@@ -28,11 +28,6 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         "real_sqlite_store: MemoryStore(path) stays on SQLite even in parity runs",
     )
-    config.addinivalue_line(
-        "markers",
-        "guardian_postgres: needs the guardian store, which is PostgreSQL-only; "
-        "runs under MEMORIA_TEST_APP_POSTGRES=1",
-    )
 
 
 _CONTROL_BACKEND = os.environ.get("MEMORIA_TEST_CONTROL_STORE", "").strip().lower()
@@ -94,31 +89,36 @@ if _CONTROL_BACKEND == "postgres":
                 connection.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
 
 
-# MEMORIA_TEST_APP_POSTGRES=1 runs Control API and governance tests against a
+# Control API, governance and companionship tests run against a
 # production-shaped PostgreSQL: every test gets a clone of a template built by
 # the real init script, every DSN connects as its production role, and eager
-# wiring builds the PostgreSQL stores (MEMORIA_EAGER_POSTGRES).
-_APP_POSTGRES = os.environ.get("MEMORIA_TEST_APP_POSTGRES", "").strip() == "1"
+# wiring builds the PostgreSQL stores (MEMORIA_EAGER_POSTGRES). Guardian and
+# archive data are PostgreSQL-only, so without MEMORIA_TEST_POSTGRES_DSN these
+# tests skip; ``sqlite_only`` tests (control-store SQLite migrations) still run.
+_APP_POSTGRES = bool(os.environ.get("MEMORIA_TEST_POSTGRES_DSN", "").strip())
 _APP_POSTGRES_ROOTS = (
     "services/control_api/tests",
     "services/governance/tests",
     "services/companionship/tests",
 )
 
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     skip_sqlite = pytest.mark.skip(reason="SQLite-file fixture; not a control store behavior")
-    skip_guardian = pytest.mark.skip(
-        reason="guardian is PostgreSQL-only; run with MEMORIA_TEST_APP_POSTGRES=1"
-    )
+    skip_app = pytest.mark.skip(reason="API tests need MEMORIA_TEST_POSTGRES_DSN")
     for item in items:
         if _CONTROL_BACKEND == "postgres" and item.get_closest_marker("sqlite_only") is not None:
             item.add_marker(skip_sqlite)
-        if not _APP_POSTGRES and item.get_closest_marker("guardian_postgres") is not None:
-            item.add_marker(skip_guardian)
+        if (
+            not _APP_POSTGRES
+            and any(root in str(item.path) for root in _APP_POSTGRES_ROOTS)
+            and item.get_closest_marker("sqlite_only") is None
+        ):
+            item.add_marker(skip_app)
 
 
 # One production-shaped template per run, shared by the app harness and the
-# guardian store fixture; built on first use.
+# store fixtures; built on first use.
 _TEMPLATE: list[Any] = []
 
 
@@ -141,27 +141,76 @@ def pytest_unconfigure(config: pytest.Config) -> None:
 
 
 @pytest.fixture
-def guardian_postgres_database() -> Iterator[Any]:
+def postgres_database() -> Iterator[Any]:
     """A fresh clone of the production-shaped template (``TestDatabase``).
 
-    Guardian data is PostgreSQL-only; without MEMORIA_TEST_POSTGRES_DSN the test skips.
+    Guardian and archive-family data are PostgreSQL-only; without
+    MEMORIA_TEST_POSTGRES_DSN the test skips. Archive-family stores connect as
+    ``database.role_dsn("memoria_app")`` (their schemas are in the template);
+    ``database.owner_dsn()`` seeds rows no store API writes.
     """
 
     if not os.environ.get("MEMORIA_TEST_POSTGRES_DSN", "").strip():
-        pytest.skip("guardian store tests need MEMORIA_TEST_POSTGRES_DSN")
+        pytest.skip("PostgreSQL-only store tests need MEMORIA_TEST_POSTGRES_DSN")
     from testing.postgres_harness import cloned_database
 
     with cloned_database(_app_template()) as database:
         yield database
 
 
+_GUARDIAN_ROLES = ("memoria_guardian", "memoria_guardian_maintenance", "memoria_guardian_worker")
+
+
 @pytest.fixture
-async def guardian_postgres_store(guardian_postgres_database: Any) -> Any:
-    """A PostgresGuardianStore on ``guardian_postgres_database``, as the production roles."""
+def dev_database_url() -> Iterator[str]:
+    """A local-development database: one NOBYPASSRLS owner role, like README's setup.
+
+    Guardian and archive data are PostgreSQL-only, so live startup needs a DSN.
+    On a shared test cluster the guardian production roles may already exist;
+    the owner then joins them so the guardian schema can hand functions over.
+    """
+    import uuid
+    from urllib.parse import urlsplit, urlunsplit
+
+    import psycopg
+
+    admin = os.environ.get("MEMORIA_TEST_POSTGRES_DSN", "").strip()
+    if not admin:
+        pytest.skip("a live PostgreSQL startup needs MEMORIA_TEST_POSTGRES_DSN")
+    name = f"memoria_dev_{uuid.uuid4().hex[:10]}"
+    with psycopg.connect(admin, autocommit=True) as connection:
+        connection.execute(f"CREATE ROLE {name} LOGIN PASSWORD 'dev' NOSUPERUSER NOBYPASSRLS")
+        connection.execute(f"CREATE DATABASE {name} OWNER {name}")
+        existing = [
+            role
+            for role in _GUARDIAN_ROLES
+            if connection.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone()
+        ]
+        for role in existing:
+            connection.execute(f"GRANT {role} TO {name}")
+    parts = urlsplit(admin)
+    if existing:
+        # ALTER ... OWNER TO needs the new owner to hold CREATE on the schema.
+        database_admin = urlunsplit(parts._replace(path=f"/{name}"))
+        with psycopg.connect(database_admin, autocommit=True) as connection:
+            connection.execute(f"GRANT USAGE, CREATE ON SCHEMA public TO {', '.join(existing)}")
+    host = parts.hostname or "127.0.0.1"
+    port = f":{parts.port}" if parts.port else ""
+    try:
+        yield urlunsplit((parts.scheme, f"{name}:dev@{host}{port}", f"/{name}", "", ""))
+    finally:
+        with psycopg.connect(admin, autocommit=True) as connection:
+            connection.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
+            connection.execute(f"DROP ROLE IF EXISTS {name}")
+
+
+@pytest.fixture
+async def guardian_postgres_store(postgres_database: Any) -> Any:
+    """A PostgresGuardianStore on ``postgres_database``, as the production roles."""
 
     from services.guardian.postgres_store import PostgresGuardianStore
 
-    env = guardian_postgres_database.control_env()
+    env = postgres_database.control_env()
     store = PostgresGuardianStore(
         env["MEMORIA_GUARDIAN_DATABASE_URL"],
         maintenance_dsn=env["MEMORIA_GUARDIAN_MAINTENANCE_DATABASE_URL"],
@@ -179,16 +228,19 @@ if _APP_POSTGRES:
     import pytest_asyncio
     from testing.postgres_harness import cloned_database
 
-    @pytest_asyncio.fixture(autouse=True)
-    async def _app_postgres(
-        request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
-    ) -> Any:
+    @pytest.fixture(autouse=True)
+    def _app_postgres(request: pytest.FixtureRequest) -> None:
+        # Sync on purpose: an async autouse fixture would run an event loop
+        # around every test in the repository, and its teardown would call
+        # time.monotonic while tests elsewhere still have it patched.
         path = str(request.node.path)
-        if not any(root in path for root in _APP_POSTGRES_ROOTS) or request.node.get_closest_marker(
+        if any(root in path for root in _APP_POSTGRES_ROOTS) and not request.node.get_closest_marker(
             "sqlite_only"
         ):
-            yield
-            return
+            request.getfixturevalue("_app_postgres_harness")
+
+    @pytest_asyncio.fixture
+    async def _app_postgres_harness(monkeypatch: pytest.MonkeyPatch) -> Any:
         from services.control_api.app import main as control_main
 
         apps: list[Any] = []

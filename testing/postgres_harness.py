@@ -14,7 +14,7 @@ Nothing here runs in production; it only reads the deployment files.
 from __future__ import annotations
 
 import re
-import secrets
+import time
 import uuid
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -30,7 +30,8 @@ ROOT = Path(__file__).resolve().parents[1]
 INIT_SCRIPT = ROOT / "infra" / "postgres" / "init-memoria.sh"
 DATA_COMPOSE = ROOT / "infra" / "memoria-data.production.yml"
 # Every login role gets the same throwaway password inside the test cluster.
-TEST_ROLE_PASSWORD = "memoria-test-" + secrets.token_hex(8)
+# Fixed, so concurrent pytest processes on one cluster agree on it.
+TEST_ROLE_PASSWORD = "memoria-test-role-password"
 
 
 def _login_roles() -> tuple[str, ...]:
@@ -202,6 +203,8 @@ def _run_init_script(admin_dsn: str, database: str) -> None:
 
 @dataclass(frozen=True)
 class TestDatabase:
+    __test__ = False  # a harness type, not a pytest test class
+
     name: str
     admin_dsn: str
 
@@ -277,11 +280,18 @@ def cloned_database(template: TestDatabase) -> Iterator[TestDatabase]:
         # Roles are cluster-wide and other PostgreSQL tests set their own
         # passwords on them; restore the harness password every time.
         for role in LOGIN_ROLES:
-            connection.execute(
-                psycopg.sql.SQL("ALTER ROLE {} PASSWORD {}").format(
-                    psycopg.sql.Identifier(role), psycopg.sql.Literal(TEST_ROLE_PASSWORD)
-                )
+            statement = psycopg.sql.SQL("ALTER ROLE {} PASSWORD {}").format(
+                psycopg.sql.Identifier(role), psycopg.sql.Literal(TEST_ROLE_PASSWORD)
             )
+            for attempt in range(5):
+                try:
+                    connection.execute(statement)
+                    break
+                except psycopg.errors.InternalError:
+                    # "tuple concurrently updated": another process reset it too.
+                    if attempt == 4:
+                        raise
+                    time.sleep(0.05 * (attempt + 1))
     clone = TestDatabase(name=name, admin_dsn=template.admin_dsn)
     try:
         yield clone

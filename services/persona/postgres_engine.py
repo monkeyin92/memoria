@@ -14,6 +14,7 @@ import asyncpg
 
 from services.archive.domain import EvidenceEvent, EvidenceNotFoundError
 from services.common.evidence_policy import contribution_for, prompt_weight_for
+from services.persona.capsule import persona_capsule_from_snapshot, persona_trait_key
 from services.persona.domain import (
     ObservationResult,
     PersonaCapsule,
@@ -29,7 +30,6 @@ from services.persona.domain import (
     require_forgettable_subject,
     require_persona_counterexample,
 )
-from services.persona.engine import persona_capsule_from_snapshot, persona_trait_key
 from services.persona.rules import (
     CATEGORY_ORDER,
     EXCLUSIVE_STYLE_CATEGORIES,

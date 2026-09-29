@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def _run(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _run(tmp_path: Path, *args: str, database_url: str = "") -> subprocess.CompletedProcess[str]:
     env = {
         "PATH": os.environ.get("PATH", ""),
         "HOME": os.environ.get("HOME", str(tmp_path)),
@@ -19,6 +19,8 @@ def _run(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
         "OFFLINE_MOCK": "true",
         "MEMORIA_AUTH_SECRET": "test-auth-material-that-is-long-enough",
         "MEMORIA_ARCHIVE_INTERNAL_TOKEN": "test-internal-archive-token",
+        "MEMORIA_GUARDIAN_DATABASE_URL": database_url,
+        "MEMORIA_ARCHIVE_DATABASE_URL": database_url,
     }
     return subprocess.run(
         [sys.executable, "-m", "scripts.replay_subject_deletions", *args],
@@ -36,7 +38,7 @@ def test_replay_requires_explicit_confirmation(tmp_path: Path) -> None:
     assert "--confirm-replay is required" in result.stderr
 
 
-def test_replay_reports_counts_only(tmp_path: Path) -> None:
-    result = _run(tmp_path, "--confirm-replay")
+def test_replay_reports_counts_only(tmp_path: Path, dev_database_url: str) -> None:
+    result = _run(tmp_path, "--confirm-replay", database_url=dev_database_url)
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout.strip().splitlines()[-1]) == {"incomplete": 0, "replayed": 0}

@@ -1,18 +1,19 @@
+"""Skill catalog and executor contract on PostgreSQL."""
+
 from __future__ import annotations
 
-import sqlite3
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
-from pathlib import Path
+from typing import Any
 
 import pytest
 from services.archive.domain import EvidenceEvent
-from services.archive.life_archive import LifeArchive
-from services.archive.memory_catalog import MemoryCatalog
 from services.archive.memory_domain import MemorySearchQuery
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
-from services.archive.skill_catalog import SkillCatalog
+from services.archive.postgres_archive import PostgresLifeArchive
+from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
+from services.archive.postgres_skill_catalog import PostgresSkillCatalog
 from services.archive.skill_domain import (
     SkillApproval,
     SkillApprovalRequiredError,
@@ -71,8 +72,11 @@ class NonJsonToolResult(FakeTools):
         return {"ok": True}
 
 
+MakeCatalog = Callable[..., Awaitable[PostgresMemoryCatalog]]
+
+
 async def _record(
-    archive: LifeArchive,
+    archive: PostgresLifeArchive,
     *,
     event_id: str,
     account_id: str,
@@ -153,10 +157,9 @@ def _proposal(
 
 
 async def _approved(
-    path: Path,
-) -> tuple[LifeArchive, SkillCatalog, str]:
-    archive = LifeArchive.sqlite(path)
-    catalog = SkillCatalog.sqlite(path)
+    archive: PostgresLifeArchive,
+    catalog: PostgresSkillCatalog,
+) -> str:
     await _record(
         archive,
         event_id="skill-instruction",
@@ -181,16 +184,15 @@ async def _approved(
             approval_event_id="skill-approval",
         )
     )
-    return archive, catalog, approved.skill_id
+    return approved.skill_id
 
 
 @pytest.mark.asyncio
 async def test_candidate_is_not_executable_and_account_scope_is_fail_closed(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    skill_catalog: PostgresSkillCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
-    catalog = SkillCatalog.sqlite(path)
+    catalog = skill_catalog
     await _record(
         archive,
         event_id="skill-instruction",
@@ -221,10 +223,12 @@ async def test_candidate_is_not_executable_and_account_scope_is_fail_closed(
 
 @pytest.mark.asyncio
 async def test_approved_skill_executes_with_schema_and_complete_step_audit(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    skill_catalog: PostgresSkillCatalog,
+    make_catalog: MakeCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive, catalog, skill_id = await _approved(path)
+    catalog = skill_catalog
+    skill_id = await _approved(archive, catalog)
     await _record(
         archive,
         event_id="skill-run-confirmation",
@@ -260,7 +264,7 @@ async def test_approved_skill_executes_with_schema_and_complete_step_audit(
         ("play_story", False),
     ]
 
-    memory_catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+    memory_catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
     search = await memory_catalog.context(
         MemorySearchQuery(
             account_id="skill-account",
@@ -279,19 +283,18 @@ async def test_approved_skill_executes_with_schema_and_complete_step_audit(
 
 @pytest.mark.asyncio
 async def test_skill_search_projection_rebuilds_from_durable_versions(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    skill_catalog: PostgresSkillCatalog,
+    make_catalog: MakeCatalog,
+    owner_sql: Callable[..., list[tuple[Any, ...]]],
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    _archive, catalog, _skill_id = await _approved(path)
-    with sqlite3.connect(path) as connection:
-        connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute("DELETE FROM memory_search_documents WHERE kind = 'skill'")
+    catalog = skill_catalog
+    await _approved(archive, catalog)
+    owner_sql("DELETE FROM memory_search_documents WHERE kind = 'skill'")
 
     rebuilt = await catalog.rebuild_search_projections(account_id="skill-account")
-    search = await MemoryCatalog.sqlite(
-        path,
-        extractor=RuleBasedMemoryExtractor(),
-    ).context(
+    memory_catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
+    search = await memory_catalog.context(
         MemorySearchQuery(
             account_id="skill-account",
             speaker_class="owner",
@@ -306,9 +309,12 @@ async def test_skill_search_projection_rebuilds_from_durable_versions(
 
 
 @pytest.mark.asyncio
-async def test_skill_input_schema_rejects_before_any_tool_runs(tmp_path: Path) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive, catalog, skill_id = await _approved(path)
+async def test_skill_input_schema_rejects_before_any_tool_runs(
+    archive: PostgresLifeArchive,
+    skill_catalog: PostgresSkillCatalog,
+) -> None:
+    catalog = skill_catalog
+    skill_id = await _approved(archive, catalog)
     await _record(
         archive,
         event_id="invalid-run-confirmation",
@@ -361,10 +367,11 @@ def test_skill_schema_rejects_constraints_the_executor_does_not_enforce() -> Non
 
 @pytest.mark.asyncio
 async def test_failed_step_compensates_completed_steps_in_reverse_and_keeps_audit(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    skill_catalog: PostgresSkillCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive, catalog, skill_id = await _approved(path)
+    catalog = skill_catalog
+    skill_id = await _approved(archive, catalog)
     await _record(
         archive,
         event_id="failed-run-confirmation",
@@ -415,11 +422,10 @@ async def test_failed_step_compensates_completed_steps_in_reverse_and_keeps_audi
 
 @pytest.mark.asyncio
 async def test_failed_compensation_template_does_not_reuse_previous_step_arguments(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    skill_catalog: PostgresSkillCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
-    catalog = SkillCatalog.sqlite(path)
+    catalog = skill_catalog
     await _record(
         archive,
         event_id="rollback-template-instruction",
@@ -513,11 +519,10 @@ async def test_failed_compensation_template_does_not_reuse_previous_step_argumen
 
 @pytest.mark.asyncio
 async def test_non_json_tool_result_still_compensates_the_completed_side_effect(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    skill_catalog: PostgresSkillCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
-    catalog = SkillCatalog.sqlite(path)
+    catalog = skill_catalog
     await _record(
         archive,
         event_id="non-json-instruction",
@@ -593,10 +598,11 @@ async def test_non_json_tool_result_still_compensates_the_completed_side_effect(
 
 @pytest.mark.asyncio
 async def test_new_approved_version_supersedes_content_without_mutating_old_version(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    skill_catalog: PostgresSkillCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive, catalog, skill_id = await _approved(path)
+    catalog = skill_catalog
+    skill_id = await _approved(archive, catalog)
     await _record(
         archive,
         event_id="skill-instruction-v2",
@@ -641,11 +647,10 @@ async def test_new_approved_version_supersedes_content_without_mutating_old_vers
 
 @pytest.mark.asyncio
 async def test_skill_name_case_variants_create_versions_of_the_same_definition(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    skill_catalog: PostgresSkillCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
-    catalog = SkillCatalog.sqlite(path)
+    catalog = skill_catalog
     for event_id, minute in (("case-name-v1", 0), ("case-name-v2", 1)):
         await _record(
             archive,
@@ -676,11 +681,10 @@ async def test_skill_name_case_variants_create_versions_of_the_same_definition(
 
 @pytest.mark.asyncio
 async def test_repeated_success_skill_requires_three_success_evidence_events(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    skill_catalog: PostgresSkillCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
-    catalog = SkillCatalog.sqlite(path)
+    catalog = skill_catalog
     for index in range(3):
         await _record(
             archive,

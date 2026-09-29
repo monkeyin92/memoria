@@ -1280,7 +1280,6 @@ async def test_plain_member_can_confirm_self_but_not_switch_others(
     assert owner_confirmed.active_subject_id == child.person_id
 
 
-@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_parent_for_child_binding_attests_the_guardianship(
     monkeypatch: pytest.MonkeyPatch,

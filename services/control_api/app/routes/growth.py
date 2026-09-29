@@ -15,7 +15,7 @@ from services.control_api.app.account_gate import AccountDeletingError, AccountO
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.security import AuthenticatedUser, require_authenticated_user
 from services.growth.domain import GrowthTask, TaskConflictError, TaskKind
-from services.growth.reader import GrowthReader
+from services.growth.postgres_reader import PostgresGrowthReader
 from services.growth.tasks import apply_task_event
 from services.growth.tasks_catalog import prompt_for, prompt_kind_for
 from services.self_model.domain import (
@@ -38,8 +38,8 @@ def _error(status_code: int, code: str) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"code": code})
 
 
-def _reader(request: Request) -> GrowthReader:
-    return cast(GrowthReader, request.app.state.growth_reader)
+def _reader(request: Request) -> PostgresGrowthReader:
+    return cast(PostgresGrowthReader, request.app.state.growth_reader)
 
 
 def _store(request: Request) -> MemoryStore:

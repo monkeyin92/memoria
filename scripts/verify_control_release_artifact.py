@@ -19,7 +19,6 @@ EXPECTED_KIND = "control-api-source-overlay"
 REQUIRED_IMPORTS = (
     "services.control_api.app.main",
     "services.archive.domain",
-    "services.archive.life_archive",
     "services.archive.memory_catalog",
     "services.archive.postgres_archive",
 )

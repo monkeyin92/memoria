@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from services.archive.domain import EvidenceEvent
@@ -12,6 +14,7 @@ from services.archive.memory_domain import (
     ExtractedTimeline,
     ExtractionUsage,
     MemoryExtraction,
+    MemoryExtractor,
 )
 from services.archive.memory_evaluation import (
     CatalogMemoryEvaluationAdapter,
@@ -34,6 +37,9 @@ from services.archive.memory_evaluation import (
 )
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
 
+if TYPE_CHECKING:
+    from testing.postgres_harness import TestDatabase
+
 DATASET = Path(__file__).parents[1] / "evaluation" / "memory_eval_zh_v1.json"
 UNSEEN_DATASET = Path(__file__).parents[1] / "evaluation" / "memory_eval_zh_v1_unseen.json"
 HELDOUT_DATASET = Path(__file__).parents[1] / "evaluation" / "memory_eval_zh_v2_unseen.json"
@@ -51,6 +57,32 @@ DEMO_STORYBOARDS = {
     "demo-elder-factory-story": "老年-人生故事留存：五天后接续纺织厂经历",
     "demo-elder-son-visit": "老年-情感陪伴：三天后召回“儿子好久没来”",
 }
+
+
+MakeEvalAdapter = Callable[..., CatalogMemoryEvaluationAdapter]
+
+
+@pytest.fixture
+def make_eval_adapter(
+    postgres_database: TestDatabase,
+    owner_sql: Callable[..., list[tuple[Any, ...]]],
+) -> MakeEvalAdapter:
+    """The catalog adapter on the clone, as the production archive/compiler roles.
+
+    Every case runs in its own schema, so the archive role needs CREATE on the
+    database; production-shaped roles do not have it on a clone by default.
+    """
+
+    owner_sql(f'GRANT CREATE ON DATABASE "{postgres_database.name}" TO memoria_app')
+
+    def make(extractor: MemoryExtractor | None = None) -> CatalogMemoryEvaluationAdapter:
+        return CatalogMemoryEvaluationAdapter(
+            postgres_database.role_dsn("memoria_app"),
+            extractor,
+            compiler_dsn=postgres_database.role_dsn("memoria_compiler"),
+        )
+
+    return make
 
 
 class PerfectAdapter:
@@ -219,11 +251,13 @@ async def test_safety_metrics_detect_conflict_candidate_and_cross_account_leakag
 
 
 @pytest.mark.asyncio
-async def test_current_catalog_adapter_runs_offline_and_preserves_account_isolation() -> None:
+async def test_current_catalog_adapter_runs_offline_and_preserves_account_isolation(
+    make_eval_adapter: MakeEvalAdapter,
+) -> None:
     dataset = load_memory_evaluation_dataset(DATASET)
     isolation = next(case for case in dataset.cases if case.scenario == "cross_account_isolation")
 
-    observation = await CatalogMemoryEvaluationAdapter().observe(isolation)
+    observation = await make_eval_adapter().observe(isolation)
 
     query = observation.query_results[0]
     assert all(item.account_id == "eval-owner-a" for item in query.items)
@@ -231,17 +265,21 @@ async def test_current_catalog_adapter_runs_offline_and_preserves_account_isolat
 
 
 @pytest.mark.asyncio
-async def test_catalog_adapter_reports_extractor_token_usage() -> None:
+async def test_catalog_adapter_reports_extractor_token_usage(
+    make_eval_adapter: MakeEvalAdapter,
+) -> None:
     dataset = load_memory_evaluation_dataset(DATASET)
     case = next(value for value in dataset.cases if value.scenario == "exact_fact")
 
-    observation = await CatalogMemoryEvaluationAdapter(UsageExtractor()).observe(case)
+    observation = await make_eval_adapter(UsageExtractor()).observe(case)
 
     assert (observation.input_tokens, observation.output_tokens) == (7, 2)
 
 
 @pytest.mark.asyncio
-async def test_catalog_adapter_reports_long_horizon_scenario_scores() -> None:
+async def test_catalog_adapter_reports_long_horizon_scenario_scores(
+    make_eval_adapter: MakeEvalAdapter,
+) -> None:
     dataset = load_memory_evaluation_dataset(DATASET)
     long_horizon = tuple(
         case
@@ -253,7 +291,7 @@ async def test_catalog_adapter_reports_long_horizon_scenario_scores() -> None:
             "comfort_recall",
         }
     )
-    adapter = CatalogMemoryEvaluationAdapter()
+    adapter = make_eval_adapter()
     observations = tuple([await adapter.observe(case) for case in long_horizon])
     subset = MemoryEvaluationDataset(version=dataset.version, cases=long_horizon)
 
@@ -395,7 +433,9 @@ class CanonicalKeyExtractor:
 
 
 @pytest.mark.asyncio
-async def test_fixed_dataset_metrics_are_pinned_for_the_rule_extractor() -> None:
+async def test_fixed_dataset_metrics_are_pinned_for_the_rule_extractor(
+    make_eval_adapter: MakeEvalAdapter,
+) -> None:
     """P1-06: keep the fixed set visible to CI, with its honest ceiling.
 
     The rule extractor cannot produce canonical episode keys, so the
@@ -405,7 +445,7 @@ async def test_fixed_dataset_metrics_are_pinned_for_the_rule_extractor() -> None
     """
     dataset = load_memory_evaluation_dataset(DATASET)
 
-    report = await run_memory_evaluation(dataset, CatalogMemoryEvaluationAdapter())
+    report = await run_memory_evaluation(dataset, make_eval_adapter())
 
     assert report.metrics.recall_at_5 == pytest.approx(0.9375)
     assert report.metrics.ndcg_at_10 == pytest.approx(0.8590438584406034)
@@ -415,7 +455,9 @@ async def test_fixed_dataset_metrics_are_pinned_for_the_rule_extractor() -> None
 
 
 @pytest.mark.asyncio
-async def test_repeated_episode_case_passes_when_extraction_states_the_key() -> None:
+async def test_repeated_episode_case_passes_when_extraction_states_the_key(
+    make_eval_adapter: MakeEvalAdapter,
+) -> None:
     """P1-06 acceptance: one episode carrying both statements, and it is recalled.
 
     This is the case the rule extractor structurally cannot pass; with the
@@ -427,7 +469,7 @@ async def test_repeated_episode_case_passes_when_extraction_states_the_key() -> 
         value for value in dataset.cases if value.case_id == "repeated-episode-campus-startup"
     )
 
-    observation = await CatalogMemoryEvaluationAdapter(CanonicalKeyExtractor()).observe(case)
+    observation = await make_eval_adapter(CanonicalKeyExtractor()).observe(case)
     metrics = calculate_memory_metrics(
         MemoryEvaluationDataset(version=dataset.version, cases=(case,)),
         (observation,),
@@ -626,7 +668,9 @@ def test_adapter_protocol_remains_structural() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unseen_rewrite_set_reports_its_own_baseline() -> None:
+async def test_unseen_rewrite_set_reports_its_own_baseline(
+    make_eval_adapter: MakeEvalAdapter,
+) -> None:
     """P1-06: the unseen paraphrase set is reported separately.
 
     The avoidance and comfort paraphrases exercise closed planner expansions
@@ -642,7 +686,7 @@ async def test_unseen_rewrite_set_reports_its_own_baseline() -> None:
         "comfort_recall",
         "cross_account_isolation",
     }
-    report = await run_memory_evaluation(dataset, CatalogMemoryEvaluationAdapter())
+    report = await run_memory_evaluation(dataset, make_eval_adapter())
 
     assert report.metrics.recall_at_5 == pytest.approx(1.0)
     assert report.metrics.ndcg_at_10 == pytest.approx(1.0)
@@ -689,7 +733,9 @@ def test_demo_scenario_dataset_pairs_every_storyboard_with_a_later_recall() -> N
 
 
 @pytest.mark.asyncio
-async def test_demo_scenario_dataset_matches_its_measured_offline_state() -> None:
+async def test_demo_scenario_dataset_matches_its_measured_offline_state(
+    make_eval_adapter: MakeEvalAdapter,
+) -> None:
     """Supported storyboards are reachable; the minor sensitive case stores nothing.
 
     Student cases run through the same subject-category filter as catalog compilation.
@@ -699,7 +745,7 @@ async def test_demo_scenario_dataset_matches_its_measured_offline_state() -> Non
     a long-term memory.  Elder cases stay on the historical unspecified path.
     """
     dataset = load_memory_evaluation_dataset(DEMO_DATASET)
-    adapter = CatalogMemoryEvaluationAdapter()
+    adapter = make_eval_adapter()
 
     reachable = set()
     for case in dataset.cases:
@@ -722,7 +768,7 @@ async def test_demo_scenario_dataset_matches_its_measured_offline_state() -> Non
         case_id for case_id in DEMO_STORYBOARDS if case_id != "demo-student-unsupported-sensitive"
     }
 
-    report = await run_memory_evaluation(dataset, CatalogMemoryEvaluationAdapter())
+    report = await run_memory_evaluation(dataset, make_eval_adapter())
 
     assert report.case_count == len(DEMO_STORYBOARDS)
     assert report.metrics.extraction_recall == pytest.approx(1.0)
@@ -733,7 +779,9 @@ async def test_demo_scenario_dataset_matches_its_measured_offline_state() -> Non
 
 
 @pytest.mark.asyncio
-async def test_heldout_set_never_leaks_and_is_not_tuned_to() -> None:
+async def test_heldout_set_never_leaks_and_is_not_tuned_to(
+    make_eval_adapter: MakeEvalAdapter,
+) -> None:
     """P1-06: a held-out set that no planner expansion was written for.
 
     Only safety invariants are locked here. Recall and nDCG are measured and
@@ -743,7 +791,7 @@ async def test_heldout_set_never_leaks_and_is_not_tuned_to() -> None:
     dataset = load_memory_evaluation_dataset(HELDOUT_DATASET)
     assert dataset.version == "memory-eval-zh-v2-unseen"
     assert len(dataset.cases) == 8
-    report = await run_memory_evaluation(dataset, CatalogMemoryEvaluationAdapter())
+    report = await run_memory_evaluation(dataset, make_eval_adapter())
 
     assert report.metrics.cross_account_leakage == 0
     assert report.metrics.candidate_leakage == 0

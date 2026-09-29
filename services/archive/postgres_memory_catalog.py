@@ -63,8 +63,7 @@ _SINGLE_VALUE_PREDICATES = SINGLE_VALUE_PREDICATES
 def _confirmed_evidence_subject(event: EvidenceEvent) -> str | None:
     """The speaker the evidence actually names, or None when it names nobody.
 
-    Same contract as the SQLite catalog: a blank subject stays unclaimed, and
-    a named subject folds only against its own lineage.
+    A blank subject stays unclaimed; a named subject folds only against its own lineage.
     """
 
     subject_id = event.subject_id.strip() if isinstance(event.subject_id, str) else ""
@@ -725,12 +724,10 @@ class PostgresMemoryCatalog:
                     alias,
                     event.event_id,
                 )
-            # Same projection as the SQLite catalog: aliases live only in
-            # person_aliases, which no read path searches, so a confirmed
-            # nickname ("阿梅") could never recall the person. The document
-            # carries the relationship and every alias and moves with the
-            # event's review lifecycle, so confirmed-only recall still gates
-            # unconfirmed people.
+            # Aliases live only in person_aliases, which no read path searches, so a confirmed
+            # nickname ("阿梅") could never recall the person. The document carries the relationship
+            # and every alias and moves with the event's review lifecycle, so confirmed-only recall
+            # still gates unconfirmed people.
             await self._insert_search_document(
                 connection,
                 account_id=event.account_id,
@@ -1666,14 +1663,17 @@ class PostgresMemoryCatalog:
                 f"websearch_to_tsquery('simple', ${text_index})), "
                 f"CASE WHEN {text_match} THEN 0.5 ELSE 0.0 END)"
             )
+            term_hits = " + ".join(  # no embeddings: rank by terms hit (ts_rank ties Chinese)
+                f"(CASE WHEN document.title ILIKE ${i} ESCAPE '\\' OR document.body ILIKE ${i} "
+                f"ESCAPE '\\' THEN 1 ELSE 0 END)" for i in term_like_indexes
+            ) or "0"
+            lexical_score = f"(({term_hits}) + 0.1 * {metadata_score})::double precision"
             if self._vector_enabled and self._embedder is not None:
                 try:
                     embedding = await self._embedder.embed(query.text.strip())
                 except MemoryEmbeddingUnavailableError:
                     clauses.append(text_match)
-                    score_expression = (
-                        f"(0.8 * {text_score} + 0.2 * {metadata_score})::double precision"
-                    )
+                    score_expression = lexical_score
                 else:
                     parameters.append(self._embedder.model)
                     model_index = len(parameters)
@@ -1712,7 +1712,7 @@ class PostgresMemoryCatalog:
                     )
             else:
                 clauses.append(text_match)
-                score_expression = f"{text_score}::double precision"
+                score_expression = lexical_score
         if query.kinds:
             parameters.append(list(query.kinds))
             clauses.append(f"document.kind = ANY(${len(parameters)}::text[])")

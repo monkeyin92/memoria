@@ -15,7 +15,6 @@ def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("OFFLINE_MOCK", "true")
 
 
-@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_every_minor_forbidden_route_family_uses_the_subject_matrix(
     monkeypatch: pytest.MonkeyPatch,

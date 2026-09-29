@@ -11,19 +11,20 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import asyncpg
 import pytest
 from services.archive.domain import EvidenceEvent
-from services.archive.life_archive import LifeArchive
+from services.archive.postgres_archive import PostgresLifeArchive
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.security import hash_password
 from services.evolution.account_repository import SqliteEvolutionAccountRepository
 from services.governance.account_data import (
     AccountDataGovernance,
+    PostgresAccountRepository,
     SqliteAccountRepository,
 )
 from services.governance.subject_export import (
@@ -35,6 +36,7 @@ from services.governance.subject_export import (
 )
 from services.guardian.domain import ConsentRecord, PersonConsentRecord
 from services.guardian.postgres_store import PostgresGuardianStore
+from testing.postgres_harness import TestDatabase
 
 ACCOUNT_ID = "account-subject-export"
 GUARDIAN_ACCOUNT = "account-guardian"
@@ -167,12 +169,14 @@ def _events() -> tuple[EvidenceEvent, ...]:
 
 
 async def _governance(
+    database: TestDatabase,
     tmp_path: Path,
     *,
     guardian: PostgresGuardianStore | None = None,
-) -> AccountDataGovernance:
-    database_path = tmp_path / "memoria.sqlite3"
-    store = MemoryStore(str(database_path))
+) -> tuple[AccountDataGovernance, str]:
+    """The governance under test and the archive consent id it holds."""
+
+    store = MemoryStore(str(tmp_path / "memoria.sqlite3"))
     store.register_account(
         user_id=ACCOUNT_ID,
         username="subject-export-owner",
@@ -180,9 +184,19 @@ async def _governance(
         password_hash=hash_password("safe-passphrase"),
         now=_NOW.isoformat(),
     )
-    archive = LifeArchive.sqlite(database_path)
-    for event in _events():
-        await archive.record(event)
+    archive_dsn = database.role_dsn("memoria_app")
+    archive = PostgresLifeArchive(archive_dsn)
+    try:
+        for event in _events():
+            await archive.record(event)
+        consent = await archive.grant_raw_voice_consent(
+            account_id=ACCOUNT_ID,
+            policy_version="voice-consent-v1",
+            retention_policy="account_lifetime",
+            granted_at=_NOW,
+        )
+    finally:
+        await archive.close()
     with store.connection() as connection:
         connection.execute(
             """
@@ -213,45 +227,33 @@ async def _governance(
                 ACCOUNT_ID,
             ),
         )
-        # A payload that cannot be parsed cannot prove its text was retained
-        # under the current ceiling, so the export has to drop it as well.
-    # consent_grants and evidence_events are the archive's SQLite tables.
-    with sqlite3.connect(database_path) as connection:
-        connection.execute(
+    # A payload that cannot be parsed cannot prove its text was retained under
+    # the current ceiling, so the export has to drop it as well. JSONB only
+    # holds valid JSON, so the truncated text is stored as a JSON string: not
+    # an object, which is what the export can never parse into a payload. No
+    # archive API writes one, so it is seeded as the owner.
+    admin = await asyncpg.connect(database.owner_dsn())
+    try:
+        await admin.execute(
             """
-            INSERT INTO consent_grants (
-                consent_grant_id, account_id, purpose, policy_version,
-                retention_policy, granted_at, expires_at, revoked_at,
-                evidence_event_id
-            ) VALUES ('consent-archive', ?, 'raw_voice', 'voice-consent-v1',
-                      'account_lifetime', ?, NULL, NULL, 'evidence-owner')
+            INSERT INTO archive_evidence_events (
+                event_id, account_id, event_type, schema_version, occurred_at,
+                recorded_at, subject_id, speaker_class, source, payload,
+                content_sha256
+            ) VALUES ('evidence-unparsed', $1, 'speech.utterance_finalized', 1, $2,
+                      $3, $1, 'owner', 'subject-export-test', to_jsonb($4::text), $5)
             """,
-            (ACCOUNT_ID, _NOW.isoformat()),
+            ACCOUNT_ID,
+            _NOW + timedelta(seconds=7),
+            _NOW,
+            '{"text": "未解析文本。",',
+            "0" * 64,
         )
-        connection.execute(
-            """
-            INSERT INTO evidence_events (
-                event_id, account_id, session_id, turn_id, generation_id,
-                event_type, schema_version, occurred_at, recorded_at,
-                subject_id, speaker_identity_id, speaker_class, source,
-                consent_grant_id, payload_json, content_sha256,
-                supersedes_event_id
-            ) VALUES ('evidence-unparsed', ?, NULL, NULL, NULL,
-                      'speech.utterance_finalized', 1, ?, ?,
-                      ?, NULL, 'owner', 'subject-export-test',
-                      NULL, '{"text": "未解析文本。",', ?, NULL)
-            """,
-            (
-                ACCOUNT_ID,
-                (_NOW + timedelta(seconds=7)).isoformat(),
-                _NOW.isoformat(),
-                ACCOUNT_ID,
-                "0" * 64,
-            ),
-        )
-    return AccountDataGovernance(
+    finally:
+        await admin.close()
+    governance = AccountDataGovernance(
         memory_store=store,
-        archive_repository=SqliteAccountRepository.archive(database_path),
+        archive_repository=PostgresAccountRepository.archive(archive_dsn),
         speaker_repository=SqliteAccountRepository.speaker(tmp_path / "speakers.sqlite3"),
         evolution_repository=SqliteEvolutionAccountRepository(
             tmp_path / "evolution.sqlite3"
@@ -259,6 +261,7 @@ async def _governance(
         voice_profiles=_UnusedVoiceProfiles(),  # type: ignore[arg-type]
         guardian_repository=guardian,
     )
+    return governance, consent.consent_grant_id
 
 
 def _canonical_manifest(body: dict[str, Any]) -> str:
@@ -285,9 +288,10 @@ def _contains_key(node: Any, key: str) -> bool:
 
 @pytest.mark.asyncio
 async def test_self_export_returns_only_evidence_attributed_to_the_subject(
+    postgres_database: TestDatabase,
     tmp_path: Path,
 ) -> None:
-    governance = await _governance(tmp_path)
+    governance, _ = await _governance(postgres_database, tmp_path)
 
     exported = await governance.export_account(
         ACCOUNT_ID,
@@ -336,9 +340,10 @@ async def test_self_export_returns_only_evidence_attributed_to_the_subject(
 
 @pytest.mark.asyncio
 async def test_self_export_declares_partial_scope_and_omits_unscoped_sections(
+    postgres_database: TestDatabase,
     tmp_path: Path,
 ) -> None:
-    governance = await _governance(tmp_path)
+    governance, consent_id = await _governance(postgres_database, tmp_path)
 
     exported = await governance.export_account(ACCOUNT_ID, subject_id=ACCOUNT_ID)
 
@@ -374,7 +379,7 @@ async def test_self_export_declares_partial_scope_and_omits_unscoped_sections(
     assert [
         row["consent_grant_id"]
         for row in exported["sections"]["consent"]["consent_grants"]
-    ] == ["consent-archive"]
+    ] == [consent_id]
     serialized = _serialized(exported)
     assert RAW_CONVERSATION_TEXT not in serialized
     assert "简介里可能引用别人的内容。" not in serialized
@@ -387,9 +392,10 @@ async def test_self_export_declares_partial_scope_and_omits_unscoped_sections(
 
 @pytest.mark.asyncio
 async def test_subject_export_never_falls_back_to_account_wide_content(
+    postgres_database: TestDatabase,
     tmp_path: Path,
 ) -> None:
-    governance = await _governance(tmp_path)
+    governance, consent_id = await _governance(postgres_database, tmp_path)
 
     exported = await governance.export_account(ACCOUNT_ID, subject_id=CHILD_SUBJECT)
 
@@ -410,7 +416,7 @@ async def test_subject_export_never_falls_back_to_account_wide_content(
     assert "consent_grants" not in consent
     assert "persona_learning_consents" not in consent
     assert "voice_clone_consents" not in consent
-    assert "consent-archive" not in _serialized(exported)
+    assert consent_id not in _serialized(exported)
     serialized = _serialized(exported)
     assert "主人自己的话。" not in serialized
     assert "模型的回复。" not in serialized
@@ -431,6 +437,7 @@ async def test_subject_export_never_falls_back_to_account_wide_content(
 
 @pytest.mark.asyncio
 async def test_guardian_export_withholds_verbatim_content_and_reports_metadata(
+    postgres_database: TestDatabase,
     tmp_path: Path,
     guardian_postgres_store: PostgresGuardianStore,
 ) -> None:
@@ -443,7 +450,9 @@ async def test_guardian_export_withholds_verbatim_content_and_reports_metadata(
         _person_consent(consent_id=OTHER_CONSENT_ID, subject="other-person"),
         actor_person_id=ACCOUNT_ID,
     )
-    governance = await _governance(tmp_path, guardian=guardian)
+    governance, consent_id = await _governance(
+        postgres_database, tmp_path, guardian=guardian
+    )
 
     exported = await governance.export_account(
         ACCOUNT_ID,
@@ -479,7 +488,7 @@ async def test_guardian_export_withholds_verbatim_content_and_reports_metadata(
         SUBJECT_PERSON_CONSENT_FIELDS
     )
     assert "consent_grants" not in consent
-    assert "consent-archive" not in _serialized(exported)
+    assert consent_id not in _serialized(exported)
     serialized = _serialized(exported)
     for text in (
         "孩子说的这句话。",
@@ -513,6 +522,7 @@ async def test_guardian_export_withholds_verbatim_content_and_reports_metadata(
 
 @pytest.mark.asyncio
 async def test_active_link_and_weekly_report_consent_do_not_authorize_verbatim(
+    postgres_database: TestDatabase,
     tmp_path: Path,
     guardian_postgres_store: PostgresGuardianStore,
 ) -> None:
@@ -551,7 +561,9 @@ async def test_active_link_and_weekly_report_consent_do_not_authorize_verbatim(
         ),
         actor_user_id=GUARDIAN_ACCOUNT,
     )
-    governance = await _governance(tmp_path, guardian=guardian)
+    governance, _ = await _governance(
+        postgres_database, tmp_path, guardian=guardian
+    )
 
     exported = await governance.export_account(
         ACCOUNT_ID,
@@ -572,8 +584,11 @@ async def test_active_link_and_weekly_report_consent_do_not_authorize_verbatim(
 
 
 @pytest.mark.asyncio
-async def test_subject_export_manifest_covers_the_reduced_body(tmp_path: Path) -> None:
-    governance = await _governance(tmp_path)
+async def test_subject_export_manifest_covers_the_reduced_body(
+    postgres_database: TestDatabase,
+    tmp_path: Path,
+) -> None:
+    governance, _ = await _governance(postgres_database, tmp_path)
 
     guardian_export = await governance.export_account(
         ACCOUNT_ID,
@@ -594,8 +609,11 @@ async def test_subject_export_manifest_covers_the_reduced_body(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-async def test_unscoped_export_keeps_the_internal_account_snapshot(tmp_path: Path) -> None:
-    governance = await _governance(tmp_path)
+async def test_unscoped_export_keeps_the_internal_account_snapshot(
+    postgres_database: TestDatabase,
+    tmp_path: Path,
+) -> None:
+    governance, _ = await _governance(postgres_database, tmp_path)
 
     exported = await governance.export_account(ACCOUNT_ID)
 
@@ -610,7 +628,7 @@ async def test_unscoped_export_keeps_the_internal_account_snapshot(tmp_path: Pat
         "legacy",
         "guardian",
     }
-    evidence_rows = exported["sections"]["archive"]["evidence_events"]
+    evidence_rows = exported["sections"]["archive"]["archive_evidence_events"]
     assert {row["event_id"] for row in evidence_rows} == {
         "evidence-owner",
         "evidence-assistant",
@@ -630,8 +648,11 @@ async def test_unscoped_export_keeps_the_internal_account_snapshot(tmp_path: Pat
 
 
 @pytest.mark.asyncio
-async def test_export_fails_closed_without_an_explicit_subject(tmp_path: Path) -> None:
-    governance = await _governance(tmp_path)
+async def test_export_fails_closed_without_an_explicit_subject(
+    postgres_database: TestDatabase,
+    tmp_path: Path,
+) -> None:
+    governance, _ = await _governance(postgres_database, tmp_path)
 
     with pytest.raises(ValueError, match="explicit subject_id"):
         await governance.export_account(ACCOUNT_ID, audience="guardian")

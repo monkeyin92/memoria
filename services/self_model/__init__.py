@@ -26,7 +26,6 @@ from services.self_model.policy import (
     activation_decision,
     is_effective,
 )
-from services.self_model.registry import SelfModelRegistry
 
 __all__ = [
     "HIGH_SENSITIVITY_CLAIM_TYPES",
@@ -45,7 +44,6 @@ __all__ = [
     "SelfModelItemKind",
     "SelfModelNotFoundError",
     "SelfModelRegistryPort",
-    "SelfModelRegistry",
     "SelfModelSource",
     "SelfModelVersionConflictError",
     "SourceRelation",

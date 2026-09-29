@@ -1,7 +1,8 @@
 """Crisis push ledger and worker on the PostgreSQL guardian store.
 
 Runs on ``guardian_postgres_store`` (production roles, RLS applies); the
-crisis evidence archive stays a local SQLite ``LifeArchive``.
+crisis evidence goes to a ``PostgresLifeArchive`` on the same clone, as the
+archive role ``memoria_app``.
 """
 
 from __future__ import annotations
@@ -9,11 +10,11 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import hashlib
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
-from services.archive.life_archive import LifeArchive
+from services.archive.postgres_archive import PostgresLifeArchive
 from services.guardian.crisis import CrisisNotificationService, GuardianNotification
 from services.guardian.domain import GuardianAccessDeniedError
 from services.guardian.postgres_store import PostgresGuardianStore
@@ -25,9 +26,19 @@ from services.guardian.push import (
     PushSendResult,
     crisis_push_retry_delay_s,
 )
+from testing.postgres_harness import TestDatabase
 
 TEMPLATE = "crisis-template-01"
 OPENID = "guardian-openid-a"
+
+
+@pytest.fixture
+async def archive(postgres_database: TestDatabase) -> AsyncIterator[PostgresLifeArchive]:
+    life_archive = PostgresLifeArchive(postgres_database.role_dsn("memoria_app"))
+    try:
+        yield life_archive
+    finally:
+        await life_archive.close()
 
 
 def _now() -> datetime:
@@ -72,7 +83,7 @@ async def _names(guardian_user_id: str, minor_user_id: str) -> str | None:
 
 async def _store_with_crisis(
     store: PostgresGuardianStore,
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
     *,
     occurred_at: datetime,
 ) -> tuple[PostgresGuardianStore, str]:
@@ -92,9 +103,7 @@ async def _store_with_crisis(
         binding_code_hash=digest,
         now=occurred_at,
     )
-    receipt = await CrisisNotificationService(
-        store, LifeArchive.sqlite(tmp_path / "archive.sqlite3")
-    ).record_minor_crisis(
+    receipt = await CrisisNotificationService(store, archive).record_minor_crisis(
         minor_user_id="minor-a",
         session_id="voice-session-a",
         turn_id=3,
@@ -192,11 +201,11 @@ async def test_ledger_counts_acceptances_and_bans_void_the_balance(
 @pytest.mark.asyncio
 async def test_worker_delivers_fixed_content_and_consumes_one_acceptance(
     guardian_postgres_store: PostgresGuardianStore,
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
 ) -> None:
     occurred = _now()
     store, _ = await _store_with_crisis(
-        guardian_postgres_store, tmp_path, occurred_at=occurred
+        guardian_postgres_store, archive, occurred_at=occurred
     )
     await _accept(store, occurred, times=2)
     sender = FakeSender(PushSendResult("delivered"))
@@ -232,11 +241,11 @@ async def test_worker_delivers_fixed_content_and_consumes_one_acceptance(
 @pytest.mark.asyncio
 async def test_guardian_without_acceptance_is_marked_no_subscription(
     guardian_postgres_store: PostgresGuardianStore,
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
 ) -> None:
     occurred = _now()
     store, _ = await _store_with_crisis(
-        guardian_postgres_store, tmp_path, occurred_at=occurred
+        guardian_postgres_store, archive, occurred_at=occurred
     )
     sender = FakeSender()
 
@@ -251,11 +260,11 @@ async def test_guardian_without_acceptance_is_marked_no_subscription(
 @pytest.mark.asyncio
 async def test_wechat_refusal_marks_no_subscription_and_exhausts_the_ledger(
     guardian_postgres_store: PostgresGuardianStore,
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
 ) -> None:
     occurred = _now()
     store, _ = await _store_with_crisis(
-        guardian_postgres_store, tmp_path, occurred_at=occurred
+        guardian_postgres_store, archive, occurred_at=occurred
     )
     await _accept(store, occurred, times=3)
     sender = FakeSender(PushSendResult("no_subscription", "wechat_43101"))
@@ -271,11 +280,11 @@ async def test_wechat_refusal_marks_no_subscription_and_exhausts_the_ledger(
 @pytest.mark.asyncio
 async def test_transient_failures_back_off_refund_and_stop_at_the_attempt_cap(
     guardian_postgres_store: PostgresGuardianStore,
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
 ) -> None:
     occurred = _now()
     store, _ = await _store_with_crisis(
-        guardian_postgres_store, tmp_path, occurred_at=occurred
+        guardian_postgres_store, archive, occurred_at=occurred
     )
     await _accept(store, occurred)
     sender = FakeSender(PushSendResult("retry", "wechat_-1"))
@@ -310,11 +319,11 @@ async def test_transient_failures_back_off_refund_and_stop_at_the_attempt_cap(
 @pytest.mark.asyncio
 async def test_permanent_failure_refunds_and_sender_exceptions_retry(
     guardian_postgres_store: PostgresGuardianStore,
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
 ) -> None:
     occurred = _now()
     store, _ = await _store_with_crisis(
-        guardian_postgres_store, tmp_path, occurred_at=occurred
+        guardian_postgres_store, archive, occurred_at=occurred
     )
     await _accept(store, occurred)
 
@@ -340,11 +349,11 @@ async def test_permanent_failure_refunds_and_sender_exceptions_retry(
 @pytest.mark.asyncio
 async def test_concurrent_workers_send_each_notification_once(
     guardian_postgres_store: PostgresGuardianStore,
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
 ) -> None:
     occurred = _now()
     store, _ = await _store_with_crisis(
-        guardian_postgres_store, tmp_path, occurred_at=occurred
+        guardian_postgres_store, archive, occurred_at=occurred
     )
     await _accept(store, occurred, times=5)
     sender = FakeSender(PushSendResult("delivered"))
@@ -361,11 +370,11 @@ async def test_concurrent_workers_send_each_notification_once(
 @pytest.mark.asyncio
 async def test_reclaim_after_a_crashed_worker_reuses_its_reservation(
     guardian_postgres_store: PostgresGuardianStore,
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
 ) -> None:
     occurred = _now()
     store, _ = await _store_with_crisis(
-        guardian_postgres_store, tmp_path, occurred_at=occurred
+        guardian_postgres_store, archive, occurred_at=occurred
     )
     await _accept(store, occurred, times=2)
     clock = Clock(occurred)
@@ -427,11 +436,11 @@ async def test_reclaim_after_a_crashed_worker_reuses_its_reservation(
 @pytest.mark.asyncio
 async def test_alerts_older_than_the_push_window_stay_on_the_page_only(
     guardian_postgres_store: PostgresGuardianStore,
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
 ) -> None:
     occurred = datetime.now(UTC)
     store, _ = await _store_with_crisis(
-        guardian_postgres_store, tmp_path, occurred_at=occurred
+        guardian_postgres_store, archive, occurred_at=occurred
     )
     await _accept(store, occurred)
     sender = FakeSender()

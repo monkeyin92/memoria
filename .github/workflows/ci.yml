@@ -254,43 +254,6 @@ jobs:
         env:
           OFFLINE_MOCK: "true"
 
-  control-api-postgres:
-    # Control API and governance tests against a production-shaped
-    # PostgreSQL: the template is built by infra/postgres/init-memoria.sh,
-    # every store DSN connects as its production role (FORCE RLS applies),
-    # and each test runs on a clone (testing/postgres_harness.py).
-    needs: changes
-    if: needs.changes.outputs.python == 'true'
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: pgvector/pgvector:0.8.1-pg17-bookworm
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      MEMORIA_TEST_POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/postgres
-      MEMORIA_TEST_APP_POSTGRES: "1"
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-        with:
-          python-version: "3.12"
-      - name: Install
-        run: uv sync --frozen --all-extras
-      - name: Control API, governance and companionship on production-shaped PostgreSQL
-        run: >-
-          uv run pytest --import-mode=importlib --no-cov
-          services/control_api/tests services/governance/tests services/companionship/tests
-
   media-edge:
     needs: changes
     if: needs.changes.outputs.media_edge == 'true'

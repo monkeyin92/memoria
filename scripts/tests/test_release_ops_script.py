@@ -160,8 +160,8 @@ def test_live_chain_constants_have_no_stale_release_trees() -> None:
         "/tmp/media-runtime",
     ):
         assert stale not in script, stale
-    assert "PREV_TAG=20260928-followup-endpoint-v1" in script
-    assert "PREV_COMMIT=a2ea41eab3d62914cfb9f727d448f80f94d49e5b" in script
+    assert "PREV_TAG=20260928-reopen-window-v1" in script
+    assert "PREV_COMMIT=173445def1981b4d714c7ef44614af8b6cd07549" in script
 
 
 def test_freeze_checks_every_target_chain_and_the_current_link() -> None:

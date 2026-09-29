@@ -18,7 +18,6 @@ FIXED = (
 )
 
 
-@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_fixed_companionship_set_passes_through_real_doors() -> None:
     """Every scenario is driven through the shipped HTTP surface, not a stub.

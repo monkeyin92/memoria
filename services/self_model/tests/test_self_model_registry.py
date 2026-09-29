@@ -1,15 +1,18 @@
-"""SQLite contract tests for the evidence-backed self model."""
+"""Behaviour of the evidence-backed self model on PostgreSQL, as the archive role."""
 
 from __future__ import annotations
 
 import asyncio
-import sqlite3
+import uuid
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from pathlib import Path
+from typing import TYPE_CHECKING
 
+import asyncpg
 import pytest
+import pytest_asyncio
 from services.archive.domain import EvidenceEvent
-from services.archive.life_archive import LifeArchive
+from services.archive.postgres_archive import PostgresLifeArchive
 from services.self_model.domain import (
     InvalidSelfModelTransitionError,
     SelfModelIdempotencyConflictError,
@@ -19,18 +22,45 @@ from services.self_model.domain import (
     UntrustedSelfModelSourceError,
 )
 from services.self_model.policy import activation_decision
-from services.self_model.registry import SelfModelRegistry
+from services.self_model.postgres_registry import PostgresSelfModelRegistry
+
+if TYPE_CHECKING:
+    from testing.postgres_harness import TestDatabase
+
+
+@pytest_asyncio.fixture
+async def archive(postgres_database: TestDatabase) -> AsyncIterator[PostgresLifeArchive]:
+    store = PostgresLifeArchive(postgres_database.role_dsn("memoria_app"))
+    await store.initialize()
+    try:
+        yield store
+    finally:
+        await store.close()
+
+
+@pytest_asyncio.fixture
+async def registry(postgres_database: TestDatabase) -> AsyncIterator[PostgresSelfModelRegistry]:
+    store = PostgresSelfModelRegistry(postgres_database.role_dsn("memoria_app"))
+    await store.initialize()
+    try:
+        yield store
+    finally:
+        await store.close()
+
+
+def _uuid(name: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"memoria:self-model-test:{name}"))
 
 
 async def _evidence(
-    path: Path,
+    archive: PostgresLifeArchive,
     *,
     account_id: str,
     event_id: str,
     speaker_class: str = "owner",
     simulated: bool = False,
 ) -> None:
-    await LifeArchive.sqlite(path).record(
+    await archive.record(
         EvidenceEvent(
             event_id=event_id,
             account_id=account_id,
@@ -52,55 +82,54 @@ async def _evidence(
     )
 
 
-def _seed_relationship(
-    path: Path,
+async def _seed_relationship(
+    database: TestDatabase,
     *,
     account_id: str,
     source_event_id: str,
     person_id: str,
     relationship_id: str,
 ) -> None:
-    with sqlite3.connect(path) as connection:
-        connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute(
-            """
-            INSERT INTO person_entities (
-                person_id, account_id, canonical_key, display_name,
-                relationship_to_owner, status, source_event_id, created_at
-            ) VALUES (?, ?, ?, '李梅', 'friend', 'confirmed', ?, ?)
-            """,
-            (
-                person_id,
+    connection = await asyncpg.connect(database.role_dsn("memoria_app"))
+    try:
+        async with connection.transaction():
+            await connection.execute("SELECT set_config('app.account_id', $1, true)", account_id)
+            await connection.execute(
+                """
+                INSERT INTO person_entities (
+                    person_id, account_id, canonical_key, display_name,
+                    relationship_to_owner, status, source_event_id, created_at
+                ) VALUES ($1, $2, $3, '李梅', 'friend', 'confirmed', $4, $5)
+                """,
+                uuid.UUID(person_id),
                 account_id,
                 f"friend:{person_id}",
                 source_event_id,
-                datetime.now(UTC).isoformat(),
-            ),
-        )
-        connection.execute(
-            """
-            INSERT INTO relationships (
-                relationship_id, account_id, person_id, relationship_type,
-                status, source_event_id, valid_at
-            ) VALUES (?, ?, ?, 'friend', 'confirmed', ?, ?)
-            """,
-            (
-                relationship_id,
+                datetime.now(UTC),
+            )
+            await connection.execute(
+                """
+                INSERT INTO relationships (
+                    relationship_id, account_id, person_id, relationship_type,
+                    status, source_event_id, valid_at
+                ) VALUES ($1, $2, $3, 'friend', 'confirmed', $4, $5)
+                """,
+                uuid.UUID(relationship_id),
                 account_id,
-                person_id,
+                uuid.UUID(person_id),
                 source_event_id,
-                datetime.now(UTC).isoformat(),
-            ),
-        )
+                datetime.now(UTC),
+            )
+    finally:
+        await connection.close()
 
 
 @pytest.mark.asyncio
 async def test_candidate_never_activates_and_low_sensitivity_needs_owner_adoption(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    registry: PostgresSelfModelRegistry,
 ) -> None:
-    path = tmp_path / "self-model.sqlite3"
-    registry = SelfModelRegistry.sqlite(path)
-    await _evidence(path, account_id="owner-a", event_id="owner-support")
+    await _evidence(archive, account_id="owner-a", event_id="owner-support")
 
     claim = await registry.create_cognitive_claim(
         account_id="owner-a",
@@ -142,17 +171,16 @@ async def test_candidate_never_activates_and_low_sensitivity_needs_owner_adoptio
 
 @pytest.mark.asyncio
 async def test_guest_assistant_and_simulated_owner_sources_are_rejected(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    registry: PostgresSelfModelRegistry,
 ) -> None:
-    path = tmp_path / "self-model.sqlite3"
-    registry = SelfModelRegistry.sqlite(path)
     for event_id, speaker_class, simulated in (
         ("guest-source", "guest", False),
         ("assistant-source", "assistant", False),
         ("simulated-owner", "owner", True),
     ):
         await _evidence(
-            path,
+            archive,
             account_id="owner-a",
             event_id=event_id,
             speaker_class=speaker_class,
@@ -183,19 +211,18 @@ async def test_guest_assistant_and_simulated_owner_sources_are_rejected(
 
 @pytest.mark.asyncio
 async def test_create_commands_attach_all_sources_with_original_version_semantics(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    registry: PostgresSelfModelRegistry,
+    postgres_database: TestDatabase,
 ) -> None:
-    path = tmp_path / "self-model.sqlite3"
-    registry = SelfModelRegistry.sqlite(path)
-    registry.initialize()
-    await _evidence(path, account_id="owner-a", event_id="atomic-support")
-    await _evidence(path, account_id="owner-a", event_id="atomic-counterexample")
-    _seed_relationship(
-        path,
+    await _evidence(archive, account_id="owner-a", event_id="atomic-support")
+    await _evidence(archive, account_id="owner-a", event_id="atomic-counterexample")
+    await _seed_relationship(
+        postgres_database,
         account_id="owner-a",
         source_event_id="atomic-support",
-        person_id="atomic-person",
-        relationship_id="atomic-relationship",
+        person_id=_uuid("atomic-person"),
+        relationship_id=_uuid("atomic-relationship"),
     )
     sources = (
         SourceInput(source_event_id="atomic-support"),
@@ -230,8 +257,8 @@ async def test_create_commands_attach_all_sources_with_original_version_semantic
     )
     profile = await registry.create_relationship_profile(
         account_id="owner-a",
-        person_id="atomic-person",
-        relationship_id="atomic-relationship",
+        person_id=_uuid("atomic-person"),
+        relationship_id=_uuid("atomic-relationship"),
         salutation="朋友",
         tone="坦诚",
         advice_style="先听再建议",
@@ -280,24 +307,23 @@ async def test_create_commands_attach_all_sources_with_original_version_semantic
 
 @pytest.mark.asyncio
 async def test_create_commands_roll_back_everything_when_any_source_fails(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    registry: PostgresSelfModelRegistry,
+    postgres_database: TestDatabase,
 ) -> None:
-    path = tmp_path / "self-model.sqlite3"
-    registry = SelfModelRegistry.sqlite(path)
-    registry.initialize()
-    await _evidence(path, account_id="owner-a", event_id="valid-source")
+    await _evidence(archive, account_id="owner-a", event_id="valid-source")
     await _evidence(
-        path,
+        archive,
         account_id="owner-a",
         event_id="guest-source",
         speaker_class="guest",
     )
-    _seed_relationship(
-        path,
+    await _seed_relationship(
+        postgres_database,
         account_id="owner-a",
         source_event_id="valid-source",
-        person_id="rollback-person",
-        relationship_id="rollback-relationship",
+        person_id=_uuid("rollback-person"),
+        relationship_id=_uuid("rollback-relationship"),
     )
 
     with pytest.raises(UntrustedSelfModelSourceError):
@@ -333,8 +359,8 @@ async def test_create_commands_roll_back_everything_when_any_source_fails(
     with pytest.raises(ValueError, match="duplicate source"):
         await registry.create_relationship_profile(
             account_id="owner-a",
-            person_id="rollback-person",
-            relationship_id="rollback-relationship",
+            person_id=_uuid("rollback-person"),
+            relationship_id=_uuid("rollback-relationship"),
             salutation="朋友",
             tone="坦诚",
             advice_style="先听再建议",
@@ -350,19 +376,20 @@ async def test_create_commands_roll_back_everything_when_any_source_fails(
     assert exported["self_model_cognitive_claims"] == []
     assert exported["self_model_decision_cases"] == []
     assert exported["self_model_relationship_profiles"] == []
-    assert exported["self_model_sources"] == []
+    assert exported["self_model_cognitive_claim_sources"] == []
+    assert exported["self_model_decision_case_sources"] == []
+    assert exported["self_model_relationship_profile_sources"] == []
     assert exported["self_model_audit_events"] == []
     assert exported["self_model_command_receipts"] == []
 
 
 @pytest.mark.asyncio
 async def test_negative_evidence_and_unresolved_conflict_fail_closed(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    registry: PostgresSelfModelRegistry,
 ) -> None:
-    path = tmp_path / "self-model.sqlite3"
-    registry = SelfModelRegistry.sqlite(path)
-    await _evidence(path, account_id="owner-a", event_id="positive")
-    await _evidence(path, account_id="owner-a", event_id="negative")
+    await _evidence(archive, account_id="owner-a", event_id="positive")
+    await _evidence(archive, account_id="owner-a", event_id="negative")
     claim = await registry.create_cognitive_claim(
         account_id="owner-a",
         claim_type="belief",
@@ -409,12 +436,11 @@ async def test_negative_evidence_and_unresolved_conflict_fail_closed(
 
 @pytest.mark.asyncio
 async def test_high_sensitivity_requires_step_up_and_owner_counterexample(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    registry: PostgresSelfModelRegistry,
 ) -> None:
-    path = tmp_path / "self-model.sqlite3"
-    registry = SelfModelRegistry.sqlite(path)
-    await _evidence(path, account_id="owner-a", event_id="value-support")
-    await _evidence(path, account_id="owner-a", event_id="value-boundary")
+    await _evidence(archive, account_id="owner-a", event_id="value-support")
+    await _evidence(archive, account_id="owner-a", event_id="value-boundary")
     claim = await registry.create_cognitive_claim(
         account_id="owner-a",
         claim_type="value",
@@ -475,10 +501,11 @@ async def test_high_sensitivity_requires_step_up_and_owner_counterexample(
 
 
 @pytest.mark.asyncio
-async def test_only_real_still_endorsed_decisions_activate(tmp_path: Path) -> None:
-    path = tmp_path / "self-model.sqlite3"
-    registry = SelfModelRegistry.sqlite(path)
-    await _evidence(path, account_id="owner-a", event_id="decision-source")
+async def test_only_real_still_endorsed_decisions_activate(
+    archive: PostgresLifeArchive,
+    registry: PostgresSelfModelRegistry,
+) -> None:
+    await _evidence(archive, account_id="owner-a", event_id="decision-source")
 
     results = []
     for kind, still_endorsed in (
@@ -531,23 +558,22 @@ async def test_only_real_still_endorsed_decisions_activate(tmp_path: Path) -> No
 
 @pytest.mark.asyncio
 async def test_relationship_profiles_are_versioned_immutable_and_never_acl(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    registry: PostgresSelfModelRegistry,
+    postgres_database: TestDatabase,
 ) -> None:
-    path = tmp_path / "self-model.sqlite3"
-    registry = SelfModelRegistry.sqlite(path)
-    registry.initialize()
-    await _evidence(path, account_id="owner-a", event_id="relationship-source")
-    _seed_relationship(
-        path,
+    await _evidence(archive, account_id="owner-a", event_id="relationship-source")
+    await _seed_relationship(
+        postgres_database,
         account_id="owner-a",
         source_event_id="relationship-source",
-        person_id="person-a",
-        relationship_id="relationship-a",
+        person_id=_uuid("person-a"),
+        relationship_id=_uuid("relationship-a"),
     )
     profile = await registry.create_relationship_profile(
         account_id="owner-a",
-        person_id="person-a",
-        relationship_id="relationship-a",
+        person_id=_uuid("person-a"),
+        relationship_id=_uuid("relationship-a"),
         salutation="梅姐",
         tone="坦诚",
         advice_style="先听再建议",
@@ -588,6 +614,23 @@ async def test_relationship_profiles_are_versioned_immutable_and_never_acl(
     assert activation_decision(approved).effective is True
     assert not hasattr(approved, "acl")
     assert not hasattr(approved, "grant")
+    # An approved version's content cannot be rewritten underneath the registry.
+    connection = await asyncpg.connect(postgres_database.role_dsn("memoria_app"))
+    try:
+        with pytest.raises(asyncpg.PostgresError, match="immutable"):
+            async with connection.transaction():
+                await connection.execute(
+                    "SELECT set_config('app.account_id', $1, true)", "owner-a"
+                )
+                await connection.execute(
+                    """
+                    UPDATE self_model_relationship_profiles SET tone = '越权修改'
+                    WHERE profile_id = $1 AND version_number = 1
+                    """,
+                    uuid.UUID(profile.profile_id),
+                )
+    finally:
+        await connection.close()
 
     revised = await registry.revise_relationship_profile(
         account_id="owner-a",
@@ -608,45 +651,28 @@ async def test_relationship_profiles_are_versioned_immutable_and_never_acl(
     assert revised.version_number == 2
     assert revised.status == "candidate"
 
-    with sqlite3.connect(path) as connection:
-        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
-            connection.execute(
-                """
-                UPDATE self_model_relationship_profiles SET tone = '越权修改'
-                WHERE profile_id = ? AND version_number = 1
-                """,
-                (profile.profile_id,),
-            )
-
 
 @pytest.mark.asyncio
-async def test_account_isolation_idempotency_and_compare_and_set(tmp_path: Path) -> None:
-    path = tmp_path / "self-model.sqlite3"
-    registry = SelfModelRegistry.sqlite(path)
-    await _evidence(path, account_id="owner-a", event_id="concurrent-source-a")
-    await _evidence(path, account_id="owner-a", event_id="concurrent-source-b")
+async def test_account_isolation_idempotency_and_compare_and_set(
+    archive: PostgresLifeArchive,
+    registry: PostgresSelfModelRegistry,
+) -> None:
+    await _evidence(archive, account_id="owner-a", event_id="concurrent-source-a")
+    await _evidence(archive, account_id="owner-a", event_id="concurrent-source-b")
     claim, duplicate = await asyncio.gather(
-        asyncio.to_thread(
-            lambda: asyncio.run(
-                registry.create_cognitive_claim(
-                    account_id="owner-a",
-                    claim_type="belief",
-                    statement="同一个命令只创建一次。",
-                    confidence=0.8,
-                    idempotency_key="same-create",
-                )
-            )
+        registry.create_cognitive_claim(
+            account_id="owner-a",
+            claim_type="belief",
+            statement="同一个命令只创建一次。",
+            confidence=0.8,
+            idempotency_key="same-create",
         ),
-        asyncio.to_thread(
-            lambda: asyncio.run(
-                registry.create_cognitive_claim(
-                    account_id="owner-a",
-                    claim_type="belief",
-                    statement="同一个命令只创建一次。",
-                    confidence=0.8,
-                    idempotency_key="same-create",
-                )
-            )
+        registry.create_cognitive_claim(
+            account_id="owner-a",
+            claim_type="belief",
+            statement="同一个命令只创建一次。",
+            confidence=0.8,
+            idempotency_key="same-create",
         ),
     )
     assert duplicate.claim_id == claim.claim_id
@@ -662,35 +688,27 @@ async def test_account_isolation_idempotency_and_compare_and_set(tmp_path: Path)
         await registry.get_cognitive_claim(account_id="owner-b", claim_id=claim.claim_id)
 
     results = await asyncio.gather(
-        asyncio.to_thread(
-            lambda: asyncio.run(
-                registry.add_source(
-                    account_id="owner-a",
-                    item_kind="cognitive_claim",
-                    item_id=claim.claim_id,
-                    source_event_id="concurrent-source-a",
-                    relation="support",
-                    adopted=True,
-                    negative=False,
-                    expected_version=1,
-                    idempotency_key="cas-a",
-                )
-            )
+        registry.add_source(
+            account_id="owner-a",
+            item_kind="cognitive_claim",
+            item_id=claim.claim_id,
+            source_event_id="concurrent-source-a",
+            relation="support",
+            adopted=True,
+            negative=False,
+            expected_version=1,
+            idempotency_key="cas-a",
         ),
-        asyncio.to_thread(
-            lambda: asyncio.run(
-                registry.add_source(
-                    account_id="owner-a",
-                    item_kind="cognitive_claim",
-                    item_id=claim.claim_id,
-                    source_event_id="concurrent-source-b",
-                    relation="support",
-                    adopted=True,
-                    negative=False,
-                    expected_version=1,
-                    idempotency_key="cas-b",
-                )
-            )
+        registry.add_source(
+            account_id="owner-a",
+            item_kind="cognitive_claim",
+            item_id=claim.claim_id,
+            source_event_id="concurrent-source-b",
+            relation="support",
+            adopted=True,
+            negative=False,
+            expected_version=1,
+            idempotency_key="cas-b",
         ),
         return_exceptions=True,
     )
@@ -706,9 +724,9 @@ async def test_account_isolation_idempotency_and_compare_and_set(tmp_path: Path)
 
 
 @pytest.mark.asyncio
-async def test_export_delete_seam_and_audit_are_account_scoped(tmp_path: Path) -> None:
-    path = tmp_path / "self-model.sqlite3"
-    registry = SelfModelRegistry.sqlite(path)
+async def test_export_delete_seam_and_audit_are_account_scoped(
+    registry: PostgresSelfModelRegistry,
+) -> None:
     claim = await registry.create_cognitive_claim(
         account_id="owner-a",
         claim_type="uncertainty",
@@ -727,7 +745,8 @@ async def test_export_delete_seam_and_audit_are_account_scoped(tmp_path: Path) -
     exported = await registry.export_account("owner-a")
     assert [row["claim_id"] for row in exported["self_model_cognitive_claims"]] == [claim.claim_id]
     assert exported["self_model_audit_events"][0]["actor_account_id"] == "owner-a"
-    assert exported["self_model_audit_events"][0]["event_type"] == ("cognitive_claim.created")
+    assert exported["self_model_audit_events"][0]["action"] == "create_claim"
+    assert exported["self_model_audit_events"][0]["target_kind"] == "cognitive_claim"
 
     deleted = await registry.delete_account("owner-a")
     assert deleted["self_model_cognitive_claims"] == 1

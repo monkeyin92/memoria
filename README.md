@@ -68,7 +68,13 @@ docker compose up -d postgres redis
 docker compose --profile self-hosted up -d redis livekit
 ```
 
-监护数据只存 PostgreSQL，Control API 启动要求 `MEMORIA_GUARDIAN_DATABASE_URL`；本机开发填 `postgresql://voice:voice@localhost:5432/voice`，非生产环境由存储自己建表。
+监护与档案（证据账本、记忆、技能、人格、自我模型、数字分身、传承、成长、声音档案）数据只存 PostgreSQL，Control API 启动要求 `MEMORIA_GUARDIAN_DATABASE_URL` 与 `MEMORIA_ARCHIVE_DATABASE_URL`。存储会拒绝可绕过 RLS 的角色，所以本机用一个普通角色拥有开发库，非生产环境由存储自己建表（pgvector 可选）：
+
+```bash
+docker compose exec postgres psql -U voice -c "CREATE ROLE memoria_dev LOGIN PASSWORD 'dev' NOSUPERUSER NOBYPASSRLS" -c "CREATE DATABASE memoria OWNER memoria_dev"
+```
+
+两个 DSN 都填 `postgresql://memoria_dev:dev@localhost:5432/memoria`。
 
 `devkey/devsecret` 只允许本机开发。生产 API secret 永远只进入 Control API/Agent 的 root-only 环境文件。
 
@@ -81,7 +87,6 @@ uv run ruff check .
 uv run python scripts/check_module_budget.py check
 uv run mypy services --strict
 MEMORIA_TEST_POSTGRES_DSN=postgresql://… uv run pytest
-MEMORIA_TEST_APP_POSTGRES=1 MEMORIA_TEST_POSTGRES_DSN=postgresql://… uv run pytest services/control_api/tests services/governance/tests services/companionship/tests
 npm --prefix apps/miniprogram test
 uv run python scripts/run_e2e.py --profile offline
 uv run python scripts/provider_smoke_test.py
@@ -103,7 +108,7 @@ uv run python scripts/generate_multi_subject_contracts.py --check
 node --test apps/miniprogram/tests/*.test.js
 ```
 
-不带 `MEMORIA_TEST_POSTGRES_DSN` 时依赖 PostgreSQL 的用例会跳过，覆盖率达不到 85%。第二行是 CI 的 `control-api-postgres` 作业：API 测试的所有存储都走生产形态的 PostgreSQL，标了 `guardian_postgres` 的监护用例只在这一模式下运行。
+不带 `MEMORIA_TEST_POSTGRES_DSN` 时依赖 PostgreSQL 的用例会跳过，覆盖率达不到 85%。带上它时，Control API、governance 与 companionship 测试的所有存储都走生产形态的 PostgreSQL（`testing/postgres_harness.py`：真实 init 脚本建模板库，每个测试一份克隆，按生产角色连接）；只有标 `sqlite_only` 的控制库 SQLite 迁移用例不走。
 
 增长护栏（2026-09-26 起）：`[tool.memoria.module-budgets]` 覆盖全部超过 1,500 行的源模块，只降不升；新模块超过 1,500 行时必须同一提交加入预算。`tests/test_service_layering.py` 冻结 `services/` 的跨包依赖图，新增跨包 import 必须显式修改基线，删除的依赖也要同步收紧。产品转向或权威路径切换时，被取代的实现、配置和测试在同一个 PR 内删除，不保留无消费者的影子路径。
 

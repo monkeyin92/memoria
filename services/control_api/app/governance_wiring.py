@@ -19,13 +19,14 @@ from services.control_api.app.session_termination import (
     AccountSessionTerminator,
     RealtimeConnectionRegistry,
 )
+from services.control_api.app.unconfigured_store import UnconfiguredStore
 from services.governance.account_data import (
     AccountDataGovernance,
     AccountRepository,
     PostgresAccountRepository,
     SqliteAccountRepository,
 )
-from services.governance.subject_archive import PostgresSubjectArchive, SqliteSubjectArchive
+from services.governance.subject_archive import PostgresSubjectArchive
 from services.governance.subject_deletion import SubjectDeletionLedger, SubjectDeletionService
 from services.governance.subject_ports import SubjectGuardianPort
 from services.guardian.corpus import (
@@ -39,12 +40,16 @@ from services.voice_profile.domain import (
 )
 
 
-def subject_archive(settings: ControlSettings) -> PostgresSubjectArchive | SqliteSubjectArchive:
+def subject_archive(settings: ControlSettings) -> PostgresSubjectArchive:
     # One repository serves account deletion and a bound subject's deletion.
     archive_url = settings.archive_database_url.get_secret_value()
     if archive_url:
         return PostgresSubjectArchive(archive_url)
-    return SqliteSubjectArchive(settings.memoria_db_path)
+    # Eager wiring only: live startup refuses to run without the archive DSN.
+    return cast(
+        PostgresSubjectArchive,
+        UnconfiguredStore("subject_archive", "MEMORIA_ARCHIVE_DATABASE_URL"),
+    )
 
 
 def install_subject_deletion(

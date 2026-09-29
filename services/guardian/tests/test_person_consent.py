@@ -9,10 +9,11 @@ counting on the PostgreSQL adapter (``guardian_postgres_store``).
 from __future__ import annotations
 
 import hashlib
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
+from services.archive.postgres_archive import PostgresLifeArchive
 from services.guardian.domain import (
     ConsentRecord,
     GuardianAccessDeniedError,
@@ -21,8 +22,20 @@ from services.guardian.domain import (
     PersonConsentRecord,
 )
 from services.guardian.postgres_store import PostgresGuardianStore
+from testing.postgres_harness import TestDatabase
 
 NOW = datetime(2026, 9, 17, 3, 0, tzinfo=UTC)
+
+
+@pytest.fixture
+async def archive(postgres_database: TestDatabase) -> AsyncIterator[PostgresLifeArchive]:
+    """The evidence archive on the guardian store's clone, as ``memoria_app``."""
+
+    life_archive = PostgresLifeArchive(postgres_database.role_dsn("memoria_app"))
+    try:
+        yield life_archive
+    finally:
+        await life_archive.close()
 
 
 def _record(
@@ -355,7 +368,7 @@ async def test_account_governance_covers_person_consents(
 @pytest.mark.asyncio
 async def test_person_consent_grant_recovers_after_evidence_write_failure(
     guardian_postgres_store: PostgresGuardianStore,
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Evidence-first grant: a ledger failure leaves no usable consent.
@@ -365,11 +378,9 @@ async def test_person_consent_grant_recovers_after_evidence_write_failure(
     event.
     """
 
-    from services.archive.life_archive import LifeArchive
     from services.guardian.consent import GuardianConsentService
 
     store = guardian_postgres_store
-    archive = LifeArchive.sqlite(tmp_path / "archive.sqlite3")
     original_record = archive.record
     attempts = {"count": 0}
 
