@@ -118,9 +118,16 @@ def _legacy_phase(
     )
 
 
-def _agent_commit(stamp: str, *, turn: int = 1, generation: int = 1, tool_epoch: int = 0) -> str:
+def _agent_commit(
+    stamp: str,
+    *,
+    turn: int = 1,
+    generation: int = 1,
+    tool_epoch: int = 0,
+    logger: str = "services.agent.src.reply_pipeline",
+) -> str:
     return (
-        f"{stamp} INFO:services.agent.src.agent:turn_committed turn_id={turn} "
+        f"{stamp} INFO:{logger}:turn_committed turn_id={turn} "
         f"generation_id={generation} tool_epoch={tool_epoch} text_len=10\n"
     )
 
@@ -256,8 +263,16 @@ def test_legacy_phase_commit_is_never_used_for_timing(tmp_path: Path, capsys) ->
     assert "commit->first_frame_sent=1.007s" not in out
 
 
-def test_agent_commit_without_session_identity_is_never_used(tmp_path: Path, capsys) -> None:
-    bridge = _agent_commit("2026-09-14T10:25:33.555000000Z", turn=2, generation=2) + _delivery(
+# Captures from before the reply pipeline was extracted log under ``agent``.
+@pytest.mark.parametrize(
+    "logger", ["services.agent.src.reply_pipeline", "services.agent.src.agent"]
+)
+def test_agent_commit_without_session_identity_is_never_used(
+    tmp_path: Path, capsys, logger: str
+) -> None:
+    bridge = _agent_commit(
+        "2026-09-14T10:25:33.555000000Z", turn=2, generation=2, logger=logger
+    ) + _delivery(
         "2026-09-14T10:25:34.007000000Z", SESSION_A, "first_frame_sent", turn=2, generation=2
     )
     run = _capture(tmp_path, bridge=bridge)

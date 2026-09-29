@@ -27,7 +27,7 @@ Secret 仅在 root-only `/etc/memoria-*.env`（root:root 0600）；候选从真�
 
 `scripts/deploy_agent_component.sh` 的 source overlay 仅适用 Agent 源码切片，只切 `voice-core-media-bridge`；`.dockerignore/pyproject.toml/uv.lock/infra/Dockerfile.agent` 变化必须完整构建，`--allow-scope-drift` 不豁免。不得为行预算顺手修改依赖输入；`check_module_budget.py check` 校验精确行数。切流 Compose 使用 Control 有效栈 tag，不用 OCI revision 或目录名代替。
 
-运行门禁需剥离本地 `LISTENER_CUES_ENABLED/OFFLINE_MOCK/INTERRUPTION_MIN_DURATION_S`；`--skip-gates` 必须有明确理由与收据。上传要求 PATH 中 `rsync>=3.0` 支持 `--protect-args`，macOS 内置版本不可假定满足。
+运行门禁需剥离本地 `OFFLINE_MOCK/INTERRUPTION_MIN_DURATION_S`；`--skip-gates` 必须有明确理由与收据。上传要求 PATH 中 `rsync>=3.0` 支持 `--protect-args`，macOS 内置版本不可假定满足。
 
 ## 完整制品上传与校验
 
@@ -150,7 +150,7 @@ python -m scripts.rebuild_memory_projections --confirm-rebuild
 
 ## LiveKit 媒体链退役（首个不含 LiveKit 的整栈版本）
 
-该版本的 `images.tar` 只含 `memoria-agent`（即 Voice Core 媒体桥镜像）、`memoria-control-api`、`memoria-speaker-model`；compose 不再定义 `agent`、`miniprogram-gateway`、`device-media-gateway`，env 分流只写 Control/Agent/Speaker Model/Media Edge 四份文件，旧 env 文件里的 LiveKit/网关键会被接受但不再分发。`release-ops.sh` 的 `PREV_STACK_SERVICES`/`TARGETS` 仍描述含这三项的 PREV：`freeze` 照旧核验并打 `rollback-$TAG-pre` 标签；`cutover` 在 bridge 健康后只 `docker stop`（不删除）`memoria-agent-1`、`memoria-miniprogram-gateway-1`、`memoria-device-media-gateway-1`；`rollback` 用 PREV 的 compose/镜像/env 整体 force-recreate 六个服务，所以停掉的容器、`/etc/memoria-miniprogram-gateway.env`、`/etc/memoria-device-media-gateway.env` 和 PREV 的 Nginx 片段必须保留到 PREV 不再是回滚目标为止。
+该版本的 `images.tar` 只含 `memoria-agent`（即 Voice Core 媒体桥镜像）、`memoria-control-api`、`memoria-speaker-model`；compose 不再定义 `agent`、`miniprogram-gateway`、`device-media-gateway`，env 分流只写 Control/Agent/Speaker Model/Media Edge 四份文件，旧 env 文件里的 LiveKit/网关键会被接受但不再分发。`20260929-livekit-retire-v1` 当时的 `release-ops.sh` 让 PREV 保留六个服务：cutover 在 bridge 健康后只停止（不删除）`memoria-agent-1`、`memoria-miniprogram-gateway-1`、`memoria-device-media-gateway-1`，rollback 可按 PREV 整体重建。主机清理完成后，其后的版本 PREV 与本版本同为 speaker-model、control-api、voice-core-media-bridge 三个角色，不再有 retire 步骤。
 
 仓库外的主机清理不随发布自动进行，需单独授权并在回滚窗口关闭后执行（`20260929-livekit-retire-v1` 已于 2026-09-29 按下述步骤完成，收据见 HANDOFF；此后整栈 `rollback` 只能回到同样不含旧媒体链的 PREV，否则按组件回滚）：停止并移除 LiveKit server compose 项目与其 sysctl 配置；安装新的 `memoria-stream.conf`、`memoria-https.conf`、IP server 片段后删除 `/etc/nginx/snippets/` 下的 `memoria-livekit.conf`、`memoria-miniprogram-media.conf`、`memoria-device-media.conf`（同时删掉 443 server 里对 `memoria-miniprogram-media.conf` 的 include），`nginx -t` 通过后 reload（若先删片段再回滚，PREV 网关的公网路由会缺失）；移除三个已停止容器、两份网关 env 文件和不再被引用的网关镜像。
 

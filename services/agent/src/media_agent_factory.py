@@ -9,7 +9,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
-from services.agent.src.agent import DuplexVoiceAgent
 from services.agent.src.agent_voice_profile import (
     _apply_cached_voice_profile,
     align_tts_voice_to_policy,
@@ -44,6 +43,7 @@ from services.agent.src.providers.tts_factory import (
     wants_clone_tts,
     warm_tts,
 )
+from services.agent.src.reply_pipeline import ReplyPipeline
 from services.agent.src.response_planner_client import (
     ResponsePlannerClient,
     ResponsePlannerClientConfig,
@@ -70,16 +70,16 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class _SessionLanguageModel:
-    agent: DuplexVoiceAgent
+    pipeline: ReplyPipeline
     closeables: tuple[object, ...]
     delegation_enabled: bool = False
     closed: bool = False
 
     def stream(self, request: LanguageModelRequest) -> Any:
-        return self.agent.stream(request)
+        return self.pipeline.stream(request)
 
     async def prepare_committed_turn(self, text: str) -> Any:
-        return await self.agent.prepare_committed_turn(text)
+        return await self.pipeline.prepare_committed_turn(text)
 
     @property
     def supports_delegation(self) -> bool:
@@ -88,7 +88,7 @@ class _SessionLanguageModel:
     async def start_delegation(self, text: str, fence: Any) -> str | None:
         if not self.delegation_enabled:
             return None
-        return await self.agent.resolve_media_delegation(text, fence)
+        return await self.pipeline.resolve_media_delegation(text, fence)
 
     @staticmethod
     def accept_output_intent(intent: Any) -> Any:
@@ -188,7 +188,7 @@ class ProductionMediaSessionFactory:
             self._configure_runtime(runtime, tts)
             await runtime.orchestrator.ready()
             warmer = getattr(language_model, "prewarm", None)
-            agent = DuplexVoiceAgent(
+            pipeline = ReplyPipeline(
                 instructions=production_system_prompt(runtime),
                 runtime=runtime,
                 voice_profile_client=voice_profile_client,
@@ -205,7 +205,7 @@ class ProductionMediaSessionFactory:
                     if realtime_search_resolver is not None
                     else None
                 ),
-                standalone_llm=language_model,
+                language_model=language_model,
                 fast_model_warmer=warmer if callable(warmer) else None,
                 llm_provider=self.settings.llm_provider,
                 llm_model=self.settings.llm_fast_model,
@@ -213,7 +213,7 @@ class ProductionMediaSessionFactory:
                 tts_model=self.settings.doubao_tts_resource_id,
             )
             handler = _SessionLanguageModel(
-                agent,
+                pipeline,
                 tuple(reversed(owned)),
                 delegation_enabled=realtime_search_resolver is not None,
             )
@@ -274,7 +274,6 @@ class ProductionMediaSessionFactory:
             capture_release_holdoff_s=(
                 DEVICE_POST_PLAYBACK_HOLDOFF_S if device_session else 0.0
             ),
-            listener_cues_enabled=bool(settings.listener_cues_enabled),
             use_paralinguistic_tags=False,
             speaker_verifier=SpeakerVerifier(
                 enabled=should_enable_legacy_speaker_verifier(settings, offline=False),
@@ -428,14 +427,6 @@ class ProductionMediaSessionFactory:
         runtime.set_owner_turn_publisher(publish_owner_turn)
 
     def _configure_runtime(self, runtime: DuplexRuntime, tts: Any) -> None:
-        settings = self.settings
-        runtime.cue_scheduler.min_speech_ms = settings.listener_cue_min_speech_ms
-        runtime.cue_scheduler.pause_ms = settings.listener_cue_pause_ms
-        runtime.cue_scheduler.cooldown_ms = settings.listener_cue_cooldown_ms
-        runtime.cue_scheduler.max_per_turn = settings.listener_cue_max_per_turn
-        runtime.set_listener_cue_aec_healthy(
-            settings.listener_cue_playback == "main_track" or settings.listener_cue_aec_validated
-        )
         trace = getattr(tts, "set_trace_callback", None)
         if callable(trace):
             trace(

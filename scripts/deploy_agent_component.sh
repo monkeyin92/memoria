@@ -115,8 +115,7 @@ else
     echo "uv is required to run release gates; pass --skip-gates only with a filed reason" >&2
     exit 1
   }
-  gate_env=(env -u LISTENER_CUES_ENABLED
-    -u OFFLINE_MOCK -u INTERRUPTION_MIN_DURATION_S)
+  gate_env=(env -u OFFLINE_MOCK -u INTERRUPTION_MIN_DURATION_S)
   run_release_gate ruff \
     "${gate_env[@]}" uv run --project "$ROOT" --extra dev ruff check \
     "$ROOT/services/agent" \
@@ -383,7 +382,7 @@ target_image_id="$(docker image inspect "$target_image" --format '{{.Id}}')"
 docker run --rm --network none \
   --entrypoint /app/.venv/bin/python \
   "$target_image" \
-  -c 'import scripts.run_media_bridge; from services.agent.src.media_agent_factory import build_production_media_session_factory; from services.agent.src.agent import DuplexVoiceAgent; from services.agent.src.providers.open_meteo_weather import OpenMeteoWeather; from services.agent.src.providers.qwen_realtime_search import QwenRealtimeSearch; print("agent_component_import_smoke=PASS")'
+  -c 'import scripts.run_media_bridge; from services.agent.src.media_agent_factory import build_production_media_session_factory; from services.agent.src.reply_pipeline import ReplyPipeline; from services.agent.src.providers.open_meteo_weather import OpenMeteoWeather; from services.agent.src.providers.qwen_realtime_search import QwenRealtimeSearch; print("agent_component_import_smoke=PASS")'
 
 {
   printf 'agent_component_build=PASS\n'

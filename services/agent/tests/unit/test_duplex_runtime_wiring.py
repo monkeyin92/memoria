@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 from livekit.agents import llm
-from services.agent.src.agent import DuplexVoiceAgent, _heard_only_chat_context
+from services.agent.src.agent_voice_profile import _heard_only_chat_context
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.orchestration.interruption_guard import PlaybackInputDecision
 from services.agent.src.orchestration.speaker_verify import (
@@ -21,6 +21,7 @@ from services.agent.src.orchestration.state_machine import ConversationState
 from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoiceTTS
 from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
 from services.agent.src.providers.doubao_voice_catalog import catalog_by_id
+from services.agent.src.reply_pipeline import ReplyPipeline
 from services.agent.tests.unit.runtime_profile_test_helpers import (
     bind_owner_policy,
     canonical_wire_payload,
@@ -1088,7 +1089,7 @@ async def test_confirm_interruption_cancels_registered_llm_task() -> None:
 async def test_duplex_voice_agent_commits_fence_on_user_turn() -> None:
     runtime = DuplexRuntime.create()
     await runtime.orchestrator.ready()
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
 
     class Msg:
         def text_content(self) -> str:

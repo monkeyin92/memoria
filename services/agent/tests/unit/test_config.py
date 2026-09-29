@@ -32,9 +32,6 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.funasr_speech_noise_threshold is None
     assert s.doubao_tts_sample_rate == 24000
     assert s.tts_provider == "doubao"
-    assert s.listener_cues_enabled is False
-    assert s.listener_cue_playback == "main_track"
-    assert s.listener_cue_aec_validated is False
     assert s.voice_profile_enabled is False
     assert s.response_plan_url.endswith("/v1/interaction/response-plan")
     assert s.response_plan_timeout_s == 0.8

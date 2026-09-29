@@ -140,7 +140,7 @@ PHASE = re.compile(
     r" session_id=(?P<sid>\S+) turn_id=(?P<turn>\d+) generation_id=(?P<gen>\d+)"
 )
 TURN_COMMITTED = re.compile(
-    r"services\.agent\.src\.agent:turn_committed turn_id=(?P<turn>\d+)"
+    r"services\.agent\.src\.(?:reply_pipeline|agent):turn_committed turn_id=(?P<turn>\d+)"
     r" generation_id=(?P<gen>\d+)(?: tool_epoch=(?P<tool>\d+))?"
 )
 # The pacing line gained and renamed fields over time (measurement=, stream_epoch=,

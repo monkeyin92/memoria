@@ -39,11 +39,11 @@ def test_deepseek_provider_requires_explicit_key(monkeypatch: pytest.MonkeyPatch
 
 def test_environment_reuses_agent_settings_invariants(monkeypatch: pytest.MonkeyPatch) -> None:
     _online_env(monkeypatch)
-    monkeypatch.setenv("LISTENER_CUE_PLAYBACK", "side-track")
+    monkeypatch.setenv("DOUBAO_TTS_RESOURCE_ID", "seed-tts-1.0")
 
     errors, _, _ = verify_env._validate_environment()
 
-    assert "LISTENER_CUE_PLAYBACK must be main_track or background" in errors
+    assert "DOUBAO_TTS_RESOURCE_ID must be seed-tts-2.0" in errors
 
 
 def test_environment_rejects_invalid_turn_timing(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -6,9 +6,9 @@ import asyncio
 from collections.abc import AsyncIterator
 
 import pytest
-from services.agent.src.agent import _chunk_text
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.mode_policy_client import ModePolicy
+from services.agent.src.reply_pipeline import _chunk_text
 
 
 def test_chunk_text_extracts_content() -> None:
@@ -48,7 +48,7 @@ async def test_active_llm_task_set_and_cancelled_on_interrupt() -> None:
         await asyncio.sleep(0.5)
         yield "不该出现"
 
-    # Same registration path used by DuplexVoiceAgent.llm_node.
+    # Same registration path used by ReplyPipeline.stream_reply.
     async def llm_job() -> list[str]:
         runtime.orchestrator.set_active_llm_task(asyncio.current_task())
         out: list[str] = []

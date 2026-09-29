@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 from collections.abc import AsyncIterator
 from dataclasses import replace
@@ -11,7 +10,11 @@ import pytest
 from livekit.agents import StopResponse, llm
 from services.agent.src import agent as agent_mod
 from services.agent.src import generation_output_policy as output_policy
-from services.agent.src.agent import DuplexVoiceAgent, plan_matches_mode_policy
+from services.agent.src.agent import (
+    build_local_safe_plan,
+    plan_is_local_safe,
+    plan_matches_mode_policy,
+)
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.orchestration.context_snapshot_manager import (
@@ -20,6 +23,7 @@ from services.agent.src.orchestration.context_snapshot_manager import (
     MemoryCapsuleEntry,
     PersonaCapsule,
 )
+from services.agent.src.reply_pipeline import ReplyPipeline
 from services.agent.src.response_planner_client import (
     ResponsePlan,
     ResponsePlanFetch,
@@ -30,6 +34,7 @@ from services.agent.tests.unit.runtime_profile_test_helpers import (
     personal_voice_profile,
 )
 from services.agent.tests.unit.runtime_state_helpers import (
+    ScriptedChatModel,
     commit_media_turn,
 )
 from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
@@ -236,7 +241,7 @@ class TurnMessage:
 
 def _legacy_fallback_turn(
     *, fallback_profile_id: str = "bright_peer"
-) -> tuple[DuplexRuntime, SwitchableTTS, DuplexVoiceAgent]:
+) -> tuple[DuplexRuntime, SwitchableTTS, ReplyPipeline]:
     tts = SwitchableTTS()
     runtime = DuplexRuntime.create(
         session_id="legacy-plan-voice-race", device_id="dev_01J_test"
@@ -278,7 +283,7 @@ def _legacy_fallback_turn(
     return (
         runtime,
         tts,
-        DuplexVoiceAgent(
+        ReplyPipeline(
             instructions="test",
             runtime=runtime,
             response_planner_client=PlannerUnavailable(),  # type: ignore[arg-type]
@@ -321,14 +326,12 @@ def _legacy_plan(runtime: DuplexRuntime, *, personal: bool) -> ResponsePlan:
 
 
 @pytest.mark.asyncio
-async def test_exact_response_plan_is_the_only_system_prompt_and_owner_can_use_tools(
+async def test_exact_response_plan_is_the_only_system_prompt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, Any] = {}
 
-    async def fake_llm_node(
-        _agent: Any, safe_ctx: Any, tools: list[Any], _settings: Any
-    ) -> AsyncIterator[str]:
+    async def fake_llm_node(safe_ctx: Any, tools: list[Any]) -> AsyncIterator[str]:
         captured["ctx"] = safe_ctx
         captured["tools"] = tools
         yield "我在。"
@@ -348,41 +351,11 @@ async def test_exact_response_plan_is_the_only_system_prompt_and_owner_can_use_t
     await runtime.orchestrator.ready()
     await runtime.on_turn_committed("今天有点累")
 
-    async def tool_handler(
-        _arguments: dict[str, Any],
-        _cancel: asyncio.Event,
-    ) -> str:
-        return "ok"
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
+    agent.response_plans.store(_plan(runtime))
+    agent.language_model = ScriptedChatModel(fake_llm_node)
 
-    runtime.orchestrator.task_manager.register(
-        agent_mod.ToolSpec(
-            name="tool",
-            description="测试工具",
-            input_schema={"type": "object"},
-            cancellable=True,
-            idempotent=True,
-            timeout_s=1,
-            side_effect_policy="read_only",
-        ),
-        tool_handler,
-    )
-
-    async def direct_tool(_raw_arguments: dict[str, object]) -> str:
-        return "ok"
-
-    tool = llm.function_tool(
-        direct_tool,
-        raw_schema={
-            "name": "tool",
-            "description": "测试工具",
-            "parameters": {"type": "object", "properties": {}},
-        },
-    )
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan(runtime)
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
-
-    assert [item async for item in agent.llm_node(llm.ChatContext.empty(), [tool], None)] == [
+    assert [item async for item in agent.stream_reply(llm.ChatContext.empty())] == [
         "我在。"
     ]
     system_text = "\n".join(
@@ -391,8 +364,7 @@ async def test_exact_response_plan_is_the_only_system_prompt_and_owner_can_use_t
     assert "按当前控制计划自然回答" in system_text
     assert "冻结的陪伴方式" not in system_text
     assert len([message for message in captured["ctx"].messages() if message.role == "system"]) == 1
-    assert len(captured["tools"]) == 1
-    assert captured["tools"][0].info.name == "tool"
+    assert captured["tools"] == []
     await runtime.close()
 
 
@@ -402,9 +374,7 @@ async def test_unavailable_policy_cannot_load_private_persona_or_tools(
 ) -> None:
     called = False
 
-    async def fake_llm_node(
-        _agent: Any, safe_ctx: Any, tools: list[Any], _settings: Any
-    ) -> AsyncIterator[str]:
+    async def fake_llm_node(safe_ctx: Any, tools: list[Any]) -> AsyncIterator[str]:
         nonlocal called
         called = True
         yield "通用回答。"
@@ -412,13 +382,13 @@ async def test_unavailable_policy_cannot_load_private_persona_or_tools(
     runtime = DuplexRuntime.create(session_id="policy-failed")
     await runtime.orchestrator.ready()
     await runtime.on_turn_committed("帮我看看")
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
     )
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent.language_model = ScriptedChatModel(fake_llm_node)
 
-    assert [item async for item in agent.llm_node(llm.ChatContext.empty(), ["tool"], None)] == []
+    assert [item async for item in agent.stream_reply(llm.ChatContext.empty())] == []
     assert called is False
     await runtime.close()
 
@@ -429,19 +399,17 @@ async def test_explicitly_failed_policy_blocks_llm_generation(
 ) -> None:
     called = False
 
-    async def fake_llm_node(
-        _agent: Any, _safe_ctx: Any, _tools: list[Any], _settings: Any
-    ) -> AsyncIterator[str]:
+    async def fake_llm_node(_safe_ctx: Any, _tools: list[Any]) -> AsyncIterator[str]:
         nonlocal called
         called = True
         yield "不应生成"
 
     runtime = DuplexRuntime.create(session_id="policy-explicitly-failed")
     runtime.set_mode_policy(ModePolicy.unavailable("fetch_failed"))
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
+    agent.language_model = ScriptedChatModel(fake_llm_node)
 
-    assert [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)] == []
+    assert [item async for item in agent.stream_reply(llm.ChatContext.empty())] == []
     assert called is False
     await runtime.close()
 
@@ -484,7 +452,7 @@ async def test_policy_mismatched_fetched_plan_downgrades_to_local_safe_plan() ->
     runtime.on_user_voice_started()
     runtime.feed_speaker_pcm(b"\x01\x00" * 800)
     runtime.on_user_voice_stopped()
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         response_planner_client=ResponsePlannerStub(),  # type: ignore[arg-type]
@@ -492,8 +460,8 @@ async def test_policy_mismatched_fetched_plan_downgrades_to_local_safe_plan() ->
 
     await commit_media_turn(agent, Message())
 
-    cached = agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)]
-    assert agent._is_local_safe_plan(cached)
+    cached = agent.response_plans.get(runtime.fence)
+    assert plan_is_local_safe(cached)
     assert cached.epistemic_reason_codes == ("local_safe_fallback", "mode_policy_mismatch")
     assert "每一轮只根据用户当前语义" in cached.instructions
     assert not plan_matches_mode_policy(
@@ -548,7 +516,7 @@ async def test_response_plan_failure_keeps_companion_identity_and_safety_fixed(
     runtime.on_user_voice_started()
     runtime.feed_speaker_pcm(b"\x01\x00" * 800)
     runtime.on_user_voice_stopped()
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         response_planner_client=PlannerUnavailable(),  # type: ignore[arg-type]
@@ -556,10 +524,10 @@ async def test_response_plan_failure_keeps_companion_identity_and_safety_fixed(
 
     await commit_media_turn(agent, Message())
 
-    cached = agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)]
-    assert agent._is_local_safe_plan(cached)
+    cached = agent.response_plans.get(runtime.fence)
+    assert plan_is_local_safe(cached)
     assert cached.direct_text == expected
-    spoken = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
+    spoken = [item async for item in agent.stream_reply(llm.ChatContext.empty())]
     assert "".join(item for item in spoken if isinstance(item, str)) == expected
     await runtime.close()
 
@@ -899,7 +867,6 @@ def test_legacy_local_safe_allows_only_deterministic_safe_text_with_frozen_fallb
     runtime = DuplexRuntime.create(session_id="strict-legacy-local-safe")
     policy = _legacy_policy(voice_allowed=True)
     runtime.set_mode_policy(policy)
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
     speaker = SpeakerDecision(
         classification="owner",
         score=0.98,
@@ -910,10 +877,12 @@ def test_legacy_local_safe_allows_only_deterministic_safe_text_with_frozen_fallb
         profile_id="grantee-a",
         permissions=permissions_for_speaker("owner"),
     )
-    plan = agent._local_safe_plan(
+    plan = build_local_safe_plan(
+        policy=runtime.mode_policy_for_fence(runtime.fence),
         fence=runtime.fence,
         speaker=speaker,
         reason="planner_unavailable",
+        tts_model="unknown",
     )
 
     assert plan.direct_text == "当前模式暂时无法安全生成回答。"
@@ -953,19 +922,23 @@ def test_legacy_local_safe_allows_only_deterministic_safe_text_with_frozen_fallb
         policy,
         tts_model="unknown",
     )
-    crisis_plan = agent._local_safe_plan(
+    crisis_plan = build_local_safe_plan(
+        policy=runtime.mode_policy_for_fence(runtime.fence),
         fence=runtime.fence,
         speaker=speaker,
         reason="planner_unavailable",
         query="我想自杀",
+        tts_model="unknown",
     )
     assert crisis_plan.direct_text == CRISIS_SUPPORT_REPLY
     assert plan_matches_mode_policy(crisis_plan, policy, tts_model="unknown")
-    clock_plan = agent._local_safe_plan(
+    clock_plan = build_local_safe_plan(
+        policy=runtime.mode_policy_for_fence(runtime.fence),
         fence=runtime.fence,
         speaker=speaker,
         reason="planner_unavailable",
         query="今天星期几",
+        tts_model="unknown",
     )
     assert clock_plan.direct_text is not None
     assert clock_plan.direct_text.startswith("今天是")
@@ -995,8 +968,8 @@ def test_unknown_safe_clock_fact_uses_authoritative_local_time(
     runtime = DuplexRuntime.create(session_id="unknown-safe-clock")
     policy = ModePolicy.degraded_unknown_safe()
     runtime.set_mode_policy(policy)
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    plan = agent._local_safe_plan(
+    plan = build_local_safe_plan(
+        policy=runtime.mode_policy_for_fence(runtime.fence),
         fence=runtime.fence,
         speaker=SpeakerDecision(
             classification="uncertain",
@@ -1010,6 +983,7 @@ def test_unknown_safe_clock_fact_uses_authoritative_local_time(
         ),
         reason="no_verified_runtime_profile",
         query="今天星期几？",
+        tts_model="unknown",
     )
 
     assert plan.direct_text == "今天是2026年8月14日，星期五。"
@@ -1039,10 +1013,10 @@ def test_unknown_safe_clock_fact_survives_non_public_capabilities(
         session_focus=None,
     )
     runtime.set_mode_policy(policy)
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
     fence = runtime.fence.bump_turn()
     runtime._generation_records.bind_mode_policy(fence, runtime.mode_policy)
-    plan = agent._local_safe_plan(
+    plan = build_local_safe_plan(
+        policy=runtime.mode_policy_for_fence(fence),
         fence=fence,
         speaker=SpeakerDecision(
             classification="uncertain",
@@ -1056,6 +1030,7 @@ def test_unknown_safe_clock_fact_survives_non_public_capabilities(
         ),
         reason="no_verified_runtime_profile",
         query="今天星期几？",
+        tts_model="unknown",
     )
 
     assert plan.direct_text == "今天是2026年8月14日，星期五。"
@@ -1069,15 +1044,15 @@ async def test_legacy_local_safe_plan_rebinds_personal_generation_to_designed_fa
 
     await commit_media_turn(agent, TurnMessage())
 
-    plan = agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)]
+    plan = agent.response_plans.get(runtime.fence)
     snapshot = runtime.generation_voice_for(runtime.fence)
-    assert agent._is_local_safe_plan(plan)
+    assert plan_is_local_safe(plan)
     assert snapshot is not None
     assert snapshot.profile_id == "bright_peer"
     assert snapshot.resource_id == "seed-tts-2.0"
     assert snapshot.voice_kind == "designed"
     assert tts.current_voice_profile_id == "bright_peer"
-    assert [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
+    assert [item async for item in agent.stream_reply(llm.ChatContext.empty())]
     provenance = runtime.response_provenance_for(runtime.fence)
     assert provenance is not None
     assert provenance["actual_voice_profile_id"] == "bright_peer"
@@ -1093,7 +1068,7 @@ async def test_legacy_local_safe_plan_stops_when_designed_fallback_cannot_resolv
 
     assert tts.current_voice_kind == "personal"
     assert runtime.generation_voice_for(runtime.fence) is not None
-    assert agent._response_plan_key(runtime.fence) not in agent._response_plan_by_fence
+    assert runtime.fence not in agent.response_plans
     assert runtime.response_provenance_for(runtime.fence) is None
 
 
@@ -1108,12 +1083,13 @@ def test_local_safe_fallback_requires_the_actual_tts_voice_and_binds_provenance(
         shadow_low_sensitivity_persona=True,
     )
     runtime.set_mode_policy(policy)
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         tts_model="seed-tts-2.0",
     )
-    plan = agent._local_safe_plan(
+    plan = build_local_safe_plan(
+        policy=runtime.mode_policy_for_fence(runtime.fence),
         fence=runtime.fence,
         speaker=SpeakerDecision(
             classification="owner",
@@ -1126,6 +1102,7 @@ def test_local_safe_fallback_requires_the_actual_tts_voice_and_binds_provenance(
             permissions=permissions_for_speaker("owner"),
         ),
         reason="planner_unavailable",
+        tts_model="seed-tts-2.0",
     )
 
     assert plan_matches_mode_policy(plan, policy, tts_model="seed-tts-2.0")
@@ -1161,7 +1138,7 @@ def test_local_safe_fallback_requires_the_actual_tts_voice_and_binds_provenance(
         "voice-mismatch",
     ),
 )
-async def test_llm_node_rejects_plan_inconsistent_with_frozen_mode_policy(
+async def test_stream_reply_rejects_plan_inconsistent_with_frozen_mode_policy(
     monkeypatch: pytest.MonkeyPatch,
     provenance_changes: dict[str, str],
     voice_kind: str,
@@ -1177,7 +1154,7 @@ async def test_llm_node_rejects_plan_inconsistent_with_frozen_mode_policy(
     runtime.set_mode_policy(_policy_with_references())
     await runtime.orchestrator.ready()
     await runtime.on_turn_committed("当前问题")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
     plan = _plan(runtime)
     provenance_values = {
         "digital_self_version_id": "digital-self-1",
@@ -1189,10 +1166,10 @@ async def test_llm_node_rejects_plan_inconsistent_with_frozen_mode_policy(
         voice_target=replace(plan.voice_target, kind=voice_kind),  # type: ignore[arg-type]
         provenance=replace(plan.provenance, **provenance_values),
     )
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = plan
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent.response_plans.store(plan)
+    agent.language_model = ScriptedChatModel(fake_llm_node)
 
-    assert [item async for item in agent.llm_node(llm.ChatContext.empty(), ["tool"], None)] == []
+    assert [item async for item in agent.stream_reply(llm.ChatContext.empty())] == []
     assert called is False
     await runtime.close()
 
@@ -1200,16 +1177,16 @@ async def test_llm_node_rejects_plan_inconsistent_with_frozen_mode_policy(
 def test_cached_plan_stays_reusable_while_authorizing_profile_current() -> None:
     """The fence-exact hit remains usable while its profile is still current."""
     runtime = DuplexRuntime.create(session_id="plan-stamp-match")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
     profile = personal_voice_profile("plan-stamp-match")
     assert runtime.orchestrator.runtime_profiles.apply(profile, runtime.fence) is not None
     plan = _plan(runtime)
-    agent._cache_response_plan(plan)
+    agent.cache_response_plan(plan)
     assert (
-        agent._response_plan_profile_by_fence[plan.fence]
+        agent.response_plans.authorizing_profile_id(plan.fence)
         == "rp_voice_plan-stamp-match"
     )
-    assert agent._response_plan_authorized_by_current_profile(plan) is True
+    assert agent.response_plan_authorized(plan) is True
 
 
 def test_cached_plan_dropped_once_authority_degraded() -> None:
@@ -1221,30 +1198,30 @@ def test_cached_plan_dropped_once_authority_degraded() -> None:
     closed rather than serve the old subject's grounded items again.
     """
     runtime = DuplexRuntime.create(session_id="plan-stamp-degrade")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
     profile = personal_voice_profile("plan-stamp-degrade")
     assert runtime.orchestrator.runtime_profiles.apply(profile, runtime.fence) is not None
     plan = _plan(runtime)
-    agent._cache_response_plan(plan)
-    assert agent._response_plan_authorized_by_current_profile(plan) is True
+    agent.cache_response_plan(plan)
+    assert agent.response_plan_authorized(plan) is True
     runtime.orchestrator.runtime_profiles.degrade(runtime.orchestrator.fence)
-    assert agent._response_plan_authorized_by_current_profile(plan) is False
+    assert agent.response_plan_authorized(plan) is False
 
 
 def test_plan_cache_evicts_superseded_epochs_on_insert() -> None:
     """Older-epoch entries can never authorize a future turn; drop them."""
     runtime = DuplexRuntime.create(session_id="plan-epoch-evict")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
     old = _plan(runtime)
-    agent._cache_response_plan(old)
-    assert old.fence in agent._response_plan_by_fence
+    agent.cache_response_plan(old)
+    assert old.fence in agent.response_plans
     runtime.orchestrator.bump_session_epoch(1)
     new = _plan(runtime)
     assert new.fence.session_epoch == 1
-    agent._cache_response_plan(new)
-    assert old.fence not in agent._response_plan_by_fence
-    assert old.fence not in agent._response_plan_profile_by_fence
-    assert new.fence in agent._response_plan_by_fence
+    agent.cache_response_plan(new)
+    assert old.fence not in agent.response_plans
+    assert old.fence not in agent.response_plans
+    assert new.fence in agent.response_plans
 
 
 def test_identity_rotation_resets_snapshots_context_and_prefetch_keys() -> None:

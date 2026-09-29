@@ -32,10 +32,6 @@ def clear_identity_private_state(runtime: Any) -> None:
     runtime._voice_floor.update(pending_assistant_text="", played_assistant_text="")
     runtime._assistant_expression_fence = None
     runtime._pending_tool_results = 0
-    # Never call a possibly-awaitable cue stop() synchronously here; the
-    # drain barrier owns any in-flight cue task.
-    runtime._active_listener_cue = None
-    runtime._active_listener_cue_handle = None
     runtime._enroll_fence = None
     runtime._sticky_interrupt_epoch = None
     runtime._sticky_interrupt_route = None
@@ -52,11 +48,10 @@ def clear_identity_private_state(runtime: Any) -> None:
     if voice_task is not None and not voice_task.done():
         voice_task.cancel()
     runtime._voice_profile_refresh_task = None
-    for task_name in ("_speaker_classification_task", "_listener_cue_candidate_task"):
-        task = getattr(runtime, task_name, None)
-        if task is not None and not task.done():
-            task.cancel()
-        setattr(runtime, task_name, None)
+    speaker_task = getattr(runtime, "_speaker_classification_task", None)
+    if speaker_task is not None and not speaker_task.done():
+        speaker_task.cancel()
+    runtime._speaker_classification_task = None
 
 
 def exact_fence_commit_authority(
@@ -92,7 +87,6 @@ def exact_fence_commit_authority(
 
 _IDENTITY_TASK_FIELDS = (
     "_speaker_classification_task",
-    "_listener_cue_candidate_task",
     "_context_snapshot_prepare_task",
     "_voice_profile_refresh_task",
 )

@@ -217,7 +217,7 @@ assert callable(bridge.main), "run_media_bridge has no main()"
 builder = getattr(importlib.import_module({module_name!r}), {attribute!r}, None)
 assert callable(builder), "production media session factory is not callable"
 from livekit.plugins import openai  # noqa: F401  (media_agent_factory imports it lazily)
-from services.agent.src.agent import DuplexVoiceAgent  # noqa: F401
+from services.agent.src.reply_pipeline import ReplyPipeline  # noqa: F401
 """
     _run_subprocess_check(
         code,
