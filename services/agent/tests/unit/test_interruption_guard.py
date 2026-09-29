@@ -9,6 +9,7 @@ from services.agent.src.orchestration.interruption_guard import (
     is_completion_ack_only,
     is_conversation_close_only,
     is_explicit_interrupt,
+    is_interrupt_command_only,
     is_primarily_non_chinese_script,
     is_short_assistant_farewell_reply,
     user_turn_suggests_conversation_close,
@@ -300,3 +301,10 @@ def test_primarily_non_chinese_script_detects_short_hangul_rescue() -> None:
 
     assert is_primarily_non_chinese_script("한국어요") is True
     assert is_primarily_non_chinese_script("今天星期几") is False
+
+
+def test_repeated_bare_stop_is_a_command_but_stop_words_in_nouns_are_not() -> None:
+    for text in ("停", "停停", "停停停", "停，停"):
+        assert is_interrupt_command_only(text), text
+    for text in ("停车", "停电了", "停停车", "我想停一下"):
+        assert not is_interrupt_command_only(text), text

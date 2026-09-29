@@ -37,6 +37,9 @@ from services.agent.src.voice_core.interruption import (
     evidence_from_speech_segment,
 )
 from services.agent.src.voice_core.media_protocol import should_pause_asr_for_playback
+from services.agent.src.voice_core.media_session_playback_stop import (
+    PLAYBACK_STOP_ROUTE_REASON,
+)
 from services.agent.src.voice_core.media_session_state import (
     MediaVoiceSessionState as _MediaVoiceSession,
 )
@@ -253,6 +256,15 @@ class MediaSessionCommitMixin:
             self, context: _MediaVoiceSession, result: ASRResult
         ) -> None: ...
 
+        @staticmethod
+        def _playback_stop_is_echo(context: _MediaVoiceSession, text: str) -> bool: ...
+
+        def _maybe_pin_playback_stop(
+            self, context: _MediaVoiceSession, result: ASRResult, *, source: str
+        ) -> None: ...
+
+        async def _stop_reply_for_voice_command(self, context: _MediaVoiceSession) -> bool: ...
+
     async def accept_asr_result(self, session_id: str, result: ASRResult) -> bool:
         """Compatibility bool seam; use the normalized decision internally."""
 
@@ -357,11 +369,14 @@ class MediaSessionCommitMixin:
             return ASRAcceptDecision(None, ASRDecisionReason.INTERVAL_CONFLICT)
         if accepted.is_final:
             self._observe_final_asr_result(context, accepted)
+            self._maybe_pin_playback_stop(context, accepted, source="final")
         else:
             self._observe_partial_asr_result(context, accepted)
             self._maybe_early_commit_stable_clock_fact_partial(context)
             self._maybe_early_commit_stable_live_lookup_partial(context)
             self._maybe_early_commit_stable_conversation_close_partial(context)
+            # A spoken stop waits for its final: a partial 「等一下」 may still
+            # grow into 「等一下我想问…」, whose rest must not be dropped.
         return decision
 
     @staticmethod
@@ -771,6 +786,10 @@ class MediaSessionCommitMixin:
         if reason == "conversation_end_explicit":
             await self._request_device_standby(context, reason=reason)
         else:
+            if reason == PLAYBACK_STOP_ROUTE_REASON:
+                # The Router suppressed the stop as a control turn; the reply
+                # it interrupts is still streaming until it is stopped here.
+                await self._stop_reply_for_voice_command(context)
             self._finish_owner_silence_turn(
                 context, accepted=fence is not None,
                 # A failed provider or a result from the replaced transport
@@ -989,6 +1008,12 @@ class MediaSessionCommitMixin:
             text,
             duration_ms=elapsed_ms,
         )
+        if (
+            guarded_reason is None
+            and was_assistant_speaking
+            and self._playback_stop_is_echo(context, text)
+        ):
+            guarded_reason = "assistant_echo"
         interaction = context.runtime.decide_interaction(
             InteractionSnapshot(
                 event=InteractionEvent.TRANSCRIPT,

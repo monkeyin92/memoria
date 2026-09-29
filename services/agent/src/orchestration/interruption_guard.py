@@ -437,7 +437,8 @@ def _interrupt_prefix(text: str) -> str | None:
         return None
     if normalized in {"等下我", "等下你"}:
         return None
-    if normalized == "停":
+    # 「停」「停停」「停，停」: only a bare repeated 停, never 「停车」「停电」.
+    if normalized == "停" or (len(normalized) <= 4 and set(normalized) == {"停"}):
         return "停"
     if any(normalized.startswith(prefix) for prefix in _NEGATED_PROPOSITION_PREFIXES):
         return None
