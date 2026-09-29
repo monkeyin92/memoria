@@ -66,6 +66,7 @@ from services.agent.tests.unit.media_session_support import (
     _start_retained_utterance,
     _verified_owner_decision,
     _wait_until,
+    open_bridge_connection,
 )
 from services.speaker.domain import SpeakerDecision
 
@@ -110,13 +111,13 @@ async def test_registry_rejects_late_audio_after_terminal_cleanup() -> None:
     )
     provider = FakeMediaProvider()
     bridge = MediaBridgeGrpcServer()
-    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    connection = open_bridge_connection(bridge, identity)
     registry = MediaVoiceCoreRegistry(
         bridge=bridge,
         provider_factory=lambda _identity: provider,
     )
-    await registry._get_or_create(identity)
-    await registry._finalize_session(identity.session_id)
+    await registry.open_session(identity)
+    await registry.finalize_session(identity.session_id)
 
     assert bridge.bridge.is_terminal(
         identity.session_id,
@@ -134,7 +135,7 @@ async def test_registry_rejects_late_audio_after_terminal_cleanup() -> None:
     )
     assert registry.context(identity.session_id) is None
     with pytest.raises(ValueError, match="media session is terminal"):
-        await registry._get_or_create(identity)
+        await registry.open_session(identity)
 
 
 @pytest.mark.asyncio
@@ -183,7 +184,7 @@ async def test_old_epoch_provider_callback_cannot_update_speaker() -> None:
         )
     )
     await asyncio.wait_for(started.wait(), timeout=1)
-    await registry._get_or_create(SessionIdentity(identity.session_id, stream_epoch=2))
+    await registry.open_session(SessionIdentity(identity.session_id, stream_epoch=2))
     release.set()
     await asyncio.wait_for(callback, timeout=1)
 
@@ -213,9 +214,9 @@ async def test_slow_new_session_does_not_block_existing_session_audio() -> None:
     registry.install()
     existing_identity = SessionIdentity("existing-session")
     existing_session = bridge.bridge.open(existing_identity)
-    await registry._get_or_create(existing_identity)
+    await registry.open_session(existing_identity)
 
-    slow_task = asyncio.create_task(registry._get_or_create(SessionIdentity("slow-new-session")))
+    slow_task = asyncio.create_task(registry.open_session(SessionIdentity("slow-new-session")))
     await asyncio.wait_for(slow_started.wait(), timeout=1)
     audio_task = asyncio.create_task(
         registry.on_audio_frame(
@@ -355,7 +356,7 @@ async def test_audio_ingress_provider_failure_drains_backlog_and_recovers_next_f
     )
     identity = SessionIdentity("provider-send-recovery", stream_epoch=1)
     session = bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
 
     await registry.on_audio_frame(session, AudioFrame(identity, 0, 0, 2, b"\x00\x00" * 2))
     await asyncio.wait_for(provider.first_started.wait(), timeout=1)
@@ -428,7 +429,7 @@ async def test_audio_ingress_lazy_task_start_failure_drains_backlog_and_resets_a
     )
     identity = SessionIdentity("lazy-task-start-recovery", stream_epoch=1)
     session = bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
 
     await registry.on_audio_frame(session, AudioFrame(identity, 0, 0, 2, b"\x00\x00" * 2))
     await registry.on_audio_frame(session, AudioFrame(identity, 1, 2, 2, b"\x01\x00" * 2))
@@ -534,7 +535,7 @@ async def test_direct_device_reply_forwards_assistant_expression() -> None:
     ]
     assert expressions
     assert expressions[0]["expression"] == "happy"
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -545,7 +546,7 @@ async def test_reconnect_preserves_current_output_intent_owner() -> None:
         provider_factory=lambda _identity: FakeMediaProvider(),
     )
     identity = SessionIdentity("resume-output-owner", stream_epoch=1)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     fence = GenerationFence(identity.session_id, 1, 1, 0)
     await context.runtime.accept_media_generation(fence, cause="test")
     intent = context.runtime.orchestrator.delegation.conversation_reply(
@@ -596,7 +597,7 @@ async def test_unheard_output_waits_through_transient_half_duplex_floor_flip(
     )
     registry.install()
     identity = SessionIdentity("unheard-floor-replay")
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     context.runtime.barge_in_enabled = False
     fence = await context.runtime.on_turn_committed("你好")
     coordinator = context.runtime.orchestrator.delegation
@@ -673,7 +674,7 @@ async def test_unheard_output_waits_through_transient_half_duplex_floor_flip(
     assert context.output_owner is lease_holder[0]
     context.runtime._fresh_user_speech = False  # noqa: SLF001
     registry._release_output_owner(context, fence, reason="test_complete")
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -717,7 +718,7 @@ async def test_nonzero_session_epoch_reply_reaches_provider_and_first_pcm() -> N
         metrics=metrics,
     )
     registry.install()
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     context.runtime.orchestrator.delegation.set_output_intent_observer(
         bridge.output_admissions.append
     )
@@ -760,7 +761,7 @@ async def test_nonzero_session_epoch_reply_reaches_provider_and_first_pcm() -> N
     assert metrics.latency_samples["tts_first_frame"]
     assert metrics.latency_samples["tts_first_frame"][-1] >= 0
     assert metrics.get("voice_first_frame_preempted_total") == 0
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -771,7 +772,7 @@ async def test_reserved_output_kind_is_rejected_at_streamcore_execution_boundary
     )
     registry.install()
     identity = SessionIdentity("reserved-output-kind")
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("你好")
     coordinator = context.runtime.orchestrator.delegation
     now_ms = int(time.time() * 1_000)
@@ -810,7 +811,7 @@ async def test_reserved_output_kind_is_rejected_at_streamcore_execution_boundary
         now_ms=now_ms + 1,
     )
     assert context.output_owner is None
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -856,7 +857,7 @@ async def test_higher_priority_intent_supersedes_main_reply_before_pcm() -> None
     )
     registry.install()
     identity = SessionIdentity("superseded-output-owner")
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("帮我查一下")
     context.playback.start(fence)
     reply = asyncio.create_task(registry.generate_reply(identity.session_id, "帮我查一下", fence))
@@ -900,7 +901,7 @@ async def test_higher_priority_intent_supersedes_main_reply_before_pcm() -> None
         floor_allows_output=True,
         now_ms=now_ms + 2,
     )
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -971,7 +972,7 @@ async def test_higher_priority_pcm_preempts_after_audio_and_restarts_from_zero()
     registry.install()
     identity = SessionIdentity("preempt-after-audio")
     session = bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("查一下")
     context.playback.start(fence)
     reply = asyncio.create_task(registry.generate_reply(identity.session_id, "查一下", fence))
@@ -1048,7 +1049,7 @@ async def test_higher_priority_pcm_preempts_after_audio_and_restarts_from_zero()
         ),
     )
     assert context.output_owner is None
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1128,7 +1129,7 @@ async def test_device_unheard_preempt_does_not_emit_playback_flush() -> None:
         runtime_profile_version=1,
     )
     session = bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("查一下")
     context.playback.start(fence)
     reply = asyncio.create_task(registry.generate_reply(identity.session_id, "查一下", fence))
@@ -1188,7 +1189,7 @@ async def test_device_unheard_preempt_does_not_emit_playback_flush() -> None:
         ),
     )
     assert context.output_owner is None
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1263,7 +1264,7 @@ async def test_expired_emitted_output_restores_listen_and_flushes_device() -> No
         client_type="device",
     )
     bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("查一下")
     context.playback.start(fence)
     reply = asyncio.create_task(registry.generate_reply(identity.session_id, "查一下", fence))
@@ -1297,7 +1298,7 @@ async def test_expired_emitted_output_restores_listen_and_flushes_device() -> No
     assert delivery is not None
     assert delivery.first_frame_sent is True
     assert delivery.terminal_event is ReplyDeliveryEvent.PREEMPTED
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1333,7 +1334,7 @@ async def test_owner_is_rechecked_after_speaking_transition_before_output() -> N
     )
     registry.install()
     identity = SessionIdentity("owner-recheck-after-await")
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("帮我查一下")
     context.playback.start(fence)
     original = context.runtime.on_assistant_speaking
@@ -1386,7 +1387,7 @@ async def test_owner_is_rechecked_after_speaking_transition_before_output() -> N
         floor_allows_output=True,
         now_ms=now_ms + 2,
     )
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1423,7 +1424,7 @@ async def test_progressing_output_generation_is_not_killed_by_wall_clock_timeout
     )
     registry.install()
     identity = SessionIdentity("progressing-output-generation")
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("今天天气怎么样")
     context.playback.start(fence)
 
@@ -1435,7 +1436,7 @@ async def test_progressing_output_generation_is_not_killed_by_wall_clock_timeout
     assert result is True
     assert context.output_owner is None
     assert provider.cancelled == []
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1462,7 +1463,7 @@ async def test_provider_timeout_error_is_not_reclassified_as_generation_deadline
     )
     registry.install()
     identity = SessionIdentity("provider-timeout-error")
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("你好")
     context.playback.start(fence)
 
@@ -1472,7 +1473,7 @@ async def test_provider_timeout_error_is_not_reclassified_as_generation_deadline
     assert context.output_owner is None
     assert context.playback.current_fence is fence
     assert context.runtime.orchestrator.state is ConversationState.THINKING
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1498,7 +1499,7 @@ async def test_unheard_wake_pcm_restores_half_duplex_listen() -> None:
     identity = _device_identity("device-unheard-wake")
     bridge.bridge.open(identity)
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         await _wait_until(
             lambda: (
@@ -1510,7 +1511,7 @@ async def test_unheard_wake_pcm_restores_half_duplex_listen() -> None:
         )
         assert context.runtime.on_user_voice_started() is PlaybackInputDecision.ACCEPT
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1540,7 +1541,7 @@ async def test_late_clock_fact_recovery_does_not_preempt_in_flight_reply(
     identity = _device_identity("device-late-clock-fact-inflight")
     session = bridge.bridge.open(identity)
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         await asyncio.wait_for(provider.completed.wait(), timeout=1)
         await _finish_output_owner_playback(registry, identity, bridge, session)
@@ -1659,7 +1660,7 @@ async def test_late_clock_fact_recovery_does_not_preempt_in_flight_reply(
             for record in caplog.records
         )
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1714,7 +1715,7 @@ async def test_half_duplex_owned_result_respects_a_closed_output_floor(
     finally:
         provider.release.set()
         if context is not None:
-            await registry._finalize_session(identity.session_id)
+            await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1739,7 +1740,7 @@ async def test_inactive_output_intent_drops_deep_result_with_warning(
     registry.install()
     identity = SessionIdentity("deep-result-dropped-observable")
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         delegation = context.runtime.orchestrator.delegation
         # Force the exact seam that dropped the epoch-1912 answer: the admitted
         # output intent is judged inactive even though the deep result finished.
@@ -1763,7 +1764,7 @@ async def test_inactive_output_intent_drops_deep_result_with_warning(
         )
     finally:
         provider.release.set()
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1772,7 +1773,7 @@ async def test_blocked_output_work_is_bounded_with_its_admission_queue() -> None
     registry = MediaVoiceCoreRegistry(bridge=bridge, provider_factory=lambda _: FakeMediaProvider())
     identity = SessionIdentity("bounded-blocked-output")
     bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     try:
         fence = await context.runtime.on_turn_committed("你好")
         context.runtime.on_user_voice_started()
@@ -1799,7 +1800,7 @@ async def test_blocked_output_work_is_bounded_with_its_admission_queue() -> None
         assert not context.output_work
         assert context.output_retry_task is None
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1894,7 +1895,7 @@ async def test_approximate_device_progress_completes_without_actual_heard() -> N
         runtime_profile_version=1,
     )
     session = bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     fence = GenerationFence(identity.session_id, 1, 1, 0)
     assert await context.runtime.accept_media_generation(fence, cause="test")
     await context.runtime.on_assistant_speaking("你好")
@@ -1979,7 +1980,7 @@ async def test_typed_device_playback_error_is_not_successful_completion() -> Non
         runtime_profile_version=1,
     )
     session = bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     fence = GenerationFence(identity.session_id, 1, 1, 0)
     assert await context.runtime.accept_media_generation(fence, cause="test")
     await context.runtime.on_assistant_speaking("你好")

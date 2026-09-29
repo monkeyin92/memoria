@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import httpx
@@ -28,6 +29,33 @@ logger = logging.getLogger(__name__)
 
 # Punctuation, symbols and whitespace carry no speech.
 _NON_SPEECH = re.compile(r"[\W_]+")
+
+
+def slice_segment_pcm(
+    chunks: Iterable[bytes],
+    ranges: Iterable[tuple[int, int]],
+    from_sample: int | None,
+) -> tuple[bytes, int | None]:
+    """Return the PCM at or after ``from_sample`` and its first sample index.
+
+    ``ranges`` are the per-chunk ``(start, end)`` sample ranges of ``chunks``.
+    Rescuing only the tail keeps the request short (the offline decoder runs at
+    ~0.1x realtime) and stops the synthetic final from overlapping a provider
+    final that already covers the prefix.  ``None`` keeps the whole segment.
+    """
+
+    kept: list[bytes] = []
+    first: int | None = None
+    for chunk, (start, end) in zip(chunks, ranges, strict=True):
+        if from_sample is not None and end <= from_sample:
+            continue
+        if from_sample is not None and start < from_sample and end - start == len(chunk) // 2:
+            chunk = chunk[(from_sample - start) * 2 :]
+            start = from_sample
+        kept.append(chunk)
+        if first is None:
+            first = start
+    return b"".join(kept), first
 
 
 @dataclass(frozen=True, slots=True)

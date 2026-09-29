@@ -38,6 +38,7 @@ from services.agent.src.providers.reliability import CircuitBreaker
 from services.agent.src.providers.sensevoice import (
     SenseVoiceRescue,
     SenseVoiceRescueConfig,
+    slice_segment_pcm,
 )
 
 logger = logging.getLogger(__name__)
@@ -1412,17 +1413,22 @@ class FunASRSession:
             if self.metrics is not None:
                 self.metrics.inc_funasr_rescue("failed")
 
+    def _final_covers(self, segment_end: int | None) -> bool:
+        tolerance = max(1, int(_RESCUE_COVERAGE_TOLERANCE_S * self.config.sample_rate))
+        return (
+            self._segment_nonempty_final_seen
+            and segment_end is not None
+            and self._last_emitted_final_sample + tolerance >= segment_end
+        )
+
     async def _rescue_segment_once(self, *, mid_utterance: bool = False) -> None:
         self._rescue_deadline = None
         rescue_config = self.config.rescue_config
-        if (
-            self._rescue is None
-            or rescue_config is None
-            or self._closed
-            or not self._segment_pcm
-        ):
+        # Rescue only the tail a nonempty provider final has not covered yet.
+        covered = self._last_emitted_final_sample if self._segment_nonempty_final_seen else None
+        pcm, pcm_start = slice_segment_pcm(self._segment_pcm, self._segment_pcm_ranges, covered)
+        if self._rescue is None or rescue_config is None or self._closed or not pcm:
             return
-        pcm = b"".join(self._segment_pcm)
         rms = audioop.rms(pcm, 2)
         peak_abs = audioop.max(pcm, 2)
         if rms < rescue_config.min_rms and peak_abs < rescue_config.min_peak_abs:
@@ -1443,13 +1449,8 @@ class FunASRSession:
                 self.metrics.inc_funasr_rescue("skipped")
                 self.metrics.inc_funasr_empty_transcript(outcome_class)
             return
-        coverage_tolerance = max(1, int(_RESCUE_COVERAGE_TOLERANCE_S * self.config.sample_rate))
         segment_end = self._segment_pcm_end_sample
-        if (
-            self._segment_nonempty_final_seen
-            and segment_end is not None
-            and self._last_emitted_final_sample + coverage_tolerance >= segment_end
-        ):
+        if self._final_covers(segment_end):
             logger.info(
                 "funasr segment rescue skipped: provider final covers segment "
                 "task_id=%s final_end=%s segment_end=%s rms=%s",
@@ -1481,7 +1482,7 @@ class FunASRSession:
         # Snapshot every timing input before the network call: a concurrent
         # recovery may rotate the provider task while the rescue is in flight.
         task_origin = self._task_sample_origin
-        segment_start = self._segment_pcm_start_sample
+        segment_start = pcm_start
         segment_end = self._segment_pcm_end_sample or segment_start
         if segment_start is None or segment_end is None:
             return
@@ -1495,12 +1496,7 @@ class FunASRSession:
             )
         finally:
             self._rescue_deadline = None
-        covering_now = (
-            self._segment_nonempty_final_seen
-            and segment_end is not None
-            and self._last_emitted_final_sample + coverage_tolerance >= segment_end
-        )
-        if self._closed or covering_now:
+        if self._closed or self._final_covers(segment_end):
             # A late provider final that covers the VAD segment crossed the
             # queue while the rescue was in flight; that result stays
             # authoritative.  A short early final must not discard rescue.

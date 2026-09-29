@@ -11,7 +11,7 @@ import pytest
 from livekit.agents import StopResponse, llm
 from services.agent.src import agent as agent_mod
 from services.agent.src import generation_output_policy as output_policy
-from services.agent.src.agent import DuplexVoiceAgent
+from services.agent.src.agent import DuplexVoiceAgent, plan_matches_mode_policy
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.orchestration.context_snapshot_manager import (
@@ -496,9 +496,10 @@ async def test_policy_mismatched_fetched_plan_downgrades_to_local_safe_plan() ->
     assert agent._is_local_safe_plan(cached)
     assert cached.epistemic_reason_codes == ("local_safe_fallback", "mode_policy_mismatch")
     assert "每一轮只根据用户当前语义" in cached.instructions
-    assert not agent._plan_matches_mode_policy(
+    assert not plan_matches_mode_policy(
         replace(cached, direct_text="伪造的本地固定回复"),
         runtime.mode_policy_for_fence(runtime.fence),
+        tts_model="unknown",
     )
     await runtime.close()
 
@@ -574,41 +575,41 @@ def test_plan_policy_validation_rejects_noncanonical_companion_or_voice_target()
         shadow_low_sensitivity_persona=True,
     )
     runtime.set_mode_policy(policy)
-    agent = DuplexVoiceAgent(
-        instructions="test",
-        runtime=runtime,
-        tts_model="seed-tts-2.0",
-    )
     plan = _plan(runtime)
 
-    assert agent._plan_matches_mode_policy(plan, policy)
-    assert not agent._plan_matches_mode_policy(
+    assert plan_matches_mode_policy(plan, policy, tts_model="seed-tts-2.0")
+    assert not plan_matches_mode_policy(
         replace(
             plan,
             provenance=replace(plan.provenance, planner_policy_version="test"),
         ),
         policy,
+        tts_model="seed-tts-2.0",
     )
-    assert not agent._plan_matches_mode_policy(
+    assert not plan_matches_mode_policy(
         replace(
             plan,
             provenance=replace(plan.provenance, legacy_grant_id="forged-grant"),
         ),
         policy,
+        tts_model="seed-tts-2.0",
     )
-    assert not agent._plan_matches_mode_policy(
+    assert not plan_matches_mode_policy(
         replace(plan, voice_target=replace(plan.voice_target, profile_id="other-voice")),
         policy,
+        tts_model="seed-tts-2.0",
     )
-    assert not agent._plan_matches_mode_policy(
+    assert not plan_matches_mode_policy(
         replace(plan, voice_target=replace(plan.voice_target, model="other-model")),
         policy,
+        tts_model="seed-tts-2.0",
     )
-    assert not agent._plan_matches_mode_policy(
+    assert not plan_matches_mode_policy(
         replace(plan, provenance=replace(plan.provenance, persona_style_only=True)),
         policy,
+        tts_model="seed-tts-2.0",
     )
-    assert agent._plan_matches_mode_policy(
+    assert plan_matches_mode_policy(
         replace(
             plan,
             provenance=replace(
@@ -618,8 +619,9 @@ def test_plan_policy_validation_rejects_noncanonical_companion_or_voice_target()
             ),
         ),
         policy,
+        tts_model="seed-tts-2.0",
     )
-    assert agent._plan_matches_mode_policy(
+    assert plan_matches_mode_policy(
         replace(
             plan,
             provenance=replace(
@@ -634,8 +636,9 @@ def test_plan_policy_validation_rejects_noncanonical_companion_or_voice_target()
             ),
         ),
         policy,
+        tts_model="seed-tts-2.0",
     )
-    assert agent._plan_matches_mode_policy(
+    assert plan_matches_mode_policy(
         replace(
             plan,
             provenance=replace(
@@ -646,6 +649,7 @@ def test_plan_policy_validation_rejects_noncanonical_companion_or_voice_target()
             ),
         ),
         policy,
+        tts_model="seed-tts-2.0",
     )
 
 
@@ -666,23 +670,20 @@ def test_plan_policy_validation_requires_version_and_voice_references_for_person
     )
     policy = _self_preview_policy(references=references)
     runtime.set_mode_policy(policy)
-    agent = DuplexVoiceAgent(
-        instructions="test",
-        runtime=runtime,
-        tts_model="seed-tts-2.0",
-    )
     plan = _approved_personal_plan(runtime)
 
-    assert agent._plan_matches_mode_policy(plan, policy)
-    assert not agent._plan_matches_mode_policy(
+    assert plan_matches_mode_policy(plan, policy, tts_model="seed-tts-2.0")
+    assert not plan_matches_mode_policy(
         replace(plan, provenance=replace(plan.provenance, manifest_sha256="b" * 64)),
         policy,
+        tts_model="seed-tts-2.0",
     )
-    assert not agent._plan_matches_mode_policy(
+    assert not plan_matches_mode_policy(
         replace(plan, provenance=replace(plan.provenance, relationship_profile_version=5)),
         policy,
+        tts_model="seed-tts-2.0",
     )
-    assert not agent._plan_matches_mode_policy(
+    assert not plan_matches_mode_policy(
         plan,
         _self_preview_policy(
             references=tuple(
@@ -691,8 +692,9 @@ def test_plan_policy_validation_requires_version_and_voice_references_for_person
                 if reference[0] not in {"manifest_sha256", "relationship_profile_version"}
             )
         ),
+        tts_model="seed-tts-2.0",
     )
-    assert not agent._plan_matches_mode_policy(
+    assert not plan_matches_mode_policy(
         plan,
         _self_preview_policy(
             references=tuple(
@@ -703,8 +705,9 @@ def test_plan_policy_validation_requires_version_and_voice_references_for_person
                 for key, value in references
             )
         ),
+        tts_model="seed-tts-2.0",
     )
-    assert not agent._plan_matches_mode_policy(
+    assert not plan_matches_mode_policy(
         plan,
         _self_preview_policy(
             references=tuple(
@@ -715,10 +718,12 @@ def test_plan_policy_validation_requires_version_and_voice_references_for_person
                 for key, value in references
             )
         ),
+        tts_model="seed-tts-2.0",
     )
-    assert not agent._plan_matches_mode_policy(
+    assert not plan_matches_mode_policy(
         replace(plan, voice_target=replace(plan.voice_target, profile_id=None)),
         policy,
+        tts_model="seed-tts-2.0",
     )
     fallback = replace(
         plan,
@@ -728,15 +733,16 @@ def test_plan_policy_validation_requires_version_and_voice_references_for_person
             model="seed-tts-2.0",
         ),
     )
-    assert agent._plan_matches_mode_policy(fallback, policy)
-    assert not agent._plan_matches_mode_policy(
+    assert plan_matches_mode_policy(fallback, policy, tts_model="seed-tts-2.0")
+    assert not plan_matches_mode_policy(
         replace(
             fallback,
             provenance=replace(fallback.provenance, manifest_sha256="b" * 64),
         ),
         policy,
+        tts_model="seed-tts-2.0",
     )
-    assert not agent._plan_matches_mode_policy(
+    assert not plan_matches_mode_policy(
         plan,
         _self_preview_policy(
             references=tuple(
@@ -745,6 +751,7 @@ def test_plan_policy_validation_requires_version_and_voice_references_for_person
                 if reference[0] not in {"voice_profile_id", "voice_model"}
             )
         ),
+        tts_model="seed-tts-2.0",
     )
 
 
@@ -766,11 +773,6 @@ def test_canonical_personal_modes_reject_missing_frozen_digital_self_identity() 
         mode=mode,
         policy_version=f"policy-{mode}",
     )
-    agent = DuplexVoiceAgent(
-        instructions="test",
-        runtime=runtime,
-        tts_model="seed-tts-2.0",
-    )
     plan = replace(
         _approved_personal_plan(runtime),
         provenance=replace(
@@ -780,8 +782,8 @@ def test_canonical_personal_modes_reject_missing_frozen_digital_self_identity() 
         ),
     )
 
-    assert agent._plan_matches_mode_policy(plan, policy)
-    assert not agent._plan_matches_mode_policy(
+    assert plan_matches_mode_policy(plan, policy, tts_model="seed-tts-2.0")
+    assert not plan_matches_mode_policy(
         replace(
             plan,
             provenance=replace(
@@ -791,6 +793,7 @@ def test_canonical_personal_modes_reject_missing_frozen_digital_self_identity() 
             ),
         ),
         policy,
+        tts_model="seed-tts-2.0",
     )
     local_safe = replace(
         plan,
@@ -808,8 +811,8 @@ def test_canonical_personal_modes_reject_missing_frozen_digital_self_identity() 
             disclosures=("privacy_refusal", "unknown"),
         ),
     )
-    assert agent._plan_matches_mode_policy(local_safe, policy)
-    assert not agent._plan_matches_mode_policy(
+    assert plan_matches_mode_policy(local_safe, policy, tts_model="seed-tts-2.0")
+    assert not plan_matches_mode_policy(
         replace(
             local_safe,
             provenance=replace(
@@ -819,6 +822,7 @@ def test_canonical_personal_modes_reject_missing_frozen_digital_self_identity() 
             ),
         ),
         policy,
+        tts_model="seed-tts-2.0",
     )
 
 
@@ -840,52 +844,54 @@ def test_legacy_canonical_plan_rejects_forged_frozen_references(
 ) -> None:
     runtime = DuplexRuntime.create(session_id="strict-legacy-plan")
     policy = _legacy_policy(voice_allowed=False)
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
     plan = _legacy_plan(runtime, personal=False)
 
-    assert agent._plan_matches_mode_policy(plan, policy)
-    assert not agent._plan_matches_mode_policy(
+    assert plan_matches_mode_policy(plan, policy, tts_model="unknown")
+    assert not plan_matches_mode_policy(
         replace(plan, provenance=replace(plan.provenance, **{field: value})),
         policy,
+        tts_model="unknown",
     )
 
 
 def test_legacy_plan_requires_digital_identity_and_actor_owner_speaker() -> None:
     runtime = DuplexRuntime.create(session_id="strict-legacy-disclosure")
     policy = _legacy_policy(voice_allowed=False)
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
     plan = _legacy_plan(runtime, personal=False)
 
-    assert agent._plan_matches_mode_policy(plan, policy)
+    assert plan_matches_mode_policy(plan, policy, tts_model="unknown")
     assert plan.provenance.actor_account_id == "grantee-a"
     assert plan.provenance.resource_owner_account_id == "owner-a"
-    assert not agent._plan_matches_mode_policy(
+    assert not plan_matches_mode_policy(
         replace(
             plan,
             disclosures=(),
             provenance=replace(plan.provenance, disclosures=()),
         ),
         policy,
+        tts_model="unknown",
     )
-    assert not agent._plan_matches_mode_policy(
+    assert not plan_matches_mode_policy(
         replace(plan, provenance=replace(plan.provenance, speaker_class="guest")),
         policy,
+        tts_model="unknown",
     )
 
 
 def test_legacy_personal_voice_requires_grant_permission_and_exact_target() -> None:
     runtime = DuplexRuntime.create(session_id="strict-legacy-voice")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
     personal = _legacy_plan(runtime, personal=True)
 
-    assert agent._plan_matches_mode_policy(personal, _legacy_policy(voice_allowed=True))
-    assert not agent._plan_matches_mode_policy(
+    assert plan_matches_mode_policy(personal, _legacy_policy(voice_allowed=True), tts_model="unknown")
+    assert not plan_matches_mode_policy(
         personal,
         _legacy_policy(voice_allowed=False),
+        tts_model="unknown",
     )
-    assert not agent._plan_matches_mode_policy(
+    assert not plan_matches_mode_policy(
         replace(personal, voice_target=replace(personal.voice_target, profile_id="forged")),
         _legacy_policy(voice_allowed=True),
+        tts_model="unknown",
     )
 
 
@@ -941,10 +947,11 @@ def test_legacy_local_safe_allows_only_deterministic_safe_text_with_frozen_fallb
     )
     assert archive_payload["legacy_grant_id"] == "grant-1"
     assert archive_payload["legacy_scope_sha256"] == "c" * 64
-    assert agent._plan_matches_mode_policy(plan, policy)
-    assert not agent._plan_matches_mode_policy(
+    assert plan_matches_mode_policy(plan, policy, tts_model="unknown")
+    assert not plan_matches_mode_policy(
         replace(plan, direct_text=None),
         policy,
+        tts_model="unknown",
     )
     crisis_plan = agent._local_safe_plan(
         fence=runtime.fence,
@@ -953,7 +960,7 @@ def test_legacy_local_safe_allows_only_deterministic_safe_text_with_frozen_fallb
         query="我想自杀",
     )
     assert crisis_plan.direct_text == CRISIS_SUPPORT_REPLY
-    assert agent._plan_matches_mode_policy(crisis_plan, policy)
+    assert plan_matches_mode_policy(crisis_plan, policy, tts_model="unknown")
     clock_plan = agent._local_safe_plan(
         fence=runtime.fence,
         speaker=speaker,
@@ -962,8 +969,8 @@ def test_legacy_local_safe_allows_only_deterministic_safe_text_with_frozen_fallb
     )
     assert clock_plan.direct_text is not None
     assert clock_plan.direct_text.startswith("今天是")
-    assert agent._plan_matches_mode_policy(clock_plan, policy)
-    assert not agent._plan_matches_mode_policy(
+    assert plan_matches_mode_policy(clock_plan, policy, tts_model="unknown")
+    assert not plan_matches_mode_policy(
         replace(
             plan,
             voice_target=ResponseVoiceTarget(
@@ -973,6 +980,7 @@ def test_legacy_local_safe_allows_only_deterministic_safe_text_with_frozen_fallb
             ),
         ),
         policy,
+        tts_model="unknown",
     )
 
 
@@ -1005,7 +1013,7 @@ def test_unknown_safe_clock_fact_uses_authoritative_local_time(
     )
 
     assert plan.direct_text == "今天是2026年8月14日，星期五。"
-    assert agent._plan_matches_mode_policy(plan, policy)
+    assert plan_matches_mode_policy(plan, policy, tts_model="unknown")
 
 
 def test_unknown_safe_clock_fact_survives_non_public_capabilities(
@@ -1052,7 +1060,7 @@ def test_unknown_safe_clock_fact_survives_non_public_capabilities(
 
     assert plan.direct_text == "今天是2026年8月14日，星期五。"
     assert plan.instructions == output_policy.ANONYMOUS_PUBLIC_CHAT_INSTRUCTIONS
-    assert agent._plan_matches_mode_policy(plan, runtime.mode_policy_for_fence(fence))
+    assert plan_matches_mode_policy(plan, runtime.mode_policy_for_fence(fence), tts_model="unknown")
 
 
 @pytest.mark.asyncio
@@ -1120,16 +1128,18 @@ def test_local_safe_fallback_requires_the_actual_tts_voice_and_binds_provenance(
         reason="planner_unavailable",
     )
 
-    assert agent._plan_matches_mode_policy(plan, policy)
+    assert plan_matches_mode_policy(plan, policy, tts_model="seed-tts-2.0")
     assert agent._bind_response_plan_provenance(runtime.fence, plan)
     assert runtime.response_provenance_for(runtime.fence) is not None
-    assert not agent._plan_matches_mode_policy(
+    assert not plan_matches_mode_policy(
         replace(plan, voice_target=replace(plan.voice_target, profile_id="other-voice")),
         policy,
+        tts_model="seed-tts-2.0",
     )
-    assert not agent._plan_matches_mode_policy(
+    assert not plan_matches_mode_policy(
         replace(plan, voice_target=replace(plan.voice_target, model="other-model")),
         policy,
+        tts_model="seed-tts-2.0",
     )
 
 

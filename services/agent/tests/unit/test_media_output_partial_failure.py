@@ -148,7 +148,7 @@ async def _drive_partial_failure(
     if generation_timeout_s is not None:
         registry.output_generation_timeout_s = generation_timeout_s
     identity = SessionIdentity(session_id)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("你好")
     context.playback.start(fence)
     started = asyncio.get_running_loop().time()
@@ -223,13 +223,13 @@ async def test_provider_fault_after_partial_audio_fails_closed_and_promptly(
         assert isinstance(outcome, str) and outcome.startswith(type(failure).__name__)
         _assert_terminal_after_partial_audio(
             bridge=bridge,
-            context=registry._sessions[fence.session_id],
+            context=registry.session_state(fence.session_id),
             fence=fence,
             elapsed=elapsed,
             bounded_s=1.0,
         )
     finally:
-        await registry._finalize_session(fence.session_id)
+        await registry.finalize_session(fence.session_id)
 
 
 @pytest.mark.asyncio
@@ -243,13 +243,13 @@ async def test_provider_stall_after_partial_audio_fails_closed_within_the_stall_
         assert outcome is False
         _assert_terminal_after_partial_audio(
             bridge=bridge,
-            context=registry._sessions[fence.session_id],
+            context=registry.session_state(fence.session_id),
             fence=fence,
             elapsed=elapsed,
             bounded_s=1.0,
         )
     finally:
-        await registry._finalize_session(fence.session_id)
+        await registry.finalize_session(fence.session_id)
 
 
 @pytest.mark.asyncio
@@ -260,7 +260,7 @@ async def test_late_results_cannot_resurrect_a_failed_partial_generation() -> No
         _PartialThenFail(),
         session_id="partial-audio-late-results",
     )
-    context = registry._sessions[fence.session_id]
+    context = registry.session_state(fence.session_id)
     try:
         session = bridge.bridge.open(context.identity)
         authority_fence = context.runtime.fence
@@ -296,4 +296,4 @@ async def test_late_results_cannot_resurrect_a_failed_partial_generation() -> No
         assert context.runtime.interaction_phase.value == "listening"
         assert context.runtime.assistant_speaking is False
     finally:
-        await registry._finalize_session(fence.session_id)
+        await registry.finalize_session(fence.session_id)

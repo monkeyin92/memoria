@@ -1036,3 +1036,9 @@ def _valid_utc_timestamp(value: str) -> bool:
         and parsed.utcoffset() is not None
         and parsed.utcoffset() == UTC.utcoffset(None)
     )
+
+
+def parse_response_plan(payload: Any) -> ResponsePlan:
+    """Validate one response-planner payload exactly as ``fetch`` does."""
+
+    return ResponsePlannerClient._parse(payload)

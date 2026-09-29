@@ -12,6 +12,7 @@ from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_bridge_server import PCMFrame
 from services.agent.src.voice_core.media_protocol import MediaEnvelope, SessionIdentity
 from services.agent.src.voice_core.speech_timeline import SegmentKind, SpeechSegment
+from services.agent.tests.unit.media_session_support import open_bridge_connection
 
 
 async def _request_stream(
@@ -154,7 +155,7 @@ async def test_coalescing_overflow_never_cancels_authoritative_delivery() -> Non
         device_id="h5",
         stream_epoch=1,
     )
-    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    connection = open_bridge_connection(bridge, identity)
     connection.outgoing.put_nowait(
         media_pb2.CoreToMedia(
             transcript=media_pb2.TranscriptEvent(turn_id=1, revision=1, text="草稿")
@@ -175,7 +176,7 @@ async def test_coalescing_overflow_never_cancels_authoritative_delivery() -> Non
 async def test_closed_conversation_state_preempts_reliable_output() -> None:
     bridge = MediaBridgeGrpcServer(max_pending_messages=4)
     identity = SessionIdentity("conversation-close", account_id="account", device_id="device")
-    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    connection = open_bridge_connection(bridge, identity)
     assert await bridge.emit_event("conversation-close", "assistant_state", {})
 
     fence = connection.session.fence.with_session_epoch(1)
@@ -210,7 +211,7 @@ async def test_closed_conversation_state_preempts_reliable_output() -> None:
 async def test_closed_conversation_state_survives_a_full_outgoing_queue() -> None:
     bridge = MediaBridgeGrpcServer(max_pending_messages=1)
     identity = SessionIdentity("conversation-close-full", account_id="account", device_id="device")
-    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    connection = open_bridge_connection(bridge, identity)
     assert await bridge.emit_event(identity.session_id, "reliable.before_close", {})
 
     assert await bridge.emit_conversation_state(
@@ -233,7 +234,7 @@ async def test_closed_conversation_state_survives_a_full_outgoing_queue() -> Non
 async def test_terminal_tombstone_blocks_closed_epoch_and_allows_newer_epoch() -> None:
     bridge = MediaBridgeGrpcServer()
     identity = SessionIdentity("conversation-tombstone", account_id="account", device_id="device")
-    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    connection = open_bridge_connection(bridge, identity)
     assert await bridge.emit_conversation_state(
         identity.session_id,
         media_pb2.CONVERSATION_STATE_CLOSED,
@@ -250,7 +251,8 @@ async def test_terminal_tombstone_blocks_closed_epoch_and_allows_newer_epoch() -
         stream_epoch=identity.stream_epoch,
     )
     with pytest.raises(ValueError, match="media session is terminal"):
-        bridge._open_connection(  # noqa: SLF001 - transport seam under test
+        open_bridge_connection(
+            bridge,
             SessionIdentity(
                 identity.session_id,
                 account_id=identity.account_id,
@@ -259,7 +261,8 @@ async def test_terminal_tombstone_blocks_closed_epoch_and_allows_newer_epoch() -
             )
         )
 
-    replacement = bridge._open_connection(  # noqa: SLF001 - transport seam under test
+    replacement = open_bridge_connection(
+        bridge,
         SessionIdentity(
             identity.session_id,
             account_id=identity.account_id,
@@ -286,7 +289,7 @@ async def test_terminal_session_rejects_late_media_without_invoking_callbacks() 
         on_speech_segment=on_speech,
     )
     identity = SessionIdentity("terminal-input", account_id="account", device_id="device")
-    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    connection = open_bridge_connection(bridge, identity)
 
     assert await bridge.emit_conversation_state(
         identity.session_id,
@@ -373,7 +376,8 @@ async def test_terminal_session_rejects_late_media_without_invoking_callbacks() 
         )
     )
     with pytest.raises(ValueError, match="media session is terminal"):
-        bridge._open_connection(  # noqa: SLF001 - transport seam under test
+        open_bridge_connection(
+            bridge,
             SessionIdentity(
                 identity.session_id,
                 account_id=identity.account_id,
@@ -385,7 +389,8 @@ async def test_terminal_session_rejects_late_media_without_invoking_callbacks() 
 
 def test_outgoing_queue_drains_critical_before_reliable_and_coalescing() -> None:
     bridge = MediaBridgeGrpcServer(max_pending_messages=4)
-    connection = bridge._open_connection(  # noqa: SLF001 - transport seam under test
+    connection = open_bridge_connection(
+        bridge,
         SessionIdentity("priority-outgoing", account_id="account", device_id="h5")
     )
     connection.outgoing.put_nowait(
@@ -420,7 +425,7 @@ async def test_outgoing_wire_sequence_follows_priority_drain_order() -> None:
         client_type="h5",
         stream_epoch=7,
     )
-    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    connection = open_bridge_connection(bridge, identity)
 
     # A coalescing partial transcript is followed by a reliable client event.
     # A later generation control is critical and therefore overtakes both.
@@ -469,7 +474,7 @@ async def test_python_executor_emits_fenced_realtime_effect() -> None:
         device_id="h5",
         stream_epoch=3,
     )
-    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    connection = open_bridge_connection(bridge, identity)
     fence = GenerationFence(identity.session_id, 4, 5, 6)
     assert await bridge.emit_generation(
         identity.session_id,
@@ -532,7 +537,7 @@ async def test_python_executor_emits_typed_floor_effect() -> None:
         device_id="h5",
         stream_epoch=3,
     )
-    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    connection = open_bridge_connection(bridge, identity)
     fence = GenerationFence(identity.session_id, 4, 5, 6)
     assert await bridge.emit_generation(
         identity.session_id,
@@ -828,7 +833,7 @@ async def test_bridge_always_returns_python_interaction_authority(requested: int
 @pytest.mark.asyncio
 async def test_duplicate_generation_start_is_not_sent_to_the_device() -> None:
     bridge = MediaBridgeGrpcServer()
-    connection = bridge._open_connection(SessionIdentity("dup-start"))
+    connection = open_bridge_connection(bridge, SessionIdentity("dup-start"))
     fence = GenerationFence("dup-start", 2, 2, 0, 1)
     assert await bridge.emit_generation(
         "dup-start",
@@ -877,7 +882,7 @@ async def test_bridge_rejects_non_monotonic_generation_controls() -> None:
 @pytest.mark.asyncio
 async def test_outgoing_queue_overflow_wakes_writer_for_reconnect() -> None:
     bridge = MediaBridgeGrpcServer(max_pending_messages=1)
-    connection = bridge._open_connection(SessionIdentity("overflow-session"))
+    connection = open_bridge_connection(bridge, SessionIdentity("overflow-session"))
     message = media_pb2.CoreToMedia(
         error=media_pb2.CoreError(code="one", message="queued")
     )
@@ -890,7 +895,7 @@ async def test_outgoing_queue_overflow_wakes_writer_for_reconnect() -> None:
 @pytest.mark.asyncio
 async def test_outgoing_queue_overflow_cancels_generation_and_reconnect_sends_cancel() -> None:
     bridge = MediaBridgeGrpcServer(max_pending_messages=1)
-    connection = bridge._open_connection(SessionIdentity("overflow-session", stream_epoch=1))
+    connection = open_bridge_connection(bridge, SessionIdentity("overflow-session", stream_epoch=1))
     fence = GenerationFence("overflow-session", 1, 1, 0)
     # The START control occupies the single queue slot; the next PCM/event
     # triggers overflow.
@@ -911,7 +916,8 @@ async def test_outgoing_queue_overflow_cancels_generation_and_reconnect_sends_ca
     assert terminal.generation.generation_id == fence.generation_id + 1
     # A reconnect reuses the same session state: because the overflowed
     # generation is inactive, the transport announces CANCEL, never RESUME.
-    reconnected = bridge._open_connection(
+    reconnected = open_bridge_connection(
+        bridge,
         SessionIdentity("overflow-session", stream_epoch=2)
     )
     assert reconnected.session is connection.session
@@ -932,10 +938,11 @@ def test_active_bridge_rejects_changed_runtime_authority_without_disconnect() ->
         binding_version=3,
         runtime_profile_version=27,
     )
-    first = bridge._open_connection(identity)  # noqa: SLF001 - transport seam
+    first = open_bridge_connection(bridge, identity)
 
     with pytest.raises(ValueError, match="reconnect authority changed"):
-        bridge._open_connection(  # noqa: SLF001 - transport seam
+        open_bridge_connection(
+            bridge,
             SessionIdentity(
                 "grpc-authority-reconnect",
                 account_id="account-a",
@@ -1013,9 +1020,9 @@ async def test_old_transport_close_cannot_notify_after_reconnect_claims_session(
         closed_epochs.append(session.identity.stream_epoch)
 
     bridge = MediaBridgeGrpcServer(on_session_closed=on_closed)
-    first = bridge._open_connection(SessionIdentity("race-session", stream_epoch=1))
+    first = open_bridge_connection(bridge, SessionIdentity("race-session", stream_epoch=1))
     bridge._close_connection(first)
-    second = bridge._open_connection(SessionIdentity("race-session", stream_epoch=2))
+    second = open_bridge_connection(bridge, SessionIdentity("race-session", stream_epoch=2))
 
     await bridge._finish_connection(first)
     assert closed_epochs == []
@@ -1027,7 +1034,7 @@ async def test_old_transport_close_cannot_notify_after_reconnect_claims_session(
 async def test_pcm_waits_for_new_epoch_and_preserves_generation_source_clock() -> None:
     bridge = MediaBridgeGrpcServer()
     first_identity = SessionIdentity("resume-pcm", stream_epoch=1)
-    first = bridge._open_connection(first_identity)
+    first = open_bridge_connection(bridge, first_identity)
     fence = GenerationFence("resume-pcm", 1, 1, 0)
     assert await bridge.emit_generation(
         first_identity.session_id,
@@ -1069,7 +1076,7 @@ async def test_pcm_waits_for_new_epoch_and_preserves_generation_source_clock() -
     )
     await asyncio.sleep(0.02)
     assert not pending.done()
-    second = bridge._open_connection(SessionIdentity("resume-pcm", stream_epoch=2))
+    second = open_bridge_connection(bridge, SessionIdentity("resume-pcm", stream_epoch=2))
     assert await pending
     resumed = await second.outgoing.get()
     assert resumed.audio.identity.stream_epoch == 2
@@ -1142,7 +1149,7 @@ def test_require_identity_ignores_hello_audio_mode() -> None:
         audio_mode="interrupt_assist",
     )
     bridge = MediaBridgeGrpcServer()
-    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    connection = open_bridge_connection(bridge, identity)
     proto = media_pb2.SessionIdentity(
         session_id=identity.session_id,
         account_id=identity.account_id,
@@ -1168,7 +1175,7 @@ async def test_vad_event_forwards_rms_as_near_end_rms() -> None:
 
     bridge = MediaBridgeGrpcServer(on_speech_segment=on_speech)
     identity = SessionIdentity("vad-rms", account_id="account", device_id="device")
-    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    connection = open_bridge_connection(bridge, identity)
     proto_identity = media_pb2.SessionIdentity(
         session_id=identity.session_id,
         account_id=identity.account_id,

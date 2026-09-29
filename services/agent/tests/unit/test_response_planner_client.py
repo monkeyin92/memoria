@@ -9,6 +9,7 @@ from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.response_planner_client import (
     ResponsePlannerClient,
     ResponsePlannerClientConfig,
+    parse_response_plan,
 )
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
@@ -203,7 +204,7 @@ def test_parse_rejects_noncanonical_planner_policy_version(
     provenance["planner_policy_version"] = planner_policy_version
 
     with pytest.raises(ValueError, match="policy version"):
-        ResponsePlannerClient._parse(payload)
+        parse_response_plan(payload)
 
 
 @pytest.mark.parametrize(
@@ -251,7 +252,7 @@ def test_parse_rejects_grounded_provenance_that_is_not_one_to_one(
         source_refs.append(extra_ref)
 
     with pytest.raises(ValueError, match="(grounded provenance|ungrounded fact provenance)"):
-        ResponsePlannerClient._parse(payload)
+        parse_response_plan(payload)
 
 
 def test_parse_allows_extra_style_or_relationship_provenance_refs() -> None:
@@ -275,7 +276,7 @@ def test_parse_allows_extra_style_or_relationship_provenance_refs() -> None:
         ]
     )
 
-    plan = ResponsePlannerClient._parse(payload)
+    plan = parse_response_plan(payload)
 
     assert len(plan.provenance.source_refs) == 3
 
@@ -307,7 +308,7 @@ def _legacy_plan_payload() -> dict[str, object]:
 
 
 def test_parse_legacy_provenance_keeps_actor_and_resource_owner_distinct() -> None:
-    plan = ResponsePlannerClient._parse(_legacy_plan_payload())
+    plan = parse_response_plan(_legacy_plan_payload())
 
     assert plan.provenance.actor_account_id == "grantee-a"
     assert plan.provenance.resource_owner_account_id == "owner-a"
@@ -337,7 +338,7 @@ def test_parse_rejects_forged_or_incomplete_legacy_provenance(
     provenance[field] = value
 
     with pytest.raises(ValueError, match="legacy|digest"):
-        ResponsePlannerClient._parse(payload)
+        parse_response_plan(payload)
 
 
 def test_parse_rejects_legacy_authority_on_non_legacy_plan() -> None:
@@ -347,7 +348,7 @@ def test_parse_rejects_legacy_authority_on_non_legacy_plan() -> None:
     provenance["legacy_grant_id"] = "forged-grant"
 
     with pytest.raises(ValueError, match="non-legacy"):
-        ResponsePlannerClient._parse(payload)
+        parse_response_plan(payload)
 
 
 @pytest.mark.parametrize(
@@ -379,7 +380,7 @@ def test_parse_rejects_incoherent_persona_provenance(
     provenance.update(persona_provenance)
 
     with pytest.raises(ValueError, match="persona"):
-        ResponsePlannerClient._parse(payload)
+        parse_response_plan(payload)
 
 
 @pytest.mark.asyncio
@@ -572,7 +573,7 @@ def test_archive_payload_contains_only_bounded_ids_and_model_metadata() -> None:
             "persona_style_only": True,
         }
     )
-    plan = ResponsePlannerClient._parse(response)
+    plan = parse_response_plan(response)
 
     payload = plan.provenance.archive_payload(
         fence=plan.fence,
@@ -624,7 +625,7 @@ def test_evolution_artifact_is_strictly_parsed_and_preserved_in_archive_provenan
         "signature": "c" * 64,
     }
 
-    plan = ResponsePlannerClient._parse(response)
+    plan = parse_response_plan(response)
     payload = plan.provenance.archive_payload(
         fence=plan.fence,
         llm_provider="qwen",
@@ -669,7 +670,7 @@ def test_evolution_artifact_rejects_noncanonical_fields(field: str, value: objec
     }
 
     with pytest.raises(ValueError, match="evolution artifact"):
-        ResponsePlannerClient._parse(response)
+        parse_response_plan(response)
 
 
 def test_parse_legacy_plan_without_evolution_fields_remains_rolling_compatible() -> None:
@@ -678,7 +679,7 @@ def test_parse_legacy_plan_without_evolution_fields_remains_rolling_compatible()
     assert isinstance(provenance, dict)
     provenance.pop("evolution_artifacts")
 
-    plan = ResponsePlannerClient._parse(response)
+    plan = parse_response_plan(response)
     archived = plan.provenance.archive_payload(
         fence=plan.fence,
         llm_provider=None,
@@ -709,4 +710,4 @@ def test_parse_rejects_nonempty_evolution_artifacts_without_negotiated_contract(
     ]
 
     with pytest.raises(ValueError, match="contract is incomplete"):
-        ResponsePlannerClient._parse(response)
+        parse_response_plan(response)

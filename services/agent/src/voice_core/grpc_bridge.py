@@ -717,7 +717,7 @@ class MediaBridgeGrpcServer:
         ):
             # CLOSED is projected before lifecycle teardown completes.  Late
             # media must be dropped at the transport boundary so no callback
-            # can call the registry's _get_or_create and resurrect a runtime.
+            # can call the registry's open_session and resurrect a runtime.
             logger.info(
                 "media input rejected session=%s event=%s reason=terminal",
                 connection.session.identity.session_id,

@@ -37,7 +37,7 @@ async def _finish_current_playback(
     bridge: _CapturingGenerationBridge,
     session: Any,
 ) -> None:
-    context = registry._sessions[identity.session_id]
+    context = registry.session_state(identity.session_id)
     await _wait_until(
         lambda: context.output_owner is not None or bool(bridge.frames),
         timeout=2.0,
@@ -89,7 +89,7 @@ async def test_device_session_asks_for_miniprogram_consent_without_intent(
     identity = _device_identity("device-enroll-skip")
     session = bridge.bridge.open(identity)
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         await _finish_current_playback(registry, identity, bridge, session)
         await _wait_until(
@@ -105,7 +105,7 @@ async def test_device_session_asks_for_miniprogram_consent_without_intent(
         assert context.standby_requested is True
         assert context.standby_reason == "speaker_enrollment_needs_consent"
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -146,7 +146,7 @@ async def test_device_session_speaks_enrollment_prompts_when_requested(
     identity = _device_identity("device-enroll-run")
     session = bridge.bridge.open(identity)
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         await _finish_current_playback(registry, identity, bridge, session)
         await _wait_until(
@@ -174,7 +174,7 @@ async def test_device_session_speaks_enrollment_prompts_when_requested(
         assert provider.texts[1:5] == list(SPEAKER_ENROLLMENT_SAMPLE_PROMPTS)
         assert provider.texts[5] == SPEAKER_ENROLLMENT_DONE_PHRASE
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -210,7 +210,7 @@ async def test_device_vad_end_collects_enrollment_sample_without_asr(
         received.append((pcm, sample_rate))
 
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         await _finish_current_playback(registry, identity, bridge, session)
         context.runtime.set_formal_speaker_enrollment_sample_sink(_sink)
@@ -252,4 +252,4 @@ async def test_device_vad_end_collects_enrollment_sample_without_asr(
         assert context.runtime.formal_speaker_enrollment_active is True
     finally:
         context.runtime.end_formal_speaker_enrollment()
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)

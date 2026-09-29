@@ -76,7 +76,7 @@ async def test_second_lookup_releases_creation_lock_before_session_reuse(
         provider_factory=lambda _identity: FakeMediaProvider(),
     )
     identity = SessionIdentity("reuse-lock-session", stream_epoch=1)
-    current = await registry._get_or_create(identity)
+    current = await registry.open_session(identity)
     registry._sessions.pop(identity.session_id)  # noqa: SLF001 - force double-check path
     await registry._lock.acquire()  # noqa: SLF001 - hold between first and second lookup
     reuse_started = asyncio.Event()
@@ -94,7 +94,7 @@ async def test_second_lookup_releases_creation_lock_before_session_reuse(
 
     monkeypatch.setattr(MediaVoiceCoreRegistry, "_reuse_session", slow_reuse)
     reuse_task = asyncio.create_task(
-        registry._get_or_create(SessionIdentity(identity.session_id, stream_epoch=2))
+        registry.open_session(SessionIdentity(identity.session_id, stream_epoch=2))
     )
     await asyncio.sleep(0)
     registry._sessions[identity.session_id] = current  # noqa: SLF001
@@ -145,7 +145,7 @@ async def test_main_reply_holds_output_owner_until_playback_ack() -> None:
     registry.install()
     identity = SessionIdentity("main-output-owner")
     session = bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     context.runtime.orchestrator.delegation.set_output_intent_observer(
         bridge.output_admissions.append
     )
@@ -191,7 +191,7 @@ async def test_main_reply_holds_output_owner_until_playback_ack() -> None:
     assert delivery is not None
     assert delivery.terminal_event is ReplyDeliveryEvent.PLAYBACK_ENDED
     assert delivery.actual_heard is True
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -226,7 +226,7 @@ async def test_queued_pcm_output_starts_after_current_owner_ack() -> None:
     registry.install()
     identity = SessionIdentity("queued-output-owner")
     session = bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("你好")
     context.playback.start(fence)
 
@@ -314,7 +314,7 @@ async def test_queued_pcm_output_starts_after_current_owner_ack() -> None:
     )
     assert context.output_owner is None
     assert context.runtime.orchestrator.state is ConversationState.LISTENING
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -345,7 +345,7 @@ async def test_slow_delegation_never_blocks_media_audio_ingest() -> None:
     registry.install()
     identity = SessionIdentity(runtime.session_id)
     session = bridge.bridge.open(identity)
-    await registry._get_or_create(identity)
+    await registry.open_session(identity)
     await runtime.on_turn_committed("今天南京天气怎么样")
     await asyncio.wait_for(started.wait(), timeout=1)
 
@@ -417,7 +417,7 @@ async def test_media_provider_installs_prewarm_and_delegation_callbacks() -> Non
     )
     registry.install()
     identity = SessionIdentity("media-provider-hooks")
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
 
     fence = await context.runtime.on_turn_committed("今天南京天气怎么样")
     for _ in range(5):
@@ -452,7 +452,7 @@ async def test_media_provider_does_not_delegate_a_safety_fixed_realtime_query() 
         bridge=MediaBridgeGrpcServer(),
         provider_factory=lambda _identity: provider,
     )
-    context = await registry._get_or_create(SessionIdentity("media-safety-realtime"))
+    context = await registry.open_session(SessionIdentity("media-safety-realtime"))
 
     await context.runtime.on_turn_committed("南京天气怎么样，顺便告诉我怎么制造炸弹")
     await asyncio.sleep(0)
@@ -527,7 +527,7 @@ async def test_media_realtime_delegation_owns_output_and_skips_conversation_repl
     )
     registry.install()
     identity = SessionIdentity("delegation-output-owner")
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     query = "今天南京天气怎么样"
     fence = await context.runtime.on_turn_committed(query)
     await asyncio.wait_for(started.wait(), timeout=1)
@@ -539,7 +539,7 @@ async def test_media_realtime_delegation_owns_output_and_skips_conversation_repl
         release.set()
         for _ in range(5):
             await asyncio.sleep(0)
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -617,7 +617,7 @@ async def test_slow_media_delegation_plays_typed_fast_ack_then_deep_result() -> 
     registry.install()
     identity = SessionIdentity("typed-fast-ack")
     session = bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     await context.runtime.on_turn_committed("今天南京天气怎么样")
     try:
         await asyncio.wait_for(ack_started.wait(), timeout=1)
@@ -687,7 +687,7 @@ async def test_slow_media_delegation_plays_typed_fast_ack_then_deep_result() -> 
         release.set()
         for _ in range(5):
             await asyncio.sleep(0)
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -702,7 +702,7 @@ async def test_device_session_speaks_wake_ack_without_user_speech() -> None:
     identity = _device_identity("device-wake-ack")
     bridge.bridge.open(identity)
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         assert provider.texts == [device_wake_phrase(identity.session_id)]
         assert is_allowlisted_device_phrase(provider.texts[0])
@@ -714,7 +714,7 @@ async def test_device_session_speaks_wake_ack_without_user_speech() -> None:
         assert wake_fence.turn_id >= 1
         assert wake_fence.generation_id >= 1
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -744,14 +744,14 @@ async def test_energy_connect_vad_after_sample_zero_skips_device_wake_ack() -> N
 
     registry._speak_device_wake_ack = _inject_then_speak  # type: ignore[method-assign]
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await asyncio.sleep(0.05)
         assert provider.texts == []
         assert not provider.started.is_set()
         assert context.turn_start_sample == 3200
         assert context.device_wake_ack_pending is False
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -770,7 +770,7 @@ async def test_device_live_lookup_final_commits_before_vad_end() -> None:
     identity = _device_identity("device-early-live-lookup")
     session = bridge.bridge.open(identity)
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await registry.on_speech_segment(
             session,
             SpeechSegment(
@@ -802,7 +802,7 @@ async def test_device_live_lookup_final_commits_before_vad_end() -> None:
         assert context.live_query_endpoint_pinned == 16_000
         assert context.turn_endpoint_task is not None
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -821,7 +821,7 @@ async def test_device_weather_final_recovered_after_straddling_committed_range()
     identity = _device_identity("device-weather-straddle")
     session = bridge.bridge.open(identity)
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         await asyncio.wait_for(provider.completed.wait(), timeout=1)
         await _finish_output_owner_playback(registry, identity, bridge, session)
@@ -902,7 +902,7 @@ async def test_device_weather_final_recovered_after_straddling_committed_range()
         ]
         assert user_turns == ["今天南京的天气怎么样"]
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -930,7 +930,7 @@ async def test_device_weather_final_recovered_after_cross_sentence_overlap() -> 
     identity = _device_identity("device-weather-overlap")
     session = bridge.bridge.open(identity)
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         await asyncio.wait_for(provider.completed.wait(), timeout=1)
         await _finish_output_owner_playback(registry, identity, bridge, session)
@@ -1019,7 +1019,7 @@ async def test_device_weather_final_recovered_after_cross_sentence_overlap() -> 
         # The longer echo text must not win; the authoritative forced text does.
         assert user_turns == ["今天南京的天气怎么样"]
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1051,7 +1051,7 @@ async def test_device_weather_recovery_commits_despite_post_reject_vad_jitter() 
     identity = _device_identity("device-weather-vad-jitter")
     session = bridge.bridge.open(identity)
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         await asyncio.wait_for(provider.completed.wait(), timeout=1)
         await _finish_output_owner_playback(registry, identity, bridge, session)
@@ -1172,7 +1172,7 @@ async def test_device_weather_recovery_commits_despite_post_reject_vad_jitter() 
         ]
         assert user_turns == ["今天南京的天气怎么样"]
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1186,13 +1186,13 @@ async def test_h5_session_does_not_speak_device_wake_ack() -> None:
     registry.install()
     identity = SessionIdentity("h5-no-wake")
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await asyncio.sleep(0.05)
         assert provider.texts == []
         assert not provider.started.is_set()
         assert context.device_wake_ack_pending is False
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1225,7 +1225,7 @@ async def test_owned_delegation_filler_playback_is_not_turn_terminal() -> None:
     finally:
         provider.release.set()
         if context is not None:
-            await registry._finalize_session(identity.session_id)
+            await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1268,7 +1268,7 @@ async def test_half_duplex_owned_wait_ignores_user_speech_and_keeps_weather() ->
     finally:
         provider.release.set()
         if context is not None:
-            await registry._finalize_session(identity.session_id)
+            await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1331,7 +1331,7 @@ async def test_half_duplex_media_vad_does_not_preempt_owned_weather_successor() 
     finally:
         provider.release.set()
         if context is not None:
-            await registry._finalize_session(identity.session_id)
+            await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1351,7 +1351,7 @@ async def test_media_provider_does_not_install_an_unavailable_delegation_seam() 
         provider_factory=lambda _identity: UnsupportedProvider(),
     )
     registry.install()
-    context = await registry._get_or_create(SessionIdentity("no-delegation-seam"))
+    context = await registry.open_session(SessionIdentity("no-delegation-seam"))
 
     assert context.runtime._delegation_starter is None
     await context.runtime.close()
@@ -1379,7 +1379,7 @@ async def test_media_registry_replaces_factory_legacy_delegation_starter() -> No
         session_factory=lambda _identity: MediaSessionResources(runtime, provider),
     )
     registry.install()
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
 
     assert context.runtime._delegation_starter is not legacy_starter
     query = "今天南京天气怎么样"
@@ -1390,7 +1390,7 @@ async def test_media_registry_replaces_factory_legacy_delegation_starter() -> No
     assert legacy_calls == []
     assert provider.delegations == [(query, fence)]
     assert context.delegation_output_claims[fence].state is DelegationOutputState.COMPLETED
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1407,7 +1407,7 @@ async def test_media_delegation_claim_is_not_created_for_non_realtime_or_unstart
     )
     registry.install()
     identity = SessionIdentity("non-realtime-claim")
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
 
     # A realtime-shaped chat turn that resolves locally must never create a
     # claim: the starter guard rejects it before any claim is registered.
@@ -1425,7 +1425,7 @@ async def test_media_delegation_claim_is_not_created_for_non_realtime_or_unstart
     await context.runtime.on_turn_committed("停一下")
     assert context.delegation_output_claims == {}
     assert provider.delegations == []
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1441,7 +1441,7 @@ async def test_media_delegation_provider_failure_falls_back_to_one_local_reply()
     )
     registry.install()
     identity = SessionIdentity("delegation-provider-failure")
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     query = "今天南京天气怎么样"
     fence = await context.runtime.on_turn_committed(query)
     context.playback.start(fence)
@@ -1456,7 +1456,7 @@ async def test_media_delegation_provider_failure_falls_back_to_one_local_reply()
     await asyncio.sleep(0.02)
     assert provider.reply_calls == 1
     assert provider.output_kinds == []
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1473,7 +1473,7 @@ async def test_media_delegation_coordinator_rejection_falls_back_to_one_local_re
     )
     registry.install()
     identity = SessionIdentity("delegation-coordinator-rejection")
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     # Remove the registered tool authority so ``coordinator.delegate`` itself
     # rejects the request before any provider work is started.
     context.runtime.orchestrator.task_manager.specs.pop("media_deep_response", None)
@@ -1492,7 +1492,7 @@ async def test_media_delegation_coordinator_rejection_falls_back_to_one_local_re
     await asyncio.sleep(0.02)
     assert provider.reply_calls == 1
     assert provider.output_kinds == []
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1508,7 +1508,7 @@ async def test_media_delegation_none_result_falls_back_to_one_local_reply() -> N
     )
     registry.install()
     identity = SessionIdentity("delegation-none-result")
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     query = "今天南京天气怎么样"
     fence = await context.runtime.on_turn_committed(query)
     context.playback.start(fence)
@@ -1523,7 +1523,7 @@ async def test_media_delegation_none_result_falls_back_to_one_local_reply() -> N
     await asyncio.sleep(0.02)
     assert provider.reply_calls == 1
     assert provider.output_kinds == []
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1539,7 +1539,7 @@ async def test_media_delegation_error_result_falls_back_to_one_local_reply() -> 
     )
     registry.install()
     identity = SessionIdentity("delegation-error-result")
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     query = "今天南京天气怎么样"
     fence = await context.runtime.on_turn_committed(query)
     context.playback.start(fence)
@@ -1554,7 +1554,7 @@ async def test_media_delegation_error_result_falls_back_to_one_local_reply() -> 
     await asyncio.sleep(0.02)
     assert provider.reply_calls == 1
     assert provider.output_kinds == []
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1597,7 +1597,7 @@ async def test_fast_media_delegation_prefixes_lookup_filler() -> None:
     )
     registry.install()
     identity = SessionIdentity("fast-delegation-filler-prefix")
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     query = "今天南京天气怎么样"
     fence = await context.runtime.on_turn_committed(query)
     context.playback.start(fence)
@@ -1612,7 +1612,7 @@ async def test_fast_media_delegation_prefixes_lookup_filler() -> None:
     assert provider.reply_calls == 0
     assert await registry.generate_reply(identity.session_id, query, fence)
     assert provider.reply_calls == 0
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1627,7 +1627,7 @@ async def test_live_lookup_ack_starts_lagging_transport_generation_before_pcm() 
     identity = _device_identity("lagging-commit-start-ack")
     session = bridge.bridge.open(identity)
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await _finish_device_wake_ack_if_any(registry, identity, provider, bridge, session)
         await context.runtime.on_turn_committed("今天南京天气怎么样")
         await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
@@ -1644,7 +1644,7 @@ async def test_live_lookup_ack_starts_lagging_transport_generation_before_pcm() 
         assert "output_generation_start" in bridge.start_reasons
     finally:
         provider.release.set()
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1699,7 +1699,7 @@ async def test_unheard_live_lookup_ack_prefixes_deep_result() -> None:
     registry.install()
     identity = SessionIdentity("unheard-lookup-ack-prefix")
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await context.runtime.on_turn_committed("今天南京天气怎么样")
         await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
         await _wait_until(lambda: context.output_owner is None, timeout=2.0)
@@ -1710,7 +1710,7 @@ async def test_unheard_live_lookup_ack_prefixes_deep_result() -> None:
         assert provider.output_texts[-1] == f"{BRIDGE_PHRASES[1]}南京今天多云，气温二十二度。"
     finally:
         provider.release.set()
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1781,7 +1781,7 @@ async def test_started_live_lookup_ack_is_not_preempted_by_deep_result() -> None
     identity = SessionIdentity("started-ack-not-preempted")
     session = bridge.bridge.open(identity)
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await context.runtime.on_turn_committed("今天南京天气怎么样")
         await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
         await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
@@ -1818,7 +1818,7 @@ async def test_started_live_lookup_ack_is_not_preempted_by_deep_result() -> None
     finally:
         provider.ack_hold.set()
         provider.release.set()
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1876,7 +1876,7 @@ async def test_heard_ack_then_duplicate_turn_commit_does_not_repeat_filler() -> 
     identity = SessionIdentity("heard-ack-duplicate-turn")
     session = bridge.bridge.open(identity)
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await context.runtime.on_turn_committed("今天南京天气怎么样")
         await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
         await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
@@ -1905,7 +1905,7 @@ async def test_heard_ack_then_duplicate_turn_commit_does_not_repeat_filler() -> 
         assert provider.output_texts[-1] == "南京今天多云，气温二十二度。"
     finally:
         provider.release.set()
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1963,7 +1963,7 @@ async def test_duplicate_turn_commit_does_not_emit_a_second_lookup_ack() -> None
     identity = SessionIdentity("duplicate-commit-single-lookup-ack")
     session = bridge.bridge.open(identity)
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await context.runtime.on_turn_committed("今天南京天气怎么样")
         await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
         await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
@@ -1996,7 +1996,7 @@ async def test_duplicate_turn_commit_does_not_emit_a_second_lookup_ack() -> None
         assert provider.output_texts[-1] == "南京今天多云，气温二十二度。"
     finally:
         provider.release.set()
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -2053,7 +2053,7 @@ async def test_later_live_lookup_still_announces_itself() -> None:
     identity = SessionIdentity("later-lookup-announces-itself")
     session = bridge.bridge.open(identity)
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await context.runtime.on_turn_committed("今天南京天气怎么样")
         await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
         await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
@@ -2090,7 +2090,7 @@ async def test_later_live_lookup_still_announces_itself() -> None:
         )
     finally:
         provider.release.set()
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -2220,7 +2220,7 @@ async def test_duplicate_turn_commit_is_skipped_after_ack_playback_completed() -
         assert provider.output_texts[-1] == "南京今天多云，气温二十二度。"
     finally:
         provider.release.set()
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -2321,7 +2321,7 @@ async def test_qa_blocked_duplicate_still_delivers_the_first_answer() -> None:
         )
     finally:
         provider.release.set()
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -2383,7 +2383,7 @@ async def test_qa_weather_result_survives_empty_vad_tail(result_before_tail: boo
         assert context.runtime.fence.turn_id == fence.turn_id
     finally:
         provider.release.set()
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -2482,7 +2482,7 @@ async def test_qa_evidence_less_vad_cannot_hold_weather_result_past_cap(
             assert context.runtime.fence.turn_id == fence.turn_id
     finally:
         provider.release.set()
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -2529,7 +2529,7 @@ async def test_qa_empty_tail_does_not_revive_invalid_weather_output(invalidator:
         elif invalidator == "identity":
             context.runtime.orchestrator.bump_session_epoch(fence.session_epoch + 1)
         elif invalidator == "close":
-            await registry._finalize_session(identity.session_id)
+            await registry.finalize_session(identity.session_id)
         elif invalidator == "standby":
             context.standby_requested = True
         elif invalidator == "stream":
@@ -2556,7 +2556,7 @@ async def test_qa_empty_tail_does_not_revive_invalid_weather_output(invalidator:
         assert context.output_retry_task is None
     finally:
         provider.release.set()
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -2584,7 +2584,7 @@ async def test_qa_conversation_or_failed_lookup_queues_during_empty_vad(
                 registry, identity, bridge, provider, session, "今天南京天气怎么样"
             )
         else:
-            context = await registry._get_or_create(identity)
+            context = await registry.open_session(identity)
             fence = await context.runtime.on_turn_committed("给我讲个故事")
             context.playback.start(fence)
         endpoint = await _qa_open_empty_vad_tail(registry, context, session, identity)
@@ -2604,7 +2604,7 @@ async def test_qa_conversation_or_failed_lookup_queues_during_empty_vad(
         await _finish_output_owner_playback(registry, identity, bridge, session)
     finally:
         provider.release.set()
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -2622,7 +2622,7 @@ async def test_queued_ack_and_deep_result_survive_internal_output_handoffs(
     registry.install()
     identity = SessionIdentity(f"queued-ack-deep-handoff-{preempt_owner}")
     session = bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     try:
         fence = await context.runtime.on_turn_committed("你好")
         context.playback.start(fence)
@@ -2676,7 +2676,7 @@ async def test_queued_ack_and_deep_result_survive_internal_output_handoffs(
         assert len(bridge.frames) == 3
         assert context.runtime.fence.turn_id == fence.turn_id
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -2743,7 +2743,7 @@ async def test_qa_same_question_after_delivered_answer_is_not_blocked() -> None:
         assert repeat_fence is not None
     finally:
         provider.release.set()
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -2783,7 +2783,7 @@ async def test_qa_different_question_in_delegation_window_is_not_blocked() -> No
         assert repeat_fence is not None
     finally:
         provider.release.set()
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -2899,7 +2899,7 @@ async def test_qa_different_question_delivers_after_superseding_old_delegation()
     finally:
         provider.release_by_text.setdefault(first_question, asyncio.Event()).set()
         provider.release_by_text.setdefault(second_question, asyncio.Event()).set()
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -2920,7 +2920,7 @@ async def test_qa_released_delegation_local_fallback_emits_audio() -> None:
     identity = SessionIdentity("qa-released-fallback-audio")
     bridge.bridge.open(identity)
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         query = "今天南京天气怎么样"
         fence = await context.runtime.on_turn_committed(query)
         context.playback.start(fence)
@@ -2932,7 +2932,7 @@ async def test_qa_released_delegation_local_fallback_emits_audio() -> None:
         assert bridge.frames, "local fallback emitted no audio frame"
         assert context.output_owner is not None
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -2988,7 +2988,7 @@ async def test_slow_lookup_uses_a_single_cue() -> None:
     identity = SessionIdentity("slow-lookup-single-cue")
     session = bridge.bridge.open(identity)
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await context.runtime.on_turn_committed("今天南京天气怎么样")
         await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
         await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
@@ -3002,7 +3002,7 @@ async def test_slow_lookup_uses_a_single_cue() -> None:
         ]
     finally:
         provider.release.set()
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -3024,7 +3024,7 @@ async def test_stale_generation_media_delegation_produces_no_output() -> None:
     )
     registry.install()
     identity = SessionIdentity("stale-delegation")
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     first_fence = await context.runtime.on_turn_committed("今天南京天气怎么样")
     claim = context.delegation_output_claims[first_fence]
 
@@ -3045,7 +3045,7 @@ async def test_stale_generation_media_delegation_produces_no_output() -> None:
     assert provider.output_kinds == []
     assert provider.reply_calls == 0
     assert provider.delegations == [("今天南京天气怎么样", first_fence)]
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -3063,7 +3063,7 @@ async def test_concurrent_media_normal_replies_produce_only_one_local_output_aft
     )
     registry.install()
     identity = SessionIdentity("delegation-duplicate-guard")
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     query = "今天南京天气怎么样"
     fence = await context.runtime.on_turn_committed(query)
     context.playback.start(fence)
@@ -3079,7 +3079,7 @@ async def test_concurrent_media_normal_replies_produce_only_one_local_output_aft
     assert claim.state is DelegationOutputState.RELEASED
     assert provider.reply_calls == 1
     assert provider.output_kinds == []
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -3094,7 +3094,7 @@ async def test_playback_ack_without_text_spans_still_completes_speaking() -> Non
     registry.install()
     identity = SessionIdentity("no-span-ack-session")
     session = bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     fence = GenerationFence(identity.session_id, 1, 1, 0)
     assert await context.runtime.accept_media_generation(fence, cause="test")
     await context.runtime.on_assistant_speaking("你好。")

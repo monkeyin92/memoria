@@ -1,0 +1,1266 @@
+{
+  "core_to_media": [
+    {
+      "accepted": {
+        "interaction_authority": "INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE",
+        "state": "CONVERSATION_STATE_LISTENING"
+      }
+    },
+    {
+      "floor_effect": {
+        "effect_id": "golden-normal-turn:1:floor:1:0",
+        "expires_at_ms": "<time>",
+        "floor_epoch": "1",
+        "floor_state": "FLOOR_STATE_SILENCE",
+        "source_event_id": "media_session_ready"
+      }
+    },
+    {
+      "client": {
+        "json": {
+          "context_version": 0,
+          "event_id": "golden-normal-turn:1:1",
+          "generation_id": 0,
+          "payload": {
+            "capture_end_sample": 1,
+            "capture_start_sample": 0,
+            "floor_state": "user_holds_floor",
+            "history_eligible": false,
+            "persist_as_turn": false,
+            "projection_revision": 1,
+            "provisional_id": "golden-normal-turn:1:1:1",
+            "provisional_turn_id": 1,
+            "reason": "",
+            "speaker": "user",
+            "speaker_evidence": {
+              "authority_verified": false,
+              "reason_code": "classification_pending",
+              "speaker_class": "uncertain"
+            },
+            "stream_epoch": 1,
+            "text": ""
+          },
+          "protocol": "media-v1",
+          "sequence": 1,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-normal-turn",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "turn.provisional.started",
+          "v": 1
+        },
+        "sequence": "1",
+        "type": "turn.provisional.started"
+      }
+    },
+    {
+      "floor_effect": {
+        "effect_id": "golden-normal-turn:1:floor:2:2",
+        "expires_at_ms": "<time>",
+        "floor_epoch": "2",
+        "floor_state": "FLOOR_STATE_USER_HOLDS_FLOOR",
+        "sequence": "2",
+        "source_event_id": "assistant_state:user_speaking"
+      }
+    },
+    {
+      "client": {
+        "json": {
+          "context_version": 0,
+          "event_id": "golden-normal-turn:1:3",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "detail": {
+              "cause": "vad_start",
+              "from": "connecting",
+              "to": "user_speaking"
+            },
+            "device_id": null,
+            "event_sequence": 1,
+            "generation_id": 0,
+            "name": "interaction_phase",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-normal-turn",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 3,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-normal-turn",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "3",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "client": {
+        "json": {
+          "context_version": 0,
+          "event_id": "golden-normal-turn:1:4",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 2,
+            "generation_id": 0,
+            "phase": "user_speaking",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-normal-turn",
+            "state": "user_speaking",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 4,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-normal-turn",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "assistant_state",
+          "v": 1
+        },
+        "sequence": "4",
+        "type": "assistant_state"
+      }
+    },
+    {
+      "client": {
+        "json": {
+          "context_version": 0,
+          "event_id": "golden-normal-turn:1:5",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 3,
+            "generation_id": 0,
+            "name": "interaction_prefetch_started",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-normal-turn",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 5,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-normal-turn",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "5",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "client": {
+        "json": {
+          "context_version": 0,
+          "event_id": "golden-normal-turn:1:6",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 4,
+            "generation_id": 0,
+            "name": "interaction_fast_model_warmup",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-normal-turn",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 6,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-normal-turn",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "6",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "transcript": {
+        "capture_end_sample": "8000",
+        "confidence": 0.99,
+        "final": true,
+        "revision": "1",
+        "sequence": "7",
+        "text": "你好"
+      }
+    },
+    {
+      "client": {
+        "json": {
+          "context_version": 0,
+          "event_id": "golden-normal-turn:1:8",
+          "generation_id": 0,
+          "payload": {
+            "capture_end_sample": 8000,
+            "capture_start_sample": 0,
+            "floor_state": "user_holds_floor",
+            "history_eligible": false,
+            "persist_as_turn": false,
+            "projection_revision": 2,
+            "provisional_id": "golden-normal-turn:1:1:1",
+            "provisional_turn_id": 1,
+            "reason": "",
+            "speaker": "user",
+            "speaker_evidence": {
+              "authority_verified": false,
+              "reason_code": "classification_pending",
+              "speaker_class": "uncertain"
+            },
+            "stream_epoch": 1,
+            "text": "你好"
+          },
+          "protocol": "media-v1",
+          "sequence": 8,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-normal-turn",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "turn.provisional.patch",
+          "v": 1
+        },
+        "sequence": "8",
+        "type": "turn.provisional.patch"
+      }
+    },
+    {
+      "client": {
+        "json": {
+          "context_version": 0,
+          "event_id": "golden-normal-turn:1:9",
+          "generation_id": 0,
+          "payload": {
+            "capture_end_sample": 8001,
+            "capture_start_sample": 0,
+            "floor_state": "uncertain",
+            "history_eligible": false,
+            "persist_as_turn": false,
+            "projection_revision": 3,
+            "provisional_id": "golden-normal-turn:1:1:1",
+            "provisional_turn_id": 1,
+            "reason": "",
+            "speaker": "user",
+            "speaker_evidence": {
+              "authority_verified": false,
+              "reason_code": "classification_pending",
+              "speaker_class": "uncertain"
+            },
+            "stream_epoch": 1,
+            "text": "你好"
+          },
+          "protocol": "media-v1",
+          "sequence": 9,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-normal-turn",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "turn.provisional.patch",
+          "v": 1
+        },
+        "sequence": "9",
+        "type": "turn.provisional.patch"
+      }
+    },
+    {
+      "generation": {
+        "action": "GENERATION_ACTION_START",
+        "context_version": "1",
+        "generation_id": "1",
+        "reason": "user_turn_committed",
+        "sequence": "10",
+        "turn_id": "1"
+      }
+    },
+    {
+      "client": {
+        "context_version": "1",
+        "generation_id": "1",
+        "json": {
+          "context_version": 1,
+          "event_id": "golden-normal-turn:1:11",
+          "generation_id": 1,
+          "payload": {
+            "capture_end_sample": 8000,
+            "capture_start_sample": 0,
+            "context_version": 1,
+            "final": true,
+            "history_eligible": false,
+            "persist_as_turn": true,
+            "projection_revision": 6,
+            "provisional_id": "golden-normal-turn:1:1:1",
+            "speaker": "user",
+            "speaker_evidence": {
+              "authority_verified": false,
+              "reason_code": "authority_unconfigured",
+              "speaker_class": "uncertain"
+            },
+            "stream_epoch": 1,
+            "text": "你好",
+            "turn_revision": 6
+          },
+          "protocol": "media-v1",
+          "sequence": 11,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-normal-turn",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 1,
+          "type": "turn.committed",
+          "v": 1
+        },
+        "sequence": "11",
+        "turn_id": "1",
+        "type": "turn.committed"
+      }
+    },
+    {
+      "client": {
+        "json": {
+          "context_version": 0,
+          "event_id": "golden-normal-turn:1:12",
+          "generation_id": 0,
+          "payload": {
+            "capture_end_sample": 8001,
+            "capture_start_sample": 0,
+            "floor_state": "user_holds_floor",
+            "history_eligible": false,
+            "persist_as_turn": false,
+            "projection_revision": 5,
+            "provisional_id": "golden-normal-turn:1:1:1",
+            "provisional_turn_id": 1,
+            "reason": "",
+            "speaker": "user",
+            "speaker_evidence": {
+              "authority_verified": false,
+              "reason_code": "authority_unconfigured",
+              "speaker_class": "uncertain"
+            },
+            "stream_epoch": 1,
+            "text": "你好"
+          },
+          "protocol": "media-v1",
+          "sequence": 12,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-normal-turn",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "turn.provisional.patch",
+          "v": 1
+        },
+        "sequence": "12",
+        "type": "turn.provisional.patch"
+      }
+    },
+    {
+      "floor_effect": {
+        "context_version": "1",
+        "effect_id": "golden-normal-turn:1:floor:3:13",
+        "expires_at_ms": "<time>",
+        "floor_epoch": "3",
+        "floor_state": "FLOOR_STATE_SILENCE",
+        "generation_id": "1",
+        "sequence": "13",
+        "source_event_id": "assistant_state:thinking_silent",
+        "turn_id": "1"
+      }
+    },
+    {
+      "client": {
+        "context_version": "1",
+        "json": {
+          "context_version": 1,
+          "event_id": "golden-normal-turn:1:14",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 5,
+            "generation_id": 0,
+            "name": "last_user_audio",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-normal-turn",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 14,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-normal-turn",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "14",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "client": {
+        "context_version": "1",
+        "generation_id": "1",
+        "json": {
+          "context_version": 1,
+          "event_id": "golden-normal-turn:1:15",
+          "generation_id": 1,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 6,
+            "evidence": [
+              "fallback:neutral"
+            ],
+            "expires_after_ms": 30000,
+            "generation_id": 1,
+            "label": "neutral",
+            "persist": false,
+            "provider_confidence": null,
+            "provider_label": "neutral",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-normal-turn",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 1
+          },
+          "protocol": "media-v1",
+          "sequence": 15,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-normal-turn",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 1,
+          "type": "emotion_observation",
+          "v": 1
+        },
+        "sequence": "15",
+        "turn_id": "1",
+        "type": "emotion_observation"
+      }
+    },
+    {
+      "client": {
+        "context_version": "1",
+        "json": {
+          "context_version": 1,
+          "event_id": "golden-normal-turn:1:16",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "detail": {
+              "cause": "turn_committed",
+              "from": "user_speaking",
+              "to": "thinking_silent"
+            },
+            "device_id": null,
+            "event_sequence": 7,
+            "generation_id": 0,
+            "name": "interaction_phase",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-normal-turn",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 16,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-normal-turn",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "16",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "client": {
+        "context_version": "1",
+        "generation_id": "1",
+        "json": {
+          "context_version": 1,
+          "event_id": "golden-normal-turn:1:17",
+          "generation_id": 1,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 8,
+            "generation_id": 1,
+            "phase": "thinking_silent",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-normal-turn",
+            "state": "thinking_silent",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 1
+          },
+          "protocol": "media-v1",
+          "sequence": 17,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-normal-turn",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 1,
+          "type": "assistant_state",
+          "v": 1
+        },
+        "sequence": "17",
+        "turn_id": "1",
+        "type": "assistant_state"
+      }
+    },
+    {
+      "client": {
+        "context_version": "1",
+        "json": {
+          "context_version": 1,
+          "event_id": "golden-normal-turn:1:18",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 9,
+            "generation_id": 0,
+            "name": "turn_committed",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-normal-turn",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 18,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-normal-turn",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "18",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "client": {
+        "context_version": "1",
+        "json": {
+          "context_version": 1,
+          "event_id": "golden-normal-turn:1:19",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 10,
+            "generation_id": 0,
+            "name": "interaction_context_prefetch_started",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-normal-turn",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 19,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-normal-turn",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "19",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "client": {
+        "context_version": "1",
+        "generation_id": "1",
+        "json": {
+          "context_version": 1,
+          "event_id": "golden-normal-turn:1:20",
+          "generation_id": 1,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 11,
+            "final": true,
+            "generation_id": 1,
+            "history_eligible": false,
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-normal-turn",
+            "speaker": "user",
+            "subject_revision": null,
+            "text": "你好",
+            "tool_epoch": 0,
+            "turn_id": 1,
+            "turn_revision": 6
+          },
+          "protocol": "media-v1",
+          "sequence": 20,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-normal-turn",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 1,
+          "type": "transcript_delta",
+          "v": 1
+        },
+        "sequence": "20",
+        "turn_id": "1",
+        "type": "transcript_delta"
+      }
+    },
+    {
+      "generation": {
+        "action": "GENERATION_ACTION_COMPLETE",
+        "context_version": "1",
+        "generation_id": "1",
+        "reason": "provider_reply_complete",
+        "sequence": "21",
+        "turn_id": "1"
+      }
+    },
+    {
+      "floor_effect": {
+        "context_version": "1",
+        "effect_id": "golden-normal-turn:1:floor:4:22",
+        "expires_at_ms": "<time>",
+        "floor_epoch": "4",
+        "floor_state": "FLOOR_STATE_ASSISTANT_HOLDS_FLOOR",
+        "generation_id": "1",
+        "sequence": "22",
+        "source_event_id": "assistant_state:speaking",
+        "turn_id": "1"
+      }
+    },
+    {
+      "audio": {
+        "context_version": "1",
+        "final_frame": true,
+        "first_frame": true,
+        "frame_samples": 160,
+        "generation_id": "1",
+        "pcm_s16le": "AgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwA=",
+        "turn_id": "1"
+      }
+    },
+    {
+      "client": {
+        "context_version": "1",
+        "json": {
+          "context_version": 1,
+          "event_id": "golden-normal-turn:1:23",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "detail": {
+              "cause": "assistant_speaking",
+              "from": "thinking_silent",
+              "to": "speaking"
+            },
+            "device_id": null,
+            "event_sequence": 12,
+            "generation_id": 0,
+            "name": "interaction_phase",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-normal-turn",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 23,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-normal-turn",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "23",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "client": {
+        "context_version": "1",
+        "generation_id": "1",
+        "json": {
+          "context_version": 1,
+          "event_id": "golden-normal-turn:1:24",
+          "generation_id": 1,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 13,
+            "generation_id": 1,
+            "phase": "speaking",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-normal-turn",
+            "state": "speaking",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 1
+          },
+          "protocol": "media-v1",
+          "sequence": 24,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-normal-turn",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 1,
+          "type": "assistant_state",
+          "v": 1
+        },
+        "sequence": "24",
+        "turn_id": "1",
+        "type": "assistant_state"
+      }
+    },
+    {
+      "client": {
+        "context_version": "1",
+        "generation_id": "1",
+        "json": {
+          "context_version": 1,
+          "event_id": "golden-normal-turn:1:25",
+          "generation_id": 1,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 14,
+            "expression": "neutral",
+            "generation_id": 1,
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-normal-turn",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 1
+          },
+          "protocol": "media-v1",
+          "sequence": 25,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-normal-turn",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 1,
+          "type": "assistant_expression",
+          "v": 1
+        },
+        "sequence": "25",
+        "turn_id": "1",
+        "type": "assistant_expression"
+      }
+    },
+    {
+      "client": {
+        "context_version": "1",
+        "generation_id": "1",
+        "json": {
+          "context_version": 1,
+          "event_id": "golden-normal-turn:1:26",
+          "generation_id": 1,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 15,
+            "final": false,
+            "generation_id": 1,
+            "history_eligible": false,
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-normal-turn",
+            "speaker": "assistant",
+            "subject_revision": null,
+            "text": "你好。",
+            "text_delivered": true,
+            "tool_epoch": 0,
+            "turn_id": 1,
+            "turn_revision": 1
+          },
+          "protocol": "media-v1",
+          "sequence": 26,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-normal-turn",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 1,
+          "type": "transcript_delta",
+          "v": 1
+        },
+        "sequence": "26",
+        "turn_id": "1",
+        "type": "transcript_delta"
+      }
+    },
+    {
+      "floor_effect": {
+        "context_version": "1",
+        "effect_id": "golden-normal-turn:1:floor:5:27",
+        "expires_at_ms": "<time>",
+        "floor_epoch": "5",
+        "floor_state": "FLOOR_STATE_SILENCE",
+        "generation_id": "1",
+        "sequence": "27",
+        "source_event_id": "assistant_state:listening",
+        "turn_id": "1"
+      }
+    },
+    {
+      "client": {
+        "context_version": "1",
+        "json": {
+          "context_version": 1,
+          "event_id": "golden-normal-turn:1:28",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "detail": {
+              "cause": "media_playback_ack",
+              "from": "speaking",
+              "to": "listening"
+            },
+            "device_id": null,
+            "event_sequence": 16,
+            "generation_id": 0,
+            "name": "interaction_phase",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-normal-turn",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 28,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-normal-turn",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "28",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "client": {
+        "context_version": "1",
+        "generation_id": "1",
+        "json": {
+          "context_version": 1,
+          "event_id": "golden-normal-turn:1:29",
+          "generation_id": 1,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 17,
+            "generation_id": 1,
+            "phase": "listening",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-normal-turn",
+            "state": "listening",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 1
+          },
+          "protocol": "media-v1",
+          "sequence": 29,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-normal-turn",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 1,
+          "type": "assistant_state",
+          "v": 1
+        },
+        "sequence": "29",
+        "turn_id": "1",
+        "type": "assistant_state"
+      }
+    },
+    {
+      "client": {
+        "context_version": "1",
+        "generation_id": "1",
+        "json": {
+          "context_version": 1,
+          "event_id": "golden-normal-turn:1:30",
+          "generation_id": 1,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 18,
+            "final": true,
+            "generation_id": 1,
+            "heard": true,
+            "history_eligible": false,
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-normal-turn",
+            "speaker": "assistant",
+            "subject_revision": null,
+            "text": "你好。",
+            "text_delivered": true,
+            "tool_epoch": 0,
+            "turn_id": 1,
+            "turn_revision": 2
+          },
+          "protocol": "media-v1",
+          "sequence": 30,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-normal-turn",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 1,
+          "type": "transcript_delta",
+          "v": 1
+        },
+        "sequence": "30",
+        "turn_id": "1",
+        "type": "transcript_delta"
+      }
+    }
+  ],
+  "interaction_phases": [
+    {
+      "cause": "vad_start",
+      "from": "connecting",
+      "to": "user_speaking"
+    },
+    {
+      "cause": "turn_committed",
+      "from": "user_speaking",
+      "to": "thinking_silent"
+    },
+    {
+      "cause": "assistant_speaking",
+      "from": "thinking_silent",
+      "to": "speaking"
+    },
+    {
+      "cause": "media_playback_ack",
+      "from": "speaking",
+      "to": "listening"
+    }
+  ],
+  "reply_delivery": [
+    {
+      "actual_heard": false,
+      "delivery_id": "golden-normal-turn/epoch-0/turn-1/generation-1/tool-0",
+      "event_id": "04f019521f9232713027a2c495fa9db072207529ee22bd3da98112e6b2803d85",
+      "event_type": "first_frame_sent",
+      "first_frame_sent": true,
+      "generation_id": 1,
+      "occurred_at": "<time>",
+      "playback_ended": false,
+      "provider_completed": false,
+      "reason": "downlink_frame_accepted",
+      "schema_version": "reply-delivery-v1",
+      "session_epoch": 0,
+      "session_id": "golden-normal-turn",
+      "terminal_event": null,
+      "terminal_reason": null,
+      "tool_epoch": 0,
+      "turn_id": 1
+    },
+    {
+      "actual_heard": false,
+      "delivery_id": "golden-normal-turn/epoch-0/turn-1/generation-1/tool-0",
+      "event_id": "1fb347e221cb811769b372a3f183a1d83914ff88bc474712b35949a565d5fb16",
+      "event_type": "provider_completed",
+      "first_frame_sent": true,
+      "generation_id": 1,
+      "occurred_at": "<time>",
+      "playback_ended": false,
+      "provider_completed": true,
+      "reason": "provider_stream_complete",
+      "schema_version": "reply-delivery-v1",
+      "session_epoch": 0,
+      "session_id": "golden-normal-turn",
+      "terminal_event": null,
+      "terminal_reason": null,
+      "tool_epoch": 0,
+      "turn_id": 1
+    },
+    {
+      "actual_heard": true,
+      "delivery_id": "golden-normal-turn/epoch-0/turn-1/generation-1/tool-0",
+      "event_id": "115c7173e4ddb63d611bea28f4a5916f220f67f88e0c0080b042c614d0441c99",
+      "event_type": "actual_heard",
+      "first_frame_sent": true,
+      "generation_id": 1,
+      "occurred_at": "<time>",
+      "playback_ended": false,
+      "provider_completed": true,
+      "reason": "exact_playback_ack",
+      "schema_version": "reply-delivery-v1",
+      "session_epoch": 0,
+      "session_id": "golden-normal-turn",
+      "terminal_event": null,
+      "terminal_reason": null,
+      "tool_epoch": 0,
+      "turn_id": 1
+    },
+    {
+      "actual_heard": true,
+      "delivery_id": "golden-normal-turn/epoch-0/turn-1/generation-1/tool-0",
+      "event_id": "fbe40878d62fd52cbf96e875141e76ae91010a4acd659a8695732cb480c8110b",
+      "event_type": "playback_ended",
+      "first_frame_sent": true,
+      "generation_id": 1,
+      "occurred_at": "<time>",
+      "playback_ended": true,
+      "provider_completed": true,
+      "reason": "playback_completed",
+      "schema_version": "reply-delivery-v1",
+      "session_epoch": 0,
+      "session_id": "golden-normal-turn",
+      "terminal_event": "playback_ended",
+      "terminal_reason": "playback_completed",
+      "tool_epoch": 0,
+      "turn_id": 1
+    }
+  ],
+  "state_history": [
+    {
+      "cause": "",
+      "event": "prewarm_ok",
+      "from": "connecting",
+      "generation_id": 0,
+      "to": "listening",
+      "tool_epoch": 0,
+      "turn_id": 0
+    },
+    {
+      "cause": "",
+      "event": "vad_start",
+      "from": "listening",
+      "generation_id": 0,
+      "to": "user_speaking",
+      "tool_epoch": 0,
+      "turn_id": 0
+    },
+    {
+      "cause": "",
+      "event": "vad_pause_incomplete",
+      "from": "user_speaking",
+      "generation_id": 0,
+      "to": "eot_pending",
+      "tool_epoch": 0,
+      "turn_id": 0
+    },
+    {
+      "cause": "",
+      "event": "turn_end",
+      "from": "eot_pending",
+      "generation_id": 1,
+      "to": "thinking",
+      "tool_epoch": 0,
+      "turn_id": 1
+    },
+    {
+      "cause": "",
+      "event": "first_phrase_ready",
+      "from": "thinking",
+      "generation_id": 1,
+      "to": "speaking",
+      "tool_epoch": 0,
+      "turn_id": 1
+    },
+    {
+      "cause": "",
+      "event": "playback_done",
+      "from": "speaking",
+      "generation_id": 1,
+      "to": "listening",
+      "tool_epoch": 0,
+      "turn_id": 1
+    }
+  ]
+}

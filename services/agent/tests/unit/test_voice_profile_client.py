@@ -11,7 +11,7 @@ from services.agent.src.generation_output_policy import (
     frozen_companion_clone_permitted,
     generation_voice_reject_reason,
 )
-from services.agent.src.mode_policy_client import ModePolicy, ModePolicyClient
+from services.agent.src.mode_policy_client import ModePolicy, parse_mode_policy
 from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoiceTTS
 from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
 from services.agent.src.voice_profile_client import (
@@ -750,7 +750,7 @@ def _companion_clone_policy(*, provider: str, model: str, voice_id: str) -> Mode
             "voice_profile": True,
         },
     }
-    policy = ModePolicyClient._parse(payload)
+    policy = parse_mode_policy(payload)
     assert policy.available
     return policy
 
@@ -819,7 +819,7 @@ async def test_companion_mode_applies_a_matching_frozen_personal_clone() -> None
 
 @pytest.mark.asyncio
 async def test_wake_aligns_tts_to_the_frozen_catalog_companion() -> None:
-    policy = ModePolicyClient._parse(
+    policy = parse_mode_policy(
         {
             "interaction_mode": "companion",
             "session_focus": "chat",

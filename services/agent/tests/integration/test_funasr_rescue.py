@@ -13,7 +13,7 @@ from services.agent.src.providers.funasr_stt import (
     FunASRConfig,
     FunASRSession,
 )
-from services.agent.src.providers.sensevoice import SenseVoiceRescueConfig
+from services.agent.src.providers.sensevoice import SenseVoiceRescueConfig, slice_segment_pcm
 from services.agent.src.voice_core.media_protocol import AudioFrame, SessionIdentity
 from services.agent.src.voice_core.provider_adapter import ExistingVoiceProviderAdapter
 from services.agent.tests.integration.mock_servers import (
@@ -152,6 +152,12 @@ async def test_rescue_runs_when_provider_final_does_not_cover_segment(
     assert finals == ["兜底识别成功。"]
     assert rescue_server.requests == 1
     assert metrics.get("funasr_rescue_total", {"outcome": "rescued"}) == 1.0
+    # Only the uncovered tail (samples 1280..4000) is sent, and the synthetic
+    # final starts where the provider final ended instead of overlapping it.
+    assert rescue_server.received_bytes == (4_000 - 1_280) * 2
+    rescued = [e.sentence for e in events if e.event == "result-generated" and e.sentence]
+    assert rescued[0].begin_ms == round(1_280 * 1000 / 16_000)
+    assert rescued[0].end_ms == round(4_000 * 1000 / 16_000)
 
 
 @pytest.mark.asyncio
@@ -477,3 +483,13 @@ def test_rescue_text_counts_only_speech_characters(text: str, accepted: bool) ->
     config = SenseVoiceRescueConfig(endpoint="http://127.0.0.1:1/asr")
 
     assert config.accepts_text(text) is accepted
+
+
+def test_slice_segment_pcm_cuts_inside_chunk_and_skips_covered_chunks() -> None:
+    chunks = [b"\x01\x00" * 10, b"\x02\x00" * 10, b"\x03\x00" * 10]
+    ranges = [(0, 10), (10, 20), (30, 40)]  # gap between chunk 2 and 3
+    assert slice_segment_pcm(chunks, ranges, None) == (b"".join(chunks), 0)
+    pcm, start = slice_segment_pcm(chunks, ranges, 15)
+    assert (start, pcm) == (15, b"\x02\x00" * 5 + b"\x03\x00" * 10)
+    assert slice_segment_pcm(chunks, ranges, 20) == (chunks[2], 30)
+    assert slice_segment_pcm(chunks, ranges, 40) == (b"", None)

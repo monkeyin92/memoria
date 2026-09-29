@@ -30,7 +30,7 @@ class MediaSessionConnectionMixin:
         _sessions: dict[str, _MediaVoiceSession]
         _cleanup_tasks: dict[str, asyncio.Task[None]]
 
-        async def _get_or_create(self, identity: SessionIdentity) -> _MediaVoiceSession: ...
+        async def open_session(self, identity: SessionIdentity) -> _MediaVoiceSession: ...
 
         async def _cancel_audio_pump(self, context: _MediaVoiceSession) -> None: ...
 
@@ -73,7 +73,7 @@ class MediaSessionConnectionMixin:
         current = self._sessions.get(session.identity.session_id)
         if current is not None and (current.closed or current.standby_requested):
             return
-        context = await self._get_or_create(session.identity)
+        context = await self.open_session(session.identity)
         if context.closed or context.standby_requested or not session.accepts_input():
             return
         if event.type != "client.stop_assistant":
@@ -166,7 +166,7 @@ class MediaSessionConnectionMixin:
         if context is not None:
             self._pause_owner_silence_timer(context)
         if session.state == "closed" or session.terminal_requested:
-            await self._finalize_session(session_id)
+            await self.finalize_session(session_id)
             return
         # A gRPC stream closing is normally a transport reconnect, not a
         # conversation close. Keep the runtime/provider alive briefly so a
@@ -194,14 +194,14 @@ class MediaSessionConnectionMixin:
             # close the newly reconnected transport/context.
             if bridge_session is None or bridge_session.identity.stream_epoch != stream_epoch:
                 return
-            await self._finalize_session(session_id)
+            await self.finalize_session(session_id)
         except asyncio.CancelledError:
             return
         finally:
             if self._cleanup_tasks.get(session_id) is asyncio.current_task():
                 self._cleanup_tasks.pop(session_id, None)
 
-    async def _finalize_session(self, session_id: str) -> None:
+    async def finalize_session(self, session_id: str) -> None:
         cleanup = self._cleanup_tasks.pop(session_id, None)
         current_task = asyncio.current_task()
         if cleanup is not None and cleanup is not current_task and not cleanup.done():

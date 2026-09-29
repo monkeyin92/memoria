@@ -60,6 +60,7 @@ from services.agent.tests.unit.media_session_support import (
     _start_speaking_reply,
     _verified_owner_decision,
     _wait_until,
+    open_bridge_connection,
 )
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
@@ -79,13 +80,13 @@ async def test_max_user_speech_watchdog_is_cancelled_by_vad_end() -> None:
     )
     provider = FakeMediaProvider()
     bridge = MediaBridgeGrpcServer()
-    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    connection = open_bridge_connection(bridge, identity)
     registry = MediaVoiceCoreRegistry(
         bridge=bridge,
         provider_factory=lambda _identity: provider,
         max_user_speech_duration_s=0.03,
     )
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     session = connection.session
 
     await registry.on_speech_segment(
@@ -125,7 +126,7 @@ async def test_max_user_speech_watchdog_is_cancelled_by_vad_end() -> None:
         event.WhichOneof("event") != "state"
         for event in tuple(connection.outgoing._critical)  # noqa: SLF001 - queue seam under test
     )
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -141,7 +142,7 @@ async def test_media_registry_installs_direct_playback_stop_seam_as_safe_noop() 
         bridge=MediaBridgeGrpcServer(),
         session_factory=build_session,
     )
-    await registry._get_or_create(identity)
+    await registry.open_session(identity)
 
     seam = runtime.orchestrator.playback_stop_seam
     assert seam is not None
@@ -204,7 +205,7 @@ async def test_direct_playback_stop_seam_revokes_output_and_cancels_next_generat
         return MediaSessionResources(runtime=runtime, provider=provider)
 
     registry = MediaVoiceCoreRegistry(bridge=bridge, session_factory=build_session)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     fence = await runtime.on_turn_committed("你好")
     reply = asyncio.create_task(registry.generate_reply(identity.session_id, "你好", fence))
     await asyncio.wait_for(reply_started.wait(), timeout=1)
@@ -278,7 +279,7 @@ async def test_interrupt_assist_commit_keeps_provider_asr_open() -> None:
     )
     provider = FakeMediaProvider()
     bridge = MediaBridgeGrpcServer()
-    bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    open_bridge_connection(bridge, identity)
     registry = MediaVoiceCoreRegistry(
         bridge=bridge,
         provider_factory=lambda _identity: provider,
@@ -323,7 +324,7 @@ async def test_reconnect_rejects_runtime_authority_change_before_cleanup_cancel(
         binding_version=3,
         runtime_profile_version=27,
     )
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     cleanup = asyncio.create_task(asyncio.sleep(60))
     registry._cleanup_tasks[identity.session_id] = cleanup  # noqa: SLF001
 
@@ -392,7 +393,7 @@ async def test_reply_owner_and_task_are_revoked_before_slow_provider_cancel() ->
     )
     registry.install()
     identity = SessionIdentity("slow-provider-cancel")
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("你好")
     context.playback.start(fence)
     reply = asyncio.create_task(registry.generate_reply(identity.session_id, "你好", fence))
@@ -411,7 +412,7 @@ async def test_reply_owner_and_task_are_revoked_before_slow_provider_cancel() ->
         if not reply.done():
             reply.cancel()
         await asyncio.gather(reply, return_exceptions=True)
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -447,7 +448,7 @@ async def test_provider_cancel_failure_is_contained_and_reply_task_is_drained() 
     )
     registry.install()
     identity = SessionIdentity("failing-provider-cancel")
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("你好")
     context.playback.start(fence)
     reply = asyncio.create_task(registry.generate_reply(identity.session_id, "你好", fence))
@@ -488,14 +489,14 @@ async def test_empty_connect_vad_does_not_cancel_device_wake_ack() -> None:
 
     registry._speak_device_wake_ack = _inject_then_speak  # type: ignore[method-assign]
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         assert provider.texts == [device_wake_phrase(identity.session_id)]
         assert is_allowlisted_device_phrase(provider.texts[0])
         assert context.turn_start_sample is None
         await _wait_until(lambda: context.device_wake_ack_pending is False)
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -525,14 +526,14 @@ async def test_energy_connect_vad_at_sample_zero_does_not_cancel_device_wake_ack
 
     registry._speak_device_wake_ack = _inject_then_speak  # type: ignore[method-assign]
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         assert provider.texts == [device_wake_phrase(identity.session_id)]
         assert is_allowlisted_device_phrase(provider.texts[0])
         assert context.turn_start_sample is None
         await _wait_until(lambda: context.device_wake_ack_pending is False)
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -578,7 +579,7 @@ async def test_energy_connect_vad_after_admit_before_first_frame_does_not_cancel
     identity = _device_identity("device-energy-connect-vad-after-admit")
     session = bridge.bridge.open(identity)
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         assert context.device_wake_ack_pending is True
         await registry.on_speech_segment(
@@ -597,7 +598,7 @@ async def test_energy_connect_vad_after_admit_before_first_frame_does_not_cancel
         await _wait_until(lambda: context.device_wake_ack_pending is False)
         assert provider.texts == [device_wake_phrase(identity.session_id)]
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -620,7 +621,7 @@ async def test_media_delegation_initial_decision_timeout_replies_locally_and_can
     )
     registry.install()
     identity = SessionIdentity("delegation-decision-timeout")
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     task_manager = context.runtime.orchestrator.task_manager
     original_start = task_manager.start
 
@@ -655,7 +656,7 @@ async def test_media_delegation_initial_decision_timeout_replies_locally_and_can
     finally:
         start_gate.set()
         deep_gate.set()
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -729,7 +730,7 @@ async def test_started_live_lookup_ack_cancelled_does_not_repeat_filler() -> Non
     identity = SessionIdentity("started-ack-no-repeat-filler")
     session = bridge.bridge.open(identity)
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await context.runtime.on_turn_committed("今天南京天气怎么样")
         await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
         await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
@@ -757,7 +758,7 @@ async def test_started_live_lookup_ack_cancelled_does_not_repeat_filler() -> Non
     finally:
         provider.ack_hold.set()
         provider.release.set()
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -872,7 +873,7 @@ async def test_qa_weather_interrupt_restarts_output_after_old_dispatch_drains() 
         provider.finish_first.set()
         if cancellation is not None:
             await asyncio.gather(cancellation, return_exceptions=True)
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -982,7 +983,7 @@ async def test_media_vad_start_ducks_before_any_asr_result() -> None:
     bridge.emit_realtime_effect = emit_realtime_effect  # type: ignore[attr-defined,method-assign]
     identity = SessionIdentity("vad-duck-session", stream_epoch=1)
     session = bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     await context.runtime.on_assistant_speaking("还在播放的回答")
 
     await registry.on_speech_segment(
@@ -1039,7 +1040,7 @@ async def test_media_backchannel_restores_without_persisting_a_turn() -> None:
     bridge.emit_realtime_effect = emit_realtime_effect  # type: ignore[attr-defined,method-assign]
     identity = SessionIdentity("backchannel-session", stream_epoch=1)
     bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     await context.runtime.on_assistant_speaking("还在播放的回答")
     vad_segment = SpeechSegment(
         session_id=identity.session_id,
@@ -1122,7 +1123,7 @@ async def test_media_sustained_barge_in_restores_gain_and_commits() -> None:
     bridge.emit_realtime_effect = emit_realtime_effect  # type: ignore[attr-defined,method-assign]
     identity = SessionIdentity("barge-in-session", stream_epoch=1)
     bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     await context.runtime.on_assistant_speaking("还在播放的回答")
     bind_owner_policy(context.runtime)
 
@@ -1208,7 +1209,7 @@ async def test_media_known_bystander_speech_does_not_cancel_playback() -> None:
     bridge.emit_realtime_effect = emit_realtime_effect  # type: ignore[attr-defined,method-assign]
     identity = SessionIdentity("bystander-session", stream_epoch=1)
     bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     await context.runtime.on_assistant_speaking("还在播放的回答")
     bind_owner_policy(context.runtime)
 
@@ -1277,7 +1278,7 @@ async def test_media_echo_restores_without_cancelling_or_committing() -> None:
     registry.install()
     identity = SessionIdentity("echo-session", stream_epoch=1)
     bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     await context.runtime.on_assistant_speaking("正在播放的同一句话")
     before = context.runtime.fence
     assert context.runtime.ingest_media_speech_segment(
@@ -1495,7 +1496,7 @@ async def test_media_vad_without_asr_restores_duck_after_endpoint_grace() -> Non
     bridge.emit_realtime_effect = emit_realtime_effect  # type: ignore[attr-defined,method-assign]
     identity = SessionIdentity("no-asr-session", stream_epoch=1)
     session = bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     await context.runtime.on_assistant_speaking("还在播放的回答")
     for segment_id, sample, final in (
         ("vad-start", 0, False),
@@ -1536,7 +1537,7 @@ async def test_interruption_records_only_provider_timed_prefix_before_fence_chan
     )
     registry.install()
     identity = SessionIdentity("timed-interrupt-session")
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     fence = GenerationFence(identity.session_id, 1, 1, 0)
     context.playback.start(fence)
     assert context.playback.register_audio(fence, 0, 0, 2)
@@ -1708,8 +1709,8 @@ async def test_downlink_queue_overflow_cancels_runtime_and_provider() -> None:
     )
     registry.install()
     identity = SessionIdentity("overflow-registry-session")
-    connection = bridge._open_connection(identity)
-    context = await registry._get_or_create(identity)
+    connection = open_bridge_connection(bridge, identity)
+    context = await registry.open_session(identity)
     baseline = connection.outgoing.get_nowait()
     assert baseline is not None and baseline.WhichOneof("event") == "floor_effect"
     fence = GenerationFence(identity.session_id, 1, 1, 0)

@@ -116,7 +116,7 @@ class MediaSessionLifecycleMixin:
 
         async def on_downlink_overflow(self, session: MediaBridgeSession) -> None: ...
 
-        async def _finalize_session(self, session_id: str) -> None: ...
+        async def finalize_session(self, session_id: str) -> None: ...
 
         async def _emit_projection_patch(
             self, context: _MediaVoiceSession, patch: ProjectionPatch
@@ -254,8 +254,8 @@ class MediaSessionLifecycleMixin:
                 # session no longer share one authority fence.  Retire both
                 # sides instead of leaving an uncollectable split epoch.
                 with contextlib.suppress(Exception):
-                    await self._finalize_session(session_id)
-                # ``_finalize_session`` closes only the Registry-owned old
+                    await self.finalize_session(session_id)
+                # ``finalize_session`` closes only the Registry-owned old
                 # epoch.  The bridge is already on the replacement epoch, so
                 # its guarded close intentionally cannot remove this session.
                 self.bridge.bridge.close(session_id)
@@ -557,7 +557,7 @@ class MediaSessionLifecycleMixin:
             await self._close_unpublished_resources(runtime, provider, identity)
             raise
 
-    async def _get_or_create(self, identity: SessionIdentity) -> _MediaVoiceSession:
+    async def open_session(self, identity: SessionIdentity) -> _MediaVoiceSession:
         bridge_session = self.bridge.bridge.get(identity.session_id)
         if self.bridge.bridge.is_terminal(
             identity.session_id,
