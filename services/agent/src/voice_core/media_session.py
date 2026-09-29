@@ -36,6 +36,9 @@ from services.agent.src.voice_core.media_session_lifecycle import (
     MediaSessionLifecycleMixin,
 )
 from services.agent.src.voice_core.media_session_output import MediaOutputMixin
+from services.agent.src.voice_core.media_session_playback_stop import (
+    MediaPlaybackStopMixin,
+)
 from services.agent.src.voice_core.media_session_projection import (
     MediaSessionProjectionMixin,
 )
@@ -73,6 +76,7 @@ class MediaVoiceCoreRegistry(
     MediaSessionProjectionMixin,
     MediaSessionInputMixin,
     MediaSessionCommitMixin,
+    MediaPlaybackStopMixin,
     MediaTurnEndpointMixin,
     MediaOutputMixin,
 ):
