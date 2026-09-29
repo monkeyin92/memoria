@@ -10,8 +10,8 @@ With ``--skip-bootstrap`` the process deliberately mirrors what the SDK does on
 its own (no ``_apply_telemetry_privacy_defaults``), which is the anti-regression
 control: the canary must then reach the collector.
 
-Import order mirrors the shipped entrypoint (``services.agent.src.main``): the
-privacy defaults are applied by ``main()`` *before* anything imports
+Import order mirrors the shipped media bridge (``scripts.run_media_bridge``):
+the privacy defaults are applied *before* anything imports
 ``livekit.agents.telemetry.gen_ai``, which is where the SDK reads its
 content-capture switch (at import time).
 """
@@ -33,7 +33,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if not args.skip_bootstrap:
-        from services.agent.src.main import _apply_telemetry_privacy_defaults
+        from services.agent.src.telemetry_privacy import _apply_telemetry_privacy_defaults
 
         _apply_telemetry_privacy_defaults()
 

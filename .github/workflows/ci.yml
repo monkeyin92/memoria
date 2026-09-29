@@ -31,6 +31,7 @@ jobs:
               - 'services/control_api/tests/test_production_compose.py'
               - 'infra/Dockerfile.agent-source-overlay'
               - 'scripts/deploy_agent_component.sh'
+              - 'scripts/run_media_bridge.py'
               - 'scripts/verify_agent_release_artifact.py'
               - 'scripts/resolve_target_images.py'
             python:
@@ -59,7 +60,6 @@ jobs:
               - '!infra/Dockerfile.agent-source-overlay'
               - 'infra/Dockerfile.control-api'
               - 'infra/Dockerfile.control-api-source-overlay'
-              - 'infra/Dockerfile.miniprogram-gateway'
               - 'infra/Dockerfile.speaker-model'
             media_edge:
               - 'packages/proto/**'

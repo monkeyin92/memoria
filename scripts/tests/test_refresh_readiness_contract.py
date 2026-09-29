@@ -41,3 +41,17 @@ def test_compose_render_failure_is_reported_instead_of_masked() -> None:
     assert 'sed \'s/^/  compose: /\' "$compose_stderr" >&2' in script
     assert "compose config did not render JSON" in script
     assert "json.load(sys.stdin).get" not in script
+
+
+def test_smokes_run_in_the_media_bridge_after_the_livekit_retirement() -> None:
+    script = _script()
+
+    # The LiveKit worker and its room-service smoke are gone; the bridge runs the
+    # Agent image, so provider/env smokes run from its Compose service.
+    assert "livekit_smoke_test" not in script
+    assert "memoria-agent-1" not in script
+    assert 'require_live_service_image "$bridge_container" voice-core-media-bridge' in script
+    assert "--entrypoint /app/.venv/bin/python voice-core-media-bridge" in script
+    # `config` renders profiled services only when their profile is active.
+    assert script.count('--project-name "$project_name" --profile media-runtime') == 2
+    assert "Doubao, InterruptSemantic" not in script

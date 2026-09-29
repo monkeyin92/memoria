@@ -10,8 +10,6 @@ from pathlib import Path
 
 from services.agent.src.config import AgentSettings, validate_doubao_auth
 from services.control_api.app.config import ControlSettings
-from services.device_media_gateway.config import DeviceMediaGatewaySettings
-from services.miniprogram_gateway.config import MiniProgramGatewaySettings
 
 _AGENT_EXTRA_KEYS = frozenset(
     {
@@ -67,8 +65,6 @@ _CONTROL_EXTRA_KEYS = frozenset(
         "SENTRY_DSN",
     }
 )
-
-_GATEWAY_EXTRA_KEYS = frozenset({"LOG_LEVEL"})
 
 # The Go edge is a separate trust boundary.  Keep its JWT and bridge
 # connection material out of both Control API and Agent env files.
@@ -151,16 +147,73 @@ _RETIRED_KEYS = frozenset(
         "MEDIA_EDGE_WEBRTC_PUBLIC_IPS",
         "MEDIA_EDGE_WEBRTC_UDP_PORT_MAX",
         "MEDIA_EDGE_WEBRTC_UDP_PORT_MIN",
+        # The LiveKit server, the LiveKit Agent worker and the Python
+        # mini-program / device media gateways were retired on 2026-09-29,
+        # with the settings only they read (LiveKit rooms/tokens, coturn,
+        # StreamCore rollout, worker VAD/turn/preemption, the semantic
+        # interrupt classifier, the Vosk KWS). Devices reach Voice Core only
+        # through the Go media-edge.
+        "COTURN_CREDENTIAL_TTL_S",
+        "COTURN_REALM",
+        "COTURN_SHARED_SECRET",
+        "COTURN_URLS",
+        "DEVICE_GATEWAY_TICKET_TTL_S",
+        "DEVICE_MEDIA_DIRECT_CANARY_DEVICE_IDS",
+        "DEVICE_MEDIA_DIRECT_ROLLOUT_MODE",
+        "DEVICE_MEDIA_GATEWAY_HANDSHAKE_TIMEOUT_S",
+        "DEVICE_MEDIA_GATEWAY_MAX_OPUS_PAYLOAD_BYTES",
+        "DEVICE_MEDIA_GATEWAY_TICKET_MAX_TTL_S",
+        "DEVICE_MEDIA_GATEWAY_URL",
+        "DEVICE_MEDIA_RUNTIME",
+        "INTERRUPT_SEMANTIC_ENABLED",
+        "INTERRUPT_SEMANTIC_MODEL",
+        "INTERRUPT_SEMANTIC_TIMEOUT_S",
+        "LIVEKIT_ADAPTIVE_INTERRUPTION",
+        "LIVEKIT_AGENT_NAME",
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
+        "LIVEKIT_TURN_DETECTOR_VERSION",
+        "LIVEKIT_URL",
+        "MEDIA_RUNTIME_DEFAULT",
+        "MEMORIA_DEVICE_GATEWAY_TICKET_SECRET",
+        "MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET",
+        "MINIPROGRAM_GATEWAY_AEC_ACTIVE_WINDOW_MS",
+        "MINIPROGRAM_GATEWAY_AEC_CAPTURE_DIR",
+        "MINIPROGRAM_GATEWAY_AEC_CAPTURE_MAX_MS",
+        "MINIPROGRAM_GATEWAY_AEC_CAPTURE_SESSION_ID",
+        "MINIPROGRAM_GATEWAY_AEC_ENABLED",
+        "MINIPROGRAM_GATEWAY_AEC_MODE",
+        "MINIPROGRAM_GATEWAY_AEC_STREAM_DELAY_MS",
+        "MINIPROGRAM_GATEWAY_AUDIO_QUEUE_FRAMES",
+        "MINIPROGRAM_GATEWAY_DOWNLINK_SAMPLE_RATE",
+        "MINIPROGRAM_GATEWAY_EVENT_QUEUE_SIZE",
+        "MINIPROGRAM_GATEWAY_FRAME_MS",
+        "MINIPROGRAM_GATEWAY_GENERATION_QUARANTINE_MS",
+        "MINIPROGRAM_GATEWAY_HANDSHAKE_TIMEOUT_S",
+        "MINIPROGRAM_GATEWAY_LIVEKIT_TOKEN_TTL_S",
+        "MINIPROGRAM_GATEWAY_TICKET_MAX_TTL_S",
+        "MINIPROGRAM_GATEWAY_TICKET_TTL_S",
+        "MINIPROGRAM_GATEWAY_UPLINK_SAMPLE_RATE",
+        "MINIPROGRAM_KWS_ENABLED",
+        "MINIPROGRAM_KWS_KEYWORDS_FILE",
+        "MINIPROGRAM_KWS_MIN_CONFIDENCE",
+        "MINIPROGRAM_KWS_MODEL_DIR",
+        "MINIPROGRAM_MEDIA_GATEWAY_URL",
+        "MINIPROGRAM_POST_PLAYOUT_GUARD_MS",
+        "PREEMPTIVE_GENERATION",
+        "PREEMPTIVE_TTS",
+        "QWEN_EMOTION_ENABLED",
+        "SESSION_TOKEN_TTL_S",
+        "STREAMCORE_EXPERIMENT_PERCENT",
+        "STREAMCORE_KILL_SWITCH",
+        "STREAMCORE_SLO_GATE_ENABLED",
+        "STREAMCORE_WHIP_URL",
+        "VAD_MIN_SILENCE_DURATION_S",
     }
 )
 
 
-def _aliases(
-    settings_type: type[AgentSettings]
-    | type[ControlSettings]
-    | type[DeviceMediaGatewaySettings]
-    | type[MiniProgramGatewaySettings],
-) -> set[str]:
+def _aliases(settings_type: type[AgentSettings] | type[ControlSettings]) -> set[str]:
     return {
         str(field.alias)
         for field in settings_type.model_fields.values()
@@ -170,14 +223,8 @@ def _aliases(
 
 def split_env(
     values: dict[str, str],
-) -> tuple[
-    dict[str, str],
-    dict[str, str],
-    dict[str, str],
-    dict[str, str],
-    dict[str, str],
-    dict[str, str],
-]:
+) -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
+    """Return the (control, agent, speaker_model, media_edge) env files."""
     if "DOUBAO_TTS_SECRET_KEY" in values:
         raise ValueError("DOUBAO_TTS_SECRET_KEY is not used and must not be deployed")
     validate_doubao_auth(
@@ -243,27 +290,13 @@ def split_env(
             )
     control_keys = _aliases(ControlSettings) | set(_CONTROL_EXTRA_KEYS)
     agent_keys = _aliases(AgentSettings) | set(_AGENT_EXTRA_KEYS)
-    gateway_keys = _aliases(MiniProgramGatewaySettings) | set(_GATEWAY_EXTRA_KEYS)
-    device_gateway_keys = _aliases(DeviceMediaGatewaySettings) | set(_GATEWAY_EXTRA_KEYS)
     media_edge_keys = set(_MEDIA_EDGE_EXTRA_KEYS)
-    known = (
-        control_keys
-        | agent_keys
-        | gateway_keys
-        | device_gateway_keys
-        | media_edge_keys
-        | set(_RETIRED_KEYS)
-    )
+    known = control_keys | agent_keys | media_edge_keys | set(_RETIRED_KEYS)
     unknown = sorted(set(values) - known)
     if unknown:
         raise ValueError(f"unrouted production env keys: {', '.join(unknown)}")
     control = {key: value for key, value in values.items() if key in control_keys}
     agent = {key: value for key, value in values.items() if key in agent_keys}
-    gateway = {key: value for key, value in values.items() if key in gateway_keys}
-    device_gateway = {
-        key: value for key, value in values.items() if key in device_gateway_keys
-    }
-    device_gateway.pop("MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET", None)
     media_edge = {key: value for key, value in values.items() if key in media_edge_keys}
     capability_flags = (
         ("MEMORIA_ARCHIVE_WRITE_TOKEN", "MEMORIA_ARCHIVE_SINK_ENABLED", True),
@@ -275,7 +308,7 @@ def split_env(
             agent.pop(token, None)
     embedding_token = values.get("MEMORIA_SPEAKER_EMBEDDING_TOKEN", "").strip()
     speaker_model = {"MEMORIA_SPEAKER_MODEL_TOKEN": embedding_token} if embedding_token else {}
-    return control, agent, speaker_model, gateway, device_gateway, media_edge
+    return control, agent, speaker_model, media_edge
 
 
 def _read_env(path: Path) -> dict[str, str]:
@@ -324,34 +357,19 @@ def main() -> int:
         default=Path("/etc/memoria-speaker-model.env"),
     )
     parser.add_argument(
-        "--gateway",
-        type=Path,
-        default=Path("/etc/memoria-miniprogram-gateway.env"),
-    )
-    parser.add_argument(
-        "--device-gateway",
-        type=Path,
-        default=Path("/etc/memoria-device-media-gateway.env"),
-    )
-    parser.add_argument(
         "--media-edge",
         type=Path,
         default=Path("/etc/memoria-media-edge.env"),
     )
     args = parser.parse_args()
-    control, agent, speaker_model, gateway, device_gateway, media_edge = split_env(
-        _read_env(args.source)
-    )
+    control, agent, speaker_model, media_edge = split_env(_read_env(args.source))
     _write_env(args.control, control)
     _write_env(args.agent, agent)
     _write_env(args.speaker_model, speaker_model)
-    _write_env(args.gateway, gateway)
-    _write_env(args.device_gateway, device_gateway)
     _write_env(args.media_edge, media_edge)
     print(
-        f"wrote {len(control)} Control API keys, {len(agent)} Agent keys "
-        f"{len(speaker_model)} Speaker Model keys, {len(gateway)} Gateway keys, "
-        f"{len(device_gateway)} Device Gateway keys and {len(media_edge)} Media Edge keys"
+        f"wrote {len(control)} Control API keys, {len(agent)} Agent keys, "
+        f"{len(speaker_model)} Speaker Model keys and {len(media_edge)} Media Edge keys"
     )
     return 0
 

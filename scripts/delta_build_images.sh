@@ -33,7 +33,7 @@ python3 "$ROOT/scripts/verify_release_source.py" \
   --release-tag "$NEW_TAG"
 
 base_commit=""
-for image in agent control-api speaker-model miniprogram-gateway; do
+for image in agent control-api speaker-model; do
   if ! docker image inspect "memoria-${image}:${BASE_TAG}" >/dev/null 2>&1; then
     echo "missing base image memoria-${image}:${BASE_TAG}; run the full image build" >&2
     exit 1
@@ -73,7 +73,6 @@ dependency_inputs=(
   uv.lock
   infra/Dockerfile.agent
   infra/Dockerfile.control-api
-  infra/Dockerfile.miniprogram-gateway
   infra/Dockerfile.speaker-model
   infra/requirements-speaker-model.txt
   infra/patches/3d-speaker-campplus-average-pool.patch
@@ -107,17 +106,21 @@ USER root
 WORKDIR /app
 COPY services ./services
 COPY packages ./packages
-COPY scripts/verify_env.py scripts/livekit_smoke_test.py scripts/provider_smoke_test.py ./scripts/
+COPY scripts/verify_env.py scripts/provider_smoke_test.py scripts/run_media_bridge.py \\
+     scripts/run_media_slo_reporter.py scripts/media_runtime_smoke.py ./scripts/
 # Delta builds replace the source tree on top of a base image that may predate
 # the gate, so the verifier is copied from this source tree rather than reused
 # from the base, and then re-runs against the combined candidate.
 COPY scripts/verify_agent_release_artifact.py ./scripts/
 COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json
 COPY infra/voices/doubao_voice_ids.json ./infra/voices/doubao_voice_ids.json
-COPY infra/kws/keywords.txt ./infra/kws/keywords.txt
 RUN chmod -R u=rwX,go=rX /app/services /app/packages /app/scripts /app/infra
 RUN /app/.venv/bin/python -m scripts.verify_agent_release_artifact
 USER 65532:65532
+# A base image built before the LiveKit worker was retired still names its
+# entrypoint; pin the media bridge entrypoint the full build now ships.
+ENTRYPOINT ["/app/.venv/bin/python"]
+CMD ["-m", "scripts.run_media_bridge"]
 EOF
 
 cat >"$tmp/Dockerfile.control-api" <<EOF
@@ -149,20 +152,6 @@ COPY services/speaker_model /app/services/speaker_model
 USER 65532:65532
 EOF
 
-cat >"$tmp/Dockerfile.miniprogram-gateway" <<EOF
-FROM memoria-miniprogram-gateway:${BASE_TAG}
-ARG MEMORIA_RELEASE_COMMIT
-ARG MEMORIA_RELEASE_TAG
-LABEL org.opencontainers.image.revision="\${MEMORIA_RELEASE_COMMIT}" \\
-      org.opencontainers.image.version="\${MEMORIA_RELEASE_TAG}" \\
-      com.memoria.release.role="miniprogram-gateway"
-USER root
-WORKDIR /app
-COPY services ./services
-COPY packages ./packages
-USER 65532:65532
-EOF
-
 echo "delta-building memoria-agent:${NEW_TAG} from ${BASE_TAG}"
 "$ROOT/scripts/docker_build.sh" \
   --pull=false \
@@ -187,16 +176,7 @@ echo "delta-relabeling memoria-speaker-model:${NEW_TAG} from ${BASE_TAG}"
   --build-arg MEMORIA_RELEASE_TAG="$NEW_TAG" \
   -f "$tmp/Dockerfile.speaker-model" -t "memoria-speaker-model:${NEW_TAG}" "$ROOT"
 
-echo "delta-building memoria-miniprogram-gateway:${NEW_TAG} from ${BASE_TAG}"
-"$ROOT/scripts/docker_build.sh" \
-  --pull=false \
-  --network=none \
-  --build-arg MEMORIA_RELEASE_COMMIT="$MEMORIA_RELEASE_COMMIT" \
-  --build-arg MEMORIA_RELEASE_TAG="$NEW_TAG" \
-  -f "$tmp/Dockerfile.miniprogram-gateway" \
-  -t "memoria-miniprogram-gateway:${NEW_TAG}" "$ROOT"
-
-for image in agent control-api speaker-model miniprogram-gateway; do
+for image in agent control-api speaker-model; do
   built_arch="$(docker image inspect "memoria-${image}:${NEW_TAG}" \
     --format '{{.Architecture}}')"
   if [[ "$built_arch" != "$TARGET_ARCH" ]]; then
@@ -205,7 +185,7 @@ for image in agent control-api speaker-model miniprogram-gateway; do
   fi
 done
 
-for image in agent control-api speaker-model miniprogram-gateway; do
+for image in agent control-api speaker-model; do
   labels="$(docker image inspect "memoria-${image}:${NEW_TAG}" \
     --format '{{index .Config.Labels "org.opencontainers.image.revision"}} {{index .Config.Labels "org.opencontainers.image.version"}} {{index .Config.Labels "com.memoria.release.role"}}')"
   if [[ "$labels" != "$MEMORIA_RELEASE_COMMIT $NEW_TAG $image" ]]; then
@@ -215,5 +195,5 @@ for image in agent control-api speaker-model miniprogram-gateway; do
 done
 
 docker images --format '{{.Repository}}:{{.Tag}} {{.Size}} {{.CreatedSince}}' \
-  | grep -E "memoria-(agent|control-api|speaker-model|miniprogram-gateway):${NEW_TAG}" || true
+  | grep -E "memoria-(agent|control-api|speaker-model):${NEW_TAG}" || true
 echo "delta_build_ok ${NEW_TAG}"

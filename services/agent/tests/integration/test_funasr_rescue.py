@@ -8,13 +8,10 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-from livekit import rtc
-from livekit.agents import stt
 from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.providers.funasr_stt import (
     FunASRConfig,
     FunASRSession,
-    FunASRSTT,
 )
 from services.agent.src.providers.sensevoice import SenseVoiceRescueConfig
 from services.agent.src.voice_core.media_protocol import AudioFrame, SessionIdentity
@@ -329,75 +326,6 @@ async def test_rescue_after_emptyaudio_synthesizes_boundary(
         await session.aclose()
     finally:
         srv.stop()
-
-
-@pytest.mark.asyncio
-async def test_recognize_stream_rescue_final_precedes_end_of_speech(
-    silent_funasr: MockFunASRServer,
-) -> None:
-    # The offline rescue is slower than the post-boundary tail grace; the
-    # consumer must keep the boundary window open until the rescue settles.
-    srv = MockSenseVoiceServer(scenario="happy", delay_s=0.3)
-    srv.start()
-    try:
-        plugin = FunASRSTT(
-            FunASRConfig(
-                api_key="test",
-                ws_url=silent_funasr.ws_url,
-                post_finish_tail_grace_s=0.05,
-                rescue_config=SenseVoiceRescueConfig(endpoint=srv.url),
-            )
-        )
-        stream = plugin.stream()
-
-        async def _collect() -> list[stt.SpeechEvent]:
-            return [event async for event in stream]
-
-        collector = asyncio.create_task(_collect())
-        samples = 4000
-        stream.push_frame(
-            rtc.AudioFrame(
-                data=_speech_pcm(samples),
-                sample_rate=16000,
-                num_channels=1,
-                samples_per_channel=samples,
-            )
-        )
-        plugin.flush_speech_segment()
-        for _ in range(200):
-            if srv.requests >= 1:
-                break
-            await asyncio.sleep(0.01)
-        await asyncio.sleep(0.5)
-        stream.end_input()
-
-        events = await asyncio.wait_for(collector, timeout=10)
-        relevant = [
-            event.type
-            for event in events
-            if event.type
-            in {
-                stt.SpeechEventType.START_OF_SPEECH,
-                stt.SpeechEventType.FINAL_TRANSCRIPT,
-                stt.SpeechEventType.END_OF_SPEECH,
-            }
-        ]
-        assert relevant == [
-            stt.SpeechEventType.START_OF_SPEECH,
-            stt.SpeechEventType.FINAL_TRANSCRIPT,
-            stt.SpeechEventType.END_OF_SPEECH,
-        ]
-        finals = [
-            event.alternatives[0].text
-            for event in events
-            if event.type is stt.SpeechEventType.FINAL_TRANSCRIPT and event.alternatives
-        ]
-        assert finals == ["兜底识别成功。"]
-        assert srv.received_bytes == samples * 2
-        await plugin.aclose()
-    finally:
-        srv.stop()
-        await plugin.aclose()
 
 
 @pytest.mark.asyncio

@@ -413,7 +413,7 @@ def test_unknown_exit_code_never_claims_success_and_does_not_skip_other_streams(
             return self._code
 
     unknown = UnknownExit()
-    processes = [("bridge", unknown), ("agent", _RunningProcess()), ("edge", _RunningProcess())]
+    processes = [("bridge", unknown), ("edge", _RunningProcess())]
     state = capture.Capture(
         processes=processes,
         streams={label: {"status": "running", "exit_code": None} for label, _ in processes},
@@ -427,10 +427,9 @@ def test_unknown_exit_code_never_claims_success_and_does_not_skip_other_streams(
     assert any(
         "wait after SIGKILL for log stream bridge:" in error for error in state.cleanup_errors
     )
-    for label in ("agent", "edge"):
-        assert state.streams[label]["status"] == "stopped_by_capture"
-        assert state.streams[label]["exit_code"] == -15
-        assert state.streams[label]["forced_kill"] is False
+    assert state.streams["edge"]["status"] == "stopped_by_capture"
+    assert state.streams["edge"]["exit_code"] == -15
+    assert state.streams["edge"]["forced_kill"] is False
 
 
 def test_unreadable_returncode_does_not_skip_cleanup_of_the_next_stream():
@@ -442,14 +441,14 @@ def test_unreadable_returncode_does_not_skip_cleanup_of_the_next_stream():
         def wait(self, timeout=None):
             return None
 
-    processes = [("bridge", UnreadableExit()), ("agent", _RunningProcess())]
+    processes = [("bridge", UnreadableExit()), ("edge", _RunningProcess())]
     state = capture.Capture(
         processes=processes,
         streams={label: {"status": "running", "exit_code": None} for label, _ in processes},
     )
     capture._stop_log_processes(state)
     assert state.streams["bridge"]["status"] == "cleanup_failed"
-    assert state.streams["agent"]["status"] == "stopped_by_capture"
+    assert state.streams["edge"]["status"] == "stopped_by_capture"
     assert any("returncode unavailable" in error for error in state.cleanup_errors)
 
 
@@ -512,7 +511,7 @@ def test_poll_failure_during_cleanup_still_reaps_all_streams_and_writes_metadata
         )
         == 1
     )
-    assert len(processes) == 3
+    assert len(processes) == 2
     assert all(process.waited and process.returncode == -15 for process in processes)
     metadata = json.loads((out / "capture.json").read_text())
     assert metadata["capture_status"] == "completed"
@@ -621,10 +620,13 @@ def test_live_server_log_streams_are_healthy_and_recorded(tmp_path, capsys, monk
     assert "CAPTURE_HEALTH healthy" in printed
     metadata = json.loads((out / "capture.json").read_text())
     assert metadata["log_stream_health"] == "healthy"
-    assert sorted(metadata["log_streams"]) == ["agent", "bridge", "edge"]
+    assert sorted(metadata["log_streams"]) == ["bridge", "edge"]
     assert metadata["log_streams"]["bridge"]["container"] == "memoria-voice-core-media-bridge-1"
+    # The LiveKit worker container is stopped after cutover; following it would
+    # end at once and mark every capture degraded.
+    assert "memoria-agent-1" not in [container for _, container in capture.CONTAINERS]
     assert metadata["log_streams"]["bridge"]["status"] == "stopped_by_capture"
-    for label in ("bridge", "agent", "edge"):
+    for label in ("bridge", "edge"):
         assert (out / f"{label}.log").exists()
 
 
@@ -901,7 +903,7 @@ def test_a_stop_at_the_first_metadata_write_is_recorded_and_keeps_the_port_close
     )
     captured = capsys.readouterr()
     assert "STOP_BEFORE_START signal=SIGTERM serial_not_opened=True" in captured.out
-    for label in ("bridge", "agent", "edge"):
+    for label in ("bridge", "edge"):
         assert f"LOG_STREAM_NOT_STARTED label={label} reason=stopping" in captured.out
         assert f"log stream {label} not_started (exit=None)" in captured.out
     assert "the serial port was never opened (the capture stopped before it opened)" in captured.out
@@ -909,7 +911,7 @@ def test_a_stop_at_the_first_metadata_write_is_recorded_and_keeps_the_port_close
 
     assert seen["ports"] == []
     assert not (out / "serial.log").exists()
-    for label in ("bridge", "agent", "edge"):
+    for label in ("bridge", "edge"):
         assert not (out / f"{label}.log").exists()
     metadata = json.loads((out / "capture.json").read_text())
     assert metadata["capture_status"] == "completed"
@@ -918,7 +920,7 @@ def test_a_stop_at_the_first_metadata_write_is_recorded_and_keeps_the_port_close
     assert metadata["stop_signal"] == "SIGTERM"
     assert sorted(metadata["stop_signal_handlers"]) == ["SIGHUP", "SIGINT", "SIGQUIT", "SIGTERM"]
     assert metadata["cleanup_errors"] == []
-    assert sorted(metadata["log_streams"]) == ["agent", "bridge", "edge"]
+    assert sorted(metadata["log_streams"]) == ["bridge", "edge"]
     assert metadata["log_stream_health"] == "degraded"
     for number in STOP_SIGNALS:
         assert signal.getsignal(number) is before[number]
@@ -1025,15 +1027,15 @@ def test_one_cleanup_error_neither_skips_the_others_nor_the_metadata(
     cleanup_errors = metadata["cleanup_errors"]
     recorded = "\n".join(cleanup_errors)
     assert "closing the serial port: OSError: [Errno 5] port wedged" in recorded
-    for label in ("bridge", "agent", "edge"):
+    for label in ("bridge", "edge"):
         assert f"terminating log stream {label}: OSError: terminate refused" in recorded
-    assert recorded.count("closing a log file handle: OSError: bad file descriptor") == 3
+    assert recorded.count("closing a log file handle: OSError: bad file descriptor") == 2
     # Every later step still ran: the port was closed, every process was signalled and
     # every handle was closed, even though the first of each raised.
     assert [port.close_attempts for port in seen["ports"]] == [1]
     assert [port.closed for port in seen["ports"]] == [False]
-    assert [process.terminate_attempts for process in processes] == [1, 1, 1]
-    assert [handle.close_attempts for handle in handles] == [1, 1, 1]
+    assert [process.terminate_attempts for process in processes] == [1, 1]
+    assert [handle.close_attempts for handle in handles] == [1, 1]
 
     assert metadata["capture_status"] == "completed"
     assert metadata["completed_at_local"]
@@ -1084,7 +1086,7 @@ def test_a_failed_kill_and_a_timed_out_wait_after_kill_are_recorded(
     metadata = json.loads((out / "capture.json").read_text())
     cleanup_errors = metadata["cleanup_errors"]
     recorded = "\n".join(cleanup_errors)
-    for label in ("bridge", "agent", "edge"):
+    for label in ("bridge", "edge"):
         assert f"SIGKILL for log stream {label}: OSError: kill refused" in recorded
         assert f"wait after SIGKILL for log stream {label}: TimeoutExpired:" in recorded
     # The bounded finalization still reached the metadata, and claims no success.
@@ -1153,10 +1155,10 @@ def test_a_non_timeout_wait_error_still_reclaims_the_stream_and_says_so(
     capsys.readouterr()
     metadata = json.loads((out / "capture.json").read_text())
     recorded = "\n".join(metadata["cleanup_errors"])
-    for label in ("bridge", "agent", "edge"):
+    for label in ("bridge", "edge"):
         assert f"waiting for log stream {label}: OSError: wait failed" in recorded
     # Every stream was still reclaimed with SIGKILL, and the record says it stopped.
-    assert [process.killed for process in processes] == [True, True, True]
+    assert [process.killed for process in processes] == [True, True]
     assert metadata["log_streams"]["bridge"]["status"] == "stopped_by_capture"
     assert metadata["log_streams"]["bridge"]["exit_code"] == -9
     # SIGKILL was used (and reclaimed the stream), so it is recorded, with the reason it
@@ -1212,7 +1214,7 @@ def test_a_stream_that_exited_before_the_drain_is_not_reported_as_stopped(
     captured = capsys.readouterr().out
     assert "LOG_STREAM_EXIT label=bridge exit=0 observed=at_drain" in captured
     metadata = json.loads((out / "capture.json").read_text())
-    for label in ("bridge", "agent", "edge"):
+    for label in ("bridge", "edge"):
         assert metadata["log_streams"][label]["status"] == "exited_early"
         assert metadata["log_streams"][label]["exit_code"] == 0
     assert "stopped_by_capture" not in json.dumps(metadata["log_streams"])

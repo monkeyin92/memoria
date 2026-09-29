@@ -29,7 +29,9 @@ import sys
 from collections.abc import Mapping
 from typing import Any
 
-SERVICES = ("agent", "voice-core-media-bridge")
+# The LiveKit worker ("agent") was retired; the media bridge is the only
+# service the Agent component lane cuts over.
+SERVICES = ("voice-core-media-bridge",)
 PROJECT_NAME = "memoria"
 BASE_COMPOSE_FILE = "docker-compose.production.yml"
 PROFILE = "media-runtime"
@@ -125,8 +127,8 @@ def verify_resolved_services(
                     f"does not match expected tag '{candidate_tag}'"
                 )
 
-    # Agent and the media bridge ship as one runnable artifact, so a divergence
-    # between them is never an intentional override.
+    # Several target services selected together ship as one runnable artifact,
+    # so a divergence between them is never an intentional override.
     if len(resolved_images) == len(target_services) and len(set(resolved_images.values())) > 1:
         errors.append(f"target services resolved to inconsistent images: {resolved_images}")
 
@@ -223,7 +225,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--services",
         default=",".join(SERVICES),
-        help="Comma-separated target services (default: agent and voice-core-media-bridge)",
+        help="Comma-separated target services (default: voice-core-media-bridge)",
     )
     parser.add_argument(
         "--profile",
@@ -322,8 +324,8 @@ def main(argv: list[str]) -> int:
         return 2
     live_stack_image = (args.stack_image or "").strip() or stack_image(stack_tag)
 
-    # Refuse to run a consistency-only check: two services on the live image
-    # would otherwise pass, which is exactly what this gate must stop.
+    # Refuse to run a consistency-only check: services on the live image would
+    # otherwise pass, which is exactly what this gate must stop.
     if not candidate_tag and not expected_images:
         print(
             "Error: explicit candidate identity is required; refusing to check internal "

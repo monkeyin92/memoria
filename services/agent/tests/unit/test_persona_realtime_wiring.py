@@ -17,6 +17,9 @@ from services.agent.src.response_planner_client import (
 )
 from services.agent.src.voice_profile_client import VoiceRuntimeProfile
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
+from services.agent.tests.unit.runtime_state_helpers import (
+    commit_media_turn,
+)
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -142,7 +145,7 @@ async def test_owner_realtime_agent_answers_without_persona_capsule(
     monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
 
     await asyncio.wait_for(
-        agent.on_user_turn_completed(chat_ctx, Message("说说你的看法")),
+        commit_media_turn(agent, Message("说说你的看法")),
         timeout=0.05,
     )
     assert [item async for item in agent.llm_node(chat_ctx, [], None)] == ["好的。"]
@@ -185,7 +188,7 @@ async def test_guest_cannot_read_cached_persona_and_baseline_context_is_unchange
     chat_ctx.add_message(role="user", content="你好")
     monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
 
-    await agent.on_user_turn_completed(chat_ctx, Message("你好"))
+    await commit_media_turn(agent, Message("你好"))
     assert [item async for item in agent.llm_node(chat_ctx, [], None)] == ["你好。"]
     await asyncio.sleep(0)
 
@@ -230,7 +233,7 @@ async def test_guest_context_cannot_see_owner_turns_or_use_tools(
     chat_ctx.add_message(role="user", content="你们刚才聊了什么？")
     monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
 
-    await agent.on_user_turn_completed(chat_ctx, Message("你们刚才聊了什么？"))
+    await commit_media_turn(agent, Message("你们刚才聊了什么？"))
     assert [item async for item in agent.llm_node(chat_ctx, [object()], None)]
 
     conversation = [
@@ -289,7 +292,7 @@ async def test_uncertain_same_session_keeps_safe_followup_context(
     chat_ctx.add_message(role="user", content=current_user)
     monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
 
-    await agent.on_user_turn_completed(chat_ctx, Message(current_user))
+    await commit_media_turn(agent, Message(current_user))
     assert [item async for item in agent.llm_node(chat_ctx, [], None)]
 
     conversation = [
@@ -362,7 +365,7 @@ async def test_uncertain_uses_generic_chat_without_private_history_memory_or_too
     chat_ctx.add_message(role="user", content="怎么开始？")
     monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
 
-    await agent.on_user_turn_completed(chat_ctx, Message("怎么开始？"))
+    await commit_media_turn(agent, Message("怎么开始？"))
     await asyncio.sleep(0)
     assert [item async for item in agent.llm_node(chat_ctx, [object()], None)]
 
@@ -426,7 +429,7 @@ async def test_uncertain_cannot_resume_an_owner_interrupted_reply(
     chat_ctx.add_message(role="user", content=compound_resume)
     monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
 
-    await agent.on_user_turn_completed(chat_ctx, Message(compound_resume))
+    await commit_media_turn(agent, Message(compound_resume))
     assert [item async for item in agent.llm_node(chat_ctx, [object()], None)]
 
     conversation = [
@@ -495,7 +498,7 @@ async def test_same_shadow_speaker_fallback_does_not_reuse_heard_history(
     chat_ctx.add_message(role="user", content=compound_resume)
     monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
 
-    await agent.on_user_turn_completed(chat_ctx, Message(compound_resume))
+    await commit_media_turn(agent, Message(compound_resume))
     assert [item async for item in agent.llm_node(chat_ctx, [object()], None)]
 
     conversation = [
@@ -657,7 +660,7 @@ async def test_completed_voice_resolution_is_applied_without_network_wait() -> N
         voice_profile_client=VoiceStub(),  # type: ignore[arg-type]
     )
 
-    await agent.on_user_turn_completed(llm.ChatContext.empty(), Message("继续"))
+    await commit_media_turn(agent, Message("继续"))
 
     assert applied == [("seed-tts-2.0", "zh_male_yangguangqingnian_uranus_bigtts")]
     await runtime.close()
@@ -793,7 +796,7 @@ async def test_first_turn_waits_for_voice_profile_refresh_before_applying_voice(
     )
 
     turn = asyncio.create_task(
-        agent.on_user_turn_completed(llm.ChatContext.empty(), Message("你好"))
+        commit_media_turn(agent, Message("你好"))
     )
     await asyncio.sleep(0)
     assert not turn.done()

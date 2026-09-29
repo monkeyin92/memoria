@@ -11,13 +11,11 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import time
 from datetime import UTC, datetime
 from typing import Any
 
 from services.agent.src.orchestration.cue_scheduler import ListenerCue
 from services.agent.src.orchestration.state_machine import (
-    ConversationState,
     InteractionPhase,
 )
 
@@ -87,61 +85,10 @@ def cancel_listener_cue_candidate(runtime: Any) -> None:
     runtime._listener_cue_candidate_task = None
 
 
-def schedule_listener_cue(
-    runtime: Any,
-    text: str,
-    *,
-    now_ns: int | None,
-) -> None:
-    """Schedule one cue after the micro pause; the whole chain stays under
-    ``_listener_cue_candidate_task`` so rotation/close own it."""
-
-    runtime._cancel_listener_cue_candidate()
-    observed_at_ns = now_ns if now_ns is not None else time.monotonic_ns()
-    frozen_fence = runtime.fence
-
-    async def _after_micro_pause() -> None:
-        try:
-            await asyncio.sleep(runtime.cue_scheduler.pause_ms / 1000)
-            cue = runtime.cue_scheduler.observe_partial(
-                text,
-                fence=frozen_fence,
-                now_ns=observed_at_ns + runtime.cue_scheduler.pause_ms * 1_000_000,
-                aec_healthy=runtime._listener_cue_aec_healthy,
-                main_response_active=runtime.orchestrator.state
-                in {
-                    ConversationState.THINKING,
-                    ConversationState.SPEAKING,
-                    ConversationState.TOOL_WAITING,
-                },
-            )
-            if cue is not None:
-                await runtime._play_listener_cue(cue)
-        finally:
-            # The loop may already be closed during teardown; never raise
-            # from a finally on that path (the reference is also cleared by
-            # the rotation/close seams).
-            try:
-                still_owner = (
-                    runtime._listener_cue_candidate_task
-                    is asyncio.current_task()
-                )
-            except RuntimeError:
-                still_owner = False
-            if still_owner:
-                runtime._listener_cue_candidate_task = None
-
-    runtime._listener_cue_candidate_task = runtime._spawn(
-        _after_micro_pause(),
-        name="listener-cue-micro-pause",
-    )
-
-
 __all__ = [
     "ListenerCue",
     "cancel_listener_cue",
     "cancel_listener_cue_candidate",
     "publish_listener_cue",
-    "schedule_listener_cue",
     "stop_cue_handle",
 ]

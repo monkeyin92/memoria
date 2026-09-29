@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from typing import Any
 
@@ -137,12 +138,15 @@ def _patch_run(
     server: _Server,
     session_factory: _SessionFactory,
     wait_error: BaseException | None = None,
+    heartbeat: object | None = None,
 ) -> None:
     class _StopEvent:
         def set(self) -> None:
             return None
 
         async def wait(self) -> None:
+            # Yield once so tasks started before the wait get to run.
+            await asyncio.sleep(0)
             if wait_error is not None:
                 raise wait_error
 
@@ -158,10 +162,16 @@ def _patch_run(
         lambda _settings: session_factory,
     )
     monkeypatch.setattr(run_media_bridge, "_tls_for_settings", lambda _settings: None)
+    monkeypatch.setattr(run_media_bridge, "build_agent_heartbeat", lambda _settings: heartbeat)
     monkeypatch.setattr(
         run_media_bridge,
         "asyncio",
-        SimpleNamespace(Event=_StopEvent, get_running_loop=lambda: _Loop()),
+        SimpleNamespace(
+            Event=_StopEvent,
+            get_running_loop=lambda: _Loop(),
+            create_task=asyncio.create_task,
+            CancelledError=asyncio.CancelledError,
+        ),
     )
 
 
@@ -252,3 +262,75 @@ async def test_run_applies_telemetry_privacy_defaults_before_loading_settings(
     import os
     assert os.environ.get("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT") == "0"
     assert os.environ.get("LIVEKIT_TELEMETRY_ALLOW_PII") == "0"
+
+
+class _Heartbeat:
+    def __init__(self, server: _Server) -> None:
+        self.server = server
+        self.events: list[str] = []
+        self.cancelled = False
+
+    def mark_worker_ready(self) -> None:
+        self.events.append("ready")
+
+    def mark_worker_stopped(self) -> None:
+        self.events.append(f"stopped server_stopped={self.server.stopped}")
+
+    async def run(self) -> None:
+        self.events.append("run")
+        try:
+            await asyncio.Event().wait()
+        finally:
+            self.cancelled = True
+
+
+@pytest.mark.asyncio
+async def test_run_reports_worker_ready_only_while_grpc_server_serves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = _Server()
+    heartbeat = _Heartbeat(server)
+    _patch_run(
+        monkeypatch,
+        server=server,
+        session_factory=_SessionFactory(),
+        heartbeat=heartbeat,
+    )
+
+    class _Registry:
+        def __init__(self, **_kwargs: object) -> None:
+            return None
+
+        def install(self) -> None:
+            return None
+
+    monkeypatch.setattr(run_media_bridge, "MediaVoiceCoreRegistry", _Registry)
+
+    await run_media_bridge.run()
+
+    # Ready after the server started; stopped (and the loop cancelled) before
+    # the server shuts down.
+    assert heartbeat.events[:2] == ["ready", "run"]
+    assert heartbeat.events[-1] == "stopped server_stopped=False"
+    assert heartbeat.cancelled
+    assert server.stopped
+
+
+@pytest.mark.asyncio
+async def test_run_never_marks_ready_when_grpc_server_fails_to_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = _Server(start_error=RuntimeError("start failed"))
+    heartbeat = _Heartbeat(server)
+    _patch_run(
+        monkeypatch,
+        server=server,
+        session_factory=_SessionFactory(),
+        heartbeat=heartbeat,
+    )
+
+    with pytest.raises(RuntimeError, match="start failed"):
+        await run_media_bridge.run()
+
+    assert "ready" not in heartbeat.events
+    assert "run" not in heartbeat.events

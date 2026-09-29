@@ -1,22 +1,19 @@
-"""Control-plane selection and short-lived media-runtime credentials."""
+"""Short-lived media-runtime credentials minted by the control plane."""
 
 from __future__ import annotations
 
 import hashlib
-import re
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Final, Literal
+from typing import Any, Final
 
 import jwt
 
 from services.control_api.app.wake_words import DEFAULT_WAKE_WORD_ID, WAKE_WORD_IDS
 
-MediaRuntime = Literal["livekit", "streamcore"]
-DeviceMediaRuntime = Literal["livekit_compat", "direct_voice_core"]
 DEVICE_AUDIO_MODES: Final = frozenset(
     {"half_duplex_safe", "interrupt_assist", "full_duplex_verified"}
 )
@@ -25,19 +22,15 @@ DEVICE_BARGE_IN_KINDS: Final = frozenset({"none", "button", "keyword", "voice"})
 DEVICE_LEARNING_MODES: Final = frozenset({"off", "tutor_english", "tutor_homework"})
 
 # Direct hardware media ticket contract (ADR-0035, plan 10.2): the Go Media
-# Edge verifies these EdDSA JWTs against its JWKS.  The audience and type are
-# deliberately distinct from the legacy HS256 device gateway ticket so the two
-# ticket families can never authenticate the same socket.
-# The audience is dedicated to the direct hardware path and differs from the
-# H5 streamcore audience ("memoria-media"); the Go edge pins the same value
-# through MEDIA_EDGE_DEVICE_JWT_AUDIENCE, so H5 tokens can never open a device
-# socket and device tickets can never be replayed against WHIP.
+# Edge verifies these EdDSA JWTs against its JWKS.  The audience is dedicated
+# to the direct hardware path and differs from the H5 streamcore audience
+# ("memoria-media"); the Go edge pins the same value through
+# MEDIA_EDGE_DEVICE_JWT_AUDIENCE, so H5 tokens can never open a device socket
+# and device tickets can never be replayed against WHIP.
 DEVICE_MEDIA_AUDIENCE: Final = "memoria-media-edge"
 DEVICE_MEDIA_TOKEN_TYPE: Final = "memoria_device_media"
 DEVICE_UINT32_MAX: Final = (1 << 32) - 1
 DEVICE_STREAM_EPOCH_MAX: Final = DEVICE_UINT32_MAX
-_DEVICE_CANARY_ID_RE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
-_DEVICE_CANARY_MAX_IDS: Final = 256
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,13 +38,6 @@ class DeviceDirectMediaTicket:
     token: str
     expires_at: datetime
     jti: str
-
-
-@dataclass(frozen=True, slots=True)
-class MediaRuntimeDecision:
-    runtime: MediaRuntime
-    rollback_required: bool = False
-    reason: str = "configured"
 
 
 def _secret(settings: Any) -> str:
@@ -78,34 +64,6 @@ def _private_key(settings: Any) -> str:
     if len(material) > 16_384:
         raise ValueError("StreamCore private key is too large")
     return material.strip()
-
-
-def select_media_runtime(
-    settings: Any,
-    *,
-    user_id: str,
-    client_platform: str,
-    device_id: str | None = None,
-) -> MediaRuntime:
-    """Return a server-owned runtime flag; clients cannot force rollout."""
-
-    if client_platform != "h5":
-        return "livekit"
-    if bool(getattr(settings, "streamcore_kill_switch", False)):
-        return "livekit"
-    if str(getattr(settings, "media_runtime_default", "livekit")) != "streamcore":
-        return "livekit"
-    whip_url = str(getattr(settings, "streamcore_whip_url", "")).strip()
-    if not whip_url:
-        return "livekit"
-    percent = int(getattr(settings, "streamcore_experiment_percent", 0))
-    if percent <= 0:
-        return "livekit"
-    if percent >= 100:
-        return "streamcore"
-    key = f"{user_id}:{device_id or ''}".encode()
-    bucket = int.from_bytes(hashlib.sha256(key).digest()[:4], "big") % 100
-    return "streamcore" if bucket < percent else "livekit"
 
 
 def mint_streamcore_token(
@@ -167,53 +125,6 @@ def mint_streamcore_token(
     if isinstance(encoded, bytes):
         return encoded.decode("ascii"), expires_at
     return encoded, expires_at
-
-
-def direct_canary_device_ids(settings: Any) -> frozenset[str]:
-    """Parse the exact server-owned Direct device allowlist.
-
-    A malformed list fails closed as a configuration error; callers selecting
-    a runtime catch that error and retain the compatibility path. Production
-    startup validation rejects the same configuration before serving traffic.
-    """
-
-    raw = str(getattr(settings, "device_media_direct_canary_device_ids", "") or "").strip()
-    if not raw:
-        return frozenset()
-    parts = tuple(part.strip() for part in raw.split(","))
-    if (
-        any(not part or _DEVICE_CANARY_ID_RE.fullmatch(part) is None for part in parts)
-        or len(parts) > _DEVICE_CANARY_MAX_IDS
-        or len(set(parts)) != len(parts)
-    ):
-        raise ValueError("invalid DEVICE_MEDIA_DIRECT_CANARY_DEVICE_IDS")
-    return frozenset(parts)
-
-
-def select_device_media_runtime(
-    settings: Any,
-    *,
-    device_id: str | None = None,
-) -> DeviceMediaRuntime:
-    """Return the server-owned, device-fenced hardware media runtime."""
-
-    value = str(getattr(settings, "device_media_runtime", "livekit_compat"))
-    if value != "direct_voice_core":
-        return "livekit_compat"
-    rollout_mode = str(
-        getattr(settings, "device_media_direct_rollout_mode", "allowlist") or ""
-    ).strip()
-    if rollout_mode == "all":
-        return "direct_voice_core"
-    if rollout_mode != "allowlist" or not device_id:
-        return "livekit_compat"
-    try:
-        canary_ids = direct_canary_device_ids(settings)
-    except ValueError:
-        return "livekit_compat"
-    if device_id in canary_ids:
-        return "direct_voice_core"
-    return "livekit_compat"
 
 
 def mint_device_direct_media_ticket(
@@ -404,56 +315,10 @@ def _validate_device_settings_claim(
     }
 
 
-def decide_media_runtime(
-    settings: Any,
-    *,
-    user_id: str,
-    client_platform: str,
-    device_id: str | None = None,
-    observed_slo: Mapping[str, float] | None = None,
-) -> MediaRuntimeDecision:
-    """Apply the deterministic rollout flag and optional SLO rollback gate."""
-
-    selected = select_media_runtime(
-        settings,
-        user_id=user_id,
-        client_platform=client_platform,
-        device_id=device_id,
-    )
-    if selected != "streamcore" or observed_slo is None:
-        if (
-            selected == "streamcore"
-            and bool(getattr(settings, "streamcore_slo_gate_enabled", False))
-            and observed_slo is None
-        ):
-            return MediaRuntimeDecision(
-                "livekit",
-                rollback_required=True,
-                reason="missing_media_slo_snapshot",
-            )
-        return MediaRuntimeDecision(selected)
-    from services.agent.src.voice_core.slo import evaluate_slo
-
-    report = evaluate_slo(observed_slo)
-    if report.rollback_required:
-        return MediaRuntimeDecision(
-            "livekit",
-            rollback_required=True,
-            reason=";".join(report.failures),
-        )
-    return MediaRuntimeDecision("streamcore")
-
-
 __all__ = [
     "DEVICE_MEDIA_AUDIENCE",
     "DEVICE_MEDIA_TOKEN_TYPE",
     "DeviceDirectMediaTicket",
-    "direct_canary_device_ids",
-    "DeviceMediaRuntime",
-    "MediaRuntimeDecision",
-    "decide_media_runtime",
     "mint_device_direct_media_ticket",
     "mint_streamcore_token",
-    "select_device_media_runtime",
-    "select_media_runtime",
 ]

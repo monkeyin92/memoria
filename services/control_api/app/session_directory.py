@@ -39,6 +39,9 @@ class SessionOwnershipConflict(SessionEpochConflict):
     """The caller no longer owns the route fencing lease."""
 
 
+RouteMediaRuntime = Literal["streamcore", "direct_voice_core"]
+
+
 @dataclass(frozen=True, slots=True)
 class SessionRoute:
     session_id: str
@@ -51,7 +54,7 @@ class SessionRoute:
     expires_at: datetime
     owner_instance_id: str
     ownership_epoch: int
-    media_runtime: Literal["livekit", "streamcore", "direct_voice_core"] = "livekit"
+    media_runtime: RouteMediaRuntime = "direct_voice_core"
     state: Literal["active", "draining"] = "active"
 
     @property
@@ -89,10 +92,11 @@ class SessionRoute:
         return value
 
 
-def _coerce_media_runtime(value: object) -> Literal["livekit", "streamcore", "direct_voice_core"]:
-    if value == "direct_voice_core":
-        return "direct_voice_core"
-    return "streamcore" if value == "streamcore" else "livekit"
+def _coerce_media_runtime(value: object) -> RouteMediaRuntime:
+    # Routes leased before the LiveKit retirement carried "livekit".  Nothing
+    # targets such a route any more (it is not StreamCore), and its lease
+    # expires on its own.
+    return "streamcore" if value == "streamcore" else "direct_voice_core"
 
 
 Clock = Callable[[], datetime]
@@ -188,7 +192,7 @@ return 1
         ttl_s: int | None,
         owner_instance_id: str,
         ownership_epoch: int,
-        media_runtime: Literal["livekit", "streamcore", "direct_voice_core"] = "livekit",
+        media_runtime: RouteMediaRuntime = "direct_voice_core",
         state: Literal["active", "draining"] = "active",
     ) -> SessionRoute:
         self._validate_ids(
@@ -287,7 +291,7 @@ return 1
         stream_epoch: int = 1,
         generation: int = 0,
         ttl_s: int | None = None,
-        media_runtime: Literal["livekit", "streamcore", "direct_voice_core"] = "livekit",
+        media_runtime: RouteMediaRuntime = "direct_voice_core",
         owner_instance_id: str | None = None,
     ) -> SessionRoute:
         owner = (owner_instance_id or media_edge_id).strip()
@@ -559,72 +563,6 @@ return 1
             owner_instance_id=owner,
             ownership_epoch=ownership_epoch,
             media_runtime=current.media_runtime,
-        )
-        if self._redis is not None:
-            return await self._redis_replace(
-                current,
-                replacement,
-                owner_instance_id=owner,
-                expected_ownership_epoch=ownership_epoch,
-            )
-        return await self._replace_local(
-            current,
-            replacement,
-            owner_instance_id=owner,
-            expected_ownership_epoch=ownership_epoch,
-        )
-
-    async def fallback_to_livekit(
-        self,
-        session_id: str,
-        *,
-        expected_stream_epoch: int | None = None,
-        ttl_s: int | None = None,
-        owner_instance_id: str | None = None,
-        expected_ownership_epoch: int | None = None,
-    ) -> SessionRoute:
-        """Atomically move a failed experimental route back to LiveKit.
-
-        The stream epoch is intentionally preserved: this is a control-plane
-        runtime transition, not a new media connection.  A stale browser may
-        not silently change the route that a newer reconnect already owns.
-        """
-
-        current = await self.lookup(session_id)
-        if current is None:
-            raise SessionNotFound(session_id)
-        if current.state == "draining":
-            raise SessionDraining(session_id)
-        owner, ownership_epoch = self._owner_fence(
-            current,
-            owner_instance_id=owner_instance_id,
-            expected_ownership_epoch=expected_ownership_epoch,
-        )
-        if (
-            expected_stream_epoch is not None
-            and current.stream_epoch != expected_stream_epoch
-        ):
-            raise SessionEpochConflict(session_id)
-        if current.media_runtime == "livekit":
-            return current
-        lifetime = ttl_s
-        if lifetime is None:
-            lifetime = max(
-                1,
-                math.ceil((current.expires_at - self._timestamp()).total_seconds()),
-            )
-        replacement = self._route(
-            session_id=current.session_id,
-            media_edge_id=current.media_edge_id,
-            voice_core_id=current.voice_core_id,
-            stream_epoch=current.stream_epoch,
-            generation=current.generation,
-            device_id=current.device_id,
-            account_id=current.account_id,
-            ttl_s=lifetime,
-            owner_instance_id=owner,
-            ownership_epoch=ownership_epoch,
-            media_runtime="livekit",
         )
         if self._redis is not None:
             return await self._redis_replace(

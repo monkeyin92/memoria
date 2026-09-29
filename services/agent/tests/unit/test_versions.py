@@ -57,10 +57,6 @@ def test_pyproject_pins_match_the_installed_candidate() -> None:
     text = (_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     for package, exp in _EXPECTED_AGENT_STACK.items():
         assert f'"{package}=={exp}"' in text, f"pyproject must pin {package}=={exp}"
-    assert '"livekit-api>=1.2.1,<2"' in text, "pyproject must require livekit-api>=1.2.1"
-    assert '"livekit-protocol>=1.1.25,<2"' in text, (
-        "pyproject must require livekit-protocol>=1.1.25"
-    )
 
 
 @pytest.mark.parametrize(

@@ -59,25 +59,6 @@ class DuplexRuntimeEmotionMixin:
             fence: GenerationFence | None = None,
         ) -> asyncio.Task[Any] | None: ...
 
-    def observe_acoustic_emotion(
-        self,
-        provider_label: str,
-        *,
-        text: str = "",
-        turn_id: int | None = None,
-    ) -> None:
-        current_turn_id = self.fence.turn_id
-        if turn_id is None or turn_id <= current_turn_id or turn_id > current_turn_id + 1:
-            return
-        segments = self._emotion_segments_by_turn.setdefault(turn_id, [])
-        if len(segments) < 8:
-            segments.append((provider_label, text[:512]))
-        self._emotion_segments_by_turn = {
-            key: value
-            for key, value in self._emotion_segments_by_turn.items()
-            if key > current_turn_id
-        }
-
     def _publish_emotion_observation(
         self,
         observation: EmotionObservation,

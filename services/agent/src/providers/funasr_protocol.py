@@ -342,38 +342,6 @@ def words_to_seconds(words: tuple[TimedWord, ...]) -> list[tuple[str, float, flo
     return out
 
 
-def result_trace_metrics(
-    sentence: FunASRSentence,
-    *,
-    task_epoch: int,
-) -> dict[str, int]:
-    """Return bounded numeric timing facts; transcript and provider IDs stay private."""
-
-    end_ms = sentence.end_ms if sentence.end_ms is not None else sentence.begin_ms
-    return {
-        "task_epoch": max(1, task_epoch),
-        "sentence_id": max(0, sentence.sentence_id),
-        "begin_ms": max(0, sentence.begin_ms),
-        "end_ms": max(0, end_ms),
-        "duration_ms": max(0, end_ms - sentence.begin_ms),
-        "text_len": len((sentence.text or "").strip()),
-    }
-
-
-def conversation_item_to_funasr_context(item: dict[str, Any]) -> dict[str, object] | None:
-    """Map conversation item to FunASR context entry with redaction/truncation."""
-    role = str(item.get("role") or "")
-    text = str(item.get("text") or item.get("content") or "")
-    if role not in ("user", "assistant") or not text.strip():
-        return None
-    text = redact_pii(text)[:400]
-    content_type = "input_text" if role == "user" else "text"
-    return {
-        "role": role,
-        "content": [{"type": content_type, "text": text}],
-    }
-
-
 def timestamps_monotonic(words: tuple[TimedWord, ...]) -> bool:
     prev = -1
     for w in words:

@@ -8,20 +8,12 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pydantic import SecretStr
-from services.control_api.app.media_runtime import (
-    decide_media_runtime,
-    mint_streamcore_token,
-    select_media_runtime,
-)
+from services.control_api.app.media_runtime import mint_streamcore_token
 from services.control_api.app.media_slo import MediaSLOGate
 
 
 def settings(**overrides: object) -> SimpleNamespace:
     values: dict[str, object] = {
-        "media_runtime_default": "streamcore",
-        "streamcore_experiment_percent": 100,
-        "streamcore_kill_switch": False,
-        "streamcore_whip_url": "https://media.example/whip",
         "streamcore_token_secret": SecretStr("streamcore-secret-material-that-is-long-enough"),
         "streamcore_token_ttl_s": 120,
         "environment": "development",
@@ -30,25 +22,6 @@ def settings(**overrides: object) -> SimpleNamespace:
     }
     values.update(overrides)
     return SimpleNamespace(**values)
-
-
-def test_runtime_selection_is_server_owned_and_h5_only() -> None:
-    configured = settings()
-    assert select_media_runtime(
-        configured,
-        user_id="user",
-        client_platform="h5",
-    ) == "streamcore"
-    assert select_media_runtime(
-        configured,
-        user_id="user",
-        client_platform="miniprogram",
-    ) == "livekit"
-    assert select_media_runtime(
-        settings(streamcore_kill_switch=True),
-        user_id="user",
-        client_platform="h5",
-    ) == "livekit"
 
 
 def test_streamcore_token_is_short_lived_and_session_scoped() -> None:
@@ -103,27 +76,6 @@ def test_production_token_requires_independent_secret() -> None:
             user_id="user-1",
             client_platform="h5",
         )
-
-
-def test_slo_gate_rolls_streamcore_back_to_livekit() -> None:
-    decision = decide_media_runtime(
-        settings(),
-        user_id="user",
-        client_platform="h5",
-        observed_slo={"stale_generation_total": 1},
-    )
-    assert decision.runtime == "livekit"
-    assert decision.rollback_required
-
-
-def test_enabled_slo_gate_fails_closed_without_a_snapshot() -> None:
-    decision = decide_media_runtime(
-        settings(streamcore_slo_gate_enabled=True),
-        user_id="user",
-        client_platform="h5",
-    )
-    assert decision.runtime == "livekit"
-    assert decision.reason == "missing_media_slo_snapshot"
 
 
 @pytest.mark.asyncio

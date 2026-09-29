@@ -13,8 +13,6 @@ nginx_config="$workdir/nginx.conf"
 nginx_pid="$workdir/nginx.pid"
 nginx_error_log="$workdir/nginx-error.log"
 smoke_https="$workdir/memoria-https.conf"
-smoke_miniprogram_media="$workdir/memoria-miniprogram-media.conf"
-smoke_device_media="$workdir/memoria-device-media.conf"
 smoke_device_edge="$workdir/memoria-device-edge.conf"
 www_root="$workdir/www"
 host_header="Host: aigcnice.com"
@@ -31,8 +29,6 @@ trap cleanup EXIT
 
 test -f "$release/infra/nginx-memoria-loopback-smoke.conf"
 test -f "$release/infra/nginx-memoria-https.conf"
-test -f "$release/infra/nginx-memoria-miniprogram-media.conf"
-test -f "$release/infra/nginx-memoria-device-media.conf"
 test -f "$release/infra/nginx-memoria-device-edge.conf"
 sudo docker image inspect "$image" >/dev/null
 if sudo ss -ltn | grep -qE ":($api_port|$nginx_port)[[:space:]]"; then
@@ -42,14 +38,10 @@ fi
 
 sudo chown 65532:65532 "$data_dir"
 install -d -m 0755 "$www_root"
-cp "$release/infra/nginx-memoria-miniprogram-media.conf" "$smoke_miniprogram_media"
-cp "$release/infra/nginx-memoria-device-media.conf" "$smoke_device_media"
 cp "$release/infra/nginx-memoria-device-edge.conf" "$smoke_device_edge"
 sed \
   -e "s#127\\.0\\.0\\.1:8791#127.0.0.1:$api_port#g" \
   -e "s#root /var/www;#root $www_root;#g" \
-  -e "s#/etc/nginx/snippets/memoria-miniprogram-media.conf;#$smoke_miniprogram_media;#g" \
-  -e "s#/etc/nginx/snippets/memoria-device-media.conf;#$smoke_device_media;#g" \
   -e "s#/etc/nginx/snippets/memoria-device-edge.conf;#$smoke_device_edge;#g" \
   "$release/infra/nginx-memoria-https.conf" >"$smoke_https"
 sed \
@@ -72,9 +64,6 @@ start_control() {
     -e "MEMORIA_RELEASE_TAG=$tag-preflight" \
     -e PUBLIC_BASE_URL=https://aigcnice.com:8443/memoria-api \
     -e ALLOWED_ORIGINS=https://122.51.108.140:8443,https://aigcnice.com:8443,https://www.aigcnice.com:8443 \
-    -e LIVEKIT_URL=wss://preflight.livekit.cloud \
-    -e LIVEKIT_API_KEY=preflight-key \
-    -e LIVEKIT_API_SECRET=preflight-secret \
     -e MEMORIA_AUTH_SECRET=preflight-auth-secret-that-is-longer-than-thirty-two-characters \
     -e "MEMORIA_RESPONSE_PLAN_TOKEN=$response_plan_token" \
     -e MEMORIA_DB_PATH=/data/memoria.sqlite3 \

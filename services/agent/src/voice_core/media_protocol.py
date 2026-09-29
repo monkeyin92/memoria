@@ -21,6 +21,9 @@ _DEVICE_IDENTIFIER_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 DEVICE_AUDIO_MODES = frozenset(
     {"half_duplex_safe", "interrupt_assist", "full_duplex_verified"}
 )
+# Device capture stays closed this long after playback ends so the tail of the
+# assistant's own audio is not committed back as a user turn.
+DEVICE_POST_PLAYBACK_HOLDOFF_S = 2.0
 
 
 class AudioEncoding(StrEnum):

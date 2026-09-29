@@ -29,6 +29,9 @@ from services.agent.src.response_planner_client import (
 from services.agent.tests.unit.runtime_profile_test_helpers import (
     personal_voice_profile,
 )
+from services.agent.tests.unit.runtime_state_helpers import (
+    commit_media_turn,
+)
 from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
@@ -487,7 +490,7 @@ async def test_policy_mismatched_fetched_plan_downgrades_to_local_safe_plan() ->
         response_planner_client=ResponsePlannerStub(),  # type: ignore[arg-type]
     )
 
-    await agent.on_user_turn_completed(llm.ChatContext.empty(), Message())
+    await commit_media_turn(agent, Message())
 
     cached = agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)]
     assert agent._is_local_safe_plan(cached)
@@ -550,7 +553,7 @@ async def test_response_plan_failure_keeps_companion_identity_and_safety_fixed(
         response_planner_client=PlannerUnavailable(),  # type: ignore[arg-type]
     )
 
-    await agent.on_user_turn_completed(llm.ChatContext.empty(), Message())
+    await commit_media_turn(agent, Message())
 
     cached = agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)]
     assert agent._is_local_safe_plan(cached)
@@ -1056,7 +1059,7 @@ def test_unknown_safe_clock_fact_survives_non_public_capabilities(
 async def test_legacy_local_safe_plan_rebinds_personal_generation_to_designed_fallback() -> None:
     runtime, tts, agent = _legacy_fallback_turn()
 
-    await agent.on_user_turn_completed(llm.ChatContext.empty(), TurnMessage())
+    await commit_media_turn(agent, TurnMessage())
 
     plan = agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)]
     snapshot = runtime.generation_voice_for(runtime.fence)
@@ -1078,7 +1081,7 @@ async def test_legacy_local_safe_plan_stops_when_designed_fallback_cannot_resolv
     runtime, tts, agent = _legacy_fallback_turn(fallback_profile_id="not-approved")
 
     with pytest.raises(StopResponse):
-        await agent.on_user_turn_completed(llm.ChatContext.empty(), TurnMessage())
+        await commit_media_turn(agent, TurnMessage())
 
     assert tts.current_voice_kind == "personal"
     assert runtime.generation_voice_for(runtime.fence) is not None

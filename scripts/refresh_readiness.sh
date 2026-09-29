@@ -5,7 +5,9 @@ release_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 agent_env="${MEMORIA_AGENT_ENV:-/etc/memoria-agent.env}"
 project_name="${MEMORIA_COMPOSE_PROJECT:-memoria}"
 control_container="${MEMORIA_CONTROL_CONTAINER:-memoria-control-api-1}"
-agent_container="${MEMORIA_AGENT_CONTAINER:-memoria-agent-1}"
+# The Voice Core media bridge runs the Agent image and posts the Agent
+# heartbeat; the LiveKit worker it replaced is retired.
+bridge_container="${MEMORIA_BRIDGE_CONTAINER:-memoria-voice-core-media-bridge-1}"
 
 container_env_value() {
   local container="$1" key="$2"
@@ -40,8 +42,8 @@ export MEMORIA_RELEASE_TAG="$release_tag"
 # MEMORIA_RELEASE_COMMIT with `:?`, so Compose refuses to render at all unless
 # the live value is exported; that render failure used to surface only as a
 # JSON decode error and left readiness evidence to expire silently.  The
-# running Control API container carries the same identity pair the Agent
-# heartbeat reports, so read it from there.
+# running Control API container carries the same identity pair the bridge's
+# Agent heartbeat reports, so read it from there.
 if [[ -z "${MEMORIA_RELEASE_COMMIT:-}" ]]; then
   MEMORIA_RELEASE_COMMIT="$(container_env_value "$control_container" MEMORIA_RELEASE_COMMIT)"
 fi
@@ -56,12 +58,13 @@ export MEMORIA_RELEASE_COMMIT
 # its labels) instead of the base file alone.  A recorded file that has since
 # disappeared, such as a /tmp overlay after a reboot, is skipped with a warning;
 # the image equality check below then decides whether what remains still
-# reproduces the deployed service.
-COMPOSE_ARGS=(docker compose --project-name "$project_name")
+# reproduces the deployed service. The bridge lives in the media-runtime
+# profile, which `config` only renders when the profile is active.
+COMPOSE_ARGS=(docker compose --project-name "$project_name" --profile media-runtime)
 
 compose_args_for() {
   local container="$1" recorded file
-  COMPOSE_ARGS=(docker compose --project-name "$project_name")
+  COMPOSE_ARGS=(docker compose --project-name "$project_name" --profile media-runtime)
   recorded="$(container_config_files "$container")"
   if [[ -z "$recorded" ]]; then
     COMPOSE_ARGS+=(-f "$release_dir/docker-compose.production.yml")
@@ -109,10 +112,10 @@ print((services.get(sys.argv[1]) or {}).get("image") or "")
   fi
 }
 
-run_agent() {
+run_bridge() {
   "${COMPOSE_ARGS[@]}" run --rm --no-deps \
     -T \
-    --entrypoint /app/.venv/bin/python agent "$@"
+    --entrypoint /app/.venv/bin/python voice-core-media-bridge "$@"
 }
 
 run_control() {
@@ -150,25 +153,11 @@ run_required_provider_smoke() {
   "${COMPOSE_ARGS[@]}" run --rm --no-deps \
     -T \
     -e MEMORIA_PROVIDER_SMOKE_REQUIRED=true \
-    --entrypoint /app/.venv/bin/python agent -m scripts.provider_smoke_test
+    --entrypoint /app/.venv/bin/python voice-core-media-bridge -m scripts.provider_smoke_test
 }
 
-compose_args_for "$agent_container"
-require_live_service_image "$agent_container" agent
-
-livekit_expected='livekit_smoke_test PASS: authenticated room-service access'
-for attempt in 1 2; do
-  if livekit_output="$(run_agent -m scripts.livekit_smoke_test 2>&1)" \
-    && grep -Fqx "$livekit_expected" <<<"$livekit_output"; then
-    printf '%s\n' "$livekit_output"
-    break
-  fi
-  if [[ "$attempt" == 2 ]]; then
-    printf '%s\n' "$livekit_output" >&2
-    exit 1
-  fi
-  sleep 2
-done
+compose_args_for "$bridge_container"
+require_live_service_image "$bridge_container" voice-core-media-bridge
 
 llm_provider="$(awk -F= '$1 == "LLM_PROVIDER" {print $2}' "$agent_env" | tail -1)"
 case "${llm_provider:-bailian_deepseek}" in
@@ -176,7 +165,7 @@ case "${llm_provider:-bailian_deepseek}" in
   bailian_deepseek|deepseek) llm_label=DeepSeek ;;
   *) echo "invalid LLM_PROVIDER in $agent_env" >&2; exit 1 ;;
 esac
-provider_expected="provider_smoke_test PASS: FunASR, QwenRealtimeSearch, $llm_label, Doubao, InterruptSemantic"
+provider_expected="provider_smoke_test PASS: FunASR, QwenRealtimeSearch, $llm_label, Doubao"
 for attempt in 1 2; do
   if provider_output="$(run_required_provider_smoke 2>&1)" \
     && grep -Fqx "$provider_expected" <<<"$provider_output"; then
@@ -190,7 +179,7 @@ for attempt in 1 2; do
   sleep 2
 done
 
-run_agent -m scripts.verify_env
+run_bridge -m scripts.verify_env
 
 compose_args_for "$control_container"
 require_live_service_image "$control_container" control-api

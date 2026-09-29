@@ -100,7 +100,6 @@ from services.control_api.app.session_directory import (
 )
 from services.control_api.app.session_termination import (
     AccountSessionTerminator,
-    LiveKitRoomCloser,
     RealtimeConnectionRegistry,
 )
 from services.control_api.app.unconfigured_store import UnconfiguredStore
@@ -290,7 +289,8 @@ def _device_onboarding_service(
     """Build the explicit local or PostgreSQL/RLS onboarding authority."""
 
     if settings.environment == "production":
-        if not settings.device_media_gateway_url.strip():
+        # No direct Media Edge URL: this deployment serves no devices.
+        if not settings.device_direct_media_wss_url.strip():
             return None
         database_url = settings.device_onboarding_database_url.get_secret_value().strip()
         encoded_seed = (
@@ -878,7 +878,6 @@ async def _wire_services(w: Wiring) -> None:
     session_terminator = AccountSessionTerminator(
         store=store,
         connections=app.state.realtime_connections,
-        close_room=LiveKitRoomCloser(settings),
     )
     app.state.session_terminator = session_terminator
 

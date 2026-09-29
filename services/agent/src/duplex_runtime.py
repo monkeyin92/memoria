@@ -1,9 +1,8 @@
-"""Wire Duplex Orchestrator invariants into the LiveKit AgentSession path (ch.8–18)."""
+"""Wire Duplex Orchestrator invariants into the voice-core media session path (ch.8–18)."""
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import inspect
 import logging
 import time
@@ -20,10 +19,6 @@ from services.agent.src.contracts.ids import (
 )
 from services.agent.src.cue_playback import (
     cancel_listener_cue,
-    cancel_listener_cue_candidate,
-    publish_listener_cue,
-    schedule_listener_cue,
-    stop_cue_handle,
 )
 from services.agent.src.event_identity import (
     archive_evidence,
@@ -42,7 +37,6 @@ from services.agent.src.identity_state import (
     invalidate_identity_epochs,
 )
 from services.agent.src.mode_policy_client import ModePolicy, mode_policy_after_identity_rotation
-from services.agent.src.observability.audio_trace import parse_client_audio_trace
 from services.agent.src.observability.tracing import LatencyTrace
 from services.agent.src.orchestration.context_snapshot_manager import (
     ContextSnapshot,
@@ -70,7 +64,6 @@ from services.agent.src.orchestration.interaction_plane import (
 from services.agent.src.orchestration.interruption_guard import (
     PlaybackInputDecision,
     PlaybackInputGuard,
-    interrupt_ack_phrase,
     normalize_short,
 )
 from services.agent.src.orchestration.orchestrator import Orchestrator, TTSPoolHandle
@@ -85,7 +78,6 @@ from services.agent.src.orchestration.speaker_verify import (
     SpeakerVerifier,
 )
 from services.agent.src.orchestration.speech_epoch_assembler import (
-    AssembledUserTurn,
     SpeechEpochAssembler,
 )
 from services.agent.src.orchestration.speech_timeline import SpeechSegment, SpeechTimeline
@@ -111,7 +103,6 @@ from services.agent.src.runtime_provenance import (
 )
 from services.agent.src.runtime_shutdown import DuplexRuntimeShutdownMixin
 from services.agent.src.runtime_speaker import (
-    PLAYBACK_INPUT_BLOCK_MIN_WORDS,
     DuplexSpeakerMixin,
     KeywordSpotterBinding,
 )
@@ -124,9 +115,7 @@ from services.common.realtime_information import (
 from services.common.redaction import redact_pii
 from services.speaker.domain import (
     SpeakerDecision,
-    SpeakerPermissions,
     is_voice_authority,
-    permissions_for_speaker,
 )
 
 logger = logging.getLogger(__name__)
@@ -171,7 +160,7 @@ class DuplexRuntime(
     DuplexRuntimeProvenanceMixin,
     DuplexRuntimeEmotionMixin,
 ):
-    """Session-scoped orchestration bound to LiveKit agent lifecycle."""
+    """Session-scoped orchestration bound to one voice-core media session."""
 
     orchestrator: Orchestrator
     tts: Any | None = None
@@ -190,7 +179,6 @@ class DuplexRuntime(
     interaction_phase: InteractionPhase = InteractionPhase.CONNECTING
     use_paralinguistic_tags: bool = False
     speaker_verifier: SpeakerVerifier = field(default_factory=SpeakerVerifier)
-    _unsubscribers: list[Callable[[], None]] = field(default_factory=list)
     _was_speaking: bool = False
     _pending_assistant_text: str = ""
     _pending_realtime_request: PendingRealtimeRequest | None = None
@@ -198,7 +186,6 @@ class DuplexRuntime(
     _input_policy_epoch: int = 0
     _capture_blocked: bool = False
     _capture_release_task: asyncio.Task[Any] | None = None
-    _phase_listener: Callable[[InteractionPhase, InteractionPhase], None] | None = None
     _transcript_revisions: TurnRevisionTracker = field(default_factory=TurnRevisionTracker)
     _played_assistant_text: str = ""
     _next_user_prompt_kind: str = "spontaneous"
@@ -209,12 +196,9 @@ class DuplexRuntime(
     # transport starts supplying explicit ranges.
     _speech_timeline: SpeechTimeline = field(default_factory=SpeechTimeline)
     _consumed_canonical_speech_epoch: int | None = None
-    _consumed_canonical_snapshot_bound: bool = False
     _persona_evidence_eligible: bool = False
     _playback_fence: GenerationFence | None = None
     _last_playback_completed_ns: int | None = None
-    _set_interruption_min_words: Callable[[int], None] | None = None
-    _base_interruption_min_words: int = 0
     _event_publisher: Callable[[dict[str, Any]], Coroutine[Any, Any, None]] | None = None
     _event_sequence: int = 0
     _evidence_publisher: Callable[[dict[str, Any]], Coroutine[Any, Any, None]] | None = None
@@ -228,9 +212,6 @@ class DuplexRuntime(
     _speaker_classify_timeout_s: float = 0.4
     _speaker_epoch: int = 0
     _speaker_pcm: bytearray = field(default_factory=bytearray)
-    _trusted_playback_pcm: bytearray = field(default_factory=bytearray)
-    _trusted_playback_witness_pcm: bytes = b""
-    _trusted_playback_witness_ns: int | None = None
     _speaker_collecting: bool = False
     _speaker_classification_task: asyncio.Task[Any] | None = None
     _playback_epoch: int = 0
@@ -238,7 +219,6 @@ class DuplexRuntime(
     _history_eligible_by_fence: dict[GenerationFence, bool] = field(default_factory=dict)
     _owner_projection_eligible_by_fence: dict[GenerationFence, bool] = field(default_factory=dict)
     _input_modality_by_fence: dict[GenerationFence, str] = field(default_factory=dict)
-    _text_only_delivery: bool = False
     _mode_policy: ModePolicy = field(default_factory=lambda: ModePolicy.unavailable("not_fetched"))
     _mode_policy_by_fence: dict[GenerationFence, ModePolicy] = field(default_factory=dict)
     _response_provenance_by_fence: dict[GenerationFence, dict[str, Any]] = field(
@@ -252,20 +232,10 @@ class DuplexRuntime(
     _reject_non_owner_voice: bool = True
     _target_focus_epoch: int | None = None
     _target_focus_pending_epoch: int | None = None
-    _target_speaker_interrupt: Callable[[], Awaitable[None]] | None = None
     _device_conversation_controls_enabled: bool = False
     _sticky_interrupt_epoch: int | None = None
     _sticky_interrupt_route: UtteranceRoute | None = None
     _sticky_interrupt_text: str = ""
-    _interrupt_semantic_resolver: (
-        Callable[[str, str, str], Awaitable[InterruptSemanticVerdict]] | None
-    ) = None
-    _interrupt_semantic_speech_epoch: int | None = None
-    _interrupt_semantic_playback_epoch: int | None = None
-    _interrupt_semantic_assistant_text: str = ""
-    _interrupt_semantic_result_epoch: int | None = None
-    _interrupt_semantic_result_fence: GenerationFence | None = None
-    _interrupt_semantic_result: InterruptSemanticVerdict | None = None
     _interaction_decision_epoch: int | None = None
     _interaction_decision: InteractionDecision | None = None
     _interaction_decision_text: str = ""
@@ -273,11 +243,6 @@ class DuplexRuntime(
     _trusted_unanchored_control_epoch: int | None = None
     _trusted_unanchored_playback_epoch: int | None = None
     _pending_keyword_interrupt_binding: KeywordSpotterBinding | None = None
-    _result_speaker: Callable[[str], Any] | None = None
-    _interrupt_yield: Callable[[str], Awaitable[None]] | None = None
-    _false_interrupt_recover: Callable[[], Awaitable[None]] | None = None
-    _user_turn_clearer: Callable[[], None] | None = None
-    _cleared_control_epoch: int | None = None
     _paused_reply_available: bool = False
     _reply_speaker_binding: ResumeSpeakerBinding | None = None
     _paused_reply_binding: ResumeSpeakerBinding | None = None
@@ -285,9 +250,6 @@ class DuplexRuntime(
     _pending_semantic_pause_binding: ResumeSpeakerBinding | None = None
     _resume_pending: bool = False
     _resume_fence: GenerationFence | None = None
-    _last_interrupt_yield_ns: int | None = None
-    _last_interrupt_yield_speech_epoch: int | None = None
-    _last_false_recover_ns: int | None = None
     _last_listen_restore_ns: int | None = None
     _playback_started_ns: int | None = None
     # After control yield, accept chat turns even if LiveKit omits speech anchors.
@@ -297,12 +259,8 @@ class DuplexRuntime(
     _durable_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
     _durable_task_errors: list[BaseException] = field(default_factory=list)
     _evidence_drain_timeout_s: float = 3.0
-    # Friendly yield when we stop mid-reply so silence does not feel like a crash.
-    INTERRUPT_YIELD_COOLDOWN_MS: int = 4_000
-    FALSE_INTERRUPT_RECOVER_COOLDOWN_MS: int = 3_000
     RUNTIME_PROFILE_REFRESH_TIMEOUT_S: float = 0.8
     _pending_tool_results: int = 0
-    _listener_cue_player: Callable[[str], Any] | None = None
     _active_listener_cue: ListenerCue | None = None
     _active_listener_cue_handle: Any | None = None
     _listener_cue_candidate_task: asyncio.Task[Any] | None = None
@@ -314,8 +272,6 @@ class DuplexRuntime(
     _formal_enrollment_sample_sink: (
         Callable[[bytes, int], Coroutine[Any, Any, None]] | None
     ) = None
-    _emotion_turn_observer: Callable[[int], None] | None = None
-    _speech_segment_finalizers: list[Callable[..., None]] = field(default_factory=list)
     _fast_model_warmer: Callable[[], Awaitable[Any] | Any] | None = None
     _delegation_starter: Callable[[str, GenerationFence], Coroutine[Any, Any, Any] | None] | None = None
     _live_lookup_cache: dict[str, bool] = field(default_factory=dict)
@@ -625,10 +581,6 @@ class DuplexRuntime(
                 activated.version,
             )
 
-    def activate_context_snapshot_for_turn(self) -> int:
-        self._activate_pending_context_snapshot()
-        return self.orchestrator.context_snapshots.current(self.session_id).version
-
     def _context_snapshot_draft(self) -> ContextSnapshotDraft:
         current = self.orchestrator.context_snapshots.current(self.session_id)
         turns = tuple(
@@ -655,27 +607,6 @@ class DuplexRuntime(
                 tool_permission=outputs_allowed,
                 speaker_class=self.current_speaker_class,
                 summary=self.orchestrator.context.context_summary(),
-            )
-        )
-
-    def prepare_context_capsules(
-        self,
-        *,
-        memory_capsule: MemoryCapsule,
-        persona_capsule: PersonaCapsule,
-    ) -> None:
-        draft = self._context_snapshot_draft()
-        self._schedule_context_snapshot_prepare(
-            scope_context_snapshot_draft(
-                ContextSnapshotDraft(
-                    recent_committed_turns=draft.recent_committed_turns,
-                    memory_capsule=memory_capsule,
-                    persona_capsule=persona_capsule,
-                    relationship_policy=draft.relationship_policy,
-                    tool_permission=draft.tool_permission,
-                    speaker_class=draft.speaker_class,
-                    summary=draft.summary,
-                )
             )
         )
 
@@ -901,14 +832,6 @@ class DuplexRuntime(
         self._speaker_sample_rate = sample_rate
         self._speaker_classify_timeout_s = timeout_s
 
-    def set_target_speaker_interrupt(
-        self,
-        interrupt: Callable[[], Awaitable[None]] | None,
-    ) -> None:
-        """Install the only callback allowed to stop playout after focus passes."""
-
-        self._target_speaker_interrupt = interrupt
-
     def set_target_speaker_focus(self, enabled: bool) -> None:
         """Enable target-speaker routing for a formal authority session."""
 
@@ -1100,45 +1023,13 @@ class DuplexRuntime(
 
         return self._current_history_eligible()
 
-    @property
-    def text_only_delivery(self) -> bool:
-        return self._text_only_delivery
-
-    def enable_text_only_delivery(self) -> None:
-        self._text_only_delivery = True
-
     def input_modality_for_fence(self, fence: GenerationFence) -> str:
         return self._input_modality_by_fence.get(fence, "audio")
-
-    def authenticate_text_owner(self) -> SpeakerDecision:
-        """Bind an lk.chat turn from the linked account participant as owner."""
-
-        decision = SpeakerDecision(
-            classification="owner",
-            score=1.0,
-            quality_score=1.0,
-            reason_code="authenticated_text_input",
-            model_version="account-auth-v1",
-            template_version=None,
-            profile_id=None,
-            permissions=permissions_for_speaker("owner"),
-        )
-        self._speaker_class = "owner"
-        self._speaker_decision = decision
-        self._speaker_pcm.clear()
-        return decision
 
     def _bind_mode_policy(self, fence: GenerationFence, policy: ModePolicy | None = None) -> None:
         self._mode_policy_by_fence[fence] = policy or self._mode_policy
         while len(self._mode_policy_by_fence) > HISTORY_ELIGIBILITY_MAX_FENCES:
             self._mode_policy_by_fence.pop(next(iter(self._mode_policy_by_fence)))
-
-    @property
-    def speaker_permissions(self) -> SpeakerPermissions:
-        if self._speaker_decision is not None:
-            return self._speaker_decision.permissions
-        classification = self._speaker_class if self._speaker_class == "owner" else "uncertain"
-        return permissions_for_speaker(classification)  # type: ignore[arg-type]
 
     def _current_history_eligible(self) -> bool:
         """Owner history requires the signed profile + memory_recall_private."""
@@ -1192,23 +1083,8 @@ class DuplexRuntime(
         return self._owner_projection_eligible_by_fence.get(fence, False)
 
 
-    def set_result_speaker(self, speaker: Callable[[str], Any]) -> None:
-        self._result_speaker = speaker
-
-    def set_listener_cue_player(self, player: Callable[[str], Any]) -> None:
-        self._listener_cue_player = player
-
     def set_listener_cue_aec_healthy(self, healthy: bool) -> None:
         self._listener_cue_aec_healthy = healthy
-
-    def set_emotion_turn_observer(self, observer: Callable[[int], None]) -> None:
-        self._emotion_turn_observer = observer
-
-    def set_keyword_spotter_finalizer(
-        self,
-        finalizer: Callable[[KeywordSpotterBinding | None], None],
-    ) -> None:
-        self._speech_segment_finalizers.append(finalizer)
 
     def set_fast_model_warmer(
         self,
@@ -1654,7 +1530,6 @@ class DuplexRuntime(
             self.fence.turn_id,
             self.fence.generation_id,
         )
-        self._notify_phase(previous, phase)
         self.orchestrator.metrics.inc_interaction_phase(
             previous.value,
             phase.value,
@@ -1694,7 +1569,6 @@ class DuplexRuntime(
                 fence.turn_id,
                 fence.generation_id,
             )
-            self._notify_phase(previous, mapped_phase)
         state_task = self._publish(
             {
                 "type": "assistant_state",
@@ -1725,21 +1599,6 @@ class DuplexRuntime(
             self._capture_blocked = True
         policy_task = self.publish_input_policy(capture_allowed=capture_allowed, reason=reason)
         return join_ui_publishes(self, state_task, policy_task)
-
-    def set_phase_listener(
-        self,
-        listener: Callable[[InteractionPhase, InteractionPhase], None] | None,
-    ) -> None:
-        self._phase_listener = listener
-
-    def _notify_phase(self, previous: InteractionPhase, phase: InteractionPhase) -> None:
-        listener = self._phase_listener
-        if listener is None:
-            return
-        try:
-            listener(phase, previous)
-        except Exception:
-            logger.warning("interaction phase listener failed", exc_info=True)
 
     def _cancel_capture_release(self) -> None:
         task = self._capture_release_task
@@ -1855,28 +1714,6 @@ class DuplexRuntime(
             None if fence is None else fence.generation_id,
         )
         self._publish(event, fence=fence)
-
-    def observe_client_audio_trace(
-        self,
-        event: dict[str, Any],
-        *,
-        mono_ns: int | None = None,
-    ) -> bool:
-        """Accept bounded client playback facts; permanent keys/audio never enter telemetry."""
-        trace = parse_client_audio_trace(event, session_id=self.session_id)
-        if trace is None:
-            return False
-        if trace.name == "first_playback" and trace.status == "ok":
-            self.latency_trace.mark("client_first_playback", mono_ns=mono_ns)
-        logger.info(
-            "client_audio_trace name=%s status=%s turn_id=%s generation_id=%s metrics=%s",
-            trace.name,
-            trace.status,
-            event.get("turn_id"),
-            event.get("generation_id"),
-            trace.metrics,
-        )
-        return True
 
     def publish_transcript(
         self,
@@ -2053,71 +1890,8 @@ class DuplexRuntime(
         )
 
 
-    def _publish_listener_cue(self, cue: ListenerCue, state: str) -> None:
-        publish_listener_cue(self, cue, state)
-
-    async def _play_listener_cue(self, cue: ListenerCue) -> None:
-        if (
-            self._listener_cue_player is None
-            or not self.cue_scheduler.is_current(cue)
-            or cue.fence.session_epoch != self.fence.session_epoch
-        ):
-            return
-        handle = self._listener_cue_player(cue.text)
-        if inspect.isawaitable(handle):
-            handle = await handle
-        if not self.cue_scheduler.is_current(cue) or not cue.fence.matches(self.fence):
-            # Superseded or identity switched: stop the physical handle.
-            await stop_cue_handle(handle)
-            return
-        self._active_listener_cue = cue
-        self._active_listener_cue_handle = handle
-        self.set_interaction_phase(
-            InteractionPhase.BACKCHANNEL,
-            cause=f"listener_cue:{cue.text}",
-        )
-        self._publish_listener_cue(cue, "started")
-        try:
-            wait_for_playout = getattr(handle, "wait_for_playout", None)
-            if callable(wait_for_playout):
-                await wait_for_playout()
-            elif inspect.isawaitable(handle):
-                await handle
-            if self.cue_scheduler.is_current(cue) and cue.fence.matches(self.fence):
-                self._publish_listener_cue(cue, "finished")
-        finally:
-            if self._active_listener_cue is cue:
-                self._active_listener_cue = None
-                self._active_listener_cue_handle = None
-            # The physical cue must not keep playing after the task was
-            # cancelled (identity switch/interrupt) or the cue was superseded.
-            if not self.cue_scheduler.is_current(cue) or not cue.fence.matches(self.fence):
-                # Stop the physical handle so no old audio keeps playing.
-                await stop_cue_handle(handle)
-            # Never mutate a newer epoch's phase from an old cue's finally.
-            if (
-                cue.fence.matches(self.fence)
-                and self.cue_scheduler.is_current(cue)
-                and self.interaction_phase is InteractionPhase.BACKCHANNEL
-            ):
-                self.set_interaction_phase(
-                    InteractionPhase.USER_SPEAKING,
-                    cause="listener_cue_finished",
-                )
-
     def cancel_listener_cue(self) -> None:
         cancel_listener_cue(self)
-
-    def _cancel_listener_cue_candidate(self) -> None:
-        cancel_listener_cue_candidate(self)
-
-    def _schedule_listener_cue(self, text: str, *, now_ns: int | None) -> None:
-        schedule_listener_cue(self, text, now_ns=now_ns)
-
-    def update_pending_assistant_text(self, text: str) -> None:
-        self._pending_assistant_text = text
-        self._pending_assistant_text_epoch += 1
-        self.orchestrator.heard_tracker.set_full_text(text)
 
     def _assistant_response_blocks_barge_in(self) -> bool:
         return not self.barge_in_enabled and (
@@ -2139,12 +1913,6 @@ class DuplexRuntime(
 
     def on_user_voice_started(self, *, now_ns: int | None = None) -> PlaybackInputDecision:
         assistant_response_blocked = self._assistant_response_blocks_barge_in()
-        interrupted_assistant_text = (
-            (self._pending_assistant_text or self._played_assistant_text)
-            if self._was_speaking
-            else ""
-        )
-        interrupted_playback_epoch = self._playback_epoch if self._was_speaking else None
         self.refresh_voice_profile()
         self._speaker_epoch += 1
         self._speech_epoch_assembler.start_epoch(self._speaker_epoch)
@@ -2153,20 +1921,11 @@ class DuplexRuntime(
         self._sticky_interrupt_epoch = None
         self._sticky_interrupt_route = None
         self._sticky_interrupt_text = ""
-        self._interrupt_semantic_speech_epoch = (
-            self._speaker_epoch if interrupted_assistant_text else None
-        )
-        self._interrupt_semantic_playback_epoch = interrupted_playback_epoch
-        self._interrupt_semantic_assistant_text = interrupted_assistant_text
-        self._interrupt_semantic_result_epoch = None
-        self._interrupt_semantic_result_fence = None
-        self._interrupt_semantic_result = None
         self._pending_semantic_pause_epoch = None
         self._pending_semantic_pause_binding = None
         self._trusted_unanchored_control_epoch = None
         self._trusted_unanchored_playback_epoch = None
         self._pending_keyword_interrupt_binding = None
-        self._clear_trusted_playback_audio()
         self._speaker_class = "uncertain"
         self._speaker_decision = self._uncertain_speaker_decision("classification_pending")
         self._speaker_pcm.clear()
@@ -2196,8 +1955,6 @@ class DuplexRuntime(
                 cause="vad_start",
             )
         pending_turn_id = self.fence.turn_id + 1
-        if self._emotion_turn_observer is not None:
-            self._emotion_turn_observer(pending_turn_id)
         if not self._was_speaking:
             self.cue_scheduler.start_turn(
                 user_turn_id=pending_turn_id,
@@ -2220,271 +1977,6 @@ class DuplexRuntime(
             self.orchestrator.metrics.inc_interruption_candidate()
             return PlaybackInputDecision.WAIT
         return PlaybackInputDecision.ACCEPT
-
-    def observe_user_transcript(
-        self,
-        text: str,
-        *,
-        final: bool,
-        now_ns: int | None = None,
-    ) -> PlaybackInputDecision:
-        if self.formal_speaker_enrollment_active:
-            if final:
-                self._speech_epoch_assembler.observe_final(
-                    text,
-                    accepted=False,
-                    contaminated=True,
-                )
-            return PlaybackInputDecision.IGNORE
-        raw_route = route_utterance(
-            text,
-            speaker_state=self.speaker_verifier.state,
-            device_conversation=self._device_conversation_controls_enabled,
-        )
-        barge_in_blocked = not self.barge_in_enabled and (
-            self._assistant_response_blocks_barge_in()
-            or self.input_guard.candidate_reason == "barge_in_disabled"
-        )
-        if barge_in_blocked:
-            if not self.input_guard.candidate_active:
-                self.input_guard.start(
-                    during_playback=True,
-                    now_ns=now_ns,
-                    vad_anchored=False,
-                )
-            self.input_guard.candidate_text = text
-            self.input_guard.candidate_during_playback = True
-            self.input_guard.candidate_decision = PlaybackInputDecision.IGNORE
-            self.input_guard.candidate_reason = "barge_in_disabled"
-            if final:
-                self._speech_epoch_assembler.observe_final(
-                    text,
-                    accepted=False,
-                    contaminated=True,
-                )
-                self.orchestrator.metrics.inc_guarded_user_input("barge_in_disabled")
-            return PlaybackInputDecision.IGNORE
-        decision = self.input_guard.observe(
-            text,
-            final=final,
-            assistant_text=self._pending_assistant_text or self._played_assistant_text,
-            now_ns=now_ns,
-            during_playback_if_unstarted=self._was_speaking,
-        )
-        trusted_unanchored_control = (
-            self.trusted_aec_playback_control
-            and self.input_guard.candidate_during_playback
-            and not self.input_guard.candidate_vad_anchored
-            and raw_route.intent is UtteranceIntent.INTERRUPT_COMMAND
-            and self._trusted_playback_has_voice(now_ns=now_ns)
-            and raw_route.normalized_text
-            not in normalize_short(self._pending_assistant_text or self._played_assistant_text)
-            and self.input_guard.guarded_reason(
-                text,
-                duration_ms=900,
-                assistant_text=self._pending_assistant_text or self._played_assistant_text,
-            )
-            is None
-        )
-        if trusted_unanchored_control:
-            if self._trusted_unanchored_control_epoch is None:
-                self._speaker_epoch += 1
-                self._speech_epoch_assembler.start_epoch(self._speaker_epoch)
-                self._target_focus_epoch = None
-                self._target_focus_pending_epoch = None
-                self._reset_speaker_classification_task()
-                self._speaker_class = "uncertain"
-                self._speaker_decision = self._uncertain_speaker_decision(
-                    "trusted_aec_unanchored_control"
-                )
-                self._speaker_pcm = bytearray(self._trusted_playback_witness_pcm)
-                self._speaker_collecting = False
-                self._fresh_user_speech = False
-                self._trusted_unanchored_control_epoch = self._speaker_epoch
-                self._trusted_unanchored_playback_epoch = self._playback_epoch
-                self.mark_audio_event("trusted_unanchored_interrupt_cmd")
-            self.input_guard.candidate_reason = None
-            self.input_guard.candidate_decision = PlaybackInputDecision.ACCEPT
-            decision = PlaybackInputDecision.ACCEPT
-        elif (
-            self.input_guard.candidate_during_playback
-            and not self.input_guard.candidate_vad_anchored
-            and text.strip()
-        ):
-            self._speech_epoch_assembler.mark_contaminated(text)
-        if final:
-            candidate_started_during_playback = self.input_guard.candidate_during_playback
-            current_vad_epoch = (
-                self.input_guard.candidate_vad_anchored
-                and self._speech_epoch_assembler.current_epoch == self._speaker_epoch
-            )
-            if current_vad_epoch:
-                self._speech_epoch_assembler.observe_final(
-                    text,
-                    accepted=decision is PlaybackInputDecision.ACCEPT,
-                    # An accepted barge-in final can still contain a prefix of
-                    # the assistant playback.  Preserve it as a contaminated
-                    # candidate so the later LiveKit endpoint can match the
-                    # real user phrase instead of discarding the whole epoch.
-                    contaminated=(
-                        decision is PlaybackInputDecision.IGNORE
-                        or candidate_started_during_playback
-                    ),
-                )
-            if decision is PlaybackInputDecision.ACCEPT and not current_vad_epoch:
-                self.mark_audio_event(
-                    "orphan_transcript_ignored",
-                    status="ignored",
-                    detail={"reason": "missing_speech_epoch"},
-                )
-            elif decision is PlaybackInputDecision.IGNORE:
-                self.orchestrator.metrics.inc_guarded_user_input(
-                    self.input_guard.candidate_reason or "playback_noise"
-                )
-        if decision is PlaybackInputDecision.ACCEPT and raw_route.should_interrupt:
-            # FunASR may revise a clear interim「等一下」into a nearby final
-            # homophone while TTS is also reaching the microphone. Keep the
-            # accepted control intent monotonic for this VAD epoch.
-            if self._sticky_interrupt_epoch != self._speaker_epoch:
-                self._sticky_interrupt_text = raw_route.normalized_text
-            self._sticky_interrupt_epoch = self._speaker_epoch
-            self._sticky_interrupt_route = raw_route
-        if self._was_speaking or self.input_guard.candidate_during_playback:
-            started_ns = self.input_guard.candidate_started_ns
-            observed_ns = now_ns if now_ns is not None else time.monotonic_ns()
-            elapsed_ms = (
-                max(0, int((observed_ns - started_ns) / 1_000_000)) if started_ns is not None else 0
-            )
-            interaction = self.decide_interaction(
-                InteractionSnapshot(
-                    event=InteractionEvent.TRANSCRIPT,
-                    assistant_speaking=self._was_speaking,
-                    text=text,
-                    elapsed_ms=elapsed_ms,
-                    final=final,
-                    has_speech_energy=True,
-                    guarded_reason=self.playback_guarded_reason(
-                        text,
-                        duration_ms=elapsed_ms,
-                    ),
-                    playback_decision=decision,
-                    utterance_route=self._route_candidate(text),
-                )
-            )
-            self.apply_interaction_decision(interaction, text=text)
-            if interaction.continue_output:
-                decision = PlaybackInputDecision.IGNORE
-                self.input_guard.candidate_reason = interaction.reason
-            elif interaction.cancel_generation:
-                decision = PlaybackInputDecision.ACCEPT
-                self.input_guard.candidate_reason = None
-            elif decision is PlaybackInputDecision.ACCEPT:
-                decision = PlaybackInputDecision.WAIT
-                self.input_guard.candidate_reason = interaction.reason
-            self.input_guard.candidate_decision = decision
-            self._interaction_decision_epoch = self._speaker_epoch
-            self._interaction_decision = interaction
-            self._interaction_decision_text = text
-        elif (
-            not final
-            and decision is PlaybackInputDecision.ACCEPT
-            and self.input_guard.candidate_active
-            and self.input_guard.candidate_vad_anchored
-            and text.strip()
-        ):
-            interaction = self.decide_interaction(
-                InteractionSnapshot(
-                    event=InteractionEvent.TRANSCRIPT,
-                    assistant_speaking=False,
-                    text=text,
-                    final=False,
-                    has_speech_energy=True,
-                    playback_decision=decision,
-                    utterance_route=self._route_candidate(text),
-                )
-            )
-            self.apply_interaction_decision(interaction, text=text)
-            self._interaction_decision_epoch = self._speaker_epoch
-            self._interaction_decision = interaction
-            self._interaction_decision_text = text
-        if final:
-            self._cancel_listener_cue_candidate()
-        elif (
-            not final
-            and decision is PlaybackInputDecision.ACCEPT
-            and self._listener_cue_player is not None
-        ):
-            self._schedule_listener_cue(text, now_ns=now_ns)
-        return decision
-
-    def consume_canonical_user_turn(self, raw_text: str) -> str | None:
-        """Resolve the callback against one or more matching VAD speech epochs."""
-
-        # Media runtimes that provide a sample-clock interval are authoritative
-        # for text assembly.  Keep the callback/FIFO assembler only as a
-        # compatibility fallback for legacy LiveKit callbacks with no range.
-        pending = self._speech_timeline.pending
-        if pending:
-            stream_epoch = self._speech_timeline.stream_epoch
-            if stream_epoch is not None:
-                canonical = self.consume_media_user_turn(
-                    stream_epoch=stream_epoch,
-                    start_sample=min(item.capture_start_sample for item in pending),
-                    end_sample=max(item.capture_end_sample for item in pending),
-                )
-                if canonical:
-                    return canonical
-
-        assembled: AssembledUserTurn = self._speech_epoch_assembler.consume(
-            raw_text,
-            fallback_epoch=self._speaker_epoch if self._fresh_user_speech else None,
-        )
-        self._consumed_canonical_snapshot_bound = assembled.snapshot_bound
-        self._consumed_canonical_speech_epoch = assembled.speech_epoch
-        if assembled.discarded_epochs:
-            self.mark_audio_event(
-                "stale_speech_epochs_discarded",
-                status="ignored",
-                detail={"count": len(assembled.discarded_epochs)},
-            )
-        if assembled.snapshot_bound:
-            logger.info(
-                "canonical_user_turn_resolved raw_len=%s canonical_len=%s "
-                "discarded_epochs=%s session_id=%s",
-                len(raw_text.strip()),
-                len(assembled.text or ""),
-                len(assembled.discarded_epochs),
-                self.session_id,
-            )
-        return assembled.text
-
-    def consume_media_user_turn(
-        self,
-        *,
-        stream_epoch: int,
-        start_sample: int,
-        end_sample: int,
-    ) -> str | None:
-        """Commit one explicit sample range and return canonical ASR text.
-
-        This is the preferred entry point for a Media Edge bridge.  It never
-        guesses a turn from callback order or from the currently latest
-        speaker; the caller supplies the frozen epoch and interval.
-        """
-
-        canonical = self.project_media_user_turn(
-            stream_epoch=stream_epoch,
-            start_sample=start_sample,
-            end_sample=end_sample,
-        )
-        if not canonical:
-            return None
-        self._speech_timeline.commit_range(
-            stream_epoch=stream_epoch,
-            start_sample=start_sample,
-            end_sample=end_sample,
-        )
-        return canonical
 
     def project_media_user_turn(
         self,
@@ -2510,10 +2002,6 @@ class DuplexRuntime(
     @property
     def consumed_canonical_speech_epoch(self) -> int | None:
         return self._consumed_canonical_speech_epoch
-
-    @property
-    def consumed_canonical_snapshot_bound(self) -> bool:
-        return self._consumed_canonical_snapshot_bound
 
     @property
     def speech_timeline(self) -> SpeechTimeline:
@@ -2551,29 +2039,6 @@ class DuplexRuntime(
         self.input_guard.candidate_active = False
         self._trusted_unanchored_control_epoch = None
         self._trusted_unanchored_playback_epoch = None
-        self._clear_trusted_playback_audio()
-
-    def _clear_unanchored_playback_transcript(self) -> None:
-        """Reset LiveKit STT after echo-only playback input, before the next VAD."""
-
-        if (
-            not self._speech_epoch_assembler.has_suspected_playback_prefix
-            or self._fresh_user_speech
-            or self._user_turn_clearer is None
-        ):
-            return
-        try:
-            self._user_turn_clearer()
-        except Exception:
-            logger.warning(
-                "playback transcript clear failed session_id=%s",
-                self.session_id,
-                exc_info=True,
-            )
-            self.mark_audio_event("playback_transcript_cleared", status="error")
-            return
-        self.discard_pending_user_transcript()
-        self.mark_audio_event("playback_transcript_cleared")
 
     def accept_user_turn(
         self,
@@ -2752,19 +2217,6 @@ class DuplexRuntime(
             # Hand floor back: unlock LiveKit min_words so the next real utterance
             # can commit (prod: after 停一下, min_words stuck at 1000 + orphan FINAL).
             self._restore_listen_after_control(cause="interrupt_command_turn")
-            # Ensure semantic ack (cooldown skips if interrupt path already said it).
-            self._spawn(
-                self._maybe_say_interrupt_yield(
-                    cause="interrupt_command_turn",
-                    route=route,
-                    speech_epoch=(
-                        canonical_speech_epoch
-                        if canonical_speech_epoch is not None
-                        else self._speaker_epoch
-                    ),
-                ),
-                name="interrupt-cmd-yield",
-            )
             return False, route.reason
         if input_modality == "audio" and self.input_guard.enabled and speech_anchored is not None:
             current_vad_has_pcm = (
@@ -3065,15 +2517,6 @@ class DuplexRuntime(
             fence=fence,
         )
 
-    async def on_playback_done(self, *, tools_active: bool = False) -> None:
-        self._was_speaking = False
-        if self.orchestrator.state is ConversationState.SPEAKING:
-            await self.orchestrator.finish_speaking(tools_active=tools_active)
-        elif self.orchestrator.state is ConversationState.THINKING and self._pending_assistant_text:
-            # No audio path — still commit heard text as full if never interrupted.
-            await self.orchestrator.begin_speaking([], self._pending_assistant_text)
-            await self.orchestrator.finish_speaking(tools_active=tools_active)
-
     async def on_media_playback_done(
         self,
         fence: GenerationFence,
@@ -3109,7 +2552,6 @@ class DuplexRuntime(
         self._pending_assistant_text = ""
         self._was_speaking = False
         self._last_playback_completed_ns = time.monotonic_ns()
-        self._clear_unanchored_playback_transcript()
         if tools_active:
             # Filler / acknowledgement playback is not the turn terminal while
             # an OWNED same-turn delegation is still waiting to speak.
@@ -3193,107 +2635,6 @@ class DuplexRuntime(
             )
         return heard
 
-    def set_interrupt_yield(self, speaker: Callable[[str], Awaitable[None]] | None) -> None:
-        """speaker(phrase) — phrase is chosen from interrupt semantics."""
-        self._interrupt_yield = speaker
-
-    def set_interrupt_semantic_resolver(
-        self,
-        resolver: Callable[[str, str, str], Awaitable[InterruptSemanticVerdict]] | None,
-    ) -> None:
-        """Inject the small-model evidence adapter; the Router still owns policy."""
-
-        self._interrupt_semantic_resolver = resolver
-
-    async def resolve_interrupt_semantic(
-        self,
-        text: str,
-        *,
-        canonical_speech_epoch: int | None,
-    ) -> InterruptSemanticVerdict | None:
-        """Review only one playback-bound ambiguous final for the current epoch."""
-
-        resolver = self._interrupt_semantic_resolver
-        sticky = (
-            self._sticky_interrupt_route
-            if self._sticky_interrupt_epoch == self._speaker_epoch
-            else None
-        )
-        if (
-            resolver is None
-            or canonical_speech_epoch is None
-            or canonical_speech_epoch != self._speaker_epoch
-            or self._interrupt_semantic_speech_epoch != canonical_speech_epoch
-            or self._interrupt_semantic_playback_epoch is None
-            or sticky is None
-            or sticky.intent is not UtteranceIntent.INTERRUPT_THEN_CHAT
-            or self._route_candidate(text).intent is not UtteranceIntent.INTERRUPT_THEN_CHAT
-        ):
-            return None
-        if (
-            self._interrupt_semantic_result_epoch == canonical_speech_epoch
-            and self._interrupt_semantic_result_fence is not None
-            and self._interrupt_semantic_result_fence.matches(self.fence)
-            and self._interrupt_semantic_result is not None
-        ):
-            return self._interrupt_semantic_result
-
-        request_fence = self.fence
-        request_playback_epoch = self._interrupt_semantic_playback_epoch
-        try:
-            verdict = await resolver(
-                text,
-                self._sticky_interrupt_text or sticky.normalized_text,
-                self._interrupt_semantic_assistant_text,
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.warning("interrupt semantic resolver unavailable", exc_info=True)
-            verdict = InterruptSemanticVerdict.UNSURE
-        if not isinstance(verdict, InterruptSemanticVerdict):
-            verdict = InterruptSemanticVerdict.UNSURE
-        if (
-            canonical_speech_epoch != self._speaker_epoch
-            or self._interrupt_semantic_speech_epoch != canonical_speech_epoch
-            or request_playback_epoch != self._interrupt_semantic_playback_epoch
-            or not request_fence.matches(self.fence)
-        ):
-            self.mark_audio_event(
-                "interrupt_semantic_stale",
-                status="ignored",
-                detail={
-                    "request_speech_epoch": canonical_speech_epoch,
-                    "current_speech_epoch": self._speaker_epoch,
-                    "request_playback_epoch": request_playback_epoch,
-                    "current_playback_epoch": self._interrupt_semantic_playback_epoch,
-                },
-            )
-            return InterruptSemanticVerdict.UNSURE
-
-        self._interrupt_semantic_result_epoch = canonical_speech_epoch
-        self._interrupt_semantic_result_fence = request_fence
-        self._interrupt_semantic_result = verdict
-        self.mark_audio_event(
-            "interrupt_semantic_resolved",
-            status="degraded" if verdict is InterruptSemanticVerdict.UNSURE else "ok",
-            detail={
-                "verdict": verdict,
-                "speech_epoch": canonical_speech_epoch,
-                "playback_epoch": request_playback_epoch,
-            },
-        )
-        return verdict
-
-    def set_false_interrupt_recover(self, recover: Callable[[], Awaitable[None]] | None) -> None:
-        """Called when LiveKit already stopped audio but speaker gate rejected barge-in."""
-        self._false_interrupt_recover = recover
-
-    def set_user_turn_clearer(self, clearer: Callable[[], None] | None) -> None:
-        """Inject LiveKit's synchronous user-turn reset at the session boundary."""
-
-        self._user_turn_clearer = clearer
-
     def _clear_control_user_turn(
         self,
         *,
@@ -3319,28 +2660,6 @@ class DuplexRuntime(
             )
             return
         self.discard_pending_user_transcript()
-        if self._user_turn_clearer is None or self._cleared_control_epoch == target_epoch:
-            return
-        try:
-            self._user_turn_clearer()
-        except Exception:
-            logger.warning(
-                "control user-turn clear failed cause=%s session_id=%s",
-                cause,
-                self.session_id,
-                exc_info=True,
-            )
-            self.mark_audio_event(
-                "control_user_turn_cleared",
-                status="error",
-                detail={"cause": cause},
-            )
-            return
-        self._cleared_control_epoch = target_epoch
-        self.mark_audio_event(
-            "control_user_turn_cleared",
-            detail={"cause": cause},
-        )
 
     def is_resume_generation(self, fence: GenerationFence | None = None) -> bool:
         """Whether this generation resumes the answer explicitly paused by the user."""
@@ -3393,8 +2712,6 @@ class DuplexRuntime(
         subsequent user speech was dropped as missing_speech_epoch while
         min_words stayed at PLAYBACK_INPUT_BLOCK_MIN_WORDS (1000).
         """
-        if self._set_interruption_min_words is not None:
-            self._set_interruption_min_words(self._base_interruption_min_words)
         self.publish_assistant_audio("restore", gain=1.0)
         self._was_speaking = False
         # LiveKit can emit playback_finished after we hand the floor back.
@@ -3410,101 +2727,8 @@ class DuplexRuntime(
             )
         self.mark_audio_event(
             "listen_restored_after_control",
-            detail={
-                "cause": cause,
-                "min_words": self._base_interruption_min_words,
-            },
-        )
-
-    async def _maybe_say_interrupt_yield(
-        self,
-        *,
-        cause: str,
-        route: UtteranceRoute | None = None,
-        speech_epoch: int | None = None,
-    ) -> None:
-        """Short ack after mid-reply stop so users know we yielded, not crashed."""
-        if self._interrupt_yield is None:
-            return
-        if cause in {"user_button", "stop_response", "rtc_recovered"}:
-            return
-        yield_speech_epoch = self._speaker_epoch if speech_epoch is None else speech_epoch
-        if self._last_interrupt_yield_speech_epoch == yield_speech_epoch:
-            self.mark_audio_event(
-                "interrupt_yield_duplicate",
-                status="ignored",
-                detail={
-                    "cause": cause,
-                    "speech_epoch": yield_speech_epoch,
-                },
-            )
-            self._restore_listen_after_control(cause=f"yield_duplicate:{cause}")
-            return
-        now = time.monotonic_ns()
-        if (
-            self._last_interrupt_yield_ns is not None
-            and (now - self._last_interrupt_yield_ns) // 1_000_000
-            < self.INTERRUPT_YIELD_COOLDOWN_MS
-        ):
-            # Still unlock listening if barge-in yield already fired.
-            self._restore_listen_after_control(cause=f"yield_cooldown:{cause}")
-            return
-        self._last_interrupt_yield_ns = now
-        self._last_interrupt_yield_speech_epoch = yield_speech_epoch
-        candidate = self._interrupt_candidate_text()
-        final_route = route or self._route_candidate(candidate)
-        phrase = final_route.ack_phrase or interrupt_ack_phrase(candidate)
-        self.mark_audio_event(
-            "interrupt_yield_started",
-            detail={
-                "cause": cause,
-                "ack_len": len(phrase),
-                "candidate_len": len(candidate),
-                "intent": final_route.intent,
-                "reason": final_route.reason,
-            },
-        )
-        try:
-            await self._interrupt_yield(phrase)
-            self.mark_audio_event(
-                "interrupt_yield_done",
-                detail={"cause": cause, "ack_len": len(phrase)},
-            )
-        except Exception:
-            logger.warning("interrupt yield failed cause=%s", cause, exc_info=True)
-            self.mark_audio_event("interrupt_yield_done", status="error")
-        finally:
-            self._restore_listen_after_control(cause=f"yield_done:{cause}")
-
-    async def _maybe_recover_false_interrupt(self, *, cause: str) -> None:
-        """Resume after nearby noise stopped playout but speaker gate rejected it."""
-        if self._false_interrupt_recover is None:
-            return
-        now = time.monotonic_ns()
-        if (
-            self._last_false_recover_ns is not None
-            and (now - self._last_false_recover_ns) // 1_000_000
-            < self.FALSE_INTERRUPT_RECOVER_COOLDOWN_MS
-        ):
-            return
-        self._last_false_recover_ns = now
-        self.mark_audio_event(
-            "false_interrupt_recover_started",
             detail={"cause": cause},
         )
-        try:
-            await self._false_interrupt_recover()
-            self.mark_audio_event(
-                "false_interrupt_recover_done",
-                detail={"cause": cause},
-            )
-        except Exception:
-            logger.warning("false interrupt recover failed cause=%s", cause, exc_info=True)
-            self.mark_audio_event(
-                "false_interrupt_recover_done",
-                status="error",
-                detail={"cause": cause},
-            )
 
     async def _apply_real_interrupt(
         self,
@@ -3579,8 +2803,6 @@ class DuplexRuntime(
             or self._pending_assistant_text_epoch == expected_pending_text_epoch
         ):
             self._pending_assistant_text = ""
-        if self._set_interruption_min_words is not None:
-            self._set_interruption_min_words(self._base_interruption_min_words)
         if self.tts is not None:
             self.tts.bind_fence(new_fence)
         if not new_fence.matches(old_fence):
@@ -3608,26 +2830,15 @@ class DuplexRuntime(
                 InteractionPhase.INTERRUPTED,
                 cause=f"interrupt:{cause}",
             )
-            if barge_route.intent is UtteranceIntent.END_SESSION:
-                # A committed close owns the projection; keep the floor for it.
-                pass
-            elif create_user_turn and mid_reply and control_only and cause not in {
-                "user_button",
-                "stop_response",
-                "rtc_recovered",
-            }:
-                self._spawn(
-                    self._maybe_say_interrupt_yield(
-                        cause=cause,
-                        speech_epoch=(
-                            expected_speaker_epoch
-                            if expected_speaker_epoch is not None
-                            else self._speaker_epoch
-                        ),
-                    ),
-                    name="interrupt-yield",
-                )
-            else:
+            # A committed close owns the projection and keeps the floor; a
+            # mid-reply control-only stop leaves the floor as the interrupt set it.
+            yielded_mid_reply = (
+                create_user_turn
+                and mid_reply
+                and control_only
+                and cause not in {"user_button", "stop_response", "rtc_recovered"}
+            )
+            if barge_route.intent is not UtteranceIntent.END_SESSION and not yielded_mid_reply:
                 self._restore_listen_after_control(cause=f"interrupt_no_yield:{cause}")
         return new_fence
 
@@ -3721,9 +2932,9 @@ class DuplexRuntime(
             if owner_cmd and self._target_focus_epoch == self._speaker_epoch:
                 # A router-confirmed「等一下 / 停一下」must release playback
                 # before ASR endpointing finishes. This path is reached only
-                # after _confirm_target_speaker_interrupt has checked the
-                # current voiceprint; an unconfirmed LiveKit VAD interrupt
-                # still waits for endpointed audio below.
+                # once this speech epoch's voice was already confirmed; an
+                # unconfirmed VAD interrupt still waits for endpointed audio
+                # below.
                 target_route = self._target_speaker_route(
                     context="interrupt",
                     explicit_interrupt=barge_route.intent
@@ -3755,11 +2966,6 @@ class DuplexRuntime(
                     cause="target_speaker_reject_interrupt"
                 )
                 self._reject_target_speaker(context="interrupt", route=target_route)
-                if mid_reply and stop_playback is None:
-                    self._spawn(
-                        self._maybe_recover_false_interrupt(cause=cause),
-                        name="false-interrupt-recover",
-                    )
                 return self.fence
             self._target_focus_epoch = self._speaker_epoch
         if (
@@ -3783,11 +2989,6 @@ class DuplexRuntime(
                     "intent": barge_route.intent,
                 },
             )
-            if mid_reply and stop_playback is None:
-                self._spawn(
-                    self._maybe_recover_false_interrupt(cause=cause),
-                    name="false-interrupt-recover",
-                )
             return self.fence
 
         async def _apply() -> GenerationFence:
@@ -3811,134 +3012,6 @@ class DuplexRuntime(
             async with self._playback_control_lock:
                 return await _apply()
         return await _apply()
-
-    async def on_playback_started(self) -> None:
-        async with self._playback_control_lock:
-            self._invalidate_trusted_unanchored_control(reason="playback_replaced")
-            self._pending_keyword_interrupt_binding = None
-            self._playback_epoch += 1
-            if self._set_interruption_min_words is not None:
-                self._set_interruption_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
-            self._last_playback_completed_ns = None
-            self._playback_started_ns = time.monotonic_ns()
-            if self._playback_fence is None or not self._playback_fence.matches(self.fence):
-                self._playback_fence = self.fence
-                self._played_assistant_text = ""
-            await self.on_assistant_speaking(self._pending_assistant_text)
-            self.mark_audio_event("playback_started")
-            self.set_interaction_phase(InteractionPhase.SPEAKING, cause="playback_started")
-
-    async def on_playback_finished(
-        self,
-        *,
-        playback_position_s: float,
-        interrupted: bool,
-        synchronized_transcript: str | None,
-    ) -> None:
-        if interrupted:
-            await self._apply_playback_finished(
-                playback_position_s=playback_position_s,
-                interrupted=True,
-                synchronized_transcript=synchronized_transcript,
-            )
-            return
-        async with self._playback_control_lock:
-            await self._apply_playback_finished(
-                playback_position_s=playback_position_s,
-                interrupted=False,
-                synchronized_transcript=synchronized_transcript,
-            )
-
-    async def _apply_playback_finished(
-        self,
-        *,
-        playback_position_s: float,
-        interrupted: bool,
-        synchronized_transcript: str | None,
-    ) -> None:
-        self._pending_keyword_interrupt_binding = None
-        self._invalidate_trusted_unanchored_control(reason="playback_finished")
-        self.publish_assistant_audio("restore", gain=1.0)
-        if interrupted:
-            interrupted_from = self._playback_fence or self.fence
-            combined_heard = self._combine_played_text(
-                self._played_assistant_text,
-                synchronized_transcript,
-            )
-            await self.on_real_interrupt(
-                cause="livekit_playback_interrupted",
-                # Completed segments are facts; if alignment is unavailable for the
-                # interrupted segment, conservatively omit that partial segment.
-                synchronized_transcript=combined_heard,
-            )
-            await self.on_media_playback_interrupted(
-                interrupted_from=interrupted_from,
-                synchronized_transcript=combined_heard,
-            )
-        else:
-            _ = playback_position_s
-            self._played_assistant_text = self._combine_played_text(
-                self._played_assistant_text,
-                synchronized_transcript,
-            )
-            # Always clear speaking flag. Fixed session.say(add_to_chat_ctx=False)
-            # may never emit conversation_item_added → on_assistant_reply_completed,
-            # which used to leave _was_speaking stuck and block enroll PCM forever.
-            self._was_speaking = False
-            self._last_playback_completed_ns = time.monotonic_ns()
-            self._clear_unanchored_playback_transcript()
-            if self._played_assistant_text:
-                self.publish_transcript(
-                    speaker="assistant",
-                    text=self._played_assistant_text,
-                    final=False,
-                    heard=True,
-                    fence=self.fence,
-                )
-
-    async def on_assistant_reply_completed(self, text: str) -> None:
-        """Commit one fully played reply after LiveKit adds its conversation item."""
-        text_delivered = self._text_only_delivery
-        if text_delivered and self.orchestrator.state is ConversationState.THINKING:
-            await self.orchestrator.begin_speaking([], text)
-        if self.orchestrator.state is not ConversationState.SPEAKING:
-            return
-        # Voice items arrive after playout; text-only items arrive after the
-        # complete assistant text has been published to the linked participant.
-        heard = text
-        reply_fence = self._playback_fence or self.fence
-        heard = await self.orchestrator.finish_livekit_playback(
-            tools_active=self._pending_tool_results > 0,
-            synchronized_transcript=heard,
-            reply_fence=reply_fence,
-        )
-        self._was_speaking = False
-        self._pending_assistant_text = ""
-        self._played_assistant_text = heard
-        self._playback_fence = None
-        self._last_playback_completed_ns = time.monotonic_ns()
-        self._clear_unanchored_playback_transcript()
-        self.publish_assistant_state(
-            "tool_waiting" if self._pending_tool_results > 0 else "listening"
-        )
-        if heard:
-            self.publish_transcript(
-                speaker="assistant",
-                text=heard,
-                final=True,
-                heard=not text_delivered,
-                text_delivered=text_delivered,
-                fence=reply_fence,
-            )
-            self._schedule_context_snapshot_prepare()
-
-    def should_ignore_post_playback_backchannel(
-        self,
-        text: str,
-        *,
-        now_ns: int | None = None,
-    ) -> bool:
-        return self.post_playback_guard_reason(text, now_ns=now_ns) is not None
 
     def post_playback_guard_reason(
         self,
@@ -3965,279 +3038,10 @@ class DuplexRuntime(
             return reason
         return None
 
-    @staticmethod
-    def _combine_played_text(existing: str, segment: str | None) -> str:
-        if not segment:
-            return existing
-        if segment.startswith(existing):
-            return segment
-        if existing.endswith(segment):
-            return existing
-        return existing + segment
-
-    def attach_session_events(self, session: Any) -> None:
-        """Subscribe to public AgentSession events; playout is attached separately."""
-
-        interruption = getattr(getattr(session, "options", None), "interruption", None)
-        base_min_words = (
-            int(interruption.get("min_words", 0)) if isinstance(interruption, dict) else 0
-        )
-        false_timeout = (
-            float(interruption.get("false_interruption_timeout") or 0.8)
-            if isinstance(interruption, dict)
-            else 0.8
-        )
-        false_resume_task: asyncio.Task[Any] | None = None
-
-        def _set_min_words(value: int) -> None:
-            if isinstance(interruption, dict):
-                interruption["min_words"] = value
-
-        self._set_interruption_min_words = _set_min_words
-        self._base_interruption_min_words = base_min_words
-
-        def _cancel_false_resume() -> None:
-            nonlocal false_resume_task
-            if false_resume_task is not None:
-                false_resume_task.cancel()
-                false_resume_task = None
-
-        def _on_user_state(ev: Any) -> None:
-            nonlocal false_resume_task
-            state = str(getattr(ev, "new_state", ""))
-            if state == "speaking":
-                _cancel_false_resume()
-                decision = self.on_user_voice_started()
-                interaction = self.decide_interaction(
-                    InteractionSnapshot(
-                        event=InteractionEvent.VAD_START,
-                        assistant_speaking=self._was_speaking and self.barge_in_enabled,
-                        has_speech_energy=True,
-                    )
-                )
-                self.apply_interaction_decision(interaction)
-                if interaction.duck_output:
-                    self.publish_assistant_audio("duck", gain=0.0)
-                    self.mark_audio_event("barge_in_detected")
-                if decision is PlaybackInputDecision.WAIT:
-                    _set_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
-                else:
-                    _set_min_words(base_min_words)
-                    if interaction.duck_output and decision is PlaybackInputDecision.IGNORE:
-                        self.publish_assistant_audio("restore", gain=1.0)
-                return
-            if state == "listening":
-                self.on_user_voice_stopped()
-                if (
-                    self.input_guard.candidate_active
-                    and (self.input_guard.candidate_during_playback or self._was_speaking)
-                    and self.input_guard.candidate_decision is PlaybackInputDecision.WAIT
-                ):
-                    candidate_started = self.input_guard.candidate_started_ns
-
-                    async def _resume_false_interruption() -> None:
-                        await asyncio.sleep(false_timeout)
-                        if (
-                            self.input_guard.candidate_active
-                            and self.input_guard.candidate_started_ns == candidate_started
-                            and self.input_guard.candidate_decision is PlaybackInputDecision.WAIT
-                        ):
-                            _set_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
-                            self.publish_assistant_audio("restore", gain=1.0)
-                            self.orchestrator.metrics.inc_false_interruptions()
-
-                    false_resume_task = self._spawn(
-                        _resume_false_interruption(),
-                        name="duplex-false-interruption-resume",
-                    )
-
-        def _on_agent_state(ev: Any) -> None:
-            state = getattr(ev, "new_state", None) or getattr(ev, "state", None)
-            if state is None and isinstance(ev, str):
-                state = ev
-            state_s = str(state)
-            # Mic/VAD/ASR must remain open while assistant speaks.
-            if state_s in ("speaking", "thinking"):
-                assert self.orchestrator.mic_open and self.orchestrator.asr_active
-            mapped = {
-                "initializing": "connecting",
-                "idle": "listening",
-                "listening": "listening",
-                # Quiet planning before first audio: explicit thinking_silent phase.
-                "thinking": "thinking_silent",
-                "speaking": "speaking",
-            }.get(state_s)
-            if mapped is not None:
-                # Do not clobber an active listener backchannel with idle/listening.
-                if mapped == "listening" and self.interaction_phase is InteractionPhase.BACKCHANNEL:
-                    return
-                self.publish_assistant_state(mapped)
-
-        def _on_user_transcript(ev: Any) -> None:
-            text = str(getattr(ev, "transcript", "") or "")
-            if text:
-                final = bool(getattr(ev, "is_final", False))
-                decision = self.observe_user_transcript(text, final=final)
-                if self._was_speaking or self.input_guard.candidate_during_playback:
-                    if decision is PlaybackInputDecision.WAIT:
-                        return
-                    _cancel_false_resume()
-                    if decision is PlaybackInputDecision.IGNORE:
-                        if final and self._target_focus_pending_epoch == self._speaker_epoch:
-                            self._target_focus_pending_epoch = None
-                        logger.info(
-                            "playback_input_ignored reason=%s",
-                            self.input_guard.candidate_reason or "playback_noise",
-                        )
-                        if self.barge_in_enabled:
-                            self.publish_assistant_audio("restore", gain=1.0)
-                        _set_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
-                        return
-                    route = self._route_candidate()
-                    if self._target_speaker_focus_enabled and self._speaker_classifier is not None:
-                        _set_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
-                        if (
-                            not final
-                            and route.should_interrupt
-                            and (
-                                self._speaker_pcm
-                                or self._trusted_unanchored_control_epoch == self._speaker_epoch
-                            )
-                        ):
-                            # Verify a router-confirmed control phrase as soon
-                            # as streaming ASR hears it. Waiting for VAD
-                            # endpointing made「等一下」arrive after the reply
-                            # had already finished; the classifier still gets
-                            # the currently collected PCM and can reject a
-                            # clear non-owner before the stop bridge runs.
-                            self._start_speaker_classification()
-                            self._spawn(
-                                self._confirm_target_speaker_interrupt(self._speaker_epoch),
-                                name="target-speaker-explicit-partial",
-                            )
-                            return
-                        if final:
-                            if self._target_focus_pending_epoch == self._speaker_epoch:
-                                self._target_focus_pending_epoch = None
-                            self._spawn(
-                                self._confirm_target_speaker_interrupt(self._speaker_epoch),
-                                name="target-speaker-playback-focus",
-                            )
-                        return
-                    if (
-                        decision is PlaybackInputDecision.ACCEPT
-                        and (final or route.should_interrupt)
-                        and self._request_playback_interrupt()
-                    ):
-                        return
-                    _set_min_words(base_min_words)
-                if (
-                    final
-                    and self._target_speaker_focus_enabled
-                    and self._speaker_classifier is not None
-                    and self._target_focus_pending_epoch == self._speaker_epoch
-                ):
-                    self._target_focus_pending_epoch = None
-                    _set_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
-                    self._spawn(
-                        self._confirm_target_speaker_interrupt(self._speaker_epoch),
-                        name="target-speaker-playback-focus",
-                    )
-                    return
-                if not final:
-                    self.publish_transcript(
-                        speaker="user",
-                        text=text,
-                        final=False,
-                        fence=self.fence,
-                    )
-
-        def _on_conversation_item(ev: Any) -> None:
-            item = getattr(ev, "item", None)
-            role = getattr(item, "role", None) if item is not None else None
-            if str(role) == "user":
-                # Only raise min_words while assistant is mid-reply. Always
-                # locking to 1000 after every user item left the session deaf
-                # after「停一下」(orphan FINAL + blocked next turn).
-                if self._was_speaking or self.interaction_phase in {
-                    InteractionPhase.SPEAKING,
-                    InteractionPhase.THINKING_SILENT,
-                }:
-                    _set_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
-                else:
-                    _set_min_words(base_min_words)
-                return
-            if str(role) != "assistant":
-                return
-            text = ""
-            if item is not None:
-                content = getattr(item, "text_content", None)
-                if callable(content):
-                    text = str(content() or "")
-                elif content is not None:
-                    text = str(content)
-            if text and not bool(getattr(item, "interrupted", False)):
-                self._spawn(
-                    self.on_assistant_reply_completed(text),
-                    name="duplex-assistant-reply-completed",
-                )
-
-        def _make_unsub(event_name: str, event_handler: Any) -> Callable[[], None]:
-            def _unsub() -> None:
-                session.off(event_name, event_handler)
-
-            return _unsub
-
-        for name, handler in (
-            ("agent_state_changed", _on_agent_state),
-            ("user_state_changed", _on_user_state),
-            ("user_input_transcribed", _on_user_transcript),
-            ("conversation_item_added", _on_conversation_item),
-        ):
-            try:
-                session.on(name, handler)
-                self._unsubscribers.append(_make_unsub(name, handler))
-            except Exception:
-                logger.warning("could not attach session event %s", name, exc_info=True)
-
-    def attach_playback_events(self, audio_output: Any) -> None:
-        """Use LiveKit's actual playout position and synchronized transcript as facts."""
-
-        def _on_started(_ev: Any) -> None:
-            self._spawn(self.on_playback_started(), name="duplex-playback-started")
-
-        def _on_finished(ev: Any) -> None:
-            self._spawn(
-                self.on_playback_finished(
-                    playback_position_s=float(getattr(ev, "playback_position", 0.0) or 0.0),
-                    interrupted=bool(getattr(ev, "interrupted", False)),
-                    synchronized_transcript=getattr(ev, "synchronized_transcript", None),
-                ),
-                name="duplex-playback-finished",
-            )
-
-        for name, handler in (
-            ("playback_started", _on_started),
-            ("playback_finished", _on_finished),
-        ):
-            audio_output.on(name, handler)
-
-            def _unsub(
-                event_name: str = name,
-                event_handler: Any = handler,
-            ) -> None:
-                audio_output.off(event_name, event_handler)
-
-            self._unsubscribers.append(_unsub)
-
     async def close(self) -> None:
         if self.begin_close():
             return
         self.cancel_listener_cue()
-        self._set_interruption_min_words = None
-        for unsub in self._unsubscribers:
-            with contextlib.suppress(Exception):
-                unsub()
         # A classification already in flight can still emit the final
         # speaker.classified evidence. Give its own bounded provider timeout a
         # chance to finish before closing the evidence admission gate.

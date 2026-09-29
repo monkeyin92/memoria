@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Upload only the Agent Python component, build a thin image on the server, and
-# optionally cut over Agent + Voice Core Media Bridge with automatic rollback.
+# optionally cut over the Voice Core Media Bridge (the only service on the
+# memoria-agent image since the LiveKit worker was retired) with automatic
+# rollback.
 set -Eeuo pipefail
 
 usage() {
@@ -113,7 +115,7 @@ else
     echo "uv is required to run release gates; pass --skip-gates only with a filed reason" >&2
     exit 1
   }
-  gate_env=(env -u LISTENER_CUES_ENABLED -u LIVEKIT_ADAPTIVE_INTERRUPTION
+  gate_env=(env -u LISTENER_CUES_ENABLED
     -u OFFLINE_MOCK -u INTERRUPTION_MIN_DURATION_S)
   run_release_gate ruff \
     "${gate_env[@]}" uv run --project "$ROOT" --extra dev ruff check \
@@ -175,7 +177,7 @@ fi
 
 # Overlay replaces the whole services/ and packages/ tree plus run_media_bridge.
 # Reject changes that would still leave the running Agent process on stale
-# in-image code the overlay does not replace (agent-image scripts/voices/kws).
+# in-image code the overlay does not replace (agent-image scripts/voices).
 # Other services, sidecar scripts, and env examples already live in other
 # images; they must not block an Agent-only cutover after merging to main.
 scope_changes="$(
@@ -191,10 +193,10 @@ while IFS= read -r changed; do
     packages/*|services/common/*)
       # Covered by the whole-tree component overlay; nothing goes stale.
       ;;
-    infra/voices/*|infra/kws/*|infra/Dockerfile.agent)
+    infra/voices/*|infra/Dockerfile.agent)
       scope_rejections+=("$changed")
       ;;
-    scripts/verify_env.py|scripts/livekit_smoke_test.py|scripts/provider_smoke_test.py|scripts/run_media_slo_reporter.py|scripts/media_runtime_smoke.py)
+    scripts/verify_env.py|scripts/provider_smoke_test.py|scripts/run_media_slo_reporter.py|scripts/media_runtime_smoke.py)
       scope_rejections+=("$changed")
       ;;
   esac
@@ -381,7 +383,7 @@ target_image_id="$(docker image inspect "$target_image" --format '{{.Id}}')"
 docker run --rm --network none \
   --entrypoint /app/.venv/bin/python \
   "$target_image" \
-  -c 'from services.agent.src.agent import DuplexVoiceAgent; from services.agent.src.providers.open_meteo_weather import OpenMeteoWeather; from services.agent.src.providers.qwen_realtime_search import QwenRealtimeSearch; print("agent_component_import_smoke=PASS")'
+  -c 'import scripts.run_media_bridge; from services.agent.src.media_agent_factory import build_production_media_session_factory; from services.agent.src.agent import DuplexVoiceAgent; from services.agent.src.providers.open_meteo_weather import OpenMeteoWeather; from services.agent.src.providers.qwen_realtime_search import QwenRealtimeSearch; print("agent_component_import_smoke=PASS")'
 
 {
   printf 'agent_component_build=PASS\n'
@@ -515,7 +517,8 @@ if not re.fullmatch(r"memoria-agent:[A-Za-z0-9][A-Za-z0-9._-]*", values["target_
 print("component_manifest=PASS")
 PY
 
-agent_container="memoria-agent-1"
+# The LiveKit worker (memoria-agent-1) was retired; the Voice Core media bridge
+# is the only service that runs the memoria-agent image.
 bridge_container="memoria-voice-core-media-bridge-1"
 control_container="memoria-control-api-1"
 
@@ -527,42 +530,30 @@ container_env_value() {
     | head -n 1
 }
 
-agent_image_id="$(docker inspect "$agent_container" --format '{{.Image}}')"
 bridge_image_id="$(docker inspect "$bridge_container" --format '{{.Image}}')"
-agent_image="$(docker inspect "$agent_container" --format '{{.Config.Image}}')"
 bridge_image="$(docker inspect "$bridge_container" --format '{{.Config.Image}}')"
-agent_release_commit="$(docker inspect "$agent_container" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
 bridge_release_commit="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
-agent_release_tag="$(docker inspect "$agent_container" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
 bridge_release_tag="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
-agent_release_role="$(docker inspect "$agent_container" --format '{{index .Config.Labels "com.memoria.release.role"}}')"
 bridge_release_role="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "com.memoria.release.role"}}')"
-agent_release_kind="$(docker inspect "$agent_container" --format '{{index .Config.Labels "com.memoria.release.kind"}}')"
 bridge_release_kind="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "com.memoria.release.kind"}}')"
-[[ "$agent_release_commit" =~ ^[0-9a-f]{40}$ \
-  && "$agent_release_commit" == "$bridge_release_commit" \
-  && -n "$agent_release_tag" \
-  && "$agent_release_tag" == "$bridge_release_tag" \
-  && "$agent_release_role" == agent \
+[[ "$bridge_release_commit" =~ ^[0-9a-f]{40}$ \
+  && -n "$bridge_release_tag" \
   && "$bridge_release_role" == agent \
-  && -n "$agent_release_kind" \
-  && "$agent_release_kind" == "$bridge_release_kind" ]] || {
-  echo "Agent and bridge do not share one current release authority" >&2
+  && -n "$bridge_release_kind" ]] || {
+  echo "bridge does not carry one current release authority" >&2
   exit 1
 }
-[[ "$agent_image_id" == "$bridge_image_id" \
-  && "$agent_image" == "$bridge_image" \
-  && "$agent_image" =~ ^memoria-agent:[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
-  echo "Agent and bridge do not share one current runnable image" >&2
+[[ "$bridge_image" =~ ^memoria-agent:[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
+  echo "bridge does not run a versioned memoria-agent image" >&2
   exit 1
 }
-if docker image inspect "$agent_image" >/dev/null 2>&1; then
-  [[ "$(docker image inspect "$agent_image" --format '{{.Id}}')" == "$agent_image_id" ]] || {
-    echo "running Agent image tag does not resolve to the container image" >&2
+if docker image inspect "$bridge_image" >/dev/null 2>&1; then
+  [[ "$(docker image inspect "$bridge_image" --format '{{.Id}}')" == "$bridge_image_id" ]] || {
+    echo "running bridge image tag does not resolve to the container image" >&2
     exit 1
   }
 else
-  echo "current Agent image object is unavailable; checking the running-source recovery path" >&2
+  echo "current bridge image object is unavailable; checking the running-source recovery path" >&2
 fi
 
 image_repo_digests() {
@@ -588,31 +579,12 @@ image_digest_or_id() {
   fi
 }
 
-image_identity_matches() {
-  local expected_id="$1"
-  local expected_repo_digests="$2"
-  local actual_id="$3"
-  local actual_repo_digests="$4"
-  [[ "$expected_id" == "$actual_id" ]] || return 1
-  if [[ -n "$expected_repo_digests" || -n "$actual_repo_digests" ]]; then
-    [[ -n "$expected_repo_digests" && -n "$actual_repo_digests" && "$expected_repo_digests" == "$actual_repo_digests" ]]
-  fi
-}
-
-agent_image_repo_digests="$(image_repo_digests "$agent_image_id")"
 bridge_image_repo_digests="$(image_repo_digests "$bridge_image_id")"
-agent_image_digest="$(image_digest_or_id "$agent_image_id")"
 bridge_image_digest="$(image_digest_or_id "$bridge_image_id")"
-image_identity_matches "$agent_image_id" "$agent_image_repo_digests" \
-  "$bridge_image_id" "$bridge_image_repo_digests" || {
-  echo "Agent and bridge image content identities differ" >&2
-  exit 1
-}
 
 target_metadata="$(docker image inspect "$target_image" --format '{{.Architecture}} {{index .Config.Labels "org.opencontainers.image.revision"}} {{index .Config.Labels "org.opencontainers.image.version"}} {{index .Config.Labels "com.memoria.release.role"}} {{index .Config.Labels "com.memoria.release.kind"}}')"
 target_image_id="$(docker image inspect "$target_image" --format '{{.Id}}')"
 [[ "$target_metadata" == "amd64 $release_commit $release_tag agent agent-source-overlay" \
-  && "$target_image_id" != "$agent_image_id" \
   && "$target_image_id" != "$bridge_image_id" ]] || {
   echo "target image metadata or identity is invalid" >&2
   exit 1
@@ -623,23 +595,19 @@ runtime_base_image_id="$(docker image inspect "$manifest_runtime_base" --format 
 runtime_base_version="$(printf '%s' "$manifest_base_image" | cut -d: -f2-)"
 [[ "$runtime_base_metadata" == "$manifest_base_image_id amd64 $manifest_base_commit $runtime_base_version agent" \
   && "$manifest_runtime_base" != "$target_image" \
-  && "$manifest_runtime_base" != "$agent_image" \
   && "$manifest_runtime_base" != "$bridge_image" \
   && "$runtime_base_image_id" != "$target_image_id" \
-  && "$runtime_base_image_id" != "$agent_image_id" \
   && "$runtime_base_image_id" != "$bridge_image_id" ]] || {
   echo "runtime base image is missing, has invalid provenance, or is not independent" >&2
   exit 1
 }
-agent_stack_release_tag="$(container_env_value "$agent_container" MEMORIA_RELEASE_TAG)"
 bridge_stack_release_tag="$(container_env_value "$bridge_container" MEMORIA_RELEASE_TAG)"
 control_stack_release_tag="$(container_env_value "$control_container" MEMORIA_RELEASE_TAG)"
 control_stack_release_commit="$(container_env_value "$control_container" MEMORIA_RELEASE_COMMIT)"
-[[ -n "$agent_stack_release_tag" \
-  && "$agent_stack_release_tag" == "$bridge_stack_release_tag" \
+[[ -n "$bridge_stack_release_tag" \
   && -n "$control_stack_release_tag" \
   && "$control_stack_release_commit" =~ ^[0-9a-f]{40}$ ]] || {
-  echo "Agent and bridge do not share one stack env, or Control stack tag is missing" >&2
+  echo "bridge stack env or Control stack tag is missing" >&2
   exit 1
 }
 # Compose interpolates image names from the stack env. Component overlay
@@ -647,17 +615,15 @@ control_stack_release_commit="$(container_env_value "$control_container" MEMORIA
 # used as that env; doing so left Agent heartbeat 409 after overlay cutovers.
 stack_release_tag="$control_stack_release_tag"
 stack_release_commit="$control_stack_release_commit"
-config_files="$(docker inspect "$agent_container" --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}')"
-bridge_config_files="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}')"
-working_dir="$(docker inspect "$agent_container" --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}')"
-project_name="$(docker inspect "$agent_container" --format '{{index .Config.Labels "com.docker.compose.project"}}')"
-bridge_project_name="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "com.docker.compose.project"}}')"
-[[ -n "$config_files" && -n "$bridge_config_files" ]] || {
-  echo "Agent or bridge is missing Compose configuration authority" >&2
+config_files="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}')"
+working_dir="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}')"
+project_name="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "com.docker.compose.project"}}')"
+[[ -n "$config_files" ]] || {
+  echo "bridge is missing Compose configuration authority" >&2
   exit 1
 }
-[[ "$project_name" == memoria && "$bridge_project_name" == "$project_name" ]] || {
-  echo "Agent and bridge do not share one Compose project authority" >&2
+[[ "$project_name" == memoria ]] || {
+  echo "bridge is not in the memoria Compose project" >&2
   exit 1
 }
 
@@ -665,18 +631,13 @@ fallback_working_dir="/opt/memoria/releases"
 fallback_config="$fallback_working_dir/docker-compose.production.yml"
 component_root="${remote_dir%/*}"
 IFS=',' read -r -a previous_files <<<"$config_files"
-IFS=',' read -r -a bridge_previous_files <<<"$bridge_config_files"
-[[ "${#previous_files[@]}" -eq "${#bridge_previous_files[@]}" ]] || {
-  echo "Agent and bridge Compose stacks have different depths" >&2
-  exit 1
-}
 
 # Compose labels retain every historical override path. Component releases only
 # write image-only overrides, so preserving that chain makes a healthy service
 # undeployable after ordinary artifact pruning. Verify every surviving override
-# is one of ours and image-only, tolerate a missing component override only when
-# both services reference the same path, then collapse the chain below to the
-# production Compose file plus a snapshot of the verified live image.
+# is one of ours and image-only, tolerate a missing component override, then
+# collapse the chain below to the production Compose file plus a snapshot of
+# the verified live image.
 validate_component_override() {
   local file="$1"
   local parent
@@ -695,8 +656,6 @@ from pathlib import Path
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
 match = re.fullmatch(
     r'services:\n'
-    r'  agent:\n'
-    r'    image: "(memoria-agent:[A-Za-z0-9][A-Za-z0-9._-]*)"\n'
     r'  voice-core-media-bridge:\n'
     r'    image: "(memoria-agent:[A-Za-z0-9][A-Za-z0-9._-]*)"\n',
     text,
@@ -707,72 +666,43 @@ PY
 }
 
 base_file=""
-for index in "${!previous_files[@]}"; do
-  agent_file="${previous_files[$index]}"
-  bridge_file="${bridge_previous_files[$index]}"
-  agent_name="${agent_file##*/}"
-  bridge_name="${bridge_file##*/}"
-  if [[ "$agent_name" == docker-compose.production.yml \
-    || "$bridge_name" == docker-compose.production.yml ]]; then
-    [[ "$agent_name" == docker-compose.production.yml \
-      && "$bridge_name" == docker-compose.production.yml \
-      && -z "$base_file" ]] || {
-      echo "Agent and bridge Compose stacks have an ambiguous base" >&2
+for file in "${previous_files[@]}"; do
+  if [[ "${file##*/}" == docker-compose.production.yml ]]; then
+    [[ -z "$base_file" ]] || {
+      echo "bridge Compose stack has an ambiguous base" >&2
       exit 1
     }
-    if [[ ! -f "$agent_file" ]]; then
-      echo "Agent Compose base snapshot was pruned; using the verified current production file" >&2
-      agent_file="$fallback_config"
+    if [[ ! -f "$file" ]]; then
+      echo "bridge Compose base snapshot was pruned; using the verified current production file" >&2
+      file="$fallback_config"
     fi
-    if [[ ! -f "$bridge_file" ]]; then
-      echo "Bridge Compose base snapshot was pruned; using the verified current production file" >&2
-      bridge_file="$fallback_config"
-    fi
-    for file in "$agent_file" "$bridge_file"; do
-      [[ -f "$file" && ! -L "$file" ]] || {
-        echo "required Compose base is unavailable or unsafe: $file" >&2
-        exit 1
-      }
-    done
-    [[ "$(sha256sum "$agent_file" | cut -d ' ' -f1)" == "$(sha256sum "$bridge_file" | cut -d ' ' -f1)" ]] || {
-      echo "Agent and bridge Compose bases do not describe one current authority" >&2
+    [[ -f "$file" && ! -L "$file" ]] || {
+      echo "required Compose base is unavailable or unsafe: $file" >&2
       exit 1
     }
-    base_file="$agent_file"
+    base_file="$file"
     continue
   fi
 
-  for file in "$agent_file" "$bridge_file"; do
-    parent="$(dirname "$file")"
-    [[ "${parent%/*}" == "$component_root" ]] || {
+  parent="$(dirname "$file")"
+  [[ "${parent%/*}" == "$component_root" ]] || {
+    echo "unrecognized Compose override authority: $file" >&2
+    exit 1
+  }
+  case "${file##*/}" in
+    agent-component.override.yml|agent-component.rollback.override.yml|pre-cutover-live.override.yml)
+      ;;
+    *)
       echo "unrecognized Compose override authority: $file" >&2
       exit 1
-    }
-    case "${file##*/}" in
-      agent-component.override.yml|agent-component.rollback.override.yml|pre-cutover-live.override.yml)
-        ;;
-      *)
-        echo "unrecognized Compose override authority: $file" >&2
-        exit 1
-        ;;
-    esac
-  done
-  if [[ ! -f "$agent_file" || ! -f "$bridge_file" ]]; then
-    [[ "$agent_file" == "$bridge_file" ]] || {
-      echo "Agent and bridge are missing different Compose overrides" >&2
-      exit 1
-    }
-    echo "historical component override was pruned; replacing it with a verified live-image snapshot: $agent_file" >&2
+      ;;
+  esac
+  if [[ ! -f "$file" ]]; then
+    echo "historical component override was pruned; replacing it with a verified live-image snapshot: $file" >&2
     continue
   fi
-  for file in "$agent_file" "$bridge_file"; do
-    [[ ! -L "$file" ]] && validate_component_override "$file" || {
-      echo "component Compose override is unavailable, unsafe, or not image-only: $file" >&2
-      exit 1
-    }
-  done
-  [[ "$(sha256sum "$agent_file" | cut -d ' ' -f1)" == "$(sha256sum "$bridge_file" | cut -d ' ' -f1)" ]] || {
-    echo "Agent and bridge component overrides do not describe one current authority" >&2
+  [[ ! -L "$file" ]] && validate_component_override "$file" || {
+    echo "component Compose override is unavailable, unsafe, or not image-only: $file" >&2
     exit 1
   }
 done
@@ -784,8 +714,6 @@ done
 live_override="$remote_dir/pre-cutover-live.override.yml"
 cat >"$live_override" <<EOF
 services:
-  agent:
-    image: "$agent_image"
   voice-core-media-bridge:
     image: "$bridge_image"
 EOF
@@ -810,8 +738,8 @@ for file in "${previous_files[@]}"; do
   previous_args+=(--file "$file")
 done
 
-# Agent and Bridge are cut over as one runnable image. Keep one rollback tag so
-# a rollback preserves the same image authority required by the next release.
+# Keep one rollback tag for the bridge image so a rollback preserves the same
+# image authority required by the next release.
 rollback_image="memoria-agent:rollback-${release_tag}-pre"
 
 source_tree_digest_live() {
@@ -828,7 +756,7 @@ source_tree_digest_image() {
     | sha256sum | cut -d ' ' -f1
 }
 
-freeze_shared_rollback_image() {
+freeze_bridge_rollback_image() {
   local container="$1"
   local image_id="$2"
   local rollback_tag="$3"
@@ -844,11 +772,11 @@ freeze_shared_rollback_image() {
     case "$rollback_existing_kind" in
       agent-source-overlay)
         [[ "$rollback_existing_id" == "$image_id" \
-          && "$rollback_existing_repo_digests" == "$agent_image_repo_digests" \
-          && "$rollback_existing_commit" == "$agent_release_commit" \
-          && "$rollback_existing_release" == "$agent_release_tag" \
+          && "$rollback_existing_repo_digests" == "$bridge_image_repo_digests" \
+          && "$rollback_existing_commit" == "$bridge_release_commit" \
+          && "$rollback_existing_release" == "$bridge_release_tag" \
           && "$rollback_existing_role" == agent ]] || {
-          echo "existing ordinary rollback tag identity or provenance does not match the current Agent/Bridge image" >&2
+          echo "existing ordinary rollback tag identity or provenance does not match the current bridge image" >&2
           exit 1
         }
         ;;
@@ -860,11 +788,11 @@ freeze_shared_rollback_image() {
         [[ "$recovery_base_metadata" == "$manifest_base_image_id amd64 $manifest_base_commit $recovery_base_version agent" \
           && "$rollback_existing_arch" == amd64 \
           && "$rollback_existing_runtime_base_id" == "$manifest_base_image_id" \
-          && "$rollback_existing_commit" == "$agent_release_commit" \
-          && "$rollback_existing_release" == "$agent_release_tag" \
+          && "$rollback_existing_commit" == "$bridge_release_commit" \
+          && "$rollback_existing_release" == "$bridge_release_tag" \
           && "$rollback_existing_role" == agent \
           && "$(source_tree_digest_live "$container")" == "$(source_tree_digest_image "$rollback_tag")" ]] || {
-          echo "existing recovery rollback tag source or provenance does not match the current Agent" >&2
+          echo "existing recovery rollback tag source or provenance does not match the current bridge" >&2
           exit 1
         }
         rollback_recovered=true
@@ -879,12 +807,12 @@ freeze_shared_rollback_image() {
   else
     # A running container can outlive a pruned parent image. Docker cannot
     # commit that container because its content digest is gone, so rebuild its
-    # exact application source tree over the surviving peer image from the same
-    # release authority and verify the result byte-for-byte before cutover.
+    # exact application source tree over the verified runtime base image from
+    # the same release authority and verify the result byte-for-byte before
+    # cutover.
     recovery_base_metadata="$(docker image inspect "$recovery_base" --format '{{.Id}} {{.Architecture}} {{index .Config.Labels "org.opencontainers.image.revision"}} {{index .Config.Labels "org.opencontainers.image.version"}} {{index .Config.Labels "com.memoria.release.role"}}')"
     recovery_base_version="$(printf '%s' "$manifest_base_image" | cut -d: -f2-)"
     [[ "$recovery_base_metadata" == "$manifest_base_image_id amd64 $manifest_base_commit $recovery_base_version agent" \
-      && "$recovery_base" != "$agent_image" \
       && "$recovery_base" != "$bridge_image" ]] || {
       echo "runtime base cannot authorize rollback recovery" >&2
       exit 1
@@ -915,8 +843,8 @@ USER 65532:65532
 ROLLBACK_DOCKERFILE
     DOCKER_BUILDKIT="${MEMORIA_DOCKER_BUILDKIT:-0}" docker build --pull=false --network=none \
       --build-arg "BASE_IMAGE=$recovery_base" \
-      --build-arg "MEMORIA_RELEASE_COMMIT=$agent_release_commit" \
-      --build-arg "MEMORIA_RELEASE_TAG=$agent_release_tag" \
+      --build-arg "MEMORIA_RELEASE_COMMIT=$bridge_release_commit" \
+      --build-arg "MEMORIA_RELEASE_TAG=$bridge_release_tag" \
       --build-arg "MEMORIA_RUNTIME_BASE_ID=$manifest_base_image_id" \
       --tag "$rollback_tag" \
       --file "$recovery_dir/Dockerfile" \
@@ -925,8 +853,8 @@ ROLLBACK_DOCKERFILE
     rollback_source_digest="$(source_tree_digest_image "$rollback_tag")"
     rollback_recovery_metadata="$(docker image inspect "$rollback_tag" --format '{{.Architecture}} {{index .Config.Labels "org.opencontainers.image.revision"}} {{index .Config.Labels "org.opencontainers.image.version"}} {{index .Config.Labels "com.memoria.release.role"}} {{index .Config.Labels "com.memoria.release.kind"}} {{index .Config.Labels "com.memoria.release.runtime-base-id"}}')"
     [[ "$live_source_digest" == "$rollback_source_digest" \
-      && "$rollback_recovery_metadata" == "amd64 $agent_release_commit $agent_release_tag agent agent-running-source-recovery $manifest_base_image_id" ]] || {
-      echo "recovered rollback image does not match the running Agent source" >&2
+      && "$rollback_recovery_metadata" == "amd64 $bridge_release_commit $bridge_release_tag agent agent-running-source-recovery $manifest_base_image_id" ]] || {
+      echo "recovered rollback image does not match the running bridge source" >&2
       exit 1
     }
     rollback_recovered=true
@@ -944,18 +872,18 @@ ROLLBACK_DOCKERFILE
   rollback_kind="$(docker image inspect "$rollback_tag" --format '{{index .Config.Labels "com.memoria.release.kind"}}')"
   rollback_arch="$(docker image inspect "$rollback_tag" --format '{{.Architecture}}')"
   rollback_runtime_base_id="$(docker image inspect "$rollback_tag" --format '{{index .Config.Labels "com.memoria.release.runtime-base-id"}}')"
-  [[ "$rollback_release_commit" == "$agent_release_commit" \
-    && "$rollback_release_tag" == "$agent_release_tag" \
+  [[ "$rollback_release_commit" == "$bridge_release_commit" \
+    && "$rollback_release_tag" == "$bridge_release_tag" \
     && "$rollback_role" == agent \
     && "$rollback_arch" == amd64 \
     && ("$rollback_kind" == agent-source-overlay || "$rollback_kind" == agent-running-source-recovery) ]] || {
-    echo "rollback tag provenance does not match the current Agent/Bridge release" >&2
+    echo "rollback tag provenance does not match the current bridge release" >&2
     exit 1
   }
   if [[ "$rollback_kind" == agent-source-overlay ]]; then
     [[ "$rollback_image_id" == "$image_id" \
-      && "$rollback_image_repo_digests" == "$agent_image_repo_digests" ]] || {
-      echo "rollback tag image identity or RepoDigest does not match the current Agent/Bridge image" >&2
+      && "$rollback_image_repo_digests" == "$bridge_image_repo_digests" ]] || {
+      echo "rollback tag image identity or RepoDigest does not match the current bridge image" >&2
       exit 1
     }
   else
@@ -968,13 +896,11 @@ ROLLBACK_DOCKERFILE
   fi
 }
 
-freeze_shared_rollback_image "$agent_container" "$agent_image_id" "$rollback_image" "$manifest_runtime_base"
+freeze_bridge_rollback_image "$bridge_container" "$bridge_image_id" "$rollback_image" "$manifest_runtime_base"
 
 override="$remote_dir/agent-component.override.yml"
 cat >"$override" <<EOF
 services:
-  agent:
-    image: "$target_image"
   voice-core-media-bridge:
     image: "$target_image"
 EOF
@@ -983,8 +909,6 @@ chmod 0600 "$override"
 rollback_override="$remote_dir/agent-component.rollback.override.yml"
 cat >"$rollback_override" <<EOF
 services:
-  agent:
-    image: "$rollback_image"
   voice-core-media-bridge:
     image: "$rollback_image"
 EOF
@@ -992,14 +916,6 @@ chmod 0600 "$rollback_override"
 
 printf '%s\n' "${previous_files[@]}" >"$remote_dir/PRE_CUTOVER_CONFIG_FILES.txt"
 {
-  printf 'agent_image=%s\n' "$agent_image"
-  printf 'agent_image_id=%s\n' "$agent_image_id"
-  printf 'agent_content_identity=%s\n' "$agent_image_digest"
-  printf 'agent_repo_digests=%s\n' "$agent_image_repo_digests"
-  printf 'agent_release_commit=%s\n' "$agent_release_commit"
-  printf 'agent_release_tag=%s\n' "$agent_release_tag"
-  printf 'agent_release_role=%s\n' "$agent_release_role"
-  printf 'agent_release_kind=%s\n' "$agent_release_kind"
   printf 'bridge_image=%s\n' "$bridge_image"
   printf 'bridge_image_id=%s\n' "$bridge_image_id"
   printf 'bridge_content_identity=%s\n' "$bridge_image_digest"
@@ -1023,11 +939,11 @@ printf '%s\n' "${previous_files[@]}" >"$remote_dir/PRE_CUTOVER_CONFIG_FILES.txt"
   } >"$remote_dir/ROLLBACK_POINT.txt"
 sha256sum "$remote_dir/ROLLBACK_POINT.txt" >"$remote_dir/ROLLBACK_POINT.txt.sha256"
 
-# Prove that the live Compose chain plus the candidate override resolves both
-# target services to THIS candidate before anything is replaced. The resolver
-# requires an explicit candidate identity, so a chain that still names the
-# effective stack image (a missing candidate override, or an old-image
-# override applied after it) fails here, while the running stack is untouched.
+# Prove that the live Compose chain plus the candidate override resolves the
+# bridge to THIS candidate before anything is replaced. The resolver requires
+# an explicit candidate identity, so a chain that still names the effective
+# stack image (a missing candidate override, or an old-image override applied
+# after it) fails here, while the running stack is untouched.
 resolve_output="$(
   cd "$working_dir"
   python3 "$remote_dir/resolve_target_images.py" \
@@ -1036,6 +952,7 @@ resolve_output="$(
     --release-commit "$stack_release_commit" \
     --expected-tag "$release_tag" \
     --expected-image "$target_image" \
+    --services voice-core-media-bridge \
     --docker-cmd docker \
     --override "$live_override" \
     --override "$override"
@@ -1054,7 +971,7 @@ rollback() {
       docker compose --project-name "$project_name" \
       "${previous_args[@]}" --file "$rollback_override" \
       --profile media-runtime up -d --no-deps --no-build \
-      agent voice-core-media-bridge
+      voice-core-media-bridge
   )
   rollback_status=$?
   if ((rollback_status == 0)); then
@@ -1071,18 +988,16 @@ env MEMORIA_RELEASE_TAG="$stack_release_tag" MEMORIA_RELEASE_COMMIT="$stack_rele
   docker compose --project-name "$project_name" \
   "${previous_args[@]}" --file "$override" \
   --profile media-runtime up -d --no-deps --no-build \
-  agent voice-core-media-bridge
+  voice-core-media-bridge
 
 for _ in $(seq 1 36); do
-  agent_health="$(docker inspect "$agent_container" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}')"
   bridge_health="$(docker inspect "$bridge_container" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}')"
-  if [[ "$agent_health" == healthy && "$bridge_health" == healthy ]]; then
+  if [[ "$bridge_health" == healthy ]]; then
     break
   fi
   sleep 5
 done
-[[ "$agent_health" == healthy && "$bridge_health" == healthy ]]
-[[ "$(docker inspect "$agent_container" --format '{{.Config.Image}}')" == "$target_image" ]]
+[[ "$bridge_health" == healthy ]]
 [[ "$(docker inspect "$bridge_container" --format '{{.Config.Image}}')" == "$target_image" ]]
 docker exec "$bridge_container" /app/.venv/bin/python -c \
   'import socket; s=socket.create_connection(("127.0.0.1", 7001), 3); s.close(); print("bridge_grpc_socket=PASS")'
@@ -1091,7 +1006,6 @@ trap - ERR
 {
   printf 'agent_component_cutover=PASS\n'
   printf 'cutover_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  docker inspect "$agent_container" --format 'agent_image={{.Config.Image}} agent_image_id={{.Image}} agent_health={{.State.Health.Status}}'
   docker inspect "$bridge_container" --format 'bridge_image={{.Config.Image}} bridge_image_id={{.Image}} bridge_health={{.State.Health.Status}}'
   printf 'runtime_stack_release_tag=%s\n' "$stack_release_tag"
   printf 'rollback_image=%s\n' "$rollback_image"

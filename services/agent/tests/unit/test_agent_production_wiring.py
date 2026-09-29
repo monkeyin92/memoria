@@ -1,11 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
-import inspect
-import json
 import logging
-import time
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from types import SimpleNamespace
@@ -13,14 +9,11 @@ from typing import Any
 
 import pytest
 from livekit.agents import FlushSentinel, StopResponse, llm
-from livekit.agents.types import TimedString
 from services.agent.src import agent as agent_mod
-from services.agent.src import session_entrypoint as entrypoint_mod
 from services.agent.src.agent import DuplexVoiceAgent
 from services.agent.src.contracts.ids import CancellationContext, GenerationFence
 from services.agent.src.duplex_runtime import (
     DuplexRuntime,
-    KeywordSpotterBinding,
     PendingRealtimeRequest,
 )
 from services.agent.src.mode_policy_client import ModePolicy
@@ -33,31 +26,23 @@ from services.agent.src.orchestration.context_snapshot_manager import (
 )
 from services.agent.src.orchestration.handlers import LanguageModelRequest
 from services.agent.src.orchestration.prosody import SpeechPlan
-from services.agent.src.orchestration.state_machine import ConversationState
-from services.agent.src.orchestration.utterance_router import InterruptSemanticVerdict
+from services.agent.src.orchestration.speaker_verify import (
+    should_enable_legacy_speaker_verifier,
+)
 from services.agent.src.prompts import BRIDGE_PHRASES
 from services.agent.src.response_planner_client import (
-    ContextPrefetchFetch,
     ResponseGroundedItem,
     ResponsePlan,
     ResponsePlanFetch,
     ResponseProvenance,
     ResponseVoiceTarget,
 )
-from services.agent.src.session_entrypoint import (
-    apply_miniprogram_session_audio_policy,
-    build_keyword_spotter_pcm_observer,
-    is_device_session,
-    is_miniprogram_session,
-    should_enable_legacy_speaker_verifier,
-)
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
-from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
-from services.common.miniprogram_gateway_ticket import (
-    DEVICE_AGENT_DISPATCH_METADATA,
-    MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA,
-    MINIPROGRAM_AGENT_DISPATCH_METADATA,
+from services.agent.tests.unit.runtime_state_helpers import (
+    bind_owner_speaker,
+    commit_media_turn,
 )
+from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
 from services.common.realtime_information import REALTIME_UNAVAILABLE_REPLY
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
@@ -75,7 +60,7 @@ async def _collect_strings(source: AsyncIterator[str]) -> list[str]:
 async def test_agent_prepares_and_streams_a_media_turn_through_the_response_plan() -> None:
     runtime = DuplexRuntime.create(session_id="media-agent-session")
     bind_owner_policy(runtime, policy_version="test-policy", private_context=True, owner_evidence=True, tools=True, voice_profile=False, shadow_low_sensitivity_persona=False)
-    runtime.authenticate_text_owner()
+    bind_owner_speaker(runtime)
 
     class Planner:
         async def fetch(self, **kwargs: object) -> ResponsePlanFetch:
@@ -125,7 +110,7 @@ async def test_agent_prepares_and_streams_a_media_turn_through_the_response_plan
 async def test_response_plan_receives_bounded_owner_recall_context_only() -> None:
     runtime = DuplexRuntime.create(session_id="response-plan-recall-context")
     bind_owner_policy(runtime, voice_profile=False)
-    runtime.authenticate_text_owner()
+    bind_owner_speaker(runtime)
     fresh_snapshot = runtime.orchestrator.context_snapshots.rebind_identity(
         runtime.session_id,
         ContextSnapshotDraft(
@@ -193,7 +178,7 @@ async def test_response_plan_receives_bounded_owner_recall_context_only() -> Non
 async def test_media_agent_streams_the_configured_llm_without_a_livekit_session() -> None:
     runtime = DuplexRuntime.create(session_id="standalone-media-agent")
     bind_owner_policy(runtime, policy_version="test-policy", private_context=True, owner_evidence=True, tools=True, voice_profile=False, shadow_low_sensitivity_persona=False)
-    runtime.authenticate_text_owner()
+    bind_owner_speaker(runtime)
 
     class Planner:
         async def fetch(self, **kwargs: object) -> ResponsePlanFetch:
@@ -254,94 +239,6 @@ async def test_media_agent_streams_the_configured_llm_without_a_livekit_session(
     assert output == ["第一句。", "第二句。"]
     assert model.calls == 1
     await runtime.close()
-
-
-@pytest.mark.asyncio
-async def test_authenticated_text_input_uses_owner_policy_and_disables_audio_output() -> None:
-    runtime = DuplexRuntime.create(session_id="text-session")
-    runtime.tts = SimpleNamespace()
-    bind_owner_policy(runtime)
-    published: list[dict[str, Any]] = []
-
-    async def publish(event: dict[str, Any]) -> None:
-        published.append(event)
-
-    runtime.set_event_publisher(publish)
-
-    class ResponsePlannerStub:
-        async def fetch(self, **kwargs: object) -> ResponsePlanFetch:
-            speaker = kwargs["speaker_decision"]
-            assert isinstance(speaker, SpeakerDecision)
-            assert speaker.classification == "owner"
-            assert speaker.reason_code == "authenticated_text_input"
-            return ResponsePlanFetch(
-                plan=_plan_for_fence(
-                    kwargs["fence"],  # type: ignore[arg-type]
-                    instructions="按当前伙伴性格回答。",
-                ),
-                reason="ok",
-            )
-
-    class Output:
-        def __init__(self) -> None:
-            self.audio_enabled: list[bool] = []
-
-        def set_audio_enabled(self, enabled: bool) -> None:
-            self.audio_enabled.append(enabled)
-
-    class Session:
-        def __init__(self) -> None:
-            self.output = Output()
-            self.interruptions = 0
-            self.replies: list[dict[str, object]] = []
-
-        @contextlib.asynccontextmanager
-        async def _claim_user_turn(self) -> AsyncIterator[None]:
-            yield
-
-        async def interrupt(self) -> None:
-            self.interruptions += 1
-
-        def generate_reply(self, **kwargs: object) -> None:
-            self.replies.append(dict(kwargs))
-
-    agent = DuplexVoiceAgent(
-        instructions="test",
-        runtime=runtime,
-        response_planner_client=ResponsePlannerStub(),  # type: ignore[arg-type]
-    )
-    session = Session()
-    event = SimpleNamespace(
-        text=" 今天星期几？ ",
-        participant=SimpleNamespace(identity="user-account-session"),
-    )
-
-    await agent.handle_text_input(session, event)  # type: ignore[arg-type]
-    await asyncio.sleep(0)
-    plan = agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)]
-    assert agent._bind_response_plan_provenance(runtime.fence, plan)
-    await runtime.on_assistant_reply_completed("今天星期四。")
-    await asyncio.sleep(0)
-
-    assert session.interruptions == 1
-    assert session.output.audio_enabled == [False]
-    assert session.replies == [{"user_input": "今天星期几？", "input_modality": "text"}]
-    assert runtime.current_speaker_class == "owner"
-    assert any(
-        item.get("type") == "transcript_delta"
-        and item.get("speaker") == "user"
-        and item.get("text") == "今天星期几？"
-        and item.get("history_eligible") is True
-        for item in published
-    )
-    assert any(
-        item.get("type") == "transcript_delta"
-        and item.get("speaker") == "assistant"
-        and item.get("text") == "今天星期四。"
-        and item.get("heard") is False
-        and item.get("text_delivered") is True
-        for item in published
-    )
 
 
 def _plan_for_fence(
@@ -406,124 +303,6 @@ def test_formal_speaker_authority_disables_legacy_session_enrollment() -> None:
     assert not should_enable_legacy_speaker_verifier(settings, offline=True)
 
 
-def test_miniprogram_audio_policy_identifies_plain_and_aec_sessions() -> None:
-    web_kwargs: dict[str, Any] = {}
-    miniprogram_kwargs: dict[str, Any] = {}
-
-    assert is_miniprogram_session(MINIPROGRAM_AGENT_DISPATCH_METADATA)
-    assert is_miniprogram_session(MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA)
-    assert not is_miniprogram_session("")
-    assert not is_miniprogram_session("memoria.miniprogram.aec.v2")
-    assert is_device_session(DEVICE_AGENT_DISPATCH_METADATA)
-    assert not is_device_session(MINIPROGRAM_AGENT_DISPATCH_METADATA)
-    assert not apply_miniprogram_session_audio_policy(web_kwargs, "")
-    assert "aec_warmup_duration" not in web_kwargs
-    assert not apply_miniprogram_session_audio_policy(web_kwargs, "memoria.miniprogram.aec.v2")
-    assert apply_miniprogram_session_audio_policy(
-        miniprogram_kwargs,
-        MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA,
-    )
-    assert miniprogram_kwargs["aec_warmup_duration"] is None
-    assert entrypoint_mod.AgentSession(**web_kwargs)._aec_warmup_remaining == 3.0
-    assert entrypoint_mod.AgentSession(**miniprogram_kwargs)._aec_warmup_remaining == 0.0
-
-
-def test_miniprogram_turn_handling_disables_barge_in_without_changing_h5() -> None:
-    h5 = entrypoint_mod.build_turn_handling_config("cn_self_hosted")
-    miniprogram = entrypoint_mod.build_turn_handling_config(
-        "cn_self_hosted",
-        interruptions_enabled=False,
-    )
-
-    assert h5["interruption"]["enabled"] is True
-    assert miniprogram["interruption"]["enabled"] is False
-
-
-def test_device_turn_handling_uses_manual_commit() -> None:
-    config = entrypoint_mod.build_turn_handling_config(
-        "cn_self_hosted",
-        device_vad=True,
-    )
-    options = entrypoint_mod.build_turn_handling_options(
-        "cn_self_hosted",
-        device_vad=True,
-    )
-
-    assert config["turn_detection"] == "manual"
-    assert options["turn_detection"] == "manual"
-    assert config["endpointing"]["min_delay"] == 0.05
-    assert config["endpointing"]["max_delay"] == 0.40
-    assert options["endpointing"]["min_delay"] == 0.05
-    assert options["endpointing"]["max_delay"] == 0.40
-
-
-def test_keyword_spotter_waits_for_vad_final_before_forwarding_hit() -> None:
-    binding = KeywordSpotterBinding(
-        speaker_epoch=3,
-        playback_epoch=4,
-        fence=GenerationFence(
-            session_id="session-kws",
-            turn_id=1,
-            generation_id=2,
-            tool_epoch=0,
-        ),
-    )
-
-    class FakeRuntime:
-        def __init__(self) -> None:
-            self.binding: KeywordSpotterBinding | None = binding
-            self.finalizer: Any = None
-            self.hits: list[tuple[str, KeywordSpotterBinding]] = []
-
-        def keyword_spotter_binding(self) -> KeywordSpotterBinding | None:
-            return self.binding
-
-        def set_keyword_spotter_finalizer(self, finalizer: Any) -> None:
-            self.finalizer = finalizer
-
-        def observe_keyword_spotter_hit(
-            self,
-            keyword: str,
-            *,
-            binding: KeywordSpotterBinding,
-        ) -> None:
-            self.hits.append((keyword, binding))
-
-    class FakeSpotter:
-        def __init__(self) -> None:
-            self.reset_count = 0
-            self.pcm: list[bytes] = []
-            self.finish_count = 0
-
-        def reset(self) -> None:
-            self.reset_count += 1
-
-        def feed_pcm(self, pcm: bytes) -> None:
-            self.pcm.append(pcm)
-
-        def finish_utterance(self) -> str:
-            self.finish_count += 1
-            return "停一下"
-
-    runtime = FakeRuntime()
-    spotter = FakeSpotter()
-    observer = build_keyword_spotter_pcm_observer(runtime, spotter)  # type: ignore[arg-type]
-
-    observer(b"\x00\x20" * 320)
-    assert runtime.hits == []
-
-    runtime.finalizer(binding)
-
-    assert runtime.hits == [("停一下", binding)]
-    assert spotter.finish_count == 1
-    assert spotter.pcm
-
-    # Post-VAD PCM belongs to the closed epoch and cannot start a second decode.
-    observer(b"\x00\x00" * 320)
-    assert spotter.finish_count == 1
-    assert len(spotter.pcm) == 1
-
-
 @pytest.mark.asyncio
 async def test_agent_llm_node_uses_heard_history_and_phrase_segments(
     monkeypatch: pytest.MonkeyPatch,
@@ -533,7 +312,7 @@ async def test_agent_llm_node_uses_heard_history_and_phrase_segments(
         "实际听到的旧回复",
         speaker_scope="public",
     )
-    runtime.authenticate_text_owner()
+    bind_owner_speaker(runtime)
     await runtime.on_turn_committed("当前问题")
     agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
     agent._current_speaker_class = "owner"
@@ -788,54 +567,6 @@ async def test_response_plan_capsules_are_frozen_for_the_current_generation() ->
     assert snapshot.tool_permission is True
     assert runtime.orchestrator.task_manager.tasks == {}
     assert runtime.orchestrator.task_manager.accepted_broadcast_count == 1
-    await runtime.close()
-
-
-@pytest.mark.asyncio
-async def test_partial_transcript_prefetches_real_context_before_commit() -> None:
-    runtime = DuplexRuntime.create(session_id="context-prefetch-before-commit")
-    bind_owner_policy(runtime, policy_version="test-policy", private_context=True, owner_evidence=True, tools=False, voice_profile=False, shadow_low_sensitivity_persona=False)
-    runtime.authenticate_text_owner()
-    calls: list[str] = []
-
-    class Planner:
-        async def prefetch_context(self, **kwargs: object) -> ContextPrefetchFetch:
-            calls.append(str(kwargs["query"]))
-            return ContextPrefetchFetch(
-                grounded_items=(
-                    ResponseGroundedItem(
-                        kind="memory_claim",
-                        item_id="memory-prefetch",
-                        content="喜欢桂花。",
-                        use_as="fact",
-                        source_event_ids=("event-prefetch",),
-                        confidence=1.0,
-                        sharing_scope="private",
-                    ),
-                ),
-                persona_version_id=None,
-                persona_version_number=None,
-                reason="ok",
-            )
-
-    DuplexVoiceAgent(
-        instructions="test",
-        runtime=runtime,
-        response_planner_client=Planner(),  # type: ignore[arg-type]
-    )
-    runtime.on_user_voice_started()
-    runtime.authenticate_text_owner()
-    assert runtime.observe_user_transcript("桂花", final=False).value == "accept"
-    for _ in range(4):
-        await asyncio.sleep(0)
-
-    assert calls == ["桂花"]
-    assert runtime._pending_context_snapshot is not None
-    assert (
-        runtime._pending_context_snapshot.candidate.memory_capsule.entries[0].item_id
-        == "memory-prefetch"
-    )
-    assert runtime.fence.turn_id == 0
     await runtime.close()
 
 
@@ -1640,7 +1371,7 @@ async def test_agent_fetches_response_plan_once_per_committed_turn(
         agent_mod.Agent.default, "llm_node", staticmethod(lambda *_args: _text_source("好。"))
     )  # type: ignore[arg-type]
 
-    await agent.on_user_turn_completed(llm.ChatContext.empty(), Message("当前问题"))
+    await commit_media_turn(agent, Message("当前问题"))
 
     assert len(fetch_calls) == 1
     assert fetch_calls[0]["session_id"] == runtime.session_id
@@ -1713,7 +1444,7 @@ async def test_companion_voice_turn_reaches_llm_when_guest_filter_is_disabled(
         staticmethod(lambda *_args: _text_source("你好，我在。")),
     )  # type: ignore[arg-type]
 
-    await agent.on_user_turn_completed(llm.ChatContext.empty(), Message())
+    await commit_media_turn(agent, Message())
     output = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
 
     assert output
@@ -1770,7 +1501,7 @@ async def test_agent_drops_response_plan_when_fence_changes_during_fetch() -> No
     )
 
     with pytest.raises(StopResponse):
-        await agent.on_user_turn_completed(llm.ChatContext.empty(), Message())
+        await commit_media_turn(agent, Message())
 
     assert fetch_calls == 1
     assert agent._response_plan_by_fence == {}
@@ -1829,7 +1560,7 @@ async def test_planner_failure_fallback_is_current_turn_only_and_disables_tools(
     chat_ctx.add_message(role="user", content="只回答现在这个问题")
     monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
 
-    await agent.on_user_turn_completed(chat_ctx, Message())
+    await commit_media_turn(agent, Message())
     assert [item async for item in agent.llm_node(chat_ctx, ["private-tool"], None)] == [
         "安全回答。"
     ]
@@ -1980,7 +1711,7 @@ async def test_legacy_turn_stops_before_planning_when_generation_voice_cannot_bi
     )
 
     with pytest.raises(StopResponse):
-        await agent.on_user_turn_completed(llm.ChatContext.empty(), Message())
+        await commit_media_turn(agent, Message())
 
     assert planner.called is False
     assert runtime.generation_voice_for(runtime.fence) is None
@@ -2414,7 +2145,7 @@ async def test_unknown_safe_audio_turn_reaches_llm_with_current_public_turn_only
     chat_ctx.add_message(role="assistant", content="旧私人回答：号码是 123456。")
     chat_ctx.add_message(role="user", content="请简单介绍一下你自己")
 
-    await agent.on_user_turn_completed(chat_ctx, Message())
+    await commit_media_turn(agent, Message())
     output = [item async for item in agent.llm_node(chat_ctx, ["private-tool"], None)]
 
     assert output == ["你好，我是一个人工智能机器人伙伴。"]
@@ -2505,7 +2236,7 @@ async def test_unknown_safe_followup_keeps_this_session_public_place(
     chat_ctx.add_message(role="assistant", content="旧私人回答：号码是 123456。")
     chat_ctx.add_message(role="user", content="今天适合去哪儿玩")
 
-    await agent.on_user_turn_completed(chat_ctx, Message())
+    await commit_media_turn(agent, Message())
     output = [item async for item in agent.llm_node(chat_ctx, ["private-tool"], None)]
 
     assert "".join(output) == "你刚问了南京天气。如果还在南京，今天比较适合室内。你是在南京吗？"
@@ -2609,7 +2340,7 @@ async def test_non_preemptive_turn_commits_fence_before_first_llm_token(
 
     monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
 
-    await agent.on_user_turn_completed(llm.ChatContext.empty(), Message())
+    await commit_media_turn(agent, Message())
     output = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
 
     assert runtime.fence.turn_id == 1
@@ -2633,7 +2364,7 @@ async def test_committed_private_transcript_never_enters_agent_logs(
             return private_text
 
     caplog.set_level(logging.INFO, logger="services.agent.src.agent")
-    await agent.on_user_turn_completed(llm.ChatContext.empty(), Message())
+    await commit_media_turn(agent, Message())
 
     messages = [
         record.getMessage()
@@ -2642,456 +2373,6 @@ async def test_committed_private_transcript_never_enters_agent_logs(
     ]
     assert private_text not in "\n".join(messages)
     assert any(f"text_len={len(private_text)}" in message for message in messages)
-
-
-@pytest.mark.asyncio
-async def test_one_physical_speech_epoch_cannot_commit_more_than_once() -> None:
-    runtime = DuplexRuntime.create(input_guard_enabled=True)
-    await runtime.orchestrator.ready()
-    published: list[dict[str, object]] = []
-
-    async def publish(event: dict[str, object]) -> None:
-        published.append(event)
-
-    runtime.set_event_publisher(publish)
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-
-    class Message:
-        def __init__(self, text: str, *, anchored: bool) -> None:
-            self._text = text
-            self.metrics: dict[str, object] = (
-                {"started_speaking_at": 1.0, "stopped_speaking_at": 2.0} if anchored else {}
-            )
-
-        def text_content(self) -> str:
-            return self._text
-
-    runtime.on_user_voice_started()
-    await agent.on_user_turn_completed(
-        llm.ChatContext.empty(),
-        Message("第一句话", anchored=True),
-    )
-
-    runtime.on_user_voice_started()
-    with pytest.raises(StopResponse):
-        await agent.on_user_turn_completed(
-            llm.ChatContext.empty(),
-            Message("迟到片段", anchored=False),
-        )
-
-    assert runtime.fence.turn_id == 1
-    assert [turn.content for turn in runtime.orchestrator.context.turns] == ["第一句话"]
-
-    runtime.on_user_voice_started()
-    await agent.on_user_turn_completed(
-        llm.ChatContext.empty(),
-        Message("真正的新讲话", anchored=True),
-    )
-    await asyncio.sleep(0)
-    assert runtime.fence.turn_id == 2
-    assert [
-        event["text"]
-        for event in published
-        if event.get("type") == "transcript_delta"
-        and event.get("speaker") == "user"
-        and event.get("final") is True
-    ] == ["第一句话", "真正的新讲话"]
-
-
-@pytest.mark.asyncio
-async def test_post_playback_backchannel_is_ignored_as_echo_tail() -> None:
-    runtime = DuplexRuntime.create()
-    await runtime.orchestrator.ready()
-    await runtime.on_turn_committed("介绍一下")
-    runtime.update_pending_assistant_text("你好。")
-    await runtime.on_playback_started()
-    await runtime.on_assistant_reply_completed("你好。")
-    fence = runtime.fence
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-
-    class Message:
-        def text_content(self) -> str:
-            return "是。"
-
-    with pytest.raises(StopResponse):
-        await agent.on_user_turn_completed(llm.ChatContext.empty(), Message())
-
-    assert runtime.fence.matches(fence)
-    assert (
-        runtime.orchestrator.metrics.get("guarded_user_input_total", {"reason": "backchannel"}) == 1
-    )
-
-
-@pytest.mark.asyncio
-async def test_post_playback_english_assistant_echo_is_ignored() -> None:
-    runtime = DuplexRuntime.create(input_guard_enabled=True)
-    await runtime.orchestrator.ready()
-    await runtime.on_turn_committed("教我英语")
-    runtime.update_pending_assistant_text("It's a good idea.")
-    await runtime.on_playback_started()
-    await runtime.on_assistant_reply_completed("It's a good idea.")
-    fence = runtime.fence
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-
-    class Message:
-        def text_content(self) -> str:
-            return "it's"
-
-    runtime.on_user_voice_started()
-    runtime.observe_user_transcript("it's", final=True)
-    with pytest.raises(StopResponse):
-        await agent.on_user_turn_completed(llm.ChatContext.empty(), Message())
-
-    assert runtime.fence.matches(fence)
-    assert (
-        runtime.orchestrator.metrics.get("guarded_user_input_total", {"reason": "assistant_echo"})
-        == 1
-    )
-
-
-@pytest.mark.asyncio
-async def test_delayed_post_playback_assistant_echo_never_publishes_as_user() -> None:
-    published: list[dict[str, object]] = []
-
-    async def publish(event: dict[str, object]) -> None:
-        published.append(event)
-
-    runtime = DuplexRuntime.create(input_guard_enabled=True)
-    runtime.set_event_publisher(publish)
-    await runtime.orchestrator.ready()
-    await runtime.on_turn_committed("妈妈，你看")
-    reply = "你好！很高兴见到你。今天过得怎么样？"
-    runtime.update_pending_assistant_text(reply)
-    await runtime.on_playback_started()
-    await runtime.on_assistant_reply_completed(reply)
-    runtime._last_playback_completed_ns = time.monotonic_ns() - 6_500_000_000
-
-    runtime.on_user_voice_started()
-    assert runtime.observe_user_transcript(reply, final=True) == "accept"
-    message = llm.ChatMessage(role="user", content=[reply])
-    message.metrics["started_speaking_at"] = 1.0
-    message.metrics["stopped_speaking_at"] = 2.0
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-
-    with pytest.raises(StopResponse):
-        await agent.on_user_turn_completed(llm.ChatContext.empty(), message)
-    await asyncio.sleep(0)
-
-    assert not any(
-        event.get("type") == "transcript_delta"
-        and event.get("speaker") == "user"
-        and event.get("final") is True
-        for event in published
-    )
-    assert (
-        runtime.orchestrator.metrics.get("guarded_user_input_total", {"reason": "assistant_echo"})
-        == 1
-    )
-
-
-@pytest.mark.asyncio
-async def test_playback_echo_final_is_removed_before_the_next_real_turn_is_committed() -> None:
-    published: list[dict[str, object]] = []
-
-    async def publish(event: dict[str, object]) -> None:
-        published.append(event)
-
-    runtime = DuplexRuntime.create(input_guard_enabled=True)
-    runtime.set_event_publisher(publish)
-    await runtime.orchestrator.ready()
-    await runtime.on_turn_committed("你好呀")
-    runtime.update_pending_assistant_text("你好呀！很高兴见到你。")
-    await runtime.on_playback_started()
-
-    echo = runtime.observe_user_transcript("你好呀！ 我告现你。", final=True)
-    await runtime.on_assistant_reply_completed("你好呀！很高兴见到你。")
-    runtime.on_user_voice_started()
-    real = runtime.observe_user_transcript("介绍一下南京。", final=True)
-
-    message = llm.ChatMessage(
-        role="user",
-        content=["你好呀！ 我告现你。 介绍一下南京。"],
-    )
-    message.metrics["started_speaking_at"] = 1.0
-    message.metrics["stopped_speaking_at"] = 2.0
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    await agent.on_user_turn_completed(llm.ChatContext.empty(), message)
-    await asyncio.sleep(0)
-
-    user_finals = [
-        event["text"]
-        for event in published
-        if event.get("type") == "transcript_delta"
-        and event.get("speaker") == "user"
-        and event.get("final") is True
-    ]
-    assert echo == "ignore"
-    assert real == "accept"
-    assert message.text_content == "介绍一下南京。"
-    assert runtime.orchestrator.context.turns[-1].content == "介绍一下南京。"
-    assert user_finals == ["介绍一下南京。"]
-
-
-@pytest.mark.asyncio
-async def test_queued_turn_callbacks_consume_only_their_own_speech_epoch() -> None:
-    """Later VAD epochs may arrive while LiveKit serializes completed-turn hooks."""
-
-    published: list[dict[str, object]] = []
-
-    async def publish(event: dict[str, object]) -> None:
-        published.append(event)
-
-    runtime = DuplexRuntime.create(input_guard_enabled=True)
-    runtime.set_event_publisher(publish)
-    await runtime.orchestrator.ready()
-    runtime.update_pending_assistant_text("你好呀！很高兴见到你。")
-    await runtime.on_playback_started()
-
-    assert runtime.observe_user_transcript("你好呀！ 我告现你。", final=True) == "ignore"
-    runtime._was_speaking = False
-
-    raw_turns = (
-        "你好呀！ 我告现你。 介绍一下南京。",
-        "南京有哪些景点？",
-        "夫子庙晚上几点关门？",
-    )
-    canonical_turns = (
-        "介绍一下南京。",
-        "南京有哪些景点？",
-        "夫子庙晚上几点关门？",
-    )
-    for text in canonical_turns:
-        runtime.on_user_voice_started()
-        assert runtime.observe_user_transcript(text, final=True) == "accept"
-
-    class Message:
-        def __init__(self, text: str) -> None:
-            self.content = [text]
-            self.metrics = {"started_speaking_at": 1.0, "stopped_speaking_at": 2.0}
-
-        def text_content(self) -> str:
-            return "".join(self.content)
-
-    messages = [Message(text) for text in raw_turns]
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    for message in messages:
-        await agent.on_user_turn_completed(llm.ChatContext.empty(), message)
-    await asyncio.sleep(0)
-
-    assert [message.text_content() for message in messages] == list(canonical_turns)
-    assert [turn.content for turn in runtime.orchestrator.context.turns] == list(canonical_turns)
-    assert [
-        event["text"]
-        for event in published
-        if event.get("type") == "transcript_delta"
-        and event.get("speaker") == "user"
-        and event.get("final") is True
-    ] == list(canonical_turns)
-
-
-@pytest.mark.asyncio
-async def test_queued_control_turn_cannot_clear_the_following_speech_epoch() -> None:
-    cleared: list[str] = []
-    runtime = DuplexRuntime.create(input_guard_enabled=True)
-    runtime.set_user_turn_clearer(lambda: cleared.append("clear"))
-    await runtime.orchestrator.ready()
-
-    runtime.on_user_voice_started()
-    assert runtime.observe_user_transcript("等一下", final=True) == "accept"
-    runtime.on_user_voice_started()
-    assert runtime.observe_user_transcript("介绍一下南京。", final=True) == "accept"
-
-    class Message:
-        def __init__(self, text: str) -> None:
-            self.content = [text]
-            self.metrics = {"started_speaking_at": 1.0, "stopped_speaking_at": 2.0}
-
-        def text_content(self) -> str:
-            return "".join(self.content)
-
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    with pytest.raises(StopResponse):
-        await agent.on_user_turn_completed(llm.ChatContext.empty(), Message("等一下"))
-    await agent.on_user_turn_completed(
-        llm.ChatContext.empty(),
-        Message("介绍一下南京。"),
-    )
-
-    assert cleared == []
-    assert [turn.content for turn in runtime.orchestrator.context.turns] == ["介绍一下南京。"]
-
-
-@pytest.mark.asyncio
-async def test_agent_semantic_review_suppresses_polluted_sticky_final() -> None:
-    resolved: list[tuple[str, str, str]] = []
-
-    async def _resolve(
-        final_text: str,
-        sticky_text: str,
-        assistant_text: str,
-    ) -> InterruptSemanticVerdict:
-        resolved.append((final_text, sticky_text, assistant_text))
-        return InterruptSemanticVerdict.CONTROL_ONLY
-
-    runtime = DuplexRuntime.create(
-        input_guard_enabled=True,
-        trusted_aec_playback_control=True,
-    )
-    runtime.set_interrupt_semantic_resolver(_resolve)
-    runtime._was_speaking = True
-    runtime.update_pending_assistant_text("根据提供的数据和指示来协助。")
-    runtime.on_user_voice_started()
-    runtime.observe_user_transcript("停一下，你叫什么名字？", final=False)
-
-    class Message:
-        def __init__(self, text: str) -> None:
-            self.content = [text]
-            self.metrics = {
-                "started_speaking_at": 1.0,
-                "stopped_speaking_at": 2.0,
-            }
-
-        def text_content(self) -> str:
-            return "".join(self.content)
-
-    final_text = "份停听一下能是据提供的数据和指示来协助。"
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-
-    with pytest.raises(StopResponse):
-        await agent.on_user_turn_completed(llm.ChatContext.empty(), Message(final_text))
-
-    assert resolved == [(final_text, "停一下，你叫什么名字", "根据提供的数据和指示来协助。")]
-    assert runtime.orchestrator.context.turns == []
-    await runtime.close()
-
-
-@pytest.mark.asyncio
-async def test_playback_echo_interim_is_removed_from_a_later_cumulative_final() -> None:
-    published: list[dict[str, object]] = []
-
-    async def publish(event: dict[str, object]) -> None:
-        published.append(event)
-
-    runtime = DuplexRuntime.create(input_guard_enabled=True)
-    runtime.set_event_publisher(publish)
-    await runtime.orchestrator.ready()
-    await runtime.on_turn_committed("你好呀")
-    runtime.update_pending_assistant_text("你好呀！很高兴见到你。")
-    await runtime.on_playback_started()
-
-    echo = runtime.observe_user_transcript("你好呀！ 我告现你。", final=False)
-    await runtime.on_assistant_reply_completed("你好呀！很高兴见到你。")
-    runtime.on_user_voice_started()
-    combined = runtime.observe_user_transcript(
-        "你好呀！ 我告现你。 介绍一下南京。",
-        final=True,
-    )
-
-    message = llm.ChatMessage(
-        role="user",
-        content=["你好呀！ 我告现你。 介绍一下南京。"],
-    )
-    message.metrics["started_speaking_at"] = 1.0
-    message.metrics["stopped_speaking_at"] = 2.0
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    await agent.on_user_turn_completed(llm.ChatContext.empty(), message)
-    await asyncio.sleep(0)
-
-    user_finals = [
-        event["text"]
-        for event in published
-        if event.get("type") == "transcript_delta"
-        and event.get("speaker") == "user"
-        and event.get("final") is True
-    ]
-    assert echo == "wait"
-    assert combined == "accept"
-    assert message.text_content == "介绍一下南京。"
-    assert runtime.orchestrator.context.turns[-1].content == "介绍一下南京。"
-    assert user_finals == ["介绍一下南京。"]
-
-
-@pytest.mark.asyncio
-async def test_short_playback_prefix_does_not_remove_a_matching_real_question() -> None:
-    runtime = DuplexRuntime.create(input_guard_enabled=True)
-    await runtime.orchestrator.ready()
-    await runtime.on_turn_committed("介绍南京")
-    runtime.update_pending_assistant_text("南京不是一座只有历史的城市。")
-    await runtime.on_playback_started()
-
-    assert runtime.observe_user_transcript("南京", final=False) == "wait"
-    await runtime.on_assistant_reply_completed("南京不是一座只有历史的城市。")
-    runtime.on_user_voice_started()
-    assert runtime.observe_user_transcript("南京有哪些景点？", final=True) == "accept"
-
-    assert runtime.consume_canonical_user_turn("南京有哪些景点？") == "南京有哪些景点？"
-
-
-@pytest.mark.asyncio
-async def test_production_echo_trace_is_quarantined_while_assistant_is_speaking() -> None:
-    runtime = DuplexRuntime.create(input_guard_enabled=True)
-    await runtime.orchestrator.ready()
-    await runtime.on_turn_committed("你充当我的英语培训师")
-    runtime.update_pending_assistant_text(
-        "好的，我们先说一句简单的英语，比如 Good morning, how are you?"
-    )
-    await runtime.on_playback_started()
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    fence = runtime.fence
-
-    class Message:
-        def __init__(self, text: str) -> None:
-            self._text = text
-
-        def text_content(self) -> str:
-            return self._text
-
-    for text in ("그.", "佢。", "啊！", "Good morning."):
-        runtime.on_user_voice_started(now_ns=1_000_000_000)
-        runtime.observe_user_transcript(text, final=True, now_ns=1_300_000_000)
-        with pytest.raises(StopResponse):
-            await agent.on_user_turn_completed(llm.ChatContext.empty(), Message(text))
-
-    assert runtime.fence.matches(fence)
-    assert [turn.content for turn in runtime.orchestrator.context.turns] == ["你充当我的英语培训师"]
-    assert (
-        runtime.orchestrator.metrics.get(
-            "guarded_user_input_total", {"reason": "non_target_language"}
-        )
-        == 2
-    )
-    assert (
-        runtime.orchestrator.metrics.get("guarded_user_input_total", {"reason": "backchannel"}) == 1
-    )
-    assert (
-        runtime.orchestrator.metrics.get("guarded_user_input_total", {"reason": "assistant_echo"})
-        == 1
-    )
-
-
-@pytest.mark.asyncio
-async def test_explicit_language_switch_allows_requested_script() -> None:
-    runtime = DuplexRuntime.create(input_guard_enabled=True)
-    await runtime.orchestrator.ready()
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-
-    class Message:
-        def __init__(self, text: str) -> None:
-            self._text = text
-
-        def text_content(self) -> str:
-            return self._text
-
-    await agent.on_user_turn_completed(llm.ChatContext.empty(), Message("请教我韩语"))
-    runtime.update_pending_assistant_text("可以，我们开始。")
-    await runtime.on_playback_started()
-    runtime.on_user_voice_started(now_ns=1_000_000_000)
-    decision = runtime.observe_user_transcript("그.", final=True, now_ns=1_300_000_000)
-
-    assert decision == "accept"
-    await runtime.on_real_interrupt(cause="accepted_test_input")
-    await agent.on_user_turn_completed(llm.ChatContext.empty(), Message("그."))
-    assert runtime.orchestrator.context.turns[-1].content == "그."
 
 
 @pytest.mark.asyncio
@@ -3277,218 +2558,6 @@ async def test_reply_budget_truncates_an_oversized_first_segment(
     assert sum(ch.isalnum() for text in output for ch in text) <= agent_mod.MAX_VOICE_REPLY_CHARS
 
 
-@pytest.mark.asyncio
-async def test_agent_tts_and_transcription_nodes_gate_and_track(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime = DuplexRuntime.create()
-    await runtime.on_turn_committed("问题")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-
-    async def fake_tts_node(
-        _agent: Any,
-        text: AsyncIterator[str],
-        _settings: Any,
-    ) -> AsyncIterator[Any]:
-        async def frames() -> AsyncIterator[Any]:
-            async for _ in text:
-                yield SimpleNamespace(data=b"")
-                yield SimpleNamespace(data=b"\x01\x02")
-
-        return frames()
-
-    async def fake_transcription_node(
-        _agent: Any,
-        _text: AsyncIterator[Any],
-        _settings: Any,
-    ) -> AsyncIterator[Any]:
-        yield TimedString("你", start_time=0.0, end_time=0.1)
-        yield SimpleNamespace(text="坏", start_time=object(), end_time=object())
-        yield "普通"
-
-    monkeypatch.setattr(agent_mod.Agent.default, "tts_node", staticmethod(fake_tts_node))
-    monkeypatch.setattr(
-        agent_mod.Agent.default,
-        "transcription_node",
-        staticmethod(fake_transcription_node),
-    )
-    frames = [frame async for frame in agent.tts_node(_text_source("回答。"), None)]
-    assert runtime.heard_tracker.observe_alignment(runtime.fence, "current-task", "started") is True
-    transcript = [delta async for delta in agent.transcription_node(_text_source("ignored"), None)]
-
-    assert len(frames) == 2
-    assert runtime.orchestrator.published_audio_generations == [runtime.fence.generation_id]
-    assert runtime.heard_tracker.full_text == "回答。"
-    assert [word.text for word in runtime.heard_tracker.words] == ["你"]
-    assert len(transcript) == 3
-    assert runtime.orchestrator.active_tts_task is None
-
-
-@pytest.mark.asyncio
-async def test_agent_omits_degraded_timed_suffix_from_livekit_heard_text(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime = DuplexRuntime.create()
-    await runtime.on_turn_committed("问题")
-    runtime.heard_tracker.expect_utterance(runtime.fence)
-    runtime.heard_tracker.observe_alignment(runtime.fence, "task", "started")
-    runtime.heard_tracker.observe_alignment(runtime.fence, "task", "degraded")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-
-    async def fake_transcription_node(
-        _agent: Any,
-        _text: AsyncIterator[Any],
-        _settings: Any,
-    ) -> AsyncIterator[Any]:
-        yield TimedString("伪精确后缀", start_time=0.0, end_time=0.4)
-
-    monkeypatch.setattr(
-        agent_mod.Agent.default,
-        "transcription_node",
-        staticmethod(fake_transcription_node),
-    )
-
-    transcript = [delta async for delta in agent.transcription_node(_text_source("ignored"), None)]
-
-    assert transcript == []
-    assert [word.text for word in runtime.heard_tracker.words] == ["伪精确后缀"]
-
-
-def test_agent_helpers_prewarm_and_turn_handling_fallback(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    assert agent_mod._message_text("plain") == "plain"
-    assert agent_mod._message_text(SimpleNamespace(content=["a", 1, "b"])) == "a\nb"
-    assert agent_mod._message_text(SimpleNamespace(content=12)) == "12"
-    assert "session.history" not in inspect.getsource(entrypoint_mod.entrypoint)
-
-    loaded: dict[str, Any] = {}
-
-    def fake_load(**kwargs: Any) -> str:
-        loaded.update(kwargs)
-        return "vad"
-
-    monkeypatch.setattr(entrypoint_mod.silero.VAD, "load", fake_load)
-    proc = SimpleNamespace(userdata={})
-    entrypoint_mod.prewarm(proc)
-    assert proc.userdata["vad"] == "vad"
-    assert loaded["min_silence_duration"] == 0.30
-
-    monkeypatch.setenv("LIVEKIT_TURN_DETECTOR_VERSION", "v1-mini")
-    options = entrypoint_mod.build_turn_handling_options("livekit_cloud")
-    assert options["interruption"]["mode"] == "adaptive"
-    assert options["preemptive_generation"]["enabled"] is False
-    assert (
-        entrypoint_mod.build_turn_handling_config("livekit_cloud")["preemptive_generation"]["enabled"]
-        is False
-    )
-    monkeypatch.setenv("LIVEKIT_ADAPTIVE_INTERRUPTION", "false")
-    options = entrypoint_mod.build_turn_handling_options("livekit_cloud")
-    assert options["interruption"]["mode"] == "vad"
-    monkeypatch.delenv("LIVEKIT_ADAPTIVE_INTERRUPTION", raising=False)
-    # Self-hosted: adaptive needs LiveKit Cloud gateway — default VAD.
-    assert entrypoint_mod.build_turn_handling_options("cn_self_hosted")["interruption"]["mode"] == "vad"
-    assert (
-        entrypoint_mod.build_turn_handling_config("cn_self_hosted")["stream_speak_while_think"] is True
-    )
-    monkeypatch.setenv("LIVEKIT_ADAPTIVE_INTERRUPTION", "true")
-    assert (
-        entrypoint_mod.build_turn_handling_config("cn_self_hosted")["interruption"]["mode"] == "adaptive"
-    )
-
-    def fail_options(
-        _profile: str,
-        *,
-        interruptions_enabled: bool = True,
-        device_vad: bool = False,
-    ) -> Any:
-        _ = interruptions_enabled
-        _ = device_vad
-        raise ValueError("bad api")
-
-    monkeypatch.setattr(entrypoint_mod, "build_turn_handling_options", fail_options)
-    monkeypatch.setenv("ENVIRONMENT", "development")
-    kwargs = entrypoint_mod.build_session_kwargs(
-        vad=None,
-        stt="stt",
-        llm="llm",
-        tts="tts",
-        profile="livekit_cloud",
-        offline=False,
-    )
-    assert "turn_handling_config" in kwargs
-    monkeypatch.setenv("ENVIRONMENT", "production")
-    with pytest.raises(ValueError, match="bad api"):
-        entrypoint_mod.build_session_kwargs(
-            vad=None,
-            stt="stt",
-            llm="llm",
-            tts="tts",
-            profile="livekit_cloud",
-            offline=False,
-        )
-
-
-def test_cascade_audio_output_uses_high_quality_opus_bitrate() -> None:
-    options = entrypoint_mod.build_cascade_audio_output_options()
-
-    assert options.sample_rate == 24000
-    assert options.num_channels == 1
-    assert options.track_publish_options.audio_encoding.max_bitrate == 64000
-
-
-def test_self_hosted_turn_handling_filters_short_echoes_and_reads_timing_env(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    for name in (
-        "ENDPOINTING_MIN_DELAY_S",
-        "ENDPOINTING_MAX_DELAY_S",
-        "ENDPOINTING_ALPHA",
-        "INTERRUPTION_MIN_DURATION_S",
-        "FALSE_INTERRUPTION_TIMEOUT_S",
-    ):
-        monkeypatch.delenv(name, raising=False)
-
-    options = entrypoint_mod.build_turn_handling_options("cn_self_hosted")
-    assert options["endpointing"] == {
-        "mode": "dynamic",
-        "min_delay": 1.50,
-        "max_delay": 2.20,
-        "alpha": 0.85,
-    }
-    assert options["interruption"]["min_duration"] == 0.35
-    assert options["interruption"]["min_words"] == 0
-    assert options["interruption"]["false_interruption_timeout"] == 1.70
-    assert (
-        options["interruption"]["false_interruption_timeout"] >= options["endpointing"]["min_delay"]
-    )
-    assert (
-        entrypoint_mod.build_turn_handling_config("cn_self_hosted")["interruption"]
-        == options["interruption"]
-    )
-
-    cloud = entrypoint_mod.build_turn_handling_config("livekit_cloud")
-    assert cloud["endpointing"]["min_delay"] == 0.30
-    assert cloud["interruption"]["min_duration"] == 0.25
-    assert cloud["interruption"]["min_words"] == 0
-    assert cloud["interruption"]["false_interruption_timeout"] == 1.20
-
-    monkeypatch.setenv("ENDPOINTING_MIN_DELAY_S", "0.61")
-    monkeypatch.setenv("ENDPOINTING_MAX_DELAY_S", "2.40")
-    monkeypatch.setenv("ENDPOINTING_ALPHA", "0.75")
-    monkeypatch.setenv("INTERRUPTION_MIN_DURATION_S", "0.52")
-    monkeypatch.setenv("FALSE_INTERRUPTION_TIMEOUT_S", "0.93")
-    overridden = entrypoint_mod.build_turn_handling_options("cn_self_hosted")
-    assert overridden["endpointing"] == {
-        "mode": "dynamic",
-        "min_delay": 0.61,
-        "max_delay": 2.40,
-        "alpha": 0.75,
-    }
-    assert overridden["interruption"]["min_duration"] == 0.52
-    assert overridden["interruption"]["false_interruption_timeout"] == 0.93
-
-
 class _Emitter:
     def __init__(self) -> None:
         self.handlers: dict[str, list[Any]] = {}
@@ -3502,21 +2571,6 @@ class _Emitter:
     def emit(self, name: str, event: Any) -> None:
         for handler in tuple(self.handlers.get(name, ())):
             handler(event)
-
-
-class _FakeParticipant:
-    def __init__(self) -> None:
-        self.published: list[tuple[dict[str, Any], bool, str]] = []
-
-    async def publish_data(self, payload: str, *, reliable: bool, topic: str) -> None:
-        self.published.append((json.loads(payload), reliable, topic))
-
-
-class _FakeRoom(_Emitter):
-    def __init__(self) -> None:
-        super().__init__()
-        self.name = "voice-public-session"
-        self.local_participant = _FakeParticipant()
 
 
 class _FakePool:
@@ -3633,315 +2687,3 @@ class _FakeSession(_Emitter):
         self.generated.append(instructions)
 
 
-@pytest.mark.asyncio
-async def test_entrypoint_routes_control_playback_and_ui_events(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from services.agent.src import mode_policy_client, policy_runtime_wiring
-    from services.agent.src.mode_policy_client import ModePolicy
-    from services.agent.src.providers import deepseek, doubao_tts, funasr_stt, vosk_kws
-
-    fake_tts = _FakeTTS()
-    fake_stt = SimpleNamespace(pcm_observer=None)
-
-    def _set_pcm_observer(observer: Any) -> None:
-        fake_stt.pcm_observer = observer
-
-    fake_stt.set_pcm_observer = _set_pcm_observer
-    monkeypatch.setenv("DEPLOYMENT_PROFILE", "livekit_cloud")
-    monkeypatch.setenv("SPEAKER_VERIFY_ENABLED", "false")
-    monkeypatch.setenv("DASHSCOPE_API_KEY", "test-dashscope-key")
-    monkeypatch.setenv("MINIPROGRAM_KWS_ENABLED", "true")
-    monkeypatch.setenv(
-        "MEMORIA_INTERACTION_POLICY_TOKEN",
-        "interaction-policy-material-that-is-long-enough",
-    )
-
-    class FakeDoubao:
-        @classmethod
-        def from_env(cls) -> _FakeTTS:
-            return fake_tts
-
-    class FakeFun:
-        @classmethod
-        def from_env(cls) -> Any:
-            return fake_stt
-
-    class FakeKeywordSpotter:
-        config: Any = None
-
-        @classmethod
-        def try_create(cls, config: Any) -> Any:
-            cls.config = config
-            return SimpleNamespace(
-                reset=lambda: None,
-                feed_pcm=lambda _pcm: None,
-                finish_utterance=lambda: None,
-            )
-
-    class FakeDeepConfig:
-        def __init__(self, **kwargs: Any) -> None:
-            self.kwargs = kwargs
-
-    class FakeDeepClient:
-        def __init__(self, config: Any) -> None:
-            self.config = config
-            self.closed = False
-
-        async def aclose(self) -> None:
-            self.closed = True
-
-    class FakeModePolicyClient:
-        def __init__(self, _config: Any) -> None:
-            self.closed = False
-
-        async def fetch(self, *, session_id: str) -> ModePolicy:
-            assert session_id == "public-session"
-            return ModePolicy.companion_for_test(
-                policy_version="s2-v1",
-                private_context=True,
-                owner_evidence=True,
-                tools=True,
-                voice_profile=True,
-                shadow_low_sensitivity_persona=True,
-            )
-
-        async def aclose(self) -> None:
-            self.closed = True
-
-    monkeypatch.setattr(doubao_tts, "DoubaoTTS", FakeDoubao)
-    monkeypatch.setattr(funasr_stt, "FunASRSTT", FakeFun)
-    monkeypatch.setattr(vosk_kws, "VoskKeywordSpotter", FakeKeywordSpotter)
-    monkeypatch.setattr(deepseek, "DeepSeekConfig", FakeDeepConfig)
-    monkeypatch.setattr(deepseek, "DeepSeekClient", FakeDeepClient)
-    monkeypatch.setattr(mode_policy_client, "ModePolicyClient", FakeModePolicyClient)
-    monkeypatch.setattr(policy_runtime_wiring, "ModePolicyClient", FakeModePolicyClient)
-    monkeypatch.setattr(entrypoint_mod.openai, "LLM", lambda **kwargs: SimpleNamespace(**kwargs))
-    monkeypatch.setattr(entrypoint_mod, "AgentSession", _FakeSession)
-    session_builds: list[dict[str, Any]] = []
-
-    def _build_session_kwargs(**kwargs: Any) -> dict[str, Any]:
-        session_builds.append(kwargs)
-        return {key: kwargs[key] for key in ("vad", "stt", "llm", "tts")}
-
-    monkeypatch.setattr(entrypoint_mod, "build_session_kwargs", _build_session_kwargs)
-
-    room = _FakeRoom()
-    shutdown_callbacks: list[Any] = []
-    ctx = SimpleNamespace(
-        room=room,
-        job=SimpleNamespace(metadata=MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA),
-        proc=SimpleNamespace(userdata={"vad": "vad"}),
-        connect=lambda: asyncio.sleep(0),
-        add_shutdown_callback=shutdown_callbacks.append,
-    )
-    await entrypoint_mod.entrypoint(ctx)
-    session = _FakeSession.last
-    assert session is not None and session.started is not None
-    assert session_builds[0]["interruptions_enabled"] is False
-    assert session.kwargs["aec_warmup_duration"] is None
-    assert session.generated == []
-    assert session.said == ["嗨，我是星澜。今天想聊点什么，我陪你慢慢说。"]
-    assert any(event[0].get("state") == "ready" for event in room.local_participant.published)
-    fixed_states = [
-        event
-        for event, _reliable, topic in room.local_participant.published
-        if topic == "voice-agent.ui"
-        and event.get("type") == "assistant_state"
-        and event.get("state") in {"speaking", "listening"}
-    ]
-    assert [event["state"] for event in fixed_states[:2]] == ["speaking", "listening"]
-    assert fixed_states[0]["generation_id"] == fixed_states[1]["generation_id"] == 0
-    assert any(
-        event[0].get("type") == "audio_trace" and event[0].get("name") == "audio_output_attached"
-        for event in room.local_participant.published
-    )
-    await asyncio.sleep(0)
-    runtime: DuplexRuntime = ctx.proc.userdata["duplex_runtime"]
-    assert runtime.session_id == "public-session"
-    assert runtime.input_guard.enabled is True
-    assert runtime.trusted_aec_playback_control is True
-    assert runtime.barge_in_enabled is False
-    assert runtime._interrupt_semantic_resolver is None
-    assert FakeKeywordSpotter.config is None
-    assert callable(fake_stt.pcm_observer)
-    runtime._clear_control_user_turn(cause="production_wiring_test")
-    assert session.clear_user_turn_count == 1
-
-    session.emit("agent_state_changed", SimpleNamespace(new_state="thinking"))
-    session.emit("user_input_transcribed", SimpleNamespace(transcript="你好", is_final=True))
-    session.emit(
-        "conversation_item_added",
-        SimpleNamespace(item=SimpleNamespace(role="assistant", text_content="回复")),
-    )
-    session.emit("conversation_item_added", SimpleNamespace(item=SimpleNamespace(role="user")))
-    assert session.options.interruption["min_words"] == 1000
-    session.emit(
-        "user_state_changed",
-        SimpleNamespace(old_state="listening", new_state="speaking"),
-    )
-    assert session.options.interruption["min_words"] == 0
-    await asyncio.sleep(0)
-
-    await runtime.on_turn_committed("等待停止")
-    room.emit("data_received", SimpleNamespace(topic="other", participant=None, data=b"{}"))
-    room.emit(
-        "data_received",
-        SimpleNamespace(topic="voice-agent.control", participant=object(), data=b"{}"),
-    )
-    room.emit(
-        "data_received",
-        SimpleNamespace(topic="voice-agent.control", participant=None, data=b"not-json"),
-    )
-    room.emit(
-        "data_received",
-        SimpleNamespace(
-            topic="voice-agent.control",
-            participant=None,
-            data=json.dumps({"type": "stop_response", "session_id": "wrong"}).encode(),
-        ),
-    )
-    room.emit(
-        "data_received",
-        SimpleNamespace(
-            topic="voice-agent.control",
-            participant=None,
-            data=json.dumps(
-                {
-                    "type": "stop_response",
-                    "session_id": "public-session",
-                    "reason": "user_button",
-                }
-            ).encode(),
-        ),
-    )
-    await asyncio.sleep(0.02)
-    assert session.interrupt_count == 1
-    assert runtime.orchestrator.state is ConversationState.LISTENING
-
-    before_recovery = runtime.fence
-    room.emit(
-        "data_received",
-        SimpleNamespace(
-            topic="voice-agent.control",
-            participant=None,
-            data=json.dumps({"type": "rtc_recovered", "session_id": "public-session"}).encode(),
-        ),
-    )
-    await asyncio.sleep(0.02)
-    assert session.interrupt_count == 2
-    assert runtime.fence.generation_id == before_recovery.generation_id + 1
-
-    await runtime.on_turn_committed("播放")
-    runtime.update_pending_assistant_text("播放内容")
-    assert session.output.audio is not None
-    session.output.audio.emit("playback_started", SimpleNamespace())
-    await asyncio.sleep(0.02)
-    assert session.options.interruption["min_words"] == 1000
-    audio_event_count = sum(
-        1 for event in room.local_participant.published if event[0].get("type") == "assistant_audio"
-    )
-    session.emit(
-        "user_state_changed",
-        SimpleNamespace(old_state="listening", new_state="speaking"),
-    )
-    session.emit(
-        "user_input_transcribed",
-        SimpleNamespace(transcript="그.", is_final=True),
-    )
-    await asyncio.sleep(0)
-    assert session.output.audio.pause_count == 0
-    assert session.output.audio.resume_count == 0
-    new_audio_events = [
-        event[0]
-        for event in room.local_participant.published
-        if event[0].get("type") == "assistant_audio"
-    ][audio_event_count:]
-    assert new_audio_events == []
-    assert 1000 in session.options.interruption.history
-    assert session.options.interruption["min_words"] == 1000
-    session.emit(
-        "user_state_changed",
-        SimpleNamespace(old_state="listening", new_state="speaking"),
-    )
-    session.emit(
-        "user_input_transcribed",
-        SimpleNamespace(transcript="等等", is_final=True),
-    )
-    await asyncio.sleep(0.02)
-    assert session.options.interruption["min_words"] == 1000
-    assert session.interrupt_count == 2
-    session.output.audio.emit(
-        "playback_finished",
-        SimpleNamespace(
-            playback_position=0.5,
-            interrupted=False,
-            synchronized_transcript="播放内容",
-        ),
-    )
-    session.emit(
-        "conversation_item_added",
-        SimpleNamespace(
-            item=SimpleNamespace(
-                role="assistant",
-                text_content="播放内容",
-                interrupted=False,
-            )
-        ),
-    )
-    await asyncio.sleep(0.02)
-    assert runtime.orchestrator.context.turns[-1].content == "播放内容"
-
-    await runtime.on_turn_committed("会被语音中断")
-    await session.interrupt(force=True)
-    assert session.interrupt_count == 3
-    assert runtime.orchestrator.state is ConversationState.USER_SPEAKING
-
-    room.emit(
-        "data_received",
-        SimpleNamespace(
-            topic="voice-agent.gateway-health",
-            participant=object(),
-            data=json.dumps(
-                {
-                    "type": "miniprogram_aec_ready",
-                    "session_id": "public-session",
-                    "failure_id": "not-a-disable",
-                }
-            ).encode(),
-        ),
-    )
-    assert runtime.trusted_aec_playback_control is True
-
-    room.emit(
-        "data_received",
-        SimpleNamespace(
-            topic="voice-agent.gateway-health",
-            participant=object(),
-            data=json.dumps(
-                {
-                    "type": "miniprogram_aec_failed",
-                    "session_id": "public-session",
-                    "failure_id": "failure-1",
-                }
-            ).encode(),
-        ),
-    )
-    await asyncio.sleep(0)
-    assert runtime.trusted_aec_playback_control is False
-    assert any(
-        event
-        == {
-            "type": "miniprogram_aec_failed_ack",
-            "session_id": "public-session",
-            "failure_id": "failure-1",
-        }
-        and topic == "voice-agent.gateway-health.ack"
-        for event, reliable, topic in room.local_participant.published
-        if reliable
-    )
-
-    assert len(shutdown_callbacks) == 1
-    await shutdown_callbacks[0]()
-    assert fake_tts.closed
-    assert room.handlers["data_received"] == []

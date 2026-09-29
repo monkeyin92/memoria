@@ -133,31 +133,6 @@ async def test_session_directory_observes_edge_generation_without_inventing_next
 
 
 @pytest.mark.asyncio
-async def test_session_directory_fallback_to_livekit_preserves_epoch_and_is_cas_fenced() -> None:
-    directory = InMemorySessionDirectory()
-    claimed = await directory.claim(
-        "fallback-session",
-        media_edge_id="edge-a",
-        voice_core_id="core-a",
-        device_id="h5",
-        account_id="account-1",
-        media_runtime="streamcore",
-    )
-    fallback = await directory.fallback_to_livekit(
-        "fallback-session",
-        expected_stream_epoch=claimed.stream_epoch,
-    )
-    assert fallback.media_runtime == "livekit"
-    assert fallback.stream_epoch == claimed.stream_epoch
-    assert fallback.generation_id == claimed.generation_id
-    with pytest.raises(SessionEpochConflict):
-        await directory.fallback_to_livekit(
-            "fallback-session",
-            expected_stream_epoch=claimed.stream_epoch + 1,
-        )
-
-
-@pytest.mark.asyncio
 async def test_session_directory_concurrent_generation_bumps_do_not_collapse() -> None:
     directory = InMemorySessionDirectory()
     await directory.claim(

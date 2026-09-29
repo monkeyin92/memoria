@@ -1,8 +1,9 @@
-"""Media-session façade for H5 and future device clients.
+"""Device media sessions on the direct Media Edge, plus media internals.
 
-The legacy ``/v1/sessions`` endpoint remains the source of frozen persona and
-account policy.  This route only projects a media-specific response and never
-reads long-term memory or accepts a client-selected runtime.
+A device proves possession of its certificate key, Control establishes the
+persistent Session authority, and the device receives a one-use EdDSA ticket
+for the Go Media Edge WSS (``direct_voice_core``).  That is the only device
+media runtime; no client can select one.
 """
 
 from __future__ import annotations
@@ -17,8 +18,6 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from packages.contracts.generated.python.multi_subject_contracts import CapabilityValue
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from services.agent.src.voice_core.device_security import SignedChallenge
-from services.common.miniprogram_gateway_ticket import issue_device_gateway_ticket
 from services.control_api.app.account_gate import (
     require_capability_for_account_id,
     require_writable_account,
@@ -37,20 +36,17 @@ from services.control_api.app.device_control import (
 )
 from services.control_api.app.device_registry import (
     DeviceChallengeRateLimited,
-    DeviceChallengeRejected,
     DeviceNotFound,
 )
 from services.control_api.app.media_runtime import (
     DEVICE_STREAM_EPOCH_MAX,
     mint_device_direct_media_ticket,
-    select_device_media_runtime,
 )
 from services.control_api.app.media_slo import MediaSLOUnavailable
 from services.control_api.app.routes import session as session_routes
 from services.control_api.app.security import (
     AuthenticatedUser,
     create_session_id,
-    optional_authenticated_user,
 )
 from services.control_api.app.session_companion import session_companion
 from services.control_api.app.session_directory import (
@@ -81,22 +77,6 @@ router = APIRouter(prefix="/v1/media", tags=["media"])
 device_router = APIRouter(prefix="/v1/devices", tags=["media"])
 internal_router = APIRouter(prefix="/v1/internal/media-runtime", tags=["media-internal"])
 logger = logging.getLogger(__name__)
-
-
-class MediaCapabilities(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    full_duplex: bool = True
-    playback_ack: str = Field(default="approximate", pattern=r"^(none|approximate|sample)$")
-    data_channel: bool = True
-
-
-class DeviceProof(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    nonce: str = Field(min_length=1, max_length=256)
-    issued_at_ms: int = Field(ge=0)
-    signature: str = Field(min_length=1, max_length=256)
 
 
 class RegisterDeviceIdentityRequest(BaseModel):
@@ -160,32 +140,6 @@ class MediaReplyDeliveryEventRequest(BaseModel):
         return value.astimezone(UTC)
 
 
-class CreateMediaSessionRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    client_type: str = Field(default="h5", pattern=r"^(h5|device)$")
-    device_id: str | None = Field(default=None, min_length=1, max_length=128)
-    capabilities: MediaCapabilities = Field(default_factory=MediaCapabilities)
-    device_proof: DeviceProof | None = None
-
-
-class MediaSessionResponse(BaseModel):
-    session_id: str
-    media_runtime: str
-    whip_url: str | None = None
-    token: str | None = None
-    expires_at: str | None = None
-    ice_servers: list[dict[str, Any]] = Field(default_factory=list)
-    stream_epoch: int = Field(ge=1)
-    owner_instance_id: str | None = None
-    ownership_epoch: int | None = Field(default=None, ge=1)
-    fallback_runtime: str = "livekit"
-    streamcore: dict[str, Any] | None = None
-    fallback: dict[str, str]
-    livekit: dict[str, str] | None = None
-    device_id: str | None = None
-
-
 def _legacy_device_protocol_versions() -> list[Literal[1, 2]]:
     return [1]
 
@@ -198,9 +152,8 @@ class DeviceMediaSessionProof(BaseModel):
     nonce: str = Field(min_length=43, max_length=43)
     signature: str = Field(min_length=86, max_length=86)
     client_id: str = Field(min_length=1, max_length=128)
-    # Omitted by every legacy firmware build.  Treat absence as v1-only so a
-    # server-side direct rollout flag can never route an old device onto the
-    # incompatible v2 WSS merely because its account/device is eligible.
+    # Omitted by every legacy firmware build.  Absence means v1-only, which
+    # the v2-only direct Media Edge refuses (409) rather than guessing.
     supported_protocol_versions: list[Literal[1, 2]] = Field(
         default_factory=_legacy_device_protocol_versions,
         min_length=1,
@@ -242,8 +195,8 @@ class DeviceGatewaySessionResponse(BaseModel):
     websocket_url: str
     media_token: str
     expires_in: int = Field(ge=30, le=300)
-    protocol_version: Literal[1, 2] = 1
-    runtime: Literal["livekit_compat", "direct_voice_core"]
+    protocol_version: Literal[2] = 2
+    runtime: Literal["direct_voice_core"] = "direct_voice_core"
     interaction_authority: Literal["python_authoritative"] = "python_authoritative"
     binding_id: str
     binding_version: int = Field(ge=1)
@@ -251,85 +204,6 @@ class DeviceGatewaySessionResponse(BaseModel):
     runtime_profile_version: int = Field(ge=1, le=DEVICE_STREAM_EPOCH_MAX)
     uplink: DeviceOpusFormat
     downlink: DeviceOpusFormat
-
-
-async def _create(
-    body: CreateMediaSessionRequest,
-    request: Request,
-    user: AuthenticatedUser,
-    *,
-    device_id: str | None = None,
-    binding_version: int | None = None,
-) -> MediaSessionResponse:
-    effective_device_id = device_id or body.device_id
-    if device_id is not None and body.device_id not in {None, device_id}:
-        raise HTTPException(status_code=422, detail="device_id mismatch")
-    if (
-        body.client_type == "h5"
-        and effective_device_id is not None
-        and body.device_id
-        not in {
-            None,
-            effective_device_id,
-        }
-    ):
-        raise HTTPException(status_code=422, detail="device_id mismatch")
-    # The current production migration intentionally permits StreamCore only
-    # for H5. Device sessions still receive the stable LiveKit fallback until
-    # the Linux AEC/identity adapter is deployed.
-    platform = "h5" if body.client_type == "h5" else "device"
-    created = await session_routes.create_session(
-        session_routes.CreateSessionRequest(
-            client=session_routes.ClientInfo(
-                platform=platform,
-                device_id=effective_device_id,
-                binding_version=binding_version,
-            ),
-        ),
-        request,
-        user,
-    )
-    if not isinstance(created, session_routes.CreateSessionResponse):
-        raise HTTPException(status_code=409, detail="media session requires cascade backend")
-    try:
-        claimed_route = await session_routes.claim_session_route(
-            request,
-            session_id=created.session_id,
-            account_id=user.user_id,
-            device_id=effective_device_id or "h5",
-            stream_epoch=created.stream_epoch,
-            media_runtime=created.media_runtime,
-        )
-    except SessionDirectoryUnavailable as exc:
-        raise HTTPException(status_code=503, detail="media session directory unavailable") from exc
-    streamcore = created.streamcore or {}
-    expires_at = cast(str | None, streamcore.get("expires_at"))
-    return MediaSessionResponse(
-        session_id=created.session_id,
-        media_runtime=created.media_runtime,
-        whip_url=cast(str | None, streamcore.get("whip_url")),
-        token=cast(str | None, streamcore.get("token")),
-        expires_at=expires_at,
-        ice_servers=session_routes.turn_ice_servers(
-            request.app.state.settings,
-            session_id=created.session_id,
-            device_id=effective_device_id,
-        ),
-        stream_epoch=created.stream_epoch,
-        fallback_runtime=created.fallback_runtime,
-        streamcore=created.streamcore,
-        owner_instance_id=claimed_route.owner_instance_id
-        if claimed_route
-        else created.owner_instance_id,
-        ownership_epoch=claimed_route.ownership_epoch if claimed_route else created.ownership_epoch,
-        fallback={"media_runtime": created.fallback_runtime},
-        livekit={
-            "url": created.livekit_url,
-            "room_name": created.room_name,
-            "participant_token": created.participant_token,
-        },
-        device_id=effective_device_id,
-    )
 
 
 def _device_onboarding_service(request: Request) -> DeviceOnboardingService:
@@ -346,15 +220,6 @@ def _device_onboarding_error(error: OnboardingError) -> HTTPException:
     return HTTPException(status_code=error.status_code, detail={"code": error.code})
 
 
-@router.post("/sessions", response_model=MediaSessionResponse)
-async def create_media_session(
-    body: CreateMediaSessionRequest,
-    request: Request,
-    user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
-) -> MediaSessionResponse:
-    return await _create(body, request, user)
-
-
 @router.post("/sessions/{session_id}/stop", response_model=dict[str, Any])
 async def stop_media_session(
     session_id: str,
@@ -362,7 +227,7 @@ async def stop_media_session(
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict[str, Any]:
-    """Idempotent media stop alias for clients that do not use room paths."""
+    """Idempotent alias of ``POST /v1/sessions/{id}/stop-response``."""
 
     record = cast(Any, request.app.state.memory_store).get_voice_session(
         session_id=session_id,
@@ -379,51 +244,6 @@ async def stop_media_session(
         user=user,
         idempotency_key=idempotency_key,
     )
-
-
-@device_router.post("/{device_id}/media-session", response_model=MediaSessionResponse)
-async def create_device_media_session(
-    device_id: str,
-    body: CreateMediaSessionRequest,
-    request: Request,
-    user: Annotated[AuthenticatedUser | None, Depends(optional_authenticated_user)],
-) -> MediaSessionResponse:
-    if body.client_type != "device":
-        raise HTTPException(status_code=422, detail="device endpoint requires client_type=device")
-    settings = request.app.state.settings
-    account_id = user.user_id if user is not None else None
-    if body.device_proof is None:
-        # Bearer bootstrap remains available only to offline/dev fixtures. A
-        # production device must prove possession of its registered key.
-        if account_id is None or not settings.offline_mock:
-            raise HTTPException(status_code=401, detail="signed device challenge is required")
-    else:
-        try:
-            account_id = request.app.state.device_registry.authenticate(
-                device_id,
-                SignedChallenge(
-                    device_id=device_id,
-                    nonce=body.device_proof.nonce,
-                    issued_at_ms=body.device_proof.issued_at_ms,
-                    signature_b64=body.device_proof.signature,
-                ),
-            )
-        except DeviceNotFound as exc:
-            raise HTTPException(
-                status_code=401, detail="device identity is not registered"
-            ) from exc
-        except DeviceChallengeRejected as exc:
-            raise HTTPException(status_code=401, detail="device challenge was rejected") from exc
-        if user is not None and user.user_id != account_id:
-            raise HTTPException(
-                status_code=403, detail="device owner does not match bearer account"
-            )
-    assert account_id is not None
-    if request.app.state.memory_store.is_account_unavailable(user_id=account_id):
-        raise HTTPException(status_code=409, detail="device owner is unavailable")
-    device_user = user or AuthenticatedUser(user_id=account_id, session_id=None, jti=None)
-    async with request.app.state.account_operations.write(account_id):
-        return await _create(body, request, device_user, device_id=device_id)
 
 
 @device_router.post("/{device_id}/media-challenge")
@@ -488,102 +308,37 @@ async def create_fleet_device_media_session(
     activation_profile_version = int(cast(int, authenticated["runtime_profile_version"]))
     firmware_version = str(authenticated["firmware_version"])
     board_profile = str(authenticated["board_profile"])
-    # Select only after the signed challenge has authenticated this path
-    # device_id. A client-provided capability list can narrow the result to
-    # legacy, but can never add itself to the server-owned Direct allowlist.
-    configured_runtime = select_device_media_runtime(settings, device_id=device_id)
-    device_runtime: Literal["livekit_compat", "direct_voice_core"] = (
-        "direct_voice_core"
-        if configured_runtime == "direct_voice_core" and body.supports(2)
-        else "livekit_compat"
-    )
-    if body.resume_session_id is not None and device_runtime != "direct_voice_core":
+    # Checked only after the signed challenge authenticated this device: the
+    # direct Media Edge speaks protocol v2 only, and firmware that does not
+    # advertise it has no other runtime to fall back to.
+    if not body.supports(2):
         raise HTTPException(
             status_code=409,
-            detail={"code": "device_media_resume_requires_v2"},
+            detail={"code": "device_media_protocol_v2_required"},
         )
-    if device_runtime == "direct_voice_core":
-        websocket_url = settings.device_direct_media_wss_url.strip()
-        if not websocket_url:
-            raise HTTPException(
-                status_code=503,
-                detail={"code": "device_direct_media_unavailable"},
-            )
-    else:
-        websocket_url = settings.device_media_gateway_url.strip()
-        if not websocket_url:
-            raise HTTPException(
-                status_code=503,
-                detail={"code": "device_media_gateway_unavailable"},
-            )
-    if request.app.state.memory_store.is_account_unavailable(user_id=account_id):
-        raise HTTPException(status_code=409, detail={"code": "device_owner_unavailable"})
-    device_user = AuthenticatedUser(user_id=account_id, session_id=None, jti=None)
-    async with request.app.state.account_operations.write(account_id):
-        if device_runtime == "direct_voice_core":
-            return await _create_direct_device_media_session(
-                request,
-                device_id=device_id,
-                account_id=account_id,
-                client_id=body.client_id,
-                binding_id=binding_id,
-                binding_version=binding_version,
-                binding_subject_id=binding_subject_id,
-                activation_profile_version=activation_profile_version,
-                firmware_version=firmware_version,
-                board_profile=board_profile,
-                websocket_url=websocket_url,
-                resume_session_id=body.resume_session_id,
-            )
-        created = await _create(
-            CreateMediaSessionRequest(client_type="device", device_id=device_id),
-            request,
-            device_user,
-            device_id=device_id,
-            binding_version=(
-                binding_version
-                if getattr(request.app.state, "session_runtime_service", None) is not None
-                else None
-            ),
-        )
-    livekit = created.livekit
-    if livekit is None:
+    websocket_url = settings.device_direct_media_wss_url.strip()
+    if not websocket_url:
         raise HTTPException(
             status_code=503,
-            detail={"code": "device_media_livekit_unavailable"},
+            detail={"code": "device_direct_media_unavailable"},
         )
-    room_name = livekit.get("room_name", "")
-    identity = f"user-{account_id}-{created.session_id[:8]}"
-    ticket, ttl = issue_device_gateway_ticket(
-        secret=settings.memoria_device_gateway_ticket_secret.get_secret_value(),
-        session_id=created.session_id,
-        user_id=account_id,
-        device_id=device_id,
-        client_id=body.client_id,
-        binding_id=binding_id,
-        binding_version=binding_version,
-        subject_id=binding_subject_id,
-        runtime_profile_version=activation_profile_version,
-        room_name=room_name,
-        identity=identity,
-        agent_name=settings.livekit_agent_name,
-        stream_epoch=created.stream_epoch,
-        ttl_s=settings.device_gateway_ticket_ttl_s,
-    )
-    return DeviceGatewaySessionResponse(
-        session_id=created.session_id,
-        stream_epoch=created.stream_epoch,
-        websocket_url=websocket_url,
-        media_token=ticket,
-        expires_in=ttl,
-        runtime="livekit_compat",
-        binding_id=binding_id,
-        binding_version=binding_version,
-        subject_id=binding_subject_id,
-        runtime_profile_version=activation_profile_version,
-        uplink=DeviceOpusFormat(sample_rate=16000),
-        downlink=DeviceOpusFormat(sample_rate=24000),
-    )
+    if request.app.state.memory_store.is_account_unavailable(user_id=account_id):
+        raise HTTPException(status_code=409, detail={"code": "device_owner_unavailable"})
+    async with request.app.state.account_operations.write(account_id):
+        return await _create_direct_device_media_session(
+            request,
+            device_id=device_id,
+            account_id=account_id,
+            client_id=body.client_id,
+            binding_id=binding_id,
+            binding_version=binding_version,
+            binding_subject_id=binding_subject_id,
+            activation_profile_version=activation_profile_version,
+            firmware_version=firmware_version,
+            board_profile=board_profile,
+            websocket_url=websocket_url,
+            resume_session_id=body.resume_session_id,
+        )
 
 
 async def _create_direct_device_media_session(
@@ -601,7 +356,7 @@ async def _create_direct_device_media_session(
     websocket_url: str,
     resume_session_id: str | None = None,
 ) -> DeviceGatewaySessionResponse:
-    """Issue a direct voice-core media session without any LiveKit dependency.
+    """Issue a direct voice-core media session.
 
     The direct path must establish the persistent Session authority first.
     PostgresSessionRuntimeService.start commits the signed Runtime Profile;
@@ -1297,12 +1052,9 @@ async def _claim_direct_session_route(
 ) -> SessionRoute | None:
     """Claim the direct session directory route with the direct profile TTL.
 
-    Mirrors claim_session_route but leases the route for
-    device_runtime_profile_ttl_s so the directory entry cannot expire while
-    the direct Runtime Profile (which uses the same TTL) is still
-    authoritative. The shared helper in routes/session.py is outside this
-    change write set, so the direct path claims with an explicit ttl instead
-    of the directory 300s default.
+    The route is leased for device_runtime_profile_ttl_s (not the directory's
+    300 s default) so it cannot expire while the direct Runtime Profile, which
+    uses the same TTL, is still authoritative.
     """
 
     directory = cast(
@@ -1528,9 +1280,6 @@ async def read_media_reply_delivery(
 
 
 __all__ = [
-    "CreateMediaSessionRequest",
-    "DeviceProof",
-    "MediaSessionResponse",
     "RegisterDeviceIdentityRequest",
     "MediaSLOReportRequest",
     "MediaReplyDeliveryEventRequest",

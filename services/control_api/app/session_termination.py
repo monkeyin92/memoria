@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Protocol
 
-from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 
 
@@ -76,11 +74,9 @@ class AccountSessionTerminator:
         *,
         store: MemoryStore,
         connections: RealtimeConnections,
-        close_room: Callable[[str], Awaitable[None]],
     ) -> None:
         self._store = store
         self._connections = connections
-        self._close_room = close_room
 
     async def terminate_account(self, account_id: str) -> int:
         sessions = await asyncio.to_thread(
@@ -96,15 +92,11 @@ class AccountSessionTerminator:
         await self._connections.close_sessions(
             {str(session["session_id"]) for session in sessions}
         )
-        for session in sessions:
-            if session["voice_backend"] == "cascade":
-                await self._close_room(str(session["room_name"]))
         await asyncio.to_thread(
             self._store.delete_voice_sessions,
             user_id=account_id,
         )
         return len(sessions)
-
 
     async def terminate_subject(self, subject_id: str) -> int:
         """Close only the device sessions serving one bound subject.
@@ -125,26 +117,3 @@ class AccountSessionTerminator:
             )
         await self._connections.close_sessions(set(session_ids))
         return len(session_ids)
-
-
-class LiveKitRoomCloser:
-    def __init__(self, settings: ControlSettings) -> None:
-        self._settings = settings
-
-    async def __call__(self, room_name: str) -> None:
-        if self._settings.offline_mock:
-            return
-        from livekit import api
-
-        async with api.LiveKitAPI(
-            self._settings.livekit_url,
-            self._settings.livekit_api_key,
-            self._settings.livekit_api_secret,
-        ) as livekit:
-            try:
-                await livekit.room.delete_room(api.DeleteRoomRequest(room=room_name))
-            except api.ServerError as exc:
-                # LiveKit expires idle rooms independently; deletion is idempotent.
-                if exc.code == api.ServerErrorCode.NOT_FOUND and exc.status == 404:
-                    return
-                raise

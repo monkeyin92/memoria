@@ -18,7 +18,6 @@ from services.agent.src.archive_sink import ArchiveSink, ArchiveSinkConfig
 from services.agent.src.conversation_close_wiring import (
     install_conversation_close_semantic_resolver,
 )
-from services.agent.src.device_vad import DEVICE_POST_PLAYBACK_HOLDOFF_S
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.generation_output_policy import frozen_companion_clone_permitted
 from services.agent.src.live_lookup_wiring import install_live_lookup_semantic_resolver
@@ -28,7 +27,10 @@ from services.agent.src.orchestration.handlers import (
     LanguageModelRequest,
     SpeechSynthesisHandler,
 )
-from services.agent.src.orchestration.speaker_verify import SpeakerVerifier
+from services.agent.src.orchestration.speaker_verify import (
+    SpeakerVerifier,
+    should_enable_legacy_speaker_verifier,
+)
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
 from services.agent.src.providers.handlers import (
     build_language_model_handler,
@@ -47,9 +49,9 @@ from services.agent.src.response_planner_client import (
     ResponsePlannerClientConfig,
 )
 from services.agent.src.runtime_profile import VerifiedRuntimeProfile
-from services.agent.src.session_entrypoint import should_enable_legacy_speaker_verifier
 from services.agent.src.tutor_session import production_system_prompt
 from services.agent.src.voice_core.media_protocol import (
+    DEVICE_POST_PLAYBACK_HOLDOFF_S,
     SessionIdentity,
     device_barge_in_enabled,
 )

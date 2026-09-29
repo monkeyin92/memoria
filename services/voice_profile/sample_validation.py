@@ -7,8 +7,7 @@ Those two gates are human A/B preference and TTS-output probes, so a
 mini-program user can never honestly satisfy them.
 
 This module is the honest replacement for the sample itself: it decodes the
-submitted audio with PyAV (already a project dependency, the same one
-``services/device_media_gateway/opus.py`` decodes with) and reports what the
+submitted audio with PyAV (already a project dependency) and reports what the
 recording actually contains, so a silent, clipped, too short or non-audio file
 is rejected inside the same request instead of becoming an unusable voice on
 the device.

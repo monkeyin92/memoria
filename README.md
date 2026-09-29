@@ -9,7 +9,7 @@ ESP32-S3 -> Go Media Edge -> Python Voice Core / Agent
 微信小程序 --------------------------------> 控制面、档案与设备管理（绑定与查看）
 ```
 
-小程序不是实时媒体终端：不采集实时对话、不播放实时 TTS、不建立媒体 WSS、不加入 LiveKit 房间；仅 profile 页可在明确授权后有界录制自定义音色样本，不承担手机声纹登记。ESP-VoCat 是机器人产品的实时语音入口。当前协商上限是 `interrupt_assist`；未完成真实 AEC、双讲 T1–T14 和连续轮次验收前，不得宣称全双工。
+小程序不是实时媒体终端：不采集实时对话、不播放实时 TTS、不建立媒体 WSS；仅 profile 页可在明确授权后有界录制自定义音色样本，不承担手机声纹登记。ESP-VoCat 是机器人产品的实时语音入口。当前协商上限是 `interrupt_assist`；未完成真实 AEC、双讲 T1–T14 和连续轮次验收前，不得宣称全双工。
 
 ## 产品定位（2026-09-12 重申）
 
@@ -35,7 +35,7 @@ ESP32-S3 -> Go Media Edge -> Python Voice Core / Agent
 
 ## 技术栈与目录
 
-- Python 3.12、uv、FastAPI、LiveKit Agents、FunASR、百炼兼容 LLM、豆包 Seed-TTS。
+- Python 3.12、uv、FastAPI、FunASR、百炼兼容 LLM、豆包 Seed-TTS；`livekit-agents` 只作为 Voice Core 内的 LLM/TTS/STT 适配库使用（LiveKit 服务器、LiveKit Agent worker 与 Python 小程序/设备媒体网关已于 2026-09-29 退役）。
 - Go Media Edge：设备 WSS、generation fence、gRPC Voice Core bridge。
 - PostgreSQL 17 + pgvector、Redis、MinIO。
 - 微信小程序：`apps/miniprogram`；ESP32 overlay：`firmware/esp32`。
@@ -54,18 +54,17 @@ echo 'OFFLINE_MOCK=true' >> .env  # 没有供应商密钥时
 uv sync --all-extras
 ```
 
-两个终端分别启动：
+两个终端分别启动 Control API 与 Voice Core 媒体桥（设备经 Go Media Edge 接入该桥）：
 
 ```bash
 uv run uvicorn services.control_api.app.main:app --host 0.0.0.0 --port 8000 --reload
-uv run python -m services.agent.src.main dev
+uv run python -m scripts.run_media_bridge
 ```
 
-本地数据层与自建 LiveKit：
+本地数据层：
 
 ```bash
 docker compose up -d postgres redis
-docker compose --profile self-hosted up -d redis livekit
 ```
 
 监护与档案（证据账本、记忆、技能、人格、自我模型、数字分身、传承、成长、声音档案）数据只存 PostgreSQL，Control API 启动要求 `MEMORIA_GUARDIAN_DATABASE_URL` 与 `MEMORIA_ARCHIVE_DATABASE_URL`。存储会拒绝可绕过 RLS 的角色，所以本机用一个普通角色拥有开发库，非生产环境由存储自己建表（pgvector 可选）：
@@ -76,7 +75,7 @@ docker compose exec postgres psql -U voice -c "CREATE ROLE memoria_dev LOGIN PAS
 
 两个 DSN 都填 `postgresql://memoria_dev:dev@localhost:5432/memoria`。
 
-`devkey/devsecret` 只允许本机开发。生产 API secret 永远只进入 Control API/Agent 的 root-only 环境文件。
+生产 API secret 永远只进入 Control API/Agent 的 root-only 环境文件。
 
 ## 质量门
 
@@ -483,7 +482,7 @@ Flash `0x10000..0x1ffff` 是独立 `memoria_identity` NVS。普通固件更新�
 固件请求 `supported_protocol_versions: [2, 1]`，首选 v2：
 
 - direct Edge 是 v2-only；direct WSS 不接受 v1。
-- v1 只由 legacy livekit_compat Gateway 承接滚动发布或明确回滚。
+- 承接 v1 的 legacy livekit_compat Gateway 已退役，服务端不再有 v1 入口；固件保留 `1` 只为兼容声明。
 - the direct edge is v2-only and never accepts a v1 hello.
 
 v2 的 `session_epoch + turn_id + generation_id + tool_epoch` 完整 fence 贯穿 generation、PCM 和 playback 回执。下行 sequence/sample 时钟按 generation 从 0/0 开始；旧 generation 帧必须在连续性检查前丢弃。`playback.ended` 只能在 completion 到达且真实解码/播放队列排空后上报；网络收到帧不是 Actual Heard。
@@ -502,6 +501,6 @@ DTLN 降噪固定到 `breizhn/DTLN` commit `1de1f15a8b5b7e1c44905618ff2ef70ca827
 - 说话距离过近：板端输入增益/codec -> 原始 PCM RMS/peak -> DTLN 输入输出 -> VAD 阈值；不要只调云端识别阈值。
 - 回答中断后失联：同一 fence 检查 stop epoch、successor cancel、迟到旧帧、first-frame 连续性和 WSS close cause。
 - 打断后仍播旧内容：先推进 generation，再取消 provider/session，并在 Edge、设备和投影处比较完整 fence。
-- 设备 transport 已连但不可用：必须等当前 Agent 的显式 `assistant_state: ready`，不能把 LiveKit connected 当业务 ready。
+- 设备 transport 已连但不可用：必须等当前 Agent 的显式 `assistant_state: ready`，不能把 transport connected 当业务 ready。
 
 当前线上镜像、证据层级、发布与剩余真实设备验收见 `HANDOFF.md`。当前开发工单是 VoCat interrupt_assist（`vocat_interrupt_assist`）：播放期保持采集，按协商 `audio_mode` 开 barge-in；`full_duplex_verified` 另需 T1–T14。

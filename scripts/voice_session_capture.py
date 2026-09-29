@@ -26,8 +26,9 @@ timing before the device reports "StateMachine: State: activating -> idle"
 belongs to the reboot and not to the conversation.  --preflight-only validates
 the receipt and writes capture.json without touching the device.
 
-Server logs: with --server-logs the tool follows the bridge/agent/edge docker log
-streams over ssh.  Each stream's exit is recorded in capture.json under
+Server logs: with --server-logs the tool follows the bridge/edge docker log streams
+over ssh (the LiveKit worker container is retired; the bridge process emits every
+marker the report parses).  Each stream's exit is recorded in capture.json under
 log_streams; a stream that fails or ends before the capture stops marks
 log_stream_health=degraded and makes the tool exit non-zero, so a capture whose
 trailing server evidence is truncated is never mistaken for a complete one.
@@ -84,7 +85,6 @@ DIGEST_FIELDS = ("candidate_app_sha256", "candidate_elf_sha256", "identity_sha25
 READBACK_FLAGS = ("app_full_readback_byte_match", "identity_byte_match")
 CONTAINERS = (
     ("bridge", "memoria-voice-core-media-bridge-1"),
-    ("agent", "memoria-agent-1"),
     ("edge", "memoria-media-edge-1"),
 )
 STOP_SIGNAL_NAMES = ("SIGHUP", "SIGQUIT", "SIGINT", "SIGTERM")
@@ -771,7 +771,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--server-logs",
         action="store_true",
-        help="also follow bridge/agent/edge docker logs over ssh",
+        help="also follow bridge/edge docker logs over ssh",
     )
     parser.add_argument(
         "--preflight-only",

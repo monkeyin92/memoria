@@ -23,7 +23,9 @@ class _FakePostgresStore:
 def _settings(**overrides: str) -> ControlSettings:
     values = {
         "ENVIRONMENT": "production",
-        "DEVICE_MEDIA_GATEWAY_URL": "wss://voice.example.com/memoria-device-media",
+        "DEVICE_DIRECT_MEDIA_WSS_URL": (
+            "wss://voice.example.com/memoria-device-edge/v1/device/media"
+        ),
         "MEMORIA_DEVICE_ONBOARDING_DATABASE_URL": (
             "postgresql://memoria_device_onboarding_api:secret@postgres/memoria"
         ),
@@ -53,7 +55,7 @@ def test_production_onboarding_uses_postgres_and_explicit_activation_key(
     assert service.store.closed is True
 
 
-def test_production_without_device_gateway_keeps_onboarding_fail_closed(
+def test_production_without_direct_media_edge_keeps_onboarding_fail_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     connected = False
@@ -67,7 +69,7 @@ def test_production_without_device_gateway_keeps_onboarding_fail_closed(
     monkeypatch.setattr(main, "PostgresBootstrapStore", _ForbiddenStore)
 
     assert main._device_onboarding_service(
-        _settings(DEVICE_MEDIA_GATEWAY_URL="")
+        _settings(DEVICE_DIRECT_MEDIA_WSS_URL="")
     ) is None
     assert connected is False
 

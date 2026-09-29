@@ -5,6 +5,9 @@ import asyncio
 import pytest
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
+from services.agent.tests.unit.runtime_state_helpers import (
+    speaker_permissions,
+)
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -143,117 +146,9 @@ async def test_guest_classification_is_rejected_by_target_focus_but_closes_priva
     assert decision.classification == "guest"
     assert accepted is False
     assert reason == "target_non_owner"
-    assert runtime.speaker_permissions.normal_conversation is True
-    assert runtime.speaker_permissions.read_private_memory is False
-    assert runtime.speaker_permissions.write_long_term_memory is False
-    await runtime.close()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("decision", "expected"),
-    [
-        (_decision("owner"), True),
-        (_decision("uncertain", reason_code="shadow_owner_candidate"), False),
-        (_decision("guest"), False),
-        (_decision("uncertain", reason_code="shadow_guest_candidate"), False),
-    ],
-)
-async def test_transcript_history_eligibility_is_frozen_for_user_and_assistant(
-    decision: SpeakerDecision,
-    expected: bool,
-) -> None:
-    published: list[dict[str, object]] = []
-
-    async def publish(event: dict[str, object]) -> None:
-        published.append(event)
-
-    runtime = DuplexRuntime.create(session_id="history-binding")
-    _enable_companion_policy(runtime)
-    runtime.set_event_publisher(publish)
-    runtime.set_reject_non_owner_voice(False)
-    await runtime.orchestrator.ready()
-
-    async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
-        return decision
-
-    runtime.set_speaker_classifier(classify, sample_rate=16000)
-    runtime.on_user_voice_started()
-    runtime.feed_speaker_pcm(b"\x00\x01" * 800)
-    runtime.on_user_voice_stopped()
-    await runtime.await_speaker_classification()
-    fence = await runtime.on_turn_committed("当前问题")
-    runtime.publish_transcript(speaker="user", text="当前问题", final=True, fence=fence)
-    await runtime.on_assistant_speaking("当前回答")
-    await runtime.on_playback_started()
-    await runtime.on_assistant_reply_completed("当前回答")
-    await asyncio.sleep(0)
-
-    finals = [
-        event
-        for event in published
-        if event.get("type") == "transcript_delta" and event.get("final") is True
-    ]
-    assert [(event["speaker"], event["history_eligible"]) for event in finals] == [
-        ("user", expected),
-        ("assistant", expected),
-    ]
-    await runtime.close()
-
-
-@pytest.mark.asyncio
-async def test_interrupted_assistant_uses_the_original_generation_history_binding() -> None:
-    published: list[dict[str, object]] = []
-    archived: list[dict[str, object]] = []
-
-    async def publish(event: dict[str, object]) -> None:
-        published.append(event)
-
-    async def archive(event: dict[str, object]) -> None:
-        archived.append(event)
-
-    runtime = DuplexRuntime.create(session_id="interrupted-history-binding")
-    _enable_companion_policy(runtime)
-    runtime.set_event_publisher(publish)
-    runtime.set_evidence_publisher(archive)
-    await runtime.orchestrator.ready()
-    runtime._speaker_decision = _decision("owner")
-    runtime._speaker_class = "owner"
-    old = await runtime.on_turn_committed("主人问题")
-    runtime.publish_transcript(speaker="user", text="主人问题", final=True, fence=old)
-    runtime.update_pending_assistant_text("主人回答还有未播放内容")
-    await runtime.on_playback_started()
-
-    await runtime.on_real_interrupt(
-        cause="session.interrupt",
-        synchronized_transcript="主人回答已听部分",
-    )
-    runtime._speaker_decision = _decision("guest")
-    runtime._speaker_class = "guest"
-    await runtime.on_playback_finished(
-        playback_position_s=0.5,
-        interrupted=True,
-        synchronized_transcript="主人回答已听部分",
-    )
-    await asyncio.sleep(0)
-
-    assistant = next(
-        event
-        for event in published
-        if event.get("type") == "transcript_delta"
-        and event.get("speaker") == "assistant"
-        and event.get("final") is True
-    )
-    assert assistant["turn_id"] == old.turn_id
-    assert assistant["generation_id"] == old.generation_id + 1
-    assert assistant["history_eligible"] is True
-    archived_assistant = next(
-        event
-        for event in archived
-        if event.get("event_type") == "assistant.playout_stopped"
-    )
-    assert archived_assistant["turn_id"] == old.turn_id
-    assert archived_assistant["generation_id"] == old.generation_id
+    assert speaker_permissions(runtime).normal_conversation is True
+    assert speaker_permissions(runtime).read_private_memory is False
+    assert speaker_permissions(runtime).write_long_term_memory is False
     await runtime.close()
 
 
@@ -278,8 +173,8 @@ async def test_model_timeout_is_uncertain_and_cannot_late_promote_the_next_turn(
 
     assert decision.classification == "uncertain"
     assert decision.reason_code == "authority_timeout"
-    assert runtime.speaker_permissions.read_private_memory is False
-    assert runtime.speaker_permissions.write_long_term_memory is False
+    assert speaker_permissions(runtime).read_private_memory is False
+    assert speaker_permissions(runtime).write_long_term_memory is False
     await runtime.close()
 
 
@@ -302,10 +197,10 @@ async def test_policy_denied_authority_stays_uncertain_without_private_permissio
     assert decision.reason_code == "authority_policy_denied"
     assert accepted is True
     assert reason is None
-    assert runtime.speaker_permissions.normal_conversation is True
-    assert runtime.speaker_permissions.read_private_memory is False
-    assert runtime.speaker_permissions.write_long_term_memory is False
-    assert runtime.speaker_permissions.sensitive_actions is False
+    assert speaker_permissions(runtime).normal_conversation is True
+    assert speaker_permissions(runtime).read_private_memory is False
+    assert speaker_permissions(runtime).write_long_term_memory is False
+    assert speaker_permissions(runtime).sensitive_actions is False
     await runtime.close()
 
 
@@ -324,8 +219,8 @@ async def test_speaker_authority_exception_stays_authority_unavailable() -> None
 
     assert decision.classification == "uncertain"
     assert decision.reason_code == "authority_unavailable"
-    assert runtime.speaker_permissions.read_private_memory is False
-    assert runtime.speaker_permissions.write_long_term_memory is False
+    assert speaker_permissions(runtime).read_private_memory is False
+    assert speaker_permissions(runtime).write_long_term_memory is False
     await runtime.close()
 
 

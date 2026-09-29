@@ -1,6 +1,11 @@
 """Assert the built Agent image really carries the released candidate.
 
-Run inside the artifact (`/app/.venv/bin/python /tmp/verify_agent_release_artifact.py`)
+The image runs the Voice Core media bridge (``scripts.run_media_bridge``); the
+LiveKit Agent worker it used to run is retired, but the bridge still imports
+``livekit.agents`` (LLM/TTS/STT adapters and the GenAI telemetry module), so the
+pinned SDK and its privacy defaults remain part of the release contract.
+
+Run inside the artifact (`/app/.venv/bin/python -m scripts.verify_agent_release_artifact`)
 so the checks exercise the shipped venv and code, not the build machine. Exits
 non-zero on the first failed assertion, which fails the image build.
 """
@@ -13,18 +18,20 @@ import sys
 from collections.abc import Mapping
 from importlib.metadata import PackageNotFoundError, version
 
+# The libraries the bridge imports. The privacy defaults below depend on the
+# 1.8.x telemetry behaviour (content capture on unless disabled), so a silent
+# SDK drift must fail the build rather than quietly change what is exported.
 EXPECTED_VERSIONS = {
     "livekit-agents": "1.8.1",
     "livekit-plugins-openai": "1.8.1",
-    "livekit-plugins-silero": "1.8.1",
     "livekit": "1.1.18",
-    "livekit-api": "1.2.1",
-    "livekit-protocol": "1.1.26",
-    "livekit-local-inference": "0.2.7",
 }
 
-# Memoria product flags returned alongside the LiveKit turn-handling keys.
-_MEMORIA_ONLY_TURN_KEYS = frozenset({"stream_speak_while_think"})
+# The factory the production compose file hands the bridge
+# (MEDIA_BRIDGE_SESSION_FACTORY in docker-compose.production.yml).
+PRODUCTION_SESSION_FACTORY = (
+    "services.agent.src.media_agent_factory:build_production_media_session_factory"
+)
 
 
 def _check_versions() -> None:
@@ -60,28 +67,27 @@ def _run_subprocess_check(code: str, *, env_overrides: Mapping[str, str | None] 
 
 
 def _check_privacy_defaults() -> None:
-    """Validate privacy gates across both Agent and Bridge in clean child processes.
+    """Validate the bridge's privacy gates in clean child processes.
 
     Prevents false-greens:
-    1. Tests Agent bootstrap with unset and empty env vars.
-    2. Tests Media Bridge bootstrap with unset and empty env vars.
+    1. Tests the shared privacy bootstrap with unset env vars.
+    2. Tests the Media Bridge entrypoint bootstrap with unset env vars.
     3. Runs real InMemorySpanExporter canary test to prove no PII/content leaks.
     4. Runs negative control to prove that omitting the bootstrap call would FAIL.
     5. Verifies explicit operator overrides are respected.
 
     ``_check_real_exporter_privacy`` then repeats the canary over a real OTLP/HTTP
     export, which is the only form that proves what an exporter actually receives.
-    
     """
     clean_env = {
         "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": None,
         "LIVEKIT_TELEMETRY_ALLOW_PII": None,
     }
 
-    # 1. Agent bootstrap in fresh process
+    # 1. Shared bootstrap in fresh process
     agent_code = """
 import os
-from services.agent.src.main import _apply_telemetry_privacy_defaults
+from services.agent.src.telemetry_privacy import _apply_telemetry_privacy_defaults
 applied = _apply_telemetry_privacy_defaults()
 assert applied.get("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT") == "0"
 assert applied.get("LIVEKIT_TELEMETRY_ALLOW_PII") == "0"
@@ -89,7 +95,7 @@ assert os.environ.get("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT") == "
 assert os.environ.get("LIVEKIT_TELEMETRY_ALLOW_PII") == "0"
 
 from livekit.agents.telemetry import gen_ai
-assert gen_ai.capture_content_enabled() is False, "Agent bootstrap failed to disable gen_ai content capture"
+assert gen_ai.capture_content_enabled() is False, "privacy bootstrap failed to disable gen_ai content capture"
 """
     _run_subprocess_check(agent_code, env_overrides=clean_env)
 
@@ -109,7 +115,7 @@ assert gen_ai.capture_content_enabled() is False, "Bridge bootstrap failed to di
     canary_code = """
 import os
 import json
-from services.agent.src.main import _apply_telemetry_privacy_defaults
+from services.agent.src.telemetry_privacy import _apply_telemetry_privacy_defaults
 _apply_telemetry_privacy_defaults()
 
 from livekit.agents.telemetry import traces, gen_ai
@@ -183,83 +189,44 @@ assert CANARY_PRIVATE in exported, "Expected canary to leak when defaults are no
     }
     override_code = """
 import os
-from services.agent.src.main import _apply_telemetry_privacy_defaults
+from services.agent.src.telemetry_privacy import _apply_telemetry_privacy_defaults
 applied = _apply_telemetry_privacy_defaults()
 assert applied["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] == "0"
 assert applied["LIVEKIT_TELEMETRY_ALLOW_PII"] == "0"
 """
     _run_subprocess_check(override_code, env_overrides=override_env)
 
-    print("telemetry privacy defaults (Agent + Bridge + Canary + Anti-regression) OK")
+    print("telemetry privacy defaults (bootstrap + Bridge + Canary + Anti-regression) OK")
 
 
-def _check_sdk_compatibility() -> None:
-    from livekit.agents import AgentSession
-    from livekit.agents.voice.turn import (
-        EndpointingOptions,
-        InterruptionOptions,
-        PreemptiveGenerationOptions,
-        TurnHandlingOptions,
+def _check_bridge_wiring() -> None:
+    """The shipped tree must resolve the bridge and its production session factory.
+
+    Runs in a clean child so the bridge entrypoint is imported exactly as the
+    container does (``-m scripts.run_media_bridge`` applies the privacy
+    defaults at import) and the lazily imported OpenAI-compatible LLM plugin
+    the factory needs is present in the venv.
+    """
+
+    module_name, _, attribute = PRODUCTION_SESSION_FACTORY.partition(":")
+    code = f"""
+import importlib
+
+import scripts.run_media_bridge as bridge
+assert callable(bridge.main), "run_media_bridge has no main()"
+builder = getattr(importlib.import_module({module_name!r}), {attribute!r}, None)
+assert callable(builder), "production media session factory is not callable"
+from livekit.plugins import openai  # noqa: F401  (media_agent_factory imports it lazily)
+from services.agent.src.agent import DuplexVoiceAgent  # noqa: F401
+"""
+    _run_subprocess_check(
+        code,
+        env_overrides={
+            "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": None,
+            "LIVEKIT_TELEMETRY_ALLOW_PII": None,
+        },
     )
-    from services.agent.src import session_entrypoint as se
-
-    for device_vad in (False, True):
-        config = se.build_turn_handling_config("cn_self_hosted", device_vad=device_vad)
-        unknown = set(config) - set(TurnHandlingOptions.__annotations__) - _MEMORIA_ONLY_TURN_KEYS
-        if unknown:
-            raise SystemExit(f"turn_handling keys would be dropped: {sorted(unknown)}")
-        for key, typed_dict in (
-            ("endpointing", EndpointingOptions),
-            ("interruption", InterruptionOptions),
-            ("preemptive_generation", PreemptiveGenerationOptions),
-        ):
-            dropped = set(config[key]) - set(typed_dict.__annotations__)
-            if dropped:
-                raise SystemExit(f"{key} keys would be dropped: {sorted(dropped)}")
-
-        kwargs = se.build_session_kwargs(
-            vad=None,
-            stt=None,
-            llm=None,
-            tts=None,
-            profile="cn_self_hosted",
-            offline=True,
-            device_vad=device_vad,
-        )
-        if "turn_handling" not in kwargs:
-            raise SystemExit("candidate SDK did not accept our TurnHandlingOptions")
-        session = AgentSession(**kwargs)
-        resolved = session._opts.turn_handling
-
-        if dict(resolved["endpointing"]) != config["endpointing"]:
-            raise SystemExit(f"endpointing not consumed: {dict(resolved['endpointing'])}")
-        for group in ("enabled", "mode", "min_duration", "false_interruption_timeout"):
-            if dict(resolved["interruption"])[group] != config["interruption"][group]:
-                raise SystemExit(f"interruption.{group} not consumed")
-        for group in ("enabled", "preemptive_tts"):
-            if dict(resolved["preemptive_generation"])[group] != config["preemptive_generation"][group]:
-                raise SystemExit(f"preemptive_generation.{group} not consumed")
-        # 1.8.x adds user_turn_limit; the upgrade must not start enforcing it.
-        limits = resolved["user_turn_limit"]
-        if limits["max_words"] is not None or limits["max_duration"] is not None:
-            raise SystemExit(f"user_turn_limit unexpectedly enforced: {limits}")
-
-    half_duplex = AgentSession(
-        **se.build_session_kwargs(
-            vad=None,
-            stt=None,
-            llm=None,
-            tts=None,
-            profile="cn_self_hosted",
-            offline=True,
-            interruptions_enabled=False,
-        )
-    )
-    if half_duplex._opts.turn_handling["interruption"]["enabled"] is not False:
-        raise SystemExit("half-duplex path is interruptible in the artifact")
-    if half_duplex._opts.turn_handling["preemptive_generation"]["enabled"] is not False:
-        raise SystemExit("preemptive generation enabled in the artifact")
-    print("in-artifact SDK compatibility OK")
+    print("media bridge wiring OK")
 
 
 def _check_real_exporter_privacy() -> None:
@@ -295,7 +262,7 @@ def main() -> int:
     _check_versions()
     _check_privacy_defaults()
     _check_real_exporter_privacy()
-    _check_sdk_compatibility()
+    _check_bridge_wiring()
     print("agent release artifact verification PASSED")
     return 0
 

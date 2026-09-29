@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Report raw per-turn timings from one captured Memoria voice session.
 
-Read-only: parses `serial.log` plus the streamed bridge/agent/edge logs from a
+Read-only: parses `serial.log` plus the streamed bridge/edge logs from a
 capture directory produced by `scripts/voice_session_capture.py` (or a legacy
 `capture.py`).  It prints the per-delivery server chain and the device-side
 `Device VAD end -> first downlink frame received` gap, so the 1.5s silence
@@ -467,10 +467,13 @@ def device_segments(run: Path) -> tuple[list[DeviceSegment], list[str]]:
 def server_facts(run: Path) -> tuple[ServerFacts, list[str]]:
     facts = ServerFacts()
     notes: list[str] = []
+    # agent.log is the retired LiveKit worker stream; captures made before the
+    # cutover still carry it, so it is read when present and never required.
     for name in ("bridge.log", "agent.log", "edge.log"):
         text = _read(run / name)
         if not text:
-            notes.append(f"{name} is missing or empty")
+            if name != "agent.log":
+                notes.append(f"{name} is missing or empty")
             continue
         for raw in text.splitlines():
             stamp = LOG_TS.match(raw)
@@ -626,7 +629,7 @@ def _completion_timestamp(value: object) -> str | None:
     return value
 
 
-LOG_STREAM_LABELS = ("bridge", "agent", "edge")
+LOG_STREAM_LABELS = ("bridge", "edge")
 
 
 def _stream_record_problems(payload: dict[str, object]) -> list[str]:

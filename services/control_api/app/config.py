@@ -22,9 +22,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from services.common.security_constants import (
     DEV_AUTH_SECRET,
-    DEV_DEVICE_GATEWAY_TICKET_SECRET,
     DEV_MESSAGE_IDEMPOTENCY_SECRET,
-    DEV_MINIPROGRAM_GATEWAY_TICKET_SECRET,
 )
 from services.control_api.app.config_fields.archive import ArchiveFields
 from services.control_api.app.config_fields.auth import AuthFields
@@ -119,9 +117,6 @@ class ControlSettings(
 
     def origins_list(self) -> list[str]:
         return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
-
-    def coturn_urls_list(self) -> list[str]:
-        return [url.strip() for url in self.coturn_urls.split(",") if url.strip()]
 
     @field_validator("evolution_runtime_prompt_families")
     @classmethod
@@ -370,14 +365,6 @@ class ControlSettings(
             self.media_edge_internal_control_client_cert_file.strip(),
             self.media_edge_internal_control_client_key_file.strip(),
         )
-        if self.device_media_direct_rollout_mode == "allowlist":
-            from services.control_api.app.media_runtime import direct_canary_device_ids
-
-            if not direct_canary_device_ids(self):
-                raise ValueError(
-                    "production direct device media allowlist mode requires "
-                    "DEVICE_MEDIA_DIRECT_CANARY_DEVICE_IDS"
-                )
 
     def _validate_direct_ed25519_private_key(self) -> None:
         """Parse the configured StreamCore/device private key at startup.
@@ -471,41 +458,16 @@ class ControlSettings(
             raise ValueError("production must not allow * CORS")
         if self.public_base_url.startswith("http://"):
             raise ValueError("production must not use plaintext PUBLIC_BASE_URL")
-        if not self.livekit_url.startswith("wss://"):
-            raise ValueError("production must use secure LIVEKIT_URL")
-        if not self.livekit_api_key or not self.livekit_api_secret:
-            raise ValueError("production requires LiveKit credentials")
-        streamcore_rollout_enabled = (
-            self.media_runtime_default == "streamcore"
-            and self.streamcore_experiment_percent > 0
-            and not self.streamcore_kill_switch
-        )
-        if streamcore_rollout_enabled:
-            if not self.streamcore_whip_url.startswith("https://"):
-                raise ValueError("production StreamCore rollout requires HTTPS WHIP URL")
-            has_private_key = bool(
-                self.streamcore_token_private_key_file.strip()
-                or self.streamcore_token_private_key_pem.get_secret_value().strip()
-            )
-            if not has_private_key and len(self.streamcore_token_secret.get_secret_value()) < 32:
-                raise ValueError(
-                    "production StreamCore rollout requires an Ed25519 private key "
-                    "or STREAMCORE_TOKEN_SECRET fallback"
-                )
-            if has_private_key and not self.streamcore_token_key_id.strip():
-                raise ValueError("production StreamCore rollout requires STREAMCORE_TOKEN_KEY_ID")
-            if not self.streamcore_slo_gate_enabled:
-                raise ValueError(
-                    "production StreamCore rollout requires STREAMCORE_SLO_GATE_ENABLED"
-                )
-            if len(self.media_slo_report_token.get_secret_value()) < 32:
-                raise ValueError("production StreamCore rollout requires MEDIA_SLO_REPORT_TOKEN")
         auth_secret = self.memoria_auth_secret.get_secret_value()
         if auth_secret == DEV_AUTH_SECRET or len(auth_secret) < 32:
             raise ValueError("production requires an independent MEMORIA_AUTH_SECRET (>=32 chars)")
-        if auth_secret == self.livekit_api_secret:
-            raise ValueError("MEMORIA_AUTH_SECRET must differ from LIVEKIT_API_SECRET")
-        if self.miniprogram_media_gateway_url.strip() and (
+        # The Mini Program is configured by its WeChat app id; its login keys
+        # must then be complete and independent.
+        miniprogram = bool(
+            self.wechat_miniprogram_appid.strip()
+            or self.wechat_miniprogram_appsecret.get_secret_value().strip()
+        )
+        if miniprogram and (
             not self.wechat_miniprogram_appid.strip()
             or not self.wechat_miniprogram_appsecret.get_secret_value().strip()
         ):
@@ -513,61 +475,28 @@ class ControlSettings(
                 "production Mini Program requires WECHAT_MINIPROGRAM_APPID "
                 "and WECHAT_MINIPROGRAM_APPSECRET"
             )
-        if (
-            self.miniprogram_media_gateway_url.strip()
-            and not self.wechat_avatar_base_url().startswith("https://")
-        ):
+        if miniprogram and not self.wechat_avatar_base_url().startswith("https://"):
             raise ValueError(
                 "production Mini Program requires an HTTPS "
                 "WECHAT_AVATAR_PUBLIC_BASE_URL or PUBLIC_BASE_URL"
             )
         self.validate_guardian_push()
         wechat_identity_secret = self.memoria_wechat_identity_secret.get_secret_value().strip()
-        if self.miniprogram_media_gateway_url.strip() and (
-            len(wechat_identity_secret) < 32
-            or wechat_identity_secret in {auth_secret, self.livekit_api_secret}
+        if miniprogram and (
+            len(wechat_identity_secret) < 32 or wechat_identity_secret == auth_secret
         ):
             raise ValueError(
                 "production Mini Program requires an independent "
                 "MEMORIA_WECHAT_IDENTITY_SECRET (>=32 chars)"
             )
-        gateway_url = self.miniprogram_media_gateway_url.strip()
-        gateway_ticket_secret = self.memoria_miniprogram_gateway_ticket_secret.get_secret_value()
-        if gateway_url:
-            if not gateway_url.startswith("wss://"):
-                raise ValueError("production Mini Program gateway must use secure WSS")
-            if (
-                gateway_ticket_secret == DEV_MINIPROGRAM_GATEWAY_TICKET_SECRET
-                or len(gateway_ticket_secret) < 32
-                or gateway_ticket_secret in {auth_secret, self.livekit_api_secret}
-            ):
-                raise ValueError(
-                    "production requires an independent Mini Program gateway ticket secret"
-                )
-        device_gateway_url = self.device_media_gateway_url.strip()
-        device_gateway_ticket_secret = (
-            self.memoria_device_gateway_ticket_secret.get_secret_value()
-        )
-        if device_gateway_url:
-            if not device_gateway_url.startswith("wss://"):
-                raise ValueError("production device media gateway must use secure WSS")
-            if (
-                device_gateway_ticket_secret == DEV_DEVICE_GATEWAY_TICKET_SECRET
-                or len(device_gateway_ticket_secret) < 32
-                or device_gateway_ticket_secret
-                in {
-                    auth_secret,
-                    self.livekit_api_secret,
-                    gateway_ticket_secret,
-                }
-            ):
-                raise ValueError(
-                    "production requires an independent device gateway ticket secret"
-                )
+        # Devices are served only through the direct Media Edge; with its WSS
+        # URL set the whole direct stack and the onboarding authority must be
+        # production-grade.
+        if self.device_direct_media_wss_url.strip():
             onboarding_url = self.device_onboarding_database_url.get_secret_value().strip()
             if not onboarding_url.startswith(("postgresql://", "postgres://")):
                 raise ValueError(
-                    "production device media gateway requires "
+                    "production device media requires "
                     "MEMORIA_DEVICE_ONBOARDING_DATABASE_URL for PostgreSQL"
                 )
             if (urlsplit(onboarding_url).username or "") != "memoria_device_onboarding_api":
@@ -592,7 +521,6 @@ class ControlSettings(
                     "production requires an independent 32-byte "
                     "MEMORIA_DEVICE_ACTIVATION_SIGNING_SEED_B64"
                 )
-        if self.device_media_runtime == "direct_voice_core":
             self.validate_device_direct_media()
         capability_tokens = {
             "MEMORIA_ARCHIVE_WRITE_TOKEN": self.internal_token("archive_write"),
@@ -606,27 +534,11 @@ class ControlSettings(
         if any(len(token) < 32 for token in capability_tokens.values()):
             raise ValueError("production requires seven capability-scoped internal tokens")
         if len(set(capability_tokens.values())) != len(capability_tokens) or any(
-            token in {auth_secret, self.livekit_api_secret} for token in capability_tokens.values()
+            token == auth_secret for token in capability_tokens.values()
         ):
             raise ValueError("production internal capability tokens must be independent")
-        if gateway_url and gateway_ticket_secret in capability_tokens.values():
-            raise ValueError(
-                "Mini Program gateway ticket secret must differ from internal capability tokens"
-            )
-        if (
-            device_gateway_url
-            and device_gateway_ticket_secret in capability_tokens.values()
-        ):
-            raise ValueError(
-                "device gateway ticket secret must differ from internal capability tokens"
-            )
-        if wechat_identity_secret and (
-            wechat_identity_secret in capability_tokens.values()
-            or wechat_identity_secret == gateway_ticket_secret
-        ):
-            raise ValueError(
-                "WeChat identity secret must differ from gateway and capability tokens"
-            )
+        if wechat_identity_secret and wechat_identity_secret in capability_tokens.values():
+            raise ValueError("WeChat identity secret must differ from capability tokens")
         message_idempotency_secret = self.memoria_message_idempotency_secret.get_secret_value()
         if (
             message_idempotency_secret == DEV_MESSAGE_IDEMPOTENCY_SECRET
@@ -635,8 +547,7 @@ class ControlSettings(
             in {
                 auth_secret,
                 wechat_identity_secret,
-                self.livekit_api_secret,
-                *capability_tokens.values(),
+                    *capability_tokens.values(),
             }
         ):
             raise ValueError(
@@ -709,7 +620,6 @@ class ControlSettings(
         transfer_secret = self.transfer_evidence_secret.get_secret_value()
         if len(runtime_profile_secret) < 32 or runtime_profile_secret in {
             auth_secret,
-            self.livekit_api_secret,
             *capability_tokens.values(),
         }:
             raise ValueError(
@@ -718,7 +628,6 @@ class ControlSettings(
             )
         if len(device_binding_secret) < 32 or device_binding_secret in {
             auth_secret,
-            self.livekit_api_secret,
             runtime_profile_secret,
             *capability_tokens.values(),
         }:
@@ -728,7 +637,6 @@ class ControlSettings(
             )
         if len(transfer_secret) < 32 or transfer_secret in {
             auth_secret,
-            self.livekit_api_secret,
             runtime_profile_secret,
             device_binding_secret,
             *capability_tokens.values(),
@@ -793,13 +701,11 @@ class ControlSettings(
         template_key = self.speaker_template_key.get_secret_value()
         if len(speaker_token) < 32 or speaker_token in {
             auth_secret,
-            self.livekit_api_secret,
             *capability_tokens.values(),
         }:
             raise ValueError("production requires an independent speaker internal token")
         if len(embedding_token) < 32 or embedding_token in {
             auth_secret,
-            self.livekit_api_secret,
             *capability_tokens.values(),
             speaker_token,
         }:
@@ -838,7 +744,6 @@ class ControlSettings(
             )
         if len(voice_url_secret) < 32 or voice_url_secret in {
             auth_secret,
-            self.livekit_api_secret,
             *capability_tokens.values(),
             speaker_token,
             embedding_token,
@@ -1093,16 +998,3 @@ class ControlSettings(
                 "MEMORIA_MEMORY_EMBEDDING_API_KEY, MEMORIA_MEMORY_EMBEDDING_MODEL "
                 "and MEMORIA_MEMORY_EMBEDDING_DIMENSIONS"
             )
-        if streamcore_rollout_enabled:
-            coturn_urls = self.coturn_urls_list()
-            if not coturn_urls:
-                raise ValueError("production StreamCore rollout requires independent COTURN_URLS")
-            if any(not url.startswith(("turn:", "turns:")) for url in coturn_urls):
-                raise ValueError("production COTURN_URLS must use turn: or turns:")
-            coturn_secret = self.coturn_shared_secret.get_secret_value().strip()
-            if len(coturn_secret) < 32:
-                raise ValueError(
-                    "production StreamCore rollout requires COTURN_SHARED_SECRET (>=32 chars)"
-                )
-            if coturn_secret in {auth_secret, self.livekit_api_secret, *capability_tokens.values()}:
-                raise ValueError("production COTURN_SHARED_SECRET must be independent")

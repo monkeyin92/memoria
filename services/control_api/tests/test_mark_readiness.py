@@ -33,7 +33,6 @@ def test_mark_and_check_use_control_env_secret_and_release_metadata(
             "method": "POST",
             "authorization": "control-auth-material-that-is-long-enough",
             "payload": {
-                "livekit": True,
                 "funasr": True,
                 "llm": True,
                 "llm_provider": "deepseek",

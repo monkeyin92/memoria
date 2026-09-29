@@ -58,7 +58,6 @@ def _mark_smokes_passed(base_url: str) -> bool:
         method="POST",
         authorization=secret,
         payload={
-            "livekit": True,
             "funasr": True,
             "llm": True,
             "llm_provider": os.getenv("LLM_PROVIDER", "qwen"),

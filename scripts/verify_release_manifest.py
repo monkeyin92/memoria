@@ -29,8 +29,6 @@ _RECORD_KEYS = {"name", "sha256", "size"}
 _ROLES = {
     "agent": "memoria-agent",
     "control-api": "memoria-control-api",
-    "device-media-gateway": "memoria-device-media-gateway",
-    "miniprogram-gateway": "memoria-miniprogram-gateway",
     "speaker-model": "memoria-speaker-model",
 }
 
