@@ -82,7 +82,7 @@ async def test_qwen_extractor_accepts_only_strict_traceable_json() -> None:
 
     result = await extractor.extract(_event("我妈妈叫李梅，今年60岁。"))
 
-    assert result.extractor_version == "qwen-json:qwen-test:v2"
+    assert result.extractor_version == "qwen-json:qwen-test:v3"
     assert result.claims[0].subject_key == result.people[0].canonical_key
     assert result.people[0].aliases == ("李梅", "妈妈", "母亲")
     assert result.timeline[0].event_start == datetime(2026, 7, 19, 12, 0, tzinfo=UTC)
@@ -212,3 +212,50 @@ async def test_numeric_identifier_is_still_refused() -> None:
 
     with pytest.raises(MemoryExtractionError):
         await extractor.extract(_event("我的妈妈叫李梅。"))
+
+
+@pytest.mark.asyncio
+async def test_qwen_person_carries_chinese_relation_labels_and_whole_propositions() -> None:
+    # 2026-09-29 configured evaluation: qwen-flash returned only the English
+    # relation code, so the person document lacked 「妈妈」, and split
+    # 「我妈妈叫李梅，家里人也叫她阿梅」 into bare-name claims.
+    def handler(request: httpx.Request) -> httpx.Response:
+        prompt = json.loads(request.content)["messages"][1]["content"]
+        assert "不要把一句话拆成只剩名词或短语的碎片" in prompt
+        assert "除了一条完整陈述的 claim" in prompt
+        extraction = {
+            "claims": [
+                {
+                    "category": "life_story",
+                    "subject_key": "mother:李梅",
+                    "predicate": "name",
+                    "value": "我妈妈叫李梅，家里人也叫她阿梅",
+                    "confidence": 0.9,
+                }
+            ],
+            "people": [
+                {
+                    "display_name": "李梅",
+                    "relationship_to_owner": "mother",
+                    "canonical_key": "mother:李梅",
+                    "aliases": ["阿梅"],
+                }
+            ],
+            "relationships": [],
+            "timeline": [],
+            "knowledge": [],
+        }
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps(extraction)}}]}
+        )
+
+    extractor = QwenMemoryExtractor(
+        api_key="test-key",
+        base_url="https://dashscope.test/v1",
+        model="qwen-test",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = await extractor.extract(_event("我妈妈叫李梅，家里人也叫她阿梅。"))
+
+    assert result.people[0].aliases == ("李梅", "阿梅", "妈妈", "母亲")

@@ -22,6 +22,7 @@ from services.archive.memory_domain import (
     MemoryExtractor,
     MemorySensitivity,
 )
+from services.archive.memory_extractor import relation_labels
 from services.archive.memory_write_policy import (
     explicit_remember_content,
     low_risk_self_fact_predicate,
@@ -186,6 +187,14 @@ claim predicate 使用 preference 或 habit；出生日期、年龄、地点、�
 原话是中文时，claim 的 value 与 timeline 的 title 用中文原话的表述，不要翻译成英文，也不要
 改写成纯数字、缩写或代码（"七十几分"不要写成"70s"）；所有文本字段都写成字符串。
 
+每条 claim 的 value 必须是一句能单独看懂的完整陈述：保留原话里的主语、对象、原因和感受，
+不要把一句话拆成只剩名词或短语的碎片。"我妈妈叫李梅，家里人也叫她阿梅"要写成一条
+"我妈妈叫李梅，家里人也叫她阿梅"，不要拆成"李梅""阿梅"；"上周五项目验收被否了，我当时很难过"
+要写成一条完整的 claim，不要只留"项目验收被否"。人名、别名放进 people，不要单独做 claim。
+描述做事方法、步骤或习惯做法的原话（例如"做项目复盘时，我会先找事实，再讨论责任"），
+除了一条完整陈述的 claim（主人审核的是 claim），还要写一条 knowledge：question 写成
+"我通常怎么……？"，answer 用原话完整写出步骤。
+
 情绪类的原话要有具体原因、而且值得以后接着关怀才提取（例如被老师批评、想念家人、考试取得
 好成绩）；没有原因、或一次就过去的琐碎心情（例如"我现在有点烦""有点无聊""今天吃了个冰淇淋，
 很开心""公交晚点了，有点烦"）不要提取。日常事实（去了哪里、做了什么、和谁在一起）照常提取，
@@ -235,7 +244,7 @@ class QwenMemoryExtractor:
         self._timeout_s = timeout_s
         self._workspace_id = workspace_id.strip()
         self._transport = transport
-        self.version = f"qwen-json:{self._model}:v2"
+        self.version = f"qwen-json:{self._model}:v3"
 
     async def extract(self, event: EvidenceEvent) -> MemoryExtraction:
         text = str(event.payload.get("text") or "").strip()
@@ -314,7 +323,17 @@ class QwenMemoryExtractor:
                     display_name=item.display_name,
                     relationship_to_owner=item.relationship_to_owner,
                     canonical_key=item.canonical_key,
-                    aliases=tuple(dict.fromkeys((item.display_name, *item.aliases))),
+                    # The rule extractor stores 「妈妈」「母亲」 with the person; the model
+                    # only returns an English relation code, so 「我妈妈叫什么」 missed.
+                    aliases=tuple(
+                        dict.fromkeys(
+                            (
+                                item.display_name,
+                                *item.aliases,
+                                *relation_labels(item.relationship_to_owner),
+                            )
+                        )
+                    ),
                 )
                 for item in parsed.people
             ),
