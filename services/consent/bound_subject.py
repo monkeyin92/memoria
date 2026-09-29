@@ -23,7 +23,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Final, Literal, cast
 
@@ -184,6 +184,10 @@ class BoundSubjectGrant:
     source_key: str
     #: The guardian's session limits for a minor's voice sessions (P0-04 D3).
     params: ConsentParams = ConsentParams()
+    #: Distinguishes a re-grant with different params from the binding's first
+    #: offer: the offer id is deterministic, and one id cannot carry two
+    #: contents. Empty keeps the original id, so existing offers replay.
+    offer_key: str = ""
 
     def __post_init__(self) -> None:
         if not self.capabilities:
@@ -263,7 +267,8 @@ class BoundSubjectConsentService:
                         "memoria:bound-offer:"
                         f"{binding.binding_id}:{binding.binding_version}:"
                         f"{request.subject_person_id}:{request.actor_person_id}:"
-                        f"{capability}:{BOUND_SUBJECT_POLICY_VERSION}",
+                        f"{capability}:{BOUND_SUBJECT_POLICY_VERSION}"
+                        + (f":{request.offer_key}" if request.offer_key else ""),
                     )
                 ),
                 created_at=binding.valid_from,
@@ -343,6 +348,61 @@ class BoundSubjectConsentService:
             )
             revoked += 1
         return revoked
+
+    async def update_session_limits(
+        self,
+        *,
+        actor_person_id: str,
+        subject_person_id: str,
+        binding_id: str,
+        max_session_seconds: int | None,
+        quiet_hours: tuple[str, str] | None,
+    ) -> bool:
+        """Replace the session length and quiet hours the guardian set.
+
+        Re-grants the guardian's minor-session consents with the new params;
+        the grant supersedes the current head atomically, so the old limits
+        stop applying as the new ones start. Returns whether anything changed.
+        ``LookupError`` when this actor holds no session consent on the binding
+        (no guardian offer was accepted, or someone else granted it).
+        """
+
+        binding = await self._identity.get_binding(binding_id, actor_person_id=actor_person_id)
+        chains = [
+            chain
+            for chain in await self.active(
+                subject_person_id=subject_person_id,
+                binding_id=binding.binding_id,
+                binding_version=binding.binding_version,
+            )
+            if chain.actor_id == actor_person_id
+            and chain.actor_kind == "guardian"
+            and chain.capability in MINOR_SESSION_CAPABILITIES
+        ]
+        if not chains:
+            raise LookupError("no guardian session consent on this binding")
+        # Only the two limits change; any other param the grant carries stays.
+        current = chains[0].params
+        params = replace(
+            current, max_session_seconds=max_session_seconds, quiet_hours=quiet_hours
+        )
+        if all(chain.params == params for chain in chains) and {
+            chain.capability for chain in chains
+        } == set(MINOR_SESSION_CAPABILITIES):
+            return False
+        await self.grant(
+            BoundSubjectGrant(
+                actor_person_id=actor_person_id,
+                subject_person_id=subject_person_id,
+                binding_id=binding.binding_id,
+                kind="guardian",
+                capabilities=MINOR_SESSION_CAPABILITIES,
+                source_key=f"limits:{self._now().isoformat()}",
+                params=params,
+                offer_key=_digest("limits", repr(params))[:16],
+            )
+        )
+        return True
 
     async def carry_forward(
         self,

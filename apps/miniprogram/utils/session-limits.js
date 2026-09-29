@@ -46,6 +46,10 @@ function sessionLimitsFromProfile(profile, now = new Date()) {
   if (!hasQuiet && !hasMax) return null;
   const crossesMidnight = hasQuiet && minutesOf(quiet[0]) > minutesOf(quiet[1]);
   return {
+    // 原始值供「修改」抽屉回填；展示用 label。
+    maxSessionMinutes: hasMax ? Math.max(1, Math.round(maxSeconds / 60)) : null,
+    quietStart: hasQuiet ? quiet[0] : "",
+    quietEnd: hasQuiet ? quiet[1] : "",
     quietHoursLabel: hasQuiet ? `${quiet[0]} – ${crossesMidnight ? "次日 " : ""}${quiet[1]}` : "",
     inQuietHours: hasQuiet ? inQuietHours(quiet, now) : false,
     maxSessionLabel: hasMax ? `${Math.max(1, Math.round(maxSeconds / 60))} 分钟` : "",

@@ -798,6 +798,39 @@ class PostgresMultiSubjectRuntimeControl:
             )
         return current
 
+    async def refresh_profile(
+        self,
+        *,
+        device_id: str,
+        actor_id: str,
+        now: datetime,
+    ) -> RuntimeProfileSignedV2:
+        """Re-issue the control profile after a consent change.
+
+        A consent write (the guardian's session limits) does not bump
+        ``binding_version`` and ``ensure_profile`` only compares persona and
+        subject facts, so rotate explicitly with the subject the profile
+        already holds; the rotation re-derives Policy from current consent.
+        """
+
+        profile = await self.ensure_profile(
+            device_id=device_id, session_id=None, actor_id=actor_id, now=now
+        )
+        manifest = await self.require_binding_member(
+            device_id=device_id, user_id=actor_id, now=now
+        )
+        return await self.sessions.switch_subject(
+            SwitchPersistentSubjectCommand(
+                session_id=self.control_session_id(
+                    device_id, binding_id=manifest.binding_id, actor_id=actor_id
+                ),
+                actor_id=profile.actor_id,
+                subject_id=profile.active_subject_id,
+                now=now,
+                requested_capabilities=_REQUESTED_CAPABILITIES,
+            )
+        )
+
     async def _subject_facts_are_current(
         self, current: RuntimeProfileSignedV2, *, actor_id: str
     ) -> bool:

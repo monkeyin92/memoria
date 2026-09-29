@@ -13,6 +13,9 @@ const { devicePlaceName, deviceStatusSummary } = require("../../utils/device-sta
 const { readOnboardingSessionId } = require("../../utils/device-onboarding/session-store");
 const { readSubjectLabel, saveSubjectLabel } = require("../../utils/subject-label");
 const { sessionLimitsFromProfile } = require("../../utils/session-limits");
+
+// 与绑定页的「单次使用时长」选项一致。
+const SESSION_MINUTE_OPTIONS = [15, 30, 45, 60, 90, 120];
 const { isTabRoute, routeOf } = require("../../utils/tab-routes");
 
 
@@ -273,6 +276,13 @@ Page({
     degradation: null,
     sensitiveEntries: [],
     sessionLimits: null,
+    limitsSheetVisible: false,
+    limitsSaving: false,
+    limitsError: "",
+    limitsMinuteOptions: SESSION_MINUTE_OPTIONS,
+    limitsMinuteIndex: 1,
+    limitsQuietStart: "21:00",
+    limitsQuietEnd: "07:00",
     currentUserLabel: "",
     subjectAliasLabel: "",
     personaRows: [],
@@ -388,6 +398,7 @@ Page({
       subjectAliasLabel: "",
       personaRows: [],
       personaSheetVisible: false,
+      limitsSheetVisible: false,
       ageRows: [],
     subjectPersonas: [],
     elderSafetyVisible: false,
@@ -1086,6 +1097,79 @@ Page({
     }
   },
 
+  openLimitsSheet() {
+    const limits = this.data.sessionLimits;
+    if (!limits) return;
+    // 当前值不在预设档位里（例如旧绑定设的 50 分钟）时，把它并进选项，避免保存时被悄悄改掉。
+    const options = SESSION_MINUTE_OPTIONS.includes(limits.maxSessionMinutes) || !limits.maxSessionMinutes
+      ? SESSION_MINUTE_OPTIONS
+      : [...SESSION_MINUTE_OPTIONS, limits.maxSessionMinutes].sort((a, b) => a - b);
+    const index = options.indexOf(limits.maxSessionMinutes);
+    this.setData({
+      limitsSheetVisible: true,
+      limitsError: "",
+      limitsMinuteOptions: options,
+      limitsMinuteIndex: index >= 0 ? index : options.indexOf(30),
+      limitsQuietStart: limits.quietStart || "21:00",
+      limitsQuietEnd: limits.quietEnd || "07:00",
+    });
+    this._syncSheetOpen();
+  },
+
+  closeLimitsSheet() {
+    if (this.data.limitsSaving) return;
+    this.setData({ limitsSheetVisible: false });
+    this._syncSheetOpen();
+  },
+
+  onLimitsMinutesChange(event) {
+    this.setData({ limitsMinuteIndex: Number(event.detail.value), limitsError: "" });
+  },
+
+  onLimitsQuietStartChange(event) {
+    this.setData({ limitsQuietStart: event.detail.value, limitsError: "" });
+  },
+
+  onLimitsQuietEndChange(event) {
+    this.setData({ limitsQuietEnd: event.detail.value, limitsError: "" });
+  },
+
+  async confirmLimitsSheet() {
+    const { binding, limitsSaving, limitsMinuteOptions, limitsMinuteIndex } = this.data;
+    const { limitsQuietStart: quietStart, limitsQuietEnd: quietEnd } = this.data;
+    if (limitsSaving || !binding?.device_id) return;
+    if (quietStart === quietEnd) {
+      this.setData({ limitsError: "夜间休息的开始和结束不能是同一时刻。" });
+      return;
+    }
+    this.setData({ limitsSaving: true, limitsError: "" });
+    try {
+      await api.setSessionLimits(binding.device_id, {
+        maxSessionMinutes: limitsMinuteOptions[limitsMinuteIndex],
+        quietStart,
+        quietEnd,
+      });
+      // 重新读设备实际执行的已签名 profile；读不到时先按刚保存的值显示，下次进入页面再对齐。
+      let profile = null;
+      try {
+        profile = await api.getRuntimeProfile(binding.device_id);
+      } catch (_error) {
+        profile = null;
+      }
+      const refreshed = profile ? sessionLimitsFromProfile(profile) : null;
+      this.setData({
+        ...(refreshed ? { profile, sessionLimits: refreshed } : {}),
+        limitsSheetVisible: false,
+      });
+      this._syncSheetOpen();
+      wx.showToast({ title: "已保存", icon: "success" });
+    } catch (error) {
+      this.setData({ limitsError: error?.message || "保存失败，请稍后重试。" });
+    } finally {
+      this.setData({ limitsSaving: false });
+    }
+  },
+
   openPersonaSheet(event) {
     const personId = event.currentTarget.dataset.personId;
     const row = (this.data.personaRows || []).find((item) => item.person_id === personId);
@@ -1418,7 +1502,10 @@ Page({
   // 有底部抽屉时锁住页面滚动，并把 tabBar 藏起来：它在页面之上，会挡住抽屉底部的按钮。
   _syncSheetOpen() {
     const sheetOpen = Boolean(
-      this.data.wakeSheetVisible || this.data.unbindSheetVisible || this.data.personaSheetVisible,
+      this.data.wakeSheetVisible ||
+        this.data.unbindSheetVisible ||
+        this.data.personaSheetVisible ||
+        this.data.limitsSheetVisible,
     );
     if (sheetOpen !== this.data.sheetOpen) this.setData({ sheetOpen });
     if (typeof this.getTabBar === "function" && this.getTabBar()) {

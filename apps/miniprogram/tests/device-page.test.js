@@ -22,6 +22,8 @@ let diagnosticsPayload = null;
 let settingsPatchResult = null;
 const settingsPatchCalls = [];
 const personaCalls = [];
+const limitsCalls = [];
+let limitsFailure = false;
 let personaFailure = false;
 let personaPayload = () => ({
   assignments: [],
@@ -162,6 +164,20 @@ global.wx = {
             ? { assignment_id: `${options.data.persona_selection}:v1`, persona_id: options.data.persona_selection }
             : { removed: true, effective: "starlight:v1" },
       });
+      return;
+    }
+    const limitsMatch = pathname.match(/^\/v1\/devices\/([^/]+)\/session-limits$/);
+    if (limitsMatch) {
+      limitsCalls.push({
+        method: options.method,
+        deviceId: decodeURIComponent(limitsMatch[1]),
+        data: options.data,
+      });
+      if (limitsFailure) {
+        options.success({ statusCode: 409, data: { detail: { code: "session_limits_not_applicable" } } });
+        return;
+      }
+      options.success({ statusCode: 200, data: { changed: true } });
       return;
     }
     if (pathname === "/v1/personas") {
@@ -636,6 +652,77 @@ test("ordinary parent_for_child can resolve and confirm with app_confirm", async
   });
   assert.equal(page.data.profile.session_epoch, 4);
   assert.equal(page.data.currentUserLabel, "小乐");
+});
+
+test("the guardian edits session limits from the device page and sees the signed result", async () => {
+  limitsCalls.length = 0;
+  limitsFailure = false;
+  binding.saveBindingManifest(parentChildManifest());
+  const limitsProfile = (minutes, start, end, epoch) =>
+    wireProfile({
+      signature_schema: "runtime-profile-v2",
+      runtime_profile_id: `rp_limits_${epoch}`,
+      session_id: "ses_limits",
+      session_epoch: epoch,
+      active_subject_id: "person_child",
+      subject_category: "minor",
+      age_band: "under_14",
+      service_mode: "student_minor",
+      signature: "f".repeat(64),
+      obligations: [
+        {
+          code: "MAX_SESSION_SECONDS",
+          params: { max_session_seconds: minutes * 60, retention_ttl_seconds: null, quiet_hours: null, extras: [] },
+        },
+        {
+          code: "QUIET_HOURS",
+          params: { max_session_seconds: null, retention_ttl_seconds: null, quiet_hours: [start, end], extras: [] },
+        },
+      ],
+    });
+  profilePayload = limitsProfile(30, "21:00", "07:00", 1);
+  resolutionPayload = null;
+  const page = instantiate(pageDefinition);
+  await page.onShow();
+  assert.equal(page.data.sessionLimits.maxSessionMinutes, 30);
+
+  page.openLimitsSheet();
+  assert.equal(page.data.limitsSheetVisible, true);
+  assert.equal(page.data.limitsMinuteOptions[page.data.limitsMinuteIndex], 30);
+  assert.equal(page.data.limitsQuietStart, "21:00");
+  assert.equal(page.data.limitsQuietEnd, "07:00");
+
+  page.onLimitsMinutesChange({ detail: { value: "3" } });
+  page.onLimitsQuietStartChange({ detail: { value: "22:00" } });
+  profilePayload = limitsProfile(60, "22:00", "07:00", 2);
+  await page.confirmLimitsSheet();
+  assert.deepEqual(limitsCalls, [
+    {
+      method: "PUT",
+      deviceId: "dev_1",
+      data: { max_session_minutes: 60, quiet_hours: { start: "22:00", end: "07:00" } },
+    },
+  ]);
+  assert.equal(page.data.limitsSheetVisible, false);
+  assert.equal(page.data.sessionLimits.maxSessionLabel, "60 分钟");
+  assert.equal(page.data.sessionLimits.quietStart, "22:00");
+
+  // A window with the same start and end means "no rest time"; it is not sent.
+  limitsCalls.length = 0;
+  page.openLimitsSheet();
+  page.onLimitsQuietEndChange({ detail: { value: "22:00" } });
+  await page.confirmLimitsSheet();
+  assert.equal(limitsCalls.length, 0);
+  assert.match(page.data.limitsError, /不能是同一时刻/);
+
+  // A refused write keeps the sheet open with the reason and the old limits on screen.
+  page.onLimitsQuietEndChange({ detail: { value: "06:30" } });
+  limitsFailure = true;
+  await page.confirmLimitsSheet();
+  assert.equal(page.data.limitsSheetVisible, true);
+  assert.notEqual(page.data.limitsError, "");
+  assert.equal(page.data.sessionLimits.maxSessionLabel, "60 分钟");
+  limitsFailure = false;
 });
 
 test("parent_for_child without app_confirm cannot switch", async () => {
