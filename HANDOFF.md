@@ -24,7 +24,7 @@
 - **问题**：合并流程每次要等约 20 分钟，PR 与 main 各一轮。`python` 任务里 `Pytest` 一步 16.5 分钟，其余步骤合计不到 1 分钟；同一套测试在本机串行只要 8 分钟。
 - **不可行的做法**：`pytest -n 4`。非数据库测试没问题，但 Postgres 测试共用一个集群里的角色（改密码、`tuple concurrently updated`、`password authentication failed`，73 个错误）；`main.py` 导入时建 app，多个 worker 同时收集会锁住 SQLite；一个参数化测试遍历 `set`，跨进程顺序不同。
 - **做法**：`scripts/ci_test_shards.py` 按 `scripts/ci_test_durations.json`（本机串行 `--durations` 求和，374 个文件）把测试文件贪心分成 4 片，新文件按中位数权重分配、不会被漏掉；每片一个 runner、一个独立 Postgres 服务，`--cov-fail-under=0` 各产出覆盖率数据。原来的检查步骤搬到并行的 `python-gates`；必需检查 `python` 变成汇总任务，任何分片、gates 或镜像构建失败都失败（被跳过的任务会被分支保护当成通过，所以用 `always()` 显式判断），再合并覆盖率并做 85%/90%/90% 门槛。
-- **本机验证**：4 片分别 2:27、4:00、2:32、2:15，共 5580 个测试全过，合并后覆盖率 89%，三个门槛都通过。CI 上的实际耗时以第一次运行为准，若某片明显偏长，用上面文件里的命令更新耗时表。
+- **本机验证**：4 片分别 2:27、4:00、2:32、2:15，共 5580 个测试全过，合并后覆盖率 89%，三个门槛都通过。CI 上第一轮 Pytest 步骤 239 / 340 / 242 / 169 秒（理想 248），用 CI 实测的逐测试耗时（各片 `durations-shard-N` artifact，保留 14 天）重生成耗时表后，按 CI 时间计的各片负载是 226 秒上下（原分配为 214 / 223 / 280 / 187）。逐次运行的波动约 ±100 秒（同一分配下最慢的分片第二轮换了一片），继续调表收益有限；刷新方法：下载 artifact，`cat` 成一个日志，`python scripts/ci_test_shards.py --from-log <log> --write`。
 - **main 上不再自动跑 CI**：触发条件从 `push`（main/master）+ `pull_request` 改为 `pull_request` + `workflow_dispatch`（Actions → ci → Run workflow，手动触发时所有任务都跑，不看路径过滤）。代价：分支保护没有要求分支保持最新（`strict=false`），两个 PR 各自通过后合并的组合结果不再被自动测试；怀疑漂移，或发布前想核对 main，就手动跑一次。
 
 ## 2026-09-29 设备页「使用时段」可修改（#136，已发布 20260929-session-limits-v1）
