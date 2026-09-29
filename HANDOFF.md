@@ -2,27 +2,36 @@
 
 ## 当前生产快照
 
-- **最近生产收据**：2026-09-29 21:41–21:54（CST）整栈发布 `20260929-turn-taking-v1`（tag → `195e104`，#134 分支头，含 #133），media-edge 同 tag 单独切换（21:54:44）。每一步单独确认 PASS。生产 `/etc/memoria-agent.env` 常开 `MEDIA_PCM_TAP_DIR=/tmp/media-pcm-tap`（容器 tmpfs，每会话 4 MB），原始上行音频留在容器内存直到重启。
-- **上一次整栈收据**：2026-09-29 18:27–18:38 `20260929-stop-reconnect-v1`（`6bbf5e8`），三角色与 media-edge 的回滚目标。
+- **最近生产收据**：2026-09-29 23:10–23:14（CST）整栈发布 `20260929-session-limits-v1`（tag → `26e937f`，#136 分支头，与合并提交 `f6c75b8` 只差 HANDOFF），只有 control-api、bridge、speaker-model 三角色换 tag，media-edge 不变（仍是 `20260929-turn-taking-v1`）。`env`、`schema`、`cutover`、`finish` 每步单独确认 PASS。生产 `/etc/memoria-agent.env` 常开 `MEDIA_PCM_TAP_DIR=/tmp/media-pcm-tap`（容器 tmpfs，每会话 4 MB），原始上行音频留在容器内存直到重启。
+- **上一次整栈收据**：2026-09-29 21:41–21:54 `20260929-turn-taking-v1`（`195e104`），三角色的回滚目标，也是 media-edge 当前版本。
 
 | component | actual image/tag | OCI digest | revision | health | restarts | startup time | receipt | rollback target |
 |---|---|---|---|---|---:|---|---|---|
-| Control API | `memoria-control-api:20260929-turn-taking-v1` | `sha256:b7071002…`（服务器 image id） | `195e1047f3b044d45841b49c456f0342f9265c1a` | healthy | 0 | `2026-09-29T13:52:54 2026-09-29T13:53:08 2026-09-29T13:52:46 Z` | `/opt/memoria/releases/20260929-turn-taking-v1/.cutover/` | `memoria-control-api:rollback-20260929-turn-taking-v1-pre`（= `20260929-stop-reconnect-v1`） |
-| Bridge | `memoria-agent:20260929-turn-taking-v1` | `sha256:5bc0b778…` | 同上 | healthy | 0 | `Z` | 同上 | `memoria-agent:rollback-20260929-turn-taking-v1-pre` |
-| Speaker Model | `memoria-speaker-model:20260929-turn-taking-v1` | `sha256:34deccc3…` | 同上 | healthy | 0 | `Z` | 同上 | `memoria-speaker-model:rollback-20260929-turn-taking-v1-pre` |
+| Control API | `memoria-control-api:20260929-session-limits-v1` | `sha256:8e77332e…`（服务器 image id） | `26e937f177b550a25ce88d46200cfbdaae2a4c68` | healthy | 0 | `2026-09-29T15:12:18Z` | `/opt/memoria/releases/20260929-session-limits-v1/.cutover/` | `memoria-control-api:rollback-20260929-session-limits-v1-pre`（= `20260929-turn-taking-v1`） |
+| Bridge | `memoria-agent:20260929-session-limits-v1` | `sha256:a04a9ab4…` | 同上 | healthy | 0 | `2026-09-29T15:12:32Z` | 同上 | `memoria-agent:rollback-20260929-session-limits-v1-pre` |
+| Speaker Model | `memoria-speaker-model:20260929-session-limits-v1` | `sha256:8f98708a…` | 同上 | healthy | 0 | `2026-09-29T15:12:10Z` | 同上 | `memoria-speaker-model:rollback-20260929-session-limits-v1-pre` |
 | Media Edge | `memoria-media-edge:20260929-turn-taking-v1` | `sha256:a231c41e…` | 同上 | healthy | 0 | `2026-09-29T13:54:44Z` | `/opt/memoria/component-releases/20260929-turn-taking-v1-media-edge/` | `memoria-media-edge:20260929-stop-reconnect-v1`（`media-edge-rollback.override.yml`） |
 
 - **候选可见性状态**：已随整栈发布上线（契约提交在 main 上为 `0059368`，早期记录中的 `f7c4c2a` 是合并前哈希）。普通 search/context 只返回 confirmed 且无 active 冲突，`include_candidates=true` 仅供审核与评测。真实 PG 上的 candidate 行为与线上带鉴权读口尚无单独收据。
 - **评测基线边界**：四份 2026-09-23 评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；它们产生于候选可见性提交之前，只证明上线前基线，不证明当前线上版本的召回质量。
-- **发布身份**：`20260929-turn-taking-v1` / `195e104`；`/opt/memoria/current` → `releases/20260929-turn-taking-v1`。上一栈 `20260929-stop-reconnect-v1` / `6bbf5e8` 为回滚目标。
+- **发布身份**：`20260929-session-limits-v1` / `26e937f`；`/opt/memoria/current` → `releases/20260929-session-limits-v1`。上一栈 `20260929-turn-taking-v1` / `195e104` 为回滚目标。
 - **未关闭缺陷**：P0-03 仍开放（缺陷 A 核心续问边界与工具查询最终回答已在 09-24、09-25 真机走通；TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
 - **下一步必须动作**：当日遗留已汇总到 [TODOLIST「2026-09-28 收尾待办」](TODOLIST.md)：伙伴页选一次绵绵、嘈杂环境验证 #83；需决定是否发布固件 OTA；待查回复规划 `no_verified_runtime_profile` 兜底；12-17 前换证书。之后按验收清单验 P0-04 产品决定、P1-11 三种绑定与隔天记忆、P1-03 孩子人格、P2-04 与 P0-03 剩余矩阵；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
 
-## 2026-09-29 设备页「使用时段」可修改（待发布）
+## 2026-09-29 CI python 任务分片（待合并）
+
+- **问题**：合并流程每次要等约 20 分钟，PR 与 main 各一轮。`python` 任务里 `Pytest` 一步 16.5 分钟，其余步骤合计不到 1 分钟；同一套测试在本机串行只要 8 分钟。
+- **不可行的做法**：`pytest -n 4`。非数据库测试没问题，但 Postgres 测试共用一个集群里的角色（改密码、`tuple concurrently updated`、`password authentication failed`，73 个错误）；`main.py` 导入时建 app，多个 worker 同时收集会锁住 SQLite；一个参数化测试遍历 `set`，跨进程顺序不同。
+- **做法**：`scripts/ci_test_shards.py` 按 `scripts/ci_test_durations.json`（本机串行 `--durations` 求和，374 个文件）把测试文件贪心分成 4 片，新文件按中位数权重分配、不会被漏掉；每片一个 runner、一个独立 Postgres 服务，`--cov-fail-under=0` 各产出覆盖率数据。原来的检查步骤搬到并行的 `python-gates`；必需检查 `python` 变成汇总任务，任何分片、gates 或镜像构建失败都失败（被跳过的任务会被分支保护当成通过，所以用 `always()` 显式判断），再合并覆盖率并做 85%/90%/90% 门槛。
+- **本机验证**：4 片分别 2:27、4:00、2:32、2:15，共 5580 个测试全过，合并后覆盖率 89%，三个门槛都通过。CI 上的实际耗时以第一次运行为准，若某片明显偏长，用上面文件里的命令更新耗时表。
+- **没做**：main 上合并后的那一轮仍会跑，是否改为按需运行待决定。
+
+## 2026-09-29 设备页「使用时段」可修改（#136，已发布 20260929-session-limits-v1）
 
 - **缺陷**：小程序设备页的「使用时段」卡片只读（夜间休息、单次最长），监护人绑定后无处修改；后端也没有绑定后改写限额的通道（同意授权按绑定版本固定，offer id 是确定性的）。
 - **修复**：新增 `PUT /v1/devices/{device_id}/session-limits`（owner/device admin，仅 `parent_for_child`，仅当前监护人自己授予的会话同意；`max_session_minutes` 1–240、`quiet_hours` 起止 HH:MM，传 `null` 取消该项）。`BoundSubjectConsentService.update_session_limits` 用带 `offer_key` 的新 offer 重新授权 chat/tutor/english_practice，原 head 被原子取代（改回旧值也重新授权，不重放旧授权）；`PostgresMultiSubjectRuntimeControl.refresh_profile` 显式轮换控制 profile（`ensure_profile` 只比较人格与主体事实，不会因同意变化轮换），再以 `next_session` 语义投影给设备，进行中的回复不被打断。SQLite 部署没有同意授权与 Session Runtime，接口返回 409 `session_limits_unavailable`。设备页卡片加「修改」，抽屉复用绑定页的时长档位与时间选择，保存后重读已签名 profile 显示设备实际执行的值。
+- **发布**：本机以 `20260929-turn-taking-v1` 为基座增量构建三镜像（依赖输入未变），seeded 上传双端校验 PASS；摘要：verifier `aff0c2ec…`，manifest `4b8ce09d…`，source `d9880da7…`，images `54530088…`。`release_ops.sh`（sha256 `346c44ee…`）PREV → `20260929-turn-taking-v1` / `195e104`，旧版备份 `release-ops.sh.pre-20260929-session-limits-v1`。`verify-load`、`freeze` 在 #136 CI 前完成，合并后推 tag，`env`（provider smoke PASS）、`schema`、`cutover`（23:12:38）、`finish`（23:14:01）PASS；未带凭证访问新接口返回 401。cutover 时设备 WSS 断开一次并在几秒内重连（bridge 重启的预期表现）。小程序体验版 `0.2.20260929.1`（1.5 MB）用 DevTools CLI 上传（首次用相对路径报 code 19，要传绝对路径），需在公众平台设为体验版。回滚（未实跑）：`TAG=20260929-session-limits-v1 COMMIT=26e937f177b550a25ce88d46200cfbdaae2a4c68 release-ops.sh rollback`，三角色按 `20260929-turn-taking-v1` 重建，无 schema 变更。
 - **验证**：本机 Postgres 上 `test_a_changed_session_limit_reaches_the_reissued_profile`（改后重发的 profile 带新限额，epoch 递增，普通读取在刷新前仍是旧值）、`test_bound_subject.py` 两条、小程序 `npm test` 324/324。未在真机与线上验证。
 - **边界**：卡片仍只在 profile 带限额时出现（绑定时两项都未设的孩子看不到入口）；抽屉总是同时写入时长与夜间时段，不提供「取消限额」。
 
