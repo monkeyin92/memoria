@@ -1,7 +1,5 @@
 {
-  "adapter": "memoria-sqlite-rules",
-  "receipt_scope": "parent_baseline",
-  "source_commit": "3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948",
+  "adapter": "memoria-postgres-rules",
   "case_count": 16,
   "cases": [
     {
@@ -618,9 +616,9 @@
           "recall_at_10": 0.0,
           "recall_at_5": 0.0,
           "recalled_keys": [
-            "unmatched:65bd4c89-0ad6-52fe-88a8-56c6ae3263a0",
             "unmatched:c6957dcc-9e30-50fd-9bc9-6b586ee364b0",
-            "unmatched:653e35b8-173c-5aac-9863-cc29214abf8c"
+            "unmatched:653e35b8-173c-5aac-9863-cc29214abf8c",
+            "unmatched:65bd4c89-0ad6-52fe-88a8-56c6ae3263a0"
           ],
           "relevant_keys": [
             "campus-startup-episode"
@@ -1462,8 +1460,8 @@
     "extraction_precision": 0.39215686274509803,
     "extraction_recall": 1.0,
     "input_tokens": 0,
-    "latency_p50_ms": 1.0087499395012856,
-    "latency_p95_ms": 2.8866250067949295,
+    "latency_p50_ms": 3.33366599988949,
+    "latency_p95_ms": 5.400792000727961,
     "ndcg_at_10": 0.8590438584406034,
     "output_tokens": 0,
     "paraphrase_followup_recall_at_5": 1.0,

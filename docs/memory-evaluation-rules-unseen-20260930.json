@@ -1,7 +1,5 @@
 {
-  "adapter": "memoria-sqlite-rules",
-  "receipt_scope": "parent_baseline",
-  "source_commit": "3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948",
+  "adapter": "memoria-postgres-rules",
   "case_count": 4,
   "cases": [
     {
@@ -439,8 +437,8 @@
     "extraction_precision": 0.5,
     "extraction_recall": 1.0,
     "input_tokens": 0,
-    "latency_p50_ms": 0.9735000785440207,
-    "latency_p95_ms": 1.2619581539183855,
+    "latency_p50_ms": 3.5380409990466433,
+    "latency_p95_ms": 3.7706669991166564,
     "ndcg_at_10": 1.0,
     "output_tokens": 0,
     "paraphrase_followup_recall_at_5": 0.0,

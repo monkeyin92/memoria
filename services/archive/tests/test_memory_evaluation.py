@@ -773,6 +773,9 @@ async def test_demo_scenario_dataset_matches_its_measured_offline_state(
     assert report.case_count == len(DEMO_STORYBOARDS)
     assert report.metrics.extraction_recall == pytest.approx(1.0)
     assert report.metrics.recall_at_5 == pytest.approx(1.0)
+    # Function-word n-grams no longer lift the rule knowledge question
+    # ("这段经历或原则是什么？") over the answering claim: 0.895 -> 0.947.
+    assert report.metrics.ndcg_at_10 == pytest.approx(0.9472756790816368)
     assert report.metrics.cross_session_recall_at_5 == pytest.approx(1.0)
     assert report.metrics.comfort_recall_at_5 == pytest.approx(1.0)
     assert report.metrics.cross_account_leakage == 0
