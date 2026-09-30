@@ -16,6 +16,7 @@ from typing import Any, cast
 import asyncpg
 import httpx
 
+from services.archive import memory_lexical_sql as lexical_sql
 from services.archive.domain import EvidenceEvent, EvidenceNotFoundError
 from services.archive.episode_consolidator import (
     EpisodeCandidate,
@@ -45,11 +46,9 @@ from services.archive.memory_domain import (
     ReviewedClaim,
     ReviewQueueItem,
     TimelineItem,
-    content_query_terms,
-    edge_content_query_terms,
-    lexical_query_terms,
     subject_lineage_predicates,
 )
+from services.archive.memory_lexical_sql import search_terms
 from services.archive.memory_write_policy import (
     SINGLE_VALUE_PREDICATES,
     MemoryWriteDecision,
@@ -1664,39 +1663,17 @@ class PostgresMemoryCatalog:
                 )
 
             whole = like(query.text.strip())
-            terms = lexical_query_terms(query.text)
-            if embedding is None:  # function-word n-grams would let boilerplate outrank
-                terms = content_query_terms(terms)
-            else:  # next to embeddings a keyword bonus must name something
-                terms = edge_content_query_terms(terms)
-            sparse = [like(term) for term in terms]
-            text_match = (
-                f"(document.search_vector @@ websearch_to_tsquery('simple', ${text_index}) "
-                f"OR {whole}{''.join(f' OR {match}' for match in sparse)})"
-            )
+            sparse = [
+                like(term) for term in search_terms(query.text, with_embedding=embedding is not None)
+            ]
+            text_match = lexical_sql.text_match(text_index, whole, sparse)
             if embedding is None or embedder is None:
                 # No embeddings: rank by content terms hit (ts_rank ties Chinese).
-                hits = " + ".join(f"(CASE WHEN {match} THEN 1 ELSE 0 END)" for match in sparse)
+                hits = lexical_sql.hit_count(sparse)
                 clauses.append(text_match)
                 score_expression = f"(({hits or '0'}) + 0.1 * {metadata_score})::double precision"
             else:
-                # A keyword bonus grows with how much of the query a memory repeats, so a
-                # fragment shared with a long question earns almost nothing while a memory
-                # that repeats what was asked earns the full bonus.
-                phrase = (
-                    f"(document.search_vector @@ websearch_to_tsquery('simple', ${text_index}) "
-                    f"OR {whole})"
-                )
-                lexical = f"CASE WHEN {phrase} THEN 0.5 ELSE 0.0 END"
-                if sparse:
-                    covered = " + ".join(f"(CASE WHEN {match} THEN 1 ELSE 0 END)" for match in sparse)
-                    share = f"(({covered})::double precision / {len(sparse)})"
-                    lexical = f"CASE WHEN {phrase} THEN 0.5 ELSE 0.5 * POWER({share}, 2) END"
-                text_score = (
-                    "GREATEST(ts_rank(document.search_vector, "
-                    f"websearch_to_tsquery('simple', ${text_index})), "
-                    f"{lexical})"
-                )
+                text_score = lexical_sql.text_score(text_index, whole, sparse)
                 parameters.append(embedder.model)
                 model_index = len(parameters)
                 parameters.append(embedder.dimensions)
