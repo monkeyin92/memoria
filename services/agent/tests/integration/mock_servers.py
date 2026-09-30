@@ -687,6 +687,9 @@ class MockDoubaoServer:
     #: Split every synthesis into this many PCM frames (0 keeps the scenario's
     #: own framing). Used to drive long, progressing streams.
     pcm_chunks: int = 0
+    #: Distinct sample values (a ramp) instead of a constant level, so a test
+    #: can prove the client delivers every byte in order.
+    pcm_ramp: bool = False
     task_requests: list[list[str]] = field(default_factory=list)
     start_session_params: list[dict[str, Any]] = field(default_factory=list)
     speakers: list[str] = field(default_factory=list)
@@ -825,7 +828,12 @@ class MockDoubaoServer:
         samples = max(480, len(full_text) * 240)
         if self.scenario in {"scaled_ts", "degraded_ts"}:
             samples = max(samples, 24_000)
-        pcm = struct.pack(f"<{samples}h", *([1200] * samples))
+        levels = (
+            [((index * 37) % 30000) - 15000 for index in range(samples)]
+            if self.pcm_ramp
+            else [1200] * samples
+        )
+        pcm = struct.pack(f"<{samples}h", *levels)
         self.pcm = pcm
         if self.pcm_chunks >= 2:
             step = max(1, len(pcm) // self.pcm_chunks)

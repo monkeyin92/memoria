@@ -14,8 +14,8 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
-from livekit.agents import APIConnectionError
 from services.agent.src.contracts.ids import GenerationFence
+from services.agent.src.providers.provider_errors import APIConnectionError
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_protocol import (

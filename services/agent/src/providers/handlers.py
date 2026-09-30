@@ -59,7 +59,10 @@ def build_language_model_handler(
     settings: AgentSettings,
     llm_factory: Callable[..., Any],
 ) -> Any:
-    """Build the shared cascade LLM without constructing transport-specific providers."""
+    """Build the session's streaming chat model (``OpenAIChatModel`` in production).
+
+    No tools are offered to the reply model, so no ``tool_choice`` is sent.
+    """
 
     extra_body: dict[str, Any] = {
         "max_tokens": int(os.getenv("DEEPSEEK_FAST_MAX_TOKENS", "240")),
@@ -74,7 +77,6 @@ def build_language_model_handler(
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
         temperature=float(os.getenv("DEEPSEEK_FAST_TEMPERATURE", "0.45")),
-        tool_choice="auto",
         max_retries=0,
         timeout=httpx.Timeout(connect=3.0, read=12.0, write=5.0, pool=3.0),
         extra_body=extra_body,

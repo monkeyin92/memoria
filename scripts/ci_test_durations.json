@@ -1,5 +1,4 @@
 {
- "services/agent/tests/integration/test_cosyvoice_livekit_stream.py": 2.8,
  "services/agent/tests/integration/test_cosyvoice_mock.py": 8.4,
  "services/agent/tests/integration/test_deepseek_mock.py": 10.7,
  "services/agent/tests/integration/test_doubao_mock.py": 8.8,
@@ -7,7 +6,6 @@
  "services/agent/tests/integration/test_funasr_rescue.py": 2.9,
  "services/agent/tests/integration/test_funasr_rescue_audio_shapes.py": 0.9,
  "services/agent/tests/integration/test_offline_pipeline.py": 0.1,
- "services/agent/tests/integration/test_telemetry_pii_real_exporter.py": 19.5,
  "services/agent/tests/unit/test_action_policy_client.py": 0.0,
  "services/agent/tests/unit/test_action_policy_tool_execution.py": 0.0,
  "services/agent/tests/unit/test_agent_production_wiring.py": 0.2,
@@ -51,7 +49,6 @@
  "services/agent/tests/unit/test_interruption_guard.py": 0.0,
  "services/agent/tests/unit/test_interruption_policy.py": 0.0,
  "services/agent/tests/unit/test_live_lookup_semantic_classifier.py": 0.0,
- "services/agent/tests/unit/test_livekit_candidate_privacy.py": 0.0,
  "services/agent/tests/unit/test_media_agent_factory.py": 0.3,
  "services/agent/tests/unit/test_media_audio_ingress_overflow.py": 0.0,
  "services/agent/tests/unit/test_media_finalize_failure_lifecycle.py": 0.0,

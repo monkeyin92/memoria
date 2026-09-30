@@ -7,9 +7,9 @@ import inspect
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
-from livekit.agents import StopResponse
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.llm_types import StopResponse
 from services.agent.src.reply_pipeline import ReplyPipeline
 from services.speaker.domain import SpeakerDecision, SpeakerPermissions, permissions_for_speaker
 
@@ -87,7 +87,7 @@ class ScriptedChatModel:
     """Chat-model double for ``ReplyPipeline.language_model``.
 
     ``respond(chat_ctx, tools)`` returns an async iterator of chunks (or an
-    awaitable of one); like ``livekit.plugins.openai.LLM`` the stream is closed when the
+    awaitable of one); like ``OpenAIChatModel`` the stream is closed when the
     ``chat()`` context exits.
     """
 

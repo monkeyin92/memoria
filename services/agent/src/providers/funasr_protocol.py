@@ -334,7 +334,7 @@ def _parse_sentence(obj: dict[str, Any]) -> FunASRSentence | None:
 
 
 def words_to_seconds(words: tuple[TimedWord, ...]) -> list[tuple[str, float, float]]:
-    """Convert ms timestamps to seconds for LiveKit TimedString."""
+    """Convert ms timestamps to (text, start_s, end_s) subtitle tuples."""
     out: list[tuple[str, float, float]] = []
     for w in words:
         text = w.text + (w.punctuation or "")

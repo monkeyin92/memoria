@@ -1,9 +1,11 @@
-"""Assert the built Agent image really carries the released candidate.
+"""Assert the built Agent image really carries a runnable Voice Core media bridge.
 
-The image runs the Voice Core media bridge (``scripts.run_media_bridge``); the
-LiveKit Agent worker it used to run is retired, but the bridge still imports
-``livekit.agents`` (LLM/TTS/STT adapters and the GenAI telemetry module), so the
-pinned SDK and its privacy defaults remain part of the release contract.
+The image runs the Voice Core media bridge (``scripts.run_media_bridge``). Its
+provider adapters (FunASR, the OpenAI-compatible chat model, Doubao and
+CosyVoice TTS) no longer use ``livekit-agents``; the gate proves the shipped
+tree still wires the production session factory, loads the pinned DTLN
+denoiser (the only production user of ``onnxruntime``), and imports no
+``livekit`` module.
 
 Run inside the artifact (`/app/.venv/bin/python -m scripts.verify_agent_release_artifact`)
 so the checks exercise the shipped venv and code, not the build machine. Exits
@@ -15,17 +17,6 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from collections.abc import Mapping
-from importlib.metadata import PackageNotFoundError, version
-
-# The libraries the bridge imports. The privacy defaults below depend on the
-# 1.8.x telemetry behaviour (content capture on unless disabled), so a silent
-# SDK drift must fail the build rather than quietly change what is exported.
-EXPECTED_VERSIONS = {
-    "livekit-agents": "1.8.1",
-    "livekit-plugins-openai": "1.8.1",
-    "livekit": "1.1.18",
-}
 
 # The factory the production compose file hands the bridge
 # (MEDIA_BRIDGE_SESSION_FACTORY in docker-compose.production.yml).
@@ -33,179 +24,35 @@ PRODUCTION_SESSION_FACTORY = (
     "services.agent.src.media_agent_factory:build_production_media_session_factory"
 )
 
-
-def _check_versions() -> None:
-    for package, expected in EXPECTED_VERSIONS.items():
-        try:
-            actual = version(package)
-        except PackageNotFoundError as exc:  # pragma: no cover - build-time guard
-            raise SystemExit(f"{package} is not installed in the artifact") from exc
-        if actual != expected:
-            raise SystemExit(f"{package}: expected {expected}, got {actual}")
-    print(f"version pins OK: {EXPECTED_VERSIONS}")
+# Appended to a check that imported the bridge: no livekit module was loaded.
+NO_LIVEKIT_IMPORTED = """
+import sys
+leaked = sorted(name for name in sys.modules if name == "livekit" or name.startswith("livekit."))
+assert not leaked, f"the bridge imports livekit again: {leaked}"
+"""
 
 
-def _run_subprocess_check(code: str, *, env_overrides: Mapping[str, str | None] | None = None) -> None:
-    """Run verification code in a completely clean child interpreter."""
-    env = os.environ.copy()
-    if env_overrides:
-        for k, v in env_overrides.items():
-            if v is None:
-                env.pop(k, None)
-            else:
-                env[k] = v
+def _run_subprocess_check(code: str) -> None:
+    """Run verification code in a fresh child interpreter."""
     res = subprocess.run(
         [sys.executable, "-c", code],
-        env=env,
+        env=os.environ.copy(),
         capture_output=True,
         text=True,
         check=False,
     )
     if res.returncode != 0:
         sys.stderr.write(res.stderr)
-        raise SystemExit(f"Subprocess privacy check failed with exit code {res.returncode}")
-
-
-def _check_privacy_defaults() -> None:
-    """Validate the bridge's privacy gates in clean child processes.
-
-    Prevents false-greens:
-    1. Tests the shared privacy bootstrap with unset env vars.
-    2. Tests the Media Bridge entrypoint bootstrap with unset env vars.
-    3. Runs real InMemorySpanExporter canary test to prove no PII/content leaks.
-    4. Runs negative control to prove that omitting the bootstrap call would FAIL.
-    5. Verifies explicit operator overrides are respected.
-
-    ``_check_real_exporter_privacy`` then repeats the canary over a real OTLP/HTTP
-    export, which is the only form that proves what an exporter actually receives.
-    """
-    clean_env = {
-        "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": None,
-        "LIVEKIT_TELEMETRY_ALLOW_PII": None,
-    }
-
-    # 1. Shared bootstrap in fresh process
-    agent_code = """
-import os
-from services.agent.src.telemetry_privacy import _apply_telemetry_privacy_defaults
-applied = _apply_telemetry_privacy_defaults()
-assert applied.get("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT") == "0"
-assert applied.get("LIVEKIT_TELEMETRY_ALLOW_PII") == "0"
-assert os.environ.get("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT") == "0"
-assert os.environ.get("LIVEKIT_TELEMETRY_ALLOW_PII") == "0"
-
-from livekit.agents.telemetry import gen_ai
-assert gen_ai.capture_content_enabled() is False, "privacy bootstrap failed to disable gen_ai content capture"
-"""
-    _run_subprocess_check(agent_code, env_overrides=clean_env)
-
-    # 2. Bridge bootstrap in fresh process (scripts.run_media_bridge)
-    bridge_code = """
-import os
-import scripts.run_media_bridge
-assert os.environ.get("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT") == "0"
-assert os.environ.get("LIVEKIT_TELEMETRY_ALLOW_PII") == "0"
-
-from livekit.agents.telemetry import gen_ai
-assert gen_ai.capture_content_enabled() is False, "Bridge bootstrap failed to disable gen_ai content capture"
-"""
-    _run_subprocess_check(bridge_code, env_overrides=clean_env)
-
-    # 3. Real exporter canary test
-    canary_code = """
-import os
-import json
-from services.agent.src.telemetry_privacy import _apply_telemetry_privacy_defaults
-_apply_telemetry_privacy_defaults()
-
-from livekit.agents.telemetry import traces, gen_ai
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-
-exporter = InMemorySpanExporter()
-provider = TracerProvider()
-provider.add_span_processor(SimpleSpanProcessor(exporter))
-traces.set_tracer_provider(provider)
-
-CANARY_NAME = "诸葛西柚-假名-canary-8f2c"
-CANARY_PRIVATE_TEXT = "我儿子小周对猫毛过敏，家里地址是假地址-canary-8f2c"
-
-with provider.get_tracer("memoria.pii.canary").start_as_current_span("gen_ai.chat") as span:
-    gen_ai.set_content_attributes(
-        span,
-        system_instructions=[{"type": "text", "content": CANARY_NAME}],
-        input_messages=[
-            {"role": "user", "parts": [{"type": "text", "content": CANARY_PRIVATE_TEXT}]}
-        ],
-    )
-
-exported = json.dumps(
-    [{k: str(v) for k, v in (s.attributes or {}).items()} for s in exporter.get_finished_spans()],
-    ensure_ascii=False,
-)
-assert CANARY_NAME not in exported, "CANARY_NAME leaked to exporter"
-assert CANARY_PRIVATE_TEXT not in exported, "CANARY_PRIVATE_TEXT leaked to exporter"
-"""
-    _run_subprocess_check(canary_code, env_overrides=clean_env)
-
-    # 4. Negative control: verify that without defaults, capture_content_enabled is True and canary leaks
-    negative_control_code = """
-import os
-import json
-from livekit.agents.telemetry import traces, gen_ai
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-
-assert gen_ai.capture_content_enabled() is True, "Expected default capture_content_enabled to be True"
-
-exporter = InMemorySpanExporter()
-provider = TracerProvider()
-provider.add_span_processor(SimpleSpanProcessor(exporter))
-traces.set_tracer_provider(provider)
-
-CANARY_PRIVATE = "canary-leak-proof-1234"
-with provider.get_tracer("memoria.test").start_as_current_span("gen_ai.chat") as span:
-    gen_ai.set_content_attributes(
-        span,
-        input_messages=[
-            {"role": "user", "parts": [{"type": "text", "content": CANARY_PRIVATE}]}
-        ],
-    )
-
-exported = json.dumps(
-    [{k: str(v) for k, v in (s.attributes or {}).items()} for s in exporter.get_finished_spans()],
-    ensure_ascii=False,
-)
-assert CANARY_PRIVATE in exported, "Expected canary to leak when defaults are not applied"
-"""
-    _run_subprocess_check(negative_control_code, env_overrides=clean_env)
-
-    # 5. Operator explicit preservation test
-    override_env = {
-        "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "0",
-        "LIVEKIT_TELEMETRY_ALLOW_PII": "0",
-    }
-    override_code = """
-import os
-from services.agent.src.telemetry_privacy import _apply_telemetry_privacy_defaults
-applied = _apply_telemetry_privacy_defaults()
-assert applied["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] == "0"
-assert applied["LIVEKIT_TELEMETRY_ALLOW_PII"] == "0"
-"""
-    _run_subprocess_check(override_code, env_overrides=override_env)
-
-    print("telemetry privacy defaults (bootstrap + Bridge + Canary + Anti-regression) OK")
+        raise SystemExit(f"Subprocess check failed with exit code {res.returncode}")
 
 
 def _check_bridge_wiring() -> None:
-    """The shipped tree must resolve the bridge and its production session factory.
+    """The shipped tree must resolve the bridge, its factory and its providers.
 
     Runs in a clean child so the bridge entrypoint is imported exactly as the
-    container does (``-m scripts.run_media_bridge`` applies the privacy
-    defaults at import) and the lazily imported OpenAI-compatible LLM plugin
-    the factory needs is present in the venv.
+    container does. The import graph, not the venv, is what must stay free of
+    ``livekit``: a source-overlay image still carries the package in the venv
+    of its older dependency base.
     """
 
     module_name, _, attribute = PRODUCTION_SESSION_FACTORY.partition(":")
@@ -216,53 +63,105 @@ import scripts.run_media_bridge as bridge
 assert callable(bridge.main), "run_media_bridge has no main()"
 builder = getattr(importlib.import_module({module_name!r}), {attribute!r}, None)
 assert callable(builder), "production media session factory is not callable"
-from livekit.plugins import openai  # noqa: F401  (media_agent_factory imports it lazily)
+# media_agent_factory imports the chat model lazily; the TTS factory imports
+# its adapters lazily as well.
+from services.agent.src.providers.openai_chat import OpenAIChatModel  # noqa: F401
+from services.agent.src.providers.doubao_tts import DoubaoTTS  # noqa: F401
+from services.agent.src.providers.cosyvoice_tts import CosyVoiceTTS  # noqa: F401
+from services.agent.src.providers.funasr_stt import FunASRSession  # noqa: F401
 from services.agent.src.reply_pipeline import ReplyPipeline  # noqa: F401
 """
-    _run_subprocess_check(
-        code,
-        env_overrides={
-            "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": None,
-            "LIVEKIT_TELEMETRY_ALLOW_PII": None,
-        },
-    )
-    print("media bridge wiring OK")
+    _run_subprocess_check(code + NO_LIVEKIT_IMPORTED)
+    print("media bridge wiring OK (no livekit import)")
 
 
-def _check_real_exporter_privacy() -> None:
-    """Drive the same privacy canary through a REAL OTLP exporter.
-
-    The in-process canary above uses ``InMemorySpanExporter``: it proves the SDK's
-    gating logic but never exercises an exporter, a wire payload or a receiver.
-    This step runs ``services.agent.tests.integration.telemetry_pii_probe``, which
-    starts the shipped bootstrap in fresh interpreters, exports over real OTLP/HTTP
-    to a loopback collector and asserts on the bytes that arrived -- including that
-    an explicit operator opt-in still carries content (so the gate is not vacuous).
-    """
+def _check_dtln_denoiser() -> None:
+    """Every media session builds the required DTLN denoiser on onnxruntime."""
 
     code = """
-from services.agent.tests.integration.telemetry_pii_probe import run_all
+from services.agent.src.voice_core.deep_denoiser import DeepDenoiser
 
-results = run_all()
-failed = [(result.case.name, result.detail) for result in results if not result.ok]
-assert not failed, failed
-print(f"real-exporter PII probe OK: {len(results)} cases")
+denoiser = DeepDenoiser()
+pcm = b"\\x00\\x01" * 1600
+assert len(denoiser.process(pcm)) == len(pcm), "DTLN changed the PCM length"
 """
-    _run_subprocess_check(
-        code,
-        env_overrides={
-            "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": None,
-            "LIVEKIT_TELEMETRY_ALLOW_PII": None,
-        },
-    )
-    print("real-exporter telemetry privacy probe OK")
+    _run_subprocess_check(code)
+    print("DTLN denoiser OK")
+
+
+def _check_media_telemetry_privacy() -> None:
+    """Prove the self-owned media telemetry bridge does not export raw identity/content."""
+
+    code = """
+import json
+
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+from services.agent.src.observability.media_otel import MediaOtelBridge
+from services.agent.src.voice_core.telemetry import MediaTelemetry, TraceContext, TurnTimeline
+
+exporter = InMemorySpanExporter()
+provider = TracerProvider()
+provider.add_span_processor(SimpleSpanProcessor(exporter))
+trace.set_tracer_provider(provider)
+
+context = TraceContext(
+    trace_id="trace-canary-8f2c",
+    session_id="session-private-canary-8f2c",
+    stream_epoch=7,
+    turn_id=3,
+    generation_id=4,
+    tool_epoch=5,
+    device_id="device-private-canary-8f2c",
+)
+with MediaOtelBridge().span("device.playback_ended", context):
+    pass
+
+exported = json.dumps(
+    [
+        {key: str(value) for key, value in (span.attributes or {}).items()}
+        for span in exporter.get_finished_spans()
+    ],
+    ensure_ascii=False,
+)
+assert "session-private-canary-8f2c" not in exported
+assert "device-private-canary-8f2c" not in exported
+assert "trace-canary-8f2c" in exported
+
+timeline = TurnTimeline(context)
+for forbidden in ("transcript", "audio_payload", "provider_token", "session_id"):
+    try:
+        timeline.add("asr.final", fields={forbidden: "private-canary"})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(f"sensitive field was accepted: {forbidden}")
+
+try:
+    MediaTelemetry().inc("voice_kws_hits_total", labels={"session_id": "private-canary"})
+except ValueError:
+    pass
+else:
+    raise AssertionError("session_id telemetry label was accepted")
+
+try:
+    MediaOtelBridge().span("not.allowlisted", context)
+except ValueError:
+    pass
+else:
+    raise AssertionError("unallowlisted media span was accepted")
+"""
+    _run_subprocess_check(code)
+    print("media telemetry privacy gate OK")
 
 
 def main() -> int:
-    _check_versions()
-    _check_privacy_defaults()
-    _check_real_exporter_privacy()
     _check_bridge_wiring()
+    _check_media_telemetry_privacy()
+    _check_dtln_denoiser()
     print("agent release artifact verification PASSED")
     return 0
 
