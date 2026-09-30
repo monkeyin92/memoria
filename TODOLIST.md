@@ -38,7 +38,10 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 - 方案：枚举复用、不动冻结契约，也不需要 media-edge 发布——`keyword` 仅唤醒词；`button` 语义改为「点击屏幕」（BOOT 物理键始终可用：硬停止与配网入口）；`button_or_keyword` 两者都开（默认不变）。下发通道用设备空闲时每 20 s 的设备签名 `GET /v1/devices/{id}/display-profile`，增加附加字段 `wake_mode`（`schema_version` 不变，旧固件忽略），固件每次轮询都应用并写 NVS，开机先用 NVS 值。固件：新模块 `memoria_wake_mode`（状态 + NVS）；Idle 只在允许唤醒词时开启检测（新补丁 0032）；点屏策略——仅唤醒词：无反应；含屏幕：只在空闲时唤醒（等同 BOOT 短按），对话中任何状态点屏无效；配网/二维码相关点屏行为不变。小程序：设备页两个开关「唤醒词唤醒」「点击屏幕唤醒」，不允许全关（提示「至少保留一种唤醒方式」），按组合显示对应说明（仅唤醒词：可能误唤醒、点屏无反应；仅屏幕：唤醒词失效、对话中点屏无效）。
 - 解释（按用户表述落实）：两者都开时，对话中点屏同样无效（与「点击屏幕只负责唤醒」一致）；用户若想保留「点屏停止」需另说。
 - 验证：后端单测（wire 含 `wake_mode`、缺省值、`display_version` 不因它变化）；固件主机单测（策略表）；固件构建；USB 刷写后串口逐模式验证（改小程序设置 ≤20 s 内串口出现 wake mode 日志，唤醒词/点屏行为符合规则）；小程序 `npm test`。
-- [ ] 后端 display-profile 增加 `wake_mode`　[ ] 固件　[ ] 小程序　[ ] 真机逐模式验证
+- [x] 后端：display-profile 增加 `wake_mode`（control-api 组件发布 `20261001-wake-mode-v1`，04:2x CST 上线，healthy，readiness 内外 200，回滚镜像 `rollback-20261001-wake-mode-v1-pre-control`）
+- [x] 固件 build 18：补丁 0032 + `memoria_wake_mode`，主机测试 218 条过，构建过，USB 只写 ota_0 + 空 otadata（写后哈希校验通过），开机串口 `MEMORIA_FIRMWARE_BUILD=18; slot=ota_0`、`MemoriaWakeMode` 已就绪、首个显示档案轮询 200
+- [x] 小程序体验版 `0.2.20261001.1`（1.5 MB，DevTools CLI）已上传，**需你在公众平台设为体验版**；327 条小程序测试全过
+- [ ] 真机逐模式验证：需要你在机器旁——小程序切三种组合，约 20 秒内串口应出现 `wake mode A -> B`；点屏是否唤醒/无反应我无法代点，需要你点（点屏串口会出现 `screen tap wakes the device` 或 `screen tap ignored`）；唤醒词我用 Mac 扬声器代说
 
 ### [ ] N-2 空闲熄屏
 
@@ -46,13 +49,15 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 - 方案：Idle 相位持续 10 s 后背光渐灭到 0 并停止逐帧渲染；离开 Idle（唤醒词、点屏、BOOT、二维码、错误、连接中）立即渐亮（约 0.4 s）；配网、二维码、错误态、OTA、Connecting/Listening/Speaking 保持亮屏；IMU 拍一拍/摇晃在熄屏时不点亮屏幕；`idle_screen`（`off` 默认 / `mascot` 保持原样）同样经显示档案下发，方便不刷机回退。
 - 兜底（本次不做，熄屏在真机出问题再做）：黑底 + 北京时间（需 SNTP 对时与大号数字字体）。
 - 验证：串口确认背光 0/恢复时序与熄屏期间仍能被唤醒词/点屏唤醒；我看不到屏幕，黑屏与亮屏的肉眼确认需用户。
-- [ ] 固件　[ ] 真机验证
+- [x] 固件 build 18：`UpdateIdleScreen`，串口实测空闲 10 s 后出现 `MemoriaMascot: screen off (idle)`
+- [ ] 真机肉眼确认屏幕确实黑了、唤醒后亮回来（我看不到屏幕，需要你确认）；并确认黑屏状态下点屏在「点击屏幕」模式下能唤醒（CST816S 在熄屏后是否仍报触摸，串口能看到）
 
 ### [ ] N-3 发布与刷机
 
 - 后端：`services/control_api` 的显示档案改动，走 control-api 组件发布（`deploy_control_component.sh`，与 `20260930-vector-keyword-v1` 同法；先核对 main 相对线上基线 `412f31e9` 只动 Control 范围）。小程序：微信开发者工具 CLI 上传体验版（绝对路径）。固件 build 18：USB 刷写（设备连着；只写 app + otadata，保留身份/NVS），USB 启动验证通过后再决定是否签名发布 OTA。
 - 固件基线含另一会话的 build 17（低分回声「mo mo li」误唤醒修复，已刷入开发板，本分支独立提交 `1ed50697` 带上，避免刷机倒退）。
-- [ ] 后端发布　[ ] 小程序体验版　[ ] 固件刷写　[ ] OTA 是否发布（待定）
+- [x] 后端组件发布　[x] 小程序体验版上传　[x] 固件 USB 刷写（build 18）　[ ] OTA 是否签名发布（待定：先经真机唤醒/点屏验证再决定；未确认镜像的 OTA 回滚未演练过）
+- 注意：control-api 现在又跑在组件链上（PREV compose + override），下一次整栈发布前 `release_ops.sh` 的 `LIVE_CONTROL_RELEASE`/`CONTROL_CHAIN` 要改成 `20261001-wake-mode-v1`（或整栈发布时并回纯链），否则 `freeze` 会拒绝。
 
 ### [ ] N-4 小程序「回顾」没有任何对话记录
 
@@ -63,7 +68,7 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 
 ### [ ] N-5 电脑对话长稳测试（≥30 分钟）
 
-- 方法：Mac 扬声器 `say -v Tingting` 代替使用者，串口 + bridge/edge 日志采集（`scripts/voice_session_capture.py`、`scripts/auto_audio/`，前例见 HANDOFF 09-29）。注意使用时段：孩子绑定带家长设的夜间休息时段，时段内唤醒只播晚安、不开 ASR；测试前先确认 profile 的 `QUIET_HOURS`。
+- 方法：Mac 扬声器 `say -v Tingting` 代替使用者，串口 + bridge/edge 日志采集（`scripts/voice_session_capture.py`、`scripts/auto_audio/`，前例见 HANDOFF 09-29）。**使用时段（2026-10-01 04:10 只读）**：孩子的 profile 带 `QUIET_HOURS 04:00–07:00`（时段内唤醒只播晚安、不开 ASR）和 `MAX_SESSION_SECONDS 1800`（单次对话最长 30 分钟，到点自动结束，需再唤醒才能续），所以不能在 07:00 前测，≥30 分钟要分多次会话；这两项是家长设定，我不绕过。
 - 场景：连续多轮 ≥30 分钟（天气/知识/故事/闲聊）；播放中打断（「停」「别说了」）；续问；长静默；重连；负面情绪（孤独、难过、被欺负、焦虑、厌学，以及自伤类危机话术与家长提醒入队，outbox 不外发）；三种唤醒方式各测一次。
 - 产出：`docs/acceptance/run-20261001-longsoak/findings.md`（逐场景结果、问题清单、修复）。
 - [ ] 执行　[ ] 问题修复　[ ] 复测
