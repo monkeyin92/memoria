@@ -49,6 +49,7 @@ class SerialWatcher:
     state: str = "unknown"
     state_since: float = field(default_factory=now)
     events: list[tuple[float, str, str]] = field(default_factory=list)  # (t, kind, payload)
+    lines_seen: int = 0
     cond: threading.Condition = field(default_factory=threading.Condition)
     stop: threading.Event = field(default_factory=threading.Event)
 
@@ -77,6 +78,7 @@ class SerialWatcher:
     def _parse(self, t: float, line: str) -> None:
         match = STATE_RE.search(line)
         with self.cond:
+            self.lines_seen += 1
             if match:
                 self.state = match.group(2)
                 self.state_since = t
@@ -86,6 +88,10 @@ class SerialWatcher:
             elif re.search(r"\b(E|W) \(\d+\)", line):
                 self.events.append((t, "log", line[:160]))
             self.cond.notify_all()
+
+    def alive(self) -> bool:
+        with self.cond:
+            return bool(self.lines_seen)
 
     def wait_state(self, states: set[str], timeout: float, since: float | None = None) -> float | None:
         """Return the time we were in one of `states` (after `since`), or None on timeout."""
@@ -161,10 +167,18 @@ def main() -> int:
     previous_volume = set_volume(args.volume)
     record(kind="start", volume=args.volume, previous_volume=previous_volume, duration_min=args.duration_min)
     try:
-        # The open reset the board: wait for it to settle into idle.
-        if watcher.wait_state({"idle", "listening"}, 90) is None:
-            record(kind="abort", reason="device never reached idle after the port open")
-            return 2
+        # Opening the port does not always reset the board. A board that was already idle prints no
+        # state line, only its periodic logs, so after a short wait trust "serial is alive and the
+        # display-profile poll is running" (it only runs while idle) instead of waiting for a line.
+        if watcher.wait_state({"idle", "listening"}, 15) is None:
+            if watcher.alive():
+                with watcher.cond:
+                    watcher.state = "idle"
+                    watcher.state_since = now()
+                record(kind="assume_idle", reason="no state line after the port open, serial is alive")
+            elif watcher.wait_state({"idle", "listening"}, 75) is None:
+                record(kind="abort", reason="device never reached idle after the port open")
+                return 2
         time.sleep(2.0)
 
         def ensure_listening(tag: str) -> bool:
@@ -177,6 +191,12 @@ def main() -> int:
                     got = watcher.wait_state({"connecting", "listening"}, 9, since=t0)
                     if got is not None:
                         watcher.wait_state({"listening"}, 12, since=t0)
+                        # The robot greets on wake ("我在。", or the goodnight phrase in quiet
+                        # hours): let it finish before the user speaks, or the line is lost.
+                        greeted = watcher.wait_state({"speaking"}, 4.0, since=now() - 0.2)
+                        if greeted is not None:
+                            watcher.wait_state({"listening", "idle"}, 25, since=greeted)
+                            record(kind="greeting_done", state=watcher.state)
                         time.sleep(0.8)
                         record(kind="woke", attempt=attempt, state=watcher.state)
                         return watcher.state == "listening"
