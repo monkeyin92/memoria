@@ -278,11 +278,6 @@ def _evidence_subject_category_resolver(
     return resolve
 
 
-def _device_onboarding_database_path(settings: ControlSettings) -> str:
-    memory_path = Path(settings.memoria_db_path)
-    return str(memory_path.with_name(f"{memory_path.stem}-device-onboarding.sqlite3"))
-
-
 def _device_onboarding_service(
     settings: ControlSettings,
 ) -> DeviceOnboardingService | None:
@@ -317,8 +312,9 @@ def _device_onboarding_service(
         b"memoria-device-activation-v1\0"
         + settings.memoria_auth_secret.get_secret_value().encode("utf-8")
     ).digest()
+    memory_path = Path(settings.memoria_db_path)
     return create_device_onboarding_service(
-        database_path=_device_onboarding_database_path(settings),
+        database_path=str(memory_path.with_name(f"{memory_path.stem}-device-onboarding.sqlite3")),
         server_signing_key=Ed25519PrivateKey.from_private_bytes(seed),
         offline_mock=settings.offline_mock,
     )
@@ -672,6 +668,7 @@ async def _install_session_runtime(w: Wiring) -> None:
             store=session_runtime_store,
             signing_key=settings.runtime_profile_signing_key(),
             policy=PolicyEngine(),
+            accept_bound_device_trust=settings.bound_device_trust_enabled,
         )
         app.state.session_runtime_service = session_runtime_service
         app.state.policy_receipt_writer = None

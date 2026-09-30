@@ -580,7 +580,9 @@ BEGIN
        OR (receipt ->> 'binding_version')::BIGINT IS DISTINCT FROM p_binding_version
        OR receipt ->> 'effect' NOT IN ('allow', 'allow_with_obligations')
        OR COALESCE((receipt ->> 'exact_fence')::BOOLEAN, FALSE) IS NOT TRUE
-       OR receipt ->> 'device_trust' NOT IN ('trusted', 'verified')
+       -- Device actions (remote commands, transfer) need a hardware attestation;
+       -- the bound-link tier (trusted) is for memory capabilities only.
+       OR receipt ->> 'device_trust' IS DISTINCT FROM 'verified'
        OR (receipt ->> 'expires_at')::TIMESTAMPTZ <= clock_timestamp()
        OR fence ->> 'action_resource_id' IS DISTINCT FROM p_action_resource_id
        OR (fence ->> 'action_revision')::BIGINT IS DISTINCT FROM p_binding_version

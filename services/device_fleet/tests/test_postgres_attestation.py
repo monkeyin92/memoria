@@ -67,8 +67,11 @@ AUTHORIZED_OWNER = AuthenticatedTestPrincipal("owner-1", "account_owner")
 
 
 class _TestDeviceCommandAuthority:
-    def __init__(self, *, authenticated_actor: str | None = None) -> None:
+    def __init__(
+        self, *, authenticated_actor: str | None = None, device_trust: str = "verified"
+    ) -> None:
         self._authenticated_actor = authenticated_actor
+        self._device_trust = device_trust
 
     async def execute_authorized(
         self,
@@ -102,7 +105,7 @@ class _TestDeviceCommandAuthority:
                     "binding_version": action.binding_version,
                     "effect": "allow",
                     "exact_fence": True,
-                    "device_trust": "verified",
+                    "device_trust": self._device_trust,
                     "expires_at": _rfc3339(datetime.now(UTC) + timedelta(minutes=5)),
                     "action_fence_hash": action_fence_hash,
                     "action_resource_fence": {

@@ -372,7 +372,7 @@ def make_context(
     speaker_state: str = "confirmed",
     speaker_confidence: float | None = 0.99,
     consent_kinds: frozenset[str] = frozenset(),
-    device_trust: str = "trusted",
+    device_trust: str = "verified",
     safety_state: str = "normal",
     jurisdiction: str = "CN",
     data_classification: str = "private",

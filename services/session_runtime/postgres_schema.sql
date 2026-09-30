@@ -2425,8 +2425,10 @@ DECLARE
     onboarding_lifecycle text;
     onboarding_binding_id text;
     onboarding_binding_version bigint;
+    onboarding_certificate_id text;
     certificate_active boolean := false;
     attestation_active boolean := false;
+    certificate_blocked boolean := false;
 BEGIN
     IF NULLIF(current_setting('app.authenticated_actor', true), '')
            IS DISTINCT FROM p_actor_id
@@ -2439,9 +2441,10 @@ BEGIN
     END IF;
     IF to_regclass('public.device_onboarding_devices') IS NOT NULL THEN
         EXECUTE
-            'SELECT lifecycle_status, binding_id, binding_version '
+            'SELECT lifecycle_status, binding_id, binding_version, certificate_id '
             'FROM public.device_onboarding_devices WHERE device_id = $1 FOR SHARE'
-        INTO onboarding_lifecycle, onboarding_binding_id, onboarding_binding_version
+        INTO onboarding_lifecycle, onboarding_binding_id, onboarding_binding_version,
+             onboarding_certificate_id
         USING p_device_id;
     END IF;
     IF to_regclass('public.device_fleet_devices') IS NOT NULL THEN
@@ -2526,6 +2529,23 @@ BEGIN
         INTO attestation_active
         USING p_device_id, p_binding_id, p_binding_version, p_now;
     END IF;
+    -- The device's own activation certificate must not have been withdrawn:
+    -- revoked or expired in the fleet registry.  Absent there, onboarding alone
+    -- is the authority (its row carries a NOT NULL certificate and public key).
+    IF onboarding_lifecycle IS NOT NULL
+       AND to_regclass('public.device_fleet_certificates') IS NOT NULL THEN
+        EXECUTE
+            'SELECT EXISTS ('
+            'SELECT 1 FROM public.device_fleet_certificates '
+            'WHERE device_id = $1 AND certificate_id = $2 '
+            'AND (status IN (''revoked'', ''expired'') OR valid_until <= $3))'
+        INTO certificate_blocked
+        USING p_device_id, onboarding_certificate_id, p_now;
+    END IF;
+    -- device_bound is a fact, not a trust level: the device was activated by
+    -- onboarding with its own key and is currently bound to exactly this
+    -- binding, but no hardware attestation backs it.  It is additive so code
+    -- that predates it ignores it; only a caller that opts in reads it.
     RETURN jsonb_build_object(
         'available', true,
         'device_trust', CASE
@@ -2536,7 +2556,8 @@ BEGIN
             WHEN certificate_active AND attestation_active
                 THEN 'device_attestation_current'
             ELSE 'device_attestation_unavailable'
-        END
+        END,
+        'device_bound', onboarding_lifecycle IS NOT NULL AND NOT certificate_blocked
     );
 END
 $action_device_lock_trust$;

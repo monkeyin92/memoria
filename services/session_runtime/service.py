@@ -74,6 +74,7 @@ from services.policy.receipts import (
     PolicyReceiptConflictError,
     exact_evidence_fence_valid,
 )
+from services.session_runtime.device_trust import DeviceTrustSnapshot, snapshot_from_authority
 from services.session_runtime.postgres_store import (
     PostgresSessionRuntimeStore,
     SessionRuntimeAuthorityUnavailable,
@@ -696,14 +697,10 @@ class _PostgresIdentityRelationshipAuthority:
         return tuple(binding.relationships)
 
 
-@dataclass(frozen=True, slots=True)
-class _DeviceTrustSnapshot:
-    available: bool
-    trust: str
-    reason_code: str
-
-
 class _PostgresDeviceAuthority:
+    def __init__(self, *, accept_bound_device: bool = False) -> None:
+        self._accept_bound_device = accept_bound_device
+
     async def lock_current(
         self,
         connection: asyncpg.Connection,
@@ -713,7 +710,7 @@ class _PostgresDeviceAuthority:
         binding_id: str,
         binding_version: int,
         now: datetime,
-    ) -> _DeviceTrustSnapshot:
+    ) -> DeviceTrustSnapshot:
         try:
             raw = await connection.fetchval(
                 "SELECT action_device_lock_trust($1, $2, $3, $4, $5)",
@@ -724,7 +721,7 @@ class _PostgresDeviceAuthority:
                 now,
             )
         except asyncpg.UndefinedFunctionError:
-            return _DeviceTrustSnapshot(
+            return DeviceTrustSnapshot(
                 available=False,
                 trust="untrusted",
                 reason_code="device_authority_unavailable",
@@ -732,22 +729,12 @@ class _PostgresDeviceAuthority:
         except asyncpg.PostgresError as exc:
             raise PersistentSessionUnavailable(str(exc)) from exc
         payload = _decode_json_object(raw, name="Device trust authority")
-        available = payload.get("available")
-        trust = payload.get("device_trust")
-        if not isinstance(available, bool) or trust not in {
-            "trusted",
-            "verified",
-            "offline",
-            "untrusted",
-            "revoked",
-        }:
-            raise PersistentSessionUnavailable("Device trust authority is invalid")
-        reason = payload.get("reason_code")
-        return _DeviceTrustSnapshot(
-            available=available,
-            trust=str(trust),
-            reason_code=str(reason) if isinstance(reason, str) else "unknown",
-        )
+        try:
+            return snapshot_from_authority(
+                payload, accept_bound_device=self._accept_bound_device
+            )
+        except ValueError as exc:
+            raise PersistentSessionUnavailable(str(exc)) from exc
 
 
 class _PostgresPrincipalAuthority:
@@ -2192,7 +2179,7 @@ class PostgresSessionRuntimeService:
         *,
         profile: RuntimeProfileSignedV2,
         binding: _LockedBinding,
-        trust: _DeviceTrustSnapshot,
+        trust: DeviceTrustSnapshot,
         actor_id: str,
         capability: CapabilityValue,
         session_epoch: int,
@@ -2370,7 +2357,7 @@ class PostgresSessionRuntimeService:
         profile: RuntimeProfileSignedV2,
         current_context: SessionRuntimeContext,
         binding: _LockedBinding,
-        trust: _DeviceTrustSnapshot,
+        trust: DeviceTrustSnapshot,
         actor_id: str,
         capability: CapabilityValue,
         session_epoch: int,
@@ -3034,9 +3021,10 @@ def build_postgres_session_runtime_service(
     signing_key: bytes,
     policy: PolicyEngine | None = None,
     profile_ttl: timedelta = _DEFAULT_PROFILE_TTL,
+    accept_bound_device_trust: bool = False,
 ) -> PostgresSessionRuntimeService:
     identity = _PostgresIdentityAuthority()
-    device = _PostgresDeviceAuthority()
+    device = _PostgresDeviceAuthority(accept_bound_device=accept_bound_device_trust)
     repository = _ActionExecutorReceiptRepository()
     return PostgresSessionRuntimeService(
         store=store,

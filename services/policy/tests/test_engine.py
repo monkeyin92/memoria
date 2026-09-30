@@ -29,7 +29,7 @@ def _context(**overrides: object) -> PolicyContext:
         "speaker_state": "unconfirmed",
         "speaker_confidence": None,
         "consent_kinds": frozenset(),
-        "device_trust": "trusted",
+        "device_trust": "verified",
         "safety_state": "normal",
         "jurisdiction": "CN",
         "data_classification": "biometric",

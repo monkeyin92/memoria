@@ -14,8 +14,9 @@ The decision matrix follows the corrected edition of the shared CONTRACT:
   model_training_contribution are default-denied.
 * adult sensitive capabilities require actor==subject==resource_owner,
   authoritative subject-owned consent evidence (purpose and data-classification
-  consistent with the context), a matching active binding fence and
-  device_trust ∈ {trusted, verified}.
+  consistent with the context), a matching active binding fence and a device
+  trust that suffices for the capability: ``verified`` (hardware attested) for
+  all of them, ``trusted`` (bound device link only) for the memory capabilities.
 * offline / revoked / untrusted devices deny every sensitive capability.
   Exception: crisis_notification remains evaluable on ``offline`` (degraded but
   trusted lineage) devices so the emergency path survives degraded service;
@@ -146,8 +147,26 @@ MINOR_GOVERNED_ALLOWED: Final[frozenset[Capability]] = frozenset(
     }
 )
 
-#: Devices that may exercise sensitive capabilities (crisis has its own path).
-TRUSTED_DEVICE_TRUSTS: Final[frozenset[str]] = frozenset({"trusted", "verified"})
+#: Device trust tiers for sensitive capabilities (crisis has its own path).
+#: ``verified`` is a fresh, signed hardware attestation and lets every sensitive
+#: capability through.  ``trusted`` is only the onboarding-bound device link,
+#: with no hardware evidence behind it: enough for the memory capabilities below
+#: and for nothing else.  Deny by default, so a new capability needs a hardware
+#: attestation until someone lists it here.
+ATTESTED_DEVICE_TRUST: Final = "verified"
+BOUND_DEVICE_TRUST: Final = "trusted"
+BOUND_DEVICE_CAPABILITIES: Final[frozenset[Capability]] = frozenset(
+    {"memory_capture", "memory_recall_private", "guardian_summary_view"}
+)
+
+
+def device_trust_allows(capability: str, device_trust: str) -> bool:
+    """Whether a device at this trust level may exercise this sensitive capability."""
+
+    if device_trust == ATTESTED_DEVICE_TRUST:
+        return True
+    return device_trust == BOUND_DEVICE_TRUST and capability in BOUND_DEVICE_CAPABILITIES
+
 
 CRISIS_SIGNAL_STATES: Final[frozenset[str]] = frozenset({"self_crisis"})
 
@@ -569,7 +588,7 @@ class PolicyEngine:
             return self._decision(context, effect="deny", reason_code="action_subject_mismatch")
         if fence is None:
             return self._decision(context, effect="deny", reason_code="action_fence_required")
-        if context.device_trust not in TRUSTED_DEVICE_TRUSTS:
+        if not device_trust_allows(context.capability, context.device_trust):
             return self._decision(context, effect="deny", reason_code="device_untrusted")
         if not binding_fence_ok(
             context.binding_id,
@@ -847,7 +866,7 @@ class PolicyEngine:
                 effect="deny",
                 reason_code="consent_purpose_mismatch",
             )
-        if context.device_trust not in TRUSTED_DEVICE_TRUSTS:
+        if not device_trust_allows(context.capability, context.device_trust):
             return self._decision(
                 context,
                 effect="deny",
@@ -973,7 +992,7 @@ class PolicyEngine:
             )
         if (
             context.capability in SENSITIVE_CAPABILITIES
-            and context.device_trust not in TRUSTED_DEVICE_TRUSTS
+            and not device_trust_allows(context.capability, context.device_trust)
         ):
             return self._decision(
                 context,
@@ -1202,7 +1221,7 @@ class PolicyEngine:
                 effect="deny",
                 reason_code="delegate_evidence_required",
             )
-        if context.device_trust not in TRUSTED_DEVICE_TRUSTS:
+        if not device_trust_allows(context.capability, context.device_trust):
             return self._decision(
                 context,
                 effect="deny",
@@ -1287,7 +1306,7 @@ class PolicyEngine:
                 effect="deny",
                 reason_code="subject_consent_required",
             )
-        if context.device_trust not in TRUSTED_DEVICE_TRUSTS:
+        if not device_trust_allows(context.capability, context.device_trust):
             return self._decision(
                 context,
                 effect="deny",

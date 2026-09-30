@@ -4613,6 +4613,8 @@ async def test_rebind_through_onboarding_keeps_session_start_allowed(
     trust = await _device_trust(store, binding_id="binding-a2", binding_version=2)
     assert trust["device_trust"] == "untrusted"
     assert trust["reason_code"] == "device_attestation_unavailable"
+    # Additive: the level is untouched, the bound-link fact rides beside it.
+    assert trust["device_bound"] is True
 
     service = build_postgres_session_runtime_service(store=store, signing_key=_SIGNING_KEY)
     profile = await service.start(
@@ -4676,6 +4678,70 @@ async def test_fleet_revocation_still_blocks_an_onboarding_bound_device(
         "device_trust": "revoked",
         "reason_code": "device_fleet_lifecycle_blocked",
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("certificate", "bound"),
+    [("active", True), ("revoked", False), ("expired", False)],
+)
+async def test_the_activation_certificate_decides_the_bound_fact(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
+    certificate: str,
+    bound: bool,
+) -> None:
+    # The fleet registry's row for the very certificate onboarding issued: an
+    # active one is production's shape (a certificate, no attestation); one
+    # that was withdrawn or ran out is not a device to vouch for.
+    store, bootstrap_dsn = postgres_runtime
+    await _rebind_through_onboarding(bootstrap_dsn)
+    now = datetime.now(UTC)
+    admin = await asyncpg.connect(bootstrap_dsn)
+    try:
+        await admin.execute(
+            """
+            INSERT INTO device_fleet_certificates (
+                certificate_id, device_id, family_space_id, binding_id,
+                binding_version, public_key_b64, key_algorithm, status,
+                valid_from, valid_until, revoked_at, revocation_reason_code,
+                created_at
+            ) VALUES ('cert-device-a', 'device-a', NULL, NULL, NULL, $1, 'ed25519',
+                      $2, $3, $4, $5, $6, $3)
+            """,
+            "A" * 44,
+            "active" if certificate == "expired" else certificate,
+            now - timedelta(hours=2),
+            now - timedelta(hours=1) if certificate == "expired" else now + timedelta(hours=1),
+            now if certificate == "revoked" else None,
+            "test" if certificate == "revoked" else None,
+        )
+    finally:
+        await admin.close()
+
+    trust = await _device_trust(store, binding_id="binding-a2", binding_version=2)
+
+    assert trust["device_trust"] == "untrusted"
+    assert trust["device_bound"] is bound
+
+
+@pytest.mark.asyncio
+async def test_an_attested_fleet_device_is_verified_and_reports_no_bound_fact(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
+) -> None:
+    # Verified needs no onboarding row; the bound fact is derived from one.
+    store, bootstrap_dsn = postgres_runtime
+    admin = await asyncpg.connect(bootstrap_dsn)
+    try:
+        await _seed_verified_device(
+            admin, device_id="device-a", binding_id="binding-a", now=datetime.now(UTC)
+        )
+    finally:
+        await admin.close()
+
+    trust = await _device_trust(store, binding_id="binding-a", binding_version=1)
+
+    assert trust["device_trust"] == "verified"
+    assert trust["device_bound"] is False
 
 
 @pytest.mark.asyncio

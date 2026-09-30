@@ -157,7 +157,7 @@ def test_v2_receipt_carries_full_fence_fields() -> None:
     assert receipt.relationship_snapshot_ids == ()
     assert receipt.binding_id == "binding-1"
     assert receipt.binding_version == 1
-    assert receipt.device_trust == "trusted"
+    assert receipt.device_trust == "verified"
     assert receipt.data_classification == "private"
     assert receipt.safety_state == "normal"
     assert receipt.jurisdiction == "CN"
