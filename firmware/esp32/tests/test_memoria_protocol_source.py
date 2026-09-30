@@ -1681,9 +1681,10 @@ def test_network_disconnect_actively_recovers_the_same_session() -> None:
             "void InitializeI2c()"
         )
     ]
-    assert "idle screen tap ignored; wake word or BOOT starts chat" in touch
-    idle = touch[touch.index("kDeviceStateIdle") :]
-    assert "ToggleChatState()" not in idle
+    # Since build 18 the phone's wake mode decides (tests/test_memoria_wake_mode.py):
+    # a tap only wakes an idle device, and never stops or standbys a conversation.
+    assert "screen tap ignored state=%d wake_mode=%s" in touch
+    assert "ToggleChatState()" not in touch
     assert "StartListening(" not in touch
     assert "MuteImuForTouch()" in touch
     assert "SetEmotion(" not in touch

@@ -548,6 +548,14 @@ esp_err_t MemoriaActivationClient::FetchDisplayProfile(const std::string& contro
     }
     profile->companion_id = std::move(companion_id);
     profile->display_version = std::move(display_version);
+    // Additive field: absent from servers before wake-mode delivery, and any
+    // value the registry does not know is ignored there.
+    profile->wake_mode.clear();
+    const cJSON* wake_mode = cJSON_GetObjectItemCaseSensitive(root.value, "wake_mode");
+    if (cJSON_IsString(wake_mode) && wake_mode->valuestring != nullptr &&
+        std::strlen(wake_mode->valuestring) <= 32) {
+        profile->wake_mode = wake_mode->valuestring;
+    }
     return ESP_OK;
 }
 

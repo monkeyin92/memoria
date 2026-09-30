@@ -53,9 +53,9 @@ rg -q 'new MemoriaMascotDisplay\(' "$board_dir/memoria_esp_vocat.cc" || \
     die "board does not use the companion mascot display"
 rg -Fq '#include "memoria_pat.h"' "$board_dir/memoria_esp_vocat.cc" || \
     die "board does not use the host-testable pat detector"
-rg -Fq 'idle screen tap ignored; wake word or BOOT starts chat' \
+rg -Fq 'memoria::TapActionFor(mode, state == kDeviceStateIdle)' \
     "$board_dir/memoria_esp_vocat.cc" || \
-    die "idle screen tap must not start a conversation"
+    die "a screen tap must follow the phone's wake mode (wake only, never stop or standby)"
 rg -Fq 'Device pat detected' "$board_dir/memoria_esp_vocat.cc" || \
     die "BMI270 pat must be wired to a local animation, not ToggleChatState"
 rg -Fq 'display_->Pat()' "$board_dir/memoria_esp_vocat.cc" || \

@@ -62,10 +62,17 @@ public:
 
 private:
     static constexpr uint32_t kFrameMs = 40;  // fastest frame pace
+    static constexpr uint32_t kIdleScreenOffMs = 10 * 1000;
+    static constexpr uint32_t kScreenOffPollMs = 100;  // how fast a dark panel notices a wake
 
     static void AnimationTask(void* arg);
     void AnimationLoop();
     memoria::ScenePhase CurrentPhase(uint32_t now_ms);
+    // No conversation, no screen: the panel goes dark kIdleScreenOffMs after the
+    // companion settles into the idle phase and lights again the moment anything
+    // else happens (wake word, tap, BOOT, pairing, an error). Nothing is rendered
+    // while it is dark; the panel keeps its last frame.
+    void UpdateIdleScreen(memoria::ScenePhase phase, uint32_t now_ms);
     bool LoadCompanion(const std::string& id, std::unique_ptr<memoria::MascotPack>* out);
     void ApplyChrome();                 // caller holds the display lock
     void ApplyChromeOpacity(uint8_t opa);  // caller holds the display lock
@@ -83,6 +90,8 @@ private:
     std::function<void()> on_first_frame_;
     Backlight* backlight_ = nullptr;
     bool dimmed_ = false;
+    bool screen_off_ = false;
+    uint32_t idle_since_ms_ = 0;  // 0: not idle
     uint8_t chrome_opa_ = 0;
     uint8_t text_opa_applied_ = 0;
     bool caption_layout_ = false;  // LVGL text is on the caption band

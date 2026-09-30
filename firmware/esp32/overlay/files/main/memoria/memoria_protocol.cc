@@ -22,6 +22,7 @@
 #include "memoria_display_hooks.h"
 #include "memoria_firmware_update.h"
 #include "memoria_stop_keyword.h"
+#include "memoria_wake_mode.h"
 #include "memoria_wake_word.h"
 #include "sodium.h"
 #include "web_socket.h"
@@ -454,6 +455,12 @@ void MemoriaProtocol::DisplayProfileTask(void* context) {
             MemoriaActivationClient client(protocol->identity_);
             DisplayProfile profile;
             const esp_err_t result = client.FetchDisplayProfile(base, &profile);
+            if (result == ESP_OK && !profile.wake_mode.empty() &&
+                WakeModeRegistry::GetInstance().Apply(profile.wake_mode)) {
+                // The mode changed: re-arm (or stop) the wake word now, not at
+                // the next time the device happens to enter idle.
+                Application::GetInstance().RefreshWakeMode();
+            }
             if (result == ESP_OK && profile.display_version != applied_version) {
                 applied_version = profile.display_version;
                 ESP_LOGI(kTag, "Display profile companion=%s version=%s",
