@@ -37,11 +37,41 @@ const AUDIO_MODE_LABELS = Object.freeze({
   half_duplex_safe: "半双工安全模式",
 });
 
+// 后端 wake_mode 枚举原样复用（冻结契约，Edge 只校验枚举）：
+//   keyword = 仅唤醒词；button = 仅点击屏幕；button_or_keyword = 两者都开。
+// 机器上的 BOOT 物理键不受影响。设备空闲时每 20 秒轮询一次，所以最多约 20 秒后生效。
 const WAKE_MODE_OPTIONS = Object.freeze([
-  { value: "button", label: "按键唤醒" },
+  { value: "button", label: "点击屏幕唤醒" },
   { value: "keyword", label: "唤醒词唤醒" },
-  { value: "button_or_keyword", label: "按键或唤醒词" },
+  { value: "button_or_keyword", label: "唤醒词或点击屏幕" },
 ]);
+
+const WAKE_MODE_NOTES = Object.freeze({
+  keyword: "唤醒词可能被电视、聊天声等误触发，出现误唤醒。此时点击屏幕没有任何反应。",
+  button:
+    "唤醒词已失效，只有轻点一下屏幕才能唤醒。对话中再点屏幕没有效果，也不会让它回到待命。",
+  button_or_keyword:
+    "喊唤醒词或轻点屏幕都能唤醒。唤醒词可能被电视、聊天声等误触发；对话中点屏幕没有效果。",
+});
+
+// 两个开关必须至少开一个：都关没有对应的 wake_mode，返回 null。
+function wakeModeFromSwitches(keywordOn, tapOn) {
+  if (keywordOn && tapOn) return "button_or_keyword";
+  if (keywordOn) return "keyword";
+  if (tapOn) return "button";
+  return null;
+}
+
+function wakeModeView(mode) {
+  const known = Object.prototype.hasOwnProperty.call(WAKE_MODE_NOTES, mode) ? mode : null;
+  return {
+    wakeKeywordOn: known === "keyword" || known === "button_or_keyword",
+    wakeTapOn: known === "button" || known === "button_or_keyword",
+    wakeModeNote: known ? WAKE_MODE_NOTES[known] : "",
+    // 只要唤醒词开着就有误唤醒风险，提示用警示色。
+    wakeModeWarn: known === "keyword" || known === "button_or_keyword",
+  };
+}
 
 const ALL_BARGE_IN_OPTIONS = Object.freeze([
   { value: "none", label: "无" },
@@ -320,9 +350,11 @@ Page({
     effectiveAudioModeLabel: "未连接，暂无实际模式",
     liveRuntimeStatusLabel: "未读取",
     audioModeIndex: 0,
-    wakeModeOptions: WAKE_MODE_OPTIONS,
-    wakeModeIndex: 0,
     wakeModeLabel: "未读取",
+    wakeKeywordOn: true,
+    wakeTapOn: true,
+    wakeModeNote: "",
+    wakeModeWarn: false,
     wakeWordOptions: [{ id: "mo_li", label: "茉莉", note: "2 个字，叫起来顺口" }],
     wakeWordIndex: 0,
     wakeWordLabel: "未读取",
@@ -425,8 +457,11 @@ Page({
       effectiveAudioModeLabel: "未连接，暂无实际模式",
       liveRuntimeStatusLabel: "未读取",
       audioModeIndex: 0,
-      wakeModeIndex: 0,
       wakeModeLabel: "未读取",
+      wakeKeywordOn: true,
+      wakeTapOn: true,
+      wakeModeNote: "",
+      wakeModeWarn: false,
       wakeWordOptions: [{ id: "mo_li", label: "茉莉", note: "2 个字，叫起来顺口" }],
       wakeWordIndex: 0,
       wakeWordLabel: "未读取",
@@ -639,7 +674,6 @@ Page({
         : [];
       const bargeInChecked = {};
       for (const kind of bargeInKinds) bargeInChecked[kind] = true;
-      const wakeModeIndex = indexOfOption(WAKE_MODE_OPTIONS, settings?.wake_mode);
       const wakeWordOptions =
         wakeWordCatalogResult.status === "fulfilled"
           ? selectableWakeWordOptions(wakeWordCatalogResult.value?.items)
@@ -763,7 +797,7 @@ Page({
               ? "当前未连接"
               : "状态暂不可用",
         audioModeIndex,
-        wakeModeIndex,
+        ...wakeModeView(settings?.wake_mode),
         wakeModeLabel: settings?.wake_mode
           ? WAKE_MODE_OPTIONS.find((option) => option.value === settings.wake_mode)?.label ||
             settings.wake_mode
@@ -1317,10 +1351,35 @@ Page({
     await this.saveDeviceSetting({ audio_mode: option.value });
   },
 
-  async selectWakeMode(event) {
-    const option = WAKE_MODE_OPTIONS[Number(event.detail.value)];
-    if (!option) return;
-    await this.saveDeviceSetting({ wake_mode: option.value });
+  async toggleWakeKeyword(event) {
+    await this._toggleWake("keyword", Boolean(event?.detail?.value));
+  },
+
+  async toggleWakeTap(event) {
+    await this._toggleWake("tap", Boolean(event?.detail?.value));
+  },
+
+  // 两个开关各管一种唤醒方式，必须至少开一个；保存失败或被拒绝时把开关还原成服务端确认的状态。
+  async _toggleWake(which, on) {
+    const keywordOn = which === "keyword" ? on : this.data.wakeKeywordOn;
+    const tapOn = which === "tap" ? on : this.data.wakeTapOn;
+    const next = wakeModeFromSwitches(keywordOn, tapOn);
+    if (next === null) {
+      wx.showToast({ title: "至少保留一种唤醒方式", icon: "none" });
+      this._restoreWakeSwitches();
+      return;
+    }
+    if (next === this.data.settings?.wake_mode) return;
+    const saved = await this.saveDeviceSetting({ wake_mode: next });
+    if (!saved) this._restoreWakeSwitches();
+  },
+
+  // switch 控件在用户点击时会自己翻转，数据没变就不会重绘；先写反值再写回，强制它回到真实状态。
+  _restoreWakeSwitches() {
+    const view = wakeModeView(this.data.settings?.wake_mode);
+    this.setData({ wakeKeywordOn: !view.wakeKeywordOn, wakeTapOn: !view.wakeTapOn }, () =>
+      this.setData(view),
+    );
   },
 
   async selectWakeWord(event) {
@@ -1404,12 +1463,12 @@ Page({
         currentAudioModeLabel: updated.audio_mode
           ? AUDIO_MODE_LABELS[updated.audio_mode] || updated.audio_mode
           : "未读取",
+        ...wakeModeView(updated.wake_mode),
         wakeModeLabel:
           WAKE_MODE_OPTIONS.find((option) => option.value === updated.wake_mode)?.label ||
           updated.wake_mode ||
           "未读取",
         audioModeIndex: indexOfOption(this.data.audioModeOptions, updated.audio_mode),
-        wakeModeIndex: indexOfOption(WAKE_MODE_OPTIONS, updated.wake_mode),
         wakeWordIndex: indexOfOption(this.data.wakeWordOptions, updated.wake_word_id, "id"),
         wakeWordLabel: updated.wake_word_display || updated.wake_word_id || "未读取",
         wakeWordNote:

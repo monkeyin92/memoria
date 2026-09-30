@@ -119,6 +119,11 @@ class DuplexRuntimeEmotionMixin:
             evidence=observation.evidence,
             use_markup_tags=self.use_paralinguistic_tags,
             companion_id=self.mode_policy.companion_style_id,
+            service_mode=(
+                self.mode_policy.runtime_profile.profile.service_mode
+                if self.mode_policy.runtime_profile is not None
+                else None
+            ),
         )
         self._generation_records.bind_speech_plan(fence, self.speech_plan)
         apply_plan = getattr(self.tts, "apply_speech_plan", None)

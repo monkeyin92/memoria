@@ -35,6 +35,11 @@ from services.control_api.app.account_gate import (
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.guardian_push import resolve_minor_display_name
+from services.control_api.app.guardian_recap import (
+    child_utterances,
+    day_activity,
+    recap_for_day,
+)
 from services.control_api.app.response_plan_cache import forget_subject_plans
 from services.control_api.app.security import AuthenticatedUser, require_authenticated_user
 from services.control_api.app.session_termination import AccountSessionTerminator
@@ -1072,21 +1077,20 @@ async def revoke_person_consent(
     return _person_consent_payload(consent)
 
 
-@router.get("/minors/{minor_user_id}/summary")
-async def weekly_summary(
-    minor_user_id: str,
-    request: Request,
-    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
-    week_start: Annotated[date | None, Query()] = None,
-) -> dict[str, Any]:
-    _require_wechat_guardian(request, user)
-    # Whose account holds the child's evidence.
+async def _guardian_evidence_account(
+    request: Request, *, user: AuthenticatedUser, minor_user_id: str
+) -> str:
+    """Whose account holds this child's evidence, once the guardian's access is proven.
+
+    A one-to-one device stores the child's turns in the binding owner's account,
+    attributed to the child; the guardian's views come with the long-term memory the
+    owner ticked for the child (user decision 2026-09-26): switching that off closes
+    them too. A child with an account of their own needs an active guardian link and
+    the weekly-report consent instead.
+    """
+
     evidence_account_id = minor_user_id
     if await _owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
-        # A one-to-one device stores the child's turns in the binding owner's
-        # account, attributed to the child. The weekly summary comes with the
-        # long-term memory the owner ticked for the child (user decision
-        # 2026-09-26): switching that off closes the summary too.
         consent = await _store(request).active_consent(
             minor_user_id=minor_user_id,
             consent_kind="memory_retention",
@@ -1109,6 +1113,20 @@ async def weekly_summary(
         )
     if consent is None:
         raise HTTPException(status_code=403, detail={"code": "guardian_consent_required"})
+    return evidence_account_id
+
+
+@router.get("/minors/{minor_user_id}/summary")
+async def weekly_summary(
+    minor_user_id: str,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+    week_start: Annotated[date | None, Query()] = None,
+) -> dict[str, Any]:
+    _require_wechat_guardian(request, user)
+    evidence_account_id = await _guardian_evidence_account(
+        request, user=user, minor_user_id=minor_user_id
+    )
     zone = ZoneInfo(_settings(request).memoria_timezone)
     local_today = _now().astimezone(zone).date()
     current_week = local_today - timedelta(days=local_today.weekday())
@@ -1134,6 +1152,73 @@ async def weekly_summary(
         ),
     )
     return report.public_payload()
+
+
+_RECAP_LOOKBACK_DAYS = 90
+
+
+async def _child_turns(
+    request: Request, *, user: AuthenticatedUser, minor_user_id: str
+) -> tuple[list[Any], ZoneInfo]:
+    """The child's consented turns of the last 90 days (guardian access already proven)."""
+
+    _require_wechat_guardian(request, user)
+    evidence_account_id = await _guardian_evidence_account(
+        request, user=user, minor_user_id=minor_user_id
+    )
+    zone = ZoneInfo(_settings(request).memoria_timezone)
+    now = _now()
+    events = await _archive(request).evidence_window(
+        account_id=evidence_account_id,
+        subject_id=minor_user_id,
+        occurred_after=now - timedelta(days=_RECAP_LOOKBACK_DAYS),
+        occurred_before=now,
+        event_types=("speech.utterance_finalized",),
+        limit=10_000,
+    )
+    return child_utterances(events, subject_id=minor_user_id, zone=zone), zone
+
+
+@router.get("/minors/{minor_user_id}/days")
+async def child_days(
+    minor_user_id: str,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+    limit: Annotated[int, Query(ge=1, le=90)] = 30,
+) -> dict[str, Any]:
+    """Which days the child talked, newest first. Counts only: no words, no recap."""
+
+    utterances, _ = await _child_turns(request, user=user, minor_user_id=minor_user_id)
+    return {"items": day_activity(utterances, limit=limit)}
+
+
+@router.post("/minors/{minor_user_id}/days/{recap_day}/recap")
+async def child_day_recap(
+    minor_user_id: str,
+    recap_day: date,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+) -> dict[str, Any]:
+    """A short recap of one day for the guardian, in the model's words, never the child's.
+
+    Computed per request from the child's own consented turns and not stored, so it can
+    outlive neither the child's data nor a per-subject deletion. A recap that repeats a
+    stretch of the child's words, or cannot be produced, is a counts-only one.
+    """
+
+    utterances, _ = await _child_turns(request, user=user, minor_user_id=minor_user_id)
+    day_turns = [item for item in utterances if item.day == recap_day]
+    if not day_turns:
+        raise HTTPException(status_code=404, detail={"code": "no_conversation_that_day"})
+    recap, source = await recap_for_day(_settings(request), day=recap_day, utterances=day_turns)
+    return {
+        "day": recap_day.isoformat(),
+        "message_count": len(day_turns),
+        "summary": recap,
+        "source": source,
+        "generated_at": _now().isoformat().replace("+00:00", "Z"),
+        "privacy": {"contains_transcript": False},
+    }
 
 
 @router.post("/minors/{minor_user_id}/export")

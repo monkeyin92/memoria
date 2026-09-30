@@ -1,0 +1,107 @@
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -6,6 +6,7 @@
+ #include "display.h"
+ #include "mcp_server.h"
+ #include "mqtt_protocol.h"
++#include "memoria/memoria_wake_mode.h"
+ #include "memoria/memoria_wake_word.h"
+ #include "memoria_protocol.h"
+ #include "memoria_bootstrap.h"
+@@ -656,6 +657,7 @@
+         return;
+     }
+     memoria::WakeWordRegistry::GetInstance().LoadFromNvs();
++    memoria::WakeModeRegistry::GetInstance().LoadFromNvs();
+     if (!InitializeProtocol()) {
+         return;
+     }
+@@ -1288,6 +1290,14 @@
+     ESP_LOGI(TAG, "Wake word detected: %s (state: %d)", wake_word.c_str(), (int)state);
+ 
+     if (state == kDeviceStateIdle) {
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++        if (!memoria::WakeModeRegistry::GetInstance().keyword_enabled()) {
++            // The phone turned the wake word off after this hit was queued.
++            ESP_LOGW(TAG, "Ignoring wake word: wake mode is tap only");
++            ArmIdleWakeWord();
++            return;
++        }
++#endif
+         BeginWakeWordInvoke(wake_word);
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
+     } else if (state == kDeviceStateSpeaking) {
+@@ -1333,6 +1343,26 @@
+         // Restart the activation check if the wake word is detected during activation
+         SetDeviceState(kDeviceStateIdle);
+     }
++}
++
++void Application::ArmIdleWakeWord() {
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++    // The phone's wake mode: with the screen as the only way in, the wake word
++    // stays off while idle.
++    audio_service_.EnableWakeWordDetection(
++        memoria::WakeModeRegistry::GetInstance().keyword_enabled());
++#else
++    audio_service_.EnableWakeWordDetection(true);
++#endif
++}
++
++void Application::RefreshWakeMode() {
++    // Called from the display-profile poll task when the phone changed the mode.
++    Schedule([this]() {
++        if (GetDeviceState() == kDeviceStateIdle) {
++            ArmIdleWakeWord();
++        }
++    });
+ }
+ 
+ void Application::BeginWakeWordInvoke(const std::string& wake_word) {
+@@ -1345,7 +1375,7 @@
+     if (!SetDeviceState(kDeviceStateConnecting)) {
+         // Wake word detection was stopped by the detection itself; restore it
+         // so the device does not become unresponsive to wake words.
+-        audio_service_.EnableWakeWordDetection(true);
++        ArmIdleWakeWord();
+         return;
+     }
+ 
+@@ -1423,7 +1453,7 @@
+             display->ClearChatMessages();    // Clear messages first
+             display->SetEmotion("neutral");  // Then set emotion (wechat mode checks child count)
+             audio_service_.EnableVoiceProcessing(false);
+-            audio_service_.EnableWakeWordDetection(true);
++            ArmIdleWakeWord();
+             break;
+         case kDeviceStateConnecting:
+             display->SetStatus(Lang::Strings::CONNECTING);
+--- a/main/application.h
++++ b/main/application.h
+@@ -110,6 +110,8 @@
+ 
+     void Reboot();
+     void WakeWordInvoke(const std::string& wake_word);
++    // Re-arm (or stop) the idle wake word after the phone changed the wake mode.
++    void RefreshWakeMode();
+     bool UpgradeFirmware(const std::string& url, const std::string& version = "");
+     bool CanEnterSleepMode();
+     void SendMcpMessage(const std::string& payload);
+@@ -194,6 +196,7 @@
+     void ConfigureStopKeywordForSpeaking();
+     void HandleLocalStopKeyword(const std::string& phrase_id, float score);
+ #endif
++    void ArmIdleWakeWord();
+     void BeginWakeWordInvoke(const std::string& wake_word);
+     void ContinueWakeWordInvoke(const std::string& wake_word);
+     void StartListeningAudio();
+--- a/main/CMakeLists.txt
++++ b/main/CMakeLists.txt
+@@ -36,6 +36,7 @@
+             "memoria/memoria_audio_frame.cc"
+             "memoria/memoria_activation_client.cc"
+             "memoria/memoria_wake_word.cc"
++            "memoria/memoria_wake_mode.cc"
+             "memoria/memoria_protocol.cc"
+             "memoria/memoria_bootstrap.cc"
+             "memoria/memoria_firmware_update.cc"

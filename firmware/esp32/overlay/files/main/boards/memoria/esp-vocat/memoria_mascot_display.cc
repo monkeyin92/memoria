@@ -583,6 +583,30 @@ memoria::ScenePhase MemoriaMascotDisplay::CurrentPhase(uint32_t now_ms) {
     }
 }
 
+void MemoriaMascotDisplay::UpdateIdleScreen(memoria::ScenePhase phase, uint32_t now_ms) {
+    if (backlight_ == nullptr) {
+        return;
+    }
+    if (phase != memoria::ScenePhase::kIdle) {
+        idle_since_ms_ = 0;
+        if (screen_off_) {
+            screen_off_ = false;
+            dimmed_ = false;  // the doze dim below starts from a lit panel again
+            backlight_->RestoreBrightness();
+            ESP_LOGI(TAG, "screen on");
+        }
+        return;
+    }
+    if (idle_since_ms_ == 0) {
+        idle_since_ms_ = now_ms | 1;  // never 0, which means "not idle"
+    }
+    if (!screen_off_ && now_ms - idle_since_ms_ >= kIdleScreenOffMs) {
+        screen_off_ = true;
+        backlight_->SetBrightness(0);
+        ESP_LOGI(TAG, "screen off (idle)");
+    }
+}
+
 void MemoriaMascotDisplay::AnimationTask(void* arg) {
     auto* self = static_cast<MemoriaMascotDisplay*>(arg);
     self->AnimationLoop();
@@ -641,7 +665,9 @@ void MemoriaMascotDisplay::AnimationLoop() {
                 scene_->SetPack(pack_.get(), frame_now);
                 ApplyChrome();  // ink colour follows the companion
             }
-            scene_->SetPhase(CurrentPhase(frame_now), frame_now);
+            const memoria::ScenePhase phase = CurrentPhase(frame_now);
+            scene_->SetPhase(phase, frame_now);
+            UpdateIdleScreen(phase, frame_now);
             const bool want_caption = WantsCaption(frame_now);
             scene_->SetCaptioned(want_caption, frame_now);
             caption_mix_ = scene_->caption_mix(frame_now);
@@ -669,7 +695,8 @@ void MemoriaMascotDisplay::AnimationLoop() {
             }
             memoria::SceneRect dirty[memoria::MascotScene::kMaxDirty];
             const int64_t render_started = esp_timer_get_time();
-            const int count = scene_->Render(frame_now, dirty, memoria::MascotScene::kMaxDirty);
+            const int count =
+                screen_off_ ? 0 : scene_->Render(frame_now, dirty, memoria::MascotScene::kMaxDirty);
             const int64_t render_us = esp_timer_get_time() - render_started;
             ++stats_frames;
             if (count > 0) {
@@ -716,7 +743,7 @@ void MemoriaMascotDisplay::AnimationLoop() {
         }
 
         // Doze: dim the panel while the companion sleeps.
-        if (backlight_ != nullptr && scene_->sleeping() != dimmed_) {
+        if (backlight_ != nullptr && !screen_off_ && scene_->sleeping() != dimmed_) {
             dimmed_ = scene_->sleeping();
             if (dimmed_) {
                 backlight_->SetBrightness(backlight_->brightness() / 3 + 4);
@@ -737,7 +764,8 @@ void MemoriaMascotDisplay::AnimationLoop() {
             stats_render_us = stats_render_max_us = 0;
             stats_pixels = 0;
         }
-        const TickType_t interval = pdMS_TO_TICKS(scene_->FrameIntervalMs(NowMs()));
+        const TickType_t interval =
+            pdMS_TO_TICKS(screen_off_ ? kScreenOffPollMs : scene_->FrameIntervalMs(NowMs()));
         if (xTaskGetTickCount() - wake > interval) {
             wake = xTaskGetTickCount();  // after a companion decode: no catch-up burst
         }

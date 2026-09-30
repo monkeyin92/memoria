@@ -21,6 +21,9 @@ struct ActivationProfile {
 struct DisplayProfile {
     std::string companion_id;
     std::string display_version;  // opaque; changes when the companion changes
+    // The phone's wake-mode setting (see memoria_wake_mode.h). Empty when the
+    // server did not send one: the device then keeps what it already applies.
+    std::string wake_mode;
 };
 
 // Fetches, verifies and acknowledges the server-signed Activation Manifest.

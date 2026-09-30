@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -28,7 +29,9 @@ inline constexpr bool kLocalStopKeywordEnabled = false;
 // Detection is split in two so weak hits stay visible for tuning. MultiNet
 // itself reports every command at or above kMultiNetDetectThreshold; the code
 // then applies each command's own acceptance: kWakeWordMinScore for the wake
-// word (0.12, just above that floor since build 16) and min_score per stop row.
+// word and min_score per stop row. Weak wake hits also need a transcript that
+// agrees with the configured command; this rejects low-score echoes such as
+// "mo mo li" while preserving the low-score recall needed by the real device.
 //
 // Tuning: in stop-only mode every stop hit >= kMultiNetDetectThreshold is
 // logged on serial as
@@ -80,12 +83,45 @@ inline constexpr float kMultiNetDetectThreshold = 0.10f;
 // The wake word's own acceptance. Build 12/13 kept build 10's 0.20, but on the
 // bench 「茉莉」 scored 0.11-0.20 in ten of twelve wake-ups (build 13 rejected
 // all of them; build 10 with the same floor missed them too), so build 14 took
-// everything MultiNet reports (0.10). Video playing next to the device then
-// woke it falsely several times, so build 16 sits just above the floor.
+// everything MultiNet reports (0.10). Build 16 moved just above the floor,
+// but the connected-device run still accepted two low-score "mo mo li" echo
+// hits. Build 17 keeps the 0.12 score floor and adds transcript consistency
+// below 0.20.
 inline constexpr float kWakeWordMinScore = 0.12f;
+inline constexpr float kWakeWordTranscriptConsistencyScore = 0.20f;
 
-inline bool WakeWordAccepted(float score) {
-    return score >= kWakeWordMinScore;  // NaN is rejected
+inline bool WakeWordTextMatchesCommand(const char* detected, const char* expected) {
+    if (detected == nullptr || expected == nullptr) {
+        return false;
+    }
+    std::size_t detected_index = 0;
+    std::size_t expected_index = 0;
+    for (;;) {
+        while (detected[detected_index] != '\0' &&
+               std::isspace(static_cast<unsigned char>(detected[detected_index]))) {
+            ++detected_index;
+        }
+        while (expected[expected_index] != '\0' &&
+               std::isspace(static_cast<unsigned char>(expected[expected_index]))) {
+            ++expected_index;
+        }
+        if (detected[detected_index] == '\0' || expected[expected_index] == '\0') {
+            return detected[detected_index] == '\0' && expected[expected_index] == '\0';
+        }
+        if (std::tolower(static_cast<unsigned char>(detected[detected_index])) !=
+            std::tolower(static_cast<unsigned char>(expected[expected_index]))) {
+            return false;
+        }
+        ++detected_index;
+        ++expected_index;
+    }
+}
+
+inline bool WakeWordAccepted(float score, bool transcript_matches) {
+    if (!(score >= kWakeWordMinScore)) {  // also rejects NaN
+        return false;
+    }
+    return score >= kWakeWordTranscriptConsistencyScore || transcript_matches;
 }
 
 // MultiNet command action for the rows above (the wake word uses "wake").

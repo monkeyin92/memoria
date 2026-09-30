@@ -534,3 +534,164 @@ test("memory review WXML exposes daily recap, pending memory, and approximate he
   assert.match(wxml, /已确认的记忆/);
   assert.match(wxml, /近似播放记录/);
 });
+
+test("guardian review endpoints are canonical and encode the child id and day", async () => {
+  await withWx(async () => {
+    const requests = [];
+    global.wx.request = (options) => {
+      requests.push(options);
+      options.success({ statusCode: 200, data: { items: [] } });
+    };
+    await api.getGuardianChildDays("person/child", 30);
+    await api.generateGuardianChildRecap("person/child", "2026-10-01");
+    assert.equal(
+      requests[0].url,
+      `${CONTROL_API_BASE_URL}/v1/guardian/minors/person%2Fchild/days?limit=30`,
+    );
+    assert.equal(requests[0].method, "GET");
+    assert.equal(
+      requests[1].url,
+      `${CONTROL_API_BASE_URL}/v1/guardian/minors/person%2Fchild/days/2026-10-01/recap`,
+    );
+    assert.equal(requests[1].method, "POST");
+  });
+});
+
+const CHILD_BINDING = Object.freeze({
+  declared_mode: "parent_for_child",
+  status: "active",
+  account_owner_id: "person_owner",
+  primary_subject_ids: ["person_child"],
+});
+
+function guardianStubs(overrides = {}) {
+  return stubApi({
+    currentIdentity: () => ({ user_id: "person_owner" }),
+    isAuthEpochCurrent: () => true,
+    readBindingManifest: () => CHILD_BINDING,
+    getMemoryDays: async () => {
+      throw new Error("the legacy day list must not be used for a bound child");
+    },
+    getConversationReview: async () => ({
+      actual_heard: [],
+      memory_candidates: [],
+      confirmed_memories: [],
+    }),
+    getConversationSessions: async () => ({ items: [] }),
+    getGuardianChildDays: async () => ({
+      items: [
+        { day: "2026-10-01", message_count: 8 },
+        { day: "2026-09-30", message_count: 3 },
+      ],
+    }),
+    ...overrides,
+  });
+}
+
+test("a parent who bound the device for a child sees the child's days and never their words", async () => {
+  await withWx(async () => {
+    const page = instantiate(loadPage("../pages/memory/index"));
+    const restore = guardianStubs();
+    try {
+      await page.loadDays();
+      assert.equal(page.data.guardianMode, true);
+      assert.equal(page.data.guardianSubjectId, "person_child");
+      assert.deepEqual(
+        page.data.days.map((day) => [day.date, day.count, day.title]),
+        [
+          ["2026-10-01", 8, "孩子聊了 8 次"],
+          ["2026-09-30", 3, "孩子聊了 3 次"],
+        ],
+      );
+      assert.deepEqual(page.data.days[0].highlights, []);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("the generate button writes one day's recap into that day's card only", async () => {
+  await withWx(async () => {
+    const page = instantiate(loadPage("../pages/memory/index"));
+    const recapCalls = [];
+    const restore = guardianStubs({
+      requireRuntimeCapability: async () => allowedGate(),
+      generateGuardianChildRecap: async (minorId, day) => {
+        recapCalls.push([minorId, day]);
+        return {
+          day,
+          summary: {
+            title: "今天聊了画画",
+            overview: "孩子聊了学校里的画画，心情不错。",
+            highlights: ["画画"],
+            suggestion: "可以一起看看他的画。",
+          },
+        };
+      },
+      summarizeDay: async () => {
+        throw new Error("the account's own summary must not be generated for a child");
+      },
+    });
+    // requireLogin passes for an authenticated session.
+    const originalHas = api.hasAuthenticatedSession;
+    api.hasAuthenticatedSession = () => true;
+    try {
+      await page.loadDays();
+      page.setData({ selectedDate: "2026-09-30" });
+      await page.summarizeSelectedDay();
+      assert.deepEqual(recapCalls, [["person_child", "2026-09-30"]]);
+      const [first, second] = page.data.days;
+      assert.equal(first.title, "孩子聊了 8 次", "other days are untouched");
+      assert.equal(second.title, "今天聊了画画");
+      assert.deepEqual(second.highlights, ["画画"]);
+      assert.equal(second.suggestion, "可以一起看看他的画。");
+      assert.equal(page.data.summarizing, false);
+    } finally {
+      api.hasAuthenticatedSession = originalHas;
+      restore();
+    }
+  });
+});
+
+test("a missing long-term memory consent is explained in words, not as an error code", async () => {
+  await withWx(async () => {
+    const page = instantiate(loadPage("../pages/memory/index"));
+    const restore = guardianStubs({
+      getGuardianChildDays: async () => {
+        const error = new Error("guardian_consent_required");
+        error.detail = { code: "guardian_consent_required" };
+        throw error;
+      },
+    });
+    try {
+      await page.loadDays();
+      assert.equal(page.data.guardianMode, true);
+      assert.deepEqual(page.data.days, []);
+      assert.match(page.data.guardianError, /长期记忆还没有开启/);
+      assert.doesNotMatch(page.data.guardianError, /guardian_consent_required/);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("an account that is not a bound child's guardian keeps its own daily review", async () => {
+  await withWx(async () => {
+    const page = instantiate(loadPage("../pages/memory/index"));
+    const restore = guardianStubs({
+      readBindingManifest: () => ({ ...CHILD_BINDING, declared_mode: "self_use" }),
+      getMemoryDays: async () => ({ items: [{ day: "2026-10-01", message_count: 2, summary: null }] }),
+      getGuardianChildDays: async () => {
+        throw new Error("a self-use account must not read a child's days");
+      },
+    });
+    try {
+      await page.loadDays();
+      assert.equal(page.data.guardianMode, false);
+      assert.equal(page.data.days.length, 1);
+      assert.equal(page.data.days[0].count, 2);
+    } finally {
+      restore();
+    }
+  });
+});

@@ -27,6 +27,7 @@
 #include "memoria_display_hooks.h"
 #include "memoria_mascot_display.h"
 #include "memoria_pat.h"
+#include "memoria_wake_mode.h"
 #include "settings.h"
 
 #if ESP_VOCAT_ENABLE_CAP_TOUCH_SENSOR
@@ -593,23 +594,20 @@ private:
             EnterWifiConfigMode();
             return;
         }
-        if (state == kDeviceStateSpeaking) {
-            app.AbortSpeaking(kAbortReasonNone);
+        // From here the phone's wake mode decides what a tap means. A tap only
+        // ever wakes: on an idle device, in a mode that includes the screen.
+        // It never stops the robot talking and never sends it back to standby
+        // (BOOT stays the on-device hard stop), and with the wake word as the
+        // only way in it does nothing at all.
+        const auto mode = memoria::WakeModeRegistry::GetInstance().mode();
+        if (memoria::TapActionFor(mode, state == kDeviceStateIdle) ==
+            memoria::TapAction::kStartConversation) {
+            ESP_LOGI(TAG, "screen tap wakes the device (wake_mode=%s)", memoria::WakeModeName(mode));
+            app.WakeWordInvoke("screen_tap");
             return;
         }
-        if (state == kDeviceStateRecovering) {
-            app.ToggleChatState();
-            return;
-        }
-        if (state == kDeviceStateListening) {
-            app.StopListening();
-            return;
-        }
-        if (state == kDeviceStateIdle || state == kDeviceStateConnecting) {
-            ESP_LOGI(TAG, "idle screen tap ignored; wake word or BOOT starts chat");
-            return;
-        }
-        ESP_LOGI(TAG, "screen tap ignored in state=%d", static_cast<int>(state));
+        ESP_LOGI(TAG, "screen tap ignored state=%d wake_mode=%s", static_cast<int>(state),
+                 memoria::WakeModeName(mode));
     }
 
     void InitializeI2c() {

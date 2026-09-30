@@ -6,17 +6,21 @@
 ③ bad, missing, foreign or cross-endpoint signatures, an unknown device and an
    unbound device fail like the manifest route;
 ④ personas without mascot art fall back to their base companion, then the
-   account companion, then the shipped default.
+   account companion, then the shipped default;
+⑤ the poll also carries the device's ``wake_mode`` setting without moving the
+   display version, and a settings read that fails leaves the field out.
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from httpx import ASGITransport, AsyncClient
+from services.control_api.app.device_control import DeviceSettingsAuthority
 from services.control_api.app.device_display_profile import (
     DeviceDisplayProfile,
     mascot_for_persona,
@@ -119,8 +123,15 @@ async def test_bound_device_reads_its_companion_and_follows_the_picker(
         assert first.status_code == 200, first.text
         assert first.headers["cache-control"] == "no-store"
         body = first.json()
-        assert set(body) == {"schema_version", "device_id", "companion_id", "display_version"}
+        assert set(body) == {
+            "schema_version",
+            "device_id",
+            "companion_id",
+            "display_version",
+            "wake_mode",
+        }
         assert body["schema_version"] == 1
+        assert body["wake_mode"] == "button_or_keyword"
         assert body["device_id"] == DEVICE_ID
         assert body["companion_id"] == "starlight"
         assert isinstance(body["display_version"], str) and 0 < len(body["display_version"]) <= 32
@@ -315,3 +326,54 @@ def test_display_version_changes_with_the_companion_only() -> None:
     assert version("bd_1", "axu", "axu") == version("bd_1", "axu", "cu_x")
     assert version("bd_1", "axu", "axu") != version("bd_1", "taoxi", "taoxi")
     assert version("bd_1", "axu", "axu") != version("bd_2", "axu", "axu")
+
+
+@pytest.mark.asyncio
+async def test_display_profile_carries_the_wake_mode_without_moving_the_display_version(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    app = _app(monkeypatch, tmp_path, offline_mock=True)
+    key = Ed25519PrivateKey.generate()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = await _bound_device(client, app, key)
+        before = (await client.get(PATH, headers=_signed_headers(key))).json()
+        assert before["wake_mode"] == "button_or_keyword"
+
+        authority = DeviceSettingsAuthority(app.state.memory_store)
+        for mode in ("keyword", "button", "button_or_keyword"):
+            authority.update(
+                device_id=DEVICE_ID,
+                actor_id=owner["user_id"],
+                changes={"wake_mode": mode},
+                reason="test",
+                now=datetime.now(UTC),
+                acoustic_capability=None,
+            )
+            body = (await client.get(PATH, headers=_signed_headers(key))).json()
+            assert body["wake_mode"] == mode
+            # The mascot is re-applied only when this moves; a wake mode change
+            # must not make the device re-dress.
+            assert body["display_version"] == before["display_version"]
+            assert body["companion_id"] == before["companion_id"]
+
+
+@pytest.mark.asyncio
+async def test_display_profile_leaves_wake_mode_out_when_the_setting_cannot_be_read(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    app = _app(monkeypatch, tmp_path, offline_mock=True)
+    key = Ed25519PrivateKey.generate()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await _bound_device(client, app, key)
+
+        def unreadable(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("settings store unavailable")
+
+        monkeypatch.setattr(DeviceSettingsAuthority, "current", unreadable)
+        response = await client.get(PATH, headers=_signed_headers(key))
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert "wake_mode" not in body, "the firmware must keep what it already applies"
+        assert body["companion_id"] == "starlight"

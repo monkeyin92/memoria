@@ -483,7 +483,39 @@ def _apply_explicit_voice_style(plan: SpeechPlan, text: str) -> SpeechPlan:
     return replace(styled, tts_instruction=_tts_instruction_for_plan(styled))
 
 
+# The elder service mode tells the model to "slow down", but a text model cannot slow its
+# own voice: only the TTS rate can. Without this every elder reply was read at the same pace
+# as an adult's (0.93-1.05 depending on the companion). The provider clamps the result to its
+# own allowed range, so a slow companion is not slowed twice past what the voice tolerates.
+SENIOR_SERVICE_MODE = "senior_companion"
+SENIOR_RATE_FACTOR = 0.94
+
+
 def speech_plan_for_turn(
+    *,
+    label: str,
+    provider_label: str,
+    text: str,
+    evidence: tuple[str, ...] = (),
+    use_markup_tags: bool = False,
+    companion_id: str | None = None,
+    service_mode: str | None = None,
+) -> SpeechPlan:
+    """The turn's speech plan, slowed for an elder unless the user asked for a pace."""
+    plan = _speech_plan_for_turn(
+        label=label,
+        provider_label=provider_label,
+        text=text,
+        evidence=evidence,
+        use_markup_tags=use_markup_tags,
+        companion_id=companion_id,
+    )
+    if service_mode == SENIOR_SERVICE_MODE and _style_command_body(text) is None:
+        return replace(plan, rate=round(plan.rate * SENIOR_RATE_FACTOR, 3))
+    return plan
+
+
+def _speech_plan_for_turn(
     *,
     label: str,
     provider_label: str,

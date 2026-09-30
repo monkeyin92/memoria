@@ -105,7 +105,7 @@
           <view class="row-icon"><glass-icon name="mic" size="72"></glass-icon></view>
           <view class="row-copy">
             <text class="row-title">唤醒词</text>
-            <text class="row-meta">叫它一声，它就应你</text>
+            <text class="row-meta">{{wakeKeywordOn ? '叫它一声，它就应你' : '唤醒词唤醒已关闭，只能点击屏幕唤醒'}}</text>
           </view>
           <text class="row-value">{{wakeWordLabel}}</text>
           <text class="row-chevron">›</text>
@@ -118,6 +118,30 @@
           <text class="row-value {{online ? '' : 'row-value-warn'}}">{{online ? '已连接' : '未连接'}}</text>
           <text wx:if="{{!online}}" class="row-chevron">›</text>
         </view>
+      </view>
+
+      <!-- 唤醒方式：唤醒词 / 点击屏幕，可以同开，但至少开一个 -->
+      <view class="card wake-mode-card">
+        <view class="wake-mode-head">
+          <text class="setting-name">唤醒方式</text>
+          <text class="row-value">{{wakeModeLabel}}</text>
+        </view>
+        <view class="wake-mode-row">
+          <view class="row-copy">
+            <text class="row-title">唤醒词唤醒</text>
+            <text class="row-meta">喊「{{wakeWordLabel}}」叫醒它</text>
+          </view>
+          <switch checked="{{wakeKeywordOn}}" color="#326e70" disabled="{{!settings || settingsSaving}}" bindchange="toggleWakeKeyword" aria-label="唤醒词唤醒" />
+        </view>
+        <view class="wake-mode-row">
+          <view class="row-copy">
+            <text class="row-title">点击屏幕唤醒</text>
+            <text class="row-meta">轻点一下机器人的屏幕叫醒它</text>
+          </view>
+          <switch checked="{{wakeTapOn}}" color="#326e70" disabled="{{!settings || settingsSaving}}" bindchange="toggleWakeTap" aria-label="点击屏幕唤醒" />
+        </view>
+        <text wx:if="{{wakeModeNote}}" class="caption wake-mode-note {{wakeModeWarn ? 'wake-mode-note-warn' : ''}}">{{wakeModeNote}}</text>
+        <text class="caption">两种方式至少开一种，保存后约 20 秒内同步到机器人。</text>
       </view>
 
       <block wx:if="{{candidates.length > 0 && !currentUserLabelConfirmed}}">

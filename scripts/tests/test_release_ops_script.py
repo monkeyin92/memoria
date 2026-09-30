@@ -11,7 +11,7 @@ Two defects surfaced during the 20260925-full-stack-v1 release:
 
 20260927-unbind-release-v1 folded the device OTA control-api component back
 into the full stack, so all targets ran from the plain PREV compose file and
-freeze and rollback carried no component chain.  The 20260930-vector-keyword-v1
+freeze and rollback carried no component chain.  The 20261001-wake-mode-v1
 control-api component put control-api on a chain again (PREV compose, the
 pre-cutover override, the component override), so freeze accepts exactly that
 chain for control-api and rollback rebuilds it there; the release that follows
@@ -172,14 +172,15 @@ def test_live_chain_constants_have_no_stale_release_trees() -> None:
         "20260928-review-batches-v1", "20260929-livekit-retire-v1", "20260929-voice-core-refactor-v1",
         "20260929-stop-word-v1", "20260929-stop-playback-v1", "20260929-stop-reconnect-v1",
         "20260929-turn-taking-v1", "20260929-session-limits-v1",
+        "20260930-local-stop-v2", "20260930-vector-keyword-v1",
         "RETIRED_TARGETS", "retire_prev_media_chain",
         "/tmp/media-runtime",
     ):
         assert stale not in script, stale
-    assert "PREV_TAG=20260930-local-stop-v2" in script
-    assert "PREV_COMMIT=88a3c8053b2ba0c0411495674e4b355deaf839d8" in script
+    assert "PREV_TAG=20261001-device-archive-v1" in script
+    assert "PREV_COMMIT=412f31e9793c4f8845dd2660b1ae38ba56db1a16" in script
     # control-api is live on the component chain of this release, and only it.
-    assert "LIVE_CONTROL_RELEASE=20260930-vector-keyword-v1" in script
+    assert "LIVE_CONTROL_RELEASE=20261001-wake-mode-v1" in script
     assert 'CR=/opt/memoria/component-releases' in script
 
 
