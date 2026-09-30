@@ -49,6 +49,8 @@ def test_child_rules_keep_answers_short_concrete_and_warm() -> None:
     assert "不要替他责怪爸爸妈妈、老师或同学" in block
     # Homework stays guided, and the refusal is phrased as an invitation.
     assert "我们一起来做" in block and "不直接代做作业" in block
+    # A teenager is not talked down to, and a crush is not answered with "study first".
+    assert "不要用哄小孩的口气" in block and "先好好学习" in block
     # A story request gets a whole small story, not a teaser.
     assert "有开头、有经过、有结尾" in block
 
