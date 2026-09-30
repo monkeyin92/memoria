@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -1122,6 +1123,68 @@ def test_agent_release_artifact_gate_is_wired_into_every_agent_build_path() -> N
     assert "-m scripts.verify_agent_release_artifact" in workflow
     assert "scripts/tests/test_verify_agent_release_artifact.py" in workflow
     assert "scripts/tests/test_resolve_target_images.py" in workflow
+
+
+def _agent_release_kind(label_kind: str, image_version: str, stack_tag: str) -> str | None:
+    deploy = (ROOT / "scripts" / "deploy_agent_component.sh").read_text(encoding="utf-8")
+    start = deploy.index("agent_release_kind() {")
+    function = deploy[start : deploy.index("\n}\n", start) + 3]
+    result = subprocess.run(
+        ["bash", "-c", f'set -Eeuo pipefail\n{function}agent_release_kind "$@"', "_",
+         label_kind, image_version, stack_tag],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stdout if result.returncode == 0 else None
+
+
+@pytest.mark.parametrize(
+    ("label_kind", "image_version", "stack_tag", "expected"),
+    [
+        # 2026-09-30: the live bridge ran the full-stack image
+        # memoria-agent:20260930-local-stop-v2, which has no kind label.
+        ("", "20260930-local-stop-v2", "20260930-local-stop-v2", "full-stack"),
+        ("agent-source-overlay", "20260930-overlay", "20260930-stack", "agent-source-overlay"),
+        (
+            "agent-running-source-recovery",
+            "20260930-overlay",
+            "20260930-stack",
+            "agent-running-source-recovery",
+        ),
+        # An unlabeled image that is not the composed stack's own release.
+        ("", "20260929-session-limits-v1", "20260930-local-stop-v2", None),
+        ("", "", "", None),
+        ("control-api-source-overlay", "20260930-x", "20260930-x", None),
+    ],
+)
+def test_agent_component_lane_accepts_a_full_stack_bridge_only_as_its_stack_release(
+    label_kind: str, image_version: str, stack_tag: str, expected: str | None
+) -> None:
+    assert _agent_release_kind(label_kind, image_version, stack_tag) == expected
+
+
+def test_agent_component_rollback_reuses_only_the_exact_full_stack_bridge_image() -> None:
+    deploy = (ROOT / "scripts" / "deploy_agent_component.sh").read_text(encoding="utf-8")
+    freeze = deploy[deploy.index("freeze_bridge_rollback_image() {") :]
+    freeze = freeze[: freeze.index('\nfreeze_bridge_rollback_image "$bridge_container"')]
+
+    # The kind check runs before any Compose or rollback work.
+    assert deploy.index('bridge_release_kind="$(agent_release_kind') < deploy.index(
+        "bridge does not carry one current release authority"
+    )
+    # release_ops.sh tags the PREVIOUS stack as rollback-<tag>-pre without a
+    # kind, so an existing unlabeled tag goes through the identity check.
+    assert '      agent-source-overlay|"")\n' in freeze
+    assert '[[ "$rollback_existing_id" == "$image_id" \\' in freeze
+    assert (
+        'rollback_kind="$(agent_release_kind "$rollback_kind" "$rollback_release_tag" '
+        '"$bridge_stack_release_tag")" || rollback_kind=""'
+    ) in freeze
+    assert (
+        'if [[ "$rollback_kind" == agent-source-overlay || "$rollback_kind" == full-stack ]]; then'
+    ) in freeze
+    assert '"$rollback_image_id" == "$image_id"' in freeze
 
 
 def test_target_image_resolver_requires_an_explicit_candidate_identity() -> None:

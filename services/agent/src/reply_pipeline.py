@@ -6,10 +6,9 @@ response plan and context capsules; ``stream`` gates every model token through
 the turn's ``GenerationFence``, the frozen response plan and the reply budget;
 ``resolve_media_delegation`` answers fenced public realtime lookups.
 
-LiveKit is used only as a library here: ``llm.ChatContext`` carries messages
-and the chat model is any object with the ``livekit.plugins.openai.LLM``
-``chat(chat_ctx=..., tools=...)`` shape. No ``livekit.agents.Agent`` session or
-node pipeline is involved.
+``llm_types.ChatContext`` carries the messages and the chat model is any
+object with the ``chat(chat_ctx=..., tools=...)`` shape of
+``providers.openai_chat.OpenAIChatModel``.
 """
 
 from __future__ import annotations
@@ -22,8 +21,6 @@ import logging
 import time
 from collections.abc import AsyncGenerator, Callable
 from typing import Any, Literal, cast
-
-from livekit.agents import StopResponse, llm
 
 from services.agent.src import generation_output_policy as output_policy
 from services.agent.src.agent import (
@@ -43,6 +40,7 @@ from services.agent.src.duplex_runtime import (
     DuplexRuntime,
     GenerationVoiceSnapshot,
 )
+from services.agent.src.llm_types import ChatContext, StopResponse
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.orchestration.context_manager import ChatMessage
 from services.agent.src.orchestration.context_snapshot_manager import (
@@ -134,7 +132,7 @@ class ReplyPipeline:
         self._realtime_search_resolver = realtime_search_resolver
         self._realtime_search_model = realtime_search_model
         # Chat model port: ``chat(chat_ctx=..., tools=...)`` returning an async
-        # context manager over chunks, as ``livekit.plugins.openai.LLM`` does.
+        # context manager over chunks, as ``OpenAIChatModel`` does.
         self.language_model = language_model
         self._llm_provider = llm_provider
         self._llm_model = llm_model
@@ -186,7 +184,7 @@ class ReplyPipeline:
 
         if not request.cancellation.is_current(self._runtime.fence):
             return
-        chat_ctx = llm.ChatContext.empty()
+        chat_ctx = ChatContext.empty()
         chat_ctx.add_message(role="system", content=self._instructions)
         for turn in self._runtime.orchestrator.context.turns:
             if turn.role in {"user", "assistant"} and turn.content:

@@ -6,9 +6,6 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "av>=18,<19",
-  "livekit-agents==1.8.1",
-  "livekit-plugins-openai==1.8.1",
-  "livekit-plugins-silero==1.8.1",
   "openai>=2.36,<3",
   "fastapi>=0.115,<1",
   "uvicorn[standard]>=0.34,<1",
@@ -27,6 +24,7 @@ dependencies = [
   "prometheus-client>=0.21,<1",
   "sentry-sdk[fastapi]>=2.20,<3",
   "numpy>=2.1,<3",
+  "onnxruntime>=1.27,<2",
   "python-dotenv>=1.0,<2",
   "PyJWT>=2.9,<3",
   "cryptography>=45,<47",
@@ -45,7 +43,10 @@ dev = [
   "ruff>=0.9,<1",
   "mypy>=1.14,<2",
   "types-PyJWT",
+  "types-protobuf",
   "httpx>=0.28,<1",
+  "pillow>=12,<13",
+  "sounddevice>=0.5,<1",
 ]
 
 [build-system]
@@ -78,12 +79,8 @@ exclude = "(?x)(^services/.*/tests/)|(^tests/)"
 
 [[tool.mypy.overrides]]
 module = [
-  "livekit.*",
   "grpc.*",
   "grpc_health.*",
-  "livekit_agents.*",
-  "livekit_plugins_openai.*",
-  "livekit_plugins_silero.*",
   "opentelemetry.*",
   "prometheus_client.*",
   "sentry_sdk.*",
@@ -121,10 +118,10 @@ show_missing = true
 "services/identity/postgres_store.py" = 2587
 "services/device_fleet/service.py" = 2610
 "services/control_api/app/routes/interaction.py" = 2422
-"services/agent/src/providers/funasr_stt.py" = 1750
+"services/agent/src/providers/funasr_stt.py" = 1748
 "services/guardian/postgres_store.py" = 2470
 "services/archive/memory_catalog.py" = 34
-"services/archive/postgres_memory_catalog.py" = 2390
+"services/archive/postgres_memory_catalog.py" = 2385
 "services/consent/authority.py" = 2202
 "services/device_fleet/bootstrap_postgres_store.py" = 2175
 "services/memory_scope/shared_actions.py" = 2007

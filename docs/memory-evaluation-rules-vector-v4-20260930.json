@@ -1,7 +1,5 @@
 {
-  "adapter": "memoria-sqlite-rules",
-  "receipt_scope": "parent_baseline",
-  "source_commit": "3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948",
+  "adapter": "memoria-postgres-vector-text-embedding-v4",
   "case_count": 16,
   "cases": [
     {
@@ -63,8 +61,8 @@
           "recall_at_10": 1.0,
           "recall_at_5": 1.0,
           "recalled_keys": [
-            "exact-hangzhou",
-            "unmatched:453016e8-6d01-5a83-877f-69f582307784"
+            "unmatched:453016e8-6d01-5a83-877f-69f582307784",
+            "exact-hangzhou"
           ],
           "relevant_keys": [
             "exact-hangzhou"
@@ -232,8 +230,8 @@
           "recall_at_5": 1.0,
           "recalled_keys": [
             "mother-li-mei",
-            "unmatched:ac683eb4-95f0-5438-8ba0-023bc58d0b71",
-            "unmatched:664d1c42-7ff9-51ef-8103-941e8139446b"
+            "unmatched:664d1c42-7ff9-51ef-8103-941e8139446b",
+            "unmatched:ac683eb4-95f0-5438-8ba0-023bc58d0b71"
           ],
           "relevant_keys": [
             "mother-li-mei"
@@ -301,8 +299,8 @@
           "recall_at_10": 1.0,
           "recall_at_5": 1.0,
           "recalled_keys": [
-            "unmatched:66585107-da6d-59b0-b347-f4fdc0699486",
-            "hospital-followup"
+            "hospital-followup",
+            "unmatched:66585107-da6d-59b0-b347-f4fdc0699486"
           ],
           "relevant_keys": [
             "hospital-followup"
@@ -416,8 +414,8 @@
           "recall_at_5": 1.0,
           "recalled_keys": [
             "current-hangzhou",
-            "unmatched:2abd071e-5d72-530d-b0e0-2394c3e98c1d",
             "historical-suzhou",
+            "unmatched:2abd071e-5d72-530d-b0e0-2394c3e98c1d",
             "unmatched:dbed930d-0661-5353-b847-0028a4e77469"
           ],
           "relevant_keys": [
@@ -615,12 +613,14 @@
       "queries": [
         {
           "query_id": "repeat-query",
-          "recall_at_10": 0.0,
-          "recall_at_5": 0.0,
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
           "recalled_keys": [
-            "unmatched:65bd4c89-0ad6-52fe-88a8-56c6ae3263a0",
             "unmatched:c6957dcc-9e30-50fd-9bc9-6b586ee364b0",
-            "unmatched:653e35b8-173c-5aac-9863-cc29214abf8c"
+            "unmatched:65bd4c89-0ad6-52fe-88a8-56c6ae3263a0",
+            "unmatched:653e35b8-173c-5aac-9863-cc29214abf8c",
+            "unmatched:2218987e-1743-57bf-9b37-acbd7c59b88d",
+            "campus-startup-episode"
           ],
           "relevant_keys": [
             "campus-startup-episode"
@@ -1013,8 +1013,8 @@
           "recall_at_10": 1.0,
           "recall_at_5": 1.0,
           "recalled_keys": [
-            "wang-qiang-boundary",
-            "unmatched:85b19c92-5919-5385-a8d9-66f753c58dc8"
+            "unmatched:85b19c92-5919-5385-a8d9-66f753c58dc8",
+            "wang-qiang-boundary"
           ],
           "relevant_keys": [
             "wang-qiang-boundary"
@@ -1127,8 +1127,8 @@
           "recall_at_10": 1.0,
           "recall_at_5": 1.0,
           "recalled_keys": [
-            "owner-a-dali",
-            "unmatched:4b4797ae-b912-5953-bb5b-29b9f652b88d"
+            "unmatched:4b4797ae-b912-5953-bb5b-29b9f652b88d",
+            "owner-a-dali"
           ],
           "relevant_keys": [
             "owner-a-dali"
@@ -1441,7 +1441,9 @@
           "recalled_keys": [
             "project-rejected",
             "unmatched:e276137e-c837-5052-b81a-d9d6cba63e35",
-            "unmatched:0e5489ac-1b5b-5c9d-90d4-7df58a0498de"
+            "unmatched:0e5489ac-1b5b-5c9d-90d4-7df58a0498de",
+            "comfort-distractor-hangzhou",
+            "unmatched:b00eaf28-90cf-524d-9dea-f88600b1deb6"
           ],
           "relevant_keys": [
             "project-rejected"
@@ -1462,13 +1464,13 @@
     "extraction_precision": 0.39215686274509803,
     "extraction_recall": 1.0,
     "input_tokens": 0,
-    "latency_p50_ms": 1.0087499395012856,
-    "latency_p95_ms": 2.8866250067949295,
-    "ndcg_at_10": 0.8590438584406034,
+    "latency_p50_ms": 295.465957999113,
+    "latency_p95_ms": 710.8509579993552,
+    "ndcg_at_10": 0.8381607388450232,
     "output_tokens": 0,
     "paraphrase_followup_recall_at_5": 1.0,
-    "recall_at_10": 0.9375,
-    "recall_at_5": 0.9375,
+    "recall_at_10": 1.0,
+    "recall_at_5": 1.0,
     "source_attribution_accuracy": 0.95,
     "temporal_accuracy": 1.0,
     "token_cost": 0

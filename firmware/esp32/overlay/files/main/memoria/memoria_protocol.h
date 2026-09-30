@@ -13,6 +13,7 @@
 #include "device_identity.h"
 #include "memoria_audio_frame.h"
 #include "memoria_activation_client.h"
+#include "memoria_stop_keyword.h"
 #include "protocol.h"
 
 #include <freertos/FreeRTOS.h>
@@ -43,6 +44,12 @@ public:
     // barge-in source. Edge rejects playback-window vad.start otherwise,
     // so the device must suppress its own echo-triggered VAD.
     bool VoiceBargeInAllowed() const;
+    // True when this v2 session's signed allowed_barge_in contains keyword
+    // (and not none). Application only arms the local stop keyword then.
+    bool KeywordBargeInAllowed() const;
+    // KeywordBargeInAllowed() and a generation is actually playing audio:
+    // the only window in which a local stop keyword may stop playback.
+    bool LocalStopKeywordArmed();
     // Called from Application's one-second clock tick. A quiet server is
     // healthy when it answers WebSocket Ping with Pong; only a missed active
     // probe retires the fenced transport and enters normal media recovery.
@@ -69,6 +76,21 @@ public:
     // fence and the local flush sample end; v1 sessions keep the legacy
     // button.event. The locally stopped generation must never resume playback.
     void NotifyLocalFlush();
+
+    // One on-device stop keyword hit (see memoria_stop_keyword.h).
+    struct LocalStopKeywordHit {
+        std::string keyword_id;      // a kLocalStopPhrases id
+        float score = 0.0f;          // raw MultiNet prob
+        float near_end_rms = 0.0f;   // latest uplink RMS, relative full scale
+        bool voice_detected = false; // AFE VAD state at the hit
+    };
+
+    // Local stop keyword hard stop. Same local flush, fence and watermark
+    // capture as NotifyLocalFlush, but reports keyword.detected
+    // (hard_stop=true, source=local_kws) instead of button.stop. Re-checks
+    // LocalStopKeywordArmed() under the playback lock and returns false
+    // without touching playback when the window has already closed.
+    bool NotifyLocalKeywordStop(const LocalStopKeywordHit& hit);
 
     // Called by Application after AudioService reports its real playback
     // pipeline drained. This is the authority for playback.ended receipts.
@@ -225,6 +247,7 @@ private:
     uint32_t settings_version_ = 0;
     std::string audio_mode_;                    // negotiated; empty until session.accepted
     bool voice_barge_in_allowed_ = false;      // signed allowed_barge_in contains voice
+    bool keyword_barge_in_allowed_ = false;    // signed allowed_barge_in contains keyword
     bool runtime_profile_pending_ = false;
     uint32_t runtime_profile_pending_version_ = 0;
     ProfileApplyMode runtime_profile_apply_mode_ = ProfileApplyMode::kNextSession;
@@ -277,6 +300,9 @@ private:
     void QueueTransportRetire();
     bool QueueTransportAction(TransportActionKind kind, std::string text = {});
     void SendButtonStop(const GenerationFence& fence, uint64_t local_flush_sample_end);
+    void SendKeywordStop(const GenerationFence& fence, const LocalStopKeywordHit& hit);
+    // Shared L0 hard stop body; keyword == nullptr is the BOOT button stop.
+    void LocalHardStop(const LocalStopKeywordHit* keyword);
     void SendPlaybackReceipt(const char* type, const GenerationFence& fence,
                              uint32_t received_sequence, uint64_t rendered_sample_end,
                              bool approximate);

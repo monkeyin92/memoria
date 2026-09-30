@@ -67,6 +67,7 @@ jobs:
             media_edge:
               - 'packages/proto/**'
               - 'packages/contracts/generation-fence-vectors.json'
+              - 'packages/contracts/device-keyword-stop-v2.example.json'
               - 'services/media_edge/**'
               - 'scripts/generate_media_go_proto.sh'
               - 'infra/Dockerfile.media-edge'
@@ -77,6 +78,8 @@ jobs:
               - 'pyproject.toml'
               - 'uv.lock'
               - 'firmware/esp32/**'
+              - 'packages/contracts/device-media-v2.json'
+              - 'packages/contracts/device-keyword-stop-v2.example.json'
             firmware_build:
               - '.github/workflows/ci.yml'
               - 'firmware/esp32/**'
@@ -291,13 +294,22 @@ jobs:
           mapfile -t files < <(uv run python scripts/ci_test_shards.py --shards 4 --index ${{ matrix.shard }})
           echo "${#files[@]} test files"
           # Coverage is checked on the combined data; a shard alone is far below it.
-          uv run pytest --import-mode=importlib --cov=services --cov-report= --cov-fail-under=0 "${files[@]}"
+          # Per-test durations feed scripts/ci_test_durations.json (see ci_test_shards.py).
+          uv run pytest --import-mode=importlib --cov=services --cov-report= --cov-fail-under=0 \
+            --durations=0 --durations-min=0 "${files[@]}" | tee durations-shard-${{ matrix.shard }}.log
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-shard-${{ matrix.shard }}
           path: coverage-shard-${{ matrix.shard }}.data
           if-no-files-found: error
           retention-days: 1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: durations-shard-${{ matrix.shard }}
+          path: durations-shard-${{ matrix.shard }}.log
+          if-no-files-found: ignore
+          retention-days: 14
 
   # The required `python` check: it fails when any shard, the gates or the image
   # build failed (a skipped job would otherwise count as passing), then combines

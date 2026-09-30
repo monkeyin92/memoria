@@ -35,7 +35,7 @@ ESP32-S3 -> Go Media Edge -> Python Voice Core / Agent
 
 ## 技术栈与目录
 
-- Python 3.12、uv、FastAPI、FunASR、百炼兼容 LLM、豆包 Seed-TTS；`livekit-agents` 只作为 Voice Core 内的 LLM/TTS/STT 适配库使用（LiveKit 服务器、LiveKit Agent worker 与 Python 小程序/设备媒体网关已于 2026-09-29 退役）。
+- Python 3.12、uv、FastAPI、FunASR、百炼兼容 LLM、豆包 Seed-TTS；Voice Core 的 LLM/TTS/STT 适配层是仓库自有实现（`providers/openai_chat.py`、`providers/tts_stream.py`），不再依赖 `livekit-agents`（LiveKit 服务器、LiveKit Agent worker 与 Python 小程序/设备媒体网关已于 2026-09-29 退役）。
 - Go Media Edge：设备 WSS、generation fence、gRPC Voice Core bridge。
 - PostgreSQL 17 + pgvector、Redis、MinIO。
 - 微信小程序：`apps/miniprogram`；ESP32 overlay：`firmware/esp32`。
@@ -442,7 +442,7 @@ uv run python firmware/esp32/scripts/publish_firmware_release.py withdraw --remo
 
 签名私钥只在发布机上：`~/.config/memoria/secrets/firmware-release-ed25519.key`（600）；公钥同时写在固件头文件与 `services/control_api/app/device_firmware.py`，测试保证两者一致。私钥丢失后已出货设备只能 USB 刷机，请离线备份。服务器上发布目录是 control-api 现有 `/data` 挂载的宿主侧 `/var/lib/memoria/firmware-releases/<board>/`（`current.json` + `<build>/app.bin`）；control-api 每次提供前都重新验签并核对镜像大小与哈希，损坏的发布一律不提供。nginx 的 `/memoria-api/` 需 `proxy_max_temp_file_size 0`（生产 worker 写不了 proxy 临时目录，缓冲溢出的响应会被截断，设备会按哈希拒收）。`services/device_fleet/service.py` 里的 OTA assignment/receipt 领域（A/B 槽、防回滚能力声明）尚未接入 control-api 与固件，本路径不依赖它。
 
-默认出厂唤醒词为「茉莉」（`mo li`）。Memoria 板卡 assets 同时打包白名单词「梅莫里亚」（`mei mo li ya`），可在小程序设备页切换，或在填写 display + 拼音后保存自定义词（MultiNet 命令词，v1 非云端训练）。切换/自定义后设备需重连；固件需含 overlay patch `0021`。短按 BOOT 可启动会话；播放期间 BOOT 是本地物理硬停止权威。只有排查媒体问题时才构建 `./scripts/build.sh --wake-word disabled`。
+默认出厂唤醒词为「茉莉」（`mo li`）。Memoria 板卡 assets 同时打包白名单词「梅莫里亚」（`mei mo li ya`），可在小程序设备页切换，或在填写 display + 拼音后保存自定义词（MultiNet 命令词，v1 非云端训练）。切换/自定义后设备需重连；固件需含 overlay patch `0021`。短按 BOOT 可启动会话；播放期间 BOOT 是本地物理硬停止权威。设备端停止词识别（patch `0031`）从 build 15 起由 `overlay/files/main/memoria/memoria_stop_keyword.h` 里的 `kLocalStopKeywordEnabled` 关闭，播放期间与 build 10 相同：唤醒词检测器关闭，停止词不进 MultiNet 命令图，hello 声明 `local_stop_keyword=false`，由云端按语义停播（「停一下」「好的我知道了」「退下吧」「再见」等）。原因：播放期间回声消除、MultiNet6 与上行 Opus 编码挤在同一颗核上，2026-09-30 三段长回复都在约 10–13 秒时触发任务看门狗（`audio_afe` 停在 `model_detect`），推迟了服务器的 `playback.flush`，且没有一次本地命中。开关打开后的行为：播放期间且签名 `allowed_barge_in` 含 `keyword` 时，设备在 AEC/NS 输出上本地识别「停一下」「别说了」「停停」「停」，命中即走与 BOOT 相同的本地清空，再上报 `keyword.detected`（`hard_stop=true`、`source=local_kws`）；词表、逐词阈值和去抖在同一头文件，串口 `Local stop keyword <verdict>: id=… prob=…` 与 `MultiNet stop-mode …` 用于调阈值。MultiNet 整体检测门限为 0.10（`CONFIG_CUSTOM_WAKE_WORD_THRESHOLD=10`）；唤醒词接受线为 0.12（`kWakeWordMinScore`）：台架上「茉莉」十二次里有十次只有 0.11–0.20，按 0.20 接受几乎唤醒不了，build 14 曾放到 0.10，但旁边电脑放视频时误唤醒了好几次，build 16 抬到 0.12；低于接受线的命中仍会打印 `Wake word below threshold`（INFO）。只有排查媒体问题时才构建 `./scripts/build.sh --wake-word disabled`。
 
 ### 屏幕：伙伴吉祥物（替换原白描对话脸）
 

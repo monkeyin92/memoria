@@ -1054,7 +1054,12 @@ async def test_existing_provider_adapter_frames_real_provider_stream_before_comp
     assert [chunk.frame_samples for chunk in chunks] == [480, 480, 480]
     assert chunks[-1].text == ""
     assert chunks[-1].assistant_text_delta == ""
-    assert chunks[-1].text_spans == ()
+    # The stream exposes no subtitle timing: the whole reply is one span over
+    # all of its audio, claimable only once the last sample was rendered.
+    assert [
+        (span.text, span.audio_start_sample, span.audio_end_sample)
+        for span in chunks[-1].text_spans
+    ] == [("你好。", 0, 1440)]
     assert chunks[-1].final is True
     assert speech.phrases == ["你好。"]
     assert speech.bound_fences == [fence]

@@ -64,6 +64,17 @@ class SemanticEmbedderStub:
         return (0.0, 1.0)
 
 
+class ConstantEmbedderStub:
+    """Every text gets the same vector, so only the lexical part of the score can differ."""
+
+    model = "constant-test-v1"
+    dimensions = 2
+
+    async def embed(self, text: str) -> tuple[float, ...]:
+        del text
+        return (1.0, 0.0)
+
+
 class UnavailableEmbedderStub:
     model = "unavailable-test-v1"
     dimensions = 2
@@ -328,6 +339,90 @@ async def test_pgvector_projection_and_hybrid_search_are_rebuildable() -> None:
 @pytest.mark.asyncio
 @pytest.mark.skipif(
     not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
+    reason="set MEMORIA_TEST_POSTGRES_DSN to a pgvector PostgreSQL for the keyword bonus",
+)
+async def test_vector_search_gives_the_keyword_bonus_only_to_terms_that_name_something() -> None:
+    dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
+    account_id = f"keyword-bonus-{uuid.uuid4()}"
+    event_ids = (f"keyword-height-{uuid.uuid4()}", f"keyword-family-{uuid.uuid4()}")
+    archive = PostgresLifeArchive(dsn)
+    catalog = PostgresMemoryCatalog(
+        dsn,
+        extractor=RuleBasedMemoryExtractor(),
+        embedder=ConstantEmbedderStub(),
+        require_vector=True,
+    )
+    await archive.initialize()
+    await catalog.initialize()
+    connection = await asyncpg.connect(dsn)
+    try:
+        # The second sentence is a family principle, so it also gets a knowledge
+        # projection whose title is the boilerplate question "这段经历或原则是什么？".
+        for event_id, text in zip(
+            event_ids,
+            ("我恐高，站在阳台边都会腿软。", "我们家的家训是勤俭持家。"),
+            strict=True,
+        ):
+            await archive.record(
+                EvidenceEvent(
+                    event_id=event_id,
+                    account_id=account_id,
+                    event_type="speech.utterance_finalized",
+                    occurred_at=datetime.now(UTC),
+                    speaker_class="owner",
+                    source="keyword-bonus-test",
+                    payload={
+                        "text": text,
+                        "interaction_mode": "companion",
+                        "prompt_kind": "spontaneous",
+                        "owner_projection_eligible": True,
+                    },
+                )
+            )
+        await catalog.compile_pending(limit=1000)
+
+        async def scored(text: str) -> list[tuple[str, float]]:
+            result = await catalog.search(
+                MemorySearchQuery(
+                    account_id=account_id,
+                    speaker_class="owner",
+                    text=text,
+                    include_candidates=True,
+                )
+            )
+            assert {item.kind for item in result.items} >= {"claim", "episode", "knowledge"}
+            # Identical vectors: 0.45 semantic + 0.2 metadata, plus the keyword bonus if any.
+            return [
+                (
+                    item.source_event_id,
+                    item.score
+                    - (0.45 + 0.2 * (0.35 * item.stability + 0.65 * item.salience)),
+                )
+                for item in result.items
+            ]
+
+        # A question word and word fragments ("什么", "处会") name nothing: no bonus, in
+        # particular not for the knowledge boilerplate that contains "是什么".
+        assert all(bonus == pytest.approx(0.0, abs=1e-3) for _, bonus in await scored("身处高处会有什么反应？"))
+        # A real keyword still earns the bonus, and only on the memory that contains it.
+        bonuses = await scored("阳台")
+        assert {event for event, bonus in bonuses if bonus > 0.1} == {event_ids[0]}
+        assert all(
+            bonus == pytest.approx(0.175, abs=1e-3) for event, bonus in bonuses if event == event_ids[0]
+        )
+    finally:
+        await connection.execute(
+            "DELETE FROM archive_evidence_events WHERE account_id = $1",
+            account_id,
+        )
+        await connection.close()
+        await catalog.close()
+        await archive.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
     reason="set MEMORIA_TEST_POSTGRES_DSN to a pgvector PostgreSQL for semantic fallback",
 )
 async def test_embedding_outage_keeps_fulltext_projection_and_search_available() -> None:
@@ -388,6 +483,67 @@ async def test_embedding_outage_keeps_fulltext_projection_and_search_available()
             account_id,
         )
         await connection.close()
+        await catalog.close()
+        await archive.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
+    reason="set MEMORIA_TEST_POSTGRES_DSN to a pgvector PostgreSQL for strict vector evaluation",
+)
+async def test_strict_embedding_outage_fails_compile_and_search() -> None:
+    dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
+    account_id = f"embedding-strict-{uuid.uuid4()}"
+    event_id = f"embedding-strict-event-{uuid.uuid4()}"
+    archive = PostgresLifeArchive(dsn)
+    catalog = PostgresMemoryCatalog(
+        dsn,
+        extractor=RuleBasedMemoryExtractor(),
+        embedder=UnavailableEmbedderStub(),
+        require_vector=True,
+        fail_on_embedding_error=True,
+    )
+    await archive.initialize()
+    await catalog.initialize()
+    try:
+        await archive.record(
+            EvidenceEvent(
+                event_id=event_id,
+                account_id=account_id,
+                event_type="speech.utterance_finalized",
+                occurred_at=datetime.now(UTC),
+                speaker_class="owner",
+                source="embedding-strict-test",
+                payload={
+                    "text": "我们家的家训是答应别人的事一定做到。",
+                    "interaction_mode": "companion",
+                    "prompt_kind": "spontaneous",
+                    "owner_projection_eligible": True,
+                },
+            )
+        )
+
+        with pytest.raises(MemoryEmbeddingUnavailableError):
+            await catalog.compile_pending(limit=1000)
+        with pytest.raises(MemoryEmbeddingUnavailableError):
+            await catalog.search(
+                MemorySearchQuery(
+                    account_id=account_id,
+                    speaker_class="owner",
+                    text="家训",
+                    include_candidates=True,
+                )
+            )
+    finally:
+        connection = await asyncpg.connect(dsn)
+        try:
+            await connection.execute(
+                "DELETE FROM archive_evidence_events WHERE account_id = $1",
+                account_id,
+            )
+        finally:
+            await connection.close()
         await catalog.close()
         await archive.close()
 

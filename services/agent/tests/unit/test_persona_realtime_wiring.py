@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
-from livekit.agents import llm
+from services.agent.src import llm_types as llm
 from services.agent.src.context_assembler import ContextAssembler
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.reply_pipeline import ReplyPipeline
@@ -150,11 +150,11 @@ async def test_owner_realtime_agent_answers_without_persona_capsule(
     assert [item async for item in agent.stream_reply(chat_ctx)] == ["好的。"]
 
     system_text = "\n".join(
-        message.text_content for message in captured["ctx"].messages() if message.role == "system"
+        message.text_content for message in captured["ctx"].items if message.role == "system"
     )
     assert "仅依据当前用户这一轮内容回答" in system_text
     assert "人格胶囊 v3" not in system_text
-    assert [message.text_content for message in chat_ctx.messages()] == ["说说你的看法"]
+    assert [message.text_content for message in chat_ctx.items] == ["说说你的看法"]
     await runtime.close()
 
 
@@ -189,7 +189,7 @@ async def test_guest_cannot_read_cached_persona_and_baseline_context_is_unchange
     assert [item async for item in agent.stream_reply(chat_ctx)] == ["你好。"]
     await asyncio.sleep(0)
 
-    assert not any("人格胶囊" in message.text_content for message in captured["ctx"].messages())
+    assert not any("人格胶囊" in message.text_content for message in captured["ctx"].items)
     assert refresh_calls == []
     await runtime.close()
 
@@ -233,12 +233,12 @@ async def test_guest_context_cannot_see_owner_turns_or_use_tools(
 
     conversation = [
         (message.role, message.text_content)
-        for message in captured["ctx"].messages()
+        for message in captured["ctx"].items
         if message.role in {"user", "assistant"}
     ]
     assert conversation == [("user", "你们刚才聊了什么？")]
     system_text = "\n".join(
-        message.text_content for message in captured["ctx"].messages() if message.role == "system"
+        message.text_content for message in captured["ctx"].items if message.role == "system"
     )
     assert "标记为公开的工作记忆" in system_text
     assert "账户主人的持久历史" in system_text
@@ -290,7 +290,7 @@ async def test_uncertain_same_session_keeps_safe_followup_context(
 
     conversation = [
         (message.role, message.text_content)
-        for message in captured["ctx"].messages()
+        for message in captured["ctx"].items
         if message.role in {"user", "assistant"}
     ]
     assert conversation == [
@@ -324,7 +324,7 @@ def test_public_working_context_stops_at_owner_scope_boundary() -> None:
 
     assert [
         (message.role, message.text_content)
-        for message in safe.messages()
+        for message in safe.items
         if message.role in {"user", "assistant"}
     ] == [("user", "现在能聊什么")]
 
@@ -362,11 +362,11 @@ async def test_uncertain_uses_generic_chat_without_private_history_memory_or_too
 
     conversation = [
         (message.role, message.text_content)
-        for message in captured["ctx"].messages()
+        for message in captured["ctx"].items
         if message.role in {"user", "assistant"}
     ]
     system_text = "\n".join(
-        message.text_content for message in captured["ctx"].messages() if message.role == "system"
+        message.text_content for message in captured["ctx"].items if message.role == "system"
     )
     assert conversation == [("user", "怎么开始？")]
     assert "已确认表达风格 v1" not in system_text
@@ -423,12 +423,12 @@ async def test_uncertain_cannot_resume_an_owner_interrupted_reply(
 
     conversation = [
         (message.role, message.text_content)
-        for message in captured["ctx"].messages()
+        for message in captured["ctx"].items
         if message.role in {"user", "assistant"}
     ]
     assert conversation == [("user", compound_resume)]
     system_text = "\n".join(
-        message.text_content for message in captured["ctx"].messages() if message.role == "system"
+        message.text_content for message in captured["ctx"].items if message.role == "system"
     )
     assert "从中断处自然续接" not in system_text
     assert captured["tools"] == []
@@ -490,12 +490,12 @@ async def test_same_shadow_speaker_fallback_does_not_reuse_heard_history(
 
     conversation = [
         (message.role, message.text_content)
-        for message in captured["ctx"].messages()
+        for message in captured["ctx"].items
         if message.role in {"user", "assistant"}
     ]
     assert conversation == [("user", compound_resume)]
     system_text = "\n".join(
-        message.text_content for message in captured["ctx"].messages() if message.role == "system"
+        message.text_content for message in captured["ctx"].items if message.role == "system"
     )
     assert "从中断处自然续接" in system_text
     assert "南京是江苏省省会" not in system_text
@@ -516,7 +516,7 @@ def test_resume_context_without_current_user_fails_closed() -> None:
         resume_interrupted_reply=True,
     )
 
-    messages = list(safe.messages())
+    messages = list(safe.items)
     assert [message.role for message in messages] == ["system"]
     assert "控制响应计划" in messages[0].text_content
 
@@ -537,7 +537,7 @@ def test_resume_context_without_heard_assistant_keeps_only_current_user() -> Non
 
     assert [
         (message.role, message.text_content)
-        for message in safe.messages()
+        for message in safe.items
         if message.role != "system"
     ] == [("user", "继续")]
 
@@ -570,13 +570,13 @@ def test_owner_salutation_never_enters_guest_or_uncertain_context() -> None:
     )
 
     owner_system = "\n".join(
-        message.text_content for message in owner.messages() if message.role == "system"
+        message.text_content for message in owner.items if message.role == "system"
     )
     assert '"owner_salutation":"主人"' in owner_system
     for safe in (guest, uncertain):
         assert all(
             "owner_salutation" not in message.text_content
-            for message in safe.messages()
+            for message in safe.items
             if message.role == "system"
         )
 

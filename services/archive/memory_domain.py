@@ -44,6 +44,39 @@ def lexical_query_terms(text: str, *, max_terms: int = 48) -> tuple[str, ...]:
     return tuple(terms[:max_terms])
 
 
+#: Pronouns, question words, particles, copulas and demonstratives. An n-gram
+#: made only of these ("什么", "我们", "是什么") names no memory, yet it
+#: matches boilerplate such as the rule extractor's knowledge question and so
+#: outranks the claim that actually answers the query.
+_FUNCTION_CHARACTERS = frozenset(
+    "我你您他她它咱们的地得了着过吗呢吧啊呀嘛么什怎哪谁几是在有没这那个些就都也还又一下要会能"
+)
+
+
+def content_query_terms(terms: tuple[str, ...]) -> tuple[str, ...]:
+    """The terms that carry content; all of ``terms`` when none does."""
+
+    content = tuple(term for term in terms if not set(term) <= _FUNCTION_CHARACTERS)
+    return content or terms
+
+
+def edge_content_query_terms(terms: tuple[str, ...]) -> tuple[str, ...]:
+    """The terms that neither start nor end on a function character.
+
+    Next to embeddings a keyword hit is only worth a bonus when it names something.
+    "什么" and "我是" are function-only, but "里的" (家里的 / 客厅里的), "味的" and "时的" are
+    not: they are fragments across a word boundary that match unrelated memories.  A term
+    bounded by content characters ("刘老师", "2016", "红楼梦") keeps its exact-match value.
+    Unlike ``content_query_terms`` this may return nothing; the semantic score still ranks.
+    """
+
+    return tuple(
+        term
+        for term in terms
+        if term[0] not in _FUNCTION_CHARACTERS and term[-1] not in _FUNCTION_CHARACTERS
+    )
+
+
 def subject_lineage_predicates(
     *,
     bind: Callable[[str], str],

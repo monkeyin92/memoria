@@ -1,0 +1,27 @@
+{
+  "type": "keyword.detected",
+  "version": 2,
+  "stream_epoch": 18,
+  "control_sequence": 1,
+  "device_monotonic_ms": 1250,
+  "keyword_id": "ting_yi_xia",
+  "confidence": 0.800000011920929,
+  "hard_stop": true,
+  "evidence": {
+    "detected_sample": 20800,
+    "source": "local_kws",
+    "duration_ms": 700,
+    "aec_mode": "fd_low_cost",
+    "aec_verified": false,
+    "vad_probability": 1,
+    "near_end_rms": 0.0421000011265278,
+    "far_end_rms": 0,
+    "speaker_class": "unknown"
+  },
+  "expected_fence": {
+    "turn_id": 1,
+    "generation_id": 1,
+    "tool_epoch": 0,
+    "session_epoch": 1
+  }
+}

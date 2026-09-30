@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from livekit.agents import APIConnectionError
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoicePool, CosyVoiceTTS
+from services.agent.src.providers.provider_errors import APIConnectionError
 from services.agent.tests.integration.mock_servers import MockCosyVoiceServer
 
 
@@ -27,6 +27,8 @@ async def test_cosyvoice_happy_pcm_and_words() -> None:
         assert len(result.pcm) > 0
         assert result.words
         assert result.discarded is False
+        # The voice preview writes its WAV header from this rate.
+        assert tts.sample_rate == cfg.sample_rate == 24000
         await tts.aclose()
     finally:
         srv.stop()

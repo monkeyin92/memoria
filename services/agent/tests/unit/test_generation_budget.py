@@ -13,13 +13,13 @@ rule that decides whether that is allowed:
 
 from __future__ import annotations
 
-from livekit.agents import APIConnectionError
 from services.agent.src.providers.generation_budget import (
     AlignmentRetryError,
     BeforeAudioError,
     retry_allowed,
     retry_may_change_voice,
 )
+from services.agent.src.providers.provider_errors import APIConnectionError
 
 
 class _ProviderPreAudioError(BeforeAudioError, RuntimeError):

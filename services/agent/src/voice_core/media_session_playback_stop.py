@@ -11,7 +11,8 @@ carries out the Router's INTERRUPT_COMMAND the way a keyword stop does.
 It also owns which other finals around the playback window may endpoint a
 turn: while the reply plays, any other early endpoint blocks this stop and
 swallows later finals, so only a farewell that is not the reply's own echo may
-pin one; after playback, a follow-up that began inside the echo window may.
+pin one, and never a rescue; after playback, a follow-up that began inside the
+echo window may, but a farewell whose audio ends before the boundary never does.
 """
 
 from __future__ import annotations
@@ -152,6 +153,49 @@ class MediaPlaybackStopMixin:
             context.identity.session_id,
             len(text.strip()),
             echo,
+        )
+        return True
+
+    @staticmethod
+    def _playback_window_holds_close(
+        context: _MediaVoiceSession,
+        capture_end_sample: int,
+        *,
+        text: str,
+        source: str,
+        result: ASRResult | None,
+    ) -> bool:
+        """True when a device farewell candidate is audio of the reply's window.
+
+        Field 2026-09-29 session addf5e00: SenseVoice rescued the wake
+        greeting's echo (samples 17280-81280) as a farewell.  Its overlap
+        recovery resolved just after the playback ack, when the audible hold
+        no longer applied, and the session closed with the greeting.  Audio
+        that ends before the last playback boundary is the reply's time on
+        the uplink, whatever its text reads.  A rescue result spans its whole
+        provider task, echo included, so one heard while the reply plays is no
+        owner farewell either (``_playback_followup_straddles`` refuses it the
+        same way); one that runs past the boundary keeps its trailing farewell.
+        """
+
+        boundary = context.last_playback_end_sample
+        rescue = result is not None and result.rescue_synthesized
+        if context.identity.client_type != "device" or not (
+            (boundary is not None and capture_end_sample <= boundary)
+            or (rescue and context.runtime.assistant_speaking)
+        ):
+            return False
+        start = None if result is None else result.capture_start_sample
+        logger.info(
+            "media early conversation-close %s endpoint held from playback window "
+            "session=%s boundary=%s start=%s end=%s rescue=%s text_len=%s",
+            source,
+            context.identity.session_id,
+            boundary,
+            start,
+            capture_end_sample,
+            rescue,
+            len(text.strip()),
         )
         return True
 
@@ -318,7 +362,9 @@ class MediaPlaybackStopMixin:
         and was held for missing owner authority, so the story played on.
         """
 
-        if self._playback_holds_early_endpoint(
+        if self._playback_window_holds_close(
+            context, capture_end_sample, text=text, source=source, result=result
+        ) or self._playback_holds_early_endpoint(
             context, text, kind=f"conversation-close {source}",
             echo_only=not source.startswith("semantic"),
         ):

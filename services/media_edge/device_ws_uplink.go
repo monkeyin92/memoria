@@ -195,6 +195,18 @@ func (c *DeviceConnection) handleKeyword(envelope deviceControlEnvelope, runtime
 	}
 	end := event.Evidence.DetectedSample + durationSamples
 	fence := event.ExpectedFence.toFence(c.sessionID)
+	if event.HardStop {
+		// A local stop keyword races server-side cancels: if the generation
+		// it names is already cancelled or superseded, the device's own
+		// flush was the whole stop. Treat it as stale instead of failing the
+		// transport the way an invalid control would.
+		if current, active := runtime.session.GenerationSnapshot(); !active || !current.Equal(fence) {
+			c.server.metrics.staleGeneration.Add(1)
+			slog.Info("media edge ignored stale keyword hard stop", "session", c.sessionID, "device", c.deviceID, "epoch", c.epoch, "keyword", event.KeywordID, "generation", event.ExpectedFence.GenerationID)
+			c.clearPlaybackActive("device_keyword_stop", event.ExpectedFence)
+			return true
+		}
+	}
 	if err := runtime.SendKeyword(
 		event.KeywordID, float32(event.Confidence),
 		event.Evidence.DetectedSample, end, event.HardStop, fence,
@@ -202,6 +214,11 @@ func (c *DeviceConnection) handleKeyword(envelope deviceControlEnvelope, runtime
 		c.server.metrics.controlRejected.Add(1)
 		c.sendSessionError("keyword_rejected", true)
 		return false
+	}
+	if event.HardStop {
+		// Like button.stop, a hard-stop keyword is produced by a local
+		// playback flush, so no playback.ended follows for this generation.
+		c.clearPlaybackActive("device_keyword_stop", event.ExpectedFence)
 	}
 	return true
 }
@@ -289,6 +306,21 @@ func (c *DeviceConnection) handlePlaybackReceipt(envelope deviceControlEnvelope,
 	}
 	progress, ok := c.ledger.record(receipt, receipt.DeviceMonotonicMS)
 	if !ok {
+		if runtime != nil && runtime.GenerationReplaced(Fence{
+			SessionID: c.sessionID, TurnID: receipt.Fence.TurnID,
+			GenerationID: receipt.Fence.GenerationID, ToolEpoch: receipt.Fence.ToolEpoch,
+			SessionEpoch: receipt.Fence.SessionEpoch,
+		}) {
+			// Voice Core already replaced this generation, so a receipt the
+			// ledger refuses (a progress tick queued behind the terminal
+			// receipt of a device that was stalled for seconds, 2026-09-30)
+			// can no longer change what was heard. Closing the WSS for it
+			// forced a reconnect; drop it, and only it.
+			slog.Info("media edge dropped late receipt for a replaced generation",
+				"session", c.sessionID, "device", c.deviceID, "epoch", c.epoch,
+				"type", envelope.Type, "generation", receipt.Fence.GenerationID)
+			return true
+		}
 		c.server.metrics.controlRejected.Add(1)
 		return false
 	}

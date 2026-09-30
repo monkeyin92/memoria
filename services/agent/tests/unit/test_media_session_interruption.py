@@ -1666,6 +1666,76 @@ async def test_kws_stop_during_interruption_pending_finalizes_heard_prefix() -> 
 
 
 @pytest.mark.asyncio
+async def test_device_kws_hard_stop_does_not_flush_the_locally_stopped_generation() -> None:
+    # The firmware flushes playback itself before reporting a hard-stop
+    # keyword and fail-closes a playback.flush for that generation, so Core
+    # stops the reply without sending the flush effect.
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        turn_endpoint_grace_s=0.01,
+    )
+    registry.install()
+    identity = SessionIdentity(
+        "device-kws-local-flush",
+        account_id="account",
+        device_id="device",
+        client_type="device",
+        subject_id="owner",
+        binding_id="binding",
+        binding_version=1,
+        runtime_profile_version=1,
+    )
+    session = bridge.bridge.open(identity)
+    context, fence = await _start_speaking_reply(registry, session, identity)
+    assert context.output.playback.register_audio(fence, 0, 0, 2)
+    assert context.output.playback.add_span(
+        PlaybackSpan(
+            fence=fence,
+            text_start=0,
+            text_end=3,
+            audio_start_sample=0,
+            audio_end_sample=2,
+            text="你好。",
+        )
+    )
+    assert context.output.playback.acknowledge(fence, 2)
+    # Heard audio: without the local-flush rule this cancel would flush.
+    assert registry._device_playback_flush_required(context, fence)
+    effects: list[int] = []
+
+    async def emit_realtime_effect(
+        _session_id: str, effect_kind: int, _fence: GenerationFence, **_kwargs: object
+    ) -> bool:
+        effects.append(effect_kind)
+        return True
+
+    bridge.emit_realtime_effect = emit_realtime_effect  # type: ignore[attr-defined,method-assign]
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="kws-device-local-flush",
+            revision=1,
+            kind=SegmentKind.KWS,
+            capture_start_sample=400,
+            capture_end_sample=402,
+            text="ting",
+            final=True,
+            confidence=0.8,
+            hard_stop=True,
+        ),
+    )
+    assert context.runtime.fence.generation_id == fence.generation_id + 1
+    assert media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION not in effects
+    assert registry.metrics.latency_samples["interrupt_core_stop"]
+
+
+@pytest.mark.asyncio
 async def test_interrupt_metric_uses_core_monotonic_clock() -> None:
     import time as time_module
 

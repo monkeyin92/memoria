@@ -19,6 +19,7 @@ import pytest
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.orchestration.state_machine import ConversationState
+from services.agent.src.voice_core import media_session_projection
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.media_protocol import (
     DEVICE_POST_PLAYBACK_HOLDOFF_S,
@@ -793,6 +794,277 @@ async def test_device_stop_reusing_a_held_candidates_sentence_id_still_stops() -
         await harness.audio_frames(15)
         await harness.wait_for(lambda: bool(harness.cancel_effects()))
         harness.assert_story_stopped_session_open(story)
+    finally:
+        provider.release.set()
+        await harness.close()
+
+
+_NIGHT_GREETING = "这么晚还醒着，我在。"
+# The four characters of the field result are not logged (privacy); any
+# lexical farewell that is not the greeting's own text closes the same way.
+_ECHO_READ_AS_FAREWELL = "就这样吧"
+
+
+class _WakeGreetingProvider(_TaskScriptProvider):
+    """Speaks the allowlisted device wake greeting at connect, as on the ESP32."""
+
+    @staticmethod
+    def accept_output_intent(intent: Any) -> Any:
+        return intent
+
+    def generate_output(
+        self,
+        _identity: SessionIdentity,
+        intent: Any,
+        _fence: GenerationFence,
+        *,
+        work_id: str,
+        source_start_sample: int,
+    ) -> AsyncIterator[MediaReplyChunk]:
+        _ = work_id
+
+        async def chunks() -> AsyncIterator[MediaReplyChunk]:
+            yield MediaReplyChunk(
+                pcm_s16le=_REPLY_PCM,
+                source_start_sample=source_start_sample,
+                text=str(intent.tts_source),
+                first=True,
+                final=True,
+            )
+
+        return chunks()
+
+
+def _window_final(
+    epoch: int,
+    *,
+    sentence_id: str,
+    start_sample: int,
+    end_sample: int,
+    text: str,
+    rescue: bool = False,
+    task_epoch: int = 2,
+) -> ASRResult:
+    return ASRResult(
+        task_epoch=task_epoch,
+        sentence_id=sentence_id,
+        revision=1,
+        capture_start_sample=start_sample,
+        capture_end_sample=end_sample,
+        text=text,
+        is_final=True,
+        confidence=0.9,
+        stream_epoch=epoch,
+        rescue_synthesized=rescue,
+        rescue_rms=4_122 if rescue else None,
+        rescue_peak_abs=24_000 if rescue else None,
+    )
+
+
+async def _run_night_greeting(
+    monkeypatch: pytest.MonkeyPatch,
+    session_id: str,
+    script: Any,
+) -> None:
+    """The device wakes at night: the greeting plays while the uplink streams."""
+
+    monkeypatch.setattr(
+        media_session_projection,
+        "device_wake_phrase",
+        lambda *_args, **_kwargs: _NIGHT_GREETING,
+    )
+    provider = _WakeGreetingProvider()
+    harness = _StoryHarness(_device_identity(session_id), provider)
+    await harness.start()
+    try:
+        # The first uplink frame opens the media session, which greets.
+        await harness.audio_frames(1)
+        await harness.wait_for(lambda: harness.count("audio") >= 1)
+        assert harness.runtime.assistant_speaking
+        assert harness.context.output.assistant_text == _NIGHT_GREETING
+        await script(harness, provider)
+    finally:
+        provider.release.set()
+        await harness.close()
+
+
+async def _end_greeting_playback(harness: _StoryHarness, *, uplink_end: int) -> int:
+    """The uplink reaches ``uplink_end``, then the greeting's playback ack."""
+
+    await _frames_to(harness, uplink_end)
+    assert harness.runtime.assistant_speaking
+    await harness.playback_ended()
+    assert not harness.runtime.assistant_speaking
+    boundary = harness.context.last_playback_end_sample
+    assert boundary is not None
+    return int(boundary)
+
+
+def _assert_session_open(harness: _StoryHarness, context: Any) -> None:
+    assert not harness.closed()
+    assert not context.standby_requested and not context.closed
+    assert context.pending.conversation_close_endpoint_pinned is None
+    assert context.pending.turn_endpoint_sample is None
+
+
+async def _owner_farewell_after(
+    harness: _StoryHarness,
+    provider: _TaskScriptProvider,
+    boundary: int,
+) -> None:
+    """The owner says 「再见」 on uplink audio wholly past the playback boundary."""
+
+    epoch = harness.identity.stream_epoch
+    start = boundary + 3_200
+    await _frames_to(harness, start)
+    provider.by_end[(epoch, start + 9_600)] = _window_final(
+        epoch, sentence_id="3", start_sample=start, end_sample=start + 9_600, text="再见"
+    )
+    await _frames_to(harness, start + 9_600)
+    await harness.wait_for(harness.closed)
+
+
+@pytest.mark.asyncio
+async def test_device_greeting_echo_rescued_as_farewell_does_not_end_the_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Field 2026-09-29 session addf5e00: the wake greeting ended its own session.
+
+    With device VAD suppressed, FunASR re-transcribed the greeting's echo as
+    「这么晚还。」 and SenseVoice rescued the whole provider task (samples
+    17280-81280, wholly inside the playback window) as four characters.
+    Overlapping that final, the rescue went to overlap recovery, whose
+    lookups resolved just after the playback ack: the audible-playback hold
+    no longer applied, the farewell pinned an endpoint, and the commit's
+    close classifier read the window's text as a farewell 0.15 s after the
+    greeting.  The owner's real farewell after the boundary still ends the
+    session at once.
+    """
+
+    async def script(harness: _StoryHarness, provider: _WakeGreetingProvider) -> None:
+        context = harness.context
+        epoch = harness.identity.stream_epoch
+        ack_heard = asyncio.Event()
+
+        async def live_lookup_verdict(text: str) -> bool:
+            if text == _ECHO_READ_AS_FAREWELL:
+                await ack_heard.wait()  # the classifier answers after the ack
+            return False
+
+        async def close_verdict(text: str) -> bool:
+            return _ECHO_READ_AS_FAREWELL in text
+
+        harness.runtime.set_live_lookup_semantic_resolver(live_lookup_verdict)
+        harness.runtime.set_conversation_close_semantic_resolver(close_verdict)
+        provider.by_end[(epoch, 69_760)] = _window_final(
+            epoch, sentence_id="2", start_sample=53_760, end_sample=69_760, text="这么晚还。"
+        )
+        provider.by_end[(epoch, 81_280)] = _window_final(
+            epoch,
+            sentence_id="0",
+            start_sample=17_280,
+            end_sample=81_280,
+            text=_ECHO_READ_AS_FAREWELL,
+            rescue=True,
+        )
+        boundary = await _end_greeting_playback(harness, uplink_end=90_880)
+        assert 81_280 < boundary
+        ack_heard.set()
+        await asyncio.sleep(0.1)
+        await harness.settle()
+        _assert_session_open(harness, context)
+        assert _user_turn_texts(context) == []
+        assert provider.reply_calls == 0
+
+        await _owner_farewell_after(harness, provider, boundary)
+        assert context.standby_reason == "conversation_end_explicit"
+        assert provider.reply_calls == 0
+
+    await _run_night_greeting(monkeypatch, "greeting-echo-rescued-farewell", script)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verdict", ["lexical", "semantic"])
+async def test_device_greeting_window_farewell_final_after_the_ack_is_held(
+    monkeypatch: pytest.MonkeyPatch,
+    verdict: str,
+) -> None:
+    """The same greeting-window interval offered as a final just after the ack.
+
+    Its audio ends before the playback boundary: whatever its text reads, it
+    is the greeting's time on the uplink and cannot close the session.
+    """
+
+    text = _ECHO_READ_AS_FAREWELL if verdict == "lexical" else "早点睡吧"
+
+    async def script(harness: _StoryHarness, provider: _WakeGreetingProvider) -> None:
+        context = harness.context
+        epoch = harness.identity.stream_epoch
+
+        async def close_verdict(candidate: str) -> bool:
+            return "早点睡" in candidate
+
+        harness.runtime.set_conversation_close_semantic_resolver(close_verdict)
+        boundary = await _end_greeting_playback(harness, uplink_end=90_880)
+        assert 81_280 < boundary
+        provider.by_end[(epoch, 91_200)] = _window_final(
+            epoch, sentence_id="2", start_sample=17_280, end_sample=81_280, text=text
+        )
+        await _frames_to(harness, 91_200)
+        await asyncio.sleep(0.1)
+        await harness.settle()
+        _assert_session_open(harness, context)
+
+    await _run_night_greeting(monkeypatch, f"greeting-window-farewell-{verdict}", script)
+
+
+@pytest.mark.asyncio
+async def test_device_farewell_after_the_greeting_boundary_still_ends_the_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Owner speech past the playback boundary is no echo: it closes at once."""
+
+    async def script(harness: _StoryHarness, provider: _WakeGreetingProvider) -> None:
+        context = harness.context
+        boundary = await _end_greeting_playback(harness, uplink_end=90_880)
+        await _owner_farewell_after(harness, provider, boundary)
+        assert context.standby_reason == "conversation_end_explicit"
+
+    await _run_night_greeting(monkeypatch, "greeting-then-farewell", script)
+
+
+@pytest.mark.asyncio
+async def test_device_rescue_farewell_during_story_is_held() -> None:
+    """A rescue spans its whole provider task, the reply's echo included.
+
+    Heard while the reply plays, its farewell text is no owner command; the
+    owner's own 「再见」 still ends the session on its own interval.
+    """
+
+    provider = _TaskScriptProvider()
+    harness = _StoryHarness(_device_identity("rescue-farewell-during-story"), provider)
+    await harness.start()
+    try:
+        story = await harness.start_story()
+        context = harness.context
+        epoch = harness.identity.stream_epoch
+        rescue_start = harness.sample
+        provider.by_end[(epoch, rescue_start + 20 * 320)] = _window_final(
+            epoch,
+            sentence_id="0",
+            start_sample=rescue_start,
+            end_sample=rescue_start + 20 * 320,
+            text=_ECHO_READ_AS_FAREWELL,
+            rescue=True,
+            task_epoch=1,
+        )
+        await harness.audio_frames(20)
+        await harness.assert_story_still_playing(story)
+        _assert_session_open(harness, context)
+
+        await harness.audio_frames(15, final_text="再见")
+        await harness.wait_for(harness.closed)
+        assert context.standby_reason == "conversation_end_explicit"
     finally:
         provider.release.set()
         await harness.close()
