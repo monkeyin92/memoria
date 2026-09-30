@@ -28,6 +28,13 @@
 | D7 | 孩子（已声明或已认定的监护人）与老人（绑定人的代理认定）的危机提醒都入队；设备页为「给父母使用」的绑定显示提醒与微信订阅；文案改为中性「TA」。同时修复：2026-09-25 之后绑定的孩子，提醒入队在 PostgreSQL 必然失败 | 推送需开通订阅消息模板并设置 `MEMORIA_GUARDIAN_PUSH_ENABLED`（需授权）；离线兜底话术不入队 |
 | D8 | 话术加入心理援助热线一二三五六，版本 `crisis-transfer-draft-v2` | 仍为草稿，对外发布前须专业审核 |
 
+### 长期记忆留存（2026-09-30 补充，未上线，设备未验）
+
+- **对齐**：2026-09-25 的决定是家长绑定时勾选长期记忆，孩子即被记住；Policy 引擎里未成年人 `memory_capture` 的旧口径却是 `PERSIST_AGGREGATE_ONLY`（`minor_memory_minimized`），归档因此对孩子只能存聚合。现在有效监护同意、有效 `guardian_of` 关系、绑定 fence、受信设备、使用人本人说话同时满足时，决定改为与成人相同的 `RETENTION_TTL`（30 天）加 `NO_MODEL_TRAINING`（`minor_memory_guardian_authorized`）；缺任一项仍拒绝，测试逐项覆盖。
+- **Agent 闸门**：孩子的 profile 只在家长长期记忆同意有效时才列出 `memory_recall_private`，闸门凭它归档；撤销同意后下一份 profile 不再有。服务端 `/v1/archive/session-events` 仍独立按家长 `memory_retention` 同意决定是否保留原文，孩子的长期记忆再经 catalog 的窄投影（只留自述类、低敏领域，排除敏感语境）。家长仍看不到原文。
+- **没有做的**：不给归档逐轮申请动作时收据。Control 的动作围栏每次授权只能前进一步，与 Agent 的计数不同步，逐事件申请会大面积 409；服务端落库时本来就独立重新授权。
+- **边界**：归档证据行没有过期任务，`RETENTION_TTL` 目前只有 MemoryScope 记录执行；设备信任不足（现状：生产设备没有 attestation）时 profile 不含该授权，孩子的对话依旧不入库，见 TODOLIST P1-11。
+
 ## 已定，不再讨论
 
 - 设备只服务绑定时选定的使用人；家长给孩子绑定并勾选长期记忆，监护小结随之授予（2026-09-25、09-26 决定）。
