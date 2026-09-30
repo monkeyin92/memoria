@@ -80,6 +80,10 @@ int main() {
                    static_cast<double>(memoria::kLocalStopHardStopConfidenceFloor));
             printf("detect %.4f\n", static_cast<double>(memoria::kMultiNetDetectThreshold));
             printf("wake %.4f\n", static_cast<double>(memoria::kWakeWordMinScore));
+            printf("enabled %d\n", memoria::kLocalStopKeywordEnabled ? 1 : 0);
+            printf("registered %d\n",
+                   static_cast<int>(memoria::LocalStopPhrasesToRegister().end() -
+                                    memoria::LocalStopPhrasesToRegister().begin()));
         } else if (strcmp(command, "wake") == 0) {
             if (sscanf(line, "%*s %31s", score_text) != 1) {
                 return 2;
@@ -135,7 +139,7 @@ def _table(tool: pathlib.Path) -> tuple[dict[str, dict[str, object]], dict[str, 
     constants: dict[str, float] = {}
     for line in _run(tool, "table"):
         name, _, value = line.partition(" ")
-        if name in {"debounce", "floor", "detect", "wake"}:
+        if name in {"debounce", "floor", "detect", "wake", "enabled", "registered"}:
             constants[name] = float(value)
         else:
             phrase_id, command, display, min_score, duration = line.split("|")
@@ -186,12 +190,17 @@ def test_phrase_table_is_tunable_above_the_detection_floor(gate_tool: pathlib.Pa
     assert constants["floor"] == pytest.approx(0.8)
 
 
-def test_wake_word_accepts_everything_multinet_reports(gate_tool: pathlib.Path) -> None:
+def test_wake_word_acceptance_sits_just_above_the_multinet_floor(gate_tool: pathlib.Path) -> None:
     phrases, constants = _table(gate_tool)
-    # Bench scores for 「茉莉」 were 0.11-0.20 in ten of twelve wake-ups, so the
-    # acceptance is the MultiNet detection floor (0.10) since build 14.
-    assert constants["wake"] == pytest.approx(0.10)
-    assert _run(gate_tool, "wake 0.099", "wake 0.10", "wake 0.15", "wake 0.27", "wake nan") == [
+    # Bench scores for 「茉莉」 were 0.11-0.20 in ten of twelve wake-ups, so build 14
+    # took the whole MultiNet report (0.10); video playing nearby then woke the
+    # device falsely, so build 16 requires 0.12.
+    assert constants["wake"] == pytest.approx(0.12)
+    assert constants["wake"] > constants["detect"]
+    assert _run(
+        gate_tool, "wake 0.10", "wake 0.119", "wake 0.12", "wake 0.15", "wake 0.27", "wake nan"
+    ) == [
+        "reject",
         "reject",
         "wake",
         "wake",
@@ -378,9 +387,20 @@ def test_keyword_stop_reuses_the_button_local_flush_and_fence() -> None:
     assert hard_stop.index("playback_terminal_receipted_ = true;") < keyword
 
 
+def test_local_stop_keyword_is_off_and_registers_no_phrase(gate_tool: pathlib.Path) -> None:
+    # 2026-09-30: MultiNet during playback starved the idle task, so playback
+    # is back to build 10's load; the cloud path stops the reply.
+    _, constants = _table(gate_tool)
+    assert constants["enabled"] == 0
+    assert constants["registered"] == 0
+
+
 def test_hello_declares_the_local_stop_keyword() -> None:
     hello = _function_body(PROTOCOL_SOURCE, "std::string MemoriaProtocol::DeviceHelloV2(")
-    assert 'cJSON_AddBoolToObject(capabilities, "local_stop_keyword", true)' in hello
+    assert (
+        'cJSON_AddBoolToObject(capabilities, "local_stop_keyword", kLocalStopKeywordEnabled)'
+        in hello
+    )
 
 
 def _added_lines(patch: str, path: str) -> str:
@@ -397,7 +417,7 @@ def _added_lines(patch: str, path: str) -> str:
 
 def test_multinet_registers_stop_phrases_and_ignores_wake_in_stop_only_mode() -> None:
     wake = _added_lines(PATCH_0031, "main/audio/wake_words/custom_wake_word.cc")
-    assert "for (const auto& phrase : memoria::kLocalStopPhrases)" in wake
+    assert "for (const auto& phrase : memoria::LocalStopPhrasesToRegister())" in wake
     assert "commands_.push_back({phrase.command, phrase.id, memoria::kLocalStopAction});" in wake
     assert "stop_gate_.Evaluate(command.text.c_str(), score, stop_only_.load(), now_ms)" in wake
     # Stop-only mode logs every stop hit that reaches the 0.10 floor at INFO;
@@ -458,6 +478,7 @@ def test_application_arms_stop_keyword_only_for_playback_with_keyword_barge_in()
     app = _added_lines(PATCH_0031, "main/application.cc")
     configure = app[app.index("void Application::ConfigureStopKeywordForSpeaking()") :]
     configure = configure[: configure.index("void Application::HandleLocalStopKeyword")]
+    assert "memoria::kLocalStopKeywordEnabled && memoria_protocol != nullptr" in configure
     assert "memoria_protocol->KeywordBargeInAllowed()" in configure
     assert "audio_service_.EnableStopKeywordDetection()" in configure
     assert "audio_service_.EnableWakeWordDetection(false);" in configure

@@ -61,7 +61,7 @@ diff --git a/main/application.cc b/main/application.cc
 +    // on the AEC/NS output so the owner can stop playback by voice; each hit
 +    // re-checks that a generation is really playing (LocalStopKeywordArmed).
 +    auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
-+    if (memoria_protocol != nullptr && memoria_protocol->KeywordBargeInAllowed() &&
++    if (memoria::kLocalStopKeywordEnabled && memoria_protocol != nullptr && memoria_protocol->KeywordBargeInAllowed() &&
 +        audio_service_.EnableStopKeywordDetection()) {
 +        ESP_LOGI(TAG, "Local stop keyword armed for playback");
 +        return;
@@ -310,7 +310,7 @@ diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/c
      }
 +    // Local stop keywords share the wake word's MultiNet graph. They only act
 +    // in stop-only mode (device playback); see HandleStopCommand.
-+    for (const auto& phrase : memoria::kLocalStopPhrases) {
++    for (const auto& phrase : memoria::LocalStopPhrasesToRegister()) {
 +        commands_.push_back({phrase.command, phrase.id, memoria::kLocalStopAction});
 +        ESP_LOGI(TAG, "Local stop keyword id=%s command=%s min_score=%.2f",
 +                 phrase.id, phrase.command, static_cast<double>(phrase.min_score));

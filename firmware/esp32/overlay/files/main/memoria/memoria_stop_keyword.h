@@ -6,6 +6,17 @@
 
 namespace memoria {
 
+// Master switch for the on-device stop keywords below. Off since build 15:
+// playback runs echo cancellation, MultiNet6 and the uplink Opus encoder on
+// one core, and on 2026-09-30 that starved the idle task (task watchdog 10-13 s
+// into a long reply), delayed the server's playback.flush and produced no
+// local stop hit in three long replies. The cloud path already stops playback
+// by meaning ("停一下", "好的我知道了", "退下吧", "再见", ...), so with the
+// switch off the device behaves as build 10 did during playback: the wake word
+// detector is disabled, no stop phrase joins the MultiNet graph, and hello
+// declares local_stop_keyword=false.
+inline constexpr bool kLocalStopKeywordEnabled = false;
+
 // On-device stop keywords. Cloud ASR misses a short 「停」 under reply echo, so
 // VoCat registers these phrases as extra MultiNet commands next to the wake
 // word and lets them stop playback locally, the same way BOOT does. They only
@@ -17,7 +28,7 @@ namespace memoria {
 // Detection is split in two so weak hits stay visible for tuning. MultiNet
 // itself reports every command at or above kMultiNetDetectThreshold; the code
 // then applies each command's own acceptance: kWakeWordMinScore for the wake
-// word (equal to that floor since build 14) and min_score per stop row.
+// word (0.12, just above that floor since build 16) and min_score per stop row.
 //
 // Tuning: in stop-only mode every stop hit >= kMultiNetDetectThreshold is
 // logged on serial as
@@ -46,16 +57,32 @@ inline constexpr LocalStopPhrase kLocalStopPhrases[] = {
 inline constexpr std::size_t kLocalStopPhraseCount =
     sizeof(kLocalStopPhrases) / sizeof(kLocalStopPhrases[0]);
 
+// The phrases CustomWakeWord registers as MultiNet commands: all of them while
+// the switch is on, none while it is off.
+struct LocalStopPhraseRange {
+    const LocalStopPhrase* first;
+    const LocalStopPhrase* last;
+    constexpr const LocalStopPhrase* begin() const { return first; }
+    constexpr const LocalStopPhrase* end() const { return last; }
+};
+
+inline constexpr LocalStopPhraseRange LocalStopPhrasesToRegister() {
+    return kLocalStopKeywordEnabled
+               ? LocalStopPhraseRange{kLocalStopPhrases, kLocalStopPhrases + kLocalStopPhraseCount}
+               : LocalStopPhraseRange{kLocalStopPhrases, kLocalStopPhrases};
+}
+
 // MultiNet's model-wide detection threshold on this board. It must match
 // CONFIG_CUSTOM_WAKE_WORD_THRESHOLD (percent) in the board config.json, which
 // feeds the assets index.json; CustomWakeWord applies this value on Memoria.
 inline constexpr float kMultiNetDetectThreshold = 0.10f;
 
-// The wake word accepts everything MultiNet reports. Build 12/13 kept build 10's
-// 0.20, but on the bench 「茉莉」 scored 0.11-0.20 in ten of twelve wake-ups
-// (build 13 rejected all of them; build 10 with the same floor missed them
-// too), so acceptance was lowered to the detection floor (build 14).
-inline constexpr float kWakeWordMinScore = 0.10f;
+// The wake word's own acceptance. Build 12/13 kept build 10's 0.20, but on the
+// bench 「茉莉」 scored 0.11-0.20 in ten of twelve wake-ups (build 13 rejected
+// all of them; build 10 with the same floor missed them too), so build 14 took
+// everything MultiNet reports (0.10). Video playing next to the device then
+// woke it falsely several times, so build 16 sits just above the floor.
+inline constexpr float kWakeWordMinScore = 0.12f;
 
 inline bool WakeWordAccepted(float score) {
     return score >= kWakeWordMinScore;  // NaN is rejected
