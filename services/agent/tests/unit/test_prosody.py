@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from services.agent.src.orchestration.prosody import (
     ProsodyController,
     ProsodyFeatures,
@@ -59,3 +60,43 @@ def test_companion_delivery_changes_neutral_voice_without_overriding_user_reques
     assert steady.rate == 0.97
     assert "沉稳" in steady.tts_instruction
     assert explicit.rate == 1.10
+
+
+def test_the_elder_mode_really_slows_the_voice_unless_the_user_asked_for_a_pace() -> None:
+    kwargs = dict(label="neutral", provider_label="neutral", text="今天想随便聊聊", companion_id="axu")
+    general = speech_plan_for_turn(**kwargs)
+    senior = speech_plan_for_turn(**kwargs, service_mode="senior_companion")
+    student = speech_plan_for_turn(**kwargs, service_mode="student_minor")
+    assert general.rate == 0.97 and student.rate == general.rate
+    assert senior.rate == pytest.approx(0.97 * 0.94, abs=0.001)
+    assert senior.rate < general.rate
+    # Only the pace moves; emotion, delivery and instruction are the companion's.
+    assert (senior.voice_emotion, senior.delivery_mode, senior.tts_instruction) == (
+        general.voice_emotion,
+        general.delivery_mode,
+        general.tts_instruction,
+    )
+
+    # An explicit request for a pace is honoured exactly, not slowed again.
+    fast = speech_plan_for_turn(
+        label="neutral",
+        provider_label="neutral",
+        text="请说快一点",
+        companion_id="axu",
+        service_mode="senior_companion",
+    )
+    assert fast.rate == speech_plan_for_turn(
+        label="neutral", provider_label="neutral", text="请说快一点", companion_id="axu"
+    ).rate
+
+
+def test_a_comforting_reply_to_an_elder_is_slower_still() -> None:
+    sad = speech_plan_for_turn(
+        label="sad",
+        provider_label="sad",
+        text="我有点想我老伴了",
+        companion_id="axu",
+        service_mode="senior_companion",
+    )
+    assert sad.delivery_mode == "supportive"
+    assert sad.rate == pytest.approx(0.98 * 0.94, abs=0.001)
