@@ -424,13 +424,13 @@ def test_multinet_registers_stop_phrases_and_ignores_wake_in_stop_only_mode() ->
     stop_only_wake = stop_only_wake[: stop_only_wake.index("continue;")]
     assert "running_ = false" not in stop_only_wake
     assert "wake_word_detected_callback_" not in stop_only_wake
-    # A wake hit under build 10's 0.20 is skipped (DEBUG only) before the
-    # unchanged detection log and wake-up.
+    # A wake hit under build 10's 0.20 is skipped (logged at INFO so missed
+    # wake words show their score) before the unchanged detection log and wake-up.
     wake_gate = wake.index(
         'if (command.action == "wake" && !memoria::WakeWordAccepted(mn_result->prob[i])) {'
     )
     gate_body = wake[wake_gate : wake.index("continue;", wake_gate)]
-    assert 'ESP_LOGD(TAG, "Wake word below threshold' in gate_body
+    assert 'ESP_LOGI(TAG, "Wake word below threshold' in gate_body
     assert wake_gate < wake.index(
         'ESP_LOGI(TAG, "Custom wake word detected: command_id=%d, string=%s, prob=%f",'
     )

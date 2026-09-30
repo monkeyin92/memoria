@@ -403,7 +403,7 @@ diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/c
  void CustomWakeWord::Start() {
      running_ = true;
  }
-@@ -201,10 +280,37 @@
+@@ -201,10 +280,38 @@
          
          if (mn_state == ESP_MN_STATE_DETECTED) {
              esp_mn_results_t *mn_result = multinet_->get_results(multinet_model_data_);
@@ -431,8 +431,9 @@ diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/c
 +                }
 +#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +                if (command.action == "wake" && !memoria::WakeWordAccepted(mn_result->prob[i])) {
-+                    // Below build 10's model-wide 0.20: never a wake-up.
-+                    ESP_LOGD(TAG, "Wake word below threshold: string=%s, prob=%f",
++                    // Below build 10's model-wide 0.20: never a wake-up,
++                    // but logged so missed wake words show their score.
++                    ESP_LOGI(TAG, "Wake word below threshold: string=%s, prob=%f",
 +                             mn_result->string, mn_result->prob[i]);
 +                    continue;
 +                }
@@ -443,7 +444,7 @@ diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/c
                  if (command.action == "wake") {
                      last_detected_wake_word_ = command.text;
                      running_ = false;
-@@ -218,6 +324,11 @@
+@@ -218,6 +325,11 @@
              multinet_->clean(multinet_model_data_);
          } else if (mn_state == ESP_MN_STATE_TIMEOUT) {
              ESP_LOGD(TAG, "Command word detection timeout, cleaning state");
