@@ -12,8 +12,8 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 import websockets
-from websockets.asyncio.client import ClientConnection
-
+from livekit.agents import APIConnectionError, APIConnectOptions, tts
+from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS, TimedString
 from services.agent.src.contracts.events import TimedWord
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.observability.metrics import MetricsRegistry
@@ -40,13 +40,8 @@ from services.agent.src.providers.generation_budget import (
     retry_allowed,
     retry_may_change_voice,
 )
-from services.agent.src.providers.provider_errors import (
-    DEFAULT_API_CONNECT_OPTIONS,
-    APIConnectionError,
-    APIConnectOptions,
-)
 from services.agent.src.providers.reliability import CircuitBreaker
-from services.agent.src.providers.tts_stream import AudioEmitter, SynthesizeStream, TimedString
+from websockets.asyncio.client import ClientConnection
 
 logger = logging.getLogger(__name__)
 COSYVOICE_EMOTIONS = frozenset(
@@ -375,8 +370,8 @@ class CosyVoicePool:
         self.metrics.set_tts_pool_available(0)
 
 
-class CosyVoiceSynthesizeStream(SynthesizeStream):
-    """Streaming synthesize; cancel closes CosyVoice WS and discards from pool."""
+class CosyVoiceSynthesizeStream(tts.SynthesizeStream):
+    """LiveKit streaming synthesize; cancel closes CosyVoice WS and discards from pool."""
 
     def __init__(
         self,
@@ -388,7 +383,7 @@ class CosyVoiceSynthesizeStream(SynthesizeStream):
         conn_options: APIConnectOptions,
         fence: GenerationFence | None = None,
     ) -> None:
-        super().__init__(conn_options=conn_options)
+        super().__init__(tts=tts_instance, conn_options=conn_options)
         self._tts_instance = tts_instance
         self._config = config
         self._fallback_config = fallback_config
@@ -398,7 +393,7 @@ class CosyVoiceSynthesizeStream(SynthesizeStream):
         self._conn: PooledConnection | None = None
         self._discarded = False
 
-    async def _run(self, output_emitter: AudioEmitter) -> None:
+    async def _run(self, output_emitter: tts.AudioEmitter) -> None:
         conn = await self._pool.acquire()
         self._conn = conn
         if self._fence is not None:
@@ -581,10 +576,18 @@ class CosyVoiceSynthesizeStream(SynthesizeStream):
             raise
 
 
-class CosyVoiceTTS:
-    """CosyVoice Realtime TTS with a discard-on-cancel pool."""
+class CosyVoiceTTS(tts.TTS[Any]):
+    """LiveKit TTS plugin for CosyVoice Realtime with discard-on-cancel pool."""
 
     def __init__(self, config: CosyVoiceConfig, pool: CosyVoicePool | None = None) -> None:
+        super().__init__(
+            capabilities=tts.TTSCapabilities(
+                streaming=True,
+                aligned_transcript=True,
+            ),
+            sample_rate=config.sample_rate,
+            num_channels=1,
+        )
         self._config = config
         self._baseline_model = config.model
         self._baseline_voice = config.voice
@@ -609,12 +612,6 @@ class CosyVoiceTTS:
         return self._config.model
 
     @property
-    def sample_rate(self) -> int:
-        """PCM rate of every synthesis; the voice preview writes its WAV with it."""
-
-        return self._config.sample_rate
-
-    @property
     def pool(self) -> CosyVoicePool:
         return self._pool
 
@@ -632,7 +629,7 @@ class CosyVoiceTTS:
         self,
         callback: Callable[[GenerationFence, str, str], None],
     ) -> None:
-        """Observe stream alignment without losing its generation/task identity."""
+        """Observe LiveKit stream alignment without losing its generation/task identity."""
         self._alignment_callback = callback
 
     def _report_alignment(
@@ -729,6 +726,11 @@ class CosyVoiceTTS:
     ) -> None:
         if self._trace_callback is not None:
             self._trace_callback(name, status, detail)
+
+    def synthesize(
+        self, text: str, *, conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS
+    ) -> tts.ChunkedStream:
+        return self._synthesize_with_stream(text, conn_options=conn_options)
 
     def stream(
         self, *, conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS

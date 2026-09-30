@@ -87,7 +87,7 @@ class ScriptedChatModel:
     """Chat-model double for ``ReplyPipeline.language_model``.
 
     ``respond(chat_ctx, tools)`` returns an async iterator of chunks (or an
-    awaitable of one); like ``livekit.plugins.openai.LLM`` the stream is closed when the
+    awaitable of one); like ``OpenAIChatModel`` the stream is closed when the
     ``chat()`` context exits.
     """
 

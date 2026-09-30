@@ -1,4 +1,4 @@
-"""Adapter for Volcengine Doubao bidirectional streaming TTS."""
+"""LiveKit adapter for Volcengine Doubao bidirectional streaming TTS."""
 
 from __future__ import annotations
 
@@ -16,9 +16,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import websockets
-from websockets.asyncio.client import ClientConnection
-from websockets.protocol import State
-
+from livekit.agents import APIConnectionError, APIConnectOptions, tts
+from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS, TimedString
 from services.agent.src.config import validate_doubao_auth
 from services.agent.src.contracts.events import TimedWord
 from services.agent.src.contracts.ids import GenerationFence
@@ -46,13 +45,9 @@ from services.agent.src.providers.generation_budget import (
     GenerationBudget,
     retry_allowed,
 )
-from services.agent.src.providers.provider_errors import (
-    DEFAULT_API_CONNECT_OPTIONS,
-    APIConnectionError,
-    APIConnectOptions,
-)
 from services.agent.src.providers.reliability import CircuitBreaker
-from services.agent.src.providers.tts_stream import AudioEmitter, SynthesizeStream, TimedString
+from websockets.asyncio.client import ClientConnection
+from websockets.protocol import State
 
 logger = logging.getLogger(__name__)
 DEFAULT_WS_URL = "wss://openspeech.bytedance.com/api/v3/tts/bidirection"
@@ -640,7 +635,7 @@ class DoubaoTTSPoolRouter:
         return pool
 
 
-class DoubaoSynthesizeStream(SynthesizeStream):
+class DoubaoSynthesizeStream(tts.SynthesizeStream):
     def __init__(
         self,
         *,
@@ -652,7 +647,7 @@ class DoubaoSynthesizeStream(SynthesizeStream):
         conn_options: APIConnectOptions,
         fence: GenerationFence | None,
     ) -> None:
-        super().__init__(conn_options=conn_options)
+        super().__init__(tts=tts_instance, conn_options=conn_options)
         self._tts_instance = tts_instance
         self._config = config
         self._pool = pool
@@ -674,7 +669,7 @@ class DoubaoSynthesizeStream(SynthesizeStream):
 
         return self._timed_transcript_alignment
 
-    async def _run(self, output_emitter: AudioEmitter) -> None:
+    async def _run(self, output_emitter: tts.AudioEmitter) -> None:
         replay: list[str] = []
         # One-shot gate: a framework re-entry of ``_run`` after a fallback must
         # continue from the already-fallen-back voice instead of restarting from
@@ -713,7 +708,7 @@ class DoubaoSynthesizeStream(SynthesizeStream):
 
     async def _run_attempt(
         self,
-        output_emitter: AudioEmitter,
+        output_emitter: tts.AudioEmitter,
         *,
         config: DoubaoTTSConfig,
         pool: DoubaoTTSPool,
@@ -932,8 +927,8 @@ class DoubaoSynthesizeStream(SynthesizeStream):
             if not got_audio and isinstance(exc, websockets.exceptions.ConnectionClosed):
                 # An idle pooled socket can be closed normally by Doubao
                 # between sessions. Classify that transport failure as
-                # retryable only before any PCM reached the emitter so the
-                # stream can replay the buffered text on a fresh connection.
+                # retryable only before any PCM reached the emitter so
+                # LiveKit can replay the buffered text on a fresh connection.
                 # Once audio starts, replaying the phrase would duplicate
                 # speech and must remain fail-closed.
                 raise APIConnectionError(
@@ -952,7 +947,7 @@ class DoubaoSynthesizeStream(SynthesizeStream):
         return parse_server_message(raw)
 
 
-class DoubaoTTS:
+class DoubaoTTS(tts.TTS[Any]):
     def __init__(
         self,
         config: DoubaoTTSConfig,
@@ -961,6 +956,11 @@ class DoubaoTTS:
         metrics: MetricsRegistry | None = None,
     ) -> None:
         baseline_config = replace(config)
+        super().__init__(
+            capabilities=tts.TTSCapabilities(streaming=True, aligned_transcript=True),
+            sample_rate=baseline_config.sample_rate,
+            num_channels=1,
+        )
         self._config = replace(baseline_config)
         self._baseline_profile = baseline_config.voice_profile
         self._baseline_resource_id = baseline_config.resource_id
@@ -1195,6 +1195,14 @@ class DoubaoTTS:
     ) -> None:
         if self._trace_callback is not None:
             self._trace_callback(name, status, detail)
+
+    def synthesize(
+        self,
+        text: str,
+        *,
+        conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
+    ) -> tts.ChunkedStream:
+        return self._synthesize_with_stream(text, conn_options=conn_options)
 
     def stream(
         self,

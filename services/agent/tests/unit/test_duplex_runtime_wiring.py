@@ -1026,7 +1026,7 @@ async def test_rtc_recovery_forces_generation_bump_while_idle() -> None:
     assert runtime.orchestrator.metrics.get("interruptions_confirmed_total") == 0
 
 
-def test_livekit_llm_history_uses_only_heard_assistant_text() -> None:
+def test_llm_history_uses_only_heard_assistant_text() -> None:
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="问题一")
     chat_ctx.add_message(role="assistant", content="完整生成但只听到一半")
@@ -1041,7 +1041,7 @@ def test_livekit_llm_history_uses_only_heard_assistant_text() -> None:
     ]
 
 
-def test_livekit_llm_history_aligns_latest_heard_reply_when_counts_differ() -> None:
+def test_llm_history_aligns_latest_heard_reply_when_counts_differ() -> None:
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="帮我安排口语训练")
     chat_ctx.add_message(role="assistant", content="模型生成的训练安排")

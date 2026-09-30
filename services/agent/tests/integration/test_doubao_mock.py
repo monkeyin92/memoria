@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from livekit.agents import APIConnectionError, APIConnectOptions
-from livekit.agents.types import USERDATA_TIMED_TRANSCRIPT
 from scripts import provider_smoke_test
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.providers.doubao_tts import (
@@ -19,6 +17,8 @@ from services.agent.src.providers.doubao_tts import (
     DoubaoTTSPool,
 )
 from services.agent.src.providers.doubao_voice_catalog import catalog_by_id
+from services.agent.src.providers.provider_errors import APIConnectionError, APIConnectOptions
+from services.agent.src.providers.tts_stream import USERDATA_TIMED_TRANSCRIPT
 from services.agent.tests.integration.mock_servers import MockDoubaoServer
 
 _VOICES = catalog_by_id()
@@ -114,7 +114,7 @@ async def test_first_audio_timeout_retries_with_a_fresh_connection() -> None:
 
 
 @pytest.mark.asyncio
-async def test_livekit_stream_retries_expired_pooled_connection_before_audio() -> None:
+async def test_stream_retries_expired_pooled_connection_before_audio() -> None:
     server = MockDoubaoServer(scenario="expire_after_first")
     server.start()
     tts = DoubaoTTS(_config(server))
@@ -400,7 +400,7 @@ async def test_personal_batch_does_not_replay_after_pcm_without_timestamps() -> 
 
 
 @pytest.mark.asyncio
-async def test_livekit_personal_before_audio_failure_replays_once_on_baseline() -> None:
+async def test_stream_personal_before_audio_failure_replays_once_on_baseline() -> None:
     server = MockDoubaoServer(scenario="slow_once")
     server.start()
     tts = DoubaoTTS(_config(server, first_audio_timeout_s=0.05))
@@ -495,7 +495,7 @@ async def test_personal_batch_pool_acquire_failure_falls_back_to_selected_xuanmo
 
 
 @pytest.mark.asyncio
-async def test_personal_livekit_pool_acquire_failure_falls_back_to_selected_xuanmo(
+async def test_personal_stream_pool_acquire_failure_falls_back_to_selected_xuanmo(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     server = MockDoubaoServer()
@@ -558,7 +558,7 @@ async def test_personal_livekit_pool_acquire_failure_falls_back_to_selected_xuan
 
 
 @pytest.mark.asyncio
-async def test_livekit_stream_emits_audio_and_reports_word_alignment() -> None:
+async def test_stream_emits_audio_and_reports_word_alignment() -> None:
     server = MockDoubaoServer(scenario="split_pcm")
     server.start()
     tts = DoubaoTTS(_config(server))
@@ -584,8 +584,8 @@ async def test_livekit_stream_emits_audio_and_reports_word_alignment() -> None:
 
 
 @pytest.mark.asyncio
-async def test_livekit_stream_preserves_pcm_across_odd_transport_chunks() -> None:
-    server = MockDoubaoServer(scenario="split_pcm_odd")
+async def test_stream_preserves_pcm_across_odd_transport_chunks() -> None:
+    server = MockDoubaoServer(scenario="split_pcm_odd", pcm_ramp=True)
     server.start()
     tts = DoubaoTTS(_config(server))
     traces: list[tuple[str, str, dict[str, object] | None]] = []
@@ -614,6 +614,29 @@ async def test_livekit_stream_preserves_pcm_across_odd_transport_chunks() -> Non
 
 
 @pytest.mark.asyncio
+async def test_stream_delivers_many_progressive_chunks_in_order() -> None:
+    server = MockDoubaoServer(pcm_chunks=9, pcm_ramp=True, chunk_delay_s=0.01)
+    server.start()
+    tts = DoubaoTTS(_config(server))
+    try:
+        async with tts.stream(conn_options=APIConnectOptions(max_retry=0)) as stream:
+            stream.push_text("第一句，")
+            stream.push_text("第二句比较长一些，用来产生多段音频。")
+            stream.end_input()
+            events = [event async for event in stream]
+
+        assert b"".join(bytes(event.frame.data) for event in events) == server.pcm
+        assert all(event.frame.sample_rate == 24000 for event in events)
+        assert [event.is_final for event in events][-1] is True
+        assert server.task_requests == [["第一句，", "第二句比较长一些，用来产生多段音频。"]]
+        assert stream.timed_transcript_alignment() == "ok"
+        assert "".join(stream.timed_transcript()) == "第一句，第二句比较长一些，用来产生多段音频。"
+    finally:
+        await tts.aclose()
+        server.stop()
+
+
+@pytest.mark.asyncio
 async def test_synthesize_rejects_odd_total_pcm_without_returning_residual_byte() -> None:
     server = MockDoubaoServer(scenario="odd_pcm")
     server.start()
@@ -634,7 +657,7 @@ async def test_synthesize_rejects_odd_total_pcm_without_returning_residual_byte(
 
 
 @pytest.mark.asyncio
-async def test_livekit_stream_emits_only_final_scaled_word_alignment() -> None:
+async def test_stream_emits_only_final_scaled_word_alignment() -> None:
     server = MockDoubaoServer(scenario="scaled_ts")
     server.start()
     tts = DoubaoTTS(_config(server))
@@ -664,7 +687,7 @@ async def test_livekit_stream_emits_only_final_scaled_word_alignment() -> None:
 
 
 @pytest.mark.asyncio
-async def test_livekit_stream_marks_excessive_relative_alignment_degraded() -> None:
+async def test_stream_marks_excessive_relative_alignment_degraded() -> None:
     server = MockDoubaoServer(scenario="degraded_ts")
     server.start()
     tts = DoubaoTTS(_config(server))
@@ -695,7 +718,7 @@ async def test_livekit_stream_marks_excessive_relative_alignment_degraded() -> N
 
 
 @pytest.mark.asyncio
-async def test_livekit_stream_starts_audio_timeout_after_first_text() -> None:
+async def test_stream_starts_audio_timeout_after_first_text() -> None:
     server = MockDoubaoServer()
     server.start()
     tts = DoubaoTTS(_config(server, first_audio_timeout_s=0.05))
@@ -716,7 +739,7 @@ async def test_livekit_stream_starts_audio_timeout_after_first_text() -> None:
 
 
 @pytest.mark.asyncio
-async def test_livekit_stream_rejects_empty_input_without_waiting_for_audio_timeout() -> None:
+async def test_stream_rejects_empty_input_without_waiting_for_audio_timeout() -> None:
     server = MockDoubaoServer()
     server.start()
     tts = DoubaoTTS(_config(server, first_audio_timeout_s=1.0, total_timeout_s=20.0))
@@ -739,7 +762,7 @@ async def test_livekit_stream_rejects_empty_input_without_waiting_for_audio_time
 
 
 @pytest.mark.asyncio
-async def test_livekit_stream_retries_first_audio_timeout() -> None:
+async def test_stream_retries_first_audio_timeout() -> None:
     server = MockDoubaoServer(scenario="slow_once")
     server.start()
     tts = DoubaoTTS(_config(server, first_audio_timeout_s=0.05))
@@ -759,7 +782,7 @@ async def test_livekit_stream_retries_first_audio_timeout() -> None:
 
 
 @pytest.mark.asyncio
-async def test_livekit_stream_does_not_replay_after_audio_without_subtitles() -> None:
+async def test_stream_does_not_replay_after_audio_without_subtitles() -> None:
     server = MockDoubaoServer(scenario="empty_ts")
     server.start()
     tts = DoubaoTTS(_config(server))
@@ -780,7 +803,7 @@ async def test_livekit_stream_does_not_replay_after_audio_without_subtitles() ->
 
 
 @pytest.mark.asyncio
-async def test_livekit_stream_renews_the_stall_watchdog_across_delayed_chunks() -> None:
+async def test_stream_renews_the_stall_watchdog_across_delayed_chunks() -> None:
     """Every delivered chunk renews the stall budget on the live stream path.
 
     This drives ``DoubaoTTS.stream()`` (the path LiveKit uses for real speech),
@@ -809,7 +832,7 @@ async def test_livekit_stream_renews_the_stall_watchdog_across_delayed_chunks() 
 
 
 @pytest.mark.asyncio
-async def test_livekit_stream_still_fails_bounded_when_generation_really_stalls() -> None:
+async def test_stream_still_fails_bounded_when_generation_really_stalls() -> None:
     """Renewal must not defuse the watchdog: a genuine stall ends bounded.
 
     The server stops mid-utterance after the first PCM frame.  The stall budget
@@ -986,7 +1009,7 @@ async def test_personal_voice_failure_before_audio_still_falls_back_once() -> No
         server.stop()
 
 @pytest.mark.asyncio
-async def test_livekit_stream_personal_fallback_fires_once_under_sustained_first_audio_failure() -> None:
+async def test_stream_personal_fallback_fires_once_under_sustained_first_audio_failure() -> None:
     """P0-03 P3: stream-level fallback is a one-shot gate under framework retry.
 
     Every attempt fails before audio (``slow`` stalls all sessions), so the
@@ -999,7 +1022,7 @@ async def test_livekit_stream_personal_fallback_fires_once_under_sustained_first
     fired per re-entry).
     """
 
-    from livekit.agents import APIConnectOptions
+    from services.agent.src.providers.provider_errors import APIConnectOptions
 
     server = MockDoubaoServer(scenario="slow")
     server.start()
