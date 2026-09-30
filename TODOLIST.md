@@ -79,6 +79,13 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 - 优化：按发现改提示词/人格/TTS 参数（仅豆包现有参数），逐项前后对照，不回退安全话术。
 - [ ] 评审报告　[ ] 提示词与参数优化　[ ] 前后对照
 
+### [ ] N-7 新发现：bridge 容器 `/tmp` 被 PCM tap 写满（2026-10-01 只读发现）
+
+- 现象：`memoria-voice-core-media-bridge-1` 的 `/tmp`（64 MiB tmpfs）100% 满：`/tmp/media-pcm-tap` 里 86 个会话 WAV 共 64 MiB（每个会话上限 4 MiB，只增不删，自 01:52 CST 起写满）。后果：PCM tap 自己以 ENOSPC 关闭（21 次），更要紧的是心跳本地状态文件 `/tmp/memoria-agent-heartbeat.json` 无法更新，`agent heartbeat failed: OSError` 14 小时 1104 次；控制面 readiness 仍 `agent ready`（心跳 POST 先于写文件成功），容器 healthcheck 走 gRPC 端口，所以没有中断服务，但任何其他 `/tmp` 写入都会失败。
+- 修复（本分支，待随 agent 发布）：`media_pcm_tap.py` 新会话打开文件前按最旧优先删除 tap 文件，直到目录加新文件不超过 `MEDIA_PCM_TAP_DIR_MAX_BYTES`（默认 40 MiB）；只动自己写的 `media-uplink-*.wav`，错误全部吞掉；单测 4 条。重启 bridge 会立刻清空（tmpfs），之前日志里的上行录音随之消失。
+- 隐私提醒（已在 P2-08「需要用户决定」）：常开 PCM tap 留存原始上行音频在容器内存，是否长期保留仍待你决定。
+- [x] 代码与单测　[ ] 随 agent 发布
+
 ## 2026-09-28 收尾待办
 
 当日工作的遗留事项汇总在这里（收据见 `HANDOFF.md` 当日各节）。处理完删除对应行；长期事项已并入下方原有条目。
