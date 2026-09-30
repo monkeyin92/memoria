@@ -267,6 +267,31 @@ async def test_close_after_a_failure_does_not_raise_again() -> None:
     await stream.aclose()
 
 
+async def test_close_lets_a_cancellation_aimed_at_its_caller_through() -> None:
+    """Adapters discard their socket while cancelled; a caller cancelled meanwhile stays cancelled."""
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def attempt(stream: ScriptedStream, _emitter: AudioEmitter, _index: int) -> None:
+        started.set()
+        try:
+            await stream.read_text()
+        except asyncio.CancelledError:
+            await release.wait()  # the slow socket discard
+            raise
+
+    stream = ScriptedStream(attempt)
+    await asyncio.wait_for(started.wait(), timeout=1)
+    closer = asyncio.create_task(stream.aclose())
+    await asyncio.sleep(0)  # aclose() now waits for the cancelled attempt
+    closer.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(closer, timeout=1)
+    assert closer.cancelled()
+
+
 def test_emitter_rejects_misuse() -> None:
     emitter = AudioEmitter(dst=None)  # type: ignore[arg-type]
     with pytest.raises(RuntimeError):
