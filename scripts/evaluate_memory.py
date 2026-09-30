@@ -19,6 +19,7 @@ from services.archive.memory_evaluation import (
     run_memory_evaluation,
 )
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
+from services.archive.postgres_memory_catalog import QwenMemoryEmbedder
 
 DEFAULT_DATASET = (
     Path(__file__).parents[1]
@@ -27,6 +28,8 @@ DEFAULT_DATASET = (
     / "evaluation"
     / "memory_eval_zh_v1.json"
 )
+DEFAULT_EMBEDDING_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings"
+DEFAULT_EMBEDDING_MODEL = "qwen3.7-text-embedding-flash"
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -62,14 +65,103 @@ def _parser() -> argparse.ArgumentParser:
             "cross-session canonical keys some cases expect."
         ),
     )
+    parser.add_argument(
+        "--embedding-model",
+        nargs="?",
+        const=DEFAULT_EMBEDDING_MODEL,
+        default=os.environ.get("MEMORIA_MEMORY_EVAL_EMBEDDING_MODEL") or None,
+        metavar="MODEL",
+        help=(
+            "Enable the PostgreSQL vector path with this OpenAI-compatible embedding "
+            f"model (omit MODEL to use {DEFAULT_EMBEDDING_MODEL}); the extractor "
+            "remains the selected offline/configured extractor."
+        ),
+    )
+    parser.add_argument(
+        "--embedding-url",
+        default=(
+            os.environ.get("MEMORIA_MEMORY_EVAL_EMBEDDING_URL")
+            or os.environ.get("MEMORIA_MEMORY_EMBEDDING_URL")
+            or DEFAULT_EMBEDDING_URL
+        ),
+        help="Embedding endpoint (default: DashScope compatible-mode endpoint).",
+    )
+    parser.add_argument(
+        "--embedding-dimensions",
+        type=int,
+        default=int(
+            os.environ.get("MEMORIA_MEMORY_EVAL_EMBEDDING_DIMENSIONS")
+            or os.environ.get("MEMORIA_MEMORY_EMBEDDING_DIMENSIONS")
+            or "1024"
+        ),
+        help=(
+            "Embedding dimensions (default: evaluation/production environment or 1024)."
+        ),
+    )
+    parser.add_argument(
+        "--embedding-timeout-s",
+        type=float,
+        default=float(
+            os.environ.get("MEMORIA_MEMORY_EVAL_EMBEDDING_TIMEOUT_S")
+            or os.environ.get("MEMORIA_MEMORY_EMBEDDING_TIMEOUT_S")
+            or "5"
+        ),
+        help="Per-request embedding timeout in seconds (default: production default 5).",
+    )
     return parser
 
 
+def build_embedder(
+    *,
+    embedding_model: str | None,
+    embedding_url: str,
+    embedding_dimensions: int,
+    embedding_timeout_s: float,
+) -> QwenMemoryEmbedder | None:
+    """The production embedder for ``embedding_model``; None keeps the lexical path."""
+
+    if embedding_model is None:
+        return None
+    api_key = os.environ.get("MEMORIA_MEMORY_EMBEDDING_API_KEY") or os.environ.get(
+        "DASHSCOPE_API_KEY", ""
+    )
+    if not api_key:
+        raise SystemExit(
+            "--embedding-model requires MEMORIA_MEMORY_EMBEDDING_API_KEY "
+            "or DASHSCOPE_API_KEY; the key is read from the environment only"
+        )
+    return QwenMemoryEmbedder(
+        endpoint=embedding_url,
+        api_key=api_key,
+        model=embedding_model,
+        dimensions=embedding_dimensions,
+        timeout_s=embedding_timeout_s,
+    )
+
+
 def _build_adapter(
-    kind: str, dsn: str, compiler_dsn: str | None
+    kind: str,
+    dsn: str,
+    compiler_dsn: str | None,
+    *,
+    embedding_model: str | None,
+    embedding_url: str,
+    embedding_dimensions: int,
+    embedding_timeout_s: float,
 ) -> CatalogMemoryEvaluationAdapter:
+    embedder = build_embedder(
+        embedding_model=embedding_model,
+        embedding_url=embedding_url,
+        embedding_dimensions=embedding_dimensions,
+        embedding_timeout_s=embedding_timeout_s,
+    )
     if kind == "rules":
-        return CatalogMemoryEvaluationAdapter(dsn, compiler_dsn=compiler_dsn)
+        return CatalogMemoryEvaluationAdapter(
+            dsn,
+            compiler_dsn=compiler_dsn,
+            embedder=embedder,
+            require_vector=embedder is not None,
+        )
     # Production parity: the same assembly the Control API uses, so an offline
     # or unkeyed environment fails loudly instead of quietly scoring rules.
     from services.control_api.app.config import ControlSettings
@@ -82,16 +174,41 @@ def _build_adapter(
             "OFFLINE_MOCK=false; without them the production assembly is the "
             "rule extractor, which cannot produce canonical episode keys."
         )
-    adapter = CatalogMemoryEvaluationAdapter(dsn, extractor, compiler_dsn=compiler_dsn)
-    adapter.name = f"memoria-postgres-{kind}"
+    adapter = CatalogMemoryEvaluationAdapter(
+        dsn,
+        extractor,
+        compiler_dsn=compiler_dsn,
+        embedder=embedder,
+        require_vector=embedder is not None,
+    )
+    adapter.name = f"memoria-postgres-{kind}" + ("-vector" if embedder is not None else "")
     return adapter
 
 
 async def _run(
-    dataset_path: Path, extractor: str, dsn: str, compiler_dsn: str | None
+    dataset_path: Path,
+    extractor: str,
+    dsn: str,
+    compiler_dsn: str | None,
+    *,
+    embedding_model: str | None,
+    embedding_url: str,
+    embedding_dimensions: int,
+    embedding_timeout_s: float,
 ) -> str:
     dataset = load_memory_evaluation_dataset(dataset_path)
-    report = await run_memory_evaluation(dataset, _build_adapter(extractor, dsn, compiler_dsn))
+    report = await run_memory_evaluation(
+        dataset,
+        _build_adapter(
+            extractor,
+            dsn,
+            compiler_dsn,
+            embedding_model=embedding_model,
+            embedding_url=embedding_url,
+            embedding_dimensions=embedding_dimensions,
+            embedding_timeout_s=embedding_timeout_s,
+        ),
+    )
     return report_json(report)
 
 
@@ -100,7 +217,18 @@ def main() -> int:
     args = parser.parse_args()
     if not args.dsn:
         parser.error("--dsn (or MEMORIA_MEMORY_EVAL_DATABASE_URL) is required")
-    payload = asyncio.run(_run(args.dataset, args.extractor, args.dsn, args.compiler_dsn))
+    payload = asyncio.run(
+        _run(
+            args.dataset,
+            args.extractor,
+            args.dsn,
+            args.compiler_dsn,
+            embedding_model=args.embedding_model,
+            embedding_url=args.embedding_url,
+            embedding_dimensions=args.embedding_dimensions,
+            embedding_timeout_s=args.embedding_timeout_s,
+        )
+    )
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(payload + "\n", encoding="utf-8")

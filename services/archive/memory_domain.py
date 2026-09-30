@@ -60,6 +60,23 @@ def content_query_terms(terms: tuple[str, ...]) -> tuple[str, ...]:
     return content or terms
 
 
+def edge_content_query_terms(terms: tuple[str, ...]) -> tuple[str, ...]:
+    """The terms that neither start nor end on a function character.
+
+    Next to embeddings a keyword hit is only worth a bonus when it names something.
+    "什么" and "我是" are function-only, but "里的" (家里的 / 客厅里的), "味的" and "时的" are
+    not: they are fragments across a word boundary that match unrelated memories.  A term
+    bounded by content characters ("刘老师", "2016", "红楼梦") keeps its exact-match value.
+    Unlike ``content_query_terms`` this may return nothing; the semantic score still ranks.
+    """
+
+    return tuple(
+        term
+        for term in terms
+        if term[0] not in _FUNCTION_CHARACTERS and term[-1] not in _FUNCTION_CHARACTERS
+    )
+
+
 def subject_lineage_predicates(
     *,
     bind: Callable[[str], str],

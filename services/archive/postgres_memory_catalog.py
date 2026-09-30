@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import json
 import math
 import re
@@ -47,6 +46,7 @@ from services.archive.memory_domain import (
     ReviewQueueItem,
     TimelineItem,
     content_query_terms,
+    edge_content_query_terms,
     lexical_query_terms,
     subject_lineage_predicates,
 )
@@ -247,6 +247,7 @@ class PostgresMemoryCatalog:
         account_guard: AccountWriteGuard | None = None,
         embedder: MemoryEmbedder | None = None,
         require_vector: bool = False,
+        fail_on_embedding_error: bool = False,
         episode_consolidator: EpisodeConsolidator | None = None,
         subject_category_resolver: Callable[[str], str | None] | None = None,
         evidence_subject_category_resolver: (
@@ -281,6 +282,7 @@ class PostgresMemoryCatalog:
         self._account_guard = account_guard or _allow_account_write
         self._embedder = embedder
         self._require_vector = require_vector
+        self._fail_on_embedding_error = fail_on_embedding_error
         self._episode_consolidator = episode_consolidator or EpisodeConsolidator()
         self._memory_write_policy = MemoryWritePolicy()
         self._subject_category_resolver = subject_category_resolver or (lambda _: None)
@@ -620,6 +622,10 @@ class PostgresMemoryCatalog:
                 max_attempts=max_attempts,
                 error_code=type(exc).__name__,
             )
+            if self._fail_on_embedding_error and isinstance(
+                exc, MemoryEmbeddingUnavailableError
+            ):
+                raise
             return "failed"
 
     async def _project_capture_evidence(self, event: EvidenceEvent) -> None:
@@ -1542,6 +1548,8 @@ class PostgresMemoryCatalog:
                     self._embedder.model,
                     self._embedder.dimensions,
                 )
+                if self._fail_on_embedding_error:
+                    raise
                 return
             vector = json.dumps(embedding, separators=(",", ":"))
             await connection.execute(
@@ -1640,8 +1648,11 @@ class PostgresMemoryCatalog:
         if query.text.strip():
             embedding: tuple[float, ...] | None = None
             if embedder is not None:
-                with contextlib.suppress(MemoryEmbeddingUnavailableError):
+                try:
                     embedding = await embedder.embed(query.text.strip())
+                except MemoryEmbeddingUnavailableError:
+                    if self._fail_on_embedding_error:
+                        raise
             parameters.append(query.text.strip())
             text_index = len(parameters)
 
@@ -1656,6 +1667,8 @@ class PostgresMemoryCatalog:
             terms = lexical_query_terms(query.text)
             if embedding is None:  # function-word n-grams would let boilerplate outrank
                 terms = content_query_terms(terms)
+            else:  # next to embeddings a keyword bonus must name something
+                terms = edge_content_query_terms(terms)
             sparse = [like(term) for term in terms]
             text_match = (
                 f"(document.search_vector @@ websearch_to_tsquery('simple', ${text_index}) "
@@ -1667,10 +1680,22 @@ class PostgresMemoryCatalog:
                 clauses.append(text_match)
                 score_expression = f"(({hits or '0'}) + 0.1 * {metadata_score})::double precision"
             else:
+                # A keyword bonus grows with how much of the query a memory repeats, so a
+                # fragment shared with a long question earns almost nothing while a memory
+                # that repeats what was asked earns the full bonus.
+                phrase = (
+                    f"(document.search_vector @@ websearch_to_tsquery('simple', ${text_index}) "
+                    f"OR {whole})"
+                )
+                lexical = f"CASE WHEN {phrase} THEN 0.5 ELSE 0.0 END"
+                if sparse:
+                    covered = " + ".join(f"(CASE WHEN {match} THEN 1 ELSE 0 END)" for match in sparse)
+                    share = f"(({covered})::double precision / {len(sparse)})"
+                    lexical = f"CASE WHEN {phrase} THEN 0.5 ELSE 0.5 * POWER({share}, 2) END"
                 text_score = (
                     "GREATEST(ts_rank(document.search_vector, "
                     f"websearch_to_tsquery('simple', ${text_index})), "
-                    f"CASE WHEN {text_match} THEN 0.5 ELSE 0.0 END)"
+                    f"{lexical})"
                 )
                 parameters.append(embedder.model)
                 model_index = len(parameters)

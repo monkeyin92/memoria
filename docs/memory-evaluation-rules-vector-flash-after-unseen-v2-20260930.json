@@ -1,0 +1,738 @@
+{
+  "adapter": "memoria-postgres-vector-qwen3.7-text-embedding-flash",
+  "case_count": 8,
+  "cases": [
+    {
+      "case_id": "v2-paraphrase-lactose",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "v2-lactose-001"
+          ],
+          "actual_valid_from": "2026-08-11T00:00:00+00:00",
+          "expected_source_event_ids": [
+            "v2-lactose-001"
+          ],
+          "expected_valid_from": null,
+          "key": "milk-discomfort",
+          "matched": true,
+          "matched_item_id": "352bad93-3227-56f8-bba8-0018efcff8d2",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "我一喝牛奶就肚子疼。",
+          "item_id": "352bad93-3227-56f8-bba8-0018efcff8d2",
+          "kind": "claim",
+          "matched_expected_key": "milk-discomfort",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "v2-lactose-001"
+          ],
+          "status": "confirmed",
+          "title": "我一喝牛奶就肚子疼。",
+          "valid_from": "2026-08-11T00:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "我一喝牛奶就肚子疼。",
+          "item_id": "e7848f64-3677-58b5-b73b-3740ac455b1d",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "v2-lactose-001"
+          ],
+          "status": "confirmed",
+          "title": "我一喝牛奶就肚子疼。",
+          "valid_from": "2026-08-11T00:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 2,
+      "queries": [
+        {
+          "query_id": "v2-lactose-query",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "milk-discomfort",
+            "unmatched:e7848f64-3677-58b5-b73b-3740ac455b1d"
+          ],
+          "relevant_keys": [
+            "milk-discomfort"
+          ]
+        }
+      ],
+      "scenario": "paraphrase"
+    },
+    {
+      "case_id": "v2-paraphrase-height-fear",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "v2-height-001"
+          ],
+          "actual_valid_from": "2026-08-12T11:00:00+00:00",
+          "expected_source_event_ids": [
+            "v2-height-001"
+          ],
+          "expected_valid_from": null,
+          "key": "fear-of-heights",
+          "matched": true,
+          "matched_item_id": "fcefe9da-ffbe-5500-aa43-03acfbeab6f4",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "我恐高，站在高处腿就发软。",
+          "item_id": "fcefe9da-ffbe-5500-aa43-03acfbeab6f4",
+          "kind": "claim",
+          "matched_expected_key": "fear-of-heights",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "v2-height-001"
+          ],
+          "status": "confirmed",
+          "title": "我恐高，站在高处腿就发软。",
+          "valid_from": "2026-08-12T11:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "我恐高，站在高处腿就发软。",
+          "item_id": "a1d3afed-e0b4-5b2e-bea6-b079bfcf83c1",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "v2-height-001"
+          ],
+          "status": "confirmed",
+          "title": "我恐高，站在高处腿就发软。",
+          "valid_from": "2026-08-12T11:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 2,
+      "queries": [
+        {
+          "query_id": "v2-height-query",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "fear-of-heights",
+            "unmatched:a1d3afed-e0b4-5b2e-bea6-b079bfcf83c1"
+          ],
+          "relevant_keys": [
+            "fear-of-heights"
+          ]
+        }
+      ],
+      "scenario": "paraphrase"
+    },
+    {
+      "case_id": "v2-comfort-exam-stress",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "v2-exam-001"
+          ],
+          "actual_valid_from": "2026-08-13T14:00:00+00:00",
+          "expected_source_event_ids": [
+            "v2-exam-001"
+          ],
+          "expected_valid_from": null,
+          "key": "exam-pressure",
+          "matched": true,
+          "matched_item_id": "57f6dfdf-a0b9-595e-a364-75a142497594",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        },
+        {
+          "actual_source_event_ids": [
+            "v2-exam-002"
+          ],
+          "actual_valid_from": "2026-08-02T02:00:00+00:00",
+          "expected_source_event_ids": [
+            "v2-exam-002"
+          ],
+          "expected_valid_from": null,
+          "key": "cat-doudou",
+          "matched": true,
+          "matched_item_id": "e37d5927-ea51-59ef-8d41-ca7b064deedb",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "下个月要考教师资格证，最近压力很大睡不好。",
+          "item_id": "57f6dfdf-a0b9-595e-a364-75a142497594",
+          "kind": "claim",
+          "matched_expected_key": "exam-pressure",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "v2-exam-001"
+          ],
+          "status": "confirmed",
+          "title": "下个月要考教师资格证，最近压力很大睡不好。",
+          "valid_from": "2026-08-13T14:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "我养了一只叫豆豆的猫。",
+          "item_id": "e37d5927-ea51-59ef-8d41-ca7b064deedb",
+          "kind": "claim",
+          "matched_expected_key": "cat-doudou",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "v2-exam-002"
+          ],
+          "status": "confirmed",
+          "title": "我养了一只叫豆豆的猫。",
+          "valid_from": "2026-08-02T02:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "下个月要考教师资格证，最近压力很大睡不好。",
+          "item_id": "9f14e647-ffb7-5821-9cd9-d74fe3faed49",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "v2-exam-001"
+          ],
+          "status": "confirmed",
+          "title": "下个月要考教师资格证，最近压力很大睡不好。",
+          "valid_from": "2026-08-13T14:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "我养了一只叫豆豆的猫。",
+          "item_id": "0fd6ef80-4d72-5208-a3a0-1bf7cb9767bc",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "v2-exam-002"
+          ],
+          "status": "confirmed",
+          "title": "我养了一只叫豆豆的猫。",
+          "valid_from": "2026-08-02T02:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 2,
+      "predicted_count": 4,
+      "queries": [
+        {
+          "query_id": "v2-exam-query",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "unmatched:9f14e647-ffb7-5821-9cd9-d74fe3faed49",
+            "exam-pressure",
+            "cat-doudou",
+            "unmatched:0fd6ef80-4d72-5208-a3a0-1bf7cb9767bc"
+          ],
+          "relevant_keys": [
+            "exam-pressure"
+          ]
+        }
+      ],
+      "scenario": "comfort_recall"
+    },
+    {
+      "case_id": "v2-cross-session-marathon",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "v2-marathon-001"
+          ],
+          "actual_valid_from": "2026-08-13T23:00:00+00:00",
+          "expected_source_event_ids": [
+            "v2-marathon-001"
+          ],
+          "expected_valid_from": null,
+          "key": "half-marathon-plan",
+          "matched": true,
+          "matched_item_id": "462099cc-d56a-55fd-93c4-44f2f0b0e14c",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        },
+        {
+          "actual_source_event_ids": [
+            "v2-marathon-002"
+          ],
+          "actual_valid_from": "2026-08-15T04:30:00+00:00",
+          "expected_source_event_ids": [
+            "v2-marathon-002"
+          ],
+          "expected_valid_from": null,
+          "key": "beef-noodles",
+          "matched": true,
+          "matched_item_id": "cd8aeb63-a4b0-5367-a77c-b0a0d0e5b643",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "今天中午吃了牛肉面。",
+          "item_id": "cd8aeb63-a4b0-5367-a77c-b0a0d0e5b643",
+          "kind": "claim",
+          "matched_expected_key": "beef-noodles",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "v2-marathon-002"
+          ],
+          "status": "confirmed",
+          "title": "今天中午吃了牛肉面。",
+          "valid_from": "2026-08-15T04:30:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "报名了十一月的半程马拉松，每周跑三次。",
+          "item_id": "462099cc-d56a-55fd-93c4-44f2f0b0e14c",
+          "kind": "claim",
+          "matched_expected_key": "half-marathon-plan",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "v2-marathon-001"
+          ],
+          "status": "confirmed",
+          "title": "报名了十一月的半程马拉松，每周跑三次。",
+          "valid_from": "2026-08-13T23:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "今天中午吃了牛肉面。",
+          "item_id": "b0f00450-1471-5a3d-a4a3-34d5c6260636",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "v2-marathon-002"
+          ],
+          "status": "confirmed",
+          "title": "今天中午吃了牛肉面。",
+          "valid_from": "2026-08-15T04:30:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "报名了十一月的半程马拉松，每周跑三次。",
+          "item_id": "08e8488e-929b-5115-96fc-3583759f0e2e",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "v2-marathon-001"
+          ],
+          "status": "confirmed",
+          "title": "报名了十一月的半程马拉松，每周跑三次。",
+          "valid_from": "2026-08-13T23:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 2,
+      "predicted_count": 4,
+      "queries": [
+        {
+          "query_id": "v2-marathon-query",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "half-marathon-plan",
+            "unmatched:08e8488e-929b-5115-96fc-3583759f0e2e",
+            "beef-noodles",
+            "unmatched:b0f00450-1471-5a3d-a4a3-34d5c6260636"
+          ],
+          "relevant_keys": [
+            "half-marathon-plan"
+          ]
+        }
+      ],
+      "scenario": "cross_session_followup"
+    },
+    {
+      "case_id": "v2-cross-session-grandma",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "v2-grandma-001"
+          ],
+          "actual_valid_from": "2026-08-16T10:00:00+00:00",
+          "expected_source_event_ids": [
+            "v2-grandma-001"
+          ],
+          "expected_valid_from": null,
+          "key": "grandma-cataract-surgery",
+          "matched": true,
+          "matched_item_id": "b9395a81-1565-5efe-b87c-f157bf0fe934",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "奶奶下周三做白内障手术。",
+          "item_id": "b9395a81-1565-5efe-b87c-f157bf0fe934",
+          "kind": "claim",
+          "matched_expected_key": "grandma-cataract-surgery",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "v2-grandma-001"
+          ],
+          "status": "confirmed",
+          "title": "奶奶下周三做白内障手术。",
+          "valid_from": "2026-08-16T10:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "奶奶下周三做白内障手术。",
+          "item_id": "2dddda6c-116e-5be4-b9be-894a68b75c9f",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "v2-grandma-001"
+          ],
+          "status": "confirmed",
+          "title": "奶奶下周三做白内障手术。",
+          "valid_from": "2026-08-16T10:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 2,
+      "queries": [
+        {
+          "query_id": "v2-grandma-query",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "grandma-cataract-surgery",
+            "unmatched:2dddda6c-116e-5be4-b9be-894a68b75c9f"
+          ],
+          "relevant_keys": [
+            "grandma-cataract-surgery"
+          ]
+        }
+      ],
+      "scenario": "cross_session_followup"
+    },
+    {
+      "case_id": "v2-exact-fact-hometown",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "v2-hometown-001"
+          ],
+          "actual_valid_from": "2026-08-01T12:00:00+00:00",
+          "expected_source_event_ids": [
+            "v2-hometown-001"
+          ],
+          "expected_valid_from": null,
+          "key": "hometown-ganzhou",
+          "matched": true,
+          "matched_item_id": "abfda174-9c01-5513-a870-70d26e550271",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "我老家在江西赣州。",
+          "item_id": "abfda174-9c01-5513-a870-70d26e550271",
+          "kind": "claim",
+          "matched_expected_key": "hometown-ganzhou",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "v2-hometown-001"
+          ],
+          "status": "confirmed",
+          "title": "我老家在江西赣州。",
+          "valid_from": "2026-08-01T12:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "我老家在江西赣州。",
+          "item_id": "e5cd12a1-04b3-57d7-94dc-481aa118ef04",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "v2-hometown-001"
+          ],
+          "status": "confirmed",
+          "title": "我老家在江西赣州。",
+          "valid_from": "2026-08-01T12:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 2,
+      "queries": [
+        {
+          "query_id": "v2-hometown-query",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "hometown-ganzhou",
+            "unmatched:e5cd12a1-04b3-57d7-94dc-481aa118ef04"
+          ],
+          "relevant_keys": [
+            "hometown-ganzhou"
+          ]
+        }
+      ],
+      "scenario": "exact_fact"
+    },
+    {
+      "case_id": "v2-exact-fact-allergy",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "v2-allergy-001"
+          ],
+          "actual_valid_from": "2026-08-03T01:30:00+00:00",
+          "expected_source_event_ids": [
+            "v2-allergy-001"
+          ],
+          "expected_valid_from": null,
+          "key": "penicillin-allergy",
+          "matched": true,
+          "matched_item_id": "92555593-2c78-566c-ba64-50ed8e2c7bb6",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "我对青霉素过敏。",
+          "item_id": "92555593-2c78-566c-ba64-50ed8e2c7bb6",
+          "kind": "claim",
+          "matched_expected_key": "penicillin-allergy",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "v2-allergy-001"
+          ],
+          "status": "confirmed",
+          "title": "我对青霉素过敏。",
+          "valid_from": "2026-08-03T01:30:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "我对青霉素过敏。",
+          "item_id": "edb1e6cf-9385-550c-a283-91a6e71dd120",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "v2-allergy-001"
+          ],
+          "status": "confirmed",
+          "title": "我对青霉素过敏。",
+          "valid_from": "2026-08-03T01:30:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 2,
+      "queries": [
+        {
+          "query_id": "v2-allergy-query",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "penicillin-allergy",
+            "unmatched:edb1e6cf-9385-550c-a283-91a6e71dd120"
+          ],
+          "relevant_keys": [
+            "penicillin-allergy"
+          ]
+        }
+      ],
+      "scenario": "exact_fact"
+    },
+    {
+      "case_id": "v2-cross-account-birthday",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "v2-birthday-a"
+          ],
+          "actual_valid_from": "2026-08-04T02:00:00+00:00",
+          "expected_source_event_ids": [
+            "v2-birthday-a"
+          ],
+          "expected_valid_from": null,
+          "key": "owner-a-birthday",
+          "matched": true,
+          "matched_item_id": "d86e0082-a47e-5850-a864-575b1a8b6f6c",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        },
+        {
+          "actual_source_event_ids": [
+            "v2-birthday-b"
+          ],
+          "actual_valid_from": "2026-08-04T02:05:00+00:00",
+          "expected_source_event_ids": [
+            "v2-birthday-b"
+          ],
+          "expected_valid_from": null,
+          "key": "owner-b-birthday",
+          "matched": true,
+          "matched_item_id": "3dd720f4-611a-5de1-9637-12f411ffd5be",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "我的生日是三月十二号。",
+          "item_id": "d86e0082-a47e-5850-a864-575b1a8b6f6c",
+          "kind": "claim",
+          "matched_expected_key": "owner-a-birthday",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "v2-birthday-a"
+          ],
+          "status": "confirmed",
+          "title": "我的生日是三月十二号。",
+          "valid_from": "2026-08-04T02:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "我的生日是三月十二号。",
+          "item_id": "e891e28b-8c3e-5ba9-8ece-55a793bcfac7",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "v2-birthday-a"
+          ],
+          "status": "confirmed",
+          "title": "我的生日是三月十二号。",
+          "valid_from": "2026-08-04T02:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-b",
+          "body": "我的生日是十月五号。",
+          "item_id": "3dd720f4-611a-5de1-9637-12f411ffd5be",
+          "kind": "claim",
+          "matched_expected_key": "owner-b-birthday",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "v2-birthday-b"
+          ],
+          "status": "confirmed",
+          "title": "我的生日是十月五号。",
+          "valid_from": "2026-08-04T02:05:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-b",
+          "body": "我的生日是十月五号。",
+          "item_id": "7426ea15-639e-50ab-a580-329b12b6af03",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "v2-birthday-b"
+          ],
+          "status": "confirmed",
+          "title": "我的生日是十月五号。",
+          "valid_from": "2026-08-04T02:05:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 2,
+      "predicted_count": 4,
+      "queries": [
+        {
+          "query_id": "v2-birthday-owner-a",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "owner-a-birthday",
+            "unmatched:e891e28b-8c3e-5ba9-8ece-55a793bcfac7"
+          ],
+          "relevant_keys": [
+            "owner-a-birthday"
+          ]
+        },
+        {
+          "query_id": "v2-birthday-owner-b",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "owner-b-birthday",
+            "unmatched:7426ea15-639e-50ab-a580-329b12b6af03"
+          ],
+          "relevant_keys": [
+            "owner-b-birthday"
+          ]
+        }
+      ],
+      "scenario": "cross_account_isolation"
+    }
+  ],
+  "dataset_version": "memory-eval-zh-v2-unseen",
+  "failed_cases": [],
+  "metrics": {
+    "candidate_leakage": 0.0,
+    "comfort_recall_at_5": 1.0,
+    "contradiction_rate": 0.0,
+    "cross_account_leakage": 0.0,
+    "cross_session_recall_at_5": 1.0,
+    "extraction_precision": 0.5,
+    "extraction_recall": 1.0,
+    "input_tokens": 0,
+    "latency_p50_ms": 249.1807920014253,
+    "latency_p95_ms": 500.66691700340016,
+    "ndcg_at_10": 0.9589921948412731,
+    "output_tokens": 0,
+    "paraphrase_followup_recall_at_5": 0.0,
+    "recall_at_10": 1.0,
+    "recall_at_5": 1.0,
+    "source_attribution_accuracy": 1.0,
+    "temporal_accuracy": 0.0,
+    "token_cost": 0
+  },
+  "scenario_coverage": [
+    "paraphrase",
+    "comfort_recall",
+    "cross_session_followup",
+    "exact_fact",
+    "cross_account_isolation"
+  ]
+}

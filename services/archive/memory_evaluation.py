@@ -20,6 +20,7 @@ from services.archive.domain import EvidenceEvent, SpeakerClass
 from services.archive.memory_domain import (
     ConflictState,
     MemoryClaimReview,
+    MemoryEmbedder,
     MemoryExtraction,
     MemoryExtractor,
     MemoryKind,
@@ -175,6 +176,10 @@ class EvaluationItem:
     # adapters that only synthesize an item; the catalog adapter fills it from
     # the source events so a cleaned claim value cannot hide retained context.
     source_texts: tuple[str, ...] = ()
+    # The catalog's ranking score for a retrieved item; None for extracted
+    # items and for adapters that do not rank.  Only the distractor evaluation
+    # reads it (score-threshold analysis).
+    score: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -564,6 +569,8 @@ class CatalogMemoryEvaluationAdapter:
         extractor: MemoryExtractor | None = None,
         *,
         compiler_dsn: str | None = None,
+        embedder: MemoryEmbedder | None = None,
+        require_vector: bool = False,
     ) -> None:
         for value in (dsn, compiler_dsn or dsn):
             if not value.startswith(("postgresql://", "postgres://")):
@@ -571,6 +578,13 @@ class CatalogMemoryEvaluationAdapter:
         self._dsn = dsn
         self._compiler_dsn = compiler_dsn
         self._extractor = extractor or RuleBasedMemoryExtractor()
+        self._embedder = embedder
+        self._require_vector = require_vector
+        if require_vector:
+            model = embedder.model if embedder is not None else "unconfigured"
+            self.name = f"memoria-postgres-vector-{model}"
+        else:
+            self.name = "memoria-postgres-rules"
 
     async def observe(self, case: MemoryEvaluationCase) -> EvaluationObservation:
         async with _case_schema(self._dsn) as schema:
@@ -584,6 +598,9 @@ class CatalogMemoryEvaluationAdapter:
             catalog = PostgresMemoryCatalog(
                 case_dsn,
                 extractor=extractor,
+                embedder=self._embedder,
+                require_vector=self._require_vector,
+                fail_on_embedding_error=self._require_vector,
                 compiler_dsn=(
                     _with_search_path(self._compiler_dsn, schema)
                     if self._compiler_dsn is not None
@@ -639,7 +656,12 @@ class CatalogMemoryEvaluationAdapter:
                     },
                 )
             )
-        await catalog.compile_pending(limit=1000)
+        compile_report = await catalog.compile_pending(limit=1000)
+        if self._require_vector and compile_report.failed_events:
+            raise RuntimeError(
+                "memory vector evaluation compilation failed for "
+                f"{compile_report.failed_events} event(s)"
+            )
         await self._apply_reviews(catalog, case)
         accounts = tuple(
             dict.fromkeys(
@@ -748,6 +770,7 @@ class CatalogMemoryEvaluationAdapter:
                                 item.source_event_ids,
                                 source_texts,
                             ),
+                            score=item.score,
                         )
                         for item in response.items
                     ),

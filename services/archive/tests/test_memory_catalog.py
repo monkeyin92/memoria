@@ -23,6 +23,7 @@ from services.archive.memory_domain import (
     MemoryExtraction,
     MemorySearchQuery,
     content_query_terms,
+    edge_content_query_terms,
     lexical_query_terms,
 )
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
@@ -562,6 +563,21 @@ def test_content_query_terms_drop_function_word_ngrams_but_never_everything() ->
     assert {"难忘", "时候"} <= set(content)
     # A query made only of function words keeps its terms rather than matching nothing.
     assert content_query_terms(lexical_query_terms("那是什么")) == lexical_query_terms("那是什么")
+
+
+def test_edge_content_query_terms_keep_named_things_and_drop_word_fragments() -> None:
+    terms = lexical_query_terms("家里的橘色小猫怎么称呼？")
+    edge = edge_content_query_terms(terms)
+
+    # "里的" straddles a word boundary (家里的 / 客厅里的): a fragment, not a name.
+    assert "里的" in terms and "里的" not in edge
+    assert {"橘色", "小猫", "称呼"} <= set(edge)
+    assert all(term[0] not in "的了么什怎" and term[-1] not in "的了么什怎" for term in edge)
+    # Names, years and terms of art keep their exact-match value.
+    assert {"刘老师", "刘老", "老师"} <= set(edge_content_query_terms(lexical_query_terms("刘老师是我的什么人？")))
+    assert "2016" in edge_content_query_terms(lexical_query_terms("2016年发生了什么？"))
+    # Unlike content_query_terms this may return nothing; embeddings still rank the query.
+    assert edge_content_query_terms(lexical_query_terms("那是什么")) == ()
 
 
 @pytest.mark.asyncio
