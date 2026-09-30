@@ -2224,7 +2224,7 @@ std::string MemoriaProtocol::DeviceHelloV2() const {
     cJSON_AddBoolToObject(capabilities, "local_vad", true);
     // MultiNet stop phrases (memoria_stop_keyword.h) run on the AEC/NS output
     // during playback and report keyword.detected with hard_stop=true.
-    cJSON_AddBoolToObject(capabilities, "local_stop_keyword", true);
+    cJSON_AddBoolToObject(capabilities, "local_stop_keyword", kLocalStopKeywordEnabled);
     cJSON_AddBoolToObject(capabilities, "physical_stop_button", true);
     cJSON_AddStringToObject(capabilities, "playback_watermark", "exact");
     cJSON_AddBoolToObject(capabilities, "local_duck", false);

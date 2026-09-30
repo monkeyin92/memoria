@@ -80,6 +80,10 @@ int main() {
                    static_cast<double>(memoria::kLocalStopHardStopConfidenceFloor));
             printf("detect %.4f\n", static_cast<double>(memoria::kMultiNetDetectThreshold));
             printf("wake %.4f\n", static_cast<double>(memoria::kWakeWordMinScore));
+            printf("enabled %d\n", memoria::kLocalStopKeywordEnabled ? 1 : 0);
+            printf("registered %d\n",
+                   static_cast<int>(memoria::LocalStopPhrasesToRegister().end() -
+                                    memoria::LocalStopPhrasesToRegister().begin()));
         } else if (strcmp(command, "wake") == 0) {
             if (sscanf(line, "%*s %31s", score_text) != 1) {
                 return 2;
@@ -135,7 +139,7 @@ def _table(tool: pathlib.Path) -> tuple[dict[str, dict[str, object]], dict[str, 
     constants: dict[str, float] = {}
     for line in _run(tool, "table"):
         name, _, value = line.partition(" ")
-        if name in {"debounce", "floor", "detect", "wake"}:
+        if name in {"debounce", "floor", "detect", "wake", "enabled", "registered"}:
             constants[name] = float(value)
         else:
             phrase_id, command, display, min_score, duration = line.split("|")
@@ -378,9 +382,17 @@ def test_keyword_stop_reuses_the_button_local_flush_and_fence() -> None:
     assert hard_stop.index("playback_terminal_receipted_ = true;") < keyword
 
 
+def test_local_stop_keyword_is_off_and_registers_no_phrase(gate_tool: pathlib.Path) -> None:
+    # 2026-09-30: MultiNet during playback starved the idle task, so playback
+    # is back to build 10's load; the cloud path stops the reply.
+    _, constants = _table(gate_tool)
+    assert constants["enabled"] == 0
+    assert constants["registered"] == 0
+
+
 def test_hello_declares_the_local_stop_keyword() -> None:
     hello = _function_body(PROTOCOL_SOURCE, "std::string MemoriaProtocol::DeviceHelloV2(")
-    assert 'cJSON_AddBoolToObject(capabilities, "local_stop_keyword", true)' in hello
+    assert 'cJSON_AddBoolToObject(capabilities, "local_stop_keyword", kLocalStopKeywordEnabled)' in hello
 
 
 def _added_lines(patch: str, path: str) -> str:
@@ -397,7 +409,7 @@ def _added_lines(patch: str, path: str) -> str:
 
 def test_multinet_registers_stop_phrases_and_ignores_wake_in_stop_only_mode() -> None:
     wake = _added_lines(PATCH_0031, "main/audio/wake_words/custom_wake_word.cc")
-    assert "for (const auto& phrase : memoria::kLocalStopPhrases)" in wake
+    assert "for (const auto& phrase : memoria::LocalStopPhrasesToRegister())" in wake
     assert "commands_.push_back({phrase.command, phrase.id, memoria::kLocalStopAction});" in wake
     assert "stop_gate_.Evaluate(command.text.c_str(), score, stop_only_.load(), now_ms)" in wake
     # Stop-only mode logs every stop hit that reaches the 0.10 floor at INFO;
@@ -458,6 +470,7 @@ def test_application_arms_stop_keyword_only_for_playback_with_keyword_barge_in()
     app = _added_lines(PATCH_0031, "main/application.cc")
     configure = app[app.index("void Application::ConfigureStopKeywordForSpeaking()") :]
     configure = configure[: configure.index("void Application::HandleLocalStopKeyword")]
+    assert "memoria::kLocalStopKeywordEnabled && memoria_protocol != nullptr" in configure
     assert "memoria_protocol->KeywordBargeInAllowed()" in configure
     assert "audio_service_.EnableStopKeywordDetection()" in configure
     assert "audio_service_.EnableWakeWordDetection(false);" in configure

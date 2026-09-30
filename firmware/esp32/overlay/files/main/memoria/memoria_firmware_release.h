@@ -11,7 +11,7 @@
 // scripts/publish_firmware_release.py: the device only installs a release
 // whose build is strictly greater than its own, and the publisher refuses an
 // image whose embedded marker does not match the build it signs.
-#define MEMORIA_FIRMWARE_BUILD 14
+#define MEMORIA_FIRMWARE_BUILD 15
 
 namespace memoria {
 

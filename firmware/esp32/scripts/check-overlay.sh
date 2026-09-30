@@ -191,12 +191,12 @@ rg -q 'cJSON_AddStringToObject\(capabilities, "aec_reference", "software_post_ga
     "$protocol_source" || die "hello v2 must declare the software AEC reference"
 rg -q 'cJSON_AddBoolToObject\(capabilities, "aec_reference_verified", false\)' \
     "$protocol_source" || die "hello v2 must declare AEC reference unverified"
-rg -q 'cJSON_AddBoolToObject\(capabilities, "local_stop_keyword", true\)' \
-    "$protocol_source" || die "hello v2 must declare the local stop keyword"
+rg -q 'cJSON_AddBoolToObject\(capabilities, "local_stop_keyword", kLocalStopKeywordEnabled\)' \
+    "$protocol_source" || die "hello v2 must declare the local stop keyword switch"
 rg -q '"keyword.detected"' "$protocol_source" || die "keyword.detected v2 is missing"
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_stop_keyword.h" ]] || \
     die "local stop keyword phrase table missing"
-rg -Fq 'memoria::kLocalStopPhrases' \
+rg -Fq 'memoria::LocalStopPhrasesToRegister' \
     "$MEMORIA_UPSTREAM_DIR/main/audio/wake_words/custom_wake_word.cc" || \
     die "applied custom_wake_word.cc must register the local stop keywords"
 rg -Fq 'ConfigureStopKeywordForSpeaking();' "$MEMORIA_UPSTREAM_DIR/main/application.cc" || \

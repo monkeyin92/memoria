@@ -6,6 +6,17 @@
 
 namespace memoria {
 
+// Master switch for the on-device stop keywords below. Off since build 15:
+// playback runs echo cancellation, MultiNet6 and the uplink Opus encoder on
+// one core, and on 2026-09-30 that starved the idle task (task watchdog 10-13 s
+// into a long reply), delayed the server's playback.flush and produced no
+// local stop hit in three long replies. The cloud path already stops playback
+// by meaning ("停一下", "好的我知道了", "退下吧", "再见", ...), so with the
+// switch off the device behaves as build 10 did during playback: the wake word
+// detector is disabled, no stop phrase joins the MultiNet graph, and hello
+// declares local_stop_keyword=false.
+inline constexpr bool kLocalStopKeywordEnabled = false;
+
 // On-device stop keywords. Cloud ASR misses a short 「停」 under reply echo, so
 // VoCat registers these phrases as extra MultiNet commands next to the wake
 // word and lets them stop playback locally, the same way BOOT does. They only
@@ -45,6 +56,21 @@ inline constexpr LocalStopPhrase kLocalStopPhrases[] = {
 };
 inline constexpr std::size_t kLocalStopPhraseCount =
     sizeof(kLocalStopPhrases) / sizeof(kLocalStopPhrases[0]);
+
+// The phrases CustomWakeWord registers as MultiNet commands: all of them while
+// the switch is on, none while it is off.
+struct LocalStopPhraseRange {
+    const LocalStopPhrase* first;
+    const LocalStopPhrase* last;
+    constexpr const LocalStopPhrase* begin() const { return first; }
+    constexpr const LocalStopPhrase* end() const { return last; }
+};
+
+inline constexpr LocalStopPhraseRange LocalStopPhrasesToRegister() {
+    return kLocalStopKeywordEnabled
+               ? LocalStopPhraseRange{kLocalStopPhrases, kLocalStopPhrases + kLocalStopPhraseCount}
+               : LocalStopPhraseRange{kLocalStopPhrases, kLocalStopPhrases};
+}
 
 // MultiNet's model-wide detection threshold on this board. It must match
 // CONFIG_CUSTOM_WAKE_WORD_THRESHOLD (percent) in the board config.json, which

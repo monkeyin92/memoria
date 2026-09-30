@@ -13,6 +13,7 @@
 #include "device_identity.h"
 #include "memoria_audio_frame.h"
 #include "memoria_activation_client.h"
+#include "memoria_stop_keyword.h"
 #include "protocol.h"
 
 #include <freertos/FreeRTOS.h>
