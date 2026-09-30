@@ -403,7 +403,7 @@ diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/c
  void CustomWakeWord::Start() {
      running_ = true;
  }
-@@ -201,10 +280,38 @@
+@@ -201,10 +280,45 @@
          
          if (mn_state == ESP_MN_STATE_DETECTED) {
              esp_mn_results_t *mn_result = multinet_->get_results(multinet_model_data_);
@@ -430,12 +430,19 @@ diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/c
 +                    continue;
 +                }
 +#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
-+                if (command.action == "wake" && !memoria::WakeWordAccepted(mn_result->prob[i])) {
-+                    // Below the wake word's own acceptance: no wake-up,
-+                    // but logged so missed wake words show their score.
-+                    ESP_LOGI(TAG, "Wake word below threshold: string=%s, prob=%f",
-+                             mn_result->string, mn_result->prob[i]);
-+                    continue;
++                if (command.action == "wake") {
++                    const bool transcript_matches = memoria::WakeWordTextMatchesCommand(
++                        mn_result->string, command.command.c_str());
++                    if (!memoria::WakeWordAccepted(mn_result->prob[i], transcript_matches)) {
++                        // Weak hits must agree with the configured command;
++                        // this rejects low-score echo variants such as
++                        // "mo mo li" without raising the recall floor.
++                        ESP_LOGI(TAG,
++                                 "Wake word rejected: string=%s expected=%s prob=%f transcript_match=%d",
++                                 mn_result->string, command.command.c_str(), mn_result->prob[i],
++                                 transcript_matches ? 1 : 0);
++                        continue;
++                    }
 +                }
 +#endif
 +                ESP_LOGI(TAG, "Custom wake word detected: command_id=%d, string=%s, prob=%f",

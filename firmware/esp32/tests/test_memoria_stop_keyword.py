@@ -85,10 +85,11 @@ int main() {
                    static_cast<int>(memoria::LocalStopPhrasesToRegister().end() -
                                     memoria::LocalStopPhrasesToRegister().begin()));
         } else if (strcmp(command, "wake") == 0) {
-            if (sscanf(line, "%*s %31s", score_text) != 1) {
+            int transcript_matches = 0;
+            if (sscanf(line, "%*s %31s %d", score_text, &transcript_matches) != 2) {
                 return 2;
             }
-            printf("%s\n", memoria::WakeWordAccepted(strtof(score_text, nullptr)) ? "wake" : "reject");
+            printf("%s\n", memoria::WakeWordAccepted(strtof(score_text, nullptr), transcript_matches != 0) ? "wake" : "reject");
         } else {
             return 2;
         }
@@ -190,23 +191,36 @@ def test_phrase_table_is_tunable_above_the_detection_floor(gate_tool: pathlib.Pa
     assert constants["floor"] == pytest.approx(0.8)
 
 
-def test_wake_word_acceptance_sits_just_above_the_multinet_floor(gate_tool: pathlib.Path) -> None:
+def test_wake_word_acceptance_requires_consistent_text_for_weak_hits(gate_tool: pathlib.Path) -> None:
     phrases, constants = _table(gate_tool)
-    # Bench scores for 「茉莉」 were 0.11-0.20 in ten of twelve wake-ups, so build 14
-    # took the whole MultiNet report (0.10); video playing nearby then woke the
-    # device falsely, so build 16 requires 0.12.
+    # Keep the measured recall floor, but require transcript consistency for
+    # weak hits so a low-score echo such as "mo mo li" cannot wake the device.
     assert constants["wake"] == pytest.approx(0.12)
     assert constants["wake"] > constants["detect"]
     assert _run(
-        gate_tool, "wake 0.10", "wake 0.119", "wake 0.12", "wake 0.15", "wake 0.27", "wake nan"
+        gate_tool,
+        "wake 0.10 0",
+        "wake 0.119 0",
+        "wake 0.12 0",
+        "wake 0.15 0",
+        "wake 0.27 0",
+        "wake nan 0",
     ) == [
         "reject",
         "reject",
-        "wake",
-        "wake",
+        "reject",
+        "reject",
         "wake",
         "reject",
     ]
+    assert _run(
+        gate_tool,
+        "wake 0.12 1",
+        "wake 0.15 1",
+        "wake 0.199 1",
+        "wake 0.20 0",
+        "wake 0.27 0",
+    ) == ["wake", "wake", "wake", "wake", "wake"]
 
 
 def test_detection_floor_matches_the_board_sdkconfig(gate_tool: pathlib.Path) -> None:
@@ -444,13 +458,13 @@ def test_multinet_registers_stop_phrases_and_ignores_wake_in_stop_only_mode() ->
     stop_only_wake = stop_only_wake[: stop_only_wake.index("continue;")]
     assert "running_ = false" not in stop_only_wake
     assert "wake_word_detected_callback_" not in stop_only_wake
-    # A wake hit under the wake word's own acceptance is skipped (logged at INFO so missed
-    # wake words show their score) before the unchanged detection log and wake-up.
-    wake_gate = wake.index(
-        'if (command.action == "wake" && !memoria::WakeWordAccepted(mn_result->prob[i])) {'
-    )
+    # Weak wake hits must match the configured transcript before the unchanged
+    # detection log and wake-up.
+    wake_gate = wake.index('if (command.action == "wake") {')
     gate_body = wake[wake_gate : wake.index("continue;", wake_gate)]
-    assert 'ESP_LOGI(TAG, "Wake word below threshold' in gate_body
+    assert "WakeWordTextMatchesCommand" in gate_body
+    assert "WakeWordAccepted(mn_result->prob[i], transcript_matches)" in gate_body
+    assert "Wake word rejected:" in gate_body
     assert wake_gate < wake.index(
         'ESP_LOGI(TAG, "Custom wake word detected: command_id=%d, string=%s, prob=%f",'
     )
