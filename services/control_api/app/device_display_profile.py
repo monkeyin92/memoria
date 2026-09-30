@@ -9,6 +9,11 @@ the account's own companion, else the shipped default.
 
 Every read here is a plain read: the firmware polls this every ~20 s, so it
 writes nothing and audits nothing.
+
+The same poll also carries the device's ``wake_mode`` setting (wake word only,
+screen tap only, or both): the firmware applies it on every poll, while the
+companion is only re-applied when ``display_version`` moves, so the two do not
+share a version.
 """
 
 from __future__ import annotations
@@ -126,6 +131,11 @@ class DeviceDisplayProfile:
     binding_id: str
     persona_id: str
     companion_id: str
+    #: The device setting ``wake_mode``: ``keyword`` (wake word only), ``button``
+    #: (screen tap only; the BOOT key is always live) or ``button_or_keyword``.
+    #: ``None`` when the setting could not be read, so the firmware keeps what
+    #: it already applies rather than being told a default it never chose.
+    wake_mode: str | None = None
 
     @property
     def display_version(self) -> str:
@@ -136,12 +146,16 @@ class DeviceDisplayProfile:
         return digest[:16]
 
     def to_wire(self) -> dict[str, object]:
-        return {
+        wire: dict[str, object] = {
             "schema_version": DISPLAY_PROFILE_SCHEMA_VERSION,
             "device_id": self.device_id,
             "companion_id": self.companion_id,
             "display_version": self.display_version,
         }
+        if self.wake_mode is not None:
+            # Additive: firmware before build 18 reads only the three fields above.
+            wire["wake_mode"] = self.wake_mode
+        return wire
 
 
 def _mascot_or_none(value: object) -> str | None:
