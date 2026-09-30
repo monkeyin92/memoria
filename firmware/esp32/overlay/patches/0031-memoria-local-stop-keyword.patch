@@ -317,7 +317,7 @@ diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/c
 +    }
 +    // MultiNet reports every command down to kMultiNetDetectThreshold so weak
 +    // stop hits stay visible; FeedSamples applies each command's acceptance
-+    // (the wake word keeps its 0.20).
++    // (the wake word accepts all of them).
 +    threshold_ = memoria::kMultiNetDetectThreshold;
 +    ESP_LOGI(TAG, "MultiNet detection threshold=%.2f, wake word accepted at %.2f",
 +             static_cast<double>(threshold_), static_cast<double>(memoria::kWakeWordMinScore));
@@ -431,7 +431,7 @@ diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/c
 +                }
 +#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +                if (command.action == "wake" && !memoria::WakeWordAccepted(mn_result->prob[i])) {
-+                    // Below build 10's model-wide 0.20: never a wake-up,
++                    // Below the wake word's own acceptance: no wake-up,
 +                    // but logged so missed wake words show their score.
 +                    ESP_LOGI(TAG, "Wake word below threshold: string=%s, prob=%f",
 +                             mn_result->string, mn_result->prob[i]);
