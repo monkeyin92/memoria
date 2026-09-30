@@ -233,7 +233,7 @@ func (c *DeviceConnection) run() {
 		switch messageType {
 		case websocket.TextMessage:
 			if !c.handleControl(data) {
-				slog.Warn("media edge device WSS handler rejected", "session", c.sessionID, "device", c.deviceID, "epoch", c.epoch, "kind", "text")
+				slog.Warn("media edge device WSS handler rejected", "session", c.sessionID, "device", c.deviceID, "epoch", c.epoch, "kind", "text", "message", describeRejectedControl(data))
 				return
 			}
 		case websocket.BinaryMessage:
