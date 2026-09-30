@@ -18,14 +18,14 @@ U=/opt/memoria/incoming/$TAG
 R=/opt/memoria/releases/$TAG
 S=$R/.cutover
 # The stack this release replaces: the rollback target and its identity.
-PREV_TAG=20260930-local-stop-v2
-PREV_COMMIT=88a3c8053b2ba0c0411495674e4b355deaf839d8
+PREV_TAG=20261001-device-archive-v1
+PREV_COMMIT=412f31e9793c4f8845dd2660b1ae38ba56db1a16
 PREV=/opt/memoria/releases/$PREV_TAG
-# The live control-api is a component release on top of PREV (the vector-path
-# keyword bonus): PREV's compose file, then the pre-cutover override that names
+# The live control-api is a component release on top of PREV (the display
+# profile's wake_mode): PREV's compose file, then the pre-cutover override that names
 # PREV's own image, then the component override that names the component image.
 CR=/opt/memoria/component-releases
-LIVE_CONTROL_RELEASE=20260930-vector-keyword-v1
+LIVE_CONTROL_RELEASE=20261001-wake-mode-v1
 CONTROL_CHAIN="$PREV/docker-compose.production.yml,$CR/$LIVE_CONTROL_RELEASE/pre-cutover-control.override.yml,$CR/$LIVE_CONTROL_RELEASE/control-component.override.yml"
 # PostgreSQL still bind-mounts its schema files from this older tree, so schema
 # upgrades are written there (in place, keeping the inode) -- never into PREV.
