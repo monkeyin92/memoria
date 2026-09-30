@@ -64,6 +64,24 @@ _SERIOUS_CONTEXT_MARKERS = (
     "抑郁",
     "家暴",
     "骚扰",
+    # Loneliness, worry and longing: what children and elders bring to a companion most often.
+    "孤单",
+    "孤独",
+    "想哭",
+    "想念",
+    "想老伴",
+    "想我老伴",
+    "睡不着",
+    "失眠",
+    "压力",
+    "焦虑",
+    "担心",
+    "考砸",
+    "欺负",
+    "不理我",
+    "不跟我玩",
+    "笑话我",
+    "没人陪",
 )
 _DELIBERATIVE_MARKERS = (
     "安排",
@@ -487,8 +505,28 @@ def _apply_explicit_voice_style(plan: SpeechPlan, text: str) -> SpeechPlan:
 # own voice: only the TTS rate can. Without this every elder reply was read at the same pace
 # as an adult's (0.93-1.05 depending on the companion). The provider clamps the result to its
 # own allowed range, so a slow companion is not slowed twice past what the voice tolerates.
+# Measured on the production voice: the first step (0.94, -6%) read 3.7-3.9 characters/s against
+# 3.5-4.1 for the adult pace once the pauses are counted, too close to tell apart; 0.90 is an
+# audible step without sounding sluggish.
 SENIOR_SERVICE_MODE = "senior_companion"
-SENIOR_RATE_FACTOR = 0.94
+SENIOR_RATE_FACTOR = 0.90
+STUDENT_SERVICE_MODE = "student_minor"
+
+# Who is listening changes how the voice should sound, not only how fast it goes. The
+# companions are written for adults (axu: "落点利落"); that crisp delivery reads as curt to a
+# child and brusque to an elder. The hint is appended to the provider's style instruction, so
+# it needs a designed voice with style control, and it never overrides what the user asked for.
+_AUDIENCE_VOICE_HINTS: dict[str, tuple[str, str]] = {
+    # (everyday, comforting)
+    STUDENT_SERVICE_MODE: (
+        "对孩子说话：声音明亮温暖，带一点笑意，吐字清楚，像大哥哥大姐姐，不要端着",
+        "对孩子说话：声音放柔放轻，耐心温和，像陪在身边的哥哥姐姐",
+    ),
+    SENIOR_SERVICE_MODE: (
+        "对长辈说话：声音温和亲切，节奏放缓，句间多停一拍，吐字清楚，不急促，也不用哄小孩的腔调",
+        "对长辈说话：声音温和低缓，耐心陪着，句间多停一拍，吐字清楚",
+    ),
+}
 
 
 def speech_plan_for_turn(
@@ -501,7 +539,7 @@ def speech_plan_for_turn(
     companion_id: str | None = None,
     service_mode: str | None = None,
 ) -> SpeechPlan:
-    """The turn's speech plan, slowed for an elder unless the user asked for a pace."""
+    """The turn's speech plan, tuned to the listener (child, elder) unless the user asked for a style."""
     plan = _speech_plan_for_turn(
         label=label,
         provider_label=provider_label,
@@ -510,8 +548,15 @@ def speech_plan_for_turn(
         use_markup_tags=use_markup_tags,
         companion_id=companion_id,
     )
-    if service_mode == SENIOR_SERVICE_MODE and _style_command_body(text) is None:
-        return replace(plan, rate=round(plan.rate * SENIOR_RATE_FACTOR, 3))
+    if _style_command_body(text) is not None:
+        return plan
+    hints = _AUDIENCE_VOICE_HINTS.get(service_mode or "")
+    if hints is not None:
+        hint = hints[1] if plan.delivery_mode == "supportive" else hints[0]
+        instruction = plan.tts_instruction.rstrip("。")
+        plan = replace(plan, tts_instruction=(f"{instruction}；{hint}" if instruction else hint)[:239] + "。")
+    if service_mode == SENIOR_SERVICE_MODE:
+        plan = replace(plan, rate=round(plan.rate * SENIOR_RATE_FACTOR, 3))
     return plan
 
 
