@@ -7,28 +7,35 @@
 # Never prints secret values. Every step fails closed.
 #
 # Installed on the host as /root/memoria-release/release-ops.sh (root 0700).
-# The PREV_* constants describe the chain this release replaces; they were
-# read-only checked on production on 2026-09-29 18:40 (all three targets on the
-# plain PREV compose file) and must be re-checked before each full-stack
-# release. The freeze step refuses to run when the live containers are on any
-# other chain.
+# The PREV_* / LIVE_CONTROL_RELEASE constants describe the chain this release
+# replaces; they were read-only checked on production on 2026-10-01 (speaker-model
+# and the bridge on the plain PREV compose file, control-api on its component
+# chain) and must be re-checked before each full-stack release. The freeze step
+# refuses to run when the live containers are on any other chain.
 set -Eeuo pipefail
 : "${TAG:?}" "${COMMIT:?}"
 U=/opt/memoria/incoming/$TAG
 R=/opt/memoria/releases/$TAG
 S=$R/.cutover
 # The stack this release replaces: the rollback target and its identity.
-PREV_TAG=20260929-session-limits-v1
-PREV_COMMIT=26e937f177b550a25ce88d46200cfbdaae2a4c68
+PREV_TAG=20260930-local-stop-v2
+PREV_COMMIT=88a3c8053b2ba0c0411495674e4b355deaf839d8
 PREV=/opt/memoria/releases/$PREV_TAG
+# The live control-api is a component release on top of PREV (the vector-path
+# keyword bonus): PREV's compose file, then the pre-cutover override that names
+# PREV's own image, then the component override that names the component image.
+CR=/opt/memoria/component-releases
+LIVE_CONTROL_RELEASE=20260930-vector-keyword-v1
+CONTROL_CHAIN="$PREV/docker-compose.production.yml,$CR/$LIVE_CONTROL_RELEASE/pre-cutover-control.override.yml,$CR/$LIVE_CONTROL_RELEASE/control-component.override.yml"
 # PostgreSQL still bind-mounts its schema files from this older tree, so schema
 # upgrades are written there (in place, keeping the inode) -- never into PREV.
 DATA_TREE=/opt/memoria/releases/20260827-architecture-split-v1
-# Services recreated from the plain PREV compose file on rollback. media-edge is
-# released separately and is not touched here. The legacy LiveKit chain was
-# retired and removed from the host with 20260929-livekit-retire-v1, so PREV
-# is the same three roles this release ships.
-PREV_STACK_SERVICES=(speaker-model control-api voice-core-media-bridge)
+# Services recreated from the plain PREV compose file on rollback; control-api
+# returns to its component chain. media-edge is released separately and is not
+# touched here. The legacy LiveKit chain was retired and removed from the host
+# with 20260929-livekit-retire-v1, so PREV is the same three roles this release
+# ships.
+PREV_STACK_SERVICES=(speaker-model voice-core-media-bridge)
 TARGETS=(memoria-speaker-model-1 memoria-control-api-1 memoria-voice-core-media-bridge-1)
 # Images this release ships (memoria-agent is the Voice Core media bridge image).
 ROLES=(agent control-api speaker-model)
@@ -113,10 +120,12 @@ step_freeze() {
   [[ -d "$R" ]]
   install -d -m 0700 "$S"
   # Every target must be on the chain the rollback rebuilds.
-  local cf c
+  local cf c want
   for c in "${TARGETS[@]}"; do
     cf="$(live_chain "$c")"
-    [[ "$cf" == "$PREV/docker-compose.production.yml" ]] || { log "unexpected live chain for $c: $cf"; exit 1; }
+    want="$PREV/docker-compose.production.yml"
+    [[ "$c" == memoria-control-api-1 ]] && want="$CONTROL_CHAIN"
+    [[ "$cf" == "$want" ]] || { log "unexpected live chain for $c: $cf"; exit 1; }
   done
   [[ "$(readlink -f /opt/memoria/current)" == "$PREV" ]] || { log "/opt/memoria/current is not $PREV"; exit 1; }
   for c in "${TARGETS[@]}"; do
@@ -256,14 +265,21 @@ step_finish() {
   log "finish=PASS"
 }
 
-# Rollback returns to PREV as a whole: PREV's compose file, its images (freeze
-# also tags each rollback-$TAG-pre) and the env files freeze snapshotted.
+# Rollback returns to PREV as a whole: PREV's compose file (control-api on its
+# component chain), its images (freeze also tags each rollback-$TAG-pre) and the
+# env files freeze snapshotted.
 step_rollback() {
   log "ROLLBACK: restoring env files"
   cp -p "$S/memoria-control-api.env" /etc/memoria-control-api.env
   cp -p "$S/memoria-agent.env" /etc/memoria-agent.env
   ln -sfn "$PREV" /opt/memoria/current.new && mv -T /opt/memoria/current.new /opt/memoria/current
   local ID=(MEMORIA_RELEASE_TAG="$PREV_TAG" MEMORIA_RELEASE_COMMIT="$PREV_COMMIT")
+  # control-api returns to its component release on top of PREV.
+  (cd "$PREV" && env "${ID[@]}" docker compose -p memoria --project-directory "$PREV" \
+    -f "$PREV/docker-compose.production.yml" \
+    -f "$CR/$LIVE_CONTROL_RELEASE/pre-cutover-control.override.yml" \
+    -f "$CR/$LIVE_CONTROL_RELEASE/control-component.override.yml" \
+    up -d --no-deps --no-build --force-recreate control-api)
   (cd "$PREV" && env "${ID[@]}" docker compose -p memoria --project-directory "$PREV" \
     -f "$PREV/docker-compose.production.yml" --profile media-runtime \
     up -d --no-deps --no-build --force-recreate "${PREV_STACK_SERVICES[@]}")

@@ -6,7 +6,7 @@
 
 ```yaml
 enabled_release: 20260930-local-stop-v2  # 源 88a3c80；三角色为该 tag，其中 control-api 为 20260930-vector-keyword-v1、media-edge 为 20260930-late-receipt-v1；LLM qwen3.7-flash（联网查询 qwen-plus），ASR fun-asr-realtime，TTS Doubao；整栈回滚 *:rollback-20260930-local-stop-v2-pre（= 20260929-session-limits-v1），media-edge 回 20260930-edge-reject-log-v1
-control_api_release_lane: 整栈走仓库版 `scripts/release_ops.sh`（安装在服务器 `/root/memoria-release/release-ops.sh`）；PREV 常量随每次发布 PR 更新；依赖文件（pyproject/uv.lock）变化时增量与 overlay 发布会被脚本拒绝，须本机全量 linux/amd64 构建；control-api 组件链支持已移除，单组件发布前须先补回
+control_api_release_lane: 整栈走仓库版 `scripts/release_ops.sh`（安装在服务器 `/root/memoria-release/release-ops.sh`）；PREV 常量随每次发布 PR 更新；依赖文件（pyproject/uv.lock）变化时增量与 overlay 发布会被脚本拒绝，须本机全量 linux/amd64 构建；`release_ops.sh` 目前带着 control-api 的组件链（`20260930-vector-keyword-v1`，freeze 与 rollback 都认它），整栈发布把它并回纯 PREV 链后，下一次发布须再删掉这段支持；此后再做 control-api 单组件发布，仍须先把链支持补回
 memory_candidate_visibility: code=main 0059368 / enabled=true（随整栈上线）/ verified=SQLite/HTTP/主体隔离/评测适配器回归；四份 2026-09-23 评测收据为上线前 parent_baseline（固定集 recall@5/10=0.857、未见集 0.4、双泄漏 0），真实 PG candidate 行为与线上带鉴权读口未单独取证
 direct_real_device_verified: false
 full_duplex_verified: false
@@ -235,7 +235,7 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 1. 第 3 批 ② 其余域：剩控制库 `MemoryStore`、speaker、evolution 的 SQLite（未要求删除）。
 2. 发布 #148：依赖文件变了，须本机全量 linux/amd64 构建的整栈发布（上次依赖变化时用清华源，speaker-model 首次曾因 PyPI 索引响应截断失败，重试通过），发布后用 `scripts/voice_session_capture.py` 做真机对话验收（重点听慢速 TTS 的节奏）。需用户授权。
 3. 验证欠账：固件 build 15/16 播放期关掉本地停止词后，长回复是否还触发任务看门狗与断线，云端语音停止延迟（开口到声音停下）未测；`20260929-turn-taking-v1` 的电脑模拟复测被家长设的使用时段挡住（唤醒只播晚安、不开 ASR），需在使用时段内复测。
-4. 在途分支：#151（`fix/device-archive-persistence`，成人主体凭 `memory_recall_private` 授权归档；根因已核实：生产自 2026-08-08 起没有设备对话入库，另有设备信任一层，见 P1-11）；`feat/minor-memory-capture-receipt`（叠在 #151 上：Policy 对孩子的 `memory_capture` 对齐 09-25 决定 + 闸门放开孩子，未开 PR）；`wip/tts-stream-hardening`（本地，#148 时摘出的 TTS 清理钩子与 `APIConnectOptions` 有限值校验，钩子版 `aclose()` 会吞调用方取消，需返工）。`feat/memory-retrieval-paraphrase` 已合并为 #150 并随 control-api 组件发布上线。
+4. 在途分支：`wip/tts-stream-hardening`（本地，#148 时摘出的 TTS 清理钩子与 `APIConnectOptions` 有限值校验，钩子版 `aclose()` 会吞调用方取消，需返工）。#151、#152、#153（设备对话归档与设备信任分档）已于 2026-09-30 合并，随整栈发布 `20261001-device-archive-v1` 上线；`feat/memory-retrieval-paraphrase` 已合并为 #150 并随 control-api 组件发布上线。
 
 **需要用户决定**
 
@@ -243,7 +243,7 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 - 播放期本地停止词（09-30 决定先关，由云端按语义停播）何时以更省算力的方式加回，等云端停播延迟数据。
 - self_model 关系画像版本保护：PG trigger 只保护 approved 版本，是否收紧到所有状态（改生产 schema）。
 - 记忆检索方向 B：09-30 生产向量路径实测 `qwen3.7-text-embedding-flash` 与 `text-embedding-v4` 在四个评测集上打平，这四个集分不出嵌入模型（每账号 2–4 条文档、无相似度阈值）；需带大量干扰项的合并评测集，换生产嵌入模型前还要先回填向量。
-- 在途分支怎么处理；控制词不重置静默计时（UX）；生产常开 PCM tap（`MEDIA_PCM_TAP_DIR`，容器 tmpfs 每会话 4 MB，重启即清）是否长期保留（隐私）。
+- `wip/tts-stream-hardening` 怎么处理；控制词不重置静默计时（UX）；生产常开 PCM tap（`MEDIA_PCM_TAP_DIR`，容器 tmpfs 每会话 4 MB，重启即清）是否长期保留（隐私）。
 
 **产品轨（大多需要用户）**：P0-03 时延拆段（用户暂缓埋点；09-30 另查到播放约 10–13 s 时设备任务看门狗触发，MultiNet 与 Opus 同核，已用 build 15 缓解，待验）；外部试用（10 个家庭、4 周）；路演材料自洽、DEMO-09/10 竞品与定价、定位二选一。
 
