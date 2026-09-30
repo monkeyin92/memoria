@@ -534,7 +534,32 @@ bridge_image="$(docker inspect "$bridge_container" --format '{{.Config.Image}}')
 bridge_release_commit="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
 bridge_release_tag="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
 bridge_release_role="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "com.memoria.release.role"}}')"
-bridge_release_kind="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "com.memoria.release.kind"}}')"
+bridge_release_label_kind="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "com.memoria.release.kind"}}')"
+bridge_stack_release_tag="$(container_env_value "$bridge_container" MEMORIA_RELEASE_TAG)"
+
+# Full-stack images (infra/Dockerfile.agent, release_ops.sh) carry no
+# com.memoria.release.kind label; only component overlays and rollback
+# recoveries do. An unlabeled image is a full-stack release only while its
+# version is the stack tag the bridge was composed with.
+agent_release_kind() {
+  local label_kind="$1"
+  local image_version="$2"
+  local stack_tag="$3"
+  case "$label_kind" in
+    agent-source-overlay|agent-running-source-recovery)
+      printf '%s' "$label_kind"
+      ;;
+    "")
+      [[ -n "$image_version" && "$image_version" == "$stack_tag" ]] || return 1
+      printf 'full-stack'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+bridge_release_kind="$(agent_release_kind "$bridge_release_label_kind" "$bridge_release_tag" "$bridge_stack_release_tag")" || bridge_release_kind=""
 [[ "$bridge_release_commit" =~ ^[0-9a-f]{40}$ \
   && -n "$bridge_release_tag" \
   && "$bridge_release_role" == agent \
@@ -600,7 +625,6 @@ runtime_base_version="$(printf '%s' "$manifest_base_image" | cut -d: -f2-)"
   echo "runtime base image is missing, has invalid provenance, or is not independent" >&2
   exit 1
 }
-bridge_stack_release_tag="$(container_env_value "$bridge_container" MEMORIA_RELEASE_TAG)"
 control_stack_release_tag="$(container_env_value "$control_container" MEMORIA_RELEASE_TAG)"
 control_stack_release_commit="$(container_env_value "$control_container" MEMORIA_RELEASE_COMMIT)"
 [[ -n "$bridge_stack_release_tag" \
@@ -769,7 +793,10 @@ freeze_bridge_rollback_image() {
     rollback_existing_role="$(docker image inspect "$rollback_tag" --format '{{index .Config.Labels "com.memoria.release.role"}}')"
     rollback_existing_kind="$(docker image inspect "$rollback_tag" --format '{{index .Config.Labels "com.memoria.release.kind"}}')"
     case "$rollback_existing_kind" in
-      agent-source-overlay)
+      agent-source-overlay|"")
+        # An unlabeled tag is a full-stack image, and release_ops.sh names its
+        # own rollback tags the same way for the PREVIOUS stack: only the exact
+        # current bridge image may be reused.
         [[ "$rollback_existing_id" == "$image_id" \
           && "$rollback_existing_repo_digests" == "$bridge_image_repo_digests" \
           && "$rollback_existing_commit" == "$bridge_release_commit" \
@@ -869,17 +896,18 @@ ROLLBACK_DOCKERFILE
   rollback_release_tag="$(docker image inspect "$rollback_tag" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
   rollback_role="$(docker image inspect "$rollback_tag" --format '{{index .Config.Labels "com.memoria.release.role"}}')"
   rollback_kind="$(docker image inspect "$rollback_tag" --format '{{index .Config.Labels "com.memoria.release.kind"}}')"
+  rollback_kind="$(agent_release_kind "$rollback_kind" "$rollback_release_tag" "$bridge_stack_release_tag")" || rollback_kind=""
   rollback_arch="$(docker image inspect "$rollback_tag" --format '{{.Architecture}}')"
   rollback_runtime_base_id="$(docker image inspect "$rollback_tag" --format '{{index .Config.Labels "com.memoria.release.runtime-base-id"}}')"
   [[ "$rollback_release_commit" == "$bridge_release_commit" \
     && "$rollback_release_tag" == "$bridge_release_tag" \
     && "$rollback_role" == agent \
     && "$rollback_arch" == amd64 \
-    && ("$rollback_kind" == agent-source-overlay || "$rollback_kind" == agent-running-source-recovery) ]] || {
+    && -n "$rollback_kind" ]] || {
     echo "rollback tag provenance does not match the current bridge release" >&2
     exit 1
   }
-  if [[ "$rollback_kind" == agent-source-overlay ]]; then
+  if [[ "$rollback_kind" == agent-source-overlay || "$rollback_kind" == full-stack ]]; then
     [[ "$rollback_image_id" == "$image_id" \
       && "$rollback_image_repo_digests" == "$bridge_image_repo_digests" ]] || {
       echo "rollback tag image identity or RepoDigest does not match the current bridge image" >&2
