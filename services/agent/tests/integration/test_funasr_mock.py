@@ -6,8 +6,8 @@ import asyncio
 from collections.abc import Iterator
 
 import pytest
-from livekit.agents import APIConnectionError
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
+from services.agent.src.providers.provider_errors import APIConnectionError
 from services.agent.tests.integration.mock_servers import MockFunASRServer
 
 

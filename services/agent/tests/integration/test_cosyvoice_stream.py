@@ -4,14 +4,14 @@ import asyncio
 import struct
 
 import pytest
-from livekit.agents import APIConnectOptions
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoiceTTS
+from services.agent.src.providers.provider_errors import APIConnectOptions
 from services.agent.tests.integration.mock_servers import MockCosyVoiceServer
 
 
 @pytest.mark.asyncio
-async def test_livekit_stream_emits_audio_and_timed_transcript() -> None:
+async def test_stream_emits_audio_and_timed_transcript() -> None:
     srv = MockCosyVoiceServer()
     srv.start()
     try:
@@ -42,7 +42,7 @@ async def test_livekit_stream_emits_audio_and_timed_transcript() -> None:
 
 
 @pytest.mark.asyncio
-async def test_livekit_stream_preserves_pcm_across_transport_chunks() -> None:
+async def test_stream_preserves_pcm_across_transport_chunks() -> None:
     srv = MockCosyVoiceServer(scenario="split_pcm")
     srv.start()
     try:
@@ -62,7 +62,7 @@ async def test_livekit_stream_preserves_pcm_across_transport_chunks() -> None:
 
 
 @pytest.mark.asyncio
-async def test_livekit_stream_first_audio_timeout_retries_with_buffered_text() -> None:
+async def test_stream_first_audio_timeout_retries_with_buffered_text() -> None:
     srv = MockCosyVoiceServer(scenario="slow_once")
     srv.start()
     try:
@@ -88,7 +88,7 @@ async def test_livekit_stream_first_audio_timeout_retries_with_buffered_text() -
 
 
 @pytest.mark.asyncio
-async def test_livekit_stream_clone_failure_replays_buffer_with_baseline_voice() -> None:
+async def test_stream_clone_failure_replays_buffer_with_baseline_voice() -> None:
     srv = MockCosyVoiceServer(scenario="slow_once")
     srv.start()
     try:
@@ -124,7 +124,7 @@ async def test_livekit_stream_clone_failure_replays_buffer_with_baseline_voice()
 
 
 @pytest.mark.asyncio
-async def test_livekit_stream_empty_timestamps_discards_connection() -> None:
+async def test_stream_empty_timestamps_discards_connection() -> None:
     srv = MockCosyVoiceServer(scenario="empty_ts")
     srv.start()
     try:
@@ -144,7 +144,7 @@ async def test_livekit_stream_empty_timestamps_discards_connection() -> None:
 
 
 @pytest.mark.asyncio
-async def test_livekit_stream_never_retries_whole_sentence_after_audio_output() -> None:
+async def test_stream_never_retries_whole_sentence_after_audio_output() -> None:
     srv = MockCosyVoiceServer(scenario="empty_ts")
     srv.start()
     try:
@@ -181,7 +181,7 @@ async def test_livekit_stream_never_retries_whole_sentence_after_audio_output() 
 
 
 @pytest.mark.asyncio
-async def test_livekit_stream_cancel_closes_bound_connection() -> None:
+async def test_stream_cancel_closes_bound_connection() -> None:
     srv = MockCosyVoiceServer(scenario="slow")
     srv.start()
     try:

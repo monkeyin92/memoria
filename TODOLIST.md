@@ -1,12 +1,12 @@
 # Memoria 优先级执行清单
 
-更新于 2026-09-28｜线上为整栈发布 `20260928-reopen-window-v1`（main `173445d`，当日第 3 次整栈发布；media-edge 随后单独发布为 `20260928-writer-teardown-v1`，main `5e358ec`），上一栈 `20260928-followup-endpoint-v1` 为回滚目标。当日上线：配网后激活卡「连接中」修复（固件 build 9/10）、伙伴一致与设备页/伙伴页整改（小程序 `0.2.20260928.1`）、会话设备信任跟随 onboarding（#77）、追问不再中途待命（#80）、背景声不能再拖住已识别的问句（#83），并把 aigcnice.com 证书换成续期证书（至 2026-12-17）。当日遗留见下方「2026-09-28 收尾待办」。本文件只保留未完成事项、执行边界和验收条件，完成收据归 `HANDOFF.md`。
+更新于 2026-09-30｜线上为整栈 `20260930-local-stop-v2`（源 `88a3c80`；bridge 镜像仍带 `livekit-agents`，#148 已合并未发布），media-edge 单独在 `20260930-late-receipt-v1`；整栈回滚目标 `20260929-session-limits-v1`，media-edge 回滚目标 `20260930-edge-reject-log-v1`。固件 build 16 已合并，未发布 OTA。2026-09-28 的收尾待办见下方同名一节；发布与验收收据见 `HANDOFF.md`。本文件只保留未关闭事项。
 
 ## 当前边界（不得越界宣称）
 
 ```yaml
-enabled_release: 20260928-reopen-window-v1  # main 173445d；agent/bridge、control-api、两个网关、speaker-model 为该 tag，media-edge 为 20260928-writer-teardown-v1（main 5e358ec）；LLM qwen3.7-flash（联网查询 qwen-plus），ASR fun-asr-realtime，TTS Doubao；回滚 *:rollback-20260928-reopen-window-v1-pre（= 20260928-followup-endpoint-v1），media-edge 回 20260926-minor-safety-v1
-control_api_release_lane: 整栈走仓库版 `scripts/release_ops.sh`（安装在服务器 `/root/memoria-release/release-ops.sh`，2026-09-28 三次整栈全链一次 PASS）；PREV 常量已指向 `20260928-followup-endpoint-v1`，下次发布前须改为 `20260928-reopen-window-v1`（小改，随发布 PR 一起带上）；control-api 组件链支持已移除，单组件发布前须先补回
+enabled_release: 20260930-local-stop-v2  # 源 88a3c80；三角色为该 tag，media-edge 为 20260930-late-receipt-v1；LLM qwen3.7-flash（联网查询 qwen-plus），ASR fun-asr-realtime，TTS Doubao；整栈回滚 *:rollback-20260930-local-stop-v2-pre（= 20260929-session-limits-v1），media-edge 回 20260930-edge-reject-log-v1
+control_api_release_lane: 整栈走仓库版 `scripts/release_ops.sh`（安装在服务器 `/root/memoria-release/release-ops.sh`）；PREV 常量随每次发布 PR 更新；依赖文件（pyproject/uv.lock）变化时增量与 overlay 发布会被脚本拒绝，须本机全量 linux/amd64 构建；control-api 组件链支持已移除，单组件发布前须先补回
 memory_candidate_visibility: code=main 0059368 / enabled=true（随整栈上线）/ verified=SQLite/HTTP/主体隔离/评测适配器回归；四份 2026-09-23 评测收据为上线前 parent_baseline（固定集 recall@5/10=0.857、未见集 0.4、双泄漏 0），真实 PG candidate 行为与线上带鉴权读口未单独取证
 direct_real_device_verified: false
 full_duplex_verified: false
@@ -82,7 +82,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 
 ### [ ] P1-01 冻结修复候选，完成发布与回滚验收
 
-- P0 收口后冻结同一 source/lock，跑 ruff、module budget、strict mypy、协议生成、真实 PG init/repeat-upgrade、全量 pytest/覆盖率、Offline E2E、真实 exporter 隐私门和受影响镜像门；DSN-gated skip 不能当通过。
+- P0 收口后冻结同一 source/lock，跑 ruff、module budget、strict mypy、协议生成、真实 PG init/repeat-upgrade、全量 pytest/覆盖率、Offline E2E 和受影响镜像门（Agent 镜像发布门：bridge 不导入 livekit、自有媒体遥测隐私 canary、DTLN 去噪器可加载）；DSN-gated skip 不能当通过。
 - 用标准全量构建复验 Agent/Bridge 同一产物、非 root 运行与真实环境变量；按授权切流，复核 12 个 readiness、外部路由、provider/LiveKit、设备与时延，并实际演练紧邻回滚。
 - 完成条件：同一候选的构建、切流、回滚、设备验收分别有证据；仅保留当前和一个可运行回滚，清理生产另授权。
 
@@ -209,18 +209,42 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 
 ### [ ] P2-08 架构整理后续（2026-09-26 审计，减法优先）
 
-- 已完成：PR #42 删除无消费者代码约 3.09 万行，行数预算覆盖全部超 1,500 行模块，跨包依赖图冻结；② 第一、二步已上线（`20260926-edge-flush-v1`）：`create_app()` 与 lifespan 共用装配函数 `_wire_services`，启动资源按创建倒序关闭；同用 archive DSN 的 10 个存储共享一个池（上限 20、语句超时 15s，线上 `memoria_app` 连接 5 → 1），`main.py` 1643 → 1518 行。
-- 状态（2026-09-29）：① 账号/会话/设备已迁到 PostgreSQL（2026-09-28 生产切换完成）；identity、consent、memory_scope、guardian 的 SQLite 孪生已删除（见第 3 批 ②）；archive 一族（证据账本、记忆、技能、人格、自我模型、数字分身、传承、成长、声音档案及治理读取器）的 SQLite 实现也已删除（2026-09-29，用户选择测试只在 PG 下跑）；剩控制库的 SQLite `MemoryStore`（开发与 `sqlite_only` 迁移用例），以及 speaker、evolution 各自 DSN 下的 SQLite 实现。② 池合并已无可做：其余 DSN 各是独立的生产角色（最小权限与 RLS 依赖角色），不能共用池；同 DSN 的已共享（archive 的 10 个存储；speaker 与 archive 同 DSN 时借用其池）。剩余只有对象在 eager 与 live 各构建一次，需先把 API 测试迁到走 lifespan 的客户端；不在 2026-09-28 评审批次内，未排期。③ 版本化迁移已完成（#98）。④ 先把重度依赖私有字段的测试迁到公开接口，再拆 `DuplexRuntime` 与媒体会话 registry：属语音主链，待真机验收窗口（第 5 批）。⑤ 反向依赖已消除：`memory_scope`→`control_api`（第 2 批）；`common`→`agent`（危机语义判定枚举移入 `common/crisis_policy.py`，agent 分类器转引）、`common`→`archive`（`evidence_policy` 只读三个字段，改为结构化 Protocol）、`governance`→`control_api`（`AccountStore` Protocol 列出治理用到的 5 个账号库方法）。`companionship`→`control_api` 保留：它是在进程内启动 Control API 的评测工具，位于依赖图顶层。
-- 2026-09-28 双视角评审后的批次顺序（先修缺陷，再做减法，再做需授权的存储迁移，最后拆大对象；每批一个 PR）：第 0 批 media-edge 写循环/CloseSend/accept 后登记与小程序 tab 导航已合并（PR #86、#87，media-edge 已单独发布）；第 1 批正确性修复见下；第 2 批删除零消费者路由与域包、一次性迁移、声纹残留、Python 设备网关残留；第 3 批即 ①③；第 4 批即 P1-12 加 `ReplyPipeline` 抽取、`TTS_PROVIDER` 工厂与跨语言 fence 向量；第 5 批即 ④ 加测试瘦身（可控时钟、按 mixin 切分）；第 6 批 `ControlSettings` 按域拆分、Go `%w` 与结构化日志、固件 CI 编译、⑤。
-- 第 6 批（部分完成，待发布）：media-edge 日志改为 `slog`（默认格式不变，`voice_session_report` 解析照旧）；CI 新增 ESP-IDF 固件编译作业（PR #90）；环境模板改为校验而非生成：`scripts/tests/test_env_template_drift.py` 要求 Control/Agent/两个网关的每个 settings alias 都出现在 `infra/memoria.env.production.example`（可为注释的 `# KEY=默认值`），或登记在带理由的豁免表（SQLite 开发库路径、镜像构建注入的 release tag、生产禁用的旧全权 token、只在 root 升级流程出现的 bootstrap DSN）；补齐了 23 个缺失项。模板为多服务共用且带人工注释，生成会丢注释，故不生成。`ControlSettings` 的 210 个字段按域拆为 `app/config_fields/` 下 8 个 mixin，属性访问与环境变量名不变，逐字段比对一致（PR #111）；Go `%w` 已核实无需改动（包装底层 error 的 `fmt.Errorf` 均已用 `%w`，其余为 C 错误字符串）；⑤ 见上。
-- 第 5 批（部分完成）：15k 行 `test_media_session.py` 按行为拆成 6 个文件并共用 `media_session_support.py`（PR #95）。prompt 测试改按段落 ID 断言（`PROMPT_SECTIONS`/`ComposedPrompt.section()`，渲染文本逐字节不变，PR #107）。SenseVoice 补救识别（2026-09-29 真机验收发现，发布前后都有）：补救请求送整个 VAD 段（最长 30 s），2 核解码约 3 s，超过 2.5 s 超时；已改为有非空 final 时只送未覆盖的尾段、`begin_ms` 从尾段起（第 5 批 PR A，待真机）。尾段仍超过约 25 s 时依旧会超时。第 5 批 PR A 另加公开测试接缝（迁移 478 处私有读取，1290→852）与 `test_media_session_golden.py` 录制基准（8 个场景），作为后续重构的比对依据；基准记下三处待查的现有行为：已验证主人会话首条之后不再发 floor-effect、停止/KWS 取消的回复没有投递终态事件、告别路径状态机从 `connecting` 直接到 `closed`。可控时钟暂不做：实测 agent 测试最慢的是 5 s mock 超时，非零 `sleep` 合计约 2 s（162 处是 `sleep(0)` 让步），收益不抵改动。已完成并上线（2026-09-29 `20260929-voice-core-refactor-v1`，#123–#126，真机验收通过）：公开测试接缝（私有读取 1290→852）、录制基准、`GenerationRecords`、`VoiceFloorState`、`PendingTurn`/`OutputState`、`ReplyPipeline`、删可信中断与 listener-cue 死代码。验收发现「停」被当告别（既有缺陷）：#127 修了误判（已上线 `20260929-stop-word-v1`），但设备播放期无 VAD、纯控制指令也从不停播，真机上「停」仍无反应；两层修复待发布（HANDOFF 该节）。SenseVoice 救援上限 12 s 已上线。剩余：替换 `livekit.agents`（TTS 流、ChatContext、openai 插件）为独立系列。
-- 第 4 批（部分完成，待发布）：Go 与 Python 共用一组 generation fence 向量（`packages/contracts/generation-fence-vectors.json`，两端各一个测试，PR #93）；TTS 经 `providers/tts_factory.py` 按 `TTS_PROVIDER` 构建，克隆音色在工厂内决定（PR #94，生产仍为豆包）。LiveKit 路径已下线并上线（P1-12，2026-09-29 `20260929-livekit-retire-v1`，真机验收通过）；`ReplyPipeline` 已抽取（批次 5 D，待发布；需真机验收窗口）；待完成：去掉 bridge 对 `livekit.agents` 类库（TTS 流、`ChatContext`）的依赖。
-- 第 3 批 ②（第一步完成：生产形态的 PG 测试底座）：`testing/postgres_harness.py` 用真实 `infra/postgres/init-memoria.sh` 与数据 compose 挂载的 schema 建模板库，运行时自建 schema 的存储按生产角色初始化，每个测试克隆一份（约 50 ms）；每个 DSN 以其生产角色连接，FORCE RLS 真实生效。`MEMORIA_TEST_APP_POSTGRES=1` 让 `services/control_api/tests` 与 `services/governance/tests` 的 `create_app()` 在 eager 装配里也构建 PostgreSQL 存储（`MEMORIA_EAGER_POSTGRES`，仅测试，生产环境忽略），CI 新增并行作业 `control-api-postgres`；测试按后端中立改写（`testing/app_store.py` 读写夹具行；RLS 下陌生人得 404 而非 403 由 `assert_stranger_denied` 统一）。它已找出并修复 9 个 SQLite 孪生掩盖的生产缺陷：self-model JSONB 列表按字符解码（#96）、长辈绑定先校验年龄后记关系（#97）、被替代绑定版本对非主体属主不可见致版本列表 500（#99）、账号删除因 `memoria_evolution` 无 lifecycle 表 DELETE 权限而中断（#100，生产已核实缺权限）、记忆编译与留存无 actor 读取绑定主体（#101，潜伏）、PG 导出不解码 JSONB 致自助导出无证据（#102）、监护行 UUID/时间不可 JSON 序列化致含监护记录的账号导出失败（#103，生产 1 个账号受影响）、语料维护角色无法标记删除（#104，潜伏）、开发运行时刷新权限未带 actor（本 PR）。默认 SQLite 模式与 PG 模式全部通过。已删 identity 的 SQLite 孪生（2.3k 行）：生产启动本就要求 `MEMORIA_IDENTITY_DATABASE_URL`，无 DSN 的开发/默认测试改用单测已在用的内存存储。consent（503 行）与 memory_scope（1.6k 行）的 SQLite 孪生也已删除：control-api 从未装配它们，只剩测试引用；契约测试保留内存实现，SQLite 专属用例删除（PG 版本各有契约测试）。device_fleet 与 archive 没有独立的 SQLite 孪生文件。guardian 的 SQLite 孪生（2.8k 行）也已删除（用户选择测试只在 PG 下跑）：Control API 启动要求 `MEMORIA_GUARDIAN_DATABASE_URL`，eager 测试装配无 DSN 时拿到调用即报错的占位；guardian 单测改用 `guardian_postgres_store` 夹具（生产形态克隆库，无 `MEMORIA_TEST_POSTGRES_DSN` 则跳过），依赖监护数据的 API 用例标 `guardian_postgres`、只在 `control-api-postgres` 作业运行，SQLite 迁移/触发器专属用例删除。archive 一族随后同样删除（用户选择只在 PG 下跑）：Control API 启动要求 `MEMORIA_ARCHIVE_DATABASE_URL`，eager 装配无 DSN 时用 `UnconfiguredStore` 占位；有 `MEMORIA_TEST_POSTGRES_DSN` 时 control_api/governance/companionship 测试全部走生产形态 PG（单独的 `control-api-postgres` 作业并入主 `python` 作业，`guardian_postgres` 标记随之删除），没有则跳过（`sqlite_only` 控制库迁移用例除外）；各包单测改用 `postgres_database` 克隆库。迁移中找出并修复：PG 声音登记读取登记操作时未设账号范围，FORCE RLS 下 `complete_enrollment` 必然失败（近两天 nginx 日志无登记调用，更早无法核实）；PG 记忆检索无向量路径缺少查询词命中排序（见 P1-06）。另发现：PG `self_model_relationship_profile_guard` 只保护 approved 版本内容，SQLite 版保护所有状态，API 不会改写，属纵深防御缺口，未改生产 schema，待定。本机开发改为一个 NOBYPASSRLS 属主角色（见 README）。
-- 第 3 批 ①（已完成：随 `20260928-review-batches-v1` 上线，2026-09-28 23:35 控制库切换到 PostgreSQL，收据见 HANDOFF）：控制库同一套 SQL 跑两个后端（`database/backend.py`：`?`→`%s`、`BEGIN IMMEDIATE`→事务级 advisory lock 保持单写者语义、写操作包 savepoint、布尔转 0/1、行对象兼容下标与列名），PostgreSQL 表结构 `database/postgres_schema.sql` 共 28 张（原 23 张 + 删除台账 + 数字分身预览 4 张；预览表必须同库，账号删除在同一事务里清它们），NOLOGIN 属主 `memoria_control_owner` + 运行时角色 `memoria_control`，全部 FORCE RLS；`MEMORIA_CONTROL_DATABASE_URL` 为空时仍用 SQLite 文件。发布链：`env` 步骤只生成角色密码不写 DSN，`schema` 步骤经 stdin 幂等建表（运行中的 PG 容器尚无 011 挂载），`verify_authoritative_postgres.sh` 检查 28 张表。迁移 `scripts/migrate_control_sqlite_to_postgres.py`（只读源、目标非空拒绝、未映射的非空表拒绝、逐表行数+校验和、序列续接、收据不含行内容）；切换 `release-ops.sh control-store`（`CONTROL_STORE_MODE=dry-run|apply`，失败自动回 SQLite），步骤与回滚写入 `docs/runbooks/release-rollback.md`。验证：对照开关 `MEMORIA_TEST_CONTROL_STORE=postgres` 让全部测试的 `MemoryStore(path)` 跑在 PG 上，全量通过；真实角色契约测试 `test_postgres_control_store.py` 证明运行时角色在 FORCE RLS 下可读写、其他角色被拒、迁移可复核且拒绝重跑。已知取舍：同步驱动 psycopg（沿用现有同步调用约定，异步化另议）；按账号的行级策略与 SQLite 持平，未新增。生产数据现状（2026-09-28 只读核对）：18 张非空表共 2,559 行，全部有映射。
-- 第 3 批 ③（代码已完成，待发布）：PostgreSQL 控制库引入版本台账 `control_schema_migrations`。`postgres_schema.sql` 是幂等基线，记为版本 1，每次发布照旧重放；基线无法幂等表达的改动放 `database/migrations/NNNN_<名>.sql`（从 0002 起连续编号，发布后不再修改），发布 `schema` 步骤逐个以单事务（`psql -1`）执行并写台账。运行时角色只读台账：库版本落后于代码即拒绝启动；库版本领先（代码回滚）仍可启动。SQLite 路径的建表与补列随孪生存储删除，不另做版本化。验证：真实角色契约测试覆盖只应用一次、失败不留痕、编号必须连续、落后拒启、领先可启，以及发布脚本与代码指向同一目录。
-- 第 2 批（代码已完成，待发布）：删除零消费者代码——一次性迁移与接缝（约 1.9 万行，含测试）、Python 设备网关残留 `device_client`/`device_runtime`、`speaker/evaluation.py`、`evolution` 的 runtime/trajectory/replay/skill；删除无调用方的路由 `/v1/legacy`、`/v1/self-model`、`/v1/skills`、`/v1/evolution`、`/v1/tutor`、`/v1/production/memories` 及仅服务它们的装配（tutor 授权、evolution 运行时采集、`tutor_profile`、MemoryScope 的 capture/recall 适配器）；域包本身保留，因 session/interaction/agent 仍导入其领域模型。依赖基线收紧：去掉 governance→digital_self/identity/memory_scope/persona、`memory_scope→control_api`（已知反向依赖之一）与 tutor→archive。保留决定：Go 端 `keyword.detected` 转发路径保留，它是 README 所述签名本地硬停与 P1-07 语音打断的契约入口，只是固件尚未产生；声纹后端（`/v1/speakers`、speaker-model 容器）按 P1-11 等设备验收后整体清理，内部登记依赖公开登记意向，不能只删一半。
-- 第 1 批（代码已完成，待发布）：media-edge 开槽等待跟随请求 context，超载答 503；关键词发送不再持 `stateMu` 做 gRPC 写（`Session.mu` 原子门保留，因关键词事件无 fence、Voice Core 不能迟到拒收）；guardian SQLite `grant_consent` 补上与 PG 一致的 actor/`guardian_user_id` 校验；`BootstrapStorePort` 由空类改为 Protocol（`bootstrap_port.py`），删除 41 处 `attr-defined` 忽略并修正一处被掩盖的类型收窄；删零导入依赖 `sqlalchemy`；小程序「我的」敏感入口改用 `entryAllowed` 结果（数字分身/原始语音不再永远「暂未开放」），监护与原始语音授权的未接入状态提前显示并禁用控件，首页唤醒词读设备设置，回顾页文案改为「点确认后才会留下」，换伙伴保存失败回滚，删 5 个无引用 API 导出。
-- 约束：①③涉及生产数据迁移，须另获授权并先演练恢复；不做大爆炸重写，每步可独立发布与回滚。
+状态（2026-09-30）：2026-09-28 双视角评审的第 0–6 批代码已全部合并（每批一个 PR；顺序：先修缺陷，再做减法，再做需授权的存储迁移，最后拆大对象；产品轨并行），没有打开的 PR。约束：涉及生产数据迁移须另获授权并先演练恢复；不做大爆炸重写，每步可独立发布与回滚。
+
+**已完成（均已上线，注明者除外）**
+
+- PR #42 删除无消费者代码约 3.09 万行，行数预算覆盖全部超 1,500 行模块，跨包依赖图冻结；`create_app()` 与 lifespan 共用装配函数 `_wire_services`，同 archive DSN 的 10 个存储共享一个池（`20260926-edge-flush-v1`）。
+- 第 0 批（#86、#87）：小程序 tab 导航；Edge 写循环出错即关连接、`CloseSend` 串行、accept 之后才登记连接。
+- 第 1 批（#89）：Edge 开槽等待跟随请求 context、超载 503、关键词发送不持锁做网络写；guardian `grant_consent` 补 actor 校验；`BootstrapStorePort` 改 Protocol、删 `sqlalchemy`；小程序隐藏不可用入口、失败回滚，回顾页文案改为"点确认后才会留下"。
+- 第 2 批（#91）：删零消费者路由与装配、一次性迁移、Python 设备网关与 evolution 运行时残留；域包保留，Go keyword 通路留给 P1-07。
+- 第 3 批：① 控制库同一套 SQL 跑 SQLite 与 PostgreSQL（`database/backend.py`），2026-09-28 23:35 生产切换完成（2266 行逐表校验一致），迁移脚本与 `release-ops.sh control-store`（#92）；② PG 测试底座 `testing/postgres_harness.py` 与 CI 作业 `control-api-postgres`（#108），底座找出的生产缺陷已修（#96–#104）；删除 identity、consent、memory_scope（#118）、guardian（#120）、archive 一族（#121）的 SQLite 孪生，测试只在 PG 下跑，顺带修 PG 声音登记 RLS 与无向量路径排序；③ 版本化 schema 迁移（#98，`control_schema_migrations`，运行时角色只读台账，库版本落后即拒绝启动）。
+- 第 4 批：跨语言 fence 向量（#93）；`TTS_PROVIDER` 工厂（#94，生产仍用豆包）；P1-12 旧媒体链下线（#122，`20260929-livekit-retire-v1`，主机旧件经用户确认已清理）；`ReplyPipeline` 抽取（#126）。
+- 第 5 批（`20260929-voice-core-refactor-v1`，#123–#126，真机验收通过）：拆 `test_media_session.py`（#95）、prompt 测试按段落 ID 断言（#107）、公开测试接缝（私有读取 1290→852）与录制基准、`GenerationRecords`、`VoiceFloorState`、`PendingTurn`/`OutputState`、删可信中断与 listener-cue 死代码。可控时钟不做：实测最慢的测试是 5 秒的 mock 超时，非零 sleep 合计约 2 秒。
+- 第 6 批：media-edge 改 `slog`、CI 固件编译（#90）；环境模板改为漂移校验不做生成（#105，`test_env_template_drift.py`）；反向依赖清理（#106）；`ControlSettings` 按域拆 8 个 mixin（#111）。
+- 09-29 停止词与轮次：`20260929-stop-word-v1`（#127）、`stop-playback-v1`（#129，#128 抽取提示词 v3）、`stop-reconnect-v1`（#130）、`turn-taking-v1`（#133、#134）；`session-limits-v1`（#136，设备页「使用时段」可修改，小程序体验版 `0.2.20260929.1`）。
+- 09-29 CI 分片（#137、#138）：python 测试分 4 片，一轮约 10 分钟；main 上不再自动跑 CI，只在 PR 与手动触发时跑。
+- 09-30 `20260930-local-stop-v2`（#139–#142）与 media-edge 三次组件发布（#145、#146）；固件仅 USB 刷入：#144（唤醒词 0.10，build 14）、#147（播放期关闭本地停止词、唤醒词 0.12，build 15/16）；#143 组件快车道接受整栈 bridge（未在生产实跑）。
+- 记忆评测：抽取提示词 v3 + 中文关系标签，固定集 recall 0.875、未见集 1.0、泄漏 0；留出 v2 集仍 0.22；留出集（#119）。流式 ASR 四家离线 A/B（#131，`docs/acceptance/run-20260929-asr-ab/findings.md`）：正常朗读打平，qwen-audio-3.1 与豆包最干净，空结果来自上行电平，暂不换。测试稳定性（#109、#110）。
+- 09-30 去掉 `livekit.agents` 依赖（#148，已合并，**待发布**）：本地 `llm_types.py`、`providers/openai_chat.py`、`providers/tts_stream.py`、`provider_errors.py` 取代 livekit 的 ChatContext、openai 插件、TTS 流与错误类型；旧库并排对照 543 例通过后连同依赖删除（提交 `15075621` 可复现）；锁文件 122→95 包，镜像 101→69 包；`onnxruntime` 显式声明，`pillow`/`sounddevice` 入 dev extra；发布门改为验证 bridge 不导入 livekit（保留自有遥测隐私 canary、DTLN 加载）。
+
+**未完成**
+
+1. 第 3 批 ② 其余域：剩控制库 `MemoryStore`、speaker、evolution 的 SQLite（未要求删除）。
+2. 发布 #148：依赖文件变了，须本机全量 linux/amd64 构建的整栈发布（上次依赖变化时用清华源，speaker-model 首次曾因 PyPI 索引响应截断失败，重试通过），发布后用 `scripts/voice_session_capture.py` 做真机对话验收（重点听慢速 TTS 的节奏）。需用户授权。
+3. 验证欠账：固件 build 15/16 播放期关掉本地停止词后，长回复是否还触发任务看门狗与断线，云端语音停止延迟（开口到声音停下）未测；`20260929-turn-taking-v1` 的电脑模拟复测被家长设的使用时段挡住（唤醒只播晚安、不开 ASR），需在使用时段内复测。
+4. 在途分支（未合并，无 PR）：`feat/memory-retrieval-paraphrase`（无向量时词面召回不再让功能词参与打分，demo 集 nDCG 0.895→0.947，其余不变；留出 v2 的 7 条漏召回与目标没有共同内容字，词面无解）；`fix/device-archive-persistence`（其提交说明称 Agent 归档门要求 `memory_capture` 收据而 Control 从不签发，生产自 2026-08-08 起没有设备对话被归档；分支让成人主体凭 `memory_recall_private` 授权归档，未成年人仍需动作时收据，未独立核实）；`wip/tts-stream-hardening`（本地，#148 时摘出的 TTS 清理钩子与 `APIConnectOptions` 有限值校验，钩子版 `aclose()` 会吞调用方取消，需返工）。
+
+**需要用户决定**
+
+- 发布 #148（见上）；固件 build 16 是否签名发布 OTA；固件 AGC（缺陷 B，空结果来自上行电平）。
+- 播放期本地停止词（09-30 决定先关，由云端按语义停播）何时以更省算力的方式加回，等云端停播延迟数据。
+- self_model 关系画像版本保护：PG trigger 只保护 approved 版本，是否收紧到所有状态（改生产 schema）。
+- 记忆检索方向 B：09-30 生产向量路径实测 `qwen3.7-text-embedding-flash` 与 `text-embedding-v4` 在四个评测集上打平，这四个集分不出嵌入模型（每账号 2–4 条文档、无相似度阈值）；需带大量干扰项的合并评测集，换生产嵌入模型前还要先回填向量。
+- 三个在途分支怎么处理；控制词不重置静默计时（UX）；生产常开 PCM tap（`MEDIA_PCM_TAP_DIR`，容器 tmpfs 每会话 4 MB，重启即清）是否长期保留（隐私）。
+
+**产品轨（大多需要用户）**：P0-03 时延拆段（用户暂缓埋点；09-30 另查到播放约 10–13 s 时设备任务看门狗触发，MultiNet 与 Opus 同核，已用 build 15 缓解，待验）；外部试用（10 个家庭、4 周）；路演材料自洽、DEMO-09/10 竞品与定价、定位二选一。
+
+**验证约定**：每个 PR 本地跑 ruff、module budget、mypy strict、相关 pytest（默认模式 + `MEMORIA_TEST_APP_POSTGRES=1`），涉及 PG 加跑 `run_authoritative_postgres_gate.sh`；语音链改动用 `scripts/voice_session_capture.py` 真机验收并写入 `HANDOFF.md`；改依赖时从旧锁重新求解、本地建 Agent 与 control-api 镜像并在 `--network none` 下重跑发布门、用 AST 扫描全仓 import 比对新旧 venv（查丢失的间接依赖）；小程序改动用微信开发者工具 CLI 上传体验版。
 - 完成条件：每步有行数与依赖图基线收紧的证据，生产切换有收据。
 
 ## 暂缓，不自动扩张范围

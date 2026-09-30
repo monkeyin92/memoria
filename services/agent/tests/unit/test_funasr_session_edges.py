@@ -4,7 +4,6 @@ import asyncio
 import logging
 
 import pytest
-from livekit.agents import APIConnectionError
 from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.providers import funasr_stt
 from services.agent.src.providers.funasr_stt import (
@@ -12,6 +11,7 @@ from services.agent.src.providers.funasr_stt import (
     FunASRConfig,
     FunASRSession,
 )
+from services.agent.src.providers.provider_errors import APIConnectionError
 
 
 @pytest.mark.asyncio

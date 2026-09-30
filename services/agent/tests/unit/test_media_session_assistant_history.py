@@ -24,7 +24,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from livekit.agents import llm
+from services.agent.src import llm_types as llm
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.media_agent_factory import _SessionLanguageModel
 from services.agent.src.reply_pipeline import ReplyPipeline
@@ -154,7 +154,7 @@ class _Conversation:
             self.requests.append(
                 [
                     (str(message.role), message.text_content or "")
-                    for message in chat_ctx.messages()
+                    for message in chat_ctx.items
                     if message.role != "system"
                 ]
             )

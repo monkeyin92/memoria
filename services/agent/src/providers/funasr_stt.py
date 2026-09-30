@@ -1,4 +1,4 @@
-"""FunASR Realtime STT adapter — LiveKit stt.STT subclass (ch.12)."""
+"""FunASR Realtime STT adapter (ch.12)."""
 
 from __future__ import annotations
 
@@ -15,9 +15,6 @@ from time import monotonic
 from typing import Any
 
 import websockets
-from livekit.agents import (
-    APIConnectionError,
-)
 from websockets.asyncio.client import ClientConnection
 
 from services.agent.src.observability.metrics import MetricsRegistry
@@ -34,6 +31,7 @@ from services.agent.src.providers.funasr_protocol import (
     sanitize_error_code,
     sanitize_error_message,
 )
+from services.agent.src.providers.provider_errors import APIConnectionError
 from services.agent.src.providers.reliability import CircuitBreaker
 from services.agent.src.providers.sensevoice import (
     SenseVoiceRescue,

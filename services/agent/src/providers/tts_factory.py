@@ -1,8 +1,7 @@
 """The one place that turns settings and session policy into a TTS provider.
 
-``TTS_PROVIDER`` selects the runtime synthesizer; both voice paths (the Go
-Media Edge factory and the LiveKit entrypoint) build it here instead of
-naming a vendor class. A frozen companion clone voice hosted on Alibaba Model
+``TTS_PROVIDER`` selects the runtime synthesizer; the Voice Core media session
+factory builds it here instead of naming a vendor class. A frozen companion clone voice hosted on Alibaba Model
 Studio is synthesized by CosyVoice; that choice is made here as well, from
 the session's mode policy.
 """

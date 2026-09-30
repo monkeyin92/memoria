@@ -9,7 +9,7 @@ import warnings
 from typing import Any
 
 import pytest
-from livekit.agents import llm
+from services.agent.src import llm_types as llm
 from services.agent.src.agent_voice_profile import _heard_only_chat_context
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.orchestration.interruption_guard import PlaybackInputDecision
@@ -1026,7 +1026,7 @@ async def test_rtc_recovery_forces_generation_bump_while_idle() -> None:
     assert runtime.orchestrator.metrics.get("interruptions_confirmed_total") == 0
 
 
-def test_livekit_llm_history_uses_only_heard_assistant_text() -> None:
+def test_llm_history_uses_only_heard_assistant_text() -> None:
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="问题一")
     chat_ctx.add_message(role="assistant", content="完整生成但只听到一半")
@@ -1034,14 +1034,14 @@ def test_livekit_llm_history_uses_only_heard_assistant_text() -> None:
 
     safe = _heard_only_chat_context(chat_ctx, ["只听到一半"])
 
-    assert [message.text_content for message in safe.messages()] == [
+    assert [message.text_content for message in safe.items] == [
         "问题一",
         "只听到一半",
         "问题二",
     ]
 
 
-def test_livekit_llm_history_aligns_latest_heard_reply_when_counts_differ() -> None:
+def test_llm_history_aligns_latest_heard_reply_when_counts_differ() -> None:
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="帮我安排口语训练")
     chat_ctx.add_message(role="assistant", content="模型生成的训练安排")
@@ -1052,7 +1052,7 @@ def test_livekit_llm_history_aligns_latest_heard_reply_when_counts_differ() -> N
         ["欢迎语", "实际听到的训练安排"],
     )
 
-    assert [message.text_content for message in safe.messages()] == [
+    assert [message.text_content for message in safe.items] == [
         "帮我安排口语训练",
         "实际听到的训练安排",
         "可以",

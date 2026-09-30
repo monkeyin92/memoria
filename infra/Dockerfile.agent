@@ -48,17 +48,16 @@ COPY infra/voices/doubao_voice_ids.json ./infra/voices/doubao_voice_ids.json
 # artifact does not depend on who built it.
 RUN chmod -R u=rwX,go=rX /app/services /app/packages /app/scripts /app/infra
 
-# Release gate: this exact venv and source tree must still carry the pinned
-# livekit-agents libraries the bridge imports, the telemetry privacy defaults
-# (fresh-process bridge bootstrap, a real-exporter canary and its negative
-# control) and a resolvable Voice Core media bridge wiring. It runs offline.
+# Release gate: this exact venv and source tree must resolve the Voice Core
+# media bridge wiring, load the pinned DTLN denoiser dependency, and prove in
+# a fresh process that the bridge imports no LiveKit module. It runs offline.
 # It is invoked as a module because the project itself is not installed into
 # the venv, so `-m` is what keeps /app on sys.path; leaving the file in the image lets the release rehearsal re-run the
 # same gate against the deployed candidate.
 RUN /app/.venv/bin/python -m scripts.verify_agent_release_artifact
 
 USER 65532:65532
-# The image runs the Voice Core media bridge (the LiveKit worker is gone). The
-# media-slo-reporter sidecar reuses it with its own command.
+# The image runs the Voice Core media bridge (the retired LiveKit worker is
+# gone). The media-slo-reporter sidecar reuses it with its own command.
 ENTRYPOINT ["/app/.venv/bin/python"]
 CMD ["-m", "scripts.run_media_bridge"]
