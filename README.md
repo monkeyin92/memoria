@@ -35,7 +35,7 @@ ESP32-S3 -> Go Media Edge -> Python Voice Core / Agent
 
 ## 技术栈与目录
 
-- Python 3.12、uv、FastAPI、FunASR、百炼兼容 LLM、豆包 Seed-TTS；`livekit-agents` 只作为 Voice Core 内的 LLM/TTS/STT 适配库使用（LiveKit 服务器、LiveKit Agent worker 与 Python 小程序/设备媒体网关已于 2026-09-29 退役）。
+- Python 3.12、uv、FastAPI、FunASR、百炼兼容 LLM、豆包 Seed-TTS；Voice Core 的 LLM/TTS/STT 适配层是仓库自有实现（`providers/openai_chat.py`、`providers/tts_stream.py`），不再依赖 `livekit-agents`（LiveKit 服务器、LiveKit Agent worker 与 Python 小程序/设备媒体网关已于 2026-09-29 退役）。
 - Go Media Edge：设备 WSS、generation fence、gRPC Voice Core bridge。
 - PostgreSQL 17 + pgvector、Redis、MinIO。
 - 微信小程序：`apps/miniprogram`；ESP32 overlay：`firmware/esp32`。
