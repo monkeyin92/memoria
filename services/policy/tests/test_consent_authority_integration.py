@@ -334,8 +334,9 @@ def test_guardian_granted_minor_memory_capture_allowed_with_obligations() -> Non
     )
     decision = PolicyEngine().decide(context)
     assert decision.effect == "allow_with_obligations"
-    assert decision.reason_code == "minor_memory_minimized"
-    assert "PERSIST_AGGREGATE_ONLY" in obligation_codes(decision.obligations)
+    assert decision.reason_code == "minor_memory_guardian_authorized"
+    assert "PERSIST_AGGREGATE_ONLY" not in obligation_codes(decision.obligations)
+    assert "RETENTION_TTL" in obligation_codes(decision.obligations)
     assert "NO_MODEL_TRAINING" in obligation_codes(decision.obligations)
 
 

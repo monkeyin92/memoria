@@ -20,6 +20,10 @@ from services.agent.src.runtime_profile import VerifiedRuntimeProfile
 from services.policy.receipts import PolicyReceiptV2
 
 _AGGREGATE_OBLIGATIONS = frozenset({"PERSIST_AGGREGATE_ONLY", "REDACT_TRANSCRIPT"})
+# Subjects whose own memory grant is enough to archive their turns.  A minor is
+# in only because Policy issues the grant to a child solely under an active
+# guardian memory consent.
+_GRANT_SUBJECT_CATEGORIES = frozenset({"adult", "minor"})
 _ACTION_PERSISTENCE_CAPABILITIES = frozenset(
     {"memory_capture", "raw_audio_retention", "model_training_contribution"}
 )
@@ -73,16 +77,22 @@ def decide_persistence(
     ``memory_capture`` receipt for a profile that lists the capability.  The
     other is ``session_memory_grant``: the caller has checked that the fence's
     signed profile grants ``memory_recall_private`` to its confirmed subject
-    on the bound device.  Control never lists ``memory_capture`` in a Runtime
-    Profile (it is an action-time capability), so without the grant no
-    production session could ever persist.  For an adult subject Policy
-    decides both capabilities under the same long-term-memory consent,
-    delegation and trusted-device rules, and Control and the Agent both read
-    the grant as history eligibility.  The Archive re-verifies the same profile
-    before it keeps anything.  A minor's capture decision also carries
-    minimisation obligations (``PERSIST_AGGREGATE_ONLY``, ``RETENTION_TTL``)
-    that the recall grant does not.  A minor therefore still needs the
-    action-time receipt.
+    on the bound device.
+
+    Control never lists ``memory_capture`` in a Runtime Profile: it is an
+    action-time capability, and Control's action fence admits exactly one
+    legal step per authorization, which cannot carry a stream of archive
+    events.  So without the grant no production session could ever persist.
+
+    Policy decides ``memory_recall_private`` and ``memory_capture`` under the
+    same consent, delegation/guardian and trusted-device rules for an adult
+    and for a minor, and both carry the same retention and no-training
+    obligations, so the grant stands for either.  For a minor it exists only
+    while the guardian's long-term-memory consent holds.  Control and the
+    Agent both read it as history eligibility; the Archive re-verifies the
+    profile, the subject's category and the guardian's active consent before
+    it keeps anything, and compiles a minor's memory through its narrow
+    projection filter.  A subject of unknown category never persists.
     """
 
     if profile is None:
@@ -137,7 +147,7 @@ def decide_persistence(
         and "memory_recall_private" in capabilities
         and profile.profile.speaker_state == "confirmed"
         and profile.profile.active_subject_id is not None
-        and profile.profile.subject_category == "adult"
+        and profile.profile.subject_category in _GRANT_SUBJECT_CATEGORIES
         and mode != "unknown_safe"
     )
     if "DO_NOT_PERSIST" in obligations or not (receipt_authorized or grant_authorized):

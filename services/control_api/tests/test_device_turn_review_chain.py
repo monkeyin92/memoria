@@ -10,6 +10,8 @@ review endpoints the mini program calls.  The profile never carries
 from __future__ import annotations
 
 import asyncio
+import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -24,12 +26,14 @@ from services.control_api.app.bound_subject import DEVICE_BOUND_SUBJECT_REASON
 from services.control_api.app.main import create_app
 from services.control_api.tests.test_archive_api import (
     _configure,
+    _register_minor,
     _register_verified_adult,
 )
 from services.control_api.tests.test_interaction_api import (
     _RUNTIME_PROFILE_SIGNING_KEY,
     _attach_signed_runtime_profile,
 )
+from services.guardian.domain import PersonConsentRecord
 
 _ARCHIVE = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
 _POLICY_TOKEN = "interaction-policy-token-that-is-long-enough"
@@ -177,3 +181,112 @@ async def test_untrusted_device_profile_sends_nothing_to_the_archive(
     assert evidence == []
     assert sessions.status_code == 200, sessions.text
     assert sessions.json()["items"] == []
+
+
+async def _grant_guardian_consents(app: Any, *, child_id: str, kinds: tuple[str, ...]) -> None:
+    """The guardian's ticks at binding: the voice session and, optionally, memory."""
+
+    for kind in kinds:
+        await app.state.guardian_store.grant_person_consent(
+            PersonConsentRecord(
+                consent_id=str(uuid.uuid4()),
+                subject_person_id=child_id,
+                grantor_person_id="device-review-guardian",
+                consent_kind=kind,
+                policy_version="minor-memory-v1",
+                granted_at=datetime.now(UTC),
+                evidence_event_id=f"device-review-{kind}-{child_id}",
+            ),
+            actor_person_id="device-review-guardian",
+        )
+
+
+@pytest.mark.asyncio
+async def test_consented_child_turn_is_kept_for_the_child(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # A child whose guardian ticked long-term memory: Control signs the memory
+    # grant into the child's profile, the Agent archives the turn, and the
+    # archive keeps the words for that child (not an aggregate).
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv("MEMORIA_INTERACTION_POLICY_TOKEN", _POLICY_TOKEN)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        child = await _register_minor(client, app, username="device-review-child")
+        account_id = str(child["user_id"])
+        headers = {"Authorization": f"Bearer {child['access_token']}"}
+        await _grant_guardian_consents(
+            app, child_id=account_id, kinds=("minor_voice_session", "memory_retention")
+        )
+        session_id = (await client.post("/v1/sessions", headers=headers, json={})).json()[
+            "session_id"
+        ]
+        _attach_signed_runtime_profile(
+            app,
+            user_id=account_id,
+            session_id=session_id,
+            subject_category="minor",
+            age_band="under_14",
+            service_mode="student_minor",
+        )
+
+        evidence = await _agent_turn(client, session_id=session_id, account_id=account_id)
+        assert [event["event_type"] for event in evidence] == [
+            "speech.utterance_finalized",
+            "assistant.playout_stopped",
+        ]
+        for event in evidence:
+            assert event["payload"].get("aggregate_only") is not True
+            stored = await client.post("/v1/archive/session-events", headers=_ARCHIVE, json=event)
+            assert stored.status_code == 201, stored.text
+
+        history = await client.get(
+            "/v1/archive/conversation-history",
+            headers=headers,
+            params={"session_id": session_id},
+        )
+        kept = await app.state.life_archive.event(
+            account_id=account_id, event_id=str(evidence[0]["event_id"])
+        )
+
+    assert kept is not None
+    assert kept.subject_id == account_id
+    assert kept.payload.get("text") == _USER_TEXT
+    assert kept.payload.get("history_eligible") is True
+    assert kept.payload.get("memory_retention") == "retained"
+    assert history.status_code == 200, history.text
+    assert [
+        (turn["owner_text"], turn["assistant_text"]) for turn in history.json()["turns"]
+    ] == [(_USER_TEXT, _REPLY_TEXT)]
+
+
+@pytest.mark.asyncio
+async def test_child_without_the_guardian_grant_sends_nothing_to_the_archive(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # No memory consent, or an untrusted device: Control signs a chat-only
+    # profile for the child and the Agent hands nothing to the archive.
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv("MEMORIA_INTERACTION_POLICY_TOKEN", _POLICY_TOKEN)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        child = await _register_minor(client, app, username="device-review-child-none")
+        account_id = str(child["user_id"])
+        headers = {"Authorization": f"Bearer {child['access_token']}"}
+        await _grant_guardian_consents(app, child_id=account_id, kinds=("minor_voice_session",))
+        session_id = (await client.post("/v1/sessions", headers=headers, json={})).json()[
+            "session_id"
+        ]
+        _attach_signed_runtime_profile(
+            app,
+            user_id=account_id,
+            session_id=session_id,
+            subject_category="minor",
+            age_band="under_14",
+            service_mode="student_minor",
+            capabilities=("chat", "english_practice"),
+        )
+
+        evidence = await _agent_turn(client, session_id=session_id, account_id=account_id)
+
+    assert evidence == []
