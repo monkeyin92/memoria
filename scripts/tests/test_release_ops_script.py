@@ -10,12 +10,11 @@ Two defects surfaced during the 20260925-full-stack-v1 release:
   greeting was dropped as ``target_non_owner``.
 
 20260927-unbind-release-v1 folded the device OTA control-api component back
-into the full stack, so all targets ran from the plain PREV compose file and
-freeze and rollback carried no component chain.  The 20261001-wake-mode-v1
-control-api component put control-api on a chain again (PREV compose, the
-pre-cutover override, the component override), so freeze accepts exactly that
-chain for control-api and rollback rebuilds it there; the release that follows
-folds it back into the stack and the chain support goes again.
+into the full stack, so all targets run from the plain PREV compose file
+and freeze and rollback carry no component chain.  The 20260930-vector-keyword-v1,
+20261001-wake-mode-v1 control-api components put control-api on a chain for a day
+each; the full-stack release that followed folded them back in and the chain support
+went again (20261001-speaking-style-v2 is the latest such release).
 
 Since 20260929-livekit-retire-v1 (the LiveKit chain was stopped, then removed
 from the host) a release ships speaker-model, control-api and the Voice Core
@@ -164,7 +163,7 @@ def test_live_chain_constants_have_no_stale_release_trees() -> None:
         "$OLD",
         "20260925-full-stack-v1", "20260926-persona-subject-v1", "20260926-edge-flush-v1",
         "20260925-device-mascot-sync",
-        "20260927-device-ota",
+        "20260927-device-ota", "LIVE_CONTROL_RELEASE", "CONTROL_CHAIN",
         "20260927-unbind-release-v1",
         "20260927-child-binding-v1",
         "20260928-child-binding-v2",
@@ -173,34 +172,20 @@ def test_live_chain_constants_have_no_stale_release_trees() -> None:
         "20260929-stop-word-v1", "20260929-stop-playback-v1", "20260929-stop-reconnect-v1",
         "20260929-turn-taking-v1", "20260929-session-limits-v1",
         "20260930-local-stop-v2", "20260930-vector-keyword-v1",
+        "20261001-device-archive-v1", "20261001-wake-mode-v1",
         "RETIRED_TARGETS", "retire_prev_media_chain",
         "/tmp/media-runtime",
     ):
         assert stale not in script, stale
-    assert "PREV_TAG=20261001-device-archive-v1" in script
-    assert "PREV_COMMIT=412f31e9793c4f8845dd2660b1ae38ba56db1a16" in script
-    # control-api is live on the component chain of this release, and only it.
-    assert "LIVE_CONTROL_RELEASE=20261001-wake-mode-v1" in script
-    assert 'CR=/opt/memoria/component-releases' in script
+    assert "PREV_TAG=20261001-audience-recap-v1" in script
+    assert "PREV_COMMIT=c6ec91ed31e0f66f41b78301ae386bd10fdc4dc9" in script
 
 
 def test_freeze_checks_every_target_chain_and_the_current_link() -> None:
     freeze = _function("step_freeze")
     assert 'for c in "${TARGETS[@]}"; do\n    cf="$(live_chain "$c")"' in freeze
-    assert 'want="$PREV/docker-compose.production.yml"' in freeze
-    assert '[[ "$c" == memoria-control-api-1 ]] && want="$CONTROL_CHAIN"' in freeze
-    assert '[[ "$cf" == "$want" ]]' in freeze
+    assert '[[ "$cf" == "$PREV/docker-compose.production.yml" ]]' in freeze
     assert 'readlink -f /opt/memoria/current)" == "$PREV"' in freeze
-
-
-def test_control_chain_is_prev_then_the_pre_cutover_then_the_component_override() -> None:
-    chain = re.search(r'^CONTROL_CHAIN="([^"]*)"', _script(), re.M)
-    assert chain
-    assert chain.group(1).split(",") == [
-        "$PREV/docker-compose.production.yml",
-        "$CR/$LIVE_CONTROL_RELEASE/pre-cutover-control.override.yml",
-        "$CR/$LIVE_CONTROL_RELEASE/control-component.override.yml",
-    ]
 
 
 def test_targets_and_rollback_services_are_the_same_three_roles() -> None:
@@ -209,10 +194,8 @@ def test_targets_and_rollback_services_are_the_same_three_roles() -> None:
     services = re.search(r"^PREV_STACK_SERVICES=\(([^)]*)\)", script, re.M)
     assert targets and services
     containers = {f"memoria-{name}-1" for name in services.group(1).split()}
-    # control-api is not in PREV_STACK_SERVICES: rollback rebuilds it on its
-    # component chain, separately from the plain PREV compose file.
-    assert containers | {"memoria-control-api-1"} == set(targets.group(1).split())
-    assert services.group(1).split() == ["speaker-model", "voice-core-media-bridge"]
+    assert containers == set(targets.group(1).split())
+    assert services.group(1).split() == ["speaker-model", "control-api", "voice-core-media-bridge"]
     # media-edge is released on its own and never recreated by this script.
     assert "media-edge" not in _code().replace("memoria-media-edge-1", "")
 
@@ -239,13 +222,6 @@ def test_rollback_recreates_the_prev_services() -> None:
         assert retired not in services
     assert '-f "$PREV/docker-compose.production.yml" --profile media-runtime' in rollback
     assert "--force-recreate" in rollback
-    # control-api first, on the same three files freeze verified, then the rest.
-    chain = rollback.index("force-recreate control-api")
-    assert rollback.index("pre-cutover-control.override.yml") < rollback.index(
-        "control-component.override.yml"
-    ) < chain < rollback.index('"${PREV_STACK_SERVICES[@]}"')
-    assert '-f "$CR/$LIVE_CONTROL_RELEASE/pre-cutover-control.override.yml"' in rollback
-    assert '-f "$CR/$LIVE_CONTROL_RELEASE/control-component.override.yml"' in rollback
 
 
 def test_schema_writes_the_data_tree_and_rollback_returns_to_prev() -> None:
@@ -255,7 +231,7 @@ def test_schema_writes_the_data_tree_and_rollback_returns_to_prev() -> None:
     assert 'ln -sfn "$PREV" /opt/memoria/current.new' in rollback
     assert 'MEMORIA_RELEASE_TAG="$PREV_TAG" MEMORIA_RELEASE_COMMIT="$PREV_COMMIT"' in rollback
     assert '"${PREV_STACK_SERVICES[@]}"' in rollback
-    assert "component-releases" not in rollback  # named through $CR, never spelled out
+    assert "component-releases" not in rollback
     assert 'for c in "${TARGETS[@]}"; do\n    wait_healthy "$c"' in rollback
     assert "$DATA_TREE" not in rollback
 
