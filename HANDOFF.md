@@ -28,7 +28,7 @@
 
 
 - **后续同日（真机测试后）**：
-  - 唤醒词接受线 0.20 → 0.10（build 14，#144）：台架上「茉莉」十二次里十次只有 0.11–0.20，build 13 全部拒绝，build 10 的代码在同位置也只认出 2/7，所以不是停止词并入词表造成的。得分不到 0.10 的唤醒仍不会被上报，需要更近的距离或更大的声音。build 14 仅 USB 刷入。
+  - 唤醒词接受线 0.20 → 0.10（build 14，#144），旁边电脑放视频时误唤醒了好几次，用户决定 0.10 → 0.12（build 16，#147；此前 0.113、0.117 的两次唤醒会被拒）：台架上「茉莉」十二次里十次只有 0.11–0.20，build 13 全部拒绝，build 10 的代码在同位置也只认出 2/7，所以不是停止词并入词表造成的。得分不到 0.10 的唤醒仍不会被上报，需要更近的距离或更大的声音。build 14 仅 USB 刷入。
   - media-edge `20260930-edge-reject-log-v1`（#145，仅日志）：`WSS handler rejected` 带上被拒帧的 type、control_sequence、fence 的 turn/generation，不含内容。
   - media-edge `20260930-late-receipt-v1`（#146）：设备被任务看门狗卡住约 4 秒，云端语音停止已替换第 2 代，设备恢复后先报该代 `playback.ended` 再补一条 `playback.progress`（control_sequence 102），账本视 `ended` 为终态而拒绝，进而关闭 WSS、约 6 秒重连。现在账本拒绝的回执若属于已被 Voice Core 替换的代际，记日志后丢弃、连接保持；活代际仍严格拒绝。回归测试在旧代码上复现同一条 `handler rejected` 日志。
   - 设备卡顿的证据：三段长回复（build 12 一次、build 14 两次）都在播放约 10–13 秒时触发任务看门狗，回溯落在 `audio_afe → CustomWakeWord::FeedSamples → model_detect`（MultiNet6 编码层），Opus 编码任务堵在同一核上（`Encode queue is full`）；三段里本地停止词共 0 次命中，都是云端语音停止停下的。

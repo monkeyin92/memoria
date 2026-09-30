@@ -28,7 +28,7 @@ inline constexpr bool kLocalStopKeywordEnabled = false;
 // Detection is split in two so weak hits stay visible for tuning. MultiNet
 // itself reports every command at or above kMultiNetDetectThreshold; the code
 // then applies each command's own acceptance: kWakeWordMinScore for the wake
-// word (equal to that floor since build 14) and min_score per stop row.
+// word (0.12, just above that floor since build 16) and min_score per stop row.
 //
 // Tuning: in stop-only mode every stop hit >= kMultiNetDetectThreshold is
 // logged on serial as
@@ -77,11 +77,12 @@ inline constexpr LocalStopPhraseRange LocalStopPhrasesToRegister() {
 // feeds the assets index.json; CustomWakeWord applies this value on Memoria.
 inline constexpr float kMultiNetDetectThreshold = 0.10f;
 
-// The wake word accepts everything MultiNet reports. Build 12/13 kept build 10's
-// 0.20, but on the bench 「茉莉」 scored 0.11-0.20 in ten of twelve wake-ups
-// (build 13 rejected all of them; build 10 with the same floor missed them
-// too), so acceptance was lowered to the detection floor (build 14).
-inline constexpr float kWakeWordMinScore = 0.10f;
+// The wake word's own acceptance. Build 12/13 kept build 10's 0.20, but on the
+// bench 「茉莉」 scored 0.11-0.20 in ten of twelve wake-ups (build 13 rejected
+// all of them; build 10 with the same floor missed them too), so build 14 took
+// everything MultiNet reports (0.10). Video playing next to the device then
+// woke it falsely several times, so build 16 sits just above the floor.
+inline constexpr float kWakeWordMinScore = 0.12f;
 
 inline bool WakeWordAccepted(float score) {
     return score >= kWakeWordMinScore;  // NaN is rejected

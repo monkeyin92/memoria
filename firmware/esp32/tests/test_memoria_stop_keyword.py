@@ -190,12 +190,17 @@ def test_phrase_table_is_tunable_above_the_detection_floor(gate_tool: pathlib.Pa
     assert constants["floor"] == pytest.approx(0.8)
 
 
-def test_wake_word_accepts_everything_multinet_reports(gate_tool: pathlib.Path) -> None:
+def test_wake_word_acceptance_sits_just_above_the_multinet_floor(gate_tool: pathlib.Path) -> None:
     phrases, constants = _table(gate_tool)
-    # Bench scores for 「茉莉」 were 0.11-0.20 in ten of twelve wake-ups, so the
-    # acceptance is the MultiNet detection floor (0.10) since build 14.
-    assert constants["wake"] == pytest.approx(0.10)
-    assert _run(gate_tool, "wake 0.099", "wake 0.10", "wake 0.15", "wake 0.27", "wake nan") == [
+    # Bench scores for 「茉莉」 were 0.11-0.20 in ten of twelve wake-ups, so build 14
+    # took the whole MultiNet report (0.10); video playing nearby then woke the
+    # device falsely, so build 16 requires 0.12.
+    assert constants["wake"] == pytest.approx(0.12)
+    assert constants["wake"] > constants["detect"]
+    assert _run(
+        gate_tool, "wake 0.10", "wake 0.119", "wake 0.12", "wake 0.15", "wake 0.27", "wake nan"
+    ) == [
+        "reject",
         "reject",
         "wake",
         "wake",
@@ -392,7 +397,10 @@ def test_local_stop_keyword_is_off_and_registers_no_phrase(gate_tool: pathlib.Pa
 
 def test_hello_declares_the_local_stop_keyword() -> None:
     hello = _function_body(PROTOCOL_SOURCE, "std::string MemoriaProtocol::DeviceHelloV2(")
-    assert 'cJSON_AddBoolToObject(capabilities, "local_stop_keyword", kLocalStopKeywordEnabled)' in hello
+    assert (
+        'cJSON_AddBoolToObject(capabilities, "local_stop_keyword", kLocalStopKeywordEnabled)'
+        in hello
+    )
 
 
 def _added_lines(patch: str, path: str) -> str:
