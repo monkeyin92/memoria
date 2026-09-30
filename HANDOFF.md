@@ -2,22 +2,30 @@
 
 ## 当前生产快照
 
-- **最近生产收据**：2026-09-29 23:10–23:14（CST）整栈发布 `20260929-session-limits-v1`（tag → `26e937f`，#136 分支头，与合并提交 `f6c75b8` 只差 HANDOFF），只有 control-api、bridge、speaker-model 三角色换 tag，media-edge 不变（仍是 `20260929-turn-taking-v1`）。`env`、`schema`、`cutover`、`finish` 每步单独确认 PASS。生产 `/etc/memoria-agent.env` 常开 `MEDIA_PCM_TAP_DIR=/tmp/media-pcm-tap`（容器 tmpfs，每会话 4 MB），原始上行音频留在容器内存直到重启。
-- **上一次整栈收据**：2026-09-29 21:41–21:54 `20260929-turn-taking-v1`（`195e104`），三角色的回滚目标，也是 media-edge 当前版本。
+- **最近生产收据**：2026-09-30 11:02–11:04（CST）整栈发布 `20260930-local-stop-v2`（tag → `88a3c80`，#142 分支头，与合并提交 `5b3e13c` 同树），control-api、bridge、speaker-model 三角色换 tag。media-edge 已于 10:51 单独切到 `20260930-local-stop-v1`（#141 分支头 `1a02175`）。`verify-load`、`freeze`、`env`、`schema`、`cutover`、`finish` 每步单独确认 PASS。生产 `/etc/memoria-agent.env` 常开 `MEDIA_PCM_TAP_DIR=/tmp/media-pcm-tap`（容器 tmpfs，每会话 4 MB），原始上行音频留在容器内存直到重启。
+- **上一次整栈收据**：2026-09-29 23:10–23:14 `20260929-session-limits-v1`（`26e937f`），三角色的回滚目标。media-edge 的回滚目标是 `20260929-turn-taking-v1`。
 
 | component | actual image/tag | OCI digest | revision | health | restarts | startup time | receipt | rollback target |
 |---|---|---|---|---|---:|---|---|---|
-| Control API | `memoria-control-api:20260929-session-limits-v1` | `sha256:8e77332e…`（服务器 image id） | `26e937f177b550a25ce88d46200cfbdaae2a4c68` | healthy | 0 | `2026-09-29T15:12:18Z` | `/opt/memoria/releases/20260929-session-limits-v1/.cutover/` | `memoria-control-api:rollback-20260929-session-limits-v1-pre`（= `20260929-turn-taking-v1`） |
-| Bridge | `memoria-agent:20260929-session-limits-v1` | `sha256:a04a9ab4…` | 同上 | healthy | 0 | `2026-09-29T15:12:32Z` | 同上 | `memoria-agent:rollback-20260929-session-limits-v1-pre` |
-| Speaker Model | `memoria-speaker-model:20260929-session-limits-v1` | `sha256:8f98708a…` | 同上 | healthy | 0 | `2026-09-29T15:12:10Z` | 同上 | `memoria-speaker-model:rollback-20260929-session-limits-v1-pre` |
-| Media Edge | `memoria-media-edge:20260929-turn-taking-v1` | `sha256:a231c41e…` | 同上 | healthy | 0 | `2026-09-29T13:54:44Z` | `/opt/memoria/component-releases/20260929-turn-taking-v1-media-edge/` | `memoria-media-edge:20260929-stop-reconnect-v1`（`media-edge-rollback.override.yml`） |
+| Control API | `memoria-control-api:20260930-local-stop-v2` | `sha256:a52a9230…`（服务器 image id） | `88a3c8053b2ba0c0411495674e4b355deaf839d8` | healthy | 0 | `2026-09-30T03:02:17Z` | `/opt/memoria/releases/20260930-local-stop-v2/.cutover/` | `memoria-control-api:rollback-20260930-local-stop-v2-pre`（= `20260929-session-limits-v1`） |
+| Bridge | `memoria-agent:20260930-local-stop-v2` | `sha256:2f62c06a…` | 同上 | healthy | 0 | `2026-09-30T03:02:30Z` | 同上 | `memoria-agent:rollback-20260930-local-stop-v2-pre` |
+| Speaker Model | `memoria-speaker-model:20260930-local-stop-v2` | `sha256:58727c09…` | 同上 | healthy | 0 | `2026-09-30T03:02:09Z` | 同上 | `memoria-speaker-model:rollback-20260930-local-stop-v2-pre` |
+| Media Edge | `memoria-media-edge:20260930-local-stop-v1` | `sha256:8d5c9bb3…` | `1a021758686e1c98b8cf1338d7c002ccef69b820` | healthy | 0 | `2026-09-30T02:51:45Z` | `/opt/memoria/component-releases/20260930-local-stop-v1-media-edge/` | `memoria-media-edge:20260929-turn-taking-v1`（`media-edge-rollback.override.yml`） |
 
 - **候选可见性状态**：已随整栈发布上线（契约提交在 main 上为 `0059368`，早期记录中的 `f7c4c2a` 是合并前哈希）。普通 search/context 只返回 confirmed 且无 active 冲突，`include_candidates=true` 仅供审核与评测。真实 PG 上的 candidate 行为与线上带鉴权读口尚无单独收据。
 - **评测基线边界**：四份 2026-09-23 评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；它们产生于候选可见性提交之前，只证明上线前基线，不证明当前线上版本的召回质量。
-- **发布身份**：`20260929-session-limits-v1` / `26e937f`；`/opt/memoria/current` → `releases/20260929-session-limits-v1`。上一栈 `20260929-turn-taking-v1` / `195e104` 为回滚目标。
+- **发布身份**：`20260930-local-stop-v2` / `88a3c80`；`/opt/memoria/current` → `releases/20260930-local-stop-v2`。上一栈 `20260929-session-limits-v1` / `26e937f` 为回滚目标。
 - **未关闭缺陷**：P0-03 仍开放（缺陷 A 核心续问边界与工具查询最终回答已在 09-24、09-25 真机走通；TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
 - **下一步必须动作**：当日遗留已汇总到 [TODOLIST「2026-09-28 收尾待办」](TODOLIST.md)：伙伴页选一次绵绵、嘈杂环境验证 #83；需决定是否发布固件 OTA；待查回复规划 `no_verified_runtime_profile` 兜底；12-17 前换证书。之后按验收清单验 P0-04 产品决定、P1-11 三种绑定与隔天记忆、P1-03 孩子人格、P2-04 与 P0-03 剩余矩阵；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
+
+## 2026-09-30 设备本地停止词（#141、#142，已发布 20260930-local-stop-v2 + media-edge 20260930-local-stop-v1）
+
+- **范围**：固件 build 13（播放期间本地识别「停一下 / 别说了 / 停停 / 停」，patch `0031`；MultiNet 检测门限 0.10，唤醒词仍按 0.20 接受，0.10–0.20 的弱唤醒以 INFO 打印 `Wake word below threshold`）。Agent：设备上报的硬停止关键词不再发 `playback.flush`（设备已在本地清空，固件会把这条 flush 判为协议违规并断线重连约 8 秒，09-30 build 12 「停」0.324 实测）。media-edge：关键词硬停止像 `button.stop` 一样关闭播放窗口，过期的硬停止记为 stale、不断连接。
+- **固件**：build 13 只经 USB 刷到开发板（仅写 `ota_0`），未走 OTA 发布。09-29 build 12 刷完后卡在 bootloader 之后、需手按 BOOT 恢复；同一镜像 09-30 重刷正常启动，视为一次性板子/USB 状态，未再复现。
+- **发布过程**：agent 组件快车道 `deploy_agent_component.sh` dry-run PASS，但 `--cutover` 在切换前拒绝：线上 bridge 是整栈镜像，不带脚本要求的 `com.memoria.release.kind` 标签（脚本已随后修复：无 kind 且 version 等于栈 tag 的镜像视为整栈，回滚 tag 只复用当前 bridge 镜像本身；尚未在生产实跑），线上未变。改走整栈：本机以 `20260929-session-limits-v1` 为基座增量构建三镜像，seeded 上传双端校验 PASS；摘要：verifier `aff0c2ec…`，manifest `7fc5490f…`，source `3c834576…`，images `6afab151…`。`release_ops.sh`（sha256 `62b4bab0…`）PREV → `20260929-session-limits-v1` / `26e937f`，旧版备份 `release-ops.sh.pre-20260930-local-stop-v2`。media-edge 镜像本机构建（revision `1a02175`），scp 后两端 sha256 `447c3ff9…` 一致再导入；按组件覆盖文件在 `20260929-session-limits-v1` 发布树下切换，新旧渲染配置的 media-edge 段只差构建上下文、构建参数与镜像；其余容器未变，未带凭证的设备入口 401。
+- **验证**：agent 发布门禁（ruff、mypy --strict、单测）、固件测试、media_edge `go test` 全过；新回归测试在去掉修复时失败。**尚未**在真机上验证 build 13 + 新 bridge 的停止词不再断线。
+
 
 ## 2026-09-29 CI python 任务分片（待合并）
 
