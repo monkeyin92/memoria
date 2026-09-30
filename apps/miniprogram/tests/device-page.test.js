@@ -235,10 +235,11 @@ function setPath(data, key, value) {
 function instantiate(definition) {
   const instance = { ...definition };
   instance.data = JSON.parse(JSON.stringify(definition.data));
-  instance.setData = (updates) => {
+  instance.setData = (updates, callback) => {
     for (const [key, value] of Object.entries(updates)) {
       setPath(instance.data, key, value);
     }
+    if (typeof callback === "function") callback();
   };
   return instance;
 }
@@ -1106,7 +1107,12 @@ test("device page loads authoritative settings and diagnostics (half-duplex fail
   assert.equal(page.data.liveRuntimeStatusLabel, "当前未连接");
   assert.equal(page.data.online, true);
   assert.equal(page.data.onlineLabel, "设备在线");
-  assert.equal(page.data.wakeModeLabel, "按键唤醒");
+  assert.equal(page.data.wakeModeLabel, "点击屏幕唤醒");
+  // wake_mode "button" 在这块板子上就是「只点击屏幕」：唤醒词开关关、点击开关开。
+  assert.equal(page.data.wakeKeywordOn, false);
+  assert.equal(page.data.wakeTapOn, true);
+  assert.match(page.data.wakeModeNote, /唤醒词已失效/);
+  assert.equal(page.data.wakeModeWarn, false);
   assert.deepEqual(
     page.data.bargeInOptions.map((option) => option.value),
     ["none", "button", "keyword"],
@@ -1223,7 +1229,7 @@ test("settings saves go through versioned updateDeviceSettings and revert on con
   assert.ok(page.data.settingsError.length > 0);
 });
 
-test("audio mode and wake mode pickers only submit server-approved values", async () => {
+test("audio mode picker and the wake switches only submit server-approved values", async () => {
   binding.saveBindingManifest(familyManifest());
   profilePayload = wireProfile({ runtime_profile_id: "rp_pick", session_id: "ses_pick", session_epoch: 1 });
   settingsPayload = wireSettings();
@@ -1237,11 +1243,89 @@ test("audio mode and wake mode pickers only submit server-approved values", asyn
   // 越界/非法选择被忽略（未验证 full duplex 不可选：选项来自 allowed_audio_modes）。
   await page.selectAudioMode({ detail: { value: "9" } });
   assert.equal(settingsPatchCalls.length, 0, "越界音频模式不得提交");
-  await page.selectWakeMode({ detail: { value: "1" } }); // keyword
+  // 起始是 button（只点击屏幕）；打开唤醒词、关闭点击屏幕 => keyword。
+  await page.toggleWakeKeyword({ detail: { value: true } });
   assert.equal(settingsPatchCalls.length, 1);
-  assert.deepEqual(settingsPatchCalls[0].changes, { wake_mode: "keyword" });
-  assert.equal(page.data.wakeModeLabel, "唤醒词唤醒");
+  assert.deepEqual(settingsPatchCalls[0].changes, { wake_mode: "button_or_keyword" });
+});
+
+function wakeSwitchPage() {
+  binding.saveBindingManifest(familyManifest());
+  profilePayload = wireProfile({ runtime_profile_id: "rp_sw", session_id: "ses_sw", session_epoch: 1 });
+  diagnosticsPayload = wireDiagnostics();
+  nextRequestResult = null;
+  settingsPatchCalls.length = 0;
+  return instantiate(pageDefinition);
+}
+
+test("wake switches map to wake_mode and show the matching notes", async () => {
+  settingsPayload = wireSettings({ wake_mode: "button_or_keyword" });
+  const page = wakeSwitchPage();
+  await page.onShow();
+  assert.equal(page.data.wakeKeywordOn, true);
+  assert.equal(page.data.wakeTapOn, true);
+  assert.equal(page.data.wakeModeLabel, "唤醒词或点击屏幕");
+  assert.match(page.data.wakeModeNote, /误触发/);
+  assert.equal(page.data.wakeModeWarn, true);
+
+  // 关掉点击屏幕 => 只剩唤醒词：提示误唤醒，并说明点屏没有任何反应。
+  settingsPatchResult = wireSettings({ settings_version: 4, wake_mode: "keyword" });
+  await page.toggleWakeTap({ detail: { value: false } });
+  assert.deepEqual(settingsPatchCalls.at(-1).changes, { wake_mode: "keyword" });
   assert.equal(page.data.settings.wake_mode, "keyword");
+  assert.equal(page.data.wakeKeywordOn, true);
+  assert.equal(page.data.wakeTapOn, false);
+  assert.equal(page.data.wakeModeLabel, "唤醒词唤醒");
+  assert.match(page.data.wakeModeNote, /误唤醒/);
+  assert.match(page.data.wakeModeNote, /点击屏幕没有任何反应/);
+  assert.equal(page.data.wakeModeWarn, true);
+
+  // 再打开点击屏幕、关掉唤醒词 => 只剩点击屏幕：唤醒词失效，对话中点屏无效。
+  settingsPatchResult = wireSettings({ settings_version: 5, wake_mode: "button_or_keyword" });
+  await page.toggleWakeTap({ detail: { value: true } });
+  assert.deepEqual(settingsPatchCalls.at(-1).changes, { wake_mode: "button_or_keyword" });
+  settingsPatchResult = wireSettings({ settings_version: 6, wake_mode: "button" });
+  await page.toggleWakeKeyword({ detail: { value: false } });
+  assert.deepEqual(settingsPatchCalls.at(-1).changes, { wake_mode: "button" });
+  assert.equal(page.data.wakeKeywordOn, false);
+  assert.equal(page.data.wakeTapOn, true);
+  assert.match(page.data.wakeModeNote, /唤醒词已失效/);
+  assert.match(page.data.wakeModeNote, /对话中再点屏幕没有效果/);
+  assert.equal(page.data.wakeModeWarn, false);
+});
+
+test("the last wake switch cannot be turned off", async () => {
+  settingsPayload = wireSettings({ wake_mode: "keyword" });
+  const page = wakeSwitchPage();
+  await page.onShow();
+  const toasts = [];
+  const originalToast = global.wx.showToast;
+  global.wx.showToast = (options) => toasts.push(options.title);
+  try {
+    const before = settingsPatchCalls.length;
+    await page.toggleWakeKeyword({ detail: { value: false } });
+    assert.equal(settingsPatchCalls.length, before, "两种方式都关不得提交");
+    assert.deepEqual(toasts, ["至少保留一种唤醒方式"]);
+    // 开关被还原成服务端确认的状态。
+    assert.equal(page.data.wakeKeywordOn, true);
+    assert.equal(page.data.wakeTapOn, false);
+    assert.equal(page.data.settings.wake_mode, "keyword");
+  } finally {
+    global.wx.showToast = originalToast;
+  }
+});
+
+test("a rejected wake mode save puts the switches back", async () => {
+  settingsPayload = wireSettings({ wake_mode: "button_or_keyword" });
+  const page = wakeSwitchPage();
+  await page.onShow();
+  settingsPatchResult = null; // 409 settings_version_conflict：服务端没有确认
+  await page.toggleWakeTap({ detail: { value: false } });
+  assert.deepEqual(settingsPatchCalls.at(-1).changes, { wake_mode: "keyword" });
+  assert.equal(page.data.settings.wake_mode, "button_or_keyword", "冲突后不得保留本地假状态");
+  assert.equal(page.data.wakeKeywordOn, true);
+  assert.equal(page.data.wakeTapOn, true);
+  assert.ok(page.data.settingsError.length > 0);
 });
 
 test("wake word picker only submits server-approved catalog ids", async () => {
