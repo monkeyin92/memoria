@@ -602,7 +602,7 @@ def test_hello_v2_declares_honest_vocat_interrupt_assist_capabilities() -> None:
         in hello_v2
     )
     assert 'cJSON_AddBoolToObject(capabilities, "aec_reference_verified", false)' in hello_v2
-    assert 'cJSON_AddBoolToObject(capabilities, "local_stop_keyword", false)' in hello_v2
+    assert 'cJSON_AddBoolToObject(capabilities, "local_stop_keyword", true)' in hello_v2
     assert 'cJSON_AddBoolToObject(capabilities, "local_duck", false)' in hello_v2
     assert 'cJSON_AddNumberToObject(capabilities, "barge_in_level", 1)' in hello_v2
     assert 'cJSON_AddStringToObject(capabilities, "playback_watermark", "exact")' in hello_v2

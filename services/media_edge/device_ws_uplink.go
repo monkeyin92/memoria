@@ -195,6 +195,18 @@ func (c *DeviceConnection) handleKeyword(envelope deviceControlEnvelope, runtime
 	}
 	end := event.Evidence.DetectedSample + durationSamples
 	fence := event.ExpectedFence.toFence(c.sessionID)
+	if event.HardStop {
+		// A local stop keyword races server-side cancels: if the generation
+		// it names is already cancelled or superseded, the device's own
+		// flush was the whole stop. Treat it as stale instead of failing the
+		// transport the way an invalid control would.
+		if current, active := runtime.session.GenerationSnapshot(); !active || !current.Equal(fence) {
+			c.server.metrics.staleGeneration.Add(1)
+			slog.Info("media edge ignored stale keyword hard stop", "session", c.sessionID, "device", c.deviceID, "epoch", c.epoch, "keyword", event.KeywordID, "generation", event.ExpectedFence.GenerationID)
+			c.clearPlaybackActive("device_keyword_stop", event.ExpectedFence)
+			return true
+		}
+	}
 	if err := runtime.SendKeyword(
 		event.KeywordID, float32(event.Confidence),
 		event.Evidence.DetectedSample, end, event.HardStop, fence,
@@ -202,6 +214,11 @@ func (c *DeviceConnection) handleKeyword(envelope deviceControlEnvelope, runtime
 		c.server.metrics.controlRejected.Add(1)
 		c.sendSessionError("keyword_rejected", true)
 		return false
+	}
+	if event.HardStop {
+		// Like button.stop, a hard-stop keyword is produced by a local
+		// playback flush, so no playback.ended follows for this generation.
+		c.clearPlaybackActive("device_keyword_stop", event.ExpectedFence)
 	}
 	return true
 }

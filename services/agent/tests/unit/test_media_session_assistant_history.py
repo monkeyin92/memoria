@@ -18,6 +18,7 @@ the TTS wire are scripted.
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
@@ -247,13 +248,18 @@ class _Conversation:
                 )
             )
         )
+        # The device already flushed locally, so Core sends no playback.flush
+        # effect; keyword.hit is the last thing the stop emits.
         await harness.wait_for(
             lambda: harness.count(
-                "realtime_effect",
-                lambda effect: effect.effect_kind
-                == media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION,
+                "client",
+                lambda client: json.loads(client.json_payload).get("type") == "keyword.hit",
             )
             >= 1
+        )
+        assert not harness.count(
+            "realtime_effect",
+            lambda effect: effect.effect_kind == media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION,
         )
         # The stop word's own uplink audio; the next question starts after it.
         await harness.audio_frames(1)

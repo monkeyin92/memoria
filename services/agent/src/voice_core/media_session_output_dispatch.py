@@ -894,7 +894,7 @@ class MediaOutputDispatchMixin:
         )
         if not required:
             logger.warning(
-                "skip device playback.flush for unheard generation session=%s "
+                "skip device playback.flush (unheard or device-flushed) session=%s "
                 "old_turn=%s old_gen=%s replacement_gen=%s source=%s",
                 context.identity.session_id,
                 heard_fence.turn_id,

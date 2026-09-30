@@ -67,6 +67,7 @@ jobs:
             media_edge:
               - 'packages/proto/**'
               - 'packages/contracts/generation-fence-vectors.json'
+              - 'packages/contracts/device-keyword-stop-v2.example.json'
               - 'services/media_edge/**'
               - 'scripts/generate_media_go_proto.sh'
               - 'infra/Dockerfile.media-edge'
@@ -77,6 +78,8 @@ jobs:
               - 'pyproject.toml'
               - 'uv.lock'
               - 'firmware/esp32/**'
+              - 'packages/contracts/device-media-v2.json'
+              - 'packages/contracts/device-keyword-stop-v2.example.json'
             firmware_build:
               - '.github/workflows/ci.yml'
               - 'firmware/esp32/**'

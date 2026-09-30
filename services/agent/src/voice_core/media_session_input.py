@@ -691,12 +691,21 @@ class MediaSessionInputMixin:
                         if should_pause_asr_for_playback(context.identity):
                             await context.provider.pause_asr_for_playback(context.identity)
                         await self._cancel_reply_task(context, previous_fence)
+                        # A device hard-stop keyword is produced by the
+                        # device's own local playback flush (the button.stop
+                        # path); its firmware fail-closes a playback.flush for
+                        # that stopped generation and reconnects (2026-09-30,
+                        # build 12 「停」).
+                        device_flushed = (
+                            segment.hard_stop and context.identity.client_type == "device"
+                        )
                         await self._emit_cancel_generation(
                             context,
                             cancelled,
                             heard_fence=previous_fence,
                             source_event_id="keyword_interrupt",
                             payload={"reason": "keyword_interrupt"},
+                            playback_flush_required=False if device_flushed else None,
                         )
                         self.metrics.observe_voice_latency(
                             "interrupt_core_stop",
