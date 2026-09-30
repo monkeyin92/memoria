@@ -291,8 +291,14 @@ def bind_owner_policy(
     shadow_low_sensitivity_persona: bool = False,
     include_voice_clone: bool = False,
     include_raw_audio: bool = False,
+    memory_recall_grant: bool = True,
 ) -> None:
-    """Bind a companion ModePolicy that carries a signed owner profile."""
+    """Bind a companion ModePolicy that carries a signed owner profile.
+
+    ``memory_recall_grant=False`` signs the profile without
+    ``memory_recall_private`` so a test sees only the receipt authority for
+    persistence, not the profile's own long-term-memory grant.
+    """
 
     policy = ModePolicy.companion_for_test(
         policy_version=policy_version,
@@ -307,8 +313,9 @@ def bind_owner_policy(
         "tutor",
         "english_practice",
         "memory_capture",
-        "memory_recall_private",
     ]
+    if memory_recall_grant:
+        capabilities.append("memory_recall_private")
     if include_voice_clone:
         capabilities.append("voice_clone_use")
     if include_raw_audio:

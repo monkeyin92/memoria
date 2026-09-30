@@ -65,8 +65,25 @@ def decide_persistence(
     raw_audio_evidence: VerifiedReceiptEvidence | None = None,
     training_evidence: VerifiedReceiptEvidence | None = None,
     action_obligations: Iterable[str] = (),
+    session_memory_grant: bool = False,
 ) -> PersistenceDecision:
-    """Decide whether (and how) evidence may be persisted for one fence."""
+    """Decide whether (and how) evidence may be persisted for one fence.
+
+    Memory persistence has two authorities.  One is a verified
+    ``memory_capture`` receipt for a profile that lists the capability.  The
+    other is ``session_memory_grant``: the caller has checked that the fence's
+    signed profile grants ``memory_recall_private`` to its confirmed subject
+    on the bound device.  Control never lists ``memory_capture`` in a Runtime
+    Profile (it is an action-time capability), so without the grant no
+    production session could ever persist.  For an adult subject Policy
+    decides both capabilities under the same long-term-memory consent,
+    delegation and trusted-device rules, and Control and the Agent both read
+    the grant as history eligibility.  The Archive re-verifies the same profile
+    before it keeps anything.  A minor's capture decision also carries
+    minimisation obligations (``PERSIST_AGGREGATE_ONLY``, ``RETENTION_TTL``)
+    that the recall grant does not.  A minor therefore still needs the
+    action-time receipt.
+    """
 
     if profile is None:
         return PersistenceDecision(allowed=False)
@@ -112,11 +129,18 @@ def decide_persistence(
             training_evidence.receipt_id if training_evidence is not None else None
         ),
     )
-    if (
-        "DO_NOT_PERSIST" in obligations
-        or "memory_capture" not in capabilities
-        or memory_capture_evidence is None
-    ):
+    receipt_authorized = (
+        "memory_capture" in capabilities and memory_capture_evidence is not None
+    )
+    grant_authorized = (
+        session_memory_grant
+        and "memory_recall_private" in capabilities
+        and profile.profile.speaker_state == "confirmed"
+        and profile.profile.active_subject_id is not None
+        and profile.profile.subject_category == "adult"
+        and mode != "unknown_safe"
+    )
+    if "DO_NOT_PERSIST" in obligations or not (receipt_authorized or grant_authorized):
         return common
     return PersistenceDecision(
         allowed=True,
@@ -169,21 +193,15 @@ def execute_action_obligations(
         )
     except ValueError:
         return False
-    decision_kwargs: dict[str, VerifiedReceiptEvidence | None] = {
-        "memory_capture_evidence": None,
-        "raw_audio_evidence": None,
-        "training_evidence": None,
-    }
-    evidence_key = {
-        "memory_capture": "memory_capture_evidence",
-        "raw_audio_retention": "raw_audio_evidence",
-        "model_training_contribution": "training_evidence",
-    }[receipt.capability]
-    decision_kwargs[evidence_key] = evidence
+    capability = receipt.capability
     decision = decide_persistence(
         profile,
         action_obligations=codes,
-        **decision_kwargs,
+        memory_capture_evidence=evidence if capability == "memory_capture" else None,
+        raw_audio_evidence=evidence if capability == "raw_audio_retention" else None,
+        training_evidence=(
+            evidence if capability == "model_training_contribution" else None
+        ),
     )
     return decision.allowed
 

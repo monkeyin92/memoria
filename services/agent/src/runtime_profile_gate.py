@@ -368,9 +368,13 @@ class RuntimeProfileGate:
     ) -> PersistenceDecision:
         """Persistence decision for one event's own fence (P0-6).
 
-        Sensitive persistence requires the matching capability-specific
-        verified receipt evidence bound to this exact profile/epoch; the
-        mapping is empty by default, so persistence stays closed (audit 3).
+        Memory persistence needs either a verified ``memory_capture`` receipt
+        bound to this exact profile/epoch or, because Control defers
+        ``memory_capture`` to action time and never signs it into a profile,
+        this epoch's own ``memory_recall_private`` grant for an adult subject
+        under the full ``permits`` check (bound device, confirmed speaker, not
+        revoked).  Minors, raw audio and training still require their own
+        receipts, and the receipt mapping is empty by default (audit 3).
         """
 
         if fence.session_epoch != current_fence.session_epoch:
@@ -391,6 +395,12 @@ class RuntimeProfileGate:
             training_evidence=self._verified_receipt_for(
                 "model_training_contribution", fence, current_fence
             ),
+            session_memory_grant=self.permits_reason(
+                fence,
+                current_fence=current_fence,
+                capability="memory_recall_private",
+            )
+            is None,
         )
 
     def _verified_receipt_for(
