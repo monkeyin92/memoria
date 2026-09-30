@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Annotated, Literal, cast
 
@@ -18,6 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.control_api.app.database import MemoryStore
+from services.control_api.app.device_control import DeviceSettingsAuthority
 from services.control_api.app.device_display_profile import (
     DisplayBindingUnavailable,
     display_binding,
@@ -436,6 +438,21 @@ async def get_device_display_profile(
             headers=_NO_STORE,
         ) from exc
     response.headers.update(_NO_STORE)
+    if isinstance(store, MemoryStore):
+        try:
+            settings = await asyncio.to_thread(
+                DeviceSettingsAuthority(store).current, device_id, now=datetime.now(UTC)
+            )
+        except Exception as exc:
+            # The poll also keeps the mascot current: a settings read that fails
+            # must not cost the device that, nor tell it a wake mode it never had.
+            logger.warning(
+                "display profile wake_mode unavailable device_id=%s error=%s",
+                device_id,
+                type(exc).__name__,
+            )
+        else:
+            profile = replace(profile, wake_mode=settings.wake_mode)
     return profile.to_wire()
 
 
