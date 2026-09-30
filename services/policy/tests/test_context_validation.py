@@ -243,7 +243,7 @@ def test_context_hash_changes_with_context_field(field: str) -> None:
         "age_band": "14_17",
         "speaker_state": "unconfirmed",
         "speaker_confidence": 0.5,
-        "device_trust": "verified",
+        "device_trust": "trusted",
         "safety_state": "concern",
         "jurisdiction": "SG",
         "data_classification": "biometric",

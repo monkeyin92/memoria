@@ -76,3 +76,11 @@ class MediaFields(BaseModel):
         le=86400,
         alias="DEVICE_RUNTIME_PROFILE_TTL_S",
     )
+    # A device that onboarding activated with its own key and that is bound to
+    # exactly this binding is trusted for the memory capabilities although no
+    # hardware attestation backs it.  Off by default: Policy then treats every
+    # unattested device as untrusted, exactly as before this switch existed.
+    bound_device_trust_enabled: bool = Field(
+        default=False,
+        alias="MEMORIA_BOUND_DEVICE_TRUST_ENABLED",
+    )

@@ -174,6 +174,8 @@ def _control(
     store: PostgresSessionRuntimeStore,
     manifest: BindingManifest,
     persons: dict[str, tuple[str, str]] | None = None,
+    *,
+    accept_bound_device_trust: bool = False,
 ) -> PostgresMultiSubjectRuntimeControl:
     return PostgresMultiSubjectRuntimeControl(
         identity=_IdentityView(manifest, persons),  # type: ignore[arg-type]
@@ -181,6 +183,7 @@ def _control(
             store=store,
             signing_key=_SIGNING_KEY,
             policy=PolicyEngine(),
+            accept_bound_device_trust=accept_bound_device_trust,
         ),
     )
 

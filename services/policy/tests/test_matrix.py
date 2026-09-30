@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
+from services.policy.action_fence import build_action_resource_fence
 from services.policy.context import canonical_runtime_purpose_for_capability
-from services.policy.engine import PolicyEngine
+from services.policy.engine import (
+    BOUND_DEVICE_CAPABILITIES,
+    SENSITIVE_CAPABILITIES,
+    PolicyEngine,
+    device_trust_allows,
+)
 from services.policy.tests.fakes import (
     make_binding,
     make_consent,
@@ -23,7 +29,7 @@ def _adult_context(
     *,
     capability: str,
     purpose: str | None = None,
-    device_trust: str = "trusted",
+    device_trust: str = "verified",
     data_classification: str = "private",
     with_evidence: bool = True,
     **overrides: object,
@@ -156,6 +162,143 @@ def test_verified_device_allows_sensitive_capability() -> None:
         )
     )
     assert decision.effect == "allow_with_obligations"
+
+
+# -- device trust tiers -------------------------------------------------------
+# ``trusted`` is the onboarding-bound device link with no hardware evidence
+# behind it; ``verified`` is a fresh signed hardware attestation.  Memory may
+# rely on the first, nothing else may.
+
+
+@pytest.mark.parametrize("capability", ["memory_capture", "memory_recall_private"])
+def test_bound_device_link_is_enough_for_adult_memory(capability: str) -> None:
+    decision = PolicyEngine().decide(
+        _adult_context(capability=capability, device_trust="trusted")  # type: ignore[arg-type]
+    )
+    assert decision.effect == "allow_with_obligations"
+
+
+@pytest.mark.parametrize("capability", ADULT_SENSITIVE)
+def test_bound_device_link_is_not_enough_for_hardware_backed_capabilities(
+    capability: str,
+) -> None:
+    decision = PolicyEngine().decide(
+        _adult_context(capability=capability, device_trust="trusted")  # type: ignore[arg-type]
+    )
+    assert decision.effect == "deny"
+    assert decision.reason_code == "device_untrusted"
+
+
+@pytest.mark.parametrize("capability", ["memory_capture", "memory_recall_private"])
+def test_bound_device_link_is_enough_for_a_childs_memory(capability: str) -> None:
+    decision = PolicyEngine().decide(
+        _minor_context(capability=capability, device_trust="trusted")  # type: ignore[arg-type]
+    )
+    assert decision.effect == "allow_with_obligations"
+
+
+def test_bound_device_link_is_not_enough_for_a_childs_voiceprint() -> None:
+    decision = PolicyEngine().decide(
+        _minor_context(  # type: ignore[arg-type]
+            capability="voice_profile_create", device_trust="trusted"
+        )
+    )
+    assert decision.effect == "deny"
+    assert decision.reason_code == "device_untrusted"
+
+
+@pytest.mark.parametrize(
+    ("device_trust", "effect"),
+    [("trusted", "allow_with_obligations"), ("untrusted", "deny")],
+)
+def test_guardian_summary_follows_the_bound_device_link(
+    device_trust: str, effect: str
+) -> None:
+    relationship = make_relationship(
+        relation_type="guardian_of",
+        source_person_id="person-parent",
+        target_person_id="person-child",
+        now=NOW,
+    )
+    consent = make_consent(
+        subject_id="person-child",
+        actor_id="person-parent",
+        actor_kind="guardian",
+        capability="guardian_summary_view",
+        purpose="guardian_summary",
+        now=NOW,
+    )
+    decision = PolicyEngine().decide(
+        make_context(
+            actor_id="person-parent",
+            subject_id="person-child",
+            resource_owner_id="person-child",
+            capability="guardian_summary_view",
+            current_session_mode="student_minor",
+            subject_category="minor",
+            age_band="under_14",
+            relationship_roles=frozenset({"guardian"}),
+            relationship_evidence=(relationship,),
+            consent_evidence=(consent,),
+            binding_evidence=make_binding(now=NOW),
+            device_trust=device_trust,
+            evaluated_at=NOW,
+        )
+    )
+    assert decision.effect == effect
+    if effect == "deny":
+        assert decision.reason_code == "device_untrusted"
+
+
+@pytest.mark.parametrize("device_trust", ["trusted", "verified"])
+def test_resource_scoped_actions_reach_the_device_gate_before_anything_else(
+    device_trust: str,
+) -> None:
+    # memory_promotion has no bound-link exception: trusted stops at the gate,
+    # verified goes on to the evidence checks that follow it.
+    fence = build_action_resource_fence(
+        capability="memory_promotion",
+        purpose="memory_promotion",
+        action_resource_id="promotion-1",
+        action_revision=1,
+        generation_id=1,
+        turn_id=1,
+        tool_epoch=0,
+        issued_at=NOW,
+        valid_until=NOW + timedelta(minutes=5),
+    )
+    decision = PolicyEngine().decide(
+        make_context(
+            capability="memory_promotion",
+            purpose="memory_promotion",
+            action_resource_fence=fence,
+            generation_id=1,
+            turn_id=1,
+            device_trust=device_trust,
+            evaluated_at=NOW,
+        )
+    )
+    assert decision.effect == "deny"
+    if device_trust == "trusted":
+        assert decision.reason_code == "device_untrusted"
+    else:
+        assert decision.reason_code != "device_untrusted"
+
+
+def test_device_trust_tiers_for_every_sensitive_capability() -> None:
+    for capability in SENSITIVE_CAPABILITIES:
+        assert device_trust_allows(capability, "verified"), capability
+        assert device_trust_allows(capability, "trusted") is (
+            capability in BOUND_DEVICE_CAPABILITIES
+        ), capability
+        for weaker in ("offline", "untrusted", "revoked", "", "verifed"):
+            assert not device_trust_allows(capability, weaker), (capability, weaker)
+    # The bound link stays a short, deliberate list of memory capabilities.
+    assert BOUND_DEVICE_CAPABILITIES == {
+        "memory_capture",
+        "memory_recall_private",
+        "guardian_summary_view",
+    }
 
 
 def test_sensitive_capability_requires_consent_purpose_match() -> None:

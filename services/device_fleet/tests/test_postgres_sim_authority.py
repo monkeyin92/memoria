@@ -139,6 +139,53 @@ async def test_sim_action_rejects_forged_authenticated_actor(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("device_trust", "accepted"), [("verified", True), ("trusted", False)])
+async def test_a_device_action_needs_a_hardware_attested_receipt(
+    pg_services: PgServices,  # noqa: F811 - pytest fixture injection shadows import
+    device_trust: str,
+    accepted: bool,
+) -> None:
+    # ``trusted`` is only the onboarding-bound link (memory capabilities may
+    # rely on it); a receipt that relied on it must not move a device's SIM.
+    maintenance, _api, _projector, _worker, action_service = pg_services
+    now = datetime.now(UTC).replace(microsecond=0)
+    context = await _provision_bound_device(
+        maintenance,
+        private_key=Ed25519PrivateKey.generate(),
+        now=now,
+        provision_sim=False,
+    )
+    await maintenance.provision_sim_authority(
+        context,
+        sim_id="trust-tier-sim",
+        provider="carrier-a",
+        profile_kind="esim",
+        provider_status="active",
+        now=now,
+    )
+    service = DeviceFleetService(
+        action_service.store,
+        command_signing_key=Ed25519PrivateKey.generate(),
+        command_signer_key_id="trust-tier-test",
+        command_authority=_TestDeviceCommandAuthority(device_trust=device_trust),
+    )
+    call = service.transition_sim_authority(
+        context,
+        authority_input=AUTHORIZED_OWNER,
+        expected_sim_id="trust-tier-sim",
+        expected_revision=1,
+        action="suspend",
+        now=now + timedelta(seconds=1),
+    )
+
+    if accepted:
+        await call
+    else:
+        with pytest.raises((DeviceFleetConflict, CommandAuthorizationRejected)):
+            await call
+
+
+@pytest.mark.asyncio
 async def test_sim_replace_revoke_expire_are_revision_cas_and_auditable(
     pg_services: PgServices,  # noqa: F811 - pytest fixture injection shadows import
 ) -> None:

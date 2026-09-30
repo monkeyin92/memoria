@@ -33,7 +33,7 @@
 - **对齐**：2026-09-25 的决定是家长绑定时勾选长期记忆，孩子即被记住；Policy 引擎里未成年人 `memory_capture` 的旧口径却是 `PERSIST_AGGREGATE_ONLY`（`minor_memory_minimized`），归档因此对孩子只能存聚合。现在有效监护同意、有效 `guardian_of` 关系、绑定 fence、受信设备、使用人本人说话同时满足时，决定改为与成人相同的 `RETENTION_TTL`（30 天）加 `NO_MODEL_TRAINING`（`minor_memory_guardian_authorized`）；缺任一项仍拒绝，测试逐项覆盖。
 - **Agent 闸门**：孩子的 profile 只在家长长期记忆同意有效时才列出 `memory_recall_private`，闸门凭它归档；撤销同意后下一份 profile 不再有。服务端 `/v1/archive/session-events` 仍独立按家长 `memory_retention` 同意决定是否保留原文，孩子的长期记忆再经 catalog 的窄投影（只留自述类、低敏领域，排除敏感语境）。家长仍看不到原文。
 - **没有做的**：不给归档逐轮申请动作时收据。Control 的动作围栏每次授权只能前进一步，与 Agent 的计数不同步，逐事件申请会大面积 409；服务端落库时本来就独立重新授权。
-- **边界**：归档证据行没有过期任务，`RETENTION_TTL` 目前只有 MemoryScope 记录执行；设备信任不足（现状：生产设备没有 attestation）时 profile 不含该授权，孩子的对话依旧不入库，见 TODOLIST P1-11。
+- **边界**：归档证据行没有过期任务，`RETENTION_TTL` 目前只有 MemoryScope 记录执行；设备信任分两档：`verified`（硬件 attestation）放行全部敏感能力，`trusted`（onboarding 绑定链路、无硬件证据）只放行 `memory_capture`、`memory_recall_private`、`guardian_summary_view`。生产设备没有 attestation，需打开 `MEMORIA_BOUND_DEVICE_TRUST_ENABLED` 后孩子的对话才会入库，见 TODOLIST P1-11。
 
 ## 已定，不再讨论
 

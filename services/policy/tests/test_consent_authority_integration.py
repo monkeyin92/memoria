@@ -168,7 +168,7 @@ def _context(
     current_session_mode: str = "adult_companion",
     binding: BindingEvidence | None = None,
     relationships: tuple[RelationshipEvidence, ...] = (),
-    device_trust: str = "trusted",
+    device_trust: str = "verified",
     purpose: str = "user_request",
     evaluated_at: datetime = NOW,
 ) -> PolicyContext:

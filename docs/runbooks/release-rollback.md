@@ -154,6 +154,17 @@ python -m scripts.rebuild_memory_projections --confirm-rebuild
 
 仓库外的主机清理不随发布自动进行，需单独授权并在回滚窗口关闭后执行（`20260929-livekit-retire-v1` 已于 2026-09-29 按下述步骤完成，收据见 HANDOFF；此后整栈 `rollback` 只能回到同样不含旧媒体链的 PREV，否则按组件回滚）：停止并移除 LiveKit server compose 项目与其 sysctl 配置；安装新的 `memoria-stream.conf`、`memoria-https.conf`、IP server 片段后删除 `/etc/nginx/snippets/` 下的 `memoria-livekit.conf`、`memoria-miniprogram-media.conf`、`memoria-device-media.conf`（同时删掉 443 server 里对 `memoria-miniprogram-media.conf` 的 include），`nginx -t` 通过后 reload（若先删片段再回滚，PREV 网关的公网路由会缺失）；移除三个已停止容器、两份网关 env 文件和不再被引用的网关镜像。
 
+## 设备信任开关（仅绑定链路，无硬件 attestation）
+
+`MEMORIA_BOUND_DEVICE_TRUST_ENABLED`（control-api env，默认 `false`）。生产设备没有 attestation，`action_device_lock_trust` 恒返回 `untrusted`，Policy 因此不给任何设备 `memory_recall_private`、`guardian_summary_view` 与 `memory_capture`。打开后，满足下列全部条件的设备按 `trusted` 对待：onboarding 记录为 `bound` 且绑定到当前 binding 与版本、fleet 未封禁、其激活证书在 fleet 里没有被吊销或过期。`trusted` 只放行这三项记忆类能力，其余敏感能力（声纹、声音克隆、数字自我、原始录音、训练、支付、转让、`memory_promotion`、家庭共享）仍要求硬件 attestation 的 `verified`。
+
+SQL 侧只多返回事实 `device_bound`，与开关无关，所以 `schema` 步骤可以先于 cutover；旧代码忽略该字段、永远看不到 `trusted`，回滚代码不需要回退 schema。
+
+1. 打开：整栈发布后确认设备会话正常，在 `/etc/memoria-control-api.env` 加 `MEMORIA_BOUND_DEVICE_TRUST_ENABLED=true`，重建 control-api 并等 healthy。此后新的设备会话取新 profile；已在进行的会话保留旧 profile（设备会话最长 `DEVICE_RUNTIME_PROFILE_TTL_S`，默认 3600 s；小程序控制会话 5 分钟）。
+2. 验收（只读查库）：`session_runtime_profiles` 里最新设备会话的 `payload_json->'capabilities'` 含 `memory_recall_private`；`policy_receipts_v2` 里该能力不再有 `device_untrusted` 拒绝，新 receipt 的 `device_trust` 为 `trusted`（`trusted` 只会来自这个开关，`verified` 才是硬件证明）；说一句带专名的话后 `archive_evidence_events` 出现该使用人的 `speech.utterance_finalized`，`archive_processing_outbox` 中该事件为 completed 而不是 dead。
+3. 关闭：删掉该行或改回 `false`，重建 control-api。已签发的 profile 到期前仍带 `memory_recall_private`，要立刻停止归档就让机器人重新唤醒（新会话取新 profile）。设备被解绑或吊销时，无论开关如何都立即变为 `revoked`。
+4. 排障：打开后 profile 仍没有 `memory_recall_private` 时，看 `policy_receipts_v2` 里该次决策的 `reason_code`；`device_untrusted` 说明 `device_bound` 为假（onboarding 记录不是 bound、绑定版本不匹配，或激活证书被吊销或过期）。
+
 ## 回滚与验收底线
 
 服务回滚按最小组件：保留失败候选日志/manifest，恢复切前 image、软链和 env，等待健康与具名 gRPC/readiness，再验外部路由/provider 和设备重连。回滚镜像曾可运行不等于本次回滚演练通过。
