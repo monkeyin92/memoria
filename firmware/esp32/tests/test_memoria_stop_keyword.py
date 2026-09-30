@@ -186,14 +186,14 @@ def test_phrase_table_is_tunable_above_the_detection_floor(gate_tool: pathlib.Pa
     assert constants["floor"] == pytest.approx(0.8)
 
 
-def test_wake_word_keeps_build_10_acceptance(gate_tool: pathlib.Path) -> None:
+def test_wake_word_accepts_everything_multinet_reports(gate_tool: pathlib.Path) -> None:
     phrases, constants = _table(gate_tool)
-    # Build 10 detected the wake word at the model-wide 0.20; the lowered
-    # MultiNet floor must not make 「茉莉」 any more sensitive.
-    assert constants["wake"] == pytest.approx(0.20)
-    assert _run(gate_tool, "wake 0.199", "wake 0.10", "wake 0.20", "wake 0.27", "wake nan") == [
+    # Bench scores for 「茉莉」 were 0.11-0.20 in ten of twelve wake-ups, so the
+    # acceptance is the MultiNet detection floor (0.10) since build 14.
+    assert constants["wake"] == pytest.approx(0.10)
+    assert _run(gate_tool, "wake 0.099", "wake 0.10", "wake 0.15", "wake 0.27", "wake nan") == [
         "reject",
-        "reject",
+        "wake",
         "wake",
         "wake",
         "reject",
@@ -424,7 +424,7 @@ def test_multinet_registers_stop_phrases_and_ignores_wake_in_stop_only_mode() ->
     stop_only_wake = stop_only_wake[: stop_only_wake.index("continue;")]
     assert "running_ = false" not in stop_only_wake
     assert "wake_word_detected_callback_" not in stop_only_wake
-    # A wake hit under build 10's 0.20 is skipped (logged at INFO so missed
+    # A wake hit under the wake word's own acceptance is skipped (logged at INFO so missed
     # wake words show their score) before the unchanged detection log and wake-up.
     wake_gate = wake.index(
         'if (command.action == "wake" && !memoria::WakeWordAccepted(mn_result->prob[i])) {'
