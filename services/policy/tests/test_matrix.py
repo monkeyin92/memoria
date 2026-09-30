@@ -400,13 +400,13 @@ def test_minor_voice_profile_create_denied_without_evidence() -> None:
     assert decision.reason_code == "consent_evidence_required"
 
 
-def test_minor_memory_capture_allowed_with_minimized_obligations() -> None:
+def test_minor_memory_capture_allowed_with_retention_and_no_training() -> None:
     decision = PolicyEngine().decide(
         _minor_context(capability="memory_capture")  # type: ignore[arg-type]
     )
     assert decision.effect == "allow_with_obligations"
+    assert decision.reason_code == "minor_memory_guardian_authorized"
     assert [o.code for o in decision.obligations] == [
-        "PERSIST_AGGREGATE_ONLY",
         "RETENTION_TTL",
         "NO_MODEL_TRAINING",
         "WRITE_POLICY_RECEIPT",
@@ -417,6 +417,30 @@ def test_minor_memory_capture_denied_without_consent_evidence() -> None:
     decision = PolicyEngine().decide(
         _minor_context(capability="memory_capture", with_evidence=False)  # type: ignore[arg-type]
     )
+    assert decision.effect == "deny"
+    assert decision.reason_code == "memory_consent_required"
+
+
+def test_minor_memory_capture_denied_on_untrusted_device() -> None:
+    # Dropping the aggregate-only obligation must not loosen who may capture:
+    # the device gate still applies.
+    decision = PolicyEngine().decide(
+        _minor_context(capability="memory_capture", device_trust="untrusted")  # type: ignore[arg-type]
+    )
+    assert decision.effect == "deny"
+    assert decision.reason_code == "device_untrusted"
+
+
+def test_minor_memory_capture_denied_without_an_active_guardian() -> None:
+    context = _minor_context(capability="memory_capture")  # type: ignore[var-annotated]
+    decision = PolicyEngine().decide(replace(context, relationship_evidence=()))
+    assert decision.effect == "deny"
+    assert decision.reason_code == "guardian_evidence_required"
+
+
+def test_minor_memory_capture_denied_when_the_guardian_is_the_one_talking() -> None:
+    context = _minor_context(capability="memory_capture")  # type: ignore[var-annotated]
+    decision = PolicyEngine().decide(replace(context, actor_id="person-parent"))
     assert decision.effect == "deny"
     assert decision.reason_code == "memory_consent_required"
 

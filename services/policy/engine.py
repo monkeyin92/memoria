@@ -1078,12 +1078,17 @@ class PolicyEngine:
                 **evidence_args,  # type: ignore[arg-type]
             )
         if context.capability == "memory_capture":
+            # Reaching here means the guardian's memory consent, the active
+            # guardian relationship, the binding fence and a trusted device
+            # all hold, and the session acts for the subject.  A child whose
+            # guardian ticked long-term memory at binding is remembered, not
+            # reduced to an aggregate (user decision 2026-09-25); how narrow
+            # that memory is stays with the minor projection filter.
             return self._decision(
                 context,
                 effect="allow_with_obligations",
-                reason_code="minor_memory_minimized",
+                reason_code="minor_memory_guardian_authorized",
                 obligations=_obligations(
-                    "PERSIST_AGGREGATE_ONLY",
                     "RETENTION_TTL",
                     "NO_MODEL_TRAINING",
                     "WRITE_POLICY_RECEIPT",

@@ -412,7 +412,7 @@ def test_confirmed_but_unverified_subject_cannot_read_private_memory() -> None:
     assert decision.reason_code == "subject_category_unverified"
 
 
-def test_minor_memory_capture_requires_consent_and_is_aggregate_only() -> None:
+def test_minor_memory_capture_requires_guardian_consent_and_keeps_verbatim_memory() -> None:
     base = _context(
         capability="memory_capture",
         purpose="memory_capture",
@@ -466,8 +466,10 @@ def test_minor_memory_capture_requires_consent_and_is_aggregate_only() -> None:
 
     assert (denied.effect, denied.reason_code) == ("deny", "memory_consent_required")
     assert allowed.effect == "allow_with_obligations"
+    assert allowed.reason_code == "minor_memory_guardian_authorized"
+    # Consent is the gate: with it a child's memory is kept for a bounded
+    # time and never trained on; it is not reduced to an aggregate.
     assert obligation_codes(allowed.obligations) == (
-        "PERSIST_AGGREGATE_ONLY",
         "RETENTION_TTL",
         "NO_MODEL_TRAINING",
         "WRITE_POLICY_RECEIPT",

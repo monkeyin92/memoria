@@ -4,11 +4,11 @@ Control never lists ``memory_capture`` in a signed Runtime Profile: it is an
 action-time capability (``PROFILE_ISSUE_DEFERRED_CAPABILITIES``), and the
 Agent has no production receipt verifier for it.  Before this fix the archive
 gate required the deferred capability, so no committed turn from any
-production session was ever handed to the archive.  An adult's
-long-term-memory authority is the profile's own ``memory_recall_private``
-grant, which Policy decides under the same consent, delegation and
-trusted-device rules.  A minor's capture decision also minimises what is kept
-(``PERSIST_AGGREGATE_ONLY``), which only an action-time receipt carries.
+production session was ever handed to the archive.  The long-term-memory
+authority of an adult, and of a child whose guardian ticked memory at binding,
+is the profile's own ``memory_recall_private`` grant: Policy decides it, and
+``memory_capture``, under the same consent, guardian and trusted-device rules
+with the same retention and no-training obligations.
 """
 
 from __future__ import annotations
@@ -224,9 +224,9 @@ async def test_adult_device_turn_is_archived_under_the_profile_memory_grant() ->
 
 
 @pytest.mark.asyncio
-async def test_consented_minor_waits_for_the_action_time_capture_receipt() -> None:
-    # Policy decides a minor's memory_capture with PERSIST_AGGREGATE_ONLY and
-    # RETENTION_TTL; the recall grant carries neither, so it is not enough.
+async def test_consented_minor_device_turn_is_archived_under_the_guardian_grant() -> None:
+    # The child's profile lists memory_recall_private only while the
+    # guardian's long-term-memory consent holds, so the grant is the consent.
     session_id = "device-archive-minor"
     profile = _control_profile(
         session_id,
@@ -235,7 +235,51 @@ async def test_consented_minor_waits_for_the_action_time_capture_receipt() -> No
     )
     runtime = _device_runtime(session_id, profile)
 
+    archived = await _archived_turn(runtime)
+
+    assert [event["event_type"] for event in archived] == [
+        "speech.utterance_finalized",
+        "assistant.playout_stopped",
+    ]
+    for event in archived:
+        # The evidence belongs to the child, filed by the parent's account.
+        assert event["active_subject_id"] == _CHILD
+        assert event["actor_id"] == _ACTOR
+        assert event["memory_scope"] == "personal_private"
+        assert event["no_model_training"] is True
+        assert event["policy_receipt_id"] is None
+        assert event["payload"].get("aggregate_only") is not True  # type: ignore[union-attr]
+    assert archived[0]["payload"]["text"] == "我今天学会骑自行车了。"  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_minor_without_the_guardian_grant_persists_nothing() -> None:
+    # Production today, and the state after a guardian withdraws memory
+    # consent: the profile only allows conversation.
+    session_id = "device-archive-minor-no-grant"
+    profile = _control_profile(session_id, capabilities=("chat", "english_practice"), minor=True)
+    runtime = _device_runtime(session_id, profile)
+
     assert await _archived_turn(runtime) == []
+
+
+@pytest.mark.asyncio
+async def test_minor_profile_that_asks_for_aggregates_archives_no_words() -> None:
+    session_id = "device-archive-minor-aggregate"
+    profile = _control_profile(
+        session_id,
+        capabilities=("chat", "memory_recall_private"),
+        minor=True,
+        extra_obligations=(PolicyObligation.POLICY_OBLIGATION_PERSIST_AGGREGATE_ONLY,),
+    )
+    runtime = _device_runtime(session_id, profile)
+
+    archived = await _archived_turn(runtime)
+
+    assert len(archived) == 2
+    for event in archived:
+        assert event["payload"]["aggregate_only"] is True  # type: ignore[index]
+        assert "text" not in event["payload"]  # type: ignore[operator]
 
 
 @pytest.mark.asyncio
@@ -302,7 +346,12 @@ def test_memory_grant_obeys_signed_obligations_and_leaves_raw_audio_closed() -> 
     assert decide_persistence(ungranted, session_memory_grant=True).allowed is False
     assert decide_persistence(granted).allowed is False
     minor = _control_profile("grant-rules-minor", capabilities=("chat", "memory_recall_private"))
-    assert decide_persistence(minor, session_memory_grant=True).allowed is False
+    minor_decision = decide_persistence(minor, session_memory_grant=True)
+    assert minor_decision.allowed is True
+    assert minor_decision.aggregate_only is False
+    assert minor_decision.raw_audio_allowed is False
+    minor_ungranted = _control_profile("grant-rules-minor-none", capabilities=("chat",))
+    assert decide_persistence(minor_ungranted, session_memory_grant=True).allowed is False
     forbidden = _control_profile(
         "grant-rules-forbidden",
         capabilities=("chat", "memory_recall_private"),

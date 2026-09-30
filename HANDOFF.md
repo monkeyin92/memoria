@@ -2,12 +2,12 @@
 
 ## 当前生产快照
 
-- **最近生产收据**：2026-09-30 11:02–11:04（CST）整栈发布 `20260930-local-stop-v2`（tag → `88a3c80`，#142 分支头，与合并提交 `5b3e13c` 同树），control-api、bridge、speaker-model 三角色换 tag。media-edge 之后单独切了三次（10:51 `20260930-local-stop-v1`，11:50 `20260930-edge-reject-log-v1`，11:59 `20260930-late-receipt-v1`，详见下一节），当前为 `20260930-late-receipt-v1`。`verify-load`、`freeze`、`env`、`schema`、`cutover`、`finish` 每步单独确认 PASS。生产 `/etc/memoria-agent.env` 常开 `MEDIA_PCM_TAP_DIR=/tmp/media-pcm-tap`（容器 tmpfs，每会话 4 MB），原始上行音频留在容器内存直到重启。
+- **最近生产收据**：2026-09-30 11:02–11:04（CST）整栈发布 `20260930-local-stop-v2`（tag → `88a3c80`，#142 分支头，与合并提交 `5b3e13c` 同树），control-api、bridge、speaker-model 三角色换 tag。media-edge 之后单独切了三次（10:51 `20260930-local-stop-v1`，11:50 `20260930-edge-reject-log-v1`，11:59 `20260930-late-receipt-v1`，详见下一节），当前为 `20260930-late-receipt-v1`。control-api 之后又以组件发布单独切到 `20260930-vector-keyword-v1`（CST 20:05，见下一节），bridge 与 speaker-model 仍是 `20260930-local-stop-v2`。`verify-load`、`freeze`、`env`、`schema`、`cutover`、`finish` 每步单独确认 PASS。生产 `/etc/memoria-agent.env` 常开 `MEDIA_PCM_TAP_DIR=/tmp/media-pcm-tap`（容器 tmpfs，每会话 4 MB），原始上行音频留在容器内存直到重启。
 - **上一次整栈收据**：2026-09-29 23:10–23:14 `20260929-session-limits-v1`（`26e937f`），三角色的回滚目标。media-edge 的回滚目标是 `20260929-turn-taking-v1`。
 
 | component | actual image/tag | OCI digest | revision | health | restarts | startup time | receipt | rollback target |
 |---|---|---|---|---|---:|---|---|---|
-| Control API | `memoria-control-api:20260930-local-stop-v2` | `sha256:a52a9230…`（服务器 image id） | `88a3c8053b2ba0c0411495674e4b355deaf839d8` | healthy | 0 | `2026-09-30T03:02:17Z` | `/opt/memoria/releases/20260930-local-stop-v2/.cutover/` | `memoria-control-api:rollback-20260930-local-stop-v2-pre`（= `20260929-session-limits-v1`） |
+| Control API | `memoria-control-api:20260930-vector-keyword-v1` | `sha256:4a768467…`（服务器 image id） | `0f1ebcfd442092416ccea5ad2b2e676248d19064`（tag 提交；镜像内容 = 线上提交 `88a3c805` 加 `services/archive` 5 个文件） | healthy | 0 | `2026-09-30T12:05:54Z` | `/opt/memoria/component-releases/20260930-vector-keyword-v1/` | `memoria-control-api:rollback-20260930-vector-keyword-v1-pre-control`（= `20260930-local-stop-v2`） |
 | Bridge | `memoria-agent:20260930-local-stop-v2` | `sha256:2f62c06a…` | 同上 | healthy | 0 | `2026-09-30T03:02:30Z` | 同上 | `memoria-agent:rollback-20260930-local-stop-v2-pre` |
 | Speaker Model | `memoria-speaker-model:20260930-local-stop-v2` | `sha256:58727c09…` | 同上 | healthy | 0 | `2026-09-30T03:02:09Z` | 同上 | `memoria-speaker-model:rollback-20260930-local-stop-v2-pre` |
 | Media Edge | `memoria-media-edge:20260930-late-receipt-v1` | `sha256:9874fa24…` | `b43577e886868ec7c9b00e30d38df13f776a0b82` | healthy | 0 | `2026-09-30T03:59:05Z` | `/opt/memoria/component-releases/20260930-late-receipt-v1-media-edge/` | `memoria-media-edge:20260930-edge-reject-log-v1`（`media-edge-rollback.override.yml`） |
@@ -18,6 +18,20 @@
 - **未关闭缺陷**：P0-03 仍开放（缺陷 A 核心续问边界与工具查询最终回答已在 09-24、09-25 真机走通；TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
 - **下一步必须动作**：当日遗留已汇总到 [TODOLIST「2026-09-28 收尾待办」](TODOLIST.md)：伙伴页选一次绵绵、嘈杂环境验证 #83；需决定是否发布固件 OTA；待查回复规划 `no_verified_runtime_profile` 兜底；12-17 前换证书。之后按验收清单验 P0-04 产品决定、P1-11 三种绑定与隔天记忆、P1-03 孩子人格、P2-04 与 P0-03 剩余矩阵；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
+
+## 2026-09-30 control-api 组件发布 20260930-vector-keyword-v1（#150，向量路径词面项）
+
+- **范围**：向量混合检索的词面分改用「首尾字都是内容字」的 n-gram，并按命中查询词占比的平方计分（`memory_domain.edge_content_query_terms`、`PostgresMemoryCatalog._search`）；指标与取舍见 TODOLIST P1-06「大语料干扰评测」。
+- **过程**：main 已越过线上提交，所以从线上提交 `88a3c805` 拉热修分支 `hotfix/control-vector-keyword-bonus`，只带 `services/archive` 的 5 个文件，annotated tag `20260930-vector-keyword-v1`（→ `0f1ebcfd`）已推送。`deploy_control_component.sh --dry-run` 后 `--cutover --base-image memoria-control-api:20260930-local-stop-v2`，约 5 分钟；`MEMORIA_RELEASE_TAG` 刻意保持栈 tag。
+- **现状（2026-09-30 晚只读核对）**：容器 healthy、重启 0，回滚镜像 `rollback-20260930-vector-keyword-v1-pre-control`。**尚未**用线上带鉴权读口或设备追问验收。
+
+## 2026-09-30 设备对话为什么没有入库（只读核对；修复在 #151 与 `feat/minor-memory-capture-receipt`，均未发布）
+
+- **现象**：生产 `archive_evidence_events` 里 `speech.utterance_finalized`（233 条 `funasr.authoritative_final` + 4 条文本输入）与 `assistant.playout_stopped`（213 条）的最后一条都是 2026-08-08；此后只有声纹分类事件和 09-28 一条监护同意事件。近 72 小时 bridge 与 control-api 日志里 `session-events` 为零。
+- **三层原因**：① Agent 归档门要求已签名 profile 列出 `memory_capture`，而 Control 从不签发它（`PROFILE_ISSUE_DEFERRED_CAPABILITIES`），线上验证器又是 `DefaultDenyReceiptVerifier`；#151 让成人凭 profile 自己的 `memory_recall_private` 归档。② 对孩子，Policy 的 `memory_capture` 旧口径带 `PERSIST_AGGREGATE_ONLY`，与 09-25「家长勾选长期记忆后孩子被记住」的决定不一致；本分支把它改成与成人同样的 `RETENTION_TTL` + `NO_MODEL_TRAINING`，并让闸门也认孩子的 `memory_recall_private`。③ **设备信任**：`action_device_lock_trust` 只有「证书有效且 attestation 当前有效」才返回 `verified`，生产 `device_fleet_attestations` 为 0 行，返回 `untrusted / device_attestation_unavailable`，Policy 因此对所有主体拒绝 `memory_recall_private` 与 `memory_capture`。库里最近签发的设备与 app 会话 profile，能力都只有 `["chat"]` 或 `["chat","english_practice"]`。这一层没有任何代码改动能绕过，需要产品/安全决定（见 TODOLIST「需用户决定」）。
+- **已核对的授权事实**：孩子 `83370358…` 的 `guardian_person_consents.memory_retention` 有效（2026-09-28 02:39Z 授予，未撤销）；binding v3 的 `memory_capture`（purpose `memory_capture`）、`memory_recall_private`（purpose `memory_recall`）、`guardian_summary_view` 三条 consent 均 active；`device_fleet_devices` 只有一行 `dev_atk_a4cb8fd6095c`（`bound`，reason `binding_backfill`）。
+- **为什么不给归档逐轮申请 `memory_capture` 收据**：Control 的动作围栏每次授权必须恰好前进一步（`turn`/`interrupt`/`tool`，`_action_fence_kind`），并发请求只有一个赢家；Agent 的 turn/generation 计数与它不同步，给每个归档事件申请会大面积 409。服务端落库时本来就独立重新授权：`/v1/archive/session-events` 按主体类别与监护同意决定是否保留原文，`memory_project_capture_evidence` 重验当前 Session profile，未成年人的长期记忆再经 catalog 的窄投影过滤（`filter_extraction_for_subject`）。Agent 上报的 `policy_receipt_id` 不是权威。
+- **未验证**：以上修复只有本地 PG 与单元测试；没有设备或生产验证。归档证据行没有过期任务，`RETENTION_TTL` 目前只有 MemoryScope 记录会执行。
 
 ## 2026-09-30 设备本地停止词（#141、#142，已发布 20260930-local-stop-v2 + media-edge 20260930-local-stop-v1）
 
