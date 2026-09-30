@@ -1,12 +1,12 @@
 # Memoria 优先级执行清单
 
-更新于 2026-10-01｜线上为整栈 `20261001-device-archive-v1`（源 `412f31e9`，含 #148、#150–#153，bridge 已不带 `livekit-agents`），media-edge 单独在 `20260930-late-receipt-v1`；整栈回滚目标 `20260930-local-stop-v2`（control-api 回到 `20260930-vector-keyword-v1` 组件链），media-edge 回滚目标 `20260930-edge-reject-log-v1`。设备信任开关 `MEMORIA_BOUND_DEVICE_TRUST_ENABLED` 已于 2026-10-01 00:30 打开，设备对话重新入库。固件：开发板已由另一会话 USB 刷入 build 17（低分回声误唤醒修复，已作为独立提交并入 `feat/wake-mode-idle-screen`），build 15–17 均未发布 OTA。生产服务器磁盘 2026-10-01 已按「当前 + 紧邻回滚」清理（根分区 80% → 33%）。**2026-10-01 用户新增六项需求见下方同名一节，按序做，做完一项更新一项。**2026-09-28 的收尾待办见更下方同名一节；发布与验收收据见 `HANDOFF.md`。本文件只保留未关闭事项。
+更新于 2026-10-01｜线上为整栈 `20261001-audience-recap-v1`（源 `c6ec91ed`，PR #156 合并提交 `bfb7b89b`；三角色换 tag，control-api 的 `20261001-wake-mode-v1` 组件由此并回纯链），media-edge 单独在 `20260930-late-receipt-v1`；整栈回滚目标 `20261001-device-archive-v1`（control-api 回到 `20261001-wake-mode-v1` 组件链），media-edge 回滚目标 `20260930-edge-reject-log-v1`。设备信任开关 2026-10-01 00:30 已打开，设备对话重新入库。固件：开发板已 USB 刷入 build 18（含另一会话的 build 17 低分回声修复），build 15–18 均未发布 OTA。生产服务器磁盘 2026-10-01 已按「当前 + 紧邻回滚」清理（根分区 80% → 33%）。**2026-10-01 用户新增的需求见下方「2026-10-01 新需求」一节（N-1…N-7），按序做，做完一项更新一项。**2026-09-28 的收尾待办见更下方同名一节；发布与验收收据见 `HANDOFF.md`。本文件只保留未关闭事项。
 
 ## 当前边界（不得越界宣称）
 
 ```yaml
-enabled_release: 20261001-device-archive-v1  # 源 412f31e9；三角色为该 tag，media-edge 为 20260930-late-receipt-v1；LLM qwen3.7-flash（联网查询 qwen-plus），ASR fun-asr-realtime，TTS Doubao；整栈回滚 *:rollback-20261001-device-archive-v1-pre（= 20260930-local-stop-v2，control-api 为组件版 20260930-vector-keyword-v1），media-edge 回 20260930-edge-reject-log-v1
-control_api_release_lane: 整栈走仓库版 `scripts/release_ops.sh`（安装在服务器 `/root/memoria-release/release-ops.sh`）；PREV 常量随每次发布 PR 更新；依赖文件（pyproject/uv.lock）变化时增量与 overlay 发布会被脚本拒绝，须本机全量 linux/amd64 构建；`release_ops.sh` 仍带着 control-api 的组件链支持（`20260930-vector-keyword-v1`，freeze 与 rollback 都认它）；`20261001-device-archive-v1` 已把该组件并回纯链，下一次整栈发布须删掉这段支持并把 PREV 改为 `20261001-device-archive-v1`；此后再做 control-api 单组件发布，仍须先把链支持补回
+enabled_release: 20261001-audience-recap-v1  # 源 c6ec91ed；三角色为该 tag，media-edge 为 20260930-late-receipt-v1；LLM qwen3.7-flash（联网查询 qwen-plus），ASR fun-asr-realtime，TTS Doubao；整栈回滚 *:rollback-20261001-audience-recap-v1-pre（= 20261001-device-archive-v1，control-api 为组件版 20261001-wake-mode-v1），media-edge 回 20260930-edge-reject-log-v1
+control_api_release_lane: 整栈走仓库版 `scripts/release_ops.sh`（安装在服务器 `/root/memoria-release/release-ops.sh`）；PREV 常量随每次发布 PR 更新；依赖文件（pyproject/uv.lock）变化时增量与 overlay 发布会被脚本拒绝，须本机全量 linux/amd64 构建；`release_ops.sh` 仍带着 control-api 的组件链支持（`20261001-wake-mode-v1`，freeze 与 rollback 都认它）；`20261001-audience-recap-v1` 已把该组件并回纯链，下一次整栈发布须删掉这段支持并把 PREV 改为 `20261001-audience-recap-v1`；此后再做 control-api 单组件发布，仍须先把链支持补回。agent 组件快车道（`deploy_agent_component.sh`）在整栈发布后的第一次会被「runtime base 必须独立于线上镜像」拒绝（2026-10-01 `20261001-audience-style-v1` 实测：门禁全过、镜像构建成功，切流前被拒，服务器无变化），需整栈发布或与线上镜像不同的同 lock 基座
 memory_candidate_visibility: code=main 0059368 / enabled=true（随整栈上线）/ verified=SQLite/HTTP/主体隔离/评测适配器回归；四份 2026-09-23 评测收据为上线前 parent_baseline（固定集 recall@5/10=0.857、未见集 0.4、双泄漏 0），真实 PG candidate 行为与线上带鉴权读口未单独取证
 direct_real_device_verified: false
 full_duplex_verified: false
@@ -52,39 +52,47 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 - [x] 固件 build 18：`UpdateIdleScreen`，串口实测空闲 10 s 后出现 `MemoriaMascot: screen off (idle)`
 - [ ] 真机肉眼确认屏幕确实黑了、唤醒后亮回来（我看不到屏幕，需要你确认）；并确认黑屏状态下点屏在「点击屏幕」模式下能唤醒（CST816S 在熄屏后是否仍报触摸，串口能看到）
 
-### [ ] N-3 发布与刷机
+### [x] N-3 发布与刷机（OTA 是否签名发布待定）
 
 - 后端：`services/control_api` 的显示档案改动，走 control-api 组件发布（`deploy_control_component.sh`，与 `20260930-vector-keyword-v1` 同法；先核对 main 相对线上基线 `412f31e9` 只动 Control 范围）。小程序：微信开发者工具 CLI 上传体验版（绝对路径）。固件 build 18：USB 刷写（设备连着；只写 app + otadata，保留身份/NVS），USB 启动验证通过后再决定是否签名发布 OTA。
 - 固件基线含另一会话的 build 17（低分回声「mo mo li」误唤醒修复，已刷入开发板，本分支独立提交 `1ed50697` 带上，避免刷机倒退）。
-- [x] 后端组件发布　[x] 小程序体验版上传　[x] 固件 USB 刷写（build 18）　[ ] OTA 是否签名发布（待定：先经真机唤醒/点屏验证再决定；未确认镜像的 OTA 回滚未演练过）
-- 注意：control-api 现在又跑在组件链上（PREV compose + override），下一次整栈发布前 `release_ops.sh` 的 `LIVE_CONTROL_RELEASE`/`CONTROL_CHAIN` 要改成 `20261001-wake-mode-v1`（或整栈发布时并回纯链），否则 `freeze` 会拒绝。
+- [x] 后端组件发布 `20261001-wake-mode-v1`　[x] 整栈发布 `20261001-audience-recap-v1`（PR #156；04:46 verify-load、freeze，合并后 04:50 env/schema/cutover、04:52 finish，每步单独确认 PASS；控制面三角色 healthy、重启 0，内外 readiness 200，bridge `/tmp` 4 KB/64 MiB，心跳告警 0）　[x] 小程序体验版 `0.2.20261001.1`（唤醒开关）与 `.2`（回顾页监护人视图）　[x] 固件 USB 刷写（build 18）　[ ] OTA 是否签名发布（待定：先经真机唤醒/点屏验证再决定；未确认镜像的 OTA 回滚未演练过）
+- 已处理：整栈发布时 `release_ops.sh` 的 `LIVE_CONTROL_RELEASE` 已改为 `20261001-wake-mode-v1`、PREV 改为 `20261001-device-archive-v1`，`freeze` 认得该链；整栈后 control-api 回到纯链。agent 组件快车道的拒绝见上面 `control_api_release_lane`。
 
-### [ ] N-4 小程序「回顾」没有任何对话记录
+### [ ] N-4 小程序「回顾」没有任何对话记录（代码已上线，待手机验收与一项决定）
 
 - 只读取证（2026-10-01 03:40，生产库）：①「日常回顾」读老表 `messages`（`/v1/memory/days`），生产已禁止写入该表（`_reject_legacy_memory_write_in_production`），用户账号 0 行——无论归档是否正常，它永远是空的；②「对话记录」（`/v1/archive/conversation-sessions`、`conversation-history`）只取 `subject_id == 登录账号` 且 `owner` 发言、`history_eligible` 的证据：07、08 月该账号的 17 条证据 speaker 是 `uncertain`、无主体，永远不合格；③设备绑定的是孩子（`83370358…`，账号是其 `guardian_of`）：开关打开后新证据的 `subject_id` 是孩子的 person id，家长账号的回顾按产品决定看不到孩子原话（家长只看小结/趋势/提醒）；④08-08 到 09-30 整段没有设备对话入库（已由 #151–#153 + 开关修复，00:33 起恢复）。
-- 方案：①「日常回顾」改读归档——账号本人是主体时显示当天对话数与摘要；监护人看到孩子的无原文小结入口（现有 `GET /v1/guardian/minors/{id}/summary`）而不是空状态；②空状态文案说明原因（「家长只能看小结，不能看孩子原话」）；③核对监护小结现在是否有数据（归档刚恢复）。
+- 已做（2026-10-01，随 `20261001-audience-recap-v1` 与小程序体验版 `0.2.20261001.2` 上线）：`GET /v1/guardian/minors/{id}/days`（孩子哪些天聊过，只有次数）与 `POST /v1/guardian/minors/{id}/days/{day}/recap`（按请求现写的 AI 概括：标题、概述、要点、心情、给家长的建议）。两者与每周小结同一道门（绑定人 + 孩子的长期记忆同意），只读孩子自己的合格发言，概括不落库（随孩子数据删除无残留），模型写出与孩子原话连续重合 10 字以上或出错时换成只有次数的兜底。小程序回顾页在「生效中的 parent_for_child 绑定 + 登录的是绑定人」时显示这套视图与一句说明，不再显示账号自己的「实际听到/最近对话」。测试：后端 12 条（含真实 PG 的门禁与只读孩子发言）、小程序 5 条。
+- 周小结（`/summary`）依赖的 `emotion_observation`/`topic.observation` 事件线上无人写入（档案里只有 `speech.utterance_finalized`、`assistant.playout_stopped` 等），所以它仍是空的；本次不改，是否要由这两类事件或改用同一份概括来补，待定。
 - **需用户决定**：监护人是否可看孩子对话原文。当前按 2026-09-24/25 产品决定「不可」，我按此实现；若要调整（例如仅测试期开放、或绑定时多一个勾选）需你明确。
-- [ ] 日常回顾改读归档　[ ] 监护人入口与空状态文案　[ ] 监护小结现场核对
+- [x] 后端与小程序视图（家长看按天次数 + 概括）　[ ] 手机上验收：登录绑定人的账号，打开回顾页，点「生成 / 更新选中日期的回顾」，应看到概括而不是原话（我无法登录你的账号）　[ ] 周小结数据来源（见上）
 
 ### [ ] N-5 电脑对话长稳测试（≥30 分钟）
 
 - 方法：Mac 扬声器 `say -v Tingting` 代替使用者，串口 + bridge/edge 日志采集（`scripts/voice_session_capture.py`、`scripts/auto_audio/`，前例见 HANDOFF 09-29）。**使用时段（2026-10-01 04:10 只读）**：孩子的 profile 带 `QUIET_HOURS 04:00–07:00`（时段内唤醒只播晚安、不开 ASR）和 `MAX_SESSION_SECONDS 1800`（单次对话最长 30 分钟，到点自动结束，需再唤醒才能续），所以不能在 07:00 前测，≥30 分钟要分多次会话；这两项是家长设定，我不绕过。
 - 场景：连续多轮 ≥30 分钟（天气/知识/故事/闲聊）；播放中打断（「停」「别说了」）；续问；长静默；重连；负面情绪（孤独、难过、被欺负、焦虑、厌学，以及自伤类危机话术与家长提醒入队，outbox 不外发）；三种唤醒方式各测一次。
+- 工具：`scripts/voice_soak.py` 由本次会话写成（Mac 扬声器 `say` 播「使用者」、串口状态机、ssh 跟 bridge/edge/control 日志，场景 JSON 在 `scripts/voice_soak_scenarios/`）；危机类话术不进场景（会给家长队列写入假的危机提醒）。
 - 产出：`docs/acceptance/run-20261001-longsoak/findings.md`（逐场景结果、问题清单、修复）。
 - [ ] 执行　[ ] 问题修复　[ ] 复测
 
-### [ ] N-6 产品体验官评审：说话内容、语气、方式（孩子 vs 老人）
+### [ ] N-6 产品体验官评审：说话内容、语气、方式（孩子 vs 老人）（提示词与语速已上线，待真机实听与 30 分钟对话复核）
 
 - 做法：用 N-5 的转写与音频，分别以「孩子」「老人」两个视角评：称呼、句长、用词、语速、停顿、情绪承接、是否说教、是否追问、安全话术；读现有提示词与人格（`prompts.py`、`persona`、`tutor`）确认是否按年龄/关系分风格。**诚实边界**：我无法直接「听」音频，只能用转写 + 音频客观度量（语速、停顿、时长、电平）评，并把抽样音频放进 `outputs/` 请用户抽听确认听感。
 - 优化：按发现改提示词/人格/TTS 参数（仅豆包现有参数），逐项前后对照，不回退安全话术。
-- [ ] 评审报告　[ ] 提示词与参数优化　[ ] 前后对照
+- 评审方法（2026-10-01）：在服务器 bridge 容器里用生产提示词组装（`compose_system_prompt`，人格阿序，服务模式 `student_minor` / `senior_companion`）和生产聊天模型 `qwen3.7-flash` 做并排实验，不经设备与 TTS，只发实验自己的句子；孩子 16 句、长辈 16 句，基线与改后各一轮，再用新情境复核。
+- 基线发现：①两个模式都只有一句「范围」描述，没有任何「怎么说」——「语速放慢」模型做不到，真实语速仍和成人一样；②孩子：回复 40–160 字，词偏书面（「散射」「微粒」），被欺负时直接下指令、没有先听，写作业回「我不能」，讲故事前加「我先看看怎么安排」，伤心时一长段道理；③长辈：称呼「长辈」「老人家」，「我给您倒杯温水」「我帮您发微信/设提醒」（机器人做不到），把「老伴」默认成「她」，膝盖疼时猜病因，132 字的回复，请求回忆时回「我没有童年」；④好的部分：防诈骗短句（「别转账，先挂断」）、紧急情况叫人、陌生人邀请的拒绝。
+- 已改（随整栈上线）：`SERVICE_MODE_BLOCKS` 两段加入「说话方式」——孩子：好朋友口吻、一两句短话、生活里的比方且要准确、先说出感受再陪着再轻问、被欺负/陌生人/害怕时多说一句并坚定地说「马上告诉爸爸妈妈或老师」、写作业说「我们一起来做」、完整的小故事、十几岁的学生像朋友、不用「先好好学习」打断心事；长辈：称「您」、短句、先接住心情并直接说出「老伴/儿子」、做认真的听众、请求重复时更短更慢地重复、不猜病因不建议吃药、不说做不到的事、防诈骗先说「别转账，先挂断」。老年模式 TTS 语速乘 0.94（用户明确要求语速时不动；供应商仍把结果夹在它允许的范围内）。测试 `test_audience_speaking_style.py`、`test_prosody.py` 新增。
+- 改后实验：孩子回复多为 10–45 字，长辈多为 13–35 字，「老伴」「儿子」被直接复述，无虚构动作；剩余问题：有时仍用「他」指代亲人、科学比方可能不准（已在规则里要求准确，仍需抽查）、故事仍偏长。
+- **我无法听音频**，所以「听感」这一半没有做：语速 0.94、声音选择（人格阿序是「沉稳干练」，给孩子用偏严肃，孩子的伙伴可在小程序换成桃喜/绵绵）、停顿和语气需要你抽听；30 分钟对话（N-5）的转写会用来复核改后的实际表现。
+- 未做：唤醒应答短语按对象区分（现在是同一张表，如夜里「这么晚还醒着，我在」对孩子有点像责备）；危机话术只读了代码，未经设备触发（避免给家长队列写入假的危机提醒）。
+- [x] 评审与并排实验　[x] 提示词与语速优化　[ ] 真机实听与 N-5 转写复核　[ ] 唤醒短语按对象区分
 
 ### [ ] N-7 新发现：bridge 容器 `/tmp` 被 PCM tap 写满（2026-10-01 只读发现）
 
 - 现象：`memoria-voice-core-media-bridge-1` 的 `/tmp`（64 MiB tmpfs）100% 满：`/tmp/media-pcm-tap` 里 86 个会话 WAV 共 64 MiB（每个会话上限 4 MiB，只增不删，自 01:52 CST 起写满）。后果：PCM tap 自己以 ENOSPC 关闭（21 次），更要紧的是心跳本地状态文件 `/tmp/memoria-agent-heartbeat.json` 无法更新，`agent heartbeat failed: OSError` 14 小时 1104 次；控制面 readiness 仍 `agent ready`（心跳 POST 先于写文件成功），容器 healthcheck 走 gRPC 端口，所以没有中断服务，但任何其他 `/tmp` 写入都会失败。
 - 修复（本分支，待随 agent 发布）：`media_pcm_tap.py` 新会话打开文件前按最旧优先删除 tap 文件，直到目录加新文件不超过 `MEDIA_PCM_TAP_DIR_MAX_BYTES`（默认 40 MiB）；只动自己写的 `media-uplink-*.wav`，错误全部吞掉；单测 4 条。重启 bridge 会立刻清空（tmpfs），之前日志里的上行录音随之消失。
 - 隐私提醒（已在 P2-08「需要用户决定」）：常开 PCM tap 留存原始上行音频在容器内存，是否长期保留仍待你决定。
-- [x] 代码与单测　[ ] 随 agent 发布
+- [x] 代码与单测　[x] 已随整栈 `20261001-audience-recap-v1` 上线（bridge 重启后 `/tmp` 为 4 KB/64 MiB，`heartbeat failed` 归零）
 
 ## 2026-09-28 收尾待办
 
