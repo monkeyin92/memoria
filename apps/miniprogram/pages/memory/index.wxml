@@ -18,13 +18,15 @@
     <view wx:if="{{loading}}" class="card"><text class="loading-text">正在读取回顾…</text></view>
 
     <block wx:elif="{{memoryTab === 'reviews'}}">
+      <view wx:if="{{guardianMode}}" class="notice">这台机器人的使用人是你绑定的孩子。为保护孩子的隐私，这里只显示 AI 的概括，不会显示孩子的原话。</view>
+      <view wx:if="{{guardianError}}" class="notice notice-warn">{{guardianError}}</view>
       <button class="primary-button memory-summarize" loading="{{summarizing}}" bindtap="summarizeSelectedDay">生成 / 更新选中日期的回顾</button>
       <button class="secondary-button memory-share" open-type="share" data-date="{{selectedDate}}">分享选中日期的回顾</button>
       <view wx:if="{{!days.length}}" class="l2-card memory-empty">
         <glass-icon name="memory" size="176"></glass-icon>
         <text class="l2-card-title">还没有可回顾的内容</text>
-        <text class="l2-card-sub">这里还空空的，没关系。需要时再来看看，一切由你决定。</text>
-        <text class="caption">在设备上说几句后，再回来看看。AI 整理可能有偏差，打开回顾可以查看来源。</text>
+        <text class="l2-card-sub">{{guardianMode ? '孩子还没有聊过天，或者还没有开启孩子的长期记忆。' : '这里还空空的，没关系。需要时再来看看，一切由你决定。'}}</text>
+        <text class="caption">{{guardianMode ? '孩子和机器人聊几句后，再回来看看。' : '在设备上说几句后，再回来看看。AI 整理可能有偏差，打开回顾可以查看来源。'}}</text>
         <view class="button-row">
           <button class="secondary-button btn-sm" bindtap="goCompanion">去和伙伴聊聊</button>
         </view>
@@ -40,10 +42,12 @@
             <view class="memory-tags">
               <text wx:for="{{item.highlights}}" wx:for-item="tag" wx:key="*this" class="pill pill-neutral memory-tag">{{tag}}</text>
             </view>
+            <text wx:if="{{item.suggestion}}" class="caption">{{item.suggestion}}</text>
           </view>
         </view>
       </view>
       <view class="notice">AI 整理可能有偏差。未确认的内容不会自动变成长期记忆。</view>
+      <block wx:if="{{!guardianMode}}">
       <view class="fold">
         <text class="fold-summary">实际听到的回复</text>
         <block wx:if="{{heardTurns.length}}">
@@ -88,6 +92,7 @@
         </view>
         <text wx:if="{{!conversationTurns.length}}" class="caption">这段对话没有可展示的合格内容。</text>
       </view>
+      </block>
     </block>
 
     <block wx:else>

@@ -632,6 +632,23 @@ function summarizeDay(userId, date) {
 }
 
 /*
+ * 监护人看自己绑定的孩子：哪些天聊过（只有次数），以及某一天的 AI 概括。概括由服务端
+ * 按请求现写、不落库，且不含孩子的原话（产品决定：家长只看小结、趋势和提醒）。
+ */
+function getGuardianChildDays(minorUserId, limit = 30) {
+  return rawRequest(
+    `/v1/guardian/minors/${encodeURIComponent(minorUserId)}/days?limit=${encodeURIComponent(limit)}`,
+  );
+}
+
+function generateGuardianChildRecap(minorUserId, day) {
+  return rawRequest(
+    `/v1/guardian/minors/${encodeURIComponent(minorUserId)}/days/${encodeURIComponent(day)}/recap`,
+    { method: "POST", timeout: 30000, data: {} },
+  );
+}
+
+/*
  * 私人回顾的权威投影（PR-19）。服务端按当前认证主体返回三个分区：
  * actual_heard / memory_candidates / confirmed_memories，客户端只消费
  * 窄字段，不透出完整 Archive payload。调用方必须先过 Runtime Profile 门禁。
@@ -1341,6 +1358,8 @@ module.exports = {
   updateProfile,
   getMemoryDays,
   summarizeDay,
+  getGuardianChildDays,
+  generateGuardianChildRecap,
   getConversationReview,
   getConversationSessions,
   getConversationHistory,

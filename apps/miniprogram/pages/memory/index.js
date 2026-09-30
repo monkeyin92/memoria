@@ -25,6 +25,29 @@ function normalizeDay(item) {
  * 下发 approximate=false，因此客户端默认按近似记录展示；只有显式 false
  * 才写成"精确播放记录"。
  */
+/* 监护人视图的一天：只有次数，概括要点按钮现生成（不含孩子原话）。 */
+function normalizeGuardianDay(item) {
+  const count = Number(item.message_count) || 0;
+  return {
+    date: item.day || "",
+    count,
+    title: `孩子聊了 ${count} 次`,
+    overview: "点上面的「生成 / 更新选中日期的回顾」，查看 AI 对这一天的概括。",
+    highlights: [],
+    suggestion: "",
+  };
+}
+
+const GUARDIAN_ERRORS = Object.freeze({
+  guardian_consent_required: "孩子的长期记忆还没有开启，暂时不能查看概括。可以在「成长小结与监护授权」里开启。",
+  no_conversation_that_day: "这一天没有可以概括的聊天。",
+});
+
+function guardianErrorMessage(error) {
+  const code = error?.detail?.code || error?.code || error?.message || "";
+  return GUARDIAN_ERRORS[code] || error?.message || "孩子的回顾暂时无法加载。";
+}
+
 function normalizeHeardTurn(item) {
   return {
     event_id: item.event_id || "",
@@ -113,6 +136,23 @@ Page({
     selectedConversationSessionId: "",
     conversationTurns: [],
     conversationLoading: false,
+    guardianMode: false,
+    guardianSubjectId: "",
+    guardianError: "",
+  },
+
+  /*
+   * 这台机器人是给孩子用的（parent_for_child，生效中），登录账号是绑定人：孩子的话按产品决定
+   * 不给家长看原文，回顾页改为「哪些天聊过 + AI 概括」。与成长小结页取同一个孩子。
+   */
+  _guardianSubject() {
+    const binding = api.readBindingManifest?.() || null;
+    if (!binding || binding.declared_mode !== "parent_for_child" || binding.status !== "active") {
+      return "";
+    }
+    const ownerId = typeof binding.account_owner_id === "string" ? binding.account_owner_id : "";
+    const subjects = Array.isArray(binding.primary_subject_ids) ? binding.primary_subject_ids : [];
+    return subjects.find((id) => typeof id === "string" && id && id !== ownerId) || "";
   },
 
   onLoad() {
@@ -155,6 +195,9 @@ Page({
       selectedConversationSessionId: "",
       conversationTurns: [],
       conversationLoading: false,
+      guardianMode: false,
+      guardianSubjectId: "",
+      guardianError: "",
       loading: false,
       summarizing: false,
       error: "",
@@ -196,8 +239,18 @@ Page({
     const authEpoch = api.currentAuthEpoch();
     this.setData({ loading: true, error: "" });
     try {
+      const guardianSubject = this._guardianSubject();
+      let guardianDays = null;
+      let guardianError = "";
+      if (guardianSubject) {
+        try {
+          guardianDays = (await api.getGuardianChildDays(guardianSubject, 30)).items || [];
+        } catch (error) {
+          guardianError = guardianErrorMessage(error);
+        }
+      }
       const [daysResult, reviewResult] = await Promise.all([
-        api.getMemoryDays(identity.user_id, 30),
+        guardianSubject ? Promise.resolve({ items: [] }) : api.getMemoryDays(identity.user_id, 30),
         api.getConversationReview(),
       ]);
       if (!api.isAuthEpochCurrent(authEpoch)) return "stale";
@@ -216,7 +269,12 @@ Page({
       }
       if (!api.isAuthEpochCurrent(authEpoch)) return "stale";
       this.setData({
-        days: (daysResult.items || []).map(normalizeDay),
+        guardianMode: Boolean(guardianSubject),
+        guardianSubjectId: guardianSubject,
+        guardianError,
+        days: guardianSubject
+          ? (guardianDays || []).map(normalizeGuardianDay)
+          : (daysResult.items || []).map(normalizeDay),
         heardTurns: review.heardTurns,
         memoryCandidates: review.memoryCandidates,
         confirmedMemories: review.confirmedMemories,
@@ -405,6 +463,9 @@ Page({
     if (!identity || this.data.summarizing) return;
     const authEpoch = api.currentAuthEpoch();
     this.setData({ summarizing: true, error: "" });
+    if (this.data.guardianMode && this.data.guardianSubjectId) {
+      return this._summarizeChildDay(authEpoch);
+    }
     try {
       await api.summarizeDay(identity.user_id, this.data.selectedDate);
       if (!api.isAuthEpochCurrent(authEpoch)) return;
@@ -414,6 +475,33 @@ Page({
     } catch (error) {
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ error: error?.message || "生成回顾失败。" });
+    } finally {
+      if (api.isAuthEpochCurrent(authEpoch)) this.setData({ summarizing: false });
+    }
+  },
+  /* 监护人：现生成选中日期的概括，只更新这一天的卡片；概括不落库，离开页面后要重新生成。 */
+  async _summarizeChildDay(authEpoch) {
+    const date = this.data.selectedDate;
+    try {
+      const result = await api.generateGuardianChildRecap(this.data.guardianSubjectId, date);
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
+      const summary = result?.summary || {};
+      const days = this.data.days.map((day) =>
+        day.date === date
+          ? {
+              ...day,
+              title: summary.title || day.title,
+              overview: summary.overview || day.overview,
+              highlights: Array.isArray(summary.highlights) ? summary.highlights : [],
+              suggestion: summary.suggestion || "",
+            }
+          : day,
+      );
+      this.setData({ days });
+      wx.showToast({ title: "概括已生成", icon: "success" });
+    } catch (error) {
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
+      this.setData({ error: guardianErrorMessage(error) });
     } finally {
       if (api.isAuthEpochCurrent(authEpoch)) this.setData({ summarizing: false });
     }
