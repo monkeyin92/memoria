@@ -306,6 +306,21 @@ func (c *DeviceConnection) handlePlaybackReceipt(envelope deviceControlEnvelope,
 	}
 	progress, ok := c.ledger.record(receipt, receipt.DeviceMonotonicMS)
 	if !ok {
+		if runtime != nil && runtime.GenerationReplaced(Fence{
+			SessionID: c.sessionID, TurnID: receipt.Fence.TurnID,
+			GenerationID: receipt.Fence.GenerationID, ToolEpoch: receipt.Fence.ToolEpoch,
+			SessionEpoch: receipt.Fence.SessionEpoch,
+		}) {
+			// Voice Core already replaced this generation, so a receipt the
+			// ledger refuses (a progress tick queued behind the terminal
+			// receipt of a device that was stalled for seconds, 2026-09-30)
+			// can no longer change what was heard. Closing the WSS for it
+			// forced a reconnect; drop it, and only it.
+			slog.Info("media edge dropped late receipt for a replaced generation",
+				"session", c.sessionID, "device", c.deviceID, "epoch", c.epoch,
+				"type", envelope.Type, "generation", receipt.Fence.GenerationID)
+			return true
+		}
 		c.server.metrics.controlRejected.Add(1)
 		return false
 	}
