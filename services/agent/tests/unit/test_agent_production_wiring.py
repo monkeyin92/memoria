@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from livekit.agents import FlushSentinel, StopResponse, llm
+from services.agent.src import llm_types as llm
 from services.agent.src import reply_pipeline as pipeline_mod
 from services.agent.src.agent import plan_is_local_safe
 from services.agent.src.agent_voice_profile import bind_generation_tts_voice
@@ -17,6 +17,7 @@ from services.agent.src.duplex_runtime import (
     DuplexRuntime,
     PendingRealtimeRequest,
 )
+from services.agent.src.llm_types import StopResponse
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.orchestration.context_snapshot_manager import (
     ContextSnapshotDraft,
@@ -362,14 +363,8 @@ async def test_stream_reply_uses_heard_history_and_phrase_segments(
             id="content",
             delta=llm.ChoiceDelta(content="可以，我先帮你看一下。"),
         )
-        yield llm.ChatChunk(
-            id="usage",
-            usage=llm.CompletionUsage(
-                prompt_tokens=1,
-                completion_tokens=1,
-                total_tokens=2,
-            ),
-        )
+        # A metadata-only chunk (the provider's usage report) carries no text.
+        yield llm.ChatChunk(id="usage")
 
     async def fake_llm_node(
         safe_ctx: Any,
@@ -382,14 +377,14 @@ async def test_stream_reply_uses_heard_history_and_phrase_segments(
     output = [item async for item in agent.stream_reply(chat_ctx)]
 
     assert [
-        message.text_content for message in captured["ctx"].messages() if message.role != "system"
+        message.text_content for message in captured["ctx"].items if message.role != "system"
     ] == [
         "旧问题",
         "实际听到的旧回复",
         "当前问题",
     ]
     system_text = "\n".join(
-        message.text_content for message in captured["ctx"].messages() if message.role == "system"
+        message.text_content for message in captured["ctx"].items if message.role == "system"
     )
     assert "【控制计划】" in system_text
     assert "claim-1" in system_text
@@ -397,7 +392,7 @@ async def test_stream_reply_uses_heard_history_and_phrase_segments(
     assert "人格胶囊" not in system_text
     assert "经确认的人生记忆" not in system_text
     assert "可以，我先帮你看一下。" in output
-    assert not any(isinstance(item, FlushSentinel) for item in output)
+    assert all(isinstance(item, str) for item in output)
     assert runtime.orchestrator.active_llm_task is None
 
 
@@ -1220,12 +1215,12 @@ async def test_realtime_search_recovery_does_not_cross_owner_public_scope(
     assert [item async for item in agent.stream_reply(chat_ctx)] == ["我在这儿呢。"]
     visible = [
         (message.role, message.text_content)
-        for message in captured["ctx"].messages()
+        for message in captured["ctx"].items
         if message.role in {"user", "assistant"}
     ]
     assert visible == [("user", "人呢？")]
     system_text = "\n".join(
-        message.text_content for message in captured["ctx"].messages() if message.role == "system"
+        message.text_content for message in captured["ctx"].items if message.role == "system"
     )
     assert "待完成实时查询恢复" not in system_text
     assert "南京" not in system_text
@@ -1472,11 +1467,11 @@ async def test_planner_failure_fallback_is_current_turn_only_and_disables_tools(
 
     conversation = [
         (message.role, message.text_content)
-        for message in captured["ctx"].messages()
+        for message in captured["ctx"].items
         if message.role != "system"
     ]
     system_text = "\n".join(
-        message.text_content for message in captured["ctx"].messages() if message.role == "system"
+        message.text_content for message in captured["ctx"].items if message.role == "system"
     )
     assert conversation == [("user", "只回答现在这个问题")]
     assert "不得读取、引用或推断历史对话" in system_text
@@ -2045,11 +2040,11 @@ async def test_unknown_safe_audio_turn_reaches_llm_with_current_public_turn_only
     assert output == ["你好，我是一个人工智能机器人伙伴。"]
     conversation = [
         (message.role, message.text_content)
-        for message in captured["ctx"].messages()
+        for message in captured["ctx"].items
         if message.role != "system"
     ]
     system_text = "\n".join(
-        message.text_content for message in captured["ctx"].messages() if message.role == "system"
+        message.text_content for message in captured["ctx"].items if message.role == "system"
     )
     assert conversation == [("user", "请简单介绍一下你自己")]
     assert "仅依据当前用户这一轮" in system_text
@@ -2134,11 +2129,11 @@ async def test_unknown_safe_followup_keeps_this_session_public_place(
     assert "".join(output) == "你刚问了南京天气。如果还在南京，今天比较适合室内。你是在南京吗？"
     conversation = [
         (message.role, message.text_content)
-        for message in captured["ctx"].messages()
+        for message in captured["ctx"].items
         if message.role != "system"
     ]
     system_text = "\n".join(
-        message.text_content for message in captured["ctx"].messages() if message.role == "system"
+        message.text_content for message in captured["ctx"].items if message.role == "system"
     )
     assert conversation == [
         ("user", "南京今天天气怎么样"),
@@ -2177,13 +2172,13 @@ async def test_agent_adds_only_the_canonical_response_plan_system_block(
 
     assert [item async for item in agent.stream_reply(chat_ctx)]
     system_messages = [
-        message for message in captured["ctx"].messages() if message.role == "system"
+        message for message in captured["ctx"].items if message.role == "system"
     ]
     assert len(system_messages) == 1
     assert "只回答当前训练安排" in system_messages[0].text_content
     assert "四到十二个字" in system_messages[0].text_content
     assert "short" not in system_messages[0].text_content.lower()
-    assert [message.text_content for message in chat_ctx.messages()] == [
+    assert [message.text_content for message in chat_ctx.items] == [
         "帮我安排一个十五分钟的英语口语训练"
     ]
 

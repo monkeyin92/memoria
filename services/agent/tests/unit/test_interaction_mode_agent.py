@@ -7,15 +7,16 @@ from datetime import datetime
 from typing import Any, Literal
 
 import pytest
-from livekit.agents import StopResponse, llm
 from services.agent.src import agent as agent_mod
 from services.agent.src import generation_output_policy as output_policy
+from services.agent.src import llm_types as llm
 from services.agent.src.agent import (
     build_local_safe_plan,
     plan_is_local_safe,
     plan_matches_mode_policy,
 )
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.llm_types import StopResponse
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.orchestration.context_snapshot_manager import (
     ContextSnapshotDraft,
@@ -359,11 +360,11 @@ async def test_exact_response_plan_is_the_only_system_prompt(
         "我在。"
     ]
     system_text = "\n".join(
-        message.text_content for message in captured["ctx"].messages() if message.role == "system"
+        message.text_content for message in captured["ctx"].items if message.role == "system"
     )
     assert "按当前控制计划自然回答" in system_text
     assert "冻结的陪伴方式" not in system_text
-    assert len([message for message in captured["ctx"].messages() if message.role == "system"]) == 1
+    assert len([message for message in captured["ctx"].items if message.role == "system"]) == 1
     assert captured["tools"] == []
     await runtime.close()
 

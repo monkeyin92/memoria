@@ -446,7 +446,7 @@ class ProductionMediaSessionFactory:
 def build_production_media_session_factory(settings: Any) -> ProductionMediaSessionFactory:
     """Build the deployable StreamCore session factory from the established Agent stack."""
 
-    from livekit.plugins import openai
+    from services.agent.src.providers.openai_chat import OpenAIChatModel
 
     archive_sink: ArchiveSink | None = None
     if settings.archive_sink_enabled:
@@ -465,7 +465,7 @@ def build_production_media_session_factory(settings: Any) -> ProductionMediaSess
         )
     return ProductionMediaSessionFactory(
         settings=settings,
-        llm_factory=openai.LLM,
+        llm_factory=OpenAIChatModel,
         archive_sink=archive_sink,
     )
 
