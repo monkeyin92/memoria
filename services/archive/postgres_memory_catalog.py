@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -15,6 +16,7 @@ from typing import Any, cast
 import asyncpg
 import httpx
 
+from services.archive import memory_lexical_sql as lexical_sql
 from services.archive.domain import EvidenceEvent, EvidenceNotFoundError
 from services.archive.episode_consolidator import (
     EpisodeCandidate,
@@ -44,9 +46,9 @@ from services.archive.memory_domain import (
     ReviewedClaim,
     ReviewQueueItem,
     TimelineItem,
-    lexical_query_terms,
     subject_lineage_predicates,
 )
+from services.archive.memory_lexical_sql import search_terms
 from services.archive.memory_write_policy import (
     SINGLE_VALUE_PREDICATES,
     MemoryWriteDecision,
@@ -244,6 +246,7 @@ class PostgresMemoryCatalog:
         account_guard: AccountWriteGuard | None = None,
         embedder: MemoryEmbedder | None = None,
         require_vector: bool = False,
+        fail_on_embedding_error: bool = False,
         episode_consolidator: EpisodeConsolidator | None = None,
         subject_category_resolver: Callable[[str], str | None] | None = None,
         evidence_subject_category_resolver: (
@@ -278,6 +281,7 @@ class PostgresMemoryCatalog:
         self._account_guard = account_guard or _allow_account_write
         self._embedder = embedder
         self._require_vector = require_vector
+        self._fail_on_embedding_error = fail_on_embedding_error
         self._episode_consolidator = episode_consolidator or EpisodeConsolidator()
         self._memory_write_policy = MemoryWritePolicy()
         self._subject_category_resolver = subject_category_resolver or (lambda _: None)
@@ -617,6 +621,10 @@ class PostgresMemoryCatalog:
                 max_attempts=max_attempts,
                 error_code=type(exc).__name__,
             )
+            if self._fail_on_embedding_error and isinstance(
+                exc, MemoryEmbeddingUnavailableError
+            ):
+                raise
             return "failed"
 
     async def _project_capture_evidence(self, event: EvidenceEvent) -> None:
@@ -1539,6 +1547,8 @@ class PostgresMemoryCatalog:
                     self._embedder.model,
                     self._embedder.dimensions,
                 )
+                if self._fail_on_embedding_error:
+                    raise
                 return
             vector = json.dumps(embedding, separators=(",", ":"))
             await connection.execute(
@@ -1633,86 +1643,71 @@ class PostgresMemoryCatalog:
         score_expression = f"{metadata_score}::double precision"
         semantic_cte = ""
         semantic_join = ""
+        embedder = self._embedder if self._vector_enabled else None
         if query.text.strip():
+            embedding: tuple[float, ...] | None = None
+            if embedder is not None:
+                try:
+                    embedding = await embedder.embed(query.text.strip())
+                except MemoryEmbeddingUnavailableError:
+                    if self._fail_on_embedding_error:
+                        raise
             parameters.append(query.text.strip())
             text_index = len(parameters)
-            escaped = (
-                query.text.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            )
-            parameters.append(f"%{escaped}%")
-            like_index = len(parameters)
-            term_like_indexes: list[int] = []
-            for term in lexical_query_terms(query.text):
-                term_escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-                parameters.append(f"%{term_escaped}%")
-                term_like_indexes.append(len(parameters))
-            sparse_match = " OR ".join(
-                f"document.title ILIKE ${index} ESCAPE '\\' "
-                f"OR document.body ILIKE ${index} ESCAPE '\\'"
-                for index in term_like_indexes
-            )
-            text_match = (
-                "(document.search_vector @@ websearch_to_tsquery('simple', "
-                f"${text_index}) OR document.title ILIKE ${like_index} ESCAPE '\\' "
-                f"OR document.body ILIKE ${like_index} ESCAPE '\\'"
-                + (f" OR {sparse_match}" if sparse_match else "")
-                + ")"
-            )
-            text_score = (
-                "GREATEST(ts_rank(document.search_vector, "
-                f"websearch_to_tsquery('simple', ${text_index})), "
-                f"CASE WHEN {text_match} THEN 0.5 ELSE 0.0 END)"
-            )
-            term_hits = " + ".join(  # no embeddings: rank by terms hit (ts_rank ties Chinese)
-                f"(CASE WHEN document.title ILIKE ${i} ESCAPE '\\' OR document.body ILIKE ${i} "
-                f"ESCAPE '\\' THEN 1 ELSE 0 END)" for i in term_like_indexes
-            ) or "0"
-            lexical_score = f"(({term_hits}) + 0.1 * {metadata_score})::double precision"
-            if self._vector_enabled and self._embedder is not None:
-                try:
-                    embedding = await self._embedder.embed(query.text.strip())
-                except MemoryEmbeddingUnavailableError:
-                    clauses.append(text_match)
-                    score_expression = lexical_score
-                else:
-                    parameters.append(self._embedder.model)
-                    model_index = len(parameters)
-                    parameters.append(self._embedder.dimensions)
-                    dimensions_index = len(parameters)
-                    parameters.append(json.dumps(embedding, separators=(",", ":")))
-                    vector_index = len(parameters)
-                    parameters.append(min(800, max(50, query.limit * 8)))
-                    semantic_limit_index = len(parameters)
-                    dimensions = self._embedder.dimensions
-                    semantic_cte = (
-                        "WITH semantic_candidates AS ("
-                        "SELECT item_id, GREATEST("
-                        f"1.0 - (embedding::vector({dimensions}) <=> "
-                        f"${vector_index}::vector({dimensions})), 0.0"
-                        ") AS semantic_score "
-                        "FROM memory_vector_documents "
-                        "WHERE account_id = $1 "
-                        f"AND embedding_model = ${model_index} "
-                        f"AND embedding_dimensions = ${dimensions_index} "
-                        f"ORDER BY embedding::vector({dimensions}) <=> "
-                        f"${vector_index}::vector({dimensions}) "
-                        f"LIMIT ${semantic_limit_index}"
-                        ")"
-                    )
-                    semantic_join = (
-                        "LEFT JOIN semantic_candidates semantic "
-                        "ON semantic.item_id = document.item_id "
-                    )
-                    clauses.append(f"({text_match} OR semantic.item_id IS NOT NULL)")
-                    score_expression = (
-                        f"(0.35 * {text_score} + "
-                        "0.45 * COALESCE(semantic.semantic_score, 0.0) + "
-                        f"0.2 * {metadata_score})"
-                        "::double precision"
-                    )
-            else:
+
+            def like(value: str) -> str:
+                parameters.append("%" + re.sub(r"([\\%_])", r"\\\1", value) + "%")
+                i = len(parameters)
+                return (
+                    f"document.title ILIKE ${i} ESCAPE '\\' OR document.body ILIKE ${i} ESCAPE '\\'"
+                )
+
+            whole = like(query.text.strip())
+            sparse = [
+                like(term) for term in search_terms(query.text, with_embedding=embedding is not None)
+            ]
+            text_match = lexical_sql.text_match(text_index, whole, sparse)
+            if embedding is None or embedder is None:
+                # No embeddings: rank by content terms hit (ts_rank ties Chinese).
+                hits = lexical_sql.hit_count(sparse)
                 clauses.append(text_match)
-                score_expression = lexical_score
+                score_expression = f"(({hits or '0'}) + 0.1 * {metadata_score})::double precision"
+            else:
+                text_score = lexical_sql.text_score(text_index, whole, sparse)
+                parameters.append(embedder.model)
+                model_index = len(parameters)
+                parameters.append(embedder.dimensions)
+                dimensions_index = len(parameters)
+                parameters.append(json.dumps(embedding, separators=(",", ":")))
+                vector_index = len(parameters)
+                parameters.append(min(800, max(50, query.limit * 8)))
+                semantic_limit_index = len(parameters)
+                dimensions = embedder.dimensions
+                semantic_cte = (
+                    "WITH semantic_candidates AS ("
+                    "SELECT item_id, GREATEST("
+                    f"1.0 - (embedding::vector({dimensions}) <=> "
+                    f"${vector_index}::vector({dimensions})), 0.0"
+                    ") AS semantic_score "
+                    "FROM memory_vector_documents "
+                    "WHERE account_id = $1 "
+                    f"AND embedding_model = ${model_index} "
+                    f"AND embedding_dimensions = ${dimensions_index} "
+                    f"ORDER BY embedding::vector({dimensions}) <=> "
+                    f"${vector_index}::vector({dimensions}) "
+                    f"LIMIT ${semantic_limit_index}"
+                    ")"
+                )
+                semantic_join = (
+                    "LEFT JOIN semantic_candidates semantic ON semantic.item_id = document.item_id "
+                )
+                clauses.append(f"({text_match} OR semantic.item_id IS NOT NULL)")
+                score_expression = (
+                    f"(0.35 * {text_score} + "
+                    "0.45 * COALESCE(semantic.semantic_score, 0.0) + "
+                    f"0.2 * {metadata_score})"
+                    "::double precision"
+                )
         if query.kinds:
             parameters.append(list(query.kinds))
             clauses.append(f"document.kind = ANY(${len(parameters)}::text[])")

@@ -1,0 +1,7096 @@
+{
+ "version": "memory-eval-zh-v3-distractors-2",
+ "pool": {
+  "account_id": "eval-pool-owner",
+  "seed": 20260930,
+  "description": "One account, many memories: 20 topic clusters (core = labelled memories, extra = same-topic siblings nobody asks about), facts about other people (peer) and daily trivia.  background_order lists every non-core event; a variant keeps a prefix.",
+  "background_order": [
+   "trv.097",
+   "peer.022",
+   "peer.046",
+   "peer.027",
+   "festivals.winter-solstice",
+   "peer.030",
+   "feelings.highway",
+   "trv.088",
+   "trv.128",
+   "trv.059",
+   "peer.012",
+   "trv.070",
+   "peer.059",
+   "values.shopping-bag",
+   "trv.130",
+   "trv.055",
+   "trv.080",
+   "birthday.friend",
+   "trv.094",
+   "peer.076",
+   "peer.075",
+   "hobbies.calligraphy",
+   "peer.018",
+   "peer.008",
+   "trv.068",
+   "home-items.blanket",
+   "trv.063",
+   "trv.083",
+   "trv.115",
+   "work.meeting",
+   "trv.144",
+   "peer.035",
+   "peer.019",
+   "milestones.first-car",
+   "peer.029",
+   "peer.041",
+   "peer.013",
+   "pets.parrot",
+   "trv.022",
+   "peer.082",
+   "peer.001",
+   "diet.mushroom",
+   "trv.006",
+   "peer.087",
+   "trv.048",
+   "people.guard",
+   "entertainment.storytelling",
+   "trv.079",
+   "peer.015",
+   "home-items.flashlight",
+   "milestones.brother-grad",
+   "peer.077",
+   "trv.122",
+   "trv.023",
+   "trv.138",
+   "trv.112",
+   "trv.045",
+   "trv.013",
+   "trv.024",
+   "peer.065",
+   "trv.129",
+   "trv.071",
+   "birthday.uncle",
+   "personal-facts.age",
+   "peer.036",
+   "pets.turtle",
+   "trv.008",
+   "peer.056",
+   "peer.049",
+   "trv.087",
+   "entertainment.game",
+   "health.tooth",
+   "residence.roommate-city",
+   "trv.081",
+   "trv.039",
+   "trv.009",
+   "peer.014",
+   "trv.020",
+   "trv.003",
+   "peer.084",
+   "trv.005",
+   "transport.metro-card",
+   "trv.114",
+   "tech.email",
+   "transport.ebike",
+   "trv.065",
+   "peer.095",
+   "tech.video",
+   "peer.025",
+   "trv.017",
+   "trv.073",
+   "peer.051",
+   "transport.ferry",
+   "trv.049",
+   "peer.054",
+   "trv.002",
+   "trv.117",
+   "shopping.hat",
+   "peer.061",
+   "peer.005",
+   "trv.089",
+   "peer.006",
+   "peer.072",
+   "peer.003",
+   "family-news.cousin-job",
+   "peer.028",
+   "trv.103",
+   "trv.074",
+   "trv.143",
+   "peer.079",
+   "trv.118",
+   "trv.053",
+   "trv.019",
+   "trv.104",
+   "trv.107",
+   "peer.091",
+   "trv.133",
+   "trv.106",
+   "trv.047",
+   "trv.095",
+   "trv.105",
+   "trv.062",
+   "trv.076",
+   "trv.052",
+   "trv.111",
+   "diet.stinky-tofu",
+   "trv.030",
+   "residence.cousin-city",
+   "feelings.crowd",
+   "trv.078",
+   "trv.034",
+   "family-news.aunt",
+   "trv.046",
+   "trv.108",
+   "trv.038",
+   "trv.050",
+   "trv.032",
+   "peer.096",
+   "people.landlord",
+   "trv.093",
+   "peer.053",
+   "shopping.gift",
+   "peer.063",
+   "trv.040",
+   "trv.136",
+   "diet.coffee",
+   "trv.011",
+   "peer.042",
+   "trv.044",
+   "peer.021",
+   "values.saving",
+   "peer.043",
+   "trv.004",
+   "trv.145",
+   "trv.096",
+   "trv.066",
+   "trv.131",
+   "peer.031",
+   "peer.004",
+   "trv.086",
+   "trv.016",
+   "trv.137",
+   "trv.037",
+   "trv.139",
+   "peer.034",
+   "trv.012",
+   "trv.014",
+   "work.boss",
+   "trv.140",
+   "peer.039",
+   "trv.028",
+   "peer.048",
+   "peer.080",
+   "peer.060",
+   "trv.092",
+   "peer.026",
+   "peer.020",
+   "feelings.thunder",
+   "trv.007",
+   "milestones.sister-marry",
+   "routine.call-parents",
+   "trv.072",
+   "peer.068",
+   "peer.037",
+   "health.thyroid",
+   "peer.033",
+   "hobbies.roses",
+   "trv.042",
+   "trv.077",
+   "peer.011",
+   "peer.024",
+   "peer.009",
+   "trv.051",
+   "shopping.perfume",
+   "health.knee",
+   "residence.spouse-home",
+   "peer.007",
+   "peer.074",
+   "trv.021",
+   "peer.038",
+   "peer.010",
+   "peer.069",
+   "trv.061",
+   "trv.127",
+   "peer.090",
+   "trv.031",
+   "trv.025",
+   "trv.067",
+   "trv.125",
+   "trv.029",
+   "peer.081",
+   "trv.043",
+   "peer.070",
+   "trv.142",
+   "trv.069",
+   "peer.089",
+   "trv.054",
+   "trv.085",
+   "birthday.grandma",
+   "peer.073",
+   "trv.124",
+   "peer.097",
+   "trv.026",
+   "trv.090",
+   "trv.098",
+   "hobbies.puzzle",
+   "trv.119",
+   "peer.062",
+   "trv.057",
+   "trv.109",
+   "peer.044",
+   "trv.116",
+   "peer.055",
+   "trv.010",
+   "trv.082",
+   "routine.run",
+   "trv.064",
+   "trv.036",
+   "values.charity",
+   "trv.075",
+   "peer.067",
+   "peer.085",
+   "trv.018",
+   "peer.083",
+   "trv.121",
+   "personal-facts.weight",
+   "peer.002",
+   "peer.017",
+   "peer.058",
+   "trv.035",
+   "trv.099",
+   "peer.040",
+   "peer.071",
+   "tech.laptop",
+   "people.tutor",
+   "festivals.national-day",
+   "trv.015",
+   "home-items.toolbox",
+   "family-news.niece",
+   "trv.101",
+   "trv.113",
+   "entertainment.concert",
+   "peer.052",
+   "trv.135",
+   "peer.093",
+   "trv.091",
+   "peer.047",
+   "peer.086",
+   "trv.110",
+   "trv.126",
+   "trv.134",
+   "trv.123",
+   "personal-facts.nickname",
+   "trv.060",
+   "trv.027",
+   "peer.045",
+   "trv.102",
+   "trv.120",
+   "trv.033",
+   "peer.023",
+   "routine.bath",
+   "peer.088",
+   "trv.041",
+   "peer.066",
+   "trv.084",
+   "peer.016",
+   "trv.141",
+   "peer.064",
+   "peer.094",
+   "peer.078",
+   "peer.092",
+   "trv.056",
+   "peer.032",
+   "peer.057",
+   "festivals.lantern",
+   "work.plan",
+   "trv.001",
+   "trv.100",
+   "peer.050",
+   "trv.058",
+   "trv.132",
+   "pets.hamster"
+  ]
+ },
+ "cases": [
+  {
+   "case_id": "v3-distractor-pool",
+   "scenario": "paraphrase",
+   "evidence": [
+    {
+     "event_id": "birthday.mom",
+     "account_id": "eval-pool-owner",
+     "text": "我妈妈的生日是农历三月初八。",
+     "occurred_at": "2026-08-24T21:56:00+08:00",
+     "session_id": "s-birthday.mom",
+     "tier": "core",
+     "cluster": "birthday"
+    },
+    {
+     "event_id": "birthday.dad",
+     "account_id": "eval-pool-owner",
+     "text": "我爸爸的生日是十月二十号。",
+     "occurred_at": "2026-08-14T11:35:00+08:00",
+     "session_id": "s-birthday.dad",
+     "tier": "core",
+     "cluster": "birthday"
+    },
+    {
+     "event_id": "birthday.spouse",
+     "account_id": "eval-pool-owner",
+     "text": "我爱人的生日是七月十五号。",
+     "occurred_at": "2026-09-24T10:51:00+08:00",
+     "session_id": "s-birthday.spouse",
+     "tier": "core",
+     "cluster": "birthday"
+    },
+    {
+     "event_id": "birthday.son",
+     "account_id": "eval-pool-owner",
+     "text": "我儿子的生日在腊月二十三。",
+     "occurred_at": "2026-07-11T13:21:00+08:00",
+     "session_id": "s-birthday.son",
+     "tier": "core",
+     "cluster": "birthday"
+    },
+    {
+     "event_id": "birthday.sister",
+     "account_id": "eval-pool-owner",
+     "text": "我姐姐的生日是五月一号。",
+     "occurred_at": "2026-07-27T16:01:00+08:00",
+     "session_id": "s-birthday.sister",
+     "tier": "core",
+     "cluster": "birthday"
+    },
+    {
+     "event_id": "birthday.brother",
+     "account_id": "eval-pool-owner",
+     "text": "我弟弟的生日是九月九号。",
+     "occurred_at": "2026-09-25T13:31:00+08:00",
+     "session_id": "s-birthday.brother",
+     "tier": "core",
+     "cluster": "birthday"
+    },
+    {
+     "event_id": "pets.cat",
+     "account_id": "eval-pool-owner",
+     "text": "我家养了一只橘猫，名字叫团团。",
+     "occurred_at": "2026-08-31T11:03:00+08:00",
+     "session_id": "s-pets.cat",
+     "tier": "core",
+     "cluster": "pets"
+    },
+    {
+     "event_id": "pets.cat-food",
+     "account_id": "eval-pool-owner",
+     "text": "我家橘猫只吃三文鱼口味的猫粮。",
+     "occurred_at": "2026-09-26T21:07:00+08:00",
+     "session_id": "s-pets.cat-food",
+     "tier": "core",
+     "cluster": "pets"
+    },
+    {
+     "event_id": "pets.dog",
+     "account_id": "eval-pool-owner",
+     "text": "楼下邻居家有条金毛，叫大黄。",
+     "occurred_at": "2026-08-16T20:48:00+08:00",
+     "session_id": "s-pets.dog",
+     "tier": "core",
+     "cluster": "pets"
+    },
+    {
+     "event_id": "pets.fish",
+     "account_id": "eval-pool-owner",
+     "text": "阳台的鱼缸里养着五条金鱼。",
+     "occurred_at": "2026-06-05T16:53:00+08:00",
+     "session_id": "s-pets.fish",
+     "tier": "core",
+     "cluster": "pets"
+    },
+    {
+     "event_id": "pets.rabbit",
+     "account_id": "eval-pool-owner",
+     "text": "我小时候养过一只白兔子。",
+     "occurred_at": "2026-06-10T17:46:00+08:00",
+     "session_id": "s-pets.rabbit",
+     "tier": "core",
+     "cluster": "pets"
+    },
+    {
+     "event_id": "pets.bird",
+     "account_id": "eval-pool-owner",
+     "text": "我爸在老家养了一只八哥。",
+     "occurred_at": "2026-09-12T19:26:00+08:00",
+     "session_id": "s-pets.bird",
+     "tier": "core",
+     "cluster": "pets"
+    },
+    {
+     "event_id": "diet.coriander",
+     "account_id": "eval-pool-owner",
+     "text": "我吃饭的时候不要香菜。",
+     "occurred_at": "2026-07-21T11:23:00+08:00",
+     "session_id": "s-diet.coriander",
+     "tier": "core",
+     "cluster": "diet"
+    },
+    {
+     "event_id": "diet.seafood",
+     "account_id": "eval-pool-owner",
+     "text": "我一吃虾蟹身上就起红疹。",
+     "occurred_at": "2026-08-25T16:04:00+08:00",
+     "session_id": "s-diet.seafood",
+     "tier": "core",
+     "cluster": "diet"
+    },
+    {
+     "event_id": "diet.spicy",
+     "account_id": "eval-pool-owner",
+     "text": "我特别爱吃辣，无辣不欢。",
+     "occurred_at": "2026-09-15T10:42:00+08:00",
+     "session_id": "s-diet.spicy",
+     "tier": "core",
+     "cluster": "diet"
+    },
+    {
+     "event_id": "diet.sugar-free",
+     "account_id": "eval-pool-owner",
+     "text": "我从来不喝含糖的饮料。",
+     "occurred_at": "2026-08-18T21:47:00+08:00",
+     "session_id": "s-diet.sugar-free",
+     "tier": "core",
+     "cluster": "diet"
+    },
+    {
+     "event_id": "diet.breakfast",
+     "account_id": "eval-pool-owner",
+     "text": "我早饭习惯来碗小米粥配咸菜。",
+     "occurred_at": "2026-06-06T13:07:00+08:00",
+     "session_id": "s-diet.breakfast",
+     "tier": "core",
+     "cluster": "diet"
+    },
+    {
+     "event_id": "diet.offal",
+     "account_id": "eval-pool-owner",
+     "text": "我从来不碰动物内脏。",
+     "occurred_at": "2026-06-08T08:13:00+08:00",
+     "session_id": "s-diet.offal",
+     "tier": "core",
+     "cluster": "diet"
+    },
+    {
+     "event_id": "health.bp",
+     "account_id": "eval-pool-owner",
+     "text": "我血压偏高，每天早上要吃一片降压药。",
+     "occurred_at": "2026-08-30T14:55:00+08:00",
+     "session_id": "s-health.bp",
+     "tier": "core",
+     "cluster": "health"
+    },
+    {
+     "event_id": "health.sugar",
+     "account_id": "eval-pool-owner",
+     "text": "医生说我血糖有点高，要少吃甜食。",
+     "occurred_at": "2026-06-16T11:17:00+08:00",
+     "session_id": "s-health.sugar",
+     "tier": "core",
+     "cluster": "health"
+    },
+    {
+     "event_id": "health.waist",
+     "account_id": "eval-pool-owner",
+     "text": "我腰椎间盘突出，不能提重物。",
+     "occurred_at": "2026-07-03T08:54:00+08:00",
+     "session_id": "s-health.waist",
+     "tier": "core",
+     "cluster": "health"
+    },
+    {
+     "event_id": "health.eye",
+     "account_id": "eval-pool-owner",
+     "text": "我左眼有轻微的白内障。",
+     "occurred_at": "2026-09-20T17:34:00+08:00",
+     "session_id": "s-health.eye",
+     "tier": "core",
+     "cluster": "health"
+    },
+    {
+     "event_id": "health.vaccine",
+     "account_id": "eval-pool-owner",
+     "text": "我每年十月去社区打流感疫苗。",
+     "occurred_at": "2026-09-06T16:30:00+08:00",
+     "session_id": "s-health.vaccine",
+     "tier": "core",
+     "cluster": "health"
+    },
+    {
+     "event_id": "health.sleep",
+     "account_id": "eval-pool-owner",
+     "text": "我睡不好的时候会吃半片褪黑素。",
+     "occurred_at": "2026-08-03T15:40:00+08:00",
+     "session_id": "s-health.sleep",
+     "tier": "core",
+     "cluster": "health"
+    },
+    {
+     "event_id": "residence.hometown",
+     "account_id": "eval-pool-owner",
+     "text": "我老家在江西赣州的一个小县城。",
+     "occurred_at": "2026-06-15T14:56:00+08:00",
+     "session_id": "s-residence.hometown",
+     "tier": "core",
+     "cluster": "residence"
+    },
+    {
+     "event_id": "residence.current",
+     "account_id": "eval-pool-owner",
+     "text": "我现在住在南京的鼓楼区。",
+     "occurred_at": "2026-08-08T11:30:00+08:00",
+     "session_id": "s-residence.current",
+     "tier": "core",
+     "cluster": "residence"
+    },
+    {
+     "event_id": "residence.college",
+     "account_id": "eval-pool-owner",
+     "text": "我大学是在武汉读的。",
+     "occurred_at": "2026-07-29T17:45:00+08:00",
+     "session_id": "s-residence.college",
+     "tier": "core",
+     "cluster": "residence"
+    },
+    {
+     "event_id": "residence.worked",
+     "account_id": "eval-pool-owner",
+     "text": "我刚毕业时在广州工作过三年。",
+     "occurred_at": "2026-06-13T10:09:00+08:00",
+     "session_id": "s-residence.worked",
+     "tier": "core",
+     "cluster": "residence"
+    },
+    {
+     "event_id": "residence.parents-home",
+     "account_id": "eval-pool-owner",
+     "text": "我父母住在赣州老家，没有搬来。",
+     "occurred_at": "2026-08-13T11:33:00+08:00",
+     "session_id": "s-residence.parents-home",
+     "tier": "core",
+     "cluster": "residence"
+    },
+    {
+     "event_id": "residence.trip-plan",
+     "account_id": "eval-pool-owner",
+     "text": "我打算明年带儿子去哈尔滨看冰雕。",
+     "occurred_at": "2026-06-09T10:46:00+08:00",
+     "session_id": "s-residence.trip-plan",
+     "tier": "core",
+     "cluster": "residence"
+    },
+    {
+     "event_id": "hobbies.photo",
+     "account_id": "eval-pool-owner",
+     "text": "我周末喜欢背着相机去公园拍花。",
+     "occurred_at": "2026-07-15T21:57:00+08:00",
+     "session_id": "s-hobbies.photo",
+     "tier": "core",
+     "cluster": "hobbies"
+    },
+    {
+     "event_id": "hobbies.chess",
+     "account_id": "eval-pool-owner",
+     "text": "我每周三晚上跟老张下象棋。",
+     "occurred_at": "2026-06-02T21:57:00+08:00",
+     "session_id": "s-hobbies.chess",
+     "tier": "core",
+     "cluster": "hobbies"
+    },
+    {
+     "event_id": "hobbies.orchid",
+     "account_id": "eval-pool-owner",
+     "text": "我阳台上养了几盆兰花。",
+     "occurred_at": "2026-09-01T17:26:00+08:00",
+     "session_id": "s-hobbies.orchid",
+     "tier": "core",
+     "cluster": "hobbies"
+    },
+    {
+     "event_id": "hobbies.taichi",
+     "account_id": "eval-pool-owner",
+     "text": "我早上六点在小区里练太极拳。",
+     "occurred_at": "2026-07-22T09:01:00+08:00",
+     "session_id": "s-hobbies.taichi",
+     "tier": "core",
+     "cluster": "hobbies"
+    },
+    {
+     "event_id": "hobbies.opera",
+     "account_id": "eval-pool-owner",
+     "text": "我爱听越剧，尤其是《红楼梦》选段。",
+     "occurred_at": "2026-08-21T15:00:00+08:00",
+     "session_id": "s-hobbies.opera",
+     "tier": "core",
+     "cluster": "hobbies"
+    },
+    {
+     "event_id": "hobbies.stamp",
+     "account_id": "eval-pool-owner",
+     "text": "我从小学起就集邮，收了几百张。",
+     "occurred_at": "2026-09-02T20:39:00+08:00",
+     "session_id": "s-hobbies.stamp",
+     "tier": "core",
+     "cluster": "hobbies"
+    },
+    {
+     "event_id": "family-news.sister-job",
+     "account_id": "eval-pool-owner",
+     "text": "我姐姐在深圳做程序员。",
+     "occurred_at": "2026-09-08T20:38:00+08:00",
+     "session_id": "s-family-news.sister-job",
+     "tier": "core",
+     "cluster": "family-news"
+    },
+    {
+     "event_id": "family-news.brother-study",
+     "account_id": "eval-pool-owner",
+     "text": "我弟弟刚考上了北京的研究生。",
+     "occurred_at": "2026-06-19T09:17:00+08:00",
+     "session_id": "s-family-news.brother-study",
+     "tier": "core",
+     "cluster": "family-news"
+    },
+    {
+     "event_id": "family-news.mom-surgery",
+     "account_id": "eval-pool-owner",
+     "text": "我妈妈过些天要做白内障手术。",
+     "occurred_at": "2026-07-08T13:14:00+08:00",
+     "session_id": "s-family-news.mom-surgery",
+     "tier": "core",
+     "cluster": "family-news"
+    },
+    {
+     "event_id": "family-news.dad-hobby",
+     "account_id": "eval-pool-owner",
+     "text": "我爸爸退休后迷上了钓鱼。",
+     "occurred_at": "2026-09-21T17:52:00+08:00",
+     "session_id": "s-family-news.dad-hobby",
+     "tier": "core",
+     "cluster": "family-news"
+    },
+    {
+     "event_id": "family-news.spouse-job",
+     "account_id": "eval-pool-owner",
+     "text": "我爱人在一家医院当护士。",
+     "occurred_at": "2026-09-06T12:52:00+08:00",
+     "session_id": "s-family-news.spouse-job",
+     "tier": "core",
+     "cluster": "family-news"
+    },
+    {
+     "event_id": "family-news.son-school",
+     "account_id": "eval-pool-owner",
+     "text": "我儿子在读小学四年级。",
+     "occurred_at": "2026-07-01T14:39:00+08:00",
+     "session_id": "s-family-news.son-school",
+     "tier": "core",
+     "cluster": "family-news"
+    },
+    {
+     "event_id": "home-items.keys",
+     "account_id": "eval-pool-owner",
+     "text": "备用钥匙放在玄关鞋柜的第二格。",
+     "occurred_at": "2026-07-20T14:55:00+08:00",
+     "session_id": "s-home-items.keys",
+     "tier": "core",
+     "cluster": "home-items"
+    },
+    {
+     "event_id": "home-items.meds-box",
+     "account_id": "eval-pool-owner",
+     "text": "药箱在客厅电视柜的最下面一层。",
+     "occurred_at": "2026-08-03T16:44:00+08:00",
+     "session_id": "s-home-items.meds-box",
+     "tier": "core",
+     "cluster": "home-items"
+    },
+    {
+     "event_id": "home-items.docs",
+     "account_id": "eval-pool-owner",
+     "text": "户口本和房产证放在卧室衣柜的保险盒里。",
+     "occurred_at": "2026-09-10T17:53:00+08:00",
+     "session_id": "s-home-items.docs",
+     "tier": "core",
+     "cluster": "home-items"
+    },
+    {
+     "event_id": "home-items.umbrella",
+     "account_id": "eval-pool-owner",
+     "text": "雨伞挂在大门后面的挂钩上。",
+     "occurred_at": "2026-08-16T10:55:00+08:00",
+     "session_id": "s-home-items.umbrella",
+     "tier": "core",
+     "cluster": "home-items"
+    },
+    {
+     "event_id": "home-items.charger",
+     "account_id": "eval-pool-owner",
+     "text": "充电器都收在书房书桌的抽屉里。",
+     "occurred_at": "2026-09-05T20:04:00+08:00",
+     "session_id": "s-home-items.charger",
+     "tier": "core",
+     "cluster": "home-items"
+    },
+    {
+     "event_id": "home-items.neighbor-key",
+     "account_id": "eval-pool-owner",
+     "text": "楼下王阿姨那里也存了一把我家的钥匙。",
+     "occurred_at": "2026-07-21T12:03:00+08:00",
+     "session_id": "s-home-items.neighbor-key",
+     "tier": "core",
+     "cluster": "home-items"
+    },
+    {
+     "event_id": "work.job",
+     "account_id": "eval-pool-owner",
+     "text": "我在南京一所中学教语文。",
+     "occurred_at": "2026-06-27T16:01:00+08:00",
+     "session_id": "s-work.job",
+     "tier": "core",
+     "cluster": "work"
+    },
+    {
+     "event_id": "work.years",
+     "account_id": "eval-pool-owner",
+     "text": "我已经当了十八年班主任。",
+     "occurred_at": "2026-07-04T11:18:00+08:00",
+     "session_id": "s-work.years",
+     "tier": "core",
+     "cluster": "work"
+    },
+    {
+     "event_id": "work.award",
+     "account_id": "eval-pool-owner",
+     "text": "去年我评上了区级优秀教师。",
+     "occurred_at": "2026-06-07T08:26:00+08:00",
+     "session_id": "s-work.award",
+     "tier": "core",
+     "cluster": "work"
+    },
+    {
+     "event_id": "work.commute",
+     "account_id": "eval-pool-owner",
+     "text": "我上班骑电动车，二十分钟就到。",
+     "occurred_at": "2026-08-12T11:13:00+08:00",
+     "session_id": "s-work.commute",
+     "tier": "core",
+     "cluster": "work"
+    },
+    {
+     "event_id": "work.colleague",
+     "account_id": "eval-pool-owner",
+     "text": "同办公室的李老师是我最好的同事。",
+     "occurred_at": "2026-06-08T09:36:00+08:00",
+     "session_id": "s-work.colleague",
+     "tier": "core",
+     "cluster": "work"
+    },
+    {
+     "event_id": "work.salary-day",
+     "account_id": "eval-pool-owner",
+     "text": "学校每月十五号发工资。",
+     "occurred_at": "2026-08-30T11:09:00+08:00",
+     "session_id": "s-work.salary-day",
+     "tier": "core",
+     "cluster": "work"
+    },
+    {
+     "event_id": "people.neighbor",
+     "account_id": "eval-pool-owner",
+     "text": "楼下的王阿姨经常帮我收快递。",
+     "occurred_at": "2026-09-29T13:33:00+08:00",
+     "session_id": "s-people.neighbor",
+     "tier": "core",
+     "cluster": "people"
+    },
+    {
+     "event_id": "people.classmate",
+     "account_id": "eval-pool-owner",
+     "text": "大学同学老周在杭州开了家茶馆。",
+     "occurred_at": "2026-09-26T12:45:00+08:00",
+     "session_id": "s-people.classmate",
+     "tier": "core",
+     "cluster": "people"
+    },
+    {
+     "event_id": "people.cardgame",
+     "account_id": "eval-pool-owner",
+     "text": "我的麻将搭子是老李和老张。",
+     "occurred_at": "2026-09-13T09:42:00+08:00",
+     "session_id": "s-people.cardgame",
+     "tier": "core",
+     "cluster": "people"
+    },
+    {
+     "event_id": "people.bestfriend",
+     "account_id": "eval-pool-owner",
+     "text": "我最好的闺蜜叫小林，我们认识二十年了。",
+     "occurred_at": "2026-09-06T15:48:00+08:00",
+     "session_id": "s-people.bestfriend",
+     "tier": "core",
+     "cluster": "people"
+    },
+    {
+     "event_id": "people.mentor",
+     "account_id": "eval-pool-owner",
+     "text": "我刚工作时的师傅是刘老师。",
+     "occurred_at": "2026-07-19T08:30:00+08:00",
+     "session_id": "s-people.mentor",
+     "tier": "core",
+     "cluster": "people"
+    },
+    {
+     "event_id": "people.doctor",
+     "account_id": "eval-pool-owner",
+     "text": "社区的赵医生一直给我量血压。",
+     "occurred_at": "2026-07-19T10:22:00+08:00",
+     "session_id": "s-people.doctor",
+     "tier": "core",
+     "cluster": "people"
+    },
+    {
+     "event_id": "routine.wake",
+     "account_id": "eval-pool-owner",
+     "text": "我每天早上六点起床，先去小区散步。",
+     "occurred_at": "2026-06-03T08:15:00+08:00",
+     "session_id": "s-routine.wake",
+     "tier": "core",
+     "cluster": "routine"
+    },
+    {
+     "event_id": "routine.nap",
+     "account_id": "eval-pool-owner",
+     "text": "我午饭后一定要睡半个小时。",
+     "occurred_at": "2026-09-05T11:16:00+08:00",
+     "session_id": "s-routine.nap",
+     "tier": "core",
+     "cluster": "routine"
+    },
+    {
+     "event_id": "routine.bed",
+     "account_id": "eval-pool-owner",
+     "text": "我晚上十点前必须上床睡觉。",
+     "occurred_at": "2026-07-30T15:42:00+08:00",
+     "session_id": "s-routine.bed",
+     "tier": "core",
+     "cluster": "routine"
+    },
+    {
+     "event_id": "routine.market",
+     "account_id": "eval-pool-owner",
+     "text": "我每周日下午固定去菜市场买菜。",
+     "occurred_at": "2026-07-06T10:55:00+08:00",
+     "session_id": "s-routine.market",
+     "tier": "core",
+     "cluster": "routine"
+    },
+    {
+     "event_id": "routine.tv",
+     "account_id": "eval-pool-owner",
+     "text": "我晚饭后要看半小时新闻联播。",
+     "occurred_at": "2026-08-02T12:25:00+08:00",
+     "session_id": "s-routine.tv",
+     "tier": "core",
+     "cluster": "routine"
+    },
+    {
+     "event_id": "routine.water",
+     "account_id": "eval-pool-owner",
+     "text": "我每天要喝够八杯水。",
+     "occurred_at": "2026-09-27T16:27:00+08:00",
+     "session_id": "s-routine.water",
+     "tier": "core",
+     "cluster": "routine"
+    },
+    {
+     "event_id": "entertainment.singer",
+     "account_id": "eval-pool-owner",
+     "text": "我最爱听邓丽君的老歌。",
+     "occurred_at": "2026-07-19T18:37:00+08:00",
+     "session_id": "s-entertainment.singer",
+     "tier": "core",
+     "cluster": "entertainment"
+    },
+    {
+     "event_id": "entertainment.drama",
+     "account_id": "eval-pool-owner",
+     "text": "我爱看抗战题材的电视剧。",
+     "occurred_at": "2026-08-02T17:02:00+08:00",
+     "session_id": "s-entertainment.drama",
+     "tier": "core",
+     "cluster": "entertainment"
+    },
+    {
+     "event_id": "entertainment.horror",
+     "account_id": "eval-pool-owner",
+     "text": "我不喜欢看恐怖片，会做噩梦。",
+     "occurred_at": "2026-07-05T14:53:00+08:00",
+     "session_id": "s-entertainment.horror",
+     "tier": "core",
+     "cluster": "entertainment"
+    },
+    {
+     "event_id": "entertainment.novel",
+     "account_id": "eval-pool-owner",
+     "text": "我最近在读《平凡的世界》。",
+     "occurred_at": "2026-06-13T19:39:00+08:00",
+     "session_id": "s-entertainment.novel",
+     "tier": "core",
+     "cluster": "entertainment"
+    },
+    {
+     "event_id": "entertainment.cartoon",
+     "account_id": "eval-pool-owner",
+     "text": "我儿子爱看动画片《熊出没》。",
+     "occurred_at": "2026-06-26T12:28:00+08:00",
+     "session_id": "s-entertainment.cartoon",
+     "tier": "core",
+     "cluster": "entertainment"
+    },
+    {
+     "event_id": "entertainment.radio",
+     "account_id": "eval-pool-owner",
+     "text": "我开车的时候喜欢听交通广播。",
+     "occurred_at": "2026-08-06T17:45:00+08:00",
+     "session_id": "s-entertainment.radio",
+     "tier": "core",
+     "cluster": "entertainment"
+    },
+    {
+     "event_id": "feelings.height",
+     "account_id": "eval-pool-owner",
+     "text": "我恐高，站在阳台边都会腿软。",
+     "occurred_at": "2026-09-21T12:33:00+08:00",
+     "session_id": "s-feelings.height",
+     "tier": "core",
+     "cluster": "feelings"
+    },
+    {
+     "event_id": "feelings.lonely",
+     "account_id": "eval-pool-owner",
+     "text": "我一个人在家的时候会觉得有点孤单。",
+     "occurred_at": "2026-07-17T14:47:00+08:00",
+     "session_id": "s-feelings.lonely",
+     "tier": "core",
+     "cluster": "feelings"
+    },
+    {
+     "event_id": "feelings.rain-knee",
+     "account_id": "eval-pool-owner",
+     "text": "一到阴雨天我的膝盖就隐隐作痛。",
+     "occurred_at": "2026-08-19T09:32:00+08:00",
+     "session_id": "s-feelings.rain-knee",
+     "tier": "core",
+     "cluster": "feelings"
+    },
+    {
+     "event_id": "feelings.dark",
+     "account_id": "eval-pool-owner",
+     "text": "我小时候怕黑，现在睡觉还要留盏小灯。",
+     "occurred_at": "2026-08-24T14:51:00+08:00",
+     "session_id": "s-feelings.dark",
+     "tier": "core",
+     "cluster": "feelings"
+    },
+    {
+     "event_id": "feelings.stage",
+     "account_id": "eval-pool-owner",
+     "text": "每次公开课之前我都会紧张得睡不着。",
+     "occurred_at": "2026-07-21T11:54:00+08:00",
+     "session_id": "s-feelings.stage",
+     "tier": "core",
+     "cluster": "feelings"
+    },
+    {
+     "event_id": "feelings.worry-son",
+     "account_id": "eval-pool-owner",
+     "text": "我总担心儿子在学校被人欺负。",
+     "occurred_at": "2026-07-29T21:29:00+08:00",
+     "session_id": "s-feelings.worry-son",
+     "tier": "core",
+     "cluster": "feelings"
+    },
+    {
+     "event_id": "shopping.cotton",
+     "account_id": "eval-pool-owner",
+     "text": "我买衣服只买纯棉的，化纤的穿着起疹子。",
+     "occurred_at": "2026-08-27T18:39:00+08:00",
+     "session_id": "s-shopping.cotton",
+     "tier": "core",
+     "cluster": "shopping"
+    },
+    {
+     "event_id": "shopping.fruit-shop",
+     "account_id": "eval-pool-owner",
+     "text": "我买水果习惯去楼下的水果店。",
+     "occurred_at": "2026-09-24T14:47:00+08:00",
+     "session_id": "s-shopping.fruit-shop",
+     "tier": "core",
+     "cluster": "shopping"
+    },
+    {
+     "event_id": "shopping.online",
+     "account_id": "eval-pool-owner",
+     "text": "我网购只在一家旗舰店下单。",
+     "occurred_at": "2026-06-09T11:18:00+08:00",
+     "session_id": "s-shopping.online",
+     "tier": "core",
+     "cluster": "shopping"
+    },
+    {
+     "event_id": "shopping.budget",
+     "account_id": "eval-pool-owner",
+     "text": "我每个月给爸妈汇两千块钱。",
+     "occurred_at": "2026-09-09T10:15:00+08:00",
+     "session_id": "s-shopping.budget",
+     "tier": "core",
+     "cluster": "shopping"
+    },
+    {
+     "event_id": "shopping.compare",
+     "account_id": "eval-pool-owner",
+     "text": "我买东西之前总要先比价。",
+     "occurred_at": "2026-07-25T18:20:00+08:00",
+     "session_id": "s-shopping.compare",
+     "tier": "core",
+     "cluster": "shopping"
+    },
+    {
+     "event_id": "shopping.shoes",
+     "account_id": "eval-pool-owner",
+     "text": "我穿鞋子只穿三十七码的。",
+     "occurred_at": "2026-07-18T15:01:00+08:00",
+     "session_id": "s-shopping.shoes",
+     "tier": "core",
+     "cluster": "shopping"
+    },
+    {
+     "event_id": "transport.subway",
+     "account_id": "eval-pool-owner",
+     "text": "我出门宁愿坐地铁，也不愿意坐公交，因为晕车。",
+     "occurred_at": "2026-06-17T13:08:00+08:00",
+     "session_id": "s-transport.subway",
+     "tier": "core",
+     "cluster": "transport"
+    },
+    {
+     "event_id": "transport.license",
+     "account_id": "eval-pool-owner",
+     "text": "我有驾照，但是很少开车上路。",
+     "occurred_at": "2026-06-08T21:40:00+08:00",
+     "session_id": "s-transport.license",
+     "tier": "core",
+     "cluster": "transport"
+    },
+    {
+     "event_id": "transport.train",
+     "account_id": "eval-pool-owner",
+     "text": "回老家我一般坐高铁，四个小时就到。",
+     "occurred_at": "2026-07-23T10:09:00+08:00",
+     "session_id": "s-transport.train",
+     "tier": "core",
+     "cluster": "transport"
+    },
+    {
+     "event_id": "transport.plane",
+     "account_id": "eval-pool-owner",
+     "text": "我坐飞机会耳鸣，所以尽量不飞。",
+     "occurred_at": "2026-07-01T09:40:00+08:00",
+     "session_id": "s-transport.plane",
+     "tier": "core",
+     "cluster": "transport"
+    },
+    {
+     "event_id": "transport.bike",
+     "account_id": "eval-pool-owner",
+     "text": "周末我会骑共享单车去附近的公园。",
+     "occurred_at": "2026-07-21T08:30:00+08:00",
+     "session_id": "s-transport.bike",
+     "tier": "core",
+     "cluster": "transport"
+    },
+    {
+     "event_id": "transport.taxi",
+     "account_id": "eval-pool-owner",
+     "text": "打车的话我只用滴滴，不用其他软件。",
+     "occurred_at": "2026-08-11T09:50:00+08:00",
+     "session_id": "s-transport.taxi",
+     "tier": "core",
+     "cluster": "transport"
+    },
+    {
+     "event_id": "tech.phone",
+     "account_id": "eval-pool-owner",
+     "text": "我用的是华为手机，字体调到了最大。",
+     "occurred_at": "2026-08-15T18:16:00+08:00",
+     "session_id": "s-tech.phone",
+     "tier": "core",
+     "cluster": "tech"
+    },
+    {
+     "event_id": "tech.wechat",
+     "account_id": "eval-pool-owner",
+     "text": "我只会用微信发语音，不会打字。",
+     "occurred_at": "2026-06-07T11:34:00+08:00",
+     "session_id": "s-tech.wechat",
+     "tier": "core",
+     "cluster": "tech"
+    },
+    {
+     "event_id": "tech.payment",
+     "account_id": "eval-pool-owner",
+     "text": "我从来不敢用手机支付，都付现金。",
+     "occurred_at": "2026-06-09T17:23:00+08:00",
+     "session_id": "s-tech.payment",
+     "tier": "core",
+     "cluster": "tech"
+    },
+    {
+     "event_id": "tech.tablet",
+     "account_id": "eval-pool-owner",
+     "text": "我的平板电脑主要用来追剧。",
+     "occurred_at": "2026-07-21T14:48:00+08:00",
+     "session_id": "s-tech.tablet",
+     "tier": "core",
+     "cluster": "tech"
+    },
+    {
+     "event_id": "tech.speaker",
+     "account_id": "eval-pool-owner",
+     "text": "客厅里的智能音箱是儿子帮我装的。",
+     "occurred_at": "2026-06-14T12:23:00+08:00",
+     "session_id": "s-tech.speaker",
+     "tier": "core",
+     "cluster": "tech"
+    },
+    {
+     "event_id": "tech.wallpaper",
+     "account_id": "eval-pool-owner",
+     "text": "我手机的屏保是全家福。",
+     "occurred_at": "2026-09-19T09:19:00+08:00",
+     "session_id": "s-tech.wallpaper",
+     "tier": "core",
+     "cluster": "tech"
+    },
+    {
+     "event_id": "festivals.spring",
+     "account_id": "eval-pool-owner",
+     "text": "春节我们家一定要包饺子，包芹菜猪肉馅。",
+     "occurred_at": "2026-07-31T15:41:00+08:00",
+     "session_id": "s-festivals.spring",
+     "tier": "core",
+     "cluster": "festivals"
+    },
+    {
+     "event_id": "festivals.midautumn",
+     "account_id": "eval-pool-owner",
+     "text": "中秋节我会给爸妈送月饼。",
+     "occurred_at": "2026-08-06T20:53:00+08:00",
+     "session_id": "s-festivals.midautumn",
+     "tier": "core",
+     "cluster": "festivals"
+    },
+    {
+     "event_id": "festivals.qingming",
+     "account_id": "eval-pool-owner",
+     "text": "清明节我们全家回赣州扫墓。",
+     "occurred_at": "2026-06-03T11:18:00+08:00",
+     "session_id": "s-festivals.qingming",
+     "tier": "core",
+     "cluster": "festivals"
+    },
+    {
+     "event_id": "festivals.dragonboat",
+     "account_id": "eval-pool-owner",
+     "text": "端午节我喜欢吃咸蛋黄的粽子。",
+     "occurred_at": "2026-06-09T19:59:00+08:00",
+     "session_id": "s-festivals.dragonboat",
+     "tier": "core",
+     "cluster": "festivals"
+    },
+    {
+     "event_id": "festivals.birthday-custom",
+     "account_id": "eval-pool-owner",
+     "text": "我过生日只吃一碗长寿面，不办酒席。",
+     "occurred_at": "2026-07-10T18:46:00+08:00",
+     "session_id": "s-festivals.birthday-custom",
+     "tier": "core",
+     "cluster": "festivals"
+    },
+    {
+     "event_id": "festivals.eve",
+     "account_id": "eval-pool-owner",
+     "text": "除夕夜全家人要守岁到零点。",
+     "occurred_at": "2026-09-02T13:11:00+08:00",
+     "session_id": "s-festivals.eve",
+     "tier": "core",
+     "cluster": "festivals"
+    },
+    {
+     "event_id": "milestones.married",
+     "account_id": "eval-pool-owner",
+     "text": "我和爱人是2008年结的婚。",
+     "occurred_at": "2026-06-08T11:36:00+08:00",
+     "session_id": "s-milestones.married",
+     "tier": "core",
+     "cluster": "milestones"
+    },
+    {
+     "event_id": "milestones.graduate",
+     "account_id": "eval-pool-owner",
+     "text": "我是2004年大学毕业的。",
+     "occurred_at": "2026-06-16T19:57:00+08:00",
+     "session_id": "s-milestones.graduate",
+     "tier": "core",
+     "cluster": "milestones"
+    },
+    {
+     "event_id": "milestones.house",
+     "account_id": "eval-pool-owner",
+     "text": "我们2012年在南京买了现在这套房子。",
+     "occurred_at": "2026-08-10T12:52:00+08:00",
+     "session_id": "s-milestones.house",
+     "tier": "core",
+     "cluster": "milestones"
+    },
+    {
+     "event_id": "milestones.dad-retire",
+     "account_id": "eval-pool-owner",
+     "text": "我爸爸2016年从工厂退休。",
+     "occurred_at": "2026-08-10T13:06:00+08:00",
+     "session_id": "s-milestones.dad-retire",
+     "tier": "core",
+     "cluster": "milestones"
+    },
+    {
+     "event_id": "milestones.mom-retire",
+     "account_id": "eval-pool-owner",
+     "text": "我妈妈2013年从小学退休。",
+     "occurred_at": "2026-08-08T17:58:00+08:00",
+     "session_id": "s-milestones.mom-retire",
+     "tier": "core",
+     "cluster": "milestones"
+    },
+    {
+     "event_id": "milestones.son-enroll",
+     "account_id": "eval-pool-owner",
+     "text": "我儿子2021年上的小学。",
+     "occurred_at": "2026-09-14T16:01:00+08:00",
+     "session_id": "s-milestones.son-enroll",
+     "tier": "core",
+     "cluster": "milestones"
+    },
+    {
+     "event_id": "values.motto",
+     "account_id": "eval-pool-owner",
+     "text": "我们家的家训是勤俭持家。",
+     "occurred_at": "2026-08-15T09:29:00+08:00",
+     "session_id": "s-values.motto",
+     "tier": "core",
+     "cluster": "values"
+    },
+    {
+     "event_id": "values.honesty",
+     "account_id": "eval-pool-owner",
+     "text": "我教育儿子做人最重要的是诚实。",
+     "occurred_at": "2026-06-25T21:17:00+08:00",
+     "session_id": "s-values.honesty",
+     "tier": "core",
+     "cluster": "values"
+    },
+    {
+     "event_id": "values.no-debt",
+     "account_id": "eval-pool-owner",
+     "text": "我从来不向别人借钱。",
+     "occurred_at": "2026-07-25T15:52:00+08:00",
+     "session_id": "s-values.no-debt",
+     "tier": "core",
+     "cluster": "values"
+    },
+    {
+     "event_id": "values.volunteer",
+     "account_id": "eval-pool-owner",
+     "text": "我每个月去社区做一次志愿服务。",
+     "occurred_at": "2026-08-01T15:11:00+08:00",
+     "session_id": "s-values.volunteer",
+     "tier": "core",
+     "cluster": "values"
+    },
+    {
+     "event_id": "values.bags",
+     "account_id": "eval-pool-owner",
+     "text": "我用过的塑料袋都会洗干净再用。",
+     "occurred_at": "2026-09-14T17:43:00+08:00",
+     "session_id": "s-values.bags",
+     "tier": "core",
+     "cluster": "values"
+    },
+    {
+     "event_id": "values.punctual",
+     "account_id": "eval-pool-owner",
+     "text": "我约人从来不迟到，宁愿早到半小时。",
+     "occurred_at": "2026-06-10T14:28:00+08:00",
+     "session_id": "s-values.punctual",
+     "tier": "core",
+     "cluster": "values"
+    },
+    {
+     "event_id": "personal-facts.blood",
+     "account_id": "eval-pool-owner",
+     "text": "我是O型血。",
+     "occurred_at": "2026-09-17T14:40:00+08:00",
+     "session_id": "s-personal-facts.blood",
+     "tier": "core",
+     "cluster": "personal-facts"
+    },
+    {
+     "event_id": "personal-facts.height",
+     "account_id": "eval-pool-owner",
+     "text": "我身高一米六五。",
+     "occurred_at": "2026-09-23T14:46:00+08:00",
+     "session_id": "s-personal-facts.height",
+     "tier": "core",
+     "cluster": "personal-facts"
+    },
+    {
+     "event_id": "personal-facts.zodiac",
+     "account_id": "eval-pool-owner",
+     "text": "我属兔。",
+     "occurred_at": "2026-08-07T15:28:00+08:00",
+     "session_id": "s-personal-facts.zodiac",
+     "tier": "core",
+     "cluster": "personal-facts"
+    },
+    {
+     "event_id": "personal-facts.lefty",
+     "account_id": "eval-pool-owner",
+     "text": "我是左撇子，写字用左手。",
+     "occurred_at": "2026-08-07T21:14:00+08:00",
+     "session_id": "s-personal-facts.lefty",
+     "tier": "core",
+     "cluster": "personal-facts"
+    },
+    {
+     "event_id": "personal-facts.glasses",
+     "account_id": "eval-pool-owner",
+     "text": "我戴的是近视眼镜，度数三百五十度。",
+     "occurred_at": "2026-08-03T21:22:00+08:00",
+     "session_id": "s-personal-facts.glasses",
+     "tier": "core",
+     "cluster": "personal-facts"
+    },
+    {
+     "event_id": "personal-facts.penicillin",
+     "account_id": "eval-pool-owner",
+     "text": "我对青霉素过敏。",
+     "occurred_at": "2026-06-05T21:07:00+08:00",
+     "session_id": "s-personal-facts.penicillin",
+     "tier": "core",
+     "cluster": "personal-facts"
+    },
+    {
+     "event_id": "birthday.grandma",
+     "account_id": "eval-pool-owner",
+     "text": "我外婆的生日是正月十六。",
+     "occurred_at": "2026-09-28T12:29:00+08:00",
+     "session_id": "s-birthday.grandma",
+     "tier": "extra",
+     "cluster": "birthday"
+    },
+    {
+     "event_id": "birthday.uncle",
+     "account_id": "eval-pool-owner",
+     "text": "我舅舅的生日在八月初二。",
+     "occurred_at": "2026-06-22T10:47:00+08:00",
+     "session_id": "s-birthday.uncle",
+     "tier": "extra",
+     "cluster": "birthday"
+    },
+    {
+     "event_id": "birthday.friend",
+     "account_id": "eval-pool-owner",
+     "text": "我闺蜜小林的生日是三月三号。",
+     "occurred_at": "2026-07-18T17:15:00+08:00",
+     "session_id": "s-birthday.friend",
+     "tier": "extra",
+     "cluster": "birthday"
+    },
+    {
+     "event_id": "pets.turtle",
+     "account_id": "eval-pool-owner",
+     "text": "我表弟养了一只巴西龟。",
+     "occurred_at": "2026-06-12T17:17:00+08:00",
+     "session_id": "s-pets.turtle",
+     "tier": "extra",
+     "cluster": "pets"
+    },
+    {
+     "event_id": "pets.hamster",
+     "account_id": "eval-pool-owner",
+     "text": "我同事家的仓鼠特别能吃。",
+     "occurred_at": "2026-08-25T17:31:00+08:00",
+     "session_id": "s-pets.hamster",
+     "tier": "extra",
+     "cluster": "pets"
+    },
+    {
+     "event_id": "pets.parrot",
+     "account_id": "eval-pool-owner",
+     "text": "我舅舅家有只会说话的鹦鹉。",
+     "occurred_at": "2026-09-17T14:11:00+08:00",
+     "session_id": "s-pets.parrot",
+     "tier": "extra",
+     "cluster": "pets"
+    },
+    {
+     "event_id": "diet.stinky-tofu",
+     "account_id": "eval-pool-owner",
+     "text": "我很喜欢吃臭豆腐。",
+     "occurred_at": "2026-09-06T13:25:00+08:00",
+     "session_id": "s-diet.stinky-tofu",
+     "tier": "extra",
+     "cluster": "diet"
+    },
+    {
+     "event_id": "diet.mushroom",
+     "account_id": "eval-pool-owner",
+     "text": "我对蘑菇的口感不太习惯。",
+     "occurred_at": "2026-07-02T16:45:00+08:00",
+     "session_id": "s-diet.mushroom",
+     "tier": "extra",
+     "cluster": "diet"
+    },
+    {
+     "event_id": "diet.coffee",
+     "account_id": "eval-pool-owner",
+     "text": "我每天下午要喝一杯黑咖啡。",
+     "occurred_at": "2026-08-06T17:36:00+08:00",
+     "session_id": "s-diet.coffee",
+     "tier": "extra",
+     "cluster": "diet"
+    },
+    {
+     "event_id": "health.knee",
+     "account_id": "eval-pool-owner",
+     "text": "我右膝盖做过半月板手术。",
+     "occurred_at": "2026-09-08T15:06:00+08:00",
+     "session_id": "s-health.knee",
+     "tier": "extra",
+     "cluster": "health"
+    },
+    {
+     "event_id": "health.tooth",
+     "account_id": "eval-pool-owner",
+     "text": "我上个月刚拔了一颗智齿。",
+     "occurred_at": "2026-09-22T10:48:00+08:00",
+     "session_id": "s-health.tooth",
+     "tier": "extra",
+     "cluster": "health"
+    },
+    {
+     "event_id": "health.thyroid",
+     "account_id": "eval-pool-owner",
+     "text": "我甲状腺有个小结节，每年复查一次。",
+     "occurred_at": "2026-09-05T14:59:00+08:00",
+     "session_id": "s-health.thyroid",
+     "tier": "extra",
+     "cluster": "health"
+    },
+    {
+     "event_id": "residence.cousin-city",
+     "account_id": "eval-pool-owner",
+     "text": "我表姐现在定居在杭州。",
+     "occurred_at": "2026-07-06T13:41:00+08:00",
+     "session_id": "s-residence.cousin-city",
+     "tier": "extra",
+     "cluster": "residence"
+    },
+    {
+     "event_id": "residence.roommate-city",
+     "account_id": "eval-pool-owner",
+     "text": "我大学室友在成都安了家。",
+     "occurred_at": "2026-08-12T20:01:00+08:00",
+     "session_id": "s-residence.roommate-city",
+     "tier": "extra",
+     "cluster": "residence"
+    },
+    {
+     "event_id": "residence.spouse-home",
+     "account_id": "eval-pool-owner",
+     "text": "我爱人的老家是山东济南。",
+     "occurred_at": "2026-06-21T16:46:00+08:00",
+     "session_id": "s-residence.spouse-home",
+     "tier": "extra",
+     "cluster": "residence"
+    },
+    {
+     "event_id": "hobbies.calligraphy",
+     "account_id": "eval-pool-owner",
+     "text": "我每个周日会临一个小时的帖。",
+     "occurred_at": "2026-06-14T14:41:00+08:00",
+     "session_id": "s-hobbies.calligraphy",
+     "tier": "extra",
+     "cluster": "hobbies"
+    },
+    {
+     "event_id": "hobbies.roses",
+     "account_id": "eval-pool-owner",
+     "text": "我喜欢在小区花坛里种月季。",
+     "occurred_at": "2026-06-23T16:01:00+08:00",
+     "session_id": "s-hobbies.roses",
+     "tier": "extra",
+     "cluster": "hobbies"
+    },
+    {
+     "event_id": "hobbies.puzzle",
+     "account_id": "eval-pool-owner",
+     "text": "我闲下来爱拼一千块的拼图。",
+     "occurred_at": "2026-07-19T08:08:00+08:00",
+     "session_id": "s-hobbies.puzzle",
+     "tier": "extra",
+     "cluster": "hobbies"
+    },
+    {
+     "event_id": "family-news.cousin-job",
+     "account_id": "eval-pool-owner",
+     "text": "我表哥在一家银行做客户经理。",
+     "occurred_at": "2026-09-03T14:33:00+08:00",
+     "session_id": "s-family-news.cousin-job",
+     "tier": "extra",
+     "cluster": "family-news"
+    },
+    {
+     "event_id": "family-news.niece",
+     "account_id": "eval-pool-owner",
+     "text": "我侄女刚上了幼儿园大班。",
+     "occurred_at": "2026-09-28T17:22:00+08:00",
+     "session_id": "s-family-news.niece",
+     "tier": "extra",
+     "cluster": "family-news"
+    },
+    {
+     "event_id": "family-news.aunt",
+     "account_id": "eval-pool-owner",
+     "text": "我小姨最近在学跳广场舞。",
+     "occurred_at": "2026-09-16T13:57:00+08:00",
+     "session_id": "s-family-news.aunt",
+     "tier": "extra",
+     "cluster": "family-news"
+    },
+    {
+     "event_id": "home-items.flashlight",
+     "account_id": "eval-pool-owner",
+     "text": "手电筒放在厨房橱柜的第一个抽屉。",
+     "occurred_at": "2026-06-18T19:48:00+08:00",
+     "session_id": "s-home-items.flashlight",
+     "tier": "extra",
+     "cluster": "home-items"
+    },
+    {
+     "event_id": "home-items.toolbox",
+     "account_id": "eval-pool-owner",
+     "text": "工具箱放在阳台储物柜的最上层。",
+     "occurred_at": "2026-08-15T08:21:00+08:00",
+     "session_id": "s-home-items.toolbox",
+     "tier": "extra",
+     "cluster": "home-items"
+    },
+    {
+     "event_id": "home-items.blanket",
+     "account_id": "eval-pool-owner",
+     "text": "多余的被子收在次卧的衣柜顶上。",
+     "occurred_at": "2026-08-28T15:03:00+08:00",
+     "session_id": "s-home-items.blanket",
+     "tier": "extra",
+     "cluster": "home-items"
+    },
+    {
+     "event_id": "work.boss",
+     "account_id": "eval-pool-owner",
+     "text": "我们校长姓周，为人很和善。",
+     "occurred_at": "2026-09-28T09:43:00+08:00",
+     "session_id": "s-work.boss",
+     "tier": "extra",
+     "cluster": "work"
+    },
+    {
+     "event_id": "work.meeting",
+     "account_id": "eval-pool-owner",
+     "text": "学校每周一早上有例会。",
+     "occurred_at": "2026-07-02T13:56:00+08:00",
+     "session_id": "s-work.meeting",
+     "tier": "extra",
+     "cluster": "work"
+    },
+    {
+     "event_id": "work.plan",
+     "account_id": "eval-pool-owner",
+     "text": "我打算五十岁之前评上高级职称。",
+     "occurred_at": "2026-08-06T19:45:00+08:00",
+     "session_id": "s-work.plan",
+     "tier": "extra",
+     "cluster": "work"
+    },
+    {
+     "event_id": "people.landlord",
+     "account_id": "eval-pool-owner",
+     "text": "我以前的房东是一位姓吴的大爷。",
+     "occurred_at": "2026-09-12T14:01:00+08:00",
+     "session_id": "s-people.landlord",
+     "tier": "extra",
+     "cluster": "people"
+    },
+    {
+     "event_id": "people.guard",
+     "account_id": "eval-pool-owner",
+     "text": "小区门口的保安大李特别热情。",
+     "occurred_at": "2026-06-12T15:31:00+08:00",
+     "session_id": "s-people.guard",
+     "tier": "extra",
+     "cluster": "people"
+    },
+    {
+     "event_id": "people.tutor",
+     "account_id": "eval-pool-owner",
+     "text": "我儿子的数学补习老师姓黄。",
+     "occurred_at": "2026-08-11T15:09:00+08:00",
+     "session_id": "s-people.tutor",
+     "tier": "extra",
+     "cluster": "people"
+    },
+    {
+     "event_id": "routine.run",
+     "account_id": "eval-pool-owner",
+     "text": "我周末上午会去江边跑步。",
+     "occurred_at": "2026-06-16T14:34:00+08:00",
+     "session_id": "s-routine.run",
+     "tier": "extra",
+     "cluster": "routine"
+    },
+    {
+     "event_id": "routine.bath",
+     "account_id": "eval-pool-owner",
+     "text": "我洗澡习惯睡前泡个热水澡。",
+     "occurred_at": "2026-08-29T17:42:00+08:00",
+     "session_id": "s-routine.bath",
+     "tier": "extra",
+     "cluster": "routine"
+    },
+    {
+     "event_id": "routine.call-parents",
+     "account_id": "eval-pool-owner",
+     "text": "我每天晚上八点会给爸妈打个电话。",
+     "occurred_at": "2026-06-07T17:09:00+08:00",
+     "session_id": "s-routine.call-parents",
+     "tier": "extra",
+     "cluster": "routine"
+    },
+    {
+     "event_id": "entertainment.game",
+     "account_id": "eval-pool-owner",
+     "text": "我偶尔会玩一会儿消消乐。",
+     "occurred_at": "2026-06-30T14:41:00+08:00",
+     "session_id": "s-entertainment.game",
+     "tier": "extra",
+     "cluster": "entertainment"
+    },
+    {
+     "event_id": "entertainment.storytelling",
+     "account_id": "eval-pool-owner",
+     "text": "我睡前喜欢听一段评书。",
+     "occurred_at": "2026-08-01T14:06:00+08:00",
+     "session_id": "s-entertainment.storytelling",
+     "tier": "extra",
+     "cluster": "entertainment"
+    },
+    {
+     "event_id": "entertainment.concert",
+     "account_id": "eval-pool-owner",
+     "text": "我去年看过一场周杰伦的演唱会。",
+     "occurred_at": "2026-06-11T09:09:00+08:00",
+     "session_id": "s-entertainment.concert",
+     "tier": "extra",
+     "cluster": "entertainment"
+    },
+    {
+     "event_id": "feelings.thunder",
+     "account_id": "eval-pool-owner",
+     "text": "我小时候被雷声吓哭过。",
+     "occurred_at": "2026-06-17T18:59:00+08:00",
+     "session_id": "s-feelings.thunder",
+     "tier": "extra",
+     "cluster": "feelings"
+    },
+    {
+     "event_id": "feelings.crowd",
+     "account_id": "eval-pool-owner",
+     "text": "我在人多的地方会有点头晕。",
+     "occurred_at": "2026-08-04T08:12:00+08:00",
+     "session_id": "s-feelings.crowd",
+     "tier": "extra",
+     "cluster": "feelings"
+    },
+    {
+     "event_id": "feelings.highway",
+     "account_id": "eval-pool-owner",
+     "text": "我刚拿到驾照的时候不敢上高架。",
+     "occurred_at": "2026-09-12T15:47:00+08:00",
+     "session_id": "s-feelings.highway",
+     "tier": "extra",
+     "cluster": "feelings"
+    },
+    {
+     "event_id": "shopping.hat",
+     "account_id": "eval-pool-owner",
+     "text": "我头围偏大，帽子要买大号的。",
+     "occurred_at": "2026-06-13T15:37:00+08:00",
+     "session_id": "s-shopping.hat",
+     "tier": "extra",
+     "cluster": "shopping"
+    },
+    {
+     "event_id": "shopping.perfume",
+     "account_id": "eval-pool-owner",
+     "text": "我不喜欢香水的味道。",
+     "occurred_at": "2026-09-02T12:53:00+08:00",
+     "session_id": "s-shopping.perfume",
+     "tier": "extra",
+     "cluster": "shopping"
+    },
+    {
+     "event_id": "shopping.gift",
+     "account_id": "eval-pool-owner",
+     "text": "我送礼物总喜欢送茶叶。",
+     "occurred_at": "2026-07-13T11:07:00+08:00",
+     "session_id": "s-shopping.gift",
+     "tier": "extra",
+     "cluster": "shopping"
+    },
+    {
+     "event_id": "transport.ebike",
+     "account_id": "eval-pool-owner",
+     "text": "我同事上下班骑一辆电动自行车。",
+     "occurred_at": "2026-06-04T10:19:00+08:00",
+     "session_id": "s-transport.ebike",
+     "tier": "extra",
+     "cluster": "transport"
+    },
+    {
+     "event_id": "transport.ferry",
+     "account_id": "eval-pool-owner",
+     "text": "我小时候坐渡船去外婆家。",
+     "occurred_at": "2026-07-09T17:52:00+08:00",
+     "session_id": "s-transport.ferry",
+     "tier": "extra",
+     "cluster": "transport"
+    },
+    {
+     "event_id": "transport.metro-card",
+     "account_id": "eval-pool-owner",
+     "text": "我的地铁卡里常年留着五十块钱。",
+     "occurred_at": "2026-09-11T10:48:00+08:00",
+     "session_id": "s-transport.metro-card",
+     "tier": "extra",
+     "cluster": "transport"
+    },
+    {
+     "event_id": "tech.laptop",
+     "account_id": "eval-pool-owner",
+     "text": "我办公用的是一台联想笔记本。",
+     "occurred_at": "2026-06-07T15:54:00+08:00",
+     "session_id": "s-tech.laptop",
+     "tier": "extra",
+     "cluster": "tech"
+    },
+    {
+     "event_id": "tech.email",
+     "account_id": "eval-pool-owner",
+     "text": "我几乎不看电子邮件。",
+     "occurred_at": "2026-09-05T14:28:00+08:00",
+     "session_id": "s-tech.email",
+     "tier": "extra",
+     "cluster": "tech"
+    },
+    {
+     "event_id": "tech.video",
+     "account_id": "eval-pool-owner",
+     "text": "我不会用手机拍视频。",
+     "occurred_at": "2026-07-31T21:10:00+08:00",
+     "session_id": "s-tech.video",
+     "tier": "extra",
+     "cluster": "tech"
+    },
+    {
+     "event_id": "festivals.lantern",
+     "account_id": "eval-pool-owner",
+     "text": "元宵节我们会煮汤圆。",
+     "occurred_at": "2026-07-02T20:02:00+08:00",
+     "session_id": "s-festivals.lantern",
+     "tier": "extra",
+     "cluster": "festivals"
+    },
+    {
+     "event_id": "festivals.national-day",
+     "account_id": "eval-pool-owner",
+     "text": "国庆节我通常带儿子出去玩。",
+     "occurred_at": "2026-08-19T15:24:00+08:00",
+     "session_id": "s-festivals.national-day",
+     "tier": "extra",
+     "cluster": "festivals"
+    },
+    {
+     "event_id": "festivals.winter-solstice",
+     "account_id": "eval-pool-owner",
+     "text": "冬至那天我们吃羊肉汤。",
+     "occurred_at": "2026-08-16T16:23:00+08:00",
+     "session_id": "s-festivals.winter-solstice",
+     "tier": "extra",
+     "cluster": "festivals"
+    },
+    {
+     "event_id": "milestones.sister-marry",
+     "account_id": "eval-pool-owner",
+     "text": "我姐姐2011年结的婚。",
+     "occurred_at": "2026-09-10T09:01:00+08:00",
+     "session_id": "s-milestones.sister-marry",
+     "tier": "extra",
+     "cluster": "milestones"
+    },
+    {
+     "event_id": "milestones.brother-grad",
+     "account_id": "eval-pool-owner",
+     "text": "我弟弟2022年大学毕业。",
+     "occurred_at": "2026-07-31T11:18:00+08:00",
+     "session_id": "s-milestones.brother-grad",
+     "tier": "extra",
+     "cluster": "milestones"
+    },
+    {
+     "event_id": "milestones.first-car",
+     "account_id": "eval-pool-owner",
+     "text": "我2014年买了第一辆车。",
+     "occurred_at": "2026-07-14T08:44:00+08:00",
+     "session_id": "s-milestones.first-car",
+     "tier": "extra",
+     "cluster": "milestones"
+    },
+    {
+     "event_id": "values.charity",
+     "account_id": "eval-pool-owner",
+     "text": "我每年都会给山区的孩子捐一点钱。",
+     "occurred_at": "2026-08-15T08:01:00+08:00",
+     "session_id": "s-values.charity",
+     "tier": "extra",
+     "cluster": "values"
+    },
+    {
+     "event_id": "values.saving",
+     "account_id": "eval-pool-owner",
+     "text": "我每个月都会存下工资的三成。",
+     "occurred_at": "2026-08-18T10:08:00+08:00",
+     "session_id": "s-values.saving",
+     "tier": "extra",
+     "cluster": "values"
+    },
+    {
+     "event_id": "values.shopping-bag",
+     "account_id": "eval-pool-owner",
+     "text": "我出门总是自带购物袋。",
+     "occurred_at": "2026-09-22T09:32:00+08:00",
+     "session_id": "s-values.shopping-bag",
+     "tier": "extra",
+     "cluster": "values"
+    },
+    {
+     "event_id": "personal-facts.weight",
+     "account_id": "eval-pool-owner",
+     "text": "我体重一百二十斤左右。",
+     "occurred_at": "2026-09-25T15:58:00+08:00",
+     "session_id": "s-personal-facts.weight",
+     "tier": "extra",
+     "cluster": "personal-facts"
+    },
+    {
+     "event_id": "personal-facts.age",
+     "account_id": "eval-pool-owner",
+     "text": "我今年四十二岁。",
+     "occurred_at": "2026-09-15T13:33:00+08:00",
+     "session_id": "s-personal-facts.age",
+     "tier": "extra",
+     "cluster": "personal-facts"
+    },
+    {
+     "event_id": "personal-facts.nickname",
+     "account_id": "eval-pool-owner",
+     "text": "小时候大家都叫我小胖。",
+     "occurred_at": "2026-09-22T18:55:00+08:00",
+     "session_id": "s-personal-facts.nickname",
+     "tier": "extra",
+     "cluster": "personal-facts"
+    },
+    {
+     "event_id": "peer.001",
+     "account_id": "eval-pool-owner",
+     "text": "我同事小刘的生日是七月三号。",
+     "occurred_at": "2026-09-20T19:53:00+08:00",
+     "session_id": "s-peer.001",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.002",
+     "account_id": "eval-pool-owner",
+     "text": "我邻居老赵的生日是三月二十二号。",
+     "occurred_at": "2026-09-24T08:50:00+08:00",
+     "session_id": "s-peer.002",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.003",
+     "account_id": "eval-pool-owner",
+     "text": "我表姐的生日是十一月三号。",
+     "occurred_at": "2026-06-11T21:54:00+08:00",
+     "session_id": "s-peer.003",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.004",
+     "account_id": "eval-pool-owner",
+     "text": "我大学室友阿杰的生日是五月初三。",
+     "occurred_at": "2026-07-03T17:11:00+08:00",
+     "session_id": "s-peer.004",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.005",
+     "account_id": "eval-pool-owner",
+     "text": "我老同学小陈的生日是正月初七。",
+     "occurred_at": "2026-06-23T13:16:00+08:00",
+     "session_id": "s-peer.005",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.006",
+     "account_id": "eval-pool-owner",
+     "text": "我发小阿明的生日是十月十二号。",
+     "occurred_at": "2026-06-20T08:37:00+08:00",
+     "session_id": "s-peer.006",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.007",
+     "account_id": "eval-pool-owner",
+     "text": "我姑姑的生日是四月二十六号。",
+     "occurred_at": "2026-08-05T16:45:00+08:00",
+     "session_id": "s-peer.007",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.008",
+     "account_id": "eval-pool-owner",
+     "text": "我姨夫的生日是六月初九。",
+     "occurred_at": "2026-07-27T11:36:00+08:00",
+     "session_id": "s-peer.008",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.009",
+     "account_id": "eval-pool-owner",
+     "text": "我外公的生日是九月二十七号。",
+     "occurred_at": "2026-08-14T13:08:00+08:00",
+     "session_id": "s-peer.009",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.010",
+     "account_id": "eval-pool-owner",
+     "text": "我小姨的生日是十二月二十号。",
+     "occurred_at": "2026-07-26T16:21:00+08:00",
+     "session_id": "s-peer.010",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.011",
+     "account_id": "eval-pool-owner",
+     "text": "我表妹的生日是二月十二号。",
+     "occurred_at": "2026-09-17T11:51:00+08:00",
+     "session_id": "s-peer.011",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.012",
+     "account_id": "eval-pool-owner",
+     "text": "我堂哥的生日是十一月二十五号。",
+     "occurred_at": "2026-08-13T12:23:00+08:00",
+     "session_id": "s-peer.012",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.013",
+     "account_id": "eval-pool-owner",
+     "text": "我干妈的生日是五月十八号。",
+     "occurred_at": "2026-07-11T19:39:00+08:00",
+     "session_id": "s-peer.013",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.014",
+     "account_id": "eval-pool-owner",
+     "text": "我学生小美的生日是一月九号。",
+     "occurred_at": "2026-07-17T17:24:00+08:00",
+     "session_id": "s-peer.014",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.015",
+     "account_id": "eval-pool-owner",
+     "text": "我同事小郑的生日是四月初五。",
+     "occurred_at": "2026-08-29T09:24:00+08:00",
+     "session_id": "s-peer.015",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.016",
+     "account_id": "eval-pool-owner",
+     "text": "我邻居周大爷的生日是六月二十八号。",
+     "occurred_at": "2026-09-02T20:08:00+08:00",
+     "session_id": "s-peer.016",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.017",
+     "account_id": "eval-pool-owner",
+     "text": "我表叔的生日是八月初六。",
+     "occurred_at": "2026-07-08T08:41:00+08:00",
+     "session_id": "s-peer.017",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.018",
+     "account_id": "eval-pool-owner",
+     "text": "我堂妹在郑州做教练。",
+     "occurred_at": "2026-09-08T11:34:00+08:00",
+     "session_id": "s-peer.018",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.019",
+     "account_id": "eval-pool-owner",
+     "text": "我大学室友阿杰在西安做会计。",
+     "occurred_at": "2026-09-16T15:36:00+08:00",
+     "session_id": "s-peer.019",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.020",
+     "account_id": "eval-pool-owner",
+     "text": "我老同学小陈在宁波做财务。",
+     "occurred_at": "2026-06-04T15:21:00+08:00",
+     "session_id": "s-peer.020",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.021",
+     "account_id": "eval-pool-owner",
+     "text": "我发小阿明在重庆做销售。",
+     "occurred_at": "2026-07-30T14:51:00+08:00",
+     "session_id": "s-peer.021",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.022",
+     "account_id": "eval-pool-owner",
+     "text": "我同事小郑在成都做建筑师。",
+     "occurred_at": "2026-07-02T17:31:00+08:00",
+     "session_id": "s-peer.022",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.023",
+     "account_id": "eval-pool-owner",
+     "text": "我堂哥在厦门做律师。",
+     "occurred_at": "2026-08-14T15:16:00+08:00",
+     "session_id": "s-peer.023",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.024",
+     "account_id": "eval-pool-owner",
+     "text": "我表妹在青岛做厨师。",
+     "occurred_at": "2026-07-13T12:13:00+08:00",
+     "session_id": "s-peer.024",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.025",
+     "account_id": "eval-pool-owner",
+     "text": "我姑姑的儿子在苏州做设计师。",
+     "occurred_at": "2026-07-14T14:32:00+08:00",
+     "session_id": "s-peer.025",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.026",
+     "account_id": "eval-pool-owner",
+     "text": "我姨夫的弟弟在昆明做记者。",
+     "occurred_at": "2026-07-10T09:44:00+08:00",
+     "session_id": "s-peer.026",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.027",
+     "account_id": "eval-pool-owner",
+     "text": "我干妈的女儿在天津做出纳。",
+     "occurred_at": "2026-08-30T16:48:00+08:00",
+     "session_id": "s-peer.027",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.028",
+     "account_id": "eval-pool-owner",
+     "text": "我邻居老赵的儿子在长沙做翻译。",
+     "occurred_at": "2026-08-28T20:00:00+08:00",
+     "session_id": "s-peer.028",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.029",
+     "account_id": "eval-pool-owner",
+     "text": "我学生小美的姐姐在合肥做摄影师。",
+     "occurred_at": "2026-08-26T09:55:00+08:00",
+     "session_id": "s-peer.029",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.030",
+     "account_id": "eval-pool-owner",
+     "text": "我堂哥家养了一只蓝猫，叫小黑。",
+     "occurred_at": "2026-08-04T17:53:00+08:00",
+     "session_id": "s-peer.030",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.031",
+     "account_id": "eval-pool-owner",
+     "text": "我同事小郑家养了一只布偶猫，叫乐乐。",
+     "occurred_at": "2026-06-20T17:50:00+08:00",
+     "session_id": "s-peer.031",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.032",
+     "account_id": "eval-pool-owner",
+     "text": "我老同学小陈家养了一只泰迪，叫毛毛。",
+     "occurred_at": "2026-09-22T17:45:00+08:00",
+     "session_id": "s-peer.032",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.033",
+     "account_id": "eval-pool-owner",
+     "text": "我发小阿明家养了一只比熊，叫旺仔。",
+     "occurred_at": "2026-09-21T12:24:00+08:00",
+     "session_id": "s-peer.033",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.034",
+     "account_id": "eval-pool-owner",
+     "text": "我姑姑家养了一只狸花猫，叫豆豆。",
+     "occurred_at": "2026-08-21T11:23:00+08:00",
+     "session_id": "s-peer.034",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.035",
+     "account_id": "eval-pool-owner",
+     "text": "我表妹家养了一只鹦鹉，叫点点。",
+     "occurred_at": "2026-07-05T19:25:00+08:00",
+     "session_id": "s-peer.035",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.036",
+     "account_id": "eval-pool-owner",
+     "text": "我干妈家养了一只边牧，叫花花。",
+     "occurred_at": "2026-06-03T11:33:00+08:00",
+     "session_id": "s-peer.036",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.037",
+     "account_id": "eval-pool-owner",
+     "text": "我邻居周大爷家养了一只柴犬，叫糖糖。",
+     "occurred_at": "2026-09-19T13:17:00+08:00",
+     "session_id": "s-peer.037",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.038",
+     "account_id": "eval-pool-owner",
+     "text": "我大学室友阿杰家养了一只乌龟，叫妞妞。",
+     "occurred_at": "2026-09-18T12:42:00+08:00",
+     "session_id": "s-peer.038",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.039",
+     "account_id": "eval-pool-owner",
+     "text": "我堂弟家养了一只荷兰猪，叫球球。",
+     "occurred_at": "2026-06-12T15:05:00+08:00",
+     "session_id": "s-peer.039",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.040",
+     "account_id": "eval-pool-owner",
+     "text": "我同事小刘不爱吃苦瓜。",
+     "occurred_at": "2026-06-24T13:58:00+08:00",
+     "session_id": "s-peer.040",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.041",
+     "account_id": "eval-pool-owner",
+     "text": "我表姐不爱吃羊肉。",
+     "occurred_at": "2026-09-20T08:45:00+08:00",
+     "session_id": "s-peer.041",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.042",
+     "account_id": "eval-pool-owner",
+     "text": "我堂弟不爱吃青椒。",
+     "occurred_at": "2026-07-07T08:00:00+08:00",
+     "session_id": "s-peer.042",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.043",
+     "account_id": "eval-pool-owner",
+     "text": "我姑姑不爱吃榴莲。",
+     "occurred_at": "2026-07-19T14:17:00+08:00",
+     "session_id": "s-peer.043",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.044",
+     "account_id": "eval-pool-owner",
+     "text": "我姨夫不爱吃芹菜。",
+     "occurred_at": "2026-07-02T11:59:00+08:00",
+     "session_id": "s-peer.044",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.045",
+     "account_id": "eval-pool-owner",
+     "text": "我外公不爱吃胡萝卜。",
+     "occurred_at": "2026-09-14T17:14:00+08:00",
+     "session_id": "s-peer.045",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.046",
+     "account_id": "eval-pool-owner",
+     "text": "我小姨不爱吃生姜。",
+     "occurred_at": "2026-09-26T14:43:00+08:00",
+     "session_id": "s-peer.046",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.047",
+     "account_id": "eval-pool-owner",
+     "text": "我表妹不爱吃韭菜。",
+     "occurred_at": "2026-09-27T08:19:00+08:00",
+     "session_id": "s-peer.047",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.048",
+     "account_id": "eval-pool-owner",
+     "text": "我同事小郑不爱吃洋葱。",
+     "occurred_at": "2026-09-23T15:56:00+08:00",
+     "session_id": "s-peer.048",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.049",
+     "account_id": "eval-pool-owner",
+     "text": "我发小阿明不爱吃茄子。",
+     "occurred_at": "2026-06-19T15:49:00+08:00",
+     "session_id": "s-peer.049",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.050",
+     "account_id": "eval-pool-owner",
+     "text": "我同事小刘的老家在福建泉州。",
+     "occurred_at": "2026-09-06T18:16:00+08:00",
+     "session_id": "s-peer.050",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.051",
+     "account_id": "eval-pool-owner",
+     "text": "我邻居老赵的老家在山东烟台。",
+     "occurred_at": "2026-09-18T10:23:00+08:00",
+     "session_id": "s-peer.051",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.052",
+     "account_id": "eval-pool-owner",
+     "text": "我大学室友阿杰的老家在陕西宝鸡。",
+     "occurred_at": "2026-08-07T10:20:00+08:00",
+     "session_id": "s-peer.052",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.053",
+     "account_id": "eval-pool-owner",
+     "text": "我老同学小陈的老家在浙江绍兴。",
+     "occurred_at": "2026-09-16T20:57:00+08:00",
+     "session_id": "s-peer.053",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.054",
+     "account_id": "eval-pool-owner",
+     "text": "我发小阿明的老家在湖南岳阳。",
+     "occurred_at": "2026-07-24T13:17:00+08:00",
+     "session_id": "s-peer.054",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.055",
+     "account_id": "eval-pool-owner",
+     "text": "我同事小郑的老家在辽宁大连。",
+     "occurred_at": "2026-09-02T10:32:00+08:00",
+     "session_id": "s-peer.055",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.056",
+     "account_id": "eval-pool-owner",
+     "text": "我表叔的老家在四川绵阳。",
+     "occurred_at": "2026-06-17T10:06:00+08:00",
+     "session_id": "s-peer.056",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.057",
+     "account_id": "eval-pool-owner",
+     "text": "我干妈的老家在安徽黄山。",
+     "occurred_at": "2026-07-06T17:21:00+08:00",
+     "session_id": "s-peer.057",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.058",
+     "account_id": "eval-pool-owner",
+     "text": "我邻居周大爷的老家在河南洛阳。",
+     "occurred_at": "2026-07-30T18:54:00+08:00",
+     "session_id": "s-peer.058",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.059",
+     "account_id": "eval-pool-owner",
+     "text": "我学生小美的老家在河北保定。",
+     "occurred_at": "2026-09-05T10:47:00+08:00",
+     "session_id": "s-peer.059",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.060",
+     "account_id": "eval-pool-owner",
+     "text": "我同事小刘平时爱骑行。",
+     "occurred_at": "2026-07-23T15:17:00+08:00",
+     "session_id": "s-peer.060",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.061",
+     "account_id": "eval-pool-owner",
+     "text": "我姑姑平时爱绣十字绣。",
+     "occurred_at": "2026-06-25T10:53:00+08:00",
+     "session_id": "s-peer.061",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.062",
+     "account_id": "eval-pool-owner",
+     "text": "我姨夫平时爱跳交谊舞。",
+     "occurred_at": "2026-07-26T13:46:00+08:00",
+     "session_id": "s-peer.062",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.063",
+     "account_id": "eval-pool-owner",
+     "text": "我外公平时爱打乒乓球。",
+     "occurred_at": "2026-06-02T09:19:00+08:00",
+     "session_id": "s-peer.063",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.064",
+     "account_id": "eval-pool-owner",
+     "text": "我堂弟平时爱爬山。",
+     "occurred_at": "2026-07-02T15:34:00+08:00",
+     "session_id": "s-peer.064",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.065",
+     "account_id": "eval-pool-owner",
+     "text": "我表叔平时爱玩航模。",
+     "occurred_at": "2026-09-18T13:34:00+08:00",
+     "session_id": "s-peer.065",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.066",
+     "account_id": "eval-pool-owner",
+     "text": "我邻居周大爷平时爱养鸽子。",
+     "occurred_at": "2026-08-15T17:20:00+08:00",
+     "session_id": "s-peer.066",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.067",
+     "account_id": "eval-pool-owner",
+     "text": "我同事小郑平时爱做手工皂。",
+     "occurred_at": "2026-08-28T15:04:00+08:00",
+     "session_id": "s-peer.067",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.068",
+     "account_id": "eval-pool-owner",
+     "text": "我老同学小陈平时爱打羽毛球。",
+     "occurred_at": "2026-07-25T18:20:00+08:00",
+     "session_id": "s-peer.068",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.069",
+     "account_id": "eval-pool-owner",
+     "text": "我干妈平时爱唱京剧。",
+     "occurred_at": "2026-09-11T21:52:00+08:00",
+     "session_id": "s-peer.069",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.070",
+     "account_id": "eval-pool-owner",
+     "text": "我外公最近有点失眠。",
+     "occurred_at": "2026-09-12T11:42:00+08:00",
+     "session_id": "s-peer.070",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.071",
+     "account_id": "eval-pool-owner",
+     "text": "我姑姑最近感冒刚好。",
+     "occurred_at": "2026-09-08T11:55:00+08:00",
+     "session_id": "s-peer.071",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.072",
+     "account_id": "eval-pool-owner",
+     "text": "我姨夫最近颈椎不舒服。",
+     "occurred_at": "2026-06-13T16:54:00+08:00",
+     "session_id": "s-peer.072",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.073",
+     "account_id": "eval-pool-owner",
+     "text": "我同事小郑最近在吃维生素。",
+     "occurred_at": "2026-08-31T10:22:00+08:00",
+     "session_id": "s-peer.073",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.074",
+     "account_id": "eval-pool-owner",
+     "text": "我老同学小陈最近刚做完体检。",
+     "occurred_at": "2026-06-20T09:18:00+08:00",
+     "session_id": "s-peer.074",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.075",
+     "account_id": "eval-pool-owner",
+     "text": "我邻居周大爷最近查出了轻度脂肪肝。",
+     "occurred_at": "2026-07-02T17:54:00+08:00",
+     "session_id": "s-peer.075",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.076",
+     "account_id": "eval-pool-owner",
+     "text": "我表叔最近膝盖不太好。",
+     "occurred_at": "2026-09-12T09:06:00+08:00",
+     "session_id": "s-peer.076",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.077",
+     "account_id": "eval-pool-owner",
+     "text": "我干妈最近血脂有点偏高。",
+     "occurred_at": "2026-08-20T11:30:00+08:00",
+     "session_id": "s-peer.077",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.078",
+     "account_id": "eval-pool-owner",
+     "text": "我堂哥最近牙疼了好几天。",
+     "occurred_at": "2026-07-07T09:45:00+08:00",
+     "session_id": "s-peer.078",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.079",
+     "account_id": "eval-pool-owner",
+     "text": "我发小阿明最近视力下降了。",
+     "occurred_at": "2026-06-21T09:22:00+08:00",
+     "session_id": "s-peer.079",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.080",
+     "account_id": "eval-pool-owner",
+     "text": "我表哥的儿子在读高中一年级。",
+     "occurred_at": "2026-09-18T13:11:00+08:00",
+     "session_id": "s-peer.080",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.081",
+     "account_id": "eval-pool-owner",
+     "text": "我同事小刘的儿子在读小学六年级。",
+     "occurred_at": "2026-09-10T13:01:00+08:00",
+     "session_id": "s-peer.081",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.082",
+     "account_id": "eval-pool-owner",
+     "text": "我老同学小陈的儿子在读初中三年级。",
+     "occurred_at": "2026-06-12T14:26:00+08:00",
+     "session_id": "s-peer.082",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.083",
+     "account_id": "eval-pool-owner",
+     "text": "我邻居老赵的儿子在读高中三年级。",
+     "occurred_at": "2026-07-17T12:53:00+08:00",
+     "session_id": "s-peer.083",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.084",
+     "account_id": "eval-pool-owner",
+     "text": "我堂哥的儿子在读小学一年级。",
+     "occurred_at": "2026-06-13T11:56:00+08:00",
+     "session_id": "s-peer.084",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.085",
+     "account_id": "eval-pool-owner",
+     "text": "我发小阿明的儿子在读小学二年级。",
+     "occurred_at": "2026-06-18T21:29:00+08:00",
+     "session_id": "s-peer.085",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.086",
+     "account_id": "eval-pool-owner",
+     "text": "我同事小郑的儿子在读初中二年级。",
+     "occurred_at": "2026-07-27T18:56:00+08:00",
+     "session_id": "s-peer.086",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.087",
+     "account_id": "eval-pool-owner",
+     "text": "我表叔的儿子在读幼儿园大班。",
+     "occurred_at": "2026-08-21T19:02:00+08:00",
+     "session_id": "s-peer.087",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.088",
+     "account_id": "eval-pool-owner",
+     "text": "我同事小刘打算下半年考个驾照。",
+     "occurred_at": "2026-08-16T13:04:00+08:00",
+     "session_id": "s-peer.088",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.089",
+     "account_id": "eval-pool-owner",
+     "text": "我邻居老赵打算春天去海南度假。",
+     "occurred_at": "2026-09-13T16:59:00+08:00",
+     "session_id": "s-peer.089",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.090",
+     "account_id": "eval-pool-owner",
+     "text": "我表姐打算明年把老房子租出去。",
+     "occurred_at": "2026-06-14T10:31:00+08:00",
+     "session_id": "s-peer.090",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.091",
+     "account_id": "eval-pool-owner",
+     "text": "我堂弟打算过完年去学画画。",
+     "occurred_at": "2026-06-16T16:20:00+08:00",
+     "session_id": "s-peer.091",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.092",
+     "account_id": "eval-pool-owner",
+     "text": "我大学室友阿杰打算开春以后想学游泳。",
+     "occurred_at": "2026-09-14T09:42:00+08:00",
+     "session_id": "s-peer.092",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.093",
+     "account_id": "eval-pool-owner",
+     "text": "我老同学小陈打算五一去趟厦门。",
+     "occurred_at": "2026-07-01T15:31:00+08:00",
+     "session_id": "s-peer.093",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.094",
+     "account_id": "eval-pool-owner",
+     "text": "我姑姑打算退休后回老家盖房子。",
+     "occurred_at": "2026-06-09T10:24:00+08:00",
+     "session_id": "s-peer.094",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.095",
+     "account_id": "eval-pool-owner",
+     "text": "我姨夫打算下半年去做个白内障检查。",
+     "occurred_at": "2026-09-16T16:23:00+08:00",
+     "session_id": "s-peer.095",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.096",
+     "account_id": "eval-pool-owner",
+     "text": "我外公打算暑假带孙子去北京。",
+     "occurred_at": "2026-09-11T13:59:00+08:00",
+     "session_id": "s-peer.096",
+     "tier": "peer"
+    },
+    {
+     "event_id": "peer.097",
+     "account_id": "eval-pool-owner",
+     "text": "我邻居周大爷打算明年搬去女儿那边住。",
+     "occurred_at": "2026-09-08T12:52:00+08:00",
+     "session_id": "s-peer.097",
+     "tier": "peer"
+    },
+    {
+     "event_id": "trv.001",
+     "account_id": "eval-pool-owner",
+     "text": "今天中午我吃了馄饨。",
+     "occurred_at": "2026-06-19T09:38:00+08:00",
+     "session_id": "s-trv.001",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.002",
+     "account_id": "eval-pool-owner",
+     "text": "晚饭我随便做了一份莲藕排骨汤。",
+     "occurred_at": "2026-09-23T20:10:00+08:00",
+     "session_id": "s-trv.002",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.003",
+     "account_id": "eval-pool-owner",
+     "text": "今天中午我吃了红烧鸡翅。",
+     "occurred_at": "2026-09-18T09:42:00+08:00",
+     "session_id": "s-trv.003",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.004",
+     "account_id": "eval-pool-owner",
+     "text": "晚饭我随便做了一份咸肉菜饭。",
+     "occurred_at": "2026-07-03T16:32:00+08:00",
+     "session_id": "s-trv.004",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.005",
+     "account_id": "eval-pool-owner",
+     "text": "今天中午我吃了蒜蓉西兰花。",
+     "occurred_at": "2026-09-02T18:19:00+08:00",
+     "session_id": "s-trv.005",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.006",
+     "account_id": "eval-pool-owner",
+     "text": "晚饭我随便做了一份青椒肉丝。",
+     "occurred_at": "2026-09-06T17:24:00+08:00",
+     "session_id": "s-trv.006",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.007",
+     "account_id": "eval-pool-owner",
+     "text": "今天中午我吃了地三鲜。",
+     "occurred_at": "2026-09-16T10:55:00+08:00",
+     "session_id": "s-trv.007",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.008",
+     "account_id": "eval-pool-owner",
+     "text": "晚饭我随便做了一份玉米排骨汤。",
+     "occurred_at": "2026-06-13T15:35:00+08:00",
+     "session_id": "s-trv.008",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.009",
+     "account_id": "eval-pool-owner",
+     "text": "今天中午我吃了香菇青菜。",
+     "occurred_at": "2026-09-22T09:07:00+08:00",
+     "session_id": "s-trv.009",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.010",
+     "account_id": "eval-pool-owner",
+     "text": "晚饭我随便做了一份黄焖鸡。",
+     "occurred_at": "2026-08-09T09:20:00+08:00",
+     "session_id": "s-trv.010",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.011",
+     "account_id": "eval-pool-owner",
+     "text": "今天中午我吃了肉末茄子。",
+     "occurred_at": "2026-09-22T16:57:00+08:00",
+     "session_id": "s-trv.011",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.012",
+     "account_id": "eval-pool-owner",
+     "text": "晚饭我随便做了一份西红柿炒鸡蛋。",
+     "occurred_at": "2026-06-18T17:15:00+08:00",
+     "session_id": "s-trv.012",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.013",
+     "account_id": "eval-pool-owner",
+     "text": "今天中午我吃了炒河粉。",
+     "occurred_at": "2026-08-15T21:26:00+08:00",
+     "session_id": "s-trv.013",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.014",
+     "account_id": "eval-pool-owner",
+     "text": "晚饭我随便做了一份糖醋排骨。",
+     "occurred_at": "2026-08-20T18:30:00+08:00",
+     "session_id": "s-trv.014",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.015",
+     "account_id": "eval-pool-owner",
+     "text": "今天中午我吃了韭菜盒子。",
+     "occurred_at": "2026-08-17T15:13:00+08:00",
+     "session_id": "s-trv.015",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.016",
+     "account_id": "eval-pool-owner",
+     "text": "晚饭我随便做了一份红烧肉。",
+     "occurred_at": "2026-09-15T10:09:00+08:00",
+     "session_id": "s-trv.016",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.017",
+     "account_id": "eval-pool-owner",
+     "text": "今天中午我吃了扬州炒饭。",
+     "occurred_at": "2026-07-12T08:28:00+08:00",
+     "session_id": "s-trv.017",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.018",
+     "account_id": "eval-pool-owner",
+     "text": "晚饭我随便做了一份炸酱面。",
+     "occurred_at": "2026-07-17T20:32:00+08:00",
+     "session_id": "s-trv.018",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.019",
+     "account_id": "eval-pool-owner",
+     "text": "今天中午我吃了小笼包。",
+     "occurred_at": "2026-06-25T16:24:00+08:00",
+     "session_id": "s-trv.019",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.020",
+     "account_id": "eval-pool-owner",
+     "text": "晚饭我随便做了一份葱油拌面。",
+     "occurred_at": "2026-09-13T14:37:00+08:00",
+     "session_id": "s-trv.020",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.021",
+     "account_id": "eval-pool-owner",
+     "text": "今天中午我吃了番茄牛腩。",
+     "occurred_at": "2026-07-14T14:25:00+08:00",
+     "session_id": "s-trv.021",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.022",
+     "account_id": "eval-pool-owner",
+     "text": "晚饭我随便做了一份山药排骨汤。",
+     "occurred_at": "2026-07-28T17:16:00+08:00",
+     "session_id": "s-trv.022",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.023",
+     "account_id": "eval-pool-owner",
+     "text": "今天中午我吃了土豆烧牛肉。",
+     "occurred_at": "2026-06-15T11:05:00+08:00",
+     "session_id": "s-trv.023",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.024",
+     "account_id": "eval-pool-owner",
+     "text": "晚饭我随便做了一份牛肉面。",
+     "occurred_at": "2026-09-08T10:05:00+08:00",
+     "session_id": "s-trv.024",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.025",
+     "account_id": "eval-pool-owner",
+     "text": "今天中午我吃了家常豆腐。",
+     "occurred_at": "2026-08-17T14:47:00+08:00",
+     "session_id": "s-trv.025",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.026",
+     "account_id": "eval-pool-owner",
+     "text": "晚饭我随便做了一份酸菜粉丝汤。",
+     "occurred_at": "2026-08-31T12:04:00+08:00",
+     "session_id": "s-trv.026",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.027",
+     "account_id": "eval-pool-owner",
+     "text": "今天中午我吃了手擀面。",
+     "occurred_at": "2026-09-27T11:55:00+08:00",
+     "session_id": "s-trv.027",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.028",
+     "account_id": "eval-pool-owner",
+     "text": "晚饭我随便做了一份蛋炒饭。",
+     "occurred_at": "2026-06-20T12:51:00+08:00",
+     "session_id": "s-trv.028",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.029",
+     "account_id": "eval-pool-owner",
+     "text": "今天中午我吃了冬瓜丸子汤。",
+     "occurred_at": "2026-07-13T17:16:00+08:00",
+     "session_id": "s-trv.029",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.030",
+     "account_id": "eval-pool-owner",
+     "text": "晚饭我随便做了一份清炒时蔬。",
+     "occurred_at": "2026-09-12T15:21:00+08:00",
+     "session_id": "s-trv.030",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.031",
+     "account_id": "eval-pool-owner",
+     "text": "今天天气特别好，阳光很足。",
+     "occurred_at": "2026-09-03T10:39:00+08:00",
+     "session_id": "s-trv.031",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.032",
+     "account_id": "eval-pool-owner",
+     "text": "今天外面刮了一整天的大风。",
+     "occurred_at": "2026-06-14T10:57:00+08:00",
+     "session_id": "s-trv.032",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.033",
+     "account_id": "eval-pool-owner",
+     "text": "今天气温一下子降了好几度。",
+     "occurred_at": "2026-08-16T17:09:00+08:00",
+     "session_id": "s-trv.033",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.034",
+     "account_id": "eval-pool-owner",
+     "text": "今天闷热得让人喘不过气。",
+     "occurred_at": "2026-06-18T16:21:00+08:00",
+     "session_id": "s-trv.034",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.035",
+     "account_id": "eval-pool-owner",
+     "text": "今天下了一阵小雨，很快就停了。",
+     "occurred_at": "2026-06-13T11:09:00+08:00",
+     "session_id": "s-trv.035",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.036",
+     "account_id": "eval-pool-owner",
+     "text": "今天早上有点起雾。",
+     "occurred_at": "2026-08-02T17:57:00+08:00",
+     "session_id": "s-trv.036",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.037",
+     "account_id": "eval-pool-owner",
+     "text": "今天傍晚天边挂着很漂亮的晚霞。",
+     "occurred_at": "2026-07-29T11:53:00+08:00",
+     "session_id": "s-trv.037",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.038",
+     "account_id": "eval-pool-owner",
+     "text": "今天风很大，我把窗户都关上了。",
+     "occurred_at": "2026-07-24T15:32:00+08:00",
+     "session_id": "s-trv.038",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.039",
+     "account_id": "eval-pool-owner",
+     "text": "今天下午突然打起了雷。",
+     "occurred_at": "2026-06-28T21:56:00+08:00",
+     "session_id": "s-trv.039",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.040",
+     "account_id": "eval-pool-owner",
+     "text": "今天太阳很毒，我没敢出门。",
+     "occurred_at": "2026-06-27T10:07:00+08:00",
+     "session_id": "s-trv.040",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.041",
+     "account_id": "eval-pool-owner",
+     "text": "这两天天气转凉了。",
+     "occurred_at": "2026-06-07T21:36:00+08:00",
+     "session_id": "s-trv.041",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.042",
+     "account_id": "eval-pool-owner",
+     "text": "这两天有点回暖。",
+     "occurred_at": "2026-08-07T14:44:00+08:00",
+     "session_id": "s-trv.042",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.043",
+     "account_id": "eval-pool-owner",
+     "text": "这两天一直阴沉沉的。",
+     "occurred_at": "2026-07-21T13:53:00+08:00",
+     "session_id": "s-trv.043",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.044",
+     "account_id": "eval-pool-owner",
+     "text": "这两天比前几天暖和多了。",
+     "occurred_at": "2026-09-13T12:05:00+08:00",
+     "session_id": "s-trv.044",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.045",
+     "account_id": "eval-pool-owner",
+     "text": "我今天去邮局寄了一个包裹。",
+     "occurred_at": "2026-07-18T19:05:00+08:00",
+     "session_id": "s-trv.045",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.046",
+     "account_id": "eval-pool-owner",
+     "text": "我今天去银行取了点现金。",
+     "occurred_at": "2026-09-12T17:59:00+08:00",
+     "session_id": "s-trv.046",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.047",
+     "account_id": "eval-pool-owner",
+     "text": "我今天去社区服务中心办了点小事。",
+     "occurred_at": "2026-08-09T11:45:00+08:00",
+     "session_id": "s-trv.047",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.048",
+     "account_id": "eval-pool-owner",
+     "text": "我今天去药店买了一盒创可贴。",
+     "occurred_at": "2026-09-23T11:22:00+08:00",
+     "session_id": "s-trv.048",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.049",
+     "account_id": "eval-pool-owner",
+     "text": "我今天去书店翻了翻新书。",
+     "occurred_at": "2026-09-12T12:03:00+08:00",
+     "session_id": "s-trv.049",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.050",
+     "account_id": "eval-pool-owner",
+     "text": "我今天去理发店剪了个头发。",
+     "occurred_at": "2026-09-11T08:28:00+08:00",
+     "session_id": "s-trv.050",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.051",
+     "account_id": "eval-pool-owner",
+     "text": "我今天去修鞋摊换了一个鞋跟。",
+     "occurred_at": "2026-08-22T08:16:00+08:00",
+     "session_id": "s-trv.051",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.052",
+     "account_id": "eval-pool-owner",
+     "text": "我今天去打印店打印了几页材料。",
+     "occurred_at": "2026-07-06T18:42:00+08:00",
+     "session_id": "s-trv.052",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.053",
+     "account_id": "eval-pool-owner",
+     "text": "我今天去洗衣店取回了洗好的被子。",
+     "occurred_at": "2026-07-06T08:48:00+08:00",
+     "session_id": "s-trv.053",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.054",
+     "account_id": "eval-pool-owner",
+     "text": "我今天去五金店配了一把螺丝刀。",
+     "occurred_at": "2026-08-19T10:32:00+08:00",
+     "session_id": "s-trv.054",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.055",
+     "account_id": "eval-pool-owner",
+     "text": "我今天去花店买了一束百合。",
+     "occurred_at": "2026-06-27T13:50:00+08:00",
+     "session_id": "s-trv.055",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.056",
+     "account_id": "eval-pool-owner",
+     "text": "我今天去眼镜店调了一下镜架。",
+     "occurred_at": "2026-07-02T13:43:00+08:00",
+     "session_id": "s-trv.056",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.057",
+     "account_id": "eval-pool-owner",
+     "text": "我今天去照相馆拍了张证件照。",
+     "occurred_at": "2026-09-16T10:48:00+08:00",
+     "session_id": "s-trv.057",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.058",
+     "account_id": "eval-pool-owner",
+     "text": "我今天去超市买了一袋大米。",
+     "occurred_at": "2026-08-12T09:23:00+08:00",
+     "session_id": "s-trv.058",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.059",
+     "account_id": "eval-pool-owner",
+     "text": "我今天去便利店买了瓶酱油。",
+     "occurred_at": "2026-06-02T08:52:00+08:00",
+     "session_id": "s-trv.059",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.060",
+     "account_id": "eval-pool-owner",
+     "text": "我今天去家具城看了看新沙发。",
+     "occurred_at": "2026-09-26T14:59:00+08:00",
+     "session_id": "s-trv.060",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.061",
+     "account_id": "eval-pool-owner",
+     "text": "我今天去电器城问了下冰箱的价格。",
+     "occurred_at": "2026-07-23T17:54:00+08:00",
+     "session_id": "s-trv.061",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.062",
+     "account_id": "eval-pool-owner",
+     "text": "我今天去公交站等了二十分钟的车。",
+     "occurred_at": "2026-09-06T13:16:00+08:00",
+     "session_id": "s-trv.062",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.063",
+     "account_id": "eval-pool-owner",
+     "text": "我今天去小区物业交了这个季度的物业费。",
+     "occurred_at": "2026-06-21T17:26:00+08:00",
+     "session_id": "s-trv.063",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.064",
+     "account_id": "eval-pool-owner",
+     "text": "我今天去快递站取了个包裹。",
+     "occurred_at": "2026-07-28T11:57:00+08:00",
+     "session_id": "s-trv.064",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.065",
+     "account_id": "eval-pool-owner",
+     "text": "昨晚我看了一集纪录片。",
+     "occurred_at": "2026-08-16T18:46:00+08:00",
+     "session_id": "s-trv.065",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.066",
+     "account_id": "eval-pool-owner",
+     "text": "昨晚我看了一部老电影。",
+     "occurred_at": "2026-08-15T17:34:00+08:00",
+     "session_id": "s-trv.066",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.067",
+     "account_id": "eval-pool-owner",
+     "text": "昨晚我看了一档综艺节目。",
+     "occurred_at": "2026-09-02T11:23:00+08:00",
+     "session_id": "s-trv.067",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.068",
+     "account_id": "eval-pool-owner",
+     "text": "昨晚我看了一集情景喜剧。",
+     "occurred_at": "2026-09-10T11:16:00+08:00",
+     "session_id": "s-trv.068",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.069",
+     "account_id": "eval-pool-owner",
+     "text": "昨晚我看了一场戏曲晚会。",
+     "occurred_at": "2026-08-29T21:59:00+08:00",
+     "session_id": "s-trv.069",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.070",
+     "account_id": "eval-pool-owner",
+     "text": "昨晚我看了一场体育比赛。",
+     "occurred_at": "2026-07-20T21:16:00+08:00",
+     "session_id": "s-trv.070",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.071",
+     "account_id": "eval-pool-owner",
+     "text": "昨晚我看了一档科普节目。",
+     "occurred_at": "2026-08-11T08:17:00+08:00",
+     "session_id": "s-trv.071",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.072",
+     "account_id": "eval-pool-owner",
+     "text": "昨晚我看了一档谈话节目。",
+     "occurred_at": "2026-09-25T21:25:00+08:00",
+     "session_id": "s-trv.072",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.073",
+     "account_id": "eval-pool-owner",
+     "text": "昨晚我看了一档美食节目。",
+     "occurred_at": "2026-08-21T11:38:00+08:00",
+     "session_id": "s-trv.073",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.074",
+     "account_id": "eval-pool-owner",
+     "text": "昨晚我看了一档旅游节目。",
+     "occurred_at": "2026-09-02T09:41:00+08:00",
+     "session_id": "s-trv.074",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.075",
+     "account_id": "eval-pool-owner",
+     "text": "昨晚我看了一集悬疑剧。",
+     "occurred_at": "2026-08-20T17:58:00+08:00",
+     "session_id": "s-trv.075",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.076",
+     "account_id": "eval-pool-owner",
+     "text": "昨晚我看了一集动物世界。",
+     "occurred_at": "2026-07-12T20:40:00+08:00",
+     "session_id": "s-trv.076",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.077",
+     "account_id": "eval-pool-owner",
+     "text": "我今天刷了一会儿短视频。",
+     "occurred_at": "2026-08-14T16:52:00+08:00",
+     "session_id": "s-trv.077",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.078",
+     "account_id": "eval-pool-owner",
+     "text": "我下午听了半小时收音机里的新闻。",
+     "occurred_at": "2026-09-19T08:34:00+08:00",
+     "session_id": "s-trv.078",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.079",
+     "account_id": "eval-pool-owner",
+     "text": "我今天翻了翻旧相册。",
+     "occurred_at": "2026-09-25T12:20:00+08:00",
+     "session_id": "s-trv.079",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.080",
+     "account_id": "eval-pool-owner",
+     "text": "小区门口的保洁阿姨今天把旧家具搬了出来。",
+     "occurred_at": "2026-08-23T09:34:00+08:00",
+     "session_id": "s-trv.080",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.081",
+     "account_id": "eval-pool-owner",
+     "text": "小区门口的大妈今天搬家了。",
+     "occurred_at": "2026-06-15T20:07:00+08:00",
+     "session_id": "s-trv.081",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.082",
+     "account_id": "eval-pool-owner",
+     "text": "对门的大妈今天在修水管。",
+     "occurred_at": "2026-07-12T18:21:00+08:00",
+     "session_id": "s-trv.082",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.083",
+     "account_id": "eval-pool-owner",
+     "text": "小区门口的保洁阿姨今天在阳台上晒被子。",
+     "occurred_at": "2026-08-05T15:13:00+08:00",
+     "session_id": "s-trv.083",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.084",
+     "account_id": "eval-pool-owner",
+     "text": "对门的小伙子今天养的花开了。",
+     "occurred_at": "2026-09-21T20:44:00+08:00",
+     "session_id": "s-trv.084",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.085",
+     "account_id": "eval-pool-owner",
+     "text": "楼上的大叔今天在门口遛弯。",
+     "occurred_at": "2026-06-19T12:20:00+08:00",
+     "session_id": "s-trv.085",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.086",
+     "account_id": "eval-pool-owner",
+     "text": "三楼的保洁阿姨今天在门口遛弯。",
+     "occurred_at": "2026-07-21T15:49:00+08:00",
+     "session_id": "s-trv.086",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.087",
+     "account_id": "eval-pool-owner",
+     "text": "对门的小伙子今天在门口遛弯。",
+     "occurred_at": "2026-07-10T10:08:00+08:00",
+     "session_id": "s-trv.087",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.088",
+     "account_id": "eval-pool-owner",
+     "text": "五楼的住户今天把旧家具搬了出来。",
+     "occurred_at": "2026-07-01T20:54:00+08:00",
+     "session_id": "s-trv.088",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.089",
+     "account_id": "eval-pool-owner",
+     "text": "二楼的一家人今天在修水管。",
+     "occurred_at": "2026-07-03T08:07:00+08:00",
+     "session_id": "s-trv.089",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.090",
+     "account_id": "eval-pool-owner",
+     "text": "对门的一家人今天在楼道里和人聊天。",
+     "occurred_at": "2026-08-16T09:24:00+08:00",
+     "session_id": "s-trv.090",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.091",
+     "account_id": "eval-pool-owner",
+     "text": "对门的一家人今天把旧家具搬了出来。",
+     "occurred_at": "2026-08-15T18:34:00+08:00",
+     "session_id": "s-trv.091",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.092",
+     "account_id": "eval-pool-owner",
+     "text": "隔壁单元的保洁阿姨今天在修水管。",
+     "occurred_at": "2026-09-22T10:49:00+08:00",
+     "session_id": "s-trv.092",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.093",
+     "account_id": "eval-pool-owner",
+     "text": "二楼的保洁阿姨今天把旧家具搬了出来。",
+     "occurred_at": "2026-06-24T08:53:00+08:00",
+     "session_id": "s-trv.093",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.094",
+     "account_id": "eval-pool-owner",
+     "text": "楼上的保洁阿姨今天在阳台上晒被子。",
+     "occurred_at": "2026-09-05T20:12:00+08:00",
+     "session_id": "s-trv.094",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.095",
+     "account_id": "eval-pool-owner",
+     "text": "隔壁单元的快递员今天在门口遛弯。",
+     "occurred_at": "2026-07-01T08:10:00+08:00",
+     "session_id": "s-trv.095",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.096",
+     "account_id": "eval-pool-owner",
+     "text": "对门的快递员今天在阳台上晒被子。",
+     "occurred_at": "2026-07-25T12:52:00+08:00",
+     "session_id": "s-trv.096",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.097",
+     "account_id": "eval-pool-owner",
+     "text": "七楼的快递员今天搬家了。",
+     "occurred_at": "2026-09-04T09:45:00+08:00",
+     "session_id": "s-trv.097",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.098",
+     "account_id": "eval-pool-owner",
+     "text": "三楼的一家人今天养的花开了。",
+     "occurred_at": "2026-07-29T08:35:00+08:00",
+     "session_id": "s-trv.098",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.099",
+     "account_id": "eval-pool-owner",
+     "text": "七楼的一家人今天把旧家具搬了出来。",
+     "occurred_at": "2026-07-07T14:02:00+08:00",
+     "session_id": "s-trv.099",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.100",
+     "account_id": "eval-pool-owner",
+     "text": "今天我一共走了五千多步。",
+     "occurred_at": "2026-08-17T08:59:00+08:00",
+     "session_id": "s-trv.100",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.101",
+     "account_id": "eval-pool-owner",
+     "text": "今天我一共走了六千多步。",
+     "occurred_at": "2026-09-23T09:15:00+08:00",
+     "session_id": "s-trv.101",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.102",
+     "account_id": "eval-pool-owner",
+     "text": "今天我一共走了八千多步。",
+     "occurred_at": "2026-09-15T15:52:00+08:00",
+     "session_id": "s-trv.102",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.103",
+     "account_id": "eval-pool-owner",
+     "text": "今天我一共走了一万多步。",
+     "occurred_at": "2026-09-18T12:29:00+08:00",
+     "session_id": "s-trv.103",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.104",
+     "account_id": "eval-pool-owner",
+     "text": "我做了二十分钟的拉伸。",
+     "occurred_at": "2026-08-17T15:43:00+08:00",
+     "session_id": "s-trv.104",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.105",
+     "account_id": "eval-pool-owner",
+     "text": "我做了二十分钟的八段锦。",
+     "occurred_at": "2026-08-06T13:07:00+08:00",
+     "session_id": "s-trv.105",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.106",
+     "account_id": "eval-pool-owner",
+     "text": "我做了二十分钟的瑜伽。",
+     "occurred_at": "2026-09-16T11:09:00+08:00",
+     "session_id": "s-trv.106",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.107",
+     "account_id": "eval-pool-owner",
+     "text": "我做了十分钟的甩手运动。",
+     "occurred_at": "2026-09-22T15:13:00+08:00",
+     "session_id": "s-trv.107",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.108",
+     "account_id": "eval-pool-owner",
+     "text": "我今天踢了一会儿毽子。",
+     "occurred_at": "2026-06-25T10:59:00+08:00",
+     "session_id": "s-trv.108",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.109",
+     "account_id": "eval-pool-owner",
+     "text": "我今天按摩了一下肩膀。",
+     "occurred_at": "2026-09-22T10:28:00+08:00",
+     "session_id": "s-trv.109",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.110",
+     "account_id": "eval-pool-owner",
+     "text": "我今天爬了六层楼梯。",
+     "occurred_at": "2026-08-09T09:02:00+08:00",
+     "session_id": "s-trv.110",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.111",
+     "account_id": "eval-pool-owner",
+     "text": "我今天拉伸了一下后背。",
+     "occurred_at": "2026-07-18T15:36:00+08:00",
+     "session_id": "s-trv.111",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.112",
+     "account_id": "eval-pool-owner",
+     "text": "我今天把窗帘洗了一遍。",
+     "occurred_at": "2026-07-16T12:01:00+08:00",
+     "session_id": "s-trv.112",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.113",
+     "account_id": "eval-pool-owner",
+     "text": "我今天把沙发套洗了一遍。",
+     "occurred_at": "2026-08-14T17:34:00+08:00",
+     "session_id": "s-trv.113",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.114",
+     "account_id": "eval-pool-owner",
+     "text": "我今天把床单换了一下。",
+     "occurred_at": "2026-06-14T16:12:00+08:00",
+     "session_id": "s-trv.114",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.115",
+     "account_id": "eval-pool-owner",
+     "text": "我今天把冰箱擦了一遍。",
+     "occurred_at": "2026-06-12T18:07:00+08:00",
+     "session_id": "s-trv.115",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.116",
+     "account_id": "eval-pool-owner",
+     "text": "我今天把微波炉擦了一遍。",
+     "occurred_at": "2026-09-28T13:40:00+08:00",
+     "session_id": "s-trv.116",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.117",
+     "account_id": "eval-pool-owner",
+     "text": "我今天把书架整理了一下。",
+     "occurred_at": "2026-09-29T08:58:00+08:00",
+     "session_id": "s-trv.117",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.118",
+     "account_id": "eval-pool-owner",
+     "text": "我今天把地毯吸了一遍。",
+     "occurred_at": "2026-06-26T19:28:00+08:00",
+     "session_id": "s-trv.118",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.119",
+     "account_id": "eval-pool-owner",
+     "text": "我今天把抽油烟机擦了一遍。",
+     "occurred_at": "2026-09-25T16:58:00+08:00",
+     "session_id": "s-trv.119",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.120",
+     "account_id": "eval-pool-owner",
+     "text": "我今天把电风扇擦了一遍。",
+     "occurred_at": "2026-07-13T13:54:00+08:00",
+     "session_id": "s-trv.120",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.121",
+     "account_id": "eval-pool-owner",
+     "text": "我今天把餐桌擦了一遍。",
+     "occurred_at": "2026-06-10T17:44:00+08:00",
+     "session_id": "s-trv.121",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.122",
+     "account_id": "eval-pool-owner",
+     "text": "我今天把洗手台擦了一遍。",
+     "occurred_at": "2026-06-19T10:51:00+08:00",
+     "session_id": "s-trv.122",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.123",
+     "account_id": "eval-pool-owner",
+     "text": "我今天把衣柜整理了一下。",
+     "occurred_at": "2026-08-04T10:45:00+08:00",
+     "session_id": "s-trv.123",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.124",
+     "account_id": "eval-pool-owner",
+     "text": "我今天把厨房打扫了一下。",
+     "occurred_at": "2026-09-19T09:32:00+08:00",
+     "session_id": "s-trv.124",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.125",
+     "account_id": "eval-pool-owner",
+     "text": "我今天把卫生间刷了一遍。",
+     "occurred_at": "2026-07-20T12:51:00+08:00",
+     "session_id": "s-trv.125",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.126",
+     "account_id": "eval-pool-owner",
+     "text": "我今天和姑妈通了五分钟电话。",
+     "occurred_at": "2026-09-15T20:07:00+08:00",
+     "session_id": "s-trv.126",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.127",
+     "account_id": "eval-pool-owner",
+     "text": "我今天和姑妈通了十五分钟电话。",
+     "occurred_at": "2026-07-26T14:19:00+08:00",
+     "session_id": "s-trv.127",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.128",
+     "account_id": "eval-pool-owner",
+     "text": "我今天和大学班长通了四十分钟电话。",
+     "occurred_at": "2026-09-21T11:56:00+08:00",
+     "session_id": "s-trv.128",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.129",
+     "account_id": "eval-pool-owner",
+     "text": "我今天和表哥通了三十分钟电话。",
+     "occurred_at": "2026-06-28T11:20:00+08:00",
+     "session_id": "s-trv.129",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.130",
+     "account_id": "eval-pool-owner",
+     "text": "我今天和姑妈通了十分钟电话。",
+     "occurred_at": "2026-08-22T11:49:00+08:00",
+     "session_id": "s-trv.130",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.131",
+     "account_id": "eval-pool-owner",
+     "text": "我今天和表哥通了四十分钟电话。",
+     "occurred_at": "2026-08-25T13:44:00+08:00",
+     "session_id": "s-trv.131",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.132",
+     "account_id": "eval-pool-owner",
+     "text": "我今天和远房亲戚通了十分钟电话。",
+     "occurred_at": "2026-07-23T16:35:00+08:00",
+     "session_id": "s-trv.132",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.133",
+     "account_id": "eval-pool-owner",
+     "text": "我今天和表哥通了十分钟电话。",
+     "occurred_at": "2026-06-16T09:28:00+08:00",
+     "session_id": "s-trv.133",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.134",
+     "account_id": "eval-pool-owner",
+     "text": "我今天和二姨通了三十分钟电话。",
+     "occurred_at": "2026-09-24T16:32:00+08:00",
+     "session_id": "s-trv.134",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.135",
+     "account_id": "eval-pool-owner",
+     "text": "我今天和堂妹通了三十分钟电话。",
+     "occurred_at": "2026-08-16T10:15:00+08:00",
+     "session_id": "s-trv.135",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.136",
+     "account_id": "eval-pool-owner",
+     "text": "我觉得这几天的菜价有点贵。",
+     "occurred_at": "2026-07-07T11:02:00+08:00",
+     "session_id": "s-trv.136",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.137",
+     "account_id": "eval-pool-owner",
+     "text": "我觉得新换的窗帘挺好看。",
+     "occurred_at": "2026-07-23T17:03:00+08:00",
+     "session_id": "s-trv.137",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.138",
+     "account_id": "eval-pool-owner",
+     "text": "我觉得小区门口的早点摊味道不错。",
+     "occurred_at": "2026-07-30T15:33:00+08:00",
+     "session_id": "s-trv.138",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.139",
+     "account_id": "eval-pool-owner",
+     "text": "我觉得新买的拖鞋有点滑。",
+     "occurred_at": "2026-07-06T10:36:00+08:00",
+     "session_id": "s-trv.139",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.140",
+     "account_id": "eval-pool-owner",
+     "text": "我觉得小区新装的路灯很亮。",
+     "occurred_at": "2026-06-14T15:21:00+08:00",
+     "session_id": "s-trv.140",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.141",
+     "account_id": "eval-pool-owner",
+     "text": "我觉得这个牌子的酱油偏咸。",
+     "occurred_at": "2026-07-09T08:47:00+08:00",
+     "session_id": "s-trv.141",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.142",
+     "account_id": "eval-pool-owner",
+     "text": "我觉得新开的地铁线方便多了。",
+     "occurred_at": "2026-08-23T12:16:00+08:00",
+     "session_id": "s-trv.142",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.143",
+     "account_id": "eval-pool-owner",
+     "text": "我觉得这两天的空气有点干。",
+     "occurred_at": "2026-08-13T15:56:00+08:00",
+     "session_id": "s-trv.143",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.144",
+     "account_id": "eval-pool-owner",
+     "text": "我觉得社区新修的健身器材不错。",
+     "occurred_at": "2026-08-09T17:40:00+08:00",
+     "session_id": "s-trv.144",
+     "tier": "trivia"
+    },
+    {
+     "event_id": "trv.145",
+     "account_id": "eval-pool-owner",
+     "text": "我觉得楼道里的灯该换了。",
+     "occurred_at": "2026-08-05T15:15:00+08:00",
+     "session_id": "s-trv.145",
+     "tier": "trivia"
+    }
+   ],
+   "expected_memories": [
+    {
+     "key": "birthday.mom",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我妈妈的生日是农历三月初八"
+     ],
+     "source_event_ids": [
+      "birthday.mom"
+     ]
+    },
+    {
+     "key": "birthday.dad",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我爸爸的生日是十月二十号"
+     ],
+     "source_event_ids": [
+      "birthday.dad"
+     ]
+    },
+    {
+     "key": "birthday.spouse",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我爱人的生日是七月十五号"
+     ],
+     "source_event_ids": [
+      "birthday.spouse"
+     ]
+    },
+    {
+     "key": "birthday.brother",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我弟弟的生日是九月九号"
+     ],
+     "source_event_ids": [
+      "birthday.brother"
+     ]
+    },
+    {
+     "key": "birthday.son",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我儿子的生日在腊月二十三"
+     ],
+     "source_event_ids": [
+      "birthday.son"
+     ]
+    },
+    {
+     "key": "pets.cat",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我家养了一只橘猫，名字叫团团"
+     ],
+     "source_event_ids": [
+      "pets.cat"
+     ]
+    },
+    {
+     "key": "pets.fish",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "阳台的鱼缸里养着五条金鱼"
+     ],
+     "source_event_ids": [
+      "pets.fish"
+     ]
+    },
+    {
+     "key": "pets.dog",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "楼下邻居家有条金毛，叫大黄"
+     ],
+     "source_event_ids": [
+      "pets.dog"
+     ]
+    },
+    {
+     "key": "pets.bird",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我爸在老家养了一只八哥"
+     ],
+     "source_event_ids": [
+      "pets.bird"
+     ]
+    },
+    {
+     "key": "pets.rabbit",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我小时候养过一只白兔子"
+     ],
+     "source_event_ids": [
+      "pets.rabbit"
+     ]
+    },
+    {
+     "key": "diet.coriander",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我吃饭的时候不要香菜"
+     ],
+     "source_event_ids": [
+      "diet.coriander"
+     ]
+    },
+    {
+     "key": "diet.seafood",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我一吃虾蟹身上就起红疹"
+     ],
+     "source_event_ids": [
+      "diet.seafood"
+     ]
+    },
+    {
+     "key": "diet.spicy",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我特别爱吃辣，无辣不欢"
+     ],
+     "source_event_ids": [
+      "diet.spicy"
+     ]
+    },
+    {
+     "key": "diet.offal",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我从来不碰动物内脏"
+     ],
+     "source_event_ids": [
+      "diet.offal"
+     ]
+    },
+    {
+     "key": "diet.breakfast",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我早饭习惯来碗小米粥配咸菜"
+     ],
+     "source_event_ids": [
+      "diet.breakfast"
+     ]
+    },
+    {
+     "key": "health.bp",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我血压偏高，每天早上要吃一片降压药"
+     ],
+     "source_event_ids": [
+      "health.bp"
+     ]
+    },
+    {
+     "key": "health.waist",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我腰椎间盘突出，不能提重物"
+     ],
+     "source_event_ids": [
+      "health.waist"
+     ]
+    },
+    {
+     "key": "health.eye",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我左眼有轻微的白内障"
+     ],
+     "source_event_ids": [
+      "health.eye"
+     ]
+    },
+    {
+     "key": "health.sleep",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我睡不好的时候会吃半片褪黑素"
+     ],
+     "source_event_ids": [
+      "health.sleep"
+     ]
+    },
+    {
+     "key": "health.vaccine",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我每年十月去社区打流感疫苗"
+     ],
+     "source_event_ids": [
+      "health.vaccine"
+     ]
+    },
+    {
+     "key": "residence.hometown",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我老家在江西赣州的一个小县城"
+     ],
+     "source_event_ids": [
+      "residence.hometown"
+     ]
+    },
+    {
+     "key": "residence.current",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我现在住在南京的鼓楼区"
+     ],
+     "source_event_ids": [
+      "residence.current"
+     ]
+    },
+    {
+     "key": "residence.college",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我大学是在武汉读的"
+     ],
+     "source_event_ids": [
+      "residence.college"
+     ]
+    },
+    {
+     "key": "residence.worked",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我刚毕业时在广州工作过三年"
+     ],
+     "source_event_ids": [
+      "residence.worked"
+     ]
+    },
+    {
+     "key": "residence.trip-plan",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我打算明年带儿子去哈尔滨看冰雕"
+     ],
+     "source_event_ids": [
+      "residence.trip-plan"
+     ]
+    },
+    {
+     "key": "hobbies.photo",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我周末喜欢背着相机去公园拍花"
+     ],
+     "source_event_ids": [
+      "hobbies.photo"
+     ]
+    },
+    {
+     "key": "hobbies.chess",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我每周三晚上跟老张下象棋"
+     ],
+     "source_event_ids": [
+      "hobbies.chess"
+     ]
+    },
+    {
+     "key": "hobbies.taichi",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我早上六点在小区里练太极拳"
+     ],
+     "source_event_ids": [
+      "hobbies.taichi"
+     ]
+    },
+    {
+     "key": "hobbies.opera",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我爱听越剧，尤其是《红楼梦》选段"
+     ],
+     "source_event_ids": [
+      "hobbies.opera"
+     ]
+    },
+    {
+     "key": "hobbies.stamp",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我从小学起就集邮，收了几百张"
+     ],
+     "source_event_ids": [
+      "hobbies.stamp"
+     ]
+    },
+    {
+     "key": "family-news.sister-job",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我姐姐在深圳做程序员"
+     ],
+     "source_event_ids": [
+      "family-news.sister-job"
+     ]
+    },
+    {
+     "key": "family-news.brother-study",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我弟弟刚考上了北京的研究生"
+     ],
+     "source_event_ids": [
+      "family-news.brother-study"
+     ]
+    },
+    {
+     "key": "family-news.spouse-job",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我爱人在一家医院当护士"
+     ],
+     "source_event_ids": [
+      "family-news.spouse-job"
+     ]
+    },
+    {
+     "key": "family-news.mom-surgery",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我妈妈过些天要做白内障手术"
+     ],
+     "source_event_ids": [
+      "family-news.mom-surgery"
+     ]
+    },
+    {
+     "key": "family-news.son-school",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我儿子在读小学四年级"
+     ],
+     "source_event_ids": [
+      "family-news.son-school"
+     ]
+    },
+    {
+     "key": "home-items.meds-box",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "药箱在客厅电视柜的最下面一层"
+     ],
+     "source_event_ids": [
+      "home-items.meds-box"
+     ]
+    },
+    {
+     "key": "home-items.docs",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "户口本和房产证放在卧室衣柜的保险盒里"
+     ],
+     "source_event_ids": [
+      "home-items.docs"
+     ]
+    },
+    {
+     "key": "home-items.umbrella",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "雨伞挂在大门后面的挂钩上"
+     ],
+     "source_event_ids": [
+      "home-items.umbrella"
+     ]
+    },
+    {
+     "key": "home-items.charger",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "充电器都收在书房书桌的抽屉里"
+     ],
+     "source_event_ids": [
+      "home-items.charger"
+     ]
+    },
+    {
+     "key": "home-items.keys",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "备用钥匙放在玄关鞋柜的第二格"
+     ],
+     "source_event_ids": [
+      "home-items.keys"
+     ]
+    },
+    {
+     "key": "work.commute",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我上班骑电动车，二十分钟就到"
+     ],
+     "source_event_ids": [
+      "work.commute"
+     ]
+    },
+    {
+     "key": "work.award",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "去年我评上了区级优秀教师"
+     ],
+     "source_event_ids": [
+      "work.award"
+     ]
+    },
+    {
+     "key": "work.colleague",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "同办公室的李老师是我最好的同事"
+     ],
+     "source_event_ids": [
+      "work.colleague"
+     ]
+    },
+    {
+     "key": "work.salary-day",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "学校每月十五号发工资"
+     ],
+     "source_event_ids": [
+      "work.salary-day"
+     ]
+    },
+    {
+     "key": "work.years",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我已经当了十八年班主任"
+     ],
+     "source_event_ids": [
+      "work.years"
+     ]
+    },
+    {
+     "key": "people.neighbor",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "楼下的王阿姨经常帮我收快递"
+     ],
+     "source_event_ids": [
+      "people.neighbor"
+     ]
+    },
+    {
+     "key": "people.classmate",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "大学同学老周在杭州开了家茶馆"
+     ],
+     "source_event_ids": [
+      "people.classmate"
+     ]
+    },
+    {
+     "key": "people.bestfriend",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我最好的闺蜜叫小林，我们认识二十年了"
+     ],
+     "source_event_ids": [
+      "people.bestfriend"
+     ]
+    },
+    {
+     "key": "people.mentor",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我刚工作时的师傅是刘老师"
+     ],
+     "source_event_ids": [
+      "people.mentor"
+     ]
+    },
+    {
+     "key": "routine.bed",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我晚上十点前必须上床睡觉"
+     ],
+     "source_event_ids": [
+      "routine.bed"
+     ]
+    },
+    {
+     "key": "routine.nap",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我午饭后一定要睡半个小时"
+     ],
+     "source_event_ids": [
+      "routine.nap"
+     ]
+    },
+    {
+     "key": "routine.water",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我每天要喝够八杯水"
+     ],
+     "source_event_ids": [
+      "routine.water"
+     ]
+    },
+    {
+     "key": "routine.market",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我每周日下午固定去菜市场买菜"
+     ],
+     "source_event_ids": [
+      "routine.market"
+     ]
+    },
+    {
+     "key": "routine.wake",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我每天早上六点起床，先去小区散步"
+     ],
+     "source_event_ids": [
+      "routine.wake"
+     ]
+    },
+    {
+     "key": "entertainment.singer",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我最爱听邓丽君的老歌"
+     ],
+     "source_event_ids": [
+      "entertainment.singer"
+     ]
+    },
+    {
+     "key": "entertainment.horror",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我不喜欢看恐怖片，会做噩梦"
+     ],
+     "source_event_ids": [
+      "entertainment.horror"
+     ]
+    },
+    {
+     "key": "entertainment.novel",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我最近在读《平凡的世界》"
+     ],
+     "source_event_ids": [
+      "entertainment.novel"
+     ]
+    },
+    {
+     "key": "entertainment.radio",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我开车的时候喜欢听交通广播"
+     ],
+     "source_event_ids": [
+      "entertainment.radio"
+     ]
+    },
+    {
+     "key": "feelings.height",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我恐高，站在阳台边都会腿软"
+     ],
+     "source_event_ids": [
+      "feelings.height"
+     ]
+    },
+    {
+     "key": "feelings.rain-knee",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "一到阴雨天我的膝盖就隐隐作痛"
+     ],
+     "source_event_ids": [
+      "feelings.rain-knee"
+     ]
+    },
+    {
+     "key": "feelings.dark",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我小时候怕黑，现在睡觉还要留盏小灯"
+     ],
+     "source_event_ids": [
+      "feelings.dark"
+     ]
+    },
+    {
+     "key": "feelings.stage",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "每次公开课之前我都会紧张得睡不着"
+     ],
+     "source_event_ids": [
+      "feelings.stage"
+     ]
+    },
+    {
+     "key": "feelings.worry-son",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我总担心儿子在学校被人欺负"
+     ],
+     "source_event_ids": [
+      "feelings.worry-son"
+     ]
+    },
+    {
+     "key": "shopping.cotton",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我买衣服只买纯棉的，化纤的穿着起疹子"
+     ],
+     "source_event_ids": [
+      "shopping.cotton"
+     ]
+    },
+    {
+     "key": "shopping.budget",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我每个月给爸妈汇两千块钱"
+     ],
+     "source_event_ids": [
+      "shopping.budget"
+     ]
+    },
+    {
+     "key": "shopping.shoes",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我穿鞋子只穿三十七码的"
+     ],
+     "source_event_ids": [
+      "shopping.shoes"
+     ]
+    },
+    {
+     "key": "shopping.compare",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我买东西之前总要先比价"
+     ],
+     "source_event_ids": [
+      "shopping.compare"
+     ]
+    },
+    {
+     "key": "shopping.fruit-shop",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我买水果习惯去楼下的水果店"
+     ],
+     "source_event_ids": [
+      "shopping.fruit-shop"
+     ]
+    },
+    {
+     "key": "transport.train",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "回老家我一般坐高铁，四个小时就到"
+     ],
+     "source_event_ids": [
+      "transport.train"
+     ]
+    },
+    {
+     "key": "transport.plane",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我坐飞机会耳鸣，所以尽量不飞"
+     ],
+     "source_event_ids": [
+      "transport.plane"
+     ]
+    },
+    {
+     "key": "transport.taxi",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "打车的话我只用滴滴，不用其他软件"
+     ],
+     "source_event_ids": [
+      "transport.taxi"
+     ]
+    },
+    {
+     "key": "transport.subway",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我出门宁愿坐地铁，也不愿意坐公交，因为晕车"
+     ],
+     "source_event_ids": [
+      "transport.subway"
+     ]
+    },
+    {
+     "key": "tech.phone",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我用的是华为手机，字体调到了最大"
+     ],
+     "source_event_ids": [
+      "tech.phone"
+     ]
+    },
+    {
+     "key": "tech.wechat",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我只会用微信发语音，不会打字"
+     ],
+     "source_event_ids": [
+      "tech.wechat"
+     ]
+    },
+    {
+     "key": "tech.payment",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我从来不敢用手机支付，都付现金"
+     ],
+     "source_event_ids": [
+      "tech.payment"
+     ]
+    },
+    {
+     "key": "tech.tablet",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我的平板电脑主要用来追剧"
+     ],
+     "source_event_ids": [
+      "tech.tablet"
+     ]
+    },
+    {
+     "key": "tech.speaker",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "客厅里的智能音箱是儿子帮我装的"
+     ],
+     "source_event_ids": [
+      "tech.speaker"
+     ]
+    },
+    {
+     "key": "festivals.spring",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "春节我们家一定要包饺子，包芹菜猪肉馅"
+     ],
+     "source_event_ids": [
+      "festivals.spring"
+     ]
+    },
+    {
+     "key": "festivals.qingming",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "清明节我们全家回赣州扫墓"
+     ],
+     "source_event_ids": [
+      "festivals.qingming"
+     ]
+    },
+    {
+     "key": "festivals.birthday-custom",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我过生日只吃一碗长寿面，不办酒席"
+     ],
+     "source_event_ids": [
+      "festivals.birthday-custom"
+     ]
+    },
+    {
+     "key": "festivals.midautumn",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "中秋节我会给爸妈送月饼"
+     ],
+     "source_event_ids": [
+      "festivals.midautumn"
+     ]
+    },
+    {
+     "key": "milestones.married",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我和爱人是2008年结的婚"
+     ],
+     "source_event_ids": [
+      "milestones.married"
+     ]
+    },
+    {
+     "key": "milestones.house",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我们2012年在南京买了现在这套房子"
+     ],
+     "source_event_ids": [
+      "milestones.house"
+     ]
+    },
+    {
+     "key": "milestones.dad-retire",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我爸爸2016年从工厂退休"
+     ],
+     "source_event_ids": [
+      "milestones.dad-retire"
+     ]
+    },
+    {
+     "key": "milestones.graduate",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我是2004年大学毕业的"
+     ],
+     "source_event_ids": [
+      "milestones.graduate"
+     ]
+    },
+    {
+     "key": "values.honesty",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我教育儿子做人最重要的是诚实"
+     ],
+     "source_event_ids": [
+      "values.honesty"
+     ]
+    },
+    {
+     "key": "values.volunteer",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我每个月去社区做一次志愿服务"
+     ],
+     "source_event_ids": [
+      "values.volunteer"
+     ]
+    },
+    {
+     "key": "values.punctual",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我约人从来不迟到，宁愿早到半小时"
+     ],
+     "source_event_ids": [
+      "values.punctual"
+     ]
+    },
+    {
+     "key": "values.bags",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我用过的塑料袋都会洗干净再用"
+     ],
+     "source_event_ids": [
+      "values.bags"
+     ]
+    },
+    {
+     "key": "values.motto",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我们家的家训是勤俭持家"
+     ],
+     "source_event_ids": [
+      "values.motto"
+     ]
+    },
+    {
+     "key": "personal-facts.blood",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我是O型血"
+     ],
+     "source_event_ids": [
+      "personal-facts.blood"
+     ]
+    },
+    {
+     "key": "personal-facts.lefty",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我是左撇子，写字用左手"
+     ],
+     "source_event_ids": [
+      "personal-facts.lefty"
+     ]
+    },
+    {
+     "key": "personal-facts.glasses",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我戴的是近视眼镜，度数三百五十度"
+     ],
+     "source_event_ids": [
+      "personal-facts.glasses"
+     ]
+    },
+    {
+     "key": "personal-facts.penicillin",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我对青霉素过敏"
+     ],
+     "source_event_ids": [
+      "personal-facts.penicillin"
+     ]
+    },
+    {
+     "key": "personal-facts.zodiac",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我属兔"
+     ],
+     "source_event_ids": [
+      "personal-facts.zodiac"
+     ]
+    },
+    {
+     "key": "personal-facts.height",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我身高一米六五"
+     ],
+     "source_event_ids": [
+      "personal-facts.height"
+     ]
+    },
+    {
+     "key": "milestones.mom-retire",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我妈妈2013年从小学退休"
+     ],
+     "source_event_ids": [
+      "milestones.mom-retire"
+     ]
+    },
+    {
+     "key": "milestones.son-enroll",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我儿子2021年上的小学"
+     ],
+     "source_event_ids": [
+      "milestones.son-enroll"
+     ]
+    },
+    {
+     "key": "people.doctor",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "社区的赵医生一直给我量血压"
+     ],
+     "source_event_ids": [
+      "people.doctor"
+     ]
+    },
+    {
+     "key": "people.cardgame",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我的麻将搭子是老李和老张"
+     ],
+     "source_event_ids": [
+      "people.cardgame"
+     ]
+    },
+    {
+     "key": "entertainment.cartoon",
+     "account_id": "eval-pool-owner",
+     "kind": "claim",
+     "memory_kind": "semantic",
+     "match_all": [
+      "我儿子爱看动画片《熊出没》"
+     ],
+     "source_event_ids": [
+      "entertainment.cartoon"
+     ]
+    }
+   ],
+   "queries": [
+    {
+     "query_id": "birthday.p1",
+     "account_id": "eval-pool-owner",
+     "text": "母亲是哪天出生的？",
+     "mode": "search",
+     "relevance": {
+      "birthday.mom": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "birthday"
+    },
+    {
+     "query_id": "birthday.p2",
+     "account_id": "eval-pool-owner",
+     "text": "父亲的诞辰是哪天？",
+     "mode": "search",
+     "relevance": {
+      "birthday.dad": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "birthday"
+    },
+    {
+     "query_id": "birthday.p3",
+     "account_id": "eval-pool-owner",
+     "text": "另一半是哪天出生的？",
+     "mode": "search",
+     "relevance": {
+      "birthday.spouse": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "birthday"
+    },
+    {
+     "query_id": "birthday.p4",
+     "account_id": "eval-pool-owner",
+     "text": "老弟是哪天来到世上的？",
+     "mode": "search",
+     "relevance": {
+      "birthday.brother": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "birthday"
+    },
+    {
+     "query_id": "birthday.l1",
+     "account_id": "eval-pool-owner",
+     "text": "我儿子的生日是哪天？",
+     "mode": "search",
+     "relevance": {
+      "birthday.son": 3
+     },
+     "tags": [
+      "lexical"
+     ],
+     "cluster": "birthday"
+    },
+    {
+     "query_id": "pets.p1",
+     "account_id": "eval-pool-owner",
+     "text": "家里的橘色小猫怎么称呼？",
+     "mode": "search",
+     "relevance": {
+      "pets.cat": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "pets"
+    },
+    {
+     "query_id": "pets.p2",
+     "account_id": "eval-pool-owner",
+     "text": "水族箱里是什么品种？",
+     "mode": "search",
+     "relevance": {
+      "pets.fish": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "pets"
+    },
+    {
+     "query_id": "pets.p3",
+     "account_id": "eval-pool-owner",
+     "text": "隔壁楼层住户养的大型犬叫什么？",
+     "mode": "search",
+     "relevance": {
+      "pets.dog": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "pets"
+    },
+    {
+     "query_id": "pets.p4",
+     "account_id": "eval-pool-owner",
+     "text": "父亲在故乡饲养的会学舌的鸟是什么？",
+     "mode": "search",
+     "relevance": {
+      "pets.bird": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "pets"
+    },
+    {
+     "query_id": "pets.l1",
+     "account_id": "eval-pool-owner",
+     "text": "我小时候养过什么？",
+     "mode": "search",
+     "relevance": {
+      "pets.rabbit": 3
+     },
+     "tags": [
+      "lexical"
+     ],
+     "cluster": "pets"
+    },
+    {
+     "query_id": "diet.p1",
+     "account_id": "eval-pool-owner",
+     "text": "点外卖时哪种调味的叶子要提前拒绝？",
+     "mode": "search",
+     "relevance": {
+      "diet.coriander": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "diet"
+    },
+    {
+     "query_id": "diet.p2",
+     "account_id": "eval-pool-owner",
+     "text": "吃了什么海味会浑身发痒？",
+     "mode": "search",
+     "relevance": {
+      "diet.seafood": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "diet"
+    },
+    {
+     "query_id": "diet.p3",
+     "account_id": "eval-pool-owner",
+     "text": "嗜辣程度怎么样？",
+     "mode": "search",
+     "relevance": {
+      "diet.spicy": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "diet"
+    },
+    {
+     "query_id": "diet.p4",
+     "account_id": "eval-pool-owner",
+     "text": "不沾哪一类下水？",
+     "mode": "search",
+     "relevance": {
+      "diet.offal": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "diet"
+    },
+    {
+     "query_id": "diet.l1",
+     "account_id": "eval-pool-owner",
+     "text": "我早饭一般吃什么？",
+     "mode": "search",
+     "relevance": {
+      "diet.breakfast": 3
+     },
+     "tags": [
+      "lexical"
+     ],
+     "cluster": "diet"
+    },
+    {
+     "query_id": "health.p1",
+     "account_id": "eval-pool-owner",
+     "text": "晨起服的药是治什么的？",
+     "mode": "search",
+     "relevance": {
+      "health.bp": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "health"
+    },
+    {
+     "query_id": "health.p2",
+     "account_id": "eval-pool-owner",
+     "text": "搬东西方面身体有什么限制？",
+     "mode": "search",
+     "relevance": {
+      "health.waist": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "health"
+    },
+    {
+     "query_id": "health.p3",
+     "account_id": "eval-pool-owner",
+     "text": "视力方面哪只眼睛有毛病？",
+     "mode": "search",
+     "relevance": {
+      "health.eye": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "health"
+    },
+    {
+     "query_id": "health.p4",
+     "account_id": "eval-pool-owner",
+     "text": "睡眠不佳时的应对办法？",
+     "mode": "search",
+     "relevance": {
+      "health.sleep": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "health"
+    },
+    {
+     "query_id": "health.l1",
+     "account_id": "eval-pool-owner",
+     "text": "我每年什么时候打流感疫苗？",
+     "mode": "search",
+     "relevance": {
+      "health.vaccine": 3
+     },
+     "tags": [
+      "lexical"
+     ],
+     "cluster": "health"
+    },
+    {
+     "query_id": "residence.p1",
+     "account_id": "eval-pool-owner",
+     "text": "祖籍是哪个省份？",
+     "mode": "search",
+     "relevance": {
+      "residence.hometown": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "residence"
+    },
+    {
+     "query_id": "residence.p2",
+     "account_id": "eval-pool-owner",
+     "text": "目前的居所在哪座城市？",
+     "mode": "search",
+     "relevance": {
+      "residence.current": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "residence"
+    },
+    {
+     "query_id": "residence.p3",
+     "account_id": "eval-pool-owner",
+     "text": "高等教育阶段的求学城市是？",
+     "mode": "search",
+     "relevance": {
+      "residence.college": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "residence"
+    },
+    {
+     "query_id": "residence.p4",
+     "account_id": "eval-pool-owner",
+     "text": "初入职场落脚在哪座城市？",
+     "mode": "search",
+     "relevance": {
+      "residence.worked": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "residence"
+    },
+    {
+     "query_id": "residence.p5",
+     "account_id": "eval-pool-owner",
+     "text": "冬季出游的预定地是哪里？",
+     "mode": "search",
+     "relevance": {
+      "residence.trip-plan": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "residence"
+    },
+    {
+     "query_id": "residence.l1",
+     "account_id": "eval-pool-owner",
+     "text": "我大学在哪里读的？",
+     "mode": "search",
+     "relevance": {
+      "residence.college": 3
+     },
+     "tags": [
+      "lexical"
+     ],
+     "cluster": "residence"
+    },
+    {
+     "query_id": "hobbies.p1",
+     "account_id": "eval-pool-owner",
+     "text": "闲暇时用什么器材记录风景？",
+     "mode": "search",
+     "relevance": {
+      "hobbies.photo": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "hobbies"
+    },
+    {
+     "query_id": "hobbies.p2",
+     "account_id": "eval-pool-owner",
+     "text": "常玩的棋类游戏是什么？",
+     "mode": "search",
+     "relevance": {
+      "hobbies.chess": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "hobbies"
+    },
+    {
+     "query_id": "hobbies.p3",
+     "account_id": "eval-pool-owner",
+     "text": "晨练做的是哪种传统健身？",
+     "mode": "search",
+     "relevance": {
+      "hobbies.taichi": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "hobbies"
+    },
+    {
+     "query_id": "hobbies.p4",
+     "account_id": "eval-pool-owner",
+     "text": "喜欢欣赏哪类戏曲？",
+     "mode": "search",
+     "relevance": {
+      "hobbies.opera": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "hobbies"
+    },
+    {
+     "query_id": "hobbies.l1",
+     "account_id": "eval-pool-owner",
+     "text": "我集邮收了多少张？",
+     "mode": "search",
+     "relevance": {
+      "hobbies.stamp": 3
+     },
+     "tags": [
+      "lexical"
+     ],
+     "cluster": "hobbies"
+    },
+    {
+     "query_id": "family-news.p1",
+     "account_id": "eval-pool-owner",
+     "text": "谁从事软件开发工作？",
+     "mode": "search",
+     "relevance": {
+      "family-news.sister-job": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "family-news"
+    },
+    {
+     "query_id": "family-news.p2",
+     "account_id": "eval-pool-owner",
+     "text": "哪位亲人升入了更高的学府深造？",
+     "mode": "search",
+     "relevance": {
+      "family-news.brother-study": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "family-news"
+    },
+    {
+     "query_id": "family-news.p3",
+     "account_id": "eval-pool-owner",
+     "text": "另一半从事什么职业？",
+     "mode": "search",
+     "relevance": {
+      "family-news.spouse-job": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "family-news"
+    },
+    {
+     "query_id": "family-news.p4",
+     "account_id": "eval-pool-owner",
+     "text": "谁马上要动眼睛的刀？",
+     "mode": "search",
+     "relevance": {
+      "family-news.mom-surgery": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "family-news"
+    },
+    {
+     "query_id": "family-news.l1",
+     "account_id": "eval-pool-owner",
+     "text": "我儿子读几年级？",
+     "mode": "search",
+     "relevance": {
+      "family-news.son-school": 3
+     },
+     "tags": [
+      "lexical"
+     ],
+     "cluster": "family-news"
+    },
+    {
+     "query_id": "home-items.p1",
+     "account_id": "eval-pool-owner",
+     "text": "家里急救用品收在哪个位置？",
+     "mode": "search",
+     "relevance": {
+      "home-items.meds-box": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "home-items"
+    },
+    {
+     "query_id": "home-items.p2",
+     "account_id": "eval-pool-owner",
+     "text": "重要证件存放的地方？",
+     "mode": "search",
+     "relevance": {
+      "home-items.docs": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "home-items"
+    },
+    {
+     "query_id": "home-items.p3",
+     "account_id": "eval-pool-owner",
+     "text": "遇到降水天气出门前该拿哪件物品？",
+     "mode": "search",
+     "relevance": {
+      "home-items.umbrella": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "home-items"
+    },
+    {
+     "query_id": "home-items.p4",
+     "account_id": "eval-pool-owner",
+     "text": "手机电量不足时用的配件存放在哪儿？",
+     "mode": "search",
+     "relevance": {
+      "home-items.charger": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "home-items"
+    },
+    {
+     "query_id": "home-items.l1",
+     "account_id": "eval-pool-owner",
+     "text": "玄关的鞋柜里放着什么？",
+     "mode": "search",
+     "relevance": {
+      "home-items.keys": 3
+     },
+     "tags": [
+      "lexical"
+     ],
+     "cluster": "home-items"
+    },
+    {
+     "query_id": "work.p1",
+     "account_id": "eval-pool-owner",
+     "text": "平时怎么去单位？",
+     "mode": "search",
+     "relevance": {
+      "work.commute": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "work"
+    },
+    {
+     "query_id": "work.p2",
+     "account_id": "eval-pool-owner",
+     "text": "得过什么荣誉称号？",
+     "mode": "search",
+     "relevance": {
+      "work.award": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "work"
+    },
+    {
+     "query_id": "work.p3",
+     "account_id": "eval-pool-owner",
+     "text": "单位里走得最近的是哪位？",
+     "mode": "search",
+     "relevance": {
+      "work.colleague": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "work"
+    },
+    {
+     "query_id": "work.p4",
+     "account_id": "eval-pool-owner",
+     "text": "薪酬按什么日期到账？",
+     "mode": "search",
+     "relevance": {
+      "work.salary-day": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "work"
+    },
+    {
+     "query_id": "work.l1",
+     "account_id": "eval-pool-owner",
+     "text": "我当了多少年班主任？",
+     "mode": "search",
+     "relevance": {
+      "work.years": 3
+     },
+     "tags": [
+      "lexical"
+     ],
+     "cluster": "work"
+    },
+    {
+     "query_id": "people.p1",
+     "account_id": "eval-pool-owner",
+     "text": "谁替我代收包裹？",
+     "mode": "search",
+     "relevance": {
+      "people.neighbor": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "people"
+    },
+    {
+     "query_id": "people.p2",
+     "account_id": "eval-pool-owner",
+     "text": "在浙江做餐饮生意的旧识是谁？",
+     "mode": "search",
+     "relevance": {
+      "people.classmate": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "people"
+    },
+    {
+     "query_id": "people.p3",
+     "account_id": "eval-pool-owner",
+     "text": "交情最久的知己是谁？",
+     "mode": "search",
+     "relevance": {
+      "people.bestfriend": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "people"
+    },
+    {
+     "query_id": "people.p4",
+     "account_id": "eval-pool-owner",
+     "text": "上班时带教我的前辈是谁？",
+     "mode": "search",
+     "relevance": {
+      "people.mentor": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "people"
+    },
+    {
+     "query_id": "people.l1",
+     "account_id": "eval-pool-owner",
+     "text": "我的师傅是谁？",
+     "mode": "search",
+     "relevance": {
+      "people.mentor": 3
+     },
+     "tags": [
+      "lexical"
+     ],
+     "cluster": "people"
+    },
+    {
+     "query_id": "routine.p1",
+     "account_id": "eval-pool-owner",
+     "text": "就寝的最晚时刻是？",
+     "mode": "search",
+     "relevance": {
+      "routine.bed": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "routine"
+    },
+    {
+     "query_id": "routine.p2",
+     "account_id": "eval-pool-owner",
+     "text": "午后小憩的时长是多久？",
+     "mode": "search",
+     "relevance": {
+      "routine.nap": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "routine"
+    },
+    {
+     "query_id": "routine.p3",
+     "account_id": "eval-pool-owner",
+     "text": "一天需要摄入多少饮用水？",
+     "mode": "search",
+     "relevance": {
+      "routine.water": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "routine"
+    },
+    {
+     "query_id": "routine.p4",
+     "account_id": "eval-pool-owner",
+     "text": "哪个时间段会去采购蔬菜？",
+     "mode": "search",
+     "relevance": {
+      "routine.market": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "routine"
+    },
+    {
+     "query_id": "routine.l1",
+     "account_id": "eval-pool-owner",
+     "text": "我几点起床？",
+     "mode": "search",
+     "relevance": {
+      "routine.wake": 3
+     },
+     "tags": [
+      "lexical"
+     ],
+     "cluster": "routine"
+    },
+    {
+     "query_id": "entertainment.p1",
+     "account_id": "eval-pool-owner",
+     "text": "偏爱哪位女歌手的经典曲目？",
+     "mode": "search",
+     "relevance": {
+      "entertainment.singer": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "entertainment"
+    },
+    {
+     "query_id": "entertainment.p2",
+     "account_id": "eval-pool-owner",
+     "text": "哪类电影我是拒绝观看的？",
+     "mode": "search",
+     "relevance": {
+      "entertainment.horror": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "entertainment"
+    },
+    {
+     "query_id": "entertainment.p3",
+     "account_id": "eval-pool-owner",
+     "text": "近期在看哪本长篇小说？",
+     "mode": "search",
+     "relevance": {
+      "entertainment.novel": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "entertainment"
+    },
+    {
+     "query_id": "entertainment.p4",
+     "account_id": "eval-pool-owner",
+     "text": "驾车时收听什么类型的节目？",
+     "mode": "search",
+     "relevance": {
+      "entertainment.radio": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "entertainment"
+    },
+    {
+     "query_id": "entertainment.l1",
+     "account_id": "eval-pool-owner",
+     "text": "我最爱听谁的歌？",
+     "mode": "search",
+     "relevance": {
+      "entertainment.singer": 3
+     },
+     "tags": [
+      "lexical"
+     ],
+     "cluster": "entertainment"
+    },
+    {
+     "query_id": "feelings.p1",
+     "account_id": "eval-pool-owner",
+     "text": "身处高处会有什么反应？",
+     "mode": "search",
+     "relevance": {
+      "feelings.height": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "feelings"
+    },
+    {
+     "query_id": "feelings.p2",
+     "account_id": "eval-pool-owner",
+     "text": "潮湿天气身体哪个部位不舒服？",
+     "mode": "search",
+     "relevance": {
+      "feelings.rain-knee": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "feelings"
+    },
+    {
+     "query_id": "feelings.p3",
+     "account_id": "eval-pool-owner",
+     "text": "为什么睡前不能把房间弄得漆黑？",
+     "mode": "search",
+     "relevance": {
+      "feelings.dark": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "feelings"
+    },
+    {
+     "query_id": "feelings.p4",
+     "account_id": "eval-pool-owner",
+     "text": "上台展示前的情绪状态如何？",
+     "mode": "search",
+     "relevance": {
+      "feelings.stage": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "feelings"
+    },
+    {
+     "query_id": "feelings.l1",
+     "account_id": "eval-pool-owner",
+     "text": "我为什么担心儿子？",
+     "mode": "search",
+     "relevance": {
+      "feelings.worry-son": 3
+     },
+     "tags": [
+      "lexical"
+     ],
+     "cluster": "feelings"
+    },
+    {
+     "query_id": "shopping.p1",
+     "account_id": "eval-pool-owner",
+     "text": "对面料有什么讲究？",
+     "mode": "search",
+     "relevance": {
+      "shopping.cotton": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "shopping"
+    },
+    {
+     "query_id": "shopping.p2",
+     "account_id": "eval-pool-owner",
+     "text": "定期孝敬双亲多少钱？",
+     "mode": "search",
+     "relevance": {
+      "shopping.budget": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "shopping"
+    },
+    {
+     "query_id": "shopping.p3",
+     "account_id": "eval-pool-owner",
+     "text": "脚上穿多大尺寸？",
+     "mode": "search",
+     "relevance": {
+      "shopping.shoes": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "shopping"
+    },
+    {
+     "query_id": "shopping.p4",
+     "account_id": "eval-pool-owner",
+     "text": "下单前的比较习惯？",
+     "mode": "search",
+     "relevance": {
+      "shopping.compare": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "shopping"
+    },
+    {
+     "query_id": "shopping.l1",
+     "account_id": "eval-pool-owner",
+     "text": "我买水果习惯去哪里？",
+     "mode": "search",
+     "relevance": {
+      "shopping.fruit-shop": 3
+     },
+     "tags": [
+      "lexical"
+     ],
+     "cluster": "shopping"
+    },
+    {
+     "query_id": "transport.p1",
+     "account_id": "eval-pool-owner",
+     "text": "长途返乡选用哪种交通工具？",
+     "mode": "search",
+     "relevance": {
+      "transport.train": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "transport"
+    },
+    {
+     "query_id": "transport.p2",
+     "account_id": "eval-pool-owner",
+     "text": "乘坐航班时身体有什么不适？",
+     "mode": "search",
+     "relevance": {
+      "transport.plane": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "transport"
+    },
+    {
+     "query_id": "transport.p3",
+     "account_id": "eval-pool-owner",
+     "text": "叫车出行偏好的平台？",
+     "mode": "search",
+     "relevance": {
+      "transport.taxi": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "transport"
+    },
+    {
+     "query_id": "transport.p4",
+     "account_id": "eval-pool-owner",
+     "text": "为什么不搭乘公共汽车？",
+     "mode": "search",
+     "relevance": {
+      "transport.subway": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "transport"
+    },
+    {
+     "query_id": "transport.l1",
+     "account_id": "eval-pool-owner",
+     "text": "我坐高铁回老家要几个小时？",
+     "mode": "search",
+     "relevance": {
+      "transport.train": 3
+     },
+     "tags": [
+      "lexical"
+     ],
+     "cluster": "transport"
+    },
+    {
+     "query_id": "tech.p1",
+     "account_id": "eval-pool-owner",
+     "text": "对屏幕上文字的大小有什么设置？",
+     "mode": "search",
+     "relevance": {
+      "tech.phone": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "tech"
+    },
+    {
+     "query_id": "tech.p2",
+     "account_id": "eval-pool-owner",
+     "text": "通讯软件里沟通的方式是什么？",
+     "mode": "search",
+     "relevance": {
+      "tech.wechat": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "tech"
+    },
+    {
+     "query_id": "tech.p3",
+     "account_id": "eval-pool-owner",
+     "text": "买单时使用什么手段？",
+     "mode": "search",
+     "relevance": {
+      "tech.payment": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "tech"
+    },
+    {
+     "query_id": "tech.p4",
+     "account_id": "eval-pool-owner",
+     "text": "闲暇时用哪个设备看连续剧？",
+     "mode": "search",
+     "relevance": {
+      "tech.tablet": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "tech"
+    },
+    {
+     "query_id": "tech.l1",
+     "account_id": "eval-pool-owner",
+     "text": "客厅的智能音箱是谁装的？",
+     "mode": "search",
+     "relevance": {
+      "tech.speaker": 3
+     },
+     "tags": [
+      "lexical"
+     ],
+     "cluster": "tech"
+    },
+    {
+     "query_id": "festivals.p1",
+     "account_id": "eval-pool-owner",
+     "text": "新年第一天大家动手包的传统面点是什么？",
+     "mode": "search",
+     "relevance": {
+      "festivals.spring": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "festivals"
+    },
+    {
+     "query_id": "festivals.p2",
+     "account_id": "eval-pool-owner",
+     "text": "祭祖的节日回到哪座城市？",
+     "mode": "search",
+     "relevance": {
+      "festivals.qingming": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "festivals"
+    },
+    {
+     "query_id": "festivals.p3",
+     "account_id": "eval-pool-owner",
+     "text": "生辰当天的餐食安排？",
+     "mode": "search",
+     "relevance": {
+      "festivals.birthday-custom": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "festivals"
+    },
+    {
+     "query_id": "festivals.p4",
+     "account_id": "eval-pool-owner",
+     "text": "给双亲送什么应节食品？",
+     "mode": "search",
+     "relevance": {
+      "festivals.midautumn": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "festivals"
+    },
+    {
+     "query_id": "festivals.l1",
+     "account_id": "eval-pool-owner",
+     "text": "中秋节我给谁送月饼？",
+     "mode": "search",
+     "relevance": {
+      "festivals.midautumn": 3
+     },
+     "tags": [
+      "lexical"
+     ],
+     "cluster": "festivals"
+    },
+    {
+     "query_id": "milestones.p1",
+     "account_id": "eval-pool-owner",
+     "text": "婚姻始于哪一年？",
+     "mode": "search",
+     "relevance": {
+      "milestones.married": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "milestones"
+    },
+    {
+     "query_id": "milestones.p2",
+     "account_id": "eval-pool-owner",
+     "text": "现住所是哪年置办的？",
+     "mode": "search",
+     "relevance": {
+      "milestones.house": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "milestones"
+    },
+    {
+     "query_id": "milestones.p3",
+     "account_id": "eval-pool-owner",
+     "text": "父亲是哪一年停止上班的？",
+     "mode": "search",
+     "relevance": {
+      "milestones.dad-retire": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "milestones"
+    },
+    {
+     "query_id": "milestones.p4",
+     "account_id": "eval-pool-owner",
+     "text": "学业修完取得学位是哪年？",
+     "mode": "search",
+     "relevance": {
+      "milestones.graduate": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "milestones"
+    },
+    {
+     "query_id": "milestones.l1",
+     "account_id": "eval-pool-owner",
+     "text": "我哪年大学毕业？",
+     "mode": "search",
+     "relevance": {
+      "milestones.graduate": 3
+     },
+     "tags": [
+      "lexical"
+     ],
+     "cluster": "milestones"
+    },
+    {
+     "query_id": "values.p1",
+     "account_id": "eval-pool-owner",
+     "text": "对小子的品行要求最高的是什么？",
+     "mode": "search",
+     "relevance": {
+      "values.honesty": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "values"
+    },
+    {
+     "query_id": "values.p2",
+     "account_id": "eval-pool-owner",
+     "text": "每月固定的公益活动是什么？",
+     "mode": "search",
+     "relevance": {
+      "values.volunteer": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "values"
+    },
+    {
+     "query_id": "values.p3",
+     "account_id": "eval-pool-owner",
+     "text": "赴约的时间观念如何？",
+     "mode": "search",
+     "relevance": {
+      "values.punctual": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "values"
+    },
+    {
+     "query_id": "values.p4",
+     "account_id": "eval-pool-owner",
+     "text": "用完的胶质袋子怎么处置？",
+     "mode": "search",
+     "relevance": {
+      "values.bags": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "values"
+    },
+    {
+     "query_id": "values.l1",
+     "account_id": "eval-pool-owner",
+     "text": "家训是什么？",
+     "mode": "search",
+     "relevance": {
+      "values.motto": 3
+     },
+     "tags": [
+      "lexical"
+     ],
+     "cluster": "values"
+    },
+    {
+     "query_id": "personal-facts.p1",
+     "account_id": "eval-pool-owner",
+     "text": "输血时要注意我属于哪个类别？",
+     "mode": "search",
+     "relevance": {
+      "personal-facts.blood": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "personal-facts"
+    },
+    {
+     "query_id": "personal-facts.p2",
+     "account_id": "eval-pool-owner",
+     "text": "惯用哪只手？",
+     "mode": "search",
+     "relevance": {
+      "personal-facts.lefty": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "personal-facts"
+    },
+    {
+     "query_id": "personal-facts.p3",
+     "account_id": "eval-pool-owner",
+     "text": "视力矫正参数是多少？",
+     "mode": "search",
+     "relevance": {
+      "personal-facts.glasses": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "personal-facts"
+    },
+    {
+     "query_id": "personal-facts.p4",
+     "account_id": "eval-pool-owner",
+     "text": "用哪类抗菌药物会出现不良反应？",
+     "mode": "search",
+     "relevance": {
+      "personal-facts.penicillin": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "personal-facts"
+    },
+    {
+     "query_id": "personal-facts.p5",
+     "account_id": "eval-pool-owner",
+     "text": "生肖是什么？",
+     "mode": "search",
+     "relevance": {
+      "personal-facts.zodiac": 3
+     },
+     "tags": [
+      "paraphrase"
+     ],
+     "cluster": "personal-facts"
+    },
+    {
+     "query_id": "personal-facts.l1",
+     "account_id": "eval-pool-owner",
+     "text": "我身高多少？",
+     "mode": "search",
+     "relevance": {
+      "personal-facts.height": 3
+     },
+     "tags": [
+      "lexical"
+     ],
+     "cluster": "personal-facts"
+    },
+    {
+     "query_id": "neg.off01",
+     "account_id": "eval-pool-owner",
+     "text": "我最喜欢的运动队是哪支？",
+     "mode": "search",
+     "relevance": {},
+     "tags": [
+      "negative",
+      "off_topic"
+     ]
+    },
+    {
+     "query_id": "neg.off02",
+     "account_id": "eval-pool-owner",
+     "text": "我会弹什么乐器？",
+     "mode": "search",
+     "relevance": {},
+     "tags": [
+      "negative",
+      "off_topic"
+     ]
+    },
+    {
+     "query_id": "neg.off03",
+     "account_id": "eval-pool-owner",
+     "text": "我最近一次出国去了哪个国家？",
+     "mode": "search",
+     "relevance": {},
+     "tags": [
+      "negative",
+      "off_topic"
+     ]
+    },
+    {
+     "query_id": "neg.off04",
+     "account_id": "eval-pool-owner",
+     "text": "我最喜欢的颜色是什么？",
+     "mode": "search",
+     "relevance": {},
+     "tags": [
+      "negative",
+      "off_topic"
+     ]
+    },
+    {
+     "query_id": "neg.off05",
+     "account_id": "eval-pool-owner",
+     "text": "我的宗教信仰是什么？",
+     "mode": "search",
+     "relevance": {},
+     "tags": [
+      "negative",
+      "off_topic"
+     ]
+    },
+    {
+     "query_id": "neg.off06",
+     "account_id": "eval-pool-owner",
+     "text": "我最想见的名人是谁？",
+     "mode": "search",
+     "relevance": {},
+     "tags": [
+      "negative",
+      "off_topic"
+     ]
+    },
+    {
+     "query_id": "neg.off07",
+     "account_id": "eval-pool-owner",
+     "text": "我小时候的理想是什么？",
+     "mode": "search",
+     "relevance": {},
+     "tags": [
+      "negative",
+      "off_topic"
+     ]
+    },
+    {
+     "query_id": "neg.off08",
+     "account_id": "eval-pool-owner",
+     "text": "我喜欢哪个季节？",
+     "mode": "search",
+     "relevance": {},
+     "tags": [
+      "negative",
+      "off_topic"
+     ]
+    },
+    {
+     "query_id": "neg.off09",
+     "account_id": "eval-pool-owner",
+     "text": "我会说哪几门外语？",
+     "mode": "search",
+     "relevance": {},
+     "tags": [
+      "negative",
+      "off_topic"
+     ]
+    },
+    {
+     "query_id": "neg.off10",
+     "account_id": "eval-pool-owner",
+     "text": "我在股市里买了哪只股票？",
+     "mode": "search",
+     "relevance": {},
+     "tags": [
+      "negative",
+      "off_topic"
+     ]
+    },
+    {
+     "query_id": "neg.near01",
+     "account_id": "eval-pool-owner",
+     "text": "我的车是什么品牌？",
+     "mode": "search",
+     "relevance": {},
+     "tags": [
+      "negative",
+      "near_miss"
+     ],
+     "cluster": "transport"
+    },
+    {
+     "query_id": "neg.near02",
+     "account_id": "eval-pool-owner",
+     "text": "我上次体检的结果怎么样？",
+     "mode": "search",
+     "relevance": {},
+     "tags": [
+      "negative",
+      "near_miss"
+     ],
+     "cluster": "health"
+    },
+    {
+     "query_id": "neg.near03",
+     "account_id": "eval-pool-owner",
+     "text": "我每个月房贷还多少钱？",
+     "mode": "search",
+     "relevance": {},
+     "tags": [
+      "negative",
+      "near_miss"
+     ],
+     "cluster": "milestones"
+    },
+    {
+     "query_id": "neg.near04",
+     "account_id": "eval-pool-owner",
+     "text": "我最怕的动物是什么？",
+     "mode": "search",
+     "relevance": {},
+     "tags": [
+      "negative",
+      "near_miss"
+     ],
+     "cluster": "feelings"
+    },
+    {
+     "query_id": "neg.near05",
+     "account_id": "eval-pool-owner",
+     "text": "我第一次坐飞机是去哪儿？",
+     "mode": "search",
+     "relevance": {},
+     "tags": [
+      "negative",
+      "near_miss"
+     ],
+     "cluster": "transport"
+    },
+    {
+     "query_id": "neg.near06",
+     "account_id": "eval-pool-owner",
+     "text": "我最近一次量血压是多少？",
+     "mode": "search",
+     "relevance": {},
+     "tags": [
+      "negative",
+      "near_miss"
+     ],
+     "cluster": "health"
+    },
+    {
+     "query_id": "neg.near07",
+     "account_id": "eval-pool-owner",
+     "text": "我儿子的班主任姓什么？",
+     "mode": "search",
+     "relevance": {},
+     "tags": [
+      "negative",
+      "near_miss"
+     ],
+     "cluster": "family-news"
+    },
+    {
+     "query_id": "neg.near08",
+     "account_id": "eval-pool-owner",
+     "text": "我养的猫几岁了？",
+     "mode": "search",
+     "relevance": {},
+     "tags": [
+      "negative",
+      "near_miss"
+     ],
+     "cluster": "pets"
+    },
+    {
+     "query_id": "neg.near09",
+     "account_id": "eval-pool-owner",
+     "text": "我爱人的医院在哪个区？",
+     "mode": "search",
+     "relevance": {},
+     "tags": [
+      "negative",
+      "near_miss"
+     ],
+     "cluster": "family-news"
+    },
+    {
+     "query_id": "neg.near10",
+     "account_id": "eval-pool-owner",
+     "text": "我打太极拳打了多少年？",
+     "mode": "search",
+     "relevance": {},
+     "tags": [
+      "negative",
+      "near_miss"
+     ],
+     "cluster": "hobbies"
+    },
+    {
+     "query_id": "exact.01",
+     "account_id": "eval-pool-owner",
+     "text": "2016年发生了什么？",
+     "mode": "search",
+     "relevance": {
+      "milestones.dad-retire": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "milestones",
+     "token": "2016"
+    },
+    {
+     "query_id": "exact.02",
+     "account_id": "eval-pool-owner",
+     "text": "2008年发生了什么？",
+     "mode": "search",
+     "relevance": {
+      "milestones.married": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "milestones",
+     "token": "2008"
+    },
+    {
+     "query_id": "exact.03",
+     "account_id": "eval-pool-owner",
+     "text": "2012年发生了什么？",
+     "mode": "search",
+     "relevance": {
+      "milestones.house": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "milestones",
+     "token": "2012"
+    },
+    {
+     "query_id": "exact.04",
+     "account_id": "eval-pool-owner",
+     "text": "2013年发生了什么？",
+     "mode": "search",
+     "relevance": {
+      "milestones.mom-retire": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "milestones",
+     "token": "2013"
+    },
+    {
+     "query_id": "exact.05",
+     "account_id": "eval-pool-owner",
+     "text": "2021年发生了什么？",
+     "mode": "search",
+     "relevance": {
+      "milestones.son-enroll": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "milestones",
+     "token": "2021"
+    },
+    {
+     "query_id": "exact.06",
+     "account_id": "eval-pool-owner",
+     "text": "2004年发生了什么？",
+     "mode": "search",
+     "relevance": {
+      "milestones.graduate": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "milestones",
+     "token": "2004"
+    },
+    {
+     "query_id": "exact.07",
+     "account_id": "eval-pool-owner",
+     "text": "刘老师是我的什么人？",
+     "mode": "search",
+     "relevance": {
+      "people.mentor": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "people",
+     "token": "刘老师"
+    },
+    {
+     "query_id": "exact.08",
+     "account_id": "eval-pool-owner",
+     "text": "李老师是我的什么人？",
+     "mode": "search",
+     "relevance": {
+      "work.colleague": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "work",
+     "token": "李老师"
+    },
+    {
+     "query_id": "exact.09",
+     "account_id": "eval-pool-owner",
+     "text": "赵医生做了什么？",
+     "mode": "search",
+     "relevance": {
+      "people.doctor": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "people",
+     "token": "赵医生"
+    },
+    {
+     "query_id": "exact.10",
+     "account_id": "eval-pool-owner",
+     "text": "老周是谁？",
+     "mode": "search",
+     "relevance": {
+      "people.classmate": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "people",
+     "token": "老周"
+    },
+    {
+     "query_id": "exact.11",
+     "account_id": "eval-pool-owner",
+     "text": "大黄是谁？",
+     "mode": "search",
+     "relevance": {
+      "pets.dog": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "pets",
+     "token": "大黄"
+    },
+    {
+     "query_id": "exact.12",
+     "account_id": "eval-pool-owner",
+     "text": "团团是谁？",
+     "mode": "search",
+     "relevance": {
+      "pets.cat": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "pets",
+     "token": "团团"
+    },
+    {
+     "query_id": "exact.13",
+     "account_id": "eval-pool-owner",
+     "text": "老李是谁？",
+     "mode": "search",
+     "relevance": {
+      "people.cardgame": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "people",
+     "token": "老李"
+    },
+    {
+     "query_id": "exact.14",
+     "account_id": "eval-pool-owner",
+     "text": "滴滴怎么样？",
+     "mode": "search",
+     "relevance": {
+      "transport.taxi": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "transport",
+     "token": "滴滴"
+    },
+    {
+     "query_id": "exact.15",
+     "account_id": "eval-pool-owner",
+     "text": "华为怎么样？",
+     "mode": "search",
+     "relevance": {
+      "tech.phone": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "tech",
+     "token": "华为"
+    },
+    {
+     "query_id": "exact.16",
+     "account_id": "eval-pool-owner",
+     "text": "青霉素怎么样？",
+     "mode": "search",
+     "relevance": {
+      "personal-facts.penicillin": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "personal-facts",
+     "token": "青霉素"
+    },
+    {
+     "query_id": "exact.17",
+     "account_id": "eval-pool-owner",
+     "text": "褪黑素怎么样？",
+     "mode": "search",
+     "relevance": {
+      "health.sleep": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "health",
+     "token": "褪黑素"
+    },
+    {
+     "query_id": "exact.18",
+     "account_id": "eval-pool-owner",
+     "text": "邓丽君怎么样？",
+     "mode": "search",
+     "relevance": {
+      "entertainment.singer": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "entertainment",
+     "token": "邓丽君"
+    },
+    {
+     "query_id": "exact.19",
+     "account_id": "eval-pool-owner",
+     "text": "熊出没怎么样？",
+     "mode": "search",
+     "relevance": {
+      "entertainment.cartoon": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "entertainment",
+     "token": "熊出没"
+    },
+    {
+     "query_id": "exact.20",
+     "account_id": "eval-pool-owner",
+     "text": "哈尔滨怎么样？",
+     "mode": "search",
+     "relevance": {
+      "residence.trip-plan": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "residence",
+     "token": "哈尔滨"
+    },
+    {
+     "query_id": "exact.21",
+     "account_id": "eval-pool-owner",
+     "text": "红楼梦怎么样？",
+     "mode": "search",
+     "relevance": {
+      "hobbies.opera": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "hobbies",
+     "token": "红楼梦"
+    },
+    {
+     "query_id": "exact.22",
+     "account_id": "eval-pool-owner",
+     "text": "武汉怎么样？",
+     "mode": "search",
+     "relevance": {
+      "residence.college": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "residence",
+     "token": "武汉"
+    },
+    {
+     "query_id": "exact.23",
+     "account_id": "eval-pool-owner",
+     "text": "广州怎么样？",
+     "mode": "search",
+     "relevance": {
+      "residence.worked": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "residence",
+     "token": "广州"
+    },
+    {
+     "query_id": "exact.24",
+     "account_id": "eval-pool-owner",
+     "text": "鼓楼区怎么样？",
+     "mode": "search",
+     "relevance": {
+      "residence.current": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "residence",
+     "token": "鼓楼区"
+    },
+    {
+     "query_id": "exact.25",
+     "account_id": "eval-pool-owner",
+     "text": "太极拳怎么样？",
+     "mode": "search",
+     "relevance": {
+      "hobbies.taichi": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "hobbies",
+     "token": "太极拳"
+    },
+    {
+     "query_id": "exact.26",
+     "account_id": "eval-pool-owner",
+     "text": "金鱼怎么样？",
+     "mode": "search",
+     "relevance": {
+      "pets.fish": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "pets",
+     "token": "金鱼"
+    },
+    {
+     "query_id": "exact.27",
+     "account_id": "eval-pool-owner",
+     "text": "八哥怎么样？",
+     "mode": "search",
+     "relevance": {
+      "pets.bird": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "pets",
+     "token": "八哥"
+    },
+    {
+     "query_id": "exact.28",
+     "account_id": "eval-pool-owner",
+     "text": "香菜怎么样？",
+     "mode": "search",
+     "relevance": {
+      "diet.coriander": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "diet",
+     "token": "香菜"
+    },
+    {
+     "query_id": "exact.29",
+     "account_id": "eval-pool-owner",
+     "text": "内脏怎么样？",
+     "mode": "search",
+     "relevance": {
+      "diet.offal": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "diet",
+     "token": "内脏"
+    },
+    {
+     "query_id": "exact.30",
+     "account_id": "eval-pool-owner",
+     "text": "集邮怎么样？",
+     "mode": "search",
+     "relevance": {
+      "hobbies.stamp": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "hobbies",
+     "token": "集邮"
+    },
+    {
+     "query_id": "exact.31",
+     "account_id": "eval-pool-owner",
+     "text": "越剧怎么样？",
+     "mode": "search",
+     "relevance": {
+      "hobbies.opera": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "hobbies",
+     "token": "越剧"
+    },
+    {
+     "query_id": "exact.32",
+     "account_id": "eval-pool-owner",
+     "text": "象棋怎么样？",
+     "mode": "search",
+     "relevance": {
+      "hobbies.chess": 3
+     },
+     "tags": [
+      "exact_term"
+     ],
+     "cluster": "hobbies",
+     "token": "象棋"
+    }
+   ]
+  }
+ ]
+}

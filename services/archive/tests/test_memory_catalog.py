@@ -22,6 +22,9 @@ from services.archive.memory_domain import (
     MemoryClaimReview,
     MemoryExtraction,
     MemorySearchQuery,
+    content_query_terms,
+    edge_content_query_terms,
+    lexical_query_terms,
 )
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
 from services.archive.postgres_archive import PostgresLifeArchive
@@ -549,6 +552,59 @@ async def test_episode_and_knowledge_context_improve_recall_without_leaking_the_
         ("knowledge", "南京"),
     }
     assert all("前几天聊到旅行" not in item.snippet for item in result.items)
+
+
+def test_content_query_terms_drop_function_word_ngrams_but_never_everything() -> None:
+    terms = lexical_query_terms("那时候最难忘的事是什么？")
+
+    assert {"什么", "是什么"} <= set(terms)
+    content = content_query_terms(terms)
+    assert "什么" not in content and "是什么" not in content
+    assert {"难忘", "时候"} <= set(content)
+    # A query made only of function words keeps its terms rather than matching nothing.
+    assert content_query_terms(lexical_query_terms("那是什么")) == lexical_query_terms("那是什么")
+
+
+def test_edge_content_query_terms_keep_named_things_and_drop_word_fragments() -> None:
+    terms = lexical_query_terms("家里的橘色小猫怎么称呼？")
+    edge = edge_content_query_terms(terms)
+
+    # "里的" straddles a word boundary (家里的 / 客厅里的): a fragment, not a name.
+    assert "里的" in terms and "里的" not in edge
+    assert {"橘色", "小猫", "称呼"} <= set(edge)
+    assert all(term[0] not in "的了么什怎" and term[-1] not in "的了么什怎" for term in edge)
+    # Names, years and terms of art keep their exact-match value.
+    assert {"刘老师", "刘老", "老师"} <= set(edge_content_query_terms(lexical_query_terms("刘老师是我的什么人？")))
+    assert "2016" in edge_content_query_terms(lexical_query_terms("2016年发生了什么？"))
+    # Unlike content_query_terms this may return nothing; embeddings still rank the query.
+    assert edge_content_query_terms(lexical_query_terms("那是什么")) == ()
+
+
+@pytest.mark.asyncio
+async def test_lexical_rank_ignores_function_words_in_knowledge_boilerplate(
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
+) -> None:
+    """Without embeddings, "是什么" must not lift the rule knowledge question over the claim."""
+
+    await _record(archive, event_id="lexical-bank-001", text="我在银行工作了十年。")
+    catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
+    await catalog.compile_pending()
+
+    result = await catalog.search(
+        MemorySearchQuery(
+            account_id="account-memory",
+            speaker_class="owner",
+            text="在银行工作最难忘的是什么？",
+            include_candidates=True,
+        )
+    )
+
+    kinds = [item.kind for item in result.items]
+    assert sorted(kinds) == ["claim", "episode", "knowledge"]
+    assert kinds[0] != "knowledge"
+    # Every projection repeats the sentence, so each hits the same content terms.
+    assert len({int(item.score) for item in result.items}) == 1
 
 
 @pytest.mark.asyncio

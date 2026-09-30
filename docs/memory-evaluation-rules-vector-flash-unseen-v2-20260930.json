@@ -1,5 +1,5 @@
 {
-  "adapter": "memoria-postgres-rules",
+  "adapter": "memoria-postgres-vector-qwen3.7-text-embedding-flash",
   "case_count": 8,
   "cases": [
     {
@@ -58,9 +58,12 @@
       "queries": [
         {
           "query_id": "v2-lactose-query",
-          "recall_at_10": 0.0,
-          "recall_at_5": 0.0,
-          "recalled_keys": [],
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "milk-discomfort",
+            "unmatched:e7848f64-3677-58b5-b73b-3740ac455b1d"
+          ],
           "relevant_keys": [
             "milk-discomfort"
           ]
@@ -124,9 +127,12 @@
       "queries": [
         {
           "query_id": "v2-height-query",
-          "recall_at_10": 0.0,
-          "recall_at_5": 0.0,
-          "recalled_keys": [],
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "fear-of-heights",
+            "unmatched:a1d3afed-e0b4-5b2e-bea6-b079bfcf83c1"
+          ],
           "relevant_keys": [
             "fear-of-heights"
           ]
@@ -235,9 +241,14 @@
       "queries": [
         {
           "query_id": "v2-exam-query",
-          "recall_at_10": 0.0,
-          "recall_at_5": 0.0,
-          "recalled_keys": [],
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "unmatched:9f14e647-ffb7-5821-9cd9-d74fe3faed49",
+            "exam-pressure",
+            "cat-doudou",
+            "unmatched:0fd6ef80-4d72-5208-a3a0-1bf7cb9767bc"
+          ],
           "relevant_keys": [
             "exam-pressure"
           ]
@@ -346,9 +357,14 @@
       "queries": [
         {
           "query_id": "v2-marathon-query",
-          "recall_at_10": 0.0,
-          "recall_at_5": 0.0,
-          "recalled_keys": [],
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "half-marathon-plan",
+            "unmatched:08e8488e-929b-5115-96fc-3583759f0e2e",
+            "beef-noodles",
+            "unmatched:b0f00450-1471-5a3d-a4a3-34d5c6260636"
+          ],
           "relevant_keys": [
             "half-marathon-plan"
           ]
@@ -412,9 +428,12 @@
       "queries": [
         {
           "query_id": "v2-grandma-query",
-          "recall_at_10": 0.0,
-          "recall_at_5": 0.0,
-          "recalled_keys": [],
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "grandma-cataract-surgery",
+            "unmatched:2dddda6c-116e-5be4-b9be-894a68b75c9f"
+          ],
           "relevant_keys": [
             "grandma-cataract-surgery"
           ]
@@ -478,9 +497,12 @@
       "queries": [
         {
           "query_id": "v2-hometown-query",
-          "recall_at_10": 0.0,
-          "recall_at_5": 0.0,
-          "recalled_keys": [],
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "hometown-ganzhou",
+            "unmatched:e5cd12a1-04b3-57d7-94dc-481aa118ef04"
+          ],
           "relevant_keys": [
             "hometown-ganzhou"
           ]
@@ -544,9 +566,12 @@
       "queries": [
         {
           "query_id": "v2-allergy-query",
-          "recall_at_10": 0.0,
-          "recall_at_5": 0.0,
-          "recalled_keys": [],
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "penicillin-allergy",
+            "unmatched:edb1e6cf-9385-550c-a283-91a6e71dd120"
+          ],
           "relevant_keys": [
             "penicillin-allergy"
           ]
@@ -685,20 +710,20 @@
   "failed_cases": [],
   "metrics": {
     "candidate_leakage": 0.0,
-    "comfort_recall_at_5": 0.0,
+    "comfort_recall_at_5": 1.0,
     "contradiction_rate": 0.0,
     "cross_account_leakage": 0.0,
-    "cross_session_recall_at_5": 0.0,
+    "cross_session_recall_at_5": 1.0,
     "extraction_precision": 0.5,
     "extraction_recall": 1.0,
     "input_tokens": 0,
-    "latency_p50_ms": 3.065750002861023,
-    "latency_p95_ms": 4.267999902367592,
-    "ndcg_at_10": 0.2222222222222222,
+    "latency_p50_ms": 273.787791000359,
+    "latency_p95_ms": 290.1814580000064,
+    "ndcg_at_10": 0.9589921948412731,
     "output_tokens": 0,
     "paraphrase_followup_recall_at_5": 0.0,
-    "recall_at_10": 0.2222222222222222,
-    "recall_at_5": 0.2222222222222222,
+    "recall_at_10": 1.0,
+    "recall_at_5": 1.0,
     "source_attribution_accuracy": 1.0,
     "temporal_accuracy": 0.0,
     "token_cost": 0

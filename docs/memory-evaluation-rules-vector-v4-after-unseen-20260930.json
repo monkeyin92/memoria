@@ -1,7 +1,5 @@
 {
-  "adapter": "memoria-sqlite-rules",
-  "receipt_scope": "parent_baseline",
-  "source_commit": "3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948",
+  "adapter": "memoria-postgres-vector-text-embedding-v4",
   "case_count": 4,
   "cases": [
     {
@@ -109,7 +107,9 @@
           "recall_at_5": 1.0,
           "recalled_keys": [
             "suzhou-embroidery-plan",
-            "unmatched:bf02a0be-8879-5e3e-ab6b-d13d0e2de6e8"
+            "unmatched:bf02a0be-8879-5e3e-ab6b-d13d0e2de6e8",
+            "bookshelf-tidying",
+            "unmatched:0aa3e1d7-0881-5781-8aa2-6c7d8ba02915"
           ],
           "relevant_keys": [
             "suzhou-embroidery-plan"
@@ -292,7 +292,9 @@
           "recall_at_5": 1.0,
           "recalled_keys": [
             "overtime-low-mood",
-            "unmatched:a570e183-12b7-59dd-b9ed-ddd88bdc4405"
+            "unmatched:a570e183-12b7-59dd-b9ed-ddd88bdc4405",
+            "lives-in-qingdao",
+            "unmatched:d57b6aa1-e5d4-5a7a-bda4-4e964613b173"
           ],
           "relevant_keys": [
             "overtime-low-mood"
@@ -405,8 +407,8 @@
           "recall_at_10": 1.0,
           "recall_at_5": 1.0,
           "recalled_keys": [
-            "owner-a-dunhuang",
-            "unmatched:92a64d87-d4e0-57d9-950f-5bda9742c6e1"
+            "unmatched:92a64d87-d4e0-57d9-950f-5bda9742c6e1",
+            "owner-a-dunhuang"
           ],
           "relevant_keys": [
             "owner-a-dunhuang"
@@ -439,9 +441,9 @@
     "extraction_precision": 0.5,
     "extraction_recall": 1.0,
     "input_tokens": 0,
-    "latency_p50_ms": 0.9735000785440207,
-    "latency_p95_ms": 1.2619581539183855,
-    "ndcg_at_10": 1.0,
+    "latency_p50_ms": 283.4250419982709,
+    "latency_p95_ms": 335.1874170039082,
+    "ndcg_at_10": 0.9261859507142916,
     "output_tokens": 0,
     "paraphrase_followup_recall_at_5": 0.0,
     "recall_at_10": 1.0,
