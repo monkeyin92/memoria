@@ -1,6 +1,6 @@
 # Memoria 优先级执行清单
 
-更新于 2026-10-01｜线上为整栈 `20261001-device-archive-v1`（源 `412f31e9`，含 #148、#150–#153，bridge 已不带 `livekit-agents`），media-edge 单独在 `20260930-late-receipt-v1`；整栈回滚目标 `20260930-local-stop-v2`（control-api 回到 `20260930-vector-keyword-v1` 组件链），media-edge 回滚目标 `20260930-edge-reject-log-v1`。固件 build 16 已合并，未发布 OTA。2026-09-28 的收尾待办见下方同名一节；发布与验收收据见 `HANDOFF.md`。本文件只保留未关闭事项。
+更新于 2026-10-01｜线上为整栈 `20261001-device-archive-v1`（源 `412f31e9`，含 #148、#150–#153，bridge 已不带 `livekit-agents`），media-edge 单独在 `20260930-late-receipt-v1`；整栈回滚目标 `20260930-local-stop-v2`（control-api 回到 `20260930-vector-keyword-v1` 组件链），media-edge 回滚目标 `20260930-edge-reject-log-v1`。设备信任开关 `MEMORIA_BOUND_DEVICE_TRUST_ENABLED` 已于 2026-10-01 00:30 打开，设备对话重新入库。固件：开发板已由另一会话 USB 刷入 build 17（低分回声误唤醒修复，已作为独立提交并入 `feat/wake-mode-idle-screen`），build 15–17 均未发布 OTA。生产服务器磁盘 2026-10-01 已按「当前 + 紧邻回滚」清理（根分区 80% → 33%）。**2026-10-01 用户新增六项需求见下方同名一节，按序做，做完一项更新一项。**2026-09-28 的收尾待办见更下方同名一节；发布与验收收据见 `HANDOFF.md`。本文件只保留未关闭事项。
 
 ## 当前边界（不得越界宣称）
 
@@ -15,17 +15,64 @@ subject_scope_batch: code=已提交 / wired=应用读出口按主体过滤 / ena
 account_to_subject_migrations: 已删除（2026-09-28 第 2 批）——四项账号→主体一次性迁移、operator CLI `run_subject_migrations.py` 与治理层迁移接缝从未在生产启用，人格已改为按使用人学习与读取（P1-03），不再有读路径依赖；表结构保留在各 schema，git 历史可恢复
 read_path_postgres_parity: 随上一项删除（仅 operator CLI 可达，Control API 从未导入）
 deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 saga 用例在远端实跑）/ enabled=未启用 / verified=PG 全 saga 本地已验（归档/声纹行 + 加密对象 + 厂商音色桩 + 收据幂等）；真实 MinIO 仍未验（本地 Docker MinIO 对象写入不可用）、真实 provider 未验（需密钥与授权）、备份「恢复后再删除」无实现、subject 键存储不在 saga
-conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与闸门）、#153（设备信任分档）均已合并 / wired=Agent 归档闸门认已签名 profile 的 `memory_recall_private`；Policy 按能力分档设备信任 / enabled=已随整栈 `20261001-device-archive-v1` 上线，但 `MEMORIA_BOUND_DEVICE_TRUST_ENABLED` 仍是默认关，关闭时行为与发布前一致 / verified=本地 PG 链路与变异测试，加线上只读核对（`action_device_lock_trust` 返回 `device_bound=true`，control-api 内开关为 False）；生产自 2026-08-08 起无设备对话入库，原因是设备无 attestation 而 `untrusted`（`device_fleet_attestations` 0 行），打开开关前设备对话仍不入库（根因与证据见 `HANDOFF.md` 2026-09-30 两节）
+conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与闸门）、#153（设备信任分档）均已合并 / wired=Agent 归档闸门认已签名 profile 的 `memory_recall_private`；Policy 按能力分档设备信任 / enabled=已随整栈 `20261001-device-archive-v1` 上线，`MEMORIA_BOUND_DEVICE_TRUST_ENABLED=true` 于 2026-10-01 00:30 打开（env 备份 `/etc/memoria-control-api.env.pre-bound-trust-20261001`，关闭 = 删该行并重建 control-api） / verified=本地 PG 链路与变异测试，线上只读核对（`action_device_lock_trust` 返回 `device_bound=true`；开关打开后 00:33–01:32 有 8 条 `owner` 的 `speech.utterance_finalized` 入库，`history_eligible`/`owner_projection_eligible` 均为真、`retained`，`subject_id` 是孩子的 person id `83370358…`）；生产自 2026-08-08 起无设备对话入库，原因是设备无 attestation 而 `untrusted`（`device_fleet_attestations` 0 行，根因与证据见 `HANDOFF.md` 2026-09-30 两节）。尚未验证：编译/向量写入/隔天召回/家长小结的下游结果，以及家长账号看不到孩子原文的回顾页表现（见下方 N-4）
 ```
 
 这里的“通过”仅代表本地、SQLite 或临时 PostgreSQL 证据，不等于远端 CI、生产、设备或真实机器人对话验收。
 
 ## 下一步与执行边界
 
-1. 真机窗口（用户推动）：设备已于 2026-09-28 重新绑定为「给孩子使用」并勾选长期记忆（`e8a27e45` v3，`growth_summary`），⓪ 已完成；当日真机项见「2026-09-28 收尾待办」。`20261001-device-archive-v1` 已上线，须在使用时段内做一次设备对话验收（先在开关关闭下确认行为不变，再经授权打开开关验收归档）。之后按 HANDOFF 验收清单验 P1-11 三种绑定、P1-03 孩子人格隔天生效、P2-04 终止性拒绝不再续连，以及 P0-03 的 TLS/WSS 重连与剩余设备矩阵。不得把核心通过扩大为完整 P0-03 或全双工通过。
+1. 真机窗口（用户推动）：设备已于 2026-09-28 重新绑定为「给孩子使用」并勾选长期记忆（`e8a27e45` v3，`growth_summary`），⓪ 已完成；当日真机项见「2026-09-28 收尾待办」。`20261001-device-archive-v1` 已上线且开关已打开；设备对话验收与长稳见下方 N-5。之后按 HANDOFF 验收清单验 P1-11 三种绑定、P1-03 孩子人格隔天生效、P2-04 终止性拒绝不再续连，以及 P0-03 的 TLS/WSS 重连与剩余设备矩阵。不得把核心通过扩大为完整 P0-03 或全双工通过。
 2. 可直接推进的代码项：P0-04 按 2026-09-26 产品决定实现（进行中）、P1-02 救援 sidecar 可复现、P1-04 自定义声音闭环、P2-06 回放评测、P2-04 Python 侧进程退出注入。
 3. 需用户决定：P1-02 两项线上调整、旧媒体链去留（P1-12）、WAL 保留策略（P1-08）、readiness 逾期的告警渠道（P1-09）、P2-07 第 2/3 项、P2-03 已知缺口是否接受、P0-04 未成年人人格学习口径。
-4. 边界：生产切流、回滚演练和制品清理须另获授权；打开 `MEMORIA_BOUND_DEVICE_TRUST_ENABLED`（设备信任分档，改变安全口径，见 P1-11）同样须另获授权；删除、重启、定时任务、自动备份和异地副本不在当前授权内；设备功能通过不等于学生安全或全双工通过。
+4. 边界：生产切流、回滚演练和制品清理须另获授权（2026-10-01 已获授权打开设备信任开关并清理旧制品，见下）；`MEMORIA_BOUND_DEVICE_TRUST_ENABLED` 的开/关仍属改变安全口径的动作，变更须用户授权；删除、重启、定时任务、自动备份和异地副本不在当前授权内；设备功能通过不等于学生安全或全双工通过。
+
+## 2026-10-01 新需求（用户提出；按序执行，做完一项更新一项）
+
+用户原话要点：①小程序可设「关键词唤醒 / 点击屏幕唤醒 / 两者同开，至少选一个」；②没有对话时熄屏，做不到就黑底显示北京时间；③改完发布小程序和后端，刷机（机器连着电脑，USB 或 OTA 均可）；④全部修好后用电脑持续对话 ≥30 分钟，含打断、负面情绪；⑤小程序「回顾」里此前的对话记录一个都没有，一并处理；⑥以产品体验官身份评审机器的说话内容、语气、方式（孩子与老人应不同）并优化。
+
+### [ ] N-1 唤醒方式设置（小程序 → 后端 → 固件）
+
+- 规则（用户）：仅「唤醒词」——提示可能误唤醒，点屏幕没有任何反应；仅「点击屏幕」——唤醒词失效，只有点一下屏幕才唤醒，对话中再点屏幕无效、不能触发待命；两者都开——两种方式都能唤醒；不允许两者都关。
+- 现状（已读代码）：后端早已有设备设置 `wake_mode`（`button` / `keyword` / `button_or_keyword`，默认 `button_or_keyword`，`routes/device_control.py`、`DeviceSettingsAuthority`，随会话票据签名下发 Edge，Edge 只校验枚举）；小程序设备页有 `selectWakeMode` 逻辑和 `WAKE_MODE_OPTIONS`，但 wxml 没有入口；**固件完全不读它**，设了也无效。固件现状：空闲点屏被忽略（`idle screen tap ignored`）；对话中点屏会停止说话（Speaking→`AbortSpeaking`）或结束聆听回到待命（Listening→`StopListening`），这两条与新规则相反；空闲态无条件开启唤醒词检测（`application.cc` 的 Idle 分支）。
+- 方案：枚举复用、不动冻结契约，也不需要 media-edge 发布——`keyword` 仅唤醒词；`button` 语义改为「点击屏幕」（BOOT 物理键始终可用：硬停止与配网入口）；`button_or_keyword` 两者都开（默认不变）。下发通道用设备空闲时每 20 s 的设备签名 `GET /v1/devices/{id}/display-profile`，增加附加字段 `wake_mode`（`schema_version` 不变，旧固件忽略），固件每次轮询都应用并写 NVS，开机先用 NVS 值。固件：新模块 `memoria_wake_mode`（状态 + NVS）；Idle 只在允许唤醒词时开启检测（新补丁 0032）；点屏策略——仅唤醒词：无反应；含屏幕：只在空闲时唤醒（等同 BOOT 短按），对话中任何状态点屏无效；配网/二维码相关点屏行为不变。小程序：设备页两个开关「唤醒词唤醒」「点击屏幕唤醒」，不允许全关（提示「至少保留一种唤醒方式」），按组合显示对应说明（仅唤醒词：可能误唤醒、点屏无反应；仅屏幕：唤醒词失效、对话中点屏无效）。
+- 解释（按用户表述落实）：两者都开时，对话中点屏同样无效（与「点击屏幕只负责唤醒」一致）；用户若想保留「点屏停止」需另说。
+- 验证：后端单测（wire 含 `wake_mode`、缺省值、`display_version` 不因它变化）；固件主机单测（策略表）；固件构建；USB 刷写后串口逐模式验证（改小程序设置 ≤20 s 内串口出现 wake mode 日志，唤醒词/点屏行为符合规则）；小程序 `npm test`。
+- [ ] 后端 display-profile 增加 `wake_mode`　[ ] 固件　[ ] 小程序　[ ] 真机逐模式验证
+
+### [ ] N-2 空闲熄屏
+
+- 现状：板子是 360×360 圆屏（ST77916 QSPI）+ PWM 背光（GPIO44，`PwmBacklight`，亮度 0–100 渐变，5 ms/级）；已有「3 分钟无动作→睡着变暗」（亮度/3+4，`memoria_mascot_display.cc` 动画循环）。背光可到 0，所以能真正熄屏，不需要「黑底 + 北京时间」兜底。
+- 方案：Idle 相位持续 10 s 后背光渐灭到 0 并停止逐帧渲染；离开 Idle（唤醒词、点屏、BOOT、二维码、错误、连接中）立即渐亮（约 0.4 s）；配网、二维码、错误态、OTA、Connecting/Listening/Speaking 保持亮屏；IMU 拍一拍/摇晃在熄屏时不点亮屏幕；`idle_screen`（`off` 默认 / `mascot` 保持原样）同样经显示档案下发，方便不刷机回退。
+- 兜底（本次不做，熄屏在真机出问题再做）：黑底 + 北京时间（需 SNTP 对时与大号数字字体）。
+- 验证：串口确认背光 0/恢复时序与熄屏期间仍能被唤醒词/点屏唤醒；我看不到屏幕，黑屏与亮屏的肉眼确认需用户。
+- [ ] 固件　[ ] 真机验证
+
+### [ ] N-3 发布与刷机
+
+- 后端：`services/control_api` 的显示档案改动，走 control-api 组件发布（`deploy_control_component.sh`，与 `20260930-vector-keyword-v1` 同法；先核对 main 相对线上基线 `412f31e9` 只动 Control 范围）。小程序：微信开发者工具 CLI 上传体验版（绝对路径）。固件 build 18：USB 刷写（设备连着；只写 app + otadata，保留身份/NVS），USB 启动验证通过后再决定是否签名发布 OTA。
+- 固件基线含另一会话的 build 17（低分回声「mo mo li」误唤醒修复，已刷入开发板，本分支独立提交 `1ed50697` 带上，避免刷机倒退）。
+- [ ] 后端发布　[ ] 小程序体验版　[ ] 固件刷写　[ ] OTA 是否发布（待定）
+
+### [ ] N-4 小程序「回顾」没有任何对话记录
+
+- 只读取证（2026-10-01 03:40，生产库）：①「日常回顾」读老表 `messages`（`/v1/memory/days`），生产已禁止写入该表（`_reject_legacy_memory_write_in_production`），用户账号 0 行——无论归档是否正常，它永远是空的；②「对话记录」（`/v1/archive/conversation-sessions`、`conversation-history`）只取 `subject_id == 登录账号` 且 `owner` 发言、`history_eligible` 的证据：07、08 月该账号的 17 条证据 speaker 是 `uncertain`、无主体，永远不合格；③设备绑定的是孩子（`83370358…`，账号是其 `guardian_of`）：开关打开后新证据的 `subject_id` 是孩子的 person id，家长账号的回顾按产品决定看不到孩子原话（家长只看小结/趋势/提醒）；④08-08 到 09-30 整段没有设备对话入库（已由 #151–#153 + 开关修复，00:33 起恢复）。
+- 方案：①「日常回顾」改读归档——账号本人是主体时显示当天对话数与摘要；监护人看到孩子的无原文小结入口（现有 `GET /v1/guardian/minors/{id}/summary`）而不是空状态；②空状态文案说明原因（「家长只能看小结，不能看孩子原话」）；③核对监护小结现在是否有数据（归档刚恢复）。
+- **需用户决定**：监护人是否可看孩子对话原文。当前按 2026-09-24/25 产品决定「不可」，我按此实现；若要调整（例如仅测试期开放、或绑定时多一个勾选）需你明确。
+- [ ] 日常回顾改读归档　[ ] 监护人入口与空状态文案　[ ] 监护小结现场核对
+
+### [ ] N-5 电脑对话长稳测试（≥30 分钟）
+
+- 方法：Mac 扬声器 `say -v Tingting` 代替使用者，串口 + bridge/edge 日志采集（`scripts/voice_session_capture.py`、`scripts/auto_audio/`，前例见 HANDOFF 09-29）。注意使用时段：孩子绑定带家长设的夜间休息时段，时段内唤醒只播晚安、不开 ASR；测试前先确认 profile 的 `QUIET_HOURS`。
+- 场景：连续多轮 ≥30 分钟（天气/知识/故事/闲聊）；播放中打断（「停」「别说了」）；续问；长静默；重连；负面情绪（孤独、难过、被欺负、焦虑、厌学，以及自伤类危机话术与家长提醒入队，outbox 不外发）；三种唤醒方式各测一次。
+- 产出：`docs/acceptance/run-20261001-longsoak/findings.md`（逐场景结果、问题清单、修复）。
+- [ ] 执行　[ ] 问题修复　[ ] 复测
+
+### [ ] N-6 产品体验官评审：说话内容、语气、方式（孩子 vs 老人）
+
+- 做法：用 N-5 的转写与音频，分别以「孩子」「老人」两个视角评：称呼、句长、用词、语速、停顿、情绪承接、是否说教、是否追问、安全话术；读现有提示词与人格（`prompts.py`、`persona`、`tutor`）确认是否按年龄/关系分风格。**诚实边界**：我无法直接「听」音频，只能用转写 + 音频客观度量（语速、停顿、时长、电平）评，并把抽样音频放进 `outputs/` 请用户抽听确认听感。
+- 优化：按发现改提示词/人格/TTS 参数（仅豆包现有参数），逐项前后对照，不回退安全话术。
+- [ ] 评审报告　[ ] 提示词与参数优化　[ ] 前后对照
 
 ## 2026-09-28 收尾待办
 
@@ -53,7 +100,7 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 **定期运维**
 
 - [ ] **2026-12-17 前**更换 aigcnice.com 证书：腾讯云会自动续签，但「未托管、未关联资源」，新证书不会自动到服务器；需下载 Nginx 格式，原位替换 `/etc/nginx/ssl/aigcnice.com_bundle.crt` 与 `.key`，`nginx -t` 后 reload，核对 443/8443（09-28 流程见 HANDOFF）。
-- [ ] 发布制品随发布累积：每次整栈在 `/opt/memoria/incoming/` 留约 3 GB，加载镜像另占数 GB；09-28 清理后根分区约 69%（118 GB）。约定一个保留规则（例如只留当前 + 紧邻回滚两批），按授权定期清理；仓库 `docker_image_retention.sh` 因保护全部 `rollback-*`/runtime-base 与 pre-state 引用而 0 候选，需要改或另写。
+- [ ] 发布制品随发布累积：每次整栈在 `/opt/memoria/incoming/` 留约 1.5–3 GB，加载的镜像每个 tag 另占约 1.3–1.8 GB。2026-10-01 已按「当前 + 紧邻回滚」清理一次（经授权，清单逐项 `docker rmi`）：根分区 90 → 37 GB（80% → 33%），镜像 77 个 tag、13 个旧 `incoming/*`、旧 `releases/<tag>` 源码树（保留 `.cutover` 收据与 DB 备份）、`component-releases/*/build`、`/home/ubuntu` 里 9 月 16 日的构建残留；保留集与被运行容器引用的 compose 文件清单见 `docs/runbooks/operations-space-governance.md`。待做：`scripts/docker_image_retention.sh` 因保护全部 `rollback-*`/runtime-base 与 pre-state 引用仍是 0 候选，需要改成「只保护当前发布的 rollback 与运行中引用」，否则下一轮（约 4 次整栈发布后）仍要手工清理；journald 占 1.1 GB 未动。
 
 ## P0：发布前必须闭环
 
@@ -153,8 +200,8 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 - 产品决定（用户 2026-09-25）：暂不用声纹（09-03 起生产 0 次 owner_match，主人得分 0.41–0.67 对门槛 0.78，profile 未评估）；设备只服务绑定时选定的使用人（孩子/老人/本人）。家长只看摘要、趋势、风险提醒，不看孩子原文；孩子的长期记忆需家长在绑定时勾选（默认不勾、非必选）；实名家长声明即监护关系；老人记忆由子女代为同意（如实记为代理）；同意长期有效直到撤销；解绑撤销同意并询问是否删除。
 - 已做并上线（本地 + 临时 PG 验证，生产 `MEMORIA_SPEAKER_AUTHORITY_ENABLED` 已于 09-25 改为 false）：Agent 在无声纹的设备会话上以签名 profile 为据给出 `device_bound_subject` 主人（仅数据权限，`current_speaker_authority_verified` 仍为假，回声/打断门不变），Control 用同一 profile 核验；播放后 3s 内机器人自己说过的告别词不能结束会话；策略 `subject_presence=device_bound`（家长 App 切到孩子仍读不到孩子记忆）；绑定时写入同意权威授予（guardian/subject/新 `delegate`），认定关系 `guardian_attestation_v1`/`delegate_attestation_v1`，老人登记为经绑定人认定的成年人（`child_for_parent` 此前根本无法绑定）；家长页开关双写、解绑撤销、换版延续；无账号孩子可由绑定人导出；生产 env 模板关闭 `MEMORIA_SPEAKER_AUTHORITY_ENABLED`；小程序隐藏声纹入口、绑定勾选与解绑/导出/删除入口。顺带修复：任何已生效关系都会让 profile 落库复核指纹不一致（收据只锁选中的关系）。
 - 按使用人删除（2026-09-25 同分支）：可续跑、有进度记录的删除流程（删除期间拒收该使用人的新证据），依次关闭该使用人的设备会话、删归档证据及其派生记忆（含引用了 TA 的合并条目）、文件对象、危机提醒与学习记录、MemoryScope（新维护角色 `memoria_memory_maintenance` 专用函数，只增不改约束对其他调用方不变）、语料；解绑并选删除时再把 TA 的身份隐去为占位并清掉审计中的旧名；最后逐库核对为空。保留的仅有无内容审计（同意记录、策略收据、关系/绑定、会话档案）。部署前须在 `/etc/memoria-postgres.env` 加 `MEMORIA_DB_MEMORY_MAINTENANCE_PASSWORD`，控制面 env 加 `MEMORIA_MEMORY_MAINTENANCE_DATABASE_URL`。已知残留：已推送到 Redis 的记忆事件无法撤回（随流修剪老化）；`speech_style_stats` 聚合、persona/digital-self 快照、`entity_ids` 数组无行级来源可追。
-- 已重新绑定（2026-09-28）：开发板以「给孩子使用」绑定为 `e8a27e45` v3 并勾选长期记忆，绑定时写入 consent grant；重新绑定曾因会话信任表未跟随而拒绝设备会话（#77 修复并上线，09-28 设备页 runtime-profile 与机器人 media-sessions 均已 200）。`memory_recall_private` 与隔天记忆在设备信任分档上线并打开开关前无法验证（见下一条）。
-- **设备信任分档（用户 2026-09-30 决定，#153，已随整栈 `20261001-device-archive-v1` 上线，开关关闭）**：生产设备没有 attestation（`device_fleet_attestations` 0 行），`action_device_lock_trust` 返回 `untrusted`，Policy 因此拒绝 `memory_recall_private`（140 次，理由均为 `device_untrusted`）与 `guardian_summary_view`（12 次），这是设备对话自 2026-08-08 起不入库的最深一层。做法：SQL 只多返回事实 `device_bound`（onboarding 激活、绑定到当前 binding、激活证书未吊销未过期）；新代码在 `MEMORIA_BOUND_DEVICE_TRUST_ENABLED=true` 时把 `untrusted` 加 `device_bound` 映射为 `trusted`；引擎按能力分档：`verified`（硬件 attestation）放行全部，`trusted`（仅绑定链路）只放行 `memory_capture`、`memory_recall_private`、`guardian_summary_view`，其余仍要 attestation；设备远程动作的 SQL 校验收紧为只认 `verified`。开关默认关，旧代码永远看不到 `trusted`，回滚代码不需要回退 schema。待完成：打开开关（需授权）；设备验收：新设备会话 profile 含 `memory_recall_private` 且没有其他敏感能力 → 说一句带专名的话 → `archive_evidence_events` 出现孩子的原文行、`archive_processing_outbox` 为 completed → 隔天追问能记起 → 家长小程序出现小结与回顾入口。编译与向量写入自 08-08 后没在现网跑过，可能暴露新问题。残余风险：设备私钥种子在普通 NVS 分区，取出私钥的人可在电脑上冒充设备、通过对话召回孩子的记忆，家长解绑即 `revoked`，根治要固件开 flash 与 NVS 加密；`trusted` 不防被改过的固件。真硬件 attestation（`verified`）留作后续。运维步骤见 `docs/runbooks/release-rollback.md`「设备信任开关」。
+- 已重新绑定（2026-09-28）：开发板以「给孩子使用」绑定为 `e8a27e45` v3 并勾选长期记忆，绑定时写入 consent grant；重新绑定曾因会话信任表未跟随而拒绝设备会话（#77 修复并上线，09-28 设备页 runtime-profile 与机器人 media-sessions 均已 200）。`memory_recall_private` 与隔天记忆在设备信任分档上线并打开开关前无法验证（见下一条，开关已于 2026-10-01 00:30 打开）。
+- **设备信任分档（用户 2026-09-30 决定，#153，已随整栈 `20261001-device-archive-v1` 上线，开关 2026-10-01 00:30 已打开）**：生产设备没有 attestation（`device_fleet_attestations` 0 行），`action_device_lock_trust` 返回 `untrusted`，Policy 因此拒绝 `memory_recall_private`（140 次，理由均为 `device_untrusted`）与 `guardian_summary_view`（12 次），这是设备对话自 2026-08-08 起不入库的最深一层。做法：SQL 只多返回事实 `device_bound`（onboarding 激活、绑定到当前 binding、激活证书未吊销未过期）；新代码在 `MEMORIA_BOUND_DEVICE_TRUST_ENABLED=true` 时把 `untrusted` 加 `device_bound` 映射为 `trusted`；引擎按能力分档：`verified`（硬件 attestation）放行全部，`trusted`（仅绑定链路）只放行 `memory_capture`、`memory_recall_private`、`guardian_summary_view`，其余仍要 attestation；设备远程动作的 SQL 校验收紧为只认 `verified`。开关默认关，旧代码永远看不到 `trusted`，回滚代码不需要回退 schema。已验证（2026-10-01 只读）：开关打开后 00:33–01:32 有 8 条孩子主体的 `owner` 原文行入库。待完成设备验收：新设备会话 profile 含 `memory_recall_private` 且没有其他敏感能力 → `archive_processing_outbox` 为 completed 而非 dead → 隔天追问能记起 → 家长小程序出现小结入口（回顾页见 N-4）。编译与向量写入自 08-08 后没在现网跑过，可能暴露新问题。残余风险：设备私钥种子在普通 NVS 分区，取出私钥的人可在电脑上冒充设备、通过对话召回孩子的记忆，家长解绑即 `revoked`，根治要固件开 flash 与 NVS 加密；`trusted` 不防被改过的固件。真硬件 attestation（`verified`）留作后续。运维步骤见 `docs/runbooks/release-rollback.md`「设备信任开关」。
 - 未做：声纹代码与 `speaker-model` 容器待设备验证后清理；危机推送订阅号未开通（功能另分支，默认关闭）。
 - 监护小结（2026-09-26 已上线；用户决定随长期记忆一起授予）：家长给孩子绑定并勾选长期记忆时，同时授予 `guardian_summary_view`（`GUARDIAN_MEMORY_CAPABILITIES`），家长页长期记忆开关同步授予/撤销；真实 PG 下家长 app 的签名 profile 因此出现该能力，孩子私人记忆仍不给。周小结接口新增无账号孩子分支：以孩子的长期记忆同意放行，只聚合家长账号下标注为该孩子的记录（不含原文），小程序在没有监护链接时自动加载绑定孩子的小结。老人（子女代同意）不授予监护小结。存量绑定需重新绑定或在家长页重开长期记忆开关后才会获得授予。
 - 完成条件：设备上孩子/老人/本人三种绑定各一次：隔天仍记得前一天说过的事；播放期回声不自答、刚播完的回声"再见"不结束会话、真人"再见"能结束；家长端看不到孩子原文；撤销后不再记忆。
