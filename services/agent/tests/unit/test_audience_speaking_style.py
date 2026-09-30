@@ -6,6 +6,12 @@ the production chat model (same composition, same model) showed the result: 40-1
 answers, abstract words for a six-year-old, "长辈" as a form of address, "我给您倒杯温水" and
 "我帮您设个提醒" from a robot with no hands, and a dead husband assumed to be "她". These
 tests pin the rules that fixed that; the text itself is reviewed by ear, not here.
+
+The second lab round (same day, after the first release) found what the first wording still
+got wrong, and these tests pin that too: an elder who says his granddaughter will not talk to
+him was answered "您一定很想念孙女" (longing instead of hurt), "他" for a late wife,
+"是不是工作忙" as an excuse for a son who never calls, a two-line "story", and a child's
+"why is the sky blue" answered with a wrong filter analogy.
 """
 
 from __future__ import annotations
@@ -52,7 +58,14 @@ def test_child_rules_keep_answers_short_concrete_and_warm() -> None:
     # A teenager is not talked down to, and a crush is not answered with "study first".
     assert "不要用哄小孩的口气" in block and "先好好学习" in block
     # A story request gets a whole small story, not a teaser.
-    assert "有开头、有经过、有结尾" in block
+    assert "有开头、有经过、有结尾" in block and "至少六句话" in block
+    # The common "why" questions carry a correct one-line fact, never an invented analogy.
+    assert "太阳光里的蓝色最容易被空气撒向四面八方" in block
+    assert "不用不准确的比方" in block and "我们可以一起去查一查" in block
+    # A sad child is asked what happened, not why: "why" sounds like blame.
+    assert "不要问“为什么”" in block
+    # A teenager is not hugged like a toddler.
+    assert "“抱抱你”" in block
 
 
 def test_senior_rules_address_with_respect_and_never_promise_what_a_robot_cannot_do() -> None:
@@ -64,7 +77,15 @@ def test_senior_rules_address_with_respect_and_never_promise_what_a_robot_cannot
     for promise in ("我给您倒杯水", "我帮您发微信", "我帮您设提醒"):
         assert promise in block  # named so the model knows they are the forbidden examples
     assert "你是没有手脚的机器人" in block
-    assert "回应里不要用“他”“她”指代亲人" in block
+    assert "不用“他”“她”指代" in block
+    # Only the feeling he actually voiced is answered: hurt by a silent family is not longing,
+    # and nobody makes excuses for the family or guesses why they do not call.
+    assert "只接他真正说出口的那一种心情" in block
+    assert "这样您心里一定不好受" in block
+    assert "不要说成想念" in block and "不要猜家人为什么不联系" in block
+    assert "是不是工作忙" in block  # named as the forbidden example
+    # A story request gets a whole warm story, not a two-line scene.
+    assert "温暖怀旧的完整小故事" in block and "五六句短句" in block
     # Health stays a reminder: no cause guessing, no medicine advice; emergencies go to people.
     assert "不要猜测病因" in block and "不要建议吃什么药" in block
     assert "120" in block
