@@ -921,26 +921,28 @@ class MediaOutputDispatchMixin:
         *,
         reason: str,
     ) -> bool:
-        """End the generation a ``playback.flush`` installed when no reply will follow it.
+        """Cancel the generation a ``playback.flush`` installed when no reply will follow it.
 
         The firmware makes the replacement generation its active one and waits for that generation's audio; a
         spoken stop is followed by no reply, so the device stayed in SPEAKING (screen, microphone state) until
         the next reply finished or the 30 s silence close, and the sentence the child said after "停" was lost
-        (2026-10-01 soak: 5 of 5 stops). ``generation.completed`` for the replacement ends it at once
-        (``FinalizePlaybackEnded`` -> legacy tts stop -> listening); it carries no audio and no receipt.
+        (2026-10-01 soak: 5 of 5 stops). ``generation.cancelled`` for the replacement ends it at once: the
+        firmware flushes and reports the legacy tts stop (``HandleGenerationTerminal``), so the device goes back
+        to listening.  It must be a CANCEL: the edge has already cancelled this fence (CANCEL_GENERATION
+        effect), applies a CANCEL for it idempotently, and fails the whole Voice Core stream with "cancelled
+        generation cannot be reactivated" for any other action (a COMPLETE, 2026-10-01 20261001-stop-terminal-v1,
+        tore the device session down: 7 s of "recovering").
         """
 
         task_epoch, context_version = self._event_versions(context, replacement)
-        emitted = await self.bridge.emit_generation(
+        return await self.bridge.emit_generation(
             replacement.session_id,
             replacement,
-            action=media_pb2.GENERATION_ACTION_COMPLETE,
+            action=media_pb2.GENERATION_ACTION_CANCEL,
             reason=reason,
             task_epoch=task_epoch,
             context_version=context_version,
         )
-        context.output.output_complete_emitted = emitted
-        return emitted
 
     async def _preempt_output_owner(
         self,
