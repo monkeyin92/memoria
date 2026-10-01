@@ -77,7 +77,8 @@ from services.common.realtime_information import (
     is_incomplete_realtime_reply,
     strip_realtime_bridge_prefix,
 )
-from services.common.response_depth import ResponseDepth, response_depth_for
+from services.common.response_depth import SHORT_REPLY_AUDIENCES, ResponseDepth, response_depth_for
+from services.speaker.domain import DEVICE_BOUND_SUBJECT_REASON
 
 media_pb2: Any = _media_pb2
 logger = logging.getLogger(__name__)
@@ -91,7 +92,46 @@ MAX_CONTROLLED_VOICE_REPLY_CHARS = 120
 # Longer budget when user asks for writing / plans / multi-step content.
 MAX_VOICE_REPLY_CHARS_LONGFORM = 560
 MAX_VOICE_REPLY_SENTENCES_LONGFORM = 12
+# A child or an elder hears the reply once, aloud, and cannot skim it. The general limits above allow
+# 320 characters (about a minute) for an ordinary answer and 560 for a requested one; (standard, extended)
+# caps for those listeners: ~25 s and ~60 s of speech.
+AUDIENCE_REPLY_LIMITS: dict[str, tuple[tuple[int, int], tuple[int, int]]] = {
+    "student_minor": ((110, 4), (300, 10)),
+    "senior_companion": ((100, 4), (240, 8)),
+}
 _SENTENCE_ENDINGS = frozenset("。！？；!?")
+
+
+def reply_limits_for(
+    depth: ResponseDepth,
+    *,
+    barge_in_enabled: bool,
+    realtime: bool,
+    audience: str | None,
+) -> tuple[int, int]:
+    """(max characters, max sentences) one spoken reply may use."""
+
+    if barge_in_enabled:
+        chars, sentences = MAX_VOICE_REPLY_CHARS, MAX_VOICE_REPLY_SENTENCES
+    else:
+        chars, sentences = MAX_CONTROLLED_VOICE_REPLY_CHARS, MAX_CONTROLLED_VOICE_REPLY_SENTENCES
+    if depth is ResponseDepth.EXTENDED:
+        chars, sentences = MAX_VOICE_REPLY_CHARS_LONGFORM, MAX_VOICE_REPLY_SENTENCES_LONGFORM
+    elif depth is ResponseDepth.BRIEF:
+        if not barge_in_enabled:
+            chars = min(chars, MAX_CONTROLLED_VOICE_REPLY_CHARS)
+            sentences = min(sentences, MAX_CONTROLLED_VOICE_REPLY_SENTENCES)
+        elif realtime:
+            chars = min(chars, MAX_REALTIME_REPLY_CHARS)
+            sentences = min(sentences, MAX_REALTIME_REPLY_SENTENCES)
+        else:
+            chars = min(chars, MAX_VOICE_REPLY_CHARS)
+            sentences = min(sentences, MAX_VOICE_REPLY_SENTENCES)
+    if audience in SHORT_REPLY_AUDIENCES:
+        standard_cap, extended_cap = AUDIENCE_REPLY_LIMITS[audience or ""]
+        cap_chars, cap_sentences = extended_cap if depth is ResponseDepth.EXTENDED else standard_cap
+        chars, sentences = min(chars, cap_chars), min(sentences, cap_sentences)
+    return chars, sentences
 
 
 def _chunk_text(chunk: Any) -> str:
@@ -1103,12 +1143,14 @@ class ReplyPipeline:
         reply_budget_exhausted = False
         first_content_marked = False
         first_phrase_marked = False
-        if not self._runtime.barge_in_enabled:
-            max_chars = MAX_CONTROLLED_VOICE_REPLY_CHARS
-            max_sentences = MAX_CONTROLLED_VOICE_REPLY_SENTENCES
-        else:
-            max_chars = MAX_VOICE_REPLY_CHARS
-            max_sentences = MAX_VOICE_REPLY_SENTENCES
+        profile = policy.runtime_profile
+        audience = profile.profile.service_mode if profile is not None else None
+        max_chars, max_sentences = reply_limits_for(
+            ResponseDepth.STANDARD,
+            barge_in_enabled=self._runtime.barge_in_enabled,
+            realtime=False,
+            audience=None,
+        )
 
         def _fit_segment(
             text: str,
@@ -1212,6 +1254,10 @@ class ReplyPipeline:
                 turn.content for turn in frozen_session_turns if turn.role == "assistant"
             ]
             owner_salutation = policy.owner_salutation if speaker_class == "owner" else None
+            device_bound_owner = (
+                speaker_class == "owner"
+                and response_plan.provenance.speaker_reason_code == DEVICE_BOUND_SUBJECT_REASON
+            )
             user_turns = [
                 turn.content
                 for turn in self._runtime.orchestrator.context.turns
@@ -1228,6 +1274,7 @@ class ReplyPipeline:
                 last_user,
                 realtime=realtime_request is not None,
                 controlled=not self._runtime.barge_in_enabled,
+                audience=audience,
             )
             delivery_instruction = speech_plan.llm_instruction.strip()
             if delivery_instruction:
@@ -1245,6 +1292,8 @@ class ReplyPipeline:
                     plan_is_local_safe(response_plan)
                     and not anonymous_public
                     and (speaker_class == "owner" or resume_interrupted_reply)
+                    # The bound person's own turns of this session are not another speaker's.
+                    and not device_bound_owner
                 ),
                 session_turns=frozen_session_turns,
                 delivery_instruction=delivery_instruction,
@@ -1266,22 +1315,12 @@ class ReplyPipeline:
                         )
                     ),
                 )
-            if depth_policy.depth is ResponseDepth.EXTENDED:
-                max_chars = MAX_VOICE_REPLY_CHARS_LONGFORM
-                max_sentences = MAX_VOICE_REPLY_SENTENCES_LONGFORM
-            elif depth_policy.depth is ResponseDepth.BRIEF:
-                if not self._runtime.barge_in_enabled:
-                    max_chars = min(max_chars, MAX_CONTROLLED_VOICE_REPLY_CHARS)
-                    max_sentences = min(
-                        max_sentences,
-                        MAX_CONTROLLED_VOICE_REPLY_SENTENCES,
-                    )
-                elif realtime_request is not None:
-                    max_chars = min(max_chars, MAX_REALTIME_REPLY_CHARS)
-                    max_sentences = min(max_sentences, MAX_REALTIME_REPLY_SENTENCES)
-                else:
-                    max_chars = min(max_chars, MAX_VOICE_REPLY_CHARS)
-                    max_sentences = min(max_sentences, MAX_VOICE_REPLY_SENTENCES)
+            max_chars, max_sentences = reply_limits_for(
+                depth_policy.depth,
+                barge_in_enabled=self._runtime.barge_in_enabled,
+                realtime=realtime_request is not None,
+                audience=audience,
+            )
             if realtime_request is not None and not resume_realtime_request:
                 handle = await self._get_or_start_realtime_delegation(
                     query=realtime_request.query,

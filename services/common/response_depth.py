@@ -43,6 +43,13 @@ _EXTENDED_HINTS = (
     "对比分析",
     "继续",
 )
+# Asking "why" or "how" is not a request for a lecture. For the audiences below it used to be: every
+# child's "天空为什么是蓝色的？" got the EXTENDED instruction and a minute of "瑞利散射" with a numbered list
+# (2026-10-01 soak), which the child and elder speaking rules ("一到两句短话") are written against.
+_SOFT_EXTENDED_HINTS = ("解释原因", "为什么", "怎么做")
+# Service modes whose listener hears a reply once, aloud, and cannot skim: children and elders.
+SHORT_REPLY_AUDIENCES = frozenset({"student_minor", "senior_companion"})
+
 _BRIEF_HINTS = (
     "简短",
     "简洁",
@@ -56,11 +63,39 @@ _BRIEF_HINTS = (
 )
 
 
+_SHORT_AUDIENCE_INSTRUCTIONS: dict[str, dict[ResponseDepth, str]] = {
+    "student_minor": {
+        ResponseDepth.BRIEF: (
+            "【回复长度】像和孩子聊天一样，用一两句短话说完，一次只讲一个要点；他想听更多会再问。"
+        ),
+        ResponseDepth.STANDARD: (
+            "【回复长度】像和孩子聊天一样，用两三句短话讲清楚，一次只讲一个要点，不要列条目、"
+            "不要用序号和符号；他想听更多会再问。"
+        ),
+        ResponseDepth.EXTENDED: (
+            "【回复长度】他明确想听完整的内容：用短句讲得有头有尾，最多约一分钟，不要列条目，"
+            "也不要在中间提前收尾。"
+        ),
+    },
+    "senior_companion": {
+        ResponseDepth.BRIEF: "【回复长度】用一两句短话说完，一次只讲一个要点，说慢一点。",
+        ResponseDepth.STANDARD: (
+            "【回复长度】用两三句短话讲清楚，一次只讲一个要点，不要列条目、不要用序号和符号，"
+            "别一口气说太多。"
+        ),
+        ResponseDepth.EXTENDED: (
+            "【回复长度】他明确想听更多：用短句慢慢讲完整，分成小段，最多约一分钟，不要列条目。"
+        ),
+    },
+}
+
+
 def response_depth_for(
     query: str,
     *,
     realtime: bool = False,
     controlled: bool = False,
+    audience: str | None = None,
 ) -> ResponseDepthPolicy:
     """Choose one depth before generation and keep it stable for the turn.
 
@@ -70,7 +105,13 @@ def response_depth_for(
     """
 
     compact = "".join(ch for ch in (query or "").casefold() if not ch.isspace())
-    if any(hint in compact for hint in _EXTENDED_HINTS):
+    short_audience = audience in SHORT_REPLY_AUDIENCES
+    extended_hints = (
+        tuple(hint for hint in _EXTENDED_HINTS if hint not in _SOFT_EXTENDED_HINTS)
+        if short_audience
+        else _EXTENDED_HINTS
+    )
+    if any(hint in compact for hint in extended_hints):
         depth = ResponseDepth.EXTENDED
     elif any(hint in compact for hint in _BRIEF_HINTS):
         depth = ResponseDepth.BRIEF
@@ -96,7 +137,14 @@ def response_depth_for(
             "关键步骤或结论尚未说完时提前收尾。"
         ),
     }
+    if short_audience:
+        instructions.update(_SHORT_AUDIENCE_INSTRUCTIONS[audience or ""])
     return ResponseDepthPolicy(depth=depth, instruction=instructions[depth])
 
 
-__all__ = ["ResponseDepth", "ResponseDepthPolicy", "response_depth_for"]
+__all__ = [
+    "SHORT_REPLY_AUDIENCES",
+    "ResponseDepth",
+    "ResponseDepthPolicy",
+    "response_depth_for",
+]

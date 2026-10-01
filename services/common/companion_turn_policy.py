@@ -30,3 +30,28 @@ COMPANION_TURN_POLICY_INSTRUCTIONS: Final = """
 
 普通陪伴：其余场景按当前陪伴风格自然回应，保持简短、真诚，不为了套角色而强行提问。
 """.strip()
+
+
+_OWNER_SCOPE_INSTRUCTIONS: Final = (
+    "仅依据当前用户这一轮内容回答。不得读取、引用或推断历史对话、"
+    "账户主人的私人记忆、人格、关系或工具结果；不确定时明确说明。"
+)
+# A device is bound to exactly one person, so the turns of the running session are that person's own words:
+# the fallback may keep the conversation coherent. Persistent history and private memory stay closed.
+_DEVICE_SESSION_SCOPE_INSTRUCTIONS: Final = (
+    "依据当前用户这一轮，以及本次会话中已经听见的对话回答，前后保持连贯。"
+    "不得读取、引用或推断账户主人的持久历史、私人记忆、人格、关系或工具结果；不确定时明确说明。"
+)
+_PUBLIC_SCOPE_INSTRUCTIONS: Final = (
+    "仅依据当前用户这一轮及本次会话内标记为公开的工作记忆回答。"
+    "不得读取、引用或推断账户主人的持久历史、私人记忆、人格、关系或"
+    "工具结果；不确定时明确说明。"
+)
+
+
+def companion_scope_instructions(*, owner: bool, device_bound: bool) -> str:
+    """What the local safe plan lets a companion reply rely on, by who is speaking."""
+
+    if owner and device_bound:
+        return _DEVICE_SESSION_SCOPE_INSTRUCTIONS
+    return _OWNER_SCOPE_INSTRUCTIONS if owner else _PUBLIC_SCOPE_INSTRUCTIONS

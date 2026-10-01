@@ -26,9 +26,13 @@ from services.agent.src.response_planner_client import (
 from services.common.companion_response_safety import (
     CRISIS_SUPPORT_REPLY,
     SAFE_UNKNOWN_REPLY,
+    companion_identity_replies,
     fixed_companion_reply,
 )
-from services.common.companion_turn_policy import COMPANION_TURN_POLICY_INSTRUCTIONS
+from services.common.companion_turn_policy import (
+    COMPANION_TURN_POLICY_INSTRUCTIONS,
+    companion_scope_instructions,
+)
 from services.common.companions import DESIGNED_VOICE_MODEL, companion_definition
 from services.common.realtime_information import (
     current_local_time,
@@ -36,6 +40,7 @@ from services.common.realtime_information import (
     is_safe_realtime_reply,
     realtime_instruction,
 )
+from services.speaker.domain import DEVICE_BOUND_SUBJECT_REASON
 
 _LOCAL_SAFE_REFUSAL_INSTRUCTIONS = "禁止生成普通回答；仅返回固定安全拒答。"
 _LOCAL_SAFE_REFUSAL_TEXT = "当前模式暂时无法安全生成回答。"
@@ -92,8 +97,8 @@ def plan_matches_mode_policy(
         companion = companion_definition(policy.companion_style_id)
         allowed_companion_direct_text = {None, SAFE_UNKNOWN_REPLY, CRISIS_SUPPORT_REPLY}
         if companion is not None:
-            allowed_companion_direct_text.add(
-                f"我是{companion.display_name}，{companion.style_description}。"
+            allowed_companion_direct_text |= companion_identity_replies(
+                companion.display_name, companion.style_description
             )
         if is_safe_realtime_reply(plan.direct_text):
             allowed_companion_direct_text.add(plan.direct_text)
@@ -293,9 +298,11 @@ def build_local_safe_plan(
     speaker_template = None if anonymous_public else getattr(speaker, "template_version", None)
     companion = mode == "companion"
     companion_definition_for_policy = companion_definition(policy.companion_style_id)
+    runtime_profile = policy.runtime_profile
     fixed_reply = fixed_companion_reply(
         query=query,
         is_companion=companion,
+        audience=runtime_profile.profile.service_mode if runtime_profile is not None else None,
         display_name=(
             companion_definition_for_policy.display_name
             if companion and companion_definition_for_policy is not None
@@ -336,18 +343,11 @@ def build_local_safe_plan(
         if anonymous_public
         else _LOCAL_SAFE_REFUSAL_INSTRUCTIONS
     )
-    if companion and speaker_class == "owner":
-        instructions = (
-            "仅依据当前用户这一轮内容回答。不得读取、引用或推断历史对话、"
-            "账户主人的私人记忆、人格、关系或工具结果；不确定时明确说明。"
-        )
-    elif companion:
-        instructions = (
-            "仅依据当前用户这一轮及本次会话内标记为公开的工作记忆回答。"
-            "不得读取、引用或推断账户主人的持久历史、私人记忆、人格、关系或"
-            "工具结果；不确定时明确说明。"
-        )
     if companion:
+        instructions = companion_scope_instructions(
+            owner=speaker_class == "owner",
+            device_bound=speaker_reason == DEVICE_BOUND_SUBJECT_REASON,
+        )
         instructions += "\n" + COMPANION_TURN_POLICY_INSTRUCTIONS
     if companion and policy.companion_style_prompt is not None:
         instructions += "\n" + policy.companion_style_prompt
