@@ -29,7 +29,7 @@ def build_live_lookup_semantic_classifier(
             api_key=endpoint.api_key,
             base_url=endpoint.base_url,
             model=endpoint.model,
-            timeout_s=float(getattr(settings, "live_lookup_semantic_timeout_s", 0.8)),
+            timeout_s=float(getattr(settings, "live_lookup_semantic_timeout_s", 1.2)),
             thinking_mode=endpoint.thinking_mode,
         )
     )

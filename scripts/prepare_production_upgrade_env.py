@@ -90,6 +90,8 @@ def prepare(
         required=True,
     )
     dashscope_key = _required(values, "DASHSCOPE_API_KEY")
+    # Production runs LLM_PROVIDER=deepseek; DashScope still serves ASR, search and embeddings.
+    _required(values, "DEEPSEEK_API_KEY")
     _required(values, "WECHAT_MINIPROGRAM_APPID")
     _required(values, "WECHAT_MINIPROGRAM_APPSECRET")
     database_urls = production_control_database_urls(postgres)
@@ -131,21 +133,22 @@ def prepare(
         {
             "ENVIRONMENT": "production",
             "OFFLINE_MOCK": "false",
-            "LLM_PROVIDER": "qwen",
+            "LLM_PROVIDER": "deepseek",
             "QWEN_FAST_MODEL": "qwen3.7-flash",
             "LIVE_LOOKUP_SEMANTIC_ENABLED": "true",
             "LIVE_LOOKUP_SEMANTIC_MODEL": "qwen-flash",
-            "LIVE_LOOKUP_SEMANTIC_TIMEOUT_S": "0.8",
+            "LIVE_LOOKUP_SEMANTIC_TIMEOUT_S": "1.2",
             "CONVERSATION_CLOSE_SEMANTIC_ENABLED": "true",
             "CONVERSATION_CLOSE_SEMANTIC_MODEL": "qwen-flash",
-            "CONVERSATION_CLOSE_SEMANTIC_TIMEOUT_S": "0.8",
+            "CONVERSATION_CLOSE_SEMANTIC_TIMEOUT_S": "1.2",
             "CRISIS_SEMANTIC_ENABLED": "true",
             "CRISIS_SEMANTIC_MODEL": "qwen-flash",
-            "CRISIS_SEMANTIC_TIMEOUT_S": "0.8",
+            "CRISIS_SEMANTIC_TIMEOUT_S": "1.2",
             "DASHSCOPE_SUMMARY_MODEL": "qwen-flash",
             "MEMORIA_MEMORY_EXTRACTION_MODEL": "qwen-flash",
             "DEEPSEEK_FAST_MODEL": "deepseek-flash",
             "DEEPSEEK_DEEP_MODEL": "deepseek-flash",
+            "DEEPSEEK_SUMMARY_MODEL": "deepseek-flash",
             "MEMORIA_RELEASE_TAG": release_tag,
             "MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256": evolution_trusted_root.lower(),
             "MEMORIA_EVOLUTION_RUNTIME_PROMPT_FAMILIES": values.get(

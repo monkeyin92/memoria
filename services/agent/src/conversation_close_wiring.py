@@ -31,7 +31,7 @@ def build_close_intent_semantic_classifier(
             api_key=endpoint.api_key,
             base_url=endpoint.base_url,
             model=endpoint.model,
-            timeout_s=float(getattr(settings, "conversation_close_semantic_timeout_s", 0.8)),
+            timeout_s=float(getattr(settings, "conversation_close_semantic_timeout_s", 1.2)),
             thinking_mode=endpoint.thinking_mode,
         )
     )

@@ -33,7 +33,7 @@ class CrisisSemanticClassifierConfig:
     api_key: str
     base_url: str
     model: str = "qwen-flash"
-    timeout_s: float = 0.8
+    timeout_s: float = 1.2
     thinking_mode: ThinkingMode = "dashscope"
 
     def __post_init__(self) -> None:

@@ -78,7 +78,7 @@ class ProviderFields(BaseModel):
         alias="CRISIS_SEMANTIC_MODEL",
     )
     crisis_semantic_timeout_s: float = Field(
-        default=0.8,
+        default=1.2,
         gt=0.0,
         le=2.0,
         alias="CRISIS_SEMANTIC_TIMEOUT_S",

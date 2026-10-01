@@ -236,7 +236,7 @@ class AgentSettings(BaseSettings):
         alias="LIVE_LOOKUP_SEMANTIC_MODEL",
     )
     live_lookup_semantic_timeout_s: float = Field(
-        default=0.8,
+        default=1.2,
         ge=0.1,
         le=2.0,
         alias="LIVE_LOOKUP_SEMANTIC_TIMEOUT_S",
@@ -251,7 +251,7 @@ class AgentSettings(BaseSettings):
         alias="CONVERSATION_CLOSE_SEMANTIC_MODEL",
     )
     conversation_close_semantic_timeout_s: float = Field(
-        default=0.8,
+        default=1.2,
         ge=0.1,
         le=2.0,
         alias="CONVERSATION_CLOSE_SEMANTIC_TIMEOUT_S",

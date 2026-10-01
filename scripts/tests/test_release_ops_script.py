@@ -14,7 +14,7 @@ into the full stack, so all targets run from the plain PREV compose file
 and freeze and rollback carry no component chain.  The 20260930-vector-keyword-v1,
 20261001-wake-mode-v1 control-api components put control-api on a chain for a day
 each; the full-stack release that followed folded them back in and the chain support
-went again (20261001-trusted-adult-v1 is the latest such release).
+went again (20261001-deepseek-flash-v1 is the latest such release).
 
 Since 20260929-livekit-retire-v1 (the LiveKit chain was stopped, then removed
 from the host) a release ships speaker-model, control-api and the Voice Core
