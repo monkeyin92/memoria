@@ -8,6 +8,7 @@ from typing import Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from services.common.llm_thinking import ThinkingMode, thinking_disabled
 from services.persona.domain import PersonaEvidence
 from services.persona.rules import (
     PersonaCandidate,
@@ -60,6 +61,29 @@ class _ExtractionPayload(BaseModel):
         return self
 
 
+def _without_unevidenced_boundaries(raw: object) -> object:
+    """Drop decision/value traits given without a counterexample; keep the rest of the reply.
+
+    Such a trait has no evidence for its boundary, so it is not learned. Every other trait is
+    still checked strictly, and any other invalid trait rejects the whole reply.
+    """
+
+    if not isinstance(raw, dict) or not isinstance(raw.get("traits"), list):
+        return raw
+    return {
+        **raw,
+        "traits": [
+            trait
+            for trait in raw["traits"]
+            if not (
+                isinstance(trait, dict)
+                and trait.get("category") in {"decision_habit", "value_priority"}
+                and not str(trait.get("counterexample") or "").strip()
+            )
+        ],
+    }
+
+
 def _prompt(text: str, evidence: PersonaEvidence) -> str:
     return f"""
 从下面的账户主人原话中提取可审核的人格候选。只输出 JSON 对象，不要 Markdown。
@@ -94,6 +118,7 @@ class QwenPersonaExtractor:
         model: str,
         timeout_s: float = 20.0,
         workspace_id: str = "",
+        thinking_mode: ThinkingMode = "dashscope",
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         if not api_key:
@@ -107,6 +132,7 @@ class QwenPersonaExtractor:
         self._model = model.strip()
         self._timeout_s = timeout_s
         self._workspace_id = workspace_id.strip()
+        self._thinking_mode = thinking_mode
         self._transport = transport
         self.version = f"qwen-persona-json:{self._model}:v2"
 
@@ -133,6 +159,7 @@ class QwenPersonaExtractor:
             "response_format": {"type": "json_object"},
             "temperature": 0,
             "max_tokens": 1600,
+            **thinking_disabled(self._thinking_mode),
         }
         try:
             async with httpx.AsyncClient(
@@ -145,7 +172,9 @@ class QwenPersonaExtractor:
             content = body["choices"][0]["message"]["content"]
             if not isinstance(content, str):
                 raise TypeError("Qwen returned non-text persona extraction content")
-            parsed = _ExtractionPayload.model_validate_json(content)
+            parsed = _ExtractionPayload.model_validate(
+                _without_unevidenced_boundaries(json.loads(content))
+            )
         except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as exc:
             raise PersonaExtractionError("Qwen returned an invalid persona extraction") from exc
 

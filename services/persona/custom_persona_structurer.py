@@ -19,6 +19,7 @@ from typing import Final
 import httpx
 from pydantic import ValidationError
 
+from services.common.llm_thinking import ThinkingMode, thinking_disabled
 from services.persona.custom_persona_fields import (
     StructuredPersona,
     invalid_structured_field,
@@ -76,6 +77,7 @@ class QwenCustomPersonaStructurer:
         model: str = "qwen-flash",
         timeout_s: float = 8.0,
         workspace_id: str = "",
+        thinking_mode: ThinkingMode = "dashscope",
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         if not api_key:
@@ -91,6 +93,7 @@ class QwenCustomPersonaStructurer:
         self._model = model.strip()
         self._timeout_s = timeout_s
         self._workspace_id = workspace_id.strip()
+        self._thinking_mode = thinking_mode
         self._transport = transport
         self.version = f"qwen-persona-structuring:{self._model}:v1"
 
@@ -116,6 +119,7 @@ class QwenCustomPersonaStructurer:
             "response_format": {"type": "json_object"},
             "temperature": 0,
             "max_tokens": 800,
+            **thinking_disabled(self._thinking_mode),
         }
         try:
             async with httpx.AsyncClient(

@@ -164,6 +164,7 @@ def _upgrade_inputs(
         "LIVEKIT_API_KEY": "livekit-key",
         "LIVEKIT_API_SECRET": "livekit-secret-material-that-is-long-enough",
         "DASHSCOPE_API_KEY": "dashscope-secret",
+        "DEEPSEEK_API_KEY": "deepseek-secret",
         "DASHSCOPE_WS_URL": "wss://dashscope.example/ws",
         "DASHSCOPE_COMPATIBLE_BASE_URL": "https://dashscope.example/v1",
         "DASHSCOPE_BASE_URL": "https://dashscope.example/v1",
@@ -308,7 +309,8 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     assert agent["ENDPOINTING_MIN_DELAY_S"] == "1.50"
     assert agent["ENDPOINTING_MAX_DELAY_S"] == "2.20"
     assert agent["FALSE_INTERRUPTION_TIMEOUT_S"] == "1.70"
-    assert agent["LLM_PROVIDER"] == "qwen"
+    assert agent["LLM_PROVIDER"] == control["LLM_PROVIDER"] == "deepseek"
+    assert control["DEEPSEEK_SUMMARY_MODEL"] == "deepseek-flash"
     assert agent["QWEN_FAST_MODEL"] == "qwen3.7-flash"
     assert agent["LIVE_LOOKUP_SEMANTIC_MODEL"] == "qwen-flash"
     assert agent["CONVERSATION_CLOSE_SEMANTIC_MODEL"] == "qwen-flash"
@@ -316,7 +318,7 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     assert control["CRISIS_SEMANTIC_MODEL"] == "qwen-flash"
     assert control["DASHSCOPE_SUMMARY_MODEL"] == "qwen-flash"
     assert control["MEMORIA_MEMORY_EXTRACTION_MODEL"] == "qwen-flash"
-    assert control["CRISIS_SEMANTIC_TIMEOUT_S"] == "0.8"
+    assert control["CRISIS_SEMANTIC_TIMEOUT_S"] == "1.2"
     assert "CRISIS_SEMANTIC_ENABLED" not in agent
     assert agent["DOUBAO_TTS_APP_ID"] == "doubao-app-id"
     assert agent["DOUBAO_TTS_ACCESS_TOKEN"] == "doubao-access-token"

@@ -27,6 +27,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from services.archive.domain import EvidenceEvent
+from services.common.llm_thinking import ThinkingMode, thinking_disabled
 from services.common.redaction import redact_pii
 from services.control_api.app.config import ControlSettings
 
@@ -121,16 +122,27 @@ def _prompt(day: date, utterances: Sequence[ChildUtterance]) -> str:
 """.strip()
 
 
-def _shares_a_quote(recap_text: str, utterances: Sequence[ChildUtterance]) -> bool:
+def _copied_fragments(recap_text: str, utterances: Sequence[ChildUtterance]) -> list[str]:
+    """Each run of the child's words that the recap repeats in VERBATIM_WINDOW-long pieces."""
+
     haystack = "".join(recap_text.split())
+    fragments: list[str] = []
     for item in utterances:
         words = "".join(item.text.split())
-        if len(words) < VERBATIM_WINDOW:
-            continue
+        covered = [False] * len(words)
         for start in range(len(words) - VERBATIM_WINDOW + 1):
             if words[start : start + VERBATIM_WINDOW] in haystack:
-                return True
-    return False
+                covered[start : start + VERBATIM_WINDOW] = [True] * VERBATIM_WINDOW
+        run = ""
+        for char, hit in zip(words, covered, strict=True):
+            if hit:
+                run += char
+            elif run:
+                fragments.append(run)
+                run = ""
+        if run:
+            fragments.append(run)
+    return fragments
 
 
 def _clean(value: object, limit: int) -> str:
@@ -140,14 +152,22 @@ def _clean(value: object, limit: int) -> str:
 def parse_recap(raw: object, utterances: Sequence[ChildUtterance]) -> dict[str, object] | None:
     """The model's JSON as the public recap, or ``None`` when it breaks a rule."""
 
+    return _checked(raw, utterances)[0]
+
+
+def _checked(
+    raw: object, utterances: Sequence[ChildUtterance]
+) -> tuple[dict[str, object] | None, list[str]]:
+    """The public recap (``None`` when it breaks a rule) and the child's words it repeated."""
+
     if not isinstance(raw, str):
-        return None
+        return None, []
     try:
         body = json.loads(raw)
     except ValueError:
-        return None
+        return None, []
     if not isinstance(body, Mapping):
-        return None
+        return None, []
     title = _clean(body.get("title"), 30)
     overview = _clean(body.get("overview"), 200)
     suggestion = _clean(body.get("suggestion"), 100)
@@ -159,16 +179,25 @@ def parse_recap(raw: object, utterances: Sequence[ChildUtterance]) -> dict[str, 
     ]
     mood = body.get("mood")
     if not title or not overview or mood not in MOODS:
-        return None
-    if _shares_a_quote("".join((title, overview, suggestion, *highlights)), utterances):
-        return None
+        return None, []
+    copied = _copied_fragments("".join((title, overview, suggestion, *highlights)), utterances)
+    if copied:
+        return None, copied
     return {
         "title": title,
         "overview": overview,
         "highlights": highlights,
         "mood": mood,
         "suggestion": suggestion,
-    }
+    }, []
+
+
+def _rewrite_prompt(copied: Sequence[str]) -> str:
+    quoted = "、".join(f"“{fragment}”" for fragment in copied)
+    return (
+        f"这份概括照搬了孩子的原话：{quoted}。请按同样的 JSON 结构重写："
+        "不要出现这些原话，也不要照搬孩子的其他原话，用自己的话只写话题和心情。"
+    )
 
 
 def fallback_recap(day: date, count: int) -> dict[str, object]:
@@ -183,7 +212,9 @@ def fallback_recap(day: date, count: int) -> dict[str, object]:
     }
 
 
-def _provider(settings: ControlSettings) -> tuple[str, str, str, str, float, RecapSource] | None:
+def _provider(
+    settings: ControlSettings,
+) -> tuple[str, str, str, ThinkingMode, float, RecapSource] | None:
     if settings.llm_provider in {"qwen", "bailian_deepseek"}:
         key = settings.dashscope_api_key.get_secret_value()
         if key:
@@ -191,7 +222,7 @@ def _provider(settings: ControlSettings) -> tuple[str, str, str, str, float, Rec
                 key,
                 settings.dashscope_base_url,
                 settings.dashscope_summary_model,
-                "enable_thinking",
+                "dashscope",
                 settings.dashscope_summary_timeout_s,
                 "qwen",
             )
@@ -202,7 +233,7 @@ def _provider(settings: ControlSettings) -> tuple[str, str, str, str, float, Rec
                 key,
                 settings.deepseek_base_url,
                 settings.deepseek_summary_model,
-                "",
+                "deepseek",
                 settings.deepseek_summary_timeout_s,
                 "deepseek",
             )
@@ -218,32 +249,48 @@ async def recap_for_day(
     provider = _provider(settings)
     if provider is None or count == 0:
         return fallback_recap(day, count), "fallback"
-    api_key, base_url, model, thinking_flag, timeout_s, source = provider
-    payload: dict[str, object] = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": "你是严谨的中文助手，只返回严格 JSON。"},
-            {"role": "user", "content": _prompt(day, utterances)},
-        ],
-        "response_format": {"type": "json_object"},
-        "temperature": 0.2,
-        "max_tokens": 600,
-    }
-    if thinking_flag:
-        payload[thinking_flag] = False
+    api_key, base_url, model, thinking_mode, timeout_s, source = provider
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": "你是严谨的中文助手，只返回严格 JSON。"},
+        {"role": "user", "content": _prompt(day, utterances)},
+    ]
     try:
         async with httpx.AsyncClient(timeout=timeout_s) as client:
-            response = await client.post(
-                f"{base_url.rstrip('/')}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json=payload,
-            )
-            response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
+
+            async def complete(conversation: list[dict[str, str]]) -> object:
+                payload: dict[str, object] = {
+                    "model": model,
+                    "messages": conversation,
+                    "response_format": {"type": "json_object"},
+                    "temperature": 0.2,
+                    "max_tokens": 600,
+                    **thinking_disabled(thinking_mode),
+                }
+                response = await client.post(
+                    f"{base_url.rstrip('/')}/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json=payload,
+                )
+                response.raise_for_status()
+                content: object = response.json()["choices"][0]["message"]["content"]
+                return content
+
+            content = await complete(messages)
+            recap, copied = _checked(content, utterances)
+            if recap is None and copied:
+                # One rewrite that names the repeated words; the guard still decides.
+                logger.info("guardian recap repeated the child's words; one rewrite day=%s", day)
+                content = await complete(
+                    [
+                        *messages,
+                        {"role": "assistant", "content": str(content)},
+                        {"role": "user", "content": _rewrite_prompt(copied)},
+                    ]
+                )
+                recap, _ = _checked(content, utterances)
     except Exception as exc:
         logger.warning("guardian recap model unavailable error=%s", type(exc).__name__)
         return fallback_recap(day, count), "fallback"
-    recap = parse_recap(content, utterances)
     if recap is None:
         logger.warning("guardian recap rejected (shape or quoted words) day=%s", day)
         return fallback_recap(day, count), "fallback"

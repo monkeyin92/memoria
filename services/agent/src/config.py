@@ -236,7 +236,7 @@ class AgentSettings(BaseSettings):
         alias="LIVE_LOOKUP_SEMANTIC_MODEL",
     )
     live_lookup_semantic_timeout_s: float = Field(
-        default=0.8,
+        default=1.2,
         ge=0.1,
         le=2.0,
         alias="LIVE_LOOKUP_SEMANTIC_TIMEOUT_S",
@@ -251,7 +251,7 @@ class AgentSettings(BaseSettings):
         alias="CONVERSATION_CLOSE_SEMANTIC_MODEL",
     )
     conversation_close_semantic_timeout_s: float = Field(
-        default=0.8,
+        default=1.2,
         ge=0.1,
         le=2.0,
         alias="CONVERSATION_CLOSE_SEMANTIC_TIMEOUT_S",
@@ -271,8 +271,9 @@ class AgentSettings(BaseSettings):
 
     deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
     deepseek_base_url: str = Field(default="https://api.deepseek.com", alias="DEEPSEEK_BASE_URL")
-    deepseek_fast_model: str = Field(default="deepseek-v4-flash", alias="DEEPSEEK_FAST_MODEL")
-    deepseek_deep_model: str = Field(default="deepseek-v4-flash", alias="DEEPSEEK_DEEP_MODEL")
+    # deepseek-flash serves DeepSeek-V4.1-Flash; the old name deepseek-v4-flash is routed to it.
+    deepseek_fast_model: str = Field(default="deepseek-flash", alias="DEEPSEEK_FAST_MODEL")
+    deepseek_deep_model: str = Field(default="deepseek-flash", alias="DEEPSEEK_DEEP_MODEL")
 
     doubao_tts_api_key: SecretStr = Field(default=SecretStr(""), alias="DOUBAO_TTS_API_KEY")
     doubao_tts_app_id: str = Field(default="", alias="DOUBAO_TTS_APP_ID")

@@ -78,7 +78,7 @@ class ProviderFields(BaseModel):
         alias="CRISIS_SEMANTIC_MODEL",
     )
     crisis_semantic_timeout_s: float = Field(
-        default=0.8,
+        default=1.2,
         gt=0.0,
         le=2.0,
         alias="CRISIS_SEMANTIC_TIMEOUT_S",
@@ -110,8 +110,16 @@ class ProviderFields(BaseModel):
         default="https://api.deepseek.com",
         alias="DEEPSEEK_BASE_URL",
     )
+    # With LLM_PROVIDER=deepseek the crisis evidence, memory/persona extraction and
+    # persona structuring calls use this model; recap and daily summary use the next one.
+    # deepseek-flash serves DeepSeek-V4.1-Flash.
+    deepseek_fast_model: str = Field(
+        default="deepseek-flash",
+        min_length=1,
+        alias="DEEPSEEK_FAST_MODEL",
+    )
     deepseek_summary_model: str = Field(
-        default="deepseek-v4-flash",
+        default="deepseek-flash",
         alias="DEEPSEEK_SUMMARY_MODEL",
     )
     deepseek_summary_timeout_s: float = Field(

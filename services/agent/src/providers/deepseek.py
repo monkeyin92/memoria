@@ -19,8 +19,8 @@ from services.agent.src.providers.reliability import CircuitBreaker
 class DeepSeekConfig:
     api_key: str
     base_url: str = "https://api.deepseek.com"
-    fast_model: str = "deepseek-v4-flash"
-    deep_model: str = "deepseek-v4-flash"
+    fast_model: str = "deepseek-flash"
+    deep_model: str = "deepseek-flash"
     fast_first_token_timeout_s: float = 3.0
     fast_total_timeout_s: float = 12.0
     fast_max_tokens: int = 240

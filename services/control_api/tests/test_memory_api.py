@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
+import httpx
 import jwt
 import pytest
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
+from services.common.llm_thinking import ThinkingMode
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.main import create_app
 from services.control_api.app.routes import memory as memory_routes
@@ -623,6 +627,57 @@ async def test_bailian_deepseek_summary_is_used_by_default(
     assert response.status_code == 200
     assert response.json()["source"] == "deepseek"
     assert "test-only-key" not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("thinking_mode", "switch", "absent"),
+    [
+        ("deepseek", {"thinking": {"type": "disabled"}}, "enable_thinking"),
+        ("dashscope", {"enable_thinking": False}, "thinking"),
+    ],
+)
+async def test_daily_summary_sends_the_providers_own_thinking_switch(
+    monkeypatch: pytest.MonkeyPatch,
+    thinking_mode: ThinkingMode,
+    switch: dict[str, object],
+    absent: str,
+) -> None:
+    seen: list[dict[str, Any]] = []
+    content = {
+        "title": "项目进展",
+        "overview": "完成了产品原型。",
+        "highlights": ["完成产品原型"],
+        "mood": "positive",
+        "suggestion": "明天验证核心交互。",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        body = {"choices": [{"message": {"content": json.dumps(content, ensure_ascii=False)}}]}
+        return httpx.Response(200, json=body)
+
+    real_client = httpx.AsyncClient
+
+    def client(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(memory_routes.httpx, "AsyncClient", client)
+
+    summary = await memory_routes._openai_compatible_summary(
+        api_key="test-key",
+        base_url="https://llm.example.invalid",
+        model="test-model",
+        timeout_s=5.0,
+        thinking_mode=thinking_mode,
+        messages=[{"role": "user", "text": "完成了产品原型"}],
+        summary_date=date(2026, 10, 1),
+    )
+
+    assert summary.title == "项目进展"
+    assert {key: seen[0][key] for key in switch} == switch
+    assert absent not in seen[0]
 
 
 @pytest.mark.asyncio

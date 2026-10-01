@@ -10,6 +10,7 @@ from services.agent.src.providers.live_lookup_semantic_classifier import (
     LiveLookupSemanticClassifierConfig,
     LiveLookupSemanticVerdict,
 )
+from services.agent.src.semantic_endpoint import semantic_endpoint
 
 
 def build_live_lookup_semantic_classifier(
@@ -17,21 +18,19 @@ def build_live_lookup_semantic_classifier(
 ) -> LiveLookupSemanticClassifier | None:
     if not bool(getattr(settings, "live_lookup_semantic_enabled", True)):
         return None
-    api_key = str(getattr(settings, "dashscope_api_key", "") or "").strip()
-    if not api_key:
+    endpoint = semantic_endpoint(
+        settings,
+        dashscope_model=str(getattr(settings, "live_lookup_semantic_model", "qwen-flash")),
+    )
+    if endpoint is None:
         return None
     return LiveLookupSemanticClassifier(
         LiveLookupSemanticClassifierConfig(
-            api_key=api_key,
-            base_url=str(
-                getattr(
-                    settings,
-                    "dashscope_compatible_base_url",
-                    "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                )
-            ),
-            model=str(getattr(settings, "live_lookup_semantic_model", "qwen-flash")),
-            timeout_s=float(getattr(settings, "live_lookup_semantic_timeout_s", 0.8)),
+            api_key=endpoint.api_key,
+            base_url=endpoint.base_url,
+            model=endpoint.model,
+            timeout_s=float(getattr(settings, "live_lookup_semantic_timeout_s", 1.2)),
+            thinking_mode=endpoint.thinking_mode,
         )
     )
 

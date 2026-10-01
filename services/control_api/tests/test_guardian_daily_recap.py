@@ -149,9 +149,10 @@ def test_fallback_is_counts_only() -> None:
 
 
 class _FakeClient:
-    """Stands in for httpx.AsyncClient: returns one canned chat completion."""
+    """Stands in for httpx.AsyncClient: returns the queued ``replies``, then ``reply``."""
 
     reply: object = None
+    replies: list[object] = []
     seen: list[dict[str, Any]] = []
 
     def __init__(self, *_: Any, **__: Any) -> None:
@@ -165,9 +166,10 @@ class _FakeClient:
 
     async def post(self, url: str, *, headers: dict[str, str], json: dict[str, Any]) -> httpx.Response:
         type(self).seen.append({"url": url, "payload": json})
-        if isinstance(type(self).reply, Exception):
-            raise type(self).reply  # type: ignore[misc]
-        body = {"choices": [{"message": {"content": type(self).reply}}]}
+        reply = type(self).replies.pop(0) if type(self).replies else type(self).reply
+        if isinstance(reply, Exception):
+            raise reply
+        body = {"choices": [{"message": {"content": reply}}]}
         return httpx.Response(200, json=body, request=httpx.Request("POST", url))
 
 
@@ -222,6 +224,54 @@ async def test_recap_for_day_uses_the_model_but_never_returns_a_quote(monkeypatc
         _Settings(key=""), day=date(2026, 10, 1), utterances=_turns()  # type: ignore[arg-type]
     )
     assert unconfigured_source == "fallback" and unconfigured["highlights"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_recap_that_repeats_the_childs_words_gets_one_rewrite(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # DeepSeek often keeps a phrase like 在学校画了一只大恐龙 word for word. The rewrite
+    # request names those words; the guard still decides (a second copy falls back, above).
+    monkeypatch.setattr(guardian_recap.httpx, "AsyncClient", _FakeClient)
+    _FakeClient.seen = []
+    _FakeClient.replies = [_model_reply(overview="孩子说" + CHILD_WORDS[0] + "，很开心。"), _model_reply()]
+
+    recap, source = await guardian_recap.recap_for_day(
+        _Settings(), day=date(2026, 10, 1), utterances=_turns()  # type: ignore[arg-type]
+    )
+
+    assert source == "qwen" and recap["title"] == "今天聊了画画和小狗"
+    assert len(_FakeClient.seen) == 2
+    rewrite = _FakeClient.seen[1]["payload"]["messages"]
+    assert [message["role"] for message in rewrite] == ["system", "user", "assistant", "user"]
+    assert f"“{CHILD_WORDS[0]}”" in rewrite[3]["content"]
+
+
+@pytest.mark.asyncio
+async def test_recap_on_official_deepseek_turns_its_thinking_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # DeepSeek ignores enable_thinking: without its own switch the 600 tokens go to reasoning
+    # and the guardian only ever sees the counts-only fallback.
+    monkeypatch.setattr(guardian_recap.httpx, "AsyncClient", _FakeClient)
+    _FakeClient.seen = []
+    _FakeClient.reply = _model_reply()
+    settings = _Settings(key="")
+    settings.llm_provider = "deepseek"
+    settings.deepseek_api_key = _Settings._Key("deepseek-test-key")
+    settings.deepseek_base_url = "https://deepseek.example.invalid"
+    settings.deepseek_summary_model = "deepseek-flash"
+
+    recap, source = await guardian_recap.recap_for_day(
+        settings, day=date(2026, 10, 1), utterances=_turns()  # type: ignore[arg-type]
+    )
+
+    assert source == "deepseek" and recap["title"] == "今天聊了画画和小狗"
+    sent = _FakeClient.seen[0]
+    assert sent["url"] == "https://deepseek.example.invalid/chat/completions"
+    assert sent["payload"]["model"] == "deepseek-flash"
+    assert sent["payload"]["thinking"] == {"type": "disabled"}
+    assert "enable_thinking" not in sent["payload"]
 
 
 # --- the endpoints ---------------------------------------------------------------------
