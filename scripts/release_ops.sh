@@ -18,8 +18,8 @@ U=/opt/memoria/incoming/$TAG
 R=/opt/memoria/releases/$TAG
 S=$R/.cutover
 # The stack this release replaces: the rollback target and its identity.
-PREV_TAG=20261001-device-prompt-v1
-PREV_COMMIT=73f7bc1cedc2e699aae44a2155a4b8a02408ff43
+PREV_TAG=20261001-stop-terminal-v1
+PREV_COMMIT=ebb6926dc9226c4671e0bf7ca8822534ab26e0ae
 PREV=/opt/memoria/releases/$PREV_TAG
 # PostgreSQL still bind-mounts its schema files from this older tree, so schema
 # upgrades are written there (in place, keeping the inode) -- never into PREV.
