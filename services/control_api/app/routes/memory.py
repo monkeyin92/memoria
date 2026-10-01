@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from services.common.companions import COMPANION_IDS
+from services.common.llm_thinking import ThinkingMode, thinking_disabled
 from services.common.redaction import redact_pii
 from services.control_api.app.account_gate import require_writable_account
 from services.control_api.app.companion_device_sync import (
@@ -306,6 +307,7 @@ async def _openai_compatible_summary(
     base_url: str,
     model: str,
     timeout_s: float,
+    thinking_mode: ThinkingMode,
     messages: list[dict[str, Any]],
     summary_date: date,
 ) -> DailySummaryContent:
@@ -324,6 +326,7 @@ async def _openai_compatible_summary(
         "response_format": {"type": "json_object"},
         "temperature": 0.2,
         "max_tokens": 900,
+        **thinking_disabled(thinking_mode),
     }
     async with httpx.AsyncClient(timeout=timeout_s) as client:
         response = await client.post(
@@ -352,6 +355,7 @@ async def _dashscope_summary(
         base_url=settings.dashscope_base_url,
         model=settings.dashscope_summary_model,
         timeout_s=settings.dashscope_summary_timeout_s,
+        thinking_mode="dashscope",
         messages=messages,
         summary_date=summary_date,
     )
@@ -367,6 +371,7 @@ async def _deepseek_summary(
         base_url=settings.deepseek_base_url,
         model=settings.deepseek_summary_model,
         timeout_s=settings.deepseek_summary_timeout_s,
+        thinking_mode="deepseek",
         messages=messages,
         summary_date=summary_date,
     )

@@ -19,10 +19,6 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from services.agent.src.providers.crisis_semantic_classifier import (
-    CrisisSemanticClassifier,
-    CrisisSemanticClassifierConfig,
-)
 from services.archive.compiler_worker import MemoryCompilerWorker
 from services.archive.domain import EvidenceEvent, LifeArchivePort
 from services.archive.memory_domain import (
@@ -102,6 +98,11 @@ from services.control_api.app.session_termination import (
     AccountSessionTerminator,
     RealtimeConnectionRegistry,
 )
+from services.control_api.app.text_models import (
+    build_crisis_semantic_classifier,
+    build_persona_extractor,
+    build_persona_structurer,
+)
 from services.control_api.app.unconfigured_store import UnconfiguredStore
 from services.control_api.app.wiring import Wiring, run_eagerly
 from services.device_fleet.bootstrap_postgres_store import PostgresBootstrapStore
@@ -167,11 +168,8 @@ from services.memory_scope.wiring import (
     MemoryProductionWiring,
     install_memory_production,
 )
-from services.persona.custom_persona_structurer import QwenCustomPersonaStructurer
 from services.persona.domain import PersonaEnginePort
 from services.persona.postgres_engine import PostgresPersonaEngine
-from services.persona.qwen_extractor import FallbackPersonaExtractor, QwenPersonaExtractor
-from services.persona.rules import PersonaExtractor, RuleBasedPersonaExtractor
 from services.policy.engine import PolicyEngine
 from services.policy.receipt_store import InMemoryPolicyReceiptWriter
 from services.self_model.domain import SelfModelRegistryPort
@@ -372,61 +370,6 @@ def _speaker_authority(
 def _unconfigured(store: str) -> Any:
     """Eager wiring without an archive DSN: the archive family is PostgreSQL-only."""
     return UnconfiguredStore(store, "MEMORIA_ARCHIVE_DATABASE_URL")
-
-
-def _persona_extractor(settings: ControlSettings) -> PersonaExtractor:
-    fallback = RuleBasedPersonaExtractor()
-    api_key = settings.dashscope_api_key.get_secret_value()
-    if settings.offline_mock or not api_key:
-        return fallback
-    return FallbackPersonaExtractor(
-        QwenPersonaExtractor(
-            api_key=api_key,
-            base_url=settings.dashscope_base_url,
-            model=settings.memory_extraction_model,
-            timeout_s=settings.memory_extraction_timeout_s,
-            workspace_id=settings.dashscope_workspace_id,
-        ),
-        fallback,
-    )
-
-
-def _persona_structurer(
-    settings: ControlSettings,
-) -> QwenCustomPersonaStructurer | None:
-    """Build the custom-persona structurer, or ``None`` when unmocked/offline.
-
-    Without authority the endpoint returns ``503 persona_structuring_
-    unavailable`` and the client hand-fills the same controlled fields
-    (PRD P1-2), so no free-text ever reaches a prompt.
-    """
-
-    api_key = settings.dashscope_api_key.get_secret_value()
-    if settings.offline_mock or not api_key:
-        return None
-    return QwenCustomPersonaStructurer(
-        api_key=api_key,
-        base_url=settings.dashscope_base_url,
-        model=settings.persona_structuring_model,
-        timeout_s=settings.persona_structuring_timeout_s,
-        workspace_id=settings.dashscope_workspace_id,
-    )
-
-
-def _crisis_semantic_classifier(
-    settings: ControlSettings,
-) -> CrisisSemanticClassifier | None:
-    api_key = settings.dashscope_api_key.get_secret_value()
-    if settings.offline_mock or not settings.crisis_semantic_enabled or not api_key:
-        return None
-    return CrisisSemanticClassifier(
-        CrisisSemanticClassifierConfig(
-            api_key=api_key,
-            base_url=settings.dashscope_base_url,
-            model=settings.crisis_semantic_model,
-            timeout_s=settings.crisis_semantic_timeout_s,
-        )
-    )
 
 
 def _voice_profile_services(
@@ -765,7 +708,7 @@ async def _wire_services(w: Wiring) -> None:
 
     app, settings = w.app, w.settings
     production = settings.environment == "production"
-    crisis_semantic_classifier = _crisis_semantic_classifier(settings)
+    crisis_semantic_classifier = build_crisis_semantic_classifier(settings)
     app.state.crisis_semantic_classifier = crisis_semantic_classifier
     if crisis_semantic_classifier is not None:
         w.on_close(crisis_semantic_classifier.aclose)
@@ -913,7 +856,7 @@ async def _wire_services(w: Wiring) -> None:
     skill_catalog: SkillCatalogPort
     persona_engine: PersonaEnginePort
     extractor = build_memory_extractor(settings)
-    persona_extractor = _persona_extractor(settings)
+    persona_extractor = build_persona_extractor(settings)
     # Live startup builds it even on SQLite: a bad embedding config fails fast.
     embedder = build_memory_embedder(settings) if w.live else None
     account_guard = _memory_account_guard(app.state.account_operations, store)
@@ -988,7 +931,7 @@ async def _wire_services(w: Wiring) -> None:
     app.state.skill_catalog = skill_catalog
     app.state.persona_engine = persona_engine
     if w.live:
-        app.state.persona_structurer = _persona_structurer(settings)
+        app.state.persona_structurer = build_persona_structurer(settings)
 
     configured_evolution_url = settings.evolution_database_url.get_secret_value().strip()
     if w.live and production and not configured_evolution_url:

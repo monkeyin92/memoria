@@ -27,6 +27,7 @@ from services.archive.memory_write_policy import (
     explicit_remember_content,
     low_risk_self_fact_predicate,
 )
+from services.common.llm_thinking import ThinkingMode, thinking_disabled
 
 
 class MemoryExtractionError(RuntimeError):
@@ -230,6 +231,7 @@ class QwenMemoryExtractor:
         model: str,
         timeout_s: float = 20.0,
         workspace_id: str = "",
+        thinking_mode: ThinkingMode = "dashscope",
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         if not api_key:
@@ -243,6 +245,7 @@ class QwenMemoryExtractor:
         self._model = model.strip()
         self._timeout_s = timeout_s
         self._workspace_id = workspace_id.strip()
+        self._thinking_mode = thinking_mode
         self._transport = transport
         self.version = f"qwen-json:{self._model}:v3"
 
@@ -270,6 +273,7 @@ class QwenMemoryExtractor:
             "response_format": {"type": "json_object"},
             "temperature": 0,
             "max_tokens": 2400,
+            **thinking_disabled(self._thinking_mode),
         }
         try:
             async with httpx.AsyncClient(

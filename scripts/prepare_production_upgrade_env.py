@@ -144,8 +144,8 @@ def prepare(
             "CRISIS_SEMANTIC_TIMEOUT_S": "0.8",
             "DASHSCOPE_SUMMARY_MODEL": "qwen-flash",
             "MEMORIA_MEMORY_EXTRACTION_MODEL": "qwen-flash",
-            "DEEPSEEK_FAST_MODEL": "deepseek-v4-flash",
-            "DEEPSEEK_DEEP_MODEL": "deepseek-v4-flash",
+            "DEEPSEEK_FAST_MODEL": "deepseek-flash",
+            "DEEPSEEK_DEEP_MODEL": "deepseek-flash",
             "MEMORIA_RELEASE_TAG": release_tag,
             "MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256": evolution_trusted_root.lower(),
             "MEMORIA_EVOLUTION_RUNTIME_PROMPT_FAMILIES": values.get(

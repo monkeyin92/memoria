@@ -8,6 +8,7 @@ from services.archive.mood_followup import MoodFollowupEnsuringExtractor
 from services.archive.postgres_memory_catalog import QwenMemoryEmbedder
 from services.archive.qwen_memory_extractor import FallbackMemoryExtractor, QwenMemoryExtractor
 from services.control_api.app.config import ControlSettings
+from services.control_api.app.text_models import text_model_endpoint
 
 
 def build_memory_embedder(settings: ControlSettings) -> MemoryEmbedder | None:
@@ -25,8 +26,8 @@ def build_memory_embedder(settings: ControlSettings) -> MemoryEmbedder | None:
 
 def build_memory_extractor(settings: ControlSettings) -> MemoryExtractor:
     fallback = RuleBasedMemoryExtractor()
-    api_key = settings.dashscope_api_key.get_secret_value()
-    if settings.offline_mock or not api_key:
+    endpoint = text_model_endpoint(settings)
+    if endpoint is None:
         # Only the model branch is wrapped. The rule extractor already stores the
         # owner's full sentence, so its claims carry the feeling by construction,
         # and scripts/evaluate_memory.py relies on this branch staying a bare
@@ -35,11 +36,12 @@ def build_memory_extractor(settings: ControlSettings) -> MemoryExtractor:
     return MoodFollowupEnsuringExtractor(
         FallbackMemoryExtractor(
             QwenMemoryExtractor(
-                api_key=api_key,
-                base_url=settings.dashscope_base_url,
-                model=settings.memory_extraction_model,
+                api_key=endpoint.api_key,
+                base_url=endpoint.base_url,
+                model=endpoint.model(settings.memory_extraction_model),
                 timeout_s=settings.memory_extraction_timeout_s,
-                workspace_id=settings.dashscope_workspace_id,
+                workspace_id=endpoint.workspace_id,
+                thinking_mode=endpoint.thinking_mode,
             ),
             fallback,
         )

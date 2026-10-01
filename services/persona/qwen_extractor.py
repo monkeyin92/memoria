@@ -8,6 +8,7 @@ from typing import Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from services.common.llm_thinking import ThinkingMode, thinking_disabled
 from services.persona.domain import PersonaEvidence
 from services.persona.rules import (
     PersonaCandidate,
@@ -94,6 +95,7 @@ class QwenPersonaExtractor:
         model: str,
         timeout_s: float = 20.0,
         workspace_id: str = "",
+        thinking_mode: ThinkingMode = "dashscope",
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         if not api_key:
@@ -107,6 +109,7 @@ class QwenPersonaExtractor:
         self._model = model.strip()
         self._timeout_s = timeout_s
         self._workspace_id = workspace_id.strip()
+        self._thinking_mode = thinking_mode
         self._transport = transport
         self.version = f"qwen-persona-json:{self._model}:v2"
 
@@ -133,6 +136,7 @@ class QwenPersonaExtractor:
             "response_format": {"type": "json_object"},
             "temperature": 0,
             "max_tokens": 1600,
+            **thinking_disabled(self._thinking_mode),
         }
         try:
             async with httpx.AsyncClient(

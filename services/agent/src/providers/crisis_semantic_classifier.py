@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 
 from services.common.crisis_policy import CrisisSemanticVerdict as CrisisSemanticVerdict
+from services.common.llm_thinking import ThinkingMode, thinking_disabled
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ class CrisisSemanticClassifierConfig:
     base_url: str
     model: str = "qwen-flash"
     timeout_s: float = 0.8
+    thinking_mode: ThinkingMode = "dashscope"
 
     def __post_init__(self) -> None:
         if not self.api_key.strip():
@@ -76,7 +78,7 @@ class CrisisSemanticClassifier:
             ],
             "temperature": 0,
             "stream": False,
-            "enable_thinking": False,
+            **thinking_disabled(self._config.thinking_mode),
             "max_tokens": 12,
         }
         try:

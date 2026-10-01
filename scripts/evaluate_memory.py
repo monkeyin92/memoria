@@ -60,7 +60,8 @@ def _parser() -> argparse.ArgumentParser:
         help=(
             "rules: offline rule extractor (structural ceiling: it never emits "
             "a canonical episode key). configured: the production assembly -- "
-            "Qwen with rule fallback -- which needs DASHSCOPE_API_KEY and "
+            "the LLM_PROVIDER model with rule fallback -- which needs its key "
+            "(DASHSCOPE_API_KEY, or DEEPSEEK_API_KEY with LLM_PROVIDER=deepseek) and "
             "OFFLINE_MOCK=false; it is the only path that can produce the "
             "cross-session canonical keys some cases expect."
         ),
@@ -170,7 +171,8 @@ def _build_adapter(
     extractor = build_memory_extractor(ControlSettings())
     if isinstance(extractor, RuleBasedMemoryExtractor):
         raise SystemExit(
-            "--extractor configured needs DASHSCOPE_API_KEY set and "
+            "--extractor configured needs the LLM_PROVIDER key (DASHSCOPE_API_KEY, or "
+            "DEEPSEEK_API_KEY with LLM_PROVIDER=deepseek) and "
             "OFFLINE_MOCK=false; without them the production assembly is the "
             "rule extractor, which cannot produce canonical episode keys."
         )

@@ -10,6 +10,7 @@ from services.agent.src.providers.close_intent_semantic_classifier import (
     CloseIntentSemanticClassifierConfig,
     CloseIntentSemanticVerdict,
 )
+from services.agent.src.semantic_endpoint import semantic_endpoint
 
 
 def build_close_intent_semantic_classifier(
@@ -17,23 +18,21 @@ def build_close_intent_semantic_classifier(
 ) -> CloseIntentSemanticClassifier | None:
     if not bool(getattr(settings, "conversation_close_semantic_enabled", True)):
         return None
-    api_key = str(getattr(settings, "dashscope_api_key", "") or "").strip()
-    if not api_key:
+    endpoint = semantic_endpoint(
+        settings,
+        dashscope_model=str(
+            getattr(settings, "conversation_close_semantic_model", "qwen-flash")
+        ),
+    )
+    if endpoint is None:
         return None
     return CloseIntentSemanticClassifier(
         CloseIntentSemanticClassifierConfig(
-            api_key=api_key,
-            base_url=str(
-                getattr(
-                    settings,
-                    "dashscope_compatible_base_url",
-                    "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                )
-            ),
-            model=str(
-                getattr(settings, "conversation_close_semantic_model", "qwen-flash")
-            ),
+            api_key=endpoint.api_key,
+            base_url=endpoint.base_url,
+            model=endpoint.model,
             timeout_s=float(getattr(settings, "conversation_close_semantic_timeout_s", 0.8)),
+            thinking_mode=endpoint.thinking_mode,
         )
     )
 

@@ -10,6 +10,8 @@ from typing import Any
 
 import httpx
 
+from services.common.llm_thinking import ThinkingMode, thinking_disabled
+
 logger = logging.getLogger(__name__)
 
 _MAX_TEXT_CHARS = 512
@@ -33,6 +35,7 @@ class CloseIntentSemanticClassifierConfig:
     base_url: str
     model: str = "qwen-flash"
     timeout_s: float = 0.8
+    thinking_mode: ThinkingMode = "dashscope"
 
     def __post_init__(self) -> None:
         if not self.api_key.strip():
@@ -76,7 +79,7 @@ class CloseIntentSemanticClassifier:
             ],
             "temperature": 0,
             "stream": False,
-            "enable_thinking": False,
+            **thinking_disabled(self._config.thinking_mode),
             "max_tokens": 16,
         }
         try:
