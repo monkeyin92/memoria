@@ -226,6 +226,23 @@ class _StoryHarness(_Harness):
             story.generation_id + 1,
         )
         assert effect.source_event_id == "voice_stop_command"
+        # playback.flush made the device wait for the replacement generation's audio. A stop is followed by
+        # no reply, so that generation must be ended too, or the device stays in SPEAKING (its mic state, its
+        # screen) until the next reply or the 30 s silence close, and the child's next sentence is lost
+        # (2026-10-01 soak: 5 of 5 spoken stops).
+        ended = [
+            message.generation
+            for message in self.outputs
+            if message.WhichOneof("event") == "generation"
+            and message.generation.action == media_pb2.GENERATION_ACTION_COMPLETE
+            and message.generation.generation_id == story.generation_id + 1
+        ]
+        if self.identity.client_type == "device":
+            [terminal_generation] = ended
+            assert terminal_generation.turn_id == story.turn_id
+            assert terminal_generation.reason == "voice_stop_command"
+        else:
+            assert ended == []  # only the firmware waits for the replacement's audio
         assert story in self.story.cancelled
         terminal = [d for d in self.deliveries_for(story) if d["terminal_event"]]
         assert [d["terminal_event"] for d in terminal] == ["preempted"]
@@ -275,6 +292,35 @@ async def test_device_stop_word_without_vad_stops_the_story_and_keeps_listening(
         assert not harness.closed()
 
     await _run_story(_device_identity("stop-word-story"), script)
+
+
+@pytest.mark.asyncio
+async def test_a_stop_that_needed_no_device_flush_ends_no_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The terminal belongs to the replacement the flush installed: without a flush there is none."""
+
+    async def script(harness: _StoryHarness) -> None:
+        monkeypatch.setattr(
+            type(harness.registry),
+            "_device_playback_flush_required",
+            staticmethod(lambda _context, _fence: False),
+        )
+        story = await harness.start_story()
+        await harness.audio_frames(15, final_text="停")
+        await harness.wait_for(
+            lambda: harness.runtime.fence.generation_id == story.generation_id + 1
+        )
+        await harness.settle()
+        assert harness.cancel_effects() == []
+        assert not [
+            message
+            for message in harness.outputs
+            if message.WhichOneof("event") == "generation"
+            and message.generation.action == media_pb2.GENERATION_ACTION_COMPLETE
+        ]
+
+    await _run_story(_device_identity("stop-without-flush"), script)
 
 
 @pytest.mark.asyncio

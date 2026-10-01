@@ -62,3 +62,29 @@ def test_short_audiences_keep_brief_and_controlled_behaviour() -> None:
     assert response_depth_for("今天天气怎么样", realtime=True, audience="student_minor").depth is (
         ResponseDepth.BRIEF
     )
+
+
+def test_every_way_to_ask_for_a_story_is_an_extended_answer_but_talking_about_one_is_not() -> None:
+    """2026-10-01: only "讲个故事" counted, so "给我讲一个故事吧" was cut off after four sentences."""
+
+    for audience in (None, "student_minor", "senior_companion"):
+        for query in (
+            "给我讲一个故事吧。",
+            "讲故事",
+            "我想听故事",
+            "来个故事",
+            "再讲一个故事",
+            "说个睡前故事",
+            "讲一个很短的故事",
+            "讲个童话吧",
+            "给我读一个故事",
+        ):
+            assert response_depth_for(query, audience=audience).depth is ResponseDepth.EXTENDED, (
+                audience,
+                query,
+            )
+        for query in ("我今天听了一个故事", "这个故事不好玩", "讲一个很短的笑话吧", "你会讲笑话吗"):
+            assert response_depth_for(query, audience=audience).depth is ResponseDepth.STANDARD, (
+                audience,
+                query,
+            )

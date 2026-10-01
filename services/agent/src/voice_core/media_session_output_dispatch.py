@@ -914,6 +914,34 @@ class MediaOutputDispatchMixin:
             context_version=context_version,
         )
 
+    async def _end_replacement_generation(
+        self,
+        context: _MediaVoiceSession,
+        replacement: GenerationFence,
+        *,
+        reason: str,
+    ) -> bool:
+        """End the generation a ``playback.flush`` installed when no reply will follow it.
+
+        The firmware makes the replacement generation its active one and waits for that generation's audio; a
+        spoken stop is followed by no reply, so the device stayed in SPEAKING (screen, microphone state) until
+        the next reply finished or the 30 s silence close, and the sentence the child said after "停" was lost
+        (2026-10-01 soak: 5 of 5 stops). ``generation.completed`` for the replacement ends it at once
+        (``FinalizePlaybackEnded`` -> legacy tts stop -> listening); it carries no audio and no receipt.
+        """
+
+        task_epoch, context_version = self._event_versions(context, replacement)
+        emitted = await self.bridge.emit_generation(
+            replacement.session_id,
+            replacement,
+            action=media_pb2.GENERATION_ACTION_COMPLETE,
+            reason=reason,
+            task_epoch=task_epoch,
+            context_version=context_version,
+        )
+        context.output.output_complete_emitted = emitted
+        return emitted
+
     async def _preempt_output_owner(
         self,
         context: _MediaVoiceSession,
