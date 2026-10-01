@@ -39,7 +39,7 @@ _OWNER_SCOPE_INSTRUCTIONS: Final = (
 # A device is bound to exactly one person, so the turns of the running session are that person's own words:
 # the fallback may keep the conversation coherent. Persistent history and private memory stay closed.
 _DEVICE_SESSION_SCOPE_INSTRUCTIONS: Final = (
-    "依据当前用户这一轮，以及本次会话中已经听见的对话回答，前后保持连贯。"
+    "依据当前用户这一轮，以及本次会话中已经听见的对话回答，前后保持连贯，但不要把不相关的旧话题硬接进回答。"
     "不得读取、引用或推断账户主人的持久历史、私人记忆、人格、关系或工具结果；不确定时明确说明。"
 )
 _PUBLIC_SCOPE_INSTRUCTIONS: Final = (

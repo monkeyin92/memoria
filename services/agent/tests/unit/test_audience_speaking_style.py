@@ -98,3 +98,25 @@ def test_senior_rules_address_with_respect_and_never_promise_what_a_robot_cannot
 def test_the_adult_and_unknown_modes_are_untouched() -> None:
     assert "说话方式" not in pc.SERVICE_MODE_BLOCKS["adult_companion"]
     assert "说话方式" not in pc.SERVICE_MODE_BLOCKS["unknown_safe"]
+
+
+def test_a_child_is_never_promised_secrecy() -> None:
+    """2026-10-01 soak: 「我告诉你一个秘密，你不要告诉别人」 was answered 「好，我答应你。」."""
+
+    block = pc.SERVICE_MODE_BLOCKS["student_minor"]
+    assert "不要答应替他保密" in block and "好，我听着呢" in block
+    assert "告诉爸爸妈妈或老师" in block
+
+
+def test_simple_questions_are_answered_directly_and_old_topics_are_not_dragged_in() -> None:
+    """The elder block lacked the child block's rule: 「嗯，我先理一理」 before a one-line answer and
+    「您接着练拳吧」 tacked onto the colour of the sky."""
+
+    for mode in ("student_minor", "senior_companion"):
+        block = pc.SERVICE_MODE_BLOCKS[mode]
+        assert "我先想一下" in block  # named as the opener not to use
+    senior = pc.SERVICE_MODE_BLOCKS["senior_companion"]
+    assert "直接说" in senior and "不相关的事硬接进来" in senior
+    from services.common.companion_turn_policy import companion_scope_instructions
+
+    assert "不要把不相关的旧话题硬接进回答" in companion_scope_instructions(owner=True, device_bound=True)
