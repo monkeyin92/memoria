@@ -27,7 +27,8 @@
 - **合并与上线**：CI 全绿后（汇总任务 `python` 的依赖安装就要 13 分钟，整条 CI 约 25 分钟）15:23 `gh pr merge 161 --merge`，合并提交 `e557c044` 的树与 tag 的树相同（`d8374b43…`），随后推 tag；上线前确认没有进行中的对话（`media_active_sessions 0`，15:18–15:21 有人在和机器人说话，等它回到 idle 才切）。`env` 15:24:34、`schema` 15:24:51、`cutover` 15:24:56–15:25:24（speaker-model → control-api → bridge）、`finish` 15:26:40，每步 PASS；切换时设备空闲的 WSS 被边缘关闭（`Cancelling all calls`），设备随后自行重连，没有对话被打断。media-edge 未动。
 - **线上核对（只读）**：三角色 `20261001-device-prompt-v1` / `73f7bc1c`，重启 0，全部 healthy，纯链；`/opt/memoria/current` 指向新目录；readiness `ready 20261001-device-prompt-v1`、外部 200、`heartbeat failed` 0；运行中的 bridge 容器内确认 `current_user_only_chat_context(keep_instructions=)` 与 `stream_reply` 的 `device_bound_owner` 在位；`/tmp` 4 KB/64 MiB。
 - **回滚**：`release-ops.sh rollback`（同一 TAG/COMMIT 环境变量）恢复 env 快照与 `current`，三个服务从 `20261001-turn-budget-v1` 重建；切前镜像另存为 `memoria-*:rollback-20261001-device-prompt-v1-pre`。无 schema 变更，回滚不涉及数据。
-- **未验证 / 请注意**：①真机上的效果——实验室用生产模型回放的是同样的消息结构（孩子 20–70 字短答、接得上上一句、没有列表），真机第三轮对话测试的结果见 `docs/acceptance/run-20261001-longsoak/findings.md`；②响应规划器仍不可用（围栏纪元与策略版本两处不兼容，见 TODOLIST N-9），所以跨会话记忆仍没有进入回复；③播放期语音打断与「说完到开口」延迟（p50 4.3 s）未改。
+- **真机复核（第三轮，15:30–15:47，音量 65）**：42 句里 38 句有回答；回复 p50 19 字、最长 50 字、最多 3 句，Markdown 0 条、念出内部计划 0 条；情绪类先接感受，被欺负 / 陌生人落到「马上告诉爸爸妈妈或老师」；说完到开口 p50 4.4 s 没有改善；**新发现**：语音停止后设备卡在「说话」状态、「讲一个故事」被截断（均在 PR #162），详见 `docs/acceptance/run-20261001-longsoak/findings.md`。
+- **未验证 / 请注意**：①孩子的自我介绍没有在真机上听到（第一步没唤醒成功），用实验室回放核对；长辈侧只有实验室回放；②响应规划器仍不可用（围栏纪元与策略版本两处不兼容，见 TODOLIST N-9），所以跨会话记忆仍没有进入回复；③播放期语音打断与「说完到开口」延迟（p50 4.3 s）未改。
 
 ## 2026-10-01 整栈发布 20261001-turn-budget-v1（PR #160；回复后的第一句不再被丢）
 
