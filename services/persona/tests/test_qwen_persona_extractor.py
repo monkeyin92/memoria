@@ -241,7 +241,7 @@ async def test_invalid_qwen_persona_output_falls_back_to_conservative_rules() ->
                 "normalized_key": "missing-boundaries",
                 "description": "总是很理性",
                 "context": "",
-                "counterexample": "",
+                "counterexample": "紧急的时候例外",
             }
         ]
     }
@@ -272,6 +272,51 @@ async def test_invalid_qwen_persona_output_falls_back_to_conservative_rules() ->
 
     assert any(trait.category == "decision_habit" for trait in traits)
     assert all(trait.description != "总是很理性" for trait in traits)
+
+
+@pytest.mark.asyncio
+async def test_a_boundary_trait_without_a_counterexample_is_dropped_alone() -> None:
+    # DeepSeek emits a decision habit with an empty counterexample when the text names no
+    # exception. That trait is not learned; the evidenced traits of the same reply still are.
+    evidenced = _structured_traits()["traits"]
+    unevidenced = {
+        "category": "decision_habit",
+        "normalized_key": "sleeps_on_decisions",
+        "description": "重大决定前总要先睡一晚",
+        "context": "做重大决定时",
+        "counterexample": "",
+    }
+    extractor = QwenPersonaExtractor(
+        api_key="test-key",
+        base_url="https://dashscope.test/v1",
+        model="qwen-test",
+        transport=httpx.MockTransport(
+            lambda _: _response({"traits": [*evidenced, unevidenced]})
+        ),
+    )
+
+    traits = await extractor.extract(
+        "讲工作经历时，我通常按时间说，最后补反思；但紧急汇报会先说结论。"
+        "涉及长期承诺时，重大决定前先核对事实，再留一晚；出现紧急安全风险会立即行动。"
+        "已经明确答应别人的事，我会优先做到；如果会伤害家人安全，就重新协商。",
+        PersonaEvidence(
+            account_id="persona-account",
+            source_event_id="persona-qwen-unevidenced",
+            learning_allowed=True,
+        ),
+    )
+
+    assert "重大决定前总要先睡一晚" not in {trait.description for trait in traits}
+    assert {trait.category for trait in traits} >= {
+        "narrative_style",
+        "decision_habit",
+        "value_priority",
+    }
+    assert all(
+        trait.counterexample
+        for trait in traits
+        if trait.category in {"decision_habit", "value_priority"}
+    )
 
 
 def test_one_off_emotion_rule_is_stated_once() -> None:

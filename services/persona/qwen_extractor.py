@@ -61,6 +61,29 @@ class _ExtractionPayload(BaseModel):
         return self
 
 
+def _without_unevidenced_boundaries(raw: object) -> object:
+    """Drop decision/value traits given without a counterexample; keep the rest of the reply.
+
+    Such a trait has no evidence for its boundary, so it is not learned. Every other trait is
+    still checked strictly, and any other invalid trait rejects the whole reply.
+    """
+
+    if not isinstance(raw, dict) or not isinstance(raw.get("traits"), list):
+        return raw
+    return {
+        **raw,
+        "traits": [
+            trait
+            for trait in raw["traits"]
+            if not (
+                isinstance(trait, dict)
+                and trait.get("category") in {"decision_habit", "value_priority"}
+                and not str(trait.get("counterexample") or "").strip()
+            )
+        ],
+    }
+
+
 def _prompt(text: str, evidence: PersonaEvidence) -> str:
     return f"""
 从下面的账户主人原话中提取可审核的人格候选。只输出 JSON 对象，不要 Markdown。
@@ -149,7 +172,9 @@ class QwenPersonaExtractor:
             content = body["choices"][0]["message"]["content"]
             if not isinstance(content, str):
                 raise TypeError("Qwen returned non-text persona extraction content")
-            parsed = _ExtractionPayload.model_validate_json(content)
+            parsed = _ExtractionPayload.model_validate(
+                _without_unevidenced_boundaries(json.loads(content))
+            )
         except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as exc:
             raise PersonaExtractionError("Qwen returned an invalid persona extraction") from exc
 
