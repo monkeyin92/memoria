@@ -294,6 +294,10 @@ class MediaSessionCommitMixin:
         @staticmethod
         def _playback_stop_is_echo(context: _MediaVoiceSession, text: str) -> bool: ...
 
+        def _playback_stop_diagnosis(
+            self, context: _MediaVoiceSession, result: ASRResult
+        ) -> str: ...
+
         def _maybe_pin_playback_stop(
             self, context: _MediaVoiceSession, result: ASRResult, *, source: str
         ) -> None: ...
@@ -388,9 +392,13 @@ class MediaSessionCommitMixin:
             self._note_owner_speech_text(context)
         await self._apply_projection_segment(context, segment)
         if not self._stream_epoch_is_current(context, accepted.stream_epoch):
-            return ASRAcceptDecision(None, ASRDecisionReason.SESSION_NOT_FOUND)
+            return self._reject_accepted_final(
+                session_id, accepted, ASRDecisionReason.SESSION_NOT_FOUND, stage="projection"
+            )
         if self._asr_precedes_pending_turn(context, accepted):
-            return ASRAcceptDecision(None, ASRDecisionReason.INTERVAL_CONFLICT)
+            return self._reject_accepted_final(
+                session_id, accepted, ASRDecisionReason.INTERVAL_CONFLICT, stage="projection"
+            )
         task_epoch, context_version = self._event_versions(context, context.runtime.fence)
         await self.bridge.emit_transcript(
             session_id,
@@ -399,9 +407,13 @@ class MediaSessionCommitMixin:
             context_version=context_version,
         )
         if not self._stream_epoch_is_current(context, accepted.stream_epoch):
-            return ASRAcceptDecision(None, ASRDecisionReason.SESSION_NOT_FOUND)
+            return self._reject_accepted_final(
+                session_id, accepted, ASRDecisionReason.SESSION_NOT_FOUND, stage="transcript"
+            )
         if self._asr_precedes_pending_turn(context, accepted):
-            return ASRAcceptDecision(None, ASRDecisionReason.INTERVAL_CONFLICT)
+            return self._reject_accepted_final(
+                session_id, accepted, ASRDecisionReason.INTERVAL_CONFLICT, stage="transcript"
+            )
         if accepted.is_final:
             self._observe_final_asr_result(context, accepted)
             self._maybe_pin_playback_stop(context, accepted, source="final")
@@ -745,12 +757,19 @@ class MediaSessionCommitMixin:
     ) -> None:
         # Diagnostics: a dropped provider result is otherwise metric-only.  A
         # final rejection is loud; partial revisions stay at INFO because they
-        # are expected churn on a healthy stream.
+        # are expected churn on a healthy stream.  A rejected final also says
+        # whether it was a spoken stop heard during playback (no text).
         level = logging.WARNING if result.is_final else logging.INFO
+        context = self._sessions.get(session_id)
+        diagnosis = (
+            self._playback_stop_diagnosis(context, result)
+            if result.is_final and context is not None
+            else ""
+        )
         logger.log(
             level,
             "media ASR result rejected session=%s stage=%s reason=%s is_final=%s "
-            "text_len=%s task_epoch=%s stream_epoch=%s samples=%s-%s",
+            "text_len=%s task_epoch=%s stream_epoch=%s samples=%s-%s %s",
             session_id,
             stage,
             reason.value,
@@ -760,7 +779,22 @@ class MediaSessionCommitMixin:
             result.stream_epoch,
             result.capture_start_sample,
             result.capture_end_sample,
+            diagnosis,
         )
+
+    def _reject_accepted_final(
+        self,
+        session_id: str,
+        result: ASRResult,
+        reason: ASRDecisionReason,
+        *,
+        stage: str,
+    ) -> ASRAcceptDecision:
+        """A result the supervisor accepted but the session dropped; finals were silent."""
+
+        if result.is_final:
+            self._log_asr_rejection(session_id, result, reason, stage=stage)
+        return ASRAcceptDecision(None, reason)
 
     async def commit_user_turn(
         self,

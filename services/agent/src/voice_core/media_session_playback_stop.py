@@ -57,6 +57,15 @@ def _compact(text: str) -> str:
     return "".join(character for character in text if character.isalnum())
 
 
+_SAMPLES_PER_MS = 16  # the media clock runs at 16 kHz
+
+
+def _ms_after(sample: int | None, origin: int) -> str:
+    """``sample - origin`` in ms for a diagnostics line, ``-`` when unset."""
+
+    return "-" if sample is None else str((sample - origin) // _SAMPLES_PER_MS)
+
+
 class MediaPlaybackStopMixin:
     """Endpoint and execute a spoken stop command during assistant playback.
 
@@ -128,6 +137,46 @@ class MediaPlaybackStopMixin:
 
         return lexical_playback_control_only(text) and (
             MediaPlaybackStopMixin._playback_text_is_echo(context, text)
+        )
+
+    def _playback_stop_diagnosis(self, context: _MediaVoiceSession, result: ASRResult) -> str:
+        """Why a final could or could not be a spoken stop, without its text.
+
+        2026-10-01 (voice soak on DeepSeek): the owner's 「别说了」 reached the ASR
+        26–31 dB above the reply's echo and a 3–4 character final followed, yet
+        no stop ran and nothing was logged; every guard returned silently.
+        """
+
+        try:
+            text = result.text.strip()
+            pending = context.pending
+            start = result.capture_start_sample
+            return (
+                f"stop_word={lexical_playback_control_only(text)} "
+                f"echo={self._playback_text_is_echo(context, text)} "
+                f"in_flight={self._reply_in_flight(context)} "
+                f"speaking={context.runtime.assistant_speaking} "
+                f"owner={context.output.output_owner is not None} "
+                f"endpoint_ms={_ms_after(pending.turn_endpoint_sample, start)} "
+                f"followup_pin={pending.playback_followup_endpoint_sample is not None} "
+                f"onset_floor_ms={_ms_after(pending.pending_turn_onset_floor, start)} "
+                f"turn_start_ms={_ms_after(pending.turn_start_sample, start)} "
+                f"reply_text_len={len(context.output.assistant_text)} "
+                f"text_len={len(text)} samples={start}-{result.capture_end_sample}"
+            )
+        except Exception:  # diagnostics sit on the audio path and must never break it
+            return "diagnosis=unavailable"
+
+    @staticmethod
+    def _log_unpinned_final(
+        context: _MediaVoiceSession, *, reason: str, diagnosis: str, source: str
+    ) -> None:
+        logger.info(
+            "media playback-stop not taken session=%s reason=%s source=%s %s",
+            context.identity.session_id,
+            reason,
+            source,
+            diagnosis,
         )
 
     def _playback_holds_early_endpoint(
@@ -412,27 +461,40 @@ class MediaPlaybackStopMixin:
         otherwise merge into 「……停」, route as chat and stay held.
         """
 
-        if (
-            context.identity.client_type != "device"
-            or context.closed
-            or context.standby_requested
-            or context.pending.turn_endpoint_sample is not None
-        ):
+        if context.identity.client_type != "device":
             return
         text = result.text.strip()
-        if not text or not lexical_playback_control_only(text):
-            return
-        if not self._reply_in_flight(context):
-            return
-        floor = context.pending.pending_turn_onset_floor
-        if floor is not None and result.capture_start_sample < floor:
+        stop_word = bool(text) and lexical_playback_control_only(text)
+        in_flight = self._reply_in_flight(context)
+        diagnosis = self._playback_stop_diagnosis(context, result)
+        # The same guards in the same order as before; each one now says why it held.
+        reason = ""
+        if context.closed or context.standby_requested:
+            reason = "session_closing"
+        elif context.pending.turn_endpoint_sample is not None:
+            reason = "endpoint_already_pinned"
+        elif not stop_word:
+            reason = "not_stop_word"
+        elif not in_flight:
+            reason = "no_reply_in_flight"
+        else:
+            floor = context.pending.pending_turn_onset_floor
+            if floor is not None and result.capture_start_sample < floor:
+                reason = "before_onset_floor"
+        if reason:
+            if in_flight or stop_word:
+                self._log_unpinned_final(
+                    context, reason=reason, diagnosis=diagnosis, source=source
+                )
             return
         if self._playback_stop_is_echo(context, text):
             logger.info(
-                "media playback stop ignored as reply echo session=%s text_len=%s source=%s",
+                "media playback stop ignored as reply echo session=%s text_len=%s "
+                "source=%s %s",
                 context.identity.session_id,
                 len(text),
                 source,
+                diagnosis,
             )
             return
         self._scope_pending_turn_to(context, result)
@@ -444,12 +506,13 @@ class MediaPlaybackStopMixin:
         pending.turn_endpoint_grace_deadline = time.monotonic()
         logger.info(
             "media early playback-stop endpoint session=%s start=%s endpoint=%s "
-            "text_len=%s source=%s",
+            "text_len=%s source=%s %s",
             context.identity.session_id,
             start,
             endpoint,
             len(text),
             source,
+            diagnosis,
         )
         self._schedule_turn_commit(context)
 
