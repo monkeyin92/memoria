@@ -1302,6 +1302,119 @@ async def test_expired_emitted_output_restores_listen_and_flushes_device() -> No
     await registry.finalize_session(identity.session_id)
 
 
+async def _speaking_session_with_effects(
+    name: str,
+    *,
+    speak_first: bool,
+) -> tuple[Any, Any, Any, GenerationFence, list[tuple[int, GenerationFence, str, dict[str, object]]], asyncio.Task[bool], asyncio.Event]:
+    """A device session whose first output of ``fence`` puts one frame on the wire (or none)."""
+
+    first_frame_sent = asyncio.Event()
+    release = asyncio.Event()
+
+    class AckProvider(FakeMediaProvider):
+        def generate_reply(
+            self,
+            _identity: SessionIdentity,
+            _user_text: str,
+            _fence: GenerationFence,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                if speak_first:
+                    yield MediaReplyChunk(
+                        pcm_s16le=b"\x02\x00\x03\x00",
+                        source_start_sample=0,
+                        text="我查一下",
+                        first=True,
+                        final=False,
+                    )
+                await release.wait()
+
+            return chunks()
+
+    effects: list[tuple[int, GenerationFence, str, dict[str, object]]] = []
+
+    class CapturingBridge(MediaBridgeGrpcServer):
+        async def emit_pcm(self, _session_id: str, _frame: object) -> bool:
+            first_frame_sent.set()
+            return True
+
+        async def emit_realtime_effect(
+            self,
+            _session_id: str,
+            effect_kind: int,
+            fence: GenerationFence,
+            *,
+            source_event_id: str,
+            payload: dict[str, object],
+            **_kwargs: object,
+        ) -> bool:
+            effects.append((effect_kind, fence, source_event_id, payload))
+            return True
+
+    bridge = CapturingBridge()
+    registry = MediaVoiceCoreRegistry(bridge=bridge, provider_factory=lambda _identity: AckProvider())
+    registry.install()
+    identity = _device_identity(name)
+    bridge.bridge.open(identity)
+    context = await registry.open_session(identity)
+    fence = await context.runtime.on_turn_committed("查一下")
+    context.output.playback.start(fence)
+    reply = asyncio.create_task(registry.generate_reply(identity.session_id, "查一下", fence))
+    if speak_first:
+        await asyncio.wait_for(first_frame_sent.wait(), timeout=1)
+    else:
+        await asyncio.sleep(0.05)
+    return registry, identity, context, fence, effects, reply, release
+
+
+@pytest.mark.asyncio
+async def test_a_failed_follow_on_output_still_closes_a_fence_that_already_spoke() -> None:
+    """The dispatch that fails sent nothing (its first frame was rejected as a sequence gap), but the
+    acknowledgement before it did: without a terminal fence the device stays in SPEAKING."""
+
+    registry, identity, context, fence, effects, reply, release = await _speaking_session_with_effects(
+        "follow-on-failure-after-ack", speak_first=True
+    )
+    try:
+        assert context.output.audio_sent_for(fence) is True
+        await registry._abort_unheard_stream(
+            context, fence, reason="transport_rejected", emitted_audio=False
+        )
+        assert context.runtime.orchestrator.state is ConversationState.LISTENING
+        assert any(
+            effect_kind == media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION
+            and cancelled.generation_id == fence.generation_id + 1
+            for effect_kind, cancelled, _source, _payload in effects
+        )
+    finally:
+        release.set()
+        await asyncio.gather(reply, return_exceptions=True)
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_output_on_a_fence_that_never_spoke_does_not_cancel_it() -> None:
+    """The control: nothing reached the device, so there is no audible generation to close."""
+
+    registry, identity, context, fence, effects, reply, release = await _speaking_session_with_effects(
+        "follow-on-failure-silent", speak_first=False
+    )
+    try:
+        assert context.output.audio_sent_for(fence) is False
+        await registry._abort_unheard_stream(
+            context, fence, reason="transport_rejected", emitted_audio=False
+        )
+        assert not any(
+            effect_kind == media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION
+            for effect_kind, _cancelled, _source, _payload in effects
+        )
+    finally:
+        release.set()
+        await asyncio.gather(reply, return_exceptions=True)
+        await registry.finalize_session(identity.session_id)
+
+
 @pytest.mark.asyncio
 async def test_owner_is_rechecked_after_speaking_transition_before_output() -> None:
     speaking_started = asyncio.Event()

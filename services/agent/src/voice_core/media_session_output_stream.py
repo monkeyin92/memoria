@@ -192,6 +192,10 @@ class MediaOutputStreamMixin:
             )
             await self._cancel_reply_task(context, fence, reason="session_closed")
             return
+        # This dispatch may have sent nothing (its first frame was rejected) while an earlier output
+        # of the same fence, e.g. a lookup acknowledgement, already put audio on the device: that
+        # fence must still be closed or the device stays in SPEAKING with no terminal fence.
+        emitted_audio = emitted_audio or context.output.audio_sent_for(fence)
         owner = context.output.output_owner
         owner_intent_active = False
         if owner is not None and owner.fence.matches(fence):

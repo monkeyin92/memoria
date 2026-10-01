@@ -49,6 +49,37 @@ class OutputState:
         default_factory=dict
     )
 
+    def begin_turn_output(self, fence: GenerationFence) -> bool:
+        """Make ``fence`` the playback generation and zero the per-response counters.
+
+        Returns False and keeps every counter when frames of this fence are already on the wire.
+        A live-lookup acknowledgement is started by the delegation while the commit that created
+        the fence is still finishing; zeroing the counters then makes the next output of the same
+        fence restart at sequence 0, which the downlink rejects as ``sequence_gap`` (it expects the
+        next number), so the answer after the acknowledgement never plays and the device stays in
+        SPEAKING (2026-10-01, a lookup that ended without a result).
+        """
+
+        self.playback.start(fence)
+        if self.audio_sent_for(fence):
+            return False
+        self.output_sequence = 0
+        self.output_text_offset = 0
+        self.assistant_text = ""
+        self.provider_complete = False
+        self.output_complete_emitted = False
+        self.tts_started_ns = None
+        self.first_audio_observed = False
+        return True
+
+    def audio_sent_for(self, fence: GenerationFence) -> bool:
+        """True once a frame of ``fence`` was accepted for the device, whatever dispatch sent it."""
+
+        delivery = self.reply_delivery.get(fence)
+        return (delivery is not None and delivery.first_frame_sent) or (
+            self.playback.received_sequence(fence) >= 0
+        )
+
 
 @dataclass(slots=True)
 class MediaVoiceSessionState:
