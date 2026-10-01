@@ -14,7 +14,7 @@ into the full stack, so all targets run from the plain PREV compose file
 and freeze and rollback carry no component chain.  The 20260930-vector-keyword-v1,
 20261001-wake-mode-v1 control-api components put control-api on a chain for a day
 each; the full-stack release that followed folded them back in and the chain support
-went again (20261001-device-prompt-v1 is the latest such release).
+went again (20261001-stop-terminal-v1 is the latest such release).
 
 Since 20260929-livekit-retire-v1 (the LiveKit chain was stopped, then removed
 from the host) a release ships speaker-model, control-api and the Voice Core
@@ -172,13 +172,13 @@ def test_live_chain_constants_have_no_stale_release_trees() -> None:
         "20260929-stop-word-v1", "20260929-stop-playback-v1", "20260929-stop-reconnect-v1",
         "20260929-turn-taking-v1", "20260929-session-limits-v1",
         "20260930-local-stop-v2", "20260930-vector-keyword-v1",
-        "20261001-device-archive-v1", "20261001-wake-mode-v1", "20261001-audience-recap-v1", "20261001-speaking-style-v2", "20261001-output-seq-v1",
+        "20261001-device-archive-v1", "20261001-wake-mode-v1", "20261001-audience-recap-v1", "20261001-speaking-style-v2", "20261001-output-seq-v1", "20261001-turn-budget-v1",
         "RETIRED_TARGETS", "retire_prev_media_chain",
         "/tmp/media-runtime",
     ):
         assert stale not in script, stale
-    assert "PREV_TAG=20261001-turn-budget-v1" in script
-    assert "PREV_COMMIT=dc138e61d0da4f6606b956bb0c8ed25bd3d368eb" in script
+    assert "PREV_TAG=20261001-device-prompt-v1" in script
+    assert "PREV_COMMIT=73f7bc1cedc2e699aae44a2155a4b8a02408ff43" in script
 
 
 def test_freeze_checks_every_target_chain_and_the_current_link() -> None:
