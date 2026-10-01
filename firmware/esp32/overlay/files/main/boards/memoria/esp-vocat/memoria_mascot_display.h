@@ -91,7 +91,8 @@ private:
     Backlight* backlight_ = nullptr;
     bool dimmed_ = false;
     bool screen_off_ = false;
-    uint32_t idle_since_ms_ = 0;  // 0: not idle
+    bool idle_ = false;           // the companion is in the idle phase
+    uint32_t idle_since_ms_ = 0;  // when it settled there (valid while idle_)
     uint8_t chrome_opa_ = 0;
     uint8_t text_opa_applied_ = 0;
     bool caption_layout_ = false;  // LVGL text is on the caption band

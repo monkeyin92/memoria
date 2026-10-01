@@ -588,7 +588,7 @@ void MemoriaMascotDisplay::UpdateIdleScreen(memoria::ScenePhase phase, uint32_t 
         return;
     }
     if (phase != memoria::ScenePhase::kIdle) {
-        idle_since_ms_ = 0;
+        idle_ = false;
         if (screen_off_) {
             screen_off_ = false;
             dimmed_ = false;  // the doze dim below starts from a lit panel again
@@ -597,8 +597,12 @@ void MemoriaMascotDisplay::UpdateIdleScreen(memoria::ScenePhase phase, uint32_t 
         }
         return;
     }
-    if (idle_since_ms_ == 0) {
-        idle_since_ms_ = now_ms | 1;  // never 0, which means "not idle"
+    if (!idle_) {
+        // A flag, not a "0 means not idle" sentinel: `now | 1` is one millisecond in the future whenever
+        // now is even, `now - since` then wrapped to ~4e9 and the panel went dark at once on about half of
+        // all idle entries instead of kIdleScreenOffMs later (seen on the device, build 18).
+        idle_ = true;
+        idle_since_ms_ = now_ms;
     }
     if (!screen_off_ && now_ms - idle_since_ms_ >= kIdleScreenOffMs) {
         screen_off_ = true;
