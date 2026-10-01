@@ -101,7 +101,11 @@ class MediaVoiceCoreRegistry(
     turn_endpoint_grace_s: float = 0.9
     turn_endpoint_min_grace_s: float = 0.7
     turn_endpoint_max_grace_s: float = 1.1
-    turn_endpoint_absolute_timeout_s: float = 2.5
+    # The first question after a reply waits a 2.0 s follow-up window before it commits, and then the
+    # commit itself prepares (two classifiers, runtime profile, response plan, context prefetch) for
+    # 1-1.5 s. 2.5 s left 0.5 s for that and closed the conversation (turn_prepare_timeout) under the
+    # question being answered: 4 of 7 first questions in a quiet room on 2026-10-01.
+    turn_endpoint_absolute_timeout_s: float = 6.0
     output_generation_timeout_s: float = 45.0
     delegation_initial_decision_timeout_s: float = 0.5
     # Disabled for direct library construction; the production bridge wires

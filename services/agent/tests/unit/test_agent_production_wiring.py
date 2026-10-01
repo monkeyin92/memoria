@@ -533,6 +533,98 @@ async def test_snapshot_build_failure_keeps_call_on_safe_fallback() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_plan_the_planner_cannot_match_to_the_epoch_answers_with_the_fallback_plan() -> None:
+    """2026-10-01: every device session has session_epoch >= 1, but the planner contract echoes only
+    turn/generation/tool_epoch, so the client reports ``fence_mismatch`` for a plan that is for this very
+    turn. That raised StopResponse: when the result was accepted in time (5 of 7 first questions in a quiet
+    room) the question got no answer and the conversation was closed by turn_prepare_timeout. The turn
+    was never stale (the runtime-fence check decides that), so it answers with the local safe plan."""
+
+    runtime = DuplexRuntime.create(session_id="planner-epoch-mismatch")
+    bind_owner_policy(runtime, policy_version="test-policy", private_context=True, owner_evidence=True, tools=True, voice_profile=False, shadow_low_sensitivity_persona=False)
+
+    class Planner:
+        async def fetch(self, **_kwargs: object) -> ResponsePlanFetch:
+            return ResponsePlanFetch(None, "fence_mismatch")
+
+    agent = ReplyPipeline(
+        instructions="test",
+        runtime=runtime,
+        response_planner_client=Planner(),  # type: ignore[arg-type]
+    )
+    fence = await agent.prepare_turn(
+        text="你好呀，你叫什么名字？",
+        speaker=SimpleNamespace(classification="owner"),
+        input_modality="text",
+    )
+
+    assert runtime.fence.matches(fence)
+    assert plan_is_local_safe(agent.response_plans.get(fence))
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_turn_that_went_stale_while_the_plan_was_fetched_is_still_dropped() -> None:
+    """The fallback above must not weaken the real staleness check: a new turn during the fetch drops it."""
+
+    runtime = DuplexRuntime.create(session_id="planner-stale-turn")
+    bind_owner_policy(runtime, policy_version="test-policy", private_context=True, owner_evidence=True, tools=True, voice_profile=False, shadow_low_sensitivity_persona=False)
+
+    class Planner:
+        async def fetch(self, **_kwargs: object) -> ResponsePlanFetch:
+            await runtime.on_turn_committed("用户已经说了下一句", input_modality="text")
+            return ResponsePlanFetch(None, "fence_mismatch")
+
+    agent = ReplyPipeline(
+        instructions="test",
+        runtime=runtime,
+        response_planner_client=Planner(),  # type: ignore[arg-type]
+    )
+    with pytest.raises(StopResponse):
+        await agent.prepare_turn(
+            text="第一句",
+            speaker=SimpleNamespace(classification="owner"),
+            input_modality="text",
+        )
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_the_two_cloud_classifiers_of_a_turn_run_together() -> None:
+    """One after the other they cost ~0.6 s of the turn's budget; each waits here for the other to start,
+    so a sequential implementation can never finish."""
+
+    runtime = DuplexRuntime.create(session_id="classifiers-concurrent")
+    bind_owner_policy(runtime, policy_version="test-policy", private_context=False, owner_evidence=False, tools=False, voice_profile=False, shadow_low_sensitivity_persona=False)
+    live_started = asyncio.Event()
+    close_started = asyncio.Event()
+
+    async def live(_text: str) -> bool:
+        live_started.set()
+        await close_started.wait()
+        return False
+
+    async def close(_text: str) -> bool:
+        close_started.set()
+        await live_started.wait()
+        return False
+
+    runtime.set_live_lookup_semantic_resolver(live)
+    runtime.set_conversation_close_semantic_resolver(close)
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
+    await asyncio.wait_for(
+        agent.prepare_turn(
+            text="你好呀，你叫什么名字？",
+            speaker=SimpleNamespace(classification="owner"),
+            input_modality="text",
+        ),
+        timeout=2,
+    )
+    assert live_started.is_set() and close_started.is_set()
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("nudge", ("人呢？", "你不能帮我查吗？"))
 async def test_realtime_search_timeout_then_nudge_resumes_the_public_request(
     nudge: str,
