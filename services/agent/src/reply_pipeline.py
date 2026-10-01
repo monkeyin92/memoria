@@ -618,8 +618,11 @@ class ReplyPipeline:
         bound; otherwise returns the fence ``stream`` will reply under.
         """
 
-        await self._runtime.resolve_live_lookup_needed(text)
-        await self._runtime.resolve_conversation_close_needed(text)
+        # Two independent cloud classifiers: one after the other they cost ~0.6 s of the turn's budget.
+        await asyncio.gather(
+            self._runtime.resolve_live_lookup_needed(text),
+            self._runtime.resolve_conversation_close_needed(text),
+        )
         # Live lookup starts inside on_turn_committed. A voice-bind failure after
         # that point leaves filler on a new generation and drops the weather
         # result as stale. Refresh and reject before the lookup task is created.
@@ -702,12 +705,17 @@ class ReplyPipeline:
             )
             raise StopResponse()
         if plan is None and fetch_reason == "fence_mismatch":
+            # The planner contract echoes turn/generation/tool_epoch only, so for every fence with
+            # session_epoch >= 1 (each device session) the client reports a mismatch even when the plan
+            # is for this very turn. Staleness of the turn itself was decided by the runtime-fence check
+            # above; dropping here silenced the reply whenever the result was accepted in time
+            # (2026-10-01: 5 of 7 first questions in a quiet room). The plan is unusable, not the turn:
+            # answer with the fallback plan, as every other fetch failure does.
             logger.info(
-                "stale response plan dropped session_id=%s turn_id=%s reason=fetch_fence",
+                "response plan ignored session_id=%s turn_id=%s reason=fetch_fence",
                 self._runtime.session_id,
                 fence.turn_id,
             )
-            raise StopResponse()
         policy = self._runtime.mode_policy_for_fence(fence)
         if (
             plan is not None

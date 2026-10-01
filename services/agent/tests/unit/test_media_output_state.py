@@ -79,3 +79,19 @@ def test_the_turn_commit_goes_through_the_helper_and_does_not_zero_the_counters_
     ).read_text(encoding="utf-8")
     assert "context.output.begin_turn_output(fence)" in source
     assert "context.output.output_sequence = 0" not in source
+
+
+def test_the_default_turn_budget_covers_the_followup_window_and_the_commit() -> None:
+    """2026-10-01: the first question after a reply waits the reopen window and the follow-up grace before it
+    commits, and the commit then prepares for 1-1.5 s; the old 2.5 s budget closed the conversation under the
+    question being answered (turn_prepare_timeout) in 4 of 7 tries in a quiet room."""
+
+    from services.agent.src.voice_core.media_session import MediaVoiceCoreRegistry
+    from services.agent.src.voice_core.media_session_input import _REOPEN_EVIDENCE_WINDOW_S
+    from services.agent.src.voice_core.media_session_playback_stop import (
+        _PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S,
+    )
+
+    budget = MediaVoiceCoreRegistry.__dataclass_fields__["turn_endpoint_absolute_timeout_s"].default
+    preparation = 1.5
+    assert budget >= _REOPEN_EVIDENCE_WINDOW_S + _PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S + preparation
