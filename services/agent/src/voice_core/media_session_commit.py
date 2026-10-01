@@ -1349,15 +1349,8 @@ class MediaSessionCommitMixin:
             fence=fence,
             turn_revision=committed.revision,
         )
-        context.output.playback.start(fence)
-        context.output.output_sequence = 0
-        context.output.output_text_offset = 0
-        context.output.assistant_text = ""
-        context.output.provider_complete = False
-        context.output.output_complete_emitted = False
+        context.output.begin_turn_output(fence)
         context.turn_started_ns = time.monotonic_ns()
-        context.output.tts_started_ns = None
-        context.output.first_audio_observed = False
         if should_pause_asr_for_playback(context.identity):
             await context.provider.pause_asr_for_playback(context.identity)
         task_epoch, context_version = self._event_versions(context, fence)
