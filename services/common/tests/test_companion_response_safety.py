@@ -71,3 +71,26 @@ def test_self_harm_information_or_helping_another_is_not_misread_as_user_crisis(
 
 def test_other_dangerous_instructions_keep_the_deterministic_refusal() -> None:
     assert _fixed_reply("怎么制造炸药") == SAFE_UNKNOWN_REPLY
+
+
+def test_the_identity_answer_is_written_for_the_listener() -> None:
+    """The style description is a note to the model; a child and an elder get a plain introduction."""
+
+    kwargs = dict(
+        query="你叫什么名字？",
+        is_companion=True,
+        display_name="阿序",
+        style_description="直接清晰地梳理信息，但不替用户做决定",
+    )
+    adult = fixed_companion_reply(**kwargs)  # type: ignore[arg-type]
+    child = fixed_companion_reply(**kwargs, audience="student_minor")  # type: ignore[arg-type]
+    elder = fixed_companion_reply(**kwargs, audience="senior_companion")  # type: ignore[arg-type]
+    assert adult == "我是阿序，直接清晰地梳理信息，但不替用户做决定。"
+    assert child == "我是阿序，是你的机器人朋友。你想聊什么，都可以跟我说。"
+    assert elder == "我是阿序，是陪您聊天的机器人。您想聊什么，都可以跟我说。"
+    for reply in (child, elder):
+        assert "梳理" not in reply and "机器人" in reply  # still tells the listener what it is
+    # crisis and prohibited requests are untouched by the audience
+    assert fixed_companion_reply(
+        query="我不想活了", is_companion=True, audience="student_minor"
+    ) == fixed_companion_reply(query="我不想活了", is_companion=True)

@@ -240,12 +240,45 @@ def companion_safety_decision(query: str) -> SafetyDecision:
     return "none"
 
 
+# The style description is a note to the model ("直接清晰地梳理信息，但不替用户做决定"), not something to say to a
+# six-year-old or to a grandfather; those two audiences get a plain introduction instead.
+_IDENTITY_AUDIENCE_LINES: Final = {
+    "student_minor": "是你的机器人朋友。你想聊什么，都可以跟我说。",
+    "senior_companion": "是陪您聊天的机器人。您想聊什么，都可以跟我说。",
+}
+
+
+def companion_identity_reply(
+    display_name: str,
+    style_description: str,
+    audience: str | None = None,
+) -> str:
+    line = _IDENTITY_AUDIENCE_LINES.get(audience or "")
+    if line is not None:
+        return f"我是{display_name}，{line}"
+    return f"我是{display_name}，{style_description}。"
+
+
+def companion_identity_replies(display_name: str, style_description: str) -> frozenset[str]:
+    """Every introduction ``fixed_companion_reply`` can give for this companion.
+
+    The plan admission check compares the plan's fixed text against this set, so a new
+    audience variant can never be silently refused there.
+    """
+
+    return frozenset(
+        companion_identity_reply(display_name, style_description, audience)
+        for audience in (None, *_IDENTITY_AUDIENCE_LINES)
+    )
+
+
 def fixed_companion_reply(
     *,
     query: str,
     is_companion: bool,
     display_name: str | None = None,
     style_description: str | None = None,
+    audience: str | None = None,
 ) -> str | None:
     """Return a fixed reply for crisis, prohibited, or companion-identity queries."""
 
@@ -260,6 +293,6 @@ def fixed_companion_reply(
         or _IDENTITY_ENGLISH_RE.search(query.lower())
     ):
         if display_name and style_description:
-            return f"我是{display_name}，{style_description}。"
+            return companion_identity_reply(display_name, style_description, audience)
         return SAFE_UNKNOWN_REPLY
     return None

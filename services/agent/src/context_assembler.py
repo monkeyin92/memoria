@@ -38,8 +38,18 @@ def heard_only_chat_context(chat_ctx: Any, heard_assistant: list[str]) -> Any:
     return safe
 
 
-def current_user_only_chat_context(chat_ctx: Any) -> Any:
-    """Fail closed when the current speaker may not read another speaker's turns."""
+def _is_instruction(item: Any) -> bool:
+    return str(getattr(item, "role", "")) in {"system", "developer"}
+
+
+def current_user_only_chat_context(chat_ctx: Any, *, keep_instructions: bool = False) -> Any:
+    """Fail closed when the current speaker may not read another speaker's turns.
+
+    ``keep_instructions`` keeps the session's frozen system prompt: it carries the safety floor, the persona,
+    the service mode (how to talk to a child or an elder) and the policy obligations, and it never holds a
+    turn or a memory. Without it the model only sees the plan block and the user's words, and answers like
+    a generic assistant (2026-10-01: markdown lists and lectures for a six-year-old).
+    """
     safe = chat_ctx.copy()
     items = list(safe.items)
     current_user = next(
@@ -47,8 +57,9 @@ def current_user_only_chat_context(chat_ctx: Any) -> Any:
         None,
     )
     for item in items:
-        if item is not current_user:
-            safe.remove(item)
+        if item is current_user or (keep_instructions and _is_instruction(item)):
+            continue
+        safe.remove(item)
     return safe
 
 
@@ -100,7 +111,7 @@ def interrupted_reply_chat_context(
         None,
     )
     if current_user_index is None:
-        return current_user_only_chat_context(safe)
+        return current_user_only_chat_context(safe, keep_instructions=include_previous_user)
     assistant_index = next(
         (
             index
@@ -110,7 +121,7 @@ def interrupted_reply_chat_context(
         None,
     )
     if assistant_index is None:
-        return current_user_only_chat_context(safe)
+        return current_user_only_chat_context(safe, keep_instructions=include_previous_user)
     previous_user_index = next(
         (
             index
@@ -126,8 +137,10 @@ def interrupted_reply_chat_context(
     keep = {current_user_index}
     if assistant_index is not None:
         keep.add(assistant_index)
-    if include_previous_user and previous_user_index is not None:
-        keep.add(previous_user_index)
+    if include_previous_user:
+        keep.update(index for index, item in enumerate(items) if _is_instruction(item))
+        if previous_user_index is not None:
+            keep.add(previous_user_index)
     for index, item in enumerate(items):
         if index not in keep:
             safe.remove(item)
@@ -153,7 +166,9 @@ class ContextAssembler:
         context_snapshot: ContextSnapshot | None = None,
     ) -> Any:
         if force_current_user_only:
-            safe = current_user_only_chat_context(chat_ctx)
+            safe = current_user_only_chat_context(
+                chat_ctx, keep_instructions=speaker_class == "owner"
+            )
         elif resume_interrupted_reply:
             safe = interrupted_reply_chat_context(
                 chat_ctx,
