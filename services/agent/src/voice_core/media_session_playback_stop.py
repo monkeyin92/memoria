@@ -101,6 +101,14 @@ class MediaPlaybackStopMixin:
             playback_flush_required: bool | None = None,
         ) -> bool: ...
 
+        async def _end_replacement_generation(
+            self,
+            context: _MediaVoiceSession,
+            replacement: GenerationFence,
+            *,
+            reason: str,
+        ) -> bool: ...
+
     @staticmethod
     def _playback_text_is_echo(context: _MediaVoiceSession, text: str) -> bool:
         """True when ``text`` repeats what the reply announced most recently."""
@@ -485,7 +493,7 @@ class MediaPlaybackStopMixin:
         if should_pause_asr_for_playback(context.identity):
             await context.provider.pause_asr_for_playback(context.identity)
         await self._cancel_reply_task(context, previous_fence, reason=_PLAYBACK_STOP_CAUSE)
-        await self._emit_cancel_generation(
+        flushed = await self._emit_cancel_generation(
             context,
             cancelled,
             heard_fence=previous_fence,
@@ -493,6 +501,9 @@ class MediaPlaybackStopMixin:
             payload={"reason": "voice_stop_command"},
             playback_flush_required=flush_required,
         )
+        if flushed and flush_required and context.identity.client_type == "device":
+            # No reply follows a stop: end the replacement generation the flush installed on the device.
+            await self._end_replacement_generation(context, cancelled, reason="voice_stop_command")
         self.metrics.observe_voice_latency(
             "interrupt_core_stop",
             (time.monotonic_ns() - stop_started_ns) / 1_000_000_000,

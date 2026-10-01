@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -42,6 +43,15 @@ _EXTENDED_HINTS = (
     "朗读",
     "对比分析",
     "继续",
+)
+# "讲个故事" was the only wording that counted as asking for a story, so a child's "给我讲一个故事吧" (2026-10-01
+# soak) was an ordinary answer and the story was cut off after four sentences. A request for a story names the
+# story, with a verb that asks for it; "我今天听了一个故事" is not one.
+_STORY_REQUEST = re.compile(
+    r"(讲|说|来|听|读|编|想听|要听|看)"
+    r"(一|个|一个|则|一则|段|一段|些|一些|点|一点|讲)?"
+    r"(很短的|短短的|长长的|好听的|好玩的|有趣的|新的|别的|另外的|另一个|其他的|睡前)?"
+    r"(童话|故事)"
 )
 # Asking "why" or "how" is not a request for a lecture. For the audiences below it used to be: every
 # child's "天空为什么是蓝色的？" got the EXTENDED instruction and a minute of "瑞利散射" with a numbered list
@@ -111,7 +121,7 @@ def response_depth_for(
         if short_audience
         else _EXTENDED_HINTS
     )
-    if any(hint in compact for hint in extended_hints):
+    if any(hint in compact for hint in extended_hints) or _STORY_REQUEST.search(compact):
         depth = ResponseDepth.EXTENDED
     elif any(hint in compact for hint in _BRIEF_HINTS):
         depth = ResponseDepth.BRIEF
