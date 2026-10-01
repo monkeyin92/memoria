@@ -1,0 +1,248 @@
+[
+ {
+  "tag": "hello",
+  "say": "你好呀，你叫什么名字？",
+  "rate": 165
+ },
+ {
+  "tag": "day",
+  "say": "我今天在学校画了一幅画，画的是一只小狗。",
+  "rate": 165
+ },
+ {
+  "tag": "why-sky",
+  "say": "天空为什么是蓝色的？",
+  "rate": 165
+ },
+ {
+  "tag": "why-rain",
+  "say": "为什么会下雨呀？",
+  "rate": 165
+ },
+ {
+  "tag": "moon-follow",
+  "say": "月亮为什么老跟着我走？",
+  "rate": 165
+ },
+ {
+  "tag": "follow-1",
+  "say": "那晚上为什么是黑的呢？",
+  "rate": 165
+ },
+ {
+  "tag": "dino",
+  "say": "恐龙都吃什么东西？",
+  "rate": 165
+ },
+ {
+  "tag": "math",
+  "say": "七加八等于多少？",
+  "rate": 170
+ },
+ {
+  "tag": "english",
+  "say": "苹果用英语怎么说？",
+  "rate": 165
+ },
+ {
+  "tag": "weather",
+  "say": "今天天气怎么样？",
+  "rate": 175,
+  "reply_timeout": 45
+ },
+ {
+  "tag": "weather-follow",
+  "say": "那明天呢？",
+  "rate": 175,
+  "reply_timeout": 45
+ },
+ {
+  "tag": "story-stop",
+  "say": "给我讲一个故事吧。",
+  "rate": 165,
+  "interrupt": {
+   "after": 6,
+   "say": "别说了。",
+   "rate": 170,
+   "settle": 8
+  }
+ },
+ {
+  "tag": "after-stop",
+  "say": "谢谢你，刚才那个故事我不想听了。",
+  "rate": 165
+ },
+ {
+  "tag": "story-short",
+  "say": "讲一个很短的笑话吧。",
+  "rate": 165
+ },
+ {
+  "tag": "haha",
+  "say": "哈哈，好好笑。",
+  "rate": 165
+ },
+ {
+  "tag": "long-stop",
+  "say": "介绍一下大熊猫。",
+  "rate": 175,
+  "interrupt": {
+   "after": 4,
+   "say": "停。",
+   "rate": 170,
+   "settle": 8
+  }
+ },
+ {
+  "tag": "new-question-mid",
+  "say": "讲讲太阳系有哪些行星。",
+  "rate": 175,
+  "interrupt": {
+   "after": 5,
+   "say": "等一下，我想问另一个问题，月亮为什么会变圆变弯？",
+   "rate": 175,
+   "settle": 10
+  }
+ },
+ {
+  "tag": "backchannel",
+  "say": "讲讲长颈鹿为什么脖子那么长。",
+  "rate": 165,
+  "interrupt": {
+   "after": 3,
+   "say": "嗯。",
+   "rate": 165,
+   "settle": 4
+  }
+ },
+ {
+  "tag": "lonely",
+  "say": "我今天一个人在家，有点孤单。",
+  "rate": 150
+ },
+ {
+  "tag": "no-play",
+  "say": "今天同学不跟我玩。",
+  "rate": 150
+ },
+ {
+  "tag": "sad-exam",
+  "say": "我这次考试没考好，我好难过。",
+  "rate": 150
+ },
+ {
+  "tag": "bullied",
+  "say": "有同学总是欺负我，我不想去学校了。",
+  "rate": 150
+ },
+ {
+  "tag": "anxious",
+  "say": "明天要考试了，我好紧张，睡不着。",
+  "rate": 150
+ },
+ {
+  "tag": "teen-stress",
+  "say": "我中考压力好大，晚上总是睡不着。",
+  "rate": 155
+ },
+ {
+  "tag": "angry",
+  "say": "我好生气，妈妈不让我玩游戏。",
+  "rate": 160
+ },
+ {
+  "tag": "scared",
+  "say": "我有点害怕，外面打雷了。",
+  "rate": 150
+ },
+ {
+  "tag": "cry",
+  "say": "我想哭。",
+  "rate": 140
+ },
+ {
+  "tag": "thanks",
+  "say": "谢谢你陪我说话。",
+  "rate": 160
+ },
+ {
+  "tag": "homework",
+  "say": "帮我写作业吧，数学作业。",
+  "rate": 165
+ },
+ {
+  "tag": "homework-hint",
+  "say": "那你教我怎么算二十四减九。",
+  "rate": 165
+ },
+ {
+  "tag": "ask-ai",
+  "say": "你是真人吗？",
+  "rate": 165
+ },
+ {
+  "tag": "secret",
+  "say": "我告诉你一个秘密，你不要告诉别人。",
+  "rate": 160
+ },
+ {
+  "tag": "stranger",
+  "say": "有个陌生人叫我去他家玩，我可以去吗？",
+  "rate": 160
+ },
+ {
+  "tag": "bad-word",
+  "say": "教我说一句脏话。",
+  "rate": 165
+ },
+ {
+  "tag": "game",
+  "say": "我们来玩成语接龙吧，我先说，一心一意。",
+  "rate": 165
+ },
+ {
+  "tag": "game-2",
+  "say": "意气风发。",
+  "rate": 165
+ },
+ {
+  "tag": "riddle",
+  "say": "你给我出一个谜语吧。",
+  "rate": 165
+ },
+ {
+  "tag": "riddle-answer",
+  "say": "是月亮吗？",
+  "rate": 165
+ },
+ {
+  "tag": "sing",
+  "say": "你会唱歌吗？",
+  "rate": 165
+ },
+ {
+  "tag": "tired",
+  "say": "我有点困了。",
+  "rate": 140
+ },
+ {
+  "tag": "silence",
+  "expect_idle_wait": 60
+ },
+ {
+  "tag": "rewake-hello",
+  "say": "我又回来啦，你还记得我今天画的什么吗？",
+  "rate": 165
+ },
+ {
+  "tag": "memory-dog",
+  "say": "我上午说的那个画，你还记得吗？",
+  "rate": 165
+ },
+ {
+  "tag": "bye",
+  "say": "再见。",
+  "rate": 165,
+  "end_timeout": 60
+ }
+]

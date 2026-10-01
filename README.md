@@ -444,6 +444,13 @@ uv run python firmware/esp32/scripts/publish_firmware_release.py withdraw --remo
 
 默认出厂唤醒词为「茉莉」（`mo li`）。Memoria 板卡 assets 同时打包白名单词「梅莫里亚」（`mei mo li ya`），可在小程序设备页切换，或在填写 display + 拼音后保存自定义词（MultiNet 命令词，v1 非云端训练）。切换/自定义后设备需重连；固件需含 overlay patch `0021`。短按 BOOT 可启动会话；播放期间 BOOT 是本地物理硬停止权威。设备端停止词识别（patch `0031`）从 build 15 起由 `overlay/files/main/memoria/memoria_stop_keyword.h` 里的 `kLocalStopKeywordEnabled` 关闭，播放期间与 build 10 相同：唤醒词检测器关闭，停止词不进 MultiNet 命令图，hello 声明 `local_stop_keyword=false`，由云端按语义停播（「停一下」「好的我知道了」「退下吧」「再见」等）。原因：播放期间回声消除、MultiNet6 与上行 Opus 编码挤在同一颗核上，2026-09-30 三段长回复都在约 10–13 秒时触发任务看门狗（`audio_afe` 停在 `model_detect`），推迟了服务器的 `playback.flush`，且没有一次本地命中。开关打开后的行为：播放期间且签名 `allowed_barge_in` 含 `keyword` 时，设备在 AEC/NS 输出上本地识别「停一下」「别说了」「停停」「停」，命中即走与 BOOT 相同的本地清空，再上报 `keyword.detected`（`hard_stop=true`、`source=local_kws`）；词表、逐词阈值和去抖在同一头文件，串口 `Local stop keyword <verdict>: id=… prob=…` 与 `MultiNet stop-mode …` 用于调阈值。MultiNet 整体检测门限为 0.10（`CONFIG_CUSTOM_WAKE_WORD_THRESHOLD=10`）；唤醒词接受线为 0.12（`kWakeWordMinScore`）：台架上「茉莉」十二次里有十次只有 0.11–0.20，按 0.20 接受几乎唤醒不了，build 14 曾放到 0.10，但旁边电脑放视频时误唤醒了好几次，build 16 抬到 0.12；低于接受线的命中仍会打印 `Wake word below threshold`（INFO）。只有排查媒体问题时才构建 `./scripts/build.sh --wake-word disabled`。
 
+### 唤醒方式与熄屏（固件 build 18，2026-10-01）
+
+- **唤醒方式**由家长在小程序设备页设置，两个开关至少开一个，对应设备设置 `wake_mode`：`keyword`（只有唤醒词，点屏没有任何反应）、`button`（只有点击屏幕，唤醒词关闭；对话中再点屏幕没有效果，也不会回到待命）、`button_or_keyword`（默认，两者都开，对话中点屏同样没有效果）。枚举沿用冻结契约，`button` 在这块板子上的含义改为「点击屏幕」。设备空闲时每 20 秒的 display-profile 轮询带回该值并写入 NVS（`memoria_ui/wake_mode`），改设置后最多约 20 秒生效；开机先用 NVS 值，从未收到过时按「两者都开」。
+- **点屏**只会唤醒：仅在空闲、且模式含屏幕时，走与唤醒词相同的路径（带聆听提示音）；说话中、聆听中、重连中点屏一律无效（此前会停止说话或回到待命）。配网二维码刷新和开机阶段点屏进配网不变。**BOOT 键始终可用**：短按启动/停止会话，长按配网。
+- **熄屏**：对话结束、回到待机后 10 秒，背光渐灭到 0 并停止渲染；唤醒词、点屏、BOOT、配网、错误、连接中都会立刻点亮。板子是 360×360 圆屏 + PWM 背光（GPIO44），所以是真正的熄屏，不做「黑底显示时间」的兜底。
+- 补丁 `0032` 改 `Application`（待机只在模式含唤醒词时开启检测），`memoria_wake_mode.{h,cc}` 是模式与 NVS，主机测试见 `firmware/esp32/tests/test_memoria_wake_mode.py`。
+
 ### 屏幕：伙伴吉祥物（替换原白描对话脸）
 
 360x360 圆屏显示账号所选伙伴（星澜/桃喜/绵绵/阿序/玄墨）的毛绒吉祥物，像 Muse Charm 一样是一个"活着"的角色，而不是表情符号：
