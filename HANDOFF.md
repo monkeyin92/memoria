@@ -2,22 +2,39 @@
 
 ## 当前生产快照
 
-- **最近生产收据**：2026-10-01 15:24–15:26（CST）整栈发布 `20261001-device-prompt-v1`（tag → `73f7bc1c`，#161 分支头；合并提交 `e557c044` 与 tag 同树 `d8374b43…`），control-api、bridge、speaker-model 三角色换 tag；media-edge 仍是组件发布 `20260930-late-receipt-v1`（回滚目标 `20260930-edge-reject-log-v1`）。`verify-load`、`freeze`（合并前）与 `env`、`schema`、`cutover`、`finish`（合并后）每步单独确认 PASS，详见下一节。生产 `/etc/memoria-agent.env` 常开 `MEDIA_PCM_TAP_DIR=/tmp/media-pcm-tap`（容器 tmpfs，每会话 4 MB；新文件打开前按最旧优先清理，目录上限 40 MiB），原始上行音频留在容器内存直到重启。
-- **上一次整栈收据**：2026-10-01 09:59–10:07 `20261001-turn-budget-v1`（`dc138e61`），本次整栈的回滚目标（三角色都在它的纯链上）。media-edge 的回滚目标是 `20260930-edge-reject-log-v1`。
+- **最近生产收据**：2026-10-01 16:47–16:49（CST）整栈发布 `20261001-stop-cancel-v1`（tag → `12a301b2`，#164 分支头；合并提交 `783a3f46` 与 tag 同树 `b4cc875e…`），control-api、bridge、speaker-model 三角色换 tag；media-edge 仍是组件发布 `20260930-late-receipt-v1`（回滚目标 `20260930-edge-reject-log-v1`）。`verify-load`、`freeze`（合并前）与 `env`、`schema`、`cutover`、`finish`（合并后）每步单独确认 PASS，详见下一节。生产 `/etc/memoria-agent.env` 常开 `MEDIA_PCM_TAP_DIR=/tmp/media-pcm-tap`（容器 tmpfs，每会话 4 MB；新文件打开前按最旧优先清理，目录上限 40 MiB），原始上行音频留在容器内存直到重启。
+- **上一次整栈收据**：2026-10-01 16:13–16:15 `20261001-stop-terminal-v1`（`ebb6926d`），本次整栈的回滚目标（三角色都在它的纯链上）。media-edge 的回滚目标是 `20260930-edge-reject-log-v1`。
 
 | component | actual image/tag | OCI digest | revision | health | restarts | startup time | receipt | rollback target |
 |---|---|---|---|---|---:|---|---|---|
-| Control API | `memoria-control-api:20261001-device-prompt-v1` | `sha256:0b956727…`（服务器 image id） | `73f7bc1cedc2e699aae44a2155a4b8a02408ff43` | healthy | 0 | `2026-10-01T07:25:04Z` | `/opt/memoria/releases/20261001-device-prompt-v1/.cutover/` | `memoria-control-api:rollback-20261001-device-prompt-v1-pre`（= `20261001-turn-budget-v1`） |
-| Bridge | `memoria-agent:20261001-device-prompt-v1` | `sha256:734c0b9c…` | 同上 | healthy | 0 | `2026-10-01T07:25:18Z` | 同上 | `memoria-agent:rollback-20261001-device-prompt-v1-pre`（= `20261001-turn-budget-v1`） |
-| Speaker Model | `memoria-speaker-model:20261001-device-prompt-v1` | `sha256:144eab85…` | 同上 | healthy | 0 | `2026-10-01T07:24:56Z` | 同上 | `memoria-speaker-model:rollback-20261001-device-prompt-v1-pre`（= `20261001-turn-budget-v1`） |
+| Control API | `memoria-control-api:20261001-stop-cancel-v1` | `sha256:1918dc5d…`（服务器 image id） | `12a301b21503c405439a3f3d934cc031b63612b0` | healthy | 0 | `2026-10-01T08:47:53Z` | `/opt/memoria/releases/20261001-stop-cancel-v1/.cutover/` | `memoria-control-api:rollback-20261001-stop-cancel-v1-pre`（= `20261001-stop-terminal-v1`） |
+| Bridge | `memoria-agent:20261001-stop-cancel-v1` | `sha256:d8f6489e…` | 同上 | healthy | 0 | `2026-10-01T08:48:07Z` | 同上 | `memoria-agent:rollback-20261001-stop-cancel-v1-pre`（= `20261001-stop-terminal-v1`） |
+| Speaker Model | `memoria-speaker-model:20261001-stop-cancel-v1` | `sha256:9d7f431f…` | 同上 | healthy | 0 | `2026-10-01T08:47:46Z` | 同上 | `memoria-speaker-model:rollback-20261001-stop-cancel-v1-pre`（= `20261001-stop-terminal-v1`） |
 | Media Edge | `memoria-media-edge:20260930-late-receipt-v1` | `sha256:9874fa24…` | `b43577e886868ec7c9b00e30d38df13f776a0b82` | healthy | 0 | `2026-09-30T03:59:05Z` | `/opt/memoria/component-releases/20260930-late-receipt-v1-media-edge/` | `memoria-media-edge:20260930-edge-reject-log-v1`（`media-edge-rollback.override.yml`） |
 
 - **候选可见性状态**：已随整栈发布上线（契约提交在 main 上为 `0059368`，早期记录中的 `f7c4c2a` 是合并前哈希）。普通 search/context 只返回 confirmed 且无 active 冲突，`include_candidates=true` 仅供审核与评测。真实 PG 上的 candidate 行为与线上带鉴权读口尚无单独收据。
 - **评测基线边界**：四份 2026-09-23 评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；它们产生于候选可见性提交之前，只证明上线前基线，不证明当前线上版本的召回质量。
-- **发布身份**：`20261001-device-prompt-v1` / `73f7bc1c`；`/opt/memoria/current` → `releases/20261001-device-prompt-v1`。上一栈 `20261001-turn-budget-v1` / `dc138e61` 为回滚目标。
+- **发布身份**：`20261001-stop-cancel-v1` / `12a301b2`；`/opt/memoria/current` → `releases/20261001-stop-cancel-v1`。上一栈 `20261001-stop-terminal-v1` / `ebb6926d` 为回滚目标。
 - **未关闭缺陷**：P0-03 仍开放（缺陷 A 核心续问边界与工具查询最终回答已在 09-24、09-25 真机走通；TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
 - **下一步必须动作**：设备对话归档与设备信任分档已随 `20261001-device-archive-v1` 上线，开关 `MEMORIA_BOUND_DEVICE_TRUST_ENABLED` 已于 2026-10-01 00:30 打开（收据见下一节），验收清单见运维手册「设备信任开关」。用户 2026-10-01 新增六项需求（唤醒方式设置、空闲熄屏、发布与刷机、回顾为空、电脑长稳对话、说话风格评审）见 [TODOLIST「2026-10-01 新需求」](TODOLIST.md)。当日遗留已汇总到 [TODOLIST「2026-09-28 收尾待办」](TODOLIST.md)：伙伴页选一次绵绵、嘈杂环境验证 #83；需决定是否发布固件 OTA；待查回复规划 `no_verified_runtime_profile` 兜底；12-17 前换证书。之后按验收清单验 P0-04 产品决定、P1-11 三种绑定与隔天记忆、P1-03 孩子人格、P2-04 与 P0-03 剩余矩阵；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
+
+## 2026-10-01 整栈发布 20261001-stop-cancel-v1（PR #164；语音停止改发 CANCEL，加提示词微调）
+
+- **背景**：上一版（`stop-terminal-v1`）在语音停止后给 flush 安装的替换代发 `generation.completed`，而 edge 已把该围栏取消：`AdvanceGeneration` 对已取消围栏的任何非取消事件报 `cancelled generation cannot be reactivated` 并让整条 Voice Core 流失败，设备每次停止后 `recovering` 约 7 s（第四轮串口 + edge 日志）。
+- **范围**：相对 `20261001-stop-terminal-v1` 只动 `media_session_output_dispatch.py`（`_end_replacement_generation` 改发 `GENERATION_ACTION_CANCEL`；edge 对同一围栏的取消是幂等的 `ApplyCancelledGeneration`，转成设备 `generation.cancelled`，固件 `HandleGenerationTerminal(cancelled)` flush 并上报 tts stop → 聆听）、`prompt_composition.py`（孩子块：被要求保密时说「好，我听着呢」不答应保密；长辈块：简单问题直接答、不把旧话题硬接）、`companion_turn_policy.py`（设备会话回退指令加「不要把不相关的旧话题硬接进回答」）、`release_ops.sh`。无 schema、无 env、无 control-api 行为变化。
+- **过程**：PR #164 16:2x 开；tag `20261001-stop-cancel-v1` → `12a301b2`；腾讯镜像构建；`verify-load`/`freeze` 16:34 PASS；CI 约 18 分钟；16:46 合并（同树 `b4cc875e…`），推 tag；上线前确认没有进行中的对话；`env` 16:47:26、`schema` 16:47:43、`cutover` 16:47:45–16:48:14、`finish` 16:49:28 全部 PASS。
+- **线上核对（只读）**：三角色 `20261001-stop-cancel-v1` / `12a301b2`，重启 0，全部 healthy，纯链；`/opt/memoria/current` 指向新目录；readiness `ready 20261001-stop-cancel-v1`、外部 200；镜像内确认 `_end_replacement_generation` 用 CANCEL 且不含 COMPLETE、孩子块 / 长辈块带新规则。
+- **回滚**：`release-ops.sh rollback` 恢复到 `20261001-stop-terminal-v1`；切前镜像 `memoria-*:rollback-20261001-stop-cancel-v1-pre`。无 schema 变更。
+- **真机复核（第五轮 16:50–16:57）**：语音停止延迟 0.56 s，设备立刻回到聆听，edge 日志里 `cannot be reactivated` 为 0、会话没有被拆；孩子的自我介绍是朋友口吻，被要求保密时说「好，我听着呢」；被欺负时的「告诉爸爸妈妈或老师」第三句偶尔漏掉（实验室 2/8），另有分支加强措辞（`fix/trusted-adult-line`）；假 VAD 抢掉已提交回复的问题仍在（TODOLIST N-8）。详见 `docs/acceptance/run-20261001-longsoak/findings.md`。
+
+## 2026-10-01 整栈发布 20261001-stop-terminal-v1（PR #162；故事不再被截断，语音停止补终结事件——这一补法有缺陷，下一版 stop-cancel-v1 改正）
+
+- **背景**：第三轮真机测试（`device-prompt-v1`）里回答变短后暴露两个老问题：①每次语音停止（「别说了」「停」）之后设备卡在「说话」状态，直到下一次回复结束或 30 s 静默关闭，紧接着那句话被吞掉（5/5）；②「给我讲一个故事吧」只讲 4 句（孩子 4 句上限，且只有「讲个故事」会被当成长内容请求）。
+- **范围**：相对 `20261001-device-prompt-v1` 只动 `services/agent/src/voice_core/media_session_output_dispatch.py`、`media_session_playback_stop.py`、`services/common/response_depth.py`（故事请求识别）和 `release_ops.sh`。语音停止后补发 `generation.completed`（`_end_replacement_generation`）；故事请求（动词 + 故事/童话）按长内容处理。
+- **过程**：PR #162 15:5x 开；tag `20261001-stop-terminal-v1` → `ebb6926d`，合并提交 `72766740` 与 tag 同树 `36cdf247…`；腾讯 PyPI 镜像构建；`verify-load`/`freeze` 15:53 PASS；CI 约 25 分钟（`python-shards (1)` 这次跑了 13 分钟）；16:12 合并，`env` 16:13:17、`schema` 16:13:25、`cutover` 16:13:27–16:13:54、`finish` 16:15:10 全部 PASS；上线前确认没有进行中的对话。
+- **真机复核（第四轮 16:15–16:25）**：故事完整讲完（约 16 s）✓；**但每次语音停止都把会话拆了**：edge `Voice Core stream failed … err="cancelled generation cannot be reactivated"`（`session_generation.go: AdvanceGeneration` 拒绝对已取消围栏的任何非取消事件），设备 `Server closed media session: code=voice_core_unavailable`，`speaking -> recovering` 约 7 s 后回到聆听。进程内测试夹具不模拟 edge 的这条规则，单测没抓到。**这一版的语音停止行为比上一版更重（拆会话），下一版立即改**。
+- **回滚**：`release-ops.sh rollback` 恢复到 `20261001-device-prompt-v1`；切前镜像 `memoria-*:rollback-20261001-stop-terminal-v1-pre`。
 
 ## 2026-10-01 整栈发布 20261001-device-prompt-v1（PR #161；设备对话里模型终于拿到系统提示词）
 
