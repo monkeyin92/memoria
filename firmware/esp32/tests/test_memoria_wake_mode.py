@@ -245,6 +245,33 @@ def test_idle_screen_goes_dark_and_nothing_is_rendered_while_dark() -> None:
     assert update.count("ScenePhase::kIdle") == 1
 
 
+def test_idle_timer_cannot_start_in_the_future() -> None:
+    """Build 18 darkened the panel at once on about half of all idle entries.
+
+    ``idle_since_ms_ = now_ms | 1`` is one millisecond AFTER ``now_ms`` whenever ``now_ms`` is even, so the
+    check in the same call, ``now_ms - idle_since_ms_ >= kIdleScreenOffMs``, wrapped around to ~4.29e9
+    (serial log of 2026-10-01: ``State: listening -> idle`` and ``screen off (idle)`` 10 ms apart in five of
+    eight cycles, ten seconds apart in the other three).
+    """
+
+    display = (BOARD_DIR / "memoria_mascot_display.cc").read_text(encoding="utf-8")
+    header = (BOARD_DIR / "memoria_mascot_display.h").read_text(encoding="utf-8")
+    update = _function(display, "void MemoriaMascotDisplay::UpdateIdleScreen(")
+    code = "\n".join(re.sub(r"//.*", "", line) for line in update.splitlines())  # a comment may name the trick
+    assert "| 1" not in code
+    assert "bool idle_ = false;" in header
+    # The start is the frame time itself, taken once when the idle phase begins.
+    assert "idle_ = true;\n        idle_since_ms_ = now_ms;" in update
+    # And the model of the arithmetic: unsigned 32-bit subtraction.
+    def elapsed(now: int, since: int) -> int:
+        return (now - since) & 0xFFFFFFFF
+
+    for now in (3041226, 3041227):
+        since = now | 1
+        assert (elapsed(now, since) >= 10_000) == (now % 2 == 0)  # the old code: even now -> instant off
+        assert elapsed(now, now) == 0  # the new code: never
+
+
 def test_build_number_moved_past_the_last_flashed_image() -> None:
     release = (MEMORIA_DIR / "memoria_firmware_release.h").read_text(encoding="utf-8")
     build = int(re.search(r"#define MEMORIA_FIRMWARE_BUILD (\d+)", release).group(1))
