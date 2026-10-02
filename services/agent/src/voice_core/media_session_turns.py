@@ -540,14 +540,13 @@ class MediaTurnEndpointMixin:
         if context.pending.turn_endpoint_sample is not None:
             return
         text = result.text.strip()
-        if not text or not context.runtime.live_lookup_needed(text):
+        in_flight = self._reply_in_flight(context)  # the audible reply's echo must not start a verdict
+        if not text or not context.runtime.live_lookup_needed(text, start_verdict=not in_flight):
             return
-        if self._reply_in_flight(context):
+        if in_flight:
             logger.warning(
-                "media early live-query commit skipped: reply in flight "
-                "session=%s text_len=%s",
-                context.identity.session_id,
-                len(text),
+                "media early live-query commit skipped: reply in flight session=%s text_len=%s",
+                context.identity.session_id, len(text),
             )
             return
         self._pin_live_lookup_endpoint(

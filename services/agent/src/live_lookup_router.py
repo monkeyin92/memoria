@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
+from services.agent.src.classifier_inflight import resolve_shared, start_shared
 from services.agent.src.clock_fact_queries import is_clock_fact_query
+from services.agent.src.orchestration.interruption_guard import (
+    is_completion_ack_only,
+    is_conversation_close_only,
+    is_interrupt_command_only,
+)
 from services.common.companion_response_safety import companion_safety_decision
 from services.common.realtime_information import (
     _normalized,
@@ -68,9 +74,34 @@ async def resolve_live_lookup_needed(
     if semantic_resolver is None:
         cache[compact] = False
         return False
-    needed = await semantic_resolver(query)
-    cache[compact] = needed
-    return needed
+    return await resolve_shared(cache, compact, semantic_resolver, query)
+
+
+def start_live_lookup_verdict(
+    query: str,
+    *,
+    cache: dict[str, bool],
+    semantic_resolver: Callable[[str], Awaitable[bool]] | None,
+) -> None:
+    """Start the semantic verdict for a sentence that will probably be committed, and leave it in flight.
+
+    The commit path joins this call instead of starting its own after the end-of-speech grace.  Nothing is
+    started where ``resolve_live_lookup_needed`` would not call the classifier, nor for a stop word, a
+    completion acknowledgement or a farewell, which never become a question for a live lookup.
+    """
+
+    compact = live_lookup_cache_key(query)
+    if (
+        semantic_resolver is None
+        or not compact
+        or compact in cache
+        or live_lookup_needed(query, cache=cache)
+        or is_interrupt_command_only(query)
+        or is_completion_ack_only(query)
+        or is_conversation_close_only(query)
+    ):
+        return
+    start_shared(cache, compact, semantic_resolver, query)
 
 
 def live_lookup_needed(

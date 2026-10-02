@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
+from services.agent.src.classifier_inflight import resolve_shared
 from services.agent.src.orchestration.interruption_guard import (
     _conversation_close_compact,
     is_completion_ack_only,
@@ -57,9 +58,7 @@ async def resolve_conversation_close_needed(
     if semantic_resolver is None:
         cache[compact] = False
         return False
-    needed = await semantic_resolver(text)
-    cache[compact] = needed
-    return needed
+    return await resolve_shared(cache, compact, semantic_resolver, text)
 
 
 def conversation_close_needed(
