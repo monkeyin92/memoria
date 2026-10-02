@@ -269,6 +269,7 @@ def main() -> int:
 
     def record(**row: object) -> None:
         row["t"] = stamp(now())
+        row["ts"] = round(now(), 3)  # epoch seconds: scripts/voice_soak_pause_split.py report joins on it
         timeline.write(json.dumps(row, ensure_ascii=False) + "\n")
         timeline.flush()
         print(row, flush=True)

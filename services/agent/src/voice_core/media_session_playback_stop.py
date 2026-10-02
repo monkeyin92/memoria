@@ -18,6 +18,7 @@ echo window may, but a farewell whose audio ends before the boundary never does.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -51,9 +52,34 @@ _PLAYBACK_FOLLOWUP_STRADDLE_SAMPLES = 16_000  # 1.0 s at 16 kHz
 # speech, not echo: endpoint it with a short grace instead of waiting for a
 # VAD edge that a stuck post-playback VAD may never emit (run 20260921).
 _PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S = 1.2
+# Latency experiment (TODOLIST N-14 tier 3): the grace may only be shortened, never lengthened, so
+# the turn budget that is sized for the default (test_the_default_turn_budget_covers...) still holds.
+PLAYBACK_FOLLOWUP_GRACE_ENV = "MEDIA_PLAYBACK_FOLLOWUP_GRACE_S"
+_PLAYBACK_FOLLOWUP_MIN_GRACE_S = 0.3
 # Conservative sample-gap policy for unanchored device candidates observed
 # during a previous reply, not a VAD silence measurement or endpoint timeout.
 _PLAYBACK_CANDIDATE_SPLIT_GAP_SAMPLES = 40_000  # 2.5 s at 16 kHz
+
+
+def playback_followup_grace_s() -> float:
+    """The grace a post-playback follow-up final waits for the next one before it commits.
+
+    1.2 s unless MEDIA_PLAYBACK_FOLLOWUP_GRACE_S asks for a shorter one (0.3-1.2 s).  Anything else
+    (unreadable, longer, shorter than 0.3 s) keeps the default: a typo must not silently shorten the
+    wait for a child's next word.
+    """
+
+    raw = os.environ.get(PLAYBACK_FOLLOWUP_GRACE_ENV, "").strip()
+    if not raw:
+        return _PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S
+    try:
+        value = float(raw)
+    except ValueError:
+        value = float("nan")
+    if _PLAYBACK_FOLLOWUP_MIN_GRACE_S <= value <= _PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S:
+        return value
+    logger.warning("%s=%r is not within 0.3-1.2 s; keeping the default", PLAYBACK_FOLLOWUP_GRACE_ENV, raw)
+    return _PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S
 
 
 def _compact(text: str) -> str:
@@ -344,7 +370,7 @@ class MediaPlaybackStopMixin:
                     context.pending.turn_retire_sample or 0, endpoint
                 )
                 context.pending.playback_followup_endpoint_sample = endpoint
-                context.pending.restart_endpoint_bounds(_PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S)
+                context.pending.restart_endpoint_bounds(playback_followup_grace_s())
                 logger.info(
                     "media playback-followup endpoint advanced session=%s "
                     "boundary=%s endpoint=%s text_len=%s",
@@ -367,7 +393,7 @@ class MediaPlaybackStopMixin:
         context.pending.turn_retire_sample = max(context.pending.turn_retire_sample or 0, endpoint)
         context.pending.playback_followup_endpoint_sample = endpoint
         context.pending.turn_endpoint_grace_deadline = (
-            time.monotonic() + _PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S
+            time.monotonic() + playback_followup_grace_s()
         )
         logger.info(
             "media playback-followup endpoint session=%s boundary=%s "
