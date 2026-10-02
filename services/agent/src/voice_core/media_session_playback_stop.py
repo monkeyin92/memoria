@@ -447,6 +447,37 @@ class MediaPlaybackStopMixin:
             source,
         )
 
+    @staticmethod
+    def _pinned_turn_holds_no_words(context: _MediaVoiceSession, result: ASRResult) -> bool:
+        """True when the standing endpoint ends a turn with no words, before ``result``.
+
+        Field 2026-10-02 (soak10): the device VAD ended on room noise while the
+        story played.  The ASR heard nothing in that range, so the turn could
+        never commit (``empty_media_turn`` leaves it pinned) and a final that
+        begins after its endpoint can never join it; yet the pin held every
+        final out as ``endpoint_already_pinned`` until the ASR tail timeout
+        discarded the turn 3-6 s later, a 「停」 included.  A pin that a
+        recognized farewell, clock or live-query text set, or whose range
+        still reaches ``result``, is a real turn and keeps the refusal.
+        """
+
+        pending = context.pending
+        endpoint, start = pending.turn_endpoint_sample, pending.turn_start_sample
+        if (
+            endpoint is None
+            or start is None
+            or not 0 <= start < endpoint <= result.capture_start_sample
+            or pending.clock_fact_endpoint_pinned is not None
+            or pending.conversation_close_endpoint_pinned is not None
+            or pending.live_query_endpoint_pinned is not None
+            or pending.clock_fact_forced_text
+            or pending.live_query_forced_text
+        ):
+            return False
+        return not context.runtime.speech_timeline.projected_text(
+            stream_epoch=result.stream_epoch, start_sample=start, end_sample=endpoint
+        )
+
     def _maybe_pin_playback_stop(
         self,
         context: _MediaVoiceSession,
@@ -458,7 +489,9 @@ class MediaPlaybackStopMixin:
 
         Only the stop phrase's own interval is committed
         (``_scope_pending_turn_to``): earlier playback-window candidates would
-        otherwise merge into 「……停」, route as chat and stay held.
+        otherwise merge into 「……停」, route as chat and stay held.  A stop
+        phrase also replaces the endpoint of an earlier turn that holds no
+        words (``_pinned_turn_holds_no_words``), which has nothing to lose.
         """
 
         if context.identity.client_type != "device":
@@ -467,11 +500,14 @@ class MediaPlaybackStopMixin:
         stop_word = bool(text) and lexical_playback_control_only(text)
         in_flight = self._reply_in_flight(context)
         diagnosis = self._playback_stop_diagnosis(context, result)
+        replaced_endpoint = context.pending.turn_endpoint_sample
         # The same guards in the same order as before; each one now says why it held.
         reason = ""
         if context.closed or context.standby_requested:
             reason = "session_closing"
-        elif context.pending.turn_endpoint_sample is not None:
+        elif replaced_endpoint is not None and not (
+            stop_word and self._pinned_turn_holds_no_words(context, result)
+        ):
             reason = "endpoint_already_pinned"
         elif not stop_word:
             reason = "not_stop_word"
@@ -503,15 +539,17 @@ class MediaPlaybackStopMixin:
         endpoint = result.capture_end_sample
         pending.turn_endpoint_sample = endpoint
         pending.turn_retire_sample = endpoint
-        pending.turn_endpoint_grace_deadline = time.monotonic()
+        # Also drops the replaced pin's tail bound: its timer belongs to the old endpoint.
+        pending.restart_endpoint_bounds(0.0)
         logger.info(
             "media early playback-stop endpoint session=%s start=%s endpoint=%s "
-            "text_len=%s source=%s %s",
+            "text_len=%s source=%s replaced_empty_endpoint=%s %s",
             context.identity.session_id,
             start,
             endpoint,
             len(text),
             source,
+            replaced_endpoint,
             diagnosis,
         )
         self._schedule_turn_commit(context)

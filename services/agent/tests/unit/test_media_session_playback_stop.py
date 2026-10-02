@@ -452,6 +452,32 @@ async def test_device_misheard_stop_read_as_farewell_cannot_block_the_next_stop(
 
 
 @pytest.mark.asyncio
+async def test_device_stop_word_takes_over_an_endpoint_held_by_a_textless_vad() -> None:
+    """Field 2026-10-02 (soak10, DeepSeek): a VAD edge with no words held the stop out.
+
+    The device VAD ended on room noise while the story played.  That empty turn kept
+    its endpoint for 3-6 s, until the ASR tail timeout discarded it, and every final
+    in between was refused as ``endpoint_already_pinned``: 「停」 never stopped the story.
+    The empty turn has nothing to lose, so the stop word takes its endpoint.
+    """
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.vad_start(harness.sample)
+        await harness.audio_frames(10)  # noise: the ASR hears no words
+        await harness.vad_end(harness.sample)
+        assert harness.context.pending.turn_endpoint_sample is not None
+        provisional = harness.context.projection.provisional
+        assert provisional is None or not provisional.text.strip()
+
+        await harness.audio_frames(15, final_text="停")
+        await harness.wait_for(lambda: bool(harness.cancel_effects()))
+        harness.assert_story_stopped_session_open(story)
+
+    await _run_story(_device_identity("textless-vad-holds-stop"), script)
+
+
+@pytest.mark.asyncio
 async def test_device_story_saying_goodbye_does_not_end_itself() -> None:
     """The reply's own 「再见！」 on the open microphone is echo, not a farewell."""
 
