@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal, Protocol, cast
 
+from services.agent.src.classifier_inflight import ClassifierCache
 from services.agent.src.contracts.events import TimedWord
 from services.agent.src.contracts.ids import (
     CancellationContext,
@@ -92,6 +93,7 @@ from services.agent.src.output_provenance import (
     owner_acoustic_evidence,
     speaker_persona_provenance,
 )
+from services.agent.src.runtime_classifiers import DuplexRuntimeClassifierMixin
 from services.agent.src.runtime_emotion import DuplexRuntimeEmotionMixin
 from services.agent.src.runtime_profile import VerifiedRuntimeProfile
 from services.agent.src.runtime_provenance import DuplexRuntimeProvenanceMixin
@@ -149,6 +151,7 @@ class LiveKitTTSPoolAdapter(TTSPoolHandle):
 
 @dataclass
 class DuplexRuntime(
+    DuplexRuntimeClassifierMixin,
     DuplexRuntimeShutdownMixin,
     DuplexSpeakerMixin,
     DuplexRuntimeProvenanceMixin,
@@ -237,9 +240,9 @@ class DuplexRuntime(
     ) = None
     _fast_model_warmer: Callable[[], Awaitable[Any] | Any] | None = None
     _delegation_starter: Callable[[str, GenerationFence], Coroutine[Any, Any, Any] | None] | None = None
-    _live_lookup_cache: dict[str, bool] = field(default_factory=dict)
+    _live_lookup_cache: dict[str, bool] = field(default_factory=ClassifierCache)
     _live_lookup_semantic_resolver: Callable[[str], Awaitable[bool]] | None = None
-    _conversation_close_cache: dict[str, bool] = field(default_factory=dict)
+    _conversation_close_cache: dict[str, bool] = field(default_factory=ClassifierCache)
     _conversation_close_semantic_resolver: Callable[[str], Awaitable[bool]] | None = None
     _interaction_prefetch_epoch: int | None = None
     _interaction_context_prefetch_key: tuple[int, str] | None = None
@@ -1007,48 +1010,6 @@ class DuplexRuntime(
         starter: Callable[[str, GenerationFence], Coroutine[Any, Any, Any] | None] | None,
     ) -> None:
         self._delegation_starter = starter
-
-    def set_live_lookup_semantic_resolver(
-        self,
-        resolver: Callable[[str], Awaitable[bool]] | None,
-    ) -> None:
-        self._live_lookup_semantic_resolver = resolver
-
-    async def resolve_live_lookup_needed(self, query: str) -> bool:
-        from services.agent.src.live_lookup_router import resolve_live_lookup_needed
-
-        return await resolve_live_lookup_needed(
-            query,
-            cache=self._live_lookup_cache,
-            semantic_resolver=self._live_lookup_semantic_resolver,
-        )
-
-    def live_lookup_needed(self, query: str) -> bool:
-        from services.agent.src.live_lookup_router import live_lookup_needed
-
-        return live_lookup_needed(query, cache=self._live_lookup_cache)
-
-    def set_conversation_close_semantic_resolver(
-        self,
-        resolver: Callable[[str], Awaitable[bool]] | None,
-    ) -> None:
-        self._conversation_close_semantic_resolver = resolver
-
-    async def resolve_conversation_close_needed(self, text: str) -> bool:
-        from services.agent.src.conversation_close_router import (
-            resolve_conversation_close_needed,
-        )
-
-        return await resolve_conversation_close_needed(
-            text,
-            cache=self._conversation_close_cache,
-            semantic_resolver=self._conversation_close_semantic_resolver,
-        )
-
-    def conversation_close_needed(self, text: str) -> bool:
-        from services.agent.src.conversation_close_router import conversation_close_needed
-
-        return conversation_close_needed(text, cache=self._conversation_close_cache)
 
     def set_voice_profile_refresher(
         self,
@@ -2830,6 +2791,7 @@ class DuplexRuntime(
         # a bounded drain window. ArchiveSink persists a task before a timeout
         # cancellation can propagate.
         self._evidence_publisher = None
+        await self.close_classifier_calls()
         await self.drain_durable_tasks()
         await self.drain_background_tasks()
         await self.orchestrator.close()
