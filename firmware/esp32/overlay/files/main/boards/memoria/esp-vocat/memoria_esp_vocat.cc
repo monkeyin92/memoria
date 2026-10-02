@@ -8,6 +8,9 @@
 
 #include <esp_log.h>
 #include <esp_timer.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <cerrno>
 #include <cinttypes>
 #include "esp_idf_version.h"
 
@@ -27,6 +30,7 @@
 #include "memoria_display_hooks.h"
 #include "memoria_mascot_display.h"
 #include "memoria_pat.h"
+#include "memoria_usb_command.h"
 #include "memoria_wake_mode.h"
 #include "settings.h"
 
@@ -481,6 +485,10 @@ private:
     bool bmi270_ready_ = false;
     bool was_charging_ = false;
     std::atomic<int64_t> imu_mute_until_ms_{0};
+    TaskHandle_t usb_command_task_handle_ = nullptr;
+    // Log tag of the USB command line: the test rig greps for "usb wake accepted" / "usb wake ignored".
+    static constexpr char kUsbTag[] = "MemoriaUsbCommand";
+    static constexpr uint32_t kUsbPollMs = 25;
 
     static void battery_task(void* arg) {
         auto* self = static_cast<MemoriaEspVocat*>(arg);
@@ -608,6 +616,85 @@ private:
         }
         ESP_LOGI(TAG, "screen tap ignored state=%d wake_mode=%s", static_cast<int>(state),
                  memoria::WakeModeName(mode));
+    }
+
+    // The `wake` line on the USB port (build 20): what a tap on the round screen does, for the computer
+    // driven tests that must not play the wake word. Pairing and start-up come first and keep their
+    // behaviour; from there it follows the tap's gate, so it only ever starts a conversation on an idle
+    // device in a mode that includes the screen. It never stops the robot, never closes a session and
+    // never changes a setting.
+    void HandleUsbWake() {
+        auto& app = Application::GetInstance();
+        const auto state = app.GetDeviceState();
+        const auto mode = memoria::WakeModeRegistry::GetInstance().mode();
+        if (memoria::MemoriaBootstrap::GetInstance().active()) {
+            ESP_LOGI(kUsbTag, "usb wake ignored reason=pairing state=%d wake_mode=%s",
+                     static_cast<int>(state), memoria::WakeModeName(mode));
+            return;
+        }
+        if (state == kDeviceStateStarting) {
+            ESP_LOGI(kUsbTag, "usb wake ignored reason=starting state=%d wake_mode=%s",
+                     static_cast<int>(state), memoria::WakeModeName(mode));
+            return;
+        }
+        const auto decision = memoria::UsbWakeDecisionFor(mode, state == kDeviceStateIdle);
+        if (decision == memoria::UsbWakeDecision::kStartConversation) {
+            ESP_LOGI(kUsbTag, "usb wake accepted wake_mode=%s", memoria::WakeModeName(mode));
+            app.WakeWordInvoke("usb_wake");
+            return;
+        }
+        ESP_LOGI(kUsbTag, "usb wake ignored reason=%s state=%d wake_mode=%s",
+                 memoria::UsbWakeDecisionName(decision), static_cast<int>(state),
+                 memoria::WakeModeName(mode));
+    }
+
+    // The USB-Serial-JTAG port is the secondary console: stdin is read from the UART, so the lines the host
+    // writes to the USB port would sit unread in the peripheral's FIFO. This task reads them through the
+    // secondary console's own device node (a non-blocking poll, no driver, no interrupt, nothing written),
+    // assembles lines and hands the one command, `wake`, to HandleUsbWake().
+    static void usb_command_task(void* arg) {
+        auto* self = static_cast<MemoriaEspVocat*>(arg);
+        const int fd = open("/dev/secondary", O_RDONLY);
+        if (self == nullptr || fd < 0) {
+            ESP_LOGW(kUsbTag, "usb command console unavailable (open errno=%d)", errno);
+            vTaskDelete(NULL);
+            return;
+        }
+        ESP_LOGI(kUsbTag, "usb command console ready commands=wake");
+        memoria::UsbLineAssembler assembler;
+        uint8_t chunk[16];
+        while (true) {
+            // The read returns a couple of bytes per call and -1 (EWOULDBLOCK) when the FIFO is empty.
+            for (int reads = 0; reads < 32; ++reads) {
+                const ssize_t got = read(fd, chunk, sizeof(chunk));
+                if (got <= 0) {
+                    break;
+                }
+                for (ssize_t i = 0; i < got; ++i) {
+                    const auto now_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+                    switch (assembler.Feed(chunk[i], now_ms)) {
+                        case memoria::UsbLineEvent::kWake:
+                            self->HandleUsbWake();
+                            break;
+                        case memoria::UsbLineEvent::kUnknown:
+                            ESP_LOGI(kUsbTag, "usb command ignored (not a command)");
+                            break;
+                        case memoria::UsbLineEvent::kTooLong:
+                            ESP_LOGI(kUsbTag, "usb command ignored (line too long)");
+                            break;
+                        case memoria::UsbLineEvent::kNone:
+                            break;
+                    }
+                }
+            }
+            vTaskDelay(pdMS_TO_TICKS(kUsbPollMs));
+        }
+    }
+
+    void InitializeUsbCommand() {
+        // Low priority and off the audio core: the loop only wakes every kUsbPollMs.
+        xTaskCreatePinnedToCore(usb_command_task, "usb_cmd", 4 * 1024, this, 1,
+                                &usb_command_task_handle_, 0);
     }
 
     void InitializeI2c() {
@@ -991,6 +1078,9 @@ public:
         if (imu_task_handle_ != nullptr) {
             vTaskDelete(imu_task_handle_);
         }
+        if (usb_command_task_handle_ != nullptr) {
+            vTaskDelete(usb_command_task_handle_);
+        }
 #if ESP_VOCAT_ENABLE_CAP_TOUCH_SENSOR
         if (touch_slider_task_handle_ != nullptr) {
             vTaskDelete(touch_slider_task_handle_);
@@ -1032,6 +1122,7 @@ public:
 #if ESP_VOCAT_ENABLE_CAP_TOUCH_SENSOR
         InitializeCapacitiveTouchPads();
 #endif
+        InitializeUsbCommand();
     }
 
     virtual AudioCodec* GetAudioCodec() override {

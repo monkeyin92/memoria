@@ -9,19 +9,27 @@ here touches the device, its configuration or production data: it only talks to 
     #    test Mac only the Tingting voice produces audio at all: Flo/Sandy/Shelley write empty files)
     python scripts/voice_soak_bank.py items --scenario scripts/voice_soak_scenarios/child.json --out items.json
     python scripts/voice_soak_bank.py render items.json --out outputs/voice-bank
-    # 2. the run
+    # 2. the resident serial logger (the ONLY process that may open the robot's USB port)
+    uv run --no-project --with pyserial python scripts/voice_soak_serial_logger.py outputs/serial/robot.log
+    # 3. the run
     uv run --no-project --with pyserial python scripts/voice_soak.py \
         --scenario scripts/voice_soak_scenarios/child.json --bank outputs/voice-bank \
-        --wake-clips wake-bright_peer-1.0,wake-warm_companion-1.0 \
-        --out outputs/acceptance/run-<stamp>-soak [--duration-min 35] [--volume 55] [--port /dev/cu.usbmodem2101]
+        --serial-log outputs/serial/robot.log \
+        --out outputs/acceptance/run-<stamp>-soak [--duration-min 35] [--volume 55] [--wake-socket PATH]
 
-Opening the serial port may reset the board (`rst:0x15 USB_UART_CHIP_RESET`, seen once in four opens);
-the driver notices the ROM banner and waits for the wake word engine. A clip shorter than half a second is
-refused, because a silent "user" makes every later number meaningless.
+The robot is woken over the USB cable (firmware build 20): the driver sends `wake` through the logger's
+command socket and the robot starts a conversation exactly like a tap on the round screen, under the same
+gate (the phone's wake mode must include the screen). The wake word is never played, because it
+false-triggers; if the command cannot be sent, or the robot refuses it, the step fails.
+
+Without --serial-log the driver opens the port itself and writes `wake` into it. Opening the serial port may
+reset the board (`rst:0x15 USB_UART_CHIP_RESET`, seen once in four opens); the driver notices the ROM banner and
+waits for the wake word engine. A clip shorter than half a second is refused, because a silent "user" makes
+every later number meaningless.
 
 The Mac speaker must be near the robot; the output volume is raised for the run and restored.
 Device sessions only start outside the guardian's quiet hours (04:00-07:00 at the time of writing)
-and end at the signed session limit (30 minutes), so a long run re-wakes the robot by voice.
+and end at the signed session limit (30 minutes), so a long run re-wakes the robot over USB.
 """
 
 from __future__ import annotations
@@ -38,7 +46,11 @@ from pathlib import Path
 
 import serial  # pyserial, from the ESP-IDF python env
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from voice_soak_serial_command import SerialCommandError, send_command  # noqa: E402
+
 STATE_RE = re.compile(r"StateMachine: State: (\w+) -> (\w+)")
+USB_WAKE_RE = re.compile(r"usb wake (accepted|ignored)(?: reason=(\w+))?")
 DEFAULT_PORT = "/dev/cu.usbmodem2101"
 DEFAULT_REMOTE = "memoria-prod"
 
@@ -62,13 +74,15 @@ class SerialWatcher:
     booted_at: float | None = None  # set when the ROM banner shows up: opening the port reset the board
     cond: threading.Condition = field(default_factory=threading.Condition)
     stop: threading.Event = field(default_factory=threading.Event)
+    ser: serial.Serial | None = None  # the port this watcher opened itself (not in the log-tail mode)
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     def _run(self) -> None:
-        ser = serial.Serial(self.port, 115200, timeout=0.2)
+        ser = serial.Serial(self.port, 115200, timeout=0.2, write_timeout=2.0)
+        self.ser = ser
         buf = b""
         with self.path.open("ab") as fh:
             while not self.stop.is_set():
@@ -95,6 +109,8 @@ class SerialWatcher:
                 self.state = match.group(2)
                 self.state_since = t
                 self.events.append((t, "state", f"{match.group(1)}->{match.group(2)}"))
+            elif (usb := USB_WAKE_RE.search(line)) is not None:
+                self.events.append((t, "usb_wake", usb.group(1) + (f" {usb.group(2)}" if usb.group(2) else "")))
             elif "Wake word detected" in line or "screen tap" in line or "screen off" in line or "screen on" in line:
                 self.events.append((t, "note", line.split(") ", 1)[-1][:120]))
             elif re.search(r"\b(E|W) \(\d+\)", line):
@@ -104,6 +120,30 @@ class SerialWatcher:
     def alive(self) -> bool:
         with self.cond:
             return bool(self.lines_seen)
+
+    def wake(self) -> None:
+        """Wake the idle robot over USB, like a tap on the screen. Never by playing the wake word."""
+        if self.ser is None:
+            raise SerialCommandError("the serial port is not open yet")
+        try:
+            self.ser.write(b"wake\n")
+            self.ser.flush()
+        except (serial.SerialException, OSError) as exc:
+            raise SerialCommandError(f"serial write failed: {exc}") from exc
+
+    def wake_refusal(self, since: float, timeout: float = 0.0) -> str | None:
+        """The reason the robot logged for refusing a USB wake after `since` (`not_idle`, `wake_mode`,
+        `pairing`, `starting`), or None when it did not refuse (yet)."""
+        deadline = now() + timeout
+        with self.cond:
+            while True:
+                for t, kind, payload in self.events:
+                    if kind == "usb_wake" and t >= since and payload.startswith("ignored"):
+                        return payload.partition("ignored")[2].strip() or "ignored"
+                remaining = deadline - now()
+                if remaining <= 0:
+                    return None
+                self.cond.wait(min(remaining, 0.25))
 
     def wait_state(self, states: set[str], timeout: float, since: float | None = None) -> float | None:
         """Return the time we were in one of `states` (after `since`), or None on timeout."""
@@ -125,6 +165,10 @@ class LogTailWatcher(SerialWatcher):
     """Follow the log of `voice_soak_serial_logger.py` instead of opening the port (an open resets the board)."""
 
     source: Path = Path("/dev/null")
+    wake_socket: Path | None = None  # the logger's command socket; default derived from the port
+
+    def wake(self) -> None:
+        send_command("wake", socket_path=self.wake_socket, port=self.port)
 
     def _run(self) -> None:
         line_re = re.compile(r"^(\d\d):(\d\d):(\d\d)\.(\d\d\d) (.*)$")
@@ -208,18 +252,16 @@ def main() -> int:
     ap.add_argument("--out", required=True)
     ap.add_argument("--duration-min", type=float, default=35.0)
     ap.add_argument("--volume", type=int, default=55)
-    ap.add_argument("--wake-voice", default="Tingting")
     ap.add_argument("--bank", default=None, help="directory of <step tag>.wav clips (voice bank) for the user's lines")
-    ap.add_argument("--wake-clips", default="", help="comma separated clip names in the bank tried in turn to wake the robot")
     ap.add_argument("--loops", type=int, default=1, help="repeat the scenario list this many times")
     ap.add_argument("--port", default=DEFAULT_PORT, help="the robot's USB serial port")
     ap.add_argument("--serial-log", default=None, help="follow this log (voice_soak_serial_logger.py) instead of opening the port")
+    ap.add_argument("--wake-socket", default=None, help="the serial logger's command socket (default: derived from --port)")
     ap.add_argument("--remote", default=DEFAULT_REMOTE, help="ssh host that runs the production containers")
     args = ap.parse_args()
 
     out = Path(args.out)
     bank = Path(args.bank) if args.bank else None
-    wake_clips = [c for c in args.wake_clips.split(",") if c]
     out.mkdir(parents=True, exist_ok=False)
     steps = json.loads(Path(args.scenario).read_text(encoding="utf-8"))
     deadline = now() + args.duration_min * 60
@@ -232,8 +274,10 @@ def main() -> int:
         print(row, flush=True)
 
     if args.serial_log:
-        watcher: SerialWatcher = LogTailWatcher(out / "serial.log")
+        watcher: SerialWatcher = LogTailWatcher(out / "serial.log", port=args.port)
         watcher.source = Path(args.serial_log)
+        if args.wake_socket:
+            watcher.wake_socket = Path(args.wake_socket)
     else:
         watcher = SerialWatcher(out / "serial.log", port=args.port)
     watcher.start()
@@ -267,12 +311,22 @@ def main() -> int:
                 if watcher.state == "listening":
                     return True
                 if watcher.state == "idle":
-                    if wake_clips and bank is not None:
-                        t0, t1, _ = play_clip(bank / f"{wake_clips[attempt % len(wake_clips)]}.wav")
-                    else:
-                        t0, t1, _ = say("茉莉", "Tingting", 150 + 10 * attempt, out, f"{tag}-wake{attempt}")
-                    record(kind="wake_try", attempt=attempt, tag=tag)
+                    # Over the USB cable, like a tap on the screen. The wake word is never played: it
+                    # false-triggers, so a failed or refused wake fails the step instead of falling back.
+                    t0 = now()
+                    try:
+                        watcher.wake()
+                    except SerialCommandError as exc:
+                        record(kind="wake_failed", attempt=attempt, tag=tag, error=str(exc))
+                        return False
+                    record(kind="wake_try", attempt=attempt, tag=tag, via="usb")
                     got = watcher.wait_state({"connecting", "listening"}, 9, since=t0)
+                    if got is None:
+                        refused = watcher.wake_refusal(t0)
+                        if refused is not None:
+                            record(kind="wake_refused", attempt=attempt, tag=tag, reason=refused)
+                            if refused in {"wake_mode", "pairing", "starting"}:
+                                return False  # retrying cannot help: the phone's mode, pairing or start-up
                     if got is not None:
                         watcher.wait_state({"listening"}, 12, since=t0)
                         # The robot greets on wake ("我在。", or the goodnight phrase in quiet

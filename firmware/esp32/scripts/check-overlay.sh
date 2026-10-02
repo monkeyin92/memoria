@@ -56,6 +56,12 @@ rg -Fq '#include "memoria_pat.h"' "$board_dir/memoria_esp_vocat.cc" || \
 rg -Fq 'memoria::TapActionFor(mode, state == kDeviceStateIdle)' \
     "$board_dir/memoria_esp_vocat.cc" || \
     die "a screen tap must follow the phone's wake mode (wake only, never stop or standby)"
+rg -Fq 'memoria::UsbWakeDecisionFor(mode, state == kDeviceStateIdle)' \
+    "$board_dir/memoria_esp_vocat.cc" || \
+    die "the USB wake command must follow the screen tap's gate (wake only, never stop or standby)"
+rg -Fq 'open("/dev/secondary", O_RDONLY)' "$board_dir/memoria_esp_vocat.cc" || \
+    die "the USB command task must read the secondary console read-only"
+[[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_usb_command.h" ]] || die "USB command header missing"
 rg -Fq 'Device pat detected' "$board_dir/memoria_esp_vocat.cc" || \
     die "BMI270 pat must be wired to a local animation, not ToggleChatState"
 rg -Fq 'display_->Pat()' "$board_dir/memoria_esp_vocat.cc" || \
@@ -426,6 +432,8 @@ flasher_args="$MEMORIA_UPSTREAM_DIR/build/flasher_args.json"
 # memoria_stop_keyword.h kMultiNetDetectThreshold (0.10) mirrors this value.
 rg -q '^CONFIG_CUSTOM_WAKE_WORD_THRESHOLD=10$' "$sdkconfig" || \
     die "final sdkconfig must lower the MultiNet detection threshold to 10%"
+rg -q '^CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y$' "$sdkconfig" || \
+    die "final sdkconfig must keep USB-Serial-JTAG as the secondary console (the USB wake command reads /dev/secondary)"
 # Kconfig can silently discard sdkconfig_append entries when dependencies fail.
 for option in BOARD_TYPE_MEMORIA_ESP_VOCAT USE_AUDIO_PROCESSOR USE_DEVICE_AEC; do
     rg -q "^CONFIG_${option}=y$" "$sdkconfig" || \
