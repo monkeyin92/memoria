@@ -256,6 +256,30 @@ async def test_a_slow_memory_fetch_is_cut_off_at_its_bound(monkeypatch: pytest.M
 
 
 @pytest.mark.asyncio
+async def test_a_memory_that_is_late_after_the_plan_does_not_slow_the_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The plan request is in, the memory is not: the reply goes out now, without memory."""
+
+    monkeypatch.setattr(reply_pipeline, "_DEVICE_MEMORY_GRACE_S", 0.05)
+    runtime = _runtime("device-memory-late")
+    planner = _Planner((_memory(),))
+
+    async def late() -> None:
+        await asyncio.sleep(0.5)  # well inside the call's own bound, well past the grace
+
+    planner.on_prefetch = late
+
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    _, plan = await _run_turn(runtime, planner)
+
+    assert loop.time() - started < 0.4
+    assert plan["DATA"]["grounded_items"] == []
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_memory_fetched_for_a_speaker_who_changed_meanwhile_is_dropped() -> None:
     runtime = _runtime("device-memory-speaker-changed")
     planner = _Planner((_memory(),))

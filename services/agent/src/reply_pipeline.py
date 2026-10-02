@@ -101,9 +101,11 @@ AUDIENCE_REPLY_LIMITS: dict[str, tuple[tuple[int, int], tuple[int, int]]] = {
     "senior_companion": ((100, 4), (240, 8)),
 }
 _SENTENCE_ENDINGS = frozenset("。！？；!?")
-# The bound person's memory is fetched while the response plan is, so this only bounds the wait on the
-# slower of the two; a miss means the reply goes out without memory.
+# The bound person's memory is fetched while the response plan is.  The call itself is bounded like the
+# plan's tool, and once the plan is in, a memory that is still outstanding gets only this long: a late
+# memory means a reply without memory, never a slower one.
 _DEVICE_MEMORY_TIMEOUT_S = 2.0
+_DEVICE_MEMORY_GRACE_S = 0.6
 DEVICE_MEMORY_TASK_NAME = "device-memory-prefetch"
 
 
@@ -793,7 +795,11 @@ class ReplyPipeline:
                 )
                 plan = None
                 fetch_reason = "request_exception"
-            device_memory = await memory_fetch if memory_fetch is not None else None
+            device_memory = None
+            if memory_fetch is not None:
+                await asyncio.wait({memory_fetch}, timeout=_DEVICE_MEMORY_GRACE_S)
+                if memory_fetch.done():
+                    device_memory = memory_fetch.result()
         finally:
             if memory_fetch is not None and not memory_fetch.done():
                 memory_fetch.cancel()
