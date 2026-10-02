@@ -6,8 +6,8 @@ wire fence carries no ``session_epoch``, so with a device fence of epoch >= 1 th
 asked.  The request itself is not optional: the control route runs the crisis routing and enqueues the
 guardian's notification before it builds anything, so it is still sent exactly once per turn, but as a
 background task that no reply waits for.  These pin that split: the reply is not held, the request is still
-made, the prompt the model sees is the same, a failure never reaches the turn, and closing the session
-leaves no task behind.
+made, the prompt the model sees is the same, a failure never reaches the turn, and closing the session lets
+the request finish (up to the runtime's drain bound) and then leaves no task behind.
 """
 
 from __future__ import annotations
@@ -46,6 +46,7 @@ class _Planner:
         self.outcome = outcome
         self.calls: list[dict[str, Any]] = []
         self.finished = asyncio.Event()
+        self.completed = False  # the request ran to its end; a cancellation sets `finished` but not this
 
     async def fetch(self, **kwargs: Any) -> ResponsePlanFetch:
         self.calls.append(kwargs)
@@ -54,6 +55,7 @@ class _Planner:
                 await asyncio.sleep(self.delay_s)
             if isinstance(self.outcome, BaseException):
                 raise self.outcome
+            self.completed = True
             return self.outcome or ResponsePlanFetch(None, "fence_mismatch")
         finally:
             self.finished.set()
@@ -226,8 +228,28 @@ async def test_a_request_that_outlives_its_bound_is_given_up_quietly(
 
 
 @pytest.mark.asyncio
-async def test_closing_the_session_leaves_no_request_behind() -> None:
+async def test_closing_the_session_lets_a_request_in_flight_finish() -> None:
+    """The guardian's notification is queued by the control route while it handles this request; closing the
+    session right after a crisis reply must not cut the request off before the route has done that."""
+
+    runtime = _runtime("plan-sidecar-close-finishes")
+    planner = _Planner(delay_s=0.3)
+
+    await _run_turn(runtime, planner, CRISIS)
+    assert not planner.completed
+    await runtime.close()
+
+    assert planner.completed
+    assert len(planner.calls) == 1
+    assert not [t for t in asyncio.all_tasks() if t.get_name() == response_plan_sidecar.SIDECAR_TASK_NAME and not t.done()]
+
+
+@pytest.mark.asyncio
+async def test_closing_the_session_waits_only_for_the_drain_bound() -> None:
+    """A request that never answers is cut at the runtime's own drain bound, and nothing is left behind."""
+
     runtime = _runtime("plan-sidecar-close")
+    runtime._evidence_drain_timeout_s = 0.2
     planner = _Planner(delay_s=30.0)
 
     await _run_turn(runtime, planner)
@@ -237,7 +259,8 @@ async def test_closing_the_session_leaves_no_request_behind() -> None:
     started = loop.time()
     await runtime.close()
 
-    assert loop.time() - started < 2.0
+    assert 0.15 < loop.time() - started < 2.0
+    assert not planner.completed
     assert not [t for t in asyncio.all_tasks() if t.get_name() == response_plan_sidecar.SIDECAR_TASK_NAME and not t.done()]
 
 

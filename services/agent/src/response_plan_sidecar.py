@@ -11,7 +11,9 @@ anything: crisis routing and the guardian's notification (``record_minor_crisis`
 accounting.  Those run server side whenever the request arrives, whether or not this client stays to hear the
 answer (a plain async route is not cancelled by the caller going away), so sending it from a task nobody
 awaits keeps them and no longer holds the reply.  The task gets a wider bound than the old 0.8 s timeout, so
-fewer requests are cut off by this client, and it never retries.
+fewer requests are cut off by this client, and it never retries.  It is a durable task: closing the session
+waits for it (up to the runtime's drain bound) instead of cancelling it, so a crisis reply followed at once by
+the end of the session still queues the notification.
 """
 
 from __future__ import annotations
@@ -69,6 +71,9 @@ def spawn(
             utterance_intent=utterance_intent,
         ),
         name=SIDECAR_TASK_NAME,
+        # Closing the session right after a crisis reply must not cut the request off before the route has
+        # queued the guardian's notification: a durable task gets the runtime's bounded drain window first.
+        durable=True,
     )
     # What the awaited request would have ended as, so the turn takes the same local safe plan.
     return ResponsePlanFetch(None, "fence_mismatch")
