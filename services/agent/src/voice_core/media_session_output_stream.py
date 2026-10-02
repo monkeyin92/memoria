@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import time
 from collections.abc import AsyncIterator
 from dataclasses import replace
@@ -40,9 +41,14 @@ if TYPE_CHECKING:
         MediaVoiceSessionState as _MediaVoiceSession,
     )
 
+logger = logging.getLogger(__name__)
 media_pb2: Any = _media_pb2
 _DOWNLINK_PCM_SAMPLE_RATE = 24_000
 _UNHEARD_OUTPUT_FLOOR_WAIT_S = 4.0
+# With barge-in an unheard reply waits this long for a user turn that holds no
+# words to give the floor back.  The evidence-less hold cap (media_session_turns,
+# 6 s at most) is what normally reopens it; this only bounds the wait if it never does.
+_UNHEARD_OUTPUT_TEXTLESS_HOLD_WAIT_S = 7.0
 _UNHEARD_OUTPUT_FLOOR_POLL_S = 0.02
 # Echo of the reply's tail can outlive the playback completion event by the
 # ASR pipeline's segmentation lag, so the boundary that gates early follow-up
@@ -172,6 +178,11 @@ class MediaOutputStreamMixin:
             fence: GenerationFence,
         ) -> None: ...
 
+        @staticmethod
+        def _pending_turn_has_text_evidence(context: _MediaVoiceSession) -> bool: ...
+
+        def _arm_evidence_less_floor_hold(self, context: _MediaVoiceSession) -> None: ...
+
     async def _abort_unheard_stream(
         self,
         context: _MediaVoiceSession,
@@ -286,6 +297,19 @@ class MediaOutputStreamMixin:
             return True
         return self._output_owner_is_current(context, lease)
 
+    def _floor_held_by_textless_turn(self, context: _MediaVoiceSession) -> bool:
+        """The user holds the floor with a turn that has produced no words yet.
+
+        A device VAD edge on room noise or on the robot's own leaked voice takes
+        the floor like speech does, but it may never turn into text.
+        """
+
+        return (
+            not context.runtime.output_floor_allows_assistant
+            and context.pending.turn_start_sample is not None
+            and not self._pending_turn_has_text_evidence(context)
+        )
+
     async def _wait_for_unheard_output_floor(
         self,
         context: _MediaVoiceSession,
@@ -293,20 +317,54 @@ class MediaOutputStreamMixin:
         *,
         emitted_audio: bool,
     ) -> bool:
-        """Wait briefly for half-duplex floor recovery before the first PCM."""
+        """Before the first PCM, wait for the floor to come back instead of dropping the reply.
 
-        if emitted_audio or context.runtime.barge_in_enabled:
+        Half-duplex waits briefly for the floor.  With barge-in a user who starts
+        talking over a prepared reply takes the floor at once and the reply is
+        superseded, but only if there are words: a turn with no text so far (a noise
+        edge landing between the commit and the first frame lost the question's
+        answer, N-8) holds the reply while the evidence-less hold cap runs, then lets
+        it speak if the turn stays empty.  Words heard meanwhile supersede it.
+        """
+
+        if emitted_audio:
             return self._output_owner_is_current(context, lease)
+        textless_hold = False
+        if context.runtime.barge_in_enabled:
+            if self._output_owner_is_current(context, lease):
+                return True
+            if not self._floor_held_by_textless_turn(context):
+                return False
+            textless_hold = True
+            self._arm_evidence_less_floor_hold(context)
+            logger.info(
+                "media prepared reply held for a user turn with no words session=%s fence=%s",
+                context.identity.session_id,
+                lease.fence,
+            )
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + _UNHEARD_OUTPUT_FLOOR_WAIT_S
+        started = loop.time()
+        deadline = started + (
+            _UNHEARD_OUTPUT_TEXTLESS_HOLD_WAIT_S if textless_hold else _UNHEARD_OUTPUT_FLOOR_WAIT_S
+        )
         while True:
             if self._output_owner_can_start_first_frame(context, lease):
+                if textless_hold:
+                    logger.info(
+                        "media prepared reply released waited_s=%.2f session=%s fence=%s",
+                        loop.time() - started,
+                        context.identity.session_id,
+                        lease.fence,
+                    )
                 return True
             if (
                 context.output.output_owner is not lease
                 or lease.task is not asyncio.current_task()
                 or not context.runtime.fence.matches(lease.fence)
             ):
+                return False
+            if textless_hold and not self._floor_held_by_textless_turn(context):
+                # Words arrived (or the turn ended): the user really holds the floor.
                 return False
             if loop.time() >= deadline:
                 return False
