@@ -42,6 +42,15 @@ _DEVICE_SESSION_SCOPE_INSTRUCTIONS: Final = (
     "依据当前用户这一轮，以及本次会话中已经听见的对话回答，前后保持连贯，但不要把不相关的旧话题硬接进回答。"
     "不得读取、引用或推断账户主人的持久历史、私人记忆、人格、关系或工具结果；不确定时明确说明。"
 )
+# The bound person may also have long-term memories the guardian's consent allows (confirmed ones only, read
+# for exactly this person). They arrive as DATA.grounded_items, never as instructions.
+_DEVICE_SESSION_MEMORY_SCOPE_INSTRUCTIONS: Final = (
+    "依据当前用户这一轮，以及本次会话中已经听见的对话回答，前后保持连贯，但不要把不相关的旧话题硬接进回答。"
+    "DATA.grounded_items 里的 memory_claim 是你记得的、关于这位用户的事：只在对话自然涉及时，用自己的话一句带出，"
+    "不要逐条罗列，不要说“记录里写着”；不要主动翻出用户没提起的旧事。"
+    "用户问你还记不记得某件事，而 grounded_items 里没有相关内容时，坦率说记不得，不要编造。"
+    "不得读取、引用或推断账户主人的其他持久历史、私人记忆、人格、关系或工具结果；不确定时明确说明。"
+)
 _PUBLIC_SCOPE_INSTRUCTIONS: Final = (
     "仅依据当前用户这一轮及本次会话内标记为公开的工作记忆回答。"
     "不得读取、引用或推断账户主人的持久历史、私人记忆、人格、关系或"
@@ -49,9 +58,18 @@ _PUBLIC_SCOPE_INSTRUCTIONS: Final = (
 )
 
 
-def companion_scope_instructions(*, owner: bool, device_bound: bool) -> str:
-    """What the local safe plan lets a companion reply rely on, by who is speaking."""
+def companion_scope_instructions(
+    *, owner: bool, device_bound: bool, private_memory: bool = False
+) -> str:
+    """What the local safe plan lets a companion reply rely on, by who is speaking.
+
+    ``private_memory`` is the bound person's own profile grant to long-term memory.
+    """
 
     if owner and device_bound:
-        return _DEVICE_SESSION_SCOPE_INSTRUCTIONS
+        return (
+            _DEVICE_SESSION_MEMORY_SCOPE_INSTRUCTIONS
+            if private_memory
+            else _DEVICE_SESSION_SCOPE_INSTRUCTIONS
+        )
     return _OWNER_SCOPE_INSTRUCTIONS if owner else _PUBLIC_SCOPE_INSTRUCTIONS

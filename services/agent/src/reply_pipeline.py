@@ -19,7 +19,7 @@ import hashlib
 import json
 import logging
 import time
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable, Iterable
 from typing import Any, Literal, cast
 
 from services.agent.src import generation_output_policy as output_policy
@@ -65,6 +65,7 @@ from services.agent.src.response_planner_client import (
     RECALL_CONTEXT_ITEM_MAX_CHARS,
     RECALL_CONTEXT_MAX_ITEMS,
     RECALL_CONTEXT_TOTAL_MAX_CHARS,
+    ResponseGroundedItem,
     ResponsePlan,
     ResponsePlanFetch,
     ResponsePlannerClient,
@@ -100,6 +101,30 @@ AUDIENCE_REPLY_LIMITS: dict[str, tuple[tuple[int, int], tuple[int, int]]] = {
     "senior_companion": ((100, 4), (240, 8)),
 }
 _SENTENCE_ENDINGS = frozenset("。！？；!?")
+# The bound person's memory is fetched while the response plan is, so this only bounds the wait on the
+# slower of the two; a miss means the reply goes out without memory.
+_DEVICE_MEMORY_TIMEOUT_S = 2.0
+DEVICE_MEMORY_TASK_NAME = "device-memory-prefetch"
+
+
+def _memory_capsule(items: Iterable[ResponseGroundedItem]) -> MemoryCapsule:
+    """The memory entries among grounded items; persona traits travel in their own capsule."""
+
+    return MemoryCapsule(
+        tuple(
+            MemoryCapsuleEntry(
+                item_id=item.item_id,
+                kind=item.kind,
+                content=item.content,
+                source_refs=item.source_event_ids,
+                use_as=item.use_as,
+                confidence=item.confidence,
+                sharing_scope=item.sharing_scope,
+            )
+            for item in items
+            if item.kind != "persona_trait"
+        )
+    )
 
 
 def reply_limits_for(
@@ -514,21 +539,7 @@ class ReplyPipeline:
         fetched = await prefetch(session_id=self._runtime.session_id, query=query, speaker_decision=speaker_decision)
         if not fetched.available or self._runtime.current_speaker_decision != speaker_decision:
             return fallback
-        memory = MemoryCapsule(
-            tuple(
-                MemoryCapsuleEntry(
-                    item_id=item.item_id,
-                    kind=item.kind,
-                    content=item.content,
-                    source_refs=item.source_event_ids,
-                    use_as=item.use_as,
-                    confidence=item.confidence,
-                    sharing_scope=item.sharing_scope,
-                )
-                for item in fetched.grounded_items
-                if item.kind != "persona_trait"
-            )
-        )
+        memory = _memory_capsule(fetched.grounded_items)
         persona = PersonaCapsule(
             version_id=fetched.persona_version_id,
             version_number=fetched.persona_version_number,
@@ -631,6 +642,49 @@ class ReplyPipeline:
         selected.reverse()
         return tuple(selected)
 
+    def _device_memory_in_scope(self, speaker: Any, fence: GenerationFence) -> bool:
+        """The bound person speaks and their own signed profile grants long-term memory recall."""
+
+        return (
+            callable(getattr(self._response_planner_client, "prefetch_context", None))
+            and getattr(speaker, "classification", None) == "owner"
+            and getattr(speaker, "reason_code", None) == DEVICE_BOUND_SUBJECT_REASON
+            and self._runtime.profile_permits(fence, capability="memory_recall_private")
+        )
+
+    async def _fetch_device_memory(self, *, text: str, speaker: Any) -> MemoryCapsule | None:
+        """The memories the control plane releases for this exact speaker and sentence, or None.
+
+        Every failure means no memory for this reply, never a blocked reply.  The control API applies
+        the subject scope (a minor needs the guardian's retention consent) and returns confirmed
+        memories only; the content is never logged.
+        """
+
+        client = cast(ResponsePlannerClient, self._response_planner_client)
+        try:
+            async with asyncio.timeout(_DEVICE_MEMORY_TIMEOUT_S):
+                fetched = await client.prefetch_context(
+                    session_id=self._runtime.session_id,
+                    query=text,
+                    speaker_decision=speaker,
+                )
+        except Exception as exc:
+            logger.info(
+                "device memory unavailable session_id=%s reason=%s",
+                self._runtime.session_id,
+                type(exc).__name__,
+            )
+            return None
+        if not fetched.available or self._runtime.current_speaker_decision != speaker:
+            return None
+        capsule = _memory_capsule(fetched.grounded_items)
+        logger.info(
+            "device memory attached session_id=%s items=%s",
+            self._runtime.session_id,
+            len(capsule.entries),
+        )
+        return capsule
+
     def _mark_context_ready(self, fence: GenerationFence) -> None:
         event = self._context_ready_by_fence.setdefault(fence, asyncio.Event())
         event.set()
@@ -713,23 +767,36 @@ class ReplyPipeline:
                 final=True,
                 fence=fence,
             )
+        memory_fetch = (
+            asyncio.create_task(
+                self._fetch_device_memory(text=text, speaker=speaker),
+                name=DEVICE_MEMORY_TASK_NAME,
+            )
+            if self._device_memory_in_scope(speaker, fence)
+            else None
+        )
         try:
-            fetch = await self._fetch_response_plan(
-                text=text,
-                speaker=speaker,
-                fence=fence,
-            )
-            plan = fetch.plan
-            fetch_reason = fetch.reason
-        except Exception:
-            logger.warning(
-                "response plan fetch failed closed session_id=%s turn_id=%s",
-                self._runtime.session_id,
-                fence.turn_id,
-                exc_info=True,
-            )
-            plan = None
-            fetch_reason = "request_exception"
+            try:
+                fetch = await self._fetch_response_plan(
+                    text=text,
+                    speaker=speaker,
+                    fence=fence,
+                )
+                plan = fetch.plan
+                fetch_reason = fetch.reason
+            except Exception:
+                logger.warning(
+                    "response plan fetch failed closed session_id=%s turn_id=%s",
+                    self._runtime.session_id,
+                    fence.turn_id,
+                    exc_info=True,
+                )
+                plan = None
+                fetch_reason = "request_exception"
+            device_memory = await memory_fetch if memory_fetch is not None else None
+        finally:
+            if memory_fetch is not None and not memory_fetch.done():
+                memory_fetch.cancel()
         if not fence.matches(self._runtime.fence):
             logger.info(
                 "stale response plan dropped session_id=%s turn_id=%s reason=runtime_fence",
@@ -794,20 +861,10 @@ class ReplyPipeline:
         try:
             snapshot = await self._runtime.freeze_context_capsules_for_generation(
                 fence,
-                memory_capsule=MemoryCapsule(
-                    tuple(
-                        MemoryCapsuleEntry(
-                            item_id=item.item_id,
-                            kind=item.kind,
-                            content=item.content,
-                            source_refs=item.source_event_ids,
-                            use_as=item.use_as,
-                            confidence=item.confidence,
-                            sharing_scope=item.sharing_scope,
-                        )
-                        for item in plan.grounded_items
-                        if item.kind != "persona_trait"
-                    )
+                memory_capsule=(
+                    device_memory
+                    if device_memory is not None and plan_is_local_safe(plan)
+                    else _memory_capsule(plan.grounded_items)
                 ),
                 persona_capsule=PersonaCapsule(
                     version_id=plan.provenance.persona_version_id,
@@ -1298,7 +1355,14 @@ class ReplyPipeline:
                 session_turns=frozen_session_turns,
                 delivery_instruction=delivery_instruction,
                 context_snapshot=(
-                    None if plan_is_local_safe(response_plan) else context_snapshot
+                    context_snapshot
+                    if not plan_is_local_safe(response_plan)
+                    or (
+                        device_bound_owner
+                        and policy.allows_private_context(speaker_class)
+                        and context_snapshot.memory_capsule.entries
+                    )
+                    else None
                 ),
             )
             if resume_realtime_request and realtime_request is not None:
