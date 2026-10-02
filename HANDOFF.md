@@ -28,7 +28,7 @@
 - **回滚**：`release-ops.sh rollback` 恢复到 `20261001-deepseek-flash-v1`；切前镜像 `memoria-*:rollback-20261002-stop-diag-v1-pre`（已核对三个都在服务器上，id 与 deepseek-flash-v1 的三角色一致）。无 schema 变更。
 - **真机复核（第七轮 10:47–10:55，短场景 16 步，音量 65）**：14 句说出口、13 句有回复；唤醒 14 次只成功 2 次（音量 65 贴着唤醒阈值），两步因唤醒失败被跳过。讲故事时只有第二个故事（t016）的「别说了」在 0.53 s 停下；其余「停下」都是回复自然讲完——t004 的「别说了」比故事结束还晚到（`no_reply_in_flight`），t008 的「停。」没有被识别成停止词。新日志给出了机制：回复播放期间一次没有文字的 VAD 误触发占住 `turn_endpoint_sample`（`media turn has no text … stage=endpoint`），之后约 3–6 s 内每条 final 都被 `endpoint_already_pinned` 挡回，直到 `media turn discarded after ASR tail timeout`。本轮 3 个窗口里被挡的 10 条 final 没有一条是停止词，所以第六轮那两次失败仍是推断，不是亲眼所见。详见 `docs/acceptance/run-20261001-longsoak/findings.md` 第七轮。
 - **发布后清理**：删除 4 个废弃 worktree、10 个本地分支、2 个远端分支和约 3 GB 的发布包；本地 main 快进到 `8f39e324`；分支 `wip/tts-stream-hardening`（未评审、有 bug、没有远端副本）有意保留。
-- **后续（未发布）**：分支 `fix/stop-over-empty-pin`——播放期间的停止词接管「没有文字的轮次」占住的终点（TODOLIST N-10），合并发布前 `release_ops.sh` 的 PREV 须是 `20261002-stop-diag-v1` / `26b0d53a`（本分支已改）。
+- **后续（未发布）**：分支 `fix/stop-over-empty-pin`（PR #169）——播放期间的停止词接管「没有文字的轮次」占住的终点（TODOLIST N-10）；修复前已在真机上用轻噪声复现（findings 第八轮，同一配方可用来复测）。合并发布前 `release_ops.sh` 的 PREV 须是 `20261002-stop-diag-v1` / `26b0d53a`（本分支已改）。
 
 ## 2026-10-01 整栈发布 20261001-deepseek-flash-v1（PR #167；所有文本模型改用 DeepSeek 官方 DeepSeek-V4.1-Flash）
 
