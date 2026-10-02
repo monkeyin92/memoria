@@ -403,3 +403,35 @@
 **p03 的设备连接重置（2026-10-02 归因，TODOLIST N-11）**。服务端接管并停止成功（`final → 打断` 69 ms），之后 edge 日志 `WSS handler rejected … type=playback.progress control_sequence=1355 fence.turn=4 fence.generation=6`，设备串口 `SSL send failed errno=104`、`speaking → recovering`，约 7.3 s 后恢复。发布后 17 次停止里 2 次出现这条拒绝（另一次是回归系列 #6，不接管的普通停止，设备串口明确是 `Server closed media session: code=playback_receipt_rejected retryable=1`）。毫秒时间线：bridge 发布 CANCEL（generation N → N+1）之后 13 ms（p03）/ 117 ms（#6）edge 收到设备在收到 flush 之前就已发出的、对 generation N 的 `playback.progress`；`handlePlaybackReceipt` 里账本接受它，但 `VoiceCoreSession.SendPlaybackProgress` 以 `playback progress belongs to a stale generation` 拒绝（会话已前进到替换代），于是发 `session.error playback_receipt_rejected` 并结束读循环，连接被关。两次的 edge 日志都没有 `dropped late receipt for a replaced generation`，说明 `20260930-late-receipt-v1` 放行的那条分支（账本拒绝且该代已被替换）没有走到。所以这是停止路径上早就存在的竞态，不是 stop-pin-v1 引入的（#6 是普通停止），约 12% 的语音停止会触发；edge 日志里 2026-10-01 22:15 CST 还有一条同类的 `playback.started` 拒绝。修法与测试方案见 N-11（Go，走 media-edge 组件发布，未做）。
 
 **其它**：bridge 一条 `media reply failed … StopAsyncIteration`（一次被抢掉的回复上 TTS 流结束的竞态，11 次被抢里出现 1 次），与停止路径无关；单字「停」被识别成停止词的比例仍低（基线 3/7），热词（`FUNASR_VOCABULARY_ID`）未动。
+
+## 第十轮（2026-10-02 21:21–21:57，整栈 `20261002-device-memory-v1` + media-edge `20261002-late-progress-v1`，固件 build 20）：N-8 / N-9 / N-11 的真机验证
+
+用户放开电脑语音测试（只限这一轮）后跑的。唤醒一律走 USB（`voice_soak_serial_command.py wake`，常驻串口记录进程开口时板子复位一次，之后 0 次拍打/唤醒词事件），不播唤醒词；音量 65，Mac 扬声器代说，用户的话来自生产豆包音色的语音库（停止系列）或 macOS Tingting（记忆的几句）。驱动脚本：仓库 `scripts/voice_soak.py`，噪声 A/B 用改成 USB 唤醒的 `phantom_stop.py`（同一配方）。
+
+| 运行 | 内容 | 结果 |
+|---|---|---|
+| 21:24 记忆写入 1 | 唤醒后第一句「帮我记住我最喜欢蓝色。」 | 机器人答「好，我记住啦，你最喜欢蓝色。」，但 `memory_claims` 仍 0 行：唤醒问候的回声被识别成「晚上好，你在？」并进了这一句，句首不再是「帮我记住」，明确记忆的标记没打上 |
+| 21:27 记忆写入 2 | 先说「你好呀。」吸收回声，停 4 s 再单独说「帮我记住我最喜欢蓝色。」 | 标记打上了，生成 1 条 claim（`daily_life / preference / 我最喜欢蓝色。`），但状态是 **candidate**、置信度 0.63（见下「记忆」）；机器人又答「好，蓝色，我记住啦。」 |
+| 21:30–21:35 N-8 A/B | 第九轮修复前的配方原样：话音结束后固定 +2.7 s 放 0.6 s 粉红噪声（−20 dBFS），开口后 0.5 s 放「别说了。」，12 次 | **12 次全部回答**（第九轮同配方 12 次里 11 次被抢掉）；7 次 `media prepared reply held for a user turn with no words` → `released waited_s=3.00–3.02`，被抢（`superseded first_frame_sent=False`）0 次；被扣住的那几次开口晚约 3 s（6.4–7.4 s，不扣住的 4.5 s）。停止只有 6/12，见下「噪声下的停止」 |
+| 21:38–21:44 停止系列 | 第八、九轮同一份 15 步（「别说了」与单字「停」交替，开口后 2–16 s 放），无噪声 | 有回答的 11 次里放了 10 次停止词：**「别说了」5/5 停下**（0.47–0.65 s），**「停」1/5**；4 次没有回答（见下「没有回答」） |
+| 21:50 记忆读取 | 新会话：「你好呀。」→ 停 4 s →「我最喜欢什么颜色？」 | `device memory attached items=0`（只有 candidate，设备只读 confirmed），机器人答「这个我还真不知道呢，你还没告诉过我。」——没有编造，但和上一次会话的「我记住啦」对不上 |
+| 21:52–21:57 补充停止 | 10 次「给我讲一个故事吧。」+ 开口后 3–5 s「别说了。」，每句前停 5 s | 10 次全部回答；「别说了」被识别成停止词并停下 6/10，另外 4 次服务端没有任何 `stop_word=True` 的 final，故事讲完；edge 4 次 `dropped late receipt for a replaced generation`，0 次拒绝、设备 0 次断线 |
+
+**N-8（已验证）**：同一配方修复前（第九轮）12 次被抢 11 次，修复后 0 次。整轮所有问句的回复里没有一次被无文字的 VAD 抢掉；唯一一次「首帧前 superseded」是停止系列第二次唤醒的问候：唤醒后约 1 s 设备报了一次无文字的 VAD，问候先被扣住，0.8 s 后在救援识别返回空结果、ASR 边界收尾之后被取代（`superseded first_frame_sent=False`），这一次没有问候；为什么没等到放出，没查清。被扣住的回复开口都晚约 3 s，这是设计上的代价。
+
+**N-11（已验证）**：开口后播放的 32 次停止词里，服务端判成停止词并停下 18 次（噪声 6、停止系列 6、补充 6；以 `media early playback-stop endpoint … stop_word=True` 为准，有的走 `superseded` 而不记 `spoken stop interrupted reply`）。edge 5 次 `dropped late receipt for a replaced generation`（都是 `type=playback.progress stage=precheck`），也就是旧代码下会关连接的 5 次；`WSS handler rejected`、设备的 `playback_receipt_rejected` / `errno=104` / `-> recovering` 都是 0。修复前 17 次停止里 edge 拒绝 2 次（1 次重置）。样本没到计划的 20 次，但修复路径真实命中 5 次。
+
+**N-9 跨会话记忆：读的一侧按设计工作，写的一侧在真机上几乎走不通**。读：设备绑定属主每一轮都并行取记忆（`device memory attached … items=N`），只取 confirmed。写：自动确认要求 claim 置信度 × 来源权重 ≥ 0.9，权重看机器人**上一句**（`duplex_runtime` 用 `classify_prompt_kind` 给下一句用户话打 `prompt_kind`：`spontaneous` 1.0，`open` 0.7）。机器人回孩子几乎每句都带个小问题（「今天想聊点什么？」「你喜欢它什么呢？」），所以第二句起都是 `open`，0.9 × 0.7 = 0.63 不够。唤醒后的第一句是 `spontaneous`，但两次写入的会话里问候回声都并进了第一句，句首不再是「帮我记住」。再加上唯一的确认接口（`/v1/archive/memories/{id}/review`）只认账号本人，孩子的候选没有人能确认。机器人两次都说「我记住啦」，下一次会话却说「不知道」，这是最显眼的问题。可选的改法：「帮我记住」这一句不因机器人上一句是提问而降权；去掉第一句开头的问候回声；家长确认入口；系统没有确认时不说「记住了」。涉及未成年人记忆口径与话术，等用户决定。
+
+**没有回答（新，TODOLIST N-13）**：停止系列 4 次没有回答，都不是 N-8，edge 都以 `owner_silence_timeout` 关会话。
+- 单字「停」之后的下一句（2 次）：t005 里「停」被识别并执行（`user_turn_ignored reason=interrupt_command_only`），5 s 后下一句问话的 final 到了（`text_len=9`），之后没有任何端点或提交日志，30 s 后静默关会话；t015 里「停」刚好在故事自然结束时到达（`pending turn split after reply boundary=unvoiced_gap`），下一句的 final 同样没有端点。同一系列里紧跟在「别说了」打断之后的 5 句问话都照常回答，紧跟在完整回复之后的问句端点来自 `playback-followup endpoint`。只有 2 个样本，机制没查清。
+- 盖在唤醒问候上的第一句（2 次）：记忆读取那次，问候因为上面那次无文字的 VAD 被扣了 3 s，进入聆听后约 5 s 才开口；测试脚本只等 4 s，「你好呀。」正好盖在问候上，设备播放期间不发 VAD，这句的 final 挂了 25 s，等下一句来了才一起提交。停止系列 t001 同样盖在问候上，没有单独的回答，同一会话 29 s 后的 t002 在 final 到达 2 s 后赶上 30 s 静默关会话。
+- 共同点：final 到了，前后没有设备 VAD start/end，又不在「播放后续问」的窗口里，就一直没有端点。是固件在播放中、播放刚结束时漏 VAD，还是服务端缺一个只凭 ASR final 的兜底端点，要对着 `media_session_turns` 的端点条件再查。孩子在机器人问候时就开口、说「停」后马上问下一句，都是真实场景。
+
+**唤醒后第一句带着问候回声**：两次记忆写入的会话里，ASR 都把透过来的机器人问候识别成「晚上好，你在？」「哎，你好！」，和用户的第一句并成同一轮提交。和 N-10 的漏音是同一个来源；噪声 A/B 那次的第一句是干净的。
+
+**噪声下的停止（6/12 没停）**：N-8 A/B 里一半的「别说了」被 FunASR 和前面的噪声、回复开头的漏音并成一段约 4.4 s 的长句（`funasr segment rescued mid_utterance pcm_ms≈4420`），随后以 `straddles_committed_without_timing` / `cross_sentence_overlap` 被拒，没有进停止逻辑；其余的被噪声轮次留下的占点挡住。没有一次是认出了停止词却被挡。只在噪声正好落在「提交 → 开口」之间、紧接着又说停止词时出现；修复前这类回复整句丢了，测不到这种情况。
+
+**不放噪声时的停止词**：「别说了」11/15（停止系列 5/5，补充 6/10；补充里没停的 4 次根本没有 `stop_word=True` 的 final，故事讲完），单字「停」1/5。比第九轮（有回答的 6/6）低，但样本小，可能和机器人自己的声音透过回声消除被识别（N-10）有关，没有再查；热词仍未动。
+
+**测试工具的坑**：`voice_soak.py` 的 `stopped=True` 把「停止词刚播完、回复正好自然结束」也算成停下（停止系列记了 9 次，服务端真正打断的只有 6 次），所以要以服务端的 `early playback-stop endpoint … stop_word=True` 为准；`stop_report.py` 把所有没有回答都标成「reply lost (N-8)」，本轮 4 次都不是；`ensure_listening` 等问候只等 4 s，本轮问候最晚 5.1 s 才开口。

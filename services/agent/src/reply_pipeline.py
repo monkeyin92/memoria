@@ -23,6 +23,7 @@ from collections.abc import AsyncGenerator, Callable, Iterable
 from typing import Any, Literal, cast
 
 from services.agent.src import generation_output_policy as output_policy
+from services.agent.src import response_plan_sidecar
 from services.agent.src.agent import (
     build_local_safe_plan,
     plan_is_local_safe,
@@ -572,9 +573,20 @@ class ReplyPipeline:
             fence, capability="memory_recall_private"
         ):
             return ResponsePlanFetch(None, "no_verified_runtime_profile")
+        recall_context = self._recall_context_for_fence(fence, speaker=speaker)
+        if response_plan_sidecar.applies(self._response_planner_client, self._runtime, fence):
+            return response_plan_sidecar.spawn(
+                self._runtime,
+                self._response_planner_client,
+                session_id=self._runtime.session_id,
+                text=text,
+                fence=fence,
+                speaker=speaker,
+                recall_context=recall_context,
+                utterance_intent=self._runtime.route_user_turn(text).intent,
+            )
         coordinator = self._runtime.orchestrator.delegation
         context_version = self._runtime.orchestrator.context_version_for_fence(fence)
-        recall_context = self._recall_context_for_fence(fence, speaker=speaker)
         handle = await coordinator.delegate(
             DelegationRequest(
                 tool_name="response_planner",

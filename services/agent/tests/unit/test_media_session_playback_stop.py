@@ -720,6 +720,118 @@ async def test_device_utterance_after_stop_and_reconnect_is_one_answered_turn() 
     await _run_story(_device_identity("stop-then-reconnect"), script, story_call=2)
 
 
+@pytest.mark.asyncio
+async def test_device_question_after_a_spoken_stop_is_answered_without_vad() -> None:
+    """Field 2026-10-02 round 10 t005: nothing had played out in that session.
+
+    The greeting was superseded and both replies were cut by a spoken stop,
+    so no playback boundary was ever recorded.  The next question's final
+    came with no device VAD edge, the post-playback follow-up endpoint
+    skipped it (no boundary), nothing endpointed it, and the edge closed the
+    session 30 s later.  A spoken stop ends the speaker window too.
+    """
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        assert harness.context.last_playback_end_sample is None
+        await harness.audio_frames(15, final_text="停")
+        await harness.wait_for(lambda: bool(harness.cancel_effects()))
+        harness.assert_story_stopped_session_open(story)
+        # The owner pauses past the 0.8 s echo margin, then asks: no VAD edge.
+        await harness.audio_frames(60)
+        await harness.audio_frames(25, final_text="换一个故事吧")
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        assert _user_turn_texts(harness.context) == ["给我讲个故事", "换一个故事吧"]
+        assert not harness.closed()
+
+    await _run_story(_device_identity("question-after-stop-no-vad"), script)
+
+
+@pytest.mark.asyncio
+async def test_device_echo_tail_inside_the_margin_after_a_spoken_stop_is_no_turn() -> None:
+    """The speaker can still sound when the stop lands: a final that ends
+    inside the echo margin after the stop stays a candidate, never a turn."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(15, final_text="停")
+        await harness.wait_for(lambda: bool(harness.cancel_effects()))
+        harness.assert_story_stopped_session_open(story)
+        boundary = harness.context.last_playback_end_sample
+        assert boundary is not None
+        await harness.audio_frames(20, final_text="山里有一座庙")
+        assert harness.sample < boundary
+        await asyncio.sleep(1.5)  # past the follow-up endpoint grace
+        await harness.settle()
+        assert harness.story.reply_calls == 1
+        assert _user_turn_texts(harness.context) == ["给我讲个故事"]
+
+    await _run_story(_device_identity("echo-tail-after-stop"), script)
+
+
+@pytest.mark.asyncio
+async def test_device_question_after_a_stop_word_at_the_natural_end_is_answered() -> None:
+    """Field 2026-10-02 round 10 t015: 「停」 landed as the reply ended by itself.
+
+    The 「停」 final began inside the 0.8 s echo margin, was split off the
+    playback window (``boundary=unvoiced_gap``) and became the pending turn,
+    with nothing left to stop.  The next question's final lay wholly after
+    the boundary, but the split no longer saw a playback overlap and the
+    follow-up endpoint saw a pending turn begun inside the echo window: each
+    left the reset to the other, and the question waited for a VAD edge
+    that never came.  The stale pre-boundary turn gives way to the question.
+    """
+
+    async def script(harness: _StoryHarness) -> None:
+        await harness.utterance("你好", frames=25)
+        await harness.wait_for(lambda: harness.count("audio") >= 1)
+        await harness.audio_frames(20, final_text="小兔子说谢谢")  # a playback-window candidate
+        await harness.audio_frames(140)
+        await harness.playback_ended()
+        boundary = harness.context.last_playback_end_sample
+        assert boundary is not None
+        stop_start = harness.sample
+        await harness.audio_frames(15, final_text="停")
+        assert stop_start < boundary and harness.sample < boundary
+        assert harness.context.pending.turn_start_sample == stop_start
+        await harness.audio_frames(150)  # more than 2.5 s without a word
+        await harness.audio_frames(25, final_text="给我讲一个故事吧")
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        assert _user_turn_texts(harness.context) == ["你好", "给我讲一个故事吧"]
+        assert not harness.closed()
+
+    await _run_story(
+        _device_identity("question-after-stop-at-natural-end"), script, story_call=0
+    )
+
+
+@pytest.mark.asyncio
+async def test_device_speech_begun_inside_the_echo_margin_stays_one_turn_with_vad() -> None:
+    """Owner speech that starts just after the reply ended and goes on past
+    the boundary is one utterance while the device VAD tracks it: only a
+    candidate that overlapped the playback may be cut at the boundary."""
+
+    async def script(harness: _StoryHarness) -> None:
+        await harness.utterance("你好", frames=25)
+        await harness.wait_for(lambda: harness.count("audio") >= 1)
+        await harness.audio_frames(50)
+        await harness.playback_ended()
+        boundary = harness.context.last_playback_end_sample
+        assert boundary is not None
+        await harness.vad_start(harness.sample)
+        await harness.audio_frames(15, final_text="讲一个")
+        assert harness.sample < boundary
+        await harness.audio_frames(60)
+        await harness.audio_frames(25, final_text="短一点的故事")
+        await harness.vad_end(harness.sample)
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        turns = _user_turn_texts(harness.context)
+        assert len(turns) == 2
+        assert "讲一个" in turns[1] and "短一点的故事" in turns[1]
+
+    await _run_story(_device_identity("speech-inside-echo-margin-with-vad"), script, story_call=0)
+
+
 class _TaskScriptProvider(_LongStoryProvider):
     """Adapter-shaped results: provider task epochs advance, sentence ids restart.
 
