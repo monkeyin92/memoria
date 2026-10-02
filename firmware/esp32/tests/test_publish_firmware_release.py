@@ -160,3 +160,22 @@ def test_firmware_installs_only_newer_signed_images_and_confirms_after_the_serve
     assert '+            "memoria/memoria_firmware_update.cc"' in patch
     sdk = (FIRMWARE_ROOT / "overlay" / "files" / "main" / "boards" / "memoria" / "esp-vocat" / "config.json").read_text()
     assert '"CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y"' in sdk
+
+
+def test_the_cli_signs_the_header_build_unless_told_another(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    publisher = _publisher()
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        publisher,
+        "sign",
+        lambda image, key, out, *, build=None, public_key=None: calls.append({"build": build}),
+    )
+
+    monkeypatch.setattr("sys.argv", ["publish_firmware_release.py", "sign"])
+    publisher.main()
+    monkeypatch.setattr("sys.argv", ["publish_firmware_release.py", "sign", "--build", "22"])
+    publisher.main()
+
+    assert calls == [{"build": None}, {"build": 22}]
