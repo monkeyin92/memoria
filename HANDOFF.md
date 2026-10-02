@@ -2,22 +2,38 @@
 
 ## 当前生产快照
 
-- **最近生产收据**：2026-10-01 16:47–16:49（CST）整栈发布 `20261001-stop-cancel-v1`（tag → `12a301b2`，#164 分支头；合并提交 `783a3f46` 与 tag 同树 `b4cc875e…`），control-api、bridge、speaker-model 三角色换 tag；media-edge 仍是组件发布 `20260930-late-receipt-v1`（回滚目标 `20260930-edge-reject-log-v1`）。`verify-load`、`freeze`（合并前）与 `env`、`schema`、`cutover`、`finish`（合并后）每步单独确认 PASS，详见下一节。生产 `/etc/memoria-agent.env` 常开 `MEDIA_PCM_TAP_DIR=/tmp/media-pcm-tap`（容器 tmpfs，每会话 4 MB；新文件打开前按最旧优先清理，目录上限 40 MiB），原始上行音频留在容器内存直到重启。
-- **上一次整栈收据**：2026-10-01 16:13–16:15 `20261001-stop-terminal-v1`（`ebb6926d`），本次整栈的回滚目标（三角色都在它的纯链上）。media-edge 的回滚目标是 `20260930-edge-reject-log-v1`。
+- **最近生产收据**：2026-10-01 22:17–22:23（CST）整栈发布 `20261001-deepseek-flash-v1`（tag → `70136e94`，#167 分支头；合并提交 `0cd5bb8d` 与 tag 同树 `fd7bbee1…`），control-api、bridge、speaker-model 三角色换 tag，两份 env 切到 `LLM_PROVIDER=deepseek`；media-edge 仍是组件发布 `20260930-late-receipt-v1`（回滚目标 `20260930-edge-reject-log-v1`）。`verify-load`、`freeze`（合并前）与 `env`、`schema`、`cutover`、`finish`（合并后）每步单独确认 PASS，详见下一节。生产 `/etc/memoria-agent.env` 常开 `MEDIA_PCM_TAP_DIR=/tmp/media-pcm-tap`（容器 tmpfs，每会话 4 MB；新文件打开前按最旧优先清理，目录上限 40 MiB），原始上行音频留在容器内存直到重启。
+- **上一次整栈收据**：2026-10-01 17:16–17:19 `20261001-trusted-adult-v1`（`ed1119a0`），本次整栈的回滚目标（三角色都在它的纯链上；它的 env 是 `freeze` 快照里的 qwen 配置）。media-edge 的回滚目标是 `20260930-edge-reject-log-v1`。
 
 | component | actual image/tag | OCI digest | revision | health | restarts | startup time | receipt | rollback target |
 |---|---|---|---|---|---:|---|---|---|
-| Control API | `memoria-control-api:20261001-stop-cancel-v1` | `sha256:1918dc5d…`（服务器 image id） | `12a301b21503c405439a3f3d934cc031b63612b0` | healthy | 0 | `2026-10-01T08:47:53Z` | `/opt/memoria/releases/20261001-stop-cancel-v1/.cutover/` | `memoria-control-api:rollback-20261001-stop-cancel-v1-pre`（= `20261001-stop-terminal-v1`） |
-| Bridge | `memoria-agent:20261001-stop-cancel-v1` | `sha256:d8f6489e…` | 同上 | healthy | 0 | `2026-10-01T08:48:07Z` | 同上 | `memoria-agent:rollback-20261001-stop-cancel-v1-pre`（= `20261001-stop-terminal-v1`） |
-| Speaker Model | `memoria-speaker-model:20261001-stop-cancel-v1` | `sha256:9d7f431f…` | 同上 | healthy | 0 | `2026-10-01T08:47:46Z` | 同上 | `memoria-speaker-model:rollback-20261001-stop-cancel-v1-pre`（= `20261001-stop-terminal-v1`） |
+| Control API | `memoria-control-api:20261001-deepseek-flash-v1` | `sha256:967a92ff…`（服务器 image id） | `70136e9435d5b76c12f238104a6696bda2eb0a34` | healthy | 0 | `2026-10-01T14:20:47Z` | `/opt/memoria/releases/20261001-deepseek-flash-v1/.cutover/` | `memoria-control-api:rollback-20261001-deepseek-flash-v1-pre`（= `20261001-trusted-adult-v1`） |
+| Bridge | `memoria-agent:20261001-deepseek-flash-v1` | `sha256:307af6af…` | 同上 | healthy | 0 | `2026-10-01T14:21:01Z` | 同上 | `memoria-agent:rollback-20261001-deepseek-flash-v1-pre`（= `20261001-trusted-adult-v1`） |
+| Speaker Model | `memoria-speaker-model:20261001-deepseek-flash-v1` | `sha256:238a5ff8…` | 同上 | healthy | 0 | `2026-10-01T14:20:40Z` | 同上 | `memoria-speaker-model:rollback-20261001-deepseek-flash-v1-pre`（= `20261001-trusted-adult-v1`） |
 | Media Edge | `memoria-media-edge:20260930-late-receipt-v1` | `sha256:9874fa24…` | `b43577e886868ec7c9b00e30d38df13f776a0b82` | healthy | 0 | `2026-09-30T03:59:05Z` | `/opt/memoria/component-releases/20260930-late-receipt-v1-media-edge/` | `memoria-media-edge:20260930-edge-reject-log-v1`（`media-edge-rollback.override.yml`） |
 
 - **候选可见性状态**：已随整栈发布上线（契约提交在 main 上为 `0059368`，早期记录中的 `f7c4c2a` 是合并前哈希）。普通 search/context 只返回 confirmed 且无 active 冲突，`include_candidates=true` 仅供审核与评测。真实 PG 上的 candidate 行为与线上带鉴权读口尚无单独收据。
 - **评测基线边界**：四份 2026-09-23 评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；它们产生于候选可见性提交之前，只证明上线前基线，不证明当前线上版本的召回质量。
-- **发布身份**：`20261001-stop-cancel-v1` / `12a301b2`；`/opt/memoria/current` → `releases/20261001-stop-cancel-v1`。上一栈 `20261001-stop-terminal-v1` / `ebb6926d` 为回滚目标。
+- **发布身份**：`20261001-deepseek-flash-v1` / `70136e94`；`/opt/memoria/current` → `releases/20261001-deepseek-flash-v1`。上一栈 `20261001-trusted-adult-v1` / `ed1119a0` 为回滚目标。
 - **未关闭缺陷**：P0-03 仍开放（缺陷 A 核心续问边界与工具查询最终回答已在 09-24、09-25 真机走通；TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
 - **下一步必须动作**：设备对话归档与设备信任分档已随 `20261001-device-archive-v1` 上线，开关 `MEMORIA_BOUND_DEVICE_TRUST_ENABLED` 已于 2026-10-01 00:30 打开（收据见下一节），验收清单见运维手册「设备信任开关」。用户 2026-10-01 新增六项需求（唤醒方式设置、空闲熄屏、发布与刷机、回顾为空、电脑长稳对话、说话风格评审）见 [TODOLIST「2026-10-01 新需求」](TODOLIST.md)。当日遗留已汇总到 [TODOLIST「2026-09-28 收尾待办」](TODOLIST.md)：伙伴页选一次绵绵、嘈杂环境验证 #83；需决定是否发布固件 OTA；待查回复规划 `no_verified_runtime_profile` 兜底；12-17 前换证书。之后按验收清单验 P0-04 产品决定、P1-11 三种绑定与隔天记忆、P1-03 孩子人格、P2-04 与 P0-03 剩余矩阵；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
+
+## 2026-10-01 整栈发布 20261001-deepseek-flash-v1（PR #167；所有文本模型改用 DeepSeek 官方 DeepSeek-V4.1-Flash）
+
+- **背景**：用户要求把 LLM 全部换成 DeepSeek 官方的 DeepSeek-V4.1-Flash（API 模型名 `deepseek-flash`）。原来的 `LLM_PROVIDER=deepseek` 只换回复模型，分类器、危机判断、记忆/人格抽取仍写死 DashScope；而 DeepSeek 不认 `enable_thinking`、默认思考，短的分类和 JSON 调用会返回空内容。
+- **范围**：相对 `20261001-trusted-adult-v1`：`services/common/llm_thinking.py` 按提供商发关闭思考的开关；意图/收尾/危机分类器与 control-api 的文本调用都跟随 `LLM_PROVIDER`（官方 DeepSeek 下统一用 `DEEPSEEK_FAST_MODEL`，没有 DeepSeek key 时退回规则，不会把 DeepSeek 模型名发给 DashScope）；家长回顾照搬孩子原话时追加一次点名改写（合成测试 8/18 → 17/18 天有回顾）；人格抽取只丢掉缺反例的决策/价值条目；三个分类器超时 0.8 → 1.2 s；生产 env 模板和 `prepare_production_upgrade_env.py` 默认 deepseek。实时搜索仍用 Qwen（DeepSeek 不能联网）。
+- **过程**：tag `20261001-deepseek-flash-v1` → `70136e94`；腾讯镜像构建、种子上传；`verify-load` 21:59、`freeze` 22:01 PASS（快照含切换前的 qwen env 和数据库 dump）；#167 合并（同树），推 tag；备份两份 env（`.pre-20261001-deepseek-flash-v1`），写入 DeepSeek key（经 stdin，不打印）、`LLM_PROVIDER=deepseek`、`DEEPSEEK_FAST_MODEL=deepseek-flash`、control-api `DEEPSEEK_SUMMARY_MODEL=deepseek-flash`、三个分类器超时 1.2；`env` 第一次豆包对齐冒烟偶发失败、重跑 22:17:50 PASS（DeepSeek 流式冒烟通过）；`schema` 22:18:54；确认没有进行中的会话后 `cutover` 22:20:39–22:21:07；`finish` 22:23:06 全部 PASS。
+- **线上核对（只读）**：三角色 `20261001-deepseek-flash-v1` / `70136e94`，重启 0，全部 healthy；readiness `ready`、`llm.provider=deepseek`，外部 200；bridge 与 control-api 切换后 0 条报错。cutover 时一个设备会话断开约 4 s 后重连（预期）。
+- **回滚**：`release-ops.sh rollback` 恢复镜像到 `20261001-trusted-adult-v1`，并用 `freeze` 快照还原 qwen env；切前镜像 `memoria-*:rollback-20261001-deepseek-flash-v1-pre`。无 schema 变更。
+- **真机复核（第六轮 22:30–22:39）**：16 句 13 句有回复，DeepSeek 首字在提交后 0.5–0.6 s；讲故事时说「别说了」两次都没停（TODOLIST N-10）。服务器上的延迟测试被权限拦下没做，1.2 s 超时依据本机实测，本轮 0 次超时。详见 `docs/acceptance/run-20261001-longsoak/findings.md`。
+
+## 2026-10-01 整栈发布 20261001-trusted-adult-v1（PR #166；孩子被欺负时「告诉爸爸妈妈或老师」必说）
+
+- **背景**：第五轮里被欺负时的「告诉爸爸妈妈或老师」偶尔漏掉（实验室 2/8）。
+- **范围**：相对 `20261001-stop-cancel-v1` 只动 `prompt_composition.py` 的孩子块一句（加测试）与 release-ops 的 PREV。
+- **过程**：tag `20261001-trusted-adult-v1` → `ed1119a0`；#166 17:15 合并（同树），推 tag；`env` 17:17:04、`schema` 17:17:06、`cutover` 17:17:59、`finish` 全部 PASS；readiness `ready 20261001-trusted-adult-v1`、外部 200。
+- **回滚**：`release-ops.sh rollback` 恢复到 `20261001-stop-cancel-v1`。无 schema 变更。
 
 ## 2026-10-01 整栈发布 20261001-stop-cancel-v1（PR #164；语音停止改发 CANCEL，加提示词微调）
 
