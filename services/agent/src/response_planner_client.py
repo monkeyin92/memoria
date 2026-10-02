@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Final, Literal, cast
+from typing import Any, ClassVar, Final, Literal, cast
 
 import httpx
 
@@ -376,6 +376,9 @@ def _normalize_recall_context(
 class ResponsePlannerClient:
     """Fetch exactly one bounded plan; failures never expose cached private context."""
 
+    # The wire fence has no session_epoch, so a plan can only match a fence of epoch 0.
+    echoes_session_epoch: ClassVar[bool] = False
+
     def __init__(
         self,
         config: ResponsePlannerClientConfig,
@@ -395,6 +398,7 @@ class ResponsePlannerClient:
         speaker_decision: SpeakerDecision,
         recall_context: Sequence[str] = (),
         utterance_intent: str = "chat",
+        timeout_s: float | None = None,
     ) -> ResponsePlanFetch:
         normalized_query = query.strip()
         normalized_recall_context = _normalize_recall_context(recall_context)
@@ -433,7 +437,7 @@ class ResponsePlannerClient:
                         "template_version": speaker_decision.template_version,
                     },
                 },
-                timeout=self._config.timeout_s,
+                timeout=self._config.timeout_s if timeout_s is None else timeout_s,
             )
             if response.status_code != 200:
                 return ResponsePlanFetch(None, f"http_{response.status_code}")
