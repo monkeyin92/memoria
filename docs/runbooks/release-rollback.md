@@ -91,6 +91,16 @@ tar --extract --file "$UPLOAD_DIR/source.tar" \
 
 不允许手工 retag 未绑定 manifest 的模型镜像。切流后运行 `scripts/smoke_server_deployment.sh`、真实 provider smoke、健康/私有 readiness/外部路由和延迟复核。
 
+## media-edge 组件发布（手工，只换 media-edge 一个容器）
+
+media-edge 不在 `release_ops.sh` 的整栈切流里，镜像按组件 tag 单独换，后续整栈发布没有换过它。编排链以线上容器为准：`docker inspect memoria-media-edge-1 --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}'`（2026-10-02 起是 `releases/20260930-local-stop-v2/docker-compose.production.yml` + `component-releases/<tag>-media-edge/media-edge-component.override.yml`）。收据样例见 HANDOFF「media-edge 组件发布 20261002-late-progress-v1」。
+
+1. 干净 detached worktree 在要发布的提交上构建（`DOCKER_DEFAULT_PLATFORM=linux/amd64`，导出 `MEMORIA_RELEASE_TAG/COMMIT`，`docker compose -f docker-compose.production.yml --profile media-runtime build media-edge`）；核对镜像的 revision/version/role 标签，用 `docker cp` 取出 `/usr/local/bin/memoria-media-edge` 确认含新代码并记下 sha256；`docker save` 后 scp 到 `/opt/memoria/incoming/<tag>-media-edge/`，服务器上 `sha256sum -c` 通过再 `docker load`（服务器 image id 与本机 containerd 存储里的不同，以标签和二进制 sha256 为准）。
+2. 在 `/opt/memoria/component-releases/<tag>-media-edge/` 写 `media-edge-component.override.yml`（`services.media-edge.image` 指向新 tag）与 `media-edge-rollback.override.yml`（当前线上的 tag），并把切前全部容器的「名字 镜像 启动时间 重启次数」快照存为 `pre-all.txt`。
+3. 确认设备没在用（edge 近 10 分钟没有 `device=dev_…` 日志），再在上述 compose 树里切换：`sudo env MEMORIA_RELEASE_TAG=<该树的栈 tag> MEMORIA_RELEASE_COMMIT=<提交> docker compose -f docker-compose.production.yml -f <组件 override> --profile media-runtime up -d --no-deps --no-build media-edge`。必须 `sudo env`：`ubuntu` 读不了 `/etc/memoria-agent.env`；`docker compose config` 的渲染含 env 展开值，只取需要的行并立即删除渲染文件。
+4. 验收：存 `post-all.txt` 并与 `pre-all.txt` 对比，只有 media-edge 变；healthy、restarts 0；运行中二进制的 sha256 等于构建出的（容器没有 shell，用 `docker cp` 取出）；启动日志无 WARN/ERROR；外部 readiness 200、未带凭证的设备入口 401；设备重连与真机对话等下次唤醒。
+5. 回滚：同一条切换命令，把组件 override 换成 `media-edge-rollback.override.yml`。
+
 ## 数据层、备份与恢复
 
 仅在需要启动/恢复且获授权时，先创建 runtime 共享网络，再从真实目录启动数据层，避免异地工作目录建错卷：
