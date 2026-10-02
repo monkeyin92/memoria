@@ -181,4 +181,6 @@ SQL 侧只多返回事实 `device_bound`，与开关无关，所以 `schema` 步
 
 固件仅回写唯一紧邻 app 至 `0x20000`；写前备份当前 `0x20000/0x3f0000` 全槽、核摘要，写后回读并比较身份和全部非 app 保护区，再做启动/媒体验收。禁止 `flash.sh` 整包、`erase-all` 或误用旧 run 回滚件。
 
+这块板的 USB-Serial-JTAG 上 `esptool read-flash` 会在个别 4 KB 块处确定性失败（2026-10-02：`0x106000`，4 MB 槽里另有约五处，报「No more data to read from the serial port」，同样的字节分成 2 KB 读就没事），所以整槽备份和保护区比较用 `firmware/esp32/scripts/flash_backup.py`（用 IDF 的 python；先停串口记录进程）：`backup` 分 64 KB 读，失败的片重连后改读 2 KB 帧，每个备份文件都与芯片自己算的 MD5 核对；`md5` 给出各区的设备端 MD5，写前写后各跑一次，比较引导/分区表、nvs、phy_init、身份区 `0x10000` 与 assets 不变（otadata 在新 app 首次启动后会被引导程序重写成与写前相同的记录，不要求保持空白）。写入只用 `esptool write-flash 0x20000 <app> 0xd000 <8 KiB 的 0xff>`，以其 `Hash of data verified.` 为写入校验；刷完用 `esptool … --after hard-reset read-mac` 或重开串口记录进程让板子回到 app。
+
 普通制品仅保留当前+一个可运行紧邻回滚，核验后按授权清理更早普通制品并查磁盘；数据库、WAL、MinIO、安全/合规备份不适用两版本规则。T1–T14 证据写 ignored `outputs/acceptance/`，由 `scripts/hardware_realtime_acceptance.py` 校验。旧 fence 可听输出/写档案、缺播放终态、错误记完成、以发送量伪造 Actual Heard、权威失败回退平行本地实现，任一均拒收。

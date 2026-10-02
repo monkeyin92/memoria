@@ -1,6 +1,6 @@
 # Memoria 优先级执行清单
 
-更新于 2026-10-02｜线上为整栈 `20261002-device-memory-v1`（源 `4101c7e4`，PR #171 + #172，合并提交 `324d1c9d`，18:14 上线；LLM 已切 DeepSeek，联网查询仍走 Qwen），media-edge 单独在组件发布 `20261002-late-progress-v1`（源 `f3fe8742`，PR #174，19:05 上线，N-11）；整栈回滚目标 `20261002-stop-pin-v1`（切前镜像 `*:rollback-20261002-device-memory-v1-pre`），media-edge 回滚目标 `20260930-late-receipt-v1`。设备信任开关 2026-10-01 00:30 已打开，设备对话入库。固件：开发板已 USB 刷入 build 19，build 15–19 均未发布 OTA。**用户 2026-10-02 决定去掉关键字唤醒、改用点击屏幕唤醒（该功能已上线）：之后的电脑模拟测试不得再用唤醒词唤醒，需要一条经 USB 的唤醒入口（方案已定：固件串口调试命令，见 N-12，是当前的下一步）；在用户放开之前不做电脑自动语音测试。**生产服务器磁盘 2026-10-02 再次按「当前 + 紧邻回滚」清理（根分区 71% → 37%；18:14 发布后 40%，收据见 `HANDOFF.md` 与 `docs/runbooks/operations-space-governance.md`）。2026-10-01 用户新增的需求见下方「2026-10-01 新需求」一节（N-1…N-12），按序做，做完一项更新一项。2026-09-28 的收尾待办见更下方同名一节；发布与验收收据见 `HANDOFF.md`。本文件只保留未关闭事项。
+更新于 2026-10-02｜线上为整栈 `20261002-device-memory-v1`（源 `4101c7e4`，PR #171 + #172，合并提交 `324d1c9d`，18:14 上线；LLM 已切 DeepSeek，联网查询仍走 Qwen），media-edge 单独在组件发布 `20261002-late-progress-v1`（源 `f3fe8742`，PR #174，19:05 上线，N-11）；整栈回滚目标 `20261002-stop-pin-v1`（切前镜像 `*:rollback-20261002-device-memory-v1-pre`），media-edge 回滚目标 `20260930-late-receipt-v1`。设备信任开关 2026-10-01 00:30 已打开，设备对话入库。固件：开发板已 USB 刷入 build 20（USB 串口 `wake` 调试命令，2026-10-02 19:43），build 15–20 均未发布 OTA。**用户 2026-10-02 决定去掉关键字唤醒、改用点击屏幕唤醒（该功能已上线）：之后的电脑模拟测试不得再用唤醒词唤醒，测试时经 USB 唤醒（固件 build 20 的串口 `wake` 命令，见 N-12，已刷入并在真机验证；用 `scripts/voice_soak_serial_command.py wake`，需要常驻的 `voice_soak_serial_logger.py` 持有串口）；在用户放开之前不做电脑自动语音测试。**生产服务器磁盘 2026-10-02 再次按「当前 + 紧邻回滚」清理（根分区 71% → 37%；18:14 发布后 40%，收据见 `HANDOFF.md` 与 `docs/runbooks/operations-space-governance.md`）。2026-10-01 用户新增的需求见下方「2026-10-01 新需求」一节（N-1…N-12），按序做，做完一项更新一项。2026-09-28 的收尾待办见更下方同名一节；发布与验收收据见 `HANDOFF.md`。本文件只保留未关闭事项。
 
 ## 当前边界（不得越界宣称）
 
@@ -25,7 +25,7 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 1. 真机窗口（用户推动）：设备已于 2026-09-28 重新绑定为「给孩子使用」并勾选长期记忆（`e8a27e45` v3，`growth_summary`），⓪ 已完成；当日真机项见「2026-09-28 收尾待办」。`20261001-device-archive-v1` 已上线且开关已打开；设备对话验收与长稳见下方 N-5。之后按 HANDOFF 验收清单验 P1-11 三种绑定、P1-03 孩子人格隔天生效、P2-04 终止性拒绝不再续连，以及 P0-03 的 TLS/WSS 重连与剩余设备矩阵。不得把核心通过扩大为完整 P0-03 或全双工通过。
 2. 可直接推进的代码项：P0-04 按 2026-09-26 产品决定实现（进行中）、P1-02 救援 sidecar 可复现、P1-04 自定义声音闭环、P2-06 回放评测、P2-04 Python 侧进程退出注入。
 3. 需用户决定：P1-02 两项线上调整、旧媒体链去留（P1-12）、WAL 保留策略（P1-08）、readiness 逾期的告警渠道（P1-09）、P2-07 第 2/3 项、P2-03 已知缺口是否接受、P0-04 未成年人人格学习口径。
-4. **当前的下一步（`20261002-device-memory-v1` 已于 2026-10-02 18:14 上线；用户 2026-10-02 决定，按序）**：①N-11 修 edge 对取消代迟到回执的处理（Go，media-edge 组件发布）——已于 2026-10-02 19:05 随 `20261002-late-progress-v1` 上线（PR #174），真机停止系列等放开测试后做；②N-12 固件加一条仅 USB 串口的调试命令用于测试时唤醒（固件 build 20，USB 刷机）。N-12 做完、并且用户放开电脑语音测试之后，才做 N-8 的真机 A/B、跨会话记忆与 N-11 的真机验证。
+4. **当前的下一步（`20261002-device-memory-v1` 已于 2026-10-02 18:14 上线；用户 2026-10-02 决定，按序）**：①N-11 修 edge 对取消代迟到回执的处理（Go，media-edge 组件发布）——已于 2026-10-02 19:05 随 `20261002-late-progress-v1` 上线（PR #174），真机停止系列等放开测试后做；②N-12 固件加一条仅 USB 串口的调试命令用于测试时唤醒——固件 build 20 已于 2026-10-02 19:43 USB 刷入并在真机验证（PR 待推送/合并）。用户放开电脑语音测试之后，才做 N-8 的真机 A/B、跨会话记忆与 N-11 的真机验证。
 5. 边界：生产切流、回滚演练和制品清理须另获授权（2026-10-01 已获授权打开设备信任开关并清理旧制品，见下）；`MEMORIA_BOUND_DEVICE_TRUST_ENABLED` 的开/关仍属改变安全口径的动作，变更须用户授权；删除、重启、定时任务、自动备份和异地副本不在当前授权内；设备功能通过不等于学生安全或全双工通过。
 
 ## 2026-10-01 新需求（用户提出；按序执行，做完一项更新一项）
@@ -151,17 +151,17 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 - [x] 归因　[x] 修复与测试　[x] 推送 / 合并 / media-edge 组件发布（PR #174，2026-10-02）　[ ] 发布后停止系列复测不再出现 `playback_receipt_rejected`
 - **同类未处理**：设备按钮停止带着已被替换代的围栏时，`CancelGeneration` 失败 → `stop_rejected` 并关连接（2026-09-30 04:30 一次，`button.stop … expected_fence.generation=2`）；形状相同，本次不动，发布后看 edge 日志里的频率再定。
 
-### [ ] N-12 电脑模拟测试怎么在不用唤醒词的情况下唤醒机器人（用户 2026-10-02 指示；方案已定，`20261002-device-memory-v1` 发布后的下一步）
+### [x] N-12 电脑模拟测试怎么在不用唤醒词的情况下唤醒机器人（用户 2026-10-02 指示；固件 build 20 已于 19:43 USB 刷入并在真机验证）
 
 - **背景**：用户决定去掉关键字唤醒（近音词和日常句都会误唤醒，见 N-1），改为点击屏幕唤醒（`wake_mode=button`，固件 `TapActionFor`，已上线）。此前所有电脑模拟测试都是用 Mac 扬声器播放唤醒词唤醒机器人，今后不能再这样；用户要求测试时「通过 USB 控制机器唤醒」，再进行对话测试，并且在他放开之前不做电脑自动语音测试。
 - **现状（只读核对）**：固件 build 19 没有任何串口输入通道（没有 `esp_console`、`uart_read`、`stdin` 读取），USB 串口只出日志；点击唤醒的入口是屏幕触摸（CST816S）回调里的 `app.WakeWordInvoke("screen_tap")`（`memoria_esp_vocat.cc`）。串口一旦被第二个进程打开就会复位板子（见 N-8 的串口记录），所以不能从 Mac 另开进程去「写」，只能由常驻的串口记录进程转写。
 - **方案（用户 2026-10-02 决定：固件加一条仅 USB 串口的调试命令）**：
-  - 固件（build 20）：在 USB-Serial-JTAG 上起一个读行任务，识别一行 `wake`，仅当设备空闲且当前 wake_mode 允许点击（沿用 `TapActionFor` 的同一套门控）时调用 `app.WakeWordInvoke("usb_wake")`；其它状态忽略并回一行日志 `usb wake ignored state=…`。命令只在 USB 连着时可达，不开放任何网络入口，也不改变现有唤醒逻辑。解析与门控写在 `memoria_wake_mode.h` 这类无 ESP-IDF 依赖的头里，主机测试覆盖。
-  - 主机：`scripts/voice_soak_serial_logger.py` 增加命令管道（FIFO 或 unix socket），把 `wake` 写进它已持有的串口；任何其它进程都不得打开串口。
-  - 刷机：build 20 经 USB 刷入（先停串口记录进程；用 `firmware/esp32/scripts/flash.sh --build`，写前备份当前 app 槽；刷机前后的保护区核对与禁忌见 `docs/runbooks/release-rollback.md` 的固件回写一节），不发 OTA（是否发布 OTA 仍是单独的决定）。机器人 2026-10-02 14:46 起不在 Mac 的 USB 上，重连后先重开串口记录进程。
-  - 测试脚本：`scripts/voice_soak*.py`、`phantom_stop.py` 一类的唤醒步骤改为经管道发 `wake`，不再用 `--wake-clips`；唤醒后再进入对话。
-  - 验证：发一次 `wake` → 串口出现 `usb wake`，状态 `idle → listening`，能对话；非空闲时被忽略；`wake_mode=keyword` 时被忽略。
-- [x] 方案已定　[ ] 固件命令与主机测试　[ ] 串口记录进程命令管道　[ ] build 20 USB 刷入与验证　[ ] 把电脑模拟测试脚本的唤醒步骤改为该入口
+  - 固件（build 20，已刷入）：`main/memoria/memoria_usb_command.h`（无 ESP-IDF 依赖：精确的 `wake` 解析、行装配器、门控；主机测试 `firmware/esp32/tests/test_memoria_usb_command.py`）加板级 `memoria_esp_vocat.cc` 的 `usb_command_task` 与 `HandleUsbWake()`：只有设备空闲、不在配对/启动、且 wake_mode 含屏幕（`UsbWakeDecisionFor` 与 `TapActionFor` 等价，测试逐项核对）时才调用 `app.WakeWordInvoke("usb_wake")`；其它状态只记日志 `usb wake ignored reason=not_idle|wake_mode|pairing|starting state=… wake_mode=…`，接受时记 `usb wake accepted wake_mode=…`，开机记 `usb command console ready commands=wake`。命令只在 USB 连着时可达，不开放任何网络入口，不能停止、关闭会话或改设置。**读口的事实（ESP-IDF 6.0.2）**：产品配置里主控制台是 UART0，USB-Serial-JTAG 是「次级控制台」且只出不进（`stdin` 只读主控制台），所以任务直接以只读方式打开次级控制台的设备节点 `/dev/secondary`，每 25 ms 非阻塞轮询接收 FIFO（不装驱动、不占中断、不往口里写），优先级 1、固定在核 0；一行至多 32 字节，超长整行丢弃，写了一半的行 2 s 后作废，CR/LF/CRLF 都算行尾。`check-overlay.sh` 新增三条断言（板文件用同一门控、只读打开 `/dev/secondary`、最终 sdkconfig 仍开着次级控制台）。
+  - 主机（已做）：`scripts/voice_soak_serial_logger.py` 增加 unix socket 命令口（默认 `/tmp/memoria-serial-<端口名>.sock`，权限 0600，同一个口只允许一个记录进程，遗留的死 socket 自动清理），只接受 `wake`（写进它已持有的串口）与 `ping`，日志里记 `LOGGER: command wake sent`；客户端 `scripts/voice_soak_serial_command.py wake`（纯标准库）。任何其它进程都不得打开串口。测试 `scripts/tests/test_voice_soak_serial_command.py`（24 项，用真 socket 与假串口，含「只有 `wake` 能写进板子」）。
+  - 刷机：build 20 经 USB 刷入——只写 app（`0x20000`）与空 `otadata`（`0xd000`），写前整槽（`0x20000/0x3f0000`）和保护区（引导/分区表、nvs+otadata+phy_init、身份区 `0x10000`、assets `0x800000`）备份并核摘要，写后回读比较；**不用 `flash.sh` 整包、不用 merged.bin、不 erase-all**（见 `docs/runbooks/release-rollback.md` 的固件回写一节），先停串口记录进程，不发 OTA（是否发布 OTA 仍是单独的决定）。**已于 2026-10-02 19:43 刷入（收据与回滚在 HANDOFF「固件 build 20」一节）**：写前备份与保护区校验都用 `firmware/esp32/scripts/flash_backup.py`，因为这块板的 USB-Serial-JTAG 上 `esptool read-flash` 会在个别 4 KB 块处确定性失败（`0x106000` 起，4 MB 槽里共 6 处），整槽备份靠分块读、失败后重连改读 2 KB 帧，并用芯片端 MD5 核对。
+  - 测试脚本（`voice_soak.py` 已做）：唤醒步骤改为经记录进程的命令口（或不带 `--serial-log` 时直接写自己打开的口）发 `wake`，删掉 `--wake-clips` 与 `--wake-voice`，发不出或被机器人拒绝（`wake_mode` / 配对 / 启动中）就让该步失败，**不退回播唤醒词**；`voice_soak_wake_trials.py` 是专门测唤醒词的工具，不在此列。`phantom_stop.py` 一类临时脚本不在仓库里，需要唤醒时调用 `scripts/voice_soak_serial_command.py`。
+  - 验证（真机，2026-10-02 19:44–19:48）：发一次 `wake` → 44 ms 后串口 `usb wake accepted wake_mode=button`，`idle → connecting → listening`（约 2.7 s，边缘侧会话正常建立、正常关闭）；对话中再发 `wake` → `usb wake ignored reason=not_idle state=7`，对话照常；压测驱动的监视器同样走通（`connecting` 0.16 s，拒绝原因读到 `not_idle`）；全程没有播放音频。**没有验证**：`wake_mode=keyword` 时被忽略（手机端设置现在是 `button`，没有改它；策略在主机测试里与点屏的门控逐项等价）、配对/启动阶段被忽略（源码级测试）。
+- [x] 方案已定　[x] 固件命令与主机测试　[x] 串口记录进程命令口　[x] build 20 USB 刷入与真机验证（19:43）　[x] 电脑模拟测试脚本的唤醒步骤改为该入口（`voice_soak.py`）　[ ] 推送 / 合并
 
 ### [ ] N-7 新发现：bridge 容器 `/tmp` 被 PCM tap 写满（2026-10-01 只读发现）
 
