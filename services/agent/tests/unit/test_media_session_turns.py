@@ -5246,6 +5246,76 @@ async def test_media_long_pause_without_playback_overlap_still_merges(
     assert "未来三天南京天气" in text and "还有明天呢" in text
 
 
+async def _echo_window_candidate(window: Any) -> None:
+    """The reply ended (boundary 100000, 0.8 s past its evidence) and no VAD
+    edge came; a final began inside that echo window and is the pending turn."""
+
+    window.context.last_playback_end_sample = 100_000
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="echo-window-1",
+        start_sample=95_000,
+        end_sample=99_000,
+        text="停",
+    )
+    assert window.context.pending.turn_start_sample == 95_000
+    assert window.context.pending.pending_turn_playback_overlap is False
+    assert window.context.pending.turn_endpoint_sample is None
+
+
+@pytest.mark.asyncio
+async def test_media_echo_window_candidate_gives_way_after_an_unvoiced_gap(
+    device_media_session: Any,
+) -> None:
+    """Field 2026-10-02 round 10 t015: the stale candidate deadlocked the next
+    question; after a 2.5 s unvoiced gap it is split off and the question,
+    wholly past the boundary, is endpointed as a post-playback follow-up."""
+
+    window = await device_media_session("echo-window-gap", during_playback=False)
+    await _echo_window_candidate(window)
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="question-2",
+        start_sample=145_000,
+        end_sample=160_000,
+        text="给我讲一个故事吧",
+        revision=2,
+    )
+    context = window.context
+    assert context.pending.turn_start_sample == 145_000
+    assert context.pending.playback_followup_endpoint_sample == 160_000
+    assert _resolve_media_turn_text(
+        context, stream_epoch=1, start_sample=95_000, end_sample=160_000
+    ) == "给我讲一个故事吧"
+
+
+@pytest.mark.asyncio
+async def test_media_echo_window_candidate_keeps_a_short_pause(
+    device_media_session: Any,
+) -> None:
+    """Without a 2.5 s unvoiced gap the fallback never cuts an utterance."""
+
+    window = await device_media_session("echo-window-short-pause", during_playback=False)
+    await _echo_window_candidate(window)
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="clause-2",
+        start_sample=120_000,
+        end_sample=130_000,
+        text="还有呢",
+        revision=2,
+    )
+    context = window.context
+    assert context.pending.turn_start_sample == 95_000
+    text = _resolve_media_turn_text(
+        context, stream_epoch=1, start_sample=95_000, end_sample=130_000
+    )
+    assert text is not None and "停" in text and "还有呢" in text
+
+
 @pytest.mark.asyncio
 async def test_media_out_of_order_final_inside_the_retained_window_still_merges(
     device_media_session: Any,

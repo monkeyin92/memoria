@@ -43,9 +43,6 @@ _PREPARE_RETRY_SUPERSEDED_REASON = "provider_prepare_retry_superseded_by_new_vad
 # larger gaps remain fail-closed so an earlier provider sentence cannot commit
 # a later turn.
 _ENDPOINT_ASR_COVERAGE_TOLERANCE_SAMPLES = 24_000
-# Conservative sample-gap policy for unanchored device candidates observed
-# during a previous reply, not a VAD silence measurement or endpoint timeout.
-_PLAYBACK_CANDIDATE_SPLIT_GAP_SAMPLES = 40_000  # 2.5 s at 16 kHz
 _CLOCK_FACT_PARTIAL_STABLE_S = 0.6
 _CONVERSATION_CLOSE_PARTIAL_STABLE_S = 0.6
 _LIVE_LOOKUP_PARTIAL_STABLE_S = 0.6
@@ -202,6 +199,10 @@ class MediaTurnEndpointMixin:
             self, context: _MediaVoiceSession, result: ASRResult
         ) -> None: ...
 
+        def _split_pending_turn_at_unvoiced_gap(
+            self, context: _MediaVoiceSession, result: ASRResult
+        ) -> None: ...
+
         def _pin_conversation_close_endpoint(
             self, context: _MediaVoiceSession, capture_end_sample: int, *, text: str,
             source: str, result: ASRResult | None = None,
@@ -271,85 +272,6 @@ class MediaTurnEndpointMixin:
         # already ended, a late final re-arms the same logical-turn commit.
         if context.pending.turn_endpoint_sample is not None:
             self._schedule_turn_commit(context)
-
-    def _split_pending_turn_at_unvoiced_gap(
-        self,
-        context: _MediaVoiceSession,
-        result: ASRResult,
-    ) -> None:
-        """Bound an unanchored candidate after the reply ended.
-
-        Two policies close the abandoned echo window: a completed playback
-        boundary (a final that starts wholly after it, or owner speech that
-        straddles it, begins a new turn even while the echo-holdover VAD is
-        still marked active), and the conservative unvoiced-gap fallback.
-        Neither may segment ordinary long pauses or an endpointed turn; the
-        resulting sample fence also applies before ASR/rescue/VAD ingest.
-        """
-
-        if context.identity.client_type != "device":
-            return
-        if self._reply_in_flight(context):
-            if context.pending.turn_endpoint_sample is None:
-                context.pending.pending_turn_playback_overlap = True
-            return
-        # Everything before a straddling follow-up lies inside the echo window;
-        # a recovered final overlapping the pending range is no new sentence.
-        straddle = self._playback_followup_straddles(context, result) and (
-            context.pending.turn_end_sample or 0
-        ) <= result.capture_start_sample
-        if not (context.pending.pending_turn_playback_overlap or straddle):
-            return
-        if context.pending.turn_end_sample is None:
-            return
-        if (
-            context.pending.turn_endpoint_sample is not None
-            or context.pending.live_query_forced_text
-            or context.pending.clock_fact_forced_text
-        ):
-            return
-        playback_end = context.last_playback_end_sample
-        boundary_split = straddle or (
-            playback_end is not None
-            and result.capture_start_sample >= playback_end
-        )
-        if not boundary_split:
-            if context.pending.active_vad_start_sample is not None:
-                return
-            if (
-                result.capture_start_sample - context.pending.turn_end_sample
-                <= _PLAYBACK_CANDIDATE_SPLIT_GAP_SAMPLES
-            ):
-                return
-        logger.warning(
-            "media pending turn split after reply session=%s "
-            "stream_epoch=%s boundary=%s gap_samples=%s pending=%s-%s final=%s-%s",
-            context.identity.session_id,
-            result.stream_epoch,
-            "playback_straddle" if straddle else "playback_end" if boundary_split else "unvoiced_gap",
-            result.capture_start_sample - context.pending.turn_end_sample,
-            context.pending.turn_start_sample,
-            context.pending.turn_end_sample,
-            result.capture_start_sample,
-            result.capture_end_sample,
-        )
-        # Drop even a cached partial crossing the boundary: its text cannot
-        # safely be sliced without word timing. Do not advance commit history.
-        context.runtime.speech_timeline.evict_before(
-            stream_epoch=result.stream_epoch, sample=result.capture_start_sample
-        )
-        context.pending.turn_start_sample = None
-        context.pending.turn_end_sample = None
-        context.pending.pending_partial = None
-        context.pending.clock_fact_partial_text = None
-        context.pending.clock_fact_partial_stable_since = None
-        context.pending.live_query_partial_text = None
-        context.pending.live_query_partial_stable_since = None
-        context.pending.conversation_close_partial_text = None
-        context.pending.conversation_close_partial_stable_since = None
-        context.pending.cancel_close_semantic()
-        context.pending.pending_turn_playback_overlap = False
-        context.pending.pending_turn_onset_floor = result.capture_start_sample
 
     @staticmethod
     def _reply_in_flight(context: _MediaVoiceSession) -> bool:

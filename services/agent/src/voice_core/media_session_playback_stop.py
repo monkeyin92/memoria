@@ -51,6 +51,9 @@ _PLAYBACK_FOLLOWUP_STRADDLE_SAMPLES = 16_000  # 1.0 s at 16 kHz
 # speech, not echo: endpoint it with a short grace instead of waiting for a
 # VAD edge that a stuck post-playback VAD may never emit (run 20260921).
 _PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S = 1.2
+# Conservative sample-gap policy for unanchored device candidates observed
+# during a previous reply, not a VAD silence measurement or endpoint timeout.
+_PLAYBACK_CANDIDATE_SPLIT_GAP_SAMPLES = 40_000  # 2.5 s at 16 kHz
 
 
 def _compact(text: str) -> str:
@@ -117,6 +120,9 @@ class MediaPlaybackStopMixin:
             *,
             reason: str,
         ) -> bool: ...
+
+        @staticmethod
+        def _record_playback_boundary(context: _MediaVoiceSession) -> None: ...
 
     @staticmethod
     def _playback_text_is_echo(context: _MediaVoiceSession, text: str) -> bool:
@@ -373,6 +379,106 @@ class MediaPlaybackStopMixin:
         )
         self._schedule_turn_commit(context)
 
+    def _split_pending_turn_at_unvoiced_gap(
+        self,
+        context: _MediaVoiceSession,
+        result: ASRResult,
+    ) -> None:
+        """Bound an unanchored candidate after the reply ended.
+
+        Two policies close the abandoned echo window: a completed playback
+        boundary (a final that starts wholly after it, or owner speech that
+        straddles it, begins a new turn even while the echo-holdover VAD is
+        still marked active), and the conservative unvoiced-gap fallback.
+        Neither may segment ordinary long pauses or an endpointed turn; the
+        resulting sample fence also applies before ASR/rescue/VAD ingest.
+
+        The fallback also bounds a candidate that began inside the echo window
+        after the reply ended (2026-10-02 round 10 t015: a 「停」 as the story
+        finished by itself).  No playback overlapped it, yet the follow-up
+        endpoint leaves any pending turn begun before the boundary to this
+        split: without the fallback each left the reset to the other and the
+        next question waited for a VAD edge that never came.
+        """
+
+        if context.identity.client_type != "device":
+            return
+        if self._reply_in_flight(context):
+            if context.pending.turn_endpoint_sample is None:
+                context.pending.pending_turn_playback_overlap = True
+            return
+        # Everything before a straddling follow-up lies inside the echo window;
+        # a recovered final overlapping the pending range is no new sentence.
+        straddle = self._playback_followup_straddles(context, result) and (
+            context.pending.turn_end_sample or 0
+        ) <= result.capture_start_sample
+        overlap = context.pending.pending_turn_playback_overlap
+        playback_end = context.last_playback_end_sample
+        stale_echo_window = (
+            playback_end is not None
+            and context.pending.turn_start_sample is not None
+            and context.pending.turn_start_sample < playback_end <= result.capture_start_sample
+        )
+        if not (overlap or straddle or stale_echo_window):
+            return
+        if context.pending.turn_end_sample is None:
+            return
+        if (
+            context.pending.turn_endpoint_sample is not None
+            or context.pending.live_query_forced_text
+            or context.pending.clock_fact_forced_text
+        ):
+            return
+        # Only a candidate that overlapped the playback may be cut at the
+        # boundary at once; one that merely began inside the echo window must
+        # also pass the unvoiced-gap fallback (no live VAD, a 2.5 s gap).
+        boundary_split = straddle or (
+            overlap and playback_end is not None and result.capture_start_sample >= playback_end
+        )
+        if not boundary_split:
+            if context.pending.active_vad_start_sample is not None:
+                return
+            if (
+                result.capture_start_sample - context.pending.turn_end_sample
+                <= _PLAYBACK_CANDIDATE_SPLIT_GAP_SAMPLES
+            ):
+                return
+        if straddle:
+            boundary = "playback_straddle"
+        elif boundary_split:
+            boundary = "playback_end"
+        else:
+            boundary = "unvoiced_gap" if overlap else "stale_echo_window"
+        logger.warning(
+            "media pending turn split after reply session=%s "
+            "stream_epoch=%s boundary=%s gap_samples=%s pending=%s-%s final=%s-%s",
+            context.identity.session_id,
+            result.stream_epoch,
+            boundary,
+            result.capture_start_sample - context.pending.turn_end_sample,
+            context.pending.turn_start_sample,
+            context.pending.turn_end_sample,
+            result.capture_start_sample,
+            result.capture_end_sample,
+        )
+        # Drop even a cached partial crossing the boundary: its text cannot
+        # safely be sliced without word timing. Do not advance commit history.
+        context.runtime.speech_timeline.evict_before(
+            stream_epoch=result.stream_epoch, sample=result.capture_start_sample
+        )
+        context.pending.turn_start_sample = None
+        context.pending.turn_end_sample = None
+        context.pending.pending_partial = None
+        context.pending.clock_fact_partial_text = None
+        context.pending.clock_fact_partial_stable_since = None
+        context.pending.live_query_partial_text = None
+        context.pending.live_query_partial_stable_since = None
+        context.pending.conversation_close_partial_text = None
+        context.pending.conversation_close_partial_stable_since = None
+        context.pending.cancel_close_semantic()
+        context.pending.pending_turn_playback_overlap = False
+        context.pending.pending_turn_onset_floor = result.capture_start_sample
+
     @staticmethod
     def _scope_pending_turn_to(context: _MediaVoiceSession, result: ASRResult) -> None:
         """Make a playback command's own interval the whole pending turn.
@@ -605,6 +711,12 @@ class MediaPlaybackStopMixin:
         if flushed and flush_required and context.identity.client_type == "device":
             # No reply follows a stop: end the replacement generation the flush installed on the device.
             await self._end_replacement_generation(context, cancelled, reason="voice_stop_command")
+        # A stop ends the speaker window like a finished or failed playback.
+        # Without this boundary a session whose replies were all stopped had
+        # none, so the post-playback follow-up endpoint skipped the owner's
+        # next question and, with no device VAD edge, nothing endpointed it
+        # (2026-10-02 round 10 t005: the session closed 30 s later).
+        self._record_playback_boundary(context)
         self.metrics.observe_voice_latency(
             "interrupt_core_stop",
             (time.monotonic_ns() - stop_started_ns) / 1_000_000_000,
