@@ -15,7 +15,7 @@ from services.archive.memory_domain import (
     ExtractedTimeline,
     MemoryExtraction,
 )
-from services.archive.memory_write_policy import (
+from services.common.explicit_memory import (
     explicit_remember_content,
     low_risk_self_fact_predicate,
 )

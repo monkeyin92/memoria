@@ -7,7 +7,7 @@ import hmac
 import secrets
 import uuid
 from datetime import UTC, date, datetime, time, timedelta
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
@@ -17,8 +17,14 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from services.archive.domain import (
     EvidenceEvent,
+    EvidenceNotFoundError,
     LifeArchivePort,
     RawVoiceConsentRequiredError,
+)
+from services.archive.memory_domain import (
+    MemoryCatalogPort,
+    MemoryClaimReview,
+    MemorySearchQuery,
 )
 from services.archive.object_store import ObjectStore
 from services.consent.bound_subject import (
@@ -162,6 +168,10 @@ def _profiles(request: Request) -> MemoryStore:
 
 def _archive(request: Request) -> LifeArchivePort:
     return cast(LifeArchivePort, request.app.state.life_archive)
+
+
+def _catalog(request: Request) -> MemoryCatalogPort:
+    return cast(MemoryCatalogPort, request.app.state.memory_catalog)
 
 
 def _archive_objects(request: Request) -> ObjectStore:
@@ -1218,6 +1228,117 @@ async def child_day_recap(
         "source": source,
         "generated_at": _now().isoformat().replace("+00:00", "Z"),
         "privacy": {"contains_transcript": False},
+    }
+
+
+class GuardianMemoryReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["confirm", "retract"]
+
+
+async def _child_memory_account(
+    request: Request, *, user: AuthenticatedUser, minor_user_id: str
+) -> str:
+    """Whose archive holds the memories of a child who has no account, once the guardian is proven.
+
+    Only the adult who bound the device for the child reviews what the robot may remember about
+    them.  A child with an account of their own keeps their memories behind that account: a
+    guardian link carries summaries and reports, not the child's memory.
+    """
+
+    _require_wechat_guardian(request, user)
+    if not await _owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
+        raise HTTPException(
+            status_code=403, detail={"code": "guardian_memory_review_unavailable"}
+        )
+    return await _guardian_evidence_account(request, user=user, minor_user_id=minor_user_id)
+
+
+@router.get("/minors/{minor_user_id}/memories")
+async def child_memories(
+    minor_user_id: str,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+) -> dict[str, Any]:
+    """What the robot may remember about the child: candidates waiting for a guardian, and kept ones.
+
+    A child's candidates have nobody else to confirm them (2026-10-02 round 10: the child's own
+    review endpoint only answers the account it is signed in as).  Only confirmed memories ever
+    reach the child's conversations, so this is the guardian's gate on what the robot recalls.
+    """
+
+    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    catalog = _catalog(request)
+    queue = await catalog.review_queue(account_id=account_id, subject_id=minor_user_id)
+    kept = await catalog.search(
+        MemorySearchQuery(
+            account_id=account_id,
+            subject_id=minor_user_id,
+            speaker_class="owner",
+            kinds=("claim",),
+            include_candidates=False,
+            limit=limit,
+        )
+    )
+    return {
+        "candidates": [
+            {
+                "claim_id": item.item_id,
+                "value": item.value,
+                "status": item.status,
+                "reason": item.reason,
+                "domain_category": item.domain_category,
+            }
+            for item in queue[:limit]
+        ],
+        "confirmed": [
+            {
+                "memory_id": item.item_id,
+                "title": item.title,
+                "snippet": item.snippet,
+                "status": item.status,
+                "domain_category": item.domain_category,
+                "occurred_at": item.occurred_at.isoformat(),
+            }
+            for item in kept.items
+        ],
+    }
+
+
+@router.post("/minors/{minor_user_id}/memories/{claim_id}/review")
+async def review_child_memory(
+    minor_user_id: str,
+    claim_id: str,
+    body: GuardianMemoryReview,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
+) -> dict[str, Any]:
+    """Confirm a candidate (the robot may then recall it) or retract one (it is forgotten).
+
+    The claim must belong to this child's own evidence: another subject's claim answers the same
+    not-found as an id that does not exist.
+    """
+
+    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    try:
+        reviewed = await _catalog(request).review(
+            MemoryClaimReview(
+                account_id=account_id,
+                subject_id=minor_user_id,
+                claim_id=claim_id,
+                action=body.action,
+            )
+        )
+    except EvidenceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"code": "memory_claim_not_found"}) from exc
+    return {
+        "claim_id": reviewed.claim_id,
+        "status": reviewed.status,
+        "value": reviewed.value,
+        "review_event_id": reviewed.review_event_id,
+        "reviewed_at": _now_text(_now()),
     }
 
 
