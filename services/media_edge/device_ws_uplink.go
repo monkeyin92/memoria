@@ -342,6 +342,14 @@ func (c *DeviceConnection) handlePlaybackReceipt(envelope deviceControlEnvelope,
 			"type", envelope.Type, "generation", receipt.Fence.GenerationID)
 		return true
 	}
+	// A progress/started receipt for a generation Voice Core has already replaced was sent by the device
+	// before it processed playback.flush. It can no longer change what was heard, and it must not touch the
+	// playback window of whatever plays now: drop it, and only it. (Closing the WSS for it cost the owner a
+	// reconnect of about 7 s and the next sentence, 2026-10-02: 2 of 17 spoken stops.)
+	if runtime != nil && runtime.GenerationReplaced(receipt.Fence.toFence(c.sessionID)) {
+		c.logDroppedLateReceipt(envelope.Type, receipt.Fence, "precheck")
+		return true
+	}
 	c.stateMu.Lock()
 	c.playbackActive = envelope.Type == "playback.started" ||
 		envelope.Type == "playback.progress"
@@ -356,11 +364,24 @@ func (c *DeviceConnection) handlePlaybackReceipt(envelope deviceControlEnvelope,
 	progress.SessionID = c.sessionID
 	progress.StreamEpoch = uint64(c.epoch)
 	if err := runtime.SendPlaybackProgress(progress); err != nil {
+		if runtime.GenerationReplaced(receipt.Fence.toFence(c.sessionID)) {
+			// The cancel landed between the check above and the send: the same late receipt. Close the
+			// playback window it just opened for the now dead generation, and drop it.
+			c.clearPlaybackActive("replaced_generation_receipt", receipt.Fence)
+			c.logDroppedLateReceipt(envelope.Type, receipt.Fence, "forward")
+			return true
+		}
 		c.server.metrics.controlRejected.Add(1)
 		c.sendSessionError("playback_receipt_rejected", true)
 		return false
 	}
 	return true
+}
+
+func (c *DeviceConnection) logDroppedLateReceipt(receiptType string, fence deviceFence, stage string) {
+	slog.Info("media edge dropped late receipt for a replaced generation",
+		"session", c.sessionID, "device", c.deviceID, "epoch", c.epoch,
+		"type", receiptType, "generation", fence.GenerationID, "stage", stage)
 }
 
 func (c *DeviceConnection) handleDeviceState(envelope deviceControlEnvelope) bool {

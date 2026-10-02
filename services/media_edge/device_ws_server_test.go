@@ -35,6 +35,11 @@ type deviceTestCore struct {
 	// strictPlayback mirrors VoiceCoreSession.SendPlaybackProgress: progress
 	// for any generation but current is rejected as stale.
 	strictPlayback bool
+	// playbackErr, when set, fails every SendPlaybackProgress (a broken stream).
+	playbackErr error
+	// beforePlayback runs at the start of every SendPlaybackProgress, outside the core's lock: a test uses it
+	// to let a cancel land exactly between the edge's check and the send.
+	beforePlayback func()
 }
 
 func newDeviceTestCore() *deviceTestCore {
@@ -104,7 +109,16 @@ func (c *deviceTestCore) SendKeywordAtFence(keyword string, _ float32, _, _ uint
 
 func (c *deviceTestCore) SendPlaybackProgress(progress PlaybackProgress) error {
 	c.mu.Lock()
+	hook := c.beforePlayback
+	c.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.playbackErr != nil {
+		return c.playbackErr
+	}
 	if c.strictPlayback && !c.current.Equal(Fence{
 		SessionID: c.current.SessionID, TurnID: progress.TurnID,
 		GenerationID: progress.GenerationID, ToolEpoch: progress.ToolEpoch,

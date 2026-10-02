@@ -147,9 +147,19 @@ func (r *VoiceCoreMediaRuntime) SendVAD(
 
 // GenerationReplaced reports whether fence names a generation this transport
 // has already moved past, such as the one a CANCEL_GENERATION flush replaced.
+// Voice Core's own session moves to the replacement fence as soon as it
+// validates the cancel, a moment before the edge Session applies it, so both
+// are consulted: a receipt that lands in that gap is exactly as late.
 func (r *VoiceCoreMediaRuntime) GenerationReplaced(fence Fence) bool {
 	current, _ := r.session.GenerationSnapshot()
-	return fence.SessionID == current.SessionID && !current.Equal(fence) && fence.monotonic(current)
+	if fence.SessionID == current.SessionID && !current.Equal(fence) && fence.monotonic(current) {
+		return true
+	}
+	if stream, ok := r.core.(generationStopStream); ok {
+		core := stream.CurrentFence()
+		return fence.SessionID == core.SessionID && !core.Equal(fence) && fence.monotonic(core)
+	}
+	return false
 }
 
 func (r *VoiceCoreMediaRuntime) SendPlaybackProgress(progress PlaybackProgress) error {
