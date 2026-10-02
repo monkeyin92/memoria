@@ -37,6 +37,7 @@ from services.common.companions import DESIGNED_VOICE_MODEL, companion_definitio
 from services.common.realtime_information import (
     current_local_time,
     fixed_realtime_reply,
+    is_fuzzy_weekday_query,
     is_safe_realtime_reply,
     realtime_instruction,
 )
@@ -44,18 +45,6 @@ from services.speaker.domain import DEVICE_BOUND_SUBJECT_REASON
 
 _LOCAL_SAFE_REFUSAL_INSTRUCTIONS = "禁止生成普通回答；仅返回固定安全拒答。"
 _LOCAL_SAFE_REFUSAL_TEXT = "当前模式暂时无法安全生成回答。"
-
-
-def _fuzzy_weekday_query(query: str) -> bool:
-    compact = query.strip().replace(" ", "").replace("　", "")
-    if any(
-        marker in compact
-        for marker in ("星期几", "周几", "礼拜几", "今天几号", "今天日期", "几月几号")
-    ):
-        return True
-    return "几" in compact and any(
-        marker in compact for marker in ("星期", "周几", "礼拜", "星", "周")
-    )
 
 
 def plan_is_local_safe(plan: ResponsePlan) -> bool:
@@ -316,7 +305,7 @@ def build_local_safe_plan(
     )
     live_now = current_local_time(os.getenv("MEMORIA_TIMEZONE", "Asia/Shanghai"))
     if fixed_reply is None:
-        lookup_query = "今天星期几" if _fuzzy_weekday_query(query) else query
+        lookup_query = "今天星期几" if is_fuzzy_weekday_query(query) else query
         fixed_reply = fixed_realtime_reply(query=lookup_query, now=live_now)
     if fixed_reply is None and is_primarily_non_chinese_script(query):
         fixed_reply = BRIDGE_PHRASES[2]
@@ -347,6 +336,7 @@ def build_local_safe_plan(
         instructions = companion_scope_instructions(
             owner=speaker_class == "owner",
             device_bound=speaker_reason == DEVICE_BOUND_SUBJECT_REASON,
+            private_memory=policy.allows_private_context(speaker_class),
         )
         instructions += "\n" + COMPANION_TURN_POLICY_INSTRUCTIONS
     if companion and policy.companion_style_prompt is not None:

@@ -1,6 +1,6 @@
 # Memoria 优先级执行清单
 
-更新于 2026-10-02｜线上为整栈 `20261002-stop-pin-v1`（源 `b3e5811e`，PR #169 合并提交 `348a78bd`；LLM 已切 DeepSeek，联网查询仍走 Qwen），media-edge 单独在 `20260930-late-receipt-v1`；整栈回滚目标 `20261002-stop-diag-v1`（切前镜像 `*:rollback-20261002-stop-pin-v1-pre`），media-edge 回滚目标 `20260930-edge-reject-log-v1`。设备信任开关 2026-10-01 00:30 已打开，设备对话入库。固件：开发板已 USB 刷入 build 19，build 15–19 均未发布 OTA。**用户 2026-10-02 决定去掉关键字唤醒、改用点击屏幕唤醒（该功能已上线）：之后的电脑模拟测试不得再用唤醒词唤醒，需要一条经 USB 的唤醒入口（见 N-12）；在用户放开之前不做电脑自动语音测试。**生产服务器磁盘 2026-10-02 再次按「当前 + 紧邻回滚」清理（根分区 71% → 37%，收据见 `HANDOFF.md` 与 `docs/runbooks/operations-space-governance.md`）。2026-10-01 用户新增的需求见下方「2026-10-01 新需求」一节（N-1…N-12），按序做，做完一项更新一项。2026-09-28 的收尾待办见更下方同名一节；发布与验收收据见 `HANDOFF.md`。本文件只保留未关闭事项。
+更新于 2026-10-02｜线上为整栈 `20261002-stop-pin-v1`（源 `b3e5811e`，PR #169 合并提交 `348a78bd`；LLM 已切 DeepSeek，联网查询仍走 Qwen），media-edge 单独在 `20260930-late-receipt-v1`；整栈回滚目标 `20261002-stop-diag-v1`（切前镜像 `*:rollback-20261002-stop-pin-v1-pre`），media-edge 回滚目标 `20260930-edge-reject-log-v1`。设备信任开关 2026-10-01 00:30 已打开，设备对话入库。固件：开发板已 USB 刷入 build 19，build 15–19 均未发布 OTA。**用户 2026-10-02 决定去掉关键字唤醒、改用点击屏幕唤醒（该功能已上线）：之后的电脑模拟测试不得再用唤醒词唤醒，需要一条经 USB 的唤醒入口（方案已定：固件串口调试命令，见 N-12，是 `20261002-device-memory-v1` 发布后的下一步）；在用户放开之前不做电脑自动语音测试。**生产服务器磁盘 2026-10-02 再次按「当前 + 紧邻回滚」清理（根分区 71% → 37%，收据见 `HANDOFF.md` 与 `docs/runbooks/operations-space-governance.md`）。2026-10-01 用户新增的需求见下方「2026-10-01 新需求」一节（N-1…N-12），按序做，做完一项更新一项。2026-09-28 的收尾待办见更下方同名一节；发布与验收收据见 `HANDOFF.md`。本文件只保留未关闭事项。
 
 ## 当前边界（不得越界宣称）
 
@@ -25,7 +25,8 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 1. 真机窗口（用户推动）：设备已于 2026-09-28 重新绑定为「给孩子使用」并勾选长期记忆（`e8a27e45` v3，`growth_summary`），⓪ 已完成；当日真机项见「2026-09-28 收尾待办」。`20261001-device-archive-v1` 已上线且开关已打开；设备对话验收与长稳见下方 N-5。之后按 HANDOFF 验收清单验 P1-11 三种绑定、P1-03 孩子人格隔天生效、P2-04 终止性拒绝不再续连，以及 P0-03 的 TLS/WSS 重连与剩余设备矩阵。不得把核心通过扩大为完整 P0-03 或全双工通过。
 2. 可直接推进的代码项：P0-04 按 2026-09-26 产品决定实现（进行中）、P1-02 救援 sidecar 可复现、P1-04 自定义声音闭环、P2-06 回放评测、P2-04 Python 侧进程退出注入。
 3. 需用户决定：P1-02 两项线上调整、旧媒体链去留（P1-12）、WAL 保留策略（P1-08）、readiness 逾期的告警渠道（P1-09）、P2-07 第 2/3 项、P2-03 已知缺口是否接受、P0-04 未成年人人格学习口径。
-4. 边界：生产切流、回滚演练和制品清理须另获授权（2026-10-01 已获授权打开设备信任开关并清理旧制品，见下）；`MEMORIA_BOUND_DEVICE_TRUST_ENABLED` 的开/关仍属改变安全口径的动作，变更须用户授权；删除、重启、定时任务、自动备份和异地副本不在当前授权内；设备功能通过不等于学生安全或全双工通过。
+4. **`20261002-device-memory-v1` 发布后的下一步（用户 2026-10-02 决定，按序）**：①N-11 修 edge 对取消代迟到回执的处理（Go，media-edge 组件发布）；②N-12 固件加一条仅 USB 串口的调试命令用于测试时唤醒（固件 build 20，USB 刷机）。两项做完、并且用户放开电脑语音测试之后，才做 N-8 的真机 A/B 与跨会话记忆的真机验证。
+5. 边界：生产切流、回滚演练和制品清理须另获授权（2026-10-01 已获授权打开设备信任开关并清理旧制品，见下）；`MEMORIA_BOUND_DEVICE_TRUST_ENABLED` 的开/关仍属改变安全口径的动作，变更须用户授权；删除、重启、定时任务、自动备份和异地副本不在当前授权内；设备功能通过不等于学生安全或全双工通过。
 
 ## 2026-10-01 新需求（用户提出；按序执行，做完一项更新一项）
 
@@ -119,10 +120,10 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 - **修复（PR #161，整栈 `20261001-device-prompt-v1`）**：①属主在「仅当前用户」与「恢复被打断的回答」两条上下文里保留系统提示词（它不含任何轮次与记忆；非属主路径不变）；②设备绑定的属主（`reason_code == device_bound_subject`）在回退里保留**本次会话**已听见的轮次，回退指令改为「依据当前这一轮和本次会话中已经听见的对话回答…不得读取…持久历史、私人记忆」（持久历史与私人记忆仍然关闭；其他属主决定仍只看当前这句）；③回复深度与口播上限按对象区分（孩子两三句、「为什么」不再按长篇处理；长辈同理），孩子/长辈的固定自我介绍改成朋友口吻，计划放行检查接受这几种固定文本，否则「你叫什么」会被放行检查拒绝而没有回答。
 - **验证**：生产模型回放修复后的消息结构——孩子「是黄色的」接着画小狗聊、天空/下雨/恐龙/熊猫 20–25 字、孤单/考砸/被欺负先说感受再让告诉爸爸妈妈或老师且没有列表、「我刚才画的是什么」答「你刚才画的是一只小狗呀」；长辈 11–33 字、用「您」、记得早上打太极拳。单测 8 条（变异检验：5 种破坏全部被抓到）+ 全量 agent 单测 + common 测试 + 控制面两个相关测试文件通过，ruff、mypy strict、模块行数预算通过（agent.py 恰好 473 行：三段「依据范围」文案挪进共享模块）。
 - **同一根因的其他受害者**：①家教焦点（`tutor_english` / `tutor_homework`）的会话靠系统提示词里的家教风格，设备上以前同样不生效；②安全底线里「用户请求暴力/色情/违法时只回答『我不知道。』」「自伤类走危机支持」只剩计划块里的危机段在起作用（固定话术走代码，不受影响）；③成人档（`adult_companion`）也一直缺席，不只是孩子。
-- **跨会话记忆仍然没有接到回复上（按代码判断，第三轮会验证）**：设备会话的回复里从来没有长期记忆——本地安全计划 `grounded_items=()`、非规划器路径 `context_snapshot=None`、系统提示词 `memory_block=None`；档案侧的记忆采集仍在写（`memory_capture_candidate_v1`），但召回没有进入回复。所以本次修复后，机器人能记住**同一次会话**里的上一句（会话在设备睡眠/超时后结束），但「重新唤醒后问我今天画了什么」预计仍答不上来；这一块要等规划器路径打通（下一条）。
-- **仍未解决（需要你决定，不在本次发布）**：真正的响应规划器在设备会话里仍用不了。除了围栏纪元，还有第二个不兼容：规划器写的 `mode_policy_version` 是 `s2-v1`，而运行时档案会话的策略版本是档案包版本 `multi-subject-v1`，`plan_matches_mode_policy` 会拒绝真计划。现网规划器返回的计划对这个孩子无 grounded 项、voice_target 与 TTS 一致，所以启用它的收益主要是长期记忆召回与人设指令，风险是这些指令首次进入生产。要启用需要：客户端采用请求围栏的纪元（回显四字段核对后）、对齐策略版本、复核音色/快照检查；control-api 是另一条发布通道。建议先看第三轮的对话质量，再决定要不要做。
+- **跨会话记忆（2026-10-02 接线，分支 `feat/device-memory`，待合并发布）**：此前设备会话的回复完全没有长期记忆（本地安全计划 `grounded_items=()`、非规划器路径 `context_snapshot=None`）。现在 `prepare_turn` 在说话人是设备绑定的属主、且签名档案带 `memory_recall_private` 时，与响应计划并行、按这一句最终文字向 `/v1/interaction/context-prefetch` 取记忆（控制面按主体范围、未成年人留存同意、只返回 confirmed 把关），`memory_claim` 条目冻进本轮快照，经上下文装配器作为控制响应计划块的 `DATA.grounded_items` 交给模型；本地安全计划的范围说明改为「只在对话自然涉及时一句话带出、不要逐条罗列、不要主动翻旧事、问到没有的就说记不得、不得编造」（没有这项授权的账户仍是旧的「不得读取持久历史、私人记忆」）。人格特征（`persona_trait`）不带；任何失败（拒绝、超时、说话人中途变了）都等于这句没有记忆，不堵回复；记忆内容不进日志。验证：17 条用例（记忆文本读起来像指令时仍只是数据、无授权不取、非绑定人不取、拒绝/失败/超时、说话人变化、空记忆不改计划块、范围说明）；13 种变异全被抓到；agent + common 全量 2801 条通过，ruff、mypy strict、模块行数预算通过（`agent.py` 预算 473 → 463：星期短语判断挪去 `realtime_information`）。**限制（决定真机上能不能看到效果）**：生产 `memory_claims` 现在是 0 行（所有状态，2026-10-02 只读计数），而设备对话自 10-01 00:30 起已归档 313 条孩子发言、206 条播放停止事件、`archive_processing_outbox` 2856 条全部处理完。原因是写入策略保守：对话里的事实只成候选，只有显式「帮我记住…」且是低风险偏好/习惯才自动确认，未成年人只允许学习进度、学习偏好、日常三类领域，检索又只返回 confirmed（`include_candidates=False`），而测试对话里没有这类话。所以现在重新唤醒后问「你还记得我今天画的什么吗」仍会答记不得——这是策略的结果，不是接线的问题；要在真机上看到效果，需要先说一句「帮我记住我最喜欢蓝色」之类，等归档编译完成再重新唤醒去问。真机验证等你放开电脑语音测试。
+- **仍未解决（需要你决定，不在本次发布）**：真正的响应规划器在设备会话里仍用不了。除了围栏纪元，还有第二个不兼容：规划器写的 `mode_policy_version` 是 `s2-v1`，而运行时档案会话的策略版本是档案包版本 `multi-subject-v1`，`plan_matches_mode_policy` 会拒绝真计划。现网规划器返回的计划对这个孩子无 grounded 项、voice_target 与 TTS 一致，所以启用它的收益主要是长期记忆召回与人设指令，风险是这些指令首次进入生产。要启用需要：客户端采用请求围栏的纪元（回显四字段核对后）、对齐策略版本、复核音色/快照检查；control-api 是另一条发布通道。建议先看第三轮的对话质量，再决定要不要做。跨会话记忆不再依赖它（见上一条）。**不要因为这个计划总是被丢弃就跳过计划请求**：`/v1/interaction/response-plan` 在服务端还做危机路由并给监护人入队通知（`_route_crisis_with_bounded_evidence` → `record_minor_crisis`），这条副作用不会因为客户端丢弃计划而消失；想省这约 0.7 s，须先把危机路由挪出计划请求。
 - **顺带记录**：①10:34:13 设备 RuntimeProfile 版本在会话中变化，agent 每回合记两条 ERROR「需在会话边界重连」并继续沿用旧档案；②分类器 0.4～1 s 的超时偶发；③`Task exception was never retrieved … aclose(): asynchronous generator is already running`（回复正常，日志噪声）；④守护方看不到孩子的原话，所以这次复核只读了我自己测试窗口的归档。
-- [x] 复现与定位　[x] 修复与测试　[x] PR #161 合并并整栈发布（`20261001-device-prompt-v1`，15:25 上线）　[x] 第三轮对话测试复核（孩子「为什么」、难过/孤单、被欺负、不再念出计划块、会话内记忆都通过；自我介绍用实验室回放核对，真机第一步没唤醒成功；跨会话记忆按预期仍无）
+- [x] 复现与定位　[x] 修复与测试　[x] PR #161 合并并整栈发布（`20261001-device-prompt-v1`，15:25 上线）　[x] 第三轮对话测试复核（孩子「为什么」、难过/孤单、被欺负、不再念出计划块、会话内记忆都通过；自我介绍用实验室回放核对，真机第一步没唤醒成功；跨会话记忆按预期仍无）　[x] 跨会话记忆接线（分支 `feat/device-memory`，待合并发布）　[ ] 真机验证（等用户放开电脑语音测试，先说「帮我记住…」）
 
 ### [ ] N-10 机器人说话时喊「别说了」不停：用户的话听清楚了，停止却没执行（2026-10-01 真机第六轮发现，DeepSeek 上线后）
 
@@ -142,15 +143,24 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 - **归因（只读，2026-10-02）**：不是停止修复引入的，也不限于接管路径。两次的毫秒时间线一致：bridge 发出 CANCEL（generation N → N+1）→ 13 ms / 117 ms 后 edge 收到设备对 generation N 的一条 `playback.progress`（设备在收到 flush 之前已发出）→ `device_ws_uplink.go` 的 `handlePlaybackReceipt`：账本 `ledger.record` 接受（该代没有终止回执、序号单调），随后 `runtime.SendPlaybackProgress` 被 `VoiceCoreSession.SendPlaybackProgress` 以 `playback progress belongs to a stale generation` 拒绝（会话的 `current` 已是替换代），处理函数发 `session.error playback_receipt_rejected` 并 `return false`，读循环退出、连接关闭。设备串口：普通停止那次是 `Server closed media session: code=playback_receipt_rejected retryable=1`，接管那次是先看到 `errno=104`。
 - **为什么 `20260930-late-receipt-v1`（#146）没挡住**：#146 只处理了两种情形——账本拒绝且该代已被替换（记日志丢弃），以及已被替换代的 `playback.ended/error`（清播放窗口）。「账本接受、会话已前进」这条路径没有同样的放行，任何一条在 CANCEL 与设备处理 flush 之间到达的 `progress/started` 都会关连接。edge 日志里更早的同类拒绝：2026-10-01 22:15 CST 一条 `playback.started`。
 - **频率**：发布后 17 次停止里 2 次（约 12%）；bridge 容器日志只覆盖本次发布之后，之前的次数查不到，所以「发布前 13 次为 0」只是小样本巧合。
-- **修法（未做，须另获授权：Go，走 media-edge 组件发布）**：`handlePlaybackReceipt` 里 `SendPlaybackProgress` 失败且 `runtime.GenerationReplaced(receipt.Fence)` 时，与另两条分支一样记日志后丢弃并返回 true；加 Go 测试（账本接受、会话已在替换代 → 连接保持）和去掉放行的变异检查。
-- [x] 归因　[ ] 修复（等授权）　[ ] 发布后停止系列复测不再出现 `playback_receipt_rejected`
+- **下一步（用户 2026-10-02 决定：`20261002-device-memory-v1` 发布完后做；Go，走 media-edge 组件发布）**：
+  - 改 `services/media_edge/device_ws_uplink.go` 的 `handlePlaybackReceipt`：`runtime.SendPlaybackProgress` 失败且 `runtime.GenerationReplaced(receipt.Fence)` 时，与另两条分支一样记 `media edge dropped late receipt for a replaced generation` 后丢弃、返回 true（不发 `session.error`、不关连接）；其它失败保持原样。
+  - Go 测试放在 `TestDeviceWSSFlushedGenerationLateProgressReceiptKeepsSession`（`device_ws_uplink_test.go`）旁边：账本接受、会话已在替换代 → 连接保持且记日志；不属于「已替换」的失败仍关连接；去掉放行即失败的变异检查。
+  - 发布：照 `20260930-late-receipt-v1` 的 media-edge 组件发布做法（HANDOFF 09-30 一节），回滚目标是当时线上的 `20260930-late-receipt-v1`。
+  - 验收：发布后停止系列（≥20 次）edge 日志不再出现 `WSS handler rejected … playback.progress`，设备串口不再有停止后紧跟的 `errno=104` / `playback_receipt_rejected`；真机验证等用户放开电脑语音测试。
+- [x] 归因　[ ] 修复（发布后的下一步）　[ ] 发布后停止系列复测不再出现 `playback_receipt_rejected`
 
-### [ ] N-12 电脑模拟测试怎么在不用唤醒词的情况下唤醒机器人（用户 2026-10-02 指示，未开始）
+### [ ] N-12 电脑模拟测试怎么在不用唤醒词的情况下唤醒机器人（用户 2026-10-02 指示；方案已定，`20261002-device-memory-v1` 发布后的下一步）
 
 - **背景**：用户决定去掉关键字唤醒（近音词和日常句都会误唤醒，见 N-1），改为点击屏幕唤醒（`wake_mode=button`，固件 `TapActionFor`，已上线）。此前所有电脑模拟测试都是用 Mac 扬声器播放唤醒词唤醒机器人，今后不能再这样；用户要求测试时「通过 USB 控制机器唤醒」，再进行对话测试，并且在他放开之前不做电脑自动语音测试。
-- **现状（只读核对）**：固件 build 19 没有任何串口输入通道（没有 `esp_console`、`uart_read`、`stdin` 读取），USB 串口只出日志；点击唤醒的入口是屏幕触摸（CST816S）回调里的 `app.WakeWordInvoke("screen_tap")`（`memoria_esp_vocat.cc`）。串口一旦被第二个进程打开就会复位板子（见 N-8 的串口记录），所以也不能从 Mac 另开一个进程去「写」。
-- **可选方案**（需要用户选）：①固件加一条仅 USB 串口调试命令（例如一行 `wake`）调用同一个 `WakeWordInvoke`，并让常驻的串口记录进程多开一个命令管道由它转写（固件 build 20，要 USB 刷机）；②服务端加「远程唤醒」，经设备空闲时的显示配置轮询下发（不需要刷机，但延迟取决于轮询间隔，且是生产功能）；③用户或支架物理点击。
-- [ ] 用户选方案　[ ] 实现与验证　[ ] 把 `scripts/voice_soak*.py` 的唤醒步骤改为该入口
+- **现状（只读核对）**：固件 build 19 没有任何串口输入通道（没有 `esp_console`、`uart_read`、`stdin` 读取），USB 串口只出日志；点击唤醒的入口是屏幕触摸（CST816S）回调里的 `app.WakeWordInvoke("screen_tap")`（`memoria_esp_vocat.cc`）。串口一旦被第二个进程打开就会复位板子（见 N-8 的串口记录），所以不能从 Mac 另开进程去「写」，只能由常驻的串口记录进程转写。
+- **方案（用户 2026-10-02 决定：固件加一条仅 USB 串口的调试命令）**：
+  - 固件（build 20）：在 USB-Serial-JTAG 上起一个读行任务，识别一行 `wake`，仅当设备空闲且当前 wake_mode 允许点击（沿用 `TapActionFor` 的同一套门控）时调用 `app.WakeWordInvoke("usb_wake")`；其它状态忽略并回一行日志 `usb wake ignored state=…`。命令只在 USB 连着时可达，不开放任何网络入口，也不改变现有唤醒逻辑。解析与门控写在 `memoria_wake_mode.h` 这类无 ESP-IDF 依赖的头里，主机测试覆盖。
+  - 主机：`scripts/voice_soak_serial_logger.py` 增加命令管道（FIFO 或 unix socket），把 `wake` 写进它已持有的串口；任何其它进程都不得打开串口。
+  - 刷机：build 20 经 USB 刷入（先停串口记录进程；用 `firmware/esp32/scripts/flash.sh --build`，写前备份当前 app 槽；刷机前后的保护区核对与禁忌见 `docs/runbooks/release-rollback.md` 的固件回写一节），不发 OTA（是否发布 OTA 仍是单独的决定）。机器人 2026-10-02 14:46 起不在 Mac 的 USB 上，重连后先重开串口记录进程。
+  - 测试脚本：`scripts/voice_soak*.py`、`phantom_stop.py` 一类的唤醒步骤改为经管道发 `wake`，不再用 `--wake-clips`；唤醒后再进入对话。
+  - 验证：发一次 `wake` → 串口出现 `usb wake`，状态 `idle → listening`，能对话；非空闲时被忽略；`wake_mode=keyword` 时被忽略。
+- [x] 方案已定　[ ] 固件命令与主机测试　[ ] 串口记录进程命令管道　[ ] build 20 USB 刷入与验证　[ ] 把电脑模拟测试脚本的唤醒步骤改为该入口
 
 ### [ ] N-7 新发现：bridge 容器 `/tmp` 被 PCM tap 写满（2026-10-01 只读发现）
 

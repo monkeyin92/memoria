@@ -129,6 +129,18 @@ def _asks_for_time(query: str) -> bool:
     )
 
 
+def is_fuzzy_weekday_query(query: str) -> bool:
+    compact = query.strip().replace(" ", "").replace("　", "")
+    if any(
+        marker in compact
+        for marker in ("星期几", "周几", "礼拜几", "今天几号", "今天日期", "几月几号")
+    ):
+        return True
+    return "几" in compact and any(
+        marker in compact for marker in ("星期", "周几", "礼拜", "星", "周")
+    )
+
+
 def fixed_realtime_reply(*, query: str, now: datetime) -> str | None:
     """Answer clock facts locally; ask for a city before searching weather."""
 
