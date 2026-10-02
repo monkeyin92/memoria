@@ -12,12 +12,22 @@
 | Speaker Model | `memoria-speaker-model:20261002-stop-pin-v1` | `sha256:f0c16495…` | 同上 | healthy | 0 | `2026-10-02T05:59:42Z` | 同上 | `memoria-speaker-model:rollback-20261002-stop-pin-v1-pre`（= `20261002-stop-diag-v1`） |
 | Media Edge | `memoria-media-edge:20260930-late-receipt-v1` | `sha256:9874fa24…` | `b43577e886868ec7c9b00e30d38df13f776a0b82` | healthy | 0 | `2026-09-30T03:59:05Z` | `/opt/memoria/component-releases/20260930-late-receipt-v1-media-edge/` | `memoria-media-edge:20260930-edge-reject-log-v1`（`media-edge-rollback.override.yml`） |
 
+- **服务器磁盘（2026-10-02 15:01 清理后）**：根分区 41 / 118 GB（37%），`/var/lib/containerd` 15 GB，`/opt/memoria/incoming` 只留 `20261002-stop-pin-v1`、`20261002-stop-diag-v1` 与最近三个 media-edge；memoria 镜像只剩当前与紧邻回滚、runtime-base、media-edge、sensevoice（共 18 个 tag）。每次整栈约占 4 GB，约每 6 次要清一次；收据见下一节。
 - **候选可见性状态**：已随整栈发布上线（契约提交在 main 上为 `0059368`，早期记录中的 `f7c4c2a` 是合并前哈希）。普通 search/context 只返回 confirmed 且无 active 冲突，`include_candidates=true` 仅供审核与评测。真实 PG 上的 candidate 行为与线上带鉴权读口尚无单独收据。
 - **评测基线边界**：四份 2026-09-23 评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；它们产生于候选可见性提交之前，只证明上线前基线，不证明当前线上版本的召回质量。
 - **发布身份**：`20261002-stop-pin-v1` / `b3e5811e`；`/opt/memoria/current` → `releases/20261002-stop-pin-v1`。上一栈 `20261002-stop-diag-v1` / `26b0d53a` 为回滚目标。
 - **未关闭缺陷**：P0-03 仍开放（缺陷 A 核心续问边界与工具查询最终回答已在 09-24、09-25 真机走通；TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
 - **下一步必须动作**：设备对话归档与设备信任分档已随 `20261001-device-archive-v1` 上线，开关 `MEMORIA_BOUND_DEVICE_TRUST_ENABLED` 已于 2026-10-01 00:30 打开（收据见下一节），验收清单见运维手册「设备信任开关」。用户 2026-10-01 新增六项需求（唤醒方式设置、空闲熄屏、发布与刷机、回顾为空、电脑长稳对话、说话风格评审）见 [TODOLIST「2026-10-01 新需求」](TODOLIST.md)。当日遗留已汇总到 [TODOLIST「2026-09-28 收尾待办」](TODOLIST.md)：伙伴页选一次绵绵、嘈杂环境验证 #83；需决定是否发布固件 OTA；待查回复规划 `no_verified_runtime_profile` 兜底；12-17 前换证书。之后按验收清单验 P0-04 产品决定、P1-11 三种绑定与隔天记忆、P1-03 孩子人格、P2-04 与 P0-03 剩余矩阵；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
+
+## 2026-10-02 服务器磁盘清理（用户授权「先清理磁盘」）
+
+- **起因**：只读核对发现根分区 80 / 118 GB（71%），10-01 清理后（33%）不到两天涨了 43 GB，期间 11 次整栈发布（约 4 GB/次）：`/var/lib/containerd` 38 GB（66 个镜像、109 个 tag，只有 10 个在用）、`/opt/memoria/incoming` 19 GB（12 个整栈上传包各约 1.5–1.8 GB）。上一次是拖到 98% 才清的。
+- **做法**（按运维手册「发布制品的手工清理」）：只读盘点 → 候选清单（75 个镜像 tag、11 个 `incoming/*` 目录，sha256 `84b22d19…` / `90e55479…`）逐项核对 → 带校验的分阶段脚本（`/root/memoria-release/cleanup-20261002.sh`，sha256 `9fdbea52…`，每阶段先过门禁：无发布进程、容器 healthy、内外 readiness、保留集镜像都在、候选不含保留集或运行中镜像）→ 阶段一 `docker rmi` 逐项（12 秒，不用 `docker system prune`、不动卷）→ 复核 → 阶段二精确目录删除 → 复核。
+- **保留**：`memoria-{agent,control-api,speaker-model}` 的 `20261002-stop-pin-v1`、`20261002-stop-diag-v1`、`rollback-20261002-stop-pin-v1-pre`；`memoria-media-edge` 三个 tag；`memoria-agent-runtime-base` 全部 tag；`memoria-sensevoice-asr`；所有非 memoria 镜像；`incoming/` 的 `20261002-stop-pin-v1`、`20261002-stop-diag-v1` 与三个 media-edge 目录。**没动**：`releases/*` 旧源码树（1.2 GB）、`component-releases`（0.5 GB）、journald（1.2 GB）、数据卷、`/var/www/memoria-releases`（1.4 GB）、WMS/saas。
+- **结果**：根分区 80 → 41 GB（71% → 37%）；containerd 38 → 15 GB；`incoming` 19 → 3.0 GB。清理后 10 个容器全部在线（带健康检查的都是 healthy），内部 `/health/ready` 与外部 `https://aigcnice.com:8443/memoria-api/health/ready` 均 200，回滚镜像与被运行容器引用的 compose 文件（`releases/20261002-stop-diag-v1`、`20260930-local-stop-v2`、`20260827-architecture-split-v1`、`20260823-210222-voice-fix`、`current/infra`、media-edge 组件 override）逐项核对存在。
+- **收据**：服务器 `/root/memoria-release/cleanup-20261002-images.log`、`cleanup-20261002-incoming.log`，清理前快照 `cleanup-20261002-pre/`（`docker ps`、镜像清单含完整 id、卷、`incoming` 列表、`df`）与两份候选清单。
+- **仍待**：`scripts/docker_image_retention.sh` 仍给不出候选（TODOLIST「定期运维」），下一轮还是手工清单。
 
 ## 2026-10-02 整栈发布 20261002-stop-pin-v1（PR #169；播放期间的停止词接管「没有文字的轮次」占住的终点）
 
@@ -30,7 +40,7 @@
   - 正常停止没有退化：8 次「故事 +『别说了』」里有回复的 6 次全部 0.27–0.72 s 停下。
   - **空占点被接管**：噪声时刻扫描 15 次里 11 次停下，其中 5 次接管了空占点（`replaced_empty_endpoint=620800 / 499520 / 673600 / 2304960 / 2478400`），占点都比停止词 final 早 2.11–2.29 s（`endpoint_ms`）、范围内没有文字，停止词 final 到 `spoken stop interrupted reply` 28–69 ms；0 次停止词被占点挡掉（修复前同配方 5 次里 1 次完整被挡，故事讲满 29.7 s）。
   - 没有测到的：N-8（回复被假 VAD 抢掉）仍在，且这一天更容易复现——固定 +2.7 s 的噪声 12 次里 11 次回复被抢掉；自然发生也有（回归系列 8 次里 1 次，另 1 次是设备 VAD 没响应停止后的下一句，30 s 静默关会话）。「停」单字被识别成停止词的比例仍低。
-  - **待观察**：扫描 p03 里服务端接管并停止成功，同一瞬间 edge 拒绝了设备对刚被取消的 generation 6 的一条 `playback.progress`（`WSS handler rejected`），设备 WSS 被重置、`recovering` 约 7 s。发布后 17 次停止里出现 2 次这条拒绝（1 次重置，另一次发生在不接管的普通停止上），发布前 13 次为 0；这条路径（edge 账本对停止后迟到回执的处理，见 `20260930-late-receipt-v1`）本次没有改动，样本太小，暂不归因。另有一条 bridge `media reply failed … StopAsyncIteration`（被抢掉的回复上 TTS 流结束的竞态），与停止路径无关。
+  - **p03 的设备连接重置已归因（2026-10-02，TODOLIST N-11）**：不是本次修复引入的，普通停止也会触发（发布后 17 次停止里 2 次）。bridge 发布 CANCEL 之后 13–117 ms，edge 收到设备在收到 flush 之前发出的、对刚取消那一代的 `playback.progress`；账本接受，但会话已前进到替换代，`SendPlaybackProgress` 报 stale generation，`handlePlaybackReceipt` 发 `session.error playback_receipt_rejected` 并关连接，设备 `recovering` 约 7.3 s。`20260930-late-receipt-v1` 只放行了「账本拒绝且该代已被替换」与已替换代的 `ended/error`。修法（`SendPlaybackProgress` 失败且该代已被替换时丢弃回执）未做，须另获授权，走 media-edge 组件发布。另有一条 bridge `media reply failed … StopAsyncIteration`（被新一轮取代的回复上 TTS 流结束的竞态），与停止路径无关。
   - 详见 `docs/acceptance/run-20261001-longsoak/findings.md` 第九轮。
 
 ## 2026-10-02 整栈发布 20261002-stop-diag-v1（PR #168；语音停止的诊断日志，行为不变）
