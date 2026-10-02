@@ -25,7 +25,7 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 1. 真机窗口（用户推动）：设备已于 2026-09-28 重新绑定为「给孩子使用」并勾选长期记忆（`e8a27e45` v3，`growth_summary`），⓪ 已完成；当日真机项见「2026-09-28 收尾待办」。`20261001-device-archive-v1` 已上线且开关已打开；设备对话验收与长稳见下方 N-5。之后按 HANDOFF 验收清单验 P1-11 三种绑定、P1-03 孩子人格隔天生效、P2-04 终止性拒绝不再续连，以及 P0-03 的 TLS/WSS 重连与剩余设备矩阵。不得把核心通过扩大为完整 P0-03 或全双工通过。
 2. 可直接推进的代码项：P0-04 按 2026-09-26 产品决定实现（进行中）、P1-02 救援 sidecar 可复现、P1-04 自定义声音闭环、P2-06 回放评测、P2-04 Python 侧进程退出注入。
 3. 需用户决定：P1-02 两项线上调整、旧媒体链去留（P1-12）、WAL 保留策略（P1-08）、readiness 逾期的告警渠道（P1-09）、P2-07 第 2/3 项、P2-03 已知缺口是否接受、P0-04 未成年人人格学习口径。
-4. **当前的下一步（`20261002-device-memory-v1` 已于 2026-10-02 18:14 上线；用户 2026-10-02 决定，按序）**：①N-11 修 edge 对取消代迟到回执的处理（Go，media-edge 组件发布）；②N-12 固件加一条仅 USB 串口的调试命令用于测试时唤醒（固件 build 20，USB 刷机）。两项做完、并且用户放开电脑语音测试之后，才做 N-8 的真机 A/B 与跨会话记忆的真机验证。
+4. **当前的下一步（`20261002-device-memory-v1` 已于 2026-10-02 18:14 上线；用户 2026-10-02 决定，按序）**：①N-11 修 edge 对取消代迟到回执的处理（Go，media-edge 组件发布；代码与测试已完成，待推送与发布）；②N-12 固件加一条仅 USB 串口的调试命令用于测试时唤醒（固件 build 20，USB 刷机）。两项做完、并且用户放开电脑语音测试之后，才做 N-8 的真机 A/B 与跨会话记忆的真机验证。
 5. 边界：生产切流、回滚演练和制品清理须另获授权（2026-10-01 已获授权打开设备信任开关并清理旧制品，见下）；`MEMORIA_BOUND_DEVICE_TRUST_ENABLED` 的开/关仍属改变安全口径的动作，变更须用户授权；删除、重启、定时任务、自动备份和异地副本不在当前授权内；设备功能通过不等于学生安全或全双工通过。
 
 ## 2026-10-01 新需求（用户提出；按序执行，做完一项更新一项）
@@ -144,11 +144,12 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 - **为什么 `20260930-late-receipt-v1`（#146）没挡住**：#146 只处理了两种情形——账本拒绝且该代已被替换（记日志丢弃），以及已被替换代的 `playback.ended/error`（清播放窗口）。「账本接受、会话已前进」这条路径没有同样的放行，任何一条在 CANCEL 与设备处理 flush 之间到达的 `progress/started` 都会关连接。edge 日志里更早的同类拒绝：2026-10-01 22:15 CST 一条 `playback.started`。
 - **频率**：发布后 17 次停止里 2 次（约 12%）；bridge 容器日志只覆盖本次发布之后，之前的次数查不到，所以「发布前 13 次为 0」只是小样本巧合。
 - **下一步（用户 2026-10-02 决定：`20261002-device-memory-v1` 发布完后做；Go，走 media-edge 组件发布）**：
-  - 改 `services/media_edge/device_ws_uplink.go` 的 `handlePlaybackReceipt`：`runtime.SendPlaybackProgress` 失败且 `runtime.GenerationReplaced(receipt.Fence)` 时，与另两条分支一样记 `media edge dropped late receipt for a replaced generation` 后丢弃、返回 true（不发 `session.error`、不关连接）；其它失败保持原样。
-  - Go 测试放在 `TestDeviceWSSFlushedGenerationLateProgressReceiptKeepsSession`（`device_ws_uplink_test.go`）旁边：账本接受、会话已在替换代 → 连接保持且记日志；不属于「已替换」的失败仍关连接；去掉放行即失败的变异检查。
+  - **已做（分支 `fix/edge-late-playback-receipt`，本地，待推送/合并/发布）**：`device_ws_uplink.go` 的 `handlePlaybackReceipt`：账本接受之后、动播放窗口之前，先看收据那一代是否已被替换——已替换就记 `media edge dropped late receipt for a replaced generation`（字段 `stage=precheck`）后丢弃、返回 true，不转发、不发 `session.error`、不关连接，也完全不碰播放窗口（新一代正在播放时，旧代的迟到收据不会把它的窗口覆盖或清掉）；取消恰好落在检查与转发之间的竞态（`SendPlaybackProgress` 失败且这一代已被替换）同样丢弃，并收掉刚为这条收据打开的窗口（`stage=forward`）；其它失败保持原样（`playback_receipt_rejected`，可重试，关连接）。`bridge_runtime.go` 的 `GenerationReplaced` 同时看边缘 Session 与 Voice Core 自己的会话：`VoiceCoreSession` 在校验 core 的 CANCEL 时就前进到替换代，比边缘 Session 应用它早一小会儿，落在这个缝里的收据同样是迟到的。
+  - **测试**（`device_ws_late_receipt_test.go`，旧代码上 4 条红、日志与线上一致 `WSS handler rejected … type=playback.progress`）：取消时在途的 `progress` / `started` 收据保持连接且不转发；落在缝里的收据；取消落在检查与转发之间；新一代的播放窗口不被旧代迟到收据改动（用语音 VAD 做探针）；对当前代的转发失败仍可重试地关连接；比 Voice Core 还新的代仍关连接；`GenerationReplaced` 的 7 个情形（两侧、顺序、会话）。10 种变异全被抓到；`go test ./...`、`-race`、`go vet`、`gofmt` 通过（`golangci-lint` 本机装不上：`go run` 拉取时模块校验和对不上，留给 CI）。
   - 发布：照 `20260930-late-receipt-v1` 的 media-edge 组件发布做法（HANDOFF 09-30 一节），回滚目标是当时线上的 `20260930-late-receipt-v1`。
   - 验收：发布后停止系列（≥20 次）edge 日志不再出现 `WSS handler rejected … playback.progress`，设备串口不再有停止后紧跟的 `errno=104` / `playback_receipt_rejected`；真机验证等用户放开电脑语音测试。
-- [x] 归因　[ ] 修复（发布后的下一步）　[ ] 发布后停止系列复测不再出现 `playback_receipt_rejected`
+- [x] 归因　[x] 修复与测试（本地分支）　[ ] 推送 / 合并 / media-edge 组件发布　[ ] 发布后停止系列复测不再出现 `playback_receipt_rejected`
+- **同类未处理**：设备按钮停止带着已被替换代的围栏时，`CancelGeneration` 失败 → `stop_rejected` 并关连接（2026-09-30 04:30 一次，`button.stop … expected_fence.generation=2`）；形状相同，本次不动，发布后看 edge 日志里的频率再定。
 
 ### [ ] N-12 电脑模拟测试怎么在不用唤醒词的情况下唤醒机器人（用户 2026-10-02 指示；方案已定，`20261002-device-memory-v1` 发布后的下一步）
 
