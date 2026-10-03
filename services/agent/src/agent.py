@@ -29,10 +29,7 @@ from services.common.companion_response_safety import (
     companion_identity_replies,
     fixed_companion_reply,
 )
-from services.common.companion_turn_policy import (
-    COMPANION_TURN_POLICY_INSTRUCTIONS,
-    companion_scope_instructions,
-)
+from services.common.companion_turn_policy import companion_plan_instructions
 from services.common.companions import DESIGNED_VOICE_MODEL, companion_definition
 from services.common.realtime_information import (
     current_local_time,
@@ -333,12 +330,13 @@ def build_local_safe_plan(
         else _LOCAL_SAFE_REFUSAL_INSTRUCTIONS
     )
     if companion:
-        instructions = companion_scope_instructions(
+        instructions = companion_plan_instructions(
             owner=speaker_class == "owner",
             device_bound=speaker_reason == DEVICE_BOUND_SUBJECT_REASON,
             private_memory=policy.allows_private_context(speaker_class),
+            query=query,
+            minor=runtime_profile is not None and runtime_profile.profile.subject_category == "minor",
         )
-        instructions += "\n" + COMPANION_TURN_POLICY_INSTRUCTIONS
     if companion and policy.companion_style_prompt is not None:
         instructions += "\n" + policy.companion_style_prompt
     live_instruction = realtime_instruction(query=query, now=live_now)

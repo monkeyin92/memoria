@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Final
 
+from services.common.explicit_memory import asks_to_remember, explicit_remember_will_save
+
 COMPANION_TURN_POLICY_INSTRUCTIONS: Final = """
 【当轮语义策略】
 每一轮只根据用户当前语义、已听见的会话上下文和本次 ResponsePlan 选择互动策略；
@@ -73,3 +75,39 @@ def companion_scope_instructions(
             else _DEVICE_SESSION_SCOPE_INSTRUCTIONS
         )
     return _OWNER_SCOPE_INSTRUCTIONS if owner else _PUBLIC_SCOPE_INSTRUCTIONS
+
+
+# A child's "remember this" that the archive will not keep. Without the note the model promises it
+# anyway (2026-10-02 round 10: 「我记住啦」 twice, then 「这个我还真不知道呢」 in the next session).
+_UNSAVED_MEMORY_REQUEST_NOTE: Final = (
+    "用户这一句是在让你记住一件事，但这件事你记不下来：不要说“我记住了”“我记下来了”“我会一直记得”，"
+    "也不要许下以后一定记得的承诺；用自己的话说你听到了，可以说会试着想着它。"
+)
+
+
+def companion_plan_instructions(
+    *,
+    owner: bool,
+    device_bound: bool,
+    private_memory: bool = False,
+    query: str = "",
+    minor: bool = False,
+) -> str:
+    """The instructions of a companion's local safe plan: scope, turn policy, memory promise.
+
+    A minor's request to remember something gets the note unless the archive's write policy will
+    confirm exactly that sentence (a closed low-risk preference or habit) and the child's profile
+    grants long-term memory at all.
+    """
+
+    text = companion_scope_instructions(
+        owner=owner, device_bound=device_bound, private_memory=private_memory
+    )
+    text += "\n" + COMPANION_TURN_POLICY_INSTRUCTIONS
+    if (
+        minor
+        and asks_to_remember(query)
+        and not (private_memory and explicit_remember_will_save(query, minor=True))
+    ):
+        text += "\n" + _UNSAVED_MEMORY_REQUEST_NOTE
+    return text

@@ -584,6 +584,7 @@ function guardianStubs(overrides = {}) {
         { day: "2026-09-30", message_count: 3 },
       ],
     }),
+    getGuardianChildMemories: async () => ({ candidates: [], confirmed: [] }),
     ...overrides,
   });
 }
@@ -694,4 +695,254 @@ test("an account that is not a bound child's guardian keeps its own daily review
       restore();
     }
   });
+});
+
+test("guardian memory endpoints are canonical, encode their ids and only allow confirm or retract", async () => {
+  await withWx(async () => {
+    const requests = [];
+    global.wx.request = (options) => {
+      requests.push(options);
+      options.success({ statusCode: 200, data: { candidates: [], confirmed: [] } });
+    };
+    await api.getGuardianChildMemories("person/child", 20);
+    await api.reviewGuardianChildMemory("person/child", "claim/1", "confirm");
+    await api.reviewGuardianChildMemory("person/child", "claim/1", "retract");
+    assert.equal(
+      requests[0].url,
+      `${CONTROL_API_BASE_URL}/v1/guardian/minors/person%2Fchild/memories?limit=20`,
+    );
+    assert.equal(requests[0].method, "GET");
+    assert.equal(
+      requests[1].url,
+      `${CONTROL_API_BASE_URL}/v1/guardian/minors/person%2Fchild/memories/claim%2F1/review`,
+    );
+    assert.equal(requests[1].method, "POST");
+    assert.deepEqual(requests[1].data, { action: "confirm" });
+    assert.deepEqual(requests[2].data, { action: "retract" });
+    await assert.rejects(api.reviewGuardianChildMemory("person_child", "claim_1", "correct"), TypeError);
+    await assert.rejects(api.reviewGuardianChildMemory("person_child", "", "confirm"), TypeError);
+    await assert.rejects(api.reviewGuardianChildMemory("person_child", " claim_1", "confirm"), TypeError);
+    await assert.rejects(api.reviewGuardianChildMemory("", "claim_1", "confirm"), TypeError);
+    assert.equal(requests.length, 3, "an invalid call never reaches the network");
+  });
+});
+
+const CHILD_MEMORIES = Object.freeze({
+  candidates: [
+    {
+      claim_id: "claim_child_1",
+      value: "今天练习了乘法口诀。",
+      status: "candidate",
+      reason: "pending_confirmation",
+      domain_category: "study_progress",
+    },
+  ],
+  confirmed: [
+    {
+      memory_id: "claim_child_2",
+      title: "我最喜欢蓝色。",
+      snippet: "我最喜欢蓝色。",
+      status: "confirmed",
+      domain_category: "daily_life",
+      occurred_at: "2026-10-02T13:30:00+00:00",
+    },
+  ],
+});
+
+test("a parent who bound the device for a child reviews the child's memories, not their own", async () => {
+  await withWx(async () => {
+    const page = instantiate(loadPage("../pages/memory/index"));
+    const restore = guardianStubs({
+      getGuardianChildMemories: async (minorId) => {
+        assert.equal(minorId, "person_child");
+        return CHILD_MEMORIES;
+      },
+      // The signed-in account's own review is not what this tab shows for a child's robot.
+      getConversationReview: async () => ({
+        actual_heard: [],
+        memory_candidates: [{ claim_id: "claim_parent", value: "家长自己的候选" }],
+        confirmed_memories: [{ memory_id: "mem_parent", title: "家长自己的记忆" }],
+      }),
+    });
+    try {
+      await page.loadDays();
+      assert.deepEqual(
+        page.data.memoryCandidates.map((item) => item.claim_id),
+        ["claim_child_1"],
+      );
+      assert.deepEqual(
+        page.data.confirmedMemories.map((item) => item.memory_id),
+        ["claim_child_2"],
+      );
+      assert.equal(page.data.pendingCount, 1);
+      assert.deepEqual(
+        page.data.visibleMemories.map((item) => [item.id, item.pending]),
+        [
+          ["claim_child_1", true],
+          ["claim_child_2", false],
+        ],
+      );
+      assert.equal(page.data.visibleMemories[0].body, "确认后才会加入记忆档案。");
+      assert.doesNotMatch(JSON.stringify(page.data.visibleMemories), /pending_confirmation|家长自己/);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("an account without a bound child keeps its own memories and never asks for a child's", async () => {
+  await withWx(async () => {
+    const page = instantiate(loadPage("../pages/memory/index"));
+    const restore = guardianStubs({
+      readBindingManifest: () => ({ ...CHILD_BINDING, declared_mode: "self_use" }),
+      getMemoryDays: async () => ({ items: [] }),
+      getConversationReview: async () => ({
+        actual_heard: [],
+        memory_candidates: [{ claim_id: "claim_own", value: "喜欢清晨散步", reason: "conflicting_values" }],
+        confirmed_memories: [],
+      }),
+      getGuardianChildMemories: async () => {
+        throw new Error("a self-use account must not read a child's memories");
+      },
+    });
+    try {
+      await page.loadDays();
+      assert.equal(page.data.guardianMode, false);
+      assert.deepEqual(
+        page.data.memoryCandidates.map((item) => item.claim_id),
+        ["claim_own"],
+      );
+      assert.equal(page.data.visibleMemories[0].body, "和之前记下的内容不一致，请确认以哪个为准。");
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("a missing consent leaves the child's memory list empty and says why in words", async () => {
+  await withWx(async () => {
+    const page = instantiate(loadPage("../pages/memory/index"));
+    const restore = guardianStubs({
+      getGuardianChildDays: async () => ({ items: [] }),
+      getGuardianChildMemories: async () => {
+        const error = new Error("guardian_consent_required");
+        error.detail = { code: "guardian_consent_required" };
+        throw error;
+      },
+    });
+    try {
+      await page.loadDays();
+      assert.deepEqual(page.data.memoryCandidates, []);
+      assert.deepEqual(page.data.confirmedMemories, []);
+      assert.match(page.data.guardianError, /长期记忆还没有开启/);
+    } finally {
+      restore();
+    }
+  });
+});
+
+async function withGuardianMemoryPage(overrides, fn) {
+  await withWx(async () => {
+    const page = instantiate(loadPage("../pages/memory/index"));
+    const calls = [];
+    const restore = guardianStubs({
+      getGuardianChildMemories: async () => CHILD_MEMORIES,
+      reviewGuardianChildMemory: async (minorId, claimId, action) => {
+        calls.push([minorId, claimId, action]);
+        return { claim_id: claimId, status: action === "confirm" ? "confirmed" : "retracted" };
+      },
+      reviewMemoryClaim: async () => {
+        throw new Error("the account's own review must not confirm a child's claim");
+      },
+      ...overrides,
+    });
+    const originalHas = api.hasAuthenticatedSession;
+    api.hasAuthenticatedSession = () => true;
+    try {
+      await page.loadDays();
+      await fn(page, calls);
+    } finally {
+      api.hasAuthenticatedSession = originalHas;
+      restore();
+    }
+  });
+}
+
+test("the parent's confirmation goes to the child's review endpoint and refetches the list", async () => {
+  let listed = 0;
+  await withGuardianMemoryPage(
+    {
+      getGuardianChildMemories: async () => {
+        listed += 1;
+        return CHILD_MEMORIES;
+      },
+    },
+    async (page, calls) => {
+      await page.confirmCandidate({ currentTarget: { dataset: { claimId: "claim_child_1" } } });
+      assert.deepEqual(calls, [["person_child", "claim_child_1", "confirm"]]);
+      assert.equal(listed, 2, "the authoritative list is read again after a confirmation");
+      assert.equal(page.data.reviewingClaimId, "");
+    },
+  );
+});
+
+test("a failed confirmation of a child's memory leaves the list as the server sent it", async () => {
+  await withGuardianMemoryPage(
+    {
+      reviewGuardianChildMemory: async () => {
+        throw new Error("网络不稳定");
+      },
+    },
+    async (page) => {
+      await page.confirmCandidate({ currentTarget: { dataset: { claimId: "claim_child_1" } } });
+      assert.equal(page.data.error, "网络不稳定");
+      assert.deepEqual(
+        page.data.memoryCandidates.map((item) => item.claim_id),
+        ["claim_child_1"],
+      );
+      assert.equal(page.data.reviewingClaimId, "");
+    },
+  );
+});
+
+test("not remembering a candidate and forgetting a kept memory are both a retract after a question", async () => {
+  await withGuardianMemoryPage({}, async (page, calls) => {
+    const asked = [];
+    global.wx.showModal = (options) => {
+      asked.push([options.title, options.confirmText]);
+      options.success?.({ confirm: true });
+    };
+    await page.retractMemory({ currentTarget: { dataset: { claimId: "claim_child_1", pending: true } } });
+    await page.retractMemory({ currentTarget: { dataset: { claimId: "claim_child_2", pending: false } } });
+    assert.deepEqual(calls, [
+      ["person_child", "claim_child_1", "retract"],
+      ["person_child", "claim_child_2", "retract"],
+    ]);
+    assert.deepEqual(asked, [
+      ["不记这一条？", "不记"],
+      ["忘掉这一条？", "忘掉"],
+    ]);
+  });
+});
+
+test("declining the question changes nothing, and outside a child's robot nothing is retracted", async () => {
+  await withGuardianMemoryPage({}, async (page, calls) => {
+    global.wx.showModal = (options) => options.success?.({ confirm: false });
+    await page.retractMemory({ currentTarget: { dataset: { claimId: "claim_child_1", pending: true } } });
+    assert.deepEqual(calls, []);
+    global.wx.showModal = (options) => options.success?.({ confirm: true });
+    page.setData({ guardianMode: false, guardianSubjectId: "" });
+    await page.retractMemory({ currentTarget: { dataset: { claimId: "claim_child_1", pending: true } } });
+    await page.retractMemory({ currentTarget: { dataset: {} } });
+    assert.deepEqual(calls, []);
+  });
+});
+
+test("memory review WXML offers the guardian's confirm, not-this and forget actions", () => {
+  const wxml = fs.readFileSync(path.join(__dirname, "../pages/memory/index.wxml"), "utf8");
+  assert.match(wxml, /确认记住/);
+  assert.match(wxml, /不记这个/);
+  assert.match(wxml, /忘掉这条/);
+  assert.match(wxml, /bindtap="retractMemory"/);
+  assert.match(wxml, /只有你点了「确认记住」的，机器人才会在以后的聊天里提起/);
 });

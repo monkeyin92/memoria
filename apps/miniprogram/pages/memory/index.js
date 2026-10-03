@@ -41,6 +41,13 @@ function normalizeGuardianDay(item) {
 const GUARDIAN_ERRORS = Object.freeze({
   guardian_consent_required: "孩子的长期记忆还没有开启，暂时不能查看概括。可以在「成长小结与监护授权」里开启。",
   no_conversation_that_day: "这一天没有可以概括的聊天。",
+  guardian_memory_review_unavailable: "这个孩子的记忆暂时不能在这里审核。",
+});
+
+/* 待确认记忆下面的说明：服务端给的是原因代码，不直接展示给用户。 */
+const MEMORY_REASON_TEXT = Object.freeze({
+  pending_confirmation: "确认后才会加入记忆档案。",
+  conflicting_values: "和之前记下的内容不一致，请确认以哪个为准。",
 });
 
 function guardianErrorMessage(error) {
@@ -92,6 +99,14 @@ function normalizeConversationReview(payload) {
       .filter((item) => Boolean(item.text)),
     memoryCandidates: (payload.memory_candidates || []).map(normalizeMemoryCandidate),
     confirmedMemories: (payload.confirmed_memories || []).map(normalizeConfirmedMemory),
+  };
+}
+
+/* 监护人看到的孩子的记忆：与自己的回顾同形，候选与已确认互斥；候选只有家长能确认。 */
+function normalizeChildMemories(payload) {
+  return {
+    memoryCandidates: (payload?.candidates || []).map(normalizeMemoryCandidate),
+    confirmedMemories: (payload?.confirmed || []).map(normalizeConfirmedMemory),
   };
 }
 
@@ -241,12 +256,18 @@ Page({
     try {
       const guardianSubject = this._guardianSubject();
       let guardianDays = null;
+      let childMemories = null;
       let guardianError = "";
       if (guardianSubject) {
         try {
           guardianDays = (await api.getGuardianChildDays(guardianSubject, 30)).items || [];
         } catch (error) {
           guardianError = guardianErrorMessage(error);
+        }
+        try {
+          childMemories = await api.getGuardianChildMemories(guardianSubject, 20);
+        } catch (error) {
+          guardianError = guardianError || guardianErrorMessage(error);
         }
       }
       const [daysResult, reviewResult] = await Promise.all([
@@ -255,6 +276,8 @@ Page({
       ]);
       if (!api.isAuthEpochCurrent(authEpoch)) return "stale";
       const review = normalizeConversationReview(reviewResult);
+      // 孩子用的机器人：「记住的事」是孩子的，不是登录账号自己的；孩子的候选只有家长能确认。
+      const memories = guardianSubject ? normalizeChildMemories(childMemories) : review;
       let sessionsResult = { items: [] };
       let conversationSessionsUnavailable = false;
       if (typeof api.getConversationSessions === "function") {
@@ -276,12 +299,12 @@ Page({
           ? (guardianDays || []).map(normalizeGuardianDay)
           : (daysResult.items || []).map(normalizeDay),
         heardTurns: review.heardTurns,
-        memoryCandidates: review.memoryCandidates,
-        confirmedMemories: review.confirmedMemories,
-        pendingCount: review.memoryCandidates.length,
+        memoryCandidates: memories.memoryCandidates,
+        confirmedMemories: memories.confirmedMemories,
+        pendingCount: memories.memoryCandidates.length,
         visibleMemories: this._visibleMemories(
-          review.memoryCandidates,
-          review.confirmedMemories,
+          memories.memoryCandidates,
+          memories.confirmedMemories,
           this.data.memoryFilter,
         ),
         conversationSessions: (sessionsResult?.items || []).map((item) => ({
@@ -390,7 +413,7 @@ Page({
       id: item.claim_id,
       pending: true,
       title: item.value,
-      body: item.reason || "确认后才会加入记忆档案。",
+      body: MEMORY_REASON_TEXT[item.reason] || MEMORY_REASON_TEXT.pending_confirmation,
     }));
     const kept = (confirmed || []).map((item) => ({
       id: item.memory_id,
@@ -428,12 +451,17 @@ Page({
     if (this.data.reviewingClaimId) return;
     const authEpoch = api.currentAuthEpoch();
     this.setData({ reviewingClaimId: claimId, error: "" });
+    const forChild = this.data.guardianMode && this.data.guardianSubjectId;
     try {
-      const review = await api.reviewMemoryClaim(claimId);
+      const review = forChild
+        ? await api.reviewGuardianChildMemory(this.data.guardianSubjectId, claimId, "confirm")
+        : await api.reviewMemoryClaim(claimId);
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       const refreshed = await this.loadDays();
       if (!api.isAuthEpochCurrent(authEpoch)) return;
-      if (refreshed === "ok") {
+      if (refreshed === "ok" && forChild) {
+        wx.showToast({ title: "已确认，会记住", icon: "success" });
+      } else if (refreshed === "ok") {
         const trace = review?.trace || {};
         const reviewEventId = trace.review_event_id || review?.review_event_id || "";
         const reviewedAt = trace.reviewed_at || "";
@@ -451,6 +479,43 @@ Page({
     } catch (error) {
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ error: error?.message || "确认失败，请稍后再试。" });
+    } finally {
+      if (api.isAuthEpochCurrent(authEpoch)) this.setData({ reviewingClaimId: "" });
+    }
+  },
+
+  /*
+   * 监护人：孩子的候选「不记这个」，或已确认的「忘掉」，都是 retract。先问一句，
+   * 成功后重新拉取服务端列表，失败时保持原状。
+   */
+  async retractMemory(event) {
+    if (!(await requireLogin({ reason: "view_memory" }))) return;
+    if (!this.data.guardianMode || !this.data.guardianSubjectId) return;
+    const dataset = event?.currentTarget?.dataset || {};
+    const claimId = dataset.claimId;
+    if (typeof claimId !== "string" || !claimId || this.data.reviewingClaimId) return;
+    const pending = dataset.pending === true || dataset.pending === "true";
+    const agreed = await new Promise((resolve) => {
+      wx.showModal({
+        title: pending ? "不记这一条？" : "忘掉这一条？",
+        content: "之后机器人就不会再提起这件事。",
+        confirmText: pending ? "不记" : "忘掉",
+        success: (result) => resolve(Boolean(result?.confirm)),
+        fail: () => resolve(false),
+      });
+    });
+    if (!agreed) return;
+    const authEpoch = api.currentAuthEpoch();
+    this.setData({ reviewingClaimId: claimId, error: "" });
+    try {
+      await api.reviewGuardianChildMemory(this.data.guardianSubjectId, claimId, "retract");
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
+      const refreshed = await this.loadDays();
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
+      if (refreshed === "ok") wx.showToast({ title: pending ? "已不记" : "已忘掉", icon: "success" });
+    } catch (error) {
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
+      this.setData({ error: error?.message || "操作失败，请稍后再试。" });
     } finally {
       if (api.isAuthEpochCurrent(authEpoch)) this.setData({ reviewingClaimId: "" });
     }

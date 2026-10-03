@@ -11,7 +11,12 @@ from dataclasses import dataclass
 from services.archive.domain import EvidenceEvent
 from services.archive.memory_domain import MemoryExtraction
 from services.common.evidence_policy import contribution_for
-from services.common.redaction import redact_pii
+from services.common.explicit_memory import (
+    contains_sensitive_text,
+    explicit_remember_content,
+    low_risk_self_fact_predicate,
+    minor_sensitive_context,
+)
 
 EXPLICIT_MEMORY_POLICY_VERSION = "explicit-memory-v2"
 EXPLICIT_MEMORY_CONFIRM_REASON = "explicit-memory-low-risk"
@@ -25,172 +30,8 @@ LOW_RISK_AUTO_CONFIRM_PREDICATES = frozenset({"preference", "habit"})
 MINOR_LONG_TERM_DOMAIN_ALLOWLIST = frozenset(
     {"study_progress", "learning_preference", "daily_life"}
 )
-
-_EXPLICIT_REMEMBER = re.compile(
-    r"^(?:请帮我|请|帮我)记住(?:一下)?(?:这件事)?(?:[：:,，]\s*|\s+)?(?P<content>.+)$"
-)
-_SENSITIVE_TERMS = (
-    "身份证",
-    "银行卡",
-    "手机号",
-    "家庭住址",
-    "邮箱",
-    "密码",
-    "验证码",
-    "病史",
-    "诊断",
-    "过敏",
-    "血压",
-    "血糖",
-    "手术",
-    "抑郁",
-    "焦虑",
-    "收入",
-    "工资",
-    "资产",
-    "负债",
-    "贷款",
-    "诉讼",
-    "案件",
-    "犯罪",
-    "判决",
-    "声纹",
-    "指纹",
-    "人脸",
-    "虹膜",
-    "身高",
-    "体重",
-    "身体特征",
-    "青春期",
-    "妈妈",
-    "爸爸",
-    "父母",
-    "妻子",
-    "丈夫",
-    "伴侣",
-    "朋友",
-    "同事",
-    "家人",
-    "离婚",
-    "婚外",
-)
-_LOW_RISK_TEMPLATES = (
-    (
-        "preference",
-        re.compile(r"^我(?:最|很|非常|比较|更)?(?:喜欢|不喜欢|偏好)(?P<value>.+)$"),
-    ),
-    (
-        "habit",
-        re.compile(r"^我(?:平时|通常|一直)?习惯(?P<value>.+)$"),
-    ),
-)
-_LOW_RISK_VALUE_TOKENS = (
-    "散步",
-    "跑步",
-    "运动",
-    "阅读",
-    "看书",
-    "音乐",
-    "电影",
-    "旅行",
-    "咖啡",
-    "茶",
-    "烹饪",
-    "做饭",
-    "每天",
-    "早起",
-    "早睡",
-    "日记",
-    "写作",
-    "绘画",
-    "摄影",
-    "园艺",
-    "植物",
-    "宠物",
-    "游戏",
-    "晴天",
-    "雨天",
-    "颜色",
-    "蓝色",
-    "绿色",
-    "红色",
-    "清淡",
-    "甜食",
-)
-_LOW_RISK_VALUE_SEQUENCE = re.compile(
-    "(?:"
-    + "|".join(re.escape(token) for token in sorted(_LOW_RISK_VALUE_TOKENS, key=len, reverse=True))
-    + ")+"
-)
-_SENSITIVE_SELF_FACT = re.compile(
-    r"(?:出生|生日|年龄|年纪|\d{1,3}\s*岁|"
-    r"\d{4}\s*(?:年|[-/.])\s*\d{1,2}|"
-    r"\d{1,2}\s*月\s*\d{1,2}\s*日)"
-)
-#: Whole-sentence contexts a minor long-term projection must not keep, even when
-#: the same sentence also names a safe study word such as 练习 or 数学. This is
-#: a fail-closed tightening, not an expansion of the allowlist. Criticism and
-#: conflict never have a negation exception: "老师没批评" and "老师没有批评"
-#: are still dropped.
-_MINOR_HARD_CONTEXT = (
-    "老师批评",
-    "老师没批评",
-    "老师没有批评",
-    "老师骂",
-    "被骂",
-    "训斥",
-    "罚站",
-    "吵架",
-    "打架",
-    "被欺负",
-    "闹矛盾",
-    "闹别扭",
-    "闹翻",
-)
-#: Feeling words match the mood follow-up list so a negative emotion cannot ride
-#: in on a study keyword. A short local negation ("不用紧张") does not count;
-#: anything else, including a missing or distant negation, stays fail-closed.
-_MINOR_FEELING_CONTEXT = (
-    "难过",
-    "伤心",
-    "不开心",
-    "委屈",
-    "生气",
-    "气愤",
-    "失望",
-    "沮丧",
-    "郁闷",
-    "害怕",
-    "恐惧",
-    "紧张",
-    "着急",
-    "担心",
-    "孤单",
-    "孤独",
-    "寂寞",
-    "烦躁",
-    "无聊",
-    "难受",
-)
-_MINOR_FEELING_NEGATION = re.compile(
-    r"(?:没有|不用|别|不|没)(?:太|很|非常|特别|那么|这么|有点|一点)?$"
-)
-
-
-def explicit_remember_content(text: object) -> str | None:
-    """Return the requested fact for a strict sentence-initial remember command."""
-
-    value = unicodedata.normalize("NFKC", str(text or "")).strip()
-    if not value or value.endswith(("?", "？")):
-        return None
-    match = _EXPLICIT_REMEMBER.fullmatch(value)
-    if match is None:
-        return None
-    content = match.group("content").strip()
-    question_probe = content.rstrip("。.!！").strip()
-    if not content.strip(" \t\r\n:：,，。.!！\"'“”‘’") or question_probe.endswith("吗"):
-        return None
-    return content
+#: What the extractor's own confidence must reach before a request confirms itself.
+AUTO_CONFIRM_MIN_CONFIDENCE = 0.9
 
 
 def has_exact_explicit_memory_intent(payload: Mapping[str, object]) -> bool:
@@ -221,62 +62,6 @@ def _traceable_to(value: str, source: str) -> bool:
     return len(fact) >= 2 and bool(original) and (fact in original or original in fact)
 
 
-def _contains_sensitive_text(value: str) -> bool:
-    return redact_pii(value) != value or any(term in value for term in _SENSITIVE_TERMS)
-
-
-def _negated_feeling(value: str, term: str) -> bool:
-    """True only when every hit sits immediately after a short negation."""
-
-    start = 0
-    found = False
-    while True:
-        index = value.find(term, start)
-        if index < 0:
-            return found
-        found = True
-        if _MINOR_FEELING_NEGATION.search(value[:index]) is None:
-            return False
-        start = index + len(term)
-
-
-def _minor_sensitive_context(value: str) -> bool:
-    """True when a minor sentence carries criticism, conflict, or a negative feeling.
-
-    Feeling words ignore a narrow local negation such as 不用/不/没/没有/别.
-    Hard criticism and conflict terms do not, so the guard stays fail-closed.
-    """
-
-    if any(term in value for term in _MINOR_HARD_CONTEXT):
-        return True
-    return any(
-        term in value and not _negated_feeling(value, term) for term in _MINOR_FEELING_CONTEXT
-    )
-
-
-def _is_closed_low_risk_value(value: str) -> bool:
-    segments = re.split(r"[、，,和与或]", re.sub(r"\s+", "", value))
-    return bool(segments) and all(
-        segment and _LOW_RISK_VALUE_SEQUENCE.fullmatch(segment) for segment in segments
-    )
-
-
-def low_risk_self_fact_predicate(value: object) -> str | None:
-    """Return the only server-verifiable facts eligible for auto-confirmation."""
-
-    content = unicodedata.normalize("NFKC", str(value or "")).strip().rstrip("。.!！?")
-    if not content or _contains_sensitive_text(content) or _SENSITIVE_SELF_FACT.search(content):
-        return None
-    for predicate, template in _LOW_RISK_TEMPLATES:
-        match = template.fullmatch(content)
-        if match is None:
-            continue
-        fact_value = match.group("value").strip()
-        if _is_closed_low_risk_value(fact_value):
-            return predicate
-    return None
-
-
 def filter_extraction_for_subject(
     event: EvidenceEvent,
     extraction: MemoryExtraction,
@@ -288,7 +73,7 @@ def filter_extraction_for_subject(
     if subject_category != "minor":
         return extraction
     text = str(event.payload.get("text") or "").strip()
-    if not text or _contains_sensitive_text(text) or _minor_sensitive_context(text):
+    if not text or contains_sensitive_text(text) or minor_sensitive_context(text):
         return MemoryExtraction(
             extractor_version=extraction.extractor_version,
             usage=extraction.usage,
@@ -306,8 +91,8 @@ def filter_extraction_for_subject(
             or (low_risk_daily and claim.predicate in {low_risk_predicate, "daily_life"})
         )
         and str(claim.sensitive_domain).casefold() in {"public", "personal"}
-        and not _contains_sensitive_text(claim.value)
-        and not _minor_sensitive_context(claim.value)
+        and not contains_sensitive_text(claim.value)
+        and not minor_sensitive_context(claim.value)
     )
     timeline = tuple(
         item
@@ -316,8 +101,8 @@ def filter_extraction_for_subject(
         and item.domain_category in MINOR_LONG_TERM_DOMAIN_ALLOWLIST
         and (item.domain_category != "daily_life" or low_risk_daily)
         and item.sensitivity in {"public", "personal"}
-        and not _contains_sensitive_text(item.title)
-        and not _minor_sensitive_context(item.title)
+        and not contains_sensitive_text(item.title)
+        and not minor_sensitive_context(item.title)
     )
     knowledge = tuple(
         item
@@ -325,10 +110,10 @@ def filter_extraction_for_subject(
         if not item.entity_keys
         and item.domain_category in {"study_progress", "learning_preference"}
         and item.sensitivity in {"public", "personal"}
-        and not _contains_sensitive_text(item.question)
-        and not _contains_sensitive_text(item.answer)
-        and not _minor_sensitive_context(item.question)
-        and not _minor_sensitive_context(item.answer)
+        and not contains_sensitive_text(item.question)
+        and not contains_sensitive_text(item.answer)
+        and not minor_sensitive_context(item.question)
+        and not minor_sensitive_context(item.answer)
     )
     return MemoryExtraction(
         claims=claims,
@@ -420,7 +205,7 @@ class MemoryWritePolicy:
         content = explicit_remember_content(event.payload.get("text"))
         if content is None:
             return MemoryWriteDecision(False, "invalid_explicit_command")
-        if subject_category == "minor" and _contains_sensitive_text(content):
+        if subject_category == "minor" and contains_sensitive_text(content):
             return MemoryWriteDecision(False, "minor_long_term_boundary", content)
         low_risk_predicate = low_risk_self_fact_predicate(content)
         if low_risk_predicate is None:
@@ -442,7 +227,10 @@ class MemoryWritePolicy:
             or claim.predicate != low_risk_predicate
         ):
             return MemoryWriteDecision(False, "auto_confirm_predicate_mismatch", content)
-        if claim.confidence * contribution.factor < 0.9:
+        # The child's own "帮我记住…" is a command, not an answer to the robot's last line, so the
+        # prompt-kind discount (open 0.7, structured and leading 0.35) does not apply to it: with
+        # it every request after the first turn scored 0.63 and stayed a candidate (2026-10-02).
+        if claim.confidence < AUTO_CONFIRM_MIN_CONFIDENCE:
             return MemoryWriteDecision(False, "insufficient_confidence", content)
         if not _traceable_to(claim.value, content):
             return MemoryWriteDecision(False, "claim_not_traceable", content)
@@ -464,7 +252,7 @@ class MemoryWritePolicy:
             for value in sensitivity_values
         ):
             return MemoryWriteDecision(False, "sensitive_or_unknown_domain", content)
-        if any(_contains_sensitive_text(value) for value in text_values):
+        if any(contains_sensitive_text(value) for value in text_values):
             return MemoryWriteDecision(False, "sensitive_content", content)
         if claim.predicate in SINGLE_VALUE_PREDICATES and any(
             str(value) != claim.value for value in existing_values

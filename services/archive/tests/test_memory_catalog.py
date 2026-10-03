@@ -153,11 +153,12 @@ async def _record(
     explicit_memory: bool = False,
     account_id: str = "account-memory",
     subject_id: str | None = None,
+    prompt_kind: str = "spontaneous",
 ) -> None:
     payload: dict[str, object] = {
         "text": text,
         "interaction_mode": "companion",
-        "prompt_kind": "spontaneous",
+        "prompt_kind": prompt_kind,
         "owner_projection_eligible": speaker_class == "owner",
         "tool_epoch": 0,
     }
@@ -798,6 +799,82 @@ async def test_minor_explicit_daily_preference_confirms_without_sensitive_captur
         ("daily_life", "confirmed", "minor-reading")
     }
     assert sensitive.items == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("text", "prompt_kind"),
+    [
+        # The robot ends nearly every line with a question, so from the second turn on the child's
+        # command used to score 0.95 x 0.7 and stay a candidate nobody could confirm.
+        ("帮我记住我最喜欢蓝色。", "open"),
+        ("帮我记住我最喜欢蓝色。", "structured"),
+        # First sentence after wake: the greeting echo is glued in front of the command.
+        ("晚上好，你在？ 帮我记住，我最喜欢蓝色。", "spontaneous"),
+        ("哎，你好！ 帮我记住我最喜欢蓝色。", "open"),
+    ],
+)
+async def test_a_childs_explicit_request_is_confirmed_whatever_preceded_it(
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
+    text: str,
+    prompt_kind: str,
+) -> None:
+    await _record(
+        archive,
+        event_id="minor-explicit-after-question",
+        text=text,
+        explicit_memory=True,
+        prompt_kind=prompt_kind,
+    )
+    catalog = await make_catalog(
+        extractor=RuleBasedMemoryExtractor(),
+        subject_category_resolver=lambda _: "minor",
+    )
+
+    report = await catalog.compile_pending()
+    confirmed = await catalog.search(
+        MemorySearchQuery(
+            account_id="account-memory",
+            speaker_class="owner",
+            text="蓝色",
+            include_candidates=False,
+        )
+    )
+
+    assert report.failed_events == 0
+    assert {(item.status, item.source_event_id) for item in confirmed.items} == {
+        ("confirmed", "minor-explicit-after-question")
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_childs_plain_statement_after_a_question_still_only_becomes_a_candidate(
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
+) -> None:
+    await _record(
+        archive,
+        event_id="minor-plain-after-question",
+        text="我最喜欢蓝色。",
+        prompt_kind="open",
+    )
+    catalog = await make_catalog(
+        extractor=RuleBasedMemoryExtractor(),
+        subject_category_resolver=lambda _: "minor",
+    )
+
+    await catalog.compile_pending()
+    confirmed = await catalog.search(
+        MemorySearchQuery(
+            account_id="account-memory",
+            speaker_class="owner",
+            text="蓝色",
+            include_candidates=False,
+        )
+    )
+
+    assert confirmed.items == ()
 
 
 @pytest.mark.asyncio

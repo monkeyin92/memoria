@@ -705,6 +705,37 @@ function reviewMemoryClaim(claimId, action = "confirm") {
   });
 }
 
+/*
+ * 监护人审核孩子的记忆：孩子的候选没有别人能确认，只有绑定设备的家长可以。
+ * 确认后机器人才会在以后的聊天里提起；「不记」和「忘掉」都是 retract。
+ * 客户端同样不本地改状态，成功后重新拉取服务端的列表。
+ */
+function getGuardianChildMemories(minorUserId, limit = 20) {
+  return rawRequest(
+    `/v1/guardian/minors/${encodeURIComponent(minorUserId)}/memories?limit=${encodeURIComponent(limit)}`,
+  );
+}
+
+function reviewGuardianChildMemory(minorUserId, claimId, action) {
+  if (
+    typeof minorUserId !== "string" ||
+    !minorUserId ||
+    typeof claimId !== "string" ||
+    !claimId ||
+    claimId.trim() !== claimId ||
+    claimId.length > 256
+  ) {
+    return Promise.reject(new TypeError("孩子的记忆审核参数无效"));
+  }
+  if (action !== "confirm" && action !== "retract") {
+    return Promise.reject(new TypeError("不支持的记忆审核动作"));
+  }
+  return rawRequest(
+    `/v1/guardian/minors/${encodeURIComponent(minorUserId)}/memories/${encodeURIComponent(claimId)}/review`,
+    { method: "POST", data: { action } },
+  );
+}
+
 function getDeliveredCapabilities() {
   return rawRequest("/v1/account/delivered-capabilities");
 }
@@ -1360,6 +1391,8 @@ module.exports = {
   summarizeDay,
   getGuardianChildDays,
   generateGuardianChildRecap,
+  getGuardianChildMemories,
+  reviewGuardianChildMemory,
   getConversationReview,
   getConversationSessions,
   getConversationHistory,

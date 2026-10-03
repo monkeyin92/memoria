@@ -40,10 +40,7 @@ from services.archive.memory_domain import (
     MemorySearchQuery,
     MemorySensitivity,
 )
-from services.archive.memory_write_policy import (
-    EXPLICIT_MEMORY_INTENT,
-    explicit_remember_content,
-)
+from services.archive.memory_write_policy import EXPLICIT_MEMORY_INTENT
 from services.archive.object_store import ObjectRef, ObjectStore
 from services.common.companions import (
     DEFAULT_COMPANION_ID,
@@ -51,6 +48,7 @@ from services.common.companions import (
     designed_voice_profile,
     designed_voice_speaker_sha256,
 )
+from services.common.explicit_memory import explicit_remember_content
 from services.control_api.app.account_gate import (
     AccountDeletingError,
     AccountOperationGate,

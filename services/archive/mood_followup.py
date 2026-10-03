@@ -34,7 +34,7 @@ from services.archive.memory_domain import (
     MemoryExtractor,
 )
 from services.archive.memory_extractor import statement_domain_category
-from services.archive.memory_write_policy import explicit_remember_content
+from services.common.explicit_memory import explicit_remember_content
 
 #: Explicit feeling words, matched against the owner's own words. Two-character
 #: forms only, so "有点烦" (a reason-less mood) is intentionally not caught here;

@@ -96,6 +96,8 @@
     </block>
 
     <block wx:else>
+      <view wx:if="{{guardianMode}}" class="notice">这里是孩子和机器人聊天时可能被记住的事。只有你点了「确认记住」的，机器人才会在以后的聊天里提起；不想让它记的，点「不记这个」。</view>
+      <view wx:if="{{guardianMode && guardianError}}" class="notice notice-warn">{{guardianError}}</view>
       <view class="memory-chips">
         <view class="pill {{memoryFilter === 'all' ? 'pill-teal' : 'pill-neutral'}}" data-filter="all" bindtap="setMemoryFilter">全部</view>
         <view class="pill {{memoryFilter === 'pending' ? 'pill-teal' : 'pill-neutral'}}" data-filter="pending" bindtap="setMemoryFilter">待你确认的记忆 {{pendingCount}}</view>
@@ -109,13 +111,17 @@
           <text class="l2-card-sub">{{item.body}}</text>
           <view wx:if="{{item.pending}}" class="button-row">
             <button class="secondary-button btn-sm" data-claim-id="{{item.id}}" disabled="{{reviewingClaimId}}" bindtap="confirmCandidate">确认记住</button>
+            <button wx:if="{{guardianMode}}" class="secondary-button btn-sm" data-claim-id="{{item.id}}" data-pending="{{true}}" disabled="{{reviewingClaimId}}" bindtap="retractMemory">不记这个</button>
+          </view>
+          <view wx:elif="{{guardianMode}}" class="button-row">
+            <button class="secondary-button btn-sm" data-claim-id="{{item.id}}" data-pending="{{false}}" disabled="{{reviewingClaimId}}" bindtap="retractMemory">忘掉这条</button>
           </view>
         </view>
       </block>
       <view wx:else class="l2-card memory-empty">
         <glass-icon name="memory" size="176"></glass-icon>
         <text class="l2-card-title">{{memoryFilter === 'pending' ? '待确认内容已处理完' : '这里还没有内容'}}</text>
-        <text class="l2-card-sub">这里还空空的，没关系。需要时再来看看，一切由你决定。</text>
+        <text class="l2-card-sub">{{guardianMode ? '孩子让机器人记住的事、聊到的学习进度，会先出现在这里等你确认。' : '这里还空空的，没关系。需要时再来看看，一切由你决定。'}}</text>
         <view class="button-row">
           <button class="secondary-button btn-sm" bindtap="openArchive">查看我的记忆档案</button>
         </view>
