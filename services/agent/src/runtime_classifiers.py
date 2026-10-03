@@ -62,12 +62,26 @@ class DuplexRuntimeClassifierMixin:
     ) -> None:
         self._conversation_close_semantic_resolver = resolver
 
-    async def resolve_conversation_close_needed(self, text: str) -> bool:
+    async def resolve_conversation_close_needed(self, text: str, *, log_wait: bool = True) -> bool:
+        """The verdict; ``log_wait=False`` for a background evaluation that no commit waits on."""
+
         from services.agent.src.conversation_close_router import (
             resolve_conversation_close_needed,
         )
 
         return await resolve_conversation_close_needed(
+            text,
+            cache=self._conversation_close_cache,
+            semantic_resolver=self._conversation_close_semantic_resolver,
+            log_wait=log_wait,
+        )
+
+    def start_conversation_close_verdict(self, text: str) -> None:
+        """Start the semantic close verdict in the background; the turn commit joins it."""
+
+        from services.agent.src.conversation_close_router import start_conversation_close_verdict
+
+        start_conversation_close_verdict(
             text,
             cache=self._conversation_close_cache,
             semantic_resolver=self._conversation_close_semantic_resolver,

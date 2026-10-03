@@ -194,6 +194,34 @@ async def test_provider_forwards_committed_turn_preparation_to_the_shared_agent(
     assert await adapter.prepare_committed_turn(identity, "帮我制定计划") == expected
 
 
+def test_provider_tells_the_shared_agent_which_turn_is_about_to_commit() -> None:
+    identity = SessionIdentity("warmed-provider")
+    warmed: list[str] = []
+
+    class WarmingLLM(FakeLLM):
+        def warm_committed_turn(self, text: str) -> None:
+            warmed.append(text)
+
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=FakeASR,  # type: ignore[arg-type]
+        language_model=WarmingLLM(),
+        speech_synthesis=FakeTTS(),
+    )
+    adapter.warm_committed_turn(identity, "后天呢")
+
+    assert warmed == ["后天呢"]
+
+
+def test_a_language_model_without_the_warm_up_seam_prepares_as_before() -> None:
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=FakeASR,  # type: ignore[arg-type]
+        language_model=FakeLLM(),
+        speech_synthesis=FakeTTS(),
+    )
+
+    adapter.warm_committed_turn(SessionIdentity("not-warmed-provider"), "后天呢")
+
+
 class SizedTTS:
     def __init__(self, samples: int) -> None:
         self.samples = samples

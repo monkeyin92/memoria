@@ -235,6 +235,18 @@ class ExistingVoiceProviderAdapter:
             raise RuntimeError("orchestrated language-model handler has no output-intent seam")
         return acceptor(intent)
 
+    def warm_committed_turn(self, identity: SessionIdentity, text: str) -> None:
+        """Tell the shared Agent which sentence is about to be committed, while its grace still runs.
+
+        The Agent starts what its preparation would otherwise wait for (the bound person's memory); the
+        later ``prepare_committed_turn`` uses it only for the same sentence.  A language model without
+        the seam simply prepares as before.
+        """
+
+        warm = getattr(self.language_model, "warm_committed_turn", None)
+        if callable(warm):
+            warm(text)
+
     async def prepare_committed_turn(
         self,
         identity: SessionIdentity,

@@ -19,8 +19,9 @@ The verdict started at the ASR final has no caller yet, so it runs as a backgrou
 joins; ``aclose`` cancels such tasks when the runtime closes.
 
 Two log lines say how long the cloud classifier really takes and whether the turn waited for it (TODOLIST N-14 4;
-never the text): ``classifier call`` when a call ends, and ``classifier verdict wait`` when a caller had to wait for
-one, either its own or the one it joined.  A verdict that was already cached waits for nothing and logs nothing.
+never the text): ``classifier call`` when a call ends, and ``classifier verdict wait`` when a turn path had to wait
+for one, either its own or the one it joined.  A verdict that was already cached waits for nothing and logs nothing,
+and so does a background evaluation that no commit waits on (``log_wait=False``): the wait line is the child's wait.
 """
 
 from __future__ import annotations
@@ -136,6 +137,8 @@ async def resolve_shared(
     key: str,
     resolver: Resolver,
     text: str,
+    *,
+    log_wait: bool = True,
 ) -> bool:
     """The verdict for ``text``: join the call in flight for ``key``, or make it, caching what it returns."""
 
@@ -147,10 +150,12 @@ async def resolve_shared(
     while (flight := cache.inflight.get(key)) is not None and flight.joinable():
         verdict = await asyncio.shield(flight.future)
         if verdict is not None:
-            _log_wait(cache, "joined", started)
+            if log_wait:
+                _log_wait(cache, "joined", started)
             return verdict
     verdict = await cache.run(key, resolver, text)
-    _log_wait(cache, "called", started)
+    if log_wait:
+        _log_wait(cache, "called", started)
     return verdict
 
 

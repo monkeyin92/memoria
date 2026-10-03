@@ -384,6 +384,7 @@ class MediaPlaybackStopMixin:
                     len(result.text.strip()),
                 )
                 self._schedule_turn_commit(context)
+                self._warm_followup_commit(context, result, endpoint)
             return
         if (
             context.pending.turn_start_sample is not None
@@ -408,6 +409,42 @@ class MediaPlaybackStopMixin:
             len(result.text.strip()),
         )
         self._schedule_turn_commit(context)
+        self._warm_followup_commit(context, result, endpoint)
+
+    @staticmethod
+    def _warm_followup_commit(
+        context: _MediaVoiceSession, result: ASRResult, endpoint: int
+    ) -> None:
+        """The follow-up endpoint stands and its grace runs: start what the commit would wait for after it.
+
+        Round 12 (2026-10-03): the conversation-close verdict (p50 403 ms) was asked only after the grace,
+        because the evaluation task scheduled by the final found the endpoint already pinned and returned
+        without asking; the bound person's memory (about 0.4 s) was fetched after it too.  The sentence is
+        read the way the commit will read it (the pending turn up to the endpoint), so a final that extends
+        the turn starts the longer text; whatever nobody uses costs one read-only call.  Never at the price
+        of the endpoint itself: a failure here is logged and the commit goes on as before.
+        """
+
+        start = context.pending.turn_start_sample
+        if start is None:
+            return
+        text = context.runtime.speech_timeline.projected_text(
+            stream_epoch=result.stream_epoch, start_sample=start, end_sample=endpoint
+        ).strip()
+        if not text:
+            return
+        try:
+            context.runtime.start_conversation_close_verdict(text)
+            warm = getattr(context.provider, "warm_committed_turn", None)
+            if callable(warm):
+                warm(context.identity, text)
+        except Exception:
+            logger.warning(
+                "media follow-up warm-up failed session=%s text_len=%s",
+                context.identity.session_id,
+                len(text),
+                exc_info=True,
+            )
 
     @staticmethod
     def _echo_candidate_yields_to_live_vad(

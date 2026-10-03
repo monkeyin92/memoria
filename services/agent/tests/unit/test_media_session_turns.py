@@ -5712,6 +5712,198 @@ async def test_media_playback_followup_endpoints_without_vad_edge(
     )
 
 
+class _CloseVerdict:
+    """The conversation-close classifier of a test: it answers when the test says so."""
+
+    def __init__(self, answer: bool = False) -> None:
+        self.answer = answer
+        self.calls: list[str] = []
+        self.release = asyncio.Event()
+
+    async def __call__(self, text: str) -> bool:
+        self.calls.append(text)
+        await self.release.wait()
+        return self.answer
+
+
+async def _let_tasks_run() -> None:
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_media_playback_followup_starts_the_close_verdict_before_the_grace_runs_out(
+    device_media_session: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Round 12 (2026-10-03): the conversation-close verdict took p50 403 ms of the commit, after the grace.
+
+    The ASR final schedules an evaluation task for it, but the same call goes on to pin the follow-up
+    endpoint, and by the time the task ran it saw the pinned endpoint and returned without asking the
+    classifier: the commit asked, 1.2 s later, and the child waited for the answer.  The verdict now starts
+    when the endpoint is pinned, so it is ready when the grace is over.
+    """
+
+    monkeypatch.setenv("MEDIA_PLAYBACK_FOLLOWUP_GRACE_S", "0.6")
+    window = await device_media_session("followup-close-verdict-warm")
+    registry, identity, context = window.registry, window.identity, window.context
+    await _complete_previous_device_playback(window)
+    verdict = _CloseVerdict(False)
+    context.runtime.set_conversation_close_semantic_resolver(verdict)
+
+    await _accept_media_asr_final(
+        registry,
+        identity,
+        sentence_id="followup-1",
+        start_sample=215_000,
+        end_sample=230_000,
+        text="后天呢",
+    )
+    assert context.pending.turn_endpoint_sample == 230_000
+    await _let_tasks_run()
+
+    assert verdict.calls == ["后天呢"]  # asked while the grace still runs
+    assert window.provider.prepared == []  # the commit has not begun
+    verdict.release.set()
+    await _wait_until(lambda: window.provider.prepared == ["后天呢"], timeout=3.0)
+    assert verdict.calls == ["后天呢"]  # and the commit used that call instead of asking again
+
+
+@pytest.mark.asyncio
+async def test_media_playback_followup_that_grows_asks_about_the_whole_sentence(
+    device_media_session: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second final that extends the endpoint changes the sentence the commit will ask about."""
+
+    monkeypatch.setenv("MEDIA_PLAYBACK_FOLLOWUP_GRACE_S", "0.6")
+    window = await device_media_session("followup-close-verdict-grows")
+    registry, identity, context = window.registry, window.identity, window.context
+    await _complete_previous_device_playback(window)
+    verdict = _CloseVerdict(False)
+    context.runtime.set_conversation_close_semantic_resolver(verdict)
+
+    await _accept_media_asr_final(
+        registry,
+        identity,
+        sentence_id="followup-1",
+        start_sample=215_000,
+        end_sample=225_000,
+        text="后天",
+    )
+    await _accept_media_asr_final(
+        registry,
+        identity,
+        sentence_id="followup-2",
+        start_sample=226_000,
+        end_sample=232_000,
+        text="天气呢",
+        revision=2,
+    )
+    await _let_tasks_run()
+    assert context.pending.playback_followup_endpoint_sample == 232_000
+    committed_text = _resolve_media_turn_text(
+        context, stream_epoch=1, start_sample=215_000, end_sample=232_000
+    )
+    assert committed_text is not None and "后天" in committed_text and "天气呢" in committed_text
+
+    assert committed_text in verdict.calls  # the grown sentence is asked about before the commit
+    assert window.provider.warmed[-1] == committed_text  # and announced to the provider
+    verdict.release.set()
+    await _wait_until(lambda: window.provider.prepared == [committed_text], timeout=3.0)
+    assert verdict.calls.count(committed_text) == 1
+
+
+@pytest.mark.asyncio
+async def test_media_playback_followup_names_the_sentence_to_the_provider_before_the_commit(
+    device_media_session: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The provider starts what its preparation waits for (the bound person's memory) inside the grace."""
+
+    monkeypatch.setenv("MEDIA_PLAYBACK_FOLLOWUP_GRACE_S", "0.6")
+    window = await device_media_session("followup-warm-provider")
+    registry, identity, context = window.registry, window.identity, window.context
+    await _complete_previous_device_playback(window)
+
+    await _accept_media_asr_final(
+        registry,
+        identity,
+        sentence_id="followup-1",
+        start_sample=215_000,
+        end_sample=230_000,
+        text="后天呢",
+    )
+
+    assert window.provider.warmed == ["后天呢"]
+    assert window.provider.prepared == []  # the commit has not begun
+    await _wait_until(lambda: window.provider.prepared == ["后天呢"], timeout=3.0)
+    assert window.provider.warmed == ["后天呢"]
+    assert context.pending.turn_endpoint_sample is None  # committed
+
+
+@pytest.mark.asyncio
+async def test_media_playback_echo_tail_is_not_announced_to_the_provider(
+    device_media_session: Any,
+) -> None:
+    """Only speech that pins the follow-up endpoint is warmed: the reply's own echo costs no call."""
+
+    window = await device_media_session("followup-warm-echo-tail")
+    registry, identity, context = window.registry, window.identity, window.context
+    await _complete_previous_device_playback(window)
+    context.pending.active_vad_start_sample = 195_000
+
+    await _accept_media_asr_final(
+        registry,
+        identity,
+        sentence_id="tail-1",
+        start_sample=195_000,
+        end_sample=208_000,
+        text="多云转晴",
+    )
+    assert context.pending.turn_endpoint_sample is None
+    assert window.provider.warmed == []
+
+    await _accept_media_asr_final(
+        registry,
+        identity,
+        sentence_id="followup-1",
+        start_sample=215_000,
+        end_sample=230_000,
+        text="后天呢",
+    )
+    assert window.provider.warmed == ["后天呢"]
+    await _wait_until(lambda: window.provider.prepared == ["后天呢"], timeout=3.0)
+
+
+@pytest.mark.asyncio
+async def test_media_playback_followup_keeps_its_endpoint_when_the_warm_up_fails(
+    device_media_session: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    window = await device_media_session("followup-warm-failure")
+    registry, identity, context = window.registry, window.identity, window.context
+    await _complete_previous_device_playback(window)
+
+    def refuse(_identity: SessionIdentity, _text: str) -> None:
+        raise RuntimeError("control plane down")
+
+    window.provider.warm_committed_turn = refuse
+    with caplog.at_level(logging.WARNING):
+        await _accept_media_asr_final(
+            registry,
+            identity,
+            sentence_id="followup-1",
+            start_sample=215_000,
+            end_sample=230_000,
+            text="后天呢",
+        )
+
+    assert context.pending.turn_endpoint_sample == 230_000
+    await _wait_until(lambda: window.provider.prepared == ["后天呢"], timeout=3.0)
+    assert any("media follow-up warm-up failed" in record.message for record in caplog.records)
+
+
 @pytest.mark.asyncio
 async def test_media_playback_followup_echo_tail_cannot_endpoint(
     device_media_session: Any,

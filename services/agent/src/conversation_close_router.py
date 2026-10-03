@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
-from services.agent.src.classifier_inflight import resolve_shared
+from services.agent.src.classifier_inflight import resolve_shared, start_shared
 from services.agent.src.orchestration.interruption_guard import (
     _conversation_close_compact,
     is_completion_ack_only,
@@ -40,6 +40,7 @@ async def resolve_conversation_close_needed(
     *,
     cache: dict[str, bool],
     semantic_resolver: Callable[[str], Awaitable[bool]] | None = None,
+    log_wait: bool = True,
 ) -> bool:
     """Resolve once per normalized query; rule hits skip the classifier."""
 
@@ -58,7 +59,32 @@ async def resolve_conversation_close_needed(
     if semantic_resolver is None:
         cache[compact] = False
         return False
-    return await resolve_shared(cache, compact, semantic_resolver, text)
+    return await resolve_shared(cache, compact, semantic_resolver, text, log_wait=log_wait)
+
+
+def start_conversation_close_verdict(
+    text: str,
+    *,
+    cache: dict[str, bool],
+    semantic_resolver: Callable[[str], Awaitable[bool]] | None,
+) -> None:
+    """Start the semantic verdict for a sentence that is about to be committed, and leave it in flight.
+
+    The commit joins this call instead of asking the classifier itself once the end-of-speech grace is over
+    (TODOLIST N-14 7).  Nothing is started where ``resolve_conversation_close_needed`` would not call the
+    classifier: a cached verdict, a rule hit, a stop word or a completion acknowledgement.
+    """
+
+    compact = conversation_close_cache_key(text)
+    if (
+        semantic_resolver is None
+        or not compact
+        or compact in cache
+        or rule_conversation_close_only(text)
+        or lexical_playback_control_only(text)
+    ):
+        return
+    start_shared(cache, compact, semantic_resolver, text)
 
 
 def conversation_close_needed(
