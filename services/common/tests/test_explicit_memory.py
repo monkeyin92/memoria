@@ -75,6 +75,71 @@ def test_the_lead_in_path_is_narrow(text: str) -> None:
 @pytest.mark.parametrize(
     "text",
     [
+        # Round 12 (2026-10-03), first sentence after wake: a 7-character final nobody said to the robot
+        # was merged into the turn, and the question mark at its end made the whole sentence "a question".
+        "帮我记住我最喜欢绿色。 你告诉我哪个？",
+        "帮我记住我最喜欢绿色。 你告诉我哪个",
+        "帮我记住我最喜欢绿色。你记住了吗？",
+        "帮我记住我最喜欢绿色。好不好？你说呢。",
+        "帮我记住我最喜欢绿色。嗯。",
+        # A greeting echo ahead of the command and a stray sentence after it.
+        "晚上好，你在？ 帮我记住，我最喜欢绿色。 你记住了吗？",
+    ],
+)
+def test_one_or_two_short_sentences_after_the_command_do_not_hide_a_self_fact(text: str) -> None:
+    assert explicit_remember_content(text) == "我最喜欢绿色。"
+    for minor in (True, False):
+        assert explicit_remember_will_save(text, minor=minor) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # The command sentence itself is the question.
+        "帮我记住我最喜欢蓝色吗？你说呢。",
+        # Only a closed low-risk self fact may have a stray sentence after it.
+        "帮我记住我喜欢恐龙。你告诉我哪个？",
+        "帮我记住明天要交作业。你告诉我哪个？",
+        # Three, or one longer than a stray remark, are a conversation, not a remark.
+        "帮我记住我最喜欢蓝色。好。嗯。啊。",
+        "帮我记住我最喜欢蓝色。然后我们明天要去动物园玩好不好呀可以吗？",
+        # A retraction after the command takes the request back.
+        "帮我记住我最喜欢蓝色。算了不用了。",
+        "帮我记住我最喜欢蓝色。不对，是绿色。",
+        "帮我记住我最喜欢蓝色。你别记了。",
+        "帮我记住我最喜欢蓝色。其实是绿色。",
+        "帮我记住我最喜欢蓝色。换成绿色吧。",
+        # Family details are sensitive wherever they sit in the sentence.
+        "帮我记住我最喜欢蓝色。我爸爸叫小明。",
+    ],
+)
+def test_the_trailing_sentence_path_is_narrow(text: str) -> None:
+    for minor in (True, False):
+        assert explicit_remember_will_save(text, minor=minor) is False
+
+
+def test_what_is_not_a_closed_fact_keeps_its_whole_sentence() -> None:
+    # The extractor needs the whole sentence when the fact is not one the archive confirms on its own.
+    assert explicit_remember_content("帮我记住明天要交作业。你说呢。") == "明天要交作业。你说呢。"
+    assert explicit_remember_content("帮我记住我喜欢恐龙。你告诉我哪个？") is None
+    assert (
+        explicit_remember_content("帮我记住我最喜欢蓝色。算了不用了。")
+        == "我最喜欢蓝色。算了不用了。"
+    )
+
+
+def test_a_stray_trailing_question_alone_does_not_make_a_command() -> None:
+    assert explicit_remember_content("我最喜欢绿色。 你告诉我哪个？") is None
+    assert explicit_remember_content("帮我记住我最喜欢蓝色吗？你说呢。") != "我最喜欢蓝色。"
+    assert (
+        explicit_remember_content("帮我记住我最喜欢蓝色。然后我们明天要去动物园玩好不好呀可以吗？")
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
         "帮我记住我最喜欢蓝色",
         "请你记住，我喜欢音乐。",
         "你要记住我喜欢绿色",
@@ -83,6 +148,12 @@ def test_the_lead_in_path_is_narrow(text: str) -> None:
         "别忘了我喜欢蓝色",
         "记住啦，帮我记一下我早睡。",
         "你记住我喜欢蓝色",
+        # A question mark ends only its own sentence: a later question does not take the command back.
+        "帮我记住我最喜欢绿色。 你告诉我哪个？",
+        "帮我记住我最喜欢蓝色。你记住了吗？",
+        # Round 12: the ASR dropped 「帮」 and put a stray word ahead of the request.
+        "滚蛋！ 我记住我最喜欢绿色。",
+        "我记住，我最喜欢绿色。",
     ],
 )
 def test_asks_to_remember_finds_the_request_anywhere(text: str) -> None:
@@ -100,6 +171,11 @@ def test_asks_to_remember_finds_the_request_anywhere(text: str) -> None:
         "你记住了吗？",
         "我会记住的",
         "老师让我记住这首诗",
+        "我记住了。",
+        "我记住啦！",
+        "好，我记住这首诗了",
+        "帮我记住我最喜欢蓝色吗？",
+        "你能帮我记住我最喜欢蓝色吗？你说呢？",
     ],
 )
 def test_asks_to_remember_ignores_statements_and_questions_about_memory(text: str) -> None:

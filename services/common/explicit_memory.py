@@ -22,10 +22,41 @@ _EXPLICIT_REMEMBER = re.compile(rf"^{_COMMAND}(?P<content>.+)$")
 _LEAD_IN_THEN_REMEMBER = re.compile(
     rf"^(?:[^。!?.\s][^。!?.]{{0,15}}[。!?.]+\s*){{1,2}}(?P<command>{_COMMAND}.+)$"
 )
-# A request to remember, wherever it sits in the sentence ("我记住了" and "你记住了吗" are not).
+# A request to remember, wherever it sits in the sentence ("我记住了" and "你记住了吗" are not).  A bare
+# "我记住，我最喜欢绿色" is the ASR's reading of 「帮我记住…」 with the first word lost (2026-10-03
+# round 12, first sentence after wake: "滚蛋！ 我记住我最喜欢绿色。"): the robot must not promise it either.
 _REMEMBER_REQUEST = re.compile(
-    r"(?:^|[,。!;:\s])(?:请你|请|麻烦你?|帮我|给我|替我|你要|你得|你可要|你能|你|能不能|可以)?"
+    r"(?:^|[,。!;:\s])(?:"
+    r"(?:请你|请|麻烦你?|帮我|给我|替我|你要|你得|你可要|你能|你|能不能|可以)?"
     r"(?:记住(?!了)|记一下|记下来|别忘了|不要忘了|不要忘记)"
+    r"|我记住[,\s]*我"
+    r")"
+)
+# A sentence with its end marks (the last one may have none).
+_SENTENCE = re.compile(r"[^。!?.]+[。!?.]*")
+# What may stand after the command without being part of it: a stray remark of the room, or the child asking
+# whether the robot got it ("你记住了吗？", 2026-10-03 round 12: "帮我记住我最喜欢绿色。 你告诉我哪个？").
+_STRAY_SENTENCE_MAX_CHARS = 16
+_MAX_STRAY_SENTENCES = 2
+# A sentence that takes the request back or changes it is not a stray remark.
+_RETRACTION_CUES = (
+    "算了",
+    "不用",
+    "别记",
+    "不要记",
+    "不记",
+    "不对",
+    "不是",
+    "错了",
+    "改成",
+    "改了",
+    "换成",
+    "更正",
+    "其实",
+    "应该是",
+    "取消",
+    "忘了",
+    "忘掉",
 )
 
 SENSITIVE_TERMS = (
@@ -180,16 +211,22 @@ def _normalized(text: object) -> str:
     return unicodedata.normalize("NFKC", str(text or "")).strip()
 
 
-def explicit_remember_content(text: object) -> str | None:
-    """Return the requested fact for a strict sentence-initial remember command.
+def _sentences(value: str) -> list[str]:
+    return [m.group(0).strip() for m in _SENTENCE.finditer(value) if m.group(0).strip(" 。!?.")]
 
-    One or two short lead-in sentences before the command are tolerated only when what follows is
-    a closed low-risk self fact (the only kind the archive confirms on its own): a lead-in that
-    belongs to the content ("我明天考试。帮我记住这件事") must keep the whole sentence for the
-    extractor, so it never takes this path.
-    """
 
-    value = _normalized(text)
+def _is_stray_sentence(sentence: str) -> bool:
+    body = sentence.rstrip("。!?. ")
+    return (
+        bool(body)
+        and len(body) <= _STRAY_SENTENCE_MAX_CHARS
+        and not any(cue in sentence for cue in _RETRACTION_CUES)
+    )
+
+
+def _command_content(value: str) -> str | None:
+    """What a normalized sentence asks to remember, or None when it is not a strict command."""
+
     if not value or value.endswith(("?", "？")):
         return None
     match = _EXPLICIT_REMEMBER.fullmatch(value)
@@ -209,13 +246,45 @@ def explicit_remember_content(text: object) -> str | None:
     return content
 
 
-def asks_to_remember(text: object) -> bool:
-    """True when the sentence asks the listener to remember something (not a question about it)."""
+def explicit_remember_content(text: object) -> str | None:
+    """Return the requested fact for a strict sentence-initial remember command.
+
+    One or two short lead-in sentences before the command are tolerated only when what follows is
+    a closed low-risk self fact (the only kind the archive confirms on its own): a lead-in that
+    belongs to the content ("我明天考试。帮我记住这件事") must keep the whole sentence for the
+    extractor, so it never takes this path.  The same holds after the command: one or two short
+    stray sentences (a question about whether the robot got it, a remark of the room) are cut off
+    when what stands before them is a closed low-risk self fact; a sentence that takes the request
+    back ("算了不用了") is never cut off, and what is not a closed fact keeps its whole sentence.
+    """
 
     value = _normalized(text)
-    if not value or value.rstrip("。.! ").endswith(("?", "吗")):
-        return False
-    return _REMEMBER_REQUEST.search(value) is not None
+    content = _command_content(value)
+    if content is not None and low_risk_self_fact_predicate(content) is not None:
+        return content
+    sentences = _sentences(value)
+    for dropped in range(1, _MAX_STRAY_SENTENCES + 1):
+        if len(sentences) <= dropped or not all(
+            _is_stray_sentence(s) for s in sentences[-dropped:]
+        ):
+            break
+        trimmed = _command_content(" ".join(sentences[:-dropped]))
+        if trimmed is not None and low_risk_self_fact_predicate(trimmed) is not None:
+            return trimmed
+    return content
+
+
+def asks_to_remember(text: object) -> bool:
+    """True when a sentence asks the listener to remember something (not a question about it).
+
+    A question mark ends only its own sentence: "帮我记住我最喜欢绿色。 你告诉我哪个？" still asks.
+    """
+
+    return any(
+        _REMEMBER_REQUEST.search(sentence) is not None
+        for sentence in _sentences(_normalized(text))
+        if not sentence.rstrip("。.! ").endswith(("?", "吗"))
+    )
 
 
 def contains_sensitive_text(value: str) -> bool:

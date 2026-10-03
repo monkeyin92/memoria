@@ -82,6 +82,8 @@ def _instructions(query: str, *, minor: bool = True, grant: bool = True) -> str:
         "请帮我记住：我平时习惯早起。",
         # The wake greeting leaked back through the speaker and was glued to the first sentence.
         "晚上好，你在？ 帮我记住，我最喜欢蓝色。",
+        # A stray sentence after the command (2026-10-03 round 12): the archive keeps the request.
+        "帮我记住我最喜欢绿色。 你告诉我哪个？",
     ],
 )
 def test_a_request_the_archive_will_keep_is_answered_as_before(query: str) -> None:
@@ -96,6 +98,10 @@ def test_a_request_the_archive_will_keep_is_answered_as_before(query: str) -> No
         "你要记住我的小狗叫旺财",
         "别忘了我喜欢画画",
         "帮我记住我爸爸喜欢蓝色。",
+        # 2026-10-03 round 12: the ASR lost the first word, so there is no command the archive could keep,
+        # and the robot still said 「我记住了」 (twice, with and without the stray sentence).
+        "滚蛋！ 我记住我最喜欢绿色。",
+        "帮我记住我最喜欢绿色。算了不用了。",
     ],
 )
 def test_a_request_the_archive_will_not_keep_must_not_be_promised(query: str) -> None:
