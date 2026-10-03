@@ -20,6 +20,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncGenerator, Callable, Iterable
+from dataclasses import dataclass
 from typing import Any, Literal, cast
 
 from services.agent.src import generation_output_policy as output_policy
@@ -108,6 +109,25 @@ _SENTENCE_ENDINGS = frozenset("。！？；!?")
 _DEVICE_MEMORY_TIMEOUT_S = 2.0
 _DEVICE_MEMORY_GRACE_S = 0.6
 DEVICE_MEMORY_TASK_NAME = "device-memory-prefetch"
+# A fetch started for a sentence whose turn is about to be committed (``warm_committed_turn``) is only ever
+# taken by that commit; one that nobody took within this long belonged to a turn that never committed.
+_WARMED_MEMORY_MAX_AGE_S = 10.0
+
+
+def _compact_sentence(text: str) -> str:
+    """The sentence without punctuation or spaces: the final and the committed text may differ in those."""
+
+    return "".join(character for character in text if character.isalnum())
+
+
+@dataclass(slots=True)
+class _WarmedMemory:
+    """The device-memory fetch started for one sentence before its turn was committed."""
+
+    sentence: str
+    speaker: Any
+    task: asyncio.Task[MemoryCapsule | None]
+    started: float
 
 
 def _memory_capsule(items: Iterable[ResponseGroundedItem]) -> MemoryCapsule:
@@ -216,6 +236,7 @@ class ReplyPipeline:
             tuple[str, TaskHandle],
         ] = {}
         self._realtime_tool_registered = False
+        self._warmed_memory: _WarmedMemory | None = None
         if callable(getattr(response_planner_client, "prefetch_context", None)):
             runtime.orchestrator.context_snapshots.builder = self._build_prefetched_context_snapshot
         runtime.set_fast_model_warmer(fast_model_warmer)
@@ -666,6 +687,60 @@ class ReplyPipeline:
             and self._runtime.profile_permits(fence, capability="memory_recall_private")
         )
 
+    def warm_committed_turn(self, text: str) -> None:
+        """Start the device-memory fetch of a sentence whose turn is about to be committed.
+
+        The commit's own fetch starts after the end-of-speech grace and costs about 0.4 s of the child's
+        wait (round 12, TODOLIST N-14 8).  This one runs inside the grace; ``prepare_turn`` takes it for
+        the same sentence and the same speaker and fetches for itself otherwise.  Read-only and bounded
+        exactly like the commit's fetch: ``/context-prefetch`` creates no turn.
+        """
+
+        speaker = self._runtime.current_speaker_decision
+        sentence = _compact_sentence(text)
+        warmed = self._warmed_memory
+        if warmed is not None and warmed.sentence == sentence and warmed.speaker == speaker:
+            return
+        self._drop_warmed_memory()
+        if not sentence or not self._device_memory_in_scope(speaker, self._runtime.fence):
+            return
+        task = self._runtime._spawn(
+            self._fetch_device_memory(text=text, speaker=speaker), name=DEVICE_MEMORY_TASK_NAME
+        )
+        self._warmed_memory = _WarmedMemory(sentence, speaker, task, time.monotonic())
+
+    def _drop_warmed_memory(self) -> None:
+        warmed, self._warmed_memory = self._warmed_memory, None
+        if warmed is not None and not warmed.task.done():
+            warmed.task.cancel()
+
+    def _take_warmed_memory(
+        self, text: str, speaker: Any
+    ) -> asyncio.Task[MemoryCapsule | None] | None:
+        """The fetch ``warm_committed_turn`` started for exactly this sentence and speaker, or None."""
+
+        warmed, self._warmed_memory = self._warmed_memory, None
+        if warmed is None:
+            return None
+        if warmed.sentence != _compact_sentence(text):
+            outcome = "other_sentence"
+        elif warmed.speaker != speaker:
+            outcome = "other_speaker"
+        elif time.monotonic() - warmed.started > _WARMED_MEMORY_MAX_AGE_S:
+            outcome = "stale"
+        elif warmed.task.cancelled():
+            outcome = "cancelled"
+        else:
+            outcome = "used"
+        logger.info(  # never the text: a robot round reads this line to see whether the head start was used
+            "device memory warm-up session_id=%s outcome=%s", self._runtime.session_id, outcome
+        )
+        if outcome == "used":
+            return warmed.task
+        if not warmed.task.done():
+            warmed.task.cancel()
+        return None
+
     async def _fetch_device_memory(self, *, text: str, speaker: Any) -> MemoryCapsule | None:
         """The memories the control plane releases for this exact speaker and sentence, or None.
 
@@ -781,14 +856,15 @@ class ReplyPipeline:
                 final=True,
                 fence=fence,
             )
-        memory_fetch = (
-            asyncio.create_task(
+        warmed_memory = self._take_warmed_memory(text, speaker)
+        memory_fetch: asyncio.Task[MemoryCapsule | None] | None = None
+        if self._device_memory_in_scope(speaker, fence):
+            memory_fetch = warmed_memory or asyncio.create_task(
                 self._fetch_device_memory(text=text, speaker=speaker),
                 name=DEVICE_MEMORY_TASK_NAME,
             )
-            if self._device_memory_in_scope(speaker, fence)
-            else None
-        )
+        elif warmed_memory is not None:
+            warmed_memory.cancel()
         try:
             try:
                 fetch = await self._fetch_response_plan(
@@ -810,7 +886,7 @@ class ReplyPipeline:
             device_memory = None
             if memory_fetch is not None:
                 await asyncio.wait({memory_fetch}, timeout=_DEVICE_MEMORY_GRACE_S)
-                if memory_fetch.done():
+                if memory_fetch.done() and not memory_fetch.cancelled():
                     device_memory = memory_fetch.result()
         finally:
             if memory_fetch is not None and not memory_fetch.done():

@@ -4,7 +4,9 @@
 Round 11 could not say what the ~2.7 s between a sentence's ASR final and its turn commit consists of, nor whether
 the two cloud classifier calls (live lookup, conversation close) are on that path.  The bridge now logs, never the
 text, one ``media turn commit timing`` line per commit, one ``classifier call`` line per cloud call and one
-``classifier verdict wait`` line whenever a caller had to wait for a verdict (a cached verdict logs nothing)::
+``classifier verdict wait`` line whenever a turn path had to wait for a verdict (a cached verdict logs nothing).
+Logs from before TODOLIST N-14 7 also hold the waits of the background evaluation that starts at the ASR final;
+there, and always for "did the commit wait", read ``close_ms`` of the commit lines instead::
 
     ssh <host> "docker logs -t --since 2h memoria-voice-core-media-bridge-1" > bridge.log 2>&1
     python scripts/voice_commit_timing.py bridge.log [--session 0d3185b8]
@@ -92,7 +94,7 @@ def summarize(lines: Iterable[str], *, session: str = "") -> str:
         outcomes = Counter(i.get("outcome", "?") for i in items)
         durations = [v for i in items if (v := _number(i.get("duration_ms"))) is not None]
         out.append(f"  {kind:<20} {_row(durations)}  outcomes: " + ", ".join(f"{k}={v}" for k, v in sorted(outcomes.items())))
-    out.append("== waits for a verdict on the commit path (waited_ms; a cached verdict logs nothing)")
+    out.append("== waits for a verdict (waited_ms; a cached verdict logs nothing; older logs include background waits)")
     for (kind, source), values in sorted(waits.items()):
         slow = sum(1 for v in values if v >= SIGNIFICANT_WAIT_MS)
         out.append(f"  {kind:<20} {source:<7} {_row(values)}  waited>={SIGNIFICANT_WAIT_MS}ms: {slow}")

@@ -559,7 +559,7 @@ class MediaTurnEndpointMixin:
                 or context.pending.turn_endpoint_sample is not None
             ):
                 return
-            needed = await context.runtime.resolve_conversation_close_needed(text)
+            needed = await context.runtime.resolve_conversation_close_needed(text, log_wait=False)
             if not needed:
                 return
             if (

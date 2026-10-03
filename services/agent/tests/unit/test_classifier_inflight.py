@@ -336,6 +336,90 @@ async def test_a_failed_and_a_cancelled_call_are_logged_with_their_outcome(
 
 
 @pytest.mark.asyncio
+async def test_a_wait_nobody_is_on_the_commit_path_for_is_not_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="services.agent.src.classifier_inflight")
+    runtime, gate = _runtime(), _Gate(True)
+    gate.release.set()
+    runtime.set_conversation_close_semantic_resolver(gate)
+
+    assert await runtime.resolve_conversation_close_needed(CLOSE_TEXT, log_wait=False) is True
+
+    assert [line["line"] for line in _classifier_lines(caplog)] == ["classifier call"]
+
+
+@pytest.mark.asyncio
+async def test_a_quiet_joiner_of_a_call_in_flight_logs_no_wait_either(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="services.agent.src.classifier_inflight")
+    runtime, gate = _runtime(), _Gate(True)
+    runtime.set_conversation_close_semantic_resolver(gate)
+    runtime.start_conversation_close_verdict(CLOSE_TEXT)
+    await _settle()
+    quiet = asyncio.ensure_future(runtime.resolve_conversation_close_needed(CLOSE_TEXT, log_wait=False))
+    await _settle()
+    gate.release.set()
+    assert await quiet is True
+    await _settle()
+
+    assert [line["line"] for line in _classifier_lines(caplog)] == ["classifier call"]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_the_close_verdict_can_be_started_in_the_background_and_is_joined_by_the_commit() -> None:
+    runtime, gate = _runtime(), _Gate(False)
+    runtime.set_conversation_close_semantic_resolver(gate)
+
+    runtime.start_conversation_close_verdict(CLOSE_TEXT)
+    runtime.start_conversation_close_verdict(CLOSE_TEXT)  # the same sentence again: nothing new starts
+    await _settle()
+    assert gate.calls == [CLOSE_TEXT]
+
+    commit = asyncio.ensure_future(runtime.resolve_conversation_close_needed(CLOSE_TEXT))
+    await _settle()
+    assert not commit.done()
+    gate.release.set()
+    assert await commit is False
+    assert gate.calls == [CLOSE_TEXT]
+    runtime.start_conversation_close_verdict(CLOSE_TEXT)  # cached now
+    await _settle()
+    assert gate.calls == [CLOSE_TEXT]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["再见", "停", "好了", "", "  "])
+async def test_no_close_verdict_is_started_where_the_commit_would_not_call_the_classifier(
+    text: str,
+) -> None:
+    runtime, gate = _runtime(), _Gate(True)
+    runtime.set_conversation_close_semantic_resolver(gate)
+
+    runtime.start_conversation_close_verdict(text)
+    await _settle()
+
+    assert gate.calls == []
+    gate.release.set()
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_no_close_verdict_is_started_without_a_resolver(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="services.agent.src.classifier_inflight")
+    runtime = _runtime()
+    runtime.start_conversation_close_verdict(CLOSE_TEXT)  # nothing installed: nothing to start
+    await _settle()
+    assert runtime._conversation_close_cache.inflight == {}  # type: ignore[attr-defined]
+    assert _classifier_lines(caplog) == [], "not even a failed call"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_no_call_is_left_in_flight_after_it_finishes() -> None:
     runtime, gate = _runtime(), _Gate(True)
     gate.release.set()
@@ -513,8 +597,11 @@ async def test_a_final_heard_while_a_reply_is_audible_starts_no_live_lookup_verd
 
 
 @pytest.mark.asyncio
-async def test_the_commit_joins_the_close_verdict_started_at_the_final() -> None:
+async def test_the_commit_joins_the_close_verdict_started_at_the_final(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """The real sequence: the final starts the close verdict, the commit path asks for it again mid-call."""
+    caplog.set_level(logging.INFO, logger="services.agent.src.classifier_inflight")
     registry, identity, context = await _idle_device_session("inflight-close-commit-joins")
     gate = _Gate(False)
     try:
@@ -530,6 +617,10 @@ async def test_the_commit_joins_the_close_verdict_started_at_the_final() -> None
         gate.release.set()
         assert await joined is False
         assert gate.calls == ["我想听一个新的故事"]
+        await _settle()
+        # The commit's wait is the only wait on record: the early evaluation made the call, nobody waited on it.
+        waits = [line for line in _classifier_lines(caplog) if line["line"].endswith("wait")]
+        assert [(line["kind"], line["source"]) for line in waits] == [("conversation_close", "joined")]
     finally:
         gate.release.set()
         await registry.finalize_session(identity.session_id)  # type: ignore[attr-defined]

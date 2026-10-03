@@ -787,6 +787,10 @@ class _PreparingDeviceProvider(FakeMediaProvider):
         super().__init__()
         self._runtime = runtime
         self.prepared: list[str] = []
+        self.warmed: list[str] = []
+
+    def warm_committed_turn(self, _identity: SessionIdentity, text: str) -> None:
+        self.warmed.append(text)
 
     async def prepare_committed_turn(
         self,

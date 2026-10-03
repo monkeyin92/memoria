@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
@@ -77,6 +78,11 @@ class _Planner:
         return ContextPrefetchFetch(self.items if mine else (), None, None, self.reason)
 
 
+async def _let_tasks_run() -> None:
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+
 def _device_bound(runtime: DuplexRuntime) -> None:
     decision = bind_owner_speaker(runtime)
     runtime._speaker_decision = replace(
@@ -103,9 +109,12 @@ def _runtime(name: str, *, grant: bool = True, device_bound: bool = True) -> Dup
 
 
 async def _run_turn(
-    runtime: DuplexRuntime, planner: _Planner, text: str = QUESTION
+    runtime: DuplexRuntime, planner: _Planner, text: str = QUESTION, *, warm: str | None = None
 ) -> tuple[list[Any], dict[str, Any]]:
-    """One spoken turn; the messages the model received and the parsed control plan block."""
+    """One spoken turn; the messages the model received and the parsed control plan block.
+
+    ``warm`` is a sentence the media session announced (``warm_committed_turn``) before the commit.
+    """
 
     captured: dict[str, Any] = {}
 
@@ -123,6 +132,9 @@ async def _run_turn(
         response_planner_client=planner,  # type: ignore[arg-type]
     )
     agent.language_model = ScriptedChatModel(model)
+    if warm is not None:
+        agent.warm_committed_turn(warm)
+        await _let_tasks_run()
     fence = await agent.prepare_committed_turn(text)
     request = LanguageModelRequest(user_text=text, cancellation=CancellationContext.capture(fence))
     _ = [token async for token in agent.stream(request)]
@@ -343,4 +355,336 @@ async def test_only_the_owner_decision_of_a_device_binding_is_in_scope(
     )
     speaker = SimpleNamespace(classification=classification, reason_code=reason_code)
     assert pipeline._device_memory_in_scope(speaker, runtime.fence) is in_scope
+    await runtime.close()
+
+
+# -- the fetch started while the turn's end-of-speech grace still runs (TODOLIST N-14 8) -------------
+
+
+def _warm_up_outcomes(caplog: pytest.LogCaptureFixture) -> list[str]:
+    prefix = "device memory warm-up session_id="
+    return [
+        record.getMessage().rsplit("outcome=", 1)[1]
+        for record in caplog.records
+        if record.getMessage().startswith(prefix)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_fetch_started_before_the_commit_is_the_one_the_commit_uses(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Round 12 (2026-10-03): the fetch (about 0.42 s) started only after the grace, on the child's wait."""
+
+    caplog.set_level(logging.INFO, logger="services.agent.src.reply_pipeline")
+    runtime = _runtime("device-memory-warmed")
+    planner = _Planner((_memory(),))
+
+    _, plan = await _run_turn(runtime, planner, warm=QUESTION)
+
+    assert planner.queries == [QUESTION], "one fetch, started before the commit, used by it"
+    assert [(g["kind"], g["content"]) for g in plan["DATA"]["grounded_items"]] == [
+        ("memory_claim", DRAWING)
+    ]
+    assert _warm_up_outcomes(caplog) == ["used"]
+    assert QUESTION not in caplog.text, "the sentence is never logged"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_the_warmed_fetch_is_already_running_before_the_commit_begins() -> None:
+    runtime = _runtime("device-memory-warmed-early")
+    planner = _Planner((_memory(),))
+    pipeline = ReplyPipeline(
+        instructions=SYSTEM_PROMPT,
+        runtime=runtime,
+        response_planner_client=planner,  # type: ignore[arg-type]
+    )
+
+    pipeline.warm_committed_turn(QUESTION)
+    await _let_tasks_run()
+
+    assert planner.queries == [QUESTION]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_punctuation_and_spaces_do_not_make_the_warmed_fetch_a_different_sentence() -> None:
+    runtime = _runtime("device-memory-warmed-punctuation")
+    planner = _Planner((_memory(),))
+
+    _, plan = await _run_turn(
+        runtime, planner, "你还记得 我今天画的什么吗？", warm="你还记得我今天画的什么吗"
+    )
+
+    assert len(planner.queries) == 1
+    assert [g["content"] for g in plan["DATA"]["grounded_items"]] == [DRAWING]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_warmed_fetch_for_another_sentence_is_not_used(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A final that grew into a longer sentence, or the wrong one: the commit fetches for its own text."""
+
+    caplog.set_level(logging.INFO, logger="services.agent.src.reply_pipeline")
+    runtime = _runtime("device-memory-warmed-other-text")
+    planner = _Planner((_memory(),))
+
+    _, plan = await _run_turn(runtime, planner, warm="你还记得我吗")
+
+    assert planner.queries == ["你还记得我吗", QUESTION]
+    assert [g["content"] for g in plan["DATA"]["grounded_items"]] == [DRAWING]
+    assert _warm_up_outcomes(caplog) == ["other_sentence"]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_warmed_fetch_for_a_speaker_who_changed_before_the_commit_is_not_used() -> None:
+    runtime = _runtime("device-memory-warmed-speaker")
+    planner = _Planner((_memory(),))
+    pipeline = ReplyPipeline(
+        instructions=SYSTEM_PROMPT,
+        runtime=runtime,
+        response_planner_client=planner,  # type: ignore[arg-type]
+    )
+    pipeline.warm_committed_turn(QUESTION)
+    await _let_tasks_run()
+    runtime._speaker_decision = replace(
+        runtime._speaker_decision, reason_code="shadow_owner_candidate"
+    )
+
+    assert pipeline._take_warmed_memory(QUESTION, runtime.current_speaker_decision) is None
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_nothing_is_warmed_without_the_grant_or_for_someone_else() -> None:
+    for name, kwargs in (
+        ("device-memory-warmed-no-grant", {"grant": False}),
+        ("device-memory-warmed-not-bound", {"device_bound": False}),
+    ):
+        runtime = _runtime(name, **kwargs)  # type: ignore[arg-type]
+        planner = _Planner((_memory(),))
+        pipeline = ReplyPipeline(
+            instructions=SYSTEM_PROMPT,
+            runtime=runtime,
+            response_planner_client=planner,  # type: ignore[arg-type]
+        )
+
+        pipeline.warm_committed_turn(QUESTION)
+        await _let_tasks_run()
+
+        assert planner.queries == [], name
+        await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_newer_sentence_replaces_the_warmed_fetch_and_stops_the_old_one() -> None:
+    runtime = _runtime("device-memory-warmed-replaced")
+    planner = _Planner((_memory(),))
+    first_stopped = asyncio.Event()
+    release = asyncio.Event()
+
+    async def hold_the_first_call() -> None:
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            first_stopped.set()
+            raise
+
+    planner.on_prefetch = hold_the_first_call
+    pipeline = ReplyPipeline(
+        instructions=SYSTEM_PROMPT,
+        runtime=runtime,
+        response_planner_client=planner,  # type: ignore[arg-type]
+    )
+
+    pipeline.warm_committed_turn("你还记得我吗")
+    await _let_tasks_run()
+    planner.on_prefetch = None
+    pipeline.warm_committed_turn(QUESTION)
+    await _let_tasks_run()
+
+    assert first_stopped.is_set(), "the fetch for the older sentence is cancelled, not left running"
+    assert planner.queries == ["你还记得我吗", QUESTION]
+    release.set()
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_warmed_fetch_that_nobody_used_for_a_while_is_not_used(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(reply_pipeline, "_WARMED_MEMORY_MAX_AGE_S", 0.0)
+    runtime = _runtime("device-memory-warmed-stale")
+    planner = _Planner((_memory(),))
+
+    _, plan = await _run_turn(runtime, planner, warm=QUESTION)
+
+    assert planner.queries == [QUESTION, QUESTION], "the stale one was dropped, the commit fetched"
+    assert [g["content"] for g in plan["DATA"]["grounded_items"]] == [DRAWING]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_announcing_the_same_sentence_again_starts_nothing_new() -> None:
+    """Every final that extends the follow-up endpoint announces the turn again."""
+
+    runtime = _runtime("device-memory-warmed-twice")
+    planner = _Planner((_memory(),))
+    pipeline = ReplyPipeline(
+        instructions=SYSTEM_PROMPT,
+        runtime=runtime,
+        response_planner_client=planner,  # type: ignore[arg-type]
+    )
+
+    pipeline.warm_committed_turn(QUESTION)
+    await _let_tasks_run()
+    first = pipeline._warmed_memory
+    pipeline.warm_committed_turn(QUESTION)
+    await _let_tasks_run()
+
+    assert planner.queries == [QUESTION]
+    assert pipeline._warmed_memory is first
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_warmed_fetch_cancelled_while_the_commit_waits_for_it_costs_the_reply_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The runtime closing (or anything else) cancels the background task just as the commit starts waiting."""
+
+    runtime = _runtime("device-memory-warmed-cancelled-midway")
+    planner = _Planner((_memory(),))
+    never = asyncio.Event()
+
+    async def hold() -> None:
+        await never.wait()
+
+    planner.on_prefetch = hold
+    pipeline = ReplyPipeline(
+        instructions=SYSTEM_PROMPT,
+        runtime=runtime,
+        response_planner_client=planner,  # type: ignore[arg-type]
+    )
+    real_wait = asyncio.wait
+
+    async def cancelling_wait(fs: Any, **kwargs: Any) -> Any:
+        for task in fs:
+            if task.get_name() == reply_pipeline.DEVICE_MEMORY_TASK_NAME:
+                task.cancel()
+        return await real_wait(fs, **kwargs)
+
+    pipeline.warm_committed_turn(QUESTION)
+    await _let_tasks_run()
+    warmed = pipeline._warmed_memory
+    assert warmed is not None and not warmed.task.done()
+    monkeypatch.setattr(asyncio, "wait", cancelling_wait)
+
+    fence = await asyncio.wait_for(pipeline.prepare_committed_turn(QUESTION), timeout=2.0)
+
+    assert fence.turn_id >= 1
+    assert warmed.task.cancelled()
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_warmed_fetch_is_stopped_when_the_commit_finds_the_scope_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same speaker, but the profile no longer grants the memory by the time the commit asks."""
+
+    runtime = _runtime("device-memory-warmed-scope-closed")
+    planner = _Planner((_memory(),))
+    never = asyncio.Event()
+
+    async def hold() -> None:
+        await never.wait()
+
+    planner.on_prefetch = hold
+    pipeline = ReplyPipeline(
+        instructions=SYSTEM_PROMPT,
+        runtime=runtime,
+        response_planner_client=planner,  # type: ignore[arg-type]
+    )
+    pipeline.warm_committed_turn(QUESTION)
+    await _let_tasks_run()
+    warmed = pipeline._warmed_memory
+    assert warmed is not None and not warmed.task.done()
+    monkeypatch.setattr(pipeline, "_device_memory_in_scope", lambda *_args: False)
+
+    await pipeline.prepare_committed_turn(QUESTION)
+    await _let_tasks_run()
+
+    assert warmed.task.cancelled()
+    assert planner.queries == [QUESTION]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_warmed_fetch_is_stopped_when_the_commit_finds_the_speaker_out_of_scope() -> None:
+    runtime = _runtime("device-memory-warmed-out-of-scope")
+    planner = _Planner((_memory(),))
+    never = asyncio.Event()
+
+    async def hold() -> None:
+        await never.wait()
+
+    planner.on_prefetch = hold
+    agent = ReplyPipeline(
+        instructions=SYSTEM_PROMPT,
+        runtime=runtime,
+        response_planner_client=planner,  # type: ignore[arg-type]
+    )
+    agent.language_model = ScriptedChatModel(lambda *_args: None)  # type: ignore[arg-type, return-value]
+    agent.warm_committed_turn(QUESTION)
+    await _let_tasks_run()
+    warmed = agent._warmed_memory
+    assert warmed is not None and not warmed.task.done()
+    runtime._speaker_decision = replace(
+        runtime._speaker_decision, reason_code="shadow_owner_candidate"
+    )
+
+    await agent.prepare_committed_turn(QUESTION)
+    await _let_tasks_run()
+
+    assert warmed.task.cancelled(), "nothing may keep running for a speaker that gets no memory"
+    assert agent._warmed_memory is None
+    assert planner.queries == [QUESTION], "only the warmed call was ever made"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_warmed_fetch_that_was_cancelled_never_breaks_the_commit() -> None:
+    """The runtime closing, or anything else cancelling the background task, must cost the reply nothing."""
+
+    runtime = _runtime("device-memory-warmed-cancelled")
+    planner = _Planner((_memory(),))
+    never = asyncio.Event()
+
+    async def hold() -> None:
+        await never.wait()
+
+    planner.on_prefetch = hold
+    pipeline = ReplyPipeline(
+        instructions=SYSTEM_PROMPT,
+        runtime=runtime,
+        response_planner_client=planner,  # type: ignore[arg-type]
+    )
+    pipeline.warm_committed_turn(QUESTION)
+    await _let_tasks_run()
+    warmed = pipeline._warmed_memory
+    assert warmed is not None and not warmed.task.done()
+    warmed.task.cancel()
+    await asyncio.gather(warmed.task, return_exceptions=True)
+    assert warmed.task.cancelled()
+    planner.on_prefetch = None
+
+    fence = await pipeline.prepare_committed_turn(QUESTION)
+
+    assert fence.turn_id >= 1
+    assert planner.queries == [QUESTION, QUESTION], "the commit fetched for itself"
     await runtime.close()

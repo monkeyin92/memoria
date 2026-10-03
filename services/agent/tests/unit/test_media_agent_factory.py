@@ -414,3 +414,17 @@ async def test_device_factory_enables_explicit_subject_fence() -> None:
     assert gate.expected_binding_version == 1
     assert gate.expected_device_profile_version == 19
     await runtime.close()
+
+
+def test_the_session_language_model_forwards_the_warm_up_to_its_pipeline() -> None:
+    from services.agent.src.media_agent_factory import _SessionLanguageModel
+
+    warmed: list[str] = []
+    model = _SessionLanguageModel(
+        pipeline=SimpleNamespace(warm_committed_turn=warmed.append),  # type: ignore[arg-type]
+        closeables=(),
+    )
+
+    model.warm_committed_turn("后天呢")
+
+    assert warmed == ["后天呢"]
