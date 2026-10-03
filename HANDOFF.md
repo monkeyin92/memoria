@@ -22,7 +22,7 @@
 - **下一步必须动作**：N-12（固件 build 20 的 USB 串口 `wake` 命令）已于 2026-10-02 19:43 刷入并在真机上验证（见下一节），N-8 的真机 A/B、跨会话记忆与 N-11 语音停止系列已于 2026-10-02 21:21–21:57 在真机上验证（findings 第十轮）：N-8、N-11 通过；跨会话记忆读得出、真机上几乎写不进，写入口径待用户决定（TODOLIST N-9）；新发现「有些话 final 到了却没有端点」记在 N-13，①②与两项时延改动（N-14 ①②）已于 2026-10-03 01:33 随整栈 `20261003-endpoint-latency-v1` 上线（PR #177，见下一节）：合并前 agent + common 2855 条测试、CI 全过；**第十一轮真机已验一轮（2026-10-03，音量 30、停止相关一段临时 50，findings 第十一轮）**：N-13 的「语音停止 → 问句」10 组 9 组答了、不能区分修没修；时延新句子说完到设备首帧 p50 4.85 → 3.84 s（目标约 3.0 s 没到，较慢的 DeepSeek 分类器调用约 1.4–1.5 s 成了最大块）；新发现 N-15（机器人自己的回声并进下一句，整轮被丢，时延场景 3/24）；停止词成功率随音量剧变（30 为 1/24，50 为 8/10）；N-8 噪声 A/B 在 30 下刺激太弱，不算复测。接下来按 TODOLIST「下一步与执行边界」第 4 条：N-15 先写失败单测再修；孩子记忆怎么写（N-9）、N-13 ③、固件 OTA、时延第 3 档与分类器耗时（N-14）仍待用户决定。之后的每一轮电脑语音测试仍要用户点头。更早的事项：设备对话归档与设备信任分档已随 `20261001-device-archive-v1` 上线，开关 `MEMORIA_BOUND_DEVICE_TRUST_ENABLED` 已于 2026-10-01 00:30 打开（收据见下一节），验收清单见运维手册「设备信任开关」。用户 2026-10-01 新增六项需求（唤醒方式设置、空闲熄屏、发布与刷机、回顾为空、电脑长稳对话、说话风格评审）见 [TODOLIST「2026-10-01 新需求」](TODOLIST.md)。当日遗留已汇总到 [TODOLIST「2026-09-28 收尾待办」](TODOLIST.md)：伙伴页选一次绵绵、嘈杂环境验证 #83；需决定是否发布固件 OTA；待查回复规划 `no_verified_runtime_profile` 兜底；12-17 前换证书。之后按验收清单验 P0-04 产品决定、P1-11 三种绑定与隔天记忆、P1-03 孩子人格、P2-04 与 P0-03 剩余矩阵；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
 
-## 2026-10-03 N-9 / N-13 ③ / 固件 OTA / 时延第 3 档（分支 `feat/n9-n13-ota-latency`，已开 PR 待 CI 与合并；未发布、未刷机、未上真机）
+## 2026-10-03 N-9 / N-13 ③ / 固件 OTA / 时延第 3 档（PR #178，2026-10-03 10:25 合并，合并提交 `0083bda7`；未发布、未刷机、未上真机）
 
 用户在 01:55 说「继续做孩子记忆怎么写（N-9）、N-13 ③、固件 OTA、时延第 3 档」，这四项原来都标着「待用户决定」。我按 TODOLIST 里列出的选项做完了本地部分，凡是动线上、动设备、对外发布的步骤都留着。
 
@@ -32,7 +32,8 @@
 - **时延第 3 档**：`media_session_playback_stop.py` 的 `playback_followup_grace_s()` 读 `MEDIA_PLAYBACK_FOLLOWUP_GRACE_S`（0.3–1.2 s，只能缩短；不设、写错、超范围都是 1.2 s 并记一条警告），新建与「后移端点」两处都用它；`scripts/voice_soak_pause_split.py`（`items` / `clips` / `report`）与 `docs/runbooks/followup-grace-experiment.md` 是真机实验的全套工具，`voice_soak.py` 的 timeline 增加 `ts`。测试含真实会话类里「用 0.3 s 的旋钮比默认快 ≥ 0.6 s」的行为测试（新建端点与后移端点各一条），5 个变异全部抓到。**实验本身没跑**（要用户放开一轮真机，改旋钮是生产环境变更）。
 - **测试工具的坑**：变异检查里有一条「构建脚本拒绝不够新的演练号」的测试，守卫被变异掉后真的启动了固件构建（覆盖了 `artifacts/`）；已改成在没有构建缓存的沙箱环境里跑，守卫失效也只会死在缺缓存上。构建中不要切分支或碰 `firmware/esp32/overlay`：`bootstrap.sh` 会按叠加层哈希重建上游缓存。
 - **这个 PR 同时带着发布会话的两条本地文档提交**：`c4c5e831`（`20261003-endpoint-latency-v1` 的发布收据）与 `ae73ede7`（第十一轮真机与新的 N-15）。它们和本节的状态说明改的是 TODOLIST、HANDOFF、findings 的同一批段落，分开合并会互相冲突，所以在这里对齐：第十一轮的测量保持原样，本分支「已做、未上真机」的说明放在旁边；findings 里第十轮补充排在第十一轮之前。
-- **下一步**：见 TODOLIST「下一步与执行边界」第 4 条（PR 合并 → 整栈发布 → 小程序体验版 → 固件 OTA/刷机与回滚演练 → 真机一轮 → 时延第 3 档实验）。每一步都要用户点头。
+- **合并**：PR #178 用 merge commit 合并（`gh pr merge --merge --match-head-commit 0c8dec69…`，CI 13 项通过、2 项按路径跳过），合并提交 `0083bda7` 的树 `e1d618c8…` 与测过的 PR 头相同；远端分支已自动删除。下一次整栈发布要先把 `scripts/release_ops.sh` 的 `PREV_TAG/PREV_COMMIT` 前移到 `20261003-endpoint-latency-v1` / `ffd2f794…`（这次 PR 没带，需要一个小 PR）。
+- **下一步**：见 TODOLIST「下一步与执行边界」第 4 条（整栈发布 → 小程序体验版 → 固件 OTA/刷机与回滚演练 → 真机一轮 → 时延第 3 档实验）。每一步都要用户点头。
 
 ## 2026-10-03 整栈发布 20261003-endpoint-latency-v1（PR #177；语音停止后的问句有端点，一句话只调一次分类器，设备回复不再等回复计划）
 
