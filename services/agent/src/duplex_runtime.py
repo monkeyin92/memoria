@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal, Protocol, cast
 
-from services.agent.src.classifier_inflight import ClassifierCache
+from services.agent.src.classifier_inflight import conversation_close_cache, live_lookup_cache
 from services.agent.src.contracts.events import TimedWord
 from services.agent.src.contracts.ids import (
     CancellationContext,
@@ -240,9 +240,9 @@ class DuplexRuntime(
     ) = None
     _fast_model_warmer: Callable[[], Awaitable[Any] | Any] | None = None
     _delegation_starter: Callable[[str, GenerationFence], Coroutine[Any, Any, Any] | None] | None = None
-    _live_lookup_cache: dict[str, bool] = field(default_factory=ClassifierCache)
+    _live_lookup_cache: dict[str, bool] = field(default_factory=live_lookup_cache)
     _live_lookup_semantic_resolver: Callable[[str], Awaitable[bool]] | None = None
-    _conversation_close_cache: dict[str, bool] = field(default_factory=ClassifierCache)
+    _conversation_close_cache: dict[str, bool] = field(default_factory=conversation_close_cache)
     _conversation_close_semantic_resolver: Callable[[str], Awaitable[bool]] | None = None
     _interaction_prefetch_epoch: int | None = None
     _interaction_context_prefetch_key: tuple[int, str] | None = None

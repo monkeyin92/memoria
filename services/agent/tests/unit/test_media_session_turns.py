@@ -5316,6 +5316,294 @@ async def test_media_echo_window_candidate_keeps_a_short_pause(
     assert text is not None and "停" in text and "还有呢" in text
 
 
+# The reply's last words, and what the realtime ASR made of its own voice leaking into the microphone
+# (2026-10-03 round 11: 27-53 character finals, seen 0.7-0.94 s after the playback ended).
+_ECHOED_REPLY = "因为天上的云里装满了小水滴，水滴越来越重，就会变成雨落下来啦。"
+_ECHOED_REPLY_ASR = "因为天上的云里装满了小水滴水滴越来越重就会变成雨落下来拉"
+_QUESTION = "为什么会下雨呀"
+
+
+async def _post_playback_echo_candidate(window: Any) -> None:
+    """The reply ended (boundary 300000 = evidence 287200 + the 0.8 s echo-tail margin) and its own
+    voice, finalized after the playback ended, is the pending turn: no endpoint, no overlap flag."""
+
+    set_floor(
+        window.context.runtime,
+        played_assistant_text=_ECHOED_REPLY,
+        last_playback_completed_ns=time.monotonic_ns(),
+    )
+    window.context.last_playback_end_sample = 300_000
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="reply-echo",
+        start_sample=185_600,
+        end_sample=295_040,
+        text=_ECHOED_REPLY_ASR,
+    )
+    pending = window.context.pending
+    assert pending.turn_start_sample == 185_600
+    assert pending.turn_endpoint_sample is None
+    assert pending.pending_turn_playback_overlap is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("vad_start", "question_start", "question_end", "voiced_end"),
+    [
+        # The field case (bridge log of round 11 t002): 3.2 s after the echo ended.
+        (348_160, 346_560, 364_480, 361_920),
+        # A quick child, 1.1 s after it: the 2.5 s unvoiced-gap rule alone would never cut this.
+        (313_600, 312_000, 325_000, 324_000),
+    ],
+)
+async def test_media_post_playback_echo_does_not_swallow_the_next_question(
+    device_media_session: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    vad_start: int,
+    question_start: int,
+    question_end: int,
+    voiced_end: int,
+) -> None:
+    """Round 11 (2026-10-03): 4 of 24 questions got silence with ``reason=assistant_echo``.
+
+    The reply's own voice was finalized after its playback ended and became the pending turn.  The
+    child's question came 1-3 s later; its final is accepted while the device VAD end is still being
+    finalized, so the VAD latch is live and no endpoint is pinned yet.  The split of a stale
+    echo-window candidate refused on that latch, the echo and the question merged, and the whole turn
+    was dropped at commit as ``assistant_echo``: the question vanished with it.
+    """
+
+    monkeypatch.setenv("MEDIA_PLAYBACK_FOLLOWUP_GRACE_S", "0.3")
+    window = await device_media_session("echo-then-question", during_playback=False)
+    context = window.context
+    await _post_playback_echo_candidate(window)
+
+    await _device_vad(window, "question-vad", vad_start, final=False)
+    assert context.pending.active_vad_start_sample == vad_start
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="question",
+        start_sample=question_start,
+        end_sample=question_end,
+        text=_QUESTION,
+        revision=2,
+    )
+
+    assert context.pending.turn_start_sample == question_start
+    assert _resolve_media_turn_text(
+        context, stream_epoch=1, start_sample=185_600, end_sample=question_end
+    ) == _QUESTION
+    await _device_vad(window, "question-vad-end", voiced_end, final=True)
+    await _wait_until(lambda: window.provider.prepared == [_QUESTION], timeout=3.0)
+    assert _QUESTION in _user_turn_texts(context)
+
+
+@pytest.mark.asyncio
+async def test_media_vad_inside_the_echo_tail_margin_is_not_new_speech(
+    device_media_session: Any,
+) -> None:
+    """Round 11, second drop in the same bridge log: a VAD edge 0.9 s after the playback ended (0.08 s
+    past the boundary) is the echo's own tail, so it cannot cut the candidate it belongs to."""
+
+    window = await device_media_session("echo-tail-vad", during_playback=False)
+    context = window.context
+    await _post_playback_echo_candidate(window)
+    await _device_vad(window, "tail-vad", 301_280, final=False)
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="later-final",
+        start_sample=346_560,
+        end_sample=364_480,
+        text=_QUESTION,
+        revision=2,
+    )
+
+    assert context.pending.turn_start_sample == 185_600
+
+
+@pytest.mark.asyncio
+async def test_media_vad_that_began_before_the_candidate_ended_does_not_cut_it(
+    device_media_session: Any,
+) -> None:
+    """A VAD that began while the candidate's own audio still ran is the same sound, not new speech."""
+
+    window = await device_media_session("echo-overlapping-vad", during_playback=False)
+    context = window.context
+    set_floor(context.runtime, played_assistant_text=_ECHOED_REPLY)
+    context.last_playback_end_sample = 300_000
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="reply-echo",
+        start_sample=185_600,
+        end_sample=330_000,
+        text=_ECHOED_REPLY_ASR,
+    )
+    await _device_vad(window, "overlapping-vad", 320_000, final=False)
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="later-final",
+        start_sample=346_560,
+        end_sample=364_480,
+        text=_QUESTION,
+        revision=2,
+    )
+
+    assert context.pending.turn_start_sample == 185_600
+
+
+@pytest.mark.asyncio
+async def test_media_echo_candidate_ignores_a_vad_latch_of_another_stream_epoch(
+    device_media_session: Any,
+) -> None:
+    """A VAD latch left over from a rotated stream says nothing about this stream's speech."""
+
+    window = await device_media_session("echo-stale-latch", during_playback=False)
+    context = window.context
+    await _post_playback_echo_candidate(window)
+    await _device_vad(window, "question-vad", 348_160, final=False)
+    context.pending.active_vad_stream_epoch = 7
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="question",
+        start_sample=346_560,
+        end_sample=364_480,
+        text=_QUESTION,
+        revision=2,
+    )
+
+    assert context.pending.turn_start_sample == 185_600
+
+
+@pytest.mark.asyncio
+async def test_media_user_speech_candidate_still_merges_under_a_live_vad(
+    device_media_session: Any,
+) -> None:
+    """Only the reply's own voice gives way: a candidate that is not an echo of the reply (the child
+    began inside the echo window) keeps merging with the speech that follows it."""
+
+    window = await device_media_session("candidate-is-user-speech", during_playback=False)
+    context = window.context
+    set_floor(context.runtime, played_assistant_text=_ECHOED_REPLY)
+    context.last_playback_end_sample = 300_000
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="user-first",
+        start_sample=290_000,
+        end_sample=296_000,
+        text="不对不对",
+    )
+    await _device_vad(window, "question-vad", 340_000, final=False)
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="user-second",
+        start_sample=341_000,
+        end_sample=352_000,
+        text=_QUESTION,
+        revision=2,
+    )
+
+    assert context.pending.turn_start_sample == 290_000
+    text = _resolve_media_turn_text(context, stream_epoch=1, start_sample=290_000, end_sample=352_000)
+    assert text is not None and "不对不对" in text and _QUESTION in text
+
+
+def _commit_timing_fields(caplog: pytest.LogCaptureFixture) -> list[dict[str, str]]:
+    prefix = "media turn commit timing "
+    return [
+        dict(part.split("=", 1) for part in record.getMessage()[len(prefix):].split())
+        for record in caplog.records
+        if record.getMessage().startswith(prefix)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_media_turn_commit_logs_where_the_time_after_the_final_went(
+    device_media_session: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """TODOLIST N-14 4: round 11 could not say what the 2.7 s between the ASR final and the commit consisted
+    of; one line per commit now splits it (never the text)."""
+
+    caplog.set_level(logging.INFO)
+    monkeypatch.setenv("MEDIA_PLAYBACK_FOLLOWUP_GRACE_S", "0.3")
+    window = await device_media_session("commit-timing", during_playback=False)
+    context = window.context
+    context.last_playback_end_sample = 10_000
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="question",
+        start_sample=20_000,
+        end_sample=40_000,
+        text=_QUESTION,
+    )
+    await _device_vad(window, "question-vad-end", 40_000, final=True)
+    await _wait_until(lambda: window.provider.prepared == [_QUESTION], timeout=3.0)
+
+    [fields] = _commit_timing_fields(caplog)
+    assert fields["result"] == "committed"
+    assert fields["session"] == "commit-timing"
+    for name in (
+        "final_to_start_ms",
+        "final_to_done_ms",
+        "lock_ms",
+        "speaker_ms",
+        "close_ms",
+        "prepare_ms",
+        "commit_ms",
+    ):
+        assert fields[name].isdigit(), (name, fields)
+    # No PCM went up in this scenario, so the uplink position (and with it the endpoint distance) is meaningless
+    # here; the field must still be a plain integer.
+    assert int(fields["since_endpoint_ms"]) <= 0
+    # The commit began after the follow-up grace, so the final was already older than the grace when it started.
+    assert int(fields["final_to_start_ms"]) >= 250
+    assert int(fields["final_to_done_ms"]) >= int(fields["final_to_start_ms"])
+    assert int(fields["commit_ms"]) >= int(fields["prepare_ms"])
+    assert _QUESTION not in caplog.text.split("media turn commit timing", 1)[1].splitlines()[0]
+
+
+@pytest.mark.asyncio
+async def test_media_turn_commit_timing_names_the_reason_a_turn_did_not_start_a_reply(
+    device_media_session: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A turn dropped as the reply's own echo is a commit too: its line carries the drop reason."""
+
+    caplog.set_level(logging.INFO)
+    window = await device_media_session("commit-timing-drop", during_playback=False)
+    context = window.context
+    set_floor(
+        context.runtime,
+        played_assistant_text=_ECHOED_REPLY,
+        last_playback_completed_ns=time.monotonic_ns(),
+    )
+    context.last_playback_end_sample = 10_000
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="reply-echo",
+        start_sample=5_000,
+        end_sample=40_000,
+        text=_ECHOED_REPLY_ASR,
+    )
+    await _device_vad(window, "echo-vad-end", 40_000, final=True)
+    await _wait_until(lambda: bool(_commit_timing_fields(caplog)), timeout=3.0)
+
+    [fields] = _commit_timing_fields(caplog)
+    assert fields["result"] == "assistant_echo"
+    assert window.provider.prepared == []
+
+
 @pytest.mark.asyncio
 async def test_media_out_of_order_final_inside_the_retained_window_still_merges(
     device_media_session: Any,

@@ -59,6 +59,10 @@ _PLAYBACK_FOLLOWUP_MIN_GRACE_S = 0.3
 # Conservative sample-gap policy for unanchored device candidates observed
 # during a previous reply, not a VAD silence measurement or endpoint timeout.
 _PLAYBACK_CANDIDATE_SPLIT_GAP_SAMPLES = 40_000  # 2.5 s at 16 kHz
+# A device VAD that began this far past the playback boundary (which already carries 0.8 s over the
+# last uplink evidence) is new speech; one closer to it is still the echo's own tail (2026-10-03 round 11:
+# a VAD edge 0.08 s past the boundary was the echo, 3 s later the child's question followed).
+_PLAYBACK_NEW_SPEECH_VAD_SAMPLES = 12_800  # 0.8 s at 16 kHz
 
 
 def playback_followup_grace_s() -> float:
@@ -405,6 +409,44 @@ class MediaPlaybackStopMixin:
         )
         self._schedule_turn_commit(context)
 
+    @staticmethod
+    def _echo_candidate_yields_to_live_vad(
+        context: _MediaVoiceSession,
+        result: ASRResult,
+        playback_end: int | None,
+    ) -> bool:
+        """True when the pending turn is the reply's own echo and live speech began after it.
+
+        The candidate must read like an echo of the reply (the guard that would drop it at commit
+        as ``assistant_echo`` agrees), so speech the child began inside the echo window keeps
+        merging with what follows.  The live VAD must have started past the echo window and after
+        the candidate ended: a VAD that began while the candidate's audio still ran is the same sound.
+        """
+
+        pending = context.pending
+        vad_start = pending.active_vad_start_sample
+        start, end = pending.turn_start_sample, pending.turn_end_sample
+        if (
+            playback_end is None
+            or vad_start is None
+            or start is None
+            or end is None
+            or end <= start
+            or pending.active_vad_stream_epoch != result.stream_epoch
+            or vad_start < playback_end + _PLAYBACK_NEW_SPEECH_VAD_SAMPLES
+            or vad_start <= end
+        ):
+            return False
+        text = context.runtime.speech_timeline.projected_text(
+            stream_epoch=result.stream_epoch, start_sample=start, end_sample=end
+        )
+        return bool(text.strip()) and (
+            context.runtime.playback_guarded_reason(
+                text, duration_ms=(end - start) // _SAMPLES_PER_MS
+            )
+            == "assistant_echo"
+        )
+
     def _split_pending_turn_at_unvoiced_gap(
         self,
         context: _MediaVoiceSession,
@@ -425,6 +467,15 @@ class MediaPlaybackStopMixin:
         endpoint leaves any pending turn begun before the boundary to this
         split: without the fallback each left the reset to the other and the
         next question waited for a VAD edge that never came.
+
+        The reply's own voice finalized after its playback ended is such a
+        candidate.  Field 2026-10-03 (round 11, 3 of 24 questions lost): the next
+        question's final is accepted while its device VAD end is still being
+        finalized, so the VAD latch is live and the gap guard below refused;
+        the echo and the question merged and the whole turn was dropped at
+        commit as ``assistant_echo``.  A live VAD that began past the echo
+        window, after the candidate ended, is new speech: then an echo
+        candidate gives way at once.
         """
 
         if context.identity.client_type != "device":
@@ -461,7 +512,12 @@ class MediaPlaybackStopMixin:
         boundary_split = straddle or (
             overlap and playback_end is not None and result.capture_start_sample >= playback_end
         )
-        if not boundary_split:
+        echo_gives_way = (
+            not boundary_split
+            and stale_echo_window
+            and self._echo_candidate_yields_to_live_vad(context, result, playback_end)
+        )
+        if not (boundary_split or echo_gives_way):
             if context.pending.active_vad_start_sample is not None:
                 return
             if (
@@ -473,6 +529,8 @@ class MediaPlaybackStopMixin:
             boundary = "playback_straddle"
         elif boundary_split:
             boundary = "playback_end"
+        elif echo_gives_way:
+            boundary = "echo_candidate_live_vad"
         else:
             boundary = "unvoiced_gap" if overlap else "stale_echo_window"
         logger.warning(

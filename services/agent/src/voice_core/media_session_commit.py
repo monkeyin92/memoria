@@ -74,6 +74,17 @@ _CLOSE_RECOVERY_MIN_RESCUE_RMS = 1_000
 _CLOSE_RECOVERY_MIN_RESCUE_PEAK_ABS = 8_000
 
 
+def _elapsed_ms(started: float) -> int:
+    return int((time.monotonic() - started) * 1000)
+
+
+def _mark_stage(timing: dict[str, int] | None, stage: str, started: float) -> None:
+    """Record how long one awaited step of the commit took, for the commit timing log line."""
+
+    if timing is not None:
+        timing[stage] = _elapsed_ms(started)
+
+
 def _preferred_clock_fact_text(
     context: _MediaVoiceSession,
     *,
@@ -377,6 +388,7 @@ class MediaSessionCommitMixin:
                 set(decision.evicted_sentence_ids)
             )
         if accepted.is_final:
+            context.last_final_accepted_at = time.monotonic()
             # Establish the range fence before projection/transcript yields.
             self._split_pending_turn_at_unvoiced_gap(context, accepted)
         # The provider result is never forwarded after supervisor policy has
@@ -813,7 +825,12 @@ class MediaSessionCommitMixin:
             return None, "session_closed" if context is not None else "session_not_found"
         if start_sample < 0 or end_sample <= start_sample:
             return None, "invalid_media_range"
+        commit_started = time.monotonic()
+        # The audio clock runs in real time, so the uplink position past the endpoint is how long ago it was.
+        since_endpoint_ms = (int(getattr(context.asr, "last_sent_sample", 0) or 0) - end_sample) // 16
+        timing: dict[str, int] = {}
         async with context.turn_commit_lock:
+            timing["lock_ms"] = _elapsed_ms(commit_started)
             if not self._stream_epoch_is_current(context, stream_epoch):
                 return None, (
                     "session_closed" if context.standby_requested or context.closed
@@ -826,6 +843,7 @@ class MediaSessionCommitMixin:
                     context, session_id=session_id, stream_epoch=stream_epoch,
                     start_sample=start_sample, end_sample=end_sample,
                     retire_sample=retire_sample, provider_final_missing=provider_final_missing,
+                    timing=timing,
                 ),
                 name=f"media-turn-prepare-{session_id}-{stream_epoch}",
             )
@@ -852,6 +870,10 @@ class MediaSessionCommitMixin:
                     await self._abort_committed_turn(context, result[0], reason="session_closed")
                 return None, "session_closed"
         fence, reason = result
+        self._log_commit_timing(
+            context, stream_epoch, "committed" if fence is not None else reason,
+            commit_started, since_endpoint_ms, timing,
+        )
         if reason == "conversation_end_explicit":
             await self._request_device_standby(context, reason=reason)
         else:
@@ -869,6 +891,41 @@ class MediaSessionCommitMixin:
                 ),
             )
         return result
+
+    @staticmethod
+    def _log_commit_timing(
+        context: _MediaVoiceSession,
+        stream_epoch: int,
+        result: str | None,
+        commit_started: float,
+        since_endpoint_ms: int,
+        timing: dict[str, int],
+    ) -> None:
+        """Say where the time between the last ASR final and the turn commit went (TODOLIST N-14 4).
+
+        ``since_endpoint_ms`` and ``final_to_start_ms`` are what the end-of-speech grace, the VAD tail and
+        the ASR wait cost before the commit began; the stage fields are the awaits inside it (``-`` when a
+        step was not reached).  Never the text.
+        """
+
+        final_at = context.last_final_accepted_at
+        now = time.monotonic()
+        logger.info(
+            "media turn commit timing session=%s stream_epoch=%s result=%s since_endpoint_ms=%s "
+            "final_to_start_ms=%s final_to_done_ms=%s lock_ms=%s speaker_ms=%s close_ms=%s "
+            "prepare_ms=%s commit_ms=%s",
+            context.identity.session_id,
+            stream_epoch,
+            result,
+            since_endpoint_ms,
+            "-" if final_at is None else int((commit_started - final_at) * 1000),
+            "-" if final_at is None else int((now - final_at) * 1000),
+            timing.get("lock_ms", "-"),
+            timing.get("speaker_ms", "-"),
+            timing.get("close_ms", "-"),
+            timing.get("prepare_ms", "-"),
+            _elapsed_ms(commit_started),
+        )
 
     async def _abort_committed_turn(
         self, context: _MediaVoiceSession, fence: GenerationFence, *, reason: str,
@@ -936,6 +993,7 @@ class MediaSessionCommitMixin:
         end_sample: int,
         retire_sample: int | None,
         provider_final_missing: bool = False,
+        timing: dict[str, int] | None = None,
     ) -> tuple[GenerationFence | None, str | None]:
         """Prepare and project one turn while its transport epoch is stable."""
 
@@ -975,7 +1033,9 @@ class MediaSessionCommitMixin:
             raise ValueError("media retire sample cannot precede the logical endpoint")
         was_assistant_speaking = context.runtime.assistant_speaking
         context.runtime.on_user_voice_stopped()
+        stage_started = time.monotonic()
         await context.runtime.await_speaker_classification()
+        _mark_stage(timing, "speaker_ms", stage_started)
         # Speaker classify yields. A late ASR final can land on the timeline
         # (or a VAD-first empty provisional can still be stale vs timeline
         # text). Refresh both sides from the same range before validate, or
@@ -1073,7 +1133,9 @@ class MediaSessionCommitMixin:
         if speaker_patch is not None:
             await self._emit_projection_patch(context, speaker_patch)
         elapsed_ms = (end_sample - start_sample) * 1_000 // 16_000
+        stage_started = time.monotonic()
         await context.runtime.resolve_conversation_close_needed(text)
+        _mark_stage(timing, "close_ms", stage_started)
         route = context.runtime.route_user_turn(text)
         guarded_reason = context.runtime.playback_guarded_reason(
             text,
@@ -1202,6 +1264,7 @@ class MediaSessionCommitMixin:
             context.runtime.publish_assistant_audio("restore", gain=1.0)
         before_prepare_fence = context.runtime.fence
         prepare_turn = getattr(context.provider, "prepare_committed_turn", None)
+        stage_started = time.monotonic()
         try:
             if callable(prepare_turn) and bool(
                 getattr(context.provider, "supports_turn_preparation", True)
@@ -1213,6 +1276,7 @@ class MediaSessionCommitMixin:
                     text,
                     input_modality="audio",
                 )
+            _mark_stage(timing, "prepare_ms", stage_started)
             if not isinstance(fence, GenerationFence) or not context.runtime.fence.matches(fence):
                 raise RuntimeError("media provider returned an invalid prepared turn fence")
         except asyncio.CancelledError:
