@@ -8,6 +8,7 @@ started after the end-of-speech grace, and a second identical call whenever the 
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 from services.agent.src.duplex_runtime import DuplexRuntime
@@ -241,6 +242,97 @@ async def test_a_failed_call_is_shared_by_its_awaiters_not_cached_and_retried() 
     gate.verdict = True
     assert await runtime.resolve_live_lookup_needed(LIVE_TEXT) is True
     assert gate.calls == [LIVE_TEXT, LIVE_TEXT]
+
+
+# -- timing log lines (TODOLIST N-14 4): how long the cloud call took, whether the turn waited for it ----
+
+
+def _classifier_lines(caplog: pytest.LogCaptureFixture) -> list[dict[str, str]]:
+    """The ``classifier call`` / ``classifier verdict wait`` lines as key=value dicts, line kind under ``line``."""
+
+    lines = []
+    for record in caplog.records:
+        message = record.getMessage()
+        for prefix in ("classifier call ", "classifier verdict wait "):
+            if message.startswith(prefix):
+                fields = dict(part.split("=", 1) for part in message[len(prefix):].split())
+                lines.append({"line": prefix.strip(), **fields})
+    return lines
+
+
+@pytest.mark.asyncio
+async def test_a_call_and_the_wait_for_it_are_logged_without_the_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="services.agent.src.classifier_inflight")
+    runtime, gate = _runtime(), _Gate(True)
+    gate.release.set()
+    runtime.set_conversation_close_semantic_resolver(gate)
+    assert await runtime.resolve_conversation_close_needed(CLOSE_TEXT) is True
+
+    call, wait = _classifier_lines(caplog)
+    assert call["line"] == "classifier call"
+    assert (call["kind"], call["outcome"], call["verdict"]) == ("conversation_close", "ok", "True")
+    assert call["duration_ms"].isdigit()
+    assert (wait["kind"], wait["source"]) == ("conversation_close", "called")
+    assert wait["waited_ms"].isdigit()
+    assert CLOSE_TEXT not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_joiner_logs_the_wait_for_the_call_in_flight_and_a_cached_verdict_logs_none(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="services.agent.src.classifier_inflight")
+    runtime, gate = _runtime(), _Gate(False)
+    runtime.set_live_lookup_semantic_resolver(gate)
+    runtime.live_lookup_needed(LIVE_TEXT, start_verdict=True)  # the call started at the ASR final
+    await _settle()
+    commit = asyncio.ensure_future(runtime.resolve_live_lookup_needed(LIVE_TEXT))
+    await _settle()
+    gate.release.set()
+    assert await commit is False
+    await _settle()
+
+    lines = _classifier_lines(caplog)
+    assert [(line["line"], line["kind"]) for line in lines] == [
+        ("classifier call", "live_lookup"),
+        ("classifier verdict wait", "live_lookup"),
+    ]
+    assert lines[1]["source"] == "joined"
+
+    assert await runtime.resolve_live_lookup_needed(LIVE_TEXT) is False  # cached: nothing waited for
+    assert len(_classifier_lines(caplog)) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_failed_and_a_cancelled_call_are_logged_with_their_outcome(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="services.agent.src.classifier_inflight")
+    runtime, gate = _runtime(), _Gate(RuntimeError("classifier down"))
+    gate.release.set()
+    runtime.set_live_lookup_semantic_resolver(gate)
+    with pytest.raises(RuntimeError, match="classifier down"):
+        await runtime.resolve_live_lookup_needed(LIVE_TEXT)
+
+    slow = _Gate(True)
+    runtime.set_conversation_close_semantic_resolver(slow)
+    awaiter = asyncio.ensure_future(runtime.resolve_conversation_close_needed(CLOSE_TEXT))
+    await _settle()
+    awaiter.cancel()
+    await asyncio.gather(awaiter, return_exceptions=True)
+
+    outcomes = [
+        (line["kind"], line["outcome"], line["verdict"])
+        for line in _classifier_lines(caplog)
+        if line["line"] == "classifier call"
+    ]
+    assert outcomes == [
+        ("live_lookup", "error", "None"),
+        ("conversation_close", "cancelled", "None"),
+    ]
+    assert not [line for line in _classifier_lines(caplog) if line["line"].endswith("wait")]
 
 
 @pytest.mark.asyncio

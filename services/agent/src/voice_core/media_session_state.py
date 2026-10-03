@@ -108,6 +108,9 @@ class MediaVoiceSessionState:
     # Highest accepted ASR evidence end (finals and non-empty partials); feeds
     # the playback boundary snapshot taken when playback completes.
     last_asr_evidence_end_sample: int = 0
+    # When the last ASR final was accepted (monotonic); the commit timing log reports how long after it the
+    # turn started and finished committing.
+    last_final_accepted_at: float | None = None
     observed_within_turn_pause_s: float | None = None
     # Normalised text of the last media turn that actually committed.  A
     # duplicate ASR final of one question commits a contiguous extension of the

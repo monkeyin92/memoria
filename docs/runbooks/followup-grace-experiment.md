@@ -17,6 +17,7 @@
 3. 拼接静音与场景：`voice_soak_pause_split.py clips --pauses 0,0.3,0.6,0.9,1.2 --repeat 10`（0 秒是不切的对照；每轮每个停顿长度各一次，句子逐轮错位，不会有某句总配同一个停顿）。
 4. 真机一轮（**需要用户放开**：Mac 音量 50、USB 唤醒、先起常驻串口记录进程，见 `docs/acceptance/run-20261001-longsoak/findings.md` 的方法一节）：先在 1.2 s（不设旋钮）上跑基线，再把旋钮设成候选值（建议 0.7）重跑同一份场景。改旋钮是生产环境变更：写 `/etc/memoria-agent.env`（先备份）并重启 bridge，须用户当场授权；做完把变量去掉再重启即回到默认。
 5. 看数：`voice_soak_pause_split.py report --run <run 目录>`，每个停顿长度的「一次提交 / 两次及以上」与说完到开口的中位数；另看 `media playback-followup endpoint`、`media pending turn split` 的日志。
+6. 看宽限到底省了多少：每次提交有一行 `media turn commit timing`，`final_to_start_ms` 是「最后一个终稿 → 提交开始」，改旋钮后它应当约少 1.2 s 与候选值之差；`python scripts/voice_commit_timing.py <bridge.log>` 汇总成 p50 / p90（含两次云端分类器的耗时与提交等它们的次数）。这几行日志不含原文。
 
 ## 边界
 
