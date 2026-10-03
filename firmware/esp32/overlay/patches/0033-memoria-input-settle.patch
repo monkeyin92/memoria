@@ -1,0 +1,54 @@
+--- a/main/audio/audio_service.h
++++ b/main/audio/audio_service.h
+@@ -25,6 +25,7 @@
+ #include "protocol.h"
+ #include "ogg_demuxer.h"
+ #include "memoria_playback_supply_meter.h"
++#include "memoria_input_settle.h"
+ 
+ /*
+  * There are two types of audio data flow:
+@@ -244,6 +245,9 @@
+ #endif
+     std::atomic<bool> service_stopped_{true};
+     std::atomic<bool> audio_input_need_warmup_{false};
++    // Start-up artifacts of a freshly powered input and the echo of a local cue never reach the audio
++    // engine (memoria_input_settle.h).
++    memoria::InputSettle input_settle_;
+     std::atomic<float> last_uplink_rms_{0.0f};
+ 
+     esp_timer_handle_t audio_power_timer_ = nullptr;
+--- a/main/audio/audio_service.cc
++++ b/main/audio/audio_service.cc
+@@ -272,6 +272,9 @@
+         esp_timer_stop(audio_power_timer_);
+         esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
+         codec_->EnableInput(true);
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++        input_settle_.Arm();
++#endif
+     }
+ 
+     if (codec_->input_sample_rate() != sample_rate) {
+@@ -379,6 +382,11 @@
+             int samples = 160; // 10ms
+             std::vector<int16_t> data;
+             if (ReadAudioData(data, 16000, samples)) {
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++                if (input_settle_.ShouldDrop(samples, static_cast<uint64_t>(esp_timer_get_time() / 1000))) {
++                    continue;  // start-up artifacts and a local cue's echo must not open a VAD epoch
++                }
++#endif
+                 audio_engine_->Feed(std::move(data));
+                 continue;
+             }
+@@ -953,6 +961,9 @@
+ }
+ 
+ void AudioService::PlaySound(const std::string_view& ogg) {
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++    input_settle_.NoteLocalSound(static_cast<uint64_t>(esp_timer_get_time() / 1000));
++#endif
+     if (!codec_->output_enabled()) {
+         esp_timer_stop(audio_power_timer_);
+         esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);

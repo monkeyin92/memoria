@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Sign and publish a Memoria firmware image for over-the-air updates.
 
-    uv run python firmware/esp32/scripts/publish_firmware_release.py sign
+    uv run python firmware/esp32/scripts/publish_firmware_release.py sign [--build N]
     uv run python firmware/esp32/scripts/publish_firmware_release.py upload --remote memoria-prod --build N
     uv run python firmware/esp32/scripts/publish_firmware_release.py withdraw --remote memoria-prod
 
@@ -196,6 +196,13 @@ def main() -> int:
     sign_parser.add_argument("--image", type=Path, default=DEFAULT_IMAGE)
     sign_parser.add_argument("--key", type=Path, default=DEFAULT_KEY)
     sign_parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    sign_parser.add_argument(
+        "--build",
+        type=int,
+        default=None,
+        help="sign this build number instead of the header's (the image must carry the same marker; "
+        "for the OTA rollback drill image, which is built with a number the header does not have)",
+    )
     upload_parser = commands.add_parser("upload")
     upload_parser.add_argument("--remote", required=True)
     upload_parser.add_argument("--remote-root", default=DEFAULT_REMOTE_ROOT)
@@ -209,7 +216,7 @@ def main() -> int:
         if value is not None and not re.fullmatch(r"[A-Za-z0-9@._/-]+", value):
             fail(f"invalid value {value!r}")
     if args.command == "sign":
-        sign(args.image, args.key, args.out)
+        sign(args.image, args.key, args.out, build=args.build)
     elif args.command == "upload":
         upload(args.remote, args.remote_root, args.build, args.out)
     else:

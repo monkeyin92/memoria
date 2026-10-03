@@ -62,6 +62,13 @@ rg -Fq 'memoria::UsbWakeDecisionFor(mode, state == kDeviceStateIdle)' \
 rg -Fq 'open("/dev/secondary", O_RDONLY)' "$board_dir/memoria_esp_vocat.cc" || \
     die "the USB command task must read the secondary console read-only"
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_usb_command.h" ]] || die "USB command header missing"
+[[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_input_settle.h" ]] || die "input settle header missing"
+rg -Fq 'input_settle_.Arm();' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
+    die "a freshly powered microphone must arm the settling window (its start-up artifacts open VAD epochs)"
+rg -Fq 'input_settle_.ShouldDrop(samples,' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
+    die "blocks inside the settling window must not be fed to the audio engine"
+rg -Fq 'input_settle_.NoteLocalSound(' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
+    die "a local sound (the listening cue) must mute the input while it can still ring"
 rg -Fq 'Device pat detected' "$board_dir/memoria_esp_vocat.cc" || \
     die "BMI270 pat must be wired to a local animation, not ToggleChatState"
 rg -Fq 'display_->Pat()' "$board_dir/memoria_esp_vocat.cc" || \
