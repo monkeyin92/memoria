@@ -84,6 +84,8 @@ def _instructions(query: str, *, minor: bool = True, grant: bool = True) -> str:
         "晚上好，你在？ 帮我记住，我最喜欢蓝色。",
         # A stray sentence after the command (2026-10-03 round 12): the archive keeps the request.
         "帮我记住我最喜欢绿色。 你告诉我哪个？",
+        # 2026-10-04 round 13: the ASR joined the question to the command with a comma.
+        "帮我记住我最喜欢绿色，你记住了吗？",
     ],
 )
 def test_a_request_the_archive_will_keep_is_answered_as_before(query: str) -> None:
@@ -102,6 +104,12 @@ def test_a_request_the_archive_will_keep_is_answered_as_before(query: str) -> No
         # and the robot still said 「我记住了」 (twice, with and without the stray sentence).
         "滚蛋！ 我记住我最喜欢绿色。",
         "帮我记住我最喜欢绿色。算了不用了。",
+        # 2026-10-04 round 13: a question joined to the command with a comma hid the request, so the robot
+        # promised 「我记住啦」 for 「我最喜欢绿色」 although nothing was saved.
+        "帮我记住我的新书包，你记住了吗？",
+        "帮我记住我最喜欢绿色，算了吧？",
+        # A list that ends on a rising note is not a remark after the command: nothing of it is kept.
+        "帮我记住我喜欢红色，蓝色，绿色？",
     ],
 )
 def test_a_request_the_archive_will_not_keep_must_not_be_promised(query: str) -> None:
@@ -123,6 +131,8 @@ def test_without_the_profiles_long_term_memory_grant_nothing_is_kept_at_all() ->
         "我记住了",
         "你还记得我喜欢什么颜色吗",
         "今天天气怎么样",
+        "你记住了吗，好吗？",
+        "我最喜欢什么颜色，你记住了吗？",
     ],
 )
 def test_a_sentence_that_asks_for_nothing_to_be_remembered_gets_no_note(query: str) -> None:
