@@ -694,9 +694,13 @@ class ReplyPipeline:
         wait (round 12, TODOLIST N-14 8).  This one runs inside the grace; ``prepare_turn`` takes it for
         the same sentence and the same speaker and fetches for itself otherwise.  Read-only and bounded
         exactly like the commit's fetch: ``/context-prefetch`` creates no turn.
+
+        The speaker is the one the commit will hold.  A session's first sentence has no decision yet (it is
+        made when the turn commits) and a device VAD start resets it, so asking for the current one found
+        nobody and the fetch never started: 6 of 84 commits in round 15, 0.4 s each (N-14 10).
         """
 
-        speaker = self._runtime.current_speaker_decision
+        speaker = self._runtime.prospective_speaker_decision()
         sentence = _compact_sentence(text)
         warmed = self._warmed_memory
         if warmed is not None and warmed.sentence == sentence and warmed.speaker == speaker:
@@ -764,7 +768,9 @@ class ReplyPipeline:
                 type(exc).__name__,
             )
             return None
-        if not fetched.available or self._runtime.current_speaker_decision != speaker:
+        # The speaker the commit will hold, not the decision of the moment: a warmed fetch finishes before the
+        # commit has made its decision, and a device VAD start in between only resets it to a placeholder.
+        if not fetched.available or self._runtime.prospective_speaker_decision() != speaker:
             return None
         capsule = _memory_capsule(fetched.grounded_items)
         logger.info(
