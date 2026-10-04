@@ -15,9 +15,13 @@
 1. 准备句子：`sentences.json`，每条 `{"tag","a","b"}`，建议 10 句（半数后半句 ≤ 4 个字）。
 2. 渲染两半：`voice_soak_pause_split.py items` → `voice_soak_bank.py render`（生产豆包音色）。
 3. 拼接静音与场景：`voice_soak_pause_split.py clips --pauses 0,0.3,0.6,0.9,1.2 --repeat 10`（0 秒是不切的对照；每轮每个停顿长度各一次，句子逐轮错位，不会有某句总配同一个停顿）。
-4. 真机一轮（**需要用户放开**：Mac 音量 50、USB 唤醒、先起常驻串口记录进程，见 `docs/acceptance/run-20261001-longsoak/findings.md` 的方法一节）：先在 1.2 s（不设旋钮）上跑基线，再把旋钮设成候选值（建议 0.7）重跑同一份场景。改旋钮是生产环境变更：写 `/etc/memoria-agent.env`（先备份）并重启 bridge，须用户当场授权；做完把变量去掉再重启即回到默认。
-5. 看数：`voice_soak_pause_split.py report --run <run 目录>`，每个停顿长度的「一次提交 / 两次及以上」与说完到开口的中位数；另看 `media playback-followup endpoint`、`media pending turn split` 的日志。
+4. 真机一轮（**需要用户点头**；Mac 音量 30 即可——2026-10-04 基线和候选都在 30 下跑，各 50 步里 49 步有回答，不必放开到 50；USB 唤醒、先起常驻串口记录进程，见 `docs/acceptance/run-20261001-longsoak/findings.md` 的方法一节）：先在 1.2 s（不设旋钮）上跑基线，再把旋钮设成候选值重跑同一份场景（2026-10-04 用 0.6；要试中间值就用 0.8–0.9）。改旋钮是生产环境变更：写 `/etc/memoria-agent.env`（先备份）并**重建** bridge 容器（`env_file` 只在创建时读，普通 restart 不会生效），须用户当场授权；做完把变量去掉再重建即回到默认，并核对 env 文件哈希与原备份一致。2026-10-04 用本机套件的 `drill/grace_set.sh <值|default>` 做（门禁、备份、一处编辑、重建、失败自动还原；要作为文件在服务器上跑，不要走 `bash -s`）。
+5. 看数：`voice_soak_pause_split.py report` 按「片段结束」定窗口，长后半句的前半句在片段还在播时就提交了，会被算到上一步（2026-10-04 基线算出假的「停顿 0 切 3/10」），不能直接用；要按「片段开始」定窗口，再统计每个停顿长度的「一次提交 / 两次及以上」与说完到开口的中位数（本机套件 `grace/grace_report.py` 的 `report` / `compare` 就这样做），并加指标「前半句单答」（回复开口距片段结束 < 1.3 s 且不是切成两次提交：前半句被当成整句回答，后半句的终稿在回复中到达被丢掉；要用设备串口的 `listening -> speaking` 算（本机套件 `grace/early_reply_recount.py`），驱动的 `latency_s` 窗口从片段结束前 0.5 s 起算，回复更早开口会被记成「无回复」）；另看 `media playback-followup endpoint`、`media pending turn split` 的日志。
 6. 看宽限到底省了多少：每次提交有一行 `media turn commit timing`，`final_to_start_ms` 是「最后一个终稿 → 提交开始」，改旋钮后它应当约少 1.2 s 与候选值之差；`python scripts/voice_commit_timing.py <bridge.log>` 汇总成 p50 / p90（含两种云端分类器调用的耗时；提交有没有等结束对话判定看 `close_ms`，`classifier verdict wait` 行也含终稿时的背景调用，不能用来数）。缩短宽限要在 TODOLIST N-14 ⑦（结束对话判定在终稿时起跑）上线之后做，否则宽限短于分类器的 p90 0.82 s 时，提交又要等分类器，会低估宽限的收益。这几行日志不含原文。
+
+## 结果（2026-10-04 夜，每种宽限一遍，50 步）
+
+基线 1.2 s 对候选 0.6 s，同一份场景，全部数字见 `docs/acceptance/run-20261001-longsoak/findings.md` 第十七轮：终稿 → 提交开始 p50 1201 → 602 ms；上面的判据满足（停顿 0.3 + 0.6 s 切成两次提交 0/20 对 0/20），但它漏了两类：①停顿 ≥ 0.9 s 的句子切成两次提交 1/19 → 8/20，长、短后半句都受影响（与前面「只有短后半句受影响」的预期不符）；②前半句单答，基线 1.2 s 下就有 7/50，候选 14/50（单看不显著）。结论：现在不把默认值改成 0.6 s（你已采纳，默认值维持 1.2 s）；中间值（0.8–0.9 s）没测。下次判据改成「整句没被一次答对」（切成两次提交 + 前半句单答）按停顿分组比较，并先量真实孩子的停顿分布（本实验答不了）。
 
 ## 边界
 

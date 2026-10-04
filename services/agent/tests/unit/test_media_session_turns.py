@@ -5548,6 +5548,8 @@ async def test_media_turn_commit_logs_where_the_time_after_the_final_went(
     )
     await _device_vad(window, "question-vad-end", 40_000, final=True)
     await _wait_until(lambda: window.provider.prepared == [_QUESTION], timeout=3.0)
+    # The line is written at the end of the commit, after the provider already recorded the text.
+    await _wait_until(lambda: bool(_commit_timing_fields(caplog)), timeout=3.0)
 
     [fields] = _commit_timing_fields(caplog)
     assert fields["result"] == "committed"
