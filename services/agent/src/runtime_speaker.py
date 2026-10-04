@@ -65,6 +65,8 @@ POST_PLAYBACK_FORMAL_GUEST_MIN_QUALITY = 0.85
 # its own tail, not the user: short phrases such as 再见 fall under the
 # 4-character text-echo floor, and with no voiceprint nothing else rejects them.
 POST_PLAYBACK_CLOSE_ECHO_GUARD_MS = 3_000
+# What a device VAD start leaves in place of the previous utterance's decision until the turn commits.
+CLASSIFICATION_PENDING = "classification_pending"
 
 
 class DuplexSpeakerMixin:
@@ -114,6 +116,9 @@ class DuplexSpeakerMixin:
         # Core runtime methods consumed by this mixin.
         @property
         def fence(self) -> GenerationFence: ...
+
+        @property
+        def current_speaker_decision(self) -> SpeakerDecision: ...
 
         def profile_permits(
             self, fence: GenerationFence, *, capability: str | None = None
@@ -431,6 +436,22 @@ class DuplexSpeakerMixin:
             profile_id=None,
             permissions=permissions_for_speaker("owner"),
         )
+
+    def prospective_speaker_decision(self) -> SpeakerDecision:
+        """The speaker decision the next commit will hold, as far as the signed profile alone decides it.
+
+        ``await_speaker_classification`` gives a device conversation without a voiceprint the bound person's
+        decision from the profile and nothing else, but only when a turn commits.  Until then the runtime holds
+        none (a new session) or the ``classification_pending`` placeholder (a device VAD start resets it), so
+        work that starts while the end-of-speech grace runs, the bound person's memory (TODOLIST N-14 10), found
+        no speaker to start for.  A decision the runtime already holds is returned as it is; with a voiceprint
+        classifier the decision depends on the audio and nothing is predicted.
+        """
+
+        decision = self._speaker_decision
+        if decision is not None and decision.reason_code != CLASSIFICATION_PENDING:
+            return decision
+        return self._device_bound_subject_decision() or self.current_speaker_decision
 
     async def await_speaker_classification(self) -> SpeakerDecision:
         self._start_speaker_classification()

@@ -429,7 +429,9 @@ async def test_the_next_turn_with_the_same_words_is_warmed_again(device_media_se
     await _end_the_utterance(window, _final("q-1", 40_000, 58_000, _QUESTION), vad_start=40_000)
     _release(window)
     await _wait_until(lambda: window.provider.prepared == [_QUESTION], timeout=3.0)
-    _finish_previous_reply(window.context)  # the reply has played out
+    # The commit is over once its task is gone (that is when the pending turn is cleared), and the reply has played out.
+    await _wait_until(lambda: window.context.turn_endpoint_task is None, timeout=3.0)
+    _finish_previous_reply(window.context)
     await _wait_until(lambda: not window.registry._reply_in_flight(window.context), timeout=3.0)
     assert window.provider.warmed == [_QUESTION]
 

@@ -109,11 +109,18 @@ def _runtime(name: str, *, grant: bool = True, device_bound: bool = True) -> Dup
 
 
 async def _run_turn(
-    runtime: DuplexRuntime, planner: _Planner, text: str = QUESTION, *, warm: str | None = None
+    runtime: DuplexRuntime,
+    planner: _Planner,
+    text: str = QUESTION,
+    *,
+    warm: str | None = None,
+    classify: bool = False,
 ) -> tuple[list[Any], dict[str, Any]]:
     """One spoken turn; the messages the model received and the parsed control plan block.
 
     ``warm`` is a sentence the media session announced (``warm_committed_turn``) before the commit.
+    ``classify`` runs the speaker classification the commit runs before it prepares the turn (the other
+    tests start from a speaker the runtime already holds).
     """
 
     captured: dict[str, Any] = {}
@@ -135,6 +142,8 @@ async def _run_turn(
     if warm is not None:
         agent.warm_committed_turn(warm)
         await _let_tasks_run()
+    if classify:
+        await runtime.await_speaker_classification()
     fence = await agent.prepare_committed_turn(text)
     request = LanguageModelRequest(user_text=text, cancellation=CancellationContext.capture(fence))
     _ = [token async for token in agent.stream(request)]
@@ -688,3 +697,193 @@ async def test_a_warmed_fetch_that_was_cancelled_never_breaks_the_commit() -> No
     assert fence.turn_id >= 1
     assert planner.queries == [QUESTION, QUESTION], "the commit fetched for itself"
     await runtime.close()
+
+
+# -- a session's first sentence, and a sentence whose device VAD start reset the speaker (TODOLIST N-14 10) --
+
+
+def _fresh_device_session(name: str, *, grant: bool = True) -> DuplexRuntime:
+    """A device session at its start: the signed profile is in, no speaker decision has been made yet.
+
+    Round 15 (2026-10-04): a device with no voiceprint gets the bound person's decision from the profile when a
+    turn commits (``await_speaker_classification``), so until the first commit the runtime holds none, and a
+    device VAD start resets it to ``classification_pending``; the warm-up needs the decision and never began.
+    """
+
+    runtime = DuplexRuntime.create(session_id=name)
+    bind_owner_policy(
+        runtime,
+        policy_version="test-policy",
+        private_context=grant,
+        owner_evidence=False,
+        tools=False,
+        voice_profile=False,
+        memory_recall_grant=grant,
+    )
+    runtime.set_device_conversation_controls(True)
+    return runtime
+
+
+def _pending(runtime: DuplexRuntime) -> None:
+    """What a device VAD start leaves behind (``on_user_voice_started``)."""
+
+    runtime.on_user_voice_started()
+    assert runtime.current_speaker_decision.reason_code == "classification_pending"
+
+
+@pytest.mark.asyncio
+async def test_the_first_sentence_of_a_session_is_warmed_before_any_speaker_decision() -> None:
+    runtime = _fresh_device_session("device-memory-first-sentence")
+    assert runtime._speaker_decision is None
+    planner = _Planner((_memory(),))
+    pipeline = ReplyPipeline(
+        instructions=SYSTEM_PROMPT,
+        runtime=runtime,
+        response_planner_client=planner,  # type: ignore[arg-type]
+    )
+
+    pipeline.warm_committed_turn(QUESTION)
+    await _let_tasks_run()
+
+    assert planner.queries == [QUESTION]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_sentence_after_a_device_vad_start_is_warmed_although_the_decision_was_reset() -> None:
+    runtime = _fresh_device_session("device-memory-vad-start")
+    await runtime.await_speaker_classification()  # an earlier turn established the decision ...
+    _pending(runtime)  # ... and this utterance's VAD start reset it
+    planner = _Planner((_memory(),))
+    pipeline = ReplyPipeline(
+        instructions=SYSTEM_PROMPT,
+        runtime=runtime,
+        response_planner_client=planner,  # type: ignore[arg-type]
+    )
+
+    pipeline.warm_committed_turn(QUESTION)
+    await _let_tasks_run()
+
+    assert planner.queries == [QUESTION]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reset", [False, True])
+async def test_the_warmed_memory_of_a_first_sentence_reaches_the_reply_and_is_fetched_once(
+    caplog: pytest.LogCaptureFixture, reset: bool
+) -> None:
+    """The fetch finishes while the grace still runs, before the commit has made the speaker decision."""
+
+    caplog.set_level(logging.INFO, logger="services.agent.src.reply_pipeline")
+    runtime = _fresh_device_session(f"device-memory-first-sentence-used-{reset}")
+    if reset:
+        _pending(runtime)
+    planner = _Planner((_memory(),))
+
+    _, plan = await _run_turn(runtime, planner, warm=QUESTION, classify=True)
+
+    assert planner.queries == [QUESTION], "one fetch, started during the grace, used by the commit"
+    assert [(g["kind"], g["content"]) for g in plan["DATA"]["grounded_items"]] == [
+        ("memory_claim", DRAWING)
+    ]
+    assert _warm_up_outcomes(caplog) == ["used"]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_what_the_commit_will_decide_is_what_the_warm_up_assumed() -> None:
+    """The prediction is the bound person's decision, and the commit establishes exactly that."""
+
+    runtime = _fresh_device_session("device-memory-prediction")
+    predicted = runtime.prospective_speaker_decision()
+
+    decided = await runtime.await_speaker_classification()
+
+    assert predicted == decided
+    assert decided.classification == "owner" and decided.reason_code == DEVICE_BOUND_SUBJECT_REASON
+    assert runtime.prospective_speaker_decision() == decided
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_decision_the_runtime_already_holds_is_never_replaced_by_the_prediction() -> None:
+    runtime = _fresh_device_session("device-memory-prediction-established")
+    _device_bound(runtime)
+    runtime._speaker_decision = replace(
+        runtime._speaker_decision, reason_code="shadow_owner_candidate"
+    )
+
+    assert runtime.prospective_speaker_decision() == runtime._speaker_decision
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_nothing_is_predicted_where_the_profile_alone_does_not_decide_the_speaker() -> None:
+    """No grant, a voiceprint classifier, or a session that is no device conversation: the decision stands."""
+
+    no_grant = _fresh_device_session("device-memory-prediction-no-grant", grant=False)
+    with_classifier = _fresh_device_session("device-memory-prediction-classifier")
+
+    async def classify(_pcm: bytes, _rate: int) -> Any:
+        raise AssertionError("not called")
+
+    with_classifier.set_speaker_classifier(classify, sample_rate=16_000)
+    no_controls = _fresh_device_session("device-memory-prediction-no-controls")
+    no_controls.set_device_conversation_controls(False)
+
+    for runtime in (no_grant, with_classifier, no_controls):
+        assert runtime.prospective_speaker_decision() == runtime.current_speaker_decision
+        assert runtime.prospective_speaker_decision().classification == "uncertain"
+        runtime.on_user_voice_started()  # the placeholder is no better a prediction than no decision
+        assert runtime.prospective_speaker_decision() == runtime.current_speaker_decision
+        assert runtime.prospective_speaker_decision().reason_code == "classification_pending"
+        planner = _Planner((_memory(),))
+        pipeline = ReplyPipeline(
+            instructions=SYSTEM_PROMPT,
+            runtime=runtime,
+            response_planner_client=planner,  # type: ignore[arg-type]
+        )
+        pipeline.warm_committed_turn(QUESTION)
+        await _let_tasks_run()
+        assert planner.queries == [], runtime.session_id
+        await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_device_vad_start_during_the_fetch_is_a_placeholder_not_another_speaker() -> None:
+    """The fetch's own guard compares with the speaker the commit will hold, not with the decision of the moment."""
+
+    runtime = _fresh_device_session("device-memory-vad-start-during-fetch")
+    speaker = await runtime.await_speaker_classification()  # the commit's decision, as production makes it
+    planner = _Planner((_memory(),))
+
+    async def next_utterance_starts() -> None:
+        runtime.on_user_voice_started()
+
+    planner.on_prefetch = next_utterance_starts
+    pipeline = ReplyPipeline(
+        instructions=SYSTEM_PROMPT,
+        runtime=runtime,
+        response_planner_client=planner,  # type: ignore[arg-type]
+    )
+
+    fetch = asyncio.create_task(
+        pipeline._fetch_device_memory(text=QUESTION, speaker=speaker),
+        name=reply_pipeline.DEVICE_MEMORY_TASK_NAME,
+    )
+    capsule = await fetch
+
+    assert runtime.current_speaker_decision.reason_code == "classification_pending"
+    assert capsule is not None and [entry.content for entry in capsule.entries] == [DRAWING]
+    await runtime.close()
+
+
+def test_the_placeholder_the_prediction_looks_for_is_the_one_a_vad_start_leaves() -> None:
+    from services.agent.src import runtime_speaker
+
+    runtime = DuplexRuntime.create(session_id="device-memory-placeholder")
+    runtime.on_user_voice_started()
+
+    assert runtime.current_speaker_decision.reason_code == runtime_speaker.CLASSIFICATION_PENDING
+
