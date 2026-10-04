@@ -64,3 +64,7 @@ sudo systemctl enable --now memoria-disk-patrol.timer
 
 做法：①`memoria-{agent,control-api,speaker-model}` 只留最新两个 tag、`memoria-media-edge` 只留当前与上一个组件 tag，其余逐项 `docker rmi`（本次 80 个 tag）；②**只删镜像不会让虚拟机磁盘变小**，这些层还被构建缓存引用，要再 `docker builder prune -af --keep-storage 8GB`（保留最近用过的约 8 GB，本次回收 26.6 GB）。结果：虚拟机磁盘空出约 28 GB（可用约 24 GB），`memoria-pgv` 自己从崩溃恢复。不动其他项目的镜像、已停止的容器与数据卷（`docker volume prune` 会删别的项目的数据，须单独授权），不用 `docker system prune`；`delta_build_images.sh` 要的底座镜像（最新发布 tag）保留。之后第一次本机发布构建会因缓存变小而慢一些。
 
+### 2026-10-05 迁到 110.42.235.198 后的空间基线（新机，不是一次清理）
+
+生产从 2026-10-05 起在 110.42.235.198：40 GB 盘（旧机 118 GB），与 pocketSparks、hr-tracker 共用，迁移后已用约 17 GB（45%）。上文的 70% 触发线与「约每 5–6 次整栈清一次」是旧机的数字，在新机上要重算：整栈发布每次约 +4–5 GB，WAL 归档约 +0.6–1.1 GB/天（见 [发布、恢复与回滚运维手册](release-rollback.md)「生产主机」），70% 是 28 GB，离现状只剩约 11 GB；`memoria-disk-patrol.timer` 的 75% / 85% 是百分比，同样适用，只告警不清理。规则不变：只清 `memoria-*` 镜像（`docker_image_retention.sh` 只处理这类 tag，不碰 pocketSparks、hr-tracker 和其他项目的镜像与卷）；每次发布核对完立刻删 `incoming` 里的包；镜像只留当前 + 一个回滚；数据卷仍不动，清理仍须另行授权。
+
