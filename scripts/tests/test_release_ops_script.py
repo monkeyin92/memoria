@@ -172,13 +172,13 @@ def test_live_chain_constants_have_no_stale_release_trees() -> None:
         "20260929-stop-word-v1", "20260929-stop-playback-v1", "20260929-stop-reconnect-v1",
         "20260929-turn-taking-v1", "20260929-session-limits-v1",
         "20260930-local-stop-v2", "20260930-vector-keyword-v1",
-        "20261001-device-archive-v1", "20261001-wake-mode-v1", "20261001-audience-recap-v1", "20261001-speaking-style-v2", "20261001-output-seq-v1", "20261001-turn-budget-v1", "20261001-device-prompt-v1", "20261001-stop-terminal-v1", "20261001-stop-cancel-v1", "20261001-trusted-adult-v1", "20261001-deepseek-flash-v1", "20261002-stop-diag-v1", "20261002-stop-pin-v1", "20261002-device-memory-v1", "20261003-endpoint-latency-v1", "20261003-child-memory-v1", "20261003-echo-merge-v1", "20261004-followup-warm-v1", "20261004-comma-tail-v1",
+        "20261001-device-archive-v1", "20261001-wake-mode-v1", "20261001-audience-recap-v1", "20261001-speaking-style-v2", "20261001-output-seq-v1", "20261001-turn-budget-v1", "20261001-device-prompt-v1", "20261001-stop-terminal-v1", "20261001-stop-cancel-v1", "20261001-trusted-adult-v1", "20261001-deepseek-flash-v1", "20261002-stop-diag-v1", "20261002-stop-pin-v1", "20261002-device-memory-v1", "20261003-endpoint-latency-v1", "20261003-child-memory-v1", "20261003-echo-merge-v1", "20261004-followup-warm-v1", "20261004-comma-tail-v1", "20261004-vad-warm-v1",
         "RETIRED_TARGETS", "retire_prev_media_chain",
         "/tmp/media-runtime",
     ):
         assert stale not in script, stale
-    assert "PREV_TAG=20261004-vad-warm-v1" in script
-    assert "PREV_COMMIT=56a874aef155cc6fd827731b177a6c18e523d886" in script
+    assert "PREV_TAG=20261004-first-warm-v1" in script
+    assert "PREV_COMMIT=38dfa5fab88a333df7ef7c70e036350a4369e261" in script
 
 
 def test_freeze_checks_every_target_chain_and_the_current_link() -> None:
