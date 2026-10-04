@@ -114,6 +114,10 @@ class MediaPlaybackStopMixin:
 
         def _schedule_turn_commit(self, context: _MediaVoiceSession) -> None: ...
 
+        def _asr_covers_endpoint(
+            self, context: _MediaVoiceSession, result_end_sample: int | None, endpoint_sample: int
+        ) -> bool: ...
+
         async def _record_interrupted_timed_spans(
             self, context: _MediaVoiceSession, fence: GenerationFence
         ) -> None: ...
@@ -384,7 +388,6 @@ class MediaPlaybackStopMixin:
                     len(result.text.strip()),
                 )
                 self._schedule_turn_commit(context)
-                self._warm_followup_commit(context, result, endpoint)
             return
         if (
             context.pending.turn_start_sample is not None
@@ -409,38 +412,58 @@ class MediaPlaybackStopMixin:
             len(result.text.strip()),
         )
         self._schedule_turn_commit(context)
-        self._warm_followup_commit(context, result, endpoint)
 
-    @staticmethod
-    def _warm_followup_commit(
-        context: _MediaVoiceSession, result: ASRResult, endpoint: int
-    ) -> None:
-        """The follow-up endpoint stands and its grace runs: start what the commit would wait for after it.
+    def _warm_endpoint_commit(self, context: _MediaVoiceSession) -> None:
+        """A commit is scheduled and its grace runs: start what the commit would wait for after it.
 
-        Round 12 (2026-10-03): the conversation-close verdict (p50 403 ms) was asked only after the grace,
-        because the evaluation task scheduled by the final found the endpoint already pinned and returned
-        without asking; the bound person's memory (about 0.4 s) was fetched after it too.  The sentence is
-        read the way the commit will read it (the pending turn up to the endpoint), so a final that extends
-        the turn starts the longer text; whatever nobody uses costs one read-only call.  Never at the price
-        of the endpoint itself: a failure here is logged and the commit goes on as before.
+        Round 12 (2026-10-03): the conversation-close verdict (p50 403 ms) was asked only after the playback
+        follow-up grace, because the task the final scheduled found the endpoint already pinned and returned
+        without asking, and the bound person's memory (about 0.4 s) was fetched after it too (TODOLIST N-14
+        7 and 8).  Round 14 (2026-10-04): every commit that follows a device VAD end waits the same way
+        (final to end of commit p50 2.9 s, against 1.3 s for the follow-up flow): the final arrives while the
+        VAD end is being finalized, the endpoint is set a few milliseconds later in the same step, and the
+        task the final scheduled returns at once; and when earlier finals are merged into the turn, the live
+        verdict started at the last final asks about a shorter sentence than the commit does (N-14 9).
+
+        So this runs wherever a commit is scheduled and reads the sentence the way the commit will (the pending
+        turn up to the endpoint): a final that extends the turn starts the longer text, and whatever nobody
+        uses costs one read-only call.  It starts nothing unless the commit will go ahead with that sentence:
+        not while a reply is in flight (its echo must not start a verdict), not before the ASR covers the
+        endpoint (the commit waits for a late final) and not for a turn a pin owns (a farewell, a clock fact
+        and a live query have their own routes).  Never at the price of the commit: a failure is logged and
+        the commit goes on as before.
         """
 
-        start = context.pending.turn_start_sample
-        if start is None:
+        pending = context.pending
+        start, endpoint = pending.turn_start_sample, pending.turn_endpoint_sample
+        if (
+            start is None
+            or endpoint is None
+            or endpoint <= start  # the commit refuses such a range, and the timeline raises on it
+            or self._reply_in_flight(context)
+            or not self._asr_covers_endpoint(context, pending.turn_end_sample, endpoint)
+            or pending.clock_fact_endpoint_pinned is not None
+            or pending.conversation_close_endpoint_pinned is not None
+            or pending.live_query_endpoint_pinned is not None
+        ):
             return
-        text = context.runtime.speech_timeline.projected_text(
-            stream_epoch=result.stream_epoch, start_sample=start, end_sample=endpoint
-        ).strip()
-        if not text:
-            return
+        runtime = context.runtime
+        text = ""
         try:
-            context.runtime.start_conversation_close_verdict(text)
+            text = runtime.speech_timeline.projected_text(
+                stream_epoch=context.stream_epoch, start_sample=start, end_sample=endpoint
+            )
+            if not text or text == pending.warmed_commit_text:
+                return
+            pending.warmed_commit_text = text
+            runtime.start_conversation_close_verdict(text)
+            runtime.live_lookup_needed(text, start_verdict=True)  # also starts the semantic verdict
             warm = getattr(context.provider, "warm_committed_turn", None)
             if callable(warm):
                 warm(context.identity, text)
         except Exception:
             logger.warning(
-                "media follow-up warm-up failed session=%s text_len=%s",
+                "media commit warm-up failed session=%s text_len=%s",
                 context.identity.session_id,
                 len(text),
                 exc_info=True,

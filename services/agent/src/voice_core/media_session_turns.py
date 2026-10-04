@@ -203,6 +203,8 @@ class MediaTurnEndpointMixin:
             self, context: _MediaVoiceSession, result: ASRResult
         ) -> None: ...
 
+        def _warm_endpoint_commit(self, context: _MediaVoiceSession) -> None: ...
+
         def _pin_conversation_close_endpoint(
             self, context: _MediaVoiceSession, capture_end_sample: int, *, text: str,
             source: str, result: ASRResult | None = None,
@@ -1213,11 +1215,7 @@ class MediaTurnEndpointMixin:
         if endpoint_sample is None:
             return
         self._arm_endpoint_tail_timeout(context, endpoint_sample)
-        if self._turn_commit_retry_matches(
-            context,
-            context.stream_epoch,
-            endpoint_sample,
-        ):
+        if self._turn_commit_retry_matches(context, context.stream_epoch, endpoint_sample):
             return
         grace_deadline = context.pending.turn_endpoint_grace_deadline or time.monotonic()
         context.turn_endpoint_task = asyncio.create_task(
@@ -1229,6 +1227,7 @@ class MediaTurnEndpointMixin:
             ),
             name=f"media-turn-endpoint-{context.identity.session_id}-{endpoint_sample}",
         )
+        self._warm_endpoint_commit(context)
 
     async def _commit_pending_turn_after_grace(
         self,

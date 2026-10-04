@@ -5901,7 +5901,7 @@ async def test_media_playback_followup_keeps_its_endpoint_when_the_warm_up_fails
 
     assert context.pending.turn_endpoint_sample == 230_000
     await _wait_until(lambda: window.provider.prepared == ["后天呢"], timeout=3.0)
-    assert any("media follow-up warm-up failed" in record.message for record in caplog.records)
+    assert any("media commit warm-up failed" in record.message for record in caplog.records)
 
 
 @pytest.mark.asyncio
