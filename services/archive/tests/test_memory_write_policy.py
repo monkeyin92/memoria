@@ -99,6 +99,9 @@ def test_a_greeting_echo_ahead_of_the_command_does_not_keep_the_request_a_candid
         "帮我记住我最喜欢绿色。 你告诉我哪个？",
         "帮我记住我最喜欢绿色。你记住了吗？",
         "晚上好，你在？ 帮我记住，我最喜欢绿色。 你记住了吗？",
+        # 2026-10-04 round 13: the ASR joined the question to the command with a comma.
+        "帮我记住我最喜欢绿色，你记住了吗？",
+        "晚上好，你在？ 帮我记住，我最喜欢绿色，你记住了吗？",
     ],
 )
 def test_a_stray_sentence_after_the_command_does_not_keep_the_request_a_candidate(
@@ -117,6 +120,11 @@ def test_a_stray_sentence_after_the_command_does_not_keep_the_request_a_candidat
         "帮我记住我最喜欢绿色。算了不用了。",
         "帮我记住我最喜欢绿色。不对，是蓝色。",
         "帮我记住我最喜欢绿色。好。嗯。啊。",
+        # The same holds when the ASR joined the sentence to the command with a comma.
+        "帮我记住我最喜欢绿色，算了吧？",
+        "帮我记住我最喜欢绿色，不对吗？",
+        # A clause that names another value is no remark either.
+        "帮我记住我最喜欢绿色，还是红色？",
     ],
 )
 def test_a_sentence_that_takes_the_request_back_keeps_it_a_candidate(text: str) -> None:
@@ -125,8 +133,15 @@ def test_a_sentence_that_takes_the_request_back_keeps_it_a_candidate(text: str) 
     assert decision.confirmed is False
 
 
-def test_a_stray_family_sentence_after_the_command_still_drops_the_childs_claim() -> None:
-    event = _event("帮我记住我最喜欢绿色。我爸爸叫小明。")
+@pytest.mark.parametrize(
+    "text",
+    [
+        "帮我记住我最喜欢绿色。我爸爸叫小明。",
+        "帮我记住我最喜欢绿色，你记住我爸爸了吗？",
+    ],
+)
+def test_a_stray_family_sentence_after_the_command_still_drops_the_childs_claim(text: str) -> None:
+    event = _event(text)
 
     kept = filter_extraction_for_subject(
         event, _extraction("我最喜欢绿色"), subject_category="minor"

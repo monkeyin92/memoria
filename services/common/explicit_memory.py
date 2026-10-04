@@ -215,6 +215,41 @@ def _sentences(value: str) -> list[str]:
     return [m.group(0).strip() for m in _SENTENCE.finditer(value) if m.group(0).strip(" 。!?.")]
 
 
+def _ends_with_question(sentence: str) -> bool:
+    return sentence.rstrip("。.! ").endswith(("?", "吗"))
+
+
+def _split_trailing_question(sentences: list[str]) -> list[str]:
+    """Cut the question that rides on the last sentence after a comma off as a sentence of its own.
+
+    FunASR joins the two breaths of 「帮我记住我最喜欢绿色。你记住了吗？」 with a comma when the second is a
+    question (2026-10-04 round 13), and the question mark at the end then hides the command.  Only the
+    last clause is cut, and not when it names a value of the closed vocabulary: a comma also separates the
+    items of the content ("我喜欢红色，蓝色，绿色？"), and a clause like 「还是红色？」 is no remark.
+    """
+
+    if not sentences or not _ends_with_question(sentences[-1]):
+        return sentences
+    head, _comma, tail = sentences[-1].rpartition(",")
+    if not head.strip():  # no comma, or nothing ahead of it
+        return sentences
+    if _LOW_RISK_VALUE_SEQUENCE.search(tail):  # the clause is content, not a remark
+        return sentences
+    return [*sentences[:-1], f"{head.strip()}。", tail.strip()]
+
+
+def _request_part(sentence: str) -> str:
+    """What of a sentence can carry a request: the clause a question mark ends cannot.
+
+    What stands before the last comma may still be the command ("帮我记住我最喜欢绿色，你记住了吗？");
+    a question without a comma has nothing left.
+    """
+
+    while _ends_with_question(sentence):
+        sentence = sentence.rpartition(",")[0]
+    return sentence
+
+
 def _is_stray_sentence(sentence: str) -> bool:
     body = sentence.rstrip("。!?. ")
     return (
@@ -255,14 +290,15 @@ def explicit_remember_content(text: object) -> str | None:
     extractor, so it never takes this path.  The same holds after the command: one or two short
     stray sentences (a question about whether the robot got it, a remark of the room) are cut off
     when what stands before them is a closed low-risk self fact; a sentence that takes the request
-    back ("算了不用了") is never cut off, and what is not a closed fact keeps its whole sentence.
+    back ("算了不用了") is never cut off, and what is not a closed fact keeps its whole sentence.  A
+    question the ASR joined to the command with a comma counts as a sentence of its own.
     """
 
     value = _normalized(text)
     content = _command_content(value)
     if content is not None and low_risk_self_fact_predicate(content) is not None:
         return content
-    sentences = _sentences(value)
+    sentences = _split_trailing_question(_sentences(value))
     for dropped in range(1, _MAX_STRAY_SENTENCES + 1):
         if len(sentences) <= dropped or not all(
             _is_stray_sentence(s) for s in sentences[-dropped:]
@@ -277,13 +313,13 @@ def explicit_remember_content(text: object) -> str | None:
 def asks_to_remember(text: object) -> bool:
     """True when a sentence asks the listener to remember something (not a question about it).
 
-    A question mark ends only its own sentence: "帮我记住我最喜欢绿色。 你告诉我哪个？" still asks.
+    A question mark ends only its own sentence, and in a sentence only its own clause: "帮我记住我最喜欢绿色。
+    你告诉我哪个？" and "帮我记住我最喜欢绿色，你记住了吗？" both still ask.
     """
 
     return any(
-        _REMEMBER_REQUEST.search(sentence) is not None
+        _REMEMBER_REQUEST.search(_request_part(sentence)) is not None
         for sentence in _sentences(_normalized(text))
-        if not sentence.rstrip("。.! ").endswith(("?", "吗"))
     )
 
 

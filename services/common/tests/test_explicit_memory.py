@@ -118,6 +118,68 @@ def test_the_trailing_sentence_path_is_narrow(text: str) -> None:
         assert explicit_remember_will_save(text, minor=minor) is False
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Round 13 (2026-10-04), first sentence after wake: FunASR glued the two breaths of
+        # 「帮我记住我最喜欢绿色。你记住了吗？」 with a comma, so the final question mark hid the command.
+        "帮我记住我最喜欢绿色，你记住了吗？",
+        "帮我记住我最喜欢绿色,你记住了吗?",
+        "帮我记住我最喜欢绿色，你记住了吗",
+        "帮我记住我最喜欢绿色，记住了没有？",
+        "帮我记住我最喜欢绿色，你告诉我哪个？",
+        "帮我记住我最喜欢绿色，好吗？",
+        "帮我记住我最喜欢绿色，行不行？",
+        # The comma may stand inside the command as well, with a greeting echo ahead of it.
+        "帮我记住，我最喜欢绿色，你记住了吗？",
+        "晚上好，你在？ 帮我记住，我最喜欢绿色，你记住了吗？",
+        # A stray sentence ahead of the question goes with it, and a comma with nothing before it is no clause.
+        "帮我记住我最喜欢绿色。好的，你记住了吗？",
+        "帮我记住我最喜欢绿色。，你记住了吗？",
+    ],
+)
+def test_a_question_joined_to_the_command_by_a_comma_does_not_hide_a_self_fact(text: str) -> None:
+    assert explicit_remember_content(text) == "我最喜欢绿色。"
+    for minor in (True, False):
+        assert explicit_remember_will_save(text, minor=minor) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Only a closed low-risk self fact may have a question cut off after it.
+        "帮我记住我喜欢恐龙，你记住了吗？",
+        "帮我记住明天要交作业，你记住了吗？",
+        # The head has to be the command, and the question the last clause of the sentence.
+        "你记住了吗，帮我记住我最喜欢绿色？",
+        "我最喜欢绿色，你记住了吗？",
+        "帮我记住我最喜欢绿色吗，你说呢？",
+        # A clause that takes the request back, or one too long to be a remark, is not cut off.
+        "帮我记住我最喜欢绿色，算了吧？",
+        "帮我记住我最喜欢绿色，不对吗？",
+        "帮我记住我最喜欢绿色，你到底有没有听清楚我刚才说的这件事情呢？",
+        # Without a question nothing tells a remark from the rest of the content.
+        "帮我记住我最喜欢绿色，谢谢你。",
+        # A comma also separates the items of the content, and a clause that names a value is no remark.
+        "帮我记住我喜欢红色，蓝色，绿色？",
+        "帮我记住我最喜欢绿色，还是红色？",
+        "帮我记住我最喜欢绿色，是红色吗？",
+        # Family details stay sensitive wherever they sit in the sentence.
+        "帮我记住我最喜欢绿色，你记住我妈妈了吗？",
+    ],
+)
+def test_the_comma_question_path_is_narrow(text: str) -> None:
+    for minor in (True, False):
+        assert explicit_remember_will_save(text, minor=minor) is False
+
+
+def test_a_comma_between_the_items_of_the_content_is_still_content() -> None:
+    # The sentence is NFKC-normalized first, so the full-width comma comes back as an ASCII one.
+    assert explicit_remember_content("帮我记住我喜欢红色，蓝色。") == "我喜欢红色,蓝色。"
+    assert explicit_remember_content("帮我记住我喜欢红色，蓝色") == "我喜欢红色,蓝色"
+    assert explicit_remember_will_save("帮我记住我喜欢红色，蓝色。", minor=True) is True
+
+
 def test_what_is_not_a_closed_fact_keeps_its_whole_sentence() -> None:
     # The extractor needs the whole sentence when the fact is not one the archive confirms on its own.
     assert explicit_remember_content("帮我记住明天要交作业。你说呢。") == "明天要交作业。你说呢。"
@@ -154,6 +216,12 @@ def test_a_stray_trailing_question_alone_does_not_make_a_command() -> None:
         # Round 12: the ASR dropped 「帮」 and put a stray word ahead of the request.
         "滚蛋！ 我记住我最喜欢绿色。",
         "我记住，我最喜欢绿色。",
+        # Round 13: a question that rides on the command's sentence after a comma does not take it back.
+        "帮我记住我最喜欢绿色，你记住了吗？",
+        "帮我记住我的新书包,你记住了吗?",
+        "帮我记住我最喜欢绿色，你记住了吗",
+        "帮我记住，我最喜欢绿色，你记住了吗，好不好？",
+        "你记住了吗，帮我记住我最喜欢绿色，好吗？",
     ],
 )
 def test_asks_to_remember_finds_the_request_anywhere(text: str) -> None:
@@ -176,6 +244,11 @@ def test_asks_to_remember_finds_the_request_anywhere(text: str) -> None:
         "好，我记住这首诗了",
         "帮我记住我最喜欢蓝色吗？",
         "你能帮我记住我最喜欢蓝色吗？你说呢？",
+        # A comma does not turn a question about memory into a request.
+        "你记住了吗，好吗？",
+        "你能记住我的名字吗，好不好？",
+        "我最喜欢什么颜色，你记住了吗？",
+        "你还记得我喜欢什么颜色吗，告诉我？",
     ],
 )
 def test_asks_to_remember_ignores_statements_and_questions_about_memory(text: str) -> None:
