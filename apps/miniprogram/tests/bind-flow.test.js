@@ -149,8 +149,27 @@ test("binding page cannot enter from a device code or scanner", async () => {
   page.onLoad({});
   await page.onShow();
   assert.equal(page.data.step, "error");
-  assert.match(page.data.error, /claim_id/);
+  // Plain words for the person, no protocol names, and a way out.
+  assert.match(page.data.error, /重新扫码/);
+  assert.doesNotMatch(page.data.error, /claim_id|服务端|认领/);
   assert.equal(typeof page.scanDeviceCode, "undefined");
+});
+
+test("binding page names the robot by the tail passed from the onboarding page, never its raw id", async () => {
+  const page = instantiate(pageDefinition);
+  page.onLoad({ claim_id: "claim_test_1", onboarding_session_id: "onb_test_1", device_tail: "AB12" });
+  assert.equal(page.data.deviceTail, "AB12");
+  // Display-only and strictly shaped: anything else is dropped.
+  for (const bad of ["", "<b>x</b>", "AB 12", "A".repeat(17)]) {
+    const other = instantiate(pageDefinition);
+    other.onLoad({ claim_id: "claim_test_1", onboarding_session_id: "onb_test_1", device_tail: bad });
+    assert.equal(other.data.deviceTail, "", bad);
+  }
+  const template = fs.readFileSync(path.join(root, "pages/bind/index.wxml"), "utf8");
+  assert.match(template, /尾号 \{\{deviceTail\}\}/);
+  for (const raw of ["claim.device_id", "claimId", "manifest.binding_id", "manifest.device_id"]) {
+    assert.ok(!template.includes(raw), `the bind page still shows ${raw}`);
+  }
 });
 
 test("binding page collects a required subject remark after choosing who it is for", async () => {

@@ -5,7 +5,7 @@
     <text class="page-title">{{reprovision ? '重新配网' : '配网引导'}}</text>
     <text class="page-subtitle">跟着亮起的步骤走就好</text>
   </view>
-  <text class="caption">{{reprovision ? '只更新网络，不改变设备归属、设备密钥或绑定关系。' : '扫码、近场配网、设备认领和激活分阶段完成；关闭小程序后机器人仍应独立工作。'}}</text>
+  <text class="caption">{{reprovision ? '只更新网络，机器人的归属和绑定都不会变。' : '扫码、连上 Wi‑Fi、确认归属、等机器人就绪，几步就能完成；设置好后关掉小程序，机器人也能正常使用。'}}</text>
 
   <view class="l2-card ob-steps-card">
     <text class="l2-card-title">{{stateLabel}}</text>
@@ -23,7 +23,7 @@
           <view wx:elif="{{state === 'prepare' || state === 'scan'}}" class="step-num">2</view>
           <view wx:else class="inline-icon step-check"><view class="icon-check"></view></view>
         </view>
-        <view class="step-main"><text class="step-title">BLE 安全连接</text><text class="step-desc">已和设备握上手</text></view>
+        <view class="step-main"><text class="step-title">连上机器人</text><text class="step-desc">手机靠近机器人，自动连上</text></view>
       </view>
       <view class="step-item {{(state === 'wifi' || state === 'progress') ? 'current' : ((state === 'claim' || state === 'initialize' || state === 'activation' || state === 'complete') ? 'done' : 'todo')}}">
         <view class="step-node">
@@ -31,7 +31,7 @@
           <view wx:elif="{{state === 'claim' || state === 'initialize' || state === 'activation' || state === 'complete'}}" class="inline-icon step-check"><view class="icon-check"></view></view>
           <view wx:else class="step-num">3</view>
         </view>
-        <view class="step-main"><text class="step-title">写入 Wi-Fi <text wx:if="{{state === 'wifi' || state === 'progress'}}" class="pill pill-teal">进行中</text></text><text class="step-desc">正在写入，大约需要 30 秒</text></view>
+        <view class="step-main"><text class="step-title">设置 Wi‑Fi <text wx:if="{{state === 'wifi' || state === 'progress'}}" class="pill pill-teal">进行中</text></text><text class="step-desc">把家里的 Wi‑Fi 告诉机器人，大约 30 秒</text></view>
       </view>
       <block wx:if="{{!reprovision}}">
       <view class="step-item {{(state === 'claim' || state === 'initialize') ? 'current' : ((state === 'activation' || state === 'complete') ? 'done' : 'todo')}}">
@@ -40,7 +40,7 @@
           <view wx:elif="{{state === 'activation' || state === 'complete'}}" class="inline-icon step-check"><view class="icon-check"></view></view>
           <view wx:else class="step-num">4</view>
         </view>
-        <view class="step-main"><text class="step-title">设备认领</text><text class="step-desc">确认这台设备属于你</text></view>
+        <view class="step-main"><text class="step-title">确认归属</text><text class="step-desc">确认这台机器人是你的</text></view>
       </view>
       <view class="step-item {{state === 'activation' ? 'current' : (state === 'complete' ? 'done' : 'todo')}}">
         <view class="step-node">
@@ -66,10 +66,10 @@
       <text class="l2-card-title">先准备好机器人</text>
     </view>
     <text wx:if="{{reprovision}}" class="l2-card-sub">机器人找不到已保存的 Wi‑Fi 时，屏幕会自动显示二维码。请用绑定它的账号扫码，本次只更新网络，不需要解除绑定；家庭网络需支持 2.4 GHz。</text>
-    <text wx:else class="l2-card-sub">请接通电源，等待机器人屏幕出现动态二维码；手机需要打开蓝牙和 Wi‑Fi，家庭网络需支持 2.4 GHz。</text>
+    <text wx:else class="l2-card-sub">请接通电源，等机器人屏幕上出现二维码；手机需要打开蓝牙和 Wi‑Fi，家里的 Wi‑Fi 要是 2.4 GHz 的（多数路由器都支持）。</text>
     <view class="notice notice-warn">
-      <text class="notice-title">安全提醒</text>
-      <text class="notice-copy">二维码只启动短期启用会话，不代表设备所有权。Wi‑Fi 密码只在本页内存和机器人安全配网会话中短暂存在。</text>
+      <text class="notice-title">小提醒</text>
+      <text class="notice-copy">扫二维码只是开始设置，还不算绑定。Wi‑Fi 密码只用来给机器人联网，不会上传，也不会保存在手机上。</text>
     </view>
     <button class="primary-button onboarding-button" bindtap="startFlow">开始扫码</button>
     <button class="secondary-button onboarding-button" bindtap="openDevicePage">返回设备管理</button>
@@ -80,9 +80,9 @@
       <glass-icon name="qr" size="80"></glass-icon>
       <text class="l2-card-title">扫描机器人二维码</text>
     </view>
-    <text class="l2-card-sub">请扫描屏幕上的 Memoria 设备二维码。扫码结果不会保存；只会原样提交到服务端进行识别和签名校验。</text>
+    <text class="l2-card-sub">请扫描机器人屏幕上的二维码，扫码结果不会保存在手机上。</text>
     <button class="primary-button onboarding-button" loading="{{scanning || busy}}" disabled="{{scanning || busy}}" bindtap="scanQr">扫描二维码</button>
-    <text class="form-note">二维码失效、设备已绑定或协议版本不兼容时，会在这里给出可操作提示。</text>
+    <text class="form-note">二维码过期了？轻点机器人屏幕换一张新的，再扫一次。</text>
   </view>
 
   <view wx:if="{{state === 'device_verified'}}" class="l2-card">
@@ -96,8 +96,8 @@
       <view class="summary-row"><text class="summary-key">固件版本</text><text class="summary-value">{{device.firmware_version}}</text></view>
       <view class="summary-row"><text class="summary-key">设备状态</text><text class="summary-value">{{device.claim_status === 'unclaimed' ? '待启用' : (device.claim_status === 'bound' ? '已绑定' : device.claim_status)}}</text></view>
     </view>
-    <text wx:if="{{reprovision}}" class="form-note">这台机器人已绑定在你的账号上，本次只更新 Wi‑Fi；下一步会在附近搜索名称和尾号均匹配的机器人。</text>
-    <text wx:else class="form-note">下一步会在附近搜索名称和尾号均匹配的机器人；扫码本身不会直接绑定账号。</text>
+    <text wx:if="{{reprovision}}" class="form-note">这台机器人已绑定在你的账号上，本次只更新 Wi‑Fi；下一步让手机连上它。</text>
+    <text wx:else class="form-note">下一步让手机连上这台机器人；只扫码不会绑定账号。</text>
     <button class="primary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="connectBle">连接附近机器人</button>
     <button class="secondary-button onboarding-button" bindtap="startFlow">重新扫码</button>
   </view>
@@ -110,8 +110,8 @@
     <view class="flow-status-list">
       <text class="flow-status">正在打开蓝牙</text>
       <text class="flow-status">正在寻找屏幕上的机器人</text>
-      <text class="flow-status">已找到后会校验设备尾号和服务</text>
-      <text class="flow-status">安全会话未通过前不会发送 Wi‑Fi 信息</text>
+      <text class="flow-status">找到后会核对尾号，确认是同一台机器人</text>
+      <text class="flow-status">确认安全之前，不会发送 Wi‑Fi 信息</text>
     </view>
     <button class="secondary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="retryBle">重新连接</button>
   </view>
@@ -121,20 +121,20 @@
       <glass-icon name="wifi" size="80"></glass-icon>
       <text class="l2-card-title">选择家庭 Wi‑Fi</text>
     </view>
-    <text class="l2-card-sub">优先使用机器人通过 BLE 扫描到的 2.4 GHz 网络；手机当前连接的 Wi‑Fi 只作默认选中提示。</text>
+    <text class="l2-card-sub">下面是机器人附近能搜到的 2.4 GHz Wi‑Fi，请选择家里的网络，再输入密码。</text>
     <view wx:if="{{connectedWifi}}" class="wifi-hint">手机当前连接：{{connectedWifi}}</view>
     <view wx:if="{{wifiNetworks.length > 0}}" class="wifi-list">
       <view wx:for="{{wifiNetworks}}" wx:key="ssid" class="wifi-row {{selectedSsid === item.ssid ? 'wifi-selected' : ''}}" data-ssid="{{item.ssid}}" bindtap="onWifiNetworkTap">
-        <view class="wifi-copy"><text class="wifi-name">{{item.ssid}}</text><text class="wifi-meta">{{item.security}} · 信号 {{item.rssi}}</text></view>
+        <view class="wifi-copy"><text class="wifi-name">{{item.ssid}}</text><text wx:if="{{item.meta}}" class="wifi-meta">{{item.meta}}</text></view>
         <text wx:if="{{selectedSsid === item.ssid}}" class="wifi-check">✓</text>
       </view>
     </view>
-    <input class="field-input" value="{{selectedSsid}}" placeholder="也可以手动输入 SSID" placeholder-class="field-placeholder" bindinput="onSsidInput" />
+    <input class="field-input" value="{{selectedSsid}}" placeholder="也可以手动输入 Wi‑Fi 名称" placeholder-class="field-placeholder" bindinput="onSsidInput" />
     <view class="password-row">
       <input class="field-input password-input" password="{{!showPassword}}" value="{{wifiPassword}}" placeholder="Wi‑Fi 密码" placeholder-class="field-placeholder" bindinput="onWifiPasswordInput" />
       <button class="password-toggle" bindtap="togglePassword">{{showPassword ? '隐藏' : '显示'}}</button>
     </view>
-    <text class="form-note">密码不会写入 Storage、日志、API 请求、埋点或错误上报；切后台、离开页面和提交后都会清空。</text>
+    <text class="form-note">密码只用来给机器人联网，不会上传，也不会留在手机上；切到后台、离开页面或发送之后，都会立刻清除。</text>
     <button class="primary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="submitWifi">安全发送给机器人</button>
   </view>
 
@@ -157,29 +157,29 @@
       <button class="secondary-button onboarding-button" bindtap="startFlow">重新扫码</button>
     </view>
     <button wx:if="{{!network}}" class="secondary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="retryProgress">查看机器人联网状态</button>
-    <button wx:if="{{network.phase === 'online' && !reprovision}}" class="primary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="reserveClaim">认领这台机器人</button>
+    <button wx:if="{{network.phase === 'online' && !reprovision}}" class="primary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="reserveClaim">确认这是我的机器人</button>
   </view>
 
   <view wx:if="{{state === 'claim'}}" class="l2-card">
     <view class="card-lead">
       <glass-icon name="shield" size="80"></glass-icon>
-      <text class="l2-card-title">认领设备</text>
+      <text class="l2-card-title">确认这是你的机器人</text>
     </view>
-    <text class="l2-card-sub">设备已完成在线证明。认领后当前账号获得一次性初始化窗口，设备归属不会因为清除 Wi‑Fi 自动转移。</text>
+    <text class="l2-card-sub">机器人已经联网。确认后，这台机器人就先留给你的账号，请接着完成设置；之后重新配 Wi‑Fi，它也不会换主人。</text>
     <view wx:if="{{device}}" class="summary-row"><text class="summary-key">设备尾号</text><text class="summary-value">{{device.display_tail}}</text></view>
-    <view wx:if="{{claim}}" class="summary-row"><text class="summary-key">认领状态</text><text class="summary-value">{{claim.status}}</text></view>
-    <view wx:if="{{claim}}" class="summary-row"><text class="summary-key">有效期</text><text class="summary-value">{{claim.expires_at}}</text></view>
-    <button wx:if="{{!claim}}" class="primary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="reserveClaim">保留认领</button>
-    <button wx:if="{{claim}}" class="primary-button onboarding-button" bindtap="continueInitialize">开始首次初始化</button>
+    <view wx:if="{{claim && claimExpiryLabel}}" class="summary-row"><text class="summary-key">请在这之前完成</text><text class="summary-value">{{claimExpiryLabel}}</text></view>
+    <text wx:if="{{claim}}" class="form-note">超时也没关系，会自动释放，回来重新确认一次就好。</text>
+    <button wx:if="{{!claim}}" class="primary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="reserveClaim">确认这是我的机器人</button>
+    <button wx:if="{{claim}}" class="primary-button onboarding-button" bindtap="continueInitialize">下一步：设置使用方式</button>
   </view>
 
   <view wx:if="{{state === 'initialize'}}" class="l2-card">
     <view class="card-lead">
       <glass-icon name="sprout" size="80"></glass-icon>
-      <text class="l2-card-title">首次初始化</text>
+      <text class="l2-card-title">设置使用方式</text>
     </view>
-    <text class="l2-card-sub">接下来选择给孩子、自己、父母或家庭使用。绑定页已经通过服务端确认 claim_id，不会再次扫码或输入设备码。</text>
-    <button class="primary-button onboarding-button" bindtap="continueInitialize">进入使用方式设置</button>
+    <text class="l2-card-sub">接下来选择机器人给谁用、挑一位陪伴伙伴，不需要再扫码。</text>
+    <button class="primary-button onboarding-button" bindtap="continueInitialize">去设置</button>
   </view>
 
   <view wx:if="{{state === 'activation'}}" class="l2-card">
@@ -206,6 +206,6 @@
   </view>
 
   <text wx:if="{{error}}" class="error-text onboarding-error">{{error}}</text>
-  <text class="privacy-note">Wi-Fi 密码只经过加密蓝牙通道，不经过服务器。</text>
+  <text class="privacy-note">Wi‑Fi 密码只传给机器人，不会上传到服务器。</text>
   <button wx:if="{{state !== 'complete'}}" class="cancel-link" bindtap="cancelFlow">{{reprovision ? '取消重新配网' : '取消本次启用'}}</button>
 </view>

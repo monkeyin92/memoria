@@ -521,7 +521,7 @@ class OnboardingController {
         !sameId(claim.onboarding_session_id, session.onboarding_session_id) ||
         !sameId(claim.device_id, session.device.device_id)
       ) {
-        throw new Error("服务端返回的认领不属于当前设备");
+        throw new Error("这次确认和当前机器人对不上，请重新扫码再试。");
       }
       if (isExpired(claim.expires_at, this.now())) {
         const error = new Error("认领保留已过期");

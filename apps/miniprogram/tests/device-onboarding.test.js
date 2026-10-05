@@ -14,6 +14,8 @@ const {
   endpointUuidCandidates,
   parseDeviceQr,
   isActivationReady,
+  STATE_LABELS,
+  ERROR_MESSAGES,
 } = require("../utils/device-onboarding");
 
 const root = path.join(__dirname, "..");
@@ -784,6 +786,94 @@ test("the finish card shows the companion picked on the bind page", () => {
     page.data.companionId = "";
     page.onBindingCreated({ device_id: "dev_01", binding_id: "bd_1" });
     assert.equal(page.data.companionId, "");
+  } finally {
+    global.Page = previousPage;
+    if (previousWx === undefined) delete global.wx;
+    else global.wx = previousWx;
+    if (previousGetApp === undefined) delete global.getApp;
+    else global.getApp = previousGetApp;
+  }
+});
+
+test("the setup pages speak plainly: no protocol terms, enums, ids or timestamps on screen", () => {
+  const visible = (file) =>
+    fs.readFileSync(path.join(root, file), "utf8").replace(/<!--[\s\S]*?-->/g, "");
+  const onboarding = visible("pages/device-onboarding/index.wxml");
+  const bind = visible("pages/bind/index.wxml");
+  for (const term of ["BLE", "SSID", "claim_id", "Storage", "认领", "初始化", "服务端", "握上手", "加密蓝牙"]) {
+    assert.ok(!onboarding.includes(term), `the onboarding page still says ${term}`);
+    assert.ok(!bind.includes(term), `the bind page still says ${term}`);
+  }
+  // Raw values the person cannot act on: a status enum, an ISO timestamp, dBm and the firmware's security string.
+  for (const raw of ["claim.status", "claim.expires_at", "item.rssi", "item.security"]) {
+    assert.ok(!onboarding.includes(raw), `the onboarding page still shows ${raw}`);
+  }
+  // The stage names people see are the same words everywhere.
+  for (const label of [STATE_LABELS.claim, STATE_LABELS.initialize, STATE_LABELS.activation]) {
+    assert.ok(!/认领|初始化|设备激活/.test(label), label);
+  }
+  for (const [code, message] of Object.entries(ERROR_MESSAGES)) {
+    assert.ok(!/认领|初始化|claim|BLE|Activation|session/i.test(message), `${code}: ${message}`);
+  }
+});
+
+test("the onboarding page shows networks by signal and the claim deadline as a clock time", () => {
+  const previousPage = global.Page;
+  const previousWx = global.wx;
+  const previousGetApp = global.getApp;
+  let definition;
+  const navigations = [];
+  global.Page = (value) => {
+    definition = value;
+  };
+  global.wx = {
+    setNavigationBarTitle() {},
+    getStorageSync: () => "",
+    setStorageSync() {},
+    removeStorageSync() {},
+    navigateTo: (options) => navigations.push(options.url),
+  };
+  global.getApp = () => ({ globalData: {}, subscribeAuthCleared: () => () => {} });
+  try {
+    const pagePath = require.resolve("../pages/device-onboarding/index");
+    delete require.cache[pagePath];
+    require(pagePath);
+    const page = { ...definition, data: JSON.parse(JSON.stringify(definition.data)) };
+    page.setData = (updates) => Object.assign(page.data, updates);
+    page._applySnapshot({
+      state: "wifi",
+      stateLabel: "配置家庭 Wi‑Fi",
+      wifiNetworks: [
+        { ssid: "Home", rssi: -48, security: "wpa2", channel: 6, saved: false },
+        { ssid: "Hall", rssi: -70, security: "wpa2", channel: 1, saved: false },
+        { ssid: "Cafe", rssi: -88, security: "open", channel: 11, saved: false },
+      ],
+      claim: { claim_id: "claim_01", expires_at: "2026-10-05T06:32:00Z" },
+    });
+    assert.deepEqual(
+      page.data.wifiNetworks.map(({ ssid, meta }) => [ssid, meta]),
+      [["Home", "信号强"], ["Hall", "信号一般"], ["Cafe", "开放网络 · 信号弱"]],
+    );
+    // A clock time on the phone, not the ISO string the server sent.
+    assert.match(page.data.claimExpiryLabel, /^\d{2}:\d{2}$/);
+    page._applySnapshot({ state: "wifi", stateLabel: "配置家庭 Wi‑Fi", claim: null, wifiNetworks: undefined });
+    assert.equal(page.data.claimExpiryLabel, "");
+    assert.deepEqual(page.data.wifiNetworks, []);
+
+    // The bind page gets the robot's tail to show instead of its raw id.
+    page._controller = {
+      beginInitialize: () => true,
+      claim: { claim_id: "claim_01", onboarding_session_id: "onb_01" },
+    };
+    page.data.device = { display_tail: "AB12" };
+    page.continueInitialize();
+    page.data.device = null;
+    page.continueInitialize();
+    assert.equal(
+      navigations[0],
+      "/pages/bind/index?claim_id=claim_01&onboarding_session_id=onb_01&device_tail=AB12",
+    );
+    assert.equal(navigations[1], "/pages/bind/index?claim_id=claim_01&onboarding_session_id=onb_01");
   } finally {
     global.Page = previousPage;
     if (previousWx === undefined) delete global.wx;

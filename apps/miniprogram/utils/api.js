@@ -223,7 +223,7 @@ function errorFromResponse(response) {
                           : code === "minor_forbidden"
                                 ? "学生账号不开放这项能力。"
                                 : code === "CLAIM_CONFLICT"
-                                  ? "设备认领状态已变化。上一次认领最多 10 分钟后自动释放，之后轻点机器人屏幕换一张新二维码再扫码。"
+                                  ? "这台机器人还有一次没做完的确认，最多 10 分钟后自动释放，之后轻点机器人屏幕换一张新二维码再扫码。"
                                   : code === "BINDING_CONFLICT" || code === "binding_conflict"
                                     ? "这次绑定没有完成，请稍后在这里再点一次完成绑定。"
                                     : code === "DEVICE_ALREADY_BOUND"
