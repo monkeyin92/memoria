@@ -371,15 +371,22 @@ bool VerifyManifest(const DeviceIdentity& identity,
         expires <= issued || expires - issued > kMaximumManifestLifetimeSeconds) {
         return false;
     }
+    // The board has no time source of its own, so the signed `issued_at` is the
+    // only wall-clock reading it ever gets.  Move the clock forward to it when
+    // the clock is unset or behind: a clock last set from an older manifest
+    // (and kept across chip resets) would otherwise judge every newer manifest
+    // to come from the future and leave the board unactivated until a full
+    // power cycle.  Never backwards, so replaying an old manifest cannot
+    // rewind the clock.
     time_t now = time(nullptr);
-    if (now < kMinimumTrustedUnixTime) {
+    if (now < kMinimumTrustedUnixTime || now < issued) {
         timeval trusted_time{.tv_sec = issued, .tv_usec = 0};
         if (settimeofday(&trusted_time, nullptr) != 0) {
             return false;
         }
         now = issued;
     }
-    return now >= issued - 300 && now < expires;
+    return now < expires;
 }
 
 std::string BuildSignedGetPayload(const DeviceIdentity& identity, const std::string& path) {
