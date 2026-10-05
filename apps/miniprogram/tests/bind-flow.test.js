@@ -399,14 +399,14 @@ test("a child declared by an earlier binding can be reused when no guardian link
   await withExistingSubjects(
     {
       links: async () => [],
-      candidates: async () => [{ personId: "person_wangzai", displayName: "旺仔", ageBand: "under_14" }],
+      candidates: async () => [{ personId: "person_child_b", displayName: "孩子乙", ageBand: "under_14" }],
     },
     async () => {
       nextResponse = successResponse(defaultManifestResponse("parent_for_child"));
       const page = await bootToMode("parent_for_child");
       await settle();
       assert.deepEqual(page.data.existingSubjectOptions, [
-        { minorUserId: "person_wangzai", label: "旺仔" },
+        { minorUserId: "person_child_b", label: "孩子乙" },
       ]);
 
       page.setData({ "form.subjectSource": "existing" });
@@ -414,9 +414,9 @@ test("a child declared by an earlier binding can be reused when no guardian link
       assert.equal(page.data.step, "review");
       await page.submitBinding();
       const payload = lastWxRequest.data;
-      assert.equal(payload.primary_subject.person_id, "person_wangzai");
+      assert.equal(payload.primary_subject.person_id, "person_child_b");
       assert.equal(payload.primary_subject.subject_draft, undefined);
-      assert.equal(readSubjectLabel(page.data.manifest), "旺仔");
+      assert.equal(readSubjectLabel(page.data.manifest), "孩子乙");
     },
   );
 });
@@ -430,8 +430,8 @@ test("guardian-linked and binding-declared children are merged without repeats",
       ],
       candidates: async () => [
         { personId: "person_child", displayName: "小乐", ageBand: "under_14" },
-        { personId: "person_wangzai", displayName: "旺仔", ageBand: "under_14" },
-        { personId: "person_wangzai", displayName: "旺仔", ageBand: "under_14" },
+        { personId: "person_child_b", displayName: "孩子乙", ageBand: "under_14" },
+        { personId: "person_child_b", displayName: "孩子乙", ageBand: "under_14" },
       ],
     },
     async () => {
@@ -440,9 +440,9 @@ test("guardian-linked and binding-declared children are merged without repeats",
       await settle();
       assert.deepEqual(page.data.existingSubjectOptions.map((option) => option.minorUserId).sort(), [
         "person_child",
-        "person_wangzai",
+        "person_child_b",
       ]);
-      assert.deepEqual(page.data.existingSubjectOptions.map((option) => option.label).sort(), ["小乐", "旺仔"]);
+      assert.deepEqual(page.data.existingSubjectOptions.map((option) => option.label).sort(), ["孩子乙", "小乐"]);
     },
   );
 });
@@ -455,13 +455,13 @@ test("a child already chosen keeps its place when the slower lookup adds more", 
         new Promise((resolve) => {
           resolveLinks = resolve;
         }),
-      candidates: async () => [{ personId: "person_wangzai", displayName: "旺仔", ageBand: "under_14" }],
+      candidates: async () => [{ personId: "person_child_b", displayName: "孩子乙", ageBand: "under_14" }],
     },
     async () => {
       nextResponse = successResponse(defaultManifestResponse("parent_for_child"));
       const page = await bootToMode("parent_for_child");
       await settle();
-      assert.deepEqual(page.data.existingSubjectOptions.map((option) => option.minorUserId), ["person_wangzai"]);
+      assert.deepEqual(page.data.existingSubjectOptions.map((option) => option.minorUserId), ["person_child_b"]);
 
       page.setData({ "form.subjectSource": "existing" });
       page.onExistingSubjectChange({ detail: { value: "0" } });
@@ -471,13 +471,13 @@ test("a child already chosen keeps its place when the slower lookup adds more", 
       await settle();
 
       assert.deepEqual(page.data.existingSubjectOptions.map((option) => option.minorUserId), [
-        "person_wangzai",
+        "person_child_b",
         "person_child",
       ]);
       assert.equal(page.data.form.existingSubjectIndex, 0);
       page.goToReview();
       await page.submitBinding();
-      assert.equal(lastWxRequest.data.primary_subject.person_id, "person_wangzai");
+      assert.equal(lastWxRequest.data.primary_subject.person_id, "person_child_b");
     },
   );
 });
@@ -505,14 +505,14 @@ test("a failing lookup leaves the children the other one found", async () => {
       links: async () => {
         throw failure;
       },
-      candidates: async () => [{ personId: "person_wangzai", displayName: "", ageBand: "" }],
+      candidates: async () => [{ personId: "person_child_b", displayName: "", ageBand: "" }],
     },
     async () => {
       nextResponse = successResponse(defaultManifestResponse("parent_for_child"));
       const page = await bootToMode("parent_for_child");
       await settle();
       // A child without a remark still gets a readable entry.
-      assert.deepEqual(page.data.existingSubjectOptions, [{ minorUserId: "person_wangzai", label: "孩子 1" }]);
+      assert.deepEqual(page.data.existingSubjectOptions, [{ minorUserId: "person_child_b", label: "孩子 1" }]);
     },
   );
 });
@@ -533,7 +533,7 @@ test("a late binding-children lookup is ignored after switching away from parent
       page.chooseMode({ currentTarget: { dataset: { mode: "self_use" } } });
       assert.equal(page.data.declaredMode, "self_use");
 
-      resolveCandidates([{ personId: "person_wangzai", displayName: "旺仔", ageBand: "under_14" }]);
+      resolveCandidates([{ personId: "person_child_b", displayName: "孩子乙", ageBand: "under_14" }]);
       await settle();
 
       assert.equal(page.data.declaredMode, "self_use");
@@ -545,15 +545,15 @@ test("a late binding-children lookup is ignored after switching away from parent
 test("the binding children list is read from the server and tolerates an older backend", async () => {
   nextResponse = successResponse({
     subjects: [
-      { person_id: " person_wangzai ", display_name: " 旺仔 ", age_band: "under_14" },
-      { person_id: "person_wangzai", display_name: "旺仔", age_band: "under_14" },
+      { person_id: " person_child_b ", display_name: " 孩子乙 ", age_band: "under_14" },
+      { person_id: "person_child_b", display_name: "孩子乙", age_band: "under_14" },
       { person_id: "", display_name: "无编号" },
       null,
       { person_id: "person_nameless" },
     ],
   });
   assert.deepEqual(await realGetBindingSubjectCandidates(), [
-    { personId: "person_wangzai", displayName: "旺仔", ageBand: "under_14" },
+    { personId: "person_child_b", displayName: "孩子乙", ageBand: "under_14" },
     { personId: "person_nameless", displayName: "", ageBand: "" },
   ]);
   assert.equal(lastWxRequest.method, "GET");
