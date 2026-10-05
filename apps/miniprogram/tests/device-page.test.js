@@ -1757,6 +1757,39 @@ test("unbind with purge asks a second time and sends purge_subject_data true", a
   }
 });
 
+test("unbinding also drops the enable session stored for that robot", async () => {
+  unbindCalls.length = 0;
+  const sessionKey = "memoria:miniprogram:onboarding_session_id";
+  storage[sessionKey] = "onb_old";
+  const page = await bootBoundDevicePage();
+  page.openUnbindSheet();
+  page.pickUnbindChoice({ currentTarget: { dataset: { choice: "keep" } } });
+  await page.confirmUnbind();
+  assert.equal(unbindCalls.length, 1);
+  // 留着它，下一次进「启用」页会续接一个已经不存在的会话（403/409）。
+  assert.equal(storage[sessionKey], undefined);
+});
+
+test("a failed unbind keeps the enable session", async () => {
+  const sessionKey = "memoria:miniprogram:onboarding_session_id";
+  storage[sessionKey] = "onb_kept";
+  const originalUnbind = api.unbindDevice;
+  api.unbindDevice = async () => {
+    throw new Error("网络不通");
+  };
+  try {
+    const page = await bootBoundDevicePage();
+    page.openUnbindSheet();
+    page.pickUnbindChoice({ currentTarget: { dataset: { choice: "keep" } } });
+    await page.confirmUnbind();
+    assert.match(page.data.unbindError, /网络不通/);
+    assert.equal(storage[sessionKey], "onb_kept");
+  } finally {
+    api.unbindDevice = originalUnbind;
+    delete storage[sessionKey];
+  }
+});
+
 test("device page offers both unbind data choices", () => {
   const template = fs.readFileSync(path.join(__dirname, "../pages/device/index.wxml"), "utf8");
   assert.match(template, /同时删除 TA 的记忆和对话数据/);

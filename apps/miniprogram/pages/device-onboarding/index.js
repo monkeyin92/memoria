@@ -84,6 +84,10 @@ Page({
     activation: null,
     activationLabel: "等待设备状态",
     activationReady: false,
+    activationSlow: false,
+    // The companion picked on the bind page, so the finish card shows it
+    // instead of a generic robot; empty when the flow was resumed.
+    companionId: "",
     networkLabel: "尚未读取网络状态",
     progressRows: [],
     progressIndex: 0,
@@ -191,6 +195,7 @@ Page({
       activation: snapshot.activation,
       activationLabel: ACTIVATION_LABELS[activationStatus] || activationStatus,
       activationReady: Boolean(snapshot.activationReady || isActivationReady(activationStatus)),
+      activationSlow: Boolean(snapshot.activationSlow),
       networkLabel: displayWifi(snapshot.session?.network_status),
       wifiNetworks: snapshot.wifiNetworks || [],
       progressIndex: progressIndexValue,
@@ -342,8 +347,9 @@ Page({
     wx.switchTab({ url: "/pages/device/index" });
   },
 
-  onBindingCreated(manifest) {
+  onBindingCreated(manifest, { companionId = "" } = {}) {
     this._resumed = true;
+    if (companionId) this.setData({ companionId });
     this._controller.onBindingCreated(manifest);
     this._controller.startActivationPolling();
   },

@@ -187,21 +187,17 @@
       <glass-icon name="bell" size="80"></glass-icon>
       <text class="l2-card-title">等待机器人激活</text>
     </view>
-    <text class="l2-card-sub">绑定清单和 Activation Manifest 已交给设备链路；只有机器人回传 device_acknowledged 或 ready_for_conversation，才会显示完成。</text>
+    <text class="l2-card-sub">机器人正在领取你刚刚设置好的内容，一般一分钟内就好。请保持机器人通电、连着 Wi‑Fi，这里会自动更新。</text>
     <view class="activation-badge">{{activationLabel}}</view>
-    <view wx:if="{{activation}}" class="summary-list">
-      <view wx:if="{{activation.firmware_version}}" class="summary-row"><text class="summary-key">固件版本</text><text class="summary-value">{{activation.firmware_version}}</text></view>
-      <view wx:if="{{activation.network}}" class="summary-row"><text class="summary-key">网络状态</text><text class="summary-value">{{activation.network.status}}</text></view>
-      <view wx:if="{{activation.updated_at}}" class="summary-row"><text class="summary-key">最近更新</text><text class="summary-value">{{activation.updated_at}}</text></view>
-    </view>
-    <view class="button-row">
-      <text class="form-note">使用人由刚才的绑定确定，机器人不需要识别声音，激活后直接开始对话即可。</text>
-    </view>
-    <button class="secondary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="refreshActivation">刷新激活状态</button>
+    <text wx:if="{{activationSlow}}" class="form-note activation-slow">等得有点久？先看看机器人屏幕是否还亮着。如果一直没有变化，把机器人的电源拔掉再插上，重启后会自动接着完成，这里不用重新操作。</text>
+    <button class="secondary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="refreshActivation">刷新状态</button>
   </view>
 
   <view wx:if="{{state === 'complete'}}" class="l2-card done-card">
-    <view class="done-device"><device-screen online="{{true}}" size="220"></device-screen></view>
+    <view class="done-device">
+      <face-badge wx:if="{{companionId}}" role="{{companionId}}" size="xl" plain="{{true}}" animated="{{true}}"></face-badge>
+      <device-screen wx:else online="{{true}}" size="220"></device-screen>
+    </view>
     <text class="done-badge">{{reprovision ? 'ONLINE' : 'READY'}}</text>
     <text class="done-title">{{reprovision ? '网络已更新' : '机器人可以开始对话了'}}</text>
     <text wx:if="{{reprovision}}" class="done-note">机器人已经用新的 Wi‑Fi 连上 Memoria。绑定关系、使用人和记忆都没有变化，唤醒它就能继续聊天。</text>

@@ -31,6 +31,9 @@ const {
 const NETWORK_POLL_MS = 2000;
 const WIFI_JOIN_TIMEOUT_MS = 45000;
 const ONLINE_TIMEOUT_MS = 90000;
+// The robot normally takes its settings within seconds of the binding; past
+// this the activation step says what usually helps.
+const ACTIVATION_SLOW_MS = 60000;
 const ONLINE_SERVER_STATES = new Set([
   "device_online",
   "claim_reserved",
@@ -45,6 +48,16 @@ function isDeviceOnline(session) {
     ONLINE_SERVER_STATES.has(session?.state) ||
     session?.network_status?.status === "device_proof_accepted"
   );
+}
+
+// The server stops answering for a session whose robot was unbound meanwhile:
+// 403 ACTOR_MISMATCH on the activation lookup, and 403/404/409/410 on cancel
+// (409 = it is past binding and can no longer be cancelled).  None of these
+// can be fixed by retrying, so the stored session is dropped instead.
+const CANCEL_NOTHING_LEFT_STATUSES = new Set([403, 404, 409, 410]);
+
+function activationNoLongerYours(error) {
+  return error?.status === 403 || error?.code === "ACTOR_MISMATCH";
 }
 
 function operationId(prefix) {
@@ -99,6 +112,7 @@ class OnboardingController {
     this._wifiPassword = new SensitiveBuffer();
     this._wifiSsid = "";
     this._activationTimer = null;
+    this._activationSince = null;
     this._bootstrapPop = "";
     this._disposed = false;
     this._emit();
@@ -147,6 +161,10 @@ class OnboardingController {
           : this._activation?.status || this._session?.activation_status,
       }),
       activationReady: Boolean(this._activation && isActivationReady(this._activation.status)),
+      activationSlow:
+        this._state === "activation" &&
+        this._activationSince !== null &&
+        this.now() - this._activationSince >= ACTIVATION_SLOW_MS,
     };
   }
 
@@ -164,6 +182,7 @@ class OnboardingController {
       return;
     }
     this._state = force ? next : transition(this._state, next);
+    this._activationSince = next === "activation" ? this.now() : null;
     this._error = "";
     this._errorCode = "";
     this._emit();
@@ -567,9 +586,30 @@ class OnboardingController {
       }
       return status;
     } catch (error) {
-      if (this._isCurrent(epoch)) this._setError(error);
+      if (!this._isCurrent(epoch)) return null;
+      if (activationNoLongerYours(error)) this._endStaleSession();
+      else this._setError(error);
       return null;
     }
+  }
+
+  // The session outlived its robot's binding (unbound since, or bound again by
+  // another flow): nothing here can finish, so drop it and say so instead of
+  // leaving a bare 403 on a page that cannot be fixed.
+  _endStaleSession() {
+    this._resetSession();
+    this._setState("prepare", { force: true });
+    this._setError({ code: "ONBOARDING_SESSION_ENDED" });
+  }
+
+  _resetSession() {
+    this.stopActivationPolling();
+    clearOnboardingSessionId();
+    this._session = null;
+    this._claim = null;
+    this._binding = null;
+    this._activation = null;
+    this._bootstrapPop = "";
   }
 
   startActivationPolling(intervalMs = 3000) {
@@ -607,14 +647,18 @@ class OnboardingController {
     const epoch = this._beginAttempt();
     this._setBusy(true);
     try {
-      if (sessionId) await this.api.cancelOnboardingSession(sessionId);
+      if (sessionId) {
+        try {
+          await this.api.cancelOnboardingSession(sessionId);
+        } catch (error) {
+          // Already over for the server (unbound, gone) or past the point it can
+          // be cancelled (bound): either way there is nothing left to cancel and
+          // leaving the flow is what the person asked for.
+          if (!CANCEL_NOTHING_LEFT_STATUSES.has(error?.status)) throw error;
+        }
+      }
       if (!this._isCurrent(epoch)) return false;
-      clearOnboardingSessionId();
-      this._session = null;
-      this._claim = null;
-      this._binding = null;
-      this._activation = null;
-      this._bootstrapPop = "";
+      this._resetSession();
       this._setState("prepare", { force: true });
       return true;
     } catch (error) {

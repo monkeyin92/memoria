@@ -245,24 +245,48 @@ Page({
     this.setData({ step: "form" });
   },
 
-  async loadExistingSubjects(modeSeq = this._modeSeq) {
+  // Children this account can pick again: confirmed guardian links, plus the
+  // children it declared when it bound a robot before (those stay after an
+  // unbind that keeps the data, and never become guardian links).  The two
+  // lookups are independent; each adds what it finds, and the list only grows
+  // at its end so a choice already made keeps its position.
+  loadExistingSubjects(modeSeq = this._modeSeq) {
+    return Promise.all([
+      this._addExistingSubjects(modeSeq, async () =>
+        (await api.getGuardianLinks())
+          .filter((link) => link.status === "active")
+          .map((link, index) => ({
+            minorUserId: link.minorUserId,
+            label: link.displayName || `孩子 ${index + 1}`,
+          })),
+      ),
+      this._addExistingSubjects(modeSeq, async () =>
+        (await api.getBindingSubjectCandidates()).map((subject, index) => ({
+          minorUserId: subject.personId,
+          label: subject.displayName || `孩子 ${index + 1}`,
+        })),
+      ),
+    ]);
+  },
+
+  async _addExistingSubjects(modeSeq, lookup) {
+    let found = [];
     try {
-      const links = await api.getGuardianLinks();
-      if (modeSeq !== this._modeSeq || this.data.declaredMode !== "parent_for_child") {
-        return;
-      }
-      const options = links
-        .filter((link) => link.status === "active")
-        .map((link, index) => ({
-          minorUserId: link.minorUserId,
-          label: link.displayName || `孩子 ${index + 1}`,
-        }));
-      this.setData({ existingSubjectOptions: options });
+      found = await lookup();
     } catch {
-      if (modeSeq !== this._modeSeq || this.data.declaredMode !== "parent_for_child") {
-        return;
+      found = [];
+    }
+    if (modeSeq !== this._modeSeq || this.data.declaredMode !== "parent_for_child") {
+      return;
+    }
+    const options = [...this.data.existingSubjectOptions];
+    for (const entry of found) {
+      if (!options.some((option) => option.minorUserId === entry.minorUserId)) {
+        options.push(entry);
       }
-      this.setData({ existingSubjectOptions: [] });
+    }
+    if (options.length !== this.data.existingSubjectOptions.length) {
+      this.setData({ existingSubjectOptions: options });
     }
   },
 
@@ -593,7 +617,9 @@ Page({
     const pages = typeof getCurrentPages === "function" ? getCurrentPages() : [];
     const previous = pages[pages.length - 2];
     if (typeof previous?.onBindingCreated === "function") {
-      previous.onBindingCreated(this.data.manifest);
+      previous.onBindingCreated(this.data.manifest, {
+        companionId: this.data.personaOptions[this.data.personaIndex]?.id || "",
+      });
       wx.navigateBack({ delta: 1 });
       return;
     }

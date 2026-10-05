@@ -64,6 +64,7 @@
         <picker wx:if="{{form.subjectSource === 'existing' && existingSubjectOptions.length > 0}}" range="{{existingSubjectOptions}}" range-key="label" value="{{form.existingSubjectIndex}}" bindchange="onExistingSubjectChange">
           <view class="picker-row"><text class="picker-label">选择孩子</text><text class="picker-value">{{existingSubjectOptions[form.existingSubjectIndex].label}}</text></view>
         </picker>
+        <text wx:if="{{form.subjectSource === 'new' && existingSubjectOptions.length > 0}}" class="caption">之前建过「{{existingSubjectOptions[0].label}}」{{existingSubjectOptions.length > 1 ? '等 ' + existingSubjectOptions.length + ' 位' : ''}}的档案，重新绑定时选「使用已有档案」就能沿用，不用重新建。</text>
         <text wx:if="{{form.subjectSource === 'new'}}" class="field-label">使用者备注 *</text>
         <input wx:if="{{form.subjectSource === 'new'}}" class="field-input" value="{{form.childNickname}}" placeholder="例如：亲爱的儿子、小乐" placeholder-class="field-placeholder" maxlength="{{maxSubjectLabel}}" data-key="childNickname" bindinput="onFieldInput" />
         <text wx:if="{{form.subjectSource === 'existing'}}" class="field-label">使用者备注</text>
@@ -204,11 +205,14 @@
   <!-- 步骤 5：完成徽章 -->
   <block wx:if="{{step === 'done'}}">
     <view class="l2-card done-card">
-      <view class="done-device"><device-screen online="{{true}}" size="220"></device-screen></view>
+      <view class="done-device">
+        <face-badge role="{{personaOptions[personaIndex].id}}" size="xl" plain="{{true}}" animated="{{true}}"></face-badge>
+      </view>
       <text class="done-badge">已提交初始化</text>
       <text class="done-title">机器人已建立「{{manifest.declared_mode === 'parent_for_child' ? '给孩子使用' : manifest.declared_mode === 'self_use' ? '给自己使用' : manifest.declared_mode === 'child_for_parent' ? '给父母使用' : '家庭共同使用'}}」绑定</text>
       <view class="summary-row"><text class="summary-key">绑定编号</text><text class="summary-value">{{manifest.binding_id}}</text></view>
       <view class="summary-row"><text class="summary-key">使用者</text><text class="summary-value">{{reviewSubjectLabel}}</text></view>
+      <view class="summary-row"><text class="summary-key">陪伴伙伴</text><text class="summary-value">{{personaOptions[personaIndex].name}}</text></view>
       <view class="summary-row"><text class="summary-key">设备</text><text class="summary-value">{{manifest.device_id}}</text></view>
       <text class="done-note">绑定成功不等于设备已经激活。下一步等机器人确认后，唤醒它就能开始对话；手机不录音。</text>
       <view class="button-row">

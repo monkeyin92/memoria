@@ -3,7 +3,6 @@
   "usingComponents": {
     "face-badge": "/components/face-badge/index",
     "page-backdrop": "/components/page-backdrop/index",
-    "glass-icon": "/components/glass-icon/index",
-    "device-screen": "/components/device-screen/index"
+    "glass-icon": "/components/glass-icon/index"
   }
 }

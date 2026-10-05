@@ -88,6 +88,8 @@ const ERROR_MESSAGES = Object.freeze({
   CLAIM_EXPIRED: "本次认领已超时，请重新保留认领，不需要重输 Wi‑Fi。",
   BINDING_FAILED: "机器人初始化没有完成，请从当前启用会话重试。",
   ACTIVATION_ACK_TIMEOUT: "配置已保存，机器人仍在同步；稍后刷新设备状态即可。",
+  ONBOARDING_SESSION_ENDED:
+    "上次的启用已经结束（机器人已解除绑定）。请重新扫描机器人屏幕上的二维码，开始新的启用。",
   DEVICE_FIRMWARE_BLOCKED: "当前固件版本不能启用，请先升级机器人固件。",
 });
 
