@@ -544,7 +544,7 @@ async def test_production_refresh_cookie_is_http_only_strict_and_secure(
 ) -> None:
     _configure_test_app(monkeypatch, tmp_path)
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("PUBLIC_BASE_URL", "https://aigcnice.com:8443/memoria-api")
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://aginice.cn:8443/memoria-api")
     app = create_app()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="https://test") as client:
@@ -1240,14 +1240,14 @@ def test_echolife_sqlite_import_reads_real_store_and_copies_server_avatar(
         target_db=target,
         dry_run=False,
         avatar_root=avatar_root,
-        public_base_url="https://aigcnice.com:8443/memoria-api",
+        public_base_url="https://aginice.cn:8443/memoria-api",
     )
     second = migrate_echolife_users(
         source=source,
         target_db=target,
         dry_run=False,
         avatar_root=avatar_root,
-        public_base_url="https://aigcnice.com:8443/memoria-api",
+        public_base_url="https://aginice.cn:8443/memoria-api",
     )
 
     assert first == {
@@ -1282,7 +1282,7 @@ def test_echolife_sqlite_import_reads_real_store_and_copies_server_avatar(
     assert profile is not None
     assert profile[:2] == ("SQLite 旧用户", "139****5678")
     assert str(profile[2]).startswith(
-        "https://aigcnice.com:8443/memoria-api/v1/auth/wechat-avatars/"
+        "https://aginice.cn:8443/memoria-api/v1/auth/wechat-avatars/"
     )
     assert avatar == ("image/png", png, hashlib.sha256(png).hexdigest())
 

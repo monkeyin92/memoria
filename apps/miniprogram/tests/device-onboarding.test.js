@@ -14,6 +14,8 @@ const {
   endpointUuidCandidates,
   parseDeviceQr,
   isActivationReady,
+  STATE_LABELS,
+  ERROR_MESSAGES,
 } = require("../utils/device-onboarding");
 
 const root = path.join(__dirname, "..");
@@ -559,6 +561,326 @@ test("late activation ACK cannot be regressed by an older response", async () =>
   assert.equal(controller.snapshot().activation.status, "device_acknowledged");
   assert.equal(isActivationReady(controller.snapshot().activation.status), true);
   controller.dispose();
+});
+
+// An unbind that happens after a session was stored leaves the phone with a
+// session the server no longer answers for.
+function withStoredSession(sessionId, body) {
+  const previousWx = global.wx;
+  const store = new Map();
+  if (sessionId) store.set("memoria:miniprogram:onboarding_session_id", sessionId);
+  global.wx = {
+    setStorageSync: (key, value) => store.set(key, value),
+    getStorageSync: (key) => store.get(key) ?? "",
+    removeStorageSync: (key) => store.delete(key),
+  };
+  const restore = () => {
+    if (previousWx === undefined) delete global.wx;
+    else global.wx = previousWx;
+  };
+  return Promise.resolve(body(store)).finally(restore);
+}
+
+function httpError(status, code) {
+  const error = new Error(`HTTP ${status}`);
+  error.status = status;
+  if (code) error.code = code;
+  return error;
+}
+
+test("an activation lookup the server refuses (robot unbound meanwhile) ends the stale session", () =>
+  withStoredSession("onb_01", async (store) => {
+    const refusals = [httpError(403, "ACTOR_MISMATCH"), httpError(403)];
+    for (const refusal of refusals) {
+      store.set("memoria:miniprogram:onboarding_session_id", "onb_01");
+      let polls = 0;
+      const controller = new OnboardingController({
+        apiClient: {
+          getActivationStatus: async () => {
+            polls += 1;
+            throw refusal;
+          },
+        },
+      });
+      controller.onBindingCreated({ device_id: "dev_01", binding_id: "binding_01" });
+      controller.startActivationPolling(1000);
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const snapshot = controller.snapshot();
+      assert.equal(snapshot.state, "prepare");
+      assert.equal(snapshot.errorCode, "ONBOARDING_SESSION_ENDED");
+      assert.match(snapshot.error, /重新扫描/);
+      assert.equal(snapshot.session, null);
+      assert.equal(snapshot.binding, null);
+      assert.equal(store.has("memoria:miniprogram:onboarding_session_id"), false);
+      // The poller is gone: nothing keeps asking about a dead session.
+      assert.equal(controller._activationTimer, null);
+      assert.equal(polls, 1);
+      controller.dispose();
+    }
+  }));
+
+test("other activation lookup failures stay on the activation step", () =>
+  withStoredSession("onb_01", async (store) => {
+    const controller = new OnboardingController({
+      apiClient: {
+        getActivationStatus: async () => {
+          throw httpError(500, "INTERNAL");
+        },
+      },
+    });
+    controller.onBindingCreated({ device_id: "dev_01", binding_id: "binding_01" });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(controller.snapshot().state, "activation");
+    assert.notEqual(controller.snapshot().errorCode, "ONBOARDING_SESSION_ENDED");
+    assert.equal(store.get("memoria:miniprogram:onboarding_session_id"), "onb_01");
+    controller.dispose();
+  }));
+
+test("cancelling a session the server has already closed or moved past still leaves the flow", () =>
+  withStoredSession("onb_01", async (store) => {
+    for (const status of [403, 404, 409, 410]) {
+      store.set("memoria:miniprogram:onboarding_session_id", "onb_01");
+      const cancelled = [];
+      const controller = new OnboardingController({
+        apiClient: {
+          cancelOnboardingSession: async (sessionId) => {
+            cancelled.push(sessionId);
+            throw httpError(status, status === 409 ? "BINDING_CONFLICT" : undefined);
+          },
+        },
+      });
+      controller._session = makeSession({ state: "bound" });
+      controller._setState("activation", { force: true });
+
+      assert.equal(await controller.cancel(), true, `status ${status}`);
+      assert.deepEqual(cancelled, ["onb_01"]);
+      const snapshot = controller.snapshot();
+      assert.equal(snapshot.state, "prepare");
+      assert.equal(snapshot.error, "");
+      assert.equal(snapshot.session, null);
+      assert.equal(snapshot.busy, false);
+      assert.equal(store.has("memoria:miniprogram:onboarding_session_id"), false);
+      controller.dispose();
+    }
+  }));
+
+test("a cancel that fails for another reason keeps the session and reports the error", () =>
+  withStoredSession("onb_01", async (store) => {
+    const controller = new OnboardingController({
+      apiClient: {
+        cancelOnboardingSession: async () => {
+          throw httpError(500, "INTERNAL");
+        },
+      },
+    });
+    controller._session = makeSession({ state: "claim_reserved" });
+    controller._setState("claim", { force: true });
+
+    assert.equal(await controller.cancel(), false);
+    const snapshot = controller.snapshot();
+    assert.equal(snapshot.state, "claim");
+    assert.ok(snapshot.error);
+    assert.equal(snapshot.session.onboarding_session_id, "onb_01");
+    assert.equal(store.get("memoria:miniprogram:onboarding_session_id"), "onb_01");
+    controller.dispose();
+  }));
+
+test("the activation step says so once the robot has taken its time, and not before", async () => {
+  let clock = Date.parse("2026-10-05T13:00:00Z");
+  const controller = new OnboardingController({
+    now: () => clock,
+    apiClient: {
+      getActivationStatus: async () => ({ device_id: "dev_01", status: "device_downloading" }),
+    },
+  });
+  controller.onBindingCreated({ device_id: "dev_01", binding_id: "binding_01" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(controller.snapshot().state, "activation");
+  assert.equal(controller.snapshot().activationSlow, false);
+
+  clock += 59_000;
+  await controller.refreshActivation();
+  assert.equal(controller.snapshot().activationSlow, false);
+
+  // Same status again does not restart the wait.
+  clock += 2_000;
+  await controller.refreshActivation();
+  assert.equal(controller.snapshot().state, "activation");
+  assert.equal(controller.snapshot().activationSlow, true);
+  controller.dispose();
+});
+
+test("a finished activation is never reported as slow", async () => {
+  let clock = Date.parse("2026-10-05T13:00:00Z");
+  const controller = new OnboardingController({
+    now: () => clock,
+    apiClient: {
+      getActivationStatus: async () => ({ device_id: "dev_01", status: "ready_for_conversation" }),
+    },
+  });
+  controller.onBindingCreated({ device_id: "dev_01", binding_id: "binding_01" });
+  await new Promise((resolve) => setImmediate(resolve));
+  clock += 10 * 60_000;
+  assert.equal(controller.snapshot().state, "complete");
+  assert.equal(controller.snapshot().activationSlow, false);
+  controller.dispose();
+});
+
+test("the activation card talks to people, not to the protocol", () => {
+  const template = fs.readFileSync(path.join(root, "pages/device-onboarding/index.wxml"), "utf8");
+  const card = template.slice(
+    template.indexOf(`<view wx:if="{{state === 'activation'}}" class="l2-card">`),
+    template.indexOf(`<view wx:if="{{state === 'complete'}}" class="l2-card done-card">`),
+  );
+  assert.ok(card.length > 100);
+  for (const jargon of [
+    "Activation Manifest",
+    "device_acknowledged",
+    "ready_for_conversation",
+    "activation.firmware_version",
+    "activation.network",
+    "activation.updated_at",
+  ]) {
+    assert.ok(!card.includes(jargon), `the activation card still shows ${jargon}`);
+  }
+  assert.match(card, /等待机器人激活/);
+  assert.match(card, /wx:if="\{\{activationSlow\}\}"/);
+  assert.match(card, /电源拔掉再插上/);
+});
+
+test("the finish card shows the companion picked on the bind page", () => {
+  const template = fs.readFileSync(path.join(root, "pages/device-onboarding/index.wxml"), "utf8");
+  const finish = template.slice(template.indexOf(`<view wx:if="{{state === 'complete'}}" class="l2-card done-card">`));
+  assert.match(finish, /<face-badge wx:if="\{\{companionId\}\}" role="\{\{companionId\}\}"/);
+  assert.match(finish, /<device-screen wx:else/);
+
+  const previousPage = global.Page;
+  const previousWx = global.wx;
+  const previousGetApp = global.getApp;
+  let definition;
+  global.Page = (value) => {
+    definition = value;
+  };
+  global.wx = { setNavigationBarTitle() {}, getStorageSync: () => "", setStorageSync() {}, removeStorageSync() {} };
+  global.getApp = () => ({ globalData: {}, subscribeAuthCleared: () => () => {} });
+  try {
+    const pagePath = require.resolve("../pages/device-onboarding/index");
+    delete require.cache[pagePath];
+    require(pagePath);
+    const page = { ...definition, data: JSON.parse(JSON.stringify(definition.data)) };
+    page.setData = (updates) => Object.assign(page.data, updates);
+    assert.equal(page.data.companionId, "");
+    page.onLoad({});
+    let handedOver = null;
+    page._controller = {
+      onBindingCreated: (manifest) => {
+        handedOver = manifest;
+      },
+      startActivationPolling() {},
+    };
+    page.onBindingCreated({ device_id: "dev_01", binding_id: "bd_1" }, { companionId: "taoxi" });
+    assert.equal(page.data.companionId, "taoxi");
+    assert.equal(handedOver.binding_id, "bd_1");
+    // A resumed flow has no pick to show and keeps the generic robot.
+    page.data.companionId = "";
+    page.onBindingCreated({ device_id: "dev_01", binding_id: "bd_1" });
+    assert.equal(page.data.companionId, "");
+  } finally {
+    global.Page = previousPage;
+    if (previousWx === undefined) delete global.wx;
+    else global.wx = previousWx;
+    if (previousGetApp === undefined) delete global.getApp;
+    else global.getApp = previousGetApp;
+  }
+});
+
+test("the setup pages speak plainly: no protocol terms, enums, ids or timestamps on screen", () => {
+  const visible = (file) =>
+    fs.readFileSync(path.join(root, file), "utf8").replace(/<!--[\s\S]*?-->/g, "");
+  const onboarding = visible("pages/device-onboarding/index.wxml");
+  const bind = visible("pages/bind/index.wxml");
+  for (const term of ["BLE", "SSID", "claim_id", "Storage", "认领", "初始化", "服务端", "握上手", "加密蓝牙"]) {
+    assert.ok(!onboarding.includes(term), `the onboarding page still says ${term}`);
+    assert.ok(!bind.includes(term), `the bind page still says ${term}`);
+  }
+  // Raw values the person cannot act on: a status enum, an ISO timestamp, dBm and the firmware's security string.
+  for (const raw of ["claim.status", "claim.expires_at", "item.rssi", "item.security"]) {
+    assert.ok(!onboarding.includes(raw), `the onboarding page still shows ${raw}`);
+  }
+  // The stage names people see are the same words everywhere.
+  for (const label of [STATE_LABELS.claim, STATE_LABELS.initialize, STATE_LABELS.activation]) {
+    assert.ok(!/认领|初始化|设备激活/.test(label), label);
+  }
+  for (const [code, message] of Object.entries(ERROR_MESSAGES)) {
+    assert.ok(!/认领|初始化|claim|BLE|Activation|session/i.test(message), `${code}: ${message}`);
+  }
+});
+
+test("the onboarding page shows networks by signal and the claim deadline as a clock time", () => {
+  const previousPage = global.Page;
+  const previousWx = global.wx;
+  const previousGetApp = global.getApp;
+  let definition;
+  const navigations = [];
+  global.Page = (value) => {
+    definition = value;
+  };
+  global.wx = {
+    setNavigationBarTitle() {},
+    getStorageSync: () => "",
+    setStorageSync() {},
+    removeStorageSync() {},
+    navigateTo: (options) => navigations.push(options.url),
+  };
+  global.getApp = () => ({ globalData: {}, subscribeAuthCleared: () => () => {} });
+  try {
+    const pagePath = require.resolve("../pages/device-onboarding/index");
+    delete require.cache[pagePath];
+    require(pagePath);
+    const page = { ...definition, data: JSON.parse(JSON.stringify(definition.data)) };
+    page.setData = (updates) => Object.assign(page.data, updates);
+    page._applySnapshot({
+      state: "wifi",
+      stateLabel: "配置家庭 Wi‑Fi",
+      wifiNetworks: [
+        { ssid: "Home", rssi: -48, security: "wpa2", channel: 6, saved: false },
+        { ssid: "Hall", rssi: -70, security: "wpa2", channel: 1, saved: false },
+        { ssid: "Cafe", rssi: -88, security: "open", channel: 11, saved: false },
+      ],
+      claim: { claim_id: "claim_01", expires_at: "2026-10-05T06:32:00Z" },
+    });
+    assert.deepEqual(
+      page.data.wifiNetworks.map(({ ssid, meta }) => [ssid, meta]),
+      [["Home", "信号强"], ["Hall", "信号一般"], ["Cafe", "开放网络 · 信号弱"]],
+    );
+    // A clock time on the phone, not the ISO string the server sent.
+    assert.match(page.data.claimExpiryLabel, /^\d{2}:\d{2}$/);
+    page._applySnapshot({ state: "wifi", stateLabel: "配置家庭 Wi‑Fi", claim: null, wifiNetworks: undefined });
+    assert.equal(page.data.claimExpiryLabel, "");
+    assert.deepEqual(page.data.wifiNetworks, []);
+
+    // The bind page gets the robot's tail to show instead of its raw id.
+    page._controller = {
+      beginInitialize: () => true,
+      claim: { claim_id: "claim_01", onboarding_session_id: "onb_01" },
+    };
+    page.data.device = { display_tail: "AB12" };
+    page.continueInitialize();
+    page.data.device = null;
+    page.continueInitialize();
+    assert.equal(
+      navigations[0],
+      "/pages/bind/index?claim_id=claim_01&onboarding_session_id=onb_01&device_tail=AB12",
+    );
+    assert.equal(navigations[1], "/pages/bind/index?claim_id=claim_01&onboarding_session_id=onb_01");
+  } finally {
+    global.Page = previousPage;
+    if (previousWx === undefined) delete global.wx;
+    else global.wx = previousWx;
+    if (previousGetApp === undefined) delete global.getApp;
+    else global.getApp = previousGetApp;
+  }
 });
 
 test("onboarding API sends raw QR and uses the planned paths with strict responses", async () => {

@@ -7,10 +7,10 @@ const PREFIX = "memoria-bootstrap:v1:";
 // scanner opens the Mini Program (扫普通链接二维码打开小程序, prefix rule
 // pointing at pages/device-onboarding/index). The link carries the signed
 // payload unchanged in `b`; only that payload is sent to the server.
-const BIND_LINK_PREFIX = "https://aigcnice.com/memoria-bind/";
+const BIND_LINK_PREFIX = "https://aginice.cn/memoria-bind/";
 // Scanners are not uniform: WeChat may return the link as printed, the whole
 // link percent-encoded, or the page it would open with the link in `q`.
-const BIND_LINK = /^https?:\/\/(?:www\.)?aigcnice\.com\/memoria-bind\/?\?([^#]*)$/i;
+const BIND_LINK = /^https?:\/\/(?:www\.)?aginice\.cn\/memoria-bind\/?\?([^#]*)$/i;
 const BIND_PAGE = /^\/?pages\/device-onboarding\/index\?(?:[^#]*&)?q=([^&#]+)/;
 const QR_TYPE = "memoria-device-bootstrap";
 const QR_VERSION = 1;

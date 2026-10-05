@@ -112,6 +112,7 @@ Page({
     step: "loading",
     claimId: "",
     onboardingSessionId: "",
+    deviceTail: "",
     claimLoading: true,
     claim: null,
     modeCards,
@@ -150,9 +151,13 @@ Page({
     // claim_id is server-issued and uniquely scopes the binding Saga.  A
     // deterministic operation key lets reload/retry resume the same intent.
     this._idempotencyKey = this._claimId ? `bind-${this._claimId}` : "";
+    // Display-only: the tail printed on the robot's screen, passed along by
+    // the onboarding page so this page can name the robot without its raw id.
+    const tail = typeof options.device_tail === "string" ? options.device_tail : "";
     this.setData({
       claimId: this._claimId,
       onboardingSessionId: this._onboardingSessionId,
+      deviceTail: /^[A-Za-z0-9]{1,16}$/.test(tail) ? tail : "",
     });
   },
 
@@ -176,7 +181,7 @@ Page({
       this.setData({
         claimLoading: false,
         step: "error",
-        error: "绑定入口缺少服务端确认的 claim_id 或启用会话，请返回设备页重新开始。",
+        error: "没有找到这次启用的信息，请回到「设备」页，重新扫码开始。",
       });
       return null;
     }
@@ -184,15 +189,15 @@ Page({
     try {
       const claim = await api.getDeviceClaim(this._claimId);
       if (claim.onboarding_session_id !== this._onboardingSessionId) {
-        throw new Error("认领不属于当前启用会话，已拒绝继续绑定。");
+        throw new Error("这次确认和当前的启用对不上，请回到「设备」页，重新扫码开始。");
       }
       if (claim.status === "expired" || isExpired(claim.expires_at)) {
-        const error = new Error("认领保留已过期，请返回启用流程重新保留。");
+        const error = new Error("这次确认已超时，请回到「设备」页重新开始。");
         error.code = "CLAIM_EXPIRED";
         throw error;
       }
       if (!["reserved", "binding_committing", "binding_created"].includes(claim.status)) {
-        const error = new Error("当前认领状态不允许创建绑定。");
+        const error = new Error("这台机器人的启用状态已经变化，请回到「设备」页重新开始。");
         error.code = "CLAIM_CONFLICT";
         throw error;
       }
@@ -204,7 +209,7 @@ Page({
       this.setData({
         claimLoading: false,
         step: "error",
-        error: error?.message || "认领状态读取失败，请返回启用流程重试。",
+        error: error?.message || "没能读取启用信息，请回到「设备」页重试。",
       });
       return null;
     }
@@ -245,24 +250,48 @@ Page({
     this.setData({ step: "form" });
   },
 
-  async loadExistingSubjects(modeSeq = this._modeSeq) {
+  // Children this account can pick again: confirmed guardian links, plus the
+  // children it declared when it bound a robot before (those stay after an
+  // unbind that keeps the data, and never become guardian links).  The two
+  // lookups are independent; each adds what it finds, and the list only grows
+  // at its end so a choice already made keeps its position.
+  loadExistingSubjects(modeSeq = this._modeSeq) {
+    return Promise.all([
+      this._addExistingSubjects(modeSeq, async () =>
+        (await api.getGuardianLinks())
+          .filter((link) => link.status === "active")
+          .map((link, index) => ({
+            minorUserId: link.minorUserId,
+            label: link.displayName || `孩子 ${index + 1}`,
+          })),
+      ),
+      this._addExistingSubjects(modeSeq, async () =>
+        (await api.getBindingSubjectCandidates()).map((subject, index) => ({
+          minorUserId: subject.personId,
+          label: subject.displayName || `孩子 ${index + 1}`,
+        })),
+      ),
+    ]);
+  },
+
+  async _addExistingSubjects(modeSeq, lookup) {
+    let found = [];
     try {
-      const links = await api.getGuardianLinks();
-      if (modeSeq !== this._modeSeq || this.data.declaredMode !== "parent_for_child") {
-        return;
-      }
-      const options = links
-        .filter((link) => link.status === "active")
-        .map((link, index) => ({
-          minorUserId: link.minorUserId,
-          label: link.displayName || `孩子 ${index + 1}`,
-        }));
-      this.setData({ existingSubjectOptions: options });
+      found = await lookup();
     } catch {
-      if (modeSeq !== this._modeSeq || this.data.declaredMode !== "parent_for_child") {
-        return;
+      found = [];
+    }
+    if (modeSeq !== this._modeSeq || this.data.declaredMode !== "parent_for_child") {
+      return;
+    }
+    const options = [...this.data.existingSubjectOptions];
+    for (const entry of found) {
+      if (!options.some((option) => option.minorUserId === entry.minorUserId)) {
+        options.push(entry);
       }
-      this.setData({ existingSubjectOptions: [] });
+    }
+    if (options.length !== this.data.existingSubjectOptions.length) {
+      this.setData({ existingSubjectOptions: options });
     }
   },
 
@@ -593,7 +622,9 @@ Page({
     const pages = typeof getCurrentPages === "function" ? getCurrentPages() : [];
     const previous = pages[pages.length - 2];
     if (typeof previous?.onBindingCreated === "function") {
-      previous.onBindingCreated(this.data.manifest);
+      previous.onBindingCreated(this.data.manifest, {
+        companionId: this.data.personaOptions[this.data.personaIndex]?.id || "",
+      });
       wx.navigateBack({ delta: 1 });
       return;
     }

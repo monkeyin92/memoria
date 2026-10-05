@@ -4,19 +4,32 @@
 
 ## 生产拓扑与安全边界
 
-- `/opt/memoria/current` 最后指向 `/opt/memoria/releases/20260827-architecture-split-v1`；有效栈 `MEMORIA_RELEASE_TAG=20260901-0945-wake-word-whitelist`。目录名、栈 tag、组件 tag 是三个概念；readiness 刷新必须取有效栈配置。
-- Control/Direct Edge 仅回环端口 `8791/8794`；Bridge 容器 `memoria-voice-core-media-bridge-1` 是 `memoria-agent` 镜像唯一的运行者，并发送 Agent heartbeat。PostgreSQL 17 + pgvector、MinIO、独立 mTLS Redis。LiveKit server、LiveKit Agent worker（`memoria-agent-1`）与 Python 小程序/设备媒体网关（`8792/8793`）自 LiveKit 退役版本起不在仓库栈内，见下文「LiveKit 媒体链退役」。SQLite 兼容库 `/data/memoria.sqlite3` 挂载自 `/var/lib/memoria`。
-- readiness 入口 `https://aigcnice.com:8443/memoria-api/health/ready`；443 根站是 WMS，不用该端口的 404 判断 Memoria 健康。
-- ESP32 Direct：`wss://aigcnice.com:8443/memoria-device-edge/v1/device/media`。公共 8080 不承载设备 WSS。H5 `/memoria-h5` 固定返回 `410 Gone`，不再发布静态前端。
-- 443 Nginx 只保留以下 Memoria include（原 `memoria-miniprogram-media.conf` include 随小程序网关退役删除），不改同机 WMS 路由/数据；8443 经 `memoria-stream.conf` 纯 TCP 透传到 `127.0.0.1:9443` 的 Memoria TLS server（不再做 LiveKit 的 `ssl_preread` 分流）。
+- `/opt/memoria/current` 指向当前整栈发布树（2026-10-05：`releases/20261004-first-warm-v1`，有效栈 `MEMORIA_RELEASE_TAG=20261004-first-warm-v1`；media-edge 是组件发布 `20261002-late-progress-v1`，编排用该发布树的 compose 加 `component-releases/20261002-late-progress-v1-media-edge/media-edge-component.override.yml`）。目录名、栈 tag、组件 tag 是三个概念；readiness 刷新必须取有效栈配置。
+- Control/Direct Edge 仅回环端口 `8791/8794`（新机上 Control 是 `18791`，见下文「生产主机」）；Bridge 容器 `memoria-voice-core-media-bridge-1` 是 `memoria-agent` 镜像唯一的运行者，并发送 Agent heartbeat。PostgreSQL 17 + pgvector、MinIO、独立 mTLS Redis。LiveKit server、LiveKit Agent worker（`memoria-agent-1`）与 Python 小程序/设备媒体网关（`8792/8793`）自 LiveKit 退役版本起不在仓库栈内，见下文「LiveKit 媒体链退役」。SQLite 兼容库 `/data/memoria.sqlite3` 挂载自 `/var/lib/memoria`。
+- readiness 入口 `https://aginice.cn:8443/memoria-api/health/ready`；443 根站不代表 Memoria（旧机是 WMS，新机只放绑定页、根路径返回 404），不用它的状态判断 Memoria 健康。
+- ESP32 Direct：`wss://aginice.cn:8443/memoria-device-edge/v1/device/media`。公共 8080 不承载设备 WSS。H5 `/memoria-h5` 固定返回 `410 Gone`，不再发布静态前端。
+- 旧机（2026-10-06 到期前）：443 Nginx 只保留以下 Memoria include（原 `memoria-miniprogram-media.conf` include 随小程序网关退役删除），不改同机 WMS 路由/数据；8443 经 `memoria-stream.conf` 纯 TCP 透传到 `127.0.0.1:9443` 的 Memoria TLS server（不再做 LiveKit 的 `ssl_preread` 分流）。
 
 ~~~nginx
 include /etc/nginx/snippets/memoria-bind.conf;
 ~~~
 
-`memoria-bind.conf`（仓库 `infra/nginx-memoria-bind.conf`，2026-09-27 起）只服务 `/memoria-bind/`：`/var/www/memoria-bind/` 下的说明页 `index.html`（仓库 `infra/memoria-bind/index.html`）与微信「扫普通链接二维码打开小程序」的校验文件，关闭访问日志。该前缀必须在 443（微信规则不支持非标准端口）。
+`memoria-bind.conf`（仓库 `infra/nginx-memoria-bind.conf`，2026-09-27 起）只服务 `/memoria-bind/`：`/var/www/memoria-bind/` 下的说明页 `index.html`（仓库 `infra/memoria-bind/index.html`）与微信「扫普通链接二维码打开小程序」的校验文件，关闭访问日志。该前缀必须在 443（微信规则不支持非标准端口）。新机上对应 `snippets/memoria-prod-bind.conf` 与 `/var/www/memoria-prod/memoria-bind/`；2026-10-05 起规则前缀是 `https://aginice.cn/memoria-bind/`（旧规则 `https://aigcnice.com/memoria-bind/` 随旧域名弃用），校验文件由公众平台在添加规则时生成，不入仓库。
 
 Secret 仅在 root-only `/etc/memoria-*.env`（root:root 0600）；候选从真实源复制并按 `scripts/split_production_env.py` 分流，禁止在输出/日志/manifest 留值。内部 token 不等于账号身份；设备/媒体 token 必须短期且绑定 audience/subject/fence。Direct 缺少 mTLS Device State Redis 时 fail closed，不回退本地权威。
+
+## 生产主机（2026-10-05 起：110.42.235.198）
+
+整套服务 2026-10-05 01:33–01:40（CST）从旧机 122.51.108.140 冷拷贝迁到 110.42.235.198：与 pocketSparks 的 MySQL、node、hr-tracker 共用的主机（Ubuntu 24.04，4 vCPU，3.7 GiB 内存 + 2 GiB swap，40 GB 盘）。本机 ssh 别名 `memoria-prod` 指新机，`memoria-prod-old` 指旧机，本文命令里的 `memoria-prod` 都是新机。迁移回执与回到旧机的路径见 `HANDOFF.md`「2026-10-05 服务迁移到 110.42.235.198」；对外域名从 `aigcnice.com` 换成 `aginice.cn`（2026-10-05）见同文件「2026-10-05 域名切换到 aginice.cn」。
+
+- **共用主机的边界**：hr-tracker 占着 `127.0.0.1:8791`，共用 nginx 拥有 80/443/8443，pocketSparks 的站点、卷不动；`sites-enabled/aginice`（aginice.cn / www，Memoria 现在的对外域名，与 pocketSparks 共用）只加了两行 include（`snippets/memoria-prod-https.conf`、`snippets/memoria-prod-bind.conf`，并把 `/` 的静态根指到 `/var/www/memoria-prod`），原件在 `/etc/nginx/backup-20261005-domain-switch/aginice.orig`。Memoria 的 nginx 文件一律用新名字：`sites-enabled/memoria-prod`（旧域名 aigcnice.com，过渡期保留）、`snippets/memoria-prod-{device-edge,https,site-common,bind}.conf`、`conf.d/memoria-prod-limits.conf`，静态页 `/var/www/memoria-prod`（只有绑定页，没有 WMS）；证书：aginice.cn 用 `/etc/nginx/ssl/aginice.cn/aginice.cn_bundle.crt` + `aginice.cn.key`（腾讯云免费 DV，约 90 天一期、不自动到服务器；该站点的 `ssl_ciphers` 只有 RSA 套件，新证书必须是 RSA、不能是 ECDSA）；aigcnice.com 的旧证书 `/etc/nginx/ssl/aigcnice.com/…`（到 2026-12-17）只服务过渡期。Let's Encrypt 的 HTTP-01 对 aginice.cn 走不通（境外验证节点访问 80 端口被腾讯云的备案提示页拦截，同机房境内访问正常），证书只能从腾讯云控制台下载，或用 DNSPod API 做 DNS-01。8443 的 stream 仍是 7 月留下的 `stream-conf.d/memoria-rtc.conf`（`ssl_preread`：TLS 到 `127.0.0.1:9443`，非 TLS 的一支指向已退役的 LiveKit 8444，没有监听者），没改。
+- **换 aginice.cn 证书**（现用的一份 2026-10-05 09:08 装入，2027-01-02 到期）：证书只能由用户在腾讯云「SSL 证书」控制台下载（Nginx 格式、RSA，含 `aginice.cn` 与 `www.aginice.cn`）。步骤：本机只读预检（SAN、未过期且 ≥ 30 天、RSA 密钥与证书匹配、链在系统信任库里验证通过，不打印私钥）→ scp 到服务器 root 0700 的临时目录 → 以**文件**运行安装脚本（先备份旧对到 `/root/domain-switch-20261005/`，同样的校验，沿用原属主与权限，`nginx -t` 失败则还原并不 reload，reload 后用 SNI `aginice.cn` 核对 443 与 8443 的序列号与 `Verify return code: 0 (ok)`，再核对 `aigcnice.com` 站点与 hr-tracker 不受影响）→ `shred -u` 暂存的私钥。脚本在服务器 `/root/domain-switch-20261005/scripts/`（`cert_install.sh`、`verify_domain.sh`；本机副本 `outputs/ops-domain-switch-20261005/`，被 git 忽略，没有入仓库）；一次实跑的收据见 `HANDOFF.md`「2026-10-05 域名切换到 aginice.cn」。
+- **Control API 端口是 `127.0.0.1:18791`，由 `MEMORIA_CONTROL_API_PORT` 带着走**（2026-10-05 的端口参数化改动）：compose 写 `127.0.0.1:${MEMORIA_CONTROL_API_PORT:-8791}:8000`；`scripts/release_ops.sh` 的 `control_api_port()` 依次取该环境变量、在跑的 `memoria-control-api-1` 的 `docker port … 8000/tcp`（只认 `127.0.0.1` 的绑定）、默认 8791，`verify-load` 把它写进新发布树的 `.env`（Compose 从项目目录读 `.env`），`cutover` 先断言候选 compose 发布的正是线上这个端口，不一致就拒绝、线上不动（新发布树若落回 8791 会与 hr-tracker 冲突，control-api 起不来、切流中途中断），`finish` 与 `scripts/refresh_readiness.sh` 也探这个端口。`verify-load` 的空闲端口预检默认 `28791` / `28891`（`MEMORIA_PREFLIGHT_API_PORT` / `MEMORIA_PREFLIGHT_NGINX_PORT` 可改），避开线上的 18791（旧的固定值 18791 / 18891 会让预检在新机上直接拒绝）。新机当前发布树 `20261004-first-warm-v1` 里 compose、`refresh_readiness.sh`、`release_ops.sh` 三处是手工改成 18791 的（原件留作 `.orig`），是这次改动之前的做法；含这次改动的第一次整栈发布完成后，发布树里就是仓库原样加一个带端口的 `.env`。
+- **没有 `release-ops.sh`，回滚深度是 0**：新机没有 `/root/memoria-release/release-ops.sh`，只有迁移用的 `bringup.sh`（按服务名逐个起；现已入库为 `scripts/bringup_shared_host.sh`，与新机上那份逐字相同，sha256 `398bd005…`；它的 `TAG` / `COMMIT` 默认值是迁移时那版栈，整栈发布之后冷启必须显式传当前的 `TAG` 与 `COMMIT`，否则指向已被换掉的发布树）；镜像与发布树只有当前栈。下一次整栈发布前要装 `release-ops.sh`（用仓库版，装前备份、比 sha256、权限 0700）、PREV 指向与回滚镜像也要按那次发布重新生成，发布完成后才重新有一个回滚。
+- **数据层**：两台机上 `memoria-data` 项目都是从 `releases/20260827-architecture-split-v1/infra` 起的。`current/infra` 里的同名 compose 多一个 `011-control-schema.sql` 的 initdb 挂载（只在空库首次初始化时用）；在已有数据的库上用 `current/infra` 去 `up -d` 会让 compose 判定配置变了而重建 postgres 容器（推断，没试），不要顺手做。
+- **WAL 归档卷** `memoria-data_postgres_wal_archive` 必须是 `999:999 0700`，否则 `archive_command` 一直失败。
+- **磁盘**：40 GB 盘，迁移后已用约 17 GB。新机的 WAL 归档从迁移时重新开始、没有裁剪，旧机实测约 0.6–1.1 GB/天；每次整栈发布再加约 4–5 GB（镜像 + `incoming` 包）。约 2–4 周会满，PostgreSQL 盘满即停；归档在没有 base backup 时没有恢复价值。P1-08 的保留策略（关 `archive_mode` 需重启 / 做 base backup 后按它裁剪 / 扩盘）要在满盘之前定。`memoria-disk-patrol.timer` 的告警线是 75% / 85%（百分比，对 40 GB 盘同样适用，只告警不清理）。
+- **systemd**：`memoria-readiness-refresh.timer`（12 小时一次提供方冒烟 + readiness 标记；迁移后 01:36:57 跑过一次，从新机出口 PASS）与 `memoria-disk-patrol.timer` 已在新机启用。
 
 ## 发布前门禁
 
@@ -114,8 +127,8 @@ docker compose --project-directory "$DATA_COMPOSE_DIR" \
 ~~~
 
 - 用户 2026-09-14 决定验证阶段暂缓自动备份/异地副本；最后核查 offsite profile 未启用、无真实 endpoint/告警。真实家庭数据、正式发布或价值/量级增长前必须重评，不把同机副本称为异地灾备或已验证 PITR。
-- 当前保留的本地还原点：`/var/backups/memoria/drill-20260914-p0-02/base`；2026-09-14 通过 `pg_verifybackup`、隔离启动、应用表/对象核对。报告 `outputs/acceptance/run-20260914-p0-02-restore-drill/report.json`。另保留 `/var/backups/memoria/20260912-1150-companion-persona-and-lookup-gate/memoria-archive-20260912T043155Z.dump`。它们不会自动更新。
-- WAL 最后观察仍归档且无自动裁剪；旧日增长估计/磁盘余量不是当前值。P1-08 单独处理保留策略，不因备份暂缓而遗漏。禁止只按文件年龄删 WAL，必须保护仍保留 base backup 所需连续链；本轮未删任何数据。
+- 当前保留的本地还原点只在新机的旧机归档包 `/root/old-host-20261005/var-backups-memoria.tar.gz`（旧机 `/var/backups/memoria` 整体打包，root 0700，2026-10-05 迁移时取）里：`drill-20260914-p0-02/base`（2026-09-14 通过 `pg_verifybackup`、隔离启动、应用表/对象核对，报告 `outputs/acceptance/run-20260914-p0-02-restore-drill/report.json`）和 `20260912-1150-companion-persona-and-lookup-gate/memoria-archive-20260912T043155Z.dump`；它们不会自动更新。09-14 base 的 WAL 链只在旧机上，旧机到期后消失，所以这个 base 只能还原到演练时刻，没有时间点恢复能力。最近一份逻辑转储是每次整栈发布前 freeze 的 `memoria-pre-<tag>.dump`，最新一份 2026-10-04 18:15（`20261004-first-warm-v1`），在同目录的 `release-receipts.tar.gz` 里。新机上没有持续的数据库备份。
+- WAL 仍归档且无自动裁剪；新机的归档从 2026-10-05 重新开始，增长与满盘估计见上文「生产主机」。P1-08 单独处理保留策略，不因备份暂缓而遗漏。禁止只按文件年龄删 WAL，必须保护仍保留 base backup 所需连续链；本轮未删任何数据。
 - 重新启用备份时，已修的 pg_basebackup CLI 仍需真实部署验证；网桥复制受现有 pg_hba 限制，优先评估 `network_mode: service:postgres` 走 loopback。真实异地 endpoint/凭据与恢复演练须另行补齐。
 
 恢复集合须含 PostgreSQL base/WAL、MinIO versioned objects、SQLite 兼容快照、root-only env、manifest/回执。用 `scripts/run_offsite_restore_drill.sh` 在隔离环境校验备份、对象清单/哈希、外键和应用读取；不能拿缓存当权威。
@@ -125,6 +138,8 @@ docker compose --project-directory "$DATA_COMPOSE_DIR" \
 ~~~bash
 python -m scripts.replay_subject_deletions --confirm-replay
 ~~~
+
+**镜像里有没有这个脚本**：`infra/Dockerfile.control-api` 与 `scripts/delta_build_images.sh` 从 2026-10-05 的端口参数化改动起会复制 `scripts/replay_subject_deletions.py`，之后构建的 Control API 镜像可直接运行上面的命令；更早的镜像（含 `20261004-first-warm-v1`）没有它，命令报 `No module named scripts.replay_subject_deletions`，可以从发布树把脚本只读挂进一次性容器：在 `docker compose run`（或 `docker run`）上加 `-v <发布树>/scripts/replay_subject_deletions.py:/app/scripts/replay_subject_deletions.py:ro`。2026-10-05 只在新机上用 `docker run` 验证过带挂载的 `--help` 能解析参数；带 `--confirm-replay` 的真实重放（会导入 `services.control_api.app.main.create_app` 并改库）没有跑过，首次使用前先在隔离的恢复库上试。
 
 然后再恢复不可变 evidence/claims 的投影，在 Control API 镜像中重建：
 
@@ -197,5 +212,7 @@ SQL 侧只多返回事实 `device_bound`，与开关无关，所以 `schema` 步
 固件仅回写唯一紧邻 app 至 `0x20000`；写前备份当前 `0x20000/0x3f0000` 全槽、核摘要，写后回读并比较身份和全部非 app 保护区，再做启动/媒体验收。禁止 `flash.sh` 整包、`erase-all` 或误用旧 run 回滚件。
 
 这块板的 USB-Serial-JTAG 上 `esptool read-flash` 会在个别 4 KB 块处确定性失败（2026-10-02：`0x106000`，4 MB 槽里另有约五处，报「No more data to read from the serial port」，同样的字节分成 2 KB 读就没事），所以整槽备份和保护区比较用 `firmware/esp32/scripts/flash_backup.py`（用 IDF 的 python；先停串口记录进程）：`backup` 分 64 KB 读，失败的片重连后改读 2 KB 帧，每个备份文件都与芯片自己算的 MD5 核对；`md5` 给出各区的设备端 MD5，写前写后各跑一次，比较引导/分区表、nvs、phy_init、身份区 `0x10000` 与 assets 不变（otadata 在新 app 首次启动后会被引导程序重写成与写前相同的记录，不要求保持空白）。写入只用 `esptool write-flash 0x20000 <app> 0xd000 <8 KiB 的 0xff>`，以其 `Hash of data verified.` 为写入校验；刷完用 `esptool … --after hard-reset read-mac` 或重开串口记录进程让板子回到 app。
+
+服务器域名变了要重写身份区（NVS，`0x10000`，64 KiB）里的 `control_api_url`，否则机器人启动后还去旧域名取激活清单（2026-10-05 `aigcnice.com` → `aginice.cn` 做过一次，收据见 `HANDOFF.md`「2026-10-05 域名切换到 aginice.cn」收据 ⑥）。做法：用 `firmware/esp32/scripts/provision_identity.py` **离线**生成身份镜像（不带 `--port`；输入是原来的 device-id / certificate-id / client-id、种子文件和激活公钥，只改 `--control-api-url`），先再用**旧** URL 生成一份，与芯片里读出的身份区逐字节比较，相同才说明新镜像只改了 URL；然后与新 app、空白 otadata 一起一次 `esptool write-flash 0x10000 <身份> 0x20000 <app> 0xd000 <8 KiB 的 0xff>`（写前按上一段备份各区，写后比较 md5，身份区应等于新镜像、其余保护区不变）。身份镜像含种子，权限 0600，放在被 git 忽略的 `firmware/esp32/artifacts/dev-path2/`，不进输出和日志。这只改机器人取清单的入口；已绑定机器人的签名清单里的端点（`control_api`、`device_media`）要靠解绑再重绑才会换成新域名。
 
 普通制品仅保留当前+一个可运行紧邻回滚，核验后按授权清理更早普通制品并查磁盘；数据库、WAL、MinIO、安全/合规备份不适用两版本规则。T1–T14 证据写 ignored `outputs/acceptance/`，由 `scripts/hardware_realtime_acceptance.py` 校验。旧 fence 可听输出/写档案、缺播放终态、错误记完成、以发送量伪造 Actual Heard、权威失败回退平行本地实现，任一均拒收。

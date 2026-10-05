@@ -7,7 +7,7 @@
     <block wx:elif="{{step === 'form'}}"><text class="page-subtitle">第 2 步 · 填写使用者信息</text></block>
     <block wx:elif="{{step === 'review'}}"><text class="page-subtitle">第 4 步 · 确认授权并提交</text></block>
     <block wx:elif="{{step === 'done'}}"><text class="page-subtitle">第 5 步 · 完成</text></block>
-    <block wx:else><text class="page-subtitle">绑定前先确认服务端认领</text></block>
+    <block wx:else><text class="page-subtitle">正在准备绑定</text></block>
   </view>
   <view class="dots">
     <view class="dot {{step === 'mode' ? 'dot-now' : (step === 'form' || step === 'review' || step === 'done' ? 'dot-done' : '')}}"></view>
@@ -19,9 +19,9 @@
 
   <block wx:if="{{step === 'loading'}}">
     <view class="l2-card">
-      <text class="l2-card-title">正在确认认领</text>
-      <text class="l2-card-sub">绑定页只接受启用流程确认过的 claim，不在这里重新识别设备。</text>
-      <text class="loading-text">正在读取服务端认领状态…</text>
+      <text class="l2-card-title">正在准备</text>
+      <text class="l2-card-sub">马上就好，请稍等。</text>
+      <text class="loading-text">正在读取机器人的启用信息…</text>
     </view>
   </block>
 
@@ -44,16 +44,16 @@
         </view>
       </view>
     </view>
-    <text class="mode-footnote">四种场景会建立不同的主体档案、关系与记忆空间；后续都可以在“设备与成员”中修改。</text>
+    <text class="mode-footnote">不同的使用方式会建立不同的档案和记忆空间；之后都可以在“设备与成员”里修改。</text>
   </block>
 
-  <!-- 步骤 2：设备编号只读 + 使用者备注 -->
+  <!-- 步骤 2：机器人尾号只读 + 使用者备注 -->
   <block wx:if="{{step === 'form'}}">
     <view class="l2-card">
       <text class="l2-card-title">{{modeMeta.title}} · 基本信息</text>
-      <view class="field">
-        <text class="field-label">设备编号</text>
-        <view class="readonly-chip"><text class="readonly-code">{{claim.device_id || claimId}}</text><text class="readonly-hint">扫码自动获取，无需填写</text></view>
+      <view wx:if="{{deviceTail}}" class="field">
+        <text class="field-label">机器人</text>
+        <view class="readonly-chip"><text class="readonly-code">尾号 {{deviceTail}}</text><text class="readonly-hint">扫码自动获取，无需填写</text></view>
       </view>
 
       <!-- A. 给孩子使用 -->
@@ -64,6 +64,7 @@
         <picker wx:if="{{form.subjectSource === 'existing' && existingSubjectOptions.length > 0}}" range="{{existingSubjectOptions}}" range-key="label" value="{{form.existingSubjectIndex}}" bindchange="onExistingSubjectChange">
           <view class="picker-row"><text class="picker-label">选择孩子</text><text class="picker-value">{{existingSubjectOptions[form.existingSubjectIndex].label}}</text></view>
         </picker>
+        <text wx:if="{{form.subjectSource === 'new' && existingSubjectOptions.length > 0}}" class="caption">之前建过「{{existingSubjectOptions[0].label}}」{{existingSubjectOptions.length > 1 ? '等 ' + existingSubjectOptions.length + ' 位' : ''}}的档案，重新绑定时选「使用已有档案」就能沿用，不用重新建。</text>
         <text wx:if="{{form.subjectSource === 'new'}}" class="field-label">使用者备注 *</text>
         <input wx:if="{{form.subjectSource === 'new'}}" class="field-input" value="{{form.childNickname}}" placeholder="例如：亲爱的儿子、小乐" placeholder-class="field-placeholder" maxlength="{{maxSubjectLabel}}" data-key="childNickname" bindinput="onFieldInput" />
         <text wx:if="{{form.subjectSource === 'existing'}}" class="field-label">使用者备注</text>
@@ -90,7 +91,7 @@
             <view class="picker-row"><text class="picker-label">结束</text><text class="picker-value">{{form.quietHoursEnd}}</text></view>
           </picker>
         </view>
-        <text class="form-note">孩子的年龄证据与监护关系由服务端验证；学习时长、夜间时段与成长记录规则绑定儿童策略，人格无法覆盖。</text>
+        <text class="form-note">孩子的年龄和监护关系由系统核实；学习时长、夜间休息和成长记录，都按儿童保护规则执行，陪伴伙伴改不了。</text>
       </block>
 
       <!-- B. 给自己使用 -->
@@ -103,7 +104,7 @@
         <picker range="{{interviewFrequencyOptions}}" range-key="label" value="{{form.interviewFrequencyIndex}}" data-key="interviewFrequencyIndex" bindchange="onPickerChange">
           <view class="picker-row"><text class="picker-label">主动采访</text><text class="picker-value">{{interviewFrequencyOptions[form.interviewFrequencyIndex].label}}</text></view>
         </picker>
-        <text class="form-note">首页「当前使用者」会显示这条备注，不是微信昵称。年龄以服务端验证为准；声音复刻、数字自我与传承等能力默认关闭，需要单独开启。首页的当前使用者会显示这条备注。</text>
+        <text class="form-note">首页「当前使用者」会显示这条备注，不是微信昵称。年龄以系统核实的为准；声音复刻、数字自我与传承等能力默认关闭，需要单独开启。首页的当前使用者会显示这条备注。</text>
       </block>
 
       <!-- C. 给父母使用 -->
@@ -132,10 +133,10 @@
         <input class="field-input" value="{{form.subjectAlias}}" placeholder="例如：老爸、亲爱的儿子" placeholder-class="field-placeholder" maxlength="{{maxSubjectLabel}}" data-key="subjectAlias" bindinput="onFieldInput" />
         <text class="caption">家庭名称与其他成员可以稍后添加。</text>
         <view class="setting-row">
-          <view><text class="setting-name">共享同一人格</text><text class="setting-desc">成员档案仍然各自独立</text></view>
+          <view><text class="setting-name">共用同一位陪伴伙伴</text><text class="setting-desc">成员档案仍然各自独立</text></view>
           <switch checked="{{form.sharedPersonaEnabled}}" data-key="sharedPersonaEnabled" bindchange="onSwitch" color="#326e70" />
         </view>
-        <text class="form-note">每位成员拥有独立主体档案；私人记忆、家庭共享记忆与待确认共同记忆分区管理，家庭管理员不能读取成员私人记忆。成员邀请与确认由服务端完成。</text>
+        <text class="form-note">每位成员都有自己独立的档案；私人记忆、家庭共享记忆与待确认的共同记忆分开管理，家庭管理员不能读取成员的私人记忆。成员邀请与确认由系统完成。</text>
       </block>
 
       <text class="field-label">陪伴伙伴</text>
@@ -176,7 +177,7 @@
       <text class="l2-card-sub">第 3 步勾选授权，第 4 步核对信息后提交</text>
       <view class="summary-row"><text class="summary-key">设备用途</text><text class="summary-value">{{modeMeta.title}}</text></view>
       <view class="summary-row"><text class="summary-key">使用者</text><text class="summary-value">{{reviewSubjectLabel}}</text></view>
-      <view class="summary-row"><text class="summary-key">陪伴人格</text><text class="summary-value">{{personaOptions[personaIndex].name}}</text></view>
+      <view class="summary-row"><text class="summary-key">陪伴伙伴</text><text class="summary-value">{{personaOptions[personaIndex].name}}</text></view>
 
       <text class="field-label">需要你确认的授权</text>
       <view wx:for="{{offers}}" wx:key="id" class="offer-row {{item.requiresParentSelfAcceptance ? 'offer-disabled' : ''}}" data-id="{{item.id}}" bindtap="{{item.requiresParentSelfAcceptance ? '' : 'toggleOffer'}}">
@@ -204,13 +205,15 @@
   <!-- 步骤 5：完成徽章 -->
   <block wx:if="{{step === 'done'}}">
     <view class="l2-card done-card">
-      <view class="done-device"><device-screen online="{{true}}" size="220"></device-screen></view>
-      <text class="done-badge">已提交初始化</text>
+      <view class="done-device">
+        <face-badge role="{{personaOptions[personaIndex].id}}" size="xl" plain="{{true}}" animated="{{true}}"></face-badge>
+      </view>
+      <text class="done-badge">设置已提交</text>
       <text class="done-title">机器人已建立「{{manifest.declared_mode === 'parent_for_child' ? '给孩子使用' : manifest.declared_mode === 'self_use' ? '给自己使用' : manifest.declared_mode === 'child_for_parent' ? '给父母使用' : '家庭共同使用'}}」绑定</text>
-      <view class="summary-row"><text class="summary-key">绑定编号</text><text class="summary-value">{{manifest.binding_id}}</text></view>
       <view class="summary-row"><text class="summary-key">使用者</text><text class="summary-value">{{reviewSubjectLabel}}</text></view>
-      <view class="summary-row"><text class="summary-key">设备</text><text class="summary-value">{{manifest.device_id}}</text></view>
-      <text class="done-note">绑定成功不等于设备已经激活。下一步等机器人确认后，唤醒它就能开始对话；手机不录音。</text>
+      <view class="summary-row"><text class="summary-key">陪伴伙伴</text><text class="summary-value">{{personaOptions[personaIndex].name}}</text></view>
+      <view wx:if="{{deviceTail}}" class="summary-row"><text class="summary-key">机器人</text><text class="summary-value">尾号 {{deviceTail}}</text></view>
+      <text class="done-note">设置已经提交，机器人收到后就能用了，一般一分钟内。等它准备好，唤醒它就能开始聊天；手机不会录音。</text>
       <view class="button-row">
         <button class="primary-button" bindtap="continueActivation">继续等待激活</button>
       </view>

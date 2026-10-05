@@ -379,7 +379,8 @@ def test_readiness_refresh_passes_required_provider_gate_into_run_container() ->
     assert "--control-api-url http://control-api:8000" in script
     assert "--skip-ready-check" in script
     assert "wait_for_current_release_readiness" in script
-    assert "http://127.0.0.1:8791/health/ready" in script
+    # The port is the live container's (8791 by default, 18791 beside hr-tracker).
+    assert 'local readiness_url="http://127.0.0.1:$(control_api_port)/health/ready"' in script
     assert 'payload.get("release_tag") == expected' in script
     assert "--mark-smokes-passed" not in script
     assert "--check-ready" not in script
@@ -406,7 +407,7 @@ def test_readiness_refresh_passes_required_provider_gate_into_run_container() ->
     delta_builder = (ROOT / "scripts" / "delta_build_images.sh").read_text(encoding="utf-8")
     maintenance_scripts = (
         "COPY scripts/mark_readiness.py scripts/rebuild_memory_projections.py "
-        "scripts/migrate_control_sqlite_to_postgres.py ./scripts/"
+        "scripts/replay_subject_deletions.py scripts/migrate_control_sqlite_to_postgres.py ./scripts/"
     )
     assert maintenance_scripts in control_dockerfile
     assert maintenance_scripts in delta_builder
@@ -1053,7 +1054,7 @@ def test_media_edge_direct_device_ingress_uses_new_loopback_port_and_exact_path(
     assert "--tls-auth-clients" in compose
     assert "device-state-redis-healthcheck-client.crt" in compose
     assert "condition: service_healthy" in edge
-    assert "wss://aigcnice.com:8443/memoria-device-edge/v1/device/media" in runbook
+    assert "wss://aginice.cn:8443/memoria-device-edge/v1/device/media" in runbook
     assert "公共 8080 不承载设备 WSS" in runbook
 
 

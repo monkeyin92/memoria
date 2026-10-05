@@ -67,6 +67,35 @@ function progressRows(steps, index) {
   }));
 }
 
+// People pick a network by name and how well the robot hears it, not by dBm
+// or the raw security string the firmware reports.
+function signalLabel(rssi) {
+  if (!Number.isFinite(rssi)) return "";
+  if (rssi >= -60) return "信号强";
+  if (rssi >= -75) return "信号一般";
+  return "信号弱";
+}
+
+function wifiRows(networks) {
+  return (networks || []).map((network) => ({
+    ssid: network.ssid,
+    meta: [
+      /^(open|none)$/i.test(network.security || "") ? "开放网络" : "",
+      signalLabel(network.rssi),
+    ]
+      .filter(Boolean)
+      .join(" · "),
+  }));
+}
+
+// The claim's expiry as a clock time on the phone, e.g. "14:32".
+function clockTime(isoTime) {
+  const date = new Date(isoTime);
+  if (!Number.isFinite(date.getTime())) return "";
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 Page({
   data: {
     state: "prepare",
@@ -79,11 +108,16 @@ Page({
     errorCode: "",
     session: null,
     claim: null,
+    claimExpiryLabel: "",
     device: null,
     provisioning: null,
     activation: null,
     activationLabel: "等待设备状态",
     activationReady: false,
+    activationSlow: false,
+    // The companion picked on the bind page, so the finish card shows it
+    // instead of a generic robot; empty when the flow was resumed.
+    companionId: "",
     networkLabel: "尚未读取网络状态",
     progressRows: [],
     progressIndex: 0,
@@ -186,13 +220,15 @@ Page({
       errorCode: snapshot.errorCode,
       session: snapshot.session,
       claim: snapshot.claim,
+      claimExpiryLabel: snapshot.claim ? clockTime(snapshot.claim.expires_at) : "",
       device: snapshot.device,
       provisioning: snapshot.provisioning,
       activation: snapshot.activation,
       activationLabel: ACTIVATION_LABELS[activationStatus] || activationStatus,
       activationReady: Boolean(snapshot.activationReady || isActivationReady(activationStatus)),
+      activationSlow: Boolean(snapshot.activationSlow),
       networkLabel: displayWifi(snapshot.session?.network_status),
-      wifiNetworks: snapshot.wifiNetworks || [],
+      wifiNetworks: wifiRows(snapshot.wifiNetworks),
       progressIndex: progressIndexValue,
       progressRows: progressRows(snapshot.progressSteps, progressIndexValue),
       network: snapshot.network || null,
@@ -309,9 +345,13 @@ Page({
     if (!this._controller.beginInitialize()) return;
     const claim = this._controller.claim;
     if (!claim) return;
+    // device_tail is display-only: the last characters printed on the robot's
+    // screen, so the bind page can name the robot without showing its raw id.
+    const tail = this.data.device?.display_tail;
+    const tailParam = tail ? `&device_tail=${encodeURIComponent(tail)}` : "";
     wx.navigateTo({
       url:
-        `/pages/bind/index?claim_id=${encodeURIComponent(claim.claim_id)}&onboarding_session_id=${encodeURIComponent(claim.onboarding_session_id)}`,
+        `/pages/bind/index?claim_id=${encodeURIComponent(claim.claim_id)}&onboarding_session_id=${encodeURIComponent(claim.onboarding_session_id)}${tailParam}`,
     });
   },
 
@@ -326,7 +366,7 @@ Page({
     const reprovision = this.data.reprovision;
     wx.showModal({
       title: reprovision ? "取消重新配网？" : "取消本次启用？",
-      content: "会断开当前蓝牙连接，但不会修改已经绑定的设备。",
+      content: "会断开手机和机器人的连接，已经绑定的设备不会受影响。",
       confirmText: reprovision ? "取消配网" : "取消启用",
       cancelText: "继续设置",
       success: (result) => {
@@ -342,8 +382,9 @@ Page({
     wx.switchTab({ url: "/pages/device/index" });
   },
 
-  onBindingCreated(manifest) {
+  onBindingCreated(manifest, { companionId = "" } = {}) {
     this._resumed = true;
+    if (companionId) this.setData({ companionId });
     this._controller.onBindingCreated(manifest);
     this._controller.startActivationPolling();
   },

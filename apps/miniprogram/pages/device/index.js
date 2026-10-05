@@ -10,7 +10,10 @@ const {
 } = require("../../utils/device-binding");
 const { companions, companionById, defaultCompanionId } = require("../../utils/companions");
 const { devicePlaceName, deviceStatusSummary } = require("../../utils/device-status");
-const { readOnboardingSessionId } = require("../../utils/device-onboarding/session-store");
+const {
+  readOnboardingSessionId,
+  clearOnboardingSessionId,
+} = require("../../utils/device-onboarding/session-store");
 const { readSubjectLabel, saveSubjectLabel } = require("../../utils/subject-label");
 const { sessionLimitsFromProfile } = require("../../utils/session-limits");
 
@@ -968,6 +971,9 @@ Page({
     this.setData({ unbinding: true, unbindError: "" });
     try {
       const result = await api.unbindDevice(binding.device_id, { purgeSubjectData });
+      // The enable session that produced this binding is over with it; keeping
+      // it would offer 「继续上次启用」 for a robot nobody can resume any more.
+      clearOnboardingSessionId();
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ unbindSheetVisible: false, unbindPurgeChoice: "" });
       this._syncSheetOpen();

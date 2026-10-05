@@ -226,6 +226,6 @@ test("onboarding page passes its entry mode and hides claim steps while reprovis
   const script = fs.readFileSync(path.join(root, "pages/device-onboarding/index.js"), "utf8");
   const template = fs.readFileSync(path.join(root, "pages/device-onboarding/index.wxml"), "utf8");
   assert.match(script, /new OnboardingController\(\{\s*mode: this\._mode,/);
-  assert.match(template, /<block wx:if="\{\{!reprovision\}\}">[\s\S]*设备认领[\s\S]*激活完成[\s\S]*<\/block>/);
+  assert.match(template, /<block wx:if="\{\{!reprovision\}\}">[\s\S]*确认归属[\s\S]*激活完成[\s\S]*<\/block>/);
   assert.match(template, /network.phase === 'online' && !reprovision/);
 });

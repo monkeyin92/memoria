@@ -128,7 +128,7 @@ node --test apps/miniprogram/tests/*.test.js
 
 首次启用使用“二维码确认设备身份、BLE 近场安全配网、HTTPS 设备认领与激活”的单一路径：
 
-1. ESP32 显示签名的 `memoria-bootstrap:v1:` 载荷并广播 `MEM-XXXX` BLE 名称。自构建 4 起二维码是链接 `https://aigcnice.com/memoria-bind/?b=<载荷>`：微信「扫一扫」按公众平台的「扫普通链接二维码打开小程序」规则（前缀 `https://aigcnice.com/memoria-bind/`，页面 `pages/device-onboarding/index`）直接打开配网页，页面从 `q` 取回链接；小程序内扫码同样接受链接与旧的裸载荷。小程序只把 `b` 里的原始载荷交给服务端，服务端验签逻辑不变。浏览器打开该链接只看到一页“请用微信扫一扫”的说明（443 上的 `infra/nginx-memoria-bind.conf`，不写访问日志，因为载荷含 PoP）。
+1. ESP32 显示签名的 `memoria-bootstrap:v1:` 载荷并广播 `MEM-XXXX` BLE 名称。自构建 4 起二维码是链接 `https://<域名>/memoria-bind/?b=<载荷>`（域名在 2026-10-05 由 `aigcnice.com` 改为 `aginice.cn`，固件源码与小程序已改：固件 build 23 起生效（2026-10-05 已 USB 刷入开发板，尚未发 OTA），小程序体验版 0.2.20261005.1 起只认新域名；设备端写死在 `kBindLinkPrefix`）：微信「扫一扫」按公众平台的「扫普通链接二维码打开小程序」规则（前缀 `https://aginice.cn/memoria-bind/`，页面 `pages/device-onboarding/index`）直接打开配网页，页面从 `q` 取回链接；小程序内扫码同样接受链接与旧的裸载荷。小程序只把 `b` 里的原始载荷交给服务端，服务端验签逻辑不变。浏览器打开该链接只看到一页“请用微信扫一扫”的说明（443 上的 `infra/nginx-memoria-bind.conf`，不写访问日志，因为载荷含 PoP）。
 2. 小程序把原始二维码交给 Control API introspect，取得一次性 onboarding session 和设备 provisioning 契约。
 3. 小程序与设备建立 Protocomm Security 1 会话，使用 X25519、PoP 和 AES-256-CTR；只有会话认证成功后才允许写入 Wi-Fi SSID/密码。
 4. 设备联网后自行提交 online-proof；小程序完成 claim、binding 和授权确认。
@@ -137,6 +137,8 @@ node --test apps/miniprogram/tests/*.test.js
 Wi-Fi 密码只通过加密 BLE 会话进入设备，不经过普通 HTTPS 业务请求或服务端日志。蓝牙本身不是互联网通道，也不会自动把手机蜂窝网络桥接给 ESP32；附近没有路由器时，可以先开启手机热点，再把该热点的 SSID/密码通过上述 BLE 流程交给设备。
 
 绑定完成前设备拉取 Activation Manifest 得到 `409` 属于正常中间态：固件保持二维码/BLE 入口并后台重试，绑定完成后停止配网入口。相同二维码从新页面再次扫码会复用原 onboarding session；安全会话已经释放时必须重新扫码，不能复用旧内存会话发送网络信息。
+
+激活清单也是机器人唯一的时钟来源（本板没有 SNTP，也绕开了上游 OTA 检查里的 `server_time`）。固件 build 24 起：验过签名与哈希之后，时钟未设或落后于清单的 `issued` 时把时钟拨到 `issued`（只前进、不回拨，重放旧清单拨不回时钟），再要求清单未过期。build 23 及更早的固件只在时钟未设时才设，并拒收 `issued` 比本机时钟晚超过 300 秒的清单：机器人断电后第一份被接受的清单（可能是旧的）会把时钟定在旧时间，此后新签的清单被拒（串口 `Activation Manifest validation failed`，小程序停在「机器人正在下载配置」），把机器人断电再上电可恢复。
 
 设备进入 Wi-Fi 配网模式（没有已知网络可连，例如换了地方）时，无论本机是否记得旧绑定，都会显示二维码并开启 BLE 配网入口（patch `0028`）：离线设备无从得知手机端已解绑，扫码后由服务端判断是首次启用、重新配网还是拒绝（见下文）。在线时被解绑的设备会在下一次空闲 display-profile 轮询（约 20 秒）收到 `409`；这个 409 只是线索（Identity 与设备档案可能不一致），设备随即重取 Activation Manifest，只有清单也答 `409` 才确认已解绑：清掉已确认的激活版本并重启，走未绑定开机流程（二维码/BLE 先于音频引擎启动，两者不能在运行中共享内部 RAM）；清单仍有效则保留绑定，10 分钟后再核对。BLE 配网面停止时完整释放 NimBLE 协议栈（`keep_ble_on = 0`）。配网模式下长按 BOOT 可重新调出二维码。
 

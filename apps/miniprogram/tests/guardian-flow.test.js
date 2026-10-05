@@ -72,7 +72,7 @@ test("guardian page grants and revokes person consent for an accountless child",
       delete storage[key];
     },
     request(options) {
-      const pathname = options.url.replace("https://aigcnice.com:8443/memoria-api", "");
+      const pathname = options.url.replace("https://aginice.cn:8443/memoria-api", "");
       requests.push({
         pathname,
         method: options.method,
@@ -235,7 +235,7 @@ test("person consent failure stays owner-scoped and does not blank the row", asy
       delete storage[key];
     },
     request(options) {
-      const pathname = options.url.replace("https://aigcnice.com:8443/memoria-api", "");
+      const pathname = options.url.replace("https://aginice.cn:8443/memoria-api", "");
       if (
         pathname === "/v1/guardian/minors/person_child/consents" &&
         (options.method || "GET") === "GET"
@@ -306,7 +306,7 @@ function guardianMinorPage(handler) {
       shared.push(options);
     },
     request(options) {
-      const pathname = options.url.replace("https://aigcnice.com:8443/memoria-api", "");
+      const pathname = options.url.replace("https://aginice.cn:8443/memoria-api", "");
       requests.push({ pathname, method: options.method || "GET", data: options.data });
       if (pathname === "/v1/guardian/minors/person_child/consents") {
         options.success({ statusCode: 200, data: { items: [] } });

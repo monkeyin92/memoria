@@ -59,7 +59,9 @@ api.currentIdentity = () => ({ user_id: "person_owner", display_name: "主人" }
 api.currentAccessToken = () => "test-token";
 api.currentAuthEpoch = () => 0;
 api.isAuthEpochCurrent = () => true;
+const realGetBindingSubjectCandidates = api.getBindingSubjectCandidates;
 api.getGuardianLinks = async () => [];
+api.getBindingSubjectCandidates = async () => [];
 api.getDeviceClaim = async () => ({
   claim_id: "claim_test_1",
   device_id: "dev_test_1",
@@ -147,8 +149,27 @@ test("binding page cannot enter from a device code or scanner", async () => {
   page.onLoad({});
   await page.onShow();
   assert.equal(page.data.step, "error");
-  assert.match(page.data.error, /claim_id/);
+  // Plain words for the person, no protocol names, and a way out.
+  assert.match(page.data.error, /重新扫码/);
+  assert.doesNotMatch(page.data.error, /claim_id|服务端|认领/);
   assert.equal(typeof page.scanDeviceCode, "undefined");
+});
+
+test("binding page names the robot by the tail passed from the onboarding page, never its raw id", async () => {
+  const page = instantiate(pageDefinition);
+  page.onLoad({ claim_id: "claim_test_1", onboarding_session_id: "onb_test_1", device_tail: "AB12" });
+  assert.equal(page.data.deviceTail, "AB12");
+  // Display-only and strictly shaped: anything else is dropped.
+  for (const bad of ["", "<b>x</b>", "AB 12", "A".repeat(17)]) {
+    const other = instantiate(pageDefinition);
+    other.onLoad({ claim_id: "claim_test_1", onboarding_session_id: "onb_test_1", device_tail: bad });
+    assert.equal(other.data.deviceTail, "", bad);
+  }
+  const template = fs.readFileSync(path.join(root, "pages/bind/index.wxml"), "utf8");
+  assert.match(template, /尾号 \{\{deviceTail\}\}/);
+  for (const raw of ["claim.device_id", "claimId", "manifest.binding_id", "manifest.device_id"]) {
+    assert.ok(!template.includes(raw), `the bind page still shows ${raw}`);
+  }
 });
 
 test("binding page collects a required subject remark after choosing who it is for", async () => {
@@ -355,6 +376,261 @@ test("late child-profile lookup is ignored after switching away from parent_for_
   } finally {
     api.getGuardianLinks = originalGetGuardianLinks;
   }
+});
+
+// The account's guardian links stay empty when a child was only ever declared
+// by a binding, so those children come from the binding's own list.
+async function withExistingSubjects({ links, candidates }, body) {
+  const originalLinks = api.getGuardianLinks;
+  const originalCandidates = api.getBindingSubjectCandidates;
+  api.getGuardianLinks = links;
+  api.getBindingSubjectCandidates = candidates;
+  try {
+    await body();
+  } finally {
+    api.getGuardianLinks = originalLinks;
+    api.getBindingSubjectCandidates = originalCandidates;
+  }
+}
+
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+test("a child declared by an earlier binding can be reused when no guardian link exists", async () => {
+  await withExistingSubjects(
+    {
+      links: async () => [],
+      candidates: async () => [{ personId: "person_wangzai", displayName: "旺仔", ageBand: "under_14" }],
+    },
+    async () => {
+      nextResponse = successResponse(defaultManifestResponse("parent_for_child"));
+      const page = await bootToMode("parent_for_child");
+      await settle();
+      assert.deepEqual(page.data.existingSubjectOptions, [
+        { minorUserId: "person_wangzai", label: "旺仔" },
+      ]);
+
+      page.setData({ "form.subjectSource": "existing" });
+      page.goToReview();
+      assert.equal(page.data.step, "review");
+      await page.submitBinding();
+      const payload = lastWxRequest.data;
+      assert.equal(payload.primary_subject.person_id, "person_wangzai");
+      assert.equal(payload.primary_subject.subject_draft, undefined);
+      assert.equal(readSubjectLabel(page.data.manifest), "旺仔");
+    },
+  );
+});
+
+test("guardian-linked and binding-declared children are merged without repeats", async () => {
+  await withExistingSubjects(
+    {
+      links: async () => [
+        { linkId: "link_1", minorUserId: "person_child", displayName: "小乐", status: "active" },
+        { linkId: "link_2", minorUserId: "person_old", displayName: "已撤销", status: "revoked" },
+      ],
+      candidates: async () => [
+        { personId: "person_child", displayName: "小乐", ageBand: "under_14" },
+        { personId: "person_wangzai", displayName: "旺仔", ageBand: "under_14" },
+        { personId: "person_wangzai", displayName: "旺仔", ageBand: "under_14" },
+      ],
+    },
+    async () => {
+      nextResponse = successResponse(defaultManifestResponse("parent_for_child"));
+      const page = await bootToMode("parent_for_child");
+      await settle();
+      assert.deepEqual(page.data.existingSubjectOptions.map((option) => option.minorUserId).sort(), [
+        "person_child",
+        "person_wangzai",
+      ]);
+      assert.deepEqual(page.data.existingSubjectOptions.map((option) => option.label).sort(), ["小乐", "旺仔"]);
+    },
+  );
+});
+
+test("a child already chosen keeps its place when the slower lookup adds more", async () => {
+  let resolveLinks;
+  await withExistingSubjects(
+    {
+      links: () =>
+        new Promise((resolve) => {
+          resolveLinks = resolve;
+        }),
+      candidates: async () => [{ personId: "person_wangzai", displayName: "旺仔", ageBand: "under_14" }],
+    },
+    async () => {
+      nextResponse = successResponse(defaultManifestResponse("parent_for_child"));
+      const page = await bootToMode("parent_for_child");
+      await settle();
+      assert.deepEqual(page.data.existingSubjectOptions.map((option) => option.minorUserId), ["person_wangzai"]);
+
+      page.setData({ "form.subjectSource": "existing" });
+      page.onExistingSubjectChange({ detail: { value: "0" } });
+      resolveLinks([
+        { linkId: "link_1", minorUserId: "person_child", displayName: "小乐", status: "active" },
+      ]);
+      await settle();
+
+      assert.deepEqual(page.data.existingSubjectOptions.map((option) => option.minorUserId), [
+        "person_wangzai",
+        "person_child",
+      ]);
+      assert.equal(page.data.form.existingSubjectIndex, 0);
+      page.goToReview();
+      await page.submitBinding();
+      assert.equal(lastWxRequest.data.primary_subject.person_id, "person_wangzai");
+    },
+  );
+});
+
+test("a failing lookup leaves the children the other one found", async () => {
+  const failure = Object.assign(new Error("HTTP 500"), { status: 500 });
+  await withExistingSubjects(
+    {
+      links: async () => [
+        { linkId: "link_1", minorUserId: "person_child", displayName: "小乐", status: "active" },
+      ],
+      candidates: async () => {
+        throw failure;
+      },
+    },
+    async () => {
+      nextResponse = successResponse(defaultManifestResponse("parent_for_child"));
+      const page = await bootToMode("parent_for_child");
+      await settle();
+      assert.deepEqual(page.data.existingSubjectOptions, [{ minorUserId: "person_child", label: "小乐" }]);
+    },
+  );
+  await withExistingSubjects(
+    {
+      links: async () => {
+        throw failure;
+      },
+      candidates: async () => [{ personId: "person_wangzai", displayName: "", ageBand: "" }],
+    },
+    async () => {
+      nextResponse = successResponse(defaultManifestResponse("parent_for_child"));
+      const page = await bootToMode("parent_for_child");
+      await settle();
+      // A child without a remark still gets a readable entry.
+      assert.deepEqual(page.data.existingSubjectOptions, [{ minorUserId: "person_wangzai", label: "孩子 1" }]);
+    },
+  );
+});
+
+test("a late binding-children lookup is ignored after switching away from parent_for_child", async () => {
+  let resolveCandidates;
+  await withExistingSubjects(
+    {
+      links: async () => [],
+      candidates: () =>
+        new Promise((resolve) => {
+          resolveCandidates = resolve;
+        }),
+    },
+    async () => {
+      nextResponse = successResponse(defaultManifestResponse("parent_for_child"));
+      const page = await bootToMode("parent_for_child");
+      page.chooseMode({ currentTarget: { dataset: { mode: "self_use" } } });
+      assert.equal(page.data.declaredMode, "self_use");
+
+      resolveCandidates([{ personId: "person_wangzai", displayName: "旺仔", ageBand: "under_14" }]);
+      await settle();
+
+      assert.equal(page.data.declaredMode, "self_use");
+      assert.equal(page.data.existingSubjectOptions.length, 0);
+    },
+  );
+});
+
+test("the binding children list is read from the server and tolerates an older backend", async () => {
+  nextResponse = successResponse({
+    subjects: [
+      { person_id: " person_wangzai ", display_name: " 旺仔 ", age_band: "under_14" },
+      { person_id: "person_wangzai", display_name: "旺仔", age_band: "under_14" },
+      { person_id: "", display_name: "无编号" },
+      null,
+      { person_id: "person_nameless" },
+    ],
+  });
+  assert.deepEqual(await realGetBindingSubjectCandidates(), [
+    { personId: "person_wangzai", displayName: "旺仔", ageBand: "under_14" },
+    { personId: "person_nameless", displayName: "", ageBand: "" },
+  ]);
+  assert.equal(lastWxRequest.method, "GET");
+  assert.match(lastWxRequest.url, /\/v1\/device-bindings\/subject-candidates$/);
+
+  nextResponse = successResponse({});
+  assert.deepEqual(await realGetBindingSubjectCandidates(), []);
+
+  // A backend that does not have the route yet: nobody to offer, and no error.
+  nextResponse = { statusCode: 404, data: { detail: "Not Found" } };
+  assert.deepEqual(await realGetBindingSubjectCandidates(), []);
+
+  // Anything else is a real failure for the caller to absorb.
+  nextResponse = { statusCode: 500, data: { detail: "boom" } };
+  await assert.rejects(realGetBindingSubjectCandidates(), (error) => error.status === 500);
+});
+
+test("the bind page tells a parent that an earlier child profile can be reused", () => {
+  const template = fs.readFileSync(path.join(root, "pages/bind/index.wxml"), "utf8");
+  assert.match(
+    template,
+    /wx:if="\{\{form\.subjectSource === 'new' && existingSubjectOptions\.length > 0\}\}" class="caption">之前建过「\{\{existingSubjectOptions\[0\]\.label\}\}」/,
+  );
+  assert.match(template, /选「使用已有档案」就能沿用/);
+});
+
+test("the finish step shows the companion picked while binding, not a generic robot", async () => {
+  const template = fs.readFileSync(path.join(root, "pages/bind/index.wxml"), "utf8");
+  const done = template.slice(template.indexOf("<!-- 步骤 5"));
+  assert.match(done, /<face-badge role="\{\{personaOptions\[personaIndex\]\.id\}\}" size="xl"/);
+  assert.match(done, /陪伴伙伴<\/text><text class="summary-value">\{\{personaOptions\[personaIndex\]\.name\}\}/);
+  assert.doesNotMatch(done, /<device-screen/);
+  const components = JSON.parse(fs.readFileSync(path.join(root, "pages/bind/index.json"), "utf8")).usingComponents;
+  assert.ok(components["face-badge"]);
+  assert.equal(components["device-screen"], undefined);
+
+  nextResponse = successResponse(defaultManifestResponse("self_use"));
+  const page = await bootSelfUseReady("阿宁");
+  const index = page.data.personaOptions.findIndex((option) => option.id === "taoxi");
+  assert.ok(index >= 0);
+  page.onPersonaSwipe({ detail: { current: index } });
+  page.goToReview();
+  await page.submitBinding();
+  assert.equal(page.data.step, "done");
+  // The two bindings the finish card reads.
+  const picked = page.data.personaOptions[page.data.personaIndex];
+  assert.equal(picked.id, "taoxi");
+  assert.equal(picked.name, "桃喜");
+});
+
+test("continuing to activation hands the picked companion to the onboarding page", async () => {
+  nextResponse = successResponse(defaultManifestResponse("self_use"));
+  const page = await bootSelfUseReady("阿宁");
+  const index = page.data.personaOptions.findIndex((option) => option.id === "taoxi");
+  page.onPersonaSwipe({ detail: { current: index } });
+  page.goToReview();
+  await page.submitBinding();
+
+  const handedOver = [];
+  const previousPages = global.getCurrentPages;
+  const previousBack = wx.navigateBack;
+  global.getCurrentPages = () => [
+    { onBindingCreated: (manifest, extra) => handedOver.push({ manifest, extra }) },
+    page,
+  ];
+  wx.navigateBack = () => {};
+  try {
+    page.continueActivation();
+  } finally {
+    if (previousPages === undefined) delete global.getCurrentPages;
+    else global.getCurrentPages = previousPages;
+    if (previousBack === undefined) delete wx.navigateBack;
+    else wx.navigateBack = previousBack;
+  }
+  assert.equal(handedOver.length, 1);
+  assert.equal(handedOver[0].manifest.binding_id, "bd_test_1");
+  assert.deepEqual(handedOver[0].extra, { companionId: "taoxi" });
 });
 
 test("child_for_parent defaults proxy memory consent off and keeps admin scope", async () => {

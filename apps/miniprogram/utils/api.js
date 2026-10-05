@@ -223,7 +223,7 @@ function errorFromResponse(response) {
                           : code === "minor_forbidden"
                                 ? "学生账号不开放这项能力。"
                                 : code === "CLAIM_CONFLICT"
-                                  ? "设备认领状态已变化。上一次认领最多 10 分钟后自动释放，之后轻点机器人屏幕换一张新二维码再扫码。"
+                                  ? "这台机器人还有一次没做完的确认，最多 10 分钟后自动释放，之后轻点机器人屏幕换一张新二维码再扫码。"
                                   : code === "BINDING_CONFLICT" || code === "binding_conflict"
                                     ? "这次绑定没有完成，请稍后在这里再点一次完成绑定。"
                                     : code === "DEVICE_ALREADY_BOUND"
@@ -939,6 +939,37 @@ function listDeviceBindings() {
   return rawRequest("/v1/device-bindings").then(normalizeDeviceBindings);
 }
 
+/*
+ * 这个账号以前给机器人建立过的孩子档案。解除绑定（保留数据）后再绑定，
+ * 绑定页可以直接选回 TA，记忆和设置接着用；确认过的监护关系列表里没有
+ * 这些孩子。后端还没有这个接口时（404）按「没有」处理。
+ */
+function normalizeBindingSubjectCandidates(payload) {
+  const items = Array.isArray(payload?.subjects) ? payload.subjects : [];
+  const seen = new Set();
+  const subjects = [];
+  for (const item of items) {
+    const personId = typeof item?.person_id === "string" ? item.person_id.trim() : "";
+    if (!personId || seen.has(personId)) continue;
+    seen.add(personId);
+    subjects.push({
+      personId,
+      displayName: typeof item.display_name === "string" ? item.display_name.trim() : "",
+      ageBand: typeof item.age_band === "string" ? item.age_band : "",
+    });
+  }
+  return subjects;
+}
+
+function getBindingSubjectCandidates() {
+  return rawRequest("/v1/device-bindings/subject-candidates")
+    .then(normalizeBindingSubjectCandidates)
+    .catch((error) => {
+      if (error?.status === 404) return [];
+      throw error;
+    });
+}
+
 function selectDeviceBinding(manifest) {
   const validated = validateBindingManifest(manifest);
   if (!validated.valid || validated.manifest.status !== "active") {
@@ -1367,6 +1398,7 @@ module.exports = {
   readyVoiceForDevice,
   enrollVoiceClone,
   getGuardianLinks,
+  getBindingSubjectCandidates,
   getGuardianSummary,
   createGuardianLink,
   confirmGuardianLink,

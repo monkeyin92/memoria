@@ -15,15 +15,18 @@ pg_password="preflight-$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')"
 pg_dsn="postgresql://memoria_preflight:$pg_password@$pg_container:5432/memoria"
 data_dir="$(mktemp -d /tmp/memoria-preflight-data.XXXXXX)"
 workdir="$(mktemp -d /tmp/memoria-preflight-work.XXXXXX)"
-api_port=18791
-nginx_port=18891
+# Throwaway loopback ports. They must stay clear of the production Control API:
+# on a host whose 8791 belongs to a neighbour that one is published on 18791,
+# and the free-port check below would refuse every release.
+api_port="${MEMORIA_PREFLIGHT_API_PORT:-28791}"
+nginx_port="${MEMORIA_PREFLIGHT_NGINX_PORT:-28891}"
 nginx_config="$workdir/nginx.conf"
 nginx_pid="$workdir/nginx.pid"
 nginx_error_log="$workdir/nginx-error.log"
 smoke_https="$workdir/memoria-https.conf"
 smoke_device_edge="$workdir/memoria-device-edge.conf"
 www_root="$workdir/www"
-host_header="Host: aigcnice.com"
+host_header="Host: aginice.cn"
 response_plan_token="preflight-response-plan-token-that-is-long-enough"
 
 cleanup() {
@@ -93,8 +96,8 @@ start_control() {
     -v "$data_dir:/data" \
     -e ENVIRONMENT=development \
     -e "MEMORIA_RELEASE_TAG=$tag-preflight" \
-    -e PUBLIC_BASE_URL=https://aigcnice.com:8443/memoria-api \
-    -e ALLOWED_ORIGINS=https://122.51.108.140:8443,https://aigcnice.com:8443,https://www.aigcnice.com:8443 \
+    -e PUBLIC_BASE_URL=https://aginice.cn:8443/memoria-api \
+    -e ALLOWED_ORIGINS=https://aginice.cn:8443,https://www.aginice.cn:8443 \
     -e MEMORIA_AUTH_SECRET=preflight-auth-secret-that-is-longer-than-thirty-two-characters \
     -e "MEMORIA_RESPONSE_PLAN_TOKEN=$response_plan_token" \
     -e MEMORIA_DB_PATH=/data/memoria.sqlite3 \

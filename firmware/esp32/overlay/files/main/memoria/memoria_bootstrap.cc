@@ -34,7 +34,7 @@ constexpr const char* kProvisioningVersion = "memoria-provisioning/1";
 // The QR is a link so WeChat's own scanner opens the Mini Program (扫普通链接
 // 二维码打开小程序). The signed payload rides unchanged in `b`; the Mini
 // Program unwraps it (qr-code.js BIND_LINK_PREFIX) before the server sees it.
-constexpr const char* kBindLinkPrefix = "https://aigcnice.com/memoria-bind/?b=";
+constexpr const char* kBindLinkPrefix = "https://aginice.cn/memoria-bind/?b=";
 constexpr const char* kQrCaption = "微信扫一扫 开始配网";
 constexpr const char* kCapabilityManifestHash =
     "67ab4e8840637bd8df497bed6b13153d146a8fa790271eae59ac3a032345758b";

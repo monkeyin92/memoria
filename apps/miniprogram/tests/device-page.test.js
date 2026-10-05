@@ -46,7 +46,7 @@ global.wx = {
   navigateTo() {},
   stopPullDownRefresh() {},
   request(options) {
-    const pathname = options.url.replace("https://aigcnice.com:8443/memoria-api", "");
+    const pathname = options.url.replace("https://aginice.cn:8443/memoria-api", "");
     if (pathname.startsWith("/v1/devices/dev_1/runtime-profile")) {
       if (deferProfileResponses) {
         deferredResponses.push({ options, kind: "refresh" });
@@ -870,7 +870,7 @@ test("age declaration offers only three bands and never claims verification", as
   const calls = [];
   const originalRequest = global.wx.request;
   global.wx.request = (options) => {
-    const pathname = options.url.replace("https://aigcnice.com:8443/memoria-api", "");
+    const pathname = options.url.replace("https://aginice.cn:8443/memoria-api", "");
     if (pathname === "/v1/persons/person_child/age-evidence") {
       // GET reads the recorded band (P0-04 D4); PATCH declares a new one.
       const isRead = (options.method || "GET") === "GET";
@@ -933,7 +933,7 @@ test("age declaration explains owner-only and unavailable authority failures", a
   const originalRequest = global.wx.request;
   let statusCode = 403;
   global.wx.request = (options) => {
-    const pathname = options.url.replace("https://aigcnice.com:8443/memoria-api", "");
+    const pathname = options.url.replace("https://aginice.cn:8443/memoria-api", "");
     if (pathname === "/v1/persons/person_child/age-evidence") {
       options.success({
         statusCode,
@@ -1754,6 +1754,39 @@ test("unbind with purge asks a second time and sends purge_subject_data true", a
     assert.equal(binding.readBindingManifest(), null);
   } finally {
     global.wx.showModal = previousShowModal;
+  }
+});
+
+test("unbinding also drops the enable session stored for that robot", async () => {
+  unbindCalls.length = 0;
+  const sessionKey = "memoria:miniprogram:onboarding_session_id";
+  storage[sessionKey] = "onb_old";
+  const page = await bootBoundDevicePage();
+  page.openUnbindSheet();
+  page.pickUnbindChoice({ currentTarget: { dataset: { choice: "keep" } } });
+  await page.confirmUnbind();
+  assert.equal(unbindCalls.length, 1);
+  // 留着它，下一次进「启用」页会续接一个已经不存在的会话（403/409）。
+  assert.equal(storage[sessionKey], undefined);
+});
+
+test("a failed unbind keeps the enable session", async () => {
+  const sessionKey = "memoria:miniprogram:onboarding_session_id";
+  storage[sessionKey] = "onb_kept";
+  const originalUnbind = api.unbindDevice;
+  api.unbindDevice = async () => {
+    throw new Error("网络不通");
+  };
+  try {
+    const page = await bootBoundDevicePage();
+    page.openUnbindSheet();
+    page.pickUnbindChoice({ currentTarget: { dataset: { choice: "keep" } } });
+    await page.confirmUnbind();
+    assert.match(page.data.unbindError, /网络不通/);
+    assert.equal(storage[sessionKey], "onb_kept");
+  } finally {
+    api.unbindDevice = originalUnbind;
+    delete storage[sessionKey];
   }
 });
 

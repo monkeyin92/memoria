@@ -259,6 +259,27 @@ def test_server_release_is_confirmed_by_the_manifest_before_restarting() -> None
     assert 'runtime.SetInt("activation_v", 0);' in unbound
 
 
+def test_activation_manifest_moves_a_lagging_clock_forward_but_never_back() -> None:
+    # 2026-10-05: the board's clock had been set from an older manifest and the
+    # RTC kept it across chip resets, so the next manifest (issued a week later)
+    # looked "issued in the future", failed validation every 6 s and the rebound
+    # board never activated until it was fully powered off.
+    client = (
+        Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria" / "memoria_activation_client.cc"
+    ).read_text(encoding="utf-8")
+    verify = client[client.index("bool VerifyManifest(") : client.index("std::string BuildSignedGetPayload")]
+    clock = verify[verify.index("time_t now = time(nullptr);") :]
+    assert "now < kMinimumTrustedUnixTime || now < issued" in clock
+    assert "tv_sec = issued" in clock
+    assert "now = issued;" in clock
+    assert "return now < expires;" in clock
+    # Nothing rejects a manifest for being newer than the clock, and the clock
+    # is only ever moved after the signature and the config hash are proven.
+    assert "issued - 300" not in verify
+    assert verify.index("crypto_sign_verify_detached") < verify.index("settimeofday")
+    assert verify.index("ConstantTimeEquals(Sha256Hex(base_manifest)") < verify.index("settimeofday")
+
+
 def test_bootstrap_releases_the_ble_stack_when_it_stops() -> None:
     bootstrap = (
         Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria" / "memoria_bootstrap.cc"
@@ -291,16 +312,16 @@ def test_the_bootstrap_qr_is_a_wechat_bind_link_the_mini_program_unwraps() -> No
     bootstrap = (
         Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria" / "memoria_bootstrap.cc"
     ).read_text(encoding="utf-8")
-    assert 'kBindLinkPrefix = "https://aigcnice.com/memoria-bind/?b="' in bootstrap
+    assert 'kBindLinkPrefix = "https://aginice.cn/memoria-bind/?b="' in bootstrap
     assert bootstrap.count("ShowQrCode(kBindLinkPrefix + qr_payload_,") == 2
     assert "ShowQrCode(qr_payload_," not in bootstrap
     qr_code = (
         Path(__file__).parents[3] / "apps" / "miniprogram" / "utils" / "device-onboarding" / "qr-code.js"
     ).read_text(encoding="utf-8")
-    assert 'BIND_LINK_PREFIX = "https://aigcnice.com/memoria-bind/";' in qr_code
+    assert 'BIND_LINK_PREFIX = "https://aginice.cn/memoria-bind/";' in qr_code
     # The Mini Program accepts this host and path, so the firmware's prefix
     # must stay inside it.
-    assert "aigcnice\\.com\\/memoria-bind\\/?\\?" in qr_code
+    assert "aginice\\.cn\\/memoria-bind\\/?\\?" in qr_code
 
 
 def test_nearby_bootstrap_leaves_internal_ram_for_tls() -> None:

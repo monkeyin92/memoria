@@ -567,6 +567,63 @@ async def list_device_bindings(
     return {"bindings": [manifest.to_dict() for manifest in manifests]}
 
 
+@router.get("/v1/device-bindings/subject-candidates")
+async def list_binding_subject_candidates(
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+) -> dict[str, object]:
+    """Children this account already declared, for "use an existing profile".
+
+    Binding a robot to a new child creates a person with no account and records
+    the owner's ``guardian_of`` attestation.  ``/v1/guardian/links`` never lists
+    that child (a link needs the child's own confirmation), so without this list
+    a second binding could only ever create another child.  The authority is
+    the one :func:`create_device_binding` applies to an existing person: an
+    active ``guardian_of`` from this account to a person it can still read.  A
+    subject whose data was deleted stays behind as a disabled placeholder and
+    is left out.
+    """
+
+    identity = _identity(request)
+    now = datetime.now(UTC)
+    try:
+        relationships = await identity.list_relationships(
+            person_id=user.user_id,
+            statuses=("active",),
+            actor_person_id=user.user_id,
+        )
+    except IdentityAccessDeniedError as exc:
+        raise HTTPException(
+            status_code=403, detail={"code": "binding_forbidden"}
+        ) from exc
+    subjects: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for relationship in relationships:
+        target_id = relationship.target_person_id
+        if (
+            relationship.relation_type != "guardian_of"
+            or relationship.source_person_id != user.user_id
+            or target_id in seen
+            or (relationship.valid_until is not None and now >= relationship.valid_until)
+        ):
+            continue
+        seen.add(target_id)
+        try:
+            person = await identity.get_person(target_id, actor_person_id=user.user_id)
+        except (IdentityAccessDeniedError, IdentityNotFoundError):
+            continue
+        if person.status != "active":
+            continue
+        subjects.append(
+            {
+                "person_id": person.person_id,
+                "display_name": person.display_name,
+                "age_band": person.age_band,
+            }
+        )
+    return {"subjects": subjects}
+
+
 @router.post(
     "/v1/device-bindings",
     status_code=status.HTTP_201_CREATED,

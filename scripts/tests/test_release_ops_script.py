@@ -241,3 +241,158 @@ def test_rollback_has_no_persona_guard_once_prev_keys_persona_by_subject() -> No
     # account index, so bound-subject persona versions no longer block a rollback.
     assert "rollback_persona_guard" not in _script()
     assert "ROLLBACK_SUPERSEDE_SUBJECT_PERSONA" not in _script()
+
+
+# --- Control API host port (110.42.235.198 shares the host with hr-tracker, which holds 8791) ---
+
+REFRESH = ROOT / "scripts" / "refresh_readiness.sh"
+SMOKE = ROOT / "scripts" / "smoke_server_deployment.sh"
+COMPOSE = ROOT / "docker-compose.production.yml"
+
+
+def _shell_function(text: str, name: str) -> str:
+    start = text.index(f"{name}() {{")
+    end = text.index("\n}\n", start)
+    return text[start : end + 3]
+
+
+def _port_from(script: Path, docker_stub: str, env_port: str | None, tmp_path: Path) -> str:
+    """Run the script's own control_api_port against a stub ``docker``."""
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    stub = bin_dir / "docker"
+    stub.write_text(f"#!/usr/bin/env bash\n{docker_stub}\n", encoding="utf-8")
+    stub.chmod(0o755)
+    env = {k: v for k, v in os.environ.items() if k != "MEMORIA_CONTROL_API_PORT"}
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    if env_port is not None:
+        env["MEMORIA_CONTROL_API_PORT"] = env_port
+    # The scripts run under set -Eeuo pipefail; so does the function under test.
+    program = (
+        "set -Eeuo pipefail\ncontrol_container=memoria-control-api-1\n"
+        + _shell_function(script.read_text(encoding="utf-8"), "control_api_port")
+        + "\ncontrol_api_port\n"
+    )
+    result = subprocess.run(
+        ["bash", "-c", program], env=env, capture_output=True, text=True, check=True
+    )
+    return result.stdout
+
+
+@pytest.mark.parametrize("script", [SCRIPT, REFRESH], ids=["release_ops", "refresh_readiness"])
+@pytest.mark.parametrize(
+    ("docker_stub", "env_port", "expected"),
+    [
+        # The live container publishes 18791 (a neighbour holds 8791).
+        ('echo "127.0.0.1:18791"', None, "18791"),
+        # An explicit override wins over what is live.
+        ('echo "127.0.0.1:18791"', "28791", "28791"),
+        # Default host: 8791.
+        ('echo "127.0.0.1:8791"', None, "8791"),
+        # Only the loopback binding counts (IPv4 and IPv6 wildcard lines are ignored).
+        ('printf "0.0.0.0:9999\\n[::]:9999\\n127.0.0.1:18791\\n"', None, "18791"),
+        ('printf "0.0.0.0:9999\\n"', None, "8791"),
+        # No such container, a failing docker, or no output: the repo default, and never an abort.
+        ('echo "Error: No public port 8000/tcp published" >&2; exit 1', None, "8791"),
+        ("exit 1", None, "8791"),
+        ("exit 0", None, "8791"),
+    ],
+)
+def test_control_api_port_prefers_override_then_live_container_then_default(
+    script: Path, docker_stub: str, env_port: str | None, expected: str, tmp_path: Path
+) -> None:
+    assert _port_from(script, docker_stub, env_port, tmp_path) == expected
+
+
+def test_compose_publishes_the_control_api_on_a_configurable_loopback_port() -> None:
+    compose = COMPOSE.read_text(encoding="utf-8")
+    assert '- "127.0.0.1:${MEMORIA_CONTROL_API_PORT:-8791}:8000"' in compose
+    assert '"127.0.0.1:8791:8000"' not in compose
+
+
+def test_verify_load_hands_the_live_port_to_the_new_release_dir() -> None:
+    body = _function("step_verify_load")
+    assert "MEMORIA_CONTROL_API_PORT=%s" in body
+    assert '"$(control_api_port)" > "$R/.env"' in body
+    # Compose reads it from the release dir's .env; the preflight runs after it is written.
+    assert body.index("control_api_port") < body.index("smoke_server_deployment.sh")
+
+
+def _cutover_python() -> str:
+    body = _function("step_cutover")
+    match = re.search(r"python3 -c '\n(.*?)print\(\"resolve=PASS\"\)'", body, re.S)
+    assert match, "cutover must resolve the candidate compose before touching containers"
+    return match.group(1) + 'print("resolve=PASS")'
+
+
+def _resolve(tag: str, services: dict, control_port: str) -> subprocess.CompletedProcess[str]:
+    import json
+
+    return subprocess.run(
+        [sys.executable, "-c", _cutover_python()],
+        input=json.dumps({"services": services}),
+        env={**os.environ, "TAG": tag, "CONTROL_PORT": control_port},
+        capture_output=True,
+        text=True,
+    )
+
+
+def _candidate(tag: str, published: str | None) -> dict:
+    services = {
+        "speaker-model": {"image": f"memoria-speaker-model:{tag}"},
+        "control-api": {
+            "image": f"memoria-control-api:{tag}",
+            "ports": [] if published is None else [{"published": published, "target": 8000}],
+        },
+        "voice-core-media-bridge": {"image": f"memoria-agent:{tag}"},
+    }
+    return services
+
+
+def test_cutover_refuses_a_candidate_that_would_publish_another_control_port() -> None:
+    body = _function("step_cutover")
+    assert 'CONTROL_PORT="$(control_api_port)" python3 -c' in body
+    ok = _resolve("t1", _candidate("t1", "18791"), "18791")
+    assert ok.returncode == 0, ok.stdout + ok.stderr
+    assert "resolve=PASS" in ok.stdout
+    # On a shared host an unconfigured candidate falls back to 8791, which hr-tracker holds.
+    assert _resolve("t1", _candidate("t1", "8791"), "18791").returncode != 0
+    assert _resolve("t1", _candidate("t1", None), "18791").returncode != 0
+    # The default host keeps working unchanged.
+    assert _resolve("t1", _candidate("t1", "8791"), "8791").returncode == 0
+
+
+def test_finish_probes_readiness_on_the_live_port() -> None:
+    finish = _function("step_finish")
+    assert 'curl -fsS "http://127.0.0.1:$(control_api_port)/health/ready"' in finish
+    # 8791 survives only as the helper's default, never as a hard-coded probe.
+    assert _code().count("8791") == 1
+    assert 'printf \'%s\' "${port:-8791}"' in _function("control_api_port")
+
+
+def test_preflight_ports_never_collide_with_the_production_control_api() -> None:
+    smoke = SMOKE.read_text(encoding="utf-8")
+    assert 'api_port="${MEMORIA_PREFLIGHT_API_PORT:-28791}"' in smoke
+    assert 'nginx_port="${MEMORIA_PREFLIGHT_NGINX_PORT:-28891}"' in smoke
+    # 18791 is where the Control API sits beside hr-tracker; the free-port check would refuse every release.
+    assert "api_port=18791" not in smoke
+    subprocess.run(["bash", "-n", str(SMOKE)], check=True)
+    subprocess.run(["bash", "-n", str(REFRESH)], check=True)
+
+
+BRINGUP = ROOT / "scripts" / "bringup_shared_host.sh"
+
+
+def test_shared_host_bringup_script_is_checked_in_and_keeps_its_step_contract() -> None:
+    text = BRINGUP.read_text(encoding="utf-8")
+    assert os.access(BRINGUP, os.X_OK)
+    subprocess.run(["bash", "-n", str(BRINGUP)], check=True)
+    for step in ("net", "data", "redis", "schema", "verify", "replay", "apps", "checks", "status", "down"):
+        assert f"  {step}) step_{step} ;;" in text
+    # Restored data is replayed through the Control API image, which now carries the module.
+    assert "-m scripts.replay_subject_deletions --confirm-replay" in text
+    dockerfile = (ROOT / "infra" / "Dockerfile.control-api").read_text(encoding="utf-8")
+    assert "scripts/replay_subject_deletions.py" in dockerfile
+    # Env files are named by path only; no secret value belongs in a checked-in helper.
+    assert not re.search(r"(?im)^\s*(?:export\s+)?[A-Z_]*(?:PASSWORD|SECRET|TOKEN|KEY)[A-Z_]*=\S+", text)
