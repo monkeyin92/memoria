@@ -70,7 +70,10 @@ services:
       - "1"
       - --no-access-log
     ports:
-      - "127.0.0.1:8791:8000"
+      # A host whose 8791 belongs to a neighbour (110.42.235.198 runs hr-tracker
+      # there) sets MEMORIA_CONTROL_API_PORT in the release dir's .env; the
+      # release scripts carry it over from the live stack (release_ops.sh).
+      - "127.0.0.1:${MEMORIA_CONTROL_API_PORT:-8791}:8000"
     volumes:
       - type: bind
         source: /var/lib/memoria

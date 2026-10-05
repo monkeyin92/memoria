@@ -9,6 +9,20 @@ control_container="${MEMORIA_CONTROL_CONTAINER:-memoria-control-api-1}"
 # heartbeat; the LiveKit worker it replaced is retired.
 bridge_container="${MEMORIA_BRIDGE_CONTAINER:-memoria-voice-core-media-bridge-1}"
 
+# The host port the Control API publishes: an explicit MEMORIA_CONTROL_API_PORT,
+# else the port the live container publishes, else the repo default 8791. A
+# host whose 8791 belongs to a neighbour (110.42.235.198: hr-tracker) runs the
+# Control API on another port. (release_ops.sh carries the same function.)
+control_api_port() {
+  local port
+  port="${MEMORIA_CONTROL_API_PORT:-}"
+  if [[ -z "$port" ]]; then
+    port="$(docker port "$control_container" 8000/tcp 2>/dev/null \
+      | sed -n 's/^127\.0\.0\.1:\([0-9][0-9]*\)$/\1/p' | head -n 1 || true)"
+  fi
+  printf '%s' "${port:-8791}"
+}
+
 container_env_value() {
   local container="$1" key="$2"
   docker inspect "$container" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
@@ -125,7 +139,7 @@ run_control() {
 }
 
 wait_for_current_release_readiness() {
-  local readiness_url="http://127.0.0.1:8791/health/ready"
+  local readiness_url="http://127.0.0.1:$(control_api_port)/health/ready"
   local payload
   for _ in $(seq 1 20); do
     if payload="$(curl -fsS "$readiness_url" 2>/dev/null)" \

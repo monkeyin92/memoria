@@ -15,8 +15,11 @@ pg_password="preflight-$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')"
 pg_dsn="postgresql://memoria_preflight:$pg_password@$pg_container:5432/memoria"
 data_dir="$(mktemp -d /tmp/memoria-preflight-data.XXXXXX)"
 workdir="$(mktemp -d /tmp/memoria-preflight-work.XXXXXX)"
-api_port=18791
-nginx_port=18891
+# Throwaway loopback ports. They must stay clear of the production Control API:
+# on a host whose 8791 belongs to a neighbour that one is published on 18791,
+# and the free-port check below would refuse every release.
+api_port="${MEMORIA_PREFLIGHT_API_PORT:-28791}"
+nginx_port="${MEMORIA_PREFLIGHT_NGINX_PORT:-28891}"
 nginx_config="$workdir/nginx.conf"
 nginx_pid="$workdir/nginx.pid"
 nginx_error_log="$workdir/nginx-error.log"

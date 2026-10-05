@@ -34,6 +34,22 @@ TARGETS=(memoria-speaker-model-1 memoria-control-api-1 memoria-voice-core-media-
 ROLES=(agent control-api speaker-model)
 log() { printf '[%s] %s\n' "$(date +%T)" "$*"; }
 
+# The host port the Control API publishes: an explicit MEMORIA_CONTROL_API_PORT,
+# else the port the live container already publishes, else the repo default
+# 8791. 110.42.235.198 shares the host with hr-tracker, which holds 8791, so
+# there the Control API sits on 18791; verify-load copies the answer into the
+# release dir's .env so Compose publishes the same port after cutover.
+# (refresh_readiness.sh carries the same function.)
+control_api_port() {
+  local port
+  port="${MEMORIA_CONTROL_API_PORT:-}"
+  if [[ -z "$port" ]]; then
+    port="$(docker port memoria-control-api-1 8000/tcp 2>/dev/null \
+      | sed -n 's/^127\.0\.0\.1:\([0-9][0-9]*\)$/\1/p' | head -n 1 || true)"
+  fi
+  printf '%s' "${port:-8791}"
+}
+
 live_chain() {
   docker inspect "$1" --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}'
 }
@@ -103,7 +119,8 @@ step_verify_load() {
   [[ ! -e "$R" ]] || { log "release dir exists: $R"; exit 1; }
   install -d -o root -g root -m 0755 "$R"
   tar --extract --file "$U/source.tar" --directory "$R" --strip-components=1 --no-same-owner
-  printf 'MEMORIA_RELEASE_COMMIT=%s\nMEMORIA_RELEASE_TAG=%s\n' "$COMMIT" "$TAG" > "$R/.env"
+  printf 'MEMORIA_RELEASE_COMMIT=%s\nMEMORIA_RELEASE_TAG=%s\nMEMORIA_CONTROL_API_PORT=%s\n' \
+    "$COMMIT" "$TAG" "$(control_api_port)" > "$R/.env"
   chmod 0644 "$R/.env"
   bash "$R/scripts/smoke_server_deployment.sh" "$TAG"
   log "verify_load=PASS"
@@ -222,13 +239,18 @@ step_schema() {
 }
 
 step_cutover() {
-  new_compose config --format json | python3 -c '
+  # The recreated Control API must publish the port the live one holds: a
+  # candidate that falls back to 8791 on a shared host cannot bind, and by then
+  # the old container is already gone.
+  new_compose config --format json | CONTROL_PORT="$(control_api_port)" python3 -c '
 import json, sys, os
 t = os.environ["TAG"]; s = json.load(sys.stdin)["services"]
 want = {"speaker-model": "memoria-speaker-model", "control-api": "memoria-control-api",
         "voice-core-media-bridge": "memoria-agent"}
 bad = [k for k, v in want.items() if s[k]["image"] != f"{v}:{t}"]
 assert not bad, bad
+published = sorted({str(p.get("published")) for p in s["control-api"].get("ports", [])})
+assert published == [os.environ["CONTROL_PORT"]], (published, os.environ["CONTROL_PORT"])
 retired = sorted({"agent", "miniprogram-gateway", "device-media-gateway"} & set(s))
 assert not retired, f"retired services still defined: {retired}"
 print("resolve=PASS")'
@@ -246,7 +268,7 @@ step_finish() {
   systemctl reset-failed memoria-readiness-refresh.service || true
   systemctl start memoria-readiness-refresh.service
   systemctl show -p Result,ExecMainStatus memoria-readiness-refresh.service
-  curl -fsS http://127.0.0.1:8791/health/ready | python3 -c 'import json,sys; b=json.load(sys.stdin); print("ready:", b["status"], b["release_tag"], b["checks"]["agent"]["status"])'
+  curl -fsS "http://127.0.0.1:$(control_api_port)/health/ready" | python3 -c 'import json,sys; b=json.load(sys.stdin); print("ready:", b["status"], b["release_tag"], b["checks"]["agent"]["status"])'
   curl -fsS -o /dev/null https://aginice.cn:8443/memoria-api/health/ready && echo external_ready=200
   memoria_container_states | tee "$S/post-state.txt"
   if grep -E ' (unhealthy|starting) restarts=' "$S/post-state.txt"; then

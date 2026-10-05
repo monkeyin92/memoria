@@ -134,7 +134,7 @@ USER root
 WORKDIR /app
 COPY services ./services
 COPY packages ./packages
-COPY scripts/mark_readiness.py scripts/rebuild_memory_projections.py scripts/migrate_control_sqlite_to_postgres.py ./scripts/
+COPY scripts/mark_readiness.py scripts/rebuild_memory_projections.py scripts/replay_subject_deletions.py scripts/migrate_control_sqlite_to_postgres.py ./scripts/
 COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json
 USER 65532:65532
 EOF
