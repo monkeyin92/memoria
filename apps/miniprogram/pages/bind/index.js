@@ -295,8 +295,13 @@ Page({
     }
   },
 
+  // A <picker> reports the index of the row chosen, not the row's value.  The
+  // form and the wxml only know "new" and "existing"; storing the raw index hid
+  // both name fields and made the request build an empty new-child draft.
   onSubjectSourceChange(event) {
-    this.setData({ "form.subjectSource": event.detail.value, error: "" });
+    const option = this.data.subjectSourceOptions[Number(event.detail.value)];
+    if (!option) return;
+    this.setData({ "form.subjectSource": option.value, error: "" });
   },
 
   onExistingSubjectChange(event) {

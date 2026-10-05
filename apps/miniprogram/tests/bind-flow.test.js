@@ -421,6 +421,65 @@ test("a child declared by an earlier binding can be reused when no guardian link
   );
 });
 
+// The tests above set form.subjectSource directly.  In the app it comes from
+// the 孩子档案 <picker>, whose change event carries the row INDEX; that handler
+// once stored the index itself, which hid both name fields and sent an empty
+// new-child draft ("subject_draft.display_name 不能为空").
+test("choosing 使用已有档案 in the 孩子档案 picker binds the child picked in the list", async () => {
+  await withExistingSubjects(
+    {
+      links: async () => [],
+      candidates: async () => [
+        { personId: "person_child_a", displayName: "孩子甲", ageBand: "under_14" },
+        { personId: "person_child_b", displayName: "孩子乙", ageBand: "under_14" },
+      ],
+    },
+    async () => {
+      nextResponse = successResponse(defaultManifestResponse("parent_for_child"));
+      const page = await bootToMode("parent_for_child");
+      await settle();
+      assert.equal(page.data.form.subjectSource, "new");
+
+      page.onSubjectSourceChange({ detail: { value: "1" } });
+      assert.equal(page.data.form.subjectSource, "existing");
+      page.onExistingSubjectChange({ detail: { value: "1" } });
+
+      page.goToReview();
+      assert.equal(page.data.error, "");
+      assert.equal(page.data.step, "review");
+      await page.submitBinding();
+      assert.equal(page.data.error, "");
+      assert.equal(page.data.step, "done");
+      const payload = lastWxRequest.data;
+      assert.equal(payload.primary_subject.person_id, "person_child_b");
+      assert.equal(payload.primary_subject.subject_draft, undefined);
+      assert.equal(readSubjectLabel(page.data.manifest), "孩子乙");
+
+      page.onSubjectSourceChange({ detail: { value: 0 } });
+      assert.equal(page.data.form.subjectSource, "new");
+    },
+  );
+});
+
+test("a picker row that does not exist leaves the child-profile source as it was", async () => {
+  await withExistingSubjects(
+    {
+      links: async () => [],
+      candidates: async () => [{ personId: "person_child_a", displayName: "孩子甲", ageBand: "under_14" }],
+    },
+    async () => {
+      nextResponse = successResponse(defaultManifestResponse("parent_for_child"));
+      const page = await bootToMode("parent_for_child");
+      await settle();
+      page.onSubjectSourceChange({ detail: { value: "1" } });
+      for (const value of ["7", -1, 1.5, undefined, "existing"]) {
+        page.onSubjectSourceChange({ detail: { value } });
+        assert.equal(page.data.form.subjectSource, "existing");
+      }
+    },
+  );
+});
+
 test("guardian-linked and binding-declared children are merged without repeats", async () => {
   await withExistingSubjects(
     {
