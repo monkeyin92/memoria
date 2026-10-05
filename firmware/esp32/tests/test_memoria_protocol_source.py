@@ -291,16 +291,16 @@ def test_the_bootstrap_qr_is_a_wechat_bind_link_the_mini_program_unwraps() -> No
     bootstrap = (
         Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria" / "memoria_bootstrap.cc"
     ).read_text(encoding="utf-8")
-    assert 'kBindLinkPrefix = "https://aigcnice.com/memoria-bind/?b="' in bootstrap
+    assert 'kBindLinkPrefix = "https://aginice.cn/memoria-bind/?b="' in bootstrap
     assert bootstrap.count("ShowQrCode(kBindLinkPrefix + qr_payload_,") == 2
     assert "ShowQrCode(qr_payload_," not in bootstrap
     qr_code = (
         Path(__file__).parents[3] / "apps" / "miniprogram" / "utils" / "device-onboarding" / "qr-code.js"
     ).read_text(encoding="utf-8")
-    assert 'BIND_LINK_PREFIX = "https://aigcnice.com/memoria-bind/";' in qr_code
+    assert 'BIND_LINK_PREFIX = "https://aginice.cn/memoria-bind/";' in qr_code
     # The Mini Program accepts this host and path, so the firmware's prefix
     # must stay inside it.
-    assert "aigcnice\\.com\\/memoria-bind\\/?\\?" in qr_code
+    assert "aginice\\.cn\\/memoria-bind\\/?\\?" in qr_code
 
 
 def test_nearby_bootstrap_leaves_internal_ram_for_tls() -> None:

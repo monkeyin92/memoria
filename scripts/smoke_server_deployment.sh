@@ -23,7 +23,7 @@ nginx_error_log="$workdir/nginx-error.log"
 smoke_https="$workdir/memoria-https.conf"
 smoke_device_edge="$workdir/memoria-device-edge.conf"
 www_root="$workdir/www"
-host_header="Host: aigcnice.com"
+host_header="Host: aginice.cn"
 response_plan_token="preflight-response-plan-token-that-is-long-enough"
 
 cleanup() {
@@ -93,8 +93,8 @@ start_control() {
     -v "$data_dir:/data" \
     -e ENVIRONMENT=development \
     -e "MEMORIA_RELEASE_TAG=$tag-preflight" \
-    -e PUBLIC_BASE_URL=https://aigcnice.com:8443/memoria-api \
-    -e ALLOWED_ORIGINS=https://122.51.108.140:8443,https://aigcnice.com:8443,https://www.aigcnice.com:8443 \
+    -e PUBLIC_BASE_URL=https://aginice.cn:8443/memoria-api \
+    -e ALLOWED_ORIGINS=https://aginice.cn:8443,https://www.aginice.cn:8443 \
     -e MEMORIA_AUTH_SECRET=preflight-auth-secret-that-is-longer-than-thirty-two-characters \
     -e "MEMORIA_RESPONSE_PLAN_TOKEN=$response_plan_token" \
     -e MEMORIA_DB_PATH=/data/memoria.sqlite3 \

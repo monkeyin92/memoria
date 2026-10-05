@@ -247,7 +247,7 @@ step_finish() {
   systemctl start memoria-readiness-refresh.service
   systemctl show -p Result,ExecMainStatus memoria-readiness-refresh.service
   curl -fsS http://127.0.0.1:8791/health/ready | python3 -c 'import json,sys; b=json.load(sys.stdin); print("ready:", b["status"], b["release_tag"], b["checks"]["agent"]["status"])'
-  curl -fsS -o /dev/null https://aigcnice.com:8443/memoria-api/health/ready && echo external_ready=200
+  curl -fsS -o /dev/null https://aginice.cn:8443/memoria-api/health/ready && echo external_ready=200
   memoria_container_states | tee "$S/post-state.txt"
   if grep -E ' (unhealthy|starting) restarts=' "$S/post-state.txt"; then
     log "containers not healthy after finish (see above)"; exit 1

@@ -31,7 +31,7 @@ const RAW = makeQr();
 const LINK = `${BIND_LINK_PREFIX}?b=${RAW}`;
 
 test("the board's WeChat bind link carries the signed payload unchanged", () => {
-  assert.equal(BIND_LINK_PREFIX, "https://aigcnice.com/memoria-bind/");
+  assert.equal(BIND_LINK_PREFIX, "https://aginice.cn/memoria-bind/");
   const fromLink = parseDeviceQr(LINK);
   assert.equal(fromLink.raw_payload, RAW);
   assert.equal(fromLink.payload.device_id, "dev_01");
@@ -49,7 +49,7 @@ test("every form a scanner hands back for the bind link is unwrapped", () => {
     `pages/device-onboarding/index?q=${encodeURIComponent(LINK)}`,
     `/pages/device-onboarding/index?scancode_time=1727430000&q=${encodeURIComponent(LINK)}`,
     LINK.replace("https://", "http://"),
-    LINK.replace("aigcnice.com/", "www.aigcnice.com/"),
+    LINK.replace("aginice.cn/", "www.aginice.cn/"),
     LINK.replace("memoria-bind/?", "memoria-bind?"),
     `${LINK}&scancode_time=1727430000`,
   ];

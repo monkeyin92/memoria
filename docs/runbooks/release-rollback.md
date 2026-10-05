@@ -6,23 +6,23 @@
 
 - `/opt/memoria/current` 指向当前整栈发布树（2026-10-05：`releases/20261004-first-warm-v1`，有效栈 `MEMORIA_RELEASE_TAG=20261004-first-warm-v1`；media-edge 是组件发布 `20261002-late-progress-v1`，编排用该发布树的 compose 加 `component-releases/20261002-late-progress-v1-media-edge/media-edge-component.override.yml`）。目录名、栈 tag、组件 tag 是三个概念；readiness 刷新必须取有效栈配置。
 - Control/Direct Edge 仅回环端口 `8791/8794`（新机上 Control 是 `18791`，见下文「生产主机」）；Bridge 容器 `memoria-voice-core-media-bridge-1` 是 `memoria-agent` 镜像唯一的运行者，并发送 Agent heartbeat。PostgreSQL 17 + pgvector、MinIO、独立 mTLS Redis。LiveKit server、LiveKit Agent worker（`memoria-agent-1`）与 Python 小程序/设备媒体网关（`8792/8793`）自 LiveKit 退役版本起不在仓库栈内，见下文「LiveKit 媒体链退役」。SQLite 兼容库 `/data/memoria.sqlite3` 挂载自 `/var/lib/memoria`。
-- readiness 入口 `https://aigcnice.com:8443/memoria-api/health/ready`；443 根站不代表 Memoria（旧机是 WMS，新机只放绑定页、根路径返回 404），不用它的状态判断 Memoria 健康。
-- ESP32 Direct：`wss://aigcnice.com:8443/memoria-device-edge/v1/device/media`。公共 8080 不承载设备 WSS。H5 `/memoria-h5` 固定返回 `410 Gone`，不再发布静态前端。
+- readiness 入口 `https://aginice.cn:8443/memoria-api/health/ready`；443 根站不代表 Memoria（旧机是 WMS，新机只放绑定页、根路径返回 404），不用它的状态判断 Memoria 健康。
+- ESP32 Direct：`wss://aginice.cn:8443/memoria-device-edge/v1/device/media`。公共 8080 不承载设备 WSS。H5 `/memoria-h5` 固定返回 `410 Gone`，不再发布静态前端。
 - 旧机（2026-10-06 到期前）：443 Nginx 只保留以下 Memoria include（原 `memoria-miniprogram-media.conf` include 随小程序网关退役删除），不改同机 WMS 路由/数据；8443 经 `memoria-stream.conf` 纯 TCP 透传到 `127.0.0.1:9443` 的 Memoria TLS server（不再做 LiveKit 的 `ssl_preread` 分流）。
 
 ~~~nginx
 include /etc/nginx/snippets/memoria-bind.conf;
 ~~~
 
-`memoria-bind.conf`（仓库 `infra/nginx-memoria-bind.conf`，2026-09-27 起）只服务 `/memoria-bind/`：`/var/www/memoria-bind/` 下的说明页 `index.html`（仓库 `infra/memoria-bind/index.html`）与微信「扫普通链接二维码打开小程序」的校验文件，关闭访问日志。该前缀必须在 443（微信规则不支持非标准端口）。
+`memoria-bind.conf`（仓库 `infra/nginx-memoria-bind.conf`，2026-09-27 起）只服务 `/memoria-bind/`：`/var/www/memoria-bind/` 下的说明页 `index.html`（仓库 `infra/memoria-bind/index.html`）与微信「扫普通链接二维码打开小程序」的校验文件，关闭访问日志。该前缀必须在 443（微信规则不支持非标准端口）。新机上对应 `snippets/memoria-prod-bind.conf` 与 `/var/www/memoria-prod/memoria-bind/`；2026-10-05 起规则前缀是 `https://aginice.cn/memoria-bind/`（旧规则 `https://aigcnice.com/memoria-bind/` 随旧域名弃用），校验文件由公众平台在添加规则时生成，不入仓库。
 
 Secret 仅在 root-only `/etc/memoria-*.env`（root:root 0600）；候选从真实源复制并按 `scripts/split_production_env.py` 分流，禁止在输出/日志/manifest 留值。内部 token 不等于账号身份；设备/媒体 token 必须短期且绑定 audience/subject/fence。Direct 缺少 mTLS Device State Redis 时 fail closed，不回退本地权威。
 
 ## 生产主机（2026-10-05 起：110.42.235.198）
 
-整套服务 2026-10-05 01:33–01:40（CST）从旧机 122.51.108.140 冷拷贝迁到 110.42.235.198：与 pocketSparks 的 MySQL、node、hr-tracker 共用的主机（Ubuntu 24.04，4 vCPU，3.7 GiB 内存 + 2 GiB swap，40 GB 盘）。本机 ssh 别名 `memoria-prod` 指新机，`memoria-prod-old` 指旧机，本文命令里的 `memoria-prod` 都是新机。迁移回执、DNS 状态与回到旧机的路径见 `HANDOFF.md`「2026-10-05 服务迁移到 110.42.235.198」。
+整套服务 2026-10-05 01:33–01:40（CST）从旧机 122.51.108.140 冷拷贝迁到 110.42.235.198：与 pocketSparks 的 MySQL、node、hr-tracker 共用的主机（Ubuntu 24.04，4 vCPU，3.7 GiB 内存 + 2 GiB swap，40 GB 盘）。本机 ssh 别名 `memoria-prod` 指新机，`memoria-prod-old` 指旧机，本文命令里的 `memoria-prod` 都是新机。迁移回执与回到旧机的路径见 `HANDOFF.md`「2026-10-05 服务迁移到 110.42.235.198」；对外域名从 `aigcnice.com` 换成 `aginice.cn`（2026-10-05）见同文件「2026-10-05 域名切换到 aginice.cn」。
 
-- **共用主机的边界**：hr-tracker 占着 `127.0.0.1:8791`，共用 nginx 拥有 80/443/8443，pocketSparks 与 aginice.cn 的站点、卷不动。Memoria 的 nginx 文件一律用新名字：`sites-enabled/memoria-prod`、`snippets/memoria-prod-{device-edge,https,site-common,bind}.conf`、`conf.d/memoria-prod-limits.conf`，静态页 `/var/www/memoria-prod`（只有绑定页，没有 WMS）；证书 `/etc/nginx/ssl/aigcnice.com/aigcnice.com_bundle.crt` + `.key`。8443 的 stream 仍是 7 月留下的 `stream-conf.d/memoria-rtc.conf`（`ssl_preread`：TLS 到 `127.0.0.1:9443`，非 TLS 的一支指向已退役的 LiveKit 8444，没有监听者），没改。
+- **共用主机的边界**：hr-tracker 占着 `127.0.0.1:8791`，共用 nginx 拥有 80/443/8443，pocketSparks 的站点、卷不动；`sites-enabled/aginice`（aginice.cn / www，Memoria 现在的对外域名，与 pocketSparks 共用）只加了两行 include（`snippets/memoria-prod-https.conf`、`snippets/memoria-prod-bind.conf`，并把 `/` 的静态根指到 `/var/www/memoria-prod`），原件在 `/etc/nginx/backup-20261005-domain-switch/aginice.orig`。Memoria 的 nginx 文件一律用新名字：`sites-enabled/memoria-prod`（旧域名 aigcnice.com，过渡期保留）、`snippets/memoria-prod-{device-edge,https,site-common,bind}.conf`、`conf.d/memoria-prod-limits.conf`，静态页 `/var/www/memoria-prod`（只有绑定页，没有 WMS）；证书：aginice.cn 用 `/etc/nginx/ssl/aginice.cn/aginice.cn_bundle.crt` + `aginice.cn.key`（腾讯云免费 DV，约 90 天一期、不自动到服务器；该站点的 `ssl_ciphers` 只有 RSA 套件，新证书必须是 RSA、不能是 ECDSA）；aigcnice.com 的旧证书 `/etc/nginx/ssl/aigcnice.com/…`（到 2026-12-17）只服务过渡期。Let's Encrypt 的 HTTP-01 对 aginice.cn 走不通（境外验证节点访问 80 端口被腾讯云的备案提示页拦截，同机房境内访问正常），证书只能从腾讯云控制台下载，或用 DNSPod API 做 DNS-01。8443 的 stream 仍是 7 月留下的 `stream-conf.d/memoria-rtc.conf`（`ssl_preread`：TLS 到 `127.0.0.1:9443`，非 TLS 的一支指向已退役的 LiveKit 8444，没有监听者），没改。
 - **Control API 端口是 `127.0.0.1:18791`**。仓库里的 `docker-compose.production.yml`（`127.0.0.1:8791:8000`）、`scripts/refresh_readiness.sh`、`scripts/release_ops.sh` 仍写 8791；新机上当前发布树的这三处是手工改的（原件留作 `.orig`）。**端口参数化的代码 PR 合并前，不得在新机上整栈发布**：新发布树会带着 8791，与 hr-tracker 冲突，control-api 起不来，切流中途中断。
 - **没有 `release-ops.sh`，回滚深度是 0**：新机没有 `/root/memoria-release/release-ops.sh`，只有迁移用的 `bringup.sh`（按服务名逐个起，不在仓库里）；镜像与发布树只有当前栈。下一次整栈发布前要装 `release-ops.sh`、PREV 指向与回滚镜像也要按那次发布重新生成，发布完成后才重新有一个回滚。
 - **数据层**：两台机上 `memoria-data` 项目都是从 `releases/20260827-architecture-split-v1/infra` 起的。`current/infra` 里的同名 compose 多一个 `011-control-schema.sql` 的 initdb 挂载（只在空库首次初始化时用）；在已有数据的库上用 `current/infra` 去 `up -d` 会让 compose 判定配置变了而重建 postgres 容器（推断，没试），不要顺手做。

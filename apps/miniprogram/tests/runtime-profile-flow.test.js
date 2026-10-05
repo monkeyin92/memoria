@@ -45,7 +45,7 @@ function resolveRequest(index, payload, statusCode = 200) {
 
 function currentPaths() {
   return pendingRequests.map((options) =>
-    options.url.replace("https://aigcnice.com:8443/memoria-api", ""),
+    options.url.replace("https://aginice.cn:8443/memoria-api", ""),
   );
 }
 

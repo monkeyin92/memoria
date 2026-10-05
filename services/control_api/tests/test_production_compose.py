@@ -1053,7 +1053,7 @@ def test_media_edge_direct_device_ingress_uses_new_loopback_port_and_exact_path(
     assert "--tls-auth-clients" in compose
     assert "device-state-redis-healthcheck-client.crt" in compose
     assert "condition: service_healthy" in edge
-    assert "wss://aigcnice.com:8443/memoria-device-edge/v1/device/media" in runbook
+    assert "wss://aginice.cn:8443/memoria-device-edge/v1/device/media" in runbook
     assert "公共 8080 不承载设备 WSS" in runbook
 
 

@@ -46,7 +46,7 @@ global.wx = {
   navigateTo() {},
   stopPullDownRefresh() {},
   request(options) {
-    const pathname = options.url.replace("https://aigcnice.com:8443/memoria-api", "");
+    const pathname = options.url.replace("https://aginice.cn:8443/memoria-api", "");
     if (pathname.startsWith("/v1/devices/dev_1/runtime-profile")) {
       if (deferProfileResponses) {
         deferredResponses.push({ options, kind: "refresh" });
@@ -870,7 +870,7 @@ test("age declaration offers only three bands and never claims verification", as
   const calls = [];
   const originalRequest = global.wx.request;
   global.wx.request = (options) => {
-    const pathname = options.url.replace("https://aigcnice.com:8443/memoria-api", "");
+    const pathname = options.url.replace("https://aginice.cn:8443/memoria-api", "");
     if (pathname === "/v1/persons/person_child/age-evidence") {
       // GET reads the recorded band (P0-04 D4); PATCH declares a new one.
       const isRead = (options.method || "GET") === "GET";
@@ -933,7 +933,7 @@ test("age declaration explains owner-only and unavailable authority failures", a
   const originalRequest = global.wx.request;
   let statusCode = 403;
   global.wx.request = (options) => {
-    const pathname = options.url.replace("https://aigcnice.com:8443/memoria-api", "");
+    const pathname = options.url.replace("https://aginice.cn:8443/memoria-api", "");
     if (pathname === "/v1/persons/person_child/age-evidence") {
       options.success({
         statusCode,
