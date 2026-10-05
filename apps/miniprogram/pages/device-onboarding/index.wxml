@@ -198,10 +198,10 @@
       <face-badge wx:if="{{companionId}}" role="{{companionId}}" size="xl" plain="{{true}}" animated="{{true}}"></face-badge>
       <device-screen wx:else online="{{true}}" size="220"></device-screen>
     </view>
-    <text class="done-badge">{{reprovision ? 'ONLINE' : 'READY'}}</text>
+    <text class="done-badge">{{reprovision ? '已联网' : '已就绪'}}</text>
     <text class="done-title">{{reprovision ? '网络已更新' : '机器人可以开始对话了'}}</text>
     <text wx:if="{{reprovision}}" class="done-note">机器人已经用新的 Wi‑Fi 连上 Memoria。绑定关系、使用人和记忆都没有变化，唤醒它就能继续聊天。</text>
-    <text wx:else class="done-note">设备已就绪。唤醒机器人就可以开始聊天；它只服务这次绑定的使用人，使用人和设备管理都可以在「设备」页调整。</text>
+    <text wx:else class="done-note">唤醒机器人就可以开始聊天；它只服务这次绑定的使用人，使用人和设备管理都可以在「设备」页调整。</text>
     <button class="primary-button onboarding-button" bindtap="openDevicePage">进入设备管理</button>
   </view>
 
