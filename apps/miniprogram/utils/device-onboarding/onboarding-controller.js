@@ -541,7 +541,7 @@ class OnboardingController {
 
   beginInitialize() {
     if (!this._claim || this.reprovision) {
-      const error = new Error("请先完成设备认领");
+      const error = new Error("请先确认这是你的机器人");
       error.code = "CLAIM_CONFLICT";
       this._setError(error);
       return false;
