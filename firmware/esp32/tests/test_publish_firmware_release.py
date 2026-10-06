@@ -30,12 +30,13 @@ def _publisher():
     return module
 
 
-def _image(build: int, *, project: bytes = b"memoria", markers: int = 1) -> bytes:
+def _image(build: int, *, project: bytes = b"memoria", markers: int = 1, bench: bool = False) -> bytes:
     header = bytes([0xE9]) + b"\0" * 31
     desc = (0xABCD5432).to_bytes(4, "little") + b"\0" * 12
     desc += b"2.4.2".ljust(32, b"\0") + project.ljust(32, b"\0") + b"\0" * 176
     marker = f"MEMORIA_FIRMWARE_BUILD={build};".encode()
-    return header + desc + b"\x11" * 4096 + marker * markers + b"\x22" * 128
+    bench_marker = b"MEMORIA_BENCH_BUILD=1;" if bench else b""
+    return header + desc + b"\x11" * 4096 + marker * markers + bench_marker + b"\x22" * 128
 
 
 def _key(tmp_path: pathlib.Path) -> tuple[pathlib.Path, bytes]:
@@ -69,6 +70,8 @@ def test_sign_writes_a_release_the_server_accepts(tmp_path: pathlib.Path) -> Non
         (_image(7, markers=2), "markers"),
         (_image(7, project=b"xiaozhi"), "project"),
         (b"\x00" + _image(7)[1:], "magic"),
+        # A test-rig image has the right project and the right build marker: only its own marker gives it away.
+        (_image(7, bench=True), "bench"),
     ],
 )
 def test_sign_refuses_foreign_or_mismatched_images(
@@ -80,6 +83,19 @@ def test_sign_refuses_foreign_or_mismatched_images(
     path.write_bytes(image)
     with pytest.raises(SystemExit, match=message):
         publisher.sign(path, key_path, tmp_path / "out", build=7, public_key=public_key)
+
+
+def test_the_bench_marker_is_the_one_the_bench_build_carries() -> None:
+    publisher = _publisher()
+    board = MEMORIA_DIR.parent / "boards" / "memoria" / "esp-vocat"
+    source = (board / "memoria_mascot_bench.cc").read_text(encoding="utf-8")
+    defined = re.findall(r'memoria_bench_build_marker\[\] = "([^"]+)";', source)
+    assert defined == [publisher.BENCH_MARKER.decode("ascii")]
+    # Defined once, inside the bench switch, and nowhere a product image compiles.
+    assert source.index("#if CONFIG_MEMORIA_BENCH_SERIAL") < source.index("memoria_bench_build_marker[] =")
+    for path in (FIRMWARE_ROOT / "overlay" / "files" / "main").rglob("*"):
+        if path.suffix in {".cc", ".h", ".c"} and path.name != "memoria_mascot_bench.cc":
+            assert publisher.BENCH_MARKER.decode("ascii") not in path.read_text(encoding="utf-8"), path.name
 
 
 def test_sign_refuses_a_key_the_firmware_does_not_trust(tmp_path: pathlib.Path) -> None:

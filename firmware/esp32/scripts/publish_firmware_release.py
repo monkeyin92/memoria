@@ -59,6 +59,9 @@ DEFAULT_REMOTE_ROOT = "/var/lib/memoria/firmware-releases"
 # magic, secure_version, reserv1[2], version[32], project_name[32], ...
 _APP_DESC_OFFSET = 32
 _APP_DESC_MAGIC = 0xABCD5432
+# Compiled into test-rig images only (memoria_mascot_bench.cc, CONFIG_MEMORIA_BENCH_SERIAL): such an image
+# answers `snap` over USB with the screen, which a product image must never do.
+BENCH_MARKER = b"MEMORIA_BENCH_BUILD=1;"
 
 
 def fail(message: str) -> None:
@@ -88,6 +91,11 @@ def inspect_image(image: bytes, build: int) -> str:
     project = _c_string(desc[48:80])
     if project != "memoria":
         fail(f"image project is {project!r}, not 'memoria'")
+    if BENCH_MARKER in image:
+        fail(
+            "image is a bench build (the test-rig serial screenshot is compiled in, TODOLIST M-2); "
+            "bench images are never published: rebuild with build.sh"
+        )
     markers = re.findall(rb"MEMORIA_FIRMWARE_BUILD=(\d+);", image)
     if markers != [str(build).encode()]:
         fail(

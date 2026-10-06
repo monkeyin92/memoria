@@ -165,7 +165,15 @@ def test_low_cost_data_stack_is_isolated_pinned_and_not_publicly_exposed() -> No
     assert "ports:" not in compose
     assert "pocketsparks" not in compose
     assert "memoria_default" in compose
-    assert "archive_mode=on" in compose
+    # WAL archiving is off on purpose (same-disk copy, no base backup, 0.6-1.1 GB a day on a 40 GB host);
+    # turning it back on must be a conscious edit of the compose, with archive_timeout and archive_command.
+    postgres_service = compose.split("  postgres:\n", 1)[1].split("\n  minio:\n", 1)[0]
+    postgres_flags = "\n".join(
+        line for line in postgres_service.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert "archive_mode=off" in postgres_flags
+    for gone in ("archive_mode=on", "archive_timeout", "archive_command"):
+        assert gone not in postgres_flags
     assert "memoria_app" in postgres_init
     assert "memoria_archive_compiler" in postgres_init
     runtime_roles = {

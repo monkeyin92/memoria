@@ -2,6 +2,7 @@
 #define MEMORIA_MASCOT_SCENE_H
 
 #include "memoria_mascot_pack.h"
+#include "memoria_mascot_raster.h"
 
 #include <cstdint>
 
@@ -10,9 +11,9 @@ namespace memoria {
 // The companion scene on the 360x360 round LCD: a soft gradient backdrop in
 // the companion's colours, the plush mascot with a ground shadow, and a state
 // ring on the rim. The scene decides the mascot's behaviour (breathing,
-// blinking, lip flaps while speaking, mood changes with a squash-and-pop,
-// hops when patted, idle moments, falling asleep) and renders it into an
-// RGB565 framebuffer, reporting only the rectangles that changed.
+// blinking, lip flaps that follow the reply's audio, mood changes with a
+// squash-and-pop, hops when patted, idle moments, falling asleep) and renders
+// it into an RGB565 framebuffer, reporting only the rectangles that changed.
 //
 // Text (status, subtitles, the binding QR card) stays in LVGL on top of the
 // framebuffer. While the device is still getting online the scene can leave
@@ -45,13 +46,6 @@ enum class SceneMood : uint8_t {
 // Server expression names (media edge screen.expression) plus the legacy
 // aliases the upstream firmware passes. Unknown names return false.
 bool SceneMoodFromName(const char* name, SceneMood* mood);
-
-struct SceneRect {
-    int x0 = 0;  // inclusive
-    int y0 = 0;
-    int x1 = 0;  // exclusive
-    int y1 = 0;
-};
 
 class MascotScene {
 public:
@@ -90,9 +84,18 @@ public:
     bool intro_active(uint32_t now_ms) const;
     void SetPhase(ScenePhase phase, uint32_t now_ms);
     ScenePhase phase() const { return phase_; }
+    SceneMood mood() const { return mood_; }
     void SetMood(SceneMood mood, uint32_t now_ms);
     void Pat(uint32_t now_ms);
     void Shake(uint32_t now_ms);
+    // How loud the audio is (TODOLIST M-1), polled by the display task once per frame from the audio tasks'
+    // level taps (memoria_audio_level.h). `peak` and `valley` are the loudest and the quietest 20 ms block
+    // since the previous call, 0..255 as RmsToLevel() scales them, and `blocks` is how many blocks that
+    // was. Zero blocks is not silence: a stalled playback queue publishes nothing, and then the mouth
+    // closes and the glow dims instead of acting out a reply that is not being heard.
+    void SetOutputLevel(uint8_t valley, uint8_t peak, uint32_t blocks, uint32_t now_ms);
+    // The microphone side, after echo cancellation: the glow while listening brightens with the voice.
+    void SetInputLevel(uint8_t peak, uint32_t blocks, uint32_t now_ms);
     // Eases the mascot into (or out of) the captioned layout.
     void SetCaptioned(bool captioned, uint32_t now_ms);
     // How far the captioned layout has progressed, 0 (full) .. 255 (captioned).
@@ -104,10 +107,14 @@ public:
     // Advance to now_ms and redraw everything that changed. Returns the number
     // of dirty rectangles written (0 when the frame is unchanged).
     int Render(uint32_t now_ms, SceneRect* dirty, int max_dirty);
-    // How soon the next Render is worth doing: fast motion needs 25 fps, slow
-    // breathing and glows look the same at half that and leave the CPU and
-    // PSRAM to audio.
+    // How soon the next Render is worth doing: 25 fps whenever the screen is lit and the companion is
+    // alive (the breathing and the glow move by fractions of a pixel per frame, so every frame is a
+    // visible step), half that for the Wi-Fi and binding screens and for the dozing companion. The
+    // display task may stretch this when frames cost more than it can afford (memoria_frame_pacer.h).
     uint32_t FrameIntervalMs(uint32_t now_ms) const;
+    // Pixels composed (backdrop copied, layers blended, row written back) by the last Render. The dirty
+    // rectangles overstate nothing and hide nothing but this: a ring-only redraw skips the middle.
+    uint32_t last_composed_px() const { return composed_px_; }
     // Opacity for the LVGL text layer: hidden during the boot animation.
     uint8_t chrome_opa(uint32_t now_ms) const;
     const MascotTheme& theme() const { return theme_; }
@@ -117,16 +124,26 @@ public:
 private:
     enum class Motion : uint8_t { kNone, kPop, kHop, kRise };
 
+    // Follows one audio level: a fast envelope for syllables (the mouth), a slow one for phrases (glow,
+    // body).
+    struct LevelFollower {
+        float fast = 0.0f;
+        float slow = 0.0f;
+        uint32_t last_ms = 0;   // the previous poll
+        uint32_t audio_ms = 0;  // the last poll that carried blocks
+        bool polled = false;
+    };
+
     struct Placement {
         bool sprite = false;
         MascotFrame frame = MascotFrame::kCount;
-        int ax = 0;  // anchor (feet centre) on screen
-        int ay = 0;
-        int ground_y = kFootY;  // row the shadow lies on
-        int sx_q = 256;  // scale, 8.8 fixed point
-        int sy_q = 256;
+        // Where the mascot stands: feet centre in 1/16 px, scale in 1/4096, sampled at exactly that.
+        SpriteTransform xf;
         SceneRect sprite_box;
-        int shadow_rx = 0;
+        // The ground shadow, centre and radius in 1/16 px.
+        int shadow_cx_q = 0;
+        int shadow_cy_q = 0;
+        int shadow_rx_q = 0;
         int shadow_alpha = 0;
         SceneRect shadow_box;
         int ring_mode = 0;  // 0 none, 1 glow, 2 comet
@@ -141,10 +158,14 @@ private:
     void UpdateActor(uint32_t now_ms);
     void StartMotion(Motion motion, uint32_t now_ms);
     Placement Compute(uint32_t now_ms);
+    // One step of the mouth detector on the fast output envelope.
+    void StepMouth(float env, uint32_t now_ms);
+    // The glow level for this frame: held for kGlowHoldMs so the ring is not redrawn at the frame rate.
+    int HeldGlow(int level, uint32_t now_ms);
     void BuildBackground();
-    void RedrawRect(const SceneRect& rect, const Placement& p, uint32_t now_ms);
+    // skip_hole: a ring-only redraw leaves the middle of the screen (inside the ring) alone.
+    void RedrawRect(const SceneRect& rect, const Placement& p, uint32_t now_ms, bool skip_hole = false);
     void DrawSprite(const SceneRect& clip, const Placement& p);
-    void DrawSpriteFiltered(const SceneRect& clip, const Placement& p, const MascotSprite* s);
     void DrawShadow(const SceneRect& clip, const Placement& p);
     void DrawRing(const SceneRect& clip, const Placement& p);
     void DrawIntro(const SceneRect& clip, uint32_t now_ms);
@@ -199,9 +220,21 @@ private:
     uint32_t next_blink_ms_ = 0;
     uint32_t blink_until_ms_ = 0;
     bool double_blink_ = false;
-    bool mouth_open_ = false;
-    uint32_t next_mouth_ms_ = 0;
+    bool mouth_open_ = false;  // out_open_ while speaking
     uint32_t next_idle_action_ms_ = 0;
+
+    // Audio levels (SetOutputLevel / SetInputLevel). out_open_ is the mouth detector's state, out_ext_
+    // the crest (while open) or valley (while shut) it is measuring from.
+    LevelFollower out_;
+    LevelFollower in_;
+    bool out_open_ = false;
+    float out_ext_ = 0.0f;
+    uint32_t out_toggle_ms_ = 0;
+    // The glow ring's held level (HeldGlow).
+    int glow_level_ = 0;
+    uint32_t glow_ms_ = 0;
+    bool glow_valid_ = false;
+    uint32_t composed_px_ = 0;
     uint32_t last_activity_ms_ = 0;
     bool sleeping_ = false;
     bool actor_started_ = false;

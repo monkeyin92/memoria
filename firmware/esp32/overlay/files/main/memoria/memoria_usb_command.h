@@ -8,22 +8,63 @@
 //
 //   wake\n    start a conversation on an idle device, under the same gate as a screen tap
 //
-// Nothing else is accepted: the port is reachable only with the cable plugged in (no network entry), the
-// command cannot stop, abort or reconfigure anything, and a device that is not idle, is pairing or is
-// starting up ignores it and says why in the log.
+// A product image accepts nothing else: the port is reachable only with the cable plugged in (no network
+// entry), the command cannot stop, abort or reconfigure anything, and a device that is not idle, is pairing
+// or is starting up ignores it and says why in the log.
+//
+// A bench build (CONFIG_MEMORIA_BENCH_SERIAL, TODOLIST M-2; never published, see memoria_bench_snap.h) also
+// answers two read-only requests, so a computer can look at the round screen without anyone standing at the
+// robot:
+//
+//   snap\n    stream a screenshot of the display as SNAP log lines
+//   status\n  log one line of key=value state (frames drawn, render cost, device state, memory)
+//
+// Neither changes anything on the robot. They are compiled in only under that switch: a product image has
+// no such enumerators, no such verbs and no code behind them.
 //
 // This header has no ESP-IDF dependency so the host tests compile the real parser, line assembler and wake
-// policy; the task that reads the port and calls the application lives in the board file.
+// policy (in both configurations); the task that reads the port and calls the application lives in the
+// board file.
 
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 
+// ESP-IDF generates sdkconfig.h with the option defined as 1 when it is on and not at all when it is off;
+// the host tests pass -DCONFIG_MEMORIA_BENCH_SERIAL=0/1 instead.
+#if __has_include("sdkconfig.h")
+#include "sdkconfig.h"
+#endif
+#ifndef CONFIG_MEMORIA_BENCH_SERIAL
+#define CONFIG_MEMORIA_BENCH_SERIAL 0
+#endif
+
 #include "memoria_wake_mode.h"
 
 namespace memoria {
 
-enum class UsbCommand : unsigned char { kUnknown, kWake };
+// Stack of the task that reads the port (the board file starts it). A product image only assembles lines and
+// calls the application; a bench image also takes the screenshot on that task, and LVGL's software renderer
+// is the deepest call chain on the robot.
+constexpr std::size_t kUsbTaskStackBytes = CONFIG_MEMORIA_BENCH_SERIAL ? 12 * 1024 : 4 * 1024;
+
+enum class UsbCommand : unsigned char {
+    kUnknown,
+    kWake,
+#if CONFIG_MEMORIA_BENCH_SERIAL
+    kSnap,
+    kStatus,
+#endif
+};
+
+namespace usb_command_detail {
+
+template <std::size_t N>
+inline bool IsVerb(const char* text, std::size_t length, const char (&verb)[N]) {
+    return length == N - 1 && std::memcmp(text, verb, N - 1) == 0;
+}
+
+}  // namespace usb_command_detail
 
 // One complete line without its terminator. Blanks around the verb are ignored; the verb itself is exact
 // (lower case, nothing after it), so a stray terminal, a pasted log line or line noise cannot wake the robot.
@@ -39,11 +80,19 @@ inline UsbCommand ParseUsbCommand(const char* line, std::size_t length) {
     while (end > begin && (line[end - 1] == ' ' || line[end - 1] == '\t')) {
         --end;
     }
-    constexpr char kWake[] = "wake";
-    constexpr std::size_t kWakeLength = sizeof(kWake) - 1;
-    if (end - begin == kWakeLength && std::memcmp(line + begin, kWake, kWakeLength) == 0) {
+    const char* verb = line + begin;
+    const std::size_t verb_length = end - begin;
+    if (usb_command_detail::IsVerb(verb, verb_length, "wake")) {
         return UsbCommand::kWake;
     }
+#if CONFIG_MEMORIA_BENCH_SERIAL
+    if (usb_command_detail::IsVerb(verb, verb_length, "snap")) {
+        return UsbCommand::kSnap;
+    }
+    if (usb_command_detail::IsVerb(verb, verb_length, "status")) {
+        return UsbCommand::kStatus;
+    }
+#endif
     return UsbCommand::kUnknown;
 }
 
@@ -52,6 +101,10 @@ enum class UsbLineEvent : unsigned char {
     kWake,     // a complete line that is the wake command
     kUnknown,  // a complete line that is not a command
     kTooLong,  // a line longer than kMaxLine just ended; it was dropped whole
+#if CONFIG_MEMORIA_BENCH_SERIAL
+    kSnap,    // bench builds only: a complete `snap` line
+    kStatus,  // bench builds only: a complete `status` line
+#endif
 };
 
 // Turns the bytes read from the port into lines. A line is ended by CR or LF. One that does not fit is
@@ -99,7 +152,19 @@ private:
         if (length == 0) {
             return UsbLineEvent::kNone;
         }
-        return command == UsbCommand::kWake ? UsbLineEvent::kWake : UsbLineEvent::kUnknown;
+        switch (command) {
+            case UsbCommand::kWake:
+                return UsbLineEvent::kWake;
+#if CONFIG_MEMORIA_BENCH_SERIAL
+            case UsbCommand::kSnap:
+                return UsbLineEvent::kSnap;
+            case UsbCommand::kStatus:
+                return UsbLineEvent::kStatus;
+#endif
+            case UsbCommand::kUnknown:
+                break;
+        }
+        return UsbLineEvent::kUnknown;
     }
 
     void Reset() {

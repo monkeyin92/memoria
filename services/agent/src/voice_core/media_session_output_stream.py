@@ -156,6 +156,14 @@ class MediaOutputStreamMixin:
             playback_flush_required: bool | None = None,
         ) -> bool: ...
 
+        async def _end_replacement_generation(
+            self,
+            context: _MediaVoiceSession,
+            replacement: GenerationFence,
+            *,
+            reason: str,
+        ) -> bool: ...
+
         def _record_reply_delivery_event(
             self,
             context: _MediaVoiceSession,
@@ -250,7 +258,7 @@ class MediaOutputStreamMixin:
                         cause=reason,
                     )
                 else:
-                    await self._emit_cancel_generation(
+                    flushed = await self._emit_cancel_generation(
                         context,
                         cancelled,
                         heard_fence=fence,
@@ -258,6 +266,17 @@ class MediaOutputStreamMixin:
                         payload={"reason": reason},
                         playback_flush_required=flush_required,
                     )
+                    if flushed and flush_required and context.identity.client_type == "device":
+                        # The firmware now waits for the replacement generation's audio, and
+                        # nothing follows it: the work for this fence is gone, the runtime has
+                        # restored LISTENING, and any later reply starts a newer generation.  The
+                        # edge's owner-silence close (30 s) was the only thing that ended it, with
+                        # the device in SPEAKING meanwhile (round 18, p03).
+                        await self._end_replacement_generation(
+                            context,
+                            cancelled,
+                            reason=f"output_{reason}",
+                        )
                 return
         if emitted_audio or reason == "playback_rejected":
             return
@@ -334,6 +353,20 @@ class MediaOutputStreamMixin:
             if self._output_owner_is_current(context, lease):
                 return True
             if not self._floor_held_by_textless_turn(context):
+                # Round 18 lost 3 prepared replies here without a "held" line; the guess is that
+                # the recognizer's interim text counted as words.  Say which input decided it.
+                partial = context.pending.pending_partial
+                provisional = context.projection.provisional
+                logger.info(
+                    "media prepared reply not held session=%s fence=%s floor_open=%s "
+                    "turn_started=%s partial_chars=%d provisional_chars=%d",
+                    context.identity.session_id,
+                    lease.fence,
+                    context.runtime.output_floor_allows_assistant,
+                    context.pending.turn_start_sample is not None,
+                    len(((partial.text if partial is not None else "") or "").strip()),
+                    len(((provisional.text if provisional is not None else "") or "").strip()),
+                )
                 return False
             textless_hold = True
             self._arm_evidence_less_floor_hold(context)

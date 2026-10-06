@@ -5,6 +5,8 @@
 #include "assets/lang_config.h"
 #include "backlight.h"
 #include "display/lvgl_display/lvgl_theme.h"
+#include "memoria_audio_level.h"
+#include "memoria_frame_pacer.h"
 #include "settings.h"
 #include "system_info.h"
 
@@ -628,6 +630,14 @@ void MemoriaMascotDisplay::AnimationLoop() {
     int64_t stats_render_us = 0;
     int64_t stats_render_max_us = 0;
     uint64_t stats_pixels = 0;
+    uint64_t stats_composed = 0;
+    int64_t stats_busy_us = 0;
+    // The frame rate the chip can afford, found by measuring (memoria_frame_pacer.h).
+    memoria::FramePacer pacer;
+#if CONFIG_MEMORIA_BENCH_SERIAL
+    // Since boot, for the bench `status` line (memoria_mascot_status.h): the PC subtracts two lines.
+    memoria::BenchStatus bench;
+#endif
     while (running_.load()) {
         // Collect inputs from other tasks.
         std::string companion;
@@ -660,8 +670,18 @@ void MemoriaMascotDisplay::AnimationLoop() {
             next.reset();
         }
 
+        // A drawn frame's cost to this task includes the wait for the display lock: that wait is LVGL still
+        // flushing the frame before this one.
+        const int64_t frame_started = esp_timer_get_time();
+        int64_t drawn_busy_us = 0;
         if (Lock(100)) {
             const uint32_t frame_now = NowMs();
+            // The audio tasks' level taps (memoria_audio_level.h): drained every frame, lit or not, so the
+            // mouth and the glow never act on audio that played while the screen was off.
+            const memoria::AudioLevelTap::Reading spoken = memoria::output_level_tap.Take();
+            const memoria::AudioLevelTap::Reading heard = memoria::input_level_tap.Take();
+            scene_->SetOutputLevel(spoken.valley, spoken.peak, spoken.blocks, frame_now);
+            scene_->SetInputLevel(heard.peak, heard.blocks, frame_now);
             if (next != nullptr) {
                 previous = std::move(pack_);
                 pack_ = std::move(next);
@@ -703,6 +723,9 @@ void MemoriaMascotDisplay::AnimationLoop() {
                 screen_off_ ? 0 : scene_->Render(frame_now, dirty, memoria::MascotScene::kMaxDirty);
             const int64_t render_us = esp_timer_get_time() - render_started;
             ++stats_frames;
+#if CONFIG_MEMORIA_BENCH_SERIAL
+            ++bench.frames;
+#endif
             if (count > 0) {
                 ++stats_drawn;
                 stats_render_us += render_us;
@@ -711,6 +734,19 @@ void MemoriaMascotDisplay::AnimationLoop() {
                     stats_pixels += static_cast<uint64_t>(dirty[i].x1 - dirty[i].x0) *
                                     (dirty[i].y1 - dirty[i].y0);
                 }
+                stats_composed += scene_->last_composed_px();
+#if CONFIG_MEMORIA_BENCH_SERIAL
+                ++bench.drawn;
+                bench.render_us += static_cast<uint64_t>(render_us);
+                if (static_cast<uint64_t>(render_us) > bench.render_max_us) {
+                    bench.render_max_us = static_cast<uint32_t>(render_us);
+                }
+                for (int i = 0; i < count; ++i) {
+                    bench.pixels += static_cast<uint64_t>(dirty[i].x1 - dirty[i].x0) *
+                                    (dirty[i].y1 - dirty[i].y0);
+                }
+                bench.composed_px += scene_->last_composed_px();
+#endif
             }
             for (int i = 0; i < count && container_ != nullptr; ++i) {
                 lv_area_t area = {static_cast<int32_t>(dirty[i].x0), static_cast<int32_t>(dirty[i].y0),
@@ -726,6 +762,16 @@ void MemoriaMascotDisplay::AnimationLoop() {
                 ApplyChromeOpacity(opa);
             }
             Unlock();
+            if (count > 0) {
+                drawn_busy_us = esp_timer_get_time() - frame_started;
+            }
+        }
+        if (drawn_busy_us > 0) {
+            pacer.NoteDrawn(static_cast<uint32_t>(drawn_busy_us));
+            stats_busy_us += drawn_busy_us;
+#if CONFIG_MEMORIA_BENCH_SERIAL
+            bench.busy_us += static_cast<uint64_t>(drawn_busy_us);
+#endif
         }
         previous.reset();  // the scene no longer references the old pack
         if (next != nullptr && xSemaphoreTake(input_mutex_, portMAX_DELAY) == pdTRUE) {
@@ -758,18 +804,37 @@ void MemoriaMascotDisplay::AnimationLoop() {
 
         const int64_t stats_now = esp_timer_get_time();
         if (stats_now - stats_since_us >= 60 * 1000 * 1000) {
-            ESP_LOGI(TAG, "anim frames=%lu drawn=%lu render_avg=%lldus render_max=%lldus px_per_drawn=%llu",
+            ESP_LOGI(TAG,
+                     "anim frames=%lu drawn=%lu render_avg=%lldus render_max=%lldus busy_avg=%lldus "
+                     "px_per_drawn=%llu composed_per_drawn=%llu extra_ms=%lu",
                      static_cast<unsigned long>(stats_frames), static_cast<unsigned long>(stats_drawn),
                      static_cast<long long>(stats_drawn ? stats_render_us / stats_drawn : 0),
                      static_cast<long long>(stats_render_max_us),
-                     static_cast<unsigned long long>(stats_drawn ? stats_pixels / stats_drawn : 0));
+                     static_cast<long long>(stats_drawn ? stats_busy_us / stats_drawn : 0),
+                     static_cast<unsigned long long>(stats_drawn ? stats_pixels / stats_drawn : 0),
+                     static_cast<unsigned long long>(stats_drawn ? stats_composed / stats_drawn : 0),
+                     static_cast<unsigned long>(pacer.extra_ms()));
             stats_since_us = stats_now;
             stats_frames = stats_drawn = 0;
-            stats_render_us = stats_render_max_us = 0;
-            stats_pixels = 0;
+            stats_render_us = stats_render_max_us = stats_busy_us = 0;
+            stats_pixels = stats_composed = 0;
         }
-        const TickType_t interval =
-            pdMS_TO_TICKS(screen_off_ ? kScreenOffPollMs : scene_->FrameIntervalMs(NowMs()));
+#if CONFIG_MEMORIA_BENCH_SERIAL
+        if (bench_status_requested_.exchange(false)) {
+            // The scene belongs to this task, so reading it here needs no lock.
+            bench.up_ms = NowMs();
+            bench.phase = scene_->phase();
+            bench.mood = scene_->mood();
+            bench.frame = scene_->last_frame();
+            bench.screen_off = screen_off_;
+            bench.sleeping = scene_->sleeping();
+            bench.captioned = caption_layout_;
+            bench.extra_ms = pacer.extra_ms();
+            BenchLogStatus(bench);
+        }
+#endif
+        const TickType_t interval = pdMS_TO_TICKS(
+            screen_off_ ? kScreenOffPollMs : pacer.NextIntervalMs(scene_->FrameIntervalMs(NowMs())));
         if (xTaskGetTickCount() - wake > interval) {
             wake = xTaskGetTickCount();  // after a companion decode: no catch-up burst
         }

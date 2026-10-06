@@ -18,12 +18,17 @@ services:
       - max_connections=50
       - -c
       - wal_level=replica
+      # WAL archiving is off (2026-10-06).  It copied into a volume on the same disk as the data, so it
+      # protected against nothing a disk loss would not also take, no base backup was ever taken to
+      # replay it onto, and it grew about 0.6-1.1 GB a day on a 40 GB host.  Recovery is the
+      # pre-release dump (release-ops.sh freeze).  The offsite-backup profile's base backup streams its
+      # own WAL, and its mirror of the archive volume copies nothing while archiving is off.  To bring
+      # archiving back (point-in-time recovery needs a base backup and a pruning policy as well),
+      # restore archive_mode=on, archive_timeout=300s and
+      # archive_command=test ! -f /wal-archive/%f && cp %p /wal-archive/%f here, and keep the volume
+      # memoria-data_postgres_wal_archive at 999:999 0700.
       - -c
-      - archive_mode=on
-      - -c
-      - archive_timeout=300s
-      - -c
-      - archive_command=test ! -f /wal-archive/%f && cp %p /wal-archive/%f
+      - archive_mode=off
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - postgres_wal_archive:/wal-archive
