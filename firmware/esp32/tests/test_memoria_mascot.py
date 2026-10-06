@@ -108,6 +108,53 @@ def test_every_state_moves_visibly_20_frames_a_second(harness, preview) -> None:
         assert min(per_second) >= 18, (state, per_second)
 
 
+def test_a_sprite_redraw_only_recomposes_the_columns_it_covered_or_covers(harness, preview) -> None:
+    """TODOLIST M-6: on the robot a frame costs about 0.8-1.2 us per composed pixel, so the pixels composed per
+    frame are what decides the frame rate. The sprite's box is the union of two frames' boxes and about 40 %
+    of it is transparent margin; recomposing only the columns the sprite covered last frame or covers now
+    (test_scripted_day_redraws_exactly proves nothing stale is left behind) took the per-frame average, on the
+    taoxi liveliness day, from 63k / 73k / 101k / 71k to 39k / 51k / 79k / 46k (idle / listening / thinking /
+    speaking). The ceilings leave a few percent above that; going back to whole boxes would exceed them.
+    """
+    stats = _play(harness, preview.LIVELINESS_DAY, first="taoxi")
+    assert stats["mismatches"] == 0
+    ceilings = {"idle": 42000, "listening": 55000, "thinking": 84000, "speaking": 50000}
+    for state, ceiling in ceilings.items():
+        start, end = preview.LIVELINESS_WINDOWS[state]
+        window = [f for f in stats["frames"] if start <= f[0] < end]
+        mean = sum(f[preview.COMPOSED_PX] for f in window) / len(window)
+        assert mean < ceiling, (state, round(mean), ceiling)
+
+
+def test_the_stage_timing_counts_what_it_times_and_changes_no_pixel(
+    harness, preview, monkeypatch
+) -> None:
+    """TODOLIST M-6: the bench image times every 8th Render by stage. With a clock that counts its own reads
+    every stage of a composed row costs exactly 1, so the sums are the row counts, and switching the clock on
+    must not move a pixel or a composed-pixel count."""
+    plain = _play(harness, preview.LIVELINESS_DAY, first="taoxi")
+    # no clock, no bookkeeping
+    assert plain["profile"]["renders"] == 0 and plain["profile"]["sampled"] == 0
+    monkeypatch.setenv("MASCOT_FAKE_CLOCK", "1")
+    timed = _play(harness, preview.LIVELINESS_DAY, first="taoxi")
+    assert timed["mismatches"] == 0
+    assert (timed["composed_px"], timed["redraw_px"], timed["renders"]) == (
+        plain["composed_px"],
+        plain["redraw_px"],
+        plain["renders"],
+    )
+    profile = timed["profile"]
+    assert profile["renders"] == timed["renders"]
+    assert profile["sampled"] == (timed["renders"] + 7) // 8
+    assert profile["rows"] > 0
+    for stage in ("copy_in_us", "shadow_us", "sprite_us", "ring_us", "copy_out_us"):
+        assert profile[stage] == profile["rows"], stage
+    assert profile["touch_us"] > 0
+    # the whole Render contains its parts
+    assert profile["total_us"] >= profile["actor_us"] + profile["rect_us"]
+    assert profile["rect_us"] >= profile["copy_in_us"] + profile["copy_out_us"]
+
+
 CAPTION_DAY = [
     (0, "phase", "setup"),
     (400, "phase", "wifi"),

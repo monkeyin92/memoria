@@ -46,6 +46,24 @@ FIELDS = (
     "psram_free",
     "anim_stack_free",
 )
+# The profile line that follows each status line (memoria_mascot_status.h, BenchProfileLine): microseconds
+# summed over the sampled renders, in the order the robot prints them.
+PROFILE_FIELDS = (
+    "renders",
+    "sampled",
+    "total_us",
+    "actor_us",
+    "rect_us",
+    "touch_us",
+    "rows",
+    "copy_in_us",
+    "shadow_us",
+    "sprite_us",
+    "ring_us",
+    "copy_out_us",
+)
+PROFILE_TOTALS = PROFILE_FIELDS  # every one of them only grows
+_STAGES = ("copy_in", "shadow", "sprite", "ring", "copy_out")
 _NAMES = ("phase", "mood", "frame")
 # Counters that only ever grow: a smaller value in the later line means the robot restarted in between.
 _TOTALS = ("frames", "drawn", "render_us", "busy_us", "px", "composed_px")
@@ -57,6 +75,8 @@ _STATUS_IGNORED = re.compile(r"usb status ignored reason=\w+")
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 _LINE = re.compile(r"MemoriaBench: status (?P<fields>up_ms=.*)")
+_PROFILE_LINE = re.compile(r"MemoriaBench: profile (?P<fields>renders=.*)")
+_TASKS_LINE = re.compile(r"MemoriaBench: tasks (?P<fields>count=.*)")
 _STAMP = re.compile(r"^\d\d:\d\d:\d\d\.\d{3}")
 _FIELD = re.compile(r"(\w+)=(\S+)")
 
@@ -91,6 +111,122 @@ def parse_status(line: str) -> Status | None:
     stamp = _STAMP.match(plain)
     status["at"] = stamp[0] if stamp else ""
     return status
+
+
+def parse_profile(line: str) -> Status | None:
+    """The sums of a profile line as int (`at` the logger's time stamp when there is one), or None when `line` is
+    not a complete profile line: a line cut by other output is not guessed at."""
+    plain = _ANSI.sub("", line).rstrip()
+    match = _PROFILE_LINE.search(plain)
+    if match is None:
+        return None
+    fields = {key: value for key, value in _FIELD.findall(match["fields"])}
+    if tuple(fields) != PROFILE_FIELDS or not all(value.isdigit() for value in fields.values()):
+        return None
+    profile: Status = {key: int(fields[key]) for key in PROFILE_FIELDS}
+    stamp = _STAMP.match(plain)
+    profile["at"] = stamp[0] if stamp else ""
+    return profile
+
+
+def collect_profiles(text: str) -> list[Status]:
+    """Every complete profile line in `text`, in order."""
+    return [p for line in text.splitlines() if (p := parse_profile(line)) is not None]
+
+
+def profile_rates(first: Status, second: Status) -> dict[str, object]:
+    """Where a sampled render spends its time between two profile lines, `first` the earlier one. Per sampled
+    render for the whole Render, per composed row for the stages; the shares are of the five row stages
+    together, so they add up to 1."""
+    delta = {key: int(second[key]) - int(first[key]) for key in PROFILE_TOTALS}
+    if any(value < 0 for value in delta.values()):
+        raise StatusError("a counter went backwards: the robot restarted between the two lines")
+    sampled, rows = delta["sampled"], delta["rows"]
+    if sampled == 0:
+        raise StatusError("no render was sampled between the two lines")
+    stage_total = sum(delta[f"{name}_us"] for name in _STAGES)
+    out: dict[str, object] = {
+        "sampled": sampled,
+        "total_us_per_render": delta["total_us"] / sampled,
+        "actor_us_per_render": delta["actor_us"] / sampled,
+        "rect_us_per_render": delta["rect_us"] / sampled,
+        "touch_us_per_render": delta["touch_us"] / sampled,
+        "rows_per_render": rows / sampled,
+    }
+    for name in _STAGES:
+        out[f"{name}_us_per_row"] = delta[f"{name}_us"] / rows if rows else None
+    out["share_of_rect"] = {
+        name: (delta[f"{name}_us"] / stage_total if stage_total else 0.0) for name in _STAGES
+    }
+    return out
+
+
+# FreeRTOS run-time counters are 32 bits in this build (CONFIG_FREERTOS_RUN_TIME_COUNTER_TYPE_U32): they wrap
+# about every 71 minutes, so a difference is taken modulo 2**32.
+_COUNTER_WRAP = 1 << 32
+
+
+def parse_tasks(line: str) -> dict[str, object] | None:
+    """A `tasks` line as {"count", "up_us", "at", "tasks": {name: (core, priority, runtime_us)}}, or None when
+    `line` is not a complete tasks line. A task name appears once; a repeated name makes the line unusable."""
+    plain = _ANSI.sub("", line).rstrip()
+    match = _TASKS_LINE.search(plain)
+    if match is None:
+        return None
+    words = match["fields"].split()
+    if len(words) < 2 or not words[0].startswith("count=") or not words[1].startswith("up_us="):
+        return None
+    count, up_us = words[0][6:], words[1][6:]
+    if not (count.isdigit() and up_us.isdigit()):
+        return None
+    tasks: dict[str, tuple[int, int, int]] = {}
+    for word in words[2:]:
+        parts = word.split(":")
+        if len(parts) != 4:
+            return None
+        name, core, priority, runtime = parts
+        try:
+            row = (int(core), int(priority), int(runtime))
+        except ValueError:
+            return None
+        if not name or name in tasks or row[1] < 0 or row[2] < 0:
+            return None
+        tasks[name] = row
+    stamp = _STAMP.match(plain)
+    return {
+        "count": int(count),
+        "up_us": int(up_us),
+        "at": stamp[0] if stamp else "",
+        "tasks": tasks,
+    }
+
+
+def task_rates(first: dict[str, object], second: dict[str, object]) -> dict[str, object]:
+    """Each task's CPU time between two tasks lines as a share of the wall time between them (1.0 = one whole
+    core), and the sum per core. A task missing from either line (it started or ended in between) is left out
+    and listed under `unmatched`. Only the busiest rows are printed by the robot, so a core's sum is a floor."""
+    wall = int(second["up_us"]) - int(first["up_us"])  # type: ignore[call-overload]
+    if wall <= 0:
+        raise StatusError("the two tasks lines are not in time order")
+    before, after = first["tasks"], second["tasks"]
+    shares: dict[str, float] = {}
+    cores: dict[str, int] = {}
+    per_core: dict[int, float] = {}
+    for name, (core, _priority, runtime) in after.items():  # type: ignore[attr-defined]
+        if name not in before:  # type: ignore[operator]
+            continue
+        used = (runtime - before[name][2]) % _COUNTER_WRAP  # type: ignore[index]
+        shares[name] = used / wall
+        cores[name] = core
+        per_core[core] = per_core.get(core, 0.0) + used / wall
+    unmatched = sorted(set(before) ^ set(after))  # type: ignore[arg-type]
+    return {
+        "wall_us": wall,
+        "share": shares,
+        "core": cores,
+        "per_core": per_core,
+        "unmatched": unmatched,
+    }
 
 
 def collect(text: str) -> list[Status]:

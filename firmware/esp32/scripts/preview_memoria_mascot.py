@@ -102,6 +102,9 @@ struct Playback {
 //
 // Time runs in 20 ms ticks, like the audio blocks. The scene renders when its own FrameIntervalMs says
 // so, as on the device, and the frame written for each 1/fps step is whatever is on screen then.
+static uint32_t g_fake_tick = 0;
+static uint32_t FakeClock() { return ++g_fake_tick; }
+
 int main(int argc, char** argv) {
     if (argc < 5) {
         fprintf(stderr, "usage\n");
@@ -162,6 +165,8 @@ int main(int argc, char** argv) {
     }
     a.Seed(7);
     b.Seed(7);
+    // MASCOT_FAKE_CLOCK: scene a counts clock reads instead of microseconds, so the stage sums are exact.
+    if (getenv("MASCOT_FAKE_CLOCK") != nullptr) a.SetProfileClock(FakeClock);
     a.SetBrand(&brand);
     b.SetBrand(&brand);
 
@@ -294,9 +299,19 @@ int main(int argc, char** argv) {
         }
     }
     if (out != nullptr) fclose(out);
+    const memoria::RenderProfile& pr = a.profile();
     printf("],\"frame_count\":%u,\"mismatches\":%u,\"unchanged_frames\":%u,\"redraw_px\":%llu,"
-           "\"composed_px\":%llu,\"renders\":%u}\n",
-           frames, mismatches, idle_frames, redraw_px, composed_px, renders);
+           "\"composed_px\":%llu,\"renders\":%u,\"profile\":{\"renders\":%llu,\"sampled\":%llu,"
+           "\"total_us\":%llu,\"actor_us\":%llu,\"rect_us\":%llu,\"touch_us\":%llu,\"rows\":%llu,"
+           "\"copy_in_us\":%llu,\"shadow_us\":%llu,\"sprite_us\":%llu,\"ring_us\":%llu,"
+           "\"copy_out_us\":%llu}}\n",
+           frames, mismatches, idle_frames, redraw_px, composed_px, renders,
+           static_cast<unsigned long long>(pr.renders), static_cast<unsigned long long>(pr.sampled),
+           static_cast<unsigned long long>(pr.total_us), static_cast<unsigned long long>(pr.actor_us),
+           static_cast<unsigned long long>(pr.rect_us), static_cast<unsigned long long>(pr.touch_us),
+           static_cast<unsigned long long>(pr.rows), static_cast<unsigned long long>(pr.copy_in_us),
+           static_cast<unsigned long long>(pr.shadow_us), static_cast<unsigned long long>(pr.sprite_us),
+           static_cast<unsigned long long>(pr.ring_us), static_cast<unsigned long long>(pr.copy_out_us));
     return mismatches == 0 ? 0 : 3;
 }
 """

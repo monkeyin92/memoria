@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 
 namespace memoria {
 
@@ -103,6 +104,107 @@ inline std::size_t BenchStatusLine(char* out, std::size_t capacity, const BenchS
         static_cast<unsigned long>(s.heap_free), static_cast<unsigned long>(s.psram_free),
         static_cast<unsigned long>(s.anim_stack_free));
     return written > 0 && static_cast<std::size_t>(written) < capacity ? static_cast<std::size_t>(written) : 0;
+}
+
+// Room for one profile line, NUL included (twelve 64-bit sums at their maximum come to 367 characters; the host
+// test measures it).
+constexpr std::size_t kBenchProfileCapacity = 448;
+
+// The profile line that follows every status line (no terminator, no log prefix): where the sampled renders spent
+// their time, in microseconds summed over `sampled` renders (memoria_mascot_scene.h, RenderProfile). Same
+// contract as BenchStatusLine: at most `capacity` bytes including the NUL, the length, or 0 when it does not fit.
+inline std::size_t BenchProfileLine(char* out, std::size_t capacity, const RenderProfile& p) {
+    if (out == nullptr || capacity == 0) {
+        return 0;
+    }
+    const int written = std::snprintf(
+        out, capacity,
+        "profile renders=%llu sampled=%llu total_us=%llu actor_us=%llu rect_us=%llu touch_us=%llu rows=%llu "
+        "copy_in_us=%llu shadow_us=%llu sprite_us=%llu ring_us=%llu copy_out_us=%llu",
+        static_cast<unsigned long long>(p.renders), static_cast<unsigned long long>(p.sampled),
+        static_cast<unsigned long long>(p.total_us), static_cast<unsigned long long>(p.actor_us),
+        static_cast<unsigned long long>(p.rect_us), static_cast<unsigned long long>(p.touch_us),
+        static_cast<unsigned long long>(p.rows), static_cast<unsigned long long>(p.copy_in_us),
+        static_cast<unsigned long long>(p.shadow_us), static_cast<unsigned long long>(p.sprite_us),
+        static_cast<unsigned long long>(p.ring_us), static_cast<unsigned long long>(p.copy_out_us));
+    return written > 0 && static_cast<std::size_t>(written) < capacity ? static_cast<std::size_t>(written) : 0;
+}
+
+// One FreeRTOS task's share of the CPU since boot, for the `tasks` line (TODOLIST M-6): the bench build samples
+// uxTaskGetSystemState and the PC divides two lines' differences by the wall time between them. Comparing
+// mascot_anim's CPU time with the wall time its frames take tells "preempted by audio" from "waiting on memory".
+struct BenchTaskRow {
+    char name[16] = {};
+    int core = 0;          // 0, 1, or -1 for no affinity
+    uint32_t priority = 0;
+    uint64_t runtime_us = 0;
+};
+
+constexpr std::size_t kBenchTaskRows = 24;
+// 24 rows of "<15 chars>:<core>:<prio>:<20 digits> " come to about 24 * 45, plus the head.
+constexpr std::size_t kBenchTasksCapacity = 1280;
+
+// Busiest first; the line keeps as many rows as fit.
+inline void BenchSortTasks(BenchTaskRow* rows, std::size_t n) {
+    for (std::size_t i = 1; i < n; ++i) {
+        const BenchTaskRow key = rows[i];
+        std::size_t j = i;
+        while (j > 0 && rows[j - 1].runtime_us < key.runtime_us) {
+            rows[j] = rows[j - 1];
+            --j;
+        }
+        rows[j] = key;
+    }
+}
+
+// `tasks count=<all tasks> up_us=<wall clock> <name>:<core>:<prio>:<runtime_us> ...` for the busiest tasks. A name
+// has no spaces or colons in the line (they become '_'). Same contract as the other line builders: at most
+// `capacity` bytes including the NUL, the length, or 0 when even the head does not fit; rows that do not fit
+// are left out, never cut in half.
+// Busiest first, so the line keeps the tasks that matter when there are more than kBenchTaskRows of them.
+inline void SortBenchTasksByRuntime(BenchTaskRow* rows, std::size_t n) {
+    for (std::size_t i = 1; i < n; ++i) {
+        BenchTaskRow key = rows[i];
+        std::size_t j = i;
+        while (j > 0 && rows[j - 1].runtime_us < key.runtime_us) {
+            rows[j] = rows[j - 1];
+            --j;
+        }
+        rows[j] = key;
+    }
+}
+
+inline std::size_t BenchTasksLine(char* out, std::size_t capacity, const BenchTaskRow* rows, std::size_t n,
+                                  std::size_t task_count, uint64_t up_us) {
+    if (out == nullptr || capacity == 0) {
+        return 0;
+    }
+    int head = std::snprintf(out, capacity, "tasks count=%llu up_us=%llu", static_cast<unsigned long long>(task_count),
+                             static_cast<unsigned long long>(up_us));
+    if (head <= 0 || static_cast<std::size_t>(head) >= capacity) {
+        out[0] = '\0';
+        return 0;
+    }
+    std::size_t length = static_cast<std::size_t>(head);
+    for (std::size_t i = 0; i < n && i < kBenchTaskRows; ++i) {
+        char name[16];
+        std::size_t k = 0;
+        for (; k < sizeof(name) - 1 && rows[i].name[k] != '\0'; ++k) {
+            const char c = rows[i].name[k];
+            name[k] = (c == ' ' || c == ':') ? '_' : c;
+        }
+        name[k] = '\0';
+        char item[80];
+        const int item_length = std::snprintf(item, sizeof(item), " %s:%d:%lu:%llu", name, rows[i].core,
+                                              static_cast<unsigned long>(rows[i].priority),
+                                              static_cast<unsigned long long>(rows[i].runtime_us));
+        if (item_length <= 0 || length + static_cast<std::size_t>(item_length) >= capacity) {
+            break;
+        }
+        std::memcpy(out + length, item, static_cast<std::size_t>(item_length) + 1);
+        length += static_cast<std::size_t>(item_length);
+    }
+    return length;
 }
 
 }  // namespace memoria
