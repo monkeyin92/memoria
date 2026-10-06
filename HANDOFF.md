@@ -47,6 +47,53 @@
 - **本地验证（发布前，2026-10-06）**：`ruff check .` 通过；`mypy services --strict` 435 个文件无问题；module budget `PASS count=26`；整仓 pytest（CI 四个分片的 403 个文件，串行跑在本机 PostgreSQL 上，`MEMORIA_TEST_POSTGRES_DSN` 已设）6,152 条：6,149 通过、3 跳过（联合恢复演练要 PG 容器，两条真实 CAM++ 要本地模型）、0 失败；固件主机测试 471 条通过；`scripts/tests` 467 条通过、1 跳过（要本机 PG）；多主体契约 `--check` 无差异、control release 离线冒烟、`media_runtime_smoke`、`media_runtime_replay`、离线 E2E 通过。Go 与小程序没有改动，没跑。
 - **没验证的**：M-1 / M-2 / M-6 在真机上的效果与开销（重绘次数、合成耗时、嘴型观感、对音频播放欠载的影响）一项都没量过——需先刷 bench 镜像（要用户点头）用 `status` 量；N-8 修复在真机上没复核；CI 里 `firmware-build` 用 ESP-IDF v6.0.2 容器重编这一步本地没跑（我在本机干净克隆里各编过一遍产品镜像与 bench 镜像，`check-overlay.sh` 通过）。
 
+## 2026-10-07 凌晨：采样基准镜像、板子约 10 分钟无响应后自己恢复、已刷回 build 24（失联原因未查清）
+
+- 00:00 前后：按用户「1 刷 2 刷回 3 改」刷入采样基准 bench 镜像（`outputs/firmware-20261006-mascot/sampler-bench/`，前置 `ota_0` md5 `dc88096d…` 即上一个 tasks 镜像，备份在 `backups/pre-sampler-bench-20261006/`）。写入两次 `Hash of data verified`，otadata 8192 B、擦除 `0xd000–0xefff`，刷后 md5 核对：只有 `ota_0` 变且等于镜像加 0xFF 尾部，保护区全部不变，`read-mac` 还读得到（`90:e5:b1:d7:83:2c`）。
+- 之后：串口记录 23:59:48 启动后**没有收到任何一行启动日志**（以往 3 秒内就有横幅），`status` 无应答，esptool 三种复位方式都报 `No serial data received`，直接读串口 30 s 为 0 字节；Mac 的 `ioreg` 仍枚举出 `USB JTAG/serial debug unit`，`/dev/cu.usbmodem2101` 还在，没有进程占端口。00:07 再试仍然如此。
+- **原因不知道**。嫌疑只有一个可写出来的事实：这个镜像比之前多了一个开机 20 s 后在核 1 上跑的一次性任务（优先级 4，栈 4096，连做 6 个变体 × 3 遍采样），但「它把芯片卡死」只是假设，没有证据；另一个可能是 USB 这一侧的问题（10-06 12:45 板子也掉过线，当时自己回来了，原因同样没查清）。
+- **恢复**：00:09 前后板子自己回来了（`esptool chip-id` 读到 MAC，没有人动过硬件；原因仍不知道）。之后同一个镜像正常启动，基准跑了两轮（见下）。
+- **采样基准结果（ns/像素，两轮一致：536/537、798/799、537/536、506/505、779/779、504/504）**：实心 alpha 252（快路径）SRAM 536、PSRAM 热缓存 537、PSRAM 冷（256×256，远超 32 KB 数据缓存）506、行缓冲放 PSRAM 504；半透明（边缘路径，三次除法）SRAM 798、PSRAM 冷 779。**内存放哪儿、缓存冷热几乎没有差别，快路径与边缘路径相差约 50 %。** 结论：采样器是算力受限（约 120 个周期/像素），不是内存受限，「把源行搬进 SRAM」不会有收益。收据 `outputs/serial/robot-20261007-sampler-bench2.log`。
+- **刷回 build 24（用户「2 刷回」）**：00:1x 备份后写回 10-06 刷 bench 之前取的整槽备份 `backups/pre-bench-20261006/ota0-before.bin`（md5 `081f0d2d…`）和 Python 生成并验过字节的 8 KiB 全 0xff otadata，写入两次 `Hash of data verified`；刷后 `ota_0`、boot/分区表、otadata、phy_init、identity、assets 的 md5 都等于会话开始前的值；启动日志 `MEMORIA_FIRMWARE_BUILD=24; slot=ota_0`，没有 `MEMORIA_BENCH_BUILD`，USB 命令只剩 `wake`。**nvs 的 md5（`e60d517c…`）和会话最开始读到的（`da2934c9…`）不同**：固件每次启动都会写 nvs，第一次 bench 启动之后就是这个值，之后所有读数一致；我没有做过 nvs 内容对比，所以只能说「是运行时状态，未见异常」，不能说「逐字节同前」。
+- 采样基准和前几版计时的代码在 worktree `/Users/monkeyin/projects/memoria-m6b`（分支 `feat/m6-span-compose`，未提交）。
+
+## 2026-10-07 M-6 成本剖析：板上每绘制帧的钱花在哪（10-06 18:22 至 10-07 00:10 的 bench 真机窗口汇总；数字原件在 git 忽略的 `outputs/`，只在本机）
+
+同一块板，bench 镜像，USB 唤醒加 `voice_soak.py` 同样 4 句，Mac 音量 19（最后一轮是 6，你自己调的，没动）。结论与建议在 `TODOLIST.md` M-6；失联与刷回见上一节。
+- 便宜版（18:22）：合成每像素墙钟成本随音频负载升——开机到首次熄屏 435 ns/px，listening 806，speaking 1169。
+- 只合成精灵覆盖列（19:05，分支镜像）：合成像素 −25 %（listening 94k → 71k），帧率 6.5 → 7.0、speaking 5.7 → 5.9，每帧墙钟只 −10 %。
+- 分段计时（19:36，每 8 次渲染采 1 次）：listening 总 81.5 ms = 精灵 44.7 + 声环 16.5 + 背景拷入 6.2 + 写回 5.8 + 阴影 3.2 + SpriteTouch 1.9；speaking 总 99.5 = 精灵 56.4 + 声环 15.6 + 拷入 8.7 + 阴影 6.0 + 写回 5.3。探针推算的总耗时是状态行 `render_us` 的 1.06 倍。
+- 快路径（20:33）：listening 总 64.4 = 精灵 31.4 + 声环 14.1 + 拷入 5.6 + 写回 5.6 + 阴影 2.9 + SpriteTouch 1.8；speaking 总 86.8，精灵 44.5；帧率 7.4 / 6.2。快路径此前从不触发，因为精灵不透明像素的 alpha 存成 252（查过 taoxi、starlight、axu 三个包），采样器判的是 255。
+- 每任务 CPU（23:35，`tasks` 行）：`mascot_anim` 每绘制帧 CPU 49.8（transition）/ 52.2（listening）/ 49.2（speaking）ms，墙钟 77.2 / 65.5 / 101.8；speaking 时核 1 份额 opus_codec 0.34、mascot_anim 0.28、taskLVGL 0.20、IDLE1 0.06；核 0 `audio_input` 0.60–0.70；每个核份额合计 0.98–0.99。配对近似（`lvgl_share.py`）：listening anim 51.7 + LVGL 39.9 ms，speaking 49.7 + 35.4；每帧脏矩形面积合计 12–13.5 万像素（屏幕 12.96 万）。
+- 采样器微基准（00:10，板上开机 20 秒后自跑，两轮一致）：快路径 505–537 ns/px，软边 779–799；sprite 放 SRAM、PSRAM 热 / 冷几乎无差别。
+- 音频旁证：各轮每代播放最大供给等待（ms），改动前 [0, 0, 6, 4, 4, 79]，分支镜像 [0, 0, 79, 0, 152, 122]，分段计时 [449, 7, 0, 40, 0, 41]，快路径 [29, 0, 102, 5, 97, 1]，tasks 镜像 [0, 32, 13, 37, 4, 106, 12, 85]；`close_dropped_waits` 与 `exact_timeouts` 全程 0，无看门狗、无分配失败；动画任务栈余量 3696 → 3600 → 3504 字节。
+- 未解释：恐龙那句在分段计时镜像那轮无回复（30 s 内没有 ASR final），5 轮 20 句里只有这一句，单样本。
+
+## 2026-10-06 bench 真机窗口：M-2 通过，M-6 的 25 fps 在真机上不成立（用户 12:05「好可以」，13:05「迟一点，现在先不刷」）
+
+在此之前 M-1 / M-2 / M-6 只有主机测试与预览出片，一项真机数字都没有。这一轮第一次把 bench 镜像刷上真机纯粹为了量开销。
+
+- **板子现状（收尾时）**：仍跑 **bench 镜像**（`MEMORIA_BENCH_BUILD=1;`、`MEMORIA_FIRMWARE_BUILD=24; slot=ota_0`，12:26:53 启动），**没有刷回产品镜像**（用户 13:05 说先不刷）。OTA 不会把它拉回去：`memoria_firmware_update.cc:327` 是 `release.build <= kFirmwareBuild` 就 `kNothingNew`，线上指针 21 < 板子的 24；但将来发 build ≥ 25 时它会照收，而 bench 与产品的 build 号都写 24，靠 build 号分不出是哪个镜像。回滚 = `firmware/esp32/artifacts/backups/pre-bench-20261006/ota0-before.bin`（md5 `081f0d2d…`，即 build 24 产品镜像）。
+- **刷机事故（我做的，已完全恢复）**：生成「8 KiB 的 0xff」用了 `head -c 8192 /dev/zero | tr '\0' '\377'`，那条管道把 0xFF 折成 U+00FF 再按 UTF-8 写出，落盘是 **16384 字节的 `c3 bf` 交替**；`esptool` 照 16384 字节写 `0xd000`，越过 otadata 边界，**擦掉整个 phy_init（`0xf000`–`0xffff`）与 identity 分区前 4096 字节（`0x10000`–`0x10fff`）**。两次 `Hash of data verified.` 都通过——这条校验只证明「写的字节到了」，不证明「写的是对的」。由刷前/刷后的 `flash_backup.py md5` 暴露（信号是 identity 与 phy_init 变了而 boot/ptable 与 assets 没变；指纹是 identity 前 4096 字节为 `c3bf` 交替、之后与备份逐字节相同）。备份是写之前取的，按区写回后逐项复原：boot/分区表 `13e19405…`、phy_init `6ae59e64…`、identity `db3c2ccd…`、otadata `11c30a9a…`、assets `e6fa91d8…` 全部回到刷前值，只有 ota_0（bench）与 nvs（实时状态）不同。`ota_0` 与「bench 镜像 + 0xff 填充」逐字节算出的 md5 一致（`33a1db23…`），证明刷进去的确实是 bench 镜像。教训与做法已写进 `docs/runbooks/release-rollback.md` 那一节与记忆 `binary-fill-verify-before-flash`：填充一律用二进制方式生成，上机前 `xxd` + `stat -f%z` 验字节与长度，并核对 esptool 报的 `Wrote N bytes`。
+- **M-2 真机验收：通过**。`status` 与 `snap` 都在真机上工作；`snap` 还原出 360×360 的 PNG（桃喜，与日志 `companion=taoxi` 一致），CRC 校验通过。每轮真机不必再拍照；用法与「用完刷回产品镜像」在运行手册「固件 bench 构建」一节。
+- **M-6 真机验收：不成立**。判据是「每个状态逐秒中位数 ≥ 20 个有可见变化的帧、最差一秒 ≥ 18」。熄屏基线（`screen_off=1`，两次各 20.6 s / 60.2 s）：`loop 10.0/s`、`drawn 0.0/s`、`extra +30 ms`——与「熄屏不合成」一致，不是缺陷。**亮屏且伙伴醒着**（按日志里的亮灭屏时间戳 12:33:03 亮 / 12:34:16 熄，扣掉窗口里熄屏的时间后重算；我先前报的 4.6/s 与 0.4/s 把熄屏时间摊进去了，是错的）：
+
+  | 窗口 | 亮屏时长 | `drawn` | 每帧合成 | 每帧占住任务 | 任务忙时占比 | 节拍器 |
+  |---|---:|---:|---:|---:|---:|---:|
+  | 唤醒后第一段（speaking / thinking） | 16.3 s | 7.2/s | 73.9 ms | 81.9 ms | 59 % | +120 ms（顶格） |
+  | listening ↔ speaking 播放中 | 15.9 s | 5.7/s | 87.6 ms | 103.1 ms | 59 % | +120 ms（顶格） |
+  | listening→idle（熄屏前） | 41.4 s | 6.7/s | 64.3 ms | 66.0 ms | 45 % | +90 ms |
+
+  `render_max_us=144802`（单帧最长 144.8 ms）。机制清楚：想要的间隔是 40 ms（25 fps），而**每画一帧要 64–88 ms**，远超节拍器允许的 65 % 预算（26 ms），于是 `extra_ms` 一路加到上限 120 ms，间隔被拉到 160 ms，上限约 6.25/s——与实测 5.7–7.2/s 同量级。**节拍器工作正常（它检测到超预算就退让）；慢在每帧的墙钟耗时，但这个耗时里有多少是合成本身、多少是被更高优先级的音频任务抢占，现有数据分不开**：每帧脏区平均约 118.7k 像素（屏幕 129.6k 的 92 %）、实际合成约 87k 像素（67 %），墙钟每像素 739–930 ns（主机上同一段代码约 3 ns/px），「占住任务」比「合成」只多 1.8 ms，所以不是显示锁等待。`render_us` 是前后两次 `esp_timer_get_time()` 之差，动画任务优先级低于全部音频任务，被抢占的时间也算在里面；播放解码时每像素成本（930 ns）比其余窗口（739–791 ns）高约 20 %，方向上支持抢占，但只是三个窗口的对照，不是证明。要分开它，需要上机量动画任务自己的 CPU 时间（`vTaskGetRunTimeStats` 一类），或在音频静默与播放两种条件下各量一轮。对照主机预览脚本量出的 ≥ 20 帧/秒：那套判据测的是脏矩形策略，主机合成是微秒级，量不出这块板的成本。与 M-6 起点记录的「待机/聆听每秒只重画 3–7 次」相比，真机上基本没有变化。
+- **音频没有被拖累（这是原本最担心的一条，证据干净）**：三次播放的供给记录全部 `supply_waits=1`、`supply_max_ms` 4–16 ms、`close_dropped_waits=0`、`exact_timeouts=0`、`prestart_max_ms` 3.4–6.5 s（首帧前的等待，非欠载）；串口 1238 行里 0 次看门狗、0 次分配失败、0 条欠载。`anim_stack_free` 全程稳定 3,696 字节（栈 6144），无下降趋势。内部堆熄屏 86,415 字节 → 亮屏约 41,200 字节；PSRAM 13.9 MB → 9.5 MB（一次短样本，未归因）。慢性项照旧：BMI270 I2C 读超时 2 次、`i2s_channel_disable` 1 次。
+- **C 的便宜版（18:22–18:33，同一块板、同一个 bench 镜像，重启后重新起串口记录）**：USB 唤醒加 `voice_soak.py` 的 4 句（你好 / 天空 / 恐龙 / 讲故事，Mac 音量 19 未动，`--volume 19`），4 句全部答出，开口时延 2.32–3.48 s；轮询 `status` 150 次。每像素墙钟成本：开机无对话 435 ns、listening 806 ns、speaking 1169 ns，详见 TODOLIST M-6。结论只有一句：音频负载抬高了同一段合成代码的墙钟成本，成因（抢占还是内存总线）没分开；音频侧 6 份供给记录干净，仅第 5 代有一次 79 ms 的队列等待，原因不明。
+- **分段计时窗口（19:36–19:40，带计时的 bench 镜像，USB 唤醒加 `voice_soak.py` 4 句、Mac 音量 19）**：精灵采样占每帧 55–80 %（listening 44.7 / 81.5 ms），声环约 20 %，其余拷入 / 写回 / 阴影 / `SpriteTouch` / 动作计算合计不到四分之一；推翻了「每行除法」和「补丁帧重建」两个嫌疑，详见 TODOLIST M-6。第 3 句（恐龙）无回复，原因不明。板子现在跑的是这个带计时的 bench 镜像（build 号仍是 24），没有刷回产品镜像；保护区 md5 刷前刷后一致，备份在 `outputs/firmware-20261006-mascot/backups/pre-profile-bench-20261006/`。
+- **快路径窗口（20:33–20:36，快路径 bench 镜像，USB 唤醒加 `voice_soak.py` 4 句、Mac 音量 19）**：精灵阶段 listening 44.7 → 31.4 ms（−30 %）、speaking 56.4 → 44.5 ms（−21 %），每帧总耗时 81.5 → 64.4、99.5 → 86.8 ms，帧率 6.5 → 7.4、5.7 → 6.2 帧/s；离 25 fps 仍差 2.7 倍以上。4 句全部答出，保护区 md5 刷前刷后一致。板子现在跑的是这个快路径 bench 镜像（build 号仍是 24），没有刷回产品镜像；备份在 `outputs/firmware-20261006-mascot/backups/pre-fastpath-bench-20261006/`。
+- **USB 掉线（未查清）**：12:45:58 板子从 USB 上消失——日志末尾是 WebSocket 断开（`mbedtls_ssl_fetch_input error=76`）→屏幕亮→重连 `aginice.cn:8443`→`Device pat detected (score: 3449)`，随后常驻记录进程报 `serial port lost: read failed: [Errno 6] Device not configured` 退出（exit 1，非 2 h 上限）。**17:17 时仍不在**（`/dev/cu.usbmodem*` 不存在），比刷机记录里 2026-09-30 那次「掉约 2 分钟」长得多；此后回来了（`/dev/cu.usbmodem2101` 重新出现，只读 `flash_backup.py md5` 核过：`ota_0` 仍是 bench 镜像 `33a1db23…`，boot/分区表、phy_init、identity、otadata、assets 与刷前一致，MAC `90:e5:b1:d7:83:2c`），掉线原因仍未查清。掉线前无崩溃、无看门狗。后果：掉线期间刷不了机，常驻串口记录随之中断（没有再起）；日志 `outputs/serial/robot-20261006-bench.log`（415.8 KB）。
+- **未验**：M-1 的嘴型观感（要看视频或亲眼）、`extra_ms` 在 25 fps 目标下是否仍会顶格（现在顶格是因为单帧太贵）、M-6 ④⑤、真机上的 `snap` 与肉眼一致性（只看了一张）。
+
+- **22:00–23:40 续：M-6 的分支实验与每任务 CPU 时间（都是 bench 镜像，均经用户「刷」点头，每次备份并核 md5，保护区不变）**：先后刷了 span-compose（合成像素 −25 % 但帧率没涨）、分段计时、快路径（精灵采样阶段 listening 44.7 → 31.4 ms）、每任务 CPU 时间四版，结论都写在 TODOLIST 的 M-6 条目。用户在机器旁的验收：「画面感觉还是和以前一样，像是图片上下动来动去的；说话与待命切换很突兀」，并澄清要的是「像视频那样连续的动作，而不是一个动作一张单独的图切换」。**板子现状**：仍是带 `tasks` 行的 bench 镜像（build 号 24），没有刷回产品镜像；串口记录仍在跑（pid 30135，2 小时上限）。分支 `feat/m6-span-compose`（worktree `/Users/monkeyin/projects/memoria-m6b`）未提交。M-7 小样只做了视线游移（虹膜层加补了眼白的脸底图，右眼掩膜边缘有锯齿），用图像模型重画「无头身体」比例对不上，已放弃。
+
 ## 2026-10-06 主机维护窗口（用户 10-06 说「现在一起做了」；回滚演练、WAL 归档关闭、旧域名/旧 IP 清理）
 
 在整栈发布之后、没有机器人会话的窗口里做的。`rollback` 演练把三个整栈角色真的切回上一栈再切回来，是这一批里唯一会主动断流的动作（两次各约半分钟）；其余步骤只换配置。
