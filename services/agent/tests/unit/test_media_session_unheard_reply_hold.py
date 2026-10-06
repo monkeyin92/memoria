@@ -12,6 +12,7 @@ first PCM in which the noise lands.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
@@ -256,6 +257,9 @@ class _Predicate(MediaOutputStreamMixin):
         MediaTurnEndpointMixin._pending_turn_has_text_evidence
     )
 
+    def _output_owner_is_current(self, context: Any, lease: Any) -> bool:
+        return False  # the user's VAD edge already took the floor
+
 
 def _context(*, floor_open: bool, turn_start: int | None, partial: str | None = None) -> Any:
     pending = PendingTurn(turn_start_sample=turn_start)
@@ -270,8 +274,9 @@ def _context(*, floor_open: bool, turn_start: int | None, partial: str | None = 
             is_final=False,
         )
     return SimpleNamespace(
+        identity=SimpleNamespace(session_id="n8-predicate"),
         pending=pending,
-        runtime=SimpleNamespace(output_floor_allows_assistant=floor_open),
+        runtime=SimpleNamespace(output_floor_allows_assistant=floor_open, barge_in_enabled=True),
         projection=SimpleNamespace(provisional=None),
     )
 
@@ -292,3 +297,22 @@ def test_only_a_user_turn_with_no_words_is_waited_out(
 ) -> None:
     context = _context(floor_open=floor_open, turn_start=turn_start, partial=partial)
     assert _Predicate()._floor_held_by_textless_turn(context) is held
+
+
+@pytest.mark.asyncio
+async def test_a_reply_that_is_not_held_says_which_input_decided_it(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Round 18 lost three prepared replies without a ``held`` line: say why the hold did not apply."""
+
+    context = _context(floor_open=False, turn_start=640, partial="嗯")
+    with caplog.at_level(logging.INFO, logger=media_session_output_stream.logger.name):
+        waited = await _Predicate()._wait_for_unheard_output_floor(
+            context, SimpleNamespace(fence="fence-1"), emitted_audio=False
+        )
+
+    assert waited is False
+    [line] = [m for m in (r.getMessage() for r in caplog.records) if "prepared reply not held" in m]
+    for expected in ("floor_open=False", "turn_started=True", "partial_chars=1", "provisional_chars=0"):
+        assert expected in line
+    assert "嗯" not in line  # lengths only, never the child's words
