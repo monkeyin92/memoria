@@ -21,7 +21,7 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 
 ## 下一步与执行边界
 
-1. **刚发布的一批（PR #189，2026-10-06 09:53 上线，收据在 `HANDOFF.md`「2026-10-06 整栈发布」）**：N-8 卡「说话」修复已在线上；WAL 归档已关（P1-08）；M-1 / M-2 / M-6 ①②③⑥ 的固件改动已在 main，固件版本号不动（build 24），固件不在整栈发布里，刷 bench 镜像与真机验收要你点头。还剩：仓库 `scripts/release_ops.sh` 的 PREV 前移到 `20261006-speaking-flush-v1`（连同 `scripts/tests/test_release_ops_script.py` 里的断言），随下一个代码 PR 走；旧域名与旧机残留清理见「域名切换与新机收尾」。
+1. **刚发布的一批（PR #189，2026-10-06 09:53 上线，收据在 `HANDOFF.md`「2026-10-06 整栈发布」）**：N-8 卡「说话」修复已在线上；WAL 归档已关（P1-08）；M-1 / M-2 / M-6 ①②③⑥ 的固件改动已在 main，固件版本号不动（build 24），固件不在整栈发布里，刷 bench 镜像与真机验收要你点头。主机维护窗口也在 10-06 做了（回滚演练、`ALLOWED_ORIGINS`、旧域名站点与证书、`release-ops.sh` 上新版——收据在 `HANDOFF.md`「2026-10-06 主机维护窗口」）。还剩：仓库 `scripts/release_ops.sh` 的 PREV 前移到 `20261006-speaking-flush-v1`（连同 `scripts/tests/test_release_ops_script.py` 里的断言），随下一个代码 PR 走；旧机自身随到期消失（「域名切换与新机收尾」）。
 2. **真机窗口（你推动；每一轮真机语音、每一次 USB 刷机都要你点头）**：①孩子真实声音的取证一轮（你 10-06 说现在不做）；②N-8 修复的复核（第十八轮的做法，音量 50 须先问）；③M 系列：先刷 bench 镜像，用 `status` 量帧率与渲染耗时、用 `snap` 取屏，再刷回产品镜像；④N-5 ≥ 30 分钟长稳；⑤之后排一个 P0 设备验收窗口：P1-11 孩子绑定、P1-03 孩子人格隔天生效、P2-04 终止性拒绝不再续连、P0-03 的 TLS / WSS 重连与剩余设备矩阵、P0-04 安全闭环。不得把核心通过扩大为完整 P0-03 或全双工通过。
 3. **不动线上就能直接做的代码项**：P0-04 剩余部分、P1-04 自定义声音闭环、P2-06 回放评测、P2-04 Python 侧进程退出注入、M-3、M-6 ④⑤。
 4. **要你定的事（汇总；细节与选项在各自条目里，不挡以上步骤）**：
@@ -34,13 +34,13 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 
 收据与细节见 [HANDOFF「2026-10-05 域名切换到 aginice.cn」「2026-10-05 服务迁移到 110.42.235.198」](HANDOFF.md)。
 
-- [ ] **本批主机维护窗口**（你 10-06 说「现在一起做了」；无活跃设备会话时做，步骤逐个确认）：新机上整栈 `release-ops.sh rollback` 演练（`verify-load`、`freeze`、`cutover`、`finish` 在 2026-10-05 实跑过，`rollback` 没演练过；会把三个角色切回上一栈再切回来，两次各约半分钟断流）；WAL 归档关掉（见下一条）；换上仓库版 `release_ops.sh`（PREV 已前移）；清理旧域名站点 / 证书 / 备份与 `ALLOWED_ORIGINS` 里的旧机 IP（下一条）。
 - [ ] **新机没有持续数据库备份（P1-08）**：WAL 归档已在 2026-10-06 09:58–10:00 关闭（`archive_mode=off`，postgres 容器重建，归档卷 39 个文件 / 654 MB 已清空，盘剩 14 GB），不再增长；现在靠发布前 `freeze` 的 dump。要不要另做每夜 `pg_dump`，你定（默认不做）；以后若要重开归档，归档卷必须是 `999:999 0700` 并先做 base backup。
-- [ ] 清理旧域名与旧机残留：新机 `sites-enabled/memoria-prod`（aigcnice.com 站点）与 `/etc/nginx/ssl/aigcnice.com/`；服务器 `/root/domain-switch-20261005/`（含旧证书私钥、env 与头像原值备份，确认不再回滚后删）与旧私钥备份；`/etc/memoria-control-api.env` 的 `ALLOWED_ORIGINS` / `LIVEKIT_URL` 里的旧机 IP（只给浏览器跨域用，小程序请求不走它；只打印键名，不打印值）；核对 `outputs/` 里没有再指旧域名的脚本。
-- [ ] 旧机 122.51.108.140 2026-10-06 到期（时刻不明）：到期后删掉 ssh 别名 `memoria-prod-old` 与 `~/.ssh/known_hosts` 里旧机的条目；旧机上没迁的东西（WMS、13 GB WAL、7.3 GB `incoming`、旧发布树与回滚镜像）随机器消失，按你的决定不再保留。`aigcnice.com` 不做桥（已定）：仍用旧域名的别的设备 / 旧版小程序在旧机到期后连不上，据我所知没有。
+- [ ] 旧域名残留（2026-10-06 已做掉大半）：新机 `sites-enabled/memoria-prod`（aigcnice.com 站点，已移到 `/etc/nginx/backup-20261005-domain-switch/memoria-prod.site.removed-20261006`）、`/etc/nginx/ssl/aigcnice.com/`（已删）、`/root/domain-switch-20261005/`（旧证书私钥、env 备份与四个脚本已删；**头像原值 TSV 与那份旧 env 备份留在 `/root/domain-switch-20261005-kept/`**，见下条）、`ALLOWED_ORIGINS` 的旧机 IP（已换成 `https://aginice.cn:8443,https://www.aginice.cn:8443`，备份 `/etc/memoria-control-api.env.pre-aginice-origins-20261006`）。**仍开着**：`/etc/memoria-control-api.env` 与 `/etc/memoria-agent.env` 的 `LIVEKIT_URL` 还指旧机（LiveKit 已退役，代码只在 `scripts/split_production_env.py` 的键名列表与测试里出现，没有容器在跑；要动它得再重建一次 control-api 与 bridge，值本身没用了，删不删你定）；`outputs/` 里指旧域名的脚本核对（未做）。
+- [ ] 你定：域切换时头像改写的数据回滚记录（`/root/domain-switch-20261005-kept/profiles-avatar-preimage-20261005-091021.tsv`，867 B，含孩子头像 URL 原值；那份旧 env 备份只留了控制台口令类的键值）留不留。切换本身没回滚过，我留着它做原值比对；确认不需要就删这个目录。
+- [ ] 旧机 122.51.108.140 2026-10-06 到期（时刻不明）：**截至 10-06 11:50 仍可连（`ssh memoria-prod-old` 通）**，所以别名和 known_hosts 条目没动；到期后删掉 ssh 别名 `memoria-prod-old` 与 `~/.ssh/known_hosts` 里旧机的条目；旧机上没迁的东西（WMS、13 GB WAL、7.3 GB `incoming`、旧发布树与回滚镜像）随机器消失，按你的决定不再保留。`aigcnice.com` 不做桥（已定）：仍用旧域名的别的设备 / 旧版小程序在旧机到期后连不上，据我所知没有。
 - [ ] 新机资源偏紧：内存 3.7 GiB（Memoria 栈约 1.3–1.4 GiB，可用约 1.7 GiB，swap 已用约 0.6 GiB，与 pocketSparks 的 MySQL / node 共用），4 vCPU 约比旧机慢 1.3 倍。发布后 1–2 天看 `docker stats`、`free -m` 与时延（对照第十六轮 24 轮时延场景说完 → 首帧 p50 2.92 s）；不够就扩内存（你在控制台做）。
 - [ ] build 24 的时钟修复仍无证据：2026-10-05 22:56 的重绑一次过，但时钟多半是 21:32 拔插 USB 后清空的，老版本也能过；要证明得让机器人时钟比清单 `issued` 落后 5 分钟以上再绑。不紧迫，碰上再看串口（那次的记录在本机 git-ignored 的 `outputs/serial/robot-20261005-trial3-rebind.log`）。
-- [ ] 你定：是否轮换数据库角色口令（一次 grep 把各角色连接串打印进了本机会话记录，库不对宿主发布端口）。
+- [ ] 你定：是否轮换数据库角色口令。**两次本机会话记录里出现过口令**：一次 grep 把各角色连接串打进了会话记录（更早的会话），2026-10-06 我做维护窗口时用 `docker compose config` 核对线上数据层 compose，它把 postgres 服务的环境变量展开成了明文（`MEMORIA_DB_*_PASSWORD` 五个角色的键与值都在输出里，只在会话记录、没进仓库、没进文档、没出机器）。库不发布到宿主端口，风险限于本机会话记录的读权限；要轮换就是一次 `ALTER ROLE` + 两份 env 的改写 + 重建 control-api/bridge，你说了我做。
 - [ ] 邻近发现（不挡路）：8443 经 stream 透传没有 PROXY protocol，9443 上的 TLS 服务器看到的客户端地址一直是 127.0.0.1（新旧机一样），按 `$binary_remote_addr` 的限流区（`memoria_media` 30 r/m 等）对所有设备共用一个键；一台机器人没有影响，设备多了要改。
 
 ## 2026-10-01 新需求里还开着的（N 系列）
@@ -236,7 +236,7 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 
 ### [ ] P1-01 冻结修复候选，完成发布与回滚验收
 
-- 门禁、构建、上传、切流、回滚与验收底线在 `docs/runbooks/release-rollback.md`；整栈发布已用 `scripts/release_ops.sh` 跑过多次（`verify-load`、`freeze`、`cutover`、`finish`）。整栈 `rollback` 在新机没演练过（并入「域名切换与新机收尾」第一条）。
+- 门禁、构建、上传、切流、回滚与验收底线在 `docs/runbooks/release-rollback.md`；整栈发布已用 `scripts/release_ops.sh` 跑过多次（`verify-load`、`freeze`、`cutover`、`finish`）。整栈 `rollback` 已于 2026-10-06 在新机演练一次并通过（切回 `20261005-subject-candidates-v1` 三个角色 health、重启 0，再 `env` → `cutover` → `finish` 切回，见 `HANDOFF.md`「2026-10-06 主机维护窗口」）。
 - 完成条件：同一候选的构建、切流、回滚、设备验收分别有证据；仅保留当前和一个可运行回滚，清理生产另授权。
 - 身份收敛（发布治理）：control-api 期望的 release tag 应与真实发布 tag 一致，取消「agent 上报历史冻结 tag」的临时对齐；与预构建镜像入口一并作为本项输入。
 
