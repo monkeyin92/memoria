@@ -25,6 +25,8 @@ constexpr int kMaxSpriteW = 512;
 constexpr int kShrinkBelowQ = 3488;
 // Pixels around the sprite's box that the filter can still reach.
 constexpr int kBoundsMargin = 2;
+// Blend565 returns the foreground untouched from this alpha up; keep the two in step.
+constexpr uint32_t kOpaqueAlpha = 250;
 constexpr int64_t kOne = 65536;
 // The scene scales the mascot between about 0.6 and 1.4; anything outside 1/8..8 is a caller's bug, and
 // would overflow the 32-bit sample coordinates and bounds below.
@@ -84,8 +86,12 @@ inline void MergeSpan(const MascotSprite& s, int r, int* lo, int* hi) {
     }
 }
 
+// Both samplers report the columns [*span_xs, *span_xe) they can write in this row (empty when
+// *span_xs == *span_xe) and, when `row` is null, stop there: that is what SpriteRowSpan asks for.
 void BilinearRow(const MascotSprite& s, int cx, int fy, const SpriteTransform& t, int y, int x0, int x1,
-                 uint16_t* row) {
+                 uint16_t* row, int* span_xs, int* span_xe) {
+    *span_xs = x0;
+    *span_xe = x0;
     const int64_t inv_y = (1LL << 28) / t.sy_q;
     const int64_t inv_x = (1LL << 28) / t.sx_q;
     // Index-space coordinate: pixel centres sit half a texel in.
@@ -117,6 +123,11 @@ void BilinearRow(const MascotSprite& s, int cx, int fy, const SpriteTransform& t
     int xe = 0;
     if (!ScreenRange(u0, inv_x, static_cast<int64_t>(lo - 1) * kOne, static_cast<int64_t>(hi) * kOne,
                      x0, x1, &xs, &xe)) {
+        return;
+    }
+    *span_xs = xs;
+    *span_xe = xe;
+    if (row == nullptr) {
         return;
     }
     const int32_t step = static_cast<int32_t>(inv_x);
@@ -155,8 +166,10 @@ void BilinearRow(const MascotSprite& s, int cx, int fy, const SpriteTransform& t
             c10 = right ? rgb_a[i0 + 1] : 0;
             c11 = right ? rgb_b[i0 + 1] : 0;
         }
-        if ((a00 & a10 & a01 & a11) == 255u) {
-            // Four opaque neighbours: interpolate the colour, nothing shows through.
+        if (a00 >= kOpaqueAlpha && a10 >= kOpaqueAlpha && a01 >= kOpaqueAlpha && a11 >= kOpaqueAlpha) {
+            // Four opaque neighbours: interpolate the colour, nothing shows through. "Opaque" is what
+            // Blend565 calls opaque (alpha >= 250): the packs store solid art as alpha 252, so testing for
+            // 255 sent every pixel down the edge path below, three integer divisions each.
             const uint32_t top = Lerp(Spread(static_cast<uint16_t>(c00)), Spread(static_cast<uint16_t>(c10)), wx);
             const uint32_t bottom =
                 Lerp(Spread(static_cast<uint16_t>(c01)), Spread(static_cast<uint16_t>(c11)), wx);
@@ -185,7 +198,9 @@ void BilinearRow(const MascotSprite& s, int cx, int fy, const SpriteTransform& t
 }
 
 void SupersampleRow(const MascotSprite& s, int cx, int fy, const SpriteTransform& t, int y, int x0,
-                    int x1, uint16_t* row) {
+                    int x1, uint16_t* row, int* span_xs, int* span_xe) {
+    *span_xs = x0;
+    *span_xe = x0;
     // A clear shrink (the captioned layout) would alias with one sample per pixel: plush edges crawl as
     // the mascot breathes. Average a 2x2 grid of samples instead, weighting colour by coverage.
     const int64_t inv_y = (1LL << 28) / t.sy_q;
@@ -219,6 +234,11 @@ void SupersampleRow(const MascotSprite& s, int cx, int fy, const SpriteTransform
     int xe = 0;
     if (!ScreenRange(c0, inv_x, static_cast<int64_t>(lo - 1) * kOne,
                      static_cast<int64_t>(hi + 1) * kOne, x0, x1, &xs, &xe)) {
+        return;
+    }
+    *span_xs = xs;
+    *span_xe = xe;
+    if (row == nullptr) {
         return;
     }
     const int32_t step = static_cast<int32_t>(inv_x);
@@ -273,18 +293,41 @@ SceneRect SpriteBounds(const MascotSprite& s, int canvas_cx, int foot_y, const S
     return box;
 }
 
-void BlendSpriteRow(const MascotSprite& s, int canvas_cx, int foot_y, const SpriteTransform& t, int y,
-                    int x0, int x1, uint16_t* row) {
+namespace {
+
+// One dispatch for drawing and for asking the span, so the two can never disagree.
+bool SampleSpriteRow(const MascotSprite& s, int canvas_cx, int foot_y, const SpriteTransform& t, int y,
+                     int x0, int x1, uint16_t* row, int* xs, int* xe) {
+    *xs = x0;
+    *xe = x0;
     if (s.rgb == nullptr || s.alpha == nullptr || s.span == nullptr || s.w <= 0 || s.h <= 0 ||
         s.w > kMaxSpriteW || t.sx_q < kMinScaleQ || t.sx_q > kMaxScaleQ || t.sy_q < kMinScaleQ ||
-        t.sy_q > kMaxScaleQ || x1 <= x0 || row == nullptr) {
-        return;
+        t.sy_q > kMaxScaleQ || x1 <= x0) {
+        return false;
     }
     if (t.sx_q < kShrinkBelowQ && t.sy_q < kShrinkBelowQ) {
-        SupersampleRow(s, canvas_cx, foot_y, t, y, x0, x1, row);
+        SupersampleRow(s, canvas_cx, foot_y, t, y, x0, x1, row, xs, xe);
     } else {
-        BilinearRow(s, canvas_cx, foot_y, t, y, x0, x1, row);
+        BilinearRow(s, canvas_cx, foot_y, t, y, x0, x1, row, xs, xe);
     }
+    return *xe > *xs;
+}
+
+}  // namespace
+
+void BlendSpriteRow(const MascotSprite& s, int canvas_cx, int foot_y, const SpriteTransform& t, int y,
+                    int x0, int x1, uint16_t* row) {
+    if (row == nullptr) {
+        return;
+    }
+    int xs = 0;
+    int xe = 0;
+    SampleSpriteRow(s, canvas_cx, foot_y, t, y, x0, x1, row, &xs, &xe);
+}
+
+bool SpriteRowSpan(const MascotSprite& s, int canvas_cx, int foot_y, const SpriteTransform& t, int y,
+                   int x0, int x1, int* xs, int* xe) {
+    return SampleSpriteRow(s, canvas_cx, foot_y, t, y, x0, x1, nullptr, xs, xe);
 }
 
 }  // namespace memoria

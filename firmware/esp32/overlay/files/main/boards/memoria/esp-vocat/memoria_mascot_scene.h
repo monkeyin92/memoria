@@ -47,6 +47,26 @@ enum class SceneMood : uint8_t {
 // aliases the upstream firmware passes. Unknown names return false.
 bool SceneMoodFromName(const char* name, SceneMood* mood);
 
+// Where a bench build's frames spend their time (TODOLIST M-6). Sums of microseconds over the renders that
+// were sampled (every kProfileEvery-th while a clock is set), so the PC divides by `sampled`. The scene
+// has no clock of its own; the bench build hands it one (SetProfileClock) and the product build never does.
+struct RenderProfile {
+    uint64_t renders = 0;      // Render() calls made while a clock was set
+    uint64_t sampled = 0;      // of those, the ones timed below
+    uint64_t total_us = 0;     // the whole Render()
+    uint64_t actor_us = 0;     // UpdateActor + Compute (+ the intro tables)
+    uint64_t rect_us = 0;      // all RedrawRect calls
+    uint64_t touch_us = 0;     // SpriteTouch (the span of the last and the new placement)
+    uint64_t rows = 0;         // rows composed
+    uint64_t copy_in_us = 0;   // the backdrop copied into the line buffer
+    uint64_t shadow_us = 0;
+    uint64_t sprite_us = 0;
+    uint64_t ring_us = 0;      // the state ring, and the boot overlay while it runs
+    uint64_t copy_out_us = 0;  // the line written back to the framebuffer
+};
+using MascotClockFn = uint32_t (*)();  // microseconds, free running, wraps at 2^32
+constexpr uint32_t kProfileEvery = 8;
+
 class MascotScene {
 public:
     static constexpr int kSize = 360;
@@ -115,6 +135,9 @@ public:
     // Pixels composed (backdrop copied, layers blended, row written back) by the last Render. The dirty
     // rectangles overstate nothing and hide nothing but this: a ring-only redraw skips the middle.
     uint32_t last_composed_px() const { return composed_px_; }
+    // Bench builds only: time the stages of every kProfileEvery-th Render with `clock`. nullptr switches it off.
+    void SetProfileClock(MascotClockFn clock) { clock_ = clock; }
+    const RenderProfile& profile() const { return profile_; }
     // Opacity for the LVGL text layer: hidden during the boot animation.
     uint8_t chrome_opa(uint32_t now_ms) const;
     const MascotTheme& theme() const { return theme_; }
@@ -151,6 +174,7 @@ private:
         int intro_step = -1;  // quantised intro overlay state, -1 when done
     };
 
+    int RenderImpl(uint32_t now_ms, SceneRect* dirty, int max_dirty);
     uint32_t Random();
     uint32_t RandomRange(uint32_t lo, uint32_t hi);
     MascotFrame PoseForMood(SceneMood mood) const;
@@ -164,7 +188,12 @@ private:
     int HeldGlow(int level, uint32_t now_ms);
     void BuildBackground();
     // skip_hole: a ring-only redraw leaves the middle of the screen (inside the ring) alone.
-    void RedrawRect(const SceneRect& rect, const Placement& p, uint32_t now_ms, bool skip_hole = false);
+    // narrow: only the columns the sprite and shadow covered in the last frame or cover now are
+    // recomposed (everything else in the rectangle is already right); never with the boot animation.
+    void RedrawRect(const SceneRect& rect, const Placement& p, uint32_t now_ms, bool skip_hole = false,
+                    bool narrow = false);
+    // The columns [*lo, *hi) of screen row y that the sprite or its shadow can change under p.
+    bool SpriteTouch(const Placement& p, int y, int* lo, int* hi) const;
     void DrawSprite(const SceneRect& clip, const Placement& p);
     void DrawShadow(const SceneRect& clip, const Placement& p);
     void DrawRing(const SceneRect& clip, const Placement& p);
@@ -184,6 +213,8 @@ private:
     uint8_t* radius_ = nullptr;       // distance from centre, px (clamped 255)
     int16_t ring_hole_[kSize] = {};   // per row: half-width inside the ring
     int16_t circle_hw_[kSize] = {};   // per row: half-width of the visible panel
+    int16_t touch_lo_[kSize] = {};    // per row: columns the last drawn sprite and shadow covered
+    int16_t touch_hi_[kSize] = {};
     uint16_t orb_r5_[256] = {};  // boot orb light per radius, 8.8 fixed point
     uint16_t orb_g6_[256] = {};
     uint16_t orb_b5_[256] = {};
@@ -235,6 +266,10 @@ private:
     uint32_t glow_ms_ = 0;
     bool glow_valid_ = false;
     uint32_t composed_px_ = 0;
+    MascotClockFn clock_ = nullptr;
+    RenderProfile profile_;
+    bool profiling_ = false;  // this Render is one of the sampled ones
+    uint32_t profile_tick_ = 0;
     uint32_t last_activity_ms_ = 0;
     bool sleeping_ = false;
     bool actor_started_ = false;
