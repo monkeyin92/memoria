@@ -5,10 +5,10 @@
 ## 当前边界（不得越界宣称）
 
 ```yaml
-enabled_release: 20261005-subject-candidates-v1  # 整栈，源 faf3efe3（PR #186 的分支头，合并提交 f15e7af6），2026-10-05 16:31 上线；media-edge 是组件发布 20261002-late-progress-v1（源 f3fe8742）；LLM deepseek（联网查询 qwen-plus），ASR fun-asr-realtime，TTS Doubao；回滚：整栈 → 20261004-first-warm-v1（新机上有 *:rollback-20261005-subject-candidates-v1-pre 镜像与保留的发布树，`rollback` 这一步在新机上没演练过）；media-edge 的回滚目标 20260930-late-receipt-v1 没迁到新机
+enabled_release: 20261006-speaking-flush-v1  # 整栈，源 e6fb10f3（PR #189 的分支头，合并提交 c1357a1f），2026-10-06 09:53 上线；media-edge 是组件发布 20261002-late-progress-v1（源 f3fe8742）；LLM deepseek（联网查询 qwen-plus），ASR fun-asr-realtime，TTS Doubao；回滚：整栈 → 20261005-subject-candidates-v1（新机上有 *:rollback-20261006-speaking-flush-v1-pre 镜像与保留的发布树，`rollback` 这一步在新机上没演练过）；media-edge 的回滚目标 20260930-late-receipt-v1 没迁到新机
 production_host: 110.42.235.198（2026-10-05 01:37 起，原 pocketSparks 生产机，与 hr-tracker / MySQL / aginice.cn 共用；ssh 别名 memoria-prod；Control API 在 127.0.0.1:18791；4 vCPU、内存 3.7 GiB、盘 40 GB；无持续数据库备份，整栈回滚深度 1）；旧机 122.51.108.140（别名 memoria-prod-old）只剩 8443 中继，2026-10-06 到期
 public_domain: aginice.cn（2026-10-05 起，aigcnice.com 弃用、不做桥；证书 2027-01-02 到期，最迟 2026-12-19 换，见「定期运维」；小程序体验版、固件与机器人身份都已指向它）
-control_api_release_lane: 整栈走仓库版 `scripts/release_ops.sh`（步骤与门禁见 `docs/runbooks/release-rollback.md`）；新机上装在 `/root/memoria-release/release-ops.sh`（装法：scp 新版、旧的备份为 `.pre-<tag>`、核对 sha256），现装的是 PR #186 的版本（PREV = `20261004-first-warm-v1`），仓库里的 PREV 已前移到 `20261005-subject-candidates-v1` / `faf3efe3d02c23f519ad139b5860200a0609b800`——下一次整栈发布前换上，那次发布成功后再前移到新 tag；Control API 在新机绑 18791（hr-tracker 占着 8791），compose、`refresh_readiness.sh`、`release_ops.sh` 用 `MEMORIA_CONTROL_API_PORT`，`verify-load` 的预检端口是 28791 / 28891；当前发布树 `releases/20261005-subject-candidates-v1` 是仓库原样加 `.env`，回滚目标树 `releases/20261004-first-warm-v1` 里是手工改的 18791，不要删它（media-edge 的 compose 链还指着它）；新机上的整栈发布可拿 `incoming/<上一个 tag>` 作种子做增量，依赖文件（pyproject / uv.lock）变化时增量与 overlay 发布会被脚本拒绝，须本机全量 linux/amd64 构建；control-api 的组件链支持已从 `release_ops.sh` 移除，此后再做 control-api 单组件发布须先把链支持补回；agent 组件快车道（`deploy_agent_component.sh`）在整栈发布后的第一次会被「runtime base 必须独立于线上镜像」拒绝（2026-10-01 实测，切流前被拒，服务器无变化），需整栈发布或与线上镜像不同的同 lock 基座
+control_api_release_lane: 整栈走仓库版 `scripts/release_ops.sh`（步骤与门禁见 `docs/runbooks/release-rollback.md`）；新机上装在 `/root/memoria-release/release-ops.sh`（装法：scp 新版、旧的备份为 `.pre-<tag>`、核对 sha256），现装的是 PREV = `20261005-subject-candidates-v1` 的版本（10-06 发布前装上，sha256 与仓库一致）；这次发布成功后，仓库里的 PREV 还要前移到 `20261006-speaking-flush-v1` / `e6fb10f3a6ada02e99dbd3362691be074e298015`，下一次整栈发布前再装到主机；Control API 在新机绑 18791（hr-tracker 占着 8791），compose、`refresh_readiness.sh`、`release_ops.sh` 用 `MEMORIA_CONTROL_API_PORT`，`verify-load` 的预检端口是 28791 / 28891；当前发布树 `releases/20261006-speaking-flush-v1` 是仓库原样加 `.env`，`releases/20261004-first-warm-v1` 里是手工改的 18791，不要删它（media-edge 的 compose 链还指着它）；新机上的整栈发布可拿 `incoming/<上一个 tag>` 作种子做增量，依赖文件（pyproject / uv.lock）变化时增量与 overlay 发布会被脚本拒绝，须本机全量 linux/amd64 构建；control-api 的组件链支持已从 `release_ops.sh` 移除，此后再做 control-api 单组件发布须先把链支持补回；agent 组件快车道（`deploy_agent_component.sh`）在整栈发布后的第一次会被「runtime base 必须独立于线上镜像」拒绝（2026-10-01 实测，切流前被拒，服务器无变化），需整栈发布或与线上镜像不同的同 lock 基座
 memory_candidate_visibility: code=main 0059368 / enabled=true（随整栈上线）/ verified=SQLite/HTTP/主体隔离/评测适配器回归；四份 2026-09-23 评测收据为上线前 parent_baseline（固定集 recall@5/10=0.857、未见集 0.4、双泄漏 0），真实 PG candidate 行为与线上带鉴权读口未单独取证
 direct_real_device_verified: false
 full_duplex_verified: false
@@ -21,7 +21,7 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 
 ## 下一步与执行边界
 
-1. **本批（2026-10-06，你说「除了 3 现在不做，1、2、4、5、6 现在一起做了，然后发布，并且清理其他分支」）**：一个 PR 里带 N-8 的卡「说话」修复（`playback.flush` 成功后收掉替换代，设备不再等 edge 30 s 静默超时）、M-1 / M-2 / M-6 ①②③⑥ 的代码与主机测试（M-4 的 sanitizer 检查已做完）、WAL 归档关闭（P1-08）与这次文档瘦身；合并后整栈发布，随后是主机维护窗口（「域名切换与新机收尾」第一条）与分支清理。固件版本号不动（build 24），固件不在整栈发布里；M 系列的真机验收与 bench 镜像刷入要你点头。
+1. **刚发布的一批（PR #189，2026-10-06 09:53 上线，收据在 `HANDOFF.md`「2026-10-06 整栈发布」）**：N-8 卡「说话」修复已在线上；WAL 归档已关（P1-08）；M-1 / M-2 / M-6 ①②③⑥ 的固件改动已在 main，固件版本号不动（build 24），固件不在整栈发布里，刷 bench 镜像与真机验收要你点头。还剩：仓库 `scripts/release_ops.sh` 的 PREV 前移到 `20261006-speaking-flush-v1`（连同 `scripts/tests/test_release_ops_script.py` 里的断言），随下一个代码 PR 走；旧域名与旧机残留清理见「域名切换与新机收尾」。
 2. **真机窗口（你推动；每一轮真机语音、每一次 USB 刷机都要你点头）**：①孩子真实声音的取证一轮（你 10-06 说现在不做）；②N-8 修复的复核（第十八轮的做法，音量 50 须先问）；③M 系列：先刷 bench 镜像，用 `status` 量帧率与渲染耗时、用 `snap` 取屏，再刷回产品镜像；④N-5 ≥ 30 分钟长稳；⑤之后排一个 P0 设备验收窗口：P1-11 孩子绑定、P1-03 孩子人格隔天生效、P2-04 终止性拒绝不再续连、P0-03 的 TLS / WSS 重连与剩余设备矩阵、P0-04 安全闭环。不得把核心通过扩大为完整 P0-03 或全双工通过。
 3. **不动线上就能直接做的代码项**：P0-04 剩余部分、P1-04 自定义声音闭环、P2-06 回放评测、P2-04 Python 侧进程退出注入、M-3、M-6 ④⑤。
 4. **要你定的事（汇总；细节与选项在各自条目里，不挡以上步骤）**：
@@ -35,7 +35,7 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 收据与细节见 [HANDOFF「2026-10-05 域名切换到 aginice.cn」「2026-10-05 服务迁移到 110.42.235.198」](HANDOFF.md)。
 
 - [ ] **本批主机维护窗口**（你 10-06 说「现在一起做了」；无活跃设备会话时做，步骤逐个确认）：新机上整栈 `release-ops.sh rollback` 演练（`verify-load`、`freeze`、`cutover`、`finish` 在 2026-10-05 实跑过，`rollback` 没演练过；会把三个角色切回上一栈再切回来，两次各约半分钟断流）；WAL 归档关掉（见下一条）；换上仓库版 `release_ops.sh`（PREV 已前移）；清理旧域名站点 / 证书 / 备份与 `ALLOWED_ORIGINS` 里的旧机 IP（下一条）。
-- [ ] **WAL 归档会占满新机的盘（P1-08）**：新机的归档从迁移时重新开始，约 0.6–1.1 GB/天（旧机近三周平均 0.6，最近一周 53–71 个 16 MB 段/天，10-01 测试密集日 139 个），没有裁剪策略；根分区 40 GB，2026-10-05 16:37 整栈发布后剩 17 GB，再加每次整栈发布约 4 GB，约 2–3 周会满，PostgreSQL 盘满即停。归档在没有 base backup 时没有恢复价值（新机上一份都没有）。仓库的 `infra/memoria-data.production.yml` 已改成 `archive_mode=off`（本批 PR）；主机上生效须重建 postgres 容器（`archive_mode` 不能用 `ALTER SYSTEM` 改，compose 的 `-c` 参数优先），只在没有活跃会话时做，之后验证 health、`pg_stat_archiver`、盘，确认没有 base backup 后删归档卷里的文件（约 545 MB / 34 个）；不按时间删 `pg_wal`。没有持续数据库备份，靠发布前 `freeze` 的 dump；要不要另做每夜 `pg_dump`，你定（默认不做）。
+- [ ] **新机没有持续数据库备份（P1-08）**：WAL 归档已在 2026-10-06 09:58–10:00 关闭（`archive_mode=off`，postgres 容器重建，归档卷 39 个文件 / 654 MB 已清空，盘剩 14 GB），不再增长；现在靠发布前 `freeze` 的 dump。要不要另做每夜 `pg_dump`，你定（默认不做）；以后若要重开归档，归档卷必须是 `999:999 0700` 并先做 base backup。
 - [ ] 清理旧域名与旧机残留：新机 `sites-enabled/memoria-prod`（aigcnice.com 站点）与 `/etc/nginx/ssl/aigcnice.com/`；服务器 `/root/domain-switch-20261005/`（含旧证书私钥、env 与头像原值备份，确认不再回滚后删）与旧私钥备份；`/etc/memoria-control-api.env` 的 `ALLOWED_ORIGINS` / `LIVEKIT_URL` 里的旧机 IP（只给浏览器跨域用，小程序请求不走它；只打印键名，不打印值）；核对 `outputs/` 里没有再指旧域名的脚本。
 - [ ] 旧机 122.51.108.140 2026-10-06 到期（时刻不明）：到期后删掉 ssh 别名 `memoria-prod-old` 与 `~/.ssh/known_hosts` 里旧机的条目；旧机上没迁的东西（WMS、13 GB WAL、7.3 GB `incoming`、旧发布树与回滚镜像）随机器消失，按你的决定不再保留。`aigcnice.com` 不做桥（已定）：仍用旧域名的别的设备 / 旧版小程序在旧机到期后连不上，据我所知没有。
 - [ ] 新机资源偏紧：内存 3.7 GiB（Memoria 栈约 1.3–1.4 GiB，可用约 1.7 GiB，swap 已用约 0.6 GiB，与 pocketSparks 的 MySQL / node 共用），4 vCPU 约比旧机慢 1.3 倍。发布后 1–2 天看 `docker stats`、`free -m` 与时延（对照第十六轮 24 轮时延场景说完 → 首帧 p50 2.92 s）；不够就扩内存（你在控制台做）。
@@ -240,10 +240,10 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 - 完成条件：同一候选的构建、切流、回滚、设备验收分别有证据；仅保留当前和一个可运行回滚，清理生产另授权。
 - 身份收敛（发布治理）：control-api 期望的 release tag 应与真实发布 tag 一致，取消「agent 上报历史冻结 tag」的临时对齐；与预构建镜像入口一并作为本项输入。
 
-### [ ] P1-08 为仍增长的 WAL 确定独立保留策略
+### [ ] P1-08 新机的数据库备份策略
 
-- 现状与做法见「域名切换与新机收尾」的 WAL 一条：本批把仓库的 `infra/memoria-data.production.yml` 改成 `archive_mode=off`，主机上生效在维护窗口。新机没有 base backup（09-14 演练的 base 在 `/root/old-host-20261005/var-backups-memoria.tar.gz`，它的 WAL 链在旧机、到期即失），归档没有恢复价值；以后若要重新开归档：归档卷必须是 `999:999 0700`，否则 `archive_command` 一直失败，并先做 base backup。
-- 需你定并授权：每夜 `pg_dump`（默认不做）、手工阈值策略；不得按 mtime 删除或清理 `pg_wal` 代替归档保留。
+- 现状：WAL 归档已于 2026-10-06 关闭（仓库 `infra/memoria-data.production.yml` 与主机一致，归档卷已清空），新机没有 base backup（09-14 演练的 base 在 `/root/old-host-20261005/var-backups-memoria.tar.gz`，它的 WAL 链在旧机、到期即失）。以后若要重新开归档：归档卷必须是 `999:999 0700`，否则 `archive_command` 一直失败，并先做 base backup。
+- 需你定并授权：每夜 `pg_dump`（默认不做）；不得按 mtime 删除或清理 `pg_wal`。
 - 完成条件：保护集合、容量 / 恢复影响、执行证据和后续责任明确，保留恢复目标可验证。
 
 ### [ ] P1-09 readiness 刷新失败的主动告警（刷新修复与逾期提示已上线）
