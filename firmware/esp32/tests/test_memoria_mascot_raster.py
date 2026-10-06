@@ -154,6 +154,30 @@ int main() {
                 (i >= x0 && i < x1 ? inside : outside)++;
             }
             printf("%d %d\n", inside, outside);
+        } else if (cmd == "span") {
+            // span <cx> <fy> <ax_q> <ay_q> <sx_q> <sy_q> <y> <x0> <x1>: the reported span, then the first and
+            // last column BlendSpriteRow really changed in [x0, x1) (-1 -1 when none), then the span asked
+            // for the whole row and clipped by hand to [x0, x1).
+            int cx = 0, fy = 0;
+            const memoria::SpriteTransform t = ReadTransform(in, &cx, &fy);
+            int y = 0, x0 = 0, x1 = 0;
+            in >> y >> x0 >> x1;
+            int xs = 0, xe = 0;
+            const bool has = memoria::SpriteRowSpan(s, cx, fy, t, y, x0, x1, &xs, &xe);
+            uint16_t row[kRowMax];
+            for (int i = 0; i < kRowMax; ++i) row[i] = 0x1234;
+            memoria::BlendSpriteRow(s, cx, fy, t, y, x0, x1, row);
+            int first = -1, last = -1;
+            for (int i = 0; i < kRowMax; ++i) {
+                if (row[i] == 0x1234) continue;
+                if (first < 0) first = i;
+                last = i;
+            }
+            int fxs = 0, fxe = 0;
+            memoria::SpriteRowSpan(s, cx, fy, t, y, 0, 360, &fxs, &fxe);
+            const int cxs = fxs > x0 ? fxs : x0;
+            const int cxe = fxe < x1 ? fxe : x1;
+            printf("%d %d %d %d %d %d %d\n", has ? 1 : 0, xs, xe, first, last, cxs, cxe);
         } else if (cmd == "guard") {
             // guard <kind>: calls the sampler cannot honour must leave the row alone and not crash.
             std::string kind;
@@ -270,6 +294,11 @@ def _kind(kind: str, w: int = 30, h: int = 24):
         return _sprite(w, h)
     if kind == "hard":
         return _sprite(w, h, hard=True)
+    if kind == "packed":
+        # The packs store solid art as alpha 252, never 255 (TODOLIST M-6): the sampler's opaque fast path
+        # must treat that as opaque, as Blend565 does, or every pixel pays for the edge path.
+        rgb565, alpha = _sprite(w, h, hard=True)
+        return rgb565, np.where(alpha == 255, 252, alpha)
     return _block(w, h)
 
 
@@ -416,7 +445,7 @@ def test_a_whole_pixel_position_at_scale_one_is_the_plain_blit_exactly(tool) -> 
     assert np.array_equal(got, expected)
 
 
-@pytest.mark.parametrize("kind", ["soft", "hard", "block"])
+@pytest.mark.parametrize("kind", ["soft", "hard", "block", "packed"])
 def test_a_fractional_position_matches_the_floating_point_model(tool, kind: str) -> None:
     rgb565, alpha = _kind(kind)
     for ax, ay in ((100.5, 100.0), (100.0, 100.5), (100.3125, 99.6875), (99.75, 100.25)):
@@ -427,7 +456,7 @@ def test_a_fractional_position_matches_the_floating_point_model(tool, kind: str)
         assert error.max() <= 24, (ax, ay, error.max())
 
 
-@pytest.mark.parametrize("kind", ["soft", "hard", "block"])
+@pytest.mark.parametrize("kind", ["soft", "hard", "block", "packed"])
 def test_a_breathing_scale_matches_the_model_in_both_directions(tool, kind: str) -> None:
     rgb565, alpha = _kind(kind)
     for sx, sy in ((1.0, 1.04), (0.985, 1.035), (1.06, 1.0), (1.2, 1.2)):
@@ -515,6 +544,35 @@ def test_nothing_is_written_outside_the_requested_columns(tool) -> None:
     results = [tuple(int(v) for v in line.split()) for line in out]
     assert all(outside == 0 for _, outside in results)
     assert any(inside > 0 for inside, _ in results)
+
+
+@pytest.mark.parametrize("kind", ["soft", "block"])
+def test_every_column_the_sampler_changes_is_inside_the_reported_span(tool, kind: str) -> None:
+    # The scene recomposes only the columns of this span (plus the last frame's), so a column outside it that
+    # the sampler could still change would be left stale on the screen. Fractional positions and both the
+    # bilinear and the supersampled (captioned) scales.
+    rgb565, alpha = _sprite(40, 32, seed=5) if kind == "soft" else _block(40, 32)
+    rng = np.random.RandomState(11)
+    commands = []
+    for _ in range(90):
+        ax, ay = rng.uniform(60, 300), rng.uniform(60, 300)
+        sx = rng.uniform(0.5, 1.5) if rng.rand() < 0.5 else rng.uniform(0.5, 0.8)
+        sy = sx if sx < 0.8 else rng.uniform(0.6, 1.5)
+        y = int(ay) + int(rng.randint(-34, 6))
+        x0 = int(rng.randint(0, 180))
+        commands.append(
+            f"span 90 96 {round(ax * 16)} {round(ay * 16)} {_scale_q(sx)} {_scale_q(sy)} {y} {x0} {x0 + int(rng.randint(10, 180))}"
+        )
+    out = _send(tool, rgb565, alpha, 70, 64, *commands)
+    drawn = 0
+    for line in out:
+        has, xs, xe, first, last, cxs, cxe = (int(v) for v in line.split())
+        if first >= 0:
+            drawn += 1
+            assert has == 1 and xs <= first and last < xe, line
+        # the span does not depend on the clip beyond being cut by it
+        assert (xs, xe) == ((cxs, cxe) if cxe > cxs else (xs, xs)) or not has, line
+    assert drawn > 20
 
 
 @pytest.mark.parametrize(
