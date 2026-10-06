@@ -23,11 +23,13 @@ ESP32-S3 -> Go Media Edge -> Python Voice Core / Agent
 
 ## 文档与权威
 
-仓库长期只保留三份文档（2026-09-17 按用户要求收拢）：
+仓库根目录只有三份长期文档（`tests/test_documentation_budget.py` 守着）：
 
 - `README.md`：产品、架构、开发、协议和固件入口。
-- `HANDOFF.md`：当前线上状态、发布/回滚/备份和待验收事项。
-- `TODOLIST.md`：唯一的优先级执行队列，保存未完成事项、依赖、完成条件及已评估的研究结论；后续从最高优先级未阻塞项推进。仍禁止 session 记录、ADR、组件 README、其他平行计划和 release note。
+- `HANDOFF.md`：当前生产快照、最近几天的发布与验收收据；更早的日期节移到 `docs/HANDOFF-archive-*.md`，这里只留快照、近日收据和永久参考的入口。
+- `TODOLIST.md`：唯一的优先级执行队列，只保存未完成事项、依赖、完成条件、需要你决定的事和已评估的研究结论；做完的条目直接删除（收据归 HANDOFF 与它的归档，全文在 git 历史里），后续从最高优先级未阻塞项推进。
+
+`docs/` 下只放几类：`runbooks/`（发布、回滚、空间治理等可重复执行的运维手册）、`acceptance/`（真机与发布验收的 findings 和证据）、`compliance/`（删除域与合规契约）、`strategy/`（非执行的战略材料）、HANDOFF 的历史归档，以及记忆评测收据 `docs/memory-evaluation-*.json`。仍禁止 session 记录、ADR、组件 README、其他平行计划和 release note；要新增文档类别，须先改上面的测试。
 
 机器可执行事实放在 schema、proto、配置、锁文件和测试中，不另建说明文档；历史发布过程不在仓库累积。
 
@@ -455,13 +457,15 @@ uv run python firmware/esp32/scripts/publish_firmware_release.py withdraw --remo
 
 360x360 圆屏显示账号所选伙伴（星澜/桃喜/绵绵/阿序/玄墨）的毛绒吉祥物，像 Muse Charm 一样是一个"活着"的角色，而不是表情符号：
 
-- **场景**：伙伴主题色的径向渐变背景（有序抖动，RGB565 无色带）+ 地面柔影 + 角色 + 圆屏边缘的状态光环。聆听=光环呼吸，思考/连接中=彗星光环旋转，说话=光环随口型轻微明暗。
-- **角色行为**：待机呼吸、随机眨眼（含双眨）、说话时口型开合（每个心情有独立张嘴帧）、心情切换时"压扁-弹起"、被拍一下开心跳、摇晃后晕乎乎、空闲时偶尔小动作（开心/思考/挥手）、闲置 3 分钟打瞌睡并调暗背光、回复结束后心情停留约 2 秒。
+- **场景**：伙伴主题色的径向渐变背景（有序抖动，RGB565 无色带）+ 地面柔影 + 角色 + 圆屏边缘的状态光环。聆听=光环呼吸，思考/连接中=彗星光环旋转，说话=光环随声音的包络明暗。
+- **角色行为**：待机呼吸、随机眨眼（含双眨）、说话时口型随真实音量开合（每个心情有独立张嘴帧，见下方「口型与动画」）、心情切换时"压扁-弹起"、被拍一下开心跳、摇晃后晕乎乎、空闲时偶尔小动作（开心/思考/挥手）、闲置 3 分钟打瞌睡并调暗背光、回复结束后心情停留约 2 秒。
 - **开机**：黑屏 → 暖光光球 → 光圈扩散展开场景 → `memoria` 字标淡入淡出 → 伙伴从底部弹入落地 → 眨眼 → 挥手问好。背光在第一帧画好后才渐亮（不再闪白屏）。未绑定时中间是白色圆角二维码卡片，上方「欢迎使用 Memoria」（此时还没选伙伴），下方「微信扫一扫 开始配网」，边缘光环呼吸；轻点屏幕换一张新二维码（新 nonce/PoP，3 秒内只响应一次），小程序里过期或被拒的码都引导用户这样做。素材分区的常用字库在开机时、二维码出现前加载（patch `0030`），不再先缺字后补全。
 - **文字**：联网阶段（扫描/连接 Wi-Fi、配网模式、激活）伙伴缩到约 0.64 倍并上移，状态和提示文字排在它下方的独立字幕带（热点兜底提示拆成两行），不压在角色身上，回到待机时伙伴再长回原大、30 秒的「已连接」通知随之收起；对话中不再显示「正在连接」（彗星光环已表达）；二维码卡片是独立画面，其它状态/字幕文字一律不叠加；字幕是底部半透明胶囊；版本号/UA/品牌通知不再上屏。
 - **手机同步**：小程序「选TA陪伴」保存后，control-api 同时把该伙伴写成设备主使用人的人格（声音从下一轮对话起切换）；设备空闲时每 20 秒用设备签名调用 `GET /v1/devices/{id}/display-profile`，`display_version` 变化即挥手换装，并写入 NVS（重启后直接显示）。
 
-实现分三层：`memoria_mascot_pack.{h,cc}`（帧包解码）与 `memoria_mascot_scene.{h,cc}`（行为状态机 + 行缓冲合成，只重绘变化矩形并裁到圆内）不依赖 ESP-IDF/LVGL；`memoria_mascot_display.{h,cc}` 接 LVGL、设备状态、QR 卡片与背光。动画任务优先级 2（低于全部音频任务），按场景自适应 12.5–25 fps；真机空闲约 240 次重绘/分钟、每次约 8 ms 纯合成。
+实现分三层：`memoria_mascot_pack.{h,cc}`（帧包解码）与 `memoria_mascot_scene.{h,cc}`（行为状态机 + 行缓冲合成，只重绘变化矩形并裁到圆内）不依赖 ESP-IDF/LVGL；`memoria_mascot_display.{h,cc}` 接 LVGL、设备状态、QR 卡片与背光。动画任务优先级 2（低于全部音频任务）。亮屏且伙伴醒着时 25 fps（Wi‑Fi 与绑定画面、瞌睡时 12.5 fps）：呼吸与光环按亚像素移动，每一帧都是看得见的一小步；`memoria_frame_pacer.h` 跟着实测的渲染耗时走，一帧占满间隔的 65 % 以上就把间隔每次拉长 10 ms（最多 +120 ms），宽裕约一秒后再慢慢放回，宁可降帧也不挤占音频。
+
+**口型与动画**：patch `0034` 在 `AudioService` 放两个音量采样点——输出是交给 codec 的 PCM（比出声早约 60 ms），输入是 AEC / NS 之后的上行 RMS；`memoria_audio_level.h` 把 −54…−12 dBFS 映射到 0…255。显示任务每帧取走采样点的数据（熄屏时也取），交给 `MascotScene::SetOutputLevel` / `SetInputLevel`：嘴在音量从谷底上升时张开、从峰值回落时合上（最短张口 80 ms、最短闭口 60 ms，防抖），光环与身体的轻微上抬跟着慢包络走；播放队列停转（没有新块）时嘴闭上、光环变暗。画面用亚像素双线性光栅（`memoria_mascot_raster.{h,cc}`）画，呼吸以脚底为支点、保持体积（`kPlushRatio = 0.7`）。
 
 美术：`apps/miniprogram/assets/companions/<id>/` 的 8 个心情帧之外，`*-blink`、`*-talk`、`greeting` 由 `design-preview/memoria-v2/tools/device_frames.py` 生成（图像编辑只改眼/嘴，再对齐并只把变化区域合成回原帧，其余像素逐位不变）。`firmware/esp32/scripts/build_mascot_pack.py` 打包成 `assets/mascot_<id>.mmp`（每个 110–180 KB，调色板 + zlib，眨眼/口型帧只存差异补丁）和 `brand_mark.mma`，由 patch `0026` 放进 assets 分区。
 
@@ -472,9 +476,11 @@ uv run python firmware/esp32/scripts/preview_memoria_mascot.py --out .tmp-mascot
 uv run pytest firmware/esp32/tests/test_memoria_mascot.py -q
 ```
 
-预览编译的是固件同一份合成器，输出 `scene.mp4`、`sheet.png` 与逐帧"增量重绘 = 全量重绘"的校验；改了源美术后先重跑 `build_mascot_pack.py`，测试会比对帧包字节。
+预览编译的是固件同一份合成器，输出 `scene.mp4`、`sheet.png`，逐帧校验"增量重绘 = 全量重绘"，并数出每个状态每秒有多少帧真的变了（测试要求中位数不少于 20、最差的一秒不少于 18）；加 `--sanitize` 用 ASan / UBSan 重编译再跑一遍（`test_compositor_is_clean_under_sanitizers`）。改了源美术后先重跑 `build_mascot_pack.py`，测试会比对帧包字节。
 
 真机验收要看：开机动画、待机呼吸/眨眼、拍一下、摇晃、聆听光环、思考彗星、说话口型、未绑定二维码卡片、小程序换伙伴后 20 秒内设备换装（需先发布含 display-profile 的 control-api）。
+
+**bench 构建（调试用，不发布）**：`./scripts/build.sh --bench` 在产品配置之上只多开 `CONFIG_MEMORIA_BENCH_SERIAL` 与 `CONFIG_LV_USE_SNAPSHOT`（patch `0035`，`config.bench.json`），让 USB 串口多认两条命令：`snap` 把屏幕当前内容按 `SNAP <id> <w>x<h> <seq>/<total> <crc> <base64>` 行分块吐出（约 6–8 s），`status` 吐一行 `MemoriaBench: status up_ms=… frames= drawn= render_us= busy_us= heap_free= …`（帧率、渲染耗时、堆余量）。电脑侧：`scripts/voice_soak_serial_command.py snap|status --log <串口记录>`，`scripts/snap_to_png.py` 把 SNAP 行还原成 PNG，`scripts/bench_status.py` 解析 `status` 行。刷入用 `./scripts/flash.sh --bench`，量完必须刷回产品镜像：bench 镜像文件名带 `-bench`、内嵌标记 `MEMORIA_BENCH_BUILD=1;`，`publish_firmware_release.py` 拒绝签名与上传它，产品镜像里没有这两条命令。
 
 Mac 进入下载模式：按住 BOOT，轻按 RESET，松开 RESET，再松开 BOOT，然后重试。monitor 使用 `Ctrl+]` 退出。
 

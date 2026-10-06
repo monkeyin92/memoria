@@ -28,8 +28,8 @@ Secret 仅在 root-only `/etc/memoria-*.env`（root:root 0600）；候选从真�
 - **回滚深度是 1（2026-10-05 16:31 起；此前是 0）**：新机上 `/root/memoria-release/release-ops.sh`（仓库版，root 0700）随 `20261005-subject-candidates-v1` 装上，回滚目标是 `20261004-first-warm-v1`（发布树 `releases/20261004-first-warm-v1` 与镜像 `*:rollback-20261005-subject-candidates-v1-pre` 都在新机上）；再往前没有。`rollback` 这一步在新机上没演练过（`verify-load`、`freeze`、`cutover`、`finish` 实跑过）。每次整栈发布要把仓库里 PREV 已前移的新版 `release_ops.sh` 装上去（装前备份为 `.pre-<tag>`、比 sha256、权限 0700），`freeze` 才认当前这一栈。迁移用的 `bringup.sh`（按服务名逐个起；入库为 `scripts/bringup_shared_host.sh`，与新机上那份逐字相同，sha256 `398bd005…`）的 `TAG` / `COMMIT` 默认值仍是迁移时那版栈 `20261004-first-warm-v1`，冷启必须显式传当前的 `TAG=20261005-subject-candidates-v1 COMMIT=faf3efe3d02c23f519ad139b5860200a0609b800`，否则指向已被换掉的发布树。
 - **在新机上发整栈（2026-10-05 `20261005-subject-candidates-v1` 实跑的做法）**：登录用户是 `ubuntu`（免密 sudo），`/root/memoria-release` 在 root 下，所以每一步都包一层 `ssh memoria-prod "sudo sh -c 'env TAG=… COMMIT=… [VERIFIER_SHA=… MANIFEST_SHA=…] /root/memoria-release/release-ops.sh <step> > /root/memoria-release/<step>-<tag>.log 2>&1; echo exit=$? >> /root/memoria-release/<step>-<tag>.log'"`，再读日志里的 PASS；上传用 `scripts/upload_release_artifacts.sh`（它用 `sudo -n` 与 `rsync --rsync-path='sudo -n rsync'`，所以 `ubuntu` 能用；本机 `PATH=/opt/homebrew/bin:$PATH` 以用到新版 rsync），先 dry-run 再真传；增量（seeded）模式要求新机上有上一个 tag 的 `incoming/<tag>/images.tar`，没有就是整包模式（第一次是整包，线上发送 502 MB / 总 1.53 GB）；本机构建用 `DOCKER_DEFAULT_PLATFORM=linux/amd64 COMPOSE_PARALLEL_LIMIT=1`，这次还设了 `UV_DEFAULT_INDEX=https://mirrors.cloud.tencent.com/pypi/simple`；`verify-load`、`freeze` 不动线上，可以在合并 PR 之前跑（它们会把 `MEMORIA_CONTROL_API_PORT` 写进新发布树的 `.env`、在 28791 / 28891 起预检栈、做发布前 DB 备份），任何需要的修正还能进同一个 PR；`cutover` 前先确认没有设备会话。
 - **数据层**：两台机上 `memoria-data` 项目都是从 `releases/20260827-architecture-split-v1/infra` 起的。`current/infra` 里的同名 compose 多一个 `011-control-schema.sql` 的 initdb 挂载（只在空库首次初始化时用）；在已有数据的库上用 `current/infra` 去 `up -d` 会让 compose 判定配置变了而重建 postgres 容器（推断，没试），不要顺手做。
-- **WAL 归档卷** `memoria-data_postgres_wal_archive` 必须是 `999:999 0700`，否则 `archive_command` 一直失败。
-- **磁盘**：40 GB 盘，迁移后已用约 17 GB，2026-10-05 16:37 第一次整栈发布后已用 21 GB（剩 17 GB；`incoming/20261005-subject-candidates-v1` 1.5 GB 留着作下一次增量上传的种子，要腾盘就删它，代价是下一次改回整包上传）。新机的 WAL 归档从迁移时重新开始、没有裁剪，旧机实测约 0.6–1.1 GB/天；每次整栈发布再加约 4–5 GB（镜像 + `incoming` 包）。约 2–4 周会满，PostgreSQL 盘满即停；归档在没有 base backup 时没有恢复价值。P1-08 的保留策略（关 `archive_mode` 需重启 / 做 base backup 后按它裁剪 / 扩盘）要在满盘之前定。`memoria-disk-patrol.timer` 的告警线是 75% / 85%（百分比，对 40 GB 盘同样适用，只告警不清理）。
+- **WAL 归档已关（P1-08，2026-10-06）**：`infra/memoria-data.production.yml` 的 postgres 参数是 `archive_mode=off`，不再有 `archive_timeout` / `archive_command`。原先每 5 分钟强制切一个 16 MB 段并拷进同盘的 `memoria-data_postgres_wal_archive` 卷：没有 base backup 可接，没有恢复价值，旧机实测每天涨约 0.6–1.1 GB。恢复靠每次整栈发布前 `freeze` 的 `memoria-pre-<tag>.dump`（见「数据层、备份与恢复」）。改这个参数必须重建 postgres 容器（`archive_mode` 要重启，`ALTER SYSTEM` 改不了：compose 的 `-c` 参数优先）；线上 compose 与仓库的同步和卷的清理是维护窗口里的一步，结果记在 HANDOFF。要重新启用（例如接异地备份 profile）：在 compose 里把 `archive_mode=on`、`archive_timeout=300s`、`archive_command=test ! -f /wal-archive/%f && cp %p /wal-archive/%f` 一并恢复，并保持该卷 `999:999 0700`，否则 `archive_command` 一直失败；同时要有 base backup 和按它裁剪的策略。
+- **磁盘**：40 GB 盘，迁移后已用约 17 GB，2026-10-05 16:37 第一次整栈发布后已用 21 GB（剩 17 GB；`incoming/20261005-subject-candidates-v1` 1.5 GB 留着作下一次增量上传的种子，要腾盘就删它，代价是下一次改回整包上传）。WAL 归档关掉之后，增长主要是每次整栈发布的约 4–5 GB（镜像 + `incoming` 包）和库本身；`pg_wal` 里只剩 PostgreSQL 自己循环使用的几段，不要手动删。`memoria-disk-patrol.timer` 的告警线是 75% / 85%（百分比，对 40 GB 盘同样适用，只告警不清理）。
 - **systemd**：`memoria-readiness-refresh.timer`（12 小时一次提供方冒烟 + readiness 标记；迁移后 01:36:57 跑过一次，从新机出口 PASS）与 `memoria-disk-patrol.timer` 已在新机启用。
 
 ## 发布前门禁
@@ -40,6 +40,8 @@ Secret 仅在 root-only `/etc/memoria-*.env`（root:root 0600）；候选从真�
 4. dry-run→上传校验→授权切流→候选 provider smoke→具名 readiness、外部 Host/SNI 路由、设备和延迟复核；非目标容器/配置不得变化，失败即停止或按授权回滚。
 
 `scripts/deploy_agent_component.sh` 的 source overlay 仅适用 Agent 源码切片，只切 `voice-core-media-bridge`；线上 bridge 可以是整栈镜像（不带 `com.memoria.release.kind`，且 version 必须等于该容器的 `MEMORIA_RELEASE_TAG`），也可以是组件或回滚恢复镜像；已存在的同名回滚 tag（`release_ops.sh` 也用 `rollback-<tag>-pre` 命名上一栈）只有与当前 bridge 镜像 image id 相同时才复用。`--dry-run` 不检查线上 bridge，这一步的拒绝只在 `--cutover` 出现，且发生在任何切换之前。`.dockerignore/pyproject.toml/uv.lock/infra/Dockerfile.agent` 变化必须完整构建，`--allow-scope-drift` 不豁免。不得为行预算顺手修改依赖输入；`check_module_budget.py check` 校验精确行数。切流 Compose 使用 Control 有效栈 tag，不用 OCI revision 或目录名代替。
+
+`scripts/deploy_control_component.sh`（control-api 单组件发布）会让 control-api 落在组件链上，而 `release_ops.sh` 的 `freeze` 只认三个角色同在 PREV 整栈 compose 上；认组件链的支持（`LIVE_CONTROL_RELEASE`）自 2026-10-01 的整栈发布（`20261001-audience-recap-v1`）起已不在脚本里。此后若再做 control-api 单组件发布，须先把链支持补回、并核对 `freeze` 认得它，否则下一次整栈发布会在 `freeze` 被拒；整栈发布之后 control-api 回到纯整栈链。
 
 运行门禁需剥离本地 `OFFLINE_MOCK/INTERRUPTION_MIN_DURATION_S`；`--skip-gates` 必须有明确理由与收据。上传要求 PATH 中 `rsync>=3.0` 支持 `--protect-args`，macOS 内置版本不可假定满足。
 
@@ -107,7 +109,7 @@ tar --extract --file "$UPLOAD_DIR/source.tar" \
 
 ## media-edge 组件发布（手工，只换 media-edge 一个容器）
 
-media-edge 不在 `release_ops.sh` 的整栈切流里，镜像按组件 tag 单独换，后续整栈发布没有换过它。编排链以线上容器为准：`docker inspect memoria-media-edge-1 --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}'`（2026-10-02 起是 `releases/20260930-local-stop-v2/docker-compose.production.yml` + `component-releases/<tag>-media-edge/media-edge-component.override.yml`）。收据样例见 HANDOFF「media-edge 组件发布 20261002-late-progress-v1」。
+media-edge 不在 `release_ops.sh` 的整栈切流里，镜像按组件 tag 单独换，后续整栈发布没有换过它。编排链以线上容器为准：`docker inspect memoria-media-edge-1 --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}'`（2026-10-02 起是 `releases/20260930-local-stop-v2/docker-compose.production.yml` + `component-releases/<tag>-media-edge/media-edge-component.override.yml`）。收据样例见 `docs/HANDOFF-archive-0924-1003.md`「2026-10-02 media-edge 组件发布 20261002-late-progress-v1」。
 
 1. 干净 detached worktree 在要发布的提交上构建（`DOCKER_DEFAULT_PLATFORM=linux/amd64`，导出 `MEMORIA_RELEASE_TAG/COMMIT`，`docker compose -f docker-compose.production.yml --profile media-runtime build media-edge`）；核对镜像的 revision/version/role 标签，用 `docker cp` 取出 `/usr/local/bin/memoria-media-edge` 确认含新代码并记下 sha256；`docker save` 后 scp 到 `/opt/memoria/incoming/<tag>-media-edge/`，服务器上 `sha256sum -c` 通过再 `docker load`（服务器 image id 与本机 containerd 存储里的不同，以标签和二进制 sha256 为准）。
 2. 在 `/opt/memoria/component-releases/<tag>-media-edge/` 写 `media-edge-component.override.yml`（`services.media-edge.image` 指向新 tag）与 `media-edge-rollback.override.yml`（当前线上的 tag），并把切前全部容器的「名字 镜像 启动时间 重启次数」快照存为 `pre-all.txt`。
@@ -129,7 +131,7 @@ docker compose --project-directory "$DATA_COMPOSE_DIR" \
 
 - 用户 2026-09-14 决定验证阶段暂缓自动备份/异地副本；最后核查 offsite profile 未启用、无真实 endpoint/告警。真实家庭数据、正式发布或价值/量级增长前必须重评，不把同机副本称为异地灾备或已验证 PITR。
 - 当前保留的本地还原点只在新机的旧机归档包 `/root/old-host-20261005/var-backups-memoria.tar.gz`（旧机 `/var/backups/memoria` 整体打包，root 0700，2026-10-05 迁移时取）里：`drill-20260914-p0-02/base`（2026-09-14 通过 `pg_verifybackup`、隔离启动、应用表/对象核对，报告 `outputs/acceptance/run-20260914-p0-02-restore-drill/report.json`）和 `20260912-1150-companion-persona-and-lookup-gate/memoria-archive-20260912T043155Z.dump`；它们不会自动更新。09-14 base 的 WAL 链只在旧机上，旧机到期后消失，所以这个 base 只能还原到演练时刻，没有时间点恢复能力。最近一份逻辑转储是每次整栈发布前 freeze 的 `memoria-pre-<tag>.dump`，最新一份 2026-10-05 16:29（`20261005-subject-candidates-v1`，4,402,127 B），在新机 `/opt/memoria/releases/20261005-subject-candidates-v1/.cutover/`；再早一份 2026-10-04 18:15（`20261004-first-warm-v1`）在上述归档目录的 `release-receipts.tar.gz` 里。新机上没有持续的数据库备份。
-- WAL 仍归档且无自动裁剪；新机的归档从 2026-10-05 重新开始，增长与满盘估计见上文「生产主机」。P1-08 单独处理保留策略，不因备份暂缓而遗漏。禁止只按文件年龄删 WAL，必须保护仍保留 base backup 所需连续链；本轮未删任何数据。
+- WAL 归档已关（P1-08，2026-10-06，见上文「生产主机」）：没有 base backup 的归档接不上任何还原点，所以不再产生。没有时间点恢复能力是已知现状：恢复点只有上述每次发布前的 `freeze` 转储和归档包里的 09-14 base。重新启用必须同时有 base backup 与按它裁剪的策略；禁止只按文件年龄删 WAL，`pg_wal` 里的段由 PostgreSQL 自己回收。
 - 重新启用备份时，已修的 pg_basebackup CLI 仍需真实部署验证；网桥复制受现有 pg_hba 限制，优先评估 `network_mode: service:postgres` 走 loopback。真实异地 endpoint/凭据与恢复演练须另行补齐。
 
 恢复集合须含 PostgreSQL base/WAL、MinIO versioned objects、SQLite 兼容快照、root-only env、manifest/回执。用 `scripts/run_offsite_restore_drill.sh` 在隔离环境校验备份、对象清单/哈希、外键和应用读取；不能拿缓存当权威。
@@ -178,7 +180,7 @@ python -m scripts.rebuild_memory_projections --confirm-rebuild
 
 该版本的 `images.tar` 只含 `memoria-agent`（即 Voice Core 媒体桥镜像）、`memoria-control-api`、`memoria-speaker-model`；compose 不再定义 `agent`、`miniprogram-gateway`、`device-media-gateway`，env 分流只写 Control/Agent/Speaker Model/Media Edge 四份文件，旧 env 文件里的 LiveKit/网关键会被接受但不再分发。`20260929-livekit-retire-v1` 当时的 `release-ops.sh` 让 PREV 保留六个服务：cutover 在 bridge 健康后只停止（不删除）`memoria-agent-1`、`memoria-miniprogram-gateway-1`、`memoria-device-media-gateway-1`，rollback 可按 PREV 整体重建。主机清理完成后，其后的版本 PREV 与本版本同为 speaker-model、control-api、voice-core-media-bridge 三个角色，不再有 retire 步骤。
 
-仓库外的主机清理不随发布自动进行，需单独授权并在回滚窗口关闭后执行（`20260929-livekit-retire-v1` 已于 2026-09-29 按下述步骤完成，收据见 HANDOFF；此后整栈 `rollback` 只能回到同样不含旧媒体链的 PREV，否则按组件回滚）：停止并移除 LiveKit server compose 项目与其 sysctl 配置；安装新的 `memoria-stream.conf`、`memoria-https.conf`、IP server 片段后删除 `/etc/nginx/snippets/` 下的 `memoria-livekit.conf`、`memoria-miniprogram-media.conf`、`memoria-device-media.conf`（同时删掉 443 server 里对 `memoria-miniprogram-media.conf` 的 include），`nginx -t` 通过后 reload（若先删片段再回滚，PREV 网关的公网路由会缺失）；移除三个已停止容器、两份网关 env 文件和不再被引用的网关镜像。
+仓库外的主机清理不随发布自动进行，需单独授权并在回滚窗口关闭后执行（`20260929-livekit-retire-v1` 已于 2026-09-29 按下述步骤完成，收据见 `docs/HANDOFF-archive-0924-1003.md`「2026-09-29 整栈发布 20260929-livekit-retire-v1」；此后整栈 `rollback` 只能回到同样不含旧媒体链的 PREV，否则按组件回滚）：停止并移除 LiveKit server compose 项目与其 sysctl 配置；安装新的 `memoria-stream.conf`、`memoria-https.conf`、IP server 片段后删除 `/etc/nginx/snippets/` 下的 `memoria-livekit.conf`、`memoria-miniprogram-media.conf`、`memoria-device-media.conf`（同时删掉 443 server 里对 `memoria-miniprogram-media.conf` 的 include），`nginx -t` 通过后 reload（若先删片段再回滚，PREV 网关的公网路由会缺失）；移除三个已停止容器、两份网关 env 文件和不再被引用的网关镜像。
 
 ## 设备信任开关（仅绑定链路，无硬件 attestation）
 
@@ -217,3 +219,14 @@ SQL 侧只多返回事实 `device_bound`，与开关无关，所以 `schema` 步
 服务器域名变了要重写身份区（NVS，`0x10000`，64 KiB）里的 `control_api_url`，否则机器人启动后还去旧域名取激活清单（2026-10-05 `aigcnice.com` → `aginice.cn` 做过一次，收据见 `HANDOFF.md`「2026-10-05 域名切换到 aginice.cn」收据 ⑥）。做法：用 `firmware/esp32/scripts/provision_identity.py` **离线**生成身份镜像（不带 `--port`；输入是原来的 device-id / certificate-id / client-id、种子文件和激活公钥，只改 `--control-api-url`），先再用**旧** URL 生成一份，与芯片里读出的身份区逐字节比较，相同才说明新镜像只改了 URL；然后与新 app、空白 otadata 一起一次 `esptool write-flash 0x10000 <身份> 0x20000 <app> 0xd000 <8 KiB 的 0xff>`（写前按上一段备份各区，写后比较 md5，身份区应等于新镜像、其余保护区不变）。身份镜像含种子，权限 0600，放在被 git 忽略的 `firmware/esp32/artifacts/dev-path2/`，不进输出和日志。这只改机器人取清单的入口；已绑定机器人的签名清单里的端点（`control_api`、`device_media`）要靠解绑再重绑才会换成新域名。
 
 普通制品仅保留当前+一个可运行紧邻回滚，核验后按授权清理更早普通制品并查磁盘；数据库、WAL、MinIO、安全/合规备份不适用两版本规则。T1–T14 证据写 ignored `outputs/acceptance/`，由 `scripts/hardware_realtime_acceptance.py` 校验。旧 fence 可听输出/写档案、缺播放终态、错误记完成、以发送量伪造 Actual Heard、权威失败回退平行本地实现，任一均拒收。
+
+## 固件 bench 构建（调试镜像，不发布）
+
+`firmware/esp32/scripts/build.sh --bench` 构建调试镜像：`config.bench.json` 是产品 `config.json` 加且仅加 `CONFIG_MEMORIA_BENCH_SERIAL=y`（patch `0035`，默认关）与 `CONFIG_LV_USE_SNAPSHOT=y`，`check-overlay.sh` 逐项核对这一点，产品清单里不得出现 bench 开关。镜像文件名带 `-bench`，内嵌标记 `MEMORIA_BENCH_BUILD=1;`：`publish_firmware_release.py` 见到它拒绝签名与上传；`flash.sh` 要求「所求类型」与树里的构建一致（不带 `--bench` 拒绝刷 bench 构建，带 `--bench` 拒绝刷产品构建）；`build.sh` 在生成的 sdkconfig 与所求类型不符时直接停下。bench 镜像不占 OTA 指针，也不产生新的 `MEMORIA_FIRMWARE_BUILD`。
+
+bench 镜像在 USB 串口多认两条命令；产品镜像不含这两个动词，收到只记 `usb command ignored (not a command)`：
+
+- `snap`：把屏幕当前内容（文字层在内）按 `SNAP <id8hex> <w>x<h> <seq>/<total> <crc8hex> <base64>` 行分块吐出（每块 384 B RGB565 小端），以 `SNAP <id> end …` 或 `SNAP <id> failed reason=…` 行收尾，约 6–8 s；`scripts/snap_to_png.py` 从串口记录还原 PNG，逐块验 base64、长度与 CRC-32，再对 end 行验整幅。
+- `status`：吐一行 `MemoriaBench: status up_ms=… phase= mood= frame= screen_off= sleeping= captioned= frames= drawn= render_us= render_max_us= busy_us= px= composed_px= extra_ms= heap_free= psram_free= anim_stack_free=`，给出画了多少帧、每帧渲染耗时、帧调速器拉长了多少毫秒，以及堆与动画任务栈的余量；`scripts/bench_status.py`（只用标准库）解析它，字段表与固件格式串由测试逐项比对。
+
+用法：先起常驻的 `scripts/voice_soak_serial_logger.py` 持有串口，再 `scripts/voice_soak_serial_command.py snap --log <串口记录> [--out shot.png]` 或 `… status --log <串口记录> [--after 60]`（`--after` 隔这么多秒再问一次，并算出这段时间里帧的开销）。刷入 bench 镜像和每次发命令都是对设备的一次操作，须用户当场授权；刷入前按上一节的方法备份保护区，量完**必须刷回产品镜像**。上游 `self.screen.snapshot` MCP 工具虽然链接在产品镜像里（`LV_USE_SNAPSHOT` 上游默认开），但 Memoria 的设备协议不转发 MCP（读源码得出，没在真机上试过），所以截屏只走 bench 构建。
