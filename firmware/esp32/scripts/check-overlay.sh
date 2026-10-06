@@ -25,6 +25,35 @@ rg -Fq 'WAKE_WORD_MODEL="${MEMORIA_FIRMWARE_WAKE_WORD_MODEL:-}"' \
 "$python_bin" -m json.tool \
     "$MEMORIA_FIRMWARE_ROOT/overlay/files/main/boards/memoria/esp-vocat/config.json" \
     >/dev/null
+"$python_bin" -m json.tool \
+    "$MEMORIA_FIRMWARE_ROOT/overlay/files/main/boards/memoria/esp-vocat/config.bench.json" \
+    >/dev/null
+
+# The bench image (TODOLIST M-2) is the product manifest plus exactly two options; the product manifest never
+# names the bench switch, and the scripts keep the two apart.
+"$python_bin" - "$MEMORIA_FIRMWARE_ROOT/overlay/files/main/boards/memoria/esp-vocat" <<'PY'
+import json
+import pathlib
+import sys
+
+board = pathlib.Path(sys.argv[1])
+product = json.loads((board / "config.json").read_text(encoding="utf-8"))
+bench = json.loads((board / "config.bench.json").read_text(encoding="utf-8"))
+product_options = product["builds"][0]["sdkconfig_append"]
+bench_options = bench["builds"][0]["sdkconfig_append"]
+if any("MEMORIA_BENCH" in option for option in product_options):
+    raise SystemExit("the product manifest must not name the bench switch")
+if bench_options != product_options + ["CONFIG_MEMORIA_BENCH_SERIAL=y", "CONFIG_LV_USE_SNAPSHOT=y"]:
+    raise SystemExit("config.bench.json must be config.json plus the two bench options, in that order")
+stripped = json.loads(json.dumps(bench))
+stripped["builds"][0]["sdkconfig_append"] = product_options
+if stripped != product:
+    raise SystemExit("config.bench.json may differ from config.json only in sdkconfig_append")
+PY
+rg -Fq -- '--config config.bench.json' "$SCRIPT_DIR/build.sh" || \
+    die "build.sh --bench must build from config.bench.json"
+rg -Fq 'CONFIG_MEMORIA_BENCH_SERIAL=y' "$SCRIPT_DIR/flash.sh" || \
+    die "flash.sh must tell a bench image from a product image"
 
 "$SCRIPT_DIR/bootstrap.sh" --no-idf-install
 
@@ -62,6 +91,18 @@ rg -Fq 'memoria::UsbWakeDecisionFor(mode, state == kDeviceStateIdle)' \
 rg -Fq 'open("/dev/secondary", O_RDONLY)' "$board_dir/memoria_esp_vocat.cc" || \
     die "the USB command task must read the secondary console read-only"
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_usb_command.h" ]] || die "USB command header missing"
+[[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_bench_snap.h" ]] || die "bench screenshot header missing"
+[[ -f "$board_dir/memoria_mascot_bench.cc" ]] || die "bench screenshot source missing"
+[[ -f "$board_dir/config.bench.json" ]] || die "bench manifest missing"
+"$python_bin" - "$MEMORIA_UPSTREAM_DIR/main/Kconfig.projbuild" <<'PY'
+import pathlib
+import sys
+
+kconfig = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+block = kconfig.split("config MEMORIA_BENCH_SERIAL\n", 1)[1].split("\nconfig ", 1)[0].split("\nendmenu", 1)[0]
+if "default n" not in block or "depends on BOARD_TYPE_MEMORIA_ESP_VOCAT" not in block:
+    raise SystemExit("MEMORIA_BENCH_SERIAL must default to n and depend on the Memoria board")
+PY
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_input_settle.h" ]] || die "input settle header missing"
 rg -Fq 'input_settle_.Arm();' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
     die "a freshly powered microphone must arm the settling window (its start-up artifacts open VAD epochs)"

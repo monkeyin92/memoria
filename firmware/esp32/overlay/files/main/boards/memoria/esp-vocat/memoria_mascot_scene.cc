@@ -30,8 +30,29 @@ constexpr uint32_t kPopSwapMs = 90;
 constexpr uint32_t kHopMs = 520;
 constexpr uint32_t kRiseMs = 700;
 constexpr uint32_t kBlinkMs = 120;
-// Below this scale (8.8) the sprite is supersampled instead of point-sampled.
-constexpr int kFilterBelowQ = 218;
+// Breathing and speech are squashes about the feet: taller means narrower, by this share of the stretch.
+constexpr float kPlushRatio = 0.7f;
+// Speech lifts the body by up to this much (share of its height) at full level.
+constexpr float kSpeakPulse = 0.014f;
+// Audio level followers (TODOLIST M-1), ms. Levels come as 20 ms blocks; the mouth follows syllables,
+// the glow and the body follow phrases.
+constexpr float kMouthAttackMs = 15.0f;
+constexpr float kMouthReleaseMs = 45.0f;
+constexpr float kBodyAttackMs = 40.0f;
+constexpr float kBodyReleaseMs = 160.0f;
+constexpr float kVoiceReleaseMs = 200.0f;
+// No blocks for this long means nothing is playing (a stalled queue), not a quiet passage.
+constexpr uint32_t kStallMs = 80;
+// The mouth opens on a rise out of a valley and shuts on a fall from a crest (a fixed threshold would
+// hold it open through whole phrases: the TTS stays within 15 % of its crest inside one), but never
+// flickers faster than this.
+constexpr float kMouthOpenFloor = 70.0f;
+constexpr float kMouthShutFloor = 45.0f;
+constexpr uint32_t kMouthMinOpenMs = 80;
+constexpr uint32_t kMouthMinClosedMs = 60;
+// The glow ring is only redrawn this often (it is a 59k px redraw, and 8 ms steps of a soft glow are
+// invisible).
+constexpr uint32_t kGlowHoldMs = 80;
 
 // Boot animation timeline, ms after StartIntro().
 constexpr uint32_t kOrbStart = 250;
@@ -73,22 +94,11 @@ uint16_t To565(uint32_t rgb) {
                                  ((rgb >> 3) & 0x001F));
 }
 
-// Blend fg over bg with alpha 0..255 in RGB565 (5-bit alpha precision).
-#if defined(__GNUC__)
-__attribute__((always_inline))
-#endif
-inline uint16_t Blend(uint16_t fg, uint16_t bg, uint32_t alpha) {
-    if (alpha >= 250) {
-        return fg;
-    }
-    if (alpha < 4) {
-        return bg;
-    }
-    const uint32_t a = (alpha + 4) >> 3;  // 0..32
-    uint32_t f = (fg | (static_cast<uint32_t>(fg) << 16)) & 0x07E0F81Fu;
-    uint32_t b = (bg | (static_cast<uint32_t>(bg) << 16)) & 0x07E0F81Fu;
-    uint32_t r = ((((f - b) * a) >> 5) + b) & 0x07E0F81Fu;
-    return static_cast<uint16_t>(r | (r >> 16));
+inline uint16_t Blend(uint16_t fg, uint16_t bg, uint32_t alpha) { return Blend565(fg, bg, alpha); }
+
+float Follow(float env, float target, float dt_ms, float attack_ms, float release_ms) {
+    const float tau = target > env ? attack_ms : release_ms;
+    return env + (target - env) * (1.0f - std::exp(-dt_ms / tau));
 }
 
 SceneRect Union(const SceneRect& a, const SceneRect& b) {
@@ -347,15 +357,15 @@ uint32_t MascotScene::FrameIntervalMs(uint32_t now_ms) const {
         return 40;
     }
     switch (phase_) {
-        case ScenePhase::kThinking:
-        case ScenePhase::kConnecting:
-            return 40;  // the comet sweeps a visible distance every frame
-        case ScenePhase::kSpeaking:
-            return 50;  // lip beats are 70 ms and up
-        case ScenePhase::kListening:
-            return 60;
+        case ScenePhase::kSetup:
+        case ScenePhase::kWifiConfig:
+            return 80;  // a slow glow, and a small captioned companion
+        case ScenePhase::kIdle:
+            // The breathing is sub-pixel now, so at 25 fps every frame moves; a dozing companion
+            // breathes once in five seconds and does not need it.
+            return sleeping_ ? 80 : 40;
         default:
-            return 80;
+            return 40;  // the comet sweeps a visible distance per frame, the mouth follows 20 ms audio
     }
 }
 
@@ -544,20 +554,78 @@ void MascotScene::UpdateActor(uint32_t now_ms) {
         blink_until_ms_ = now_ms + kBlinkMs;
     }
 
-    // Lip flaps while speaking: short open/closed beats with breath pauses.
-    if (phase_ == ScenePhase::kSpeaking) {
-        if (now_ms >= next_mouth_ms_) {
-            mouth_open_ = !mouth_open_;
-            if (mouth_open_) {
-                next_mouth_ms_ = now_ms + RandomRange(90, 180);
-            } else {
-                next_mouth_ms_ = now_ms + (Random() % 7 == 0 ? RandomRange(260, 460)
-                                                              : RandomRange(70, 150));
-            }
+    // Lip flaps follow what the speaker plays (SetOutputLevel); nothing playing, the mouth stays shut.
+    mouth_open_ = phase_ == ScenePhase::kSpeaking && out_open_;
+}
+
+void MascotScene::SetOutputLevel(uint8_t valley, uint8_t peak, uint32_t blocks, uint32_t now_ms) {
+    LevelFollower& f = out_;
+    float dt = f.polled ? static_cast<float>(now_ms - f.last_ms) : 40.0f;
+    dt = dt < 1.0f ? 1.0f : (dt > 200.0f ? 200.0f : dt);
+    f.polled = true;
+    f.last_ms = now_ms;
+    if (blocks > 0) {
+        f.audio_ms = now_ms;
+        const float hi = static_cast<float>(peak);
+        const float lo = valley < peak ? static_cast<float>(valley) : hi;
+        // The quietest block first, then the loudest: a syllable boundary inside the frame shows up as
+        // a dip the detector can see, whatever the frame rate.
+        f.fast = Follow(f.fast, lo, dt * 0.5f, kMouthAttackMs, kMouthReleaseMs);
+        StepMouth(f.fast, now_ms);
+        f.fast = Follow(f.fast, hi, dt * 0.5f, kMouthAttackMs, kMouthReleaseMs);
+        StepMouth(f.fast, now_ms);
+        f.slow = Follow(f.slow, hi, dt, kBodyAttackMs, kBodyReleaseMs);
+    } else if (now_ms - f.audio_ms >= kStallMs) {
+        f.fast = Follow(f.fast, 0.0f, dt, kMouthAttackMs, kMouthReleaseMs);
+        StepMouth(f.fast, now_ms);
+        f.slow = Follow(f.slow, 0.0f, dt, kBodyAttackMs, kBodyReleaseMs);
+    }
+}
+
+void MascotScene::StepMouth(float env, uint32_t now_ms) {
+    const uint32_t since = now_ms - out_toggle_ms_;
+    if (out_open_) {
+        out_ext_ = env > out_ext_ ? env : out_ext_;
+        const float drop = 0.15f * out_ext_ > 12.0f ? 0.15f * out_ext_ : 12.0f;
+        if ((env <= kMouthShutFloor || env < out_ext_ - drop) && since >= kMouthMinOpenMs) {
+            out_open_ = false;
+            out_ext_ = env;
+            out_toggle_ms_ = now_ms;
         }
     } else {
-        mouth_open_ = false;
+        out_ext_ = env < out_ext_ ? env : out_ext_;
+        const float base = out_ext_ > kMouthOpenFloor ? out_ext_ : kMouthOpenFloor;
+        const float rise = 0.12f * base > 12.0f ? 0.12f * base : 12.0f;
+        if (env >= kMouthOpenFloor && env > out_ext_ + rise && since >= kMouthMinClosedMs) {
+            out_open_ = true;
+            out_ext_ = env;
+            out_toggle_ms_ = now_ms;
+        }
     }
+}
+
+void MascotScene::SetInputLevel(uint8_t peak, uint32_t blocks, uint32_t now_ms) {
+    LevelFollower& f = in_;
+    float dt = f.polled ? static_cast<float>(now_ms - f.last_ms) : 40.0f;
+    dt = dt < 1.0f ? 1.0f : (dt > 200.0f ? 200.0f : dt);
+    f.polled = true;
+    f.last_ms = now_ms;
+    if (blocks > 0) {
+        f.audio_ms = now_ms;
+        f.slow = Follow(f.slow, static_cast<float>(peak), dt, kBodyAttackMs, kVoiceReleaseMs);
+    } else if (now_ms - f.audio_ms >= kStallMs) {
+        f.slow = Follow(f.slow, 0.0f, dt, kBodyAttackMs, kVoiceReleaseMs);
+    }
+}
+
+int MascotScene::HeldGlow(int level, uint32_t now_ms) {
+    if (glow_valid_ && now_ms - glow_ms_ < kGlowHoldMs) {
+        return glow_level_;
+    }
+    glow_valid_ = true;
+    glow_ms_ = now_ms;
+    glow_level_ = level;
+    return level;
 }
 
 MascotScene::Placement MascotScene::Compute(uint32_t now_ms) {
@@ -573,10 +641,13 @@ MascotScene::Placement MascotScene::Compute(uint32_t now_ms) {
 
     // Ring.
     const float t_s = now_ms / 1000.0f;
+    int glow = 0;
     switch (phase_) {
         case ScenePhase::kListening: {
+            // A calm pulse that brightens toward full with the child's voice.
             p.ring_mode = 1;
-            p.ring_level = static_cast<int>(150 + 90 * (0.5f + 0.5f * std::sin(t_s * 2.0f * kPi / 1.4f)));
+            const float calm = 120.0f + 70.0f * (0.5f + 0.5f * std::sin(t_s * 2.0f * kPi / 1.4f));
+            glow = static_cast<int>(calm + (255.0f - calm) * (in_.slow / 255.0f));
             break;
         }
         case ScenePhase::kThinking:
@@ -587,13 +658,14 @@ MascotScene::Placement MascotScene::Compute(uint32_t now_ms) {
             break;
         }
         case ScenePhase::kSpeaking:
+            // The glow rides the phrase and dims while nothing plays.
             p.ring_mode = 1;
-            p.ring_level = mouth_open_ ? 120 : 70;
+            glow = static_cast<int>(64.0f + 72.0f * (out_.slow / 255.0f));
             break;
         case ScenePhase::kSetup:
         case ScenePhase::kWifiConfig:
             p.ring_mode = 1;
-            p.ring_level = static_cast<int>(80 + 90 * (0.5f + 0.5f * std::sin(t_s * 2.0f * kPi / 3.0f)));
+            glow = static_cast<int>(80 + 90 * (0.5f + 0.5f * std::sin(t_s * 2.0f * kPi / 3.0f)));
             break;
         default:
             break;
@@ -602,7 +674,9 @@ MascotScene::Placement MascotScene::Compute(uint32_t now_ms) {
         p.ring_mode = 0;
     }
     if (p.ring_mode == 1) {
-        p.ring_level &= ~7;  // 32 intensity steps are plenty for a glow
+        p.ring_level = HeldGlow(glow & ~7, now_ms);  // 32 intensity steps are plenty for a glow
+    } else {
+        glow_valid_ = false;
     }
 
     if (pack_ == nullptr || phase_ == ScenePhase::kSetup) {
@@ -625,39 +699,58 @@ MascotScene::Placement MascotScene::Compute(uint32_t now_ms) {
         return p;
     }
 
-    // Body motion.
+    // Body motion. The mascot is one bitmap, so all it can do is move and squash. Breathing squashes it
+    // about the feet (the head rises, the feet stay planted, taller means narrower) instead of sliding the
+    // whole picture up and down, and a slow sideways weight shift keeps it from standing still between
+    // breaths. Every effect below adds to the scale, so a pop or a hop starts from the breath it
+    // interrupts rather than from a rest pose.
     float dx = 0.0f;
     float dy = 0.0f;
     float sx = 1.0f;
     float sy = 1.0f;
-    float breathe_amp = 3.0f;
+    float breathe = 0.012f;  // stretch of the body's height at the top of a breath
     float breathe_period = 3.6f;
+    float sway_px = 1.2f;
+    float sway_period = 7.3f;
     switch (phase_) {
         case ScenePhase::kListening:
-            breathe_amp = 2.0f;
+            breathe = 0.008f;
             breathe_period = 2.4f;
+            sway_px = 1.0f;
+            sway_period = 6.1f;
             break;
         case ScenePhase::kThinking:
         case ScenePhase::kConnecting:
-            breathe_amp = 2.0f;
+            breathe = 0.008f;
             breathe_period = 3.0f;
+            sway_px = 0.0f;
             dx = 5.0f * std::sin(t_s * 2.0f * kPi / 2.8f);
             break;
-        case ScenePhase::kSpeaking:
-            breathe_amp = 1.5f;
+        case ScenePhase::kSpeaking: {
+            breathe = 0.006f;
             breathe_period = 3.0f;
-            dy -= mouth_open_ ? 2.0f : 0.0f;
+            sway_px = 0.8f;
+            sway_period = 5.9f;
+            // The body lifts with the voice, a squash about the feet like the breath.
+            const float lift_with_voice = kSpeakPulse * (out_.slow / 255.0f);
+            sy += lift_with_voice;
+            sx -= kPlushRatio * lift_with_voice;
             break;
+        }
         case ScenePhase::kIdle:
             if (sleeping_) {
-                breathe_amp = 2.5f;
+                breathe = 0.010f;
                 breathe_period = 5.2f;
+                sway_px = 0.0f;
             }
             break;
         default:
             break;
     }
-    dy += breathe_amp * std::sin(t_s * 2.0f * kPi / breathe_period);
+    const float breath = breathe * std::sin(t_s * 2.0f * kPi / breathe_period);
+    sy += breath;
+    sx -= kPlushRatio * breath;
+    dx += sway_px * std::sin(t_s * 2.0f * kPi / sway_period + 1.3f);
     if (now_ms < wobble_until_ms_) {
         const float fade = Clamp01((wobble_until_ms_ - now_ms) / 600.0f);
         dx += 6.0f * fade * std::sin(t_s * 2.0f * kPi / 0.45f);
@@ -670,13 +763,13 @@ MascotScene::Placement MascotScene::Compute(uint32_t now_ms) {
         const float u = Phase01(intro_t, kRiseStart, kRiseStart + kRiseMs);
         dy += (1.0f - EaseOutBack(u)) * 230.0f;
         if (u < 1.0f) {
-            sy = 1.0f + 0.06f * (1.0f - u);
-            sx = 1.0f - 0.04f * (1.0f - u);
+            sy += 0.06f * (1.0f - u);
+            sx -= 0.04f * (1.0f - u);
         } else {
             const float v = Phase01(intro_t, kRiseStart + kRiseMs, kRiseStart + kRiseMs + 220);
             const float squash = std::sin(v * kPi) * 0.06f;
-            sy = 1.0f - squash;
-            sx = 1.0f + squash * 0.8f;
+            sy -= squash;
+            sx += squash * 0.8f;
         }
         if (intro_t >= kGreetStart && intro_t < kGreetStart + kHopMs) {
             const float h = static_cast<float>(intro_t - kGreetStart) / kHopMs;
@@ -691,25 +784,28 @@ MascotScene::Placement MascotScene::Compute(uint32_t now_ms) {
             const float v = static_cast<float>(mt - kPopSwapMs) / (kPopMs - kPopSwapMs);
             s = -0.07f * std::cos(v * kPi * 0.5f) + 0.05f * std::sin(v * kPi) * (1.0f - v);
         }
-        sy = 1.0f + s;
-        sx = 1.0f - s * 0.7f;
+        sy += s;
+        sx -= s * 0.7f;
     } else if (motion_ == Motion::kHop) {
         if (mt < 90) {
             const float u = mt / 90.0f;
-            sy = 1.0f - 0.10f * u;
-            sx = 1.0f + 0.07f * u;
+            sy -= 0.10f * u;
+            sx += 0.07f * u;
         } else if (mt < 350) {
             const float u = (mt - 90) / 260.0f;
             dy -= 24.0f * std::sin(u * kPi);
-            sy = 1.0f + 0.05f * std::sin(u * kPi);
-            sx = 1.0f - 0.035f * std::sin(u * kPi);
+            sy += 0.05f * std::sin(u * kPi);
+            sx -= 0.035f * std::sin(u * kPi);
         } else {
             const float u = Clamp01((mt - 350) / 170.0f);
             const float squash = std::sin(u * kPi) * 0.08f;
-            sy = 1.0f - squash;
-            sx = 1.0f + squash * 0.8f;
+            sy -= squash;
+            sx += squash * 0.8f;
         }
     }
+
+    // The shadow stays on the ground and shrinks while the mascot is airborne.
+    const float lift = Clamp01(-dy / 30.0f);
 
     // Captioned layout: the whole body, its motion included, shrinks about
     // the feet onto a higher ground row. The boot entrance keeps its stage.
@@ -727,33 +823,33 @@ MascotScene::Placement MascotScene::Compute(uint32_t now_ms) {
 
     p.sprite = true;
     p.frame = frame;
-    p.ground_y = static_cast<int>(std::lround(ground));
-    p.ax = kCenter + static_cast<int>(std::lround(dx));
-    p.ay = p.ground_y + static_cast<int>(std::lround(dy));
-    p.sx_q = static_cast<int>(std::lround(sx * 256.0f));
-    p.sy_q = static_cast<int>(std::lround(sy * 256.0f));
-    const int cx = pack_->canvas_w() / 2;
-    const int fy = pack_->foot_y();
-    p.sprite_box.x0 = p.ax + ((sprite->x - cx) * p.sx_q >> 8) - 1;
-    p.sprite_box.x1 = p.ax + ((sprite->x + sprite->w - cx) * p.sx_q >> 8) + 2;
-    p.sprite_box.y0 = p.ay + ((sprite->y - fy) * p.sy_q >> 8) - 1;
-    p.sprite_box.y1 = p.ay + ((sprite->y + sprite->h - fy) * p.sy_q >> 8) + 2;
-    p.sprite_box = Clip(p.sprite_box, Screen());
+    // Position to 1/16 px and scale to 1/4096: far finer than a pixel, so the sampler sees every bit of
+    // the motion, and still coarse enough that an unmoving mascot compares equal frame to frame.
+    p.xf.ax_q = static_cast<int32_t>(std::lround((kCenter + dx) * 16.0f));
+    p.xf.ay_q = static_cast<int32_t>(std::lround((ground + dy) * 16.0f));
+    p.xf.sx_q = static_cast<int32_t>(std::lround(sx * kScaleOne));
+    p.xf.sy_q = static_cast<int32_t>(std::lround(sy * kScaleOne));
+    p.sprite_box =
+        Clip(SpriteBounds(*sprite, pack_->canvas_w() / 2, pack_->foot_y(), p.xf), Screen());
 
-    // The shadow stays on the ground and shrinks while the mascot is airborne.
-    const float lift = Clamp01((p.ground_y - p.ay) / (30.0f * k));
-    p.shadow_rx = static_cast<int>(pack_->foot_half_w() * 1.35f * k * (1.0f - 0.3f * lift));
+    const float rx = pack_->foot_half_w() * 1.35f * k * (1.0f - 0.3f * lift);
+    const float ry = rx / 6.0f + 2.0f;
+    const float cx = kCenter + dx * 0.4f;
+    const float cy = ground + 2.0f;
+    p.shadow_rx_q = static_cast<int>(std::lround(rx * 16.0f));
+    p.shadow_cx_q = static_cast<int>(std::lround(cx * 16.0f));
+    p.shadow_cy_q = static_cast<int>(std::lround(cy * 16.0f));
     p.shadow_alpha = static_cast<int>(72.0f * (1.0f - 0.5f * lift));
-    const int sry = p.shadow_rx / 6 + 2;
-    const int scx = kCenter + static_cast<int>(dx * 0.4f);
-    p.shadow_box = Clip(SceneRect{scx - p.shadow_rx - 1, p.ground_y + 2 - sry - 1,
-                                  scx + p.shadow_rx + 2, p.ground_y + 2 + sry + 2},
+    p.shadow_box = Clip(SceneRect{static_cast<int>(std::floor(cx - rx)) - 1,
+                                  static_cast<int>(std::floor(cy - ry)) - 1,
+                                  static_cast<int>(std::ceil(cx + rx)) + 1,
+                                  static_cast<int>(std::ceil(cy + ry)) + 1},
                         Screen());
     return p;
 }
 
 void MascotScene::DrawShadow(const SceneRect& clip, const Placement& p) {
-    if (!p.sprite || p.shadow_rx <= 0) {
+    if (!p.sprite || p.shadow_rx_q <= 0) {
         return;
     }
     const SceneRect area = Clip(clip, p.shadow_box);
@@ -761,10 +857,10 @@ void MascotScene::DrawShadow(const SceneRect& clip, const Placement& p) {
         return;
     }
     const uint16_t colour = To565(theme_.ink);
-    const float cx = (p.shadow_box.x0 + p.shadow_box.x1) * 0.5f;
-    const float cy = p.ground_y + 2.0f;
-    const float rx = static_cast<float>(p.shadow_rx);
-    const float ry = static_cast<float>(p.shadow_rx / 6 + 2);
+    const float cx = static_cast<float>(p.shadow_cx_q) / 16.0f;
+    const float cy = static_cast<float>(p.shadow_cy_q) / 16.0f;
+    const float rx = static_cast<float>(p.shadow_rx_q) / 16.0f;
+    const float ry = rx / 6.0f + 2.0f;
     for (int y = area.y0; y < area.y1; ++y) {
         const float ny = (y + 0.5f - cy) / ry;
         uint16_t* row = RowPtr(y);
@@ -794,127 +890,8 @@ void MascotScene::DrawSprite(const SceneRect& clip, const Placement& p) {
     }
     const int cx = pack_->canvas_w() / 2;
     const int fy = pack_->foot_y();
-    if (p.sx_q == 256 && p.sy_q == 256) {
-        // Unscaled: a straight alpha blit.
-        const int ox = p.ax - cx + s->x;  // screen x of sprite column 0
-        const int oy = p.ay - fy + s->y;
-        for (int y = area.y0; y < area.y1; ++y) {
-            const int sy = y - oy;
-            if (sy < 0 || sy >= s->h) {
-                continue;
-            }
-            const uint16_t* src = s->rgb + static_cast<std::size_t>(sy) * s->w;
-            const uint8_t* alpha = s->alpha + static_cast<std::size_t>(sy) * s->w;
-            uint16_t* row = RowPtr(y);
-            // Only the opaque span of this sprite row can change a pixel.
-            const int span0 = ox + s->span[sy * 2];
-            const int span1 = ox + s->span[sy * 2 + 1];
-            int x0 = area.x0 > span0 ? area.x0 : span0;
-            int x1 = area.x1 < span1 ? area.x1 : span1;
-            for (int x = x0; x < x1; ++x) {
-                const uint8_t a = alpha[x - ox];
-                if (a != 0) {
-                    row[x] = Blend(src[x - ox], row[x], a);
-                }
-            }
-        }
-        return;
-    }
-    if (p.sx_q < kFilterBelowQ && p.sy_q < kFilterBelowQ) {
-        DrawSpriteFiltered(area, p, s);
-        return;
-    }
-    // Scaled about the feet: nearest-neighbour inverse mapping, 16.16 fixed point.
-    const int32_t inv_x = static_cast<int32_t>((256LL << 16) / p.sx_q);
-    const int32_t inv_y = static_cast<int32_t>((256LL << 16) / p.sy_q);
     for (int y = area.y0; y < area.y1; ++y) {
-        const int32_t cyq = (y - p.ay) * inv_y;  // canvas offset from the feet, 16.16
-        const int canvas_y = fy + (cyq >> 16);
-        const int sy = canvas_y - s->y;
-        if (sy < 0 || sy >= s->h) {
-            continue;
-        }
-        const uint16_t* src = s->rgb + static_cast<std::size_t>(sy) * s->w;
-        const uint8_t* alpha = s->alpha + static_cast<std::size_t>(sy) * s->w;
-        uint16_t* row = RowPtr(y);
-        const int span0 = s->span[sy * 2];
-        const int span1 = s->span[sy * 2 + 1];
-        int32_t cxq = (area.x0 - p.ax) * inv_x;
-        for (int x = area.x0; x < area.x1; ++x, cxq += inv_x) {
-            const int sx = cx + (cxq >> 16) - s->x;
-            if (sx < span0 || sx >= span1) {
-                continue;
-            }
-            const uint8_t a = alpha[sx];
-            if (a != 0) {
-                row[x] = Blend(src[sx], row[x], a);
-            }
-        }
-    }
-}
-
-void MascotScene::DrawSpriteFiltered(const SceneRect& area, const Placement& p,
-                                     const MascotSprite* s) {
-    // A clear shrink (the captioned layout) would alias with one sample per
-    // pixel: plush edges crawl as the mascot breathes. Average a 2x2 grid of
-    // samples instead, weighting colour by coverage.
-    const int cx = pack_->canvas_w() / 2;
-    const int fy = pack_->foot_y();
-    const int32_t inv_x = static_cast<int32_t>((256LL << 16) / p.sx_q);
-    const int32_t inv_y = static_cast<int32_t>((256LL << 16) / p.sy_q);
-    for (int y = area.y0; y < area.y1; ++y) {
-        const uint16_t* src_rows[2] = {nullptr, nullptr};
-        const uint8_t* alpha_rows[2] = {nullptr, nullptr};
-        int span0[2] = {0, 0};
-        int span1[2] = {0, 0};
-        bool any_row = false;
-        for (int j = 0; j < 2; ++j) {
-            const int32_t cyq = (y - p.ay) * inv_y + inv_y / 4 + j * (inv_y / 2);
-            const int sy = fy + (cyq >> 16) - s->y;
-            if (sy < 0 || sy >= s->h) {
-                continue;
-            }
-            src_rows[j] = s->rgb + static_cast<std::size_t>(sy) * s->w;
-            alpha_rows[j] = s->alpha + static_cast<std::size_t>(sy) * s->w;
-            span0[j] = s->span[sy * 2];
-            span1[j] = s->span[sy * 2 + 1];
-            any_row = true;
-        }
-        if (!any_row) {
-            continue;
-        }
-        uint16_t* row = RowPtr(y);
-        const int32_t base_q = (area.x0 - p.ax) * inv_x + inv_x / 4;
-        for (int x = area.x0; x < area.x1; ++x) {
-            const int32_t cxq = base_q + (x - area.x0) * inv_x;
-            uint32_t sum_a = 0;
-            uint32_t sum_r = 0;
-            uint32_t sum_g = 0;
-            uint32_t sum_b = 0;
-            for (int i = 0; i < 2; ++i) {
-                const int sx = cx + ((cxq + i * (inv_x / 2)) >> 16) - s->x;
-                for (int j = 0; j < 2; ++j) {
-                    if (alpha_rows[j] == nullptr || sx < span0[j] || sx >= span1[j]) {
-                        continue;
-                    }
-                    const uint32_t a = alpha_rows[j][sx];
-                    if (a == 0) {
-                        continue;
-                    }
-                    const uint32_t c = src_rows[j][sx];
-                    sum_a += a;
-                    sum_r += ((c >> 11) & 0x1F) * a;
-                    sum_g += ((c >> 5) & 0x3F) * a;
-                    sum_b += (c & 0x1F) * a;
-                }
-            }
-            if (sum_a == 0) {
-                continue;
-            }
-            const uint16_t colour = static_cast<uint16_t>(((sum_r / sum_a) << 11) |
-                                                          ((sum_g / sum_a) << 5) | (sum_b / sum_a));
-            row[x] = Blend(colour, row[x], sum_a >> 2);
-        }
+        BlendSpriteRow(*s, cx, fy, p.xf, y, area.x0, area.x1, RowPtr(y));
     }
 }
 
@@ -1054,7 +1031,8 @@ void MascotScene::PrepareIntro(uint32_t now_ms) {
     }
 }
 
-void MascotScene::RedrawRect(const SceneRect& rect, const Placement& p, uint32_t now_ms) {
+void MascotScene::RedrawRect(const SceneRect& rect, const Placement& p, uint32_t now_ms,
+                             bool skip_hole) {
     const SceneRect r = Clip(rect, Screen());
     if (Empty(r)) {
         return;
@@ -1066,18 +1044,16 @@ void MascotScene::RedrawRect(const SceneRect& rect, const Placement& p, uint32_t
     // the circle.
     const bool intro_on = intro_active(now_ms);
     uint16_t line[kSize];
-    for (int y = r.y0; y < r.y1; ++y) {
-        const int x0 = r.x0 > kCenter - circle_hw_[y] ? r.x0 : kCenter - circle_hw_[y];
-        const int x1 = r.x1 < kCenter + circle_hw_[y] ? r.x1 : kCenter + circle_hw_[y];
-        if (x1 <= x0) {
-            continue;
+    auto compose = [&](int y, int xa, int xb) {
+        if (xb <= xa) {
+            return;
         }
-        const std::size_t bytes = static_cast<std::size_t>(x1 - x0) * 2;
+        const std::size_t bytes = static_cast<std::size_t>(xb - xa) * 2;
         const std::size_t offset = static_cast<std::size_t>(y) * kSize;
-        std::memcpy(line + x0, bg_ + offset + x0, bytes);
+        std::memcpy(line + xa, bg_ + offset + xa, bytes);
         line_ = line;
         line_y_ = y;
-        const SceneRect row{x0, y, x1, y + 1};
+        const SceneRect row{xa, y, xb, y + 1};
         DrawShadow(row, p);
         DrawSprite(row, p);
         DrawRing(row, p);
@@ -1085,7 +1061,23 @@ void MascotScene::RedrawRect(const SceneRect& rect, const Placement& p, uint32_t
             DrawIntro(row, now_ms);
         }
         line_y_ = -1;
-        std::memcpy(fb_ + offset + x0, line + x0, bytes);
+        std::memcpy(fb_ + offset + xa, line + xa, bytes);
+        composed_px_ += static_cast<uint32_t>(xb - xa);
+    };
+    for (int y = r.y0; y < r.y1; ++y) {
+        const int x0 = r.x0 > kCenter - circle_hw_[y] ? r.x0 : kCenter - circle_hw_[y];
+        const int x1 = r.x1 < kCenter + circle_hw_[y] ? r.x1 : kCenter + circle_hw_[y];
+        if (x1 <= x0) {
+            continue;
+        }
+        // The columns inside the ring's inner circle are never lit by it: a ring-only redraw leaves them.
+        const int hole = skip_hole ? ring_hole_[y] : 0;
+        if (hole > 0) {
+            compose(y, x0, x1 < kCenter - hole ? x1 : kCenter - hole);
+            compose(y, x0 > kCenter + hole ? x0 : kCenter + hole, x1);
+        } else {
+            compose(y, x0, x1);
+        }
     }
 }
 
@@ -1102,6 +1094,7 @@ int MascotScene::Render(uint32_t now_ms, SceneRect* dirty, int max_dirty) {
         intro_ = false;
         full_redraw_ = true;
     }
+    composed_px_ = 0;
     UpdateActor(now_ms);
     const Placement p = Compute(now_ms);
     if (intro_active(now_ms)) {
@@ -1118,12 +1111,13 @@ int MascotScene::Render(uint32_t now_ms, SceneRect* dirty, int max_dirty) {
         return 1;
     }
     const bool sprite_changed = p.sprite != last_.sprite || p.frame != last_.frame ||
-                                p.ax != last_.ax || p.ay != last_.ay || p.sx_q != last_.sx_q ||
-                                p.sy_q != last_.sy_q || p.ground_y != last_.ground_y ||
-                                p.shadow_rx != last_.shadow_rx ||
+                                p.xf != last_.xf || p.shadow_cx_q != last_.shadow_cx_q ||
+                                p.shadow_cy_q != last_.shadow_cy_q ||
+                                p.shadow_rx_q != last_.shadow_rx_q ||
                                 p.shadow_alpha != last_.shadow_alpha;
     const bool ring_changed = p.ring_mode != last_.ring_mode || p.ring_level != last_.ring_level;
     SceneRect rects[kMaxDirty];
+    bool ring_only[kMaxDirty] = {};
     if (sprite_changed) {
         SceneRect box = Union(Union(last_.sprite_box, last_.shadow_box),
                               Union(p.sprite_box, p.shadow_box));
@@ -1135,14 +1129,19 @@ int MascotScene::Render(uint32_t now_ms, SceneRect* dirty, int max_dirty) {
         }
     }
     if (ring_changed) {
-        count += RingStrips(rects + count);
+        const int strips = RingStrips(rects + count);
+        for (int i = 0; i < strips; ++i) {
+            ring_only[count + i] = true;
+        }
+        count += strips;
     }
     if (count > max_dirty) {
         count = 1;
         rects[0] = Screen();
+        ring_only[0] = false;
     }
     for (int i = 0; i < count; ++i) {
-        RedrawRect(rects[i], p, now_ms);
+        RedrawRect(rects[i], p, now_ms, ring_only[i]);
         dirty[i] = rects[i];
     }
     last_ = p;

@@ -1,0 +1,39 @@
+--- a/main/audio/audio_service.cc
++++ b/main/audio/audio_service.cc
+@@ -485,6 +485,13 @@ void AudioService::AudioOutputTask() {
+             codec_->EnableOutput(true);
+         }
+ 
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++        /* The level the mascot's mouth and glow follow (memoria_audio_level.h). Measured as the frame is
++         * handed to the codec: the DMA ring plays it about 60 ms later, which is about what the display
++         * needs to put the mouth on screen. */
++        memoria::PublishPcm(memoria::output_level_tap, task->pcm.data(), task->pcm.size(),
++                            codec_->output_sample_rate());
++#endif
+         codec_->OutputData(task->pcm);
+ 
+         /* Update the last output time */
+@@ -644,6 +651,12 @@ void AudioService::OpusCodecTask() {
+                 }
+                 last_uplink_rms_.store(static_cast<float>(
+                     std::sqrt(sum / static_cast<double>(task->pcm.size())) / 32768.0));
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++                /* The microphone side of the mascot's levels: what the audio engine sends upstream, after
++                 * echo cancellation and noise suppression. */
++                memoria::input_level_tap.Publish(
++                    memoria::RmsToLevel(last_uplink_rms_.load(std::memory_order_relaxed)));
++#endif
+             }
+ 
+             auto packet = std::make_unique<AudioStreamPacket>();
+--- a/main/audio/audio_service.h
++++ b/main/audio/audio_service.h
+@@ -26,6 +26,7 @@
+ #include "ogg_demuxer.h"
+ #include "memoria_playback_supply_meter.h"
+ #include "memoria_input_settle.h"
++#include "memoria_audio_level.h"
+ 
+ /*
+  * There are two types of audio data flow:

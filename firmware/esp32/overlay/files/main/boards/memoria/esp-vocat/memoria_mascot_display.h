@@ -5,6 +5,13 @@
 #include "lvgl_image.h"
 #include "memoria_mascot_pack.h"
 #include "memoria_mascot_scene.h"
+#include "sdkconfig.h"
+#if CONFIG_MEMORIA_BENCH_SERIAL
+#include "memoria_mascot_status.h"
+
+// Defined in memoria_mascot_bench.cc; present in test-rig images only.
+extern "C" const char memoria_bench_build_marker[];
+#endif
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -60,6 +67,17 @@ public:
 
     static bool IsKnownCompanion(const char* companion_id);
 
+#if CONFIG_MEMORIA_BENCH_SERIAL
+    // Test-rig builds only (TODOLIST M-2, memoria_mascot_bench.cc); a product image has neither of these.
+    // The whole screen, LVGL text layer included, as SNAP lines on the USB port (memoria_bench_snap.h). It
+    // runs on the calling task, the USB command task, whose stack is sized for the software renderer; the
+    // display lock is held only while LVGL draws the picture, not while it is sent.
+    void BenchSendSnapshot();
+    // Asks the animation task for one status line (memoria_mascot_status.h) with its counters; answered within
+    // a frame, 100 ms at the slowest (the dark-panel poll).
+    void BenchRequestStatus() { bench_status_requested_.store(true); }
+#endif
+
 private:
     static constexpr uint32_t kFrameMs = 40;  // fastest frame pace
     static constexpr uint32_t kIdleScreenOffMs = 10 * 1000;
@@ -79,6 +97,10 @@ private:
     bool WantsCaption(uint32_t now_ms);
     void StyleQrCard();                 // caller holds the display lock
     static uint32_t NowMs();
+#if CONFIG_MEMORIA_BENCH_SERIAL
+    // Logs the status line; called by the animation task with its own counters.
+    static void BenchLogStatus(const memoria::BenchStatus& status);
+#endif
 
     uint16_t* framebuffer_ = nullptr;
     std::unique_ptr<LvglAllocatedImage> frame_image_;
@@ -112,6 +134,9 @@ private:
     std::atomic<uint32_t> error_until_ms_{0};
     std::atomic<bool> user_spoke_{false};
     std::atomic<bool> qr_visible_{false};
+#if CONFIG_MEMORIA_BENCH_SERIAL
+    std::atomic<bool> bench_status_requested_{false};
+#endif
 };
 
 #endif  // MEMORIA_MASCOT_DISPLAY_H

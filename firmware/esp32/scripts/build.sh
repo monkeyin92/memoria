@@ -6,24 +6,32 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 
 CLEAN=0
+BENCH=0
 LANGUAGE="${MEMORIA_FIRMWARE_LANGUAGE:-zh-CN}"
 WAKE_WORD_MODEL="${MEMORIA_FIRMWARE_WAKE_WORD_MODEL:-}"
 NO_IDF_INSTALL=0
 
 usage() {
     cat <<'EOF'
-Usage: build.sh [--clean] [--language LOCALE] [--wake-word MODEL|disabled] [--no-idf-install]
+Usage: build.sh [--clean] [--bench] [--language LOCALE] [--wake-word MODEL|disabled] [--no-idf-install]
 
 The product build uses zh-CN and the board's Memoria wake word ("茉莉") by
 default. Pass --wake-word disabled only for an explicit bring-up diagnostic
 build, or pass an upstream ESP-SR model to override the product default. The
 upstream build.py still performs the real merge-bin.
+
+--bench builds the test-rig image from the board's config.bench.json: the
+product build plus CONFIG_MEMORIA_BENCH_SERIAL (the USB console also answers
+`snap` and `status`, see TODOLIST M-2). It is written next to the product
+artifacts as memoria-esp-vocat-bench-*.bin, carries a marker the firmware
+publisher refuses, and flash.sh flashes it only with --bench.
 EOF
 }
 
 while (($# > 0)); do
     case "$1" in
         --clean) CLEAN=1 ;;
+        --bench) BENCH=1 ;;
         --language) shift; (($# > 0)) || die "--language requires a value"; LANGUAGE="$1" ;;
         --wake-word) shift; (($# > 0)) || die "--wake-word requires a value"; WAKE_WORD_MODEL="$1" ;;
         --no-idf-install) NO_IDF_INSTALL=1 ;;
@@ -57,6 +65,16 @@ if [[ "$CLEAN" == 1 ]]; then
     (cd "$MEMORIA_UPSTREAM_DIR" && idf.py fullclean)
 fi
 
+# A bench image never takes a product artifact's name: the product files stay what publish_firmware_release.py
+# and flash.sh expect, and a bench file is recognisable from its name alone.
+artifact_name="$MEMORIA_BOARD_NAME"
+if [[ "$BENCH" == 1 ]]; then
+    artifact_name="$MEMORIA_BOARD_NAME-bench"
+    printf '%s\n' \
+        '*** BENCH BUILD: the USB console answers snap and status (CONFIG_MEMORIA_BENCH_SERIAL). ***' \
+        '*** For the test rig only: never publish it, never ship it. ***' >&2
+fi
+
 cd "$MEMORIA_UPSTREAM_DIR"
 build_args=(
     "$python_bin"
@@ -65,15 +83,33 @@ build_args=(
     --name "$MEMORIA_BOARD_NAME"
     --language "$LANGUAGE"
 )
+if [[ "$BENCH" == 1 ]]; then
+    build_args+=(--config config.bench.json)
+fi
 if [[ -n "$WAKE_WORD_MODEL" ]]; then
     build_args+=(--wake-word "$WAKE_WORD_MODEL")
 fi
 "${build_args[@]}"
 
+# The generated sdkconfig says what was really built. A product build must not carry the bench switch and a
+# bench build must: either mismatch stops here, before any artifact is copied.
+sdkconfig_file="$MEMORIA_UPSTREAM_DIR/sdkconfig"
+[[ -s "$sdkconfig_file" ]] || die "upstream did not produce sdkconfig: $sdkconfig_file"
+built_bench=0
+if grep -q '^CONFIG_MEMORIA_BENCH_SERIAL=y$' "$sdkconfig_file"; then
+    built_bench=1
+fi
+if [[ "$BENCH" == 1 && "$built_bench" != 1 ]]; then
+    die "bench build requested, but the generated sdkconfig lacks CONFIG_MEMORIA_BENCH_SERIAL=y"
+fi
+if [[ "$BENCH" != 1 && "$built_bench" == 1 ]]; then
+    die "product build carries CONFIG_MEMORIA_BENCH_SERIAL=y; the bench switch must stay out of config.json"
+fi
+
 merged="$MEMORIA_UPSTREAM_DIR/build/merged-binary.bin"
 [[ -s "$merged" ]] || die "upstream did not produce a non-empty merged binary: $merged"
 mkdir -p "$MEMORIA_ARTIFACT_DIR"
-cp "$merged" "$MEMORIA_ARTIFACT_DIR/$MEMORIA_BOARD_NAME-merged.bin"
+cp "$merged" "$MEMORIA_ARTIFACT_DIR/$artifact_name-merged.bin"
 for image in bootloader.bin partition-table.bin; do
     image_path="$MEMORIA_UPSTREAM_DIR/build/$image"
     if [[ "$image" == "bootloader.bin" ]]; then
@@ -86,7 +122,7 @@ for image in bootloader.bin partition-table.bin; do
         fi
     fi
     if [[ -s "$image_path" ]]; then
-        cp "$image_path" "$MEMORIA_ARTIFACT_DIR/$MEMORIA_BOARD_NAME-$image"
+        cp "$image_path" "$MEMORIA_ARTIFACT_DIR/$artifact_name-$image"
     fi
 done
 metadata="$MEMORIA_UPSTREAM_DIR/build/project_description.json"
@@ -113,9 +149,12 @@ PY
 )"
 app_image="$MEMORIA_UPSTREAM_DIR/build/$app_image_name"
 [[ -s "$app_image" ]] || die "upstream did not produce a non-empty application image: $app_image"
-cp "$app_image" "$MEMORIA_ARTIFACT_DIR/$MEMORIA_BOARD_NAME-app.bin"
+cp "$app_image" "$MEMORIA_ARTIFACT_DIR/$artifact_name-app.bin"
 # Remove stale product-level aliases only. Identity/NVS data and rollback
 # backups live outside this top-level artifact glob and are not touched.
 find "$MEMORIA_ARTIFACT_DIR" -maxdepth 1 -type f -name '*-xiaozhi.bin' -delete
-printf 'merged binary: %s\n' "$MEMORIA_ARTIFACT_DIR/$MEMORIA_BOARD_NAME-merged.bin"
-printf 'application binary: %s\n' "$MEMORIA_ARTIFACT_DIR/$MEMORIA_BOARD_NAME-app.bin"
+printf 'merged binary: %s\n' "$MEMORIA_ARTIFACT_DIR/$artifact_name-merged.bin"
+printf 'application binary: %s\n' "$MEMORIA_ARTIFACT_DIR/$artifact_name-app.bin"
+if [[ "$BENCH" == 1 ]]; then
+    printf 'BENCH image: flash it with flash.sh --bench; the firmware publisher refuses it\n'
+fi

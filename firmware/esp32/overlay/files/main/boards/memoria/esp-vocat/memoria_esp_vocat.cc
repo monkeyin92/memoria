@@ -648,10 +648,32 @@ private:
                  memoria::WakeModeName(mode));
     }
 
+#if CONFIG_MEMORIA_BENCH_SERIAL
+    // The two read-only requests of a test-rig image (TODOLIST M-2): neither changes anything on the robot.
+    // A product image does not compile them in, and its parser does not know the verbs.
+    void HandleUsbSnap() {
+        if (display_ == nullptr) {
+            ESP_LOGI(kUsbTag, "usb snap ignored reason=no_display");
+            return;
+        }
+        ESP_LOGI(kUsbTag, "usb snap accepted");
+        display_->BenchSendSnapshot();
+    }
+
+    void HandleUsbStatus() {
+        if (display_ == nullptr) {
+            ESP_LOGI(kUsbTag, "usb status ignored reason=no_display");
+            return;
+        }
+        display_->BenchRequestStatus();
+    }
+#endif
+
     // The USB-Serial-JTAG port is the secondary console: stdin is read from the UART, so the lines the host
     // writes to the USB port would sit unread in the peripheral's FIFO. This task reads them through the
     // secondary console's own device node (a non-blocking poll, no driver, no interrupt, nothing written),
-    // assembles lines and hands the one command, `wake`, to HandleUsbWake().
+    // assembles lines and hands the one command, `wake`, to HandleUsbWake(). A test-rig image also hands it
+    // `snap` and `status`.
     static void usb_command_task(void* arg) {
         auto* self = static_cast<MemoriaEspVocat*>(arg);
         const int fd = open("/dev/secondary", O_RDONLY);
@@ -660,7 +682,13 @@ private:
             vTaskDelete(NULL);
             return;
         }
+#if CONFIG_MEMORIA_BENCH_SERIAL
+        // The marker is what makes the firmware publisher refuse this image; logging it keeps the linker
+        // from dropping it.
+        ESP_LOGI(kUsbTag, "usb command console ready commands=wake,snap,status %s", memoria_bench_build_marker);
+#else
         ESP_LOGI(kUsbTag, "usb command console ready commands=wake");
+#endif
         memoria::UsbLineAssembler assembler;
         uint8_t chunk[16];
         while (true) {
@@ -676,6 +704,14 @@ private:
                         case memoria::UsbLineEvent::kWake:
                             self->HandleUsbWake();
                             break;
+#if CONFIG_MEMORIA_BENCH_SERIAL
+                        case memoria::UsbLineEvent::kSnap:
+                            self->HandleUsbSnap();
+                            break;
+                        case memoria::UsbLineEvent::kStatus:
+                            self->HandleUsbStatus();
+                            break;
+#endif
                         case memoria::UsbLineEvent::kUnknown:
                             ESP_LOGI(kUsbTag, "usb command ignored (not a command)");
                             break;
@@ -693,7 +729,7 @@ private:
 
     void InitializeUsbCommand() {
         // Low priority and off the audio core: the loop only wakes every kUsbPollMs.
-        xTaskCreatePinnedToCore(usb_command_task, "usb_cmd", 4 * 1024, this, 1,
+        xTaskCreatePinnedToCore(usb_command_task, "usb_cmd", memoria::kUsbTaskStackBytes, this, 1,
                                 &usb_command_task_handle_, 0);
     }
 

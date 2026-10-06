@@ -1,0 +1,18 @@
+--- a/main/Kconfig.projbuild
++++ b/main/Kconfig.projbuild
+@@ -1087,4 +1087,15 @@
+         启动双声道
+ endmenu
+ 
++config MEMORIA_BENCH_SERIAL
++    bool "Memoria bench build: screenshot and status over the USB console"
++    depends on BOARD_TYPE_MEMORIA_ESP_VOCAT
++    default n
++    help
++        Answer two read-only lines on the USB-Serial-JTAG console, `snap` (a screenshot of the display as
++        SNAP log lines) and `status` (one line of render and device state), so a computer can look at the
++        round screen with nobody at the robot. Test rigs only: the image carries a marker the firmware
++        publisher refuses, and flash.sh will not flash it without --bench. Never enable it for a product
++        image.
++
+ endmenu
