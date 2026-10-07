@@ -207,6 +207,43 @@ inline std::size_t BenchTasksLine(char* out, std::size_t capacity, const BenchTa
     return length;
 }
 
+// Where taskLVGL's time goes (TODOLIST M-6), counted by hooks on LVGL's own events in the bench image, all
+// cumulative since boot, microseconds of wall clock. Four spans per refresh: the whole refresh (REFR_START to
+// REFR_READY), the flush callbacks inside it (FLUSH_START to FLUSH_FINISH: the byte swap and the hand-over to the
+// panel), and the waits for the previous flush to finish (FLUSH_WAIT_START to FLUSH_WAIT_FINISH). Nothing in
+// upstream sets a flush-wait callback, so a single-buffered LVGL spins in `while (flushing)` on the task's own
+// CPU: the wait is suspected to be counted as taskLVGL run time. What is left of the refresh once flush and wait
+// are taken out is rendering (object tree, background image, blend into the 20-row buffer).
+struct LvglStats {
+    uint64_t refreshes = 0;    // refresh cycles that drew something (REFR_START..REFR_READY with a flush inside)
+    uint64_t refresh_us = 0;
+    uint64_t flushes = 0;      // flush callbacks, one per chunk
+    uint64_t flush_us = 0;
+    uint64_t flush_px = 0;     // pixels handed to those callbacks
+    uint64_t waits = 0;        // flush-wait spans
+    uint64_t wait_us = 0;
+};
+
+// Worst case: seven 64-bit sums come to about 170 characters.
+constexpr std::size_t kBenchLvglCapacity = 256;
+
+// `disp refreshes=.. refresh_us=.. flushes=.. flush_us=.. flush_px=.. waits=.. wait_us=..` (no terminator, no log
+// prefix). Same contract as the other line builders: at most `capacity` bytes including the NUL, the length, or 0
+// when it does not fit.
+inline std::size_t BenchLvglLine(char* out, std::size_t capacity, const LvglStats& s) {
+    if (out == nullptr || capacity == 0) {
+        return 0;
+    }
+    const int written = std::snprintf(
+        out, capacity,
+        "disp refreshes=%llu refresh_us=%llu flushes=%llu flush_us=%llu flush_px=%llu waits=%llu wait_us=%llu",
+        static_cast<unsigned long long>(s.refreshes), static_cast<unsigned long long>(s.refresh_us),
+        static_cast<unsigned long long>(s.flushes), static_cast<unsigned long long>(s.flush_us),
+        static_cast<unsigned long long>(s.flush_px), static_cast<unsigned long long>(s.waits),
+        static_cast<unsigned long long>(s.wait_us));
+    return written > 0 && static_cast<std::size_t>(written) < capacity ? static_cast<std::size_t>(written) : 0;
+}
+
 }  // namespace memoria
 
 #endif  // MEMORIA_MASCOT_STATUS_H

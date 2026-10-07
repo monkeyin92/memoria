@@ -130,6 +130,7 @@ MemoriaMascotDisplay::MemoriaMascotDisplay(esp_lcd_panel_io_handle_t panel_io,
     // The bench image times the stages of every eighth render (RenderProfile); the product image never does.
     scene_->SetProfileClock(+[]() -> uint32_t { return static_cast<uint32_t>(esp_timer_get_time()); });
     BenchStartSamplerBench();
+    BenchHookLvgl();
 #endif
 
     Settings settings(kSettingsNamespace, false);
@@ -845,6 +846,7 @@ void MemoriaMascotDisplay::AnimationLoop() {
             bench.extra_ms = pacer.extra_ms();
             BenchLogStatus(bench);
             BenchLogProfile(scene_->profile());
+            BenchLogLvgl();
             BenchLogTasks();
         }
 #endif

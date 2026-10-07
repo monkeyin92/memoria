@@ -91,6 +91,17 @@ int main() {
             if (capacity > sizeof(text)) capacity = sizeof(text);
             const size_t length = memoria::BenchProfileLine(text, capacity, p);
             printf("%zu|%s\n", length, length > 0 ? text : "");
+        } else if (cmd == "lvgl") {
+            // lvgl <capacity> then the seven sums in the order of LvglStats.
+            unsigned long capacity = 0;
+            memoria::LvglStats l;
+            in >> capacity >> l.refreshes >> l.refresh_us >> l.flushes >> l.flush_us >> l.flush_px >> l.waits >>
+                l.wait_us;
+            if (capacity > sizeof(text)) capacity = sizeof(text);
+            const size_t length = memoria::BenchLvglLine(text, capacity, l);
+            printf("%zu|%s\n", length, length > 0 ? text : "");
+        } else if (cmd == "lvgl_capacity") {
+            printf("%zu\n", memoria::kBenchLvglCapacity);
         } else if (cmd == "tasks") {
             // tasks <capacity> <count> <up_us> <rows> then <name> <core> <priority> <runtime_us> per row; the rows
             // go through the same sort as on the robot before they are printed.
@@ -388,6 +399,61 @@ def test_the_pc_script_reads_the_profile_line_the_robot_formats(tool: pathlib.Pa
         bench_status.parse_profile("MemoriaBench: profile renders=1 sampled=1") is None
     )  # cut: not guessed at
     assert bench_status.parse_profile(prefix + PROFILE_LINE.replace("rows=", "lines=")) is None
+
+
+LVGL_SAMPLE = "256 1000 40000000 9000 12000000 1100000000 800 15000000"
+LVGL_LINE = (
+    "disp refreshes=1000 refresh_us=40000000 flushes=9000 flush_us=12000000 flush_px=1100000000 "
+    "waits=800 wait_us=15000000"
+)
+
+
+def test_the_lvgl_line_names_every_sum_in_a_fixed_order(tool: pathlib.Path) -> None:
+    assert _run(tool, f"lvgl {LVGL_SAMPLE}") == [f"{len(LVGL_LINE)}|{LVGL_LINE}"]
+
+
+def test_the_worst_case_lvgl_line_fits(tool: pathlib.Path) -> None:
+    capacity = int(_run(tool, "lvgl_capacity")[0])
+    worst = str(2**64 - 1)
+    printed = _run(tool, f"lvgl {capacity} " + " ".join([worst] * 7))[0]
+    length = int(printed.split("|", 1)[0])
+    assert 0 < length < capacity - 40
+
+
+def test_an_lvgl_line_that_does_not_fit_is_refused_not_cut(tool: pathlib.Path) -> None:
+    fields = LVGL_SAMPLE.split()
+    fields[0] = str(len(LVGL_LINE))
+    assert _run(tool, "lvgl " + " ".join(fields)) == ["0|"]
+    fields[0] = str(len(LVGL_LINE) + 1)
+    assert _run(tool, "lvgl " + " ".join(fields)) == [f"{len(LVGL_LINE)}|{LVGL_LINE}"]
+
+
+def test_the_pc_script_reads_the_lvgl_line_and_splits_a_refresh_into_its_spans(
+    tool: pathlib.Path,
+) -> None:
+    prefix = "12:00:00.000 I (123456) MemoriaBench: "
+    first = bench_status.parse_lvgl(prefix + _run(tool, f"lvgl {LVGL_SAMPLE}")[0].split("|", 1)[1])
+    assert first is not None
+    assert (first["refreshes"], first["flushes"], first["wait_us"]) == (1000, 9000, 15000000)
+    assert bench_status.parse_lvgl("MemoriaBench: disp refreshes=1 refresh_us=2") is None  # cut
+    assert bench_status.parse_lvgl(prefix + LVGL_LINE.replace("waits=", "stalls=")) is None
+
+    second = dict(first)
+    second.update(
+        refreshes=1100, refresh_us=44_400_000, flushes=9_990, flush_us=13_100_000,
+        flush_px=1_210_000_000, waits=890, wait_us=16_600_000,
+    )
+    split = bench_status.lvgl_rates(first, second)
+    assert split["refreshes"] == 100
+    # 4.4 s over 100 refreshes; flush callbacks 1.1 s, waits 1.6 s, the remaining 1.7 s is rendering.
+    assert split["refresh_ms"] == pytest.approx(44.0)
+    assert split["flush_ms"] == pytest.approx(11.0)
+    assert split["wait_ms"] == pytest.approx(16.0)
+    assert split["render_ms"] == pytest.approx(17.0)
+    assert split["flushes_per_refresh"] == pytest.approx(9.9)
+    assert split["px_per_refresh"] == pytest.approx(1_100_000)
+    with pytest.raises(bench_status.StatusError):
+        bench_status.lvgl_rates(second, first)  # counters went backwards: the robot restarted
 
 
 def test_the_profile_shares_say_where_a_sampled_frame_goes() -> None:
