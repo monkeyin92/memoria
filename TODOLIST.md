@@ -5,10 +5,10 @@
 ## 当前边界（不得越界宣称）
 
 ```yaml
-enabled_release: 20261005-subject-candidates-v1  # 整栈，源 faf3efe3（PR #186 的分支头，合并提交 f15e7af6），2026-10-05 16:31 上线；media-edge 是组件发布 20261002-late-progress-v1（源 f3fe8742）；LLM deepseek（联网查询 qwen-plus），ASR fun-asr-realtime，TTS Doubao；回滚：整栈 → 20261004-first-warm-v1（新机上有 *:rollback-20261005-subject-candidates-v1-pre 镜像与保留的发布树，`rollback` 这一步在新机上没演练过）；media-edge 的回滚目标 20260930-late-receipt-v1 没迁到新机
+enabled_release: 20261006-speaking-flush-v1  # 整栈，源 e6fb10f3（PR #189 的分支头，合并提交 c1357a1f），2026-10-06 09:53 上线；media-edge 是组件发布 20261002-late-progress-v1（源 f3fe8742）；LLM deepseek（联网查询 qwen-plus），ASR fun-asr-realtime，TTS Doubao；回滚：整栈 → 20261005-subject-candidates-v1（新机上有 *:rollback-20261006-speaking-flush-v1-pre 镜像与保留的发布树，`rollback` 这一步在新机上没演练过）；media-edge 的回滚目标 20260930-late-receipt-v1 没迁到新机
 production_host: 110.42.235.198（2026-10-05 01:37 起，原 pocketSparks 生产机，与 hr-tracker / MySQL / aginice.cn 共用；ssh 别名 memoria-prod；Control API 在 127.0.0.1:18791；4 vCPU、内存 3.7 GiB、盘 40 GB；无持续数据库备份，整栈回滚深度 1）；旧机 122.51.108.140（别名 memoria-prod-old）只剩 8443 中继，2026-10-06 到期
 public_domain: aginice.cn（2026-10-05 起，aigcnice.com 弃用、不做桥；证书 2027-01-02 到期，最迟 2026-12-19 换，见「定期运维」；小程序体验版、固件与机器人身份都已指向它）
-control_api_release_lane: 整栈走仓库版 `scripts/release_ops.sh`（步骤与门禁见 `docs/runbooks/release-rollback.md`）；新机上装在 `/root/memoria-release/release-ops.sh`（装法：scp 新版、旧的备份为 `.pre-<tag>`、核对 sha256），现装的是 PR #186 的版本（PREV = `20261004-first-warm-v1`），仓库里的 PREV 已前移到 `20261005-subject-candidates-v1` / `faf3efe3d02c23f519ad139b5860200a0609b800`——下一次整栈发布前换上，那次发布成功后再前移到新 tag；Control API 在新机绑 18791（hr-tracker 占着 8791），compose、`refresh_readiness.sh`、`release_ops.sh` 用 `MEMORIA_CONTROL_API_PORT`，`verify-load` 的预检端口是 28791 / 28891；当前发布树 `releases/20261005-subject-candidates-v1` 是仓库原样加 `.env`，回滚目标树 `releases/20261004-first-warm-v1` 里是手工改的 18791，不要删它（media-edge 的 compose 链还指着它）；新机上的整栈发布可拿 `incoming/<上一个 tag>` 作种子做增量，依赖文件（pyproject / uv.lock）变化时增量与 overlay 发布会被脚本拒绝，须本机全量 linux/amd64 构建；control-api 的组件链支持已从 `release_ops.sh` 移除，此后再做 control-api 单组件发布须先把链支持补回；agent 组件快车道（`deploy_agent_component.sh`）在整栈发布后的第一次会被「runtime base 必须独立于线上镜像」拒绝（2026-10-01 实测，切流前被拒，服务器无变化），需整栈发布或与线上镜像不同的同 lock 基座
+control_api_release_lane: 整栈走仓库版 `scripts/release_ops.sh`（步骤与门禁见 `docs/runbooks/release-rollback.md`）；新机上装在 `/root/memoria-release/release-ops.sh`（装法：scp 新版、旧的备份为 `.pre-<tag>`、核对 sha256），现装的是 PREV = `20261005-subject-candidates-v1` 的版本（10-06 发布前装上，sha256 与仓库一致）；这次发布成功后，仓库里的 PREV 还要前移到 `20261006-speaking-flush-v1` / `e6fb10f3a6ada02e99dbd3362691be074e298015`，下一次整栈发布前再装到主机；Control API 在新机绑 18791（hr-tracker 占着 8791），compose、`refresh_readiness.sh`、`release_ops.sh` 用 `MEMORIA_CONTROL_API_PORT`，`verify-load` 的预检端口是 28791 / 28891；当前发布树 `releases/20261006-speaking-flush-v1` 是仓库原样加 `.env`，`releases/20261004-first-warm-v1` 里是手工改的 18791，不要删它（media-edge 的 compose 链还指着它）；新机上的整栈发布可拿 `incoming/<上一个 tag>` 作种子做增量，依赖文件（pyproject / uv.lock）变化时增量与 overlay 发布会被脚本拒绝，须本机全量 linux/amd64 构建；control-api 的组件链支持已从 `release_ops.sh` 移除，此后再做 control-api 单组件发布须先把链支持补回；agent 组件快车道（`deploy_agent_component.sh`）在整栈发布后的第一次会被「runtime base 必须独立于线上镜像」拒绝（2026-10-01 实测，切流前被拒，服务器无变化），需整栈发布或与线上镜像不同的同 lock 基座
 memory_candidate_visibility: code=main 0059368 / enabled=true（随整栈上线）/ verified=SQLite/HTTP/主体隔离/评测适配器回归；四份 2026-09-23 评测收据为上线前 parent_baseline（固定集 recall@5/10=0.857、未见集 0.4、双泄漏 0），真实 PG candidate 行为与线上带鉴权读口未单独取证
 direct_real_device_verified: false
 full_duplex_verified: false
@@ -21,9 +21,9 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 
 ## 下一步与执行边界
 
-1. **本批（2026-10-06，你说「除了 3 现在不做，1、2、4、5、6 现在一起做了，然后发布，并且清理其他分支」）**：一个 PR 里带 N-8 的卡「说话」修复（`playback.flush` 成功后收掉替换代，设备不再等 edge 30 s 静默超时）、M-1 / M-2 / M-6 ①②③⑥ 的代码与主机测试（M-4 的 sanitizer 检查已做完）、WAL 归档关闭（P1-08）与这次文档瘦身；合并后整栈发布，随后是主机维护窗口（「域名切换与新机收尾」第一条）与分支清理。固件版本号不动（build 24），固件不在整栈发布里；M 系列的真机验收与 bench 镜像刷入要你点头。
-2. **真机窗口（你推动；每一轮真机语音、每一次 USB 刷机都要你点头）**：①孩子真实声音的取证一轮（你 10-06 说现在不做）；②N-8 修复的复核（第十八轮的做法，音量 50 须先问）；③M 系列：先刷 bench 镜像，用 `status` 量帧率与渲染耗时、用 `snap` 取屏，再刷回产品镜像；④N-5 ≥ 30 分钟长稳；⑤之后排一个 P0 设备验收窗口：P1-11 孩子绑定、P1-03 孩子人格隔天生效、P2-04 终止性拒绝不再续连、P0-03 的 TLS / WSS 重连与剩余设备矩阵、P0-04 安全闭环。不得把核心通过扩大为完整 P0-03 或全双工通过。
-3. **不动线上就能直接做的代码项**：P0-04 剩余部分、P1-04 自定义声音闭环、P2-06 回放评测、P2-04 Python 侧进程退出注入、M-3、M-6 ④⑤。
+1. **刚发布的一批（PR #189，2026-10-06 09:53 上线，收据在 `HANDOFF.md`「2026-10-06 整栈发布」）**：N-8 卡「说话」修复已在线上；WAL 归档已关（P1-08）；M-1 / M-2 / M-6 ①②③⑥ 的固件改动已在 main，固件版本号不动（build 24），固件不在整栈发布里，刷 bench 镜像与真机验收要你点头。主机维护窗口也在 10-06 做了（回滚演练、`ALLOWED_ORIGINS`、旧域名站点与证书、`release-ops.sh` 上新版——收据在 `HANDOFF.md`「2026-10-06 主机维护窗口」）。还剩：仓库 `scripts/release_ops.sh` 的 PREV 前移到 `20261006-speaking-flush-v1`（连同 `scripts/tests/test_release_ops_script.py` 里的断言），随下一个代码 PR 走；旧机自身随到期消失（「域名切换与新机收尾」）。
+2. **真机窗口（你推动；每一轮真机语音、每一次 USB 刷机都要你点头）**：①孩子真实声音的取证一轮（你 10-06 说现在不做）；②N-8 修复的复核（第十八轮的做法，音量 50 须先问）；③M 系列：bench 镜像已在 2026-10-06 刷上并量过（M-2 通过，M-6 的 25 fps 不成立，见 M-6），**板子已在 2026-10-07 00:17 刷回 build 24 产品镜像**（期间它有约 10 分钟对串口无响应后自己恢复，原因未查清，见 HANDOFF「2026-10-07 凌晨」）；下一次刷机，填充字节按运行手册新加的那一段先验再写。M-6 的下一次上板（scratch 实验）要你点头，见 M-6「我的建议」；N-8 复核排在它之后；④N-5 ≥ 30 分钟长稳；⑤之后排一个 P0 设备验收窗口：P1-11 孩子绑定、P1-03 孩子人格隔天生效、P2-04 终止性拒绝不再续连、P0-03 的 TLS / WSS 重连与剩余设备矩阵、P0-04 安全闭环。不得把核心通过扩大为完整 P0-03 或全双工通过。
+3. **不动线上就能直接做的代码项**：P0-04 剩余部分、P1-04 自定义声音闭环、P2-06 回放评测、P2-04 Python 侧进程退出注入、M-3。
 4. **要你定的事（汇总；细节与选项在各自条目里，不挡以上步骤）**：
    - 线上与运维：固件 OTA 指针留 21 还是指回 8（「2026-09-28 收尾待办」）；新机每夜 `pg_dump` 做不做（P1-08，默认不做）；是否轮换数据库角色口令；P1-09 readiness 逾期的告警渠道；P1-02 两项线上调整；`MEMORIA_GUARDIAN_PUSH_ENABLED` 与话术专业审核、未成年人人格学习口径（P0-04）。
    - 产品口径：N-1 关键字唤醒的代码与开关随不随一起删；N-4 监护人看不看孩子原文、周小结的数据从哪来；N-6 听感、危机话术、天气城市；N-9 孩子闭集词表、置信度余量、规划器；N-10 `FUNASR_VOCABULARY_ID`；N-8 的两种候选修法与安静房间假回合阈值；N-13 / N-14 的 2.2 s 阈值、0.8–0.9 s 宽限中间值、影子模式的数据去向、「前半句先提交、后半句被丢」要不要单独立项；P2-03 已知缺口接不接受；P2-07 第 2 / 3 项；P2-08 里的 `self_model` 版本保护、PCM tap 留存、控制词与静默计时。
@@ -34,13 +34,13 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 
 收据与细节见 [HANDOFF「2026-10-05 域名切换到 aginice.cn」「2026-10-05 服务迁移到 110.42.235.198」](HANDOFF.md)。
 
-- [ ] **本批主机维护窗口**（你 10-06 说「现在一起做了」；无活跃设备会话时做，步骤逐个确认）：新机上整栈 `release-ops.sh rollback` 演练（`verify-load`、`freeze`、`cutover`、`finish` 在 2026-10-05 实跑过，`rollback` 没演练过；会把三个角色切回上一栈再切回来，两次各约半分钟断流）；WAL 归档关掉（见下一条）；换上仓库版 `release_ops.sh`（PREV 已前移）；清理旧域名站点 / 证书 / 备份与 `ALLOWED_ORIGINS` 里的旧机 IP（下一条）。
-- [ ] **WAL 归档会占满新机的盘（P1-08）**：新机的归档从迁移时重新开始，约 0.6–1.1 GB/天（旧机近三周平均 0.6，最近一周 53–71 个 16 MB 段/天，10-01 测试密集日 139 个），没有裁剪策略；根分区 40 GB，2026-10-05 16:37 整栈发布后剩 17 GB，再加每次整栈发布约 4 GB，约 2–3 周会满，PostgreSQL 盘满即停。归档在没有 base backup 时没有恢复价值（新机上一份都没有）。仓库的 `infra/memoria-data.production.yml` 已改成 `archive_mode=off`（本批 PR）；主机上生效须重建 postgres 容器（`archive_mode` 不能用 `ALTER SYSTEM` 改，compose 的 `-c` 参数优先），只在没有活跃会话时做，之后验证 health、`pg_stat_archiver`、盘，确认没有 base backup 后删归档卷里的文件（约 545 MB / 34 个）；不按时间删 `pg_wal`。没有持续数据库备份，靠发布前 `freeze` 的 dump；要不要另做每夜 `pg_dump`，你定（默认不做）。
-- [ ] 清理旧域名与旧机残留：新机 `sites-enabled/memoria-prod`（aigcnice.com 站点）与 `/etc/nginx/ssl/aigcnice.com/`；服务器 `/root/domain-switch-20261005/`（含旧证书私钥、env 与头像原值备份，确认不再回滚后删）与旧私钥备份；`/etc/memoria-control-api.env` 的 `ALLOWED_ORIGINS` / `LIVEKIT_URL` 里的旧机 IP（只给浏览器跨域用，小程序请求不走它；只打印键名，不打印值）；核对 `outputs/` 里没有再指旧域名的脚本。
-- [ ] 旧机 122.51.108.140 2026-10-06 到期（时刻不明）：到期后删掉 ssh 别名 `memoria-prod-old` 与 `~/.ssh/known_hosts` 里旧机的条目；旧机上没迁的东西（WMS、13 GB WAL、7.3 GB `incoming`、旧发布树与回滚镜像）随机器消失，按你的决定不再保留。`aigcnice.com` 不做桥（已定）：仍用旧域名的别的设备 / 旧版小程序在旧机到期后连不上，据我所知没有。
+- [ ] **新机没有持续数据库备份（P1-08）**：WAL 归档已在 2026-10-06 09:58–10:00 关闭（`archive_mode=off`，postgres 容器重建，归档卷 39 个文件 / 654 MB 已清空，盘剩 14 GB），不再增长；现在靠发布前 `freeze` 的 dump。要不要另做每夜 `pg_dump`，你定（默认不做）；以后若要重开归档，归档卷必须是 `999:999 0700` 并先做 base backup。
+- [ ] 旧域名残留（2026-10-06 已做掉大半）：新机 `sites-enabled/memoria-prod`（aigcnice.com 站点，已移到 `/etc/nginx/backup-20261005-domain-switch/memoria-prod.site.removed-20261006`）、`/etc/nginx/ssl/aigcnice.com/`（已删）、`/root/domain-switch-20261005/`（旧证书私钥、env 备份与四个脚本已删；**头像原值 TSV 与那份旧 env 备份留在 `/root/domain-switch-20261005-kept/`**，见下条）、`ALLOWED_ORIGINS` 的旧机 IP（已换成 `https://aginice.cn:8443,https://www.aginice.cn:8443`，备份 `/etc/memoria-control-api.env.pre-aginice-origins-20261006`）。**仍开着**：`/etc/memoria-control-api.env` 与 `/etc/memoria-agent.env` 的 `LIVEKIT_URL` 还指旧机（LiveKit 已退役，代码只在 `scripts/split_production_env.py` 的键名列表与测试里出现，没有容器在跑；要动它得再重建一次 control-api 与 bridge，值本身没用了，删不删你定）；`outputs/` 里指旧域名的脚本核对（未做）。
+- [ ] 你定：域切换时头像改写的数据回滚记录（`/root/domain-switch-20261005-kept/profiles-avatar-preimage-20261005-091021.tsv`，867 B，含孩子头像 URL 原值；那份旧 env 备份只留了控制台口令类的键值）留不留。切换本身没回滚过，我留着它做原值比对；确认不需要就删这个目录。
+- [ ] 旧机 122.51.108.140 2026-10-06 到期（时刻不明）：**截至 10-06 11:50 仍可连（`ssh memoria-prod-old` 通）**，所以别名和 known_hosts 条目没动；到期后删掉 ssh 别名 `memoria-prod-old` 与 `~/.ssh/known_hosts` 里旧机的条目；旧机上没迁的东西（WMS、13 GB WAL、7.3 GB `incoming`、旧发布树与回滚镜像）随机器消失，按你的决定不再保留。`aigcnice.com` 不做桥（已定）：仍用旧域名的别的设备 / 旧版小程序在旧机到期后连不上，据我所知没有。
 - [ ] 新机资源偏紧：内存 3.7 GiB（Memoria 栈约 1.3–1.4 GiB，可用约 1.7 GiB，swap 已用约 0.6 GiB，与 pocketSparks 的 MySQL / node 共用），4 vCPU 约比旧机慢 1.3 倍。发布后 1–2 天看 `docker stats`、`free -m` 与时延（对照第十六轮 24 轮时延场景说完 → 首帧 p50 2.92 s）；不够就扩内存（你在控制台做）。
 - [ ] build 24 的时钟修复仍无证据：2026-10-05 22:56 的重绑一次过，但时钟多半是 21:32 拔插 USB 后清空的，老版本也能过；要证明得让机器人时钟比清单 `issued` 落后 5 分钟以上再绑。不紧迫，碰上再看串口（那次的记录在本机 git-ignored 的 `outputs/serial/robot-20261005-trial3-rebind.log`）。
-- [ ] 你定：是否轮换数据库角色口令（一次 grep 把各角色连接串打印进了本机会话记录，库不对宿主发布端口）。
+- [ ] 你定：是否轮换数据库角色口令。**两次本机会话记录里出现过口令**：一次 grep 把各角色连接串打进了会话记录（更早的会话），2026-10-06 我做维护窗口时用 `docker compose config` 核对线上数据层 compose，它把 postgres 服务的环境变量展开成了明文（`MEMORIA_DB_*_PASSWORD` 五个角色的键与值都在输出里，只在会话记录、没进仓库、没进文档、没出机器）。库不发布到宿主端口，风险限于本机会话记录的读权限；要轮换就是一次 `ALTER ROLE` + 两份 env 的改写 + 重建 control-api/bridge，你说了我做。
 - [ ] 邻近发现（不挡路）：8443 经 stream 透传没有 PROXY protocol，9443 上的 TLS 服务器看到的客户端地址一直是 127.0.0.1（新旧机一样），按 `$binary_remote_addr` 的限流区（`memoria_media` 30 r/m 等）对所有设备共用一个键；一台机器人没有影响，设备多了要改。
 
 ## 2026-10-01 新需求里还开着的（N 系列）
@@ -133,22 +133,24 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 
 来源：2026-10-05 对 Meta `facebookincubator/muse-gadget-sdk`（Apache‑2.0）的只读评估，加上你 10-06 对屏幕动画的反馈（「我们这个看起来就很死板，就像一张图片在上下动一下」）和按需下载角色的思路。它是 ESP32 薄客户端加 Meta 云端大脑，SDK 里没有 VAD、AEC、唤醒词和双工，所以音频对话主线没有可借的，可借的是形象动画与调试方式。借做法、不拷代码；若拷其 Apache‑2.0 代码，保留版权声明并标注改动；Jollybot 角色与仓库里提交的开发签名密钥不拿；SDK 令牌条款只约束使用 Meta 云端，我们用自己的后端，不受影响。
 
-**本批（10-06）已写完代码与主机测试、整机上一项都没量过的**：M-1、M-2、M-6 ①②③⑥；M-4 已做完（见编号索引）。没做的：M-3、M-5、M-6 ④⑤、M-7、M-8。固件 build 号没动（24），没有刷机：产品镜像比 build 24 大 6,112 B，占 OTA 槽（0x3f0000）的 80 %；bench 镜像另带 `snap` / `status`。动画任务在真机上的 CPU、PSRAM、QSPI 开销与对音频的抢占没有量过，上机要你点头，顺序是先刷 bench 镜像用 `status` 量，再决定产品镜像。
+**本批（10-06）已写完代码与主机测试的**：M-1、M-2、M-6 ①②③⑥；bench 窗口已量过 M-2（通过）与 M-6（25 fps 不成立），M-1 只有音频侧间接证据；M-4 已做完（见编号索引）。没做的：M-3、M-5、M-6 ④⑤（先不做，见 M-6）、M-7、M-8。固件 build 号没动（24），产品镜像比 build 24 大 6,112 B，占 OTA 槽（0x3f0000）的 80 %；bench 镜像另带 `snap` / `status`。10-06 至 10-07 的 bench 窗口已把动画任务的 CPU 开销量清楚（M-6），音频侧没有被拖累；板子现在跑的是 build 24 产品镜像，分支上的改动都没进产品镜像。
 
 ### [ ] M-1 嘴型、声环和身体律动由真实音量驱动（代码与主机测试完成，真机未验）
 
 - 做了什么：patch `0034` 在 `AudioService` 里留了两个读数点——播放任务把 PCM 交给 codec 时量一次（约比喇叭出声早 60 ms），上行 Opus 任务量经回声消除与降噪之后的上行；`memoria_audio_level.h` 把 20 ms 块的 RMS 折成 0–255（−54…−12 dBFS 线性）经 atomic 交给显示任务，显示任务每帧取一次，不管亮不亮屏（熄屏期间的音频不会冲进下一帧）。`MascotScene::SetOutputLevel` / `SetInputLevel`：嘴在一个块序列里「从谷底升起就张、从峰顶落下就合」（迟滞，最短张 80 ms、最短合 60 ms，不是固定阈值），声环亮度与身体上抬跟着慢包络，聆听时声环跟麦克风电平；播放队列停转时读数点什么也不发，嘴合上、声环变暗，不再演一段没人听见的回答。
 - 主机验收：预览脚本的电平曲线剧本；`test_a_stalled_reply_keeps_the_mouth_shut`、`test_the_mouth_flaps_with_the_syllables_of_the_reply`、`test_the_mouth_shuts_within_a_quarter_second_of_the_audio_stopping`、`test_the_ring_glow_follows_the_voice_it_hears_and_the_voice_it_speaks`；「增量重绘 = 全量重绘」逐帧校验仍 0 不一致。
 - 未验：真机上播放卡住时屏幕确实不再「说话」（第十八轮 p03 在 speaking 里停了 30.76 s，按代码推断那期间嘴一直在随机动，没回放视频核对）；动画任务优先级仍低于全部音频任务，真机对照 patch `0026` 的播放欠载计数不得比基线差。真机轮次要你点头。
-- [x] 代码与单测　[x] 预览出片　[ ] 真机验收
+- 2026-10-06 bench 窗口的间接证据（详见 HANDOFF「2026-10-06 bench 真机窗口」）：三次播放 `supply_waits=1`、`close_dropped_waits=0`、`exact_timeouts=0`、0 看门狗、0 分配失败，音频侧没有被动画拖累；但嘴型观感仍未看（要视频或亲眼），播放卡住时嘴是否停住也未验。
+- [x] 代码与单测　[x] 预览出片　[ ] 真机验收（音频侧已取证，观感一项未验）
 
-### [ ] M-2 串口截屏与只读状态命令（只进 bench 构建；代码与主机测试完成，真机未验）
+### [x] M-2 串口截屏与只读状态命令（只进 bench 构建；代码、主机测试与真机验收完成，板子已在 10-07 00:17 刷回 build 24）
 
 - 做了什么：Kconfig `CONFIG_MEMORIA_BENCH_SERIAL`（patch `0035`，默认 n）加 `config.bench.json`；只有 bench 构建多两条只读 USB 命令。`snap`：LVGL snapshot（带文字层，场景帧缓冲不含它），经串口分块 base64 吐出 RGB565，行格式 `SNAP <id> <w>x<h> <seq>/<total> <crc> <base64>`，PC 端 `scripts/snap_to_png.py` 校验 CRC 后还原 PNG。`status`：一行 `MemoriaBench: status up_ms=… phase=… mood=… frame=… frames=… drawn=… render_us=… busy_us=… px=… heap_free=…`（相位、心情、帧名、是否熄屏，加自开机的重绘次数与合成耗时的累计），`scripts/bench_status.py` 读它，两行之间算出速率；字段表与 C++ 格式串由测试互相核对。`scripts/voice_soak_serial_command.py snap|status --log …` 经常驻串口记录那一路发请求并等答案（snap 约 6–8 s）。产品固件没有这两条：二维码卡片上有绑定载荷，产品固件不能有把屏幕吐出来的入口；`memoria_usb_command.h` 的头注释与 `test_memoria_usb_command.py` 同步成「产品只收 `wake`，bench 多 `snap`、`status`」。
 - 防串味：bench 镜像带标记 `MEMORIA_BENCH_BUILD=1;`，`publish_firmware_release.py` 见到就拒绝发布；入口是 `build.sh --bench` 与 `flash.sh --bench`；用完要把产品镜像刷回（USB）。两种镜像各编译过一遍，产品镜像里没有 bench 的代码，`check-overlay.sh` 通过。用法见运行手册 `docs/runbooks/release-rollback.md`「固件 bench 构建」。
 - 发现（读源码，没上机）：上游的 MCP 工具 `self.screen.snapshot` 链进了产品固件（`LV_USE_SNAPSHOT` 上游默认开），但 Memoria 的协议上没有通道能调到它；Memoria 自己加的吐屏代码只在 bench 构建里。
 - 未验：真机上 `snap` 还原图与肉眼所见一致，`status` 的数字合理；常驻串口记录里同一次会话自动留下「这一刻屏幕是什么样」，不再靠拍照。Muse 的 `>face=<mode>` 强制切状态会改显示状态，不在「只读」范围，要不要加另议。
-- [x] 代码与单测　[x] 还原脚本　[ ] 真机验收
+- **2026-10-06 真机验收：通过**（收据在 HANDOFF「2026-10-06 bench 真机窗口」）。`status` 与 `snap` 都在真机上工作，`snap` 还原出 360×360 的 PNG（桃喜，与日志 `companion=taoxi` 一致），CRC 通过；`status` 每次采样的字段都自洽，熄屏窗口 `drawn 0.0/s` 与亮屏窗口的差值正可用它区分。**遗留一件操作**：板子现在还跑着 bench 镜像（用户 13:05 说先不刷），刷回产品镜像是收尾步骤；回滚源 `firmware/esp32/artifacts/backups/pre-bench-20261006/ota0-before.bin`。
+- [x] 代码与单测　[x] 还原脚本　[x] 真机验收　[ ] 刷回产品镜像
 
 ### [ ] M-3 在 sprite 上叠几个程序画的动态小特效（未做）
 
@@ -165,20 +167,30 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 - 做法（若做）：先量化——用 USB 唤醒加「唤醒的同时开口」的录音，量出第一个字的丢失率，确认丢字是否来自 `InputSettle`；`pre_reset` 规则对应 `InputSettle::NoteLocalSound`。
 - 完成条件：你给出决定；若做，上述测试里第一个字的丢失率下降，且给监护人的说明就位。
 
-### [ ] M-6 动画第 0 档：不要新美术，先让现有伙伴动得顺（①②③⑥ 代码与主机测试完成，④⑤ 未做，真机未验）
+### [ ] M-6 动画第 0 档：让现有伙伴动得顺（①②③⑥ 已在 main；真机验收不通过；成本已查清，下一步待你定）
 
-- 起点（已改，留作对照）：待机和聆听时屏幕每秒只重画几次且是整像素阶梯，合成器只有平移和以脚为轴的缩放，动势是固定时长的正弦，换姿势是「压扁—硬换—弹起」，没有过冲和跟随。差距不在硬件：Muse 在 S3 上同样只有 25 fps。
-- 做了什么：① 子像素渲染（`memoria_mascot_raster.{h,cc}`）：位置和缩放保留小数、双线性采样，脏矩形多留 1 px；② 亮屏且伙伴醒着时统一 40 ms 一帧（25 fps），Wi-Fi / 绑定画面与打瞌睡的伙伴减半；`memoria_frame_pacer.h` 的节拍器量一帧占住动画任务多久（含等显示锁），超过间隔的 65 % 就每次加 10 ms（最多 +120 ms），连续宽松约 1 s 才还回来，所以屏幕出不起帧时它自己慢下来；③ 呼吸改成以脚为轴的体积守恒缩放（`sy` 增则 `sx` 按 0.7 减），不再整体上下平移；⑥ 接 M-1 的电平（嘴、声环、说话时身体上抬）。预览脚本 `preview_memoria_mascot.py` 出 `scene.mp4`，并逐秒数「有可见变化的帧」：`test_every_state_moves_visibly_20_frames_a_second` 要求每个状态逐秒的中位数 ≥ 20、最差一秒 ≥ 18（起点是待机和聆听的秒里 25 帧只有 3–7 帧有变化；「可见」指与前一帧在状态光环内至少差 5 个像素）；「增量重绘 = 全量重绘」仍 0 不一致，`kMaxDirty` 没放宽。
-- 还没做：④ 弹簧阻尼代替固定正弦（换姿势、拍一拍、摇晃、说话起伏带过冲和回弹，目标改变时速度连续）；⑤ 换姿势用短交叉淡化代替压扁里的硬切（`MascotPack::Frame()` 对补丁帧只有一个暂存 sprite，见 `memoria_mascot_pack.h` 的注释，同时画两帧要处理）。
-- 未验：你看前后对比视频认可（跑预览脚本即得 `scene.mp4`，旧版在 git 历史里）；真机一轮（要你点头）：对话中重绘从每秒 3–7 次涨到 25 次、待机从约 4 次涨到 25 次（约 6 倍），CPU、PSRAM、QSPI（40 MHz、4 线）开销与音频抢占没有量过，对照 patch `0026` 的播放欠载计数不得变差，动画任务优先级仍低于全部音频任务。量法是 bench 镜像的 `status`（M-2）。
-- [x] ①②③⑥ 代码与单测　[ ] ④⑤　[ ] 前后对比视频　[ ] 真机验收
+- 做了什么（PR #189，已在 main）：① 子像素渲染（`memoria_mascot_raster.{h,cc}`，位置与缩放保留小数、双线性采样）；② 亮屏且伙伴醒着时 40 ms 一帧，`memoria_frame_pacer.h` 的节拍器量一帧占住任务多久，超过间隔的 65 % 就每次加 10 ms（最多 +120 ms），所以屏幕出不起帧时自己慢下来；③ 呼吸改成以脚为轴的体积守恒缩放；⑥ 接 M-1 的音量电平。没做：④ 弹簧阻尼（换姿势、拍一拍带过冲和回弹）；⑤ 换姿势用短交叉淡化代替硬切（补丁帧只有一个暂存 sprite，同时画两帧要处理）。
+- 你的验收（10-06 20:4x，机器旁）：**不通过**。原话：「画面感觉还是和以前一样，感觉像是图片上下动来动去的。说话与待命状态之间切换也很突兀」。含义：帧率从来不是主因，①②③⑥ 只是把同一张图动得更细；换姿势仍是整图硬换，而压扁段约 170 ms，在 6–7 fps 下只有一两帧，所以更像硬切。预览视频是 25 fps、板子只有 6–7 fps，**动画好坏以后在板子上看，不拿预览视频验收**。
+- 为什么板上只有 6–7 fps（10-06 / 10-07 的 bench 真机实测，各轮数字在 `HANDOFF.md`「2026-10-07 M-6 成本剖析」）：核 1 上每个绘制帧，`mascot_anim` 占约 50 ms CPU，`taskLVGL`（把帧缓冲刷到屏幕）再占约 35–40 ms，合计 85–92 ms；说话时这两个任务合起来只拿到约 0.48 个核（opus 编码占 0.34，核 1 空闲只剩 0.06），帧率约等于份额除以每帧成本，与实测 5.9–6.5 吻合。核 0 被 `audio_input` 占 0.60–0.70，没有地方挪任务。`mascot_anim` 的 50 ms 里精灵采样占 55–80 %；采样器是**算力受限**（快路径约 505–537 ns/像素，精灵放片内 SRAM 还是 PSRAM 几乎没差别），所以「把源数据搬进 SRAM」作废。
+- **更正：10-07 凌晨你同意的「anim ≤ 15 ms」口径不完整**（口径是我提的，我漏了 LVGL 那一半）。按状态行与 tasks 行配对的近似值（`outputs/firmware-20261006-mascot/profile/lvgl_share.py`，配对有半个采样周期的误差）：listening 每绘制帧 anim 51.7 ms + taskLVGL 39.9 ms = 91.6；speaking 49.7 + 35.4 = 85.1。每帧交给 LVGL 的脏矩形面积合计平均约 12–13.5 万像素，屏幕是 12.96 万——声环四条带加精灵包围盒加起来几乎是整屏，LVGL 每个绘制帧都在重刷接近整屏（合并后的真实面积没量）。这也解释了 span-compose 为什么没换来帧率：它只少合成了像素，交给 LVGL 的脏矩形没变（`Render` 返回的仍是整盒，`memoria_mascot_display.cc` 原样 `lv_obj_invalidate_area`）。这是推断，没有单独验证。
+- **scratch 实验已做（10-07 01:12–01:20，一次性 bench 镜像：身体运动归零、声环关掉、采样器基准任务关掉，USB 唤醒加 4 句全答出；镜像与日志 `outputs/firmware-20261006-mascot/scratch-experiment/`，收据 `outputs/acceptance/run-20261007-scratch-measure/`）**：只有眨眼和张嘴补丁在变时，每绘制帧仍要约 59 ms（anim 33–35 + taskLVGL 24–26；完整场景 85–92）。**结论：成本不随变化面积下降**——眨眼 / 张嘴补丁在 MMP1 里就是一张 256×256 的整幅精灵重采样，「静止大底图 + 只动小部件」不会自动变快。M-7 若要更快，得给包格式加「只重采样补丁矩形」的能力，或接受分层后仍约 10–12 fps；两者都要先出设计。审查底稿：`docs/acceptance/run-20261007-m6-overnight/REVIEW.md`。
+- **口径已定（用户 10-07 09:1x「采纳」）**：`mascot_anim` + `taskLVGL` 合计 **≤ 32 ms 每绘制帧**（现在 85–92 ms，约降到三分之一）。算法：说话时这两个任务拿约 0.48 个核，除以 0.032 s 约 15 fps；只把 anim 压到 15 ms、LVGL 不动的话是约 50 ms，约 9.6 fps，达不到想要的。前提是这两个任务的核份额不变，是推算。量法：bench 镜像 `tasks` 行的 CPU 时间增量除以 `status` 行 `drawn` 增量（`profile/task_table.py`、`lvgl_share.py`）。它只管成本，「像不像视频」仍以你在机器旁看为准。
+- 试过、结论明确的：**快路径阈值**（精灵不透明像素 alpha 存成 252，采样器却判 255，快路径从不触发；改成 ≥ 250 与 `Blend565` 对齐）——板上精灵阶段 listening 44.7 → 31.4 ms（−30 %）、speaking 56.4 → 44.5，像素输出有 4.2 % 的像素差 1 个最低位，**已获认可（用户 10-07 09:1x「接受」）**；**只合成精灵覆盖列**（span-compose）——合成像素 −25 %，墙钟只 −10 %、帧率没动，不该直接上产品；**精灵源数据搬 SRAM**——作废；**声环只合成有权重的像素**——只省约 4 %，作废。
+- **我的建议（按顺序；没有一项已动手）**：
+  1. 先回答一个问题再定方向：成本是不是随「变化面积」走。做一次一次性 scratch bench 构建（不进仓库）——身体呼吸和位移置零、声环关掉，只剩眨眼和嘴补丁在变，量 `anim + taskLVGL` 每绘制帧 CPU。要刷一次板子，你点头我再做。合计 ≤ 32 ms（最好 ≤ 20 ms）就说明「大底图静止、只重画小部件」是对的，M-7 分层 rig 按这个约束做（大部件整数像素摆放、不逐帧重采样，眼、嘴、耳才用子像素和旋转）；仍然很高，说明瓶颈在 LVGL 的刷屏路径（20 行单缓冲、分 18 条串行刷），该查 LVGL 配置，不是合成器。
+  2. 快路径阈值留下（一行，板上实测 −30 %），你认可那 1 个最低位的差异后单独提交。span-compose 先不并，等上面的结果：静止底图方案下它基本用不上，而它多一个每行的 `SpriteTouch`（约 2 ms/帧）。
+  3. 测量工具（`profile` / `tasks` 两行、采样器微基准）只在 bench 构建里，值得留，单独一个提交；场景里的计时钩子对产品镜像只多一个空指针判断。
+  4. ④ 弹簧阻尼和 ⑤ 交叉淡化先不做：6 fps 下过渡只有一两帧，缓动和淡化都显不出来，要先有帧率。
+- 等你定：①认可快路径的 1 个最低位差异吗；②同意把口径改成「anim + LVGL ≤ 32 ms」吗；③同意再刷一次 scratch 构建做建议 1 吗；④已完成：分支已拆成三个提交（`1430b243` span-compose + 快路径、`293ce97c` bench 工具、`12673a4c` 跨度守卫测试），用户 10-07 09:1x 说「推送合并」。
+- [x] ①②③⑥ 代码与单测　[ ] ④⑤　[ ] 成本降到口径内　[ ] 前后对比视频　[ ] 真机验收（首轮未通过）
 
 ### [ ] M-7 动画第 2 档：分层 rig 试点（星澜），定稿美术要求分层交付
 
 - 现状：美术是整张姿势图——源图在 `apps/miniprogram/assets/companions/<id>/`（512 px），眨眼和张嘴是图像编辑出来的差异补丁（`apps/miniprogram/design-preview/memoria-v2/tools/device_frames.py`），打成 19 帧的 `MMP1` 包（`memoria_mascot_pack.h`）。眼睛、嘴、耳朵、手臂不能单独动，所以视线不会游移、嘴形不连续、耳朵不会甩。Muse 的灵动来自逐部件的实时控制：视线每 1.2–3.6 s 漂向新目标并缓动，每 2.2–5.2 s 随机眨眼含双眨，呼吸约 ±3 %，嘴随电平加微颤，听、想、开心各有肢体语言。阵容是占位资产（README，将来整体替换），五个都拆层不值得，先拿星澜（默认角色）试点。
 - 做法：① 先出一个星澜小样，验证分层图怎么来——美术重画、3D 毛绒建模分部件渲染，或用图像模型把现有姿势图拆层，哪种质量可接受没验证；② 交付规格（也写进将来的定稿美术要求，仓库里目前没有这份需求文档）：统一画布与脚点；部件清单（身体、头、耳 / 触角 / 叶芽、双臂、瞳孔、眼睑、每个心情若干嘴形、听 / 想 / 惊讶的小道具）；每个部件带枢轴点和层序；眨眼与嘴形成系列；格式用分层 PNG；③ 包格式：`MMP1` 升版本，加部件表（锚点、枢轴、父子、层序）与嘴形 / 眼睑表，沿用调色板加 zlib，旧包仍走整帧路径；④ 合成器：部件各自旋转平移缩放，弹簧跟随（头滞后身体，耳朵、触角摆动），瞳孔漂移与缓动，随机眨眼含双眨，嘴形由 M-1 的电平映射成连续开度，各心情的肢体语言做成姿势偏置而不是整图替换。运动库（弹簧、注视、眨眼）是共用代码，新角色只交付分层图和很小的 rig 描述。
 - 不做的（已想过）：不照搬 Muse 的程序化像素角色，会丢掉毛绒质感；不做预渲染整幅动画片段——固定的帧不会看你、嘴不会跟声音走，几百帧全解码进不了 PSRAM（一张解码后约 147 KB），要边读边解（新的播放路径），每个角色都得出几百帧；按 14 KB 一张全帧、25 fps 算，assets 剩余空间五等分只够约 1.4 s，每槽 6 MiB 约 17.6 s，而一套完整动画（9 个姿势各循环 2 s 加过渡，假设）约 20 s。第 1 档（在现有位图上套粗网格形变，让触角、耳朵、叶芽带滞后摆动）只在分层美术迟迟不到时当过渡，不与第 2 档并行。
-- 完成条件：星澜小样在主机预览里出片——视线游移、双眨、嘴随电平连续张合、头与耳的滞后、听 / 想 / 开心的肢体语言，你看了认可；包体积进预算（一个角色估 100–300 KB，没有分层美术可量，以实测为准），`test_pack_budget_fits_the_assets_partition` 与「增量重绘 = 全量重绘」继续通过，旧包仍可读；真机一轮对比（要你点头）。先看 M-6 的真机结果，再做它。
+- 完成条件：星澜小样在主机预览里出片——视线游移、双眨、嘴随电平连续张合、头与耳的滞后、听 / 想 / 开心的肢体语言，你看了认可；包体积进预算（一个角色估 100–300 KB，没有分层美术可量，以实测为准），`test_pack_budget_fits_the_assets_partition` 与「增量重绘 = 全量重绘」继续通过，旧包仍可读；真机一轮对比（要你点头）。M-6 的 scratch 实验否定了「静止底图 + 只动小部件」的自动变快，用户 10-07 09:1x 定了「要」M-7：**先出 MMP2「补丁矩形重绘」的包格式与合成器设计再动手**。**设计稿已出：`docs/strategy/mmp2-patch-rect-design.md`（v1，待你过目）**——补丁矩形 5.2k–12.8k px（星澜实测），估算每绘制帧降到 15–25 ms（口径 32 ms 内）；最大未知是 LVGL 对小矩形的刷屏成本，设计稿 §6.1 要求**通过后先量这个再写 MMP2**。
+- 2026-10-06 夜小样进展（用户 20:4x 验收 M-6 不通过后说「按你推荐的 1 来做」，并提供了 bb-api 图像接口可生成素材）：①让图像模型（gpt-image-2.5 编辑接口，参照星澜默认图）只画「无头身体层」，毛绒质感和配色一致、脖子衔接自然，但比例与原图对不上（主体放大、位置下移），拼回去会有接缝，所以**不用模型重画分层**，改为直接从原图按颜色切层，保证逐像素对齐；②已切出虹膜层和补了眼白底色的脸底图（`outputs/firmware-20261006-mascot/layers/`，git 忽略）：两个虹膜各约 1.4k 像素，眼眶约 3.5k 像素，把虹膜平移 ±5/±4 px 的 `gaze-sheet.png` 显示视线游移可行，左眼干净，右眼眼眶边缘有锯齿和白色碎边，需要清理掩膜；③还没做：嘴的连续张合（现有闭嘴与张嘴两个补丁，可做纵向缩放插值）、眨眼（现有闭眼帧可直接交叉或用虹膜压扁）、头与身体的切分（兜帽与身体同色，没有颜色边界，只能人工画切线并补脖子被遮住的部分）、耳朵和触角的滞后摆动、包格式与合成器。**风险**：板上每绘制帧现在约 85–92 ms（anim 加 LVGL，见 M-6），分层后如果每个部件每帧都重采样，总面积不会比整图小，部件运动在板上仍是 6–7 fps 一档的台阶；只有「大部件静止、小部件才动」才能让成本随变化面积下降，这一点还没有实测。预览用 25 fps 看着顺不代表板上顺。
 - [ ] 小样　[ ] 包格式与合成器　[ ] 预览出片　[ ] 真机验收
 
 ### [ ] M-8 角色包按需下载（A/B 槽，一次只存一个角色）
@@ -236,14 +248,14 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 
 ### [ ] P1-01 冻结修复候选，完成发布与回滚验收
 
-- 门禁、构建、上传、切流、回滚与验收底线在 `docs/runbooks/release-rollback.md`；整栈发布已用 `scripts/release_ops.sh` 跑过多次（`verify-load`、`freeze`、`cutover`、`finish`）。整栈 `rollback` 在新机没演练过（并入「域名切换与新机收尾」第一条）。
+- 门禁、构建、上传、切流、回滚与验收底线在 `docs/runbooks/release-rollback.md`；整栈发布已用 `scripts/release_ops.sh` 跑过多次（`verify-load`、`freeze`、`cutover`、`finish`）。整栈 `rollback` 已于 2026-10-06 在新机演练一次并通过（切回 `20261005-subject-candidates-v1` 三个角色 health、重启 0，再 `env` → `cutover` → `finish` 切回，见 `HANDOFF.md`「2026-10-06 主机维护窗口」）。
 - 完成条件：同一候选的构建、切流、回滚、设备验收分别有证据；仅保留当前和一个可运行回滚，清理生产另授权。
 - 身份收敛（发布治理）：control-api 期望的 release tag 应与真实发布 tag 一致，取消「agent 上报历史冻结 tag」的临时对齐；与预构建镜像入口一并作为本项输入。
 
-### [ ] P1-08 为仍增长的 WAL 确定独立保留策略
+### [ ] P1-08 新机的数据库备份策略
 
-- 现状与做法见「域名切换与新机收尾」的 WAL 一条：本批把仓库的 `infra/memoria-data.production.yml` 改成 `archive_mode=off`，主机上生效在维护窗口。新机没有 base backup（09-14 演练的 base 在 `/root/old-host-20261005/var-backups-memoria.tar.gz`，它的 WAL 链在旧机、到期即失），归档没有恢复价值；以后若要重新开归档：归档卷必须是 `999:999 0700`，否则 `archive_command` 一直失败，并先做 base backup。
-- 需你定并授权：每夜 `pg_dump`（默认不做）、手工阈值策略；不得按 mtime 删除或清理 `pg_wal` 代替归档保留。
+- 现状：WAL 归档已于 2026-10-06 关闭（仓库 `infra/memoria-data.production.yml` 与主机一致，归档卷已清空），新机没有 base backup（09-14 演练的 base 在 `/root/old-host-20261005/var-backups-memoria.tar.gz`，它的 WAL 链在旧机、到期即失）。以后若要重新开归档：归档卷必须是 `999:999 0700`，否则 `archive_command` 一直失败，并先做 base backup。
+- 需你定并授权：每夜 `pg_dump`（默认不做）；不得按 mtime 删除或清理 `pg_wal`。
 - 完成条件：保护集合、容量 / 恢复影响、执行证据和后续责任明确，保留恢复目标可验证。
 
 ### [ ] P1-09 readiness 刷新失败的主动告警（刷新修复与逾期提示已上线）
