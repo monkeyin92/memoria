@@ -753,26 +753,19 @@ void MemoriaMascotDisplay::AnimationLoop() {
                 bench.composed_px += scene_->last_composed_px();
 #endif
             }
-            // LVGL-rect probe (MMP2 design §6.1): invalidate only the active patch rects' union
-            // (scene_->last_active_box()) instead of the whole dirty box, so taskLVGL flushes the
-            // 5-13k px the patches actually cover instead of ~the whole screen. The scene still
-            // composes exactly as before: only the area handed to LVGL shrinks.
-            if (container_ != nullptr) {
-                const memoria::SceneRect active = scene_->last_active_box();
-                if (RectEmpty(active)) {
-                    for (int i = 0; i < count; ++i) {
-                        lv_area_t area = {static_cast<int32_t>(dirty[i].x0),
-                                          static_cast<int32_t>(dirty[i].y0),
-                                          static_cast<int32_t>(dirty[i].x1 - 1),
-                                          static_cast<int32_t>(dirty[i].y1 - 1)};
-                        lv_obj_invalidate_area(container_, &area);
-                    }
-                } else {
-                    lv_area_t area = {static_cast<int32_t>(active.x0), static_cast<int32_t>(active.y0),
-                                      static_cast<int32_t>(active.x1 - 1),
-                                      static_cast<int32_t>(active.y1 - 1)};
-                    lv_obj_invalidate_area(container_, &area);
+            // Hand LVGL exactly what the scene composed: every rectangle it returns. The scene decides
+            // how narrow each one may be (MMP2, TODOLIST M-7) — it alone knows whether the base is still,
+            // which is what makes a patch-rect-only redraw safe. Invalidating one box here, as the
+            // 2026-10-07 probe did, drops the state ring's four rim strips: composed_px counts them and
+            // the panel would keep showing the previous glow.
+            for (int i = 0; i < count && container_ != nullptr; ++i) {
+                if (memoria::RectEmpty(dirty[i])) {
+                    continue;  // the scene composed nothing for this rectangle (every row cancelled out)
                 }
+                lv_area_t area = {static_cast<int32_t>(dirty[i].x0), static_cast<int32_t>(dirty[i].y0),
+                                  static_cast<int32_t>(dirty[i].x1 - 1),
+                                  static_cast<int32_t>(dirty[i].y1 - 1)};
+                lv_obj_invalidate_area(container_, &area);
             }
             const uint8_t opa = scene_->chrome_opa(frame_now);
             const uint8_t text_opa =

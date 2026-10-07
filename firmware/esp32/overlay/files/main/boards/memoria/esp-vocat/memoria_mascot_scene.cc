@@ -819,30 +819,8 @@ MascotScene::Placement MascotScene::Compute(uint32_t now_ms) {
     p.xf.ay_q = static_cast<int32_t>(std::lround((ground + dy) * 16.0f));
     p.xf.sx_q = static_cast<int32_t>(std::lround(sx * kScaleOne));
     p.xf.sy_q = static_cast<int32_t>(std::lround(sy * kScaleOne));
-    // MMP2's narrowing is only correct when the base does not move between frames: a still base
-    // keeps outside-rect content identical, a moving transform repaints edges there. Everything
-    // that displaces or rescales the bitmap must be neutral for this flag.
-    base_still_ = p.xf.ax_q == kCenter * 16 && p.xf.ay_q == kFootY * 16 &&
-                  p.xf.sx_q == kScaleOne && p.xf.sy_q == kScaleOne;
     p.sprite_box =
         Clip(SpriteBounds(*sprite, pack_->canvas_w() / 2, pack_->foot_y(), p.xf), Screen());
-
-    // LVGL-rect probe (MMP2 design §6.1): the patch's canvas rect through the same projection as
-    // SpriteBounds (CanvasRectBounds), clipped to the sprite's box; the whole box for a full pose.
-    // Pixels the patch just left must be erased too, so Render unions this with the previous frame's
-    // rect and the display invalidates only the union.
-    {
-        int rx = 0;
-        int ry = 0;
-        int rw = 0;
-        int rh = 0;
-        pack_->PatchRect(frame, &rx, &ry, &rw, &rh);
-        p.active_box = rw > 0 && rh > 0
-            ? Clip(CanvasRectBounds(SceneRect{rx, ry, rx + rw, ry + rh}, pack_->canvas_w() / 2,
-                                    pack_->foot_y(), p.xf),
-                   p.sprite_box)
-            : p.sprite_box;
-    }
 
     const float rx = pack_->foot_half_w() * 1.35f * k * (1.0f - 0.3f * lift);
     const float ry = rx / 6.0f + 2.0f;
@@ -1067,11 +1045,11 @@ bool MascotScene::SpriteTouch(const Placement& p, int y, int* lo, int* hi) const
     return h > l;
 }
 
-void MascotScene::RedrawRect(const SceneRect& rect, const Placement& p, uint32_t now_ms,
-                             bool skip_hole, bool narrow_request) {
+SceneRect MascotScene::RedrawRect(const SceneRect& rect, const Placement& p, uint32_t now_ms,
+                                  bool skip_hole, bool span_request) {
     const SceneRect r = Clip(rect, Screen());
     if (Empty(r)) {
-        return;
+        return SceneRect{};
     }
     // Compose one row at a time in a small line buffer (internal RAM on the
     // device) so each framebuffer pixel in PSRAM is read once from the
@@ -1079,11 +1057,22 @@ void MascotScene::RedrawRect(const SceneRect& rect, const Placement& p, uint32_t
     // Pixels outside the round panel are never seen, so each row stops at
     // the circle.
     const bool intro_on = intro_active(now_ms);
-    const bool narrow = narrow_request && !intro_on;
+    const bool narrow = span_request && !intro_on;
+    // Every pixel this call writes, so Render can hand the display a rectangle that covers exactly that
+    // and nothing more. A row whose columns all cancel contributes nothing; the box therefore tracks the
+    // sprite's real footprint rather than its ~40 %-transparent bounding box.
+    SceneRect wrote{};
     uint16_t line[kSize];
     auto compose = [&](int y, int xa, int xb) {
         if (xb <= xa) {
             return;
+        }
+        if (Empty(wrote)) {
+            wrote = SceneRect{xa, y, xb, y + 1};
+        } else {
+            wrote.x0 = xa < wrote.x0 ? xa : wrote.x0;
+            wrote.x1 = xb > wrote.x1 ? xb : wrote.x1;
+            wrote.y1 = y + 1;
         }
         const std::size_t bytes = static_cast<std::size_t>(xb - xa) * 2;
         const std::size_t offset = static_cast<std::size_t>(y) * kSize;
@@ -1137,24 +1126,13 @@ void MascotScene::RedrawRect(const SceneRect& rect, const Placement& p, uint32_t
                     ulo = touch_lo_[y] < ulo ? touch_lo_[y] : ulo;
                     uhi = touch_hi_[y] > uhi ? touch_hi_[y] : uhi;
                 }
-                // MMP2 (TODOLIST M-7): recompose only (erase union) ∩ (active ∪ prev active) while
-                // the base is still; a moving transform repaints outside-rect edges, so the erase
-                // union must win there. Inside the rects, columns outside both erase and span stay.
-                if (base_still_) {
-                    const SceneRect act = RectUnion(p.active_box, last_active_rect_[y]);
-                    if (!RectEmpty(act) && y >= act.y0 && y < act.y1) {
-                        ulo = act.x0 > ulo ? act.x0 : ulo;
-                        uhi = act.x1 < uhi ? act.x1 : uhi;
-                    } else {
-                        uhi = ulo;
-                    }
-                }
+                // The erase union is the whole story here: this row recomposes exactly the columns the
+                // sprite covered last frame or covers now, so no stale pixel can survive a move.
                 x0 = ulo > x0 ? ulo : x0;
                 x1 = uhi < x1 ? uhi : x1;
             }
             touch_lo_[y] = static_cast<int16_t>(covers ? lo : 0);
             touch_hi_[y] = static_cast<int16_t>(covers ? hi : 0);
-            last_active_rect_[y] = RectEmpty(p.active_box) ? last_active_rect_[y] : p.active_box;
         }
         if (x1 <= x0) {
             continue;
@@ -1168,6 +1146,7 @@ void MascotScene::RedrawRect(const SceneRect& rect, const Placement& p, uint32_t
             compose(y, x0, x1);
         }
     }
+    return wrote;
 }
 
 int MascotScene::Render(uint32_t now_ms, SceneRect* dirty, int max_dirty) {
@@ -1257,16 +1236,16 @@ int MascotScene::RenderImpl(uint32_t now_ms, SceneRect* dirty, int max_dirty) {
     }
     const uint32_t tr = profiling_ ? clock_() : 0;
     for (int i = 0; i < count; ++i) {
-        RedrawRect(rects[i], p, now_ms, ring_only[i], !ring_only[i] && !overflow);
-        dirty[i] = rects[i];
+        // RedrawRect reports what it actually wrote (the sprite's real span, the ring band inside the
+        // round panel). Hand that to the display: it is what the scene changed, so it is what LVGL has to
+        // re-blit, and it can only ever be a subset of the rectangle asked for.
+        const SceneRect wrote =
+            RedrawRect(rects[i], p, now_ms, ring_only[i], !ring_only[i] && !overflow);
+        dirty[i] = wrote;
     }
     if (profiling_) {
         profile_.rect_us += clock_() - tr;
     }
-    // LVGL-rect probe: what the display invalidates is this frame's rect plus the previous frame's
-    // (the patch's old pixels must be erased); a full-redraw or an overflow frame paints everything
-    // anyway, so the union only needs the mix of the two.
-    active_box_ = overflow ? Screen() : Union(p.active_box, last_.active_box);
     last_ = p;
     return count;
 }

@@ -66,11 +66,6 @@ struct SpriteTransform {
 // to the screen. `canvas_cx` and `foot_y` are the pack's canvas centre column and foot row.
 SceneRect SpriteBounds(const MascotSprite& s, int canvas_cx, int foot_y, const SpriteTransform& t);
 
-// Every pixel a canvas-space rectangle can touch under `t` — the same projection as SpriteBounds for a
-// rect that is known not to hold sprite data (the MMP1 patch's application rect; LVGL-rect probe, MMP2
-// design §6.1). Margins included, not clipped to the screen.
-SceneRect CanvasRectBounds(const SceneRect& rect, int canvas_cx, int foot_y, const SpriteTransform& t);
-
 // Blends the sprite's pixels in screen row `y`, columns [x0, x1), over `row` (indexed by screen x).
 // Pixels the sprite does not cover are left alone. Scales below about 0.85 in both directions (the
 // captioned layout) are supersampled, anything else is sampled bilinearly.

@@ -135,9 +135,6 @@ public:
     // Pixels composed (backdrop copied, layers blended, row written back) by the last Render. The dirty
     // rectangles overstate nothing and hide nothing but this: a ring-only redraw skips the middle.
     uint32_t last_composed_px() const { return composed_px_; }
-    // LVGL-rect probe (MMP2 design §6.1): what the last Render handed to the display as the invalidate
-    // area (the active patch rects' union); an empty rect when nothing was drawn.
-    SceneRect last_active_box() const { return active_box_; }
 
     // Bench builds only: time the stages of every kProfileEvery-th Render with `clock`. nullptr switches it off.
     void SetProfileClock(MascotClockFn clock) { clock_ = clock; }
@@ -167,11 +164,6 @@ private:
         // Where the mascot stands: feet centre in 1/16 px, scale in 1/4096, sampled at exactly that.
         SpriteTransform xf;
         SceneRect sprite_box;
-        // LVGL-rect probe (MMP2 design §6.1): the screen-space patch rect (the whole sprite_box when
-        // the frame is a full pose). The display invalidates only this instead of sprite_box, so a
-        // blink or talk beat flushes 5-13k px instead of ~the whole screen. Render unions it with the
-        // previous frame's rect so pixels the patch just left are erased.
-        SceneRect active_box;
         // The ground shadow, centre and radius in 1/16 px.
         int shadow_cx_q = 0;
         int shadow_cy_q = 0;
@@ -197,10 +189,13 @@ private:
     int HeldGlow(int level, uint32_t now_ms);
     void BuildBackground();
     // skip_hole: a ring-only redraw leaves the middle of the screen (inside the ring) alone.
-    // narrow: only the columns the sprite and shadow covered in the last frame or cover now are
-    // recomposed (everything else in the rectangle is already right); never with the boot animation.
-    void RedrawRect(const SceneRect& rect, const Placement& p, uint32_t now_ms, bool skip_hole = false,
-                    bool narrow = false);
+    // span: recompose only the columns the sprite and shadow covered in the last frame or cover now
+    // (everything else in the rectangle is already right); never with the boot animation.
+    // Returns the bounding box of the pixels actually written (empty when the call wrote nothing), which
+    // is never wider than the requested rectangle: Render hands this to the display as the invalidate
+    // area so LVGL re-blits what the scene composed and nothing more.
+    SceneRect RedrawRect(const SceneRect& rect, const Placement& p, uint32_t now_ms,
+                         bool skip_hole = false, bool span = false);
     // The columns [*lo, *hi) of screen row y that the sprite or its shadow can change under p.
     bool SpriteTouch(const Placement& p, int y, int* lo, int* hi) const;
     void DrawSprite(const SceneRect& clip, const Placement& p);
@@ -223,9 +218,6 @@ private:
     int16_t ring_hole_[kSize] = {};   // per row: half-width inside the ring
     int16_t circle_hw_[kSize] = {};   // per row: half-width of the visible panel
     int16_t touch_lo_[kSize] = {};    // per row: columns the last drawn sprite and shadow covered
-    SceneRect last_active_rect_[kSize] = {};  // MMP2: each row's previous active patch rect (erase domain)
-    bool base_still_ = false;         // MMP2: breath/sway/lift/motions all neutral this frame — only then may
-                                      // the recomposed range shrink to the patch rects (memoria_mascot_scene.cc)
     int16_t touch_hi_[kSize] = {};
     uint16_t orb_r5_[256] = {};  // boot orb light per radius, 8.8 fixed point
     uint16_t orb_g6_[256] = {};
@@ -287,7 +279,6 @@ private:
     bool actor_started_ = false;
 
     Placement last_;
-    SceneRect active_box_ = {};
 };
 
 }  // namespace memoria

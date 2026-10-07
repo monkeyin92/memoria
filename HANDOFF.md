@@ -81,6 +81,19 @@
 - **上午的四个决定（用户「1. 接受 2.采纳 3.要 4. 推送合并」）**全部执行：1-LSB 接受、口径 `anim + taskLVGL ≤ 32 ms` 采纳、M-7 要做、PR #190 / #191 推送合并（`403eada3` / `f6e6a596`）。
 - **MMP2 实现开始（「你用电脑模拟我测试，确认方案，开始做吧」）**：packer 输出 v2（reserved → flags bit 0 = patch_rect_only）、loader 接受 1 与 2、场景加 `base_still_` 与「静止时重画范围 = 擦除并集 ∩ 补丁矩形并集」。两次收窄尝试被预览的逐位校验判错（432、318 处不一致：SpriteTouch 内收窄缩小了擦除域；带 prev-rect 的行级并集在眨眼边界留了 stale），都已撤销，最终规则的注释在 `SpriteTouch`/`RedrawRect`。预览 851 帧 0 不一致、逐位与 main 相同（主机时间线底图在动，收窄只在静止时启用）。**板上没验**。提交 `1e606286`，与探针 `0b4b3a59` 一起进 PR #192。
 
+## 2026-10-07 下午：MMP2 复核与修复（用户「按你说的修吧，1、2 做了，然后重新量」）
+
+审查 PR #190 / #191 / #192 发现的缺陷与修复、以及板上的重量，收据 `outputs/acceptance/run-20261007-mmp2-fix2/`（git 忽略）。
+
+- **缺陷（PR #190 引入，随 #192 一起在 main）**：`memoria_mascot_display.cc` 只 invalidate `last_active_box()` 一个矩形。该盒只由补丁矩形与精灵盒组成，场景每帧另外交出的**四条声环带**（`RingStrips`，19k–55k px/帧）和影子矩形被整个丢弃——合成对（`composed_px` 计入它们），LVGL 不刷，屏上那圈会停在旧亮度。**因此 §6.1 探针的「taskLVGL 35–40 → 17.5–21.9 ms」不是「小 invalidate 便宜」的证据，那 18 ms 主要是被丢掉的声环带面积。**
+- **修法（用户点头的 1、2 两项）**：`RedrawRect` 返回本次调用实际写过的像素包围盒，`Render` 把它作为 dirty rect 交出（只窄不宽），display 回到「逐条 invalidate 场景返回的每个矩形」；收窄决策集中到 scene 一处。
+- **PR #192 的另一半也作废**：`base_still_`（四个变换量精确等于中立值）不可达——呼吸与 sway 每帧都动（idle ≤ 0.062 px/帧、speaking ≤ 3.438），量化到 1/16 px 与 1/4096 后 750 帧里最多成立 2 帧、且从没落在补丁帧上。包格式 v2 的 flags 位没有读者（重打包产物与已提交的包逐字节一致），版本退回 1；`PatchRect` / `CanvasRectBounds` / `Patch::rect_only` 删除。
+- **板上重量（带修复的 bench 镜像，音量 30，4 句全答出，`outputs/serial/robot-20261007-mmp2-fix.log`）**：`lvgl_share.py` 给出 idle 1.7 fps / anim 34.1 + taskLVGL 23.6 = **57.7 ms**、dirty 77,499 px；listening 5.8 fps / 48.8 + 38.6 = **87.4 ms**、123,719 px；speaking 6.7 fps / 48.3 + 36.9 = **85.1 ms**、115,295 px。**与修复前一致**（声环带被还回来了）。收窄本身在主机只省 1.5–3 %（精灵逐行填满包围盒，LVGL 刷的是矩形不是像素）。**`anim + taskLVGL ≤ 32 ms` 未达成，收窄 invalidate 这条路走不通**；下一步在合成像素量或 LVGL 刷屏路径（TODOLIST M-6 / M-7）。
+- **新增回归测试** `test_the_display_invalidates_everything_the_scene_composed`：预览 harness 新增「面板模拟」，只把返回的矩形刷进模拟面板再与强制全量重画比较。用探针那个 bug 注入验证过（liveliness 那天 651 帧不一致），原有的 `mismatches` 抓不到这类问题。
+- **音频侧（同一窗口）**：13 次播放全部 `close_dropped_waits=0` / `close_dropped_ms=0` / `exact_timeouts=0`，0 看门狗、0 分配失败。
+- **板子**：测完刷回 build 24 产品镜像，七个区的设备端 MD5 与刷机前逐一相同（`ota_0` = `081f0d2d…`），启动日志 `MEMORIA_FIRMWARE_BUILD=24; slot=ota_0`、USB 命令只剩 `wake`；备份在 `firmware/esp32/artifacts/backups/pre-mmp2-fix-20261007/`。常驻串口记录写到 `outputs/serial/robot-20261007-restore-after-mmp2.log`。
+- **未验**：声环「不再停住」是代码推理 + 主机面板模拟，板上没有肉眼确认；收窄后的 dirty 矩形与返回值一致只有主机证据。
+
 ## 2026-10-06 bench 真机窗口：M-2 通过，M-6 的 25 fps 在真机上不成立（用户 12:05「好可以」，13:05「迟一点，现在先不刷」）
 
 在此之前 M-1 / M-2 / M-6 只有主机测试与预览出片，一项真机数字都没有。这一轮第一次把 bench 镜像刷上真机纯粹为了量开销。

@@ -200,6 +200,12 @@ int main(int argc, char** argv) {
     unsigned long long pending_area = 0, pending_composed = 0;
     bool pending_same = true;
     std::vector<uint16_t> previous(fb_a.size(), 0);
+    // The panel, as LVGL would leave it: pixels are only re-blitted where the display was invalidated.
+    // fb_a/fb_b compare what the scene *composed*; this compares what would actually reach the glass, so a
+    // dirty rectangle that misses a composed pixel (the 2026-10-07 probe's failure mode) shows up as a
+    // panel mismatch even though the scene's own framebuffer was right.
+    std::vector<uint16_t> panel(fb_a.size(), 0);
+    unsigned long long panel_mismatch_px = 0, panel_mismatch_frames = 0;
     // The mascot lives inside the state ring's inner circle; the ring and its comet animate outside it.
     std::vector<uint8_t> inside(fb_a.size(), 0);
     for (int y = 0; y < kSize; ++y) {
@@ -273,6 +279,27 @@ int main(int argc, char** argv) {
             pending_rects += n;
             pending_area += area;
             pending_composed += a.last_composed_px();
+            // Blit exactly the invalidated rectangles into the simulated panel, as LVGL does, and check
+            // that the result equals what a full redraw would have put there.
+            for (int i = 0; i < n; ++i) {
+                const int x0 = dirty[i].x0 < 0 ? 0 : dirty[i].x0;
+                const int y0 = dirty[i].y0 < 0 ? 0 : dirty[i].y0;
+                const int x1 = dirty[i].x1 > kSize ? kSize : dirty[i].x1;
+                const int y1 = dirty[i].y1 > kSize ? kSize : dirty[i].y1;
+                for (int y = y0; y < y1; ++y) {
+                    std::memcpy(&panel[static_cast<size_t>(y) * kSize + x0],
+                                &fb_a[static_cast<size_t>(y) * kSize + x0],
+                                static_cast<size_t>(x1 - x0) * 2);
+                }
+            }
+            {
+                unsigned long long diff = 0;
+                for (size_t i = 0; i < panel.size(); ++i) diff += panel[i] != fb_b[i];
+                if (diff != 0) {
+                    ++panel_mismatch_frames;
+                    panel_mismatch_px += diff;
+                }
+            }
             if (memcmp(fb_a.data(), fb_b.data(), fb_a.size() * 2) != 0) {
                 pending_same = false;
                 if (mismatches < 4) {
@@ -311,12 +338,14 @@ int main(int argc, char** argv) {
     }
     if (out != nullptr) fclose(out);
     const memoria::RenderProfile& pr = a.profile();
-    printf("],\"frame_count\":%u,\"mismatches\":%u,\"unchanged_frames\":%u,\"redraw_px\":%llu,"
+    printf("],\"frame_count\":%u,\"mismatches\":%u,\"panel_mismatch_frames\":%llu,"
+           "\"panel_mismatch_px\":%llu,\"unchanged_frames\":%u,\"redraw_px\":%llu,"
            "\"composed_px\":%llu,\"renders\":%u,\"profile\":{\"renders\":%llu,\"sampled\":%llu,"
            "\"total_us\":%llu,\"actor_us\":%llu,\"rect_us\":%llu,\"touch_us\":%llu,\"rows\":%llu,"
            "\"copy_in_us\":%llu,\"shadow_us\":%llu,\"sprite_us\":%llu,\"ring_us\":%llu,"
            "\"copy_out_us\":%llu}}\n",
-           frames, mismatches, idle_frames, redraw_px, composed_px, renders,
+           frames, mismatches, panel_mismatch_frames, panel_mismatch_px, idle_frames, redraw_px,
+           composed_px, renders,
            static_cast<unsigned long long>(pr.renders), static_cast<unsigned long long>(pr.sampled),
            static_cast<unsigned long long>(pr.total_us), static_cast<unsigned long long>(pr.actor_us),
            static_cast<unsigned long long>(pr.rect_us), static_cast<unsigned long long>(pr.touch_us),
@@ -696,7 +725,10 @@ def main() -> int:
     stats["mean_redraw_fraction"] = round(stats["redraw_px"] / (len(frames) * SIZE * SIZE), 3)
     (out / "stats.json").write_text(json.dumps(stats, indent=2))
     print(json.dumps(stats, indent=2))
-    return 0 if stats["mismatches"] == 0 else 1
+    # `mismatches` proves the scene's own dirty rectangles leave nothing stale. `panel_mismatch_frames`
+    # proves the rectangles the *display* is told to invalidate cover everything the scene composed — the
+    # check that would have caught the 2026-10-07 probe dropping the state ring's rim strips.
+    return 0 if stats["mismatches"] == 0 and stats["panel_mismatch_frames"] == 0 else 1
 
 
 if __name__ == "__main__":

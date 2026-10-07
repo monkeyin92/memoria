@@ -1,6 +1,6 @@
 # MMP2 设计稿：补丁矩形重绘（分层 rig 的成本前提）
 
-状态：**已确认（用户 10-07 10:3x「你用电脑模拟我测试，确认方案，开始做吧」）**；§6.1 已实测（§6.1a），音频承载复核通过（10:29–10:32 音量 30 下 4/4，`run-20261007-audio-integrity-vol30/`）。实现开始。
+状态：**已实做并上板量过（2026-10-07）；结论是原方案的两条路都不成立，实现已改成另一条并落到 main**。收据：`outputs/acceptance/run-20261007-mmp2-fix/`、`outputs/acceptance/run-20261007-mmp2-fix2/`、`outputs/serial/robot-20261007-mmp2-fix.log`（git 忽略）。要点见 §6；原始设计与当时的估算保留在下面，但**§1 的表格与 §5 的合成器方案已被实测否掉**。
 来源：M-6 的 scratch 实验否定了「静止大底图 + 只动小部件」的自动变快（TODOLIST M-6），根因是 MMP1 的补丁帧（眨眼、张嘴）要整幅重采样：`MascotPack::Frame()` 把补丁应用到 base 的整张画布上（256×256 ≈ 65k px），场景再按整张 sprite 采样（`memoria_mascot_pack.cc` 的 `Frame()` 与 `memoria_mascot_raster.cc`）。
 
 ## 1. 要解决的问题（数字）
@@ -16,7 +16,7 @@
 | LVGL 需要刷的面积 | 整幅包围盒（~13 万 px，几乎整屏） | 补丁矩形（~5–13k px，屏幕的 4–10%） |
 | 每绘制帧合计（估） | 85–92 ms | **~15–25 ms** |
 
-最后一行取决于 LVGL 对小矩形的处理（见 §6 的风险），这是设计稿要先请示的部分。
+**（2026-10-07 实测更正：这张表的最后两行都不成立。）** 声环每帧自带 19k–55k px 的刷屏面积，跟补丁无关；补丁帧本身也不是每帧都出现（speaking 25.6 %、idle 3.6 %）。见 §6。
 
 ## 2. 不改什么（约束）
 
@@ -47,25 +47,36 @@
 
 ## 5. 合成器改动（`memoria_mascot_scene.cc`）
 
-- `Placement` 增加一个 `active_box`（补丁矩形在屏幕上的投影，含采样器边缘余量）；补丁帧时 `sprite_box` 仍按整幅算（视口裁剪不变），但 `RedrawRect` 的窄化逻辑把「合并上一帧与本帧的 sprite 覆盖列」改为「上一帧与本帧的 active_box 覆盖列」。
-- 全姿势帧：`active_box` = 整幅 sprite_box，行为与现在一致。
-- 与 span-compose 的关系：span-compose 的「覆盖列并集」继续成立，只是覆盖列从「整幅投影的并集」收窄为「活性矩形投影的并集」。thinking 状态的彗星环路径不变。
+**（2026-10-07 修正：本节原方案已作废，实做如下。）**
+
+原方案是给 `Placement` 加 `active_box`，并用 `base_still_`（四个变换量精确等于中立值）作闸门，静止时把重合范围收窄到补丁矩形。实做后实测否掉了它：`base_still_` 不可达（§6 第 6 条），而且**按矩形收窄省不下多少**（§6 第 2 条）。
+
+实做的收窄是另一条，与补丁矩形无关，也不需要「静止」这个前提：
+
+- `RedrawRect` 记录本次调用**实际写过的像素包围盒**并返回；`Render` 把它作为 dirty rect 交出（不再是请求矩形）。它只会比请求矩形小，且总是覆盖真正变过的像素，所以合成与 invalidate 天然一致。
+- display 回到「逐条 invalidate 场景返回的每个矩形」（`memoria_mascot_display.cc`）。
+- 上一帧的 `touch_lo_/hi_`（span-compose 的擦除并集）保持不变，仍是每行重合范围的唯一依据。
+
+配套（同日）：补丁帧在 speaking 占 25.6 %、idle 3.6 %，收窄本身只省 1.5–3 %，所以 ≤ 32 ms 的目标要靠别的路（见 §6 第 2 条）。
 
 ## 6. 风险与必须先量的事
 
-1. **LVGL 对小矩形的刷新是否真的便宜**：**已量（10-07 10:0x，探针 bench 镜像，见 §6.1a）**——taskLVGL 从整盒的 35–40 ms/帧降到 **17.5–21.9 ms/帧（−18 ms，约一半）**，帧率从约 6.5 升到 8.3/s（省出的预算被动画任务拿去多画了）。这仍不是 MMP2 的全部收益：探针退出条件保守（`RectEmpty(active)` 才回退整盒）而且合成与帧率都驱动 invalidate；它只证明「小 invalidate 便宜」，方向成立。
-   - §6.1a 探针的做法与收据（`docs/acceptance/run-20261007-lvgl-rect-probe/`、`outputs/serial/robot-20261007-lvgl-rect-probe.log`）：场景合成与 display 的 invalidate 改为只递交 `last_active_box()`（本帧 + 上一帧补丁矩形的屏幕投影并集，`CanvasRectBounds` 与 `SpriteBounds` 同公式，`RectEmpty` 时回退整盒）；合成逐位不变（预览 851 帧 mismatch 0，compose_per_frame 与 main 相同）；板上 anim 40–60 ms/帧与昨晚满帧几乎一样（`drawn` 窗口 `render_avg` 40.7/60.3/52.7 ms，昨晚 31.8–69.9），所以 taskLVGL 的下降（35–40 → 17.5–21.9）归给「invalidate 面积变小」。代码在分支 `feat/mmp2-lvgl-rect-probe`（worktree `/Users/monkeyin/projects/memoria-m6lv`，未提交）；板子已刷回 build 24。
-   - **同一个窗口的独立发现（不归因此探针，音量 6 的已知弱点加重了它）**：第 3、4 句没有回复。桥日志里 09:58:31 起音频帧一直 `Encode queue is full`（最高丢到 249 帧、稳定不涨），FunASR 只拿到 text_len 3–5 的碎片。对照昨晚 fastpath 探针（音量 6，4/4 全答、`Encode queue` 也满 172 次）：这次 anim 每帧 50.2 ms + opus_codec 0.34 核 + taskLVGL 0.17，核 1 满载时 encode 的节奏被打断到把句子切碎。**结论：32 ms 口径下的音频承载仍要复核——不是探针本身的失败，而是「低音量 + 满核」组合已两次暴露在边缘上。**
-2. 调色板共享：补丁与 base 共用一张 255 色调色板（MMP1 现状），眼白 / 眼睑色已在内；MMP2 不改。若分层美术（M-7 的美术件）颜色超 255，才需要 per-part 调色板——先不做。
-3. 双补丁帧（同时眨眼 + 张嘴）不存在：MMP1 的帧表里眨眼与张嘴是互斥的帧（`default_blink`、`default_talk`），MMP2 维持。
-4. 边缘余量：补丁矩形外扩 1–2 px（采样器 `kBoundsMargin` 与背景行差异），避免旧帧残留。
+1. **LVGL 对小矩形的刷新是否真的便宜**：**已量，结论已更正（10-07 10:0x 探针 → 同日复核）**。探针（bench 镜像，见 §6.1a）当时报 taskLVGL 35–40 → **17.5–21.9 ms/帧**、帧率 6.5 → 8.3/s；**复盘发现这个数字不能当作「小 invalidate 便宜」的证据**：探针在 display 里只递交 `last_active_box()` 一个矩形，而场景每帧还给 LVGL **四条声环带**（`RingStrips`，每帧合计 19k–55k px，绕屏幕一圈）。探针因此根本没刷声环，屏上那一圈会停在上一帧的亮度上——它量到的是「少刷了东西」，不是「刷得便宜」。所以 §1 表格里「LVGL 需要刷的面积：整幅包围盒 → 补丁矩形」这一行**目前没有实测支撑**。
+   - §6.1a 探针的做法与收据（`outputs/serial/robot-20261007-lvgl-rect-probe.log`）：场景合成与 display 的 invalidate 改为只递交 `last_active_box()`；合成逐位不变（预览 851 帧 mismatch 0，compose_per_frame 与 main 相同）；板上 anim 与前一晚满帧相同（`drawn` 窗口 `render_avg` 40.7/60.3/52.7 ms）。**anim 不变、taskLVGL 降 18 ms 这个观察本身可信**（同一窗口、同一镜像），但归因只有一个：被丢掉的声环带面积，不是补丁矩形有多小。
+   - **同一个窗口的独立发现（不归因此探针，音量 6 的已知弱点加重了它）**：第 3、4 句没有回复。桥日志里 09:58:31 起音频帧一直 `Encode queue is full`（最高丢到 249 帧、稳定不涨），FunASR 只拿到 text_len 3–5 的碎片。对照前一晚 fastpath 探针（音量 6，4/4 全答、`Encode queue` 也满 172 次）：这次 anim 每帧 50.2 ms + opus_codec 0.34 核 + taskLVGL 0.17，核 1 满载时 encode 的节奏被打断到把句子切碎。**结论：32 ms 口径下的音频承载仍要复核——不是探针本身的失败，而是「低音量 + 满核」组合已两次暴露在边缘上。** 该复核已于 10-07 10:29–10:32 在音量 30 下通过（4/4 答出，`close_dropped` / `exact_timeouts` 为 0）。
+2. **收窄能省多少**（10-07 实现后实测，主机 2000 帧）：**几乎不省**。把 `RedrawRect` 实际写过的像素包围盒作为 dirty rect 递交，每帧 invalidate 面积只从 53,432 → 52,038 px（idle）/ 86,229 → 85,146（speaking），约 1.5–3 %。原因是精灵逐行填满了它的包围盒（198×264 = 52,272 px 的请求矩形，实际写过也是 52,272），而合成像素少（34k）只是因为盒子里的透明边缘不产生写入——**LVGL 刷的是矩形，不是像素**，透明边缘照样要刷。另一半可省的是圆屏外那部分（idle 0 %、thinking 14 %）。**结论：`mascot_anim` + `taskLVGL` ≤ 32 ms 这个口径，靠收窄 invalidate 面积达不到**，得从合成成本（anim 侧）或 LVGL 的刷屏路径本身去想办法。
+3. 调色板共享：补丁与 base 共用一张 255 色调色板（MMP1 现状），眼白 / 眼睑色已在内；MMP2 不改。若分层美术（M-7 的美术件）颜色超 255，才需要 per-part 调色板——先不做。
+4. 双补丁帧（同时眨眼 + 张嘴）不存在：MMP1 的帧表里眨眼与张嘴是互斥的帧（`default_blink`、`default_talk`），MMP2 维持。
+5. 边缘余量：补丁矩形外扩 1–2 px（采样器 `kBoundsMargin` 与背景行差异），避免旧帧残留。
+6. **「完全静止的底图」不是一个可达的条件**（10-07 实现后实测）：呼吸与 sway 每帧都动 `dx/dy/sx/sy`（idle 每帧最多 0.062 px，speaking 3.4 px），量化到 1/16 px 与 1/4096 之后，"四个量都精确等于中立值"在 750 帧里最多成立 2 帧，而且从没落在补丁帧上。所以「静止时只重合补丁矩形」的判据在现有动画参数下是死代码。补丁帧本身很常见（speaking 25.6 %、idle 3.6 %），要利用它得换一个可达的判据（例如「底图位移小于半个像素」），或等分层美术让大部件真的不动。
+7. **板上实测（10-07，带修复的 bench 镜像，音量 30，4 句全答出）**：`lvgl_share.py` 给出的每绘制帧成本 —— idle 1.7 fps、anim 34.1 + taskLVGL 23.6 = 57.7 ms、dirty 77,499 px/帧；listening 5.8 fps、48.8 + 38.6 = 87.4 ms、123,719 px/帧；speaking 6.7 fps、48.3 + 36.9 = 85.1 ms、115,295 px/帧。与修复前（85–92 ms、6–7 fps）**基本一致**，因为修复把声环带还给了 invalidate（listening 每帧 123,719 px 里约 68k 是那四条带子）。音频侧干净：13 次播放全部 `close_dropped_waits=0`、`close_dropped_ms=0`、`exact_timeouts=0`，0 看门狗、0 分配失败。
 
-## 7. 交付物与验收（设计稿通过后）
+## 7. 交付物与验收（实际做出来的）
 
-1. `build_mascot_pack.py` 输出 version 2 包（带 flags 位），`MascotPack::Load` 接受 1 与 2。
-2. 合成器按 §5 改；`preview_memoria_mascot.py` 出对比视频（左：MMP1 路径；右：MMP2）。
-3. 测试：`test_scripted_day_redraws_exactly`（增量 = 全量）继续 0 不一致；新增「补丁帧只合成补丁矩形」的像素上限测试（照 `test_a_sprite_redraw_only_recomposes...` 的样式）；包体积回归。
-4. 主机预览通过后，bench 镜像上板量 `anim + taskLVGL`（判据：≤ 32 ms，用 `profile/task_table.py` 量），你看过对比视频再决定是否把 MMP2 用于产品镜像。
+1. ~~`build_mascot_pack.py` 输出 version 2 包~~ → **包格式退回 version 1**：flags 位没有任何读者，产物与已提交的包逐字节一致；`PatchRect` / `CanvasRectBounds` / `Patch::rect_only` 一并删除。
+2. ~~合成器按 §5 的 `active_box` 方案改~~ → 改成 `RedrawRect` 返回它实际写过的像素包围盒，`Render` 把它作为 dirty rect 交出，display 逐条 invalidate（见 §5 修正）。
+3. 测试：全部固件主机测试与 ruff 通过；新增 `test_the_display_invalidates_everything_the_scene_composed`（预览 harness 新增「面板模拟」：只把返回的矩形刷进一个模拟面板，再与全量重画比较。用 2026-10-07 探针那个 bug 注入验证过——liveliness 那天报 651 帧不一致，而 `mismatches` 抓不到它）。
+4. 板上量得 57.7–87.4 ms/帧（§6 第 7 条）：**≤ 32 ms 的目标未达成**，收窄 invalidate 这条路走不通。
 
 ## 8. 工作量估计（供排期）
 
