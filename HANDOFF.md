@@ -88,7 +88,9 @@
 - 板子：已刷回 build 24，七个区 md5 与刷前逐一相同（`ota_0` = `081f0d2d…`），常驻记录 `outputs/serial/robot-20261007-restore-after-ring.log`。备份复用上一轮 `firmware/esp32/artifacts/backups/pre-mmp2-fix-20261007/`（刷前先核了当前 md5 等于那份备份）。
 - 这一轮脚本 t001 没叫醒（`woke` 时设备已在 speaking），其余三句答出；音频计数 close_dropped=0、exact_timeouts=0，`Encode queue is full` 2 行。
 - 随后又刷了一次「每帧只 invalidate 一个外接矩形」的 bench 镜像（用户在询问里点了头），分支 `exp/invalidate-union`（`a73af47e`，未推送）。结果无收益：listening 86.9 ms（48.1 + 38.8）、speaking 88.5 ms（49.1 + 39.3）。脚本 t001 同样没叫醒，其余三句答出，音频计数 close_dropped=0、exact_timeouts=0；`Encode queue is full` 三轮分别是 159（修复轮）/ 2（环形）/ 116（这轮），跟改动对不上，没有追因。板子再次刷回 build 24，`ota_0` = `081f0d2d…`；`nvs` 的 md5 从 `e60d517c…` 变成 `97d8ddc0…`，是在这一轮刷机之前就变了的（我没写过 nvs），内容没看。常驻记录 `outputs/serial/robot-20261007-restore-after-union.log`。
-- 未验：矩形数代价的机制（拟合预测失败，别再用）；taskLVGL 约 39 ms 的内部拆分。
+- 未验：矩形数代价的机制（拟合预测失败，别再用）。
+- 再往下一步：bench 镜像加了一行 `disp`（分支 `feat/bench-lvgl-split`，`0e693355`，未推送），用户在询问里又点了头，刷机测了一轮。结果：一次刷新 57.0 ms = 渲染 25.6 + 刷新回调 17.6 + 等待 13.8，数字和判断见 TODOLIST M-6，收据 `outputs/acceptance/run-20261007-disp/findings.md`。这一轮脚本 t001 没叫醒，t003 说完等了 30 s 没答（前三轮同一句都答出，没查原因），t002 / t004 答出；音频计数 close_dropped=0、exact_timeouts=0。
+- **板子状态未确认**：还原 build 24 的写入两次哈希校验通过，但之后 esptool 握手失败（No serial data received），串口无任何输出；10-07 凌晨刷 bench 之后出现过同样的静默并在约 10 分钟后自愈，原因不明。恢复后要核对七个区 md5（`ota_0` 应为 `081f0d2d…`）。
 
 ## 2026-10-07 下午：MMP2 复核与修复（用户「按你说的修吧，1、2 做了，然后重新量」）
 
