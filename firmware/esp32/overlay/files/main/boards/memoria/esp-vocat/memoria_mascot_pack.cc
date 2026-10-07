@@ -284,6 +284,24 @@ bool MascotPack::DecodePatch(MascotFrame frame, const uint8_t* entry, const uint
     return true;
 }
 
+void MascotPack::PatchRect(MascotFrame frame, int* x, int* y, int* w, int* h) const {
+    *x = 0;
+    *y = 0;
+    *w = 0;
+    *h = 0;
+    if (!loaded_ || frame >= MascotFrame::kCount) {
+        return;
+    }
+    const Patch& patch = patch_[static_cast<std::size_t>(frame)];
+    if (!patch.present) {
+        return;
+    }
+    *x = patch.x;
+    *y = patch.y;
+    *w = patch.w;
+    *h = patch.h;
+}
+
 const MascotSprite* MascotPack::Frame(MascotFrame frame) {
     if (!loaded_ || frame >= MascotFrame::kCount) {
         return nullptr;

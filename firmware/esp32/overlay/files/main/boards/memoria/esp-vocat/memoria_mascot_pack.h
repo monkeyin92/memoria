@@ -117,6 +117,11 @@ public:
     // next Frame() call for a different patch frame. Missing frames fall back
     // to their base, and then to kDefault.
     const MascotSprite* Frame(MascotFrame frame);
+    // The patch's application rectangle in canvas coordinates (the patch's own x/y/w/h), as four out
+    // params (no SceneRect here: raster.h and this header already include each other). All four are 0
+    // when this frame is a full pose. LVGL-rect probe (MMP2 design §6.1): the scene invalidates only
+    // this rect's screen area for patch frames.
+    void PatchRect(MascotFrame frame, int* x, int* y, int* w, int* h) const;
 
 private:
     struct Patch {

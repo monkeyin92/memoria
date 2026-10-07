@@ -135,6 +135,10 @@ public:
     // Pixels composed (backdrop copied, layers blended, row written back) by the last Render. The dirty
     // rectangles overstate nothing and hide nothing but this: a ring-only redraw skips the middle.
     uint32_t last_composed_px() const { return composed_px_; }
+    // LVGL-rect probe (MMP2 design §6.1): what the last Render handed to the display as the invalidate
+    // area (the active patch rects' union); an empty rect when nothing was drawn.
+    SceneRect last_active_box() const { return active_box_; }
+
     // Bench builds only: time the stages of every kProfileEvery-th Render with `clock`. nullptr switches it off.
     void SetProfileClock(MascotClockFn clock) { clock_ = clock; }
     const RenderProfile& profile() const { return profile_; }
@@ -163,6 +167,11 @@ private:
         // Where the mascot stands: feet centre in 1/16 px, scale in 1/4096, sampled at exactly that.
         SpriteTransform xf;
         SceneRect sprite_box;
+        // LVGL-rect probe (MMP2 design §6.1): the screen-space patch rect (the whole sprite_box when
+        // the frame is a full pose). The display invalidates only this instead of sprite_box, so a
+        // blink or talk beat flushes 5-13k px instead of ~the whole screen. Render unions it with the
+        // previous frame's rect so pixels the patch just left are erased.
+        SceneRect active_box;
         // The ground shadow, centre and radius in 1/16 px.
         int shadow_cx_q = 0;
         int shadow_cy_q = 0;
@@ -275,6 +284,7 @@ private:
     bool actor_started_ = false;
 
     Placement last_;
+    SceneRect active_box_ = {};
 };
 
 }  // namespace memoria

@@ -101,20 +101,9 @@ float Follow(float env, float target, float dt_ms, float attack_ms, float releas
     return env + (target - env) * (1.0f - std::exp(-dt_ms / tau));
 }
 
-SceneRect Union(const SceneRect& a, const SceneRect& b) {
-    if (a.x1 <= a.x0 || a.y1 <= a.y0) {
-        return b;
-    }
-    if (b.x1 <= b.x0 || b.y1 <= b.y0) {
-        return a;
-    }
-    SceneRect r;
-    r.x0 = a.x0 < b.x0 ? a.x0 : b.x0;
-    r.y0 = a.y0 < b.y0 ? a.y0 : b.y0;
-    r.x1 = a.x1 > b.x1 ? a.x1 : b.x1;
-    r.y1 = a.y1 > b.y1 ? a.y1 : b.y1;
-    return r;
-}
+// Empty and Union come from memoria_mascot_raster.h (RectEmpty / RectUnion), shared with the display.
+constexpr bool (*Empty)(const SceneRect&) = RectEmpty;
+constexpr SceneRect (*Union)(const SceneRect&, const SceneRect&) = RectUnion;
 
 SceneRect Clip(const SceneRect& a, const SceneRect& b) {
     SceneRect r;
@@ -130,8 +119,6 @@ SceneRect Clip(const SceneRect& a, const SceneRect& b) {
     }
     return r;
 }
-
-bool Empty(const SceneRect& r) { return r.x1 <= r.x0 || r.y1 <= r.y0; }
 
 SceneRect Screen() {
     SceneRect r;
@@ -832,6 +819,23 @@ MascotScene::Placement MascotScene::Compute(uint32_t now_ms) {
     p.sprite_box =
         Clip(SpriteBounds(*sprite, pack_->canvas_w() / 2, pack_->foot_y(), p.xf), Screen());
 
+    // LVGL-rect probe (MMP2 design §6.1): the patch's canvas rect through the same projection as
+    // SpriteBounds (CanvasRectBounds), clipped to the sprite's box; the whole box for a full pose.
+    // Pixels the patch just left must be erased too, so Render unions this with the previous frame's
+    // rect and the display invalidates only the union.
+    {
+        int rx = 0;
+        int ry = 0;
+        int rw = 0;
+        int rh = 0;
+        pack_->PatchRect(frame, &rx, &ry, &rw, &rh);
+        p.active_box = rw > 0 && rh > 0
+            ? Clip(CanvasRectBounds(SceneRect{rx, ry, rx + rw, ry + rh}, pack_->canvas_w() / 2,
+                                    pack_->foot_y(), p.xf),
+                   p.sprite_box)
+            : p.sprite_box;
+    }
+
     const float rx = pack_->foot_half_w() * 1.35f * k * (1.0f - 0.3f * lift);
     const float ry = rx / 6.0f + 2.0f;
     const float cx = kCenter + dx * 0.4f;
@@ -1238,6 +1242,10 @@ int MascotScene::RenderImpl(uint32_t now_ms, SceneRect* dirty, int max_dirty) {
     if (profiling_) {
         profile_.rect_us += clock_() - tr;
     }
+    // LVGL-rect probe: what the display invalidates is this frame's rect plus the previous frame's
+    // (the patch's old pixels must be erased); a full-redraw or an overflow frame paints everything
+    // anyway, so the union only needs the mix of the two.
+    active_box_ = overflow ? Screen() : Union(p.active_box, last_.active_box);
     last_ = p;
     return count;
 }
