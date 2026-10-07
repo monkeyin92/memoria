@@ -108,6 +108,22 @@ def test_every_state_moves_visibly_20_frames_a_second(harness, preview) -> None:
         assert min(per_second) >= 18, (state, per_second)
 
 
+def test_the_display_invalidates_everything_the_scene_composed(harness, preview) -> None:
+    """The dirty rectangles Render hands out are what the display invalidates, and not everything the
+    scene composes necessarily fits in one of them: the state ring is redrawn as four rim strips outside
+    the sprite's box, so a display that invalidates only the sprite (as the 2026-10-07 LVGL-rect probe
+    did while measuring taskLVGL) leaves the previous glow on the panel.
+
+    The harness simulates the panel — a framebuffer that is only updated where the rectangles say so —
+    and compares it against the forced-full-redraw scene after every render. On the liveliness day, which
+    exercises the ring in every state, this is the check that fails when the ring strips are dropped;
+    `mismatches` alone cannot see it, because the scene's own framebuffer is right either way.
+    """
+    stats = _play(harness, preview.LIVELINESS_DAY)
+    assert stats["panel_mismatch_frames"] == 0, stats["panel_mismatch_px"]
+    assert stats["panel_mismatch_px"] == 0
+
+
 def test_a_sprite_redraw_only_recomposes_the_columns_it_covered_or_covers(harness, preview) -> None:
     """TODOLIST M-6: on the robot a frame costs about 0.8-1.2 us per composed pixel, so the pixels composed per
     frame are what decides the frame rate. The sprite's box is the union of two frames' boxes and about 40 %

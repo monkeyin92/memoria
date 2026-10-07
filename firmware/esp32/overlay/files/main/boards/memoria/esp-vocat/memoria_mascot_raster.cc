@@ -293,17 +293,6 @@ SceneRect SpriteBounds(const MascotSprite& s, int canvas_cx, int foot_y, const S
     return box;
 }
 
-SceneRect CanvasRectBounds(const SceneRect& rect, int canvas_cx, int foot_y, const SpriteTransform& t) {
-    // Same projection as SpriteBounds; the sprite is only needed there for its x/y/w/h, which a rect
-    // already carries.
-    MascotSprite as_sprite;
-    as_sprite.x = rect.x0;
-    as_sprite.y = rect.y0;
-    as_sprite.w = rect.x1 - rect.x0;
-    as_sprite.h = rect.y1 - rect.y0;
-    return SpriteBounds(as_sprite, canvas_cx, foot_y, t);
-}
-
 namespace {
 
 // One dispatch for drawing and for asking the span, so the two can never disagree.

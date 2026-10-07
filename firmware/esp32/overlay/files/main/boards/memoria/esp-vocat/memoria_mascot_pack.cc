@@ -276,31 +276,12 @@ bool MascotPack::DecodePatch(MascotFrame frame, const uint8_t* entry, const uint
         }
     }
     patch.base = static_cast<MascotFrame>(base);
-    patch.rect_only = (Read32(entry + 16) & 1u) != 0;  // MMP2 flags bit 0; MMP1 packs read as false
     patch.x = x;
     patch.y = y;
     patch.w = w;
     patch.h = h;
     patch.present = true;
     return true;
-}
-
-void MascotPack::PatchRect(MascotFrame frame, int* x, int* y, int* w, int* h) const {
-    *x = 0;
-    *y = 0;
-    *w = 0;
-    *h = 0;
-    if (!loaded_ || frame >= MascotFrame::kCount) {
-        return;
-    }
-    const Patch& patch = patch_[static_cast<std::size_t>(frame)];
-    if (!patch.present) {
-        return;
-    }
-    *x = patch.x;
-    *y = patch.y;
-    *w = patch.w;
-    *h = patch.h;
 }
 
 const MascotSprite* MascotPack::Frame(MascotFrame frame) {
