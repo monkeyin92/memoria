@@ -81,6 +81,14 @@
 - **上午的四个决定（用户「1. 接受 2.采纳 3.要 4. 推送合并」）**全部执行：1-LSB 接受、口径 `anim + taskLVGL ≤ 32 ms` 采纳、M-7 要做、PR #190 / #191 推送合并（`403eada3` / `f6e6a596`）。
 - **MMP2 实现开始（「你用电脑模拟我测试，确认方案，开始做吧」）**：packer 输出 v2（reserved → flags bit 0 = patch_rect_only）、loader 接受 1 与 2、场景加 `base_still_` 与「静止时重画范围 = 擦除并集 ∩ 补丁矩形并集」。两次收窄尝试被预览的逐位校验判错（432、318 处不一致：SpriteTouch 内收窄缩小了擦除域；带 prev-rect 的行级并集在眨眼边界留了 stale），都已撤销，最终规则的注释在 `SpriteTouch`/`RedrawRect`。预览 851 帧 0 不一致、逐位与 main 相同（主机时间线底图在动，收窄只在静止时启用）。**板上没验**。提交 `1e606286`，与探针 `0b4b3a59` 一起进 PR #192。
 
+## 2026-10-07 傍晚：环形覆盖实验（用户「先合并 #193，再做环形实验」「继续」，刷机前又点了一次头）
+
+- PR #193 已手工合并（`ffc679e0`，CI 全绿，`autoMergeRequest` 为空，分支已删）。
+- 环形实验：分支 `feat/ring-annulus-cover`（`df32566a`，未推送）。板上结果是负的，数字与判断见 TODOLIST M-6 和设计稿 §6 第 8 条，收据 `outputs/acceptance/run-20261007-ring-cover/findings.md`。不并入，也没开 PR。
+- 板子：已刷回 build 24，七个区 md5 与刷前逐一相同（`ota_0` = `081f0d2d…`），常驻记录 `outputs/serial/robot-20261007-restore-after-ring.log`。备份复用上一轮 `firmware/esp32/artifacts/backups/pre-mmp2-fix-20261007/`（刷前先核了当前 md5 等于那份备份）。
+- 这一轮脚本 t001 没叫醒（`woke` 时设备已在 speaking），其余三句答出；音频计数 close_dropped=0、exact_timeouts=0，`Encode queue is full` 2 行。
+- 未验：矩形数代价的机制；成本模型只有 14 + 6 个窗口。
+
 ## 2026-10-07 下午：MMP2 复核与修复（用户「按你说的修吧，1、2 做了，然后重新量」）
 
 审查 PR #190 / #191 / #192 发现的缺陷与修复、以及板上的重量，收据 `outputs/acceptance/run-20261007-mmp2-fix2/`（git 忽略）。
