@@ -9,10 +9,13 @@
 
 #include "memoria_bench_snap.h"
 #include "memoria_mascot_status.h"
+#include "memoria_mascot_sampler_bench.h"
 
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <esp_timer.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -120,6 +123,118 @@ void MemoriaMascotDisplay::BenchLogStatus(const memoria::BenchStatus& status) {
         return;
     }
     ESP_LOGI(kTag, "%s", text);
+}
+
+// Where the CPU went since boot, per task (TODOLIST M-6): the PC subtracts two lines and divides by the wall time
+// between them. uxTaskGetSystemState stops the scheduler for a moment, so this runs once per status request only.
+void MemoriaMascotDisplay::BenchLogTasks() {
+    static char text[memoria::kBenchTasksCapacity];
+    const UBaseType_t count = uxTaskGetNumberOfTasks();
+    auto* states = static_cast<TaskStatus_t*>(heap_caps_malloc(sizeof(TaskStatus_t) * (count + 4), MALLOC_CAP_8BIT));
+    if (states == nullptr) {
+        ESP_LOGW(kTag, "tasks line: no memory");
+        return;
+    }
+    uint32_t total = 0;
+    const UBaseType_t got = uxTaskGetSystemState(states, count + 4, &total);
+    static memoria::BenchTaskRow rows[64];
+    std::size_t n = 0;
+    for (UBaseType_t i = 0; i < got && n < 64; ++i) {
+        memoria::BenchTaskRow& row = rows[n++];
+        std::memset(&row, 0, sizeof(row));
+        std::strncpy(row.name, states[i].pcTaskName, sizeof(row.name) - 1);
+        const BaseType_t core = xTaskGetCoreID(states[i].xHandle);  // TaskStatus_t::xCoreID needs a Kconfig option
+        row.core = core == tskNO_AFFINITY ? -1 : static_cast<int>(core);
+        row.priority = states[i].uxCurrentPriority;
+        row.runtime_us = states[i].ulRunTimeCounter;
+    }
+    heap_caps_free(states);
+    memoria::SortBenchTasksByRuntime(rows, n);
+    if (memoria::BenchTasksLine(text, sizeof(text), rows, n, got, static_cast<uint64_t>(esp_timer_get_time())) == 0) {
+        ESP_LOGW(kTag, "tasks line did not fit");
+        return;
+    }
+    ESP_LOGI(kTag, "%s", text);
+}
+
+void MemoriaMascotDisplay::BenchLogProfile(const memoria::RenderProfile& profile) {
+    static char text[memoria::kBenchProfileCapacity];
+    if (memoria::BenchProfileLine(text, sizeof(text), profile) == 0) {
+        ESP_LOGW(kTag, "profile line did not fit");
+        return;
+    }
+    ESP_LOGI(kTag, "%s", text);
+}
+
+namespace {
+
+uint32_t SamplerBenchClock() { return static_cast<uint32_t>(esp_timer_get_time()); }
+
+void* BenchAlloc(std::size_t bytes, bool psram) {
+    return heap_caps_malloc(bytes, (psram ? MALLOC_CAP_SPIRAM : MALLOC_CAP_INTERNAL) | MALLOC_CAP_8BIT);
+}
+
+// One variant: the best of three timed passes (another task running in between only ever makes a pass slower).
+// A sprite that cannot be allocated reports zero pixels, so the line says "not measured" rather than a wrong number.
+memoria::SamplerBenchRow RunSamplerBenchVariant(const memoria::SamplerBenchVariant& v) {
+    memoria::SamplerBenchRow result;
+    const std::size_t pixels = static_cast<std::size_t>(v.w) * static_cast<std::size_t>(v.h);
+    auto* rgb = static_cast<uint16_t*>(BenchAlloc(pixels * sizeof(uint16_t), v.sprite_psram));
+    auto* alpha = static_cast<uint8_t*>(BenchAlloc(pixels, v.sprite_psram));
+    auto* span = static_cast<uint16_t*>(BenchAlloc(static_cast<std::size_t>(v.h) * 2 * sizeof(uint16_t), v.sprite_psram));
+    auto* row = static_cast<uint16_t*>(BenchAlloc(memoria::kBenchCanvas * sizeof(uint16_t), v.row_psram));
+    if (rgb != nullptr && alpha != nullptr && span != nullptr && row != nullptr) {
+        memoria::MascotSprite sprite;
+        sprite.w = v.w;
+        sprite.h = v.h;
+        sprite.rgb = rgb;
+        sprite.alpha = alpha;
+        sprite.span = span;
+        memoria::FillBenchSprite(&sprite, v.soft);
+        for (int pass = 0; pass < 3; ++pass) {
+            uint64_t px = 0;
+            const uint32_t us = memoria::SamplerBenchPass(sprite, row, v.reps, SamplerBenchClock, &px);
+            if (result.px == 0 || us < result.us) {
+                result.us = us;
+                result.px = px;
+            }
+            vTaskDelay(1);  // let the idle task feed the watchdog between passes
+        }
+    } else {
+        ESP_LOGW(kTag, "sampler bench %s: no memory", v.name);
+    }
+    heap_caps_free(rgb);
+    heap_caps_free(alpha);
+    heap_caps_free(span);
+    heap_caps_free(row);
+    return result;
+}
+
+// Twice, 20 s apart, so the log shows whether the numbers repeat. Runs above the animation and LVGL tasks on their
+// core, so for the second or so it takes nothing else there competes with it; the audio tasks are idle at that point.
+void SamplerBenchTask(void*) {
+    for (int round = 0; round < 2; ++round) {
+        vTaskDelay(pdMS_TO_TICKS(20000));
+        memoria::SamplerBenchRow rows[memoria::kSamplerBenchCount];
+        for (std::size_t i = 0; i < memoria::kSamplerBenchCount; ++i) {
+            rows[i] = RunSamplerBenchVariant(memoria::kSamplerBenchVariants[i]);
+        }
+        char text[memoria::kSamplerBenchLineCapacity];
+        if (memoria::SamplerBenchLine(text, sizeof(text), rows) == 0) {
+            ESP_LOGW(kTag, "sampler bench line did not fit");
+        } else {
+            ESP_LOGI(kTag, "%s round=%d", text, round);
+        }
+    }
+    vTaskDelete(nullptr);
+}
+
+}  // namespace
+
+void MemoriaMascotDisplay::BenchStartSamplerBench() {
+    if (xTaskCreatePinnedToCore(&SamplerBenchTask, "sampler_bench", 4096, nullptr, 4, nullptr, 1) != pdPASS) {
+        ESP_LOGW(kTag, "sampler bench task not started");
+    }
 }
 
 #endif  // CONFIG_MEMORIA_BENCH_SERIAL

@@ -65,6 +65,13 @@ SceneRect SpriteBounds(const MascotSprite& s, int canvas_cx, int foot_y, const S
 void BlendSpriteRow(const MascotSprite& s, int canvas_cx, int foot_y, const SpriteTransform& t, int y,
                     int x0, int x1, uint16_t* row);
 
+// The columns of screen row `y`, inside [x0, x1), that BlendSpriteRow can write: [*xs, *xe). A pixel in
+// the span may still stay untouched (transparent); a pixel outside it never changes. Returns false, with
+// an empty span, when the row has nothing to draw. The answer does not depend on x0 or x1 beyond
+// clipping to them.
+bool SpriteRowSpan(const MascotSprite& s, int canvas_cx, int foot_y, const SpriteTransform& t, int y,
+                   int x0, int x1, int* xs, int* xe);
+
 }  // namespace memoria
 
 #endif  // MEMORIA_MASCOT_RASTER_H

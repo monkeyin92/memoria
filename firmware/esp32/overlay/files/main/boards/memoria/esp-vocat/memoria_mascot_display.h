@@ -100,6 +100,11 @@ private:
 #if CONFIG_MEMORIA_BENCH_SERIAL
     // Logs the status line; called by the animation task with its own counters.
     static void BenchLogStatus(const memoria::BenchStatus& status);
+    // Logs the profile line that follows it: where the sampled renders spent their time.
+    static void BenchLogProfile(const memoria::RenderProfile& profile);
+    static void BenchLogTasks();
+    // One-shot sampler microbenchmark 20 s after boot (memoria_mascot_sampler_bench.h).
+    static void BenchStartSamplerBench();
 #endif
 
     uint16_t* framebuffer_ = nullptr;

@@ -1031,8 +1031,32 @@ void MascotScene::PrepareIntro(uint32_t now_ms) {
     }
 }
 
+bool MascotScene::SpriteTouch(const Placement& p, int y, int* lo, int* hi) const {
+    int l = kSize;
+    int h = 0;
+    if (p.sprite && pack_ != nullptr) {
+        const MascotSprite* s = pack_->Frame(p.frame);
+        const SceneRect& box = p.sprite_box;
+        int xs = 0;
+        int xe = 0;
+        if (s != nullptr && y >= box.y0 && y < box.y1 &&
+            SpriteRowSpan(*s, pack_->canvas_w() / 2, pack_->foot_y(), p.xf, y, box.x0, box.x1, &xs, &xe)) {
+            l = xs;
+            h = xe;
+        }
+    }
+    if (p.sprite && p.shadow_rx_q > 0 && y >= p.shadow_box.y0 && y < p.shadow_box.y1 &&
+        p.shadow_box.x1 > p.shadow_box.x0) {
+        l = p.shadow_box.x0 < l ? p.shadow_box.x0 : l;
+        h = p.shadow_box.x1 > h ? p.shadow_box.x1 : h;
+    }
+    *lo = l;
+    *hi = h;
+    return h > l;
+}
+
 void MascotScene::RedrawRect(const SceneRect& rect, const Placement& p, uint32_t now_ms,
-                             bool skip_hole) {
+                             bool skip_hole, bool narrow_request) {
     const SceneRect r = Clip(rect, Screen());
     if (Empty(r)) {
         return;
@@ -1043,6 +1067,7 @@ void MascotScene::RedrawRect(const SceneRect& rect, const Placement& p, uint32_t
     // Pixels outside the round panel are never seen, so each row stops at
     // the circle.
     const bool intro_on = intro_active(now_ms);
+    const bool narrow = narrow_request && !intro_on;
     uint16_t line[kSize];
     auto compose = [&](int y, int xa, int xb) {
         if (xb <= xa) {
@@ -1050,23 +1075,62 @@ void MascotScene::RedrawRect(const SceneRect& rect, const Placement& p, uint32_t
         }
         const std::size_t bytes = static_cast<std::size_t>(xb - xa) * 2;
         const std::size_t offset = static_cast<std::size_t>(y) * kSize;
+        const bool timed = profiling_ && clock_ != nullptr;
+        const uint32_t t0 = timed ? clock_() : 0;
         std::memcpy(line + xa, bg_ + offset + xa, bytes);
         line_ = line;
         line_y_ = y;
         const SceneRect row{xa, y, xb, y + 1};
+        const uint32_t t1 = timed ? clock_() : 0;
         DrawShadow(row, p);
+        const uint32_t t2 = timed ? clock_() : 0;
         DrawSprite(row, p);
+        const uint32_t t3 = timed ? clock_() : 0;
         DrawRing(row, p);
         if (intro_on) {
             DrawIntro(row, now_ms);
         }
+        const uint32_t t4 = timed ? clock_() : 0;
         line_y_ = -1;
         std::memcpy(fb_ + offset + xa, line + xa, bytes);
         composed_px_ += static_cast<uint32_t>(xb - xa);
+        if (timed) {
+            const uint32_t t5 = clock_();
+            profile_.rows += 1;
+            profile_.copy_in_us += t1 - t0;
+            profile_.shadow_us += t2 - t1;
+            profile_.sprite_us += t3 - t2;
+            profile_.ring_us += t4 - t3;
+            profile_.copy_out_us += t5 - t4;
+        }
     };
     for (int y = r.y0; y < r.y1; ++y) {
-        const int x0 = r.x0 > kCenter - circle_hw_[y] ? r.x0 : kCenter - circle_hw_[y];
-        const int x1 = r.x1 < kCenter + circle_hw_[y] ? r.x1 : kCenter + circle_hw_[y];
+        int x0 = r.x0 > kCenter - circle_hw_[y] ? r.x0 : kCenter - circle_hw_[y];
+        int x1 = r.x1 < kCenter + circle_hw_[y] ? r.x1 : kCenter + circle_hw_[y];
+        if (!skip_hole) {
+            // What this row's sprite and shadow cover now is what the next narrow redraw must also erase.
+            int lo = 0;
+            int hi = 0;
+            const bool timed = profiling_ && clock_ != nullptr;
+            const uint32_t tt = timed ? clock_() : 0;
+            const bool covers = SpriteTouch(p, y, &lo, &hi);
+            if (timed) {
+                profile_.touch_us += clock_() - tt;
+            }
+            if (narrow) {
+                const bool had = touch_hi_[y] > touch_lo_[y];
+                int ulo = covers ? lo : kSize;
+                int uhi = covers ? hi : 0;
+                if (had) {
+                    ulo = touch_lo_[y] < ulo ? touch_lo_[y] : ulo;
+                    uhi = touch_hi_[y] > uhi ? touch_hi_[y] : uhi;
+                }
+                x0 = ulo > x0 ? ulo : x0;
+                x1 = uhi < x1 ? uhi : x1;
+            }
+            touch_lo_[y] = static_cast<int16_t>(covers ? lo : 0);
+            touch_hi_[y] = static_cast<int16_t>(covers ? hi : 0);
+        }
         if (x1 <= x0) {
             continue;
         }
@@ -1082,6 +1146,23 @@ void MascotScene::RedrawRect(const SceneRect& rect, const Placement& p, uint32_t
 }
 
 int MascotScene::Render(uint32_t now_ms, SceneRect* dirty, int max_dirty) {
+    if (clock_ == nullptr) {
+        profiling_ = false;
+        return RenderImpl(now_ms, dirty, max_dirty);
+    }
+    ++profile_.renders;
+    profiling_ = (profile_tick_++ % kProfileEvery) == 0;
+    const uint32_t t0 = profiling_ ? clock_() : 0;
+    const int count = RenderImpl(now_ms, dirty, max_dirty);
+    if (profiling_) {
+        profile_.total_us += clock_() - t0;
+        ++profile_.sampled;
+        profiling_ = false;
+    }
+    return count;
+}
+
+int MascotScene::RenderImpl(uint32_t now_ms, SceneRect* dirty, int max_dirty) {
     if (fb_ == nullptr || bg_ == nullptr || dirty == nullptr || max_dirty <= 0) {
         return 0;
     }
@@ -1095,10 +1176,14 @@ int MascotScene::Render(uint32_t now_ms, SceneRect* dirty, int max_dirty) {
         full_redraw_ = true;
     }
     composed_px_ = 0;
+    const uint32_t ta = profiling_ ? clock_() : 0;
     UpdateActor(now_ms);
     const Placement p = Compute(now_ms);
     if (intro_active(now_ms)) {
         PrepareIntro(now_ms);
+    }
+    if (profiling_) {
+        profile_.actor_us += clock_() - ta;
     }
 
     int count = 0;
@@ -1106,7 +1191,11 @@ int MascotScene::Render(uint32_t now_ms, SceneRect* dirty, int max_dirty) {
     if (full_redraw_ || (intro_changed && (p.intro_step >= 0 || last_.intro_step >= 0))) {
         full_redraw_ = false;
         dirty[0] = Screen();
+        const uint32_t tf = profiling_ ? clock_() : 0;
         RedrawRect(dirty[0], p, now_ms);
+        if (profiling_) {
+            profile_.rect_us += clock_() - tf;
+        }
         last_ = p;
         return 1;
     }
@@ -1135,14 +1224,19 @@ int MascotScene::Render(uint32_t now_ms, SceneRect* dirty, int max_dirty) {
         }
         count += strips;
     }
-    if (count > max_dirty) {
+    const bool overflow = count > max_dirty;
+    if (overflow) {
         count = 1;
         rects[0] = Screen();
         ring_only[0] = false;
     }
+    const uint32_t tr = profiling_ ? clock_() : 0;
     for (int i = 0; i < count; ++i) {
-        RedrawRect(rects[i], p, now_ms, ring_only[i]);
+        RedrawRect(rects[i], p, now_ms, ring_only[i], !ring_only[i] && !overflow);
         dirty[i] = rects[i];
+    }
+    if (profiling_) {
+        profile_.rect_us += clock_() - tr;
     }
     last_ = p;
     return count;
