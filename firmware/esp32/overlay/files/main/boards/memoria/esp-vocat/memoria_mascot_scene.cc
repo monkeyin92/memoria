@@ -4,6 +4,9 @@
 #pragma GCC optimize("O2")
 #endif
 
+#include <cstdio>
+#include <cstdlib>
+
 #include "memoria_mascot_scene.h"
 
 #include <cmath>
@@ -816,6 +819,11 @@ MascotScene::Placement MascotScene::Compute(uint32_t now_ms) {
     p.xf.ay_q = static_cast<int32_t>(std::lround((ground + dy) * 16.0f));
     p.xf.sx_q = static_cast<int32_t>(std::lround(sx * kScaleOne));
     p.xf.sy_q = static_cast<int32_t>(std::lround(sy * kScaleOne));
+    // MMP2's narrowing is only correct when the base does not move between frames: a still base
+    // keeps outside-rect content identical, a moving transform repaints edges there. Everything
+    // that displaces or rescales the bitmap must be neutral for this flag.
+    base_still_ = p.xf.ax_q == kCenter * 16 && p.xf.ay_q == kFootY * 16 &&
+                  p.xf.sx_q == kScaleOne && p.xf.sy_q == kScaleOne;
     p.sprite_box =
         Clip(SpriteBounds(*sprite, pack_->canvas_w() / 2, pack_->foot_y(), p.xf), Screen());
 
@@ -1129,11 +1137,24 @@ void MascotScene::RedrawRect(const SceneRect& rect, const Placement& p, uint32_t
                     ulo = touch_lo_[y] < ulo ? touch_lo_[y] : ulo;
                     uhi = touch_hi_[y] > uhi ? touch_hi_[y] : uhi;
                 }
+                // MMP2 (TODOLIST M-7): recompose only (erase union) ∩ (active ∪ prev active) while
+                // the base is still; a moving transform repaints outside-rect edges, so the erase
+                // union must win there. Inside the rects, columns outside both erase and span stay.
+                if (base_still_) {
+                    const SceneRect act = RectUnion(p.active_box, last_active_rect_[y]);
+                    if (!RectEmpty(act) && y >= act.y0 && y < act.y1) {
+                        ulo = act.x0 > ulo ? act.x0 : ulo;
+                        uhi = act.x1 < uhi ? act.x1 : uhi;
+                    } else {
+                        uhi = ulo;
+                    }
+                }
                 x0 = ulo > x0 ? ulo : x0;
                 x1 = uhi < x1 ? uhi : x1;
             }
             touch_lo_[y] = static_cast<int16_t>(covers ? lo : 0);
             touch_hi_[y] = static_cast<int16_t>(covers ? hi : 0);
+            last_active_rect_[y] = RectEmpty(p.active_box) ? last_active_rect_[y] : p.active_box;
         }
         if (x1 <= x0) {
             continue;

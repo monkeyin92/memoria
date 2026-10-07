@@ -275,6 +275,17 @@ int main(int argc, char** argv) {
             pending_composed += a.last_composed_px();
             if (memcmp(fb_a.data(), fb_b.data(), fb_a.size() * 2) != 0) {
                 pending_same = false;
+                if (mismatches < 4) {
+                    // find and print the first differing pixel with its screen position
+                    for (size_t i = 0; i < fb_a.size(); ++i) {
+                        if (fb_a[i] != fb_b[i]) {
+                            fprintf(stderr, "MISMATCH at now=%u ms frame=%d x=%zu y=%zu a=%04x b=%04x\n",
+                                    now, static_cast<int>(a.last_frame()), i % kSize, i / kSize,
+                                    fb_a[i], fb_b[i]);
+                            break;
+                        }
+                    }
+                }
                 ++mismatches;
             }
             ++renders;

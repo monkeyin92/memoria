@@ -134,6 +134,7 @@ private:
         uint16_t rgb[255] = {};
         uint8_t alpha[255] = {};
         bool present = false;
+        bool rect_only = false;  // MMP2 flags bit 0: the pack promises the patch stays inside its rect
     };
 
     void Reset();

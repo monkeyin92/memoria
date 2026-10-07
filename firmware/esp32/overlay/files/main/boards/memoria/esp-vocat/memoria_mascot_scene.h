@@ -223,6 +223,9 @@ private:
     int16_t ring_hole_[kSize] = {};   // per row: half-width inside the ring
     int16_t circle_hw_[kSize] = {};   // per row: half-width of the visible panel
     int16_t touch_lo_[kSize] = {};    // per row: columns the last drawn sprite and shadow covered
+    SceneRect last_active_rect_[kSize] = {};  // MMP2: each row's previous active patch rect (erase domain)
+    bool base_still_ = false;         // MMP2: breath/sway/lift/motions all neutral this frame — only then may
+                                      // the recomposed range shrink to the patch rects (memoria_mascot_scene.cc)
     int16_t touch_hi_[kSize] = {};
     uint16_t orb_r5_[256] = {};  // boot orb light per radius, 8.8 fixed point
     uint16_t orb_g6_[256] = {};

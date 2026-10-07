@@ -276,6 +276,7 @@ bool MascotPack::DecodePatch(MascotFrame frame, const uint8_t* entry, const uint
         }
     }
     patch.base = static_cast<MascotFrame>(base);
+    patch.rect_only = (Read32(entry + 16) & 1u) != 0;  // MMP2 flags bit 0; MMP1 packs read as false
     patch.x = x;
     patch.y = y;
     patch.w = w;
