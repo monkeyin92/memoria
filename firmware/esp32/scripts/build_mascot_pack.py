@@ -49,7 +49,7 @@ BRAND_FONT_CANDIDATES = (
 )
 
 MAGIC = b"MMP1"
-VERSION = 1
+VERSION = 2  # MMP2: the entry's reserved uint32 is now flags; bit 0 = patch_rect_only
 CANVAS = 256
 KEEP_INDEX = 255
 HEADER = struct.Struct("<4sHHHHHHIIIII16s12s")  # 64 bytes
@@ -198,7 +198,8 @@ def build_companion(companion: str) -> bytes:
         entries, blobs, strict=True
     ):
         palette_bytes = colours * 4
-        table_bytes += ENTRY.pack(frame_id, base_id, colours, x, y, w, h, offset, stream_size, 0)
+        table_bytes += ENTRY.pack(frame_id, base_id, colours, x, y, w, h, offset, stream_size,
+                                  1 if base_id != 0xFF else 0)  # MMP2 flags: patch rect is exact
         offset += palette_bytes + stream_size
         assert len(blob) == palette_bytes + stream_size
     header = HEADER.pack(

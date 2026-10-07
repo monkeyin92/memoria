@@ -753,11 +753,26 @@ void MemoriaMascotDisplay::AnimationLoop() {
                 bench.composed_px += scene_->last_composed_px();
 #endif
             }
-            for (int i = 0; i < count && container_ != nullptr; ++i) {
-                lv_area_t area = {static_cast<int32_t>(dirty[i].x0), static_cast<int32_t>(dirty[i].y0),
-                                  static_cast<int32_t>(dirty[i].x1 - 1),
-                                  static_cast<int32_t>(dirty[i].y1 - 1)};
-                lv_obj_invalidate_area(container_, &area);
+            // LVGL-rect probe (MMP2 design §6.1): invalidate only the active patch rects' union
+            // (scene_->last_active_box()) instead of the whole dirty box, so taskLVGL flushes the
+            // 5-13k px the patches actually cover instead of ~the whole screen. The scene still
+            // composes exactly as before: only the area handed to LVGL shrinks.
+            if (container_ != nullptr) {
+                const memoria::SceneRect active = scene_->last_active_box();
+                if (RectEmpty(active)) {
+                    for (int i = 0; i < count; ++i) {
+                        lv_area_t area = {static_cast<int32_t>(dirty[i].x0),
+                                          static_cast<int32_t>(dirty[i].y0),
+                                          static_cast<int32_t>(dirty[i].x1 - 1),
+                                          static_cast<int32_t>(dirty[i].y1 - 1)};
+                        lv_obj_invalidate_area(container_, &area);
+                    }
+                } else {
+                    lv_area_t area = {static_cast<int32_t>(active.x0), static_cast<int32_t>(active.y0),
+                                      static_cast<int32_t>(active.x1 - 1),
+                                      static_cast<int32_t>(active.y1 - 1)};
+                    lv_obj_invalidate_area(container_, &area);
+                }
             }
             const uint8_t opa = scene_->chrome_opa(frame_now);
             const uint8_t text_opa =

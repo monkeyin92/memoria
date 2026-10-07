@@ -39,6 +39,13 @@ inline uint16_t Blend565(uint16_t fg, uint16_t bg, uint32_t alpha) {
     return static_cast<uint16_t>(r | (r >> 16));
 }
 
+// Geometry helpers shared by the scene, the display and the preview harness.
+inline bool RectEmpty(const SceneRect& r) { return r.x1 <= r.x0 || r.y1 <= r.y0; }
+inline SceneRect RectUnion(const SceneRect& a, const SceneRect& b) {
+    return SceneRect{a.x0 < b.x0 ? a.x0 : b.x0, a.y0 < b.y0 ? a.y0 : b.y0,
+                     a.x1 > b.x1 ? a.x1 : b.x1, a.y1 > b.y1 ? a.y1 : b.y1};
+}
+
 constexpr int kAnchorShift = 4;     // anchor positions are in 1/16 px
 constexpr int kScaleOne = 4096;     // scales are in 1/4096
 
@@ -58,6 +65,11 @@ struct SpriteTransform {
 // Every pixel the sprite can touch under `t`, filter margin included: [x0, x1) x [y0, y1), not clipped
 // to the screen. `canvas_cx` and `foot_y` are the pack's canvas centre column and foot row.
 SceneRect SpriteBounds(const MascotSprite& s, int canvas_cx, int foot_y, const SpriteTransform& t);
+
+// Every pixel a canvas-space rectangle can touch under `t` — the same projection as SpriteBounds for a
+// rect that is known not to hold sprite data (the MMP1 patch's application rect; LVGL-rect probe, MMP2
+// design §6.1). Margins included, not clipped to the screen.
+SceneRect CanvasRectBounds(const SceneRect& rect, int canvas_cx, int foot_y, const SpriteTransform& t);
 
 // Blends the sprite's pixels in screen row `y`, columns [x0, x1), over `row` (indexed by screen x).
 // Pixels the sprite does not cover are left alone. Scales below about 0.85 in both directions (the
