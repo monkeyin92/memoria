@@ -77,6 +77,9 @@
 - 刷入（备份 `backups/pre-lvgl-rect-probe-20261007/`，前置 `ota_0` `081f0d2d…`，写入两次 Hash verified，刷后只剩 `ota_0` 变且等于镜像 + 0xFF 尾部）。USB 唤醒 + 4 句（Mac 音量 6）：句 1、2 正常，句 3、4 无回复——桥里 09:58:31 起 `Encode queue is full` 一直在丢上行帧（最高 249，不涨），FunASR 只拿到 text_len 3–5 的碎片。**这轮的测量结论仍成立**：taskLVGL 35–40 → 17.5–21.9 ms/帧（−18 ms，约一半），帧率 6.5 → 8.3/s；anim 40–60 ms/帧与昨晚满帧相同（`render_avg` 对照），所以下降归给 invalidate 面积。收据 `outputs/acceptance/run-20261007-lvgl-rect-probe/`。
 - 音频承载的警示（不归因此探针；昨晚 fastpath 探针在同样音量 6、`Encode queue` 也满 172 次时 4/4 全答）：32 ms 口径下「满核 + 低音量」已两次处于边缘，MMP2 方向继续之前要做一次音频承载专项（先复测日间正常音量的稳态，再看 opus_codec 的节奏）。
 - 刷回：板子已写回 build 24 产品镜像（备份 `backups/pre-restore-after-probe-20261007/`，刷后保护区全与会话开始前一致；nvs 仍为运行时值）。串口记录还开着（pid 约 80849 起的那条链）。
+- **音频承载复核（10:29–10:32，build 24 产品镜像，Mac 音量 30）**：4/4 全部答出（2.18–7.10 s），`close_dropped` 与 `exact_timeouts` 为 0，无看门狗；`Encode queue is full` 30 次（昨晚 fastpath 轮 172 次也全答）。结论：两次丢句是低音量 6 的已知弱点，不是满核；收据 `outputs/acceptance/run-20261007-audio-integrity-vol30/`。
+- **上午的四个决定（用户「1. 接受 2.采纳 3.要 4. 推送合并」）**全部执行：1-LSB 接受、口径 `anim + taskLVGL ≤ 32 ms` 采纳、M-7 要做、PR #190 / #191 推送合并（`403eada3` / `f6e6a596`）。
+- **MMP2 实现开始（「你用电脑模拟我测试，确认方案，开始做吧」）**：packer 输出 v2（reserved → flags bit 0 = patch_rect_only）、loader 接受 1 与 2、场景加 `base_still_` 与「静止时重画范围 = 擦除并集 ∩ 补丁矩形并集」。两次收窄尝试被预览的逐位校验判错（432、318 处不一致：SpriteTouch 内收窄缩小了擦除域；带 prev-rect 的行级并集在眨眼边界留了 stale），都已撤销，最终规则的注释在 `SpriteTouch`/`RedrawRect`。预览 851 帧 0 不一致、逐位与 main 相同（主机时间线底图在动，收窄只在静止时启用）。**板上没验**。提交 `1e606286`，与探针 `0b4b3a59` 一起进 PR #192。
 
 ## 2026-10-06 bench 真机窗口：M-2 通过，M-6 的 25 fps 在真机上不成立（用户 12:05「好可以」，13:05「迟一点，现在先不刷」）
 
