@@ -316,3 +316,59 @@ async def test_a_reply_that_is_not_held_says_which_input_decided_it(
     for expected in ("floor_open=False", "turn_started=True", "partial_chars=1", "provisional_chars=0"):
         assert expected in line
     assert "嗯" not in line  # lengths only, never the child's words
+
+
+def _dropped_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [m for m in (r.getMessage() for r in caplog.records) if "prepared reply dropped" in m]
+
+
+@pytest.mark.asyncio
+async def test_a_reply_dropped_because_words_arrived_says_so(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """N-8 diagnosis (2026-10-07): two of five held replies vanished and the three exits of the wait look alike."""
+
+    async def script(scene: _Scene) -> None:
+        await scene.committed_question_with_a_prepared_reply()
+        await scene.room_noise()
+        scene.gated.gate.set()
+        await asyncio.sleep(0.05)
+        await scene.audio_frames(10, final_text="我还想问一件事")
+        await scene.wait_for(lambda: bool(scene.terminals()), timeout=3.0)
+
+    with caplog.at_level(logging.INFO, logger=media_session_output_stream.logger.name):
+        await _run(script, name="n8-dropped-words")
+
+    [line] = _dropped_lines(caplog)
+    assert "我还想问一件事" not in line  # flags and lengths only, never the child's words
+    assert "cause=textless_turn_over" in line
+    assert "text_evidence=True" in line
+
+
+@pytest.mark.asyncio
+async def test_a_reply_dropped_at_the_hold_deadline_says_so(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def never_expires(self: Any, session_id: str, stream_epoch: int) -> None:
+        return None
+
+    monkeypatch.setattr(
+        media_session_turns.MediaTurnEndpointMixin,
+        "_expire_evidence_less_floor_hold",
+        never_expires,
+    )
+    monkeypatch.setattr(media_session_output_stream, "_UNHEARD_OUTPUT_TEXTLESS_HOLD_WAIT_S", 0.4)
+
+    async def script(scene: _Scene) -> None:
+        await scene.committed_question_with_a_prepared_reply()
+        await scene.room_noise()
+        scene.gated.gate.set()
+        await scene.wait_for(lambda: bool(scene.terminals()), timeout=3.0)
+
+    with caplog.at_level(logging.INFO, logger=media_session_output_stream.logger.name):
+        await _run(script, name="n8-dropped-deadline")
+
+    [line] = _dropped_lines(caplog)
+    assert "cause=deadline" in line
+    assert "textless_hold=True" in line
+    assert "text_evidence=False" in line
