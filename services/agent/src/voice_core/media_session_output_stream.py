@@ -395,13 +395,71 @@ class MediaOutputStreamMixin:
                 or lease.task is not asyncio.current_task()
                 or not context.runtime.fence.matches(lease.fence)
             ):
+                self._log_unheard_reply_dropped(
+                    context,
+                    lease,
+                    cause="lease_lost",
+                    textless_hold=textless_hold,
+                    waited_s=loop.time() - started,
+                )
                 return False
             if textless_hold and not self._floor_held_by_textless_turn(context):
                 # Words arrived (or the turn ended): the user really holds the floor.
+                self._log_unheard_reply_dropped(
+                    context,
+                    lease,
+                    cause="textless_turn_over",
+                    textless_hold=textless_hold,
+                    waited_s=loop.time() - started,
+                )
                 return False
             if loop.time() >= deadline:
+                self._log_unheard_reply_dropped(
+                    context,
+                    lease,
+                    cause="deadline",
+                    textless_hold=textless_hold,
+                    waited_s=loop.time() - started,
+                )
                 return False
             await asyncio.sleep(_UNHEARD_OUTPUT_FLOOR_POLL_S)
+
+    def _log_unheard_reply_dropped(
+        self,
+        context: _MediaVoiceSession,
+        lease: _OutputOwnerLease,
+        *,
+        cause: str,
+        textless_hold: bool,
+        waited_s: float,
+    ) -> None:
+        """Say which exit of the wait dropped a prepared reply (N-8).
+
+        In the 2026-10-07 bench rounds two of five held replies were superseded well inside the hold cap,
+        with no cap line and no words in the log, and the three exits of the wait look alike from outside.
+        Flags and lengths only, never the child's words.
+        """
+
+        partial = context.pending.pending_partial
+        provisional = context.projection.provisional
+        logger.info(
+            "media prepared reply dropped cause=%s textless_hold=%s waited_s=%.2f session=%s fence=%s "
+            "owner_is_lease=%s task_is_current=%s fence_matches=%s floor_open=%s turn_started=%s "
+            "text_evidence=%s partial_chars=%d provisional_chars=%d",
+            cause,
+            textless_hold,
+            waited_s,
+            context.identity.session_id,
+            lease.fence,
+            context.output.output_owner is lease,
+            lease.task is asyncio.current_task(),
+            context.runtime.fence.matches(lease.fence),
+            context.runtime.output_floor_allows_assistant,
+            context.pending.turn_start_sample is not None,
+            self._pending_turn_has_text_evidence(context),
+            len(((partial.text if partial is not None else "") or "").strip()),
+            len(((provisional.text if provisional is not None else "") or "").strip()),
+        )
 
     async def on_playback_progress(
         self,
