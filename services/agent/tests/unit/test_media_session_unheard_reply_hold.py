@@ -15,7 +15,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from services.agent.src.contracts.ids import GenerationFence
@@ -308,7 +308,7 @@ async def test_a_reply_that_is_not_held_says_which_input_decided_it(
     context = _context(floor_open=False, turn_start=640, partial="嗯")
     with caplog.at_level(logging.INFO, logger=media_session_output_stream.logger.name):
         waited = await _Predicate()._wait_for_unheard_output_floor(
-            context, SimpleNamespace(fence="fence-1"), emitted_audio=False
+            context, cast(Any, SimpleNamespace(fence="fence-1")), emitted_audio=False
         )
 
     assert waited is False
