@@ -63,6 +63,16 @@ PROFILE_FIELDS = (
     "copy_out_us",
 )
 PROFILE_TOTALS = PROFILE_FIELDS  # every one of them only grows
+# The disp line (memoria_mascot_status.h, BenchLvglLine): where taskLVGL's refreshes spend their wall-clock time.
+LVGL_FIELDS = (
+    "refreshes",
+    "refresh_us",
+    "flushes",
+    "flush_us",
+    "flush_px",
+    "waits",
+    "wait_us",
+)
 _STAGES = ("copy_in", "shadow", "sprite", "ring", "copy_out")
 _NAMES = ("phase", "mood", "frame")
 # Counters that only ever grow: a smaller value in the later line means the robot restarted in between.
@@ -77,6 +87,7 @@ _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 _LINE = re.compile(r"MemoriaBench: status (?P<fields>up_ms=.*)")
 _PROFILE_LINE = re.compile(r"MemoriaBench: profile (?P<fields>renders=.*)")
 _TASKS_LINE = re.compile(r"MemoriaBench: tasks (?P<fields>count=.*)")
+_LVGL_LINE = re.compile(r"MemoriaBench: disp (?P<fields>refreshes=.*)")
 _STAMP = re.compile(r"^\d\d:\d\d:\d\d\.\d{3}")
 _FIELD = re.compile(r"(\w+)=(\S+)")
 
@@ -127,6 +138,47 @@ def parse_profile(line: str) -> Status | None:
     stamp = _STAMP.match(plain)
     profile["at"] = stamp[0] if stamp else ""
     return profile
+
+
+def parse_lvgl(line: str) -> Status | None:
+    """The sums of a disp line as int (`at` the logger's time stamp when there is one), or None when `line` is not
+    a complete disp line: a line cut by other output is not guessed at."""
+    plain = _ANSI.sub("", line).rstrip()
+    match = _LVGL_LINE.search(plain)
+    if match is None:
+        return None
+    fields = {key: value for key, value in _FIELD.findall(match["fields"])}
+    if tuple(fields) != LVGL_FIELDS or not all(value.isdigit() for value in fields.values()):
+        return None
+    lvgl: Status = {key: int(fields[key]) for key in LVGL_FIELDS}
+    stamp = _STAMP.match(plain)
+    lvgl["at"] = stamp[0] if stamp else ""
+    return lvgl
+
+
+def lvgl_rates(first: Status, second: Status) -> dict[str, float | int]:
+    """What one refresh costs between two disp lines, `first` the earlier one, in milliseconds of wall clock.
+    The flush callbacks and the waits for the previous flush are taken out of the refresh; what is left is
+    rendering. The three spans are measured separately on the robot, so the remainder can come out slightly
+    off (a wait is counted in the refresh too); it is not clamped."""
+    delta = {key: int(second[key]) - int(first[key]) for key in LVGL_FIELDS}
+    if any(value < 0 for value in delta.values()):
+        raise StatusError("a counter went backwards: the robot restarted between the two lines")
+    refreshes = delta["refreshes"]
+    if refreshes == 0:
+        raise StatusError("no refresh happened between the two lines")
+    refresh_ms = delta["refresh_us"] / refreshes / 1000
+    flush_ms = delta["flush_us"] / refreshes / 1000
+    wait_ms = delta["wait_us"] / refreshes / 1000
+    return {
+        "refreshes": refreshes,
+        "refresh_ms": refresh_ms,
+        "flush_ms": flush_ms,
+        "wait_ms": wait_ms,
+        "render_ms": refresh_ms - flush_ms - wait_ms,
+        "flushes_per_refresh": delta["flushes"] / refreshes,
+        "px_per_refresh": delta["flush_px"] / refreshes,
+    }
 
 
 def collect_profiles(text: str) -> list[Status]:

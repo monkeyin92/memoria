@@ -157,6 +157,87 @@ void MemoriaMascotDisplay::BenchLogTasks() {
     ESP_LOGI(kTag, "%s", text);
 }
 
+namespace {
+
+// Where taskLVGL's refreshes spend their wall-clock time (memoria_mascot_status.h, LvglStats). The hooks run on
+// LVGL's own task and are its only writer; the animation task reads a copy under the same spinlock, so a 64-bit
+// sum is never seen half-written on this 32-bit core.
+portMUX_TYPE g_lvgl_lock = portMUX_INITIALIZER_UNLOCKED;
+memoria::LvglStats g_lvgl;
+int64_t g_refresh_start_us = 0;
+uint64_t g_flushes_at_refresh_start = 0;
+int64_t g_flush_start_us = 0;
+int64_t g_wait_start_us = 0;
+
+void LvglEventHook(lv_event_t* e) {
+    const int64_t now = esp_timer_get_time();
+    switch (lv_event_get_code(e)) {
+        case LV_EVENT_REFR_START:
+            g_refresh_start_us = now;
+            g_flushes_at_refresh_start = g_lvgl.flushes;
+            break;
+        case LV_EVENT_REFR_READY:
+            // A refresh with nothing to redraw sends both events too: only those that flushed are counted.
+            if (g_lvgl.flushes != g_flushes_at_refresh_start) {
+                portENTER_CRITICAL(&g_lvgl_lock);
+                ++g_lvgl.refreshes;
+                g_lvgl.refresh_us += static_cast<uint64_t>(now - g_refresh_start_us);
+                portEXIT_CRITICAL(&g_lvgl_lock);
+            }
+            break;
+        case LV_EVENT_FLUSH_START:
+            g_flush_start_us = now;
+            break;
+        case LV_EVENT_FLUSH_FINISH: {
+            const auto* area = static_cast<const lv_area_t*>(lv_event_get_param(e));
+            portENTER_CRITICAL(&g_lvgl_lock);
+            ++g_lvgl.flushes;
+            g_lvgl.flush_us += static_cast<uint64_t>(now - g_flush_start_us);
+            if (area != nullptr) {
+                g_lvgl.flush_px += static_cast<uint64_t>(lv_area_get_size(area));
+            }
+            portEXIT_CRITICAL(&g_lvgl_lock);
+            break;
+        }
+        case LV_EVENT_FLUSH_WAIT_START:
+            g_wait_start_us = now;
+            break;
+        case LV_EVENT_FLUSH_WAIT_FINISH:
+            portENTER_CRITICAL(&g_lvgl_lock);
+            ++g_lvgl.waits;
+            g_lvgl.wait_us += static_cast<uint64_t>(now - g_wait_start_us);
+            portEXIT_CRITICAL(&g_lvgl_lock);
+            break;
+        default:
+            break;
+    }
+}
+
+}  // namespace
+
+// Called once from the constructor, with the display lock not held.
+void MemoriaMascotDisplay::BenchHookLvgl() {
+    if (display_ == nullptr || !Lock(1000)) {
+        ESP_LOGW(kTag, "lvgl hooks not installed");
+        return;
+    }
+    lv_display_add_event_cb(display_, LvglEventHook, LV_EVENT_ALL, nullptr);
+    Unlock();
+}
+
+void MemoriaMascotDisplay::BenchLogLvgl() {
+    static char text[memoria::kBenchLvglCapacity];
+    memoria::LvglStats copy;
+    portENTER_CRITICAL(&g_lvgl_lock);
+    copy = g_lvgl;
+    portEXIT_CRITICAL(&g_lvgl_lock);
+    if (memoria::BenchLvglLine(text, sizeof(text), copy) == 0) {
+        ESP_LOGW(kTag, "disp line did not fit");
+        return;
+    }
+    ESP_LOGI(kTag, "%s", text);
+}
+
 void MemoriaMascotDisplay::BenchLogProfile(const memoria::RenderProfile& profile) {
     static char text[memoria::kBenchProfileCapacity];
     if (memoria::BenchProfileLine(text, sizeof(text), profile) == 0) {

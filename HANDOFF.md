@@ -81,6 +81,17 @@
 - **上午的四个决定（用户「1. 接受 2.采纳 3.要 4. 推送合并」）**全部执行：1-LSB 接受、口径 `anim + taskLVGL ≤ 32 ms` 采纳、M-7 要做、PR #190 / #191 推送合并（`403eada3` / `f6e6a596`）。
 - **MMP2 实现开始（「你用电脑模拟我测试，确认方案，开始做吧」）**：packer 输出 v2（reserved → flags bit 0 = patch_rect_only）、loader 接受 1 与 2、场景加 `base_still_` 与「静止时重画范围 = 擦除并集 ∩ 补丁矩形并集」。两次收窄尝试被预览的逐位校验判错（432、318 处不一致：SpriteTouch 内收窄缩小了擦除域；带 prev-rect 的行级并集在眨眼边界留了 stale），都已撤销，最终规则的注释在 `SpriteTouch`/`RedrawRect`。预览 851 帧 0 不一致、逐位与 main 相同（主机时间线底图在动，收窄只在静止时启用）。**板上没验**。提交 `1e606286`，与探针 `0b4b3a59` 一起进 PR #192。
 
+## 2026-10-07 傍晚：环形覆盖实验（用户「先合并 #193，再做环形实验」「继续」，刷机前又点了一次头）
+
+- PR #193 已手工合并（`ffc679e0`，CI 全绿，`autoMergeRequest` 为空，分支已删）。
+- 环形实验：分支 `feat/ring-annulus-cover`（`df32566a`，未推送）。板上结果是负的，数字与判断见 TODOLIST M-6 和设计稿 §6 第 8 条，收据 `outputs/acceptance/run-20261007-ring-cover/findings.md`。不并入，也没开 PR。
+- 板子：已刷回 build 24，七个区 md5 与刷前逐一相同（`ota_0` = `081f0d2d…`），常驻记录 `outputs/serial/robot-20261007-restore-after-ring.log`。备份复用上一轮 `firmware/esp32/artifacts/backups/pre-mmp2-fix-20261007/`（刷前先核了当前 md5 等于那份备份）。
+- 这一轮脚本 t001 没叫醒（`woke` 时设备已在 speaking），其余三句答出；音频计数 close_dropped=0、exact_timeouts=0，`Encode queue is full` 2 行。
+- 随后又刷了一次「每帧只 invalidate 一个外接矩形」的 bench 镜像（用户在询问里点了头），分支 `exp/invalidate-union`（`a73af47e`，未推送）。结果无收益：listening 86.9 ms（48.1 + 38.8）、speaking 88.5 ms（49.1 + 39.3）。脚本 t001 同样没叫醒，其余三句答出，音频计数 close_dropped=0、exact_timeouts=0；`Encode queue is full` 三轮分别是 159（修复轮）/ 2（环形）/ 116（这轮），跟改动对不上，没有追因。板子再次刷回 build 24，`ota_0` = `081f0d2d…`；`nvs` 的 md5 从 `e60d517c…` 变成 `97d8ddc0…`，是在这一轮刷机之前就变了的（我没写过 nvs），内容没看。常驻记录 `outputs/serial/robot-20261007-restore-after-union.log`。
+- 未验：矩形数代价的机制（拟合预测失败，别再用）。
+- 再往下一步：bench 镜像加了一行 `disp`（分支 `feat/bench-lvgl-split`，`0e693355`，随本批 PR 并入 main），用户在询问里又点了头，刷机测了一轮。结果：一次刷新 57.0 ms = 渲染 25.6 + 刷新回调 17.6 + 等待 13.8，数字和判断见 TODOLIST M-6，收据 `outputs/acceptance/run-20261007-disp/findings.md`。这一轮脚本 t001 没叫醒，t003 说完等了 30 s 没答（前三轮同一句都答出，没查原因），t002 / t004 答出；音频计数 close_dropped=0、exact_timeouts=0。
+- **板子已恢复（18:44 确认）**：还原 build 24 的写入两次哈希校验通过，之后板子静默约 7 分钟（esptool 握手失败、串口无输出），第 14 次握手自己恢复；10-07 凌晨刷 bench 之后出现过同样的静默，两次都自愈、原因仍不明，像是 bench 镜像之后还原写入的共同现象。恢复后七个区 md5 与会话前备份一致，仅 `nvs` 不同（固件运行时自己写的，不是我写的）；启动日志 `MEMORIA_FIRMWARE_BUILD=24; slot=ota_0`，USB 命令只剩 `wake`。
+
 ## 2026-10-07 下午：MMP2 复核与修复（用户「按你说的修吧，1、2 做了，然后重新量」）
 
 审查 PR #190 / #191 / #192 发现的缺陷与修复、以及板上的重量，收据 `outputs/acceptance/run-20261007-mmp2-fix2/`（git 忽略）。

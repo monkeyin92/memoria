@@ -103,6 +103,9 @@ private:
     // Logs the profile line that follows it: where the sampled renders spent their time.
     static void BenchLogProfile(const memoria::RenderProfile& profile);
     static void BenchLogTasks();
+    // The disp line: where LVGL's refreshes spend their time (hooks on its events, installed once).
+    void BenchHookLvgl();
+    static void BenchLogLvgl();
     // One-shot sampler microbenchmark 20 s after boot (memoria_mascot_sampler_bench.h).
     static void BenchStartSamplerBench();
 #endif
