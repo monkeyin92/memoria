@@ -71,6 +71,13 @@
 
 - **01:12–01:20 scratch 实验（通宵窗口，用户睡前授权「按你的建议来做…做完了就提交代码，更新文档，明天我让人来检查审查」）**：结论、方法学弱点与遗留决定都在 `docs/acceptance/run-20261007-m6-overnight/REVIEW.md`；一句话——只有眨眼 / 张嘴在变时每绘制帧仍约 59 ms，成本不随变化面积下降，M-7 的「静止底图」前提被否定。板子已刷回 build 24（md5 与会话开始前一致）。提交：worktree `feat/m6-span-compose` 三个（`1430b243` span-compose、`293ce97c` bench 工具、`12673a4c` 跨度守卫测试），主仓库 `docs/mark-189-released` 三个（`c568bc1b` 文档 + 10-06 两条收据），都未推送。
 
+## 2026-10-07 上午：MMP2 §6.1 的 LVGL 小矩形实验（探针分支，板子已刷回 build 24）
+
+- 用户「可以，继续」放行设计稿 §6.1：探针分支 `feat/mmp2-lvgl-rect-probe`（worktree `../memoria-m6lv`，基于 main `f6e6a596`，未提交）把 display 的 invalidate 从整盒改为只递交 `last_active_box()`（本帧 + 上一帧补丁矩形的屏幕投影并集，`CanvasRectBounds` 与 `SpriteBounds` 同公式，空盒回退整盒）。合成逐位不变：`preview_memoria_mascot.py` 851 帧 mismatch 0、compose_per_frame 与 main 相同；固件测试 + ruff 全过；ESP32 bench 构建通过。
+- 刷入（备份 `backups/pre-lvgl-rect-probe-20261007/`，前置 `ota_0` `081f0d2d…`，写入两次 Hash verified，刷后只剩 `ota_0` 变且等于镜像 + 0xFF 尾部）。USB 唤醒 + 4 句（Mac 音量 6）：句 1、2 正常，句 3、4 无回复——桥里 09:58:31 起 `Encode queue is full` 一直在丢上行帧（最高 249，不涨），FunASR 只拿到 text_len 3–5 的碎片。**这轮的测量结论仍成立**：taskLVGL 35–40 → 17.5–21.9 ms/帧（−18 ms，约一半），帧率 6.5 → 8.3/s；anim 40–60 ms/帧与昨晚满帧相同（`render_avg` 对照），所以下降归给 invalidate 面积。收据 `outputs/acceptance/run-20261007-lvgl-rect-probe/`。
+- 音频承载的警示（不归因此探针；昨晚 fastpath 探针在同样音量 6、`Encode queue` 也满 172 次时 4/4 全答）：32 ms 口径下「满核 + 低音量」已两次处于边缘，MMP2 方向继续之前要做一次音频承载专项（先复测日间正常音量的稳态，再看 opus_codec 的节奏）。
+- 刷回：板子已写回 build 24 产品镜像（备份 `backups/pre-restore-after-probe-20261007/`，刷后保护区全与会话开始前一致；nvs 仍为运行时值）。串口记录还开着（pid 约 80849 起的那条链）。
+
 ## 2026-10-06 bench 真机窗口：M-2 通过，M-6 的 25 fps 在真机上不成立（用户 12:05「好可以」，13:05「迟一点，现在先不刷」）
 
 在此之前 M-1 / M-2 / M-6 只有主机测试与预览出片，一项真机数字都没有。这一轮第一次把 bench 镜像刷上真机纯粹为了量开销。

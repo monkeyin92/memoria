@@ -53,7 +53,9 @@
 
 ## 6. 风险与必须先量的事
 
-1. **LVGL 对小矩形的刷新是否真的便宜**（最大未知）：LVGL 单缓冲 20 行、`buff_dma`、分块刷。小矩形 ≤ 20 行高时理论上一次 DMA 完成；补丁矩形高 51–141 px，要分 3–8 条。需要 scratch 量一次「同帧只 invalidate 补丁矩形」的 taskLVGL 成本（不再依赖 §1 表的估算）。**设计稿通过后第一件事就是量这个，不是先写 MMP2。**
+1. **LVGL 对小矩形的刷新是否真的便宜**：**已量（10-07 10:0x，探针 bench 镜像，见 §6.1a）**——taskLVGL 从整盒的 35–40 ms/帧降到 **17.5–21.9 ms/帧（−18 ms，约一半）**，帧率从约 6.5 升到 8.3/s（省出的预算被动画任务拿去多画了）。这仍不是 MMP2 的全部收益：探针退出条件保守（`RectEmpty(active)` 才回退整盒）而且合成与帧率都驱动 invalidate；它只证明「小 invalidate 便宜」，方向成立。
+   - §6.1a 探针的做法与收据（`docs/acceptance/run-20261007-lvgl-rect-probe/`、`outputs/serial/robot-20261007-lvgl-rect-probe.log`）：场景合成与 display 的 invalidate 改为只递交 `last_active_box()`（本帧 + 上一帧补丁矩形的屏幕投影并集，`CanvasRectBounds` 与 `SpriteBounds` 同公式，`RectEmpty` 时回退整盒）；合成逐位不变（预览 851 帧 mismatch 0，compose_per_frame 与 main 相同）；板上 anim 40–60 ms/帧与昨晚满帧几乎一样（`drawn` 窗口 `render_avg` 40.7/60.3/52.7 ms，昨晚 31.8–69.9），所以 taskLVGL 的下降（35–40 → 17.5–21.9）归给「invalidate 面积变小」。代码在分支 `feat/mmp2-lvgl-rect-probe`（worktree `/Users/monkeyin/projects/memoria-m6lv`，未提交）；板子已刷回 build 24。
+   - **同一个窗口的独立发现（不归因此探针，音量 6 的已知弱点加重了它）**：第 3、4 句没有回复。桥日志里 09:58:31 起音频帧一直 `Encode queue is full`（最高丢到 249 帧、稳定不涨），FunASR 只拿到 text_len 3–5 的碎片。对照昨晚 fastpath 探针（音量 6，4/4 全答、`Encode queue` 也满 172 次）：这次 anim 每帧 50.2 ms + opus_codec 0.34 核 + taskLVGL 0.17，核 1 满载时 encode 的节奏被打断到把句子切碎。**结论：32 ms 口径下的音频承载仍要复核——不是探针本身的失败，而是「低音量 + 满核」组合已两次暴露在边缘上。**
 2. 调色板共享：补丁与 base 共用一张 255 色调色板（MMP1 现状），眼白 / 眼睑色已在内；MMP2 不改。若分层美术（M-7 的美术件）颜色超 255，才需要 per-part 调色板——先不做。
 3. 双补丁帧（同时眨眼 + 张嘴）不存在：MMP1 的帧表里眨眼与张嘴是互斥的帧（`default_blink`、`default_talk`），MMP2 维持。
 4. 边缘余量：补丁矩形外扩 1–2 px（采样器 `kBoundsMargin` 与背景行差异），避免旧帧残留。
