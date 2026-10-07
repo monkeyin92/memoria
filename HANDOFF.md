@@ -81,6 +81,12 @@
 - **上午的四个决定（用户「1. 接受 2.采纳 3.要 4. 推送合并」）**全部执行：1-LSB 接受、口径 `anim + taskLVGL ≤ 32 ms` 采纳、M-7 要做、PR #190 / #191 推送合并（`403eada3` / `f6e6a596`）。
 - **MMP2 实现开始（「你用电脑模拟我测试，确认方案，开始做吧」）**：packer 输出 v2（reserved → flags bit 0 = patch_rect_only）、loader 接受 1 与 2、场景加 `base_still_` 与「静止时重画范围 = 擦除并集 ∩ 补丁矩形并集」。两次收窄尝试被预览的逐位校验判错（432、318 处不一致：SpriteTouch 内收窄缩小了擦除域；带 prev-rect 的行级并集在眨眼边界留了 stale），都已撤销，最终规则的注释在 `SpriteTouch`/`RedrawRect`。预览 851 帧 0 不一致、逐位与 main 相同（主机时间线底图在动，收窄只在静止时启用）。**板上没验**。提交 `1e606286`，与探针 `0b4b3a59` 一起进 PR #192。
 
+## 2026-10-07 夜：#194 合并，M-7 第一步的主机测量（用户「好，按你推荐的第二条，然后 feat/bench-lvgl-split 推上去开 PR 合并」）
+
+- PR #194（bench 的 `disp` 行加六条文档提交）CI 11 项全绿，手工合并（`4a7f3cba`，`autoMergeRequest` 为空，`--match-head-commit`），远端和本地分支已删。另外两个实验分支 `feat/ring-annulus-cover`（`df32566a`）、`exp/invalidate-union`（`a73af47e`）仍只在本地，不并入。
+- M-7 第一步：先量「大部件不动」省多少合成像素，没动产品代码。结果与结论在 TODOLIST M-7 最后一条，脚本、原始结果和三段对比视频在 `outputs/acceptance/run-20261007-m7-body/`（git 忽略）。一句话：精灵一侧的开销几乎全来自「身体每帧都动」，不需要新美术就能省；剩下的大头是声环，分层美术动不了它。没刷机，板子仍是 build 24。
+- 常驻串口记录 `outputs/serial/robot-20261007-restore-final-disp.log`（18:44 起，两小时上限）。
+
 ## 2026-10-07 傍晚：环形覆盖实验（用户「先合并 #193，再做环形实验」「继续」，刷机前又点了一次头）
 
 - PR #193 已手工合并（`ffc679e0`，CI 全绿，`autoMergeRequest` 为空，分支已删）。
