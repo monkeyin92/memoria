@@ -86,7 +86,7 @@
 - PR #194（bench 的 `disp` 行加六条文档提交）CI 11 项全绿，手工合并（`4a7f3cba`，`autoMergeRequest` 为空，`--match-head-commit`），远端和本地分支已删。另外两个实验分支 `feat/ring-annulus-cover`（`df32566a`）、`exp/invalidate-union`（`a73af47e`）仍只在本地，不并入。
 - M-7 第一步：先量「大部件不动」省多少合成像素，没动产品代码。结果与结论在 TODOLIST M-7 最后一条，脚本、原始结果和三段对比视频在 `outputs/acceptance/run-20261007-m7-body/`（git 忽略）。一句话：精灵一侧的开销几乎全来自「身体每帧都动」，不需要新美术就能省；剩下的大头是声环，分层美术动不了它。没刷机，板子仍是 build 24。
 - 常驻串口记录 `outputs/serial/robot-20261007-restore-final-disp.log`（18:44 起，两小时上限）。
-- 你看完对比视频后回「今天的这个还可以，能接受，你继续」：按「保持现在的身体连续动」处理，M-7 第一步到此收住（不做收窄、不做不动 / 阶梯动、不做分层小样），理由与「若理解错了」的回退写在 TODOLIST M-7 最后一条。接着做了 `release_ops.sh` PREV 前移和 runbook 停在 10-05 的几处状态（10-06 的 `rollback` 演练通过、当前栈、磁盘），在本地分支 `chore/release-ops-prev-flush-v1`，没推送。
+- 你看完对比视频后回「今天的这个还可以，能接受，你继续」：按「保持现在的身体连续动」处理，M-7 第一步到此收住（不做收窄、不做不动 / 阶梯动、不做分层小样），理由与「若理解错了」的回退写在 TODOLIST M-7 最后一条。接着做了 `release_ops.sh` PREV 前移和 runbook 停在 10-05 的几处状态（10-06 的 `rollback` 演练通过、当前栈、磁盘），随 PR #195 并入 main。
 
 ## 2026-10-07 傍晚：环形覆盖实验（用户「先合并 #193，再做环形实验」「继续」，刷机前又点了一次头）
 
@@ -146,7 +146,7 @@
 - **`ALLOWED_ORIGINS`**：`/etc/memoria-control-api.env` 从 `https://122.51.108.140:8443` 换成 `https://aginice.cn:8443,https://www.aginice.cn:8443`（与 `infra/memoria.env.production.example` 和 `scripts/smoke_server_deployment.sh` 同值；浏览器跨域用，小程序与设备请求不走它）。原文件备份 `memoria-control-api.env.pre-aginice-origins-20261006`；`env` 步逐键比对快照与线上无差异，随后 `cutover` 生效。`LIVEKIT_URL` **没动**（LiveKit 已退役，代码只在 `scripts/split_production_env.py` 的键名清单与测试里出现，没有容器在跑；改它要再重建一次 control-api 与 bridge，值本身已无用）。改 env 后按 `env` → `cutover` → `finish` 重新切流（与回滚演练共用这一次）。
 - **旧域名站点与证书**：`/etc/nginx/sites-enabled/memoria-prod`（aigcnice.com 的 443/9443/80 三个 server）与 `/etc/nginx/ssl/aigcnice.com/`（bundle + 私钥，证书到 2026-12-17）都已删；站点文件先移进 `/etc/nginx/backup-20261005-domain-switch/` 备查（`memoria-prod.site.removed-20261006`），删前核过引用：除那份 nginx -T 备份与站点自身，没有别处引用这两个路径，cron / systemd / letsencrypt renewal 里也没有 `aigcnice`。删后 `nginx -t` 通过、`systemctl reload nginx` 成功，`https://aginice.cn:8443/memoria-api/health/ready` 200、`/memoria-bind/` 200、根 200。
 - **`/root/domain-switch-20261005/`**：旧证书私钥、env 备份（域切换 09:09 的那份）与四个切换脚本已删；**留下** `/root/domain-switch-20261005-kept/`：域切换时头像改写的原值 TSV（867 B，含孩子头像 URL 原值，确认不需要再删）与同一份旧 env 备份的副本（`memoria-control-api.env.pre-aginice-origins-20261005-090953`）。
-- **`release_ops.sh`**：主机上装的就是这一批仓库里的版本（安装时 sha256 `f5f787e5…`，与前一代备份一致性核过；旧版留作 `release-ops.sh.pre-20261006-speaking-flush-v1`，21,230 B）。演练用的就是它。**下一次整栈发布前**要把它前移后的版本再装一次（仓库里的 PREV 已在本地分支 `chore/release-ops-prev-flush-v1` 前移到 `20261006-speaking-flush-v1` / `e6fb10f3…`，待并入 main；主机上的仍是前移前的版本）。
+- **`release_ops.sh`**：主机上装的就是这一批仓库里的版本（安装时 sha256 `f5f787e5…`，与前一代备份一致性核过；旧版留作 `release-ops.sh.pre-20261006-speaking-flush-v1`，21,230 B）。演练用的就是它。**下一次整栈发布前**要把它前移后的版本再装一次（仓库里的 PREV 已随 PR #195 前移到 `20261006-speaking-flush-v1` / `e6fb10f3…`，PR #195；主机上的仍是前移前的版本）。
 - **旧机**：截至 10-06 11:50 仍可连接（`ssh memoria-prod-old` 通、退出码 0），到期时刻不明，所以 ssh 别名与 `known_hosts` 条目都留着，等它真的断了再删。
 - **分文未动**：固件（build 24，OTA 指针仍指 build 21）、小程序、media-edge 组件、数据库 schema、`pg_wal`。
 
