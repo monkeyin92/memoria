@@ -64,6 +64,17 @@ sudo systemctl enable --now memoria-disk-patrol.timer
 
 做法：①`memoria-{agent,control-api,speaker-model}` 只留最新两个 tag、`memoria-media-edge` 只留当前与上一个组件 tag，其余逐项 `docker rmi`（本次 80 个 tag）；②**只删镜像不会让虚拟机磁盘变小**，这些层还被构建缓存引用，要再 `docker builder prune -af --keep-storage 8GB`（保留最近用过的约 8 GB，本次回收 26.6 GB）。结果：虚拟机磁盘空出约 28 GB（可用约 24 GB），`memoria-pgv` 自己从崩溃恢复。不动其他项目的镜像、已停止的容器与数据卷（`docker volume prune` 会删别的项目的数据，须单独授权），不用 `docker system prune`；`delta_build_images.sh` 要的底座镜像（最新发布 tag）保留。之后第一次本机发布构建会因缓存变小而慢一些。
 
+### 2026-10-08 第四次手工清理（经用户授权「先清理磁盘，删除没用的备份数据等等」）
+
+同一套规则，间隔约 4 天，在整栈 `20261007-n8-diag-v1` 切流之后做。清理前根分区 28 G / 40 G（75 %），containerd 镜像层约 12 G，`incoming/` 4.3 G，`/var/backups/memoria-july-archive-20261005` 1.6 G。步骤：①只读盘点（`du -x`；root 目录的通配符要在 root 下展开，`sudo sh -c 'du … /dir/*'`，否则非 root 的 shell 展不开，输出是空的）；②保留集与运行中容器的 compose 引用核对（`com.docker.compose.project.config_files` 标签：Postgres 与 MinIO 用 `releases/20260827-architecture-split-v1`，Redis 与 media-edge 用 `releases/20261004-first-warm-v1`，media-edge 另加 `component-releases/20261002-late-progress-v1-media-edge` 的 override）；③候选的逐文件 sha256 清单写进 `/root/memoria-release/cleanup-20261008-pre/`；④逐项执行，过程写进 `/root/memoria-release/cleanup-20261008.log`。
+
+删除的：镜像 tag 12 个（`memoria-{agent,control-api,speaker-model}` 的 `20261004-first-warm-v1`、`20261005-subject-candidates-v1`，以及两个过期的 `rollback-20261005-…-pre`、`rollback-20261006-…-pre`；都是 `docker rmi <repo:tag>`，不是 prune）；`incoming/20261005-subject-candidates-v1`（1.5 G）；`releases/20261005-subject-candidates-v1` 的源码树（保留 `.cutover`，4.3 M）；`/var/backups/memoria-july-archive-20261005`（1.6 G：7 月候选部署的 volumes 归档、旧 env 文件（含密钥）与旧发布树；它自己的 README 写着 nothing in use，逐文件 sha256 清单 14,559 条）。
+
+有意保留：`/root/old-host-20261005/`（99 M，其中 `var-backups-memoria.tar.gz` 是旧机 `/var/backups/memoria` 的唯一本地还原点，见上文「2026-10-05」一节）；`/var/backups/memoria`（11 M，未动）；`releases/20261004-first-warm-v1` 与 `releases/20260827-architecture-split-v1`（compose 链）；`incoming/20261006-speaking-flush-v1` 与 `incoming/20261007-n8-diag-v1`（上一版整栈与当前）；`/home/ubuntu` 下不属于 Memoria 的 family-growth-h5、prepulse（归属未核实，未动）；数据卷（未 prune）；journald（约 1 G，未动）。
+
+结果：根分区 28 G → 21 G（75 % → 55 %，剩 18 G）。容器全部 healthy，本机与外部 readiness 200，`current` 不变，20261006 回滚镜像的 image id 与之前一致。`docker system df` 仍显示约 4.2 G 可回收，那是 20261006 整栈与 `rollback-20261007-*-pre`（同 id），按规则不删。
+
+
 ### 2026-10-05 迁到 110.42.235.198 后的空间基线（新机，不是一次清理）
 
 生产从 2026-10-05 起在 110.42.235.198：40 GB 盘（旧机 118 GB），与 pocketSparks、hr-tracker 共用，迁移后已用约 17 GB（45%）。上文的 70% 触发线与「约每 5–6 次整栈清一次」是旧机的数字，在新机上要重算：整栈发布每次约 +4–5 GB（WAL 归档曾约 +0.6–1.1 GB/天，2026-10-06 起已关，见 [发布、恢复与回滚运维手册](release-rollback.md)「生产主机」），70% 是 28 GB，迁移后 17 GB、第一次整栈发布后 21 GB；`memoria-disk-patrol.timer` 的 75% / 85% 是百分比，同样适用，只告警不清理。规则不变：只清 `memoria-*` 镜像（`docker_image_retention.sh` 只处理这类 tag，不碰 pocketSparks、hr-tracker 和其他项目的镜像与卷）；每次发布核对完立刻删 `incoming` 里的包；镜像只留当前 + 一个回滚；数据卷仍不动，清理仍须另行授权。

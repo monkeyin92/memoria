@@ -250,7 +250,7 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 ## 定期运维
 
 - [ ] **证书定期更换**：aginice.cn 现用的证书 2026-10-05 装入，**2027-01-02 23:59:59（GMT）到期**（腾讯云免费证书约 90 天一期、不会自动到服务器）；最迟 2026-12-19 前从腾讯云下载新一期 Nginx 格式（RSA）给我，我在新机原位替换 `/etc/nginx/ssl/aginice.cn/aginice.cn_bundle.crt` 与 `aginice.cn.key`（先备份、核对密钥与证书匹配 / SAN / 有效期 / 链，`nginx -t` 后 reload，核对 443 与 8443；做法见运行手册「生产主机」一节的换证书条）。这份证书与 pocketSparks 的其它站点共用，换的时候别碰它们的站点文件。
-- [ ] **根分区（2026-10-08 发布后）**：28 G / 40 G（75 %），超过空间治理基线的 70 % 触发线。候选清理是 `/opt/memoria/incoming/20261005-subject-candidates-v1`（1.5 G，不是任何回滚的依赖）与更早的镜像；**要你授权才删**，删前先列清单、逐项核对（规则见 `docs/runbooks/operations-space-governance.md`）。
+- [x] **根分区（2026-10-08 清理）**：清理前 28 G / 40 G（75 %），清理后 21 G（55 %）；删了什么、保留什么见运行手册「2026-10-08 第四次手工清理」，收据在主机 `/root/memoria-release/cleanup-20261008.log` 与 `cleanup-20261008-pre/`。下一次整栈发布后再看（约每 6 次整栈清一次，或超过 70 % 时清）。
 - [ ] **发布制品随发布累积**：每次整栈约占 4 GB（`/opt/memoria/incoming/` 约 1.5 GB + 镜像 tag 约 2.2 GB）；清理按「当前 + 紧邻回滚」、清单带 sha256、逐项 `docker rmi` / 精确目录删除、不用 `docker system prune`，每次要你授权（规则、脚本与收据见 `docs/runbooks/operations-space-governance.md`），约每 5–6 次整栈清一次，或根分区超过 70 % 时。待做：`scripts/docker_image_retention.sh` 因保护全部 `rollback-*` / runtime-base 与 pre-state 引用仍是 0 候选，要改成「只保护当前发布的 rollback 与运行中引用」，否则下一轮仍要手工清理。新机的磁盘现状（40 GB 盘，2026-10-05 16:37 整栈发布后剩 17 GB）见「域名切换与新机收尾」的 WAL 一条。
 
 ## P0：发布前必须闭环
