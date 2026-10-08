@@ -22,6 +22,15 @@
 - **未关闭缺陷与下一步**：P0-03 仍开放（缺陷 A 核心续问边界与工具查询最终回答已在 09-24、09-25 真机走通；TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动与近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。未关闭事项与执行边界一律以 [TODOLIST](TODOLIST.md) 为准，本文件只记已经发生的事实；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变；每一轮电脑语音测试仍要你点头。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)；历史归档 [2026-09-24 至 2026-10-03](docs/HANDOFF-archive-0924-1003.md)、[2026-09-16 至 2026-09-23](docs/HANDOFF-archive-0916-0923.md)、[2026-09-20 及更早](docs/HANDOFF-archive-before-0920.md)。下面各节里写着「2026-10-03 …」「2026-09-2x …」一节的引用，都到这些归档里找。
 
+## 2026-10-08 18:13 N-8 诊断一轮（电脑模拟，音量 30，产品 build 24；结果与逐句表见 `docs/acceptance/run-20261008-n8-diag/findings.md`）
+
+- **结果**：11 句有效输入都提交并进入回复，10 句完整播放；1 句（t012「你会唱歌吗？」）在首个下行帧到达的同一时刻被一次 rms 0.0009 的 VAD 起点取代，输出 0 帧。取代它的回合没有提交，所以没有重放。
+- **与诊断行的关系**：这次丢失走的是「已开播后被取代」路径，不是 held 扣住路径，所以 `prepared reply dropped cause=` 一次都没有出现（本轮 `held` 与 `dropped` 都是 0）。诊断行要补到 superseded 分支，才能覆盖这一例。
+- **没查清**：VAD 起点的来源（扬声器开启瞬态、底噪、回声残留）；上行编码队列整段都在丢帧（末计数 1157），与听错（11 句里 5 句逐字正确、2 句部分正确、4 句没有对应的最终识别文本）的因果未证实。
+- **边界**：只跑了 12 句中性问题，没有注入噪声；音量恢复到 38；服务端在 18:16:53 关闭了会话，板子之后的状态没有观察到（记录进程已停，重开串口会让板子复位）。
+- **收据**：`outputs/acceptance/run-20261008-n8-diag/`（git 忽略），串口原始记录 `outputs/serial/robot-20261008-n8-diag.log`。
+
+
 ## 2026-10-08 整栈发布 20261007-n8-diag-v1（PR #196 的诊断日志；无行为变更；真机复核未做）
 
 用户 10-08 说「好，按你顺序来」，顺序是发布 → 真机一轮 → 据结果定修法。本节是「发布」这一步。
