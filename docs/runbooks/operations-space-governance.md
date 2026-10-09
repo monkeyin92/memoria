@@ -75,6 +75,16 @@ sudo systemctl enable --now memoria-disk-patrol.timer
 结果：根分区 28 G → 21 G（75 % → 55 %，剩 18 G）。容器全部 healthy，本机与外部 readiness 200，`current` 不变，20261006 回滚镜像的 image id 与之前一致。`docker system df` 仍显示约 4.2 G 可回收，那是 20261006 整栈与 `rollback-20261007-*-pre`（同 id），按规则不删。
 
 
+### 2026-10-09 第五次手工清理（经用户授权「先做2，3吧」）
+
+同一套规则，间隔约 1 天，在整栈 `20261009-textless-spare-v1` 切流之后做。清理前根分区 25 G / 40 G（65 %），`incoming/` 三个包各 1.5 G。回滚深度是 1，所以 20261006 整栈已不是回滚目标。执行方式比 10-08 又固化了一步：脚本 `/root/memoria-release/cleanup-20261009.sh`（root 0700，sha256 `66b56d94…`）分 `pre`（只读盘点、写快照与逐文件 sha256 清单，不改任何东西）与 `apply` 两个模式，候选是写死的清单，不用通配符；`apply` 前后各过一遍门禁：没有发布或 docker 进程、七个带健康检查的容器 healthy 加 SenseVoice 在跑、三个整栈角色在当前 tag 上、`current` 指向当前发布树、本机 readiness 200、保留集镜像都在、近 5 分钟 bridge 日志没有 `media turn committed`、近 10 分钟边缘日志没有 `device=dev_`；候选镜像还要断言与任何保留 tag 或容器用的镜像 id 不同。
+
+删除的：6 个镜像 tag，对应 3 个镜像（`memoria-{agent,control-api,speaker-model}` 的 `20261006-speaking-flush-v1` 与同 id 的过期 `rollback-20261007-n8-diag-v1-pre`；逐个 `docker rmi <repo:tag>`，不是 prune）；`incoming/20261006-speaking-flush-v1`（1.5 G，6 个文件的 sha256 清单）；`releases/20261006-speaking-flush-v1` 的源码树（1,685 个文件的 sha256 清单，保留 `.cutover`，71 M → 4.3 M）。
+
+有意保留：`incoming/20261007-n8-diag-v1`（下一次增量上传的种子）与 `incoming/20261009-textless-spare-v1`（当前）；`releases/20261007-n8-diag-v1`（回滚目标的发布树）与当前发布树；镜像 `20261009`、`20261007` 与 `rollback-20261009-textless-spare-v1-pre`、media-edge、SenseVoice；`releases/20261004-first-warm-v1` 与 `releases/20260827-architecture-split-v1`（compose 链）；数据卷、journald、`/root/old-host-20261005/` 都没动。
+
+结果：根分区 25 G → 21 G（65 % → 55 %，剩 18 G），`docker system df` 的镜像数 19 → 16。清理前后门禁全部通过，四个关键容器 healthy，本机与外部 readiness 200，`current` 不变。收据在服务器 `/root/memoria-release/cleanup-20261009.log`、`cleanup-20261009-precheck.log`、`cleanup-20261009-apply.out` 与 `cleanup-20261009-pre/`（前后快照、两份 sha256 清单、候选镜像与 id）。
+
 ### 2026-10-05 迁到 110.42.235.198 后的空间基线（新机，不是一次清理）
 
 生产从 2026-10-05 起在 110.42.235.198：40 GB 盘（旧机 118 GB），与 pocketSparks、hr-tracker 共用，迁移后已用约 17 GB（45%）。上文的 70% 触发线与「约每 5–6 次整栈清一次」是旧机的数字，在新机上要重算：整栈发布每次约 +4–5 GB（WAL 归档曾约 +0.6–1.1 GB/天，2026-10-06 起已关，见 [发布、恢复与回滚运维手册](release-rollback.md)「生产主机」），70% 是 28 GB，迁移后 17 GB、第一次整栈发布后 21 GB；`memoria-disk-patrol.timer` 的 75% / 85% 是百分比，同样适用，只告警不清理。规则不变：只清 `memoria-*` 镜像（`docker_image_retention.sh` 只处理这类 tag，不碰 pocketSparks、hr-tracker 和其他项目的镜像与卷）；每次发布核对完立刻删 `incoming` 里的包；镜像只留当前 + 一个回滚；数据卷仍不动，清理仍须另行授权。
