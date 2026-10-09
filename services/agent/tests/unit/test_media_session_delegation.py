@@ -2451,7 +2451,7 @@ async def test_qa_evidence_less_vad_cannot_hold_weather_result_past_cap(
                 sentence_id="owner-partial",
                 revision=1,
                 capture_start_sample=640,
-                capture_end_sample=1_600,
+                capture_end_sample=4_000,  # reaches 210 ms into the edge: the owner's own words
                 text="我还想问",
                 is_final=False,
             )
@@ -2546,7 +2546,7 @@ async def test_qa_empty_tail_does_not_revive_invalid_weather_output(invalidator:
         elif invalidator == "partial":
             context.pending.pending_partial = ASRResult(
                 task_epoch=1, sentence_id="real-speech", revision=1,
-                capture_start_sample=640, capture_end_sample=650, text="等等",
+                capture_start_sample=640, capture_end_sample=4_000, text="等等",
                 is_final=False, stream_epoch=identity.stream_epoch,
             )
         await registry._expire_endpoint_tail(identity.session_id, identity.stream_epoch, endpoint)

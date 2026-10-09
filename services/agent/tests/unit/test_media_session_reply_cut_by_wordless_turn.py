@@ -120,10 +120,6 @@ def _fast_timers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(media_session_turns, "_EVIDENCE_LESS_HOLD_MAX_S", 0.6)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="N-8 open: interim text from before the edge counts as the edge's words and drops the reply",
-)
 @pytest.mark.asyncio
 async def test_interim_text_from_before_the_edge_does_not_cost_the_prepared_reply() -> None:
     async def script(scene: _InterimScene) -> None:
