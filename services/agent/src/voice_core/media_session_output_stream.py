@@ -196,6 +196,9 @@ class MediaOutputStreamMixin:
         @staticmethod
         def _pending_turn_has_text_evidence(context: _MediaVoiceSession) -> bool: ...
 
+        @staticmethod
+        def _pending_turn_has_fresh_text_evidence(context: _MediaVoiceSession) -> bool: ...
+
         def _arm_evidence_less_floor_hold(self, context: _MediaVoiceSession) -> None: ...
 
     async def _abort_unheard_stream(
@@ -333,7 +336,7 @@ class MediaOutputStreamMixin:
         return (
             not context.runtime.output_floor_allows_assistant
             and context.pending.turn_start_sample is not None
-            and not self._pending_turn_has_text_evidence(context)
+            and not self._pending_turn_has_fresh_text_evidence(context)
         )
 
     @staticmethod
@@ -516,7 +519,7 @@ class MediaOutputStreamMixin:
         logger.info(
             "media prepared reply dropped cause=%s textless_hold=%s waited_s=%.2f session=%s fence=%s "
             "owner_is_lease=%s task_is_current=%s fence_matches=%s floor_open=%s turn_started=%s "
-            "text_evidence=%s partial_chars=%d provisional_chars=%d",
+            "text_evidence=%s fresh_text_evidence=%s partial_chars=%d provisional_chars=%d",
             cause,
             textless_hold,
             waited_s,
@@ -528,6 +531,7 @@ class MediaOutputStreamMixin:
             context.runtime.output_floor_allows_assistant,
             context.pending.turn_start_sample is not None,
             self._pending_turn_has_text_evidence(context),
+            self._pending_turn_has_fresh_text_evidence(context),
             len(((partial.text if partial is not None else "") or "").strip()),
             len(((provisional.text if provisional is not None else "") or "").strip()),
         )

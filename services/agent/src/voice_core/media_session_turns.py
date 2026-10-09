@@ -57,6 +57,8 @@ _DUPLICATE_COMMIT_DELIVERY_GUARD_S = 8.0
 _EVIDENCE_LESS_HOLD_BASE_S = 3.0
 _EVIDENCE_LESS_HOLD_VAD_EXTENSION_S = 1.5
 _EVIDENCE_LESS_HOLD_MAX_S = 6.0
+# Interim text that reaches less than 40 ms into a pending turn is left over from before it.
+_STALE_INTERIM_SLOP_SAMPLES = 640
 
 
 class MediaTurnEndpointMixin:
@@ -1015,6 +1017,31 @@ class MediaTurnEndpointMixin:
             )
         )
 
+    @staticmethod
+    def _pending_turn_has_fresh_text_evidence(context: _MediaVoiceSession) -> bool:
+        """Text evidence about the pending turn's own audio, not interim text left over from before it.
+
+        2026-10-09 baseline t010: the question was committed on 3 characters, the recognizer kept the rest
+        as interim text that never got a final, and a noise VAD edge 2.6 s later found 5 characters on the
+        pending turn 19 ms after it started.  Those words ended before the edge began; they were the tail of
+        the question, not the edge's words, and counting them dropped the prepared reply unheard.
+        """
+
+        start = context.pending.turn_start_sample
+        partial = context.pending.pending_partial
+        provisional = context.projection.provisional
+        interim = (
+            (partial.text, partial.capture_end_sample) if partial is not None else (None, 0),
+            (provisional.text, provisional.capture_end_sample) if provisional is not None else (None, 0),
+        )
+        return any(
+            text and text.strip() and (start is None or end > start + _STALE_INTERIM_SLOP_SAMPLES)
+            for text, end in interim
+        ) or any(
+            text and text.strip()
+            for text in (context.pending.clock_fact_forced_text, context.pending.live_query_forced_text)
+        )
+
     async def _retire_pending_turn_locked(
         self,
         context: _MediaVoiceSession,
@@ -1030,7 +1057,7 @@ class MediaTurnEndpointMixin:
         """
 
         input_fence = context.pending.turn_input_fence
-        empty_input = not self._pending_turn_has_text_evidence(context)
+        empty_input = not self._pending_turn_has_fresh_text_evidence(context)
         if not await self._retire_pending_turn_input_range(
             context,
             stream_epoch=stream_epoch,
@@ -1125,7 +1152,7 @@ class MediaTurnEndpointMixin:
             and not context.standby_requested
             and not context.runtime.output_floor_allows_assistant
             and context.pending.turn_start_sample is not None
-            and not self._pending_turn_has_text_evidence(context)
+            and not self._pending_turn_has_fresh_text_evidence(context)
             and any(
                 self._output_work_is_active(context, work)
                 for work in tuple(context.output.output_work.values())

@@ -256,20 +256,33 @@ class _Predicate(MediaOutputStreamMixin):
     _pending_turn_has_text_evidence = staticmethod(
         MediaTurnEndpointMixin._pending_turn_has_text_evidence
     )
+    _pending_turn_has_fresh_text_evidence = staticmethod(
+        MediaTurnEndpointMixin._pending_turn_has_fresh_text_evidence
+    )
 
     def _output_owner_is_current(self, context: Any, lease: Any) -> bool:
         return False  # the user's VAD edge already took the floor
 
 
-def _context(*, floor_open: bool, turn_start: int | None, partial: str | None = None) -> Any:
+def _context(
+    *,
+    floor_open: bool,
+    turn_start: int | None,
+    partial: str | None = None,
+    partial_end: int | None = None,
+) -> Any:
+    """A pending turn; the interim text, if any, reaches 200 ms past the turn start unless ``partial_end`` says."""
+
     pending = PendingTurn(turn_start_sample=turn_start)
     if partial is not None:
+        start = turn_start or 0
+        end = start + 3_200 if partial_end is None else partial_end
         pending.pending_partial = ASRResult(
             task_epoch=1,
             sentence_id="s",
             revision=1,
-            capture_start_sample=0,
-            capture_end_sample=1_600,
+            capture_start_sample=start if partial_end is None else max(0, end - 1_600),
+            capture_end_sample=end,
             text=partial,
             is_final=False,
         )
@@ -296,6 +309,23 @@ def test_only_a_user_turn_with_no_words_is_waited_out(
     floor_open: bool, turn_start: int | None, partial: str | None, held: bool
 ) -> None:
     context = _context(floor_open=floor_open, turn_start=turn_start, partial=partial)
+    assert _Predicate()._floor_held_by_textless_turn(context) is held
+
+
+@pytest.mark.parametrize(
+    ("partial_end", "held"),
+    [
+        (640, True),  # the interim text ended where the edge began: left over from before it
+        (640 + 640, True),  # less than 40 ms into the edge: still the tail of earlier speech
+        (640 + 641, False),  # reaches past that: the edge's own words
+        (640 + 16_000, False),  # the child talking on
+    ],
+    ids=["ends-at-the-edge", "within-slop", "just-past-slop", "talking-on"],
+)
+def test_interim_text_from_before_the_edge_is_not_the_edges_words(partial_end: int, held: bool) -> None:
+    """N-8, baseline t010: 5 interim characters were on the pending turn 19 ms after a noise edge began."""
+
+    context = _context(floor_open=False, turn_start=640, partial="笑话吧", partial_end=partial_end)
     assert _Predicate()._floor_held_by_textless_turn(context) is held
 
 
