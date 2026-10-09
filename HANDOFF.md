@@ -22,7 +22,7 @@
 - **未关闭缺陷与下一步**：P0-03 仍开放（缺陷 A 核心续问边界与工具查询最终回答已在 09-24、09-25 真机走通；TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动与近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。未关闭事项与执行边界一律以 [TODOLIST](TODOLIST.md) 为准，本文件只记已经发生的事实；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变；每一轮电脑语音测试仍要你点头。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)；历史归档 [2026-09-24 至 2026-10-03](docs/HANDOFF-archive-0924-1003.md)、[2026-09-16 至 2026-09-23](docs/HANDOFF-archive-0916-0923.md)、[2026-09-20 及更早](docs/HANDOFF-archive-before-0920.md)。下面各节里写着「2026-10-03 …」「2026-09-2x …」一节的引用，都到这些归档里找。
 
-## 2026-10-09 20:03 N-8 发布后真机复测，以及 t010 的机制与修复原型（电脑模拟，音量 30，线上 `20261009-textless-spare-v1`）
+## 2026-10-09 20:03 N-8 发布后真机复测，以及 t010 的机制与修复（电脑模拟，音量 30，线上 `20261009-textless-spare-v1`；修复在本批 PR）
 
 用户 10-09 先说「先做2，3吧，真机先不测不碰」，随后说「这个弄好后就进行真机测试」。2 是读码并复现 t010 那一类，3 是清磁盘（收据在「整栈发布」一节之后的清理，运行手册「2026-10-09 第五次手工清理」）；本节是 2 和随后的真机一轮。对照表与全部数字见 `docs/acceptance/run-20261009-n8-after/findings.md`。
 
@@ -31,7 +31,7 @@
 - **识别质量没变，上行丢帧却几乎为零**：这一轮串口 `Encode queue is full` 只有 1 行（基线 2,722 帧），平均相似度 0.82（基线 0.81），没匹配上 9/45（基线 5/22）；上行丢帧不是听错的主要原因（两个会话，样本小）。
 - **新发现**：1 次 Doubao TTS `APIConnectionError: empty-timestamps` → t016 的回复没出声（`reply_task_exception`），约 28 s 后与下一句的回复合并说出。
 - **t010 的机制（读码确认，测试夹具复现）**：识别器只把开头 320 ms（3 字）定为终稿，回合以 3 字提交、回复备好后，其余没有终稿的临时识别文字（5 字）才出现在待定回合里；2.6 s 后一次噪声 VAD 起点到达，19 ms 后待定回合已带着这 5 字，`_pending_turn_has_text_evidence` 不看文字对应的音频位置，把它们算成边缘的话，回复在首帧之前被取代，问题无人回答。复现测试 `test_media_session_reply_cut_by_wordless_turn.py`（日志特征与线上一致）。
-- **修复原型（本地分支 `fix/n8-stale-interim-evidence`，2 个提交，未推送、未发布）**：新增 `_pending_turn_has_fresh_text_evidence`：止于待定回合起点之后不足 40 ms 的临时文字算「之前留下的」，不算这个边缘的话；只用在三处（流式等待里的「边缘有没有话」、无证据扣住的上限、空输入退场），其余仍用旧判断；临时文字伸进边缘里（孩子接着说）或已有终稿，照旧立刻让位。31 行改动（`media_session_turns.py` 预算 1646 → 1673），`services/agent` 全部 2944 项通过，ruff、mypy strict、预算 PASS。它不解决根源（识别器给了半句终稿，回复答的是半句话），只是不再让半句话的回复也被丢掉。**要你定：是否发布这个修复**（PR + 整栈发布；我建议发）。
+- **修复（本批 PR，分支 `fix/n8-stale-interim-evidence`；用户 10-10 说「好，发布后再验证一轮」＝合并发布它，再复测一轮）**：新增 `_pending_turn_has_fresh_text_evidence`：止于待定回合起点之后不足 40 ms 的临时文字算「之前留下的」，不算这个边缘的话；只用在三处（流式等待里的「边缘有没有话」、无证据扣住的上限、空输入退场），其余仍用旧判断；临时文字伸进边缘里（孩子接着说）或已有终稿，照旧立刻让位。31 行改动（`media_session_turns.py` 预算 1646 → 1673），`services/agent` 全部 2944 项通过，ruff、mypy strict、预算 PASS。它不解决根源（识别器给了半句终稿，回复答的是半句话），只是不再让半句话的回复也被丢掉。发布与复测的收据另记。
 - **t011 另一条路径**：识别器的终稿被 `cross_sentence_overlap` 拒绝（规则：补救用的转写终稿不能挤掉提供方的终稿），挡路的区间没有记日志，没查清。候选：在拒绝日志里记下挡路的区间，随修复一起发。
 - **收据**：`outputs/acceptance/run-20261009-n8-after/`（git 忽略）与 `outputs/serial/robot-20261009-n8-after.log`。Mac 音量驱动设为 30，结束后恢复到 19（运行前就是 19）；串口记录进程已停，USB 口已释放。
 
