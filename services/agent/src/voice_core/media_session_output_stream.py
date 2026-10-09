@@ -7,7 +7,7 @@ import inspect
 import logging
 import time
 from collections.abc import AsyncIterator
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from services.agent.src.contracts.ids import GenerationFence
@@ -54,6 +54,13 @@ _UNHEARD_OUTPUT_FLOOR_POLL_S = 0.02
 # ASR pipeline's segmentation lag, so the boundary that gates early follow-up
 # endpoints carries a margin over the freshest uplink evidence.
 _PLAYBACK_ECHO_TAIL_MARGIN_SAMPLES = 12_800  # 0.8 s at 16 kHz
+
+
+@dataclass(slots=True)
+class _TextlessSpare:
+    """The user turn (by its start sample) a streaming reply was spared from while it was unheard."""
+
+    turn_start_sample: int | None = None
 
 
 def _playback_terminal(event_type: PlaybackEventType) -> bool | None:
@@ -329,12 +336,71 @@ class MediaOutputStreamMixin:
             and not self._pending_turn_has_text_evidence(context)
         )
 
+    @staticmethod
+    def _reply_owner_intact(context: _MediaVoiceSession, lease: _OutputOwnerLease) -> bool:
+        """The lease is still this task's, on the live fence; the floor is not asked here."""
+
+        return (
+            not context.closed
+            and not context.standby_requested
+            and context.output.output_owner is lease
+            and lease.task is asyncio.current_task()
+            and context.runtime.fence.matches(lease.fence)
+        )
+
+    def _textless_turn_spares_reply(
+        self,
+        context: _MediaVoiceSession,
+        lease: _OutputOwnerLease,
+        spare: _TextlessSpare,
+    ) -> bool:
+        """A user turn with no words does not take back a reply the child has not heard (N-8).
+
+        2026-10-08 round on build 24: the first frame went out at T, a 20 ms device VAD edge on room
+        noise reached the bridge at T+21 ms, and the next provider chunk found the floor taken and
+        cancelled the reply at T+82 ms, before the device had rendered a sample.  The wait below covers
+        only the time before the first PCM, but a frame is "sent" a network trip before it is heard.
+        While no playback ACK says the device rendered anything, a turn that still holds no words is no
+        reason to yield.  Words still are, and so is a reply the child already hears (a barge-in).  A
+        turn spared once stays spared for as long as it is the same turn, so the first ACK arriving
+        before the edge resolves does not undo it.
+        """
+
+        if not context.runtime.barge_in_enabled or not self._floor_held_by_textless_turn(context):
+            return False
+        if not self._reply_owner_intact(context, lease):
+            return False
+        coordinator = context.runtime.orchestrator.delegation
+        if not coordinator.output_intent_is_selected(
+            lease.intent,
+            current_fence=context.runtime.fence,
+            current_context_version=coordinator.current_context_version(lease.fence.session_id),
+            floor_allows_output=True,
+        ):
+            return False
+        turn_start = context.pending.turn_start_sample
+        if spare.turn_start_sample != turn_start:
+            rendered = context.output.playback.rendered_sample_end(lease.fence)
+            if rendered > 0:
+                return False
+            spare.turn_start_sample = turn_start
+            logger.info(
+                "media reply spared from a user turn with no words session=%s fence=%s "
+                "turn_start=%s rendered=%d",
+                context.identity.session_id,
+                lease.fence,
+                turn_start,
+                rendered,
+            )
+        return True
+
     async def _wait_for_unheard_output_floor(
         self,
         context: _MediaVoiceSession,
         lease: _OutputOwnerLease,
         *,
         emitted_audio: bool,
+        spare: _TextlessSpare | None = None,
     ) -> bool:
         """Before the first PCM, wait for the floor to come back instead of dropping the reply.
 
@@ -344,10 +410,15 @@ class MediaOutputStreamMixin:
         edge landing between the commit and the first frame lost the question's
         answer, N-8) holds the reply while the evidence-less hold cap runs, then lets
         it speak if the turn stays empty.  Words heard meanwhile supersede it.
+
+        After the first PCM it only asks whether the owner is still current, or whether
+        a user turn with no words may be sat out (``_textless_turn_spares_reply``).
         """
 
         if emitted_audio:
-            return self._output_owner_is_current(context, lease)
+            if self._output_owner_is_current(context, lease):
+                return True
+            return spare is not None and self._textless_turn_spares_reply(context, lease, spare)
         textless_hold = False
         if context.runtime.barge_in_enabled:
             if self._output_owner_is_current(context, lease):
@@ -612,6 +683,7 @@ class MediaOutputStreamMixin:
         """Send one selected source through the shared owner and PCM ledger."""
 
         emitted_audio = False
+        spare = _TextlessSpare()
         loop = asyncio.get_running_loop()
         next_pcm_send_at = loop.time()
         # This clock starts when the selected provider/output iterator is first
@@ -632,6 +704,14 @@ class MediaOutputStreamMixin:
                 "session_closed",
                 emitted_audio,
             )
+
+        def may_speak() -> bool:
+            """The owner may publish SPEAKING: it can start, or it is a spared reply mid-stream."""
+
+            return self._output_owner_can_start_first_frame(context, lease) or (
+                emitted_audio and self._textless_turn_spares_reply(context, lease, spare)
+            )
+
         try:
             while True:
                 if context.closed or context.standby_requested:
@@ -647,6 +727,7 @@ class MediaOutputStreamMixin:
                     context,
                     lease,
                     emitted_audio=emitted_audio,
+                    spare=spare,
                 ):
                     self.metrics.inc_media_stale_generation()
                     await self._abort_unheard_stream(
@@ -686,6 +767,7 @@ class MediaOutputStreamMixin:
                         context,
                         lease,
                         emitted_audio=emitted_audio,
+                        spare=spare,
                     ):
                         self.metrics.inc_media_stale_generation()
                         await self._abort_unheard_stream(
@@ -719,17 +801,11 @@ class MediaOutputStreamMixin:
                     speaking_started = await context.runtime.on_assistant_speaking(
                         context.output.assistant_text,
                         expected_fence=fence,
-                        precondition=lambda: self._output_owner_can_start_first_frame(
-                            context,
-                            lease,
-                        ),
+                        precondition=may_speak,
                     )
                     if context.closed or context.standby_requested:
                         return await abort_for_session_close()
-                    if not speaking_started or not self._output_owner_can_start_first_frame(
-                        context,
-                        lease,
-                    ):
+                    if not speaking_started or not may_speak():
                         self.metrics.inc_media_stale_generation()
                         await self._abort_unheard_stream(
                             context,

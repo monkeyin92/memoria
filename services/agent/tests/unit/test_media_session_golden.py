@@ -346,6 +346,14 @@ class _Harness:
     async def playback_ended(self) -> None:
         """Report the last emitted assistant frame as fully rendered."""
 
+        await self._report_playback(media_pb2.PLAYBACK_EVENT_TYPE_ENDED)
+
+    async def playback_progress(self) -> None:
+        """Report the last emitted assistant frame as rendered: the child hears the reply from here on."""
+
+        await self._report_playback(media_pb2.PLAYBACK_EVENT_TYPE_PROGRESS)
+
+    async def _report_playback(self, event_type: Any) -> None:
         frame = self.last("audio")
         await self.send(
             media_pb2.MediaToCore(
@@ -358,7 +366,7 @@ class _Harness:
                     turn_id=frame.turn_id,
                     tool_epoch=frame.tool_epoch,
                     session_epoch=frame.session_epoch,
-                    event_type=media_pb2.PLAYBACK_EVENT_TYPE_ENDED,
+                    event_type=event_type,
                 )
             )
         )
