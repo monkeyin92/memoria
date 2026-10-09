@@ -9,6 +9,9 @@ restored LISTENING).  The device stayed in SPEAKING for 30.76 s until the edge c
 ``owner_silence_timeout``, and whatever the child said meanwhile never got in.  The spoken-stop path already
 ends that replacement generation; the abort path now does too.  These drive the real registry/runtime over the
 public stream.
+
+The reply is audible here: the device has ACKed what it rendered.  A frame that is only *sent* is not heard yet,
+and an edge with no words no longer takes it (``test_media_session_noise_edge_after_first_frame``).
 """
 
 from __future__ import annotations
@@ -42,6 +45,7 @@ async def _noise_edge_over_the_audible_reply(harness: _StoryHarness) -> Generati
     """The first phrase is on the speaker; a VAD edge with no words takes the floor from it."""
 
     story = await harness.start_story()
+    await harness.playback_progress()  # the device plays the phrase: the child hears it
     await harness.vad_start(harness.sample)
     assert not harness.runtime.output_floor_allows_assistant
     # The next provider chunk is what notices that the reply lost the floor.
@@ -113,6 +117,7 @@ async def test_without_a_device_flush_there_is_no_replacement_to_end(
             staticmethod(lambda _context, _fence: False),
         )
         story = await harness.start_story()
+        await harness.playback_progress()
         await harness.vad_start(harness.sample)
         harness.story.release.set()
         await harness.wait_for(lambda: harness.runtime.fence.generation_id > story.generation_id)
@@ -134,6 +139,7 @@ async def test_a_flush_that_never_reached_the_edge_leaves_no_replacement_to_end(
 
         monkeypatch.setattr(harness.bridge, "emit_realtime_effect", effect_rejected)
         story = await harness.start_story()
+        await harness.playback_progress()
         await harness.vad_start(harness.sample)
         harness.story.release.set()
         await harness.wait_for(lambda: harness.runtime.fence.generation_id > story.generation_id)
