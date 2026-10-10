@@ -1,0 +1,111 @@
+{
+  "schema_version": "voice-soak-stop-v2",
+  "run": "outputs/acceptance/run-20261010-verify-standard",
+  "source_sha256": {
+    "timeline.jsonl": "e7480af649ea0922ce5b2d9b46f5b11a34d4f14cdae8c9ece8b5db7f1378d87c",
+    "bridge.log": "e4954e3a6dbb9d5a440c2ab62e63a75480d057fd1e7784f5b7c62154285ed06e",
+    "serial.log": "a829700b106a356ba757a831717a62d7b9bc917bd134722ee277dda55aa825b2"
+  },
+  "interruptions": {
+    "t013-story-stop": {
+      "stop_evidence_version": 2,
+      "stopped": false,
+      "stop_verdict": "not_stopped",
+      "stop_reason": "playback_completed",
+      "stop_delay_s": null,
+      "stop_delay_origin": "interrupt_start",
+      "reply_delivery_id": "d0208cd4-ce37-40e7-bc55-2d69b7a39104/epoch-1/turn-14/generation-14/tool-0",
+      "reply_terminal_reason": "playback_completed"
+    },
+    "t014-long-stop": {
+      "stop_evidence_version": 2,
+      "stopped": false,
+      "stop_verdict": "not_stopped",
+      "stop_reason": "playback_completed",
+      "stop_delay_s": null,
+      "stop_delay_origin": "interrupt_start",
+      "reply_delivery_id": "d0208cd4-ce37-40e7-bc55-2d69b7a39104/epoch-1/turn-15/generation-15/tool-0",
+      "reply_terminal_reason": "playback_completed"
+    },
+    "t015-new-question-mid": {
+      "stop_evidence_version": 2,
+      "stopped": false,
+      "stop_verdict": "not_stopped",
+      "stop_reason": "playback_completed",
+      "stop_delay_s": null,
+      "stop_delay_origin": "interrupt_start",
+      "reply_delivery_id": "d0208cd4-ce37-40e7-bc55-2d69b7a39104/epoch-1/turn-16/generation-16/tool-0",
+      "reply_terminal_reason": "playback_completed"
+    },
+    "t016-backchannel": {
+      "stop_evidence_version": 2,
+      "stopped": false,
+      "stop_verdict": "not_stopped",
+      "stop_reason": "playback_completed",
+      "stop_delay_s": null,
+      "stop_delay_origin": "interrupt_start",
+      "reply_delivery_id": "d0208cd4-ce37-40e7-bc55-2d69b7a39104/epoch-1/turn-17/generation-17/tool-0",
+      "reply_terminal_reason": "playback_completed"
+    },
+    "t017-early-mid": {
+      "stop_evidence_version": 2,
+      "stopped": false,
+      "stop_verdict": "not_stopped",
+      "stop_reason": "playback_completed",
+      "stop_delay_s": null,
+      "stop_delay_origin": "interrupt_start",
+      "reply_delivery_id": "d0208cd4-ce37-40e7-bc55-2d69b7a39104/epoch-1/turn-18/generation-18/tool-0",
+      "reply_terminal_reason": "playback_completed"
+    },
+    "t018-story-stop": {
+      "stop_evidence_version": 2,
+      "stopped": false,
+      "stop_verdict": "not_stopped",
+      "stop_reason": "playback_completed",
+      "stop_delay_s": null,
+      "stop_delay_origin": "interrupt_start",
+      "reply_delivery_id": "d0208cd4-ce37-40e7-bc55-2d69b7a39104/epoch-1/turn-19/generation-19/tool-0",
+      "reply_terminal_reason": "playback_completed"
+    },
+    "t019-long-stop": {
+      "stop_evidence_version": 2,
+      "stopped": false,
+      "stop_verdict": "not_stopped",
+      "stop_reason": "playback_completed",
+      "stop_delay_s": null,
+      "stop_delay_origin": "interrupt_start",
+      "reply_delivery_id": "d0208cd4-ce37-40e7-bc55-2d69b7a39104/epoch-1/turn-20/generation-20/tool-0",
+      "reply_terminal_reason": "playback_completed"
+    },
+    "t020-new-question-mid": {
+      "stop_evidence_version": 2,
+      "stopped": false,
+      "stop_verdict": "not_stopped",
+      "stop_reason": "playback_completed",
+      "stop_delay_s": null,
+      "stop_delay_origin": "interrupt_start",
+      "reply_delivery_id": "d0208cd4-ce37-40e7-bc55-2d69b7a39104/epoch-1/turn-21/generation-21/tool-0",
+      "reply_terminal_reason": "playback_completed"
+    },
+    "t021-backchannel": {
+      "stop_evidence_version": 2,
+      "stopped": false,
+      "stop_verdict": "not_stopped",
+      "stop_reason": "playback_completed",
+      "stop_delay_s": null,
+      "stop_delay_origin": "interrupt_start",
+      "reply_delivery_id": "d0208cd4-ce37-40e7-bc55-2d69b7a39104/epoch-1/turn-22/generation-22/tool-0",
+      "reply_terminal_reason": "playback_completed"
+    },
+    "t022-early-mid": {
+      "stop_evidence_version": 2,
+      "stopped": false,
+      "stop_verdict": "not_stopped",
+      "stop_reason": "playback_completed",
+      "stop_delay_s": null,
+      "stop_delay_origin": "interrupt_start",
+      "reply_delivery_id": "d0208cd4-ce37-40e7-bc55-2d69b7a39104/epoch-1/turn-23/generation-23/tool-0",
+      "reply_terminal_reason": "playback_completed"
+    }
+  }
+}

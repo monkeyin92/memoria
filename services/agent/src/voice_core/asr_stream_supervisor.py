@@ -19,6 +19,8 @@ from services.agent.src.voice_core.speech_timeline import (
     asr_result_to_segment,
 )
 
+_MAX_OVERLAP_DIAGNOSTIC_INTERVALS = 4
+
 
 class ASRDecisionReason(StrEnum):
     ACCEPTED = "accepted"
@@ -32,6 +34,27 @@ class ASRDecisionReason(StrEnum):
     STRADDLES_COMMITTED_WITHOUT_TIMING = "straddles_committed_without_timing"
     STRADDLES_COMMITTED_WORD_BOUNDARY = "straddles_committed_word_boundary"
     INTERVAL_CONFLICT = "interval_conflict"
+
+
+@dataclass(frozen=True, slots=True)
+class ASRConflictInterval:
+    """Content-free metadata of an interval that blocked a final."""
+
+    task_epoch: int
+    capture_start_sample: int
+    capture_end_sample: int
+    text_len: int
+    rescue_synthesized: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ASROverlapEvidence:
+    """Bounded snapshot at arbitration, after committed-watermark normalization."""
+
+    capture_start_sample: int
+    capture_end_sample: int
+    conflict_count: int
+    conflicts: tuple[ASRConflictInterval, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +72,7 @@ class ASRAcceptDecision:
     accepted: ASRResult | None
     reason: ASRDecisionReason
     evicted_sentence_ids: tuple[str, ...] = ()
+    overlap: ASROverlapEvidence | None = None
 
     @property
     def result(self) -> ASRResult | None:
@@ -348,6 +372,23 @@ class ASRStreamSupervisor:
                         return ASRAcceptDecision(
                             None,
                             ASRDecisionReason.CROSS_SENTENCE_OVERLAP,
+                            overlap=ASROverlapEvidence(
+                                capture_start_sample=result.capture_start_sample,
+                                capture_end_sample=result.capture_end_sample,
+                                conflict_count=len(cross_sentence),
+                                conflicts=tuple(
+                                    ASRConflictInterval(
+                                        task_epoch=interval.task_epoch,
+                                        capture_start_sample=interval.capture_start_sample,
+                                        capture_end_sample=interval.capture_end_sample,
+                                        text_len=len(interval.text),
+                                        rescue_synthesized=interval.rescue_synthesized,
+                                    )
+                                    for interval in cross_sentence[
+                                        :_MAX_OVERLAP_DIAGNOSTIC_INTERVALS
+                                    ]
+                                ),
+                            ),
                         )
                 if not same_task_correction and overlapping:
                     same_range_keys = [

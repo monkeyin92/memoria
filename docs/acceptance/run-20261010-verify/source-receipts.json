@@ -1,0 +1,56 @@
+{
+  "standard": {
+    "path": "outputs/acceptance/run-20261010-verify-standard",
+    "files": {
+      "bridge.log": {
+        "bytes": 819538,
+        "sha256": "e4954e3a6dbb9d5a440c2ab62e63a75480d057fd1e7784f5b7c62154285ed06e"
+      },
+      "control.log": {
+        "bytes": 153,
+        "sha256": "63436cc8cd24809d557c9ce9484fb6ee23523e7cbe95d8988063dc290e4d1742"
+      },
+      "edge.log": {
+        "bytes": 234,
+        "sha256": "bdc7b197513fc78a700e09a84215fdc23fcd49e4e7e34683e8b72a026febc5b9"
+      },
+      "serial.log": {
+        "bytes": 60530,
+        "sha256": "a829700b106a356ba757a831717a62d7b9bc917bd134722ee277dda55aa825b2"
+      },
+      "timeline.jsonl": {
+        "bytes": 18482,
+        "sha256": "e7480af649ea0922ce5b2d9b46f5b11a34d4f14cdae8c9ece8b5db7f1378d87c"
+      }
+    }
+  },
+  "probe": {
+    "path": "outputs/acceptance/run-20261010-verify-probe",
+    "files": {
+      "bridge.log": {
+        "bytes": 106731,
+        "sha256": "f8680bdb6f57828a7bd7fea9a44ba5fdd7ff585dbb05fbac0db5f4b3acc1fefc"
+      },
+      "control.log": {
+        "bytes": 306,
+        "sha256": "b347c50e0ad4b12bd7791544f8786f30163f78f045610e56ad25bc1a25e11cb4"
+      },
+      "edge.log": {
+        "bytes": 888,
+        "sha256": "ab401e922c1e34aac8effeb9911c67a7a21e64451c4151d900fe400bbf9416bb"
+      },
+      "noise.jsonl": {
+        "bytes": 1703,
+        "sha256": "33d76c193e576df877cbe14cf455f680797eb844dcb2265c6eb55a11aec401f8"
+      },
+      "serial.log": {
+        "bytes": 14749,
+        "sha256": "bc0baa5ac8250f1d369ebc30999f6b25f0676a041b5e3051f1cb9c7efddfb7ba"
+      },
+      "timeline.jsonl": {
+        "bytes": 2855,
+        "sha256": "bdc1d5cdba42bd3512ce242caf22bf6556880889cfa558bea5a094308aedae40"
+      }
+    }
+  }
+}

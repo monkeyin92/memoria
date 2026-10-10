@@ -243,14 +243,40 @@ class MediaSessionInputMixin:
 
         if context.pending.reopen_evidence_handle is not None:
             return
-        if (
-            context.identity.client_type != "device"
-            or not self._pending_turn_has_text_evidence(context)
-            or not self._asr_covers_endpoint(
-                context, context.pending.turn_end_sample, endpoint_sample
+        if context.identity.client_type != "device":
+            return
+        has_text = self._pending_turn_has_text_evidence(context)
+        covered = self._asr_covers_endpoint(
+            context, context.pending.turn_end_sample, endpoint_sample
+        )
+        reply_in_flight = self._reply_in_flight(context)
+        if not has_text or not covered or reply_in_flight:
+            partial = context.pending.pending_partial
+            provisional = context.projection.provisional
+            reason = (
+                "no_text"
+                if not has_text
+                else "endpoint_uncovered"
+                if not covered
+                else "reply_in_flight"
             )
-            or self._reply_in_flight(context)
-        ):
+            logger.info(
+                "media reopen evidence window skipped session=%s stream_epoch=%s "
+                "endpoint=%s reason=%s turn_start=%s turn_end=%s "
+                "partial_end=%s partial_text_len=%s provisional_end=%s "
+                "provisional_text_len=%s finalized_watermark=%s",
+                context.identity.session_id,
+                context.stream_epoch,
+                endpoint_sample,
+                reason,
+                context.pending.turn_start_sample,
+                context.pending.turn_end_sample,
+                partial.capture_end_sample if partial is not None else None,
+                len(partial.text.strip()) if partial is not None else 0,
+                provisional.capture_end_sample if provisional is not None else None,
+                len(provisional.text.strip()) if provisional is not None else 0,
+                context.ingress.last_finalized_audio_watermark,
+            )
             return
         context.pending.reopen_evidence_endpoint = endpoint_sample
         context.pending.reopen_evidence_turn_end = context.pending.turn_end_sample
@@ -261,6 +287,24 @@ class MediaSessionInputMixin:
             context.identity.session_id,
             context.stream_epoch,
             endpoint_sample,
+        )
+        partial = context.pending.pending_partial
+        provisional = context.projection.provisional
+        logger.info(
+            "media reopen evidence window armed session=%s stream_epoch=%s "
+            "endpoint=%s turn_start=%s turn_end=%s partial_end=%s "
+            "partial_text_len=%s provisional_end=%s provisional_text_len=%s "
+            "window_s=%.1f",
+            context.identity.session_id,
+            context.stream_epoch,
+            endpoint_sample,
+            context.pending.turn_start_sample,
+            context.pending.turn_end_sample,
+            partial.capture_end_sample if partial is not None else None,
+            len(partial.text.strip()) if partial is not None else 0,
+            provisional.capture_end_sample if provisional is not None else None,
+            len(provisional.text.strip()) if provisional is not None else 0,
+            _REOPEN_EVIDENCE_WINDOW_S,
         )
 
     def _expire_reopen_evidence_window(
@@ -276,22 +320,51 @@ class MediaSessionInputMixin:
         context.pending.reopen_evidence_turn_end = None
         context.pending.reopen_evidence_turn_start = None
         partial = context.pending.pending_partial
-        new_text = (context.pending.turn_end_sample or 0) > (turn_end_at_reopen or 0) or (
+        turn_end_advanced = (
+            context.pending.turn_end_sample or 0
+        ) > (turn_end_at_reopen or 0)
+        partial_after_endpoint = bool(
             partial is not None
             and partial.text.strip()
             and partial.capture_end_sample > endpoint_sample
         )
-        if (
-            context.closed
-            or context.standby_requested
-            or context.stream_epoch != stream_epoch
-            # The same logical turn: a turn that committed meanwhile and a
-            # newer one must never be committed at this older endpoint.
-            or context.pending.turn_start_sample is None
+        reason = (
+            "session_closed"
+            if context.closed
+            else "standby_requested"
+            if context.standby_requested
+            else "stream_epoch_changed"
+            if context.stream_epoch != stream_epoch
+            # The same logical turn: a newer turn must never commit at this
+            # older endpoint.
+            else "turn_changed"
+            if context.pending.turn_start_sample is None
             or context.pending.turn_start_sample != turn_start_at_reopen
-            or new_text
-            or self._reply_in_flight(context)
-        ):
+            else "turn_end_advanced"
+            if turn_end_advanced
+            else "partial_after_endpoint"
+            if partial_after_endpoint
+            else "reply_in_flight"
+            if self._reply_in_flight(context)
+            else None
+        )
+        if reason is not None:
+            logger.info(
+                "media reopen evidence window held session=%s stream_epoch=%s "
+                "endpoint=%s reason=%s turn_start=%s expected_turn_start=%s "
+                "turn_end=%s expected_turn_end=%s partial_end=%s "
+                "partial_text_len=%s",
+                session_id,
+                context.stream_epoch,
+                endpoint_sample,
+                reason,
+                context.pending.turn_start_sample,
+                turn_start_at_reopen,
+                context.pending.turn_end_sample,
+                turn_end_at_reopen,
+                partial.capture_end_sample if partial is not None else None,
+                len(partial.text.strip()) if partial is not None else 0,
+            )
             return
         # Back to the text-covered endpoint: a VAD end inside the noise would
         # never be covered by ASR, so committing there would stall again.
@@ -307,8 +380,9 @@ class MediaSessionInputMixin:
         self._cancel_max_user_speech_watchdog(context)
         logger.info(
             "media reopened turn committing without new text session=%s "
-            "endpoint=%s window_s=%.1f",
+            "stream_epoch=%s endpoint=%s reason=no_new_text window_s=%.1f",
             session_id,
+            context.stream_epoch,
             endpoint_sample,
             _REOPEN_EVIDENCE_WINDOW_S,
         )

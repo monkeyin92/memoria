@@ -1,0 +1,450 @@
+{
+  "schema_version": "voice-soak-input-audit-v1",
+  "evidence_date": "2026-10-10",
+  "release_source_commit": "bef8e1174679b40239b35c96729911ea0331882c",
+  "scope": "offline_only_no_audio_playback_no_device_no_network",
+  "asset_scope": "current_local_retained_files_not_hashed_at_original_playback",
+  "limitations": [
+    "File RMS is digital PCM amplitude, not acoustic SPL.",
+    "afplay process start/end are host timestamps, not measured acoustic boundaries.",
+    "VAD events are compared by logged host time; no clock-skew or ADC/DAC reconstruction.",
+    "Raw robot/provider PCM was not captured; ASR/VAD and file timing do not prove input quality."
+  ],
+  "source_sha256": {
+    "standard": {
+      "bridge.log": "e4954e3a6dbb9d5a440c2ab62e63a75480d057fd1e7784f5b7c62154285ed06e",
+      "control.log": "63436cc8cd24809d557c9ce9484fb6ee23523e7cbe95d8988063dc290e4d1742",
+      "edge.log": "bdc7b197513fc78a700e09a84215fdc23fcd49e4e7e34683e8b72a026febc5b9",
+      "serial.log": "a829700b106a356ba757a831717a62d7b9bc917bd134722ee277dda55aa825b2",
+      "timeline.jsonl": "e7480af649ea0922ce5b2d9b46f5b11a34d4f14cdae8c9ece8b5db7f1378d87c"
+    },
+    "probe": {
+      "bridge.log": "f8680bdb6f57828a7bd7fea9a44ba5fdd7ff585dbb05fbac0db5f4b3acc1fefc",
+      "control.log": "b347c50e0ad4b12bd7791544f8786f30163f78f045610e56ad25bc1a25e11cb4",
+      "edge.log": "ab401e922c1e34aac8effeb9911c67a7a21e64451c4151d900fe400bbf9416bb",
+      "noise.jsonl": "33d76c193e576df877cbe14cf455f680797eb844dcb2265c6eb55a11aec401f8",
+      "serial.log": "bc0baa5ac8250f1d369ebc30999f6b25f0676a041b5e3051f1cb9c7efddfb7ba",
+      "timeline.jsonl": "bdc1d5cdba42bd3512ce242caf22bf6556880889cfa558bea5a094308aedae40"
+    }
+  },
+  "assets": [
+    {
+      "path": "outputs/voice-bank-verify/p01.wav",
+      "bytes": 113972,
+      "sha256": "4b403e23aaa22e249dbe56300463b1d9abfee82d686978a682f49e88e7c7ade8",
+      "sample_rate_hz": 24000,
+      "channels": 1,
+      "sample_width_bytes": 2,
+      "duration_s": 2.3735,
+      "rms_dbfs": -23.732,
+      "peak_dbfs": -8.54,
+      "clipped_samples": 0
+    },
+    {
+      "path": "outputs/voice-bank-verify/p02.wav",
+      "bytes": 67698,
+      "sha256": "d13a230d06b9d74ccf46ddbf3a4380b6d9fdd2ec0ea650c56b933502ad0ac423",
+      "sample_rate_hz": 24000,
+      "channels": 1,
+      "sample_width_bytes": 2,
+      "duration_s": 1.409458,
+      "rms_dbfs": -20.13,
+      "peak_dbfs": -4.806,
+      "clipped_samples": 0
+    },
+    {
+      "path": "outputs/voice-bank-verify/p03.wav",
+      "bytes": 95002,
+      "sha256": "15a55cd9d851c4324e5ef4551b68987bf1075857ddfc777777ed09c9035e2113",
+      "sample_rate_hz": 24000,
+      "channels": 1,
+      "sample_width_bytes": 2,
+      "duration_s": 1.978292,
+      "rms_dbfs": -21.416,
+      "peak_dbfs": -5.34,
+      "clipped_samples": 0
+    },
+    {
+      "path": "outputs/voice-bank-verify/p04.wav",
+      "bytes": 67020,
+      "sha256": "9686edad511815a73e756b92c6475337f8e9fcde2b18b03682a39280ba6c9517",
+      "sample_rate_hz": 24000,
+      "channels": 1,
+      "sample_width_bytes": 2,
+      "duration_s": 1.395333,
+      "rms_dbfs": -22.263,
+      "peak_dbfs": -7.518,
+      "clipped_samples": 0
+    },
+    {
+      "path": "outputs/voice-bank-verify/p05.wav",
+      "bytes": 105742,
+      "sha256": "cd2f55038784df90a685a675b7c8a65f12fa4271086ad0a0649fdd8b54830550",
+      "sample_rate_hz": 24000,
+      "channels": 1,
+      "sample_width_bytes": 2,
+      "duration_s": 2.202042,
+      "rms_dbfs": -19.927,
+      "peak_dbfs": -5.339,
+      "clipped_samples": 0
+    },
+    {
+      "path": "outputs/voice-bank-verify/p06.wav",
+      "bytes": 94906,
+      "sha256": "508999dd7185ad8f483e94212be9443e3c927d8e4be40055113c1e147fbb8b97",
+      "sample_rate_hz": 24000,
+      "channels": 1,
+      "sample_width_bytes": 2,
+      "duration_s": 1.976292,
+      "rms_dbfs": -19.902,
+      "peak_dbfs": -4.72,
+      "clipped_samples": 0
+    },
+    {
+      "path": "outputs/voice-bank-verify/why-rain.wav",
+      "bytes": 67698,
+      "sha256": "d13a230d06b9d74ccf46ddbf3a4380b6d9fdd2ec0ea650c56b933502ad0ac423",
+      "sample_rate_hz": 24000,
+      "channels": 1,
+      "sample_width_bytes": 2,
+      "duration_s": 1.409458,
+      "rms_dbfs": -20.13,
+      "peak_dbfs": -4.806,
+      "clipped_samples": 0
+    },
+    {
+      "path": "outputs/voice-bank-verify/moon-follow.wav",
+      "bytes": 133772,
+      "sha256": "74ffd2bd26ebc50eb213afedf42d73bc967a52707b00782c89c4b9fe96f189aa",
+      "sample_rate_hz": 24000,
+      "channels": 1,
+      "sample_width_bytes": 2,
+      "duration_s": 2.786,
+      "rms_dbfs": -19.241,
+      "peak_dbfs": -5.34,
+      "clipped_samples": 0
+    },
+    {
+      "path": "outputs/voice-bank-verify/sing.wav",
+      "bytes": 47974,
+      "sha256": "529ab876f48117c2b158323b4c0f1bf672e50b0d06d014f5b96fb8f71c5a3a76",
+      "sample_rate_hz": 24000,
+      "channels": 1,
+      "sample_width_bytes": 2,
+      "duration_s": 0.998542,
+      "rms_dbfs": -21.528,
+      "peak_dbfs": -7.299,
+      "clipped_samples": 0
+    },
+    {
+      "path": "outputs/verify-noise/noise_m10.wav",
+      "bytes": 28844,
+      "sha256": "239e91b1190b35c221d25e2da94af7e8355956f6f52708e3de52592a49ea3fe8",
+      "sample_rate_hz": 24000,
+      "channels": 1,
+      "sample_width_bytes": 2,
+      "duration_s": 0.6,
+      "rms_dbfs": -12.316,
+      "peak_dbfs": -0.176,
+      "clipped_samples": 0
+    },
+    {
+      "path": "outputs/verify-noise/noise_m14.wav",
+      "bytes": 28844,
+      "sha256": "eb1d4bfa2e451a3017c316e781eaf829cdbefb26c1be15d3508ca68f4b17801a",
+      "sample_rate_hz": 24000,
+      "channels": 1,
+      "sample_width_bytes": 2,
+      "duration_s": 0.6,
+      "rms_dbfs": -14.186,
+      "peak_dbfs": -2.046,
+      "clipped_samples": 0
+    },
+    {
+      "path": "outputs/verify-noise/noise_m20.wav",
+      "bytes": 28844,
+      "sha256": "43924a8fdcdabfaab80eb31108579532142584265895cabe41ee3105768c7ac4",
+      "sample_rate_hz": 24000,
+      "channels": 1,
+      "sample_width_bytes": 2,
+      "duration_s": 0.6,
+      "rms_dbfs": -20.187,
+      "peak_dbfs": -8.046,
+      "clipped_samples": 0
+    }
+  ],
+  "stimuli": [
+    {
+      "run": "probe",
+      "tag": "t001-p01",
+      "stimulus_start": "08:17:19.154",
+      "stimulus_end": "08:17:22.351",
+      "stimulus_start_ts": 1791591439.154,
+      "stimulus_end_ts": 1791591442.351,
+      "serial_vad_in_stimulus_window": [],
+      "bridge_vad_start_in_stimulus_window": [],
+      "next_serial_vad_start_after_stimulus": {
+        "ts": 1791591445.033,
+        "line": 65,
+        "kind": "start",
+        "sample": 164800,
+        "rms": 0.001
+      },
+      "noise_burst_ts": 1791591443.954
+    },
+    {
+      "run": "probe",
+      "tag": "t002-p02",
+      "stimulus_start": "08:17:52.384",
+      "stimulus_end": "08:17:54.070",
+      "stimulus_start_ts": 1791591472.384,
+      "stimulus_end_ts": 1791591474.07,
+      "serial_vad_in_stimulus_window": [
+        {
+          "ts": 1791591473.68,
+          "line": 75,
+          "kind": "start",
+          "sample": 625920,
+          "rms": 0.001
+        }
+      ],
+      "bridge_vad_start_in_stimulus_window": [
+        {
+          "ts": 1791591473.690624,
+          "line": 183,
+          "session": "751e33c8-15d5-447a-a672-66fdceb42c67",
+          "stream_epoch": 2571,
+          "sample": 625920
+        }
+      ],
+      "next_serial_vad_start_after_stimulus": {
+        "ts": 1791591483.565,
+        "line": 78,
+        "kind": "start",
+        "sample": 781760,
+        "rms": 0.001
+      },
+      "noise_burst_ts": 1791591475.68
+    },
+    {
+      "run": "probe",
+      "tag": "t003-p03",
+      "stimulus_start": "08:18:31.277",
+      "stimulus_end": "08:18:34.215",
+      "stimulus_start_ts": 1791591511.277,
+      "stimulus_end_ts": 1791591514.215,
+      "serial_vad_in_stimulus_window": [
+        {
+          "ts": 1791591512.43,
+          "line": 132,
+          "kind": "start",
+          "sample": 75200,
+          "rms": 0.001
+        },
+        {
+          "ts": 1791591514.089,
+          "line": 134,
+          "kind": "end",
+          "sample": 101760,
+          "rms": 0.0009
+        }
+      ],
+      "bridge_vad_start_in_stimulus_window": [
+        {
+          "ts": 1791591512.264611,
+          "line": 266,
+          "session": "70e5dd2e-a3d3-45b4-8efb-1df4bb9fb4e2",
+          "stream_epoch": 2572,
+          "sample": 75200
+        }
+      ],
+      "next_serial_vad_start_after_stimulus": {
+        "ts": 1791591516.359,
+        "line": 135,
+        "kind": "start",
+        "sample": 140160,
+        "rms": 0.0013
+      },
+      "noise_burst_ts": 1791591515.821
+    },
+    {
+      "run": "probe",
+      "tag": "t004-p04",
+      "stimulus_start": "08:19:04.248",
+      "stimulus_end": "08:19:06.417",
+      "stimulus_start_ts": 1791591544.248,
+      "stimulus_end_ts": 1791591546.417,
+      "serial_vad_in_stimulus_window": [],
+      "bridge_vad_start_in_stimulus_window": [],
+      "next_serial_vad_start_after_stimulus": {
+        "ts": 1791591553.369,
+        "line": 151,
+        "kind": "start",
+        "sample": 729920,
+        "rms": 0.0009
+      },
+      "noise_burst_ts": 1791591548.024
+    },
+    {
+      "run": "probe",
+      "tag": "t005-p05",
+      "stimulus_start": "08:19:13.985",
+      "stimulus_end": "08:19:17.170",
+      "stimulus_start_ts": 1791591553.985,
+      "stimulus_end_ts": 1791591557.17,
+      "serial_vad_in_stimulus_window": [
+        {
+          "ts": 1791591554.193,
+          "line": 152,
+          "kind": "end",
+          "sample": 744320,
+          "rms": 0.0019
+        },
+        {
+          "ts": 1791591554.813,
+          "line": 153,
+          "kind": "start",
+          "sample": 756160,
+          "rms": 0.0041
+        }
+      ],
+      "bridge_vad_start_in_stimulus_window": [
+        {
+          "ts": 1791591554.818725,
+          "line": 406,
+          "session": "70e5dd2e-a3d3-45b4-8efb-1df4bb9fb4e2",
+          "stream_epoch": 2572,
+          "sample": 756160
+        }
+      ],
+      "next_serial_vad_start_after_stimulus": {
+        "ts": 1791591559.371,
+        "line": 155,
+        "kind": "start",
+        "sample": 827200,
+        "rms": 0.0013
+      },
+      "noise_burst_ts": 1791591558.78
+    },
+    {
+      "run": "probe",
+      "tag": "t006-p06",
+      "stimulus_start": "08:19:47.205",
+      "stimulus_end": "08:19:50.154",
+      "stimulus_start_ts": 1791591587.205,
+      "stimulus_end_ts": 1791591590.154,
+      "serial_vad_in_stimulus_window": [
+        {
+          "ts": 1791591588.102,
+          "line": 163,
+          "kind": "start",
+          "sample": 1287040,
+          "rms": 0.0008
+        }
+      ],
+      "bridge_vad_start_in_stimulus_window": [
+        {
+          "ts": 1791591587.997458,
+          "line": 465,
+          "session": "70e5dd2e-a3d3-45b4-8efb-1df4bb9fb4e2",
+          "stream_epoch": 2572,
+          "sample": 1287040
+        }
+      ],
+      "next_serial_vad_start_after_stimulus": {
+        "ts": 1791591592.263,
+        "line": 166,
+        "kind": "start",
+        "sample": 1355200,
+        "rms": 0.0021
+      },
+      "noise_burst_ts": 1791591591.765
+    },
+    {
+      "run": "standard",
+      "tag": "t038-why-rain",
+      "stimulus_start": "08:12:22.843",
+      "stimulus_end": "08:12:25.006",
+      "stimulus_start_ts": 1791591142.843,
+      "stimulus_end_ts": 1791591145.006,
+      "serial_vad_in_stimulus_window": [],
+      "bridge_vad_start_in_stimulus_window": [],
+      "next_serial_vad_start_after_stimulus": {
+        "ts": 1791591145.434,
+        "line": 450,
+        "kind": "start",
+        "sample": 9754560,
+        "rms": 0.0038
+      },
+      "noise_burst_ts": null
+    },
+    {
+      "run": "standard",
+      "tag": "t039-moon-follow",
+      "stimulus_start": "08:12:55.039",
+      "stimulus_end": "08:12:58.747",
+      "stimulus_start_ts": 1791591175.039,
+      "stimulus_end_ts": 1791591178.747,
+      "serial_vad_in_stimulus_window": [
+        {
+          "ts": 1791591175.519,
+          "line": 470,
+          "kind": "start",
+          "sample": 10236800,
+          "rms": 0.0006
+        }
+      ],
+      "bridge_vad_start_in_stimulus_window": [
+        {
+          "ts": 1791591175.534681,
+          "line": 3224,
+          "session": "d0208cd4-ce37-40e7-bc55-2d69b7a39104",
+          "stream_epoch": 2570,
+          "sample": 10236800
+        }
+      ],
+      "next_serial_vad_start_after_stimulus": {
+        "ts": 1791591183.99,
+        "line": 473,
+        "kind": "start",
+        "sample": 10369600,
+        "rms": 0.0014
+      },
+      "noise_burst_ts": null
+    },
+    {
+      "run": "standard",
+      "tag": "t046-sing",
+      "stimulus_start": "08:14:39.820",
+      "stimulus_end": "08:14:41.810",
+      "stimulus_start_ts": 1791591279.82,
+      "stimulus_end_ts": 1791591281.81,
+      "serial_vad_in_stimulus_window": [
+        {
+          "ts": 1791591280.256,
+          "line": 542,
+          "kind": "start",
+          "sample": 11908800,
+          "rms": 0.0021
+        }
+      ],
+      "bridge_vad_start_in_stimulus_window": [
+        {
+          "ts": 1791591280.110566,
+          "line": 3825,
+          "session": "d0208cd4-ce37-40e7-bc55-2d69b7a39104",
+          "stream_epoch": 2570,
+          "sample": 11908800
+        }
+      ],
+      "next_serial_vad_start_after_stimulus": {
+        "ts": 1791591284.773,
+        "line": 544,
+        "kind": "start",
+        "sample": 11981120,
+        "rms": 0.001
+      },
+      "noise_burst_ts": null
+    }
+  ]
+}

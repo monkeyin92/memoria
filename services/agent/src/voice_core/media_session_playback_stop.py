@@ -23,7 +23,10 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from services.agent.src.contracts.ids import GenerationFence
-from services.agent.src.conversation_close_router import lexical_playback_control_only
+from services.agent.src.conversation_close_router import (
+    lexical_playback_control_only,
+    rule_conversation_close_only,
+)
 from services.agent.src.voice_core.media_protocol import should_pause_asr_for_playback
 from services.agent.src.voice_core.speech_timeline import ASRResult
 
@@ -690,11 +693,17 @@ class MediaPlaybackStopMixin:
         context.pending.turn_endpoint_grace_deadline = time.monotonic()
         logger.info(
             "media early conversation-close endpoint session=%s endpoint=%s "
-            "text_len=%s source=%s",
+            "text_len=%s source=%s rule_match=%s asr_samples=%s-%s "
+            "asr_task_epoch=%s asr_rescue=%s",
             context.identity.session_id,
             endpoint,
             len(text),
             source,
+            rule_conversation_close_only(text),
+            result.capture_start_sample if result is not None else None,
+            result.capture_end_sample if result is not None else None,
+            result.task_epoch if result is not None else None,
+            result.rescue_synthesized if result is not None else None,
         )
 
     @staticmethod

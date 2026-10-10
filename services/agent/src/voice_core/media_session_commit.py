@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
 import time
-from dataclasses import replace
+from dataclasses import asdict, replace
 from typing import TYPE_CHECKING, Any
 
 from services.agent.src.clock_fact_queries import is_clock_fact_query
@@ -30,6 +31,7 @@ from services.agent.src.orchestration.interruption_guard import normalize_short
 from services.agent.src.voice_core.asr_stream_supervisor import (
     ASRAcceptDecision,
     ASRDecisionReason,
+    ASROverlapEvidence,
 )
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.interruption import (
@@ -175,7 +177,8 @@ def _log_empty_media_turn(
     ]
     logger.info(
         "media turn has no text session=%s stream_epoch=%s samples=%s-%s stage=%s "
-        "pending_text_segments=%s pending_text_ranges=%s",
+        "pending_text_segments=%s pending_text_ranges=%s text_after_endpoint=%s "
+        "pending_end=%s active_vad_start=%s last_playback_end=%s committed_sample=%s",
         context.identity.session_id,
         stream_epoch,
         start_sample,
@@ -186,6 +189,11 @@ def _log_empty_media_turn(
             (segment.capture_start_sample, segment.capture_end_sample)
             for segment in text_segments[:4]
         ],
+        sum(segment.capture_start_sample >= end_sample for segment in text_segments),
+        context.pending.turn_end_sample,
+        context.pending.active_vad_start_sample,
+        context.last_playback_end_sample,
+        context.asr.last_committed_sample,
     )
 
 
@@ -374,7 +382,9 @@ class MediaSessionCommitMixin:
         if accepted is None:
             if result.is_final:
                 self.metrics.inc_media_stale_asr_final()
-            self._log_asr_rejection(session_id, result, decision.reason, stage="accept")
+            self._log_asr_rejection(
+                session_id, result, decision.reason, stage="accept", overlap=decision.overlap
+            )
             if result.is_final:
                 await self._recover_rejected_semantic_final(
                     context,
@@ -766,6 +776,7 @@ class MediaSessionCommitMixin:
         reason: ASRDecisionReason,
         *,
         stage: str,
+        overlap: ASROverlapEvidence | None = None,
     ) -> None:
         # Diagnostics: a dropped provider result is otherwise metric-only.  A
         # final rejection is loud; partial revisions stay at INFO because they
@@ -781,7 +792,8 @@ class MediaSessionCommitMixin:
         logger.log(
             level,
             "media ASR result rejected session=%s stage=%s reason=%s is_final=%s "
-            "text_len=%s task_epoch=%s stream_epoch=%s samples=%s-%s %s",
+            "text_len=%s task_epoch=%s stream_epoch=%s samples=%s-%s "
+            "rescue_synthesized=%s %s overlap=%s",
             session_id,
             stage,
             reason.value,
@@ -791,7 +803,9 @@ class MediaSessionCommitMixin:
             result.stream_epoch,
             result.capture_start_sample,
             result.capture_end_sample,
+            result.rescue_synthesized,
             diagnosis,
+            json.dumps(asdict(overlap) if overlap is not None else None, separators=(",", ":")),
         )
 
     def _reject_accepted_final(

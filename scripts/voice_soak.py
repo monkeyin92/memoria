@@ -15,7 +15,8 @@ here touches the device, its configuration or production data: it only talks to 
     uv run --no-project --with pyserial python scripts/voice_soak.py \
         --scenario scripts/voice_soak_scenarios/child.json --bank outputs/voice-bank \
         --serial-log outputs/serial/robot.log \
-        --out outputs/acceptance/run-<stamp>-soak [--duration-min 35] [--volume 55] [--wake-socket PATH]
+        --out outputs/acceptance/run-<stamp>-soak [--duration-min 35] [--volume 55] \
+        [--wake-socket PATH] [--post-scenario-wait 90]
 
 The robot is woken over the USB cable (firmware build 20): the driver sends `wake` through the logger's
 command socket and the robot starts a conversation exactly like a tap on the round screen, under the same
@@ -47,6 +48,7 @@ from pathlib import Path
 import serial  # pyserial, from the ESP-IDF python env
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from voice_soak_evidence import assess_interruption  # noqa: E402
 from voice_soak_serial_command import SerialCommandError, send_command  # noqa: E402
 
 STATE_RE = re.compile(r"StateMachine: State: (\w+) -> (\w+)")
@@ -69,6 +71,7 @@ class SerialWatcher:
     port: str = DEFAULT_PORT
     state: str = "unknown"
     state_since: float = field(default_factory=now)
+    state_source: str = "unknown"
     events: list[tuple[float, str, str]] = field(default_factory=list)  # (t, kind, payload)
     lines_seen: int = 0
     booted_at: float | None = None  # set when the ROM banner shows up: opening the port reset the board
@@ -108,6 +111,7 @@ class SerialWatcher:
             if match:
                 self.state = match.group(2)
                 self.state_since = t
+                self.state_source = "serial_transition"
                 self.events.append((t, "state", f"{match.group(1)}->{match.group(2)}"))
             elif (usb := USB_WAKE_RE.search(line)) is not None:
                 self.events.append((t, "usb_wake", usb.group(1) + (f" {usb.group(2)}" if usb.group(2) else "")))
@@ -157,8 +161,60 @@ class SerialWatcher:
                     return None
                 self.cond.wait(min(remaining, 0.25))
 
+    def wait_state_event(
+        self, states: set[str], timeout: float, since: float
+    ) -> float | None:
+        """Return the first matching state transition after `since`, even if it has ended."""
+        deadline = now() + timeout
+        with self.cond:
+            while True:
+                for t, kind, payload in self.events:
+                    if kind == "state" and t >= since and payload.rsplit("->", 1)[-1] in states:
+                        return t
+                remaining = deadline - now()
+                if remaining <= 0:
+                    return None
+                self.cond.wait(min(remaining, 0.25))
+
+    def observe_post_scenario(self, timeout: float) -> dict[str, object]:
+        """Keep collecting serial events for a bounded tail and snapshot the final state."""
+        started_at = now()
+        started_monotonic = time.monotonic()
+        deadline = started_monotonic + timeout
+        with self.cond:
+            while (remaining := deadline - time.monotonic()) > 0:
+                self.cond.wait(min(remaining, 0.25))
+
+            final_state = self.state
+            final_state_since = self.state_since
+            state_source = self.state_source
+
+        idle_observed = (
+            final_state == "idle"
+            and state_source == "serial_transition"
+            and final_state_since >= started_at
+        )
+        verdict = (
+            "timeout"
+            if final_state != "idle"
+            else "verified_idle" if idle_observed else "evidence_insufficient"
+        )
+
+        return {
+            "idle_observed": idle_observed,
+            "final_state": final_state,
+            "final_state_source": state_source,
+            "final_state_since": stamp(final_state_since),
+            "waited_s": round(time.monotonic() - started_monotonic, 2),
+            "timeout_s": timeout,
+            "verdict": verdict,
+            "timed_out": verdict == "timeout",
+        }
+
 
 MIN_CLIP_SECONDS = 0.5
+DEFAULT_POST_SCENARIO_WAIT_S = 90.0
+MAX_POST_SCENARIO_WAIT_S = 180.0
 
 
 class LogTailWatcher(SerialWatcher):
@@ -254,11 +310,19 @@ def main() -> int:
     ap.add_argument("--volume", type=int, default=55)
     ap.add_argument("--bank", default=None, help="directory of <step tag>.wav clips (voice bank) for the user's lines")
     ap.add_argument("--loops", type=int, default=1, help="repeat the scenario list this many times")
+    ap.add_argument(
+        "--post-scenario-wait",
+        type=float,
+        default=DEFAULT_POST_SCENARIO_WAIT_S,
+        help="seconds to keep collecting logs after the scenario (0-180; default 90)",
+    )
     ap.add_argument("--port", default=DEFAULT_PORT, help="the robot's USB serial port")
     ap.add_argument("--serial-log", default=None, help="follow this log (voice_soak_serial_logger.py) instead of opening the port")
     ap.add_argument("--wake-socket", default=None, help="the serial logger's command socket (default: derived from --port)")
     ap.add_argument("--remote", default=DEFAULT_REMOTE, help="ssh host that runs the production containers")
     args = ap.parse_args()
+    if not 0 <= args.post_scenario_wait <= MAX_POST_SCENARIO_WAIT_S:
+        ap.error("--post-scenario-wait must be between 0 and 180 seconds")
 
     out = Path(args.out)
     bank = Path(args.bank) if args.bank else None
@@ -294,6 +358,7 @@ def main() -> int:
                 with watcher.cond:
                     watcher.state = "idle"
                     watcher.state_since = now()
+                    watcher.state_source = "assumed_idle"
                 record(kind="assume_idle", reason="no state line after the port open, serial is alive")
             elif watcher.wait_state({"idle", "listening"}, 75) is None:
                 record(kind="abort", reason="device never reached idle after the port open")
@@ -329,13 +394,27 @@ def main() -> int:
                             if refused in {"wake_mode", "pairing", "starting"}:
                                 return False  # retrying cannot help: the phone's mode, pairing or start-up
                     if got is not None:
-                        watcher.wait_state({"listening"}, 12, since=t0)
+                        listening_at = watcher.wait_state_event(
+                            {"listening"}, 12.0, since=t0
+                        )
+                        if listening_at is None:
+                            continue
                         # The robot greets on wake ("我在。", or the goodnight phrase in quiet
-                        # hours): let it finish before the user speaks, or the line is lost.
-                        greeted = watcher.wait_state({"speaking"}, 4.0, since=now() - 0.2)
+                        # hours). State events are retained because the greeting may start after
+                        # listening, and can even finish before this waiter is scheduled.
+                        greeted = watcher.wait_state_event(
+                            {"speaking"}, 8.0, since=listening_at
+                        )
                         if greeted is not None:
-                            watcher.wait_state({"listening", "idle"}, 25, since=greeted)
-                            record(kind="greeting_done", state=watcher.state)
+                            record(kind="greeting_started", started=stamp(greeted))
+                            finished = watcher.wait_state({"listening", "idle"}, 25, since=greeted)
+                            record(
+                                kind="greeting_done",
+                                finished=stamp(finished) if finished is not None else None,
+                                state=watcher.state,
+                            )
+                        else:
+                            record(kind="greeting_absent", state=watcher.state)
                         time.sleep(0.8)
                         record(kind="woke", attempt=attempt, state=watcher.state)
                         return watcher.state == "listening"
@@ -344,11 +423,13 @@ def main() -> int:
             return watcher.state == "listening"
 
         turn = 0
+        deadline_reached = False
         for _loop in range(args.loops):
             for step in steps:
                 if now() >= deadline:
                     record(kind="deadline")
-                    return 0
+                    deadline_reached = True
+                    break
                 turn += 1
                 tag = f"t{turn:03d}-{step.get('tag', 'x')}"
                 if step.get("pause"):
@@ -376,23 +457,40 @@ def main() -> int:
                     continue
                 latency = started - t1
                 interrupt = step.get("interrupt")
-                outcome = {"kind": "reply", "tag": tag, "latency_s": round(latency, 2)}
+                outcome = {"kind": "reply", "tag": tag, "latency_s": round(latency, 2),
+                           "reply_started_ts": started,
+                           "serial_utc_offset_s": -time.altzone if time.localtime().tm_isdst > 0 else -time.timezone}
                 if interrupt:
                     time.sleep(float(interrupt.get("after", 5)))
                     if watcher.state == "speaking":
                         i0, i1, _ = speak(interrupt["say"], int(interrupt.get("rate", 175)), out, tag + "-stop",
                                           bank, step.get("tag", "") + "-stop")
-                        stopped = watcher.wait_state({"listening", "idle"}, float(interrupt.get("settle", 8)), since=i0)
+                        settle = float(interrupt.get("settle", 8))
+                        returned = watcher.wait_state({"listening", "idle"}, settle, since=i0)
                         outcome.update(interrupted=True, interrupt_text=interrupt["say"],
-                                       stopped=stopped is not None,
-                                       stop_delay_s=round(stopped - i1, 2) if stopped else None)
+                                       interrupt_start_ts=i0, interrupt_end_ts=i1,
+                                       interrupt_deadline_ts=i1 + settle, device_returned_ts=returned)
                     else:
                         outcome.update(interrupted=False, note="reply ended before the interrupt")
                 ended = watcher.wait_state({"listening", "idle"}, float(step.get("end_timeout", 150)), since=started)
                 outcome.update(reply_s=round(ended - started, 2) if ended else None, end_state=watcher.state)
+                if outcome.get("interrupted"):
+                    outcome.update(assess_interruption(
+                        (out / "bridge.log").read_text(encoding="utf-8", errors="replace"),
+                        (out / "serial.log").read_text(encoding="utf-8", errors="replace"),
+                        outcome,
+                    ))
                 record(**outcome)
                 time.sleep(float(step.get("gap", 2.0)))
-        record(kind="scenario_done", turns=turn)
+            if deadline_reached:
+                break
+        record(kind="scenario_done", turns=turn, deadline_reached=deadline_reached)
+        post_scenario = watcher.observe_post_scenario(args.post_scenario_wait)
+        record(kind="post_scenario_observation", **post_scenario)
+        if post_scenario["verdict"] == "timeout":
+            return 3
+        if post_scenario["verdict"] == "evidence_insufficient":
+            return 4
         return 0
     finally:
         set_volume(previous_volume)

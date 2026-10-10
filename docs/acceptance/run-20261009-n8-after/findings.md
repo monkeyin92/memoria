@@ -6,7 +6,7 @@
 
 1. 35 句中性问题（12 句 ×3；第一句 t001 是唤醒后的热身，驱动判 `step_failed`，不计）全部有回复，0 句丢失；基线 12 句丢 2。
 2. **这一轮证明不了 #197 起作用**：#197 要修的那一类（首帧之后被没有文字的回合取代）一次都没出现（`media reply spared…` 0、`superseded` 0），t010 那一类也没出现（`prepared reply not held` 0）。0/35 可能是运气或环境：若真实丢失率是 10%，35 句一次不丢的概率约 2.5%，若是 5% 约 17%。本轮上行丢帧也几乎为零（见 4）。要主动撞这一类，需要噪声注入的配方（第十轮 0.6 s、−20 dBFS 粉红噪声；第十八轮音量 50，要先问）。
-3. **打断没法评估**：10 个打断步没有一步真的停下了回复（回复结局全是 `playback_completed`，`playback-stop taken` 0 次，`not taken` 175 次），与基线相同；驱动的「停下」判据把自然播完也算进去，基线里的停止延迟数字作废（见基线文档）。
+3. **打断没法评估（2026-10-10 逐个完整回复身份纠正）**：10 个打断步中9个 `playback_completed`，t016 对应 generation16 是 `reply_task_exception`，也不是停止成功；实际成功日志 `media spoken stop interrupted reply` 0次（代码不存在 `playback-stop taken`）。旧判据把自然播完和异常后回到聆听也算停止，原停止数和停止延迟作废。回算方法见 [10-10复盘](../run-20261010-verify/findings.md)。
 4. **上行丢帧不是听错的主要原因**：本轮串口 `Encode queue is full` 只有 1 行（基线 2,722 帧，约 6.4 帧/秒），识别质量却没变：已匹配句的平均相似度 0.82（基线 0.81），≥ 0.9 的 19/36，没匹配上 9/45（基线 5/22）。两个会话，样本小；为什么有的会话不丢仍未查清。
 5. 扣住 3 次（t025、t026、t027 连着，各多等 3.0–3.5 s，都放出并答了）：每次扣住的代价约 3 s。
 6. **新发现**：1 次 Doubao TTS `APIConnectionError: empty-timestamps` → t016 的回复没出声（`reply_task_exception`，`emitted_audio=False`，`interrupt_no_yield:provider_failed`），约 28 s 后才与下一句的回复合并说出。没有看到重试。
