@@ -16,6 +16,7 @@ import re
 import statistics
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 if __package__:
@@ -28,12 +29,14 @@ PSQL = (
 )
 
 
-def archive_rows(start: str, end: str) -> list[dict[str, str]]:
+def archive_rows(start: str, end: str, session_id: str) -> list[dict[str, str]]:
+    session_id = str(uuid.UUID(session_id))
     sql = f"""
 select to_char(occurred_at at time zone 'Asia/Shanghai','HH24:MI:SS'), event_type,
        replace(replace(coalesce(payload->>'text',''),E'\\n',' '),E'\\t',' ')
 from archive_evidence_events
 where event_type in ('speech.utterance_finalized','assistant.playout_stopped')
+  and session_id = '{session_id}'
   and occurred_at >= timestamptz '{start}+08' and occurred_at <= timestamptz '{end}+08'
 order by occurred_at;
 """
@@ -67,12 +70,44 @@ def main() -> int:
         replies[tag] = {**replies[tag], **assessment}
     no_reply = {r["tag"] for r in rows if r.get("kind") == "no_reply"}
     wakes = [r for r in rows if r.get("kind") in {"wake_try", "woke"}]
-    archive = archive_rows(start, end)
+    session_ids = set(
+        re.findall(
+            r"\bsession=([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b",
+            bridge_text,
+        )
+    )
+    session_id = next(iter(session_ids)) if len(session_ids) == 1 else None
+    archive = archive_rows(start, end, session_id) if session_id else []
     heard = [a for a in archive if a["type"] == "speech.utterance_finalized"]
     spoken = [a for a in archive if a["type"] == "assistant.playout_stopped"]
 
     print("# 对话长稳测试结果\n")
     print(f"- 窗口：{start} – {end}（北京时间）；说话 {len(said)} 句；唤醒尝试 {sum(1 for w in wakes if w['kind']=='wake_try')} 次，成功 {sum(1 for w in wakes if w['kind']=='woke')} 次")
+    if session_id:
+        print(f"- 归档范围：session `{session_id}`")
+    else:
+        print("- 归档范围：未能从 bridge.log 唯一识别 session ID；未查询归档，逐句归档结果未验证")
+    observations = [r for r in rows if r.get("kind") == "post_scenario_observation"]
+    if not observations:
+        print("- 尾窗 idle：未验证（timeline 缺少 post_scenario_observation）")
+    else:
+        observation = observations[-1]
+        verdict = observation.get("verdict")
+        if verdict == "verified_idle":
+            idle_status = "已验证：串口状态转换证明最终 idle"
+        elif verdict == "timeout":
+            idle_status = f"超时：最终状态 {observation.get('final_state')}"
+        else:
+            idle_status = (
+                "证据不足：最终状态为 idle，但来源不是串口状态转换"
+                if observation.get("final_state") == "idle"
+                else f"未验证：最终状态 {observation.get('final_state')}，缺少判据字段"
+            )
+        print(
+            f"- 尾窗 idle：{idle_status}；"
+            f"state_source={observation.get('final_state_source', 'missing')}；"
+            f"观察 {observation.get('waited_s', '—')}s"
+        )
     lat = [r["latency_s"] for r in replies.values() if r.get("latency_s") is not None]
     dur = [r["reply_s"] for r in replies.values() if r.get("reply_s") is not None]
     if lat:

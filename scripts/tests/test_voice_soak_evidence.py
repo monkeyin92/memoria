@@ -6,6 +6,7 @@ import importlib
 import json
 import sys
 import threading
+import time
 import types
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
@@ -282,8 +283,17 @@ def test_reply_start_and_device_closure_can_cross_midnight(evidence) -> None:
 
 
 @pytest.mark.parametrize("natural_completion", [False, True])
+@pytest.mark.parametrize(
+    ("post_verdict", "expected_exit"),
+    [("verified_idle", 0), ("timeout", 3), ("evidence_insufficient", 4)],
+)
 def test_driver_records_the_attempt_window_and_uses_evidence_not_just_state(
-    evidence, tmp_path: Path, monkeypatch, natural_completion: bool
+    evidence,
+    tmp_path: Path,
+    monkeypatch,
+    natural_completion: bool,
+    post_verdict: str,
+    expected_exit: int,
 ) -> None:
     # pyserial is a device-only extra, not a dependency of these offline tests.
     monkeypatch.setitem(sys.modules, "serial", types.ModuleType("serial"))
@@ -312,6 +322,25 @@ def test_driver_records_the_attempt_window_and_uses_evidence_not_just_state(
                 return BASE
             self.state = "listening"
             return BASE - 10 if since is None else BASE + 5.1
+
+        def observe_post_scenario(self, _timeout):
+            final_state = "listening" if post_verdict == "timeout" else "idle"
+            return {
+                "idle_observed": post_verdict == "verified_idle",
+                "final_state": final_state,
+                "final_state_source": (
+                    "serial_transition"
+                    if post_verdict == "verified_idle"
+                    else "assumed_idle"
+                    if post_verdict == "evidence_insufficient"
+                    else "serial_transition"
+                ),
+                "final_state_since": driver.stamp(BASE + 6),
+                "waited_s": 0,
+                "timeout_s": 0,
+                "verdict": post_verdict,
+                "timed_out": post_verdict == "timeout",
+            }
 
     def logs(out, _remote):
         (out / "bridge.log").write_text(bridge)
@@ -342,7 +371,7 @@ def test_driver_records_the_attempt_window_and_uses_evidence_not_just_state(
         ["voice_soak", "--scenario", str(scenario), "--out", str(out), "--volume", "30"],
     )
 
-    assert driver.main() == 0
+    assert driver.main() == expected_exit
 
     rows = [json.loads(line) for line in (out / "timeline.jsonl").read_text().splitlines()]
     reply = next(row for row in rows if row["kind"] == "reply")
@@ -353,3 +382,226 @@ def test_driver_records_the_attempt_window_and_uses_evidence_not_just_state(
     assert reply["interrupt_deadline_ts"] == BASE + 12
     assert reply["device_returned_ts"] == BASE + 5.1
     assert volumes == [30, 19]
+    observation = next(row for row in rows if row["kind"] == "post_scenario_observation")
+    assert observation["final_state"] == ("listening" if post_verdict == "timeout" else "idle")
+    assert observation["verdict"] == post_verdict
+    assert observation["timed_out"] is (post_verdict == "timeout")
+
+
+def test_driver_waits_for_a_late_wake_greeting_before_playing_the_first_line(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setitem(sys.modules, "serial", types.ModuleType("serial"))
+    driver = importlib.import_module("scripts.voice_soak")
+    listening_at = BASE
+    greeting_at = listening_at + 4.2641
+    greeting_done_at = listening_at + 6
+    reply_at = listening_at + 12
+    reply_done_at = listening_at + 15
+    watchers = []
+
+    class DelayedGreetingWatcher(driver.SerialWatcher):
+        def __init__(self, *_args, **_kwargs):
+            super().__init__(tmp_path / "serial.log")
+            self.state = "idle"
+            self.state_since = BASE - 10
+
+        def start(self):
+            pass
+
+        def observe_post_scenario(self, _timeout):
+            return {
+                "idle_observed": True,
+                "final_state": "idle",
+                "final_state_source": "serial_transition",
+                "final_state_since": driver.stamp(reply_done_at),
+                "waited_s": 0,
+                "timeout_s": 0,
+                "verdict": "verified_idle",
+                "timed_out": False,
+            }
+
+        def wake(self):
+            pass
+
+        def wait_state(self, states, _timeout, since=None):
+            if states == {"idle", "listening"}:
+                return self.state_since if self.state in states else None
+            if states == {"connecting", "listening"}:
+                return listening_at - 0.1
+            if states == {"listening", "idle"} and since == greeting_at:
+                self._parse(greeting_done_at, "StateMachine: State: speaking -> listening")
+                return greeting_done_at
+            if states == {"listening", "idle"} and since == reply_at:
+                self._parse(reply_done_at, "StateMachine: State: speaking -> listening")
+                return reply_done_at
+            if states == {"speaking"}:
+                self._parse(reply_at, "StateMachine: State: listening -> speaking")
+                return reply_at
+            return None
+
+        def wait_state_event(self, states, _timeout, since):
+            if states == {"listening"}:
+                self._parse(listening_at - 0.1, "StateMachine: State: idle -> connecting")
+                self._parse(listening_at, "StateMachine: State: connecting -> listening")
+            else:
+                assert states == {"speaking"}
+                assert since == listening_at
+                self._parse(greeting_at, "StateMachine: State: listening -> speaking")
+                self._parse(greeting_done_at, "StateMachine: State: speaking -> listening")
+            return super().wait_state_event(states, 0, since)
+
+    scenario = tmp_path / "scenario.json"
+    scenario.write_text(json.dumps([{"tag": "hello", "say": "hello"}]))
+    out = tmp_path / "out"
+    spoken: list[tuple[str, str, float]] = []
+
+    def make_watcher(*_args, **_kwargs):
+        watcher = DelayedGreetingWatcher()
+        watchers.append(watcher)
+        return watcher
+
+    monkeypatch.setattr(driver, "SerialWatcher", make_watcher)
+    monkeypatch.setattr(driver, "follow_logs", lambda *_args: [])
+    monkeypatch.setattr(driver, "now", lambda: BASE - 10)
+    monkeypatch.setattr(driver.time, "sleep", lambda *_args: None)
+    monkeypatch.setattr(driver, "set_volume", lambda _level: 19)
+    monkeypatch.setattr(
+        driver,
+        "speak",
+        lambda _text, _rate, _out, tag, *_args: (
+            spoken.append((tag, watchers[0].state, watchers[0].state_since))
+            or (BASE + 8, BASE + 9, 1)
+        ),
+    )
+    monkeypatch.setattr(driver.time, "timezone", -8 * 3600)
+    monkeypatch.setattr(driver.time, "altzone", -8 * 3600)
+    monkeypatch.setattr(
+        driver.sys,
+        "argv",
+        ["voice_soak", "--scenario", str(scenario), "--out", str(out), "--volume", "30"],
+    )
+
+    assert driver.main() == 0
+
+    rows = [json.loads(line) for line in (out / "timeline.jsonl").read_text().splitlines()]
+    kinds = [row["kind"] for row in rows]
+    assert spoken == [("t001-hello", "listening", greeting_done_at)]
+    assert kinds.index("greeting_started") < kinds.index("greeting_done") < kinds.index("said")
+    greeting = next(row for row in rows if row["kind"] == "greeting_started")
+    assert greeting["started"] == driver.stamp(greeting_at)
+
+
+def test_post_scenario_observation_keeps_collecting_until_late_idle(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setitem(sys.modules, "serial", types.ModuleType("serial"))
+    driver = importlib.import_module("scripts.voice_soak")
+    monkeypatch.setattr(driver, "now", lambda: BASE)
+    watcher = driver.SerialWatcher(tmp_path / "serial.log")
+    watcher.state = "listening"
+    watcher.state_since = BASE - 1
+
+    def delayed_transitions():
+        time.sleep(0.01)
+        watcher._parse(BASE + 0.01, "StateMachine: State: listening -> speaking")
+        time.sleep(0.01)
+        watcher._parse(BASE + 0.02, "StateMachine: State: speaking -> idle")
+
+    transition_thread = threading.Thread(target=delayed_transitions)
+    transition_thread.start()
+    result = watcher.observe_post_scenario(0.04)
+    transition_thread.join()
+
+    assert result["idle_observed"] is True
+    assert result["final_state"] == "idle"
+    assert result["final_state_source"] == "serial_transition"
+    assert result["verdict"] == "verified_idle"
+    assert result["timed_out"] is False
+    assert result["waited_s"] >= 0.03
+
+
+def test_post_scenario_timeout_captures_non_idle_state(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "serial", types.ModuleType("serial"))
+    driver = importlib.import_module("scripts.voice_soak")
+    watcher = driver.SerialWatcher(tmp_path / "serial.log")
+    watcher.state = "listening"
+    watcher.state_since = BASE - 1
+    result = watcher.observe_post_scenario(0.01)
+
+    assert result["idle_observed"] is False
+    assert result["final_state"] == "listening"
+    assert result["final_state_source"] == "unknown"
+    assert result["verdict"] == "timeout"
+    assert result["timed_out"] is True
+    assert result["waited_s"] >= 0.01
+
+
+def test_post_scenario_assumed_idle_is_insufficient_evidence(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setitem(sys.modules, "serial", types.ModuleType("serial"))
+    driver = importlib.import_module("scripts.voice_soak")
+    watcher = driver.SerialWatcher(tmp_path / "serial.log")
+    watcher.state = "idle"
+    watcher.state_since = BASE - 1
+    watcher.state_source = "assumed_idle"
+
+    result = watcher.observe_post_scenario(0.01)
+
+    assert result["idle_observed"] is False
+    assert result["final_state"] == "idle"
+    assert result["final_state_source"] == "assumed_idle"
+    assert result["verdict"] == "evidence_insufficient"
+    assert result["timed_out"] is False
+
+
+def test_preexisting_serial_idle_is_not_observed_in_the_post_scenario_window(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setitem(sys.modules, "serial", types.ModuleType("serial"))
+    driver = importlib.import_module("scripts.voice_soak")
+    monkeypatch.setattr(driver, "now", lambda: BASE)
+    watcher = driver.SerialWatcher(tmp_path / "serial.log")
+    watcher.state = "idle"
+    watcher.state_since = BASE - 1
+    watcher.state_source = "serial_transition"
+
+    result = watcher.observe_post_scenario(0.01)
+
+    assert result["idle_observed"] is False
+    assert result["final_state"] == "idle"
+    assert result["final_state_source"] == "serial_transition"
+    assert result["verdict"] == "evidence_insufficient"
+
+
+def test_report_marks_legacy_missing_post_scenario_observation_unverified(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    (tmp_path / "timeline.jsonl").write_text(
+        json.dumps({"kind": "scenario_done", "turns": 4, "ts": BASE})
+    )
+    (tmp_path / "bridge.log").write_text("")
+    monkeypatch.setattr(analyze, "archive_rows", lambda *_args: [])
+    monkeypatch.setattr(analyze.sys, "argv", ["analyze", str(tmp_path), "start", "end"])
+
+    assert analyze.main() == 0
+
+    report = capsys.readouterr().out
+    assert "尾窗 idle：未验证" in report
+    assert "逐句归档结果未验证" in report
+
+
+def test_archive_query_is_limited_to_the_device_session(monkeypatch) -> None:
+    captured = {}
+
+    def run(_command, *, input, **_kwargs):
+        captured["sql"] = input
+        return subprocess.CompletedProcess([], 0, stdout="", stderr="")
+
+    import subprocess
+
+    monkeypatch.setattr(analyze.subprocess, "run", run)
+    analyze.archive_rows("2026-10-10 19:48:25", "2026-10-10 19:50:30", "c5ba6569-54ff-4783-8a78-28628fe85052")
+
+    assert "session_id = 'c5ba6569-54ff-4783-8a78-28628fe85052'" in captured["sql"]
