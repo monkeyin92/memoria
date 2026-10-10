@@ -47,6 +47,7 @@ from pathlib import Path
 import serial  # pyserial, from the ESP-IDF python env
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from voice_soak_evidence import assess_interruption  # noqa: E402
 from voice_soak_serial_command import SerialCommandError, send_command  # noqa: E402
 
 STATE_RE = re.compile(r"StateMachine: State: (\w+) -> (\w+)")
@@ -376,20 +377,29 @@ def main() -> int:
                     continue
                 latency = started - t1
                 interrupt = step.get("interrupt")
-                outcome = {"kind": "reply", "tag": tag, "latency_s": round(latency, 2)}
+                outcome = {"kind": "reply", "tag": tag, "latency_s": round(latency, 2),
+                           "reply_started_ts": started,
+                           "serial_utc_offset_s": -time.altzone if time.localtime().tm_isdst > 0 else -time.timezone}
                 if interrupt:
                     time.sleep(float(interrupt.get("after", 5)))
                     if watcher.state == "speaking":
                         i0, i1, _ = speak(interrupt["say"], int(interrupt.get("rate", 175)), out, tag + "-stop",
                                           bank, step.get("tag", "") + "-stop")
-                        stopped = watcher.wait_state({"listening", "idle"}, float(interrupt.get("settle", 8)), since=i0)
+                        settle = float(interrupt.get("settle", 8))
+                        returned = watcher.wait_state({"listening", "idle"}, settle, since=i0)
                         outcome.update(interrupted=True, interrupt_text=interrupt["say"],
-                                       stopped=stopped is not None,
-                                       stop_delay_s=round(stopped - i1, 2) if stopped else None)
+                                       interrupt_start_ts=i0, interrupt_end_ts=i1,
+                                       interrupt_deadline_ts=i1 + settle, device_returned_ts=returned)
                     else:
                         outcome.update(interrupted=False, note="reply ended before the interrupt")
                 ended = watcher.wait_state({"listening", "idle"}, float(step.get("end_timeout", 150)), since=started)
                 outcome.update(reply_s=round(ended - started, 2) if ended else None, end_state=watcher.state)
+                if outcome.get("interrupted"):
+                    outcome.update(assess_interruption(
+                        (out / "bridge.log").read_text(encoding="utf-8", errors="replace"),
+                        (out / "serial.log").read_text(encoding="utf-8", errors="replace"),
+                        outcome,
+                    ))
                 record(**outcome)
                 time.sleep(float(step.get("gap", 2.0)))
         record(kind="scenario_done", turns=turn)

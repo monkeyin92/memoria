@@ -18,6 +18,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+if __package__:
+    from .voice_soak_evidence import audit_interruptions
+else:
+    from voice_soak_evidence import audit_interruptions
+
 PSQL = (
     "sudo docker exec -i memoria-data-postgres-1 psql -U memoria_admin -d memoria -At -F '\t' -f -"
 )
@@ -56,6 +61,10 @@ def main() -> int:
     rows = [json.loads(line) for line in (run / "timeline.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
     said = [r for r in rows if r.get("kind") == "said"]
     replies = {r["tag"]: r for r in rows if r.get("kind") == "reply"}
+    bridge_text = (run / "bridge.log").read_text(encoding="utf-8", errors="replace") if (run / "bridge.log").exists() else ""
+    serial_text = (run / "serial.log").read_text(encoding="utf-8", errors="replace") if (run / "serial.log").exists() else ""
+    for tag, assessment in audit_interruptions(rows, bridge_text, serial_text).items():
+        replies[tag] = {**replies[tag], **assessment}
     no_reply = {r["tag"] for r in rows if r.get("kind") == "no_reply"}
     wakes = [r for r in rows if r.get("kind") in {"wake_try", "woke"}]
     archive = archive_rows(start, end)
@@ -72,9 +81,12 @@ def main() -> int:
         print(f"- 回复时长 p50 {statistics.median(dur):.1f}s p95 {pct(dur, .95):.1f}s 最长 {max(dur):.1f}s")
     interrupted = [r for r in replies.values() if r.get("interrupted")]
     if interrupted:
-        ok = [r for r in interrupted if r.get("stopped")]
+        ok = [r for r in interrupted if r.get("stopped") is True]
+        failed = sum(r.get("stopped") is False for r in interrupted)
+        unknown = sum(r.get("stopped") is None for r in interrupted)
         delays = [r["stop_delay_s"] for r in ok if r.get("stop_delay_s") is not None]
-        print(f"- 打断 {len(interrupted)} 次，停下 {len(ok)} 次" + (f"，停止延迟 p50 {statistics.median(delays):.1f}s" if delays else ""))
+        print(f"- 打断 {len(interrupted)} 次，确认停止 {len(ok)} 次，未停止 {failed} 次，证据不足 {unknown} 次"
+              + (f"，素材起点到设备退出说话 p50 {statistics.median(delays):.1f}s（非声学测量）" if delays else ""))
 
     print("\n## 逐句\n")
     print("| # | 场景 | 我说的 | 服务器听到的 | 字符相似度 | 说完到开口 | 回复时长 | 备注 |")
@@ -100,7 +112,8 @@ def main() -> int:
             accuracies.append(ratio)
         reply = replies.get(tag, {})
         note = "无回复" if tag in no_reply else ("；".join(filter(None, [
-            "打断成功" if reply.get("interrupted") and reply.get("stopped") else ("打断未停" if reply.get("interrupted") else ""),
+            (f"打断{'成功' if reply.get('stopped') is True else ('未停' if reply.get('stopped') is False else '未验证')}（{reply.get('stop_reason')}）"
+             if reply.get("interrupted") else ""),
             f"结束于 {reply.get('end_state')}" if reply.get("end_state") and reply.get("end_state") != "listening" else "",
         ])))
         print(f"| {index} | {tag} | {row['text']} | {heard_text} | {ratio:.2f} | {reply.get('latency_s', '—')} | {reply.get('reply_s', '—')} | {note} |")

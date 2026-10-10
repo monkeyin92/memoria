@@ -1,0 +1,161 @@
+{
+  "schema_version": "t038-recorded-events-v1",
+  "source_commit": "bef8e1174679b40239b35c96729911ea0331882c",
+  "source_bridge_sha256": "e4954e3a6dbb9d5a440c2ab62e63a75480d057fd1e7784f5b7c62154285ed06e",
+  "origin_utc": "2026-10-10T00:12:24.726910+00:00",
+  "evidence_boundary": "Known events only. Interim ASR revisions, prior partial and timer guard outcomes are absent. Test text is synthetic.",
+  "initial_recorded_ranges": {
+    "playback_end": 9691520,
+    "pending_start": 9551680,
+    "pending_end": 9699200
+  },
+  "events": [
+    {
+      "at_ms": 0.0,
+      "bridge_line": 3120,
+      "kind": "final",
+      "task_epoch": 51,
+      "start_sample": 9726080,
+      "end_sample": 9728640,
+      "text_length": 2
+    },
+    {
+      "at_ms": 664.016,
+      "bridge_line": 3126,
+      "kind": "vad_start",
+      "sample": 9754560
+    },
+    {
+      "at_ms": 5112.554,
+      "bridge_line": 3134,
+      "kind": "vad_end",
+      "sample": 9816960,
+      "voiced_end_sample": 9802560,
+      "audio_watermark": 9816960,
+      "task_epoch": 51
+    },
+    {
+      "at_ms": 5122.655,
+      "bridge_line": 3135,
+      "kind": "vad_start",
+      "sample": 9820160
+    },
+    {
+      "at_ms": 9953.739,
+      "bridge_line": 3143,
+      "kind": "vad_end",
+      "sample": 9887040,
+      "voiced_end_sample": 9872640,
+      "audio_watermark": 9887040,
+      "task_epoch": 52
+    },
+    {
+      "at_ms": 10167.278,
+      "bridge_line": 3145,
+      "kind": "vad_start",
+      "sample": 9906560
+    },
+    {
+      "at_ms": 13582.784,
+      "bridge_line": 3151,
+      "kind": "vad_end",
+      "sample": 9947200,
+      "voiced_end_sample": 9932800,
+      "audio_watermark": 9947200,
+      "task_epoch": 53
+    },
+    {
+      "at_ms": 13593.995,
+      "bridge_line": 3152,
+      "kind": "vad_start",
+      "sample": 9953280
+    },
+    {
+      "at_ms": 18001.813,
+      "bridge_line": 3161,
+      "kind": "vad_end",
+      "sample": 10017600,
+      "voiced_end_sample": 10003200,
+      "audio_watermark": 10017600,
+      "task_epoch": 54
+    },
+    {
+      "at_ms": 18021.058,
+      "bridge_line": 3162,
+      "kind": "vad_start",
+      "sample": 10024000
+    },
+    {
+      "at_ms": 20868.716,
+      "bridge_line": 3167,
+      "kind": "vad_end",
+      "sample": 10067520,
+      "voiced_end_sample": 10053120,
+      "audio_watermark": 10067520,
+      "task_epoch": 55
+    },
+    {
+      "at_ms": 21205.311,
+      "bridge_line": 3169,
+      "kind": "vad_start",
+      "sample": 10083200
+    },
+    {
+      "at_ms": 25511.028,
+      "bridge_line": 3177,
+      "kind": "vad_end",
+      "sample": 10138560,
+      "voiced_end_sample": 10124160,
+      "audio_watermark": 10138560,
+      "task_epoch": 56
+    },
+    {
+      "at_ms": 25519.085,
+      "bridge_line": 3178,
+      "kind": "vad_start",
+      "sample": 10143040
+    },
+    {
+      "at_ms": 27454.365,
+      "bridge_line": 3182,
+      "kind": "final",
+      "task_epoch": 57,
+      "start_sample": 10157760,
+      "end_sample": 10167360,
+      "text_length": 2
+    },
+    {
+      "at_ms": 28090.206,
+      "bridge_line": 3193,
+      "kind": "vad_end",
+      "sample": 10184640,
+      "voiced_end_sample": 10170240,
+      "audio_watermark": 10184640,
+      "task_epoch": 57
+    },
+    {
+      "at_ms": 28108.949,
+      "bridge_line": 3194,
+      "kind": "vad_start",
+      "sample": 10191680
+    },
+    {
+      "at_ms": 29622.403,
+      "bridge_line": 3200,
+      "kind": "vad_end",
+      "sample": 10209600,
+      "voiced_end_sample": 10195200,
+      "audio_watermark": 10209600,
+      "task_epoch": 58
+    }
+  ],
+  "observed_reopen_commit": {
+    "at_ms": 30109.252,
+    "endpoint_sample": 10170240,
+    "bridge_line": 3201
+  },
+  "observed_turn_commit": {
+    "at_ms": 30311.301,
+    "bridge_line": 3214
+  }
+}
