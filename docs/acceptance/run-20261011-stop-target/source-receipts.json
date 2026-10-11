@@ -1,0 +1,156 @@
+{
+  "schema_version": "voice-soak-source-receipts-v1",
+  "captured_at": "2026-10-11T09:25:35+08:00",
+  "hash_capture_scope": "retained_local_files_after_run_not_physical_audio_input",
+  "local_commit_before_receipt": "c562cd79f8033b8ead58f45451d1998017ef7fdb",
+  "window": {
+    "start": "2026-10-11T09:16:11+08:00",
+    "end": "2026-10-11T09:19:07+08:00"
+  },
+  "session_id": "201620b7-bd21-4802-909d-115a6483d8a5",
+  "stream_epoch": 2578,
+  "firmware_build": 24,
+  "firmware_slot": "ota_0",
+  "wake_mode": "button",
+  "volume": {
+    "before_level_recorded": 38,
+    "before_muted_recorded": null,
+    "test_level": 50,
+    "after_driver_level": 38,
+    "after_driver_muted": false,
+    "final_level": 38,
+    "final_muted": true,
+    "final_mute_source": "manual_restore_to_previous_run_recorded_state_then_live_readback"
+  },
+  "result": {
+    "confirmed_stop": 1,
+    "not_stopped": 1,
+    "evidence_insufficient": 0,
+    "first_stop_delay_s": 4.891,
+    "stop_delay_origin": "interrupt_start_not_acoustic",
+    "post_scenario": {
+      "kind": "post_scenario_observation",
+      "idle_observed": true,
+      "final_state": "idle",
+      "final_state_source": "serial_transition",
+      "final_state_since": "09:18:05.104",
+      "waited_s": 90.0,
+      "timeout_s": 90.0,
+      "verdict": "verified_idle",
+      "timed_out": false,
+      "t": "09:19:04.976",
+      "ts": 1791681544.977
+    }
+  },
+  "production_recheck": {
+    "observed_at": "2026-10-11T09:22:21+08:00",
+    "current": "/opt/memoria/releases/20261010-n8-endpoint-diag-v1",
+    "commit": "a758e7a1a086aebc4f947ac273dca2be7f60d28d",
+    "all_four_components_healthy": true,
+    "all_four_components_restarts": 0,
+    "readiness_status": "ready",
+    "smokes": "passed"
+  },
+  "files": [
+    {
+      "path": "outputs/acceptance/run-20261011-091611-stop-target/timeline.jsonl",
+      "bytes": 2985,
+      "sha256": "6d40950604d0c6ecf37e06ae1d31add5c84d0176760186ad344c1930c22cee9f"
+    },
+    {
+      "path": "outputs/acceptance/run-20261011-091611-stop-target/bridge.log",
+      "bytes": 54003,
+      "sha256": "b98c1cec71653394b090310a80a357a029c426fc47a19ea0e0fd91536309dac0"
+    },
+    {
+      "path": "outputs/acceptance/run-20261011-091611-stop-target/edge.log",
+      "bytes": 909,
+      "sha256": "152580432750ccde9a7bb7db9e51c833933e09e30ab977f93775db63887a373a"
+    },
+    {
+      "path": "outputs/acceptance/run-20261011-091611-stop-target/control.log",
+      "bytes": 153,
+      "sha256": "77a891ed2c7eb9263b579b1bd5c1fa983ef968786f5c441d42d76f9461f209ea"
+    },
+    {
+      "path": "outputs/acceptance/run-20261011-091611-stop-target/serial.log",
+      "bytes": 22312,
+      "sha256": "5d348d824806942f912bddf873f32fb00757efa9be8e5be84782d05bc13cccd2"
+    },
+    {
+      "path": "outputs/acceptance/run-20261011-091611-stop-target/analysis.md",
+      "bytes": 1993,
+      "sha256": "92ad09f8a1f815163458b1520e704cf9161f35b765ef12111150e76606a5aa29"
+    },
+    {
+      "path": "outputs/acceptance/run-20261011-091611-stop-target/production-recheck.txt",
+      "bytes": 1462,
+      "sha256": "ee2d6b1dd78947ea7096f3d920e33bfaa9ad4cbc2dcc2a3c79858932db3ca034"
+    },
+    {
+      "path": "outputs/acceptance/run-20261011-091611-stop-target/readiness-recheck.json",
+      "bytes": 748,
+      "sha256": "3e882be14c73448379a4dca8d973d7c43868b7aec472daaaf6d6e89504299f01"
+    },
+    {
+      "path": "outputs/serial/robot-20261011-091611-stop-target.log",
+      "bytes": 22418,
+      "sha256": "96a6a80ec2a6a2d5a85226b63147d7a40aba6abf916d58db7af43a3e7328775a"
+    },
+    {
+      "path": "outputs/serial/robot-20261011-091611-stop-target.logger.stdout",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "outputs/acceptance/run-20261010-story-stop-2145-scenario.json",
+      "bytes": 536,
+      "sha256": "80af68e210251c65fbf7b32db45931fb5c66aad9bfef6b3ca82835a6712398cb"
+    },
+    {
+      "path": "outputs/voice-bank/story-stop.wav",
+      "bytes": 95274,
+      "sha256": "e0a8426f3fb9831e6b9306a15e041e3ad1d91b0920902ee2cbc4120fa9ece35c"
+    },
+    {
+      "path": "outputs/voice-bank/story-stop-stop.wav",
+      "bytes": 45610,
+      "sha256": "b943971ef95d632d4d66c87add325177f9f8d4dff85ba6cb1534158aa4b729e2"
+    },
+    {
+      "path": "outputs/acceptance/run-20261011-091611-stop-target/t002-story-stop-short.aiff",
+      "bytes": 90532,
+      "sha256": "c1b6da3e9bc658cb15a6dce5d3a3aca35211b13e8266a76ac7f7e2285a00cb67"
+    },
+    {
+      "path": "outputs/acceptance/run-20261011-091611-stop-target/t002-story-stop-short-stop.aiff",
+      "bytes": 27828,
+      "sha256": "8f2f059a7be76a65117f90572a5d8782a4f740c9aa1e5fdbc8182c67c9ea5839"
+    },
+    {
+      "path": "scripts/voice_soak.py",
+      "bytes": 24786,
+      "sha256": "325a355d2c9d8daa5496f9645badc82944c4fcb305638f5d0189876767c587e1"
+    },
+    {
+      "path": "scripts/voice_soak_evidence.py",
+      "bytes": 9763,
+      "sha256": "40f164160dd192a2b32898b7de663da432817d01a4d82402b3dae19849368bb1"
+    },
+    {
+      "path": "scripts/voice_soak_analyze.py",
+      "bytes": 10837,
+      "sha256": "159684a0f748a850f2d72a0b86edac1f37c544ec34d2f7e753890b7f7644414f"
+    },
+    {
+      "path": "scripts/voice_soak_serial_logger.py",
+      "bytes": 8568,
+      "sha256": "734cfd604380f40637f98514e0af5efe476448966fbcc3c7b45d7086e164f403"
+    },
+    {
+      "path": "scripts/voice_soak_serial_command.py",
+      "bytes": 9275,
+      "sha256": "68958a11c220783f608df59b9398b1d59f7faef095dc3fe43092948785bd097e"
+    }
+  ]
+}

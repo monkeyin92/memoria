@@ -1,0 +1,31 @@
+{
+  "schema_version": "voice-soak-stop-v2",
+  "run": "outputs/acceptance/run-20261011-091611-stop-target",
+  "source_sha256": {
+    "timeline.jsonl": "6d40950604d0c6ecf37e06ae1d31add5c84d0176760186ad344c1930c22cee9f",
+    "bridge.log": "b98c1cec71653394b090310a80a357a029c426fc47a19ea0e0fd91536309dac0",
+    "serial.log": "5d348d824806942f912bddf873f32fb00757efa9be8e5be84782d05bc13cccd2"
+  },
+  "interruptions": {
+    "t001-story-stop": {
+      "stop_evidence_version": 2,
+      "stopped": true,
+      "stop_verdict": "stopped",
+      "stop_reason": "spoken_stop_and_device_playout",
+      "stop_delay_s": 4.891,
+      "stop_delay_origin": "interrupt_start",
+      "reply_delivery_id": "201620b7-bd21-4802-909d-115a6483d8a5/epoch-1/turn-2/generation-2/tool-0",
+      "reply_terminal_reason": "reply_task_cancelled"
+    },
+    "t002-story-stop-short": {
+      "stop_evidence_version": 2,
+      "stopped": false,
+      "stop_verdict": "not_stopped",
+      "stop_reason": "playback_completed",
+      "stop_delay_s": null,
+      "stop_delay_origin": "interrupt_start",
+      "reply_delivery_id": "201620b7-bd21-4802-909d-115a6483d8a5/epoch-1/turn-3/generation-4/tool-0",
+      "reply_terminal_reason": "playback_completed"
+    }
+  }
+}

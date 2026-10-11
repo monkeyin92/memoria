@@ -142,3 +142,5 @@ uv run --no-project python scripts/voice_soak_analyze.py \
 | `outputs/serial/robot-20261010-story-stop-2145.log` | `e625d630bd7ce6af1f7b2cd259e8007cf8fc6f1d92c9d9dc8ed9485dc0b4b81c` |
 
 归档复核只查唯一设备 session `56e42cce-2a50-4b31-b224-2c0b83ccc621` 和 21:44:25–21:47:12 时间窗。Mac 音量在两轮脚本退出后均恢复为 38，静音为 `true`；串口占用与命令 socket 已释放。此失败需要先检查 stop 词范围、播报期间声学路径与回声/ASR 证据；未改播放停止规则、阈值或固件。基于停止专项未通过，本批不开始 ≥30 分钟长稳。
+
+后续独立窗口：2026-10-11 09:16–09:19 使用音量50复测，“别说了”首次取得当前判据下的同fence正向停止证据，“停”仍自然完成；两者音色不同，不能归为音量单因果。新的素材身份、完整终态与尾窗证据见 [10-11停止专项](../run-20261011-stop-target/findings.md)；本节0/2历史结论不变，长稳仍未开始。
