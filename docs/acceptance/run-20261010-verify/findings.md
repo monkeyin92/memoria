@@ -1,10 +1,10 @@
-# 2026-10-10 发布后两组语音记录复盘
+# 2026-10-10 语音记录复盘与诊断发布验收
 
-本报告复盘已经发生的两组记录，并在 2026-10-10 16:33–16:51（北京时间）只读核验生产、发布收据和限定测试会话的档案。没有重新播放素材、操作串口、刷机或发布。原始记录保留在本机 ignored `outputs/acceptance/run-20261010-verify-{standard,probe}/`，未改写；全部文件的大小和 SHA-256 见 [source-receipts.json](source-receipts.json)。时间线是原驱动的观察结果，不等于问题内容或整体验收通过。
+本报告先复盘已经发生的两组记录，在 2026-10-10 16:33–16:51（北京时间）只读核验生产、发布收据和限定测试会话的档案；原始记录保留在本机 ignored `outputs/acceptance/run-20261010-verify-{standard,probe}/`，未改写，文件大小和 SHA-256 见 [source-receipts.json](source-receipts.json)。随后用户授权直接切流并测试，PR #199 于 23:12 完成生产收尾，23:17–23:22 做了新一轮中性问答诊断；新的发布和设备收据在本报告最后一节。时间线是驱动观察结果，不等于问题内容或整体验收通过。
 
 ## 结论与验收状态
 
-- `20261010-stale-interim-v1`（PR #198，源 `bef8e1174679b40239b35c96729911ea0331882c`）已经发布；三个整栈角色的运行身份一致、healthy、重启 0，公网 readiness 为 `ready`、提供方冒烟 `passed`。回滚镜像指向 `20261009-textless-spare-v1`，本次发布没有再次演练 rollback。
+- 当前整栈为 `20261010-n8-endpoint-diag-v1`（PR #199，源 `a758e7a1a086aebc4f947ac273dca2be7f60d28d`）：23:12 finish PASS、内部 ready / smokes passed / 外部 200，三角色 healthy / 重启 0。`20261010-stale-interim-v1` 现为回滚目标；本次没有回滚演练。
 - 标准轮 46 步、44 次进入说话、2 次 `no_reply`，实际 13 分 19 秒；不能关闭 N-5 的 ≥30 分钟长稳。44 次出声没有逐句核验内容，不能写成 44 个问题答对。
 - 10 个打断尝试全部对应 `playback_completed`，确认停止 0；原驱动 `stopped=true` 的 7 次和全部停止延迟作废。包含口头停止、新问题和附和素材，不能把每种素材都当成应当停下的命令。
 - 噪声探针 6 步只有 1 次出声，但该次的转写与回答都不对应算术题；另外 5 步没有已提交回复被取消的证据。不能把 5 次 `no_reply` 记作 #197 / #198 修复失败，也不能把唯一出声记作内容通过。
@@ -14,8 +14,8 @@
 |---|---|---|---|
 | #197 首帧之后保护未被听到的回复 | 已合并并接入 | 已随 10-09 发布，10-10 继承 | 单测有复现；本轮没有目标事件，设备专项未通过 |
 | #198 旧临时文字不当作新边缘的话 | 已合并并接入 | 10-10 07:59 起 | 单测有复现；发布身份/健康已核验，本轮不能证明目标路径修复 |
-| `voice_soak` 停止判据 v2 | 本批本地实现，驱动和分析器共用 | 后续用本批脚本运行才生效，不涉及生产服务 | 离线回归和既有记录复算；没有新真机验收 |
-| ASR 重叠 / 空 endpoint / 关闭诊断 | 候选分支实现，接到既有日志出口 | 未发布；原生产日志没有新字段 | 12 条离线诊断用例、Agent 全套 2958 条回归通过；没有新设备证据 |
+| `voice_soak` 停止判据 v2 | PR #199，驱动和分析器共用 | 本机新脚本运行生效，不涉及生产服务 | 离线回归和历史复算；21:44 两次自然完成被正确记作未停止；成功停止路径仍未验证 |
+| ASR 重叠 / 空 endpoint / 关闭与 reopen-window 诊断 | PR #199，既有日志出口 | 23:12 起 `20261010-n8-endpoint-diag-v1` | 12 条诊断用例、Agent 2958 条；23:17 真机捕获 4 条 overlap 快照、1 条 reopen `no_text` 原因，其余出口及 #197/#198 目标未触发 |
 
 ## 条件与汇总
 
@@ -94,9 +94,9 @@
 
 为了让下一次同类事件可以定因，`media_session_input.py` 新增只记录布尔原因、ASR sample 范围、文字长度和 endpoint 水位的诊断：重开窗口是 `armed`、因 `no_text` / `endpoint_uncovered` / `reply_in_flight` 未启动，还是到期时因 `turn_end_advanced` / `partial_after_endpoint` / `turn_changed` / 输出仍在途而暂缓。字段不包含终稿内容，不改变既有判定。新增 `test_media_reopen_replay.py` 两条确定性差分用例验证原范围和合成 interim 分支。
 
-候选本地验证：完整 Agent 套件 **2958 passed、0 skipped**；脚本套件 **501 passed、1 skipped**；新增 ASR/reopen 诊断与发布脚本聚焦检查通过；`ruff check .`、严格 `mypy services --strict`（435 文件）、26 项模块预算、Bash 语法及文档预算均通过。远端 PR CI 尚待运行；未进行设备测试、生产访问或部署。
+合并前本地验证：完整 Agent 套件 **2958 passed、0 skipped**；脚本套件 **501 passed、1 skipped**；新增 ASR/reopen 诊断与发布脚本聚焦检查通过；`ruff check .`、严格 `mypy services --strict`（435 文件）、26 项模块预算、Bash 语法及文档预算均通过。PR #199 已于 22:04 CST 合并，GitHub 状态复核为 10 项 SUCCESS、5 项按路径 SKIPPED；后续生产与设备状态见最后一节。
 
-下一阶段可将这批判据、输入/关闭诊断与 reopen-window 诊断作为一个服务端候选提交并走 CI；生产发布和设备语音仍分开授权。目标事件要以完整 fence 和新的诊断字段验收，不靠放宽阈值、强制合并空 endpoint 或将 synthetic replay 宣称为真机通过。
+这批判据、输入/关闭诊断与 reopen-window 诊断现已交付。下一次目标事件仍按完整 fence 和新诊断字段验收，不靠放宽阈值、强制合并空 endpoint 或将 synthetic replay 宣称为真机通过。
 
 ## 停止判据的修正与历史纠正
 
@@ -119,12 +119,54 @@ uv run python scripts/voice_soak_evidence.py outputs/acceptance/run-20261010-ver
 
 代码与主机回归不等于新真机验收；本批没有运行新的语音测试。离线测试覆盖正常完成、真实停止、错误/传输退出、缺证据、跨会话/epoch/tool、错代、超时、跨午夜、延迟日志补到后的复算，以及模拟驱动的时间记录与音量恢复。软件门的结果记在 HANDOFF 本批收据。
 
-## 发布收据（只读核验，非本批重新发布）
+## 07:59 旧栈发布收据（初次只读核验，现为回滚目标）
 
 - 源与 tag：`bef8e1174679b40239b35c96729911ea0331882c` / `20261010-stale-interim-v1`。切流 07:58:53–07:59:39，finish 08:01:01。六步 `verify-load / freeze / env / schema / cutover / finish` 全 PASS、exit 0；schema 为 `UPDATE 0`。
 - 三个服务端角色的标签、OCI revision 与 current 一致；image id：Control API `5da9e8d7a992…`，Bridge `89d0ce364884…`，Speaker Model `a4b9422a5440…`。Media Edge 仍为 `20261002-late-progress-v1` / `f3fe8742177e4002db652203b1fadffa549d1098` / `8c3815357fd3…`。
 - 回滚镜像 `*:rollback-20261010-stale-interim-v1-pre` 与 `20261009-textless-spare-v1` 各角色 image id 相同：Control `e45acac7227f…`、Bridge `46da9b837b26…`、Speaker `bcb4acae191f…`。本次没有新回滚演练，不能把镜像存在写作演练通过。
 - manifest `/opt/memoria/incoming/20261010-stale-interim-v1/release-manifest.json`：SHA-256 `9dbb9c7a57065e73babda18179da061aa8323e8d6936eaf0fc69bce81c14f5e4`；images 1,463,958,528 B、SHA-256 `5e7f6e0811f537564dfd7c6533ffe868c1241eea62a091d203df61409ff89dfd`；source 66,703,360 B、SHA-256 `c8635eda650eb6047a550a13f432f01ed18aa3b3bec6c61ca94fab93d729cbd8`（后两项从已经通过 verify-load 的 manifest 回读，本轮未重新读整个制品）。
 - 切前 dump `/opt/memoria/releases/20261010-stale-interim-v1/.cutover/memoria-pre-20261010-stale-interim-v1.dump`：4,427,691 B、SHA-256 `cc7217aed648e1cac460d62b02ba6728a398e9e71f5aa00c80aa2525224fa10d`；同目录有 pre / post-state 与 env 快照，未读取或复制秘密值。
-- 10-10 16:51 只读核验时，主机 `/root/memoria-release/release-ops.sh` 与当时仓库版本 SHA-256 同为 `a8dfb1babb2f3cb3cf355402c57e0822926fc07b0edaf546487bc59cbf739f5b`，PREV 为 20261009（当时正确的回滚目标）。当前候选分支已将仓库 `PREV_TAG/PREV_COMMIT` 与脚本断言前移到 `20261010-stale-interim-v1` / `bef8e1174679b40239b35c96729911ea0331882c`；主机文件未安装或修改，线上没有切流。
-- 既有清理收据 `/root/memoria-release/cleanup-20261010.log`：09:40–09:41 清掉 20261007 的旧镜像 tag、incoming 与源码树，保留 `.cutover`；当前根分区 21 / 40 GB（55%，剩 18 GB），incoming 保留 20261009 / 20261010。本批只读核对，不执行清理。
+- 10-10 16:51 初次只读核验时，主机 `/root/memoria-release/release-ops.sh` 与当时仓库版本 SHA-256 同为 `a8dfb1babb2f3cb3cf355402c57e0822926fc07b0edaf546487bc59cbf739f5b`，PREV 为 20261009（当时正确的回滚目标）。随后 PR #199 发布前已安装 PREV 前移后的版本，实际身份见下一节。
+- 既有清理收据 `/root/memoria-release/cleanup-20261010.log`：09:40–09:41 清掉 20261007 的旧镜像 tag、incoming 与源码树，保留 `.cutover`；16:33 根分区为 21 / 40 GB（55%，剩 18 GB），当时 incoming 保留 20261009 / 20261010。本批没有执行新的清理。
+
+## PR #199 诊断发布与 23:17 真机验收
+
+用户授权“直接切，没事。切好后测试吧”。切流前有一条空闲设备 WSS、零媒体会话，授权覆盖该空闲连接断开。PR #199 / `a758e7a1a086aebc4f947ac273dca2be7f60d28d` 已合并并打 tag `20261010-n8-endpoint-diag-v1`；所有镜像 revision、manifest commit、发布树 `.env` 与 tag 一致。主机 `/root/memoria-release/release-ops.sh` SHA-256 为 `fb4d98e27440a7e3b122329d857b320d2c99d0f7bcf84a2ebf9bbfc8948e5c89`，PREV 为 `20261010-stale-interim-v1` / `bef8e1174679b40239b35c96729911ea0331882c`。
+
+六步均为 PASS / exit 0：`verify-load` 22:16:56、`freeze` 22:18:23、`env` 22:20:41、`schema` 22:21:37、`cutover` 23:07:24、`finish` 23:12:37。DeepSeek、Qwen Search、Doubao、FunASR 冒烟通过；finish 前 current 仍指旧栈导致 readiness 503，finish 后 `/opt/memoria/current` → 新树、内部 `ready` / `smokes=passed`、外部 200，23:26 复核仍相同。Control / Bridge / Speaker image id 分别为 `411b460e73ad…` / `f62e801c3cab…` / `325a571b0a4a…`，healthy / 重启 0；Media Edge image id `8c3815357fd3…`、StartedAt `2026-10-04T17:36:08Z` / 重启 0，未重建。
+
+三枚 `*:rollback-20261010-n8-endpoint-diag-v1-pre` 镜像与旧栈相同：Control `5da9e8d7a992…`、Bridge `89d0ce364884…`、Speaker `a4b9422a5440…`。回滚没有演练。切前 dump 为 4,445,037 B、SHA-256 `36344e4db2ca057ce955765cbf7a8614b8cefd40a9b7a18e00f92a6ca9fb31c0`，位于 `/opt/memoria/releases/20261010-n8-endpoint-diag-v1/.cutover/`，同目录有 pre / post-state 和 env 快照；秘密值未读出。新 manifest SHA-256 为 `d653f149e60d627f04a81204da69fde0ddcdb7e0e1e0b5bde52fba06fee22301`，verifier SHA-256 为 `aff0c2ec340a7315f673a709324db9c3699613336311fd07c8e3f507f0cb9880`。
+
+真机窗口为 23:17:50–23:22:55 CST，使用已有12条中性音色库素材、USB `wake` 和单一串口记录器。打开串口复位一次，启动日志核对 `MEMORIA_FIRMWARE_BUILD=24` / `slot=ota_0`、`wake_mode=button`、进入 idle；没有刷机或改设备配置。唯一测试 session 为 `ea4bb529-fb39-4552-82cc-3747659d290e` / stream epoch 2577。Mac 输出状态 38/静音 → 45/解除静音 → 38/静音；结束后 logger 用 SIGINT 停止，进程、命令 socket 和串口占用均释放。
+
+| 本轮指标 | 实测 |
+|---|---:|
+| 预设输入 / 有回复 / 无回复 | 12 / 12 / 0 |
+| 说完到开口 p50 / p95 / 最长 | 3.0 / 3.9 / 3.9 秒 |
+| ASR 字符相似度均值 / ≥0.9 | 0.95 / 10 of 12 |
+| 尾窗 | 90秒；23:21:52.421 实际 `listening -> idle`，`verified_idle` |
+| `cross_sentence_overlap` 拒绝 | 4，均有新 `overlap` 快照 |
+| reopen-window 原因 | 1次 `skipped reason=no_text` |
+| 空 endpoint / early conversation-close / reopened commit 诊断 | 0 / 0 / 0 |
+| `media prepared reply dropped` / `media reply spared` | 0 / 0 |
+
+归档按唯一 session 和该时间窗只读核对。t004 只差“呀/啊”（相似度0.86）；t005 月亮问题的归档转写夹入一段非预期文字，相似度0.57，回复仍给出月亮答案但也回应了误识别内容。没有原始上行录音，不能归为声学回声、输入质量或特定 endpoint 分支。桥另有一次 live-lookup semantic classifier 约1.2秒超时并回退，后续回复正常发出；分析器计数的两处 Traceback 是同一次异常的链式堆栈。设备有11条既有 BMI270 I2C timeout，未见崩溃或测试中复位。本轮没有停止词或噪声注入，不能验证口头停止、#197/#198目标路径或N-5长稳；三个全体验收标志仍为false。
+
+原始收据在本机 ignored `outputs/acceptance/run-20261010-n8-postcutover-diag-2317/`，原始串口在 `outputs/serial/robot-20261010-n8-postcutover.log`。复算命令：
+
+```bash
+uv run --no-project python scripts/voice_soak_analyze.py \
+  outputs/acceptance/run-20261010-n8-postcutover-diag-2317 \
+  '2026-10-10 23:17:50' '2026-10-10 23:22:55'
+```
+
+| 文件 | SHA-256 |
+|---|---|
+| `timeline.jsonl` | `f8f771cc3b315c501dc20673ac7de3df175ceb07af7f43ac4c37f26d1f556ea5` |
+| `serial.log` | `04dfb106610c86a54e04382db2c95bb6f6c87e5b9a38720bfba1aef68909501a` |
+| `bridge.log` | `7e4b979693261d3dcfaab594e6cf8a1ab9cb17ced6106f737668465297cb85dd` |
+| `edge.log` | `132db169127dd2188e6add375d91b7e33be697b8b74bde7c1af987850c46cb41` |
+| `control.log` | `93eb08bf62ff8fb4c1c1f29dd86e4a1e0c18b0fa0cd45b7d24deed6871a56bd8` |
+| 原始 `robot-20261010-n8-postcutover.log` | `b8043898b290ea4e43cbed1d9b62259080a044cc10c4dd435e857113545103fe` |
+
+23:31资源只读复核：根分区25/40GB（65%，剩14GB）、可用内存1.7GiB；incoming现有20261009旧栈、20261010旧栈和本次新栈三个目录。新制品仍未清理，不改既有数据库、安全备份或被编排引用的树。
