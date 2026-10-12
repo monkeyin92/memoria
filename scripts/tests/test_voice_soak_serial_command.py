@@ -209,10 +209,16 @@ def test_default_socket_path_is_short_and_follows_the_port() -> None:
 
 
 def test_the_wire_table_holds_exactly_the_words_the_robot_knows() -> None:
-    # `wake` is in every image; `snap` and `status` only read, and only a bench image answers them.
-    assert logger.WIRE_COMMANDS == {"wake": b"wake\n", "snap": b"snap\n", "status": b"status\n"}
-    assert set(command.COMMANDS) == {"wake", "snap", "status", "ping"}
-    assert set(command.BENCH_COMMANDS) == {"snap", "status"}
+    # `wake` is in every image; the others change nothing the robot does, and only a bench image answers them.
+    assert logger.WIRE_COMMANDS == {
+        "wake": b"wake\n",
+        "snap": b"snap\n",
+        "status": b"status\n",
+        "pcmarm": b"pcmarm\n",
+        "pcmdump": b"pcmdump\n",
+    }
+    assert set(command.COMMANDS) == {"wake", "snap", "status", "pcmarm", "pcmdump", "ping"}
+    assert set(command.BENCH_COMMANDS) == {"snap", "status", "pcmarm", "pcmdump"}
 
 
 def test_the_soak_driver_wakes_over_usb_and_never_plays_the_wake_word() -> None:
@@ -287,10 +293,17 @@ class FakeRobot(FakePort):
     def send(self, payload: bytes) -> None:
         super().send(payload)
         self.requests += 1
-        if payload not in (b"snap\n", b"status\n"):
+        if payload not in (b"snap\n", b"status\n", b"pcmarm\n", b"pcmdump\n"):
             return
         if not self.bench:
             answer = ["I (9) MemoriaUsb: usb command ignored (not a command)"]
+        elif payload == b"pcmarm\n":
+            answer = [
+                "I (9) MemoriaDiagPcm: PCMD 0000abcd armed window_ms=3000 "
+                "lanes=play_pre_i2s@24000x1,pre_afe_mic+pre_afe_ref@16000x2,post_afe@16000x1 psram_free=7000000"
+            ]
+        elif payload == b"pcmdump\n":
+            answer = ["I (9) MemoriaDiagPcm: PCMD 0000abcd failed reason=recording"]
         elif payload == b"snap\n":
             self.picture, answer = _snap_lines(100, 10)
         else:
@@ -348,6 +361,43 @@ def test_a_product_image_ignoring_the_request_is_named_at_once(socket_dir) -> No
                 call(log, socket_path=server.path, wait=5)
     finally:
         server.stop()
+
+
+def test_pcmarm_and_pcmdump_wait_in_the_log_for_the_robots_answer(bench_rig) -> None:
+    server, robot, log, lines = bench_rig
+    armed = command.pcm_request("pcmarm", log, socket_path=server.path, wait=5)
+    assert (armed.id, armed.armed, armed.failed) == ("0000abcd", True, None)
+    refused = command.pcm_request("pcmdump", log, socket_path=server.path, wait=5)
+    assert (refused.id, refused.failed) == ("0000abcd", "recording")
+    assert robot.written == [b"pcmarm\n", b"pcmdump\n"]
+    assert lines == ["LOGGER: command pcmarm sent", "LOGGER: command pcmdump sent"]
+
+
+def test_a_refused_pcmdump_fails_the_command_line(bench_rig, capsys) -> None:
+    server, _robot, log, _lines = bench_rig
+    assert command.main(["pcmdump", "--socket", str(server.path), "--log", str(log), "--wait", "5"]) == 1
+    assert "the robot refused `pcmdump`: reason=recording" in capsys.readouterr().err
+
+
+def test_a_product_image_ignoring_pcmarm_is_named_at_once(socket_dir) -> None:
+    log = socket_dir / "robot.log"
+    robot = FakeRobot(log, bench=False)
+    server = logger.CommandServer(socket_dir / "robot.sock", robot.send, lambda _line: None)
+    server.start()
+    try:
+        with pytest.raises(command.SerialCommandError, match="not running a bench image"):
+            command.pcm_request("pcmarm", log, socket_path=server.path, wait=5)
+    finally:
+        server.stop()
+
+
+def test_an_unknown_pcm_verb_is_refused_before_the_port(served) -> None:
+    server, port, _lines = served
+    with pytest.raises(command.SerialCommandError):
+        command.send_command("pcm", socket_path=server.path)
+    with pytest.raises(command.SerialCommandError, match="unknown"):
+        command.send_command("pcmrec", socket_path=server.path)
+    assert port.written == []
 
 
 def test_no_logger_stops_snap_before_any_waiting(socket_dir) -> None:
