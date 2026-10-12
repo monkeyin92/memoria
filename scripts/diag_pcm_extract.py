@@ -364,7 +364,7 @@ def verify(t: Transcript) -> Verdict:
                 details.append(f"lane_seq lane={lane.name.lower()} expected {index}, got {block.lane_seq}")
                 seq_ok = False
                 break
-        for prev, block in zip(blocks, blocks[1:]):
+        for prev, block in zip(blocks, blocks[1:], strict=False):
             if block.lane_sample != prev.lane_sample + prev.frames:
                 details.append(f"lane_sample lane={lane.name.lower()} gap after seq {prev.lane_seq}")
                 sample_ok = False
@@ -372,7 +372,7 @@ def verify(t: Transcript) -> Verdict:
         if blocks and blocks[0].lane_sample != 0:
             details.append(f"lane_sample lane={lane.name.lower()} starts at {blocks[0].lane_sample}")
             sample_ok = False
-        for prev, block in zip(blocks, blocks[1:]):
+        for prev, block in zip(blocks, blocks[1:], strict=False):
             if block.mic_clock < prev.mic_clock:
                 details.append(f"mic_clock lane={lane.name.lower()} goes back at seq {block.lane_seq}")
                 mono_ok = False
