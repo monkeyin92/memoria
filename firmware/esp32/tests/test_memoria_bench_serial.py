@@ -23,6 +23,8 @@ SCRIPTS = FIRMWARE_ROOT / "scripts"
 
 SOURCES = sorted(path for path in MAIN.rglob("*") if path.suffix in {".c", ".cc", ".h"})
 BENCH_SOURCE = BOARD / "memoria_mascot_bench.cc"
+DIAG_SOURCE = BOARD / "memoria_diag_pcm.cc"
+DIAG_PATCH = PATCHES / "0036-memoria-diag-pcm.patch"
 DISPLAY_CC = BOARD / "memoria_mascot_display.cc"
 DISPLAY_H = BOARD / "memoria_mascot_display.h"
 BOARD_CC = BOARD / "memoria_esp_vocat.cc"
@@ -58,6 +60,14 @@ BENCH_ONLY = [
     r"O_WRONLY",
     r'"snap"',
     r'"status"',
+    r"\bmemoria::diag::",
+    r"memoria_diag_pcm\.h",
+    r"\bUsbLineEvent::kPcm(Arm|Dump)\b",
+    r"\bUsbCommand::kPcm(Arm|Dump)\b",
+    r'"pcmarm"',
+    r'"pcmdump"',
+    r"\bMemoriaDiagPcm\b",
+    r"\bStreamJournal\b",
 ]
 
 
@@ -191,12 +201,73 @@ def test_the_bench_source_is_an_empty_unit_in_a_product_build() -> None:
     assert '#include "sdkconfig.h"' in _read(DISPLAY_H)
 
 
-def test_only_the_bench_source_ever_opens_the_console_for_writing() -> None:
+def test_the_pcm_journal_source_is_an_empty_unit_in_a_product_build() -> None:
+    code = [
+        line.strip()
+        for line in _strip_comments(product_text(_read(DIAG_SOURCE))).splitlines()
+        if line.strip()
+    ]
+    assert code == ['#include "sdkconfig.h"']
+
+
+def _hunks(patch: str) -> list[str]:
+    """The new side of every hunk in `patch` (context and added lines), one string per hunk."""
+    hunks: list[list[str]] = []
+    for line in patch.splitlines():
+        if line.startswith("@@"):
+            hunks.append([])
+        elif hunks and not line.startswith(("-", "diff ", "index ", "+++", "---")):
+            hunks[-1].append(line[1:])
+    return ["\n".join(hunk) for hunk in hunks]
+
+
+def _innermost_if(lines: list[str]) -> str | None:
+    """The condition of the innermost #if still open after `lines`; a hunk may start inside one, so an
+    #endif with nothing open is ignored."""
+    stack: list[str] = []
+    for line in lines:
+        directive = re.match(r"^\s*#\s*(if|ifdef|ifndef|endif)\b\s*(.*)$", line)
+        if directive is None:
+            continue
+        if directive[1] == "endif":
+            if stack:
+                stack.pop()
+        else:
+            stack.append(f"{directive[1]} {directive[2].strip()}")
+    return stack[-1] if stack else None
+
+
+def test_every_pcm_tap_of_the_audio_path_sits_behind_the_switch() -> None:
+    hunks = _hunks(_read(DIAG_PATCH))
+    patched = "\n".join(hunks)
+    for tap in ("RecordFeed(", "RecordPostAfe(", "RecordPlay("):
+        assert patched.count(f"memoria::diag::{tap}") == 1, tap
+    guarded = 0
+    for hunk in hunks:
+        lines = hunk.splitlines()
+        for index, line in enumerate(lines):
+            if re.search(r"memoria::diag::\w+\(|memoria_diag_pcm\.h", line):
+                assert _innermost_if(lines[:index]) == f"if {SWITCH}", line
+                guarded += 1
+    assert guarded == 6  # three taps, the post-AFE consumer flags and two includes
+    # The feed tap runs before the settle drop, so the journal shows what the AFE never saw, flagged.
+    feed = patched.index("memoria::diag::RecordFeed(")
+    assert patched.index("const bool settle_drop =") < feed < patched.index("if (settle_drop) {")
+    assert "settle_drop ? memoria::diag::kFlagSettleDropped : 0" in patched
+    # The post-AFE tap runs once per fetch, before the first consumer (the uplink one follows it).
+    assert patched.index("memoria::diag::RecordPostAfe(") < patched.index("HandleWakeWordResult(result);")
+    # The playback tap sees the frame right before the codec does.
+    play = patched.index("memoria::diag::RecordPlay(")
+    assert play < patched.index("codec_->OutputData(task->pcm);")
+
+
+def test_only_the_bench_sources_ever_open_the_console_for_writing() -> None:
     writers = [
         path.name for path in SOURCES if re.search(r"O_WRONLY|O_RDWR", _strip_comments(_read(path)))
     ]
-    assert writers == [BENCH_SOURCE.name]
+    assert writers == [DIAG_SOURCE.name, BENCH_SOURCE.name]
     assert _strip_comments(_read(BENCH_SOURCE)).count('open("/dev/secondary", O_WRONLY)') == 1
+    assert _strip_comments(_read(DIAG_SOURCE)).count('open("/dev/secondary", O_WRONLY)') == 1
     # The command task itself stays a reader.
     assert 'open("/dev/secondary", O_RDONLY)' in _read(BOARD_CC)
 
@@ -322,7 +393,7 @@ def test_the_marker_the_publisher_refuses_is_defined_once_and_logged_at_boot() -
     assert definitions == [BENCH_SOURCE.name]
     boot_log = _read(BOARD_CC)
     assert (
-        '"usb command console ready commands=wake,snap,status %s", memoria_bench_build_marker'
+        '"usb command console ready commands=wake,snap,status,pcmarm,pcmdump %s", memoria_bench_build_marker'
         in boot_log
     )
 
