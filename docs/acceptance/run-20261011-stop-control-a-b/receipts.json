@@ -1,0 +1,391 @@
+{
+  "schema_version": "memoria-stop-control-acceptance-v1",
+  "evidence_date": "2026-10-11",
+  "run": "outputs/acceptance/run-20261011-stop-control-a-b",
+  "source_commit": "a758e7a1a086aebc4f947ac273dca2be7f60d28d",
+  "source_file_sha256": {
+    "scripts/voice_soak.py": "325a355d2c9d8daa5496f9645badc82944c4fcb305638f5d0189876767c587e1",
+    "scripts/voice_soak_evidence.py": "40f164160dd192a2b32898b7de663da432817d01a4d82402b3dae19849368bb1",
+    "scripts/voice_soak_analyze.py": "159684a0f748a850f2d72a0b86edac1f37c544ec34d2f7e753890b7f7644414f",
+    "scripts/voice_soak_serial_logger.py": "734cfd604380f40637f98514e0af5efe476448966fbcc3c7b45d7086e164f403",
+    "services/agent/src/voice_core/media_pcm_tap.py": "66783d38271b94b95f18a08ac3c3c75b988cbdb77585686331c9fb5c6dc96e3f"
+  },
+  "device": {
+    "mac": "90:e5:b1:d7:83:2c",
+    "firmware_build": 24,
+    "slot": "ota_0",
+    "wake_mode": "button",
+    "port": "/dev/cu.usbmodem101",
+    "initial_idle_at": "21:13:42.247",
+    "wake_method": "USB command through sole serial logger"
+  },
+  "production": {
+    "release_tag": "20261010-n8-endpoint-diag-v1",
+    "revision": "a758e7a1a086aebc4f947ac273dca2be7f60d28d",
+    "media_edge_release_tag": "20261002-late-progress-v1",
+    "readiness": {
+      "status": "ready",
+      "release_tag": "20261010-n8-endpoint-diag-v1",
+      "smokes": "passed",
+      "warnings": [],
+      "checks": {
+        "config": true,
+        "core": {
+          "control_database": "ready",
+          "evolution_store": "ready",
+          "memory_archive": "ready",
+          "memory_catalog": "ready",
+          "persona": "ready",
+          "speaker_authority": "ready",
+          "voice_profile": "ready",
+          "archive_object_store": "ready",
+          "voice_object_store": "ready",
+          "session_runtime": "ready",
+          "memory_scope": "ready",
+          "speaker_model": "ready"
+        },
+        "agent": {
+          "status": "ready",
+          "release_tag": "20261010-n8-endpoint-diag-v1",
+          "boot_id": "de617dad-2a50-4d28-9d3d-928857ed2d83",
+          "worker_ready": true,
+          "last_loop_at": "2026-10-11T13:46:22.833298+00:00"
+        },
+        "funasr": true,
+        "llm": {
+          "provider": "deepseek",
+          "passed": true
+        },
+        "tts": {
+          "provider": "doubao",
+          "audio": true,
+          "word_timestamps": true
+        }
+      }
+    },
+    "deployment_performed": false,
+    "configuration_changed": false,
+    "firmware_changed": false
+  },
+  "session_id": "9a3598e3-e89d-4432-966a-3d6dc1c2c0ea",
+  "stream_epoch": 2585,
+  "run_exit_code": 0,
+  "run_exit_semantics": "verified final idle only; spoken-stop acceptance failed",
+  "timing": {
+    "timezone": "Asia/Shanghai",
+    "start": "21:15:48.102",
+    "scenario_done": "21:17:46.427",
+    "end": "21:19:16.433",
+    "elapsed_s": 208.331,
+    "scenario_elapsed_s": 118.324,
+    "duration_min_argument_is_upper_deadline": 15,
+    "post_scenario_observation": {
+      "kind": "post_scenario_observation",
+      "idle_observed": true,
+      "final_state": "idle",
+      "final_state_source": "serial_transition",
+      "final_state_since": "21:18:16.509",
+      "waited_s": 90.01,
+      "timeout_s": 90.0,
+      "verdict": "verified_idle",
+      "timed_out": false,
+      "t": "21:19:16.433",
+      "ts": 1791724756.434
+    }
+  },
+  "stimuli": {
+    "asset_selection": "bank/<step.tag>.wav and bank/<step.tag>-stop.wav",
+    "same_requested_voice": "bright_peer",
+    "stop_asset_hashes_distinct": true,
+    "human_listening_verified": false,
+    "assets": [
+      {
+        "id": "story-stop-a",
+        "voice": "bright_peer",
+        "text": "给我讲一个故事吧。",
+        "rate": 1.0,
+        "instruction": "像十岁左右的小学生在说话，声音清脆自然，语气随意，不要播音腔",
+        "file": "outputs/voice-bank-stop-control-a-b/story-stop-a.wav",
+        "size_bytes": 86448,
+        "sha256": "7d26ec9289885a0ed75796767e818ad3731466c83ee1d2f6c276ba1a53359db8",
+        "sample_rate_hz": 24000,
+        "duration_s": 1.800083
+      },
+      {
+        "id": "story-stop-a-stop",
+        "voice": "bright_peer",
+        "text": "别说了。",
+        "rate": 1.05,
+        "instruction": "像十岁左右的小学生在说话，声音清脆自然，语气随意，不要播音腔，打断别人说话，语气急一点",
+        "file": "outputs/voice-bank-stop-control-a-b/story-stop-a-stop.wav",
+        "size_bytes": 45730,
+        "sha256": "d4f606e4ab9c81b43b76075dd878caaca27a2fac923011285b2960309ecb3d6e",
+        "sample_rate_hz": 24000,
+        "duration_s": 0.951792
+      },
+      {
+        "id": "story-stop-b",
+        "voice": "bright_peer",
+        "text": "给我讲一个故事吧。",
+        "rate": 1.0,
+        "instruction": "像十岁左右的小学生在说话，声音清脆自然，语气随意，不要播音腔",
+        "file": "outputs/voice-bank-stop-control-a-b/story-stop-b.wav",
+        "size_bytes": 75648,
+        "sha256": "e3331cc07aa1a270237b4b540d1edf5128b89d61dcd5dc050099777b008d2dde",
+        "sample_rate_hz": 24000,
+        "duration_s": 1.575083
+      },
+      {
+        "id": "story-stop-b-stop",
+        "voice": "bright_peer",
+        "text": "停。",
+        "rate": 1.05,
+        "instruction": "像十岁左右的小学生在说话，声音清脆自然，语气随意，不要播音腔，打断别人说话，语气急一点",
+        "file": "outputs/voice-bank-stop-control-a-b/story-stop-b-stop.wav",
+        "size_bytes": 45594,
+        "sha256": "5db1d3ac5057eee24f21303f365c2c5ad265f3221b41e3f6f341351399a40e1f",
+        "sample_rate_hz": 24000,
+        "duration_s": 0.948958
+      },
+      {
+        "id": "story-parking-negative",
+        "voice": "bright_peer",
+        "text": "给我讲一个故事吧。",
+        "rate": 1.0,
+        "instruction": "像十岁左右的小学生在说话，声音清脆自然，语气随意，不要播音腔",
+        "file": "outputs/voice-bank-stop-control-a-b/story-parking-negative.wav",
+        "size_bytes": 75786,
+        "sha256": "e8147c46f7b9f601f09a4cea01e297f8fc7bc00de1a40d2c0b8976b4b10d9555",
+        "sample_rate_hz": 24000,
+        "duration_s": 1.577958
+      },
+      {
+        "id": "story-parking-negative-stop",
+        "voice": "bright_peer",
+        "text": "停车场在哪里？",
+        "rate": 1.05,
+        "instruction": "像十岁左右的小学生在说话，声音清脆自然，语气随意，不要播音腔，打断别人说话，语气急一点",
+        "file": "outputs/voice-bank-stop-control-a-b/story-parking-negative-stop.wav",
+        "size_bytes": 82790,
+        "sha256": "52968d154810dda64d2432176e48ca802ba70dca9a37284004cf71667f4c6eeb",
+        "sample_rate_hz": 24000,
+        "duration_s": 1.723875
+      }
+    ]
+  },
+  "trials": [
+    {
+      "tag": "t001-story-stop-a",
+      "latency_s": 3.12,
+      "reply_started_ts": 1791724580.966,
+      "interrupt_text": "别说了。",
+      "interrupt_start_ts": 1791724587.066973,
+      "interrupt_end_ts": 1791724588.9609432,
+      "interrupt_deadline_ts": 1791724598.9609432,
+      "device_returned_ts": 1791724595.019,
+      "reply_s": 14.05,
+      "end_state": "listening",
+      "stop_evidence_version": 2,
+      "stopped": false,
+      "stop_verdict": "not_stopped",
+      "stop_reason": "playback_completed",
+      "stop_delay_s": null,
+      "stop_delay_origin": "interrupt_start",
+      "reply_delivery_id": "9a3598e3-e89d-4432-966a-3d6dc1c2c0ea/epoch-1/turn-2/generation-2/tool-0",
+      "reply_terminal_reason": "playback_completed",
+      "expected_stop": true,
+      "stimulus_file": "outputs/voice-bank-stop-control-a-b/story-stop-a-stop.wav",
+      "stimulus_sha256": "d4f606e4ab9c81b43b76075dd878caaca27a2fac923011285b2960309ecb3d6e",
+      "asr_stimulus_text_verified": false
+    },
+    {
+      "tag": "t002-story-stop-b",
+      "latency_s": 2.83,
+      "reply_started_ts": 1791724603.361,
+      "interrupt_text": "停。",
+      "interrupt_start_ts": 1791724609.403936,
+      "interrupt_end_ts": 1791724611.3036811,
+      "interrupt_deadline_ts": 1791724621.3036811,
+      "device_returned_ts": 1791724620.058,
+      "reply_s": 16.7,
+      "end_state": "listening",
+      "stop_evidence_version": 2,
+      "stopped": false,
+      "stop_verdict": "not_stopped",
+      "stop_reason": "playback_completed",
+      "stop_delay_s": null,
+      "stop_delay_origin": "interrupt_start",
+      "reply_delivery_id": "9a3598e3-e89d-4432-966a-3d6dc1c2c0ea/epoch-1/turn-3/generation-3/tool-0",
+      "reply_terminal_reason": "playback_completed",
+      "expected_stop": true,
+      "stimulus_file": "outputs/voice-bank-stop-control-a-b/story-stop-b-stop.wav",
+      "stimulus_sha256": "5db1d3ac5057eee24f21303f365c2c5ad265f3221b41e3f6f341351399a40e1f",
+      "asr_stimulus_text_verified": false
+    },
+    {
+      "tag": "t003-story-parking-negative",
+      "latency_s": 3.4,
+      "reply_started_ts": 1791724629.002,
+      "interrupt_text": "停车场在哪里？",
+      "interrupt_start_ts": 1791724635.081722,
+      "interrupt_end_ts": 1791724637.7494621,
+      "interrupt_deadline_ts": 1791724647.7494621,
+      "device_returned_ts": null,
+      "reply_s": 34.38,
+      "end_state": "listening",
+      "stop_evidence_version": 2,
+      "stopped": false,
+      "stop_verdict": "not_stopped",
+      "stop_reason": "playback_completed",
+      "stop_delay_s": null,
+      "stop_delay_origin": "interrupt_start",
+      "reply_delivery_id": "9a3598e3-e89d-4432-966a-3d6dc1c2c0ea/epoch-1/turn-4/generation-4/tool-0",
+      "reply_terminal_reason": "playback_completed",
+      "expected_stop": false,
+      "stimulus_file": "outputs/voice-bank-stop-control-a-b/story-parking-negative-stop.wav",
+      "stimulus_sha256": "52968d154810dda64d2432176e48ca802ba70dca9a37284004cf71667f4c6eeb",
+      "asr_stimulus_text_verified": false
+    }
+  ],
+  "summary": {
+    "planned_questions": 3,
+    "archived_questions_matching_requested_text": 3,
+    "device_replies": 3,
+    "expected_stop_attempts": 2,
+    "confirmed_expected_stops": 0,
+    "expected_stop_natural_completions": 2,
+    "unverified_expected_stops": 0,
+    "negative_control_attempts": 1,
+    "negative_control_observed_spoken_stops": 0,
+    "negative_control_asr_content_verified": false,
+    "online_offline_verdicts_match": true,
+    "spoken_stop_action_log_count": 0,
+    "stop_word_true_log_count": 0,
+    "acceptance": "spoken_stop_failed"
+  },
+  "diagnostics": {
+    "not_stop_word_count": 30,
+    "echo_true_stop_rejection_count": 8,
+    "serial_error_lines": [
+      "21:15:55.332 E (143807) esp-tls-mbedtls: read error :-0x004C",
+      "21:15:55.332 E (143807) EspSsl: SSL receive failed: -76",
+      "21:16:07.549 E (156077) i2s_common: i2s_channel_disable(1254): the channel has not been enabled yet",
+      "21:16:59.446 E (207937) BMI2_ESP32: I2C read reg 0x03 len 24 failed: ESP_ERR_TIMEOUT",
+      "21:17:19.177 E (227547) BMI2_ESP32: I2C read reg 0x03 len 24 failed: ESP_ERR_TIMEOUT",
+      "21:17:32.604 E (240987) BMI2_ESP32: I2C read reg 0x03 len 24 failed: ESP_ERR_TIMEOUT"
+    ],
+    "serial_encode_drop_warning_count": 1,
+    "serial_last_reported_dropped_frames": 1,
+    "provider_boundary_clipping_true_count": 2,
+    "root_cause": "undetermined: raw ASR stimulus text and acoustic isolation not verified"
+  },
+  "pcm_tap": {
+    "source_container": "memoria-voice-core-media-bridge-1",
+    "source_path": "/tmp/media-pcm-tap/media-uplink-9a3598e3-e89d-4432-966a-3d6dc1c2c0ea-epoch2585.wav",
+    "retrieved": true,
+    "header_verified": true,
+    "contents_transcribed": false,
+    "sample_rate_hz": 16000,
+    "channels": 1,
+    "sample_width_bytes": 2,
+    "frames": 2015040,
+    "duration_s": 125.94
+  },
+  "cleanup": {
+    "verified_at": "2026-10-11T21:49:25+08:00",
+    "stopped_pids": [
+      78854,
+      97490
+    ],
+    "port_released": true,
+    "command_socket_removed": true,
+    "volume_settings_after": "output volume:50, input volume:82, alert volume:100, output muted:true",
+    "output_volume_restored": true,
+    "output_mute_restored": true
+  },
+  "acceptance_boundary": {
+    "N-10": "open; this stop test failed",
+    "N-5": "unchanged; this is a 3.47-minute targeted run",
+    "N-8": "unchanged; target paths not covered",
+    "direct_real_device_verified": false,
+    "full_duplex_verified": false,
+    "student_safety_loop_verified": false
+  },
+  "files": [
+    {
+      "file": "outputs/acceptance/run-20261011-stop-control-a-b/admitted-uplink.wav",
+      "size_bytes": 4030124,
+      "sha256": "bcfa35225ea5117dd0f6826e0fb630e395497645e598b72233802c7294755ead"
+    },
+    {
+      "file": "outputs/acceptance/run-20261011-stop-control-a-b/analysis.md",
+      "size_bytes": 2748,
+      "sha256": "b43a561a23666b49a9f40e3a91e85567480c17c18af9bdac437236d4d8e961eb"
+    },
+    {
+      "file": "outputs/acceptance/run-20261011-stop-control-a-b/audio-items.json",
+      "size_bytes": 1378,
+      "sha256": "7c3f103d462cbae6d12a3ad3a4c502422a0580208f2117fabab38f89fba8691e"
+    },
+    {
+      "file": "outputs/acceptance/run-20261011-stop-control-a-b/bridge.log",
+      "size_bytes": 77625,
+      "sha256": "6944d59773235a431d60b7cf724081466dda50204795ad36c941d751457a15c7"
+    },
+    {
+      "file": "outputs/acceptance/run-20261011-stop-control-a-b/control.log",
+      "size_bytes": 153,
+      "sha256": "ee5a4a21f10231ec44822c1be872126bbd571fd6860eab9b3346f59ed77f0bea"
+    },
+    {
+      "file": "outputs/acceptance/run-20261011-stop-control-a-b/edge.log",
+      "size_bytes": 229,
+      "sha256": "48c870bdc0b44c06ca64fbf08443c6ae916664b255988085cd6996016f825f00"
+    },
+    {
+      "file": "outputs/acceptance/run-20261011-stop-control-a-b/production-image-identities.txt",
+      "size_bytes": 585,
+      "sha256": "2c9c8b765a7aff8e9f3d12c6f5991b15886000025cadbe784569da9ca2fb5e11"
+    },
+    {
+      "file": "outputs/acceptance/run-20261011-stop-control-a-b/production-postcheck.txt",
+      "size_bytes": 1423,
+      "sha256": "b0374c4d256afeb203d4ef02ecd654bc253d1d6ab5ecce17a9dac9e58513e617"
+    },
+    {
+      "file": "outputs/acceptance/run-20261011-stop-control-a-b/production-precheck.txt",
+      "size_bytes": 1528,
+      "sha256": "e8b4ebf46a3202ab90ec7d9c084924512a270bc29f111eac033395b7acb0bc3f"
+    },
+    {
+      "file": "outputs/acceptance/run-20261011-stop-control-a-b/scenario.json",
+      "size_bytes": 817,
+      "sha256": "9b2f5a5c517a6cdc7efd8b5d503f2e43e91c82ca3938ca73b982b8b1177b8dc9"
+    },
+    {
+      "file": "outputs/acceptance/run-20261011-stop-control-a-b/serial.log",
+      "size_bytes": 11668,
+      "sha256": "e4cca2d1baacf2de8acf00e8ee5cd20ffaeefc3f82692508497955f1ade098a4"
+    },
+    {
+      "file": "outputs/acceptance/run-20261011-stop-control-a-b/stop-audit.json",
+      "size_bytes": 1628,
+      "sha256": "ea1b819fbeb8bb9bb4ab5f3f05669fdbd679d643f58ef63c35806b56402b509a"
+    },
+    {
+      "file": "outputs/acceptance/run-20261011-stop-control-a-b/timeline.jsonl",
+      "size_bytes": 4025,
+      "sha256": "fc8ecd484ad67b98f005f3b7ee74620a4b4d35b70c5bbac16669da6d03176d29"
+    },
+    {
+      "file": "outputs/acceptance/run-20261011-stop-control-a-b/volume-restore.txt",
+      "size_bytes": 236,
+      "sha256": "5adac35b6b4ce2bc600838dc310f01dc2924edf1b7e65f079401ceb7a3b89a1e"
+    },
+    {
+      "file": "outputs/serial/robot-20261011-stop-control-a-b.log",
+      "size_bytes": 52132,
+      "sha256": "e85a36702b9debf57f7a684f9b0c6ac5389a3c01e1301da6b94679d86858fbf6"
+    }
+  ]
+}
