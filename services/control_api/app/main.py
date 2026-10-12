@@ -723,6 +723,9 @@ async def _wire_services(w: Wiring) -> None:
     )
     app.state.session_directory = session_directory
     w.on_close(session_directory.close)
+    from services.memory_scope.subject_session_recall import InMemorySubjectSessionRecallStore
+
+    app.state.subject_session_recall_store = InMemorySubjectSessionRecallStore()
     media_slo_gate = MediaSLOGate(
         ttl_s=settings.media_slo_snapshot_ttl_s,
         redis_url=settings.redis_url.strip() or None,

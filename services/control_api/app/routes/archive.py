@@ -1928,6 +1928,26 @@ async def append_session_event(
             event, result = await record_event()
     else:
         event, result = await record_event()
+    if (
+        body.event_type == "speech.utterance_finalized"
+        and body.speaker_class == "owner"
+        and retention_allowed
+        and event.subject_id is not None
+        and body.turn_id is not None
+    ):
+        from services.control_api.app.subject_session_recall import append_owner_utterance
+
+        utterance = payload.get("text")
+        session_epoch = memory_write_fence.get("session_epoch")
+        if isinstance(utterance, str) and isinstance(session_epoch, int):
+            await append_owner_utterance(
+                request,
+                subject_id=event.subject_id,
+                session_id=body.session_id,
+                session_epoch=session_epoch,
+                turn_id=body.turn_id,
+                text=utterance,
+            )
     # ``actual_heard`` is evidence that playout completed, not evidence that a
     # user task succeeded.  Offline trajectory replay loads this canonical pair
     # later and appends a LearningSignal only after independent evaluation.

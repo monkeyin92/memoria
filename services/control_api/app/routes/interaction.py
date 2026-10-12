@@ -66,6 +66,7 @@ from services.control_api.app.security import (
     require_authenticated_user,
 )
 from services.control_api.app.subject_persona import subject_persona_capsule
+from services.control_api.app.subject_session_recall import authoritative_recall_context
 from services.digital_self.domain import (
     CognitiveClaimManifestEntry,
     DecisionCaseManifestEntry,
@@ -390,6 +391,7 @@ class _SubjectMemoryScope:
     # The current signed profile confirms this device's bound subject and
     # grants private recall: the only proof a device-bound owner claim needs.
     bound_subject_trusted: bool = False
+    session_epoch: int | None = None
 
     @property
     def memory_readable(self) -> bool:
@@ -424,6 +426,7 @@ async def _resolve_subject_memory_scope(
     subject_id: str | None = None
     subject_category: str | None = None
     age_band: str | None = None
+    session_epoch: int | None = None
     catalog_readable = False
     bound_subject_trusted = False
     runtime_service = getattr(request.app.state, "session_runtime_service", None)
@@ -432,6 +435,7 @@ async def _resolve_subject_memory_scope(
         # account is the subject by construction.
         subject_authority = "account_profile"
         subject_id = account_id
+        session_epoch = 1
         catalog_readable = True
     else:
         subject_authority = "unavailable"
@@ -460,6 +464,9 @@ async def _resolve_subject_memory_scope(
             if isinstance(profile_age_band, str):
                 age_band = profile_age_band
             bound_subject_trusted = runtime_profile_trusts_bound_subject(runtime_profile)
+            profile_epoch = runtime_profile.get("session_epoch")
+            if isinstance(profile_epoch, int) and profile_epoch >= 1:
+                session_epoch = profile_epoch
     if subject_authority == "account_profile" and subject_id is not None and subject_category is None:
         profile = _store(request).get_subject_profile(user_id=subject_id)
         if profile is not None:
@@ -471,6 +478,7 @@ async def _resolve_subject_memory_scope(
         subject_id=subject_id,
         subject_category=subject_category,
         age_band=age_band,
+        session_epoch=session_epoch,
         retention_allowed=(
             await _subject_memory_retention_allowed(
                 request,
@@ -2238,6 +2246,14 @@ async def response_plan(
                 )
                 .instruction
             )
+        merged_recall = await authoritative_recall_context(
+            request,
+            subject_id=scope.subject_id,
+            session_id=body.session_id,
+            session_epoch=scope.session_epoch,
+            retention_allowed=retention_allowed,
+            client_items=tuple(body.recall_context),
+        )
         companion_items, persona_capsule = (
             await _companion_items(
                 request=request,
@@ -2247,7 +2263,7 @@ async def response_plan(
                 query=body.query,
                 speaker=body.speaker_decision,
                 now=now,
-                recall_context=tuple(body.recall_context),
+                recall_context=merged_recall,
             )
             if (
                 frozen.interaction_mode == "companion" and fixed_reply is None and retention_allowed
