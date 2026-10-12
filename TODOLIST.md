@@ -69,6 +69,7 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 - 2026-10-10 19:48–19:50 经授权复测四句（约 90 秒），验证了问候延迟 4.553 秒时首句仍会播放；这不是 ≥30 分钟混合对话，也未覆盖停止、续问、重连或长静默，N-5 仍开放。末句识别错误、额外 VAD 回合与丢帧见 [复测收据](docs/acceptance/run-20261010-volume-retest/findings.md)。
 - 2026-10-10 21:38 音量 45 四句短测完整跑完，90 秒尾窗有串口 `listening -> idle`；验证新收尾判据，但逐句 ASR /设备错误日志仍有异常，不算长稳或整机通过。
 - 21:44 故事播报“别说了”和“停”各测一次，均未进入可证实的 stop 路由，回复自然播完。其后 10-11 [stop-target](docs/acceptance/run-20261011-stop-target/findings.md) 与 [停止词对照](docs/acceptance/run-20261011-stop-control-a-b/findings.md) 仍不稳定；N-5 ≥30 分钟混合长稳暂缓，先定位停止词路径，不能以长时间发声替代停止验收。
+- 2026-10-12 经授权一圈 `child.json`（音量 30，产品 build 24）：44 步、41 有回复、2 no_reply，约 13 分钟场景 + 90 s 尾窗（退出 4，idle 证据不足）。不是 ≥30 分钟混合长稳，不关闭 N-5。见 [多轮对话收据](docs/acceptance/run-20261012-multiturn/findings.md)。
 - `voice_soak` 场景后默认保留 90 秒（最大 180 秒）日志观察；只在尾窗内观察到真实串口 `StateMachine -> idle` 才通过。推定 idle 返回 4（证据不足），非 idle 返回 3（超时）。21:38 真机样本覆盖该判据，旧 10-10 timeline 缺少新收尾记录仍保持未验证。
 - [ ] 要你点头的一轮：天气 / 知识 / 故事 / 闲聊、播放中打断（「停」「别说了」）、续问、长静默、重连、负面情绪（孤独、难过、被欺负、焦虑、厌学；不含危机类话术，会给家长队列写入假的危机提醒）、USB 唤醒。孩子的 profile 带 `QUIET_HOURS 04:00–07:00`（时段内唤醒只播晚安）与 `MAX_SESSION_SECONDS 1800`（单次最长 30 分钟），这两项是家长设定、我不绕过，所以不能在 07:00 前测，≥ 30 分钟要分多次会话。工具 `scripts/voice_soak.py`（场景在 `scripts/voice_soak_scenarios/`），产出写进 `docs/acceptance/run-20261001-longsoak/findings.md`。
 
@@ -115,9 +116,10 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 
 空 VAD 占住终点时停止词接管（PR #169，第九轮真机通过）与停止后迟到收据不再关连接（PR #174）已上线。未关：
 
-- [x] **2026-10-12 bench 诊断 PCM 采集（代码 + 本地编译 + 刷机烟雾，无声学窗）**：在既有 `CONFIG_MEMORIA_BENCH_SERIAL` 内增加 `pcmarm` / `pcmdump`，三路 lane journal（`play_pre_i2s`、交织 `pre_afe_mic`+`pre_afe_ref`、`post_afe`），共享 16 kHz mic 时钟，3.0 s 窗，SNAP 式 CRC 导出；主机 `scripts/diag_pcm_extract.py` fail-closed。产品镜像仍只收 `wake`。不假装同时导出 post-AEC / post-NS；`pre_afe_ref` 是 ES7210 第二路进 AFE 的 R，不是播放 PCM 的软件拷贝；`play_pre_i2s` 不是 exact DAC。产品/bench 构建与定向测试通过；设备已刷 bench 镜像，`pcmdump` 空仓 `reason=empty` 烟雾通过，**未发 `pcmarm`、未做声学窗**。板子现为 bench 镜像，正式语音测试前须刷回产品镜像。N-10 / N-5 仍开放。见 #200。
+- [x] **2026-10-12 bench 诊断 PCM 采集（代码 + 本地编译 + 刷机烟雾，无声学窗）**：在既有 `CONFIG_MEMORIA_BENCH_SERIAL` 内增加 `pcmarm` / `pcmdump`，三路 lane journal（`play_pre_i2s`、交织 `pre_afe_mic`+`pre_afe_ref`、`post_afe`），共享 16 kHz mic 时钟，3.0 s 窗，SNAP 式 CRC 导出；主机 `scripts/diag_pcm_extract.py` fail-closed。产品镜像仍只收 `wake`。不假装同时导出 post-AEC / post-NS；`pre_afe_ref` 是 ES7210 第二路进 AFE 的 R，不是播放 PCM 的软件拷贝；`play_pre_i2s` 不是 exact DAC。产品/bench 构建与定向测试通过；设备曾刷 bench 镜像做烟雾，**未发 `pcmarm`、未做声学窗**。2026-10-12 晚为多轮对话已刷回产品 build 24。N-10 / N-5 仍开放。见 #200。
 - [x] **2026-10-12 停止 PCM 离线诊断工具入库**：`scripts/diagnose_stop_pcm.py` 与定向测试、[停止词对照收据](docs/acceptance/run-20261011-stop-control-a-b/findings.md) / `receipts.json`。Fail-closed 窗与身份校验已验；NCC/Whisper 结论见该 findings。不运行 `scripts/create_funasr_vocabulary.py`。三窗声学仍待授权。
 - [x] **2026-10-11 停止专项收据入库（不关闭 N-10）**：[stop-target](docs/acceptance/run-20261011-stop-target/findings.md)（同音色正序 1/2、反序 0/2 等）与同目录 receipts；样本不足以改规则。N-10 保持开放。
+- [x] **2026-10-12 电脑多轮一圈（音量 30，观察项）**：见 [多轮对话收据](docs/acceptance/run-20261012-multiturn/findings.md)。「别说了」v2 成功、「停」失败；不作 N-10 关闭依据。三窗声学仍待授权。
 - [ ] 口头停止的成功率随音量剧变：音量 30 为 1/24（放大 2 倍 1/12），50 为 8/10（第十一轮）；第十八轮音量 50 下 46 步停下 25 次（54 %；停止延迟 p50 0.74 s / p90 1.58 s；没停下的 21 步服务端没有任何 `stop_word=True` 的终稿，故事讲满）。未被接受的几乎都是 ASR 终稿里只有机器人自己的回声。含义：声音小或离得远的孩子靠嗓子停不住它（P1-07 的范围，没有改动）；测试时音量要写进结果。
 - [ ] 「停」单字识别偏弱（第十轮 1/5，「别说了」11/15；第八轮基线 3/7）：识别配置里有可选的 `FUNASR_VOCABULARY_ID`（词表要先在云端创建、再用真机录音校准，会动生产 env）；要不要做，你定。先完成参考 / AEC / NS 三窗取证后再议。
 - [ ] 机器人自己的声音透过回声消除漏进来（−43…−51 dBFS，真人说话 −21…−27），仍被识别成用户的话（每个故事 3–6 条）。N-15 处理了它并进下一句的最坏后果，漏音本身没有处理。
