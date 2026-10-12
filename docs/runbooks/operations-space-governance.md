@@ -85,6 +85,18 @@ sudo systemctl enable --now memoria-disk-patrol.timer
 
 结果：根分区 25 G → 21 G（65 % → 55 %，剩 18 G），`docker system df` 的镜像数 19 → 16。清理前后门禁全部通过，四个关键容器 healthy，本机与外部 readiness 200，`current` 不变。收据在服务器 `/root/memoria-release/cleanup-20261009.log`、`cleanup-20261009-precheck.log`、`cleanup-20261009-apply.out` 与 `cleanup-20261009-pre/`（前后快照、两份 sha256 清单、候选镜像与 id）。
 
+### 2026-10-10 第六次手工清理（经用户授权「清理20261007 的 incoming 包、镜像和发布树」）
+
+同一套规则，间隔约 1 天，在整栈 `20261010-stale-interim-v1` 切流之后做。清理前根分区 25 G / 40 G（65 %），`incoming/` 三个包各 1.5 G。回滚深度是 1：当前栈 20261010，回滚目标 20261009，所以 20261007 既不在线、也不是回滚目标。
+
+只读盘点先行：所有容器（含已停止的）的 compose 标签都不引用 `releases/20261007-n8-diag-v1`；`incoming/20261007-n8-diag-v1` 的六个文件硬链接数都是 1（没有和别的目录共享 inode）；六个候选镜像标签（`memoria-{agent,control-api,speaker-model}` 的 `20261007-n8-diag-v1`，以及同 id 的 `rollback-20261009-textless-spare-v1-pre`，那是 20261009 冻结时从 20261007 打的标签）没有任何容器在用；保留集的镜像都在。脚本 `/root/memoria-release/cleanup-20261010.sh`（root 0700）分 `pre`（只读：快照、两份 sha256 清单、候选镜像与 id）与 `apply`。`apply` 前后各过一遍门禁：没有发布或 docker 进程；七个带健康检查的容器与 SenseVoice 在跑；三个整栈角色都在当前 tag 上；`current` 指向当前发布树；本机 readiness 200；保留集镜像都在；近 5 分钟没有 `media turn committed`，近 10 分钟边缘没有 `device=dev_`。删 incoming 之前重新校验它的 sha256。
+
+删除的：6 个镜像标签（逐个 `docker rmi <repo:tag>`，不是 prune；同 id 的两个标签都删掉后镜像层才释放）；`incoming/20261007-n8-diag-v1`（1.5 G）；`releases/20261007-n8-diag-v1` 的源码树（保留 `.cutover`，4.4 M：pre-cutover 数据库转储、pre/post 状态、env 快照）。
+
+有意保留：`releases/20261007-n8-diag-v1/.cutover`（收据）；`incoming/20261009-textless-spare-v1`（回滚目标的增量种子）与 `incoming/20261010-stale-interim-v1`（当前）；镜像 `20261010`、`20261009` 与 `rollback-20261010-stale-interim-v1-pre`（= 20261009 镜像）、media-edge、SenseVoice；`releases/20261009-textless-spare-v1`（回滚目标的 compose 链）、`releases/20261004-first-warm-v1`、`releases/20260827-architecture-split-v1`；数据卷、journald、`/root/old-host-20261005/`。本机（Mac）上 `~/Library/Caches/memoria-release-build/20261007-n8-diag-v1/`（64 M）与本机 Docker 里的 20261007 镜像没有动。
+
+结果：根分区 25 G → 21 G（65 % → 55 %，剩 18 G）；memoria 镜像标签 17 → 11 个；`docker system df` 的镜像可回收量为 4.2 G。清理后七个健康检查容器全部 healthy、SenseVoice 在跑、重启次数不变，本机与外部 readiness 200，`current` 不变，回滚目标 20261009 的三个镜像 id 与 compose 文件都在。`apply` 的最后一行 `docker system df | head -2` 因 SIGPIPE 退出 141，发生在所有删除与校验之后，不影响结果。收据在服务器 `/root/memoria-release/cleanup-20261010.log`、`cleanup-20261010-precheck.log` 与 `cleanup-20261010-pre/`。
+
 ### 2026-10-05 迁到 110.42.235.198 后的空间基线（新机，不是一次清理）
 
 生产从 2026-10-05 起在 110.42.235.198：40 GB 盘（旧机 118 GB），与 pocketSparks、hr-tracker 共用，迁移后已用约 17 GB（45%）。上文的 70% 触发线与「约每 5–6 次整栈清一次」是旧机的数字，在新机上要重算：整栈发布每次约 +4–5 GB（WAL 归档曾约 +0.6–1.1 GB/天，2026-10-06 起已关，见 [发布、恢复与回滚运维手册](release-rollback.md)「生产主机」），70% 是 28 GB，迁移后 17 GB、第一次整栈发布后 21 GB；`memoria-disk-patrol.timer` 的 75% / 85% 是百分比，同样适用，只告警不清理。规则不变：只清 `memoria-*` 镜像（`docker_image_retention.sh` 只处理这类 tag，不碰 pocketSparks、hr-tracker 和其他项目的镜像与卷）；每次发布核对完立刻删 `incoming` 里的包；镜像只留当前 + 一个回滚；数据卷仍不动，清理仍须另行授权。

@@ -1,0 +1,439 @@
+{
+  "schema_version": "voice-soak-source-receipts-v1",
+  "captured_at": "2026-10-11T10:00:04+08:00",
+  "hash_capture_scope": "retained_local_files_after_run_not_physical_audio_input",
+  "local_commit_before_receipt": "0d925120fa7176a19498c5ad6e0ed80b1ba59450",
+  "window": {
+    "start": "2026-10-11T09:55:14.117+08:00",
+    "end": "2026-10-11T09:58:04.036+08:00",
+    "archive_query_start": "2026-10-11T09:55:10+08:00",
+    "archive_query_end": "2026-10-11T09:58:10+08:00"
+  },
+  "session_id": "6954594a-7146-4a4f-b65c-3aec9147ca15",
+  "stream_epoch": 2579,
+  "firmware_build": 24,
+  "firmware_slot": "ota_0",
+  "wake_mode": "button",
+  "serial_startup": {
+    "esp_rom_banner_seen": true,
+    "boot_seen_at": "09:55:14.116",
+    "build_reported_at": "09:55:25.702",
+    "state_after_boot": "activating -> idle",
+    "voice_soak_initial_state": "assume_idle",
+    "initial_state_evidence": "raw_serial_log_contains_boot_and_idle_transition"
+  },
+  "scenario": {
+    "steps": [
+      "t001-story-stop-a",
+      "t002-story-stop-b"
+    ],
+    "same_question": "给我讲一个故事吧。",
+    "same_question_asset": "outputs/voice-bank/story-stop.wav",
+    "same_question_asset_sha256": "e0a8426f3fb9831e6b9306a15e041e3ad1d91b0920902ee2cbc4120fa9ece35c",
+    "same_question_duration_s": 1.984,
+    "stop_asset": "outputs/voice-bank/story-stop-stop.wav",
+    "stop_asset_sha256": "b943971ef95d632d4d66c87add325177f9f8d4dff85ba6cb1534158aa4b729e2",
+    "stop_asset_duration_s": 0.949,
+    "interrupt_after_reply_start_s": 6,
+    "interrupt_texts": [
+      "别说了。",
+      "停。"
+    ],
+    "volume_level": 50
+  },
+  "volume": {
+    "before": {
+      "output_level": 38,
+      "input_level": 82,
+      "alert_level": 100,
+      "output_muted": true
+    },
+    "test": {
+      "output_level": 50,
+      "output_muted": false
+    },
+    "driver_previous_level": 50,
+    "after": {
+      "output_level": 38,
+      "input_level": 82,
+      "alert_level": 100,
+      "output_muted": true
+    },
+    "restore_source": "outer_test_wrapper_after_voice_soak_driver"
+  },
+  "result": {
+    "confirmed_stop": 1,
+    "not_stopped": 1,
+    "evidence_insufficient": 0,
+    "stops": {
+      "别说了。": {
+        "stopped": true,
+        "reason": "spoken_stop_and_device_playout",
+        "stop_delay_s": 3.337,
+        "delay_origin": "interrupt_start_not_acoustic",
+        "bridge_stop_word": true,
+        "bridge_echo": false,
+        "device_output_frames": 465,
+        "device_returned_to_listening_at": "09:56:08.201",
+        "reply_terminal_reason": "superseded",
+        "server_actual_heard": false
+      },
+      "停。": {
+        "stopped": false,
+        "reason": "playback_completed",
+        "bridge_stop_word_true": 0,
+        "candidate_finals": 7,
+        "candidate_finals_echo_true": 2,
+        "device_returned_to_listening_at": "09:56:31.000",
+        "reply_terminal_reason": "playback_completed",
+        "server_actual_heard": true
+      }
+    },
+    "asr": {
+      "story_stop_a": "给我讲一个故事吧。",
+      "story_stop_b": "你好。 给我讲一个故事吧。",
+      "story_stop_b_similarity": 0.89
+    },
+    "post_scenario": {
+      "idle_observed": true,
+      "final_state": "idle",
+      "final_state_source": "serial_transition",
+      "final_state_since": "09:57:02.736",
+      "waited_s": 90
+    },
+    "unexpected_empty_turns_after_scenario": 1,
+    "raw_uplink_audio_retained": false,
+    "n8_197_198_target_events": "not_observed"
+  },
+  "serial_diagnostics": {
+    "raw_error_lines": 5,
+    "startup_i2c_not_initialized": 1,
+    "i2s_disable_channel_not_enabled": 1,
+    "bmi270_i2c_timeouts": 3,
+    "encode_queue_drop_oldest": 1,
+    "empty_vendor_silent_tail_timeout": 1
+  },
+  "serial_release": {
+    "logger_stopped_by_sigint": true,
+    "device_port_released": true,
+    "command_socket_removed": true
+  },
+  "production_recheck": {
+    "observed_at": "2026-10-11T10:00:04+08:00",
+    "current": "/opt/memoria/releases/20261010-n8-endpoint-diag-v1",
+    "release_tag": "20261010-n8-endpoint-diag-v1",
+    "release_commit": "a758e7a1a086aebc4f947ac273dca2be7f60d28d",
+    "media_edge_tag": "20261002-late-progress-v1",
+    "all_four_components_healthy": true,
+    "all_four_components_restarts": 0,
+    "internal_readiness": "ready",
+    "smokes": "passed",
+    "external_readiness_http": 200
+  },
+  "change_scope": {
+    "production_config_changed": false,
+    "firmware_flashed": false,
+    "production_deployed": false,
+    "direct_real_device_verified": false,
+    "full_duplex_verified": false,
+    "student_safety_loop_verified": false
+  },
+  "reverse_order_run": {
+    "captured_at": "2026-10-11T12:09:11+08:00",
+    "local_commit_before_run": "a658bc9f57c272f9ecdf71baaa384c0f8abbf201",
+    "hash_capture_scope": "retained_local_files_after_run_not_pcm_tap_content",
+    "window": {
+      "start": "2026-10-11T12:01:37.051+08:00",
+      "end": "2026-10-11T12:04:55.806+08:00",
+      "archive_query_start": "2026-10-11T12:01:37+08:00",
+      "archive_query_end": "2026-10-11T12:04:56+08:00"
+    },
+    "session_id": "408e64ba-1eec-4e76-a3e2-b4b806d8991c",
+    "stream_epoch": 2580,
+    "firmware_build": 24,
+    "firmware_slot": "ota_0",
+    "wake_mode": "button",
+    "serial_startup": {
+      "esp_rom_banner_seen": true,
+      "boot_seen_at": "12:00:41.843",
+      "build_reported_at": "12:00:51.792",
+      "state_after_boot": "activating -> idle",
+      "voice_soak_initial_state": "assume_idle",
+      "initial_state_evidence": "raw_serial_log_contains_boot_and_idle_transition"
+    },
+    "scenario": {
+      "steps": [
+        "t001-story-stop",
+        "t002-story-stop"
+      ],
+      "same_question": "给我讲一个故事吧。",
+      "same_question_asset": "outputs/voice-bank/story-stop.wav",
+      "same_question_asset_sha256": "e0a8426f3fb9831e6b9306a15e041e3ad1d91b0920902ee2cbc4120fa9ece35c",
+      "same_question_duration_s": 1.984,
+      "stop_asset": "outputs/voice-bank/story-stop-stop.wav",
+      "stop_asset_sha256": "b943971ef95d632d4d66c87add325177f9f8d4dff85ba6cb1534158aa4b729e2",
+      "stop_asset_duration_s": 0.949,
+      "interrupt_after_reply_start_s": 6,
+      "interrupt_texts": [
+        "停。",
+        "别说了。"
+      ],
+      "volume_level": 50
+    },
+    "volume": {
+      "before": {
+        "output_level": 38,
+        "input_level": 82,
+        "alert_level": 100,
+        "output_muted": true
+      },
+      "test": {
+        "output_level": 50,
+        "output_muted": false
+      },
+      "driver_previous_level": 50,
+      "after": {
+        "output_level": 38,
+        "input_level": 82,
+        "alert_level": 100,
+        "output_muted": true
+      },
+      "restore_source": "outer_test_wrapper_after_voice_soak_driver"
+    },
+    "result": {
+      "confirmed_stop": 0,
+      "not_stopped": 2,
+      "evidence_insufficient": 0,
+      "stops": {
+        "停。": {
+          "stopped": false,
+          "reason": "playback_completed",
+          "reply_delivery_id": "408e64ba-1eec-4e76-a3e2-b4b806d8991c/epoch-1/turn-2/generation-2/tool-0",
+          "reply_terminal_reason": "playback_completed",
+          "assistant_actual_heard": true
+        },
+        "别说了。": {
+          "stopped": false,
+          "reason": "playback_completed",
+          "reply_delivery_id": "408e64ba-1eec-4e76-a3e2-b4b806d8991c/epoch-1/turn-3/generation-3/tool-0",
+          "reply_terminal_reason": "playback_completed",
+          "assistant_actual_heard": true
+        }
+      },
+      "asr": {
+        "story_stop_a": "给我讲一个故事吧。",
+        "story_stop_a_similarity": 1,
+        "story_stop_b": "给我讲一个故事吧。",
+        "story_stop_b_similarity": 1
+      },
+      "unexpected_after_scenario_turns": 1,
+      "unexpected_turn_text": "你说呢？",
+      "unexpected_turn_reply_at": "12:03:56",
+      "unexpected_turn_source": "unknown_not_attributed",
+      "post_scenario": {
+        "idle_observed": true,
+        "final_state": "idle",
+        "final_state_source": "serial_transition",
+        "final_state_since": "12:04:29.661",
+        "waited_s": 90
+      },
+      "n8_197_198_target_events": "not_observed",
+      "bridge_pcm_tap": {
+        "open_logged": true,
+        "path": "/tmp/media-pcm-tap/media-uplink-408e64ba-1eec-4e76-a3e2-b4b806d8991c-epoch2580.wav",
+        "file_existence_checked": false,
+        "content_reviewed": false,
+        "retrieved_or_deleted": false
+      }
+    },
+    "serial_diagnostics": {
+      "test_capture_error_lines": 2,
+      "i2s_disable_channel_not_enabled": 1,
+      "bmi270_i2c_timeout": 1
+    },
+    "serial_release": {
+      "logger_stopped_by_sigint": true,
+      "device_port_released": true,
+      "command_socket_removed": true
+    },
+    "production_recheck": {
+      "observed_at": "2026-10-11T12:09:11+08:00",
+      "current": "/opt/memoria/releases/20261010-n8-endpoint-diag-v1",
+      "release_tag": "20261010-n8-endpoint-diag-v1",
+      "release_commit": "a758e7a1a086aebc4f947ac273dca2be7f60d28d",
+      "media_edge_tag": "20261002-late-progress-v1",
+      "all_four_components_healthy": true,
+      "all_four_components_restarts": 0,
+      "external_readiness_http": 200
+    },
+    "change_scope": {
+      "production_config_changed": false,
+      "firmware_flashed": false,
+      "production_deployed": false,
+      "direct_real_device_verified": false,
+      "full_duplex_verified": false,
+      "student_safety_loop_verified": false
+    },
+    "files": [
+      {
+        "path": "outputs/acceptance/run-20261011-1200-reverse-same-tone-stop/scenario.json",
+        "bytes": 527,
+        "sha256": "cc238fcf6ce1914de28ed5710e345e7411656c403f20caba1225dfc609b81935"
+      },
+      {
+        "path": "outputs/acceptance/run-20261011-1200-reverse-same-tone-stop/capture/timeline.jsonl",
+        "bytes": 2998,
+        "sha256": "52f78b08dcaa5b0dba24be0f3b3efe54a7f7055c6ed53ee6e5f7810878df2068"
+      },
+      {
+        "path": "outputs/acceptance/run-20261011-1200-reverse-same-tone-stop/capture/bridge.log",
+        "bytes": 68325,
+        "sha256": "19adb8aba0f644dca4d8d593a54f8af029a32c54ce2be61dfb5fe9301b3891db"
+      },
+      {
+        "path": "outputs/acceptance/run-20261011-1200-reverse-same-tone-stop/capture/edge.log",
+        "bytes": 229,
+        "sha256": "d0f6c5149f597a21f58320faae1da609e41fcfa964455a1810b402dde9039eeb"
+      },
+      {
+        "path": "outputs/acceptance/run-20261011-1200-reverse-same-tone-stop/capture/control.log",
+        "bytes": 153,
+        "sha256": "901b8f6a43bc767e4664ff56ef0ab468a0133722da9e1ee772e87ed89b0d4bd5"
+      },
+      {
+        "path": "outputs/acceptance/run-20261011-1200-reverse-same-tone-stop/capture/serial.log",
+        "bytes": 24929,
+        "sha256": "50429b708b6f24b4e5d1de4ad5943b707f57784d7ca838129b927d9420ffb1c3"
+      },
+      {
+        "path": "outputs/acceptance/run-20261011-1200-reverse-same-tone-stop/capture/analysis.md",
+        "bytes": 2693,
+        "sha256": "d0e5319c5f1180197d22a207a0bc57c6fb97243cd99d70cfbcf60aaaaff271bb"
+      },
+      {
+        "path": "outputs/acceptance/run-20261011-1200-reverse-same-tone-stop/capture/stop-audit.json",
+        "bytes": 1233,
+        "sha256": "10b8aa625ab3c4c216cdf2fa18d88d92b7ed1eeba1d52079e4e04e1130bc3e54"
+      },
+      {
+        "path": "outputs/acceptance/run-20261011-1200-reverse-same-tone-stop/capture/production-recheck.txt",
+        "bytes": 578,
+        "sha256": "7b61d8f750fb37be4ca477f691511020183aeba6799675c008497fab7c3048b3"
+      },
+      {
+        "path": "outputs/acceptance/run-20261011-1200-reverse-same-tone-stop/capture/readiness-recheck.json",
+        "bytes": 748,
+        "sha256": "6450bf3bf11215f4689fa749de0cf1d175e9fd130407e76ae5990423f5c5e252"
+      },
+      {
+        "path": "outputs/serial/robot-20261011-1200-reverse-same-tone-stop.log",
+        "bytes": 38159,
+        "sha256": "9d7478f179745aa67f3e6844a7ca8705cdcb6bcebf0d7cb7c70a975b29a418f3"
+      }
+    ],
+    "tools_sha256": {
+      "scripts/voice_soak.py": "325a355d2c9d8daa5496f9645badc82944c4fcb305638f5d0189876767c587e1",
+      "scripts/voice_soak_evidence.py": "40f164160dd192a2b32898b7de663da432817d01a4d82402b3dae19849368bb1",
+      "scripts/voice_soak_analyze.py": "159684a0f748a850f2d72a0b86edac1f37c544ec34d2f7e753890b7f7644414f",
+      "scripts/voice_soak_serial_logger.py": "734cfd604380f40637f98514e0af5efe476448966fbcc3c7b45d7086e164f403",
+      "scripts/voice_soak_serial_command.py": "68958a11c220783f608df59b9398b1d59f7faef095dc3fe43092948785bd097e"
+    }
+  },
+  "files": [
+    {
+      "path": "outputs/acceptance/run-20261011-095137-same-tone-stop/scenario.json",
+      "bytes": 531,
+      "sha256": "2d1a7c371d2bcde74abbbf4bf32c312150afd737f61446d34f8154aa1c613cf9"
+    },
+    {
+      "path": "outputs/voice-bank/story-stop.wav",
+      "bytes": 95274,
+      "sha256": "e0a8426f3fb9831e6b9306a15e041e3ad1d91b0920902ee2cbc4120fa9ece35c"
+    },
+    {
+      "path": "outputs/voice-bank/story-stop-stop.wav",
+      "bytes": 45610,
+      "sha256": "b943971ef95d632d4d66c87add325177f9f8d4dff85ba6cb1534158aa4b729e2"
+    },
+    {
+      "path": "outputs/acceptance/run-20261011-095137-same-tone-stop/capture/timeline.jsonl",
+      "bytes": 3029,
+      "sha256": "d65d7f6c94a8f49c9849b5448755128c6d157f3c5416a260b9a393633904242c"
+    },
+    {
+      "path": "outputs/acceptance/run-20261011-095137-same-tone-stop/capture/bridge.log",
+      "bytes": 52818,
+      "sha256": "089cf020d8bb8e0d100d2a568e48f746ed031f041d2778bb5cf2b95983e6c704"
+    },
+    {
+      "path": "outputs/acceptance/run-20261011-095137-same-tone-stop/capture/edge.log",
+      "bytes": 909,
+      "sha256": "603e8f793d9a3219e9e83f76a4fb0fa24e8caa6c9ac924bde6bbf8083fb89918"
+    },
+    {
+      "path": "outputs/acceptance/run-20261011-095137-same-tone-stop/capture/control.log",
+      "bytes": 153,
+      "sha256": "fd5019c42dfadc513046d0d20850c0cf071482b0b41d8feabc22cc55b85ec24e"
+    },
+    {
+      "path": "outputs/acceptance/run-20261011-095137-same-tone-stop/capture/serial.log",
+      "bytes": 11132,
+      "sha256": "895f96ad739c78c9450e071cc6f56677a5c172789d7f85a611d7b06412e57c3f"
+    },
+    {
+      "path": "outputs/acceptance/run-20261011-095137-same-tone-stop/capture/analysis.md",
+      "bytes": 1969,
+      "sha256": "f32285edf286e8b4f3a779e821f5a1775b569b1ef01dce5fa392706ee2856184"
+    },
+    {
+      "path": "outputs/acceptance/run-20261011-095137-same-tone-stop/capture/stop-audit.json",
+      "bytes": 1231,
+      "sha256": "e6bb351208abe69f6db26805537ba6100a9d73f69796479799ca716a43cf1d2d"
+    },
+    {
+      "path": "outputs/acceptance/run-20261011-095137-same-tone-stop/capture/production-recheck.txt",
+      "bytes": 1350,
+      "sha256": "a36f0a22454e0a1b3a4d4fa61edf6e2b4219daa884e153ac0de50584a900751d"
+    },
+    {
+      "path": "outputs/acceptance/run-20261011-095137-same-tone-stop/capture/readiness-recheck.json",
+      "bytes": 748,
+      "sha256": "0b3cdccff678653e25446c2cca3912d9591e6090241c1a7e216ff1d5b7f6c1e4"
+    },
+    {
+      "path": "outputs/serial/robot-20261011-095137-same-tone-stop.log",
+      "bytes": 23051,
+      "sha256": "19efefdf0fbb2693dd91fc0f77f7a1f6a40227511a8e5d284f97a9c5db55d585"
+    },
+    {
+      "path": "outputs/serial/robot-20261011-095137-same-tone-stop.logger.stdout",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "scripts/voice_soak.py",
+      "bytes": 24786,
+      "sha256": "325a355d2c9d8daa5496f9645badc82944c4fcb305638f5d0189876767c587e1"
+    },
+    {
+      "path": "scripts/voice_soak_evidence.py",
+      "bytes": 9763,
+      "sha256": "40f164160dd192a2b32898b7de663da432817d01a4d82402b3dae19849368bb1"
+    },
+    {
+      "path": "scripts/voice_soak_analyze.py",
+      "bytes": 10837,
+      "sha256": "159684a0f748a850f2d72a0b86edac1f37c544ec34d2f7e753890b7f7644414f"
+    },
+    {
+      "path": "scripts/voice_soak_serial_logger.py",
+      "bytes": 8568,
+      "sha256": "734cfd604380f40637f98514e0af5efe476448966fbcc3c7b45d7086e164f403"
+    },
+    {
+      "path": "scripts/voice_soak_serial_command.py",
+      "bytes": 9275,
+      "sha256": "68958a11c220783f608df59b9398b1d59f7faef095dc3fe43092948785bd097e"
+    }
+  ]
+}
