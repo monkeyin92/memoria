@@ -24,6 +24,7 @@ from services.legacy.domain import LegacyAccessDeniedError, LegacyAccessSnapshot
 from services.voice_profile.domain import (
     EvaluationRequiredError,
     ProviderVoice,
+    VoiceEnrollmentReconciliationRequiredError,
     VoiceEnrollmentRequest,
     VoiceEvaluationRequest,
     VoiceProfile,
@@ -1421,6 +1422,8 @@ async def test_ready_for_device_enrollment_activates_without_in_app_ab(
     assert profile["status"] == "enrolling"
     assert profile["sample_validation_status"] == "passed"
     assert profile["enrollment"]["stage"] == "queued"
+    assert profile["enrollment"]["state"] == "queued"
+    assert profile["enrollment"]["operation_state"] == "sample_uploaded"
     assert profile["enrollment"]["expected_total_ms"] == 60_000
     assert profile["enrollment"]["over_budget"] is False
     # The same profile is admitted on measured evidence -- no A/B evaluation
@@ -1432,6 +1435,8 @@ async def test_ready_for_device_enrollment_activates_without_in_app_ab(
     assert ready_again.status_code == 200
     assert ready_again.json()["status"] == "active"
     assert ready_again.json()["activated_at"]
+    assert ready_again.json()["enrollment"]["state"] == "ready"
+    assert ready_again.json()["enrollment"]["progress"] is None
 
 
 
@@ -1557,3 +1562,92 @@ async def test_a_rejected_sample_cannot_be_put_on_a_device_by_a_later_read(
     reloaded = (await manager.profiles(account_id="voice-account"))[0]
     assert reloaded.evaluation_status == "failed"
     assert reloaded.status != "active"
+
+
+class _TimeoutProvider(ProviderStub):
+    async def create_voice(
+        self,
+        *,
+        target_model: str,
+        prefix: str,
+        sample_url: str,
+    ) -> ProviderVoice:
+        raise RuntimeError("provider timed out")
+
+
+@pytest.mark.asyncio
+async def test_profile_poll_shows_reconciliation_required_after_provider_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    postgres_voice: PostgresVoiceFactory,
+) -> None:
+    """The list the mini-program polls keeps needs-human distinct from over_budget.
+
+    Without MEMORIA_TEST_POSTGRES_DSN this module is skipped by the root conftest.
+    """
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    signer = VoiceSampleURLSigner(
+        secret="voice-sample-signing-secret-long-enough",
+        public_base_url="https://control.test",
+        ttl_s=300,
+    )
+    app.state.voice_sample_signer = signer
+    manager = postgres_voice(
+        app,
+        provider=_TimeoutProvider(),
+        sample_url_factory=signer.url,
+    )
+    app.state.voice_profile_manager = manager
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = (
+            await client.post(
+                "/v1/auth/register",
+                json={"username": "reconcile-owner", "password": "safe-password"},
+            )
+        ).json()
+        headers = await _verified_adult_headers(
+            app,
+            client,
+            user_id=identity["user_id"],
+            username="reconcile-owner",
+        )
+        await client.post(
+            "/v1/voices/consent",
+            headers=headers,
+            json={"accepted": True, "policy_version": "voice-clone-v1"},
+        )
+        enrolled = await client.post(
+            "/v1/voices/enrollments",
+            headers=headers,
+            json={
+                "audio_base64": base64.b64encode(_voice_sample()).decode(),
+                "media_type": "audio/wav",
+                "duration_ms": 12_000,
+                "sample_rate": 24_000,
+                "ready_for_device": True,
+            },
+        )
+        profile_id = enrolled.json()["profile_id"]
+        # The upload returns before the provider call. If the response's
+        # background task already recorded the timeout, a second completion
+        # refuses to reissue it. Either way the poll must show needs-human.
+        with pytest.raises((RuntimeError, VoiceEnrollmentReconciliationRequiredError)):
+            await manager.complete_enrollment(
+                account_id=identity["user_id"],
+                profile_id=profile_id,
+            )
+        listing = await client.get("/v1/voices/profiles", headers=headers)
+
+    assert enrolled.status_code == 201
+    assert enrolled.json()["enrollment"]["state"] == "queued"
+    body = listing.json()["items"][0]
+    assert listing.status_code == 200
+    assert body["status"] == "enrolling"
+    assert body["enrollment"]["state"] == "reconciliation_required"
+    assert body["enrollment"]["operation_state"] == "reconciliation_required"
+    assert body["enrollment"]["stage_label"] == "需要人工核对这次声音"
+    assert body["enrollment"]["progress"] is None
+    assert body["enrollment"]["over_budget"] is False
+    assert body["enrollment"]["retryable"] is False

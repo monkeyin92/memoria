@@ -7,6 +7,7 @@ import json
 import secrets
 import uuid
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, cast
@@ -370,11 +371,22 @@ class PostgresVoiceProfileManager:
                 last_error=type(exc).__name__,
             )
             raise
-        await self._persist_provider_voice(
-            account_id=account_id,
-            operation_id=operation["operation_id"],
-            voice=provider_voice,
-        )
+        try:
+            await self._persist_provider_voice(
+                account_id=account_id,
+                operation_id=operation["operation_id"],
+                voice=provider_voice,
+            )
+        except Exception as exc:
+            # The provider may already have created the voice. Do not reissue it;
+            # leave a needs-human state the profile poll can show.
+            await self._set_operation_state(
+                account_id,
+                operation["operation_id"],
+                state="reconciliation_required",
+                last_error=type(exc).__name__,
+            )
+            raise
         operation = await self._operation_for_profile(account_id, profile_id)
         assert operation is not None, "a submitted enrollment always has an operation"
         return await self._finalize_enrollment(operation)
@@ -1183,8 +1195,17 @@ class PostgresVoiceProfileManager:
             await self._scope(connection, account_id)
             rows = await connection.fetch(
                 """
-                SELECT * FROM voice_profiles
-                WHERE account_id = $1 ORDER BY version_number DESC
+                SELECT profile.*, (
+                    SELECT operation.state
+                    FROM voice_enrollment_operations AS operation
+                    WHERE operation.profile_id = profile.profile_id
+                      AND operation.account_id = profile.account_id
+                    ORDER BY operation.updated_at DESC
+                    LIMIT 1
+                ) AS enrollment_state
+                FROM voice_profiles AS profile
+                WHERE profile.account_id = $1
+                ORDER BY profile.version_number DESC
                 """,
                 account_id,
             )
@@ -1607,7 +1628,12 @@ class PostgresVoiceProfileManager:
             str(operation["account_id"]),
             operation["profile_id"],
         )
-        return self._profile(row) if row is not None else self._synthetic_profile(operation)
+        if row is None:
+            return self._synthetic_profile(operation)
+        return replace(
+            self._profile(row),
+            enrollment_state=cast(VoiceEnrollmentOperationState, operation["state"]),
+        )
 
     @staticmethod
     def _synthetic_profile(operation: asyncpg.Record) -> VoiceProfile:
@@ -1631,6 +1657,7 @@ class PostgresVoiceProfileManager:
             provider_expires_at=cast(datetime | None, operation["provider_expires_at"]),
             created_at=cast(datetime, operation["created_at"]),
             revoked_at=(cast(datetime, operation["updated_at"]) if state == "revoked" else None),
+            enrollment_state=cast(VoiceEnrollmentOperationState, state),
         )
 
     @staticmethod
@@ -1691,6 +1718,11 @@ class PostgresVoiceProfileManager:
             created_at=cast(datetime, row["created_at"]),
             activated_at=cast(datetime | None, row["activated_at"]),
             revoked_at=cast(datetime | None, row["revoked_at"]),
+            enrollment_state=(
+                cast(VoiceEnrollmentOperationState, row["enrollment_state"])
+                if "enrollment_state" in row.keys() and row["enrollment_state"] is not None
+                else None
+            ),
         )
 
     @staticmethod

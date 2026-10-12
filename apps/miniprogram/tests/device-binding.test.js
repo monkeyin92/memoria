@@ -1006,6 +1006,11 @@ test("config action gate allows only a complete policy allow", async () => {
       data_classification: "biometric",
       safety_state: "normal",
     },
+    voice_sample_revoke: {
+      capability: "voice_clone_use",
+      data_classification: "biometric",
+      safety_state: "normal",
+    },
   };
   await withGateClient({}, async () => {
     const requests = installPolicyHttp((options) => {
@@ -1028,7 +1033,7 @@ test("config action gate allows only a complete policy allow", async () => {
       assert.deepEqual(gate.obligations, ["WRITE_POLICY_RECEIPT"]);
     }
     const decisions = requests.filter((item) => item.url.endsWith("/v1/policy/decisions"));
-    assert.equal(decisions.length, 2);
+    assert.equal(decisions.length, 3);
     assert.deepEqual(
       decisions.map((item) => item.data),
       Object.values(expected).map((spec) => ({

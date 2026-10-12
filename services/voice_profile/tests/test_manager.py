@@ -32,6 +32,7 @@ from services.voice_profile.domain import (
     objective_voice_quality_passes,
     subjective_voice_evaluation_passes,
 )
+from services.voice_profile.enrollment_progress import enrollment_progress
 from services.voice_profile.postgres_manager import PostgresVoiceProfileManager
 from services.voice_profile.testing_audio import voice_sample_wav
 
@@ -795,6 +796,7 @@ async def test_ambiguous_provider_creation_is_enumerable_and_never_reissued(
     assert pending[0].enrollment_key == "stable-enrollment-ambiguous"
     assert pending[0].provider_prefix == provider.created[0]["prefix"]
     assert profiles[0].status == "enrolling"
+    assert profiles[0].enrollment_state == "reconciliation_required"
 
     recovered = ProviderVoice(
         voice_id=f"cosyvoice-v3.5-flash-clone-{pending[0].provider_prefix}",
@@ -857,3 +859,92 @@ async def test_ambiguous_sample_upload_is_enumerable_and_blocks_false_deletion(
 
     assert candidate.status == "candidate"
     assert len(provider.created) == 1
+
+
+class _FailingCreateProvider(ProviderStub):
+    async def create_voice(
+        self,
+        *,
+        target_model: str,
+        prefix: str,
+        sample_url: str,
+    ) -> ProviderVoice:
+        self.created.append(
+            {"target_model": target_model, "prefix": prefix, "sample_url": sample_url}
+        )
+        raise RuntimeError("provider timed out")
+
+
+@pytest.mark.asyncio
+async def test_stub_provider_upload_train_and_reconciliation_are_visible(
+    voice: VoiceHarness,
+) -> None:
+    """Offline provider: upload and train succeed, a failed train needs a person.
+
+    Skipped without MEMORIA_TEST_POSTGRES_DSN (the voice harness is PostgreSQL).
+    """
+    provider = ProviderStub()
+    manager = voice.build(
+        object_store=_local_store(voice.tmp_path / "chain-objects"),
+        provider=provider,
+    )
+    await manager.grant_consent(account_id="voice-account", policy_version="voice-clone-v1")
+    request = VoiceEnrollmentRequest(
+        account_id="voice-account",
+        audio=voice_sample_wav(12_400),
+        media_type="audio/wav",
+        duration_ms=12_000,
+        sample_rate=24_000,
+        enrollment_key="stub-chain",
+        require_sample_validation=True,
+    )
+    uploaded = await manager.accept_enrollment(request)
+    uploaded_view = enrollment_progress(uploaded)
+    assert uploaded.status == "enrolling"
+    assert uploaded.enrollment_state == "sample_uploaded"
+    assert uploaded_view.to_dict()["state"] == "queued"
+
+    trained = await manager.complete_enrollment(
+        account_id="voice-account",
+        profile_id=uploaded.profile_id,
+    )
+    trained_view = enrollment_progress(trained).to_dict()
+    assert trained.status == "candidate"
+    assert trained_view["state"] == "activating"
+    assert trained_view["operation_state"] == "completed"
+    assert len(provider.created) == 1
+
+    failing = _FailingCreateProvider()
+    failed_manager = voice.build(
+        object_store=_local_store(voice.tmp_path / "chain-fail-objects"),
+        provider=failing,
+    )
+    await failed_manager.grant_consent(
+        account_id="voice-account-2",
+        policy_version="voice-clone-v1",
+    )
+    failed_request = VoiceEnrollmentRequest(
+        account_id="voice-account-2",
+        audio=voice_sample_wav(12_600),
+        media_type="audio/wav",
+        duration_ms=12_000,
+        sample_rate=24_000,
+        enrollment_key="stub-chain-fail",
+        require_sample_validation=True,
+    )
+    accepted = await failed_manager.accept_enrollment(failed_request)
+    with pytest.raises(RuntimeError, match="provider timed out"):
+        await failed_manager.complete_enrollment(
+            account_id="voice-account-2",
+            profile_id=accepted.profile_id,
+        )
+    visible = (await failed_manager.profiles(account_id="voice-account-2"))[0]
+    payload = enrollment_progress(visible).to_dict()
+    assert visible.status == "enrolling"
+    assert visible.enrollment_state == "reconciliation_required"
+    assert payload["state"] == "reconciliation_required"
+    assert payload["operation_state"] == "reconciliation_required"
+    assert payload["progress"] is None
+    assert payload["over_budget"] is False
+    assert payload["stage"] != "failed"
+    assert len(failing.created) == 1

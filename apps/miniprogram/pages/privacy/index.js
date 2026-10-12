@@ -6,6 +6,10 @@ const {
   configActionGate,
   CONFIG_GATE_PENDING_MESSAGE,
 } = require("../../utils/device-binding");
+const {
+  shouldRevokeVoiceConsent,
+  voiceSamplesToForget,
+} = require("../../utils/voice-enrollment-state");
 
 Page({
   data: {
@@ -17,6 +21,9 @@ Page({
     consent: null,
     memoryOn: true,
     voiceOn: true,
+    voiceConfigOpen: false,
+    voiceConfigNote: CONFIG_GATE_PENDING_MESSAGE,
+    voiceActing: false,
   },
 
   onLoad() {
@@ -34,6 +41,7 @@ Page({
       }))
     ) return;
     await this.refreshConfigGate();
+    await this.refreshVoiceGate();
     this.loadConsent();
   },
 
@@ -52,6 +60,9 @@ Page({
       acting: false,
       error: "",
       consent: null,
+      voiceConfigOpen: false,
+      voiceConfigNote: CONFIG_GATE_PENDING_MESSAGE,
+      voiceActing: false,
     });
   },
 
@@ -60,6 +71,15 @@ Page({
     this.setData({
       configOpen: seam.allowed,
       configNote: seam.allowed ? "" : seam.message,
+    });
+    return seam;
+  },
+
+  async refreshVoiceGate() {
+    const seam = await configActionGate("voice_sample_revoke");
+    this.setData({
+      voiceConfigOpen: seam.allowed,
+      voiceConfigNote: seam.allowed ? "" : seam.message,
     });
     return seam;
   },
@@ -144,13 +164,67 @@ Page({
     });
   },
 
-  revokeVoiceTip() {
-    wx.showModal({
-      title: "撤回声音样本授权",
-      content: "撤回后将删除已保存的声音样本，删除范围与完成时间会以书面回执告知。",
-      showCancel: false,
-      confirmText: "知道了",
+  async revokeVoiceTip() {
+    if (!api.hasAuthenticatedSession()) {
+      this.setData({
+        voiceConfigOpen: false,
+        voiceConfigNote: "请先登录，再撤回声音样本。",
+        error: "请先登录，再撤回声音样本。",
+      });
+      return;
+    }
+    const seam = await this.refreshVoiceGate();
+    if (!seam.allowed) {
+      this.setData({ error: seam.message });
+      return;
+    }
+    const confirmed = await new Promise((resolve) => {
+      wx.showModal({
+        title: "撤回声音样本授权",
+        content: "撤回会删除已保存的声音样本和克隆音色。删除没完成时会留在这一页，不会显示成已经删掉。",
+        confirmColor: "#ba4255",
+        success: (result) => resolve(!!result.confirm),
+      });
     });
+    if (!confirmed) return;
+    if (!api.hasAuthenticatedSession()) {
+      this.setData({
+        voiceConfigOpen: false,
+        error: "请先登录，再撤回声音样本。",
+      });
+      return;
+    }
+    const again = await this.refreshVoiceGate();
+    if (!again.allowed) {
+      this.setData({ error: again.message });
+      return;
+    }
+    const authEpoch = api.currentAuthEpoch();
+    this.setData({ voiceActing: true, error: "" });
+    try {
+      const listing = await api.listVoiceProfiles();
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
+      const targets = voiceSamplesToForget(listing?.items);
+      for (const item of targets) {
+        await api.revokeVoiceProfile(item.profile_id);
+        if (!api.isAuthEpochCurrent(authEpoch)) return;
+      }
+      if (shouldRevokeVoiceConsent(listing, targets)) {
+        await api.revokeVoiceCloneConsent();
+        if (!api.isAuthEpochCurrent(authEpoch)) return;
+      }
+      this.setData({ voiceOn: false });
+      if (targets.length === 0 && !shouldRevokeVoiceConsent(listing, targets)) {
+        wx.showToast({ title: "没有可撤回的声音样本", icon: "none" });
+        return;
+      }
+      wx.showToast({ title: "声音样本已撤回", icon: "success" });
+    } catch (error) {
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
+      this.setData({ error: error?.message || "声音样本撤回未完成，请稍后重试。" });
+    } finally {
+      if (api.isAuthEpochCurrent(authEpoch)) this.setData({ voiceActing: false });
+    }
   },
 
   async revoke() {

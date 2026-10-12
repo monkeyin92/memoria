@@ -41,6 +41,17 @@ _STAGE_LABEL: dict[EnrollmentStage, str] = {
     "done": "自定义声音已就绪",
     "failed": "这次没生成成功",
 }
+_RECONCILIATION_LABEL = "需要人工核对这次声音"
+EnrollmentClientState = Literal[
+    "queued",
+    "cloning",
+    "activating",
+    "ready",
+    "failed",
+    "revoked",
+    "over_budget",
+    "reconciliation_required",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +69,11 @@ class EnrollmentProgress:
     retryable: bool
     error_code: str | None = None
     validation: dict[str, object] | None = None
+    #: Raw ``voice_enrollment_operations.state``, when the profile was loaded
+    #: with that row. Distinct from ``over_budget``, which is only the clock.
+    operation_state: str | None = None
+    #: One client state. ``reconciliation_required`` wins over ``over_budget``.
+    state: EnrollmentClientState = "queued"
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -72,6 +88,8 @@ class EnrollmentProgress:
             "retryable": self.retryable,
             "error_code": self.error_code,
             "validation": self.validation,
+            "operation_state": self.operation_state,
+            "state": self.state,
         }
 
 
@@ -87,6 +105,31 @@ def _stage_for(profile: VoiceProfile) -> EnrollmentStage:
     return "failed"
 
 
+def _client_state(
+    profile: VoiceProfile,
+    *,
+    stage: EnrollmentStage,
+    over_budget: bool,
+) -> EnrollmentClientState:
+    """One state for the mini-program. Needs-human beats the slow-clock state.
+
+    ``reconciliation_required`` is recoverable and is not ``failed``. The
+    profile status stays ``enrolling``. ``over_budget`` stays a separate
+    boolean on the payload so a slow clone is not reported as needing a person.
+    """
+    if profile.enrollment_state == "reconciliation_required":
+        return "reconciliation_required"
+    if stage == "done":
+        return "ready"
+    if profile.status == "revoked":
+        return "revoked"
+    if stage == "failed":
+        return "failed"
+    if over_budget:
+        return "over_budget"
+    return stage
+
+
 def enrollment_progress(
     profile: VoiceProfile,
     *,
@@ -99,17 +142,26 @@ def enrollment_progress(
         0, int(((now or datetime.now(UTC)) - reference).total_seconds() * 1000)
     )
     terminal = stage in {"done", "failed"}
+    needs_human = profile.enrollment_state == "reconciliation_required"
+    # The clock is independent of reconciliation: a needs-human row can also
+    # be past the promised minute, and the client state still says so via
+    # ``state`` rather than by clearing this flag.
+    over_budget = not terminal and elapsed_ms > PROMISED_TOTAL_MS
     return EnrollmentProgress(
         stage=stage,
         stage_index=_STAGE_ORDER.index(stage) + 1 if stage in _STAGE_ORDER else len(_STAGE_ORDER),
         stage_count=len(_STAGE_ORDER),
-        stage_label=_STAGE_LABEL[stage],
-        progress=None if terminal else _STAGE_PROGRESS[stage],
+        stage_label=_RECONCILIATION_LABEL if needs_human else _STAGE_LABEL[stage],
+        # No invented percentage once a person has to reconcile the provider.
+        progress=None if terminal or needs_human else _STAGE_PROGRESS[stage],
         elapsed_ms=elapsed_ms,
         expected_total_ms=PROMISED_TOTAL_MS,
-        over_budget=not terminal and elapsed_ms > PROMISED_TOTAL_MS,
+        over_budget=over_budget,
         # Only a failure the user can act on by trying again is retryable;
         # ``revoked`` and ``failed`` differ in cause, not in user action.
+        # Reconciliation is not a retry: reissuing the provider call is unsafe.
         retryable=stage == "failed" and profile.status == "failed",
         error_code=None if stage != "failed" else profile.status,
+        operation_state=profile.enrollment_state,
+        state=_client_state(profile, stage=stage, over_budget=over_budget),
     )

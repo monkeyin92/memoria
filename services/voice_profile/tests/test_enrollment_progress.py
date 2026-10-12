@@ -122,6 +122,84 @@ def test_progress_survives_a_reload_because_it_is_derived_not_tracked() -> None:
     assert later.elapsed_ms == first.elapsed_ms + 10_000
 
 
+def test_stub_chain_keeps_reconciliation_distinct_from_over_budget() -> None:
+    """Upload, train, and assign are different states from a needs-human stop.
+
+    The provider here is only the profile snapshots it would leave behind.
+    ``reconciliation_required`` stays recoverable (status stays enrolling) and
+    does not borrow the slow-clock copy, even after the promised minute.
+    """
+    uploaded = enrollment_progress(_profile(status="enrolling"), now=_NOW).to_dict()
+    assert uploaded["state"] == "queued"
+    assert uploaded["operation_state"] is None
+    assert uploaded["progress"] == 0.0
+    assert uploaded["over_budget"] is False
+
+    training = enrollment_progress(
+        _profile(
+            status="enrolling",
+            provider_voice_id="voice-1",
+            enrollment_state="provider_submitted",
+        ),
+        now=_NOW,
+    ).to_dict()
+    assert training["state"] == "cloning"
+    assert training["stage"] == "cloning"
+    assert training["operation_state"] == "provider_submitted"
+    assert training["progress"] == 0.15
+
+    assigned = enrollment_progress(
+        _profile(
+            status="candidate",
+            provider_voice_id="voice-1",
+            enrollment_state="completed",
+        ),
+        now=_NOW,
+    ).to_dict()
+    assert assigned["state"] == "activating"
+    assert assigned["stage"] == "activating"
+
+    ready = enrollment_progress(
+        _profile(
+            status="active",
+            provider_voice_id="voice-1",
+            enrollment_state="completed",
+        ),
+        now=_NOW,
+    ).to_dict()
+    assert ready["state"] == "ready"
+    assert ready["stage"] == "done"
+    assert ready["progress"] is None
+    assert ready["over_budget"] is False
+
+    slow = enrollment_progress(
+        _profile(status="enrolling", created_seconds_ago=90),
+        now=_NOW,
+    ).to_dict()
+    assert slow["state"] == "over_budget"
+    assert slow["over_budget"] is True
+    assert slow["progress"] == 0.0
+    assert slow["operation_state"] is None
+
+    needs_human = enrollment_progress(
+        _profile(
+            status="enrolling",
+            created_seconds_ago=90,
+            enrollment_state="reconciliation_required",
+        ),
+        now=_NOW,
+    ).to_dict()
+    assert needs_human["state"] == "reconciliation_required"
+    assert needs_human["operation_state"] == "reconciliation_required"
+    assert needs_human["stage"] == "queued"
+    assert needs_human["stage_label"] == "需要人工核对这次声音"
+    assert needs_human["progress"] is None
+    assert needs_human["retryable"] is False
+    # The clock flag stays visible and is not the client state.
+    assert needs_human["over_budget"] is True
+    assert needs_human["state"] != slow["state"]
+
+
 def test_every_rejection_reason_has_actionable_copy() -> None:
     reasons = (
         "audio_decode_failed",
