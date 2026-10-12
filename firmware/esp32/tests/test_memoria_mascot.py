@@ -310,6 +310,142 @@ def test_the_ring_glow_follows_the_voice_it_hears_and_the_voice_it_speaks(harnes
         assert np.abs(quiet[at] - nothing[at]).sum(axis=-1).mean() <= 1.5, phase
 
 
+def _rgb565(rgb: int) -> int:
+    """The scene's To565: the same packing DrawOverlays uses for fleck colours."""
+    return ((rgb >> 8) & 0xF800) | ((rgb >> 5) & 0x07E0) | ((rgb >> 3) & 0x001F)
+
+
+# Flat colours from memoria_mascot_scene.cc (kDotRgb / kHeartRgb / kSparkRgb).
+DOT_565 = _rgb565(0x5CE1FF)
+HEART_565 = _rgb565(0xFF2D6A)
+SPARK_565 = _rgb565(0xE6FF55)
+
+
+def _raw_frames(harness, timeline, name: str, **kwargs):
+    preview, work, binary = harness
+    np = pytest.importorskip("numpy")
+    raw = work / name
+    stats = preview.run(binary, work, 25, str(raw), timeline=timeline, **kwargs)
+    frames = np.fromfile(raw, dtype="<u2").reshape(-1, 360, 360)
+    return stats, frames
+
+
+def _ridge_radius(frame) -> int:
+    """Integer radius where the rim's brightness rises most sharply above its neighbourhood.
+
+    The glow's own weight climbs smoothly toward the bezel; a level-driven ripple is a bump that
+    moves. The radius of that bump is what this returns.
+    """
+    np = pytest.importorskip("numpy")
+    yy, xx = np.mgrid[0:360, 0:360]
+    radius = np.sqrt((xx + 0.5 - 180) ** 2 + (yy + 0.5 - 180) ** 2)
+    channels = np.stack([(frame >> 11) & 31, (frame >> 5) & 63, frame & 31], axis=-1)
+    energy = channels.sum(axis=-1)
+    radii = list(range(150, 179))
+    profile = []
+    for rad in radii:
+        mask = (radius >= rad) & (radius < rad + 1)
+        profile.append(float(energy[mask].mean()) if mask.any() else 0.0)
+    profile = np.asarray(profile)
+    smooth = np.convolve(profile, np.ones(5) / 5.0, mode="same")
+    residual = profile - smooth
+    residual[:3] = -1e9
+    residual[-3:] = -1e9
+    return radii[int(np.argmax(residual))]
+
+
+def test_the_listening_ring_diffuses_farther_as_the_glow_rises(harness) -> None:
+    """TODOLIST M-3: the listening glow already brightens with the level. The ripple on it has to
+    travel outward as that level rises, and an incremental redraw has to match a full one.
+    """
+    stats, frames = _raw_frames(
+        harness,
+        [(0, "phase", "listening"), (2400, "end", "")],
+        "ripple.raw",
+    )
+    assert stats["mismatches"] == 0
+    # 360 ms is the crest of the 1.4 s listening pulse, 1040 ms the trough (memoria_mascot_scene.cc).
+    crest = _ridge_radius(frames[360 // 40])
+    trough = _ridge_radius(frames[1040 // 40])
+    assert crest - trough >= 2, (crest, trough)
+
+
+def test_thinking_dots_rise_one_after_another(harness) -> None:
+    stats, frames = _raw_frames(
+        harness,
+        [(0, "phase", "thinking"), (2400, "end", "")],
+        "dots.raw",
+    )
+    assert stats["mismatches"] == 0
+    # 200 ms and 520 ms are both inside the leftmost dot's opaque rise (it fades after 600 ms,
+    # and a faded glyph is blended, so it is no longer the flat dot colour).
+    early = frames[200 // 40] == DOT_565
+    later = frames[520 // 40] == DOT_565
+    assert int(early.sum()) >= 10
+    assert int(later.sum()) >= 10
+    # The three dots are staggered by a third of the cycle, so the set of lit pixels moves, and the
+    # leftmost dot — the same glyph — is higher on the screen (smaller y) at 700 ms than at 400.
+    assert not (early == later).all()
+    np = pytest.importorskip("numpy")
+
+    def leftmost_dot_y(mask) -> float:
+        left = int(np.where(mask.any(axis=0))[0].min())
+        ys = np.where(mask[:, left : left + 6].any(axis=1))[0]
+        return float(ys.mean())
+
+    assert leftmost_dot_y(later) < leftmost_dot_y(early)
+
+
+def test_a_pat_and_loving_lift_hearts(harness) -> None:
+    patted, pat_frames = _raw_frames(
+        harness,
+        [(0, "phase", "idle"), (400, "pat", ""), (3200, "end", "")],
+        "hearts-pat.raw",
+    )
+    loved, love_frames = _raw_frames(
+        harness,
+        [(0, "phase", "idle"), (200, "mood", "loving"), (2400, "end", "")],
+        "hearts-love.raw",
+    )
+    assert patted["mismatches"] == 0 and loved["mismatches"] == 0
+    # Mid-flight the glyphs are opaque (alpha 255), so the heart colour survives the blend.
+    assert int((pat_frames[800 // 40] == HEART_565).sum()) >= 40
+    assert int((pat_frames[2800 // 40] == HEART_565).sum()) == 0  # the flight is over
+    assert int((love_frames[600 // 40] == HEART_565).sum()) >= 40
+    # Loving keeps looping; a later frame in the same mood still has hearts.
+    assert int((love_frames[1800 // 40] == HEART_565).sum()) >= 40
+
+
+def test_idle_sparkles_come_and_go(harness) -> None:
+    stats, frames = _raw_frames(
+        harness,
+        [(0, "phase", "idle"), (6400, "end", "")],
+        "spark.raw",
+    )
+    assert stats["mismatches"] == 0
+    # kSparklePeriodMs = 2800, on for the first 420 ms, and every third slot (slot % 3 == 2) is dark.
+    assert int((frames[200 // 40] == SPARK_565).sum()) >= 5
+    assert int((frames[800 // 40] == SPARK_565).sum()) == 0
+    assert int((frames[(2 * 2800 + 200) // 40] == SPARK_565).sum()) == 0
+
+
+def test_overlays_stay_within_six_dirty_rectangles(harness, preview) -> None:
+    """kMaxDirty is 6. Overflow collapses a render to one full-screen rect.
+
+    The tour's boot animation already repaints the whole panel while the intro overlay is moving,
+    so the steady liveliness day — no intro, no companion switch — is the check that flecks did
+    not start doing that too.
+    """
+    tour = _play(harness, preview.TIMELINE)
+    assert tour["mismatches"] == 0
+    assert max(frame[1] for frame in tour["frames"]) <= 6
+    steady = _play(harness, preview.LIVELINESS_DAY)
+    assert steady["mismatches"] == 0
+    assert max(frame[1] for frame in steady["frames"]) <= 6
+    full = sum(1 for frame in steady["frames"] if frame[1] == 1 and frame[2] >= 360 * 360)
+    assert full <= 2, full
+
+
 def test_pat_hops_happy_and_shake_goes_dizzy(harness) -> None:
     stats = _play(
         harness, [(0, "phase", "idle"), (1000, "pat", ""), (4000, "shake", ""), (8000, "end", "")]

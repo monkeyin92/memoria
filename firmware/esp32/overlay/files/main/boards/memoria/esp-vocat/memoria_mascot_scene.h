@@ -14,6 +14,9 @@ namespace memoria {
 // blinking, lip flaps that follow the reply's audio, mood changes with a
 // squash-and-pop, hops when patted, idle moments, falling asleep) and renders
 // it into an RGB565 framebuffer, reporting only the rectangles that changed.
+// Procedural overlays (level-driven ripples on the state ring, rising thinking
+// dots, hearts, occasional sparkles) are drawn in that same pass, not baked
+// into the pose art.
 //
 // Text (status, subtitles, the binding QR card) stays in LVGL on top of the
 // framebuffer. While the device is still getting online the scene can leave
@@ -70,7 +73,11 @@ constexpr uint32_t kProfileEvery = 8;
 class MascotScene {
 public:
     static constexpr int kSize = 360;
+    // One sprite box, up to four ring strips, and one overlay rect. Render folds
+    // anything past this into a rect it already has instead of repainting the panel.
     static constexpr int kMaxDirty = 6;
+    // Code-drawn flecks (thinking dots, hearts, sparkles) carried on a placement.
+    static constexpr int kOverlayCount = 4;
     // Screen row the mascot's feet stand on.
     static constexpr int kFootY = 298;
     // Captioned layout: the mascot shrinks onto a higher ground row and the
@@ -173,6 +180,18 @@ private:
         int ring_mode = 0;  // 0 none, 1 glow, 2 comet
         int ring_level = 0;  // glow: 0..255 intensity; comet: head angle 0..255
         int intro_step = -1;  // quantised intro overlay state, -1 when done
+        // Procedural flecks for this frame (TODOLIST M-3). kind: 0 off, 1 thinking
+        // dot, 2 heart, 3 sparkle. (x, y) is the glyph's top-left in screen pixels.
+        struct Fleck {
+            int16_t x = 0;
+            int16_t y = 0;
+            uint8_t kind = 0;
+            uint8_t alpha = 0;
+            bool operator==(const Fleck& o) const {
+                return x == o.x && y == o.y && kind == o.kind && alpha == o.alpha;
+            }
+        };
+        Fleck fleck[kOverlayCount] = {};
     };
 
     int RenderImpl(uint32_t now_ms, SceneRect* dirty, int max_dirty);
@@ -189,18 +208,23 @@ private:
     int HeldGlow(int level, uint32_t now_ms);
     void BuildBackground();
     // skip_hole: a ring-only redraw leaves the middle of the screen (inside the ring) alone.
-    // span: recompose only the columns the sprite and shadow covered in the last frame or cover now
-    // (everything else in the rectangle is already right); never with the boot animation.
+    // span: recompose only the columns the sprite, its shadow and the flecks covered in the last frame
+    // or cover now (everything else in the rectangle is already right); never with the boot animation.
     // Returns the bounding box of the pixels actually written (empty when the call wrote nothing), which
     // is never wider than the requested rectangle: Render hands this to the display as the invalidate
     // area so LVGL re-blits what the scene composed and nothing more.
     SceneRect RedrawRect(const SceneRect& rect, const Placement& p, uint32_t now_ms,
                          bool skip_hole = false, bool span = false);
-    // The columns [*lo, *hi) of screen row y that the sprite or its shadow can change under p.
+    // The columns [*lo, *hi) of screen row y that the sprite, its shadow or a fleck can change under p.
     bool SpriteTouch(const Placement& p, int y, int* lo, int* hi) const;
     void DrawSprite(const SceneRect& clip, const Placement& p);
     void DrawShadow(const SceneRect& clip, const Placement& p);
+    void DrawOverlays(const SceneRect& clip, const Placement& p);
     void DrawRing(const SceneRect& clip, const Placement& p);
+    // Fills p->fleck from the phase, the mood and the pat timer. Scale is the
+    // caption layout's shrink (1 full size, about 0.64 captioned).
+    void PlaceOverlays(Placement* p, uint32_t now_ms, float scale) const;
+    SceneRect FleckBounds(const Placement& p) const;
     void DrawIntro(const SceneRect& clip, uint32_t now_ms);
     void PrepareIntro(uint32_t now_ms);
     void PrepareComet();
@@ -269,6 +293,10 @@ private:
     int glow_level_ = 0;
     uint32_t glow_ms_ = 0;
     bool glow_valid_ = false;
+    // Hearts from Pat() and from a loving mood (TODOLIST M-3). The mood keeps
+    // them looping; a pat plays one flight out from heart_spawn_ms_.
+    uint32_t heart_spawn_ms_ = 0;
+    uint32_t hearts_until_ms_ = 0;
     uint32_t composed_px_ = 0;
     MascotClockFn clock_ = nullptr;
     RenderProfile profile_;
