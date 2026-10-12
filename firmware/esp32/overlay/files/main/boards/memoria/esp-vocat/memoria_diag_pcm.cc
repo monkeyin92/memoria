@@ -56,7 +56,7 @@ void RecordPlay(const std::int16_t* pcm, std::size_t samples, int sample_rate, s
 void Arm() {
     const std::uint32_t id = NowMs();
     // The arena is taken on the first arm and kept until reboot: a bench image that never records costs nothing.
-    if (!g_recorder.attached() && g_recorder.state() == State::kIdle) {
+    if (!g_recorder.attached()) {
         if (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) >= kArenaBytes + kPsramReserveBytes) {
             g_recorder.Attach(static_cast<std::uint8_t*>(heap_caps_malloc(kArenaBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)));
         }
