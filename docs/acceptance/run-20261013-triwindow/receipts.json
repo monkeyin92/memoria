@@ -1,0 +1,82 @@
+{
+  "run": "run-20261013-triwindow",
+  "date": "2026-10-13",
+  "device_mac": "90:e5:b1:d7:83:2c",
+  "port": "/dev/cu.usbmodem101",
+  "firmware": {
+    "bench": true,
+    "MEMORIA_BENCH_BUILD": 1,
+    "MEMORIA_FIRMWARE_BUILD": 24,
+    "slot": "ota_0"
+  },
+  "mac_audio": {
+    "test_volume": 50,
+    "test_muted": false,
+    "restore_volume": 19,
+    "restore_muted": true
+  },
+  "stimuli": {
+    "story": "outputs/voice-bank-stop-control-a-b/story-stop-a.wav",
+    "stop": "outputs/voice-bank-stop-control-a-b/story-stop-a-stop.wav",
+    "stop_text": "别说了。"
+  },
+  "local_artifacts": {
+    "serial_log": "outputs/serial/robot-20261013-triwindow.log",
+    "capture_dir": "outputs/acceptance/run-20261013-triwindow/",
+    "note": "gitignored; WAVs and lane-analysis.json live here"
+  },
+  "windows": [
+    {
+      "id": "01-play-only",
+      "journal_id": "0001cad7",
+      "intact": true,
+      "device_state_at_arm": "speaking",
+      "lanes_dbfs": {
+        "play_pre_i2s": -20.66,
+        "pre_afe_mic": -32.2,
+        "pre_afe_ref": -78.28,
+        "post_afe": -37.46
+      },
+      "erle_mic_to_post_db": 5.21,
+      "stop_ncc_pre_afe_mic": { "peak": -0.217, "lag_s": 0.124 },
+      "stop_ncc_post_afe": { "peak": 0.192, "lag_s": 0.229 }
+    },
+    {
+      "id": "02-near-end-only",
+      "journal_id": "00022bb9",
+      "intact": true,
+      "device_state_at_arm": "listening",
+      "lanes_dbfs": {
+        "play_pre_i2s": null,
+        "pre_afe_mic": -46.48,
+        "pre_afe_ref": -90.37,
+        "post_afe": -48.42
+      },
+      "stop_ncc_pre_afe_mic": { "peak": -0.563, "lag_s": 0.797 },
+      "stop_ncc_post_afe": { "peak": -0.58, "lag_s": 0.903 }
+    },
+    {
+      "id": "03-duplex",
+      "journal_id": "00027a79",
+      "intact": true,
+      "device_state_at_arm": "speaking",
+      "near_end_during_window": true,
+      "lanes_dbfs": {
+        "play_pre_i2s": -19.97,
+        "pre_afe_mic": -32.0,
+        "pre_afe_ref": -77.61,
+        "post_afe": -36.32
+      },
+      "erle_mic_to_post_db": 4.28,
+      "stop_ncc_pre_afe_mic": { "peak": -0.179, "lag_s": 0.796 },
+      "stop_ncc_post_afe": { "peak": 0.207, "lag_s": 0.909 }
+    }
+  ],
+  "diagnosis": {
+    "aec_reference_energy_usable": false,
+    "near_end_reaches_mic_when_quiet": true,
+    "near_end_separable_in_duplex_post_afe": false,
+    "closes_n10": false,
+    "closes_full_duplex_verified": false
+  }
+}
