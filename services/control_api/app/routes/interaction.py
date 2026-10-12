@@ -66,7 +66,10 @@ from services.control_api.app.security import (
     require_authenticated_user,
 )
 from services.control_api.app.subject_persona import subject_persona_capsule
-from services.control_api.app.subject_session_recall import authoritative_recall_context
+from services.control_api.app.subject_session_recall import (
+    authoritative_recall_context,
+    session_epoch_from_runtime_profile,
+)
 from services.digital_self.domain import (
     CognitiveClaimManifestEntry,
     DecisionCaseManifestEntry,
@@ -464,9 +467,7 @@ async def _resolve_subject_memory_scope(
             if isinstance(profile_age_band, str):
                 age_band = profile_age_band
             bound_subject_trusted = runtime_profile_trusts_bound_subject(runtime_profile)
-            profile_epoch = runtime_profile.get("session_epoch")
-            if isinstance(profile_epoch, int) and profile_epoch >= 1:
-                session_epoch = profile_epoch
+            session_epoch = session_epoch_from_runtime_profile(runtime_profile)
     if subject_authority == "account_profile" and subject_id is not None and subject_category is None:
         profile = _store(request).get_subject_profile(user_id=subject_id)
         if profile is not None:
