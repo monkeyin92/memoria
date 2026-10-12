@@ -43,7 +43,9 @@ async def test_fixed_companionship_set_passes_through_real_doors() -> None:
         os.environ.update(saved)
 
     failures = {item.case_id: item.failures for item in report.observations if not item.passed}
-    assert failures == {}
+    assert failures == {}, "\n".join(
+        f"{case_id}: {'; '.join(reasons)}" for case_id, reasons in failures.items()
+    )
     assert report.accuracy == 1.0
     assert report.gate_violations == 0
     # 未成年轮廓上出现私密记忆能力即为越权读取风险；基线必须为 0。

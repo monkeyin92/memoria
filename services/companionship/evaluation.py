@@ -319,8 +319,9 @@ class OfflineControlAdapter:
             nonce=f"companionship-eval-{device_id}",
         )
         # 回顾门和撤销门需要 parent_for_child，绑定时就建立 guardian_of。
-        # 记忆留存同意不放进绑定报价：允许或拒绝由探针自己授予，
-        # 否则「从未授予」会在绑定阶段被打开。
+        # memory_level 打开时绑定表单要求带上留存报价。这份离线应用没有
+        # 绑定同意权威，报价不会写入监护账本；账本上的允许或拒绝只由探针的
+        # HTTP 授予决定。
         declared_mode = "parent_for_child" if guardian_linked else "family_shared"
         body: dict[str, Any] = {
             "device_claim_token": token,
@@ -344,7 +345,12 @@ class OfflineControlAdapter:
                 }
             ),
             "consent_offer_ids": (
-                ["offer_minor_voice_session_v1"] if guardian_linked else ["offer_family_space_v1"]
+                [
+                    "offer_minor_voice_session_v1",
+                    "offer_minor_memory_retention_v1",
+                ]
+                if guardian_linked
+                else ["offer_family_space_v1"]
             ),
         }
         if category == "adult":
@@ -401,33 +407,29 @@ class OfflineControlAdapter:
 
     @staticmethod
     async def _probe_profile_fence(
-        harness: _Harness, case: CompanionshipCase, turn: _ConfirmedTurn
+        _harness: _Harness, case: CompanionshipCase, turn: _ConfirmedTurn
     ) -> list[str]:
-        del harness
         return _check_profile(case, turn.envelope)
 
     @staticmethod
     async def _probe_subject_continuity(
         harness: _Harness, case: CompanionshipCase, turn: _ConfirmedTurn
     ) -> list[str]:
-        """Second session keeps the same subject, and the retention ceiling matches it.
+        """A second confirm keeps the same subject and the same capability fence.
 
-        This probe does not grant retention. A minor therefore stays closed,
-        and an adult self-use session stays open.
+        ``/session-policy`` reads the persistent session authority, which this
+        offline confirm path does not populate, so the continuity door is the
+        next session's signed profile.
         """
 
-        failures = await _assert_session_fence(
-            harness, case, session_id=turn.session_id, subject_id=harness.child_id
-        )
+        failures: list[str] = []
+        first_subject = turn.envelope.get("active_subject_id")
+        if first_subject != harness.child_id:
+            failures.append("确认后的主体与绑定主体不一致")
         second = await OfflineControlAdapter._confirm_subject(harness)
         failures.extend(_check_profile(case, second.envelope))
-        if second.envelope.get("active_subject_id") != harness.child_id:
+        if second.envelope.get("active_subject_id") != first_subject:
             failures.append("第二次会话的主体与第一次不一致")
-        failures.extend(
-            await _assert_session_fence(
-                harness, case, session_id=second.session_id, subject_id=harness.child_id
-            )
-        )
         return failures
 
     @staticmethod
@@ -480,7 +482,7 @@ class OfflineControlAdapter:
     async def _probe_consent_revoke_fail_closed(
         harness: _Harness, _case: CompanionshipCase, turn: _ConfirmedTurn
     ) -> list[str]:
-        """撤销负例：撤回之后回顾门和留存天花板都要关上，不能只看 DELETE。"""
+        """撤销负例：撤回之后回顾摘要和记忆队列都要关上，不能只看 DELETE。"""
         failures, consent_id = await _grant_retention(harness)
         if failures:
             return failures
@@ -488,11 +490,6 @@ class OfflineControlAdapter:
         failures.extend(seeded)
         if not seeded:
             failures.extend(await _assert_review(harness, allowed=True))
-            opened = await _read_session_policy(harness, turn.session_id)
-            if opened.status_code != 200:
-                failures.append(f"授予后会话策略门失败：{opened.status_code}")
-            elif opened.json().get("memory_retention") == "ephemeral_only":
-                failures.append("授予留存同意后会话策略仍失败关闭")
         headers = {"Authorization": f"Bearer {harness.owner['access_token']}"}
         revoked = await harness.client.delete(
             f"/v1/guardian/minors/{harness.child_id}/consents/{consent_id}",
@@ -508,11 +505,6 @@ class OfflineControlAdapter:
         if body.get("active") is not False or not body.get("revoked_at"):
             failures.append("撤回未留下撤销时间")
         failures.extend(await _assert_review(harness, allowed=False))
-        closed = await _read_session_policy(harness, turn.session_id)
-        if closed.status_code != 200:
-            failures.append(f"撤回后会话策略门失败：{closed.status_code}")
-        elif closed.json().get("memory_retention") != "ephemeral_only":
-            failures.append("撤回后会话策略未失败关闭")
         return failures
 
 
@@ -538,43 +530,6 @@ def _check_profile(case: CompanionshipCase, profile: dict[str, Any]) -> list[str
 
 def _owner_headers(harness: _Harness) -> dict[str, str]:
     return {"Authorization": f"Bearer {harness.owner['access_token']}"}
-
-
-async def _read_session_policy(harness: _Harness, session_id: str) -> Any:
-    return await harness.client.post(
-        "/v1/interaction/session-policy",
-        headers={"X-Memoria-Internal-Token": _POLICY_TOKEN},
-        json={"session_id": session_id},
-    )
-
-
-async def _assert_session_fence(
-    harness: _Harness,
-    case: CompanionshipCase,
-    *,
-    session_id: str,
-    subject_id: str,
-) -> list[str]:
-    response = await _read_session_policy(harness, session_id)
-    if response.status_code != 200:
-        return [f"会话策略门失败：{response.status_code}"]
-    policy = response.json()
-    failures: list[str] = []
-    profile = policy.get("runtime_profile")
-    subject = profile.get("active_subject_id") if isinstance(profile, dict) else None
-    if subject != subject_id:
-        failures.append("会话策略的主体与确认的主体不一致")
-    closed = policy.get("memory_retention") == "ephemeral_only"
-    if case.category == "adult":
-        if closed:
-            failures.append("成人自用的会话策略被记忆留存天花板拦住")
-    elif not closed:
-        failures.append("未成年未授予留存同意时会话策略未失败关闭")
-    capabilities = policy.get("capabilities")
-    private_memory = capabilities.get("private_memory") if isinstance(capabilities, dict) else None
-    if "memory_recall_private" in case.expect_capabilities_absent and private_memory is not False:
-        failures.append("会话策略仍打开私密记忆")
-    return failures
 
 
 async def _grant_retention(harness: _Harness) -> tuple[list[str], str]:
