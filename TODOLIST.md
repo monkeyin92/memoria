@@ -381,8 +381,8 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 
 ### [ ] P2-04 协议故障注入与长稳观测
 
-- 现状（`20260926-edge-flush-v1` 起上线，设备行为未验）：关闭前送达排队的 `session.error`；Opus 编解码器加锁；`services/media_edge/device_ws_fault_injection_test.go` 覆盖七种关闭路径加拒绝 hello，三轮 24 条连接后协程、连接表、租约与 Voice Core runtime 全部回收，变异验证与 `-race -count=20` 稳定。
-- 待完成：Python 侧 Bridge / Agent 进程退出与重启的注入；预定义长稳窗口（内存、连接、延迟趋势）；govulncheck / Trivy 扫描当前候选（本机未安装工具）；设备上验证终止性拒绝不再续连。
+- 现状（`20260926-edge-flush-v1` 起上线，设备行为未验）：关闭前送达排队的 `session.error`；Opus 编解码器加锁；`services/media_edge/device_ws_fault_injection_test.go` 覆盖七种关闭路径加拒绝 hello，三轮 24 条连接后协程、连接表、租约与 Voice Core runtime 全部回收，变异验证与 `-race -count=20` 稳定。Python 侧离线进程退出与重启注入见 `services/agent/tests/unit/test_bridge_process_exit_injection.py`。
+- 待完成：预定义长稳窗口（内存、连接、延迟趋势；`scripts/offline_process_trend_sample.py` 最多三次采样，不是窗口）；govulncheck / Trivy 扫描当前候选（本机未安装工具）；设备上验证终止性拒绝不再续连。
 - 完成条件：旧代无副作用，有效输出有交付或可解释终态，回滚可运行；预定义长稳窗口保留内存、连接和延迟趋势。先补测量 / 注入，不顺手改断线产品行为。
 
 ### [ ] P2-05 补齐唤醒计数，再采家庭噪声矩阵
