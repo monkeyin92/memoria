@@ -276,7 +276,8 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 ### [ ] P0-04 当前使用人的监护授权与学生安全闭环
 
 - 产品决定（你 2026-09-26，详见 `docs/compliance/p0-04-minor-safety-decisions.md`「实现状态」）：未成年人不分档、只学表达风格；时长与夜间时段运行时强制（危机除外）；年龄以家长申报为准并可在设备页修改；年龄不明也允许不留存的学习辅导；删「每周小结」勾选项；危机提醒推送给家长（老人一侧 2026-10-04 起暂不适用，代码暂留）；话术加 12356 并待专业审核。D2–D8 已随 `20260926-minor-safety-v1` 上线；未成年人长期记忆的留存口径（有效监护同意、有效 `guardian_of`、绑定 fence、受信设备、使用人本人说话同时满足时只带 30 天 TTL 与禁止训练）随 #152 上线，Agent 归档闸门对孩子也认 profile 的 `memory_recall_private`。设备上都没验。
-- 待完成：微信订阅消息模板开通与 `MEMORIA_GUARDIAN_PUSH_ENABLED`（要你授权）；建后年龄资料与 `app_confirm` UI、guardian consent 决策接口；会话记忆按 subject 键迁入 `services/memory_scope`；两条策略入口的软件矩阵；安全专项设备链验收（身份 / 年龄 → 有效同意 → 准入或受限能力 → 固定话术真实交付 → outbox 绑定 / 幂等 / 家长读回）；话术专业审核。发送 worker / 外部投递暂缓。
+- 小程序监护与隐私配置门已接 `POST /v1/policy/decisions`，服务端未允许或请求失败时保持关闭。
+- 待完成：微信订阅消息模板开通与 `MEMORIA_GUARDIAN_PUSH_ENABLED`（要你授权）；建后年龄资料与 `app_confirm` UI；会话记忆按 subject 键迁入 `services/memory_scope`；两条策略入口的软件矩阵；安全专项设备链验收（身份 / 年龄 → 有效同意 → 准入或受限能力 → 固定话术真实交付 → outbox 绑定 / 幂等 / 家长读回）；话术专业审核。发送 worker / 外部投递暂缓。
 - 软件门：两条策略入口覆盖 under_14 / 14_17 / adult / unknown_safe、权威 unavailable / 过期、profile-session 错绑、同意撤销 / 过期 / 无权限、管理账号更换与切人并发；不能决定时 fail closed，且不得读取其他主体私密记忆。
 - 完成条件：软件矩阵与真实设备链一致，分别记录 `code / wired / enabled / verified`；`student_safety_loop_verified=false` 保持到安全专项设备链通过。入口：`routes/{identity_lifecycle,multi_subject,interaction,guardian}.py`、`services/{identity,session_runtime,guardian}/`。
 

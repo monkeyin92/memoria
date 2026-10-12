@@ -2,7 +2,11 @@ const api = require("../../utils/api");
 const { guardianSummaryErrorState } = require("../../utils/guardian");
 const { requireLogin } = require("../../utils/auth-gate");
 const contracts = require("../../utils/multi-subject-contracts");
-const { capabilityGateMessage, configActionGate } = require("../../utils/device-binding");
+const {
+  capabilityGateMessage,
+  configActionGate,
+  CONFIG_GATE_PENDING_MESSAGE,
+} = require("../../utils/device-binding");
 const guardianPush = require("../../utils/guardian-push");
 
 const CONSENT_DEFINITIONS = Object.freeze([
@@ -71,10 +75,8 @@ function personConsentError(error) {
 
 Page({
   data: {
-    // The config seam is closed until the server consent/policy decision API
-    // exists; show that up front instead of after the form is filled in.
-    configOpen: configActionGate("guardian_manage").allowed,
-    configNote: configActionGate("guardian_manage").message,
+    configOpen: false,
+    configNote: CONFIG_GATE_PENDING_MESSAGE,
     authenticated: false,
     loading: false,
     working: false,
@@ -155,7 +157,18 @@ Page({
       minorDeleteConfirmation: "",
       minorDeleting: false,
       minorDeleteError: "",
+      configOpen: false,
+      configNote: CONFIG_GATE_PENDING_MESSAGE,
     });
+  },
+
+  async refreshConfigGate() {
+    const gate = await configActionGate("guardian_manage");
+    this.setData({
+      configOpen: gate.allowed,
+      configNote: gate.allowed ? "" : gate.message,
+    });
+    return gate;
   },
 
   /* 每次敏感读/写动作都重新走 Runtime Profile 能力门禁（D-07）。 */
@@ -167,16 +180,17 @@ Page({
     return gate.allowed;
   },
 
-  /* 创建关系/修改授权属于配置动作：走独立 config seam（P1 边界）。 */
-  _gateGuardianConfig() {
-    const gate = configActionGate("guardian_manage");
-    this.setData({ error: gate.message });
+  async _gateGuardianConfig() {
+    const gate = await this.refreshConfigGate();
+    if (!gate.allowed) this.setData({ error: gate.message });
     return gate.allowed;
   },
 
   async refresh() {
     const identity = api.currentIdentity();
-    if (!identity || this.data.loading) return;
+    if (!identity) return;
+    await this.refreshConfigGate();
+    if (this.data.loading) return;
     if (!(await this._gateGuardian())) return;
     const authEpoch = api.currentAuthEpoch();
     this.setData({ loading: true, error: "" });
@@ -294,7 +308,7 @@ Page({
 
   async createLink() {
     if (!this.data.minorUserId || this.data.working) return;
-    if (!this._gateGuardianConfig()) return;
+    if (!(await this._gateGuardianConfig())) return;
     this.setData({ working: true, error: "", createdBindingCode: "" });
     try {
       const link = await api.createGuardianLink({
@@ -320,7 +334,7 @@ Page({
     const linkId = event.currentTarget.dataset.linkId;
     const band = this.data.birthBands[this.data.birthBandIndex]?.value || "under_14";
     if (!linkId || this.data.bindingCode.length !== 8 || this.data.working) return;
-    if (!this._gateGuardianConfig()) return;
+    if (!(await this._gateGuardianConfig())) return;
     this.setData({ working: true, error: "" });
     try {
       await api.confirmGuardianLink({
@@ -344,7 +358,7 @@ Page({
 
   async toggleConsent(event) {
     if (this.data.working) return;
-    if (!this._gateGuardianConfig()) return;
+    if (!(await this._gateGuardianConfig())) return;
     const { linkId, kind, policyVersion, consentId, active } = event.currentTarget.dataset;
     this.setData({ working: true, error: "" });
     try {
@@ -370,10 +384,6 @@ Page({
     }
   },
 
-  /*
-   * person consent 复用已有 grant/revoke 语义，不走尚未接入的决策接口。
-   * 授权人校验、幂等和过期都由服务端 person 端点决定。
-   */
   async togglePersonConsent(event) {
     if (this.data.working) return;
     const { personId, kind, policyVersion, consentId, active } = event.currentTarget.dataset;

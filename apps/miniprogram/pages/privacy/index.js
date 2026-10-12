@@ -1,12 +1,16 @@
 const api = require("../../utils/api");
 const { requireLogin } = require("../../utils/auth-gate");
 const contracts = require("../../utils/multi-subject-contracts");
-const { capabilityGateMessage, configActionGate } = require("../../utils/device-binding");
+const {
+  capabilityGateMessage,
+  configActionGate,
+  CONFIG_GATE_PENDING_MESSAGE,
+} = require("../../utils/device-binding");
 
 Page({
   data: {
-    configOpen: configActionGate("raw_audio_consent").allowed,
-    configNote: configActionGate("raw_audio_consent").message,
+    configOpen: false,
+    configNote: CONFIG_GATE_PENDING_MESSAGE,
     loading: false,
     acting: false,
     error: "",
@@ -29,6 +33,7 @@ Page({
         redirect: "/pages/privacy/index",
       }))
     ) return;
+    await this.refreshConfigGate();
     this.loadConsent();
   },
 
@@ -41,11 +46,22 @@ Page({
 
   _clearPrivateState() {
     this.setData({
+      configOpen: false,
+      configNote: CONFIG_GATE_PENDING_MESSAGE,
       loading: false,
       acting: false,
       error: "",
       consent: null,
     });
+  },
+
+  async refreshConfigGate() {
+    const seam = await configActionGate("raw_audio_consent");
+    this.setData({
+      configOpen: seam.allowed,
+      configNote: seam.allowed ? "" : seam.message,
+    });
+    return seam;
   },
 
   async loadConsent() {
@@ -77,8 +93,7 @@ Page({
   },
 
   async grant() {
-    // 配置动作：consent 决策接口接入前由 config seam fail-closed（P1 边界）。
-    const seam = configActionGate("raw_audio_consent");
+    const seam = await this.refreshConfigGate();
     if (!seam.allowed) {
       this.setData({ error: seam.message });
       return;
@@ -138,9 +153,8 @@ Page({
     });
   },
 
-    // 配置动作：同上，fail-closed 且不按本地年龄放开。
   async revoke() {
-    const seam = configActionGate("raw_audio_consent");
+    const seam = await this.refreshConfigGate();
     if (!seam.allowed) {
       this.setData({ error: seam.message });
       return;

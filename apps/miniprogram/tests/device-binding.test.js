@@ -3,7 +3,9 @@ const test = require("node:test");
 const fs = require("node:fs");
 const path = require("node:path");
 
+const api = require("../utils/api");
 const binding = require("../utils/device-binding");
+const { CONTROL_API_BASE_URL } = require("../config");
 const contracts = require("../utils/multi-subject-contracts");
 const { canonicalManifest } = require("./manifest-fixtures");
 const subjectLabel = require("../utils/subject-label");
@@ -888,14 +890,245 @@ test("tampered binding manifest is cleared on read and yields no_binding", () =>
   });
 });
 
-test("config action seam fails closed with explainable messages", () => {
-  for (const action of ["guardian_manage", "raw_audio_consent"]) {
-    const gate = binding.configActionGate(action);
-    assert.equal(gate.allowed, false);
-    assert.equal(gate.reason, "config_seam_pending");
-    assert.ok(gate.message.includes("尚未接入"), `${action} 必须说明接口未接入`);
-    assert.ok(!/年龄/.test(gate.message) || gate.message.includes("不会按本地年龄放开"));
+function signedInApp() {
+  return {
+    globalData: {
+      identity: { user_id: "person_owner", display_name: "主人" },
+      accessToken: "token-gate",
+      accessTokenExpiresAt: Date.now() + 3600_000,
+      authEpoch: 1,
+    },
+  };
+}
+
+function policyDecisionBody(overrides = {}) {
+  return {
+    effect: "allow",
+    reason_code: "subject_authorized",
+    obligations: [],
+    ...overrides,
+  };
+}
+
+async function withGateClient(store, fn) {
+  const previousWx = global.wx;
+  const previousGetApp = global.getApp;
+  global.wx = {
+    getStorageSync: (key) => store[key],
+    setStorageSync: (key, value) => {
+      store[key] = value;
+    },
+    removeStorageSync: (key) => {
+      delete store[key];
+    },
+  };
+  global.getApp = () => signedInApp();
+  api.clearRuntimeProfileMemory();
+  try {
+    return await fn();
+  } finally {
+    api.clearRuntimeProfileMemory();
+    if (previousWx === undefined) delete global.wx;
+    else global.wx = previousWx;
+    if (previousGetApp === undefined) delete global.getApp;
+    else global.getApp = previousGetApp;
   }
+}
+
+function installPolicyHttp(respond) {
+  const requests = [];
+  const profile = validRuntimeProfile();
+  binding.saveBindingManifest(
+    canonicalManifest({
+      binding_id: "bd_1",
+      device_id: "dev_1",
+      binding_version: 2,
+      declared_mode: "self_use",
+    }),
+  );
+  global.wx.request = (options) => {
+    requests.push({ method: options.method, url: options.url, data: options.data, header: options.header });
+    const url = options.url || "";
+    if (url.includes("/runtime-profile")) {
+      options.success({ statusCode: 200, data: profile });
+      return;
+    }
+    if (url.endsWith("/v1/policy/decisions")) {
+      respond(options);
+      return;
+    }
+    options.fail({ errMsg: `unexpected ${url}` });
+  };
+  return requests;
+}
+
+test("unknown config action fails closed before any policy request", async () => {
+  const requests = [];
+  await withGateClient({}, async () => {
+    global.wx.request = (options) => {
+      requests.push(options.url);
+      options.fail({ errMsg: "should not request" });
+    };
+    const gate = await binding.configActionGate("voice_revoke");
+    assert.equal(gate.allowed, false);
+    assert.equal(gate.reason, "unknown_capability");
+    assert.equal(gate.code, "unknown_capability");
+    assert.equal(gate.effect, "deny");
+    assert.match(gate.message, /操作保持关闭/);
+    assert.deepEqual(requests, []);
+  });
+});
+
+test("config action gate fails closed without a session or binding", async () => {
+  await withGateClient({}, async () => {
+    global.getApp = () => ({ globalData: {} });
+    const loggedOut = await binding.configActionGate("guardian_manage");
+    assert.equal(loggedOut.allowed, false);
+    assert.equal(loggedOut.reason, "unauthenticated");
+
+    global.getApp = () => signedInApp();
+    const unbound = await binding.configActionGate("raw_audio_consent");
+    assert.equal(unbound.allowed, false);
+    assert.equal(unbound.reason, "no_binding");
+    assert.match(unbound.message, /操作保持关闭/);
+  });
+});
+
+test("config action gate allows only a complete policy allow", async () => {
+  const expected = {
+    guardian_manage: {
+      capability: "guardian_summary_view",
+      data_classification: "aggregate",
+      safety_state: "normal",
+    },
+    raw_audio_consent: {
+      capability: "raw_audio_retention",
+      data_classification: "biometric",
+      safety_state: "normal",
+    },
+  };
+  await withGateClient({}, async () => {
+    const requests = installPolicyHttp((options) => {
+      options.success({
+        statusCode: 200,
+        data: policyDecisionBody({
+          effect: "allow_with_obligations",
+          reason_code: "subject_authorized",
+          obligations: ["WRITE_POLICY_RECEIPT"],
+        }),
+      });
+    });
+    for (const action of Object.keys(expected)) {
+      const gate = await binding.configActionGate(action);
+      assert.equal(gate.allowed, true, action);
+      assert.equal(gate.reason, "subject_authorized");
+      assert.equal(gate.code, "subject_authorized");
+      assert.equal(gate.effect, "allow_with_obligations");
+      assert.equal(gate.message, "");
+      assert.deepEqual(gate.obligations, ["WRITE_POLICY_RECEIPT"]);
+    }
+    const decisions = requests.filter((item) => item.url.endsWith("/v1/policy/decisions"));
+    assert.equal(decisions.length, 2);
+    assert.deepEqual(
+      decisions.map((item) => item.data),
+      Object.values(expected).map((spec) => ({
+        runtime_profile_id: "rp_1",
+        ...spec,
+      })),
+    );
+    for (const item of decisions) {
+      assert.equal(item.method, "POST");
+      assert.equal(item.url, `${CONTROL_API_BASE_URL}/v1/policy/decisions`);
+      assert.equal(item.header.Authorization, "Bearer token-gate");
+    }
+  });
+});
+
+test("config action gate fails closed on deny, http errors, and incomplete decisions", async () => {
+  const cases = [
+    {
+      name: "deny",
+      respond: (options) => {
+        options.success({
+          statusCode: 200,
+          data: policyDecisionBody({
+            effect: "deny",
+            reason_code: "capability_not_in_runtime_profile",
+          }),
+        });
+      },
+      reason: "capability_not_in_runtime_profile",
+      message: /未允许/,
+    },
+    {
+      name: "http 503",
+      respond: (options) => {
+        options.success({ statusCode: 503, data: { detail: { code: "session_runtime_authority_unavailable" } } });
+      },
+      reason: "policy_unavailable",
+      message: /操作保持关闭/,
+    },
+    {
+      name: "network",
+      respond: (options) => {
+        options.fail({ errMsg: "request:fail" });
+      },
+      reason: "policy_unavailable",
+      message: /操作保持关闭/,
+    },
+    {
+      name: "missing reason",
+      respond: (options) => {
+        options.success({ statusCode: 200, data: { effect: "allow", obligations: [] } });
+      },
+      reason: "policy_response_invalid",
+      message: /不完整/,
+    },
+    {
+      name: "unknown effect",
+      respond: (options) => {
+        options.success({
+          statusCode: 200,
+          data: { effect: "permit", reason_code: "subject_authorized", obligations: [] },
+        });
+      },
+      reason: "policy_response_invalid",
+      message: /不完整/,
+    },
+  ];
+  for (const item of cases) {
+    await withGateClient({}, async () => {
+      installPolicyHttp(item.respond);
+      const gate = await binding.configActionGate("raw_audio_consent");
+      assert.equal(gate.allowed, false, item.name);
+      assert.equal(gate.reason, item.reason, item.name);
+      assert.equal(gate.code, item.reason, item.name);
+      assert.match(gate.message, item.message, item.name);
+    });
+  }
+});
+
+test("config action gate does not decide when the runtime profile request fails", async () => {
+  await withGateClient({}, async () => {
+    const requests = installPolicyHttp(() => {
+      throw new Error("decision should not be parsed");
+    });
+    global.wx.request = (options) => {
+      requests.push({ url: options.url });
+      if ((options.url || "").includes("/runtime-profile")) {
+        options.success({ statusCode: 500, data: {} });
+        return;
+      }
+      options.success({
+        statusCode: 200,
+        data: policyDecisionBody(),
+      });
+    };
+    const gate = await binding.configActionGate("guardian_manage");
+    assert.equal(gate.allowed, false);
+    assert.equal(gate.reason, "policy_unavailable");
+    assert.equal(requests.some((item) => String(item.url).endsWith("/v1/policy/decisions")), false);
+  });
 });
 
 test("valid adult profile is accepted with capabilities intact", () => {

@@ -3,13 +3,14 @@ const test = require("node:test");
 
 const api = require("../utils/api");
 const binding = require("../utils/device-binding");
+const { CONTROL_API_BASE_URL } = require("../config");
 const contracts = require("../utils/multi-subject-contracts");
 const { canonicalManifest } = require("./manifest-fixtures");
 
 const storage = {};
 let pageDefinition = null;
 
-function withWx(fn) {
+async function withWx(fn) {
   const previousWx = global.wx;
   const previousGetApp = global.getApp;
   const previousPage = global.Page;
@@ -40,7 +41,7 @@ function withWx(fn) {
     pageDefinition = definition;
   };
   try {
-    return fn();
+    return await fn();
   } finally {
     if (previousWx === undefined) delete global.wx;
     else global.wx = previousWx;
@@ -163,6 +164,64 @@ test("memory page summarize action does not consult the Runtime Profile", async 
   });
 });
 
+function policyProfile() {
+  const now = Date.now();
+  return {
+    signature_schema: "runtime-profile-v1",
+    runtime_profile_id: "rp_gate",
+    device_id: "dev_1",
+    session_id: "ses_gate",
+    actor_id: "person_owner",
+    binding_id: "bd_1",
+    binding_version: 2,
+    active_subject_id: "person_owner",
+    subject_revision: 3,
+    subject_category: "adult",
+    age_band: "adult",
+    speaker_state: "confirmed",
+    speaker_confidence: 0.96,
+    service_mode: "adult_companion",
+    persona_assignment_id: "pa_1",
+    persona: { persona_id: "starlight", version: 4, relationship_stage: "familiar" },
+    policy_bundle_version: "policy-cn-adult-v2",
+    capabilities: ["chat", "guardian_summary_view"],
+    obligations: ["REQUIRE_SPEAKER_CONFIRMATION"],
+    policy_receipt_ids: ["rc_1"],
+    session_epoch: 1,
+    issued_at: new Date(now - 60_000).toISOString(),
+    expires_at: new Date(now + 60_000).toISOString(),
+    signature: "b".repeat(64),
+  };
+}
+
+function mockPolicyDecision(decision) {
+  const requests = [];
+  const profile = policyProfile();
+  api.clearRuntimeProfileMemory();
+  binding.saveBindingManifest(
+    canonicalManifest({
+      binding_id: "bd_1",
+      device_id: "dev_1",
+      binding_version: 2,
+      declared_mode: "self_use",
+    }),
+  );
+  global.wx.request = (options) => {
+    requests.push(options);
+    const url = options.url || "";
+    if (url.includes("/runtime-profile")) {
+      options.success({ statusCode: 200, data: profile });
+      return;
+    }
+    if (url.endsWith("/v1/policy/decisions")) {
+      options.success({ statusCode: 200, data: decision });
+      return;
+    }
+    options.fail({ errMsg: `unexpected ${url}` });
+  };
+  return requests;
+}
+
 test("privacy load/grant/revoke are each gated by raw_audio_retention", async () => {
   await withWx(async () => {
     const definition = loadPage("../pages/privacy/index");
@@ -187,15 +246,71 @@ test("privacy load/grant/revoke are each gated by raw_audio_retention", async ()
       },
     });
     try {
+      delete storage["memoria:miniprogram:device:binding-manifest"];
       await page.loadConsent();
       await page.grant();
       await page.revoke();
       assert.equal(consentCalls, 0);
       assert.equal(grantCalls, 0);
       assert.equal(revokeCalls, 0);
-      assert.ok(page.data.error.includes("尚未接入"), "配置动作必须走 config seam fail-closed");
+      assert.match(page.data.error, /操作保持关闭/);
+      assert.equal(page.data.error.includes("无法取得 Runtime Profile"), false);
     } finally {
       restore();
+    }
+  });
+});
+
+test("privacy grant and revoke run only when the policy decision allows", async () => {
+  await withWx(async () => {
+    const definition = loadPage("../pages/privacy/index");
+    const page = instantiate(definition);
+    let grantCalls = 0;
+    let revokeCalls = 0;
+    const restore = stubApi({
+      hasAuthenticatedSession: () => true,
+      isAuthEpochCurrent: () => true,
+      grantRawVoiceConsent: async () => {
+        grantCalls += 1;
+        return { policy_version: "x" };
+      },
+      revokeRawVoiceConsent: async () => {
+        revokeCalls += 1;
+      },
+    });
+    try {
+      mockPolicyDecision({
+        effect: "deny",
+        reason_code: "capability_not_in_runtime_profile",
+        obligations: [],
+      });
+      await page.grant();
+      await page.revoke();
+      assert.equal(grantCalls, 0);
+      assert.equal(revokeCalls, 0);
+      assert.equal(page.data.configOpen, false);
+      assert.match(page.data.error, /未允许/);
+
+      const requests = mockPolicyDecision({
+        effect: "allow",
+        reason_code: "subject_authorized",
+        obligations: [],
+      });
+      await page.grant();
+      await page.revoke();
+      assert.equal(grantCalls, 1);
+      assert.equal(revokeCalls, 1);
+      assert.equal(page.data.configOpen, true);
+      const decisions = requests.filter((item) => item.url.endsWith("/v1/policy/decisions"));
+      assert.equal(decisions.length, 2);
+      assert.equal(decisions[0].url, `${CONTROL_API_BASE_URL}/v1/policy/decisions`);
+      assert.equal(decisions[0].data.capability, "raw_audio_retention");
+      assert.equal(decisions[0].data.data_classification, "biometric");
+      assert.equal(decisions[0].data.safety_state, "normal");
+      assert.equal(decisions[0].data.runtime_profile_id, "rp_gate");
+    } finally {
+      restore();
+      api.clearRuntimeProfileMemory();
     }
   });
 });
@@ -218,10 +333,12 @@ test("guardian config actions use the config seam, not the usage capability", as
       },
     });
     try {
+      delete storage["memoria:miniprogram:device:binding-manifest"];
       page.setData({ minorUserId: "person_child" });
       await page.createLink();
       assert.equal(createCalls, 0, "配置动作不得依赖使用类能力门禁");
-      assert.ok(page.data.error.includes("尚未接入"));
+      assert.match(page.data.error, /操作保持关闭/);
+      assert.equal(page.data.error.includes("无法取得 Runtime Profile"), false);
 
       await page.toggleConsent({
         currentTarget: {
@@ -235,9 +352,70 @@ test("guardian config actions use the config seam, not the usage capability", as
         },
       });
       assert.equal(grantCalls, 0);
-      assert.ok(page.data.error.includes("尚未接入"));
+      assert.match(page.data.error, /操作保持关闭/);
     } finally {
       restore();
+    }
+  });
+});
+
+test("guardian config actions proceed only when the policy decision allows", async () => {
+  await withWx(async () => {
+    const definition = loadPage("../pages/guardian/index");
+    const page = instantiate(definition);
+    let createCalls = 0;
+    let grantCalls = 0;
+    const restore = stubApi({
+      currentIdentity: () => ({ user_id: "person_owner" }),
+      createGuardianLink: async () => {
+        createCalls += 1;
+        return { binding_code: "12345678" };
+      },
+      grantGuardianConsent: async () => {
+        grantCalls += 1;
+      },
+      getGuardianLinks: async () => [],
+      getProfile: async () => ({ subject_category: "adult" }),
+    });
+    try {
+      mockPolicyDecision({
+        effect: "deny",
+        reason_code: "guardian_summary_forbidden",
+        obligations: [],
+      });
+      page.setData({ minorUserId: "person_child" });
+      await page.createLink();
+      assert.equal(createCalls, 0);
+      assert.equal(page.data.configOpen, false);
+
+      const requests = mockPolicyDecision({
+        effect: "allow_with_obligations",
+        reason_code: "guardian_summary_authorized",
+        obligations: ["WRITE_POLICY_RECEIPT"],
+      });
+      await page.createLink();
+      await page.toggleConsent({
+        currentTarget: {
+          dataset: {
+            linkId: "link_1",
+            kind: "weekly_report",
+            policyVersion: "guardian-weekly-v1",
+            consentId: "",
+            active: false,
+          },
+        },
+      });
+      assert.equal(createCalls, 1);
+      assert.equal(grantCalls, 1);
+      assert.equal(page.data.configOpen, true);
+      const decision = requests.find((item) => item.url.endsWith("/v1/policy/decisions"));
+      assert.equal(decision.data.capability, "guardian_summary_view");
+      assert.equal(decision.data.data_classification, "aggregate");
+      assert.equal(decision.data.safety_state, "normal");
+      assert.equal(decision.data.runtime_profile_id, "rp_gate");
+    } finally {
+      restore();
+      api.clearRuntimeProfileMemory();
     }
   });
 });
