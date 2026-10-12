@@ -222,6 +222,11 @@ class VoiceProfile:
     sample_validation_status: Literal["pending", "passed", "failed"] = "pending"
     #: ``None`` is the account's own personal voice, unbound to a persona.
     custom_persona_id: str | None = None
+    #: Read model of ``voice_enrollment_operations.state``. ``None`` means this
+    #: profile was loaded without its operation row. It is not a second status:
+    #: ``enrolling`` stays ``enrolling`` when the operation is
+    #: ``reconciliation_required``.
+    enrollment_state: VoiceEnrollmentOperationState | None = None
 
 
 @dataclass(frozen=True, slots=True)

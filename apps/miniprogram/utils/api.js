@@ -400,6 +400,19 @@ function listVoiceProfiles() {
   return rawRequest("/v1/voices/profiles");
 }
 
+function revokeVoiceProfile(profileId) {
+  if (typeof profileId !== "string" || !profileId) {
+    return Promise.reject(new ApiError("声音档案无效。", { status: 400 }));
+  }
+  return rawRequest(`/v1/voices/profiles/${encodeURIComponent(profileId)}`, {
+    method: "DELETE",
+  });
+}
+
+function revokeVoiceCloneConsent() {
+  return rawRequest("/v1/voices/consent", { method: "DELETE" });
+}
+
 function readyVoiceForDevice(profileId) {
   return rawRequest(
     `/v1/voices/profiles/${encodeURIComponent(profileId)}/ready-for-device`,
@@ -1407,6 +1420,8 @@ module.exports = {
   getProfile,
   grantVoiceCloneConsent,
   listVoiceProfiles,
+  revokeVoiceProfile,
+  revokeVoiceCloneConsent,
   readyVoiceForDevice,
   enrollVoiceClone,
   getGuardianLinks,

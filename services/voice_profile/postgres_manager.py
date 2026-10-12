@@ -35,7 +35,6 @@ from services.voice_profile.domain import (
     VoiceEvaluationRequest,
     VoicePreviewTarget,
     VoiceProfile,
-    VoiceProfileStatus,
     VoiceQualityMeasurement,
     VoiceQualityMeasurementRequest,
     VoiceResolution,
@@ -43,6 +42,12 @@ from services.voice_profile.domain import (
     objective_voice_quality_passes,
     subjective_voice_evaluation_passes,
     voice_profile_delivery_admitted,
+)
+from services.voice_profile.enrollment_records import (
+    enrollment_operation_from_row,
+    profile_for_operation,
+    profile_from_row,
+    synthetic_profile,
 )
 from services.voice_profile.sample_validation import (
     VoiceSampleValidation,
@@ -370,11 +375,22 @@ class PostgresVoiceProfileManager:
                 last_error=type(exc).__name__,
             )
             raise
-        await self._persist_provider_voice(
-            account_id=account_id,
-            operation_id=operation["operation_id"],
-            voice=provider_voice,
-        )
+        try:
+            await self._persist_provider_voice(
+                account_id=account_id,
+                operation_id=operation["operation_id"],
+                voice=provider_voice,
+            )
+        except Exception as exc:
+            # The provider may already have created the voice. Do not reissue it;
+            # leave a needs-human state the profile poll can show.
+            await self._set_operation_state(
+                account_id,
+                operation["operation_id"],
+                state="reconciliation_required",
+                last_error=type(exc).__name__,
+            )
+            raise
         operation = await self._operation_for_profile(account_id, profile_id)
         assert operation is not None, "a submitted enrollment always has an operation"
         return await self._finalize_enrollment(operation)
@@ -637,7 +653,7 @@ class PostgresVoiceProfileManager:
                     str(operation["account_id"]),
                 )
         if row is not None:
-            return self._profile(row)
+            return profile_from_row(row)
         revoked = await self.revoke_profile(
             account_id=str(operation["account_id"]),
             profile_id=str(operation["profile_id"]),
@@ -1127,7 +1143,7 @@ class PostgresVoiceProfileManager:
                 account_id,
             )
         assert updated is not None
-        return self._profile(updated)
+        return profile_from_row(updated)
 
     async def resolve(
         self, *, account_id: str, custom_persona_id: str | None = None
@@ -1183,8 +1199,17 @@ class PostgresVoiceProfileManager:
             await self._scope(connection, account_id)
             rows = await connection.fetch(
                 """
-                SELECT * FROM voice_profiles
-                WHERE account_id = $1 ORDER BY version_number DESC
+                SELECT profile.*, (
+                    SELECT operation.state
+                    FROM voice_enrollment_operations AS operation
+                    WHERE operation.profile_id = profile.profile_id
+                      AND operation.account_id = profile.account_id
+                    ORDER BY operation.updated_at DESC
+                    LIMIT 1
+                ) AS enrollment_state
+                FROM voice_profiles AS profile
+                WHERE profile.account_id = $1
+                ORDER BY profile.version_number DESC
                 """,
                 account_id,
             )
@@ -1199,8 +1224,8 @@ class PostgresVoiceProfileManager:
                 """,
                 account_id,
             )
-        combined = [self._profile(row) for row in rows]
-        combined.extend(self._synthetic_profile(operation) for operation in operations)
+        combined = [profile_from_row(row) for row in rows]
+        combined.extend(synthetic_profile(operation) for operation in operations)
         return tuple(sorted(combined, key=lambda profile: profile.version_number, reverse=True))
 
     async def pending_enrollments(
@@ -1219,7 +1244,7 @@ class PostgresVoiceProfileManager:
                 """,
                 account_id,
             )
-        return tuple(self._enrollment_operation(row) for row in rows)
+        return tuple(enrollment_operation_from_row(row) for row in rows)
 
     async def reconcile_enrollment(
         self,
@@ -1368,7 +1393,7 @@ class PostgresVoiceProfileManager:
                         account_id,
                     )
                     assert refreshed is not None
-                    return self._synthetic_profile(refreshed)
+                    return synthetic_profile(refreshed)
                 refreshed = await connection.fetchrow(
                     """
                     UPDATE voice_enrollment_operations
@@ -1383,9 +1408,9 @@ class PostgresVoiceProfileManager:
                     account_id,
                 )
                 assert refreshed is not None
-                return self._synthetic_profile(refreshed)
+                return synthetic_profile(refreshed)
             if row["status"] == "revoked" and row["deletion_status"] in {"completed", "pending"}:
-                return self._profile(row)
+                return profile_from_row(row)
             if row["status"] != "revoked":
                 event = self._event(
                     account_id,
@@ -1471,7 +1496,7 @@ class PostgresVoiceProfileManager:
                     account_id,
                 )
         assert updated is not None
-        return self._profile(updated)
+        return profile_from_row(updated)
 
     async def confirm_provider_deletion(
         self,
@@ -1506,7 +1531,7 @@ class PostgresVoiceProfileManager:
                     "only a revoked voice profile can confirm provider deletion"
                 )
             if row["deletion_status"] == "completed":
-                return self._profile(row)
+                return profile_from_row(row)
             if row["deletion_status"] not in {"pending", "failed"}:
                 raise EvaluationRequiredError(
                     "provider deletion must be pending or failed before confirmation"
@@ -1552,7 +1577,7 @@ class PostgresVoiceProfileManager:
                 account_id,
             )
         assert updated is not None
-        return self._profile(updated)
+        return profile_from_row(updated)
 
     @staticmethod
     async def _require_consent(
@@ -1607,91 +1632,7 @@ class PostgresVoiceProfileManager:
             str(operation["account_id"]),
             operation["profile_id"],
         )
-        return self._profile(row) if row is not None else self._synthetic_profile(operation)
-
-    @staticmethod
-    def _synthetic_profile(operation: asyncpg.Record) -> VoiceProfile:
-        state = str(operation["state"])
-        return VoiceProfile(
-            profile_id=str(operation["profile_id"]),
-            sample_id=str(operation["sample_id"]),
-            version_number=int(operation["version_number"]),
-            provider=str(operation["provider"]),
-            provider_region=str(operation["provider_region"]),
-            target_model=str(operation["target_model"]),
-            provider_voice_id=(
-                str(operation["provider_voice_id"])
-                if operation["provider_voice_id"] is not None
-                else None
-            ),
-            status="revoked" if state == "revoked" else "enrolling",
-            evaluation_status="pending",
-            quality_status="pending",
-            deletion_status="completed" if state == "revoked" else "failed",
-            provider_expires_at=cast(datetime | None, operation["provider_expires_at"]),
-            created_at=cast(datetime, operation["created_at"]),
-            revoked_at=(cast(datetime, operation["updated_at"]) if state == "revoked" else None),
-        )
-
-    @staticmethod
-    def _enrollment_operation(row: asyncpg.Record) -> VoiceEnrollmentOperation:
-        return VoiceEnrollmentOperation(
-            operation_id=str(row["operation_id"]),
-            enrollment_key=str(row["enrollment_key"]),
-            account_id=str(row["account_id"]),
-            profile_id=str(row["profile_id"]),
-            sample_id=str(row["sample_id"]),
-            version_number=int(row["version_number"]),
-            provider_prefix=str(row["provider_prefix"]),
-            sample_purpose=str(row["sample_purpose"]),
-            state=cast(VoiceEnrollmentOperationState, row["state"]),
-            provider_voice_id=(
-                str(row["provider_voice_id"]) if row["provider_voice_id"] is not None else None
-            ),
-            last_error=str(row["last_error"]) if row["last_error"] is not None else None,
-            created_at=cast(datetime, row["created_at"]),
-            updated_at=cast(datetime, row["updated_at"]),
-        )
-
-    @staticmethod
-    def _profile(row: asyncpg.Record) -> VoiceProfile:
-        return VoiceProfile(
-            profile_id=str(row["profile_id"]),
-            sample_id=str(row["sample_id"]),
-            version_number=int(row["version_number"]),
-            provider=str(row["provider"]),
-            provider_region=str(row["provider_region"]),
-            target_model=str(row["target_model"]),
-            provider_voice_id=(
-                str(row["provider_voice_id"]) if row["provider_voice_id"] is not None else None
-            ),
-            status=cast(VoiceProfileStatus, row["status"]),
-            evaluation_status=cast(
-                Literal["pending", "passed", "failed"],
-                row["evaluation_status"],
-            ),
-            quality_status=cast(
-                Literal["pending", "passed", "failed"],
-                row["quality_status"],
-            ),
-            deletion_status=cast(VoiceDeletionStatus, row["deletion_status"]),
-            sample_validation_status=cast(
-                Literal["pending", "passed", "failed"],
-                row["sample_validation_status"]
-                if "sample_validation_status" in row.keys()
-                else "pending",
-            ),
-            custom_persona_id=(
-                str(row["custom_persona_id"])
-                if "custom_persona_id" in row.keys()
-                and row["custom_persona_id"] is not None
-                else None
-            ),
-            provider_expires_at=cast(datetime | None, row["provider_expires_at"]),
-            created_at=cast(datetime, row["created_at"]),
-            activated_at=cast(datetime | None, row["activated_at"]),
-            revoked_at=cast(datetime | None, row["revoked_at"]),
-        )
+        return profile_for_operation(row, operation)
 
     @staticmethod
     def _event(account_id: str, event_type: str, payload: dict[str, object]) -> EvidenceEvent:

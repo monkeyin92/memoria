@@ -46,8 +46,9 @@
     </view>
     <text class="setting-desc">声音复刻需要本人朗读授权语句。样本仅用于生成声音，不作他用。</text>
     <text class="setting-desc">默认不采集麦克风。只有你主动录制自定义声音样本时才会申请麦克风权限，样本用于声音复刻，不用于小程序内对话。</text>
+    <text wx:if="{{!voiceConfigOpen}}" class="setting-desc">{{voiceConfigNote}}</text>
     <view class="auth-card-foot">
-      <button class="danger-link" bindtap="revokeVoiceTip">撤回并删除</button>
+      <button class="danger-link" loading="{{voiceActing}}" disabled="{{!voiceConfigOpen || voiceActing}}" bindtap="revokeVoiceTip">撤回并删除</button>
     </view>
   </view>
 

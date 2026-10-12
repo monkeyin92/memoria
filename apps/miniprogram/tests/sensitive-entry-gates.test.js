@@ -633,3 +633,163 @@ test("profile entry clicks follow the entry flags, so action-time entries open",
     assert.match(toasts[0], /原始语音授权暂未开放：profile 已过期/);
   });
 });
+
+test("privacy voice revoke fails closed when logged out, the gate is closed, or delete fails", async () => {
+  await withWx(async () => {
+    const definition = loadPage("../pages/privacy/index");
+    const page = instantiate(definition);
+    const toasts = [];
+    global.wx.showToast = ({ title }) => toasts.push(title);
+    let listed = 0;
+    let deleted = 0;
+    let consentRevoked = 0;
+    const restore = stubApi({
+      hasAuthenticatedSession: () => false,
+      listVoiceProfiles: async () => {
+        listed += 1;
+        return { items: [], consent: null };
+      },
+      revokeVoiceProfile: async () => {
+        deleted += 1;
+      },
+      revokeVoiceCloneConsent: async () => {
+        consentRevoked += 1;
+      },
+    });
+    try {
+      await page.revokeVoiceTip();
+      assert.equal(listed, 0);
+      assert.equal(deleted, 0);
+      assert.equal(consentRevoked, 0);
+      assert.match(page.data.error, /请先登录/);
+      assert.equal(page.data.voiceOn, true);
+
+      restore();
+      const signedIn = stubApi({
+        hasAuthenticatedSession: () => true,
+        isAuthEpochCurrent: () => true,
+        currentAuthEpoch: () => 0,
+        listVoiceProfiles: async () => {
+          listed += 1;
+          return { items: [], consent: null };
+        },
+        revokeVoiceProfile: async () => {
+          deleted += 1;
+        },
+        revokeVoiceCloneConsent: async () => {
+          consentRevoked += 1;
+        },
+      });
+      mockPolicyDecision({
+        effect: "deny",
+        reason_code: "capability_not_in_runtime_profile",
+        obligations: [],
+      });
+      await page.revokeVoiceTip();
+      assert.equal(listed, 0);
+      assert.equal(page.data.voiceConfigOpen, false);
+      assert.match(page.data.error, /未允许/);
+
+      mockPolicyDecision({
+        effect: "allow",
+        reason_code: "subject_authorized",
+        obligations: [],
+      });
+      const failing = stubApi({
+        hasAuthenticatedSession: () => true,
+        isAuthEpochCurrent: () => true,
+        currentAuthEpoch: () => 0,
+        listVoiceProfiles: async () => {
+          listed += 1;
+          return {
+            consent: { policy_version: "voice-clone-v1", revoked_at: null },
+            items: [{ profile_id: "vp_1", status: "active", enrollment: { stage: "done", state: "ready" } }],
+          };
+        },
+        revokeVoiceProfile: async () => {
+          deleted += 1;
+          const error = new Error("声音资产删除未完成，请稍后重试");
+          error.status = 503;
+          throw error;
+        },
+        revokeVoiceCloneConsent: async () => {
+          consentRevoked += 1;
+        },
+      });
+      await page.revokeVoiceTip();
+      assert.equal(listed, 1);
+      assert.equal(deleted, 1);
+      assert.equal(consentRevoked, 0);
+      assert.match(page.data.error, /删除未完成/);
+      assert.equal(page.data.voiceOn, true);
+      assert.deepEqual(toasts, []);
+      failing();
+      signedIn();
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("privacy voice revoke deletes retained profiles and withdraws voice consent", async () => {
+  await withWx(async () => {
+    const definition = loadPage("../pages/privacy/index");
+    const page = instantiate(definition);
+    const toasts = [];
+    const modals = [];
+    global.wx.showToast = ({ title }) => toasts.push(title);
+    global.wx.showModal = (options) => {
+      modals.push(options.title);
+      options.success?.({ confirm: true });
+    };
+    const deleted = [];
+    let consentRevoked = 0;
+    const restore = stubApi({
+      hasAuthenticatedSession: () => true,
+      isAuthEpochCurrent: () => true,
+      currentAuthEpoch: () => 0,
+      listVoiceProfiles: async () => ({
+        consent: { policy_version: "voice-clone-v1", revoked_at: null },
+        items: [
+          { profile_id: "vp_live", status: "enrolling", enrollment: { stage: "queued", state: "reconciliation_required", operation_state: "reconciliation_required" } },
+          { profile_id: "vp_done", status: "revoked", deletion_status: "completed", enrollment: { stage: "failed", state: "revoked" } },
+        ],
+      }),
+      revokeVoiceProfile: async (profileId) => {
+        deleted.push(profileId);
+        return { profile_id: profileId, deletion_status: "completed" };
+      },
+      revokeVoiceCloneConsent: async () => {
+        consentRevoked += 1;
+        return { revoked_at: "2026-10-12T00:00:00Z" };
+      },
+    });
+    try {
+      const requests = mockPolicyDecision({
+        effect: "allow",
+        reason_code: "subject_authorized",
+        obligations: [],
+      });
+      await page.revokeVoiceTip();
+      assert.deepEqual(deleted, ["vp_live"]);
+      assert.equal(consentRevoked, 1);
+      assert.equal(page.data.voiceOn, false);
+      assert.equal(page.data.error, "");
+      assert.deepEqual(toasts, ["声音样本已撤回"]);
+      assert.deepEqual(modals, ["撤回声音样本授权"]);
+      const decisions = requests.filter((item) => String(item.url).endsWith("/v1/policy/decisions"));
+      assert.ok(decisions.length >= 1);
+      assert.equal(decisions[0].data.capability, "voice_clone_use");
+      assert.equal(decisions[0].data.data_classification, "biometric");
+
+      toasts.length = 0;
+      modals.length = 0;
+      await page.revokeMemoryTip();
+      assert.deepEqual(modals, ["撤回记忆档案授权"]);
+      assert.equal(consentRevoked, 1);
+      assert.deepEqual(toasts, []);
+    } finally {
+      restore();
+    }
+  });
+});

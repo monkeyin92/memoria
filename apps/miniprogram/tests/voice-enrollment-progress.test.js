@@ -221,18 +221,36 @@ test("WXML 渲染 enrollment.stage_label 与绑定 enrollment.progress 的进度
   assert.match(styles, /\.enrollment-bar-fill\s*\{[^}]*background:\s*#326e70/s);
 });
 
-test("over_budget 之后不再承诺「一分钟」，而是提示可以离开", () => {
-  assert.match(script, /over_budget\s*===\s*true/);
-  assert.match(script, /已经比预计久了一点。可以先去忙别的，回来这一页再看就行。/);
-  // "一分钟" 只出现在服务端已确认预算（expected_total_ms）的分支里，
-  // 且 over_budget 分支必须排在它前面，才能提前短路掉这句承诺。
-  const promiseIndex = script.indexOf("预计 1 分钟左右");
-  const overBudgetIndex = script.indexOf("over_budget === true");
-  assert.ok(promiseIndex > 0, "缺少 elapsed/expected 提示");
-  assert.ok(
-    overBudgetIndex > 0 && overBudgetIndex < promiseIndex,
-    "over_budget 必须在承诺时长之前判断，超时后不得再承诺一分钟",
-  );
+test("over_budget 与 reconciliation_required 分属状态表，超时后不再承诺一分钟", () => {
+  const stateSource = fs.readFileSync(path.join(root, "utils/voice-enrollment-state.js"), "utf8");
+  const voiceEnrollment = require("../utils/voice-enrollment-state");
+  assert.match(stateSource, /over_budget\s*===\s*true/);
+  assert.match(stateSource, /已经比预计久了一点。可以先去忙别的，回来这一页再看就行。/);
+  assert.match(stateSource, /operation === "reconciliation_required"/);
+  assert.doesNotMatch(script, /over_budget\s*===\s*true/);
+  assert.doesNotMatch(script, /reconciliation_required/);
+  assert.match(script, /voiceState\.presentVoiceClone/);
+  const both = voiceEnrollment.resolveVoiceEnrollmentState({
+    status: "enrolling",
+    enrollment: {
+      stage: "cloning",
+      over_budget: true,
+      operation_state: "reconciliation_required",
+      progress: 0.2,
+    },
+  });
+  const slow = voiceEnrollment.resolveVoiceEnrollmentState({
+    status: "enrolling",
+    enrollment: { stage: "cloning", over_budget: true, progress: 0.2 },
+  });
+  assert.equal(both, "reconciliation_required");
+  assert.equal(slow, "over_budget");
+  const slowHint = voiceEnrollment.VOICE_ENROLLMENT_STATES[slow].hint({});
+  const humanHint = voiceEnrollment.VOICE_ENROLLMENT_STATES[both].hint({});
+  assert.match(slowHint, /可以先去忙别的/);
+  assert.doesNotMatch(slowHint, /一分钟|大约|通常/);
+  assert.match(humanHint, /需要人工核对/);
+  assert.doesNotMatch(humanHint, /可以先去忙别的|一分钟/);
   // 模板自身不得硬编码任何时长承诺。
   assert.doesNotMatch(template, /一分钟|大约一分/);
 });
@@ -516,6 +534,78 @@ test("声音克隆绑定到设备当前分配的自定义人格，且只在目�
       await page.uploadVoiceSample();
       assert.equal(seen.length, 2);
       assert.equal(seen[1].customPersonaId, "");
+    } finally {
+      stubs();
+      harness.restore();
+    }
+  });
+});
+
+test("reconciliation_required 与 over_budget 文案和动作不同，且不显示百分比", async () => {
+  await withWx(async () => {
+    storage = {};
+    const harness = installPageTimeoutHarness();
+    const stubs = stubApi(
+      apiStubs({
+        listVoiceProfiles: async () => ({
+          items: [enrollingItem({
+            state: "reconciliation_required",
+            operation_state: "reconciliation_required",
+            progress: null,
+            over_budget: true,
+            stage_label: "需要人工核对这次声音",
+          })],
+        }),
+      }),
+    );
+    try {
+      const page = newPage();
+      page.onShow();
+      await flushAsync();
+
+      assert.equal(page.data.voiceCloneState, "reconciliation_required");
+      assert.equal(page.data.voiceCloneEnrollmentOverBudget, false);
+      assert.equal(page.data.voiceCloneEnrollment.hasProgress, false);
+      assert.match(page.data.voiceCloneEnrollment.hint, /需要人工核对/);
+      assert.doesNotMatch(page.data.voiceCloneEnrollment.hint, /可以先去忙别的|一分钟/);
+      assert.equal(page.data.voiceCloneActions.upload, false);
+      assert.equal(page.data.voiceCloneActions.record, false);
+      assert.equal(page.data.voiceCloneActions.revoke, true);
+      assert.equal(harness.finished().length, 1, "档案仍是 enrolling，轮询继续");
+      page.onUnload();
+    } finally {
+      stubs();
+      harness.restore();
+    }
+  });
+});
+
+test("reconciliation_required 时不允许再上传，避免重发厂商请求", async () => {
+  await withWx(async () => {
+    storage = {};
+    let enrollCalls = 0;
+    const harness = installPageTimeoutHarness();
+    const stubs = stubApi(
+      apiStubs({
+        listVoiceProfiles: async () => ({
+          items: [enrollingItem({
+            operation_state: "reconciliation_required",
+            over_budget: true,
+          })],
+        }),
+        enrollVoiceClone: async () => {
+          enrollCalls += 1;
+          return { status: "enrolling" };
+        },
+      }),
+    );
+    try {
+      const page = newPage();
+      page.onShow();
+      await flushAsync();
+      await page.uploadVoiceSample();
+      assert.equal(enrollCalls, 0);
+      page.onUnload();
     } finally {
       stubs();
       harness.restore();

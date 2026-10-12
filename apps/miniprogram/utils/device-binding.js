@@ -379,6 +379,14 @@ const CONFIG_ACTION_POLICY = Object.freeze({
     data_classification: contracts.DataClassification.Biometric,
     safety_state: contracts.SafetyState.Normal,
   }),
+  // Privacy-page voice sample forget. Distinct from raw_audio_consent so the
+  // archive gate stays the one #204 wired. Unknown names such as voice_revoke
+  // stay fail-closed and never reach /v1/policy/decisions.
+  voice_sample_revoke: Object.freeze({
+    capability: contracts.Capability.VoiceCloneUse,
+    data_classification: contracts.DataClassification.Biometric,
+    safety_state: contracts.SafetyState.Normal,
+  }),
 });
 
 const CONFIG_DECISION_MESSAGES = Object.freeze({

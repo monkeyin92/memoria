@@ -4,6 +4,7 @@ const { companions, companionById, defaultCompanionId } = require("../../utils/c
 const { requireLogin } = require("../../utils/auth-gate");
 const { MODE_META, readBindingManifest, entryAllowed } = require("../../utils/device-binding");
 const contracts = require("../../utils/multi-subject-contracts");
+const voiceState = require("../../utils/voice-enrollment-state");
 
 const defaultProfile = {
   display_name: "新朋友",
@@ -52,103 +53,8 @@ function clampCloneDuration(durationMs) {
   return value;
 }
 
-function voiceCloneStatusLabel(payload) {
-  if (!payload) return "暂时读不到自定义声音状态。";
-  const items = Array.isArray(payload.items) ? payload.items : [];
-  if (items.some((item) => item.status === "active")) {
-    return "自定义声音已就绪。下次在设备上说话就会用；听着不像，再录一段即可。";
-  }
-  if (items.some((item) => item.status === "enrolling")) {
-    return "正在生成自定义声音，通常一分钟内完成。结果就在这一页，不用去别处看。";
-  }
-  if (items.some((item) => item.status === "candidate")) {
-    return "声音已经生成，正在接到设备上。";
-  }
-  if (items.some((item) => item.status === "failed")) {
-    return "这次没生成成功。请换一段 10–60 秒、更清楚的人声再试。";
-  }
-  if (payload.consent && !payload.consent.revoked_at) {
-    return "还没有声音样本。录一段或上传音频后，大约一分钟就能用。";
-  }
-  return "还没有自定义声音样本。";
-}
-
-function voiceCloneProfiles(payload) {
-  return Array.isArray(payload?.items) ? payload.items : [];
-}
-
-// 进度条只在服务端给了 progress 时出现，绝不自己编造百分比。
-function voiceCloneProgressPercent(progress) {
-  const value = Number(progress);
-  if (!Number.isFinite(value)) return null;
-  return Math.round(Math.max(0, Math.min(1, value)) * 100);
-}
-
-// 同一账号可能有多条档案，按服务端状态取最贴近当前进度的那一条。
-const VOICE_CLONE_STATUS_RANK = {
-  enrolling: 0,
-  candidate: 1,
-  active: 2,
-  failed: 3,
-  revoked: 4,
-};
-
-function voiceCloneEnrollmentItem(payload) {
-  const items = voiceCloneProfiles(payload).filter((item) => item?.enrollment);
-  let best = null;
-  let bestRank = Infinity;
-  for (const item of items) {
-    const rank = VOICE_CLONE_STATUS_RANK[item.status] ?? Object.keys(VOICE_CLONE_STATUS_RANK).length;
-    if (rank < bestRank) {
-      best = item;
-      bestRank = rank;
-    }
-  }
-  return best;
-}
-
-// 只有还在跑的阶段才画进度条；done / failed 已结束，交给 voiceCloneStatusLabel 收尾。
-const VOICE_CLONE_TERMINAL_STAGES = new Set(["done", "failed"]);
-
-function voiceCloneEnrollmentView(payload) {
-  const enrollment = voiceCloneEnrollmentItem(payload)?.enrollment || null;
-  if (!enrollment || VOICE_CLONE_TERMINAL_STAGES.has(enrollment.stage)) return null;
-
-  const percent = voiceCloneProgressPercent(enrollment.progress);
-  const overBudget = enrollment.over_budget === true;
-  const elapsedSeconds = Math.max(0, Math.round((Number(enrollment.elapsed_ms) || 0) / 1000));
-  // over_budget：服务端已确认超过约定的一分钟，此时不再承诺时长，只说可以离开。
-  const hint = overBudget
-    ? "已经比预计久了一点。可以先去忙别的，回来这一页再看就行。"
-    : enrollment.expected_total_ms
-      ? `预计 1 分钟左右，已等待 ${elapsedSeconds} 秒。`
-      : "正在处理，可以留在这页看进度。";
-  // stage_label 由服务端下发，已经是中文原句，直接渲染，不自行改写。
-  const label = enrollment.stage_label || voiceCloneStatusLabel(payload);
-  return {
-    voiceCloneEnrollment: {
-      label,
-      // hasProgress 为 false 时模板不渲染进度条，也不显示百分比。
-      hasProgress: percent !== null,
-      progressPercent: percent === null ? 0 : percent,
-      progressLabel: percent === null ? "" : `${percent}%`,
-      hint,
-    },
-    voiceCloneStatusLabel: label,
-    voiceCloneEnrollmentOverBudget: overBudget,
-  };
-}
-
-function voiceCloneEmptyView() {
-  return {
-    voiceCloneEnrollment: null,
-    voiceCloneStatusLabel: "还没有自定义声音样本。",
-    voiceCloneEnrollmentOverBudget: false,
-  };
-}
-
 function voiceCloneStatusData(label) {
-  return { ...voiceCloneEmptyView(), voiceCloneStatusLabel: label };
+  return voiceState.voiceCloneStatusData(label);
 }
 
 function profileInitialFor(displayName) {
@@ -330,9 +236,7 @@ Page({
     customPersonaId: "",
     customPersonaLabel: "",
     voiceCloneAllowed: false,
-    voiceCloneStatusLabel: "还没有自定义声音样本。",
-    voiceCloneEnrollment: null,
-    voiceCloneEnrollmentOverBudget: false,
+    ...voiceState.idleVoiceCloneView(),
     voiceSampleBusy: false,
     recording: false,
     recordSeconds: 0,
@@ -442,9 +346,7 @@ Page({
       customPersonaId: "",
       customPersonaLabel: "",
       voiceCloneAllowed: false,
-      voiceCloneStatusLabel: "还没有自定义声音样本。",
-      voiceCloneEnrollment: null,
-      voiceCloneEnrollmentOverBudget: false,
+      ...voiceState.idleVoiceCloneView(),
       voiceSampleBusy: false,
       recording: false,
       recordSeconds: 0,
@@ -853,11 +755,15 @@ Page({
       voiceCloneStatusLabel: state.voiceCloneStatusLabel,
       voiceCloneEnrollment: state.voiceCloneEnrollment,
       voiceCloneEnrollmentOverBudget: state.voiceCloneEnrollmentOverBudget,
+      voiceCloneActions: state.voiceCloneActions,
+      voiceCloneState: state.voiceCloneState,
     };
     const changed =
       !previous ||
       previous.voiceCloneStatusLabel !== next.voiceCloneStatusLabel ||
       previous.voiceCloneEnrollmentOverBudget !== next.voiceCloneEnrollmentOverBudget ||
+      previous.voiceCloneState !== next.voiceCloneState ||
+      JSON.stringify(previous.voiceCloneActions) !== JSON.stringify(next.voiceCloneActions) ||
       JSON.stringify(previous.voiceCloneEnrollment) !== JSON.stringify(next.voiceCloneEnrollment);
     this._voiceCloneView = next;
     if (changed) this.setData(next);
@@ -879,8 +785,7 @@ Page({
       this._voiceCloneEnrolling = (payload.items || []).some(
         (item) => item.status === "enrolling",
       );
-      return voiceCloneEnrollmentView(payload) ||
-        voiceCloneStatusData(voiceCloneStatusLabel(payload));
+      return voiceState.presentVoiceClone(payload);
     } catch (error) {
       if (error?.status === 403) {
         this._voiceCloneEnrolling = false;
@@ -1014,6 +919,7 @@ Page({
       this._ensureRecorder().stop();
       return;
     }
+    if (this.data.voiceCloneActions?.record !== true) return;
     if (!(await this._ensureRecordPermission())) return;
     this._ensureRecorder().start({
       duration: 60000,
@@ -1027,6 +933,7 @@ Page({
   async uploadVoiceSample() {
     if (!(await requireLogin({ reason: "edit_profile" }))) return;
     if (this.data.voiceSampleBusy || this.data.recording) return;
+    if (this.data.voiceCloneActions?.upload !== true) return;
     const chosen = await new Promise((resolve, reject) => {
       wx.chooseMessageFile({
         count: 1,
