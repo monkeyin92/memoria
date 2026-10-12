@@ -1322,6 +1322,18 @@ function clearPersonaAssignment(deviceId, personId) {
   );
 }
 
+function requestPolicyDecision(body) {
+  return rawRequest("/v1/policy/decisions", {
+    method: "POST",
+    data: {
+      runtime_profile_id: body && body.runtime_profile_id,
+      capability: body && body.capability,
+      data_classification: body && body.data_classification,
+      safety_state: body && body.safety_state,
+    },
+  });
+}
+
 /*
  * 敏感入口的统一能力门禁（D-07）：只有当前设备取得有效 Runtime Profile
  * 且 capabilities 包含目标能力时才放行；Profile 不可用时返回可解释拒绝。
@@ -1455,6 +1467,7 @@ module.exports = {
   updateDeviceSettings,
   resolveSessionSubject,
   getRuntimeProfile,
+  requestPolicyDecision,
   setActiveSubject,
   listPersonaAssignments,
   setPersonaAssignment,

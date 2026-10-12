@@ -368,27 +368,121 @@ function entryForCapability(capability) {
   return SENSITIVE_ENTRIES.find((entry) => entry.capability === capability) || null;
 }
 
-/*
- * 配置/consent 类动作的独立 gate seam（P1 边界）：监护关系创建与授权、
-  * 原始语音授权授予/撤回等“配置能力”的动作不能复用使用类
- * 能力的门禁（否则首次设置死锁：未授权就永远无法发起授权），也不能在
- * 客户端用年龄绕过。后端 consent/policy 决策接口接入前，一律 fail-closed
- * 并给出可解释文案；接入后由该 seam 消费服务端决策结果。
- */
-const CONFIG_SEAM_MESSAGES = Object.freeze({
-  guardian_manage:
-    "监护关系与授权配置需要服务端 consent/policy 决策接口；该接口尚未接入，操作保持关闭，不会按本地年龄放开。",
-  raw_audio_consent:
-    "原始语音授权配置需要服务端 consent 决策接口；该接口尚未接入，授权保持关闭，不会按本地年龄放开。",
+const CONFIG_ACTION_POLICY = Object.freeze({
+  guardian_manage: Object.freeze({
+    capability: contracts.Capability.GuardianSummaryView,
+    data_classification: contracts.DataClassification.Aggregate,
+    safety_state: contracts.SafetyState.Normal,
+  }),
+  raw_audio_consent: Object.freeze({
+    capability: contracts.Capability.RawAudioRetention,
+    data_classification: contracts.DataClassification.Biometric,
+    safety_state: contracts.SafetyState.Normal,
+  }),
 });
 
-function configActionGate(action) {
+const CONFIG_DECISION_MESSAGES = Object.freeze({
+  pending: "正在向服务端确认这项配置是否允许。",
+  unknown_capability: "这项配置没有对应的服务端决策，操作保持关闭。",
+  unauthenticated: "请先登录，再处理这项配置。",
+  no_binding: "还没有绑定设备，无法向服务端确认这项配置，操作保持关闭。",
+  invalid_profile: "服务端暂时无法提供有效的 Runtime Profile，这项配置保持关闭。",
+  superseded: "登录状态已变化，这项配置保持关闭。请刷新后再试。",
+  policy_unavailable: "暂时无法确认这项配置是否允许，操作保持关闭。",
+  policy_response_invalid: "服务端决策结果不完整，这项配置保持关闭。",
+  denied: "服务端未允许这项配置，操作保持关闭。",
+});
+
+const CONFIG_GATE_PENDING_MESSAGE = CONFIG_DECISION_MESSAGES.pending;
+
+function closedConfigDecision(reason) {
   return {
     allowed: false,
-    reason: "config_seam_pending",
-    message:
-      CONFIG_SEAM_MESSAGES[action] || "该配置动作的服务端决策接口尚未接入，保持关闭。",
+    reason,
+    code: reason,
+    effect: contracts.PolicyEffect.Deny,
+    message: CONFIG_DECISION_MESSAGES[reason] || CONFIG_DECISION_MESSAGES.policy_unavailable,
+    obligations: [],
   };
+}
+
+function parsePolicyDecision(payload) {
+  if (!isPlainObject(payload)) return closedConfigDecision("policy_response_invalid");
+  const effect = payload.effect;
+  const reason = payload.reason_code;
+  const obligations = payload.obligations;
+  if (!contracts.isPolicyEffect(effect) || typeof reason !== "string" || !reason.trim()) {
+    return closedConfigDecision("policy_response_invalid");
+  }
+  if (!Array.isArray(obligations) || obligations.some((item) => typeof item !== "string" || !item)) {
+    return closedConfigDecision("policy_response_invalid");
+  }
+  const allowed =
+    effect === contracts.PolicyEffect.Allow ||
+    effect === contracts.PolicyEffect.AllowWithObligations;
+  return {
+    allowed,
+    reason,
+    code: reason,
+    effect,
+    message: allowed ? "" : CONFIG_DECISION_MESSAGES.denied,
+    obligations: obligations.slice(),
+  };
+}
+
+function configActionSpec(action) {
+  const spec = CONFIG_ACTION_POLICY[action];
+  if (
+    !spec ||
+    !contracts.isCapability(spec.capability) ||
+    !contracts.isDataClassification(spec.data_classification) ||
+    !contracts.isSafetyState(spec.safety_state)
+  ) {
+    return null;
+  }
+  return spec;
+}
+
+async function configActionGate(action) {
+  const spec = configActionSpec(action);
+  if (!spec) return closedConfigDecision("unknown_capability");
+  const api = require("./api");
+  const authEpoch = api.currentAuthEpoch();
+  if (!api.hasAuthenticatedSession()) return closedConfigDecision("unauthenticated");
+  const manifest = readBindingManifest();
+  if (!manifest || typeof manifest.device_id !== "string" || !manifest.device_id) {
+    return closedConfigDecision("no_binding");
+  }
+  let profile;
+  try {
+    profile = await api.getRuntimeProfile(manifest.device_id);
+  } catch {
+    if (!api.isAuthEpochCurrent(authEpoch)) return closedConfigDecision("superseded");
+    return closedConfigDecision("policy_unavailable");
+  }
+  if (!api.isAuthEpochCurrent(authEpoch)) return closedConfigDecision("superseded");
+  if (
+    !profile ||
+    profile.valid !== true ||
+    typeof profile.runtime_profile_id !== "string" ||
+    !profile.runtime_profile_id
+  ) {
+    return closedConfigDecision("invalid_profile");
+  }
+  let payload;
+  try {
+    payload = await api.requestPolicyDecision({
+      runtime_profile_id: profile.runtime_profile_id,
+      capability: spec.capability,
+      data_classification: spec.data_classification,
+      safety_state: spec.safety_state,
+    });
+  } catch {
+    if (!api.isAuthEpochCurrent(authEpoch)) return closedConfigDecision("superseded");
+    return closedConfigDecision("policy_unavailable");
+  }
+  if (!api.isAuthEpochCurrent(authEpoch)) return closedConfigDecision("superseded");
+  return parsePolicyDecision(payload);
 }
 
 /*
@@ -1556,6 +1650,7 @@ module.exports = {
   degradationFor,
   entryForCapability,
   capabilityGateMessage,
+  CONFIG_GATE_PENDING_MESSAGE,
   configActionGate,
   validateBindingManifest,
   saveBindingManifest,
