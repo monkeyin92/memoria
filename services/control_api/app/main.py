@@ -98,6 +98,7 @@ from services.control_api.app.session_termination import (
     AccountSessionTerminator,
     RealtimeConnectionRegistry,
 )
+from services.control_api.app.subject_session_recall import wire_subject_session_recall_store
 from services.control_api.app.text_models import (
     build_crisis_semantic_classifier,
     build_persona_extractor,
@@ -723,6 +724,7 @@ async def _wire_services(w: Wiring) -> None:
     )
     app.state.session_directory = session_directory
     w.on_close(session_directory.close)
+    wire_subject_session_recall_store(app)
     media_slo_gate = MediaSLOGate(
         ttl_s=settings.media_slo_snapshot_ttl_s,
         redis_url=settings.redis_url.strip() or None,
