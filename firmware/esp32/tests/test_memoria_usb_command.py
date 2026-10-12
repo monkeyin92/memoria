@@ -44,6 +44,8 @@ static const char* EventName(memoria::UsbLineEvent event) {
 #if CONFIG_MEMORIA_BENCH_SERIAL
         case memoria::UsbLineEvent::kSnap: return "snap";
         case memoria::UsbLineEvent::kStatus: return "status";
+        case memoria::UsbLineEvent::kPcmArm: return "pcmarm";
+        case memoria::UsbLineEvent::kPcmDump: return "pcmdump";
 #endif
     }
     return nullptr;
@@ -56,6 +58,8 @@ static const char* CommandName(memoria::UsbCommand command) {
 #if CONFIG_MEMORIA_BENCH_SERIAL
         case memoria::UsbCommand::kSnap: return "snap";
         case memoria::UsbCommand::kStatus: return "status";
+        case memoria::UsbCommand::kPcmArm: return "pcmarm";
+        case memoria::UsbCommand::kPcmDump: return "pcmdump";
 #endif
     }
     return "unknown";
@@ -347,10 +351,13 @@ def test_a_product_image_knows_no_bench_verbs(tool: pathlib.Path) -> None:
         tool,
         "parse snap",
         "parse status",
+        "parse pcmarm",
+        "parse pcmdump",
         _feed(0, "snap\n"),
         _feed(0, "status\r\n"),
         _feed(0, "snap\nwake\nstatus\n"),
-    ) == ["unknown", "unknown", "unknown", "unknown", "unknown wake unknown"]
+        _feed(0, "pcmarm\nwake\npcmdump\n"),
+    ) == ["unknown"] * 6 + ["unknown wake unknown"] * 2
 
 
 def test_the_task_stack_grows_only_in_a_bench_build(tool: pathlib.Path, bench_tool: pathlib.Path) -> None:
@@ -361,7 +368,16 @@ def test_the_task_stack_grows_only_in_a_bench_build(tool: pathlib.Path, bench_to
 
 def test_a_product_image_cannot_even_name_the_bench_commands(tmp_path: pathlib.Path) -> None:
     snippet = '#include "memoria_usb_command.h"\nint main() { return static_cast<int>(memoria::%s); }\n'
-    for name in ("UsbCommand::kSnap", "UsbCommand::kStatus", "UsbLineEvent::kSnap", "UsbLineEvent::kStatus"):
+    for name in (
+        "UsbCommand::kSnap",
+        "UsbCommand::kStatus",
+        "UsbCommand::kPcmArm",
+        "UsbCommand::kPcmDump",
+        "UsbLineEvent::kSnap",
+        "UsbLineEvent::kStatus",
+        "UsbLineEvent::kPcmArm",
+        "UsbLineEvent::kPcmDump",
+    ):
         source = snippet % name
         product = _compile(tmp_path / "product", "-DCONFIG_MEMORIA_BENCH_SERIAL=0", source=source)
         assert product.returncode != 0, name
@@ -369,6 +385,35 @@ def test_a_product_image_cannot_even_name_the_bench_commands(tmp_path: pathlib.P
         # The same line compiles in a bench build, so the refusal above is the missing enumerator.
         bench = _compile(tmp_path / "bench", "-DCONFIG_MEMORIA_BENCH_SERIAL=1", source=source)
         assert bench.returncode == 0, bench.stderr
+
+
+def test_a_bench_build_reads_the_pcm_verbs_exactly(bench_tool: pathlib.Path) -> None:
+    assert _run(
+        bench_tool,
+        "parse pcmarm",
+        "parse  pcmarm\t",
+        "parse pcmdump",
+        "parse \tpcmdump ",
+    ) == ["pcmarm", "pcmarm", "pcmdump", "pcmdump"]
+    # No arguments ride the line: the window is compiled in and the dump has no options.
+    assert _run(
+        bench_tool,
+        "parse PCMARM",
+        "parse pcmarm 3000",
+        "parse pcmar",
+        "parse pcmrec",
+        "parse pcmdumpx",
+        "parse pcmdump now",
+        "parse pcm",
+        "parse PCMD 0001a2b3 failed reason=empty",
+    ) == ["unknown"] * 8
+    assert _run(
+        bench_tool,
+        _feed(0, "pcmarm\r\n"),
+        _feed(0, "pcm"),
+        _feed(10, "dump\n"),
+        _feed(0, "pcmarm\nstatus\npcmdump\n"),
+    ) == ["pcmarm", "-", "pcmdump", "pcmarm status pcmdump"]
 
 
 def test_a_bench_build_reads_the_two_extra_verbs_as_strictly_as_wake(bench_tool: pathlib.Path) -> None:

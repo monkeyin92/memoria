@@ -13,11 +13,12 @@ Since firmware build 20 this process is also the only way to talk TO the robot. 
 (default /tmp/memoria-serial-<port>.sock, owner-only) and writes the few allowed commands into the port it
 already holds. `wake`: `python scripts/voice_soak_serial_command.py wake`, or the soak driver, wakes an idle
 robot exactly like a tap on the round screen, so computer-driven tests never have to play the wake word.
-`snap` and `status` are answered by bench images only (firmware/esp32/scripts/build.sh --bench): the robot
-streams its screenshot as SNAP lines and logs one status line, which this log records like all other output;
+`snap`, `status`, `pcmarm` and `pcmdump` are answered by bench images only (firmware/esp32/scripts/build.sh
+--bench): the robot streams its screenshot as SNAP lines, logs one status line, records a PCM window and
+streams it as PCMD lines, which this log records like all other output;
 a product image does not know them and logs `usb command ignored`. The log records every command as a
 `LOGGER: command <word> sent` line, and the robot answers with `usb wake accepted ...` / `usb wake ignored
-reason=...` and `usb snap accepted`. Nothing but these three words is ever written to the port.
+reason=...` and `usb snap accepted`. Nothing but these five words is ever written to the port.
 
 Stop it (Ctrl-C / kill) before flashing: esptool needs the port to itself.
 """
@@ -38,10 +39,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import voice_soak_serial_command as serial_command  # noqa: E402
 
-# What may be written into the port: `wake`, which every image knows, and the read-only `snap` and `status`
-# that only a bench image answers. Everything else is refused here, so a typo or another local process cannot
-# type into the board.
-WIRE_COMMANDS = {"wake": b"wake\n", "snap": b"snap\n", "status": b"status\n"}
+# What may be written into the port: `wake`, which every image knows, and the bench-only `snap`, `status`,
+# `pcmarm` and `pcmdump`, none of which changes what the robot does. Everything else is refused here, so a typo
+# or another local process cannot type into the board.
+WIRE_COMMANDS = {
+    "wake": b"wake\n",
+    "snap": b"snap\n",
+    "status": b"status\n",
+    "pcmarm": b"pcmarm\n",
+    "pcmdump": b"pcmdump\n",
+}
 
 _MAX_REQUEST = 64
 

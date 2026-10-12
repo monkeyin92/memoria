@@ -21,8 +21,13 @@ with `--log FILE` (the logger's output) this client waits for it:
     status --log robot.log [--after 60]       what the mascot is doing; with --after, asked again that many
                                               seconds later, and what its frames cost in between
 
-Without `--log` the request is only sent and the answer is left in the log for scripts/snap_to_png.py and
-scripts/bench_status.py to read later.
+    pcmarm  --log robot.log                   record the fixed PCM window (memoria_diag_pcm.h); waits for
+                                              the robot to say it armed
+    pcmdump --log robot.log [--out DIR]       stream the sealed recording, verify it and write one WAV per
+                                              channel plus manifest.json (scripts/diag_pcm_extract.py)
+
+Without `--log` the request is only sent and the answer is left in the log for scripts/snap_to_png.py,
+scripts/bench_status.py and scripts/diag_pcm_extract.py to read later.
 
 Standard library only, so the tests and the soak driver can import it without pyserial.
 """
@@ -38,23 +43,24 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bench_status  # noqa: E402
+import diag_pcm_extract  # noqa: E402
 import snap_to_png  # noqa: E402
 
 DEFAULT_PORT = "/dev/cu.usbmodem2101"
 
-# What the logger accepts on its socket. `wake`, `snap` and `status` reach the robot; `ping` just proves the
-# logger is alive.
-COMMANDS = ("wake", "snap", "status", "ping")
-# The two only a bench image answers.
-BENCH_COMMANDS = ("snap", "status")
+# What the logger accepts on its socket. All but `ping` reach the robot; `ping` just proves the logger is alive.
+COMMANDS = ("wake", "snap", "status", "pcmarm", "pcmdump", "ping")
+# The ones only a bench image answers.
+BENCH_COMMANDS = ("snap", "status", "pcmarm", "pcmdump")
 # Which commands each option belongs to.
 _OPTION_COMMANDS = {
     "--log": BENCH_COMMANDS,
     "--wait": BENCH_COMMANDS,
-    "--out": ("snap",),
-    "--partial": ("snap",),
+    "--out": ("snap", "pcmdump"),
+    "--partial": ("snap", "pcmdump"),
     "--after": ("status",),
 }
+_DEFAULT_WAIT = {"snap": 40.0, "status": 10.0, "pcmarm": 10.0, "pcmdump": 90.0}
 
 _MAX_REPLY = 256
 
@@ -150,20 +156,51 @@ def read_status(
         raise SerialCommandError(str(exc)) from exc
 
 
+def pcm_request(
+    command: str,
+    log: Path,
+    *,
+    socket_path: Path | str | None = None,
+    port: str = DEFAULT_PORT,
+    wait: float,
+) -> diag_pcm_extract.Transcript:
+    """Send `pcmarm` or `pcmdump` and return the journal it answers about in `log`: armed, fully dumped, or
+    refused (Transcript.failed says why)."""
+    offset = _log_size(log)
+    send_command(command, socket_path=socket_path, port=port)
+    done = diag_pcm_extract.armed if command == "pcmarm" else diag_pcm_extract.dumped
+    try:
+        return diag_pcm_extract.wait_for(log, offset, wait, done)
+    except diag_pcm_extract.CaptureError as exc:
+        raise SerialCommandError(str(exc)) from exc
+
+
 def _bench_request(args: argparse.Namespace) -> str:
-    """Run `snap` or `status` with the answer awaited in args.log; returns what to print."""
+    """Run a bench command with the answer awaited in args.log; returns what to print."""
     where = {"socket_path": args.socket, "port": args.port}
+    wait = args.wait or _DEFAULT_WAIT[args.command]
+    if args.command in ("pcmarm", "pcmdump"):
+        journal = pcm_request(args.command, args.log, wait=wait, **where)
+        if journal.failed is not None:
+            raise SerialCommandError(f"the robot refused `{args.command}`: reason={journal.failed}")
+        if args.command == "pcmarm":
+            return f"armed journal {journal.id}"
+        out = args.out or Path(f"pcm-{journal.id}")
+        verdict = diag_pcm_extract.export(journal, out, partial=args.partial)
+        if not verdict.intact:
+            raise SerialCommandError(f"journal {journal.id} is damaged: " + "; ".join(verdict.details))
+        return f"wrote {out} (journal {journal.id}, intact)"
     if args.command == "snap":
-        shot, png = take_snapshot(args.log, partial=args.partial, wait=args.wait or 40.0, **where)
+        shot, png = take_snapshot(args.log, partial=args.partial, wait=wait, **where)
         out = args.out or Path(f"snap-{shot.id}.png")
         out.write_bytes(png)
         note = ", damaged, gaps painted magenta" if shot.problems() else ""
         return f"wrote {out} ({shot.width}x{shot.height}, snapshot {shot.id}{note})"
-    first = read_status(args.log, wait=args.wait or 10.0, **where)
+    first = read_status(args.log, wait=wait, **where)
     if args.after is None:
         return bench_status.format_status(first)
     time.sleep(args.after)
-    second = read_status(args.log, wait=args.wait or 10.0, **where)
+    second = read_status(args.log, wait=wait, **where)
     try:
         return bench_status.format_rates(first, second)
     except bench_status.StatusError as exc:
@@ -182,16 +219,16 @@ def main(argv: list[str] | None = None) -> int:
         "--log",
         type=Path,
         default=None,
-        help="snap/status: the logger's output, to wait for the answer in",
+        help="bench commands: the logger's output, to wait for the answer in",
     )
     parser.add_argument(
-        "--out", type=Path, default=None, help="snap: the PNG (default snap-<id>.png)"
+        "--out", type=Path, default=None, help="snap: the PNG (default snap-<id>.png); pcmdump: the directory (default pcm-<id>)"
     )
     parser.add_argument(
-        "--wait", type=float, default=None, help="snap/status: seconds to wait (default 40 / 10)"
+        "--wait", type=float, default=None, help="bench commands: seconds to wait (snap 40, status 10, pcmarm 10, pcmdump 90)"
     )
     parser.add_argument(
-        "--partial", action="store_true", help="snap: draw a damaged picture, gaps in magenta"
+        "--partial", action="store_true", help="snap: draw a damaged picture, gaps in magenta; pcmdump: write a damaged journal's WAVs too"
     )
     parser.add_argument(
         "--after",

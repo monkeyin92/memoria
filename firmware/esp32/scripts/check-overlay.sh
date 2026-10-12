@@ -94,11 +94,23 @@ rg -Fq 'open("/dev/secondary", O_RDONLY)' "$board_dir/memoria_esp_vocat.cc" || \
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_bench_snap.h" ]] || die "bench screenshot header missing"
 [[ -f "$board_dir/memoria_mascot_bench.cc" ]] || die "bench screenshot source missing"
 [[ -f "$board_dir/config.bench.json" ]] || die "bench manifest missing"
+[[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_diag_pcm.h" ]] || die "bench PCM journal header missing"
+[[ -f "$board_dir/memoria_diag_pcm.cc" ]] || die "bench PCM journal source missing"
+rg -Fq 'memoria::diag::RecordFeed(' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
+    die "the bench PCM journal must record what AudioInputTask feeds the AFE"
+rg -Fq 'memoria::diag::RecordPlay(' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
+    die "the bench PCM journal must record what AudioOutputTask hands to the codec"
+rg -Fq 'memoria::diag::RecordPostAfe(' "$MEMORIA_UPSTREAM_DIR/main/audio/engines/afe_audio_engine.cc" || \
+    die "the bench PCM journal must record the AFE fetch result before its consumers"
 "$python_bin" - "$MEMORIA_UPSTREAM_DIR/main/Kconfig.projbuild" <<'PY'
 import pathlib
+import re
 import sys
 
 kconfig = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+# Bench-only features ride the one bench switch: a second option without the bench marker could be signed.
+if re.findall(r"^config (MEMORIA_\w+)", kconfig, re.MULTILINE) != ["MEMORIA_BENCH_SERIAL"]:
+    raise SystemExit("MEMORIA_BENCH_SERIAL must be the only Memoria Kconfig option")
 block = kconfig.split("config MEMORIA_BENCH_SERIAL\n", 1)[1].split("\nconfig ", 1)[0].split("\nendmenu", 1)[0]
 if "default n" not in block or "depends on BOARD_TYPE_MEMORIA_ESP_VOCAT" not in block:
     raise SystemExit("MEMORIA_BENCH_SERIAL must default to n and depend on the Memoria board")

@@ -1,0 +1,81 @@
+diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
+index 863a254..1cbbc30 100644
+--- a/main/audio/audio_service.cc
++++ b/main/audio/audio_service.cc
+@@ -30,6 +30,9 @@
+ #else
+ #include "engines/lite_audio_engine.h"
+ #endif
++#if CONFIG_MEMORIA_BENCH_SERIAL
++#include "memoria_diag_pcm.h"
++#endif
+ 
+ #define TAG "AudioService"
+ 
+@@ -383,7 +386,16 @@ void AudioService::AudioInputTask() {
+             std::vector<int16_t> data;
+             if (ReadAudioData(data, 16000, samples)) {
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
+-                if (input_settle_.ShouldDrop(samples, static_cast<uint64_t>(esp_timer_get_time() / 1000))) {
++                const bool settle_drop =
++                    input_settle_.ShouldDrop(samples, static_cast<uint64_t>(esp_timer_get_time() / 1000));
++#if CONFIG_MEMORIA_BENCH_SERIAL
++                /* Recorded before the drop: the bench journal shows what the microphones gave, flagged when
++                 * the AFE never saw it. */
++                memoria::diag::RecordFeed(data.data(), data.size() / codec_->input_channels(),
++                                          codec_->input_channels(),
++                                          settle_drop ? memoria::diag::kFlagSettleDropped : 0);
++#endif
++                if (settle_drop) {
+                     continue;  // start-up artifacts and a local cue's echo must not open a VAD epoch
+                 }
+ #endif
+@@ -479,7 +491,8 @@ void AudioService::AudioOutputTask() {
+         audio_queue_cv_.notify_all();
+         lock.unlock();
+ 
+-        if (!codec_->output_enabled()) {
++        const bool output_reenabled = !codec_->output_enabled();
++        if (output_reenabled) {
+             esp_timer_stop(audio_power_timer_);
+             esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
+             codec_->EnableOutput(true);
+@@ -491,6 +504,10 @@ void AudioService::AudioOutputTask() {
+          * needs to put the mouth on screen. */
+         memoria::PublishPcm(memoria::output_level_tap, task->pcm.data(), task->pcm.size(),
+                             codec_->output_sample_rate());
++#if CONFIG_MEMORIA_BENCH_SERIAL
++        memoria::diag::RecordPlay(task->pcm.data(), task->pcm.size(), codec_->output_sample_rate(),
++                                  output_reenabled ? memoria::diag::kFlagOutputReenabled : 0);
++#endif
+ #endif
+         codec_->OutputData(task->pcm);
+ 
+diff --git a/main/audio/engines/afe_audio_engine.cc b/main/audio/engines/afe_audio_engine.cc
+index 4ed8a62..3ffcba9 100644
+--- a/main/audio/engines/afe_audio_engine.cc
++++ b/main/audio/engines/afe_audio_engine.cc
+@@ -11,6 +11,9 @@
+ 
+ #include "audio_service.h"
+ #include "wake_words/custom_wake_word.h"
++#if CONFIG_MEMORIA_BENCH_SERIAL
++#include "memoria_diag_pcm.h"
++#endif
+ 
+ #define TAG "AfeAudioEngine"
+ 
+@@ -431,6 +434,13 @@ void AfeAudioEngine::ProcessingTask() {
+         }
+ 
+         EventBits_t bits = xEventGroupGetBits(event_group_);
++#if CONFIG_MEMORIA_BENCH_SERIAL
++        /* Once per fetch, before either consumer, flagged with which of them read it. */
++        memoria::diag::RecordPostAfe(
++            result->data, result->data_size / sizeof(int16_t),
++            memoria::diag::ConsumerFlags((bits & kWakeWordEnabled) != 0,
++                                         kUseAfeForVoiceProcessing && (bits & kVoiceProcessingEnabled) != 0));
++#endif
+         if (bits & kWakeWordEnabled) {
+             HandleWakeWordResult(result);
+         }
