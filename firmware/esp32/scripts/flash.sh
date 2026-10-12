@@ -89,7 +89,7 @@ cd "$MEMORIA_UPSTREAM_DIR"
 [[ "$PWD" == "$MEMORIA_UPSTREAM_DIR" ]] || die "failed to enter locked upstream project"
 printf 'upstream cwd: %s\n' "$PWD"
 if [[ "$BENCH" == 1 ]]; then
-    printf '*** flashing a BENCH image (snap and status over USB); put a product image back afterwards ***\n' >&2
+    printf '*** flashing a BENCH image (snap, status, pcmarm, pcmdump over USB); put a product image back afterwards ***\n' >&2
 fi
 printf 'flashing %s on %s\n' "$MEMORIA_BOARD_NAME" "$port"
 if [[ "$MONITOR" == 1 ]]; then

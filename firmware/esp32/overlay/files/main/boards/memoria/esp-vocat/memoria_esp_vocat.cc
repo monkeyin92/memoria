@@ -33,6 +33,9 @@
 #include "memoria_usb_command.h"
 #include "memoria_wake_mode.h"
 #include "settings.h"
+#if CONFIG_MEMORIA_BENCH_SERIAL
+#include "memoria_diag_pcm.h"
+#endif
 
 #if ESP_VOCAT_ENABLE_CAP_TOUCH_SENSOR
 extern "C" {
@@ -673,7 +676,7 @@ private:
     // writes to the USB port would sit unread in the peripheral's FIFO. This task reads them through the
     // secondary console's own device node (a non-blocking poll, no driver, no interrupt, nothing written),
     // assembles lines and hands the one command, `wake`, to HandleUsbWake(). A test-rig image also hands it
-    // `snap` and `status`.
+    // `snap`, `status`, `pcmarm` and `pcmdump`, and seals a PCM recording when its window ends.
     static void usb_command_task(void* arg) {
         auto* self = static_cast<MemoriaEspVocat*>(arg);
         const int fd = open("/dev/secondary", O_RDONLY);
@@ -685,7 +688,7 @@ private:
 #if CONFIG_MEMORIA_BENCH_SERIAL
         // The marker is what makes the firmware publisher refuse this image; logging it keeps the linker
         // from dropping it.
-        ESP_LOGI(kUsbTag, "usb command console ready commands=wake,snap,status %s", memoria_bench_build_marker);
+        ESP_LOGI(kUsbTag, "usb command console ready commands=wake,snap,status,pcmarm,pcmdump %s", memoria_bench_build_marker);
 #else
         ESP_LOGI(kUsbTag, "usb command console ready commands=wake");
 #endif
@@ -711,6 +714,12 @@ private:
                         case memoria::UsbLineEvent::kStatus:
                             self->HandleUsbStatus();
                             break;
+                        case memoria::UsbLineEvent::kPcmArm:
+                            memoria::diag::Arm();
+                            break;
+                        case memoria::UsbLineEvent::kPcmDump:
+                            memoria::diag::Dump();
+                            break;
 #endif
                         case memoria::UsbLineEvent::kUnknown:
                             ESP_LOGI(kUsbTag, "usb command ignored (not a command)");
@@ -724,6 +733,9 @@ private:
                 }
             }
             vTaskDelay(pdMS_TO_TICKS(kUsbPollMs));
+#if CONFIG_MEMORIA_BENCH_SERIAL
+            memoria::diag::Tick();
+#endif
         }
     }
 

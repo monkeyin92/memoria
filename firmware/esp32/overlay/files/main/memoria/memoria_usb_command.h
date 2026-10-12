@@ -19,8 +19,13 @@
 //   snap\n    stream a screenshot of the display as SNAP log lines
 //   status\n  log one line of key=value state (frames drawn, render cost, device state, memory)
 //
-// Neither changes anything on the robot. They are compiled in only under that switch: a product image has
-// no such enumerators, no such verbs and no code behind them.
+// and two that record what the audio path handled (memoria_diag_pcm.h, TODOLIST N-10):
+//
+//   pcmarm\n   record a fixed window of playback, AFE input and AFE output into PSRAM
+//   pcmdump\n  stream that recording as PCMD log lines
+//
+// None changes what the robot does. They are compiled in only under that switch: a product image has no
+// such enumerators, no such verbs and no code behind them.
 //
 // This header has no ESP-IDF dependency so the host tests compile the real parser, line assembler and wake
 // policy (in both configurations); the task that reads the port and calls the application lives in the
@@ -54,6 +59,8 @@ enum class UsbCommand : unsigned char {
 #if CONFIG_MEMORIA_BENCH_SERIAL
     kSnap,
     kStatus,
+    kPcmArm,
+    kPcmDump,
 #endif
 };
 
@@ -92,6 +99,12 @@ inline UsbCommand ParseUsbCommand(const char* line, std::size_t length) {
     if (usb_command_detail::IsVerb(verb, verb_length, "status")) {
         return UsbCommand::kStatus;
     }
+    if (usb_command_detail::IsVerb(verb, verb_length, "pcmarm")) {
+        return UsbCommand::kPcmArm;
+    }
+    if (usb_command_detail::IsVerb(verb, verb_length, "pcmdump")) {
+        return UsbCommand::kPcmDump;
+    }
 #endif
     return UsbCommand::kUnknown;
 }
@@ -104,6 +117,8 @@ enum class UsbLineEvent : unsigned char {
 #if CONFIG_MEMORIA_BENCH_SERIAL
     kSnap,    // bench builds only: a complete `snap` line
     kStatus,  // bench builds only: a complete `status` line
+    kPcmArm,   // bench builds only: a complete `pcmarm` line
+    kPcmDump,  // bench builds only: a complete `pcmdump` line
 #endif
 };
 
@@ -160,6 +175,10 @@ private:
                 return UsbLineEvent::kSnap;
             case UsbCommand::kStatus:
                 return UsbLineEvent::kStatus;
+            case UsbCommand::kPcmArm:
+                return UsbLineEvent::kPcmArm;
+            case UsbCommand::kPcmDump:
+                return UsbLineEvent::kPcmDump;
 #endif
             case UsbCommand::kUnknown:
                 break;

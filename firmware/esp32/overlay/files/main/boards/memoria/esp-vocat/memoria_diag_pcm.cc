@@ -1,9 +1,11 @@
 // Test-rig builds only (TODOLIST N-10): the device side of the PCM journal in memoria_diag_pcm.h. Without
 // CONFIG_MEMORIA_BENCH_SERIAL (the product image, always) this file compiles to nothing.
 
-#include "memoria_diag_pcm.h"
+#include "sdkconfig.h"
 
 #if CONFIG_MEMORIA_BENCH_SERIAL
+
+#include "memoria_diag_pcm.h"
 
 #include <esp_heap_caps.h>
 #include <esp_log.h>

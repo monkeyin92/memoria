@@ -22,9 +22,10 @@ upstream build.py still performs the real merge-bin.
 
 --bench builds the test-rig image from the board's config.bench.json: the
 product build plus CONFIG_MEMORIA_BENCH_SERIAL (the USB console also answers
-`snap` and `status`, see TODOLIST M-2). It is written next to the product
-artifacts as memoria-esp-vocat-bench-*.bin, carries a marker the firmware
-publisher refuses, and flash.sh flashes it only with --bench.
+`snap`, `status`, `pcmarm` and `pcmdump`, see TODOLIST M-2 and N-10). It is
+written next to the product artifacts as memoria-esp-vocat-bench-*.bin,
+carries a marker the firmware publisher refuses, and flash.sh flashes it only
+with --bench.
 EOF
 }
 
@@ -71,7 +72,7 @@ artifact_name="$MEMORIA_BOARD_NAME"
 if [[ "$BENCH" == 1 ]]; then
     artifact_name="$MEMORIA_BOARD_NAME-bench"
     printf '%s\n' \
-        '*** BENCH BUILD: the USB console answers snap and status (CONFIG_MEMORIA_BENCH_SERIAL). ***' \
+        '*** BENCH BUILD: the USB console answers snap, status, pcmarm and pcmdump (CONFIG_MEMORIA_BENCH_SERIAL). ***' \
         '*** For the test rig only: never publish it, never ship it. ***' >&2
 fi
 
