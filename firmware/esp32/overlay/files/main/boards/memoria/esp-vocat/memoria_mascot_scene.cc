@@ -56,6 +56,97 @@ constexpr uint32_t kMouthMinClosedMs = 60;
 // The glow ring is only redrawn this often (it is a 59k px redraw, and 8 ms steps of a soft glow are
 // invisible).
 constexpr uint32_t kGlowHoldMs = 80;
+// Hearts (Pat and the loving mood) and the idle sparkle. Times are chosen so a fleck moves by whole
+// pixels, which is what the dirty-rect compare keys on.
+constexpr uint32_t kHeartLifeMs = 900;
+constexpr uint32_t kHeartStaggerMs = 160;
+constexpr uint32_t kHeartWindowMs = kHeartLifeMs + 2 * kHeartStaggerMs;
+constexpr uint32_t kSparklePeriodMs = 2800;
+constexpr uint32_t kSparkleOnMs = 420;
+constexpr int kDotCycleMs = 900;
+constexpr int kDotRiseMs = 600;
+// Flat colours so a host test can count the glyphs without knowing the pose art. The ring keeps the
+// companion's primary; these three are the flecks.
+constexpr uint32_t kDotRgb = 0x5CE1FF;
+constexpr uint32_t kHeartRgb = 0xFF2D6A;
+constexpr uint32_t kSparkRgb = 0xE6FF55;
+// A 7x6 heart, 1 where the glyph is opaque.
+constexpr uint8_t kHeart[6][7] = {
+    {0, 1, 1, 0, 1, 1, 0}, {1, 1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1, 1},
+    {0, 1, 1, 1, 1, 1, 0}, {0, 0, 1, 1, 1, 0, 0}, {0, 0, 0, 1, 0, 0, 0},
+};
+
+bool FleckSize(uint8_t kind, int* w, int* h) {
+    switch (kind) {
+        case 1:
+            *w = 5;
+            *h = 5;
+            return true;  // thinking dot
+        case 2:
+            *w = 7;
+            *h = 6;
+            return true;  // heart
+        case 3:
+            *w = 7;
+            *h = 7;
+            return true;  // sparkle
+        default:
+            return false;
+    }
+}
+
+// Alpha of glyph pixel (lx, ly), or 0 when the glyph is clear there. `alpha` is the fleck's fade.
+int FleckAlpha(uint8_t kind, int lx, int ly, int alpha) {
+    if (alpha < 4) {
+        return 0;
+    }
+    switch (kind) {
+        case 1: {
+            const int dx = lx - 2;
+            const int dy = ly - 2;
+            return dx * dx + dy * dy <= 4 ? alpha : 0;
+        }
+        case 2:
+            return (lx >= 0 && ly >= 0 && lx < 7 && ly < 6 && kHeart[ly][lx] != 0) ? alpha : 0;
+        case 3: {
+            const bool plus = (lx == 3 && ly >= 1 && ly <= 5) || (ly == 3 && lx >= 1 && lx <= 5);
+            const bool diag = (lx == ly || lx + ly == 6) && lx >= 2 && lx <= 4 && ly >= 2 && ly <= 4;
+            if (plus) {
+                return alpha;
+            }
+            return diag ? alpha / 2 : 0;
+        }
+        default:
+            return 0;
+    }
+}
+
+// Extra brightness of a listening/speaking ripple at `radius`, in 0..200. The radius is a coarse
+// function of the held glow level, so the ripple steps outward only on frames the ring already
+// redraws — it never asks for its own dirty rectangles (kMaxDirty is 6, and the ring already uses 4).
+int RippleBump(int radius, int level) {
+    constexpr int kBand = kRingOuter - kRingInner;
+    int travel = (level >> 5) * 3;  // 32-level buckets, 3 px each
+    if (travel > kBand - 10) {
+        travel = kBand - 10;
+    }
+    const int ridge = kRingInner + 4 + travel;
+    const int echo = ridge - 8;
+    int bump = 0;
+    const int d0 = radius - ridge;
+    const int a0 = d0 < 0 ? -d0 : d0;
+    if (a0 < 3) {
+        bump += (3 - a0) * (20 + (level >> 3));
+    }
+    if (echo >= kRingInner) {
+        const int d1 = radius - echo;
+        const int a1 = d1 < 0 ? -d1 : d1;
+        if (a1 < 3) {
+            bump += (3 - a1) * (8 + (level >> 4));
+        }
+    }
+    return bump > 200 ? 200 : bump;
+}
 
 // Boot animation timeline, ms after StartIntro().
 constexpr uint32_t kOrbStart = 250;
@@ -386,6 +477,10 @@ void MascotScene::SetMood(SceneMood mood, uint32_t now_ms) {
     if (phase_ == ScenePhase::kIdle) {
         mood_hold_until_ms_ = now_ms + 2200;
     }
+    if (mood == SceneMood::kLoving) {
+        heart_spawn_ms_ = now_ms;
+        hearts_until_ms_ = now_ms + kHeartWindowMs;
+    }
 }
 
 void MascotScene::Pat(uint32_t now_ms) {
@@ -395,6 +490,8 @@ void MascotScene::Pat(uint32_t now_ms) {
     override_until_ms_ = now_ms + 1800;
     StartMotion(Motion::kHop, now_ms);
     pose_ = MascotFrame::kHappy;
+    heart_spawn_ms_ = now_ms;
+    hearts_until_ms_ = now_ms + kHeartWindowMs;
 }
 
 void MascotScene::Shake(uint32_t now_ms) {
@@ -835,6 +932,7 @@ MascotScene::Placement MascotScene::Compute(uint32_t now_ms) {
                                   static_cast<int>(std::ceil(cx + rx)) + 1,
                                   static_cast<int>(std::ceil(cy + ry)) + 1},
                         Screen());
+    PlaceOverlays(&p, now_ms, k);
     return p;
 }
 
@@ -885,6 +983,146 @@ void MascotScene::DrawSprite(const SceneRect& clip, const Placement& p) {
     }
 }
 
+void MascotScene::PlaceOverlays(Placement* p, uint32_t now_ms, float scale) const {
+    // No flecks over the boot animation or the binding card: both already own the centre, and the
+    // intro's quantised overlay must not grow a new dirty rect.
+    if (p == nullptr || !p->sprite || intro_active(now_ms) || scale < 0.2f) {
+        return;
+    }
+    const int ax = static_cast<int>((p->xf.ax_q + 8) >> 4);
+    const int ay = static_cast<int>((p->xf.ay_q + 8) >> 4);
+    const int s = static_cast<int>(std::lround(scale * 256.0f));
+    auto at = [&](int full) { return (full * s + 128) >> 8; };
+    int used = 0;
+    auto add = [&](int x, int y, uint8_t kind, int alpha) {
+        int w = 0;
+        int h = 0;
+        if (used >= kOverlayCount || alpha < 16 || !FleckSize(kind, &w, &h)) {
+            return;
+        }
+        if (x < 0 || y < 0 || x + w > kSize || y + h > kSize) {
+            return;
+        }
+        // Inside the ring's hole. A ring-only redraw skips that hole, so a fleck out here would
+        // be painted on one path and skipped on the other.
+        const int cx = x + w / 2 - kCenter;
+        const int cy = y + h / 2 - kCenter;
+        if (cx * cx + cy * cy > 130 * 130) {
+            return;
+        }
+        Placement::Fleck& f = p->fleck[used++];
+        f.x = static_cast<int16_t>(x);
+        f.y = static_cast<int16_t>(y);
+        f.kind = kind;
+        // 255 stays opaque so the glyph colour is exact; fades step by 16 so a frame that only
+        // changed by a couple of levels does not dirty the rect.
+        if (alpha >= 255) {
+            alpha = 255;
+        } else if (alpha < 0) {
+            alpha = 0;
+        } else {
+            alpha &= ~15;
+        }
+        f.alpha = static_cast<uint8_t>(alpha);
+    };
+
+    const bool loving = mood_ == SceneMood::kLoving;
+    const bool hearts = loving || now_ms < hearts_until_ms_;
+    // Thinking dots, unless a pat or a loving mood is spending the slots on hearts.
+    if (phase_ == ScenePhase::kThinking && !hearts) {
+        for (int i = 0; i < 3; ++i) {
+            const int t = static_cast<int>((now_ms + static_cast<uint32_t>(i) * 300u) % kDotCycleMs);
+            const int rise = t < kDotRiseMs ? t * 18 / kDotRiseMs : 18;
+            int alpha = 255;
+            if (t >= kDotRiseMs) {
+                alpha = 255 * (kDotCycleMs - t) / (kDotCycleMs - kDotRiseMs);
+            }
+            const int x = ax + at(30 + i * 12) - 2;
+            const int y = ay - at(148) - rise - 2;
+            add(x, y, 1, alpha);
+        }
+    } else if (hearts) {
+        const uint32_t age0 = loving ? now_ms % kHeartWindowMs : now_ms - heart_spawn_ms_;
+        for (int i = 0; i < 3; ++i) {
+            const int age = static_cast<int>(age0) - i * static_cast<int>(kHeartStaggerMs);
+            if (age < 0 || age >= static_cast<int>(kHeartLifeMs)) {
+                continue;
+            }
+            const int rise = age * 32 / static_cast<int>(kHeartLifeMs);
+            const int drift = (i - 1) * (4 + age / 150);
+            int alpha = 255;
+            if (age > 640) {
+                alpha = 255 * (static_cast<int>(kHeartLifeMs) - age) / static_cast<int>(kHeartLifeMs - 640);
+            }
+            const int x = ax + at((i - 1) * 18) + drift - 3;
+            const int y = ay - at(96) - rise;
+            add(x, y, 2, alpha);
+        }
+    }
+    // Occasional, and only while nothing else is asking the mascot to perform.
+    if (used < kOverlayCount && phase_ == ScenePhase::kIdle && !sleeping_ && !hearts) {
+        const uint32_t slot = now_ms / kSparklePeriodMs;
+        const uint32_t into = now_ms % kSparklePeriodMs;
+        if (into < kSparkleOnMs && slot % 3 != 2) {
+            int alpha = 255;
+            if (into < 80) {
+                alpha = static_cast<int>(into) * 255 / 80;
+            } else if (into > kSparkleOnMs - 100) {
+                alpha = static_cast<int>(kSparkleOnMs - into) * 255 / 100;
+            }
+            const int jx = static_cast<int>(slot % 5) - 2;
+            const int jy = static_cast<int>((slot / 5) % 3);
+            const int x = ax + at(-34 + jx * 8) - 3;
+            const int y = ay - at(156 + jy * 6) - 3;
+            add(x, y, 3, alpha);
+        }
+    }
+}
+
+SceneRect MascotScene::FleckBounds(const Placement& p) const {
+    SceneRect box{};
+    bool any = false;
+    for (int i = 0; i < kOverlayCount; ++i) {
+        const Placement::Fleck& f = p.fleck[i];
+        int w = 0;
+        int h = 0;
+        if (f.kind == 0 || f.alpha == 0 || !FleckSize(f.kind, &w, &h)) {
+            continue;
+        }
+        const SceneRect r{f.x, f.y, f.x + w, f.y + h};
+        box = any ? Union(box, r) : r;
+        any = true;
+    }
+    return any ? box : SceneRect{};
+}
+
+void MascotScene::DrawOverlays(const SceneRect& clip, const Placement& p) {
+    const int y = clip.y0;
+    if (y < 0 || y >= kSize || clip.y1 <= y) {
+        return;
+    }
+    uint16_t* row = RowPtr(y);
+    for (int i = 0; i < kOverlayCount; ++i) {
+        const Placement::Fleck& f = p.fleck[i];
+        int w = 0;
+        int h = 0;
+        if (f.kind == 0 || f.alpha == 0 || !FleckSize(f.kind, &w, &h) || y < f.y || y >= f.y + h) {
+            continue;
+        }
+        const uint32_t rgb = f.kind == 2 ? kHeartRgb : (f.kind == 3 ? kSparkRgb : kDotRgb);
+        const uint16_t colour = To565(rgb);
+        const int ly = y - f.y;
+        const int x0 = f.x > clip.x0 ? f.x : clip.x0;
+        const int x1 = f.x + w < clip.x1 ? f.x + w : clip.x1;
+        for (int x = x0; x < x1; ++x) {
+            const int alpha = FleckAlpha(f.kind, x - f.x, ly, f.alpha);
+            if (alpha >= 4) {
+                row[x] = Blend(colour, row[x], static_cast<uint32_t>(alpha));
+            }
+        }
+    }
+}
+
 void MascotScene::DrawRing(const SceneRect& clip, const Placement& p) {
     if (p.ring_mode == 0) {
         return;
@@ -907,6 +1145,12 @@ void MascotScene::DrawRing(const SceneRect& clip, const Placement& p) {
             }
             if (p.ring_mode == 1) {
                 row[x] = Blend(colour, row[x], (w * static_cast<uint32_t>(p.ring_level)) >> 8);
+                // A second, narrower blend: two ripples whose radius follows the held level, so a
+                // louder voice (or the listening pulse) pushes them toward the rim.
+                const int bump = RippleBump(static_cast<int>(radius_[base + x]), p.ring_level);
+                if (bump > 0) {
+                    row[x] = Blend(colour, row[x], static_cast<uint32_t>(bump));
+                }
             } else {
                 const uint8_t behind = static_cast<uint8_t>(p.ring_level - ring_angle_[base + x]);
                 row[x] = Blend(comet_colour_[behind], row[x], (w * comet_level_[behind]) >> 8);
@@ -1040,6 +1284,22 @@ bool MascotScene::SpriteTouch(const Placement& p, int y, int* lo, int* hi) const
         l = p.shadow_box.x0 < l ? p.shadow_box.x0 : l;
         h = p.shadow_box.x1 > h ? p.shadow_box.x1 : h;
     }
+    // Flecks ride in the same span as the sprite, so a narrow redraw erases a fleck that moved
+    // and paints the one that replaced it. The box is the whole glyph, clear pixels included.
+    for (int i = 0; i < kOverlayCount; ++i) {
+        const Placement::Fleck& f = p.fleck[i];
+        int gw = 0;
+        int gh = 0;
+        if (f.kind == 0 || f.alpha == 0 || !FleckSize(f.kind, &gw, &gh)) {
+            continue;
+        }
+        if (y < f.y || y >= f.y + gh) {
+            continue;
+        }
+        l = f.x < l ? f.x : l;
+        const int x1 = f.x + gw;
+        h = x1 > h ? x1 : h;
+    }
     *lo = l;
     *hi = h;
     return h > l;
@@ -1087,6 +1347,7 @@ SceneRect MascotScene::RedrawRect(const SceneRect& rect, const Placement& p, uin
         const uint32_t t2 = timed ? clock_() : 0;
         DrawSprite(row, p);
         const uint32_t t3 = timed ? clock_() : 0;
+        DrawOverlays(row, p);
         DrawRing(row, p);
         if (intro_on) {
             DrawIntro(row, now_ms);
@@ -1227,6 +1488,42 @@ int MascotScene::RenderImpl(uint32_t now_ms, SceneRect* dirty, int max_dirty) {
             ring_only[count + i] = true;
         }
         count += strips;
+    }
+    // Flecks (dots, hearts, sparkles). Fold them into the sprite rect when there is one, so a frame
+    // that already redraws the body and the four ring strips stays at 5 of the 6 slots. A fleck-only
+    // change takes the spare slot. Past the budget, fold into a rect that still draws the centre —
+    // a ring-only strip would skip the hole and leave the fleck stale.
+    bool overlay_changed = false;
+    for (int i = 0; i < kOverlayCount; ++i) {
+        if (!(p.fleck[i] == last_.fleck[i])) {
+            overlay_changed = true;
+        }
+    }
+    if (overlay_changed) {
+        SceneRect ovr = FleckBounds(last_);
+        const SceneRect cur = FleckBounds(p);
+        if (!Empty(cur)) {
+            ovr = Empty(ovr) ? cur : Union(ovr, cur);
+        }
+        if (!Empty(ovr)) {
+            int host = -1;
+            for (int i = 0; i < count; ++i) {
+                if (!ring_only[i]) {
+                    host = i;
+                    break;
+                }
+            }
+            if (host >= 0) {
+                rects[host] = Union(rects[host], ovr);
+            } else if (count < max_dirty && count < kMaxDirty) {
+                rects[count] = ovr;
+                ring_only[count] = false;
+                ++count;
+            } else if (count > 0) {
+                rects[0] = Union(rects[0], ovr);
+                ring_only[0] = false;
+            }
+        }
     }
     const bool overflow = count > max_dirty;
     if (overflow) {
