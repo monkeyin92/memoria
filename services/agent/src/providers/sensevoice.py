@@ -1,10 +1,11 @@
 """SenseVoice offline rescue client for empty realtime ASR segments.
 
-When FunASR realtime ends a VAD segment with zero usable finals, the session
+When FunASR realtime ends a VAD segment with zero nonempty finals, the session
 sends the whole segment PCM to a one-shot offline SenseVoice endpoint and
-re-emits the transcript as a normal provider final.  This module only owns the
-HTTP contract; session-level gating and event synthesis live in
-``funasr_stt.FunASRSession``.
+re-emits the transcript as a normal provider final.  A nonempty FunASR final
+always suppresses rescue, even if VAD hangover extends past its end_ms.
+This module only owns the HTTP contract; session-level gating and event
+synthesis live in ``funasr_stt.FunASRSession``.
 
 Contract (both sides are ours):
     POST <endpoint>?format=pcm&sample_rate=<hz>&language=<lang>
