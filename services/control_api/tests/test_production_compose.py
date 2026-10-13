@@ -487,8 +487,10 @@ def test_runtime_images_include_voice_registries_needed_by_bridge_and_control() 
         assert dependency_input in delta_builder
     assert "base images do not share one release commit" in delta_builder
     assert "miniprogram-gateway" not in delta_builder
-    assert delta_builder.count("--network=none") == 3
-    assert delta_builder.count("--pull=false") == 3
+    # One build invocation serves every role, and it never reaches the network.
+    assert delta_builder.count('"$ROOT/scripts/docker_build.sh"') == 1
+    assert delta_builder.count("--network=none") == 1
+    assert delta_builder.count("--pull=false") == 1
 
 
 def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> None:

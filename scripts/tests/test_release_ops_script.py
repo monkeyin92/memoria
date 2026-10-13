@@ -204,6 +204,48 @@ def _candidate(tag: str, published: str | None) -> dict[str, dict[str, object]]:
     return services
 
 
+def test_every_release_artifact_list_ships_the_stack_roles() -> None:
+    from scripts.verify_release_manifest import _ROLES
+
+    roles = set(sourced_stack().roles)
+    assert _ROLES == {role: f"memoria-{role}" for role in roles}
+
+    runbook = (ROOT / "docs" / "runbooks" / "release-rollback.md").read_text(encoding="utf-8")
+    save = re.search(r'docker save -o "\$ARTIFACT_DIR/images\.tar" ((?:.*\\\n)*.*)', runbook)
+    assert save, "the runbook must show the docker save that builds images.tar"
+    assert set(re.findall(r"memoria-([a-z-]+):\$RELEASE_TAG", save.group(1))) == roles
+
+    delta = (ROOT / "scripts" / "delta_build_images.sh").read_text(encoding="utf-8")
+    delta_roles = re.search(r"^ROLES=\((.*)\)$", delta, re.M)
+    assert delta_roles, "the delta build must name its roles in one ROLES array"
+    assert set(delta_roles.group(1).split()) == roles
+
+
+def _delta_dockerfile(role: str) -> subprocess.CompletedProcess[str]:
+    delta = (ROOT / "scripts" / "delta_build_images.sh").read_text(encoding="utf-8")
+    program = "\n".join(
+        (
+            "set -Eeuo pipefail",
+            "BASE_TAG=20261013-guardian-summaries-v1",
+            _shell_function(delta, "delta_dockerfile"),
+            f"delta_dockerfile {shlex.quote(role)}",
+        )
+    )
+    return subprocess.run(["bash", "-c", program], capture_output=True, text=True, check=False)
+
+
+def test_delta_build_layers_every_ship_role_and_refuses_any_other() -> None:
+    for role in sourced_stack().roles:
+        built = _delta_dockerfile(role)
+        assert built.returncode == 0, built.stderr
+        assert f"FROM memoria-{role}:20261013-guardian-summaries-v1\n" in built.stdout
+        assert f'com.memoria.release.role="{role}"' in built.stdout
+
+    unknown = _delta_dockerfile("media-edge")
+    assert unknown.returncode == 1
+    assert "no delta Dockerfile for role media-edge; run the full image build" in unknown.stderr
+
+
 # --- The real steps against a fake host ---
 
 GUARDIAN = "20261013-guardian-summaries-v1"
