@@ -16,11 +16,10 @@ NoticeKind = Literal["archive_idle_30d", "archive_idle_7d", "archive_review_90d"
 NOTICE_ARCHIVE_IDLE_30D: Final = (
     "孩子已经有 150 天没和 memoria 聊天了。"
     "如果再过 30 天还没有使用，长期记忆档案会自动删除。"
-    "想保留的话，打开小程序就能导出。"
+    "想保留的话，让孩子再和 memoria 聊一聊就行。"
 )
 NOTICE_ARCHIVE_IDLE_7D: Final = (
     "7 天后，孩子的长期记忆档案会自动删除，删除后无法恢复。"
-    "如果需要，可以现在导出。"
 )
 NOTICE_ARCHIVE_REVIEW_90D: Final = (
     "memoria 记住了孩子的一些喜好和事情，请花一分钟看一看，不需要的可以随时删除。"

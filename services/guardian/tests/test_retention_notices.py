@@ -18,11 +18,10 @@ def test_notice_copy_is_exact() -> None:
     assert notice_text("archive_idle_30d") == (
         "孩子已经有 150 天没和 memoria 聊天了。"
         "如果再过 30 天还没有使用，长期记忆档案会自动删除。"
-        "想保留的话，打开小程序就能导出。"
+        "想保留的话，让孩子再和 memoria 聊一聊就行。"
     )
     assert notice_text("archive_idle_7d") == (
         "7 天后，孩子的长期记忆档案会自动删除，删除后无法恢复。"
-        "如果需要，可以现在导出。"
     )
     assert notice_text("archive_review_90d") == (
         "memoria 记住了孩子的一些喜好和事情，请花一分钟看一看，不需要的可以随时删除。"
