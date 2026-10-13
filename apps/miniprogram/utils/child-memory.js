@@ -20,7 +20,7 @@ const CHILD_ARCHIVE_CONSENT = Object.freeze({
   policyVersion: "child-archive-v1",
 });
 
-const PRIVACY_LINE = "我们不保存录音和原话。摘要 30 天后自动删除。";
+const PRIVACY_LINE = "我们自己的服务器不保存录音和原话。摘要 30 天后自动删除。";
 const EMPTY_RECENT =
   "还没有记忆。孩子和 memoria 聊过之后，这里会出现摘要。";
 const EMPTY_ARCHIVE_ON = "开启后，孩子聊到的兴趣会出现在这里。";
