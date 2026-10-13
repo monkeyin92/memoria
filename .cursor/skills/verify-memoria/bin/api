@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# Drive Control API with optional Bearer auth; capture request+response evidence.
+# Usage:
+#   bin/api [--run RUN_ID] [--token TOKEN|--token-file PATH] [--evidence RELPATH]
+#           METHOD PATH [-- curl-args...]
+# Examples:
+#   bin/api POST /v1/auth/anonymous --evidence auth/anonymous.json
+#   bin/api --token-file session.env GET /v1/auth/me --evidence auth/me.json
+#   bin/api --token-file session.env POST /v1/memory/messages --evidence memory/message.json \
+#     -- -H 'Content-Type: application/json' -d '{"user_id":"..."}'
+set -euo pipefail
+
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/common.sh"
+
+require_cmd curl
+require_cmd python3
+
+RUN_ID=""
+TOKEN=""
+TOKEN_FILE=""
+EVIDENCE_REL=""
+POSITIONAL=()
+CURL_EXTRA=()
+SEEN_DDASH=0
+
+while [[ $# -gt 0 ]]; do
+  if [[ "$SEEN_DDASH" -eq 1 ]]; then
+    CURL_EXTRA+=("$1")
+    shift
+    continue
+  fi
+  case "$1" in
+    --) SEEN_DDASH=1; shift ;;
+    --run) RUN_ID="$2"; shift 2 ;;
+    --token) TOKEN="$2"; shift 2 ;;
+    --token-file) TOKEN_FILE="$2"; shift 2 ;;
+    --evidence) EVIDENCE_REL="$2"; shift 2 ;;
+    -H|-d|--data|--data-raw|--data-binary|-F)
+      # Convenience: allow common curl flags without requiring --
+      CURL_EXTRA+=("$1" "$2"); shift 2 ;;
+    -*)
+      die "unknown flag: $1 (pass curl flags after -- or use -H/-d)"
+      ;;
+    *)
+      POSITIONAL+=("$1"); shift ;;
+  esac
+done
+
+[[ ${#POSITIONAL[@]} -ge 2 ]] || die "usage: bin/api METHOD PATH ..."
+METHOD="${POSITIONAL[0]}"
+PATH_ARG="${POSITIONAL[1]}"
+[[ ${#POSITIONAL[@]} -eq 2 ]] || die "unexpected positional args after PATH"
+
+RUN_ID="$(resolve_run_id "$RUN_ID")"
+load_run_env "$RUN_ID"
+BASE="http://${MEMORIA_VERIFY_HOST}:${MEMORIA_VERIFY_PORT}"
+
+if [[ -n "$TOKEN_FILE" ]]; then
+  if grep -q '^TOKEN=' "$TOKEN_FILE" 2>/dev/null; then
+    # shellcheck disable=SC1090
+    source "$TOKEN_FILE"
+  else
+    TOKEN="$(tr -d '[:space:]' <"$TOKEN_FILE")"
+  fi
+fi
+
+URL="$BASE$PATH_ARG"
+
+TMP_BODY="$(mktemp)"
+TMP_HDR="$(mktemp)"
+CURL_CMD=(curl -sS -D "$TMP_HDR" -o "$TMP_BODY" -w '%{http_code}' -X "$METHOD")
+if [[ -n "${TOKEN:-}" ]]; then
+  CURL_CMD+=(-H "Authorization: Bearer $TOKEN")
+fi
+CURL_CMD+=(-H 'Accept: application/json')
+if [[ ${#CURL_EXTRA[@]} -gt 0 ]]; then
+  CURL_CMD+=("${CURL_EXTRA[@]}")
+fi
+CURL_CMD+=("$URL")
+set +e
+HTTP_CODE="$("${CURL_CMD[@]}")"
+CURL_RC=$?
+set -e
+if [[ "$CURL_RC" -ne 0 ]]; then
+  rm -f "$TMP_BODY" "$TMP_HDR"
+  die "curl failed (rc=$CURL_RC) for $METHOD $URL"
+fi
+
+if [[ -n "$EVIDENCE_REL" ]]; then
+  mkdir -p "$EVIDENCE_DIR/$RUN_ID/$(dirname "$EVIDENCE_REL")"
+  BODY_PATH="$EVIDENCE_DIR/$RUN_ID/$EVIDENCE_REL"
+  META_PATH="$BODY_PATH.meta.json"
+  cp "$TMP_BODY" "$BODY_PATH"
+  python3 - <<PY
+import json
+from pathlib import Path
+meta = {
+    "run_id": "$RUN_ID",
+    "method": "$METHOD",
+    "path": "$PATH_ARG",
+    "url": "$URL",
+    "http_status": int("$HTTP_CODE"),
+    "authenticated": bool("${TOKEN:-}"),
+}
+Path("$META_PATH").write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n")
+PY
+  echo "verify-memoria: evidence $BODY_PATH (HTTP $HTTP_CODE)" >&2
+fi
+
+cat "$TMP_BODY"
+[[ -s "$TMP_BODY" ]] && echo
+rm -f "$TMP_BODY" "$TMP_HDR"
+
+case "$HTTP_CODE" in
+  2*) exit 0 ;;
+  *) exit 1 ;;
+esac

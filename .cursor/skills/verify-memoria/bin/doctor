@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Read-only health check for the active (or named) verification instance.
+# Usage: bin/doctor [RUN_ID]
+set -euo pipefail
+
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/common.sh"
+
+require_cmd curl
+require_cmd lsof
+require_cmd python3
+
+RUN_ID="$(resolve_run_id "${1:-}")"
+load_run_env "$RUN_ID"
+DIR="$(run_dir "$RUN_ID")"
+BASE="http://${MEMORIA_VERIFY_HOST}:${MEMORIA_VERIFY_PORT}"
+
+failures=0
+note() { echo "doctor: $*"; }
+fail() { echo "doctor FAIL: $*" >&2; failures=$((failures + 1)); }
+
+note "run_id=$RUN_ID"
+note "base_url=$BASE"
+note "db_path=$MEMORIA_VERIFY_DB_PATH"
+
+LISTEN_PID="$(listen_pid "$RUN_ID")"
+RECORDED_PID="$(cat "$DIR/control-api.pid" 2>/dev/null || true)"
+if [[ -z "$LISTEN_PID" ]]; then
+  fail "nothing listening on ${MEMORIA_VERIFY_HOST}:${MEMORIA_VERIFY_PORT}"
+else
+  note "listen_pid=$LISTEN_PID"
+  if [[ -n "$RECORDED_PID" && "$RECORDED_PID" != "$LISTEN_PID" ]]; then
+    fail "recorded pid $RECORDED_PID != listen pid $LISTEN_PID (refusing foreign instance)"
+  fi
+  CMD="$(ps -p "$LISTEN_PID" -o command= 2>/dev/null || true)"
+  if [[ "$CMD" != *"services.control_api.app.main:app"* && "$CMD" != *"uvicorn"* ]]; then
+    fail "listener command does not look like Control API: $CMD"
+  else
+    note "listener_ok"
+  fi
+fi
+
+LIVE="$(curl -sS -o /tmp/memoria-verify-live.json -w '%{http_code}' "$BASE/health/live" || true)"
+if [[ "$LIVE" != "200" ]]; then
+  fail "/health/live returned HTTP $LIVE"
+else
+  python3 - <<'PY'
+import json, sys
+body=json.load(open("/tmp/memoria-verify-live.json"))
+sys.exit(0 if body.get("status")=="ok" else 1)
+PY
+  note "/health/live ok"
+fi
+
+# Confirm this process owns our disposable DB path (via cwd/env is hard);
+# require the sqlite file created under the run data dir after first write, or
+# at least that the configured path lives under this run directory.
+case "$MEMORIA_VERIFY_DB_PATH" in
+  "$DIR"/data/*) note "db_path_isolated" ;;
+  *) fail "MEMORIA_VERIFY_DB_PATH is outside run data dir: $MEMORIA_VERIFY_DB_PATH" ;;
+esac
+
+# OpenAPI only in development — proves we are not pointed at a production deploy.
+DOCS="$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/docs" || true)"
+if [[ "$DOCS" != "200" ]]; then
+  fail "/docs expected 200 in development verify instance, got $DOCS"
+else
+  note "/docs development surface present"
+fi
+
+if [[ "$failures" -ne 0 ]]; then
+  die "$failures check(s) failed; do not drive this instance"
+fi
+
+echo "doctor: PASS run=$RUN_ID url=$BASE"

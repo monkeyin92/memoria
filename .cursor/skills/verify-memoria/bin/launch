@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# Start an isolated Control API instance for verification.
+# Usage: bin/launch [RUN_ID]
+set -euo pipefail
+
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/common.sh"
+
+require_cmd docker
+require_cmd uv
+require_cmd curl
+require_cmd lsof
+require_cmd python3
+
+RUN_ID="${1:-$(date +%Y%m%d%H%M%S)-$$}"
+PORT="${MEMORIA_VERIFY_PORT:-$DEFAULT_PORT}"
+HOST="${MEMORIA_VERIFY_HOST:-$DEFAULT_HOST}"
+DIR="$RUNS_DIR/$RUN_ID"
+
+if [[ -f "$(active_run_file)" ]]; then
+  existing="$(cat "$(active_run_file)")"
+  if [[ -f "$RUNS_DIR/$existing/run.env" ]]; then
+    # shellcheck disable=SC1091
+    source "$RUNS_DIR/$existing/run.env"
+    if [[ -n "$(listen_pid "$existing")" ]]; then
+      die "active run $existing already listening on ${MEMORIA_VERIFY_HOST}:${MEMORIA_VERIFY_PORT}; cleanup first"
+    fi
+  fi
+fi
+
+if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  die "port $PORT already in use; set MEMORIA_VERIFY_PORT or free the port"
+fi
+
+mkdir -p "$DIR/data" "$DIR/logs" "$EVIDENCE_DIR/$RUN_ID"
+cd "$REPO_ROOT"
+
+log() { echo "verify-memoria: $*" >&2; }
+
+log "ensuring postgres/redis…"
+docker compose up -d postgres redis >/dev/null
+
+for _ in $(seq 1 30); do
+  if docker compose exec -T postgres pg_isready -U voice >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+docker compose exec -T postgres pg_isready -U voice >/dev/null \
+  || die "postgres did not become ready"
+
+docker compose exec -T postgres psql -U voice -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'memoria_dev') THEN
+    CREATE ROLE memoria_dev LOGIN PASSWORD 'dev' NOSUPERUSER NOBYPASSRLS;
+  END IF;
+END$$;
+SQL
+
+docker compose exec -T postgres psql -U voice -tc \
+  "SELECT 1 FROM pg_database WHERE datname='${VERIFY_PG_DB}'" | grep -q 1 \
+  || docker compose exec -T postgres psql -U voice -c \
+    "CREATE DATABASE ${VERIFY_PG_DB} OWNER memoria_dev" >/dev/null
+
+AUTH_SECRET="${MEMORIA_VERIFY_AUTH_SECRET:-verify-auth-secret-that-is-long-enough-0123456789}"
+DB_PATH="$DIR/data/memoria.sqlite3"
+
+# Isolate from the developer's .env: force verification-owned state and port.
+export ENVIRONMENT=development
+export OFFLINE_MOCK=true
+export MEMORIA_AUTH_SECRET="$AUTH_SECRET"
+export MEMORIA_DB_PATH="$DB_PATH"
+export MEMORIA_GUARDIAN_DATABASE_URL="$VERIFY_PG_DSN"
+export MEMORIA_ARCHIVE_DATABASE_URL="$VERIFY_PG_DSN"
+export MEMORIA_EVOLUTION_DATABASE_URL="$VERIFY_PG_DSN"
+export MEMORIA_IDENTITY_DATABASE_URL="${MEMORIA_VERIFY_IDENTITY_DATABASE_URL:-}"
+export MEMORIA_CONSENT_DATABASE_URL="${MEMORIA_VERIFY_CONSENT_DATABASE_URL:-}"
+export PUBLIC_BASE_URL="http://${HOST}:${PORT}"
+export ALLOWED_ORIGINS="http://${HOST}:${PORT}"
+# Empty env vars beat .env in pydantic-settings; keep summaries/structuring off real providers.
+export DASHSCOPE_API_KEY=""
+export DEEPSEEK_API_KEY=""
+
+# Avoid accidental attachment to a developer speaker/postgres override.
+unset MEMORIA_SPEAKER_DATABASE_URL || true
+
+cat >"$DIR/run.env" <<EOF
+MEMORIA_VERIFY_RUN_ID=$RUN_ID
+MEMORIA_VERIFY_HOST=$HOST
+MEMORIA_VERIFY_PORT=$PORT
+MEMORIA_VERIFY_BASE_URL=http://${HOST}:${PORT}
+MEMORIA_VERIFY_DB_PATH=$DB_PATH
+MEMORIA_VERIFY_PG_DSN=$VERIFY_PG_DSN
+MEMORIA_VERIFY_REPO_ROOT=$REPO_ROOT
+MEMORIA_VERIFY_SKILL_DIR=$SKILL_DIR
+EOF
+
+echo "$RUN_ID" >"$(active_run_file)"
+
+# New session so the server outlives the shell that ran launch (agent shells
+# reap their process group). macOS has no setsid(1); python's os.setsid works
+# everywhere. Cleanup keys off the listen PID.
+START_CMD=(uv run uvicorn services.control_api.app.main:app --host "$HOST" --port "$PORT")
+nohup python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
+  "${START_CMD[@]}" \
+  >"$DIR/logs/control-api.stdout.log" \
+  2>"$DIR/logs/control-api.stderr.log" </dev/null &
+LAUNCHER_PID=$!
+echo "$LAUNCHER_PID" >"$DIR/launcher.pid"
+
+ready=0
+for _ in $(seq 1 90); do
+  if curl -sf "http://${HOST}:${PORT}/health/live" >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  # If the launcher died before binding, fail fast once the port is still down.
+  if ! kill -0 "$LAUNCHER_PID" 2>/dev/null; then
+    LISTEN_PID="$(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | head -n 1 || true)"
+    if [[ -z "$LISTEN_PID" ]]; then
+      break
+    fi
+  fi
+  sleep 1
+done
+
+LISTEN_PID="$(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | head -n 1 || true)"
+if [[ "$ready" -ne 1 || -z "$LISTEN_PID" ]]; then
+  log "launch failed; last stderr:"
+  tail -n 80 "$DIR/logs/control-api.stderr.log" >&2 || true
+  if [[ -n "${LAUNCHER_PID:-}" ]]; then
+    kill -TERM "-$LAUNCHER_PID" 2>/dev/null || kill -TERM "$LAUNCHER_PID" 2>/dev/null || true
+  fi
+  if [[ -n "${LISTEN_PID:-}" ]]; then
+    kill -TERM "$LISTEN_PID" 2>/dev/null || true
+  fi
+  rm -f "$(active_run_file)"
+  die "Control API did not become ready on ${HOST}:${PORT}"
+fi
+
+echo "$LISTEN_PID" >"$DIR/control-api.pid"
+{
+  echo "MEMORIA_VERIFY_LISTEN_PID=$LISTEN_PID"
+  echo "MEMORIA_VERIFY_LAUNCHER_PID=$LAUNCHER_PID"
+} >>"$DIR/run.env"
+
+log "launched run=$RUN_ID pid=$LISTEN_PID url=http://${HOST}:${PORT}"
+log "evidence dir=$EVIDENCE_DIR/$RUN_ID"
+# stdout is only the run id (for command substitution).
+echo "$RUN_ID"

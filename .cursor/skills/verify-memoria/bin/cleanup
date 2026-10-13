@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Tear down the verification instance started by bin/launch.
+# Keeps evidence/ intact. Removes run process state and disposable data.
+# Usage: bin/cleanup [RUN_ID]
+set -euo pipefail
+
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/common.sh"
+
+RUN_ID="$(resolve_run_id "${1:-}")"
+DIR="$(run_dir "$RUN_ID")"
+[[ -d "$DIR" ]] || die "unknown run: $RUN_ID"
+
+load_run_env "$RUN_ID" 2>/dev/null || true
+
+LISTEN_PID="$(listen_pid "$RUN_ID" || true)"
+RECORDED_PID="$(cat "$DIR/control-api.pid" 2>/dev/null || true)"
+LAUNCHER_PID="$(cat "$DIR/launcher.pid" 2>/dev/null || true)"
+
+kill_pid() {
+  local pid="$1"
+  [[ -n "$pid" ]] || return 0
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -TERM "$pid" 2>/dev/null || true
+    for _ in $(seq 1 20); do
+      kill -0 "$pid" 2>/dev/null || return 0
+      sleep 0.25
+    done
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+}
+
+# Only kill PIDs we recorded or that currently own our verify port.
+if [[ -n "$RECORDED_PID" && -n "$LISTEN_PID" && "$RECORDED_PID" != "$LISTEN_PID" ]]; then
+  die "refusing cleanup: recorded pid $RECORDED_PID != listen pid $LISTEN_PID"
+fi
+
+TARGET="${LISTEN_PID:-$RECORDED_PID}"
+if [[ -n "$TARGET" ]]; then
+  echo "verify-memoria: stopping pid=$TARGET (run=$RUN_ID)"
+  kill_pid "$TARGET"
+fi
+
+# Also stop the launcher process group if it is still around and distinct.
+if [[ -n "${LAUNCHER_PID:-}" && "$LAUNCHER_PID" != "$TARGET" ]]; then
+  kill -TERM "-$LAUNCHER_PID" 2>/dev/null || kill_pid "$LAUNCHER_PID"
+fi
+
+# Drop disposable SQLite/data for this run; leave logs briefly then remove run dir
+# except we keep nothing under runs/ after cleanup. Evidence stays.
+rm -rf "$DIR"
+
+if [[ -f "$(active_run_file)" ]] && [[ "$(cat "$(active_run_file)")" == "$RUN_ID" ]]; then
+  rm -f "$(active_run_file)"
+fi
+
+# Do not drop memoria_verify PostgreSQL contents automatically: schemas are
+# shared across verify runs on this host. Evidence already captured HTTP proofs.
+# Agents may recreate the DB with: docker compose exec postgres psql -U voice \
+#   -c "DROP DATABASE IF EXISTS memoria_verify" && re-launch.
+
+echo "verify-memoria: cleaned run=$RUN_ID"
+echo "verify-memoria: evidence retained at $EVIDENCE_DIR/$RUN_ID"
