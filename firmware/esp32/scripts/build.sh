@@ -15,10 +15,9 @@ usage() {
     cat <<'EOF'
 Usage: build.sh [--clean] [--bench] [--language LOCALE] [--wake-word MODEL|disabled] [--no-idf-install]
 
-The product build uses zh-CN and the board's Memoria wake word ("茉莉") by
-default. Pass --wake-word disabled only for an explicit bring-up diagnostic
-build, or pass an upstream ESP-SR model to override the product default. The
-upstream build.py still performs the real merge-bin.
+The product build uses zh-CN. Board config disables keyword wake
+(CONFIG_WAKE_WORD_DISABLED); pass --wake-word only to override for a
+diagnostic image. The upstream build.py still performs the real merge-bin.
 
 --bench builds the test-rig image from the board's config.bench.json: the
 product build plus CONFIG_MEMORIA_BENCH_SERIAL (the USB console also answers

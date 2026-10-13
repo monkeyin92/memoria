@@ -82,12 +82,17 @@ rg -q 'new MemoriaMascotDisplay\(' "$board_dir/memoria_esp_vocat.cc" || \
     die "board does not use the companion mascot display"
 rg -Fq '#include "memoria_pat.h"' "$board_dir/memoria_esp_vocat.cc" || \
     die "board does not use the host-testable pat detector"
-rg -Fq 'memoria::TapActionFor(mode, state == kDeviceStateIdle)' \
-    "$board_dir/memoria_esp_vocat.cc" || \
-    die "a screen tap must follow the phone's wake mode (wake only, never stop or standby)"
+rg -Fq 'TapWakeActionFor' "$board_dir/memoria_esp_vocat.cc" || \
+    die "a screen tap must follow the power policy (wake only, never stop or standby)"
 rg -Fq 'memoria::UsbWakeDecisionFor(mode, state == kDeviceStateIdle)' \
     "$board_dir/memoria_esp_vocat.cc" || \
     die "the USB wake command must follow the screen tap's gate (wake only, never stop or standby)"
+rg -Fq 'MemoriaMic' "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_power_policy.cc" || \
+    die "mic open/close must log at the MemoriaMic tag for demos"
+rg -Fq 'esp_deep_sleep_start' "$board_dir/memoria_esp_vocat.cc" || \
+    die "board must deep-sleep with tap (GPIO10) as the wake source"
+rg -Fq 'wo_zai_ne.ogg' "$board_dir/memoria_esp_vocat.cc" || \
+    die "tap wake must play the local 我在呢 prompt clip"
 rg -Fq 'open("/dev/secondary", O_RDONLY)' "$board_dir/memoria_esp_vocat.cc" || \
     die "the USB command task must read the secondary console read-only"
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_usb_command.h" ]] || die "USB command header missing"
@@ -149,10 +154,28 @@ rg -Fq 'DEFAULT_ASSETS_EXTRA_FILES "${CMAKE_CURRENT_SOURCE_DIR}/boards/memoria/e
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/device_identity.cc" ]] || die "device identity source missing"
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_audio_frame.h" ]] || die "audio frame header missing"
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_audio_frame.cc" ]] || die "audio frame source missing"
-[[ -f "$MEMORIA_UPSTREAM_DIR/partitions/v2/32m.csv" ]] || die "Memoria partition table missing"
+[[ -f "$MEMORIA_UPSTREAM_DIR/partitions/v2/16m.csv" ]] || die "Memoria partition table missing"
 
 rg -q '^memoria_identity,[[:space:]]*data,[[:space:]]*nvs,[[:space:]]*0x10000,[[:space:]]*64K' \
-    "$MEMORIA_UPSTREAM_DIR/partitions/v2/32m.csv" || die "identity partition is not at 0x10000/64K"
+    "$MEMORIA_UPSTREAM_DIR/partitions/v2/16m.csv" || die "identity partition is not at 0x10000/64K"
+rg -Fq '16MB Flash (N16R16)' "$MEMORIA_UPSTREAM_DIR/partitions/v2/16m.csv" || \
+    die "partition table must document N16R16 / 16MB flash"
+rg -q 'CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y' "$board_dir/config.json" || \
+    die "board must claim 16MB flash (N16R16), not 32MB"
+rg -Fq 'CONFIG_WAKE_WORD_DISABLED=y' "$board_dir/config.json" || \
+    die "product build must disable keyword wake"
+rg -Fq 'CONFIG_SR_MN_CN_NONE=y' "$board_dir/config.json" || \
+    die "product build must not package MultiNet6 (mn6_cn)"
+rg -Fq 'CONFIG_USE_CUSTOM_WAKE_WORD=y' "$board_dir/config.json" && \
+    die "custom wake word must stay off after tap-only product change"
+rg -Fq 'CONFIG_SR_MN_CN_MULTINET6_QUANT=y' "$board_dir/config.json" && \
+    die "MultiNet6 must stay off after tap-only product change"
+[[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_power_policy.h" ]] || \
+    die "power policy header missing"
+[[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_mic_gate.h" ]] || \
+    die "mic gate header missing"
+[[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_quiet_hours.h" ]] || \
+    die "quiet hours header missing"
 rg -q 'espressif/libsodium:[[:space:]]*\^1\.0\.22' "$MEMORIA_UPSTREAM_DIR/main/idf_component.yml" || \
     die "libsodium dependency missing"
 rg -q 'memoria/device_identity\.cc' "$MEMORIA_UPSTREAM_DIR/main/CMakeLists.txt" || die "device identity is not in CMake"
@@ -190,34 +213,34 @@ with open(sys.argv[1], encoding="utf-8") as handle:
 sdkconfig = set(manifest["builds"][0]["sdkconfig_append"])
 required = {
     "CONFIG_USE_DEVICE_AEC=y",
-    "CONFIG_USE_CUSTOM_WAKE_WORD=y",
+    "CONFIG_WAKE_WORD_DISABLED=y",
     "CONFIG_OTA_URL=\"\"",
-    'CONFIG_CUSTOM_WAKE_WORD="mo li"',
-    'CONFIG_CUSTOM_WAKE_WORD_DISPLAY="茉莉"',
-    "CONFIG_CUSTOM_WAKE_WORD_THRESHOLD=10",
     "CONFIG_SEND_WAKE_WORD_DATA=n",
     "CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS=n",
     "CONFIG_SR_WN_WN9L_NIHAOXIAOZHI_TTS3=n",
-    "CONFIG_SR_MN_CN_MULTINET6_QUANT=y",
+    "CONFIG_SR_MN_CN_NONE=y",
     "CONFIG_SR_NSN_WEBRTC=y",
+    "CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y",
 }
 missing = sorted(required - sdkconfig)
 if missing:
-    raise SystemExit("missing Memoria wake-word settings: " + ", ".join(missing))
-if "CONFIG_SR_MN_CN_NONE=y" in sdkconfig:
-    raise SystemExit("Memoria custom wake word cannot use CONFIG_SR_MN_CN_NONE=y")
+    raise SystemExit("missing Memoria tap-wake settings: " + ", ".join(missing))
+if "CONFIG_USE_CUSTOM_WAKE_WORD=y" in sdkconfig:
+    raise SystemExit("Memoria product must not enable custom keyword wake")
+if "CONFIG_SR_MN_CN_MULTINET6_QUANT=y" in sdkconfig:
+    raise SystemExit("Memoria product must not package mn6_cn")
+if "CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y" in sdkconfig:
+    raise SystemExit("Memoria board is N16R16; FLASHSIZE_32MB is wrong")
 if any(
     item.startswith("CONFIG_SR_WN_") and item.endswith("=y")
     for item in sdkconfig
 ):
     raise SystemExit("Memoria board must not enable an upstream Xiaozhi WakeNet model")
 if any(
-    item.startswith("CONFIG_SR_MN_CN_MULTINET")
-    and item.endswith("=y")
-    and item != "CONFIG_SR_MN_CN_MULTINET6_QUANT=y"
+    item.startswith("CONFIG_SR_MN_CN_MULTINET") and item.endswith("=y")
     for item in sdkconfig
 ):
-    raise SystemExit("Memoria board must select only CONFIG_SR_MN_CN_MULTINET6_QUANT=y")
+    raise SystemExit("Memoria board must not enable a MultiNet model")
 PY
 "$python_bin" - "$MEMORIA_UPSTREAM_DIR/main/Kconfig.projbuild" <<'PY'
 import pathlib
@@ -494,10 +517,15 @@ rg -Fq 'kMaxVadSpeechSamples = static_cast<uint64_t>(kUplinkSampleRate) * 20' \
 sdkconfig="$MEMORIA_UPSTREAM_DIR/sdkconfig"
 metadata="$MEMORIA_UPSTREAM_DIR/build/project_description.json"
 flasher_args="$MEMORIA_UPSTREAM_DIR/build/flasher_args.json"
-[[ -s "$sdkconfig" ]] || die "final sdkconfig is missing"
-# memoria_stop_keyword.h kMultiNetDetectThreshold (0.10) mirrors this value.
-rg -q '^CONFIG_CUSTOM_WAKE_WORD_THRESHOLD=10$' "$sdkconfig" || \
-    die "final sdkconfig must lower the MultiNet detection threshold to 10%"
+if [[ ! -s "$sdkconfig" ]]; then
+    printf 'check-overlay: sdkconfig not built yet; skipping post-build assertions\n' >&2
+else
+rg -q '^CONFIG_WAKE_WORD_DISABLED=y$' "$sdkconfig" || \
+    die "final sdkconfig must disable keyword wake"
+rg -q '^CONFIG_SR_MN_CN_NONE=y$' "$sdkconfig" || \
+    die "final sdkconfig must not package MultiNet6"
+rg -q '^CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y$' "$sdkconfig" || \
+    die "final sdkconfig must claim 16MB flash (N16R16)"
 rg -q '^CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y$' "$sdkconfig" || \
     die "final sdkconfig must keep USB-Serial-JTAG as the secondary console (the USB wake command reads /dev/secondary)"
 # Kconfig can silently discard sdkconfig_append entries when dependencies fail.
@@ -507,6 +535,12 @@ for option in BOARD_TYPE_MEMORIA_ESP_VOCAT USE_AUDIO_PROCESSOR USE_DEVICE_AEC; d
 done
 if rg -q '^CONFIG_USE_SERVER_AEC=y$' "$sdkconfig"; then
     die "final sdkconfig must use device-side AEC, not server-side AEC"
+fi
+if rg -q '^CONFIG_USE_CUSTOM_WAKE_WORD=y$' "$sdkconfig"; then
+    die "final sdkconfig must not enable custom keyword wake"
+fi
+if rg -q '^CONFIG_SR_MN_CN_MULTINET6_QUANT=y$' "$sdkconfig"; then
+    die "final sdkconfig must not package mn6_cn"
 fi
 rg -q '^CONFIG_OTA_URL=""$' "$sdkconfig" || die "final sdkconfig still exposes an OTA endpoint"
 if rg -n 'api\.tenclass\.net/xiaozhi/ota|CONFIG_OTA_URL="https?://' "$sdkconfig"; then
@@ -538,5 +572,6 @@ if any("xiaozhi" in str(value).casefold() for value in flash_files.values()):
 PY
 if find "$MEMORIA_ARTIFACT_DIR" -maxdepth 1 -type f -name '*-xiaozhi.bin' -print -quit | rg -q .; then
     die "upstream-named product artifact remains in artifacts/"
+fi
 fi
 printf 'overlay check passed: %s\n' "$MEMORIA_BOARD_NAME"

@@ -141,7 +141,7 @@ def test_firmware_rebuilds_the_signed_bytes_exactly() -> None:
         }
     )
     assert device_firmware.MAX_IMAGE_BYTES == 0x3F0000
-    partitions = (FIRMWARE_ROOT / "overlay" / "files" / "partitions" / "v2" / "32m.csv").read_text()
+    partitions = (FIRMWARE_ROOT / "overlay" / "files" / "partitions" / "v2" / "16m.csv").read_text()
     assert re.search(r"^ota_0,\s+app,\s+ota_0,\s+0x20000,\s+0x3f0000,", partitions, re.MULTILINE)
 
 
