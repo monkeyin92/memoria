@@ -76,6 +76,7 @@ inspect_container() {   # <container> chain|version|revision|image|image-id|runn
     image) format='{{.Config.Image}}' ;;
     image-id) format='{{.Image}}' ;;
     running) format='{{.State.Running}}' ;;
+    *) fail "inspect_container: unknown field $2" ;;
   esac
   docker inspect "$1" --format "$format"
 }

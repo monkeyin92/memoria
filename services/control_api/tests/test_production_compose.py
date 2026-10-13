@@ -341,10 +341,8 @@ def test_production_stack_no_longer_runs_the_speaker_model() -> None:
     compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
     control = compose.split("  control-api:\n", 1)[1].split("  media-slo-reporter:\n", 1)[0]
 
-    # No service, no depends_on entry, no URL host: each would be "speaker-model:".
     assert "speaker-model:" not in compose
     assert "depends_on" not in control
-    # The host env file may still name the retired service; compose must override it.
     assert '      MEMORIA_SPEAKER_EMBEDDING_URL: ""\n' in control
 
 
@@ -482,11 +480,9 @@ def test_runtime_images_include_voice_registries_needed_by_bridge_and_control() 
         "infra/Dockerfile.control-api",
     ):
         assert dependency_input in delta_builder
-    # The speaker model is no longer shipped, so its inputs no longer block a delta build.
     assert "speaker" not in delta_builder
     assert "base images do not share one release commit" in delta_builder
     assert "miniprogram-gateway" not in delta_builder
-    # One build invocation serves every role, and it never reaches the network.
     assert delta_builder.count('"$ROOT/scripts/docker_build.sh"') == 1
     assert delta_builder.count("--network=none") == 1
     assert delta_builder.count("--pull=false") == 1

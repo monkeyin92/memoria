@@ -26,7 +26,6 @@ NEW_TAG="${NEW_TAG:-${MEMORIA_RELEASE_TAG:?set NEW_TAG or MEMORIA_RELEASE_TAG}}"
 BASE_TAG="${BASE_TAG:?set BASE_TAG to previous healthy image tag}"
 TARGET_ARCH="${TARGET_ARCH:-amd64}"
 MEMORIA_RELEASE_COMMIT="${MEMORIA_RELEASE_COMMIT:?set MEMORIA_RELEASE_COMMIT to the tagged clean commit}"
-# The ship roles of the STACK table in scripts/release_ops.sh (a test keeps them equal).
 ROLES=(agent control-api)
 
 python3 "$ROOT/scripts/verify_release_source.py" \
@@ -93,8 +92,7 @@ fi
 tmp="$(mktemp -d /tmp/memoria-delta-build.XXXXXX)"
 trap 'rm -rf "$tmp"' EXIT
 
-# A delta image is its base plus this release's code and provenance labels.
-delta_dockerfile() {   # <role>
+delta_dockerfile() {
   cat <<EOF
 FROM memoria-$1:${BASE_TAG}
 ARG MEMORIA_RELEASE_COMMIT

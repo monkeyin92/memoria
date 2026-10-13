@@ -1,20 +1,3 @@
-"""Guards for the server-side full-stack release script (``scripts/release_ops.sh``).
-
-Two defects surfaced during the 20260925-full-stack-v1 release:
-
-- ``finish`` printed every memoria container's ``.State.Health.Status``. LiveKit
-  and the SenseVoice sidecar have no healthcheck, the Go template failed, and
-  ``set -e``/``pipefail`` aborted the step before the post-state receipt.
-- ``env`` compared env keys but never values, so a stale
-  ``MEMORIA_SPEAKER_AUTHORITY_ENABLED=true`` shipped and the first device
-  greeting was dropped as ``target_non_owner``.
-
-PREV used to be a pair of literals that every release moved in its own PR.
-``freeze`` now derives it from the live stack, and the ``FakeHost`` tests below
-run the real steps against a temporary /opt/memoria tree with a recording
-``docker``.
-"""
-
 from __future__ import annotations
 
 import json
@@ -152,7 +135,6 @@ def test_speaker_guard_accepts_only_values_every_reader_treats_as_off(
 
 
 def test_script_names_no_release_tag_but_the_data_tree() -> None:
-    # PREV comes from the live stack; a dated tag in the code is a literal that goes stale.
     assert re.findall(r"\b20\d{6}-[a-z0-9.-]+", _code()) == ["20260827-architecture-split-v1"]
     for retired in (
         "$OLD",
@@ -163,7 +145,6 @@ def test_script_names_no_release_tag_but_the_data_tree() -> None:
         "/tmp/media-runtime",
     ):
         assert retired not in _code(), retired
-    # media-edge is released on its own and never recreated by this script.
     assert "media-edge" not in _code().replace("memoria-media-edge-1", "")
 
 
@@ -246,8 +227,6 @@ def test_delta_build_layers_every_ship_role_and_refuses_any_other() -> None:
     assert "no delta Dockerfile for role media-edge; run the full image build" in unknown.stderr
 
 
-# --- The real steps against a fake host ---
-
 GUARDIAN = "20261013-guardian-summaries-v1"
 GUARDIAN_COMMIT = "42a095d241a3b33d2bf6f35437d19da3fe937576"
 RELEASE = "20261014-speaker-retire-v1"
@@ -258,7 +237,6 @@ EDGE_OVERRIDE = (
     "media-edge-component.override.yml"
 )
 
-#: The image repository each service runs on the host (the host's truth, not the script's).
 _HOST_REPO = {
     "speaker-model": "memoria-speaker-model",
     "control-api": "memoria-control-api",
@@ -301,10 +279,7 @@ class ComposeCall:
 class StepRun:
     returncode: int
     output: str
-    #: Every docker argv, reads included.
     docker: list[str]
-    #: Ordered mutations: docker tag/stop/exec, compose up/run/stop (project flags
-    #: stripped), and the replaced wait_healthy and refresh_readiness.sh.
     actions: list[str]
     copies: list[str]
     compose_calls: list[ComposeCall]
@@ -348,13 +323,6 @@ def _executable(path: Path, text: str) -> None:
 
 
 class FakeHost:
-    """A host under ``root``: an /opt/memoria tree, container facts and a recording ``docker``.
-
-    ``step`` sources the real script, points ``release_paths`` at the tree and
-    replaces three functions: ``inspect_container`` reads the facts, ``cp`` and
-    ``wait_healthy`` record. Everything else runs as on the host.
-    """
-
     def __init__(self, root: Path, *, current: str) -> None:
         self.root = root
         self.memoria = root / "opt" / "memoria"
@@ -451,12 +419,9 @@ class FakeHost:
 
 
 def guardian_host(tmp_path: Path) -> FakeHost:
-    """The host after 20261013-guardian-summaries-v1, with the sidecars no step may touch."""
-
     host = FakeHost(tmp_path, current=GUARDIAN)
     for service in ("control-api", "voice-core-media-bridge", "speaker-model"):
         host.container(service, release=GUARDIAN, commit=GUARDIAN_COMMIT)
-    # Same plain chain, but not rows of the script's table.
     for sidecar in ("media-slo-reporter", "device-state-redis"):
         host.container(sidecar, release=GUARDIAN, commit=GUARDIAN_COMMIT)
     host.container(
@@ -473,8 +438,6 @@ def _up(*services: str) -> str:
 
 
 def _finish_this_release(host: FakeHost) -> None:
-    """The host after this release's finish: speaker-model stopped, still on PREV's chain."""
-
     host.set_current(RELEASE)
     for service in ("control-api", "voice-core-media-bridge"):
         host.container(service, release=RELEASE, commit=NEW_COMMIT)
@@ -487,7 +450,6 @@ def test_freeze_derives_and_persists_prev_from_the_live_stack(tmp_path: Path) ->
     run = host.step("freeze", tag=RELEASE)
 
     assert run.returncode == 0, run.output
-    # speaker-model is retired in this release, but PREV runs it: rollback must bring it back.
     assert host.prev_record(RELEASE) == (
         "tag=20261013-guardian-summaries-v1\n"
         "commit=42a095d241a3b33d2bf6f35437d19da3fe937576\n"
@@ -598,7 +560,6 @@ def test_cutover_stops_at_the_first_service_that_fails_to_come_up(tmp_path: Path
     run = host.step("cutover", tag=RELEASE)
 
     assert run.returncode != 0
-    # The speaker model keeps serving PREV until every ship row is up.
     assert run.actions == [_up("control-api")]
 
 
@@ -876,7 +837,6 @@ def test_shared_host_bringup_script_is_checked_in_and_keeps_its_step_contract() 
     text = BRINGUP.read_text(encoding="utf-8")
     assert os.access(BRINGUP, os.X_OK)
     subprocess.run(["bash", "-n", str(BRINGUP)], check=True)
-    # The network comes from compose without the retired speaker model.
     assert "speaker-model" not in text
     for step in ("net", "data", "redis", "schema", "verify", "replay", "apps", "checks", "status", "down"):
         assert f"  {step}) step_{step} ;;" in text
