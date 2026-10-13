@@ -20,12 +20,14 @@ moves, so they do not share a version.
 from __future__ import annotations
 
 import hashlib
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
 
 from services.common.companions import DEFAULT_COMPANION_ID
+from services.consent.bound_subject import MINOR_SESSION_CAPABILITIES
 from services.control_api.app.multi_subject_runtime import _persona_assignment_for
 from services.control_api.app.session_companion import CUSTOM_PERSONA_PREFIX
 from services.device_fleet.bootstrap_domain import (
@@ -44,6 +46,8 @@ from services.identity.domain import (
 )
 from services.identity.service import IdentityService
 
+logger = logging.getLogger(__name__)
+
 #: Built-in companions that ship on-device mascot art.  The tutor personas
 #: (zhiyao, yanxi) and custom personas have none, so a device display falls
 #: back to one of these.  Kept here rather than in services/common so the
@@ -54,10 +58,76 @@ MASCOT_COMPANION_IDS: frozenset[str] = frozenset(
 
 DISPLAY_PROFILE_SCHEMA_VERSION = 1
 _DISPLAY_VERSION_DOMAIN = b"memoria-device-display-profile-v1\0"
+#: Same night window as policy ``QUIET_HOURS`` when the guardian set none.
+DEFAULT_DISPLAY_QUIET_HOURS: Final[tuple[str, str]] = ("21:30", "06:30")
+_ALL_DAY_QUIET_HOURS: Final[tuple[str, str]] = ("00:00", "23:59")
 
 
 class DisplayBindingUnavailable(LookupError):
     """The device is bound in the fleet but Identity has no active binding."""
+
+
+def anti_addiction_quiet_hours(
+    *,
+    night_mode: bool,
+    do_not_disturb: bool,
+    consent_quiet_hours: tuple[str, str] | None,
+) -> tuple[str, str] | None:
+    """Map parent anti-addiction switches onto the firmware quiet-hours wire.
+
+    Do-not-disturb stays all day. Night mode alone uses the child's bind-time
+    window when present, otherwise the policy night default.
+    """
+
+    if do_not_disturb:
+        return _ALL_DAY_QUIET_HOURS
+    if night_mode:
+        return consent_quiet_hours or DEFAULT_DISPLAY_QUIET_HOURS
+    return None
+
+
+async def consent_quiet_hours_for_binding(
+    *,
+    identity: IdentityService,
+    consent: object | None,
+    actor_id: str,
+    subject_id: str,
+    binding_id: str,
+) -> tuple[str, str] | None:
+    """The guardian's bind-time quiet hours on this binding, if any.
+
+    Duck-types ``consent.active`` so tests can install a stub without the
+    PostgreSQL consent store. Misses and lookup errors yield ``None``.
+    """
+
+    active = getattr(consent, "active", None)
+    if not callable(active) or not subject_id or not binding_id:
+        return None
+    try:
+        binding = await identity.get_binding(binding_id, actor_person_id=actor_id)
+        chains = await active(
+            subject_person_id=subject_id,
+            binding_id=binding_id,
+            binding_version=binding.binding_version,
+        )
+    except Exception as exc:
+        logger.warning(
+            "display profile consent quiet_hours unavailable binding_id=%s error=%s",
+            binding_id,
+            type(exc).__name__,
+        )
+        return None
+    for chain in chains:
+        if getattr(chain, "capability", None) not in MINOR_SESSION_CAPABILITIES:
+            continue
+        quiet = getattr(getattr(chain, "params", None), "quiet_hours", None)
+        if (
+            isinstance(quiet, tuple)
+            and len(quiet) == 2
+            and all(isinstance(part, str) for part in quiet)
+        ):
+            return (quiet[0], quiet[1])
+    return None
 
 
 def display_request_payload(*, device_id: str, certificate_id: str) -> dict[str, object]:
@@ -243,9 +313,12 @@ async def resolve_device_display_profile(
 
 
 __all__ = [
+    "DEFAULT_DISPLAY_QUIET_HOURS",
     "DISPLAY_PROFILE_SCHEMA_VERSION",
     "DeviceDisplayProfile",
     "DisplayBindingUnavailable",
+    "anti_addiction_quiet_hours",
+    "consent_quiet_hours_for_binding",
     "mascot_for_persona",
     "resolve_device_display_profile",
 ]

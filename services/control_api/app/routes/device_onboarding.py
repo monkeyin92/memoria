@@ -22,6 +22,8 @@ from services.control_api.app.database import MemoryStore
 from services.control_api.app.device_control import DeviceSettingsAuthority
 from services.control_api.app.device_display_profile import (
     DisplayBindingUnavailable,
+    anti_addiction_quiet_hours,
+    consent_quiet_hours_for_binding,
     display_binding,
     resolve_device_display_profile,
 )
@@ -452,10 +454,20 @@ async def get_device_display_profile(
                 type(exc).__name__,
             )
         else:
-            quiet_hours = None
-            if settings.night_mode or settings.do_not_disturb:
-                # Anti-addiction switches: on-device night tap soothes then sleeps.
-                quiet_hours = ("00:00", "23:59")
+            consent_hours = None
+            if settings.night_mode and not settings.do_not_disturb:
+                consent_hours = await consent_quiet_hours_for_binding(
+                    identity=identity,
+                    consent=getattr(request.app.state, "bound_subject_consent", None),
+                    actor_id=bound["actor_id"],
+                    subject_id=bound["subject_id"],
+                    binding_id=bound["binding_id"],
+                )
+            quiet_hours = anti_addiction_quiet_hours(
+                night_mode=settings.night_mode,
+                do_not_disturb=settings.do_not_disturb,
+                consent_quiet_hours=consent_hours,
+            )
             # Tap-only product; coerce any legacy keyword settings rows.
             profile = replace(profile, wake_mode="button", quiet_hours=quiet_hours)
     return profile.to_wire()
