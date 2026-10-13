@@ -72,7 +72,8 @@ if [[ -e "$MEMORIA_UPSTREAM_DIR" || -L "$MEMORIA_UPSTREAM_DIR" ]]; then
         if [[ -f "$existing_marker" ]]; then
             existing_overlay_hash="$(<"$existing_marker")"
         fi
-        if [[ "$existing_remote" != "$MEMORIA_UPSTREAM_REPOSITORY" || \
+        existing_remote_norm="$(printf '%s\n' "$existing_remote" | sed -E 's#https://[^@]+@github.com/#https://github.com/#')"
+        if [[ "$existing_remote_norm" != "$MEMORIA_UPSTREAM_REPOSITORY" || \
               "$existing_head" != "$MEMORIA_UPSTREAM_REF" || \
               "$existing_overlay_hash" != "$desired_overlay_hash" ]]; then
             cache_needs_recreate=1
@@ -92,8 +93,11 @@ if [[ ! -d "$MEMORIA_UPSTREAM_DIR/.git" ]]; then
     git -C "$MEMORIA_UPSTREAM_DIR" checkout --detach "$MEMORIA_UPSTREAM_REF" >/dev/null
 fi
 
+# Credential helpers may rewrite github.com to a token URL on get-url. Compare
+# the public github.com form so the lock file still matches.
 remote_url="$(git -C "$MEMORIA_UPSTREAM_DIR" remote get-url origin)"
-[[ "$remote_url" == "$MEMORIA_UPSTREAM_REPOSITORY" ]] || \
+normalized_remote="$(printf '%s\n' "$remote_url" | sed -E 's#https://[^@]+@github.com/#https://github.com/#')"
+[[ "$normalized_remote" == "$MEMORIA_UPSTREAM_REPOSITORY" ]] || \
     die "upstream remote mismatch: $remote_url"
 [[ "$(git -C "$MEMORIA_UPSTREAM_DIR" rev-parse HEAD)" == "$MEMORIA_UPSTREAM_REF" ]] || \
     die "upstream HEAD is not locked at $MEMORIA_UPSTREAM_REF"

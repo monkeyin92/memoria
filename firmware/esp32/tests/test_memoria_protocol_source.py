@@ -145,19 +145,18 @@ BOARD_SOURCE = (
 CONTRACTS_README = FIRMWARE_README
 
 
-def test_product_build_has_a_real_idle_session_entry() -> None:
+def test_product_build_is_tap_only_without_multinet() -> None:
     assert 'WAKE_WORD_MODEL="${MEMORIA_FIRMWARE_WAKE_WORD_MODEL:-}"' in BUILD_SCRIPT
     sdkconfig = BOARD_CONFIG["builds"][0]["sdkconfig_append"]
-    assert "CONFIG_USE_CUSTOM_WAKE_WORD=y" in sdkconfig
-    assert 'CONFIG_CUSTOM_WAKE_WORD="mo li"' in sdkconfig
-    assert 'CONFIG_CUSTOM_WAKE_WORD_DISPLAY="茉莉"' in sdkconfig
+    assert "CONFIG_WAKE_WORD_DISABLED=y" in sdkconfig
+    assert "CONFIG_USE_CUSTOM_WAKE_WORD=y" not in sdkconfig
+    assert "CONFIG_SR_MN_CN_NONE=y" in sdkconfig
+    assert "CONFIG_SR_MN_CN_MULTINET6_QUANT=y" not in sdkconfig
+    assert "CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y" in sdkconfig
+    assert "CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y" not in sdkconfig
     assert "CONFIG_SEND_WAKE_WORD_DATA=n" in sdkconfig
-    assert "CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS=n" in sdkconfig
-    assert "CONFIG_SR_WN_WN9L_NIHAOXIAOZHI_TTS3=n" in sdkconfig
-    assert "CONFIG_SR_MN_CN_MULTINET6_QUANT=y" in sdkconfig
     assert "CONFIG_USE_DEVICE_AEC=y" in sdkconfig
-    assert "默认出厂唤醒词为「茉莉」（`mo li`）" in FIRMWARE_README
-    assert "白名单词「梅莫里亚」（`mei mo li ya`）" in FIRMWARE_README
+    assert "CONFIG_SR_NSN_WEBRTC=y" in sdkconfig
 
 
 def test_board_mic_gain_keeps_normal_distance_speech_above_denoiser_floor() -> None:
@@ -1702,13 +1701,14 @@ def test_network_disconnect_actively_recovers_the_same_session() -> None:
             "void InitializeI2c()"
         )
     ]
-    # Since build 18 the phone's wake mode decides (tests/test_memoria_wake_mode.py):
-    # a tap only wakes an idle device, and never stops or standbys a conversation.
-    assert "screen tap ignored state=%d wake_mode=%s" in touch
+    # Tap-only power policy: a tap wakes or soothes, and never stops a conversation.
+    assert "TapWakeActionFor" in touch
+    assert 'PlayLocalAssetClip("wo_zai_ne.ogg")' in touch
     assert "ToggleChatState()" not in touch
     assert "StartListening(" not in touch
     assert "MuteImuForTouch()" in touch
     assert "SetEmotion(" not in touch
+    assert "esp_deep_sleep_start" in board_source
     # A shake only makes the companion dizzy; it is never a pat or a chat.
     assert "dizzy companion, no chat" in board_source
     assert '#include "memoria_pat.h"' in board_source

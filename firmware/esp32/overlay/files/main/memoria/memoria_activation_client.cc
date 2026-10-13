@@ -555,13 +555,25 @@ esp_err_t MemoriaActivationClient::FetchDisplayProfile(const std::string& contro
     }
     profile->companion_id = std::move(companion_id);
     profile->display_version = std::move(display_version);
-    // Additive field: absent from servers before wake-mode delivery, and any
-    // value the registry does not know is ignored there.
+    // Additive fields: older servers omit them; the device keeps what it has.
     profile->wake_mode.clear();
+    profile->quiet_hours_start.clear();
+    profile->quiet_hours_end.clear();
     const cJSON* wake_mode = cJSON_GetObjectItemCaseSensitive(root.value, "wake_mode");
     if (cJSON_IsString(wake_mode) && wake_mode->valuestring != nullptr &&
         std::strlen(wake_mode->valuestring) <= 32) {
         profile->wake_mode = wake_mode->valuestring;
+    }
+    const cJSON* quiet = cJSON_GetObjectItemCaseSensitive(root.value, "quiet_hours");
+    if (cJSON_IsArray(quiet) && cJSON_GetArraySize(quiet) == 2) {
+        const cJSON* start = cJSON_GetArrayItem(quiet, 0);
+        const cJSON* end = cJSON_GetArrayItem(quiet, 1);
+        if (cJSON_IsString(start) && cJSON_IsString(end) && start->valuestring != nullptr &&
+            end->valuestring != nullptr && std::strlen(start->valuestring) == 5 &&
+            std::strlen(end->valuestring) == 5) {
+            profile->quiet_hours_start = start->valuestring;
+            profile->quiet_hours_end = end->valuestring;
+        }
     }
     return ESP_OK;
 }

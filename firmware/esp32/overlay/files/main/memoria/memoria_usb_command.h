@@ -198,16 +198,15 @@ private:
 };
 
 // What the wake command does to a device that is not pairing or starting up (the board handles those first,
-// as it does for a tap). It follows the screen tap's gate exactly: only an idle device in a mode that
-// includes the screen starts a conversation, so the command can never stop the robot talking or send it back
-// to standby.
-enum class UsbWakeDecision : unsigned char { kStartConversation, kIgnoreNotIdle, kIgnoreWakeMode };
+// as it does for a tap). Tap-only product: idle starts a conversation; busy is ignored. The command can
+// never stop the robot talking or send it back to standby.
+enum class UsbWakeDecision : unsigned char { kStartConversation, kIgnoreNotIdle };
 
 inline UsbWakeDecision UsbWakeDecisionFor(WakeMode mode, bool device_idle) {
     if (TapActionFor(mode, device_idle) == TapAction::kStartConversation) {
         return UsbWakeDecision::kStartConversation;
     }
-    return device_idle ? UsbWakeDecision::kIgnoreWakeMode : UsbWakeDecision::kIgnoreNotIdle;
+    return UsbWakeDecision::kIgnoreNotIdle;
 }
 
 inline const char* UsbWakeDecisionName(UsbWakeDecision decision) {
@@ -216,8 +215,6 @@ inline const char* UsbWakeDecisionName(UsbWakeDecision decision) {
             return "start";
         case UsbWakeDecision::kIgnoreNotIdle:
             return "not_idle";
-        case UsbWakeDecision::kIgnoreWakeMode:
-            return "wake_mode";
     }
     return "unknown";
 }

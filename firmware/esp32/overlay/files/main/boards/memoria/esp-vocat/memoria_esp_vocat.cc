@@ -30,9 +30,14 @@
 #include "memoria_display_hooks.h"
 #include "memoria_mascot_display.h"
 #include "memoria_pat.h"
+#include "memoria_power_policy.h"
+#include "memoria_quiet_hours.h"
 #include "memoria_usb_command.h"
 #include "memoria_wake_mode.h"
+#include "assets.h"
 #include "settings.h"
+#include <esp_sleep.h>
+#include <ctime>
 #if CONFIG_MEMORIA_BENCH_SERIAL
 #include "memoria_diag_pcm.h"
 #endif
@@ -45,6 +50,8 @@ extern "C" {
 #endif
 
 #include <atomic>
+#include <string>
+#include <string_view>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -479,6 +486,7 @@ private:
     TaskHandle_t charge_task_handle_ = nullptr;
     TaskHandle_t touch_task_handle_ = nullptr;
     int64_t last_qr_refresh_us_ = 0;
+    std::atomic<std::uint32_t> wifi_hold_since_ms_{0};
     TaskHandle_t imu_task_handle_ = nullptr;
 #if ESP_VOCAT_ENABLE_CAP_TOUCH_SENSOR
     TaskHandle_t touch_slider_task_handle_ = nullptr;
@@ -582,6 +590,69 @@ private:
                                  std::memory_order_relaxed);
     }
 
+    static std::uint16_t BeijingMinuteNowOrZero() {
+        const time_t now = time(nullptr);
+        // Before SNTP a Unix epoch near zero is useless; treat as unknown.
+        if (now < 1'700'000'000) {
+            return 0;
+        }
+        const time_t beijing = now + 8 * 3600;
+        struct tm parts = {};
+        gmtime_r(&beijing, &parts);
+        return static_cast<std::uint16_t>(parts.tm_hour * 60 + parts.tm_min);
+    }
+
+    bool PlayLocalAssetClip(const char* asset_name) {
+        void* data = nullptr;
+        size_t size = 0;
+        if (!Assets::GetInstance().GetAssetData(std::string(asset_name), data, size) ||
+            data == nullptr || size == 0) {
+            ESP_LOGW(TAG, "local clip missing: %s", asset_name);
+            return false;
+        }
+        const std::string_view ogg(static_cast<const char*>(data), size);
+        Application::GetInstance().PlaySound(ogg);
+        return true;
+    }
+
+    void EnterTapDeepSleep() {
+        auto& power = memoria::PowerPolicyRegistry::GetInstance();
+        power.SetPhase(memoria::PowerPhase::kDeepSleep);
+        ESP_LOGI(TAG, "entering deep sleep; wake source=GPIO%d (CST816S INT)",
+                 static_cast<int>(TP_PIN_NUM_INT));
+        // CST816S INT is active-low on this board (ISR on falling edge elsewhere).
+        ESP_ERROR_CHECK(esp_sleep_enable_ext0_wakeup(TP_PIN_NUM_INT, 0));
+        esp_deep_sleep_start();
+    }
+
+    void OnIdleScreenOff() {
+        auto& power = memoria::PowerPolicyRegistry::GetInstance();
+        power.SetPhase(memoria::PowerPhase::kWifiHold);
+        wifi_hold_since_ms_.store(static_cast<std::uint32_t>(esp_timer_get_time() / 1000),
+                                  std::memory_order_relaxed);
+        ESP_LOGI(TAG, "wifi hold started hold_ms=%u", power.wifi_hold_ms());
+    }
+
+    void MaybeEnterDeepSleepFromWifiHold() {
+        auto& power = memoria::PowerPolicyRegistry::GetInstance();
+        if (power.phase() != memoria::PowerPhase::kWifiHold) {
+            return;
+        }
+        if (Application::GetInstance().GetDeviceState() != kDeviceStateIdle) {
+            return;
+        }
+        const std::uint32_t since = wifi_hold_since_ms_.load(std::memory_order_relaxed);
+        if (since == 0) {
+            return;
+        }
+        const std::uint32_t now =
+            static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+        if (now - since < power.wifi_hold_ms()) {
+            return;
+        }
+        EnterTapDeepSleep();
+    }
+
     void HandleScreenTouchRelease() {
         MuteImuForTouch();
         auto& app = Application::GetInstance();
@@ -605,20 +676,49 @@ private:
             EnterWifiConfigMode();
             return;
         }
-        // From here the phone's wake mode decides what a tap means. A tap only
-        // ever wakes: on an idle device, in a mode that includes the screen.
-        // It never stops the robot talking and never sends it back to standby
-        // (BOOT stays the on-device hard stop), and with the wake word as the
-        // only way in it does nothing at all.
-        const auto mode = memoria::WakeModeRegistry::GetInstance().mode();
-        if (memoria::TapActionFor(mode, state == kDeviceStateIdle) ==
-            memoria::TapAction::kStartConversation) {
-            ESP_LOGI(TAG, "screen tap wakes the device (wake_mode=%s)", memoria::WakeModeName(mode));
-            app.WakeWordInvoke("screen_tap");
+
+        auto& power = memoria::PowerPolicyRegistry::GetInstance();
+        const std::uint32_t now_ms =
+            static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+        if (!power.NoteTap(now_ms)) {
+            ESP_LOGI(TAG, "screen tap debounced");
             return;
         }
-        ESP_LOGI(TAG, "screen tap ignored state=%d wake_mode=%s", static_cast<int>(state),
-                 memoria::WakeModeName(mode));
+
+        // Map Application idle onto WifiHold/DeepSleep phases for the policy.
+        memoria::PowerPhase phase = power.phase();
+        if (state == kDeviceStateIdle) {
+            if (phase != memoria::PowerPhase::kWifiHold &&
+                phase != memoria::PowerPhase::kDeepSleep) {
+                phase = memoria::PowerPhase::kWifiHold;
+            }
+        } else {
+            phase = memoria::PowerPhase::kConversing;
+        }
+        const bool quiet = power.in_quiet_hours(BeijingMinuteNowOrZero());
+        const auto action = memoria::TapWakeActionFor(phase, state == kDeviceStateIdle, quiet);
+        ESP_LOGI(TAG, "screen tap action=%s phase=%s quiet=%d state=%d",
+                 memoria::TapWakeActionName(action), memoria::PowerPhaseName(phase), quiet ? 1 : 0,
+                 static_cast<int>(state));
+        switch (action) {
+            case memoria::TapWakeAction::kNightSoothing:
+                power.SetPhase(memoria::PowerPhase::kNightSoothing);
+                PlayLocalAssetClip("night_soothe.ogg");
+                app.Schedule([this]() {
+                    vTaskDelay(pdMS_TO_TICKS(2500));
+                    EnterTapDeepSleep();
+                });
+                return;
+            case memoria::TapWakeAction::kStartConversation:
+            case memoria::TapWakeAction::kResumeFromHold:
+                power.SetPhase(memoria::PowerPhase::kWaking);
+                wifi_hold_since_ms_.store(0, std::memory_order_relaxed);
+                PlayLocalAssetClip("wo_zai_ne.ogg");
+                app.WakeWordInvoke("screen_tap");
+                return;
+            case memoria::TapWakeAction::kIgnore:
+                break;
+        }
     }
 
     // The `wake` line on the USB port (build 20): what a tap on the round screen does, for the computer
@@ -643,6 +743,10 @@ private:
         const auto decision = memoria::UsbWakeDecisionFor(mode, state == kDeviceStateIdle);
         if (decision == memoria::UsbWakeDecision::kStartConversation) {
             ESP_LOGI(kUsbTag, "usb wake accepted wake_mode=%s", memoria::WakeModeName(mode));
+            auto& power = memoria::PowerPolicyRegistry::GetInstance();
+            power.SetPhase(memoria::PowerPhase::kWaking);
+            wifi_hold_since_ms_.store(0, std::memory_order_relaxed);
+            PlayLocalAssetClip("wo_zai_ne.ogg");
             app.WakeWordInvoke("usb_wake");
             return;
         }
@@ -732,6 +836,7 @@ private:
                     }
                 }
             }
+            self->MaybeEnterDeepSleepFromWifiHold();
             vTaskDelay(pdMS_TO_TICKS(kUsbPollMs));
 #if CONFIG_MEMORIA_BENCH_SERIAL
             memoria::diag::Tick();
@@ -1032,6 +1137,7 @@ private:
                                             DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
         backlight_ = new PwmBacklight(DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_OUTPUT_INVERT);
         display_->SetBacklight(backlight_);
+        display_->SetOnScreenOff([this]() { OnIdleScreenOff(); });
         if (display_->animated()) {
             // Light the panel only once the boot animation's first frame is
             // on it; the backlight's own ramp then fades the picture in.
@@ -1158,6 +1264,7 @@ public:
     }
 
     MemoriaEspVocat() : boot_button_(BOOT_BUTTON_GPIO) {
+        memoria::PowerPolicyRegistry::GetInstance().LoadFromNvs();
         InitializeI2c();
         uint8_t pcb_version = DetectPcbVersion();
         InitializeCharge();

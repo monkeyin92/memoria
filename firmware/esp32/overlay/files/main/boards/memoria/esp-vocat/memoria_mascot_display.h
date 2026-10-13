@@ -58,6 +58,8 @@ public:
     // Called once from the animation task after the first frame is on screen,
     // so the backlight can fade in over a finished picture, never over noise.
     void SetOnFirstFrame(std::function<void()> callback) { on_first_frame_ = std::move(callback); }
+    // Board wires WifiHold start when idle darkens the panel.
+    void SetOnScreenOff(std::function<void()> callback) { on_screen_off_ = std::move(callback); }
     // Used to dim the panel while the companion sleeps.
     void SetBacklight(Backlight* backlight) { backlight_ = backlight; }
 
@@ -80,7 +82,8 @@ public:
 
 private:
     static constexpr uint32_t kFrameMs = 40;  // fastest frame pace
-    static constexpr uint32_t kIdleScreenOffMs = 10 * 1000;
+    // Matches PowerPolicy::kIdleScreenOffMs / kNoSpeechEndMs (15 s).
+    static constexpr uint32_t kIdleScreenOffMs = 15 * 1000;
     static constexpr uint32_t kScreenOffPollMs = 100;  // how fast a dark panel notices a wake
 
     static void AnimationTask(void* arg);
@@ -88,8 +91,9 @@ private:
     memoria::ScenePhase CurrentPhase(uint32_t now_ms);
     // No conversation, no screen: the panel goes dark kIdleScreenOffMs after the
     // companion settles into the idle phase and lights again the moment anything
-    // else happens (wake word, tap, BOOT, pairing, an error). Nothing is rendered
-    // while it is dark; the panel keeps its last frame.
+    // else happens (tap, BOOT, pairing, an error). Nothing is rendered while it
+    // is dark; the panel keeps its last frame. Entering dark notifies the board
+    // so WifiHold can start.
     void UpdateIdleScreen(memoria::ScenePhase phase, uint32_t now_ms);
     bool LoadCompanion(const std::string& id, std::unique_ptr<memoria::MascotPack>* out);
     void ApplyChrome();                 // caller holds the display lock
@@ -118,6 +122,7 @@ private:
     TaskHandle_t task_ = nullptr;
     std::atomic<bool> running_{false};
     std::function<void()> on_first_frame_;
+    std::function<void()> on_screen_off_;
     Backlight* backlight_ = nullptr;
     bool dimmed_ = false;
     bool screen_off_ = false;

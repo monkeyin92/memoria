@@ -1,0 +1,54 @@
+--- a/main/CMakeLists.txt
++++ b/main/CMakeLists.txt
+@@ -36,6 +36,7 @@
+             "memoria/memoria_activation_client.cc"
+             "memoria/memoria_wake_word.cc"
+             "memoria/memoria_wake_mode.cc"
++            "memoria/memoria_power_policy.cc"
+             "memoria/memoria_protocol.cc"
+             "memoria/memoria_bootstrap.cc"
+             "memoria/memoria_firmware_update.cc"
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -6,6 +6,7 @@
+ #include "display.h"
+ #include "mcp_server.h"
+ #include "mqtt_protocol.h"
++#include "memoria/memoria_power_policy.h"
+ #include "memoria/memoria_wake_mode.h"
+ #include "memoria/memoria_wake_word.h"
+ #include "memoria_protocol.h"
+@@ -657,6 +658,7 @@
+     }
+     memoria::WakeWordRegistry::GetInstance().LoadFromNvs();
+     memoria::WakeModeRegistry::GetInstance().LoadFromNvs();
++    memoria::PowerPolicyRegistry::GetInstance().LoadFromNvs();
+     if (!InitializeProtocol()) {
+         return;
+     }
+@@ -1345,11 +1347,11 @@
+ 
+ void Application::ArmIdleWakeWord() {
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
+-    // The phone's wake mode: with the screen as the only way in, the wake word
+-    // stays off while idle.
+-    audio_service_.EnableWakeWordDetection(
+-        memoria::WakeModeRegistry::GetInstance().keyword_enabled());
++    // Tap-only product: never arm keyword wake. Mic stays closed until a tap
++    // starts (or resumes) a conversation.
++    audio_service_.EnableWakeWordDetection(false);
++    memoria::PowerPolicyRegistry::GetInstance().SetPhase(memoria::PowerPhase::kWifiHold);
+ #else
+     audio_service_.EnableWakeWordDetection(true);
+ #endif
+ }
+@@ -1455,6 +1458,9 @@
+         case kDeviceStateListening:
+             display->SetStatus(Lang::Strings::LISTENING);
+             display->SetEmotion("neutral");
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++            memoria::PowerPolicyRegistry::GetInstance().SetPhase(memoria::PowerPhase::kConversing);
++#endif
+ 
+             // Make sure the audio processor is running
+             if (play_popup_on_listening_ || !audio_service_.IsAudioProcessorRunning()) {
