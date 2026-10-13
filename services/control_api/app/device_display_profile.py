@@ -58,7 +58,6 @@ MASCOT_COMPANION_IDS: frozenset[str] = frozenset(
 
 DISPLAY_PROFILE_SCHEMA_VERSION = 1
 _DISPLAY_VERSION_DOMAIN = b"memoria-device-display-profile-v1\0"
-#: Same night window as policy ``QUIET_HOURS`` when the guardian set none.
 DEFAULT_DISPLAY_QUIET_HOURS: Final[tuple[str, str]] = ("21:30", "06:30")
 _ALL_DAY_QUIET_HOURS: Final[tuple[str, str]] = ("00:00", "23:59")
 
@@ -74,7 +73,6 @@ def anti_addiction_quiet_hours(
     consent_quiet_hours: tuple[str, str] | None,
 ) -> tuple[str, str] | None:
     if do_not_disturb:
-        # Product choice: do-not-disturb quiets the device for the whole day.
         return _ALL_DAY_QUIET_HOURS
     if night_mode:
         return consent_quiet_hours or DEFAULT_DISPLAY_QUIET_HOURS
@@ -89,12 +87,6 @@ async def consent_quiet_hours_for_binding(
     subject_id: str,
     binding_id: str,
 ) -> tuple[str, str] | None:
-    """Bind-time quiet hours on a minor-session grant, or ``None`` on any miss.
-
-    A consent failure must not fail the display poll. Night mode then uses
-    the policy window.
-    """
-
     active = getattr(consent, "active", None)
     if not callable(active) or not subject_id or not binding_id:
         return None

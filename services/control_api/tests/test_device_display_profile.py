@@ -8,9 +8,7 @@
 ④ personas without mascot art fall back to their base companion, then the
    account companion, then the shipped default;
 ⑤ the poll also carries the device's ``wake_mode`` setting without moving the
-   display version, and a settings read that fails leaves the field out;
-⑥ night mode alone carries a night window (the child's bind-time quiet hours,
-   or 21:30-06:30 when those are absent) and do-not-disturb stays all day.
+   display version, and a settings read that fails leaves the field out.
 """
 
 from __future__ import annotations
