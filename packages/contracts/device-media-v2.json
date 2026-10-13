@@ -127,9 +127,7 @@
         },
         "wake_mode": {
           "enum": [
-            "button",
-            "keyword",
-            "button_or_keyword"
+            "button"
           ]
         },
         "wake_word_id": {

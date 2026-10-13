@@ -180,7 +180,7 @@ def test_direct_ticket_rejects_invalid_binding_facts() -> None:
                 "do_not_disturb": False,
                 "learning_mode": "off",
                 "audio_mode": "half_duplex_safe",
-                "wake_mode": "button_or_keyword",
+                "wake_mode": "button",
                 "allowed_barge_in": ["button"],
             }
         )
