@@ -274,6 +274,14 @@ class AgentSettings(BaseSettings):
     # deepseek-flash serves DeepSeek-V4.1-Flash; the old name deepseek-v4-flash is routed to it.
     deepseek_fast_model: str = Field(default="deepseek-flash", alias="DEEPSEEK_FAST_MODEL")
     deepseek_deep_model: str = Field(default="deepseek-flash", alias="DEEPSEEK_DEEP_MODEL")
+    deepseek_summary_model: str = Field(default="deepseek-flash", alias="DEEPSEEK_SUMMARY_MODEL")
+    deepseek_summary_timeout_s: float = Field(
+        default=30.0, ge=1.0, le=120.0, alias="DEEPSEEK_SUMMARY_TIMEOUT_S"
+    )
+    dashscope_summary_model: str = Field(default="qwen-flash", alias="DASHSCOPE_SUMMARY_MODEL")
+    dashscope_summary_timeout_s: float = Field(
+        default=30.0, ge=1.0, le=120.0, alias="DASHSCOPE_SUMMARY_TIMEOUT_S"
+    )
 
     doubao_tts_api_key: SecretStr = Field(default=SecretStr(""), alias="DOUBAO_TTS_API_KEY")
     doubao_tts_app_id: str = Field(default="", alias="DOUBAO_TTS_APP_ID")

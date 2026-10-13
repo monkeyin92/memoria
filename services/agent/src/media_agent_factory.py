@@ -49,6 +49,7 @@ from services.agent.src.response_planner_client import (
     ResponsePlannerClientConfig,
 )
 from services.agent.src.runtime_profile import VerifiedRuntimeProfile
+from services.agent.src.session_recap_llm import summary_model_config_from_settings
 from services.agent.src.session_recap_sink import HttpSessionRecapConfig, SessionRecapSink
 from services.agent.src.tutor_session import production_system_prompt
 from services.agent.src.voice_core.media_protocol import (
@@ -448,7 +449,12 @@ def build_production_media_session_factory(settings: Any) -> ProductionMediaSess
                         "http://control-api:8000/v1/internal/child-memory/session-recap",
                     )),
                     internal_token=token,
-                )
+                    timeout_s=float(
+                        getattr(settings, "deepseek_summary_timeout_s", 30.0)
+                    )
+                    + 5.0,
+                ),
+                summary_model=summary_model_config_from_settings(settings),
             )
     return ProductionMediaSessionFactory(
         settings=settings,

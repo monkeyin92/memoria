@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 
 import httpx
 import pytest
@@ -30,12 +31,17 @@ async def test_publish_posts_summary_and_facts_without_transcript() -> None:
             },
         )
 
+    async def fake_summary(turns: Sequence[SessionTurn]) -> str | None:
+        assert any("恐龙" in turn.text for turn in turns)
+        return "聊了恐龙和小狗"
+
     sink = SessionRecapSink(
         HttpSessionRecapConfig(
             endpoint="http://control.test/v1/internal/child-memory/session-recap",
             internal_token="token-that-is-long-enough",
         ),
         _client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        _summary_generator=fake_summary,
     )
     result = await sink.publish_session_end(
         subject_id="child-1",
@@ -52,20 +58,25 @@ async def test_publish_posts_summary_and_facts_without_transcript() -> None:
     assert result is not None
     assert result["summary_record_id"] == "dlgsum:1"
     assert posted[0]["subject_id"] == "child-1"
-    assert isinstance(posted[0]["summary_text"], str) and posted[0]["summary_text"]
+    assert posted[0]["summary_text"] == "聊了恐龙和小狗"
     assert "transcript" not in posted[0]
-    assert "text" not in posted[0]
     assert any(item["text"] == "喜欢恐龙" for item in posted[0]["archive_facts"])  # type: ignore[index]
 
 
 @pytest.mark.asyncio
-async def test_publish_skips_short_session_without_posting() -> None:
+async def test_publish_skips_short_session_without_model_or_post() -> None:
     calls = 0
+    model_calls = 0
 
     def handler(_: httpx.Request) -> httpx.Response:
         nonlocal calls
         calls += 1
         return httpx.Response(200, json={})
+
+    async def fake_summary(_: Sequence[SessionTurn]) -> str | None:
+        nonlocal model_calls
+        model_calls += 1
+        return "不应调用"
 
     sink = SessionRecapSink(
         HttpSessionRecapConfig(
@@ -73,6 +84,7 @@ async def test_publish_skips_short_session_without_posting() -> None:
             internal_token="token-that-is-long-enough",
         ),
         _client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        _summary_generator=fake_summary,
     )
     result = await sink.publish_session_end(
         subject_id="child-1",
@@ -87,6 +99,48 @@ async def test_publish_skips_short_session_without_posting() -> None:
     assert result == {
         "skipped": True,
         "reason": "fewer_than_two_turns",
+        "summary_record_id": None,
+        "archive_record_ids": [],
+    }
+    assert calls == 0
+    assert model_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_publish_skips_when_model_fails_without_raw_fallback() -> None:
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json={})
+
+    async def fake_summary(_: Sequence[SessionTurn]) -> str | None:
+        return None
+
+    sink = SessionRecapSink(
+        HttpSessionRecapConfig(
+            endpoint="http://control.test/v1/internal/child-memory/session-recap",
+            internal_token="token-that-is-long-enough",
+        ),
+        _client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        _summary_generator=fake_summary,
+    )
+    result = await sink.publish_session_end(
+        subject_id="child-1",
+        resource_owner_id="parent-1",
+        session_id="sess-1",
+        turns=[
+            SessionTurn(role="user", text="我想听恐龙"),
+            SessionTurn(role="assistant", text="好呀"),
+            SessionTurn(role="user", text="还有小狗"),
+            SessionTurn(role="assistant", text="可爱"),
+        ],
+    )
+    await sink.aclose()
+    assert result == {
+        "skipped": True,
+        "reason": "summary_model_failed",
         "summary_record_id": None,
         "archive_record_ids": [],
     }

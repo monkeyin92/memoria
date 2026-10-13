@@ -307,10 +307,10 @@ class ChildLayerStore:
         consent_snapshot_id: str,
         created_at: datetime | None = None,
     ) -> ChildLayerRecord:
-        """Write a whitelist fact, or replace a duplicate so last-mentioned moves forward.
+        """Write a whitelist fact, or refresh ``last_mentioned_at`` in place.
 
-        ``memory_records`` is append-only, so a re-mention erases the prior row and
-        inserts a fresh one whose ``created_at`` / ``last_mentioned_at`` is now.
+        Re-mentions keep ``created_at`` and the same ``record_id``. Only
+        ``payload.last_mentioned_at`` moves forward (no delete/insert).
         """
 
         stamped = created_at or datetime.now(UTC)
@@ -321,7 +321,21 @@ class ChildLayerStore:
             viewer_subject_id=resource_owner_id,
         )
         if existing is not None:
-            await self.delete_record(subject_id=fact.subject_id, record_id=existing.record_id)
+            async with (await self._api()).acquire() as connection:
+                async with connection.transaction():
+                    await connection.fetchval(
+                        "SELECT memory_child_archive_touch_mentioned($1, $2, $3)",
+                        fact.subject_id,
+                        existing.record_id,
+                        stamped,
+                    )
+            listed = await self.get(
+                subject_id=fact.subject_id,
+                record_id=existing.record_id,
+                viewer_subject_id=resource_owner_id,
+            )
+            assert listed is not None
+            return listed
         return await self.write_archive_fact(
             fact,
             resource_owner_id=resource_owner_id,

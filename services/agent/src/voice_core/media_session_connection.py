@@ -208,9 +208,6 @@ class MediaSessionConnectionMixin:
         """Write the session summary/archive draft, then discard the in-memory transcript."""
 
         publisher = getattr(self, "session_recap_publisher", None)
-        if not callable(publisher):
-            context.runtime.orchestrator.context.clear_turns()
-            return
         profile = context.runtime.mode_policy.runtime_profile
         subject_category = (
             profile.profile.subject_category if profile is not None else None
@@ -221,24 +218,30 @@ class MediaSessionConnectionMixin:
             else context.identity.subject_id
         )
         turns = snapshot_context_turns(context.runtime.orchestrator.context.turns)
-        context.runtime.orchestrator.context.clear_turns()
-        if subject_category != "minor" or not subject_id or not context.identity.account_id:
-            return
         try:
-            result = publisher(
-                subject_id=subject_id,
-                resource_owner_id=context.identity.account_id,
-                session_id=context.identity.session_id,
-                turns=turns,
-            )
-            if asyncio.iscoroutine(result):
-                await result
+            if (
+                callable(publisher)
+                and subject_category == "minor"
+                and subject_id
+                and context.identity.account_id
+            ):
+                result = publisher(
+                    subject_id=subject_id,
+                    resource_owner_id=context.identity.account_id,
+                    session_id=context.identity.session_id,
+                    turns=turns,
+                )
+                if asyncio.iscoroutine(result):
+                    await result
         except Exception:
             logger.warning(
                 "session recap publish failed session=%s",
                 context.identity.session_id,
                 exc_info=True,
             )
+        finally:
+            # Always drop the ephemeral transcript after the write attempt.
+            context.runtime.orchestrator.context.clear_turns()
 
     async def finalize_session(self, session_id: str) -> None:
         cleanup = self._cleanup_tasks.pop(session_id, None)

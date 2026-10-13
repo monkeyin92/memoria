@@ -3,20 +3,36 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 import httpx
 
-from services.guardian.session_recap import SessionTurn, draft_session_recap
+from services.agent.src.session_recap_llm import (
+    SessionSummaryModelConfig,
+    generate_parent_session_summary,
+)
+from services.guardian.session_recap import (
+    SessionTurn,
+    draft_session_recap,
+    skip_session_recap,
+)
 
 logger = logging.getLogger(__name__)
 
+SummaryGenerator = Callable[[Sequence[SessionTurn]], Awaitable[str | None]]
+
 
 class SessionRecapConfig(Protocol):
-    endpoint: str
-    internal_token: str
-    timeout_s: float
+    @property
+    def endpoint(self) -> str: ...
+
+    @property
+    def internal_token(self) -> str: ...
+
+    @property
+    def timeout_s(self) -> float: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,12 +48,27 @@ class SessionRecapSink:
 
     _config: SessionRecapConfig
     _client: httpx.AsyncClient
+    _summary_generator: SummaryGenerator | None = None
 
     @classmethod
-    def from_config(cls, config: SessionRecapConfig) -> SessionRecapSink:
+    def from_config(
+        cls,
+        config: SessionRecapConfig,
+        *,
+        summary_model: SessionSummaryModelConfig | None = None,
+    ) -> SessionRecapSink:
+        generator: SummaryGenerator | None = None
+        if summary_model is not None:
+            model = summary_model
+
+            async def _generate(turns: Sequence[SessionTurn]) -> str | None:
+                return await generate_parent_session_summary(turns, config=model)
+
+            generator = _generate
         return cls(
             _config=config,
             _client=httpx.AsyncClient(timeout=config.timeout_s),
+            _summary_generator=generator,
         )
 
     async def aclose(self) -> None:
@@ -52,17 +83,27 @@ class SessionRecapSink:
         turns: list[SessionTurn],
         source_event_id: str | None = None,
     ) -> dict[str, Any] | None:
-        """Draft from ephemeral turns. Control API consent-gates archive writes."""
+        """LLM-summarize ephemeral turns. Control API consent-gates archive writes."""
 
         event_id = source_event_id or f"session-end:{session_id}"
-        # Extract whitelist candidates locally; the ingest endpoint drops them
-        # when child_archive consent is absent.
+        early_skip = skip_session_recap(turns)
+        summary_text: str | None = None
+        model_skip: str | None = early_skip
+        if early_skip is None:
+            if self._summary_generator is None:
+                model_skip = "summary_model_unavailable"
+            else:
+                summary_text = await self._summary_generator(turns)
+                if summary_text is None:
+                    model_skip = "summary_model_failed"
         draft = draft_session_recap(
             subject_id=subject_id,
             session_id=session_id,
             source_event_id=event_id,
             turns=turns,
             archive_consent=True,
+            summary_text=summary_text,
+            skipped_reason=model_skip,
         )
         if draft.skipped_reason is not None or draft.summary is None:
             logger.info(

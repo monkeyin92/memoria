@@ -370,10 +370,24 @@ CREATE OR REPLACE FUNCTION memory_records_immutable() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE
     v_target TEXT := memory_subject_erase_target();
+    v_touch TEXT := NULLIF(current_setting('app.memory.child_archive_touch', true), '');
 BEGIN
     IF TG_OP = 'DELETE' AND v_target IS NOT NULL
        AND memory_subject_erase_names_record(OLD.record_id, v_target) THEN
         RETURN OLD;
+    END IF;
+    -- Narrow escape for child_archive last_mentioned_at only (SECURITY DEFINER port).
+    IF TG_OP = 'UPDATE'
+       AND v_touch IS NOT NULL
+       AND v_touch = OLD.record_id
+       AND OLD.payload ->> 'kind' = 'child_archive'
+       AND NEW.record_id = OLD.record_id
+       AND NEW.subject_id = OLD.subject_id
+       AND NEW.created_at IS NOT DISTINCT FROM OLD.created_at
+       AND NEW.resource_owner_id IS NOT DISTINCT FROM OLD.resource_owner_id
+       AND (NEW.payload - 'last_mentioned_at') = (OLD.payload - 'last_mentioned_at')
+       AND NEW.payload ? 'last_mentioned_at' THEN
+        RETURN NEW;
     END IF;
     RAISE EXCEPTION 'memory_records is append-only';
 END;
@@ -509,7 +523,7 @@ BEGIN
 
         DROP POLICY IF EXISTS memory_records_update ON memory_records;
         CREATE POLICY memory_records_update ON memory_records FOR UPDATE
-            TO memoria_memory_api, memoria_memory_worker
+            TO memoria_memory_api, memoria_memory_worker, memoria_memory_owner
             USING (
                 (
                     subject_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
@@ -2738,11 +2752,75 @@ BEGIN
 END
 $memory_kind_subjects$;
 
+CREATE OR REPLACE FUNCTION memory_child_archive_touch_mentioned(
+    p_subject_id TEXT,
+    p_record_id TEXT,
+    p_mentioned_at TIMESTAMPTZ
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = on
+SET lock_timeout = '5s'
+AS $memory_child_archive_touch_mentioned$
+DECLARE
+    v_kind TEXT;
+    v_payload JSONB;
+    v_actor TEXT;
+BEGIN
+    IF NOT (
+        pg_has_role(session_user, 'memoria_memory_api', 'member')
+        OR pg_has_role(session_user, 'memoria_memory_maintenance', 'member')
+    ) THEN
+        RAISE EXCEPTION 'child archive touch requires the memory api or maintenance role'
+            USING ERRCODE = 'MC403';
+    END IF;
+    IF p_subject_id IS NULL OR btrim(p_subject_id) = ''
+       OR char_length(p_subject_id) > 128
+       OR p_record_id IS NULL OR btrim(p_record_id) = ''
+       OR char_length(p_record_id) > 128
+       OR p_mentioned_at IS NULL THEN
+        RAISE EXCEPTION 'child archive touch needs bounded ids and a timestamp'
+            USING ERRCODE = 'MC403';
+    END IF;
+
+    SELECT payload ->> 'kind', payload, created_by_actor_id
+      INTO v_kind, v_payload, v_actor
+    FROM memory_records
+    WHERE record_id = p_record_id AND subject_id = p_subject_id
+    FOR UPDATE;
+    IF v_kind IS DISTINCT FROM 'child_archive' OR v_payload IS NULL OR v_actor IS NULL THEN
+        RAISE EXCEPTION 'child archive touch only updates child_archive rows'
+            USING ERRCODE = 'MC404';
+    END IF;
+
+    PERFORM set_config('app.memory.subject_id', p_subject_id, true);
+    PERFORM set_config('app.memory.actor_subject_id', v_actor, true);
+    PERFORM set_config('app.memory.child_archive_touch', p_record_id, true);
+    UPDATE memory_records
+    SET payload = jsonb_set(
+        v_payload,
+        '{last_mentioned_at}',
+        to_jsonb(p_mentioned_at),
+        true
+    )
+    WHERE record_id = p_record_id AND subject_id = p_subject_id;
+    PERFORM set_config('app.memory.child_archive_touch', '', true);
+
+    RETURN jsonb_build_object(
+        'record_id', p_record_id,
+        'last_mentioned_at', p_mentioned_at
+    );
+END
+$memory_child_archive_touch_mentioned$;
+
 REVOKE ALL ON FUNCTION memory_kind_erase(TEXT, TEXT, BOOLEAN) FROM PUBLIC;
 REVOKE ALL ON FUNCTION memory_kind_remaining(TEXT, TEXT, BOOLEAN) FROM PUBLIC;
 REVOKE ALL ON FUNCTION memory_record_erase(TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION memory_kind_due_subjects(TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION memory_kind_subjects(TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION memory_child_archive_touch_mentioned(TEXT, TEXT, TIMESTAMPTZ) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION memory_kind_erase(TEXT, TEXT, BOOLEAN)
     TO memoria_memory_maintenance;
 GRANT EXECUTE ON FUNCTION memory_kind_remaining(TEXT, TEXT, BOOLEAN)
@@ -2753,5 +2831,7 @@ GRANT EXECUTE ON FUNCTION memory_kind_due_subjects(TEXT)
     TO memoria_memory_maintenance;
 GRANT EXECUTE ON FUNCTION memory_kind_subjects(TEXT)
     TO memoria_memory_maintenance;
+GRANT EXECUTE ON FUNCTION memory_child_archive_touch_mentioned(TEXT, TEXT, TIMESTAMPTZ)
+    TO memoria_memory_api, memoria_memory_maintenance;
 
 RESET ROLE;
