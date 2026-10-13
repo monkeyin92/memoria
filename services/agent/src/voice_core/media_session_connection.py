@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import TYPE_CHECKING
 
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.observability.metrics import MetricsRegistry
+from services.agent.src.session_recap_sink import snapshot_context_turns
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_bridge_server import MediaBridgeSession
 from services.agent.src.voice_core.media_protocol import (
@@ -19,6 +21,8 @@ from services.agent.src.voice_core.media_session_state import (
     MediaVoiceSessionState as _MediaVoiceSession,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class MediaSessionConnectionMixin:
     """Apply transport lifecycle facts to the one Registry-owned state record."""
@@ -27,6 +31,7 @@ class MediaSessionConnectionMixin:
         bridge: MediaBridgeGrpcServer
         metrics: MetricsRegistry
         reconnect_grace_s: float
+        session_recap_publisher: object | None
         _sessions: dict[str, _MediaVoiceSession]
         _cleanup_tasks: dict[str, asyncio.Task[None]]
 
@@ -199,6 +204,42 @@ class MediaSessionConnectionMixin:
             if self._cleanup_tasks.get(session_id) is asyncio.current_task():
                 self._cleanup_tasks.pop(session_id, None)
 
+    async def _publish_child_session_recap(self, context: _MediaVoiceSession) -> None:
+        """Write the session summary/archive draft, then discard the in-memory transcript."""
+
+        publisher = getattr(self, "session_recap_publisher", None)
+        if not callable(publisher):
+            context.runtime.orchestrator.context.clear_turns()
+            return
+        profile = context.runtime.mode_policy.runtime_profile
+        subject_category = (
+            profile.profile.subject_category if profile is not None else None
+        )
+        subject_id = (
+            profile.profile.active_subject_id
+            if profile is not None
+            else context.identity.subject_id
+        )
+        turns = snapshot_context_turns(context.runtime.orchestrator.context.turns)
+        context.runtime.orchestrator.context.clear_turns()
+        if subject_category != "minor" or not subject_id or not context.identity.account_id:
+            return
+        try:
+            result = publisher(
+                subject_id=subject_id,
+                resource_owner_id=context.identity.account_id,
+                session_id=context.identity.session_id,
+                turns=turns,
+            )
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception:
+            logger.warning(
+                "session recap publish failed session=%s",
+                context.identity.session_id,
+                exc_info=True,
+            )
+
     async def finalize_session(self, session_id: str) -> None:
         cleanup = self._cleanup_tasks.pop(session_id, None)
         current_task = asyncio.current_task()
@@ -270,6 +311,7 @@ class MediaSessionConnectionMixin:
             context.pending.evidence_less_hold_handle.cancel()
             context.pending.evidence_less_hold_handle = None
         await self._cancel_audio_pump(context)
+        await self._publish_child_session_recap(context)
         await context.runtime.close()
         await context.provider.close(context.identity)
         # The registry owns the transport session created by the bridge. Once

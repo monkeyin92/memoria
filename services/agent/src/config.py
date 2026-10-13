@@ -152,7 +152,7 @@ class AgentSettings(BaseSettings):
         ),
     )
     media_owner_silence_timeout_s: float = Field(
-        default=30.0,
+        default=15.0,
         ge=1.0,
         le=300.0,
         alias="MEDIA_OWNER_SILENCE_TIMEOUT_S",
@@ -350,6 +350,13 @@ class AgentSettings(BaseSettings):
     archive_session_events_url: str = Field(
         default="http://control-api:8000/v1/archive/session-events",
         alias="MEMORIA_ARCHIVE_SESSION_EVENTS_URL",
+    )
+    session_recap_url: str = Field(
+        default="http://control-api:8000/v1/internal/child-memory/session-recap",
+        alias="MEMORIA_SESSION_RECAP_URL",
+    )
+    session_recap_enabled: bool = Field(
+        default=True, alias="MEMORIA_SESSION_RECAP_ENABLED"
     )
     archive_internal_token: SecretStr = Field(
         default=SecretStr(""),
@@ -583,6 +590,16 @@ class AgentSettings(BaseSettings):
                     raise ValueError(
                         "production archive requires a valid Fernet spool key"
                     ) from exc
+            if self.session_recap_enabled:
+                recap_token = self.internal_token("archive_write")
+                if len(recap_token) < 32:
+                    raise ValueError("production session recap requires a scoped write token")
+                if not _secure_internal_url(self.session_recap_url):
+                    raise ValueError(
+                        "production session recap URL requires HTTPS or local Docker DNS"
+                    )
+                if recap_token not in capability_tokens:
+                    capability_tokens.append(recap_token)
             if self.voice_profile_enabled:
                 voice_token = self.internal_token("voice_resolution")
                 if len(voice_token) < 32:

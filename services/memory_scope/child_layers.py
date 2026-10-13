@@ -216,6 +216,28 @@ class ChildLayerStore:
         assert listed is not None
         return listed
 
+    async def find_archive_fact(
+        self,
+        *,
+        subject_id: str,
+        field: str,
+        text: str,
+        viewer_subject_id: str,
+    ) -> ChildLayerRecord | None:
+        """Return the existing whitelist fact with the same field and text, if any."""
+
+        items = await self.list(
+            subject_id=subject_id,
+            kind=KIND_CHILD_ARCHIVE,
+            viewer_subject_id=viewer_subject_id,
+            limit=50,
+        )
+        needle = text.strip()
+        for item in items:
+            if item.field == field and item.text == needle:
+                return item
+        return None
+
     async def write_archive_fact(
         self,
         fact: ArchiveFact,
@@ -229,7 +251,7 @@ class ChildLayerStore:
         stamped = created_at or datetime.now(UTC)
         record_id = f"charch:{uuid.uuid4()}"
         receipt = f"{policy_receipt_id}:{record_id}"
-        payload = archive_payload(fact, created_at=stamped)
+        payload = archive_payload(fact, created_at=stamped, last_mentioned_at=stamped)
         async with (await self._api()).acquire() as connection:
             async with connection.transaction():
                 await _scope(
@@ -275,6 +297,38 @@ class ChildLayerStore:
         )
         assert listed is not None
         return listed
+
+    async def upsert_archive_fact(
+        self,
+        fact: ArchiveFact,
+        *,
+        resource_owner_id: str,
+        actor_id: str,
+        consent_snapshot_id: str,
+        created_at: datetime | None = None,
+    ) -> ChildLayerRecord:
+        """Write a whitelist fact, or replace a duplicate so last-mentioned moves forward.
+
+        ``memory_records`` is append-only, so a re-mention erases the prior row and
+        inserts a fresh one whose ``created_at`` / ``last_mentioned_at`` is now.
+        """
+
+        stamped = created_at or datetime.now(UTC)
+        existing = await self.find_archive_fact(
+            subject_id=fact.subject_id,
+            field=fact.field,
+            text=fact.text,
+            viewer_subject_id=resource_owner_id,
+        )
+        if existing is not None:
+            await self.delete_record(subject_id=fact.subject_id, record_id=existing.record_id)
+        return await self.write_archive_fact(
+            fact,
+            resource_owner_id=resource_owner_id,
+            actor_id=actor_id,
+            consent_snapshot_id=consent_snapshot_id,
+            created_at=stamped,
+        )
 
     async def list(
         self,
