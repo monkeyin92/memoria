@@ -27,7 +27,7 @@ BASE_TAG="${BASE_TAG:?set BASE_TAG to previous healthy image tag}"
 TARGET_ARCH="${TARGET_ARCH:-amd64}"
 MEMORIA_RELEASE_COMMIT="${MEMORIA_RELEASE_COMMIT:?set MEMORIA_RELEASE_COMMIT to the tagged clean commit}"
 # The ship roles of the STACK table in scripts/release_ops.sh (a test keeps them equal).
-ROLES=(agent control-api speaker-model)
+ROLES=(agent control-api)
 
 python3 "$ROOT/scripts/verify_release_source.py" \
   --root "$ROOT" \
@@ -75,10 +75,6 @@ dependency_inputs=(
   uv.lock
   infra/Dockerfile.agent
   infra/Dockerfile.control-api
-  infra/Dockerfile.speaker-model
-  infra/requirements-speaker-model.txt
-  infra/patches/3d-speaker-campplus-average-pool.patch
-  scripts/export_campplus_onnx.py
 )
 dependency_changes=()
 dependency_diff="$(
@@ -137,12 +133,6 @@ COPY services ./services
 COPY packages ./packages
 COPY scripts/mark_readiness.py scripts/rebuild_memory_projections.py scripts/replay_subject_deletions.py scripts/migrate_control_sqlite_to_postgres.py ./scripts/
 COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json
-USER 65532:65532
-EOF
-      ;;
-    speaker-model)
-      cat <<'EOF'
-COPY services/speaker_model /app/services/speaker_model
 USER 65532:65532
 EOF
       ;;

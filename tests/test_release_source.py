@@ -99,14 +99,20 @@ def test_release_source_requires_tag_at_expected_commit(tmp_path: Path) -> None:
     assert "points to" in wrong_target.stderr
 
 
-def _image_archive(path: Path, *, commit: str, tag: str, bad_role: str | None = None) -> None:
+_SHIPPED_IMAGES = (("agent", "memoria-agent"), ("control-api", "memoria-control-api"))
+
+
+def _image_archive(
+    path: Path,
+    *,
+    commit: str,
+    tag: str,
+    bad_role: str | None = None,
+    images: tuple[tuple[str, str], ...] = _SHIPPED_IMAGES,
+) -> None:
     entries = []
     with tarfile.open(path, "w") as archive:
-        for role, image in (
-            ("agent", "memoria-agent"),
-            ("control-api", "memoria-control-api"),
-            ("speaker-model", "memoria-speaker-model"),
-        ):
+        for role, image in images:
             config_name = f"{role}.json"
             config = json.dumps(
                 {
@@ -351,6 +357,19 @@ def test_image_archive_rejects_a_retagged_or_wrong_role_image(tmp_path: Path) ->
     _image_archive(archive, commit="a" * 40, tag="release-test", bad_role="agent")
 
     with pytest.raises(ValueError, match="repository tag|roles"):
+        verify_image_archive(archive=archive, expected_commit="a" * 40, release_tag="release-test")
+
+
+def test_image_archive_rejects_the_retired_speaker_model_image(tmp_path: Path) -> None:
+    archive = tmp_path / "images.tar"
+    _image_archive(
+        archive,
+        commit="a" * 40,
+        tag="release-test",
+        images=(*_SHIPPED_IMAGES, ("speaker-model", "memoria-speaker-model")),
+    )
+
+    with pytest.raises(ValueError, match="every required runtime image"):
         verify_image_archive(archive=archive, expected_commit="a" * 40, release_tag="release-test")
 
 

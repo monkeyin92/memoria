@@ -454,7 +454,7 @@ def guardian_host(tmp_path: Path) -> FakeHost:
     """The host after 20261013-guardian-summaries-v1, with the sidecars no step may touch."""
 
     host = FakeHost(tmp_path, current=GUARDIAN)
-    for service in ("speaker-model", "control-api", "voice-core-media-bridge"):
+    for service in ("control-api", "voice-core-media-bridge", "speaker-model"):
         host.container(service, release=GUARDIAN, commit=GUARDIAN_COMMIT)
     # Same plain chain, but not rows of the script's table.
     for sidecar in ("media-slo-reporter", "device-state-redis"):
@@ -472,25 +472,35 @@ def _up(*services: str) -> str:
     return " ".join(("compose up -d --no-deps --no-build --force-recreate", *services))
 
 
+def _finish_this_release(host: FakeHost) -> None:
+    """The host after this release's finish: speaker-model stopped, still on PREV's chain."""
+
+    host.set_current(RELEASE)
+    for service in ("control-api", "voice-core-media-bridge"):
+        host.container(service, release=RELEASE, commit=NEW_COMMIT)
+    host.container("speaker-model", release=GUARDIAN, commit=GUARDIAN_COMMIT, running=False)
+
+
 def test_freeze_derives_and_persists_prev_from_the_live_stack(tmp_path: Path) -> None:
     host = guardian_host(tmp_path)
 
     run = host.step("freeze", tag=RELEASE)
 
     assert run.returncode == 0, run.output
+    # speaker-model is retired in this release, but PREV runs it: rollback must bring it back.
     assert host.prev_record(RELEASE) == (
         "tag=20261013-guardian-summaries-v1\n"
         "commit=42a095d241a3b33d2bf6f35437d19da3fe937576\n"
-        "services=speaker-model control-api voice-core-media-bridge\n"
+        "services=control-api voice-core-media-bridge speaker-model\n"
     )
     assert [action for action in run.actions if action.startswith("tag ")] == [
-        f"tag sha-speaker-model memoria-speaker-model:rollback-{RELEASE}-pre",
         f"tag sha-control-api memoria-control-api:rollback-{RELEASE}-pre",
         f"tag sha-voice-core-media-bridge memoria-agent:rollback-{RELEASE}-pre",
+        f"tag sha-speaker-model memoria-speaker-model:rollback-{RELEASE}-pre",
     ]
     assert (
-        f"prev={GUARDIAN}@{GUARDIAN_COMMIT} services=speaker-model control-api "
-        "voice-core-media-bridge" in run.output
+        f"prev={GUARDIAN}@{GUARDIAN_COMMIT} services=control-api voice-core-media-bridge "
+        "speaker-model" in run.output
     )
 
 
@@ -542,7 +552,7 @@ def test_freeze_refuses_prev_images_that_disagree_on_commit(tmp_path: Path) -> N
     assert host.prev_record(RELEASE) is None
 
 
-def test_cutover_recreates_the_ship_rows_in_table_order(tmp_path: Path) -> None:
+def test_cutover_recreates_the_ship_rows_then_stops_the_speaker_model(tmp_path: Path) -> None:
     host = guardian_host(tmp_path)
     host.step("freeze", tag=RELEASE)
     host.candidate_compose(_candidate(RELEASE, "8791"))
@@ -551,16 +561,32 @@ def test_cutover_recreates_the_ship_rows_in_table_order(tmp_path: Path) -> None:
 
     assert run.returncode == 0, run.output
     assert run.actions == [
-        _up("speaker-model"),
-        "wait memoria-speaker-model-1",
+        _up("control-api"),
+        "wait memoria-control-api-1",
+        _up("voice-core-media-bridge"),
+        "wait memoria-voice-core-media-bridge-1",
+        "stop memoria-speaker-model-1",
+    ]
+    assert {(c.cwd, c.release_tag, c.release_commit) for c in run.compose_calls} == {
+        (host.release_dir(RELEASE), RELEASE, NEW_COMMIT)
+    }
+
+
+def test_cutover_rerun_leaves_the_stopped_speaker_model_alone(tmp_path: Path) -> None:
+    host = guardian_host(tmp_path)
+    host.step("freeze", tag=RELEASE)
+    host.candidate_compose(_candidate(RELEASE, "8791"))
+    host.container("speaker-model", release=GUARDIAN, commit=GUARDIAN_COMMIT, running=False)
+
+    run = host.step("cutover", tag=RELEASE)
+
+    assert run.returncode == 0, run.output
+    assert run.actions == [
         _up("control-api"),
         "wait memoria-control-api-1",
         _up("voice-core-media-bridge"),
         "wait memoria-voice-core-media-bridge-1",
     ]
-    assert {(c.cwd, c.release_tag, c.release_commit) for c in run.compose_calls} == {
-        (host.release_dir(RELEASE), RELEASE, NEW_COMMIT)
-    }
 
 
 def test_cutover_stops_at_the_first_service_that_fails_to_come_up(tmp_path: Path) -> None:
@@ -572,34 +598,31 @@ def test_cutover_stops_at_the_first_service_that_fails_to_come_up(tmp_path: Path
     run = host.step("cutover", tag=RELEASE)
 
     assert run.returncode != 0
-    assert run.actions == [
-        _up("speaker-model"),
-        "wait memoria-speaker-model-1",
-        _up("control-api"),
-    ]
+    # The speaker model keeps serving PREV until every ship row is up.
+    assert run.actions == [_up("control-api")]
 
 
 def test_cutover_refuses_a_candidate_that_still_defines_a_retired_service(tmp_path: Path) -> None:
     host = guardian_host(tmp_path)
     host.step("freeze", tag=RELEASE)
     host.candidate_compose(
-        {"agent": {"image": f"memoria-agent:{RELEASE}"}, **_candidate(RELEASE, "8791")}
+        {
+            "speaker-model": {"image": f"memoria-speaker-model:{RELEASE}"},
+            **_candidate(RELEASE, "8791"),
+        }
     )
 
     run = host.step("cutover", tag=RELEASE)
 
     assert run.returncode == 1
-    assert "retired services still defined: ['agent']" in run.output
+    assert "retired services still defined: ['speaker-model']" in run.output
     assert run.actions == []
 
 
 def test_rollback_restores_prev_from_the_frozen_record(tmp_path: Path) -> None:
     host = guardian_host(tmp_path)
     host.step("freeze", tag=RELEASE)
-    # After finish: current and the shipped services are this release.
-    host.set_current(RELEASE)
-    for service in ("speaker-model", "control-api", "voice-core-media-bridge"):
-        host.container(service, release=RELEASE, commit=NEW_COMMIT)
+    _finish_this_release(host)
     prev_dir = host.release_dir(GUARDIAN)
     snapshots = host.release_dir(RELEASE) / ".cutover"
 
@@ -622,16 +645,39 @@ def test_rollback_restores_prev_from_the_frozen_record(tmp_path: Path) -> None:
                 "-f", str(prev_dir / "docker-compose.production.yml"),
                 "--profile", "media-runtime",
                 "up", "-d", "--no-deps", "--no-build", "--force-recreate",
-                "speaker-model", "control-api", "voice-core-media-bridge",
+                "control-api", "voice-core-media-bridge", "speaker-model",
             ),
         )
     ]
     assert run.actions == [
-        _up("speaker-model", "control-api", "voice-core-media-bridge"),
-        "wait memoria-speaker-model-1",
+        _up("control-api", "voice-core-media-bridge", "speaker-model"),
         "wait memoria-control-api-1",
         "wait memoria-voice-core-media-bridge-1",
+        "wait memoria-speaker-model-1",
         f"refresh {GUARDIAN}",
+    ]
+
+
+def test_the_next_release_leaves_out_the_stopped_speaker_model(tmp_path: Path) -> None:
+    host = guardian_host(tmp_path)
+    host.step("freeze", tag=RELEASE)
+    _finish_this_release(host)
+    following = "20261020-following-v1"
+
+    freeze = host.step("freeze", tag=following)
+
+    assert freeze.returncode == 0, freeze.output
+    assert host.prev_record(following) == (
+        f"tag={RELEASE}\ncommit={NEW_COMMIT}\nservices=control-api voice-core-media-bridge\n"
+    )
+    host.candidate_compose(_candidate(following, "8791"))
+    cutover = host.step("cutover", tag=following)
+    assert cutover.returncode == 0, cutover.output
+    assert cutover.actions == [
+        _up("control-api"),
+        "wait memoria-control-api-1",
+        _up("voice-core-media-bridge"),
+        "wait memoria-voice-core-media-bridge-1",
     ]
 
 
@@ -830,6 +876,8 @@ def test_shared_host_bringup_script_is_checked_in_and_keeps_its_step_contract() 
     text = BRINGUP.read_text(encoding="utf-8")
     assert os.access(BRINGUP, os.X_OK)
     subprocess.run(["bash", "-n", str(BRINGUP)], check=True)
+    # The network comes from compose without the retired speaker model.
+    assert "speaker-model" not in text
     for step in ("net", "data", "redis", "schema", "verify", "replay", "apps", "checks", "status", "down"):
         assert f"  {step}) step_{step} ;;" in text
     # Restored data is replayed through the Control API image, which now carries the module.

@@ -16,7 +16,7 @@ def test_production_services_use_separate_env_files_and_persistent_agent_spool()
     assert "/etc/memoria.env" not in compose
     assert "/etc/memoria-control-api.env" in compose
     assert "/etc/memoria-agent.env" in compose
-    assert "/etc/memoria-speaker-model.env" in compose
+    assert "/etc/memoria-speaker-model.env" not in compose
     assert "/etc/memoria-media-edge.env" in compose
     assert "-gateway.env" not in compose
     assert "source: /var/lib/memoria-agent" in compose
@@ -337,19 +337,21 @@ def test_production_runbook_pins_data_compose_path_and_network_bootstrap_order()
     assert runbook.index(network_create) < runbook.index(data_start)
 
 
-def test_production_stack_contains_pinned_authenticated_campplus_model() -> None:
+def test_production_stack_no_longer_runs_the_speaker_model() -> None:
     compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
+    control = compose.split("  control-api:\n", 1)[1].split("  media-slo-reporter:\n", 1)[0]
+
+    # No service, no depends_on entry, no URL host: each would be "speaker-model:".
+    assert "speaker-model:" not in compose
+    assert "depends_on" not in control
+    # The host env file may still name the retired service; compose must override it.
+    assert '      MEMORIA_SPEAKER_EMBEDDING_URL: ""\n' in control
+
+
+def test_speaker_model_image_pins_the_authenticated_campplus_model() -> None:
     dockerfile = (ROOT / "infra" / "Dockerfile.speaker-model").read_text(encoding="utf-8")
     requirements = (ROOT / "infra" / "requirements-speaker-model.txt").read_text(encoding="utf-8")
 
-    assert "\n  speaker-model:\n" in compose
-    assert "dockerfile: infra/Dockerfile.speaker-model" in compose
-    assert "/etc/memoria-speaker-model.env" in compose
-    assert "http://speaker-model:8001/v1/embeddings/speaker" in compose
-    control_dependencies = compose.split("  control-api:\n", 1)[1].split(
-        "  media-slo-reporter:\n", 1
-    )[0]
-    assert "speaker-model:\n        condition: service_healthy" in control_dependencies
     assert "065629c313eaf1a01c65c640c46d77e61e9607b4" in dockerfile
     assert "v1.0.0" in dockerfile
     assert "3388cf5fd3493c9ac9c69851d8e7a8badcfb4f3dc631020c4961371646d5ada8" in dockerfile
@@ -472,19 +474,16 @@ def test_runtime_images_include_voice_registries_needed_by_bridge_and_control() 
     assert "kws" not in delta_builder
     # A delta image rebuilt on a pre-cutover base must still start the bridge.
     assert 'CMD ["-m", "scripts.run_media_bridge"]' in delta_builder
-    assert "COPY services/speaker_model /app/services/speaker_model" in delta_builder
     for dependency_input in (
         ".dockerignore",
         "pyproject.toml",
         "uv.lock",
         "infra/Dockerfile.agent",
         "infra/Dockerfile.control-api",
-        "infra/Dockerfile.speaker-model",
-        "infra/requirements-speaker-model.txt",
-        "infra/patches/3d-speaker-campplus-average-pool.patch",
-        "scripts/export_campplus_onnx.py",
     ):
         assert dependency_input in delta_builder
+    # The speaker model is no longer shipped, so its inputs no longer block a delta build.
+    assert "speaker" not in delta_builder
     assert "base images do not share one release commit" in delta_builder
     assert "miniprogram-gateway" not in delta_builder
     # One build invocation serves every role, and it never reaches the network.

@@ -51,8 +51,7 @@ Secret 仅在 root-only `/etc/memoria-*.env`（root:root 0600）；候选从真�
 
 ~~~bash
 docker save -o "$ARTIFACT_DIR/images.tar" \
-  memoria-agent:$RELEASE_TAG memoria-control-api:$RELEASE_TAG \
-  memoria-speaker-model:$RELEASE_TAG
+  memoria-agent:$RELEASE_TAG memoria-control-api:$RELEASE_TAG
 python3 scripts/verify_release_source.py \
   --expected-commit "$SOURCE_COMMIT" --release-tag "$RELEASE_TAG" \
   --create-archive "$ARTIFACT_DIR/source.tar"

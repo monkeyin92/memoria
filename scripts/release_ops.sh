@@ -21,9 +21,9 @@ set -Eeuo pipefail
 # separately and is not touched here. Delete a retired row only once no
 # rollback target runs that service.
 STACK='
-speaker-model            speaker-model  ship
 control-api              control-api    ship
 voice-core-media-bridge  agent          ship
+speaker-model            -              retired
 agent                    -              retired
 miniprogram-gateway      -              retired
 device-media-gateway     -              retired
@@ -357,7 +357,21 @@ print("resolve=PASS")'
     new_compose up -d --no-deps --no-build --force-recreate "$s"
     wait_healthy "$(container_of "$s")"
   done
+  stop_orphans
   log "cutover=PASS"
+}
+
+# Stops (never removes) what PREV runs and this release no longer ships, once
+# the ship rows are healthy; rollback recreates it from PREV's compose file.
+stop_orphans() {
+  local s c
+  for s in "${PREV_SERVICES[@]}"; do
+    is_ship "$s" && continue
+    c="$(container_of "$s")"
+    [[ "$(inspect_container "$c" running 2>/dev/null || true)" == true ]] || continue
+    docker stop "$c" >/dev/null
+    log "orphan stopped (rollback recreates it from PREV): $c"
+  done
 }
 
 step_finish() {
