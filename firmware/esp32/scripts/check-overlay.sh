@@ -122,6 +122,12 @@ rg -Fq 'input_settle_.ShouldDrop(samples,' "$MEMORIA_UPSTREAM_DIR/main/audio/aud
     die "blocks inside the settling window must not be fed to the audio engine"
 rg -Fq 'input_settle_.NoteLocalSound(' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
     die "a local sound (the listening cue) must mute the input while it can still ring"
+[[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_software_aec_ref.h" ]] || \
+    die "software AEC reference ring header missing"
+rg -Fq 'memoria::WritePlay(' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
+    die "AudioOutputTask must WritePlay the pre-I2S PCM into the software AEC reference ring"
+rg -Fq 'memoria::ApplyToFeed(' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
+    die "ReadAudioData must ApplyToFeed the software AEC reference into channel 1 before resample"
 rg -Fq 'Device pat detected' "$board_dir/memoria_esp_vocat.cc" || \
     die "BMI270 pat must be wired to a local animation, not ToggleChatState"
 rg -Fq 'display_->Pat()' "$board_dir/memoria_esp_vocat.cc" || \

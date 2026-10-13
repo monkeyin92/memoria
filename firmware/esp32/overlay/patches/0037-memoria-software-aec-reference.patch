@@ -1,0 +1,44 @@
+--- a/main/audio/audio_service.cc
++++ b/main/audio/audio_service.cc
+@@ -33,6 +33,9 @@
+ #if CONFIG_MEMORIA_BENCH_SERIAL
+ #include "memoria_diag_pcm.h"
+ #endif
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++#include "memoria_software_aec_ref.h"
++#endif
+ 
+ #define TAG "AudioService"
+ 
+@@ -285,6 +288,11 @@
+         if (!codec_->InputData(data)) {
+             return false;
+         }
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++        /* Inject play PCM into R at the codec rate (24 kHz) before the 24→16 kHz resampler. */
++        memoria::ApplyToFeed(data.data(), data.size() / codec_->input_channels(),
++                             codec_->input_channels());
++#endif
+         if (input_resampler_ != nullptr) {
+             std::lock_guard<std::mutex> lock(input_resampler_mutex_);
+             uint32_t in_sample_num = data.size() / codec_->input_channels();
+@@ -302,6 +310,10 @@
+         if (!codec_->InputData(data)) {
+             return false;
+         }
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++        memoria::ApplyToFeed(data.data(), data.size() / codec_->input_channels(),
++                             codec_->input_channels());
++#endif
+     }
+ 
+     /* Update the last input time */
+@@ -508,6 +520,8 @@
+         memoria::diag::RecordPlay(task->pcm.data(), task->pcm.size(), codec_->output_sample_rate(),
+                                   output_reenabled ? memoria::diag::kFlagOutputReenabled : 0);
+ #endif
++        /* Same post-software / pre-I2S PCM the bench play lane sees; fills the AFE R channel. */
++        memoria::WritePlay(task->pcm.data(), task->pcm.size());
+ #endif
+         codec_->OutputData(task->pcm);
+ 

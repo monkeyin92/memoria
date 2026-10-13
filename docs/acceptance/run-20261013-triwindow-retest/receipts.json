@@ -1,0 +1,30 @@
+{
+  "run": "run-20261013-triwindow-retest",
+  "date": "2026-10-13",
+  "baseline_run": "run-20261013-triwindow",
+  "fix": "firmware/esp32/overlay/patches/0037-memoria-software-aec-reference.patch",
+  "compare": {
+    "01-play-only": {
+      "pre_afe_ref_dbfs": { "before": -78.28, "after": -19.86 },
+      "erle_db": { "before": 5.21, "after": 22.84 },
+      "ref_vs_play_ncc": { "before": -0.038, "after": 0.996 }
+    },
+    "02-near-end-only": {
+      "stop_ncc_mic": { "before": -0.563, "after": -0.517 },
+      "stop_ncc_post": { "before": -0.58, "after": -0.574 }
+    },
+    "03-duplex": {
+      "pre_afe_ref_dbfs": { "before": -77.61, "after": -21.51 },
+      "erle_db": { "before": 4.28, "after": 23.94 },
+      "stop_ncc_mic": { "before": -0.179, "after": 0.172 },
+      "stop_ncc_post": { "before": 0.207, "after": -0.194 }
+    }
+  },
+  "journals": {
+    "01-play-only": "0000c02a",
+    "02-near-end-only": "0001275a",
+    "03-duplex": "000315be"
+  },
+  "closes_n10": false,
+  "aec_reference_verified": false
+}
