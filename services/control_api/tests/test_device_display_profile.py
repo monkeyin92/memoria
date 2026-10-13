@@ -8,7 +8,9 @@
 ④ personas without mascot art fall back to their base companion, then the
    account companion, then the shipped default;
 ⑤ the poll also carries the device's ``wake_mode`` setting without moving the
-   display version, and a settings read that fails leaves the field out.
+   display version, and a settings read that fails leaves the field out;
+⑥ night mode alone carries a night window (the child's bind-time quiet hours,
+   or 21:30-06:30 when those are absent) and do-not-disturb stays all day.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from typing import Any
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from httpx import ASGITransport, AsyncClient
+from services.consent.bound_subject import MINOR_SESSION_CAPABILITIES
 from services.control_api.app.device_control import DeviceSettingsAuthority
 from services.control_api.app.device_display_profile import (
     DeviceDisplayProfile,
@@ -378,3 +381,104 @@ async def test_display_profile_leaves_wake_mode_out_when_the_setting_cannot_be_r
         body = response.json()
         assert "wake_mode" not in body, "the firmware must keep what it already applies"
         assert body["companion_id"] == "starlight"
+
+
+def _apply_settings(app: Any, actor_id: str, changes: dict[str, object]) -> None:
+    DeviceSettingsAuthority(app.state.memory_store).update(
+        device_id=DEVICE_ID,
+        actor_id=actor_id,
+        changes=changes,
+        reason="test",
+        now=datetime.now(UTC),
+        acoustic_capability=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_night_mode_uses_the_policy_night_window_when_consent_has_none(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    app = _app(monkeypatch, tmp_path, offline_mock=True)
+    key = Ed25519PrivateKey.generate()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = await _bound_device(client, app, key)
+        before = (await client.get(PATH, headers=_signed_headers(key))).json()
+        assert "quiet_hours" not in before
+
+        _apply_settings(app, owner["user_id"], {"night_mode": True})
+        body = (await client.get(PATH, headers=_signed_headers(key))).json()
+        assert body["quiet_hours"] == ["21:30", "06:30"]
+        assert body["wake_mode"] == "button"
+        assert body["display_version"] == before["display_version"]
+        assert body["companion_id"] == before["companion_id"]
+
+
+class _ConsentParams:
+    def __init__(self, quiet_hours: tuple[str, str] | None) -> None:
+        self.quiet_hours = quiet_hours
+
+
+class _ConsentChain:
+    def __init__(self, capability: str, quiet_hours: tuple[str, str] | None) -> None:
+        self.capability = capability
+        self.params = _ConsentParams(quiet_hours)
+
+
+class _BoundSubjectConsent:
+    def __init__(self, chains: tuple[_ConsentChain, ...]) -> None:
+        self._chains = chains
+
+    async def active(
+        self,
+        *,
+        subject_person_id: str,
+        binding_id: str,
+        binding_version: int,
+    ) -> tuple[_ConsentChain, ...]:
+        assert subject_person_id
+        assert binding_id
+        assert binding_version >= 1
+        return self._chains
+
+
+@pytest.mark.asyncio
+async def test_night_mode_uses_the_child_bind_time_quiet_hours(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    app = _app(monkeypatch, tmp_path, offline_mock=True)
+    key = Ed25519PrivateKey.generate()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = await _bound_device(client, app, key)
+        _apply_settings(app, owner["user_id"], {"night_mode": True})
+        app.state.bound_subject_consent = _BoundSubjectConsent(
+            (
+                _ConsentChain("memory_capture", ("08:00", "09:00")),
+                _ConsentChain(MINOR_SESSION_CAPABILITIES[0], ("20:00", "07:00")),
+            )
+        )
+        body = (await client.get(PATH, headers=_signed_headers(key))).json()
+        assert body["quiet_hours"] == ["20:00", "07:00"]
+        assert body["wake_mode"] == "button"
+
+
+@pytest.mark.asyncio
+async def test_do_not_disturb_keeps_all_day_quiet_hours_even_with_night_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    app = _app(monkeypatch, tmp_path, offline_mock=True)
+    key = Ed25519PrivateKey.generate()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = await _bound_device(client, app, key)
+        app.state.bound_subject_consent = _BoundSubjectConsent(
+            (_ConsentChain(MINOR_SESSION_CAPABILITIES[0], ("20:00", "07:00")),)
+        )
+        _apply_settings(app, owner["user_id"], {"do_not_disturb": True})
+        dnd = (await client.get(PATH, headers=_signed_headers(key))).json()
+        assert dnd["quiet_hours"] == ["00:00", "23:59"]
+
+        _apply_settings(app, owner["user_id"], {"night_mode": True, "do_not_disturb": True})
+        both = (await client.get(PATH, headers=_signed_headers(key))).json()
+        assert both["quiet_hours"] == ["00:00", "23:59"]
