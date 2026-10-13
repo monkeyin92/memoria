@@ -685,6 +685,71 @@ function reviewGuardianChildMemory(minorUserId, claimId, action) {
   );
 }
 
+/*
+ * Scheme A parent layers: paraphrased session summaries and whitelist archive
+ * facts. List/delete call the guardian endpoints from #217; clear-all erases one
+ * kind. Clients must never request or render transcripts here.
+ */
+function getChildSessionSummaries(minorUserId, limit = 20) {
+  return rawRequest(
+    `/v1/guardian/minors/${encodeURIComponent(minorUserId)}/session-summaries?limit=${encodeURIComponent(limit)}`,
+  );
+}
+
+function deleteChildSessionSummary(minorUserId, recordId) {
+  if (typeof minorUserId !== "string" || !minorUserId || typeof recordId !== "string" || !recordId) {
+    return Promise.reject(new TypeError("会话小结删除参数无效"));
+  }
+  return rawRequest(
+    `/v1/guardian/minors/${encodeURIComponent(minorUserId)}/session-summaries/${encodeURIComponent(recordId)}`,
+    { method: "DELETE" },
+  );
+}
+
+function clearChildSessionSummaries(minorUserId) {
+  if (typeof minorUserId !== "string" || !minorUserId) {
+    return Promise.reject(new TypeError("会话小结清空参数无效"));
+  }
+  return rawRequest(`/v1/guardian/minors/${encodeURIComponent(minorUserId)}/session-summaries`, {
+    method: "DELETE",
+  });
+}
+
+function getChildArchive(minorUserId, limit = 20) {
+  return rawRequest(
+    `/v1/guardian/minors/${encodeURIComponent(minorUserId)}/child-archive?limit=${encodeURIComponent(limit)}`,
+  );
+}
+
+function deleteChildArchiveFact(minorUserId, recordId) {
+  if (typeof minorUserId !== "string" || !minorUserId || typeof recordId !== "string" || !recordId) {
+    return Promise.reject(new TypeError("长期小档案删除参数无效"));
+  }
+  return rawRequest(
+    `/v1/guardian/minors/${encodeURIComponent(minorUserId)}/child-archive/${encodeURIComponent(recordId)}`,
+    { method: "DELETE" },
+  );
+}
+
+function clearChildArchive(minorUserId) {
+  if (typeof minorUserId !== "string" || !minorUserId) {
+    return Promise.reject(new TypeError("长期小档案清空参数无效"));
+  }
+  return rawRequest(`/v1/guardian/minors/${encodeURIComponent(minorUserId)}/child-archive`, {
+    method: "DELETE",
+  });
+}
+
+function touchChildActivity(minorUserId, source = "miniprogram") {
+  if (typeof minorUserId !== "string" || !minorUserId) {
+    return Promise.reject(new TypeError("孩子活跃记录参数无效"));
+  }
+  return rawRequest(
+    `/v1/guardian/minors/${encodeURIComponent(minorUserId)}/activity?source=${encodeURIComponent(source)}`,
+    { method: "POST" },
+  );
+}
+
 function getDeliveredCapabilities() {
   return rawRequest("/v1/account/delivered-capabilities");
 }
@@ -1382,6 +1447,13 @@ module.exports = {
   generateGuardianChildRecap,
   getGuardianChildMemories,
   reviewGuardianChildMemory,
+  getChildSessionSummaries,
+  deleteChildSessionSummary,
+  clearChildSessionSummaries,
+  getChildArchive,
+  deleteChildArchiveFact,
+  clearChildArchive,
+  touchChildActivity,
   getConversationReview,
   getConversationSessions,
   getConversationHistory,

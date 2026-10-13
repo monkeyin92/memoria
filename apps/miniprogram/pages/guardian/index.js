@@ -28,6 +28,12 @@ const CONSENT_DEFINITIONS = Object.freeze([
     description: "只分享趋势、学习时长和话题分布，不含对话原文",
     policyVersion: "guardian-weekly-v1",
   },
+  {
+    kind: "child_archive",
+    label: "长期小档案",
+    description: "只记住称呼、喜好和小名；可在「孩子的记忆」里查看和删除",
+    policyVersion: "child-archive-v1",
+  },
 ]);
 
 function operationKey(prefix) {
@@ -502,6 +508,15 @@ Page({
     } finally {
       this.setData({ minorDeleting: false });
     }
+  },
+
+  openChildMemory(event) {
+    const minorId = event.currentTarget.dataset.minorId || event.currentTarget.dataset.personId;
+    const name = event.currentTarget.dataset.name || "孩子";
+    if (!minorId) return;
+    wx.navigateTo({
+      url: `/pages/child-memory/index?minorId=${encodeURIComponent(minorId)}&name=${encodeURIComponent(name)}`,
+    });
   },
 
   selectMinor(event) {

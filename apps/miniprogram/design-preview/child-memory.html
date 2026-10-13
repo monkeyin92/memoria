@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>孩子的记忆 · 预览</title>
+  <style>
+    :root {
+      --brand-deep: #172f43;
+      --brand-teal: #285c5e;
+      --text-primary: #16191c;
+      --text-secondary: #474e54;
+      --surface: rgba(255, 255, 255, 0.62);
+      --danger: #a3221b;
+      --radius-card: 22px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text-primary);
+      font-family: "PingFang SC", "HarmonyOS Sans SC", "Noto Sans SC", sans-serif;
+      background:
+        radial-gradient(120% 80% at 10% -10%, #bac7fa 0%, transparent 55%),
+        radial-gradient(90% 70% at 100% 0%, #d7ece8 0%, transparent 45%),
+        linear-gradient(180deg, #fef6e6 0%, #f3f2ef 100%);
+    }
+    .phone {
+      width: min(390px, 100%);
+      margin: 32px auto 64px;
+      padding: 20px 18px 48px;
+    }
+    .back { color: var(--text-secondary); font-size: 14px; margin-bottom: 8px; }
+    .eyebrow { color: var(--brand-teal); font-size: 12px; letter-spacing: 0.08em; }
+    h1 { margin: 6px 0 8px; font-size: 30px; line-height: 1.25; }
+    .lede { margin: 0 0 18px; color: var(--text-secondary); font-size: 14px; line-height: 1.7; max-width: 28em; }
+    .card {
+      background: var(--surface);
+      border: 1px solid rgba(30, 45, 70, 0.08);
+      border-radius: var(--radius-card);
+      box-shadow: 0 10px 28px rgba(34, 52, 84, 0.08);
+      padding: 16px 16px 14px;
+      margin-bottom: 12px;
+      backdrop-filter: blur(16px);
+    }
+    .row { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+    .name { font-size: 16px; font-weight: 600; }
+    .desc { margin-top: 4px; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+    .caption { margin-top: 6px; color: var(--text-secondary); font-size: 12px; }
+    .section {
+      display: flex; justify-content: space-between; align-items: baseline;
+      margin: 22px 4px 10px; font-size: 15px; font-weight: 600;
+    }
+    .clear { color: var(--danger); font-size: 12px; font-weight: 500; }
+    .pill {
+      display: inline-flex; align-items: center; padding: 2px 10px; border-radius: 999px;
+      background: rgba(227, 237, 236, 0.9); color: var(--brand-teal); font-size: 12px;
+    }
+    .pill-neutral { background: rgba(233, 238, 242, 0.9); color: var(--text-secondary); }
+    .body { margin: 10px 0 12px; font-size: 15px; line-height: 1.7; }
+    .actions { display: flex; justify-content: flex-end; }
+    button {
+      border: 1px solid rgba(30, 45, 70, 0.12);
+      background: rgba(255,255,255,0.7);
+      border-radius: 15px;
+      padding: 6px 14px;
+      color: var(--brand-deep);
+      font: inherit;
+      font-size: 13px;
+    }
+    .switch {
+      width: 46px; height: 28px; border-radius: 999px; background: #326e70; position: relative;
+    }
+    .switch::after {
+      content: ""; position: absolute; top: 3px; right: 3px; width: 22px; height: 22px;
+      border-radius: 50%; background: #fff;
+    }
+    .empty { text-align: center; padding: 28px 16px; }
+    .note { margin-top: 24px; color: var(--text-secondary); font-size: 12px; line-height: 1.7; }
+    .states { max-width: 860px; margin: 0 auto 48px; padding: 0 20px; color: var(--text-secondary); font-size: 14px; }
+    .states h2 { color: var(--text-primary); font-size: 18px; }
+  </style>
+</head>
+<body>
+  <div class="phone">
+    <div class="back">‹ 家庭与监护</div>
+    <div class="eyebrow">看得见 · 删得掉</div>
+    <h1>孩子的记忆</h1>
+    <p class="lede">关于豆豆，机器人只会留下简短小结和你同意的小档案。这里从不展示孩子的原话或录音。</p>
+
+    <div class="card">
+      <div class="row">
+        <div>
+          <div class="name">长期小档案</div>
+          <div class="desc">只记住称呼、喜好和小名这类短事实。关掉后不再写入，页面也不再展示。</div>
+          <div class="caption">已开启</div>
+        </div>
+        <div class="switch" aria-hidden="true"></div>
+      </div>
+    </div>
+
+    <div class="section"><span>会话小结</span><span class="clear">全部清空</span></div>
+    <div class="card">
+      <div class="row">
+        <span class="pill">会话小结</span>
+        <span class="caption">10月12日 17:20</span>
+      </div>
+      <div class="body">孩子今天聊了小狗和画画，还问机器人会不会一起画一只小狗。</div>
+      <div class="actions"><button type="button">删除</button></div>
+    </div>
+    <div class="card">
+      <div class="row">
+        <span class="pill">会话小结</span>
+        <span class="caption">10月11日 19:05</span>
+      </div>
+      <div class="body">孩子问起恐龙为什么灭绝，听完后说想再听一个关于翼龙的故事。</div>
+      <div class="actions"><button type="button">删除</button></div>
+    </div>
+
+    <div class="section"><span>长期小档案</span><span class="clear">全部清空</span></div>
+    <div class="card">
+      <div class="row">
+        <span class="pill pill-neutral">喜欢什么</span>
+        <span class="caption">10月12日 08:00</span>
+      </div>
+      <div class="body">喜欢恐龙</div>
+      <div class="caption">最近一次提到 · 10月12日 08:00</div>
+      <div class="actions"><button type="button">删除</button></div>
+    </div>
+
+    <p class="note">服务器不保存孩子的录音和原话。记忆家长看得见、删得掉。</p>
+  </div>
+
+  <div class="states">
+    <h2>空状态文案（页面内已实现）</h2>
+    <ul>
+      <li>会话小结空：还没有会话小结 / 聊完后出现一到三句家长视角小结，不会出现原话。</li>
+      <li>档案关闭：长期小档案已关闭 / 上面的开关可以随时打开或关闭。</li>
+      <li>档案开启但为空：小档案还是空的 / 提到喜欢的事物或怎么叫自己会出现在这里。</li>
+    </ul>
+  </div>
+</body>
+</html>

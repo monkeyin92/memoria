@@ -7,6 +7,7 @@
     "pages/companion/index",
     "pages/persona-custom/index",
     "pages/guardian/index",
+    "pages/child-memory/index",
     "pages/auth/index",
     "pages/digital-self/index",
     "pages/privacy/index",

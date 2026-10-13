@@ -1,0 +1,127 @@
+<view class="page-shell child-memory-page">
+  <page-backdrop theme="mist"></page-backdrop>
+  <view class="nav-back" bindtap="goBack"><text>‹ 家庭与监护</text></view>
+
+  <view class="mem-hero child-memory-hero">
+    <text class="mem-hero-eyebrow">看得见 · 删得掉</text>
+    <view class="mem-hero-row">
+      <view class="row-copy">
+        <text class="mem-hero-title">孩子的记忆</text>
+        <text class="mem-hero-sub">关于{{childName}}，机器人只会留下简短小结和你同意的小档案。这里从不展示孩子的原话或录音。</text>
+      </view>
+      <glass-icon name="memory" size="112"></glass-icon>
+    </view>
+  </view>
+
+  <text wx:if="{{error}}" class="error-text">{{error}}</text>
+
+  <view wx:if="{{!authenticated}}" class="l2-card">
+    <text class="empty-title">请先登录</text>
+    <text class="empty-copy">登录后即可查看和删除孩子的记忆。</text>
+  </view>
+
+  <block wx:elif="{{loadState === 'loading' || loading}}">
+    <view class="l2-card child-memory-loading">
+      <text class="loading-text">正在轻轻打开记忆…</text>
+    </view>
+  </block>
+
+  <block wx:elif="{{loadState === 'ready' || loadState === 'error'}}">
+    <view class="l2-card child-memory-consent">
+      <view class="setting-row">
+        <view class="row-copy">
+          <text class="setting-name">{{archiveConsent.label}}</text>
+          <text class="setting-desc">{{archiveConsent.description}}</text>
+          <text class="caption">{{archiveConsent.statusLabel}}</text>
+        </view>
+        <switch
+          checked="{{archiveConsent.active}}"
+          color="#326e70"
+          disabled="{{working}}"
+          bindchange="onArchiveConsentChange"
+          aria-label="长期小档案"
+        />
+      </view>
+    </view>
+
+    <view class="section-head">
+      <text class="section-head-title">会话小结</text>
+      <text
+        wx:if="{{summaries.length}}"
+        class="text-button child-memory-clear"
+        bindtap="askClearSummaries"
+      >全部清空</text>
+    </view>
+    <view wx:if="{{!summaries.length}}" class="l2-card child-memory-empty">
+      <glass-icon name="memory" size="120"></glass-icon>
+      <text class="l2-card-title">还没有会话小结</text>
+      <text class="l2-card-sub">孩子和机器人聊完一次之后，这里会出现一到三句家长视角的小结。不会出现原话。</text>
+      <text class="caption">聊几句再回来看看就好。</text>
+    </view>
+    <view wx:for="{{summaries}}" wx:key="recordId" class="l2-card child-memory-card">
+      <view class="child-memory-card-meta">
+        <text class="pill pill-teal">会话小结</text>
+        <text class="caption">{{item.createdLabel}}</text>
+      </view>
+      <text class="child-memory-body">{{item.text}}</text>
+      <view class="button-row">
+        <button
+          class="secondary-button secondary-button-ghost btn-sm"
+          data-record-id="{{item.recordId}}"
+          disabled="{{working}}"
+          bindtap="askDeleteSummary"
+        >删除</button>
+      </view>
+    </view>
+
+    <view class="section-head">
+      <text class="section-head-title">长期小档案</text>
+      <text
+        wx:if="{{archiveConsent.active && archive.length}}"
+        class="text-button child-memory-clear"
+        bindtap="askClearArchive"
+      >全部清空</text>
+    </view>
+    <view wx:if="{{!archiveConsent.active}}" class="l2-card child-memory-empty child-memory-empty-soft">
+      <text class="l2-card-title">长期小档案已关闭</text>
+      <text class="l2-card-sub">开启后，机器人只会记住称呼、喜好、小名这类短事实。关掉就不会再写入，这里也不展示。</text>
+      <text class="caption">上面的开关可以随时打开或关闭。</text>
+    </view>
+    <view wx:elif="{{!archive.length}}" class="l2-card child-memory-empty">
+      <glass-icon name="family" size="120"></glass-icon>
+      <text class="l2-card-title">小档案还是空的</text>
+      <text class="l2-card-sub">孩子聊天时提到喜欢的事物或怎么叫自己，会出现在这里。每条都很少，也不会引用原话。</text>
+    </view>
+    <view wx:else>
+      <view wx:for="{{archive}}" wx:key="recordId" class="l2-card child-memory-card">
+        <view class="child-memory-card-meta">
+          <text class="pill pill-neutral">{{item.fieldLabel}}</text>
+          <text class="caption">{{item.lastMentionedLabel || item.createdLabel}}</text>
+        </view>
+        <text class="child-memory-body">{{item.text}}</text>
+        <text wx:if="{{item.lastMentionedLabel}}" class="caption">最近一次提到 · {{item.lastMentionedLabel}}</text>
+        <view class="button-row">
+          <button
+            class="secondary-button secondary-button-ghost btn-sm"
+            data-record-id="{{item.recordId}}"
+            disabled="{{working}}"
+            bindtap="askDeleteArchive"
+          >删除</button>
+        </view>
+      </view>
+    </view>
+  </block>
+
+  <text class="privacy-note">服务器不保存孩子的录音和原话。记忆家长看得见、删得掉。</text>
+
+  <view wx:if="{{confirm}}" class="modal-wrap" bindtap="closeConfirm">
+    <view class="modal-card child-memory-modal" catchtap="noop">
+      <text class="modal-title">{{confirm.title}}</text>
+      <text class="modal-desc">{{confirm.body}}</text>
+      <view class="button-row">
+        <button class="secondary-button" disabled="{{working}}" bindtap="closeConfirm">取消</button>
+        <button class="danger-button" loading="{{working}}" bindtap="runConfirm">{{confirm.confirmLabel}}</button>
+      </view>
+    </view>
+  </view>
+</view>

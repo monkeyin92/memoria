@@ -1,0 +1,65 @@
+.child-memory-page {
+  padding-bottom: 96rpx;
+}
+
+.child-memory-hero .mem-hero-sub {
+  max-width: 420rpx;
+}
+
+.child-memory-consent {
+  margin-top: 8rpx;
+}
+
+.child-memory-loading,
+.child-memory-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12rpx;
+  min-height: 220rpx;
+}
+
+.child-memory-empty {
+  align-items: center;
+  text-align: center;
+  padding-top: 48rpx;
+  padding-bottom: 48rpx;
+}
+
+.child-memory-empty-soft {
+  background: rgba(255, 255, 255, 0.48);
+}
+
+.child-memory-card {
+  margin-bottom: 20rpx;
+}
+
+.child-memory-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  margin-bottom: 12rpx;
+}
+
+.child-memory-body {
+  display: block;
+  color: var(--text-primary);
+  font-size: 30rpx;
+  line-height: 1.7;
+  letter-spacing: 0.2rpx;
+}
+
+.child-memory-clear {
+  color: var(--danger);
+  font-size: 24rpx;
+}
+
+.child-memory-modal .button-row {
+  margin-top: 28rpx;
+}
+
+.child-memory-card .button-row {
+  margin-top: 20rpx;
+  justify-content: flex-end;
+}
