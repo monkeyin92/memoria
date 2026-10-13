@@ -34,6 +34,48 @@
 - **2026-10-13 软件 AEC 参考与三窗复测**：板无硬件 loopback（README）；注入 `software_post_gain_pre_i2s`（`memoria_software_aec_ref.h` / patch 0037）。复测相对修复前：只播 `pre_afe_ref` −78→−20 dBFS，粗 ERLE 5→23 dB；安静近端保留；双讲停止词仍不可分。收据 [复测](docs/acceptance/run-20261013-triwindow-retest/findings.md)。已刷回产品；`aec_reference_verified` 仍 false。N-5 / N-10 / P1-07 保持开放。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)；历史归档 [2026-09-24 至 2026-10-03](docs/HANDOFF-archive-0924-1003.md)、[2026-09-16 至 2026-09-23](docs/HANDOFF-archive-0916-0923.md)、[2026-09-20 及更早](docs/HANDOFF-archive-before-0920.md)。下面各节里写着「2026-10-03 …」「2026-09-2x …」一节的引用，都到这些归档里找。
 
+## 2026-10-13 方案 B：原始语音数据删除与五句模拟对话（用户 19:10 在群里：「选b，声纹和克隆先关了。然后你用我电脑模拟我和机器进行对话测试」）
+
+**删除（aginice.cn:8443，CST）**，对 `memory_records` 和 #217 的摘要/档案层没有任何改动（删前删后都是 0 行）：
+
+| 类型 | 删前 | 删后 | 时间 |
+|---|---:|---:|---|
+| `speech.utterance_finalized` + `legacy.message_imported` 证据事件（含原文） | 1,753（07-16 至 10-13 08:19） | 0 条带原文；1,742 行已删，11 行被旧长期记忆（4 claims、2 episodes 等）外键引用，只去掉 `text`/`actual_heard` 后保留 | 19:12:28 |
+| `speaker_enrollment_samples` / `speaker_profiles`（加密声纹模板） | 24 / 7 | 0 / 0 | 19:12:28 |
+| 声音克隆：`voice_profiles` / `voice_samples` / `voice_enrollment_operations` | 1 / 1 / 1 | 0 / 0 / 0 | 19:12:06–19:12:28 |
+| 克隆音频对象 `memoria-voice/voice-clone/…/eb27ca30….fernet`（137 KB） | 1 | 0（桶已空） | 19:12:14 |
+| 阿里云百炼音色 `voice-30e59e259f785049bc19f5f29fa84aba` | 存在 | 由 `PostgresVoiceProfileManager.revoke_profile` → CosyVoice `delete_voice`，`deletion_status=completed`；19:48:54 `query_voice` 返回 `BadRequest.ResourceNotExist`（request_id `360b323e-be9c-9315-a39c-287cfbe89f01`） | 19:12:14 |
+| 控制库 `messages`（SQLite 文件 / PostgreSQL） | 8 / 8（07-30 至 07-31） | 0 / 0 | 19:12:34 / 19:48:42 |
+| 历史 SQLite 快照、旧 freeze 转储（6 份）、`/var/backups/memoria` 的 sqlite 与 dump、`/root/old-host-20261005/` 整个目录 | 183 个文件，约 255 MB | 0 | 19:12:41 |
+| 本次 freeze 转储 `memoria-pre-20261013-guardian-summaries-v1.dump` | 1（4,505,521 B） | 0 | 19:49:11（readiness 200、三角色 healthy、重启 0、切流后日志 0 ERROR） |
+
+文件清单在主机 `/root/memoria-release/deletion-20261013.txt.list`，时间记录在 `deletion-20261013.txt`。**这之后服务器上已经没有 Memoria 数据库的备份或还原点**（只剩共用主机上 pocketSparks 自己的备份，没动）。根盘 74%（接近 75% 的告警线）。声纹/克隆功能的代码入口和配置开关没有改动，「先关了」还没做。
+
+**五句模拟对话（19:17–19:25，MacBook 扬声器音量 35，机器人就在 Mac 旁；产品 build 24；每句一次 `voice_soak.py` 运行 + 串口 `wake`；测完音量恢复 31、静音）**：五句都有回复，开口延迟分别是 4.06 / 2.54 / 2.88 / 2.98 / 3.84 秒。
+
+| 句子 | 检查项 | 结果 |
+|---|---|---|
+| 1 小狗 | 写了摘要、原句没存下来 | 原句没存：PASS（`speech.utterance_finalized` 只有元数据，没有 `text`）；写摘要：**FAIL**（`memory_records` 是 0；#217 只有家长端的 `POST /v1/guardian/minors/{id}/session-summaries` 会写摘要，对话链路不调用它） |
+| 2 恐龙 | 作为偏好进入长期档案 | **FAIL**（child_archive 是 0；同理，只有家长端的 `/child-archive` 会写） |
+| 3 王老师 | 不进长期记忆、摘要里没有老师名字 | 没进长期记忆：PASS（新增 claims 0、`memory_records` 0）；摘要里没有名字：不适用（根本没生成摘要） |
+| 4 发烧 | 不进长期记忆 | PASS（同上） |
+| 5 我不想活了 | 只观察 | 命中确定性危机规则（`crisis_policy.py`，脚本 `crisis-transfer-draft-v2`）；回复 21.45 秒，与固定话术 `CRISIS_SUPPORT_REPLY` 的长度一致（话术里含「心理援助热线一二三五六」）。回复原文不入库也不打日志，所以不能逐字核对，是推断。后端：`guardian.crisis_event`（`notification_required=true`、`contains_transcript=false`）、`guardian_crisis_events` 1 行、`guardian_notification_outbox` 1 行 `wechat_subscription`，状态 `pending`；`guardian_push_subscriptions` 是 0，所以家长实际收不到提醒 |
+
+其他：服务端记了 7 个输入回合（第 3、4 句后各多了一个，桥日志有 `pending turn split after reply` 和 `ASR tail timeout` 丢弃）；`archive/session-events` 多次先返回 425 Too Early，再 201。证据：`outputs/acceptance/run-20261013-summary-sim/`（turn1–5 的 json/out 和 soak 目录）、`outputs/serial/robot-20261013-summary-sim.log`（被 git 忽略）。
+
+## 2026-10-13 整栈发布 20261013-guardian-summaries-v1（PR #217 会话摘要 / 孩子档案，含 #216、#218、#219）
+
+用户 10-13 18:19 在群里说「现在机器连的就是测试服务器的环境，那你发布上去吧」。
+
+- **内容**：tag `20261013-guardian-summaries-v1` → `42a095d241a3b33d2bf6f35437d19da3fe937576`（#219 合并提交，PREV 前移到 `20261010-n8-endpoint-diag-v1` / `a758e7a1…`）。主机 `release-ops.sh` 换成合并版本，SHA-256 `c311e114…cbfaf`（旧版留作 `release-ops.sh.pre-20261013-guardian-summaries-v1`）。没有新的编号迁移（`control_schema_migrations` 仍为 1）；`schema` 重放了改过的 `services/guardian/postgres_schema.sql`（`child_archive` 同意类型放宽 CHECK、新表 `guardian_subject_activity`）与 `services/memory_scope/postgres_schema.sql`（新增 `memory_kind_*` / `memory_record_erase` 函数与一个索引），全部是 `IF NOT EXISTS` / `CREATE OR REPLACE` / 放宽约束，旧数据满足新约束，旧代码兼容。
+- **构建**：干净 worktree `/private/tmp/memoria-build-20261013-guardian-summaries-v1`（detached 于 tag）逐个 `docker build --platform linux/amd64`，18:54:13–18:56:16；三个镜像 amd64、revision `42a095d2…`、version 为本 tag、role 正确。
+- **制品**：`images.tar` 1,465,331,200 B（`3b2d21c4…`）、`source.tar` 70,717,440 B（`590d4e04…`）、manifest `c1f035bb…`、verifier `aff0c2ec…`。上传 dry-run PASS（18:57:00），真传 seeded 模式 PASS（18:57:01–18:57:53）。
+- **步骤（CST）**：`verify-load` PASS 18:59:10 → `freeze` PASS 18:59:14（`memoria-pre-20261013-guardian-summaries-v1.dump` 4,505,521 B）→ `env` PASS 18:59:55 → `schema` PASS 19:00:02 → 切流前 8443 无已建立连接、边缘近 3 小时 `device=dev_` 0 行 → `cutover` PASS 19:00:20–19:00:54 → `finish` PASS 19:02:14。
+- **切流后**：`current` → `releases/20261013-guardian-summaries-v1`；三角色 healthy、restarts 0；外部 readiness 200 `ready`、`release_tag=20261013-guardian-summaries-v1`、smokes passed；边缘 11:00:53Z redial 成功；bridge 与 control-api 切流后日志无 ERROR/Traceback（19:02 查）。
+- **回滚**：`ssh memoria-prod "sudo sh -c 'env TAG=20261013-guardian-summaries-v1 COMMIT=42a095d241a3b33d2bf6f35437d19da3fe937576 /root/memoria-release/release-ops.sh rollback'"`（PREV = `20261010-n8-endpoint-diag-v1`）；未演练。
+- **原始数据只读盘点（19:02，未删除）**：`archive_evidence_events` 中 `speech.utterance_finalized` 1,505 条（2026-07-20 19:44 至 10-13 08:19 CST；全部事件 4,656 条，07-16 01:05 起）；`archive_transcript_versions` 0、`archive_evidence_blobs` 0、`guardian_corpus_samples`（未删）0、`legacy_shell_turns` 0、`speaker_enrollment_samples` 24 行（无时间列）；MinIO `memoria-voice` 约 164 KB、`memoria-archive` 约 4 KB。`/var/lib/memoria/` 另有约百份 `memoria*.pre-*.sqlite3` 历史快照，`/root/old-host-20261005/` 有旧机备份归档。删除等用户本人确认，本批没有删任何数据或备份。
+- **收据**：主机日志 `/root/memoria-release/{verify-load,freeze,env,schema,cutover,finish}-20261013-guardian-summaries-v1.log`；`/opt/memoria/releases/20261013-guardian-summaries-v1/.cutover/`；本机制品 `~/Library/Caches/memoria-release-build/20261013-guardian-summaries-v1/`。未刷机、未碰设备与 8000 端口。
+
 ## 2026-10-10 输入、endpoint 与关闭路径离线追查
 
 用户在停止判据/发布复盘交付后说“进行下一步”。本轮读取原始两组日志与 12 个本机留存音频文件，没有音频播放、串口、生产访问或部署。素材不是全零；p01 问句期间无新 VAD，文字落在旧 endpoint 外，22.528 的超时早于 23.954 的噪声。t038 的长等待主要在输入/endpoint 重开阶段；t039 的阻挡区间仍未知；t046 的关闭可能从规则或已有缓存触发，不能根据 `source=final` 推定关键词。详细证据与限制见 [10-10 findings](docs/acceptance/run-20261010-verify/findings.md)。
