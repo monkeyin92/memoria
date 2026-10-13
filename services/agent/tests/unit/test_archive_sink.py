@@ -507,9 +507,9 @@ async def test_missing_or_revoked_raw_consent_keeps_the_transcript_without_audio
 
 
 @pytest.mark.asyncio
-async def test_minor_corpus_consent_keeps_transcript_separate_from_bounded_audio(
-    tmp_path: Path,
-) -> None:
+async def test_minor_corpus_consent_never_uploads_raw_audio(tmp_path: Path) -> None:
+    """Scheme A: child corpus consent must not persist conversation audio."""
+
     requests: list[tuple[str, dict[str, object]]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -552,10 +552,7 @@ async def test_minor_corpus_consent_keeps_transcript_separate_from_bounded_audio
         pcm=b"\x00\x00" * 1600,
         sample_rate=16_000,
     )
-    assert requests[0] == ("/v1/archive/session-events", event)
-    assert requests[1][0] == "/v1/archive/session-raw-audio"
-    assert requests[1][1]["archive_purpose"] == "corpus_recording"
-    assert requests[1][1]["consent_grant_id"] == "corpus-consent-001"
+    assert requests == [("/v1/archive/session-events", event)]
     await client.aclose()
 
 
