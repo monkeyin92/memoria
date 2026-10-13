@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "codec": "opus",
+  "bitrate_bps": 16000,
+  "sample_rate_hz": 16000,
+  "stories": [
+    {"id": "story_01", "title": "小星星的枕头", "file": "story_01.ogg", "placeholder": true},
+    {"id": "story_02", "title": "月亮不着急", "file": "story_02.ogg", "placeholder": true},
+    {"id": "story_03", "title": "一只会听的熊", "file": "story_03.ogg", "placeholder": true}
+  ]
+}
