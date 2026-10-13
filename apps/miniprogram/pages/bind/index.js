@@ -15,6 +15,11 @@ const {
   saveSubjectLabel,
   subjectLabelFromBindForm,
 } = require("../../utils/subject-label");
+const {
+  DEFAULT_QUIET_HOURS,
+  nightModeQuietHoursLabel,
+  confirmUnusualQuietHours,
+} = require("../../utils/quiet-hours");
 
 const SESSION_MINUTE_OPTIONS = [15, 30, 45, 60, 90, 120];
 const FAMILY_MEMBER_AGE_BANDS = ["under_14", "14_17", "adult"];
@@ -77,8 +82,8 @@ function defaultForm(mode, identity) {
       tutorEnabled: true,
       englishPracticeEnabled: true,
       maxSessionMinutes: 30,
-      quietHoursStart: "21:00",
-      quietHoursEnd: "07:00",
+      quietHoursStart: DEFAULT_QUIET_HOURS.start,
+      quietHoursEnd: DEFAULT_QUIET_HOURS.end,
       subjectSource: "new",
       existingSubjectIndex: 0,
     };
@@ -133,6 +138,7 @@ Page({
     ],
     sessionMinuteOptions: SESSION_MINUTE_OPTIONS,
     sessionMinuteIndex: 1,
+    quietHoursLabel: nightModeQuietHoursLabel(DEFAULT_QUIET_HOURS),
     memoryLevelOptions: MEMORY_LEVEL_OPTIONS,
     interviewFrequencyOptions: INTERVIEW_FREQUENCY_OPTIONS,
     speechSpeedOptions: SPEECH_SPEED_OPTIONS,
@@ -242,6 +248,10 @@ Page({
       offers,
       acceptedOfferIds,
       existingSubjectOptions: [],
+      quietHoursLabel:
+        mode === "parent_for_child"
+          ? nightModeQuietHoursLabel(form.quietHoursStart, form.quietHoursEnd)
+          : nightModeQuietHoursLabel(DEFAULT_QUIET_HOURS),
       error: "",
     });
     if (mode === "parent_for_child") {
@@ -339,11 +349,19 @@ Page({
   },
 
   onQuietStartChange(event) {
-    this.setData({ "form.quietHoursStart": event.detail.value });
+    const quietHoursStart = event.detail.value;
+    this.setData({
+      "form.quietHoursStart": quietHoursStart,
+      quietHoursLabel: nightModeQuietHoursLabel(quietHoursStart, this.data.form.quietHoursEnd),
+    });
   },
 
   onQuietEndChange(event) {
-    this.setData({ "form.quietHoursEnd": event.detail.value });
+    const quietHoursEnd = event.detail.value;
+    this.setData({
+      "form.quietHoursEnd": quietHoursEnd,
+      quietHoursLabel: nightModeQuietHoursLabel(this.data.form.quietHoursStart, quietHoursEnd),
+    });
   },
 
   onPickerChange(event) {
@@ -569,6 +587,13 @@ Page({
 
   async submitBinding() {
     if (this.data.submitting) return;
+    if (this.data.declaredMode === "parent_for_child") {
+      const confirmed = await confirmUnusualQuietHours({
+        start: this.data.form.quietHoursStart,
+        end: this.data.form.quietHoursEnd,
+      });
+      if (!confirmed) return;
+    }
     this.setData({ submitting: true, error: "" });
     try {
       const request = this._buildRequest();

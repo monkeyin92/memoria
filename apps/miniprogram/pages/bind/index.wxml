@@ -83,15 +83,18 @@
         <picker range="{{sessionMinuteOptions}}" value="{{sessionMinuteIndex}}" bindchange="onSessionMinutesChange">
           <view class="picker-row"><text class="picker-label">单次使用时长</text><text class="picker-value">{{sessionMinuteOptions[sessionMinuteIndex]}} 分钟</text></view>
         </picker>
-        <view class="quiet-hours-row">
-          <picker mode="time" value="{{form.quietHoursStart}}" bindchange="onQuietStartChange">
-            <view class="picker-row"><text class="picker-label">夜间休息开始</text><text class="picker-value">{{form.quietHoursStart}}</text></view>
-          </picker>
-          <picker mode="time" value="{{form.quietHoursEnd}}" bindchange="onQuietEndChange">
-            <view class="picker-row"><text class="picker-label">结束</text><text class="picker-value">{{form.quietHoursEnd}}</text></view>
-          </picker>
+        <view class="quiet-hours-block">
+          <text class="quiet-hours-label">{{quietHoursLabel}}</text>
+          <view class="quiet-hours-row">
+            <picker mode="time" value="{{form.quietHoursStart}}" bindchange="onQuietStartChange">
+              <view class="picker-row"><text class="picker-label">开始</text><text class="picker-value">{{form.quietHoursStart}}</text></view>
+            </picker>
+            <picker mode="time" value="{{form.quietHoursEnd}}" bindchange="onQuietEndChange">
+              <view class="picker-row"><text class="picker-label">结束</text><text class="picker-value">{{form.quietHoursEnd}}</text></view>
+            </picker>
+          </view>
         </view>
-        <text class="form-note">孩子的年龄和监护关系由系统核实；学习时长、夜间休息和成长记录，都按儿童保护规则执行，陪伴伙伴改不了。</text>
+        <text class="form-note">孩子的年龄和监护关系由系统核实；学习时长、夜间模式和成长记录，都按儿童保护规则执行，陪伴伙伴改不了。</text>
       </block>
 
       <!-- B. 给自己使用 -->

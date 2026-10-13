@@ -193,6 +193,14 @@
 
 /* 使用时段：卡片标题行的「修改」与抽屉里的选择行 */
 .limits-edit { margin: 0; padding: 0 0 0 24rpx; }
+.limits-quiet-label {
+  display: block;
+  margin: 8rpx 0 0;
+  color: #1e2d46;
+  font-size: 28rpx;
+  font-weight: 600;
+  line-height: 1.45;
+}
 .limits-row {
   display: flex;
   align-items: center;

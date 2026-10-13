@@ -16,6 +16,11 @@ const {
 } = require("../../utils/device-onboarding/session-store");
 const { readSubjectLabel, saveSubjectLabel } = require("../../utils/subject-label");
 const { sessionLimitsFromProfile } = require("../../utils/session-limits");
+const {
+  DEFAULT_QUIET_HOURS,
+  nightModeQuietHoursLabel,
+  confirmUnusualQuietHours,
+} = require("../../utils/quiet-hours");
 
 // 与绑定页的「单次使用时长」选项一致。
 const SESSION_MINUTE_OPTIONS = [15, 30, 45, 60, 90, 120];
@@ -291,8 +296,9 @@ Page({
     limitsError: "",
     limitsMinuteOptions: SESSION_MINUTE_OPTIONS,
     limitsMinuteIndex: 1,
-    limitsQuietStart: "21:00",
-    limitsQuietEnd: "07:00",
+    limitsQuietStart: DEFAULT_QUIET_HOURS.start,
+    limitsQuietEnd: DEFAULT_QUIET_HOURS.end,
+    limitsQuietLabel: nightModeQuietHoursLabel(DEFAULT_QUIET_HOURS),
     currentUserLabel: "",
     subjectAliasLabel: "",
     personaRows: [],
@@ -1118,13 +1124,16 @@ Page({
       ? SESSION_MINUTE_OPTIONS
       : [...SESSION_MINUTE_OPTIONS, limits.maxSessionMinutes].sort((a, b) => a - b);
     const index = options.indexOf(limits.maxSessionMinutes);
+    const quietStart = limits.quietStart || DEFAULT_QUIET_HOURS.start;
+    const quietEnd = limits.quietEnd || DEFAULT_QUIET_HOURS.end;
     this.setData({
       limitsSheetVisible: true,
       limitsError: "",
       limitsMinuteOptions: options,
       limitsMinuteIndex: index >= 0 ? index : options.indexOf(30),
-      limitsQuietStart: limits.quietStart || "21:00",
-      limitsQuietEnd: limits.quietEnd || "07:00",
+      limitsQuietStart: quietStart,
+      limitsQuietEnd: quietEnd,
+      limitsQuietLabel: nightModeQuietHoursLabel(quietStart, quietEnd),
     });
     this._syncSheetOpen();
   },
@@ -1140,11 +1149,21 @@ Page({
   },
 
   onLimitsQuietStartChange(event) {
-    this.setData({ limitsQuietStart: event.detail.value, limitsError: "" });
+    const limitsQuietStart = event.detail.value;
+    this.setData({
+      limitsQuietStart,
+      limitsQuietLabel: nightModeQuietHoursLabel(limitsQuietStart, this.data.limitsQuietEnd),
+      limitsError: "",
+    });
   },
 
   onLimitsQuietEndChange(event) {
-    this.setData({ limitsQuietEnd: event.detail.value, limitsError: "" });
+    const limitsQuietEnd = event.detail.value;
+    this.setData({
+      limitsQuietEnd,
+      limitsQuietLabel: nightModeQuietHoursLabel(this.data.limitsQuietStart, limitsQuietEnd),
+      limitsError: "",
+    });
   },
 
   async confirmLimitsSheet() {
@@ -1152,9 +1171,11 @@ Page({
     const { limitsQuietStart: quietStart, limitsQuietEnd: quietEnd } = this.data;
     if (limitsSaving || !binding?.device_id) return;
     if (quietStart === quietEnd) {
-      this.setData({ limitsError: "夜间休息的开始和结束不能是同一时刻。" });
+      this.setData({ limitsError: "夜间模式的开始和结束不能是同一时刻。" });
       return;
     }
+    const confirmed = await confirmUnusualQuietHours({ start: quietStart, end: quietEnd });
+    if (!confirmed) return;
     this.setData({ limitsSaving: true, limitsError: "" });
     try {
       await api.setSessionLimits(binding.device_id, {
