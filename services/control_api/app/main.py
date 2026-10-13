@@ -156,6 +156,7 @@ from services.legacy.postgres_registry import PostgresLegacyRegistry
 from services.memory_scope.capture_policy import (
     build_memory_capture_policy_assembly,
 )
+from services.memory_scope.child_layers import ChildLayerStore
 from services.memory_scope.production import (
     MemoryProductionSettings,
 )
@@ -630,6 +631,23 @@ async def _install_session_runtime(w: Wiring) -> None:
     )
 
 
+async def _install_child_layer_store(w: Wiring) -> None:
+    """Parent-visible dialogue_summary / child_archive layers (Scheme A)."""
+
+    app, settings = w.app, w.settings
+    app.state.child_layer_store = None
+    if not w.live:
+        return
+    api_dsn = settings.memory_api_database_url.get_secret_value().strip()
+    maintenance_dsn = settings.memory_maintenance_database_url.get_secret_value().strip()
+    if not api_dsn or not maintenance_dsn:
+        return
+    store = ChildLayerStore(api_dsn=api_dsn, maintenance_dsn=maintenance_dsn)
+    await store.initialize()
+    app.state.child_layer_store = store
+    w.on_close(store.close)
+
+
 async def _install_memory_scope(w: Wiring) -> None:
     """Install MemoryScope only from dedicated production PostgreSQL roles."""
 
@@ -812,6 +830,7 @@ async def _wire_services(w: Wiring) -> None:
         )
     app.state.multi_subject_binding_manifests = {}
     await _install_session_runtime(w)
+    await _install_child_layer_store(w)
     await _install_memory_scope(w)
     app.state.device_registry = DeviceRegistry(
         store,

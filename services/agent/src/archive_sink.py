@@ -192,11 +192,12 @@ class ArchiveSink:
             return None
         subject_category = payload.get("subject_category")
         archive_purpose = payload.get("archive_purpose", "raw_voice_archive")
-        if subject_category == "minor" and archive_purpose != "corpus_recording":
+        # Scheme A: never persist child conversation audio.
+        if subject_category == "minor":
             return None
-        if subject_category not in {None, "adult", "minor"}:
+        if subject_category not in {None, "adult"}:
             return None
-        if subject_category in {None, "adult"} and archive_purpose != "raw_voice_archive":
+        if archive_purpose != "raw_voice_archive":
             return None
         if payload.get("allowed") is not True:
             return None

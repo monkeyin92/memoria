@@ -220,11 +220,10 @@ def test_subject_or_session_epoch_change_invalidates_policy_receipt() -> None:
     ],
 )
 def test_minor_never_receives_adult_sensitive_capabilities(capability: str) -> None:
-    # Matrix change (V2): the hard-forbidden minor set is now only
-    # voice_clone_use / digital_self_preview / legacy_grant_create /
-    # device_ownership_transfer; voice_profile_create is enrollable under
-    # governance (separate test) and payment / raw_audio_retention /
-    # model_training_contribution are default-denied with their own reason code.
+    # Hard-forbidden minors: voice_clone_use / digital_self_preview /
+    # legacy_grant_create / device_ownership_transfer. voice_profile_create is
+    # capability_forbidden (Scheme A). payment / raw_audio_retention /
+    # model_training_contribution stay default-denied with their own reason.
     decision = PolicyEngine().decide(
         _context(
             capability=capability,
@@ -283,9 +282,8 @@ def test_minor_default_denied_capabilities_keep_minor_denied(capability: str) ->
     assert decision.reason_code == "minor_capability_denied"
 
 
-def test_minor_voice_profile_create_requires_governance_and_evidence() -> None:
-    # Matrix change (V2): voice_profile_create (voiceprint enrollment only, not
-    # cloning) is allowed for minors under governance + authoritative evidence.
+def test_minor_voice_profile_create_is_forbidden() -> None:
+    # Scheme A: voiceprint enrollment is closed for minors even with governance.
     evaluated_at = _context().evaluated_at
     denied = PolicyEngine().decide(
         _context(
@@ -300,7 +298,7 @@ def test_minor_voice_profile_create_requires_governance_and_evidence() -> None:
             current_session_mode="student_minor",
         )
     )
-    allowed = PolicyEngine().decide(
+    governed = PolicyEngine().decide(
         _context(
             capability="voice_profile_create",
             actor_id="person-child",
@@ -332,12 +330,8 @@ def test_minor_voice_profile_create_requires_governance_and_evidence() -> None:
         )
     )
 
-    assert (denied.effect, denied.reason_code) == ("deny", "consent_evidence_required")
-    assert allowed.effect == "allow_with_obligations"
-    assert obligation_codes(allowed.obligations) == (
-        "NO_MODEL_TRAINING",
-        "WRITE_POLICY_RECEIPT",
-    )
+    assert (denied.effect, denied.reason_code) == ("deny", "capability_forbidden")
+    assert (governed.effect, governed.reason_code) == ("deny", "capability_forbidden")
 
 
 def test_guardian_relationship_does_not_grant_private_memory_read() -> None:

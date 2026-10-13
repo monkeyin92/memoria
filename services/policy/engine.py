@@ -136,6 +136,9 @@ MINOR_DEFAULT_DENIED: Final[frozenset[Capability]] = frozenset(
 )
 
 #: Minor capabilities allowed under governance + authoritative consent evidence.
+# voice_profile_create removed for minors (Scheme A): account gate already
+# refuses speaker enrollment for children; policy must match so new entry
+# points cannot authorize a voiceprint.
 MINOR_GOVERNED_ALLOWED: Final[frozenset[Capability]] = frozenset(
     {
         "chat",
@@ -143,7 +146,6 @@ MINOR_GOVERNED_ALLOWED: Final[frozenset[Capability]] = frozenset(
         "english_practice",
         "memory_capture",
         "memory_recall_private",
-        "voice_profile_create",
     }
 )
 
@@ -981,8 +983,7 @@ class PolicyEngine:
                 reason_code="tutor_subject_mismatch",
             )
         if (
-            context.capability
-            in {"memory_capture", "memory_recall_private", "voice_profile_create"}
+            context.capability in {"memory_capture", "memory_recall_private"}
             and context.resource_owner_id != subject_id
         ):
             return self._decision(
@@ -1122,16 +1123,10 @@ class PolicyEngine:
                 obligations=_obligations("WRITE_POLICY_RECEIPT"),
                 **evidence_args,  # type: ignore[arg-type]
             )
-        # voice_profile_create: voiceprint enrollment only (not cloning).
         return self._decision(
             context,
-            effect="allow_with_obligations",
-            reason_code="minor_voice_profile_enrolled",
-            obligations=_obligations(
-                "NO_MODEL_TRAINING",
-                "WRITE_POLICY_RECEIPT",
-            ),
-            **evidence_args,  # type: ignore[arg-type]
+            effect="deny",
+            reason_code="capability_forbidden",
         )
 
     def _decide_adult(self, context: PolicyContext) -> _PolicyEvaluation:
