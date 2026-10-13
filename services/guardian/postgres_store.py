@@ -7,7 +7,7 @@ import json
 import uuid
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 import asyncpg
 
@@ -2465,48 +2465,6 @@ class PostgresGuardianStore:
                     guardian_user_id,
                 )
         return tuple(str(row["minor_user_id"]) for row in rows)
-
-    async def touch_subject_activity(
-        self,
-        *,
-        subject_person_id: str,
-        source: Literal["dialogue", "miniprogram"],
-        now: datetime | None = None,
-    ) -> datetime:
-        """Reset the 180-day child_archive idle clock."""
-
-        stamped = now or datetime.now(UTC)
-        pool = await self._ready_pool()
-        async with pool.acquire() as connection:
-            await connection.execute(
-                """
-                INSERT INTO guardian_subject_activity (
-                    subject_person_id, last_active_at, last_source, updated_at
-                ) VALUES ($1, $2, $3, $2)
-                ON CONFLICT (subject_person_id) DO UPDATE
-                SET last_active_at = EXCLUDED.last_active_at,
-                    last_source = EXCLUDED.last_source,
-                    updated_at = EXCLUDED.updated_at
-                """,
-                subject_person_id,
-                stamped,
-                source,
-            )
-        return stamped
-
-    async def subject_last_active(
-        self, *, subject_person_id: str
-    ) -> datetime | None:
-        pool = await self._ready_pool()
-        async with pool.acquire() as connection:
-            value = await connection.fetchval(
-                """
-                SELECT last_active_at FROM guardian_subject_activity
-                WHERE subject_person_id = $1
-                """,
-                subject_person_id,
-            )
-        return value
 
 
 __all__ = ["PostgresGuardianStore"]

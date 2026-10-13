@@ -1480,10 +1480,10 @@ async def touch_child_activity(
     """Reset the 180-day child_archive idle clock (dialogue or mini program open)."""
 
     await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
-    touch = getattr(_store(request), "touch_subject_activity", None)
-    if touch is None:
+    activity = getattr(request.app.state, "subject_activity_store", None)
+    if activity is None:
         raise HTTPException(status_code=503, detail={"code": "subject_activity_unavailable"})
-    stamped = await touch(subject_person_id=minor_user_id, source=source)
+    stamped = await activity.touch(subject_person_id=minor_user_id, source=source)
     return {"subject_id": minor_user_id, "last_active_at": stamped.isoformat(), "source": source}
 
 

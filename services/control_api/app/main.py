@@ -45,6 +45,7 @@ from services.consent.binding_snapshot import (
 from services.consent.bound_subject import BoundSubjectConsentService
 from services.consent.postgres_store import PostgresConsentStore
 from services.control_api.app.account_gate import AccountDeletingError, AccountOperationGate
+from services.control_api.app.child_compliance_wiring import install_child_compliance
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.device_registry import DeviceRegistry
@@ -156,7 +157,6 @@ from services.legacy.postgres_registry import PostgresLegacyRegistry
 from services.memory_scope.capture_policy import (
     build_memory_capture_policy_assembly,
 )
-from services.memory_scope.child_layers import ChildLayerStore
 from services.memory_scope.production import (
     MemoryProductionSettings,
 )
@@ -606,7 +606,6 @@ async def _install_session_runtime(w: Wiring) -> None:
             ),
         )
         app.state.session_runtime_store = session_runtime_store
-        # Registered before initialize: a half-initialized store still closes.
         w.resources.add(session_runtime_store.close)
         await session_runtime_store.initialize()
         session_runtime_service = build_postgres_session_runtime_service(
@@ -629,23 +628,6 @@ async def _install_session_runtime(w: Wiring) -> None:
         policy=PolicyEngine(receipt_writer=app.state.policy_receipt_writer),
         signing_key=settings.runtime_profile_signing_key(),
     )
-
-
-async def _install_child_layer_store(w: Wiring) -> None:
-    """Parent-visible dialogue_summary / child_archive layers (Scheme A)."""
-
-    app, settings = w.app, w.settings
-    app.state.child_layer_store = None
-    if not w.live:
-        return
-    api_dsn = settings.memory_api_database_url.get_secret_value().strip()
-    maintenance_dsn = settings.memory_maintenance_database_url.get_secret_value().strip()
-    if not api_dsn or not maintenance_dsn:
-        return
-    store = ChildLayerStore(api_dsn=api_dsn, maintenance_dsn=maintenance_dsn)
-    await store.initialize()
-    app.state.child_layer_store = store
-    w.on_close(store.close)
 
 
 async def _install_memory_scope(w: Wiring) -> None:
@@ -717,7 +699,6 @@ async def _install_memory_scope(w: Wiring) -> None:
         outbox_dispatcher=dispatcher,
         shared_action_executor=shared_actions,
     )
-    # Registered before start: a wiring that fails to start still closes.
     w.on_close(wiring.close)
     await wiring.start()
 
@@ -830,7 +811,7 @@ async def _wire_services(w: Wiring) -> None:
         )
     app.state.multi_subject_binding_manifests = {}
     await _install_session_runtime(w)
-    await _install_child_layer_store(w)
+    await install_child_compliance(w)
     await _install_memory_scope(w)
     app.state.device_registry = DeviceRegistry(
         store,
