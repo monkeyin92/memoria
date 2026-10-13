@@ -15,9 +15,10 @@
 //   play_pre_i2s              the PCM AudioOutputTask hands to OutputData. On this board there is no software
 //                             volume, so these are the bytes written to I2S; the ES8311 DAC volume applies
 //                             after them, so they are NOT the exact DAC signal.
-//   pre_afe_mic, pre_afe_ref  interleaved, exactly what AudioInputTask reads to Feed the AFE. pre_afe_ref is
-//                             the second ES7210 ADC channel that the AFE takes as its reference R. It is NOT a
-//                             software copy of play_pre_i2s.
+//   pre_afe_mic, pre_afe_ref  interleaved, exactly what AudioInputTask reads to Feed the AFE. On VoCat,
+//                             pre_afe_ref is the software-injected play path (WritePlay into a 24 kHz ring,
+//                             ApplyToFeed over ES7210 ch1 before the 24→16 kHz resample), not the empty
+//                             hardware ADC channel.
 //   post_afe                  afe_fetch_result_t::data: AEC and NS merged. One AFE instance offers no separate
 //                             post-AEC or post-NS buffer, so this lane is never split or renamed that way.
 //
