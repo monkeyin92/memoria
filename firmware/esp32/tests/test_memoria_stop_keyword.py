@@ -223,8 +223,10 @@ def test_wake_word_acceptance_requires_consistent_text_for_weak_hits(gate_tool: 
     ) == ["wake", "wake", "wake", "wake", "wake"]
 
 
-def test_detection_floor_matches_the_board_sdkconfig(gate_tool: pathlib.Path) -> None:
-    _, constants = _table(gate_tool)
+def test_board_sdkconfig_is_tap_only_without_custom_wake_threshold() -> None:
+    # Tap-only product policy (#215): keyword wake packaging is off. The
+    # MultiNet detect floor stays in memoria_stop_keyword.h for local stop
+    # phrases, but it is no longer mirrored by CONFIG_CUSTOM_WAKE_WORD_THRESHOLD.
     board = json.loads(
         (
             FIRMWARE_ROOT
@@ -238,11 +240,11 @@ def test_detection_floor_matches_the_board_sdkconfig(gate_tool: pathlib.Path) ->
         ).read_text(encoding="utf-8")
     )
     sdkconfig = board["builds"][0]["sdkconfig_append"]
-    thresholds = [
-        item for item in sdkconfig if item.startswith("CONFIG_CUSTOM_WAKE_WORD_THRESHOLD=")
-    ]
-    assert thresholds == ["CONFIG_CUSTOM_WAKE_WORD_THRESHOLD=10"]
-    assert int(thresholds[0].split("=")[1]) / 100 == pytest.approx(constants["detect"])
+    assert "CONFIG_WAKE_WORD_DISABLED=y" in sdkconfig
+    assert not any(item.startswith("CONFIG_USE_CUSTOM_WAKE_WORD=") for item in sdkconfig)
+    assert not any(
+        item.startswith("CONFIG_CUSTOM_WAKE_WORD_THRESHOLD=") for item in sdkconfig
+    )
 
 
 def test_gate_requires_stop_only_mode_and_the_phrase_threshold(gate_tool: pathlib.Path) -> None:
