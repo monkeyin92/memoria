@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-
 from services.common.companions import DEFAULT_COMPANION_ID, designed_voice_profile
 from services.control_api.app.main import create_app
 
