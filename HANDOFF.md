@@ -1,5 +1,11 @@
 # Memoria 当前交接
 
+## 发布前检查清单
+
+正式固件发布前必须逐条清掉。每条与代码里的 `TODO(release-blocker):` 标记一字不差，`firmware/esp32/tests/test_release_blockers.py` 核对两边一致：代码里还有标记，这里就不能勾掉或删掉。
+
+- [ ] TODO(release-blocker): remove USB serial wake before final firmware; it opens the mic without a screen tap
+
 ## 当前生产快照
 
 - **生产主机（2026-10-05 起）**：整套服务 01:33–01:40（CST）从旧机 122.51.108.140 迁到 110.42.235.198（原 pocketSparks 生产机，与 hr-tracker、MySQL 等共用，40 GB 盘、3.7 GiB 内存）；ssh 别名 `memoria-prod` 指新机，旧机别名 `memoria-prod-old`（旧机 10-06 到期，到期后别名和 known_hosts 条目可删）。Control API 绑 `127.0.0.1:18791`（hr-tracker 占 8791），由 `MEMORIA_CONTROL_API_PORT` 参数化。对外域名是 `aginice.cn`（你 10-05 说「域名换成aginice.cn这个域名，之前那个不用了」；证书到 2027-01-02，**2026-12-19 前换证**；`aigcnice.com` 仍解析到旧机，旧机到期后失效，已定不做桥、不动 DNS）。客户端已切完：小程序体验版 `0.2.20261005.3`，固件 build 24，机器人只连 `aginice.cn:8443`。详见「2026-10-05 服务迁移到 110.42.235.198」「2026-10-05 域名切换到 aginice.cn」两节。

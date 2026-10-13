@@ -75,6 +75,7 @@ jobs:
               - 'apps/miniprogram/**'
             firmware:
               - '.github/workflows/ci.yml'
+              - 'HANDOFF.md'
               - 'pyproject.toml'
               - 'uv.lock'
               - 'firmware/esp32/**'
