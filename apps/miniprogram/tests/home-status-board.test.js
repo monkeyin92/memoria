@@ -79,13 +79,12 @@ test("device wake word copy tells users it syncs then restarts", () => {
   assert.match(template, /此刻是谁在用/);
 });
 
-test("profile keeps the voice-sample entry points and never promises an evaluation", () => {
+test("profile has no voice-sample entry points after voice-clone removal", () => {
   const template = fs.readFileSync(path.join(root, "pages/profile/index.wxml"), "utf8");
   const script = fs.readFileSync(path.join(root, "pages/profile/index.js"), "utf8");
-  assert.match(template, /自定义人格与声音/);
-  assert.match(template, /对着麦克风录/);
-  assert.match(template, /上传音频/);
-  // 消费者路径不得承诺人工 A/B 评估：那是实验室路径的准入方式。
+  assert.match(template, /自定义人格/);
+  assert.doesNotMatch(template, /对着麦克风录|上传音频|声音复刻|自定义人格与声音/);
+  assert.doesNotMatch(script, /uploadVoiceSample|enrollVoiceClone|getRecorderManager/);
   assert.doesNotMatch(script, /评估/);
   assert.doesNotMatch(template, /评估/);
 });

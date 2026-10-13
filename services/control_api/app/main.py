@@ -87,7 +87,6 @@ from services.control_api.app.routes import (
 from services.control_api.app.routes import readiness as readiness_routes
 from services.control_api.app.routes import self_preview as self_preview_routes
 from services.control_api.app.routes import session as session_routes
-from services.control_api.app.routes import speaker as speaker_routes
 from services.control_api.app.routes import voice as voice_routes
 from services.control_api.app.session_directory import (
     InMemorySessionDirectory,
@@ -1160,7 +1159,6 @@ def create_app() -> FastAPI:
     app.include_router(media_routes.router)
     app.include_router(media_routes.device_router)
     app.include_router(media_routes.internal_router)
-    app.include_router(speaker_routes.router)
     app.include_router(memory_routes.router)
     app.include_router(multi_subject_routes.router)
     app.include_router(persona_assignment_routes.router)

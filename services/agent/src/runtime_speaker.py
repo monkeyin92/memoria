@@ -9,15 +9,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.event_identity import speaker_classification_evidence
-from services.agent.src.orchestration.formal_speaker_enrollment import (
-    FormalSpeakerEnrollment,
-)
 from services.agent.src.orchestration.interaction_plane import (
     InteractionDecision,
     InteractionSnapshot,
@@ -30,7 +27,6 @@ from services.agent.src.orchestration.orchestrator import Orchestrator
 from services.agent.src.orchestration.speaker_verify import (
     SpeakerGateState,
     SpeakerVerifier,
-    speech_ms_from_pcm,
 )
 from services.agent.src.orchestration.speech_epoch_assembler import (
     SpeechEpochAssembler,
@@ -56,6 +52,28 @@ if TYPE_CHECKING:
     from services.agent.src.voice_floor import VoiceFloorState
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class _InactiveFormalEnrollment:
+    """Enrollment removed; kept so runtime fields stay typed without a product path."""
+
+    target_samples: int = 4
+    sample_rate: int = 16_000
+    active: bool = False
+    complete: bool = False
+    sample_count: int = 0
+
+    def begin(self) -> None:
+        # No product path starts enrollment; tests may still toggle this latch.
+        self.active = True
+
+    def cancel(self) -> None:
+        self.active = False
+
+    def add_endpoint(self, pcm: bytes) -> bytes | None:
+        del pcm
+        return None
 
 PLAYBACK_INPUT_BLOCK_MIN_WORDS = 1000
 POST_PLAYBACK_SPEAKER_UNTRUSTED_MS = 2_000
@@ -106,7 +124,7 @@ class DuplexSpeakerMixin:
         _evidence_publisher: Callable[[dict[str, Any]], Coroutine[Any, Any, None]] | None
         _speech_epoch_assembler: SpeechEpochAssembler
         _enroll_fence: GenerationFence | None
-        _formal_enrollment: FormalSpeakerEnrollment
+        _formal_enrollment: _InactiveFormalEnrollment
         _formal_enrollment_sample_sink: Callable[[bytes, int], Coroutine[Any, Any, None]] | None
         _enroll_collecting: bool
         _enroll_started_mono: float
@@ -221,28 +239,8 @@ class DuplexSpeakerMixin:
             self.mark_audio_event("last_user_audio")
         self._speaker_collecting = False
         self.speaker_verifier.mark_utterance_end()
-        if self.formal_speaker_enrollment_active:
-            pcm = bytes(self._speaker_pcm)
-            speech_ms = speech_ms_from_pcm(pcm, sample_rate=self._speaker_sample_rate)
-            sample = self._formal_enrollment.add_endpoint(pcm)
-            logger.info(
-                "formal enrollment endpoint session=%s accepted=%s speech_ms=%s "
-                "pcm_bytes=%s collecting=%s sample_count=%s",
-                self.session_id,
-                sample is not None,
-                speech_ms,
-                len(pcm),
-                was_collecting,
-                self._formal_enrollment.sample_count,
-            )
-            if sample is not None and self._formal_enrollment_sample_sink is not None:
-                self._spawn(
-                    self._formal_enrollment_sample_sink(sample, self._speaker_sample_rate),
-                    name="formal-speaker-enrollment-sample",
-                )
-            self.publish_formal_speaker_enrollment_progress()
-        else:
-            self._start_speaker_classification()
+        del was_collecting
+        self._start_speaker_classification()
 
     def _start_speaker_classification(self) -> None:
         if (
@@ -496,7 +494,7 @@ class DuplexSpeakerMixin:
 
     def begin_formal_speaker_enrollment(self, *, target_samples: int = 4) -> None:
         if target_samples != self._formal_enrollment.target_samples:
-            self._formal_enrollment = FormalSpeakerEnrollment(
+            self._formal_enrollment = _InactiveFormalEnrollment(
                 target_samples=target_samples,
                 sample_rate=self._speaker_sample_rate,
             )

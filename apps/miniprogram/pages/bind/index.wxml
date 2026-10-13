@@ -104,7 +104,7 @@
         <picker range="{{interviewFrequencyOptions}}" range-key="label" value="{{form.interviewFrequencyIndex}}" data-key="interviewFrequencyIndex" bindchange="onPickerChange">
           <view class="picker-row"><text class="picker-label">主动采访</text><text class="picker-value">{{interviewFrequencyOptions[form.interviewFrequencyIndex].label}}</text></view>
         </picker>
-        <text class="form-note">首页「当前使用者」会显示这条备注，不是微信昵称。年龄以系统核实的为准；声音复刻、数字自我与传承等能力默认关闭，需要单独开启。首页的当前使用者会显示这条备注。</text>
+        <text class="form-note">首页「当前使用者」会显示这条备注，不是微信昵称。年龄以系统核实的为准；数字自我与传承等能力默认关闭，需要单独开启。首页的当前使用者会显示这条备注。</text>
       </block>
 
       <!-- C. 给父母使用 -->
@@ -191,7 +191,7 @@
           <text wx:if="{{item.proxyConsent}}" class="offer-note">由你代父母同意，可随时在小程序里撤回</text>
         </view>
       </view>
-      <text class="form-note">敏感能力（长期记忆、声音复刻、数字自我、传承、原始音频等）只有明确勾选才会申请；孩子和父母的长期记忆默认不勾选，不勾选也能完成绑定。</text>
+      <text class="form-note">敏感能力（长期记忆、数字自我、传承、原始音频等）只有明确勾选才会申请；孩子和父母的长期记忆默认不勾选，不勾选也能完成绑定。</text>
 
       <view class="button-row bind-nav">
         <button class="secondary-button" bindtap="backToForm">上一步</button>

@@ -227,10 +227,6 @@ Page({
     if (!(await this._saveCatalog(companion.id))) this.setData(previous);
   },
 
-  // 自定义声音在「我的」里录制/上传；这一行只是入口，不在这里采集音频。
-  openVoiceClone() {
-    wx.switchTab({ url: "/pages/profile/index" });
-  },
 
   async _saveCatalog(companionId) {
     if (!(await requireLogin({ reason: "edit_profile" }))) return false;

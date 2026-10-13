@@ -17,15 +17,14 @@ test("profile hero uses the WeChat avatar or a name initial, not a robot mascot"
   assert.match(styles, /\.user-avatar\s*\{[^}]*border-radius:\s*50%/s);
 });
 
-test("profile keeps custom persona recording and opens the companion picker", () => {
-  assert.match(template, /人格与声音/);
+test("profile keeps custom persona entry and opens the companion picker", () => {
   assert.match(template, /对话只在机器人上进行/);
-  assert.match(template, /下次唤醒才会换成对应声音/);
-  assert.match(template, /自定义人格与声音/);
-  assert.match(template, /openCompanion/);
+  assert.match(template, /自定义人格/);
+  assert.match(template, /openCompanion|openCustomPersona/);
+  assert.doesNotMatch(template, /对着麦克风录|上传音频|我的自定义声音/);
   assert.doesNotMatch(template, /class="persona-row/);
   assert.doesNotMatch(template, /companion-mascot-shell|companion-face|character-photo/);
   assert.doesNotMatch(template, /assets\/companions/);
   assert.match(companionTemplate, /角色默认声音/);
-  assert.match(companionTemplate, /我的自定义声音/);
+  assert.doesNotMatch(companionTemplate, /我的自定义声音/);
 });

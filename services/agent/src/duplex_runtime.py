@@ -49,9 +49,6 @@ from services.agent.src.orchestration.context_snapshot_manager import (
 from services.agent.src.orchestration.emotion import (
     EmotionSmoother,
 )
-from services.agent.src.orchestration.formal_speaker_enrollment import (
-    FormalSpeakerEnrollment,
-)
 from services.agent.src.orchestration.heard_text_tracker import HeardTextTracker
 from services.agent.src.orchestration.interaction_plane import (
     InteractionDecision,
@@ -101,7 +98,7 @@ from services.agent.src.runtime_provenance import (
     GenerationVoiceSnapshot as GenerationVoiceSnapshot,
 )
 from services.agent.src.runtime_shutdown import DuplexRuntimeShutdownMixin
-from services.agent.src.runtime_speaker import DuplexSpeakerMixin
+from services.agent.src.runtime_speaker import DuplexSpeakerMixin, _InactiveFormalEnrollment
 from services.agent.src.voice_floor import FloorSnapshot, VoiceFloorState
 from services.common.companion_response_safety import SAFE_UNKNOWN_REPLY
 from services.common.evidence_policy import classify_prompt_kind
@@ -232,8 +229,8 @@ class DuplexRuntime(
     RUNTIME_PROFILE_REFRESH_TIMEOUT_S: float = 0.8
     _pending_tool_results: int = 0
     _enroll_fence: GenerationFence | None = None
-    _formal_enrollment: FormalSpeakerEnrollment = field(
-        default_factory=FormalSpeakerEnrollment
+    _formal_enrollment: _InactiveFormalEnrollment = field(
+        default_factory=_InactiveFormalEnrollment
     )
     _formal_enrollment_sample_sink: (
         Callable[[bytes, int], Coroutine[Any, Any, None]] | None

@@ -135,7 +135,6 @@ from services.session_runtime.service import (
     PersistentSessionUnavailable,
     PostgresSessionRuntimeService,
 )
-from services.speaker.domain import SpeakerAuthorityPort
 from services.tutor.domain import TutorFocus
 from services.tutor.turn_policy import TutorTurnPolicy, TutorUtteranceIntent
 
@@ -591,9 +590,6 @@ async def capabilities(
                 break
         if not preview_ready:
             missing.append("preview_version_stale_or_fidelity_unready")
-    speaker = cast(SpeakerAuthorityPort, request.app.state.speaker_authority)
-    if not any(profile.status == "active" for profile in await speaker.profiles(user.user_id)):
-        missing.append("verified_owner_voice")
     modes["self_preview"] = {
         "status": "blocked" if missing else "available",
         "conversational": True,

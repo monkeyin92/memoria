@@ -7,7 +7,7 @@
  *   由 buildBindingRequest 在发送前 fail-closed。
  * - 首次绑定的“最小必要信息”按场景采集；年龄带只用于默认体验文案与展示，
  *   不写入绑定请求（正式年龄证据由服务端验证，见 PR-02）。
- * - 数字自我 / 声音复刻 / 传承等敏感授权默认不勾选；“父母本人接受”类
+ * - 数字自我 / 传承等敏感授权默认不勾选；“父母本人接受”类
  *   consent 只能由父母本人确认，客户端不得代为提交。
  * - 每台设备只服务一位使用人，身份来自绑定而不是声纹；客户端不再提供
  *   声纹档案授权。长期记忆（孩子 / 父母）默认不勾选、不是完成绑定的
@@ -105,14 +105,6 @@ const CONSENT_OFFERS = Object.freeze([
     modes: ["self_use"],
     label: "原始音频留存",
     description: "单独授权保存你的原始语音",
-    defaultChecked: false,
-    requiresParentSelfAcceptance: false,
-  },
-  {
-    id: "offer_self_voice_clone_v1",
-    modes: ["self_use"],
-    label: "声音复刻",
-    description: "生成你的声音模型；默认不开启",
     defaultChecked: false,
     requiresParentSelfAcceptance: false,
   },
@@ -339,6 +331,7 @@ const ACTION_TIME_CAPABILITIES = Object.freeze([
   contracts.Capability.FamilySharedMemoryProposal,
   contracts.Capability.FamilySharedMemoryApproval,
   contracts.Capability.FamilySharedMemoryPromotion,
+  // Retained in the deferred matrix for contract parity; no product UI or routes.
   contracts.Capability.VoiceProfileCreate,
   contracts.Capability.VoiceCloneUse,
   contracts.Capability.DigitalSelfPreview,
@@ -376,14 +369,6 @@ const CONFIG_ACTION_POLICY = Object.freeze({
   }),
   raw_audio_consent: Object.freeze({
     capability: contracts.Capability.RawAudioRetention,
-    data_classification: contracts.DataClassification.Biometric,
-    safety_state: contracts.SafetyState.Normal,
-  }),
-  // Privacy-page voice sample forget. Distinct from raw_audio_consent so the
-  // archive gate stays the one #204 wired. Unknown names such as voice_revoke
-  // stay fail-closed and never reach /v1/policy/decisions.
-  voice_sample_revoke: Object.freeze({
-    capability: contracts.Capability.VoiceCloneUse,
     data_classification: contracts.DataClassification.Biometric,
     safety_state: contracts.SafetyState.Normal,
   }),
@@ -811,7 +796,7 @@ const UNKNOWN_SAFE_ALLOWED_CAPABILITIES = Object.freeze([
 
 /*
  * minor 主体结构层禁止的能力集合（§4.2 能力矩阵“儿童/学生”列）：
- * - voice_clone_use（声音复刻）：默认禁止；
+ * - voice_clone_use：已下线，策略层始终拒绝；
  * - digital_self_preview（数字自我）：禁止或仅成人后重新授权；
  * - legacy_grant_create（人生传承）：禁止；
  * - device_ownership_transfer（所有权转移）：不属于儿童。
@@ -1346,7 +1331,7 @@ function degradationFor(runtimeProfile) {
     reasons,
     allowed: ["普通聊天", "通用知识", "临时英语练习", "基础设备控制"],
     restricted: ["长期记忆", "学习进度", "私人历史检索", "家长摘要", "个性化敏感信息"],
-    forbidden: ["声音复刻", "数字自我", "传承", "支付", "隐私设置变更", "查看他人记忆"],
+    forbidden: ["数字自我", "传承", "支付", "隐私设置变更", "查看他人记忆"],
   };
 }
 

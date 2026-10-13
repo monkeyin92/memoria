@@ -25,11 +25,8 @@ test("app config only declares supported required private APIs", () => {
   assert.deepEqual(invalid, []);
 });
 
-test("app config declares recorder permission only for custom voice samples", () => {
-  assert.equal(
-    appConfig.permission?.["scope.record"]?.desc,
-    "仅用于录制自定义声音样本，供机器人使用；不用于小程序内对话。",
-  );
+test("app config declares no recorder permission after voice-clone removal", () => {
+  assert.equal(appConfig.permission?.["scope.record"], undefined);
 });
 
 test("home is the first tab and stays a status board without in-app chat", () => {

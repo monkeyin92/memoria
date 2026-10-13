@@ -41,13 +41,15 @@ SUBJECT_CAPABILITY_RULES = MappingProxyType(
         "memory_ledger": frozenset({"adult", "minor"}),
         "emotion_expression": frozenset({"unknown", "adult", "minor"}),
         "tutor": frozenset({"unknown", "adult", "minor"}),
-        "voice_clone": frozenset({"adult"}),
+        # Removed 2026-10-13: empty allow-set fails closed for every subject.
+        "voice_clone": frozenset(),
         "digital_self": frozenset({"adult"}),
         "self_preview": frozenset({"adult"}),
         "legacy_grant": frozenset({"adult"}),
         "legacy_receive": frozenset({"adult"}),
         "account_evolution": frozenset({"adult"}),
-        "speaker_enrollment": frozenset({"adult"}),
+        # Removed 2026-10-13: empty allow-set fails closed for every subject.
+        "speaker_enrollment": frozenset(),
         "raw_voice_archive": frozenset({"adult"}),
         "guardian_manage": frozenset({"adult"}),
         "guardian_weekly_report": frozenset({"minor"}),
@@ -120,20 +122,6 @@ def require_capability_for_account_id(
         profile.get("subject_category"),
         capability,
     )
-    if capability == "speaker_enrollment":
-        # A speaker profile is biometric identity authority.  Category alone
-        # is not sufficient: historical/default adult rows and accounts whose
-        # age evidence is still pending must remain fail-closed until the
-        # verified subject profile is committed by the trusted identity path.
-        if (
-            profile.get("subject_category") != "adult"
-            or profile.get("birth_year_band") != "adult"
-            or profile.get("age_evidence_status") != "verified"
-        ):
-            raise HTTPException(
-                status_code=403,
-                detail={"code": "subject_capability_forbidden", "capability": capability},
-            )
     return profile
 
 

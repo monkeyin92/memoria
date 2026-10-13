@@ -8,7 +8,6 @@ from services.control_api.app.database import MemoryStore
 from services.control_api.app.subject_verification import (
     ensure_account_person,
     maybe_verify_adult_from_wechat_phone,
-    speaker_enrollment_remediation,
 )
 from services.identity.in_memory_store import InMemoryIdentityStore
 from services.identity.service import IdentityService
@@ -91,16 +90,3 @@ async def test_account_sync_does_not_promote_protected_control_profile(
     assert store.get_subject_profile(user_id="owner-1") == original
 
 
-def test_speaker_enrollment_remediation_for_missing_phone() -> None:
-    remediation = speaker_enrollment_remediation(
-        block_code="subject_capability_forbidden",
-        registered=True,
-        has_wechat_phone=False,
-        subject={
-            "subject_category": "unknown",
-            "birth_year_band": "unknown",
-            "age_evidence_status": "unverified",
-        },
-    )
-    assert remediation is not None
-    assert remediation["steps"] == ["authorize_wechat_phone", "refresh_speaker_status"]

@@ -110,7 +110,6 @@ function baseStubs(overrides = {}) {
       bindings: [readyBinding],
     }),
     getProfile: async () => ({ display_name: "主人" }),
-    listVoiceProfiles: async () => ({ items: [] }),
     getDeliveredCapabilities: async () => ({}),
     getRuntimeProfile: async () => ({
       valid: true,
@@ -625,7 +624,7 @@ test("onUnload 后迟到加载不得改写页面且必须释放忙位", async ()
   });
 });
 
-test("人格与声音入口用 switchTab 打开伙伴 tab（navigateTo 打不开 tab 页）", async () => {
+test("伙伴入口用 switchTab 打开伙伴 tab（navigateTo 打不开 tab 页）", async () => {
   await withWx(async () => {
     const calls = [];
     global.wx.switchTab = ({ url }) => calls.push(["switchTab", url]);

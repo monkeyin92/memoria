@@ -316,7 +316,7 @@ test("consent catalogs keep sensitive capabilities off by default", () => {
   assert.equal(byId.offer_self_memory_retention_v1.defaultChecked, true);
   assert.equal(byId.offer_self_voice_profile_v1, undefined);
   assert.equal(byId.offer_self_raw_audio_v1.defaultChecked, false);
-  assert.equal(byId.offer_self_voice_clone_v1.defaultChecked, false);
+  assert.equal(byId.offer_self_voice_clone_v1, undefined);
   assert.equal(byId.offer_self_digital_self_v1.defaultChecked, false);
   assert.equal(byId.offer_self_legacy_v1.defaultChecked, false);
 
@@ -1006,11 +1006,6 @@ test("config action gate allows only a complete policy allow", async () => {
       data_classification: "biometric",
       safety_state: "normal",
     },
-    voice_sample_revoke: {
-      capability: "voice_clone_use",
-      data_classification: "biometric",
-      safety_state: "normal",
-    },
   };
   await withGateClient({}, async () => {
     const requests = installPolicyHttp((options) => {
@@ -1033,7 +1028,7 @@ test("config action gate allows only a complete policy allow", async () => {
       assert.deepEqual(gate.obligations, ["WRITE_POLICY_RECEIPT"]);
     }
     const decisions = requests.filter((item) => item.url.endsWith("/v1/policy/decisions"));
-    assert.equal(decisions.length, 3);
+    assert.equal(decisions.length, 2);
     assert.deepEqual(
       decisions.map((item) => item.data),
       Object.values(expected).map((spec) => ({
@@ -1252,7 +1247,7 @@ test("degradation is explainable and only present when unsafe", () => {
   const degradation = binding.degradationFor(safe);
   assert.ok(degradation.reasons.some((reason) => reason.includes("安全模式")));
   assert.ok(degradation.reasons.some((reason) => reason.includes("尚未确认")));
-  assert.ok(degradation.forbidden.includes("声音复刻"));
+  assert.ok(!degradation.forbidden.includes("声音复刻"));
   assert.ok(degradation.forbidden.includes("数字自我"));
   assert.ok(degradation.allowed.includes("普通聊天"));
 

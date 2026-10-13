@@ -80,8 +80,7 @@ def maybe_verify_adult_from_wechat_phone(
     """Promote unknown accounts to verified adult after WeChat phone binding.
 
     WeChat phone authorization is the trusted registration evidence for the
-    account owner on the control plane.  This unlocks ``speaker_enrollment``
-    without exposing biometric capture to the Mini Program client.
+    account owner on the control plane.
     """
 
     if not store.has_external_identity(user_id=user_id, provider="wechat_phone"):
@@ -116,60 +115,3 @@ def maybe_verify_adult_from_wechat_phone(
         now=now,
     )
 
-
-def speaker_enrollment_remediation(
-    *,
-    block_code: str | None,
-    registered: bool,
-    has_wechat_phone: bool,
-    subject: dict[str, Any] | None,
-) -> dict[str, Any] | None:
-    """Return client-safe next steps when speaker enrollment is blocked."""
-
-    if block_code is None:
-        return None
-    if block_code == "account_not_registered":
-        return {
-            "code": block_code,
-            "steps": ["register_account"],
-            "message": "请先完成账号注册后再登记主人声纹。",
-        }
-    if block_code == "minor_forbidden":
-        return {
-            "code": block_code,
-            "steps": ["use_adult_account"],
-            "message": "未成年人主体不能登记主人声纹。",
-        }
-    if block_code == "subject_category_unavailable":
-        return {
-            "code": block_code,
-            "steps": ["retry_later"],
-            "message": "主体资料暂时不可用，请稍后重试。",
-        }
-    if block_code != "subject_capability_forbidden":
-        return {
-            "code": block_code,
-            "steps": ["retry_later"],
-            "message": "当前还不能登记主人声纹，请稍后重试。",
-        }
-    category = (subject or {}).get("subject_category")
-    evidence = (subject or {}).get("age_evidence_status")
-    if not registered:
-        return {
-            "code": block_code,
-            "steps": ["register_account"],
-            "message": "请先完成账号注册后再登记主人声纹。",
-        }
-    if not has_wechat_phone:
-        return {
-            "code": block_code,
-            "steps": ["authorize_wechat_phone", "refresh_speaker_status"],
-            "message": "请先在微信登录时授权手机号，以完成已验证成人主体确认。",
-        }
-    if category != "adult" or evidence != "verified":
-        return {
-            "code": block_code,
-            "steps": ["refresh_speaker_status", "contact_support"],
-            "message": "主体资料尚未满足主人声纹所需的已验证成人条件。",
-        }
-    return None

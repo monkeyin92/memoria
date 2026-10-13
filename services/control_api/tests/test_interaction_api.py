@@ -427,7 +427,6 @@ async def test_capabilities_expose_explicit_preview_requirements(
     assert modes["self_preview"]["status"] == "blocked"
     assert modes["self_preview"]["missing"] == [
         "approved_digital_self_version",
-        "verified_owner_voice",
     ]
     assert modes["legacy"]["status"] == "blocked"
 

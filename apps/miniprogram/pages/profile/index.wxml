@@ -38,7 +38,7 @@
         <view class="row-icon"><glass-icon name="star" size="72"></glass-icon></view>
         <view class="row-copy">
           <text class="row-title">{{personaHeadline}}</text>
-          <text class="row-meta">人格与声音。下次唤醒才会换成对应声音</text>
+          <text class="row-meta">日常角色。下次唤醒才会换成对应声音</text>
         </view>
         <text class="row-chevron">›</text>
       </view>
@@ -105,19 +105,18 @@
         <view class="row-icon"><glass-icon name="shield" size="72"></glass-icon></view>
         <view class="row-copy">
           <text class="row-title">隐私与数据</text>
-          <text class="row-meta">授权、声音样本、导出与删除</text>
+          <text class="row-meta">授权、导出与删除</text>
         </view>
         <text class="row-chevron">›</text>
       </view>
     </view>
 
-    <!-- L2 功能层：声音复刻卡 -->
-    <view wx:if="{{voiceCloneAllowed}}" class="l2-card">
+    <view class="l2-card">
       <view class="card-lead">
         <glass-icon name="wave" size="80"></glass-icon>
-        <text class="l2-card-title">自定义人格与声音</text>
+        <text class="l2-card-title">自定义人格</text>
       </view>
-      <text class="l2-card-sub">对话只在机器人上进行。自定义人格用你写的名字说话，并在声音就绪后用你的声音。</text>
+      <text class="l2-card-sub">对话只在机器人上进行。自定义人格用你写的名字说话。</text>
       <view class="list-row" bindtap="openCustomPersona">
         <view class="row-copy">
           <text class="row-title">{{customPersonaLabel || '还没有分配到自定义人格'}}</text>
@@ -125,27 +124,6 @@
         </view>
         <text class="row-chevron">›</text>
       </view>
-      <text class="setting-desc">{{customPersonaId ? '这段声音会绑给这个自定义人格。' : '没有自定义人格时，克隆的声音用在你账号本人的声音上。'}}</text>
-      <text class="setting-desc">{{voiceCloneStatusLabel}}</text>
-      <view wx:if="{{voiceCloneEnrollment}}" class="enrollment-progress">
-        <view class="enrollment-head">
-          <text class="enrollment-stage">{{voiceCloneEnrollment.label}}</text>
-          <!-- progress 缺失时既不显示百分比，也不渲染进度条。 -->
-          <text wx:if="{{voiceCloneEnrollment.hasProgress}}" class="enrollment-percent">{{voiceCloneEnrollment.progressLabel}}</text>
-        </view>
-        <view wx:if="{{voiceCloneEnrollment.hasProgress}}" class="enrollment-bar">
-          <view
-            class="enrollment-bar-fill"
-            style="width:{{voiceCloneEnrollment.progressPercent}}%"
-          ></view>
-        </view>
-        <text class="enrollment-hint">{{voiceCloneEnrollment.hint}}</text>
-      </view>
-      <view class="button-row">
-        <button class="secondary-button" loading="{{voiceSampleBusy}}" disabled="{{voiceSampleBusy || recording || !voiceCloneActions.upload}}" bindtap="uploadVoiceSample">上传音频</button>
-        <button class="secondary-button" loading="{{voiceSampleBusy}}" disabled="{{voiceSampleBusy || (!recording && !voiceCloneActions.record)}}" bindtap="toggleVoiceRecord">{{recording ? '结束录音' : '对着麦克风录'}}</button>
-      </view>
-      <text wx:if="{{recording}}" class="caption">正在录音 {{recordSeconds}} 秒，请说满 10 秒后再点结束。</text>
     </view>
 
     <text class="group-label">账号</text>

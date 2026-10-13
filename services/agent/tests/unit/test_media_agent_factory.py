@@ -313,11 +313,6 @@ async def test_production_media_factory_does_not_replay_archive_during_session_c
     )
     monkeypatch.setattr(
         factory_module.ProductionMediaSessionFactory,
-        "_bind_speaker_authority",
-        lambda self, bound_runtime: None,
-    )
-    monkeypatch.setattr(
-        factory_module.ProductionMediaSessionFactory,
         "_configure_runtime",
         lambda self, bound_runtime, tts: None,
     )

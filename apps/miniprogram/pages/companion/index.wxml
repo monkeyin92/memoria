@@ -78,16 +78,8 @@
       </view>
       <view class="pill pill-teal">使用中</view>
     </view>
-    <view class="setting-row" bindtap="openVoiceClone">
-      <view class="row-icon"><glass-icon name="mic" size="72"></glass-icon></view>
-      <view class="row-copy">
-        <text class="row-title">我的自定义声音</text>
-        <text class="row-meta">需要单独同意与可用声音样本，在「我的」里录制或上传</text>
-      </view>
-      <text class="row-chevron">›</text>
-    </view>
   </view>
 
   <text class="caption">角色只影响表达风格，不改变你的资料权限。换伙伴后，机器人下一次对话起换成 TA 的声音。</text>
-  <text class="privacy-note">声音数据加密传输与存储于云端，可随时更换或撤回。</text>
+  <text class="privacy-note">角色音色来自产品设计音色，可在上方切换伙伴。</text>
 </view>

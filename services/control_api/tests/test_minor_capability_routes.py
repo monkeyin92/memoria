@@ -43,20 +43,11 @@ async def test_every_minor_forbidden_route_family_uses_the_subject_matrix(
         ).json()
         auth = {"Authorization": f"Bearer {refreshed['access_token']}"}
         checks = [
-            (
-                await client.post(
-                    "/v1/voices/consent",
-                    headers=auth,
-                    json={"accepted": True, "policy_version": "voice-clone-v1"},
-                ),
-                "voice_clone",
-            ),
             (await client.get("/v1/digital-self/versions", headers=auth), "digital_self"),
             (
                 await client.get("/v1/digital-self/preview-capability", headers=auth),
                 "self_preview",
             ),
-            (await client.get("/v1/speakers", headers=auth), "speaker_enrollment"),
             (await client.get("/v1/archive/raw-voice-consent", headers=auth), "raw_voice_archive"),
             (
                 await client.post(

@@ -214,7 +214,7 @@ test("self_use flow keeps sensitive offers off by default and submits clean payl
   assert.equal(offers.find((offer) => offer.id === "offer_self_memory_retention_v1").checked, true);
   assert.equal(offers.some((offer) => offer.id === "offer_self_voice_profile_v1"), false);
   assert.equal(offers.find((offer) => offer.id === "offer_self_raw_audio_v1").checked, false);
-  assert.equal(offers.find((offer) => offer.id === "offer_self_voice_clone_v1").checked, false);
+  assert.equal(offers.find((offer) => offer.id === "offer_self_voice_clone_v1"), undefined);
   assert.equal(offers.find((offer) => offer.id === "offer_self_digital_self_v1").checked, false);
   assert.equal(offers.find((offer) => offer.id === "offer_self_legacy_v1").checked, false);
 

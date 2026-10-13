@@ -47,7 +47,6 @@ from services.digital_self.response_planner import (
     PlannerSpeakerDecision,
     ResponsePlan,
 )
-from services.speaker.domain import SpeakerAuthorityPort
 
 router = APIRouter(prefix="/v1/digital-self", tags=["digital-self-preview"])
 _MAX_SOURCE_COUNT = 12
@@ -70,10 +69,6 @@ def _store(request: Request) -> MemoryStore:
     return cast(MemoryStore, request.app.state.memory_store)
 
 
-def _speaker(request: Request) -> SpeakerAuthorityPort:
-    return cast(SpeakerAuthorityPort, request.app.state.speaker_authority)
-
-
 def _error(status_code: int, code: str) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"code": code})
 
@@ -89,13 +84,6 @@ def _registered(request: Request, user: AuthenticatedUser) -> dict[str, Any]:
 def _step_up(account: Mapping[str, Any], password: str) -> None:
     if not verify_password(password, str(account["password_hash"])):
         raise _error(status.HTTP_403_FORBIDDEN, "step_up_failed")
-
-
-async def _active_owner_voice(request: Request, account_id: str) -> bool:
-    return any(
-        profile.status == "active"
-        for profile in await _speaker(request).profiles(account_id)
-    )
 
 
 async def _version(
@@ -180,7 +168,6 @@ async def preview_capability(
 ) -> dict[str, Any]:
     _registered(request, user)
     versions = await _versions(request).list(account_id=user.user_id)
-    active_voice = await _active_owner_voice(request, user.user_id)
     items: list[dict[str, Any]] = []
     for version in versions:
         stale = await _preview(request).version_stale(
@@ -213,8 +200,6 @@ async def preview_capability(
         )
     preview_versions = [item for item in items if item["preview_eligible"]]
     missing: list[str] = []
-    if not active_voice:
-        missing.append("verified_owner_voice")
     if not any(
         version.status in {"approved", "frozen"} for version in versions
     ):
@@ -226,7 +211,7 @@ async def preview_capability(
         "status": "available" if not missing else "blocked",
         "conversational": True,
         "missing": missing,
-        "active_owner_voice": active_voice,
+        "active_owner_voice": False,
         "versions": items,
     }
 
@@ -250,14 +235,6 @@ async def issue_preview_grant(
 ) -> dict[str, Any]:
     account = _registered(request, user)
     _step_up(account, body.password)
-    if not await _active_owner_voice(request, user.user_id):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": "preview_prerequisite_missing",
-                "missing": ["verified_owner_voice"],
-            },
-        )
     await _version(
         request,
         account_id=user.user_id,
