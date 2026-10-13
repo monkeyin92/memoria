@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -103,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if not args.check_only:
-        for story_id, title, freq in STORIES:
+        for story_id, _title, freq in STORIES:
             _ffmpeg_placeholder(
                 STORIES_DIR / f"{story_id}.ogg",
                 seconds=args.seconds,
