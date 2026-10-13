@@ -114,17 +114,12 @@ test("cold start, memory, home and device surfaces never create a RecorderManage
   matches(scoped, /getRecorderManager/, "冷启动/首页/回顾/设备页创建 RecorderManager");
 });
 
-test("RecorderManager is limited to custom voice samples on the profile page", () => {
+test("RecorderManager is unused after voice-clone removal", () => {
   const files = productionSources();
   const hits = files
     .filter((file) => /getRecorderManager|RecorderManager/.test(fs.readFileSync(file, "utf8")))
     .map((file) => path.relative(root, file));
-  assert.deepEqual(hits, ["pages/profile/index.js"]);
-  const recordHits = files
-    .filter((file) => /scope\.record/.test(fs.readFileSync(file, "utf8")))
-    .map((file) => path.relative(root, file))
-    .sort();
-  assert.deepEqual(recordHits, ["app.json", "pages/profile/index.js"]);
+  assert.deepEqual(hits, []);
 });
 
 test("phone voiceprint enrollment page is fully removed", () => {
@@ -149,9 +144,9 @@ test("phone voiceprint enrollment page is fully removed", () => {
   assert.doesNotMatch(apiSource, /enrollSpeakerProfiles|\/v1\/speakers\/enrollments/, "api.js 不得保留声纹上传函数");
 });
 
-test("voiceprint is gone from every page, only voice cloning stays", () => {
+test("voiceprint and voice cloning are gone from every page", () => {
   // 声纹整体下线：使用人身份来自设备绑定。页面不得再出现声纹文案，也不得
-  // 发起或读取说话人登记；声音复刻（声音样本 / 自定义声音）是另一项能力，保留。
+  // 发起或读取说话人登记；声音复刻已整体下线。
   const pageFiles = [];
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -181,7 +176,12 @@ test("voiceprint is gone from every page, only voice cloning stays", () => {
   const complianceSource = fs.readFileSync(path.join(root, "utils", "compliance.js"), "utf8");
   assert.doesNotMatch(complianceSource, /声纹/);
   const profile = fs.readFileSync(path.join(root, "pages", "profile", "index.wxml"), "utf8");
-  assert.match(profile, /自定义人格与声音/);
+  assert.match(profile, /自定义人格/);
+  assert.doesNotMatch(profile, /声音复刻|对着麦克风录|上传音频/);
+  assert.equal(
+    CONSENT_OFFERS.some((offer) => offer.id === "offer_self_voice_clone_v1"),
+    false,
+  );
 });
 
 test("deleted media modules stay deleted", () => {

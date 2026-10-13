@@ -186,7 +186,6 @@ class ProductionMediaSessionFactory:
                 )
                 or frozen_companion_clone_permitted(runtime.mode_policy),
             )
-            self._bind_speaker_authority(runtime)
             await self._bind_archive(runtime)
             self._configure_runtime(runtime, tts)
             await runtime.orchestrator.ready()
@@ -339,39 +338,6 @@ class ProductionMediaSessionFactory:
             )
         )
 
-    def _bind_speaker_authority(self, runtime: DuplexRuntime) -> None:
-        settings = self.settings
-        if not settings.speaker_authority_enabled:
-            return
-        from services.agent.src.speaker_authority_client import (
-            SpeakerAuthorityClient,
-            SpeakerAuthorityClientConfig,
-        )
-
-        authority = SpeakerAuthorityClient(
-            SpeakerAuthorityClientConfig(
-                endpoint=settings.speaker_authority_url,
-                internal_token=settings.speaker_internal_token.get_secret_value(),
-                timeout_s=settings.speaker_authority_timeout_s,
-            )
-        )
-
-        async def classify(pcm: bytes, sample_rate: int) -> Any:
-            try:
-                return await authority.classify(
-                    session_id=runtime.session_id,
-                    pcm=pcm,
-                    sample_rate=sample_rate,
-                )
-            finally:
-                runtime.set_reject_non_owner_voice(authority.reject_non_owner_voice)
-
-        runtime.set_speaker_classifier(
-            classify,
-            sample_rate=settings.funasr_sample_rate,
-            timeout_s=settings.speaker_authority_timeout_s,
-        )
-        runtime.set_target_speaker_focus(True)
 
     async def _bind_voice_profile(
         self,

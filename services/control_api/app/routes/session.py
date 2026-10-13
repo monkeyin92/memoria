@@ -51,7 +51,6 @@ from services.digital_self.domain import (
     PersonaTraitManifestEntry,
     RelationshipProfileManifestEntry,
     VersionNotFoundError,
-    VoiceProfileManifestRef,
 )
 from services.digital_self.preview import (
     PreviewConflictError,
@@ -79,9 +78,7 @@ from services.session_runtime.service import (
     PostgresSessionRuntimeService,
     StartPersistentSessionCommand,
 )
-from services.speaker.domain import SpeakerAuthorityPort
 from services.tutor.domain import SessionFocus
-from services.voice_profile.domain import VoiceProfilePort, VoiceResolution
 
 router = APIRouter(prefix="/v1/sessions", tags=["sessions"])
 logger = logging.getLogger(__name__)
@@ -101,54 +98,6 @@ _WORKSPACE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _STOP_REQUESTS: list[dict[str, Any]] = []
 _STOP_IDEMPOTENCY: dict[tuple[str, str, str], dict[str, Any]] = {}
 _STOP_DISPATCH_PENDING: dict[tuple[str, str, str], dict[str, Any]] = {}
-
-
-def _matching_preview_voice(
-    ref: VoiceProfileManifestRef | None,
-    resolution: VoiceResolution,
-) -> tuple[
-    str | None,
-    int | None,
-    str | None,
-    str | None,
-    str | None,
-    str | None,
-    str | None,
-]:
-    expires_at = (
-        resolution.provider_expires_at.isoformat()
-        if resolution.provider_expires_at is not None
-        else None
-    )
-    speaker_sha256 = (
-        hashlib.sha256(resolution.voice_id.encode("utf-8")).hexdigest()
-        if resolution.voice_id is not None
-        else None
-    )
-    if (
-        ref is None
-        or resolution.mode != "active"
-        or resolution.voice_kind != "personal"
-        or resolution.profile_id != ref.profile_id
-        or resolution.version_number != ref.version_number
-        or resolution.provider != ref.provider
-        or resolution.model != ref.target_model
-        or resolution.resource_id != ref.resource_id
-        or expires_at != ref.provider_expires_at
-        or speaker_sha256 != ref.speaker_sha256
-    ):
-        return None, None, None, None, None, None, None
-    return (
-        ref.profile_id,
-        ref.version_number,
-        ref.provider,
-        ref.target_model,
-        ref.resource_id,
-        ref.provider_expires_at,
-        ref.speaker_sha256,
-    )
-
-
 def _manifest_item_refs(version: DigitalSelfVersion) -> frozenset[LegacyManifestItemRef]:
     refs: set[LegacyManifestItemRef] = set()
     for entry in version.manifest.entries:
@@ -510,11 +459,6 @@ async def create_session(
             )
             if not _legacy_relationship_matches(legacy_grant, relationship, version):
                 raise LegacyAccessDeniedError("legacy relationship snapshot is unavailable")
-            speaker_authority = cast(SpeakerAuthorityPort, request.app.state.speaker_authority)
-            if not any(
-                profile.status == "active" for profile in await speaker_authority.profiles(user_id)
-            ):
-                raise LegacyAccessDeniedError("legacy actor voice is not verified")
         except (
             LegacyAccessDeniedError,
             LegacyNotFoundError,
@@ -580,44 +524,18 @@ async def create_session(
                 status_code=409,
                 detail={"code": "preview_version_unavailable"},
             )
-        speaker_authority = cast(SpeakerAuthorityPort, request.app.state.speaker_authority)
-        if not any(
-            profile.status == "active" for profile in await speaker_authority.profiles(user_id)
-        ):
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "preview_prerequisite_missing",
-                    "missing": ["verified_owner_voice"],
-                },
-            )
-        voice_resolution = await cast(
-            VoiceProfilePort, request.app.state.voice_profile_manager
-        ).resolve(account_id=user_id)
-        (
-            voice_profile_id,
-            voice_profile_version,
-            voice_provider,
-            voice_model,
-            voice_resource_id,
-            voice_provider_expires_at,
-            voice_speaker_sha256,
-        ) = _matching_preview_voice(
-            version.manifest.source_summary.voice_profile,
-            voice_resolution,
-        )
         preview_frozen = ModePolicy.freeze_self_preview(
             version_id=version.version_id,
             manifest_sha256=version.manifest_sha256,
             preview_grant_id=grant.grant_id,
             perspective=grant.perspective,
-            voice_profile_id=voice_profile_id,
-            voice_profile_version=voice_profile_version,
-            voice_provider=voice_provider,
-            voice_model=voice_model,
-            voice_resource_id=voice_resource_id,
-            voice_provider_expires_at=voice_provider_expires_at,
-            voice_speaker_sha256=voice_speaker_sha256,
+            voice_profile_id=None,
+            voice_profile_version=None,
+            voice_provider=None,
+            voice_model=None,
+            voice_resource_id=None,
+            voice_provider_expires_at=None,
+            voice_speaker_sha256=None,
             fallback_voice_profile_id=companion.designed_voice_profile,
             fallback_voice_provider="volcengine_doubao",
             fallback_voice_model="seed-tts-2.0",
@@ -628,36 +546,15 @@ async def create_session(
     legacy_frozen: FrozenMode | None = None
     if body.interaction_mode == "legacy":
         assert legacy_access is not None and legacy_grant is not None
-        legacy_version = await request.app.state.digital_self_registry.get(
-            account_id=legacy_access.resource_owner_account_id,
-            version_id=legacy_access.version_id,
-        )
-        if legacy_access.voice_allowed:
-            voice_resolution = await cast(
-                VoiceProfilePort, request.app.state.voice_profile_manager
-            ).resolve(account_id=legacy_access.resource_owner_account_id)
-            (
-                voice_profile_id,
-                voice_profile_version,
-                voice_provider,
-                voice_model,
-                voice_resource_id,
-                voice_provider_expires_at,
-                voice_speaker_sha256,
-            ) = _matching_preview_voice(
-                legacy_version.manifest.source_summary.voice_profile,
-                voice_resolution,
-            )
-        else:
-            (
-                voice_profile_id,
-                voice_profile_version,
-                voice_provider,
-                voice_model,
-                voice_resource_id,
-                voice_provider_expires_at,
-                voice_speaker_sha256,
-            ) = (None, None, None, None, None, None, None)
+        (
+            voice_profile_id,
+            voice_profile_version,
+            voice_provider,
+            voice_model,
+            voice_resource_id,
+            voice_provider_expires_at,
+            voice_speaker_sha256,
+        ) = (None, None, None, None, None, None, None)
         legacy_frozen = ModePolicy.freeze_legacy(
             actor_account_id=user_id,
             resource_owner_account_id=legacy_access.resource_owner_account_id,

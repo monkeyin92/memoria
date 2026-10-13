@@ -1,0 +1,7 @@
+ts	phase	decision	why	evidence	result
+2026-10-13T11:16:56Z	start	remove voiceprint enrollment and voice cloning (Monkey In Oct 13)	product decision: no feature flag; leave DB tables; keep #217 memory	user_query	open
+2026-10-13T11:16:56Z	frame	done when no HTTP/agent/miniprogram path stores voice samples or templates; CI green; schema SQL kept; #217 child layers intact	falsifiable predicate for figure-it-out Phase A	.audit/remove-voiceprint-voice-clone.tsv	framed
+2026-10-13T11:17:52Z	harness	verification lever scripts/check_no_server_voiceprint_clone.py; baseline should fail	build the lever before deletion	scripts/check_no_server_voiceprint_clone.py	baseline FAIL expected
+2026-10-13T11:25:19Z	unit	deleted speaker routes, slimmed voice.py, stripped agent enrollment client and miniprogram clone UI	product decision: remove enrollment and cloning with no feature flag	scripts/check_no_server_voiceprint_clone.py	lever pending
+2026-10-13T11:41:25Z	verify	lever green; module budget PASS; miniprogram 357 pass; control/agent/#217 pytest green	prove against real artifact	scripts/check_no_server_voiceprint_clone.py	VERIFIED
+2026-10-13T11:43:21Z	commit	stage removal: routes, agent enrollment, miniprogram UI, feature-only tests/docs; DB schemas kept	subtract before add; migrate callers then delete; leave tables for later drop	scripts/check_no_server_voiceprint_clone.py	ready to push

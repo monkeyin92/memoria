@@ -13,36 +13,13 @@ from urllib.parse import urlsplit
 
 import jwt
 import pytest
-from cryptography.fernet import Fernet
 from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 from services.control_api.app import wechat_auth
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.main import create_app
 from services.control_api.app.routes import auth as auth_routes
-from services.speaker.authority import SpeakerAuthority
-from services.speaker.domain import EmbeddingResult
 from testing import app_store
-
-
-class _RestartEmbeddingAdapter:
-    model_version = "campplus-restart-test-v1"
-
-    async def embed(self, pcm: bytes, *, sample_rate: int) -> EmbeddingResult:
-        _ = sample_rate
-        vectors = {
-            b"owner-01": (1.0, 0.0),
-            b"owner-02": (0.99, 0.01),
-            b"owner-03": (0.98, 0.02),
-        }
-        return EmbeddingResult(
-            vector=vectors[pcm],
-            speech_ms=1800,
-            snr_db=20,
-            quality_score=0.95,
-            replay_risk=0.02,
-            synthetic_risk=0.02,
-        )
 
 
 def _configure_test_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -1345,22 +1322,12 @@ def test_echolife_import_does_not_resurrect_a_deleted_wechat_identity(
 
 
 @pytest.mark.asyncio
-async def test_registered_identity_keeps_chat_speaker_and_voice_data_after_restart(
+async def test_registered_identity_keeps_chat_data_after_restart(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     _configure_test_app(monkeypatch, tmp_path)
-    speaker_key = Fernet.generate_key().decode("ascii")
-    speaker_database = tmp_path / "speakers.sqlite3"
-    monkeypatch.setenv("MEMORIA_SPEAKER_DB_PATH", str(speaker_database))
-    monkeypatch.setenv("MEMORIA_SPEAKER_TEMPLATE_KEY", speaker_key)
-    monkeypatch.setenv("MEMORIA_VOICE_SAMPLE_STORE_PATH", str(tmp_path / "voice-samples"))
     app = create_app()
-    app.state.speaker_authority = SpeakerAuthority.sqlite(
-        speaker_database,
-        template_key=speaker_key,
-        adapter=_RestartEmbeddingAdapter(),
-    )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         account = await _register_verified_adult(
@@ -1380,30 +1347,8 @@ async def test_registered_identity_keeps_chat_speaker_and_voice_data_after_resta
                 "text": "这是需要跨重启保留的聊天。",
             },
         )
-        voice_consent = await client.post(
-            "/v1/voices/consent",
-            headers=original_headers,
-            json={"accepted": True, "policy_version": "voice-clone-v1"},
-        )
-        speaker = await client.post(
-            "/v1/speakers/enrollments",
-            headers=original_headers,
-            json={
-                "consent_policy_version": "speaker-biometric-v1",
-                "consent_accepted": True,
-                "samples": [
-                    {
-                        "audio_base64": base64.b64encode(sample).decode("ascii"),
-                        "sample_rate": 16000,
-                    }
-                    for sample in (b"owner-01", b"owner-02", b"owner-03")
-                ],
-            },
-        )
 
     assert message.status_code == 201
-    assert voice_consent.status_code == 201
-    assert speaker.status_code == 201
     with app.state.memory_store.connection() as connection:
         stored_password = connection.execute(
             "SELECT password_hash FROM accounts WHERE user_id = ?",
@@ -1413,12 +1358,6 @@ async def test_registered_identity_keeps_chat_speaker_and_voice_data_after_resta
     assert "safe-passphrase" not in stored_password
 
     restarted_app = create_app()
-    # The same speaker file the first app wrote, as on a real restart.
-    restarted_app.state.speaker_authority = SpeakerAuthority.sqlite(
-        speaker_database,
-        template_key=speaker_key,
-        adapter=_RestartEmbeddingAdapter(),
-    )
     async with AsyncClient(
         transport=ASGITransport(app=restarted_app),
         base_url="http://test",
@@ -1437,15 +1376,15 @@ async def test_registered_identity_keeps_chat_speaker_and_voice_data_after_resta
             headers=restarted_headers,
             params={"user_id": restarted_identity["user_id"]},
         )
-        voices = await client.get("/v1/voices/profiles", headers=restarted_headers)
-        speakers = await client.get("/v1/speakers", headers=restarted_headers)
+        gone_voices = await client.get("/v1/voices/profiles", headers=restarted_headers)
+        gone_speakers = await client.get("/v1/speakers", headers=restarted_headers)
 
     assert resumed.status_code == 200
     assert logged_in.status_code == 200
     assert restarted_identity["user_id"] == account["user_id"]
     assert days.json()["items"][0]["message_count"] == 1
-    assert voices.json()["consent"]["policy_version"] == "voice-clone-v1"
-    assert speakers.json()["items"][0]["profile_id"] == speaker.json()["profile_id"]
+    assert gone_voices.status_code == 404
+    assert gone_speakers.status_code == 404
 
 
 @pytest.mark.asyncio

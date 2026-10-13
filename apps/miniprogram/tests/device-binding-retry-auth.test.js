@@ -366,7 +366,6 @@ test("profile retry 恢复登录后正常同步", async () => {
       };
     },
     getProfile: async () => ({ display_name: "主人" }),
-    listVoiceProfiles: async () => ({ items: [] }),
     getDeliveredCapabilities: async () => ({}),
     requireRuntimeCapability: async () => ({ allowed: false }),
   });

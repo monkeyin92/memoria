@@ -219,7 +219,7 @@ function errorFromResponse(response) {
                                 : code === "identity_authority_unavailable"
                                   ? "暂时无法确认身份资料，已按受限模式处理。"
                                   : code === "voice_clone_forbidden" || code === "voice_clone"
-                            ? "当前账号未开启声音复刻。"
+                            ? "当前账号不支持该能力。"
                           : code === "minor_forbidden"
                                 ? "学生账号不开放这项能力。"
                                 : code === "CLAIM_CONFLICT"
@@ -389,75 +389,11 @@ function getProfile(userId) {
   return rawRequest(`/v1/memory/profile/${encodeURIComponent(userId)}`);
 }
 
-function grantVoiceCloneConsent() {
-  return rawRequest("/v1/voices/consent", {
-    method: "POST",
-    data: { accepted: true, policy_version: "voice-clone-v1" },
-  });
-}
 
-function listVoiceProfiles() {
-  return rawRequest("/v1/voices/profiles");
-}
 
-function revokeVoiceProfile(profileId) {
-  if (typeof profileId !== "string" || !profileId) {
-    return Promise.reject(new ApiError("声音档案无效。", { status: 400 }));
-  }
-  return rawRequest(`/v1/voices/profiles/${encodeURIComponent(profileId)}`, {
-    method: "DELETE",
-  });
-}
 
-function revokeVoiceCloneConsent() {
-  return rawRequest("/v1/voices/consent", { method: "DELETE" });
-}
 
-function readyVoiceForDevice(profileId) {
-  return rawRequest(
-    `/v1/voices/profiles/${encodeURIComponent(profileId)}/ready-for-device`,
-    { method: "POST" },
-  );
-}
 
-function enrollVoiceClone({
-  audioBase64,
-  mediaType,
-  durationMs,
-  sampleRate = 16000,
-  enrollmentKey,
-  readyForDevice = true,
-  customPersonaId = "",
-}) {
-  const data = {
-    audio_base64: audioBase64,
-    media_type: mediaType,
-    duration_ms: durationMs,
-    sample_rate: sampleRate,
-    ready_for_device: Boolean(readyForDevice),
-    ...(enrollmentKey ? { enrollment_key: enrollmentKey } : {}),
-    // 只提交服务端已确认属于本账号的自定义人格 id；留空表示账号本人的声音。
-    ...(customPersonaId ? { custom_persona_id: customPersonaId } : {}),
-  };
-  return rawRequest("/v1/voices/enrollments", {
-    method: "POST",
-    timeout: 120000,
-    data,
-  }).catch((error) => {
-    if (!readyForDevice || error?.status !== 422) throw error;
-    // 旧服务端连 ready_for_device 都不认：自定义人格字段同样不可用。
-    const {
-      ready_for_device: _ignored,
-      custom_persona_id: _ignoredPersona,
-      ...legacy
-    } = data;
-    return rawRequest("/v1/voices/enrollments", {
-      method: "POST",
-      timeout: 120000,
-      data: legacy,
-    });
-  });
-}
 
 function getGuardianLinks() {
   return rawRequest("/v1/guardian/links").then(normalizeGuardianLinks);
@@ -1160,7 +1096,7 @@ function updateDeviceSettings(deviceId, changes, { expectedVersion } = {}) {
 }
 
 /*
- * 解析当前会话主体（§9.2）。客户端不发送声纹原始数据，只传服务端
+ * 解析当前会话主体（§9.2）。客户端只传服务端
  * 已知的设备与会话标识。
  */
 function resolveSessionSubject({
@@ -1215,7 +1151,7 @@ function getRuntimeProfile(deviceId, { sessionId = null } = {}) {
 
 /*
  * 切换当前使用者（§9.5）。confirmation_method 只允许服务端声明的
- * 确认方式（如 app_confirm），客户端不能自行断言已通过声纹确认。
+ * 确认方式（如 app_confirm），客户端不能自行断言使用人身份已确认。
  * 同样受请求代次与 session_epoch 单调守卫：切换后只保存 epoch 提升的
  * 新 profile，晚到响应返回 null。
  */
@@ -1418,12 +1354,6 @@ module.exports = {
   logoutAllDevices,
   requestAccountDeletion,
   getProfile,
-  grantVoiceCloneConsent,
-  listVoiceProfiles,
-  revokeVoiceProfile,
-  revokeVoiceCloneConsent,
-  readyVoiceForDevice,
-  enrollVoiceClone,
   getGuardianLinks,
   getBindingSubjectCandidates,
   getGuardianSummary,

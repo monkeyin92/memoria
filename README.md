@@ -19,7 +19,7 @@ ESP32-S3 -> Go Media Edge -> Python Voice Core / Agent
 
 机器人外形尚未确定；星澜、桃喜、绵绵、阿序、玄墨等吉祥物阵容为**占位资产**，商业计划书等对外材料可暂用，不绑定最终外形，后续可整体替换。
 
-声纹门禁、按需档案、带标识导出与可证明删除是贯穿的能力底座，不是定位本身；「家庭桌面记忆终端 / 声纹档案音箱」的旧叙事不再作为定位表述，仅作能力描述保留。
+按需档案、带标识导出与可证明删除是贯穿的能力底座。声纹登记与声音复刻已下线；身份来自设备绑定。
 
 ## 文档与权威
 
@@ -159,7 +159,7 @@ Wi-Fi 密码只通过加密 BLE 会话进入设备，不经过普通 HTTPS 业�
 
 小程序「解除绑定」（`POST /v1/devices/{id}/binding/unbind`）先撤销 Identity 绑定，再释放设备档案里的绑定（`DeviceOnboardingService.release_device_binding`，实现见 `services/device_fleet/binding_release.py`）：设备回到 `provisioned`、清空 actor/binding，对应的 fleet binding 与已提交 claim 标为 `released`，`activation_version` 与单调计数器保留，下一次绑定的清单版本继续递增。响应里的 `device_released` 表示这一步是否生效；它按 `binding_id` 匹配，重复调用无副作用，失败只记日志（Identity 撤销已生效并隔离记忆）。此后设备的 Activation Manifest 与 display-profile 都答 `409`，在线设备约 20 秒内核对清单后重启并显示二维码，任何账号都能按首次启用流程重新认领。
 
-小程序仍是控制面：手机不采集声纹，不参与机器人实时对话。主人声纹登记由小程序记录明确授权，再由已绑定设备采集有界语音样本并提交 Speaker Authority；`requested`、`pending`、`active` 是服务端权威状态，shadow 档案未激活前不得宣传为主人认证。
+小程序仍是控制面：手机不采集声纹，不参与机器人实时对话。声纹登记与声音复刻已移除；使用人身份来自设备绑定。
 
 当前启用链路的线上、板卡和小程序证据以及仍待完成的真实对话验收见 `HANDOFF.md`。
 

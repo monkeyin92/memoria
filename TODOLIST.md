@@ -360,7 +360,7 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 - 现状：暂不用声纹（`MEMORIA_SPEAKER_AUTHORITY_ENABLED` 自 2026-09-25 为 false）；设备只服务绑定时选定的使用人（孩子；老人 / 本人绑定 2026-10-04 起不在范围内）；家长只看摘要、趋势、风险提醒，不看孩子原文；孩子的长期记忆需家长在绑定时勾选（默认不勾）；同意长期有效直到撤销；解绑撤销同意并询问是否删除；监护小结（`guardian_summary_view`）随长期记忆勾选一起授予，存量绑定要重新绑定或在家长页重开长期记忆开关才获得。按使用人删除流程（可续跑、有进度记录）已上线。
 - 设备信任分档（#153，`MEMORIA_BOUND_DEVICE_TRUST_ENABLED=true` 自 2026-10-01 00:30）：生产设备没有 attestation（`device_fleet_attestations` 0 行），绑定链路上的设备按 `trusted` 只放行 `memory_capture`、`memory_recall_private`、`guardian_summary_view`，其余仍要 `verified`（硬件 attestation）。运维步骤见 `docs/runbooks/release-rollback.md`「设备信任开关」。残余风险：设备私钥种子在普通 NVS 分区，取出私钥的人可在电脑上冒充设备、通过对话召回孩子的记忆，家长解绑即 `revoked`，根治要固件开 flash 与 NVS 加密；`trusted` 不防被改过的固件；真硬件 attestation 留作后续。
 - 待完成设备验收：新设备会话 profile 含 `memory_recall_private` 且没有其他敏感能力 → `archive_processing_outbox` 为 completed 而非 dead → 隔天追问能记起 → 家长小程序出现小结入口（回顾页见 N-4）；孩子绑定一次（10-05 重绑已有一次）后隔天仍记得前一天说过的事；播放期回声不自答、刚播完的回声「再见」不结束会话、真人「再见」能结束；家长端看不到孩子原文；撤销后不再记忆。编译与向量写入自 08-08 后没在现网跑过，可能暴露新问题。
-- 未做：声纹代码与 `speaker-model` 容器待设备验证后清理；危机推送订阅号未开通（功能另分支，默认关闭）。已知残留（按使用人删除覆盖不到的）：已推送到 Redis 的记忆事件无法撤回（随流修剪老化）；`speech_style_stats` 聚合、persona / digital-self 快照、`entity_ids` 数组无行级来源可追。
+- 已做：服务端声纹登记 / 声音复刻路由与小程序入口已移除（表结构保留，后续 PR 再 drop）；危机推送订阅号未开通（功能另分支，默认关闭）。已知残留（按使用人删除覆盖不到的）：已推送到 Redis 的记忆事件无法撤回（随流修剪老化）；`speech_style_stats` 聚合、persona / digital-self 快照、`entity_ids` 数组无行级来源可追。
 
 ### [ ] P1-13 《人工智能拟人化互动服务管理暂行办法》（2026-07-15 已施行）对照与补缺
 

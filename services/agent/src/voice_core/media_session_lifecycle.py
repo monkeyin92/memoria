@@ -183,8 +183,6 @@ class MediaSessionLifecycleMixin:
 
         async def _refuse_minor_quiet_hours(self, context: _MediaVoiceSession) -> bool: ...
 
-        def _spawn_device_speaker_enrollment(self, context: _MediaVoiceSession) -> None: ...
-
         def _cancel_max_user_speech_watchdog(
             self, context: _MediaVoiceSession
         ) -> None: ...
@@ -625,7 +623,6 @@ class MediaSessionLifecycleMixin:
             if await self._refuse_minor_quiet_hours(created):
                 return created
             await self._speak_device_wake_ack(created)
-            self._spawn_device_speaker_enrollment(created)
             return created
         except BaseException as exc:
             if created is not None:

@@ -4,7 +4,6 @@ const { companions, companionById, defaultCompanionId } = require("../../utils/c
 const { requireLogin } = require("../../utils/auth-gate");
 const { MODE_META, readBindingManifest, entryAllowed } = require("../../utils/device-binding");
 const contracts = require("../../utils/multi-subject-contracts");
-const voiceState = require("../../utils/voice-enrollment-state");
 
 const defaultProfile = {
   display_name: "新朋友",
@@ -16,8 +15,6 @@ const defaultProfile = {
 
 const DELETE_CONFIRMATION_TEXT = "永久删除我的全部数据";
 
-// 声音复刻进度轮询节奏：服务端接管后每 2 秒读一次档案状态。
-const VOICE_CLONE_POLL_INTERVAL_MS = 2000;
 
 // 只有服务端会把自定义人格写进 Runtime Profile 的 persona；非 cu_ 前缀表示
 // 内置人格，克隆声音时不该带 custom_persona_id。
@@ -53,9 +50,6 @@ function clampCloneDuration(durationMs) {
   return value;
 }
 
-function voiceCloneStatusData(label) {
-  return voiceState.voiceCloneStatusData(label);
-}
 
 function profileInitialFor(displayName) {
   const name = String(displayName || "").trim();
@@ -235,11 +229,6 @@ Page({
     deliveredCapabilitiesLoading: false,
     customPersonaId: "",
     customPersonaLabel: "",
-    voiceCloneAllowed: false,
-    ...voiceState.idleVoiceCloneView(),
-    voiceSampleBusy: false,
-    recording: false,
-    recordSeconds: 0,
     ...deviceBindingReset(),
     complianceCopy: {
       positioning: compliance.PRODUCT_POSITIONING,
@@ -288,19 +277,6 @@ Page({
     this._deviceBindingBusy = false;
     this._deviceBindingBusyKey = "";
     this._deviceBindingRequest = null;
-    this._stopRecordingTimer();
-    this._stopVoiceClonePoll();
-    // 起一次表就会 +1 代数，使在途轮询的迟到结果失效，也放掉忙位，
-    // 免得同一实例再次 onShow 时被旧请求挡住。
-    this._voiceClonePollSeq = (this._voiceClonePollSeq || 0) + 1;
-    this._voiceClonePollBusy = false;
-    if (this.data.recording && this._recorder) {
-      try {
-        this._recorder.stop();
-      } catch {
-        // Recorder stop is best effort when leaving the page.
-      }
-    }
     if (this._unsubscribeAuthCleared) {
       this._unsubscribeAuthCleared();
       this._unsubscribeAuthCleared = null;
@@ -317,10 +293,6 @@ Page({
     this._deviceBindingBusyKey = "";
     this._deviceBindingRequest = null;
     this._lastCapabilityState = null;
-    // 退出登录后不再轮询声音复刻进度，避免用旧身份继续请求。
-    this._stopVoiceClonePoll();
-    this._voiceCloneEnrolling = false;
-    this._voiceCloneView = null;
     this.setData({
       authenticated: false,
       identity: null,
@@ -345,11 +317,6 @@ Page({
       deliveredCapabilitiesLoading: false,
       customPersonaId: "",
       customPersonaLabel: "",
-      voiceCloneAllowed: false,
-      ...voiceState.idleVoiceCloneView(),
-      voiceSampleBusy: false,
-      recording: false,
-      recordSeconds: 0,
       ...deviceBindingReset(),
     });
   },
@@ -510,10 +477,9 @@ Page({
       const profile = { ...defaultProfile, ...(await api.getProfile(identity.user_id)) };
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       // 使用人身份来自设备绑定，这里不再读取说话人识别（speaker enrollment）状态。
-      const [capabilityState, voiceCloneState] = await Promise.all([
+      const [capabilityState] = await Promise.all([
         this.loadRuntimeCapabilities(),
-        this.loadVoiceCloneStatus(),
-      ]);
+              ]);
       const customPersonaState = capabilityState.customPersonaId
         ? await this.loadCustomPersonaLabel(capabilityState.customPersonaId)
         : { customPersonaId: "", customPersonaLabel: "" };
@@ -529,10 +495,7 @@ Page({
         accountId: identity.user_id,
         ...capabilityState,
       });
-      // 声音复刻进度单独写回：轮询与进入页面共用同一套变更判断。
-      this._applyVoiceCloneState(voiceCloneState);
       // 回到这一页（onShow 会重新加载）时，若服务端仍在生成就把进度接上。
-      this._ensureVoiceClonePoll();
     } catch (error) {
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ error: error?.message || "个人资料无法加载。" });
@@ -558,7 +521,6 @@ Page({
         digitalSelfEntryAllowed: false,
         guardianEntryAllowed: false,
         rawVoiceEntryAllowed: false,
-        voiceCloneAllowed: false,
         customPersonaId: "",
         profileUnavailableReason: reasonByState[this.data.deviceBindingState] ||
           "设备绑定状态不完整，无法取得 Runtime Profile。",
@@ -575,7 +537,6 @@ Page({
           digitalSelfEntryAllowed: false,
           guardianEntryAllowed: false,
           rawVoiceEntryAllowed: false,
-          voiceCloneAllowed: false,
           customPersonaId: "",
           profileUnavailableReason: "能力状态正在刷新，请稍后重试。",
         };
@@ -588,7 +549,6 @@ Page({
           digitalSelfEntryAllowed: false,
           guardianEntryAllowed: false,
           rawVoiceEntryAllowed: false,
-          voiceCloneAllowed: false,
           customPersonaId: "",
           profileUnavailableReason: "服务端返回的 Runtime Profile 校验失败，敏感能力已关闭。",
         };
@@ -597,11 +557,10 @@ Page({
       const state = {
         hasRuntimeProfile: true,
         runtimeCapabilities: capabilities,
-        speakerEntryAllowed: entryAllowed(profile, contracts.Capability.VoiceProfileCreate),
+        speakerEntryAllowed: false,
         digitalSelfEntryAllowed: entryAllowed(profile, contracts.Capability.DigitalSelfPreview),
         guardianEntryAllowed: entryAllowed(profile, contracts.Capability.GuardianSummaryView),
         rawVoiceEntryAllowed: entryAllowed(profile, contracts.Capability.RawAudioRetention),
-        voiceCloneAllowed: entryAllowed(profile, contracts.Capability.VoiceCloneUse),
         customPersonaId: customPersonaIdFor(profile),
         profileUnavailableReason: "",
       };
@@ -615,7 +574,6 @@ Page({
         digitalSelfEntryAllowed: false,
         guardianEntryAllowed: false,
         rawVoiceEntryAllowed: false,
-        voiceCloneAllowed: false,
         customPersonaId: "",
         profileUnavailableReason: "Runtime Profile 获取失败，敏感能力入口已关闭。",
       };
@@ -749,298 +707,6 @@ Page({
   },
 
   // 轮询会反复取回同一份快照：只有视图真的变了才写回，避免无谓渲染。
-  _applyVoiceCloneState(state) {
-    const previous = this._voiceCloneView;
-    const next = {
-      voiceCloneStatusLabel: state.voiceCloneStatusLabel,
-      voiceCloneEnrollment: state.voiceCloneEnrollment,
-      voiceCloneEnrollmentOverBudget: state.voiceCloneEnrollmentOverBudget,
-      voiceCloneActions: state.voiceCloneActions,
-      voiceCloneState: state.voiceCloneState,
-    };
-    const changed =
-      !previous ||
-      previous.voiceCloneStatusLabel !== next.voiceCloneStatusLabel ||
-      previous.voiceCloneEnrollmentOverBudget !== next.voiceCloneEnrollmentOverBudget ||
-      previous.voiceCloneState !== next.voiceCloneState ||
-      JSON.stringify(previous.voiceCloneActions) !== JSON.stringify(next.voiceCloneActions) ||
-      JSON.stringify(previous.voiceCloneEnrollment) !== JSON.stringify(next.voiceCloneEnrollment);
-    this._voiceCloneView = next;
-    if (changed) this.setData(next);
-    return changed;
-  },
-
-  async loadVoiceCloneStatus() {
-    try {
-      let payload = await api.listVoiceProfiles();
-      const pending = (payload.items || []).find((item) => item.status === "candidate");
-      if (pending?.profile_id) {
-        try {
-          await api.readyVoiceForDevice(pending.profile_id);
-          payload = await api.listVoiceProfiles();
-        } catch {
-          // Keep the listing we already have; the page still explains the current state.
-        }
-      }
-      this._voiceCloneEnrolling = (payload.items || []).some(
-        (item) => item.status === "enrolling",
-      );
-      return voiceState.presentVoiceClone(payload);
-    } catch (error) {
-      if (error?.status === 403) {
-        this._voiceCloneEnrolling = false;
-        return voiceCloneStatusData("当前未开启声音复刻，或尚未完成授权。");
-      }
-      // 读取失败不代表复刻结束：保留上一次的 enrolling 判断，下一拍继续试。
-      return voiceCloneStatusData(error?.message || "暂时读不到自定义声音状态。");
-    }
-  },
-
-  _stopVoiceClonePoll() {
-    if (this._voiceClonePollTimer) {
-      clearInterval(this._voiceClonePollTimer);
-      this._voiceClonePollTimer = null;
-    }
-  },
-
-  // 只有服务端确实报告还在 enrolling 才继续轮询；其余情况一律停表。
-  _ensureVoiceClonePoll() {
-    if (!this._voiceCloneEnrolling || !api.hasAuthenticatedSession()) {
-      this._stopVoiceClonePoll();
-      return;
-    }
-    if (this._voiceClonePollTimer) return;
-    this._voiceClonePollSeq = (this._voiceClonePollSeq || 0) + 1;
-    this._voiceClonePollAuthEpoch = api.currentAuthEpoch();
-    this._voiceClonePollTimer = setInterval(() => {
-      this._pollVoiceCloneStatus();
-    }, VOICE_CLONE_POLL_INTERVAL_MS);
-  },
-
-  // 页面已卸载（或换账号）后，任何在途轮询结果都必须丢弃。
-  _voiceClonePollStale(seq, authEpoch) {
-    return seq !== this._voiceClonePollSeq || !api.isAuthEpochCurrent(authEpoch);
-  },
-
-  async _pollVoiceCloneStatus() {
-    if (this._voiceClonePollBusy) return;
-    if (!api.hasAuthenticatedSession()) {
-      this._stopVoiceClonePoll();
-      this._voiceCloneEnrolling = false;
-      return;
-    }
-    // 记下本次轮询所属的计时器代数：卸载或停表后这个代数会变，迟到的结果必须丢弃，
-    // 否则一个在途请求会在页面卸载后重新把 setInterval 起回来（泄漏）。
-    const seq = this._voiceClonePollSeq;
-    const authEpoch = this._voiceClonePollAuthEpoch;
-    this._voiceClonePollBusy = true;
-    try {
-      const state = await this.loadVoiceCloneStatus();
-      if (this._voiceClonePollStale(seq, authEpoch)) return;
-      this._applyVoiceCloneState(state);
-      this._ensureVoiceClonePoll();
-    } finally {
-      this._voiceClonePollBusy = false;
-    }
-  },
-
-  _stopRecordingTimer() {
-    if (this._recordTimer) {
-      clearInterval(this._recordTimer);
-      this._recordTimer = null;
-    }
-  },
-
-  _ensureRecorder() {
-    if (this._recorder) return this._recorder;
-    const recorder = wx.getRecorderManager();
-    recorder.onStart(() => {
-      this._stopRecordingTimer();
-      this.setData({ recording: true, recordSeconds: 0 });
-      this._recordTimer = setInterval(() => {
-        this.setData({ recordSeconds: this.data.recordSeconds + 1 });
-      }, 1000);
-    });
-    recorder.onStop((result) => {
-      this._stopRecordingTimer();
-      this.setData({ recording: false });
-      this._submitRecordedSample(result);
-    });
-    recorder.onError((error) => {
-      this._stopRecordingTimer();
-      this.setData({ recording: false, voiceSampleBusy: false });
-      wx.showToast({ title: error?.errMsg || "录音失败", icon: "none" });
-    });
-    this._recorder = recorder;
-    return recorder;
-  },
-
-  async _ensureRecordPermission() {
-    const setting = await new Promise((resolve) => {
-      wx.getSetting({
-        success: resolve,
-        fail: () => resolve({ authSetting: {} }),
-      });
-    });
-    if (setting?.authSetting?.["scope.record"]) return true;
-    const authorized = await new Promise((resolve) => {
-      wx.authorize({
-        scope: "scope.record",
-        success: () => resolve(true),
-        fail: () => resolve(false),
-      });
-    });
-    if (authorized) return true;
-    const open = await new Promise((resolve) => {
-      wx.showModal({
-        title: "需要麦克风权限",
-        content: "录制自定义声音样本需要麦克风。请在设置中允许。",
-        confirmText: "去设置",
-        success: (result) => resolve(Boolean(result.confirm)),
-      });
-    });
-    if (!open) return false;
-    await new Promise((resolve) => {
-      wx.openSetting({ complete: resolve });
-    });
-    const after = await new Promise((resolve) => {
-      wx.getSetting({
-        success: resolve,
-        fail: () => resolve({ authSetting: {} }),
-      });
-    });
-    return Boolean(after?.authSetting?.["scope.record"]);
-  },
-
-  async toggleVoiceRecord() {
-    if (!(await requireLogin({ reason: "edit_profile" }))) return;
-    if (this.data.voiceSampleBusy) return;
-    if (this.data.recording) {
-      this._ensureRecorder().stop();
-      return;
-    }
-    if (this.data.voiceCloneActions?.record !== true) return;
-    if (!(await this._ensureRecordPermission())) return;
-    this._ensureRecorder().start({
-      duration: 60000,
-      sampleRate: 16000,
-      numberOfChannels: 1,
-      encodeBitRate: 48000,
-      format: "mp3",
-    });
-  },
-
-  async uploadVoiceSample() {
-    if (!(await requireLogin({ reason: "edit_profile" }))) return;
-    if (this.data.voiceSampleBusy || this.data.recording) return;
-    if (this.data.voiceCloneActions?.upload !== true) return;
-    const chosen = await new Promise((resolve, reject) => {
-      wx.chooseMessageFile({
-        count: 1,
-        type: "file",
-        extension: ["mp3", "wav", "m4a", "aac", "ogg", "flac"],
-        success: resolve,
-        fail: (error) => {
-          if (String(error?.errMsg || "").includes("cancel")) resolve(null);
-          else reject(error);
-        },
-      });
-    });
-    const file = chosen?.tempFiles?.[0];
-    if (!file?.path) return;
-    const mediaType = mediaTypeForPath(file.path) || mediaTypeForPath(file.name);
-    if (!mediaType) {
-      wx.showToast({ title: "请选择 wav / mp3 / m4a 音频", icon: "none" });
-      return;
-    }
-    const size = Number(file.size) || 0;
-    if (size < 20000) {
-      wx.showToast({ title: "音频太短，请使用 10–60 秒样本", icon: "none" });
-      return;
-    }
-    await this._enrollVoiceSample({
-      filePath: file.path,
-      mediaType,
-      durationMs: clampCloneDuration(estimateDurationMs(size, mediaType)),
-      sampleRate: 16000,
-    });
-  },
-
-  async _submitRecordedSample(result) {
-    const duration = Number(result?.duration) || 0;
-    if (duration < 10000) {
-      wx.showToast({ title: "请至少录 10 秒", icon: "none" });
-      return;
-    }
-    if (!result?.tempFilePath) {
-      wx.showToast({ title: "没有录到声音", icon: "none" });
-      return;
-    }
-    await this._enrollVoiceSample({
-      filePath: result.tempFilePath,
-      mediaType: "audio/mpeg",
-      durationMs: clampCloneDuration(duration),
-      sampleRate: 16000,
-    });
-  },
-
-  async _enrollVoiceSample({ filePath, mediaType, durationMs, sampleRate }) {
-    this.setData({
-      voiceSampleBusy: true,
-      error: "",
-      voiceCloneStatusLabel: "正在生成自定义声音，大约一分钟，请先留在这一页。",
-    });
-    try {
-      const audioBase64 = await new Promise((resolve, reject) => {
-        wx.getFileSystemManager().readFile({
-          filePath,
-          encoding: "base64",
-          success: (file) => resolve(file.data),
-          fail: (error) => reject(error),
-        });
-      });
-      try {
-        await api.grantVoiceCloneConsent();
-      } catch (error) {
-        if (error?.status !== 409) throw error;
-      }
-      const enrolled = await api.enrollVoiceClone({
-        audioBase64,
-        mediaType,
-        durationMs,
-        sampleRate,
-        enrollmentKey: `miniprogram-${Date.now()}`,
-        readyForDevice: true,
-        customPersonaId: this.data.customPersonaId,
-      });
-      const voiceCloneState = await this.loadVoiceCloneStatus();
-      this._applyVoiceCloneState(voiceCloneState);
-      // 服务端已受理，进度以后由轮询接管；提交过程中保持轮询也是允许的。
-      this._ensureVoiceClonePoll();
-      wx.showToast({
-        title: enrolled?.status === "active" ? "声音已就绪" : "声音处理中",
-        icon: "success",
-      });
-    } catch (error) {
-      // 422 表示这段音频不可用：服务端 detail 已经是给用户看的中文句子，直接展示。
-      const message = error?.message || "这次没生成成功，请再试一次。";
-      this._applyVoiceCloneState(voiceCloneStatusData(message));
-      this.setData({ error: message });
-    } finally {
-      this.setData({ voiceSampleBusy: false });
-    }
-  },
-
-  async loginFromProfile() {
-    if (!(await requireLogin({ reason: "view_profile" }))) return;
-    this.setData({ authenticated: true });
-    await this._loadAuthenticatedData();
-  },
-
-  openCompanion() {
-    wx.switchTab({ url: "/pages/companion/index" });
-  },
-
   copyAccountId() {
     const accountId = this.data.accountId;
     if (!accountId) return;
@@ -1056,6 +722,10 @@ Page({
     wx.navigateTo({ url: "/pages/digital-self/index" });
   },
 
+
+  openCompanion() {
+    wx.switchTab({ url: "/pages/companion/index" });
+  },
 
   openDevice() {
     wx.switchTab({ url: "/pages/device/index" });
