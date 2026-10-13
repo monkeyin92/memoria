@@ -73,13 +73,8 @@ def anti_addiction_quiet_hours(
     do_not_disturb: bool,
     consent_quiet_hours: tuple[str, str] | None,
 ) -> tuple[str, str] | None:
-    """Map parent anti-addiction switches onto the firmware quiet-hours wire.
-
-    Do-not-disturb stays all day. Night mode alone uses the child's bind-time
-    window when present, otherwise the policy night default.
-    """
-
     if do_not_disturb:
+        # Product choice: do-not-disturb quiets the device for the whole day.
         return _ALL_DAY_QUIET_HOURS
     if night_mode:
         return consent_quiet_hours or DEFAULT_DISPLAY_QUIET_HOURS
@@ -94,10 +89,10 @@ async def consent_quiet_hours_for_binding(
     subject_id: str,
     binding_id: str,
 ) -> tuple[str, str] | None:
-    """The guardian's bind-time quiet hours on this binding, if any.
+    """Bind-time quiet hours on a minor-session grant, or ``None`` on any miss.
 
-    Duck-types ``consent.active`` so tests can install a stub without the
-    PostgreSQL consent store. Misses and lookup errors yield ``None``.
+    A consent failure must not fail the display poll. Night mode then uses
+    the policy window.
     """
 
     active = getattr(consent, "active", None)
@@ -105,10 +100,12 @@ async def consent_quiet_hours_for_binding(
         return None
     try:
         binding = await identity.get_binding(binding_id, actor_person_id=actor_id)
-        chains = await active(
-            subject_person_id=subject_id,
-            binding_id=binding_id,
-            binding_version=binding.binding_version,
+        chains = tuple(
+            await active(
+                subject_person_id=subject_id,
+                binding_id=binding_id,
+                binding_version=binding.binding_version,
+            )
         )
     except Exception as exc:
         logger.warning(
