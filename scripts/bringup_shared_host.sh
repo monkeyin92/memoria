@@ -2,7 +2,7 @@
 # Memoria stack bring-up on the shared pocketSparks host (run as root; installed as
 # /root/memoria-release/bringup.sh, mode 0700). It mirrors scripts/release_ops.sh (step_schema /
 # step_cutover) and the start order of the old host, one explicit service name at a time:
-#   net     speaker-model (creates the memoria_default network) + the SenseVoice sidecar
+#   net     the memoria_default network (creates device-state-redis, unstarted) + the SenseVoice sidecar
 #   data    PostgreSQL + MinIO (+ the one-shot MinIO provisioning)   [project memoria-data]
 #   redis   device-state-redis                                       [project memoria]
 #   schema  empty-database path only: upgrade + 011 + versioned migrations + verify
@@ -59,8 +59,8 @@ ensure_dirs() {
 
 step_net() {
   ensure_dirs
-  log "speaker-model"; app_compose up -d --no-deps --no-build speaker-model
-  wait_healthy memoria-speaker-model-1
+  # Compose owns the network; a plain `docker network create` lacks its labels and compose refuses it.
+  log "network"; app_compose up --no-start --no-deps --no-build device-state-redis
   docker image inspect "$ASR_IMAGE" >/dev/null
   if docker inspect memoria-sensevoice-asr >/dev/null 2>&1; then
     log "sensevoice-asr exists; starting it"; docker start memoria-sensevoice-asr >/dev/null

@@ -716,8 +716,8 @@ class ControlSettings(
             Fernet(template_key.encode("ascii"))
         except (ValueError, UnicodeEncodeError) as exc:
             raise ValueError("production requires a valid speaker template key") from exc
-        if not self.speaker_embedding_url.startswith(("http://", "https://")):
-            raise ValueError("production requires a speaker embedding service URL")
+        if (url := self.speaker_embedding_url) and not url.startswith(("http://", "https://")):
+            raise ValueError("speaker embedding URL must be http(s) when set")
         if self.speaker_guest_threshold >= self.speaker_owner_threshold:
             raise ValueError("speaker thresholds must satisfy guest < owner")
         speaker_database_url = self.speaker_database_url.get_secret_value() or archive_url

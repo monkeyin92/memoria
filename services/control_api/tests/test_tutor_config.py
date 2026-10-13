@@ -188,6 +188,14 @@ def test_production_requires_independent_guardian_governance_roles() -> None:
         settings.validate_production()
 
 
+def test_production_runs_without_a_speaker_embedding_service() -> None:
+    _production_settings(MEMORIA_SPEAKER_EMBEDDING_URL="").validate_production()
+    with pytest.raises(ValueError, match="speaker embedding URL must be http"):
+        _production_settings(
+            MEMORIA_SPEAKER_EMBEDDING_URL="speaker-model:8001"
+        ).validate_production()
+
+
 def test_production_requires_independent_consent_authority_role() -> None:
     _production_settings().validate_production()
 

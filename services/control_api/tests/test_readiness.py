@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-import httpx
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
@@ -41,63 +40,6 @@ async def _ready(app: FastAPI) -> tuple[int, dict[str, object]]:
 
 
 @pytest.mark.asyncio
-async def test_speaker_model_probe_requires_ready_status_and_matching_model() -> None:
-    seen: list[httpx.Request] = []
-
-    async def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        return httpx.Response(
-            200,
-            json={
-                "status": "ready",
-                "model_version": "campplus-test-v1",
-            },
-        )
-
-    settings = ControlSettings(
-        MEMORIA_SPEAKER_EMBEDDING_URL=("http://speaker-model.test:8001/v1/embeddings/speaker"),
-        MEMORIA_SPEAKER_EMBEDDING_TOKEN=SecretStr("speaker-model-token"),
-        MEMORIA_SPEAKER_EMBEDDING_MODEL="campplus-test-v1",
-    )
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    try:
-        assert await readiness_routes._probe_speaker_model(settings, client=client) == "ready"
-    finally:
-        await client.aclose()
-
-    assert len(seen) == 1
-    assert str(seen[0].url) == "http://speaker-model.test:8001/health/ready"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("status_code", "payload"),
-    [
-        (503, {"detail": "not ready"}),
-        (200, {"status": "ready", "model_version": "campplus-other-v1"}),
-        (200, {"status": "loading", "model_version": "campplus-test-v1"}),
-    ],
-)
-async def test_speaker_model_probe_fails_closed_for_down_or_drifted_model(
-    status_code: int,
-    payload: dict[str, object],
-) -> None:
-    async def handler(_: httpx.Request) -> httpx.Response:
-        return httpx.Response(status_code, json=payload)
-
-    settings = ControlSettings(
-        MEMORIA_SPEAKER_EMBEDDING_URL="http://speaker-model.test/v1/embeddings/speaker",
-        MEMORIA_SPEAKER_EMBEDDING_TOKEN=SecretStr("speaker-model-token"),
-        MEMORIA_SPEAKER_EMBEDDING_MODEL="campplus-test-v1",
-    )
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    try:
-        assert await readiness_routes._probe_speaker_model(settings, client=client) == "unavailable"
-    finally:
-        await client.aclose()
-
-
-@pytest.mark.asyncio
 async def test_local_readiness_checks_core_services_without_active_profiles(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -120,7 +62,6 @@ async def test_local_readiness_checks_core_services_without_active_profiles(
         "voice_object_store": "ready",
         "session_runtime": "skipped",
         "memory_scope": "skipped",
-        "speaker_model": "skipped",
     }
 
 
@@ -138,30 +79,6 @@ async def test_readiness_fails_closed_when_a_runtime_component_is_missing(
     assert status == 503
     assert body["status"] == "not_ready"
     assert body["checks"]["core"]["persona"] == "unavailable"
-
-
-@pytest.mark.asyncio
-async def test_readiness_fails_closed_when_speaker_model_is_unavailable(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    _configure_local(monkeypatch, tmp_path)
-    monkeypatch.setenv(
-        "MEMORIA_SPEAKER_EMBEDDING_URL",
-        "http://speaker-model.test/v1/embeddings/speaker",
-    )
-    monkeypatch.setenv("MEMORIA_SPEAKER_EMBEDDING_TOKEN", "speaker-model-token")
-    app = create_app()
-
-    async def unavailable(_settings: ControlSettings, **_kwargs: object) -> str:
-        return "unavailable"
-
-    monkeypatch.setattr(readiness_routes, "_probe_speaker_model", unavailable)
-    status, body = await _ready(app)
-
-    assert status == 503
-    assert body["status"] == "not_ready"
-    assert body["checks"]["core"]["speaker_model"] == "unavailable"
 
 
 class _UnavailableObjectStore:

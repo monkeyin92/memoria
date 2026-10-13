@@ -1,38 +1,21 @@
-"""Guards for the server-side full-stack release script (``scripts/release_ops.sh``).
-
-Two defects surfaced during the 20260925-full-stack-v1 release:
-
-- ``finish`` printed every memoria container's ``.State.Health.Status``. LiveKit
-  and the SenseVoice sidecar have no healthcheck, the Go template failed, and
-  ``set -e``/``pipefail`` aborted the step before the post-state receipt.
-- ``env`` compared env keys but never values, so a stale
-  ``MEMORIA_SPEAKER_AUTHORITY_ENABLED=true`` shipped and the first device
-  greeting was dropped as ``target_non_owner``.
-
-20260927-unbind-release-v1 folded the device OTA control-api component back
-into the full stack, so all targets run from the plain PREV compose file
-and freeze and rollback carry no component chain.  The 20260930-vector-keyword-v1,
-20261001-wake-mode-v1 control-api components put control-api on a chain for a day
-each; the full-stack release that followed folded them back in and the chain support
-went again (20261002-stop-diag-v1 is the latest such release).
-
-Since 20260929-livekit-retire-v1 (the LiveKit chain was stopped, then removed
-from the host) a release ships speaker-model, control-api and the Voice Core
-media bridge, and PREV is those same three roles.
-"""
-
 from __future__ import annotations
 
+import json
 import os
 import re
+import shlex
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "release_ops.sh"
+CI = ROOT / ".github" / "workflows" / "ci.yml"
 
 
 def _script() -> str:
@@ -151,89 +134,560 @@ def test_speaker_guard_accepts_only_values_every_reader_treats_as_off(
         assert "speaker_authority_disabled=PASS" in result.stdout
 
 
-def test_live_chain_constants_have_no_stale_release_trees() -> None:
-    script = _code()
-    # Chains retired by earlier full-stack releases must not come back.
-    for stale in (
-        "20260921-demo02-base",
-        "20260921-defect-a-base",
-        "20260901-0945",
-        "20260828-agent-loss",
-        "confirm-bound-subject",
+def test_script_names_no_release_tag_but_the_data_tree() -> None:
+    assert re.findall(r"\b20\d{6}-[a-z0-9.-]+", _code()) == ["20260827-architecture-split-v1"]
+    for retired in (
         "$OLD",
-        "20260925-full-stack-v1", "20260926-persona-subject-v1", "20260926-edge-flush-v1",
-        "20260925-device-mascot-sync",
-        "20260927-device-ota", "LIVE_CONTROL_RELEASE", "CONTROL_CHAIN",
-        "20260927-unbind-release-v1",
-        "20260927-child-binding-v1",
-        "20260928-child-binding-v2",
-        "20260928-session-trust-v1",
-        "20260928-review-batches-v1", "20260929-livekit-retire-v1", "20260929-voice-core-refactor-v1",
-        "20260929-stop-word-v1", "20260929-stop-playback-v1", "20260929-stop-reconnect-v1",
-        "20260929-turn-taking-v1", "20260929-session-limits-v1",
-        "20260930-local-stop-v2", "20260930-vector-keyword-v1",
-        "20261001-device-archive-v1", "20261001-wake-mode-v1", "20261001-audience-recap-v1", "20261001-speaking-style-v2", "20261001-output-seq-v1", "20261001-turn-budget-v1", "20261001-device-prompt-v1", "20261001-stop-terminal-v1", "20261001-stop-cancel-v1", "20261001-trusted-adult-v1", "20261001-deepseek-flash-v1", "20261002-stop-diag-v1", "20261002-stop-pin-v1", "20261002-device-memory-v1", "20261003-endpoint-latency-v1", "20261003-child-memory-v1", "20261003-echo-merge-v1", "20261004-followup-warm-v1", "20261004-comma-tail-v1", "20261004-vad-warm-v1", "20261004-first-warm-v1", "20261005-subject-candidates-v1", "20261006-speaking-flush-v1", "20261007-n8-diag-v1", "20261009-textless-spare-v1", "20261010-stale-interim-v1",
-        "RETIRED_TARGETS", "retire_prev_media_chain",
+        "LIVE_CONTROL_RELEASE",
+        "CONTROL_CHAIN",
+        "RETIRED_TARGETS",
+        "retire_prev_media_chain",
         "/tmp/media-runtime",
     ):
-        assert stale not in script, stale
-    assert "PREV_TAG=20261010-n8-endpoint-diag-v1" in script
-    assert "PREV_COMMIT=a758e7a1a086aebc4f947ac273dca2be7f60d28d" in script
-
-
-def test_freeze_checks_every_target_chain_and_the_current_link() -> None:
-    freeze = _function("step_freeze")
-    assert 'for c in "${TARGETS[@]}"; do\n    cf="$(live_chain "$c")"' in freeze
-    assert '[[ "$cf" == "$PREV/docker-compose.production.yml" ]]' in freeze
-    assert 'readlink -f /opt/memoria/current)" == "$PREV"' in freeze
-
-
-def test_targets_and_rollback_services_are_the_same_three_roles() -> None:
-    script = _script()
-    targets = re.search(r"^TARGETS=\(([^)]*)\)", script, re.M)
-    services = re.search(r"^PREV_STACK_SERVICES=\(([^)]*)\)", script, re.M)
-    assert targets and services
-    containers = {f"memoria-{name}-1" for name in services.group(1).split()}
-    assert containers == set(targets.group(1).split())
-    assert services.group(1).split() == ["speaker-model", "control-api", "voice-core-media-bridge"]
-    # media-edge is released on its own and never recreated by this script.
+        assert retired not in _code(), retired
     assert "media-edge" not in _code().replace("memoria-media-edge-1", "")
 
 
-def _array(name: str) -> list[str]:
-    match = re.search(rf"^{name}=\(([^)]*)\)", _script(), re.M)
-    assert match, name
-    return match.group(1).split()
-
-
-def test_release_ships_only_the_bridge_media_chain() -> None:
-    assert _array("ROLES") == ["agent", "control-api", "speaker-model"]
-    cutover = _function("step_cutover")
-    for retired in ("miniprogram-gateway", "device-media-gateway", "memoria-agent-1"):
-        assert retired not in cutover.replace('{"agent", "miniprogram-gateway", "device-media-gateway"}', "")
-    assert "force-recreate voice-core-media-bridge" in cutover
-    assert 'retired services still defined' in cutover
-
-
-def test_rollback_recreates_the_prev_services() -> None:
-    rollback = _function("step_rollback")
-    services = _array("PREV_STACK_SERVICES")
-    for retired in ("agent", "miniprogram-gateway", "device-media-gateway"):
-        assert retired not in services
-    assert '-f "$PREV/docker-compose.production.yml" --profile media-runtime' in rollback
-    assert "--force-recreate" in rollback
-
-
-def test_schema_writes_the_data_tree_and_rollback_returns_to_prev() -> None:
+def test_schema_writes_the_data_tree_never_prev() -> None:
     schema = _function("step_schema")
-    rollback = _function("step_rollback")
-    assert '"$DATA_TREE/$f"' in schema and "$PREV" not in schema
-    assert 'ln -sfn "$PREV" /opt/memoria/current.new' in rollback
-    assert 'MEMORIA_RELEASE_TAG="$PREV_TAG" MEMORIA_RELEASE_COMMIT="$PREV_COMMIT"' in rollback
-    assert '"${PREV_STACK_SERVICES[@]}"' in rollback
-    assert "component-releases" not in rollback
-    assert 'for c in "${TARGETS[@]}"; do\n    wait_healthy "$c"' in rollback
-    assert "$DATA_TREE" not in rollback
+    assert '"$DATA_TREE/$f"' in schema
+    assert "PREV" not in schema
+
+
+@dataclass(frozen=True)
+class SourcedStack:
+    ship: list[str]
+    roles: list[str]
+    retired: list[str]
+    ship_images: str
+
+
+def sourced_stack() -> SourcedStack:
+    program = (
+        f"export TAG=t COMMIT=c\nsource {shlex.quote(str(SCRIPT))}\n"
+        'printf "%s\\n" "${SHIP[*]}" "${ROLES[*]}" "${RETIRED[*]}" "$(ship_images)"'
+    )
+    lines = subprocess.run(
+        ["bash", "-c", program], capture_output=True, text=True, check=True
+    ).stdout.splitlines()
+    return SourcedStack(lines[0].split(), lines[1].split(), lines[2].split(), lines[3])
+
+
+def _candidate(tag: str, published: str | None) -> dict[str, dict[str, object]]:
+    stack = sourced_stack()
+    services: dict[str, dict[str, object]] = {
+        service: {"image": f"memoria-{role}:{tag}"}
+        for service, role in zip(stack.ship, stack.roles, strict=True)
+    }
+    services["control-api"]["ports"] = (
+        [] if published is None else [{"published": published, "target": 8000}]
+    )
+    return services
+
+
+def test_every_release_artifact_list_ships_the_stack_roles() -> None:
+    from scripts.verify_release_manifest import _ROLES
+
+    roles = set(sourced_stack().roles)
+    assert _ROLES == {role: f"memoria-{role}" for role in roles}
+
+    runbook = (ROOT / "docs" / "runbooks" / "release-rollback.md").read_text(encoding="utf-8")
+    save = re.search(r'docker save -o "\$ARTIFACT_DIR/images\.tar" ((?:.*\\\n)*.*)', runbook)
+    assert save, "the runbook must show the docker save that builds images.tar"
+    assert set(re.findall(r"memoria-([a-z-]+):\$RELEASE_TAG", save.group(1))) == roles
+
+    delta = (ROOT / "scripts" / "delta_build_images.sh").read_text(encoding="utf-8")
+    delta_roles = re.search(r"^ROLES=\((.*)\)$", delta, re.M)
+    assert delta_roles, "the delta build must name its roles in one ROLES array"
+    assert set(delta_roles.group(1).split()) == roles
+
+
+def _delta_dockerfile(role: str) -> subprocess.CompletedProcess[str]:
+    delta = (ROOT / "scripts" / "delta_build_images.sh").read_text(encoding="utf-8")
+    program = "\n".join(
+        (
+            "set -Eeuo pipefail",
+            "BASE_TAG=20261013-guardian-summaries-v1",
+            _shell_function(delta, "delta_dockerfile"),
+            f"delta_dockerfile {shlex.quote(role)}",
+        )
+    )
+    return subprocess.run(["bash", "-c", program], capture_output=True, text=True, check=False)
+
+
+def test_delta_build_layers_every_ship_role_and_refuses_any_other() -> None:
+    for role in sourced_stack().roles:
+        built = _delta_dockerfile(role)
+        assert built.returncode == 0, built.stderr
+        assert f"FROM memoria-{role}:20261013-guardian-summaries-v1\n" in built.stdout
+        assert f'com.memoria.release.role="{role}"' in built.stdout
+
+    unknown = _delta_dockerfile("media-edge")
+    assert unknown.returncode == 1
+    assert "no delta Dockerfile for role media-edge; run the full image build" in unknown.stderr
+
+
+GUARDIAN = "20261013-guardian-summaries-v1"
+GUARDIAN_COMMIT = "42a095d241a3b33d2bf6f35437d19da3fe937576"
+RELEASE = "20261014-speaker-retire-v1"
+NEW_COMMIT = "1" * 40
+EDGE_TREE = "20261004-first-warm-v1"
+EDGE_OVERRIDE = (
+    "/opt/memoria/component-releases/20261002-late-progress-v1-media-edge/"
+    "media-edge-component.override.yml"
+)
+
+_HOST_REPO = {
+    "speaker-model": "memoria-speaker-model",
+    "control-api": "memoria-control-api",
+    "voice-core-media-bridge": "memoria-agent",
+    "media-slo-reporter": "memoria-agent",
+    "device-state-redis": "redis",
+    "media-edge": "memoria-media-edge",
+}
+
+_RECORD = """
+import json, os, sys
+fake = os.environ["FAKE_ROOT"]
+argv = sys.argv[1:]
+with open(os.path.join(fake, "calls.jsonl"), "a", encoding="utf-8") as calls:
+    calls.write(json.dumps({
+        "argv": argv,
+        "cwd": os.getcwd(),
+        "release_tag": os.environ.get("MEMORIA_RELEASE_TAG"),
+        "release_commit": os.environ.get("MEMORIA_RELEASE_COMMIT"),
+    }) + "\\n")
+failing = os.path.join(fake, "fail")
+if os.path.exists(failing) and open(failing, encoding="utf-8").read() in " ".join(argv):
+    sys.exit(1)
+if argv[:2] == ["docker", "compose"] and "config" in argv:
+    sys.stdout.write(open(os.path.join(fake, "compose-config.json"), encoding="utf-8").read())
+"""
+
+_COMPOSE_PROJECT_FLAGS = {"-p", "--project-directory", "-f", "--profile"}
+
+
+@dataclass(frozen=True)
+class ComposeCall:
+    cwd: Path
+    release_tag: str | None
+    release_commit: str | None
+    argv: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class StepRun:
+    returncode: int
+    output: str
+    docker: list[str]
+    actions: list[str]
+    copies: list[str]
+    compose_calls: list[ComposeCall]
+
+
+def _step_run(result: subprocess.CompletedProcess[str], calls: list[dict[str, Any]]) -> StepRun:
+    docker: list[str] = []
+    actions: list[str] = []
+    copies: list[str] = []
+    compose_calls: list[ComposeCall] = []
+    for call in calls:
+        tool, *args = call["argv"]
+        if tool == "cp":
+            copies.append(" ".join(args))
+        elif tool != "docker":
+            actions.append(" ".join([tool, *args]))
+        elif args[0] == "compose":
+            docker.append(" ".join(args))
+            compose_calls.append(
+                ComposeCall(
+                    Path(call["cwd"]), call["release_tag"], call["release_commit"], tuple(args)
+                )
+            )
+            command = args[1:]
+            while command[0] in _COMPOSE_PROJECT_FLAGS:
+                command = command[2:]
+            if command[0] in {"up", "run", "stop"}:
+                actions.append(" ".join(["compose", *command]))
+        else:
+            docker.append(" ".join(args))
+            if args[0] in {"tag", "stop", "exec"}:
+                actions.append(" ".join(args))
+    return StepRun(
+        result.returncode, result.stdout + result.stderr, docker, actions, copies, compose_calls
+    )
+
+
+def _executable(path: Path, text: str) -> None:
+    path.write_text(text, encoding="utf-8")
+    path.chmod(0o755)
+
+
+class FakeHost:
+    def __init__(self, root: Path, *, current: str) -> None:
+        self.root = root
+        self.memoria = root / "opt" / "memoria"
+        self.fake = root / "fake"
+        self.bin = root / "bin"
+        (self.fake / "containers").mkdir(parents=True)
+        self.bin.mkdir()
+        _executable(self.bin / "record", f"#!{sys.executable}\n{_RECORD}")
+        _executable(self.bin / "docker", '#!/usr/bin/env bash\nexec record docker "$@"\n')
+        self.set_current(current)
+
+    def release_dir(self, tag: str) -> Path:
+        path = self.memoria / "releases" / tag
+        if not path.exists():
+            (path / "scripts").mkdir(parents=True)
+            (path / "docker-compose.production.yml").write_text("services: {}\n", encoding="utf-8")
+            _executable(
+                path / "scripts" / "refresh_readiness.sh",
+                '#!/usr/bin/env bash\nexec record refresh "$MEMORIA_RELEASE_TAG"\n',
+            )
+        return path
+
+    def set_current(self, tag: str) -> None:
+        link = self.memoria / "current"
+        link.unlink(missing_ok=True)
+        link.symlink_to(self.release_dir(tag))
+
+    def current_target(self) -> Path:
+        return Path(os.readlink(self.memoria / "current"))
+
+    def container(
+        self,
+        service: str,
+        *,
+        release: str,
+        commit: str,
+        running: bool = True,
+        chain: str | None = None,
+    ) -> None:
+        facts = {
+            "chain": chain or str(self.release_dir(release) / "docker-compose.production.yml"),
+            "image": f"{_HOST_REPO[service]}:{release}",
+            "image-id": f"sha-{service}",
+            "running": "true" if running else "false",
+            "version": release,
+            "revision": commit,
+        }
+        box = self.fake / "containers" / f"memoria-{service}-1"
+        box.mkdir(exist_ok=True)
+        for field, value in facts.items():
+            (box / field).write_text(value, encoding="utf-8")
+
+    def candidate_compose(self, services: dict[str, dict[str, object]]) -> None:
+        (self.fake / "compose-config.json").write_text(
+            json.dumps({"services": services}), encoding="utf-8"
+        )
+
+    def fail_on(self, docker_args: str) -> None:
+        (self.fake / "fail").write_text(docker_args, encoding="utf-8")
+
+    def prev_record(self, tag: str) -> str | None:
+        record = self.release_dir(tag) / ".cutover" / "prev-release"
+        return record.read_text(encoding="utf-8") if record.exists() else None
+
+    def step(self, name: str, *, tag: str, commit: str = NEW_COMMIT) -> StepRun:
+        self.release_dir(tag)
+        calls = self.fake / "calls.jsonl"
+        calls.write_text("", encoding="utf-8")
+        containers = shlex.quote(str(self.fake / "containers"))
+        program = "\n".join(
+            (
+                "set -Eeuo pipefail",
+                f"export TAG={tag} COMMIT={commit}",
+                f"source {shlex.quote(str(SCRIPT))}",
+                f"release_paths {shlex.quote(str(self.memoria))}",
+                f'inspect_container() {{ cat {containers}/"$1/$2" 2>/dev/null; }}',
+                'cp() { record cp "$@"; }',
+                'wait_healthy() { record wait "$1"; }',
+                f"main {name}",
+            )
+        )
+        env = {k: v for k, v in os.environ.items() if not k.startswith("MEMORIA_")}
+        env.update(PATH=f"{self.bin}:{env['PATH']}", FAKE_ROOT=str(self.fake))
+        result = subprocess.run(
+            ["bash", "-c", program],
+            cwd=self.root,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        lines = calls.read_text(encoding="utf-8").splitlines()
+        return _step_run(result, [json.loads(line) for line in lines])
+
+
+def guardian_host(tmp_path: Path) -> FakeHost:
+    host = FakeHost(tmp_path, current=GUARDIAN)
+    for service in ("control-api", "voice-core-media-bridge", "speaker-model"):
+        host.container(service, release=GUARDIAN, commit=GUARDIAN_COMMIT)
+    for sidecar in ("media-slo-reporter", "device-state-redis"):
+        host.container(sidecar, release=GUARDIAN, commit=GUARDIAN_COMMIT)
+    host.container(
+        "media-edge",
+        release="20261002-late-progress-v1",
+        commit="f3fe8742177e4002db652203b1fadffa549d1098",
+        chain=f"{host.release_dir(EDGE_TREE) / 'docker-compose.production.yml'},{EDGE_OVERRIDE}",
+    )
+    return host
+
+
+def _up(*services: str) -> str:
+    return " ".join(("compose up -d --no-deps --no-build --force-recreate", *services))
+
+
+def _finish_this_release(host: FakeHost) -> None:
+    host.set_current(RELEASE)
+    for service in ("control-api", "voice-core-media-bridge"):
+        host.container(service, release=RELEASE, commit=NEW_COMMIT)
+    host.container("speaker-model", release=GUARDIAN, commit=GUARDIAN_COMMIT, running=False)
+
+
+def test_freeze_derives_and_persists_prev_from_the_live_stack(tmp_path: Path) -> None:
+    host = guardian_host(tmp_path)
+
+    run = host.step("freeze", tag=RELEASE)
+
+    assert run.returncode == 0, run.output
+    assert host.prev_record(RELEASE) == (
+        "tag=20261013-guardian-summaries-v1\n"
+        "commit=42a095d241a3b33d2bf6f35437d19da3fe937576\n"
+        "services=control-api voice-core-media-bridge speaker-model\n"
+    )
+    assert [action for action in run.actions if action.startswith("tag ")] == [
+        f"tag sha-control-api memoria-control-api:rollback-{RELEASE}-pre",
+        f"tag sha-voice-core-media-bridge memoria-agent:rollback-{RELEASE}-pre",
+        f"tag sha-speaker-model memoria-speaker-model:rollback-{RELEASE}-pre",
+    ]
+    assert (
+        f"prev={GUARDIAN}@{GUARDIAN_COMMIT} services=control-api voice-core-media-bridge "
+        "speaker-model" in run.output
+    )
+
+
+def test_freeze_reruns_converge_on_the_same_record(tmp_path: Path) -> None:
+    host = guardian_host(tmp_path)
+    assert host.step("freeze", tag=RELEASE).returncode == 0
+    frozen = host.prev_record(RELEASE)
+
+    again = host.step("freeze", tag=RELEASE)
+
+    assert again.returncode == 0, again.output
+    assert "prev already frozen (unchanged)" in again.output
+    assert host.prev_record(RELEASE) == frozen
+
+
+def test_freeze_after_cutover_refuses_before_any_write(tmp_path: Path) -> None:
+    host = guardian_host(tmp_path)
+    assert host.step("freeze", tag=RELEASE).returncode == 0
+    frozen = host.prev_record(RELEASE)
+    host.container("control-api", release=RELEASE, commit=NEW_COMMIT)
+
+    run = host.step("freeze", tag=RELEASE)
+
+    assert run.returncode == 1
+    assert "unexpected live chain for memoria-control-api-1" in run.output
+    assert host.prev_record(RELEASE) == frozen
+    assert run.docker == [] and run.copies == []
+
+
+def test_freeze_refuses_once_current_names_this_release(tmp_path: Path) -> None:
+    host = guardian_host(tmp_path)
+    host.set_current(RELEASE)
+
+    run = host.step("freeze", tag=RELEASE)
+
+    assert run.returncode == 1
+    assert f"current already points at {RELEASE}; PREV would be this release" in run.output
+    assert host.prev_record(RELEASE) is None
+
+
+def test_freeze_refuses_prev_images_that_disagree_on_commit(tmp_path: Path) -> None:
+    host = guardian_host(tmp_path)
+    host.container("voice-core-media-bridge", release=GUARDIAN, commit="2" * 40)
+
+    run = host.step("freeze", tag=RELEASE)
+
+    assert run.returncode == 1
+    assert f"PREV images disagree on commit: {GUARDIAN_COMMIT} vs {'2' * 40}" in run.output
+    assert host.prev_record(RELEASE) is None
+
+
+def test_cutover_recreates_the_ship_rows_then_stops_the_speaker_model(tmp_path: Path) -> None:
+    host = guardian_host(tmp_path)
+    host.step("freeze", tag=RELEASE)
+    host.candidate_compose(_candidate(RELEASE, "8791"))
+
+    run = host.step("cutover", tag=RELEASE)
+
+    assert run.returncode == 0, run.output
+    assert run.actions == [
+        _up("control-api"),
+        "wait memoria-control-api-1",
+        _up("voice-core-media-bridge"),
+        "wait memoria-voice-core-media-bridge-1",
+        "stop memoria-speaker-model-1",
+    ]
+    assert {(c.cwd, c.release_tag, c.release_commit) for c in run.compose_calls} == {
+        (host.release_dir(RELEASE), RELEASE, NEW_COMMIT)
+    }
+
+
+def test_cutover_rerun_leaves_the_stopped_speaker_model_alone(tmp_path: Path) -> None:
+    host = guardian_host(tmp_path)
+    host.step("freeze", tag=RELEASE)
+    host.candidate_compose(_candidate(RELEASE, "8791"))
+    host.container("speaker-model", release=GUARDIAN, commit=GUARDIAN_COMMIT, running=False)
+
+    run = host.step("cutover", tag=RELEASE)
+
+    assert run.returncode == 0, run.output
+    assert run.actions == [
+        _up("control-api"),
+        "wait memoria-control-api-1",
+        _up("voice-core-media-bridge"),
+        "wait memoria-voice-core-media-bridge-1",
+    ]
+
+
+def test_cutover_stops_at_the_first_service_that_fails_to_come_up(tmp_path: Path) -> None:
+    host = guardian_host(tmp_path)
+    host.step("freeze", tag=RELEASE)
+    host.candidate_compose(_candidate(RELEASE, "8791"))
+    host.fail_on("up -d --no-deps --no-build --force-recreate control-api")
+
+    run = host.step("cutover", tag=RELEASE)
+
+    assert run.returncode != 0
+    assert run.actions == [_up("control-api")]
+
+
+def test_cutover_refuses_a_candidate_that_still_defines_a_retired_service(tmp_path: Path) -> None:
+    host = guardian_host(tmp_path)
+    host.step("freeze", tag=RELEASE)
+    host.candidate_compose(
+        {
+            "speaker-model": {"image": f"memoria-speaker-model:{RELEASE}"},
+            **_candidate(RELEASE, "8791"),
+        }
+    )
+
+    run = host.step("cutover", tag=RELEASE)
+
+    assert run.returncode == 1
+    assert "retired services still defined: ['speaker-model']" in run.output
+    assert run.actions == []
+
+
+def test_rollback_restores_prev_from_the_frozen_record(tmp_path: Path) -> None:
+    host = guardian_host(tmp_path)
+    host.step("freeze", tag=RELEASE)
+    _finish_this_release(host)
+    prev_dir = host.release_dir(GUARDIAN)
+    snapshots = host.release_dir(RELEASE) / ".cutover"
+
+    run = host.step("rollback", tag=RELEASE)
+
+    assert run.returncode == 0, run.output
+    assert host.current_target() == prev_dir
+    assert run.copies == [
+        f"-p {snapshots}/memoria-control-api.env /etc/memoria-control-api.env",
+        f"-p {snapshots}/memoria-agent.env /etc/memoria-agent.env",
+    ]
+    assert run.compose_calls == [
+        ComposeCall(
+            cwd=prev_dir,
+            release_tag=GUARDIAN,
+            release_commit=GUARDIAN_COMMIT,
+            argv=(
+                "compose", "-p", "memoria",
+                "--project-directory", str(prev_dir),
+                "-f", str(prev_dir / "docker-compose.production.yml"),
+                "--profile", "media-runtime",
+                "up", "-d", "--no-deps", "--no-build", "--force-recreate",
+                "control-api", "voice-core-media-bridge", "speaker-model",
+            ),
+        )
+    ]
+    assert run.actions == [
+        _up("control-api", "voice-core-media-bridge", "speaker-model"),
+        "wait memoria-control-api-1",
+        "wait memoria-voice-core-media-bridge-1",
+        "wait memoria-speaker-model-1",
+        f"refresh {GUARDIAN}",
+    ]
+
+
+def test_the_next_release_leaves_out_the_stopped_speaker_model(tmp_path: Path) -> None:
+    host = guardian_host(tmp_path)
+    host.step("freeze", tag=RELEASE)
+    _finish_this_release(host)
+    following = "20261020-following-v1"
+
+    freeze = host.step("freeze", tag=following)
+
+    assert freeze.returncode == 0, freeze.output
+    assert host.prev_record(following) == (
+        f"tag={RELEASE}\ncommit={NEW_COMMIT}\nservices=control-api voice-core-media-bridge\n"
+    )
+    host.candidate_compose(_candidate(following, "8791"))
+    cutover = host.step("cutover", tag=following)
+    assert cutover.returncode == 0, cutover.output
+    assert cutover.actions == [
+        _up("control-api"),
+        "wait memoria-control-api-1",
+        _up("voice-core-media-bridge"),
+        "wait memoria-voice-core-media-bridge-1",
+    ]
+
+
+@pytest.mark.parametrize("step", ["cutover", "finish", "rollback"])
+def test_steps_that_need_prev_refuse_without_a_frozen_record(tmp_path: Path, step: str) -> None:
+    host = guardian_host(tmp_path)
+
+    run = host.step(step, tag=RELEASE)
+
+    assert run.returncode == 1
+    assert "run freeze first; the rollback target is unknown" in run.output
+    assert run.docker == [] and run.copies == [] and run.actions == []
+    assert host.current_target() == host.release_dir(GUARDIAN)
+
+
+@pytest.mark.parametrize(
+    ("record", "complaint"),
+    [
+        (f"tag={GUARDIAN}\ncommit=42a095d2\nservices=control-api\n", "commit=42a095d2"),
+        (f"tag={GUARDIAN}\ncommit={GUARDIAN_COMMIT}\n", "malformed"),
+        (
+            f"tag={GUARDIAN}\ncommit={GUARDIAN_COMMIT}\nservices=control-api media-edge\n",
+            "unknown service media-edge",
+        ),
+        (f"tag={RELEASE}\ncommit={GUARDIAN_COMMIT}\nservices=control-api\n", f"tag={RELEASE}"),
+    ],
+    ids=["short-commit", "no-services", "unknown-service", "self-tag"],
+)
+def test_rollback_refuses_a_malformed_record(tmp_path: Path, record: str, complaint: str) -> None:
+    host = guardian_host(tmp_path)
+    snapshots = host.release_dir(RELEASE) / ".cutover"
+    snapshots.mkdir()
+    (snapshots / "prev-release").write_text(record, encoding="utf-8")
+
+    run = host.step("rollback", tag=RELEASE)
+
+    assert run.returncode == 1
+    assert "malformed" in run.output and complaint in run.output
+    assert run.docker == [] and run.copies == []
+
+
+def _ci_step(job: str, name: str) -> str:
+    steps = yaml.safe_load(CI.read_text(encoding="utf-8"))["jobs"][job]["steps"]
+    return str(next(step["run"] for step in steps if step.get("name") == name))
+
+
+def test_ci_python_gates_run_these_tests() -> None:
+    gates = _ci_step("python-gates", "Release tool gates (offline)")
+    assert f"scripts/tests/{Path(__file__).name}" in gates.split()
 
 
 def test_rollback_has_no_persona_guard_once_prev_keys_persona_by_subject() -> None:
@@ -326,33 +780,28 @@ def _cutover_python() -> str:
     return match.group(1) + 'print("resolve=PASS")'
 
 
-def _resolve(tag: str, services: dict, control_port: str) -> subprocess.CompletedProcess[str]:
-    import json
-
+def _resolve(
+    tag: str, services: dict[str, dict[str, object]], control_port: str
+) -> subprocess.CompletedProcess[str]:
+    stack = sourced_stack()
     return subprocess.run(
         [sys.executable, "-c", _cutover_python()],
         input=json.dumps({"services": services}),
-        env={**os.environ, "TAG": tag, "CONTROL_PORT": control_port},
+        env={
+            **os.environ,
+            "TAG": tag,
+            "CONTROL_PORT": control_port,
+            "SHIP_IMAGES": stack.ship_images,
+            "RETIRED": " ".join(stack.retired),
+        },
         capture_output=True,
         text=True,
     )
 
 
-def _candidate(tag: str, published: str | None) -> dict:
-    services = {
-        "speaker-model": {"image": f"memoria-speaker-model:{tag}"},
-        "control-api": {
-            "image": f"memoria-control-api:{tag}",
-            "ports": [] if published is None else [{"published": published, "target": 8000}],
-        },
-        "voice-core-media-bridge": {"image": f"memoria-agent:{tag}"},
-    }
-    return services
-
-
 def test_cutover_refuses_a_candidate_that_would_publish_another_control_port() -> None:
     body = _function("step_cutover")
-    assert 'CONTROL_PORT="$(control_api_port)" python3 -c' in body
+    assert 'CONTROL_PORT="$(control_api_port)"' in body
     ok = _resolve("t1", _candidate("t1", "18791"), "18791")
     assert ok.returncode == 0, ok.stdout + ok.stderr
     assert "resolve=PASS" in ok.stdout
@@ -388,6 +837,7 @@ def test_shared_host_bringup_script_is_checked_in_and_keeps_its_step_contract() 
     text = BRINGUP.read_text(encoding="utf-8")
     assert os.access(BRINGUP, os.X_OK)
     subprocess.run(["bash", "-n", str(BRINGUP)], check=True)
+    assert "speaker-model" not in text
     for step in ("net", "data", "redis", "schema", "verify", "replay", "apps", "checks", "status", "down"):
         assert f"  {step}) step_{step} ;;" in text
     # Restored data is replayed through the Control API image, which now carries the module.

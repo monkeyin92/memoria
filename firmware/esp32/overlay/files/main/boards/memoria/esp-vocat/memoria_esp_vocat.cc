@@ -726,6 +726,7 @@ private:
     // behaviour; from there it follows the tap's gate, so it only ever starts a conversation on an idle
     // device in a mode that includes the screen. It never stops the robot, never closes a session and
     // never changes a setting.
+    // TODO(release-blocker): remove USB serial wake before final firmware; it opens the mic without a screen tap
     void HandleUsbWake() {
         auto& app = Application::GetInstance();
         const auto state = app.GetDeviceState();

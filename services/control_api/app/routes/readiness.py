@@ -9,7 +9,6 @@ from datetime import UTC, datetime
 from typing import Annotated, Literal, cast
 from uuid import UUID
 
-import httpx
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -163,49 +162,6 @@ async def _probe_object_store(store: ObjectStore) -> object:
     return None
 
 
-async def _probe_speaker_model(
-    settings: ControlSettings,
-    *,
-    client: httpx.AsyncClient | None = None,
-) -> str:
-    endpoint = settings.speaker_embedding_url.strip()
-    if not endpoint:
-        return "skipped" if settings.environment != "production" else "unavailable"
-    expected_model = settings.speaker_embedding_model.strip()
-    if not expected_model:
-        return "unavailable"
-    try:
-        health_url = httpx.URL(endpoint).copy_with(
-            path="/health/ready",
-            query=None,
-            fragment=None,
-        )
-    except (TypeError, ValueError):
-        return "unavailable"
-
-    owned_client = client is None
-    runtime_client = client or httpx.AsyncClient(timeout=settings.speaker_embedding_timeout_s)
-    try:
-        response = await runtime_client.get(
-            health_url,
-            timeout=settings.speaker_embedding_timeout_s,
-        )
-        response.raise_for_status()
-        payload = response.json()
-    except (httpx.HTTPError, TypeError, ValueError):
-        return "unavailable"
-    finally:
-        if owned_client:
-            await runtime_client.aclose()
-    if (
-        not isinstance(payload, dict)
-        or payload.get("status") != "ready"
-        or payload.get("model_version") != expected_model
-    ):
-        return "unavailable"
-    return "ready"
-
-
 async def _core_checks(
     request: Request,
     settings: ControlSettings,
@@ -300,10 +256,6 @@ async def _core_checks(
             checks[name] = "unavailable"
         else:
             checks[name] = "skipped" if result == "skipped" else "ready"
-    try:
-        checks["speaker_model"] = await _probe_speaker_model(settings)
-    except Exception:
-        checks["speaker_model"] = "unavailable"
     return checks
 
 

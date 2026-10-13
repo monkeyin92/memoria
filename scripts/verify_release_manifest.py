@@ -29,7 +29,6 @@ _RECORD_KEYS = {"name", "sha256", "size"}
 _ROLES = {
     "agent": "memoria-agent",
     "control-api": "memoria-control-api",
-    "speaker-model": "memoria-speaker-model",
 }
 
 

@@ -26,6 +26,7 @@ NEW_TAG="${NEW_TAG:-${MEMORIA_RELEASE_TAG:?set NEW_TAG or MEMORIA_RELEASE_TAG}}"
 BASE_TAG="${BASE_TAG:?set BASE_TAG to previous healthy image tag}"
 TARGET_ARCH="${TARGET_ARCH:-amd64}"
 MEMORIA_RELEASE_COMMIT="${MEMORIA_RELEASE_COMMIT:?set MEMORIA_RELEASE_COMMIT to the tagged clean commit}"
+ROLES=(agent control-api)
 
 python3 "$ROOT/scripts/verify_release_source.py" \
   --root "$ROOT" \
@@ -33,7 +34,7 @@ python3 "$ROOT/scripts/verify_release_source.py" \
   --release-tag "$NEW_TAG"
 
 base_commit=""
-for image in agent control-api speaker-model; do
+for image in "${ROLES[@]}"; do
   if ! docker image inspect "memoria-${image}:${BASE_TAG}" >/dev/null 2>&1; then
     echo "missing base image memoria-${image}:${BASE_TAG}; run the full image build" >&2
     exit 1
@@ -73,10 +74,6 @@ dependency_inputs=(
   uv.lock
   infra/Dockerfile.agent
   infra/Dockerfile.control-api
-  infra/Dockerfile.speaker-model
-  infra/requirements-speaker-model.txt
-  infra/patches/3d-speaker-campplus-average-pool.patch
-  scripts/export_campplus_onnx.py
 )
 dependency_changes=()
 dependency_diff="$(
@@ -95,18 +92,23 @@ fi
 tmp="$(mktemp -d /tmp/memoria-delta-build.XXXXXX)"
 trap 'rm -rf "$tmp"' EXIT
 
-cat >"$tmp/Dockerfile.agent" <<EOF
-FROM memoria-agent:${BASE_TAG}
+delta_dockerfile() {
+  cat <<EOF
+FROM memoria-$1:${BASE_TAG}
 ARG MEMORIA_RELEASE_COMMIT
 ARG MEMORIA_RELEASE_TAG
 LABEL org.opencontainers.image.revision="\${MEMORIA_RELEASE_COMMIT}" \\
       org.opencontainers.image.version="\${MEMORIA_RELEASE_TAG}" \\
-      com.memoria.release.role="agent"
+      com.memoria.release.role="$1"
 USER root
 WORKDIR /app
+EOF
+  case "$1" in
+    agent)
+      cat <<'EOF'
 COPY services ./services
 COPY packages ./packages
-COPY scripts/verify_env.py scripts/provider_smoke_test.py scripts/run_media_bridge.py \\
+COPY scripts/verify_env.py scripts/provider_smoke_test.py scripts/run_media_bridge.py \
      scripts/run_media_slo_reporter.py scripts/media_runtime_smoke.py ./scripts/
 # Delta builds replace the source tree on top of a base image that may predate
 # the gate, so the verifier is copied from this source tree rather than reused
@@ -122,61 +124,38 @@ USER 65532:65532
 ENTRYPOINT ["/app/.venv/bin/python"]
 CMD ["-m", "scripts.run_media_bridge"]
 EOF
-
-cat >"$tmp/Dockerfile.control-api" <<EOF
-FROM memoria-control-api:${BASE_TAG}
-ARG MEMORIA_RELEASE_COMMIT
-ARG MEMORIA_RELEASE_TAG
-LABEL org.opencontainers.image.revision="\${MEMORIA_RELEASE_COMMIT}" \\
-      org.opencontainers.image.version="\${MEMORIA_RELEASE_TAG}" \\
-      com.memoria.release.role="control-api"
-USER root
-WORKDIR /app
+      ;;
+    control-api)
+      cat <<'EOF'
 COPY services ./services
 COPY packages ./packages
 COPY scripts/mark_readiness.py scripts/rebuild_memory_projections.py scripts/replay_subject_deletions.py scripts/migrate_control_sqlite_to_postgres.py ./scripts/
 COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json
 USER 65532:65532
 EOF
+      ;;
+    *)
+      echo "no delta Dockerfile for role $1; run the full image build" >&2
+      return 1
+      ;;
+  esac
+}
 
-cat >"$tmp/Dockerfile.speaker-model" <<EOF
-FROM memoria-speaker-model:${BASE_TAG}
-ARG MEMORIA_RELEASE_COMMIT
-ARG MEMORIA_RELEASE_TAG
-LABEL org.opencontainers.image.revision="\${MEMORIA_RELEASE_COMMIT}" \\
-      org.opencontainers.image.version="\${MEMORIA_RELEASE_TAG}" \\
-      com.memoria.release.role="speaker-model"
-USER root
-WORKDIR /app
-COPY services/speaker_model /app/services/speaker_model
-USER 65532:65532
-EOF
+for image in "${ROLES[@]}"; do
+  delta_dockerfile "$image" >"$tmp/Dockerfile.$image"
+done
 
-echo "delta-building memoria-agent:${NEW_TAG} from ${BASE_TAG}"
-"$ROOT/scripts/docker_build.sh" \
-  --pull=false \
-  --network=none \
-  --build-arg MEMORIA_RELEASE_COMMIT="$MEMORIA_RELEASE_COMMIT" \
-  --build-arg MEMORIA_RELEASE_TAG="$NEW_TAG" \
-  -f "$tmp/Dockerfile.agent" -t "memoria-agent:${NEW_TAG}" "$ROOT"
+for image in "${ROLES[@]}"; do
+  echo "delta-building memoria-${image}:${NEW_TAG} from ${BASE_TAG}"
+  "$ROOT/scripts/docker_build.sh" \
+    --pull=false \
+    --network=none \
+    --build-arg MEMORIA_RELEASE_COMMIT="$MEMORIA_RELEASE_COMMIT" \
+    --build-arg MEMORIA_RELEASE_TAG="$NEW_TAG" \
+    -f "$tmp/Dockerfile.$image" -t "memoria-${image}:${NEW_TAG}" "$ROOT"
+done
 
-echo "delta-building memoria-control-api:${NEW_TAG} from ${BASE_TAG}"
-"$ROOT/scripts/docker_build.sh" \
-  --pull=false \
-  --network=none \
-  --build-arg MEMORIA_RELEASE_COMMIT="$MEMORIA_RELEASE_COMMIT" \
-  --build-arg MEMORIA_RELEASE_TAG="$NEW_TAG" \
-  -f "$tmp/Dockerfile.control-api" -t "memoria-control-api:${NEW_TAG}" "$ROOT"
-
-echo "delta-relabeling memoria-speaker-model:${NEW_TAG} from ${BASE_TAG}"
-"$ROOT/scripts/docker_build.sh" \
-  --pull=false \
-  --network=none \
-  --build-arg MEMORIA_RELEASE_COMMIT="$MEMORIA_RELEASE_COMMIT" \
-  --build-arg MEMORIA_RELEASE_TAG="$NEW_TAG" \
-  -f "$tmp/Dockerfile.speaker-model" -t "memoria-speaker-model:${NEW_TAG}" "$ROOT"
-
-for image in agent control-api speaker-model; do
+for image in "${ROLES[@]}"; do
   built_arch="$(docker image inspect "memoria-${image}:${NEW_TAG}" \
     --format '{{.Architecture}}')"
   if [[ "$built_arch" != "$TARGET_ARCH" ]]; then
@@ -185,7 +164,7 @@ for image in agent control-api speaker-model; do
   fi
 done
 
-for image in agent control-api speaker-model; do
+for image in "${ROLES[@]}"; do
   labels="$(docker image inspect "memoria-${image}:${NEW_TAG}" \
     --format '{{index .Config.Labels "org.opencontainers.image.revision"}} {{index .Config.Labels "org.opencontainers.image.version"}} {{index .Config.Labels "com.memoria.release.role"}}')"
   if [[ "$labels" != "$MEMORIA_RELEASE_COMMIT $NEW_TAG $image" ]]; then
@@ -195,5 +174,5 @@ for image in agent control-api speaker-model; do
 done
 
 docker images --format '{{.Repository}}:{{.Tag}} {{.Size}} {{.CreatedSince}}' \
-  | grep -E "memoria-(agent|control-api|speaker-model):${NEW_TAG}" || true
+  | grep -E "memoria-($(IFS='|'; echo "${ROLES[*]}")):${NEW_TAG}" || true
 echo "delta_build_ok ${NEW_TAG}"

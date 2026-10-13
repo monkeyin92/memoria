@@ -1,46 +1,6 @@
 name: memoria
 
 services:
-  speaker-model:
-    image: "memoria-speaker-model:${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
-    build:
-      context: .
-      dockerfile: infra/Dockerfile.speaker-model
-      args:
-        MEMORIA_RELEASE_COMMIT: "${MEMORIA_RELEASE_COMMIT:?MEMORIA_RELEASE_COMMIT is required}"
-        MEMORIA_RELEASE_TAG: "${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
-    env_file:
-      - /etc/memoria-speaker-model.env
-    environment:
-      MEMORIA_SPEAKER_MODEL_PATH: /models/campplus_cn_common.onnx
-      MEMORIA_SPEAKER_MODEL_VERSION: campplus-cn-common@v1.0.0+ckpt.3388cf5f+onnx.7a39d2e5e566+fbank.v1
-      MEMORIA_SPEAKER_MODEL_SHA256_PATH: /models/campplus_cn_common.onnx.sha256
-      MEMORIA_SPEAKER_MODEL_MAX_CONCURRENCY: "1"
-    expose:
-      - "8001"
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - >-
-          import urllib.request;
-          urllib.request.urlopen('http://127.0.0.1:8001/health/ready', timeout=3).close()
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-    restart: unless-stopped
-    read_only: true
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=64m
-    mem_limit: 1g
-    cpus: 2.0
-
   control-api:
     image: "memoria-control-api:${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
     build:
@@ -56,7 +16,9 @@ services:
       ENVIRONMENT: production
       MEMORIA_RELEASE_TAG: "${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
       MEMORIA_DB_PATH: /data/memoria.sqlite3
-      MEMORIA_SPEAKER_EMBEDDING_URL: http://speaker-model:8001/v1/embeddings/speaker
+      # Empty, not absent: /etc/memoria-control-api.env may still carry the
+      # retired speaker-model URL, and this value overrides it.
+      MEMORIA_SPEAKER_EMBEDDING_URL: ""
       MEMORIA_SPEAKER_EMBEDDING_MODEL: campplus-cn-common@v1.0.0+ckpt.3388cf5f+onnx.7a39d2e5e566+fbank.v1
       MEDIA_EDGE_CONTROL_URL: "http://media-edge:8080"
     command:
@@ -82,9 +44,6 @@ services:
         source: /etc/memoria-media-runtime
         target: /etc/memoria-media-runtime
         read_only: true
-    depends_on:
-      speaker-model:
-        condition: service_healthy
     healthcheck:
       test:
         - CMD
