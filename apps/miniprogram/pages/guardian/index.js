@@ -28,6 +28,12 @@ const CONSENT_DEFINITIONS = Object.freeze([
     description: "只分享趋势、学习时长和话题分布，不含对话原文",
     policyVersion: "guardian-weekly-v1",
   },
+  {
+    kind: "child_archive",
+    label: "长期记忆",
+    description: "兴趣等白名单内容；可在首页「孩子的记忆」里查看和删除",
+    policyVersion: "child-archive-v1",
+  },
 ]);
 
 function operationKey(prefix) {

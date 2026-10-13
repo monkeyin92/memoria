@@ -23,6 +23,7 @@ test("guardian page covers child confirmation, granular consent, summary, and al
   assert.match(script, /语音陪伴/);
   assert.match(script, /学习与成长记录/);
   assert.match(script, /每周成长小结/);
+  assert.match(script, /长期记忆/);
   assert.match(template, /不含对话原文/);
   assert.doesNotMatch(template, /心理监测|心理诊断评分|严重度分级/);
 });
@@ -279,7 +280,10 @@ test("person consent failure stays owner-scoped and does not blank the row", asy
     },
   });
   assert.match(page.data.error, /只有监护绑定发起人/);
-  assert.equal(page.data.boundSubjects[0].consentRows.length, 3);
+  assert.equal(page.data.boundSubjects[0].consentRows.length, 4);
+  assert.ok(
+    page.data.boundSubjects[0].consentRows.some((row) => row.kind === "child_archive"),
+  );
 });
 
 function guardianMinorPage(handler) {

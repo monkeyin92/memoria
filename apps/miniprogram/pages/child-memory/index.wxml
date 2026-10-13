@@ -1,0 +1,137 @@
+<view class="cm-page">
+  <text class="cm-privacy">{{privacyLine}}</text>
+
+  <view class="cm-tabs">
+    <view
+      class="cm-tab {{activeTab === 'recent' ? 'cm-tab-on' : ''}}"
+      bindtap="showRecent"
+    >最近对话</view>
+    <view
+      class="cm-tab {{activeTab === 'archive' ? 'cm-tab-on' : ''}}"
+      bindtap="showArchive"
+    >长期记忆</view>
+  </view>
+
+  <text wx:if="{{error}}" class="cm-error">{{error}}</text>
+  <text wx:if="{{statusBanner}}" class="cm-banner">{{statusBanner}}</text>
+
+  <view wx:if="{{!authenticated}}" class="cm-card cm-empty">
+    <text class="cm-empty-title">请先登录</text>
+    <text class="cm-empty-copy">登录后即可查看和删除孩子的记忆。</text>
+  </view>
+
+  <view wx:elif="{{loadState === 'loading' || loading}}" class="cm-card">
+    <text class="cm-loading">正在读取…</text>
+  </view>
+
+  <block wx:elif="{{activeTab === 'recent'}}">
+    <view wx:if="{{!summaries.length}}" class="cm-card cm-empty">
+      <view class="cm-illus" aria-hidden="true">
+        <view class="cm-illus-leaf cm-illus-leaf-a"></view>
+        <view class="cm-illus-leaf cm-illus-leaf-b"></view>
+        <view class="cm-illus-dot"></view>
+      </view>
+      <text class="cm-empty-copy">{{emptyRecent}}</text>
+    </view>
+
+    <block wx:else>
+      <view
+        wx:for="{{summaries}}"
+        wx:key="recordId"
+        class="cm-swipe"
+      >
+        <view
+          class="cm-swipe-action"
+          data-record-id="{{item.recordId}}"
+          bindtap="askDeleteSummary"
+        >删除</view>
+        <view
+          class="cm-card cm-summary {{item.swipeOpen ? 'cm-swipe-open' : ''}}"
+          data-record-id="{{item.recordId}}"
+          bindtouchstart="onSummaryTouchStart"
+          bindtouchmove="onSummaryTouchMove"
+          bindtouchend="onSummaryTouchEnd"
+          bindtouchcancel="onSummaryTouchEnd"
+        >
+          <text class="cm-date">{{item.dateLabel}}</text>
+          <text class="cm-summary-text">{{item.text}}</text>
+        </view>
+      </view>
+
+      <view class="cm-footer">
+        <text class="cm-danger-link" bindtap="askClearSummaries">清空全部</text>
+      </view>
+    </block>
+  </block>
+
+  <block wx:elif="{{activeTab === 'archive'}}">
+    <view class="cm-card cm-consent">
+      <view class="cm-consent-row">
+        <view class="cm-consent-copy">
+          <text class="cm-consent-title">{{archiveConsent.label}}</text>
+          <text class="cm-consent-desc">{{archiveConsent.description}}</text>
+        </view>
+        <switch
+          checked="{{archiveConsent.active}}"
+          color="#6f9e8e"
+          disabled="{{working}}"
+          bindchange="onArchiveConsentChange"
+          aria-label="长期记忆"
+        />
+      </view>
+    </view>
+
+    <block wx:if="{{!archiveConsent.active}}">
+      <!-- Without consent: toggle + explanation only, no items. -->
+    </block>
+
+    <view wx:elif="{{!archiveFlat.length}}" class="cm-card cm-empty">
+      <text class="cm-empty-title">暂无长期记忆</text>
+      <text class="cm-empty-copy">{{emptyArchiveOn}}</text>
+    </view>
+
+    <block wx:else>
+      <view wx:for="{{archiveGroups}}" wx:key="field" class="cm-group">
+        <text class="cm-group-title">{{item.label}}</text>
+        <view
+          wx:for="{{item.items}}"
+          wx:for-item="fact"
+          wx:key="recordId"
+          class="cm-swipe"
+        >
+          <view
+            class="cm-swipe-action"
+            data-record-id="{{fact.recordId}}"
+            bindtap="askDeleteArchive"
+          >删除</view>
+          <view
+            class="cm-card cm-fact {{fact.swipeOpen ? 'cm-swipe-open' : ''}}"
+            data-record-id="{{fact.recordId}}"
+            bindtouchstart="onArchiveTouchStart"
+            bindtouchmove="onArchiveTouchMove"
+            bindtouchend="onArchiveTouchEnd"
+            bindtouchcancel="onArchiveTouchEnd"
+          >
+            <text class="cm-fact-text">{{fact.text}}</text>
+            <text class="cm-date">{{fact.dateLabel}}</text>
+          </view>
+        </view>
+      </view>
+
+      <view class="cm-footer">
+        <text class="cm-danger-link" bindtap="askClearArchive">清空全部</text>
+      </view>
+    </block>
+  </block>
+
+  <view wx:if="{{confirm}}" class="cm-modal-wrap" bindtap="closeConfirm">
+    <view class="cm-modal" catchtap="noop">
+      <text class="cm-modal-title">{{confirm.title}}</text>
+      <text class="cm-modal-body">{{confirm.body}}</text>
+      <view class="cm-modal-actions">
+        <text class="cm-modal-cancel" bindtap="closeConfirm">取消</text>
+        <text class="cm-modal-ok" bindtap="runConfirm">{{confirm.confirmLabel}}</text>
+      </view>
+    </view>
+  </view>
+</view>

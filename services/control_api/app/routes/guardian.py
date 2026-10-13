@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import secrets
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated, Any, Literal, cast
 from zoneinfo import ZoneInfo
@@ -63,6 +64,7 @@ from services.guardian.child_memory import (
     KIND_CHILD_ARCHIVE,
     KIND_DIALOGUE_SUMMARY,
     ArchiveFact,
+    ChildMemoryKind,
     DialogueSummary,
 )
 from services.guardian.consent import GuardianConsentService
@@ -1267,6 +1269,30 @@ def _child_layers(request: Request) -> ChildLayerStore:
     return cast(ChildLayerStore, store)
 
 
+def _payload_iso(payload: Mapping[str, object], key: str) -> str | None:
+    value = payload.get(key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+async def _erase_child_kind(
+    request: Request,
+    *,
+    subject_id: str,
+    kind: ChildMemoryKind,
+    incomplete_code: str,
+) -> dict[str, Any]:
+    layers = _child_layers(request)
+    erased = await layers.erase_kind(subject_id=subject_id, kind=kind, only_expired=False)
+    remaining = await layers.remaining_kind(
+        subject_id=subject_id, kind=kind, only_expired=False
+    )
+    if int(remaining.get("memory_records", 0)):
+        raise HTTPException(status_code=500, detail={"code": incomplete_code})
+    return {"deleted": True, "kind": kind, "erased": dict(erased), "remaining": dict(remaining)}
+
+
 async def _child_memory_account(
     request: Request, *, user: AuthenticatedUser, minor_user_id: str
 ) -> str:
@@ -1390,6 +1416,23 @@ async def delete_session_summary(
     return {"deleted": True, "record_id": record_id, "erased": dict(erased)}
 
 
+@router.delete("/minors/{minor_user_id}/session-summaries")
+async def clear_session_summaries(
+    minor_user_id: str,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
+) -> dict[str, Any]:
+    """Physically erase every dialogue summary for this child; remaining must be zero."""
+
+    await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    return await _erase_child_kind(
+        request,
+        subject_id=minor_user_id,
+        kind=KIND_DIALOGUE_SUMMARY,
+        incomplete_code="session_summaries_clear_incomplete",
+    )
+
+
 @router.get("/minors/{minor_user_id}/child-archive")
 async def list_child_archive(
     minor_user_id: str,
@@ -1413,6 +1456,7 @@ async def list_child_archive(
                 "field": item.field,
                 "text": item.text,
                 "created_at": item.created_at.isoformat(),
+                "last_mentioned_at": _payload_iso(item.payload, "last_mentioned_at"),
             }
             for item in items
         ]
@@ -1468,6 +1512,23 @@ async def delete_child_archive_fact(
         raise HTTPException(status_code=404, detail={"code": "child_archive_not_found"})
     erased = await layers.delete_record(subject_id=minor_user_id, record_id=record_id)
     return {"deleted": True, "record_id": record_id, "erased": dict(erased)}
+
+
+@router.delete("/minors/{minor_user_id}/child-archive")
+async def clear_child_archive(
+    minor_user_id: str,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
+) -> dict[str, Any]:
+    """Physically erase every whitelist archive fact for this child; remaining must be zero."""
+
+    await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    return await _erase_child_kind(
+        request,
+        subject_id=minor_user_id,
+        kind=KIND_CHILD_ARCHIVE,
+        incomplete_code="child_archive_clear_incomplete",
+    )
 
 
 @router.post("/minors/{minor_user_id}/activity")

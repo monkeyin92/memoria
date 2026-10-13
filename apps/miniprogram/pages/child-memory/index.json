@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "孩子的记忆",
+  "navigationBarBackgroundColor": "#FAF6F0",
+  "backgroundColor": "#FAF6F0",
+  "enablePullDownRefresh": true,
+  "usingComponents": {}
+}

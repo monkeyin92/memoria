@@ -111,6 +111,17 @@
         </view>
       </view>
 
+      <view wx:if="{{showChildMemory}}" class="l2-card home-child-memory" bindtap="openChildMemory">
+        <view class="home-todo-head">
+          <glass-icon name="memory" size="80"></glass-icon>
+          <view class="home-todo-copy">
+            <text class="l2-card-title">孩子的记忆</text>
+            <text class="l2-card-sub">会话摘要与长期记忆，看得见、删得掉</text>
+          </view>
+          <text class="row-chevron">›</text>
+        </view>
+      </view>
+
       <view wx:if="{{pendingCount}}" class="l2-card home-todo">
         <view class="home-todo-head" bindtap="toggleTodo">
           <glass-icon name="check" size="80"></glass-icon>
@@ -130,7 +141,7 @@
           </view>
         </view>
       </view>
-      <view wx:else class="notice">需要确认的内容都处理好了。今天不用再做什么。</view>
+      <view wx:elif="{{!showChildMemory}}" class="notice">需要确认的内容都处理好了。今天不用再做什么。</view>
 
       <view class="section-head">
         <text class="section-head-title">每日摘要</text>
