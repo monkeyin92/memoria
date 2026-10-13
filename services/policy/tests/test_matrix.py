@@ -204,7 +204,7 @@ def test_bound_device_link_is_not_enough_for_a_childs_voiceprint() -> None:
         )
     )
     assert decision.effect == "deny"
-    assert decision.reason_code == "device_untrusted"
+    assert decision.reason_code == "capability_forbidden"
 
 
 @pytest.mark.parametrize(
@@ -523,24 +523,19 @@ def test_minor_regular_capabilities_require_governance_and_evidence(
     assert allowed.effect == "allow_with_obligations"
 
 
-def test_minor_voice_profile_create_allowed_as_enrollment_only() -> None:
-    decision = PolicyEngine().decide(
+def test_minor_voice_profile_create_is_forbidden() -> None:
+    """Scheme A: minors cannot enroll voiceprints; policy matches the account gate."""
+
+    with_evidence = PolicyEngine().decide(
         _minor_context(capability="voice_profile_create")  # type: ignore[arg-type]
     )
-    assert decision.effect == "allow_with_obligations"
-    assert decision.reason_code == "minor_voice_profile_enrolled"
-    assert [o.code for o in decision.obligations] == [
-        "NO_MODEL_TRAINING",
-        "WRITE_POLICY_RECEIPT",
-    ]
-
-
-def test_minor_voice_profile_create_denied_without_evidence() -> None:
-    decision = PolicyEngine().decide(
+    without = PolicyEngine().decide(
         _minor_context(capability="voice_profile_create", with_evidence=False)  # type: ignore[arg-type]
     )
-    assert decision.effect == "deny"
-    assert decision.reason_code == "consent_evidence_required"
+    assert with_evidence.effect == "deny"
+    assert with_evidence.reason_code == "capability_forbidden"
+    assert without.effect == "deny"
+    assert without.reason_code == "capability_forbidden"
 
 
 def test_minor_memory_capture_allowed_with_retention_and_no_training() -> None:

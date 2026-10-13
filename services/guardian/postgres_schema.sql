@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS guardian_consents (
     link_id UUID NOT NULL REFERENCES guardian_links(link_id) ON DELETE CASCADE,
     consent_kind TEXT NOT NULL CHECK (consent_kind IN (
         'minor_voice_session', 'memory_retention',
-        'weekly_report', 'corpus_recording'
+        'weekly_report', 'corpus_recording', 'child_archive'
     )),
     policy_version TEXT NOT NULL CHECK (
         char_length(policy_version) BETWEEN 1 AND 64
@@ -60,6 +60,20 @@ CREATE TABLE IF NOT EXISTS guardian_consents (
 );
 
 ALTER TABLE guardian_consents ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+
+DO $guardian_consent_kind_child_archive$
+BEGIN
+    ALTER TABLE guardian_consents DROP CONSTRAINT IF EXISTS guardian_consents_consent_kind_check;
+    ALTER TABLE guardian_consents
+        ADD CONSTRAINT guardian_consents_consent_kind_check
+        CHECK (consent_kind IN (
+            'minor_voice_session', 'memory_retention',
+            'weekly_report', 'corpus_recording', 'child_archive'
+        ));
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END
+$guardian_consent_kind_child_archive$;
 
 DO $guardian_consent_expiry_constraints$
 BEGIN
@@ -114,7 +128,7 @@ CREATE TABLE IF NOT EXISTS guardian_person_consents (
     ),
     consent_kind TEXT NOT NULL CHECK (consent_kind IN (
         'minor_voice_session', 'memory_retention',
-        'weekly_report', 'corpus_recording'
+        'weekly_report', 'corpus_recording', 'child_archive'
     )),
     policy_version TEXT NOT NULL CHECK (
         char_length(policy_version) BETWEEN 1 AND 64
@@ -141,6 +155,33 @@ CREATE TABLE IF NOT EXISTS guardian_person_consents (
         OR (revoked_at IS NOT NULL AND revocation_evidence_event_id IS NOT NULL)
     )
 );
+
+DO $guardian_person_consent_kind_child_archive$
+BEGIN
+    ALTER TABLE guardian_person_consents
+        DROP CONSTRAINT IF EXISTS guardian_person_consents_consent_kind_check;
+    ALTER TABLE guardian_person_consents
+        ADD CONSTRAINT guardian_person_consents_consent_kind_check
+        CHECK (consent_kind IN (
+            'minor_voice_session', 'memory_retention',
+            'weekly_report', 'corpus_recording', 'child_archive'
+        ));
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END
+$guardian_person_consent_kind_child_archive$;
+
+CREATE TABLE IF NOT EXISTS guardian_subject_activity (
+    subject_person_id TEXT PRIMARY KEY CHECK (
+        char_length(subject_person_id) BETWEEN 1 AND 128
+    ),
+    last_active_at TIMESTAMPTZ NOT NULL,
+    last_source TEXT NOT NULL CHECK (last_source IN ('dialogue', 'miniprogram')),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_guardian_subject_activity_idle
+ON guardian_subject_activity(last_active_at);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_guardian_person_consents_active_kind
 ON guardian_person_consents(subject_person_id, consent_kind)
@@ -1321,6 +1362,7 @@ BEGIN
         GRANT SELECT, INSERT, UPDATE ON guardian_links TO memoria_guardian;
         GRANT SELECT, INSERT, UPDATE ON guardian_consents TO memoria_guardian;
         GRANT SELECT, INSERT, UPDATE ON guardian_person_consents TO memoria_guardian;
+        GRANT SELECT, INSERT, UPDATE ON guardian_subject_activity TO memoria_guardian;
         GRANT SELECT, INSERT, UPDATE ON guardian_corpus_samples TO memoria_guardian;
         GRANT SELECT, INSERT, UPDATE, DELETE ON tutor_practice_sessions TO memoria_guardian;
         GRANT SELECT, INSERT, UPDATE, DELETE ON tutor_study_progress TO memoria_guardian;

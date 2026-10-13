@@ -45,6 +45,7 @@ from services.consent.binding_snapshot import (
 from services.consent.bound_subject import BoundSubjectConsentService
 from services.consent.postgres_store import PostgresConsentStore
 from services.control_api.app.account_gate import AccountDeletingError, AccountOperationGate
+from services.control_api.app.child_compliance_wiring import install_child_compliance
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.device_registry import DeviceRegistry
@@ -605,7 +606,6 @@ async def _install_session_runtime(w: Wiring) -> None:
             ),
         )
         app.state.session_runtime_store = session_runtime_store
-        # Registered before initialize: a half-initialized store still closes.
         w.resources.add(session_runtime_store.close)
         await session_runtime_store.initialize()
         session_runtime_service = build_postgres_session_runtime_service(
@@ -699,7 +699,6 @@ async def _install_memory_scope(w: Wiring) -> None:
         outbox_dispatcher=dispatcher,
         shared_action_executor=shared_actions,
     )
-    # Registered before start: a wiring that fails to start still closes.
     w.on_close(wiring.close)
     await wiring.start()
 
@@ -812,6 +811,7 @@ async def _wire_services(w: Wiring) -> None:
         )
     app.state.multi_subject_binding_manifests = {}
     await _install_session_runtime(w)
+    await install_child_compliance(w)
     await _install_memory_scope(w)
     app.state.device_registry = DeviceRegistry(
         store,

@@ -9,7 +9,6 @@ import hashlib
 import hmac
 import io
 import logging
-import uuid
 import wave
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
@@ -93,14 +92,7 @@ from services.governance.account_data import (
     AccountDataGovernance,
     AccountDeletionIncompleteError,
 )
-from services.guardian.corpus import (
-    MAX_ACTIVE_CORPUS_SAMPLES_PER_MINOR,
-    CorpusConsentInactiveError,
-    CorpusSample,
-    CorpusSampleLimitError,
-    CorpusSampleStorePort,
-)
-from services.guardian.domain import GuardianConflictError, GuardianStorePort
+from services.guardian.domain import GuardianStorePort
 from services.guardian.retention import (
     apply_memory_retention_ceiling,
     memory_retention_allowed,
@@ -1846,7 +1838,10 @@ async def append_session_event(
         trusted_interaction,
         allowed=retention_allowed,
     )
-    if not retention_allowed:
+    # Scheme A: minor and unknown never persist verbatim turn text. Summaries
+    # are written separately as dialogue_summary rows; this evidence row stays
+    # metadata-only even when memory_retention consent is active.
+    if subject_category in {"minor", "unknown"} or not retention_allowed:
         for key in ("text", "transcript", "user_text", "assistant_text"):
             payload.pop(key, None)
     prompt_kind = payload.get("prompt_kind")
@@ -2052,22 +2047,13 @@ async def session_raw_voice_consent(
     profile = _store(request).get_subject_profile(user_id=account_id)
     subject_category = profile.get("subject_category") if profile else None
     if subject_category == "minor":
-        corpus_consent = await cast(
-            GuardianStorePort, request.app.state.guardian_store
-        ).active_consent(
-            minor_user_id=account_id,
-            consent_kind="corpus_recording",
-        )
-        if corpus_consent is None or corpus_consent.expires_at is None:
-            return {"allowed": False, "subject_category": "minor"}
+        # Approved: abolish child corpus recording. Historical consent rows may
+        # remain until the offline cleanup script runs; the write path always
+        # refuses.
         return {
-            "allowed": True,
+            "allowed": False,
             "subject_category": "minor",
-            "archive_purpose": "corpus_recording",
-            "consent_grant_id": corpus_consent.consent_id,
-            "policy_version": corpus_consent.policy_version,
-            "retention_policy": "corpus_time_bounded",
-            "expires_at": corpus_consent.expires_at.isoformat(),
+            "reason": "child_corpus_recording_abolished",
         }
     if subject_category != "adult":
         return {"allowed": False, "subject_category": subject_category}
@@ -2088,129 +2074,11 @@ async def _append_minor_corpus_audio(
     *,
     account_id: str,
 ) -> JSONResponse:
-    if body.archive_purpose != "corpus_recording" or body.consent_grant_id is None:
-        raise HTTPException(status_code=403, detail={"code": "minor_raw_audio_forbidden"})
-    guardian = cast(GuardianStorePort, request.app.state.guardian_store)
-    projection = cast(CorpusSampleStorePort, request.app.state.guardian_store)
-    consent = await guardian.active_consent(
-        minor_user_id=account_id,
-        consent_kind="corpus_recording",
-    )
-    if (
-        consent is None
-        or consent.expires_at is None
-        or consent.consent_id != body.consent_grant_id
-    ):
-        raise HTTPException(status_code=410, detail={"code": "corpus_consent_inactive"})
-    audio = _decode_owner_wav(body.audio_base64)
-    archive = _archive(request)
-    parent = await archive.event(account_id=account_id, event_id=body.event_id)
-    if parent is None:
-        raise HTTPException(status_code=425, detail={"code": "parent_turn_not_recorded"})
-    if (
-        body.turn_id is None
-        or body.generation_id is None
-        or parent.session_id != body.session_id
-        or parent.turn_id != body.turn_id
-        or parent.generation_id != body.generation_id
-        or parent.event_type != "speech.utterance_finalized"
-        or parent.speaker_class != "owner"
-        or parent.subject_id != account_id
-    ):
-        raise HTTPException(status_code=409, detail={"code": "corpus_parent_mismatch"})
-    existing = await projection.corpus_sample_by_event(
-        minor_user_id=account_id,
-        source_event_id=body.event_id,
-    )
-    audio_sha256 = hashlib.sha256(audio).hexdigest()
-    now = datetime.now(UTC)
-    if existing is not None:
-        if (
-            existing.consent_id != consent.consent_id
-            or existing.reference.content_sha256 != audio_sha256
-        ):
-            raise HTTPException(status_code=409, detail={"code": "corpus_idempotency_conflict"})
-        if existing.deleted_at is not None or existing.expires_at <= now:
-            raise HTTPException(status_code=410, detail={"code": "corpus_sample_expired"})
-        return JSONResponse(
-            status_code=200,
-            content={
-                "sample_id": existing.sample_id,
-                "duplicate": True,
-                "expires_at": existing.expires_at.isoformat(),
-            },
-        )
-    active_samples = await projection.corpus_samples(
-        minor_user_id=account_id,
-        include_deleted=False,
-    )
-    if (
-        sum(sample.expires_at > now for sample in active_samples)
-        >= MAX_ACTIVE_CORPUS_SAMPLES_PER_MINOR
-    ):
-        raise HTTPException(status_code=429, detail={"code": "corpus_sample_limit_reached"})
-    reference: ObjectRef | None = None
-    persisted = False
-    try:
-        async with _account_write(request, account_id):
-            reference = await _put_archive_object(
-                _archive_objects(request),
-                account_id=account_id,
-                data=audio,
-                purpose="authorized-child-corpus",
-            )
-            sample = CorpusSample(
-                sample_id=str(
-                    uuid.uuid5(
-                        uuid.NAMESPACE_URL,
-                        f"memoria:authorized-child-corpus:{account_id}:{body.event_id}",
-                    )
-                ),
-                minor_user_id=account_id,
-                consent_id=consent.consent_id,
-                source_event_id=body.event_id,
-                reference=reference,
-                created_at=now,
-                expires_at=consent.expires_at,
-            )
-            saved = await projection.record_corpus_sample(sample)
-            persisted = True
-    except CorpusConsentInactiveError as exc:
-        if reference is not None and not persisted:
-            await _delete_object_safely(_archive_objects(request), reference)
-        raise HTTPException(
-            status_code=410,
-            detail={"code": "corpus_consent_inactive"},
-        ) from exc
-    except CorpusSampleLimitError as exc:
-        if reference is not None and not persisted:
-            await _delete_object_safely(_archive_objects(request), reference)
-        raise HTTPException(
-            status_code=429,
-            detail={"code": "corpus_sample_limit_reached"},
-        ) from exc
-    except GuardianConflictError as exc:
-        if reference is not None and not persisted:
-            await _delete_object_safely(_archive_objects(request), reference)
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "corpus_idempotency_conflict"},
-        ) from exc
-    except asyncio.CancelledError:
-        if reference is not None and not persisted:
-            await _delete_object_safely(_archive_objects(request), reference)
-        raise
-    except Exception:
-        if reference is not None and not persisted:
-            await _delete_object_safely(_archive_objects(request), reference)
-        raise
-    return JSONResponse(
-        status_code=201,
-        content={
-            "sample_id": saved.sample_id,
-            "duplicate": False,
-            "expires_at": saved.expires_at.isoformat(),
-        },
+    """Child corpus recording is abolished (Scheme A)."""
+
+    del body, request, account_id
+    raise HTTPException(
+        status_code=403, detail={"code": "child_corpus_recording_abolished"}
     )
 
 

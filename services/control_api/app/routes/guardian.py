@@ -59,6 +59,12 @@ from services.governance.subject_deletion import (
     SubjectDeletionService,
 )
 from services.governance.subject_ports import SubjectScope
+from services.guardian.child_memory import (
+    KIND_CHILD_ARCHIVE,
+    KIND_DIALOGUE_SUMMARY,
+    ArchiveFact,
+    DialogueSummary,
+)
 from services.guardian.consent import GuardianConsentService
 from services.guardian.corpus import CorpusRetentionService
 from services.guardian.crisis import CrisisNotificationStorePort
@@ -82,6 +88,7 @@ from services.guardian.push import PushSubscriptionResult, PushSubscriptionStore
 from services.guardian.weekly_report import WeeklyReportProjector
 from services.identity.service import IdentityService
 from services.legacy.domain import LegacyRegistryPort
+from services.memory_scope.child_layers import ChildLayerStore
 from services.speaker.domain import RevokeSpeakerProfile, SpeakerAuthorityPort
 from services.voice_profile.domain import VoiceProfilePort
 
@@ -92,6 +99,7 @@ _CONSENT_KINDS: tuple[ConsentKind, ...] = (
     "memory_retention",
     "weekly_report",
     "corpus_recording",
+    "child_archive",
 )
 _WEEKLY_EVENT_TYPES = (
     "emotion_observation",
@@ -1237,6 +1245,28 @@ class GuardianMemoryReview(BaseModel):
     action: Literal["confirm", "retract"]
 
 
+class ChildSessionSummaryCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    text: str = Field(min_length=1, max_length=200)
+    session_id: str = Field(min_length=1, max_length=128)
+    source_event_id: str = Field(min_length=1, max_length=128)
+
+
+class ChildArchiveFactCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    field: Literal["appellation", "preference", "pet_name"]
+    text: str = Field(min_length=1, max_length=40)
+
+
+def _child_layers(request: Request) -> ChildLayerStore:
+    store = getattr(request.app.state, "child_layer_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail={"code": "child_layers_unavailable"})
+    return cast(ChildLayerStore, store)
+
+
 async def _child_memory_account(
     request: Request, *, user: AuthenticatedUser, minor_user_id: str
 ) -> str:
@@ -1253,6 +1283,208 @@ async def _child_memory_account(
             status_code=403, detail={"code": "guardian_memory_review_unavailable"}
         )
     return await _guardian_evidence_account(request, user=user, minor_user_id=minor_user_id)
+
+
+@router.get("/minors/{minor_user_id}/session-summaries")
+async def list_session_summaries(
+    minor_user_id: str,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+) -> dict[str, Any]:
+    """Stored dialogue summaries for the parent mini program (no verbatim quotes)."""
+
+    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    layers = _child_layers(request)
+    items = await layers.list(
+        subject_id=minor_user_id,
+        kind=KIND_DIALOGUE_SUMMARY,
+        viewer_subject_id=account_id,
+        limit=limit,
+    )
+    return {
+        "items": [
+            {
+                "record_id": item.record_id,
+                "text": item.text,
+                "session_id": item.session_id,
+                "created_at": item.created_at.isoformat(),
+                "retention_expires_at": (
+                    item.retention_expires_at.isoformat()
+                    if item.retention_expires_at
+                    else None
+                ),
+            }
+            for item in items
+        ],
+        "privacy": {"contains_transcript": False},
+    }
+
+
+@router.post("/minors/{minor_user_id}/session-summaries")
+async def create_session_summary(
+    minor_user_id: str,
+    body: ChildSessionSummaryCreate,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
+) -> dict[str, Any]:
+    """Ingest one paraphrased session summary after a conversation ends."""
+
+    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    consent = await _store(request).active_consent(
+        minor_user_id=minor_user_id, consent_kind="memory_retention"
+    )
+    if consent is None:
+        raise HTTPException(
+            status_code=403, detail={"code": "memory_retention_consent_required"}
+        )
+    consent_snapshot_id = consent.consent_id
+    try:
+        summary = DialogueSummary(
+            subject_id=minor_user_id,
+            text=body.text,
+            source_event_id=body.source_event_id,
+            session_id=body.session_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": "invalid_dialogue_summary"}) from exc
+    record = await _child_layers(request).write_summary(
+        summary,
+        resource_owner_id=account_id,
+        actor_id=account_id,
+        consent_snapshot_id=consent_snapshot_id,
+    )
+    return {
+        "record_id": record.record_id,
+        "text": record.text,
+        "session_id": record.session_id,
+        "created_at": record.created_at.isoformat(),
+        "retention_expires_at": (
+            record.retention_expires_at.isoformat() if record.retention_expires_at else None
+        ),
+    }
+
+
+@router.delete("/minors/{minor_user_id}/session-summaries/{record_id}")
+async def delete_session_summary(
+    minor_user_id: str,
+    record_id: str,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
+) -> dict[str, Any]:
+    """Physically delete one dialogue summary; a re-query must return nothing."""
+
+    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    layers = _child_layers(request)
+    existing = await layers.get(
+        subject_id=minor_user_id, record_id=record_id, viewer_subject_id=account_id
+    )
+    if existing is None or existing.kind != KIND_DIALOGUE_SUMMARY:
+        raise HTTPException(status_code=404, detail={"code": "session_summary_not_found"})
+    erased = await layers.delete_record(subject_id=minor_user_id, record_id=record_id)
+    again = await layers.get(
+        subject_id=minor_user_id, record_id=record_id, viewer_subject_id=account_id
+    )
+    if again is not None:
+        raise HTTPException(status_code=500, detail={"code": "session_summary_delete_incomplete"})
+    return {"deleted": True, "record_id": record_id, "erased": dict(erased)}
+
+
+@router.get("/minors/{minor_user_id}/child-archive")
+async def list_child_archive(
+    minor_user_id: str,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+) -> dict[str, Any]:
+    """Whitelist long-term archive facts (appellation, preference, pet_name)."""
+
+    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    items = await _child_layers(request).list(
+        subject_id=minor_user_id,
+        kind=KIND_CHILD_ARCHIVE,
+        viewer_subject_id=account_id,
+        limit=limit,
+    )
+    return {
+        "items": [
+            {
+                "record_id": item.record_id,
+                "field": item.field,
+                "text": item.text,
+                "created_at": item.created_at.isoformat(),
+            }
+            for item in items
+        ]
+    }
+
+
+@router.post("/minors/{minor_user_id}/child-archive")
+async def create_child_archive_fact(
+    minor_user_id: str,
+    body: ChildArchiveFactCreate,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
+) -> dict[str, Any]:
+    """Write one whitelist archive fact; requires separate child_archive consent."""
+
+    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    consent = await _store(request).active_consent(
+        minor_user_id=minor_user_id, consent_kind="child_archive"
+    )
+    if consent is None:
+        raise HTTPException(status_code=403, detail={"code": "child_archive_consent_required"})
+    try:
+        fact = ArchiveFact(subject_id=minor_user_id, field=body.field, text=body.text)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": "invalid_child_archive_fact"}) from exc
+    record = await _child_layers(request).write_archive_fact(
+        fact,
+        resource_owner_id=account_id,
+        actor_id=account_id,
+        consent_snapshot_id=consent.consent_id,
+    )
+    return {
+        "record_id": record.record_id,
+        "field": record.field,
+        "text": record.text,
+        "created_at": record.created_at.isoformat(),
+    }
+
+
+@router.delete("/minors/{minor_user_id}/child-archive/{record_id}")
+async def delete_child_archive_fact(
+    minor_user_id: str,
+    record_id: str,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
+) -> dict[str, Any]:
+    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    layers = _child_layers(request)
+    existing = await layers.get(
+        subject_id=minor_user_id, record_id=record_id, viewer_subject_id=account_id
+    )
+    if existing is None or existing.kind != KIND_CHILD_ARCHIVE:
+        raise HTTPException(status_code=404, detail={"code": "child_archive_not_found"})
+    erased = await layers.delete_record(subject_id=minor_user_id, record_id=record_id)
+    return {"deleted": True, "record_id": record_id, "erased": dict(erased)}
+
+
+@router.post("/minors/{minor_user_id}/activity")
+async def touch_child_activity(
+    minor_user_id: str,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+    source: Annotated[Literal["dialogue", "miniprogram"], Query()] = "miniprogram",
+) -> dict[str, Any]:
+    """Reset the 180-day child_archive idle clock (dialogue or mini program open)."""
+
+    await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    activity = getattr(request.app.state, "subject_activity_store", None)
+    if activity is None:
+        raise HTTPException(status_code=503, detail={"code": "subject_activity_unavailable"})
+    stamped = await activity.touch(subject_person_id=minor_user_id, source=source)
+    return {"subject_id": minor_user_id, "last_active_at": stamped.isoformat(), "source": source}
 
 
 @router.get("/minors/{minor_user_id}/memories")

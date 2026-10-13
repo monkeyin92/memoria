@@ -695,6 +695,7 @@ async def unbind_device(
     )
     withdrawn = 0
     subject_deletion = "not_requested"
+    child_layers_purged = "not_applicable"
     if manifest is not None and manifest.account_owner_id == user.user_id:
         withdrawn = await _withdraw_bound_subject_consents(
             request,
@@ -702,6 +703,21 @@ async def unbind_device(
             binding_id=manifest.binding_id,
             subject_ids=manifest.primary_subject_ids,
         )
+        # PIPL art. 47 / owner decision: unbind always deletes child_archive
+        # and all dialogue_summary rows, including those under 30 days.
+        child_layers = getattr(request.app.state, "child_layer_store", None)
+        if child_layers is not None:
+            child_layers_purged = "completed"
+            for subject_id in manifest.primary_subject_ids:
+                if subject_id == user.user_id:
+                    continue
+                try:
+                    await child_layers.purge_both_layers(subject_id=subject_id)
+                except Exception:
+                    logger.exception(
+                        "child layer purge after unbind failed subject_id=%s", subject_id
+                    )
+                    child_layers_purged = "pending"
         if body.purge_subject_data and deletion is not None:
             subject_deletion = "completed"
             for subject_id in manifest.primary_subject_ids:
@@ -724,6 +740,7 @@ async def unbind_device(
         "device_released": device_released,
         "consents_withdrawn": withdrawn,
         "subject_deletion": subject_deletion,
+        "child_layers_purged": child_layers_purged,
     }
 
 
