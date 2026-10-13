@@ -217,22 +217,23 @@ class MediaSessionConnectionMixin:
             if profile is not None
             else context.identity.subject_id
         )
+        if (
+            not callable(publisher)
+            or subject_category != "minor"
+            or not subject_id
+            or not context.identity.account_id
+        ):
+            return
         turns = snapshot_context_turns(context.runtime.orchestrator.context.turns)
         try:
-            if (
-                callable(publisher)
-                and subject_category == "minor"
-                and subject_id
-                and context.identity.account_id
-            ):
-                result = publisher(
-                    subject_id=subject_id,
-                    resource_owner_id=context.identity.account_id,
-                    session_id=context.identity.session_id,
-                    turns=turns,
-                )
-                if asyncio.iscoroutine(result):
-                    await result
+            result = publisher(
+                subject_id=subject_id,
+                resource_owner_id=context.identity.account_id,
+                session_id=context.identity.session_id,
+                turns=turns,
+            )
+            if asyncio.iscoroutine(result):
+                await result
         except Exception:
             logger.warning(
                 "session recap publish failed session=%s",
@@ -240,7 +241,7 @@ class MediaSessionConnectionMixin:
                 exc_info=True,
             )
         finally:
-            # Always drop the ephemeral transcript after the write attempt.
+            # Scheme A: drop the ephemeral child transcript after the write attempt.
             context.runtime.orchestrator.context.clear_turns()
 
     async def finalize_session(self, session_id: str) -> None:
