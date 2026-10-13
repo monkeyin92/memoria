@@ -201,6 +201,10 @@ class MediaTurnEndpointMixin:
             self, context: _MediaVoiceSession, result: ASRResult
         ) -> None: ...
 
+        def defer_incomplete_followup_commit(
+            self, context: _MediaVoiceSession, endpoint_sample: int
+        ) -> bool: ...
+
         def _split_pending_turn_at_unvoiced_gap(
             self, context: _MediaVoiceSession, result: ASRResult
         ) -> None: ...
@@ -1323,6 +1327,10 @@ class MediaTurnEndpointMixin:
                     )
                 if context.runtime.assistant_speaking:
                     context.runtime.publish_assistant_audio("restore", gain=1.0)
+                return
+            # Mid-clause follow-ups (「我想听」) must wait for the next final; otherwise
+            # one child sentence becomes two input turns and the tail dies on ASR timeout.
+            if self.defer_incomplete_followup_commit(context, endpoint_sample):
                 return
             # Shield past the grace sleep: late offline recovery re-arms the
             # same endpoint via ``_schedule_turn_commit``, which cancels the

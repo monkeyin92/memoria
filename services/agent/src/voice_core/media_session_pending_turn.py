@@ -59,6 +59,8 @@ class PendingTurn:
     # Endpoint pinned by the playback-followup path; a later guarded final may
     # advance it while the utterance keeps producing post-boundary finals.
     playback_followup_endpoint_sample: int | None = None
+    # Wall clock when the follow-up pin first landed; bounds incomplete-hold deferrals.
+    followup_pin_monotonic: float | None = None
     # The sentence the commit's head start was last started for: a reschedule of the same commit must
     # not start it again (``_warm_endpoint_commit``).
     warmed_commit_text: str | None = None
@@ -154,6 +156,7 @@ class PendingTurn:
         self.pending_turn_playback_overlap = False
         self.pending_turn_onset_floor = None
         self.playback_followup_endpoint_sample = None
+        self.followup_pin_monotonic = None
         self.warmed_commit_text = None
         self.committed_asr_keys.clear()
         self.pending_partial = None

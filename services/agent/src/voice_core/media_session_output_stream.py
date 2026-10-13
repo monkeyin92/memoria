@@ -1198,6 +1198,9 @@ class MediaOutputStreamMixin:
         if owner is not None and not owner.fence.matches(fence):
             return
         self._record_playback_boundary(context)
+        endpoint_overlap = getattr(self, "endpoint_overlapped_pending_after_playback", None)
+        if callable(endpoint_overlap):
+            endpoint_overlap(context)
         context.output.provider_complete = False
         self._record_reply_delivery_event(
             context,
