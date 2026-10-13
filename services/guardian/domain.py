@@ -30,6 +30,7 @@ ConsentKind = Literal[
     "memory_retention",
     "weekly_report",
     "corpus_recording",
+    "child_archive",
 ]
 
 

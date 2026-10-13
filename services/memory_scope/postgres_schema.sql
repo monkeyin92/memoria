@@ -2516,4 +2516,242 @@ GRANT EXECUTE ON FUNCTION memory_subject_erase(TEXT)
 GRANT EXECUTE ON FUNCTION memory_subject_remaining(TEXT)
     TO memoria_memory_maintenance;
 
+-- ---------------------------------------------------------------------------
+-- Layered child-memory erase (dialogue_summary / child_archive).
+-- Uses the same append-only escape as memory_subject_erase: set
+-- app.memory.subject_erase to the subject, DELETE matching kind rows, count
+-- remaining.  Does NOT wipe the whole subject; full subject erase still
+-- covers both layers via memory_subject_erase.
+-- ---------------------------------------------------------------------------
+
+CREATE INDEX IF NOT EXISTS idx_memory_records_child_kind
+ON memory_records (subject_id, ((payload ->> 'kind')))
+WHERE payload ? 'kind';
+
+CREATE OR REPLACE FUNCTION memory_kind_erase(
+    p_subject_id TEXT,
+    p_kind TEXT,
+    p_only_expired BOOLEAN DEFAULT FALSE
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = on
+SET lock_timeout = '5s'
+AS $memory_kind_erase$
+DECLARE
+    v_records TEXT[];
+    v_status_events INTEGER;
+    v_records_deleted INTEGER;
+BEGIN
+    IF NOT pg_has_role(session_user, 'memoria_memory_maintenance', 'member') THEN
+        RAISE EXCEPTION 'memory kind erasure requires the maintenance role'
+            USING ERRCODE = 'MC403';
+    END IF;
+    IF p_subject_id IS NULL OR btrim(p_subject_id) = ''
+       OR char_length(p_subject_id) > 128 THEN
+        RAISE EXCEPTION 'memory kind erasure needs a bounded subject id'
+            USING ERRCODE = 'MC403';
+    END IF;
+    IF p_kind NOT IN ('dialogue_summary', 'child_archive') THEN
+        RAISE EXCEPTION 'memory kind erasure needs a known child layer kind'
+            USING ERRCODE = 'MC403';
+    END IF;
+
+    PERFORM set_config('app.memory.subject_erase', p_subject_id, true);
+
+    SELECT COALESCE(array_agg(r.record_id), ARRAY[]::TEXT[]) INTO v_records
+    FROM (
+        SELECT record_id FROM memory_records
+        WHERE subject_id = p_subject_id
+          AND payload ->> 'kind' = p_kind
+          AND (
+            NOT p_only_expired
+            OR (
+                retention_expires_at IS NOT NULL
+                AND retention_expires_at <= CURRENT_TIMESTAMP
+            )
+        )
+        ORDER BY record_id
+        FOR UPDATE
+    ) r;
+
+    DELETE FROM memory_status_events WHERE record_id = ANY(v_records);
+    GET DIAGNOSTICS v_status_events = ROW_COUNT;
+    DELETE FROM memory_records WHERE record_id = ANY(v_records);
+    GET DIAGNOSTICS v_records_deleted = ROW_COUNT;
+
+    PERFORM set_config('app.memory.subject_erase', '', true);
+
+    RETURN jsonb_build_object(
+        'kind', p_kind,
+        'only_expired', p_only_expired,
+        'memory_status_events', v_status_events,
+        'memory_records', v_records_deleted
+    );
+END
+$memory_kind_erase$;
+
+CREATE OR REPLACE FUNCTION memory_kind_remaining(
+    p_subject_id TEXT,
+    p_kind TEXT,
+    p_only_expired BOOLEAN DEFAULT FALSE
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = on
+AS $memory_kind_remaining$
+BEGIN
+    IF NOT pg_has_role(session_user, 'memoria_memory_maintenance', 'member') THEN
+        RAISE EXCEPTION 'memory kind remaining requires the maintenance role'
+            USING ERRCODE = 'MC403';
+    END IF;
+    IF p_kind NOT IN ('dialogue_summary', 'child_archive') THEN
+        RAISE EXCEPTION 'memory kind remaining needs a known child layer kind'
+            USING ERRCODE = 'MC403';
+    END IF;
+    RETURN jsonb_build_object(
+        'kind', p_kind,
+        'only_expired', p_only_expired,
+        'memory_records', (
+            SELECT count(*) FROM memory_records
+            WHERE subject_id = p_subject_id
+              AND payload ->> 'kind' = p_kind
+              AND (
+                NOT p_only_expired
+                OR (
+                    retention_expires_at IS NOT NULL
+                    AND retention_expires_at <= CURRENT_TIMESTAMP
+                )
+              )
+        )
+    );
+END
+$memory_kind_remaining$;
+
+CREATE OR REPLACE FUNCTION memory_record_erase(
+    p_subject_id TEXT,
+    p_record_id TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = on
+SET lock_timeout = '5s'
+AS $memory_record_erase$
+DECLARE
+    v_kind TEXT;
+    v_status_events INTEGER;
+    v_records_deleted INTEGER;
+BEGIN
+    IF NOT pg_has_role(session_user, 'memoria_memory_maintenance', 'member') THEN
+        RAISE EXCEPTION 'memory record erasure requires the maintenance role'
+            USING ERRCODE = 'MC403';
+    END IF;
+    IF p_subject_id IS NULL OR btrim(p_subject_id) = ''
+       OR char_length(p_subject_id) > 128
+       OR p_record_id IS NULL OR btrim(p_record_id) = ''
+       OR char_length(p_record_id) > 128 THEN
+        RAISE EXCEPTION 'memory record erasure needs bounded ids'
+            USING ERRCODE = 'MC403';
+    END IF;
+
+    SELECT payload ->> 'kind' INTO v_kind
+    FROM memory_records
+    WHERE record_id = p_record_id AND subject_id = p_subject_id
+    FOR UPDATE;
+    IF v_kind IS NULL OR v_kind NOT IN ('dialogue_summary', 'child_archive') THEN
+        RAISE EXCEPTION 'memory record erasure only deletes child layer rows'
+            USING ERRCODE = 'MC404';
+    END IF;
+
+    PERFORM set_config('app.memory.subject_erase', p_subject_id, true);
+    DELETE FROM memory_status_events WHERE record_id = p_record_id;
+    GET DIAGNOSTICS v_status_events = ROW_COUNT;
+    DELETE FROM memory_records
+    WHERE record_id = p_record_id AND subject_id = p_subject_id;
+    GET DIAGNOSTICS v_records_deleted = ROW_COUNT;
+    PERFORM set_config('app.memory.subject_erase', '', true);
+
+    RETURN jsonb_build_object(
+        'kind', v_kind,
+        'record_id', p_record_id,
+        'memory_status_events', v_status_events,
+        'memory_records', v_records_deleted
+    );
+END
+$memory_record_erase$;
+
+CREATE OR REPLACE FUNCTION memory_kind_due_subjects(p_kind TEXT)
+RETURNS TEXT[]
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = on
+AS $memory_kind_due_subjects$
+BEGIN
+    IF NOT pg_has_role(session_user, 'memoria_memory_maintenance', 'member') THEN
+        RAISE EXCEPTION 'memory kind due subjects requires the maintenance role'
+            USING ERRCODE = 'MC403';
+    END IF;
+    IF p_kind NOT IN ('dialogue_summary', 'child_archive') THEN
+        RAISE EXCEPTION 'memory kind due subjects needs a known child layer kind'
+            USING ERRCODE = 'MC403';
+    END IF;
+    RETURN ARRAY(
+        SELECT DISTINCT subject_id
+        FROM memory_records
+        WHERE payload ->> 'kind' = p_kind
+          AND retention_expires_at IS NOT NULL
+          AND retention_expires_at <= CURRENT_TIMESTAMP
+        ORDER BY subject_id
+    );
+END
+$memory_kind_due_subjects$;
+
+CREATE OR REPLACE FUNCTION memory_kind_subjects(p_kind TEXT)
+RETURNS TEXT[]
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = on
+AS $memory_kind_subjects$
+BEGIN
+    IF NOT pg_has_role(session_user, 'memoria_memory_maintenance', 'member') THEN
+        RAISE EXCEPTION 'memory kind subjects requires the maintenance role'
+            USING ERRCODE = 'MC403';
+    END IF;
+    IF p_kind NOT IN ('dialogue_summary', 'child_archive') THEN
+        RAISE EXCEPTION 'memory kind subjects needs a known child layer kind'
+            USING ERRCODE = 'MC403';
+    END IF;
+    RETURN ARRAY(
+        SELECT DISTINCT subject_id
+        FROM memory_records
+        WHERE payload ->> 'kind' = p_kind
+        ORDER BY subject_id
+    );
+END
+$memory_kind_subjects$;
+
+REVOKE ALL ON FUNCTION memory_kind_erase(TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+REVOKE ALL ON FUNCTION memory_kind_remaining(TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+REVOKE ALL ON FUNCTION memory_record_erase(TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION memory_kind_due_subjects(TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION memory_kind_subjects(TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION memory_kind_erase(TEXT, TEXT, BOOLEAN)
+    TO memoria_memory_maintenance;
+GRANT EXECUTE ON FUNCTION memory_kind_remaining(TEXT, TEXT, BOOLEAN)
+    TO memoria_memory_maintenance;
+GRANT EXECUTE ON FUNCTION memory_record_erase(TEXT, TEXT)
+    TO memoria_memory_maintenance;
+GRANT EXECUTE ON FUNCTION memory_kind_due_subjects(TEXT)
+    TO memoria_memory_maintenance;
+GRANT EXECUTE ON FUNCTION memory_kind_subjects(TEXT)
+    TO memoria_memory_maintenance;
+
 RESET ROLE;
