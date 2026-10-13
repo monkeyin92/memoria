@@ -23,10 +23,8 @@ test("guardian page covers child confirmation, granular consent, summary, and al
   assert.match(script, /语音陪伴/);
   assert.match(script, /学习与成长记录/);
   assert.match(script, /每周成长小结/);
-  assert.match(script, /长期小档案/);
-  assert.match(script, /openChildMemory/);
+  assert.match(script, /长期记忆/);
   assert.match(template, /不含对话原文/);
-  assert.match(template, /孩子的记忆/);
   assert.doesNotMatch(template, /心理监测|心理诊断评分|严重度分级/);
 });
 

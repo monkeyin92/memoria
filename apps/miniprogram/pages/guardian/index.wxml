@@ -112,18 +112,6 @@
             <text class="row-meta">按当前设备绑定管理，不按登录账号另查</text>
           </view>
         </view>
-        <view
-          class="list-row child-memory-entry"
-          data-person-id="{{item.personId}}"
-          data-name="{{item.displayName}}"
-          bindtap="openChildMemory"
-        >
-          <view class="row-copy">
-            <text class="row-title">孩子的记忆</text>
-            <text class="row-meta">会话小结与长期小档案，看得见、删得掉</text>
-          </view>
-          <text class="row-chevron">打开 ›</text>
-        </view>
         <text wx:if="{{item.loadError}}" class="error-text">{{item.loadError}}</text>
         <view wx:for="{{item.consentRows}}" wx:for-item="consent" wx:key="kind" class="setting-row">
           <view class="row-copy">

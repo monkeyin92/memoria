@@ -10,6 +10,7 @@ const {
 const { greetingFor, formatDateLabel } = require("../../utils/greeting");
 const { readOnboardingSessionId } = require("../../utils/device-onboarding/session-store");
 const { readSubjectLabel } = require("../../utils/subject-label");
+const { boundChildFromManifest } = require("../../utils/child-memory");
 
 function todayKey(date = new Date()) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -55,6 +56,9 @@ function emptyDashboard() {
     todayTitle: "",
     todayOverview: "",
     dailySummaryText: "",
+    showChildMemory: false,
+    childMemoryMinorId: "",
+    childMemoryName: "",
   };
 }
 
@@ -195,6 +199,15 @@ Page({
     wx.switchTab({ url: "/pages/memory/index" });
   },
 
+  openChildMemory() {
+    const minorId = this.data.childMemoryMinorId;
+    if (!minorId) return;
+    const name = this.data.childMemoryName || "孩子";
+    wx.navigateTo({
+      url: `/pages/child-memory/index?minorId=${encodeURIComponent(minorId)}&name=${encodeURIComponent(name)}`,
+    });
+  },
+
   async retryBindingSync() {
     if (!(await requireLogin({ reason: "view_dashboard" }))) {
       this._enterGuestState();
@@ -326,6 +339,7 @@ Page({
       (result) => result.status === "rejected",
     );
     const online = summary.online;
+    const boundChild = boundChildFromManifest(binding);
 
     this.setData({
       loading: false,
@@ -361,6 +375,9 @@ Page({
       todayTitle: today.todayTitle || "",
       todayOverview: today.todayOverview || "",
       dailySummaryText: today.dailySummaryText || "",
+      showChildMemory: Boolean(boundChild),
+      childMemoryMinorId: boundChild?.personId || "",
+      childMemoryName: boundChild?.displayName || "",
       error: failures.length ? "部分状态暂时无法同步。" : "",
     });
   },

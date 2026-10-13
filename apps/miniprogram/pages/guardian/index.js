@@ -30,8 +30,8 @@ const CONSENT_DEFINITIONS = Object.freeze([
   },
   {
     kind: "child_archive",
-    label: "长期小档案",
-    description: "只记住称呼、喜好和小名；可在「孩子的记忆」里查看和删除",
+    label: "长期记忆",
+    description: "兴趣等白名单内容；可在首页「孩子的记忆」里查看和删除",
     policyVersion: "child-archive-v1",
   },
 ]);
@@ -508,15 +508,6 @@ Page({
     } finally {
       this.setData({ minorDeleting: false });
     }
-  },
-
-  openChildMemory(event) {
-    const minorId = event.currentTarget.dataset.minorId || event.currentTarget.dataset.personId;
-    const name = event.currentTarget.dataset.name || "孩子";
-    if (!minorId) return;
-    wx.navigateTo({
-      url: `/pages/child-memory/index?minorId=${encodeURIComponent(minorId)}&name=${encodeURIComponent(name)}`,
-    });
   },
 
   selectMinor(event) {

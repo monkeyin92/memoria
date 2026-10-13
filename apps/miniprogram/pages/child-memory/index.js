@@ -1,12 +1,23 @@
 const api = require("../../utils/api");
 const { requireLogin } = require("../../utils/auth-gate");
+const { readBindingManifest } = require("../../utils/device-binding");
 const {
   CHILD_ARCHIVE_CONSENT,
+  CLEARED_TOAST,
+  CONSENT_OFF_DIALOG,
+  DELETE_CONFIRM,
+  EMPTY_ARCHIVE_ON,
+  EMPTY_RECENT,
+  PRIVACY_LINE,
   archiveConsentFromPersonPayload,
   assertsNoTranscriptFields,
+  boundChildFromManifest,
+  groupArchiveByCategory,
   normalizeChildArchive,
   normalizeSessionSummaries,
 } = require("../../utils/child-memory");
+
+const SWIPE_OPEN_PX = 72;
 
 function operationKey(prefix) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -22,6 +33,23 @@ function pageError(error, fallback) {
   return error?.message || fallback;
 }
 
+function resolveMinor(query) {
+  const fromQuery =
+    typeof query?.minorId === "string" && query.minorId
+      ? decodeURIComponent(query.minorId)
+      : "";
+  const nameFromQuery =
+    typeof query?.name === "string" && query.name.trim()
+      ? decodeURIComponent(query.name)
+      : "";
+  if (fromQuery) {
+    return { minorId: fromQuery, childName: nameFromQuery || "孩子" };
+  }
+  const bound = boundChildFromManifest(readBindingManifest());
+  if (!bound) return { minorId: "", childName: "孩子" };
+  return { minorId: bound.personId, childName: bound.displayName };
+}
+
 Page({
   data: {
     authenticated: false,
@@ -31,8 +59,13 @@ Page({
     minorId: "",
     childName: "孩子",
     loadState: "idle",
+    activeTab: "recent",
+    privacyLine: PRIVACY_LINE,
+    emptyRecent: EMPTY_RECENT,
+    emptyArchiveOn: EMPTY_ARCHIVE_ON,
     summaries: [],
-    archive: [],
+    archiveGroups: [],
+    archiveFlat: [],
     archiveConsent: {
       ...CHILD_ARCHIVE_CONSENT,
       active: false,
@@ -40,23 +73,22 @@ Page({
       statusLabel: "未开启",
     },
     confirm: null,
+    statusBanner: "",
   },
 
   onLoad(query) {
-    const minorId = typeof query?.minorId === "string" ? decodeURIComponent(query.minorId) : "";
-    const childName =
-      typeof query?.name === "string" && query.name.trim()
-        ? decodeURIComponent(query.name)
-        : "孩子";
-    this.setData({ minorId, childName });
+    const resolved = resolveMinor(query || {});
+    this.setData(resolved);
     const app = getApp();
     this._unsubscribeAuthCleared = app?.subscribeAuthCleared?.(() => {
       this.setData({
         authenticated: false,
         summaries: [],
-        archive: [],
+        archiveGroups: [],
+        archiveFlat: [],
         loadState: "idle",
         error: "",
+        statusBanner: "",
       });
     });
   },
@@ -71,6 +103,10 @@ Page({
       return;
     }
     this.setData({ authenticated: true });
+    if (!this.data.minorId) {
+      const resolved = resolveMinor({});
+      this.setData(resolved);
+    }
     await this.refresh();
   },
 
@@ -82,8 +118,14 @@ Page({
     }
   },
 
-  goBack() {
-    wx.navigateBack({ fail: () => wx.navigateTo({ url: "/pages/guardian/index" }) });
+  showRecent() {
+    this._closeAllSwipes();
+    this.setData({ activeTab: "recent", statusBanner: "" });
+  },
+
+  showArchive() {
+    this._closeAllSwipes();
+    this.setData({ activeTab: "archive", statusBanner: "" });
   },
 
   async refresh() {
@@ -91,7 +133,7 @@ Page({
     if (!minorId) {
       this.setData({
         loadState: "error",
-        error: "没有找到孩子。请从「家庭与监护」进入。",
+        error: "没有找到孩子。请先完成家长代孩子绑定。",
       });
       return;
     }
@@ -105,16 +147,17 @@ Page({
       ]);
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       const archiveConsent = archiveConsentFromPersonPayload(consentPayload);
-      let archive = [];
+      let archiveFlat = [];
       if (archiveConsent.active) {
-        archive = normalizeChildArchive(await api.getChildArchive(minorId));
+        archiveFlat = normalizeChildArchive(await api.getChildArchive(minorId));
       }
       const summaries = normalizeSessionSummaries(summaryPayload);
       assertsNoTranscriptFields(summaries);
-      assertsNoTranscriptFields(archive);
+      assertsNoTranscriptFields(archiveFlat);
       this.setData({
         summaries,
-        archive,
+        archiveFlat,
+        archiveGroups: groupArchiveByCategory(archiveFlat),
         archiveConsent,
         loadState: "ready",
         error: "",
@@ -133,50 +176,111 @@ Page({
     }
   },
 
-  async onArchiveConsentChange(event) {
-    if (this.data.working) return;
-    const wantOn = Boolean(event.detail?.value);
-    const { archiveConsent, minorId } = this.data;
-    if (!minorId || wantOn === archiveConsent.active) return;
-    this.setData({ working: true, error: "" });
-    try {
-      if (wantOn) {
-        await api.grantPersonConsent({
-          personId: minorId,
-          consentKind: CHILD_ARCHIVE_CONSENT.kind,
-          policyVersion: CHILD_ARCHIVE_CONSENT.policyVersion,
-          idempotencyKey: operationKey("child-archive-grant"),
-        });
-      } else {
-        if (!archiveConsent.consentId) {
-          throw new TypeError("找不到可撤回的授权记录。");
-        }
-        await api.revokePersonConsent({
-          personId: minorId,
-          consentId: archiveConsent.consentId,
-          idempotencyKey: operationKey("child-archive-revoke"),
-        });
-      }
-      await this.refresh();
-    } catch (error) {
-      this.setData({ error: pageError(error, "长期小档案授权未能更新。") });
-      await this.refresh();
-    } finally {
-      this.setData({ working: false });
+  _closeAllSwipes() {
+    const summaries = this.data.summaries.map((item) =>
+      item.swipeOpen ? { ...item, swipeOpen: false } : item,
+    );
+    const archiveFlat = this.data.archiveFlat.map((item) =>
+      item.swipeOpen ? { ...item, swipeOpen: false } : item,
+    );
+    this.setData({
+      summaries,
+      archiveFlat,
+      archiveGroups: groupArchiveByCategory(archiveFlat),
+    });
+  },
+
+  onSummaryTouchStart(event) {
+    const touch = event.touches?.[0];
+    if (!touch) return;
+    this._swipe = {
+      kind: "summary",
+      recordId: event.currentTarget.dataset.recordId,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      lock: "",
+    };
+  },
+
+  onSummaryTouchMove(event) {
+    const swipe = this._swipe;
+    const touch = event.touches?.[0];
+    if (!swipe || swipe.kind !== "summary" || !touch) return;
+    const dx = touch.clientX - swipe.startX;
+    const dy = touch.clientY - swipe.startY;
+    if (!swipe.lock) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      swipe.lock = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
     }
+    if (swipe.lock !== "h") return;
+    const open = dx < -SWIPE_OPEN_PX / 2;
+    this._setSummarySwipe(swipe.recordId, open);
+  },
+
+  onSummaryTouchEnd() {
+    this._swipe = null;
+  },
+
+  _setSummarySwipe(recordId, open) {
+    const summaries = this.data.summaries.map((item) => ({
+      ...item,
+      swipeOpen: item.recordId === recordId ? open : false,
+    }));
+    this.setData({ summaries });
+  },
+
+  onArchiveTouchStart(event) {
+    const touch = event.touches?.[0];
+    if (!touch) return;
+    this._swipe = {
+      kind: "archive",
+      recordId: event.currentTarget.dataset.recordId,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      lock: "",
+    };
+  },
+
+  onArchiveTouchMove(event) {
+    const swipe = this._swipe;
+    const touch = event.touches?.[0];
+    if (!swipe || swipe.kind !== "archive" || !touch) return;
+    const dx = touch.clientX - swipe.startX;
+    const dy = touch.clientY - swipe.startY;
+    if (!swipe.lock) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      swipe.lock = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
+    }
+    if (swipe.lock !== "h") return;
+    const open = dx < -SWIPE_OPEN_PX / 2;
+    this._setArchiveSwipe(swipe.recordId, open);
+  },
+
+  onArchiveTouchEnd() {
+    this._swipe = null;
+  },
+
+  _setArchiveSwipe(recordId, open) {
+    const archiveFlat = this.data.archiveFlat.map((item) => ({
+      ...item,
+      swipeOpen: item.recordId === recordId ? open : false,
+    }));
+    this.setData({
+      archiveFlat,
+      archiveGroups: groupArchiveByCategory(archiveFlat),
+    });
   },
 
   askDeleteSummary(event) {
     const recordId = event.currentTarget.dataset.recordId;
-    const item = this.data.summaries.find((row) => row.recordId === recordId);
-    if (!item) return;
+    if (!recordId) return;
     this.setData({
       confirm: {
         kind: "delete-summary",
         recordId,
-        title: "删除这条会话小结？",
-        body: "删除后不可恢复。这里只会删掉家长可见的小结，不会留下孩子的原话。",
-        confirmLabel: "删除这条",
+        title: "删除这条摘要？",
+        body: DELETE_CONFIRM,
+        confirmLabel: "删除",
       },
     });
   },
@@ -186,43 +290,83 @@ Page({
     this.setData({
       confirm: {
         kind: "clear-summaries",
-        title: "清空全部会话小结？",
-        body: "将永久删除这个孩子的全部会话小结，且不可恢复。",
-        confirmLabel: "全部清空",
+        title: "清空全部摘要？",
+        body: DELETE_CONFIRM,
+        confirmLabel: "清空全部",
       },
     });
   },
 
   askDeleteArchive(event) {
     const recordId = event.currentTarget.dataset.recordId;
-    const item = this.data.archive.find((row) => row.recordId === recordId);
-    if (!item) return;
+    if (!recordId) return;
     this.setData({
       confirm: {
         kind: "delete-archive",
         recordId,
-        title: "删除这条小档案？",
-        body: `将忘掉「${item.fieldLabel}：${item.text}」。删除后不可恢复。`,
-        confirmLabel: "删除这条",
+        title: "删除这条记忆？",
+        body: DELETE_CONFIRM,
+        confirmLabel: "删除",
       },
     });
   },
 
   askClearArchive() {
-    if (!this.data.archive.length) return;
+    if (!this.data.archiveFlat.length) return;
     this.setData({
       confirm: {
         kind: "clear-archive",
-        title: "清空长期小档案？",
-        body: "将永久删除这个孩子的全部长期小档案条目，且不可恢复。",
-        confirmLabel: "全部清空",
+        title: "清空长期记忆？",
+        body: DELETE_CONFIRM,
+        confirmLabel: "清空全部",
       },
     });
   },
 
+  async onArchiveConsentChange(event) {
+    if (this.data.working) return;
+    const wantOn = Boolean(event.detail?.value);
+    const { archiveConsent, minorId } = this.data;
+    if (!minorId || wantOn === archiveConsent.active) return;
+
+    if (!wantOn) {
+      // Revert switch visually until the parent confirms turn-off.
+      this.setData({
+        "archiveConsent.active": true,
+        confirm: {
+          kind: "consent-off",
+          title: "关闭长期记忆？",
+          body: CONSENT_OFF_DIALOG,
+          confirmLabel: "关闭",
+        },
+      });
+      return;
+    }
+
+    this.setData({ working: true, error: "" });
+    try {
+      await api.grantPersonConsent({
+        personId: minorId,
+        consentKind: CHILD_ARCHIVE_CONSENT.kind,
+        policyVersion: CHILD_ARCHIVE_CONSENT.policyVersion,
+        idempotencyKey: operationKey("child-archive-grant"),
+      });
+      await this.refresh();
+    } catch (error) {
+      this.setData({ error: pageError(error, "长期记忆授权未能更新。") });
+      await this.refresh();
+    } finally {
+      this.setData({ working: false });
+    }
+  },
+
   closeConfirm() {
     if (this.data.working) return;
-    this.setData({ confirm: null });
+    const wasConsentOff = this.data.confirm?.kind === "consent-off";
+    this.setData({
+      confirm: null,
+      ...(wasConsentOff ? { "archiveConsent.active": true } : {}),
+    });
   },
 
   noop() {},
@@ -231,22 +375,38 @@ Page({
     const confirm = this.data.confirm;
     const minorId = this.data.minorId;
     if (!confirm || !minorId || this.data.working) return;
-    this.setData({ working: true, error: "" });
+    this.setData({ working: true, error: "", statusBanner: "" });
     try {
       if (confirm.kind === "delete-summary") {
         await api.deleteChildSessionSummary(minorId, confirm.recordId);
+        this.setData({ confirm: null });
+        await this.refresh();
       } else if (confirm.kind === "clear-summaries") {
         await api.clearChildSessionSummaries(minorId);
+        this.setData({ confirm: null, statusBanner: CLEARED_TOAST });
+        await this.refresh();
       } else if (confirm.kind === "delete-archive") {
         await api.deleteChildArchiveFact(minorId, confirm.recordId);
+        this.setData({ confirm: null });
+        await this.refresh();
       } else if (confirm.kind === "clear-archive") {
         await api.clearChildArchive(minorId);
+        this.setData({ confirm: null, statusBanner: CLEARED_TOAST });
+        await this.refresh();
+      } else if (confirm.kind === "consent-off") {
+        if (!this.data.archiveConsent.consentId) {
+          throw new TypeError("找不到可撤回的授权记录。");
+        }
+        await api.revokePersonConsent({
+          personId: minorId,
+          consentId: this.data.archiveConsent.consentId,
+          idempotencyKey: operationKey("child-archive-revoke"),
+        });
+        this.setData({ confirm: null });
+        await this.refresh();
       }
-      this.setData({ confirm: null });
-      wx.showToast({ title: "已删除", icon: "none" });
-      await this.refresh();
     } catch (error) {
-      this.setData({ error: pageError(error, "删除失败，请稍后再试。") });
+      this.setData({ error: pageError(error, "操作失败，请稍后再试。") });
     } finally {
       this.setData({ working: false });
     }

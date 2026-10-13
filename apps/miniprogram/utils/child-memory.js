@@ -5,17 +5,29 @@
  */
 
 const ARCHIVE_FIELD_LABELS = Object.freeze({
-  appellation: "怎么称呼",
-  preference: "喜欢什么",
-  pet_name: "小名 / 宠物名",
+  preference: "兴趣",
+  appellation: "称呼",
+  pet_name: "小名",
 });
+
+const ARCHIVE_FIELD_ORDER = Object.freeze(["preference", "appellation", "pet_name"]);
 
 const CHILD_ARCHIVE_CONSENT = Object.freeze({
   kind: "child_archive",
-  label: "长期小档案",
-  description: "只记住称呼、喜好和小名这类短事实。关掉后不再写入，页面也不再展示。",
+  label: "长期记忆",
+  description:
+    "开启后，memoria 会记住孩子提到的兴趣等白名单内容。你可以随时关闭，关闭后已有内容可删除。",
   policyVersion: "child-archive-v1",
 });
+
+const PRIVACY_LINE = "我们不保存录音和原话。摘要 30 天后自动删除。";
+const EMPTY_RECENT =
+  "还没有记忆。孩子和 memoria 聊过之后，这里会出现摘要。";
+const EMPTY_ARCHIVE_ON = "开启后，孩子聊到的兴趣会出现在这里。";
+const CONSENT_OFF_DIALOG =
+  "关闭后不会再写入新内容。已有内容可以继续查看和删除。";
+const DELETE_CONFIRM = "删除后无法恢复";
+const CLEARED_TOAST = "已清空，剩余 0 条";
 
 function firstItems(payload) {
   if (Array.isArray(payload?.items)) return payload.items;
@@ -23,15 +35,13 @@ function firstItems(payload) {
   return [];
 }
 
-function displayStamp(value) {
+function displayDateLabel(value) {
   if (typeof value !== "string" || !value) return "";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   const month = date.getMonth() + 1;
   const day = date.getDate();
-  const hour = String(date.getHours()).padStart(2, "0");
-  const minute = String(date.getMinutes()).padStart(2, "0");
-  return `${month}月${day}日 ${hour}:${minute}`;
+  return `${month} 月 ${day} 日`;
 }
 
 function normalizeSessionSummaries(payload) {
@@ -50,9 +60,10 @@ function normalizeSessionSummaries(payload) {
         text,
         sessionId: typeof item.session_id === "string" ? item.session_id : "",
         createdAt,
-        createdLabel: displayStamp(createdAt) || "最近",
+        dateLabel: displayDateLabel(createdAt) || "最近",
         retentionExpiresAt:
           typeof item.retention_expires_at === "string" ? item.retention_expires_at : "",
+        swipeOpen: false,
       };
     })
     .filter(Boolean);
@@ -75,15 +86,16 @@ function normalizeChildArchive(payload) {
       const createdAt = typeof item.created_at === "string" ? item.created_at : "";
       const lastMentionedAt =
         typeof item.last_mentioned_at === "string" ? item.last_mentioned_at : "";
+      const stamp = lastMentionedAt || createdAt;
       return {
         recordId,
         field,
         fieldLabel: ARCHIVE_FIELD_LABELS[field],
         text,
         createdAt,
-        createdLabel: displayStamp(createdAt) || "已保存",
         lastMentionedAt,
-        lastMentionedLabel: displayStamp(lastMentionedAt),
+        dateLabel: displayDateLabel(stamp) || "已保存",
+        swipeOpen: false,
       };
     })
     .filter(Boolean);
@@ -93,6 +105,22 @@ function normalizeChildArchive(payload) {
     return b - a;
   });
   return items;
+}
+
+function groupArchiveByCategory(items) {
+  const buckets = new Map();
+  for (const field of ARCHIVE_FIELD_ORDER) {
+    buckets.set(field, {
+      field,
+      label: ARCHIVE_FIELD_LABELS[field],
+      items: [],
+    });
+  }
+  for (const item of items) {
+    const group = buckets.get(item.field);
+    if (group) group.items.push(item);
+  }
+  return [...buckets.values()].filter((group) => group.items.length > 0);
 }
 
 function archiveConsentFromPersonPayload(payload) {
@@ -113,6 +141,23 @@ function archiveConsentFromPersonPayload(payload) {
   };
 }
 
+function boundChildFromManifest(binding) {
+  if (
+    !binding ||
+    binding.declared_mode !== "parent_for_child" ||
+    binding.status !== "active"
+  ) {
+    return null;
+  }
+  const ownerId = typeof binding.account_owner_id === "string" ? binding.account_owner_id : "";
+  const subjects = Array.isArray(binding.primary_subject_ids) ? binding.primary_subject_ids : [];
+  const personId = subjects.find(
+    (id) => typeof id === "string" && id && id !== ownerId,
+  );
+  if (!personId) return null;
+  return { personId, displayName: "孩子" };
+}
+
 function assertsNoTranscriptFields(viewModels) {
   const banned = ["transcript", "user_text", "assistant_text", "utterance", "audio_url"];
   for (const item of viewModels) {
@@ -126,10 +171,19 @@ function assertsNoTranscriptFields(viewModels) {
 
 module.exports = {
   ARCHIVE_FIELD_LABELS,
+  ARCHIVE_FIELD_ORDER,
   CHILD_ARCHIVE_CONSENT,
+  CLEARED_TOAST,
+  CONSENT_OFF_DIALOG,
+  DELETE_CONFIRM,
+  EMPTY_ARCHIVE_ON,
+  EMPTY_RECENT,
+  PRIVACY_LINE,
   archiveConsentFromPersonPayload,
   assertsNoTranscriptFields,
-  displayStamp,
+  boundChildFromManifest,
+  displayDateLabel,
+  groupArchiveByCategory,
   normalizeChildArchive,
   normalizeSessionSummaries,
 };

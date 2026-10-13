@@ -3,141 +3,394 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>孩子的记忆 · 预览</title>
+  <title>孩子的记忆 · 产品预览</title>
   <style>
     :root {
-      --brand-deep: #172f43;
-      --brand-teal: #285c5e;
-      --text-primary: #16191c;
-      --text-secondary: #474e54;
-      --surface: rgba(255, 255, 255, 0.62);
-      --danger: #a3221b;
-      --radius-card: 22px;
+      --bg: #faf6f0;
+      --card: #ffffff;
+      --ink: #2a2a28;
+      --muted: #8a8580;
+      --accent: #6f9e8e;
+      --accent-soft: rgba(111, 158, 142, 0.14);
+      --danger: #b56a64;
+      --shadow: 0 4px 14px rgba(60, 48, 36, 0.06);
+      --radius: 16px;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      min-height: 100vh;
-      color: var(--text-primary);
+      background: #ebe4da;
+      color: var(--ink);
       font-family: "PingFang SC", "HarmonyOS Sans SC", "Noto Sans SC", sans-serif;
-      background:
-        radial-gradient(120% 80% at 10% -10%, #bac7fa 0%, transparent 55%),
-        radial-gradient(90% 70% at 100% 0%, #d7ece8 0%, transparent 45%),
-        linear-gradient(180deg, #fef6e6 0%, #f3f2ef 100%);
+    }
+    .board {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 28px;
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 32px 24px 64px;
+    }
+    .label {
+      margin: 0 0 10px;
+      color: #6a635c;
+      font-size: 13px;
+      letter-spacing: 0.04em;
     }
     .phone {
-      width: min(390px, 100%);
-      margin: 32px auto 64px;
-      padding: 20px 18px 48px;
+      width: 100%;
+      max-width: 375px;
+      min-height: 720px;
+      margin: 0 auto;
+      padding: 18px 16px 40px;
+      background: var(--bg);
+      border-radius: 28px;
+      box-shadow: 0 18px 50px rgba(40, 30, 20, 0.12);
     }
-    .back { color: var(--text-secondary); font-size: 14px; margin-bottom: 8px; }
-    .eyebrow { color: var(--brand-teal); font-size: 12px; letter-spacing: 0.08em; }
-    h1 { margin: 6px 0 8px; font-size: 30px; line-height: 1.25; }
-    .lede { margin: 0 0 18px; color: var(--text-secondary); font-size: 14px; line-height: 1.7; max-width: 28em; }
+    .nav {
+      text-align: center;
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 14px;
+    }
+    .privacy {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.6;
+      margin: 0 2px 14px;
+    }
+    .tabs {
+      display: flex;
+      gap: 4px;
+      padding: 3px;
+      margin-bottom: 14px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.72);
+    }
+    .tab {
+      flex: 1;
+      text-align: center;
+      padding: 9px 0;
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .tab.on {
+      background: #fff;
+      color: var(--ink);
+      font-weight: 600;
+      box-shadow: var(--shadow);
+    }
     .card {
-      background: var(--surface);
-      border: 1px solid rgba(30, 45, 70, 0.08);
-      border-radius: var(--radius-card);
-      box-shadow: 0 10px 28px rgba(34, 52, 84, 0.08);
-      padding: 16px 16px 14px;
-      margin-bottom: 12px;
-      backdrop-filter: blur(16px);
+      background: var(--card);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      margin-bottom: 10px;
     }
-    .row { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
-    .name { font-size: 16px; font-weight: 600; }
-    .desc { margin-top: 4px; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
-    .caption { margin-top: 6px; color: var(--text-secondary); font-size: 12px; }
-    .section {
-      display: flex; justify-content: space-between; align-items: baseline;
-      margin: 22px 4px 10px; font-size: 15px; font-weight: 600;
+    .summary {
+      display: flex;
+      gap: 12px;
+      padding: 14px;
     }
-    .clear { color: var(--danger); font-size: 12px; font-weight: 500; }
-    .pill {
-      display: inline-flex; align-items: center; padding: 2px 10px; border-radius: 999px;
-      background: rgba(227, 237, 236, 0.9); color: var(--brand-teal); font-size: 12px;
+    .date {
+      flex: 0 0 70px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
     }
-    .pill-neutral { background: rgba(233, 238, 242, 0.9); color: var(--text-secondary); }
-    .body { margin: 10px 0 12px; font-size: 15px; line-height: 1.7; }
-    .actions { display: flex; justify-content: flex-end; }
-    button {
-      border: 1px solid rgba(30, 45, 70, 0.12);
-      background: rgba(255,255,255,0.7);
-      border-radius: 15px;
-      padding: 6px 14px;
-      color: var(--brand-deep);
-      font: inherit;
+    .text {
+      flex: 1;
+      font-size: 15px;
+      line-height: 1.7;
+    }
+    .swipe {
+      position: relative;
+      overflow: hidden;
+      border-radius: var(--radius);
+      margin-bottom: 10px;
+    }
+    .action {
+      position: absolute;
+      inset: 0 0 0 auto;
+      width: 72px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(181, 106, 100, 0.12);
+      color: var(--danger);
       font-size: 13px;
     }
+    .summary.open { transform: translateX(-72px); }
+    .footer {
+      text-align: center;
+      margin-top: 22px;
+      color: var(--danger);
+      font-size: 13px;
+    }
+    .empty {
+      padding: 36px 22px;
+      text-align: center;
+    }
+    .empty h3 {
+      margin: 0 0 8px;
+      font-size: 15px;
+    }
+    .empty p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.7;
+    }
+    .illus {
+      width: 56px;
+      height: 42px;
+      margin: 0 auto 16px;
+      position: relative;
+    }
+    .leaf {
+      position: absolute;
+      width: 26px;
+      height: 26px;
+      border-radius: 60% 0 60% 40%;
+      background: var(--accent-soft);
+    }
+    .leaf.a { left: 8px; top: 8px; transform: rotate(-28deg); }
+    .leaf.b { right: 8px; top: 4px; transform: rotate(18deg) scaleX(-1); }
+    .dot {
+      position: absolute;
+      left: 24px;
+      bottom: 4px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      opacity: 0.45;
+    }
+    .consent {
+      padding: 14px;
+      display: flex;
+      gap: 12px;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+    .consent h3 { margin: 0 0 6px; font-size: 15px; }
+    .consent p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
     .switch {
-      width: 46px; height: 28px; border-radius: 999px; background: #326e70; position: relative;
+      width: 46px; height: 28px; border-radius: 999px; background: #d8d2cb; position: relative; flex: 0 0 auto;
     }
+    .switch.on { background: var(--accent); }
     .switch::after {
-      content: ""; position: absolute; top: 3px; right: 3px; width: 22px; height: 22px;
-      border-radius: 50%; background: #fff;
+      content: "";
+      position: absolute;
+      top: 3px;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #fff;
+      left: 3px;
     }
-    .empty { text-align: center; padding: 28px 16px; }
-    .note { margin-top: 24px; color: var(--text-secondary); font-size: 12px; line-height: 1.7; }
-    .states { max-width: 860px; margin: 0 auto 48px; padding: 0 20px; color: var(--text-secondary); font-size: 14px; }
-    .states h2 { color: var(--text-primary); font-size: 18px; }
+    .switch.on::after { left: auto; right: 3px; }
+    .group-title {
+      margin: 8px 4px 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .fact {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px;
+      font-size: 15px;
+    }
+    .fact .date { flex: 0 0 auto; text-align: right; }
+    .home-card {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      padding: 14px;
+    }
+    .home-card .icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
+      background: var(--accent-soft);
+    }
+    .home-card h3 { margin: 0 0 4px; font-size: 15px; }
+    .home-card p { margin: 0; color: var(--muted); font-size: 12px; }
+    .chevron { margin-left: auto; color: var(--muted); }
+    .banner {
+      margin-bottom: 10px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 12px;
+    }
+    .modal-mask {
+      margin-top: 24px;
+      padding: 18px;
+      border-radius: 18px;
+      background: rgba(42, 36, 30, 0.08);
+    }
+    .modal {
+      background: #fff;
+      border-radius: 18px;
+      padding: 18px 16px 14px;
+      box-shadow: var(--shadow);
+    }
+    .modal h3 { margin: 0 0 8px; font-size: 16px; }
+    .modal p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 18px;
+      margin-top: 16px;
+      font-size: 14px;
+    }
+    .modal-actions .ok { color: var(--danger); font-weight: 600; }
+    .modal-actions .cancel { color: var(--muted); }
   </style>
 </head>
 <body>
-  <div class="phone">
-    <div class="back">‹ 家庭与监护</div>
-    <div class="eyebrow">看得见 · 删得掉</div>
-    <h1>孩子的记忆</h1>
-    <p class="lede">关于豆豆，机器人只会留下简短小结和你同意的小档案。这里从不展示孩子的原话或录音。</p>
-
-    <div class="card">
-      <div class="row">
-        <div>
-          <div class="name">长期小档案</div>
-          <div class="desc">只记住称呼、喜好和小名这类短事实。关掉后不再写入，页面也不再展示。</div>
-          <div class="caption">已开启</div>
+  <div class="board">
+    <section data-shot="home-entry">
+      <p class="label">首页入口卡</p>
+      <div class="phone">
+        <div class="nav">首页</div>
+        <div class="card home-card">
+          <div class="icon"></div>
+          <div>
+            <h3>孩子的记忆</h3>
+            <p>会话摘要与长期记忆，看得见、删得掉</p>
+          </div>
+          <div class="chevron">›</div>
         </div>
-        <div class="switch" aria-hidden="true"></div>
       </div>
-    </div>
+    </section>
 
-    <div class="section"><span>会话小结</span><span class="clear">全部清空</span></div>
-    <div class="card">
-      <div class="row">
-        <span class="pill">会话小结</span>
-        <span class="caption">10月12日 17:20</span>
+    <section data-shot="recent-list">
+      <p class="label">最近对话 · 列表</p>
+      <div class="phone">
+        <div class="nav">孩子的记忆</div>
+        <p class="privacy">我们不保存录音和原话。摘要 30 天后自动删除。</p>
+        <div class="tabs"><div class="tab on">最近对话</div><div class="tab">长期记忆</div></div>
+        <div class="card summary">
+          <div class="date">10 月 13 日</div>
+          <div class="text">孩子今天聊了小狗和画画，还问机器人会不会一起画一只小狗。</div>
+        </div>
+        <div class="card summary">
+          <div class="date">10 月 12 日</div>
+          <div class="text">孩子问起恐龙为什么灭绝，听完后说想再听一个关于翼龙的故事。</div>
+        </div>
+        <div class="footer">清空全部</div>
       </div>
-      <div class="body">孩子今天聊了小狗和画画，还问机器人会不会一起画一只小狗。</div>
-      <div class="actions"><button type="button">删除</button></div>
-    </div>
-    <div class="card">
-      <div class="row">
-        <span class="pill">会话小结</span>
-        <span class="caption">10月11日 19:05</span>
+    </section>
+
+    <section data-shot="recent-swipe">
+      <p class="label">最近对话 · 左滑删除</p>
+      <div class="phone">
+        <div class="nav">孩子的记忆</div>
+        <p class="privacy">我们不保存录音和原话。摘要 30 天后自动删除。</p>
+        <div class="tabs"><div class="tab on">最近对话</div><div class="tab">长期记忆</div></div>
+        <div class="swipe">
+          <div class="action">删除</div>
+          <div class="card summary open">
+            <div class="date">10 月 13 日</div>
+            <div class="text">孩子今天聊了小狗和画画，还问机器人会不会一起画一只小狗。</div>
+          </div>
+        </div>
+        <div class="modal-mask">
+          <div class="modal">
+            <h3>删除这条摘要？</h3>
+            <p>删除后无法恢复</p>
+            <div class="modal-actions"><span class="cancel">取消</span><span class="ok">删除</span></div>
+          </div>
+        </div>
       </div>
-      <div class="body">孩子问起恐龙为什么灭绝，听完后说想再听一个关于翼龙的故事。</div>
-      <div class="actions"><button type="button">删除</button></div>
-    </div>
+    </section>
 
-    <div class="section"><span>长期小档案</span><span class="clear">全部清空</span></div>
-    <div class="card">
-      <div class="row">
-        <span class="pill pill-neutral">喜欢什么</span>
-        <span class="caption">10月12日 08:00</span>
+    <section data-shot="recent-empty">
+      <p class="label">最近对话 · 空状态</p>
+      <div class="phone">
+        <div class="nav">孩子的记忆</div>
+        <p class="privacy">我们不保存录音和原话。摘要 30 天后自动删除。</p>
+        <div class="tabs"><div class="tab on">最近对话</div><div class="tab">长期记忆</div></div>
+        <div class="card empty">
+          <div class="illus"><div class="leaf a"></div><div class="leaf b"></div><div class="dot"></div></div>
+          <p>还没有记忆。孩子和 memoria 聊过之后，这里会出现摘要。</p>
+        </div>
       </div>
-      <div class="body">喜欢恐龙</div>
-      <div class="caption">最近一次提到 · 10月12日 08:00</div>
-      <div class="actions"><button type="button">删除</button></div>
-    </div>
+    </section>
 
-    <p class="note">服务器不保存孩子的录音和原话。记忆家长看得见、删得掉。</p>
-  </div>
+    <section data-shot="recent-cleared">
+      <p class="label">最近对话 · 清空反馈</p>
+      <div class="phone">
+        <div class="nav">孩子的记忆</div>
+        <p class="privacy">我们不保存录音和原话。摘要 30 天后自动删除。</p>
+        <div class="tabs"><div class="tab on">最近对话</div><div class="tab">长期记忆</div></div>
+        <div class="banner">已清空，剩余 0 条</div>
+        <div class="card empty">
+          <div class="illus"><div class="leaf a"></div><div class="leaf b"></div><div class="dot"></div></div>
+          <p>还没有记忆。孩子和 memoria 聊过之后，这里会出现摘要。</p>
+        </div>
+      </div>
+    </section>
 
-  <div class="states">
-    <h2>空状态文案（页面内已实现）</h2>
-    <ul>
-      <li>会话小结空：还没有会话小结 / 聊完后出现一到三句家长视角小结，不会出现原话。</li>
-      <li>档案关闭：长期小档案已关闭 / 上面的开关可以随时打开或关闭。</li>
-      <li>档案开启但为空：小档案还是空的 / 提到喜欢的事物或怎么叫自己会出现在这里。</li>
-    </ul>
+    <section data-shot="archive-off">
+      <p class="label">长期记忆 · 未开启</p>
+      <div class="phone">
+        <div class="nav">孩子的记忆</div>
+        <p class="privacy">我们不保存录音和原话。摘要 30 天后自动删除。</p>
+        <div class="tabs"><div class="tab">最近对话</div><div class="tab on">长期记忆</div></div>
+        <div class="card consent">
+          <div>
+            <h3>长期记忆</h3>
+            <p>开启后，memoria 会记住孩子提到的兴趣等白名单内容。你可以随时关闭，关闭后已有内容可删除。</p>
+          </div>
+          <div class="switch"></div>
+        </div>
+      </div>
+    </section>
+
+    <section data-shot="archive-on">
+      <p class="label">长期记忆 · 分组列表</p>
+      <div class="phone">
+        <div class="nav">孩子的记忆</div>
+        <p class="privacy">我们不保存录音和原话。摘要 30 天后自动删除。</p>
+        <div class="tabs"><div class="tab">最近对话</div><div class="tab on">长期记忆</div></div>
+        <div class="card consent">
+          <div>
+            <h3>长期记忆</h3>
+            <p>开启后，memoria 会记住孩子提到的兴趣等白名单内容。你可以随时关闭，关闭后已有内容可删除。</p>
+          </div>
+          <div class="switch on"></div>
+        </div>
+        <div class="group-title">兴趣</div>
+        <div class="card fact"><div>霸王龙</div><div class="date">10 月 13 日</div></div>
+        <div class="card fact"><div>恐龙</div><div class="date">10 月 12 日</div></div>
+        <div class="footer">清空全部</div>
+      </div>
+    </section>
+
+    <section data-shot="archive-empty">
+      <p class="label">长期记忆 · 已开启空状态</p>
+      <div class="phone">
+        <div class="nav">孩子的记忆</div>
+        <p class="privacy">我们不保存录音和原话。摘要 30 天后自动删除。</p>
+        <div class="tabs"><div class="tab">最近对话</div><div class="tab on">长期记忆</div></div>
+        <div class="card consent">
+          <div>
+            <h3>长期记忆</h3>
+            <p>开启后，memoria 会记住孩子提到的兴趣等白名单内容。你可以随时关闭，关闭后已有内容可删除。</p>
+          </div>
+          <div class="switch on"></div>
+        </div>
+        <div class="card empty">
+          <h3>暂无长期记忆</h3>
+          <p>开启后，孩子聊到的兴趣会出现在这里。</p>
+        </div>
+      </div>
+    </section>
   </div>
 </body>
 </html>
