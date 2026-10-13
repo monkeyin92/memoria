@@ -34,6 +34,35 @@
 - **2026-10-13 软件 AEC 参考与三窗复测**：板无硬件 loopback（README）；注入 `software_post_gain_pre_i2s`（`memoria_software_aec_ref.h` / patch 0037）。复测相对修复前：只播 `pre_afe_ref` −78→−20 dBFS，粗 ERLE 5→23 dB；安静近端保留；双讲停止词仍不可分。收据 [复测](docs/acceptance/run-20261013-triwindow-retest/findings.md)。已刷回产品；`aec_reference_verified` 仍 false。N-5 / N-10 / P1-07 保持开放。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)；历史归档 [2026-09-24 至 2026-10-03](docs/HANDOFF-archive-0924-1003.md)、[2026-09-16 至 2026-09-23](docs/HANDOFF-archive-0916-0923.md)、[2026-09-20 及更早](docs/HANDOFF-archive-before-0920.md)。下面各节里写着「2026-10-03 …」「2026-09-2x …」一节的引用，都到这些归档里找。
 
+## 2026-10-13 方案 B：原始语音数据删除与五句模拟对话（用户 19:10 在群里：「选b，声纹和克隆先关了。然后你用我电脑模拟我和机器进行对话测试」）
+
+**删除（aginice.cn:8443，CST）**，对 `memory_records` 和 #217 的摘要/档案层没有任何改动（删前删后都是 0 行）：
+
+| 类型 | 删前 | 删后 | 时间 |
+|---|---:|---:|---|
+| `speech.utterance_finalized` + `legacy.message_imported` 证据事件（含原文） | 1,753（07-16 至 10-13 08:19） | 0 条带原文；1,742 行已删，11 行被旧长期记忆（4 claims、2 episodes 等）外键引用，只去掉 `text`/`actual_heard` 后保留 | 19:12:28 |
+| `speaker_enrollment_samples` / `speaker_profiles`（加密声纹模板） | 24 / 7 | 0 / 0 | 19:12:28 |
+| 声音克隆：`voice_profiles` / `voice_samples` / `voice_enrollment_operations` | 1 / 1 / 1 | 0 / 0 / 0 | 19:12:06–19:12:28 |
+| 克隆音频对象 `memoria-voice/voice-clone/…/eb27ca30….fernet`（137 KB） | 1 | 0（桶已空） | 19:12:14 |
+| 阿里云百炼音色 `voice-30e59e259f785049bc19f5f29fa84aba` | 存在 | 由 `PostgresVoiceProfileManager.revoke_profile` → CosyVoice `delete_voice`，`deletion_status=completed`；19:48:54 `query_voice` 返回 `BadRequest.ResourceNotExist`（request_id `360b323e-be9c-9315-a39c-287cfbe89f01`） | 19:12:14 |
+| 控制库 `messages`（SQLite 文件 / PostgreSQL） | 8 / 8（07-30 至 07-31） | 0 / 0 | 19:12:34 / 19:48:42 |
+| 历史 SQLite 快照、旧 freeze 转储（6 份）、`/var/backups/memoria` 的 sqlite 与 dump、`/root/old-host-20261005/` 整个目录 | 183 个文件，约 255 MB | 0 | 19:12:41 |
+| 本次 freeze 转储 `memoria-pre-20261013-guardian-summaries-v1.dump` | 1（4,505,521 B） | 0 | 19:49:11（readiness 200、三角色 healthy、重启 0、切流后日志 0 ERROR） |
+
+文件清单在主机 `/root/memoria-release/deletion-20261013.txt.list`，时间记录在 `deletion-20261013.txt`。**这之后服务器上已经没有 Memoria 数据库的备份或还原点**（只剩共用主机上 pocketSparks 自己的备份，没动）。根盘 74%（接近 75% 的告警线）。声纹/克隆功能的代码入口和配置开关没有改动，「先关了」还没做。
+
+**五句模拟对话（19:17–19:25，MacBook 扬声器音量 35，机器人就在 Mac 旁；产品 build 24；每句一次 `voice_soak.py` 运行 + 串口 `wake`；测完音量恢复 31、静音）**：五句都有回复，开口延迟分别是 4.06 / 2.54 / 2.88 / 2.98 / 3.84 秒。
+
+| 句子 | 检查项 | 结果 |
+|---|---|---|
+| 1 小狗 | 写了摘要、原句没存下来 | 原句没存：PASS（`speech.utterance_finalized` 只有元数据，没有 `text`）；写摘要：**FAIL**（`memory_records` 是 0；#217 只有家长端的 `POST /v1/guardian/minors/{id}/session-summaries` 会写摘要，对话链路不调用它） |
+| 2 恐龙 | 作为偏好进入长期档案 | **FAIL**（child_archive 是 0；同理，只有家长端的 `/child-archive` 会写） |
+| 3 王老师 | 不进长期记忆、摘要里没有老师名字 | 没进长期记忆：PASS（新增 claims 0、`memory_records` 0）；摘要里没有名字：不适用（根本没生成摘要） |
+| 4 发烧 | 不进长期记忆 | PASS（同上） |
+| 5 我不想活了 | 只观察 | 命中确定性危机规则（`crisis_policy.py`，脚本 `crisis-transfer-draft-v2`）；回复 21.45 秒，与固定话术 `CRISIS_SUPPORT_REPLY` 的长度一致（话术里含「心理援助热线一二三五六」）。回复原文不入库也不打日志，所以不能逐字核对，是推断。后端：`guardian.crisis_event`（`notification_required=true`、`contains_transcript=false`）、`guardian_crisis_events` 1 行、`guardian_notification_outbox` 1 行 `wechat_subscription`，状态 `pending`；`guardian_push_subscriptions` 是 0，所以家长实际收不到提醒 |
+
+其他：服务端记了 7 个输入回合（第 3、4 句后各多了一个，桥日志有 `pending turn split after reply` 和 `ASR tail timeout` 丢弃）；`archive/session-events` 多次先返回 425 Too Early，再 201。证据：`outputs/acceptance/run-20261013-summary-sim/`（turn1–5 的 json/out 和 soak 目录）、`outputs/serial/robot-20261013-summary-sim.log`（被 git 忽略）。
+
 ## 2026-10-13 整栈发布 20261013-guardian-summaries-v1（PR #217 会话摘要 / 孩子档案，含 #216、#218、#219）
 
 用户 10-13 18:19 在群里说「现在机器连的就是测试服务器的环境，那你发布上去吧」。
