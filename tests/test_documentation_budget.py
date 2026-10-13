@@ -25,6 +25,8 @@ ALLOWED_DOCS_FILES = {
 # Evaluation receipts are data, kept next to the docs that cite them.
 ALLOWED_DOCS_DATA_PATTERN = "docs/memory-evaluation-*.json"
 DOCUMENT_SUFFIXES = {".md", ".markdown", ".mdown", ".rst", ".adoc", ".asciidoc"}
+# Agent skills are executable instructions for coding agents, not project docs.
+ALLOWED_AGENT_SKILL_PREFIX = ".cursor/skills/"
 
 
 def test_repository_has_exactly_three_long_lived_documents() -> None:
@@ -47,7 +49,11 @@ def test_repository_has_exactly_three_long_lived_documents() -> None:
         and (ROOT / path).is_file()
     }
 
-    top_level = {path for path in documents if not path.startswith("docs/")}
+    top_level = {
+        path
+        for path in documents
+        if not path.startswith(("docs/", ALLOWED_AGENT_SKILL_PREFIX))
+    }
     assert top_level == ALLOWED_DOCUMENTS
     stray = sorted(
         path
