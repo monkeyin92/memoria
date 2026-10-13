@@ -393,7 +393,7 @@ def _apply_settings(app: Any, actor_id: str, changes: dict[str, object]) -> None
 
 
 @pytest.mark.asyncio
-async def test_night_mode_uses_the_policy_night_window_when_consent_has_none(
+async def test_night_mode_uses_the_default_night_window_when_consent_has_none(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
@@ -406,7 +406,7 @@ async def test_night_mode_uses_the_policy_night_window_when_consent_has_none(
 
         _apply_settings(app, owner["user_id"], {"night_mode": True})
         body = (await client.get(PATH, headers=_signed_headers(key))).json()
-        assert body["quiet_hours"] == ["21:30", "06:30"]
+        assert body["quiet_hours"] == ["21:00", "07:00"]
         assert body["wake_mode"] == "button"
         assert body["display_version"] == before["display_version"]
         assert body["companion_id"] == before["companion_id"]

@@ -58,7 +58,7 @@ MASCOT_COMPANION_IDS: frozenset[str] = frozenset(
 
 DISPLAY_PROFILE_SCHEMA_VERSION = 1
 _DISPLAY_VERSION_DOMAIN = b"memoria-device-display-profile-v1\0"
-DEFAULT_DISPLAY_QUIET_HOURS: Final[tuple[str, str]] = ("21:30", "06:30")
+DEFAULT_DISPLAY_QUIET_HOURS: Final[tuple[str, str]] = ("21:00", "07:00")
 _ALL_DAY_QUIET_HOURS: Final[tuple[str, str]] = ("00:00", "23:59")
 
 
