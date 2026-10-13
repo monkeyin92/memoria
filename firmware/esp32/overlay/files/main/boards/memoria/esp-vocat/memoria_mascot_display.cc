@@ -616,6 +616,9 @@ void MemoriaMascotDisplay::UpdateIdleScreen(memoria::ScenePhase phase, uint32_t 
         screen_off_ = true;
         backlight_->SetBrightness(0);
         ESP_LOGI(TAG, "screen off (idle)");
+        if (on_screen_off_) {
+            on_screen_off_();
+        }
     }
 }
 

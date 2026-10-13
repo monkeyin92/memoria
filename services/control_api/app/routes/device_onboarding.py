@@ -452,7 +452,12 @@ async def get_device_display_profile(
                 type(exc).__name__,
             )
         else:
-            profile = replace(profile, wake_mode=settings.wake_mode)
+            quiet_hours = None
+            if settings.night_mode or settings.do_not_disturb:
+                # Anti-addiction switches: on-device night tap soothes then sleeps.
+                quiet_hours = ("00:00", "23:59")
+            # Tap-only product; coerce any legacy keyword settings rows.
+            profile = replace(profile, wake_mode="button", quiet_hours=quiet_hours)
     return profile.to_wire()
 
 

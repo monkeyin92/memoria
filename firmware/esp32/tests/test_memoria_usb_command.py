@@ -130,7 +130,7 @@ int main() {
 
 
 def _compile(destination: pathlib.Path, *flags: str, source: str = HARNESS) -> subprocess.CompletedProcess:
-    compiler = shutil.which("clang++") or shutil.which("g++")
+    compiler = shutil.which("g++") or shutil.which("clang++")
     if compiler is None:
         pytest.skip("no host C++ compiler available")
     code = destination.parent / f"{destination.name}.cc"
@@ -325,6 +325,7 @@ def test_the_stale_window_survives_the_millisecond_counter_wrapping(tool: pathli
 
 
 def test_the_wake_policy_is_the_screen_taps_gate_in_every_mode_and_state(tool: pathlib.Path) -> None:
+    # Tap-only product: legacy keyword wire values coerce to button; idle starts.
     lines = [
         f"decide {mode} {idle}"
         for mode in ("keyword", "button", "button_or_keyword")
@@ -332,14 +333,13 @@ def test_the_wake_policy_is_the_screen_taps_gate_in_every_mode_and_state(tool: p
     ]
     results = _run(tool, *lines)
     assert results == [
-        "not_idle tap-ignores",  # keyword, busy
-        "wake_mode tap-ignores",  # keyword, idle: the screen is not an allowed way in
-        "not_idle tap-ignores",  # button, busy
-        "start tap-starts",  # button, idle
-        "not_idle tap-ignores",  # both, busy
-        "start tap-starts",  # both, idle
+        "not_idle tap-ignores",
+        "start tap-starts",
+        "not_idle tap-ignores",
+        "start tap-starts",
+        "not_idle tap-ignores",
+        "start tap-starts",
     ]
-    # Whatever the policy says, it starts exactly when a tap would.
     for result in results:
         decision, tap = result.split()
         assert (decision == "start") == (tap == "tap-starts")

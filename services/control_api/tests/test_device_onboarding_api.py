@@ -777,7 +777,7 @@ async def test_device_media_session_issues_a_direct_media_edge_ticket(
         "do_not_disturb": False,
         "learning_mode": "off",
         "audio_mode": "interrupt_assist",
-        "wake_mode": "button_or_keyword",
+        "wake_mode": "button",
         "allowed_barge_in": ["button", "keyword"],
         "wake_word_id": "mo_li",
         "wake_word_pinyin": "mo li",

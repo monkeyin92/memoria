@@ -31,7 +31,8 @@ from services.control_api.app.wake_words import (
 )
 
 AUDIO_MODES = ("full_duplex_verified", "interrupt_assist", "half_duplex_safe")
-WAKE_MODES = ("button", "keyword", "button_or_keyword")
+# Tap-only product: keyword wake is removed. Legacy keyword values coerce to button on read.
+WAKE_MODES = ("button",)
 BARGE_IN_KINDS = ("none", "button", "keyword", "voice")
 LEARNING_MODES = ("off", "tutor_english", "tutor_homework")
 
@@ -42,11 +43,11 @@ DEFAULT_DEVICE_SETTINGS: dict[str, object] = {
     "do_not_disturb": False,
     "learning_mode": "off",
     "audio_mode": "interrupt_assist",
-    "wake_mode": "button_or_keyword",
+    "wake_mode": "button",
     "wake_word_id": DEFAULT_WAKE_WORD_ID,
     "wake_word_pinyin": "mo li",
     "wake_word_display": "茉莉",
-    "allowed_barge_in": ["button", "keyword"],
+    "allowed_barge_in": ["button"],
 }
 
 _STABLE_PROFILE_KEYS = (
@@ -322,7 +323,7 @@ def _settings_from_row(device_id: str, row: Mapping[str, Any]) -> DeviceSettings
         do_not_disturb=bool(raw["do_not_disturb"]),
         learning_mode=str(raw.get("learning_mode", "off")),
         audio_mode=str(raw["audio_mode"]),
-        wake_mode=str(raw["wake_mode"]),
+        wake_mode=_coerce_wake_mode(str(raw["wake_mode"])),
         wake_word_id=str(raw.get("wake_word_id", DEFAULT_WAKE_WORD_ID)),
         wake_word_pinyin=str(
             raw.get("wake_word_pinyin")
@@ -373,6 +374,14 @@ def default_settings(device_id: str, *, now: datetime) -> DeviceSettings:
     )
 
 
+def _coerce_wake_mode(value: str) -> str:
+    """Product is tap-only. Legacy keyword modes become button."""
+
+    if value in {"button", "keyword", "button_or_keyword"}:
+        return "button"
+    raise ValueError(f"wake_mode must be one of {WAKE_MODES}")
+
+
 def _validate_settings_changes(changes: Mapping[str, object]) -> dict[str, object]:
     cleaned: dict[str, object] = {}
     for key, value in changes.items():
@@ -391,9 +400,7 @@ def _validate_settings_changes(changes: Mapping[str, object]) -> dict[str, objec
                 raise ValueError(f"audio_mode must be one of {AUDIO_MODES}")
             cleaned[key] = value
         elif key == "wake_mode":
-            if value not in WAKE_MODES:
-                raise ValueError(f"wake_mode must be one of {WAKE_MODES}")
-            cleaned[key] = value
+            cleaned[key] = _coerce_wake_mode(str(value))
         elif key == "wake_word_id":
             wake_word_id = str(value)
             if wake_word_id not in WAKE_WORD_IDS:

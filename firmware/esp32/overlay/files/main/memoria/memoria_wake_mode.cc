@@ -21,30 +21,35 @@ WakeModeRegistry& WakeModeRegistry::GetInstance() {
 void WakeModeRegistry::LoadFromNvs() {
     Settings settings(kSettingsNamespace, false);
     const std::string stored = settings.GetString(kWakeModeKey, "");
-    WakeMode loaded = WakeMode::kBoth;
+    WakeMode loaded = WakeMode::kTapOnly;
     if (!ParseWakeMode(stored.c_str(), &loaded)) {
-        ESP_LOGI(kTag, "no stored wake mode; keeping %s", WakeModeName(mode()));
+        ESP_LOGI(kTag, "no stored wake mode; tap-only");
         return;
     }
-    mode_.store(loaded);
-    ESP_LOGI(kTag, "wake mode from NVS: %s (keyword=%d tap=%d)", WakeModeName(loaded),
-             KeywordWakeEnabled(loaded) ? 1 : 0, TapWakeEnabled(loaded) ? 1 : 0);
+    mode_.store(WakeMode::kTapOnly);
+    if (stored != "button") {
+        Settings writable(kSettingsNamespace, true);
+        writable.SetString(kWakeModeKey, "button");
+        ESP_LOGI(kTag, "wake mode from NVS coerced %s -> button (tap-only)", stored.c_str());
+        return;
+    }
+    ESP_LOGI(kTag, "wake mode from NVS: button (tap-only)");
 }
 
 bool WakeModeRegistry::Apply(const std::string& wire) {
-    WakeMode next = WakeMode::kBoth;
+    WakeMode next = WakeMode::kTapOnly;
     if (!ParseWakeMode(wire.c_str(), &next)) {
         ESP_LOGW(kTag, "ignoring unknown wake mode from the server: %s", wire.c_str());
         return false;
     }
-    const WakeMode previous = mode_.exchange(next);
-    if (previous == next) {
+    mode_.store(WakeMode::kTapOnly);
+    Settings settings(kSettingsNamespace, true);
+    const std::string previous = settings.GetString(kWakeModeKey, "");
+    if (previous == "button") {
         return false;
     }
-    Settings settings(kSettingsNamespace, true);
-    settings.SetString(kWakeModeKey, WakeModeName(next));
-    ESP_LOGI(kTag, "wake mode %s -> %s (keyword=%d tap=%d)", WakeModeName(previous),
-             WakeModeName(next), KeywordWakeEnabled(next) ? 1 : 0, TapWakeEnabled(next) ? 1 : 0);
+    settings.SetString(kWakeModeKey, "button");
+    ESP_LOGI(kTag, "wake mode %s -> button (tap-only)", previous.empty() ? "(none)" : previous.c_str());
     return true;
 }
 

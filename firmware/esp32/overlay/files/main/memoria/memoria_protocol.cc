@@ -457,9 +457,12 @@ void MemoriaProtocol::DisplayProfileTask(void* context) {
             const esp_err_t result = client.FetchDisplayProfile(base, &profile);
             if (result == ESP_OK && !profile.wake_mode.empty() &&
                 WakeModeRegistry::GetInstance().Apply(profile.wake_mode)) {
-                // The mode changed: re-arm (or stop) the wake word now, not at
-                // the next time the device happens to enter idle.
+                // Tap-only product: keep idle mic/wake arming consistent.
                 Application::GetInstance().RefreshWakeMode();
+            }
+            if (result == ESP_OK) {
+                PowerPolicyRegistry::GetInstance().ApplyQuietHours(
+                    profile.quiet_hours_start.c_str(), profile.quiet_hours_end.c_str());
             }
             if (result == ESP_OK && profile.display_version != applied_version) {
                 applied_version = profile.display_version;

@@ -21,9 +21,12 @@ struct ActivationProfile {
 struct DisplayProfile {
     std::string companion_id;
     std::string display_version;  // opaque; changes when the companion changes
-    // The phone's wake-mode setting (see memoria_wake_mode.h). Empty when the
-    // server did not send one: the device then keeps what it already applies.
+    // Always tap-only on this product (`button`). Empty when the server omitted
+    // it: the device keeps tap-only behaviour.
     std::string wake_mode;
+    // Guardian quiet hours HH:MM, additive. Empty when absent.
+    std::string quiet_hours_start;
+    std::string quiet_hours_end;
 };
 
 // Fetches, verifies and acknowledges the server-signed Activation Manifest.

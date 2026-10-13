@@ -17,7 +17,7 @@ from services.control_api.app.wake_words import DEFAULT_WAKE_WORD_ID, WAKE_WORD_
 DEVICE_AUDIO_MODES: Final = frozenset(
     {"half_duplex_safe", "interrupt_assist", "full_duplex_verified"}
 )
-DEVICE_WAKE_MODES: Final = frozenset({"button", "keyword", "button_or_keyword"})
+DEVICE_WAKE_MODES: Final = frozenset({"button"})
 DEVICE_BARGE_IN_KINDS: Final = frozenset({"none", "button", "keyword", "voice"})
 DEVICE_LEARNING_MODES: Final = frozenset({"off", "tutor_english", "tutor_homework"})
 
@@ -242,7 +242,7 @@ def _validate_device_settings_claim(
             "do_not_disturb": False,
             "learning_mode": "off",
             "audio_mode": "half_duplex_safe",
-            "wake_mode": "button_or_keyword",
+            "wake_mode": "button",
             "wake_word_id": DEFAULT_WAKE_WORD_ID,
             "wake_word_pinyin": "mo li",
             "wake_word_display": "茉莉",
@@ -284,7 +284,10 @@ def _validate_device_settings_claim(
         raise ValueError("direct device media learning_mode is invalid")
     if value["audio_mode"] not in DEVICE_AUDIO_MODES:
         raise ValueError("direct device media audio_mode is invalid")
-    if value["wake_mode"] not in DEVICE_WAKE_MODES:
+    wake_mode = str(value["wake_mode"])
+    if wake_mode in {"keyword", "button_or_keyword"}:
+        wake_mode = "button"
+    if wake_mode not in DEVICE_WAKE_MODES:
         raise ValueError("direct device media wake_mode is invalid")
     wake_word_id = str(value.get("wake_word_id", DEFAULT_WAKE_WORD_ID))
     if wake_word_id not in WAKE_WORD_IDS:
@@ -307,7 +310,7 @@ def _validate_device_settings_claim(
         "do_not_disturb": bool(value["do_not_disturb"]),
         "learning_mode": str(value["learning_mode"]),
         "audio_mode": str(value["audio_mode"]),
-        "wake_mode": str(value["wake_mode"]),
+        "wake_mode": wake_mode,
         "wake_word_id": wake_word_id,
         "wake_word_pinyin": wake_word_pinyin,
         "wake_word_display": wake_word_display,

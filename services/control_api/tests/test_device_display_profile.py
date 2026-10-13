@@ -131,7 +131,7 @@ async def test_bound_device_reads_its_companion_and_follows_the_picker(
             "wake_mode",
         }
         assert body["schema_version"] == 1
-        assert body["wake_mode"] == "button_or_keyword"
+        assert body["wake_mode"] == "button"
         assert body["device_id"] == DEVICE_ID
         assert body["companion_id"] == "starlight"
         assert isinstance(body["display_version"], str) and 0 < len(body["display_version"]) <= 32
@@ -338,7 +338,7 @@ async def test_display_profile_carries_the_wake_mode_without_moving_the_display_
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         owner = await _bound_device(client, app, key)
         before = (await client.get(PATH, headers=_signed_headers(key))).json()
-        assert before["wake_mode"] == "button_or_keyword"
+        assert before["wake_mode"] == "button"
 
         authority = DeviceSettingsAuthority(app.state.memory_store)
         for mode in ("keyword", "button", "button_or_keyword"):
@@ -351,7 +351,8 @@ async def test_display_profile_carries_the_wake_mode_without_moving_the_display_
                 acoustic_capability=None,
             )
             body = (await client.get(PATH, headers=_signed_headers(key))).json()
-            assert body["wake_mode"] == mode
+            # Tap-only product: legacy keyword values coerce to button.
+            assert body["wake_mode"] == "button"
             # The mascot is re-applied only when this moves; a wake mode change
             # must not make the device re-dress.
             assert body["display_version"] == before["display_version"]

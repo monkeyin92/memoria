@@ -10,10 +10,11 @@ the account's own companion, else the shipped default.
 Every read here is a plain read: the firmware polls this every ~20 s, so it
 writes nothing and audits nothing.
 
-The same poll also carries the device's ``wake_mode`` setting (wake word only,
-screen tap only, or both): the firmware applies it on every poll, while the
-companion is only re-applied when ``display_version`` moves, so the two do not
-share a version.
+The same poll also carries the device's ``wake_mode`` setting (tap-only
+``button`` after keyword wake was removed) and optional guardian ``quiet_hours``
+``[start, end)`` clocks for on-device night taps. The firmware applies those on
+every poll, while the companion is only re-applied when ``display_version``
+moves, so they do not share a version.
 """
 
 from __future__ import annotations
@@ -131,11 +132,11 @@ class DeviceDisplayProfile:
     binding_id: str
     persona_id: str
     companion_id: str
-    #: The device setting ``wake_mode``: ``keyword`` (wake word only), ``button``
-    #: (screen tap only; the BOOT key is always live) or ``button_or_keyword``.
-    #: ``None`` when the setting could not be read, so the firmware keeps what
-    #: it already applies rather than being told a default it never chose.
+    #: Tap-only product: always ``button`` when present. ``None`` when the
+    #: setting could not be read, so the firmware keeps what it already applies.
     wake_mode: str | None = None
+    #: Guardian quiet hours as ``(start, end)`` HH:MM, or ``None`` when unknown.
+    quiet_hours: tuple[str, str] | None = None
 
     @property
     def display_version(self) -> str:
@@ -155,6 +156,8 @@ class DeviceDisplayProfile:
         if self.wake_mode is not None:
             # Additive: firmware before build 18 reads only the three fields above.
             wire["wake_mode"] = self.wake_mode
+        if self.quiet_hours is not None:
+            wire["quiet_hours"] = [self.quiet_hours[0], self.quiet_hours[1]]
         return wire
 
 
