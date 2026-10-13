@@ -5845,6 +5845,57 @@ async def test_media_playback_followup_names_the_sentence_to_the_provider_before
 
 
 @pytest.mark.asyncio
+async def test_media_incomplete_followup_waits_for_second_half_before_commit(
+    device_media_session: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Demo blocker: one child sentence must not become two server input turns.
+
+    Field path: post-playback FunASR finals 「我想听」then 「恐龙的故事呀」, with the
+    echo-holdover VAD still active.  The first final used to commit alone after grace;
+    the second half then overlapped the reply, hit ``pending turn split after reply``,
+    and died on ASR tail timeout (5 spoken sentences → 7 input turns).  Incomplete
+    follow-ups now hold until the next final (or the incomplete-hold budget).
+    """
+
+    monkeypatch.setenv("MEDIA_PLAYBACK_FOLLOWUP_GRACE_S", "0.3")
+    window = await device_media_session("followup-incomplete-hold")
+    registry, identity, context = window.registry, window.identity, window.context
+    await _complete_previous_device_playback(window)
+    context.pending.active_vad_start_sample = 195_000
+
+    await _accept_media_asr_final(
+        registry,
+        identity,
+        sentence_id="half-1",
+        start_sample=215_000,
+        end_sample=225_000,
+        text="我想听",
+    )
+    assert context.pending.playback_followup_endpoint_sample == 225_000
+    await asyncio.sleep(0.45)
+    assert window.provider.prepared == []
+    assert context.pending.turn_endpoint_sample == 225_000
+
+    await _accept_media_asr_final(
+        registry,
+        identity,
+        sentence_id="half-2",
+        start_sample=226_000,
+        end_sample=245_000,
+        text="恐龙的故事呀",
+        revision=2,
+    )
+    await _wait_until(
+        lambda: any("我想听" in text and "恐龙" in text for text in window.provider.prepared),
+        timeout=3.0,
+    )
+    followups = [text for text in _user_turn_texts(context) if "我想听" in text or "恐龙" in text]
+    assert followups == ["我想听 恐龙的故事呀"]
+    assert window.provider.prepared.count(followups[0]) == 1
+
+
+@pytest.mark.asyncio
 async def test_media_playback_echo_tail_is_not_announced_to_the_provider(
     device_media_session: Any,
 ) -> None:

@@ -81,6 +81,15 @@ def test_postgres_schema_never_uses_open_rls() -> None:
     assert "FORCE ROW LEVEL SECURITY" in schema
 
 
+def test_postgres_schema_exposes_child_archive_last_mentioned_touch() -> None:
+    schema = (
+        Path(__file__).resolve().parents[1] / "postgres_schema.sql"
+    ).read_text(encoding="utf-8")
+    assert "memory_child_archive_touch_mentioned" in schema
+    assert "app.memory.child_archive_touch" in schema
+    assert "last_mentioned_at" in schema
+
+
 def test_postgres_schema_uses_a_nologin_owner_for_sensitive_objects() -> None:
     schema = (
         Path(__file__).resolve().parents[1] / "postgres_schema.sql"

@@ -59,6 +59,10 @@ _PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S = 1.2
 # the turn budget that is sized for the default (test_the_default_turn_budget_covers...) still holds.
 PLAYBACK_FOLLOWUP_GRACE_ENV = "MEDIA_PLAYBACK_FOLLOWUP_GRACE_S"
 _PLAYBACK_FOLLOWUP_MIN_GRACE_S = 0.3
+# How long an incomplete follow-up (「我想听」before 「恐龙的故事」) may keep the commit open while
+# later finals arrive.  Matches the unvoiced-gap split threshold so mid-sentence pauses do not mint
+# a second turn that later dies on ASR tail timeout (demo: 5 sentences → 7 input turns).
+_PLAYBACK_FOLLOWUP_INCOMPLETE_HOLD_S = 2.5
 # Conservative sample-gap policy for unanchored device candidates observed
 # during a previous reply, not a VAD silence measurement or endpoint timeout.
 _PLAYBACK_CANDIDATE_SPLIT_GAP_SAMPLES = 40_000  # 2.5 s at 16 kHz
@@ -66,6 +70,17 @@ _PLAYBACK_CANDIDATE_SPLIT_GAP_SAMPLES = 40_000  # 2.5 s at 16 kHz
 # last uplink evidence) is new speech; one closer to it is still the echo's own tail (2026-10-03 round 11:
 # a VAD edge 0.08 s past the boundary was the echo, 3 s later the child's question followed).
 _PLAYBACK_NEW_SPEECH_VAD_SAMPLES = 12_800  # 0.8 s at 16 kHz
+
+# Sentence-final particles / punctuation: a follow-up that ends here may commit after one grace.
+_FOLLOWUP_COMPLETE_SUFFIXES = (
+    "吗", "呢", "吧", "呀", "啊", "哦", "啦", "嘛", "哈", "嗯",
+    "谢谢", "再见", "拜拜", "。", "！", "？", "!", "?",
+)
+# Clause-internal endings: FunASR often finalizes here mid-utterance; hold the commit.
+_FOLLOWUP_INCOMPLETE_SUFFIXES = (
+    "的", "了", "着", "和", "跟", "在", "把", "被", "是", "有", "想", "要",
+    "会", "能", "可以", "因为", "所以", "但是", "然后", "如果", "虽然", "听",
+)
 
 
 def playback_followup_grace_s() -> float:
@@ -87,6 +102,23 @@ def playback_followup_grace_s() -> float:
         return value
     logger.warning("%s=%r is not within 0.3-1.2 s; keeping the default", PLAYBACK_FOLLOWUP_GRACE_ENV, raw)
     return _PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S
+
+
+def followup_utterance_looks_complete(text: str) -> bool:
+    """True when a post-playback follow-up may commit after one grace window.
+
+    Incomplete mid-clause finals (「我想听」) must wait for the next final or the
+    incomplete-hold budget; complete short follow-ups (「后天呢」) commit as today.
+    """
+
+    compact = "".join(character for character in text.strip() if not character.isspace())
+    if not compact:
+        return False
+    if any(compact.endswith(suffix) for suffix in _FOLLOWUP_COMPLETE_SUFFIXES):
+        return True
+    if any(compact.endswith(suffix) for suffix in _FOLLOWUP_INCOMPLETE_SUFFIXES):
+        return False
+    return len(compact) >= 6
 
 
 def _compact(text: str) -> str:
@@ -381,6 +413,8 @@ class MediaPlaybackStopMixin:
                     context.pending.turn_retire_sample or 0, endpoint
                 )
                 context.pending.playback_followup_endpoint_sample = endpoint
+                if context.pending.followup_pin_monotonic is None:
+                    context.pending.followup_pin_monotonic = time.monotonic()
                 context.pending.restart_endpoint_bounds(playback_followup_grace_s())
                 logger.info(
                     "media playback-followup endpoint advanced session=%s "
@@ -403,6 +437,8 @@ class MediaPlaybackStopMixin:
         context.pending.turn_endpoint_sample = endpoint
         context.pending.turn_retire_sample = max(context.pending.turn_retire_sample or 0, endpoint)
         context.pending.playback_followup_endpoint_sample = endpoint
+        if context.pending.followup_pin_monotonic is None:
+            context.pending.followup_pin_monotonic = time.monotonic()
         context.pending.turn_endpoint_grace_deadline = (
             time.monotonic() + playback_followup_grace_s()
         )
@@ -413,6 +449,95 @@ class MediaPlaybackStopMixin:
             playback_end,
             endpoint,
             len(result.text.strip()),
+        )
+        self._schedule_turn_commit(context)
+
+    def defer_incomplete_followup_commit(
+        self, context: _MediaVoiceSession, endpoint_sample: int
+    ) -> bool:
+        """True when grace ran out on an incomplete follow-up that should keep waiting.
+
+        Restarts the grace when the projected sentence still looks mid-clause and the
+        incomplete-hold budget remains.  Returns False once the text looks complete or
+        the hold expires, so the caller may commit.
+        """
+
+        pending = context.pending
+        if pending.playback_followup_endpoint_sample != endpoint_sample:
+            return False
+        start = pending.turn_start_sample
+        if start is None or endpoint_sample <= start:
+            return False
+        text = context.runtime.speech_timeline.projected_text(
+            stream_epoch=context.stream_epoch, start_sample=start, end_sample=endpoint_sample
+        )
+        if followup_utterance_looks_complete(text):
+            return False
+        pinned_at = pending.followup_pin_monotonic
+        if pinned_at is None:
+            pending.followup_pin_monotonic = time.monotonic()
+            pinned_at = pending.followup_pin_monotonic
+        if time.monotonic() - pinned_at >= _PLAYBACK_FOLLOWUP_INCOMPLETE_HOLD_S:
+            logger.info(
+                "media playback-followup incomplete hold exhausted session=%s "
+                "endpoint=%s text_len=%s",
+                context.identity.session_id,
+                endpoint_sample,
+                len(text.strip()),
+            )
+            return False
+        pending.restart_endpoint_bounds(playback_followup_grace_s())
+        logger.info(
+            "media playback-followup incomplete deferred session=%s endpoint=%s text_len=%s",
+            context.identity.session_id,
+            endpoint_sample,
+            len(text.strip()),
+        )
+        self._schedule_turn_commit(context)
+        return True
+
+    def endpoint_overlapped_pending_after_playback(self, context: _MediaVoiceSession) -> None:
+        """Pin a follow-up endpoint for speech that overlapped the reply just ended.
+
+        Without this, an incomplete first half that slipped through commits a reply, the
+        second half sits as ``pending_turn_playback_overlap``, and a stuck post-playback
+        VAD never ends the turn: ASR tail timeout discards it (field demo blocker).
+        """
+
+        if context.identity.client_type != "device":
+            return
+        if self._reply_in_flight(context):
+            return
+        pending = context.pending
+        start, end = pending.turn_start_sample, pending.turn_end_sample
+        if (
+            not pending.pending_turn_playback_overlap
+            or pending.turn_endpoint_sample is not None
+            or start is None
+            or end is None
+            or end <= start
+        ):
+            return
+        text = context.runtime.speech_timeline.projected_text(
+            stream_epoch=context.stream_epoch, start_sample=start, end_sample=end
+        )
+        if not text.strip():
+            return
+        duration_ms = (end - start) // _SAMPLES_PER_MS
+        if context.runtime.playback_guarded_reason(text, duration_ms=duration_ms) == "assistant_echo":
+            return
+        pending.turn_endpoint_sample = end
+        pending.turn_retire_sample = max(pending.turn_retire_sample or 0, end)
+        pending.playback_followup_endpoint_sample = end
+        if pending.followup_pin_monotonic is None:
+            pending.followup_pin_monotonic = time.monotonic()
+        pending.pending_turn_playback_overlap = False
+        pending.restart_endpoint_bounds(playback_followup_grace_s())
+        logger.info(
+            "media playback-overlap followup endpoint session=%s endpoint=%s text_len=%s",
+            context.identity.session_id,
+            end,
+            len(text.strip()),
         )
         self._schedule_turn_commit(context)
 

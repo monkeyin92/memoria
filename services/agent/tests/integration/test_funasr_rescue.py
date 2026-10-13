@@ -116,11 +116,17 @@ async def test_rescue_skipped_when_provider_final_seen(
 
 
 @pytest.mark.asyncio
-async def test_rescue_runs_when_provider_final_does_not_cover_segment(
+async def test_rescue_skipped_when_provider_final_does_not_cover_vad_hangover(
     silent_funasr: MockFunASRServer,
     rescue_server: MockSenseVoiceServer,
 ) -> None:
-    """An early nonempty FunASR final must not suppress SenseVoice for the rest of the VAD."""
+    """Any nonempty FunASR final suppresses SenseVoice, even if VAD outlasts it.
+
+    Field demo: FunASR returned text, then VAD hangover / echo PCM looked
+    uncovered, so SenseVoice minted a second synthetic final and split one
+    child sentence into two server turns. Product rule is rescue only when
+    FunASR returned no text for the segment.
+    """
 
     metrics = MetricsRegistry()
     session = FunASRSession(
@@ -128,36 +134,111 @@ async def test_rescue_runs_when_provider_final_does_not_cover_segment(
             api_key="test",
             ws_url=silent_funasr.ws_url,
             rescue_config=SenseVoiceRescueConfig(endpoint=rescue_server.url),
+            post_finish_tail_grace_s=0.0,
         ),
         metrics=metrics,
     )
     await session.connect()
     await session.send_pcm(_speech_pcm())
-    # Reproduce the 11:33 weather miss: FunASR closed the sentence after
-    # ~80 ms of text while the VAD segment still had ~250 ms of speech.
     session._segment_nonempty_final_seen = True
     session._last_emitted_final_sample = 1_280
     await session.rotate_task(require_consumed=False)
-
-    events = []
-    while not session.events.empty():
-        events.append(session.events.get_nowait())
     await session.aclose()
 
-    finals = [
-        event.sentence.text
-        for event in events
-        if event.event == "result-generated" and event.sentence is not None
-    ]
-    assert finals == ["兜底识别成功。"]
-    assert rescue_server.requests == 1
-    assert metrics.get("funasr_rescue_total", {"outcome": "rescued"}) == 1.0
-    # Only the uncovered tail (samples 1280..4000) is sent, and the synthetic
-    # final starts where the provider final ended instead of overlapping it.
-    assert rescue_server.received_bytes == (4_000 - 1_280) * 2
-    rescued = [e.sentence for e in events if e.event == "result-generated" and e.sentence]
-    assert rescued[0].begin_ms == round(1_280 * 1000 / 16_000)
-    assert rescued[0].end_ms == round(4_000 * 1000 / 16_000)
+    assert rescue_server.requests == 0
+    assert metrics.get("funasr_rescue_total", {"outcome": "skipped"}) == 1.0
+    assert metrics.get("funasr_rescue_total", {"outcome": "rescued"}) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_vad_hangover_after_realtime_final_does_not_call_sensevoice(
+    rescue_server: MockSenseVoiceServer,
+) -> None:
+    """Happy FunASR + post-final hangover PCM must not run SenseVoice in parallel."""
+
+    srv = MockFunASRServer(scenario="happy")
+    srv.start()
+    try:
+        metrics = MetricsRegistry()
+        session = FunASRSession(
+            FunASRConfig(
+                api_key="test",
+                ws_url=srv.ws_url,
+                rescue_config=SenseVoiceRescueConfig(
+                    endpoint=rescue_server.url,
+                    min_rms=50,
+                    min_peak_abs=50,
+                ),
+                post_finish_tail_grace_s=0.0,
+            ),
+            metrics=metrics,
+        )
+        await session.connect()
+        await session.send_pcm(_speech_pcm(samples=4_000), capture_start_sample=0)
+        await asyncio.sleep(0.2)
+        while not session.events.empty():
+            session.events.get_nowait()
+        assert session._segment_nonempty_final_seen is True
+        final_end = session._last_emitted_final_sample
+        # Trailing energy after the realtime final (echo / VAD hangover).
+        await session.send_pcm(
+            _speech_pcm(samples=8_000),
+            capture_start_sample=4_000,
+        )
+        assert session._segment_pcm_end_sample is not None
+        assert session._segment_pcm_end_sample > final_end
+        await session.rotate_task(require_consumed=False)
+
+        rescued = []
+        while not session.events.empty():
+            event = session.events.get_nowait()
+            if (
+                event.event == "result-generated"
+                and event.sentence is not None
+                and event.sentence.rescue_synthesized
+            ):
+                rescued.append(event.sentence.text)
+        await session.aclose()
+
+        assert rescued == []
+        assert rescue_server.requests == 0
+        assert metrics.get("funasr_rescue_total", {"outcome": "skipped"}) >= 1.0
+    finally:
+        srv.stop()
+
+
+@pytest.mark.asyncio
+async def test_late_provider_final_during_grace_suppresses_rescue(
+    silent_funasr: MockFunASRServer,
+    rescue_server: MockSenseVoiceServer,
+) -> None:
+    """A FunASR final that arrives in the post-finish grace must beat SenseVoice."""
+
+    metrics = MetricsRegistry()
+    session = FunASRSession(
+        FunASRConfig(
+            api_key="test",
+            ws_url=silent_funasr.ws_url,
+            rescue_config=SenseVoiceRescueConfig(endpoint=rescue_server.url),
+            post_finish_tail_grace_s=0.2,
+        ),
+        metrics=metrics,
+    )
+    await session.connect()
+    await session.send_pcm(_speech_pcm())
+
+    async def _late_provider_text() -> None:
+        await asyncio.sleep(0.05)
+        session._segment_nonempty_final_seen = True
+        session._last_emitted_final_sample = session._segment_pcm_end_sample or 0
+
+    marker = asyncio.create_task(_late_provider_text())
+    await session.rotate_task(require_consumed=False)
+    await marker
+    await session.aclose()
+
+    assert rescue_server.requests == 0
+    assert metrics.get("funasr_rescue_total", {"outcome": "skipped"}) == 1.0
 
 
 @pytest.mark.asyncio

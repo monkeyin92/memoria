@@ -167,13 +167,20 @@ def summary_payload(
     }
 
 
-def archive_payload(fact: ArchiveFact, *, created_at: datetime | None = None) -> dict[str, object]:
+def archive_payload(
+    fact: ArchiveFact,
+    *,
+    created_at: datetime | None = None,
+    last_mentioned_at: datetime | None = None,
+) -> dict[str, object]:
     stamped = created_at or datetime.now(UTC)
+    mentioned = last_mentioned_at or stamped
     return {
         "kind": KIND_CHILD_ARCHIVE,
         "field": fact.field,
         "text": fact.text,
         "created_at": stamped.isoformat(),
+        "last_mentioned_at": mentioned.isoformat(),
     }
 
 

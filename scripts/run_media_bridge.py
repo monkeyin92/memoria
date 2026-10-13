@@ -122,7 +122,7 @@ async def run() -> None:
         getattr(settings, "media_output_generation_timeout_s", 45.0)
     )
     owner_silence_timeout_s = float(
-        getattr(settings, "media_owner_silence_timeout_s", 30.0)
+        getattr(settings, "media_owner_silence_timeout_s", 15.0)
     )
     max_user_speech_duration_s = float(
         getattr(settings, "media_max_user_speech_duration_s", 60.0)
@@ -161,6 +161,7 @@ async def run() -> None:
                 logger.info("reply delivery projection spool replayed events=%s", replayed)
         registry: MediaVoiceCoreRegistry | None = None
         if session_factory is not None:
+            recap_sink = getattr(session_factory, "session_recap_sink", None)
             registry = MediaVoiceCoreRegistry(
                 bridge=server,
                 session_factory=session_factory,
@@ -171,6 +172,9 @@ async def run() -> None:
                     reply_delivery_reporter.submit
                     if reply_delivery_reporter is not None
                     else None
+                ),
+                session_recap_publisher=(
+                    recap_sink.publish_session_end if recap_sink is not None else None
                 ),
             )
             registry.install()

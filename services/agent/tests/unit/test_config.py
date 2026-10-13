@@ -43,7 +43,7 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.media_bridge_mtls is False
     assert s.media_bridge_max_pending_audio_frames == 20
     assert s.media_output_generation_timeout_s == 45.0
-    assert s.media_owner_silence_timeout_s == 30.0
+    assert s.media_owner_silence_timeout_s == 15.0
     assert s.media_max_user_speech_duration_s == 60.0
     assert s.media_slo_report_enabled is False
     assert s.media_slo_metrics_url == "http://agent:9090/"
@@ -55,6 +55,7 @@ def test_production_media_bridge_requires_mtls_material(
 ) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
+    monkeypatch.setenv("MEMORIA_SESSION_RECAP_ENABLED", "false")
     monkeypatch.setenv("MEDIA_BRIDGE_GRPC_ENABLED", "true")
     monkeypatch.setenv("MEDIA_BRIDGE_MTLS", "false")
 
@@ -67,6 +68,7 @@ def test_production_media_slo_reporter_requires_scoped_token(
 ) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
+    monkeypatch.setenv("MEMORIA_SESSION_RECAP_ENABLED", "false")
     monkeypatch.setenv("MEDIA_SLO_REPORT_ENABLED", "true")
     monkeypatch.setenv("MEDIA_SLO_REPORT_URL", "http://control-api:8000/v1/internal/media-runtime/slo")
     monkeypatch.setenv("MEDIA_SLO_REPORT_TOKEN", "too-short")
@@ -80,6 +82,7 @@ def test_production_reply_delivery_reporter_requires_scoped_token(
 ) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
+    monkeypatch.setenv("MEMORIA_SESSION_RECAP_ENABLED", "false")
     monkeypatch.setenv("MEDIA_REPLY_DELIVERY_ENABLED", "true")
     monkeypatch.setenv(
         "MEDIA_REPLY_DELIVERY_URL",
@@ -312,6 +315,7 @@ def test_production_interaction_policy_requires_independent_token(
 ) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
+    monkeypatch.setenv("MEMORIA_SESSION_RECAP_ENABLED", "false")
     monkeypatch.delenv("MEMORIA_INTERACTION_POLICY_TOKEN", raising=False)
 
     with pytest.raises(ValidationError, match="interaction policy"):
@@ -325,6 +329,7 @@ def test_production_response_plan_requires_scoped_token(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
+    monkeypatch.setenv("MEMORIA_SESSION_RECAP_ENABLED", "false")
     monkeypatch.delenv("MEMORIA_RESPONSE_PLAN_TOKEN", raising=False)
 
     with pytest.raises(ValidationError, match="response plan requires a scoped token"):
@@ -338,6 +343,7 @@ def test_production_response_plan_requires_secure_internal_url(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
+    monkeypatch.setenv("MEMORIA_SESSION_RECAP_ENABLED", "false")
     monkeypatch.setenv(
         "MEMORIA_RESPONSE_PLAN_URL",
         "http://planner.internal.example/v1/interaction/response-plan",
@@ -355,6 +361,7 @@ def test_production_response_plan_token_is_independent(
     shared = "shared-policy-plan-token-material-32-characters"
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
+    monkeypatch.setenv("MEMORIA_SESSION_RECAP_ENABLED", "false")
     monkeypatch.setenv("MEMORIA_INTERACTION_POLICY_TOKEN", shared)
     monkeypatch.setenv("MEMORIA_RESPONSE_PLAN_TOKEN", shared)
 
@@ -367,6 +374,7 @@ def test_production_formal_speaker_authority_requires_independent_token(
 ) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
+    monkeypatch.setenv("MEMORIA_SESSION_RECAP_ENABLED", "false")
     monkeypatch.setenv("MEMORIA_SPEAKER_AUTHORITY_ENABLED", "true")
     monkeypatch.delenv("MEMORIA_SPEAKER_INTERNAL_TOKEN", raising=False)
 
@@ -379,6 +387,7 @@ def test_production_voice_profile_requires_internal_auth_even_without_archive_si
 ) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
+    monkeypatch.setenv("MEMORIA_SESSION_RECAP_ENABLED", "false")
     monkeypatch.setenv("MEMORIA_VOICE_PROFILE_ENABLED", "true")
     monkeypatch.delenv("MEMORIA_ARCHIVE_INTERNAL_TOKEN", raising=False)
     monkeypatch.delenv("MEMORIA_VOICE_RESOLUTION_TOKEN", raising=False)
@@ -392,6 +401,7 @@ def test_production_plaintext_internal_url_is_limited_to_local_docker_dns(
 ) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
+    monkeypatch.setenv("MEMORIA_SESSION_RECAP_ENABLED", "false")
     monkeypatch.setenv("MEMORIA_VOICE_PROFILE_ENABLED", "true")
     monkeypatch.setenv("MEMORIA_VOICE_RESOLUTION_TOKEN", "voice-resolution-material-that-is-long-enough")
     monkeypatch.setenv(
@@ -419,6 +429,7 @@ def test_production_rejects_unsafe_doubao_websocket_urls(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
+    monkeypatch.setenv("MEMORIA_SESSION_RECAP_ENABLED", "false")
     monkeypatch.setenv("DOUBAO_TTS_WS_URL", ws_url)
 
     with pytest.raises(ValidationError, match="DOUBAO_TTS_WS_URL"):
@@ -431,6 +442,7 @@ def test_production_enabled_capabilities_require_independent_tokens(
     shared = "shared-capability-material-that-is-long-enough"
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
+    monkeypatch.setenv("MEMORIA_SESSION_RECAP_ENABLED", "false")
     monkeypatch.setenv("MEMORIA_VOICE_PROFILE_ENABLED", "true")
     monkeypatch.setenv("MEMORIA_VOICE_RESOLUTION_TOKEN", shared)
     monkeypatch.setenv("MEMORIA_INTERACTION_POLICY_TOKEN", shared)

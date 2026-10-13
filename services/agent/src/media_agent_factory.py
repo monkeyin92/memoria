@@ -49,6 +49,8 @@ from services.agent.src.response_planner_client import (
     ResponsePlannerClientConfig,
 )
 from services.agent.src.runtime_profile import VerifiedRuntimeProfile
+from services.agent.src.session_recap_llm import summary_model_config_from_settings
+from services.agent.src.session_recap_sink import HttpSessionRecapConfig, SessionRecapSink
 from services.agent.src.tutor_session import production_system_prompt
 from services.agent.src.voice_core.media_protocol import (
     DEVICE_POST_PLAYBACK_HOLDOFF_S,
@@ -123,6 +125,7 @@ class ProductionMediaSessionFactory:
     settings: Any
     llm_factory: Any
     archive_sink: ArchiveSink | None = None
+    session_recap_sink: SessionRecapSink | None = None
 
     async def __call__(self, identity: SessionIdentity) -> MediaSessionResources:
         if not identity.session_id:
@@ -410,6 +413,8 @@ class ProductionMediaSessionFactory:
     async def aclose(self) -> None:
         if self.archive_sink is not None:
             await self.archive_sink.close()
+        if self.session_recap_sink is not None:
+            await self.session_recap_sink.aclose()
 
 
 def build_production_media_session_factory(settings: Any) -> ProductionMediaSessionFactory:
@@ -432,10 +437,30 @@ def build_production_media_session_factory(settings: Any) -> ProductionMediaSess
                 spool_max_bytes=settings.archive_spool_max_bytes,
             )
         )
+    session_recap_sink: SessionRecapSink | None = None
+    if bool(getattr(settings, "session_recap_enabled", True)):
+        token = settings.internal_token("archive_write")
+        if token:
+            session_recap_sink = SessionRecapSink.from_config(
+                HttpSessionRecapConfig(
+                    endpoint=str(getattr(
+                        settings,
+                        "session_recap_url",
+                        "http://control-api:8000/v1/internal/child-memory/session-recap",
+                    )),
+                    internal_token=token,
+                    timeout_s=float(
+                        getattr(settings, "deepseek_summary_timeout_s", 30.0)
+                    )
+                    + 5.0,
+                ),
+                summary_model=summary_model_config_from_settings(settings),
+            )
     return ProductionMediaSessionFactory(
         settings=settings,
         llm_factory=OpenAIChatModel,
         archive_sink=archive_sink,
+        session_recap_sink=session_recap_sink,
     )
 
 

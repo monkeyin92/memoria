@@ -42,10 +42,6 @@ from services.agent.src.providers.sensevoice import (
 logger = logging.getLogger(__name__)
 
 _WS_TRACE_MAX_PER_WINDOW = 20
-# A FunASR sentence_end that stops more than 100 ms before the VAD segment
-# end is not a covering transcript.  Skipping SenseVoice in that case left
-# loud weather utterances on the 没听清 path (2026-08-30 11:33 take).
-_RESCUE_COVERAGE_TOLERANCE_S = 0.1
 _MID_SEGMENT_RESCUE_MIN_S = 4.0
 
 
@@ -859,9 +855,7 @@ class FunASRSession:
                                 min(ack, ack_ceiling),
                             )
                             if ev.sentence.text.strip():
-                                # Remember a usable provider final.  Rescue
-                                # still runs at VAD end unless this final
-                                # covers the captured segment.
+                                # Nonempty FunASR text suppresses SenseVoice for this segment.
                                 self._segment_nonempty_final_seen = True
                     elif ev.event == "task-finished" and ev.task_id == self.task_id:
                         self._finished_task_id = ev.task_id
@@ -1369,11 +1363,9 @@ class FunASRSession:
     async def _maybe_rescue_segment(self) -> None:
         """Rescue an empty VAD segment through the offline SenseVoice fallback.
 
-        Fires only when the provider produced no nonempty final for the whole
-        segment while real speech energy was captured.  The transcript is
-        enqueued as a normal provider final (plus a synthetic boundary when
-        the provider rejected the task as empty audio), so timeline, fence
-        and commit logic stay on their existing paths.  Never raises.
+        Fires only when FunASR produced no nonempty final for the segment and
+        real speech energy was captured.  A nonempty realtime final always
+        wins, including when VAD hangover extends past its end_ms.  Never raises.
         """
 
         try:
@@ -1411,21 +1403,39 @@ class FunASRSession:
             if self.metrics is not None:
                 self.metrics.inc_funasr_rescue("failed")
 
-    def _final_covers(self, segment_end: int | None) -> bool:
-        tolerance = max(1, int(_RESCUE_COVERAGE_TOLERANCE_S * self.config.sample_rate))
-        return (
-            self._segment_nonempty_final_seen
-            and segment_end is not None
-            and self._last_emitted_final_sample + tolerance >= segment_end
+    def _log_rescue_skipped_for_provider_text(self, *, late: bool = False) -> None:
+        logger.info(
+            "funasr segment rescue skipped: %sprovider text present "
+            "task_id=%s final_end=%s segment_end=%s",
+            "late " if late else "",
+            self.task_id or "unknown",
+            self._last_emitted_final_sample,
+            self._segment_pcm_end_sample,
         )
+        if self.metrics is not None:
+            self.metrics.inc_funasr_rescue("skipped")
 
     async def _rescue_segment_once(self, *, mid_utterance: bool = False) -> None:
         self._rescue_deadline = None
         rescue_config = self.config.rescue_config
-        # Rescue only the tail a nonempty provider final has not covered yet.
-        covered = self._last_emitted_final_sample if self._segment_nonempty_final_seen else None
-        pcm, pcm_start = slice_segment_pcm(self._segment_pcm, self._segment_pcm_ranges, covered)
-        if self._rescue is None or rescue_config is None or self._closed or not pcm:
+        if self._rescue is None or rescue_config is None or self._closed:
+            return
+        if self._segment_nonempty_final_seen:
+            self._log_rescue_skipped_for_provider_text()
+            return
+        if not mid_utterance:
+            # Late FunASR finals often arrive just after task-finished. Wait the
+            # same grace the media adapter uses so both paths do not emit.
+            grace_s = float(self.config.post_finish_tail_grace_s)
+            if grace_s > 0:
+                await asyncio.sleep(grace_s)
+            if self._closed:
+                return
+            if self._segment_nonempty_final_seen:
+                self._log_rescue_skipped_for_provider_text(late=True)
+                return
+        pcm, pcm_start = slice_segment_pcm(self._segment_pcm, self._segment_pcm_ranges, None)
+        if not pcm:
             return
         rms = audioop.rms(pcm, 2)
         peak_abs = audioop.max(pcm, 2)
@@ -1447,19 +1457,6 @@ class FunASRSession:
                 self.metrics.inc_funasr_rescue("skipped")
                 self.metrics.inc_funasr_empty_transcript(outcome_class)
             return
-        segment_end = self._segment_pcm_end_sample
-        if self._final_covers(segment_end):
-            logger.info(
-                "funasr segment rescue skipped: provider final covers segment "
-                "task_id=%s final_end=%s segment_end=%s rms=%s",
-                self.task_id or "unknown",
-                self._last_emitted_final_sample,
-                segment_end,
-                rms,
-            )
-            if self.metrics is not None:
-                self.metrics.inc_funasr_rescue("skipped")
-            return
         task_id = self.task_id or ""
         boundary = self._task_boundary_observed()
         empty_audio_boundary = self._has_replaceable_empty_audio_failure()
@@ -1477,8 +1474,6 @@ class FunASRSession:
                 round(self._segment_pcm_samples * 1000 / self.config.sample_rate),
             )
             return
-        # Snapshot every timing input before the network call: a concurrent
-        # recovery may rotate the provider task while the rescue is in flight.
         task_origin = self._task_sample_origin
         segment_start = pcm_start
         segment_end = self._segment_pcm_end_sample or segment_start
@@ -1494,10 +1489,7 @@ class FunASRSession:
             )
         finally:
             self._rescue_deadline = None
-        if self._closed or self._final_covers(segment_end):
-            # A late provider final that covers the VAD segment crossed the
-            # queue while the rescue was in flight; that result stays
-            # authoritative.  A short early final must not discard rescue.
+        if self._closed or self._segment_nonempty_final_seen:
             return
         text = (text or "").strip()
         if not rescue_config.accepts_text(text):
@@ -1539,10 +1531,6 @@ class FunASRSession:
             rescue_peak_abs=peak_abs,
         )
         if empty_audio_boundary and not boundary:
-            # The provider rejected the task as empty audio, so no
-            # task-finished will ever arrive.  Synthesize the whole boundary
-            # sequence and drop the queued task-failed so both consumers see
-            # a normal final + boundary pair.
             self._discard_queued_task_failure(task_id)
             self._finished_task_id = task_id
             self._task_finished_received.set()
@@ -1551,15 +1539,10 @@ class FunASRSession:
             )
             await self.events.put(FunASRServerEvent(event="task-finished", task_id=task_id))
         elif mid_utterance:
-            # The VAD segment is still open.  Emit only the synthetic final so
-            # the media adapter can commit clock facts without waiting for
-            # vad.end while FunASR streaming stays silent.
             await self.events.put(
                 FunASRServerEvent(event="result-generated", task_id=task_id, sentence=sentence)
             )
         else:
-            # Normal boundary: task-finished is already queued; the synthetic
-            # final becomes the provider's last tail final.
             await self.events.put(
                 FunASRServerEvent(event="result-generated", task_id=task_id, sentence=sentence)
             )
