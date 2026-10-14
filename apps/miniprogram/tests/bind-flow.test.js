@@ -27,6 +27,9 @@ global.wx = {
     options.complete?.();
   },
   showToast() {},
+  showModal(options) {
+    options.success?.({ confirm: true });
+  },
   navigateTo(options) {
     navigations.push(options.url);
   },
@@ -260,6 +263,12 @@ test("parent_for_child flow validates minimal info and submits guardian relation
   const page = await bootToMode("parent_for_child");
   assert.equal(page.data.form.subjectSource, "new");
   assert.deepEqual(page.data.ageBands.map((band) => band.value), ["under_14", "14_17"]);
+  assert.equal(page.data.form.quietHoursStart, "21:00");
+  assert.equal(page.data.form.quietHoursEnd, "07:00");
+  assert.equal(
+    page.data.quietHoursLabel,
+    "夜间模式：21:00–07:00（这段时间点屏只会说晚安）",
+  );
 
   page.goToReview();
   assert.ok(page.data.error.includes("备注"));
@@ -291,6 +300,49 @@ test("parent_for_child flow validates minimal info and submits guardian relation
   assert.ok(!page.data.offers.some((offer) => offer.id === "offer_guardian_weekly_summary_v1"));
   assert.ok(!payload.consent_offer_ids.includes("offer_emergency_contact_v1"));
   assert.equal(readSubjectLabel(page.data.manifest), "小乐");
+});
+
+test("parent_for_child asks before submitting an unusually short quiet-hours window", async () => {
+  nextResponse = successResponse(defaultManifestResponse("parent_for_child"));
+  const page = await bootToMode("parent_for_child");
+  page.setData({ "form.childNickname": "小乐" });
+  page.onQuietStartChange({ detail: { value: "23:45" } });
+  page.onQuietEndChange({ detail: { value: "00:15" } });
+  assert.equal(
+    page.data.quietHoursLabel,
+    "夜间模式：23:45–00:15（这段时间点屏只会说晚安）",
+  );
+  page.goToReview();
+  assert.equal(page.data.step, "review");
+
+  const modals = [];
+  const previousShowModal = global.wx.showModal;
+  global.wx.showModal = (options) => {
+    modals.push(options);
+    options.success({ confirm: false, cancel: true });
+  };
+  lastWxRequest = null;
+  try {
+    await page.submitBinding();
+    assert.equal(page.data.step, "review");
+    assert.equal(lastWxRequest, null);
+    assert.equal(modals.length, 1);
+    assert.match(modals[0].content, /23:45–00:15/);
+
+    global.wx.showModal = (options) => {
+      modals.push(options);
+      options.success({ confirm: true });
+    };
+    await page.submitBinding();
+    assert.equal(page.data.step, "done");
+    assert.deepEqual(lastWxRequest.data.service_preferences.quiet_hours, {
+      start: "23:45",
+      end: "00:15",
+    });
+    assert.equal(modals.length, 2);
+  } finally {
+    global.wx.showModal = previousShowModal;
+  }
 });
 
 test("minor long-term memory defaults unticked and sends memory_level none", async () => {

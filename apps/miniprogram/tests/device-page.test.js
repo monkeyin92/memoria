@@ -42,7 +42,9 @@ global.wx = {
     delete storage[key];
   },
   showToast() {},
-  showModal() {},
+  showModal(options) {
+    options.success?.({ confirm: true });
+  },
   navigateTo() {},
   stopPullDownRefresh() {},
   request(options) {
@@ -692,9 +694,17 @@ test("the guardian edits session limits from the device page and sees the signed
   assert.equal(page.data.limitsMinuteOptions[page.data.limitsMinuteIndex], 30);
   assert.equal(page.data.limitsQuietStart, "21:00");
   assert.equal(page.data.limitsQuietEnd, "07:00");
+  assert.equal(
+    page.data.limitsQuietLabel,
+    "夜间模式：21:00–07:00（这段时间点屏只会说晚安）",
+  );
 
   page.onLimitsMinutesChange({ detail: { value: "3" } });
   page.onLimitsQuietStartChange({ detail: { value: "22:00" } });
+  assert.equal(
+    page.data.limitsQuietLabel,
+    "夜间模式：22:00–07:00（这段时间点屏只会说晚安）",
+  );
   profilePayload = limitsProfile(60, "22:00", "07:00", 2);
   await page.confirmLimitsSheet();
   assert.deepEqual(limitsCalls, [
@@ -716,7 +726,43 @@ test("the guardian edits session limits from the device page and sees the signed
   assert.equal(limitsCalls.length, 0);
   assert.match(page.data.limitsError, /不能是同一时刻/);
 
+  // An unusually long window asks first; cancel leaves the sheet open with no write.
+  page.onLimitsQuietStartChange({ detail: { value: "09:00" } });
+  page.onLimitsQuietEndChange({ detail: { value: "22:00" } });
+  const previousShowModal = global.wx.showModal;
+  const modals = [];
+  global.wx.showModal = (options) => {
+    modals.push(options);
+    options.success({ confirm: false, cancel: true });
+  };
+  try {
+    await page.confirmLimitsSheet();
+    assert.equal(limitsCalls.length, 0);
+    assert.equal(page.data.limitsSheetVisible, true);
+    assert.equal(modals.length, 1);
+    assert.match(modals[0].content, /09:00–22:00/);
+
+    global.wx.showModal = (options) => {
+      modals.push(options);
+      options.success({ confirm: true });
+    };
+    profilePayload = limitsProfile(60, "09:00", "22:00", 3);
+    await page.confirmLimitsSheet();
+    assert.deepEqual(limitsCalls, [
+      {
+        method: "PUT",
+        deviceId: "dev_1",
+        data: { max_session_minutes: 60, quiet_hours: { start: "09:00", end: "22:00" } },
+      },
+    ]);
+    assert.equal(page.data.sessionLimits.quietStart, "09:00");
+  } finally {
+    global.wx.showModal = previousShowModal;
+  }
+
   // A refused write keeps the sheet open with the reason and the old limits on screen.
+  limitsCalls.length = 0;
+  page.openLimitsSheet();
   page.onLimitsQuietEndChange({ detail: { value: "06:30" } });
   limitsFailure = true;
   await page.confirmLimitsSheet();

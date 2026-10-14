@@ -186,8 +186,8 @@
         <view class="list">
           <view wx:if="{{sessionLimits.quietHoursLabel}}" class="list-row">
             <view class="row-copy">
-              <text class="row-title">夜间休息</text>
-              <text class="row-meta">这段时间唤醒，机器人会说晚安并回到待命，不会继续聊天</text>
+              <text class="row-title">夜间模式</text>
+              <text class="row-meta">这段时间点屏只会说晚安，不会继续聊天</text>
             </view>
             <text class="row-value">{{sessionLimits.quietHoursLabel}}</text>
           </view>
@@ -394,7 +394,7 @@
         <button class="text-button sheet-cancel" disabled="{{personaSaving}}" data-person-id="{{personaSheetSubjectId}}" bindtap="clearPersonaAssignment">恢复设备默认人格</button>
       </view>
 
-      <!-- 使用时段底部抽屉：监护人修改单次时长与夜间休息，保存后设备从下一次对话起按新值执行 -->
+      <!-- 使用时段底部抽屉：监护人修改单次时长与夜间模式，保存后设备从下一次对话起按新值执行 -->
       <view wx:if="{{limitsSheetVisible}}" class="sheet-mask" bindtap="closeLimitsSheet" catchtouchmove="noop"></view>
       <view wx:if="{{limitsSheetVisible}}" class="sheet device-sheet">
         <view class="sheet-grab"></view>
@@ -403,11 +403,12 @@
         <picker range="{{limitsMinuteOptions}}" value="{{limitsMinuteIndex}}" bindchange="onLimitsMinutesChange">
           <view class="limits-row"><text class="row-title">单次最长</text><text class="row-value">{{limitsMinuteOptions[limitsMinuteIndex]}} 分钟</text></view>
         </picker>
+        <text class="sheet-sub limits-quiet-label">{{limitsQuietLabel}}</text>
         <picker mode="time" value="{{limitsQuietStart}}" bindchange="onLimitsQuietStartChange">
-          <view class="limits-row"><text class="row-title">夜间休息开始</text><text class="row-value">{{limitsQuietStart}}</text></view>
+          <view class="limits-row"><text class="row-title">开始</text><text class="row-value">{{limitsQuietStart}}</text></view>
         </picker>
         <picker mode="time" value="{{limitsQuietEnd}}" bindchange="onLimitsQuietEndChange">
-          <view class="limits-row"><text class="row-title">夜间休息结束</text><text class="row-value">{{limitsQuietEnd}}</text></view>
+          <view class="limits-row"><text class="row-title">结束</text><text class="row-value">{{limitsQuietEnd}}</text></view>
         </picker>
         <text wx:if="{{limitsError}}" class="error-text">{{limitsError}}</text>
         <button class="primary-button sheet-action" loading="{{limitsSaving}}" disabled="{{limitsSaving}}" bindtap="confirmLimitsSheet">保存</button>

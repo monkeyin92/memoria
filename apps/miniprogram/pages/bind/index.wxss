@@ -103,6 +103,19 @@
   font-size: 26rpx;
 }
 
+.quiet-hours-block {
+  margin-top: 8rpx;
+}
+
+.quiet-hours-label {
+  display: block;
+  margin-bottom: 12rpx;
+  color: #1e2d46;
+  font-size: 28rpx;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
 .quiet-hours-row {
   display: flex;
   gap: 24rpx;
