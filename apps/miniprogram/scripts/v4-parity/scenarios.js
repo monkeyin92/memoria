@@ -7,6 +7,7 @@ const fx = require("../mp-harness/fixtures");
 
 const PARITY = [
   { slug: "01-login", design: "01-login.png", page: "pages/home/index", harness: { api: fx.baseApi(fx.GUEST_API), now: fx.NOW } },
+  { slug: "02-consent", design: "02-consent.png", page: "pages/auth/index", harness: { api: fx.baseApi(fx.GUEST_API), now: fx.NOW } },
   { slug: "03-home", design: "03-home.png", page: "pages/home/index", harness: { api: fx.baseApi(), now: fx.NOW } },
   {
     slug: "04-summary",
@@ -17,6 +18,7 @@ const PARITY = [
   },
   { slug: "06-usage", design: "06-usage.png", page: "pages/device/index", harness: { api: fx.baseApi(), now: fx.NOW } },
   { slug: "05-attention", design: "05-attention.png", page: "pages/memory/index", harness: { api: fx.baseApi(), now: fx.NOW } },
+  { slug: "10-profile", design: "10-profile.png", page: "pages/profile/index", harness: { api: fx.baseApi(), now: fx.NOW } },
   { slug: "08-roles", design: "08-roles.png", page: "pages/companion/index", harness: { api: fx.baseApi(), now: fx.NOW } },
   {
     slug: "09-memory",

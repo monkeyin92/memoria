@@ -12,15 +12,23 @@ const authStyles = fs.readFileSync(
   "utf8",
 );
 
-test("auth header keeps the brand cue and title on separate lines", () => {
+test("auth header puts the draft chip and the two-line title on separate lines", () => {
   assert.match(
     authTemplate,
-    /<view class="auth-copy">[\s\S]*?<text class="eyebrow auth-copy-line">[\s\S]*?<text class="page-title auth-copy-line">/,
+    /<view class="auth-copy">[\s\S]*?<text class="pill pill-draft auth-chip">草稿 · 待律师审核<\/text>[\s\S]*?<text class="page-title auth-copy-line">开始前，<\/text>\s*<text class="page-title auth-copy-line">请先确认这几件事<\/text>/,
   );
   assert.match(
     authStyles,
     /\.auth-copy-line\s*\{[\s\S]*?display:\s*block\s*;/,
   );
+});
+
+test("auth facts state only what the product does and promise no view or delete", () => {
+  const facts = [...authTemplate.matchAll(/<text class="auth-fact-title">([^<]+)<\/text>/g)].map((m) => m[1]);
+  assert.deepEqual(facts, ["对话经过我们的服务器", "保存对话摘要", "长期只记三项", "回应由 AI 生成"]);
+  assert.match(authTemplate, /称呼、兴趣和小名/);
+  assert.doesNotMatch(authTemplate, /摄像头|随时查看|删除可证明|device-screen/);
+  assert.doesNotMatch(authStyles, /#[0-9a-fA-F]{3,8}\b|rgba\(/);
 });
 
 test("auth header has no unselected mascot placeholder or redundant subtitle", () => {

@@ -1,7 +1,6 @@
 {
   "navigationBarTitleText": "登录 Memoria",
   "usingComponents": {
-    "device-screen": "/components/device-screen/index",
     "mp-icon": "/components/mp-icon/index"
   }
 }
