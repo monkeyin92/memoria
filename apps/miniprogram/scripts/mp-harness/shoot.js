@@ -6,7 +6,6 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const puppeteer = require("puppeteer-core");
 
 const { loadPage } = require("./runtime");
 const { renderPage } = require("./render");
@@ -19,7 +18,7 @@ function chromePath() {
 }
 
 function launch() {
-  return puppeteer.launch({
+  return require("puppeteer-core").launch({
     executablePath: chromePath(),
     headless: "new",
     args: ["--no-sandbox", "--disable-gpu", "--font-render-hinting=none", "--allow-file-access-from-files"],
@@ -102,7 +101,7 @@ async function shoot(browser, scenario, view, outPath) {
   const html = renderPage(scenario.page, data, { width: view.width, safeTop: view.safeTop, safeBottom: view.safeBottom, fontScale: view.fontScale || 1 });
   const renderMs = Number(process.hrtime.bigint() - renderStarted) / 1e6;
   fs.mkdirSync(HTML_DIR, { recursive: true });
-  const htmlPath = path.join(HTML_DIR, `${path.basename(outPath, ".png")}.html`);
+  const htmlPath = path.join(HTML_DIR, `${outPath ? path.basename(outPath, ".png") : `${scenario.slug}-${view.name}`}.html`);
   fs.writeFileSync(htmlPath, html);
   const page = await browser.newPage();
   try {
@@ -112,11 +111,13 @@ async function shoot(browser, scenario, view, outPath) {
     await page.evaluate(() => document.fonts.ready);
     const layoutMs = Date.now() - layoutStarted;
     const metrics = await measure(page, view);
-    if (view.fullPage && metrics.scrollHeight > view.height) {
-      await page.setViewport({ width: view.width, height: metrics.scrollHeight, deviceScaleFactor: view.dpr || 1 });
+    if (outPath) {
+      if (view.fullPage && metrics.scrollHeight > view.height) {
+        await page.setViewport({ width: view.width, height: metrics.scrollHeight, deviceScaleFactor: view.dpr || 1 });
+      }
+      fs.mkdirSync(path.dirname(outPath), { recursive: true });
+      await page.screenshot({ path: outPath, type: "png" });
     }
-    fs.mkdirSync(path.dirname(outPath), { recursive: true });
-    await page.screenshot({ path: outPath, type: "png" });
     const setDataBytes = setDataLog.reduce((sum, entry) => sum + entry.bytes, 0);
     return { ...metrics, loadMs: +loadMs.toFixed(1), renderMs: +renderMs.toFixed(1), layoutMs, setDataCalls: setDataLog.length, setDataBytes, htmlPath };
   } finally {
@@ -124,4 +125,49 @@ async function shoot(browser, scenario, view, outPath) {
   }
 }
 
-module.exports = { launch, scenarioData, shoot };
+function problems(result, view) {
+  const found = [];
+  if (result.scrollWidth > view.width) found.push(`scrollWidth ${result.scrollWidth} > ${view.width}`);
+  if (result.overflow.length) found.push(`overflow: ${result.overflow.join("; ")}`);
+  if (result.underCapsule.length) found.push(`under capsule: ${result.underCapsule.join("; ")}`);
+  if (result.tabClearance && result.tabClearance.gap < result.tabClearance.tabHeight) {
+    found.push(`content ends ${result.tabClearance.gap}px above page bottom, tab bar is ${result.tabClearance.tabHeight}px`);
+  }
+  return found;
+}
+
+// Scrolls the rendered page top to bottom in fixed steps, one per animation
+// frame, and reports frame intervals. Chrome on this machine, not the WeChat
+// WebView, so the numbers bound the page's layout cost rather than predict a phone.
+async function scrollFrames(browser, scenario, view, stepPx = 120) {
+  const { htmlPath, ...result } = await shoot(browser, scenario, view, null);
+  const page = await browser.newPage();
+  try {
+    await page.setViewport({ width: view.width, height: view.height });
+    await page.goto(`file://${htmlPath}`, { waitUntil: "load" });
+    const frames = await page.evaluate(
+      (step) =>
+        new Promise((resolve) => {
+          const intervals = [];
+          let last = performance.now();
+          const tick = (now) => {
+            intervals.push(now - last);
+            last = now;
+            const before = window.scrollY;
+            window.scrollBy(0, step);
+            if (window.scrollY === before) resolve(intervals.slice(1));
+            else requestAnimationFrame(tick);
+          };
+          requestAnimationFrame(tick);
+        }),
+      stepPx,
+    );
+    const sorted = [...frames].sort((a, b) => a - b);
+    const pick = (q) => +sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))].toFixed(1);
+    return { ...result, frames: frames.length, p50FrameMs: pick(0.5), p95FrameMs: pick(0.95), maxFrameMs: +sorted[sorted.length - 1].toFixed(1) };
+  } finally {
+    await page.close();
+  }
+}
+
+module.exports = { chromePath, launch, problems, scenarioData, scrollFrames, shoot };

@@ -232,6 +232,43 @@ const GUEST_API = { hasAuthenticatedSession: () => false, currentIdentity: () =>
 const authed = (overrides) => ({ api: baseApi(overrides), storage: STORAGE, now: NOW });
 const guest = () => ({ api: baseApi(GUEST_API), now: NOW });
 
+function longMemoryApi(days) {
+  return {
+    getGuardianNotifications: async () => ({ items: [] }),
+    getGuardianChildDays: async () => ({
+      items: Array.from({ length: days }, (_, offset) => ({ day: dayKey(offset), message_count: (offset % 5) + 1 })),
+    }),
+    getChildSessionSummaries: async () => ({
+      items: Array.from({ length: days * 3 }, (_, index) => ({
+        record_id: `s_long_${index}`,
+        text: `聊到了第 ${index + 1} 个有趣的话题，还讲了一个关于星星的故事`,
+        created_at: isoMinutesAgo(index * 8 * 60),
+      })),
+    }),
+  };
+}
+
+function longArchiveApi(facts) {
+  const fields = ["appellation", "preference", "pet_name"];
+  return {
+    ...archiveApi,
+    getChildArchive: async () => ({
+      items: Array.from({ length: facts }, (_, index) => ({
+        record_id: `a_long_${index}`,
+        field: fields[index % fields.length],
+        text: `第 ${index + 1} 条`,
+        created_at: isoMinutesAgo(60 * index),
+      })),
+    }),
+  };
+}
+
+const emptyMemoryApi = {
+  getGuardianChildDays: async () => ({ items: [] }),
+  getChildSessionSummaries: async () => ({ items: [] }),
+  getGuardianNotifications: async () => ({ items: [] }),
+};
+
 const ONBOARDING_DEVICE = { model: "Memoria M1", display_tail: "7F3A", firmware_version: "1.4.2", claim_status: "unclaimed" };
 const WIFI_SCAN = [
   { ssid: "Home-2.4G", rssi: -52, security: "WPA2" },
@@ -265,9 +302,12 @@ module.exports = {
   bindApi,
   dayKey,
   digitalSelfApi,
+  emptyMemoryApi,
   guardianApi,
   guest,
   isoMinutesAgo,
+  longArchiveApi,
+  longMemoryApi,
   onboardingSnapshot,
   personaApi,
 };

@@ -1,30 +1,19 @@
 #!/usr/bin/env node
 /*
- * Screenshots every page state in scripts/mp-harness/pages.js at 375, 390 and
- * 430 widths plus a 1.3x font scale, and records layout checks and timings to
+ * Screenshots every page state in scripts/mp-harness/pages.js at 320, 375, 390
+ * and 430 widths plus a 1.3x font scale, and records layout checks and timings to
  * docs/design/app-v4/mp-screenshots/pages/results.json.
  *   node scripts/screenshot-pages.js [slug ...]
  */
 const fs = require("node:fs");
 const path = require("node:path");
 
-const { launch, shoot } = require("./mp-harness/shoot");
+const { launch, problems, shoot } = require("./mp-harness/shoot");
 const { PAGES, VIEWS } = require("./mp-harness/pages");
 
 process.env.TZ = "Asia/Shanghai";
 
 const OUT = path.join(__dirname, "../../../docs/design/app-v4/mp-screenshots/pages");
-
-function problems(result, view) {
-  const found = [];
-  if (result.scrollWidth > view.width) found.push(`scrollWidth ${result.scrollWidth} > ${view.width}`);
-  if (result.overflow.length) found.push(`overflow: ${result.overflow.join("; ")}`);
-  if (result.underCapsule.length) found.push(`under capsule: ${result.underCapsule.join("; ")}`);
-  if (result.tabClearance && result.tabClearance.gap < result.tabClearance.tabHeight) {
-    found.push(`content ends ${result.tabClearance.gap}px above page bottom, tab bar is ${result.tabClearance.tabHeight}px`);
-  }
-  return found;
-}
 
 async function main() {
   const only = process.argv.slice(2);

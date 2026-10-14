@@ -11,6 +11,8 @@ const PAGES = [
   { slug: "home-guest", page: "pages/home/index", harness: guest() },
   { slug: "memory", page: "pages/memory/index", harness: authed({ getGuardianNotifications: async () => ({ items: [] }) }), actions: [["summarizeSelectedDay"]] },
   { slug: "memory-attention", page: "pages/memory/index", harness: authed() },
+  { slug: "memory-empty", page: "pages/memory/index", harness: authed(fx.emptyMemoryApi) },
+  { slug: "memory-empty-memories", page: "pages/memory/index", harness: authed(fx.emptyMemoryApi), actions: [["showMemories"]] },
   { slug: "companion", page: "pages/companion/index", harness: authed() },
   { slug: "device", page: "pages/device/index", harness: authed() },
   { slug: "profile", page: "pages/profile/index", harness: authed() },
@@ -73,9 +75,23 @@ const PAGES = [
 
 const VIEWS = [
   { name: "390", width: 390, height: 844, safeTop: 47, safeBottom: 34, fullPage: true },
+  { name: "320", width: 320, height: 568, safeTop: 20, safeBottom: 0 },
   { name: "375", width: 375, height: 667, safeTop: 20, safeBottom: 0 },
   { name: "430", width: 430, height: 932, safeTop: 59, safeBottom: 34 },
   { name: "390-large-font", width: 390, height: 844, safeTop: 47, safeBottom: 34, fontScale: 1.3 },
 ];
 
-module.exports = { PAGES, VIEWS };
+const LONG_LIST_SIZE = 200;
+
+const LONG_LISTS = [
+  { slug: "memory-200", page: "pages/memory/index", harness: authed(fx.longMemoryApi(LONG_LIST_SIZE)) },
+  {
+    slug: "child-memory-200",
+    page: "pages/child-memory/index",
+    harness: authed(fx.longArchiveApi(LONG_LIST_SIZE)),
+    query: { minorId: "p_child", name: "乐乐" },
+    actions: [["showArchive"]],
+  },
+];
+
+module.exports = { LONG_LISTS, LONG_LIST_SIZE, PAGES, VIEWS };
