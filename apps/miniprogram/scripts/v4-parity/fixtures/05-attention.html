@@ -1,0 +1,49 @@
+<!doctype html><html lang="zh"><meta charset="utf-8">
+<meta name="viewport" content="width=390, initial-scale=1">
+<title>05-attention fixture</title>
+<style>
+:root{--bg:#F4F4F7;--card:#FFFFFF;--ink:#16182B;--ink2:#5B5F73;--ink3:#7A7E92;--line:#ECECF1;--acc:#4A52C9;--accbg:#EEEFFC;--soft:#F4F4F8;--rust:#9A4732;--rustbg:#FBEEE9;--sage:#23805F;--sagebg:#E7F4EE;--sun:#7F5A00;--sunbg:#FBF1D6;
+--sans:"Inter","Noto Sans CJK SC",-apple-system,sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);color:var(--ink);background:#E6E6EC;-webkit-font-smoothing:antialiased;font-feature-settings:"tnum"}
+.s{width:390px;height:844px;position:relative;overflow:hidden;background:var(--bg)}
+.c{padding:64px 24px 0;position:relative}
+.eyebrow{font-size:13px;color:var(--ink3);font-weight:600;letter-spacing:.2px}
+h1{font-size:32px;font-weight:800;letter-spacing:-.6px;line-height:40px;margin-top:4px}
+h2{font-size:20px;font-weight:700;letter-spacing:-.3px;margin:32px 0 16px}
+.sub{font-size:15px;color:var(--ink2);margin-top:8px;line-height:24px}
+.k{background:var(--card);border-radius:24px;box-shadow:0 1px 2px rgba(22,24,43,.04),0 8px 24px -8px rgba(22,24,43,.08),0 24px 48px -24px rgba(22,24,43,.10)}
+.k.xl{border-radius:32px}
+img.m{mix-blend-mode:multiply}
+.chip{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:600;height:24px;padding:0 12px;border-radius:99px}
+.on{background:var(--sagebg);color:var(--sage)}.on:before{content:"";width:8px;height:8px;border-radius:50%;background:var(--sage)}
+.draft{background:var(--sunbg);color:var(--sun)}.soon{background:var(--accbg);color:var(--acc)}
+.ic{width:40px;height:40px;border-radius:12px;flex:none;display:grid;place-items:center}
+.ic svg{width:24px;height:24px}
+svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.row{display:flex;align-items:center;gap:16px;padding:16px;font-size:16px;min-height:64px}
+.row+.row{box-shadow:inset 0 1px 0 var(--line)}
+.row .r{margin-left:auto;color:#B4B6C4;display:flex}
+.btn{display:flex;justify-content:center;align-items:center;gap:8px;font-weight:600;font-size:17px;height:56px;border-radius:16px;color:#fff;background:var(--ink)}
+.btn.alt{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(22,24,43,.06),0 8px 24px -12px rgba(22,24,43,.12)}
+.note{font-size:12px;color:var(--ink3);text-align:center;margin-top:16px;line-height:16px}
+.tab{position:absolute;left:0;right:0;bottom:0;height:88px;padding:8px 16px 32px;background:rgba(250,250,252,.86);backdrop-filter:blur(24px);box-shadow:inset 0 1px 0 rgba(22,24,43,.06);display:flex;justify-content:space-around;font-size:10px;font-weight:500;color:#8E91A3;z-index:2}
+.tab div{display:flex;flex-direction:column;align-items:center;gap:4px;width:64px}
+.tab svg{width:24px;height:24px}.tab .a{color:var(--acc)}.tab .a svg{fill:var(--accbg)}
+.num{font-weight:700;letter-spacing:-1px;font-variant-numeric:tabular-nums}
+.lbl{font-size:13px;color:var(--ink2);font-weight:500}
+.sl{height:8px;border-radius:8px;background:#ECECF2;position:relative;margin:24px 0 8px}
+.sl span{position:absolute;left:0;top:0;bottom:0;border-radius:8px;background:var(--acc)}
+.sl em{position:absolute;top:-12px;width:32px;height:32px;border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(22,24,43,.18),0 0 0 .5px rgba(22,24,43,.08)}
+.rg{display:flex;justify-content:space-between;font-size:12px;color:var(--ink3)}
+
+html,body{margin:0;padding:0;background:#F4F4F7}
+body{width:390px;height:844px;overflow:hidden}
+.s{width:390px;height:844px;position:relative;overflow:hidden;background:var(--bg)}
+</style>
+<body><div class="s"><div class="c" style="padding-top:48px"><div style="width:40px;height:40px;border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(22,24,43,.08);color:var(--ink);display:grid;place-items:center"><svg viewBox="0 0 24 24" style="width:24px;height:24px"><path d="m15 6-6 6 6 6"></path></svg></div>
+<div class="k xl" style="margin-top:16px;padding:24px 24px 16px;text-align:center"><div style="width:80px;height:80px;border-radius:50%;background:var(--rustbg);margin:0 auto;overflow:hidden;display:grid;place-items:center"><img class="m" src="file:///workspace/docs/design/app-v4/assets/m_calm.jpg" style="width:96px;margin-top:8px"></div><div style="font-size:22px;font-weight:700;letter-spacing:-.4px;margin-top:16px">有一条需要你关注的对话</div><div class="sub" style="margin-top:4px">今天 19:42</div>
+<div style="margin-top:16px;padding:16px;border-radius:16px;background:var(--rustbg);color:#7A3D2C;font-size:14px;line-height:24px;text-align:left">孩子在聊天中提到了让他不舒服的事。为了保护孩子，这里不展示对话内容。</div></div>
+<h2 style="margin:16px 0 8px">可以这样和孩子聊</h2><div class="k" style="padding:0">
+<div class="row" style="align-items:flex-start;padding:16px;min-height:0"><div style="width:24px;height:24px;border-radius:50%;background:var(--soft);flex:none;display:grid;place-items:center;font-size:13px;font-weight:700;color:var(--ink2)">1</div><div><div style="font-weight:600;font-size:15px">找一个放松的时间</div><div style="font-size:13px;color:var(--ink2);margin-top:4px">比如睡前或散步时，不要急着追问</div></div></div><div class="row" style="align-items:flex-start;padding:16px;min-height:0"><div style="width:24px;height:24px;border-radius:50%;background:var(--soft);flex:none;display:grid;place-items:center;font-size:13px;font-weight:700;color:var(--ink2)">2</div><div><div style="font-weight:600;font-size:15px">先听，少评判</div><div style="font-size:13px;color:var(--ink2);margin-top:4px">“愿意和我说说今天的事吗？”</div></div></div><div class="row" style="align-items:flex-start;padding:16px;min-height:0"><div style="width:24px;height:24px;border-radius:50%;background:var(--soft);flex:none;display:grid;place-items:center;font-size:13px;font-weight:700;color:var(--ink2)">3</div><div><div style="font-weight:600;font-size:15px">告诉孩子你在</div><div style="font-size:13px;color:var(--ink2);margin-top:4px">“不管发生什么，你都可以来找我。”</div></div></div><div class="row" style="align-items:flex-start;padding:16px;min-height:0"><div style="width:24px;height:24px;border-radius:50%;background:var(--soft);flex:none;display:grid;place-items:center;font-size:13px;font-weight:700;color:var(--ink2)">4</div><div><div style="font-weight:600;font-size:15px">需要时寻求帮助</div><div style="font-size:13px;color:var(--ink2);margin-top:4px">可拨打 12356 心理援助热线</div></div></div></div>
+<div class="btn" style="margin-top:16px">我知道了</div></div></div></body></html>

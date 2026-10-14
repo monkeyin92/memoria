@@ -1,0 +1,49 @@
+<!doctype html><html lang="zh"><meta charset="utf-8">
+<meta name="viewport" content="width=390, initial-scale=1">
+<title>02-consent fixture</title>
+<style>
+:root{--bg:#F4F4F7;--card:#FFFFFF;--ink:#16182B;--ink2:#5B5F73;--ink3:#7A7E92;--line:#ECECF1;--acc:#4A52C9;--accbg:#EEEFFC;--soft:#F4F4F8;--rust:#9A4732;--rustbg:#FBEEE9;--sage:#23805F;--sagebg:#E7F4EE;--sun:#7F5A00;--sunbg:#FBF1D6;
+--sans:"Inter","Noto Sans CJK SC",-apple-system,sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);color:var(--ink);background:#E6E6EC;-webkit-font-smoothing:antialiased;font-feature-settings:"tnum"}
+.s{width:390px;height:844px;position:relative;overflow:hidden;background:var(--bg)}
+.c{padding:64px 24px 0;position:relative}
+.eyebrow{font-size:13px;color:var(--ink3);font-weight:600;letter-spacing:.2px}
+h1{font-size:32px;font-weight:800;letter-spacing:-.6px;line-height:40px;margin-top:4px}
+h2{font-size:20px;font-weight:700;letter-spacing:-.3px;margin:32px 0 16px}
+.sub{font-size:15px;color:var(--ink2);margin-top:8px;line-height:24px}
+.k{background:var(--card);border-radius:24px;box-shadow:0 1px 2px rgba(22,24,43,.04),0 8px 24px -8px rgba(22,24,43,.08),0 24px 48px -24px rgba(22,24,43,.10)}
+.k.xl{border-radius:32px}
+img.m{mix-blend-mode:multiply}
+.chip{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:600;height:24px;padding:0 12px;border-radius:99px}
+.on{background:var(--sagebg);color:var(--sage)}.on:before{content:"";width:8px;height:8px;border-radius:50%;background:var(--sage)}
+.draft{background:var(--sunbg);color:var(--sun)}.soon{background:var(--accbg);color:var(--acc)}
+.ic{width:40px;height:40px;border-radius:12px;flex:none;display:grid;place-items:center}
+.ic svg{width:24px;height:24px}
+svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.row{display:flex;align-items:center;gap:16px;padding:16px;font-size:16px;min-height:64px}
+.row+.row{box-shadow:inset 0 1px 0 var(--line)}
+.row .r{margin-left:auto;color:#B4B6C4;display:flex}
+.btn{display:flex;justify-content:center;align-items:center;gap:8px;font-weight:600;font-size:17px;height:56px;border-radius:16px;color:#fff;background:var(--ink)}
+.btn.alt{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(22,24,43,.06),0 8px 24px -12px rgba(22,24,43,.12)}
+.note{font-size:12px;color:var(--ink3);text-align:center;margin-top:16px;line-height:16px}
+.tab{position:absolute;left:0;right:0;bottom:0;height:88px;padding:8px 16px 32px;background:rgba(250,250,252,.86);backdrop-filter:blur(24px);box-shadow:inset 0 1px 0 rgba(22,24,43,.06);display:flex;justify-content:space-around;font-size:10px;font-weight:500;color:#8E91A3;z-index:2}
+.tab div{display:flex;flex-direction:column;align-items:center;gap:4px;width:64px}
+.tab svg{width:24px;height:24px}.tab .a{color:var(--acc)}.tab .a svg{fill:var(--accbg)}
+.num{font-weight:700;letter-spacing:-1px;font-variant-numeric:tabular-nums}
+.lbl{font-size:13px;color:var(--ink2);font-weight:500}
+.sl{height:8px;border-radius:8px;background:#ECECF2;position:relative;margin:24px 0 8px}
+.sl span{position:absolute;left:0;top:0;bottom:0;border-radius:8px;background:var(--acc)}
+.sl em{position:absolute;top:-12px;width:32px;height:32px;border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(22,24,43,.18),0 0 0 .5px rgba(22,24,43,.08)}
+.rg{display:flex;justify-content:space-between;font-size:12px;color:var(--ink3)}
+
+html,body{margin:0;padding:0;background:#F4F4F7}
+body{width:390px;height:844px;overflow:hidden}
+.s{width:390px;height:844px;position:relative;overflow:hidden;background:var(--bg)}
+</style>
+<body><div class="s"><div class="c"><span class="chip draft">草稿 · 待律师审核</span><h1 style="margin-top:16px">开始前，<br>请先确认这几件事</h1>
+<div class="sub">作为孩子的监护人，你需要知道我们实际会处理哪些信息。</div>
+<div class="k" style="margin-top:24px;padding:8px 0">
+<div class="row" style="align-items:flex-start"><div class="ic" style="background:var(--soft);color:var(--ink2)"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="7" rx="2"></rect><rect x="4" y="13" width="16" height="7" rx="2"></rect><path d="M8 7.5h.01M8 16.5h.01"></path></svg></div><div><div style="font-weight:600">对话经过我们的服务器</div><div style="font-size:13px;color:var(--ink2);margin-top:4px;line-height:20px">孩子说的话会经服务器处理后再回复</div></div></div><div class="row" style="align-items:flex-start"><div class="ic" style="background:var(--soft);color:var(--ink2)"><svg viewBox="0 0 24 24"><path d="M7 3.5h7l4 4V19a1.5 1.5 0 0 1-1.5 1.5h-9.5A1.5 1.5 0 0 1 5.5 19V5A1.5 1.5 0 0 1 7 3.5z"></path><path d="M9 12h6M9 15.5h4"></path></svg></div><div><div style="font-weight:600">保存对话摘要</div><div style="font-size:13px;color:var(--ink2);margin-top:4px;line-height:20px">家长可以按天查看，不保存原话和录音</div></div></div><div class="row" style="align-items:flex-start"><div class="ic" style="background:var(--soft);color:var(--ink2)"><svg viewBox="0 0 24 24"><path d="m12 4 2.4 4.9 5.4.8-3.9 3.8.9 5.3L12 16.3l-4.8 2.5.9-5.3L4.2 9.7l5.4-.8z"></path></svg></div><div><div style="font-weight:600">长期只存三项</div><div style="font-size:13px;color:var(--ink2);margin-top:4px;line-height:20px">孩子的称呼、喜好、宠物名</div></div></div><div class="row" style="align-items:flex-start"><div class="ic" style="background:var(--soft);color:var(--ink2)"><svg viewBox="0 0 24 24"><path d="M3 3l18 18"></path><path d="M9 5h5l1.5 2H19a1.5 1.5 0 0 1 1.5 1.5V16M17 19H5a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 5 7h1"></path><path d="M10 10.5a3 3 0 0 0 4 4"></path></svg></div><div><div style="font-weight:600">设备没有摄像头</div><div style="font-size:13px;color:var(--ink2);margin-top:4px;line-height:20px">不拍照，也不录像</div></div></div></div>
+<div style="display:flex;gap:16px;align-items:flex-start;margin:24px 0;font-size:14px;line-height:24px;color:var(--ink2)"><span style="flex:none;width:24px;height:24px;border-radius:8px;background:var(--acc);color:#fff;display:grid;place-items:center"><svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke-width:2.6"><path d="m5 12.5 4.5 4.5L19 7.5"></path></svg></span><span>我是孩子的监护人，已阅读并同意<b style="color:var(--ink);font-weight:600">《监护人同意书》</b>（草稿）</span></div>
+<div class="btn">同意并继续</div><div style="text-align:center;margin-top:16px;font-size:15px;color:var(--ink2)">暂不同意</div></div></div></body></html>

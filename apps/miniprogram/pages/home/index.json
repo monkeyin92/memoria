@@ -1,7 +1,7 @@
 {
   "navigationBarTitleText": "首页",
-  "navigationBarBackgroundColor": "#FAF5EC",
-  "backgroundColor": "#FAF5EC",
+  "navigationBarBackgroundColor": "#F4F4F7",
+  "backgroundColor": "#F4F4F7",
   "enablePullDownRefresh": true,
   "usingComponents": {
     "face-badge": "/components/face-badge/index"

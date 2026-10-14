@@ -1,0 +1,82 @@
+[
+  {
+    "slug": "01-login",
+    "status": "OK",
+    "out": "/workspace/docs/design/app-v4/mp-screenshots/side-by-side/01-login.png",
+    "diffRatio": 0.107148,
+    "diffPixels": 141076,
+    "rmse": 31.174
+  },
+  {
+    "slug": "02-consent",
+    "status": "OK",
+    "out": "/workspace/docs/design/app-v4/mp-screenshots/side-by-side/02-consent.png",
+    "diffRatio": 0.148159,
+    "diffPixels": 195072,
+    "rmse": 44.578
+  },
+  {
+    "slug": "03-home",
+    "status": "OK",
+    "out": "/workspace/docs/design/app-v4/mp-screenshots/side-by-side/03-home.png",
+    "diffRatio": 0.164621,
+    "diffPixels": 216746,
+    "rmse": 28.728
+  },
+  {
+    "slug": "04-summary",
+    "status": "OK",
+    "out": "/workspace/docs/design/app-v4/mp-screenshots/side-by-side/04-summary.png",
+    "diffRatio": 0.185482,
+    "diffPixels": 244213,
+    "rmse": 30.344
+  },
+  {
+    "slug": "05-attention",
+    "status": "OK",
+    "out": "/workspace/docs/design/app-v4/mp-screenshots/side-by-side/05-attention.png",
+    "diffRatio": 0.205914,
+    "diffPixels": 271114,
+    "rmse": 59.022
+  },
+  {
+    "slug": "06-usage",
+    "status": "OK",
+    "out": "/workspace/docs/design/app-v4/mp-screenshots/side-by-side/06-usage.png",
+    "diffRatio": 0.150109,
+    "diffPixels": 197640,
+    "rmse": 27.222
+  },
+  {
+    "slug": "07-content",
+    "status": "OK",
+    "out": "/workspace/docs/design/app-v4/mp-screenshots/side-by-side/07-content.png",
+    "diffRatio": 0.186195,
+    "diffPixels": 245152,
+    "rmse": 30.092
+  },
+  {
+    "slug": "08-roles",
+    "status": "OK",
+    "out": "/workspace/docs/design/app-v4/mp-screenshots/side-by-side/08-roles.png",
+    "diffRatio": 0.213838,
+    "diffPixels": 281548,
+    "rmse": 28.012
+  },
+  {
+    "slug": "09-memory",
+    "status": "OK",
+    "out": "/workspace/docs/design/app-v4/mp-screenshots/side-by-side/09-memory.png",
+    "diffRatio": 0.171967,
+    "diffPixels": 226419,
+    "rmse": 27.395
+  },
+  {
+    "slug": "10-profile",
+    "status": "OK",
+    "out": "/workspace/docs/design/app-v4/mp-screenshots/side-by-side/10-profile.png",
+    "diffRatio": 0.019445,
+    "diffPixels": 25602,
+    "rmse": 11.718
+  }
+]

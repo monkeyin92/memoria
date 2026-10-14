@@ -8,7 +8,7 @@ function greetingFor(date = new Date()) {
 
 function formatDateLabel(date = new Date()) {
   const week = "日一二三四五六"[date.getDay()];
-  return `${date.getMonth() + 1} 月 ${date.getDate()} 日，星期${week}`;
+  return `${date.getMonth() + 1}月${date.getDate()}日 周${week}`;
 }
 
 module.exports = { greetingFor, formatDateLabel };

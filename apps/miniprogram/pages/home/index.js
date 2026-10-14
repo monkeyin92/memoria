@@ -1,4 +1,5 @@
 const api = require("../../utils/api");
+const { SUBSCRIPTION_PUSH_ENABLED } = require("../../config");
 const { requireLogin } = require("../../utils/auth-gate");
 const { companionById, defaultCompanionId } = require("../../utils/companions");
 const { MODE_META, readBindingManifest } = require("../../utils/device-binding");
@@ -23,6 +24,24 @@ const {
   memoryPreviewItems,
   pinnedAlertMeta,
 } = require("../../utils/trial-device-card");
+
+function usageViewFields(trialCard) {
+  const limit = trialCard.usageLimitMinutes || 30;
+  const known = trialCard.usageKnown === true;
+  const used = known ? trialCard.usageUsedMinutes : null;
+  const percent =
+    known && limit > 0 ? Math.max(0, Math.min(100, Math.round((used / limit) * 100))) : 0;
+  return {
+    usagePercent: percent,
+    usagePercentLabel: known ? `${percent}%` : "—",
+    usageDisplayMinutes: known ? String(used) : "—",
+  };
+}
+
+function avatarGlyphFrom(name) {
+  const text = typeof name === "string" ? name.trim() : "";
+  return text ? text.slice(0, 1) : "M";
+}
 
 function todayKey(date = new Date()) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -79,6 +98,13 @@ function emptyDashboard() {
     usageUsedMinutes: null,
     usageLimitMinutes: 30,
     usageLabel: "每日上限 30 分钟",
+    usagePercent: 0,
+    usagePercentLabel: "—",
+    usageDisplayMinutes: "—",
+    summaryCount: 0,
+    showTodayCount: false,
+    avatarGlyph: "M",
+    subscriptionPushEnabled: SUBSCRIPTION_PUSH_ENABLED,
     quietHoursLine: "夜间 21:00–07:00",
     quietHoursLabel: "21:00 – 07:00",
     nightModeOn: false,
@@ -515,12 +541,17 @@ Page({
       online,
       runtimeProfile: runtime,
     });
+    const usageFields = usageViewFields(trialCard);
     const unreadSafetyAlert = pinnedCrisisAlerts.length > 0;
     const firstAlert = pinnedCrisisAlerts[0] || null;
     const unreadSafetyMeta = pinnedAlertMeta({
       childName: boundChild?.displayName || firstAlert?.minor_display_name || "",
       occurredAt: firstAlert?.occurred_at || "",
     });
+    const placeName = devicePlaceName(binding, personaName);
+    const childName = boundChild?.displayName || "";
+    const summaryCount = memoryPreviews.length;
+    const todayCount = today.todayCount || 0;
 
     this.setData({
       loading: false,
@@ -543,7 +574,7 @@ Page({
       personaVoice,
       personaSummary,
       heroRoleId: companion.id,
-      devicePlaceName: devicePlaceName(binding, personaName),
+      devicePlaceName: placeName,
       pageLede: formatDateLabel(),
       heroTitle: online ? "给今天，留一点回味。" : "等它回来，记录还在。",
       heroCaption: online
@@ -551,14 +582,18 @@ Page({
         : "可查看已同步的回顾。设备恢复连接后再记录。",
       heroFoot: online ? "在设备上使用，手机不录音" : "绑定关系不受影响",
       pendingCount: today.pendingCount || 0,
-      todayCount: today.todayCount || 0,
+      todayCount,
+      showTodayCount: todayCount > 0,
       todayMeta: today.todayMeta || "",
       todayTitle: today.todayTitle || "",
       todayOverview: today.todayOverview || "",
       dailySummaryText: today.dailySummaryText || "",
+      summaryCount,
+      avatarGlyph: avatarGlyphFrom(childName || placeName || personaName),
+      subscriptionPushEnabled: SUBSCRIPTION_PUSH_ENABLED,
       showChildMemory: Boolean(boundChild),
       childMemoryMinorId: boundChild?.personId || "",
-      childMemoryName: boundChild?.displayName || "",
+      childMemoryName: childName,
       memoryPreviews,
       pinnedCrisisAlerts,
       statusPill: trialCard.statusPill,
@@ -567,6 +602,7 @@ Page({
       usageUsedMinutes: trialCard.usageUsedMinutes,
       usageLimitMinutes: trialCard.usageLimitMinutes,
       usageLabel: trialCard.usageLabel,
+      ...usageFields,
       quietHoursLine: trialCard.quietHoursLine,
       quietHoursLabel: trialCard.quietHoursLabel,
       nightModeOn: trialCard.nightModeOn,
