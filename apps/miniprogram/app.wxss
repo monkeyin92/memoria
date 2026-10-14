@@ -327,14 +327,13 @@ button[disabled] {
   box-sizing: border-box;
   min-height: 64px;
   padding: 16px 0;
-  border-bottom: 1px solid var(--mp-line);
 }
+.list-row + .list-row { box-shadow: inset 0 1px 0 var(--mp-line); }
 .list > .list-row {
   margin: 0 calc(-1 * var(--mp-pad-card));
   padding-left: var(--mp-pad-card);
   padding-right: var(--mp-pad-card);
 }
-.list-row:last-child { border-bottom: none; }
 .row-copy { flex: 1; min-width: 0; }
 .row-title,
 .row-copy .row-title {
