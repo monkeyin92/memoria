@@ -19,6 +19,7 @@ page {
   --mp-sun: #7f5a00;
   --mp-sun-bg: #fbf1d6;
   --mp-ink: #16182b;
+  --mp-ink-body: #34374d;
   --mp-ink-2: #5b5f73;
   --mp-ink-3: #7a7e92;
   --mp-ink-4: #b4b6c4;

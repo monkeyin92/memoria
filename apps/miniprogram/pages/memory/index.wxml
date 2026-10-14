@@ -1,5 +1,5 @@
 <view class="page-shell tab-page" style="{{statusBarStyle}}">
-  <text class="eyebrow">按天查看 · AI 整理</text>
+  <text class="eyebrow">按天查看</text>
   <text class="page-title">对话回顾</text>
   <text class="page-lede">{{guardianMode ? '这里只有摘要，不显示原话，也没有录音。' : '想记住的事，点确认后才会留下。'}}</text>
 
@@ -51,11 +51,6 @@
       <button class="secondary-button btn-sm" bindtap="enableCrisisPush">开启安全提醒</button>
     </view>
 
-    <view class="seg memory-seg">
-      <view class="seg-item {{memoryTab === 'reviews' ? 'seg-item-on' : ''}}" bindtap="showReviews">日常回顾</view>
-      <view class="seg-item {{memoryTab === 'memories' ? 'seg-item-on' : ''}}" bindtap="showMemories">记住的事{{pendingCount ? ' · ' + pendingCount : ''}}</view>
-    </view>
-
     <text wx:if="{{error}}" class="error-text">{{error}}</text>
     <view wx:if="{{loading}}" class="card memory-card"><text class="loading-text">正在读取回顾…</text></view>
 
@@ -92,7 +87,7 @@
       >
         <view class="memory-day-head">
           <text class="memory-day-label">{{item.dayLabel}}</text>
-          <text class="memory-day-meta">{{item.dateLabel}} · {{item.title}}</text>
+          <text class="memory-day-meta">{{item.dateLabel}}</text>
         </view>
         <view class="memory-line"><view class="memory-dot"></view><text class="memory-line-text">{{item.overview}}</text></view>
         <view wx:for="{{item.highlights}}" wx:for-item="line" wx:key="*this" class="memory-line">
@@ -103,6 +98,14 @@
       <view wx:if="{{days.length}}" class="button-row memory-actions">
         <button class="primary-button btn-sm" loading="{{summarizing}}" bindtap="summarizeSelectedDay">整理选中这一天</button>
         <button class="secondary-button btn-sm" open-type="share" data-date="{{selectedDate}}">分享这一天</button>
+      </view>
+      <view class="card list-row memory-claims-row" bindtap="showMemories">
+        <mp-icon name="star"></mp-icon>
+        <view class="row-copy">
+          <text class="row-title">记住的事</text>
+          <text class="row-meta">{{pendingCount ? pendingCount + ' 条待你确认' : '确认过的事，机器人才会在以后的聊天里提起'}}</text>
+        </view>
+        <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
       </view>
       <text class="caption memory-note">AI 整理可能有偏差。未确认的内容不会自动变成长期记忆。</text>
 
@@ -155,6 +158,11 @@
     </block>
 
     <block wx:else>
+      <view class="memory-back" bindtap="showReviews">
+        <image class="memory-back-icon" src="/assets/ui/v4/back-strong.svg" />
+        <text>日常回顾</text>
+      </view>
+      <text class="section-title memory-claims-title">记住的事</text>
       <view wx:if="{{guardianMode}}" class="notice">这里是孩子和机器人聊天时可能被记住的事。只有你点了「确认记住」的，机器人才会在以后的聊天里提起；不想让它记的，点「不记这个」。</view>
       <view wx:if="{{guardianMode && guardianError}}" class="notice notice-warn">{{guardianError}}</view>
       <view class="seg memory-filter">

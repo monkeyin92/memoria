@@ -6,10 +6,6 @@
   margin-top: var(--mp-gap-card);
 }
 
-.memory-seg {
-  margin-top: 24px;
-}
-
 .memory-strip {
   display: flex;
   justify-content: space-between;
@@ -32,18 +28,16 @@
 
 .memory-strip-week {
   display: block;
-  font-size: var(--mp-type-tab);
+  font-size: var(--mp-type-micro);
   font-weight: 500;
-  line-height: 14px;
   opacity: 0.85;
 }
 
 .memory-strip-num {
   display: block;
   margin-top: 4px;
-  font-size: var(--mp-type-button);
+  font-size: var(--mp-type-lead);
   font-weight: 700;
-  line-height: 22px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -94,7 +88,7 @@
 .memory-line-text {
   flex: 1;
   min-width: 0;
-  color: var(--mp-ink);
+  color: var(--mp-ink-body);
   font-size: var(--mp-type-body);
   line-height: var(--mp-lh-body);
 }
@@ -273,6 +267,32 @@
 
 .memory-filter {
   margin-top: 16px;
+}
+
+.memory-claims-row {
+  margin-top: var(--mp-gap-card);
+  padding: 12px var(--mp-pad-card);
+}
+
+.memory-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  margin-top: 16px;
+  color: var(--mp-ink);
+  font-size: var(--mp-type-body);
+  font-weight: 600;
+}
+
+.memory-back-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.memory-claims-title {
+  display: block;
+  margin-top: 8px;
 }
 
 .memory-archive-row {

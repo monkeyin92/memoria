@@ -55,7 +55,7 @@ function normalizeGuardianDay(item) {
     date: item.day || "",
     count,
     title: `孩子聊了 ${count} 次`,
-    overview: "点下面的「整理选中这一天」，查看 AI 对这一天的概括。",
+    overview: `孩子聊了 ${count} 次，还没整理`,
     highlights: [],
     suggestion: "",
   };
