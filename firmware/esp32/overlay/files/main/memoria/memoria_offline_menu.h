@@ -36,6 +36,7 @@ inline constexpr const char* kOfflineMenuStart = "offline-menu-start-v1";
 inline constexpr const char* kOfflineMenuEnd = "offline-menu-end-v1";
 inline constexpr const char* kOfflineMenuIdle = "offline-menu-idle-v1";
 
+// TODO(release-blocker): offline clips use a trial/demo-only Doubao voice; clear Volcengine terms or re-voice before final firmware
 inline constexpr const char* kOfflineLineIds[] = {
     kOfflineWakeNoNetwork,    kOfflineWakeAskParent,   kOfflineWakeStoryHint,
     kOfflineMidDrop,          kOfflineMidAskParent,    kOfflineMidRetry,

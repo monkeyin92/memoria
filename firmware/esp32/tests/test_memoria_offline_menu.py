@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import pathlib
 import shutil
+import struct
 import subprocess
 import tempfile
 
@@ -261,18 +262,144 @@ def test_online_idle_tap_is_not_intercepted(tool: pathlib.Path) -> None:
     assert lines[2] == "mode=inactive item=1"
 
 
-def test_build_offline_stories_check_passes() -> None:
-    completed = subprocess.run(
-        ["python3", str(BUILD_SCRIPT), "--check-only"],
-        check=True,
+VOICE = {
+    "id": "zh_female_tianmeitaozi_uranus_bigtts",
+    "generated": "2026-10-14",
+    "terms": "trial/demo only pending Volcengine terms",
+}
+
+
+def _pack_script(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["python3", str(BUILD_SCRIPT), *args],
+        check=False,
         capture_output=True,
         text=True,
     )
-    assert "free_margin_bytes=" in completed.stdout
-    free = int(
-        next(line.split("=", 1)[1] for line in completed.stdout.splitlines() if line.startswith("free_margin_bytes="))
+
+
+def _ogg_bytes(rel: pathlib.Path) -> dict[str, bytes]:
+    return {path.relative_to(rel).as_posix(): path.read_bytes() for path in rel.rglob("*.ogg")}
+
+
+def _ogg_with_title(title: str) -> bytes:
+    vendor = b"memoria-test"
+    comment = f"TITLE={title}".encode()
+    return (
+        b"OggS"
+        + b"\x00" * 24
+        + b"OpusTags"
+        + struct.pack("<I", len(vendor))
+        + vendor
+        + struct.pack("<I", 1)
+        + struct.pack("<I", len(comment))
+        + comment
     )
-    assert free >= 512 * 1024
+
+
+def test_check_only_passes_with_production_pack() -> None:
+    completed = _pack_script("--check-only")
+    assert completed.returncode == 0, completed.stderr
+    fields = dict(line.split("=", 1) for line in completed.stdout.splitlines() if "=" in line)
+    assert int(fields["free_margin_bytes"]) >= 512 * 1024
+    assert fields["production_clips"] == "25"
+    assert fields["placeholder_clips"] == "0"
+
+
+def test_default_run_never_writes_audio_and_converges(tmp_path: pathlib.Path) -> None:
+    root = tmp_path / "assets"
+    shutil.copytree(BOARD_ASSETS, root)
+    before = _ogg_bytes(root)
+    first = _pack_script("--assets-root", str(root))
+    assert first.returncode == 0, first.stderr
+    manifests = {
+        rel: (root / rel).read_bytes()
+        for rel in ("stories/index.json", "offline_lines/index.json")
+    }
+    second = _pack_script("--assets-root", str(root))
+    assert second.returncode == 0, second.stderr
+    assert _ogg_bytes(root) == before
+    assert {
+        rel: (root / rel).read_bytes()
+        for rel in ("stories/index.json", "offline_lines/index.json")
+    } == manifests
+    script = BUILD_SCRIPT.read_text(encoding="utf-8")
+    assert "ffmpeg" not in script
+    assert "subprocess" not in script
+
+
+def test_placeholder_clip_fails_check(tmp_path: pathlib.Path) -> None:
+    root = tmp_path / "assets"
+    shutil.copytree(BOARD_ASSETS, root)
+    target = root / "stories" / "story_01.ogg"
+    blob = _ogg_with_title("story_01_placeholder")
+    target.write_bytes(blob)
+    completed = _pack_script("--assets-root", str(root))
+    assert completed.returncode == 1
+    assert "stories/story_01.ogg is a placeholder; copy the production clip" in completed.stderr
+    assert target.read_bytes() == blob
+
+
+def test_missing_stories_index_fails_check_only(tmp_path: pathlib.Path) -> None:
+    root = tmp_path / "assets"
+    shutil.copytree(BOARD_ASSETS, root)
+    prepared = _pack_script("--assets-root", str(root))
+    assert prepared.returncode == 0, prepared.stderr
+    index = root / "stories" / "index.json"
+    index.unlink()
+    completed = _pack_script("--assets-root", str(root), "--check-only")
+    assert completed.returncode == 1
+    assert "stories/index.json is stale; run build_offline_stories.py" in completed.stderr
+    assert not index.exists()
+
+
+def test_clip_without_opus_tags_is_not_production(tmp_path: pathlib.Path) -> None:
+    root = tmp_path / "assets"
+    shutil.copytree(BOARD_ASSETS, root)
+    target = root / "offline_lines" / "offline-menu-idle-v1.ogg"
+    blob = b"OggS" + b"\x00" * 32
+    target.write_bytes(blob)
+    completed = _pack_script("--assets-root", str(root))
+    assert completed.returncode == 1
+    assert "offline_lines/offline-menu-idle-v1.ogg: no OpusTags header" in completed.stderr
+    assert target.read_bytes() == blob
+    assert "placeholder_clips=0" in completed.stdout
+
+
+def test_missing_clip_fails_without_creating_it(tmp_path: pathlib.Path) -> None:
+    root = tmp_path / "assets"
+    shutil.copytree(BOARD_ASSETS, root)
+    target = root / "stories" / "story_03.ogg"
+    target.unlink()
+    completed = _pack_script("--assets-root", str(root))
+    assert completed.returncode == 1
+    assert "missing asset stories/story_03.ogg; copy the production clip" in completed.stderr
+    assert not target.exists()
+
+
+def test_hand_edited_manifest_fails_check_only(tmp_path: pathlib.Path) -> None:
+    root = tmp_path / "assets"
+    shutil.copytree(BOARD_ASSETS, root)
+    prepared = _pack_script("--assets-root", str(root))
+    assert prepared.returncode == 0, prepared.stderr
+    manifest = root / "stories" / "index.json"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8").replace("大熊和森林里的悄悄话", "一只会听的熊"),
+        encoding="utf-8",
+    )
+    completed = _pack_script("--assets-root", str(root), "--check-only")
+    assert completed.returncode == 1
+    assert "stories/index.json is stale; run build_offline_stories.py" in completed.stderr
+    assert "一只会听的熊" in manifest.read_text(encoding="utf-8")
+
+
+def test_manifests_record_production_voice() -> None:
+    for rel in ("stories/index.json", "offline_lines/index.json"):
+        manifest = json.loads((BOARD_ASSETS / rel).read_text(encoding="utf-8"))
+        assert manifest["voice"] == VOICE
+        entries = manifest["stories"] if "stories" in manifest else manifest["lines"]
+        assert entries
+        assert all(entry["placeholder"] is False for entry in entries)
 
 
 def test_offline_line_manifest_matches_pack() -> None:
@@ -284,7 +411,7 @@ def test_offline_line_manifest_matches_pack() -> None:
     assert ids[15] == "offline-menu-item-03-v2"
     assert ids[19] == "offline-menu-idle-v1"
     for entry in manifest["lines"]:
-        assert entry["placeholder"] is True
+        assert entry["placeholder"] is False
         filename = entry["file"]
         assert len(filename) <= 32
         assert (BOARD_ASSETS / "offline_lines" / filename).is_file()
