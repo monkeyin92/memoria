@@ -107,6 +107,10 @@ class CrisisNotificationService:
         never upgraded to a verified link, and it never unlocks consent-gated
         capabilities such as memory retention or session admission.
 
+        ``attempt_push`` is False for relay-tier support requests: the alert
+        still pins in the Mini Program, but the subscribe-message worker must
+        not claim it.
+
         ``reply_template_id`` and ``script_version`` are ids only. Child text
         never enters this payload or the crisis event row.
         """
@@ -131,7 +135,7 @@ class CrisisNotificationService:
                 payload={
                     "script_version": script_version,
                     "reply_template_id": reply_template_id,
-                    "notification_required": attempt_push,
+                    "notification_required": True,
                     "attempt_push": attempt_push,
                     "tool_epoch": tool_epoch,
                     "contains_transcript": False,
@@ -150,7 +154,7 @@ class CrisisNotificationService:
             declared_guardian_ids=declared_guardian_ids,
             attempt_push=attempt_push,
         )
-        if attempt_push and receipt.notification_count < 1:
+        if receipt.notification_count < 1:
             raise CrisisNotificationUnavailableError(
                 "minor crisis has no authorized guardian notification target"
             )

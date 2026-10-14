@@ -361,6 +361,7 @@ CREATE TABLE IF NOT EXISTS guardian_crisis_events (
     attempt_push BOOLEAN NOT NULL DEFAULT TRUE
 );
 
+-- Relay-tier support requests pin without WeChat push; claim skips these rows.
 ALTER TABLE guardian_crisis_events
     ADD COLUMN IF NOT EXISTS attempt_push BOOLEAN NOT NULL DEFAULT TRUE;
 

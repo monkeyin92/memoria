@@ -155,54 +155,53 @@ class PostgresGuardianCrisisMixin:
                 or bool(row["attempt_push"]) is not attempt_push
             ):
                 raise GuardianConflictError("crisis event id is immutable")
-            if attempt_push:
-                guardians = await connection.fetch(
-                    """
-                    SELECT DISTINCT guardian_user_id FROM guardian_links
-                    WHERE minor_user_id = $1 AND status = 'active'
-                    """,
-                    minor_user_id,
+            guardians = await connection.fetch(
+                """
+                SELECT DISTINCT guardian_user_id FROM guardian_links
+                WHERE minor_user_id = $1 AND status = 'active'
+                """,
+                minor_user_id,
+            )
+            linked_guardians = {
+                str(guardian["guardian_user_id"]) for guardian in guardians
+            }
+            targets = set(linked_guardians)
+            # Declared guardians are a separate, honestly labelled basis: the
+            # caller resolved them from the Identity authority because the
+            # subject has no account to confirm a guardian link. They never
+            # become an active link and never unlock consent-gated capability,
+            # and the database re-validates the declaration itself instead of
+            # trusting the caller's id.
+            targets.update(
+                guardian_id
+                for guardian_id in declared_guardian_ids
+                if guardian_id and guardian_id != minor_user_id
+            )
+            for guardian_user_id in sorted(targets):
+                notification_id = uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"memoria:guardian-crisis:{event_uuid}:{guardian_user_id}",
                 )
-                linked_guardians = {
-                    str(guardian["guardian_user_id"]) for guardian in guardians
-                }
-                targets = set(linked_guardians)
-                # Declared guardians are a separate, honestly labelled basis: the
-                # caller resolved them from the Identity authority because the
-                # subject has no account to confirm a guardian link. They never
-                # become an active link and never unlock consent-gated capability,
-                # and the database re-validates the declaration itself instead of
-                # trusting the caller's id.
-                targets.update(
-                    guardian_id
-                    for guardian_id in declared_guardian_ids
-                    if guardian_id and guardian_id != minor_user_id
-                )
-                for guardian_user_id in sorted(targets):
-                    notification_id = uuid.uuid5(
-                        uuid.NAMESPACE_URL,
-                        f"memoria:guardian-crisis:{event_uuid}:{guardian_user_id}",
+                if guardian_user_id in linked_guardians:
+                    await connection.execute(
+                        """
+                        SELECT guardian_enqueue_notification($1, $2, $3, $4)
+                        """,
+                        notification_id,
+                        event_uuid,
+                        guardian_user_id,
+                        created,
                     )
-                    if guardian_user_id in linked_guardians:
-                        await connection.execute(
-                            """
-                            SELECT guardian_enqueue_notification($1, $2, $3, $4)
-                            """,
-                            notification_id,
-                            event_uuid,
-                            guardian_user_id,
-                            created,
-                        )
-                    else:
-                        await connection.execute(
-                            """
-                            SELECT guardian_enqueue_declared_notification($1, $2, $3, $4)
-                            """,
-                            notification_id,
-                            event_uuid,
-                            guardian_user_id,
-                            created,
-                        )
+                else:
+                    await connection.execute(
+                        """
+                        SELECT guardian_enqueue_declared_notification($1, $2, $3, $4)
+                        """,
+                        notification_id,
+                        event_uuid,
+                        guardian_user_id,
+                        created,
+                    )
             notification_count = int(
                 await connection.fetchval(
                     """

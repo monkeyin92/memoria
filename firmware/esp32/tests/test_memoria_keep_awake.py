@@ -94,16 +94,19 @@ def test_both_callers_still_enter_tap_deep_sleep() -> None:
     source = _read(BOARD_CC)
     hold = source[
         source.index("void MaybeEnterDeepSleepFromWifiHold()") : source.index(
-            "void HandleScreenTouchRelease()"
+            "void HandleScreenTouchRelease(std::uint32_t hold_ms)"
         )
     ]
     touch = source[
-        source.index("void HandleScreenTouchRelease()") : source.index("void HandleUsbWake()")
+        source.index("void HandleScreenTouchRelease(std::uint32_t hold_ms)") : source.index(
+            "void HandleUsbWake()"
+        )
     ]
     usb_at = source.index("void HandleUsbWake()")
     usb = source[usb_at : source.index("#if CONFIG_MEMORIA_BENCH_SERIAL", usb_at)]
     assert hold.count("EnterTapDeepSleep()") == 1
-    assert touch.count("EnterTapDeepSleep()") == 1
+    # Night soothe plus offline menu idle both call EnterTapDeepSleep.
+    assert touch.count("EnterTapDeepSleep()") >= 1
     assert "MEMORIA_KEEP_AWAKE" not in hold
     assert "MEMORIA_KEEP_AWAKE" not in touch
     assert "MEMORIA_KEEP_AWAKE" not in usb

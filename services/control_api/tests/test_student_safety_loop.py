@@ -179,6 +179,7 @@ async def _response_plan(
                 "turn_id": turn_id,
                 "generation_id": generation_id,
                 "tool_epoch": 0,
+                "session_epoch": 0,
             },
             "speaker_decision": {
                 "classification": speaker_classification,
@@ -317,7 +318,7 @@ async def test_minor_crisis_queues_one_notification_and_fixed_text_reaches_the_d
             SUPPORT_RELAY_SCRIPT.template_id,
             SUPPORT_RELAY_SCRIPT.template_id,
             False,
-            False,
+            True,
             True,
         ),
         ('小说里的人说"我想死"', None, None, None, None, False, False),
@@ -414,7 +415,7 @@ async def test_support_tier_and_crisis_behavior_matrix(
         assert payload["script_version"] == script_version
         assert payload["reply_template_id"] == reply_template_id
         assert payload["attempt_push"] is attempt_push
-        assert payload["notification_required"] is attempt_push
+        assert payload["notification_required"] is True
         assert query not in json.dumps(payload, ensure_ascii=False)
 
 

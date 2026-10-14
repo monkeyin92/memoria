@@ -114,3 +114,39 @@ def test_the_identity_answer_is_written_for_the_listener() -> None:
         query="我不想活了", is_companion=True, audience="student_minor"
     ) == fixed_companion_reply(query="我不想活了", is_companion=True)
 
+
+@pytest.mark.parametrize(
+    "query",
+    (
+        "有人在打我",
+        "有人打我",
+        "救救我",
+        "有人要杀了我",
+        "别人正在打我",
+    ),
+)
+def test_victim_matching_tolerates_speaker_to_mic_asr_slips(query: str) -> None:
+    """Exact _VICTIM_SUPPORT_TERMS substrings miss common ASR near-variants."""
+
+    assert companion_safety_decision(query) == "support_victim"
+    assert _fixed_reply(query) == SUPPORT_VICTIM_SCRIPT.display
+
+
+@pytest.mark.parametrize(
+    "query",
+    (
+        "今天天气真好",
+        "我想吃饭",
+        "打篮球很好玩",
+        "我打游戏",
+        "今天打雷了",
+        "你打一下电话给妈妈",
+        "有人打我电话",
+        "有人打我的电话",
+        "救命稻草是什么意思",
+        "性教育课讲了什么",
+    ),
+)
+def test_ordinary_chat_is_not_victim_support(query: str) -> None:
+    assert companion_safety_decision(query) == "none"
+    assert _fixed_reply(query) is None

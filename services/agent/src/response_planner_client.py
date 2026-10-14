@@ -71,7 +71,9 @@ _PLAN_KEYS = frozenset(
         "provenance",
     }
 )
-_FENCE_KEYS = frozenset({"session_id", "turn_id", "generation_id", "tool_epoch"})
+_FENCE_KEYS = frozenset(
+    {"session_id", "turn_id", "generation_id", "tool_epoch", "session_epoch"}
+)
 _GROUNDED_ITEM_KEYS = frozenset(
     {
         "kind",
@@ -381,8 +383,7 @@ def _normalize_recall_context(
 class ResponsePlannerClient:
     """Fetch exactly one bounded plan; failures never expose cached private context."""
 
-    # The wire fence has no session_epoch, so a plan can only match a fence of epoch 0.
-    echoes_session_epoch: ClassVar[bool] = False
+    echoes_session_epoch: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -433,6 +434,7 @@ class ResponsePlannerClient:
                         "turn_id": fence.turn_id,
                         "generation_id": fence.generation_id,
                         "tool_epoch": fence.tool_epoch,
+                        "session_epoch": fence.session_epoch,
                     },
                     "speaker_decision": {
                         "classification": speaker_decision.classification,
@@ -934,6 +936,7 @@ class ResponsePlannerClient:
         turn_id = value.get("turn_id")
         generation_id = value.get("generation_id")
         tool_epoch = value.get("tool_epoch")
+        session_epoch = value.get("session_epoch")
         if (
             not isinstance(session_id, str)
             or not session_id
@@ -947,6 +950,9 @@ class ResponsePlannerClient:
             or isinstance(tool_epoch, bool)
             or not isinstance(tool_epoch, int)
             or tool_epoch < 0
+            or isinstance(session_epoch, bool)
+            or not isinstance(session_epoch, int)
+            or session_epoch < 0
         ):
             raise ValueError("response plan fence is invalid")
         return GenerationFence(
@@ -954,6 +960,7 @@ class ResponsePlannerClient:
             turn_id=turn_id,
             generation_id=generation_id,
             tool_epoch=tool_epoch,
+            session_epoch=session_epoch,
         )
 
     @staticmethod

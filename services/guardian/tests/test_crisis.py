@@ -121,7 +121,7 @@ async def test_minor_crisis_is_idempotent_and_contains_no_transcript_or_severity
 
 
 @pytest.mark.asyncio
-async def test_relay_tier_crisis_records_event_and_evidence_without_notifying(
+async def test_relay_tier_crisis_pins_without_push(
     postgres_database: TestDatabase,
     guardian_postgres_store: PostgresGuardianStore,
     archive: PostgresLifeArchive,
@@ -175,11 +175,13 @@ async def test_relay_tier_crisis_records_event_and_evidence_without_notifying(
         )
 
     assert first == replay
-    assert first.notification_count == 0
-    assert await store.guardian_notifications(guardian_user_id="guardian-a") == ()
+    assert first.notification_count == 1
+    notifications = await store.guardian_notifications(guardian_user_id="guardian-a")
+    assert len(notifications) == 1
+    assert notifications[0].status == "pending"
     event = await archive.event(account_id="minor-a", event_id=first.evidence_event_id)
     assert event is not None
-    assert event.payload["notification_required"] is False
+    assert event.payload["notification_required"] is True
     assert event.payload["attempt_push"] is False
     admin = await asyncpg.connect(postgres_database.owner_dsn())
     try:

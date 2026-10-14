@@ -29,6 +29,7 @@
 #include "memoria_bootstrap.h"
 #include "memoria_display_hooks.h"
 #include "memoria_mascot_display.h"
+#include "memoria_offline_menu.h"
 #include "memoria_pat.h"
 #include "memoria_power_policy.h"
 #include "memoria_quiet_hours.h"
@@ -36,6 +37,7 @@
 #include "memoria_wake_mode.h"
 #include "assets.h"
 #include "settings.h"
+#include "wifi_manager.h"
 #include <esp_sleep.h>
 #include <ctime>
 #if CONFIG_MEMORIA_BENCH_SERIAL
@@ -426,11 +428,13 @@ public:
 
         if (is_touched && !was_touched_) {
             press_count_++;
+            press_started_us_ = esp_timer_get_time();
             event = TOUCH_PRESS;
             ESP_LOGI(TAG, "TOUCH PRESS - count: %d, x: %d, y: %d", press_count_, tp_.x, tp_.y);
         } else if (!is_touched && was_touched_) {
             event = TOUCH_RELEASE;
-            ESP_LOGI(TAG, "TOUCH RELEASE - total presses: %d", press_count_);
+            ESP_LOGI(TAG, "TOUCH RELEASE - total presses: %d hold_ms=%u", press_count_,
+                     static_cast<unsigned>(HoldDurationMsOnRelease()));
         } else if (is_touched && was_touched_) {
             event = TOUCH_HOLD;
             ESP_LOGD(TAG, "TOUCH HOLD - x: %d, y: %d", tp_.x, tp_.y);
@@ -461,12 +465,24 @@ public:
         }
     }
 
+    std::uint32_t HoldDurationMsOnRelease() const {
+        if (press_started_us_ <= 0) {
+            return 0;
+        }
+        const int64_t held = esp_timer_get_time() - press_started_us_;
+        if (held <= 0) {
+            return 0;
+        }
+        return static_cast<std::uint32_t>(held / 1000);
+    }
+
 private:
     uint8_t* read_buffer_ = nullptr;
     TouchPoint_t tp_;
 
     bool was_touched_;
     int press_count_;
+    int64_t press_started_us_ = 0;
 
     SemaphoreHandle_t touch_isr_mux_;
 };
@@ -501,6 +517,10 @@ private:
     bool bmi270_ready_ = false;
     bool was_charging_ = false;
     std::atomic<int64_t> imu_mute_until_ms_{0};
+    memoria::OfflineMenuMachine offline_menu_;
+    std::atomic<bool> network_was_online_{true};
+    std::atomic<std::uint32_t> offline_play_generation_{0};
+    std::atomic<bool> offline_story_cancel_{false};
     TaskHandle_t usb_command_task_handle_ = nullptr;
     // Log tag of the USB command line: the test rig greps for "usb wake accepted" / "usb wake ignored".
     static constexpr char kUsbTag[] = "MemoriaUsbCommand";
@@ -516,6 +536,9 @@ private:
                     self->was_charging_ = is_charging;
                     ESP_LOGI(TAG, "Charging state changed: %s", is_charging ? "CHARGING" : "DISCHARGING");
                 }
+            }
+            if (self != nullptr) {
+                self->TickOfflineMenuNetwork();
             }
             vTaskDelay(pdMS_TO_TICKS(1000));
         }
@@ -620,6 +643,92 @@ private:
         return true;
     }
 
+    static bool NetworkLooksOnline() {
+        auto& wifi = WifiManager::GetInstance();
+        return wifi.IsConnected() && !wifi.GetIpAddress().empty();
+    }
+
+    static bool DeviceInConversation(DeviceState state) {
+        return state != kDeviceStateIdle && state != kDeviceStateStarting &&
+               state != kDeviceStateWifiConfiguring;
+    }
+
+    void ApplyOfflineMenuOutput(const memoria::OfflineMenuOutput& out) {
+        if (out.stop_retry_network) {
+            // Retry flag lives in the machine; board only logs.
+            ESP_LOGI(TAG, "offline menu stop network retry");
+        }
+        if (out.retry_network) {
+            ESP_LOGI(TAG, "offline menu retry network in background");
+        }
+        if (out.stop_story) {
+            offline_story_cancel_.store(true, std::memory_order_relaxed);
+            offline_play_generation_.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (out.clip_count == 0 && !out.start_story && !out.enter_deep_sleep) {
+            return;
+        }
+        const std::uint32_t generation =
+            offline_play_generation_.fetch_add(1, std::memory_order_relaxed) + 1;
+        offline_story_cancel_.store(false, std::memory_order_relaxed);
+        Application::GetInstance().Schedule([this, out, generation]() {
+            if (generation != offline_play_generation_.load(std::memory_order_relaxed)) {
+                return;
+            }
+            for (std::size_t i = 0; i < out.clip_count; ++i) {
+                if (generation != offline_play_generation_.load(std::memory_order_relaxed)) {
+                    return;
+                }
+                const std::string name = std::string(out.clips[i]) + ".ogg";
+                PlayLocalAssetClip(name.c_str());
+                vTaskDelay(pdMS_TO_TICKS(1600));
+            }
+            if (out.start_story) {
+                if (generation != offline_play_generation_.load(std::memory_order_relaxed)) {
+                    return;
+                }
+                PlayLocalAssetClip(memoria::OfflineStoryFile(out.story_index));
+                vTaskDelay(pdMS_TO_TICKS(8500));
+                if (offline_story_cancel_.load(std::memory_order_relaxed) ||
+                    generation != offline_play_generation_.load(std::memory_order_relaxed)) {
+                    return;
+                }
+                const std::uint32_t now_ms =
+                    static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+                ApplyOfflineMenuOutput(offline_menu_.OnStoryFinished(now_ms));
+                return;
+            }
+            if (out.enter_deep_sleep) {
+                EnterTapDeepSleep();
+                return;
+            }
+            if (offline_menu_.mode() == memoria::OfflineMode::kMenu) {
+                const std::uint32_t now_ms =
+                    static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+                offline_menu_.NoteMenuActivity(now_ms);
+            }
+        });
+    }
+
+    void TickOfflineMenuNetwork() {
+        const bool online = NetworkLooksOnline();
+        const bool was = network_was_online_.load(std::memory_order_relaxed);
+        const std::uint32_t now_ms =
+            static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+        if (was && !online) {
+            const auto state = Application::GetInstance().GetDeviceState();
+            ApplyOfflineMenuOutput(
+                offline_menu_.OnNetworkDown(now_ms, DeviceInConversation(state)));
+        } else if (!was && online) {
+            if (offline_menu_.ConsumesTap() ||
+                offline_menu_.mode() != memoria::OfflineMode::kInactive) {
+                ApplyOfflineMenuOutput(offline_menu_.OnNetworkUp(now_ms));
+            }
+        }
+        network_was_online_.store(online, std::memory_order_relaxed);
+        ApplyOfflineMenuOutput(offline_menu_.OnTimer(now_ms));
+    }
+
     void EnterTapDeepSleep() {
 #if CONFIG_MEMORIA_KEEP_AWAKE
         auto& power = memoria::PowerPolicyRegistry::GetInstance();
@@ -665,7 +774,7 @@ private:
         EnterTapDeepSleep();
     }
 
-    void HandleScreenTouchRelease() {
+    void HandleScreenTouchRelease(std::uint32_t hold_ms) {
         MuteImuForTouch();
         auto& app = Application::GetInstance();
         const auto state = app.GetDeviceState();
@@ -708,19 +817,55 @@ private:
             phase = memoria::PowerPhase::kConversing;
         }
         const bool quiet = power.in_quiet_hours(BeijingMinuteNowOrZero());
-        const auto action = memoria::TapWakeActionFor(phase, state == kDeviceStateIdle, quiet);
-        ESP_LOGI(TAG, "screen tap action=%s phase=%s quiet=%d state=%d",
-                 memoria::TapWakeActionName(action), memoria::PowerPhaseName(phase), quiet ? 1 : 0,
-                 static_cast<int>(state));
-        switch (action) {
-            case memoria::TapWakeAction::kNightSoothing:
+        ESP_LOGI(TAG, "screen tap hold_ms=%u phase=%s quiet=%d state=%d offline=%s",
+                 static_cast<unsigned>(hold_ms), memoria::PowerPhaseName(phase), quiet ? 1 : 0,
+                 static_cast<int>(state), memoria::OfflineModeName(offline_menu_.mode()));
+
+        // Quiet hours keep the night soothe path and never open the offline menu.
+        if (quiet && (phase == memoria::PowerPhase::kDeepSleep ||
+                      phase == memoria::PowerPhase::kWifiHold)) {
+            const auto action = memoria::TapWakeActionFor(phase, state == kDeviceStateIdle, true);
+            if (action == memoria::TapWakeAction::kNightSoothing) {
                 power.SetPhase(memoria::PowerPhase::kNightSoothing);
                 PlayLocalAssetClip("night_soothe.ogg");
                 app.Schedule([this]() {
                     vTaskDelay(pdMS_TO_TICKS(2500));
                     EnterTapDeepSleep();
                 });
+            }
+            return;
+        }
+
+        const bool online = NetworkLooksOnline();
+        network_was_online_.store(online, std::memory_order_relaxed);
+
+        // Deep sleep first tap (and menu-idle sleep wake): wake only, never "next".
+        const bool deep_sleep_wake = phase == memoria::PowerPhase::kDeepSleep ||
+                                     offline_menu_.from_menu_sleep();
+        if (deep_sleep_wake && state == kDeviceStateIdle) {
+            power.SetPhase(memoria::PowerPhase::kWifiHold);
+            wifi_hold_since_ms_.store(kWifiHoldNotArmed, std::memory_order_relaxed);
+            offline_menu_.ClearMenuSleepFlag();
+            ApplyOfflineMenuOutput(offline_menu_.OnDeepSleepWake(now_ms, online));
+            return;
+        }
+
+        if (offline_menu_.ConsumesTap() || (!online && state == kDeviceStateIdle)) {
+            auto out = offline_menu_.OnTap(now_ms, hold_ms, online, state == kDeviceStateIdle,
+                                           DeviceInConversation(state));
+            if (out.intercept) {
+                if (out.start_story || out.clip_count > 0) {
+                    power.SetPhase(memoria::PowerPhase::kWifiHold);
+                    wifi_hold_since_ms_.store(kWifiHoldNotArmed, std::memory_order_relaxed);
+                }
+                ApplyOfflineMenuOutput(out);
                 return;
+            }
+        }
+
+        const auto action = memoria::TapWakeActionFor(phase, state == kDeviceStateIdle, false);
+        ESP_LOGI(TAG, "screen tap action=%s", memoria::TapWakeActionName(action));
+        switch (action) {
             case memoria::TapWakeAction::kStartConversation:
             case memoria::TapWakeAction::kResumeFromHold:
                 power.SetPhase(memoria::PowerPhase::kWaking);
@@ -728,6 +873,7 @@ private:
                 PlayLocalAssetClip("wo_zai_ne.ogg");
                 app.WakeWordInvoke("screen_tap");
                 return;
+            case memoria::TapWakeAction::kNightSoothing:
             case memoria::TapWakeAction::kIgnore:
                 break;
         }
@@ -956,7 +1102,7 @@ private:
                     board.MuteImuForTouch();
                 }
                 if (touch_event == Cst816s::TOUCH_RELEASE) {
-                    board.HandleScreenTouchRelease();
+                    board.HandleScreenTouchRelease(touchpad->HoldDurationMsOnRelease());
                 }
             }
         }

@@ -1,15 +1,3 @@
-"""A device turn no longer waits for a response plan the client can never apply.
-
-Round 10 (2026-10-02, 38 device turns): every plan request came back unusable -- 28 ``fence_mismatch`` (the
-wire fence carries no ``session_epoch``, so with a device fence of epoch >= 1 the answer can never match) and
-10 cut off by the client's 0.8 s timeout -- yet each reply waited for it (p50 0.81 s) before the model was
-asked.  The request itself is not optional: the control route runs the crisis routing and enqueues the
-guardian's notification before it builds anything, so it is still sent exactly once per turn, but as a
-background task that no reply waits for.  These pin that split: the reply is not held, the request is still
-made, the prompt the model sees is the same, a failure never reaches the turn, and closing the session lets
-the request finish (up to the runtime's drain bound) and then leaves no task behind.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -34,11 +22,8 @@ CRISIS = "我不想活了"
 
 
 class _Planner:
-    """The real client's verdict for a device fence: the wire fence lacks ``session_epoch``."""
-
     def __init__(self, *, sidecar: bool = True, delay_s: float = 0.0, outcome: Any = None) -> None:
         if sidecar:
-            # What ResponsePlannerClient declares; a double that does not say so is awaited as before.
             self.echoes_session_epoch = False
         self.delay_s = delay_s
         self.outcome = outcome
@@ -319,8 +304,8 @@ async def test_without_the_memory_grant_no_request_is_made_at_all() -> None:
     await runtime.close()
 
 
-def test_the_real_client_declares_that_it_cannot_echo_the_epoch() -> None:
-    assert ResponsePlannerClient.echoes_session_epoch is False
+def test_the_real_client_declares_that_it_echoes_the_epoch() -> None:
+    assert ResponsePlannerClient.echoes_session_epoch is True
 
 
 @pytest.mark.asyncio
