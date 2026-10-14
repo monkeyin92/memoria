@@ -59,7 +59,7 @@ from services.agent.src.orchestration.delegation_coordinator import (
     SideEffectPolicy,
     TaskHandle,
 )
-from services.agent.src.orchestration.handlers import LanguageModelRequest
+from services.agent.src.orchestration.handlers import LanguageModelRequest, ReplyItem
 from services.agent.src.orchestration.task_manager import ToolSpec
 from services.agent.src.prompts import LIVE_LOOKUP_FILLER
 from services.agent.src.response_plan_cache import ResponsePlanCache
@@ -268,8 +268,8 @@ class ReplyPipeline:
             publish_user_transcript=False,
         )
 
-    async def stream(self, request: LanguageModelRequest) -> AsyncGenerator[str, None]:
-        """Reply text for the media handler, built from the committed conversation."""
+    async def stream(self, request: LanguageModelRequest) -> AsyncGenerator[ReplyItem, None]:
+        """Reply items for the media handler, built from the committed conversation."""
 
         if not request.cancellation.is_current(self._runtime.fence):
             return
@@ -278,8 +278,8 @@ class ReplyPipeline:
         for turn in self._runtime.orchestrator.context.turns:
             if turn.role in {"user", "assistant"} and turn.content:
                 chat_ctx.add_message(role=turn.role, content=turn.content)
-        async for text in self.stream_reply(chat_ctx):
-            yield text
+        async for item in self.stream_reply(chat_ctx):
+            yield item
 
     async def resolve_media_delegation(
         self,
@@ -1189,11 +1189,13 @@ class ReplyPipeline:
                 return False
         return True
 
-    async def stream_reply(self, chat_ctx: Any) -> AsyncGenerator[str, None]:
+    async def stream_reply(self, chat_ctx: Any) -> AsyncGenerator[ReplyItem, None]:
         """Reply phrases for ``chat_ctx`` under the current fence's frozen response plan.
 
         Every model token passes the GenerationFence gate; the reply stops at
         the voice budget, and the stream is registered as the active LLM task.
+        A plan with a fixed safety script yields only the script, whole, outside
+        the segmenter and the budget.
         """
         cancellation = self._runtime.cancellation_context()
         fence = cancellation.fence
@@ -1263,7 +1265,8 @@ class ReplyPipeline:
             )
             return
         speaker_class = response_plan.provenance.speaker_class
-        if resume_interrupted_reply:
+        script = response_plan.fixed_safety_script
+        if resume_interrupted_reply or script is not None:
             realtime_request, resume_realtime_request = None, False
         else:
             realtime_request, resume_realtime_request = self._runtime.resolve_realtime_request(
@@ -1380,12 +1383,6 @@ class ReplyPipeline:
             _mark_first_phrase()
             return accepted
 
-        def _ready_segment_unbudgeted(text: str) -> str | None:
-            if not cancellation.is_current(self._runtime.fence):
-                return None
-            _mark_first_phrase()
-            return text
-
         stream: Any = None
         realtime_reply = ""
         realtime_buffer_chars = 0
@@ -1393,32 +1390,28 @@ class ReplyPipeline:
         realtime_buffer_exhausted = False
         try:
             self._runtime.mark_audio_event("llm_request_started")
+            if script is not None:
+                self._runtime.mark_audio_event("llm_first_content_token")
+                gated = self._runtime.gate_llm_token(cancellation, script.display)
+                if gated is not None and cancellation.is_current(self._runtime.fence):
+                    _mark_first_phrase()
+                    yield script
+                return
             if response_plan.direct_text is not None and realtime_request is None:
                 self._runtime.mark_audio_event("llm_first_content_token")
                 gated = self._runtime.gate_llm_token(
                     cancellation,
                     response_plan.direct_text,
                 )
-                # Fixed safety scripts must play in full; voice reply budgets
-                # must not truncate them mid-script.
-                bypass_budget = response_plan.fixed_safety_script is not None
                 if gated is not None:
                     for segment in segmenter.push_token(gated):
-                        if bypass_budget:
-                            accepted_segment = _ready_segment_unbudgeted(segment.text)
-                        else:
-                            accepted_segment = _ready_segment(segment.text)
+                        accepted_segment = _ready_segment(segment.text)
                         if accepted_segment is None:
                             break
                         yield accepted_segment
-                    if cancellation.is_current(self._runtime.fence) and (
-                        bypass_budget or not reply_budget_exhausted
-                    ):
+                    if cancellation.is_current(self._runtime.fence) and not reply_budget_exhausted:
                         for segment in segmenter.flush(end_of_stream=True):
-                            if bypass_budget:
-                                accepted_segment = _ready_segment_unbudgeted(segment.text)
-                            else:
-                                accepted_segment = _ready_segment(segment.text)
+                            accepted_segment = _ready_segment(segment.text)
                             if accepted_segment is None:
                                 break
                             yield accepted_segment

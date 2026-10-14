@@ -529,7 +529,7 @@ async def test_response_plan_failure_keeps_companion_identity_and_safety_fixed(
     assert plan_is_local_safe(cached)
     assert cached.direct_text == expected
     spoken = [item async for item in agent.stream_reply(llm.ChatContext.empty())]
-    assert "".join(item for item in spoken if isinstance(item, str)) == expected
+    assert "".join(item if isinstance(item, str) else item.display for item in spoken) == expected
     await runtime.close()
 
 
