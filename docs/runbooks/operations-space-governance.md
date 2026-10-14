@@ -38,6 +38,15 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now memoria-disk-patrol.timer
 ~~~
 
+Freeze 转储清理（只删 `/opt/memoria/releases/*/.cutover/` 下超过 3 天的 `memoria-pre-*.dump` 与 `memoria.pre-*.sqlite3`；执行仍需另行授权）：
+
+~~~bash
+sudo install -m 0755 scripts/cleanup_freeze_dumps.py /opt/memoria/ops-tools/cleanup_freeze_dumps.py
+sudo install -m 0644 infra/memoria-freeze-dump-cleanup.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now memoria-freeze-dump-cleanup.timer
+~~~
+
 ## 发布制品的手工清理（2026-10-01 首次执行，经用户授权）
 
 规则（与 `release-rollback.md` 一致）：只保留当前发布和一个可运行的紧邻回滚，更早的普通制品核验后按授权清理。`docker_image_retention.sh` 因保护全部 `rollback-*` 与 runtime-base 而给不出候选（TODOLIST「定期运维」跟踪），所以本次是手工清单：先只读盘点并生成候选清单与它的 sha256，复核后带着这个 sha256 才能执行，执行时逐项 `docker rmi <repo:tag>`，不用 `docker system prune`，不动数据卷。

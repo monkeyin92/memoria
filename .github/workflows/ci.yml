@@ -209,6 +209,7 @@ jobs:
         run: >-
           uv run pytest --import-mode=importlib --no-cov
           scripts/tests/test_release_ops_script.py
+          scripts/tests/test_cleanup_freeze_dumps.py
           scripts/tests/test_control_release_contract.py
           scripts/tests/test_verify_control_release_artifact.py
           scripts/tests/test_resolve_target_images.py

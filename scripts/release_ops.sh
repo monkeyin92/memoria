@@ -2,6 +2,7 @@
 # Server-side full-stack release steps (run as root). Usage:
 #   TAG=... COMMIT=... release_ops.sh <step>
 #   steps: verify-load | freeze | env | schema | cutover | finish | rollback
+#          cleanup-freeze-dumps (expire .cutover freeze dumps older than 3 days)
 #          control-store (CONTROL_STORE_MODE=dry-run|apply; separate, authorized
 #          SQLite-to-PostgreSQL move of the Control API store, see the runbook)
 # Never prints secret values. Every step fails closed.
@@ -244,9 +245,29 @@ step_freeze() {
   done > "$S/pre-state.txt"
   cp -p /etc/memoria-postgres.env /etc/memoria-control-api.env /etc/memoria-agent.env "$S/"
   docker exec memoria-data-postgres-1 pg_dump -U memoria_admin -d memoria -Fc > "$S/memoria-pre-$TAG.dump"
+  # Control-store snapshot stays inside this release's .cutover (not /var/lib/memoria),
+  # so freeze-dump retention can expire it with the pg_dump and never leave the releases tree.
   docker exec memoria-control-api-1 /app/.venv/bin/python -c "import sqlite3; s=sqlite3.connect('/data/memoria.sqlite3'); d=sqlite3.connect('/data/memoria.pre-$TAG.sqlite3'); s.backup(d); d.close()"
+  docker cp "memoria-control-api-1:/data/memoria.pre-$TAG.sqlite3" "$S/memoria.pre-$TAG.sqlite3"
+  docker exec memoria-control-api-1 rm -f "/data/memoria.pre-$TAG.sqlite3"
   ls -la "$S" | sed 's/^/  /'
+  cleanup_freeze_dumps
   log "freeze=PASS"
+}
+
+# Expire freeze dumps under /opt/memoria/releases/*/.cutover only (3-day window).
+cleanup_freeze_dumps() {
+  local script root
+  root="$(dirname "$RELEASES")"
+  script="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/cleanup_freeze_dumps.py"
+  [[ -f "$script" ]] || script="$R/scripts/cleanup_freeze_dumps.py"
+  [[ -f "$script" ]] || fail "cleanup_freeze_dumps.py missing"
+  python3 "$script" --root "$root" --retention-days 3 --apply
+}
+
+step_cleanup_freeze_dumps() {
+  cleanup_freeze_dumps
+  log "cleanup-freeze-dumps=PASS"
 }
 
 step_env() {
@@ -494,8 +515,9 @@ main() {
     cutover) step_cutover ;;
     finish) step_finish ;;
     rollback) step_rollback ;;
+    cleanup-freeze-dumps) step_cleanup_freeze_dumps ;;
     control-store) step_control_store ;;
-    *) echo "usage: $0 verify-load|freeze|env|schema|cutover|finish|rollback|control-store" >&2; exit 2 ;;
+    *) echo "usage: $0 verify-load|freeze|env|schema|cutover|finish|rollback|cleanup-freeze-dumps|control-store" >&2; exit 2 ;;
   esac
 }
 # Sourcing only defines (the tests run single steps against a fake host).
