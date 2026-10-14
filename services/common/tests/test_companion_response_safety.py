@@ -11,9 +11,7 @@ from services.common.companion_response_safety import (
     SUPPORT_VICTIM_REPLY_TEMPLATE_ID,
     companion_safety_decision,
     fixed_companion_reply,
-    fixed_safety_tts_text,
     session_had_fixed_safety_reply,
-    tts_speak_helpline_digits,
 )
 
 
@@ -136,30 +134,6 @@ def test_approved_fixed_replies_match_exact_product_copy() -> None:
     assert CRISIS_SUPPORT_REPLY_TEMPLATE_ID == "crisis-self-v1"
     assert SUPPORT_VICTIM_REPLY_TEMPLATE_ID == "victim-support-v1"
     assert SUPPORT_RELAY_REPLY_TEMPLATE_ID == "support-other-v1"
-
-
-def test_fixed_safety_tts_speaks_helpline_digits() -> None:
-    spoken = fixed_safety_tts_text(CRISIS_SUPPORT_REPLY)
-    assert "12356" not in spoken
-    assert "120" not in spoken
-    assert "一二三五六" in spoken
-    assert "幺二零" in spoken
-    assert fixed_safety_tts_text(SUPPORT_VICTIM_REPLY).endswith("打 幺幺零。")
-    assert tts_speak_helpline_digits("请打 110") == "请打 幺幺零"
-
-
-def test_ordinary_reply_text_keeps_arabic_helpline_looking_digits() -> None:
-    # Digit rewrite is gated to exact fixed-safety scripts. Ordinary replies
-    # that mention 120/110 (or longer numbers that contain them) must stay intact.
-    for ordinary in (
-        "篮子里有 120 个苹果",
-        "今天一共买了 110 个",
-        "一共 1100 元",
-        "房间号是 2120",
-        "普通聊天 110",
-        "普通聊天 120",
-    ):
-        assert fixed_safety_tts_text(ordinary) == ordinary
 
 
 def test_session_had_fixed_safety_reply_detects_prior_spoken_script() -> None:

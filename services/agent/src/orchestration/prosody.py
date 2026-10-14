@@ -7,10 +7,7 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Literal
 
-from services.common.companion_response_safety import (
-    companion_safety_decision,
-    fixed_safety_tts_text,
-)
+from services.common.companion_response_safety import companion_safety_decision
 from services.common.companions import companion_definition
 
 VoiceEmotion = Literal[
@@ -35,7 +32,6 @@ _MARKUP_TAG = re.compile(
 )
 _HAS_DIGIT = re.compile(r"\d")
 _LEADING_LAUGH_TEXT = re.compile(r"^(?:哈{2,}|呵{2,}|嘿{2,}|[（(]笑[)）])[，,、\s]*")
-_SOFT_LAUGH_PREFIXES = ("呵，", "呵,", "呵呵，", "呵呵,", "[laughter]")
 _SUPPORTIVE_LLM_INSTRUCTION = (
     "本轮语境严肃。像熟人一样直接、温和地承接，语气关切但不要客服腔。"
     "绝对不要笑、咳嗽、吸气戏或使用轻佻的思考填充词。"
@@ -199,35 +195,6 @@ def strip_paralinguistic_markup(text: str) -> str:
     cleaned = _MARKUP_TAG.sub("", text)
     cleaned = _LEADING_LAUGH_TEXT.sub("", cleaned)
     return cleaned
-
-
-def prepare_tts_text(
-    text: str,
-    plan: SpeechPlan,
-    *,
-    is_first_segment: bool,
-    use_markup_tags: bool = False,
-) -> str:
-    """Apply delivery-mode TTS rewrites without changing chat history text."""
-    body = fixed_safety_tts_text(text if text else "")
-    if plan.strip_paralinguistic or plan.delivery_mode == "supportive":
-        body = strip_paralinguistic_markup(body)
-    if not is_first_segment or not body.strip():
-        return body
-
-    prefix = plan.tts_prefix
-    if not prefix and plan.delivery_mode == "light_laughter":
-        prefix = soft_laugh_prefix(use_markup_tags=use_markup_tags)
-    if not prefix:
-        return body
-
-    stripped = body.lstrip()
-    if any(stripped.startswith(existing) for existing in _SOFT_LAUGH_PREFIXES):
-        return body
-    # Keep a single soft onset; LLM may already have written a longer laugh.
-    if stripped.startswith(("哈哈", "呵呵", "嘿嘿")):
-        return body
-    return f"{prefix}{body}"
 
 
 def speech_plan_for_emotion(label: str) -> SpeechPlan:

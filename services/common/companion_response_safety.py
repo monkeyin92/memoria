@@ -15,7 +15,7 @@ SafetyDecision = Literal[
 ]
 
 SAFE_UNKNOWN_REPLY = "我不知道。"
-# Product/compliance approved copy. Display keeps Arabic digits; TTS uses spoken form.
+# Product/compliance approved copy.
 CRISIS_SUPPORT_REPLY: Final = (
     "你说的话很重要，这件事一定要请大人来帮你。现在就去找爸爸妈妈或者身边的大人，"
     "告诉他们你刚才说的话。请大人陪着你，也可以请大人拨打心理援助热线 12356。"
@@ -39,33 +39,10 @@ SUPPORT_RELAY_REPLY_TEMPLATE_ID: Final = "support-other-v1"
 FIXED_SAFETY_REPLIES: Final = frozenset(
     {CRISIS_SUPPORT_REPLY, SUPPORT_VICTIM_REPLY, SUPPORT_RELAY_REPLY}
 )
-# Longer codes first so 12356 is not partially rewritten.
-_FIXED_SAFETY_TTS_DIGITS: Final = (
-    ("12356", "一二三五六"),
-    ("120", "幺二零"),
-    ("110", "幺幺零"),
-)
 AFTER_FIXED_SAFETY_SESSION_INSTRUCTION: Final = (
     "本会话已经对用户说过固定安全话术。不要继续讨论或追问刚才的安全话题；"
     "若用户再次提出同类自伤、受害或转述他人危险的求助，系统会再次给出同一句固定话术，你不要另写。"
 )
-
-
-def tts_speak_helpline_digits(text: str) -> str:
-    """Rewrite known helpline numbers to digit-by-digit Chinese for TTS."""
-
-    spoken = text
-    for arabic, chinese in _FIXED_SAFETY_TTS_DIGITS:
-        spoken = spoken.replace(arabic, chinese)
-    return spoken
-
-
-def fixed_safety_tts_text(display: str) -> str:
-    """Spoken form for TTS. Display/history keep Arabic digits."""
-
-    if display not in FIXED_SAFETY_REPLIES:
-        return display
-    return tts_speak_helpline_digits(display)
 
 
 def session_had_fixed_safety_reply(assistant_turns: Sequence[str]) -> bool:
