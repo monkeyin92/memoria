@@ -42,6 +42,10 @@
 #include "memoria_diag_pcm.h"
 #endif
 
+#if CONFIG_MEMORIA_KEEP_AWAKE
+extern "C" const char memoria_keep_awake_build_marker[] = "MEMORIA_KEEP_AWAKE_BUILD=1;";
+#endif
+
 #if ESP_VOCAT_ENABLE_CAP_TOUCH_SENSOR
 extern "C" {
 #include "touch_button_sensor.h"
@@ -486,7 +490,8 @@ private:
     TaskHandle_t charge_task_handle_ = nullptr;
     TaskHandle_t touch_task_handle_ = nullptr;
     int64_t last_qr_refresh_us_ = 0;
-    std::atomic<std::uint32_t> wifi_hold_since_ms_{0};
+    static constexpr std::uint32_t kWifiHoldNotArmed = 0;
+    std::atomic<std::uint32_t> wifi_hold_since_ms_{kWifiHoldNotArmed};
     TaskHandle_t imu_task_handle_ = nullptr;
 #if ESP_VOCAT_ENABLE_CAP_TOUCH_SENSOR
     TaskHandle_t touch_slider_task_handle_ = nullptr;
@@ -617,11 +622,10 @@ private:
 
     void EnterTapDeepSleep() {
 #if CONFIG_MEMORIA_KEEP_AWAKE
-        // WifiHold keeps the mic closed. Clearing the hold timer stops the 25 ms USB poll from calling this again.
         auto& power = memoria::PowerPolicyRegistry::GetInstance();
         power.SetPhase(memoria::PowerPhase::kWifiHold);
-        wifi_hold_since_ms_.store(0, std::memory_order_relaxed);
-        ESP_LOGW(TAG, "chip deep sleep suppressed (CONFIG_MEMORIA_KEEP_AWAKE)");
+        wifi_hold_since_ms_.store(kWifiHoldNotArmed, std::memory_order_relaxed);
+        ESP_LOGW(TAG, "chip deep sleep suppressed %s", memoria_keep_awake_build_marker);
 #else
         auto& power = memoria::PowerPolicyRegistry::GetInstance();
         power.SetPhase(memoria::PowerPhase::kDeepSleep);
@@ -650,7 +654,7 @@ private:
             return;
         }
         const std::uint32_t since = wifi_hold_since_ms_.load(std::memory_order_relaxed);
-        if (since == 0) {
+        if (since == kWifiHoldNotArmed) {
             return;
         }
         const std::uint32_t now =
@@ -720,7 +724,7 @@ private:
             case memoria::TapWakeAction::kStartConversation:
             case memoria::TapWakeAction::kResumeFromHold:
                 power.SetPhase(memoria::PowerPhase::kWaking);
-                wifi_hold_since_ms_.store(0, std::memory_order_relaxed);
+                wifi_hold_since_ms_.store(kWifiHoldNotArmed, std::memory_order_relaxed);
                 PlayLocalAssetClip("wo_zai_ne.ogg");
                 app.WakeWordInvoke("screen_tap");
                 return;
@@ -754,7 +758,7 @@ private:
             ESP_LOGI(kUsbTag, "usb wake accepted wake_mode=%s", memoria::WakeModeName(mode));
             auto& power = memoria::PowerPolicyRegistry::GetInstance();
             power.SetPhase(memoria::PowerPhase::kWaking);
-            wifi_hold_since_ms_.store(0, std::memory_order_relaxed);
+            wifi_hold_since_ms_.store(kWifiHoldNotArmed, std::memory_order_relaxed);
             PlayLocalAssetClip("wo_zai_ne.ogg");
             app.WakeWordInvoke("usb_wake");
             return;

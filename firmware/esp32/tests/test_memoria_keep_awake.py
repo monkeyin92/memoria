@@ -1,9 +1,3 @@
-"""Keep-awake is a separate test profile. Product firmware still deep-sleeps.
-
-CONFIG_MEMORIA_KEEP_AWAKE defaults off. build.sh --keep-awake is the only way
-on. While that image is idle it stays in wifi hold, so the mic stays closed.
-"""
-
 from __future__ import annotations
 
 import json
@@ -82,8 +76,10 @@ def test_product_text_still_deep_sleeps_and_keep_awake_text_does_not() -> None:
     awake = _keep_awake_branch(body)
     sleep = _sleep_branch(body)
     assert "SetPhase(memoria::PowerPhase::kWifiHold)" in awake
-    assert "wifi_hold_since_ms_.store(0, std::memory_order_relaxed)" in awake
-    assert 'ESP_LOGW(TAG, "chip deep sleep suppressed (CONFIG_MEMORIA_KEEP_AWAKE)")' in awake
+    assert "wifi_hold_since_ms_.store(kWifiHoldNotArmed, std::memory_order_relaxed)" in awake
+    assert 'ESP_LOGW(TAG, "chip deep sleep suppressed %s", memoria_keep_awake_build_marker)' in awake
+    assert 'memoria_keep_awake_build_marker[] = "MEMORIA_KEEP_AWAKE_BUILD=1;"' in _read(BOARD_CC)
+    assert "kWifiHoldNotArmed" in awake
     assert "kWaking" not in awake
     assert "kConversing" not in awake
     assert "esp_deep_sleep_start" not in awake
@@ -112,7 +108,7 @@ def test_both_callers_still_enter_tap_deep_sleep() -> None:
     assert "MEMORIA_KEEP_AWAKE" not in touch
     assert "MEMORIA_KEEP_AWAKE" not in usb
     assert "SetPhase(memoria::PowerPhase::kWaking)" in usb
-    assert source.count("#if CONFIG_MEMORIA_KEEP_AWAKE") == 1
+    assert source.count("#if CONFIG_MEMORIA_KEEP_AWAKE") == 2
     assert source.count("esp_deep_sleep_start();") == 1
 
 

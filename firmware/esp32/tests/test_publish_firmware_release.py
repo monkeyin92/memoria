@@ -43,9 +43,7 @@ def _image(
     desc += b"2.4.2".ljust(32, b"\0") + project.ljust(32, b"\0") + b"\0" * 176
     marker = f"MEMORIA_FIRMWARE_BUILD={build};".encode()
     bench_marker = b"MEMORIA_BENCH_BUILD=1;" if bench else b""
-    keep_marker = (
-        b"chip deep sleep suppressed (CONFIG_MEMORIA_KEEP_AWAKE)" if keep_awake else b""
-    )
+    keep_marker = b"MEMORIA_KEEP_AWAKE_BUILD=1;" if keep_awake else b""
     return header + desc + b"\x11" * 4096 + marker * markers + bench_marker + keep_marker + b"\x22" * 128
 
 
@@ -118,18 +116,24 @@ def test_sign_refuses_a_keep_awake_filename(tmp_path: pathlib.Path) -> None:
         publisher.sign(path, key_path, tmp_path / "out", build=7, public_key=public_key)
 
 
-def test_the_keep_awake_marker_is_the_suppressed_sleep_log() -> None:
+def test_the_keep_awake_marker_is_the_one_the_keep_awake_build_carries() -> None:
     publisher = _publisher()
     board = MEMORIA_DIR.parent / "boards" / "memoria" / "esp-vocat"
     source = (board / "memoria_esp_vocat.cc").read_text(encoding="utf-8")
-    start = source.index("#if CONFIG_MEMORIA_KEEP_AWAKE")
-    awake = source[start : source.index("#else", start)]
-    sleep = source[source.index("#else", start) : source.index("#endif", start)]
+    defined = re.findall(r'memoria_keep_awake_build_marker\[\] = "([^"]+)";', source)
+    assert defined == [publisher.KEEP_AWAKE_MARKER.decode("ascii")]
+    assert source.index("#if CONFIG_MEMORIA_KEEP_AWAKE") < source.index(
+        "memoria_keep_awake_build_marker[] ="
+    )
     marker = publisher.KEEP_AWAKE_MARKER.decode("ascii")
-    assert marker in awake
-    assert marker not in sleep
-    assert "esp_deep_sleep_start" not in awake
-    assert "esp_deep_sleep_start();" in sleep
+    enter = source.index("void EnterTapDeepSleep()")
+    awake = source[enter : source.index("void OnIdleScreenOff()", enter)]
+    assert "memoria_keep_awake_build_marker" in awake
+    assert "esp_deep_sleep_start" not in awake[awake.index("#if CONFIG_MEMORIA_KEEP_AWAKE") : awake.index("#else")]
+    assert "esp_deep_sleep_start();" in awake[awake.index("#else") :]
+    for path in (FIRMWARE_ROOT / "overlay" / "files" / "main").rglob("*"):
+        if path.suffix in {".cc", ".h", ".c"} and path.name != "memoria_esp_vocat.cc":
+            assert marker not in path.read_text(encoding="utf-8"), path.name
 
 
 def test_sign_refuses_a_key_the_firmware_does_not_trust(tmp_path: pathlib.Path) -> None:

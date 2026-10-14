@@ -62,8 +62,7 @@ _APP_DESC_MAGIC = 0xABCD5432
 # Compiled into test-rig images only (memoria_mascot_bench.cc, CONFIG_MEMORIA_BENCH_SERIAL): such an image
 # answers `snap` over USB with the screen, which a product image must never do.
 BENCH_MARKER = b"MEMORIA_BENCH_BUILD=1;"
-# The keep-awake log line is compiled only into that profile. A product image does not contain it.
-KEEP_AWAKE_MARKER = b"chip deep sleep suppressed (CONFIG_MEMORIA_KEEP_AWAKE)"
+KEEP_AWAKE_MARKER = b"MEMORIA_KEEP_AWAKE_BUILD=1;"
 
 
 def fail(message: str) -> None:

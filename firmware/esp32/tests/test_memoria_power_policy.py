@@ -126,7 +126,6 @@ def test_tap_actions_follow_the_power_phase(tool: pathlib.Path) -> None:
 
 
 def test_idle_keep_awake_park_does_not_want_the_mic_open(tool: pathlib.Path) -> None:
-    """A keep-awake build parks on wifi_hold. That phase keeps the mic shut."""
     assert _run(
         tool,
         "wanted wifi_hold",

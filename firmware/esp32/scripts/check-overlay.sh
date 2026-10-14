@@ -32,8 +32,6 @@ rg -Fq 'WAKE_WORD_MODEL="${MEMORIA_FIRMWARE_WAKE_WORD_MODEL:-}"' \
     "$MEMORIA_FIRMWARE_ROOT/overlay/files/main/boards/memoria/esp-vocat/config.keep-awake.json" \
     >/dev/null
 
-# The bench image (TODOLIST M-2) is the product manifest plus exactly two options. The keep-awake image is
-# the product manifest plus CONFIG_MEMORIA_KEEP_AWAKE=y. The product manifest names neither switch.
 "$python_bin" - "$MEMORIA_FIRMWARE_ROOT/overlay/files/main/boards/memoria/esp-vocat" <<'PY'
 import json
 import pathlib
@@ -601,8 +599,6 @@ PY
 if find "$MEMORIA_ARTIFACT_DIR" -maxdepth 1 -type f -name '*-xiaozhi.bin' -print -quit | rg -q .; then
     die "upstream-named product artifact remains in artifacts/"
 fi
-# Product and bench sdkconfigs must not set CONFIG_MEMORIA_KEEP_AWAKE. The line
-# is legal only for the keep-awake profile, which build.sh copies under that name.
 if rg -q '^CONFIG_MEMORIA_KEEP_AWAKE=y$' "$sdkconfig"; then
     if rg -q '^CONFIG_MEMORIA_BENCH_SERIAL=y$' "$sdkconfig"; then
         die "sdkconfig must not set CONFIG_MEMORIA_KEEP_AWAKE=y on a bench build"
