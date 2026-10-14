@@ -14,6 +14,7 @@ from services.agent.src.orchestration.interruption_guard import (
     is_short_assistant_farewell_reply,
     user_turn_suggests_conversation_close,
 )
+from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
 
 
 def test_backchannel_whitelist() -> None:
@@ -205,6 +206,19 @@ def test_wait_alias_cannot_bypass_assistant_echo_guard() -> None:
             )
             == "assistant_echo"
         )
+
+
+def test_speaker_echo_of_a_read_out_helpline_is_guarded_mid_script() -> None:
+    guard = PlaybackInputGuard(enabled=True)
+    announced = "".join(phrase.display for phrase in CRISIS_SELF_SCRIPT.phrases[:3])
+    echo = "请大人陪着你，也可以请大人拨打心理援助热线幺二三五六"
+
+    for assistant_text in (announced, CRISIS_SELF_SCRIPT.display):
+        assert (
+            guard.guarded_reason(echo, duration_ms=2400, assistant_text=assistant_text)
+            == "assistant_echo"
+        )
+    assert guard.guarded_reason("我现在就去找妈妈", duration_ms=1200, assistant_text=announced) is None
 
 
 def test_short_weekday_echo_cannot_bypass_assistant_echo_guard() -> None:

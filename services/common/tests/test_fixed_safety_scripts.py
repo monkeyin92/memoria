@@ -13,6 +13,7 @@ from services.common.fixed_safety_scripts import (
     _approved,
     script_for_decision,
     script_for_display,
+    spoken_prefix_for_display,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -109,6 +110,22 @@ def test_scripts_resolve_by_decision_and_exact_display_copy_only() -> None:
     assert script_for_display(SUPPORT_VICTIM_SCRIPT.spoken) is None
     assert script_for_display(CRISIS_SELF_SCRIPT.phrases[0].display) is None
     assert script_for_display(None) is None
+
+
+def test_announced_display_maps_to_spoken_copy_only_at_phrase_boundaries() -> None:
+    first, second, third, _ = CRISIS_SELF_SCRIPT.phrases
+
+    assert spoken_prefix_for_display(first.display) == first.spoken
+    assert (
+        spoken_prefix_for_display(first.display + second.display + third.display)
+        == "你说的话很重要，这件事一定要请大人来帮你。现在就去找爸爸妈妈或者身边的大人，"
+        "告诉他们你刚才说的话。请大人陪着你，也可以请大人拨打心理援助热线幺二三五六。"
+    )
+    assert spoken_prefix_for_display(CRISIS_SELF_SCRIPT.display) == CRISIS_SELF_SCRIPT.spoken
+    assert spoken_prefix_for_display(SUPPORT_VICTIM_SCRIPT.display) == SUPPORT_VICTIM_SCRIPT.spoken
+    assert spoken_prefix_for_display(CRISIS_SELF_SCRIPT.display[:5]) is None
+    assert spoken_prefix_for_display(third.display) is None
+    assert spoken_prefix_for_display("请打 120。") is None
 
 
 def test_ordinary_text_is_spoken_as_written() -> None:

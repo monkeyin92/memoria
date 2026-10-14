@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from itertools import accumulate
 from typing import Final, Literal
 
 FixedSafetyTemplateId = Literal["crisis-self-v1", "victim-support-v1", "support-other-v1"]
@@ -88,6 +89,15 @@ _BY_DECISION: Final[dict[str, FixedSafetyScript]] = {
 _BY_DISPLAY: Final[dict[str, FixedSafetyScript]] = {
     script.display: script for script in _BY_DECISION.values()
 }
+_SPOKEN_BY_DISPLAY_PREFIX: Final[dict[str, str]] = {
+    display: spoken
+    for script in _BY_DECISION.values()
+    for display, spoken in zip(
+        accumulate(phrase.display for phrase in script.phrases),
+        accumulate(phrase.spoken for phrase in script.phrases),
+        strict=True,
+    )
+}
 
 
 def script_for_decision(decision: str) -> FixedSafetyScript | None:
@@ -98,6 +108,12 @@ def script_for_display(text: str | None) -> FixedSafetyScript | None:
     """The script whose exact display copy is ``text``. Spoken copy never matches."""
 
     return None if text is None else _BY_DISPLAY.get(text)
+
+
+def spoken_prefix_for_display(text: str) -> str | None:
+    """Spoken copy for display text announced so far, cut at a phrase boundary."""
+
+    return _SPOKEN_BY_DISPLAY_PREFIX.get(text)
 
 
 def log_fixed_safety_playout(logger: logging.Logger, script: FixedSafetyScript) -> None:
@@ -121,4 +137,5 @@ __all__ = [
     "log_fixed_safety_playout",
     "script_for_decision",
     "script_for_display",
+    "spoken_prefix_for_display",
 ]
