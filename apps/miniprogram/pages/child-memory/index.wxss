@@ -236,6 +236,7 @@
   flex-shrink: 0;
   width: 144rpx;
   margin-top: 16rpx;
+  mix-blend-mode: multiply;
 }
 
 .cm-note-text {
