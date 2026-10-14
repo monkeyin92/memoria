@@ -146,10 +146,11 @@ _PROHIBITED_ENGLISH_RE = re.compile(
 )
 _EXPLICIT_SELF_HARM_INTENT_RE = re.compile(
     r"我(?:真(?:的)?|现在)?(?:"
-    r"不想(?:再|继续)?活(?:下去)?(?:了)?|"
+    # 或不了 is a speaker-to-mic slip for 活不了 / 不想活了.
+    r"不想(?:再|继续)?(?:活(?:下去)?(?:了)?|或了)|"
     r"活不下去(?:了)?|"
     r"(?:想|要|准备|打算)(?:去)?(?:"
-    r"死|自杀|自残|自尽|轻生|结束生命|杀(?:了|死)?自己|跳楼"
+    r"死|自杀|自残|自尽|轻生|结束生命|杀(?:了|死)?自己|跳楼|伤害自己"
     r")"
     r")"
 )
@@ -178,11 +179,22 @@ _VICTIM_SUPPORT_RE = re.compile(
     r"我刚被强奸|我被强奸|"
     r"有人正在对我实施暴力|"
     r"(?:有人|别人)(?:正在|在)?打我(?!电话|的电话)|"
+    # Adult / relative hitting the child; 大我 is a common ASR slip for 打我.
+    r"(?:有个)?(?:大人|叔叔|阿姨|老师).{0,12}(?:老是)?(?:打|大)我|"
+    r"老是(?:打|大)我|"
+    r"有人摸我(?:的)?身体|摸我身体|"
     r"我正在被打|"
     r"我被下毒|我中毒|"
     r"有人要杀(?:了)?我|"
     r"快救我|救救我|"
     r"(?<!稻草)救命(?!稻草)"
+    r")"
+)
+_REPORTED_PEER_HARM_RE = re.compile(
+    r"(?:"
+    r"(?:同桌|朋友|同学|家人).{0,24}(?:说|告诉我|跟我说).{0,24}"
+    r"(?:打她|打他|欺负她|欺负他|被打|被人打)|"
+    r"(?:同桌|朋友|同学).{0,12}被人打了"
     r")"
 )
 _EXPLICIT_SELF_HARM_EXACT = frozenset(
@@ -283,6 +295,8 @@ def companion_safety_decision(query: str) -> SafetyDecision:
     full_normalized = re.sub(r"[\s，。！？、,.!?：:\-—_]+", "", query).lower()
     if _VICTIM_SUPPORT_RE.search(full_normalized):
         return "support_victim"
+    if _REPORTED_PEER_HARM_RE.search(full_normalized):
+        return "support_relay"
     if _SAFETY_PREVENTION_RE.search(full_normalized):
         return "support_relay"
     # Markers follow the same quote-stripped surface as crisis_self, so fiction

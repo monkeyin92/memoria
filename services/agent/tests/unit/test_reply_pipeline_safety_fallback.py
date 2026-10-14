@@ -70,6 +70,15 @@ def _pipeline(runtime: DuplexRuntime, planner: _MismatchPlanner) -> ReplyPipelin
         ("有人正在打我", SUPPORT_VICTIM_REPLY),
         ("有人在打我", SUPPORT_VICTIM_REPLY),
         ("我朋友说他不想活了", SUPPORT_RELAY_REPLY),
+        ("我不想活了。", CRISIS_SUPPORT_REPLY),
+        ("我想伤害自己。", CRISIS_SUPPORT_REPLY),
+        ("我不想或了。", CRISIS_SUPPORT_REPLY),
+        ("有个大人老是打我，还不让我告诉妈妈。", SUPPORT_VICTIM_REPLY),
+        ("有人摸我身体，我不喜欢。", SUPPORT_VICTIM_REPLY),
+        ("有个叔叔老是大我。", SUPPORT_VICTIM_REPLY),
+        ("我同桌说她爸爸打她，我该怎么帮她？", SUPPORT_RELAY_REPLY),
+        ("我朋友说有人欺负她。", SUPPORT_RELAY_REPLY),
+        ("我同学被人打了。", SUPPORT_RELAY_REPLY),
     ],
 )
 async def test_fence_mismatch_fallback_still_speaks_fixed_safety_replies(
