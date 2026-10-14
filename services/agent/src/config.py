@@ -109,13 +109,6 @@ def validate_doubao_auth(
 
 
 def pcm_tap_directory(environment: str, configured: str) -> str | None:
-    """Return the uplink PCM tap directory, or None when the tap is off.
-
-    The tap writes unencrypted device audio, so only an explicit development
-    environment may enable it. A configured directory anywhere else is refused
-    rather than ignored.
-    """
-
     directory = configured.strip()
     if not directory:
         return None

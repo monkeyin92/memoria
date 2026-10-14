@@ -28,7 +28,6 @@ NOT_IN_PRODUCTION = {
     "MEMORIA_EAGER_POSTGRES": "test harness only",
     # Legacy all-access token; split_production_env refuses it in production.
     "MEMORIA_ARCHIVE_INTERNAL_TOKEN": "forbidden in production",
-    # Unencrypted uplink audio. AgentSettings and split_env refuse it outside development.
     "MEDIA_PCM_TAP_DIR": "development-only diagnostic",
     # Admin DSNs for schema bootstrap: the upgrade helper strips them from the
     # long-lived env (the template says so in words, not as a KEY= line).

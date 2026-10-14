@@ -148,11 +148,7 @@ def archive_evidence(
     fingerprint: str,
     event_sequence: int,
 ) -> dict[str, object]:
-    """One archive record with the full re-verifiable MemoryWriteFence.
-
-    Callers pass the payload their turn produced, words included.  The
-    decision's content ceiling decides what leaves the process.
-    """
+    """One archive record with the full re-verifiable MemoryWriteFence."""
 
     match decision.content_ceiling:
         case "verbatim":

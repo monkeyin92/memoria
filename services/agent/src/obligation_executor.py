@@ -101,12 +101,6 @@ def decide_persistence(
     profile, the subject's category and the guardian's active consent before
     it keeps anything, and compiles a minor's memory through its narrow
     projection filter.  A subject of unknown category never persists.
-
-    The ceiling is taken from the same signed profile that authorizes the
-    write, so a later subject switch cannot loosen an event already decided.
-    A minor's grant keeps the turn, but never its words. Policy does not put
-    REDACT_TRANSCRIPT on that grant, because an aggregate would also drop
-    prompt kind, persona flags and response provenance.
     """
 
     if profile is None:

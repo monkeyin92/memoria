@@ -1,12 +1,12 @@
 """Env-gated PCM tap capturing admitted Media ingress audio for diagnostics.
 
-The tap is disabled unless the process environment sets
-``ENVIRONMENT=development`` and ``MEDIA_PCM_TAP_DIR`` points at a writable
-directory.  When enabled, each session/stream-epoch pair gets one capped WAV
-file containing exactly the PCM frames admitted toward the ASR provider, so
-uplink corruption (energy, spectrum, timing) can be inspected offline.  The
-tap is strictly fail-open: any I/O error closes and disables the tap for that
-session without touching the audio path.
+The tap is disabled unless ``MEDIA_PCM_TAP_DIR`` points at a writable
+directory under ``ENVIRONMENT=development``.  When enabled, each
+session/stream-epoch pair gets one capped WAV file containing exactly the PCM
+frames admitted toward the ASR provider, so uplink corruption (energy,
+spectrum, timing) can be inspected offline.  The tap is strictly fail-open:
+any I/O error closes and disables the tap for that session without touching
+the audio path.
 
 The directory lives on the container's small ``/tmp`` tmpfs, which also holds the
 heartbeat state file. Without a bound the files of a day's sessions fill it, the
@@ -207,12 +207,7 @@ class MediaPcmTap:
 
 
 def maybe_create_tap(session_id: str, stream_epoch: int) -> MediaPcmTap | None:
-    """Create a tap only when ENVIRONMENT=development. Never raise.
-
-    Reads the process environment, not AgentSettings, and does not inherit
-    that object's development default. A process that never states its
-    environment never records audio.
-    """
+    """Create a tap when admitted; never raise."""
 
     try:
         directory = pcm_tap_directory(os.getenv("ENVIRONMENT", ""), os.getenv(TAP_DIR_ENV, ""))

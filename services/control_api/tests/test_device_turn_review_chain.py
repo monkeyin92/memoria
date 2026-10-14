@@ -206,8 +206,7 @@ async def test_consented_child_turn_is_kept_without_its_words(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # A child whose guardian ticked long-term memory: Control signs the memory
-    # grant into the child's profile, the Agent archives the turn, and the
-    # archive keeps the metadata for that child (not the words, not an aggregate).
+    # grant into the child's profile and the Agent archives the turn.
     _configure(monkeypatch, tmp_path)
     monkeypatch.setenv("MEMORIA_INTERACTION_POLICY_TOKEN", _POLICY_TOKEN)
     app = create_app()
