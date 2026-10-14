@@ -16,7 +16,7 @@ const CHILD_ARCHIVE_CONSENT = Object.freeze({
   kind: "child_archive",
   label: "长期记忆",
   description:
-    "开启后，memoria 会记住孩子提到的兴趣等白名单内容。你可以随时关闭，关闭后已有内容可删除。",
+    "开启后，memoria 会记住孩子提到的称呼、兴趣和小名。你可以随时关闭，关闭后不再记新的内容。",
   policyVersion: "child-archive-v1",
 });
 
