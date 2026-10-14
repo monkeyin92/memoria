@@ -10,11 +10,18 @@ const {
 const { greetingFor, formatDateLabel } = require("../../utils/greeting");
 const { readOnboardingSessionId } = require("../../utils/device-onboarding/session-store");
 const { readSubjectLabel } = require("../../utils/subject-label");
-const { boundChildFromManifest } = require("../../utils/child-memory");
+const {
+  boundChildFromManifest,
+  normalizeSessionSummaries,
+} = require("../../utils/child-memory");
 const { loadPinnedCrisisAlerts, shouldOfferCrisisSubscription } = require("../../utils/crisis-alerts");
+const guardianPush = require("../../utils/guardian-push");
 const {
   UNREAD_SAFETY_COPY,
+  SAFETY_SUBSCRIBE_HELPER,
   buildTrialDeviceCard,
+  memoryPreviewItems,
+  pinnedAlertMeta,
 } = require("../../utils/trial-device-card");
 
 function todayKey(date = new Date()) {
@@ -64,15 +71,26 @@ function emptyDashboard() {
     showChildMemory: false,
     childMemoryMinorId: "",
     childMemoryName: "",
+    memoryPreviews: [],
     pinnedCrisisAlerts: [],
     statusPill: "离线",
+    statusLine: "离线 · 已绑定",
     usageKnown: false,
     usageUsedMinutes: null,
     usageLimitMinutes: 30,
     usageLabel: "每日上限 30 分钟",
     quietHoursLine: "夜间 21:00–07:00",
+    quietHoursLabel: "21:00 – 07:00",
+    nightModeOn: false,
+    nightToggleBusy: false,
+    showSafetyNightCard: false,
     unreadSafetyAlert: false,
     unreadSafetyCopy: UNREAD_SAFETY_COPY,
+    unreadSafetyMeta: pinnedAlertMeta(),
+    safetySubscribeOn: false,
+    safetySubscribeKnown: false,
+    safetySubscribeBusy: false,
+    safetySubscribeHelper: SAFETY_SUBSCRIBE_HELPER,
   };
 }
 
@@ -104,7 +122,9 @@ Page({
   },
 
   onShow() {
-    if (typeof this.getTabBar === "function" && this.getTabBar()) { this.getTabBar().setData({ selected: 0 }); }
+    if (typeof this.getTabBar === "function" && this.getTabBar()) {
+      this.getTabBar().setData({ selected: 0 });
+    }
     const authenticated = api.hasAuthenticatedSession();
     const identity = api.currentIdentity();
     const name = identity?.display_name || "朋友";
@@ -201,6 +221,15 @@ Page({
     wx.switchTab({ url: "/pages/device/index" });
   },
 
+  openNightSettings() {
+    wx.switchTab({ url: "/pages/device/index" });
+  },
+
+  onNightModeChange() {
+    this.setData({ nightModeOn: this.data.nightModeOn });
+    wx.switchTab({ url: "/pages/device/index" });
+  },
+
   openProfile() {
     wx.switchTab({ url: "/pages/profile/index" });
   },
@@ -225,6 +254,103 @@ Page({
   openUnreadSafety() {
     // Pinned safety alerts land on the memory tab (#229); keep that route.
     this.openMemory();
+  },
+
+  async onSafetySubscribeChange(event) {
+    if (!this.data.safetySubscribeKnown || this.data.safetySubscribeBusy) {
+      this.setData({ safetySubscribeOn: this.data.safetySubscribeOn });
+      return;
+    }
+    const nextOn = Boolean(event.detail.value);
+    if (!nextOn) {
+      const keepOn = await new Promise((resolve) => {
+        wx.showModal({
+          title: guardianPush.SAFETY_SUBSCRIBE_OFF_TITLE,
+          content: guardianPush.SAFETY_SUBSCRIBE_OFF_CONFIRM,
+          confirmText: guardianPush.SAFETY_SUBSCRIBE_OFF_KEEP,
+          cancelText: guardianPush.SAFETY_SUBSCRIBE_OFF_PROCEED,
+          success: (result) => resolve(Boolean(result?.confirm)),
+          fail: () => resolve(true),
+        });
+      });
+      if (keepOn) {
+        this.setData({ safetySubscribeOn: true });
+        return;
+      }
+      this.setData({ safetySubscribeBusy: true });
+      try {
+        const config = this._safetyPushConfig;
+        if (!config?.templateId) {
+          this.setData(
+            guardianPush.safetySubscribeView({
+              safetySubscribeKnown: true,
+              safetySubscribeOn: false,
+            }),
+          );
+          return;
+        }
+        const outcome = await guardianPush.optOutCrisisPushAlerts({ config, api });
+        if (!outcome.ok) {
+          this.setData({ safetySubscribeOn: true });
+          wx.showToast({ title: "关闭失败，请稍后再试", icon: "none" });
+          return;
+        }
+        this.setData(
+          guardianPush.safetySubscribeView({
+            safetySubscribeKnown: true,
+            safetySubscribeOn: false,
+          }),
+        );
+      } catch (error) {
+        this.setData({ safetySubscribeOn: true });
+        wx.showToast({ title: error?.message || "关闭失败，请稍后再试", icon: "none" });
+      } finally {
+        this.setData({ safetySubscribeBusy: false });
+      }
+      return;
+    }
+    const config = this._safetyPushConfig;
+    this.setData({ safetySubscribeBusy: true });
+    try {
+      if (!config?.enabled || !config.templateId) {
+        this.setData(
+          guardianPush.safetySubscribeView({
+            safetySubscribeKnown: true,
+            safetySubscribeOn: false,
+          }),
+        );
+        wx.showToast({ title: "安全提醒订阅尚未开通", icon: "none" });
+        return;
+      }
+      const outcome = await guardianPush.subscribeCrisisAlerts({ config, api });
+      if (outcome.result === "accept" && outcome.recorded) {
+        this.setData(
+          guardianPush.safetySubscribeView({
+            safetySubscribeKnown: true,
+            safetySubscribeOn: true,
+          }),
+        );
+        wx.showToast({ title: "已订阅安全提醒", icon: "none" });
+      } else {
+        this.setData(
+          guardianPush.safetySubscribeView({
+            safetySubscribeKnown: true,
+            safetySubscribeOn: false,
+          }),
+        );
+        wx.showToast({ title: "未完成订阅，请再试一次", icon: "none" });
+      }
+    } catch (error) {
+      this.setData(
+        guardianPush.safetySubscribeView({
+          safetySubscribeKnown: true,
+          safetySubscribeOn: false,
+        }),
+      );
+      wx.showToast({ title: error?.message || "订阅失败，请稍后再试", icon: "none" });
+    } finally {
+      this.setData({ safetySubscribeBusy: false });
+    }
   },
 
   async retryBindingSync() {
@@ -345,8 +471,6 @@ Page({
         : null;
     const summary = deviceStatusSummary(activation, runtime, diagnostics);
     const companion = companionById(profile?.companion_id);
-    // 设备当前分配给使用人的自定义人格（cu_*）优先于账号级内置人格；
-    // 名字来自账号目录，读不到时退回内置人格而不是猜一个名字。
     const custom = await this._resolveCustomPersona(runtime);
     if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
     const personaName = custom ? custom.display_name : companion.name;
@@ -359,15 +483,44 @@ Page({
     );
     const online = summary.online;
     const boundChild = boundChildFromManifest(binding);
-    const pinnedCrisisAlerts = shouldOfferCrisisSubscription(binding)
-      ? await loadPinnedCrisisAlerts(api)
-      : [];
+    const offerSafety = shouldOfferCrisisSubscription(binding);
+    const pinnedCrisisAlerts = offerSafety ? await loadPinnedCrisisAlerts(api) : [];
     if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
+
+    let safetyView = {
+      safetySubscribeKnown: false,
+      safetySubscribeOn: false,
+    };
+    if (offerSafety) {
+      const safety = await guardianPush.loadSafetySubscribeState(api);
+      if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
+      this._safetyPushConfig = safety.config;
+      safetyView = guardianPush.safetySubscribeView(safety);
+    } else {
+      this._safetyPushConfig = null;
+    }
+
+    let memoryPreviews = [];
+    if (boundChild?.personId) {
+      try {
+        const summaryPayload = await api.getChildSessionSummaries(boundChild.personId);
+        if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
+        memoryPreviews = memoryPreviewItems(normalizeSessionSummaries(summaryPayload), 3);
+      } catch {
+        memoryPreviews = [];
+      }
+    }
+
     const trialCard = buildTrialDeviceCard({
       online,
       runtimeProfile: runtime,
     });
     const unreadSafetyAlert = pinnedCrisisAlerts.length > 0;
+    const firstAlert = pinnedCrisisAlerts[0] || null;
+    const unreadSafetyMeta = pinnedAlertMeta({
+      childName: boundChild?.displayName || firstAlert?.minor_display_name || "",
+      occurredAt: firstAlert?.occurred_at || "",
+    });
 
     this.setData({
       loading: false,
@@ -406,21 +559,27 @@ Page({
       showChildMemory: Boolean(boundChild),
       childMemoryMinorId: boundChild?.personId || "",
       childMemoryName: boundChild?.displayName || "",
+      memoryPreviews,
       pinnedCrisisAlerts,
       statusPill: trialCard.statusPill,
+      statusLine: trialCard.statusLine,
       usageKnown: trialCard.usageKnown,
       usageUsedMinutes: trialCard.usageUsedMinutes,
       usageLimitMinutes: trialCard.usageLimitMinutes,
       usageLabel: trialCard.usageLabel,
       quietHoursLine: trialCard.quietHoursLine,
+      quietHoursLabel: trialCard.quietHoursLabel,
+      nightModeOn: trialCard.nightModeOn,
+      showSafetyNightCard: offerSafety,
       unreadSafetyAlert,
       unreadSafetyCopy: UNREAD_SAFETY_COPY,
+      unreadSafetyMeta,
+      safetySubscribeHelper: SAFETY_SUBSCRIBE_HELPER,
+      ...safetyView,
       error: failures.length ? "部分状态暂时无法同步。" : "",
     });
   },
 
-  // 只有设备签发的 Runtime Profile 会声明实际使用的人格；自定义人格还要在
-  // 账号目录里存在才展示，避免把未知 id 当成名字显示。
   async _resolveCustomPersona(runtime) {
     const personaId = runtime?.persona?.persona_id;
     if (typeof personaId !== "string" || !personaId.startsWith("cu_")) return null;
@@ -445,20 +604,15 @@ Page({
       dailySummaryText: "",
     };
     if (!identity) return empty;
-    // 每日摘要是账号自己的回顾，服务端按登录账号鉴权，不走 Runtime Profile 门禁。
     const [daysResult, reviewResult, sessionsResult] = await Promise.all([
       api.getMemoryDays(identity.user_id, 7),
       api.getConversationReview(),
-      // 会话列表是可选增强：拿不到就退回 day 的 message_count，不能让首页
-      // 因为一个可选接口失败而整体空白。
       typeof api.getConversationSessions === "function"
         ? api.getConversationSessions(20).catch(() => null)
         : Promise.resolve(null),
     ]);
     const today = todayKey();
     const day = (daysResult.items || []).find((item) => (item.day || item.date) === today);
-    // 「今日对话次数」以当前主体的会话数为准；会话列表不可用时退回服务端
-    // 日计数。两者都在同一道 MemoryRecallPrivate 门禁之后才读取。
     const sessionsToday = ((sessionsResult && sessionsResult.items) || []).filter(
       (item) => item.occurred_at && todayKey(new Date(item.occurred_at)) === today,
     ).length;
@@ -468,7 +622,6 @@ Page({
       day?.summary?.overview || day?.overview || day?.summary_text || "";
     const title = day?.summary?.title || day?.title || "";
     if (!count && !pending) return empty;
-    // 每日摘要只组合「次数 + 服务端已生成的回顾」，不生成情绪、不编造事实。
     const dailySummaryText = count
       ? overview
         ? `今天和 Memoria 聊了 ${count} 次。${overview}`

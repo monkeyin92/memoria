@@ -11,6 +11,9 @@
 
 const PARENT_SUBSCRIBE_LABEL = "订阅安全提醒";
 
+const SAFETY_SUBSCRIBE_HELPER =
+  "可能通过微信推送提醒，打开小程序首页会置顶显示";
+
 const CRISIS_PUSH_EXPLANATION =
   "订阅安全提醒后，孩子可能需要帮助时，微信会提醒你打开小程序查看。提醒不含任何对话内容，每次允许可收到一次。";
 
@@ -188,6 +191,7 @@ function offerCrisisSubscription({ config, api, wxApi = globalThis.wx } = {}) {
 module.exports = {
   CRISIS_PUSH_EXPLANATION,
   PARENT_SUBSCRIBE_LABEL,
+  SAFETY_SUBSCRIBE_HELPER,
   SAFETY_SUBSCRIBE_OFF_CAPTION,
   SAFETY_SUBSCRIBE_OFF_CONFIRM,
   SAFETY_SUBSCRIBE_OFF_KEEP,
