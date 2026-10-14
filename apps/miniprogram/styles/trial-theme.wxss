@@ -144,3 +144,9 @@
   font-size: 24rpx;
   line-height: 1.45;
 }
+
+.trial-inset-caption.is-action {
+  color: var(--trial-accent);
+  text-decoration: underline;
+  text-underline-offset: 4rpx;
+}

@@ -178,6 +178,7 @@ test("settings toggle loads remaining > 0 as on and opt_out clears the ledger", 
     subscription: { template_id: "tmpl-crisis", remaining: 2, subscribed: true, last_result: "accept" },
   });
   const onState = await guardianPush.loadSafetySubscribeState(onApi);
+  assert.equal(onState.safetySubscribeKnown, true);
   assert.equal(onState.safetySubscribeOn, true);
   assert.equal(onState.subscription.remaining, 2);
   assert.equal(onApi.calls.config, 1);
@@ -188,7 +189,16 @@ test("settings toggle loads remaining > 0 as on and opt_out clears the ledger", 
     subscription: { template_id: "tmpl-crisis", remaining: 0, subscribed: false, last_result: "opt_out" },
   });
   const offState = await guardianPush.loadSafetySubscribeState(offApi);
+  assert.equal(offState.safetySubscribeKnown, true);
   assert.equal(offState.safetySubscribeOn, false);
+  assert.deepEqual(
+    guardianPush.safetySubscribeView(offState),
+    {
+      safetySubscribeKnown: true,
+      safetySubscribeOn: false,
+      safetySubscribeOffCaption: guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION,
+    },
+  );
 
   const config = guardianPush.normalizeCrisisPushConfig(enabledConfig);
   const cleared = await guardianPush.optOutCrisisPushAlerts({ config, api: offApi });
@@ -211,18 +221,43 @@ test("settings toggle loads remaining > 0 as on and opt_out clears the ledger", 
   assert.doesNotMatch(guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION, /无法再推送|永久关闭|危机/);
 });
 
+test("subscription-state query failure is unknown, not pretended off", async () => {
+  const api = fakeApi({
+    config: { enabled: true, template_ids: { crisis: "tmpl-crisis" } },
+    subscription: new Error("network down"),
+  });
+  const state = await guardianPush.loadSafetySubscribeState(api);
+  assert.equal(state.safetySubscribeKnown, false);
+  assert.equal(state.safetySubscribeOn, false);
+  assert.equal(state.subscription.known, false);
+  assert.deepEqual(guardianPush.safetySubscribeView(state), {
+    safetySubscribeKnown: false,
+    safetySubscribeOn: false,
+    safetySubscribeOffCaption: guardianPush.SAFETY_SUBSCRIBE_UNKNOWN_CAPTION,
+  });
+  assert.equal(guardianPush.SAFETY_SUBSCRIBE_UNKNOWN_CAPTION, "状态获取失败，点击重试");
+  assert.notEqual(
+    guardianPush.safetySubscribeView(state).safetySubscribeOffCaption,
+    guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION,
+  );
+});
+
 test("device settings toggle uses ledger state and real opt-out, not UI-only off", () => {
   const script = fs.readFileSync(path.join(root, "pages/device/index.js"), "utf8");
   const template = fs.readFileSync(path.join(root, "pages/device/index.wxml"), "utf8");
   assert.match(template, /安全提醒订阅/);
   assert.match(template, /safetySubscribeOffCaption/);
+  assert.match(template, /safetySubscribeKnown && safetySubscribeOn/);
+  assert.match(template, /disabled="\{\{!safetySubscribeKnown \|\| safetySubscribeBusy\}\}"/);
+  assert.match(template, /bindtap="retrySafetySubscribeState"/);
   assert.match(template, /bindchange="onSafetySubscribeChange"/);
   assert.match(script, /loadSafetySubscribeState/);
+  assert.match(script, /safetySubscribeView/);
+  assert.match(script, /retrySafetySubscribeState/);
   assert.match(script, /optOutCrisisPushAlerts/);
   assert.match(script, /SAFETY_SUBSCRIBE_OFF_TITLE/);
   assert.match(script, /SAFETY_SUBSCRIBE_OFF_KEEP/);
   assert.match(script, /SAFETY_SUBSCRIBE_OFF_PROCEED/);
-  assert.match(script, /SAFETY_SUBSCRIBE_OFF_CAPTION/);
   assert.match(script, /subscribeCrisisAlerts/);
   assert.doesNotMatch(script, /无法再推送|永久关闭/);
   assert.doesNotMatch(script, /危机/);
