@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from typing import Final, Literal
 
 SafetyDecision = Literal[
@@ -67,7 +68,7 @@ def fixed_safety_tts_text(display: str) -> str:
     return tts_speak_helpline_digits(display)
 
 
-def session_had_fixed_safety_reply(assistant_turns: list[str] | tuple[str, ...]) -> bool:
+def session_had_fixed_safety_reply(assistant_turns: Sequence[str]) -> bool:
     return any(turn in FIXED_SAFETY_REPLIES for turn in assistant_turns)
 CRISIS_CONTEXT_MARKERS: Final = (
     "自杀",

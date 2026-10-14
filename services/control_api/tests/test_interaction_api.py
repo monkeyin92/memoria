@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
-
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -23,6 +21,7 @@ from services.archive.memory_domain import (
     MemorySearchResult,
     PersonItem,
 )
+from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
 from services.common.crisis_policy import CrisisSemanticVerdict
 from services.control_api.app.main import create_app
 from services.control_api.app.routes import interaction as interaction_routes
