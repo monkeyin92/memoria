@@ -30,11 +30,10 @@ class CrisisSemanticVerdict(StrEnum):
     NO_CRISIS = "NO_CRISIS"
     UNSURE = "UNSURE"
 
-# Parent/child-facing copy changed with the support-request tier split; bump ids.
-# Names keep ``draft`` until product and compliance sign off the final wording.
-CRISIS_SCRIPT_VERSION = "crisis-transfer-draft-v3"
-SUPPORT_VICTIM_SCRIPT_VERSION = "support-victim-notify-v1"
-SUPPORT_RELAY_SCRIPT_VERSION = "support-relay-pin-v1"
+# Same id as reply_template_id for each route (product/compliance approved).
+CRISIS_SCRIPT_VERSION = CRISIS_SUPPORT_REPLY_TEMPLATE_ID
+SUPPORT_VICTIM_SCRIPT_VERSION = SUPPORT_VICTIM_REPLY_TEMPLATE_ID
+SUPPORT_RELAY_SCRIPT_VERSION = SUPPORT_RELAY_REPLY_TEMPLATE_ID
 
 _FIRST_PERSON_RISK_ANCHOR = re.compile(
     r"(?:我|本人).{0,16}(?:不想活|想死|自伤|自残|轻生|结束生命|"

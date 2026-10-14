@@ -7,10 +7,8 @@ from typing import Literal
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.response_planner_client import ResponsePlan
 from services.common.companion_response_safety import (
-    CRISIS_SUPPORT_REPLY,
+    FIXED_SAFETY_REPLIES,
     SAFE_UNKNOWN_REPLY,
-    SUPPORT_RELAY_REPLY,
-    SUPPORT_VICTIM_REPLY,
 )
 from services.common.companions import (
     DESIGNED_VOICE_MODEL,
@@ -203,14 +201,7 @@ def anonymous_public_plan_allowed(
         and provenance.planner_policy_version == "local-safe-fallback-v1"
         and plan.instructions == ANONYMOUS_PUBLIC_CHAT_INSTRUCTIONS
         and (
-            plan.direct_text
-            in {
-                None,
-                SAFE_UNKNOWN_REPLY,
-                CRISIS_SUPPORT_REPLY,
-                SUPPORT_VICTIM_REPLY,
-                SUPPORT_RELAY_REPLY,
-            }
+            plan.direct_text in {None, SAFE_UNKNOWN_REPLY, *FIXED_SAFETY_REPLIES}
             or is_safe_realtime_reply(plan.direct_text)
         )
         and plan.epistemic_status == provenance.epistemic_status == "not_applicable"

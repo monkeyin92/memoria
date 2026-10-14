@@ -2456,7 +2456,8 @@ async def test_controlled_turn_speaks_the_complete_fixed_crisis_reply() -> None:
     output = [item async for item in agent.stream_reply(llm.ChatContext.empty())]
 
     assert "".join(item for item in output if isinstance(item, str)) == CRISIS_SUPPORT_REPLY
-    assert CRISIS_SUPPORT_REPLY.endswith("你现在是否正准备伤害自己？")
+    assert "12356" in CRISIS_SUPPORT_REPLY
+    assert not CRISIS_SUPPORT_REPLY.endswith("？")
 
 
 @pytest.mark.asyncio

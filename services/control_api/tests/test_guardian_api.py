@@ -346,7 +346,7 @@ async def test_guardian_binding_consent_revocation_and_summary_are_end_to_end(
             headers=parent_headers,
         )
         assert crisis.status_code == 200
-        assert "急救或报警" in crisis.json()["direct_text"]
+        assert "12356" in crisis.json()["direct_text"]
         assert "【导师话轮约束】" not in crisis.json()["instructions"]
         assert notifications.status_code == 200
         notification_text = json.dumps(notifications.json(), ensure_ascii=False)
@@ -401,7 +401,7 @@ async def test_guardian_binding_consent_revocation_and_summary_are_end_to_end(
             },
         )
         assert semantic_crisis.status_code == 200
-        assert "急救或报警" in semantic_crisis.json()["direct_text"]
+        assert "12356" in semantic_crisis.json()["direct_text"]
         assert "【导师话轮约束】" not in semantic_crisis.json()["instructions"]
 
         revoked = await client.delete(

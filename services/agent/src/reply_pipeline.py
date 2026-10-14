@@ -1358,23 +1358,33 @@ class ReplyPipeline:
             reply_budget_exhausted = reply_budget_exhausted or exhausted
             return accepted
 
-        def _ready_segment(text: str) -> str | None:
+        def _mark_first_phrase() -> None:
             nonlocal first_phrase_marked
+            if first_phrase_marked:
+                return
+            self._runtime.mark_audio_event(
+                "first_phrase_ready",
+                detail={
+                    "stream_speak_while_think": True,
+                    "generation_id": fence.generation_id,
+                },
+            )
+            first_phrase_marked = True
+
+        def _ready_segment(text: str) -> str | None:
             if not cancellation.is_current(self._runtime.fence):
                 return None
             accepted = _accept_segment(text)
             if accepted is None:
                 return None
-            if not first_phrase_marked:
-                self._runtime.mark_audio_event(
-                    "first_phrase_ready",
-                    detail={
-                        "stream_speak_while_think": True,
-                        "generation_id": fence.generation_id,
-                    },
-                )
-                first_phrase_marked = True
+            _mark_first_phrase()
             return accepted
+
+        def _ready_segment_unbudgeted(text: str) -> str | None:
+            if not cancellation.is_current(self._runtime.fence):
+                return None
+            _mark_first_phrase()
+            return text
 
         stream: Any = None
         realtime_reply = ""
@@ -1384,20 +1394,33 @@ class ReplyPipeline:
         try:
             self._runtime.mark_audio_event("llm_request_started")
             if response_plan.direct_text is not None and realtime_request is None:
+                from services.common.companion_response_safety import FIXED_SAFETY_REPLIES
+
                 self._runtime.mark_audio_event("llm_first_content_token")
                 gated = self._runtime.gate_llm_token(
                     cancellation,
                     response_plan.direct_text,
                 )
+                # Fixed safety scripts must play in full; voice reply budgets
+                # must not truncate them mid-script.
+                bypass_budget = response_plan.direct_text in FIXED_SAFETY_REPLIES
                 if gated is not None:
                     for segment in segmenter.push_token(gated):
-                        accepted_segment = _ready_segment(segment.text)
+                        if bypass_budget:
+                            accepted_segment = _ready_segment_unbudgeted(segment.text)
+                        else:
+                            accepted_segment = _ready_segment(segment.text)
                         if accepted_segment is None:
                             break
                         yield accepted_segment
-                    if cancellation.is_current(self._runtime.fence) and not reply_budget_exhausted:
+                    if cancellation.is_current(self._runtime.fence) and (
+                        bypass_budget or not reply_budget_exhausted
+                    ):
                         for segment in segmenter.flush(end_of_stream=True):
-                            accepted_segment = _ready_segment(segment.text)
+                            if bypass_budget:
+                                accepted_segment = _ready_segment_unbudgeted(segment.text)
+                            else:
+                                accepted_segment = _ready_segment(segment.text)
                             if accepted_segment is None:
                                 break
                             yield accepted_segment

@@ -248,7 +248,9 @@ async def test_minor_crisis_queues_one_notification_and_fixed_text_reaches_the_d
 
         # 设备端固定安全话术就是 response plan 的 direct_text，逐字相同。
         assert body["direct_text"] == CRISIS_SUPPORT_REPLY
-        assert "急救或报警" in body["direct_text"]
+        assert "12356" in body["direct_text"]
+        assert "120" in body["direct_text"]
+        assert not body["direct_text"].endswith("？")
         # 固定话术不得被导师话轮约束或普通人格上下文改写。
         assert "【导师话轮约束】" not in body["instructions"]
 

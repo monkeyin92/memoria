@@ -327,6 +327,9 @@ class SynthesizeStream(ABC):
     def push_text(self, token: str) -> None:
         if not token or self._input_ch.closed:
             return
+        from services.common.companion_response_safety import tts_speak_helpline_digits
+
+        token = tts_speak_helpline_digits(token)
         self._pushed_text += token
         if not self._segment_text:
             if self._num_segments >= 1:

@@ -3,11 +3,17 @@ from __future__ import annotations
 import pytest
 from services.common.companion_response_safety import (
     CRISIS_SUPPORT_REPLY,
+    CRISIS_SUPPORT_REPLY_TEMPLATE_ID,
     SAFE_UNKNOWN_REPLY,
     SUPPORT_RELAY_REPLY,
+    SUPPORT_RELAY_REPLY_TEMPLATE_ID,
     SUPPORT_VICTIM_REPLY,
+    SUPPORT_VICTIM_REPLY_TEMPLATE_ID,
     companion_safety_decision,
     fixed_companion_reply,
+    fixed_safety_tts_text,
+    session_had_fixed_safety_reply,
+    tts_speak_helpline_digits,
 )
 
 
@@ -111,3 +117,38 @@ def test_the_identity_answer_is_written_for_the_listener() -> None:
     assert fixed_companion_reply(
         query="我不想活了", is_companion=True, audience="student_minor"
     ) == fixed_companion_reply(query="我不想活了", is_companion=True)
+
+
+def test_approved_fixed_replies_match_exact_product_copy() -> None:
+    assert CRISIS_SUPPORT_REPLY == (
+        "你说的话很重要，这件事一定要请大人来帮你。现在就去找爸爸妈妈或者身边的大人，"
+        "告诉他们你刚才说的话。请大人陪着你，也可以请大人拨打心理援助热线 12356。"
+        "如果你已经受伤了，马上告诉大人，请大人打 120。"
+    )
+    assert SUPPORT_VICTIM_REPLY == (
+        "你说的事情很重要。现在马上去找身边的大人，爸爸妈妈、老师都可以。"
+        "如果有危险，请大人帮你打 110。"
+    )
+    assert SUPPORT_RELAY_REPLY == (
+        "谢谢你告诉我，你是个关心别人的好孩子。"
+        "这件事要请大人帮忙，现在就去告诉爸爸妈妈或者老师吧。"
+    )
+    assert CRISIS_SUPPORT_REPLY_TEMPLATE_ID == "crisis-self-v1"
+    assert SUPPORT_VICTIM_REPLY_TEMPLATE_ID == "victim-support-v1"
+    assert SUPPORT_RELAY_REPLY_TEMPLATE_ID == "support-other-v1"
+
+
+def test_fixed_safety_tts_speaks_helpline_digits() -> None:
+    spoken = fixed_safety_tts_text(CRISIS_SUPPORT_REPLY)
+    assert "12356" not in spoken
+    assert "120" not in spoken
+    assert "一二三五六" in spoken
+    assert "幺二零" in spoken
+    assert fixed_safety_tts_text(SUPPORT_VICTIM_REPLY).endswith("打 幺幺零。")
+    assert tts_speak_helpline_digits("请打 110") == "请打 幺幺零"
+    assert fixed_safety_tts_text("普通聊天 110") == "普通聊天 110"
+
+
+def test_session_had_fixed_safety_reply_detects_prior_spoken_script() -> None:
+    assert session_had_fixed_safety_reply([SUPPORT_RELAY_REPLY]) is True
+    assert session_had_fixed_safety_reply(["你好"]) is False

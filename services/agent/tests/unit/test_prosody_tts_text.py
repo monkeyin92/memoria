@@ -81,3 +81,20 @@ def test_deliberative_breath_and_serious_hard_ban_markup() -> None:
     assert "[breath]" not in stripped
     assert "[laughter]" not in stripped
     assert "<strong>" not in stripped
+
+
+def test_prepare_tts_text_speaks_fixed_safety_helpline_digits() -> None:
+    from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY, SUPPORT_VICTIM_REPLY
+
+    plan = speech_plan_for_turn(
+        label="sad",
+        provider_label="sad",
+        text=CRISIS_SUPPORT_REPLY,
+    )
+    spoken = prepare_tts_text(CRISIS_SUPPORT_REPLY, plan, is_first_segment=True)
+    assert "一二三五六" in spoken
+    assert "幺二零" in spoken
+    assert "12356" not in spoken
+    victim = prepare_tts_text(SUPPORT_VICTIM_REPLY, plan, is_first_segment=True)
+    assert "幺幺零" in victim
+    assert "110" not in victim

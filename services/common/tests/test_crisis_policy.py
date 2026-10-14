@@ -30,6 +30,7 @@ def test_explicit_self_crisis_always_uses_fixed_script_and_notification() -> Non
     assert route.direct_text == CRISIS_SUPPORT_REPLY
     assert route.script_version == CRISIS_SCRIPT_VERSION
     assert route.reply_template_id == CRISIS_SUPPORT_REPLY_TEMPLATE_ID
+    assert route.script_version == route.reply_template_id == "crisis-self-v1"
     assert route.evidence_source == "deterministic"
 
 
@@ -42,6 +43,7 @@ def test_victim_support_tier_notifies_and_attempts_push() -> None:
     assert route.direct_text == SUPPORT_VICTIM_REPLY
     assert route.script_version == SUPPORT_VICTIM_SCRIPT_VERSION
     assert route.reply_template_id == SUPPORT_VICTIM_REPLY_TEMPLATE_ID
+    assert route.script_version == route.reply_template_id == "victim-support-v1"
 
 
 def test_relay_support_tier_pins_without_push() -> None:
@@ -53,6 +55,7 @@ def test_relay_support_tier_pins_without_push() -> None:
     assert route.direct_text == SUPPORT_RELAY_REPLY
     assert route.script_version == SUPPORT_RELAY_SCRIPT_VERSION
     assert route.reply_template_id == SUPPORT_RELAY_REPLY_TEMPLATE_ID
+    assert route.script_version == route.reply_template_id == "support-other-v1"
 
 
 def test_helping_another_person_never_notifies_as_the_current_users_crisis() -> None:

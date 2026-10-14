@@ -7,7 +7,10 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Literal
 
-from services.common.companion_response_safety import companion_safety_decision
+from services.common.companion_response_safety import (
+    companion_safety_decision,
+    fixed_safety_tts_text,
+)
 from services.common.companions import companion_definition
 
 VoiceEmotion = Literal[
@@ -206,7 +209,7 @@ def prepare_tts_text(
     use_markup_tags: bool = False,
 ) -> str:
     """Apply delivery-mode TTS rewrites without changing chat history text."""
-    body = text if text else ""
+    body = fixed_safety_tts_text(text if text else "")
     if plan.strip_paralinguistic or plan.delivery_mode == "supportive":
         body = strip_paralinguistic_markup(body)
     if not is_first_segment or not body.strip():
