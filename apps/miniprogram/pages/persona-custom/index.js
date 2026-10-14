@@ -134,8 +134,12 @@ Page({
     try {
       const payload = await api.listPersonas();
       if (!api.isAuthEpochCurrent(authEpoch)) return;
+      const personas = Array.isArray(payload?.custom_personas) ? payload.custom_personas : [];
       this.setData({
-        personas: Array.isArray(payload?.custom_personas) ? payload.custom_personas : [],
+        personas: personas.map((item) => ({
+          ...item,
+          voiceName: companions.find((companion) => companion.id === item?.fallback_designed_voice)?.name || "",
+        })),
       });
     } catch (error) {
       if (!api.isAuthEpochCurrent(authEpoch)) return;
@@ -276,7 +280,7 @@ Page({
       wx.showModal({
         title: "删除自定义人格？",
         content: "删除后无法恢复；仍在使用中的话会先让你确认一次。",
-        confirmColor: "#ba4255",
+        confirmColor: "#9A4732",
         success: (result) => resolve(result.confirm),
       });
     });

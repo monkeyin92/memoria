@@ -7,7 +7,7 @@
   <text wx:if="{{error}}" class="error-text">{{error}}</text>
 
   <text class="group-label">原始语音</text>
-  <view class="card privacy-card">
+  <view class="card">
     <view class="privacy-head">
       <mp-icon name="wave" tone="ink"></mp-icon>
       <view class="row-copy">

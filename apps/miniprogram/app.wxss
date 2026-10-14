@@ -400,6 +400,20 @@ button[disabled] {
   font-size: var(--mp-type-body);
 }
 .field-placeholder { color: var(--mp-ink-3); }
+.picker-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24rpx;
+  box-sizing: border-box;
+  min-height: 96rpx;
+  padding: 0 28rpx;
+  border: 2rpx solid var(--mp-line);
+  border-radius: var(--mp-radius-inset);
+  background: var(--mp-fill);
+}
+.picker-label { color: var(--mp-ink); font-size: var(--mp-type-body); }
+.picker-value { flex: 1; min-width: 0; color: var(--mp-ink); font-size: var(--mp-type-body); }
 .setting-row {
   display: flex;
   align-items: center;

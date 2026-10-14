@@ -16,7 +16,7 @@ const PAGES = [
   { slug: "profile", page: "pages/profile/index", harness: authed() },
   { slug: "guardian", page: "pages/guardian/index", harness: authed(fx.guardianApi) },
   { slug: "bind", page: "pages/bind/index", harness: authed() },
-  { slug: "persona-custom", page: "pages/persona-custom/index", harness: authed() },
+  { slug: "persona-custom", page: "pages/persona-custom/index", harness: authed(fx.personaApi) },
   { slug: "auth", page: "pages/auth/index", harness: guest(), query: { reason: "view_device" } },
   { slug: "privacy", page: "pages/privacy/index", harness: authed() },
   {

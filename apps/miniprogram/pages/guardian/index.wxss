@@ -84,17 +84,11 @@
 }
 
 .picker-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 88rpx;
-}
-
-.picker-label {
-  color: var(--mp-ink);
+  margin-top: 24rpx;
 }
 
 .picker-value {
+  flex: none;
   color: var(--mp-accent);
 }
 

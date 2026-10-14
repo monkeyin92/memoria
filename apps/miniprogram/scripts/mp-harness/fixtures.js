@@ -146,6 +146,15 @@ const digitalSelfApi = {
   }),
 };
 
+const personaApi = {
+  listPersonas: async () => ({
+    custom_personas: [
+      { persona_id: "cu_0123456789abcdef0123456789abcd", display_name: "小北", persona_version: 1, fallback_designed_voice: "starlight" },
+    ],
+    builtin_personas: [],
+  }),
+};
+
 const PINNED_ALERT = {
   notification_id: "n1",
   minor_user_id: "p_child",
@@ -232,4 +241,5 @@ module.exports = {
   guardianApi,
   guest,
   isoMinutesAgo,
+  personaApi,
 };
