@@ -17,6 +17,7 @@ const PARITY = [
   },
   { slug: "06-usage", design: "06-usage.png", page: "pages/device/index", harness: { api: fx.baseApi(), now: fx.NOW } },
   { slug: "05-attention", design: "05-attention.png", page: "pages/memory/index", harness: { api: fx.baseApi(), now: fx.NOW } },
+  { slug: "08-roles", design: "08-roles.png", page: "pages/companion/index", harness: { api: fx.baseApi(), now: fx.NOW } },
   {
     slug: "09-memory",
     design: "09-memory.png",
