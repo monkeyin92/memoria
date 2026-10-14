@@ -193,6 +193,8 @@ def test_victim_matching_tolerates_speaker_to_mic_asr_slips(query: str) -> None:
         "我打游戏",
         "今天打雷了",
         "你打一下电话给妈妈",
+        "有人打我电话",
+        "有人打我的电话",
         "救命稻草是什么意思",
         "性教育课讲了什么",
     ),
