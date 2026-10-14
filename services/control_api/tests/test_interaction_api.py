@@ -571,6 +571,8 @@ async def test_internal_policy_uses_its_own_capability_and_returns_frozen_sessio
     assert response.status_code == 200
     policy = response.json()
     assert policy["interaction_mode"] == "companion"
+    assert policy["mode_policy_version"] == "s2-v1"
+    assert policy["runtime_profile"]["policy_bundle_version"] != policy["mode_policy_version"]
     assert policy["policy_scope"] == "session"
     assert policy["simulated_output"] is False
     assert policy["history_eligible"] is True

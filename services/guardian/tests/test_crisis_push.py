@@ -240,12 +240,12 @@ async def test_ledger_counts_acceptances_and_bans_void_the_balance(
     assert len(audit) == 46
 
 
-def test_undelivered_statuses_are_pinned_for_the_mini_program() -> None:
+def test_crisis_alert_statuses_stay_pinned_regardless_of_push_delivery() -> None:
     assert crisis_alert_is_pinned("pending")
     assert crisis_alert_is_pinned("pin_only")
     assert crisis_alert_is_pinned("failed")
     assert crisis_alert_is_pinned("no_subscription")
-    assert not crisis_alert_is_pinned("delivered")
+    assert crisis_alert_is_pinned("delivered")
     assert not crisis_alert_is_pinned("retry")
 
 
@@ -280,7 +280,7 @@ async def test_worker_delivers_fixed_content_and_consumes_one_acceptance(
 
     notification = await _only_notification(store)
     assert notification.status == "delivered"
-    assert not crisis_alert_is_pinned(notification.status)
+    assert crisis_alert_is_pinned(notification.status)
     assert notification.delivered_at is not None
     reach = await store.crisis_reach_for_window(
         since=occurred - timedelta(minutes=1),
@@ -546,7 +546,7 @@ async def test_relay_tier_alert_pins_as_pin_only_and_is_never_claimed_for_push(
         item.crisis_event_id: (item.status, crisis_alert_is_pinned(item.status))
         for item in notifications
     } == {
-        crisis_event_id: ("delivered", False),
+        crisis_event_id: ("delivered", True),
         relay.crisis_event_id: ("pin_only", True),
     }
     assert len(sender.calls) == 1
