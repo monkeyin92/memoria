@@ -220,8 +220,6 @@
 }
 
 .cm-note-art {
-  display: flex;
-  justify-content: center;
   flex-shrink: 0;
   width: 56px;
   height: 56px;
@@ -231,7 +229,7 @@
 }
 
 .cm-note-art image {
-  flex-shrink: 0;
+  display: block;
   width: 72px;
   margin-top: 8px;
   mix-blend-mode: multiply;

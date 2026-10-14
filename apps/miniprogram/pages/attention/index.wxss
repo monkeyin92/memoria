@@ -9,8 +9,6 @@
 }
 
 .attention-mascot {
-  display: flex;
-  justify-content: center;
   width: 80px;
   height: 80px;
   margin: 0 auto;
@@ -20,6 +18,7 @@
 }
 
 .attention-mascot-img {
+  display: block;
   width: 96px;
   margin-top: 8px;
   mix-blend-mode: multiply;
