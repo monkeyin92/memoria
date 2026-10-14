@@ -30,7 +30,7 @@ Secret 仅在 root-only `/etc/memoria-*.env`（root:root 0600）；候选从真�
 - **数据层**：两台机上 `memoria-data` 项目都是从 `releases/20260827-architecture-split-v1/infra` 起的。`current/infra` 里的同名 compose 多一个 `011-control-schema.sql` 的 initdb 挂载（只在空库首次初始化时用）；在已有数据的库上用 `current/infra` 去 `up -d` 会让 compose 判定配置变了而重建 postgres 容器（推断，没试），不要顺手做。
 - **WAL 归档已关（P1-08，2026-10-06）**：`infra/memoria-data.production.yml` 的 postgres 参数是 `archive_mode=off`，不再有 `archive_timeout` / `archive_command`。原先每 5 分钟强制切一个 16 MB 段并拷进同盘的 `memoria-data_postgres_wal_archive` 卷：没有 base backup 可接，没有恢复价值，旧机实测每天涨约 0.6–1.1 GB。恢复靠每次整栈发布前 `freeze` 的 `memoria-pre-<tag>.dump`（见「数据层、备份与恢复」）。改这个参数必须重建 postgres 容器（`archive_mode` 要重启，`ALTER SYSTEM` 改不了：compose 的 `-c` 参数优先）；线上 compose 与仓库的同步和卷的清理是维护窗口里的一步，结果记在 HANDOFF。要重新启用（例如接异地备份 profile）：在 compose 里把 `archive_mode=on`、`archive_timeout=300s`、`archive_command=test ! -f /wal-archive/%f && cp %p /wal-archive/%f` 一并恢复，并保持该卷 `999:999 0700`，否则 `archive_command` 一直失败；同时要有 base backup 和按它裁剪的策略。
 - **磁盘（最近一次只读核验：2026-10-10 23:31）**：40GB盘、已用25GB（65%）、剩14GB；09:40既有清理删掉20261007旧镜像tag/incoming/源码树、保留`.cutover`。`incoming/`保留`20261009-textless-spare-v1`、`20261010-stale-interim-v1`和`20261010-n8-endpoint-diag-v1`三个目录，镜像保留当前与一个可运行回滚；详细收据见`docs/acceptance/run-20261010-verify/findings.md`。WAL归档关掉后主要增长是每次发布约4–5GB（镜像+包）与库本身；不要手删`pg_wal`。`memoria-disk-patrol.timer`只在75%/85%告警、不自动清理，生产清理另授权。
-- **systemd**：`memoria-readiness-refresh.timer`（12 小时一次提供方冒烟 + readiness 标记；迁移后 01:36:57 跑过一次，从新机出口 PASS）与 `memoria-disk-patrol.timer` 已在新机启用。
+- **systemd**：`memoria-readiness-refresh.timer`（12 小时一次提供方冒烟 + readiness 标记；迁移后 01:36:57 跑过一次，从新机出口 PASS）与 `memoria-disk-patrol.timer` 已在新机启用。`memoria-freeze-dump-cleanup.timer`（每日）应在下一次整栈发布时一并安装：只删 `/opt/memoria/releases/*/.cutover/` 下超过 3 天的 `memoria-pre-*.dump` 与 `memoria.pre-*.sqlite3`。
 
 ## 发布前门禁
 
@@ -131,7 +131,17 @@ docker compose --project-directory "$DATA_COMPOSE_DIR" \
 
 - 用户 2026-09-14 决定验证阶段暂缓自动备份/异地副本；最后核查 offsite profile 未启用、无真实 endpoint/告警。真实家庭数据、正式发布或价值/量级增长前必须重评，不把同机副本称为异地灾备或已验证 PITR。
 - 当前保留的本地还原点只在新机的旧机归档包 `/root/old-host-20261005/var-backups-memoria.tar.gz`（旧机 `/var/backups/memoria` 整体打包，root 0700，2026-10-05 迁移时取）里：`drill-20260914-p0-02/base`（2026-09-14 通过 `pg_verifybackup`、隔离启动、应用表/对象核对，报告 `outputs/acceptance/run-20260914-p0-02-restore-drill/report.json`）和 `20260912-1150-companion-persona-and-lookup-gate/memoria-archive-20260912T043155Z.dump`；它们不会自动更新。09-14 base 的 WAL 链只在旧机上，旧机到期后消失，所以这个 base 只能还原到演练时刻，没有时间点恢复能力。最近一份发布前 freeze 逻辑转储为 2026-10-10 22:18 的 `memoria-pre-20261010-n8-endpoint-diag-v1.dump`（4,445,037 B，发布收据 SHA-256 `36344e4d…`），在 `/opt/memoria/releases/20261010-n8-endpoint-diag-v1/.cutover/`；10-11 09:22只读复核文件时间/大小，完整摘要见10-10 findings。此前07:57旧栈转储为4,427,691 B / `cc7217ae…`；10-04 18:15转储在旧机归档目录的 `release-receipts.tar.gz` 里。新机上没有持续的数据库备份。
-- WAL 归档已关（P1-08，2026-10-06，见上文「生产主机」）：没有 base backup 的归档接不上任何还原点，所以不再产生。没有时间点恢复能力是已知现状：恢复点只有上述每次发布前的 `freeze` 转储和归档包里的 09-14 base。重新启用必须同时有 base backup 与按它裁剪的策略；禁止只按文件年龄删 WAL，`pg_wal` 里的段由 PostgreSQL 自己回收。
+- **Freeze 转储保留 3 天**：`freeze` 把 `memoria-pre-<tag>.dump` 与 `memoria.pre-<tag>.sqlite3` 都写进该发布树的 `.cutover/`（不再留在 `/var/lib/memoria`）。`scripts/cleanup_freeze_dumps.py` 只扫描 `/opt/memoria/releases/*/.cutover/`，删除 mtime 超过 3 天的上述两类文件；`freeze` 结束时会跑一次，`release_ops.sh cleanup-freeze-dumps` 与 `memoria-freeze-dump-cleanup.timer`（每日）也会跑。因此**用 freeze 转储做库级回滚/恢复只在转储未满 3 天时可行**；更早的 `.cutover` 转储会被自动删掉。安装基线（执行仍需授权）：
+
+~~~bash
+sudo install -d -m 0755 /opt/memoria/ops-tools
+sudo install -m 0755 scripts/cleanup_freeze_dumps.py /opt/memoria/ops-tools/cleanup_freeze_dumps.py
+sudo install -m 0644 infra/memoria-freeze-dump-cleanup.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now memoria-freeze-dump-cleanup.timer
+~~~
+
+- WAL 归档已关（P1-08，2026-10-06，见上文「生产主机」）：没有 base backup 的归档接不上任何还原点，所以不再产生。没有时间点恢复能力是已知现状：恢复点只有上述每次发布前的 `freeze` 转储（且仅 3 天内）和归档包里的 09-14 base。重新启用必须同时有 base backup 与按它裁剪的策略；禁止只按文件年龄删 WAL，`pg_wal` 里的段由 PostgreSQL 自己回收。
 - 重新启用备份时，已修的 pg_basebackup CLI 仍需真实部署验证；网桥复制受现有 pg_hba 限制，优先评估 `network_mode: service:postgres` 走 loopback。真实异地 endpoint/凭据与恢复演练须另行补齐。
 
 恢复集合须含 PostgreSQL base/WAL、MinIO versioned objects、SQLite 兼容快照、root-only env、manifest/回执。用 `scripts/run_offsite_restore_drill.sh` 在隔离环境校验备份、对象清单/哈希、外键和应用读取；不能拿缓存当权威。
@@ -218,7 +228,7 @@ SQL 侧只多返回事实 `device_bound`，与开关无关，所以 `schema` 步
 
 ## 回滚与验收底线
 
-服务回滚按最小组件：保留失败候选日志/manifest，恢复切前 image、软链和 env，等待健康与具名 gRPC/readiness，再验外部路由/provider 和设备重连。回滚镜像曾可运行不等于本次回滚演练通过。
+服务回滚按最小组件：保留失败候选日志/manifest，恢复切前 image、软链和 env，等待健康与具名 gRPC/readiness，再验外部路由/provider 和设备重连。回滚镜像曾可运行不等于本次回滚演练通过。若回滚还需要恢复 `freeze` 写入的 PostgreSQL / 控制库快照，那些文件只保留 3 天（见上文「Freeze 转储保留 3 天」）；超过窗口后只能回滚镜像与配置，不能再从 `.cutover` 转储还原库。
 
 固件仅回写唯一紧邻 app 至 `0x20000`；写前备份当前 `0x20000/0x3f0000` 全槽、核摘要，写后回读并比较身份和全部非 app 保护区，再做启动/媒体验收。禁止 `flash.sh` 整包、`erase-all` 或误用旧 run 回滚件。
 

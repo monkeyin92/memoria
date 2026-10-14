@@ -55,3 +55,26 @@ test("a same-day window has no 次日 marker", () => {
   assert.equal(limits.quietHoursLabel, "12:00 – 14:00");
   assert.equal(limits.maxSessionLabel, "");
 });
+
+test("stored daily limits above 60 minutes clamp to 60 on read", () => {
+  for (const minutes of [90, 120]) {
+    const limits = sessionLimitsFromProfile(
+      profile({
+        obligations: [
+          {
+            code: "MAX_SESSION_SECONDS",
+            params: {
+              max_session_seconds: minutes * 60,
+              retention_ttl_seconds: null,
+              quiet_hours: null,
+              extras: [],
+            },
+          },
+        ],
+      }),
+      DAY,
+    );
+    assert.equal(limits.maxSessionMinutes, 60);
+    assert.equal(limits.maxSessionLabel, "60 分钟");
+  }
+});

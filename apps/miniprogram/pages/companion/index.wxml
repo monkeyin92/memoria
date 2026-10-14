@@ -1,9 +1,9 @@
 <view class="page-shell companion-shell">
   <page-backdrop theme="mist"></page-backdrop>
-  <text class="page-title">伙伴</text>
-  <text class="page-lede">当前伙伴 · {{currentName}}在陪你</text>
+  <text class="page-title">角色</text>
+  <text class="page-lede">当前角色 · {{currentName}}在陪你</text>
 
-  <!-- 堆叠卡组：当前卡在最前，其余伙伴叠在后面左右露出；左右拖动或点露出的卡切换 -->
+  <!-- 堆叠卡组：当前卡在最前，其余角色叠在后面左右露出；左右拖动或点露出的卡切换 -->
   <view
     class="deck {{dragging ? 'deck-dragging' : ''}}"
     bindtouchstart="onDeckTouchStart"
@@ -21,7 +21,7 @@
       bindtap="onCardTap"
     >
       <view class="deck-body">
-      <view wx:if="{{profile.companion_id === item.id}}" class="pill pill-teal deck-current">当前伙伴</view>
+      <view wx:if="{{profile.companion_id === item.id}}" class="pill pill-teal deck-current">当前角色</view>
       <view class="deck-face">
         <face-badge role="{{item.id}}" size="xl" plain="{{true}}" animated="{{item.front}}"></face-badge>
       </view>
@@ -64,7 +64,7 @@
     data-id="{{browsingId}}"
     bindtap="chooseCompanion"
   >选{{browsingName}}陪伴</button>
-  <text class="caption deck-hint">左右滑动卡片，认识每一位伙伴</text>
+  <text class="caption deck-hint">左右滑动卡片，认识每一位角色</text>
 
   <view class="section-head">
     <text class="section-head-title">声音</text>
@@ -80,6 +80,6 @@
     </view>
   </view>
 
-  <text class="caption">角色只影响表达风格，不改变你的资料权限。换伙伴后，机器人下一次对话起换成 TA 的声音。</text>
-  <text class="privacy-note">角色音色来自产品设计音色，可在上方切换伙伴。</text>
+  <text class="caption">角色只影响表达风格，不改变你的资料权限。换角色后，机器人下一次对话起换成 TA 的声音。</text>
+  <text class="privacy-note">角色音色来自产品设计音色，可在上方切换角色。</text>
 </view>

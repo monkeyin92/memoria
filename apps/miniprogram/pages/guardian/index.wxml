@@ -8,7 +8,7 @@
     <view class="mem-hero-row">
       <view class="row-copy">
         <text class="mem-hero-title">{{role === 'minor' ? '学生模式与监护授权' : '家庭与监护'}}</text>
-        <text class="mem-hero-sub">{{role === 'minor' ? '绑定由孩子本人确认，授权变化会立即生效。' : '只看聚合趋势，不展示孩子与伙伴的对话原文。'}}</text>
+        <text class="mem-hero-sub">{{role === 'minor' ? '绑定由孩子本人确认，授权变化会立即生效。' : '只看聚合趋势，不展示孩子与角色的对话原文。'}}</text>
       </view>
       <glass-icon name="family" size="112"></glass-icon>
     </view>

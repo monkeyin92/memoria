@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Memoria parent UI v3</title>
+  <style>
+    :root {
+      /* danger: ONLY delete-confirm button text and error text. */
+      --bg: #faf5ec;
+      --surface: #fffdf9;
+      --accent: #e2702a;
+      --accent-soft: #fbe6d4;
+      --accent-wash: #fdf1e6;
+      --danger: #c8423a;
+      --danger-outline: #dcd2c5;
+      --ink: #2b241f;
+      --ink-2: #6e635a;
+      --ink-3: #a39789;
+      --line: #efe6da;
+      --fill: #f2eadf;
+      --scrim: rgba(43, 36, 31, 0.42);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 32px 20px 64px;
+      background: #e8e0d4;
+      color: var(--ink);
+      font-family: "PingFang SC", "HarmonyOS Sans SC", "Noto Sans SC", sans-serif;
+    }
+    h1 { margin: 0 0 8px; font-size: 22px; }
+    .lede { margin: 0 0 28px; color: var(--ink-2); font-size: 14px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 340px));
+      gap: 24px;
+    }
+    .phone {
+      position: relative;
+      width: 100%;
+      min-height: 720px;
+      padding: 28px 20px 40px;
+      border-radius: 36px;
+      background: var(--bg);
+      overflow: hidden;
+    }
+    .label {
+      margin: 0 0 12px;
+      color: var(--ink-3);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .title { margin: 0; font-size: 24px; font-weight: 600; line-height: 32px; }
+    .caption { margin: 8px 0 0; color: var(--ink-2); font-size: 13px; line-height: 18px; }
+    .card {
+      margin-top: 16px;
+      padding: 20px;
+      border-radius: 20px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
+    }
+    .banner {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 16px;
+      padding: 14px 16px;
+      border-radius: 16px;
+      background: var(--accent-wash);
+      border: 1px solid var(--accent-soft);
+    }
+    .banner-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 4px var(--accent-soft);
+    }
+    .banner-title { font-size: 15px; font-weight: 500; }
+    .banner-meta { margin-top: 2px; color: var(--ink-3); font-size: 12px; }
+    .device-row { display: flex; align-items: center; gap: 14px; }
+    .tile {
+      width: 60px;
+      height: 60px;
+      border-radius: 18px;
+      background: var(--fill);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .tile img { width: 52px; height: 52px; object-fit: contain; }
+    .status { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; color: var(--ink-2); font-size: 13px; }
+    .status .dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+    .card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .card-title { font-size: 17px; font-weight: 600; }
+    .link { color: var(--accent); font-size: 13px; }
+    .preview {
+      margin-top: 10px;
+      padding-left: 8px;
+      border-left: 3px solid var(--accent-soft);
+      font-size: 15px;
+      line-height: 22px;
+    }
+    .toggle-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      min-height: 44px;
+    }
+    .toggle-row + .toggle-row {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+    }
+    .switch {
+      width: 51px;
+      height: 31px;
+      border-radius: 999px;
+      background: var(--accent);
+      position: relative;
+    }
+    .switch::after {
+      content: "";
+      position: absolute;
+      top: 2px;
+      right: 2px;
+      width: 27px;
+      height: 27px;
+      border-radius: 50%;
+      background: #fff;
+    }
+    .switch.off { background: var(--fill); }
+    .switch.off::after { left: 2px; right: auto; }
+    .hero { display: flex; justify-content: space-between; gap: 12px; }
+    .hero img { width: 72px; height: 72px; object-fit: contain; }
+    .empty { text-align: center; padding: 40px 12px; }
+    .empty img { width: 148px; height: 148px; object-fit: contain; }
+    .row {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+    }
+    .row-body { flex: 1; }
+    .meta { margin-top: 6px; color: var(--ink-3); font-size: 12px; }
+    .trash {
+      width: 36px;
+      height: 36px;
+      border-radius: 12px;
+      background: var(--bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--ink-3);
+      font-size: 14px;
+    }
+    .sheet-mask {
+      position: absolute;
+      inset: 0;
+      background: var(--scrim);
+      display: flex;
+      align-items: flex-end;
+    }
+    .sheet {
+      width: 100%;
+      padding: 12px 20px 28px;
+      border-radius: 28px 28px 0 0;
+      background: var(--surface);
+    }
+    .grab {
+      width: 36px;
+      height: 4px;
+      margin: 6px auto 16px;
+      border-radius: 999px;
+      background: var(--fill);
+    }
+    .quote {
+      margin: 12px 0 18px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: var(--bg);
+      font-size: 15px;
+      line-height: 22px;
+    }
+    .btn {
+      display: block;
+      width: 100%;
+      height: 50px;
+      margin-top: 10px;
+      border: 0;
+      border-radius: 999px;
+      font: inherit;
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .btn-danger {
+      background: var(--surface);
+      color: var(--danger);
+      border: 1px solid var(--danger-outline);
+    }
+    .btn-secondary { background: var(--fill); color: var(--ink); }
+    .inset-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      min-height: 52px;
+      padding: 10px 0;
+      border-top: 1px solid var(--line);
+      font-size: 15px;
+    }
+    .inset-row:first-child { border-top: 0; }
+    .well {
+      margin-top: 12px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: var(--bg);
+      color: var(--ink-2);
+      font-size: 13px;
+      line-height: 18px;
+    }
+    .slider {
+      height: 4px;
+      margin: 8px 0 4px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent) 40%, var(--fill) 40%);
+      position: relative;
+    }
+    .slider::after {
+      content: "";
+      position: absolute;
+      left: 40%;
+      top: -8px;
+      width: 20px;
+      height: 20px;
+      margin-left: -10px;
+      border-radius: 50%;
+      background: #fff;
+      border: 1px solid var(--line);
+    }
+  </style>
+</head>
+<body>
+  <h1>Memoria parent UI v3</h1>
+  <p class="lede">Founder-approved surfaces. Existing mascot assets only. No battery.</p>
+  <div class="grid">
+    <section class="phone" data-shot="home">
+      <p class="label">Home</p>
+      <h2 class="title">晚上好，朋友</h2>
+      <p class="caption">10 月 14 日</p>
+      <div class="banner">
+        <div class="banner-dot"></div>
+        <div>
+          <div class="banner-title">有一条需要你关注的对话</div>
+          <div class="banner-meta">豆豆 · 今天 18:20 · 点按查看</div>
+        </div>
+        <div style="margin-left:auto;color:var(--ink-3)">›</div>
+      </div>
+      <div class="card device-row">
+        <div class="tile"><img src="../assets/mascots/starlight/default.png" alt="" /></div>
+        <div>
+          <div class="card-title">豆豆的星澜</div>
+          <div class="status"><span class="dot"></span>在线 · 已绑定</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <div class="card-title">豆豆的记忆</div>
+          <div class="link">查看全部</div>
+        </div>
+        <div class="preview">孩子问起恐龙，聊了画画和周末。</div>
+        <div class="preview">今天说想养一只小狗。</div>
+      </div>
+      <div class="card">
+        <div class="toggle-row">
+          <div>
+            <div class="card-title">安全提醒</div>
+            <div class="caption">可能通过微信推送提醒，打开小程序首页会置顶显示</div>
+          </div>
+          <div class="switch"></div>
+        </div>
+        <div class="toggle-row">
+          <div>
+            <div class="card-title">夜间模式</div>
+            <div class="caption">21:00 – 次日 07:00</div>
+          </div>
+          <div class="switch"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="phone" data-shot="memory">
+      <p class="label">Memory</p>
+      <div class="hero">
+        <div>
+          <h2 class="title">豆豆的记忆</h2>
+          <p class="caption">共 2 条 · 可以随时删除</p>
+        </div>
+        <img src="../assets/mascots/starlight/happy.png" alt="" />
+      </div>
+      <p class="caption" style="margin:16px 0">孩子说的原话，我们的服务器在入库前就去掉了；机器人本身不存录音。</p>
+      <div class="card row">
+        <div class="row-body">
+          <div>孩子问起恐龙，聊了画画和周末。</div>
+          <div class="meta">10 月 13 日</div>
+        </div>
+        <div class="trash">⌫</div>
+      </div>
+      <div class="card row">
+        <div class="row-body">
+          <div>今天说想养一只小狗。</div>
+          <div class="meta">10 月 12 日</div>
+        </div>
+        <div class="trash">⌫</div>
+      </div>
+    </section>
+
+    <section class="phone" data-shot="memory-empty">
+      <p class="label">Memory empty</p>
+      <div class="hero">
+        <div>
+          <h2 class="title">豆豆的记忆</h2>
+          <p class="caption">共 0 条 · 可以随时删除</p>
+        </div>
+      </div>
+      <div class="empty">
+        <img src="../assets/mascots/starlight/thinking.png" alt="" />
+        <div class="card-title" style="margin-top:12px">星澜还没有记住豆豆的事</div>
+        <p class="caption">还没有记忆。孩子和 memoria 聊过之后，这里会出现摘要。</p>
+      </div>
+    </section>
+
+    <section class="phone" data-shot="delete-sheet">
+      <p class="label">Delete sheet</p>
+      <div class="sheet-mask">
+        <div class="sheet">
+          <div class="grab"></div>
+          <div class="card-title" style="font-size:20px">删除这条摘要？</div>
+          <div class="quote">孩子问起恐龙，聊了画画和周末。</div>
+          <p class="caption" style="margin:0 0 12px">删除后，这条记忆会从服务器上删除，无法恢复，不影响其他记忆。</p>
+          <button class="btn btn-danger" type="button">删除</button>
+          <button class="btn btn-secondary" type="button">再想想</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="phone" data-shot="settings">
+      <p class="label">Settings</p>
+      <h2 class="title">设置</h2>
+      <p class="caption">豆豆的星澜 · 在线</p>
+      <div class="card">
+        <div class="inset-row">
+          <div>
+            <div>安全提醒订阅</div>
+            <div class="caption">可能通过微信推送提醒，打开小程序首页会置顶显示</div>
+          </div>
+          <div class="switch"></div>
+        </div>
+        <div class="inset-row"><span>夜间时段</span><span style="color:var(--ink-2)">21:00 – 次日 07:00 ›</span></div>
+        <div class="inset-row"><span>每日上限</span><span style="color:var(--ink-2)">30 分钟</span></div>
+        <div class="slider"></div>
+      </div>
+      <div class="card">
+        <div class="inset-row"><span>隐私说明</span><span>›</span></div>
+        <div class="inset-row"><span>管理与导出数据</span><span>›</span></div>
+        <div class="inset-row"><span>解绑设备</span><span>›</span></div>
+        <div class="well">孩子说的原话，我们的服务器在入库前就去掉了；机器人本身不存录音。</div>
+        <div class="well">删除的数据会在 7 天内从备份中清除</div>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

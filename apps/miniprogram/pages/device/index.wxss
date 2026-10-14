@@ -6,11 +6,28 @@
   padding-left: 32rpx;
   padding-right: 32rpx;
   padding-bottom: 8rpx;
-  background: #faf7f2;
+  background: var(--mp-bg);
 }
 
 .page-shell {
-  background: #faf7f2;
+  background: var(--mp-bg);
+}
+
+.device-setting-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.device-setting-copy .trial-caption {
+  margin-top: 4rpx;
+}
+
+.device-slider-block {
+  padding: 8rpx 32rpx 28rpx;
+}
+
+.device-privacy-block {
+  margin-top: var(--mp-gap-settings);
 }
 
 .device-header {

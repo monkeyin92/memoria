@@ -1,11 +1,50 @@
 /* ============================================================
-   Memoria 设计系统 v2.0（磨砂玻璃 · 氛围背景）
-   页面背景由 page-backdrop 组件铺满视口；卡片、按钮、胶囊为半透明玻璃材质。
-   全部页面统一浅色主题：page-backdrop 用 mist，深墨色文字 + 浅色玻璃，品牌深蓝 / 青绿点缀。
-   文字色按 WCAG AA 取值：正文在 mist 顶部最深处 ≥ 4.5:1，辅助色在玻璃卡上 ≥ 4.5:1。
-   px 按 375 屏宽 1:2 换算为 rpx。
+   Memoria parent UI v3 tokens (source: design/miniprogram-v1/spec.md).
+   No gradients, glass, or shadows on parent surfaces. 375pt → rpx ×2.
+   Legacy glass tokens below remain for non-redesigned pages.
    ============================================================ */
 page {
+  --mp-bg: #faf5ec;
+  --mp-surface: #fffdf9;
+  --mp-accent: #e2702a;
+  --mp-accent-press: #c75f1f;
+  --mp-accent-soft: #fbe6d4;
+  --mp-accent-wash: #fdf1e6;
+  /* Red only for delete-confirm button text and error text. Never links or icons. */
+  --mp-danger: #c8423a;
+  --mp-danger-outline: #dcd2c5;
+  --mp-ink: #2b241f;
+  --mp-ink-2: #6e635a;
+  --mp-ink-3: #a39789;
+  --mp-line: #efe6da;
+  --mp-fill: #f2eadf;
+  --mp-scrim: rgba(43, 36, 31, 0.42);
+  --mp-radius-card: 40rpx;
+  --mp-radius-banner: 32rpx;
+  --mp-radius-inset: 28rpx;
+  --mp-radius-icon: 24rpx;
+  --mp-radius-mascot: 36rpx;
+  --mp-radius-sheet: 56rpx;
+  --mp-radius-pill: 999rpx;
+  --mp-pad-page: 40rpx;
+  --mp-gap-card: 32rpx;
+  --mp-gap-settings: 24rpx;
+  --mp-pad-card: 40rpx;
+  --mp-tap: 88rpx;
+  --mp-type-display: 48rpx;
+  --mp-type-nav: 36rpx;
+  --mp-type-sheet: 40rpx;
+  --mp-type-card: 34rpx;
+  --mp-type-body: 30rpx;
+  --mp-type-button: 32rpx;
+  --mp-type-caption: 26rpx;
+  --mp-type-meta: 24rpx;
+  --mp-type-tab: 22rpx;
+  --mp-lh-display: 64rpx;
+  --mp-lh-card: 48rpx;
+  --mp-lh-body: 44rpx;
+  --mp-lh-caption: 36rpx;
+
   --brand-deep: #172f43;
   --brand-deep-hover: #1f3d55;
   --brand-teal: #285c5e;
@@ -40,7 +79,7 @@ page {
   min-height: 100%;
   color: #16191c;
   color: var(--text-primary);
-  background: #fef6e6;
+  background: var(--mp-bg);
   font-family: "PingFang SC", "HarmonyOS Sans SC", "Source Han Sans SC", "Noto Sans SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   font-size: 28rpx;
   line-height: 1.6;

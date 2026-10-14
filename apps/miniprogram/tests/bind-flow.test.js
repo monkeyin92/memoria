@@ -193,7 +193,7 @@ test("app registers binding, device, and onboarding pages", () => {
   assert.ok(appConfig.pages.includes("pages/device-onboarding/index"));
   assert.deepEqual(
     appConfig.tabBar.list.map((item) => item.text),
-    ["首页", "回顾", "伙伴", "设备", "我的"],
+    ["首页", "回顾", "角色", "设备", "我的"],
   );
 });
 
@@ -764,7 +764,7 @@ test("the finish step shows the companion picked while binding, not a generic ro
   const template = fs.readFileSync(path.join(root, "pages/bind/index.wxml"), "utf8");
   const done = template.slice(template.indexOf("<!-- 步骤 5"));
   assert.match(done, /<face-badge role="\{\{personaOptions\[personaIndex\]\.id\}\}" size="xl"/);
-  assert.match(done, /陪伴伙伴<\/text><text class="summary-value">\{\{personaOptions\[personaIndex\]\.name\}\}/);
+  assert.match(done, /AI 角色<\/text><text class="summary-value">\{\{personaOptions\[personaIndex\]\.name\}\}/);
   assert.doesNotMatch(done, /<device-screen/);
   const components = JSON.parse(fs.readFileSync(path.join(root, "pages/bind/index.json"), "utf8")).usingComponents;
   assert.ok(components["face-badge"]);

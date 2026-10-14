@@ -20,14 +20,34 @@ const CHILD_ARCHIVE_CONSENT = Object.freeze({
   policyVersion: "child-archive-v1",
 });
 
-const PRIVACY_LINE = "我们自己的服务器不保存录音和原话。摘要 30 天后自动删除。";
+const PRIVACY_LINE =
+  "孩子说的原话，我们的服务器在入库前就去掉了；机器人本身不存录音。";
+const BACKUP_RETENTION_LINE = "删除的数据会在 7 天内从备份中清除";
 const EMPTY_RECENT =
   "还没有记忆。孩子和 memoria 聊过之后，这里会出现摘要。";
 const EMPTY_ARCHIVE_ON = "开启后，孩子聊到的兴趣会出现在这里。";
 const CONSENT_OFF_DIALOG =
   "关闭后不会再写入新内容。已有内容可以继续查看和删除。";
-const DELETE_CONFIRM = "删除后无法恢复";
+const DELETE_CONFIRM =
+  "删除后，这条记忆会从服务器上删除，无法恢复，不影响其他记忆。";
+const DELETE_KEEP = "再想想";
 const CLEARED_TOAST = "已清空，剩余 0 条";
+
+function memoryHeaderTitle(_companionName, childName) {
+  const child = childName || "孩子";
+  return `${child}的记忆`;
+}
+
+function memoryHeaderCaption(count) {
+  const n = Number.isInteger(count) && count >= 0 ? count : 0;
+  return `共 ${n} 条 · 可以随时删除`;
+}
+
+function memoryEmptyTitle(companionName, childName) {
+  const companion = companionName || "角色";
+  const child = childName || "孩子";
+  return `${companion}还没有记住${child}的事`;
+}
 
 function firstItems(payload) {
   if (Array.isArray(payload?.items)) return payload.items;
@@ -173,9 +193,11 @@ module.exports = {
   ARCHIVE_FIELD_LABELS,
   ARCHIVE_FIELD_ORDER,
   CHILD_ARCHIVE_CONSENT,
+  BACKUP_RETENTION_LINE,
   CLEARED_TOAST,
   CONSENT_OFF_DIALOG,
   DELETE_CONFIRM,
+  DELETE_KEEP,
   EMPTY_ARCHIVE_ON,
   EMPTY_RECENT,
   PRIVACY_LINE,
@@ -184,6 +206,9 @@ module.exports = {
   boundChildFromManifest,
   displayDateLabel,
   groupArchiveByCategory,
+  memoryEmptyTitle,
+  memoryHeaderCaption,
+  memoryHeaderTitle,
   normalizeChildArchive,
   normalizeSessionSummaries,
 };

@@ -44,7 +44,7 @@ test("every companion ships a compact packed set of expression frames", () => {
     assert.equal(companion.image, undefined);
   }
   assert.match(faceBadgeTemplate, /src="\/assets\/mascots\/\{\{roleId\}\}\/\{\{item\}\}\.png"/);
-  assert.match(faceBadgeTemplate, /src="\/assets\/mascots\/\{\{roleId\}\}\/default\.png"/);
+  assert.match(faceBadgeTemplate, /src="\/assets\/mascots\/\{\{roleId\}\}\/\{\{mood\}\}\.png"/);
   const { FRAMES } = faceBadgeFrames();
   assert.deepEqual(FRAMES, MASCOT_MOODS);
   // 路径是动态拼接的，ignoreUploadUnusedFiles 看不到引用，必须显式 include。
@@ -71,13 +71,17 @@ test("the full expression frame set stays out of the package and out of pages", 
   }
 });
 
-test("trial home and device drop companion mascots from the status surface", () => {
+test("v3 home uses one face-badge on the device card; settings keep none", () => {
   const home = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
   const device = fs.readFileSync(path.join(root, "pages/device/index.wxml"), "utf8");
-  assert.doesNotMatch(home, /<face-badge/);
+  const memory = fs.readFileSync(path.join(root, "pages/child-memory/index.wxml"), "utf8");
+  assert.match(home, /home-device-card[\s\S]*<face-badge/);
+  assert.equal((home.match(/<face-badge/g) || []).length, 1);
   assert.doesNotMatch(device, /<face-badge/);
   assert.doesNotMatch(home, /<device-screen/);
   assert.doesNotMatch(device, /<device-screen/);
   assert.match(home, /home-device-card/);
   assert.match(device, /trialSettingsVisible|trial-inset/);
+  assert.match(memory, /<face-badge/);
+  assert.match(memory, /mood="thinking"|mood="happy"/);
 });

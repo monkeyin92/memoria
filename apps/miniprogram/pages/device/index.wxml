@@ -51,21 +51,14 @@
         <text class="trial-caption">{{devicePlaceName}} · {{online ? '在线' : '离线'}}</text>
 
         <view wx:if="{{trialSettingsVisible}}" class="trial-inset">
-          <view class="trial-inset-row" bindtap="openLimitsSheet">
-            <text class="trial-inset-label">夜间时段</text>
-            <text class="trial-inset-value">{{sessionLimits.quietHoursLabel || '21:00 – 07:00'}} ›</text>
-          </view>
-          <picker range="{{limitsMinuteOptions}}" value="{{limitsMinuteIndex}}" bindchange="onTrialDailyCapChange">
-            <view class="trial-inset-row">
-              <text class="trial-inset-label">每日上限</text>
-              <text class="trial-inset-value">{{sessionLimits.maxSessionLabel || '30 分钟'}} ›</text>
-            </view>
-          </picker>
           <view class="trial-inset-row">
-            <text class="trial-inset-label">安全提醒订阅</text>
+            <view class="device-setting-copy">
+              <text class="trial-inset-label">安全提醒订阅</text>
+              <text class="trial-caption">{{safetySubscribeHelper}}</text>
+            </view>
             <switch
               checked="{{safetySubscribeKnown && safetySubscribeOn}}"
-              color="#3CB8A0"
+              color="#E2702A"
               disabled="{{!safetySubscribeKnown || safetySubscribeBusy}}"
               bindchange="onSafetySubscribeChange"
             />
@@ -75,6 +68,45 @@
             class="trial-caption trial-inset-caption {{safetySubscribeKnown ? '' : 'is-action'}}"
             bindtap="retrySafetySubscribeState"
           >{{safetySubscribeOffCaption}}</text>
+          <view class="trial-inset-row" bindtap="openLimitsSheet">
+            <text class="trial-inset-label">夜间时段</text>
+            <text class="trial-inset-value">{{sessionLimits.quietHoursLabel || '21:00 – 07:00'}} ›</text>
+          </view>
+          <view class="trial-inset-row">
+            <text class="trial-inset-label">每日上限</text>
+            <text class="trial-inset-value">{{sessionLimits.maxSessionLabel || '30 分钟'}}</text>
+          </view>
+          <view class="device-slider-block">
+            <slider
+              min="{{limitsSliderMin}}"
+              max="{{limitsSliderMax}}"
+              step="{{limitsSliderStep}}"
+              value="{{sessionLimits.maxSessionMinutes || 30}}"
+              disabled="{{limitsSaving}}"
+              bindchange="onTrialDailyCapSlider"
+              activeColor="#E2702A"
+              backgroundColor="#F2EADF"
+              block-color="#ffffff"
+              block-size="24"
+            />
+          </view>
+        </view>
+
+        <view class="trial-inset device-privacy-block">
+          <view class="trial-inset-row" bindtap="openPrivacyNote">
+            <text class="trial-inset-label">隐私说明</text>
+            <text class="trial-inset-value">›</text>
+          </view>
+          <view wx:if="{{guardianExportVisible}}" class="trial-inset-row" bindtap="openGuardianExport">
+            <text class="trial-inset-label">管理与导出数据</text>
+            <text class="trial-inset-value">›</text>
+          </view>
+          <view class="trial-inset-row" bindtap="openUnbindSheet">
+            <text class="trial-inset-label">解绑设备</text>
+            <text class="trial-inset-value">›</text>
+          </view>
+          <view class="mp-privacy-well">{{privacyNote}}</view>
+          <view class="mp-privacy-well">{{backupRetentionLine}}</view>
         </view>
       </view>
 
@@ -186,7 +218,7 @@
           <text class="row-chevron">›</text>
         </view>
       </view>
-      <text wx:if="{{personaRows.length > 0}}" class="caption">「角色与声音」里选的伙伴会自动分配给主要使用者；想用自建人格，在这里单独分配。分配从下一次对话起生效。</text>
+      <text wx:if="{{personaRows.length > 0}}" class="caption">「角色与声音」里选的角色会自动分配给主要使用者；想用自建人格，在这里单独分配。分配从下一次对话起生效。</text>
       <text wx:if="{{personaAssignmentError && !personaSheetVisible}}" class="error-text">{{personaAssignmentError}}</text>
 
       <!-- P0-04 D3：试用设置卡已展示夜间时段与每日上限；无试用卡时保留原使用时段卡。 -->

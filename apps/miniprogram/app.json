@@ -15,19 +15,19 @@
     "pages/device-onboarding/index"
   ],
   "window": {
-    "backgroundColor": "#BAC7FA",
-    "backgroundColorTop": "#BAC7FA",
-    "backgroundColorBottom": "#FEF6E6",
+    "backgroundColor": "#FAF5EC",
+    "backgroundColorTop": "#FAF5EC",
+    "backgroundColorBottom": "#FAF5EC",
     "backgroundTextStyle": "dark",
-    "navigationBarBackgroundColor": "#BAC7FA",
+    "navigationBarBackgroundColor": "#FAF5EC",
     "navigationBarTextStyle": "black",
     "navigationBarTitleText": "Memoria"
   },
   "tabBar": {
     "custom": true,
-    "color": "#5a6167",
-    "selectedColor": "#172f43",
-    "backgroundColor": "#fef7ea",
+    "color": "#A39789",
+    "selectedColor": "#E2702A",
+    "backgroundColor": "#FFFDF9",
     "borderStyle": "white",
     "list": [
       {
@@ -40,7 +40,7 @@
       },
       {
         "pagePath": "pages/companion/index",
-        "text": "伙伴"
+        "text": "角色"
       },
       {
         "pagePath": "pages/device/index",

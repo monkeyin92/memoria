@@ -1,0 +1,9 @@
+[Unit]
+Description=Expire Memoria release freeze dumps older than 3 days
+After=local-fs.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/memoria
+ExecStart=/usr/bin/python3 /opt/memoria/ops-tools/cleanup_freeze_dumps.py --root /opt/memoria --retention-days 3 --apply
+User=root

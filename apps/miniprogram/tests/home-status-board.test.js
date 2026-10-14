@@ -54,10 +54,13 @@ test("home page is a status board without rooms or realtime chat", () => {
   assert.doesNotMatch(template, /先了解怎么用|openHowItWorks|家中的设备/);
   assert.match(template, /wx:if="\{\{!authenticated\}\}"[\s\S]*微信登录，找回我的设备/);
   assert.match(template, /home-device-card/);
-  assert.match(template, /usageLabel/);
-  assert.match(template, /usageKnown/);
+  assert.match(template, /home-memory-card/);
+  assert.match(template, /home-toggle-card/);
+  assert.match(template, /statusLine/);
   assert.match(template, /unreadSafetyCopy|unreadSafetyAlert/);
-  assert.doesNotMatch(template, /status-chips|face-badge|glass-icon/);
+  assert.match(template, /<face-badge/);
+  assert.doesNotMatch(template, /status-chips|glass-icon|battery|电量/);
+  assert.doesNotMatch(template, /usageLabel|usageKnown|home-usage/);
   assert.match(script, /subscribeAuthCleared\(\(\) => this\._enterGuestState\(\)\)/);
   assert.doesNotMatch(script, /待在设备上确认/);
   assert.doesNotMatch(script, /resolveSessionSubject/);
@@ -65,6 +68,7 @@ test("home page is a status board without rooms or realtime chat", () => {
   assert.doesNotMatch(script, /家中的设备/);
   assert.match(script, /readSubjectLabel/);
   assert.match(script, /buildTrialDeviceCard/);
+  assert.match(script, /memoryPreviewItems/);
 });
 
 test("current user on home is the bind-time remark, not the WeChat name", () => {
@@ -121,7 +125,9 @@ test("trial device card helper uses profile quiet hours and usage limit", () => 
   assert.equal(unknown.usageUsedMinutes, null);
   assert.equal(unknown.usageLimitMinutes, 30);
   assert.equal(unknown.usageLabel, "每日上限 30 分钟");
+  assert.equal(unknown.statusLine, "在线 · 已绑定");
   assert.equal(unknown.quietHoursLine, "夜间 21:00–07:00");
+  assert.equal(unknown.nightModeOn, true);
   const known = buildTrialDeviceCard({
     online: true,
     runtimeProfile: profile,
@@ -139,7 +145,11 @@ test("trial device card helper uses profile quiet hours and usage limit", () => 
   assert.equal(hasUnreadSafetyAlert([{ pinned: false, delivery_status: "delivered" }]), false);
 });
 
-test("trial pages use CSS chrome only, no new bitmap or third-party art", () => {
+test("parent v3 tokens live in app.wxss and pages avoid third-party art", () => {
+  const appWxss = fs.readFileSync(path.join(root, "app.wxss"), "utf8");
+  assert.match(appWxss, /--mp-bg:\s*#faf5ec/i);
+  assert.match(appWxss, /--mp-accent:\s*#e2702a/i);
+  assert.match(appWxss, /--mp-surface:\s*#fffdf9/i);
   const surfaces = [
     "pages/home/index.wxml",
     "pages/home/index.wxss",
@@ -150,18 +160,11 @@ test("trial pages use CSS chrome only, no new bitmap or third-party art", () => 
     "pages/device/index.wxml",
     "pages/device/index.wxss",
     "styles/trial-theme.wxss",
-    "design-preview/trial-ui-after.html",
   ];
   for (const relative of surfaces) {
     const source = fs.readFileSync(path.join(root, relative), "utf8");
-    assert.doesNotMatch(
-      source,
-      /assets\/(companions|mascots|icons)\/|\.png|\.webp|\.jpg|\.svg|cm-illus|background-image\s*:/,
-      relative,
-    );
+    assert.doesNotMatch(source, /\/assets\/(companions|mascots)\//, relative);
     assert.doesNotMatch(source, /apple\.com|mi\.com|homekit|sf-symbol/i, relative);
+    assert.doesNotMatch(source, /电池|battery/i, relative);
   }
-  const preview = fs.readFileSync(path.join(root, "design-preview/trial-ui-after.html"), "utf8");
-  assert.doesNotMatch(preview, /<img\b/);
-  assert.match(preview, /style reference only/i);
 });

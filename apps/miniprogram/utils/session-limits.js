@@ -7,6 +7,8 @@
 const QUIET_HOUR_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 // 设备按北京时间执行休息时段（agent 的 MEMORIA_TIMEZONE 默认 Asia/Shanghai）。
 const DEVICE_UTC_OFFSET_MINUTES = 8 * 60;
+// Parent UI daily-cap ceiling. Older bindings may still store 90/120; clamp on read only.
+const MAX_SESSION_MINUTES_CAP = 60;
 
 function obligationParams(profile, code) {
   const list = Array.isArray(profile?.obligations) ? profile.obligations : [];
@@ -45,15 +47,22 @@ function sessionLimitsFromProfile(profile, now = new Date()) {
   const hasMax = Number.isInteger(maxSeconds) && maxSeconds > 0;
   if (!hasQuiet && !hasMax) return null;
   const crossesMidnight = hasQuiet && minutesOf(quiet[0]) > minutesOf(quiet[1]);
+  const rawMinutes = hasMax ? Math.max(1, Math.round(maxSeconds / 60)) : null;
+  const maxSessionMinutes =
+    rawMinutes == null ? null : Math.min(MAX_SESSION_MINUTES_CAP, rawMinutes);
   return {
-    // 原始值供「修改」抽屉回填；展示用 label。
-    maxSessionMinutes: hasMax ? Math.max(1, Math.round(maxSeconds / 60)) : null,
+    // Clamped display/edit value; stored profile seconds are not rewritten.
+    maxSessionMinutes,
     quietStart: hasQuiet ? quiet[0] : "",
     quietEnd: hasQuiet ? quiet[1] : "",
     quietHoursLabel: hasQuiet ? `${quiet[0]} – ${crossesMidnight ? "次日 " : ""}${quiet[1]}` : "",
     inQuietHours: hasQuiet ? inQuietHours(quiet, now) : false,
-    maxSessionLabel: hasMax ? `${Math.max(1, Math.round(maxSeconds / 60))} 分钟` : "",
+    maxSessionLabel: maxSessionMinutes != null ? `${maxSessionMinutes} 分钟` : "",
   };
 }
 
-module.exports = { sessionLimitsFromProfile, inQuietHours };
+module.exports = {
+  MAX_SESSION_MINUTES_CAP,
+  sessionLimitsFromProfile,
+  inQuietHours,
+};

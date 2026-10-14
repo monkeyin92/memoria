@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Memoria freeze-dump cleanup daily
+
+[Timer]
+OnBootSec=30min
+OnUnitActiveSec=24h
+RandomizedDelaySec=20min
+Persistent=true
+Unit=memoria-freeze-dump-cleanup.service
+
+[Install]
+WantedBy=timers.target

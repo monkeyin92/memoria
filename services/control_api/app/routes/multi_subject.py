@@ -953,7 +953,7 @@ class SessionLimitsRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    max_session_minutes: int | None = Field(default=None, ge=1, le=240)
+    max_session_minutes: int | None = Field(default=None, ge=15, le=60)
     quiet_hours: QuietHoursRequest | None = None
 
 

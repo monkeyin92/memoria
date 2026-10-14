@@ -206,6 +206,10 @@ test("settings toggle loads remaining > 0 as on and opt_out clears the ledger", 
   assert.deepEqual(offApi.calls.recorded, [
     { templateId: "tmpl-crisis", result: "opt_out", loginCode: "" },
   ]);
+  assert.equal(
+    guardianPush.SAFETY_SUBSCRIBE_HELPER,
+    "可能通过微信推送提醒，打开小程序首页会置顶显示",
+  );
   assert.equal(guardianPush.SAFETY_SUBSCRIBE_OFF_TITLE, "关闭安全提醒推送？");
   assert.equal(
     guardianPush.SAFETY_SUBSCRIBE_OFF_CONFIRM,
@@ -246,11 +250,16 @@ test("device settings toggle uses ledger state and real opt-out, not UI-only off
   const script = fs.readFileSync(path.join(root, "pages/device/index.js"), "utf8");
   const template = fs.readFileSync(path.join(root, "pages/device/index.wxml"), "utf8");
   assert.match(template, /安全提醒订阅/);
+  assert.match(template, /safetySubscribeHelper|可能通过微信推送提醒/);
   assert.match(template, /safetySubscribeOffCaption/);
   assert.match(template, /safetySubscribeKnown && safetySubscribeOn/);
   assert.match(template, /disabled="\{\{!safetySubscribeKnown \|\| safetySubscribeBusy\}\}"/);
   assert.match(template, /bindtap="retrySafetySubscribeState"/);
   assert.match(template, /bindchange="onSafetySubscribeChange"/);
+  assert.match(template, /onTrialDailyCapSlider|每日上限/);
+  assert.match(template, /隐私说明/);
+  assert.match(template, /解绑设备/);
+  assert.match(template, /mp-privacy-well|privacyNote/);
   assert.match(script, /loadSafetySubscribeState/);
   assert.match(script, /safetySubscribeView/);
   assert.match(script, /retrySafetySubscribeState/);

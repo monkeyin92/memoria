@@ -68,12 +68,21 @@ SESSION_SUMMARY_USER_PROMPT_PREFIX: Final = """
 硬性规则：
 - 用“孩子”做主语或隐含主语，例如“聊了公园里的黄色小狗”。
 - 不得引用或复述孩子的原话，不得截取原文片段。
+- 提到其他人时只写昵称（如“小明”），不要写全名、学校全称或具体住址门牌。
 - 不要出现老师、同学、班主任、校长的姓名，也不要写具体健康细节（生病、医院、吃药等）。
 - 只写聊天里出现过的话题，不编造。
 - 全文不超过 200 字。
 
 孩子说过的话（只供你理解，勿照搬）：
 """.strip()
+
+_ADDRESS_OR_SCHOOL_NAME_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:"
+    r"[\u4e00-\u9fff]{2,12}(?:小学|中学|大学|幼儿园)"
+    r"|[\u4e00-\u9fff]{1,12}(?:路|街|巷|弄)\d{1,4}号"
+    r"|[\u4e00-\u9fff]{2,8}市[\u4e00-\u9fff]{1,8}区"
+    r")"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +183,8 @@ def accept_parent_summary(text: str, turns: Sequence[SessionTurn]) -> str | None
     if any(term in cleaned for term in _HEALTH_TERMS):
         return None
     if _NAMED_ROLE_RE.search(cleaned) is not None:
+        return None
+    if _ADDRESS_OR_SCHOOL_NAME_RE.search(cleaned) is not None:
         return None
     if copied_transcript_fragments(cleaned, turns):
         return None

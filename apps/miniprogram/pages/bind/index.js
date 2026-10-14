@@ -26,7 +26,7 @@ const {
   requiresCrisisSubscribeBeforeBind,
 } = require("../../utils/crisis-alerts");
 
-const SESSION_MINUTE_OPTIONS = [15, 30, 45, 60, 90, 120];
+const SESSION_MINUTE_OPTIONS = [15, 30, 45, 60];
 const FAMILY_MEMBER_AGE_BANDS = ["under_14", "14_17", "adult"];
 const MEMORY_LEVEL_OPTIONS = [
   { value: "personal", label: "完整个人记忆" },

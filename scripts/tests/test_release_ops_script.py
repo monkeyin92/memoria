@@ -79,6 +79,18 @@ def test_finish_fails_only_on_unhealthy_or_starting(line: str, blocks: bool) -> 
     assert found is blocks
 
 
+def test_freeze_keeps_sqlite_snapshot_in_cutover_and_prunes_old_dumps() -> None:
+    freeze = _function("step_freeze")
+    assert 'docker cp "memoria-control-api-1:/data/memoria.pre-$TAG.sqlite3" "$S/memoria.pre-$TAG.sqlite3"' in freeze
+    assert 'rm -f "/data/memoria.pre-$TAG.sqlite3"' in freeze
+    assert "cleanup_freeze_dumps" in freeze
+    cleanup = _function("cleanup_freeze_dumps")
+    assert "cleanup_freeze_dumps.py" in cleanup
+    assert "--retention-days 3" in cleanup
+    assert "--apply" in cleanup
+    assert "cleanup-freeze-dumps" in _function("main")
+
+
 def test_env_checks_speaker_authority_for_the_bridge() -> None:
     env_step = _function("step_env")
     guard = _function("assert_speaker_authority_disabled")

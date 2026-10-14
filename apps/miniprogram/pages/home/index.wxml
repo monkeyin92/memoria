@@ -58,21 +58,69 @@
         class="trial-banner"
         bindtap="openUnreadSafety"
       >
-        <text>{{unreadSafetyCopy}}</text>
+        <view class="trial-banner-dot"></view>
+        <view class="trial-banner-copy">
+          <text class="trial-banner-title">{{unreadSafetyCopy}}</text>
+          <text class="trial-banner-meta">{{unreadSafetyMeta}}</text>
+        </view>
         <text class="trial-banner-chevron">›</text>
       </view>
 
       <view class="trial-card home-device-card" bindtap="openDevice">
-        <view class="home-device-top">
+        <view class="mp-mascot-tile">
+          <face-badge role="{{heroRoleId}}" size="tile" mood="default" plain></face-badge>
+        </view>
+        <view class="home-device-copy">
           <text class="home-device-name">{{devicePlaceName}}</text>
           <view class="trial-status-pill {{online ? '' : 'is-off'}}">
             <view class="trial-status-dot"></view>
-            <text>{{statusPill}}</text>
+            <text>{{statusLine}}</text>
           </view>
         </view>
-        <text wx:if="{{usageKnown}}" class="home-usage-number">{{usageUsedMinutes}}</text>
-        <text class="home-usage-label {{usageKnown ? '' : 'home-usage-label-solo'}}">{{usageLabel}}</text>
-        <text class="trial-caption home-quiet">{{quietHoursLine}}</text>
+      </view>
+
+      <view wx:if="{{showChildMemory}}" class="trial-card home-memory-card">
+        <view class="home-memory-head">
+          <text class="home-card-title">{{childMemoryName}}的记忆</text>
+          <text class="trial-link" bindtap="openChildMemory">查看全部</text>
+        </view>
+        <view wx:if="{{memoryPreviews.length}}" class="home-memory-list">
+          <view
+            wx:for="{{memoryPreviews}}"
+            wx:key="recordId"
+            class="home-memory-preview"
+          >
+            <text class="home-memory-text">{{item.text}}</text>
+          </view>
+        </view>
+        <text wx:else class="trial-caption home-memory-empty">还没有摘要。聊过之后会出现在这里。</text>
+      </view>
+
+      <view wx:if="{{showSafetyNightCard}}" class="trial-card home-toggle-card">
+        <view class="home-toggle-row">
+          <view class="home-toggle-copy">
+            <text class="home-card-title">安全提醒</text>
+            <text class="trial-caption">{{safetySubscribeHelper}}</text>
+          </view>
+          <switch
+            checked="{{safetySubscribeKnown && safetySubscribeOn}}"
+            color="#E2702A"
+            disabled="{{!safetySubscribeKnown || safetySubscribeBusy}}"
+            bindchange="onSafetySubscribeChange"
+          />
+        </view>
+        <view class="home-toggle-row" bindtap="openNightSettings">
+          <view class="home-toggle-copy">
+            <text class="home-card-title">夜间模式</text>
+            <text class="trial-caption">{{quietHoursLabel}}</text>
+          </view>
+          <switch
+            checked="{{nightModeOn}}"
+            color="#E2702A"
+            disabled="{{nightToggleBusy}}"
+            catchchange="onNightModeChange"
+          />
+        </view>
       </view>
     </block>
 
