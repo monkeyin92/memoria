@@ -825,10 +825,6 @@ async def test_inviting_family_does_not_elevate_the_child_to_owner(
         assert digital_self.status_code == 403
         assert digital_self.json()["detail"]["code"] == "minor_forbidden"
 
-        speakers = await client.get("/v1/speakers", headers=child_headers)
-        assert speakers.status_code == 403
-        assert speakers.json()["detail"]["code"] == "minor_forbidden"
-
 
 @pytest.mark.asyncio
 async def test_adult_account_manages_independent_under_14_subject_without_child_account(

@@ -17,6 +17,7 @@ from services.common.fixed_safety_scripts import (
     CRISIS_SELF_SCRIPT,
     SUPPORT_RELAY_SCRIPT,
     SUPPORT_VICTIM_SCRIPT,
+    FixedSafetyScript,
 )
 
 
@@ -90,15 +91,17 @@ async def test_fence_mismatch_fallback_still_speaks_fixed_safety_replies(
     assert response_plan_sidecar.applies(planner, runtime, runtime.fence)
     pipeline = _pipeline(runtime, planner)
     fence = await pipeline.prepare_committed_turn(query)
-    spoken = [
-        token
-        async for token in pipeline.stream(
-            LanguageModelRequest(
-                user_text=query,
-                cancellation=CancellationContext.capture(fence),
-            )
+    spoken: list[str] = []
+    async for token in pipeline.stream(
+        LanguageModelRequest(
+            user_text=query,
+            cancellation=CancellationContext.capture(fence),
         )
-    ]
+    ):
+        if isinstance(token, FixedSafetyScript):
+            spoken.append(token.display)
+        else:
+            spoken.append(token)
     assert "".join(spoken) == expected
     assert "模型不该开口" not in "".join(spoken)
     await runtime.close()
