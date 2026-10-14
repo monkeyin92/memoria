@@ -19,8 +19,6 @@ function reasonText(reason) {
   }[reason] || "登录后即可继续刚才的操作。";
 }
 
-// consent: facts, guardian consent and phone authorization.
-// profile: first registration only, asks how to address the user before the held phone code is spent.
 Page({
   data: {
     statusBarStyle: statusBarStyle(),

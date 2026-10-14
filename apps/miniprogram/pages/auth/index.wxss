@@ -94,7 +94,6 @@
   text-align: center;
 }
 
-/* A 44px tap target whose label lands where the design's 16px-gap text line sits. */
 .auth-decline {
   display: flex;
   align-items: center;

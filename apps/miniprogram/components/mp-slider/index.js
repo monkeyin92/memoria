@@ -22,7 +22,6 @@ Component({
   },
   data: { percent: 0 },
   observers: {
-    // A released value stays on screen while the parent saves (disabled) and yields to the stored value after.
     "value, min, max, disabled"(value, min, max, disabled) {
       const held = this._held;
       if (held && (!held.released || disabled)) return;

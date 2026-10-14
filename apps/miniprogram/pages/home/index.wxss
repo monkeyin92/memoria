@@ -98,7 +98,6 @@
   flex-shrink: 0;
   width: 40px;
   height: 40px;
-  /* Measured from the tab-page top padding so the avatar always starts 4px below the capsule. */
   margin-top: calc(var(--mp-capsule-bottom) - var(--mp-status-bar) - var(--mp-tab-top) + 4px);
   border-radius: 50%;
   background: var(--mp-surface);

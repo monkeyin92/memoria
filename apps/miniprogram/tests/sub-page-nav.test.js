@@ -18,7 +18,6 @@ const OWNING_TAB = {
   "device-onboarding": "/pages/device/index",
 };
 
-// Auth's consent step leaves through 暂不同意 like the design; its profile step has the back button.
 const BACK_BUTTON_STATE = { auth: { step: "profile" } };
 
 function readPage(page, ext) {
@@ -45,6 +44,7 @@ for (const [page, tab] of Object.entries(OWNING_TAB)) {
       const html = renderPage(`pages/${page}/index`, { ...harness.page.data, ...BACK_BUTTON_STATE[page] });
       assert.doesNotMatch(html, /class="wx-navbar"/);
       assert.match(html, /class="[^"]*\bsub-page\b[^"]*" style="--mp-status-bar: 47px; --mp-capsule-bottom: 83px;"/);
+      assert.match(html, /padding-top: calc\(var\(--mp-capsule-bottom, calc\(var\(--mp-status-bar, 20px\) \+ 40px\)\) - 36px\)/);
       assert.match(html, /class="nav-back"[^>]*><wx-image class="nav-back-icon"><img src="[^"]*\/assets\/ui\/v4\/back-strong\.svg"/);
       assert.doesNotMatch(readPage(page, "wxml"), /back-row|‹/);
     } finally {

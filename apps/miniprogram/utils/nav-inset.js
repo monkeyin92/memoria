@@ -1,5 +1,4 @@
-// Tab pages draw their own large title under navigationStyle "custom", so they
-// need the status bar height. env(safe-area-inset-top) reads 0 on Android WeChat.
+// env(safe-area-inset-top) reads 0 on Android WeChat.
 function statusBarHeight() {
   try {
     const info = typeof wx.getWindowInfo === "function" ? wx.getWindowInfo() : wx.getSystemInfoSync();

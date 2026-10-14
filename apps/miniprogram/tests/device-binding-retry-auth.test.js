@@ -290,6 +290,32 @@ test("device retry 恢复登录后正常同步", async () => {
   restore();
 });
 
+test("device companion follows the account profile companion_id", async () => {
+  const state = makeAuth();
+  const restore = stubApi({
+    ...authStubs(state),
+    getProfile: async () => ({ user_id: "person_owner" }),
+    syncDeviceBindings: async () => ({
+      status: "ready",
+      binding: readyBinding(),
+      bindings: [readyBinding()],
+    }),
+    getRuntimeProfile: async () => ({
+      persona: { persona_id: "taoxi", version: 1 },
+    }),
+    getActivationStatus: async () => null,
+    getDeviceSettings: async () => null,
+    getDeviceDiagnostics: async () => null,
+    getWakeWordCatalog: async () => ({ items: [] }),
+  });
+  await withPage("../pages/device/index", async (page) => {
+    await page.loadDevice();
+    assert.equal(page.data.heroRoleId, "starlight");
+    assert.equal(page.data.personaName, "星澜");
+  });
+  restore();
+});
+
 test("profile retry 未授权时进入游客态，旧同步迟到不得回填", async () => {
   const state = makeAuth();
   const deferred = createDeferred();

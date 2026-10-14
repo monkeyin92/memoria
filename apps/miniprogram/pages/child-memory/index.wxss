@@ -161,7 +161,6 @@
   line-height: normal;
 }
 
-/* Negative margins keep a 44px tap target without pushing the row taller than the design's. */
 .cm-delete {
   display: flex;
   align-items: center;

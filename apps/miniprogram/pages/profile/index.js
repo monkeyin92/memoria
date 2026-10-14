@@ -653,7 +653,6 @@ Page({
     return false;
   },
 
-  // The privacy page manages raw-audio consent and needs that capability; everyone else still gets the guideline.
   openPrivacy() {
     if (this.data.rawVoiceEntryAllowed) {
       wx.navigateTo({ url: "/pages/privacy/index" });

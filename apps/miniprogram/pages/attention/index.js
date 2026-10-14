@@ -4,8 +4,6 @@ const { leavePage } = require("../../utils/nav-back");
 const { loadPinnedCrisisAlerts } = require("../../utils/crisis-alerts");
 const { alertTimeLabel } = require("../../utils/trial-device-card");
 
-// One pinned safety alert. The conversation itself is never shown; the alert is re-read
-// so a stale link lands on an honest empty state instead of an old message.
 Page({
   data: {
     statusBarStyle: statusBarStyle(),

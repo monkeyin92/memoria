@@ -1,4 +1,3 @@
-// Secondary pages draw their own round back button under custom navigation.
 // A page opened from a share card or scan sits alone in the stack, so going
 // back has to land on the tab or page that owns it instead.
 const TAB_PAGES = Object.freeze([

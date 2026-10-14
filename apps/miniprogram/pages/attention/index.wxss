@@ -1,7 +1,6 @@
 @import "../../styles/trial-theme.wxss";
 
 .attention-card {
-  /* The design's back button sits 1px lower than the capsule-centred one, so its card starts 1px later. */
   margin-top: 9px;
   padding: 24px 24px 16px;
   border-radius: var(--mp-radius-card-xl);

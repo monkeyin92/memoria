@@ -1,15 +1,22 @@
 #!/usr/bin/env node
 /*
  * Bytes of the files the mini program ships, before the upload minifier.
- * Mirrors project.config.example.json packOptions.ignore plus the folders the
- * runtime never loads.
  *   node scripts/package-size.js
  */
 const fs = require("node:fs");
 const path = require("node:path");
 
 const ROOT = path.join(__dirname, "..");
-const SKIP_DIRS = new Set(["tests", "design-preview", "scripts", "node_modules", "assets/companions"]);
+
+function ignoredUploadFolders() {
+  const config = JSON.parse(fs.readFileSync(path.join(ROOT, "project.config.example.json"), "utf8"));
+  const folders = (config.packOptions?.ignore || [])
+    .filter((entry) => entry && entry.type === "folder" && typeof entry.value === "string")
+    .map((entry) => entry.value);
+  return new Set([...folders, "scripts", "node_modules"]);
+}
+
+const SKIP_DIRS = ignoredUploadFolders();
 const SKIP_FILE = /^(package(-lock)?\.json|project\.config.*\.json)$|\.md$/;
 const MAIN_PACKAGE_LIMIT = 2 * 1024 * 1024;
 

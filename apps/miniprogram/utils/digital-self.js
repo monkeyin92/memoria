@@ -1,5 +1,3 @@
-// Labels for the growth overview and digital-self versions. Keys mirror
-// services/growth/policy.py and services/digital_self/domain.py.
 const DIMENSION_LABELS = Object.freeze({
   life_chapters: "人生阶段",
   important_people: "重要的人",

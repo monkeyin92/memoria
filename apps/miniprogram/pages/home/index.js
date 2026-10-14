@@ -27,7 +27,6 @@ const {
   pinnedAlertMeta,
 } = require("../../utils/trial-device-card");
 
-// Ring fill only when a real used-minutes tally exists; otherwise the ring is an empty track.
 function usageRingPercent({ usageKnown, usageUsedMinutes, usageLimitMinutes }) {
   if (usageKnown !== true || !(usageLimitMinutes > 0)) return 0;
   return Math.max(0, Math.min(100, Math.round((usageUsedMinutes / usageLimitMinutes) * 100)));
@@ -162,7 +161,6 @@ Page({
     this.loadHome();
   },
 
-  // The guest login screen is full-bleed like the design; tabs appear once there is a dashboard.
   _syncTabBar(authenticated) {
     if (typeof this.getTabBar === "function" && this.getTabBar()) {
       this.getTabBar().setData({ selected: 0, hidden: !authenticated });

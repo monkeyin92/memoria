@@ -5,8 +5,6 @@
  */
 const CONTROL_API_BASE_URL = "https://aginice.cn:8443/memoria-api";
 
-// WeChat subscription push is paused. Keep subscribe helpers, hide their UI, and
-// do not require subscribe during bind while this flag is false.
 const SUBSCRIPTION_PUSH_ENABLED = false;
 
 module.exports = {

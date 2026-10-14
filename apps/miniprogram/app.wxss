@@ -78,7 +78,6 @@ page {
   min-height: 100%;
   color: var(--mp-ink);
   background: var(--mp-bg);
-  /* Inter and Noto Sans CJK SC are the design's stand-ins for SF and PingFang; phones with PingFang or HarmonyOS Sans never reach them. */
   font-family: "PingFang SC", "HarmonyOS Sans SC", "Inter", "Noto Sans CJK SC", "Source Han Sans SC", "Noto Sans SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   font-size: var(--mp-type-body);
   line-height: normal;
@@ -149,16 +148,14 @@ button { font-family: inherit; }
   width: 24px;
   height: 24px;
 }
-/* The capsule spans status bar +4px to +36px, so a 40px back button starting at the status bar edge shares its centre line. */
 .page-shell.sub-page,
 .trial-page.sub-page {
-  padding-top: var(--mp-status-bar, 20px);
+  padding-top: calc(var(--mp-capsule-bottom, calc(var(--mp-status-bar, 20px) + 40px)) - 36px);
 }
 .sub-page > .nav-back {
   margin: 0 0 8px;
 }
 
-/* ---------- 卡片 ---------- */
 .l2-card,
 .card,
 .list,
@@ -198,7 +195,6 @@ button { font-family: inherit; }
 }
 .card-lead .l2-card-title { flex: 1; min-width: 0; }
 
-/* ---------- 角色卡（角色页与绑定页共用） ---------- */
 .role-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -314,7 +310,6 @@ button[disabled] {
 .button-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
 .button-row button { flex: 1 1 120px; min-width: 0; }
 
-/* ---------- inset-grouped 列表 ---------- */
 .list {
   margin-top: var(--mp-gap-card);
   padding: 0 var(--mp-pad-card);
@@ -516,7 +511,6 @@ button[disabled] {
   box-shadow: inset 0 0 0 4px var(--mp-surface);
 }
 
-/* ---------- 区块 ---------- */
 .foot-link { margin-top: 12px; color: var(--mp-ink-2); font-size: var(--mp-type-caption); background: transparent; }
 .privacy-note {
   display: block;
@@ -552,7 +546,6 @@ button[disabled] {
 .fold-summary { display: block; padding: 12px 0; color: var(--mp-ink-2); font-size: var(--mp-type-caption); }
 .diagnostic { padding-bottom: 12px; color: var(--mp-ink-2); font-size: var(--mp-type-meta); line-height: var(--mp-lh-caption); }
 
-/* ---------- 分段器 ---------- */
 .seg {
   display: flex;
   padding: 4px;
@@ -642,7 +635,6 @@ button[disabled] {
 .modal-title { display: block; font-size: var(--mp-type-title); font-weight: 700; text-align: center; }
 .modal-desc { display: block; margin-top: 8px; color: var(--mp-ink-2); font-size: var(--mp-type-body); line-height: var(--mp-lh-body); text-align: center; }
 
-/* ---------- 步骤点 ---------- */
 .dots { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 12px 0; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mp-line); }
 .dot-done { background: var(--mp-accent-soft); }

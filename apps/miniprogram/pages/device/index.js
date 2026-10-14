@@ -934,12 +934,9 @@ Page({
       );
       const subjectAliasLabel = readSubjectLabel(binding);
       const speakerLabel = currentUserLabel(profile, candidates);
-      // 与首页、角色页同源：以账号选定的角色为准；Runtime Profile 读不到时也不回落成默认角色。
       const accountProfile =
         accountProfileResult.status === "fulfilled" ? accountProfileResult.value : null;
-      const companion = companionById(
-        accountProfile?.companion_id || profile?.persona?.persona_id,
-      );
+      const companion = companionById(accountProfile?.companion_id);
       const personaOptions = personaOptionItems(
         personasResult.status === "fulfilled" ? personasResult.value : null,
       );

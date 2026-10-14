@@ -19,11 +19,6 @@ function parseArgs(argv) {
   return out;
 }
 
-function toFileUrl(file) {
-  const abs = path.resolve(file);
-  return `file://${abs}`;
-}
-
 async function main() {
   const args = parseArgs(process.argv);
   if (!args.actual || !args.design || !args.out) {
@@ -58,25 +53,6 @@ async function main() {
       height,
       deviceScaleFactor: 1,
     });
-    const actualUrl = toFileUrl(args.actual);
-    const designUrl = toFileUrl(args.design);
-    const html = `<!doctype html><html><head><meta charset="utf-8"><style>
-      html,body{margin:0;padding:0;background:#E6E6EC}
-      .row{display:flex;gap:${gap}px;width:${width * 2 + gap}px;height:${height}px}
-      .pane{width:${width}px;height:${height}px;overflow:hidden;background:#F4F4F7;position:relative}
-      img{width:${width}px;height:${height}px;object-fit:cover;display:block}
-      canvas{display:none}
-    </style></head><body>
-      <div class="row">
-        <div class="pane"><img id="actual" src="${actualUrl}"></div>
-        <div class="pane"><img id="design" src="${designUrl}"></div>
-      </div>
-      <canvas id="c"></canvas>
-    </body></html>`;
-    await page.goto(`data:text/html,${encodeURIComponent(html)}`, {
-      waitUntil: "load",
-    });
-    // data: URLs block file: images; load via fetch in Node instead
     await page.setContent(
       `<!doctype html><html><body>
       <div class="row" style="display:flex;gap:${gap}px">

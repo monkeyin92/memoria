@@ -2,7 +2,6 @@
 /*
  * Fail CI when parent-visible mini program copy uses paused or banned words.
  * Scans wxml and user-facing string literals in page/component js.
- * Keep the word list in sync with docs/design/app-v4/design-notes.md.
  */
 const fs = require("node:fs");
 const path = require("node:path");
@@ -36,12 +35,6 @@ function isCommentOnlyHit(line, word) {
 
 function scanFile(file) {
   const rel = path.relative(ROOT, file);
-  // Internal modules may keep identifiers; only page/component surfaces and utils
-  // that export user-visible copy are gated. Skip pure test helpers.
-  if (rel.startsWith("utils/") && !/(guardian-push|crisis-alerts|trial-device-card|device-binding)\.js$/.test(rel)) {
-    return [];
-  }
-  if (rel === "scripts/check-forbidden-ui-copy.js") return [];
   const text = fs.readFileSync(file, "utf8");
   const hits = [];
   const lines = text.split(/\r?\n/);
@@ -49,8 +42,6 @@ function scanFile(file) {
     for (const word of FORBIDDEN) {
       if (!line.includes(word)) continue;
       if (isCommentOnlyHit(line, word)) continue;
-      // Allow identifier-like uses in non-wxml only when clearly not UI copy:
-      // skipped none — product rule is zero visible use.
       hits.push({ file: rel, line: index + 1, word, text: line.trim().slice(0, 160) });
     }
   });

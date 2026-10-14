@@ -202,7 +202,6 @@ function componentData(entry, attrs, scope) {
       if (fields.some((field) => field in passed)) observer.apply(instance, fields.map((field) => data[field]));
     }
   } catch {
-    // Component init errors leave defaults, matching a component that failed to attach.
   } finally {
     global.setTimeout = realTimeout;
   }

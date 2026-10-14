@@ -1,4 +1,3 @@
-/* Parent v4 tab bar: frosted surface, indigo active, safe-area. */
 .mem-tabbar {
   display: flex;
   justify-content: space-around;
