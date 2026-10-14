@@ -1,0 +1,5 @@
+ts	phase	decision	why	evidence	result
+2026-10-14T15:38:38Z	start	figure-it-out run for Memoria miniprogram v4 restyle	cross-cutting UI restyle plus archive tests and PR	agent-run	open
+2026-10-14T15:38:38Z	frame	done when design archived miniprogram restyled bugs fixed copy rules gated tests+screenshots in PR	falsifiable predicate for figure-it-out Phase A	user_query tasks 1-5	framed
+2026-10-14T15:41:01Z	design	wrote workflow with 8 units, single PR, skip arena, 12356 out	monkey-approved v4 settles design; user task overrides design-notes on 12356	/cursor/stores/self/docs/app-v4-mp-restyle-workflow.md	workflow locked
+2026-10-14T15:41:01Z	archive	archived design under docs/design/app-v4 with JPEG assets totaling ~2.8MB	keep files reasonably sized	docs/design/app-v4/README.md	VERIFIED
