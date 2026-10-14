@@ -1259,9 +1259,6 @@ class DoubaoTTS:
         fence: GenerationFence,
         cancel_event: asyncio.Event | None = None,
     ) -> SynthesizeResult:
-        from services.common.companion_response_safety import tts_speak_helpline_digits
-
-        texts = [tts_speak_helpline_digits(item) for item in texts]
         """Synthesize with at most one fresh-connection retry.
 
         Retry rule (shared with the CosyVoice batch path):

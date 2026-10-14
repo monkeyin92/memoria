@@ -98,3 +98,18 @@ def test_prepare_tts_text_speaks_fixed_safety_helpline_digits() -> None:
     victim = prepare_tts_text(SUPPORT_VICTIM_REPLY, plan, is_first_segment=True)
     assert "幺幺零" in victim
     assert "110" not in victim
+
+
+def test_prepare_tts_text_passes_ordinary_120_and_110_unchanged() -> None:
+    plan = speech_plan_for_turn(
+        label="neutral",
+        provider_label="neutral",
+        text="篮子里有 120 个苹果",
+    )
+    for ordinary in (
+        "篮子里有 120 个苹果",
+        "今天一共买了 110 个",
+        "一共 1100 元",
+        "房间号是 2120",
+    ):
+        assert prepare_tts_text(ordinary, plan, is_first_segment=True) == ordinary

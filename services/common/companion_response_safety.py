@@ -70,6 +70,8 @@ def fixed_safety_tts_text(display: str) -> str:
 
 def session_had_fixed_safety_reply(assistant_turns: Sequence[str]) -> bool:
     return any(turn in FIXED_SAFETY_REPLIES for turn in assistant_turns)
+
+
 CRISIS_CONTEXT_MARKERS: Final = (
     "自杀",
     "自残",

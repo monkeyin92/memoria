@@ -146,7 +146,20 @@ def test_fixed_safety_tts_speaks_helpline_digits() -> None:
     assert "幺二零" in spoken
     assert fixed_safety_tts_text(SUPPORT_VICTIM_REPLY).endswith("打 幺幺零。")
     assert tts_speak_helpline_digits("请打 110") == "请打 幺幺零"
-    assert fixed_safety_tts_text("普通聊天 110") == "普通聊天 110"
+
+
+def test_ordinary_reply_text_keeps_arabic_helpline_looking_digits() -> None:
+    # Digit rewrite is gated to exact fixed-safety scripts. Ordinary replies
+    # that mention 120/110 (or longer numbers that contain them) must stay intact.
+    for ordinary in (
+        "篮子里有 120 个苹果",
+        "今天一共买了 110 个",
+        "一共 1100 元",
+        "房间号是 2120",
+        "普通聊天 110",
+        "普通聊天 120",
+    ):
+        assert fixed_safety_tts_text(ordinary) == ordinary
 
 
 def test_session_had_fixed_safety_reply_detects_prior_spoken_script() -> None:
