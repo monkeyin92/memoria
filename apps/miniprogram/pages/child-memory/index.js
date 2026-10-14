@@ -4,7 +4,6 @@ const { companionById, defaultCompanionId } = require("../../utils/companions");
 const { readBindingManifest } = require("../../utils/device-binding");
 const {
   CHILD_ARCHIVE_CONSENT,
-  BACKUP_RETENTION_LINE,
   CLEARED_TOAST,
   CONSENT_OFF_DIALOG,
   DELETE_CONFIRM,
@@ -75,7 +74,6 @@ Page({
     loadState: "idle",
     activeTab: "recent",
     privacyLine: PRIVACY_LINE,
-    backupRetentionLine: BACKUP_RETENTION_LINE,
     emptyRecent: EMPTY_RECENT,
     emptyArchiveOn: EMPTY_ARCHIVE_ON,
     deleteKeepLabel: DELETE_KEEP,

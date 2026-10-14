@@ -15,7 +15,16 @@ const PARITY = [
     harness: { api: fx.baseApi({ getGuardianNotifications: async () => ({ items: [] }) }), now: fx.NOW },
     actions: [["summarizeSelectedDay"]],
   },
+  { slug: "06-usage", design: "06-usage.png", page: "pages/device/index", harness: { api: fx.baseApi(), now: fx.NOW } },
   { slug: "05-attention", design: "05-attention.png", page: "pages/memory/index", harness: { api: fx.baseApi(), now: fx.NOW } },
+  {
+    slug: "09-memory",
+    design: "09-memory.png",
+    page: "pages/child-memory/index",
+    harness: { api: fx.baseApi(fx.archiveApi), now: fx.NOW },
+    query: { minorId: "p_child", name: "乐乐" },
+    actions: [["showArchive"]],
+  },
 ];
 
 module.exports = { PARITY };

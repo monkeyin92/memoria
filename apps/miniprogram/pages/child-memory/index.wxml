@@ -1,30 +1,11 @@
 <view class="cm-page trial-page">
-  <view class="cm-hero">
-    <view class="cm-hero-copy">
-      <text class="trial-title">{{headerTitle}}</text>
-      <text class="trial-caption">{{headerCaption}}</text>
-    </view>
-    <face-badge
-      wx:if="{{showHeaderMascot}}"
-      role="{{companionId}}"
-      size="md"
-      mood="happy"
-      plain
-    ></face-badge>
-  </view>
+  <text class="eyebrow">长期记住的事</text>
+  <text class="trial-title">{{headerTitle}}</text>
+  <text class="page-lede">{{headerCaption}}</text>
 
-  <text class="cm-privacy">{{privacyLine}}</text>
-  <text class="cm-privacy">{{backupRetentionLine}}</text>
-
-  <view class="cm-tabs">
-    <view
-      class="cm-tab {{activeTab === 'recent' ? 'cm-tab-on' : ''}}"
-      bindtap="showRecent"
-    >近期摘要</view>
-    <view
-      class="cm-tab {{activeTab === 'archive' ? 'cm-tab-on' : ''}}"
-      bindtap="showArchive"
-    >长期记忆</view>
+  <view class="seg cm-tabs">
+    <view class="seg-item {{activeTab === 'recent' ? 'seg-item-on' : ''}}" bindtap="showRecent">近期摘要</view>
+    <view class="seg-item {{activeTab === 'archive' ? 'seg-item-on' : ''}}" bindtap="showArchive">长期记忆</view>
   </view>
 
   <text wx:if="{{error}}" class="cm-error">{{error}}</text>
@@ -76,22 +57,6 @@
   </block>
 
   <block wx:elif="{{activeTab === 'archive'}}">
-    <view class="trial-card cm-consent">
-      <view class="cm-consent-row">
-        <view class="cm-consent-copy">
-          <text class="cm-consent-title">{{archiveConsent.label}}</text>
-          <text class="cm-consent-desc">{{archiveConsent.description}}</text>
-        </view>
-        <switch
-          checked="{{archiveConsent.active}}"
-          color="#E2702A"
-          disabled="{{working}}"
-          bindchange="onArchiveConsentChange"
-          aria-label="长期记忆"
-        />
-      </view>
-    </view>
-
     <block wx:if="{{!archiveConsent.active}}">
     </block>
 
@@ -102,37 +67,55 @@
     </view>
 
     <block wx:else>
-      <view wx:for="{{archiveGroups}}" wx:key="field" class="cm-group">
-        <text class="cm-group-title">{{item.label}}</text>
-        <view
-          wx:for="{{item.items}}"
-          wx:for-item="fact"
-          wx:key="recordId"
-          class="trial-card cm-row"
-        >
-          <view class="cm-row-body">
-            <text class="cm-summary-text">{{fact.text}}</text>
-            <text class="cm-meta">{{fact.dateLabel}}</text>
-          </view>
-          <view
-            class="cm-delete"
-            data-record-id="{{fact.recordId}}"
-            bindtap="askDeleteArchive"
-            aria-label="删除"
-          >
-            <view class="cm-trash" aria-hidden="true">
-              <view class="cm-trash-lid"></view>
-              <view class="cm-trash-body"></view>
+      <view class="trial-card trial-card-xl cm-archive">
+        <view wx:for="{{archiveGroups}}" wx:key="field" class="cm-field">
+          <mp-icon name="{{item.field === 'appellation' ? 'tag' : item.field === 'preference' ? 'heart' : 'paw'}}"></mp-icon>
+          <view class="cm-field-body">
+            <text class="cm-field-label">{{item.label}}</text>
+            <view wx:for="{{item.items}}" wx:for-item="fact" wx:key="recordId" class="cm-fact">
+              <view class="cm-fact-copy">
+                <text class="cm-fact-text">{{fact.text}}</text>
+                <text class="cm-meta">{{fact.dateLabel}}</text>
+              </view>
+              <view class="cm-delete" data-record-id="{{fact.recordId}}" bindtap="askDeleteArchive" aria-label="删除">
+                <view class="cm-trash" aria-hidden="true">
+                  <view class="cm-trash-lid"></view>
+                  <view class="cm-trash-body"></view>
+                </view>
+              </view>
             </view>
           </view>
         </view>
       </view>
 
-      <view class="cm-footer">
-        <text class="cm-muted-link" bindtap="askClearArchive">清空全部</text>
+      <view class="trial-card cm-note">
+        <view class="cm-note-art" aria-hidden="true"><image src="/assets/ui/v4/mascot-curious.jpg" mode="widthFix"></image></view>
+        <text class="cm-note-text">长期记忆只记这三类：称呼、兴趣和小名。</text>
       </view>
     </block>
+
+    <view class="trial-card cm-consent">
+      <view class="cm-consent-row">
+        <view class="cm-consent-copy">
+          <text class="cm-consent-title">{{archiveConsent.label}}</text>
+          <text class="cm-consent-desc">{{archiveConsent.description}}</text>
+        </view>
+        <switch
+          checked="{{archiveConsent.active}}"
+          color="#4A52C9"
+          disabled="{{working}}"
+          bindchange="onArchiveConsentChange"
+          aria-label="长期记忆"
+        />
+      </view>
+    </view>
+
+    <view wx:if="{{archiveConsent.active && archiveFlat.length}}" class="cm-footer">
+      <text class="cm-muted-link" bindtap="askClearArchive">清空全部</text>
+    </view>
   </block>
+
+  <text class="cm-privacy">{{privacyLine}}</text>
 
   <view wx:if="{{confirm}}" class="mp-sheet-mask" bindtap="closeConfirm" catchtouchmove="noop"></view>
   <view wx:if="{{confirm}}" class="mp-sheet" catchtap="noop">

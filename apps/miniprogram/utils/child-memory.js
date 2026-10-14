@@ -10,7 +10,7 @@ const ARCHIVE_FIELD_LABELS = Object.freeze({
   pet_name: "小名",
 });
 
-const ARCHIVE_FIELD_ORDER = Object.freeze(["preference", "appellation", "pet_name"]);
+const ARCHIVE_FIELD_ORDER = Object.freeze(["appellation", "preference", "pet_name"]);
 
 const CHILD_ARCHIVE_CONSENT = Object.freeze({
   kind: "child_archive",
@@ -22,7 +22,6 @@ const CHILD_ARCHIVE_CONSENT = Object.freeze({
 
 const PRIVACY_LINE =
   "孩子说的原话，我们的服务器在入库前就去掉了；机器人本身不存录音。";
-const BACKUP_RETENTION_LINE = "摘要按天整理，不在此页承诺保存期限";
 const EMPTY_RECENT =
   "还没有记忆。孩子和 memoria 聊过之后，这里会出现摘要。";
 const EMPTY_ARCHIVE_ON = "开启后，孩子聊到的兴趣会出现在这里。";
@@ -193,7 +192,6 @@ module.exports = {
   ARCHIVE_FIELD_LABELS,
   ARCHIVE_FIELD_ORDER,
   CHILD_ARCHIVE_CONSENT,
-  BACKUP_RETENTION_LINE,
   CLEARED_TOAST,
   CONSENT_OFF_DIALOG,
   DELETE_CONFIRM,

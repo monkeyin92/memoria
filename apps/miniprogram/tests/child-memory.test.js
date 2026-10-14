@@ -129,17 +129,16 @@ test("page copy and structure match product acceptance", () => {
     childMemory.PRIVACY_LINE,
     "孩子说的原话，我们的服务器在入库前就去掉了；机器人本身不存录音。",
   );
-  assert.equal(
-    childMemory.BACKUP_RETENTION_LINE,
-    "删除的数据会在 7 天内从备份中清除",
-  );
-  assert.match(wxml, /backupRetentionLine/);
+  assert.equal(childMemory.BACKUP_RETENTION_LINE, undefined);
+  assert.doesNotMatch(wxml, /backupRetentionLine|保存期限|天内/);
   assert.match(wxml, /cm-muted-link/);
   assert.doesNotMatch(wxml, /cm-danger-link/);
   assert.equal(childMemory.DELETE_KEEP, "再想想");
   assert.equal(childMemory.memoryHeaderTitle("星澜", "小明"), "小明的记忆");
   assert.equal(childMemory.memoryEmptyTitle("星澜", "小明"), "星澜还没有记住小明的事");
-  assert.equal(childMemory.memoryHeaderCaption(3), "共 3 条 · 可以随时删除");
+  assert.equal(childMemory.memoryHeaderCaption(3), "共 3 条 · 按天整理");
+  assert.deepEqual([...childMemory.ARCHIVE_FIELD_ORDER], ["appellation", "preference", "pet_name"]);
+  assert.match(wxml, /<mp-icon name="\{\{item\.field === 'appellation' \? 'tag'/);
   assert.equal(
     childMemory.EMPTY_RECENT,
     "还没有记忆。孩子和 memoria 聊过之后，这里会出现摘要。",
@@ -151,8 +150,9 @@ test("page copy and structure match product acceptance", () => {
   assert.equal(childMemory.CLEARED_TOAST, "已清空，剩余 0 条");
   assert.equal(
     childMemory.CONSENT_OFF_DIALOG,
-    "关闭后不会再写入新内容。已有内容可以继续查看和删除。",
+    "关闭后不会再写入新内容。已有内容仍按当前授权管理。",
   );
+  assert.doesNotMatch(childMemory.CONSENT_OFF_DIALOG, /查看|删除/);
   assert.equal(childMemory.EMPTY_ARCHIVE_ON, "开启后，孩子聊到的兴趣会出现在这里。");
 });
 

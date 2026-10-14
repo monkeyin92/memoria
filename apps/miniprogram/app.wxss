@@ -50,6 +50,7 @@ page {
   --mp-type-headline: 48rpx;
   --mp-type-title: 40rpx;
   --mp-type-button: 34rpx;
+  --mp-type-lead: 36rpx;
   --mp-type-card: 32rpx;
   --mp-type-body: 30rpx;
   --mp-type-caption: 26rpx;
