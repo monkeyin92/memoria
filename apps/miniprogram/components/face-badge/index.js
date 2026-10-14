@@ -25,6 +25,16 @@ Component({
       },
     },
     size: { type: String, value: "md" },
+    mood: {
+      type: String,
+      value: "default",
+      observer(mood) {
+        const next = FRAMES.includes(mood) ? mood : "default";
+        if (!this.data.animated && this.data.mood !== next) {
+          this.setData({ mood: next });
+        }
+      },
+    },
     breathe: { type: Boolean, value: false },
     onLight: { type: Boolean, value: false },
     plain: { type: Boolean, value: false },
@@ -46,7 +56,6 @@ Component({
   data: {
     roleId: "starlight",
     frames: FRAMES,
-    mood: "default",
   },
   lifetimes: {
     attached() {
@@ -77,7 +86,8 @@ Component({
     _restart() {
       this._stop();
       if (!this.data.animated) {
-        if (this.data.mood !== "default") this.setData({ mood: "default" });
+        const mood = FRAMES.includes(this.properties.mood) ? this.properties.mood : "default";
+        if (this.data.mood !== mood) this.setData({ mood });
         return;
       }
       if (this.data.dim) {

@@ -29,9 +29,11 @@
 
 .fb-xs { width: 48rpx; height: 48rpx; }
 .fb-sm { width: 80rpx; height: 80rpx; }
+.fb-tile { width: 104rpx; height: 104rpx; }
 .fb-md { width: 144rpx; height: 144rpx; }
 .fb-lg { width: 192rpx; height: 192rpx; }
 .fb-xl { width: 240rpx; height: 240rpx; }
+.fb-empty { width: 296rpx; height: 296rpx; }
 .fb-hero { width: 260rpx; height: 260rpx; }
 
 .face-on-light {

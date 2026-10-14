@@ -12,5 +12,5 @@
       mode="aspectFit"
     ></image>
   </view>
-  <image wx:else class="fb-img" src="/assets/mascots/{{roleId}}/default.png" mode="aspectFit"></image>
+  <image wx:else class="fb-img" src="/assets/mascots/{{roleId}}/{{mood}}.png" mode="aspectFit"></image>
 </view>
