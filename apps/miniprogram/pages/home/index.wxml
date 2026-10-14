@@ -99,7 +99,7 @@
           <text wx:else class="home-usage-pending">用量暂未统计</text>
           <view class="trial-status-pill {{online ? '' : 'is-off'}}">
             <view class="trial-status-dot"></view>
-            <text>{{devicePlaceName}}{{online ? '在线' : '离线'}}</text>
+            <text>{{personaName}}{{online ? '在线' : '离线'}}</text>
           </view>
         </view>
       </view>
@@ -156,6 +156,6 @@
       </view>
     </block>
 
-    <text class="home-note">在设备上使用，手机不录音。对话由人工智能生成，会明确标识。</text>
+    <text class="home-note">在设备上使用，手机不录音，回应由 AI 生成。</text>
   </block>
 </view>

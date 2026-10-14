@@ -88,10 +88,8 @@
   flex-shrink: 0;
   width: 40px;
   height: 40px;
-  /* Measured from the tab-page top padding (status bar + 16px) so the avatar
-     always starts 8px below the capsule. */
-  margin-top: calc(var(--mp-capsule-bottom) - var(--mp-status-bar) - 16px + 8px);
-  margin-bottom: 4px;
+  /* Measured from the tab-page top padding so the avatar always starts 4px below the capsule. */
+  margin-top: calc(var(--mp-capsule-bottom) - var(--mp-status-bar) - var(--mp-tab-top) + 4px);
   border-radius: 50%;
   background: var(--mp-surface);
   box-shadow: var(--mp-shadow-float);
@@ -147,7 +145,7 @@
 
 .home-ring-cap {
   color: var(--mp-ink-3);
-  font-size: var(--mp-type-tab);
+  font-size: var(--mp-type-micro);
 }
 
 .home-usage-copy {
@@ -183,10 +181,11 @@
 
 .home-usage-pending {
   display: block;
-  margin: 8px 0 12px;
+  margin: 4px 0 8px;
   color: var(--mp-ink);
   font-size: var(--mp-type-card);
   font-weight: 600;
+  line-height: 48px;
 }
 
 .home-usage-copy .trial-status-pill {
@@ -226,7 +225,7 @@
 
 .home-stat-unit {
   color: var(--mp-ink-2);
-  font-size: var(--mp-type-body);
+  font-size: var(--mp-type-small);
 }
 
 .home-pad,
@@ -257,13 +256,16 @@
   min-width: 0;
 }
 
+.home-row-copy .home-card-title {
+  line-height: normal;
+}
+
 .home-row-sub {
   display: block;
   margin-top: 4px;
   overflow: hidden;
   color: var(--mp-ink-2);
   font-size: var(--mp-type-caption);
-  line-height: var(--mp-lh-caption);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -331,7 +333,7 @@
   margin-top: 16px;
   color: var(--mp-ink-3);
   font-size: var(--mp-type-meta);
-  line-height: var(--mp-lh-caption);
+  line-height: 16px;
 }
 
 .home-guest .home-note {

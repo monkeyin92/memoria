@@ -8,7 +8,7 @@ function view(name, tone, size) {
   const safeTone = TONES.includes(tone) ? tone : "accent";
   return {
     src: `/assets/ui/v4/${icon}-${safeTone}.svg`,
-    toneClass: `mi-${safeTone}`,
+    toneClass: `mi-${safeTone}${size >= 96 ? " mi-lg" : ""}`,
     glyph: Math.round(size * 0.6),
   };
 }

@@ -49,6 +49,28 @@ test("the rpx-to-px codemod halves literal and bound lengths", () => {
   );
 });
 
+test("mp-icon tiles of 48px and up take the design's 16px inset radius", () => {
+  let definition;
+  const previous = global.Component;
+  global.Component = (config) => {
+    definition = config;
+  };
+  try {
+    delete require.cache[require.resolve("../components/mp-icon/index")];
+    require("../components/mp-icon/index");
+  } finally {
+    global.Component = previous;
+  }
+  const classesAt = (size) => {
+    const instance = { setData(patch) { Object.assign(this, patch); } };
+    definition.observers["name, tone, size"].call(instance, "heart", "accent", size);
+    return instance.toneClass;
+  };
+  assert.equal(classesAt(80), "mi-accent");
+  assert.equal(classesAt(96), "mi-accent mi-lg");
+  assert.equal(classesAt(112), "mi-accent mi-lg");
+});
+
 test("app.wxss declares raw colours only inside the page token block", () => {
   const app = fs.readFileSync(path.join(root, "app.wxss"), "utf8");
   const tokenBlock = app.match(/^page \{[\s\S]*?^\}/m)[0];
