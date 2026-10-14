@@ -5,6 +5,7 @@
  */
 
 const { normalizeGuardianSummary } = require("../../utils/guardian");
+const { STATE_LABELS } = require("../../utils/device-onboarding/state");
 
 const NOW = new Date("2026-10-14T19:42:00+08:00");
 
@@ -231,6 +232,17 @@ const GUEST_API = { hasAuthenticatedSession: () => false, currentIdentity: () =>
 const authed = (overrides) => ({ api: baseApi(overrides), storage: STORAGE, now: NOW });
 const guest = () => ({ api: baseApi(GUEST_API), now: NOW });
 
+const ONBOARDING_DEVICE = { model: "Memoria M1", display_tail: "7F3A", firmware_version: "1.4.2", claim_status: "unclaimed" };
+const WIFI_SCAN = [
+  { ssid: "Home-2.4G", rssi: -52, security: "WPA2" },
+  { ssid: "Home-Guest", rssi: -68, security: "open" },
+  { ssid: "楼下咖啡店", rssi: -81, security: "WPA2" },
+];
+
+function onboardingSnapshot(state, extra = {}) {
+  return { state, stateLabel: STATE_LABELS[state], reprovision: false, busy: false, error: "", device: ONBOARDING_DEVICE, ...extra };
+}
+
 module.exports = {
   ARCHIVE,
   BIND_QUERY,
@@ -240,6 +252,7 @@ module.exports = {
   IDENTITY,
   NOW,
   PINNED_ALERT,
+  WIFI_SCAN,
   RAW_VOICE_CONSENT,
   RECAP,
   RUNTIME_PROFILE,
@@ -255,5 +268,6 @@ module.exports = {
   guardianApi,
   guest,
   isoMinutesAgo,
+  onboardingSnapshot,
   personaApi,
 };

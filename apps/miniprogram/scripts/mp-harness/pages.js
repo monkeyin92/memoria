@@ -48,6 +48,27 @@ const PAGES = [
   { slug: "child-memory", page: "pages/child-memory/index", harness: authed(), query: { minorId: "p_child", name: "乐乐" } },
   { slug: "child-memory-archive", page: "pages/child-memory/index", harness: authed(fx.archiveApi), query: { minorId: "p_child", name: "乐乐" }, actions: [["showArchive"]] },
   { slug: "device-onboarding", page: "pages/device-onboarding/index", harness: authed() },
+  {
+    slug: "device-onboarding-wifi",
+    page: "pages/device-onboarding/index",
+    harness: authed(),
+    actions: [
+      ["_applySnapshot", fx.onboardingSnapshot("wifi", { wifiNetworks: fx.WIFI_SCAN })],
+      ["onWifiNetworkTap", { currentTarget: { dataset: { ssid: "Home-2.4G" } } }],
+    ],
+  },
+  {
+    slug: "device-onboarding-progress",
+    page: "pages/device-onboarding/index",
+    harness: authed(),
+    actions: [["_applySnapshot", fx.onboardingSnapshot("progress", { network: { phase: "joining", joined: true, ssid: "Home-2.4G", elapsedS: 12 } })]],
+  },
+  {
+    slug: "device-onboarding-complete",
+    page: "pages/device-onboarding/index",
+    harness: authed(),
+    actions: [["_applySnapshot", fx.onboardingSnapshot("complete", { activation: { status: "ready_for_conversation" } })]],
+  },
 ];
 
 const VIEWS = [
