@@ -28,7 +28,7 @@ function currentUserSummary({ subjectLabel = "" } = {}) {
 function devicePlaceName(binding, companionName) {
   const name = String(companionName || "Memoria").trim() || "Memoria";
   const mode = binding?.declared_mode;
-  if (mode === "family_shared" || mode === "child_for_parent") return `家人的${name}`;
+  if (mode === "family_shared" || mode === "child_for_parent") return `家里共用的${name}`;
   if (mode === "parent_for_child") return `孩子的${name}`;
   return `我的${name}`;
 }

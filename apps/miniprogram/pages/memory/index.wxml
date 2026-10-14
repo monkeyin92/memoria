@@ -49,7 +49,7 @@
         <text class="l2-card-sub">{{guardianMode ? '孩子还没有聊过天，或者还没有开启孩子的长期记忆。' : '这里还空空的，没关系。需要时再来看看，一切由你决定。'}}</text>
         <text class="caption">{{guardianMode ? '孩子和机器人聊几句后，再回来看看。' : '在设备上说几句后，再回来看看。AI 整理可能有偏差，打开回顾可以查看来源。'}}</text>
         <view class="button-row">
-          <button class="secondary-button btn-sm" bindtap="goCompanion">去和伙伴聊聊</button>
+          <button class="secondary-button btn-sm" bindtap="goCompanion">去和角色聊聊</button>
         </view>
       </view>
       <view wx:for="{{days}}" wx:key="date" class="memory-day">

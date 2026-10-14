@@ -178,7 +178,7 @@
       <glass-icon name="sprout" size="80"></glass-icon>
       <text class="l2-card-title">设置使用方式</text>
     </view>
-    <text class="l2-card-sub">接下来选择机器人给谁用、挑一位陪伴伙伴，不需要再扫码。</text>
+    <text class="l2-card-sub">接下来选择机器人给谁用、挑一位AI 角色，不需要再扫码。</text>
     <button class="primary-button onboarding-button" bindtap="continueInitialize">去设置</button>
   </view>
 

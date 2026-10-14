@@ -25,9 +25,9 @@ const { offersSafetySubscribe } = require("../../utils/trial-device-card");
 const { PRIVACY_LINE } = require("../../utils/child-memory");
 
 // 与绑定页的「单次使用时长」选项一致。
-const SESSION_MINUTE_OPTIONS = [15, 30, 45, 60, 90, 120];
+const SESSION_MINUTE_OPTIONS = [15, 30, 45, 60];
 const LIMITS_SLIDER_MIN = 15;
-const LIMITS_SLIDER_MAX = 120;
+const LIMITS_SLIDER_MAX = 60;
 const LIMITS_SLIDER_STEP = 15;
 const { isTabRoute, routeOf } = require("../../utils/tab-routes");
 

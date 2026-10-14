@@ -94,7 +94,7 @@
             </picker>
           </view>
         </view>
-        <text class="form-note">孩子的年龄和监护关系由系统核实；学习时长、夜间模式和成长记录，都按儿童保护规则执行，陪伴伙伴改不了。</text>
+        <text class="form-note">孩子的年龄和监护关系由系统核实；学习时长、夜间模式和成长记录，都按儿童保护规则执行，AI 角色改不了。</text>
       </block>
 
       <!-- B. 给自己使用 -->
@@ -126,7 +126,7 @@
         </picker>
         <view class="notice notice-warn parent-acceptance-notice">
           <text class="notice-title">长期记忆由你代父母决定</text>
-          <text class="notice-copy">下一步如果勾选「我代父母同意」，就是你代父母同意伙伴记住 TA 聊过的事；不勾选只保留当次对话。你可以随时在小程序里撤回。子女协助管理设备，不等于可以读取父母的聊天和人生故事。</text>
+          <text class="notice-copy">下一步如果勾选「我代父母同意」，就是你代父母同意角色记住 TA 聊过的事；不勾选只保留当次对话。你可以随时在小程序里撤回。子女协助管理设备，不等于可以读取父母的聊天和人生故事。</text>
         </view>
       </block>
 
@@ -136,14 +136,14 @@
         <input class="field-input" value="{{form.subjectAlias}}" placeholder="例如：老爸、亲爱的儿子" placeholder-class="field-placeholder" maxlength="{{maxSubjectLabel}}" data-key="subjectAlias" bindinput="onFieldInput" />
         <text class="caption">家庭名称与其他成员可以稍后添加。</text>
         <view class="setting-row">
-          <view><text class="setting-name">共用同一位陪伴伙伴</text><text class="setting-desc">成员档案仍然各自独立</text></view>
+          <view><text class="setting-name">共用同一位 AI 角色</text><text class="setting-desc">成员档案仍然各自独立</text></view>
           <switch checked="{{form.sharedPersonaEnabled}}" data-key="sharedPersonaEnabled" bindchange="onSwitch" color="#326e70" />
         </view>
         <text class="form-note">每位成员都有自己独立的档案；私人记忆、家庭共享记忆与待确认的共同记忆分开管理，家庭管理员不能读取成员的私人记忆。成员邀请与确认由系统完成。</text>
       </block>
 
-      <text class="field-label">陪伴伙伴</text>
-      <text class="form-note persona-hint">左右滑动认识每一位伙伴，点「试听」听听 TA 的声音</text>
+      <text class="field-label">AI 角色</text>
+      <text class="form-note persona-hint">左右滑动认识每一位角色，点「试听」听听 TA 的声音</text>
       <swiper class="persona-swiper" current="{{personaIndex}}" previous-margin="96rpx" next-margin="96rpx" bindchange="onPersonaSwipe">
         <swiper-item wx:for="{{personaOptions}}" wx:key="id" class="persona-slide">
           <view class="persona-card {{index === personaIndex ? 'persona-card-current' : ''}}" data-role="{{item.id}}" data-index="{{index}}" bindtap="onPersonaTap">
@@ -180,7 +180,7 @@
       <text class="l2-card-sub">第 3 步勾选授权，第 4 步核对信息后提交</text>
       <view class="summary-row"><text class="summary-key">设备用途</text><text class="summary-value">{{modeMeta.title}}</text></view>
       <view class="summary-row"><text class="summary-key">使用者</text><text class="summary-value">{{reviewSubjectLabel}}</text></view>
-      <view class="summary-row"><text class="summary-key">陪伴伙伴</text><text class="summary-value">{{personaOptions[personaIndex].name}}</text></view>
+      <view class="summary-row"><text class="summary-key">AI 角色</text><text class="summary-value">{{personaOptions[personaIndex].name}}</text></view>
 
       <text class="field-label">需要你确认的授权</text>
       <view wx:for="{{offers}}" wx:key="id" class="offer-row {{item.requiresParentSelfAcceptance ? 'offer-disabled' : ''}}" data-id="{{item.id}}" bindtap="{{item.requiresParentSelfAcceptance ? '' : 'toggleOffer'}}">
@@ -218,7 +218,7 @@
       <text class="done-badge">设置已提交</text>
       <text class="done-title">机器人已建立「{{manifest.declared_mode === 'parent_for_child' ? '给孩子使用' : manifest.declared_mode === 'self_use' ? '给自己使用' : manifest.declared_mode === 'child_for_parent' ? '给父母使用' : '家庭共同使用'}}」绑定</text>
       <view class="summary-row"><text class="summary-key">使用者</text><text class="summary-value">{{reviewSubjectLabel}}</text></view>
-      <view class="summary-row"><text class="summary-key">陪伴伙伴</text><text class="summary-value">{{personaOptions[personaIndex].name}}</text></view>
+      <view class="summary-row"><text class="summary-key">AI 角色</text><text class="summary-value">{{personaOptions[personaIndex].name}}</text></view>
       <view wx:if="{{deviceTail}}" class="summary-row"><text class="summary-key">机器人</text><text class="summary-value">尾号 {{deviceTail}}</text></view>
       <text wx:if="{{crisisSubscribeAccepted}}" class="done-note">已完成订阅安全提醒。提醒用完后，可在「回顾」页再次订阅。</text>
       <text class="done-note">设置已经提交，机器人收到后就能用了，一般一分钟内。等它准备好，唤醒它就能开始聊天；手机不会录音。</text>

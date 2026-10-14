@@ -80,7 +80,7 @@ const CONSENT_OFFERS = Object.freeze([
     modes: ["parent_for_child"],
     label: "长期记忆：学习与成长记录",
     description:
-      "勾选后伙伴会记住孩子的学习进度和聊过的事（脱敏保存，不存原始音频），并同时为你开通每周成长小结（只含趋势和话题分布，不含对话原文）；不勾选也能完成绑定，只保留当次对话",
+      "勾选后角色会记住孩子的学习进度和聊过的事（脱敏保存，不存原始音频），并同时为你开通每周成长小结（只含趋势和话题分布，不含对话原文）；不勾选也能完成绑定，只保留当次对话",
     defaultChecked: false,
     requiresParentSelfAcceptance: false,
   },
@@ -96,7 +96,7 @@ const CONSENT_OFFERS = Object.freeze([
     id: "offer_self_memory_retention_v1",
     modes: ["self_use"],
     label: "长期记忆",
-    description: "让伙伴记住你们聊过的事，形成你自己的回忆",
+    description: "让角色记住你们聊过的事，形成你自己的回忆",
     defaultChecked: true,
     requiresParentSelfAcceptance: false,
   },
@@ -129,7 +129,7 @@ const CONSENT_OFFERS = Object.freeze([
     modes: ["child_for_parent"],
     label: "我代父母同意：长期记忆",
     description:
-      "勾选即由你代父母同意，让伙伴记住父母聊过的事；不勾选只保留当次对话。可随时在小程序里撤回，你也不能因此读取父母的聊天内容",
+      "勾选即由你代父母同意，让角色记住父母聊过的事；不勾选只保留当次对话。可随时在小程序里撤回，你也不能因此读取父母的聊天内容",
     defaultChecked: false,
     requiresParentSelfAcceptance: false,
     proxyConsent: true,
@@ -553,11 +553,11 @@ function validatePreferenceValue(schema, value, key) {
     const isValidMinutes =
       typeof value === "number" &&
       Number.isFinite(value) &&
-      value >= 5 &&
-      value <= 120 &&
+      value >= 15 &&
+      value <= 60 &&
       Math.floor(value) === value;
     if (!isValidMinutes) {
-      throw new TypeError(`${key} 必须是 5 到 120 的整数分钟`);
+      throw new TypeError(`${key} 必须是 15 到 60 的整数分钟`);
     }
     return value;
   }

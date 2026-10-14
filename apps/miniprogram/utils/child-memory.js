@@ -27,14 +27,14 @@ const EMPTY_RECENT =
 const EMPTY_ARCHIVE_ON = "开启后，孩子聊到的兴趣会出现在这里。";
 const CONSENT_OFF_DIALOG =
   "关闭后不会再写入新内容。已有内容可以继续查看和删除。";
-const DELETE_CONFIRM = "删除后无法恢复";
+const DELETE_CONFIRM =
+  "删除后，这条记忆会从服务器上删除，无法恢复，不影响其他记忆。";
 const DELETE_KEEP = "再想想";
 const CLEARED_TOAST = "已清空，剩余 0 条";
 
-function memoryHeaderTitle(companionName, childName) {
-  const companion = companionName || "伙伴";
+function memoryHeaderTitle(_companionName, childName) {
   const child = childName || "孩子";
-  return `${companion}记得的${child}`;
+  return `${child}的记忆`;
 }
 
 function memoryHeaderCaption(count) {
@@ -43,7 +43,7 @@ function memoryHeaderCaption(count) {
 }
 
 function memoryEmptyTitle(companionName, childName) {
-  const companion = companionName || "伙伴";
+  const companion = companionName || "角色";
   const child = childName || "孩子";
   return `${companion}还没有记住${child}的事`;
 }

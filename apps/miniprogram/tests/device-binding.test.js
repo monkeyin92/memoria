@@ -268,7 +268,7 @@ test("rejects unknown service preference keys and invalid values", () => {
       binding.buildBindingRequest(
         validRequest({ service_preferences: { max_session_minutes: 240 } }),
       ),
-    /5 到 120/,
+    /15 到 60/,
   );
   assert.throws(
     () =>

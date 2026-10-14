@@ -99,7 +99,7 @@ Page({
         currentName: companion.name,
         currentTone: companion.tone,
       });
-      // 打开时停在当前伙伴这张卡上。
+      // 打开时停在当前角色这张卡上。
       this._showCard(companionIndex(companion.id));
     } catch (error) {
       wx.showToast({ title: error?.message || "资料暂时无法读取", icon: "none" });
