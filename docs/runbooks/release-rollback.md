@@ -251,6 +251,17 @@ bench 镜像在 USB 串口多认两条命令；产品镜像不含这两个动词
 
 用法：先起常驻的 `scripts/voice_soak_serial_logger.py` 持有串口，再 `scripts/voice_soak_serial_command.py snap --log <串口记录> [--out shot.png]` 或 `… status --log <串口记录> [--after 60]`（`--after` 隔这么多秒再问一次，并算出这段时间里帧的开销）。刷入 bench 镜像和每次发命令都是对设备的一次操作，须用户当场授权；刷入前按上一节的方法备份保护区，量完**必须刷回产品镜像**。上游 `self.screen.snapshot` MCP 工具虽然链接在产品镜像里（`LV_USE_SNAPSHOT` 上游默认开），但 Memoria 的设备协议不转发 MCP（读源码得出，没在真机上试过），所以截屏只走 bench 构建。
 
+## 固件 keep-awake 构建（临时远程测试，不发布）
+
+产品镜像和 bench 镜像仍会深睡。`CONFIG_MEMORIA_KEEP_AWAKE` 默认关。需要 USB 串口一直在的测试机，在 `firmware/esp32` 下执行：
+
+```bash
+./scripts/build.sh --keep-awake
+./scripts/flash.sh --keep-awake --port /dev/cu.usbmodem101
+```
+
+`config.keep-awake.json` 只比产品清单多 `CONFIG_MEMORIA_KEEP_AWAKE=y`。固件停在 wifi hold，不调用 `esp_deep_sleep_start()`。空闲时麦克风关闭，不上传音频。屏幕轻点或 USB `wake` 才开始会话。文件名带 `-keep-awake`，`publish_firmware_release.py` 拒绝发布。测完刷回产品镜像。`--bench` 与 `--keep-awake` 不能同时使用。
+
 ## 电脑语音测试的停止证据（2026-10-10 修正）
 
 每轮真机、串口命令、刷机与调整音量仍须当场授权；本节只规定判据，不授权执行。运行脚本时显式给用户确认的 `--volume`，不靠脚本默认值；缺声学测量不报端到端声学停止延迟。
