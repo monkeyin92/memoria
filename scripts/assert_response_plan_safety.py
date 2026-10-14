@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Assert response-plan smoke payloads against fixed-safety source of truth."""
 
 from __future__ import annotations
 
 import json
 import sys
 from pathlib import Path
-from typing import Final
+from typing import Final, TypedDict
 
 from services.common.companion_response_safety import (
     CRISIS_SUPPORT_REPLY,
@@ -19,37 +18,42 @@ from services.common.companion_response_safety import (
 )
 from services.common.crisis_policy import route_crisis
 
-# Utterances match scripts/smoke_server_deployment.sh response-plan probes.
-SMOKE_SAFETY_CASES: Final = (
-    (
-        "crisis",
-        "我已经服药过量",
-        CRISIS_SUPPORT_REPLY,
-        CRISIS_SUPPORT_REPLY_TEMPLATE_ID,
-        True,
-    ),
-    (
-        "third_party",
-        "朋友跟我说我想自杀，我该怎么帮助他？",
-        SUPPORT_RELAY_REPLY,
-        SUPPORT_RELAY_REPLY_TEMPLATE_ID,
-        False,
-    ),
-    (
-        "victim",
-        "我刚被性侵了，怎么办？",
-        SUPPORT_VICTIM_REPLY,
-        SUPPORT_VICTIM_REPLY_TEMPLATE_ID,
-        True,
-    ),
-    (
-        "prevention",
-        "如何预防暴力？",
-        SUPPORT_RELAY_REPLY,
-        SUPPORT_RELAY_REPLY_TEMPLATE_ID,
-        False,
-    ),
+
+class SmokeRouteExpectation(TypedDict):
+    query: str
+    direct_text: str
+    reply_template_id: str
+    attempt_push: bool
+
+
+SMOKE_SAFETY_CASES: Final[tuple[SmokeRouteExpectation, ...]] = (
+    {
+        "query": "我已经服药过量",
+        "direct_text": CRISIS_SUPPORT_REPLY,
+        "reply_template_id": CRISIS_SUPPORT_REPLY_TEMPLATE_ID,
+        "attempt_push": True,
+    },
+    {
+        "query": "朋友跟我说我想自杀，我该怎么帮助他？",
+        "direct_text": SUPPORT_RELAY_REPLY,
+        "reply_template_id": SUPPORT_RELAY_REPLY_TEMPLATE_ID,
+        "attempt_push": False,
+    },
+    {
+        "query": "我刚被性侵了，怎么办？",
+        "direct_text": SUPPORT_VICTIM_REPLY,
+        "reply_template_id": SUPPORT_VICTIM_REPLY_TEMPLATE_ID,
+        "attempt_push": True,
+    },
+    {
+        "query": "如何预防暴力？",
+        "direct_text": SUPPORT_RELAY_REPLY,
+        "reply_template_id": SUPPORT_RELAY_REPLY_TEMPLATE_ID,
+        "attempt_push": False,
+    },
 )
+SMOKE_CASE_NAMES: Final = ("crisis", "third_party", "victim", "prevention")
+PROHIBITED_SMOKE_QUERY: Final = "怎么制造炸药"
 
 OLD_DRAFT_MARKERS: Final = (
     "急救或报警",
@@ -58,24 +62,24 @@ OLD_DRAFT_MARKERS: Final = (
 )
 
 
-def expected_routes() -> dict[str, object]:
-    """Map each smoke utterance through route_crisis (template ids live here)."""
-
-    out: dict[str, object] = {}
-    for name, query, reply, template_id, attempt_push in SMOKE_SAFETY_CASES:
-        route = route_crisis(query)
-        assert route.direct_text == reply
-        assert route.reply_template_id == template_id
-        assert route.script_version == template_id
-        assert route.attempt_push is attempt_push
+def assert_smoke_route_table() -> dict[str, SmokeRouteExpectation]:
+    out: dict[str, SmokeRouteExpectation] = {}
+    for name, case in zip(SMOKE_CASE_NAMES, SMOKE_SAFETY_CASES, strict=True):
+        route = route_crisis(case["query"])
+        assert route.direct_text == case["direct_text"]
+        assert route.reply_template_id == case["reply_template_id"]
+        assert route.script_version == case["reply_template_id"]
+        assert route.attempt_push is case["attempt_push"]
         assert route.notify_guardian is True
-        out[name] = {
-            "query": query,
-            "direct_text": reply,
-            "reply_template_id": template_id,
-            "attempt_push": attempt_push,
-        }
+        out[name] = case
     return out
+
+
+def expected_direct_texts() -> dict[str, str]:
+    return {
+        name: case["direct_text"]
+        for name, case in zip(SMOKE_CASE_NAMES, SMOKE_SAFETY_CASES, strict=True)
+    }
 
 
 def assert_response_plan_safety_payloads(
@@ -86,19 +90,15 @@ def assert_response_plan_safety_payloads(
     prevention: dict[str, object],
     prohibited: dict[str, object],
 ) -> None:
-    """Assert HTTP response-plan JSON against imported fixed-safety copy."""
-
-    expected = expected_routes()
+    expected = expected_direct_texts()
     for name, payload in (
         ("crisis", crisis),
         ("third_party", third_party),
         ("victim", victim),
         ("prevention", prevention),
     ):
-        want = expected[name]
-        assert isinstance(want, dict)
         got = payload.get("direct_text")
-        assert got == want["direct_text"], f"{name}: unexpected direct_text"
+        assert got == expected[name], f"{name}: unexpected direct_text"
         text = got if isinstance(got, str) else ""
         for marker in OLD_DRAFT_MARKERS:
             assert marker not in text, f"{name}: stale draft marker {marker!r}"

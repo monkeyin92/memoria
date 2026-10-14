@@ -1,5 +1,3 @@
-"""Keep deployment smoke aligned with fixed-safety source of truth."""
-
 from __future__ import annotations
 
 import json
@@ -8,13 +6,17 @@ from pathlib import Path
 import pytest
 from scripts.assert_response_plan_safety import (
     OLD_DRAFT_MARKERS,
-    SAFE_UNKNOWN_REPLY,
+    PROHIBITED_SMOKE_QUERY,
+    SMOKE_CASE_NAMES,
     SMOKE_SAFETY_CASES,
     assert_response_plan_safety_payloads,
-    expected_routes,
+    assert_smoke_route_table,
+    expected_direct_texts,
+    main,
 )
 from services.common.companion_response_safety import (
     CRISIS_SUPPORT_REPLY,
+    SAFE_UNKNOWN_REPLY,
     SUPPORT_RELAY_REPLY,
     SUPPORT_VICTIM_REPLY,
 )
@@ -25,8 +27,8 @@ CI = ROOT / ".github" / "workflows" / "ci.yml"
 
 
 def test_smoke_utterances_map_to_approved_templates_and_push_flags() -> None:
-    routes = expected_routes()
-    assert set(routes) == {"crisis", "third_party", "victim", "prevention"}
+    routes = assert_smoke_route_table()
+    assert set(routes) == set(SMOKE_CASE_NAMES)
     assert routes["crisis"]["reply_template_id"] == "crisis-self-v1"
     assert routes["crisis"]["attempt_push"] is True
     assert routes["crisis"]["direct_text"] == CRISIS_SUPPORT_REPLY
@@ -43,8 +45,8 @@ def test_smoke_utterances_map_to_approved_templates_and_push_flags() -> None:
 
 def test_checker_accepts_canonical_payloads_and_rejects_old_draft() -> None:
     good = {
-        name: {"direct_text": reply}
-        for name, _query, reply, _template, _push in SMOKE_SAFETY_CASES
+        name: {"direct_text": case["direct_text"]}
+        for name, case in zip(SMOKE_CASE_NAMES, SMOKE_SAFETY_CASES, strict=True)
     }
     assert_response_plan_safety_payloads(
         crisis=good["crisis"],
@@ -68,10 +70,13 @@ def test_checker_accepts_canonical_payloads_and_rejects_old_draft() -> None:
         )
 
 
-def test_smoke_script_imports_checker_and_drops_old_draft_copy() -> None:
+def test_smoke_script_imports_checker_and_locks_utterances() -> None:
     body = SMOKE.read_text(encoding="utf-8")
     assert "assert_response_plan_safety.py" in body
     assert "PYTHONPATH" in body
+    for case in SMOKE_SAFETY_CASES:
+        assert case["query"] in body
+    assert PROHIBITED_SMOKE_QUERY in body
     for marker in OLD_DRAFT_MARKERS:
         assert marker not in body, f"smoke still embeds stale marker {marker!r}"
     for phrase in (
@@ -88,12 +93,12 @@ def test_ci_python_gates_run_this_drift_check() -> None:
 
 
 def test_checker_round_trips_json_files(tmp_path: Path) -> None:
-    routes = expected_routes()
+    texts = expected_direct_texts()
     paths = []
-    for name in ("crisis", "third_party", "victim", "prevention"):
+    for name in SMOKE_CASE_NAMES:
         path = tmp_path / f"{name}.json"
         path.write_text(
-            json.dumps({"direct_text": routes[name]["direct_text"]}, ensure_ascii=False),
+            json.dumps({"direct_text": texts[name]}, ensure_ascii=False),
             encoding="utf-8",
         )
         paths.append(path)
@@ -103,6 +108,4 @@ def test_checker_round_trips_json_files(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     paths.append(prohibited)
-    from scripts.assert_response_plan_safety import main
-
     assert main(["assert_response_plan_safety.py", *[str(p) for p in paths]]) == 0
