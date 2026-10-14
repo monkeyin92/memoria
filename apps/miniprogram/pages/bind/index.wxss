@@ -1,3 +1,39 @@
+@import "../../styles/trial-theme.wxss";
+
+.bind-trial .l2-card,
+.bind-trial .choice-card,
+.bind-trial .persona-card {
+  background: #ffffff;
+  border: none;
+  border-radius: 40rpx;
+  box-shadow: 0 12rpx 40rpx rgba(60, 48, 36, 0.08);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.bind-trial .field-input {
+  border: none;
+  background: #f5ebdd;
+  border-radius: 28rpx;
+  color: #1f2a2e;
+}
+
+.bind-trial .picker-row {
+  border-bottom: none;
+  margin: 8rpx 0;
+  padding: 0 24rpx;
+  border-radius: 28rpx;
+  background: #f5ebdd;
+}
+
+.bind-night-caption {
+  margin: 0 0 16rpx;
+}
+
+.bind-submit {
+  flex: 1;
+}
+
 .back-row {
   padding: 8rpx 0 4rpx;
 }

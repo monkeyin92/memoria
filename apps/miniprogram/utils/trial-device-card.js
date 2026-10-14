@@ -1,0 +1,68 @@
+/*
+ * Trial home device card + safety banner fields.
+ * Limit minutes come from Runtime Profile MAX_SESSION_SECONDS.
+ * Used minutes are only shown when a real tally is passed in; otherwise the
+ * card shows the daily limit label alone (no fake 0).
+ */
+
+const { sessionLimitsFromProfile } = require("./session-limits");
+
+const UNREAD_SAFETY_COPY = "有一条安全提醒未读";
+
+function formatQuietHoursLine(sessionLimits) {
+  if (!sessionLimits?.quietStart || !sessionLimits?.quietEnd) return "";
+  return `夜间 ${sessionLimits.quietStart}–${sessionLimits.quietEnd}`;
+}
+
+function usageLabel({ limitMinutes, usedMinutes } = {}) {
+  const limit = Number.isInteger(limitMinutes) && limitMinutes > 0 ? limitMinutes : 30;
+  if (Number.isInteger(usedMinutes) && usedMinutes >= 0) {
+    return `今日已用 / ${limit} 分钟`;
+  }
+  return `每日上限 ${limit} 分钟`;
+}
+
+function buildTrialDeviceCard({ online, runtimeProfile, usedMinutes } = {}) {
+  const limits = sessionLimitsFromProfile(runtimeProfile);
+  const limitMinutes =
+    limits?.maxSessionMinutes && limits.maxSessionMinutes > 0 ? limits.maxSessionMinutes : 30;
+  const usageKnown = Number.isInteger(usedMinutes) && usedMinutes >= 0;
+  return {
+    online: online === true,
+    statusPill: online === true ? "在线" : "离线",
+    usageKnown,
+    usageUsedMinutes: usageKnown ? usedMinutes : null,
+    usageLimitMinutes: limitMinutes,
+    usageLabel: usageLabel({
+      limitMinutes,
+      usedMinutes: usageKnown ? usedMinutes : undefined,
+    }),
+    quietHoursLine: formatQuietHoursLine(limits) || "夜间 21:00–07:00",
+  };
+}
+
+function hasUnreadSafetyAlert(items) {
+  return (Array.isArray(items) ? items : []).some((item) => {
+    if (!item || typeof item !== "object") return false;
+    if (item.pinned === true) return true;
+    const status = typeof item.delivery_status === "string" ? item.delivery_status : "";
+    return status === "no_subscription" || status === "failed" || status === "pending";
+  });
+}
+
+function offersSafetySubscribe(binding) {
+  if (!binding || (binding.status && binding.status !== "active")) return false;
+  return (
+    binding.declared_mode === "parent_for_child" ||
+    binding.declared_mode === "child_for_parent"
+  );
+}
+
+module.exports = {
+  UNREAD_SAFETY_COPY,
+  buildTrialDeviceCard,
+  formatQuietHoursLine,
+  hasUnreadSafetyAlert,
+  offersSafetySubscribe,
+  usageLabel,
+};

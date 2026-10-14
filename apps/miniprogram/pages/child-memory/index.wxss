@@ -1,15 +1,16 @@
-/* Parent memory review. Off-white / light apricot + soft mint accent. */
+@import "../../styles/trial-theme.wxss";
+
+/* Parent memory review. Trial palette: bg / apricot / mint. */
 .cm-page {
-  --cm-bg: #faf6f0;
+  --cm-bg: #faf7f2;
   --cm-card: #ffffff;
-  --cm-ink: #2a2a28;
+  --cm-ink: #1f2a2e;
   --cm-muted: #8a8580;
-  --cm-accent: #6f9e8e;
-  --cm-accent-soft: rgba(111, 158, 142, 0.14);
+  --cm-accent: #3cb8a0;
+  --cm-accent-soft: rgba(60, 184, 160, 0.14);
   --cm-danger: #b56a64;
-  --cm-shadow: 0 8rpx 28rpx rgba(60, 48, 36, 0.06);
-  --cm-radius: 32rpx;
-  min-height: 100vh;
+  --cm-shadow: 0 12rpx 40rpx rgba(60, 48, 36, 0.08);
+  --cm-radius: 40rpx;
   padding: 20rpx 32rpx 96rpx;
   background: var(--cm-bg);
   color: var(--cm-ink);
@@ -98,41 +99,6 @@
   line-height: 1.7;
 }
 
-.cm-illus {
-  position: relative;
-  width: 120rpx;
-  height: 88rpx;
-  margin: 0 auto 28rpx;
-}
-
-.cm-illus-leaf {
-  position: absolute;
-  width: 52rpx;
-  height: 52rpx;
-  border-radius: 60% 0 60% 40%;
-  background: var(--cm-accent-soft);
-  transform: rotate(-28deg);
-}
-
-.cm-illus-leaf-a { left: 18rpx; top: 18rpx; }
-.cm-illus-leaf-b {
-  right: 18rpx;
-  top: 8rpx;
-  transform: rotate(18deg) scaleX(-1);
-  opacity: 0.85;
-}
-
-.cm-illus-dot {
-  position: absolute;
-  left: 52rpx;
-  bottom: 10rpx;
-  width: 16rpx;
-  height: 16rpx;
-  border-radius: 50%;
-  background: var(--cm-accent);
-  opacity: 0.45;
-}
-
 .cm-swipe {
   position: relative;
   margin-bottom: 20rpx;
@@ -161,8 +127,16 @@
   display: flex;
   gap: 24rpx;
   align-items: flex-start;
-  padding: 28rpx 28rpx;
+  padding: 32rpx 28rpx;
   transition: transform 180ms ease;
+}
+
+.cm-summary-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 16rpx;
+  min-width: 0;
 }
 
 .cm-swipe-open {
@@ -170,9 +144,12 @@
 }
 
 .cm-date {
-  flex: 0 0 140rpx;
-  color: var(--cm-muted);
-  font-size: 24rpx;
+  flex: 0 0 auto;
+  padding: 6rpx 16rpx;
+  border-radius: 999rpx;
+  background: var(--cm-accent-soft);
+  color: #2a8f7c;
+  font-size: 22rpx;
   line-height: 1.5;
 }
 
@@ -231,10 +208,13 @@
 }
 
 .cm-group-title {
-  display: block;
+  display: inline-block;
   margin: 8rpx 8rpx 16rpx;
+  padding: 6rpx 18rpx;
+  border-radius: 999rpx;
+  background: #f5ebdd;
   color: var(--cm-muted);
-  font-size: 24rpx;
+  font-size: 22rpx;
   letter-spacing: 0.5rpx;
 }
 

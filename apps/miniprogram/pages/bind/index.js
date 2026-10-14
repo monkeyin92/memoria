@@ -150,6 +150,7 @@ Page({
     adminVisibilityOptions: ADMIN_VISIBILITY_OPTIONS,
     error: "",
     submitting: false,
+    submitLabel: "提交绑定",
     manifest: null,
     reviewSubjectLabel: "",
     maxSubjectLabel: MAX_LABEL,
@@ -260,6 +261,7 @@ Page({
         mode === "parent_for_child"
           ? nightModeQuietHoursLabel(form.quietHoursStart, form.quietHoursEnd)
           : nightModeQuietHoursLabel(DEFAULT_QUIET_HOURS),
+      submitLabel: requiresCrisisSubscribeBeforeBind(mode) ? "订阅安全提醒" : "提交绑定",
       error: "",
     });
     if (mode === "parent_for_child") {
@@ -527,6 +529,7 @@ Page({
       crisisSubscribeRequired,
       crisisPush,
       crisisSubscribeAccepted: false,
+      submitLabel: crisisSubscribeRequired ? "订阅安全提醒" : "提交绑定",
     });
   },
 

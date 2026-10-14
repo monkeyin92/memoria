@@ -631,7 +631,10 @@ test("ordinary parent_for_child can resolve and confirm with app_confirm", async
   assert.equal(page.data.sessionLimits, null);
   const template = fs.readFileSync(path.join(root, "pages/device/index.wxml"), "utf8");
   assert.match(template, /申报不是核验/);
-  assert.match(template, /wx:if="\{\{sessionLimits\}\}"[\s\S]*使用时段/);
+  assert.match(
+    template,
+    /trialSettingsVisible[\s\S]*夜间时段[\s\S]*每日上限[\s\S]*安全提醒订阅|wx:if="\{\{sessionLimits && !trialSettingsVisible\}\}"[\s\S]*使用时段/,
+  );
   assert.doesNotMatch(template, /已核验|adult/);
 
   page.selectCandidate({ currentTarget: { dataset: { personId: "person_child" } } });

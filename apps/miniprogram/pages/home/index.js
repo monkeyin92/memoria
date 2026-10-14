@@ -12,6 +12,10 @@ const { readOnboardingSessionId } = require("../../utils/device-onboarding/sessi
 const { readSubjectLabel } = require("../../utils/subject-label");
 const { boundChildFromManifest } = require("../../utils/child-memory");
 const { loadPinnedCrisisAlerts, shouldOfferCrisisSubscription } = require("../../utils/crisis-alerts");
+const {
+  UNREAD_SAFETY_COPY,
+  buildTrialDeviceCard,
+} = require("../../utils/trial-device-card");
 
 function todayKey(date = new Date()) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -61,6 +65,14 @@ function emptyDashboard() {
     childMemoryMinorId: "",
     childMemoryName: "",
     pinnedCrisisAlerts: [],
+    statusPill: "离线",
+    usageKnown: false,
+    usageUsedMinutes: null,
+    usageLimitMinutes: 30,
+    usageLabel: "每日上限 30 分钟",
+    quietHoursLine: "夜间 21:00–07:00",
+    unreadSafetyAlert: false,
+    unreadSafetyCopy: UNREAD_SAFETY_COPY,
   };
 }
 
@@ -210,6 +222,11 @@ Page({
     });
   },
 
+  openUnreadSafety() {
+    // Pinned safety alerts land on the memory tab (#229); keep that route.
+    this.openMemory();
+  },
+
   async retryBindingSync() {
     if (!(await requireLogin({ reason: "view_dashboard" }))) {
       this._enterGuestState();
@@ -346,6 +363,11 @@ Page({
       ? await loadPinnedCrisisAlerts(api)
       : [];
     if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
+    const trialCard = buildTrialDeviceCard({
+      online,
+      runtimeProfile: runtime,
+    });
+    const unreadSafetyAlert = pinnedCrisisAlerts.length > 0;
 
     this.setData({
       loading: false,
@@ -385,6 +407,14 @@ Page({
       childMemoryMinorId: boundChild?.personId || "",
       childMemoryName: boundChild?.displayName || "",
       pinnedCrisisAlerts,
+      statusPill: trialCard.statusPill,
+      usageKnown: trialCard.usageKnown,
+      usageUsedMinutes: trialCard.usageUsedMinutes,
+      usageLimitMinutes: trialCard.usageLimitMinutes,
+      usageLabel: trialCard.usageLabel,
+      quietHoursLine: trialCard.quietHoursLine,
+      unreadSafetyAlert,
+      unreadSafetyCopy: UNREAD_SAFETY_COPY,
       error: failures.length ? "部分状态暂时无法同步。" : "",
     });
   },

@@ -1,181 +1,81 @@
-<view class="page-shell">
-  <page-backdrop theme="mist"></page-backdrop>
+<view class="page-shell trial-page home-trial">
   <view wx:if="{{!authenticated}}">
-    <text class="page-title">你好，欢迎来到 Memoria</text>
-    <text class="page-lede">把设备连好，再慢慢留下日常。</text>
-    <view class="mem-hero" data-role="starlight">
-      <view class="mem-hero-row">
-        <view class="pill"><view class="pill-dot"></view><text>欢迎加入</text></view>
-      </view>
-      <view class="mem-hero-row home-hero-main">
-        <view class="home-hero-copy">
-          <text class="mem-hero-title">记住哪些事，由你决定。</text>
-          <text class="mem-hero-sub">在设备上记录，在这里确认与整理。</text>
-        </view>
-        <face-badge role="starlight" size="xl" plain="{{true}}" animated="{{true}}"></face-badge>
-      </view>
-      <view class="home-hero-foot">
-        <text>登录后查看设备和今天记下的内容</text>
-      </view>
+    <text class="trial-title">你好，欢迎来到 Memoria</text>
+    <text class="trial-caption">把设备连好，再慢慢留下日常。</text>
+    <view class="trial-card home-guest-card">
+      <text class="home-guest-lead">记住哪些事，由你决定。</text>
+      <text class="trial-caption">在设备上记录，在这里确认与整理。</text>
     </view>
-    <view class="stack" style="margin-top: 46rpx;">
-      <button class="primary-button" bindtap="loginFromHome">微信登录，找回我的设备</button>
+    <view class="home-cta">
+      <button class="trial-primary" bindtap="loginFromHome">微信登录，找回我的设备</button>
     </view>
-    <text class="privacy-note">对话在设备上完成，数据加密传输与存储于云端。手机用来连接、确认和整理，不录音。</text>
+    <text class="trial-caption home-foot">对话在设备上完成。手机用来连接、确认和整理，不录音。</text>
   </view>
 
   <block wx:else>
-    <text class="page-title">{{greeting}}</text>
-    <text class="page-lede">{{pageLede}}</text>
+    <text class="trial-title">{{greeting}}</text>
+    <text class="trial-caption">{{pageLede}}</text>
 
-    <view wx:if="{{loading}}" class="card">
-      <text class="loading-text">{{syncingBindings ? '正在同步你的设备…' : '正在读取状态…'}}</text>
+    <view wx:if="{{loading}}" class="trial-card home-pad">
+      <text class="trial-caption">{{syncingBindings ? '正在同步你的设备…' : '正在读取状态…'}}</text>
     </view>
 
-    <view wx:elif="{{bindingSyncError && !hasBinding && !needsBindingChoice}}" class="card">
-      <text class="empty-title">设备信息暂未同步</text>
-      <text class="empty-copy">这不代表未绑定，无需重新配网。{{bindingSyncError}}</text>
-      <button class="primary-button empty-button" bindtap="retryBindingSync">重新同步</button>
+    <view wx:elif="{{bindingSyncError && !hasBinding && !needsBindingChoice}}" class="trial-card home-pad">
+      <text class="home-empty-title">设备信息暂未同步</text>
+      <text class="trial-caption">这不代表未绑定，无需重新配网。{{bindingSyncError}}</text>
+      <button class="trial-primary home-cta-btn" bindtap="retryBindingSync">重新同步</button>
     </view>
 
     <view wx:elif="{{needsBindingChoice}}">
-      <text class="page-lede">设备信息已从账号找到。选择你要查看的设备。</text>
+      <text class="trial-caption">设备信息已从账号找到。选择你要查看的设备。</text>
       <view
         wx:for="{{bindingChoices}}"
         wx:key="bindingId"
-        class="choice-card"
+        class="trial-card home-choice"
         data-binding-id="{{item.bindingId}}"
         bindtap="chooseDeviceBinding"
       >
-        <view class="row-copy">
-          <text class="row-title">{{item.label}}</text>
-          <text class="row-meta">{{item.modeLabel}}</text>
+        <view class="home-choice-copy">
+          <text class="home-choice-title">{{item.label}}</text>
+          <text class="trial-caption">{{item.modeLabel}}</text>
         </view>
-        <text class="row-chevron">›</text>
+        <text class="trial-banner-chevron">›</text>
       </view>
-      <text class="caption">切换设备不会赋予查看其他成员私密内容的权限。</text>
-      <text wx:if="{{bindingSyncError}}" class="error-text">{{bindingSyncError}}</text>
+      <text class="trial-caption">切换设备不会赋予查看其他成员私密内容的权限。</text>
+      <text wx:if="{{bindingSyncError}}" class="home-error">{{bindingSyncError}}</text>
     </view>
 
-    <view wx:elif="{{!hasBinding}}" class="empty-block">
-      <text class="empty-title">还没有绑定设备</text>
-      <text class="empty-copy">已完成账号同步。请接通设备电源，在手机旁完成首次启用。</text>
-      <button class="primary-button empty-button" bindtap="openOnboarding">{{hasPendingOnboarding ? '继续上次启用' : '添加第一台设备'}}</button>
-      <button class="text-button" bindtap="showSyncHelp">其他手机上已经有设备？</button>
+    <view wx:elif="{{!hasBinding}}" class="trial-card home-pad">
+      <text class="home-empty-title">还没有绑定设备</text>
+      <text class="trial-caption">已完成账号同步。请接通设备电源，在手机旁完成首次启用。</text>
+      <button class="trial-primary home-cta-btn" bindtap="openOnboarding">{{hasPendingOnboarding ? '继续上次启用' : '添加第一台设备'}}</button>
+      <button class="home-text-btn" bindtap="showSyncHelp">其他手机上已经有设备？</button>
     </view>
 
     <block wx:else>
-      <block wx:if="{{pinnedCrisisAlerts.length}}">
-        <view
-          wx:for="{{pinnedCrisisAlerts}}"
-          wx:key="notificationId"
-          class="notice notice-warn"
-          bindtap="openMemory"
-        >
-          <text class="l2-card-title">安全风险提醒 · {{item.minorDisplayName}}</text>
-          <text class="l2-card-sub">{{item.message}}</text>
-          <text class="caption">打开回顾页查看详情 ›</text>
-        </view>
-      </block>
-
-      <view class="status-chips">
-        <view class="status-chip" bindtap="openDevice">
-          <glass-icon name="device" size="56"></glass-icon>
-          <view class="status-chip-copy">
-            <text class="status-chip-label">设备</text>
-            <text class="status-chip-value">{{online ? '在线' : '离线'}}</text>
-          </view>
-        </view>
-        <view class="status-chip" bindtap="openPendingMemory">
-          <glass-icon name="check" size="56"></glass-icon>
-          <view class="status-chip-copy">
-            <text class="status-chip-label">待你确认</text>
-            <text class="status-chip-value">{{pendingCount || 0}} 条</text>
-          </view>
-        </view>
-        <view class="status-chip" bindtap="openMemory">
-          <glass-icon name="memory" size="56"></glass-icon>
-          <view class="status-chip-copy">
-            <text class="status-chip-label">每日摘要</text>
-            <text class="status-chip-value">{{dailySummaryText || todayTitle ? '已整理' : '暂无'}}</text>
-          </view>
-        </view>
+      <view
+        wx:if="{{unreadSafetyAlert || pinnedCrisisAlerts.length}}"
+        class="trial-banner"
+        bindtap="openUnreadSafety"
+      >
+        <text>{{unreadSafetyCopy}}</text>
+        <text class="trial-banner-chevron">›</text>
       </view>
 
-      <view class="mem-hero" data-role="{{heroRoleId}}">
-        <view class="mem-hero-row">
-          <view class="pill {{online ? '' : 'pill-amber'}}">
-            <view class="pill-dot"></view>
-            <text>{{online ? '设备在线' : '暂时离线'}}</text>
+      <view class="trial-card home-device-card" bindtap="openDevice">
+        <view class="home-device-top">
+          <text class="home-device-name">{{devicePlaceName}}</text>
+          <view class="trial-status-pill {{online ? '' : 'is-off'}}">
+            <view class="trial-status-dot"></view>
+            <text>{{statusPill}}</text>
           </view>
-          <text class="mem-hero-eyebrow">{{devicePlaceName}}</text>
         </view>
-        <view class="mem-hero-row home-hero-main">
-          <view class="home-hero-copy">
-            <text class="mem-hero-title">{{heroTitle}}</text>
-            <text class="mem-hero-sub">{{personaName}} · {{personaVoice}}在陪你</text>
-            <text class="mem-hero-sub">{{heroCaption}}</text>
-          </view>
-          <face-badge role="{{heroRoleId}}" size="hero" plain="{{true}}" animated="{{true}}" dim="{{!online}}"></face-badge>
-        </view>
-        <view class="home-hero-foot">
-          <text>{{heroFoot}}</text>
-          <text class="mem-hero-link" bindtap="openDevice">{{online ? '管理设备' : '检查连接'}} ›</text>
-        </view>
+        <text wx:if="{{usageKnown}}" class="home-usage-number">{{usageUsedMinutes}}</text>
+        <text class="home-usage-label {{usageKnown ? '' : 'home-usage-label-solo'}}">{{usageLabel}}</text>
+        <text class="trial-caption home-quiet">{{quietHoursLine}}</text>
       </view>
-
-      <view wx:if="{{showChildMemory}}" class="l2-card home-child-memory" bindtap="openChildMemory">
-        <view class="home-todo-head">
-          <glass-icon name="memory" size="80"></glass-icon>
-          <view class="home-todo-copy">
-            <text class="l2-card-title">孩子的记忆</text>
-            <text class="l2-card-sub">会话摘要与长期记忆，看得见、删得掉</text>
-          </view>
-          <text class="row-chevron">›</text>
-        </view>
-      </view>
-
-      <view wx:if="{{pendingCount}}" class="l2-card home-todo">
-        <view class="home-todo-head" bindtap="toggleTodo">
-          <glass-icon name="check" size="80"></glass-icon>
-          <view class="home-todo-copy">
-            <text class="l2-card-title">待确认的记忆 <text class="count-badge">{{pendingCount}}</text></text>
-            <text class="l2-card-sub">{{pendingCount}} 条内容，等你确认</text>
-          </view>
-          <view class="home-todo-chevron {{todoExpanded ? 'is-open' : ''}}">
-            <view class="icon-chevron"></view>
-          </view>
-        </view>
-        <view wx:if="{{todoExpanded}}" class="home-todo-body">
-          <text class="caption">确认后才会加入记忆档案</text>
-          <view class="button-row">
-            <button class="secondary-button btn-sm" bindtap="openPendingMemory">确认记住</button>
-            <button class="secondary-button secondary-button-ghost btn-sm" bindtap="openMemory">看看回顾</button>
-          </view>
-        </view>
-      </view>
-      <view wx:elif="{{!showChildMemory}}" class="notice">需要确认的内容都处理好了。今天不用再做什么。</view>
-
-      <view class="section-head">
-        <text class="section-head-title">每日摘要</text>
-        <text class="text-button" bindtap="openMemory">全部 ›</text>
-      </view>
-      <view wx:if="{{dailySummaryText || todayTitle}}" class="l2-card home-recap">
-        <view class="home-recap-meta">
-          <glass-icon name="memory" size="64"></glass-icon>
-          <text class="home-recap-time">{{todayMeta}}</text>
-          <text class="pill pill-neutral">AI 整理</text>
-        </view>
-        <text class="l2-card-title">{{todayTitle || '今日对话'}}</text>
-        <text class="l2-card-sub">{{dailySummaryText || todayOverview}}</text>
-        <view class="button-row">
-          <button class="secondary-button btn-sm" open-type="share">分享给家人</button>
-          <button class="secondary-button secondary-button-ghost btn-sm" bindtap="openMemory">查看回顾</button>
-        </view>
-      </view>
-      <view wx:else class="notice">今天还没有可回顾的内容。在设备旁唤醒「茉莉」后，再回来查看。</view>
     </block>
 
-    <text class="privacy-note">在设备上使用，手机不录音。对话由人工智能生成，会明确标识。数据加密传输与存储于云端。</text>
+    <text class="trial-caption home-foot">在设备上使用，手机不录音。对话由人工智能生成，会明确标识。</text>
   </block>
 </view>

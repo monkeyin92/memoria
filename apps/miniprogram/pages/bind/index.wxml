@@ -1,8 +1,7 @@
-<view class="page-shell">
-  <page-backdrop theme="mist"></page-backdrop>
+<view class="page-shell trial-page bind-trial">
   <view class="back-row"><navigator class="back-link" url="/pages/profile/index" open-type="switchTab">‹ 我的</navigator></view>
   <view class="page-head">
-    <text class="page-title">绑定设备</text>
+    <text class="trial-title">绑定设备</text>
     <block wx:if="{{step === 'mode'}}"><text class="page-subtitle">第 1 步 · 选择绑定方式</text></block>
     <block wx:elif="{{step === 'form'}}"><text class="page-subtitle">第 2 步 · 填写使用者信息</text></block>
     <block wx:elif="{{step === 'review'}}"><text class="page-subtitle">第 4 步 · 确认授权并提交</text></block>
@@ -85,6 +84,7 @@
         </picker>
         <view class="quiet-hours-block">
           <text class="quiet-hours-label">{{quietHoursLabel}}</text>
+          <text class="trial-caption bind-night-caption">夜间模式默认 21:00–07:00，可改</text>
           <view class="quiet-hours-row">
             <picker mode="time" value="{{form.quietHoursStart}}" bindchange="onQuietStartChange">
               <view class="picker-row"><text class="picker-label">开始</text><text class="picker-value">{{form.quietHoursStart}}</text></view>
@@ -202,7 +202,7 @@
 
       <view class="button-row bind-nav">
         <button class="secondary-button" bindtap="backToForm">上一步</button>
-        <button class="primary-button" loading="{{submitting}}" bindtap="submitBinding">{{crisisSubscribeRequired ? '订阅安全提醒并绑定' : '提交绑定'}}</button>
+        <button class="trial-primary bind-submit" loading="{{submitting}}" bindtap="submitBinding">{{submitLabel}}</button>
       </view>
       <text wx:if="{{error}}" class="error-text">{{error}}</text>
       <button wx:if="{{needsRescan}}" class="secondary-button bind-rescan" bindtap="rescanDevice">轻点机器人屏幕换码后，重新扫码</button>

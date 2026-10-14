@@ -49,16 +49,22 @@ test("online status reflects activation readiness", () => {
 test("home page is a status board without rooms or realtime chat", () => {
   const template = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
   const script = fs.readFileSync(path.join(root, "pages/home/index.js"), "utf8");
-  assert.match(template, /欢迎来到 Memoria|page-title">\{\{greeting\}\}/);
+  assert.match(template, /欢迎来到 Memoria|trial-title">\{\{greeting\}\}/);
   assert.doesNotMatch(template, /startVoice|startText|sendText|可直接对话/);
   assert.doesNotMatch(template, /先了解怎么用|openHowItWorks|家中的设备/);
-  assert.match(template, /wx:if="\{\{!authenticated\}\}"[\s\S]*登录后查看设备和今天/);
+  assert.match(template, /wx:if="\{\{!authenticated\}\}"[\s\S]*微信登录，找回我的设备/);
+  assert.match(template, /home-device-card/);
+  assert.match(template, /usageLabel/);
+  assert.match(template, /usageKnown/);
+  assert.match(template, /unreadSafetyCopy|unreadSafetyAlert/);
+  assert.doesNotMatch(template, /status-chips|face-badge|glass-icon/);
   assert.match(script, /subscribeAuthCleared\(\(\) => this\._enterGuestState\(\)\)/);
   assert.doesNotMatch(script, /待在设备上确认/);
   assert.doesNotMatch(script, /resolveSessionSubject/);
   assert.doesNotMatch(script, /openHowItWorks/);
   assert.doesNotMatch(script, /家中的设备/);
   assert.match(script, /readSubjectLabel/);
+  assert.match(script, /buildTrialDeviceCard/);
 });
 
 test("current user on home is the bind-time remark, not the WeChat name", () => {
@@ -93,4 +99,69 @@ test("online hero caption names the device's configured wake word", () => {
   const script = fs.readFileSync(path.join(root, "pages/home/index.js"), "utf8");
   assert.match(script, /唤醒「\$\{settings\?\.wake_word_display \|\| "茉莉"\}」/);
   assert.doesNotMatch(script, /\? "在设备旁唤醒「茉莉」/);
+});
+
+test("trial device card helper uses profile quiet hours and usage limit", () => {
+  const {
+    buildTrialDeviceCard,
+    hasUnreadSafetyAlert,
+    usageLabel,
+  } = require("../utils/trial-device-card");
+  const profile = {
+    valid: true,
+    subject_category: "minor",
+    obligations: [
+      { code: "QUIET_HOURS", params: { quiet_hours: ["21:00", "07:00"] } },
+      { code: "MAX_SESSION_SECONDS", params: { max_session_seconds: 1800 } },
+    ],
+  };
+  const unknown = buildTrialDeviceCard({ online: true, runtimeProfile: profile });
+  assert.equal(unknown.statusPill, "在线");
+  assert.equal(unknown.usageKnown, false);
+  assert.equal(unknown.usageUsedMinutes, null);
+  assert.equal(unknown.usageLimitMinutes, 30);
+  assert.equal(unknown.usageLabel, "每日上限 30 分钟");
+  assert.equal(unknown.quietHoursLine, "夜间 21:00–07:00");
+  const known = buildTrialDeviceCard({
+    online: true,
+    runtimeProfile: profile,
+    usedMinutes: 12,
+  });
+  assert.equal(known.usageKnown, true);
+  assert.equal(known.usageUsedMinutes, 12);
+  assert.equal(known.usageLabel, "今日已用 / 30 分钟");
+  assert.equal(usageLabel({ limitMinutes: 45 }), "每日上限 45 分钟");
+  assert.equal(usageLabel({ limitMinutes: 45, usedMinutes: 0 }), "今日已用 / 45 分钟");
+  assert.equal(
+    hasUnreadSafetyAlert([{ pinned: true, delivery_status: "no_subscription" }]),
+    true,
+  );
+  assert.equal(hasUnreadSafetyAlert([{ pinned: false, delivery_status: "delivered" }]), false);
+});
+
+test("trial pages use CSS chrome only, no new bitmap or third-party art", () => {
+  const surfaces = [
+    "pages/home/index.wxml",
+    "pages/home/index.wxss",
+    "pages/child-memory/index.wxml",
+    "pages/child-memory/index.wxss",
+    "pages/bind/index.wxml",
+    "pages/bind/index.wxss",
+    "pages/device/index.wxml",
+    "pages/device/index.wxss",
+    "styles/trial-theme.wxss",
+    "design-preview/trial-ui-after.html",
+  ];
+  for (const relative of surfaces) {
+    const source = fs.readFileSync(path.join(root, relative), "utf8");
+    assert.doesNotMatch(
+      source,
+      /assets\/(companions|mascots|icons)\/|\.png|\.webp|\.jpg|\.svg|cm-illus|background-image\s*:/,
+      relative,
+    );
+    assert.doesNotMatch(source, /apple\.com|mi\.com|homekit|sf-symbol/i, relative);
+  }
+  const preview = fs.readFileSync(path.join(root, "design-preview/trial-ui-after.html"), "utf8");
+  assert.doesNotMatch(preview, /<img\b/);
+  assert.match(preview, /style reference only/i);
 });

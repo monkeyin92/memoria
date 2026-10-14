@@ -1,11 +1,11 @@
-<view class="cm-page">
+<view class="cm-page trial-page">
   <text class="cm-privacy">{{privacyLine}}</text>
 
   <view class="cm-tabs">
     <view
       class="cm-tab {{activeTab === 'recent' ? 'cm-tab-on' : ''}}"
       bindtap="showRecent"
-    >最近对话</view>
+    >近期摘要</view>
     <view
       class="cm-tab {{activeTab === 'archive' ? 'cm-tab-on' : ''}}"
       bindtap="showArchive"
@@ -26,11 +26,6 @@
 
   <block wx:elif="{{activeTab === 'recent'}}">
     <view wx:if="{{!summaries.length}}" class="cm-card cm-empty">
-      <view class="cm-illus" aria-hidden="true">
-        <view class="cm-illus-leaf cm-illus-leaf-a"></view>
-        <view class="cm-illus-leaf cm-illus-leaf-b"></view>
-        <view class="cm-illus-dot"></view>
-      </view>
       <text class="cm-empty-copy">{{emptyRecent}}</text>
     </view>
 
@@ -53,8 +48,10 @@
           bindtouchend="onSummaryTouchEnd"
           bindtouchcancel="onSummaryTouchEnd"
         >
-          <text class="cm-date">{{item.dateLabel}}</text>
-          <text class="cm-summary-text">{{item.text}}</text>
+          <view class="cm-summary-body">
+            <text class="cm-date">{{item.dateLabel}}</text>
+            <text class="cm-summary-text">{{item.text}}</text>
+          </view>
         </view>
       </view>
 
@@ -73,7 +70,7 @@
         </view>
         <switch
           checked="{{archiveConsent.active}}"
-          color="#6f9e8e"
+          color="#3CB8A0"
           disabled="{{working}}"
           bindchange="onArchiveConsentChange"
           aria-label="长期记忆"

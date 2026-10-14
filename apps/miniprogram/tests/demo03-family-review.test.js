@@ -558,17 +558,19 @@ test("memory share uses the pressed day and falls back for guests", async () => 
   });
 });
 
-test("DEMO-03 templates expose the daily summary card, share buttons and previews", () => {
+test("DEMO-03 keeps share handlers; trial home drops the daily summary card", () => {
   const home = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
   const homeScript = fs.readFileSync(path.join(root, "pages/home/index.js"), "utf8");
   const memory = fs.readFileSync(path.join(root, "pages/memory/index.wxml"), "utf8");
   const memoryScript = fs.readFileSync(path.join(root, "pages/memory/index.js"), "utf8");
 
-  assert.match(home, /每日摘要/);
-  assert.match(home, /open-type="share"/);
-  assert.match(home, /\{\{dailySummaryText \|\| todayOverview\}\}/);
+  // Trial home is a device status board. Summary copy still loads for menu share.
+  assert.doesNotMatch(home, /每日摘要/);
+  assert.doesNotMatch(home, /open-type="share"/);
+  assert.doesNotMatch(home, /\{\{dailySummaryText \|\| todayOverview\}\}/);
   assert.match(homeScript, /次对话/);
   assert.match(homeScript, /onShareAppMessage/);
+  assert.match(homeScript, /dailySummaryText/);
 
   assert.match(memory, /分享选中日期的回顾/);
   assert.match(memory, /open-type="share"/);

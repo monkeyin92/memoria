@@ -95,28 +95,30 @@ function stubApi(overrides) {
   };
 }
 
-test("home exposes 孩子的记忆 as a card for parent_for_child bindings", () => {
+test("home routes unread safety banner into child memory for parent bindings", () => {
   const home = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
   const homeJs = fs.readFileSync(path.join(root, "pages/home/index.js"), "utf8");
   const appConfig = require("../app.json");
   assert.ok(appConfig.pages.includes("pages/child-memory/index"));
-  assert.match(home, /home-child-memory/);
-  assert.match(home, /孩子的记忆/);
+  assert.match(home, /openUnreadSafety|unreadSafetyAlert/);
   assert.match(homeJs, /openChildMemory/);
+  assert.match(homeJs, /openUnreadSafety/);
   assert.match(homeJs, /boundChildFromManifest/);
+  assert.doesNotMatch(home, /home-child-memory|孩子的记忆/);
 });
 
 test("page copy and structure match product acceptance", () => {
   const wxml = fs.readFileSync(path.join(root, "pages/child-memory/index.wxml"), "utf8");
   const wxss = fs.readFileSync(path.join(root, "pages/child-memory/index.wxss"), "utf8");
-  assert.match(wxml, /最近对话/);
+  assert.match(wxml, /近期摘要/);
   assert.match(wxml, /长期记忆/);
   assert.match(wxml, /privacyLine|cm-privacy/);
   assert.match(wxml, /askClearSummaries/);
   assert.match(wxml, /onSummaryTouchStart/);
   assert.doesNotMatch(wxml, /transcript|utterance|audio_url|user_text|assistant_text/);
-  assert.match(wxss, /#faf6f0|#FAF6F0/i);
-  assert.match(wxss, /#6f9e8e/);
+  assert.doesNotMatch(wxml, /cm-illus/);
+  assert.match(wxss, /#faf7f2|#FAF7F2/i);
+  assert.match(wxss, /#3cb8a0|#3CB8A0/i);
   assert.doesNotMatch(wxss, /cartoon|completeness|score|radar/i);
   assert.equal(childMemory.PRIVACY_LINE, "我们自己的服务器不保存录音和原话。摘要 30 天后自动删除。");
   assert.equal(

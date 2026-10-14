@@ -71,11 +71,13 @@ test("the full expression frame set stays out of the package and out of pages", 
   }
 });
 
-test("home and device heroes show the selected companion, not the generic robot", () => {
+test("trial home and device drop companion mascots from the status surface", () => {
   const home = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
   const device = fs.readFileSync(path.join(root, "pages/device/index.wxml"), "utf8");
-  assert.match(home, /<face-badge role="\{\{heroRoleId\}\}"[^>]*animated="\{\{true\}\}"[^>]*dim="\{\{!online\}\}"/);
-  assert.match(device, /<face-badge role="\{\{heroRoleId\}\}"[^>]*animated="\{\{true\}\}"[^>]*dim="\{\{!online\}\}"/);
+  assert.doesNotMatch(home, /<face-badge/);
+  assert.doesNotMatch(device, /<face-badge/);
   assert.doesNotMatch(home, /<device-screen/);
   assert.doesNotMatch(device, /<device-screen/);
+  assert.match(home, /home-device-card/);
+  assert.match(device, /trialSettingsVisible|trial-inset/);
 });
