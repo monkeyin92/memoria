@@ -5,18 +5,17 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal, Protocol
+from typing import Literal, Protocol, get_args
 
 from services.archive.domain import EvidenceEvent, LifeArchivePort
 
 NotificationStatus = Literal["pending", "pin_only", "delivered", "failed", "no_subscription"]
 
-# Crisis / victim / support-other alerts stay on the Mini Program home pin
-# for every outbox status, including after a successful WeChat push.  Push
-# delivery must never clear the pin.
-PINNED_CRISIS_ALERT_STATUSES = frozenset(
-    {"pending", "pin_only", "failed", "no_subscription", "delivered"}
-)
+# SQL enqueue picks the insert status from attempt_push (pending for
+# crisis/victim, pin_only for relay). Push may later move a row to
+# delivered / failed / no_subscription. Every legal outbox status stays
+# pinned; delivery must never clear the home card.
+PINNED_CRISIS_ALERT_STATUSES = frozenset(get_args(NotificationStatus))
 
 
 def crisis_alert_is_pinned(status: str) -> bool:

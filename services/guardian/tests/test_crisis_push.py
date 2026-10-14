@@ -241,10 +241,12 @@ async def test_ledger_counts_acceptances_and_bans_void_the_balance(
 
 
 def test_crisis_alert_statuses_stay_pinned_regardless_of_push_delivery() -> None:
-    assert crisis_alert_is_pinned("pending")
-    assert crisis_alert_is_pinned("pin_only")
-    assert crisis_alert_is_pinned("failed")
-    assert crisis_alert_is_pinned("no_subscription")
+    from typing import get_args
+
+    from services.guardian.crisis import NotificationStatus
+
+    for status in get_args(NotificationStatus):
+        assert crisis_alert_is_pinned(status), status
     assert crisis_alert_is_pinned("delivered")
     assert not crisis_alert_is_pinned("retry")
 
