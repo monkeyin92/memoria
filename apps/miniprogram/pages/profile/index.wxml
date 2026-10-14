@@ -6,122 +6,119 @@
     <button class="primary-button empty-button" bindtap="loginFromProfile">微信登录</button>
     <view class="list" style="margin-top: 32rpx;">
       <view class="list-row" bindtap="openPrivacy">
+        <mp-icon name="shield" tone="ink"></mp-icon>
         <view class="row-copy">
-          <text class="row-title">隐私与数据</text>
+          <text class="row-title">授权与隐私说明</text>
           <text class="row-meta">先了解，再决定</text>
         </view>
-        <text class="row-chevron">›</text>
+        <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
       </view>
     </view>
   </view>
 
   <block wx:else>
-    <!-- L1 情感层：头像行（FaceBadge + 昵称首字） -->
-    <view class="l2-card account-card">
-      <view class="account">
-        <image wx:if="{{profile.avatar_url}}" class="user-avatar" src="{{profile.avatar_url}}" mode="aspectFill" />
-        <view wx:else class="hero-initial" aria-hidden="true">
-          <text class="hero-initial-text">{{profileInitial}}</text>
-        </view>
-        <view class="account-copy">
-          <text class="page-title">{{profile.display_name || '新朋友'}}</text>
-          <text class="page-lede account-lede">微信已登录</text>
-        </view>
-        <face-badge role="{{profile.companion_id}}" size="sm"></face-badge>
+    <text class="page-title">我的</text>
+
+    <view class="card card-xl account-card">
+      <image wx:if="{{profile.avatar_url}}" class="user-avatar" src="{{profile.avatar_url}}" mode="aspectFill" />
+      <view wx:else class="hero-initial" aria-hidden="true">
+        <text class="hero-initial-text">{{profileInitial}}</text>
+      </view>
+      <view class="account-copy">
+        <text class="account-name">{{profile.display_name || '新朋友'}}</text>
+        <text class="account-sub">{{deviceBindingStateLabel}} · {{deviceBindingCountLabel}}</text>
       </view>
     </view>
 
-    <!-- L2 功能层：入口列表 -->
-    <view class="list">
-      <view class="list-row" bindtap="openCompanion">
-        <view class="row-icon"><mp-icon name="star"></mp-icon></view>
+    <view class="card device-card" bindtap="openDevice">
+      <view class="device-art"><view class="device-fig"><face-badge role="{{profile.companion_id}}" size="md" plain="{{true}}"></face-badge></view></view>
+      <view class="row-copy">
+        <text class="device-name">{{deviceBindingLabel || '我的设备'}}</text>
+        <view class="device-pill pill {{deviceBindingState === 'ready' || deviceBindingState === 'cached' ? 'pill-online' : 'pill-neutral'}}">{{deviceBindingStateLabel}}</view>
+        <text wx:if="{{deviceBindingState !== 'ready'}}" class="row-meta">{{deviceBindingDetail}}</text>
+      </view>
+      <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
+    </view>
+    <view wx:if="{{deviceBindingChoices.length}}" class="list binding-choices">
+      <view
+        wx:for="{{deviceBindingChoices}}"
+        wx:key="bindingId"
+        class="list-row"
+        data-binding-id="{{item.bindingId}}"
+        bindtap="chooseDeviceBinding"
+      >
         <view class="row-copy">
-          <text class="row-title">{{personaHeadline}}</text>
-          <text class="row-meta">日常角色。下次唤醒才会换成对应声音</text>
+          <text class="row-title">{{item.label}}</text>
+          <text class="row-meta">{{item.modeLabel}}</text>
         </view>
-        <text class="row-chevron">›</text>
+        <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
       </view>
     </view>
+    <button
+      wx:if="{{deviceBindingState === 'error' || deviceBindingState === 'cached'}}"
+      class="secondary-button resync-button"
+      loading="{{deviceBindingSyncing}}"
+      disabled="{{deviceBindingSyncing}}"
+      bindtap="retryDeviceBindingSync"
+    >重新同步设备</button>
 
     <view class="list">
       <view class="list-row" bindtap="openDevice">
-        <view class="row-icon"><mp-icon name="dev"></mp-icon></view>
+        <mp-icon name="dev" tone="ink"></mp-icon>
+        <text class="row-title row-copy">设备管理</text>
+        <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
+      </view>
+      <view class="list-row" bindtap="openCompanion">
+        <mp-icon name="star" tone="ink"></mp-icon>
         <view class="row-copy">
-          <text class="row-title">我的设备</text>
-          <text class="row-meta">{{deviceBindingDetail}}</text>
+          <text class="row-title">{{personaHeadline}}</text>
+          <text class="row-meta">下次唤醒才会换成对应声音</text>
         </view>
-        <text class="row-chevron">›</text>
+        <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
       </view>
-      <view wx:if="{{deviceBindingChoices.length}}" class="binding-choices">
-        <view
-          wx:for="{{deviceBindingChoices}}"
-          wx:key="bindingId"
-          class="choice-card"
-          data-binding-id="{{item.bindingId}}"
-          bindtap="chooseDeviceBinding"
-        >
-          <view class="row-copy">
-            <text class="row-title">{{item.label}}</text>
-            <text class="row-meta">{{item.modeLabel}}</text>
-          </view>
-        </view>
-      </view>
-      <button
-        wx:if="{{deviceBindingState === 'error' || deviceBindingState === 'cached'}}"
-        class="secondary-button"
-        loading="{{deviceBindingSyncing}}"
-        disabled="{{deviceBindingSyncing}}"
-        bindtap="retryDeviceBindingSync"
-      >重新同步设备</button>
       <view wx:if="{{guardianEntryAllowed}}" class="list-row" bindtap="openGuardianSummary">
-        <view class="row-icon"><mp-icon name="user"></mp-icon></view>
+        <mp-icon name="user" tone="ink"></mp-icon>
         <view class="row-copy">
-            <text class="row-title">家庭与监护</text>
-            <text class="row-meta">成长小结与监护授权</text>
+          <text class="row-title">监护与成长小结</text>
+          <text class="row-meta">成长小结与监护授权</text>
         </view>
-        <text class="row-chevron">›</text>
+        <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
       </view>
       <view wx:if="{{digitalSelfEntryAllowed}}" class="list-row" bindtap="openDigitalSelf">
-        <view class="row-icon"><mp-icon name="note"></mp-icon></view>
+        <mp-icon name="note" tone="ink"></mp-icon>
         <view class="row-copy">
           <text class="row-title">我的记忆档案</text>
           <text class="row-meta">只保留你确认的事</text>
         </view>
-        <text class="row-chevron">›</text>
+        <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
+      </view>
+      <view wx:if="{{rawVoiceEntryAllowed}}" class="list-row" bindtap="openPrivacy">
+        <mp-icon name="shield" tone="ink"></mp-icon>
+        <view class="row-copy">
+          <text class="row-title">授权与隐私说明</text>
+          <text class="row-meta">授权、导出与删除</text>
+        </view>
+        <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
+      </view>
+      <view class="list-row" bindtap="openCustomPersona">
+        <mp-icon name="wave" tone="ink"></mp-icon>
+        <view class="row-copy">
+          <text class="row-title">自定义人格</text>
+          <text class="row-meta">{{customPersonaLabel || '还没有分配到自定义人格'}}</text>
+        </view>
+        <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
       </view>
     </view>
+    <text class="caption profile-caption">对话只在机器人上进行。自定义人格用你写的名字说话，可创建、删除或分配给使用人。</text>
 
-    <text class="group-label">偏好与隐私</text>
+    <text class="group-label">偏好</text>
     <view class="list">
       <view class="setting-row">
-        <view>
+        <view class="row-copy">
           <text class="setting-name">自动整理日常回顾</text>
           <text class="setting-desc">开启后生成待查看的草稿，不自动保存为记忆</text>
         </view>
-        <switch checked="{{profile.auto_summary}}" data-key="auto_summary" bindchange="onSwitch" color="#326e70" />
-      </view>
-      <view wx:if="{{rawVoiceEntryAllowed}}" class="list-row" bindtap="openPrivacy">
-        <view class="row-icon"><mp-icon name="shield"></mp-icon></view>
-        <view class="row-copy">
-          <text class="row-title">隐私与数据</text>
-          <text class="row-meta">授权、导出与删除</text>
-        </view>
-        <text class="row-chevron">›</text>
-      </view>
-    </view>
-
-    <view class="l2-card">
-      <view class="card-lead">
-        <mp-icon name="wave"></mp-icon>
-        <text class="l2-card-title">自定义人格</text>
-      </view>
-      <text class="l2-card-sub">对话只在机器人上进行。自定义人格用你写的名字说话。</text>
-      <view class="list-row" bindtap="openCustomPersona">
-        <view class="row-copy">
-          <text class="row-title">{{customPersonaLabel || '还没有分配到自定义人格'}}</text>
-          <text class="row-meta">创建 / 删除 / 分配给使用人</text>
-        </view>
-        <text class="row-chevron">›</text>
+        <switch checked="{{profile.auto_summary}}" data-key="auto_summary" bindchange="onSwitch" color="#4A52C9" />
       </view>
     </view>
 
@@ -134,14 +131,10 @@
         </view>
       </view>
       <view class="list-row" bindtap="logout">
-        <view class="row-copy">
-          <text class="row-title">退出当前设备</text>
-        </view>
+        <text class="row-title row-copy">退出当前设备</text>
       </view>
       <view class="list-row" bindtap="logoutAll">
-        <view class="row-copy">
-          <text class="row-title">退出所有设备</text>
-        </view>
+        <text class="row-title row-copy">退出所有设备</text>
       </view>
     </view>
 
