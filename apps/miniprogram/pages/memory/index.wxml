@@ -9,6 +9,27 @@
   </view>
 
   <block wx:else>
+    <block wx:if="{{pinnedCrisisAlerts.length}}">
+      <view
+        wx:for="{{pinnedCrisisAlerts}}"
+        wx:key="notificationId"
+        class="notice notice-warn"
+      >
+        <text class="l2-card-title">安全风险提醒 · {{item.minorDisplayName}}</text>
+        <text class="l2-card-sub">{{item.message}}</text>
+        <text class="caption">{{item.occurredAt}}</text>
+      </view>
+    </block>
+
+    <view wx:if="{{crisisPush.enabled}}" class="l2-card">
+      <view class="card-lead">
+        <glass-icon name="bell" size="72"></glass-icon>
+        <text class="l2-card-title">微信安全提醒</text>
+      </view>
+      <text class="l2-card-sub">{{crisisPush.explanation}}</text>
+      <button size="mini" bindtap="enableCrisisPush">开启一次提醒</button>
+    </view>
+
     <view class="seg">
       <view class="seg-item {{memoryTab === 'reviews' ? 'seg-item-on' : ''}}" bindtap="showReviews">日常回顾</view>
       <view class="seg-item {{memoryTab === 'memories' ? 'seg-item-on' : ''}}" bindtap="showMemories">记住的事{{pendingCount ? ' · ' + pendingCount : ''}}</view>

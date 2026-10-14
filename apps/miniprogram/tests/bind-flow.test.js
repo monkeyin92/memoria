@@ -42,6 +42,19 @@ global.wx = {
       options.success({ statusCode: 200, data: { user_id: "person_owner", ...options.data } });
       return;
     }
+    // Crisis subscribe config / notifications are side reads after bind; do not
+    // overwrite the binding request the suite asserts on.
+    if (
+      options.url.includes("/v1/guardian/push-config") ||
+      options.url.includes("/v1/guardian/notifications") ||
+      options.url.includes("/v1/guardian/push-subscriptions")
+    ) {
+      options.success({
+        statusCode: 200,
+        data: { enabled: false, template_ids: {}, items: [] },
+      });
+      return;
+    }
     lastWxRequest = options;
     options.success(nextResponse);
   },

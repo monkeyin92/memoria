@@ -20,6 +20,8 @@ const {
   nightModeQuietHoursLabel,
   confirmUnusualQuietHours,
 } = require("../../utils/quiet-hours");
+const guardianPush = require("../../utils/guardian-push");
+const { shouldOfferCrisisSubscription } = require("../../utils/crisis-alerts");
 
 const SESSION_MINUTE_OPTIONS = [15, 30, 45, 60, 90, 120];
 const FAMILY_MEMBER_AGE_BANDS = ["under_14", "14_17", "adult"];
@@ -148,6 +150,7 @@ Page({
     manifest: null,
     reviewSubjectLabel: "",
     maxSubjectLabel: MAX_LABEL,
+    crisisPush: { enabled: false, templateId: "", explanation: "" },
   },
 
   onLoad(options = {}) {
@@ -606,11 +609,18 @@ Page({
         label: this._subjectLabel(),
       });
       await this._adoptPickedCompanion(request.persona_selection);
+      const crisisPush = shouldOfferCrisisSubscription(manifest)
+        ? await guardianPush.loadCrisisPushConfig(api)
+        : { enabled: false, templateId: "", explanation: "" };
       this.setData({
         manifest,
         step: "done",
         reviewSubjectLabel: this._subjectLabel(),
+        crisisPush,
       });
+      if (crisisPush.enabled) {
+        guardianPush.offerCrisisSubscription({ config: crisisPush, api }).catch(() => {});
+      }
     } catch (error) {
       const code = String(error?.code || error?.detail?.code || "").toUpperCase();
       this.setData({
@@ -622,6 +632,21 @@ Page({
       });
     } finally {
       this.setData({ submitting: false });
+    }
+  },
+
+  /* 必须直接绑定在按钮 tap 上：订阅框只能由用户点击调起。 */
+  async enableCrisisPush() {
+    try {
+      const outcome = await guardianPush.subscribeCrisisAlerts({
+        config: this.data.crisisPush,
+        api,
+      });
+      if (outcome.result === "accept") {
+        wx.showToast({ title: "已开启一次安全提醒", icon: "none" });
+      }
+    } catch (error) {
+      wx.showToast({ title: error?.message || "安全提醒开启失败，请稍后再试。", icon: "none" });
     }
   },
 
