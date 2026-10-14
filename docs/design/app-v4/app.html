@@ -1,0 +1,138 @@
+<!doctype html><html lang="zh"><meta charset="utf-8"><style>
+:root{--bg:#F4F4F7;--card:#FFFFFF;--ink:#16182B;--ink2:#5B5F73;--ink3:#7A7E92;--line:#ECECF1;--acc:#4A52C9;--accbg:#EEEFFC;--soft:#F4F4F8;--rust:#9A4732;--rustbg:#FBEEE9;--sage:#23805F;--sagebg:#E7F4EE;--sun:#7F5A00;--sunbg:#FBF1D6;
+--sans:"Inter","Noto Sans CJK SC",-apple-system,sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);color:var(--ink);background:#E6E6EC;-webkit-font-smoothing:antialiased;font-feature-settings:"tnum"}
+.s{width:390px;height:844px;position:relative;overflow:hidden;background:var(--bg)}
+.c{padding:64px 24px 0;position:relative}
+.eyebrow{font-size:13px;color:var(--ink3);font-weight:600;letter-spacing:.2px}
+h1{font-size:32px;font-weight:800;letter-spacing:-.6px;line-height:40px;margin-top:4px}
+h2{font-size:20px;font-weight:700;letter-spacing:-.3px;margin:32px 0 16px}
+.sub{font-size:15px;color:var(--ink2);margin-top:8px;line-height:24px}
+.k{background:var(--card);border-radius:24px;box-shadow:0 1px 2px rgba(22,24,43,.04),0 8px 24px -8px rgba(22,24,43,.08),0 24px 48px -24px rgba(22,24,43,.10)}
+.k.xl{border-radius:32px}
+img.m{mix-blend-mode:multiply}
+.chip{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:600;height:24px;padding:0 12px;border-radius:99px}
+.on{background:var(--sagebg);color:var(--sage)}.on:before{content:"";width:8px;height:8px;border-radius:50%;background:var(--sage)}
+.draft{background:var(--sunbg);color:var(--sun)}.soon{background:var(--accbg);color:var(--acc)}
+.ic{width:40px;height:40px;border-radius:12px;flex:none;display:grid;place-items:center}
+.ic svg{width:24px;height:24px}
+svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.row{display:flex;align-items:center;gap:16px;padding:16px;font-size:16px;min-height:64px}
+.row+.row{box-shadow:inset 0 1px 0 var(--line)}
+.row .r{margin-left:auto;color:#B4B6C4;display:flex}
+.btn{display:flex;justify-content:center;align-items:center;gap:8px;font-weight:600;font-size:17px;height:56px;border-radius:16px;color:#fff;background:var(--ink)}
+.btn.alt{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(22,24,43,.06),0 8px 24px -12px rgba(22,24,43,.12)}
+.note{font-size:12px;color:var(--ink3);text-align:center;margin-top:16px;line-height:16px}
+.tab{position:absolute;left:0;right:0;bottom:0;height:88px;padding:8px 16px 32px;background:rgba(250,250,252,.86);backdrop-filter:blur(24px);box-shadow:inset 0 1px 0 rgba(22,24,43,.06);display:flex;justify-content:space-around;font-size:10px;font-weight:500;color:#8E91A3;z-index:2}
+.tab div{display:flex;flex-direction:column;align-items:center;gap:4px;width:64px}
+.tab svg{width:24px;height:24px}.tab .a{color:var(--acc)}.tab .a svg{fill:var(--accbg)}
+.num{font-weight:700;letter-spacing:-1px;font-variant-numeric:tabular-nums}
+.lbl{font-size:13px;color:var(--ink2);font-weight:500}
+.sl{height:8px;border-radius:8px;background:#ECECF2;position:relative;margin:24px 0 8px}
+.sl span{position:absolute;left:0;top:0;bottom:0;border-radius:8px;background:var(--acc)}
+.sl em{position:absolute;top:-12px;width:32px;height:32px;border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(22,24,43,.18),0 0 0 .5px rgba(22,24,43,.08)}
+.rg{display:flex;justify-content:space-between;font-size:12px;color:var(--ink3)}
+</style><body><div id="root"></div><script>
+const P=+new URLSearchParams(location.search).get('p')||0;
+const I={
+home:'<svg viewBox="0 0 24 24"><path d="M3.5 10.5 12 4l8.5 6.5V19a1.5 1.5 0 0 1-1.5 1.5h-4v-6h-6v6H5A1.5 1.5 0 0 1 3.5 19z"/></svg>',
+book:'<svg viewBox="0 0 24 24"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5z"/><path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5z"/></svg>',
+face:'<svg viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="13" rx="5"/><path d="M12 6V3.5"/><circle cx="12" cy="3" r=".6"/><path d="M9 12v1M15 12v1M10 16c1.2.8 2.8.8 4 0"/></svg>',
+dev:'<svg viewBox="0 0 24 24"><rect x="5" y="3.5" width="14" height="17" rx="4"/><circle cx="12" cy="10" r="3"/><path d="M9.5 16.5h5"/></svg>',
+user:'<svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="4"/><path d="M4.5 20c1.3-3.6 4.2-5.5 7.5-5.5s6.2 1.9 7.5 5.5"/></svg>',
+chev:'<svg viewBox="0 0 24 24" style="width:18px;height:18px"><path d="m9 6 6 6-6 6"/></svg>',
+back:'<svg viewBox="0 0 24 24" style="width:24px;height:24px"><path d="m15 6-6 6 6 6"/></svg>',
+server:'<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="7" rx="2"/><rect x="4" y="13" width="16" height="7" rx="2"/><path d="M8 7.5h.01M8 16.5h.01"/></svg>',
+note:'<svg viewBox="0 0 24 24"><path d="M7 3.5h7l4 4V19a1.5 1.5 0 0 1-1.5 1.5h-9.5A1.5 1.5 0 0 1 5.5 19V5A1.5 1.5 0 0 1 7 3.5z"/><path d="M9 12h6M9 15.5h4"/></svg>',
+star:'<svg viewBox="0 0 24 24"><path d="m12 4 2.4 4.9 5.4.8-3.9 3.8.9 5.3L12 16.3l-4.8 2.5.9-5.3L4.2 9.7l5.4-.8z"/></svg>',
+cam:'<svg viewBox="0 0 24 24"><path d="M3 3l18 18"/><path d="M9 5h5l1.5 2H19a1.5 1.5 0 0 1 1.5 1.5V16M17 19H5a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 5 7h1"/><path d="M10 10.5a3 3 0 0 0 4 4"/></svg>',
+check:'<svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke-width:2.6"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>',
+bell:'<svg viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg>',
+heart:'<svg viewBox="0 0 24 24"><path d="M12 20s-7.5-4.6-7.5-10A4.3 4.3 0 0 1 12 7.4 4.3 4.3 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10z"/></svg>',
+tag:'<svg viewBox="0 0 24 24"><path d="M3.5 12.2V5A1.5 1.5 0 0 1 5 3.5h7.2l8.3 8.3-8.7 8.7z"/><circle cx="8" cy="8" r="1.3"/></svg>',
+paw:'<svg viewBox="0 0 24 24"><circle cx="7" cy="9" r="1.8"/><circle cx="11" cy="6" r="1.8"/><circle cx="15.5" cy="7" r="1.8"/><circle cx="18" cy="11" r="1.6"/><path d="M8.5 16.5c0-2.5 2-4.5 4-4.5s4 2 4 4.5c0 1.6-1.3 2.5-2.6 2.2-1-.2-1.8-.2-2.8 0-1.3.3-2.6-.6-2.6-2.2z"/></svg>',
+shield:'<svg viewBox="0 0 24 24"><path d="M12 3.5 19 6v5.5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6z"/><path d="m9 12 2 2 4-4"/></svg>',
+help:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.5a2.5 2.5 0 0 1 4.8.8c0 1.7-2.4 2-2.4 3.6M12 17h.01"/></svg>',
+info:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.8h.01"/></svg>',
+play:'<svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:currentColor;stroke:none"><path d="M8 5.5v13l10.5-6.5z"/></svg>',
+moon:'<svg viewBox="0 0 24 24"><path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z"/></svg>',
+plus:'<svg viewBox="0 0 24 24" style="width:18px;height:18px"><path d="M12 5v14M5 12h14"/></svg>',
+wechat:'<svg viewBox="0 0 24 24" style="width:20px;height:20px"><path d="M9.5 5C5.9 5 3 7.4 3 10.4c0 1.7.9 3.2 2.4 4.2L5 16.8l2.4-1.3c.7.2 1.4.3 2.1.3M21 14.2c0-2.6-2.5-4.7-5.6-4.7s-5.6 2.1-5.6 4.7 2.5 4.7 5.6 4.7c.6 0 1.2-.1 1.8-.3l2 1.1-.4-1.9c1.3-.9 2.2-2.2 2.2-3.6z"/></svg>'};
+
+const tab=a=>'<div class="tab">'+[['首页','home'],['回顾','book'],['角色','face'],['设备','dev'],['我的','user']].map(([t,i])=>`<div class="${t==a?'a':''}">${I[i]}${t}</div>`).join('')+'</div>';
+const ic=(i,bg,fg)=>`<div class="ic" style="background:${bg||'var(--soft)'};color:${fg||'var(--ink2)'}">${I[i]}</div>`;
+const ring=(p,size,w,inner)=>`<div style="width:${size}px;height:${size}px;border-radius:50%;background:conic-gradient(var(--acc) 0 ${p}%,#ECECF2 ${p}% 100%);display:grid;place-items:center;flex:none"><div style="width:${size-2*w}px;height:${size-2*w}px;border-radius:50%;background:#fff;display:grid;place-items:center;text-align:center">${inner}</div></div>`;
+const S=[];
+/* 1 login */
+S.push(`<div style="position:absolute;left:24px;right:24px;top:80px;height:400px;border-radius:32px;overflow:hidden;box-shadow:0 24px 48px -24px rgba(22,24,43,.35)"><img src="assets/dusk.jpg" style="position:absolute;left:-120px;top:-24px;height:448px"><div style="position:absolute;inset:0;background:linear-gradient(180deg,rgba(16,18,48,.32),rgba(16,18,48,0) 48%)"></div>
+<div style="position:absolute;top:40px;left:0;right:0;text-align:center;color:#fff"><div style="font-size:40px;font-weight:800;letter-spacing:-1px">Memoria</div><div style="font-size:15px;margin-top:8px;opacity:.95">陪孩子聊天、讲故事的 AI 助手</div></div></div>
+<div style="position:absolute;left:0;right:0;top:520px;padding:0 24px;text-align:center"><div style="font-size:24px;font-weight:700;letter-spacing:-.4px">晚上好，欢迎回来</div><div class="sub">登录后查看孩子今天聊了什么</div>
+<div class="btn" style="margin-top:32px">${I.wechat}微信一键登录</div><div class="btn alt" style="margin-top:16px">手机号登录</div>
+<div class="note" style="margin-top:24px">登录即表示你已阅读《用户协议》和《隐私说明》</div></div>`);
+/* 2 consent */
+S.push(`<div class="c"><span class="chip draft">草稿 · 待律师审核</span><h1 style="margin-top:16px">开始前，<br>请先确认这几件事</h1>
+<div class="sub">作为孩子的监护人，你需要知道我们实际会处理哪些信息。</div>
+<div class="k" style="margin-top:24px;padding:8px 0">
+${[['server','对话经过我们的服务器','孩子说的话会经服务器处理后再回复'],['note','保存对话摘要','家长可以按天查看，不保存原话和录音'],['star','长期只存三项','孩子的称呼、喜好、宠物名'],['cam','设备没有摄像头','不拍照，也不录像']].map(r=>`<div class="row" style="align-items:flex-start">${ic(r[0])}<div><div style="font-weight:600">${r[1]}</div><div style="font-size:13px;color:var(--ink2);margin-top:4px;line-height:20px">${r[2]}</div></div></div>`).join('')}</div>
+<div style="display:flex;gap:16px;align-items:flex-start;margin:24px 0;font-size:14px;line-height:24px;color:var(--ink2)"><span style="flex:none;width:24px;height:24px;border-radius:8px;background:var(--acc);color:#fff;display:grid;place-items:center">${I.check}</span><span>我是孩子的监护人，已阅读并同意<b style="color:var(--ink);font-weight:600">《监护人同意书》</b>（草稿）</span></div>
+<div class="btn">同意并继续</div><div style="text-align:center;margin-top:16px;font-size:15px;color:var(--ink2)">暂不同意</div></div>`);
+/* 3 home */
+S.push(`<div class="c"><div style="display:flex;justify-content:space-between;align-items:flex-end"><div><div class="eyebrow">10月14日 周三</div><h1>今天</h1></div><div style="width:40px;height:40px;border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(22,24,43,.08);display:grid;place-items:center;font-weight:700;font-size:15px;color:var(--acc)">乐</div></div>
+<div style="margin-top:24px;border-radius:24px;padding:16px;background:var(--rustbg);display:flex;gap:16px;align-items:center">${ic('heart','#F5DCD3','var(--rust)')}<div style="flex:1"><div style="font-weight:600;color:var(--rust);font-size:16px">有一条需要你关注的对话</div><div style="font-size:12px;color:#8A5848;margin-top:4px">今天 19:42 · 打开时首页会置顶显示</div></div><span style="color:var(--rust);display:flex">${I.chev}</span></div>
+<div class="k xl" style="margin-top:16px;padding:24px;display:flex;align-items:center;gap:24px">
+${ring(60,112,12,`<div><div class="num" style="font-size:24px;line-height:32px">60%</div><div style="font-size:11px;color:var(--ink3)">上限 30 分钟</div></div>`)}
+<div style="flex:1"><div class="lbl">今天聊了</div><div style="margin-top:4px"><span class="num" style="font-size:40px;line-height:48px">18</span><span style="font-size:15px;font-weight:600;color:var(--ink2)"> 分钟</span></div><div style="margin-top:8px"><span class="chip on">小乐在线</span></div></div></div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+<div class="k" style="padding:16px;height:152px;display:flex;flex-direction:column">${ic('book','var(--accbg)','var(--acc)')}<div style="margin-top:auto" class="lbl">今天讲了</div><div><span class="num" style="font-size:32px;line-height:40px">3</span><span style="font-size:14px;color:var(--ink2)"> 个故事</span></div></div>
+<div class="k" style="padding:16px;height:152px;display:flex;flex-direction:column">${ic('note','var(--accbg)','var(--acc)')}<div style="margin-top:auto" class="lbl">今日摘要</div><div><span class="num" style="font-size:32px;line-height:40px">3</span><span style="font-size:14px;color:var(--ink2)"> 条</span></div></div></div>
+<div class="k" style="margin-top:16px;padding:16px;display:flex;align-items:center;gap:16px"><div style="width:48px;height:48px;border-radius:16px;background:#FBEADF;overflow:hidden;flex:none"><img class="m" src="assets/h_forest.jpg" style="width:100%"></div><div style="flex:1"><div style="font-weight:600">今晚推荐</div><div style="font-size:13px;color:var(--ink2);margin-top:4px">大熊和森林里的悄悄话</div></div><div style="width:40px;height:40px;border-radius:50%;background:var(--ink);color:#fff;display:grid;place-items:center">${I.play}</div></div>
+<div class="note" style="text-align:left">名字和数字均为示例</div></div>${tab('首页')}`);
+/* 4 summary */
+const days=[['今天','10月14日',['讲了《大熊和森林里的悄悄话》','聊到了幼儿园的新朋友','一起数了天上的星星']],['昨天','10月13日',['问了很多关于恐龙的问题','听了一个睡前故事']],['周一','10月12日',['说今天画了一只小猫']]];
+S.push(`<div class="c"><div class="eyebrow">按天查看</div><h1>对话回顾</h1><div class="sub">这里只有摘要，不显示原话，也没有录音。</div>
+<div class="k" style="display:flex;justify-content:space-between;margin-top:24px;padding:8px">${['14','13','12','11','10','9'].map((d,i)=>`<div style="width:48px;padding:8px 0;text-align:center;border-radius:16px;${i==0?'background:var(--acc);color:#fff':'color:var(--ink2)'}"><div style="font-size:11px;font-weight:500;opacity:.85">${['三','二','一','日','六','五'][i]}</div><div class="num" style="font-size:18px;margin-top:4px;letter-spacing:0">${d}</div></div>`).join('')}</div>
+${days.map(d=>`<div class="k" style="padding:16px 24px;margin-top:16px"><div style="display:flex;justify-content:space-between;align-items:baseline"><b style="font-size:17px;font-weight:700">${d[0]}</b><span style="font-size:12px;color:var(--ink3)">${d[1]}</span></div>${d[2].map(t=>`<div style="font-size:15px;margin-top:8px;color:#34374D;line-height:24px;display:flex;gap:8px;align-items:center"><span style="width:4px;height:4px;border-radius:50%;background:var(--acc);flex:none"></span>${t}</div>`).join('')}</div>`).join('')}
+<div class="note">摘要内容为示例</div></div>${tab('回顾')}`);
+/* 5 attention */
+S.push(`<div class="c" style="padding-top:48px"><div style="width:40px;height:40px;border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(22,24,43,.08);color:var(--ink);display:grid;place-items:center">${I.back}</div>
+<div class="k xl" style="margin-top:16px;padding:24px 24px 16px;text-align:center"><div style="width:80px;height:80px;border-radius:50%;background:var(--rustbg);margin:0 auto;overflow:hidden;display:grid;place-items:center"><img class="m" src="assets/m_calm.jpg" style="width:96px;margin-top:8px"></div><div style="font-size:22px;font-weight:700;letter-spacing:-.4px;margin-top:16px">有一条需要你关注的对话</div><div class="sub" style="margin-top:4px">今天 19:42</div>
+<div style="margin-top:16px;padding:16px;border-radius:16px;background:var(--rustbg);color:#7A3D2C;font-size:14px;line-height:24px;text-align:left">孩子在聊天中提到了让他不舒服的事。为了保护孩子，这里不展示对话内容。</div></div>
+<h2 style="margin:16px 0 8px">可以这样和孩子聊</h2><div class="k" style="padding:0">
+${[['找一个放松的时间','比如睡前或散步时，不要急着追问'],['先听，少评判','“愿意和我说说今天的事吗？”'],['告诉孩子你在','“不管发生什么，你都可以来找我。”'],['需要时寻求帮助','可拨打 12356 心理援助热线']].map((r,i)=>`<div class="row" style="align-items:flex-start;padding:16px;min-height:0"><div style="width:24px;height:24px;border-radius:50%;background:var(--soft);flex:none;display:grid;place-items:center;font-size:13px;font-weight:700;color:var(--ink2)">${i+1}</div><div><div style="font-weight:600;font-size:15px">${r[0]}</div><div style="font-size:13px;color:var(--ink2);margin-top:4px">${r[1]}</div></div></div>`).join('')}</div>
+<div class="btn" style="margin-top:16px">我知道了</div></div>`);
+/* 6 usage */
+const slider=(t,v,a,b,p)=>`<div style="padding:16px 24px"><div style="display:flex;justify-content:space-between;align-items:baseline"><b style="font-weight:600">${t}</b><span><span class="num" style="font-size:32px">${v}</span><span style="font-size:14px;color:var(--ink2)"> 分钟</span></span></div><div class="sl"><span style="width:${p}%"></span><em style="left:calc(${p}% - 16px)"></em></div><div class="rg"><span>${a} 分钟</span><span>${b} 分钟</span></div></div>`;
+S.push(`<div class="c"><div class="eyebrow">设备 · 小乐</div><h1>使用时长</h1><div class="sub">到时间后，机器人会温柔地提醒孩子休息。</div>
+<div class="k xl" style="margin-top:24px;padding:16px 24px;display:flex;align-items:center;gap:24px">${ring(60,112,12,`<div><div class="num" style="font-size:32px;line-height:32px">18</div><div style="font-size:11px;color:var(--ink3);margin-top:4px">/ 30 分钟</div></div>`)}
+<div><b style="font-size:17px;font-weight:600">今天还可以聊<br>12 分钟</b><div style="font-size:13px;color:var(--ink3);margin-top:8px">已用 60% · 数字为示例</div></div></div>
+<div class="k" style="margin-top:16px;padding:8px 0">${slider('单次上限',15,10,30,25)}<div style="height:1px;background:var(--line);margin:0 24px"></div>${slider('每天上限',30,15,60,33)}</div>
+<div class="k" style="padding:16px;margin-top:16px;display:flex;align-items:center;gap:16px">${ic('moon')}<div style="flex:1"><b style="font-weight:600">安静时段</b><div style="font-size:13px;color:var(--ink2);margin-top:4px">孩子睡觉的时间，机器人不陪聊</div></div><span class="chip soon">即将上线</span></div></div>${tab('设备')}`);
+/* 7 content */
+const story=(img,t,d,c)=>`<div class="row" style="padding:16px"><div style="width:64px;height:64px;border-radius:16px;background:${c};flex:none;overflow:hidden"><img class="m" src="assets/${img}.jpg" style="width:100%"></div><div style="flex:1"><b style="font-size:16px;font-weight:600">${t}</b><div style="font-size:13px;color:var(--ink3);margin-top:4px">${d} · 离线可听</div></div><div style="width:40px;height:40px;border-radius:50%;background:var(--accbg);color:var(--acc);display:grid;place-items:center">${I.play}</div></div>`;
+S.push(`<div class="c"><div class="eyebrow">离线故事</div><h1>内容</h1><div class="sub">对机器人说“讲个故事”，就能开始播放。</div>
+<div class="k xl" style="margin-top:24px;height:208px;position:relative;overflow:hidden;background:#FBEADF"><img class="m" src="assets/h_forest.jpg" style="position:absolute;right:-72px;top:0;width:224px"><div style="position:absolute;left:24px;bottom:24px;width:160px"><span class="chip" style="background:#fff;color:var(--ink)">今晚推荐</span><div style="font-size:22px;font-weight:700;letter-spacing:-.3px;margin-top:8px;line-height:28px">大熊和<br>森林里的<br>悄悄话</div><div style="font-size:13px;color:var(--ink2);margin-top:8px">约 6 分钟</div></div></div>
+<h2 style="margin:24px 0 16px">全部故事</h2><div class="k" style="padding:0">${story('h_forest','大熊和森林里的悄悄话','约 6 分钟','#FBEADF')}${story('h_moon','小兔的纸船月亮','约 5 分钟','#FBF2D9')}${story('h_star','小狐狸收集星星','约 7 分钟','#ECEBF8')}</div>
+<div class="note">儿歌等核对出处后再上线</div></div>${tab('首页')}`);
+/* 8 roles */
+const role=(img,n,d,on,c)=>`<div class="k" style="padding:8px 8px 16px;text-align:center;${on?'box-shadow:0 0 0 2px var(--acc),0 8px 24px -8px rgba(74,82,201,.25);':''}"><div style="height:96px;border-radius:16px;background:${c};overflow:hidden;display:grid;place-items:center"><img class="m" src="assets/${img}.jpg" style="width:104px;margin-top:8px"></div><b style="display:block;margin-top:8px;font-weight:600">${n}</b><div style="font-size:12px;color:var(--ink2);margin-top:4px">${d}</div>${on?'<span class="chip on" style="margin-top:8px">正在使用</span>':'<span class="chip" style="background:var(--soft);color:var(--ink2);margin-top:8px">切换</span>'}</div>`;
+S.push(`<div class="c"><div class="eyebrow">说话风格</div><h1>角色</h1><div class="sub">换个说话风格。它始终是陪孩子聊天、讲故事的 AI 助手。</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:24px">${role('m_happy','小乐','开朗爱笑，适合白天',1,'#EEEFFC')}${role('m_curious','故事博士','慢慢讲，爱问为什么',0,'#F1F2F6')}${role('m_calm','温柔姐姐','说话轻柔，安抚情绪',0,'#F1F2F6')}${role('m_sleepy','晚安星星','睡前专用，声音更小',0,'#F1F2F6')}</div>
+<div class="k" style="margin-top:16px;height:48px;border-radius:16px;display:flex;justify-content:center;align-items:center;gap:8px;color:var(--acc);font-weight:600">${I.plus}新建角色</div>
+<div class="note" style="margin-top:8px">角色名称为示例</div></div>${tab('角色')}`);
+/* 9 memory */
+S.push(`<div class="c"><div class="eyebrow">长期记住的事</div><h1>记忆</h1><div class="sub">机器人长期只记住这三件事，用来更自然地和孩子聊天。</div>
+<div class="k xl" style="margin-top:24px;padding:0">
+${[['tag','称呼','乐乐','孩子喜欢被这样叫'],['heart','喜好','恐龙、画画、草莓','聊天时会提到'],['paw','宠物名','布丁（一只橘猫）','讲故事时可能出现']].map(r=>`<div class="row" style="padding:24px">${ic(r[0],'var(--accbg)','var(--acc)')}<div style="flex:1"><div style="font-size:13px;color:var(--ink3)">${r[1]}</div><div style="font-size:18px;font-weight:700;letter-spacing:-.2px;margin-top:4px">${r[2]}</div><div style="font-size:12px;color:var(--ink3);margin-top:4px">${r[3]}</div></div></div>`).join('')}</div>
+<div class="k" style="margin-top:16px;padding:16px;display:flex;gap:16px;align-items:center"><div style="width:56px;height:56px;border-radius:50%;background:var(--accbg);overflow:hidden;display:grid;place-items:center;flex:none"><img class="m" src="assets/m_curious.jpg" style="width:72px;margin-top:8px"></div><div style="font-size:13px;color:var(--ink2);line-height:20px">除这三项外，不长期保存其他信息。</div></div>
+<div class="note">以上内容为示例</div></div>${tab('设备')}`);
+/* 10 profile */
+S.push(`<div class="c"><h1>我的</h1><div class="k xl" style="margin-top:24px;padding:24px;display:flex;gap:16px;align-items:center"><div style="width:64px;height:64px;border-radius:50%;background:var(--accbg);color:var(--acc);display:grid;place-items:center;font-size:24px;font-weight:700">乐</div><div><div style="font-size:20px;font-weight:700;letter-spacing:-.3px">乐乐妈妈</div><div class="sub" style="margin-top:4px;font-size:14px">已绑定 1 台设备</div></div></div>
+<div class="k" style="margin-top:16px;padding:16px;display:flex;align-items:center;gap:16px"><div style="width:56px;height:56px;border-radius:16px;background:var(--accbg);overflow:hidden;display:grid;place-items:center"><img class="m" src="assets/m_happy.jpg" style="width:72px;margin-top:8px"></div><div style="flex:1"><b style="font-weight:600">小乐</b><div style="margin-top:8px"><span class="chip on">在线</span></div></div><span style="color:#B4B6C4;display:flex">${I.chev}</span></div>
+<div class="k" style="margin-top:16px;padding:0">${[['dev','设备管理'],['shield','授权与隐私说明'],['help','帮助与反馈'],['info','关于']].map(r=>`<div class="row">${ic(r[0])}${r[1]}<span class="r">${I.chev}</span></div>`).join('')}</div>
+<div class="note" style="margin-top:24px">绑定新设备请在 Memoria 小程序中完成<br>版本 0.1 设计稿</div></div>${tab('我的')}`);
+const N=['登录','监护人同意','首页','对话回顾','需要你关注','使用时长','内容','角色','记忆','我的'];
+const r=document.getElementById('root');
+if(P)r.innerHTML=`<div class="s">${S[P-1]}</div>`;
+else{r.innerHTML=`<div style="padding:64px 72px 16px;display:flex;justify-content:space-between;align-items:flex-end"><div><div class="eyebrow" style="font-size:14px">MEMORIA · 家长端</div><div style="font-size:48px;font-weight:800;letter-spacing:-1.2px;margin-top:8px">App 设计稿 v4</div></div><div class="sub" style="font-size:16px;text-align:right">10 个页面 · 名字和数字均为示例<br>仅设计与演示用</div></div><div style="display:grid;grid-template-columns:repeat(5,390px);gap:48px 40px;padding:24px 72px 72px">${S.map((s,i)=>`<div><div style="font-size:15px;margin-bottom:16px;color:var(--ink2)"><b style="color:var(--ink);margin-right:8px">${String(i+1).padStart(2,'0')}</b>${N[i]}</div><div class="s" style="border-radius:48px;box-shadow:0 32px 64px -24px rgba(22,24,43,.3)">${s}</div></div>`).join('')}</div>`}
+</script>
