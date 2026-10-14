@@ -3,7 +3,7 @@
 }
 
 .pc-action {
-  margin-top: 32rpx;
+  margin-top: 16px;
   background: var(--mp-accent-soft);
   color: var(--mp-accent);
   box-shadow: none;
@@ -15,7 +15,7 @@
 
 .pc-delete {
   flex-shrink: 0;
-  padding: 16rpx 24rpx;
+  padding: 8px 12px;
   color: var(--mp-rust);
   font-size: var(--mp-type-caption);
   font-weight: 600;

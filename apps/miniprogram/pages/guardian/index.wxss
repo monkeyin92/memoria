@@ -1,5 +1,5 @@
 .binding-result {
-  margin-top: 24rpx;
+  margin-top: 12px;
   padding: var(--mp-pad-card);
   border-radius: var(--mp-radius-inset);
   background: var(--mp-accent-soft);
@@ -8,11 +8,11 @@
 
 .binding-code {
   display: block;
-  margin: 8rpx 0;
+  margin: 4px 0;
   color: var(--mp-ink);
   font-size: var(--mp-type-num-xl);
   font-weight: 700;
-  letter-spacing: 8rpx;
+  letter-spacing: 4px;
   line-height: 1.2;
 }
 
@@ -28,7 +28,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16rpx;
+  gap: 8px;
 }
 
 .kept-head .l2-card-title {
@@ -37,26 +37,26 @@
 }
 
 .subject-actions button {
-  padding: 16rpx;
+  padding: 8px;
   font-size: var(--mp-type-card);
 }
 
 .l2-card .group-label {
-  margin: 32rpx 0 0;
+  margin: 16px 0 0;
 }
 
 .bar-row {
   display: grid;
-  grid-template-columns: 112rpx 1fr 48rpx;
+  grid-template-columns: 56px 1fr 24px;
   align-items: center;
-  gap: 16rpx;
-  margin-top: 16rpx;
+  gap: 8px;
+  margin-top: 8px;
   color: var(--mp-ink-2);
   font-size: var(--mp-type-meta);
 }
 
 .bar-track {
-  height: 16rpx;
+  height: 8px;
   overflow: hidden;
   border-radius: var(--mp-radius-pill);
   background: var(--mp-track);
@@ -71,12 +71,12 @@
 .topic-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 16rpx;
-  margin-top: 16rpx;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .topic-tag {
-  padding: 8rpx 24rpx;
+  padding: 4px 12px;
   border-radius: var(--mp-radius-pill);
   background: var(--mp-fill);
   color: var(--mp-ink-2);
@@ -84,10 +84,10 @@
 }
 
 .picker-row {
-  margin-top: 24rpx;
+  margin-top: 12px;
 }
 
 /* 删除孩子数据：居中弹窗复用全局 .modal-wrap / .modal-card，只补输入框间距 */
 .modal-card .field-input {
-  margin-top: 24rpx;
+  margin-top: 12px;
 }

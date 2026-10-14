@@ -1,3 +1,3 @@
-<view class="mi {{toneClass}}" style="width: {{size}}rpx; height: {{size}}rpx;" aria-hidden="true">
-  <image class="mi-glyph" src="{{src}}" mode="aspectFit" style="width: {{glyph}}rpx; height: {{glyph}}rpx;"></image>
+<view class="mi {{toneClass}}" style="width: {{(size) / 2}}px; height: {{(size) / 2}}px;" aria-hidden="true">
+  <image class="mi-glyph" src="{{src}}" mode="aspectFit" style="width: {{(glyph) / 2}}px; height: {{(glyph) / 2}}px;"></image>
 </view>

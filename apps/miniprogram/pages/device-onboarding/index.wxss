@@ -1,22 +1,22 @@
 .stepper {
-  margin-top: 32rpx;
+  margin-top: 16px;
 }
 
 .step-item {
   display: flex;
-  gap: 24rpx;
+  gap: 12px;
   position: relative;
-  padding-bottom: 40rpx;
+  padding-bottom: 20px;
 }
 
 .step-item::before {
   content: '';
   position: absolute;
-  left: 26rpx;
-  top: 56rpx;
-  bottom: 4rpx;
-  width: 4rpx;
-  border-radius: 2rpx;
+  left: 13px;
+  top: 28px;
+  bottom: 2px;
+  width: 2px;
+  border-radius: 1px;
   background: var(--mp-line);
 }
 
@@ -37,10 +37,10 @@
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 56rpx;
-  height: 56rpx;
+  width: 28px;
+  height: 28px;
   box-sizing: border-box;
-  border: 4rpx solid var(--mp-line);
+  border: 2px solid var(--mp-line);
   border-radius: 50%;
   background: var(--mp-surface);
   color: var(--mp-ink-3);
@@ -59,7 +59,7 @@
   border-color: var(--mp-ink);
   background: var(--mp-ink);
   color: var(--mp-on-accent);
-  box-shadow: 0 0 0 8rpx var(--mp-accent-soft);
+  box-shadow: 0 0 0 4px var(--mp-accent-soft);
 }
 
 .step-num {
@@ -67,14 +67,14 @@
 }
 
 .step-check {
-  width: 32rpx;
-  height: 32rpx;
+  width: 16px;
+  height: 16px;
 }
 
 .step-main {
   flex: 1;
   min-width: 0;
-  padding-top: 4rpx;
+  padding-top: 2px;
 }
 
 .step-title {
@@ -102,32 +102,32 @@
 }
 
 .step-title .pill {
-  margin-left: 16rpx;
-  vertical-align: 2rpx;
+  margin-left: 8px;
+  vertical-align: 1px;
 }
 
 .onboarding-button {
-  margin-top: 24rpx;
+  margin-top: 12px;
 }
 
 .flow-status-list {
-  margin-top: 24rpx;
-  padding: 16rpx 28rpx;
+  margin-top: 12px;
+  padding: 8px 14px;
   border-radius: var(--mp-radius-inset);
   background: var(--mp-fill);
 }
 
 .flow-status {
   display: block;
-  margin: 8rpx 0;
+  margin: 4px 0;
   color: var(--mp-ink-2);
   font-size: var(--mp-type-caption);
   line-height: var(--mp-lh-caption);
 }
 
 .wifi-hint {
-  margin-top: 24rpx;
-  padding: 16rpx 24rpx;
+  margin-top: 12px;
+  padding: 8px 12px;
   border-radius: var(--mp-radius-icon);
   background: var(--mp-sage-bg);
   color: var(--mp-sage);
@@ -135,8 +135,8 @@
 }
 
 .wifi-list {
-  margin: 24rpx 0 16rpx;
-  max-height: 360rpx;
+  margin: 12px 0 8px;
+  max-height: 180px;
   overflow-y: scroll;
   border-radius: var(--mp-radius-inset);
   background: var(--mp-fill);
@@ -146,9 +146,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 24rpx;
-  padding: 24rpx 28rpx;
-  border-bottom: 2rpx solid var(--mp-line);
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--mp-line);
 }
 
 .wifi-row:last-child {
@@ -174,7 +174,7 @@
 
 .wifi-meta {
   display: block;
-  margin-top: 4rpx;
+  margin-top: 2px;
   color: var(--mp-ink-3);
   font-size: var(--mp-type-meta);
 }
@@ -188,8 +188,8 @@
 .password-row {
   display: flex;
   align-items: center;
-  gap: 16rpx;
-  margin-top: 16rpx;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .password-input {
@@ -197,9 +197,9 @@
 }
 
 .password-toggle {
-  flex: 0 0 112rpx;
-  width: 112rpx;
-  min-height: 80rpx;
+  flex: 0 0 56px;
+  width: 56px;
+  min-height: 40px;
   margin: 0;
   padding: 0;
   border-radius: var(--mp-radius-pill);
@@ -207,25 +207,25 @@
   color: var(--mp-accent);
   font-size: var(--mp-type-caption);
   font-weight: 600;
-  line-height: 80rpx;
+  line-height: 40px;
 }
 
 .form-note {
   display: block;
-  margin-top: 24rpx;
+  margin-top: 12px;
   color: var(--mp-ink-3);
   font-size: var(--mp-type-meta);
   line-height: var(--mp-lh-caption);
 }
 
 .progress-list {
-  margin-top: 24rpx;
+  margin-top: 12px;
 }
 
 .progress-row {
   display: flex;
   align-items: center;
-  min-height: 64rpx;
+  min-height: 32px;
   color: var(--mp-ink-3);
   font-size: var(--mp-type-body);
 }
@@ -234,12 +234,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 36rpx;
-  width: 36rpx;
-  height: 36rpx;
-  margin-right: 16rpx;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  margin-right: 8px;
   box-sizing: border-box;
-  border: 2rpx solid var(--mp-ink-4);
+  border: 1px solid var(--mp-ink-4);
   border-radius: 50%;
   color: var(--mp-on-accent);
   font-size: var(--mp-type-meta);
@@ -263,7 +263,7 @@
 
 @keyframes progress-pulse {
   0%, 100% { box-shadow: 0 0 0 0 var(--mp-accent-soft); }
-  50% { box-shadow: 0 0 0 10rpx var(--mp-accent-soft); }
+  50% { box-shadow: 0 0 0 5px var(--mp-accent-soft); }
 }
 
 .progress-failed {
@@ -277,19 +277,19 @@
 
 .network-state {
   display: block;
-  margin-top: 24rpx;
+  margin-top: 12px;
   color: var(--mp-ink-2);
   font-size: var(--mp-type-caption);
   line-height: var(--mp-lh-caption);
 }
 
 .network-failure {
-  margin-top: 24rpx;
+  margin-top: 12px;
 }
 
 .network-failure-text {
   display: block;
-  padding: 24rpx 28rpx;
+  padding: 12px 14px;
   border-radius: var(--mp-radius-inset);
   background: var(--mp-rust-bg);
   color: var(--mp-rust);
@@ -300,8 +300,8 @@
 .activation-badge,
 .done-badge {
   display: inline-flex;
-  margin-top: 24rpx;
-  padding: 8rpx 24rpx;
+  margin-top: 12px;
+  padding: 4px 12px;
   border-radius: var(--mp-radius-pill);
   background: var(--mp-sage-bg);
   color: var(--mp-sage);
@@ -316,12 +316,12 @@
 .done-device {
   display: flex;
   justify-content: center;
-  margin-top: 8rpx;
+  margin-top: 4px;
 }
 
 .done-title {
   display: block;
-  margin-top: 24rpx;
+  margin-top: 12px;
   color: var(--mp-ink);
   font-size: var(--mp-type-title);
   font-weight: 700;
@@ -330,7 +330,7 @@
 
 .done-note {
   display: block;
-  margin-top: 24rpx;
+  margin-top: 12px;
   color: var(--mp-ink-2);
   font-size: var(--mp-type-caption);
   line-height: var(--mp-lh-caption);
@@ -338,14 +338,14 @@
 }
 
 .onboarding-error {
-  margin-top: 24rpx;
+  margin-top: 12px;
 }
 
 .cancel-link {
   display: block;
   width: auto;
-  margin: 24rpx auto 0;
-  padding: 16rpx 32rpx;
+  margin: 12px auto 0;
+  padding: 8px 16px;
   background: transparent;
   color: var(--mp-rust);
   font-size: var(--mp-type-caption);

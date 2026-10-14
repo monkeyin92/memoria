@@ -9,8 +9,8 @@
   padding: 8%;
   border-radius: 30%;
   background: #dde6f5;
-  border: 1rpx solid rgba(255, 255, 255, 0.8);
-  box-shadow: 0 12rpx 28rpx rgba(34, 52, 84, 0.14), inset 0 2rpx 0 rgba(255, 255, 255, 0.9);
+  border: 0.5px solid rgba(255, 255, 255, 0.8);
+  box-shadow: 0 6px 14px rgba(34, 52, 84, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.9);
   overflow: hidden;
 }
 
@@ -27,14 +27,14 @@
   height: 100%;
 }
 
-.fb-xs { width: 48rpx; height: 48rpx; }
-.fb-sm { width: 80rpx; height: 80rpx; }
-.fb-tile { width: 104rpx; height: 104rpx; }
-.fb-md { width: 144rpx; height: 144rpx; }
-.fb-lg { width: 192rpx; height: 192rpx; }
-.fb-xl { width: 240rpx; height: 240rpx; }
-.fb-empty { width: 296rpx; height: 296rpx; }
-.fb-hero { width: 260rpx; height: 260rpx; }
+.fb-xs { width: 24px; height: 24px; }
+.fb-sm { width: 40px; height: 40px; }
+.fb-tile { width: 52px; height: 52px; }
+.fb-md { width: 72px; height: 72px; }
+.fb-lg { width: 96px; height: 96px; }
+.fb-xl { width: 120px; height: 120px; }
+.fb-empty { width: 148px; height: 148px; }
+.fb-hero { width: 130px; height: 130px; }
 
 .face-on-light {
   background: #ffffff;
@@ -97,26 +97,26 @@
 @keyframes fbHop {
   0%, 100% { transform: translateY(0) scale(1, 1); }
   15% { transform: translateY(0) scale(1.05, 0.94); }
-  45% { transform: translateY(-22rpx) scale(0.97, 1.04); }
+  45% { transform: translateY(-11px) scale(0.97, 1.04); }
   75% { transform: translateY(0) scale(1.03, 0.97); }
 }
 
 @keyframes fbStartle {
   0% { transform: scale(0.94); }
-  60% { transform: translateY(-10rpx) scale(1.06); }
+  60% { transform: translateY(-5px) scale(1.06); }
   100% { transform: translateY(0) scale(1); }
 }
 
 @keyframes fbTilt {
   0% { transform: rotate(0deg); }
-  25%, 80% { transform: rotate(-5deg) translateY(-4rpx); }
+  25%, 80% { transform: rotate(-5deg) translateY(-2px); }
   100% { transform: rotate(0deg); }
 }
 
 @keyframes fbWobble {
   0%, 100% { transform: rotate(0deg); }
-  25% { transform: rotate(-6deg) translateX(-4rpx); }
-  75% { transform: rotate(6deg) translateX(4rpx); }
+  25% { transform: rotate(-6deg) translateX(-2px); }
+  75% { transform: rotate(6deg) translateX(2px); }
 }
 
 @keyframes fbSnooze {
@@ -126,5 +126,5 @@
 
 @keyframes fbFloat {
   0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-8rpx); }
+  50% { transform: translateY(-4px); }
 }

@@ -2,8 +2,8 @@
 
 .home-login-hero {
   position: relative;
-  height: 800rpx;
-  margin-top: 32rpx;
+  height: 400px;
+  margin-top: 16px;
   border-radius: var(--mp-radius-card-xl);
   overflow: hidden;
   background: var(--mp-ink);
@@ -12,9 +12,9 @@
 
 .home-login-art {
   position: absolute;
-  left: -240rpx;
-  top: -48rpx;
-  height: 896rpx;
+  left: -120px;
+  top: -24px;
+  height: 448px;
 }
 
 .home-login-scrim {
@@ -28,7 +28,7 @@
 
 .home-login-brand {
   position: absolute;
-  top: 80rpx;
+  top: 40px;
   left: 0;
   right: 0;
   color: var(--mp-on-accent);
@@ -39,20 +39,20 @@
   display: block;
   font-size: var(--mp-type-num-xl);
   font-weight: 800;
-  line-height: 96rpx;
-  letter-spacing: -2rpx;
+  line-height: 48px;
+  letter-spacing: -1px;
 }
 
 .home-login-tag {
   display: block;
-  margin-top: 16rpx;
+  margin-top: 8px;
   font-size: var(--mp-type-body);
   line-height: var(--mp-lh-body);
   opacity: 0.95;
 }
 
 .home-login-body {
-  padding-top: 64rpx;
+  padding-top: 32px;
   text-align: center;
 }
 
@@ -61,20 +61,20 @@
   color: var(--mp-ink);
   font-size: var(--mp-type-headline);
   font-weight: 700;
-  letter-spacing: -0.8rpx;
+  letter-spacing: -0.4px;
 }
 
 .home-btn-icon {
-  width: 40rpx;
-  height: 40rpx;
-  margin-right: 16rpx;
+  width: 20px;
+  height: 20px;
+  margin-right: 8px;
 }
 
 .home-head {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 24rpx;
+  gap: 12px;
 }
 
 .home-head-copy {
@@ -86,12 +86,12 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 80rpx;
-  height: 80rpx;
-  /* Measured from the tab-page top padding (status bar + 32rpx) so the avatar
-     always starts 8px below the capsule, even when rpx shrinks on 320pt phones. */
-  margin-top: calc(var(--mp-capsule-bottom) - var(--mp-status-bar) - 32rpx + 8px);
-  margin-bottom: 8rpx;
+  width: 40px;
+  height: 40px;
+  /* Measured from the tab-page top padding (status bar + 16px) so the avatar
+     always starts 8px below the capsule. */
+  margin-top: calc(var(--mp-capsule-bottom) - var(--mp-status-bar) - 16px + 8px);
+  margin-bottom: 4px;
   border-radius: 50%;
   background: var(--mp-surface);
   box-shadow: var(--mp-shadow-float);
@@ -102,14 +102,14 @@
 
 .home-chev {
   flex-shrink: 0;
-  width: 36rpx;
-  height: 36rpx;
+  width: 18px;
+  height: 18px;
 }
 
 .home-usage-card {
   display: flex;
   align-items: center;
-  gap: 48rpx;
+  gap: 24px;
   margin-top: var(--mp-gap-card);
   padding: var(--mp-pad-card-lg);
 }
@@ -119,8 +119,8 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 224rpx;
-  height: 224rpx;
+  width: 112px;
+  height: 112px;
   border-radius: 50%;
 }
 
@@ -129,8 +129,8 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  width: 176rpx;
-  height: 176rpx;
+  width: 88px;
+  height: 88px;
   border-radius: 50%;
   background: var(--mp-surface);
   text-align: center;
@@ -140,8 +140,8 @@
   color: var(--mp-ink);
   font-size: var(--mp-type-headline);
   font-weight: 700;
-  line-height: 64rpx;
-  letter-spacing: -2rpx;
+  line-height: 32px;
+  letter-spacing: -1px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -163,15 +163,15 @@
 }
 
 .home-usage-line {
-  margin: 8rpx 0 16rpx;
+  margin: 4px 0 8px;
 }
 
 .home-usage-num {
   color: var(--mp-ink);
   font-size: var(--mp-type-num-xl);
   font-weight: 700;
-  line-height: 96rpx;
-  letter-spacing: -2rpx;
+  line-height: 48px;
+  letter-spacing: -1px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -183,7 +183,7 @@
 
 .home-usage-pending {
   display: block;
-  margin: 16rpx 0 24rpx;
+  margin: 8px 0 12px;
   color: var(--mp-ink);
   font-size: var(--mp-type-card);
   font-weight: 600;
@@ -207,7 +207,7 @@
   flex-direction: column;
   box-sizing: border-box;
   min-width: 0;
-  height: 304rpx;
+  height: 152px;
   padding: var(--mp-pad-card);
 }
 
@@ -219,8 +219,8 @@
   color: var(--mp-ink);
   font-size: var(--mp-type-display);
   font-weight: 700;
-  line-height: 80rpx;
-  letter-spacing: -2rpx;
+  line-height: 40px;
+  letter-spacing: -1px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -247,7 +247,7 @@
 .home-row-card {
   display: flex;
   align-items: center;
-  gap: 32rpx;
+  gap: 16px;
   margin-top: var(--mp-gap-card);
   padding: var(--mp-pad-card);
 }
@@ -259,7 +259,7 @@
 
 .home-row-sub {
   display: block;
-  margin-top: 8rpx;
+  margin-top: 4px;
   overflow: hidden;
   color: var(--mp-ink-2);
   font-size: var(--mp-type-caption);
@@ -269,14 +269,14 @@
 }
 
 .home-choice-lede {
-  margin-top: 32rpx;
+  margin-top: 16px;
 }
 
 .home-choice {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 24rpx;
+  gap: 12px;
 }
 
 .home-choice-copy {
@@ -285,17 +285,17 @@
 
 .home-error {
   display: block;
-  margin-top: 16rpx;
+  margin-top: 8px;
   color: var(--mp-rust);
   font-size: var(--mp-type-meta);
 }
 
 .home-cta-btn {
-  margin-top: 32rpx;
+  margin-top: 16px;
 }
 
 .home-text-btn {
-  margin: 16rpx 0 0;
+  margin: 8px 0 0;
   padding: 0;
   background: transparent;
   color: var(--mp-accent);
@@ -307,14 +307,14 @@
 .home-toggle-row {
   display: flex;
   align-items: center;
-  gap: 32rpx;
+  gap: 16px;
   min-height: var(--mp-tap);
 }
 
 .home-toggle-row + .home-toggle-row {
-  margin-top: 8rpx;
-  padding-top: 24rpx;
-  border-top: 1rpx solid var(--mp-line);
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 0.5px solid var(--mp-line);
 }
 
 .home-toggle-copy {
@@ -328,7 +328,7 @@
 
 .home-note {
   display: block;
-  margin-top: 32rpx;
+  margin-top: 16px;
   color: var(--mp-ink-3);
   font-size: var(--mp-type-meta);
   line-height: var(--mp-lh-caption);

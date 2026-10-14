@@ -1,11 +1,11 @@
 @import "../../styles/trial-theme.wxss";
 
 .bind-trial .picker-row {
-  margin-top: 16rpx;
+  margin-top: 8px;
 }
 
 .bind-night-caption {
-  margin: 0 0 16rpx;
+  margin: 0 0 8px;
 }
 
 .bind-submit {
@@ -15,7 +15,7 @@
 .bind-mode-list {
   display: flex;
   flex-direction: column;
-  margin-top: 32rpx;
+  margin-top: 16px;
 }
 
 .bind-mode-list .choice-card {
@@ -35,7 +35,7 @@
 
 .choice-desc {
   display: block;
-  margin-top: 8rpx;
+  margin-top: 4px;
   color: var(--mp-ink-2);
   font-size: var(--mp-type-caption);
   line-height: var(--mp-lh-caption);
@@ -44,23 +44,23 @@
 .mode-footnote,
 .form-note {
   display: block;
-  margin-top: 24rpx;
+  margin-top: 12px;
   color: var(--mp-ink-3);
   font-size: var(--mp-type-meta);
   line-height: var(--mp-lh-caption);
 }
 
 .field {
-  margin-bottom: 16rpx;
+  margin-bottom: 8px;
 }
 
 .readonly-chip {
   display: flex;
   align-items: center;
-  gap: 16rpx;
+  gap: 8px;
   box-sizing: border-box;
-  min-height: 96rpx;
-  padding: 16rpx 28rpx;
+  min-height: 48px;
+  padding: 8px 14px;
   border-radius: var(--mp-radius-inset);
   background: var(--mp-fill);
 }
@@ -69,7 +69,7 @@
   color: var(--mp-ink);
   font-size: var(--mp-type-body);
   font-weight: 600;
-  letter-spacing: 2rpx;
+  letter-spacing: 1px;
 }
 
 .readonly-hint {
@@ -78,12 +78,12 @@
 }
 
 .quiet-hours-block {
-  margin-top: 32rpx;
+  margin-top: 16px;
 }
 
 .quiet-hours-label {
   display: block;
-  margin-bottom: 8rpx;
+  margin-bottom: 4px;
   color: var(--mp-ink);
   font-size: var(--mp-type-body);
   font-weight: 600;
@@ -92,7 +92,7 @@
 
 .quiet-hours-row {
   display: flex;
-  gap: 24rpx;
+  gap: 12px;
 }
 
 .quiet-hours-row picker {
@@ -109,8 +109,8 @@
 }
 
 .bind-voice {
-  padding-top: 32rpx;
-  padding-bottom: 16rpx;
+  padding-top: 16px;
+  padding-bottom: 8px;
 }
 
 .bind-role-desc {
@@ -121,29 +121,29 @@
 }
 
 .bind-voice .setting-row {
-  gap: 32rpx;
-  margin-top: 16rpx;
-  border-top: 2rpx solid var(--mp-line);
+  gap: 16px;
+  margin-top: 8px;
+  border-top: 1px solid var(--mp-line);
 }
 
 .offer-row {
   display: flex;
   align-items: flex-start;
-  gap: 24rpx;
-  padding: 24rpx 0;
-  border-bottom: 2rpx solid var(--mp-line);
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--mp-line);
 }
 
 .offer-check {
   display: flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 40rpx;
-  width: 40rpx;
-  height: 40rpx;
-  margin-top: 4rpx;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
   box-sizing: border-box;
-  border: 2rpx solid var(--mp-ink-4);
+  border: 1px solid var(--mp-ink-4);
   border-radius: 50%;
   color: var(--mp-on-accent);
   font-size: var(--mp-type-meta);
@@ -168,7 +168,7 @@
 
 .offer-desc {
   display: block;
-  margin-top: 8rpx;
+  margin-top: 4px;
   color: var(--mp-ink-2);
   font-size: var(--mp-type-caption);
   line-height: var(--mp-lh-caption);
@@ -176,7 +176,7 @@
 
 .offer-note {
   display: block;
-  margin-top: 8rpx;
+  margin-top: 4px;
   color: var(--mp-sun);
   font-size: var(--mp-type-meta);
 }
@@ -186,7 +186,7 @@
 }
 
 .bind-rescan {
-  margin-top: 16rpx;
+  margin-top: 8px;
 }
 
 .done-card {
@@ -196,13 +196,13 @@
 .done-device {
   display: flex;
   justify-content: center;
-  margin-top: 8rpx;
+  margin-top: 4px;
 }
 
 .done-badge {
   display: inline-flex;
-  margin-top: 24rpx;
-  padding: 8rpx 24rpx;
+  margin-top: 12px;
+  padding: 4px 12px;
   border-radius: var(--mp-radius-pill);
   background: var(--mp-sage-bg);
   color: var(--mp-sage);
@@ -212,7 +212,7 @@
 
 .done-title {
   display: block;
-  margin-top: 24rpx;
+  margin-top: 12px;
   font-size: var(--mp-type-title);
   font-weight: 700;
   line-height: 1.4;
@@ -220,7 +220,7 @@
 
 .done-note {
   display: block;
-  margin-top: 24rpx;
+  margin-top: 12px;
   color: var(--mp-ink-2);
   font-size: var(--mp-type-caption);
   line-height: var(--mp-lh-caption);

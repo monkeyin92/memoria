@@ -2,7 +2,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 16rpx;
+  gap: 8px;
   height: var(--mp-tap);
   margin-top: var(--mp-gap-card);
   border-radius: var(--mp-radius-inset);
@@ -14,21 +14,21 @@
 }
 
 .role-new-icon {
-  width: 40rpx;
-  height: 40rpx;
+  width: 20px;
+  height: 20px;
 }
 
 .role-hint {
-  margin-top: 32rpx;
+  margin-top: 16px;
   text-align: center;
 }
 
 .companion-voice {
   margin-top: 0;
-  padding-top: 8rpx;
-  padding-bottom: 8rpx;
+  padding-top: 4px;
+  padding-bottom: 4px;
 }
 
 .companion-voice .setting-row {
-  gap: 32rpx;
+  gap: 16px;
 }

@@ -1,5 +1,5 @@
 .memory-guest .primary-button {
-  margin-top: 32rpx;
+  margin-top: 16px;
 }
 
 .memory-card {
@@ -7,19 +7,19 @@
 }
 
 .memory-seg {
-  margin-top: 48rpx;
+  margin-top: 24px;
 }
 
 .memory-strip {
   display: flex;
   justify-content: space-between;
-  margin-top: 48rpx;
-  padding: 16rpx;
+  margin-top: 24px;
+  padding: 8px;
 }
 
 .memory-strip-day {
-  width: 96rpx;
-  padding: 16rpx 0;
+  width: 48px;
+  padding: 8px 0;
   border-radius: var(--mp-radius-inset);
   color: var(--mp-ink-2);
   text-align: center;
@@ -34,29 +34,29 @@
   display: block;
   font-size: var(--mp-type-tab);
   font-weight: 500;
-  line-height: 28rpx;
+  line-height: 14px;
   opacity: 0.85;
 }
 
 .memory-strip-num {
   display: block;
-  margin-top: 8rpx;
+  margin-top: 4px;
   font-size: var(--mp-type-button);
   font-weight: 700;
-  line-height: 44rpx;
+  line-height: 22px;
   font-variant-numeric: tabular-nums;
 }
 
 .memory-day {
   margin-top: var(--mp-gap-card);
-  padding: 32rpx 48rpx;
+  padding: 16px 24px;
 }
 
 .memory-day-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 16rpx;
+  gap: 8px;
 }
 
 .memory-day-label {
@@ -78,15 +78,15 @@
 .memory-line {
   display: flex;
   align-items: flex-start;
-  gap: 16rpx;
-  margin-top: 16rpx;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .memory-dot {
   flex-shrink: 0;
-  width: 8rpx;
-  height: 8rpx;
-  margin-top: 20rpx;
+  width: 4px;
+  height: 4px;
+  margin-top: 10px;
   border-radius: 50%;
   background: var(--mp-accent);
 }
@@ -100,7 +100,7 @@
 }
 
 .memory-actions {
-  margin-top: 48rpx;
+  margin-top: 24px;
 }
 
 .memory-note {
@@ -115,7 +115,7 @@
 }
 
 .memory-empty .l2-card-title {
-  margin-top: 24rpx;
+  margin-top: 12px;
 }
 
 .memory-empty .button-row {
@@ -124,15 +124,15 @@
 }
 
 .attention-card {
-  padding: 48rpx 48rpx 32rpx;
+  padding: 24px 24px 16px;
   text-align: center;
 }
 
 .attention-mascot {
   display: flex;
   justify-content: center;
-  width: 160rpx;
-  height: 160rpx;
+  width: 80px;
+  height: 80px;
   margin: 0 auto;
   overflow: hidden;
   border-radius: 50%;
@@ -140,24 +140,24 @@
 }
 
 .attention-mascot-img {
-  width: 192rpx;
-  margin-top: 16rpx;
+  width: 96px;
+  margin-top: 8px;
   mix-blend-mode: multiply;
 }
 
 .attention-title {
   display: block;
-  margin-top: 32rpx;
+  margin-top: 16px;
   color: var(--mp-ink);
   font-size: var(--mp-type-title);
   font-weight: 700;
-  letter-spacing: -0.8rpx;
-  line-height: 56rpx;
+  letter-spacing: -0.4px;
+  line-height: 28px;
 }
 
 .attention-time {
   display: block;
-  margin-top: 8rpx;
+  margin-top: 4px;
   color: var(--mp-ink-2);
   font-size: var(--mp-type-body);
   line-height: var(--mp-lh-body);
@@ -165,8 +165,8 @@
 
 .attention-well {
   display: block;
-  margin-top: 32rpx;
-  padding: 32rpx;
+  margin-top: 16px;
+  padding: 16px;
   border-radius: var(--mp-radius-inset);
   background: var(--mp-rust-bg);
   color: var(--mp-rust);
@@ -176,7 +176,7 @@
 }
 
 .attention-card + .section-title {
-  margin: 32rpx 0 16rpx;
+  margin: 16px 0 8px;
 }
 
 .attention-tips {
@@ -186,12 +186,12 @@
 .attention-tip {
   display: flex;
   align-items: flex-start;
-  gap: 32rpx;
-  padding: 32rpx;
+  gap: 16px;
+  padding: 16px;
 }
 
 .attention-tip + .attention-tip {
-  box-shadow: inset 0 1rpx 0 var(--mp-line);
+  box-shadow: inset 0 0.5px 0 var(--mp-line);
 }
 
 .attention-tip-num {
@@ -199,8 +199,8 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 48rpx;
-  height: 48rpx;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   background: var(--mp-fill);
   color: var(--mp-ink-2);
@@ -223,16 +223,16 @@
 
 .attention-tip-sub {
   display: block;
-  margin-top: 8rpx;
+  margin-top: 4px;
   color: var(--mp-ink-2);
   font-size: var(--mp-type-caption);
   line-height: var(--mp-lh-caption);
 }
 
 .memory-heard + .memory-heard {
-  margin-top: 24rpx;
-  padding-top: 24rpx;
-  border-top: 1rpx solid var(--mp-line);
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 0.5px solid var(--mp-line);
 }
 
 .conversation-card-selected {
@@ -243,13 +243,13 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16rpx;
+  gap: 8px;
 }
 
 .conversation-turn + .conversation-turn {
-  margin-top: 24rpx;
-  padding-top: 24rpx;
-  border-top: 1rpx solid var(--mp-line);
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 0.5px solid var(--mp-line);
 }
 
 .conversation-speaker {
@@ -265,18 +265,18 @@
 
 .conversation-text {
   display: block;
-  margin-top: 8rpx;
+  margin-top: 4px;
   color: var(--mp-ink);
   font-size: var(--mp-type-body);
   line-height: var(--mp-lh-body);
 }
 
 .memory-filter {
-  margin-top: 32rpx;
+  margin-top: 16px;
 }
 
 .memory-archive-row {
   margin-top: var(--mp-gap-card);
-  padding: 24rpx var(--mp-pad-card);
+  padding: 12px var(--mp-pad-card);
   border-bottom: none;
 }

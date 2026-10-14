@@ -4,7 +4,7 @@
     <text class="page-lede">设备与记录，登录后跟随账号。</text>
     <view class="notice">登录后即可管理你的资料。未登录时不会读取资料、统计或回顾。</view>
     <button class="primary-button empty-button" bindtap="loginFromProfile">微信登录</button>
-    <view class="list" style="margin-top: 32rpx;">
+    <view class="list" style="margin-top: 16px;">
       <view class="list-row" bindtap="openPrivacy">
         <mp-icon name="shield" tone="ink"></mp-icon>
         <view class="row-copy">

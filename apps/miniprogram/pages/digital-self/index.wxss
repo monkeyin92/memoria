@@ -2,7 +2,7 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 24rpx;
+  gap: 12px;
   padding: var(--mp-pad-card-lg);
 }
 
@@ -16,13 +16,13 @@
   color: var(--mp-ink);
   font-size: var(--mp-type-num-xl);
   font-weight: 800;
-  letter-spacing: -1.6rpx;
+  letter-spacing: -0.8px;
   line-height: 1;
 }
 
 .ds-unit {
   display: block;
-  margin-top: 16rpx;
+  margin-top: 8px;
   color: var(--mp-ink);
   font-size: var(--mp-type-card);
   font-weight: 600;
@@ -30,7 +30,7 @@
 
 .ds-sub {
   display: block;
-  margin-top: 8rpx;
+  margin-top: 4px;
   color: var(--mp-ink-2);
   font-size: var(--mp-type-caption);
   line-height: var(--mp-lh-caption);

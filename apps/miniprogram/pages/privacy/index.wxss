@@ -1,12 +1,12 @@
 .privacy-head {
   display: flex;
   align-items: center;
-  gap: 24rpx;
+  gap: 12px;
 }
 
 .privacy-copy {
   display: block;
-  margin-top: 24rpx;
+  margin-top: 12px;
   color: var(--mp-ink-2);
   font-size: var(--mp-type-caption);
   line-height: var(--mp-lh-caption);
@@ -15,5 +15,5 @@
 .privacy-foot {
   display: flex;
   justify-content: flex-end;
-  margin-top: 32rpx;
+  margin-top: 16px;
 }
