@@ -263,7 +263,8 @@ Page({
         mode === "parent_for_child"
           ? nightModeQuietHoursLabel(form.quietHoursStart, form.quietHoursEnd)
           : nightModeQuietHoursLabel(DEFAULT_QUIET_HOURS),
-      submitLabel: requiresCrisisSubscribeBeforeBind(mode) ? "订阅安全提醒" : "提交绑定",
+      submitLabel:
+        SUBSCRIPTION_PUSH_ENABLED && requiresCrisisSubscribeBeforeBind(mode) ? "开启安全提醒" : "提交绑定",
       error: "",
     });
     if (mode === "parent_for_child") {
