@@ -5,7 +5,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from scripts.cleanup_freeze_dumps import (
     DEFAULT_RETENTION_DAYS,
     expired_freeze_dumps,
@@ -126,3 +125,32 @@ def test_dry_run_lists_without_deleting(tmp_path: Path, capsys: pytest.CaptureFi
     out = capsys.readouterr().out
     assert str(stale) in out
     assert "dry-run" in out
+
+
+def test_current_symlink_does_not_double_delete(tmp_path: Path) -> None:
+    now = time.time()
+    release = tmp_path / "releases" / "20261010-n8-endpoint-diag-v1"
+    stale = _touch(
+        release / ".cutover" / "memoria-pre-old.dump",
+        age_days=5,
+        now=now,
+    )
+    (tmp_path / "releases" / "current").symlink_to(release, target_is_directory=True)
+
+    found = list_freeze_dump_candidates(tmp_path)
+    assert len(found) == 1
+    assert found[0].resolve() == stale.resolve()
+
+    assert main(["--root", str(tmp_path), "--apply", "--retention-days", "3"]) == 0
+    assert not stale.exists()
+
+
+def test_missing_releases_directory_exits_zero(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    empty_root = tmp_path / "empty-host"
+    empty_root.mkdir()
+    assert main(["--root", str(empty_root), "--apply"]) == 0
+    out = capsys.readouterr().out
+    assert "no releases directory" in out
+    assert "nothing to clean" in out

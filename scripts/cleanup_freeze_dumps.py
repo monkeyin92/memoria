@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import re
-import sys
 import time
 from collections.abc import Iterable, Sequence
 from pathlib import Path
@@ -38,12 +37,18 @@ def _is_under(path: Path, root: Path) -> bool:
 
 
 def list_freeze_dump_candidates(memoria_root: Path) -> list[Path]:
-    """Return freeze dump paths under ``memoria_root/releases/*/ .cutover/``."""
+    """Return freeze dump paths under ``memoria_root/releases/*/ .cutover/``.
+
+    Candidates are deduped by resolved real path so a ``current`` symlink (or
+    any other duplicate link under ``releases/``) does not list the same file
+    twice.
+    """
 
     releases = (memoria_root / "releases").resolve()
     if not releases.is_dir():
         return []
     found: list[Path] = []
+    seen_real: set[Path] = set()
     for cutover in sorted(releases.glob("*/.cutover")):
         if not cutover.is_dir():
             continue
@@ -56,6 +61,10 @@ def list_freeze_dump_candidates(memoria_root: Path) -> list[Path]:
                 continue
             if not _is_under(path, releases):
                 continue
+            real = path.resolve()
+            if real in seen_real:
+                continue
+            seen_real.add(real)
             found.append(path)
     return found
 
@@ -84,7 +93,11 @@ def expired_freeze_dumps(
 def delete_paths(paths: Iterable[Path]) -> list[Path]:
     removed: list[Path] = []
     for path in paths:
-        path.unlink()
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            # Already gone (race, or a second name for the same inode).
+            continue
         removed.append(path)
     return removed
 
@@ -113,8 +126,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     root = args.root.resolve()
     releases = root / "releases"
     if not releases.is_dir():
-        print(f"no releases directory under {root}", file=sys.stderr)
-        return 2
+        print(f"no releases directory under {root}; nothing to clean")
+        return 0
 
     candidates = list_freeze_dump_candidates(root)
     expired = expired_freeze_dumps(candidates, retention_days=args.retention_days)
