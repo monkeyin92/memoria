@@ -390,13 +390,6 @@ Page({
     this.setData({ [`form.${key}`]: index, error: "" });
   },
 
-  onPersonaSwipe(event) {
-    const index = Number(event.detail.current);
-    if (!Number.isInteger(index) || index === this.data.personaIndex) return;
-    this._stopPreview();
-    this.setData({ personaIndex: index });
-  },
-
   onPersonaTap(event) {
     const index = Number(event.currentTarget.dataset.index);
     if (Number.isInteger(index) && index !== this.data.personaIndex) {

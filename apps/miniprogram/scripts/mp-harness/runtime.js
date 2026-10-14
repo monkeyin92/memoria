@@ -37,6 +37,17 @@ function createWx({ storage = {}, systemInfo = {}, onCall } = {}) {
     showActionSheet: (options = {}) => options.fail?.({ errMsg: "cancel" }),
     nextTick: (fn) => setImmediate(fn),
     canIUse: () => true,
+    createInnerAudioContext: () => {
+      const audio = {
+        src: "",
+        play: () => calls.push({ name: "InnerAudioContext.play", args: [audio.src] }),
+        stop: () => calls.push({ name: "InnerAudioContext.stop", args: [audio.src] }),
+        destroy() {},
+        onEnded() {},
+        onError() {},
+      };
+      return audio;
+    },
     createSelectorQuery: () => {
       const query = {
         in: () => query,

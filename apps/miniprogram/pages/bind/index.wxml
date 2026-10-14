@@ -1,13 +1,11 @@
 <view class="page-shell trial-page bind-trial sub-page" style="{{statusBarStyle}}">
   <view class="nav-back" bindtap="goBack" aria-label="返回"><image class="nav-back-icon" src="/assets/ui/v4/back-strong.svg" /></view>
-  <view class="page-head">
-    <text class="trial-title">绑定设备</text>
-    <block wx:if="{{step === 'mode'}}"><text class="page-subtitle">第 1 步 · 选择绑定方式</text></block>
-    <block wx:elif="{{step === 'form'}}"><text class="page-subtitle">第 2 步 · 填写使用者信息</text></block>
-    <block wx:elif="{{step === 'review'}}"><text class="page-subtitle">第 4 步 · 确认授权并提交</text></block>
-    <block wx:elif="{{step === 'done'}}"><text class="page-subtitle">第 5 步 · 完成</text></block>
-    <block wx:else><text class="page-subtitle">正在准备绑定</text></block>
-  </view>
+  <block wx:if="{{step === 'mode'}}"><text class="eyebrow">第 1 步 · 选择绑定方式</text></block>
+  <block wx:elif="{{step === 'form'}}"><text class="eyebrow">第 2 步 · 填写使用者信息</text></block>
+  <block wx:elif="{{step === 'review'}}"><text class="eyebrow">第 3、4 步 · 确认授权并提交</text></block>
+  <block wx:elif="{{step === 'done'}}"><text class="eyebrow">第 5 步 · 完成</text></block>
+  <block wx:else><text class="eyebrow">正在准备绑定</text></block>
+  <text class="page-title">绑定设备</text>
   <view class="dots">
     <view class="dot {{step === 'mode' ? 'dot-now' : (step === 'form' || step === 'review' || step === 'done' ? 'dot-done' : '')}}"></view>
     <view class="dot {{step === 'form' ? 'dot-now' : (step === 'review' || step === 'done' ? 'dot-done' : '')}}"></view>
@@ -84,7 +82,7 @@
         </picker>
         <view class="quiet-hours-block">
           <text class="quiet-hours-label">{{quietHoursLabel}}</text>
-          <text class="trial-caption bind-night-caption">夜间模式默认 21:00–07:00，可改</text>
+          <text class="trial-caption bind-night-caption">点下方的开始、结束时间可以修改</text>
           <view class="quiet-hours-row">
             <picker mode="time" value="{{form.quietHoursStart}}" bindchange="onQuietStartChange">
               <view class="picker-row"><text class="picker-label">开始</text><text class="picker-value">{{form.quietHoursStart}}</text></view>
@@ -107,7 +105,7 @@
         <picker range="{{interviewFrequencyOptions}}" range-key="label" value="{{form.interviewFrequencyIndex}}" data-key="interviewFrequencyIndex" bindchange="onPickerChange">
           <view class="picker-row"><text class="picker-label">主动采访</text><text class="picker-value">{{interviewFrequencyOptions[form.interviewFrequencyIndex].label}}</text></view>
         </picker>
-        <text class="form-note">首页「当前使用者」会显示这条备注，不是微信昵称。年龄以系统核实的为准；数字自我与传承等能力默认关闭，需要单独开启。首页的当前使用者会显示这条备注。</text>
+        <text class="form-note">首页的当前使用者会显示这条备注，不是微信昵称。年龄以系统核实的为准；数字自我与传承等能力默认关闭，需要单独开启。</text>
       </block>
 
       <!-- C. 给父母使用 -->
@@ -124,7 +122,7 @@
         <picker range="{{adminVisibilityOptions}}" range-key="label" value="{{form.adminVisibilityIndex}}" data-key="adminVisibilityIndex" bindchange="onPickerChange">
           <view class="picker-row"><text class="picker-label">子女可见范围</text><text class="picker-value">{{adminVisibilityOptions[form.adminVisibilityIndex].label}}</text></view>
         </picker>
-        <view class="notice notice-warn parent-acceptance-notice">
+        <view class="notice notice-warn">
           <text class="notice-title">长期记忆由你代父母决定</text>
           <text class="notice-copy">下一步如果勾选「我代父母同意」，就是你代父母同意角色记住 TA 聊过的事；不勾选只保留当次对话。你可以随时在小程序里撤回。子女协助管理设备，不等于可以读取父母的聊天和人生故事。</text>
         </view>
@@ -142,42 +140,50 @@
         <text class="form-note">每位成员都有自己独立的档案；私人记忆、家庭共享记忆与待确认的共同记忆分开管理，家庭管理员不能读取成员的私人记忆。成员邀请与确认由系统完成。</text>
       </block>
 
-      <text class="field-label">AI 角色</text>
-      <text class="form-note persona-hint">左右滑动认识每一位角色，点「试听」听听 TA 的声音</text>
-      <swiper class="persona-swiper" current="{{personaIndex}}" previous-margin="96rpx" next-margin="96rpx" bindchange="onPersonaSwipe">
-        <swiper-item wx:for="{{personaOptions}}" wx:key="id" class="persona-slide">
-          <view class="persona-card {{index === personaIndex ? 'persona-card-current' : ''}}" data-role="{{item.id}}" data-index="{{index}}" bindtap="onPersonaTap">
-            <view wx:if="{{index === personaIndex}}" class="pill pill-teal persona-picked">已选择</view>
-            <view class="persona-face">
-              <face-badge role="{{item.id}}" size="xl" plain="{{true}}" animated="{{index === personaIndex}}"></face-badge>
-            </view>
-            <text class="persona-name">{{item.name}}</text>
-            <text class="persona-tagline">{{item.tagline}}</text>
-            <text class="persona-desc">{{item.description}}</text>
-            <view class="persona-voice">
-              <text class="persona-voice-name">声音 · {{item.voiceName}}（{{item.tone}}）</text>
-              <button class="persona-play {{previewingId === item.id ? 'persona-play-on' : ''}}" data-index="{{index}}" catchtap="togglePreview">{{previewingId === item.id ? '停止' : '▶ 试听'}}</button>
-            </view>
-          </view>
-        </swiper-item>
-      </swiper>
-      <view class="persona-dots">
-        <view wx:for="{{personaOptions}}" wx:key="id" class="persona-dot {{index === personaIndex ? 'persona-dot-on' : ''}}"></view>
-      </view>
-
-      <view class="button-row bind-nav">
-        <button class="secondary-button" bindtap="backToMode">上一步</button>
-        <button class="primary-button" bindtap="goToReview">下一步</button>
-      </view>
-      <text wx:if="{{error}}" class="error-text">{{error}}</text>
     </view>
+
+    <text class="section-title">AI 角色</text>
+    <view class="role-grid bind-roles">
+      <view
+        wx:for="{{personaOptions}}"
+        wx:key="id"
+        class="role-card {{index === personaIndex ? 'role-card-on' : ''}}"
+        data-index="{{index}}"
+        bindtap="onPersonaTap"
+      >
+        <view class="role-art">
+          <view class="role-fig"><face-badge role="{{item.id}}" size="lg" plain="{{true}}"></face-badge></view>
+        </view>
+        <text class="role-name">{{item.name}}</text>
+        <text class="role-tagline">{{item.tagline}}</text>
+        <view wx:if="{{index === personaIndex}}" class="pill pill-online role-chip">已选择</view>
+        <view wx:else class="pill pill-neutral role-chip">选这个</view>
+      </view>
+    </view>
+    <view class="card bind-voice">
+      <text class="bind-role-desc">{{personaOptions[personaIndex].description}}</text>
+      <view class="setting-row">
+        <mp-icon name="volume"></mp-icon>
+        <view class="row-copy">
+          <text class="row-title">声音 · {{personaOptions[personaIndex].voiceName}}</text>
+          <text class="row-meta">{{personaOptions[personaIndex].tone}}</text>
+        </view>
+        <view class="pill pill-teal role-play" data-index="{{personaIndex}}" catchtap="togglePreview">{{previewingId === personaOptions[personaIndex].id ? '停止' : '试听'}}</view>
+      </view>
+    </view>
+
+    <view class="button-row bind-nav">
+      <button class="secondary-button" bindtap="backToMode">上一步</button>
+      <button class="primary-button" bindtap="goToReview">下一步</button>
+    </view>
+    <text wx:if="{{error}}" class="error-text">{{error}}</text>
   </block>
 
   <!-- 步骤 3/4：协议勾选与汇总确认 -->
   <block wx:if="{{step === 'review'}}">
     <view class="l2-card">
       <text class="l2-card-title">确认一下</text>
-      <text class="l2-card-sub">第 3 步勾选授权，第 4 步核对信息后提交</text>
+      <text class="l2-card-sub">核对下面的信息，勾选需要的授权后提交</text>
       <view class="summary-row"><text class="summary-key">设备用途</text><text class="summary-value">{{modeMeta.title}}</text></view>
       <view class="summary-row"><text class="summary-key">使用者</text><text class="summary-value">{{reviewSubjectLabel}}</text></view>
       <view class="summary-row"><text class="summary-key">AI 角色</text><text class="summary-value">{{personaOptions[personaIndex].name}}</text></view>

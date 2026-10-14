@@ -183,13 +183,56 @@ button { font-family: inherit; }
 }
 .card-lead .l2-card-title { flex: 1; min-width: 0; }
 
-.role-tint-card {
-  box-sizing: border-box;
-  padding: var(--mp-pad-card-lg);
-  border-radius: var(--mp-radius-card-xl);
-  background: var(--mp-accent-soft);
-  box-shadow: none;
+/* ---------- 角色卡（角色页与绑定页共用） ---------- */
+.role-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--mp-gap-card);
+  margin-top: 48rpx;
 }
+.role-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 16rpx 16rpx 32rpx;
+  border-radius: var(--mp-radius-card);
+  background: var(--mp-surface);
+  box-shadow: var(--mp-shadow-card);
+  text-align: center;
+  transition: box-shadow var(--mp-dur);
+}
+.role-card-on { box-shadow: var(--mp-shadow-selected); }
+.role-art {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  height: 192rpx;
+  overflow: hidden;
+  border-radius: var(--mp-radius-inset);
+  background: var(--mp-fill);
+}
+.role-card-on .role-art { background: var(--mp-accent-soft); }
+.role-fig { margin-top: 16rpx; }
+.role-name {
+  display: block;
+  margin-top: 16rpx;
+  color: var(--mp-ink);
+  font-size: var(--mp-type-body);
+  font-weight: 600;
+  line-height: var(--mp-lh-body);
+}
+.role-tagline {
+  display: block;
+  margin-top: 8rpx;
+  padding: 0 8rpx;
+  color: var(--mp-ink-2);
+  font-size: var(--mp-type-meta);
+  line-height: 32rpx;
+}
+.role-chip { margin-top: 16rpx; }
+.role-play { flex-shrink: 0; min-height: 64rpx; }
 
 /* ---------- 按钮 ---------- */
 .primary-button,
@@ -220,6 +263,11 @@ button { font-family: inherit; }
   color: var(--mp-ink);
   background: var(--mp-surface);
   box-shadow: var(--mp-shadow-card);
+}
+.l2-card .secondary-button,
+.card .secondary-button {
+  background: var(--mp-fill);
+  box-shadow: none;
 }
 .danger-button {
   color: var(--mp-rust);
@@ -353,6 +401,7 @@ button[disabled] {
 }
 .notice-warn { background: var(--mp-rust-bg); color: var(--mp-rust); }
 .notice-title { display: block; font-size: var(--mp-type-card); font-weight: 600; }
+.notice-copy { display: block; font-size: var(--mp-type-caption); line-height: var(--mp-lh-caption); }
 .empty-block { padding: 64rpx 32rpx; text-align: center; }
 .empty-title {
   display: block;
@@ -412,8 +461,9 @@ button[disabled] {
   border-radius: var(--mp-radius-inset);
   background: var(--mp-fill);
 }
-.picker-label { color: var(--mp-ink); font-size: var(--mp-type-body); }
+.picker-label { flex: 1; min-width: 0; color: var(--mp-ink); font-size: var(--mp-type-body); }
 .picker-value { flex: 1; min-width: 0; color: var(--mp-ink); font-size: var(--mp-type-body); }
+.picker-label + .picker-value { flex: none; max-width: 60%; color: var(--mp-accent); text-align: right; }
 .setting-row {
   display: flex;
   align-items: center;

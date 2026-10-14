@@ -253,7 +253,7 @@ test("the companion picked while binding becomes the account's companion", async
   profileWrites.length = 0;
   const page = await bootSelfUseReady("阿宁");
   const index = page.data.personaOptions.findIndex((option) => option.id === "mianmian");
-  page.onPersonaSwipe({ detail: { current: index } });
+  page.onPersonaTap({ currentTarget: { dataset: { index } } });
   await page.goToReview();
   await page.submitBinding();
   assert.equal(page.data.step, "done");
@@ -323,7 +323,7 @@ test("parent_for_child flow validates minimal info and submits guardian relation
   );
   assert.equal(page.data.submitLabel, "提交绑定");
   const bindTemplate = fs.readFileSync(path.join(root, "pages/bind/index.wxml"), "utf8");
-  assert.match(bindTemplate, /夜间模式默认 21:00–07:00，可改/);
+  assert.match(bindTemplate, /点下方的开始、结束时间可以修改/);
   assert.match(bindTemplate, /\{\{submitLabel\}\}/);
 
   await page.goToReview();
@@ -781,7 +781,7 @@ test("the finish step shows the companion picked while binding, not a generic ro
   const page = await bootSelfUseReady("阿宁");
   const index = page.data.personaOptions.findIndex((option) => option.id === "taoxi");
   assert.ok(index >= 0);
-  page.onPersonaSwipe({ detail: { current: index } });
+  page.onPersonaTap({ currentTarget: { dataset: { index } } });
   await page.goToReview();
   await page.submitBinding();
   assert.equal(page.data.step, "done");
@@ -795,7 +795,7 @@ test("continuing to activation hands the picked companion to the onboarding page
   nextResponse = successResponse(defaultManifestResponse("self_use"));
   const page = await bootSelfUseReady("阿宁");
   const index = page.data.personaOptions.findIndex((option) => option.id === "taoxi");
-  page.onPersonaSwipe({ detail: { current: index } });
+  page.onPersonaTap({ currentTarget: { dataset: { index } } });
   await page.goToReview();
   await page.submitBinding();
 

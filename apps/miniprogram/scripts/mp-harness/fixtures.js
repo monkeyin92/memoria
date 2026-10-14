@@ -155,6 +155,17 @@ const personaApi = {
   }),
 };
 
+const CLAIM = {
+  claim_id: "claim_1",
+  onboarding_session_id: "onb_1",
+  device_id: "dev_7f3a",
+  status: "reserved",
+  expires_at: new Date(NOW.getTime() + 10 * 60 * 1000).toISOString(),
+};
+
+const bindApi = { getDeviceClaim: async () => CLAIM };
+const BIND_QUERY = { claim_id: CLAIM.claim_id, onboarding_session_id: CLAIM.onboarding_session_id };
+
 const PINNED_ALERT = {
   notification_id: "n1",
   minor_user_id: "p_child",
@@ -222,7 +233,9 @@ const guest = () => ({ api: baseApi(GUEST_API), now: NOW });
 
 module.exports = {
   ARCHIVE,
+  BIND_QUERY,
   BINDING,
+  CLAIM,
   GUARDIAN_SUMMARY,
   IDENTITY,
   NOW,
@@ -236,6 +249,7 @@ module.exports = {
   archiveApi,
   authed,
   baseApi,
+  bindApi,
   dayKey,
   digitalSelfApi,
   guardianApi,
