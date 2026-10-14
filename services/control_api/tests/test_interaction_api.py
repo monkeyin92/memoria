@@ -21,6 +21,7 @@ from services.archive.memory_domain import (
     MemorySearchResult,
     PersonItem,
 )
+from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
 from services.common.crisis_policy import CrisisSemanticVerdict
 from services.control_api.app.main import create_app
 from services.control_api.app.routes import interaction as interaction_routes
@@ -1376,7 +1377,7 @@ async def test_tutor_turn_policy_requires_two_stuck_turns_and_crisis_still_wins(
     assert "连续两次" in second_response.json()["instructions"]
     assert "只允许给一个" in second_response.json()["instructions"]
     assert crisis_response.json()["direct_text"] is not None
-    assert "急救或报警" in crisis_response.json()["direct_text"]
+    assert "12356" in crisis_response.json()["direct_text"]
     assert "【导师话轮约束】" not in crisis_response.json()["instructions"]
 
 
@@ -1413,7 +1414,7 @@ async def test_response_plan_consumes_bounded_crisis_semantic_evidence(
 
     assert response.status_code == 200
     assert evidence.calls == ["我真的找不到活下去的理由"]
-    assert "急救或报警" in response.json()["direct_text"]
+    assert "12356" in response.json()["direct_text"]
 
 
 @pytest.mark.asyncio
@@ -1690,9 +1691,7 @@ async def test_response_plan_short_circuits_explicit_self_harm_to_crisis_support
     assert response.status_code == 200
     payload = response.json()
     assert payload["direct_text"] != "我不知道。"
-    assert "安全" in payload["direct_text"]
-    assert "可信的人" in payload["direct_text"]
-    assert "急救或报警" in payload["direct_text"]
+    assert payload["direct_text"] == CRISIS_SUPPORT_REPLY
 
 
 @pytest.mark.asyncio

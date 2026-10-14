@@ -111,6 +111,7 @@ async def _crisis(store: PostgresGuardianStore, *, turn_id: int) -> None:
         minor_user_id="pg-minor",
         occurred_at=datetime.now(UTC),
         script_version="crisis-transfer-draft-v1",
+        reply_template_id="crisis-support-reply",
     )
     assert receipt.notification_count == 1
 

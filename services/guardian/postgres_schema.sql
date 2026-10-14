@@ -354,8 +354,20 @@ CREATE TABLE IF NOT EXISTS guardian_crisis_events (
     script_version TEXT NOT NULL CHECK (
         char_length(script_version) BETWEEN 1 AND 64
     ),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    reply_template_id TEXT NOT NULL DEFAULT 'legacy-unspecified' CHECK (
+        char_length(reply_template_id) BETWEEN 1 AND 64
+    ),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    attempt_push BOOLEAN NOT NULL DEFAULT TRUE
 );
+
+-- Relay-tier support requests pin without WeChat push; claim skips these rows.
+ALTER TABLE guardian_crisis_events
+    ADD COLUMN IF NOT EXISTS attempt_push BOOLEAN NOT NULL DEFAULT TRUE;
+
+-- Fixed-reply template id spoken for this event (ids only; never child text).
+ALTER TABLE guardian_crisis_events
+    ADD COLUMN IF NOT EXISTS reply_template_id TEXT NOT NULL DEFAULT 'legacy-unspecified';
 
 CREATE INDEX IF NOT EXISTS idx_guardian_crisis_minor_occurred
 ON guardian_crisis_events(minor_user_id, occurred_at DESC);
@@ -1252,8 +1264,11 @@ BEGIN
         WHERE o.notification_id IN (
             SELECT candidate.notification_id
             FROM guardian_notification_outbox candidate
+            JOIN guardian_crisis_events crisis_gate
+              ON crisis_gate.crisis_event_id = candidate.crisis_event_id
             WHERE candidate.status = 'pending'
               AND candidate.channel = 'wechat_subscription'
+              AND crisis_gate.attempt_push
               AND candidate.attempts < p_max_attempts
               AND candidate.created_at >= p_now - make_interval(secs => p_max_age_seconds)
               AND (candidate.next_attempt_at IS NULL OR candidate.next_attempt_at <= p_now)

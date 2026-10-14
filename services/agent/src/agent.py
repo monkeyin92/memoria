@@ -1,10 +1,4 @@
-"""Response-plan admission policy for the reply pipeline.
-
-``plan_matches_mode_policy`` binds a fetched plan to the fence's frozen
-interaction policy, and ``build_local_safe_plan`` is the fail-closed plan used
-whenever no authorized plan is available. ``ReplyPipeline``
-(``reply_pipeline.py``) is the only production caller.
-"""
+"""Response-plan admission for the reply pipeline (``ReplyPipeline`` only)."""
 
 from __future__ import annotations
 
@@ -24,7 +18,7 @@ from services.agent.src.response_planner_client import (
     ResponseVoiceTarget,
 )
 from services.common.companion_response_safety import (
-    CRISIS_SUPPORT_REPLY,
+    FIXED_SAFETY_REPLIES,
     SAFE_UNKNOWN_REPLY,
     companion_identity_replies,
     fixed_companion_reply,
@@ -81,7 +75,11 @@ def plan_matches_mode_policy(
         if unknown_safe_direct:
             return True
         companion = companion_definition(policy.companion_style_id)
-        allowed_companion_direct_text = {None, SAFE_UNKNOWN_REPLY, CRISIS_SUPPORT_REPLY}
+        allowed_companion_direct_text = {
+            None,
+            SAFE_UNKNOWN_REPLY,
+            *FIXED_SAFETY_REPLIES,
+        }
         if companion is not None:
             allowed_companion_direct_text |= companion_identity_replies(
                 companion.display_name, companion.style_description
@@ -100,7 +98,10 @@ def plan_matches_mode_policy(
         refusal_safe = (
             policy.mode in {"self_preview", "legacy"}
             and plan.instructions == _LOCAL_SAFE_REFUSAL_INSTRUCTIONS
-            and (plan.direct_text in {_LOCAL_SAFE_REFUSAL_TEXT, CRISIS_SUPPORT_REPLY} or is_safe_realtime_reply(plan.direct_text))
+            and (
+                plan.direct_text in {_LOCAL_SAFE_REFUSAL_TEXT, *FIXED_SAFETY_REPLIES}
+                or is_safe_realtime_reply(plan.direct_text)
+            )
             and not plan.grounded_items
             and not plan.provenance.source_refs
             and plan.disclosures
@@ -195,10 +196,8 @@ def plan_matches_mode_policy(
         and references.get("voice_model") == plan.voice_target.model
     )
 
-
 def _legacy_provenance_absent(provenance: ResponseProvenance) -> bool:
     return all(value is None for value in (provenance.actor_account_id, provenance.resource_owner_account_id, provenance.legacy_actor_role, provenance.legacy_grantee_account_id, provenance.legacy_grant_id, provenance.legacy_grant_snapshot_sha256, provenance.legacy_scope_sha256, provenance.legacy_shell_id, provenance.legacy_voice_allowed, provenance.legacy_expires_at))
-
 
 def _legacy_provenance_matches(
     provenance: ResponseProvenance,
@@ -217,7 +216,6 @@ def _legacy_provenance_matches(
         and provenance.legacy_expires_at == references.get("legacy_expires_at")
     )
 
-
 def _fallback_voice_target_matches(
     voice_target: ResponseVoiceTarget,
     policy: ModePolicy,
@@ -235,7 +233,6 @@ def _fallback_voice_target_matches(
         and voice_target.profile_id is None
         and voice_target.model == tts_model
     )
-
 
 def _persona_snapshot_matches(provenance: ResponseProvenance) -> bool:
     absent = provenance.persona_version_id is None and provenance.persona_version_number is None
@@ -349,7 +346,7 @@ def build_local_safe_plan(
             fixed_reply
             if companion
             or anonymous_public
-            or fixed_reply == CRISIS_SUPPORT_REPLY
+            or fixed_reply in FIXED_SAFETY_REPLIES
             or fixed_reply in BRIDGE_PHRASES
             or is_safe_realtime_reply(fixed_reply)
             else _LOCAL_SAFE_REFUSAL_TEXT
@@ -456,6 +453,5 @@ def build_local_safe_plan(
             ),
         ),
     )
-
 
 __all__ = ["build_local_safe_plan", "plan_is_local_safe", "plan_matches_mode_policy"]

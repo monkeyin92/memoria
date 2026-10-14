@@ -56,6 +56,19 @@ _HEALTH_TERMS: Final[tuple[str, ...]] = (
     "打针",
     "咳嗽",
 )
+# Victim / abuse details must never appear in parent-facing session summaries.
+_VICTIM_DETAIL_TERMS: Final[tuple[str, ...]] = (
+    "被打",
+    "被性侵",
+    "性侵",
+    "强奸",
+    "被下毒",
+    "中毒",
+    "正在打我",
+    "对我实施暴力",
+    "要杀我",
+    "救命",
+)
 #: Same window as guardian daily recap: this many consecutive chars is a quote.
 VERBATIM_WINDOW: Final = 10
 
@@ -70,6 +83,7 @@ SESSION_SUMMARY_USER_PROMPT_PREFIX: Final = """
 - 不得引用或复述孩子的原话，不得截取原文片段。
 - 提到其他人时只写昵称（如“小明”），不要写全名、学校全称或具体住址门牌。
 - 不要出现老师、同学、班主任、校长的姓名，也不要写具体健康细节（生病、医院、吃药等）。
+- 不要写受害细节（被打、被性侵、下毒、暴力等），也不要用「危机」一词。
 - 只写聊天里出现过的话题，不编造。
 - 全文不超过 200 字。
 
@@ -162,10 +176,10 @@ def copied_transcript_fragments(summary: str, turns: Sequence[SessionTurn]) -> l
 
 
 def redact_name_and_health_terms(text: str) -> str:
-    """Strip named roles and health terms without chopping unrelated words."""
+    """Strip named roles, health terms, and victim details without chopping unrelated words."""
 
     cleaned = _NAMED_ROLE_RE.sub("", text)
-    for term in _HEALTH_TERMS:
+    for term in (*_HEALTH_TERMS, *_VICTIM_DETAIL_TERMS):
         cleaned = cleaned.replace(term, "")
     cleaned = re.sub(r"[，,]{2,}", "，", cleaned)
     return cleaned.strip("，。、；; \t\n")
@@ -180,7 +194,9 @@ def accept_parent_summary(text: str, turns: Sequence[SessionTurn]) -> str | None
     cleaned = redact_name_and_health_terms(original)
     if len(_compact(cleaned)) < 6:
         return None
-    if any(term in cleaned for term in _HEALTH_TERMS):
+    if any(term in cleaned for term in (*_HEALTH_TERMS, *_VICTIM_DETAIL_TERMS)):
+        return None
+    if "危机" in cleaned:
         return None
     if _NAMED_ROLE_RE.search(cleaned) is not None:
         return None

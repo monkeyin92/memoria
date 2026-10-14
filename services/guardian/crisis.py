@@ -30,6 +30,7 @@ class CrisisNotificationReceipt:
     minor_user_id: str
     occurred_at: datetime
     script_version: str
+    reply_template_id: str
     notification_count: int
 
 
@@ -56,7 +57,9 @@ class CrisisNotificationStorePort(Protocol):
         minor_user_id: str,
         occurred_at: datetime,
         script_version: str,
+        reply_template_id: str,
         declared_guardian_ids: tuple[str, ...] = (),
+        attempt_push: bool = True,
     ) -> CrisisNotificationReceipt: ...
 
     async def guardian_notifications(
@@ -89,8 +92,10 @@ class CrisisNotificationService:
         generation_id: int,
         tool_epoch: int,
         script_version: str,
+        reply_template_id: str,
         occurred_at: datetime | None = None,
         declared_guardian_ids: tuple[str, ...] = (),
+        attempt_push: bool = True,
     ) -> CrisisNotificationReceipt:
         """Queue one crisis event for every guardian that is authorized to read it.
 
@@ -101,6 +106,13 @@ class CrisisNotificationService:
         labelled basis from an activated guardian link: the declaration is
         never upgraded to a verified link, and it never unlocks consent-gated
         capabilities such as memory retention or session admission.
+
+        ``attempt_push`` is False for relay-tier support requests: the alert
+        still pins in the Mini Program, but the subscribe-message worker must
+        not claim it.
+
+        ``reply_template_id`` and ``script_version`` are ids only. Child text
+        never enters this payload or the crisis event row.
         """
 
         now = (occurred_at or datetime.now(UTC)).astimezone(UTC)
@@ -122,7 +134,9 @@ class CrisisNotificationService:
                 generation_id=generation_id,
                 payload={
                     "script_version": script_version,
+                    "reply_template_id": reply_template_id,
                     "notification_required": True,
+                    "attempt_push": attempt_push,
                     "tool_epoch": tool_epoch,
                     "contains_transcript": False,
                     "contains_severity": False,
@@ -136,7 +150,9 @@ class CrisisNotificationService:
             minor_user_id=minor_user_id,
             occurred_at=now,
             script_version=script_version,
+            reply_template_id=reply_template_id,
             declared_guardian_ids=declared_guardian_ids,
+            attempt_push=attempt_push,
         )
         if receipt.notification_count < 1:
             raise CrisisNotificationUnavailableError(

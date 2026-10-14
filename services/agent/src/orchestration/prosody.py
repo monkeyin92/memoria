@@ -7,7 +7,10 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Literal
 
-from services.common.companion_response_safety import companion_safety_decision
+from services.common.companion_response_safety import (
+    companion_safety_decision,
+    fixed_safety_tts_text,
+)
 from services.common.companions import companion_definition
 
 VoiceEmotion = Literal[
@@ -206,7 +209,7 @@ def prepare_tts_text(
     use_markup_tags: bool = False,
 ) -> str:
     """Apply delivery-mode TTS rewrites without changing chat history text."""
-    body = text if text else ""
+    body = fixed_safety_tts_text(text if text else "")
     if plan.strip_paralinguistic or plan.delivery_mode == "supportive":
         body = strip_paralinguistic_markup(body)
     if not is_first_segment or not body.strip():
@@ -269,7 +272,8 @@ def _semantic_speech_plan_for_turn(
     serious = (
         label in {"sad", "angry", "fearful", "disgusted"}
         or provider_label in {"sad", "angry", "fearful", "disgusted"}
-        or companion_safety_decision(text) in {"crisis_self", "support_request"}
+        or companion_safety_decision(text)
+        in {"crisis_self", "support_victim", "support_relay"}
         or any(marker in text.lower() for marker in _SERIOUS_CONTEXT_MARKERS)
     )
     if serious:
@@ -578,7 +582,11 @@ def _speech_plan_for_turn(
         use_markup_tags=use_markup_tags,
     )
     styled = _apply_explicit_voice_style(plan, text)
-    if companion_safety_decision(text) not in {"crisis_self", "support_request"}:
+    if companion_safety_decision(text) not in {
+        "crisis_self",
+        "support_victim",
+        "support_relay",
+    }:
         companion = companion_definition(companion_id)
         if companion is None or _style_command_body(text) is not None:
             return styled

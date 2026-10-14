@@ -115,6 +115,7 @@ async def _store_with_crisis(
         generation_id=1,
         tool_epoch=1,
         script_version="crisis-transfer-draft-v1",
+        reply_template_id="crisis-support-reply",
         occurred_at=occurred_at,
     )
     assert receipt.notification_count == 1
@@ -510,6 +511,52 @@ async def test_reclaim_after_a_crashed_worker_reuses_its_reservation(
 
 
 @pytest.mark.asyncio
+
+
+@pytest.mark.asyncio
+async def test_relay_tier_alert_pins_without_being_claimed_for_push(
+    guardian_postgres_store: PostgresGuardianStore,
+    archive: PostgresLifeArchive,
+) -> None:
+    occurred = _now()
+    store = guardian_postgres_store
+    digest = hashlib.sha256(b"binding-code").hexdigest()
+    link = await store.create_link(
+        guardian_user_id="guardian-a",
+        minor_user_id="minor-a",
+        relation="parent",
+        verified_via="wechat_identity",
+        binding_code_hash=digest,
+        binding_expires_at=occurred + timedelta(minutes=15),
+        now=occurred,
+    )
+    await store.confirm_link(
+        link_id=link.link_id,
+        minor_user_id="minor-a",
+        binding_code_hash=digest,
+        now=occurred,
+    )
+    receipt = await CrisisNotificationService(store, archive).record_minor_crisis(
+        minor_user_id="minor-a",
+        session_id="voice-session-relay",
+        turn_id=9,
+        generation_id=1,
+        tool_epoch=1,
+        script_version="support-relay-pin-v1",
+        reply_template_id="support-relay-reply",
+        occurred_at=occurred,
+        attempt_push=False,
+    )
+    assert receipt.notification_count == 1
+    await _accept(store, occurred)
+    sender = FakeSender(PushSendResult("delivered"))
+    assert await _worker(store, sender, Clock(occurred + timedelta(seconds=5))).run_once() == 0
+    notification = await _only_notification(store)
+    assert notification.status == "pending"
+    assert crisis_alert_is_pinned(notification.status)
+    assert sender.calls == []
+
+
 async def test_alerts_older_than_the_push_window_stay_on_the_page_only(
     guardian_postgres_store: PostgresGuardianStore,
     archive: PostgresLifeArchive,

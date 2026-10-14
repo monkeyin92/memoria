@@ -472,6 +472,7 @@ async def test_postgres_guardian_core_tables_are_isolated_by_guardian_and_minor_
                 minor_user_id=minor,
                 occurred_at=now,
                 script_version="crisis-transfer-v1",
+                reply_template_id="crisis-support-reply",
             )
 
         api = await asyncpg.connect(
@@ -1397,6 +1398,7 @@ async def test_declared_guardian_notification_requires_the_identity_declaration(
             minor_user_id="declared-ward",
             occurred_at=now,
             script_version="crisis-transfer-v1",
+            reply_template_id="crisis-support-reply",
             declared_guardian_ids=("declared-guardian",),
         )
         assert receipt.notification_count == 1
@@ -1420,6 +1422,7 @@ async def test_declared_guardian_notification_requires_the_identity_declaration(
                 minor_user_id="declared-ward",
                 occurred_at=now,
                 script_version="crisis-transfer-v1",
+                reply_template_id="crisis-support-reply",
                 declared_guardian_ids=("undeclared-guardian",),
             )
 
@@ -1437,6 +1440,7 @@ async def test_declared_guardian_notification_requires_the_identity_declaration(
                 minor_user_id="declared-ward",
                 occurred_at=now,
                 script_version="crisis-transfer-v1",
+                reply_template_id="crisis-support-reply",
                 declared_guardian_ids=("self-declared-outsider",),
             )
     finally:

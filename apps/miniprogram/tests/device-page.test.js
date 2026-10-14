@@ -1857,7 +1857,7 @@ test("an elder's binder sees safety alerts on the device page (P0-04 D7)", async
       {
         notification_id: "n1",
         minor_display_name: "老爸",
-        message: "TA此刻可能需要可信任的人陪伴，请尽快联系并确认安全；紧急时联系当地急救或报警。",
+        message: "有一条需要你关注的对话",
         occurred_at: "2026-09-26T10:00:00Z",
       },
     ],

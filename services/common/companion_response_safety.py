@@ -3,22 +3,75 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from typing import Final, Literal
 
 SafetyDecision = Literal[
     "crisis_self",
-    "support_request",
+    "support_victim",
+    "support_relay",
     "prohibited_request",
     "none",
 ]
 
 SAFE_UNKNOWN_REPLY = "我不知道。"
+# Product/compliance approved copy. Display keeps Arabic digits; TTS uses spoken form.
 CRISIS_SUPPORT_REPLY: Final = (
-    "听起来你现在很痛苦，我很担心你的安全。请先远离可能伤害自己的东西和危险地点，"
-    "马上联系一位可信的人陪着你，也可以拨打心理援助热线一二三五六，"
-    "如果你已经准备行动或受伤，请立即联系当地急救或报警。"
-    "你现在是否正准备伤害自己？"
+    "你说的话很重要，这件事一定要请大人来帮你。现在就去找爸爸妈妈或者身边的大人，"
+    "告诉他们你刚才说的话。请大人陪着你，也可以请大人拨打心理援助热线 12356。"
+    "如果你已经受伤了，马上告诉大人，请大人打 120。"
 )
+# Tier 1: the child is currently a victim. Exact fixed reply.
+SUPPORT_VICTIM_REPLY: Final = (
+    "你说的事情很重要。现在马上去找身边的大人，爸爸妈妈、老师都可以。"
+    "如果有危险，请大人帮你打 110。"
+)
+# Tier 2: relaying someone else or asking how to prevent. Exact fixed reply.
+SUPPORT_RELAY_REPLY: Final = (
+    "谢谢你告诉我，你是个关心别人的好孩子。"
+    "这件事要请大人帮忙，现在就去告诉爸爸妈妈或者老师吧。"
+)
+GUARDIAN_ATTENTION_COPY: Final = "有一条需要你关注的对话"
+# Template id and script_version share one id per route.
+CRISIS_SUPPORT_REPLY_TEMPLATE_ID: Final = "crisis-self-v1"
+SUPPORT_VICTIM_REPLY_TEMPLATE_ID: Final = "victim-support-v1"
+SUPPORT_RELAY_REPLY_TEMPLATE_ID: Final = "support-other-v1"
+FIXED_SAFETY_REPLIES: Final = frozenset(
+    {CRISIS_SUPPORT_REPLY, SUPPORT_VICTIM_REPLY, SUPPORT_RELAY_REPLY}
+)
+# Longer codes first so 12356 is not partially rewritten.
+_FIXED_SAFETY_TTS_DIGITS: Final = (
+    ("12356", "一二三五六"),
+    ("120", "幺二零"),
+    ("110", "幺幺零"),
+)
+AFTER_FIXED_SAFETY_SESSION_INSTRUCTION: Final = (
+    "本会话已经对用户说过固定安全话术。不要继续讨论或追问刚才的安全话题；"
+    "若用户再次提出同类自伤、受害或转述他人危险的求助，系统会再次给出同一句固定话术，你不要另写。"
+)
+
+
+def tts_speak_helpline_digits(text: str) -> str:
+    """Rewrite known helpline numbers to digit-by-digit Chinese for TTS."""
+
+    spoken = text
+    for arabic, chinese in _FIXED_SAFETY_TTS_DIGITS:
+        spoken = spoken.replace(arabic, chinese)
+    return spoken
+
+
+def fixed_safety_tts_text(display: str) -> str:
+    """Spoken form for TTS. Display/history keep Arabic digits."""
+
+    if display not in FIXED_SAFETY_REPLIES:
+        return display
+    return tts_speak_helpline_digits(display)
+
+
+def session_had_fixed_safety_reply(assistant_turns: Sequence[str]) -> bool:
+    return any(turn in FIXED_SAFETY_REPLIES for turn in assistant_turns)
+
+
 CRISIS_CONTEXT_MARKERS: Final = (
     "自杀",
     "自残",
@@ -212,9 +265,12 @@ _IDENTITY_ENGLISH_RE = re.compile(
 
 def companion_safety_decision(query: str) -> SafetyDecision:
     """Classify one current-turn query without granting facts or permissions."""
-    if _UNQUOTED_REPORTED_SELF_HARM_RE.search(query):
-        return "support_request"
-    crisis_query = _QUOTED_TEXT_RE.sub("", query)
+    stripped_of_quotes = _QUOTED_TEXT_RE.sub("", query)
+    # Reported self-harm must survive quote stripping; otherwise fiction /
+    # analysis that only quotes risk language would still trip the relay path.
+    if _UNQUOTED_REPORTED_SELF_HARM_RE.search(stripped_of_quotes):
+        return "support_relay"
+    crisis_query = stripped_of_quotes
     if crisis_query == query or not _REPORTED_OR_ANALYTICAL_RE.search(crisis_query):
         crisis_query = query
     normalized = re.sub(r"[\s，。！？、,.!?：:\-—_]+", "", crisis_query).lower()
@@ -228,11 +284,13 @@ def companion_safety_decision(query: str) -> SafetyDecision:
         return "crisis_self"
     full_normalized = re.sub(r"[\s，。！？、,.!?：:\-—_]+", "", query).lower()
     if any(term in full_normalized for term in _VICTIM_SUPPORT_TERMS):
-        return "support_request"
+        return "support_victim"
     if _SAFETY_PREVENTION_RE.search(full_normalized):
-        return "support_request"
-    if any(marker in query.lower() for marker in CRISIS_CONTEXT_MARKERS):
-        return "support_request"
+        return "support_relay"
+    # Markers follow the same quote-stripped surface as crisis_self, so fiction
+    # / analysis that only quotes risk language does not become a support hit.
+    if any(marker in crisis_query.lower() for marker in CRISIS_CONTEXT_MARKERS):
+        return "support_relay"
     if any(term in full_normalized for term in _PROHIBITED_CONTENT_TERMS) or (
         _PROHIBITED_ENGLISH_RE.search(query.lower())
     ):
@@ -285,6 +343,10 @@ def fixed_companion_reply(
     decision = companion_safety_decision(query)
     if decision == "crisis_self":
         return CRISIS_SUPPORT_REPLY
+    if decision == "support_victim":
+        return SUPPORT_VICTIM_REPLY
+    if decision == "support_relay":
+        return SUPPORT_RELAY_REPLY
     if decision == "prohibited_request":
         return SAFE_UNKNOWN_REPLY
     normalized = re.sub(r"[\s，。！？、,.!?：:\-—_]+", "", query).lower()
