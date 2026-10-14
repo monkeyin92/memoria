@@ -249,6 +249,7 @@ async def test_minor_crisis_queues_one_notification_and_fixed_text_reaches_the_d
         assert item["channel"] == "wechat_subscription"
         # 边界：本阶段没有发送 worker，入队不等于家长已收到。
         assert item["delivery_status"] == "pending"
+        assert item["pinned"] is True
         assert item["contains_transcript"] is False
         assert item["contains_severity"] is False
 
@@ -788,6 +789,7 @@ async def test_adult_account_manages_independent_under_14_subject_without_child_
         assert items[0]["minor_user_id"] == child_person_id
         assert items[0]["minor_display_name"] == "独立小明"
         assert items[0]["delivery_status"] == "pending"
+        assert items[0]["pinned"] is True
 
         # 5. 对照验证：若切换为成人使用人（例如家长本人），危机语句虽然给出通用固定话术，但绝不入队未成年危机通知
         _attach_signed_runtime_profile(

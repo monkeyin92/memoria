@@ -11,6 +11,17 @@ from services.archive.domain import EvidenceEvent, LifeArchivePort
 
 NotificationStatus = Literal["pending", "delivered", "failed", "no_subscription"]
 
+# Undelivered outbox rows stay pinned in the Mini Program until WeChat
+# delivery succeeds.  Delivered alerts remain listable on the guardian page
+# but no longer occupy the home/memory pin slot.
+PINNED_CRISIS_ALERT_STATUSES = frozenset({"pending", "failed", "no_subscription"})
+
+
+def crisis_alert_is_pinned(status: str) -> bool:
+    """True when the parent must see this alert on next Mini Program open."""
+
+    return status in PINNED_CRISIS_ALERT_STATUSES
+
 
 @dataclass(frozen=True, slots=True)
 class CrisisNotificationReceipt:
@@ -135,10 +146,12 @@ class CrisisNotificationService:
 
 
 __all__ = [
+    "PINNED_CRISIS_ALERT_STATUSES",
     "CrisisNotificationReceipt",
     "CrisisNotificationService",
     "CrisisNotificationStorePort",
     "CrisisNotificationUnavailableError",
     "GuardianNotification",
     "NotificationStatus",
+    "crisis_alert_is_pinned",
 ]

@@ -8,8 +8,10 @@ only per-event values are the child's display name (already shown on the
 guardian page) and the time of the event.
 
 When a guardian has no remaining acceptance the notification is marked
-``no_subscription`` and stays visible on the guardian page, which remains the
-authoritative surface for every alert.
+``no_subscription`` and stays pinned on the memory and home pages until the
+parent opens the Mini Program.  Delivered alerts remain listable on the
+guardian page.  Each subscribe-message answer is appended to an audit ledger
+in addition to updating the acceptance balance.
 """
 
 from __future__ import annotations
@@ -47,6 +49,18 @@ class PushSubscription:
     remaining: int
     last_result: PushSubscriptionResult
     updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class PushSubscriptionEvent:
+    """One immutable subscribe-message answer for a guardian and template."""
+
+    event_id: str
+    guardian_user_id: str
+    template_id: str
+    result: PushSubscriptionResult
+    remaining_after: int
+    recorded_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +110,14 @@ class PushSubscriptionStorePort(Protocol):
         guardian_user_id: str,
         template_id: str,
     ) -> PushSubscription | None: ...
+
+    async def push_subscription_events(
+        self,
+        *,
+        guardian_user_id: str,
+        template_id: str | None = None,
+        limit: int = 50,
+    ) -> tuple[PushSubscriptionEvent, ...]: ...
 
 
 class CrisisPushStorePort(Protocol):
@@ -405,6 +427,7 @@ __all__ = [
     "PendingCrisisPush",
     "PushSendResult",
     "PushSubscription",
+    "PushSubscriptionEvent",
     "PushSubscriptionResult",
     "PushSubscriptionStorePort",
     "crisis_push_content",

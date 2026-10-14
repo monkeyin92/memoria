@@ -69,7 +69,7 @@ from services.guardian.child_memory import (
 )
 from services.guardian.consent import GuardianConsentService
 from services.guardian.corpus import CorpusRetentionService
-from services.guardian.crisis import CrisisNotificationStorePort
+from services.guardian.crisis import CrisisNotificationStorePort, crisis_alert_is_pinned
 from services.guardian.domain import (
     AgeEvidenceStatus,
     BirthYearBand,
@@ -655,6 +655,7 @@ async def guardian_notifications(
                 "minor_display_name": str(minor_display_name or "TA"),
                 "occurred_at": item.created_at.isoformat(),
                 "delivery_status": item.status,
+                "pinned": crisis_alert_is_pinned(item.status),
                 "channel": item.channel,
                 "message": "TA此刻可能需要可信任的人陪伴，请尽快联系并确认安全；紧急时联系当地急救或报警。",
                 "contains_transcript": False,

@@ -64,7 +64,7 @@ def test_guardian_push_is_disabled_by_default() -> None:
         settings.wechat_subscribe_send_endpoint
         == "https://api.weixin.qq.com/cgi-bin/message/subscribe/send"
     )
-    assert settings.wechat_subscribe_crisis_page == "pages/guardian/index"
+    assert settings.wechat_subscribe_crisis_page == "pages/memory/index"
     assert settings.wechat_miniprogram_state == "formal"
     settings.validate_guardian_push()  # disabled: nothing to validate
     assert (
@@ -202,7 +202,7 @@ async def test_wechat_sender_posts_only_the_fixed_alert(monkeypatch: pytest.Monk
     assert posts[0]["json"] == {
         "touser": "openid-a",
         "template_id": TEMPLATE,
-        "page": "pages/guardian/index",
+        "page": "pages/memory/index",
         "miniprogram_state": "formal",
         "lang": "zh_CN",
         "data": {

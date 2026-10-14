@@ -42,6 +42,7 @@ from services.guardian.push import (
     CrisisPushOutcome,
     PendingCrisisPush,
     PushSubscription,
+    PushSubscriptionEvent,
     PushSubscriptionResult,
     push_identifier,
     push_openid,
@@ -77,6 +78,7 @@ _REQUIRED_TABLES = frozenset(
         "guardian_crisis_events",
         "guardian_notification_outbox",
         "guardian_push_subscriptions",
+        "guardian_push_subscription_events",
     }
 )
 
@@ -1959,9 +1961,80 @@ class PostgresGuardianStore:
                 timestamp,
                 MAX_PUSH_SUBSCRIPTION_BALANCE,
             )
-        if row is None:  # pragma: no cover
-            raise RuntimeError("guardian push subscription disappeared")
+            if row is None:  # pragma: no cover
+                raise RuntimeError("guardian push subscription disappeared")
+            await connection.execute(
+                """
+                INSERT INTO guardian_push_subscription_events(
+                    event_id, guardian_user_id, template_id, result,
+                    remaining_after, recorded_at
+                ) VALUES ($1, $2, $3, $4, $5, $6)
+                """,
+                uuid.uuid4(),
+                guardian,
+                template,
+                result,
+                int(row["remaining"]),
+                timestamp,
+            )
         return self._push_subscription(row)
+
+    async def push_subscription_events(
+        self,
+        *,
+        guardian_user_id: str,
+        template_id: str | None = None,
+        limit: int = 50,
+    ) -> tuple[PushSubscriptionEvent, ...]:
+        if not 1 <= limit <= 100:
+            raise ValueError("push subscription event limit must be between 1 and 100")
+        guardian = push_identifier(guardian_user_id, field="guardian_user_id")
+        template = push_template_id(template_id) if template_id is not None else None
+        pool = await self._ready_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            await self._set_api_context(
+                connection,
+                actor_user_id=guardian,
+                subject_user_id=guardian,
+            )
+            if template is None:
+                rows = await connection.fetch(
+                    """
+                    SELECT event_id, guardian_user_id, template_id, result,
+                           remaining_after, recorded_at
+                    FROM guardian_push_subscription_events
+                    WHERE guardian_user_id = $1
+                    ORDER BY recorded_at DESC, event_id DESC
+                    LIMIT $2
+                    """,
+                    guardian,
+                    limit,
+                )
+            else:
+                rows = await connection.fetch(
+                    """
+                    SELECT event_id, guardian_user_id, template_id, result,
+                           remaining_after, recorded_at
+                    FROM guardian_push_subscription_events
+                    WHERE guardian_user_id = $1 AND template_id = $2
+                    ORDER BY recorded_at DESC, event_id DESC
+                    LIMIT $3
+                    """,
+                    guardian,
+                    template,
+                    limit,
+                )
+        return tuple(
+            PushSubscriptionEvent(
+                event_id=str(row["event_id"]),
+                guardian_user_id=str(row["guardian_user_id"]),
+                template_id=str(row["template_id"]),
+                result=cast(PushSubscriptionResult, str(row["result"])),
+                remaining_after=int(row["remaining_after"]),
+                recorded_at=cast(datetime, row["recorded_at"]),
+            )
+            for row in rows
+        )
 
     async def push_subscription(
         self,
@@ -2170,6 +2243,16 @@ class PostgresGuardianStore:
                 """,
                 account_id,
             )
+            push_subscription_events = await connection.fetch(
+                """
+                SELECT event_id, guardian_user_id, template_id, result,
+                       remaining_after, recorded_at
+                FROM guardian_push_subscription_events
+                WHERE guardian_user_id = $1
+                ORDER BY recorded_at, event_id
+                """,
+                account_id,
+            )
         async with maintenance_pool.acquire() as connection:
             row = await connection.fetchval(
                 "SELECT guardian_tutor_account_scope_export($1)",
@@ -2192,6 +2275,9 @@ class PostgresGuardianStore:
             "guardian_notifications": [dict(row) for row in notifications],
             "corpus_samples": [dict(row) for row in corpus_samples],
             "guardian_push_subscriptions": [dict(row) for row in push_subscriptions],
+            "guardian_push_subscription_events": [
+                dict(row) for row in push_subscription_events
+            ],
         }
 
     async def delete_for_account(self, *, account_id: str) -> dict[str, int]:
@@ -2224,6 +2310,10 @@ class PostgresGuardianStore:
             )
             crisis_result = await connection.execute(
                 "DELETE FROM guardian_crisis_events WHERE minor_user_id = $1",
+                account_id,
+            )
+            push_subscription_event_result = await connection.execute(
+                "DELETE FROM guardian_push_subscription_events WHERE guardian_user_id = $1",
                 account_id,
             )
             push_subscription_result = await connection.execute(
@@ -2278,6 +2368,9 @@ class PostgresGuardianStore:
             "corpus_samples": int(corpus_result.rsplit(" ", 1)[-1]),
             "guardian_push_subscriptions": int(
                 push_subscription_result.rsplit(" ", 1)[-1]
+            ),
+            "guardian_push_subscription_events": int(
+                push_subscription_event_result.rsplit(" ", 1)[-1]
             ),
         }
 
@@ -2358,6 +2451,15 @@ class PostgresGuardianStore:
                     account_id,
                 )
             )
+            push_subscription_events = int(
+                await connection.fetchval(
+                    """
+                    SELECT count(*) FROM guardian_push_subscription_events
+                    WHERE guardian_user_id = $1
+                    """,
+                    account_id,
+                )
+            )
         async with maintenance_pool.acquire() as connection:
             tutor_result = await connection.fetchval(
                 "SELECT guardian_tutor_account_scope_remaining($1)",
@@ -2378,6 +2480,7 @@ class PostgresGuardianStore:
                 "corpus_samples": corpus_samples,
                 "person_consents": person_consents,
                 "guardian_push_subscriptions": push_subscriptions,
+                "guardian_push_subscription_events": push_subscription_events,
             }.items()
             if value
         }
