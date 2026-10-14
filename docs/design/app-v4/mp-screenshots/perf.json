@@ -1,0 +1,327 @@
+{
+  "view": "390",
+  "packageSize": {
+    "bytes": 1881240,
+    "limitBytes": 2097152,
+    "byFolder": {
+      ".gitignore": 48,
+      "app.js": 2263,
+      "app.json": 1279,
+      "app.wxss": 18993,
+      "assets/bg": 142018,
+      "assets/mascots": 616793,
+      "assets/ui": 144379,
+      "assets/voices": 149260,
+      "components/device-screen": 2443,
+      "components/face-badge": 7529,
+      "components/mp-icon": 1589,
+      "config.js": 665,
+      "custom-tab-bar/index.js": 950,
+      "custom-tab-bar/index.json": 49,
+      "custom-tab-bar/index.wxml": 441,
+      "custom-tab-bar/index.wxss": 844,
+      "generated/multi-subject-contracts.js": 43544,
+      "pages/auth": 11403,
+      "pages/bind": 46388,
+      "pages/child-memory": 22983,
+      "pages/companion": 7705,
+      "pages/device": 102582,
+      "pages/device-onboarding": 36182,
+      "pages/digital-self": 7237,
+      "pages/guardian": 31222,
+      "pages/home": 36467,
+      "pages/memory": 40363,
+      "pages/persona-custom": 14557,
+      "pages/privacy": 8210,
+      "pages/profile": 40001,
+      "sitemap.json": 155,
+      "styles/trial-theme.wxss": 5772,
+      "utils/api.js": 52790,
+      "utils/auth-gate.js": 1289,
+      "utils/child-memory.js": 7091,
+      "utils/companions.js": 1710,
+      "utils/compliance.js": 2158,
+      "utils/crisis-alerts.js": 3946,
+      "utils/device-binding.js": 61813,
+      "utils/device-onboarding": 170092,
+      "utils/device-status.js": 2563,
+      "utils/digital-self.js": 2706,
+      "utils/greeting.js": 447,
+      "utils/guardian-push.js": 7201,
+      "utils/guardian.js": 6003,
+      "utils/multi-subject-contracts.js": 232,
+      "utils/nav-back.js": 787,
+      "utils/nav-inset.js": 1139,
+      "utils/quiet-hours.js": 2797,
+      "utils/session-limits.js": 3033,
+      "utils/storage.js": 1909,
+      "utils/subject-label.js": 2655,
+      "utils/tab-routes.js": 673,
+      "utils/trial-device-card.js": 3892
+    }
+  },
+  "pages": [
+    {
+      "slug": "home",
+      "loadMs": 10.4,
+      "renderMs": 5.2,
+      "layoutMs": 86,
+      "setDataCalls": 3,
+      "setDataLargest": 2260,
+      "setDataTotal": 2500
+    },
+    {
+      "slug": "home-guest",
+      "loadMs": 1.6,
+      "renderMs": 1.6,
+      "layoutMs": 59,
+      "setDataCalls": 2,
+      "setDataLargest": 1633,
+      "setDataTotal": 1719
+    },
+    {
+      "slug": "memory",
+      "loadMs": 1.7,
+      "renderMs": 1.9,
+      "layoutMs": 65,
+      "setDataCalls": 9,
+      "setDataLargest": 1876,
+      "setDataTotal": 3689
+    },
+    {
+      "slug": "memory-attention",
+      "loadMs": 0.8,
+      "renderMs": 2,
+      "layoutMs": 60,
+      "setDataCalls": 5,
+      "setDataLargest": 1876,
+      "setDataTotal": 2268
+    },
+    {
+      "slug": "memory-empty",
+      "loadMs": 0.9,
+      "renderMs": 1.9,
+      "layoutMs": 50,
+      "setDataCalls": 5,
+      "setDataLargest": 331,
+      "setDataTotal": 486
+    },
+    {
+      "slug": "memory-empty-memories",
+      "loadMs": 1.7,
+      "renderMs": 1.4,
+      "layoutMs": 54,
+      "setDataCalls": 6,
+      "setDataLargest": 331,
+      "setDataTotal": 531
+    },
+    {
+      "slug": "companion",
+      "loadMs": 1.3,
+      "renderMs": 2.1,
+      "layoutMs": 69,
+      "setDataCalls": 1,
+      "setDataLargest": 166,
+      "setDataTotal": 166
+    },
+    {
+      "slug": "device",
+      "loadMs": 5.6,
+      "renderMs": 3.4,
+      "layoutMs": 78,
+      "setDataCalls": 7,
+      "setDataLargest": 4323,
+      "setDataTotal": 5122
+    },
+    {
+      "slug": "profile",
+      "loadMs": 3.5,
+      "renderMs": 2.2,
+      "layoutMs": 64,
+      "setDataCalls": 10,
+      "setDataLargest": 1177,
+      "setDataTotal": 2726
+    },
+    {
+      "slug": "guardian",
+      "loadMs": 2.9,
+      "renderMs": 2.1,
+      "layoutMs": 56,
+      "setDataCalls": 11,
+      "setDataLargest": 1037,
+      "setDataTotal": 2283
+    },
+    {
+      "slug": "bind",
+      "loadMs": 2.2,
+      "renderMs": 1.8,
+      "layoutMs": 43,
+      "setDataCalls": 2,
+      "setDataLargest": 132,
+      "setDataTotal": 187
+    },
+    {
+      "slug": "bind-mode",
+      "loadMs": 1.5,
+      "renderMs": 1.1,
+      "layoutMs": 40,
+      "setDataCalls": 3,
+      "setDataLargest": 193,
+      "setDataTotal": 309
+    },
+    {
+      "slug": "bind-form",
+      "loadMs": 1.3,
+      "renderMs": 2.3,
+      "layoutMs": 58,
+      "setDataCalls": 5,
+      "setDataLargest": 1760,
+      "setDataTotal": 2084
+    },
+    {
+      "slug": "bind-review",
+      "loadMs": 1.4,
+      "renderMs": 1.2,
+      "layoutMs": 51,
+      "setDataCalls": 7,
+      "setDataLargest": 1760,
+      "setDataTotal": 2362
+    },
+    {
+      "slug": "persona-custom",
+      "loadMs": 1,
+      "renderMs": 1,
+      "layoutMs": 47,
+      "setDataCalls": 3,
+      "setDataLargest": 168,
+      "setDataTotal": 219
+    },
+    {
+      "slug": "auth",
+      "loadMs": 0.7,
+      "renderMs": 1.2,
+      "layoutMs": 48,
+      "setDataCalls": 1,
+      "setDataLargest": 111,
+      "setDataTotal": 111
+    },
+    {
+      "slug": "privacy",
+      "loadMs": 1.4,
+      "renderMs": 0.9,
+      "layoutMs": 53,
+      "setDataCalls": 4,
+      "setDataLargest": 35,
+      "setDataTotal": 113
+    },
+    {
+      "slug": "privacy-granted",
+      "loadMs": 1.1,
+      "renderMs": 0.8,
+      "layoutMs": 49,
+      "setDataCalls": 4,
+      "setDataLargest": 192,
+      "setDataTotal": 271
+    },
+    {
+      "slug": "digital-self",
+      "loadMs": 1.8,
+      "renderMs": 0.9,
+      "layoutMs": 44,
+      "setDataCalls": 3,
+      "setDataLargest": 1207,
+      "setDataTotal": 1258
+    },
+    {
+      "slug": "digital-self-empty",
+      "loadMs": 0.9,
+      "renderMs": 0.6,
+      "layoutMs": 53,
+      "setDataCalls": 2,
+      "setDataLargest": 143,
+      "setDataTotal": 170
+    },
+    {
+      "slug": "child-memory",
+      "loadMs": 2,
+      "renderMs": 1,
+      "layoutMs": 61,
+      "setDataCalls": 5,
+      "setDataLargest": 1323,
+      "setDataTotal": 1629
+    },
+    {
+      "slug": "child-memory-archive",
+      "loadMs": 1.9,
+      "renderMs": 1.7,
+      "layoutMs": 62,
+      "setDataCalls": 6,
+      "setDataLargest": 2942,
+      "setDataTotal": 3357
+    },
+    {
+      "slug": "device-onboarding",
+      "loadMs": 7.8,
+      "renderMs": 2.6,
+      "layoutMs": 66,
+      "setDataCalls": 2,
+      "setDataLargest": 1371,
+      "setDataTotal": 1405
+    },
+    {
+      "slug": "device-onboarding-wifi",
+      "loadMs": 1.4,
+      "renderMs": 1.4,
+      "layoutMs": 63,
+      "setDataCalls": 4,
+      "setDataLargest": 1371,
+      "setDataTotal": 2450
+    },
+    {
+      "slug": "device-onboarding-progress",
+      "loadMs": 1.2,
+      "renderMs": 1.4,
+      "layoutMs": 58,
+      "setDataCalls": 3,
+      "setDataLargest": 1371,
+      "setDataTotal": 2347
+    },
+    {
+      "slug": "device-onboarding-complete",
+      "loadMs": 1.4,
+      "renderMs": 1.8,
+      "layoutMs": 56,
+      "setDataCalls": 3,
+      "setDataLargest": 1371,
+      "setDataTotal": 2316
+    }
+  ],
+  "longLists": [
+    {
+      "slug": "memory-200",
+      "setDataCalls": 5,
+      "setDataLargest": 51618,
+      "setDataTotal": 51773,
+      "scrollHeight": 27860,
+      "renderMs": 4.7,
+      "layoutMs": 72,
+      "frames": 226,
+      "p50FrameMs": 16.7,
+      "p95FrameMs": 16.7,
+      "maxFrameMs": 16.8
+    },
+    {
+      "slug": "child-memory-200",
+      "setDataCalls": 6,
+      "setDataLargest": 79144,
+      "setDataTotal": 79561,
+      "scrollHeight": 12993,
+      "renderMs": 6.9,
+      "layoutMs": 73,
+      "frames": 102,
+      "p50FrameMs": 16.7,
+      "p95FrameMs": 16.8,
+      "maxFrameMs": 16.8
+    }
+  ]
+}

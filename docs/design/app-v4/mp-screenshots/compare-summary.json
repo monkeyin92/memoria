@@ -1,82 +1,104 @@
 [
   {
     "slug": "01-login",
-    "status": "OK",
-    "out": "/workspace/docs/design/app-v4/mp-screenshots/side-by-side/01-login.png",
-    "diffRatio": 0.107148,
-    "diffPixels": 141076,
-    "rmse": 31.174
+    "page": "pages/home/index",
+    "diffRatio": 0.647483,
+    "rmse": 35.715,
+    "overflow": [],
+    "underCapsule": [],
+    "tabClearance": {
+      "tabHeight": 86,
+      "gap": 150
+    }
   },
   {
     "slug": "02-consent",
-    "status": "OK",
-    "out": "/workspace/docs/design/app-v4/mp-screenshots/side-by-side/02-consent.png",
-    "diffRatio": 0.148159,
-    "diffPixels": 195072,
-    "rmse": 44.578
+    "page": "pages/auth/index",
+    "diffRatio": 0.390582,
+    "rmse": 64.374,
+    "overflow": [],
+    "underCapsule": [],
+    "tabClearance": null
   },
   {
     "slug": "03-home",
-    "status": "OK",
-    "out": "/workspace/docs/design/app-v4/mp-screenshots/side-by-side/03-home.png",
-    "diffRatio": 0.164621,
-    "diffPixels": 216746,
-    "rmse": 28.728
+    "page": "pages/home/index",
+    "diffRatio": 0.316241,
+    "rmse": 35.663,
+    "overflow": [],
+    "underCapsule": [],
+    "tabClearance": {
+      "tabHeight": 86,
+      "gap": 151
+    }
   },
   {
     "slug": "04-summary",
-    "status": "OK",
-    "out": "/workspace/docs/design/app-v4/mp-screenshots/side-by-side/04-summary.png",
-    "diffRatio": 0.185482,
-    "diffPixels": 244213,
-    "rmse": 30.344
-  },
-  {
-    "slug": "05-attention",
-    "status": "OK",
-    "out": "/workspace/docs/design/app-v4/mp-screenshots/side-by-side/05-attention.png",
-    "diffRatio": 0.205914,
-    "diffPixels": 271114,
-    "rmse": 59.022
+    "page": "pages/memory/index",
+    "diffRatio": 0.339383,
+    "rmse": 41.092,
+    "overflow": [],
+    "underCapsule": [],
+    "tabClearance": {
+      "tabHeight": 86,
+      "gap": 151
+    }
   },
   {
     "slug": "06-usage",
-    "status": "OK",
-    "out": "/workspace/docs/design/app-v4/mp-screenshots/side-by-side/06-usage.png",
-    "diffRatio": 0.150109,
-    "diffPixels": 197640,
-    "rmse": 27.222
+    "page": "pages/device/index",
+    "diffRatio": 0.252705,
+    "rmse": 36.015,
+    "overflow": [],
+    "underCapsule": [],
+    "tabClearance": {
+      "tabHeight": 86,
+      "gap": 151
+    }
   },
   {
-    "slug": "07-content",
-    "status": "OK",
-    "out": "/workspace/docs/design/app-v4/mp-screenshots/side-by-side/07-content.png",
-    "diffRatio": 0.186195,
-    "diffPixels": 245152,
-    "rmse": 30.092
-  },
-  {
-    "slug": "08-roles",
-    "status": "OK",
-    "out": "/workspace/docs/design/app-v4/mp-screenshots/side-by-side/08-roles.png",
-    "diffRatio": 0.213838,
-    "diffPixels": 281548,
-    "rmse": 28.012
-  },
-  {
-    "slug": "09-memory",
-    "status": "OK",
-    "out": "/workspace/docs/design/app-v4/mp-screenshots/side-by-side/09-memory.png",
-    "diffRatio": 0.171967,
-    "diffPixels": 226419,
-    "rmse": 27.395
+    "slug": "05-attention",
+    "page": "pages/memory/index",
+    "diffRatio": 0.499083,
+    "rmse": 60.835,
+    "overflow": [],
+    "underCapsule": [],
+    "tabClearance": {
+      "tabHeight": 86,
+      "gap": 151
+    }
   },
   {
     "slug": "10-profile",
-    "status": "OK",
-    "out": "/workspace/docs/design/app-v4/mp-screenshots/side-by-side/10-profile.png",
-    "diffRatio": 0.019445,
-    "diffPixels": 25602,
-    "rmse": 11.718
+    "page": "pages/profile/index",
+    "diffRatio": 0.244987,
+    "rmse": 31.257,
+    "overflow": [],
+    "underCapsule": [],
+    "tabClearance": {
+      "tabHeight": 86,
+      "gap": 151
+    }
+  },
+  {
+    "slug": "08-roles",
+    "page": "pages/companion/index",
+    "diffRatio": 0.353867,
+    "rmse": 37.812,
+    "overflow": [],
+    "underCapsule": [],
+    "tabClearance": {
+      "tabHeight": 86,
+      "gap": 150
+    }
+  },
+  {
+    "slug": "09-memory",
+    "page": "pages/child-memory/index",
+    "diffRatio": 0.370551,
+    "rmse": 34.775,
+    "overflow": [],
+    "underCapsule": [],
+    "tabClearance": null
   }
 ]
