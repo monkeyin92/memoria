@@ -261,11 +261,7 @@
           <text class="row-meta">{{item.minor_display_name}}：{{item.message}}</text>
           <text class="caption">{{item.occurred_at}}</text>
         </view>
-<<<<<<< HEAD
-        <button wx:if="{{elderCrisisPush.enabled}}" class="secondary-button card-action" bindtap="enableElderCrisisPush">订阅安全提醒</button>
-=======
         <button wx:if="{{elderCrisisPush.enabled && !trialSettingsVisible}}" class="secondary-button card-action" bindtap="enableElderCrisisPush">订阅安全提醒</button>
->>>>>>> f0e5575d (feat(miniprogram): iOS-style trial settings group on device)
       </view>
 
       <view wx:if="{{sensitiveEntries.length > 0}}" class="list">

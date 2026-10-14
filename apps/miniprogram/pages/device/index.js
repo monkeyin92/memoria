@@ -530,14 +530,10 @@ Page({
   async enableElderCrisisPush() {
     try {
       const outcome = await guardianPush.subscribeCrisisAlerts({ config: this.data.elderCrisisPush, api });
-<<<<<<< HEAD
-      if (outcome.result === "accept") wx.showToast({ title: "已完成订阅安全提醒", icon: "none" });
-=======
       if (outcome.result === "accept") {
         this.setData({ safetySubscribeOn: true });
-        wx.showToast({ title: "已开启一次安全提醒", icon: "none" });
+        wx.showToast({ title: "已完成订阅安全提醒", icon: "none" });
       }
->>>>>>> f0e5575d (feat(miniprogram): iOS-style trial settings group on device)
     } catch (error) {
       wx.showToast({ title: error?.message || "订阅安全提醒失败，请稍后再试。", icon: "none" });
     }
