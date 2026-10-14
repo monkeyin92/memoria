@@ -50,6 +50,7 @@ page {
     0 8px 24px -8px rgba(22, 24, 43, 0.08),
     0 24px 48px -24px rgba(22, 24, 43, 0.1);
   --mp-shadow-float: 0 2px 8px rgba(22, 24, 43, 0.08);
+  --mp-shadow-thumb: 0 2px 8px rgba(22, 24, 43, 0.18), 0 0 0 0.5px rgba(22, 24, 43, 0.08);
   --mp-shadow-button: 0 1px 2px rgba(22, 24, 43, 0.06), 0 8px 24px -12px rgba(22, 24, 43, 0.12);
   --mp-shadow-hero: 0 24px 48px -24px rgba(22, 24, 43, 0.35);
   --mp-hero-scrim: rgba(16, 18, 48, 0.32);

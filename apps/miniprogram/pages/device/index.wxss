@@ -58,7 +58,7 @@
 .device-ring-cap {
   margin-top: 4px;
   color: var(--mp-ink-3);
-  font-size: var(--mp-type-tab);
+  font-size: var(--mp-type-micro);
 }
 
 .device-usage-copy {
@@ -68,7 +68,7 @@
 
 .device-usage-title {
   display: block;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   color: var(--mp-ink);
   font-size: var(--mp-type-button);
   font-weight: 600;
@@ -102,11 +102,7 @@
 
 .device-limit-unit {
   color: var(--mp-ink-2);
-  font-size: var(--mp-type-caption);
-}
-
-.device-slider {
-  margin: 16px 0 4px;
+  font-size: var(--mp-type-small);
 }
 
 .device-limit-range {
@@ -124,12 +120,35 @@
   padding: 16px;
 }
 
-.device-quiet-card .trial-inset-label {
+.device-quiet-title {
+  color: var(--mp-ink);
+  font-size: var(--mp-type-card);
   font-weight: 600;
+}
+
+.device-quiet-card .trial-caption {
+  line-height: normal;
+}
+
+.device-quiet-chip {
+  flex-shrink: 0;
+  height: 24px;
+  padding: 0 12px;
+  border-radius: var(--mp-radius-pill);
+  background: var(--mp-accent-soft);
+  color: var(--mp-accent);
+  font-size: var(--mp-type-meta);
+  font-weight: 600;
+  line-height: 24px;
+  white-space: nowrap;
 }
 
 .device-privacy-block {
   margin-top: var(--mp-gap-card);
+}
+
+.device-privacy-block .trial-inset-label {
+  flex: 1;
 }
 
 .device-header {

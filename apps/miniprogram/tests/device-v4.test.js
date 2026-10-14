@@ -7,7 +7,33 @@ const { renderPage } = require("../scripts/mp-harness/render");
 const { scenarioData } = require("../scripts/mp-harness/shoot");
 const { PAGES } = require("../scripts/mp-harness/pages");
 
+const fx = require("../scripts/mp-harness/fixtures");
+const { loadPage } = require("../scripts/mp-harness/runtime");
+
 const visibleText = (html) => html.replace(/<style>[\s\S]*?<\/style>/g, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+
+test("the usage screen shows the real quiet window as the card chip and the privacy rows below", async () => {
+  const scenario = PAGES.find((item) => item.slug === "device");
+  const { data } = await scenarioData(scenario);
+  const html = renderPage(scenario.page, data);
+  const text = visibleText(html);
+  assert.match(text, /安静时段 孩子睡觉的时间，机器人不陪聊 21:00–07:00 隐私说明 管理与导出数据 解绑设备/);
+  assert.doesNotMatch(text, /即将上线/);
+  assert.match(html, /class="mps-fill" style="width: 33\.3%;"/);
+});
+
+test("releasing the 单次上限 slider at 60 saves 60 minutes with the stored quiet window", async () => {
+  const saved = [];
+  const harness = loadPage("pages/device/index", fx.authed({ setSessionLimits: async (...args) => saved.push(args) }));
+  try {
+    await harness.run();
+    await harness.page.onTrialDailyCapSlider({ detail: { value: 60 } });
+    assert.deepEqual(saved, [["dev_1", { maxSessionMinutes: 60, quietStart: "21:00", quietEnd: "07:00" }]]);
+    assert.equal(harness.page.data.limitsSaving, false);
+  } finally {
+    harness.restore();
+  }
+});
 
 test("the usage slider names the per-session limit the device enforces, never a daily cap", async () => {
   const scenario = PAGES.find((item) => item.slug === "device");

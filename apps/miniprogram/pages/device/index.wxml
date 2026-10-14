@@ -75,19 +75,15 @@
                 <text class="device-limit-unit"> 分钟</text>
               </view>
             </view>
-            <slider
-              class="device-slider"
+            <mp-slider
+              label="单次上限"
               min="{{limitsSliderMin}}"
               max="{{limitsSliderMax}}"
               step="{{limitsSliderStep}}"
               value="{{sessionLimits.maxSessionMinutes || 30}}"
               disabled="{{limitsSaving}}"
               bindchange="onTrialDailyCapSlider"
-              activeColor="#4A52C9"
-              backgroundColor="#ECECF2"
-              block-color="#ffffff"
-              block-size="28"
-            />
+            ></mp-slider>
             <view class="device-limit-range">
               <text>{{limitsSliderMin}} 分钟</text>
               <text>{{limitsSliderMax}} 分钟</text>
@@ -97,10 +93,10 @@
           <view class="trial-card device-quiet-card" bindtap="openLimitsSheet">
             <mp-icon name="moon" tone="ink"></mp-icon>
             <view class="device-setting-copy">
-              <text class="trial-inset-label">安静时段</text>
-              <text class="trial-caption">{{sessionLimits.quietHoursLabel || '未设置'}}，孩子睡觉的时间机器人不陪聊</text>
+              <text class="device-quiet-title">安静时段</text>
+              <text class="trial-caption">孩子睡觉的时间，机器人不陪聊</text>
             </view>
-            <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
+            <text class="device-quiet-chip">{{sessionLimits.quietStart ? sessionLimits.quietStart + '–' + sessionLimits.quietEnd : '未设置'}}</text>
           </view>
 
           <view wx:if="{{subscriptionPushEnabled}}" class="trial-inset">
@@ -126,14 +122,17 @@
 
         <view class="trial-inset device-privacy-block">
           <view class="trial-inset-row" bindtap="openPrivacyNote">
+            <mp-icon name="shield" tone="ink"></mp-icon>
             <text class="trial-inset-label">隐私说明</text>
             <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
           </view>
           <view wx:if="{{guardianExportVisible}}" class="trial-inset-row" bindtap="openGuardianExport">
+            <mp-icon name="export" tone="ink"></mp-icon>
             <text class="trial-inset-label">管理与导出数据</text>
             <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
           </view>
           <view class="trial-inset-row" bindtap="openUnbindSheet">
+            <mp-icon name="dev" tone="ink"></mp-icon>
             <text class="trial-inset-label">解绑设备</text>
             <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
           </view>
@@ -162,7 +161,7 @@
           </view>
           <text class="volume-num">{{settings.volume_limit}}%</text>
         </view>
-        <slider min="0" max="100" step="5" value="{{settings.volume_limit}}" bindchange="changeVolume" disabled="{{settingsSaving}}" activeColor="#4A52C9" backgroundColor="#ECECF2" block-color="#ffffff" block-size="24" />
+        <mp-slider label="设备音量" min="0" max="100" step="5" value="{{settings.volume_limit}}" disabled="{{settingsSaving}}" bindchange="changeVolume"></mp-slider>
         <view class="slider-scale"><text>安静</text><text>响亮</text></view>
       </view>
 
