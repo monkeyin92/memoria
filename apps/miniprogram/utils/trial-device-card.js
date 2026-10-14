@@ -1,36 +1,42 @@
 /*
  * Trial home device card + safety banner fields.
- * Usage minutes come from Runtime Profile limits; used minutes stay 0 until a
- * daily tally exists on the server (product still enforces per-session max).
+ * Limit minutes come from Runtime Profile MAX_SESSION_SECONDS.
+ * Used minutes are only shown when a real tally is passed in; otherwise the
+ * card shows the daily limit label alone (no fake 0).
  */
 
 const { sessionLimitsFromProfile } = require("./session-limits");
 
 const UNREAD_SAFETY_COPY = "有一条安全提醒未读";
-const USAGE_LABEL_PREFIX = "今日已用 / ";
 
 function formatQuietHoursLine(sessionLimits) {
   if (!sessionLimits?.quietStart || !sessionLimits?.quietEnd) return "";
   return `夜间 ${sessionLimits.quietStart}–${sessionLimits.quietEnd}`;
 }
 
-function usageLabel(limitMinutes) {
+function usageLabel({ limitMinutes, usedMinutes } = {}) {
   const limit = Number.isInteger(limitMinutes) && limitMinutes > 0 ? limitMinutes : 30;
-  return `${USAGE_LABEL_PREFIX}${limit} 分钟`;
+  if (Number.isInteger(usedMinutes) && usedMinutes >= 0) {
+    return `今日已用 / ${limit} 分钟`;
+  }
+  return `每日上限 ${limit} 分钟`;
 }
 
-function buildTrialDeviceCard({ online, runtimeProfile, usedMinutes = 0 } = {}) {
+function buildTrialDeviceCard({ online, runtimeProfile, usedMinutes } = {}) {
   const limits = sessionLimitsFromProfile(runtimeProfile);
   const limitMinutes =
     limits?.maxSessionMinutes && limits.maxSessionMinutes > 0 ? limits.maxSessionMinutes : 30;
-  const used =
-    Number.isInteger(usedMinutes) && usedMinutes >= 0 ? usedMinutes : 0;
+  const usageKnown = Number.isInteger(usedMinutes) && usedMinutes >= 0;
   return {
     online: online === true,
     statusPill: online === true ? "在线" : "离线",
-    usageUsedMinutes: used,
+    usageKnown,
+    usageUsedMinutes: usageKnown ? usedMinutes : null,
     usageLimitMinutes: limitMinutes,
-    usageLabel: usageLabel(limitMinutes),
+    usageLabel: usageLabel({
+      limitMinutes,
+      usedMinutes: usageKnown ? usedMinutes : undefined,
+    }),
     quietHoursLine: formatQuietHoursLine(limits) || "夜间 21:00–07:00",
   };
 }

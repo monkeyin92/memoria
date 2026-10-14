@@ -66,9 +66,10 @@ function emptyDashboard() {
     childMemoryName: "",
     pinnedCrisisAlerts: [],
     statusPill: "离线",
-    usageUsedMinutes: 0,
+    usageKnown: false,
+    usageUsedMinutes: null,
     usageLimitMinutes: 30,
-    usageLabel: "今日已用 / 30 分钟",
+    usageLabel: "每日上限 30 分钟",
     quietHoursLine: "夜间 21:00–07:00",
     unreadSafetyAlert: false,
     unreadSafetyCopy: UNREAD_SAFETY_COPY,
@@ -365,7 +366,6 @@ Page({
     const trialCard = buildTrialDeviceCard({
       online,
       runtimeProfile: runtime,
-      usedMinutes: 0,
     });
     const unreadSafetyAlert = pinnedCrisisAlerts.length > 0;
 
@@ -408,6 +408,7 @@ Page({
       childMemoryName: boundChild?.displayName || "",
       pinnedCrisisAlerts,
       statusPill: trialCard.statusPill,
+      usageKnown: trialCard.usageKnown,
       usageUsedMinutes: trialCard.usageUsedMinutes,
       usageLimitMinutes: trialCard.usageLimitMinutes,
       usageLabel: trialCard.usageLabel,

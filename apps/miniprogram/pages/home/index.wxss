@@ -101,6 +101,13 @@
   font-size: 28rpx;
 }
 
+.home-usage-label-solo {
+  margin-top: 36rpx;
+  color: var(--trial-ink);
+  font-size: 36rpx;
+  font-weight: 650;
+}
+
 .home-quiet {
   margin-top: 28rpx;
 }

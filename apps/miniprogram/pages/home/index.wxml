@@ -70,8 +70,8 @@
             <text>{{statusPill}}</text>
           </view>
         </view>
-        <text class="home-usage-number">{{usageUsedMinutes}}</text>
-        <text class="home-usage-label">{{usageLabel}}</text>
+        <text wx:if="{{usageKnown}}" class="home-usage-number">{{usageUsedMinutes}}</text>
+        <text class="home-usage-label {{usageKnown ? '' : 'home-usage-label-solo'}}">{{usageLabel}}</text>
         <text class="trial-caption home-quiet">{{quietHoursLine}}</text>
       </view>
     </block>

@@ -54,7 +54,8 @@ test("home page is a status board without rooms or realtime chat", () => {
   assert.doesNotMatch(template, /先了解怎么用|openHowItWorks|家中的设备/);
   assert.match(template, /wx:if="\{\{!authenticated\}\}"[\s\S]*微信登录，找回我的设备/);
   assert.match(template, /home-device-card/);
-  assert.match(template, /usageLabel|usageUsedMinutes/);
+  assert.match(template, /usageLabel/);
+  assert.match(template, /usageKnown/);
   assert.match(template, /unreadSafetyCopy|unreadSafetyAlert/);
   assert.doesNotMatch(template, /status-chips|face-badge|glass-icon/);
   assert.match(script, /subscribeAuthCleared\(\(\) => this\._enterGuestState\(\)\)/);
@@ -106,24 +107,31 @@ test("trial device card helper uses profile quiet hours and usage limit", () => 
     hasUnreadSafetyAlert,
     usageLabel,
   } = require("../utils/trial-device-card");
-  const card = buildTrialDeviceCard({
+  const profile = {
+    valid: true,
+    subject_category: "minor",
+    obligations: [
+      { code: "QUIET_HOURS", params: { quiet_hours: ["21:00", "07:00"] } },
+      { code: "MAX_SESSION_SECONDS", params: { max_session_seconds: 1800 } },
+    ],
+  };
+  const unknown = buildTrialDeviceCard({ online: true, runtimeProfile: profile });
+  assert.equal(unknown.statusPill, "在线");
+  assert.equal(unknown.usageKnown, false);
+  assert.equal(unknown.usageUsedMinutes, null);
+  assert.equal(unknown.usageLimitMinutes, 30);
+  assert.equal(unknown.usageLabel, "每日上限 30 分钟");
+  assert.equal(unknown.quietHoursLine, "夜间 21:00–07:00");
+  const known = buildTrialDeviceCard({
     online: true,
-    runtimeProfile: {
-      valid: true,
-      subject_category: "minor",
-      obligations: [
-        { code: "QUIET_HOURS", params: { quiet_hours: ["21:00", "07:00"] } },
-        { code: "MAX_SESSION_SECONDS", params: { max_session_seconds: 1800 } },
-      ],
-    },
-    usedMinutes: 0,
+    runtimeProfile: profile,
+    usedMinutes: 12,
   });
-  assert.equal(card.statusPill, "在线");
-  assert.equal(card.usageUsedMinutes, 0);
-  assert.equal(card.usageLimitMinutes, 30);
-  assert.equal(card.usageLabel, "今日已用 / 30 分钟");
-  assert.equal(card.quietHoursLine, "夜间 21:00–07:00");
-  assert.equal(usageLabel(45), "今日已用 / 45 分钟");
+  assert.equal(known.usageKnown, true);
+  assert.equal(known.usageUsedMinutes, 12);
+  assert.equal(known.usageLabel, "今日已用 / 30 分钟");
+  assert.equal(usageLabel({ limitMinutes: 45 }), "每日上限 45 分钟");
+  assert.equal(usageLabel({ limitMinutes: 45, usedMinutes: 0 }), "今日已用 / 45 分钟");
   assert.equal(
     hasUnreadSafetyAlert([{ pinned: true, delivery_status: "no_subscription" }]),
     true,
