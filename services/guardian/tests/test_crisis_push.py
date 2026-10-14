@@ -15,7 +15,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from services.archive.postgres_archive import PostgresLifeArchive
-from services.guardian.crisis import CrisisNotificationService, GuardianNotification
+from services.guardian.crisis import (
+    CrisisNotificationService,
+    GuardianNotification,
+    crisis_alert_is_pinned,
+)
 from services.guardian.domain import GuardianAccessDeniedError
 from services.guardian.postgres_store import PostgresGuardianStore
 from services.guardian.push import (
@@ -25,6 +29,7 @@ from services.guardian.push import (
     CrisisPushWorker,
     PushSendResult,
     crisis_push_retry_delay_s,
+    crisis_reach_breakdown,
 )
 from testing.postgres_harness import TestDatabase
 
@@ -138,15 +143,24 @@ async def _only_notification(store: PostgresGuardianStore) -> GuardianNotificati
     return notifications[0]
 
 
-async def _accept(store: PostgresGuardianStore, now: datetime, times: int = 1) -> None:
+async def _accept(
+    store: PostgresGuardianStore,
+    now: datetime,
+    times: int = 1,
+    *,
+    step_s: float = 1.0,
+) -> datetime:
+    stamp = now
     for _ in range(times):
         await store.record_push_subscription(
             guardian_user_id="guardian-a",
             template_id=TEMPLATE,
             result="accept",
             openid=OPENID,
-            now=now,
+            now=stamp,
         )
+        stamp += timedelta(seconds=step_s)
+    return stamp
 
 
 async def _remaining(store: PostgresGuardianStore) -> int:
@@ -164,24 +178,34 @@ async def test_ledger_counts_acceptances_and_bans_void_the_balance(
     store = guardian_postgres_store
     now = datetime(2026, 9, 25, 8, 0, tzinfo=UTC)
 
-    await _accept(store, now, times=2)
+    stamp = await _accept(store, now, times=2)
     assert await _remaining(store) == 2
     rejected = await store.record_push_subscription(
         guardian_user_id="guardian-a",
         template_id=TEMPLATE,
         result="reject",
         openid=None,
-        now=now,
+        now=stamp,
     )
+    stamp += timedelta(seconds=1)
     assert (rejected.remaining, rejected.last_result) == (2, "reject")
-    await _accept(store, now, times=40)
+    events = await store.push_subscription_events(
+        guardian_user_id="guardian-a",
+        template_id=TEMPLATE,
+    )
+    assert [(event.result, event.remaining_after) for event in events] == [
+        ("reject", 2),
+        ("accept", 2),
+        ("accept", 1),
+    ]
+    stamp = await _accept(store, stamp, times=40)
     assert await _remaining(store) == 20  # bounded ledger
     banned = await store.record_push_subscription(
         guardian_user_id="guardian-a",
         template_id=TEMPLATE,
         result="ban",
         openid=None,
-        now=now,
+        now=stamp,
     )
     assert (banned.remaining, banned.last_result) == (0, "ban")
     with pytest.raises(ValueError):
@@ -190,12 +214,36 @@ async def test_ledger_counts_acceptances_and_bans_void_the_balance(
             template_id=TEMPLATE,
             result="accept",
             openid=None,
-            now=now,
+            now=stamp,
         )
     assert await store.push_subscription(
         guardian_user_id="guardian-b",
         template_id=TEMPLATE,
     ) is None
+    audit = await store.push_subscription_events(guardian_user_id="guardian-a")
+    assert audit[0].result == "ban"
+    assert audit[0].remaining_after == 0
+    assert len(audit) == 44
+
+
+def test_undelivered_statuses_are_pinned_for_the_mini_program() -> None:
+    assert crisis_alert_is_pinned("pending")
+    assert crisis_alert_is_pinned("failed")
+    assert crisis_alert_is_pinned("no_subscription")
+    assert not crisis_alert_is_pinned("delivered")
+    assert not crisis_alert_is_pinned("retry")
+
+
+def test_crisis_reach_breakdown_exposes_wechat_and_pin_rates() -> None:
+    stats = crisis_reach_breakdown(
+        ("delivered", "delivered", "no_subscription", "failed", "pending")
+    )
+    assert stats.total == 5
+    assert stats.settled == 4
+    assert stats.wechat_delivery_rate == 0.5
+    assert stats.pin_fallback_rate == 0.5
+    assert stats.push_or_pin_rate == 1.0
+    assert crisis_reach_breakdown(()).wechat_delivery_rate is None
 
 
 @pytest.mark.asyncio
@@ -215,7 +263,13 @@ async def test_worker_delivers_fixed_content_and_consumes_one_acceptance(
 
     notification = await _only_notification(store)
     assert notification.status == "delivered"
+    assert not crisis_alert_is_pinned(notification.status)
     assert notification.delivered_at is not None
+    reach = await store.crisis_reach_for_window(
+        since=occurred - timedelta(minutes=1),
+        until=occurred + timedelta(hours=1),
+    )
+    assert (reach.delivered, reach.total, reach.wechat_delivery_rate) == (1, 1, 1.0)
     assert await _remaining(store) == 1
     assert len(sender.calls) == 1
     openid, template_id, content = sender.calls[0]
@@ -254,7 +308,15 @@ async def test_guardian_without_acceptance_is_marked_no_subscription(
     notification = await _only_notification(store)
     assert notification.status == "no_subscription"
     assert notification.last_error_code == "no_subscription"
+    assert crisis_alert_is_pinned(notification.status)
     assert sender.calls == []
+    reach = await store.crisis_reach_for_window(
+        since=occurred - timedelta(minutes=1),
+        until=occurred + timedelta(hours=1),
+    )
+    assert reach.no_subscription == 1
+    assert reach.wechat_delivery_rate == 0.0
+    assert reach.push_or_pin_rate == 1.0
 
 
 @pytest.mark.asyncio
@@ -274,6 +336,7 @@ async def test_wechat_refusal_marks_no_subscription_and_exhausts_the_ledger(
     notification = await _only_notification(store)
     assert notification.status == "no_subscription"
     assert notification.last_error_code == "wechat_43101"
+    assert crisis_alert_is_pinned(notification.status)
     assert await _remaining(store) == 0
 
 
@@ -473,10 +536,15 @@ async def test_ledger_is_exported_without_openid_and_deleted_with_the_account(
             "openid_on_file": True,
         }
     ]
+    assert len(exported["guardian_push_subscription_events"]) == 1
+    assert exported["guardian_push_subscription_events"][0]["result"] == "accept"
+    assert exported["guardian_push_subscription_events"][0]["remaining_after"] == 1
     assert OPENID not in repr(exported)
     assert (await store.remaining_account_rows(account_id="guardian-a")) == {
-        "guardian_push_subscriptions": 1
+        "guardian_push_subscriptions": 1,
+        "guardian_push_subscription_events": 1,
     }
     deleted = await store.delete_for_account(account_id="guardian-a")
     assert deleted["guardian_push_subscriptions"] == 1
+    assert deleted["guardian_push_subscription_events"] == 1
     assert await store.remaining_account_rows(account_id="guardian-a") == {}

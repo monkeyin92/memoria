@@ -8,8 +8,10 @@ only per-event values are the child's display name (already shown on the
 guardian page) and the time of the event.
 
 When a guardian has no remaining acceptance the notification is marked
-``no_subscription`` and stays visible on the guardian page, which remains the
-authoritative surface for every alert.
+``no_subscription`` and stays pinned on the memory and home pages until the
+parent opens the Mini Program.  Delivered alerts remain listable on the
+guardian page.  Each subscribe-message answer is appended to an audit ledger
+in addition to updating the acceptance balance.
 """
 
 from __future__ import annotations
@@ -47,6 +49,82 @@ class PushSubscription:
     remaining: int
     last_result: PushSubscriptionResult
     updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class PushSubscriptionEvent:
+    """One immutable subscribe-message answer for a guardian and template."""
+
+    event_id: str
+    guardian_user_id: str
+    template_id: str
+    result: PushSubscriptionResult
+    remaining_after: int
+    recorded_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class CrisisReachBreakdown:
+    """Counts for a later crisis→push-or-pin delivery-rate check.
+
+    Every enqueued alert is either delivered over WeChat or pinned in-app
+    (pending / failed / no_subscription).  ``wechat_delivery_rate`` is the
+    share of settled alerts that left via subscribe-message send.
+    """
+
+    total: int
+    pending: int
+    delivered: int
+    failed: int
+    no_subscription: int
+
+    @property
+    def settled(self) -> int:
+        return self.delivered + self.failed + self.no_subscription
+
+    @property
+    def wechat_delivery_rate(self) -> float | None:
+        if self.settled == 0:
+            return None
+        return self.delivered / self.settled
+
+    @property
+    def pin_fallback_rate(self) -> float | None:
+        if self.settled == 0:
+            return None
+        return (self.failed + self.no_subscription) / self.settled
+
+    @property
+    def push_or_pin_rate(self) -> float | None:
+        if self.total == 0:
+            return None
+        return 1.0
+
+
+def crisis_reach_breakdown(
+    statuses: tuple[str, ...] | list[str],
+) -> CrisisReachBreakdown:
+    """Aggregate outbox statuses into rates a recruit gate can assert on."""
+
+    pending = delivered = failed = no_subscription = 0
+    for status in statuses:
+        if status == "pending":
+            pending += 1
+        elif status == "delivered":
+            delivered += 1
+        elif status == "failed":
+            failed += 1
+        elif status == "no_subscription":
+            no_subscription += 1
+        else:
+            raise ValueError(f"unknown crisis delivery status: {status}")
+    return CrisisReachBreakdown(
+        total=pending + delivered + failed + no_subscription,
+        pending=pending,
+        delivered=delivered,
+        failed=failed,
+        no_subscription=no_subscription,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +174,14 @@ class PushSubscriptionStorePort(Protocol):
         guardian_user_id: str,
         template_id: str,
     ) -> PushSubscription | None: ...
+
+    async def push_subscription_events(
+        self,
+        *,
+        guardian_user_id: str,
+        template_id: str | None = None,
+        limit: int = 50,
+    ) -> tuple[PushSubscriptionEvent, ...]: ...
 
 
 class CrisisPushStorePort(Protocol):
@@ -401,14 +487,17 @@ __all__ = [
     "CrisisPushSender",
     "CrisisPushStorePort",
     "CrisisPushWorker",
+    "CrisisReachBreakdown",
     "DisplayNameResolver",
     "PendingCrisisPush",
     "PushSendResult",
     "PushSubscription",
+    "PushSubscriptionEvent",
     "PushSubscriptionResult",
     "PushSubscriptionStorePort",
     "crisis_push_content",
     "crisis_push_retry_delay_s",
+    "crisis_reach_breakdown",
     "push_identifier",
     "push_openid",
     "push_template_id",

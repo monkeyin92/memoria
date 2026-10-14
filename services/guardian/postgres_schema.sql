@@ -395,7 +395,12 @@ ALTER TABLE guardian_notification_outbox
     ADD COLUMN IF NOT EXISTS reserved_template_id TEXT CHECK (
         reserved_template_id IS NULL
         OR reserved_template_id ~ '^[A-Za-z0-9_-]{1,128}$'
-    );
+    ),
+    ADD COLUMN IF NOT EXISTS settled_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_guardian_notification_settled_status
+ON guardian_notification_outbox(settled_at, status)
+WHERE settled_at IS NOT NULL;
 
 DO $guardian_outbox_status$
 BEGIN
@@ -438,6 +443,22 @@ CREATE TABLE IF NOT EXISTS guardian_push_subscriptions (
     PRIMARY KEY (guardian_user_id, template_id),
     CHECK (remaining = 0 OR openid IS NOT NULL)
 );
+
+-- Append-only audit of every wx.requestSubscribeMessage answer.  The balance
+-- row above is the live ledger; this table keeps each accept/reject/ban.
+CREATE TABLE IF NOT EXISTS guardian_push_subscription_events (
+    event_id UUID PRIMARY KEY,
+    guardian_user_id TEXT NOT NULL CHECK (
+        char_length(guardian_user_id) BETWEEN 1 AND 128
+    ),
+    template_id TEXT NOT NULL CHECK (template_id ~ '^[A-Za-z0-9_-]{1,128}$'),
+    result TEXT NOT NULL CHECK (result IN ('accept', 'reject', 'ban')),
+    remaining_after INTEGER NOT NULL CHECK (remaining_after BETWEEN 0 AND 20),
+    recorded_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_guardian_push_subscription_events_guardian
+ON guardian_push_subscription_events(guardian_user_id, recorded_at DESC, event_id DESC);
 
 CREATE OR REPLACE FUNCTION guardian_link_core_immutable_guard()
 RETURNS TRIGGER LANGUAGE plpgsql AS $guardian_link_immutable$
@@ -536,6 +557,12 @@ DROP TRIGGER IF EXISTS guardian_push_subscriptions_delete_guard
 ON guardian_push_subscriptions;
 CREATE TRIGGER guardian_push_subscriptions_delete_guard
 BEFORE DELETE ON guardian_push_subscriptions
+FOR EACH ROW EXECUTE FUNCTION guardian_delete_guard();
+
+DROP TRIGGER IF EXISTS guardian_push_subscription_events_delete_guard
+ON guardian_push_subscription_events;
+CREATE TRIGGER guardian_push_subscription_events_delete_guard
+BEFORE DELETE ON guardian_push_subscription_events
 FOR EACH ROW EXECUTE FUNCTION guardian_delete_guard();
 
 -- Delivery only settles state: the recipient and the event a notification
@@ -1318,6 +1345,10 @@ BEGIN
     UPDATE guardian_notification_outbox
     SET status = CASE WHEN p_outcome = 'retry' THEN 'pending' ELSE p_outcome END,
         delivered_at = CASE WHEN p_outcome = 'delivered' THEN p_now ELSE NULL END,
+        settled_at = CASE
+            WHEN p_outcome IN ('delivered', 'failed', 'no_subscription') THEN p_now
+            ELSE NULL
+        END,
         last_error_code = CASE WHEN p_outcome = 'delivered' THEN NULL ELSE p_error_code END,
         claimed_by = NULL,
         lease_until = NULL,
@@ -1343,6 +1374,7 @@ ALTER TABLE tutor_commit_outbox ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardian_crisis_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardian_notification_outbox ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardian_push_subscriptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE guardian_push_subscription_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardian_links FORCE ROW LEVEL SECURITY;
 ALTER TABLE guardian_consents FORCE ROW LEVEL SECURITY;
 ALTER TABLE guardian_person_consents FORCE ROW LEVEL SECURITY;
@@ -1354,6 +1386,7 @@ ALTER TABLE tutor_commit_outbox FORCE ROW LEVEL SECURITY;
 ALTER TABLE guardian_crisis_events FORCE ROW LEVEL SECURITY;
 ALTER TABLE guardian_notification_outbox FORCE ROW LEVEL SECURITY;
 ALTER TABLE guardian_push_subscriptions FORCE ROW LEVEL SECURITY;
+ALTER TABLE guardian_push_subscription_events FORCE ROW LEVEL SECURITY;
 
 DO $guardian_policy$
 BEGIN
@@ -1371,6 +1404,7 @@ BEGIN
         GRANT SELECT, INSERT ON guardian_crisis_events TO memoria_guardian;
         GRANT SELECT ON guardian_notification_outbox TO memoria_guardian;
         GRANT SELECT, INSERT, UPDATE ON guardian_push_subscriptions TO memoria_guardian;
+        GRANT SELECT, INSERT ON guardian_push_subscription_events TO memoria_guardian;
 
         -- The maintenance role is the only role allowed to perform an
         -- account-wide guardian export/deletion or retention sweep.  The API
@@ -1380,7 +1414,7 @@ BEGIN
                 ON guardian_links, guardian_consents, guardian_person_consents,
                    guardian_corpus_samples,
                    guardian_crisis_events, guardian_notification_outbox,
-                   guardian_push_subscriptions
+                   guardian_push_subscriptions, guardian_push_subscription_events
                 TO memoria_guardian_maintenance;
         END IF;
 
@@ -1896,6 +1930,40 @@ BEGIN
         DROP POLICY IF EXISTS guardian_controller_push_subscriptions
             ON guardian_push_subscriptions;
         CREATE POLICY guardian_controller_push_subscriptions ON guardian_push_subscriptions
+            TO memoria_guardian, memoria_guardian_maintenance
+            USING (
+                (
+                    current_user = 'memoria_guardian_maintenance'
+                    AND COALESCE(
+                        current_setting('memoria.guardian_maintenance_scope', true),
+                        ''
+                    ) = '1'
+                )
+                OR (
+                    COALESCE(current_setting('memoria.guardian_actor_id', true), '') <> ''
+                    AND guardian_user_id = current_setting('memoria.guardian_actor_id', true)
+                    AND guardian_user_id = current_setting('memoria.guardian_subject_id', true)
+                )
+            )
+            WITH CHECK (
+                (
+                    current_user = 'memoria_guardian_maintenance'
+                    AND COALESCE(
+                        current_setting('memoria.guardian_maintenance_scope', true),
+                        ''
+                    ) = '1'
+                )
+                OR (
+                    COALESCE(current_setting('memoria.guardian_actor_id', true), '') <> ''
+                    AND guardian_user_id = current_setting('memoria.guardian_actor_id', true)
+                    AND guardian_user_id = current_setting('memoria.guardian_subject_id', true)
+                )
+            );
+
+        DROP POLICY IF EXISTS guardian_controller_push_subscription_events
+            ON guardian_push_subscription_events;
+        CREATE POLICY guardian_controller_push_subscription_events
+            ON guardian_push_subscription_events
             TO memoria_guardian, memoria_guardian_maintenance
             USING (
                 (

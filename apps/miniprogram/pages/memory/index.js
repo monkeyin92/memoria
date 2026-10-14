@@ -1,5 +1,7 @@
 const api = require("../../utils/api");
 const { requireLogin } = require("../../utils/auth-gate");
+const guardianPush = require("../../utils/guardian-push");
+const { loadPinnedCrisisAlerts } = require("../../utils/crisis-alerts");
 
 function today() {
   const date = new Date();
@@ -154,6 +156,8 @@ Page({
     guardianMode: false,
     guardianSubjectId: "",
     guardianError: "",
+    pinnedCrisisAlerts: [],
+    crisisPush: { enabled: false, templateId: "", explanation: "" },
   },
 
   /*
@@ -186,6 +190,37 @@ Page({
       return;
     }
     this.loadDays();
+    this._loadCrisisSafety();
+  },
+
+  async _loadCrisisSafety() {
+    if (!this._guardianSubject()) {
+      this.setData({
+        pinnedCrisisAlerts: [],
+        crisisPush: { enabled: false, templateId: "", explanation: "" },
+      });
+      return;
+    }
+    const [pinnedCrisisAlerts, crisisPush] = await Promise.all([
+      loadPinnedCrisisAlerts(api),
+      guardianPush.loadCrisisPushConfig(api),
+    ]);
+    this.setData({ pinnedCrisisAlerts, crisisPush });
+  },
+
+  /* 必须直接绑定在按钮 tap 上：订阅框只能由用户点击调起。 */
+  async enableCrisisPush() {
+    try {
+      const outcome = await guardianPush.subscribeCrisisAlerts({
+        config: this.data.crisisPush,
+        api,
+      });
+      if (outcome.result === "accept") {
+        wx.showToast({ title: "已完成订阅安全提醒", icon: "none" });
+      }
+    } catch (error) {
+      this.setData({ error: error?.message || "订阅安全提醒失败，请稍后再试。" });
+    }
   },
 
   onUnload() {
@@ -213,6 +248,8 @@ Page({
       guardianMode: false,
       guardianSubjectId: "",
       guardianError: "",
+      pinnedCrisisAlerts: [],
+      crisisPush: { enabled: false, templateId: "", explanation: "" },
       loading: false,
       summarizing: false,
       error: "",

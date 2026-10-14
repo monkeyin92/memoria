@@ -73,7 +73,9 @@ test("enabled push prompts for the crisis template and posts an accepted result"
   const config = await guardianPush.loadCrisisPushConfig(api);
   assert.equal(config.enabled, true);
   assert.equal(config.templateId, "tmpl-crisis");
+  assert.match(config.explanation, /订阅安全提醒/);
   assert.match(config.explanation, /不含任何对话内容/);
+  assert.equal(guardianPush.PARENT_SUBSCRIBE_LABEL, "订阅安全提醒");
 
   const outcome = await guardianPush.subscribeCrisisAlerts({ config, api, wxApi: wx });
 
@@ -153,6 +155,8 @@ test("guardian page wires the subscribe prompt to a tap and keeps alerts visible
 
   assert.match(template, /wx:if="\{\{crisisPush\.enabled\}\}"/);
   assert.match(template, /bindtap="enableCrisisPush"/);
+  assert.match(template, /订阅安全提醒/);
+  assert.doesNotMatch(template, /危机提醒/);
   assert.match(template, /需要及时关注/);
   assert.match(script, /guardianPush\.subscribeCrisisAlerts/);
   assert.match(script, /guardianPush\.offerCrisisSubscription/);

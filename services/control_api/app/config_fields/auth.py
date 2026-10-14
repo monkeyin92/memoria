@@ -92,8 +92,8 @@ class AuthFields(BaseModel):
         alias="WECHAT_AVATAR_PUBLIC_BASE_URL",
     )
     # Guardian crisis alerts via Mini Program one-time subscribe messages.
-    # Disabled by default: alerts then stay queued and visible on the
-    # guardian page only, exactly as before delivery existed.
+    # Disabled by default: alerts then stay queued and pinned on memory/home
+    # until the parent opens the Mini Program.
     guardian_push_enabled: bool = Field(
         default=False,
         alias="MEMORIA_GUARDIAN_PUSH_ENABLED",
@@ -114,7 +114,7 @@ class AuthFields(BaseModel):
         alias="WECHAT_SUBSCRIBE_SEND_ENDPOINT",
     )
     wechat_subscribe_crisis_page: str = Field(
-        default="pages/guardian/index",
+        default="pages/memory/index",
         alias="MEMORIA_WECHAT_SUBSCRIBE_CRISIS_PAGE",
     )
     wechat_miniprogram_state: Literal["formal", "trial", "developer"] = Field(

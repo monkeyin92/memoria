@@ -11,6 +11,7 @@ const { greetingFor, formatDateLabel } = require("../../utils/greeting");
 const { readOnboardingSessionId } = require("../../utils/device-onboarding/session-store");
 const { readSubjectLabel } = require("../../utils/subject-label");
 const { boundChildFromManifest } = require("../../utils/child-memory");
+const { loadPinnedCrisisAlerts, shouldOfferCrisisSubscription } = require("../../utils/crisis-alerts");
 
 function todayKey(date = new Date()) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -59,6 +60,7 @@ function emptyDashboard() {
     showChildMemory: false,
     childMemoryMinorId: "",
     childMemoryName: "",
+    pinnedCrisisAlerts: [],
   };
 }
 
@@ -340,6 +342,10 @@ Page({
     );
     const online = summary.online;
     const boundChild = boundChildFromManifest(binding);
+    const pinnedCrisisAlerts = shouldOfferCrisisSubscription(binding)
+      ? await loadPinnedCrisisAlerts(api)
+      : [];
+    if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
 
     this.setData({
       loading: false,
@@ -378,6 +384,7 @@ Page({
       showChildMemory: Boolean(boundChild),
       childMemoryMinorId: boundChild?.personId || "",
       childMemoryName: boundChild?.displayName || "",
+      pinnedCrisisAlerts,
       error: failures.length ? "部分状态暂时无法同步。" : "",
     });
   },

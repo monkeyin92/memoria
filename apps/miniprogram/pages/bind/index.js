@@ -20,6 +20,11 @@ const {
   nightModeQuietHoursLabel,
   confirmUnusualQuietHours,
 } = require("../../utils/quiet-hours");
+const guardianPush = require("../../utils/guardian-push");
+const {
+  requireCrisisSubscribeBeforeBind,
+  requiresCrisisSubscribeBeforeBind,
+} = require("../../utils/crisis-alerts");
 
 const SESSION_MINUTE_OPTIONS = [15, 30, 45, 60, 90, 120];
 const FAMILY_MEMBER_AGE_BANDS = ["under_14", "14_17", "adult"];
@@ -148,6 +153,9 @@ Page({
     manifest: null,
     reviewSubjectLabel: "",
     maxSubjectLabel: MAX_LABEL,
+    crisisPush: { enabled: false, templateId: "", explanation: "" },
+    crisisSubscribeRequired: false,
+    crisisSubscribeAccepted: false,
   },
 
   onLoad(options = {}) {
@@ -501,16 +509,24 @@ Page({
     return "";
   },
 
-  goToReview() {
+  async goToReview() {
     const error = this.validateForm();
     if (error) {
       this.setData({ error });
       return;
     }
+    const crisisSubscribeRequired = requiresCrisisSubscribeBeforeBind(this.data.declaredMode);
+    // Preload before the submit tap so requestSubscribeMessage can run in that gesture.
+    const crisisPush = crisisSubscribeRequired
+      ? await guardianPush.loadCrisisPushConfig(api)
+      : { enabled: false, templateId: "", explanation: "" };
     this.setData({
       step: "review",
       error: "",
       reviewSubjectLabel: this._subjectLabel(),
+      crisisSubscribeRequired,
+      crisisPush,
+      crisisSubscribeAccepted: false,
     });
   },
 
@@ -587,6 +603,25 @@ Page({
 
   async submitBinding() {
     if (this.data.submitting) return;
+    // Hard gate: subscribe must start in this tap stack before any other await
+    // (including the quiet-hours confirm modal).
+    let gate;
+    try {
+      gate = await requireCrisisSubscribeBeforeBind({
+        declaredMode: this.data.declaredMode,
+        config: this.data.crisisPush,
+        api,
+      });
+    } catch (error) {
+      this.setData({
+        error: error?.message || "订阅安全提醒失败，绑定未提交。",
+      });
+      return;
+    }
+    if (!gate.ok) {
+      this.setData({ error: gate.message, crisisSubscribeAccepted: false });
+      return;
+    }
     if (this.data.declaredMode === "parent_for_child") {
       const confirmed = await confirmUnusualQuietHours({
         start: this.data.form.quietHoursStart,
@@ -610,6 +645,7 @@ Page({
         manifest,
         step: "done",
         reviewSubjectLabel: this._subjectLabel(),
+        crisisSubscribeAccepted: gate.kind === "accepted",
       });
     } catch (error) {
       const code = String(error?.code || error?.detail?.code || "").toUpperCase();

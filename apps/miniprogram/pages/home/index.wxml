@@ -65,6 +65,19 @@
     </view>
 
     <block wx:else>
+      <block wx:if="{{pinnedCrisisAlerts.length}}">
+        <view
+          wx:for="{{pinnedCrisisAlerts}}"
+          wx:key="notificationId"
+          class="notice notice-warn"
+          bindtap="openMemory"
+        >
+          <text class="l2-card-title">安全风险提醒 · {{item.minorDisplayName}}</text>
+          <text class="l2-card-sub">{{item.message}}</text>
+          <text class="caption">打开回顾页查看详情 ›</text>
+        </view>
+      </block>
+
       <view class="status-chips">
         <view class="status-chip" bindtap="openDevice">
           <glass-icon name="device" size="56"></glass-icon>

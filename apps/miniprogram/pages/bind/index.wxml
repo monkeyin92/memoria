@@ -195,10 +195,14 @@
         </view>
       </view>
       <text class="form-note">敏感能力（长期记忆、数字自我、传承、原始音频等）只有明确勾选才会申请；孩子和父母的长期记忆默认不勾选，不勾选也能完成绑定。</text>
+      <view wx:if="{{crisisSubscribeRequired}}" class="notice notice-warn">
+        <text class="l2-card-title">订阅安全提醒是完成绑定的前提</text>
+        <text class="l2-card-sub">{{crisisPush.enabled ? crisisPush.explanation : '订阅安全提醒尚未开通，暂时不能完成这类绑定。'}}</text>
+      </view>
 
       <view class="button-row bind-nav">
         <button class="secondary-button" bindtap="backToForm">上一步</button>
-        <button class="primary-button" loading="{{submitting}}" bindtap="submitBinding">提交绑定</button>
+        <button class="primary-button" loading="{{submitting}}" bindtap="submitBinding">{{crisisSubscribeRequired ? '订阅安全提醒并绑定' : '提交绑定'}}</button>
       </view>
       <text wx:if="{{error}}" class="error-text">{{error}}</text>
       <button wx:if="{{needsRescan}}" class="secondary-button bind-rescan" bindtap="rescanDevice">轻点机器人屏幕换码后，重新扫码</button>
@@ -216,6 +220,7 @@
       <view class="summary-row"><text class="summary-key">使用者</text><text class="summary-value">{{reviewSubjectLabel}}</text></view>
       <view class="summary-row"><text class="summary-key">陪伴伙伴</text><text class="summary-value">{{personaOptions[personaIndex].name}}</text></view>
       <view wx:if="{{deviceTail}}" class="summary-row"><text class="summary-key">机器人</text><text class="summary-value">尾号 {{deviceTail}}</text></view>
+      <text wx:if="{{crisisSubscribeAccepted}}" class="done-note">已完成订阅安全提醒。提醒用完后，可在「回顾」页再次订阅。</text>
       <text class="done-note">设置已经提交，机器人收到后就能用了，一般一分钟内。等它准备好，唤醒它就能开始聊天；手机不会录音。</text>
       <view class="button-row">
         <button class="primary-button" bindtap="continueActivation">继续等待激活</button>
