@@ -71,16 +71,17 @@ test("the full expression frame set stays out of the package and out of pages", 
   }
 });
 
-test("v3 home uses one face-badge on the device card; settings keep none", () => {
+test("v4 home keeps the mascot off the dashboard; settings keep none", () => {
   const home = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
+  const homeJson = require("../pages/home/index.json");
   const device = fs.readFileSync(path.join(root, "pages/device/index.wxml"), "utf8");
   const memory = fs.readFileSync(path.join(root, "pages/child-memory/index.wxml"), "utf8");
-  assert.match(home, /home-device-card[\s\S]*<face-badge/);
-  assert.equal((home.match(/<face-badge/g) || []).length, 1);
+  assert.doesNotMatch(home, /<face-badge/);
+  assert.deepEqual(homeJson.usingComponents, {});
   assert.doesNotMatch(device, /<face-badge/);
   assert.doesNotMatch(home, /<device-screen/);
   assert.doesNotMatch(device, /<device-screen/);
-  assert.match(home, /home-device-card/);
+  assert.match(home, /class="trial-card trial-card-xl home-usage-card" bindtap="openDevice"/);
   assert.match(device, /trialSettingsVisible|trial-inset/);
   assert.match(memory, /<face-badge/);
   assert.match(memory, /mood="thinking"|mood="happy"/);

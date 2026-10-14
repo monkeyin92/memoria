@@ -20,22 +20,24 @@ const guardianPush = require("../../utils/guardian-push");
 const {
   UNREAD_SAFETY_COPY,
   SAFETY_SUBSCRIBE_HELPER,
+  alertTimeLabel,
   buildTrialDeviceCard,
   memoryPreviewItems,
   pinnedAlertMeta,
 } = require("../../utils/trial-device-card");
 
-function usageViewFields(trialCard) {
-  const limit = trialCard.usageLimitMinutes || 30;
-  const known = trialCard.usageKnown === true;
-  const used = known ? trialCard.usageUsedMinutes : null;
-  const percent =
-    known && limit > 0 ? Math.max(0, Math.min(100, Math.round((used / limit) * 100))) : 0;
-  return {
-    usagePercent: percent,
-    usagePercentLabel: known ? `${percent}%` : "—",
-    usageDisplayMinutes: known ? String(used) : "—",
-  };
+// Ring fill only when a real used-minutes tally exists; otherwise the ring is an empty track.
+function usageRingPercent({ usageKnown, usageUsedMinutes, usageLimitMinutes }) {
+  if (usageKnown !== true || !(usageLimitMinutes > 0)) return 0;
+  return Math.max(0, Math.min(100, Math.round((usageUsedMinutes / usageLimitMinutes) * 100)));
+}
+
+function countCreatedToday(summaries, now = new Date()) {
+  const today = todayKey(now);
+  return summaries.filter((item) => {
+    const created = Date.parse(item.createdAt);
+    return Number.isFinite(created) && todayKey(new Date(created)) === today;
+  }).length;
 }
 
 function avatarGlyphFrom(name) {
@@ -99,10 +101,7 @@ function emptyDashboard() {
     usageLimitMinutes: 30,
     usageLabel: "每日上限 30 分钟",
     usagePercent: 0,
-    usagePercentLabel: "—",
-    usageDisplayMinutes: "—",
     summaryCount: 0,
-    showTodayCount: false,
     avatarGlyph: "M",
     subscriptionPushEnabled: SUBSCRIPTION_PUSH_ENABLED,
     quietHoursLine: "夜间 21:00–07:00",
@@ -527,11 +526,14 @@ Page({
     }
 
     let memoryPreviews = [];
+    let summaryCount = 0;
     if (boundChild?.personId) {
       try {
         const summaryPayload = await api.getChildSessionSummaries(boundChild.personId);
         if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
-        memoryPreviews = memoryPreviewItems(normalizeSessionSummaries(summaryPayload), 3);
+        const summaries = normalizeSessionSummaries(summaryPayload);
+        memoryPreviews = memoryPreviewItems(summaries, 3);
+        summaryCount = countCreatedToday(summaries);
       } catch {
         memoryPreviews = [];
       }
@@ -541,16 +543,13 @@ Page({
       online,
       runtimeProfile: runtime,
     });
-    const usageFields = usageViewFields(trialCard);
     const unreadSafetyAlert = pinnedCrisisAlerts.length > 0;
     const firstAlert = pinnedCrisisAlerts[0] || null;
     const unreadSafetyMeta = pinnedAlertMeta({
-      childName: boundChild?.displayName || firstAlert?.minor_display_name || "",
-      occurredAt: firstAlert?.occurred_at || "",
+      occurredAt: alertTimeLabel(firstAlert?.occurredAt),
     });
     const placeName = devicePlaceName(binding, personaName);
     const childName = boundChild?.displayName || "";
-    const summaryCount = memoryPreviews.length;
     const todayCount = today.todayCount || 0;
 
     this.setData({
@@ -583,13 +582,12 @@ Page({
       heroFoot: online ? "在设备上使用，手机不录音" : "绑定关系不受影响",
       pendingCount: today.pendingCount || 0,
       todayCount,
-      showTodayCount: todayCount > 0,
       todayMeta: today.todayMeta || "",
       todayTitle: today.todayTitle || "",
       todayOverview: today.todayOverview || "",
       dailySummaryText: today.dailySummaryText || "",
       summaryCount,
-      avatarGlyph: avatarGlyphFrom(childName || placeName || personaName),
+      avatarGlyph: avatarGlyphFrom(identity?.display_name),
       subscriptionPushEnabled: SUBSCRIPTION_PUSH_ENABLED,
       showChildMemory: Boolean(boundChild),
       childMemoryMinorId: boundChild?.personId || "",
@@ -602,7 +600,7 @@ Page({
       usageUsedMinutes: trialCard.usageUsedMinutes,
       usageLimitMinutes: trialCard.usageLimitMinutes,
       usageLabel: trialCard.usageLabel,
-      ...usageFields,
+      usagePercent: usageRingPercent(trialCard),
       quietHoursLine: trialCard.quietHoursLine,
       quietHoursLabel: trialCard.quietHoursLabel,
       nightModeOn: trialCard.nightModeOn,

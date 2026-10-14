@@ -48,6 +48,15 @@ function buildTrialDeviceCard({ online, runtimeProfile, usedMinutes } = {}) {
   };
 }
 
+function alertTimeLabel(occurredAt, now = new Date()) {
+  const at = new Date(typeof occurredAt === "string" ? occurredAt : NaN);
+  if (Number.isNaN(at.getTime())) return "";
+  const clock = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+  return at.toDateString() === now.toDateString()
+    ? `今天 ${clock}`
+    : `${at.getMonth() + 1}月${at.getDate()}日 ${clock}`;
+}
+
 function pinnedAlertMeta({ childName, occurredAt } = {}) {
   const parts = [];
   if (typeof childName === "string" && childName.trim()) parts.push(childName.trim());
@@ -87,6 +96,7 @@ module.exports = {
   UNREAD_SAFETY_COPY,
   UNREAD_SAFETY_META_SUFFIX,
   SAFETY_SUBSCRIBE_HELPER,
+  alertTimeLabel,
   buildTrialDeviceCard,
   formatQuietHoursLine,
   hasUnreadSafetyAlert,

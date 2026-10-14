@@ -1,7 +1,7 @@
-<view class="page-shell trial-page home-v4">
+<view class="page-shell trial-page tab-page home-v4">
   <view wx:if="{{!authenticated}}" class="home-guest">
     <view class="home-login-hero">
-      <image class="home-login-art" src="/assets/design/dusk.jpg" mode="aspectFill" />
+      <image class="home-login-art" src="/assets/ui/v4/dusk.jpg" mode="aspectFill" />
       <view class="home-login-scrim"></view>
       <view class="home-login-brand">
         <text class="home-login-title">Memoria</text>
@@ -11,7 +11,9 @@
     <view class="home-login-body">
       <text class="home-login-hello">{{greeting}}</text>
       <text class="trial-caption">登录后查看孩子今天聊了什么</text>
-      <button class="trial-primary home-cta-btn" bindtap="loginFromHome">微信一键登录</button>
+      <button class="trial-primary home-cta-btn" bindtap="loginFromHome">
+        <image class="home-btn-icon" src="/assets/ui/v4/wechat-white.svg" />微信一键登录
+      </button>
       <text class="home-note">登录即表示你已阅读《用户协议》和《隐私说明》</text>
     </view>
   </view>
@@ -19,10 +21,10 @@
   <block wx:else>
     <view class="home-head">
       <view class="home-head-copy">
-        <text class="home-eyebrow">{{pageLede}}</text>
+        <text class="eyebrow">{{pageLede}}</text>
         <text class="trial-title">今天</text>
       </view>
-      <view class="home-avatar">{{avatarGlyph}}</view>
+      <view class="home-avatar" bindtap="openProfile">{{avatarGlyph}}</view>
     </view>
 
     <view wx:if="{{loading}}" class="trial-card home-pad">
@@ -36,7 +38,7 @@
     </view>
 
     <view wx:elif="{{needsBindingChoice}}">
-      <text class="trial-caption">设备信息已从账号找到。选择你要查看的设备。</text>
+      <text class="trial-caption home-choice-lede">设备信息已从账号找到。选择你要查看的设备。</text>
       <view
         wx:for="{{bindingChoices}}"
         wx:key="bindingId"
@@ -45,10 +47,10 @@
         bindtap="chooseDeviceBinding"
       >
         <view class="home-choice-copy">
-          <text class="home-choice-title">{{item.label}}</text>
+          <text class="home-card-title">{{item.label}}</text>
           <text class="trial-caption">{{item.modeLabel}}</text>
         </view>
-        <text class="trial-banner-chevron">›</text>
+        <image class="home-chev" src="/assets/ui/v4/chev-ink.svg" />
       </view>
       <text class="trial-caption">切换设备不会赋予查看其他成员私密内容的权限。</text>
       <text wx:if="{{bindingSyncError}}" class="home-error">{{bindingSyncError}}</text>
@@ -67,34 +69,44 @@
         class="trial-banner home-attention"
         bindtap="openUnreadSafety"
       >
-        <view class="home-attention-icon">♥</view>
+        <view class="trial-banner-icon"><image src="/assets/ui/v4/heart-rust.svg" /></view>
         <view class="trial-banner-copy">
           <text class="trial-banner-title">{{unreadSafetyCopy}}</text>
           <text class="trial-banner-meta">{{unreadSafetyMeta}}</text>
         </view>
-        <text class="trial-banner-chevron">›</text>
+        <image class="home-chev" src="/assets/ui/v4/chev-rust.svg" />
       </view>
 
-      <view class="trial-card home-usage-card" bindtap="openDevice">
-        <view class="home-ring" style="background: conic-gradient(var(--mp-accent) 0 {{usagePercent}}%, #ECECF2 {{usagePercent}}% 100%);">
+      <view class="trial-card trial-card-xl home-usage-card" bindtap="openDevice">
+        <view class="home-ring" style="background: conic-gradient(var(--mp-accent) 0 {{usagePercent}}%, var(--mp-track) {{usagePercent}}% 100%);">
           <view class="home-ring-inner">
-            <text class="home-ring-num">{{usagePercentLabel}}</text>
-            <text class="home-ring-cap">上限 {{usageLimitMinutes}} 分钟</text>
+            <block wx:if="{{usageKnown}}">
+              <text class="home-ring-num">{{usagePercent}}%</text>
+              <text class="home-ring-cap">上限 {{usageLimitMinutes}} 分钟</text>
+            </block>
+            <block wx:else>
+              <text class="home-ring-num">{{usageLimitMinutes}}</text>
+              <text class="home-ring-cap">分钟上限</text>
+            </block>
           </view>
         </view>
         <view class="home-usage-copy">
           <text class="home-lbl">今天聊了</text>
-          <view class="home-usage-line">
-            <text class="home-usage-num">{{usageDisplayMinutes}}</text>
+          <view wx:if="{{usageKnown}}" class="home-usage-line">
+            <text class="home-usage-num">{{usageUsedMinutes}}</text>
             <text class="home-usage-unit"> 分钟</text>
           </view>
-          <view class="home-chip {{online ? 'is-on' : 'is-off'}}">{{devicePlaceName}}{{online ? '在线' : '离线'}}</view>
+          <text wx:else class="home-usage-pending">用量暂未统计</text>
+          <view class="trial-status-pill {{online ? '' : 'is-off'}}">
+            <view class="trial-status-dot"></view>
+            <text>{{devicePlaceName}}{{online ? '在线' : '离线'}}</text>
+          </view>
         </view>
       </view>
 
       <view class="home-stat-grid">
-        <view class="trial-card home-stat" wx:if="{{showTodayCount}}" bindtap="openMemory">
-          <view class="home-stat-icon">◇</view>
+        <view class="trial-card home-stat" bindtap="openMemory">
+          <view class="mp-icon-tile"><image src="/assets/ui/v4/book-accent.svg" /></view>
           <text class="home-lbl">今天对话</text>
           <view class="home-stat-line">
             <text class="home-stat-num">{{todayCount}}</text>
@@ -102,7 +114,7 @@
           </view>
         </view>
         <view class="trial-card home-stat" bindtap="openMemory">
-          <view class="home-stat-icon accent">☰</view>
+          <view class="mp-icon-tile"><image src="/assets/ui/v4/note-accent.svg" /></view>
           <text class="home-lbl">今日摘要</text>
           <view class="home-stat-line">
             <text class="home-stat-num">{{summaryCount}}</text>
@@ -111,8 +123,22 @@
         </view>
       </view>
 
-      <view wx:if="{{subscriptionPushEnabled && showSafetyNightCard}}" class="trial-card home-toggle-card">
-        <view class="home-toggle-row">
+      <view wx:if="{{showChildMemory}}" class="trial-card home-memory-card">
+        <view class="home-memory-head">
+          <text class="home-card-title">{{childMemoryName}}的记忆</text>
+          <text class="trial-link" bindtap="openChildMemory">查看全部</text>
+        </view>
+        <view wx:if="{{memoryPreviews.length}}" class="home-memory-list">
+          <view wx:for="{{memoryPreviews}}" wx:key="recordId" class="home-memory-preview">
+            <view class="home-memory-dot"></view>
+            <text class="home-memory-text">{{item.text}}</text>
+          </view>
+        </view>
+        <text wx:else class="trial-caption">还没有摘要。聊过之后会出现在这里。</text>
+      </view>
+
+      <view wx:if="{{showSafetyNightCard}}" class="trial-card home-toggle-card">
+        <view wx:if="{{subscriptionPushEnabled}}" class="home-toggle-row">
           <view class="home-toggle-copy">
             <text class="home-card-title">安全提醒</text>
             <text class="trial-caption">{{safetySubscribeHelper}}</text>
@@ -125,25 +151,16 @@
           />
         </view>
         <view class="home-toggle-row" bindtap="openNightSettings">
+          <view class="mp-icon-tile home-moon"><image src="/assets/ui/v4/moon-ink.svg" /></view>
           <view class="home-toggle-copy">
             <text class="home-card-title">安静时段</text>
-            <text class="trial-caption">{{quietHoursLabel}}</text>
+            <text class="trial-caption">{{nightModeOn ? quietHoursLabel : '未设置'}}</text>
           </view>
-          <text class="home-soon">即将上线</text>
-        </view>
-      </view>
-
-      <view wx:elif="{{showSafetyNightCard}}" class="trial-card home-toggle-card" bindtap="openNightSettings">
-        <view class="home-toggle-row">
-          <view class="home-toggle-copy">
-            <text class="home-card-title">安静时段</text>
-            <text class="trial-caption">孩子睡觉的时间，机器人不陪聊</text>
-          </view>
-          <text class="home-soon">即将上线</text>
+          <image class="home-chev" src="/assets/ui/v4/chev-ink.svg" />
         </view>
       </view>
     </block>
 
-    <text class="home-note home-foot">在设备上使用，手机不录音。对话由人工智能生成，会明确标识。</text>
+    <text class="home-note">在设备上使用，手机不录音。对话由人工智能生成，会明确标识。</text>
   </block>
 </view>

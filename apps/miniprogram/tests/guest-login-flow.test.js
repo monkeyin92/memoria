@@ -15,12 +15,12 @@ test("tab pages keep a useful guest state instead of redirecting on show", () =>
   const memory = read("pages/memory/index.wxml");
   const profile = read("pages/profile/index.wxml");
 
-  assert.match(home, /wx:if="\{\{!authenticated\}\}"[\s\S]*微信登录，找回我的设备/);
+  assert.match(home, /wx:if="\{\{!authenticated\}\}"[\s\S]*bindtap="loginFromHome"[\s\S]*微信一键登录/);
   assert.doesNotMatch(
     device,
     /onShow\(\)\s*\{[\s\S]{0,220}navigateTo\(\{\s*url:\s*"\/pages\/auth\/index"/,
   );
-  assert.match(memory, /wx:if="\{\{!authenticated\}\}"[\s\S]*登录后查看你的专属回顾/);
+  assert.match(memory, /wx:if="\{\{!authenticated\}\}"[\s\S]*登录后打开你的专属回顾/);
   assert.match(profile, /wx:if="\{\{!authenticated\}\}"[\s\S]*登录后即可管理你的资料/);
 });
 
