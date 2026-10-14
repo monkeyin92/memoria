@@ -482,6 +482,15 @@ uv run pytest firmware/esp32/tests/test_memoria_mascot.py -q
 
 **bench 构建（调试用，不发布）**：`./scripts/build.sh --bench` 在产品配置之上只多开 `CONFIG_MEMORIA_BENCH_SERIAL` 与 `CONFIG_LV_USE_SNAPSHOT`（patch `0035`，`config.bench.json`），让 USB 串口多认两条命令：`snap` 把屏幕当前内容按 `SNAP <id> <w>x<h> <seq>/<total> <crc> <base64>` 行分块吐出（约 6–8 s），`status` 吐一行 `MemoriaBench: status up_ms=… frames= drawn= render_us= busy_us= heap_free= …`（帧率、渲染耗时、堆余量）。电脑侧：`scripts/voice_soak_serial_command.py snap|status --log <串口记录>`，`scripts/snap_to_png.py` 把 SNAP 行还原成 PNG，`scripts/bench_status.py` 解析 `status` 行。刷入用 `./scripts/flash.sh --bench`，量完必须刷回产品镜像：bench 镜像文件名带 `-bench`、内嵌标记 `MEMORIA_BENCH_BUILD=1;`，`publish_firmware_release.py` 拒绝签名与上传它，产品镜像里没有这两条命令。
 
+**临时不深睡构建（远程测试，默认关，不发布）。** 产品构建和 bench 构建仍在 WifiHold 到期或夜间安抚结束后调用 `esp_deep_sleep_start()`。`CONFIG_MEMORIA_KEEP_AWAKE` 在 patch `0039` 里是 `default n`。只有下面的命令改用 `config.keep-awake.json`，在产品 `sdkconfig_append` 上加一行 `CONFIG_MEMORIA_KEEP_AWAKE=y`。
+
+```bash
+./scripts/build.sh --keep-awake
+./scripts/flash.sh --keep-awake --port /dev/cu.usbmodem101
+```
+
+这时 `EnterTapDeepSleep()` 把相位停在 `kWifiHold` 并清掉 hold 计时，USB 串口保持可枚举。空闲时麦克风保持关闭，固件不上传音频。屏幕轻点或 USB `wake` 仍按现在的路径开始会话。镜像文件名是 `memoria-esp-vocat-keep-awake-*`。`publish_firmware_release.py` 拒绝签名和上传。测完刷回产品镜像。`--bench` 和 `--keep-awake` 不能一起用。
+
 Mac 进入下载模式：按住 BOOT，轻按 RESET，松开 RESET，再松开 BOOT，然后重试。monitor 使用 `Ctrl+]` 退出。
 
 ### 身份分区安全

@@ -21,6 +21,16 @@ Illegal combinations made unrepresentable:
 - Mic cannot be wanted open while phase is WifiHold or DeepSleep.
 - Night tap cannot open a conversation channel.
 
+## Temporary keep-awake test profile
+
+The diagram above is the product firmware. `CONFIG_MEMORIA_KEEP_AWAKE` defaults to n, so product and bench images still take the edges into chip deep sleep.
+
+`./scripts/build.sh --keep-awake` builds `config.keep-awake.json`. That file is the product `sdkconfig_append` plus `CONFIG_MEMORIA_KEEP_AWAKE=y`. `EnterTapDeepSleep` then sets `PowerPhase::kWifiHold` and clears the hold timer. It does not call `esp_deep_sleep_start`. USB serial stays enumerated.
+
+`MicWantedOpen` is false for `kWifiHold`. An idle keep-awake device does not open the microphone and does not upload audio. A screen tap or the USB `wake` line is still what starts a session.
+
+The image name is `memoria-esp-vocat-keep-awake-*`. `publish_firmware_release.py` refuses it. Flash with `./scripts/flash.sh --keep-awake --port /dev/cu.usbmodem101`. Use this profile on a remote test device that must keep USB serial.
+
 ## Designs compared (principle: Foundational thinking)
 
 1. Keep `wake_mode` enum, default to `button`. Smallest server diff. Rejected: leaves keyword paths live (violates Subtract before you add).

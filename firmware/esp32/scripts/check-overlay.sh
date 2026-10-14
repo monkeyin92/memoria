@@ -28,9 +28,10 @@ rg -Fq 'WAKE_WORD_MODEL="${MEMORIA_FIRMWARE_WAKE_WORD_MODEL:-}"' \
 "$python_bin" -m json.tool \
     "$MEMORIA_FIRMWARE_ROOT/overlay/files/main/boards/memoria/esp-vocat/config.bench.json" \
     >/dev/null
+"$python_bin" -m json.tool \
+    "$MEMORIA_FIRMWARE_ROOT/overlay/files/main/boards/memoria/esp-vocat/config.keep-awake.json" \
+    >/dev/null
 
-# The bench image (TODOLIST M-2) is the product manifest plus exactly two options; the product manifest never
-# names the bench switch, and the scripts keep the two apart.
 "$python_bin" - "$MEMORIA_FIRMWARE_ROOT/overlay/files/main/boards/memoria/esp-vocat" <<'PY'
 import json
 import pathlib
@@ -39,21 +40,32 @@ import sys
 board = pathlib.Path(sys.argv[1])
 product = json.loads((board / "config.json").read_text(encoding="utf-8"))
 bench = json.loads((board / "config.bench.json").read_text(encoding="utf-8"))
+keep = json.loads((board / "config.keep-awake.json").read_text(encoding="utf-8"))
 product_options = product["builds"][0]["sdkconfig_append"]
 bench_options = bench["builds"][0]["sdkconfig_append"]
+keep_options = keep["builds"][0]["sdkconfig_append"]
 if any("MEMORIA_BENCH" in option for option in product_options):
     raise SystemExit("the product manifest must not name the bench switch")
+if any("MEMORIA_KEEP_AWAKE" in option for option in product_options + bench_options):
+    raise SystemExit("config.json and config.bench.json must omit MEMORIA_KEEP_AWAKE")
 if bench_options != product_options + ["CONFIG_MEMORIA_BENCH_SERIAL=y", "CONFIG_LV_USE_SNAPSHOT=y"]:
     raise SystemExit("config.bench.json must be config.json plus the two bench options, in that order")
-stripped = json.loads(json.dumps(bench))
-stripped["builds"][0]["sdkconfig_append"] = product_options
-if stripped != product:
-    raise SystemExit("config.bench.json may differ from config.json only in sdkconfig_append")
+if keep_options != product_options + ["CONFIG_MEMORIA_KEEP_AWAKE=y"]:
+    raise SystemExit("config.keep-awake.json must be config.json plus CONFIG_MEMORIA_KEEP_AWAKE=y")
+for label, manifest in (("config.bench.json", bench), ("config.keep-awake.json", keep)):
+    stripped = json.loads(json.dumps(manifest))
+    stripped["builds"][0]["sdkconfig_append"] = product_options
+    if stripped != product:
+        raise SystemExit(f"{label} may differ from config.json only in sdkconfig_append")
 PY
 rg -Fq -- '--config config.bench.json' "$SCRIPT_DIR/build.sh" || \
     die "build.sh --bench must build from config.bench.json"
+rg -Fq -- '--config config.keep-awake.json' "$SCRIPT_DIR/build.sh" || \
+    die "build.sh --keep-awake must build from config.keep-awake.json"
 rg -Fq 'CONFIG_MEMORIA_BENCH_SERIAL=y' "$SCRIPT_DIR/flash.sh" || \
     die "flash.sh must tell a bench image from a product image"
+rg -Fq 'CONFIG_MEMORIA_KEEP_AWAKE=y' "$SCRIPT_DIR/flash.sh" || \
+    die "flash.sh must tell a keep-awake image from a product image"
 
 "$SCRIPT_DIR/bootstrap.sh" --no-idf-install
 
@@ -91,6 +103,12 @@ rg -Fq 'MemoriaMic' "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_power_policy.cc"
     die "mic open/close must log at the MemoriaMic tag for demos"
 rg -Fq 'esp_deep_sleep_start' "$board_dir/memoria_esp_vocat.cc" || \
     die "board must deep-sleep with tap (GPIO10) as the wake source"
+rg -Fq '#if CONFIG_MEMORIA_KEEP_AWAKE' "$board_dir/memoria_esp_vocat.cc" || \
+    die "keep-awake must gate EnterTapDeepSleep"
+rg -Fq 'MEMORIA_KEEP_AWAKE_BUILD=1;' "$board_dir/memoria_esp_vocat.cc" || \
+    die "keep-awake image must carry MEMORIA_KEEP_AWAKE_BUILD=1; for the publisher refusal"
+rg -Fq 'chip deep sleep suppressed %s' "$board_dir/memoria_esp_vocat.cc" || \
+    die "keep-awake skip must log that chip deep sleep is suppressed"
 rg -Fq 'wo_zai_ne.ogg' "$board_dir/memoria_esp_vocat.cc" || \
     die "tap wake must play the local 我在呢 prompt clip"
 rg -Fq 'open("/dev/secondary", O_RDONLY)' "$board_dir/memoria_esp_vocat.cc" || \
@@ -99,6 +117,7 @@ rg -Fq 'open("/dev/secondary", O_RDONLY)' "$board_dir/memoria_esp_vocat.cc" || \
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_bench_snap.h" ]] || die "bench screenshot header missing"
 [[ -f "$board_dir/memoria_mascot_bench.cc" ]] || die "bench screenshot source missing"
 [[ -f "$board_dir/config.bench.json" ]] || die "bench manifest missing"
+[[ -f "$board_dir/config.keep-awake.json" ]] || die "keep-awake manifest missing"
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_diag_pcm.h" ]] || die "bench PCM journal header missing"
 [[ -f "$board_dir/memoria_diag_pcm.cc" ]] || die "bench PCM journal source missing"
 rg -Fq 'memoria::diag::RecordFeed(' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
@@ -113,12 +132,21 @@ import re
 import sys
 
 kconfig = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
-# Bench-only features ride the one bench switch: a second option without the bench marker could be signed.
-if re.findall(r"^config (MEMORIA_\w+)", kconfig, re.MULTILINE) != ["MEMORIA_BENCH_SERIAL"]:
-    raise SystemExit("MEMORIA_BENCH_SERIAL must be the only Memoria Kconfig option")
-block = kconfig.split("config MEMORIA_BENCH_SERIAL\n", 1)[1].split("\nconfig ", 1)[0].split("\nendmenu", 1)[0]
-if "default n" not in block or "depends on BOARD_TYPE_MEMORIA_ESP_VOCAT" not in block:
-    raise SystemExit("MEMORIA_BENCH_SERIAL must default to n and depend on the Memoria board")
+symbols = re.findall(r"^config (MEMORIA_\w+)", kconfig, re.MULTILINE)
+if symbols != ["MEMORIA_BENCH_SERIAL", "MEMORIA_KEEP_AWAKE"]:
+    raise SystemExit(
+        "Memoria Kconfig options must be MEMORIA_BENCH_SERIAL then MEMORIA_KEEP_AWAKE"
+    )
+
+def block(name: str) -> str:
+    return kconfig.split(f"config {name}\n", 1)[1].split("\nconfig ", 1)[0].split("\nendmenu", 1)[0]
+
+for name in symbols:
+    body = block(name)
+    if "default n" not in body or "depends on BOARD_TYPE_MEMORIA_ESP_VOCAT" not in body:
+        raise SystemExit(f"{name} must default to n and depend on the Memoria board")
+    if "default y" in body:
+        raise SystemExit(f"{name} must not default to y")
 PY
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_input_settle.h" ]] || die "input settle header missing"
 rg -Fq 'input_settle_.Arm();' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
@@ -572,6 +600,17 @@ if any("xiaozhi" in str(value).casefold() for value in flash_files.values()):
 PY
 if find "$MEMORIA_ARTIFACT_DIR" -maxdepth 1 -type f -name '*-xiaozhi.bin' -print -quit | rg -q .; then
     die "upstream-named product artifact remains in artifacts/"
+fi
+if rg -q '^CONFIG_MEMORIA_KEEP_AWAKE=y$' "$sdkconfig"; then
+    if rg -q '^CONFIG_MEMORIA_BENCH_SERIAL=y$' "$sdkconfig"; then
+        die "sdkconfig must not set CONFIG_MEMORIA_KEEP_AWAKE=y on a bench build"
+    fi
+    app_bin_name="$("$python_bin" -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["app_bin"])' "$metadata")"
+    built_app="$MEMORIA_UPSTREAM_DIR/build/$app_bin_name"
+    keep_app="$MEMORIA_ARTIFACT_DIR/${MEMORIA_BOARD_NAME}-keep-awake-app.bin"
+    if [[ ! -s "$built_app" || ! -s "$keep_app" ]] || ! cmp -s "$built_app" "$keep_app"; then
+        die "sdkconfig sets CONFIG_MEMORIA_KEEP_AWAKE=y but this is not a keep-awake build; product and bench images must leave it off"
+    fi
 fi
 fi
 printf 'overlay check passed: %s\n' "$MEMORIA_BOARD_NAME"

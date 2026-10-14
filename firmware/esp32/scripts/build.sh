@@ -7,13 +7,14 @@ source "$SCRIPT_DIR/common.sh"
 
 CLEAN=0
 BENCH=0
+KEEP_AWAKE=0
 LANGUAGE="${MEMORIA_FIRMWARE_LANGUAGE:-zh-CN}"
 WAKE_WORD_MODEL="${MEMORIA_FIRMWARE_WAKE_WORD_MODEL:-}"
 NO_IDF_INSTALL=0
 
 usage() {
     cat <<'EOF'
-Usage: build.sh [--clean] [--bench] [--language LOCALE] [--wake-word MODEL|disabled] [--no-idf-install]
+Usage: build.sh [--clean] [--bench] [--keep-awake] [--language LOCALE] [--wake-word MODEL|disabled] [--no-idf-install]
 
 The product build uses zh-CN. Board config disables keyword wake
 (CONFIG_WAKE_WORD_DISABLED); pass --wake-word only to override for a
@@ -25,6 +26,12 @@ product build plus CONFIG_MEMORIA_BENCH_SERIAL (the USB console also answers
 written next to the product artifacts as memoria-esp-vocat-bench-*.bin,
 carries a marker the firmware publisher refuses, and flash.sh flashes it only
 with --bench.
+
+--keep-awake builds the remote-test image from config.keep-awake.json: the
+product build plus CONFIG_MEMORIA_KEEP_AWAKE. Chip deep sleep stays off so
+USB serial remains enumerated. The microphone stays closed until a screen
+tap or USB wake. Artifacts are memoria-esp-vocat-keep-awake-*.bin. The
+firmware publisher refuses them. Do not combine with --bench.
 EOF
 }
 
@@ -32,6 +39,7 @@ while (($# > 0)); do
     case "$1" in
         --clean) CLEAN=1 ;;
         --bench) BENCH=1 ;;
+        --keep-awake) KEEP_AWAKE=1 ;;
         --language) shift; (($# > 0)) || die "--language requires a value"; LANGUAGE="$1" ;;
         --wake-word) shift; (($# > 0)) || die "--wake-word requires a value"; WAKE_WORD_MODEL="$1" ;;
         --no-idf-install) NO_IDF_INSTALL=1 ;;
@@ -40,6 +48,10 @@ while (($# > 0)); do
     esac
     shift
 done
+
+if [[ "$BENCH" == 1 && "$KEEP_AWAKE" == 1 ]]; then
+    die "pass only one of --bench and --keep-awake"
+fi
 
 if [[ "$NO_IDF_INSTALL" == 1 ]]; then
     "$SCRIPT_DIR/bootstrap.sh" --no-idf-install
@@ -73,6 +85,11 @@ if [[ "$BENCH" == 1 ]]; then
     printf '%s\n' \
         '*** BENCH BUILD: the USB console answers snap, status, pcmarm and pcmdump (CONFIG_MEMORIA_BENCH_SERIAL). ***' \
         '*** For the test rig only: never publish it, never ship it. ***' >&2
+elif [[ "$KEEP_AWAKE" == 1 ]]; then
+    artifact_name="$MEMORIA_BOARD_NAME-keep-awake"
+    printf '%s\n' \
+        '*** KEEP-AWAKE BUILD: chip deep sleep is off (CONFIG_MEMORIA_KEEP_AWAKE). The mic stays closed until a screen tap or USB wake. ***' \
+        '*** For a remote test device only: never publish it, never ship it. ***' >&2
 fi
 
 cd "$MEMORIA_UPSTREAM_DIR"
@@ -85,6 +102,8 @@ build_args=(
 )
 if [[ "$BENCH" == 1 ]]; then
     build_args+=(--config config.bench.json)
+elif [[ "$KEEP_AWAKE" == 1 ]]; then
+    build_args+=(--config config.keep-awake.json)
 fi
 if [[ -n "$WAKE_WORD_MODEL" ]]; then
     build_args+=(--wake-word "$WAKE_WORD_MODEL")
@@ -104,6 +123,16 @@ if [[ "$BENCH" == 1 && "$built_bench" != 1 ]]; then
 fi
 if [[ "$BENCH" != 1 && "$built_bench" == 1 ]]; then
     die "product build carries CONFIG_MEMORIA_BENCH_SERIAL=y; the bench switch must stay out of config.json"
+fi
+built_keep_awake=0
+if grep -q '^CONFIG_MEMORIA_KEEP_AWAKE=y$' "$sdkconfig_file"; then
+    built_keep_awake=1
+fi
+if [[ "$KEEP_AWAKE" == 1 && "$built_keep_awake" != 1 ]]; then
+    die "keep-awake build requested, but the generated sdkconfig lacks CONFIG_MEMORIA_KEEP_AWAKE=y"
+fi
+if [[ "$KEEP_AWAKE" != 1 && "$built_keep_awake" == 1 ]]; then
+    die "product build carries CONFIG_MEMORIA_KEEP_AWAKE=y; the keep-awake switch must stay out of config.json"
 fi
 
 merged="$MEMORIA_UPSTREAM_DIR/build/merged-binary.bin"
@@ -157,4 +186,6 @@ printf 'merged binary: %s\n' "$MEMORIA_ARTIFACT_DIR/$artifact_name-merged.bin"
 printf 'application binary: %s\n' "$MEMORIA_ARTIFACT_DIR/$artifact_name-app.bin"
 if [[ "$BENCH" == 1 ]]; then
     printf 'BENCH image: flash it with flash.sh --bench; the firmware publisher refuses it\n'
+elif [[ "$KEEP_AWAKE" == 1 ]]; then
+    printf 'KEEP-AWAKE image: flash it with flash.sh --keep-awake; the firmware publisher refuses it\n'
 fi
