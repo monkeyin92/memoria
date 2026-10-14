@@ -191,7 +191,7 @@
           <text class="row-title">打开我的记忆档案</text>
           <text class="row-meta">已确认的偏好、来源与版本</text>
         </view>
-        <image class="row-chev" src="/assets/ui/v4/chev-ink.svg" />
+        <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
       </view>
     </block>
   </block>

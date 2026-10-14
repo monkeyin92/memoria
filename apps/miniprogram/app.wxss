@@ -211,8 +211,7 @@ button { font-family: inherit; }
   margin-top: 8rpx;
 }
 .mem-hero .pill { background: var(--mp-sage-bg); color: var(--mp-sage); }
-.mem-hero .pill-amber,
-.pill-draft { background: var(--mp-sun-bg); color: var(--mp-sun); }
+.mem-hero .pill-amber { background: var(--mp-sun-bg); color: var(--mp-sun); }
 
 .role-tint-card {
   box-sizing: border-box;
@@ -294,9 +293,15 @@ button[disabled] {
   display: flex;
   align-items: center;
   gap: 32rpx;
+  box-sizing: border-box;
   min-height: 128rpx;
-  padding: 24rpx 0;
-  border-bottom: 1rpx solid var(--mp-line);
+  padding: 32rpx 0;
+  border-bottom: 2rpx solid var(--mp-line);
+}
+.list > .list-row {
+  margin: 0 calc(-1 * var(--mp-pad-card));
+  padding-left: var(--mp-pad-card);
+  padding-right: var(--mp-pad-card);
 }
 .list-row:last-child { border-bottom: none; }
 .row-copy { flex: 1; min-width: 0; }
@@ -359,7 +364,8 @@ button[disabled] {
   background: currentColor;
 }
 .pill-neutral { background: var(--mp-fill); color: var(--mp-ink-2); }
-.pill-amber { background: var(--mp-sun-bg); color: var(--mp-sun); }
+.pill-amber,
+.pill-draft { background: var(--mp-sun-bg); color: var(--mp-sun); }
 .pill-teal { background: var(--mp-accent-soft); color: var(--mp-accent); }
 
 /* ---------- 提示条 / 空状态 ---------- */

@@ -50,7 +50,7 @@
           <text class="home-card-title">{{item.label}}</text>
           <text class="trial-caption">{{item.modeLabel}}</text>
         </view>
-        <image class="home-chev" src="/assets/ui/v4/chev-ink.svg" />
+        <image class="home-chev" src="/assets/ui/v4/chev-faint.svg" />
       </view>
       <text class="trial-caption">切换设备不会赋予查看其他成员私密内容的权限。</text>
       <text wx:if="{{bindingSyncError}}" class="home-error">{{bindingSyncError}}</text>
@@ -129,7 +129,7 @@
           <text class="home-card-title">{{childMemoryName}}的记忆</text>
           <text class="home-row-sub">{{memoryPreviews.length ? '最近：' + memoryPreviews[0].text : '还没有摘要，聊过之后会出现在这里'}}</text>
         </view>
-        <image class="home-chev" src="/assets/ui/v4/chev-ink.svg" />
+        <image class="home-chev" src="/assets/ui/v4/chev-faint.svg" />
       </view>
 
       <view wx:if="{{showSafetyNightCard && subscriptionPushEnabled}}" class="trial-card home-toggle-card">
@@ -151,7 +151,7 @@
             <text class="home-card-title">安静时段</text>
             <text class="trial-caption">{{nightModeOn ? quietHoursLabel : '未设置'}}</text>
           </view>
-          <image class="home-chev" src="/assets/ui/v4/chev-ink.svg" />
+          <image class="home-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
       </view>
     </block>
