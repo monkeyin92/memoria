@@ -30,7 +30,7 @@
       <mp-icon name="note" tone="ink"></mp-icon>
       <view class="row-copy">
         <text class="row-title">孩子的长期记忆</text>
-        <text class="row-meta">只记称呼、兴趣和小名，在「孩子的记忆」里开关</text>
+        <text class="row-meta">只记称呼、喜好和宠物名，在「孩子的记忆」里开关</text>
       </view>
       <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
     </view>

@@ -16,8 +16,8 @@
   text-align: center;
 }
 
-.cm-tabs {
-  margin: 24px 0 var(--mp-gap-card);
+.cm-first {
+  margin-top: 24px;
 }
 
 .cm-error {
@@ -118,7 +118,7 @@
 }
 
 .cm-field + .cm-field {
-  border-top: 1px solid var(--mp-line);
+  box-shadow: inset 0 1px 0 var(--mp-line);
 }
 
 .cm-field-body {
@@ -130,7 +130,6 @@
   display: block;
   color: var(--mp-ink-3);
   font-size: var(--mp-type-caption);
-  line-height: var(--mp-lh-caption);
 }
 
 .cm-fact {
@@ -155,23 +154,22 @@
   font-size: var(--mp-type-lead);
   font-weight: 700;
   letter-spacing: -0.2px;
-  line-height: var(--mp-lh-card);
   word-break: break-all;
 }
 
 .cm-fact .cm-meta {
-  margin-top: 2px;
+  line-height: normal;
 }
 
+/* Negative margins keep a 44px tap target without pushing the row taller than the design's. */
 .cm-delete {
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--mp-radius-icon);
-  background: var(--mp-fill);
+  width: 44px;
+  height: 44px;
+  margin: -10px -14px -10px 0;
 }
 
 .cm-trash {
@@ -187,7 +185,7 @@
   width: 12px;
   height: 3px;
   border-radius: 1px;
-  background: var(--mp-ink-3);
+  background: var(--mp-ink-4);
 }
 
 .cm-trash-lid::before {
@@ -198,7 +196,7 @@
   width: 6px;
   height: 2px;
   border-radius: 1px;
-  background: var(--mp-ink-3);
+  background: var(--mp-ink-4);
 }
 
 .cm-trash-body {
@@ -207,7 +205,7 @@
   left: 2px;
   width: 10px;
   height: 10px;
-  border: 1.5px solid var(--mp-ink-3);
+  border: 1.5px solid var(--mp-ink-4);
   border-top: 0;
   border-radius: 0 0 2px 2px;
   box-sizing: border-box;

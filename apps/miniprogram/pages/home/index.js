@@ -281,7 +281,7 @@ Page({
     if (!minorId) return;
     const name = this.data.childMemoryName || "孩子";
     wx.navigateTo({
-      url: `/pages/child-memory/index?minorId=${encodeURIComponent(minorId)}&name=${encodeURIComponent(name)}`,
+      url: `/pages/child-memory/index?minorId=${encodeURIComponent(minorId)}&name=${encodeURIComponent(name)}&section=recent`,
     });
   },
 

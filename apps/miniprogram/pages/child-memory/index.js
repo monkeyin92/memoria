@@ -18,7 +18,6 @@ const {
   boundChildFromManifest,
   groupArchiveByCategory,
   memoryEmptyTitle,
-  memoryHeaderCaption,
   memoryHeaderTitle,
   normalizeChildArchive,
   normalizeSessionSummaries,
@@ -72,15 +71,12 @@ Page({
     companionId: defaultCompanionId,
     companionName: companionById(defaultCompanionId).name,
     headerTitle: memoryHeaderTitle(companionById(defaultCompanionId).name, "孩子"),
-    headerCaption: memoryHeaderCaption(0),
     emptyTitle: memoryEmptyTitle(companionById(defaultCompanionId).name, "孩子"),
     loadState: "idle",
-    activeTab: "recent",
     privacyLine: PRIVACY_LINE,
     emptyRecent: EMPTY_RECENT,
     emptyArchiveOn: EMPTY_ARCHIVE_ON,
     deleteKeepLabel: DELETE_KEEP,
-    showHeaderMascot: false,
     summaries: [],
     archiveGroups: [],
     archiveFlat: [],
@@ -101,13 +97,13 @@ Page({
   onLoad(query) {
     const resolved = resolveMinor(query || {});
     const companion = companionById(defaultCompanionId);
+    this._scrollToRecent = query?.section === "recent";
     this.setData({
       ...resolved,
       companionId: companion.id,
       companionName: companion.name,
       headerTitle: memoryHeaderTitle(companion.name, resolved.childName),
       emptyTitle: memoryEmptyTitle(companion.name, resolved.childName),
-      headerCaption: memoryHeaderCaption(0),
     });
     const app = getApp();
     this._unsubscribeAuthCleared = app?.subscribeAuthCleared?.(() => {
@@ -153,27 +149,6 @@ Page({
     }
   },
 
-  showRecent() {
-    const showHeaderMascot = this.data.summaries.length > 0;
-    this.setData({
-      activeTab: "recent",
-      statusBanner: "",
-      showHeaderMascot,
-      headerCaption: memoryHeaderCaption(this.data.summaries.length),
-    });
-  },
-
-  showArchive() {
-    const showHeaderMascot =
-      this.data.archiveConsent.active && this.data.archiveFlat.length > 0;
-    this.setData({
-      activeTab: "archive",
-      statusBanner: "",
-      showHeaderMascot,
-      headerCaption: memoryHeaderCaption(this.data.archiveFlat.length),
-    });
-  },
-
   async refresh() {
     const minorId = this.data.minorId;
     if (!minorId) {
@@ -210,11 +185,6 @@ Page({
       assertsNoTranscriptFields(summaries);
       assertsNoTranscriptFields(archiveFlat);
       const companion = companionById(profileResult?.companion_id || defaultCompanionId);
-      const count = this.data.activeTab === "archive" ? archiveFlat.length : summaries.length;
-      const showHeaderMascot =
-        this.data.activeTab === "archive"
-          ? archiveConsent.active && archiveFlat.length > 0
-          : summaries.length > 0;
       this.setData({
         summaries,
         archiveFlat,
@@ -224,8 +194,6 @@ Page({
         companionName: companion.name,
         headerTitle: memoryHeaderTitle(companion.name, this.data.childName),
         emptyTitle: memoryEmptyTitle(companion.name, this.data.childName),
-        headerCaption: memoryHeaderCaption(count),
-        showHeaderMascot,
         loadState: "ready",
         error: "",
       });
@@ -238,9 +206,15 @@ Page({
       }
     } finally {
       if (api.isAuthEpochCurrent(authEpoch)) {
-        this.setData({ loading: false });
+        this.setData({ loading: false }, () => this._revealRecent());
       }
     }
+  },
+
+  _revealRecent() {
+    if (!this._scrollToRecent || this.data.loadState !== "ready") return;
+    this._scrollToRecent = false;
+    wx.pageScrollTo({ selector: "#cm-recent", duration: 0 });
   },
 
   askDeleteSummary(event) {

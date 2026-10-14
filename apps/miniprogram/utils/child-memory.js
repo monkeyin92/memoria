@@ -5,9 +5,9 @@
  */
 
 const ARCHIVE_FIELD_LABELS = Object.freeze({
-  preference: "兴趣",
+  preference: "喜好",
   appellation: "称呼",
-  pet_name: "小名",
+  pet_name: "宠物名",
 });
 
 const ARCHIVE_FIELD_ORDER = Object.freeze(["appellation", "preference", "pet_name"]);
@@ -16,7 +16,7 @@ const CHILD_ARCHIVE_CONSENT = Object.freeze({
   kind: "child_archive",
   label: "长期记忆",
   description:
-    "开启后，memoria 会记住孩子提到的称呼、兴趣和小名。你可以随时关闭，关闭后不再记新的内容。",
+    "开启后，memoria 会记住孩子提到的称呼、喜好和宠物名。你可以随时关闭，关闭后不再记新的内容。",
   policyVersion: "child-archive-v1",
 });
 
@@ -24,7 +24,7 @@ const PRIVACY_LINE =
   "孩子说的原话，我们的服务器在入库前就去掉了；机器人本身不存录音。";
 const EMPTY_RECENT =
   "还没有记忆。孩子和 memoria 聊过之后，这里会出现摘要。";
-const EMPTY_ARCHIVE_ON = "开启后，孩子聊到的兴趣会出现在这里。";
+const EMPTY_ARCHIVE_ON = "开启后，孩子聊到的喜好会出现在这里。";
 const CONSENT_OFF_DIALOG =
   "关闭后不会再写入新内容。已有内容仍按当前授权管理。";
 const DELETE_CONFIRM =
@@ -35,11 +35,6 @@ const CLEARED_TOAST = "已清空，剩余 0 条";
 function memoryHeaderTitle(_companionName, childName) {
   const child = childName || "孩子";
   return `${child}的记忆`;
-}
-
-function memoryHeaderCaption(count) {
-  const n = Number.isInteger(count) && count >= 0 ? count : 0;
-  return `共 ${n} 条 · 按天整理`;
 }
 
 function memoryEmptyTitle(companionName, childName) {
@@ -205,7 +200,6 @@ module.exports = {
   displayDateLabel,
   groupArchiveByCategory,
   memoryEmptyTitle,
-  memoryHeaderCaption,
   memoryHeaderTitle,
   normalizeChildArchive,
   normalizeSessionSummaries,

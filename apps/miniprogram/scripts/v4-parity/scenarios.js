@@ -26,7 +26,6 @@ const PARITY = [
     page: "pages/child-memory/index",
     harness: fx.authed(fx.archiveApi),
     query: { minorId: "p_child", name: "乐乐" },
-    actions: [["showArchive"]],
   },
 ];
 

@@ -57,7 +57,7 @@ const PAGES = [
   { slug: "digital-self", page: "pages/digital-self/index", harness: authed(fx.digitalSelfApi), actions: [["toggleEngineering"]] },
   { slug: "digital-self-empty", page: "pages/digital-self/index", harness: authed() },
   { slug: "child-memory", page: "pages/child-memory/index", harness: authed(), query: { minorId: "p_child", name: "乐乐" } },
-  { slug: "child-memory-archive", page: "pages/child-memory/index", harness: authed(fx.archiveApi), query: { minorId: "p_child", name: "乐乐" }, actions: [["showArchive"]] },
+  { slug: "child-memory-archive", page: "pages/child-memory/index", harness: authed(fx.archiveApi), query: { minorId: "p_child", name: "乐乐" } },
   { slug: "device-onboarding", page: "pages/device-onboarding/index", harness: authed() },
   {
     slug: "device-onboarding-wifi",
@@ -99,7 +99,6 @@ const LONG_LISTS = [
     page: "pages/child-memory/index",
     harness: authed(fx.longArchiveApi(LONG_LIST_SIZE)),
     query: { minorId: "p_child", name: "乐乐" },
-    actions: [["showArchive"]],
   },
 ];
 

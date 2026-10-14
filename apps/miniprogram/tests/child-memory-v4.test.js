@@ -1,0 +1,99 @@
+const assert = require("node:assert/strict");
+const test = require("node:test");
+
+process.env.TZ = "Asia/Shanghai";
+
+const { loadPage } = require("../scripts/mp-harness/runtime");
+const { renderPage } = require("../scripts/mp-harness/render");
+const fx = require("../scripts/mp-harness/fixtures");
+
+const CHILD = { minorId: "p_child", name: "乐乐" };
+
+function visibleText(html) {
+  return html.replace(/<head>[\s\S]*?<\/head>/, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+async function openChildMemory(overrides, query = CHILD) {
+  const harness = loadPage("pages/child-memory/index", fx.authed(overrides));
+  await harness.run(query);
+  return harness;
+}
+
+test("the archive leads the page with the design's three labels and footer, summaries follow below", async () => {
+  const harness = await openChildMemory(fx.archiveApi);
+  try {
+    const text = visibleText(renderPage("pages/child-memory/index", harness.page.data, { tabBar: false }));
+    assert.match(
+      text,
+      /^长期记住的事 乐乐的记忆 机器人长期只记住这三件事，用来更自然地和孩子聊天。 称呼 乐乐 10 月 5 日 喜好 恐龙 10 月 14 日 画画 10 月 13 日 宠物名 小乐宝 10 月 9 日 除这三项外，不长期保存其他信息。 长期记忆 /,
+    );
+    assert.match(text, / 清空长期记忆 近期摘要 讲了/);
+    assert.doesNotMatch(text, /兴趣|小名|共 \d+ 条/);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("deleting a fact from the archive card removes it on the server and from the page", async () => {
+  let archive = [
+    { record_id: "a2", field: "preference", text: "恐龙", created_at: "2026-10-14T03:00:00+00:00" },
+    { record_id: "a3", field: "preference", text: "画画", created_at: "2026-10-13T03:00:00+00:00" },
+  ];
+  const deleted = [];
+  const harness = await openChildMemory({
+    ...fx.archiveApi,
+    getChildArchive: async () => ({ items: archive }),
+    deleteChildArchiveFact: async (minorId, recordId) => {
+      deleted.push([minorId, recordId]);
+      archive = archive.filter((item) => item.record_id !== recordId);
+      return { deleted: true };
+    },
+  });
+  try {
+    harness.page.askDeleteArchive({ currentTarget: { dataset: { recordId: "a2" } } });
+    assert.equal(harness.page.data.confirm.title, "删除这条记忆？");
+    assert.equal(harness.page.data.confirm.quote, "恐龙");
+    await harness.page.runConfirm();
+    assert.deepEqual(deleted, [["p_child", "a2"]]);
+    assert.deepEqual(
+      harness.page.data.archiveGroups.map((group) => [group.label, group.items.map((item) => item.text)]),
+      [["喜好", ["画画"]]],
+    );
+  } finally {
+    harness.restore();
+  }
+});
+
+test("opening from the home preview scrolls once to 近期摘要", async () => {
+  const harness = await openChildMemory(fx.archiveApi, { ...CHILD, section: "recent" });
+  try {
+    const scrolls = () => harness.wxCalls.filter((call) => call.name === "pageScrollTo").map((call) => call.args[0]);
+    assert.deepEqual(scrolls(), [{ selector: "#cm-recent", duration: 0 }]);
+    await harness.page.refresh();
+    assert.equal(scrolls().length, 1);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("opening from anywhere else stays at the archive", async () => {
+  const harness = await openChildMemory(fx.archiveApi);
+  try {
+    assert.deepEqual(harness.wxCalls.filter((call) => call.name === "pageScrollTo"), []);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("the home memory card opens the summaries section", async () => {
+  const harness = loadPage("pages/home/index", fx.authed());
+  try {
+    await harness.run();
+    harness.page.setData({ childMemoryMinorId: "p_child", childMemoryName: "乐乐" });
+    harness.page.openChildMemory();
+    const nav = harness.wxCalls.find((call) => call.name === "navigateTo");
+    assert.equal(nav.args[0].url, "/pages/child-memory/index?minorId=p_child&name=%E4%B9%90%E4%B9%90&section=recent");
+  } finally {
+    harness.restore();
+  }
+});

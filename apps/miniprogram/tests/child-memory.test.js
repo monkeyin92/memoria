@@ -136,7 +136,6 @@ test("page copy and structure match product acceptance", () => {
   assert.equal(childMemory.DELETE_KEEP, "再想想");
   assert.equal(childMemory.memoryHeaderTitle("星澜", "小明"), "小明的记忆");
   assert.equal(childMemory.memoryEmptyTitle("星澜", "小明"), "星澜还没有记住小明的事");
-  assert.equal(childMemory.memoryHeaderCaption(3), "共 3 条 · 按天整理");
   assert.deepEqual([...childMemory.ARCHIVE_FIELD_ORDER], ["appellation", "preference", "pet_name"]);
   assert.match(wxml, /<mp-icon name="\{\{item\.field === 'appellation' \? 'tag'/);
   assert.equal(
@@ -153,7 +152,7 @@ test("page copy and structure match product acceptance", () => {
     "关闭后不会再写入新内容。已有内容仍按当前授权管理。",
   );
   assert.doesNotMatch(childMemory.CONSENT_OFF_DIALOG, /查看|删除/);
-  assert.equal(childMemory.EMPTY_ARCHIVE_ON, "开启后，孩子聊到的兴趣会出现在这里。");
+  assert.equal(childMemory.EMPTY_ARCHIVE_ON, "开启后，孩子聊到的喜好会出现在这里。");
 });
 
 test("normalizeSessionSummaries uses spaced Chinese dates and newest first", () => {
@@ -206,7 +205,7 @@ test("archive facts group under whitelist categories", () => {
   });
   const groups = childMemory.groupArchiveByCategory(flat);
   assert.equal(groups.length, 1);
-  assert.equal(groups[0].label, "兴趣");
+  assert.equal(groups[0].label, "喜好");
   assert.deepEqual(
     groups[0].items.map((item) => item.text),
     ["霸王龙", "恐龙"],
@@ -237,7 +236,7 @@ test("child memory API helpers hit the guardian layer endpoints", async () => {
   });
 });
 
-test("recent tab lists summaries, delete sheet confirms, clear-all shows remaining 0", async () => {
+test("recent summaries list, delete sheet confirms, clear-all shows remaining 0", async () => {
   await withWx(async () => {
     let summaries = [
       {
@@ -270,7 +269,6 @@ test("recent tab lists summaries, delete sheet confirms, clear-all shows remaini
       const page = instantiate(loadPage("../pages/child-memory/index"));
       page.onLoad({ minorId: "person_child", name: "豆豆" });
       await page.refresh();
-      assert.equal(page.data.activeTab, "recent");
       assert.equal(page.data.summaries.length, 1);
       assert.match(page.data.summaries[0].dateLabel, /10 月 13 日/);
       assert.equal(page.data.archiveConsent.active, false);
@@ -303,7 +301,7 @@ test("recent tab lists summaries, delete sheet confirms, clear-all shows remaini
   });
 });
 
-test("archive tab hides items without consent and confirms turn-off copy", async () => {
+test("archive hides items without consent and confirms turn-off copy", async () => {
   await withWx(async () => {
     let consentActive = true;
     const restore = stubApi({
@@ -344,10 +342,8 @@ test("archive tab hides items without consent and confirms turn-off copy", async
       const page = instantiate(loadPage("../pages/child-memory/index"));
       page.onLoad({ minorId: "person_child", name: "豆豆" });
       await page.refresh();
-      page.showArchive();
-      assert.equal(page.data.activeTab, "archive");
       assert.equal(page.data.archiveConsent.active, true);
-      assert.equal(page.data.archiveGroups[0].label, "兴趣");
+      assert.equal(page.data.archiveGroups[0].label, "喜好");
       assert.equal(page.data.archiveGroups[0].items[0].text, "恐龙");
 
       await page.onArchiveConsentChange({ detail: { value: false } });
