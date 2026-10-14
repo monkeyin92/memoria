@@ -103,6 +103,16 @@ api.isAuthEpochCurrent = () => true;
 const realGetBindingSubjectCandidates = api.getBindingSubjectCandidates;
 api.getGuardianLinks = async () => [];
 api.getBindingSubjectCandidates = async () => [];
+api.getGuardianPushConfig = async () => ({
+  enabled: true,
+  template_ids: { crisis: "tmpl-crisis" },
+});
+api.recordGuardianPushSubscription = async (body) => ({
+  template_id: body.templateId,
+  result: body.result,
+  remaining: 1,
+});
+api.wechatLoginCode = async () => "login-code";
 api.getDeviceClaim = async () => ({
   claim_id: "claim_test_1",
   device_id: "dev_test_1",
@@ -309,6 +319,10 @@ test("parent_for_child flow validates minimal info and submits guardian relation
     page.data.quietHoursLabel,
     "夜间模式：21:00–07:00（这段时间点屏只会说晚安）",
   );
+  assert.equal(page.data.submitLabel, "订阅安全提醒");
+  const bindTemplate = fs.readFileSync(path.join(root, "pages/bind/index.wxml"), "utf8");
+  assert.match(bindTemplate, /夜间模式默认 21:00–07:00，可改/);
+  assert.match(bindTemplate, /\{\{submitLabel\}\}/);
 
   await page.goToReview();
   assert.ok(page.data.error.includes("备注"));
@@ -317,6 +331,7 @@ test("parent_for_child flow validates minimal info and submits guardian relation
   page.setData({ "form.childNickname": "小乐" });
   await page.goToReview();
   assert.equal(page.data.step, "review");
+  assert.equal(page.data.submitLabel, "订阅安全提醒");
   await page.submitBinding();
   assert.equal(page.data.step, "done");
   const payload = lastWxRequest.data;
