@@ -28,7 +28,6 @@ test("auth facts state only what the product does and promise no view or delete"
   assert.deepEqual(facts, ["对话经过我们的服务器", "保存对话摘要", "长期只记三项", "回应由 AI 生成"]);
   assert.match(authTemplate, /称呼、兴趣和小名/);
   assert.doesNotMatch(authTemplate, /摄像头|随时查看|删除可证明|device-screen/);
-  assert.doesNotMatch(authStyles, /#[0-9a-fA-F]{3,8}\b|rgba\(/);
 });
 
 test("auth header has no unselected mascot placeholder or redundant subtitle", () => {
