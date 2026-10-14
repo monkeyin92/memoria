@@ -1,9 +1,5 @@
 #pragma once
 
-// Product power and wake policy for Memoria ESP-VoCat (tap wake only).
-// Decision helpers are host-compilable. The NVS-backed registry lives in
-// memoria_power_policy.cc.
-
 #include <atomic>
 #include <cstdint>
 #include <cstring>
@@ -20,11 +16,24 @@ enum class PowerPhase : unsigned char {
     kNightSoothing,
 };
 
+enum class TapDevice : unsigned char {
+    kStarting,
+    kIdle,
+    kBusy,
+};
+
 enum class TapWakeAction : unsigned char {
     kIgnore,
     kStartConversation,
-    kResumeFromHold,
     kNightSoothing,
+    kOfflineMenu,
+    kWifiConfig,
+};
+
+struct TapFacts {
+    TapDevice device = TapDevice::kBusy;
+    bool in_quiet_hours = false;
+    bool offline_wants_tap = false;
 };
 
 struct PowerPolicy {
@@ -36,18 +45,18 @@ struct PowerPolicy {
     static constexpr std::uint32_t kIdleScreenOffMs = 15 * 1000;
 };
 
-inline TapWakeAction TapWakeActionFor(PowerPhase phase, bool /*device_idle*/, bool in_quiet_hours) {
-    switch (phase) {
-        case PowerPhase::kDeepSleep:
-            return in_quiet_hours ? TapWakeAction::kNightSoothing
-                                  : TapWakeAction::kStartConversation;
-        case PowerPhase::kWifiHold:
-            return in_quiet_hours ? TapWakeAction::kNightSoothing
-                                  : TapWakeAction::kResumeFromHold;
-        case PowerPhase::kWaking:
-        case PowerPhase::kNightSoothing:
-        case PowerPhase::kConversing:
-            return TapWakeAction::kIgnore;
+inline TapWakeAction TapWakeActionFor(TapFacts facts) {
+    if (facts.device == TapDevice::kStarting) {
+        return facts.offline_wants_tap ? TapWakeAction::kOfflineMenu : TapWakeAction::kWifiConfig;
+    }
+    if (facts.device == TapDevice::kIdle && facts.in_quiet_hours) {
+        return TapWakeAction::kNightSoothing;
+    }
+    if (facts.offline_wants_tap) {
+        return TapWakeAction::kOfflineMenu;
+    }
+    if (facts.device == TapDevice::kIdle) {
+        return TapWakeAction::kStartConversation;
     }
     return TapWakeAction::kIgnore;
 }
@@ -78,10 +87,12 @@ inline const char* TapWakeActionName(TapWakeAction action) {
             return "ignore";
         case TapWakeAction::kStartConversation:
             return "start";
-        case TapWakeAction::kResumeFromHold:
-            return "resume";
         case TapWakeAction::kNightSoothing:
             return "night";
+        case TapWakeAction::kOfflineMenu:
+            return "offline";
+        case TapWakeAction::kWifiConfig:
+            return "wifi_config";
     }
     return "unknown";
 }

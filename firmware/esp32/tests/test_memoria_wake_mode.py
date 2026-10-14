@@ -133,6 +133,28 @@ def test_a_tap_only_wakes_an_idle_device(tool: pathlib.Path) -> None:
     ) == ["start", "ignore", "start", "ignore"]
 
 
+def test_deep_sleep_reset_arms_offline_reconnect_before_the_battery_tick() -> None:
+    source = (BOARD_DIR / "memoria_esp_vocat.cc").read_text(encoding="utf-8")
+    ctor = source[source.index("MemoriaEspVocat() :") : source.index("virtual AudioCodec*")]
+    assert "ESP_RST_DEEPSLEEP" in ctor
+    assert ctor.count("OnDeepSleepWake(") == 1
+    assert source.count("OnDeepSleepWake(") == 1
+    assert ctor.index("OnDeepSleepWake(") < ctor.index("InitializeCharge()")
+    assert "network_was_online_" not in source
+    assert "OnNetworkSample(" in source
+    handler = _function(source, "void HandleScreenTouchRelease(std::uint32_t hold_ms)")
+    assert "OnDeepSleepWake(" not in handler
+    assert handler.index("TapWakeActionFor") < handler.index("EnterWifiConfigMode()")
+    overlay = FIRMWARE_ROOT / "overlay"
+    hits = [
+        path.relative_to(overlay).as_posix()
+        for path in overlay.rglob("*")
+        if path.suffix in {".h", ".cc", ".c", ".cpp", ".py", ".patch"}
+        and "from_menu_sleep" in path.read_text(encoding="utf-8")
+    ]
+    assert hits == []
+
+
 def test_board_tap_handler_uses_power_policy_and_never_stops() -> None:
     source = (BOARD_DIR / "memoria_esp_vocat.cc").read_text(encoding="utf-8")
     handler = _function(source, "void HandleScreenTouchRelease(std::uint32_t hold_ms)")

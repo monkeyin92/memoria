@@ -39,6 +39,7 @@
 #include "settings.h"
 #include "wifi_manager.h"
 #include <esp_sleep.h>
+#include <esp_system.h>
 #include <ctime>
 #if CONFIG_MEMORIA_BENCH_SERIAL
 #include "memoria_diag_pcm.h"
@@ -518,7 +519,6 @@ private:
     bool was_charging_ = false;
     std::atomic<int64_t> imu_mute_until_ms_{0};
     memoria::OfflineMenuMachine offline_menu_;
-    std::atomic<bool> network_was_online_{true};
     std::atomic<std::uint32_t> offline_play_generation_{0};
     std::atomic<bool> offline_story_cancel_{false};
     TaskHandle_t usb_command_task_handle_ = nullptr;
@@ -653,9 +653,18 @@ private:
                state != kDeviceStateWifiConfiguring;
     }
 
+    static memoria::TapDevice TapDeviceFor(DeviceState state) {
+        if (state == kDeviceStateStarting) {
+            return memoria::TapDevice::kStarting;
+        }
+        if (state == kDeviceStateIdle) {
+            return memoria::TapDevice::kIdle;
+        }
+        return memoria::TapDevice::kBusy;
+    }
+
     void ApplyOfflineMenuOutput(const memoria::OfflineMenuOutput& out) {
         if (out.stop_retry_network) {
-            // Retry flag lives in the machine; board only logs.
             ESP_LOGI(TAG, "offline menu stop network retry");
         }
         if (out.retry_network) {
@@ -711,21 +720,11 @@ private:
     }
 
     void TickOfflineMenuNetwork() {
-        const bool online = NetworkLooksOnline();
-        const bool was = network_was_online_.load(std::memory_order_relaxed);
         const std::uint32_t now_ms =
             static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
-        if (was && !online) {
-            const auto state = Application::GetInstance().GetDeviceState();
-            ApplyOfflineMenuOutput(
-                offline_menu_.OnNetworkDown(now_ms, DeviceInConversation(state)));
-        } else if (!was && online) {
-            if (offline_menu_.ConsumesTap() ||
-                offline_menu_.mode() != memoria::OfflineMode::kInactive) {
-                ApplyOfflineMenuOutput(offline_menu_.OnNetworkUp(now_ms));
-            }
-        }
-        network_was_online_.store(online, std::memory_order_relaxed);
+        const auto state = Application::GetInstance().GetDeviceState();
+        ApplyOfflineMenuOutput(offline_menu_.OnNetworkSample(
+            now_ms, NetworkLooksOnline(), DeviceInConversation(state)));
         ApplyOfflineMenuOutput(offline_menu_.OnTimer(now_ms));
     }
 
@@ -793,10 +792,6 @@ private:
             });
             return;
         }
-        if (state == kDeviceStateStarting) {
-            EnterWifiConfigMode();
-            return;
-        }
 
         auto& power = memoria::PowerPolicyRegistry::GetInstance();
         const std::uint32_t now_ms =
@@ -806,54 +801,32 @@ private:
             return;
         }
 
-        // Map Application idle onto WifiHold/DeepSleep phases for the policy.
-        memoria::PowerPhase phase = power.phase();
-        if (state == kDeviceStateIdle) {
-            if (phase != memoria::PowerPhase::kWifiHold &&
-                phase != memoria::PowerPhase::kDeepSleep) {
-                phase = memoria::PowerPhase::kWifiHold;
-            }
-        } else {
-            phase = memoria::PowerPhase::kConversing;
-        }
-        const bool quiet = power.in_quiet_hours(BeijingMinuteNowOrZero());
-        ESP_LOGI(TAG, "screen tap hold_ms=%u phase=%s quiet=%d state=%d offline=%s",
-                 static_cast<unsigned>(hold_ms), memoria::PowerPhaseName(phase), quiet ? 1 : 0,
+        const bool online = NetworkLooksOnline();
+        const auto device = TapDeviceFor(state);
+        const bool idle = device == memoria::TapDevice::kIdle;
+        const auto action = memoria::TapWakeActionFor(memoria::TapFacts{
+            .device = device,
+            .in_quiet_hours = power.in_quiet_hours(BeijingMinuteNowOrZero()),
+            .offline_wants_tap = offline_menu_.WantsTap(online, idle),
+        });
+        ESP_LOGI(TAG, "screen tap hold_ms=%u action=%s state=%d offline=%s",
+                 static_cast<unsigned>(hold_ms), memoria::TapWakeActionName(action),
                  static_cast<int>(state), memoria::OfflineModeName(offline_menu_.mode()));
 
-        // Quiet hours keep the night soothe path and never open the offline menu.
-        if (quiet && (phase == memoria::PowerPhase::kDeepSleep ||
-                      phase == memoria::PowerPhase::kWifiHold)) {
-            const auto action = memoria::TapWakeActionFor(phase, state == kDeviceStateIdle, true);
-            if (action == memoria::TapWakeAction::kNightSoothing) {
+        switch (action) {
+            case memoria::TapWakeAction::kWifiConfig:
+                EnterWifiConfigMode();
+                return;
+            case memoria::TapWakeAction::kNightSoothing:
                 power.SetPhase(memoria::PowerPhase::kNightSoothing);
                 PlayLocalAssetClip("night_soothe.ogg");
                 app.Schedule([this]() {
                     vTaskDelay(pdMS_TO_TICKS(2500));
                     EnterTapDeepSleep();
                 });
-            }
-            return;
-        }
-
-        const bool online = NetworkLooksOnline();
-        network_was_online_.store(online, std::memory_order_relaxed);
-
-        // Deep sleep first tap (and menu-idle sleep wake): wake only, never "next".
-        const bool deep_sleep_wake = phase == memoria::PowerPhase::kDeepSleep ||
-                                     offline_menu_.from_menu_sleep();
-        if (deep_sleep_wake && state == kDeviceStateIdle) {
-            power.SetPhase(memoria::PowerPhase::kWifiHold);
-            wifi_hold_since_ms_.store(kWifiHoldNotArmed, std::memory_order_relaxed);
-            offline_menu_.ClearMenuSleepFlag();
-            ApplyOfflineMenuOutput(offline_menu_.OnDeepSleepWake(now_ms, online));
-            return;
-        }
-
-        if (offline_menu_.ConsumesTap() || (!online && state == kDeviceStateIdle)) {
-            auto out = offline_menu_.OnTap(now_ms, hold_ms, online, state == kDeviceStateIdle,
-                                           DeviceInConversation(state));
-            if (out.intercept) {
+                return;
+            case memoria::TapWakeAction::kOfflineMenu: {
+                auto out = offline_menu_.OnTap(now_ms, hold_ms, online, idle);
                 if (out.start_story || out.clip_count > 0) {
                     power.SetPhase(memoria::PowerPhase::kWifiHold);
                     wifi_hold_since_ms_.store(kWifiHoldNotArmed, std::memory_order_relaxed);
@@ -861,21 +834,14 @@ private:
                 ApplyOfflineMenuOutput(out);
                 return;
             }
-        }
-
-        const auto action = memoria::TapWakeActionFor(phase, state == kDeviceStateIdle, false);
-        ESP_LOGI(TAG, "screen tap action=%s", memoria::TapWakeActionName(action));
-        switch (action) {
             case memoria::TapWakeAction::kStartConversation:
-            case memoria::TapWakeAction::kResumeFromHold:
                 power.SetPhase(memoria::PowerPhase::kWaking);
                 wifi_hold_since_ms_.store(kWifiHoldNotArmed, std::memory_order_relaxed);
                 PlayLocalAssetClip("wo_zai_ne.ogg");
                 app.WakeWordInvoke("screen_tap");
                 return;
-            case memoria::TapWakeAction::kNightSoothing:
             case memoria::TapWakeAction::kIgnore:
-                break;
+                return;
         }
     }
 
@@ -1423,7 +1389,14 @@ public:
     }
 
     MemoriaEspVocat() : boot_button_(BOOT_BUTTON_GPIO) {
-        memoria::PowerPolicyRegistry::GetInstance().LoadFromNvs();
+        auto& power = memoria::PowerPolicyRegistry::GetInstance();
+        power.LoadFromNvs();
+        if (esp_reset_reason() == ESP_RST_DEEPSLEEP) {
+            const std::uint32_t now_ms =
+                static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+            ApplyOfflineMenuOutput(offline_menu_.OnDeepSleepWake(
+                now_ms, power.in_quiet_hours(BeijingMinuteNowOrZero())));
+        }
         InitializeI2c();
         uint8_t pcb_version = DetectPcbVersion();
         InitializeCharge();

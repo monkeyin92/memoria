@@ -5,6 +5,7 @@
 正式固件发布前必须逐条清掉。每条与代码里的 `TODO(release-blocker):` 标记一字不差，`firmware/esp32/tests/test_release_blockers.py` 核对两边一致：代码里还有标记，这里就不能勾掉或删掉。
 
 - [ ] TODO(release-blocker): remove USB serial wake before final firmware; it opens the mic without a screen tap
+- [ ] TODO(release-blocker): offline clips use a trial/demo-only Doubao voice; clear Volcengine terms or re-voice before final firmware
 
 ## 当前生产快照
 

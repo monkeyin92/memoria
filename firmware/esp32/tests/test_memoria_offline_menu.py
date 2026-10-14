@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import pathlib
 import shutil
+import struct
 import subprocess
 import tempfile
 
@@ -54,21 +55,33 @@ int main() {
             printf("ok mode=%s item=%u\n", memoria::OfflineModeName(menu.mode()), menu.menu_item());
         } else if (strncmp(line, "wake ", 5) == 0) {
             unsigned now = 0;
-            int online = 0;
-            if (sscanf(line + 5, "%u %d", &now, &online) != 2) return 2;
-            print_out(menu.OnDeepSleepWake(now, online != 0));
+            int quiet = 0;
+            if (sscanf(line + 5, "%u %d", &now, &quiet) != 2) return 2;
+            print_out(menu.OnDeepSleepWake(now, quiet != 0));
             printf("mode=%s\n", memoria::OfflineModeName(menu.mode()));
         } else if (strncmp(line, "down ", 5) == 0) {
             unsigned now = 0;
             int convo = 0;
             if (sscanf(line + 5, "%u %d", &now, &convo) != 2) return 2;
-            print_out(menu.OnNetworkDown(now, convo != 0));
+            // An offline edge needs a prior online sample. Discard that sample.
+            menu.OnNetworkSample(now, true, convo != 0);
+            print_out(menu.OnNetworkSample(now, false, convo != 0));
             printf("mode=%s\n", memoria::OfflineModeName(menu.mode()));
         } else if (strncmp(line, "up ", 3) == 0) {
             unsigned now = 0;
             if (sscanf(line + 3, "%u", &now) != 1) return 2;
-            print_out(menu.OnNetworkUp(now));
+            print_out(menu.OnNetworkSample(now, true, false));
             printf("mode=%s\n", memoria::OfflineModeName(menu.mode()));
+        } else if (strncmp(line, "net ", 4) == 0) {
+            unsigned now = 0;
+            int online = 0, convo = 0;
+            if (sscanf(line + 4, "%u %d %d", &now, &online, &convo) != 3) return 2;
+            print_out(menu.OnNetworkSample(now, online != 0, convo != 0));
+            printf("mode=%s\n", memoria::OfflineModeName(menu.mode()));
+        } else if (strncmp(line, "wants ", 6) == 0) {
+            int online = 0, idle = 0;
+            if (sscanf(line + 6, "%d %d", &online, &idle) != 2) return 2;
+            printf("%s\n", menu.WantsTap(online != 0, idle != 0) ? "yes" : "no");
         } else if (strncmp(line, "timer ", 6) == 0) {
             unsigned now = 0;
             if (sscanf(line + 6, "%u", &now) != 1) return 2;
@@ -76,9 +89,9 @@ int main() {
             printf("mode=%s item=%u\n", memoria::OfflineModeName(menu.mode()), menu.menu_item());
         } else if (strncmp(line, "tap ", 4) == 0) {
             unsigned now = 0, hold = 0;
-            int online = 0, idle = 0, convo = 0;
-            if (sscanf(line + 4, "%u %u %d %d %d", &now, &hold, &online, &idle, &convo) != 5) return 2;
-            print_out(menu.OnTap(now, hold, online != 0, idle != 0, convo != 0));
+            int online = 0, idle = 0;
+            if (sscanf(line + 4, "%u %u %d %d", &now, &hold, &online, &idle) != 4) return 2;
+            print_out(menu.OnTap(now, hold, online != 0, idle != 0));
             printf("mode=%s item=%u\n", memoria::OfflineModeName(menu.mode()), menu.menu_item());
         } else if (strncmp(line, "done ", 5) == 0) {
             unsigned now = 0;
@@ -261,18 +274,217 @@ def test_online_idle_tap_is_not_intercepted(tool: pathlib.Path) -> None:
     assert lines[2] == "mode=inactive item=1"
 
 
-def test_build_offline_stories_check_passes() -> None:
-    completed = subprocess.run(
-        ["python3", str(BUILD_SCRIPT), "--check-only"],
-        check=True,
+def test_awake_known_offline_tap_skips_20s_reconnect(tool: pathlib.Path) -> None:
+    lines = _run(
+        tool,
+        "reset",
+        "tap 1000 100 0 1 0",
+        "note 2000",
+        "timer 33000",
+        "tap 34000 100 0 1 0",
+    )
+    assert "offline-menu-idle-v1" in lines[4]
+    assert lines[5].startswith("mode=inactive")
+    joined = "\n".join(lines)
+    assert "awake_reconnecting" not in joined
+    assert "offline-wake-no-network-v1" in lines[6]
+    assert "offline-menu-intro-v2" in lines[6]
+    assert lines[7] == "mode=menu item=1"
+
+
+def test_deep_sleep_wake_arms_20s_reconnect_then_menu(tool: pathlib.Path) -> None:
+    lines = _run(tool, "reset", "wake 300 0", "wants 0 0", "tap 2000 100 0 0 0", "timer 20300")
+    assert lines[1].startswith("intercept=1 mode_clips=0")
+    assert lines[2] == "mode=awake_reconnecting"
+    assert lines[3] == "yes"
+    assert "offline-reconnecting-v1" in lines[4]
+    assert "offline-wake-no-network-v1" in lines[6]
+    assert "offline-menu-intro-v2" in lines[6]
+    assert lines[7].startswith("mode=menu item=1")
+
+
+def test_deep_sleep_wake_in_quiet_hours_stays_inactive(tool: pathlib.Path) -> None:
+    lines = _run(tool, "reset", "wake 300 1", "wants 0 0")
+    assert lines[1].startswith("intercept=0 mode_clips=0")
+    assert lines[2] == "mode=inactive"
+    assert lines[3] == "no"
+
+
+def test_deep_sleep_wake_reconnect_says_restored(tool: pathlib.Path) -> None:
+    lines = _run(tool, "reset", "wake 300 0", "up 1000")
+    assert lines[2] == "mode=awake_reconnecting"
+    assert "online-restored-v1" in lines[3]
+    assert "online-restored-chat-v1" in lines[3]
+    assert lines[4] == "mode=inactive"
+
+
+def test_cold_boot_samples_never_speak(tool: pathlib.Path) -> None:
+    lines = _run(tool, "reset", "net 1000 0 0", "net 4000 1 0")
+    assert lines[1].startswith("intercept=0 mode_clips=0")
+    assert lines[2] == "mode=inactive"
+    assert lines[3].startswith("intercept=0 mode_clips=0")
+    assert lines[4] == "mode=inactive"
+
+
+def test_idle_drop_restore_still_says_network_is_back(tool: pathlib.Path) -> None:
+    lines = _run(tool, "reset", "net 1000 1 0", "net 2000 0 0", "net 3000 1 0")
+    assert lines[1].startswith("intercept=0 mode_clips=0")
+    assert lines[2] == "mode=inactive"
+    assert lines[3].startswith("intercept=1 mode_clips=0")
+    assert lines[4] == "mode=standby_offline"
+    assert "online-restored-v1" in lines[5]
+    assert "online-restored-chat-v1" in lines[5]
+    assert lines[6] == "mode=inactive"
+
+
+def test_mid_conversation_drop_keeps_20s_reconnect(tool: pathlib.Path) -> None:
+    lines = _run(tool, "reset", "net 500 1 0", "net 1000 0 1", "timer 21000")
+    assert lines[1].startswith("intercept=0 mode_clips=0")
+    assert "offline-mid-drop-v2" in lines[3]
+    assert lines[4] == "mode=mid_reconnecting"
+    assert "offline-menu-intro-v2" in lines[5]
+    assert "offline-wake-no-network-v1" not in lines[5]
+    assert lines[6].startswith("mode=menu item=1")
+
+
+VOICE = {
+    "id": "zh_female_tianmeitaozi_uranus_bigtts",
+    "generated": "2026-10-14",
+    "terms": "trial/demo only pending Volcengine terms",
+}
+
+
+def _pack_script(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["python3", str(BUILD_SCRIPT), *args],
+        check=False,
         capture_output=True,
         text=True,
     )
-    assert "free_margin_bytes=" in completed.stdout
-    free = int(
-        next(line.split("=", 1)[1] for line in completed.stdout.splitlines() if line.startswith("free_margin_bytes="))
+
+
+def _ogg_bytes(rel: pathlib.Path) -> dict[str, bytes]:
+    return {path.relative_to(rel).as_posix(): path.read_bytes() for path in rel.rglob("*.ogg")}
+
+
+def _ogg_with_title(title: str) -> bytes:
+    vendor = b"memoria-test"
+    comment = f"TITLE={title}".encode()
+    return (
+        b"OggS"
+        + b"\x00" * 24
+        + b"OpusTags"
+        + struct.pack("<I", len(vendor))
+        + vendor
+        + struct.pack("<I", 1)
+        + struct.pack("<I", len(comment))
+        + comment
     )
-    assert free >= 512 * 1024
+
+
+def test_check_only_passes_with_production_pack() -> None:
+    completed = _pack_script("--check-only")
+    assert completed.returncode == 0, completed.stderr
+    fields = dict(line.split("=", 1) for line in completed.stdout.splitlines() if "=" in line)
+    assert int(fields["free_margin_bytes"]) >= 512 * 1024
+    assert fields["production_clips"] == "25"
+    assert fields["placeholder_clips"] == "0"
+
+
+def test_default_run_never_writes_audio_and_converges(tmp_path: pathlib.Path) -> None:
+    root = tmp_path / "assets"
+    shutil.copytree(BOARD_ASSETS, root)
+    before = _ogg_bytes(root)
+    first = _pack_script("--assets-root", str(root))
+    assert first.returncode == 0, first.stderr
+    manifests = {
+        rel: (root / rel).read_bytes()
+        for rel in ("stories/index.json", "offline_lines/index.json")
+    }
+    second = _pack_script("--assets-root", str(root))
+    assert second.returncode == 0, second.stderr
+    assert _ogg_bytes(root) == before
+    assert {
+        rel: (root / rel).read_bytes()
+        for rel in ("stories/index.json", "offline_lines/index.json")
+    } == manifests
+    script = BUILD_SCRIPT.read_text(encoding="utf-8")
+    assert "ffmpeg" not in script
+    assert "subprocess" not in script
+
+
+def test_placeholder_clip_fails_check(tmp_path: pathlib.Path) -> None:
+    root = tmp_path / "assets"
+    shutil.copytree(BOARD_ASSETS, root)
+    target = root / "stories" / "story_01.ogg"
+    blob = _ogg_with_title("story_01_placeholder")
+    target.write_bytes(blob)
+    completed = _pack_script("--assets-root", str(root))
+    assert completed.returncode == 1
+    assert "stories/story_01.ogg is a placeholder; copy the production clip" in completed.stderr
+    assert target.read_bytes() == blob
+
+
+def test_missing_stories_index_fails_check_only(tmp_path: pathlib.Path) -> None:
+    root = tmp_path / "assets"
+    shutil.copytree(BOARD_ASSETS, root)
+    prepared = _pack_script("--assets-root", str(root))
+    assert prepared.returncode == 0, prepared.stderr
+    index = root / "stories" / "index.json"
+    index.unlink()
+    completed = _pack_script("--assets-root", str(root), "--check-only")
+    assert completed.returncode == 1
+    assert "stories/index.json is stale; run build_offline_stories.py" in completed.stderr
+    assert not index.exists()
+
+
+def test_clip_without_opus_tags_is_not_production(tmp_path: pathlib.Path) -> None:
+    root = tmp_path / "assets"
+    shutil.copytree(BOARD_ASSETS, root)
+    target = root / "offline_lines" / "offline-menu-idle-v1.ogg"
+    blob = b"OggS" + b"\x00" * 32
+    target.write_bytes(blob)
+    completed = _pack_script("--assets-root", str(root))
+    assert completed.returncode == 1
+    assert "offline_lines/offline-menu-idle-v1.ogg: no OpusTags header" in completed.stderr
+    assert target.read_bytes() == blob
+    assert "placeholder_clips=0" in completed.stdout
+
+
+def test_missing_clip_fails_without_creating_it(tmp_path: pathlib.Path) -> None:
+    root = tmp_path / "assets"
+    shutil.copytree(BOARD_ASSETS, root)
+    target = root / "stories" / "story_03.ogg"
+    target.unlink()
+    completed = _pack_script("--assets-root", str(root))
+    assert completed.returncode == 1
+    assert "missing asset stories/story_03.ogg; copy the production clip" in completed.stderr
+    assert not target.exists()
+
+
+def test_hand_edited_manifest_fails_check_only(tmp_path: pathlib.Path) -> None:
+    root = tmp_path / "assets"
+    shutil.copytree(BOARD_ASSETS, root)
+    prepared = _pack_script("--assets-root", str(root))
+    assert prepared.returncode == 0, prepared.stderr
+    manifest = root / "stories" / "index.json"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8").replace("大熊和森林里的悄悄话", "一只会听的熊"),
+        encoding="utf-8",
+    )
+    completed = _pack_script("--assets-root", str(root), "--check-only")
+    assert completed.returncode == 1
+    assert "stories/index.json is stale; run build_offline_stories.py" in completed.stderr
+    assert "一只会听的熊" in manifest.read_text(encoding="utf-8")
+
+
+def test_manifests_record_production_voice() -> None:
+    for rel in ("stories/index.json", "offline_lines/index.json"):
+        manifest = json.loads((BOARD_ASSETS / rel).read_text(encoding="utf-8"))
+        assert manifest["voice"] == VOICE
+        entries = manifest["stories"] if "stories" in manifest else manifest["lines"]
+        assert entries
+        assert all(entry["placeholder"] is False for entry in entries)
 
 
 def test_offline_line_manifest_matches_pack() -> None:
@@ -284,10 +496,35 @@ def test_offline_line_manifest_matches_pack() -> None:
     assert ids[15] == "offline-menu-item-03-v2"
     assert ids[19] == "offline-menu-idle-v1"
     for entry in manifest["lines"]:
-        assert entry["placeholder"] is True
+        assert entry["placeholder"] is False
         filename = entry["file"]
         assert len(filename) <= 32
         assert (BOARD_ASSETS / "offline_lines" / filename).is_file()
+
+
+def test_offline_line_ids_match_header_and_script() -> None:
+    import importlib.util
+    import re
+
+    header = (MEMORIA_DIR / "memoria_offline_menu.h").read_text(encoding="utf-8")
+    consts = dict(
+        re.findall(
+            r'inline constexpr const char\* (k\w+) = "([a-z0-9-]+)";',
+            header,
+        )
+    )
+    start = header.index("inline constexpr const char* kOfflineLineIds[] = {")
+    end = header.index("};", start)
+    symbols = re.findall(r"\b(k[A-Za-z0-9]+)\b", header[start:end])
+    header_ids = [consts[name] for name in symbols if name in consts]
+    spec = importlib.util.spec_from_file_location("build_offline_stories", BUILD_SCRIPT)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    script_ids = [line_id for line_id, _ in mod.OFFLINE_LINES]
+    assert header_ids == script_ids
+    manifest = json.loads((BOARD_ASSETS / "offline_lines" / "index.json").read_text(encoding="utf-8"))
+    assert [entry["id"] for entry in manifest["lines"]] == script_ids
 
 
 def test_story_03_title_renamed() -> None:
