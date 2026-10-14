@@ -21,7 +21,7 @@
         <mp-icon name="note" tone="ink"></mp-icon>
         <view class="auth-fact-copy">
           <text class="auth-fact-title">保存对话摘要</text>
-          <text class="auth-fact-sub">按天查看，原话在入库前就去掉</text>
+          <text class="auth-fact-sub">家长可以按天查看，原话在入库前就去掉</text>
         </view>
       </view>
       <view class="auth-fact">
