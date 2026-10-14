@@ -50,7 +50,35 @@ def _uuid(value: str, *, field: str) -> uuid.UUID:
 
 
 class PostgresGuardianCrisisMixin:
-    """PostgreSQL persistence for guardian crisis alerts and push subscribe."""
+    """PostgreSQL persistence for guardian crisis alerts and push subscribe.
+
+    Pool and RLS helpers are implemented on ``PostgresGuardianStore``.
+    """
+
+    _maintenance_dsn: str | None
+    _worker_dsn: str | None
+
+    async def _ready_pool(self) -> asyncpg.Pool:
+        raise NotImplementedError
+
+    async def _ready_role_pool(
+        self,
+        *,
+        dsn: str | None,
+        pool_attr: str,
+        expected_role: str,
+        operation: str,
+    ) -> asyncpg.Pool:
+        raise NotImplementedError
+
+    @staticmethod
+    async def _set_api_context(
+        connection: asyncpg.Connection,
+        *,
+        actor_user_id: str,
+        subject_user_id: str,
+    ) -> None:
+        raise NotImplementedError
 
     @staticmethod
     def _notification(row: asyncpg.Record) -> GuardianNotification:
