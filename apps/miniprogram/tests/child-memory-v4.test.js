@@ -25,10 +25,19 @@ test("the archive leads the page with the design's three labels and footer, summ
     const text = visibleText(renderPage("pages/child-memory/index", harness.page.data, { tabBar: false }));
     assert.match(
       text,
-      /^长期记住的事 乐乐的记忆 机器人长期只记住这三件事，用来更自然地和孩子聊天。 称呼 乐乐 10 月 5 日 喜好 恐龙 10 月 14 日 画画 10 月 13 日 宠物名 小乐宝 10 月 9 日 除这三项外，不长期保存其他信息。 长期记忆 /,
+      /^长期记住的事 乐乐的记忆 机器人长期只记住这三件事，用来更自然地和孩子聊天。 称呼 乐乐 10 月 5 日 喜好 恐龙 10 月 14 日 画画 10 月 13 日 宠物名 小乐宝 10 月 9 日 除这三项外，不长期保存其他信息。 长期记忆 开启后，Memoria 会记住孩子提到的称呼、喜好和宠物名。你可以随时关闭，关闭后不再记新的内容。 清空长期记忆 近期摘要 讲了/,
     );
-    assert.match(text, / 清空长期记忆 近期摘要 讲了/);
     assert.doesNotMatch(text, /兴趣|小名|共 \d+ 条/);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("with no summaries yet the section explains when they appear", async () => {
+  const harness = await openChildMemory({ ...fx.archiveApi, ...fx.emptyMemoryApi });
+  try {
+    const text = visibleText(renderPage("pages/child-memory/index", harness.page.data, { tabBar: false }));
+    assert.match(text, / 近期摘要 星澜还没有记住乐乐的事 还没有记忆。孩子和 Memoria 聊过之后，这里会出现摘要。 孩子说的原话/);
   } finally {
     harness.restore();
   }
