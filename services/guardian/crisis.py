@@ -9,12 +9,13 @@ from typing import Literal, Protocol
 
 from services.archive.domain import EvidenceEvent, LifeArchivePort
 
-NotificationStatus = Literal["pending", "delivered", "failed", "no_subscription"]
+NotificationStatus = Literal["pending", "pin_only", "delivered", "failed", "no_subscription"]
 
 # Undelivered outbox rows stay pinned in the Mini Program until WeChat
-# delivery succeeds.  Delivered alerts remain listable on the guardian page
-# but no longer occupy the home/memory pin slot.
-PINNED_CRISIS_ALERT_STATUSES = frozenset({"pending", "failed", "no_subscription"})
+# delivery succeeds, and ``pin_only`` rows are never pushed so they stay
+# pinned.  Delivered alerts remain listable on the guardian page but no
+# longer occupy the home/memory pin slot.
+PINNED_CRISIS_ALERT_STATUSES = frozenset({"pending", "pin_only", "failed", "no_subscription"})
 
 
 def crisis_alert_is_pinned(status: str) -> bool:

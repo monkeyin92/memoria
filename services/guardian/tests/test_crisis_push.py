@@ -242,6 +242,7 @@ async def test_ledger_counts_acceptances_and_bans_void_the_balance(
 
 def test_undelivered_statuses_are_pinned_for_the_mini_program() -> None:
     assert crisis_alert_is_pinned("pending")
+    assert crisis_alert_is_pinned("pin_only")
     assert crisis_alert_is_pinned("failed")
     assert crisis_alert_is_pinned("no_subscription")
     assert not crisis_alert_is_pinned("delivered")
@@ -250,14 +251,16 @@ def test_undelivered_statuses_are_pinned_for_the_mini_program() -> None:
 
 def test_crisis_reach_breakdown_exposes_wechat_and_pin_rates() -> None:
     stats = crisis_reach_breakdown(
-        ("delivered", "delivered", "no_subscription", "failed", "pending")
+        ("delivered", "delivered", "no_subscription", "failed", "pending", "pin_only")
     )
-    assert stats.total == 5
+    assert (stats.total, stats.pending, stats.pin_only) == (6, 1, 1)
     assert stats.settled == 4
     assert stats.wechat_delivery_rate == 0.5
     assert stats.pin_fallback_rate == 0.5
     assert stats.push_or_pin_rate == 1.0
     assert crisis_reach_breakdown(()).wechat_delivery_rate is None
+    with pytest.raises(ValueError, match="unknown crisis delivery status: retry"):
+        crisis_reach_breakdown(("delivered", "retry"))
 
 
 @pytest.mark.asyncio

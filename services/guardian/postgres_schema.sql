@@ -379,7 +379,7 @@ CREATE TABLE IF NOT EXISTS guardian_notification_outbox (
     guardian_user_id TEXT NOT NULL,
     channel TEXT NOT NULL CHECK (channel = 'wechat_subscription'),
     status TEXT NOT NULL CHECK (
-        status IN ('pending', 'delivered', 'failed', 'no_subscription')
+        status IN ('pending', 'pin_only', 'delivered', 'failed', 'no_subscription')
     ),
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
     created_at TIMESTAMPTZ NOT NULL,
@@ -420,13 +420,13 @@ BEGIN
         SELECT 1 FROM pg_constraint
         WHERE conrelid = 'guardian_notification_outbox'::regclass
           AND conname = 'guardian_notification_outbox_status_check'
-          AND pg_get_constraintdef(oid) LIKE '%no_subscription%'
+          AND pg_get_constraintdef(oid) LIKE '%pin_only%'
     ) THEN
         ALTER TABLE guardian_notification_outbox
             DROP CONSTRAINT IF EXISTS guardian_notification_outbox_status_check;
         ALTER TABLE guardian_notification_outbox
             ADD CONSTRAINT guardian_notification_outbox_status_check CHECK (
-                status IN ('pending', 'delivered', 'failed', 'no_subscription')
+                status IN ('pending', 'pin_only', 'delivered', 'failed', 'no_subscription')
             );
     END IF;
 END

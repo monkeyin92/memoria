@@ -390,3 +390,29 @@ async def test_postgres_schema_upgrades_a_pre_delivery_outbox_in_place() -> None
         assert await worker.run_once() == 1
         notifications = await store.guardian_notifications(guardian_user_id="pg-guardian")
         assert [item.status for item in notifications] == ["no_subscription"]
+
+
+async def test_postgres_schema_upgrade_admits_pin_only_on_a_no_subscription_outbox() -> None:
+    async with _guardian_database() as (store, bootstrap_dsn, _api_dsn):
+        await _link(store)
+        await _crisis(store, turn_id=7)
+        schema = (
+            Path(__file__).resolve().parents[1] / "postgres_schema.sql"
+        ).read_text(encoding="utf-8")
+        bootstrap = await asyncpg.connect(bootstrap_dsn)
+        try:
+            await bootstrap.execute(
+                """
+                ALTER TABLE guardian_notification_outbox
+                    DROP CONSTRAINT guardian_notification_outbox_status_check,
+                    ADD CONSTRAINT guardian_notification_outbox_status_check CHECK (
+                        status IN ('pending', 'delivered', 'failed', 'no_subscription')
+                    );
+                """
+            )
+            await bootstrap.execute(schema)
+            await bootstrap.execute("UPDATE guardian_notification_outbox SET status = 'pin_only'")
+        finally:
+            await bootstrap.close()
+        notifications = await store.guardian_notifications(guardian_user_id="pg-guardian")
+        assert [item.status for item in notifications] == ["pin_only"]
