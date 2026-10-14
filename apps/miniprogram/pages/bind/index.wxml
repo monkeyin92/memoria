@@ -73,11 +73,11 @@
         </picker>
         <view class="setting-row">
           <view><text class="setting-name">学习指导</text><text class="setting-desc">先引导步骤，不直接代做作业</text></view>
-          <switch checked="{{form.tutorEnabled}}" data-key="tutorEnabled" bindchange="onSwitch" color="#326e70" />
+          <switch checked="{{form.tutorEnabled}}" data-key="tutorEnabled" bindchange="onSwitch" color="#4A52C9" />
         </view>
         <view class="setting-row">
           <view><text class="setting-name">英语口语陪练</text><text class="setting-desc">开口练习与即时反馈</text></view>
-          <switch checked="{{form.englishPracticeEnabled}}" data-key="englishPracticeEnabled" bindchange="onSwitch" color="#326e70" />
+          <switch checked="{{form.englishPracticeEnabled}}" data-key="englishPracticeEnabled" bindchange="onSwitch" color="#4A52C9" />
         </view>
         <picker range="{{sessionMinuteOptions}}" value="{{sessionMinuteIndex}}" bindchange="onSessionMinutesChange">
           <view class="picker-row"><text class="picker-label">单次使用时长</text><text class="picker-value">{{sessionMinuteOptions[sessionMinuteIndex]}} 分钟</text></view>
@@ -114,7 +114,7 @@
       <block wx:if="{{declaredMode === 'child_for_parent'}}">
         <view class="setting-row">
           <view><text class="setting-name">我是购买者 / 设备管理员</text><text class="setting-desc">管理网络、固件与绑定，不代表可以读取父母私人内容</text></view>
-          <switch checked="{{form.adminIsBuyer}}" data-key="adminIsBuyer" bindchange="onSwitch" color="#326e70" />
+          <switch checked="{{form.adminIsBuyer}}" data-key="adminIsBuyer" bindchange="onSwitch" color="#4A52C9" />
         </view>
         <text class="field-label">使用者备注 *</text>
         <input class="field-input" value="{{form.parentNickname}}" placeholder="例如：老爸、妈妈" placeholder-class="field-placeholder" maxlength="{{maxSubjectLabel}}" data-key="parentNickname" bindinput="onFieldInput" />
@@ -137,7 +137,7 @@
         <text class="caption">家庭名称与其他成员可以稍后添加。</text>
         <view class="setting-row">
           <view><text class="setting-name">共用同一位 AI 角色</text><text class="setting-desc">成员档案仍然各自独立</text></view>
-          <switch checked="{{form.sharedPersonaEnabled}}" data-key="sharedPersonaEnabled" bindchange="onSwitch" color="#326e70" />
+          <switch checked="{{form.sharedPersonaEnabled}}" data-key="sharedPersonaEnabled" bindchange="onSwitch" color="#4A52C9" />
         </view>
         <text class="form-note">每位成员都有自己独立的档案；私人记忆、家庭共享记忆与待确认的共同记忆分开管理，家庭管理员不能读取成员的私人记忆。成员邀请与确认由系统完成。</text>
       </block>

@@ -30,7 +30,6 @@
   align-items: center;
   gap: 12rpx;
   margin-top: 12rpx;
-  color: #474e54;
   color: var(--mp-ink-2);
   font-size: 22rpx;
 }
@@ -76,7 +75,6 @@
 }
 
 .picker-value {
-  color: #285c5e;
   color: var(--mp-accent);
 }
 

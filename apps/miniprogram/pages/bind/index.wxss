@@ -42,7 +42,6 @@
   display: inline-flex;
   align-items: center;
   min-height: 88rpx;
-  color: #285c5e;
   color: var(--mp-accent);
   font-size: 28rpx;
   font-weight: 500;
@@ -76,7 +75,6 @@
 .choice-desc {
   display: block;
   margin-top: 8rpx;
-  color: #474e54;
   color: var(--mp-ink-2);
   font-size: 24rpx;
   line-height: 1.6;
@@ -86,7 +84,6 @@
 .form-note {
   display: block;
   margin-top: 24rpx;
-  color: #474e54;
   color: var(--mp-ink-2);
   font-size: 22rpx;
   line-height: 1.65;
@@ -115,7 +112,6 @@
 }
 
 .readonly-hint {
-  color: #474e54;
   color: var(--mp-ink-2);
   font-size: 24rpx;
 }
@@ -134,7 +130,6 @@
 }
 
 .picker-value {
-  color: #285c5e;
   color: var(--mp-accent);
   font-size: 26rpx;
 }
@@ -208,7 +203,6 @@
 .offer-desc {
   display: block;
   margin-top: 6rpx;
-  color: #474e54;
   color: var(--mp-ink-2);
   font-size: 24rpx;
   line-height: 1.55;
@@ -263,7 +257,6 @@
 .done-note {
   display: block;
   margin-top: 22rpx;
-  color: #474e54;
   color: var(--mp-ink-2);
   font-size: 23rpx;
   line-height: 1.65;

@@ -6,7 +6,6 @@
   display: inline-flex;
   align-items: center;
   min-height: 88rpx;
-  color: #285c5e;
   color: var(--mp-accent);
   font-size: 28rpx;
   font-weight: 500;
@@ -41,7 +40,6 @@
 .ds-sub {
   display: block;
   margin-top: 12rpx;
-  color: #474e54;
   color: var(--mp-ink-2);
   font-size: 24rpx;
 }
@@ -69,7 +67,6 @@
 
 .dim-meta {
   flex: none;
-  color: #5a6167;
   color: var(--mp-ink-3);
   font-size: 24rpx;
 }
@@ -87,7 +84,6 @@
 }
 
 .fold-chevron {
-  color: #5a6167;
   color: var(--mp-ink-3);
   transition: transform 250ms;
 }
@@ -99,7 +95,6 @@
 .fold-summary {
   display: block;
   padding: 16rpx 0;
-  color: #474e54;
   color: var(--mp-ink-2);
   font-size: 26rpx;
 }

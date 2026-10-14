@@ -67,7 +67,6 @@
   border: 4rpx solid rgba(30, 45, 70, 0.12);
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.8);
-  color: #5a6167;
   color: var(--mp-ink-3);
   font-size: 24rpx;
   font-weight: 600;
@@ -110,7 +109,6 @@
 }
 
 .step-item.todo .step-title {
-  color: #5a6167;
   color: var(--mp-ink-3);
   font-weight: 500;
 }
@@ -118,14 +116,12 @@
 .step-desc {
   display: block;
   margin-top: 8rpx;
-  color: #474e54;
   color: var(--mp-ink-2);
   font-size: 24rpx;
   line-height: 1.6;
 }
 
 .step-item.todo .step-desc {
-  color: #5a6167;
   color: var(--mp-ink-3);
 }
 
@@ -157,7 +153,6 @@
 .flow-status {
   display: block;
   margin: 10rpx 0;
-  color: #474e54;
   color: var(--mp-ink-2);
   font-size: 24rpx;
 }
@@ -212,7 +207,6 @@
 .wifi-meta {
   display: block;
   margin-top: 6rpx;
-  color: #474e54;
   color: var(--mp-ink-2);
   font-size: 21rpx;
 }
@@ -251,7 +245,6 @@
 .form-note {
   display: block;
   margin-top: 20rpx;
-  color: #474e54;
   color: var(--mp-ink-2);
   font-size: 22rpx;
   line-height: 1.65;
@@ -265,7 +258,6 @@
   display: flex;
   align-items: center;
   min-height: 64rpx;
-  color: #5a6167;
   color: var(--mp-ink-3);
 }
 
@@ -374,7 +366,6 @@
 .done-note {
   display: block;
   margin-top: 20rpx;
-  color: #474e54;
   color: var(--mp-ink-2);
   font-size: 24rpx;
   line-height: 1.7;
@@ -390,7 +381,6 @@
   margin: 28rpx auto 0;
   padding: 10rpx 20rpx;
   border: none;
-  color: #a3221b;
   color: var(--mp-rust);
   background: transparent;
   font-size: 24rpx;

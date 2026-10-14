@@ -11,7 +11,7 @@
     <view class="auth-card-head auth-card-head-icon">
       <mp-icon name="wave"></mp-icon>
       <text class="l2-card-title">{{consent ? '原始语音归档已授权' : '原始语音归档'}}</text>
-      <switch checked="{{consent ? true : false}}" color="#326e70" disabled="{{!configOpen}}" bindchange="onRawAudioSwitch" aria-label="原始语音归档" />
+      <switch checked="{{consent ? true : false}}" color="#4A52C9" disabled="{{!configOpen}}" bindchange="onRawAudioSwitch" aria-label="原始语音归档" />
     </view>
     <text class="setting-desc">原始语音用于整理回顾，默认 7 天后自动删除。云端加密传输与存储，只有你能查看。</text>
     <text wx:if="{{consent}}" class="setting-desc">授权时间：{{consent.granted_at}}</text>
@@ -28,7 +28,7 @@
     <view class="auth-card-head auth-card-head-icon">
       <mp-icon name="note"></mp-icon>
       <text class="l2-card-title">记忆档案</text>
-      <switch checked="{{memoryOn}}" color="#326e70" bindchange="onMemorySwitch" aria-label="记忆档案" />
+      <switch checked="{{memoryOn}}" color="#4A52C9" bindchange="onMemorySwitch" aria-label="记忆档案" />
     </view>
     <text class="setting-desc">你确认过的「记住的事」会放进档案，陪伴才有连续性。档案加密存储在云端，仅家庭管理员可查看。</text>
     <text class="setting-desc">待确认草稿不会自动变成记忆；日常回顾由 AI 整理，可能有偏差。</text>

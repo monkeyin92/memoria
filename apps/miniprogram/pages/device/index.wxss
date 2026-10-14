@@ -140,18 +140,9 @@
   margin-bottom: 12rpx;
 }
 
-/* L1 hero 胶囊行：复用全局 .pill，只补间距 */
-.hero-pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12rpx;
-  margin-top: 20rpx;
-}
-
 /* L2 音量卡：复用全局 l2-card / slider，只补数字与刻度 */
 .volume-num {
   flex-shrink: 0;
-  color: #16191c;
   color: var(--mp-ink);
   font-size: 40rpx;
   font-weight: 600;
@@ -162,27 +153,25 @@
   align-items: center;
   justify-content: space-between;
   margin-top: 8rpx;
-  color: #5a6167;
   color: var(--mp-ink-3);
   font-size: 22rpx;
 }
 
 /* L3 行内数值：唤醒词、网络、备注的当前值 */
 .row-value {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
-  max-width: none;
+  max-width: 50%;
   overflow: visible;
   color: var(--mp-ink-2);
-  font-size: 26rpx;
-  line-height: 1.45;
+  font-size: var(--mp-type-caption);
+  line-height: var(--mp-lh-caption);
   text-align: right;
   white-space: normal;
   word-break: break-word;
 }
 
 .row-value-warn {
-  color: #8a4c10;
   color: var(--mp-sun);
 }
 
@@ -192,7 +181,6 @@
 
 .row-title-danger,
 .row-copy .row-title-danger {
-  color: #a3221b;
   color: var(--mp-rust);
 }
 
@@ -209,20 +197,18 @@
   flex: 1 1 180rpx;
   min-height: 84rpx;
   padding: 18rpx 20rpx;
-  border: 2rpx solid rgba(30, 45, 70, 0.12);
-  border-radius: 24rpx;
-  background: rgba(255, 255, 255, 0.7);
-  color: #16191c;
+  border: 2rpx solid var(--mp-line);
+  border-radius: var(--mp-radius-icon);
+  background: var(--mp-surface);
   color: var(--mp-ink);
-  font-size: 26rpx;
+  font-size: var(--mp-type-caption);
   line-height: 1.4;
   text-align: center;
 }
 
 .option-chip-on {
-  border-color: #326e70;
-  background: rgba(227, 237, 236, 0.9);
-  color: #285c5e;
+  border-color: var(--mp-accent);
+  background: var(--mp-accent-soft);
   color: var(--mp-accent);
   font-weight: 600;
 }
@@ -251,7 +237,6 @@
 }
 
 .summary-key {
-  color: #474e54;
   color: var(--mp-ink-2);
 }
 
@@ -297,14 +282,14 @@
   min-height: 112rpx;
   margin-top: 16rpx;
   padding: 20rpx 24rpx;
-  border: 2rpx solid rgba(30, 45, 70, 0.1);
-  border-radius: 28rpx;
-  background: rgba(255, 255, 255, 0.62);
+  border: 2rpx solid var(--mp-line);
+  border-radius: var(--mp-radius-inset);
+  background: var(--mp-surface);
 }
 
 .sheet-opt.on {
-  border-color: #326e70;
-  background: rgba(227, 237, 236, 0.86);
+  border-color: var(--mp-accent);
+  background: var(--mp-accent-soft);
 }
 
 .sheet-opt .opt-check {
@@ -314,7 +299,6 @@
   flex-shrink: 0;
   width: 36rpx;
   height: 36rpx;
-  color: #285c5e;
   color: var(--mp-accent);
 }
 
@@ -322,18 +306,15 @@
   display: flex;
 }
 
-.sheet-opt.on .choice-radio { border-color: #172f43; background: #172f43; box-shadow: inset 0 0 0 8rpx #fff; }
-
-/* hero 是深色品牌底，胶囊文字保持浅青 */
-.hero-pills .pill-teal { color: #9fe3d8; }
+.sheet-opt.on .choice-radio { border-color: var(--mp-accent); background: var(--mp-accent); box-shadow: inset 0 0 0 8rpx var(--mp-surface); }
 
 /* 使用时段：卡片标题行的「修改」与抽屉里的选择行 */
 .limits-edit { margin: 0; padding: 0 0 0 24rpx; }
 .limits-quiet-label {
   display: block;
   margin: 8rpx 0 0;
-  color: #1e2d46;
-  font-size: 28rpx;
+  color: var(--mp-ink);
+  font-size: var(--mp-type-body);
   font-weight: 600;
   line-height: 1.45;
 }
@@ -342,7 +323,7 @@
   align-items: center;
   justify-content: space-between;
   min-height: 96rpx;
-  border-bottom: 1rpx solid rgba(30, 45, 70, 0.08);
+  border-bottom: 2rpx solid var(--mp-line);
 }
 
 /* 唤醒方式：两个开关（唤醒词 / 点击屏幕）与说明 */
@@ -358,8 +339,7 @@
   gap: 24rpx;
   min-height: 120rpx;
   padding: 16rpx 0;
-  border-bottom: 1rpx solid rgba(30, 45, 70, 0.08);
   border-bottom: 1rpx solid var(--mp-line);
 }
 .wake-mode-note { margin-top: 16rpx; }
-.wake-mode-note-warn { color: #8a4c10; color: var(--mp-sun); }
+.wake-mode-note-warn { color: var(--mp-sun); }

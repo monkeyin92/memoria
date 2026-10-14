@@ -87,7 +87,7 @@
           </view>
           <switch
             checked="{{consent.active}}"
-            color="#326e70"
+            color="#4A52C9"
             disabled="{{working || !configOpen}}"
             data-link-id="{{item.linkId}}"
             data-kind="{{consent.kind}}"
@@ -120,7 +120,7 @@
           </view>
           <switch
             checked="{{consent.active}}"
-            color="#326e70"
+            color="#4A52C9"
             disabled="{{working || !!item.loadError}}"
             data-person-id="{{item.personId}}"
             data-kind="{{consent.kind}}"
