@@ -1,41 +1,40 @@
 <view class="page-shell sub-page" style="{{statusBarStyle}}">
   <view class="nav-back" bindtap="goBack" aria-label="返回"><image class="nav-back-icon" src="/assets/ui/v4/back-strong.svg" /></view>
-  <view class="page-head">
-    <text class="page-title">隐私授权</text>
-    <text class="page-subtitle">每一项，都可以随时收回</text>
-  </view>
+  <text class="eyebrow">授权与隐私</text>
+  <text class="page-title">隐私授权</text>
+  <text class="page-lede">每一项都单独授权，也都可以随时收回。</text>
   <text wx:if="{{loading}}" class="loading-text">正在读取授权状态…</text>
   <text wx:if="{{error}}" class="error-text">{{error}}</text>
 
-  <view class="l2-card">
-    <view class="auth-card-head auth-card-head-icon">
-      <mp-icon name="wave"></mp-icon>
-      <text class="l2-card-title">{{consent ? '原始语音归档已授权' : '原始语音归档'}}</text>
+  <text class="group-label">原始语音</text>
+  <view class="card privacy-card">
+    <view class="privacy-head">
+      <mp-icon name="wave" tone="ink"></mp-icon>
+      <view class="row-copy">
+        <text class="setting-name">原始语音归档</text>
+        <text class="setting-desc">{{consent ? consentLabel : '默认关闭'}}</text>
+      </view>
       <switch checked="{{consent ? true : false}}" color="#4A52C9" disabled="{{!configOpen}}" bindchange="onRawAudioSwitch" aria-label="原始语音归档" />
     </view>
-    <text class="setting-desc">原始语音用于整理回顾，默认 7 天后自动删除。云端加密传输与存储，只有你能查看。</text>
-    <text wx:if="{{consent}}" class="setting-desc">授权时间：{{consent.granted_at}}</text>
-    <text wx:if="{{consent}}" class="setting-desc">策略：{{consent.retention_policy}}</text>
-    <text wx:else class="setting-desc">机器人的对话音频是否归档需要单独明确同意。小程序只做授权管理，不采集或中转实时音频。</text>
-    <text wx:if="{{!configOpen}}" class="setting-desc">{{configNote}}</text>
-    <view class="auth-card-foot">
-      <button wx:if="{{!consent}}" class="primary-button btn-sm empty-button" loading="{{acting}}" disabled="{{!configOpen}}" bindtap="grant">明确授权原始语音归档</button>
-      <button wx:else class="danger-link" disabled="{{!configOpen}}" bindtap="revoke">撤回并删除</button>
+    <text class="privacy-copy">开启后，机器人对话的原始语音会保存在你的账号下，直到你撤回授权。撤回时服务端会删除这些录音。</text>
+    <text wx:if="{{!configOpen}}" class="privacy-copy">{{configNote}}</text>
+    <view class="privacy-foot">
+      <button wx:if="{{!consent}}" class="primary-button" loading="{{acting}}" disabled="{{!configOpen}}" bindtap="grant">明确授权原始语音归档</button>
+      <button wx:else class="danger-link" disabled="{{!configOpen}}" bindtap="revoke">撤回并删除录音</button>
     </view>
   </view>
 
-  <view class="l2-card">
-    <view class="auth-card-head auth-card-head-icon">
-      <mp-icon name="note"></mp-icon>
-      <text class="l2-card-title">记忆档案</text>
-      <switch checked="{{memoryOn}}" color="#4A52C9" bindchange="onMemorySwitch" aria-label="记忆档案" />
-    </view>
-    <text class="setting-desc">你确认过的「记住的事」会放进档案，陪伴才有连续性。档案加密存储在云端，仅家庭管理员可查看。</text>
-    <text class="setting-desc">待确认草稿不会自动变成记忆；日常回顾由 AI 整理，可能有偏差。</text>
-    <view class="auth-card-foot">
-      <button class="danger-link" bindtap="revokeMemoryTip">撤回并删除</button>
+  <text class="group-label">长期记忆</text>
+  <view class="list">
+    <view class="list-row" bindtap="openChildMemory">
+      <mp-icon name="note" tone="ink"></mp-icon>
+      <view class="row-copy">
+        <text class="row-title">孩子的长期记忆</text>
+        <text class="row-meta">只记称呼、兴趣和小名，在「孩子的记忆」里开关</text>
+      </view>
+      <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
     </view>
   </view>
 
-  <text class="privacy-note">撤回应立即生效，可证明删除。&#10;删除范围与完成时间，会以书面回执告知。</text>
+  <text class="privacy-note">小程序只管理授权，不采集或中转实时音频。</text>
 </view>

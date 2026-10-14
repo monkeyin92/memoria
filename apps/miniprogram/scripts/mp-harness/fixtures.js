@@ -112,6 +112,13 @@ const guardianApi = {
   getGuardianSummary: async (minorUserId) => normalizeGuardianSummary(GUARDIAN_SUMMARY, minorUserId),
 };
 
+const RAW_VOICE_CONSENT = {
+  consent_id: "rv_1",
+  policy_version: "raw-voice-archive-v1",
+  retention_policy: "account_lifetime",
+  granted_at: "2026-10-04T09:30:00+08:00",
+};
+
 const PINNED_ALERT = {
   notification_id: "n1",
   minor_user_id: "p_child",
@@ -155,6 +162,7 @@ function baseApi(overrides = {}) {
     getGuardianConsents: async () => ({ items: [] }),
     getDeliveredCapabilities: async () => ({ items: [] }),
     getGuardianPushConfig: async () => ({ enabled: false }),
+    getRawVoiceConsent: async () => ({ consent: null }),
     getGuardianChildDays: async () => ({
       items: [3, 2, 1, 2, 1, 4].map((count, offset) => ({ day: dayKey(offset), message_count: count })),
     }),
@@ -183,6 +191,7 @@ module.exports = {
   IDENTITY,
   NOW,
   PINNED_ALERT,
+  RAW_VOICE_CONSENT,
   RECAP,
   RUNTIME_PROFILE,
   STORAGE,

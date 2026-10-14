@@ -19,6 +19,11 @@ const PAGES = [
   { slug: "persona-custom", page: "pages/persona-custom/index", harness: authed() },
   { slug: "auth", page: "pages/auth/index", harness: guest(), query: { reason: "view_device" } },
   { slug: "privacy", page: "pages/privacy/index", harness: authed() },
+  {
+    slug: "privacy-granted",
+    page: "pages/privacy/index",
+    harness: authed({ getRawVoiceConsent: async () => ({ consent: fx.RAW_VOICE_CONSENT }) }),
+  },
   { slug: "digital-self", page: "pages/digital-self/index", harness: authed() },
   { slug: "child-memory", page: "pages/child-memory/index", harness: authed(), query: { minorId: "p_child", name: "乐乐" } },
   { slug: "child-memory-archive", page: "pages/child-memory/index", harness: authed(fx.archiveApi), query: { minorId: "p_child", name: "乐乐" }, actions: [["showArchive"]] },

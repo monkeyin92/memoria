@@ -8,6 +8,13 @@ const {
   configActionGate,
   CONFIG_GATE_PENDING_MESSAGE,
 } = require("../../utils/device-binding");
+
+function grantedLabel(consent) {
+  const at = new Date(typeof consent?.granted_at === "string" ? consent.granted_at : NaN);
+  if (Number.isNaN(at.getTime())) return "已授权";
+  return `${at.getFullYear()}年${at.getMonth() + 1}月${at.getDate()}日授权`;
+}
+
 Page({
   data: {
     statusBarStyle: statusBarStyle(),
@@ -17,7 +24,7 @@ Page({
     acting: false,
     error: "",
     consent: null,
-    memoryOn: true,
+    consentLabel: "",
   },
 
   goBack() {
@@ -57,7 +64,8 @@ Page({
       acting: false,
       error: "",
       consent: null,
-          });
+      consentLabel: "",
+    });
   },
 
   async refreshConfigGate() {
@@ -69,13 +77,8 @@ Page({
     return seam;
   },
 
-  async refreshVoiceGate() {
-    const seam = await configActionGate("voice_sample_revoke");
-    this.setData({
-      voiceConfigOpen: seam.allowed,
-      voiceConfigNote: seam.allowed ? "" : seam.message,
-    });
-    return seam;
+  _showConsent(consent) {
+    this.setData({ consent: consent || null, consentLabel: consent ? grantedLabel(consent) : "" });
   },
 
   async loadConsent() {
@@ -88,6 +91,7 @@ Page({
       this.setData({
         loading: false,
         consent: null,
+        consentLabel: "",
         error: capabilityGateMessage(gate, contracts.Capability.RawAudioRetention),
       });
       return;
@@ -97,7 +101,7 @@ Page({
     try {
       const result = await api.getRawVoiceConsent();
       if (!api.isAuthEpochCurrent(authEpoch)) return;
-      this.setData({ consent: result.consent || null });
+      this._showConsent(result?.consent);
     } catch (error) {
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ error: error?.message || "授权状态无法加载。" });
@@ -125,7 +129,7 @@ Page({
     try {
       const consent = await api.grantRawVoiceConsent();
       if (!api.isAuthEpochCurrent(authEpoch)) return;
-      this.setData({ consent });
+      this._showConsent(consent);
       wx.showToast({ title: "授权已记录", icon: "success" });
     } catch (error) {
       if (!api.isAuthEpochCurrent(authEpoch)) return;
@@ -141,20 +145,9 @@ Page({
     if (!on && this.data.consent) this.revoke();
   },
 
-  onMemorySwitch(event) {
-    this.setData({ memoryOn: !!(event && event.detail && event.detail.value) });
+  openChildMemory() {
+    wx.navigateTo({ url: "/pages/child-memory/index" });
   },
-
-
-  revokeMemoryTip() {
-    wx.showModal({
-      title: "撤回记忆档案授权",
-      content: "撤回后将删除已归档的记忆内容，删除范围与完成时间会以书面回执告知。",
-      showCancel: false,
-      confirmText: "知道了",
-    });
-  },
-
 
   async revoke() {
     const seam = await this.refreshConfigGate();
@@ -166,7 +159,7 @@ Page({
       wx.showModal({
         title: "撤回原始语音授权",
         content: "撤回会请求服务端删除受该授权保护的原始语音对象，过程可能需要重试。",
-        confirmColor: "#ba4255",
+        confirmColor: "#9A4732",
         success: (result) => resolve(result.confirm),
       });
     });
@@ -176,7 +169,7 @@ Page({
     try {
       await api.revokeRawVoiceConsent();
       if (!api.isAuthEpochCurrent(authEpoch)) return;
-      this.setData({ consent: null });
+      this._showConsent(null);
       wx.showToast({ title: "已撤回授权", icon: "success" });
     } catch (error) {
       if (!api.isAuthEpochCurrent(authEpoch)) return;
