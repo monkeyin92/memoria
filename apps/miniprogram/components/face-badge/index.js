@@ -1,5 +1,5 @@
-// 伙伴吉祥物形象。图片来自 assets/mascots/<id>/<mood>.png（由 assets/companions/<id>/ 的表情帧压缩而来），
-// 未知角色（如自定义人格 cu_*）回落到默认伙伴。plain 去掉底板，用于大尺寸 hero；dim 用于设备离线。
+// 角色吉祥物形象。图片来自 assets/mascots/<id>/<mood>.png（由 assets/companions/<id>/ 的表情帧压缩而来），
+// 未知角色（如自定义人格 cu_*）回落到默认角色。plain 去掉底板，用于大尺寸 hero；dim 用于设备离线。
 // animated 打开空闲表情循环：平时是默认表情，隔几秒随机换一个表情再回来；点一下会笑。
 const { companionById } = require("../../utils/companions");
 

@@ -32,7 +32,7 @@
           <text class="row-title">{{item.label}}</text>
           <text class="row-meta">{{item.modeLabel}}</text>
         </view>
-        <text class="row-chevron">›</text>
+        <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
       </view>
       <text class="caption">切换设备不会赋予查看其他成员私密内容的权限。</text>
       <text wx:if="{{bindingSyncError}}" class="error-text">{{bindingSyncError}}</text>
@@ -174,7 +174,7 @@
             <text class="row-title">角色与声音</text>
             <text class="row-meta">{{personaName}} · {{personaVoice}}</text>
           </view>
-          <text class="row-chevron">›</text>
+          <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
         <view class="list-row" hover-class="{{online ? 'none' : 'list-row-hover'}}" bindtap="{{online ? '' : 'showConnectionHelp'}}">
           <view class="row-icon"><mp-icon name="wifi"></mp-icon></view>
@@ -182,7 +182,7 @@
             <text class="row-title">网络连接</text>
           </view>
           <text class="row-value {{online ? '' : 'row-value-warn'}}">{{online ? '已连接' : '未连接'}}</text>
-          <text wx:if="{{!online}}" class="row-chevron">›</text>
+          <image wx:if="{{!online}}" class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
       </view>
 
@@ -222,7 +222,7 @@
             <text class="row-meta">首页用这个称呼 TA，不按客厅、卧室这类房间来标记</text>
           </view>
           <text class="row-value">{{subjectAliasLabel || '未设置'}}</text>
-          <text class="row-chevron">›</text>
+          <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
         <view class="list-row" hover-class="list-row-hover" bindtap="openGuardian">
           <view class="row-icon"><mp-icon name="user"></mp-icon></view>
@@ -230,7 +230,7 @@
             <text class="row-title">家庭成员</text>
             <text class="row-meta">邀请与权限分别管理</text>
           </view>
-          <text class="row-chevron">›</text>
+          <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
         <view
           wx:for="{{personaRows}}"
@@ -246,7 +246,7 @@
             <text class="row-meta">{{item.source_label}} · 可选自建人格</text>
           </view>
           <text class="row-value">{{item.persona_name}}</text>
-          <text class="row-chevron">›</text>
+          <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
       </view>
       <text wx:if="{{personaRows.length > 0}}" class="caption">「角色与声音」里选的角色会自动分配给主要使用者；想用自建人格，在这里单独分配。分配从下一次对话起生效。</text>
@@ -338,7 +338,7 @@
             <text class="row-title">{{item.title}}</text>
             <text class="row-meta">{{item.description}}</text>
           </view>
-          <text class="row-chevron">›</text>
+          <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
       </view>
 
@@ -353,21 +353,21 @@
             <text class="row-title">重新配网</text>
             <text class="row-meta">换了 Wi‑Fi 时用，不解除绑定</text>
           </view>
-          <text class="row-chevron">›</text>
+          <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
         <view class="list-row" hover-class="list-row-hover" bindtap="openOnboarding">
           <view class="row-icon"><mp-icon name="dev"></mp-icon></view>
           <view class="row-copy">
             <text class="row-title">添加其他设备</text>
           </view>
-          <text class="row-chevron">›</text>
+          <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
         <view class="list-row" hover-class="list-row-hover" bindtap="toggleDiag">
           <view class="row-icon"><mp-icon name="note"></mp-icon></view>
           <view class="row-copy">
             <text class="row-title">设备信息与诊断</text>
           </view>
-          <text class="row-chevron">{{diagExpanded ? '﹀' : '›'}}</text>
+          <image class="row-chev row-chev-fold {{diagExpanded ? 'row-chev-open' : ''}}" src="/assets/ui/v4/chev-faint.svg" />
         </view>
         <view wx:if="{{diagExpanded}}" class="diagnostic">
           <view class="summary-row"><text class="summary-key">设备用途</text><text class="summary-value">{{bindingModeLabel}}</text></view>
@@ -390,7 +390,7 @@
             <text class="row-title row-title-danger">解除绑定</text>
             <text class="row-meta">停止记忆，再决定保留还是删除 TA 的数据</text>
           </view>
-          <text class="row-chevron">›</text>
+          <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
       </view>
 

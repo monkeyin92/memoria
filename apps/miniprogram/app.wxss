@@ -338,8 +338,9 @@ button[disabled] {
   font-size: var(--mp-type-caption);
   line-height: var(--mp-lh-caption);
 }
-.row-chevron { flex-shrink: 0; color: var(--mp-ink-4); font-size: var(--mp-type-title); line-height: 1; }
 .row-chev { flex-shrink: 0; width: 36rpx; height: 36rpx; }
+.row-chev-fold { transition: transform var(--mp-dur); }
+.row-chev-open { transform: rotate(90deg); }
 .row-icon {
   display: flex;
   align-items: center;

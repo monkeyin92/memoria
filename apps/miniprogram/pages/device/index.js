@@ -115,7 +115,7 @@ function personaSubjects(binding) {
 
 // 分配结果只用于展示：override 优先、binding 默认兜底，与服务端同一顺序。
 // 显示名来自同一份目录（内置 + 自建），未知 id 原样显示，不猜名字。
-// 「选TA陪伴」保存后，服务端把所选伙伴写成主要使用者的单独分配；与账号伙伴
+// 「选TA陪伴」保存后，服务端把所选角色写成主要使用者的单独分配；与账号角色
 // 一致的分配读作“跟随陪伴选择”，而不是一条来历不明的手动分配。
 function personaRows(binding, payload, options, accountCompanionId = "") {
   const labels = new Map((options || []).map((item) => [item.id, item.label]));
@@ -153,7 +153,7 @@ function personaRows(binding, payload, options, accountCompanionId = "") {
   });
 }
 
-// 人格选择器目录：内置伙伴在前，账号自建人格在后并显式标注。
+// 人格选择器目录：内置角色在前，账号自建人格在后并显式标注。
 function personaOptionItems(personas) {
   const custom = Array.isArray(personas?.custom_personas) ? personas.custom_personas : [];
   return [
@@ -934,7 +934,7 @@ Page({
       );
       const subjectAliasLabel = readSubjectLabel(binding);
       const speakerLabel = currentUserLabel(profile, candidates);
-      // 与首页、伙伴页同源：以账号选定的伙伴为准；Runtime Profile 读不到时也不回落成默认伙伴。
+      // 与首页、角色页同源：以账号选定的角色为准；Runtime Profile 读不到时也不回落成默认角色。
       const accountProfile =
         accountProfileResult.status === "fulfilled" ? accountProfileResult.value : null;
       const companion = companionById(
@@ -1106,7 +1106,7 @@ Page({
     this.loadDevice().finally(() => wx.stopPullDownRefresh());
   },
 
-  // 伙伴页是 tabBar 页，navigateTo 打不开它。
+  // 角色页是 tabBar 页，navigateTo 打不开它。
   openCompanion() {
     wx.switchTab({ url: "/pages/companion/index" });
   },

@@ -4,7 +4,7 @@ const { companions, companionById, defaultCompanionId } = require("../../utils/c
 const { requireLogin } = require("../../utils/auth-gate");
 const { readBindingManifest } = require("../../utils/device-binding");
 
-// 选定的伙伴也是已绑定设备的人格：服务端在保存后把它下发到设备，
+// 选定的角色也是已绑定设备的人格：服务端在保存后把它下发到设备，
 // 下一次对话起换声音，待机形象随后刷新。没有绑定设备时只提示已保存。
 function savedToastTitle() {
   return readBindingManifest() ? "已保存，设备将同步切换" : "已保存";

@@ -46,11 +46,3 @@
 .ds-pending {
   color: var(--mp-sun);
 }
-
-.ds-fold {
-  transition: transform var(--mp-dur);
-}
-
-.ds-fold-open {
-  transform: rotate(90deg);
-}

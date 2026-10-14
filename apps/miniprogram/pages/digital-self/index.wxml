@@ -43,7 +43,7 @@
         <text class="row-title">版本记录</text>
         <text class="row-meta">{{showEngineering ? '收起版本记录' : '已生成 ' + view.versionRows.length + ' 个版本'}}</text>
       </view>
-      <image class="row-chev ds-fold {{showEngineering ? 'ds-fold-open' : ''}}" src="/assets/ui/v4/chev-faint.svg" />
+      <image class="row-chev row-chev-fold {{showEngineering ? 'row-chev-open' : ''}}" src="/assets/ui/v4/chev-faint.svg" />
     </view>
     <block wx:if="{{showEngineering}}">
       <view wx:for="{{view.versionRows}}" wx:key="versionId" class="list-row">

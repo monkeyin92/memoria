@@ -5,6 +5,7 @@ const test = require("node:test");
 
 const root = path.join(__dirname, "..");
 const RAW_COLOR = /#[0-9a-fA-F]{3,8}\b|rgba?\(/g;
+const RAW_FONT_SIZE = /font-size:\s*[\d.]+(?:rpx|px)/g;
 
 function wxssFiles(dir) {
   return fs
@@ -16,6 +17,13 @@ function wxssFiles(dir) {
 test("page and shared stylesheets take every colour from the app.wxss tokens", () => {
   const offenders = [...wxssFiles("pages"), ...wxssFiles("styles")].flatMap((file) =>
     (fs.readFileSync(path.join(root, file), "utf8").match(RAW_COLOR) || []).map((hit) => `${file}: ${hit}`),
+  );
+  assert.deepEqual(offenders, []);
+});
+
+test("type sizes come from the --mp-type scale, so no page drifts to odd or tiny sizes", () => {
+  const offenders = ["app.wxss", ...wxssFiles("pages"), ...wxssFiles("styles")].flatMap((file) =>
+    (fs.readFileSync(path.join(root, file), "utf8").match(RAW_FONT_SIZE) || []).map((hit) => `${file}: ${hit}`),
   );
   assert.deepEqual(offenders, []);
 });

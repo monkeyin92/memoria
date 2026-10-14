@@ -144,7 +144,7 @@
 .volume-num {
   flex-shrink: 0;
   color: var(--mp-ink);
-  font-size: 40rpx;
+  font-size: var(--mp-type-title);
   font-weight: 600;
 }
 
@@ -154,7 +154,7 @@
   justify-content: space-between;
   margin-top: 8rpx;
   color: var(--mp-ink-3);
-  font-size: 22rpx;
+  font-size: var(--mp-type-meta);
 }
 
 /* L3 行内数值：唤醒词、网络、备注的当前值 */
