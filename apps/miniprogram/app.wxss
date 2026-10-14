@@ -36,6 +36,7 @@ page {
   --mp-radius-sheet: 32px;
   --mp-radius-pill: 499.5px;
   --mp-pad-page: 24px;
+  --mp-tab-top: 17px;
   --mp-gap-card: 16px;
   --mp-pad-card: 16px;
   --mp-pad-card-lg: 24px;
@@ -51,13 +52,16 @@ page {
   --mp-type-num-xl: 40px;
   --mp-type-display: 32px;
   --mp-type-headline: 24px;
+  --mp-type-heading: 22px;
   --mp-type-title: 20px;
   --mp-type-button: 17px;
   --mp-type-lead: 18px;
   --mp-type-card: 16px;
   --mp-type-body: 15px;
+  --mp-type-small: 14px;
   --mp-type-caption: 13px;
   --mp-type-meta: 12px;
+  --mp-type-micro: 11px;
   --mp-type-tab: 10px;
   --mp-lh-display: 40px;
   --mp-lh-card: 24px;
@@ -70,7 +74,7 @@ page {
   /* Inter and Noto Sans CJK SC are the design's stand-ins for SF and PingFang; phones with PingFang or HarmonyOS Sans never reach them. */
   font-family: "PingFang SC", "HarmonyOS Sans SC", "Inter", "Noto Sans CJK SC", "Source Han Sans SC", "Noto Sans SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   font-size: var(--mp-type-body);
-  line-height: 1.6;
+  line-height: normal;
   font-feature-settings: "tnum";
 }
 
@@ -87,7 +91,7 @@ button { font-family: inherit; }
   color: var(--mp-ink);
 }
 .page-shell.tab-page {
-  padding-top: calc(var(--mp-status-bar, 20px) + 16px);
+  padding-top: calc(var(--mp-status-bar, 20px) + var(--mp-tab-top));
   padding-bottom: var(--mp-tab-clearance);
 }
 .eyebrow {
@@ -368,7 +372,7 @@ button[disabled] {
 .pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-height: 24px;
   padding: 0 12px;
   border-radius: var(--mp-radius-pill);
