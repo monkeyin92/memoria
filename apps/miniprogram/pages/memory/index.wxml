@@ -1,5 +1,4 @@
 <view class="page-shell">
-  <page-backdrop theme="mist"></page-backdrop>
   <text class="page-title">回顾</text>
   <text class="page-lede">想记住的事，点确认后才会留下。</text>
 
@@ -23,7 +22,7 @@
 
     <view wx:if="{{subscriptionPushEnabled && crisisPush.enabled}}" class="l2-card">
       <view class="card-lead">
-        <glass-icon name="bell" size="72"></glass-icon>
+        <mp-icon name="bell"></mp-icon>
         <text class="l2-card-title">安全提醒</text>
       </view>
       <text class="l2-card-sub">{{crisisPush.explanation}}</text>
@@ -44,7 +43,7 @@
       <button class="primary-button memory-summarize" loading="{{summarizing}}" bindtap="summarizeSelectedDay">生成 / 更新选中日期的回顾</button>
       <button class="secondary-button memory-share" open-type="share" data-date="{{selectedDate}}">分享选中日期的回顾</button>
       <view wx:if="{{!days.length}}" class="l2-card memory-empty">
-        <glass-icon name="memory" size="176"></glass-icon>
+        <mp-icon name="note" size="176"></mp-icon>
         <text class="l2-card-title">还没有可回顾的内容</text>
         <text class="l2-card-sub">{{guardianMode ? '孩子还没有聊过天，或者还没有开启孩子的长期记忆。' : '这里还空空的，没关系。需要时再来看看，一切由你决定。'}}</text>
         <text class="caption">{{guardianMode ? '孩子和机器人聊几句后，再回来看看。' : '在设备上说几句后，再回来看看。AI 整理可能有偏差，摘要按天整理。'}}</text>
@@ -140,7 +139,7 @@
         </view>
       </block>
       <view wx:else class="l2-card memory-empty">
-        <glass-icon name="memory" size="176"></glass-icon>
+        <mp-icon name="note" size="176"></mp-icon>
         <text class="l2-card-title">{{memoryFilter === 'pending' ? '待确认内容已处理完' : '这里还没有内容'}}</text>
         <text class="l2-card-sub">{{guardianMode ? '孩子让机器人记住的事、聊到的学习进度，会先出现在这里等你确认。' : '这里还空空的，没关系。需要时再来看看，一切由你决定。'}}</text>
         <view class="button-row">
@@ -148,7 +147,7 @@
         </view>
       </view>
       <view class="l2-card list-row memory-archive-row" bindtap="openArchive">
-        <view class="row-icon"><glass-icon name="memory" size="72"></glass-icon></view>
+        <view class="row-icon"><mp-icon name="note"></mp-icon></view>
         <view class="row-copy">
           <text class="row-title">打开我的记忆档案</text>
           <text class="row-meta">已确认的偏好、来源与版本</text>

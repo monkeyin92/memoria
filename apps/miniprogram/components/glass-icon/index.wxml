@@ -1,1 +1,0 @@
-<image class="gi" src="{{src}}" mode="aspectFit" style="width: {{size}}rpx; height: {{size}}rpx;" aria-hidden="true"></image>

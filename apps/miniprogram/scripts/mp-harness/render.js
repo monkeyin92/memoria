@@ -196,9 +196,10 @@ function componentData(entry, attrs, scope) {
   global.setTimeout = () => 0;
   try {
     config.lifetimes?.attached?.call(instance);
-    for (const [name, value] of Object.entries(passed)) {
-      properties[name]?.observer?.call(instance, value);
-      config.observers?.[name]?.call(instance, value);
+    for (const [name, value] of Object.entries(passed)) properties[name]?.observer?.call(instance, value);
+    for (const [key, observer] of Object.entries(config.observers || {})) {
+      const fields = key.split(",").map((field) => field.trim());
+      if (fields.some((field) => field in passed)) observer.apply(instance, fields.map((field) => data[field]));
     }
   } catch {
     // Component init errors leave defaults, matching a component that failed to attach.

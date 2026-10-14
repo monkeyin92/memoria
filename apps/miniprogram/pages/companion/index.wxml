@@ -1,5 +1,4 @@
 <view class="page-shell companion-shell">
-  <page-backdrop theme="mist"></page-backdrop>
   <text class="page-title">角色</text>
   <text class="page-lede">换个说话风格。它始终是陪孩子聊天、讲故事的 AI 助手。当前 · {{currentName}}</text>
 
@@ -71,7 +70,7 @@
   </view>
   <view class="l2-card companion-voice">
     <view class="setting-row">
-      <view class="row-icon"><glass-icon name="volume" size="72"></glass-icon></view>
+      <view class="row-icon"><mp-icon name="volume"></mp-icon></view>
       <view class="row-copy">
         <text class="row-title">角色默认声音</text>
         <text class="row-meta">{{currentName}} · {{currentTone}}</text>

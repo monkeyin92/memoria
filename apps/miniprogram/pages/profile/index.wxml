@@ -1,5 +1,4 @@
 <view class="page-shell">
-  <page-backdrop theme="mist"></page-backdrop>
   <view wx:if="{{!authenticated}}">
     <text class="page-title">我的</text>
     <text class="page-lede">设备与记录，登录后跟随账号。</text>
@@ -35,7 +34,7 @@
     <!-- L2 功能层：入口列表 -->
     <view class="list">
       <view class="list-row" bindtap="openCompanion">
-        <view class="row-icon"><glass-icon name="star" size="72"></glass-icon></view>
+        <view class="row-icon"><mp-icon name="star"></mp-icon></view>
         <view class="row-copy">
           <text class="row-title">{{personaHeadline}}</text>
           <text class="row-meta">日常角色。下次唤醒才会换成对应声音</text>
@@ -46,7 +45,7 @@
 
     <view class="list">
       <view class="list-row" bindtap="openDevice">
-        <view class="row-icon"><glass-icon name="device" size="72"></glass-icon></view>
+        <view class="row-icon"><mp-icon name="dev"></mp-icon></view>
         <view class="row-copy">
           <text class="row-title">我的设备</text>
           <text class="row-meta">{{deviceBindingDetail}}</text>
@@ -75,7 +74,7 @@
         bindtap="retryDeviceBindingSync"
       >重新同步设备</button>
       <view wx:if="{{guardianEntryAllowed}}" class="list-row" bindtap="openGuardianSummary">
-        <view class="row-icon"><glass-icon name="family" size="72"></glass-icon></view>
+        <view class="row-icon"><mp-icon name="user"></mp-icon></view>
         <view class="row-copy">
             <text class="row-title">家庭与监护</text>
             <text class="row-meta">成长小结与监护授权</text>
@@ -83,7 +82,7 @@
         <text class="row-chevron">›</text>
       </view>
       <view wx:if="{{digitalSelfEntryAllowed}}" class="list-row" bindtap="openDigitalSelf">
-        <view class="row-icon"><glass-icon name="memory" size="72"></glass-icon></view>
+        <view class="row-icon"><mp-icon name="note"></mp-icon></view>
         <view class="row-copy">
           <text class="row-title">我的记忆档案</text>
           <text class="row-meta">只保留你确认的事</text>
@@ -102,7 +101,7 @@
         <switch checked="{{profile.auto_summary}}" data-key="auto_summary" bindchange="onSwitch" color="#326e70" />
       </view>
       <view wx:if="{{rawVoiceEntryAllowed}}" class="list-row" bindtap="openPrivacy">
-        <view class="row-icon"><glass-icon name="shield" size="72"></glass-icon></view>
+        <view class="row-icon"><mp-icon name="shield"></mp-icon></view>
         <view class="row-copy">
           <text class="row-title">隐私与数据</text>
           <text class="row-meta">授权、导出与删除</text>
@@ -113,7 +112,7 @@
 
     <view class="l2-card">
       <view class="card-lead">
-        <glass-icon name="wave" size="80"></glass-icon>
+        <mp-icon name="wave"></mp-icon>
         <text class="l2-card-title">自定义人格</text>
       </view>
       <text class="l2-card-sub">对话只在机器人上进行。自定义人格用你写的名字说话。</text>

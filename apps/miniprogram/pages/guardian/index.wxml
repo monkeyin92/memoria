@@ -1,5 +1,4 @@
 <view class="page-shell">
-  <page-backdrop theme="mist"></page-backdrop>
   <view class="nav-back" bindtap="goBack"><text>‹ 我的</text></view>
 
   <!-- L1 情感层 -->
@@ -10,7 +9,7 @@
         <text class="mem-hero-title">{{role === 'minor' ? '学生模式与监护授权' : '家庭与监护'}}</text>
         <text class="mem-hero-sub">{{role === 'minor' ? '绑定由孩子本人确认，授权变化会立即生效。' : '只看聚合趋势，不展示孩子与角色的对话原文。'}}</text>
       </view>
-      <glass-icon name="family" size="112"></glass-icon>
+      <mp-icon name="user" size="112"></mp-icon>
     </view>
   </view>
 
@@ -42,7 +41,7 @@
     <!-- L2 功能层：绑定卡 -->
     <view class="l2-card">
       <view class="card-lead">
-        <glass-icon name="family" size="72"></glass-icon>
+        <mp-icon name="user"></mp-icon>
         <text class="l2-card-title">绑定孩子的设备</text>
       </view>
       <text class="l2-card-sub">打开孩子的「我的」，复制「账号编号」后填在这里。生成的 8 位码由孩子本人确认。</text>
@@ -151,7 +150,7 @@
     <view wx:elif="{{summaryState === 'empty'}}" class="l2-card"><text class="empty-copy">本周还没有足够的成长记录。</text></view>
     <view wx:elif="{{summaryState === 'ready'}}" class="l2-card">
       <view class="kept-head">
-        <glass-icon name="chart" size="72"></glass-icon>
+        <mp-icon name="chart"></mp-icon>
         <text class="l2-card-title">孩子的成长小结 · 本周</text>
         <text class="pill pill-teal">不含对话原文</text>
       </view>
@@ -168,7 +167,7 @@
 
     <view wx:if="{{subscriptionPushEnabled && crisisPush.enabled}}" class="l2-card">
       <view class="card-lead">
-        <glass-icon name="bell" size="72"></glass-icon>
+        <mp-icon name="bell"></mp-icon>
         <text class="l2-card-title">安全提醒</text>
       </view>
       <text class="l2-card-sub">{{crisisPush.explanation}}</text>

@@ -1,6 +1,5 @@
 <page-meta page-style="{{sheetOpen ? 'overflow: hidden;' : ''}}"></page-meta>
 <view class="page-shell">
-  <page-backdrop theme="mist"></page-backdrop>
   <view wx:if="{{!authenticated}}">
     <text class="page-title">设备</text>
     <text class="page-lede">跟随账号同步，无需在每个端重新绑定。</text>
@@ -140,7 +139,7 @@
       <!-- 角色与声音 / 唤醒词 / 网络 -->
       <view class="list">
         <view class="list-row" hover-class="list-row-hover" bindtap="openCompanion">
-          <view class="row-icon"><glass-icon name="star" size="72"></glass-icon></view>
+          <view class="row-icon"><mp-icon name="star"></mp-icon></view>
           <view class="row-copy">
             <text class="row-title">角色与声音</text>
             <text class="row-meta">{{personaName}} · {{personaVoice}}</text>
@@ -148,7 +147,7 @@
           <text class="row-chevron">›</text>
         </view>
         <view class="list-row" hover-class="{{online ? 'none' : 'list-row-hover'}}" bindtap="{{online ? '' : 'showConnectionHelp'}}">
-          <view class="row-icon"><glass-icon name="wifi" size="72"></glass-icon></view>
+          <view class="row-icon"><mp-icon name="wifi"></mp-icon></view>
           <view class="row-copy">
             <text class="row-title">网络连接</text>
           </view>
@@ -187,7 +186,7 @@
       </view>
       <view class="list">
         <view class="list-row" hover-class="list-row-hover" bindtap="editSubjectAlias">
-          <view class="row-icon"><glass-icon name="pen" size="72"></glass-icon></view>
+          <view class="row-icon"><mp-icon name="pen"></mp-icon></view>
           <view class="row-copy">
             <text class="row-title">使用者备注</text>
             <text class="row-meta">首页用这个称呼 TA，不按客厅、卧室这类房间来标记</text>
@@ -196,7 +195,7 @@
           <text class="row-chevron">›</text>
         </view>
         <view class="list-row" hover-class="list-row-hover" bindtap="openGuardian">
-          <view class="row-icon"><glass-icon name="family" size="72"></glass-icon></view>
+          <view class="row-icon"><mp-icon name="user"></mp-icon></view>
           <view class="row-copy">
             <text class="row-title">家庭成员</text>
             <text class="row-meta">邀请与权限分别管理</text>
@@ -211,7 +210,7 @@
           data-person-id="{{item.person_id}}"
           bindtap="openPersonaSheet"
         >
-          <view class="row-icon"><glass-icon name="star" size="72"></glass-icon></view>
+          <view class="row-icon"><mp-icon name="star"></mp-icon></view>
           <view class="row-copy">
             <text class="row-title">{{item.role_label}}的人格</text>
             <text class="row-meta">{{item.source_label}} · 可选自建人格</text>
@@ -319,7 +318,7 @@
       </view>
       <view class="list">
         <view class="list-row" hover-class="list-row-hover" bindtap="openReprovision">
-          <view class="row-icon"><glass-icon name="bluetooth" size="72"></glass-icon></view>
+          <view class="row-icon"><mp-icon name="bluetooth"></mp-icon></view>
           <view class="row-copy">
             <text class="row-title">重新配网</text>
             <text class="row-meta">换了 Wi‑Fi 时用，不解除绑定</text>
@@ -327,14 +326,14 @@
           <text class="row-chevron">›</text>
         </view>
         <view class="list-row" hover-class="list-row-hover" bindtap="openOnboarding">
-          <view class="row-icon"><glass-icon name="device" size="72"></glass-icon></view>
+          <view class="row-icon"><mp-icon name="dev"></mp-icon></view>
           <view class="row-copy">
             <text class="row-title">添加其他设备</text>
           </view>
           <text class="row-chevron">›</text>
         </view>
         <view class="list-row" hover-class="list-row-hover" bindtap="toggleDiag">
-          <view class="row-icon"><glass-icon name="receipt" size="72"></glass-icon></view>
+          <view class="row-icon"><mp-icon name="note"></mp-icon></view>
           <view class="row-copy">
             <text class="row-title">设备信息与诊断</text>
           </view>
@@ -356,7 +355,7 @@
           <button class="text-button" bindtap="retryBindingSync">重新同步账号设备</button>
         </view>
         <view class="list-row" hover-class="list-row-hover" bindtap="openUnbindSheet">
-          <view class="row-icon"><glass-icon name="shield" size="72"></glass-icon></view>
+          <view class="row-icon"><mp-icon name="shield"></mp-icon></view>
           <view class="row-copy">
             <text class="row-title row-title-danger">解除绑定</text>
             <text class="row-meta">停止记忆，再决定保留还是删除 TA 的数据</text>

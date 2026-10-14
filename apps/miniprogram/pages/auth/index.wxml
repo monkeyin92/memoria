@@ -1,5 +1,4 @@
 <view class="page-shell auth-wrap">
-  <page-backdrop theme="mist"></page-backdrop>
   <view class="mem-hero auth-hero" data-role="starlight">
     <view class="auth-copy">
       <text class="eyebrow auth-copy-line">家庭桌面陪伴终端</text>
@@ -10,15 +9,15 @@
 
   <view class="auth-points">
     <view class="auth-point">
-      <glass-icon name="shield" size="56"></glass-icon>
+      <mp-icon name="shield"></mp-icon>
       <text class="auth-point-text">对话经云端安全处理，只为你服务</text>
     </view>
     <view class="auth-point">
-      <glass-icon name="memory" size="56"></glass-icon>
+      <mp-icon name="note"></mp-icon>
       <text class="auth-point-text">记忆档案由你掌控，随时查看</text>
     </view>
     <view class="auth-point">
-      <glass-icon name="export" size="56"></glass-icon>
+      <mp-icon name="export"></mp-icon>
       <text class="auth-point-text">支持导出与删除，删除可证明</text>
     </view>
   </view>

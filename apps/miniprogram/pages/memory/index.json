@@ -2,9 +2,6 @@
   "navigationBarTitleText": "回顾",
   "enablePullDownRefresh": true,
   "usingComponents": {
-    "face-badge": "/components/face-badge/index",
-    "page-backdrop": "/components/page-backdrop/index",
-    "glass-icon": "/components/glass-icon/index",
-    "device-screen": "/components/device-screen/index"
+    "mp-icon": "/components/mp-icon/index"
   }
 }

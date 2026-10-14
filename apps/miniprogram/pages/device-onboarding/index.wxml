@@ -1,5 +1,4 @@
 <view class="page-shell onboarding-page">
-  <page-backdrop theme="mist"></page-backdrop>
   <view class="back-row"><navigator class="back-link" url="/pages/device/index" open-type="switchTab">‹ 设备</navigator></view>
   <view class="page-head">
     <text class="page-title">{{reprovision ? '重新配网' : '配网引导'}}</text>
@@ -62,7 +61,7 @@
 
   <view wx:if="{{state === 'prepare'}}" class="l2-card">
     <view class="card-lead">
-      <glass-icon name="device" size="80"></glass-icon>
+      <mp-icon name="dev"></mp-icon>
       <text class="l2-card-title">先准备好机器人</text>
     </view>
     <text wx:if="{{reprovision}}" class="l2-card-sub">机器人找不到已保存的 Wi‑Fi 时，屏幕会自动显示二维码。请用绑定它的账号扫码，本次只更新网络，不需要解除绑定；家庭网络需支持 2.4 GHz。</text>
@@ -77,7 +76,7 @@
 
   <view wx:if="{{state === 'scan'}}" class="l2-card">
     <view class="card-lead">
-      <glass-icon name="qr" size="80"></glass-icon>
+      <mp-icon name="qr"></mp-icon>
       <text class="l2-card-title">扫描机器人二维码</text>
     </view>
     <text class="l2-card-sub">请扫描机器人屏幕上的二维码，扫码结果不会保存在手机上。</text>
@@ -87,7 +86,7 @@
 
   <view wx:if="{{state === 'device_verified'}}" class="l2-card">
     <view class="card-lead">
-      <glass-icon name="check" size="80"></glass-icon>
+      <mp-icon name="check"></mp-icon>
       <text class="l2-card-title">已确认这台设备</text>
     </view>
     <view wx:if="{{device}}" class="summary-list">
@@ -104,7 +103,7 @@
 
   <view wx:if="{{state === 'ble'}}" class="l2-card">
     <view class="card-lead">
-      <glass-icon name="bluetooth" size="80"></glass-icon>
+      <mp-icon name="bluetooth"></mp-icon>
       <text class="l2-card-title">连接附近机器人</text>
     </view>
     <view class="flow-status-list">
@@ -118,7 +117,7 @@
 
   <view wx:if="{{state === 'wifi'}}" class="l2-card">
     <view class="card-lead">
-      <glass-icon name="wifi" size="80"></glass-icon>
+      <mp-icon name="wifi"></mp-icon>
       <text class="l2-card-title">选择家庭 Wi‑Fi</text>
     </view>
     <text class="l2-card-sub">下面是机器人附近能搜到的 2.4 GHz Wi‑Fi，请选择家里的网络，再输入密码。</text>
@@ -140,7 +139,7 @@
 
   <view wx:if="{{state === 'progress'}}" class="l2-card">
     <view class="card-lead">
-      <glass-icon name="wifi" size="80"></glass-icon>
+      <mp-icon name="wifi"></mp-icon>
       <text class="l2-card-title">{{networkFailed ? '机器人没能联网' : (network.phase === 'online' ? '机器人已上线' : '机器人正在联网')}}</text>
     </view>
     <view class="progress-list">
@@ -162,7 +161,7 @@
 
   <view wx:if="{{state === 'claim'}}" class="l2-card">
     <view class="card-lead">
-      <glass-icon name="shield" size="80"></glass-icon>
+      <mp-icon name="shield"></mp-icon>
       <text class="l2-card-title">确认这是你的机器人</text>
     </view>
     <text class="l2-card-sub">机器人已经联网。确认后，这台机器人就先留给你的账号，请接着完成设置；之后重新配 Wi‑Fi，它也不会换主人。</text>
@@ -175,7 +174,7 @@
 
   <view wx:if="{{state === 'initialize'}}" class="l2-card">
     <view class="card-lead">
-      <glass-icon name="sprout" size="80"></glass-icon>
+      <mp-icon name="leaf"></mp-icon>
       <text class="l2-card-title">设置使用方式</text>
     </view>
     <text class="l2-card-sub">接下来选择机器人给谁用、挑一位AI 角色，不需要再扫码。</text>
@@ -184,7 +183,7 @@
 
   <view wx:if="{{state === 'activation'}}" class="l2-card">
     <view class="card-lead">
-      <glass-icon name="bell" size="80"></glass-icon>
+      <mp-icon name="bell"></mp-icon>
       <text class="l2-card-title">等待机器人激活</text>
     </view>
     <text class="l2-card-sub">机器人正在领取你刚刚设置好的内容，一般一分钟内就好。请保持机器人通电、连着 Wi‑Fi，这里会自动更新。</text>
