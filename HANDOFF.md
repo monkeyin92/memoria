@@ -55,7 +55,7 @@
 | 历史 SQLite 快照、旧 freeze 转储（6 份）、`/var/backups/memoria` 的 sqlite 与 dump、`/root/old-host-20261005/` 整个目录 | 183 个文件，约 255 MB | 0 | 19:12:41 |
 | 本次 freeze 转储 `memoria-pre-20261013-guardian-summaries-v1.dump` | 1（4,505,521 B） | 0 | 19:49:11（readiness 200、三角色 healthy、重启 0、切流后日志 0 ERROR） |
 
-文件清单在主机 `/root/memoria-release/deletion-20261013.txt.list`，时间记录在 `deletion-20261013.txt`。**这之后服务器上已经没有 Memoria 数据库的备份或还原点**（只剩共用主机上 pocketSparks 自己的备份，没动）。根盘 74%（接近 75% 的告警线）。声纹/克隆功能的代码入口和配置开关没有改动，「先关了」还没做。
+文件清单在主机 `/root/memoria-release/deletion-20261013.txt.list`，时间记录在 `deletion-20261013.txt`。**这之后服务器上已经没有 Memoria 数据库的备份或还原点**（只剩共用主机上 pocketSparks 自己的备份，没动）（2026-10-14 更正：清理后服务器上仍保留一份回滚 dump，来自发布 20261014-child-playout-ephemeral-v1，即 `/opt/memoria/releases/20261014-child-playout-ephemeral-v1/.cutover/memoria-pre-20261014-child-playout-ephemeral-v1.dump`，已核对其中不含机器人回复文本。详见 docs/compliance/deletion-record-20261014.md）。根盘 74%（接近 75% 的告警线）。声纹/克隆功能的代码入口和配置开关没有改动，「先关了」还没做。
 
 **五句模拟对话（19:17–19:25，MacBook 扬声器音量 35，机器人就在 Mac 旁；产品 build 24；每句一次 `voice_soak.py` 运行 + 串口 `wake`；测完音量恢复 31、静音）**：五句都有回复，开口延迟分别是 4.06 / 2.54 / 2.88 / 2.98 / 3.84 秒。
 
