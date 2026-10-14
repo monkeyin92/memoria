@@ -1,4 +1,6 @@
 const api = require("../../utils/api");
+const { statusBarStyle } = require("../../utils/nav-inset");
+const { leavePage } = require("../../utils/nav-back");
 const { guardianSummaryErrorState } = require("../../utils/guardian");
 const { requireLogin } = require("../../utils/auth-gate");
 const contracts = require("../../utils/multi-subject-contracts");
@@ -81,6 +83,7 @@ function personConsentError(error) {
 
 Page({
   data: {
+    statusBarStyle: statusBarStyle(),
     configOpen: false,
     configNote: CONFIG_GATE_PENDING_MESSAGE,
     authenticated: false,
@@ -143,7 +146,7 @@ Page({
 
   /* 纯展示：非 tab 页经导航返回。 */
   goBack() {
-    wx.navigateBack({ delta: 1 });
+    leavePage("/pages/profile/index");
   },
 
   _enterGuestState() {

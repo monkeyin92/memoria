@@ -1,5 +1,6 @@
 {
   "navigationBarTitleText": "配网引导",
+  "navigationStyle": "custom",
   "enablePullDownRefresh": false,
   "usingComponents": {
     "face-badge": "/components/face-badge/index",

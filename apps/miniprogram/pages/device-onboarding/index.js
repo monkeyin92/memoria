@@ -1,4 +1,6 @@
 const { requireLogin } = require("../../utils/auth-gate");
+const { statusBarStyle } = require("../../utils/nav-inset");
+const { leavePage } = require("../../utils/nav-back");
 const { OnboardingController } = require("../../utils/device-onboarding/onboarding-controller");
 const { readOnboardingSessionId } = require("../../utils/device-onboarding/session-store");
 const { isActivationReady } = require("../../utils/device-onboarding/contracts");
@@ -98,6 +100,7 @@ function clockTime(isoTime) {
 
 Page({
   data: {
+    statusBarStyle: statusBarStyle(),
     state: "prepare",
     stateLabel: "准备设备",
     mode: "add",
@@ -130,6 +133,10 @@ Page({
     selectedSsid: "",
     wifiPassword: "",
     showPassword: false,
+  },
+
+  goBack() {
+    leavePage("/pages/device/index");
   },
 
   onLoad(options = {}) {

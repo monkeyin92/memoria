@@ -1,4 +1,5 @@
-<view class="page-shell auth-wrap">
+<view class="page-shell auth-wrap sub-page" style="{{statusBarStyle}}">
+  <view class="nav-back" bindtap="goBack" aria-label="返回"><image class="nav-back-icon" src="/assets/ui/v4/back-strong.svg" /></view>
   <view class="auth-copy">
     <text class="pill pill-draft auth-chip">草稿 · 待律师审核</text>
     <view class="auth-title">

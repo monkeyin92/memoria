@@ -1,4 +1,6 @@
 const api = require("../../utils/api");
+const { statusBarStyle } = require("../../utils/nav-inset");
+const { leavePage } = require("../../utils/nav-back");
 const { isTabRoute, routeOf } = require("../../utils/tab-routes");
 
 function reasonText(reason) {
@@ -18,6 +20,7 @@ function reasonText(reason) {
 
 Page({
   data: {
+    statusBarStyle: statusBarStyle(),
     nickname: "",
     avatarPath: "",
     consented: false,
@@ -26,6 +29,10 @@ Page({
     redirect: "/pages/home/index",
     reasonHint: "",
     needsSalutation: false,
+  },
+
+  goBack() {
+    leavePage("/pages/home/index");
   },
 
   onLoad(options) {

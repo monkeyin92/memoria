@@ -1,4 +1,6 @@
 const api = require("../../utils/api");
+const { statusBarStyle } = require("../../utils/nav-inset");
+const { leavePage } = require("../../utils/nav-back");
 const { requireLogin } = require("../../utils/auth-gate");
 const contracts = require("../../utils/multi-subject-contracts");
 const {
@@ -8,6 +10,7 @@ const {
 } = require("../../utils/device-binding");
 Page({
   data: {
+    statusBarStyle: statusBarStyle(),
     configOpen: false,
     configNote: CONFIG_GATE_PENDING_MESSAGE,
     loading: false,
@@ -15,6 +18,10 @@ Page({
     error: "",
     consent: null,
     memoryOn: true,
+  },
+
+  goBack() {
+    leavePage("/pages/profile/index");
   },
 
   onLoad() {

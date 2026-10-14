@@ -1,5 +1,5 @@
-<view class="page-shell">
-  <view class="nav-back" bindtap="goBack"><text>‹ 我的</text></view>
+<view class="page-shell sub-page" style="{{statusBarStyle}}">
+  <view class="nav-back" bindtap="goBack" aria-label="返回"><image class="nav-back-icon" src="/assets/ui/v4/back-strong.svg" /></view>
 
   <!-- L1 情感层 -->
   <view class="mem-hero">

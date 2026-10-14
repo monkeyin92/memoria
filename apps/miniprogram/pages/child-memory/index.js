@@ -1,4 +1,6 @@
 const api = require("../../utils/api");
+const { statusBarStyle } = require("../../utils/nav-inset");
+const { leavePage } = require("../../utils/nav-back");
 const { requireLogin } = require("../../utils/auth-gate");
 const { companionById, defaultCompanionId } = require("../../utils/companions");
 const { readBindingManifest } = require("../../utils/device-binding");
@@ -60,6 +62,7 @@ function quoteForRecord(list, recordId) {
 
 Page({
   data: {
+    statusBarStyle: statusBarStyle(),
     authenticated: false,
     loading: false,
     working: false,
@@ -89,6 +92,10 @@ Page({
     },
     confirm: null,
     statusBanner: "",
+  },
+
+  goBack() {
+    leavePage("/pages/home/index");
   },
 
   onLoad(query) {

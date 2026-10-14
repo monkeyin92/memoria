@@ -1,5 +1,5 @@
-<view class="page-shell trial-page bind-trial">
-  <view class="back-row"><navigator class="back-link" url="/pages/profile/index" open-type="switchTab">‹ 我的</navigator></view>
+<view class="page-shell trial-page bind-trial sub-page" style="{{statusBarStyle}}">
+  <view class="nav-back" bindtap="goBack" aria-label="返回"><image class="nav-back-icon" src="/assets/ui/v4/back-strong.svg" /></view>
   <view class="page-head">
     <text class="trial-title">绑定设备</text>
     <block wx:if="{{step === 'mode'}}"><text class="page-subtitle">第 1 步 · 选择绑定方式</text></block>

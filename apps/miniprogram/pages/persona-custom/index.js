@@ -1,6 +1,8 @@
 // 自定义人格创建页（P1-03/P1-04）：名字 + 描述，或手填服务端同一套受控字段。
 // 服务端只接受十一个受控字段（超域值拒绝、不收窄），创建即冻结 v1。
 const api = require("../../utils/api");
+const { statusBarStyle } = require("../../utils/nav-inset");
+const { leavePage } = require("../../utils/nav-back");
 const { requireLogin } = require("../../utils/auth-gate");
 const { companions } = require("../../utils/companions");
 
@@ -88,6 +90,7 @@ function indexOfOption(options, value) {
 
 Page({
   data: {
+    statusBarStyle: statusBarStyle(),
     loading: false,
     loadingError: "",
     personas: [],
@@ -107,6 +110,10 @@ Page({
     })),
     voiceIndex: 0,
     rateValue: 100,
+  },
+
+  goBack() {
+    leavePage("/pages/profile/index");
   },
 
   async onShow() {

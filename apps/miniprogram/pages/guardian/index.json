@@ -1,5 +1,6 @@
 {
   "navigationBarTitleText": "监护与成长小结",
+  "navigationStyle": "custom",
   "enablePullDownRefresh": true,
   "usingComponents": {
     "mp-icon": "/components/mp-icon/index"

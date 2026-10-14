@@ -1,5 +1,5 @@
-<view class="page-shell">
-  <view class="back-row"><navigator class="back-link" url="/pages/profile/index" open-type="switchTab">‹ 我的</navigator></view>
+<view class="page-shell sub-page" style="{{statusBarStyle}}">
+  <view class="nav-back" bindtap="goBack" aria-label="返回"><image class="nav-back-icon" src="/assets/ui/v4/back-strong.svg" /></view>
   <view class="page-head">
     <text class="page-title">自定义人格</text>
     <text class="page-subtitle">创建即冻结，改内容要新建一个</text>

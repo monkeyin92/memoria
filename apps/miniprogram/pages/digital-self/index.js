@@ -1,4 +1,6 @@
 const api = require("../../utils/api");
+const { statusBarStyle } = require("../../utils/nav-inset");
+const { leavePage } = require("../../utils/nav-back");
 const { requireLogin } = require("../../utils/auth-gate");
 const contracts = require("../../utils/multi-subject-contracts");
 const { capabilityGateMessage } = require("../../utils/device-binding");
@@ -13,12 +15,17 @@ function versionsOf(result) {
 
 Page({
   data: {
+    statusBarStyle: statusBarStyle(),
     loading: false,
     error: "",
     persona: null,
     dimensions: [],
     versions: [],
     showEngineering: false,
+  },
+
+  goBack() {
+    leavePage("/pages/profile/index");
   },
 
   onLoad() {

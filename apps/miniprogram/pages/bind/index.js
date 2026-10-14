@@ -1,4 +1,6 @@
 const api = require("../../utils/api");
+const { statusBarStyle } = require("../../utils/nav-inset");
+const { leavePage } = require("../../utils/nav-back");
 const { companions } = require("../../utils/companions");
 const { requireLogin } = require("../../utils/auth-gate");
 const {
@@ -120,6 +122,7 @@ function defaultForm(mode, identity) {
 
 Page({
   data: {
+    statusBarStyle: statusBarStyle(),
     step: "loading",
     claimId: "",
     onboardingSessionId: "",
@@ -159,6 +162,10 @@ Page({
     crisisSubscribeRequired: false,
     crisisSubscribeAccepted: false,
     subscriptionPushEnabled: SUBSCRIPTION_PUSH_ENABLED,
+  },
+
+  goBack() {
+    leavePage("/pages/profile/index");
   },
 
   onLoad(options = {}) {

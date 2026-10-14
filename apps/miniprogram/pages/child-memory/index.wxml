@@ -1,4 +1,5 @@
-<view class="cm-page trial-page">
+<view class="cm-page trial-page sub-page" style="{{statusBarStyle}}">
+  <view class="nav-back" bindtap="goBack" aria-label="返回"><image class="nav-back-icon" src="/assets/ui/v4/back-strong.svg" /></view>
   <text class="eyebrow">长期记住的事</text>
   <text class="trial-title">{{headerTitle}}</text>
   <text class="page-lede">{{headerCaption}}</text>

@@ -50,6 +50,7 @@ const VARIANTS = {
   "tab-off": { stroke: "#7A7E92", fill: "none" },
   "tab-on": { stroke: "#4A52C9", fill: "#EEEFFC" },
   accent: { stroke: "#4A52C9", fill: "none" },
+  strong: { stroke: "#16182B", fill: "none" },
   ink: { stroke: "#5B5F73", fill: "none" },
   faint: { stroke: "#B4B6C4", fill: "none" },
   rust: { stroke: "#9A4732", fill: "none" },
@@ -68,7 +69,7 @@ const WANTED = [
   ["heart", "rust"],
   ["chev", "rust"],
   ["chev", "faint"],
-  ["back", "ink"],
+  ["back", "strong"],
   ["plus", "accent"],
   ["wechat", "white"],
 ];

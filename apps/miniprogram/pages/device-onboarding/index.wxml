@@ -1,5 +1,5 @@
-<view class="page-shell onboarding-page">
-  <view class="back-row"><navigator class="back-link" url="/pages/device/index" open-type="switchTab">‹ 设备</navigator></view>
+<view class="page-shell onboarding-page sub-page" style="{{statusBarStyle}}">
+  <view class="nav-back" bindtap="goBack" aria-label="返回"><image class="nav-back-icon" src="/assets/ui/v4/back-strong.svg" /></view>
   <view class="page-head">
     <text class="page-title">{{reprovision ? '重新配网' : '配网引导'}}</text>
     <text class="page-subtitle">跟着亮起的步骤走就好</text>

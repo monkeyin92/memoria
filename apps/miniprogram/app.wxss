@@ -130,6 +130,18 @@ button { font-family: inherit; }
   color: var(--mp-ink);
   font-size: var(--mp-type-title);
 }
+.nav-back-icon {
+  width: 48rpx;
+  height: 48rpx;
+}
+/* The capsule spans status bar +4px to +36px, so a 40px back button starting at the status bar edge shares its centre line. */
+.page-shell.sub-page,
+.trial-page.sub-page {
+  padding-top: var(--mp-status-bar, 20px);
+}
+.sub-page > .nav-back {
+  margin: 0 0 16rpx;
+}
 
 /* ---------- 卡片 ---------- */
 .l2-card,
