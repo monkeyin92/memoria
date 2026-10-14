@@ -3,51 +3,20 @@
 from __future__ import annotations
 
 from services.agent.src.orchestration.prosody import (
-    prepare_tts_text,
     speech_plan_for_turn,
     strip_paralinguistic_markup,
 )
 
 
-def test_light_laughter_prefixes_first_segment_once() -> None:
-    plan = speech_plan_for_turn(
-        label="neutral",
-        provider_label="happy",
-        text="哈哈，太好笑了",
-    )
-    first = prepare_tts_text("那确实好笑。", plan, is_first_segment=True)
-    second = prepare_tts_text("我们继续练。", plan, is_first_segment=False)
-    already = prepare_tts_text("呵，我懂。", plan, is_first_segment=True)
-
-    assert first == "呵，那确实好笑。"
-    assert second == "我们继续练。"
-    assert already == "呵，我懂。"
-
-
 def test_markup_tags_and_supportive_strip() -> None:
-    plan = speech_plan_for_turn(
-        label="neutral",
-        provider_label="happy",
-        text="哈哈，太好笑了",
-        use_markup_tags=True,
-    )
-    assert prepare_tts_text("好呀。", plan, is_first_segment=True) == "[laughter]好呀。"
-
     serious = speech_plan_for_turn(
         label="sad",
         provider_label="sad",
         text="我今天很难过",
     )
     assert serious.strip_paralinguistic is True
-    assert (
-        prepare_tts_text(
-            "[laughter]哈哈，别担心。",
-            serious,
-            is_first_segment=True,
-        )
-        == "别担心。"
-    )
     assert strip_paralinguistic_markup("<laughter>呵</laughter>你好") == "呵你好"
+    assert strip_paralinguistic_markup("[laughter]哈哈，别担心。") == "别担心。"
 
 
 def test_deliberative_breath_and_serious_hard_ban_markup() -> None:
@@ -60,8 +29,6 @@ def test_deliberative_breath_and_serious_hard_ban_markup() -> None:
     assert deliberative.delivery_mode == "deliberative"
     assert deliberative.tts_prefix == "[breath]"
     assert "[breath]" in deliberative.llm_instruction or "吸气" in deliberative.llm_instruction
-    first = prepare_tts_text("好，我们可以这样安排。", deliberative, is_first_segment=True)
-    assert first.startswith("[breath]")
 
     serious = speech_plan_for_turn(
         label="neutral",
@@ -72,44 +39,3 @@ def test_deliberative_breath_and_serious_hard_ban_markup() -> None:
     assert serious.delivery_mode == "supportive"
     assert serious.strip_paralinguistic is True
     assert "禁止" in serious.llm_instruction
-    stripped = prepare_tts_text(
-        "[breath][laughter]<strong>没事</strong>的",
-        serious,
-        is_first_segment=True,
-        use_markup_tags=True,
-    )
-    assert "[breath]" not in stripped
-    assert "[laughter]" not in stripped
-    assert "<strong>" not in stripped
-
-
-def test_prepare_tts_text_speaks_fixed_safety_helpline_digits() -> None:
-    from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY, SUPPORT_VICTIM_REPLY
-
-    plan = speech_plan_for_turn(
-        label="sad",
-        provider_label="sad",
-        text=CRISIS_SUPPORT_REPLY,
-    )
-    spoken = prepare_tts_text(CRISIS_SUPPORT_REPLY, plan, is_first_segment=True)
-    assert "一二三五六" in spoken
-    assert "幺二零" in spoken
-    assert "12356" not in spoken
-    victim = prepare_tts_text(SUPPORT_VICTIM_REPLY, plan, is_first_segment=True)
-    assert "幺幺零" in victim
-    assert "110" not in victim
-
-
-def test_prepare_tts_text_passes_ordinary_120_and_110_unchanged() -> None:
-    plan = speech_plan_for_turn(
-        label="neutral",
-        provider_label="neutral",
-        text="篮子里有 120 个苹果",
-    )
-    for ordinary in (
-        "篮子里有 120 个苹果",
-        "今天一共买了 110 个",
-        "一共 1100 元",
-        "房间号是 2120",
-    ):
-        assert prepare_tts_text(ordinary, plan, is_first_segment=True) == ordinary

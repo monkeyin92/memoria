@@ -8,15 +8,13 @@ import pytest
 from services.agent.src import response_plan_sidecar
 from services.agent.src.contracts.ids import CancellationContext
 from services.agent.src.duplex_runtime import DuplexRuntime
-from services.agent.src.orchestration.handlers import LanguageModelRequest
+from services.agent.src.orchestration.handlers import LanguageModelRequest, ReplyItem
 from services.agent.src.reply_pipeline import ReplyPipeline
 from services.agent.src.response_planner_client import ResponsePlanFetch, ResponsePlannerClient
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
 from services.agent.tests.unit.runtime_state_helpers import ScriptedChatModel, bind_owner_speaker
-from services.common.companion_response_safety import (
-    CRISIS_SUPPORT_REPLY,
-    companion_safety_decision,
-)
+from services.common.companion_response_safety import companion_safety_decision
+from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
 
 SYSTEM_PROMPT = "【不可变安全底线】不要输出 Markdown。【服务模式】孩子：一到两句短话。"
 QUESTION = "天空为什么是蓝色的"
@@ -83,7 +81,7 @@ def _pipeline(runtime: DuplexRuntime, planner: _Planner) -> tuple[ReplyPipeline,
 
 async def _run_turn(
     runtime: DuplexRuntime, planner: _Planner, text: str = QUESTION
-) -> tuple[ReplyPipeline, list[str], list[str], float]:
+) -> tuple[ReplyPipeline, list[str], list[ReplyItem], float]:
     """One spoken turn: the pipeline, the messages the model received, what was spoken, how long it took."""
 
     pipeline, captured = _pipeline(runtime, planner)
@@ -142,7 +140,7 @@ async def test_a_crisis_turn_still_sends_the_request_and_speaks_the_same_crisis_
 
     assert len(blocking.calls) == len(sidecar.calls) == 1
     assert sidecar.calls[0]["query"] == CRISIS
-    assert "".join(sidecar_spoken) == "".join(blocking_spoken) == CRISIS_SUPPORT_REPLY
+    assert sidecar_spoken == blocking_spoken == [CRISIS_SELF_SCRIPT]
     await blocking_runtime.close()
     await sidecar_runtime.close()
 

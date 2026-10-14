@@ -865,9 +865,6 @@ async def session_policy(
     policy.update(
         {
             "interaction_mode": interaction_mode,
-            "mode_policy_version": runtime_profile.get(
-                "policy_bundle_version", policy["mode_policy_version"]
-            ),
             "simulated_output": interaction_mode != "companion",
             "history_eligible": history_eligible,
             "owner_projection_eligible": history_eligible,
@@ -2179,12 +2176,13 @@ async def response_plan(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         now = _local_now(settings)
         crisis = await _route_crisis_with_bounded_evidence(request, body.query)
-        fixed_reply = crisis.direct_text or _fixed_reply_for_query(
+        script = crisis.script
+        fixed_reply = script.display if script is not None else _fixed_reply_for_query(
             query=body.query,
             frozen=frozen,
             now=now,
         )
-        if crisis.direct_text is not None:
+        if script is not None:
             log_fixed_safety_reply(logger, crisis)
         # The subject was resolved once, before the cache key, and decides the
         # category, the consent lookup, the memory scope and the notification
@@ -2195,17 +2193,16 @@ async def response_plan(
             scope.subject_category == "minor"
             or scope.age_band in {"under_14", "14_17"}
         )
-        notify = (
-            crisis.notify_guardian
-            and None not in (crisis.script_version, crisis.reply_template_id, active_subject_id)
-        )
+        notify = crisis.notify_guardian and None not in (script, active_subject_id)
         # A minor always notifies; an elder notifies the attested delegate (P0-04 D7).
         contacts = (
             await _declared_guardian_ids(request, subject_person_id=active_subject_id)
             if notify and active_subject_id is not None
             else ()
         )
-        if notify and active_subject_id is not None and (is_minor_student or contacts):
+        if notify and script is not None and active_subject_id is not None and (
+            is_minor_student or contacts
+        ):
             try:
                 await _crisis_notifications(request).record_minor_crisis(
                     minor_user_id=active_subject_id,
@@ -2213,8 +2210,8 @@ async def response_plan(
                     turn_id=body.fence.turn_id,
                     generation_id=body.fence.generation_id,
                     tool_epoch=body.fence.tool_epoch,
-                    script_version=crisis.script_version or "",
-                    reply_template_id=crisis.reply_template_id or "",
+                    script_version=script.template_id,
+                    reply_template_id=script.template_id,
                     occurred_at=now,
                     declared_guardian_ids=contacts,
                     attempt_push=crisis.attempt_push,

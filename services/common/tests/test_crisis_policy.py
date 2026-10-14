@@ -1,23 +1,19 @@
 import logging
 
 import pytest
-from services.common.companion_response_safety import (
-    CRISIS_SUPPORT_REPLY,
-    CRISIS_SUPPORT_REPLY_TEMPLATE_ID,
-    SUPPORT_RELAY_REPLY,
-    SUPPORT_RELAY_REPLY_TEMPLATE_ID,
-    SUPPORT_VICTIM_REPLY,
-    SUPPORT_VICTIM_REPLY_TEMPLATE_ID,
-)
 from services.common.crisis_policy import (
-    CRISIS_SCRIPT_VERSION,
-    SUPPORT_RELAY_SCRIPT_VERSION,
-    SUPPORT_VICTIM_SCRIPT_VERSION,
+    _DETERMINISTIC_ROUTES,
     CrisisSemanticVerdict,
     crisis_semantic_candidate,
     fixed_safety_reply_log_fields,
     log_fixed_safety_reply,
     route_crisis,
+)
+from services.common.fixed_safety_scripts import (
+    CRISIS_SELF_SCRIPT,
+    SUPPORT_RELAY_SCRIPT,
+    SUPPORT_VICTIM_SCRIPT,
+    script_for_decision,
 )
 
 
@@ -27,10 +23,7 @@ def test_explicit_self_crisis_always_uses_fixed_script_and_notification() -> Non
     assert route.action == "crisis_support"
     assert route.notify_guardian is True
     assert route.attempt_push is True
-    assert route.direct_text == CRISIS_SUPPORT_REPLY
-    assert route.script_version == CRISIS_SCRIPT_VERSION
-    assert route.reply_template_id == CRISIS_SUPPORT_REPLY_TEMPLATE_ID
-    assert route.script_version == route.reply_template_id == "crisis-self-v1"
+    assert route.script is CRISIS_SELF_SCRIPT
     assert route.evidence_source == "deterministic"
 
 
@@ -40,22 +33,26 @@ def test_victim_support_tier_notifies_and_attempts_push() -> None:
     assert route.action == "support_victim"
     assert route.notify_guardian is True
     assert route.attempt_push is True
-    assert route.direct_text == SUPPORT_VICTIM_REPLY
-    assert route.script_version == SUPPORT_VICTIM_SCRIPT_VERSION
-    assert route.reply_template_id == SUPPORT_VICTIM_REPLY_TEMPLATE_ID
-    assert route.script_version == route.reply_template_id == "victim-support-v1"
+    assert route.script is SUPPORT_VICTIM_SCRIPT
 
 
-def test_relay_support_tier_pins_without_push() -> None:
+def test_relay_support_tier_records_without_push() -> None:
     route = route_crisis("我朋友说他不想活了")
 
     assert route.action == "support_relay"
     assert route.notify_guardian is True
     assert route.attempt_push is False
-    assert route.direct_text == SUPPORT_RELAY_REPLY
-    assert route.script_version == SUPPORT_RELAY_SCRIPT_VERSION
-    assert route.reply_template_id == SUPPORT_RELAY_REPLY_TEMPLATE_ID
-    assert route.script_version == route.reply_template_id == "support-other-v1"
+    assert route.script is SUPPORT_RELAY_SCRIPT
+
+
+def test_every_routed_decision_has_a_registry_script() -> None:
+    assert {
+        decision: script_for_decision(decision) for decision in _DETERMINISTIC_ROUTES
+    } == {
+        "crisis_self": CRISIS_SELF_SCRIPT,
+        "support_victim": SUPPORT_VICTIM_SCRIPT,
+        "support_relay": SUPPORT_RELAY_SCRIPT,
+    }
 
 
 def test_helping_another_person_never_notifies_as_the_current_users_crisis() -> None:
@@ -67,7 +64,7 @@ def test_helping_another_person_never_notifies_as_the_current_users_crisis() -> 
     assert route.action == "support_relay"
     assert route.notify_guardian is True
     assert route.attempt_push is False
-    assert route.direct_text == SUPPORT_RELAY_REPLY
+    assert route.script is SUPPORT_RELAY_SCRIPT
 
 
 def test_quoted_fiction_triggers_nothing() -> None:
@@ -76,7 +73,7 @@ def test_quoted_fiction_triggers_nothing() -> None:
     assert route.action == "none"
     assert route.notify_guardian is False
     assert route.attempt_push is False
-    assert route.direct_text is None
+    assert route.script is None
 
 
 def test_model_evidence_cannot_execute_without_deterministic_first_person_anchor() -> None:
@@ -91,6 +88,7 @@ def test_model_evidence_cannot_execute_without_deterministic_first_person_anchor
     )
     assert route.action == "crisis_support"
     assert route.attempt_push is True
+    assert route.script is CRISIS_SELF_SCRIPT
     assert route.evidence_source == "semantic_evidence"
 
 
@@ -106,8 +104,8 @@ def test_fixed_safety_reply_log_fields_are_ids_and_route_only() -> None:
     fields = fixed_safety_reply_log_fields(route)
     assert fields == {
         "route": "crisis_support",
-        "reply_template_id": CRISIS_SUPPORT_REPLY_TEMPLATE_ID,
-        "script_version": CRISIS_SCRIPT_VERSION,
+        "reply_template_id": "crisis-self-v1",
+        "script_version": "crisis-self-v1",
     }
     blob = " ".join(fields.values())
     assert query not in blob
@@ -122,14 +120,10 @@ def test_log_fixed_safety_reply_emits_structured_line_without_child_text(
     logger = logging.getLogger("test.fixed_safety_reply")
     with caplog.at_level(logging.INFO, logger=logger.name):
         log_fixed_safety_reply(logger, route)
-    assert len(caplog.records) == 1
-    message = caplog.records[0].getMessage()
-    assert "fixed_safety_reply" in message
-    assert f"route={route.action}" in message
-    assert f"reply_template_id={SUPPORT_VICTIM_REPLY_TEMPLATE_ID}" in message
-    assert f"script_version={SUPPORT_VICTIM_SCRIPT_VERSION}" in message
-    assert query not in message
-    assert "打我" not in message
+    assert [record.getMessage() for record in caplog.records] == [
+        "fixed_safety_reply route=support_victim reply_template_id=victim-support-v1 "
+        "script_version=victim-support-v1"
+    ]
 
 
 def test_none_route_does_not_log_fixed_safety_reply(

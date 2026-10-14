@@ -56,7 +56,7 @@ _BINDING = "bind-archive"
 _COMPANION = {
     "history_eligible": False,
     "interaction_mode": "companion",
-    "mode_policy_version": "policy-v2",
+    "mode_policy_version": "s2-v1",
     "owner_projection_eligible": False,
     "simulated_output": False,
 }

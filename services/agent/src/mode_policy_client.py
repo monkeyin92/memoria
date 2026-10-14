@@ -61,6 +61,14 @@ _INTERACTION_MODE_BY_SERVICE_MODE = {
     "legacy_access": "legacy",
     "unknown_safe": "unknown_safe",
 }
+# Distinct from RuntimeProfile.policy_bundle_version (e.g. multi-subject-v1).
+_MODE_POLICY_VERSION_BY_INTERACTION: dict[InteractionMode, str] = {
+    "companion": "s2-v1",
+    "archive": "s2-v1",
+    "self_preview": "s8-v1",
+    "legacy": "s9-v1",
+    "unknown_safe": "degraded-unknown-safe-v1",
+}
 
 @dataclass(frozen=True, slots=True)
 class CompanionStyle:
@@ -258,13 +266,14 @@ class ModePolicy:
 
         capabilities = set(profile.profile.capabilities)
         obligations = set(profile.profile.obligations)
+        mode = cast(
+            InteractionMode | None,
+            _INTERACTION_MODE_BY_SERVICE_MODE.get(profile.profile.service_mode),
+        )
         return cls(
-            mode=cast(
-                InteractionMode | None,
-                _INTERACTION_MODE_BY_SERVICE_MODE.get(profile.profile.service_mode),
-            ),
+            mode=mode,
             policy_version=(
-                profile.profile.policy_bundle_version or "derived"
+                _MODE_POLICY_VERSION_BY_INTERACTION[mode] if mode is not None else "derived"
             ),
             companion_style_id=None,
             style_version=None,

@@ -46,6 +46,7 @@ from services.agent.src.orchestration.state_machine import (
 from services.agent.src.orchestration.task_manager import TaskManager
 from services.agent.src.prompts import VOICE_SYSTEM_PROMPT
 from services.agent.src.runtime_profile_gate import RuntimeProfileGate
+from services.common.fixed_safety_scripts import FixedSafetyScript
 
 logger = logging.getLogger(__name__)
 
@@ -933,6 +934,11 @@ class OfflinePipeline:
                 cancellation=cancellation,
             )
             async for token in self.llm_handler.stream(request):
+                if isinstance(token, FixedSafetyScript):
+                    if orch.gate_llm_token(cancellation, token.display) is not None:
+                        full_content += token.display
+                        phrases.extend(phrase.spoken for phrase in token.phrases)
+                    continue
                 gated = orch.gate_llm_token(cancellation, token)
                 if gated is None:
                     continue

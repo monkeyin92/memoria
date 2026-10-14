@@ -18,13 +18,13 @@ from services.agent.src.response_planner_client import (
     ResponseVoiceTarget,
 )
 from services.common.companion_response_safety import (
-    FIXED_SAFETY_REPLIES,
     SAFE_UNKNOWN_REPLY,
     companion_identity_replies,
     fixed_companion_reply,
 )
 from services.common.companion_turn_policy import companion_plan_instructions
 from services.common.companions import DESIGNED_VOICE_MODEL, companion_definition
+from services.common.fixed_safety_scripts import script_for_display
 from services.common.realtime_information import (
     current_local_time,
     fixed_realtime_reply,
@@ -75,11 +75,7 @@ def plan_matches_mode_policy(
         if unknown_safe_direct:
             return True
         companion = companion_definition(policy.companion_style_id)
-        allowed_companion_direct_text = {
-            None,
-            SAFE_UNKNOWN_REPLY,
-            *FIXED_SAFETY_REPLIES,
-        }
+        allowed_companion_direct_text = {None, SAFE_UNKNOWN_REPLY}
         if companion is not None:
             allowed_companion_direct_text |= companion_identity_replies(
                 companion.display_name, companion.style_description
@@ -89,7 +85,10 @@ def plan_matches_mode_policy(
         companion_safe = (
             policy.mode == "companion"
             and companion is not None
-            and plan.direct_text in allowed_companion_direct_text
+            and (
+                plan.fixed_safety_script is not None
+                or plan.direct_text in allowed_companion_direct_text
+            )
             and not plan.grounded_items
             and not provenance.source_refs
             and plan.disclosures == ("privacy_refusal", "unknown")
@@ -99,7 +98,8 @@ def plan_matches_mode_policy(
             policy.mode in {"self_preview", "legacy"}
             and plan.instructions == _LOCAL_SAFE_REFUSAL_INSTRUCTIONS
             and (
-                plan.direct_text in {_LOCAL_SAFE_REFUSAL_TEXT, *FIXED_SAFETY_REPLIES}
+                plan.fixed_safety_script is not None
+                or plan.direct_text == _LOCAL_SAFE_REFUSAL_TEXT
                 or is_safe_realtime_reply(plan.direct_text)
             )
             and not plan.grounded_items
@@ -346,7 +346,7 @@ def build_local_safe_plan(
             fixed_reply
             if companion
             or anonymous_public
-            or fixed_reply in FIXED_SAFETY_REPLIES
+            or script_for_display(fixed_reply) is not None
             or fixed_reply in BRIDGE_PHRASES
             or is_safe_realtime_reply(fixed_reply)
             else _LOCAL_SAFE_REFUSAL_TEXT

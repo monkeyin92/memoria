@@ -8,10 +8,9 @@ only per-event values are the child's display name (already shown on the
 guardian page) and the time of the event.
 
 When a guardian has no remaining acceptance the notification is marked
-``no_subscription`` and stays pinned on the memory and home pages until the
-parent opens the Mini Program.  Delivered alerts remain listable on the
-guardian page.  Each subscribe-message answer is appended to an audit ledger
-in addition to updating the acceptance balance.
+``no_subscription``.  Delivered and undelivered alerts both stay pinned on
+the memory and home pages.  Each subscribe-message answer is appended to an
+audit ledger in addition to updating the acceptance balance.
 """
 
 from __future__ import annotations
@@ -19,14 +18,18 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Literal, Protocol, cast
+from typing import Literal, Protocol, cast, get_args
 
 from services.common.companion_response_safety import GUARDIAN_ATTENTION_COPY
+from services.guardian.crisis import NotificationStatus
 
 logger = logging.getLogger(__name__)
+
+_NOTIFICATION_STATUSES = frozenset(get_args(NotificationStatus))
 
 PushSubscriptionResult = Literal["accept", "reject", "ban", "opt_out"]
 CrisisPushOutcome = Literal["delivered", "no_subscription", "failed", "retry"]
@@ -69,13 +72,15 @@ class PushSubscriptionEvent:
 class CrisisReachBreakdown:
     """Counts for a later crisis→push-or-pin delivery-rate check.
 
-    Every enqueued alert is either delivered over WeChat or pinned in-app
-    (pending / failed / no_subscription).  ``wechat_delivery_rate`` is the
-    share of settled alerts that left via subscribe-message send.
+    Every enqueued alert is pinned in-app.  Some are also delivered over
+    WeChat (pending / failed / no_subscription / delivered); ``pin_only``
+    alerts are never pushed, so they never settle.  ``wechat_delivery_rate``
+    is the share of settled alerts that left via subscribe-message send.
     """
 
     total: int
     pending: int
+    pin_only: int
     delivered: int
     failed: int
     no_subscription: int
@@ -108,24 +113,17 @@ def crisis_reach_breakdown(
 ) -> CrisisReachBreakdown:
     """Aggregate outbox statuses into rates a recruit gate can assert on."""
 
-    pending = delivered = failed = no_subscription = 0
-    for status in statuses:
-        if status == "pending":
-            pending += 1
-        elif status == "delivered":
-            delivered += 1
-        elif status == "failed":
-            failed += 1
-        elif status == "no_subscription":
-            no_subscription += 1
-        else:
+    counts = Counter(statuses)
+    for status in counts:
+        if status not in _NOTIFICATION_STATUSES:
             raise ValueError(f"unknown crisis delivery status: {status}")
     return CrisisReachBreakdown(
-        total=pending + delivered + failed + no_subscription,
-        pending=pending,
-        delivered=delivered,
-        failed=failed,
-        no_subscription=no_subscription,
+        total=counts.total(),
+        pending=counts["pending"],
+        pin_only=counts["pin_only"],
+        delivered=counts["delivered"],
+        failed=counts["failed"],
+        no_subscription=counts["no_subscription"],
     )
 
 

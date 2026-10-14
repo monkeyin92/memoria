@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from enum import StrEnum
 
+from services.common.fixed_safety_scripts import spoken_prefix_for_display
+
 
 class InterruptDecision(StrEnum):
     DUCK = "duck"
@@ -637,6 +639,13 @@ def _looks_like_assistant_echo(text: str, assistant_text: str) -> bool:
         )
     if len(content) < 4 or not spoken:
         return False
+    if _echoes(content, spoken):
+        return True
+    script_spoken = spoken_prefix_for_display(assistant_text.strip())
+    return script_spoken is not None and _echoes(content, _content(script_spoken))
+
+
+def _echoes(content: str, spoken: str) -> bool:
     if content in spoken:
         return True
     return len(content) >= 12 and SequenceMatcher(None, content, spoken).ratio() >= 0.72

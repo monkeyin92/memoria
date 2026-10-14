@@ -156,7 +156,7 @@ def run_tutor() -> dict[str, Any]:
     crisis = route_crisis(crisis_text)
     if crisis_route.intent is not UtteranceIntent.REQUEST_HINT:
         raise AssertionError("tutor crisis fixture no longer exercises an intent collision")
-    if crisis.action != "crisis_support" or not crisis.direct_text:
+    if crisis.action != "crisis_support" or crisis.script is None:
         raise AssertionError("crisis support did not override the tutor intent")
     return {
         "profile": "tutor",

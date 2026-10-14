@@ -209,6 +209,42 @@ async def test_missed_hearing_nudge_cooldown_blocks_back_to_back_prompts() -> No
 
 
 @pytest.mark.asyncio
+async def test_missed_hearing_nudge_is_suppressed_after_crisis_reply() -> None:
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = _device_identity("device-nudge-after-crisis")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry.open_session(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await asyncio.wait_for(provider.completed.wait(), timeout=1)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        provider.started.clear()
+        provider.completed.clear()
+        provider.texts.clear()
+
+        context.pending.turn_endpoint_sample = 16_000
+        decision = _verified_owner_decision()
+        context.runtime._speaker_decision = decision
+        context.runtime._speaker_class = decision.classification
+        context.pending_missed_hearing_nudge = True
+        context.crisis_reply_heard = True
+
+        registry._nudge_missed_hearing(context)
+        registry.flush_pending_missed_hearing_nudge(context)
+        assert context.missed_hearing_nudge_count == 0
+        assert context.pending_missed_hearing_nudge is False
+        assert provider.texts == []
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_media_assistant_state_emits_typed_floor_effect() -> None:
     bridge = MediaBridgeGrpcServer()
     registry = MediaVoiceCoreRegistry(

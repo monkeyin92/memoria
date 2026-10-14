@@ -361,7 +361,8 @@ CREATE TABLE IF NOT EXISTS guardian_crisis_events (
     attempt_push BOOLEAN NOT NULL DEFAULT TRUE
 );
 
--- Relay-tier support requests pin without WeChat push; claim skips these rows.
+-- Relay-tier support requests pin without WeChat push: their outbox rows are
+-- pin_only, which claim never selects.
 ALTER TABLE guardian_crisis_events
     ADD COLUMN IF NOT EXISTS attempt_push BOOLEAN NOT NULL DEFAULT TRUE;
 
@@ -379,7 +380,7 @@ CREATE TABLE IF NOT EXISTS guardian_notification_outbox (
     guardian_user_id TEXT NOT NULL,
     channel TEXT NOT NULL CHECK (channel = 'wechat_subscription'),
     status TEXT NOT NULL CHECK (
-        status IN ('pending', 'delivered', 'failed', 'no_subscription')
+        status IN ('pending', 'pin_only', 'delivered', 'failed', 'no_subscription')
     ),
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
     created_at TIMESTAMPTZ NOT NULL,
@@ -420,13 +421,13 @@ BEGIN
         SELECT 1 FROM pg_constraint
         WHERE conrelid = 'guardian_notification_outbox'::regclass
           AND conname = 'guardian_notification_outbox_status_check'
-          AND pg_get_constraintdef(oid) LIKE '%no_subscription%'
+          AND pg_get_constraintdef(oid) LIKE '%pin_only%'
     ) THEN
         ALTER TABLE guardian_notification_outbox
             DROP CONSTRAINT IF EXISTS guardian_notification_outbox_status_check;
         ALTER TABLE guardian_notification_outbox
             ADD CONSTRAINT guardian_notification_outbox_status_check CHECK (
-                status IN ('pending', 'delivered', 'failed', 'no_subscription')
+                status IN ('pending', 'pin_only', 'delivered', 'failed', 'no_subscription')
             );
     END IF;
 END
@@ -1146,10 +1147,14 @@ BEGIN
     INSERT INTO guardian_notification_outbox(
         notification_id, crisis_event_id, guardian_user_id,
         channel, status, attempts, created_at
-    ) VALUES (
-        p_notification_id, p_crisis_event_id, p_guardian_user_id,
-        'wechat_subscription', 'pending', 0, p_created_at
-    ) ON CONFLICT(crisis_event_id, guardian_user_id) DO NOTHING;
+    )
+    SELECT p_notification_id, p_crisis_event_id, p_guardian_user_id,
+        'wechat_subscription',
+        CASE WHEN crisis.attempt_push THEN 'pending' ELSE 'pin_only' END,
+        0, p_created_at
+    FROM guardian_crisis_events crisis
+    WHERE crisis.crisis_event_id = p_crisis_event_id
+    ON CONFLICT(crisis_event_id, guardian_user_id) DO NOTHING;
     PERFORM set_config('memoria.guardian_maintenance_scope', '0', true);
 END
 $notification_enqueue$;
@@ -1206,10 +1211,14 @@ BEGIN
     INSERT INTO guardian_notification_outbox(
         notification_id, crisis_event_id, guardian_user_id,
         channel, status, attempts, created_at
-    ) VALUES (
-        p_notification_id, p_crisis_event_id, p_guardian_user_id,
-        'wechat_subscription', 'pending', 0, p_created_at
-    ) ON CONFLICT(crisis_event_id, guardian_user_id) DO NOTHING;
+    )
+    SELECT p_notification_id, p_crisis_event_id, p_guardian_user_id,
+        'wechat_subscription',
+        CASE WHEN crisis.attempt_push THEN 'pending' ELSE 'pin_only' END,
+        0, p_created_at
+    FROM guardian_crisis_events crisis
+    WHERE crisis.crisis_event_id = p_crisis_event_id
+    ON CONFLICT(crisis_event_id, guardian_user_id) DO NOTHING;
     PERFORM set_config('memoria.guardian_declared_notification_scope', '0', true);
     PERFORM set_config('memoria.guardian_maintenance_scope', '0', true);
 END

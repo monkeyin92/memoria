@@ -47,7 +47,7 @@ from services.agent.tests.unit.runtime_state_helpers import (
     bind_owner_speaker,
     commit_media_turn,
 )
-from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
+from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
 from services.common.realtime_information import REALTIME_UNAVAILABLE_REPLY
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
@@ -2450,14 +2450,55 @@ async def test_controlled_turn_speaks_the_complete_fixed_crisis_reply() -> None:
     agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="直接播放固定危机支持。",
-        direct_text=CRISIS_SUPPORT_REPLY,
+        direct_text=CRISIS_SELF_SCRIPT.display,
     ))
 
     output = [item async for item in agent.stream_reply(llm.ChatContext.empty())]
 
-    assert "".join(item for item in output if isinstance(item, str)) == CRISIS_SUPPORT_REPLY
-    assert "12356" in CRISIS_SUPPORT_REPLY
-    assert not CRISIS_SUPPORT_REPLY.endswith("？")
+    assert output == [CRISIS_SELF_SCRIPT]
+
+
+@pytest.mark.asyncio
+async def test_fixed_safety_script_outranks_a_pending_realtime_resume() -> None:
+    runtime = DuplexRuntime.create(session_id="fixed-safety-outranks-realtime")
+    await runtime.on_turn_committed("今天南京天气怎么样")
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
+    agent.response_plans.store(_plan_for_fence(
+        runtime.fence,
+        instructions="南京天气必须先联网查询，查询失败不得猜测。",
+        speaker_class="uncertain",
+    ))
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="user", content="今天南京天气怎么样")
+    searched: list[str] = []
+
+    class SearchResolver:
+        async def resolve(self, *, query: str) -> str | None:
+            searched.append(query)
+            return None if len(searched) == 1 else "南京今天多云，最高气温三十二度。"
+
+    agent._realtime_search_resolver = SearchResolver()
+    agent._realtime_search_model = "realtime-search-model"
+    agent._llm_model = "chat-model"
+    _ = [item async for item in agent.stream_reply(chat_ctx)]
+    runtime.orchestrator.context.commit_assistant_heard("我不知道。", speaker_scope="public")
+    chat_ctx.add_message(role="assistant", content="我不知道。")
+    await runtime.on_turn_committed("人呢？")
+    agent.response_plans.store(_plan_for_fence(
+        runtime.fence,
+        instructions="直接播放固定危机支持。",
+        direct_text=CRISIS_SELF_SCRIPT.display,
+        speaker_class="uncertain",
+    ))
+    chat_ctx.add_message(role="user", content="人呢？")
+
+    output = [item async for item in agent.stream_reply(chat_ctx)]
+
+    assert output == [CRISIS_SELF_SCRIPT]
+    assert len(searched) == 1
+    provenance = runtime.response_provenance_for(runtime.fence)
+    assert provenance is not None
+    assert provenance["llm_model"] == "chat-model"
 
 
 @pytest.mark.asyncio

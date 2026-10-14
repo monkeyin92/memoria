@@ -5,16 +5,17 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal, Protocol
+from typing import Literal, Protocol, get_args
 
 from services.archive.domain import EvidenceEvent, LifeArchivePort
 
-NotificationStatus = Literal["pending", "delivered", "failed", "no_subscription"]
+NotificationStatus = Literal["pending", "pin_only", "delivered", "failed", "no_subscription"]
 
-# Undelivered outbox rows stay pinned in the Mini Program until WeChat
-# delivery succeeds.  Delivered alerts remain listable on the guardian page
-# but no longer occupy the home/memory pin slot.
-PINNED_CRISIS_ALERT_STATUSES = frozenset({"pending", "failed", "no_subscription"})
+# SQL enqueue picks the insert status from attempt_push (pending for
+# crisis/victim, pin_only for relay). Push may later move a row to
+# delivered / failed / no_subscription. Every legal outbox status stays
+# pinned; delivery must never clear the home card.
+PINNED_CRISIS_ALERT_STATUSES = frozenset(get_args(NotificationStatus))
 
 
 def crisis_alert_is_pinned(status: str) -> bool:
@@ -108,8 +109,8 @@ class CrisisNotificationService:
         capabilities such as memory retention or session admission.
 
         ``attempt_push`` is False for relay-tier support requests: the alert
-        still pins in the Mini Program, but the subscribe-message worker must
-        not claim it.
+        still pins in the Mini Program as a ``pin_only`` row, which the
+        subscribe-message worker never claims.
 
         ``reply_template_id`` and ``script_version`` are ids only. Child text
         never enters this payload or the crisis event row.

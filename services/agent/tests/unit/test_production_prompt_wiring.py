@@ -851,7 +851,7 @@ async def test_subject_switch_via_seam_clears_every_old_subject_cache(
     # ONE consistent authority after the switch: the ModePolicy is derived
     # from B's signed profile (never A's policy, never an unrelated surface).
     assert runtime.mode_policy.mode == "companion"
-    assert runtime.mode_policy.policy_version == "cn-minor-v5"
+    assert runtime.mode_policy.policy_version == "s2-v1"
     assert runtime.mode_policy.runtime_profile is applied
     assert runtime.mode_policy.allows_conversation() is True
     assert runtime.mode_policy.history_eligible("owner") is True

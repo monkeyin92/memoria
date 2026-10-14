@@ -361,6 +361,9 @@ class MediaSessionProjectionMixin:
             return
         if context.identity.client_type != "device":
             return
+        if self._fixed_safety_reply_active(context):
+            context.pending_missed_hearing_nudge = False
+            return
         if self._is_wake_echo_discard(context):
             return
         if context.runtime.assistant_speaking:
@@ -409,7 +412,11 @@ class MediaSessionProjectionMixin:
         if not context.pending_missed_hearing_nudge:
             return
         context.pending_missed_hearing_nudge = False
-        if context.closed or context.standby_requested:
+        if (
+            context.closed
+            or context.standby_requested
+            or self._fixed_safety_reply_active(context)
+        ):
             return
         if context.runtime.assistant_speaking:
             context.pending_missed_hearing_nudge = True
@@ -419,6 +426,21 @@ class MediaSessionProjectionMixin:
         if not self._owner_speech_is_established(context):
             return
         self._schedule_missed_hearing_nudge(context)
+
+    @staticmethod
+    def _fixed_safety_reply_active(context: _MediaVoiceSession) -> bool:
+        if context.crisis_reply_heard:
+            return True
+        from services.common.fixed_safety_scripts import (
+            script_for_display,
+            spoken_prefix_for_display,
+        )
+
+        announced = context.output.assistant_text.strip()
+        return (
+            script_for_display(announced) is not None
+            or spoken_prefix_for_display(announced) is not None
+        )
 
     def clear_device_wake_ack_fence(
         self,

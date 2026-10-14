@@ -240,24 +240,29 @@ async def test_ledger_counts_acceptances_and_bans_void_the_balance(
     assert len(audit) == 46
 
 
-def test_undelivered_statuses_are_pinned_for_the_mini_program() -> None:
-    assert crisis_alert_is_pinned("pending")
-    assert crisis_alert_is_pinned("failed")
-    assert crisis_alert_is_pinned("no_subscription")
-    assert not crisis_alert_is_pinned("delivered")
+def test_crisis_alert_statuses_stay_pinned_regardless_of_push_delivery() -> None:
+    from typing import get_args
+
+    from services.guardian.crisis import NotificationStatus
+
+    for status in get_args(NotificationStatus):
+        assert crisis_alert_is_pinned(status), status
+    assert crisis_alert_is_pinned("delivered")
     assert not crisis_alert_is_pinned("retry")
 
 
 def test_crisis_reach_breakdown_exposes_wechat_and_pin_rates() -> None:
     stats = crisis_reach_breakdown(
-        ("delivered", "delivered", "no_subscription", "failed", "pending")
+        ("delivered", "delivered", "no_subscription", "failed", "pending", "pin_only")
     )
-    assert stats.total == 5
+    assert (stats.total, stats.pending, stats.pin_only) == (6, 1, 1)
     assert stats.settled == 4
     assert stats.wechat_delivery_rate == 0.5
     assert stats.pin_fallback_rate == 0.5
     assert stats.push_or_pin_rate == 1.0
     assert crisis_reach_breakdown(()).wechat_delivery_rate is None
+    with pytest.raises(ValueError, match="unknown crisis delivery status: retry"):
+        crisis_reach_breakdown(("delivered", "retry"))
 
 
 @pytest.mark.asyncio
@@ -277,7 +282,7 @@ async def test_worker_delivers_fixed_content_and_consumes_one_acceptance(
 
     notification = await _only_notification(store)
     assert notification.status == "delivered"
-    assert not crisis_alert_is_pinned(notification.status)
+    assert crisis_alert_is_pinned(notification.status)
     assert notification.delivered_at is not None
     reach = await store.crisis_reach_for_window(
         since=occurred - timedelta(minutes=1),
@@ -511,50 +516,53 @@ async def test_reclaim_after_a_crashed_worker_reuses_its_reservation(
 
 
 @pytest.mark.asyncio
-
-
-@pytest.mark.asyncio
-async def test_relay_tier_alert_pins_without_being_claimed_for_push(
+async def test_relay_tier_alert_pins_as_pin_only_and_is_never_claimed_for_push(
     guardian_postgres_store: PostgresGuardianStore,
     archive: PostgresLifeArchive,
 ) -> None:
     occurred = _now()
-    store = guardian_postgres_store
-    digest = hashlib.sha256(b"binding-code").hexdigest()
-    link = await store.create_link(
-        guardian_user_id="guardian-a",
-        minor_user_id="minor-a",
-        relation="parent",
-        verified_via="wechat_identity",
-        binding_code_hash=digest,
-        binding_expires_at=occurred + timedelta(minutes=15),
-        now=occurred,
+    store, crisis_event_id = await _store_with_crisis(
+        guardian_postgres_store, archive, occurred_at=occurred
     )
-    await store.confirm_link(
-        link_id=link.link_id,
-        minor_user_id="minor-a",
-        binding_code_hash=digest,
-        now=occurred,
-    )
-    receipt = await CrisisNotificationService(store, archive).record_minor_crisis(
+    relay = await CrisisNotificationService(store, archive).record_minor_crisis(
         minor_user_id="minor-a",
         session_id="voice-session-relay",
         turn_id=9,
         generation_id=1,
         tool_epoch=1,
-        script_version="support-relay-pin-v1",
-        reply_template_id="support-relay-reply",
+        script_version="support-other-v1",
+        reply_template_id="support-other-v1",
         occurred_at=occurred,
         attempt_push=False,
     )
-    assert receipt.notification_count == 1
-    await _accept(store, occurred)
+    assert relay.notification_count == 1
+    await _accept(store, occurred, times=2)
     sender = FakeSender(PushSendResult("delivered"))
-    assert await _worker(store, sender, Clock(occurred + timedelta(seconds=5))).run_once() == 0
-    notification = await _only_notification(store)
-    assert notification.status == "pending"
-    assert crisis_alert_is_pinned(notification.status)
-    assert sender.calls == []
+    clock = Clock(occurred + timedelta(seconds=5))
+
+    assert await _worker(store, sender, clock).run_once() == 1
+    assert await _worker(store, sender, clock).run_once() == 0
+
+    notifications = await store.guardian_notifications(guardian_user_id="guardian-a")
+    assert {
+        item.crisis_event_id: (item.status, crisis_alert_is_pinned(item.status))
+        for item in notifications
+    } == {
+        crisis_event_id: ("delivered", True),
+        relay.crisis_event_id: ("pin_only", True),
+    }
+    assert len(sender.calls) == 1
+    assert await _remaining(store) == 1
+    reach = await store.crisis_reach_for_window(
+        since=occurred - timedelta(minutes=1),
+        until=occurred + timedelta(hours=1),
+    )
+    assert (reach.total, reach.delivered, reach.pin_only, reach.wechat_delivery_rate) == (
+        2,
+        1,
+        1,
+        1.0,
+    )
 
 
 async def test_alerts_older_than_the_push_window_stay_on_the_page_only(

@@ -254,9 +254,37 @@ async def test_fetch_freezes_companion_policy_from_the_authoritative_session_res
     assert policy.available is True
     assert policy.mode == "companion"
     assert policy.session_focus == "chat"
-    assert policy.policy_version == "cn-minor-v5"
+    assert policy.policy_version == "s2-v1"
     assert policy.companion_style_prompt is not None
     assert "价值观" in policy.companion_style_prompt
+
+
+def test_derived_companion_policy_uses_mode_policy_version_not_bundle_version() -> None:
+    from services.agent.src.mode_policy_client import ModePolicy
+    from services.agent.tests.unit.runtime_profile_test_helpers import (
+        TEST_VERIFY_KEY,
+        canonical_wire_payload,
+        parse_runtime_profile,
+    )
+
+    verified = parse_runtime_profile(
+        canonical_wire_payload(
+            session_id="ses_policy_version_namespaces",
+            session_epoch=1,
+            active_subject_id="person_child",
+            subject_category="minor",
+            age_band="under_14",
+            service_mode="student_minor",
+            policy_bundle_version="multi-subject-v1",
+            capabilities=["chat", "memory_recall_private"],
+        ),
+        verify_key=TEST_VERIFY_KEY,
+    )
+    assert verified is not None
+    assert verified.profile.policy_bundle_version == "multi-subject-v1"
+    policy = ModePolicy.from_runtime_profile(verified)
+    assert policy.mode == "companion"
+    assert policy.policy_version == "s2-v1"
 
 
 def test_owner_salutation_is_only_available_from_a_valid_companion_policy() -> None:

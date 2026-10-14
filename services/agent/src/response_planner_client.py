@@ -10,6 +10,7 @@ from typing import Any, ClassVar, Final, Literal, cast
 import httpx
 
 from services.agent.src.contracts.ids import GenerationFence
+from services.common.fixed_safety_scripts import FixedSafetyScript, script_for_display
 from services.evolution.receipt import EvolutionResolutionReceipt
 from services.speaker.domain import SpeakerDecision
 
@@ -325,6 +326,10 @@ class ResponsePlan:
     disclosures: tuple[Disclosure, ...]
     voice_target: ResponseVoiceTarget
     provenance: ResponseProvenance
+
+    @property
+    def fixed_safety_script(self) -> FixedSafetyScript | None:
+        return script_for_display(self.direct_text)
 
 
 @dataclass(frozen=True, slots=True)
