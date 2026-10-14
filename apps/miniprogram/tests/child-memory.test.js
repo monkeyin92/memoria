@@ -140,7 +140,7 @@ test("page copy and structure match product acceptance", () => {
   assert.match(wxml, /<mp-icon name="\{\{item\.field === 'appellation' \? 'tag'/);
   assert.equal(
     childMemory.EMPTY_RECENT,
-    "还没有记忆。孩子和 memoria 聊过之后，这里会出现摘要。",
+    "还没有记忆。孩子和 Memoria 聊过之后，这里会出现摘要。",
   );
   assert.equal(
     childMemory.DELETE_CONFIRM,

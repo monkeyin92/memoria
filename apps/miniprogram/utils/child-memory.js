@@ -16,14 +16,14 @@ const CHILD_ARCHIVE_CONSENT = Object.freeze({
   kind: "child_archive",
   label: "长期记忆",
   description:
-    "开启后，memoria 会记住孩子提到的称呼、喜好和宠物名。你可以随时关闭，关闭后不再记新的内容。",
+    "开启后，Memoria 会记住孩子提到的称呼、喜好和宠物名。你可以随时关闭，关闭后不再记新的内容。",
   policyVersion: "child-archive-v1",
 });
 
 const PRIVACY_LINE =
   "孩子说的原话，我们的服务器在入库前就去掉了；机器人本身不存录音。";
 const EMPTY_RECENT =
-  "还没有记忆。孩子和 memoria 聊过之后，这里会出现摘要。";
+  "还没有记忆。孩子和 Memoria 聊过之后，这里会出现摘要。";
 const EMPTY_ARCHIVE_ON = "开启后，孩子聊到的喜好会出现在这里。";
 const CONSENT_OFF_DIALOG =
   "关闭后不会再写入新内容。已有内容仍按当前授权管理。";
