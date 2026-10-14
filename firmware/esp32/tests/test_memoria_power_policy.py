@@ -58,6 +58,17 @@ int main() {
                 printf("%s\n", memoria::InQuietHours(
                     static_cast<uint16_t>(hour * 60 + minute), window) ? "in" : "out");
             }
+        } else if (strncmp(line, "wanted ", 7) == 0) {
+            char phase[32];
+            if (sscanf(line + 7, "%31s", phase) != 1) return 2;
+            memoria::PowerPhase p = memoria::PowerPhase::kWifiHold;
+            if (strcmp(phase, "wifi_hold") == 0) p = memoria::PowerPhase::kWifiHold;
+            else if (strcmp(phase, "deep_sleep") == 0) p = memoria::PowerPhase::kDeepSleep;
+            else if (strcmp(phase, "conversing") == 0) p = memoria::PowerPhase::kConversing;
+            else if (strcmp(phase, "waking") == 0) p = memoria::PowerPhase::kWaking;
+            else if (strcmp(phase, "night") == 0) p = memoria::PowerPhase::kNightSoothing;
+            else return 2;
+            printf("%s\n", memoria::MicWantedOpen(p) ? "yes" : "no");
         } else if (strncmp(line, "debounce ", 9) == 0) {
             unsigned now = 0, last = 0, window = 250;
             if (sscanf(line + 9, "%u %u %u", &now, &last, &window) != 3) return 2;
@@ -112,6 +123,20 @@ def test_tap_actions_follow_the_power_phase(tool: pathlib.Path) -> None:
         "tap conversing 0 0",
         "tap waking 1 0",
     ) == ["start", "night", "resume", "night", "ignore", "ignore"]
+
+
+def test_idle_keep_awake_park_does_not_want_the_mic_open(tool: pathlib.Path) -> None:
+    """A keep-awake build parks on wifi_hold. That phase keeps the mic shut."""
+    assert _run(
+        tool,
+        "wanted wifi_hold",
+        "wanted deep_sleep",
+        "wanted night",
+        "wanted waking",
+        "wanted conversing",
+        "mic wifi_hold 0",
+        "mic wifi_hold 1",
+    ) == ["no", "no", "no", "yes", "yes", "noop", "close"]
 
 
 def test_mic_only_opens_while_waking_or_conversing(tool: pathlib.Path) -> None:

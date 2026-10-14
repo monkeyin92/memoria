@@ -1,0 +1,18 @@
+--- a/main/Kconfig.projbuild
++++ b/main/Kconfig.projbuild
+@@ -1098,4 +1098,15 @@ config MEMORIA_BENCH_SERIAL
+         image carries a marker the firmware publisher refuses, and flash.sh will not flash it without
+         --bench. Never enable it for a product image.
+ 
++config MEMORIA_KEEP_AWAKE
++    bool "Memoria keep-awake test build: leave chip deep sleep off"
++    depends on BOARD_TYPE_MEMORIA_ESP_VOCAT
++    default n
++    help
++        Park in wifi hold instead of calling esp_deep_sleep_start, so USB serial stays
++        enumerated on a remote test device. The microphone stays closed until a screen
++        tap or the USB `wake` line. Product and bench images leave this off. Enable it
++        only with build.sh --keep-awake (config.keep-awake.json). The firmware publisher
++        refuses the image.
++
+ endmenu

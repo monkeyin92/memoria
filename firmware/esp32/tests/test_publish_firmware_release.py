@@ -30,13 +30,23 @@ def _publisher():
     return module
 
 
-def _image(build: int, *, project: bytes = b"memoria", markers: int = 1, bench: bool = False) -> bytes:
+def _image(
+    build: int,
+    *,
+    project: bytes = b"memoria",
+    markers: int = 1,
+    bench: bool = False,
+    keep_awake: bool = False,
+) -> bytes:
     header = bytes([0xE9]) + b"\0" * 31
     desc = (0xABCD5432).to_bytes(4, "little") + b"\0" * 12
     desc += b"2.4.2".ljust(32, b"\0") + project.ljust(32, b"\0") + b"\0" * 176
     marker = f"MEMORIA_FIRMWARE_BUILD={build};".encode()
     bench_marker = b"MEMORIA_BENCH_BUILD=1;" if bench else b""
-    return header + desc + b"\x11" * 4096 + marker * markers + bench_marker + b"\x22" * 128
+    keep_marker = (
+        b"chip deep sleep suppressed (CONFIG_MEMORIA_KEEP_AWAKE)" if keep_awake else b""
+    )
+    return header + desc + b"\x11" * 4096 + marker * markers + bench_marker + keep_marker + b"\x22" * 128
 
 
 def _key(tmp_path: pathlib.Path) -> tuple[pathlib.Path, bytes]:
@@ -72,6 +82,7 @@ def test_sign_writes_a_release_the_server_accepts(tmp_path: pathlib.Path) -> Non
         (b"\x00" + _image(7)[1:], "magic"),
         # A test-rig image has the right project and the right build marker: only its own marker gives it away.
         (_image(7, bench=True), "bench"),
+        (_image(7, keep_awake=True), "keep-awake"),
     ],
 )
 def test_sign_refuses_foreign_or_mismatched_images(
@@ -96,6 +107,29 @@ def test_the_bench_marker_is_the_one_the_bench_build_carries() -> None:
     for path in (FIRMWARE_ROOT / "overlay" / "files" / "main").rglob("*"):
         if path.suffix in {".cc", ".h", ".c"} and path.name != "memoria_mascot_bench.cc":
             assert publisher.BENCH_MARKER.decode("ascii") not in path.read_text(encoding="utf-8"), path.name
+
+
+def test_sign_refuses_a_keep_awake_filename(tmp_path: pathlib.Path) -> None:
+    publisher = _publisher()
+    key_path, public_key = _key(tmp_path)
+    path = tmp_path / "memoria-esp-vocat-keep-awake-app.bin"
+    path.write_bytes(_image(7))
+    with pytest.raises(SystemExit, match="keep-awake"):
+        publisher.sign(path, key_path, tmp_path / "out", build=7, public_key=public_key)
+
+
+def test_the_keep_awake_marker_is_the_suppressed_sleep_log() -> None:
+    publisher = _publisher()
+    board = MEMORIA_DIR.parent / "boards" / "memoria" / "esp-vocat"
+    source = (board / "memoria_esp_vocat.cc").read_text(encoding="utf-8")
+    start = source.index("#if CONFIG_MEMORIA_KEEP_AWAKE")
+    awake = source[start : source.index("#else", start)]
+    sleep = source[source.index("#else", start) : source.index("#endif", start)]
+    marker = publisher.KEEP_AWAKE_MARKER.decode("ascii")
+    assert marker in awake
+    assert marker not in sleep
+    assert "esp_deep_sleep_start" not in awake
+    assert "esp_deep_sleep_start();" in sleep
 
 
 def test_sign_refuses_a_key_the_firmware_does_not_trust(tmp_path: pathlib.Path) -> None:

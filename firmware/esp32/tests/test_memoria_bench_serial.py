@@ -362,7 +362,10 @@ def test_the_bench_manifest_is_the_product_manifest_plus_the_two_bench_options()
     product = json.loads(_read(BOARD / "config.json"))
     bench = json.loads(_read(BOARD / "config.bench.json"))
     product_options = product["builds"][0]["sdkconfig_append"]
-    assert not any("BENCH" in option or "SNAPSHOT" in option for option in product_options)
+    assert not any(
+        "BENCH" in option or "SNAPSHOT" in option or "KEEP_AWAKE" in option
+        for option in product_options
+    )
     assert bench["builds"][0]["sdkconfig_append"] == [
         *product_options,
         "CONFIG_MEMORIA_BENCH_SERIAL=y",

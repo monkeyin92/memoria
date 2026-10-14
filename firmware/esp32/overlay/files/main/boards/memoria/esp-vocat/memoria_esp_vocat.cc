@@ -616,6 +616,13 @@ private:
     }
 
     void EnterTapDeepSleep() {
+#if CONFIG_MEMORIA_KEEP_AWAKE
+        // WifiHold keeps the mic closed. Clearing the hold timer stops the 25 ms USB poll from calling this again.
+        auto& power = memoria::PowerPolicyRegistry::GetInstance();
+        power.SetPhase(memoria::PowerPhase::kWifiHold);
+        wifi_hold_since_ms_.store(0, std::memory_order_relaxed);
+        ESP_LOGW(TAG, "chip deep sleep suppressed (CONFIG_MEMORIA_KEEP_AWAKE)");
+#else
         auto& power = memoria::PowerPolicyRegistry::GetInstance();
         power.SetPhase(memoria::PowerPhase::kDeepSleep);
         ESP_LOGI(TAG, "entering deep sleep; wake source=GPIO%d (CST816S INT)",
@@ -623,6 +630,7 @@ private:
         // CST816S INT is active-low on this board (ISR on falling edge elsewhere).
         ESP_ERROR_CHECK(esp_sleep_enable_ext0_wakeup(TP_PIN_NUM_INT, 0));
         esp_deep_sleep_start();
+#endif
     }
 
     void OnIdleScreenOff() {

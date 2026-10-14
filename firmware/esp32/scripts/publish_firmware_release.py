@@ -62,6 +62,8 @@ _APP_DESC_MAGIC = 0xABCD5432
 # Compiled into test-rig images only (memoria_mascot_bench.cc, CONFIG_MEMORIA_BENCH_SERIAL): such an image
 # answers `snap` over USB with the screen, which a product image must never do.
 BENCH_MARKER = b"MEMORIA_BENCH_BUILD=1;"
+# The keep-awake log line is compiled only into that profile. A product image does not contain it.
+KEEP_AWAKE_MARKER = b"chip deep sleep suppressed (CONFIG_MEMORIA_KEEP_AWAKE)"
 
 
 def fail(message: str) -> None:
@@ -96,6 +98,11 @@ def inspect_image(image: bytes, build: int) -> str:
             "image is a bench build (the test-rig serial screenshot is compiled in, TODOLIST M-2); "
             "bench images are never published: rebuild with build.sh"
         )
+    if KEEP_AWAKE_MARKER in image:
+        fail(
+            "image is a keep-awake build (chip deep sleep is suppressed, so USB serial stays up); "
+            "keep-awake images are never published: rebuild with build.sh"
+        )
     markers = re.findall(rb"MEMORIA_FIRMWARE_BUILD=(\d+);", image)
     if markers != [str(build).encode()]:
         fail(
@@ -123,6 +130,11 @@ def sign(
     public_key: bytes = RELEASE_PUBLIC_KEY,
 ) -> Path:
     build = header_build() if build is None else build
+    if "keep-awake" in image_path.name.casefold():
+        fail(
+            "keep-awake images are never published "
+            f"({image_path.name}); rebuild with build.sh"
+        )
     image = image_path.read_bytes()
     app_version = inspect_image(image, build)
     release: dict[str, object] = {
