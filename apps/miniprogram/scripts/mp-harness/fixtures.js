@@ -4,6 +4,8 @@
  * that returned nothing, so pages must render their honest empty states.
  */
 
+const { normalizeGuardianSummary } = require("../../utils/guardian");
+
 const NOW = new Date("2026-10-14T19:42:00+08:00");
 
 function isoMinutesAgo(minutes) {
@@ -23,13 +25,37 @@ const BINDING = {
   binding_id: "bind_1",
   device_id: "dev_1",
   declared_mode: "parent_for_child",
+  binding_version: 1,
   status: "active",
+  reason: "create",
+  supersedes_binding_id: null,
+  family_space_id: null,
   account_owner_id: "u_parent",
+  device_admin_ids: ["u_parent"],
   primary_subject_ids: ["u_parent", "p_child"],
+  guardian_ids: ["u_parent"],
+  delegate_ids: [],
+  emergency_contact_ids: [],
+  member_ids: [],
+  roles: [
+    { person_id: "u_parent", role: "account_owner", permissions: [] },
+    { person_id: "u_parent", role: "guardian", permissions: [] },
+    { person_id: "p_child", role: "primary_subject", permissions: [] },
+  ],
+  service_profile_version: "child-cn-v1",
+  policy_bundle_version: "policy-cn-minor-v2",
+  consent_snapshot_id: null,
+  persona_assignment_id: "pa_1",
+  valid_from: "2026-10-01T08:00:00.000Z",
+  valid_until: null,
+  created_at: "2026-10-01T08:00:00.000Z",
 };
+
+const STORAGE = { "memoria:miniprogram:device:binding-manifest": BINDING };
 
 const RUNTIME_PROFILE = {
   valid: true,
+  runtime_profile_id: "rp_child",
   subject_category: "minor",
   obligations: [
     { code: "QUIET_HOURS", params: { quiet_hours: ["21:00", "07:00"] } },
@@ -67,6 +93,25 @@ const archiveApi = {
   getChildArchive: async () => ({ items: ARCHIVE }),
 };
 
+const GUARDIAN_SUMMARY = {
+  minor_user_id: "p_child",
+  window: { start: dayKey(6), end: dayKey(0) },
+  emotion_distribution: { happy: 6, neutral: 4, fearful: 1 },
+  topic_distribution: { interests: 5, school: 3, family: 2 },
+  study_minutes: 95,
+  source_event_count: 11,
+};
+
+const guardianApi = {
+  getPersonConsents: async () => ({
+    items: [
+      ...ARCHIVE_CONSENT.items,
+      { consent_kind: "weekly_report", consent_id: "c_weekly", active: true, granted_at: isoMinutesAgo(60 * 24 * 10) },
+    ],
+  }),
+  getGuardianSummary: async (minorUserId) => normalizeGuardianSummary(GUARDIAN_SUMMARY, minorUserId),
+};
+
 const PINNED_ALERT = {
   notification_id: "n1",
   minor_user_id: "p_child",
@@ -84,10 +129,11 @@ function baseApi(overrides = {}) {
     isAuthEpochCurrent: () => true,
     selectDeviceBinding: () => {},
     readBindingManifest: () => BINDING,
-    requireRuntimeCapability: () => true,
+    requireRuntimeCapability: async () => ({ allowed: true, reason: "allowed", profile: RUNTIME_PROFILE }),
     syncDeviceBindings: async () => ({ status: "ready", binding: BINDING }),
     getActivationStatus: async () => ({ status: "ready_for_conversation", network: { internet: true } }),
     getRuntimeProfile: async () => RUNTIME_PROFILE,
+    requestPolicyDecision: async () => ({ effect: "allow", reason_code: "allowed", obligations: [] }),
     getDeviceSettings: async () => ({ wake_word_display: "小乐小乐", volume_limit: 60 }),
     getProfile: async () => ({ user_id: "u_parent", display_name: "乐乐妈妈", companion_id: "starlight", auto_summary: true }),
     getMemoryDays: async () => ({
@@ -101,7 +147,7 @@ function baseApi(overrides = {}) {
     getChildSessionSummaries: async () => ({ items: SUMMARIES }),
     getChildArchive: async () => ({ items: [] }),
     getGuardianNotifications: async () => ({ items: [PINNED_ALERT] }),
-    getGuardianLinks: async () => ({ items: [] }),
+    getGuardianLinks: async () => [],
     listPersonas: async () => ({ custom_personas: [], builtin_personas: [] }),
     getWakeWordCatalog: async () => ({ items: [] }),
     listPersonaAssignments: async () => ({ items: [] }),
@@ -127,4 +173,26 @@ function baseApi(overrides = {}) {
 
 const GUEST_API = { hasAuthenticatedSession: () => false, currentIdentity: () => null };
 
-module.exports = { ARCHIVE, BINDING, IDENTITY, NOW, PINNED_ALERT, RECAP, RUNTIME_PROFILE, SUMMARIES, GUEST_API, archiveApi, baseApi, dayKey, isoMinutesAgo };
+const authed = (overrides) => ({ api: baseApi(overrides), storage: STORAGE, now: NOW });
+const guest = () => ({ api: baseApi(GUEST_API), now: NOW });
+
+module.exports = {
+  ARCHIVE,
+  BINDING,
+  GUARDIAN_SUMMARY,
+  IDENTITY,
+  NOW,
+  PINNED_ALERT,
+  RECAP,
+  RUNTIME_PROFILE,
+  STORAGE,
+  SUMMARIES,
+  GUEST_API,
+  archiveApi,
+  authed,
+  baseApi,
+  dayKey,
+  guardianApi,
+  guest,
+  isoMinutesAgo,
+};

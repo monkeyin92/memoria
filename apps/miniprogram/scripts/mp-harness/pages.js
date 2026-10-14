@@ -4,20 +4,20 @@
  */
 const fx = require("./fixtures");
 
-const authed = (overrides) => ({ api: fx.baseApi(overrides), now: fx.NOW });
+const { authed, guest } = fx;
 
 const PAGES = [
   { slug: "home", page: "pages/home/index", harness: authed() },
-  { slug: "home-guest", page: "pages/home/index", harness: { api: fx.baseApi(fx.GUEST_API), now: fx.NOW } },
+  { slug: "home-guest", page: "pages/home/index", harness: guest() },
   { slug: "memory", page: "pages/memory/index", harness: authed({ getGuardianNotifications: async () => ({ items: [] }) }), actions: [["summarizeSelectedDay"]] },
   { slug: "memory-attention", page: "pages/memory/index", harness: authed() },
   { slug: "companion", page: "pages/companion/index", harness: authed() },
   { slug: "device", page: "pages/device/index", harness: authed() },
   { slug: "profile", page: "pages/profile/index", harness: authed() },
-  { slug: "guardian", page: "pages/guardian/index", harness: authed() },
+  { slug: "guardian", page: "pages/guardian/index", harness: authed(fx.guardianApi) },
   { slug: "bind", page: "pages/bind/index", harness: authed() },
   { slug: "persona-custom", page: "pages/persona-custom/index", harness: authed() },
-  { slug: "auth", page: "pages/auth/index", harness: { api: fx.baseApi(fx.GUEST_API), now: fx.NOW }, query: { reason: "view_device" } },
+  { slug: "auth", page: "pages/auth/index", harness: guest(), query: { reason: "view_device" } },
   { slug: "privacy", page: "pages/privacy/index", harness: authed() },
   { slug: "digital-self", page: "pages/digital-self/index", harness: authed() },
   { slug: "child-memory", page: "pages/child-memory/index", harness: authed(), query: { minorId: "p_child", name: "乐乐" } },
