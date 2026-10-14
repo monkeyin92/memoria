@@ -23,7 +23,7 @@ SERVICES = ROOT / "services"
 
 ALLOWED_EDGES: dict[str, frozenset[str]] = {
     "agent": frozenset(
-        {"common", "evolution", "identity", "persona", "policy", "speaker", "tutor"}
+        {"common", "evolution", "guardian", "identity", "persona", "policy", "speaker", "tutor"}
     ),
     "archive": frozenset({"common", "evolution", "governance"}),
     "companionship": frozenset({"control_api"}),

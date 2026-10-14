@@ -13,11 +13,12 @@ import asyncio
 import hashlib
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, assert_never
 
 from services.agent.src.contracts.events import UI_EVENT_TYPES
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.obligation_executor import PersistenceDecision
+from services.guardian.child_memory import strip_transcript_fields
 
 if TYPE_CHECKING:
     from services.agent.src.duplex_runtime import DuplexRuntime
@@ -147,8 +148,26 @@ def archive_evidence(
     fingerprint: str,
     event_sequence: int,
 ) -> dict[str, object]:
-    """One archive record with the full re-verifiable MemoryWriteFence."""
+    """One archive record with the full re-verifiable MemoryWriteFence.
 
+    Callers pass the payload their turn produced, words included.  The
+    decision's content ceiling decides what leaves the process.
+    """
+
+    match decision.content_ceiling:
+        case "verbatim":
+            body: dict[str, object] = payload
+        case "metadata_only":
+            body = strip_transcript_fields(payload)
+        case "aggregate_only":
+            body = {
+                "aggregate_only": True,
+                "session_epoch": decision.session_epoch,
+                "active_subject_id": decision.subject_id,
+                "runtime_profile_id": decision.runtime_profile_id,
+            }
+        case unreachable:
+            assert_never(unreachable)
     evidence: dict[str, object] = {
         "event_id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"memoria:evidence:{fingerprint}")),
         "session_id": session_id,
@@ -173,16 +192,7 @@ def archive_evidence(
         "training_receipt_id": decision.training_receipt_id,
         "no_model_training": decision.no_model_training,
         "event_sequence": event_sequence,
-        "payload": (
-            {
-                "aggregate_only": True,
-                "session_epoch": decision.session_epoch,
-                "active_subject_id": decision.subject_id,
-                "runtime_profile_id": decision.runtime_profile_id,
-            }
-            if decision.aggregate_only
-            else payload
-        ),
+        "payload": body,
     }
     return evidence
 

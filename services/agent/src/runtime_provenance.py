@@ -16,6 +16,7 @@ from services.agent.src.generation_output_policy import (
     frozen_companion_clone_permitted,
     generation_voice_allowed,
 )
+from services.guardian.child_memory import TRANSCRIPT_KEYS
 
 if TYPE_CHECKING:
     from services.agent.src.generation_records import GenerationRecords
@@ -36,7 +37,7 @@ _RESPONSE_PROVENANCE_FORBIDDEN_KEYS = frozenset(
         "token",
         "cookie",
     }
-)
+) | {key.lower() for key in TRANSCRIPT_KEYS}
 
 
 @dataclass(frozen=True, slots=True)

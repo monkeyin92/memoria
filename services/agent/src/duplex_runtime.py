@@ -1707,7 +1707,7 @@ class DuplexRuntime(
         if (
             speaker_class == "owner"
             and payload["owner_projection_eligible"] is True
-            and not decision.aggregate_only
+            and decision.content_ceiling == "verbatim"
             and decision.raw_audio_allowed
             and self._owner_turn_publisher is not None
         ):
