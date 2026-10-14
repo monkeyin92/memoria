@@ -135,10 +135,12 @@ def test_a_tap_only_wakes_an_idle_device(tool: pathlib.Path) -> None:
 
 def test_board_tap_handler_uses_power_policy_and_never_stops() -> None:
     source = (BOARD_DIR / "memoria_esp_vocat.cc").read_text(encoding="utf-8")
-    handler = _function(source, "void HandleScreenTouchRelease()")
+    handler = _function(source, "void HandleScreenTouchRelease(std::uint32_t hold_ms)")
     assert "TapWakeActionFor" in handler
     assert 'PlayLocalAssetClip("wo_zai_ne.ogg")' in handler
     assert 'app.WakeWordInvoke("screen_tap")' in handler
+    assert "offline_menu_" in source
+    assert "HoldDurationMsOnRelease" in source
     for forbidden in ("StopListening", "AbortSpeaking", "ToggleChatState", "CloseAudioChannel"):
         assert forbidden not in handler, f"a tap must not call {forbidden}"
 

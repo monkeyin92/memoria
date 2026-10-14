@@ -399,7 +399,7 @@ def test_the_qr_screen_is_neutral_complete_and_refreshable() -> None:
     board = (
         root / "files" / "main" / "boards" / "memoria" / "esp-vocat" / "memoria_esp_vocat.cc"
     ).read_text(encoding="utf-8")
-    touch = board[board.index("void HandleScreenTouchRelease()") :]
+    touch = board[board.index("void HandleScreenTouchRelease(std::uint32_t hold_ms)") :]
     touch = touch[: touch.index("void InitializeI2c()")]
     # A tap on the QR refreshes it before any state-specific handling (the
     # starting state used to jump to hotspot Wi-Fi setup instead).
@@ -1697,7 +1697,7 @@ def test_network_disconnect_actively_recovers_the_same_session() -> None:
     assert "app.ToggleChatState()" in board_source
     assert "app.Schedule([this]() { EnterWifiConfigMode(); })" in board_source
     touch = board_source[
-        board_source.index("void HandleScreenTouchRelease()") : board_source.index(
+        board_source.index("void HandleScreenTouchRelease(std::uint32_t hold_ms)") : board_source.index(
             "void InitializeI2c()"
         )
     ]
@@ -1709,6 +1709,8 @@ def test_network_disconnect_actively_recovers_the_same_session() -> None:
     assert "MuteImuForTouch()" in touch
     assert "SetEmotion(" not in touch
     assert "esp_deep_sleep_start" in board_source
+    assert "offline_menu_" in board_source
+    assert "HoldDurationMsOnRelease" in board_source
     # A shake only makes the companion dizzy; it is never a pat or a chat.
     assert "dizzy companion, no chat" in board_source
     assert '#include "memoria_pat.h"' in board_source
