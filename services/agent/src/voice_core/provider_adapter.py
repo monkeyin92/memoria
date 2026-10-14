@@ -36,6 +36,11 @@ from services.agent.src.providers.funasr_stt import FunASRSession
 from services.agent.src.voice_core.media_protocol import AudioFrame, SessionIdentity
 from services.agent.src.voice_core.media_session_types import ProviderAudioTaskSnapshot
 from services.agent.src.voice_core.speech_timeline import ASRResult
+from services.common.fixed_safety_scripts import (
+    FixedSafetyScript,
+    SpokenPhrase,
+    log_fixed_safety_playout,
+)
 
 if TYPE_CHECKING:
     from services.agent.src.config import AgentSettings
@@ -127,6 +132,9 @@ class ExistingVoiceProviderAdapter:
         init=False,
     )
     _active_speech_streams: dict[GenerationFence, Any] = field(default_factory=dict, init=False)
+    # Generations speaking a fixed safety script. Provider subtitles for these
+    # echo spoken copy, so none may enter heard history.
+    _fixed_safety_fences: set[GenerationFence] = field(default_factory=set, init=False)
     _generation_output_ends: dict[GenerationFence, int] = field(
         default_factory=dict,
         init=False,
@@ -593,9 +601,49 @@ class ExistingVoiceProviderAdapter:
                 (monotonic() - received_at) * 1000.0,
             )
 
+    async def _reply_phrases(
+        self,
+        user_text: str,
+        fence: GenerationFence,
+        cancellation: CancellationContext,
+        cancel_event: asyncio.Event,
+    ) -> AsyncGenerator[SpokenPhrase, None]:
+        """Every phrase one generation speaks, in order. Both TTS paths consume this.
+
+        A fixed safety script yields its approved phrases and never reaches the
+        segmenter, so its spoken copy arrives at the engine intact.
+        """
+
+        segmenter = PhraseSegmenter(fence=fence)
+        llm_stream = self.language_model.stream(
+            LanguageModelRequest(user_text=user_text, cancellation=cancellation)
+        )
+        try:
+            async for item in self._cancel_aware_items(llm_stream, cancel_event):
+                if isinstance(item, FixedSafetyScript):
+                    self._fixed_safety_fences.add(fence)
+                    log_fixed_safety_playout(logger, item)
+                    for phrase in item.phrases:
+                        yield phrase
+                    continue
+                if not item:
+                    continue
+                for segment in segmenter.push_token(item):
+                    yield SpokenPhrase.verbatim(segment.text)
+        finally:
+            close_llm = getattr(llm_stream, "aclose", None)
+            if callable(close_llm):
+                closed_llm = close_llm()
+                if inspect.isawaitable(closed_llm):
+                    await closed_llm
+        for segment in segmenter.flush(end_of_stream=True):
+            if cancel_event.is_set():
+                return
+            yield SpokenPhrase.verbatim(segment.text)
+
     async def _provider_pcm_chunks(
         self,
-        phrase: str,
+        spoken: str,
         fence: GenerationFence,
         cancellation: CancellationContext,
         cancel_event: asyncio.Event,
@@ -603,7 +651,7 @@ class ExistingVoiceProviderAdapter:
         """Yield the provider's actual asynchronous PCM chunks when available."""
 
         request = SpeechSynthesisRequest(
-            phrases=(phrase,),
+            phrases=(spoken,),
             cancellation=cancellation,
             cancel_event=cancel_event,
         )
@@ -622,7 +670,7 @@ class ExistingVoiceProviderAdapter:
                 end_input = getattr(stream, "end_input", None)
                 if not callable(push_text) or not callable(end_input):
                     raise RuntimeError("speech provider stream cannot accept text")
-                pushed = push_text(phrase)
+                pushed = push_text(spoken)
                 if inspect.isawaitable(pushed):
                     await pushed
                 ended = end_input()
@@ -785,6 +833,26 @@ class ExistingVoiceProviderAdapter:
                 ]
         return tuple(spans)
 
+    async def _heard_text_spans(
+        self,
+        fence: GenerationFence,
+        stream: Any,
+        *,
+        max_audio_end_sample: int,
+    ) -> tuple[Any, ...]:
+        """Provider-timed spans that may become heard history.
+
+        A fixed safety script gets none, because its subtitles echo spoken copy.
+        Its display copy is then recorded only as one whole-reply span.
+        """
+
+        if fence in self._fixed_safety_fences:
+            return ()
+        return await self._provider_timed_text_spans(
+            stream,
+            max_audio_end_sample=max_audio_end_sample,
+        )
+
     async def interrupted_timed_text_spans(self, fence: GenerationFence) -> tuple[Any, ...]:
         """Return only the verified timed prefix available at interruption."""
 
@@ -792,14 +860,11 @@ class ExistingVoiceProviderAdapter:
         audio_end = self._generation_output_ends.get(fence, 0)
         if stream is None or audio_end <= 0:
             return ()
-        return await self._provider_timed_text_spans(
-            stream,
-            max_audio_end_sample=audio_end,
-        )
+        return await self._heard_text_spans(fence, stream, max_audio_end_sample=audio_end)
 
     async def _synthesize_phrase(
         self,
-        phrase: str,
+        phrase: SpokenPhrase,
         fence: GenerationFence,
         cancellation: CancellationContext,
         cancel_event: asyncio.Event,
@@ -808,12 +873,16 @@ class ExistingVoiceProviderAdapter:
         final: bool,
         source_start_sample: int,
     ) -> AsyncIterator[MediaReplyChunk]:
-        """Stream one phrase as bounded, fixed-size PCM frames."""
+        """Stream one phrase as bounded, fixed-size PCM frames.
+
+        The engine receives ``phrase.spoken``. Every chunk carries ``phrase.display``.
+        """
 
         if cancel_event.is_set():
             return
         from services.agent.src.voice_core.media_session import MediaReplyChunk
 
+        display = phrase.display
         frame_samples = self.output_frame_samples
         frame_bytes = frame_samples * 2
         buffered = bytearray()
@@ -821,7 +890,7 @@ class ExistingVoiceProviderAdapter:
         held_frame_received_at: float | None = None
         output_sample = source_start_sample
         provider_pcm = self._provider_pcm_chunks(
-            phrase,
+            phrase.spoken,
             fence,
             cancellation,
             cancel_event,
@@ -840,7 +909,7 @@ class ExistingVoiceProviderAdapter:
                             pcm_s16le=held_frame,
                             source_start_sample=output_sample,
                             assistant_text_delta=(
-                                phrase if output_sample == source_start_sample else ""
+                                display if output_sample == source_start_sample else ""
                             ),
                             first=first and output_sample == source_start_sample,
                         )
@@ -862,7 +931,7 @@ class ExistingVoiceProviderAdapter:
                 yield MediaReplyChunk(
                     pcm_s16le=held_frame,
                     source_start_sample=output_sample,
-                    assistant_text_delta=(phrase if output_sample == source_start_sample else ""),
+                    assistant_text_delta=(display if output_sample == source_start_sample else ""),
                     first=first and output_sample == source_start_sample,
                 )
                 if cancel_event.is_set():
@@ -878,8 +947,8 @@ class ExistingVoiceProviderAdapter:
         yield MediaReplyChunk(
             pcm_s16le=held_frame,
             source_start_sample=output_sample,
-            text=phrase,
-            assistant_text_delta=(phrase if output_sample == source_start_sample else ""),
+            text=display,
+            assistant_text_delta=(display if output_sample == source_start_sample else ""),
             first=first and output_sample == source_start_sample,
             final=final,
             text_audio_start_sample=source_start_sample,
@@ -924,37 +993,25 @@ class ExistingVoiceProviderAdapter:
 
         phrases: list[str] = []
         pending_announcements: deque[str] = deque()
-        segmenter = PhraseSegmenter(fence=fence)
         first_phrase_ready = asyncio.Event()
 
-        async def push_phrase(phrase: str) -> None:
-            if cancel_event.is_set() or not phrase:
+        async def push_phrase(phrase: SpokenPhrase) -> None:
+            if cancel_event.is_set() or not phrase.spoken:
                 return
-            phrases.append(phrase)
-            pending_announcements.append(phrase)
-            pushed = push_text(phrase)
+            phrases.append(phrase.display)
+            pending_announcements.append(phrase.display)
+            pushed = push_text(phrase.spoken)
             if inspect.isawaitable(pushed):
                 await pushed
             first_phrase_ready.set()
 
         async def produce_text() -> None:
-            llm_stream = self.language_model.stream(
-                LanguageModelRequest(user_text=user_text, cancellation=cancellation)
-            )
+            reply = self._reply_phrases(user_text, fence, cancellation, cancel_event)
             try:
-                async for token in self._cancel_aware_items(llm_stream, cancel_event):
-                    if not token:
-                        continue
-                    for segment in segmenter.push_token(token):
-                        await push_phrase(segment.text)
-                for segment in segmenter.flush(end_of_stream=True):
-                    await push_phrase(segment.text)
+                async for phrase in reply:
+                    await push_phrase(phrase)
             finally:
-                close_llm = getattr(llm_stream, "aclose", None)
-                if callable(close_llm):
-                    closed_llm = close_llm()
-                    if inspect.isawaitable(closed_llm):
-                        await closed_llm
+                await reply.aclose()
                 first_phrase_ready.set()
                 ended = end_input()
                 if inspect.isawaitable(ended):
@@ -1041,7 +1098,8 @@ class ExistingVoiceProviderAdapter:
                 raise RuntimeError("language model returned no speakable text")
             audio_end = output_sample + frame_samples
             announcement = take_announcement()
-            timed_text_spans = await self._provider_timed_text_spans(
+            timed_text_spans = await self._heard_text_spans(
+                fence,
                 stream,
                 max_audio_end_sample=audio_end,
             )
@@ -1124,57 +1182,31 @@ class ExistingVoiceProviderAdapter:
                 ):
                     yield chunk
                 return
-            segmenter = PhraseSegmenter(fence=fence)
             terminal_chunk: MediaReplyChunk | None = None
-            llm_stream = self.language_model.stream(
-                LanguageModelRequest(user_text=user_text, cancellation=cancellation)
-            )
+            reply = self._reply_phrases(user_text, fence, cancellation, cancel_event)
             try:
-                async for token in self._cancel_aware_items(llm_stream, cancel_event):
-                    if not token:
-                        continue
-                    for segment in segmenter.push_token(token):
-                        async for chunk in self._synthesize_phrase(
-                            segment.text,
-                            fence,
-                            cancellation,
-                            cancel_event,
-                            first=output_sample == 0,
-                            final=False,
-                            source_start_sample=output_sample,
-                        ):
-                            output_sample = chunk.source_start_sample + chunk.frame_samples
-                            if terminal_chunk is not None:
-                                yield terminal_chunk
-                            terminal_chunk = chunk
+                async for phrase in reply:
+                    async for chunk in self._synthesize_phrase(
+                        phrase,
+                        fence,
+                        cancellation,
+                        cancel_event,
+                        first=output_sample == 0,
+                        final=False,
+                        source_start_sample=output_sample,
+                    ):
+                        output_sample = chunk.source_start_sample + chunk.frame_samples
+                        if terminal_chunk is not None:
+                            yield terminal_chunk
+                        terminal_chunk = chunk
             finally:
-                close_llm = getattr(llm_stream, "aclose", None)
-                if callable(close_llm):
-                    closed_llm = close_llm()
-                    if inspect.isawaitable(closed_llm):
-                        await closed_llm
-            pending = [segment.text for segment in segmenter.flush(end_of_stream=True)]
-            for index, phrase in enumerate(pending):
-                if cancel_event.is_set():
-                    return
-                async for chunk in self._synthesize_phrase(
-                    phrase,
-                    fence,
-                    cancellation,
-                    cancel_event,
-                    first=output_sample == 0,
-                    final=index == len(pending) - 1,
-                    source_start_sample=output_sample,
-                ):
-                    output_sample = chunk.source_start_sample + chunk.frame_samples
-                    if terminal_chunk is not None:
-                        yield terminal_chunk
-                    terminal_chunk = chunk
+                await reply.aclose()
             if terminal_chunk is not None and not cancel_event.is_set():
                 yield replace(terminal_chunk, final=True)
         finally:
             cancel_event.set()
             self._generation_cancel_events.pop(fence, None)
+            self._fixed_safety_fences.discard(fence)
             self._remember_terminal_generation(fence)
 
     async def generate_output(
@@ -1217,7 +1249,7 @@ class ExistingVoiceProviderAdapter:
                 if not text:
                     raise ValueError("output tts source must not be empty")
                 async for chunk in self._synthesize_phrase(
-                    text,
+                    SpokenPhrase.verbatim(text),
                     fence,
                     cancellation,
                     cancel_event,

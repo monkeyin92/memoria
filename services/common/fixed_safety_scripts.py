@@ -7,6 +7,7 @@ engine's ``push_text`` and the playout log.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Final, Literal
 
@@ -99,6 +100,17 @@ def script_for_display(text: str | None) -> FixedSafetyScript | None:
     return None if text is None else _BY_DISPLAY.get(text)
 
 
+def log_fixed_safety_playout(logger: logging.Logger, script: FixedSafetyScript) -> None:
+    """Takes only the script, so child text cannot reach this line."""
+
+    logger.info(
+        "fixed_safety_playout reply_template_id=%s script_version=%s tts_text=%s",
+        script.template_id,
+        script.template_id,
+        script.spoken,
+    )
+
+
 __all__ = [
     "CRISIS_SELF_SCRIPT",
     "SUPPORT_RELAY_SCRIPT",
@@ -106,6 +118,7 @@ __all__ = [
     "FixedSafetyScript",
     "FixedSafetyTemplateId",
     "SpokenPhrase",
+    "log_fixed_safety_playout",
     "script_for_decision",
     "script_for_display",
 ]

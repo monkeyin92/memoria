@@ -8,6 +8,10 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from services.agent.src.contracts.ids import CancellationContext, GenerationFence
+from services.common.fixed_safety_scripts import FixedSafetyScript
+
+# A fixed safety script arrives whole and must not be segmented.
+type ReplyItem = str | FixedSafetyScript
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,7 +28,7 @@ class SpeechSynthesisRequest:
 
 
 class LanguageModelHandler(Protocol):
-    def stream(self, request: LanguageModelRequest) -> AsyncIterator[str]: ...
+    def stream(self, request: LanguageModelRequest) -> AsyncIterator[ReplyItem]: ...
 
 
 class SpeechSynthesisHandler(Protocol):
