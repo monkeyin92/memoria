@@ -38,7 +38,7 @@ async function scenarioData(scenario, view = {}) {
       await harness.page[method](event || { currentTarget: { dataset: {} }, detail: {} });
       await harness.settle();
     }
-    return { data: harness.page.data, setDataLog: harness.setDataLog, loadMs };
+    return { data: harness.page.data, setDataLog: harness.setDataLog, loadMs, tabBar: harness.tabBar.data };
   } finally {
     harness.restore();
   }
@@ -96,9 +96,15 @@ async function measure(page, { width, safeTop }) {
 }
 
 async function shoot(browser, scenario, view, outPath) {
-  const { data, setDataLog, loadMs } = await scenarioData(scenario, view);
+  const { data, setDataLog, loadMs, tabBar } = await scenarioData(scenario, view);
   const renderStarted = process.hrtime.bigint();
-  const html = renderPage(scenario.page, data, { width: view.width, safeTop: view.safeTop, safeBottom: view.safeBottom, fontScale: view.fontScale || 1 });
+  const html = renderPage(scenario.page, data, {
+    width: view.width,
+    safeTop: view.safeTop,
+    safeBottom: view.safeBottom,
+    fontScale: view.fontScale || 1,
+    tabBar: tabBar.hidden !== true,
+  });
   const renderMs = Number(process.hrtime.bigint() - renderStarted) / 1e6;
   fs.mkdirSync(HTML_DIR, { recursive: true });
   const htmlPath = path.join(HTML_DIR, `${outPath ? path.basename(outPath, ".png") : `${scenario.slug}-${view.name}`}.html`);
