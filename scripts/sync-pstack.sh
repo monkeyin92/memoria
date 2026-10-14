@@ -3,6 +3,9 @@
 # Does not modify skill contents. Preserves non-pstack entries under .cursor/skills/
 # (e.g. verify-memoria). Updates .cursor/skills/PSTACK_VERSION.
 # Writes only under .cursor/skills/. Upstream agents, README, and docs are skipped.
+#
+# Dry-run guards: `sync-pstack.sh --check-name NAME` validates NAME and the
+# resolved destination, then exits without cloning or writing.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -11,19 +14,40 @@ VERSION_FILE="${SKILLS_DST}/PSTACK_VERSION"
 UPSTREAM_REPO="${PSTACK_UPSTREAM_REPO:-https://github.com/cursor/plugins.git}"
 UPSTREAM_REF="${PSTACK_UPSTREAM_REF:-main}"
 
-assert_under_skills() {
+# Skill folder names must be a single path segment under .cursor/skills/.
+assert_skill_name() {
+  local name="$1"
+  if [[ -z "${name}" || "${name}" == "." || "${name}" == ".." || "${name}" == "*" || "${name}" == */* ]]; then
+    printf "error: refuse skill name: %q\n" "${name}" >&2
+    exit 1
+  fi
+}
+
+# Destination must resolve to exactly one directory entry under SKILLS_DST.
+# Never the skills root itself (blocks empty / '.' names that would rm -rf it).
+assert_skill_dest() {
   local path="$1"
-  local skills_real path_real
+  local skills_real path_real parent_real
   skills_real="$(realpath -m "${SKILLS_DST}")"
   path_real="$(realpath -m "${path}")"
-  case "${path_real}" in
-    "${skills_real}"|"${skills_real}"/*) ;;
-    *)
-      echo "error: refuse path outside ${SKILLS_DST}: ${path}" >&2
-      exit 1
-      ;;
-  esac
+  parent_real="$(dirname "${path_real}")"
+  if [[ "${path_real}" == "${skills_real}" ]]; then
+    echo "error: refuse skills root as target: ${path}" >&2
+    exit 1
+  fi
+  if [[ "${parent_real}" != "${skills_real}" ]]; then
+    echo "error: refuse path not exactly one level under ${SKILLS_DST}: ${path}" >&2
+    exit 1
+  fi
 }
+
+if [[ "${1:-}" == "--check-name" ]]; then
+  name="${2-}"
+  assert_skill_name "${name}"
+  assert_skill_dest "${SKILLS_DST}/${name}"
+  echo "ok ${name}"
+  exit 0
+fi
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/sync-pstack.XXXXXX")"
 cleanup() { rm -rf "${WORK}"; }
@@ -41,8 +65,7 @@ if [[ ! -d "${SRC_SKILLS}" ]]; then
   exit 1
 fi
 
-assert_under_skills "${SKILLS_DST}"
-assert_under_skills "${VERSION_FILE}"
+assert_skill_dest "${VERSION_FILE}"
 mkdir -p "${SKILLS_DST}"
 
 # Previously managed skill dirs (so removals upstream are reflected locally).
@@ -51,8 +74,10 @@ if [[ -f "${VERSION_FILE}" ]]; then
   while IFS= read -r line; do
     case "${line}" in
       skills:*)
-        # shellcheck disable=SC2206
-        PREV_SKILLS=(${line#skills:})
+        set -f
+        # Intentionally unquoted after skills:: split on IFS only; set -f blocks globs.
+        read -r -a PREV_SKILLS <<< "${line#skills:}"
+        set +f
         ;;
       agents:*|extras:*)
         echo "Ignoring legacy manifest line (sync is skills-only): ${line}"
@@ -61,9 +86,14 @@ if [[ -f "${VERSION_FILE}" ]]; then
   done < "${VERSION_FILE}"
 fi
 
+for name in "${PREV_SKILLS[@]+"${PREV_SKILLS[@]}"}"; do
+  assert_skill_name "${name}"
+done
+
 NEW_SKILLS=()
 while IFS= read -r -d '' dir; do
   name="$(basename "${dir}")"
+  assert_skill_name "${name}"
   NEW_SKILLS+=("${name}")
 done < <(find "${SRC_SKILLS}" -mindepth 1 -maxdepth 1 -type d -print0 | sort -z)
 
@@ -75,7 +105,8 @@ if ((${#PREV_SKILLS[@]})); then
       if [[ "${n}" == "${name}" ]]; then keep=1; break; fi
     done
     dest="${SKILLS_DST}/${name}"
-    assert_under_skills "${dest}"
+    assert_skill_name "${name}"
+    assert_skill_dest "${dest}"
     if [[ "${keep}" -eq 0 && -d "${dest}" ]]; then
       echo "Removing obsolete pstack skill: ${name}"
       rm -rf "${dest}"
@@ -86,7 +117,8 @@ fi
 echo "Syncing ${#NEW_SKILLS[@]} skill folders into ${SKILLS_DST} ..."
 for name in "${NEW_SKILLS[@]}"; do
   dest="${SKILLS_DST}/${name}"
-  assert_under_skills "${dest}"
+  assert_skill_name "${name}"
+  assert_skill_dest "${dest}"
   rm -rf "${dest}"
   cp -a "${SRC_SKILLS}/${name}" "${dest}"
 done
