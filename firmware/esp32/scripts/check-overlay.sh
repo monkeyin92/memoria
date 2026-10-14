@@ -105,7 +105,9 @@ rg -Fq 'esp_deep_sleep_start' "$board_dir/memoria_esp_vocat.cc" || \
     die "board must deep-sleep with tap (GPIO10) as the wake source"
 rg -Fq '#if CONFIG_MEMORIA_KEEP_AWAKE' "$board_dir/memoria_esp_vocat.cc" || \
     die "keep-awake must gate EnterTapDeepSleep"
-rg -Fq 'chip deep sleep suppressed (CONFIG_MEMORIA_KEEP_AWAKE)' "$board_dir/memoria_esp_vocat.cc" || \
+rg -Fq 'MEMORIA_KEEP_AWAKE_BUILD=1;' "$board_dir/memoria_esp_vocat.cc" || \
+    die "keep-awake image must carry MEMORIA_KEEP_AWAKE_BUILD=1; for the publisher refusal"
+rg -Fq 'chip deep sleep suppressed %s' "$board_dir/memoria_esp_vocat.cc" || \
     die "keep-awake skip must log that chip deep sleep is suppressed"
 rg -Fq 'wo_zai_ne.ogg' "$board_dir/memoria_esp_vocat.cc" || \
     die "tap wake must play the local 我在呢 prompt clip"
