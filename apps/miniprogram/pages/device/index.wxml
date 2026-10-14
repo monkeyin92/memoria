@@ -106,6 +106,7 @@
             <text class="trial-inset-value">›</text>
           </view>
           <view class="mp-privacy-well">{{privacyNote}}</view>
+          <view class="mp-privacy-well">{{backupRetentionLine}}</view>
         </view>
       </view>
 

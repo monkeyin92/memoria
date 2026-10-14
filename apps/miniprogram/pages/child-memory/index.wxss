@@ -227,8 +227,8 @@
   padding-bottom: 24rpx;
 }
 
-.cm-danger-link {
-  color: var(--mp-danger);
+.cm-muted-link {
+  color: var(--mp-ink-3);
   font-size: 26rpx;
   padding: 12rpx 20rpx;
 }

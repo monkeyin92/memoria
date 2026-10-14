@@ -10,6 +10,7 @@ page {
   --mp-accent-press: #c75f1f;
   --mp-accent-soft: #fbe6d4;
   --mp-accent-wash: #fdf1e6;
+  /* Red only for delete-confirm button text and error text. Never links or icons. */
   --mp-danger: #c8423a;
   --mp-danger-outline: #dcd2c5;
   --mp-ink: #2b241f;

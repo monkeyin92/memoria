@@ -129,6 +129,13 @@ test("page copy and structure match product acceptance", () => {
     childMemory.PRIVACY_LINE,
     "孩子说的原话，我们的服务器在入库前就去掉了；机器人本身不存录音。",
   );
+  assert.equal(
+    childMemory.BACKUP_RETENTION_LINE,
+    "删除的数据会在 7 天内从备份中清除",
+  );
+  assert.match(wxml, /backupRetentionLine/);
+  assert.match(wxml, /cm-muted-link/);
+  assert.doesNotMatch(wxml, /cm-danger-link/);
   assert.equal(childMemory.DELETE_KEEP, "再想想");
   assert.equal(childMemory.memoryHeaderTitle("星澜", "小明"), "小明的记忆");
   assert.equal(childMemory.memoryEmptyTitle("星澜", "小明"), "星澜还没有记住小明的事");
