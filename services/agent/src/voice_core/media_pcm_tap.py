@@ -1,6 +1,7 @@
 """Env-gated PCM tap capturing admitted Media ingress audio for diagnostics.
 
-The tap is disabled unless ``MEDIA_PCM_TAP_DIR`` points at a writable
+The tap is disabled unless the process environment sets
+``ENVIRONMENT=development`` and ``MEDIA_PCM_TAP_DIR`` points at a writable
 directory.  When enabled, each session/stream-epoch pair gets one capped WAV
 file containing exactly the PCM frames admitted toward the ASR provider, so
 uplink corruption (energy, spectrum, timing) can be inspected offline.  The
@@ -22,6 +23,8 @@ import os
 import wave
 from dataclasses import dataclass
 
+from services.agent.src.config import pcm_tap_directory
+
 logger = logging.getLogger(__name__)
 
 TAP_DIR_ENV = "MEDIA_PCM_TAP_DIR"
@@ -33,10 +36,6 @@ _TAP_FILE_PREFIX = "media-uplink-"
 _TAP_FILE_SUFFIX = ".wav"
 SAMPLE_RATE_HZ = 16_000
 _SAMPLE_WIDTH_BYTES = 2
-
-
-def tap_directory() -> str:
-    return os.getenv(TAP_DIR_ENV, "").strip()
 
 
 def tap_max_bytes() -> int:
@@ -208,10 +207,23 @@ class MediaPcmTap:
 
 
 def maybe_create_tap(session_id: str, stream_epoch: int) -> MediaPcmTap | None:
-    """Create a tap when enabled; never raise."""
+    """Create a tap only when ENVIRONMENT=development. Never raise.
 
-    directory = tap_directory()
-    if not directory:
+    Reads the process environment, not AgentSettings, and does not inherit
+    that object's development default. A process that never states its
+    environment never records audio.
+    """
+
+    try:
+        directory = pcm_tap_directory(os.getenv("ENVIRONMENT", ""), os.getenv(TAP_DIR_ENV, ""))
+    except ValueError:
+        logger.error(
+            "media PCM tap refused session=%s: %s requires ENVIRONMENT=development",
+            session_id,
+            TAP_DIR_ENV,
+        )
+        return None
+    if directory is None:
         return None
     try:
         return MediaPcmTap(

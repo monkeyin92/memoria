@@ -82,6 +82,7 @@ services:
       HOME: /tmp
       XDG_CACHE_HOME: /tmp/.cache
       MEDIA_SLO_METRICS_URL: "http://voice-core-media-bridge:9090/"
+      MEDIA_PCM_TAP_DIR: ""
     command:
       - -m
       - scripts.run_media_slo_reporter
@@ -132,6 +133,9 @@ services:
       MEDIA_OUTPUT_GENERATION_TIMEOUT_S: "45"
       MEDIA_OWNER_SILENCE_TIMEOUT_S: "30"
       MEDIA_MAX_USER_SPEECH_DURATION_S: "60"
+      # Empty, not absent: /etc/memoria-agent.env may still carry a diagnostic
+      # tap dir, and the Agent refuses to start with one outside development.
+      MEDIA_PCM_TAP_DIR: ""
     command:
       - -m
       - scripts.run_media_bridge

@@ -8,7 +8,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from services.agent.src.config import AgentSettings, validate_doubao_auth
+from services.agent.src.config import AgentSettings, pcm_tap_directory, validate_doubao_auth
 from services.control_api.app.config import ControlSettings
 
 _AGENT_EXTRA_KEYS = frozenset(
@@ -243,6 +243,7 @@ def split_env(
         access_token=values.get("DOUBAO_TTS_ACCESS_TOKEN", ""),
         required=False,
     )
+    pcm_tap_directory(values.get("ENVIRONMENT", ""), values.get("MEDIA_PCM_TAP_DIR", ""))
     clone_key = values.get("MEMORIA_DOUBAO_VOICE_API_KEY", "").strip()
     runtime_tts_secrets = {
         values.get("DOUBAO_TTS_API_KEY", "").strip(),
