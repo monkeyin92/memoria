@@ -1,11 +1,13 @@
 const api = require("../../utils/api");
 const { requireLogin } = require("../../utils/auth-gate");
+const { companionById, defaultCompanionId } = require("../../utils/companions");
 const { readBindingManifest } = require("../../utils/device-binding");
 const {
   CHILD_ARCHIVE_CONSENT,
   CLEARED_TOAST,
   CONSENT_OFF_DIALOG,
   DELETE_CONFIRM,
+  DELETE_KEEP,
   EMPTY_ARCHIVE_ON,
   EMPTY_RECENT,
   PRIVACY_LINE,
@@ -13,11 +15,12 @@ const {
   assertsNoTranscriptFields,
   boundChildFromManifest,
   groupArchiveByCategory,
+  memoryEmptyTitle,
+  memoryHeaderCaption,
+  memoryHeaderTitle,
   normalizeChildArchive,
   normalizeSessionSummaries,
 } = require("../../utils/child-memory");
-
-const SWIPE_OPEN_PX = 72;
 
 function operationKey(prefix) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -50,6 +53,11 @@ function resolveMinor(query) {
   return { minorId: bound.personId, childName: bound.displayName };
 }
 
+function quoteForRecord(list, recordId) {
+  const hit = (list || []).find((item) => item.recordId === recordId);
+  return hit?.text || "";
+}
+
 Page({
   data: {
     authenticated: false,
@@ -58,11 +66,18 @@ Page({
     error: "",
     minorId: "",
     childName: "孩子",
+    companionId: defaultCompanionId,
+    companionName: companionById(defaultCompanionId).name,
+    headerTitle: memoryHeaderTitle(companionById(defaultCompanionId).name, "孩子"),
+    headerCaption: memoryHeaderCaption(0),
+    emptyTitle: memoryEmptyTitle(companionById(defaultCompanionId).name, "孩子"),
     loadState: "idle",
     activeTab: "recent",
     privacyLine: PRIVACY_LINE,
     emptyRecent: EMPTY_RECENT,
     emptyArchiveOn: EMPTY_ARCHIVE_ON,
+    deleteKeepLabel: DELETE_KEEP,
+    showHeaderMascot: false,
     summaries: [],
     archiveGroups: [],
     archiveFlat: [],
@@ -78,7 +93,15 @@ Page({
 
   onLoad(query) {
     const resolved = resolveMinor(query || {});
-    this.setData(resolved);
+    const companion = companionById(defaultCompanionId);
+    this.setData({
+      ...resolved,
+      companionId: companion.id,
+      companionName: companion.name,
+      headerTitle: memoryHeaderTitle(companion.name, resolved.childName),
+      emptyTitle: memoryEmptyTitle(companion.name, resolved.childName),
+      headerCaption: memoryHeaderCaption(0),
+    });
     const app = getApp();
     this._unsubscribeAuthCleared = app?.subscribeAuthCleared?.(() => {
       this.setData({
@@ -89,6 +112,7 @@ Page({
         loadState: "idle",
         error: "",
         statusBanner: "",
+        confirm: null,
       });
     });
   },
@@ -105,7 +129,11 @@ Page({
     this.setData({ authenticated: true });
     if (!this.data.minorId) {
       const resolved = resolveMinor({});
-      this.setData(resolved);
+      this.setData({
+        ...resolved,
+        headerTitle: memoryHeaderTitle(this.data.companionName, resolved.childName),
+        emptyTitle: memoryEmptyTitle(this.data.companionName, resolved.childName),
+      });
     }
     await this.refresh();
   },
@@ -119,13 +147,24 @@ Page({
   },
 
   showRecent() {
-    this._closeAllSwipes();
-    this.setData({ activeTab: "recent", statusBanner: "" });
+    const showHeaderMascot = this.data.summaries.length > 0;
+    this.setData({
+      activeTab: "recent",
+      statusBanner: "",
+      showHeaderMascot,
+      headerCaption: memoryHeaderCaption(this.data.summaries.length),
+    });
   },
 
   showArchive() {
-    this._closeAllSwipes();
-    this.setData({ activeTab: "archive", statusBanner: "" });
+    const showHeaderMascot =
+      this.data.archiveConsent.active && this.data.archiveFlat.length > 0;
+    this.setData({
+      activeTab: "archive",
+      statusBanner: "",
+      showHeaderMascot,
+      headerCaption: memoryHeaderCaption(this.data.archiveFlat.length),
+    });
   },
 
   async refresh() {
@@ -141,9 +180,18 @@ Page({
     this.setData({ loading: true, error: "", loadState: "loading" });
     try {
       api.touchChildActivity(minorId).catch(() => {});
-      const [summaryPayload, consentPayload] = await Promise.all([
+      const [summaryPayload, consentPayload, profileResult] = await Promise.all([
         api.getChildSessionSummaries(minorId),
         api.getPersonConsents(minorId),
+        (async () => {
+          try {
+            const identity = api.currentIdentity();
+            if (!identity) return null;
+            return await api.getProfile(identity.user_id);
+          } catch {
+            return null;
+          }
+        })(),
       ]);
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       const archiveConsent = archiveConsentFromPersonPayload(consentPayload);
@@ -154,11 +202,23 @@ Page({
       const summaries = normalizeSessionSummaries(summaryPayload);
       assertsNoTranscriptFields(summaries);
       assertsNoTranscriptFields(archiveFlat);
+      const companion = companionById(profileResult?.companion_id || defaultCompanionId);
+      const count = this.data.activeTab === "archive" ? archiveFlat.length : summaries.length;
+      const showHeaderMascot =
+        this.data.activeTab === "archive"
+          ? archiveConsent.active && archiveFlat.length > 0
+          : summaries.length > 0;
       this.setData({
         summaries,
         archiveFlat,
         archiveGroups: groupArchiveByCategory(archiveFlat),
         archiveConsent,
+        companionId: companion.id,
+        companionName: companion.name,
+        headerTitle: memoryHeaderTitle(companion.name, this.data.childName),
+        emptyTitle: memoryEmptyTitle(companion.name, this.data.childName),
+        headerCaption: memoryHeaderCaption(count),
+        showHeaderMascot,
         loadState: "ready",
         error: "",
       });
@@ -176,101 +236,6 @@ Page({
     }
   },
 
-  _closeAllSwipes() {
-    const summaries = this.data.summaries.map((item) =>
-      item.swipeOpen ? { ...item, swipeOpen: false } : item,
-    );
-    const archiveFlat = this.data.archiveFlat.map((item) =>
-      item.swipeOpen ? { ...item, swipeOpen: false } : item,
-    );
-    this.setData({
-      summaries,
-      archiveFlat,
-      archiveGroups: groupArchiveByCategory(archiveFlat),
-    });
-  },
-
-  onSummaryTouchStart(event) {
-    const touch = event.touches?.[0];
-    if (!touch) return;
-    this._swipe = {
-      kind: "summary",
-      recordId: event.currentTarget.dataset.recordId,
-      startX: touch.clientX,
-      startY: touch.clientY,
-      lock: "",
-    };
-  },
-
-  onSummaryTouchMove(event) {
-    const swipe = this._swipe;
-    const touch = event.touches?.[0];
-    if (!swipe || swipe.kind !== "summary" || !touch) return;
-    const dx = touch.clientX - swipe.startX;
-    const dy = touch.clientY - swipe.startY;
-    if (!swipe.lock) {
-      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-      swipe.lock = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
-    }
-    if (swipe.lock !== "h") return;
-    const open = dx < -SWIPE_OPEN_PX / 2;
-    this._setSummarySwipe(swipe.recordId, open);
-  },
-
-  onSummaryTouchEnd() {
-    this._swipe = null;
-  },
-
-  _setSummarySwipe(recordId, open) {
-    const summaries = this.data.summaries.map((item) => ({
-      ...item,
-      swipeOpen: item.recordId === recordId ? open : false,
-    }));
-    this.setData({ summaries });
-  },
-
-  onArchiveTouchStart(event) {
-    const touch = event.touches?.[0];
-    if (!touch) return;
-    this._swipe = {
-      kind: "archive",
-      recordId: event.currentTarget.dataset.recordId,
-      startX: touch.clientX,
-      startY: touch.clientY,
-      lock: "",
-    };
-  },
-
-  onArchiveTouchMove(event) {
-    const swipe = this._swipe;
-    const touch = event.touches?.[0];
-    if (!swipe || swipe.kind !== "archive" || !touch) return;
-    const dx = touch.clientX - swipe.startX;
-    const dy = touch.clientY - swipe.startY;
-    if (!swipe.lock) {
-      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-      swipe.lock = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
-    }
-    if (swipe.lock !== "h") return;
-    const open = dx < -SWIPE_OPEN_PX / 2;
-    this._setArchiveSwipe(swipe.recordId, open);
-  },
-
-  onArchiveTouchEnd() {
-    this._swipe = null;
-  },
-
-  _setArchiveSwipe(recordId, open) {
-    const archiveFlat = this.data.archiveFlat.map((item) => ({
-      ...item,
-      swipeOpen: item.recordId === recordId ? open : false,
-    }));
-    this.setData({
-      archiveFlat,
-      archiveGroups: groupArchiveByCategory(archiveFlat),
-    });
-  },
-
   askDeleteSummary(event) {
     const recordId = event.currentTarget.dataset.recordId;
     if (!recordId) return;
@@ -280,6 +245,7 @@ Page({
         recordId,
         title: "删除这条摘要？",
         body: DELETE_CONFIRM,
+        quote: quoteForRecord(this.data.summaries, recordId),
         confirmLabel: "删除",
       },
     });
@@ -292,6 +258,7 @@ Page({
         kind: "clear-summaries",
         title: "清空全部摘要？",
         body: DELETE_CONFIRM,
+        quote: "",
         confirmLabel: "清空全部",
       },
     });
@@ -306,6 +273,7 @@ Page({
         recordId,
         title: "删除这条记忆？",
         body: DELETE_CONFIRM,
+        quote: quoteForRecord(this.data.archiveFlat, recordId),
         confirmLabel: "删除",
       },
     });
@@ -318,6 +286,7 @@ Page({
         kind: "clear-archive",
         title: "清空长期记忆？",
         body: DELETE_CONFIRM,
+        quote: "",
         confirmLabel: "清空全部",
       },
     });
@@ -330,13 +299,13 @@ Page({
     if (!minorId || wantOn === archiveConsent.active) return;
 
     if (!wantOn) {
-      // Revert switch visually until the parent confirms turn-off.
       this.setData({
         "archiveConsent.active": true,
         confirm: {
           kind: "consent-off",
           title: "关闭长期记忆？",
           body: CONSENT_OFF_DIALOG,
+          quote: "",
           confirmLabel: "关闭",
         },
       });

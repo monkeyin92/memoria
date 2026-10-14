@@ -1,4 +1,18 @@
 <view class="cm-page trial-page">
+  <view class="cm-hero">
+    <view class="cm-hero-copy">
+      <text class="trial-title">{{headerTitle}}</text>
+      <text class="trial-caption">{{headerCaption}}</text>
+    </view>
+    <face-badge
+      wx:if="{{showHeaderMascot}}"
+      role="{{companionId}}"
+      size="md"
+      mood="happy"
+      plain
+    ></face-badge>
+  </view>
+
   <text class="cm-privacy">{{privacyLine}}</text>
 
   <view class="cm-tabs">
@@ -15,17 +29,19 @@
   <text wx:if="{{error}}" class="cm-error">{{error}}</text>
   <text wx:if="{{statusBanner}}" class="cm-banner">{{statusBanner}}</text>
 
-  <view wx:if="{{!authenticated}}" class="cm-card cm-empty">
+  <view wx:if="{{!authenticated}}" class="trial-card cm-empty">
     <text class="cm-empty-title">请先登录</text>
     <text class="cm-empty-copy">登录后即可查看和删除孩子的记忆。</text>
   </view>
 
-  <view wx:elif="{{loadState === 'loading' || loading}}" class="cm-card">
+  <view wx:elif="{{loadState === 'loading' || loading}}" class="trial-card">
     <text class="cm-loading">正在读取…</text>
   </view>
 
   <block wx:elif="{{activeTab === 'recent'}}">
-    <view wx:if="{{!summaries.length}}" class="cm-card cm-empty">
+    <view wx:if="{{!summaries.length}}" class="cm-empty-state">
+      <face-badge role="{{companionId}}" size="empty" mood="thinking" plain></face-badge>
+      <text class="cm-empty-title">{{emptyTitle}}</text>
       <text class="cm-empty-copy">{{emptyRecent}}</text>
     </view>
 
@@ -33,24 +49,21 @@
       <view
         wx:for="{{summaries}}"
         wx:key="recordId"
-        class="cm-swipe"
+        class="trial-card cm-row"
       >
+        <view class="cm-row-body">
+          <text class="cm-summary-text">{{item.text}}</text>
+          <text class="cm-meta">{{item.dateLabel}}</text>
+        </view>
         <view
-          class="cm-swipe-action"
+          class="cm-delete"
           data-record-id="{{item.recordId}}"
           bindtap="askDeleteSummary"
-        >删除</view>
-        <view
-          class="cm-card cm-summary {{item.swipeOpen ? 'cm-swipe-open' : ''}}"
-          data-record-id="{{item.recordId}}"
-          bindtouchstart="onSummaryTouchStart"
-          bindtouchmove="onSummaryTouchMove"
-          bindtouchend="onSummaryTouchEnd"
-          bindtouchcancel="onSummaryTouchEnd"
+          aria-label="删除"
         >
-          <view class="cm-summary-body">
-            <text class="cm-date">{{item.dateLabel}}</text>
-            <text class="cm-summary-text">{{item.text}}</text>
+          <view class="cm-trash" aria-hidden="true">
+            <view class="cm-trash-lid"></view>
+            <view class="cm-trash-body"></view>
           </view>
         </view>
       </view>
@@ -62,7 +75,7 @@
   </block>
 
   <block wx:elif="{{activeTab === 'archive'}}">
-    <view class="cm-card cm-consent">
+    <view class="trial-card cm-consent">
       <view class="cm-consent-row">
         <view class="cm-consent-copy">
           <text class="cm-consent-title">{{archiveConsent.label}}</text>
@@ -70,7 +83,7 @@
         </view>
         <switch
           checked="{{archiveConsent.active}}"
-          color="#3CB8A0"
+          color="#E2702A"
           disabled="{{working}}"
           bindchange="onArchiveConsentChange"
           aria-label="长期记忆"
@@ -79,10 +92,10 @@
     </view>
 
     <block wx:if="{{!archiveConsent.active}}">
-      <!-- Without consent: toggle + explanation only, no items. -->
     </block>
 
-    <view wx:elif="{{!archiveFlat.length}}" class="cm-card cm-empty">
+    <view wx:elif="{{!archiveFlat.length}}" class="cm-empty-state">
+      <face-badge role="{{companionId}}" size="empty" mood="thinking" plain></face-badge>
       <text class="cm-empty-title">暂无长期记忆</text>
       <text class="cm-empty-copy">{{emptyArchiveOn}}</text>
     </view>
@@ -94,23 +107,22 @@
           wx:for="{{item.items}}"
           wx:for-item="fact"
           wx:key="recordId"
-          class="cm-swipe"
+          class="trial-card cm-row"
         >
+          <view class="cm-row-body">
+            <text class="cm-summary-text">{{fact.text}}</text>
+            <text class="cm-meta">{{fact.dateLabel}}</text>
+          </view>
           <view
-            class="cm-swipe-action"
+            class="cm-delete"
             data-record-id="{{fact.recordId}}"
             bindtap="askDeleteArchive"
-          >删除</view>
-          <view
-            class="cm-card cm-fact {{fact.swipeOpen ? 'cm-swipe-open' : ''}}"
-            data-record-id="{{fact.recordId}}"
-            bindtouchstart="onArchiveTouchStart"
-            bindtouchmove="onArchiveTouchMove"
-            bindtouchend="onArchiveTouchEnd"
-            bindtouchcancel="onArchiveTouchEnd"
+            aria-label="删除"
           >
-            <text class="cm-fact-text">{{fact.text}}</text>
-            <text class="cm-date">{{fact.dateLabel}}</text>
+            <view class="cm-trash" aria-hidden="true">
+              <view class="cm-trash-lid"></view>
+              <view class="cm-trash-body"></view>
+            </view>
           </view>
         </view>
       </view>
@@ -121,14 +133,15 @@
     </block>
   </block>
 
-  <view wx:if="{{confirm}}" class="cm-modal-wrap" bindtap="closeConfirm">
-    <view class="cm-modal" catchtap="noop">
-      <text class="cm-modal-title">{{confirm.title}}</text>
-      <text class="cm-modal-body">{{confirm.body}}</text>
-      <view class="cm-modal-actions">
-        <text class="cm-modal-cancel" bindtap="closeConfirm">取消</text>
-        <text class="cm-modal-ok" bindtap="runConfirm">{{confirm.confirmLabel}}</text>
-      </view>
+  <view wx:if="{{confirm}}" class="mp-sheet-mask" bindtap="closeConfirm" catchtouchmove="noop"></view>
+  <view wx:if="{{confirm}}" class="mp-sheet" catchtap="noop">
+    <view class="mp-sheet-grab"></view>
+    <text class="mp-sheet-title">{{confirm.title}}</text>
+    <view wx:if="{{confirm.quote}}" class="mp-sheet-quote">{{confirm.quote}}</view>
+    <text wx:else class="cm-sheet-body">{{confirm.body}}</text>
+    <view class="mp-sheet-actions">
+      <button class="trial-danger" bindtap="runConfirm" disabled="{{working}}">{{confirm.confirmLabel}}</button>
+      <button class="trial-secondary" bindtap="closeConfirm" disabled="{{working}}">{{deleteKeepLabel}}</button>
     </view>
   </view>
 </view>
