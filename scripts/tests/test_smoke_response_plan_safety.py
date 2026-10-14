@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+from scripts import assert_response_plan_safety as checker
 from scripts.assert_response_plan_safety import (
     OLD_DRAFT_MARKERS,
     PROHIBITED_SMOKE_QUERY,
@@ -33,24 +34,18 @@ CI = ROOT / ".github" / "workflows" / "ci.yml"
 def test_smoke_utterances_map_to_approved_templates_and_push_flags() -> None:
     routes = assert_smoke_route_table()
     assert set(routes) == set(SMOKE_CASE_NAMES)
-    assert routes["crisis"]["reply_template_id"] == "crisis-self-v1"
+    assert routes["crisis"]["script"].template_id == "crisis-self-v1"
     assert routes["crisis"]["attempt_push"] is True
-    assert routes["crisis"]["direct_text"] == CRISIS_SELF_SCRIPT.display
-    assert routes["victim"]["reply_template_id"] == "victim-support-v1"
+    assert routes["crisis"]["script"] is CRISIS_SELF_SCRIPT
+    assert routes["victim"]["script"].template_id == "victim-support-v1"
     assert routes["victim"]["attempt_push"] is True
-    assert routes["victim"]["direct_text"] == SUPPORT_VICTIM_SCRIPT.display
-    assert routes["third_party"]["reply_template_id"] == "support-other-v1"
+    assert routes["victim"]["script"] is SUPPORT_VICTIM_SCRIPT
+    assert routes["third_party"]["script"].template_id == "support-other-v1"
     assert routes["third_party"]["attempt_push"] is False
-    assert routes["third_party"]["direct_text"] == SUPPORT_RELAY_SCRIPT.display
-    assert routes["prevention"]["reply_template_id"] == "support-other-v1"
+    assert routes["third_party"]["script"] is SUPPORT_RELAY_SCRIPT
+    assert routes["prevention"]["script"].template_id == "support-other-v1"
     assert routes["prevention"]["attempt_push"] is False
-    assert routes["prevention"]["direct_text"] == SUPPORT_RELAY_SCRIPT.display
-    for name, case in zip(SMOKE_CASE_NAMES, SMOKE_SAFETY_CASES, strict=True):
-        route = route_crisis(case["query"])
-        assert route.script is not None
-        assert route.script.template_id == routes[name]["reply_template_id"]
-        assert route.attempt_push is routes[name]["attempt_push"]
-        assert route.script.display == routes[name]["direct_text"]
+    assert routes["prevention"]["script"] is SUPPORT_RELAY_SCRIPT
     prohibited = route_crisis(PROHIBITED_SMOKE_QUERY)
     assert prohibited.script is None
     assert prohibited.attempt_push is False
@@ -58,6 +53,40 @@ def test_smoke_utterances_map_to_approved_templates_and_push_flags() -> None:
         fixed_companion_reply(query=PROHIBITED_SMOKE_QUERY, is_companion=False)
         == SAFE_UNKNOWN_REPLY
     )
+
+
+def test_smoke_locks_the_spoken_phone_readings() -> None:
+    routes = assert_smoke_route_table()
+
+    assert "热线幺二三五六。" in routes["crisis"]["tts_text"]
+    assert routes["crisis"]["tts_text"].endswith("请大人打幺二零。")
+    assert "一二三五六" not in routes["crisis"]["tts_text"]
+    assert routes["victim"]["tts_text"].endswith("请大人帮你打幺幺零。")
+    assert routes["third_party"]["tts_text"] == SUPPORT_RELAY_SCRIPT.display
+
+
+def test_route_table_fails_when_spoken_copy_drifts(monkeypatch: pytest.MonkeyPatch) -> None:
+    crisis, *rest = SMOKE_SAFETY_CASES
+    drifted = {**crisis, "tts_text": crisis["tts_text"].replace("幺二三五六", "一二三五六")}
+    monkeypatch.setattr(checker, "SMOKE_SAFETY_CASES", (drifted, *rest))
+
+    with pytest.raises(AssertionError, match="crisis: spoken copy drifted"):
+        assert_smoke_route_table()
+
+
+def test_checker_rejects_display_copy_that_names_no_script() -> None:
+    for direct_text in (
+        CRISIS_SELF_SCRIPT.spoken,
+        CRISIS_SELF_SCRIPT.display.replace("热线12356", "热线 12356"),
+    ):
+        with pytest.raises(AssertionError, match="crisis: unexpected direct_text"):
+            assert_response_plan_safety_payloads(
+                crisis={"direct_text": direct_text},
+                third_party={"direct_text": SUPPORT_RELAY_SCRIPT.display},
+                victim={"direct_text": SUPPORT_VICTIM_SCRIPT.display},
+                prevention={"direct_text": SUPPORT_RELAY_SCRIPT.display},
+                prohibited={"direct_text": SAFE_UNKNOWN_REPLY},
+            )
 
 
 def test_checker_accepts_canonical_payloads_and_rejects_old_draft() -> None:
