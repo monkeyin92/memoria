@@ -1141,10 +1141,9 @@ class MediaOutputStreamMixin:
             minor_limits,
             session_limit_reached,
         )
-        from services.common.companion_response_safety import FIXED_SAFETY_REPLIES
+        from services.common.fixed_safety_scripts import script_for_display
 
-        assistant_text = context.output.assistant_text.strip()
-        if assistant_text in FIXED_SAFETY_REPLIES:
+        if script_for_display(context.output.assistant_text.strip()) is not None:
             context.crisis_reply_heard = True
         max_seconds, _quiet_hours = minor_limits(context.runtime.mode_policy.runtime_profile)
         if (

@@ -50,7 +50,7 @@ from services.archive.memory_domain import (
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
 from services.archive.postgres_archive import PostgresLifeArchive
 from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
-from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
+from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
 from services.control_api.app.main import create_app
 from services.control_api.app.subject_verification import ensure_account_person
 from services.control_api.tests.test_interaction_api import _MemoryCatalog
@@ -454,7 +454,7 @@ async def test_real_runtime_child_profile_reaches_both_policy_seams(
             generation_id=2,
         )
         assert crisis_turn.status_code == 200, crisis_turn.text
-        assert crisis_turn.json()["direct_text"] == CRISIS_SUPPORT_REPLY
+        assert crisis_turn.json()["direct_text"] == CRISIS_SELF_SCRIPT.display
 
         # /session-policy must read the SAME signed profile the authority issued
         # for the child — not an account fallback, not a fixture.
@@ -988,7 +988,7 @@ async def test_real_runtime_authority_unavailable_fails_closed_on_both_seams(
             generation_id=2,
         )
         assert crisis_dead.status_code == 200, crisis_dead.text
-        assert crisis_dead.json()["direct_text"] == CRISIS_SUPPORT_REPLY
+        assert crisis_dead.json()["direct_text"] == CRISIS_SELF_SCRIPT.display
         memory_dead = await _response_plan(
             client,
             session_id=chain.session_id,
@@ -1797,7 +1797,7 @@ async def test_subject_category_matrix_keeps_minor_adult_and_unknown_safe_distin
                 generation_id=1,
             )
             assert crisis_turn.status_code == 200, crisis_turn.text
-            assert crisis_turn.json()["direct_text"] == CRISIS_SUPPORT_REPLY
+            assert crisis_turn.json()["direct_text"] == CRISIS_SELF_SCRIPT.display
 
             memory_turn = await _response_plan(
                 client,
@@ -1926,7 +1926,7 @@ async def test_subject_category_matrix_keeps_minor_adult_and_unknown_safe_distin
             generation_id=1,
         )
         assert unknown_crisis.status_code == 200, unknown_crisis.text
-        assert unknown_crisis.json()["direct_text"] == CRISIS_SUPPORT_REPLY
+        assert unknown_crisis.json()["direct_text"] == CRISIS_SELF_SCRIPT.display
         unknown_memory = await _response_plan(
             client,
             session_id=unknown.session_id,
@@ -2098,7 +2098,7 @@ async def test_both_policy_seams_reject_a_diverged_runtime_projection(
             generation_id=2,
         )
         assert crisis_mismatch.status_code == 200, crisis_mismatch.text
-        assert crisis_mismatch.json()["direct_text"] == CRISIS_SUPPORT_REPLY
+        assert crisis_mismatch.json()["direct_text"] == CRISIS_SELF_SCRIPT.display
         assert await _crisis_evidence_events(app, account_id=chain.child_person_id) == ()
         assert await _crisis_evidence_events(app, account_id=chain.account_id) == ()
         assert len(catalog.queries) == queries_before
@@ -2357,7 +2357,7 @@ async def test_legal_manager_change_closes_the_agent_facing_seams(
                 "account_keyed_reads_after_change": reads_after_change,
                 "crisis_status_after": crisis_after.status_code,
                 "crisis_is_fixed_reply": crisis_after.json().get("direct_text")
-                == CRISIS_SUPPORT_REPLY
+                == CRISIS_SELF_SCRIPT.display
                 if crisis_after.status_code == 200
                 else None,
                 "authority_current_after": current_after,
@@ -2384,7 +2384,7 @@ async def test_legal_manager_change_closes_the_agent_facing_seams(
 
         # The crisis fixed reply is never suppressed, before or after the change.
         assert crisis_after.status_code == 200, crisis_after.text
-        assert crisis_after.json()["direct_text"] == CRISIS_SUPPORT_REPLY
+        assert crisis_after.json()["direct_text"] == CRISIS_SELF_SCRIPT.display
 
         # The read path itself must have withdrawn the authorization basis, and
         # both its read and its write entry points must agree on that.

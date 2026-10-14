@@ -47,7 +47,7 @@ from services.agent.tests.unit.runtime_state_helpers import (
     bind_owner_speaker,
     commit_media_turn,
 )
-from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
+from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
 from services.common.realtime_information import REALTIME_UNAVAILABLE_REPLY
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
@@ -2450,14 +2450,14 @@ async def test_controlled_turn_speaks_the_complete_fixed_crisis_reply() -> None:
     agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="直接播放固定危机支持。",
-        direct_text=CRISIS_SUPPORT_REPLY,
+        direct_text=CRISIS_SELF_SCRIPT.display,
     ))
 
     output = [item async for item in agent.stream_reply(llm.ChatContext.empty())]
 
-    assert "".join(item for item in output if isinstance(item, str)) == CRISIS_SUPPORT_REPLY
-    assert "12356" in CRISIS_SUPPORT_REPLY
-    assert not CRISIS_SUPPORT_REPLY.endswith("？")
+    assert "".join(item for item in output if isinstance(item, str)) == CRISIS_SELF_SCRIPT.display
+    assert "12356" in CRISIS_SELF_SCRIPT.display
+    assert not CRISIS_SELF_SCRIPT.display.endswith("？")
 
 
 @pytest.mark.asyncio

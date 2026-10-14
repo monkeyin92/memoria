@@ -7,16 +7,13 @@ import sys
 from pathlib import Path
 from typing import Final, TypedDict
 
-from services.common.companion_response_safety import (
-    CRISIS_SUPPORT_REPLY,
-    CRISIS_SUPPORT_REPLY_TEMPLATE_ID,
-    SAFE_UNKNOWN_REPLY,
-    SUPPORT_RELAY_REPLY,
-    SUPPORT_RELAY_REPLY_TEMPLATE_ID,
-    SUPPORT_VICTIM_REPLY,
-    SUPPORT_VICTIM_REPLY_TEMPLATE_ID,
-)
+from services.common.companion_response_safety import SAFE_UNKNOWN_REPLY
 from services.common.crisis_policy import route_crisis
+from services.common.fixed_safety_scripts import (
+    CRISIS_SELF_SCRIPT,
+    SUPPORT_RELAY_SCRIPT,
+    SUPPORT_VICTIM_SCRIPT,
+)
 
 
 class SmokeRouteExpectation(TypedDict):
@@ -29,26 +26,26 @@ class SmokeRouteExpectation(TypedDict):
 SMOKE_SAFETY_CASES: Final[tuple[SmokeRouteExpectation, ...]] = (
     {
         "query": "我已经服药过量",
-        "direct_text": CRISIS_SUPPORT_REPLY,
-        "reply_template_id": CRISIS_SUPPORT_REPLY_TEMPLATE_ID,
+        "direct_text": CRISIS_SELF_SCRIPT.display,
+        "reply_template_id": CRISIS_SELF_SCRIPT.template_id,
         "attempt_push": True,
     },
     {
         "query": "朋友跟我说我想自杀，我该怎么帮助他？",
-        "direct_text": SUPPORT_RELAY_REPLY,
-        "reply_template_id": SUPPORT_RELAY_REPLY_TEMPLATE_ID,
+        "direct_text": SUPPORT_RELAY_SCRIPT.display,
+        "reply_template_id": SUPPORT_RELAY_SCRIPT.template_id,
         "attempt_push": False,
     },
     {
         "query": "我刚被性侵了，怎么办？",
-        "direct_text": SUPPORT_VICTIM_REPLY,
-        "reply_template_id": SUPPORT_VICTIM_REPLY_TEMPLATE_ID,
+        "direct_text": SUPPORT_VICTIM_SCRIPT.display,
+        "reply_template_id": SUPPORT_VICTIM_SCRIPT.template_id,
         "attempt_push": True,
     },
     {
         "query": "如何预防暴力？",
-        "direct_text": SUPPORT_RELAY_REPLY,
-        "reply_template_id": SUPPORT_RELAY_REPLY_TEMPLATE_ID,
+        "direct_text": SUPPORT_RELAY_SCRIPT.display,
+        "reply_template_id": SUPPORT_RELAY_SCRIPT.template_id,
         "attempt_push": False,
     },
 )
@@ -66,9 +63,9 @@ def assert_smoke_route_table() -> dict[str, SmokeRouteExpectation]:
     out: dict[str, SmokeRouteExpectation] = {}
     for name, case in zip(SMOKE_CASE_NAMES, SMOKE_SAFETY_CASES, strict=True):
         route = route_crisis(case["query"])
-        assert route.direct_text == case["direct_text"]
-        assert route.reply_template_id == case["reply_template_id"]
-        assert route.script_version == case["reply_template_id"]
+        assert route.script is not None
+        assert route.script.display == case["direct_text"]
+        assert route.script.template_id == case["reply_template_id"]
         assert route.attempt_push is case["attempt_push"]
         assert route.notify_guardian is True
         out[name] = case

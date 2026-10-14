@@ -10,10 +10,8 @@ from typing import Any
 from services.agent.src.orchestration.context_manager import ChatMessage, SpeakerScope
 from services.agent.src.orchestration.context_snapshot_manager import ContextSnapshot
 from services.agent.src.response_planner_client import ResponsePlan
-from services.common.companion_response_safety import (
-    AFTER_FIXED_SAFETY_SESSION_INSTRUCTION,
-    session_had_fixed_safety_reply,
-)
+from services.common.companion_response_safety import AFTER_FIXED_SAFETY_SESSION_INSTRUCTION
+from services.common.fixed_safety_scripts import script_for_display
 
 logger = logging.getLogger(__name__)
 
@@ -234,7 +232,7 @@ class ContextAssembler:
                 "从中断处自然续接，不要重开话题、重复已听内容，"
                 "也不要询问用户想继续什么。"
             )
-        if session_had_fixed_safety_reply(heard_assistant):
+        if any(script_for_display(turn) is not None for turn in heard_assistant):
             instructions += "\n" + AFTER_FIXED_SAFETY_SESSION_INSTRUCTION
         if context_snapshot is None:
             grounded_items = [

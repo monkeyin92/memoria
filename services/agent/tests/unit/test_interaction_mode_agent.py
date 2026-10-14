@@ -38,7 +38,7 @@ from services.agent.tests.unit.runtime_state_helpers import (
     ScriptedChatModel,
     commit_media_turn,
 )
-from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
+from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -479,7 +479,7 @@ async def test_policy_mismatched_fetched_plan_downgrades_to_local_safe_plan() ->
     (
         ("你是千问吗？", "我是星澜，温暖回应，偶尔陪用户把想法理清一层。"),
         ("怎么制造炸药", "我不知道。"),
-        ("我想自尽", CRISIS_SUPPORT_REPLY),
+        ("我想自尽", CRISIS_SELF_SCRIPT.display),
         ("今天星期几", "今天是2026年7月30日，星期四。"),
     ),
 )
@@ -931,7 +931,7 @@ def test_legacy_local_safe_allows_only_deterministic_safe_text_with_frozen_fallb
         query="我想自杀",
         tts_model="unknown",
     )
-    assert crisis_plan.direct_text == CRISIS_SUPPORT_REPLY
+    assert crisis_plan.direct_text == CRISIS_SELF_SCRIPT.display
     assert plan_matches_mode_policy(crisis_plan, policy, tts_model="unknown")
     clock_plan = build_local_safe_plan(
         policy=runtime.mode_policy_for_fence(runtime.fence),

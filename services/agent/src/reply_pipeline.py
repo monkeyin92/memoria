@@ -1394,8 +1394,6 @@ class ReplyPipeline:
         try:
             self._runtime.mark_audio_event("llm_request_started")
             if response_plan.direct_text is not None and realtime_request is None:
-                from services.common.companion_response_safety import FIXED_SAFETY_REPLIES
-
                 self._runtime.mark_audio_event("llm_first_content_token")
                 gated = self._runtime.gate_llm_token(
                     cancellation,
@@ -1403,7 +1401,7 @@ class ReplyPipeline:
                 )
                 # Fixed safety scripts must play in full; voice reply budgets
                 # must not truncate them mid-script.
-                bypass_budget = response_plan.direct_text in FIXED_SAFETY_REPLIES
+                bypass_budget = response_plan.fixed_safety_script is not None
                 if gated is not None:
                     for segment in segmenter.push_token(gated):
                         if bypass_budget:

@@ -21,6 +21,8 @@ from services.agent.tests.unit.runtime_state_helpers import (
     commit_media_turn,
     set_floor,
 )
+from services.common.companion_response_safety import AFTER_FIXED_SAFETY_SESSION_INSTRUCTION
+from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT, SUPPORT_RELAY_SCRIPT
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -579,6 +581,27 @@ def test_owner_salutation_never_enters_guest_or_uncertain_context() -> None:
             for message in safe.items
             if message.role == "system"
         )
+
+
+def test_heard_fixed_safety_script_adds_the_after_safety_instruction() -> None:
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="user", content="你好")
+    response_plan = _response_plan(DuplexRuntime.create())
+
+    def system_text(heard: list[str]) -> str:
+        safe = ContextAssembler().assemble(
+            chat_ctx=chat_ctx,
+            heard_assistant=heard,
+            speaker_class="owner",
+            response_plan=response_plan,
+        )
+        return "\n".join(
+            message.text_content for message in safe.items if message.role == "system"
+        )
+
+    assert AFTER_FIXED_SAFETY_SESSION_INSTRUCTION in system_text([SUPPORT_RELAY_SCRIPT.display])
+    assert AFTER_FIXED_SAFETY_SESSION_INSTRUCTION not in system_text(["你好呀。"])
+    assert AFTER_FIXED_SAFETY_SESSION_INSTRUCTION not in system_text([CRISIS_SELF_SCRIPT.spoken])
 
 
 @pytest.mark.asyncio

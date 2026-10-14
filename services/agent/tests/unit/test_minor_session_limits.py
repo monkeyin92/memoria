@@ -23,7 +23,7 @@ from services.agent.src.voice_core import media_session_projection
 from services.agent.src.voice_core.media_session_output_stream import MediaOutputStreamMixin
 from services.agent.src.voice_core.media_session_projection import MediaSessionProjectionMixin
 from services.agent.src.voice_core.minor_session_limits import in_quiet_hours, minor_limits
-from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
+from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
 from services.session_runtime.profile_service import (
     RuntimeProfile,
     runtime_profile_wire_payload,
@@ -179,7 +179,7 @@ async def test_an_adult_wake_at_night_is_not_refused(monkeypatch: pytest.MonkeyP
     [
         (60.0, "好的。", False),  # inside the limit
         (1900.0, "好的。", True),  # past the limit: goodbye after the reply
-        (1900.0, CRISIS_SUPPORT_REPLY, False),  # a crisis session is never cut short
+        (1900.0, CRISIS_SELF_SCRIPT.display, False),  # a crisis session is never cut short
     ],
 )
 async def test_a_minor_session_past_its_limit_ends_after_the_reply(

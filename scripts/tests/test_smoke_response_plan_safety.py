@@ -15,13 +15,15 @@ from scripts.assert_response_plan_safety import (
     main,
 )
 from services.common.companion_response_safety import (
-    CRISIS_SUPPORT_REPLY,
     SAFE_UNKNOWN_REPLY,
-    SUPPORT_RELAY_REPLY,
-    SUPPORT_VICTIM_REPLY,
     fixed_companion_reply,
 )
 from services.common.crisis_policy import route_crisis
+from services.common.fixed_safety_scripts import (
+    CRISIS_SELF_SCRIPT,
+    SUPPORT_RELAY_SCRIPT,
+    SUPPORT_VICTIM_SCRIPT,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 SMOKE = ROOT / "scripts" / "smoke_server_deployment.sh"
@@ -33,25 +35,25 @@ def test_smoke_utterances_map_to_approved_templates_and_push_flags() -> None:
     assert set(routes) == set(SMOKE_CASE_NAMES)
     assert routes["crisis"]["reply_template_id"] == "crisis-self-v1"
     assert routes["crisis"]["attempt_push"] is True
-    assert routes["crisis"]["direct_text"] == CRISIS_SUPPORT_REPLY
+    assert routes["crisis"]["direct_text"] == CRISIS_SELF_SCRIPT.display
     assert routes["victim"]["reply_template_id"] == "victim-support-v1"
     assert routes["victim"]["attempt_push"] is True
-    assert routes["victim"]["direct_text"] == SUPPORT_VICTIM_REPLY
+    assert routes["victim"]["direct_text"] == SUPPORT_VICTIM_SCRIPT.display
     assert routes["third_party"]["reply_template_id"] == "support-other-v1"
     assert routes["third_party"]["attempt_push"] is False
-    assert routes["third_party"]["direct_text"] == SUPPORT_RELAY_REPLY
+    assert routes["third_party"]["direct_text"] == SUPPORT_RELAY_SCRIPT.display
     assert routes["prevention"]["reply_template_id"] == "support-other-v1"
     assert routes["prevention"]["attempt_push"] is False
-    assert routes["prevention"]["direct_text"] == SUPPORT_RELAY_REPLY
+    assert routes["prevention"]["direct_text"] == SUPPORT_RELAY_SCRIPT.display
     for name, case in zip(SMOKE_CASE_NAMES, SMOKE_SAFETY_CASES, strict=True):
         route = route_crisis(case["query"])
-        assert route.reply_template_id == routes[name]["reply_template_id"]
+        assert route.script is not None
+        assert route.script.template_id == routes[name]["reply_template_id"]
         assert route.attempt_push is routes[name]["attempt_push"]
-        assert route.direct_text == routes[name]["direct_text"]
+        assert route.script.display == routes[name]["direct_text"]
     prohibited = route_crisis(PROHIBITED_SMOKE_QUERY)
-    assert prohibited.reply_template_id is None
+    assert prohibited.script is None
     assert prohibited.attempt_push is False
-    assert prohibited.direct_text is None
     assert (
         fixed_companion_reply(query=PROHIBITED_SMOKE_QUERY, is_companion=False)
         == SAFE_UNKNOWN_REPLY
@@ -60,10 +62,10 @@ def test_smoke_utterances_map_to_approved_templates_and_push_flags() -> None:
 
 def test_checker_accepts_canonical_payloads_and_rejects_old_draft() -> None:
     good = {
-        "crisis": {"direct_text": CRISIS_SUPPORT_REPLY},
-        "third_party": {"direct_text": SUPPORT_RELAY_REPLY},
-        "victim": {"direct_text": SUPPORT_VICTIM_REPLY},
-        "prevention": {"direct_text": SUPPORT_RELAY_REPLY},
+        "crisis": {"direct_text": CRISIS_SELF_SCRIPT.display},
+        "third_party": {"direct_text": SUPPORT_RELAY_SCRIPT.display},
+        "victim": {"direct_text": SUPPORT_VICTIM_SCRIPT.display},
+        "prevention": {"direct_text": SUPPORT_RELAY_SCRIPT.display},
     }
     assert_response_plan_safety_payloads(
         crisis=good["crisis"],

@@ -21,8 +21,8 @@ from services.archive.memory_domain import (
     MemorySearchResult,
     PersonItem,
 )
-from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
 from services.common.crisis_policy import CrisisSemanticVerdict
+from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
 from services.control_api.app.main import create_app
 from services.control_api.app.routes import interaction as interaction_routes
 from services.digital_self.domain import (
@@ -1691,7 +1691,7 @@ async def test_response_plan_short_circuits_explicit_self_harm_to_crisis_support
     assert response.status_code == 200
     payload = response.json()
     assert payload["direct_text"] != "我不知道。"
-    assert payload["direct_text"] == CRISIS_SUPPORT_REPLY
+    assert payload["direct_text"] == CRISIS_SELF_SCRIPT.display
 
 
 @pytest.mark.asyncio

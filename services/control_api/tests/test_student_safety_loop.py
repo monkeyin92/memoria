@@ -16,19 +16,11 @@ from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from services.common.companion_response_safety import (
-    CRISIS_SUPPORT_REPLY,
-    CRISIS_SUPPORT_REPLY_TEMPLATE_ID,
-    GUARDIAN_ATTENTION_COPY,
-    SUPPORT_RELAY_REPLY,
-    SUPPORT_RELAY_REPLY_TEMPLATE_ID,
-    SUPPORT_VICTIM_REPLY,
-    SUPPORT_VICTIM_REPLY_TEMPLATE_ID,
-)
-from services.common.crisis_policy import (
-    CRISIS_SCRIPT_VERSION,
-    SUPPORT_RELAY_SCRIPT_VERSION,
-    SUPPORT_VICTIM_SCRIPT_VERSION,
+from services.common.companion_response_safety import GUARDIAN_ATTENTION_COPY
+from services.common.fixed_safety_scripts import (
+    CRISIS_SELF_SCRIPT,
+    SUPPORT_RELAY_SCRIPT,
+    SUPPORT_VICTIM_SCRIPT,
 )
 from services.control_api.app.device_binding_token import mint_device_binding_token
 from services.control_api.app.main import create_app
@@ -247,7 +239,7 @@ async def test_minor_crisis_queues_one_notification_and_fixed_text_reaches_the_d
         body = crisis.json()
 
         # 设备端固定安全话术就是 response plan 的 direct_text，逐字相同。
-        assert body["direct_text"] == CRISIS_SUPPORT_REPLY
+        assert body["direct_text"] == CRISIS_SELF_SCRIPT.display
         assert "12356" in body["direct_text"]
         assert "120" in body["direct_text"]
         assert not body["direct_text"].endswith("？")
@@ -281,8 +273,8 @@ async def test_minor_crisis_queues_one_notification_and_fixed_text_reaches_the_d
         )
         assert len(events) == 1
         payload = dict(events[0].payload)
-        assert payload["script_version"] == CRISIS_SCRIPT_VERSION
-        assert payload["reply_template_id"] == CRISIS_SUPPORT_REPLY_TEMPLATE_ID
+        assert payload["script_version"] == CRISIS_SELF_SCRIPT.template_id
+        assert payload["reply_template_id"] == CRISIS_SELF_SCRIPT.template_id
         assert payload["attempt_push"] is True
         assert payload["contains_transcript"] is False
         assert payload["contains_severity"] is False
@@ -295,25 +287,25 @@ async def test_minor_crisis_queues_one_notification_and_fixed_text_reaches_the_d
     (
         (
             "我不想活了",
-            CRISIS_SUPPORT_REPLY,
-            CRISIS_SCRIPT_VERSION,
-            CRISIS_SUPPORT_REPLY_TEMPLATE_ID,
+            CRISIS_SELF_SCRIPT.display,
+            CRISIS_SELF_SCRIPT.template_id,
+            CRISIS_SELF_SCRIPT.template_id,
             True,
             True,
         ),
         (
             "有人正在打我",
-            SUPPORT_VICTIM_REPLY,
-            SUPPORT_VICTIM_SCRIPT_VERSION,
-            SUPPORT_VICTIM_REPLY_TEMPLATE_ID,
+            SUPPORT_VICTIM_SCRIPT.display,
+            SUPPORT_VICTIM_SCRIPT.template_id,
+            SUPPORT_VICTIM_SCRIPT.template_id,
             True,
             True,
         ),
         (
             "我朋友说他不想活了",
-            SUPPORT_RELAY_REPLY,
-            SUPPORT_RELAY_SCRIPT_VERSION,
-            SUPPORT_RELAY_REPLY_TEMPLATE_ID,
+            SUPPORT_RELAY_SCRIPT.display,
+            SUPPORT_RELAY_SCRIPT.template_id,
+            SUPPORT_RELAY_SCRIPT.template_id,
             False,
             True,
         ),
@@ -471,8 +463,8 @@ async def test_replay_of_the_same_generation_does_not_duplicate_the_notification
             turn_id=2,
             generation_id=1,
             tool_epoch=0,
-            script_version=CRISIS_SCRIPT_VERSION,
-            reply_template_id=CRISIS_SUPPORT_REPLY_TEMPLATE_ID,
+            script_version=CRISIS_SELF_SCRIPT.template_id,
+            reply_template_id=CRISIS_SELF_SCRIPT.template_id,
         )
         direct_replay = await service.record_minor_crisis(
             minor_user_id=child["user_id"],
@@ -480,8 +472,8 @@ async def test_replay_of_the_same_generation_does_not_duplicate_the_notification
             turn_id=2,
             generation_id=1,
             tool_epoch=0,
-            script_version=CRISIS_SCRIPT_VERSION,
-            reply_template_id=CRISIS_SUPPORT_REPLY_TEMPLATE_ID,
+            script_version=CRISIS_SELF_SCRIPT.template_id,
+            reply_template_id=CRISIS_SELF_SCRIPT.template_id,
         )
         assert direct_first == direct_replay
         assert direct_first.notification_count == 1
@@ -575,7 +567,7 @@ async def test_adult_crisis_gets_the_fixed_reply_without_touching_the_outbox(
         )
 
         assert crisis.status_code == 200, crisis.text
-        assert crisis.json()["direct_text"] == CRISIS_SUPPORT_REPLY
+        assert crisis.json()["direct_text"] == CRISIS_SELF_SCRIPT.display
         assert await _crisis_event_count(app, minor_user_id=adult["user_id"]) == 0
 
 
@@ -612,7 +604,7 @@ async def test_unknown_safe_subject_gets_the_fixed_reply_without_any_notificatio
         )
 
         assert crisis.status_code == 200, crisis.text
-        assert crisis.json()["direct_text"] == CRISIS_SUPPORT_REPLY
+        assert crisis.json()["direct_text"] == CRISIS_SELF_SCRIPT.display
         # 匿名公开面不得因为危机话术而变成主人私有链。
         notifications = await client.get("/v1/guardian/notifications", headers=owner_headers)
         assert notifications.status_code in {403, 200}
@@ -663,7 +655,7 @@ async def test_minor_crisis_still_delivers_the_fixed_reply_when_the_outbox_is_do
         )
 
         assert crisis.status_code == 200, crisis.text
-        assert crisis.json()["direct_text"] == CRISIS_SUPPORT_REPLY
+        assert crisis.json()["direct_text"] == CRISIS_SELF_SCRIPT.display
 
 
 @pytest.mark.asyncio
@@ -923,7 +915,7 @@ async def test_adult_account_manages_independent_under_14_subject_without_child_
         plan = response.json()
 
         # 断言设备端下发的固定危机安全话术逐字一致
-        assert plan["direct_text"] == CRISIS_SUPPORT_REPLY
+        assert plan["direct_text"] == CRISIS_SELF_SCRIPT.display
 
         # 断言家长通知入队，且归属于孩子的 person_id
         notifications = await client.get("/v1/guardian/notifications", headers=parent_headers)
@@ -954,7 +946,7 @@ async def test_adult_account_manages_independent_under_14_subject_without_child_
             speaker_classification="owner",
         )
         assert adult_response.status_code == 200
-        assert adult_response.json()["direct_text"] == CRISIS_SUPPORT_REPLY
+        assert adult_response.json()["direct_text"] == CRISIS_SELF_SCRIPT.display
 
         # 通知队列数量依然为 1（成人危机不碰 minor outbox）
         notifications_after = await client.get("/v1/guardian/notifications", headers=parent_headers)
@@ -977,7 +969,7 @@ async def test_adult_account_manages_independent_under_14_subject_without_child_
             speaker_classification="guest",
         )
         assert guest_response.status_code == 200
-        assert guest_response.json()["direct_text"] == CRISIS_SUPPORT_REPLY
+        assert guest_response.json()["direct_text"] == CRISIS_SELF_SCRIPT.display
 
         # 通知队列依然为 1
         notifications_final = await client.get("/v1/guardian/notifications", headers=parent_headers)
@@ -1138,6 +1130,6 @@ async def test_an_elder_crisis_is_queued_for_the_binding_delegate(
         )
 
         assert crisis.status_code == 200, crisis.text
-        assert crisis.json()["direct_text"] == CRISIS_SUPPORT_REPLY
+        assert crisis.json()["direct_text"] == CRISIS_SELF_SCRIPT.display
         assert seen == [elder["user_id"]]
         assert await _crisis_event_count(app, minor_user_id=elder["user_id"]) == 1

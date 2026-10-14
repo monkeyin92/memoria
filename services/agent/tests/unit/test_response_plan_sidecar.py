@@ -25,10 +25,8 @@ from services.agent.src.reply_pipeline import ReplyPipeline
 from services.agent.src.response_planner_client import ResponsePlanFetch, ResponsePlannerClient
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
 from services.agent.tests.unit.runtime_state_helpers import ScriptedChatModel, bind_owner_speaker
-from services.common.companion_response_safety import (
-    CRISIS_SUPPORT_REPLY,
-    companion_safety_decision,
-)
+from services.common.companion_response_safety import companion_safety_decision
+from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
 
 SYSTEM_PROMPT = "【不可变安全底线】不要输出 Markdown。【服务模式】孩子：一到两句短话。"
 QUESTION = "天空为什么是蓝色的"
@@ -157,7 +155,7 @@ async def test_a_crisis_turn_still_sends_the_request_and_speaks_the_same_crisis_
 
     assert len(blocking.calls) == len(sidecar.calls) == 1
     assert sidecar.calls[0]["query"] == CRISIS
-    assert "".join(sidecar_spoken) == "".join(blocking_spoken) == CRISIS_SUPPORT_REPLY
+    assert "".join(sidecar_spoken) == "".join(blocking_spoken) == CRISIS_SELF_SCRIPT.display
     await blocking_runtime.close()
     await sidecar_runtime.close()
 

@@ -3,14 +3,9 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
 from typing import Final, Literal
 
-from services.common.fixed_safety_scripts import (
-    CRISIS_SELF_SCRIPT,
-    SUPPORT_RELAY_SCRIPT,
-    SUPPORT_VICTIM_SCRIPT,
-)
+from services.common.fixed_safety_scripts import script_for_decision
 
 SafetyDecision = Literal[
     "crisis_self",
@@ -21,24 +16,11 @@ SafetyDecision = Literal[
 ]
 
 SAFE_UNKNOWN_REPLY = "我不知道。"
-CRISIS_SUPPORT_REPLY: Final = CRISIS_SELF_SCRIPT.display
-SUPPORT_VICTIM_REPLY: Final = SUPPORT_VICTIM_SCRIPT.display
-SUPPORT_RELAY_REPLY: Final = SUPPORT_RELAY_SCRIPT.display
 GUARDIAN_ATTENTION_COPY: Final = "有一条需要你关注的对话"
-CRISIS_SUPPORT_REPLY_TEMPLATE_ID: Final = CRISIS_SELF_SCRIPT.template_id
-SUPPORT_VICTIM_REPLY_TEMPLATE_ID: Final = SUPPORT_VICTIM_SCRIPT.template_id
-SUPPORT_RELAY_REPLY_TEMPLATE_ID: Final = SUPPORT_RELAY_SCRIPT.template_id
-FIXED_SAFETY_REPLIES: Final = frozenset(
-    {CRISIS_SUPPORT_REPLY, SUPPORT_VICTIM_REPLY, SUPPORT_RELAY_REPLY}
-)
 AFTER_FIXED_SAFETY_SESSION_INSTRUCTION: Final = (
     "本会话已经对用户说过固定安全话术。不要继续讨论或追问刚才的安全话题；"
     "若用户再次提出同类自伤、受害或转述他人危险的求助，系统会再次给出同一句固定话术，你不要另写。"
 )
-
-
-def session_had_fixed_safety_reply(assistant_turns: Sequence[str]) -> bool:
-    return any(turn in FIXED_SAFETY_REPLIES for turn in assistant_turns)
 
 
 CRISIS_CONTEXT_MARKERS: Final = (
@@ -310,12 +292,9 @@ def fixed_companion_reply(
     """Return a fixed reply for crisis, prohibited, or companion-identity queries."""
 
     decision = companion_safety_decision(query)
-    if decision == "crisis_self":
-        return CRISIS_SUPPORT_REPLY
-    if decision == "support_victim":
-        return SUPPORT_VICTIM_REPLY
-    if decision == "support_relay":
-        return SUPPORT_RELAY_REPLY
+    script = script_for_decision(decision)
+    if script is not None:
+        return script.display
     if decision == "prohibited_request":
         return SAFE_UNKNOWN_REPLY
     normalized = re.sub(r"[\s，。！？、,.!?：:\-—_]+", "", query).lower()

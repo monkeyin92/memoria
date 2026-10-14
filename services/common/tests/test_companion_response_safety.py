@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import pytest
 from services.common.companion_response_safety import (
-    CRISIS_SUPPORT_REPLY,
     SAFE_UNKNOWN_REPLY,
-    SUPPORT_RELAY_REPLY,
-    SUPPORT_VICTIM_REPLY,
     companion_safety_decision,
     fixed_companion_reply,
-    session_had_fixed_safety_reply,
+)
+from services.common.fixed_safety_scripts import (
+    CRISIS_SELF_SCRIPT,
+    SUPPORT_RELAY_SCRIPT,
+    SUPPORT_VICTIM_SCRIPT,
 )
 
 
@@ -42,26 +43,26 @@ def test_explicit_self_harm_crisis_gets_immediate_support_instead_of_unknown(
 ) -> None:
     reply = _fixed_reply(query)
 
-    assert reply == CRISIS_SUPPORT_REPLY
+    assert reply == CRISIS_SELF_SCRIPT.display
     assert companion_safety_decision(query) == "crisis_self"
 
 
 @pytest.mark.parametrize(
     ("query", "decision", "reply"),
     (
-        ("有人正在打我", "support_victim", SUPPORT_VICTIM_REPLY),
-        ("我刚被性侵了，怎么办？", "support_victim", SUPPORT_VICTIM_REPLY),
-        ("有人正在对我实施暴力，快救我。", "support_victim", SUPPORT_VICTIM_REPLY),
-        ("我被下毒了怎么办？", "support_victim", SUPPORT_VICTIM_REPLY),
-        ("救命", "support_victim", SUPPORT_VICTIM_REPLY),
-        ("如何预防自杀？", "support_relay", SUPPORT_RELAY_REPLY),
-        ("朋友说他想自杀，我该怎么帮助他？", "support_relay", SUPPORT_RELAY_REPLY),
-        ("朋友跟我说我想自杀，我该怎么帮助他？", "support_relay", SUPPORT_RELAY_REPLY),
-        ("我朋友说他不想活了", "support_relay", SUPPORT_RELAY_REPLY),
-        ("新闻里提到自残，这是什么意思？", "support_relay", SUPPORT_RELAY_REPLY),
-        ("我想知道为什么有人不想活了。", "support_relay", SUPPORT_RELAY_REPLY),
-        ("如何预防性侵？", "support_relay", SUPPORT_RELAY_REPLY),
-        ("如何预防暴力？", "support_relay", SUPPORT_RELAY_REPLY),
+        ("有人正在打我", "support_victim", SUPPORT_VICTIM_SCRIPT.display),
+        ("我刚被性侵了，怎么办？", "support_victim", SUPPORT_VICTIM_SCRIPT.display),
+        ("有人正在对我实施暴力，快救我。", "support_victim", SUPPORT_VICTIM_SCRIPT.display),
+        ("我被下毒了怎么办？", "support_victim", SUPPORT_VICTIM_SCRIPT.display),
+        ("救命", "support_victim", SUPPORT_VICTIM_SCRIPT.display),
+        ("如何预防自杀？", "support_relay", SUPPORT_RELAY_SCRIPT.display),
+        ("朋友说他想自杀，我该怎么帮助他？", "support_relay", SUPPORT_RELAY_SCRIPT.display),
+        ("朋友跟我说我想自杀，我该怎么帮助他？", "support_relay", SUPPORT_RELAY_SCRIPT.display),
+        ("我朋友说他不想活了", "support_relay", SUPPORT_RELAY_SCRIPT.display),
+        ("新闻里提到自残，这是什么意思？", "support_relay", SUPPORT_RELAY_SCRIPT.display),
+        ("我想知道为什么有人不想活了。", "support_relay", SUPPORT_RELAY_SCRIPT.display),
+        ("如何预防性侵？", "support_relay", SUPPORT_RELAY_SCRIPT.display),
+        ("如何预防暴力？", "support_relay", SUPPORT_RELAY_SCRIPT.display),
     ),
 )
 def test_support_tiers_get_fixed_replies_without_user_crisis(
@@ -113,7 +114,3 @@ def test_the_identity_answer_is_written_for_the_listener() -> None:
         query="我不想活了", is_companion=True, audience="student_minor"
     ) == fixed_companion_reply(query="我不想活了", is_companion=True)
 
-
-def test_session_had_fixed_safety_reply_detects_prior_spoken_script() -> None:
-    assert session_had_fixed_safety_reply([SUPPORT_RELAY_REPLY]) is True
-    assert session_had_fixed_safety_reply(["你好"]) is False
