@@ -33,6 +33,7 @@ async def archive(postgres_database: TestDatabase) -> AsyncIterator[PostgresLife
 
 @pytest.mark.asyncio
 async def test_minor_crisis_is_idempotent_and_contains_no_transcript_or_severity(
+    postgres_database: TestDatabase,
     guardian_postgres_store: PostgresGuardianStore,
     archive: PostgresLifeArchive,
 ) -> None:
@@ -63,6 +64,7 @@ async def test_minor_crisis_is_idempotent_and_contains_no_transcript_or_severity
         generation_id=2,
         tool_epoch=1,
         script_version="crisis-transfer-draft-v1",
+        reply_template_id="crisis-support-reply",
         occurred_at=now,
     )
     replay = await service.record_minor_crisis(
@@ -72,6 +74,7 @@ async def test_minor_crisis_is_idempotent_and_contains_no_transcript_or_severity
         generation_id=2,
         tool_epoch=1,
         script_version="crisis-transfer-draft-v1",
+        reply_template_id="crisis-support-reply",
         occurred_at=now,
     )
     notifications = await store.guardian_notifications(guardian_user_id="guardian-a")
@@ -87,6 +90,7 @@ async def test_minor_crisis_is_idempotent_and_contains_no_transcript_or_severity
     assert event is not None
     assert dict(event.payload) == {
         "script_version": "crisis-transfer-draft-v1",
+        "reply_template_id": "crisis-support-reply",
         "notification_required": True,
         "attempt_push": True,
         "tool_epoch": 1,
@@ -94,6 +98,23 @@ async def test_minor_crisis_is_idempotent_and_contains_no_transcript_or_severity
         "contains_severity": False,
         "declared_guardian_count": 0,
     }
+    assert first.reply_template_id == "crisis-support-reply"
+    assert first.script_version == "crisis-transfer-draft-v1"
+    admin = await asyncpg.connect(postgres_database.owner_dsn())
+    try:
+        row = await admin.fetchrow(
+            """
+            SELECT reply_template_id, script_version
+            FROM guardian_crisis_events
+            WHERE crisis_event_id = $1::uuid
+            """,
+            first.crisis_event_id,
+        )
+    finally:
+        await admin.close()
+    assert row is not None
+    assert str(row["reply_template_id"]) == "crisis-support-reply"
+    assert str(row["script_version"]) == "crisis-transfer-draft-v1"
 
 
 @pytest.mark.asyncio
@@ -129,6 +150,7 @@ async def test_declared_guardian_receives_the_crisis_without_an_active_link(
         generation_id=1,
         tool_epoch=1,
         script_version="crisis-transfer-draft-v1",
+        reply_template_id="crisis-support-reply",
         occurred_at=now,
         declared_guardian_ids=("guardian-declared",),
     )
@@ -165,4 +187,5 @@ async def test_minor_crisis_without_active_guardian_is_not_silently_accepted(
             generation_id=1,
             tool_epoch=0,
             script_version="crisis-transfer-draft-v1",
+            reply_template_id="crisis-support-reply",
         )

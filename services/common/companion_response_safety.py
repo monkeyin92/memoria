@@ -31,6 +31,12 @@ SUPPORT_RELAY_REPLY: Final = (
     "这件事要请大人帮忙，现在就去告诉爸爸妈妈或者老师吧。"
 )
 GUARDIAN_ATTENTION_COPY: Final = "有一条需要你关注的对话"
+CRISIS_SUPPORT_REPLY_TEMPLATE_ID: Final = "crisis-support-reply"
+SUPPORT_VICTIM_REPLY_TEMPLATE_ID: Final = "support-victim-reply"
+SUPPORT_RELAY_REPLY_TEMPLATE_ID: Final = "support-relay-reply"
+FIXED_SAFETY_REPLIES: Final = frozenset(
+    {CRISIS_SUPPORT_REPLY, SUPPORT_VICTIM_REPLY, SUPPORT_RELAY_REPLY}
+)
 CRISIS_CONTEXT_MARKERS: Final = (
     "自杀",
     "自残",

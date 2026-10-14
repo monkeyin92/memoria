@@ -31,7 +31,12 @@ from services.common.companions import (
     CompanionDefinition,
     companion_definition,
 )
-from services.common.crisis_policy import CrisisRoute, crisis_semantic_candidate, route_crisis
+from services.common.crisis_policy import (
+    CrisisRoute,
+    crisis_semantic_candidate,
+    log_fixed_safety_reply,
+    route_crisis,
+)
 from services.common.realtime_information import (
     current_local_time,
     fixed_realtime_reply,
@@ -146,10 +151,8 @@ _RECALL_CONTEXT_MAX_ITEMS = 4
 _RECALL_CONTEXT_ITEM_MAX_CHARS = 240
 _RECALL_CONTEXT_TOTAL_MAX_CHARS = 960
 
-
 def _local_now(settings: ControlSettings) -> datetime:
     return current_local_time(settings.memoria_timezone)
-
 
 def _fixed_reply_for_query(*, query: str, frozen: FrozenMode, now: datetime) -> str | None:
     companion = companion_definition(frozen.companion_style_id)
@@ -165,12 +168,10 @@ def _fixed_reply_for_query(*, query: str, frozen: FrozenMode, now: datetime) -> 
         return fixed_realtime_reply(query=query, now=now)
     return None
 
-
 def _with_fixed_reply(plan: ResponsePlan, reply: str | None) -> ResponsePlan:
     if reply is None:
         return plan
     return replace(plan, instructions=replace(plan.instructions, direct_text=reply))
-
 
 async def _cached_plan_is_still_authorized(
     request: Request,
@@ -209,7 +210,6 @@ async def _cached_plan_is_still_authorized(
         )
         return False
     return True
-
 
 def _tutor_turn_policy(request: Request) -> TutorTurnPolicy:
     policy = getattr(request.app.state, "tutor_turn_policy", None)
@@ -2184,6 +2184,8 @@ async def response_plan(
             frozen=frozen,
             now=now,
         )
+        if crisis.direct_text is not None:
+            log_fixed_safety_reply(logger, crisis)
         # The subject was resolved once, before the cache key, and decides the
         # category, the consent lookup, the memory scope and the notification
         # target -- through the one resolver every Agent-facing seam shares.
@@ -2195,8 +2197,7 @@ async def response_plan(
         )
         notify = (
             crisis.notify_guardian
-            and crisis.script_version is not None
-            and active_subject_id is not None
+            and None not in (crisis.script_version, crisis.reply_template_id, active_subject_id)
         )
         # A minor always notifies; an elder notifies the attested delegate (P0-04 D7).
         contacts = (
@@ -2213,6 +2214,7 @@ async def response_plan(
                     generation_id=body.fence.generation_id,
                     tool_epoch=body.fence.tool_epoch,
                     script_version=crisis.script_version or "",
+                    reply_template_id=crisis.reply_template_id or "",
                     occurred_at=now,
                     declared_guardian_ids=contacts,
                     attempt_push=crisis.attempt_push,
@@ -2224,10 +2226,7 @@ async def response_plan(
                     body.session_id,
                     body.fence.turn_id,
                 )
-                # Notification delivery is a release-critical side effect, but
-                # it must never suppress the immediate fixed crisis response.
-                # The exception remains observable and the release gate stays
-                # closed until the outbox path is healthy.
+                # Notification failure must never suppress the fixed safety reply.
         tutor_directive: str | None = None
         if fixed_reply is None and frozen.session_focus in {
             "tutor_english",

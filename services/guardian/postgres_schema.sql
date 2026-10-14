@@ -354,6 +354,9 @@ CREATE TABLE IF NOT EXISTS guardian_crisis_events (
     script_version TEXT NOT NULL CHECK (
         char_length(script_version) BETWEEN 1 AND 64
     ),
+    reply_template_id TEXT NOT NULL DEFAULT 'legacy-unspecified' CHECK (
+        char_length(reply_template_id) BETWEEN 1 AND 64
+    ),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     attempt_push BOOLEAN NOT NULL DEFAULT TRUE
 );
@@ -361,6 +364,10 @@ CREATE TABLE IF NOT EXISTS guardian_crisis_events (
 -- Relay-tier support requests pin without WeChat push; claim skips these rows.
 ALTER TABLE guardian_crisis_events
     ADD COLUMN IF NOT EXISTS attempt_push BOOLEAN NOT NULL DEFAULT TRUE;
+
+-- Fixed-reply template id spoken for this event (ids only; never child text).
+ALTER TABLE guardian_crisis_events
+    ADD COLUMN IF NOT EXISTS reply_template_id TEXT NOT NULL DEFAULT 'legacy-unspecified';
 
 CREATE INDEX IF NOT EXISTS idx_guardian_crisis_minor_occurred
 ON guardian_crisis_events(minor_user_id, occurred_at DESC);

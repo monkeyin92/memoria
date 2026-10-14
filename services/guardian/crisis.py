@@ -30,6 +30,7 @@ class CrisisNotificationReceipt:
     minor_user_id: str
     occurred_at: datetime
     script_version: str
+    reply_template_id: str
     notification_count: int
 
 
@@ -56,6 +57,7 @@ class CrisisNotificationStorePort(Protocol):
         minor_user_id: str,
         occurred_at: datetime,
         script_version: str,
+        reply_template_id: str,
         declared_guardian_ids: tuple[str, ...] = (),
         attempt_push: bool = True,
     ) -> CrisisNotificationReceipt: ...
@@ -90,6 +92,7 @@ class CrisisNotificationService:
         generation_id: int,
         tool_epoch: int,
         script_version: str,
+        reply_template_id: str,
         occurred_at: datetime | None = None,
         declared_guardian_ids: tuple[str, ...] = (),
         attempt_push: bool = True,
@@ -107,6 +110,9 @@ class CrisisNotificationService:
         ``attempt_push`` is False for relay-tier support requests: the alert
         still pins in the Mini Program, but the subscribe-message worker must
         not claim it.
+
+        ``reply_template_id`` and ``script_version`` are ids only. Child text
+        never enters this payload or the crisis event row.
         """
 
         now = (occurred_at or datetime.now(UTC)).astimezone(UTC)
@@ -128,6 +134,7 @@ class CrisisNotificationService:
                 generation_id=generation_id,
                 payload={
                     "script_version": script_version,
+                    "reply_template_id": reply_template_id,
                     "notification_required": True,
                     "attempt_push": attempt_push,
                     "tool_epoch": tool_epoch,
@@ -143,6 +150,7 @@ class CrisisNotificationService:
             minor_user_id=minor_user_id,
             occurred_at=now,
             script_version=script_version,
+            reply_template_id=reply_template_id,
             declared_guardian_ids=declared_guardian_ids,
             attempt_push=attempt_push,
         )

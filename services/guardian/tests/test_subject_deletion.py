@@ -151,6 +151,7 @@ async def _seed(store: PostgresGuardianStore, database: TestDatabase) -> None:
             minor_user_id=minor,
             occurred_at=NOW,
             script_version="crisis-transfer-draft-v1",
+            reply_template_id="crisis-support-reply",
             declared_guardian_ids=(OWNER,),
         )
         assert receipt.notification_count == 1

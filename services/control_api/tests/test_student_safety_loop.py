@@ -18,9 +18,12 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from services.common.companion_response_safety import (
     CRISIS_SUPPORT_REPLY,
+    CRISIS_SUPPORT_REPLY_TEMPLATE_ID,
     GUARDIAN_ATTENTION_COPY,
     SUPPORT_RELAY_REPLY,
+    SUPPORT_RELAY_REPLY_TEMPLATE_ID,
     SUPPORT_VICTIM_REPLY,
+    SUPPORT_VICTIM_REPLY_TEMPLATE_ID,
 )
 from services.common.crisis_policy import (
     CRISIS_SCRIPT_VERSION,
@@ -277,6 +280,7 @@ async def test_minor_crisis_queues_one_notification_and_fixed_text_reaches_the_d
         assert len(events) == 1
         payload = dict(events[0].payload)
         assert payload["script_version"] == CRISIS_SCRIPT_VERSION
+        assert payload["reply_template_id"] == CRISIS_SUPPORT_REPLY_TEMPLATE_ID
         assert payload["attempt_push"] is True
         assert payload["contains_transcript"] is False
         assert payload["contains_severity"] is False
@@ -285,26 +289,43 @@ async def test_minor_crisis_queues_one_notification_and_fixed_text_reaches_the_d
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("query", "reply", "script_version", "attempt_push", "expect_notification"),
+    ("query", "reply", "script_version", "reply_template_id", "attempt_push", "expect_notification"),
     (
-        ("我不想活了", CRISIS_SUPPORT_REPLY, CRISIS_SCRIPT_VERSION, True, True),
-        ("有人正在打我", SUPPORT_VICTIM_REPLY, SUPPORT_VICTIM_SCRIPT_VERSION, True, True),
+        (
+            "我不想活了",
+            CRISIS_SUPPORT_REPLY,
+            CRISIS_SCRIPT_VERSION,
+            CRISIS_SUPPORT_REPLY_TEMPLATE_ID,
+            True,
+            True,
+        ),
+        (
+            "有人正在打我",
+            SUPPORT_VICTIM_REPLY,
+            SUPPORT_VICTIM_SCRIPT_VERSION,
+            SUPPORT_VICTIM_REPLY_TEMPLATE_ID,
+            True,
+            True,
+        ),
         (
             "我朋友说他不想活了",
             SUPPORT_RELAY_REPLY,
             SUPPORT_RELAY_SCRIPT_VERSION,
+            SUPPORT_RELAY_REPLY_TEMPLATE_ID,
             False,
             True,
         ),
-        ('小说里的人说"我想死"', None, None, None, False),
+        ('小说里的人说"我想死"', None, None, None, None, False),
     ),
 )
 async def test_support_tier_and_crisis_behavior_matrix(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
     query: str,
     reply: str | None,
     script_version: str | None,
+    reply_template_id: str | None,
     attempt_push: bool | None,
     expect_notification: bool,
 ) -> None:
@@ -330,13 +351,15 @@ async def test_support_tier_and_crisis_behavior_matrix(
             parent_headers=parent_headers,
             binding_key=f"tier-{key}",
         )
-        plan = await _response_plan(
-            client,
-            session_id=session["session_id"],
-            query=query,
-            turn_id=1,
-            generation_id=1,
-        )
+        interaction_logger = "services.control_api.app.routes.interaction"
+        with caplog.at_level("INFO", logger=interaction_logger):
+            plan = await _response_plan(
+                client,
+                session_id=session["session_id"],
+                query=query,
+                turn_id=1,
+                generation_id=1,
+            )
         assert plan.status_code == 200, plan.text
         body = plan.json()
         assert body["direct_text"] == reply
@@ -345,6 +368,18 @@ async def test_support_tier_and_crisis_behavior_matrix(
             assert "伙伴" not in reply
             assert "家人" not in reply
             assert "好朋友" not in reply
+            log_lines = [
+                record.getMessage()
+                for record in caplog.records
+                if "fixed_safety_reply" in record.getMessage()
+            ]
+            assert len(log_lines) == 1
+            assert f"reply_template_id={reply_template_id}" in log_lines[0]
+            assert f"script_version={script_version}" in log_lines[0]
+            assert query not in log_lines[0]
+            assert query not in caplog.text
+        else:
+            assert not any("fixed_safety_reply" in r.getMessage() for r in caplog.records)
 
         notifications = await client.get("/v1/guardian/notifications", headers=parent_headers)
         assert notifications.status_code == 200, notifications.text
@@ -371,7 +406,9 @@ async def test_support_tier_and_crisis_behavior_matrix(
         assert len(events) == 1
         payload = dict(events[0].payload)
         assert payload["script_version"] == script_version
+        assert payload["reply_template_id"] == reply_template_id
         assert payload["attempt_push"] is attempt_push
+        assert query not in json.dumps(payload, ensure_ascii=False)
 
 
 @pytest.mark.asyncio
@@ -433,6 +470,7 @@ async def test_replay_of_the_same_generation_does_not_duplicate_the_notification
             generation_id=1,
             tool_epoch=0,
             script_version=CRISIS_SCRIPT_VERSION,
+            reply_template_id=CRISIS_SUPPORT_REPLY_TEMPLATE_ID,
         )
         direct_replay = await service.record_minor_crisis(
             minor_user_id=child["user_id"],
@@ -441,6 +479,7 @@ async def test_replay_of_the_same_generation_does_not_duplicate_the_notification
             generation_id=1,
             tool_epoch=0,
             script_version=CRISIS_SCRIPT_VERSION,
+            reply_template_id=CRISIS_SUPPORT_REPLY_TEMPLATE_ID,
         )
         assert direct_first == direct_replay
         assert direct_first.notification_count == 1

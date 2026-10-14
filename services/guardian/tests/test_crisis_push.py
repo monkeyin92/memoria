@@ -115,6 +115,7 @@ async def _store_with_crisis(
         generation_id=1,
         tool_epoch=1,
         script_version="crisis-transfer-draft-v1",
+        reply_template_id="crisis-support-reply",
         occurred_at=occurred_at,
     )
     assert receipt.notification_count == 1
@@ -542,6 +543,7 @@ async def test_relay_tier_alert_pins_without_being_claimed_for_push(
         generation_id=1,
         tool_epoch=1,
         script_version="support-relay-pin-v1",
+        reply_template_id="support-relay-reply",
         occurred_at=occurred,
         attempt_push=False,
     )
