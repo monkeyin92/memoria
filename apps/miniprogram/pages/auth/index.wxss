@@ -59,7 +59,7 @@
 .login-note {
   display: block;
   color: #474e54;
-  color: var(--text-secondary);
+  color: var(--mp-ink-2);
   font-size: 25rpx;
   line-height: 1.6;
 }
@@ -137,7 +137,7 @@
   display: block;
   margin-top: 6rpx;
   color: #5a6167;
-  color: var(--text-tertiary);
+  color: var(--mp-ink-3);
   font-size: 24rpx;
 }
 
@@ -148,7 +148,7 @@
   align-items: center;
   justify-content: center;
   color: #474e54;
-  color: var(--text-secondary);
+  color: var(--mp-ink-2);
   font-size: 25rpx;
 }
 
@@ -164,7 +164,7 @@
   margin-left: 8rpx;
   align-items: center;
   color: #285c5e;
-  color: var(--brand-teal);
+  color: var(--mp-accent);
 }
 
 .auth-submit {

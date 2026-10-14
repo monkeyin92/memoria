@@ -2,7 +2,7 @@
 
 .trial-page {
   --trial-bg: var(--mp-bg);
-  --trial-apricot: var(--mp-accent-wash);
+  --trial-apricot: var(--mp-accent-soft);
   --trial-mint: var(--mp-accent);
   --trial-ink: var(--mp-ink);
   --trial-muted: var(--mp-ink-2);
@@ -43,7 +43,7 @@
 }
 
 .trial-card-soft {
-  background: var(--mp-accent-wash);
+  background: var(--mp-accent-soft);
   border-radius: var(--mp-radius-card);
   box-shadow: none;
 }
@@ -83,8 +83,8 @@
   height: 112rpx;
   border-radius: 32rpx;
   background: var(--mp-surface) !important;
-  color: var(--mp-danger) !important;
-  border: 2rpx solid var(--mp-danger-outline);
+  color: var(--mp-rust) !important;
+  border: 2rpx solid var(--mp-line);
   font-size: var(--mp-type-button);
   font-weight: 600;
   line-height: 112rpx;
@@ -129,7 +129,7 @@
   gap: 32rpx;
   margin-bottom: var(--mp-gap-card);
   padding: 32rpx;
-  border-radius: var(--mp-radius-banner);
+  border-radius: var(--mp-radius-card);
   background: var(--mp-rust-bg);
   border: none;
   color: var(--mp-rust);
@@ -230,7 +230,7 @@
   justify-content: center;
   width: 120rpx;
   height: 120rpx;
-  border-radius: var(--mp-radius-mascot);
+  border-radius: var(--mp-radius-inset);
   background: var(--mp-fill);
   overflow: hidden;
 }
@@ -279,7 +279,7 @@
   display: block;
   margin-bottom: 24rpx;
   color: var(--mp-ink);
-  font-size: var(--mp-type-sheet);
+  font-size: var(--mp-type-title);
   font-weight: 600;
   line-height: 1.3;
 }

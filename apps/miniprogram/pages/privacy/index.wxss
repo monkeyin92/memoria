@@ -7,7 +7,7 @@
   align-items: center;
   min-height: 88rpx;
   color: #285c5e;
-  color: var(--brand-teal);
+  color: var(--mp-accent);
   font-size: 28rpx;
   font-weight: 500;
 }

@@ -72,7 +72,7 @@
 .enrollment-stage {
   min-width: 0;
   color: #16191c;
-  color: var(--text-primary);
+  color: var(--mp-ink);
   font-size: 26rpx;
   font-weight: 500;
   line-height: 1.6;
@@ -81,7 +81,7 @@
 .enrollment-percent {
   flex-shrink: 0;
   color: #285c5e;
-  color: var(--brand-teal);
+  color: var(--mp-accent);
   font-size: 24rpx;
   font-weight: 600;
   line-height: 1.6;
@@ -106,7 +106,7 @@
   display: block;
   margin-top: 14rpx;
   color: #474e54;
-  color: var(--text-secondary);
+  color: var(--mp-ink-2);
   font-size: 24rpx;
   line-height: 1.65;
 }

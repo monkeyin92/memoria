@@ -18,7 +18,7 @@
   margin-left: -280rpx;
   padding: 36rpx 32rpx 28rpx;
   border-radius: 52rpx;
-  border-radius: var(--radius-l1);
+  border-radius: var(--mp-radius-card-xl);
   background: #ffffff;
   background: linear-gradient(180deg, var(--role-soft) 0%, #ffffff 70%);
   border: 2rpx solid #ffffff;
@@ -91,7 +91,7 @@
 .deck-desc {
   margin-top: 14rpx;
   color: #474e54;
-  color: var(--text-secondary);
+  color: var(--mp-ink-2);
   font-size: 25rpx;
   line-height: 1.6;
   text-align: center;
@@ -107,14 +107,14 @@
   margin-top: auto;
   padding-top: 18rpx;
   border-top: 1rpx solid rgba(30, 45, 70, 0.08);
-  border-top: 1rpx solid var(--border-default);
+  border-top: 1rpx solid var(--mp-line);
 }
 
 .deck-voice-name {
   flex: 1;
   min-width: 0;
   color: #474e54;
-  color: var(--text-secondary);
+  color: var(--mp-ink-2);
   font-size: 24rpx;
 }
 
@@ -155,7 +155,7 @@
   width: 32rpx;
   border-radius: 999rpx;
   background: #172f43;
-  background: var(--brand-deep);
+  background: var(--mp-ink);
 }
 
 .deck-hint {

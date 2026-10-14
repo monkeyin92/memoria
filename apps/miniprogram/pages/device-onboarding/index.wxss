@@ -68,7 +68,7 @@
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.8);
   color: #5a6167;
-  color: var(--text-tertiary);
+  color: var(--mp-ink-3);
   font-size: 24rpx;
   font-weight: 600;
   z-index: 1;
@@ -111,7 +111,7 @@
 
 .step-item.todo .step-title {
   color: #5a6167;
-  color: var(--text-tertiary);
+  color: var(--mp-ink-3);
   font-weight: 500;
 }
 
@@ -119,14 +119,14 @@
   display: block;
   margin-top: 8rpx;
   color: #474e54;
-  color: var(--text-secondary);
+  color: var(--mp-ink-2);
   font-size: 24rpx;
   line-height: 1.6;
 }
 
 .step-item.todo .step-desc {
   color: #5a6167;
-  color: var(--text-tertiary);
+  color: var(--mp-ink-3);
 }
 
 .step-title .pill {
@@ -158,7 +158,7 @@
   display: block;
   margin: 10rpx 0;
   color: #474e54;
-  color: var(--text-secondary);
+  color: var(--mp-ink-2);
   font-size: 24rpx;
 }
 
@@ -213,7 +213,7 @@
   display: block;
   margin-top: 6rpx;
   color: #474e54;
-  color: var(--text-secondary);
+  color: var(--mp-ink-2);
   font-size: 21rpx;
 }
 
@@ -252,7 +252,7 @@
   display: block;
   margin-top: 20rpx;
   color: #474e54;
-  color: var(--text-secondary);
+  color: var(--mp-ink-2);
   font-size: 22rpx;
   line-height: 1.65;
 }
@@ -266,7 +266,7 @@
   align-items: center;
   min-height: 64rpx;
   color: #5a6167;
-  color: var(--text-tertiary);
+  color: var(--mp-ink-3);
 }
 
 .progress-dot {
@@ -309,18 +309,18 @@
 }
 
 .progress-failed {
-  color: var(--danger);
+  color: var(--mp-rust);
 }
 
 .progress-failed .progress-dot {
-  border-color: var(--danger);
-  background: var(--danger);
+  border-color: var(--mp-rust);
+  background: var(--mp-rust);
 }
 
 .network-state {
   display: block;
   margin-top: 22rpx;
-  color: var(--text-secondary);
+  color: var(--mp-ink-2);
   font-size: 25rpx;
 }
 
@@ -332,9 +332,9 @@
   display: block;
   margin-bottom: 20rpx;
   padding: 20rpx 24rpx;
-  border-radius: var(--radius-input);
-  background: var(--danger-bg);
-  color: var(--danger);
+  border-radius: var(--mp-radius-inset);
+  background: var(--mp-rust-bg);
+  color: var(--mp-rust);
   font-size: 26rpx;
   line-height: 1.7;
 }
@@ -375,7 +375,7 @@
   display: block;
   margin-top: 20rpx;
   color: #474e54;
-  color: var(--text-secondary);
+  color: var(--mp-ink-2);
   font-size: 24rpx;
   line-height: 1.7;
   text-align: left;
@@ -391,7 +391,7 @@
   padding: 10rpx 20rpx;
   border: none;
   color: #a3221b;
-  color: var(--danger);
+  color: var(--mp-rust);
   background: transparent;
   font-size: 24rpx;
 }

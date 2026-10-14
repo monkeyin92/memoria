@@ -54,7 +54,7 @@
 .cm-error {
   display: block;
   margin-bottom: 16rpx;
-  color: var(--mp-danger);
+  color: var(--mp-rust);
   font-size: 24rpx;
 }
 
@@ -62,8 +62,8 @@
   display: block;
   margin-bottom: 16rpx;
   padding: 16rpx 20rpx;
-  border-radius: var(--mp-radius-banner);
-  background: var(--mp-accent-wash);
+  border-radius: var(--mp-radius-card);
+  background: var(--mp-accent-soft);
   color: var(--mp-accent);
   font-size: 24rpx;
 }

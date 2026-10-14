@@ -1,40 +1,261 @@
 @import "../../styles/trial-theme.wxss";
 
-.home-trial {
+.home-v4 {
   padding-bottom: var(--mp-tab-clearance);
 }
 
-.home-guest-card,
-.home-pad,
-.home-device-card,
-.home-memory-card,
-.home-toggle-card,
-.home-choice {
-  margin-top: var(--mp-gap-card);
-  padding: var(--mp-pad-card);
+.home-guest {
+  margin: 0 calc(0px - var(--mp-pad-page));
 }
 
-.home-guest-lead {
+.home-login-hero {
+  position: relative;
+  margin: 32rpx 48rpx 0;
+  height: 560rpx;
+  border-radius: 64rpx;
+  overflow: hidden;
+  background: linear-gradient(160deg, #2a2f6b 0%, #6b5a8c 48%, #c4a484 100%);
+  box-shadow: 0 48rpx 96rpx -48rpx rgba(22, 24, 43, 0.35);
+}
+
+.home-login-art {
+  display: none;
+}
+
+.home-login-scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(16, 18, 48, 0.32), rgba(16, 18, 48, 0) 48%);
+}
+
+.home-login-brand {
+  position: absolute;
+  top: 80rpx;
+  left: 0;
+  right: 0;
+  text-align: center;
+  color: #fff;
+}
+
+.home-login-title {
   display: block;
+  font-size: 80rpx;
+  font-weight: 800;
+  letter-spacing: -2rpx;
+}
+
+.home-login-tag {
+  display: block;
+  margin-top: 16rpx;
+  font-size: 30rpx;
+  opacity: 0.95;
+}
+
+.home-login-body {
+  padding: 64rpx 48rpx 0;
+  text-align: center;
+}
+
+.home-login-hello {
+  display: block;
+  font-size: 48rpx;
+  font-weight: 700;
+  letter-spacing: -0.8rpx;
   color: var(--mp-ink);
-  font-size: 40rpx;
+}
+
+.home-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.home-eyebrow {
+  display: block;
+  font-size: 26rpx;
   font-weight: 600;
-  line-height: 1.35;
+  color: var(--mp-ink-3);
+  letter-spacing: 0.4rpx;
 }
 
-.home-cta {
-  margin-top: 40rpx;
+.home-avatar {
+  width: 80rpx;
+  height: 80rpx;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 4rpx 16rpx rgba(22, 24, 43, 0.08);
+  color: var(--mp-accent);
+  font-size: 30rpx;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.home-cta-btn {
+.home-attention {
+  margin-top: 48rpx;
+}
+
+.home-attention-icon {
+  width: 80rpx;
+  height: 80rpx;
+  border-radius: 24rpx;
+  background: #f5dcd3;
+  color: var(--mp-rust);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36rpx;
+  flex-shrink: 0;
+}
+
+.home-usage-card {
+  margin-top: 32rpx;
+  padding: 48rpx;
+  border-radius: var(--mp-radius-card-xl);
+  display: flex;
+  align-items: center;
+  gap: 48rpx;
+}
+
+.home-ring {
+  width: 224rpx;
+  height: 224rpx;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.home-ring-inner {
+  width: 176rpx;
+  height: 176rpx;
+  border-radius: 50%;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.home-ring-num {
+  font-size: 48rpx;
+  font-weight: 700;
+  line-height: 64rpx;
+  letter-spacing: -2rpx;
+  font-variant-numeric: tabular-nums;
+  color: var(--mp-ink);
+}
+
+.home-ring-cap {
+  font-size: 22rpx;
+  color: var(--mp-ink-3);
+}
+
+.home-lbl {
+  display: block;
+  font-size: 26rpx;
+  font-weight: 500;
+  color: var(--mp-ink-2);
+}
+
+.home-usage-line {
+  margin-top: 8rpx;
+}
+
+.home-usage-num {
+  font-size: 80rpx;
+  font-weight: 700;
+  line-height: 96rpx;
+  letter-spacing: -2rpx;
+  font-variant-numeric: tabular-nums;
+  color: var(--mp-ink);
+}
+
+.home-usage-unit {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: var(--mp-ink-2);
+}
+
+.home-chip {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 16rpx;
+  height: 48rpx;
+  padding: 0 24rpx;
+  border-radius: 999rpx;
+  font-size: 24rpx;
+  font-weight: 600;
+}
+
+.home-chip.is-on {
+  background: var(--mp-sage-bg);
+  color: var(--mp-sage);
+}
+
+.home-chip.is-off {
+  background: var(--mp-fill);
+  color: var(--mp-ink-3);
+}
+
+.home-stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 32rpx;
   margin-top: 32rpx;
 }
 
-.home-foot {
-  margin-top: 40rpx;
+.home-stat {
+  padding: 32rpx;
+  min-height: 304rpx;
+  display: flex;
+  flex-direction: column;
 }
 
-.home-empty-title,
+.home-stat-icon {
+  width: 80rpx;
+  height: 80rpx;
+  border-radius: 24rpx;
+  background: var(--mp-fill);
+  color: var(--mp-ink-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32rpx;
+}
+
+.home-stat-icon.accent {
+  background: var(--mp-accent-soft);
+  color: var(--mp-accent);
+}
+
+.home-stat .home-lbl {
+  margin-top: auto;
+}
+
+.home-stat-num {
+  font-size: 64rpx;
+  font-weight: 700;
+  line-height: 80rpx;
+  letter-spacing: -2rpx;
+  font-variant-numeric: tabular-nums;
+}
+
+.home-stat-unit {
+  font-size: 28rpx;
+  color: var(--mp-ink-2);
+}
+
+.home-pad,
+.home-choice,
+.home-toggle-card {
+  margin-top: var(--mp-gap-card);
+  padding: var(--mp-pad-card-lg);
+}
+
 .home-card-title {
   display: block;
   color: var(--mp-ink);
@@ -63,6 +284,10 @@
   font-size: 24rpx;
 }
 
+.home-cta-btn {
+  margin-top: 32rpx;
+}
+
 .home-text-btn {
   margin-top: 16rpx;
   padding: 0;
@@ -71,59 +296,6 @@
   font-size: 26rpx;
   line-height: 1.6;
   text-align: left;
-}
-
-.home-device-card {
-  display: flex;
-  align-items: center;
-  gap: 28rpx;
-}
-
-.home-device-copy {
-  flex: 1;
-  min-width: 0;
-}
-
-.home-device-name {
-  display: block;
-  margin-bottom: 8rpx;
-  color: var(--mp-ink);
-  font-size: var(--mp-type-card);
-  font-weight: 600;
-  line-height: var(--mp-lh-card);
-}
-
-.home-memory-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16rpx;
-  margin-bottom: 20rpx;
-}
-
-.home-memory-list {
-  display: flex;
-  flex-direction: column;
-  gap: 20rpx;
-}
-
-.home-memory-preview {
-  padding: 4rpx 0 4rpx 16rpx;
-  border-left: 6rpx solid var(--mp-accent-soft);
-}
-
-.home-memory-text {
-  display: -webkit-box;
-  overflow: hidden;
-  color: var(--mp-ink);
-  font-size: var(--mp-type-body);
-  line-height: var(--mp-lh-body);
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.home-memory-empty {
-  margin-top: 0;
 }
 
 .home-toggle-row {
@@ -145,6 +317,26 @@
   min-width: 0;
 }
 
-.home-toggle-copy .trial-caption {
-  margin-top: 4rpx;
+.home-soon {
+  height: 48rpx;
+  padding: 0 24rpx;
+  border-radius: 999rpx;
+  background: var(--mp-accent-soft);
+  color: var(--mp-accent);
+  font-size: 24rpx;
+  font-weight: 600;
+  line-height: 48rpx;
+}
+
+.home-note {
+  display: block;
+  margin-top: 32rpx;
+  font-size: 24rpx;
+  color: var(--mp-ink-3);
+  line-height: 32rpx;
+  text-align: center;
+}
+
+.home-foot {
+  text-align: left;
 }

@@ -65,7 +65,7 @@
 .recap-body {
   display: block;
   color: #474e54;
-  color: var(--text-secondary);
+  color: var(--mp-ink-2);
   font-size: 26rpx;
   line-height: 1.8;
 }
@@ -115,7 +115,7 @@
 .conversation-speaker {
   display: block;
   color: #285c5e;
-  color: var(--brand-teal);
+  color: var(--mp-accent);
   font-size: 22rpx;
   font-weight: 600;
 }

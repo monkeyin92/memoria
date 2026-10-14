@@ -4,3 +4,6 @@ ts	phase	decision	why	evidence	result
 2026-10-14T15:41:01Z	design	wrote workflow with 8 units, single PR, skip arena, 12356 out	monkey-approved v4 settles design; user task overrides design-notes on 12356	/cursor/stores/self/docs/app-v4-mp-restyle-workflow.md	workflow locked
 2026-10-14T15:41:01Z	archive	archived design under docs/design/app-v4 with JPEG assets totaling ~2.8MB	keep files reasonably sized	docs/design/app-v4/README.md	VERIFIED
 2026-10-14T15:44:19Z	harness	landed v4 tokens flag sheet scroll tab icons forbidden-copy CI	scaffold before page restyles	git log -1 --oneline	VERIFIED scaffold
+2026-10-14T15:46:07Z	frame	Monkey acceptance: exact v4 look, side-by-side every page, functional+perf numbers, fix diffs before PR	operator raised the visual parity bar	user follow-up	predicate tightened
+2026-10-14T15:53:27Z	frame	Monkey exact-parity bar: side-by-side every page, self-check, functional+perf numbers	operator acceptance raised	user follow-up	predicate tightened
+2026-10-14T15:53:27Z	harness	v4-parity compare+fixtures; side-by-sides under mp-screenshots; home wxml port started	build the lever before page loop	apps/miniprogram/scripts/v4-parity/	INCONCLUSIVE actual-vs-design until MP fixtures replace design HTML exports

@@ -31,7 +31,7 @@
   gap: 12rpx;
   margin-top: 12rpx;
   color: #474e54;
-  color: var(--text-secondary);
+  color: var(--mp-ink-2);
   font-size: 22rpx;
 }
 
@@ -77,7 +77,7 @@
 
 .picker-value {
   color: #285c5e;
-  color: var(--brand-teal);
+  color: var(--mp-accent);
 }
 
 /* 删除孩子数据：居中弹窗复用全局 .modal-wrap / .modal-card，只补输入框间距 */
