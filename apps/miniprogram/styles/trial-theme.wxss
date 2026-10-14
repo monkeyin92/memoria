@@ -18,6 +18,7 @@
 }
 
 .trial-page.tab-page {
+  padding-top: calc(var(--mp-status-bar, 20px) + 32rpx);
   padding-bottom: var(--mp-tab-clearance);
 }
 

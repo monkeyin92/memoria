@@ -1,4 +1,5 @@
 const api = require("../../utils/api");
+const { statusBarStyle } = require("../../utils/nav-inset");
 const guardianPush = require("../../utils/guardian-push");
 const { requireLogin } = require("../../utils/auth-gate");
 const {
@@ -270,6 +271,7 @@ function bindingChoiceItems(bindings) {
 
 Page({
   data: {
+    statusBarStyle: statusBarStyle(),
     authenticated: false,
     loading: true,
     devicePlaceName: "设备",

@@ -68,16 +68,24 @@ test("home pins the attention card with its time and the open-to-pin meta", asyn
   assert.doesNotMatch(renderPage("pages/home/index", calm.data), /需要你关注/);
 });
 
-test("home hides the safety subscribe switch unless subscription push is enabled", async () => {
+test("home hides the safety subscribe card unless subscription push is enabled", async () => {
   const off = await loadHome();
   assert.equal(off.data.subscriptionPushEnabled, false);
   const offText = visibleText(renderPage("pages/home/index", off.data));
-  assert.doesNotMatch(offText, /安全提醒/);
-  assert.match(offText, /安静时段 21:00 – 次日 07:00/);
+  assert.doesNotMatch(offText, /安全提醒|安静时段/);
 
   const on = await loadHome({ config: { CONTROL_API_BASE_URL: "https://example.invalid", SUBSCRIPTION_PUSH_ENABLED: true } });
   assert.equal(on.data.subscriptionPushEnabled, true);
-  assert.match(visibleText(renderPage("pages/home/index", on.data)), /安全提醒/);
+  const onText = visibleText(renderPage("pages/home/index", on.data));
+  assert.match(onText, /安全提醒/);
+  assert.match(onText, /安静时段 21:00 – 次日 07:00/);
+});
+
+test("home memory card previews the latest summary and opens child memory", async () => {
+  const { data } = await loadHome();
+  const text = visibleText(renderPage("pages/home/index", data));
+  assert.match(text, /孩子的记忆 最近：讲了《大熊和森林里的悄悄话》/);
+  assert.match(renderPage("pages/home/index", data), /class="trial-card home-row-card" data-tap/);
 });
 
 test("home never renders battery, story counts or a recommendation card", async () => {

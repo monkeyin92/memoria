@@ -1,4 +1,5 @@
 const api = require("../../utils/api");
+const { statusBarStyle } = require("../../utils/nav-inset");
 const { SUBSCRIPTION_PUSH_ENABLED } = require("../../config");
 const { requireLogin } = require("../../utils/auth-gate");
 const { companionById, defaultCompanionId } = require("../../utils/companions");
@@ -133,6 +134,7 @@ function bindingChoiceItems(bindings) {
 
 Page({
   data: {
+    statusBarStyle: statusBarStyle(),
     greeting: `${greetingFor()}，朋友`,
     authenticated: false,
     ...emptyDashboard(),

@@ -1,5 +1,6 @@
 {
   "navigationBarTitleText": "角色",
+  "navigationStyle": "custom",
   "usingComponents": {
     "face-badge": "/components/face-badge/index",
     "mp-icon": "/components/mp-icon/index"

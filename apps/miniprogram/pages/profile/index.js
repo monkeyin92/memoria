@@ -1,4 +1,5 @@
 const api = require("../../utils/api");
+const { statusBarStyle } = require("../../utils/nav-inset");
 const compliance = require("../../utils/compliance");
 const { companions, companionById, defaultCompanionId } = require("../../utils/companions");
 const { requireLogin } = require("../../utils/auth-gate");
@@ -201,6 +202,7 @@ function formatDeliveredCapabilityRows(payload) {
 
 Page({
   data: {
+    statusBarStyle: statusBarStyle(),
     identity: null,
     profile: defaultProfile,
     profileInitial: profileInitialFor(defaultProfile.display_name),

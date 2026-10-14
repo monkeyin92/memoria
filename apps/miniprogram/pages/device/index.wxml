@@ -1,5 +1,5 @@
 <page-meta page-style="{{sheetOpen ? 'overflow: hidden;' : ''}}"></page-meta>
-<view class="page-shell">
+<view class="page-shell tab-page" style="{{statusBarStyle}}">
   <view wx:if="{{!authenticated}}">
     <text class="page-title">设备</text>
     <text class="page-lede">跟随账号同步，无需在每个端重新绑定。</text>

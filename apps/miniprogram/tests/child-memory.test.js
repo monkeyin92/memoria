@@ -101,7 +101,7 @@ test("home routes unread safety banner and shows the child memory card", () => {
   const appConfig = require("../app.json");
   assert.ok(appConfig.pages.includes("pages/child-memory/index"));
   assert.match(home, /openUnreadSafety|unreadSafetyAlert/);
-  assert.match(home, /home-memory-card/);
+  assert.match(home, /home-row-card[^>]*bindtap="openChildMemory"/);
   assert.match(home, /的记忆/);
   assert.match(homeJs, /openChildMemory/);
   assert.match(homeJs, /openUnreadSafety/);

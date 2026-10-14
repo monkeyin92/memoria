@@ -77,7 +77,7 @@ test("v4 home keeps the mascot off the dashboard; settings keep none", () => {
   const device = fs.readFileSync(path.join(root, "pages/device/index.wxml"), "utf8");
   const memory = fs.readFileSync(path.join(root, "pages/child-memory/index.wxml"), "utf8");
   assert.doesNotMatch(home, /<face-badge/);
-  assert.deepEqual(homeJson.usingComponents, {});
+  assert.deepEqual(homeJson.usingComponents, { "mp-icon": "/components/mp-icon/index" });
   assert.doesNotMatch(device, /<face-badge/);
   assert.doesNotMatch(home, /<device-screen/);
   assert.doesNotMatch(device, /<device-screen/);

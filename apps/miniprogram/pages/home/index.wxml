@@ -1,7 +1,7 @@
-<view class="page-shell trial-page tab-page home-v4">
+<view class="page-shell trial-page tab-page home-v4" style="{{statusBarStyle}}">
   <view wx:if="{{!authenticated}}" class="home-guest">
     <view class="home-login-hero">
-      <image class="home-login-art" src="/assets/ui/v4/dusk.jpg" mode="aspectFill" />
+      <image class="home-login-art" src="/assets/ui/v4/dusk.jpg" mode="heightFix" />
       <view class="home-login-scrim"></view>
       <view class="home-login-brand">
         <text class="home-login-title">Memoria</text>
@@ -10,7 +10,7 @@
     </view>
     <view class="home-login-body">
       <text class="home-login-hello">{{greeting}}</text>
-      <text class="trial-caption">登录后查看孩子今天聊了什么</text>
+      <text class="page-lede">登录后查看孩子今天聊了什么</text>
       <button class="trial-primary home-cta-btn" bindtap="loginFromHome">
         <image class="home-btn-icon" src="/assets/ui/v4/wechat-white.svg" />微信一键登录
       </button>
@@ -123,22 +123,17 @@
         </view>
       </view>
 
-      <view wx:if="{{showChildMemory}}" class="trial-card home-memory-card">
-        <view class="home-memory-head">
+      <view wx:if="{{showChildMemory}}" class="trial-card home-row-card" bindtap="openChildMemory">
+        <mp-icon name="heart" size="96"></mp-icon>
+        <view class="home-row-copy">
           <text class="home-card-title">{{childMemoryName}}的记忆</text>
-          <text class="trial-link" bindtap="openChildMemory">查看全部</text>
+          <text class="home-row-sub">{{memoryPreviews.length ? '最近：' + memoryPreviews[0].text : '还没有摘要，聊过之后会出现在这里'}}</text>
         </view>
-        <view wx:if="{{memoryPreviews.length}}" class="home-memory-list">
-          <view wx:for="{{memoryPreviews}}" wx:key="recordId" class="home-memory-preview">
-            <view class="home-memory-dot"></view>
-            <text class="home-memory-text">{{item.text}}</text>
-          </view>
-        </view>
-        <text wx:else class="trial-caption">还没有摘要。聊过之后会出现在这里。</text>
+        <image class="home-chev" src="/assets/ui/v4/chev-ink.svg" />
       </view>
 
-      <view wx:if="{{showSafetyNightCard}}" class="trial-card home-toggle-card">
-        <view wx:if="{{subscriptionPushEnabled}}" class="home-toggle-row">
+      <view wx:if="{{showSafetyNightCard && subscriptionPushEnabled}}" class="trial-card home-toggle-card">
+        <view class="home-toggle-row">
           <view class="home-toggle-copy">
             <text class="home-card-title">安全提醒</text>
             <text class="trial-caption">{{safetySubscribeHelper}}</text>

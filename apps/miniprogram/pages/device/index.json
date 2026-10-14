@@ -1,5 +1,6 @@
 {
   "navigationBarTitleText": "设备",
+  "navigationStyle": "custom",
   "enablePullDownRefresh": true,
   "usingComponents": {
     "mp-icon": "/components/mp-icon/index"

@@ -1,4 +1,4 @@
-<view class="page-shell companion-shell">
+<view class="page-shell tab-page companion-shell" style="{{statusBarStyle}}">
   <text class="page-title">角色</text>
   <text class="page-lede">换个说话风格。它始终是陪孩子聊天、讲故事的 AI 助手。当前 · {{currentName}}</text>
 

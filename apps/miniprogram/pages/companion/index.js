@@ -1,4 +1,5 @@
 const api = require("../../utils/api");
+const { statusBarStyle } = require("../../utils/nav-inset");
 const { companions, companionById, defaultCompanionId } = require("../../utils/companions");
 const { requireLogin } = require("../../utils/auth-gate");
 const { readBindingManifest } = require("../../utils/device-binding");
@@ -60,6 +61,7 @@ function companionIndex(companionId) {
 
 Page({
   data: {
+    statusBarStyle: statusBarStyle(),
     cards: deckCards(companionIndex(defaultCompanionId)),
     currentIndex: companionIndex(defaultCompanionId),
     dragging: false,

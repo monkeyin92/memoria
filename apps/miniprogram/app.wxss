@@ -81,10 +81,12 @@ button { font-family: inherit; }
   background: var(--mp-bg);
   color: var(--mp-ink);
 }
-.page-shell.tab-page { padding-bottom: var(--mp-tab-clearance); }
+.page-shell.tab-page {
+  padding-top: calc(var(--mp-status-bar, 20px) + 32rpx);
+  padding-bottom: var(--mp-tab-clearance);
+}
 .eyebrow {
   display: block;
-  margin-top: 16rpx;
   color: var(--mp-ink-3);
   font-size: var(--mp-type-caption);
   font-weight: 600;
@@ -208,7 +210,8 @@ button { font-family: inherit; }
   margin-top: 8rpx;
 }
 .mem-hero .pill { background: var(--mp-sage-bg); color: var(--mp-sage); }
-.mem-hero .pill-amber { background: var(--mp-sun-bg); color: var(--mp-sun); }
+.mem-hero .pill-amber,
+.pill-draft { background: var(--mp-sun-bg); color: var(--mp-sun); }
 
 .role-tint-card {
   box-sizing: border-box;
@@ -312,6 +315,7 @@ button[disabled] {
   line-height: var(--mp-lh-caption);
 }
 .row-chevron { flex-shrink: 0; color: var(--mp-ink-4); font-size: var(--mp-type-title); line-height: 1; }
+.row-chev { flex-shrink: 0; width: 36rpx; height: 36rpx; }
 .row-icon {
   display: flex;
   align-items: center;
@@ -471,6 +475,7 @@ button[disabled] {
 }
 .section-head { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; margin: 64rpx 4rpx 24rpx; }
 .section-head-title { color: var(--mp-ink); font-size: var(--mp-type-title); font-weight: 700; letter-spacing: -0.6rpx; }
+.section-title { display: block; margin: 64rpx 0 32rpx; color: var(--mp-ink); font-size: var(--mp-type-title); font-weight: 700; letter-spacing: -0.6rpx; line-height: 56rpx; }
 .section-link { padding: 12rpx 0; color: var(--mp-accent); font-size: var(--mp-type-caption); font-weight: 600; }
 .summary-row {
   display: flex;
