@@ -107,10 +107,6 @@ class CrisisNotificationService:
         never upgraded to a verified link, and it never unlocks consent-gated
         capabilities such as memory retention or session admission.
 
-        ``attempt_push`` is False for relay-tier support requests. The event
-        row and its evidence are recorded, and no guardian notification is
-        queued, so nothing pins in the Mini Program and nothing is pushed.
-
         ``reply_template_id`` and ``script_version`` are ids only. Child text
         never enters this payload or the crisis event row.
         """

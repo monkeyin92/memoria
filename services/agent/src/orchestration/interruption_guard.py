@@ -641,7 +641,6 @@ def _looks_like_assistant_echo(text: str, assistant_text: str) -> bool:
         return False
     if _echoes(content, spoken):
         return True
-    # The speaker played a fixed safety script's spoken copy, not the display copy.
     script_spoken = spoken_prefix_for_display(assistant_text.strip())
     return script_spoken is not None and _echoes(content, _content(script_spoken))
 

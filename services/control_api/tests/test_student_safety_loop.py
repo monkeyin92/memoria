@@ -335,8 +335,6 @@ async def test_support_tier_and_crisis_behavior_matrix(
     expect_outbox: bool,
     expect_event: bool,
 ) -> None:
-    """Crisis and victim pin and push. Relay records the event only. Quoted fiction records nothing."""
-
     _configure(monkeypatch, tmp_path)
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

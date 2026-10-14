@@ -132,8 +132,6 @@ class ExistingVoiceProviderAdapter:
         init=False,
     )
     _active_speech_streams: dict[GenerationFence, Any] = field(default_factory=dict, init=False)
-    # Generations speaking a fixed safety script. Provider subtitles for these
-    # echo spoken copy, so none may enter heard history.
     _fixed_safety_fences: set[GenerationFence] = field(default_factory=set, init=False)
     _generation_output_ends: dict[GenerationFence, int] = field(
         default_factory=dict,
@@ -608,12 +606,6 @@ class ExistingVoiceProviderAdapter:
         cancellation: CancellationContext,
         cancel_event: asyncio.Event,
     ) -> AsyncGenerator[SpokenPhrase, None]:
-        """Every phrase one generation speaks, in order. Both TTS paths consume this.
-
-        A fixed safety script yields its approved phrases and never reaches the
-        segmenter, so its spoken copy arrives at the engine intact.
-        """
-
         segmenter = PhraseSegmenter(fence=fence)
         llm_stream = self.language_model.stream(
             LanguageModelRequest(user_text=user_text, cancellation=cancellation)
@@ -840,12 +832,6 @@ class ExistingVoiceProviderAdapter:
         *,
         max_audio_end_sample: int,
     ) -> tuple[Any, ...]:
-        """Provider-timed spans that may become heard history.
-
-        A fixed safety script gets none, because its subtitles echo spoken copy.
-        Its display copy is then recorded only as one whole-reply span.
-        """
-
         if fence in self._fixed_safety_fences:
             return ()
         return await self._provider_timed_text_spans(
@@ -873,10 +859,7 @@ class ExistingVoiceProviderAdapter:
         final: bool,
         source_start_sample: int,
     ) -> AsyncIterator[MediaReplyChunk]:
-        """Stream one phrase as bounded, fixed-size PCM frames.
-
-        The engine receives ``phrase.spoken``. Every chunk carries ``phrase.display``.
-        """
+        """Stream one phrase as bounded, fixed-size PCM frames."""
 
         if cancel_event.is_set():
             return

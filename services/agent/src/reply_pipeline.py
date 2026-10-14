@@ -269,8 +269,6 @@ class ReplyPipeline:
         )
 
     async def stream(self, request: LanguageModelRequest) -> AsyncGenerator[ReplyItem, None]:
-        """Reply items for the media handler, built from the committed conversation."""
-
         if not request.cancellation.is_current(self._runtime.fence):
             return
         chat_ctx = ChatContext.empty()
@@ -1194,8 +1192,6 @@ class ReplyPipeline:
 
         Every model token passes the GenerationFence gate; the reply stops at
         the voice budget, and the stream is registered as the active LLM task.
-        A plan with a fixed safety script yields only the script, whole, outside
-        the segmenter and the budget.
         """
         cancellation = self._runtime.cancellation_context()
         fence = cancellation.fence

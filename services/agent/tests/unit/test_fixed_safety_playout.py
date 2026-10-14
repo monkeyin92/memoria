@@ -38,8 +38,6 @@ class ReplyLLM:
 
 
 class SubtitledSpeech:
-    """A live TTS stream whose subtitles echo the pushed text with exact timing."""
-
     def __init__(self) -> None:
         self.pushed: list[str] = []
         self.queue: asyncio.Queue[Any | None] = asyncio.Queue()

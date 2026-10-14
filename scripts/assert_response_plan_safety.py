@@ -21,7 +21,6 @@ from services.common.fixed_safety_scripts import (
 class SmokeRouteExpectation(TypedDict):
     query: str
     script: FixedSafetyScript
-    # Literal, so a registry edit that changes what the speaker says fails CI.
     tts_text: str
     attempt_push: bool
 

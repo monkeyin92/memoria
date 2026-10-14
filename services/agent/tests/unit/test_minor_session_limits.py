@@ -179,7 +179,7 @@ async def test_an_adult_wake_at_night_is_not_refused(monkeypatch: pytest.MonkeyP
     [
         (60.0, "好的。", False),  # inside the limit
         (1900.0, "好的。", True),  # past the limit: goodbye after the reply
-        (1900.0, CRISIS_SELF_SCRIPT.display, False),  # a crisis session is never cut short
+        (1900.0, CRISIS_SELF_SCRIPT.display, False),
     ],
 )
 async def test_a_minor_session_past_its_limit_ends_after_the_reply(

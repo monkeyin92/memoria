@@ -10,7 +10,6 @@ from typing import Any, Protocol
 from services.agent.src.contracts.ids import CancellationContext, GenerationFence
 from services.common.fixed_safety_scripts import FixedSafetyScript
 
-# A fixed safety script arrives whole and must not be segmented.
 type ReplyItem = str | FixedSafetyScript
 
 

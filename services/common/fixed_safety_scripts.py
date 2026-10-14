@@ -1,10 +1,3 @@
-"""Approved fixed safety scripts: the copy a child reads and the copy a speaker says.
-
-Display copy keeps Arabic digits. History, the wire and plan admission compare it.
-Spoken copy reads each phone number digit by digit and reaches only a speech
-engine's ``push_text`` and the playout log.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -27,8 +20,6 @@ class SpokenPhrase:
 
 @dataclass(frozen=True, slots=True)
 class FixedSafetyScript:
-    """``template_id`` is written as both reply_template_id and script_version."""
-
     template_id: FixedSafetyTemplateId
     phrases: tuple[SpokenPhrase, ...]
 
@@ -80,7 +71,6 @@ SUPPORT_RELAY_SCRIPT: Final = _approved(
     "这件事要请大人帮忙，现在就去告诉爸爸妈妈或者老师吧。",
 )
 
-# Keys are companion_safety_decision() values.
 _BY_DECISION: Final[dict[str, FixedSafetyScript]] = {
     "crisis_self": CRISIS_SELF_SCRIPT,
     "support_victim": SUPPORT_VICTIM_SCRIPT,
@@ -105,20 +95,14 @@ def script_for_decision(decision: str) -> FixedSafetyScript | None:
 
 
 def script_for_display(text: str | None) -> FixedSafetyScript | None:
-    """The script whose exact display copy is ``text``. Spoken copy never matches."""
-
     return None if text is None else _BY_DISPLAY.get(text)
 
 
 def spoken_prefix_for_display(text: str) -> str | None:
-    """Spoken copy for display text announced so far, cut at a phrase boundary."""
-
     return _SPOKEN_BY_DISPLAY_PREFIX.get(text)
 
 
 def log_fixed_safety_playout(logger: logging.Logger, script: FixedSafetyScript) -> None:
-    """Takes only the script, so child text cannot reach this line."""
-
     logger.info(
         "fixed_safety_playout reply_template_id=%s script_version=%s tts_text=%s",
         script.template_id,
