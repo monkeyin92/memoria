@@ -11,11 +11,12 @@ from services.archive.domain import EvidenceEvent, LifeArchivePort
 
 NotificationStatus = Literal["pending", "pin_only", "delivered", "failed", "no_subscription"]
 
-# Undelivered outbox rows stay pinned in the Mini Program until WeChat
-# delivery succeeds, and ``pin_only`` rows are never pushed so they stay
-# pinned.  Delivered alerts remain listable on the guardian page but no
-# longer occupy the home/memory pin slot.
-PINNED_CRISIS_ALERT_STATUSES = frozenset({"pending", "pin_only", "failed", "no_subscription"})
+# Crisis / victim / support-other alerts stay on the Mini Program home pin
+# for every outbox status, including after a successful WeChat push.  Push
+# delivery must never clear the pin.
+PINNED_CRISIS_ALERT_STATUSES = frozenset(
+    {"pending", "pin_only", "failed", "no_subscription", "delivered"}
+)
 
 
 def crisis_alert_is_pinned(status: str) -> bool:

@@ -865,9 +865,6 @@ async def session_policy(
     policy.update(
         {
             "interaction_mode": interaction_mode,
-            "mode_policy_version": runtime_profile.get(
-                "policy_bundle_version", policy["mode_policy_version"]
-            ),
             "simulated_output": interaction_mode != "companion",
             "history_eligible": history_eligible,
             "owner_projection_eligible": history_eligible,

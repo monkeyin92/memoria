@@ -8,10 +8,9 @@ only per-event values are the child's display name (already shown on the
 guardian page) and the time of the event.
 
 When a guardian has no remaining acceptance the notification is marked
-``no_subscription`` and stays pinned on the memory and home pages until the
-parent opens the Mini Program.  Delivered alerts remain listable on the
-guardian page.  Each subscribe-message answer is appended to an audit ledger
-in addition to updating the acceptance balance.
+``no_subscription``.  Delivered and undelivered alerts both stay pinned on
+the memory and home pages.  Each subscribe-message answer is appended to an
+audit ledger in addition to updating the acceptance balance.
 """
 
 from __future__ import annotations
@@ -73,10 +72,10 @@ class PushSubscriptionEvent:
 class CrisisReachBreakdown:
     """Counts for a later crisis→push-or-pin delivery-rate check.
 
-    Every enqueued alert is either delivered over WeChat or pinned in-app
-    (pending / pin_only / failed / no_subscription).  ``pin_only`` alerts are
-    never pushed, so they never settle.  ``wechat_delivery_rate`` is the
-    share of settled alerts that left via subscribe-message send.
+    Every enqueued alert is pinned in-app.  Some are also delivered over
+    WeChat (pending / failed / no_subscription / delivered); ``pin_only``
+    alerts are never pushed, so they never settle.  ``wechat_delivery_rate``
+    is the share of settled alerts that left via subscribe-message send.
     """
 
     total: int
