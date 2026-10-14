@@ -603,15 +603,8 @@ Page({
 
   async submitBinding() {
     if (this.data.submitting) return;
-    if (this.data.declaredMode === "parent_for_child") {
-      const confirmed = await confirmUnusualQuietHours({
-        start: this.data.form.quietHoursStart,
-        end: this.data.form.quietHoursEnd,
-      });
-      if (!confirmed) return;
-    }
-    this.setData({ submitting: true, error: "" });
-    // Hard gate: subscribe must start in this tap stack before any other await.
+    // Hard gate: subscribe must start in this tap stack before any other await
+    // (including the quiet-hours confirm modal).
     let gate;
     try {
       gate = await requireCrisisSubscribeBeforeBind({
@@ -621,15 +614,22 @@ Page({
       });
     } catch (error) {
       this.setData({
-        submitting: false,
         error: error?.message || "安全提醒开启失败，绑定未提交。",
       });
       return;
     }
     if (!gate.ok) {
-      this.setData({ submitting: false, error: gate.message, crisisSubscribeAccepted: false });
+      this.setData({ error: gate.message, crisisSubscribeAccepted: false });
       return;
     }
+    if (this.data.declaredMode === "parent_for_child") {
+      const confirmed = await confirmUnusualQuietHours({
+        start: this.data.form.quietHoursStart,
+        end: this.data.form.quietHoursEnd,
+      });
+      if (!confirmed) return;
+    }
+    this.setData({ submitting: true, error: "" });
     try {
       const request = this._buildRequest();
       const manifest = await api.createDeviceBinding(request, {

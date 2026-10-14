@@ -366,7 +366,7 @@ test("parent_for_child asks before submitting an unusually short quiet-hours win
     page.data.quietHoursLabel,
     "夜间模式：23:45–00:15（这段时间点屏只会说晚安）",
   );
-  page.goToReview();
+  await page.goToReview();
   assert.equal(page.data.step, "review");
 
   const modals = [];

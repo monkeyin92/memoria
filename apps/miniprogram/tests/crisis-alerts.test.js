@@ -125,9 +125,13 @@ test("bind requires subscribe before create; memory pins undelivered alerts", ()
 
   assert.match(bindJs, /requireCrisisSubscribeBeforeBind/);
   assert.match(bindJs, /createDeviceBinding/);
-  const gateAt = bindJs.indexOf("requireCrisisSubscribeBeforeBind");
-  const createAt = bindJs.indexOf("createDeviceBinding");
-  assert.ok(gateAt > 0 && createAt > gateAt);
+  const submitAt = bindJs.indexOf("async submitBinding");
+  const gateAt = bindJs.indexOf("requireCrisisSubscribeBeforeBind", submitAt);
+  const quietAt = bindJs.indexOf("confirmUnusualQuietHours", submitAt);
+  const createAt = bindJs.indexOf("createDeviceBinding", submitAt);
+  assert.ok(gateAt > submitAt && createAt > gateAt);
+  // WeChat subscribe must start before any other await in the submit tap stack.
+  assert.ok(quietAt > gateAt && quietAt < createAt);
   assert.match(bindWxml, /开启提醒并绑定/);
   assert.match(bindWxml, /安全提醒是完成绑定的前提/);
   assert.doesNotMatch(bindJs, /offerCrisisSubscription/);
