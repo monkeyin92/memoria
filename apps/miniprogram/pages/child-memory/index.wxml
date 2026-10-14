@@ -138,7 +138,7 @@
     <view class="mp-sheet-grab"></view>
     <text class="mp-sheet-title">{{confirm.title}}</text>
     <view wx:if="{{confirm.quote}}" class="mp-sheet-quote">{{confirm.quote}}</view>
-    <text wx:else class="cm-sheet-body">{{confirm.body}}</text>
+    <text wx:if="{{confirm.body}}" class="cm-sheet-body">{{confirm.body}}</text>
     <view class="mp-sheet-actions">
       <button class="trial-danger" bindtap="runConfirm" disabled="{{working}}">{{confirm.confirmLabel}}</button>
       <button class="trial-secondary" bindtap="closeConfirm" disabled="{{working}}">{{deleteKeepLabel}}</button>

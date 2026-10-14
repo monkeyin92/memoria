@@ -37,7 +37,7 @@
 .trial-card {
   background: var(--mp-surface);
   border-radius: var(--mp-radius-card);
-  border-bottom: 1rpx solid var(--mp-line);
+  border-bottom: 2rpx solid var(--mp-line);
   box-shadow: none;
 }
 
@@ -82,7 +82,7 @@
   border-radius: var(--mp-radius-pill);
   background: var(--mp-surface) !important;
   color: var(--mp-danger) !important;
-  border: 1rpx solid var(--mp-danger-outline);
+  border: 2rpx solid var(--mp-danger-outline);
   font-size: var(--mp-type-button);
   font-weight: 600;
   line-height: 100rpx;
@@ -125,7 +125,7 @@
   padding: 28rpx 32rpx;
   border-radius: var(--mp-radius-banner);
   background: var(--mp-accent-wash);
-  border: 1rpx solid var(--mp-accent-soft);
+  border: 2rpx solid var(--mp-accent-soft);
   color: var(--mp-ink);
 }
 
@@ -169,7 +169,7 @@
   overflow: hidden;
   background: var(--mp-surface);
   border-radius: var(--mp-radius-card);
-  border-bottom: 1rpx solid var(--mp-line);
+  border-bottom: 2rpx solid var(--mp-line);
   box-shadow: none;
 }
 
@@ -274,7 +274,7 @@
 }
 
 .mp-sheet-quote {
-  margin-bottom: 36rpx;
+  margin-bottom: 20rpx;
   padding: 28rpx 32rpx;
   border-radius: var(--mp-radius-inset);
   background: var(--mp-bg);
