@@ -49,16 +49,21 @@ test("online status reflects activation readiness", () => {
 test("home page is a status board without rooms or realtime chat", () => {
   const template = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
   const script = fs.readFileSync(path.join(root, "pages/home/index.js"), "utf8");
-  assert.match(template, /欢迎来到 Memoria|page-title">\{\{greeting\}\}/);
+  assert.match(template, /欢迎来到 Memoria|trial-title">\{\{greeting\}\}/);
   assert.doesNotMatch(template, /startVoice|startText|sendText|可直接对话/);
   assert.doesNotMatch(template, /先了解怎么用|openHowItWorks|家中的设备/);
-  assert.match(template, /wx:if="\{\{!authenticated\}\}"[\s\S]*登录后查看设备和今天/);
+  assert.match(template, /wx:if="\{\{!authenticated\}\}"[\s\S]*微信登录，找回我的设备/);
+  assert.match(template, /home-device-card/);
+  assert.match(template, /usageLabel|usageUsedMinutes/);
+  assert.match(template, /unreadSafetyCopy|unreadSafetyAlert/);
+  assert.doesNotMatch(template, /status-chips|face-badge|glass-icon/);
   assert.match(script, /subscribeAuthCleared\(\(\) => this\._enterGuestState\(\)\)/);
   assert.doesNotMatch(script, /待在设备上确认/);
   assert.doesNotMatch(script, /resolveSessionSubject/);
   assert.doesNotMatch(script, /openHowItWorks/);
   assert.doesNotMatch(script, /家中的设备/);
   assert.match(script, /readSubjectLabel/);
+  assert.match(script, /buildTrialDeviceCard/);
 });
 
 test("current user on home is the bind-time remark, not the WeChat name", () => {
@@ -93,4 +98,35 @@ test("online hero caption names the device's configured wake word", () => {
   const script = fs.readFileSync(path.join(root, "pages/home/index.js"), "utf8");
   assert.match(script, /唤醒「\$\{settings\?\.wake_word_display \|\| "茉莉"\}」/);
   assert.doesNotMatch(script, /\? "在设备旁唤醒「茉莉」/);
+});
+
+test("trial device card helper uses profile quiet hours and usage limit", () => {
+  const {
+    buildTrialDeviceCard,
+    hasUnreadSafetyAlert,
+    usageLabel,
+  } = require("../utils/trial-device-card");
+  const card = buildTrialDeviceCard({
+    online: true,
+    runtimeProfile: {
+      valid: true,
+      subject_category: "minor",
+      obligations: [
+        { code: "QUIET_HOURS", params: { quiet_hours: ["21:00", "07:00"] } },
+        { code: "MAX_SESSION_SECONDS", params: { max_session_seconds: 1800 } },
+      ],
+    },
+    usedMinutes: 0,
+  });
+  assert.equal(card.statusPill, "在线");
+  assert.equal(card.usageUsedMinutes, 0);
+  assert.equal(card.usageLimitMinutes, 30);
+  assert.equal(card.usageLabel, "今日已用 / 30 分钟");
+  assert.equal(card.quietHoursLine, "夜间 21:00–07:00");
+  assert.equal(usageLabel(45), "今日已用 / 45 分钟");
+  assert.equal(
+    hasUnreadSafetyAlert([{ pinned: true, delivery_status: "no_subscription" }]),
+    true,
+  );
+  assert.equal(hasUnreadSafetyAlert([{ pinned: false, delivery_status: "delivered" }]), false);
 });

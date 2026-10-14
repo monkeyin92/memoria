@@ -1,75 +1,106 @@
-.home-hero-main {
-  align-items: center;
-  margin-top: 20rpx;
+@import "../../styles/trial-theme.wxss";
+
+.home-trial {
+  padding-bottom: 120rpx;
 }
 
-.home-hero-copy {
-  flex: 1;
-  min-width: 0;
+.home-guest-card,
+.home-pad,
+.home-device-card,
+.home-choice {
+  margin-top: 36rpx;
+  padding: 40rpx 36rpx;
 }
 
-.home-hero-foot {
+.home-guest-lead {
+  display: block;
+  color: var(--trial-ink);
+  font-size: 40rpx;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.home-cta {
+  margin-top: 40rpx;
+}
+
+.home-cta-btn {
+  margin-top: 32rpx;
+}
+
+.home-foot {
+  margin-top: 40rpx;
+}
+
+.home-empty-title {
+  display: block;
+  color: var(--trial-ink);
+  font-size: 36rpx;
+  font-weight: 700;
+}
+
+.home-choice {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 24rpx;
-  min-height: 102rpx;
-  margin-top: 28rpx;
-  padding-top: 24rpx;
-  border-top: 1rpx solid rgba(255, 255, 255, 0.14);
-  color: #c3d5e1;
+  gap: 16rpx;
+}
+
+.home-choice-title {
+  display: block;
+  font-size: 32rpx;
+  font-weight: 600;
+}
+
+.home-error {
+  display: block;
+  margin-top: 16rpx;
+  color: #a3221b;
   font-size: 24rpx;
 }
 
-.home-todo-head {
-  display: flex;
-  align-items: center;
-  gap: 20rpx;
+.home-text-btn {
+  margin-top: 16rpx;
+  padding: 0;
+  background: transparent;
+  color: var(--trial-muted);
+  font-size: 26rpx;
+  line-height: 1.6;
+  text-align: left;
 }
 
-.home-todo-copy {
+.home-device-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+
+.home-device-name {
   flex: 1;
   min-width: 0;
+  color: var(--trial-ink);
+  font-size: 34rpx;
+  font-weight: 650;
 }
 
-.home-todo-copy .count-badge {
-  margin-left: 12rpx;
-  vertical-align: 2rpx;
+.home-usage-number {
+  display: block;
+  margin-top: 36rpx;
+  color: var(--trial-ink);
+  font-size: 112rpx;
+  font-weight: 700;
+  letter-spacing: -2rpx;
+  line-height: 1;
 }
 
-.home-todo-chevron {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 56rpx;
-  height: 56rpx;
-  border-radius: 50%;
-  background: rgba(233, 238, 242, 0.72);
-  background: var(--gray-100);
-  color: #474e54;
-  color: var(--text-secondary);
-  transition: transform 250ms;
+.home-usage-label {
+  display: block;
+  margin-top: 12rpx;
+  color: var(--trial-muted);
+  font-size: 28rpx;
 }
 
-.home-todo-chevron.is-open {
-  transform: rotate(180deg);
-}
-
-.home-todo-body .caption {
-  margin-top: 16rpx;
-}
-
-.home-recap-meta {
-  display: flex;
-  align-items: center;
-  gap: 18rpx;
-  margin-bottom: 18rpx;
-}
-
-.home-recap-time {
-  flex: 1;
-  color: #474e54;
-  color: var(--text-secondary);
-  font-size: 24rpx;
+.home-quiet {
+  margin-top: 28rpx;
 }
