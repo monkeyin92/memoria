@@ -361,7 +361,8 @@ CREATE TABLE IF NOT EXISTS guardian_crisis_events (
     attempt_push BOOLEAN NOT NULL DEFAULT TRUE
 );
 
--- Relay-tier support requests pin without WeChat push; claim skips these rows.
+-- Relay-tier support requests pin without WeChat push: their outbox rows are
+-- pin_only, which claim never selects.
 ALTER TABLE guardian_crisis_events
     ADD COLUMN IF NOT EXISTS attempt_push BOOLEAN NOT NULL DEFAULT TRUE;
 
@@ -1146,10 +1147,14 @@ BEGIN
     INSERT INTO guardian_notification_outbox(
         notification_id, crisis_event_id, guardian_user_id,
         channel, status, attempts, created_at
-    ) VALUES (
-        p_notification_id, p_crisis_event_id, p_guardian_user_id,
-        'wechat_subscription', 'pending', 0, p_created_at
-    ) ON CONFLICT(crisis_event_id, guardian_user_id) DO NOTHING;
+    )
+    SELECT p_notification_id, p_crisis_event_id, p_guardian_user_id,
+        'wechat_subscription',
+        CASE WHEN crisis.attempt_push THEN 'pending' ELSE 'pin_only' END,
+        0, p_created_at
+    FROM guardian_crisis_events crisis
+    WHERE crisis.crisis_event_id = p_crisis_event_id
+    ON CONFLICT(crisis_event_id, guardian_user_id) DO NOTHING;
     PERFORM set_config('memoria.guardian_maintenance_scope', '0', true);
 END
 $notification_enqueue$;
@@ -1206,10 +1211,14 @@ BEGIN
     INSERT INTO guardian_notification_outbox(
         notification_id, crisis_event_id, guardian_user_id,
         channel, status, attempts, created_at
-    ) VALUES (
-        p_notification_id, p_crisis_event_id, p_guardian_user_id,
-        'wechat_subscription', 'pending', 0, p_created_at
-    ) ON CONFLICT(crisis_event_id, guardian_user_id) DO NOTHING;
+    )
+    SELECT p_notification_id, p_crisis_event_id, p_guardian_user_id,
+        'wechat_subscription',
+        CASE WHEN crisis.attempt_push THEN 'pending' ELSE 'pin_only' END,
+        0, p_created_at
+    FROM guardian_crisis_events crisis
+    WHERE crisis.crisis_event_id = p_crisis_event_id
+    ON CONFLICT(crisis_event_id, guardian_user_id) DO NOTHING;
     PERFORM set_config('memoria.guardian_declared_notification_scope', '0', true);
     PERFORM set_config('memoria.guardian_maintenance_scope', '0', true);
 END

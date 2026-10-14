@@ -121,8 +121,7 @@ async def test_minor_crisis_is_idempotent_and_contains_no_transcript_or_severity
 
 
 @pytest.mark.asyncio
-async def test_relay_tier_crisis_pins_without_push(
-    postgres_database: TestDatabase,
+async def test_relay_tier_crisis_records_event_evidence_and_a_pin_only_notification(
     guardian_postgres_store: PostgresGuardianStore,
     archive: PostgresLifeArchive,
 ) -> None:
@@ -177,21 +176,13 @@ async def test_relay_tier_crisis_pins_without_push(
     assert first == replay
     assert first.notification_count == 1
     notifications = await store.guardian_notifications(guardian_user_id="guardian-a")
-    assert len(notifications) == 1
-    assert notifications[0].status == "pending"
+    assert [(item.crisis_event_id, item.status) for item in notifications] == [
+        (first.crisis_event_id, "pin_only")
+    ]
     event = await archive.event(account_id="minor-a", event_id=first.evidence_event_id)
     assert event is not None
     assert event.payload["notification_required"] is True
     assert event.payload["attempt_push"] is False
-    admin = await asyncpg.connect(postgres_database.owner_dsn())
-    try:
-        attempt_push = await admin.fetchval(
-            "SELECT attempt_push FROM guardian_crisis_events WHERE crisis_event_id = $1::uuid",
-            first.crisis_event_id,
-        )
-    finally:
-        await admin.close()
-    assert attempt_push is False
 
 
 @pytest.mark.asyncio
@@ -249,9 +240,11 @@ async def test_declared_guardian_receives_the_crisis_without_an_active_link(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("attempt_push", (True, False))
 async def test_minor_crisis_without_active_guardian_is_not_silently_accepted(
     guardian_postgres_store: PostgresGuardianStore,
     archive: PostgresLifeArchive,
+    attempt_push: bool,
 ) -> None:
     store = guardian_postgres_store
     service = CrisisNotificationService(store, archive)
@@ -265,4 +258,5 @@ async def test_minor_crisis_without_active_guardian_is_not_silently_accepted(
             tool_epoch=0,
             script_version="crisis-transfer-draft-v1",
             reply_template_id="crisis-support-reply",
+            attempt_push=attempt_push,
         )

@@ -514,32 +514,15 @@ async def test_reclaim_after_a_crashed_worker_reuses_its_reservation(
 
 
 @pytest.mark.asyncio
-
-
-@pytest.mark.asyncio
-async def test_relay_tier_alert_pins_without_being_claimed_for_push(
+async def test_relay_tier_alert_pins_as_pin_only_and_is_never_claimed_for_push(
     guardian_postgres_store: PostgresGuardianStore,
     archive: PostgresLifeArchive,
 ) -> None:
     occurred = _now()
-    store = guardian_postgres_store
-    digest = hashlib.sha256(b"binding-code").hexdigest()
-    link = await store.create_link(
-        guardian_user_id="guardian-a",
-        minor_user_id="minor-a",
-        relation="parent",
-        verified_via="wechat_identity",
-        binding_code_hash=digest,
-        binding_expires_at=occurred + timedelta(minutes=15),
-        now=occurred,
+    store, crisis_event_id = await _store_with_crisis(
+        guardian_postgres_store, archive, occurred_at=occurred
     )
-    await store.confirm_link(
-        link_id=link.link_id,
-        minor_user_id="minor-a",
-        binding_code_hash=digest,
-        now=occurred,
-    )
-    receipt = await CrisisNotificationService(store, archive).record_minor_crisis(
+    relay = await CrisisNotificationService(store, archive).record_minor_crisis(
         minor_user_id="minor-a",
         session_id="voice-session-relay",
         turn_id=9,
@@ -550,14 +533,34 @@ async def test_relay_tier_alert_pins_without_being_claimed_for_push(
         occurred_at=occurred,
         attempt_push=False,
     )
-    assert receipt.notification_count == 1
-    await _accept(store, occurred)
+    assert relay.notification_count == 1
+    await _accept(store, occurred, times=2)
     sender = FakeSender(PushSendResult("delivered"))
-    assert await _worker(store, sender, Clock(occurred + timedelta(seconds=5))).run_once() == 0
-    notification = await _only_notification(store)
-    assert notification.status == "pending"
-    assert crisis_alert_is_pinned(notification.status)
-    assert sender.calls == []
+    clock = Clock(occurred + timedelta(seconds=5))
+
+    assert await _worker(store, sender, clock).run_once() == 1
+    assert await _worker(store, sender, clock).run_once() == 0
+
+    notifications = await store.guardian_notifications(guardian_user_id="guardian-a")
+    assert {
+        item.crisis_event_id: (item.status, crisis_alert_is_pinned(item.status))
+        for item in notifications
+    } == {
+        crisis_event_id: ("delivered", False),
+        relay.crisis_event_id: ("pin_only", True),
+    }
+    assert len(sender.calls) == 1
+    assert await _remaining(store) == 1
+    reach = await store.crisis_reach_for_window(
+        since=occurred - timedelta(minutes=1),
+        until=occurred + timedelta(hours=1),
+    )
+    assert (reach.total, reach.delivered, reach.pin_only, reach.wechat_delivery_rate) == (
+        2,
+        1,
+        1,
+        1.0,
+    )
 
 
 async def test_alerts_older_than_the_push_window_stay_on_the_page_only(

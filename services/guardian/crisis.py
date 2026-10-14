@@ -109,8 +109,8 @@ class CrisisNotificationService:
         capabilities such as memory retention or session admission.
 
         ``attempt_push`` is False for relay-tier support requests: the alert
-        still pins in the Mini Program, but the subscribe-message worker must
-        not claim it.
+        still pins in the Mini Program as a ``pin_only`` row, which the
+        subscribe-message worker never claims.
 
         ``reply_template_id`` and ``script_version`` are ids only. Child text
         never enters this payload or the crisis event row.

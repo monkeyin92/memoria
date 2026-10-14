@@ -290,8 +290,7 @@ async def test_minor_crisis_queues_one_notification_and_fixed_text_reaches_the_d
         "script_version",
         "reply_template_id",
         "attempt_push",
-        "expect_outbox",
-        "expect_event",
+        "delivery_status",
     ),
     (
         (
@@ -300,8 +299,7 @@ async def test_minor_crisis_queues_one_notification_and_fixed_text_reaches_the_d
             CRISIS_SELF_SCRIPT.template_id,
             CRISIS_SELF_SCRIPT.template_id,
             True,
-            True,
-            True,
+            "pending",
         ),
         (
             "有人正在打我",
@@ -309,8 +307,7 @@ async def test_minor_crisis_queues_one_notification_and_fixed_text_reaches_the_d
             SUPPORT_VICTIM_SCRIPT.template_id,
             SUPPORT_VICTIM_SCRIPT.template_id,
             True,
-            True,
-            True,
+            "pending",
         ),
         (
             "我朋友说他不想活了",
@@ -318,10 +315,9 @@ async def test_minor_crisis_queues_one_notification_and_fixed_text_reaches_the_d
             SUPPORT_RELAY_SCRIPT.template_id,
             SUPPORT_RELAY_SCRIPT.template_id,
             False,
-            True,
-            True,
+            "pin_only",
         ),
-        ('小说里的人说"我想死"', None, None, None, None, False, False),
+        ('小说里的人说"我想死"', None, None, None, None, None),
     ),
 )
 async def test_support_tier_and_crisis_behavior_matrix(
@@ -333,8 +329,7 @@ async def test_support_tier_and_crisis_behavior_matrix(
     script_version: str | None,
     reply_template_id: str | None,
     attempt_push: bool | None,
-    expect_outbox: bool,
-    expect_event: bool,
+    delivery_status: str | None,
 ) -> None:
     _configure(monkeypatch, tmp_path)
     app = create_app()
@@ -389,20 +384,20 @@ async def test_support_tier_and_crisis_behavior_matrix(
         notifications = await client.get("/v1/guardian/notifications", headers=parent_headers)
         assert notifications.status_code == 200, notifications.text
         items = notifications.json()["items"]
-        assert await _crisis_event_count(app, minor_user_id=child["user_id"]) == int(expect_event)
-        if expect_outbox:
-            assert len(items) == 1
-            item = items[0]
-            assert item["pinned"] is True
-            assert item["delivery_status"] == "pending"
-            assert item["message"] == GUARDIAN_ATTENTION_COPY
-            blob = json.dumps(notifications.json(), ensure_ascii=False)
-            assert "被打" not in blob
-            assert "性侵" not in blob
-        else:
+        assert await _crisis_event_count(app, minor_user_id=child["user_id"]) == int(
+            delivery_status is not None
+        )
+        if delivery_status is None:
             assert items == []
-        if not expect_event:
             return
+        assert len(items) == 1
+        item = items[0]
+        assert item["pinned"] is True
+        assert item["delivery_status"] == delivery_status
+        assert item["message"] == GUARDIAN_ATTENTION_COPY
+        blob = json.dumps(notifications.json(), ensure_ascii=False)
+        assert "被打" not in blob
+        assert "性侵" not in blob
 
         events = await app.state.life_archive.evidence_window(
             account_id=child["user_id"],
