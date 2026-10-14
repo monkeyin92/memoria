@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from scripts.assert_response_plan_safety import (
     OLD_DRAFT_MARKERS,
     SAFE_UNKNOWN_REPLY,
@@ -22,7 +21,6 @@ from services.common.companion_response_safety import (
 
 ROOT = Path(__file__).resolve().parents[2]
 SMOKE = ROOT / "scripts" / "smoke_server_deployment.sh"
-CHECKER = ROOT / "scripts" / "assert_response_plan_safety.py"
 CI = ROOT / ".github" / "workflows" / "ci.yml"
 
 
