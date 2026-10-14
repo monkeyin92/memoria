@@ -495,5 +495,7 @@ jobs:
         run: npm --prefix apps/miniprogram ci --ignore-scripts
       - name: Test
         run: npm --prefix apps/miniprogram test
+      - name: Forbidden UI copy
+        run: npm --prefix apps/miniprogram run check:forbidden-copy
       - name: Syntax
         run: find apps/miniprogram -type f -name '*.js' ! -path '*/node_modules/*' -print0 | xargs -0 -n1 node --check

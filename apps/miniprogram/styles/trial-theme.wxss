@@ -9,10 +9,10 @@
   --trial-card: var(--mp-surface);
   --trial-radius: var(--mp-radius-card);
   --trial-accent: var(--mp-accent);
-  --trial-shadow: none;
+  --trial-shadow: var(--mp-shadow-card);
   min-height: 100vh;
   box-sizing: border-box;
-  padding: 24rpx var(--mp-pad-page) 96rpx;
+  padding: 24rpx var(--mp-pad-page) var(--mp-tab-clearance);
   background: var(--mp-bg);
   color: var(--mp-ink);
 }
@@ -22,7 +22,8 @@
   margin: 0;
   color: var(--mp-ink);
   font-size: var(--mp-type-display);
-  font-weight: 600;
+  font-weight: 800;
+  letter-spacing: -1.2rpx;
   line-height: var(--mp-lh-display);
 }
 
@@ -37,8 +38,8 @@
 .trial-card {
   background: var(--mp-surface);
   border-radius: var(--mp-radius-card);
-  border-bottom: 2rpx solid var(--mp-line);
-  box-shadow: none;
+  border: none;
+  box-shadow: var(--mp-shadow-card);
 }
 
 .trial-card-soft {
@@ -50,13 +51,13 @@
 .trial-primary {
   margin: 0;
   padding: 0 40rpx;
-  height: 100rpx;
-  border-radius: var(--mp-radius-pill);
-  background: var(--mp-accent) !important;
+  height: 112rpx;
+  border-radius: 32rpx;
+  background: var(--mp-ink) !important;
   color: #ffffff !important;
   font-size: var(--mp-type-button);
   font-weight: 600;
-  line-height: 100rpx;
+  line-height: 112rpx;
 }
 
 .trial-primary[disabled] {
@@ -66,26 +67,27 @@
 .trial-secondary {
   margin: 0;
   padding: 0 40rpx;
-  height: 100rpx;
-  border-radius: var(--mp-radius-pill);
-  background: var(--mp-fill) !important;
+  height: 112rpx;
+  border-radius: 32rpx;
+  background: var(--mp-surface) !important;
   color: var(--mp-ink) !important;
+  box-shadow: var(--mp-shadow-card);
   font-size: var(--mp-type-button);
   font-weight: 600;
-  line-height: 100rpx;
+  line-height: 112rpx;
 }
 
 .trial-danger {
   margin: 0;
   padding: 0 40rpx;
-  height: 100rpx;
-  border-radius: var(--mp-radius-pill);
+  height: 112rpx;
+  border-radius: 32rpx;
   background: var(--mp-surface) !important;
   color: var(--mp-danger) !important;
   border: 2rpx solid var(--mp-danger-outline);
   font-size: var(--mp-type-button);
   font-weight: 600;
-  line-height: 100rpx;
+  line-height: 112rpx;
 }
 
 .trial-status-pill {
@@ -112,21 +114,25 @@
   box-shadow: none;
 }
 
+.trial-status-pill:not(.is-off) {
+  color: var(--mp-sage);
+}
+
 .trial-status-pill:not(.is-off) .trial-status-dot {
-  background: var(--mp-accent);
-  box-shadow: 0 0 0 6rpx var(--mp-accent-soft);
+  background: var(--mp-sage);
+  box-shadow: 0 0 0 6rpx var(--mp-sage-bg);
 }
 
 .trial-banner {
   display: flex;
   align-items: center;
-  gap: 20rpx;
+  gap: 32rpx;
   margin-bottom: var(--mp-gap-card);
-  padding: 28rpx 32rpx;
+  padding: 32rpx;
   border-radius: var(--mp-radius-banner);
-  background: var(--mp-accent-wash);
-  border: 2rpx solid var(--mp-accent-soft);
-  color: var(--mp-ink);
+  background: var(--mp-rust-bg);
+  border: none;
+  color: var(--mp-rust);
 }
 
 .trial-banner-dot {
@@ -134,8 +140,8 @@
   width: 14rpx;
   height: 14rpx;
   border-radius: 50%;
-  background: var(--mp-accent);
-  box-shadow: 0 0 0 8rpx var(--mp-accent-soft);
+  background: var(--mp-rust);
+  box-shadow: none;
 }
 
 .trial-banner-copy {
@@ -145,21 +151,22 @@
 
 .trial-banner-title {
   display: block;
-  font-size: 30rpx;
-  font-weight: 500;
+  font-size: 32rpx;
+  font-weight: 600;
   line-height: var(--mp-lh-body);
+  color: var(--mp-rust);
 }
 
 .trial-banner-meta {
   display: block;
-  margin-top: 4rpx;
-  color: var(--mp-ink-3);
+  margin-top: 8rpx;
+  color: #8a5848;
   font-size: var(--mp-type-meta);
   line-height: 1.4;
 }
 
 .trial-banner-chevron {
-  color: var(--mp-ink-3);
+  color: var(--mp-rust);
   font-size: 36rpx;
   font-weight: 400;
 }
@@ -169,8 +176,8 @@
   overflow: hidden;
   background: var(--mp-surface);
   border-radius: var(--mp-radius-card);
-  border-bottom: 2rpx solid var(--mp-line);
-  box-shadow: none;
+  border: none;
+  box-shadow: var(--mp-shadow-card);
 }
 
 .trial-inset-row {
@@ -251,9 +258,13 @@
   right: 0;
   bottom: 0;
   z-index: 101;
+  max-height: min(86vh, 1200rpx);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   padding: 16rpx 40rpx calc(40rpx + env(safe-area-inset-bottom));
   border-radius: var(--mp-radius-sheet) var(--mp-radius-sheet) 0 0;
   background: var(--mp-surface);
+  box-shadow: var(--mp-shadow-card);
 }
 
 .mp-sheet-grab {

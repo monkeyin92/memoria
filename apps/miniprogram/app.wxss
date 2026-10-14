@@ -1,88 +1,99 @@
 /* ============================================================
-   Memoria parent UI v3 tokens (source: design/miniprogram-v1/spec.md).
-   No gradients, glass, or shadows on parent surfaces. 375pt → rpx ×2.
-   Legacy glass tokens below remain for non-redesigned pages.
+   Memoria parent UI v4 tokens (docs/design/app-v4).
+   One indigo accent, light grey bg, white cards, 8pt grid, layered shadows.
+   px in design notes → rpx ×2.
    ============================================================ */
 page {
-  --mp-bg: #faf5ec;
-  --mp-surface: #fffdf9;
-  --mp-accent: #e2702a;
-  --mp-accent-press: #c75f1f;
-  --mp-accent-soft: #fbe6d4;
-  --mp-accent-wash: #fdf1e6;
-  /* Red only for delete-confirm button text and error text. Never links or icons. */
-  --mp-danger: #c8423a;
-  --mp-danger-outline: #dcd2c5;
-  --mp-ink: #2b241f;
-  --mp-ink-2: #6e635a;
-  --mp-ink-3: #a39789;
-  --mp-line: #efe6da;
-  --mp-fill: #f2eadf;
-  --mp-scrim: rgba(43, 36, 31, 0.42);
-  --mp-radius-card: 40rpx;
-  --mp-radius-banner: 32rpx;
-  --mp-radius-inset: 28rpx;
+  --mp-bg: #f4f4f7;
+  --mp-surface: #ffffff;
+  --mp-accent: #4a52c9;
+  --mp-accent-press: #3b43b0;
+  --mp-accent-soft: #eeeffc;
+  --mp-accent-wash: #eeeffc;
+  --mp-danger: #9a4732;
+  --mp-danger-outline: #ececf1;
+  --mp-rust: #9a4732;
+  --mp-rust-bg: #fbeee9;
+  --mp-sage: #23805f;
+  --mp-sage-bg: #e7f4ee;
+  --mp-sun: #7f5a00;
+  --mp-sun-bg: #fbf1d6;
+  --mp-ink: #16182b;
+  --mp-ink-2: #5b5f73;
+  --mp-ink-3: #7a7e92;
+  --mp-line: #ececf1;
+  --mp-fill: #f4f4f8;
+  --mp-scrim: rgba(22, 24, 43, 0.42);
+  --mp-radius-card: 48rpx;
+  --mp-radius-card-xl: 64rpx;
+  --mp-radius-banner: 48rpx;
+  --mp-radius-inset: 32rpx;
   --mp-radius-icon: 24rpx;
-  --mp-radius-mascot: 36rpx;
-  --mp-radius-sheet: 56rpx;
+  --mp-radius-mascot: 32rpx;
+  --mp-radius-sheet: 64rpx;
   --mp-radius-pill: 999rpx;
-  --mp-pad-page: 40rpx;
+  --mp-pad-page: 48rpx;
   --mp-gap-card: 32rpx;
-  --mp-gap-settings: 24rpx;
-  --mp-pad-card: 40rpx;
-  --mp-tap: 88rpx;
-  --mp-type-display: 48rpx;
-  --mp-type-nav: 36rpx;
+  --mp-gap-settings: 32rpx;
+  --mp-pad-card: 32rpx;
+  --mp-pad-card-lg: 48rpx;
+  --mp-tap: 112rpx;
+  --mp-tab-clearance: calc(176rpx + env(safe-area-inset-bottom));
+  --mp-shadow-card: 0 2rpx 4rpx rgba(22, 24, 43, 0.04),
+    0 16rpx 48rpx -16rpx rgba(22, 24, 43, 0.08),
+    0 48rpx 96rpx -48rpx rgba(22, 24, 43, 0.1);
+  --mp-type-display: 64rpx;
+  --mp-type-nav: 40rpx;
   --mp-type-sheet: 40rpx;
-  --mp-type-card: 34rpx;
+  --mp-type-card: 32rpx;
   --mp-type-body: 30rpx;
-  --mp-type-button: 32rpx;
+  --mp-type-button: 34rpx;
   --mp-type-caption: 26rpx;
   --mp-type-meta: 24rpx;
-  --mp-type-tab: 22rpx;
-  --mp-lh-display: 64rpx;
+  --mp-type-tab: 20rpx;
+  --mp-lh-display: 80rpx;
   --mp-lh-card: 48rpx;
-  --mp-lh-body: 44rpx;
-  --mp-lh-caption: 36rpx;
+  --mp-lh-body: 48rpx;
+  --mp-lh-caption: 40rpx;
 
-  --brand-deep: #172f43;
-  --brand-deep-hover: #1f3d55;
-  --brand-teal: #285c5e;
-  --brand-teal-soft: rgba(227, 237, 236, 0.78);
-  --bg-porcelain: #f3f2ef;
-  --surface-white: rgba(255, 255, 255, 0.62);
-  --gray-100: rgba(233, 238, 242, 0.72);
-  --gray-150: rgba(234, 240, 243, 0.72);
-  --border-default: rgba(30, 45, 70, 0.08);
-  --text-primary: #16191c;
-  --text-secondary: #474e54;
-  --text-tertiary: #5a6167;
+  --brand-deep: #16182b;
+  --brand-deep-hover: #2a2d45;
+  --brand-teal: #4a52c9;
+  --brand-teal-soft: #eeeffc;
+  --bg-porcelain: #f4f4f7;
+  --surface-white: #ffffff;
+  --gray-100: #f4f4f8;
+  --gray-150: #ececf1;
+  --border-default: #ececf1;
+  --text-primary: #16182b;
+  --text-secondary: #5b5f73;
+  --text-tertiary: #7a7e92;
   --text-inverse: #ffffff;
-  --text-on-brand-soft: #c9d6dd;
-  --success: #1d6552;
-  --success-bg: rgba(228, 242, 236, 0.86);
-  --warning: #8a4c10;
-  --warning-bg: rgba(251, 240, 226, 0.9);
-  --danger: #a3221b;
-  --danger-bg: rgba(251, 234, 232, 0.9);
-  --radius-l1: 52rpx;
-  --radius-card: 44rpx;
+  --text-on-brand-soft: #c5c8e8;
+  --success: #23805f;
+  --success-bg: #e7f4ee;
+  --warning: #7f5a00;
+  --warning-bg: #fbf1d6;
+  --danger: #9a4732;
+  --danger-bg: #fbeee9;
+  --radius-l1: 64rpx;
+  --radius-card: 48rpx;
   --radius-sm: 32rpx;
-  --radius-button: 30rpx;
-  --radius-input: 24rpx;
-  --shadow-sm: 0 16rpx 44rpx rgba(34, 52, 84, 0.08);
-  --shadow-md: 0 20rpx 56rpx rgba(34, 52, 84, 0.12);
-  --shadow-lg: 0 24rpx 64rpx rgba(20, 30, 50, 0.18);
+  --radius-button: 32rpx;
+  --radius-input: 32rpx;
+  --shadow-sm: var(--mp-shadow-card);
+  --shadow-md: var(--mp-shadow-card);
+  --shadow-lg: var(--mp-shadow-card);
   --dur-fast: 150ms;
   --dur-base: 250ms;
   --dur-slow: 400ms;
   min-height: 100%;
-  color: #16191c;
-  color: var(--text-primary);
+  color: var(--mp-ink);
   background: var(--mp-bg);
   font-family: "PingFang SC", "HarmonyOS Sans SC", "Source Han Sans SC", "Noto Sans SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-  font-size: 28rpx;
+  font-size: 30rpx;
   line-height: 1.6;
+  font-feature-settings: "tnum";
 }
 
 /* 角色主题变量组：换角色 = 换 data-role 一个属性，结构零改动 */

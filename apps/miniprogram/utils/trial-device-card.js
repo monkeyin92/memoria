@@ -8,9 +8,9 @@
 const { sessionLimitsFromProfile } = require("./session-limits");
 
 const UNREAD_SAFETY_COPY = "有一条需要你关注的对话";
-const UNREAD_SAFETY_META_SUFFIX = "点按查看";
+const UNREAD_SAFETY_META_SUFFIX = "打开时首页会置顶显示";
 const SAFETY_SUBSCRIBE_HELPER =
-  "可能通过微信推送提醒，打开小程序首页会置顶显示";
+  "家长打开小程序时首页会置顶显示";
 
 function formatQuietHoursLine(sessionLimits) {
   if (!sessionLimits?.quietStart || !sessionLimits?.quietEnd) return "";

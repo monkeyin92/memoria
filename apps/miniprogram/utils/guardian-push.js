@@ -12,18 +12,18 @@
 const PARENT_SUBSCRIBE_LABEL = "订阅安全提醒";
 
 const SAFETY_SUBSCRIBE_HELPER =
-  "可能通过微信推送提醒，打开小程序首页会置顶显示";
+  "家长打开小程序时首页会置顶显示";
 
 const CRISIS_PUSH_EXPLANATION =
-  "订阅安全提醒后，孩子可能需要帮助时，微信会提醒你打开小程序查看。提醒不含任何对话内容，每次允许可收到一次。";
+  "开启安全提醒后，孩子可能需要帮助时，微信会提醒你打开小程序查看。提醒不含任何对话内容，每次允许可收到一次。";
 
-const SAFETY_SUBSCRIBE_OFF_TITLE = "关闭安全提醒推送？";
+const SAFETY_SUBSCRIBE_OFF_TITLE = "关闭安全提醒？";
 const SAFETY_SUBSCRIBE_OFF_CONFIRM =
-  "关闭后，我们不再通过微信给你推送安全提醒。如果孩子聊到需要你关注的话题，只会在你下次打开小程序时置顶显示，你可能不能及时知道。";
+  "关闭后，我们不再通过微信提醒你。如果孩子聊到需要你关注的话题，只会在你下次打开小程序时置顶显示，你可能不能及时知道。";
 const SAFETY_SUBSCRIBE_OFF_KEEP = "保持开启";
 const SAFETY_SUBSCRIBE_OFF_PROCEED = "仍要关闭";
 const SAFETY_SUBSCRIBE_OFF_CAPTION =
-  "安全提醒推送已关闭，打开小程序仍会看到置顶提醒。";
+  "安全提醒已关闭，打开小程序仍会看到置顶提醒。";
 const SAFETY_SUBSCRIBE_UNKNOWN_CAPTION = "状态获取失败，点击重试";
 
 const RECORDABLE_RESULTS = Object.freeze(["accept", "reject", "ban"]);

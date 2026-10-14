@@ -1,7 +1,7 @@
 @import "../../styles/trial-theme.wxss";
 
 .home-trial {
-  padding-bottom: 120rpx;
+  padding-bottom: var(--mp-tab-clearance);
 }
 
 .home-guest-card,
