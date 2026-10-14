@@ -53,7 +53,6 @@ STORIES = (
     ("story_03", "大熊和森林里的悄悄话"),
 )
 
-# Numbering matches offline-lines v2.1 and kOfflineLineIds in memoria_offline_menu.h.
 OFFLINE_LINES = (
     ("offline-wake-no-network-v1", "我现在连不上网。"),
     ("offline-wake-ask-parent-v1", "请爸爸妈妈看看家里的网络。"),
@@ -97,7 +96,6 @@ def clip_paths() -> tuple[PurePosixPath, ...]:
 
 
 def asset_kind(head: bytes) -> AssetKind:
-    """Read AssetKind from an Ogg Opus header. TITLE ending in _placeholder is a placeholder."""
     if not head.startswith(b"OggS"):
         raise ValueError("not an Ogg stream")
     at = head.find(b"OpusTags")

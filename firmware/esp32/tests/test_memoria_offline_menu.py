@@ -502,6 +502,31 @@ def test_offline_line_manifest_matches_pack() -> None:
         assert (BOARD_ASSETS / "offline_lines" / filename).is_file()
 
 
+def test_offline_line_ids_match_header_and_script() -> None:
+    import importlib.util
+    import re
+
+    header = (MEMORIA_DIR / "memoria_offline_menu.h").read_text(encoding="utf-8")
+    consts = dict(
+        re.findall(
+            r'inline constexpr const char\* (k\w+) = "([a-z0-9-]+)";',
+            header,
+        )
+    )
+    start = header.index("inline constexpr const char* kOfflineLineIds[] = {")
+    end = header.index("};", start)
+    symbols = re.findall(r"\b(k[A-Za-z0-9]+)\b", header[start:end])
+    header_ids = [consts[name] for name in symbols if name in consts]
+    spec = importlib.util.spec_from_file_location("build_offline_stories", BUILD_SCRIPT)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    script_ids = [line_id for line_id, _ in mod.OFFLINE_LINES]
+    assert header_ids == script_ids
+    manifest = json.loads((BOARD_ASSETS / "offline_lines" / "index.json").read_text(encoding="utf-8"))
+    assert [entry["id"] for entry in manifest["lines"]] == script_ids
+
+
 def test_story_03_title_renamed() -> None:
     manifest = json.loads((BOARD_ASSETS / "stories" / "index.json").read_text(encoding="utf-8"))
     by_id = {s["id"]: s["title"] for s in manifest["stories"]}

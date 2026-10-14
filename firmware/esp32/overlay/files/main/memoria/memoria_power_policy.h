@@ -1,9 +1,5 @@
 #pragma once
 
-// Product power and wake policy for Memoria ESP-VoCat (tap wake only).
-// Decision helpers are host-compilable. The NVS-backed registry lives in
-// memoria_power_policy.cc.
-
 #include <atomic>
 #include <cstdint>
 #include <cstring>

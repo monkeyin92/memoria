@@ -1,10 +1,5 @@
 #pragma once
 
-// Offline story menu policy for Memoria ESP-VoCat.
-// Host-compilable pure state machine. The board feeds taps, network edges,
-// timers, and story-finished events; it plays the returned clip ids as
-// "<id>.ogg" and starts/stops story_0N.ogg.
-
 #include <cstddef>
 #include <cstdint>
 
@@ -134,7 +129,6 @@ public:
         menu_idle_deadline_ms_ = 0;
     }
 
-    // The radio is down at reset, so an online wake is not a case here.
     OfflineMenuOutput OnDeepSleepWake(std::uint32_t now_ms, bool in_quiet_hours) {
         OfflineMenuOutput out;
         if (in_quiet_hours) {
@@ -154,7 +148,7 @@ public:
             return OnNetworkDown(now_ms, in_conversation);
         }
         if (!was_online && online) {
-            return OnNetworkUp(now_ms);
+            return OnNetworkUp();
         }
         return {};
     }
@@ -172,7 +166,6 @@ public:
             now_ms >= reconnect_deadline_ms_) {
             reconnect_deadline_ms_ = 0;
             AppendWakeThenMenu(out);
-            // Board arms idle via NoteMenuActivity after the intro clips finish.
             menu_idle_deadline_ms_ = 0;
             out.intercept = true;
             out.retry_network = true;
@@ -219,8 +212,6 @@ public:
         return OfflineMenuOutput{};
     }
 
-    // Quiet hours: caller must handle night soothe and not call this.
-    // Online idle: caller uses TapWakeActionFor; this returns intercept=false.
     OfflineMenuOutput OnTap(std::uint32_t now_ms, std::uint32_t hold_ms, bool network_online,
                             bool device_idle) {
         OfflineMenuOutput out;
@@ -230,7 +221,6 @@ public:
             if (network_online || !device_idle) {
                 return out;
             }
-            // Idle, offline, no active offline mode: wake lines then menu.
             AppendWakeThenMenu(out);
             menu_idle_deadline_ms_ = 0;
             out.intercept = true;
@@ -242,7 +232,7 @@ public:
 
         if (mode_ == OfflineMode::kAwakeReconnecting || mode_ == OfflineMode::kMidReconnecting) {
             if (network_online) {
-                return OnNetworkUp(now_ms);
+                return OnNetworkUp();
             }
             Push(out, kOfflineReconnecting);
             return out;
@@ -250,7 +240,7 @@ public:
 
         if (mode_ == OfflineMode::kStandbyOffline) {
             if (network_online) {
-                return OnNetworkUp(now_ms);
+                return OnNetworkUp();
             }
             AppendWakeThenMenu(out);
             menu_idle_deadline_ms_ = 0;
@@ -295,7 +285,6 @@ private:
         if (mode_ == OfflineMode::kPlaying || mode_ == OfflineMode::kPendingOnlineAfterStory ||
             mode_ == OfflineMode::kMenu || mode_ == OfflineMode::kMidReconnecting ||
             mode_ == OfflineMode::kAwakeReconnecting || mode_ == OfflineMode::kStandbyOffline) {
-            // Already offline-handling; keep retrying.
             out.retry_network = true;
             out.intercept = true;
             return out;
@@ -310,7 +299,6 @@ private:
             out.retry_network = true;
             return out;
         }
-        // Idle/standby drop: silent background retry only.
         mode_ = OfflineMode::kStandbyOffline;
         reconnect_deadline_ms_ = 0;
         out.intercept = true;
@@ -318,7 +306,7 @@ private:
         return out;
     }
 
-    OfflineMenuOutput OnNetworkUp(std::uint32_t /*now_ms*/) {
+    OfflineMenuOutput OnNetworkUp() {
         OfflineMenuOutput out;
         out.intercept = true;
         switch (mode_) {
@@ -354,7 +342,7 @@ private:
         menu_idle_deadline_ms_ = now_ms + kOfflineMenuIdleMs;
     }
 
-    void EnterMenuItem1(std::uint32_t /*now_ms*/) {
+    void EnterMenuItem1() {
         mode_ = OfflineMode::kMenu;
         menu_item_ = 1;
     }
@@ -365,9 +353,7 @@ private:
         Push(out, kOfflineMenuConfirmHow);
         Push(out, kOfflineMenuItem01);
         Push(out, kOfflineMenuChoose);
-        EnterMenuItem1(0);
-        // Caller supplies now_ms via OnTimer; arm idle from there after play.
-        // Approximate: board should call NoteMenuActivity after clips.
+        EnterMenuItem1();
         menu_idle_deadline_ms_ = 0;
     }
 
@@ -379,7 +365,6 @@ private:
     }
 
 public:
-    // Board calls after entering menu so the 30s idle starts after speech.
     void NoteMenuActivity(std::uint32_t now_ms) {
         if (mode_ == OfflineMode::kMenu) {
             ArmMenuIdle(now_ms);

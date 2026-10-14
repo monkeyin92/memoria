@@ -665,7 +665,6 @@ private:
 
     void ApplyOfflineMenuOutput(const memoria::OfflineMenuOutput& out) {
         if (out.stop_retry_network) {
-            // Retry flag lives in the machine; board only logs.
             ESP_LOGI(TAG, "offline menu stop network retry");
         }
         if (out.retry_network) {
