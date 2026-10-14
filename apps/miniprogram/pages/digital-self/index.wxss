@@ -1,28 +1,10 @@
-.back-row {
-  padding: 8rpx 0 4rpx;
-}
-
-.back-link {
-  display: inline-flex;
-  align-items: center;
-  min-height: 88rpx;
-  color: var(--mp-accent);
-  font-size: 28rpx;
-  font-weight: 500;
-}
-
-.page-head {
-  padding: 12rpx 0 4rpx;
-}
-
 .ds-hero {
   display: flex;
-  align-items: center;
-  gap: 32rpx;
-  margin-top: 28rpx;
-  padding: 40rpx 36rpx;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24rpx;
+  padding: var(--mp-pad-card-lg);
 }
-
 
 .ds-copy {
   flex: 1;
@@ -31,70 +13,44 @@
 
 .ds-num {
   display: block;
-  color: #22344d;
-  font-size: 68rpx;
-  font-weight: 700;
+  color: var(--mp-ink);
+  font-size: var(--mp-type-num-xl);
+  font-weight: 800;
+  letter-spacing: -1.6rpx;
   line-height: 1;
+}
+
+.ds-unit {
+  display: block;
+  margin-top: 16rpx;
+  color: var(--mp-ink);
+  font-size: var(--mp-type-card);
+  font-weight: 600;
 }
 
 .ds-sub {
   display: block;
-  margin-top: 12rpx;
+  margin-top: 8rpx;
   color: var(--mp-ink-2);
-  font-size: 24rpx;
+  font-size: var(--mp-type-caption);
+  line-height: var(--mp-lh-caption);
 }
 
-.dim-row {
-  padding: 24rpx 0;
-}
-
-.dim-row + .dim-row {
-  border-top: 1rpx solid rgba(30, 45, 70, 0.08);
-}
-
-.dim-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 20rpx;
-  margin-bottom: 16rpx;
-}
-
-.dim-name {
-  font-size: 28rpx;
-  font-weight: 500;
-}
-
-.dim-meta {
-  flex: none;
-  color: var(--mp-ink-3);
-  font-size: 24rpx;
-}
-
-.fold-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20rpx;
-}
-
-.fold-title {
-  font-size: 30rpx;
-  font-weight: 600;
-}
-
-.fold-chevron {
-  color: var(--mp-ink-3);
-  transition: transform 250ms;
-}
-
-.fold-chevron-open {
-  transform: rotate(180deg);
-}
-
-.fold-summary {
-  display: block;
-  padding: 16rpx 0;
+.ds-count {
+  flex-shrink: 0;
   color: var(--mp-ink-2);
-  font-size: 26rpx;
+  font-size: var(--mp-type-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.ds-pending {
+  color: var(--mp-sun);
+}
+
+.ds-fold {
+  transition: transform var(--mp-dur);
+}
+
+.ds-fold-open {
+  transform: rotate(90deg);
 }

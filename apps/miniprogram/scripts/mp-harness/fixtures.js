@@ -119,6 +119,33 @@ const RAW_VOICE_CONSENT = {
   granted_at: "2026-10-04T09:30:00+08:00",
 };
 
+function growthDimension(key, sources, status, readiness) {
+  return {
+    key,
+    status,
+    adopted_sources: Array.from({ length: sources }, (_, index) => ({ event_id: `${key}_${index}` })),
+    version_readiness: { status: readiness },
+  };
+}
+
+const digitalSelfApi = {
+  getGrowthOverview: async () => ({
+    dimensions: [
+      growthDimension("life_chapters", 4, "supported", "ready"),
+      growthDimension("important_people", 3, "supported", "stale"),
+      growthDimension("expression", 1, "conflicted", "stale"),
+      growthDimension("decision_cases", 0, "empty", "not_built"),
+      growthDimension("relationship_models", 0, "empty", "not_built"),
+      growthDimension("voice", 0, "empty", "dependency_pending"),
+      growthDimension("legacy", 0, "empty", "dependency_pending"),
+    ],
+  }),
+  getPersonaStatus: async () => ({ enabled: true }),
+  getDigitalSelfVersions: async () => ({
+    items: [{ version_id: "dsv_1", version_number: 1, status: "approved", manifest_sha256: "a1b2" }],
+  }),
+};
+
 const PINNED_ALERT = {
   notification_id: "n1",
   minor_user_id: "p_child",
@@ -201,6 +228,7 @@ module.exports = {
   authed,
   baseApi,
   dayKey,
+  digitalSelfApi,
   guardianApi,
   guest,
   isoMinutesAgo,

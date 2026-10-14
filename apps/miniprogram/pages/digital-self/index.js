@@ -4,6 +4,7 @@ const { leavePage } = require("../../utils/nav-back");
 const { requireLogin } = require("../../utils/auth-gate");
 const contracts = require("../../utils/multi-subject-contracts");
 const { capabilityGateMessage } = require("../../utils/device-binding");
+const { digitalSelfView } = require("../../utils/digital-self");
 
 function dimensionsOf(result) {
   return Array.isArray(result?.dimensions) ? result.dimensions : [];
@@ -18,9 +19,7 @@ Page({
     statusBarStyle: statusBarStyle(),
     loading: false,
     error: "",
-    persona: null,
-    dimensions: [],
-    versions: [],
+    view: digitalSelfView(),
     showEngineering: false,
   },
 
@@ -64,9 +63,7 @@ Page({
     this.setData({
       loading: false,
       error: "",
-      persona: null,
-      dimensions: [],
-      versions: [],
+      view: digitalSelfView(),
       showEngineering: false,
     });
   },
@@ -109,9 +106,11 @@ Page({
       .map((result) => result.reason?.message)
       .filter(Boolean);
     this.setData({
-      dimensions: growth.status === "fulfilled" ? dimensionsOf(growth.value) : [],
-      persona: persona.status === "fulfilled" ? persona.value : null,
-      versions: versions.status === "fulfilled" ? versionsOf(versions.value) : [],
+      view: digitalSelfView({
+        dimensions: growth.status === "fulfilled" ? dimensionsOf(growth.value) : [],
+        persona: persona.status === "fulfilled" ? persona.value : null,
+        versions: versions.status === "fulfilled" ? versionsOf(versions.value) : [],
+      }),
       error: errors[0] || "",
       loading: false,
     });

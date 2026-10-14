@@ -1,35 +1,32 @@
 <view class="page-shell sub-page" style="{{statusBarStyle}}">
   <view class="nav-back" bindtap="goBack" aria-label="返回"><image class="nav-back-icon" src="/assets/ui/v4/back-strong.svg" /></view>
-  <view class="page-head">
-    <text class="page-title">记忆档案</text>
-    <text class="page-subtitle">被记住的，都是被允许的</text>
-  </view>
+  <text class="eyebrow">只保留你确认过的事</text>
+  <text class="page-title">记忆档案</text>
+  <text class="page-lede">被记住的，都是被允许的。</text>
 
-  <view class="role-tint-card ds-hero" data-role="starlight">
-    <mp-icon name="note" size="176"></mp-icon>
+  <view class="card card-xl ds-hero">
     <view class="ds-copy">
-      <text class="ds-num">{{dimensions.length}}</text>
-      <text class="ds-sub">档案累计 · 版本 {{versions.length}}</text>
-      <text class="ds-sub">{{persona && persona.enabled ? '已启用记忆档案' : '尚未启用，或还没有可展示的材料'}}</text>
+      <text class="ds-num">{{view.sourceTotal}}</text>
+      <text class="ds-unit">条已确认的来源</text>
+      <text class="ds-sub">{{view.supportedCount}} / {{view.dimensionTotal}} 个方面已有依据</text>
     </view>
+    <text class="pill {{view.enabled ? 'pill-online' : 'pill-neutral'}}">{{view.enabled ? '已启用' : '尚未启用'}}</text>
   </view>
 
   <text wx:if="{{error}}" class="error-text">{{error}}</text>
 
-  <view class="l2-card">
-    <text class="l2-card-title">已确认的内容</text>
-    <text class="l2-card-sub">只保留你确认过的事</text>
+  <text class="group-label">各个方面</text>
+  <view class="list">
     <block wx:if="{{loading}}">
-      <text class="loading-text">正在读取记忆档案…</text>
+      <view class="list-row"><text class="loading-text">正在读取记忆档案…</text></view>
     </block>
-    <block wx:elif="{{dimensions.length}}">
-      <view wx:for="{{dimensions}}" wx:key="key" class="dim-row">
-        <view class="dim-head">
-          <text class="dim-name">{{item.key}}</text>
-          <text class="dim-meta">已采纳 {{item.adopted_sources.length}} 条来源</text>
+    <block wx:elif="{{view.dimensionRows.length}}">
+      <view wx:for="{{view.dimensionRows}}" wx:key="key" class="list-row">
+        <view class="row-copy">
+          <text class="row-title">{{item.label}}</text>
+          <text class="row-meta {{item.pending ? 'ds-pending' : ''}}">{{item.statusLabel}}{{item.readinessLabel ? ' · ' + item.readinessLabel : ''}}</text>
         </view>
-        <view class="progress-track"><view class="progress-fill" style="width: {{item.adopted_sources.length}}%"></view></view>
-        <text class="row-meta">状态：{{item.status}} · {{item.version_readiness.status}}</text>
+        <text class="ds-count">{{item.sourceCount}} 条</text>
       </view>
     </block>
     <block wx:else>
@@ -40,24 +37,23 @@
     </block>
   </view>
 
-  <view class="l2-card">
-    <view class="fold-head" bindtap="toggleEngineering">
-      <text class="fold-title">技术状态与版本</text>
-      <view class="inline-icon fold-chevron {{showEngineering ? 'fold-chevron-open' : ''}}"><view class="icon-chevron"></view></view>
+  <view class="list">
+    <view class="list-row" bindtap="toggleEngineering">
+      <view class="row-copy">
+        <text class="row-title">版本记录</text>
+        <text class="row-meta">{{showEngineering ? '收起版本记录' : '已生成 ' + view.versionRows.length + ' 个版本'}}</text>
+      </view>
+      <image class="row-chev ds-fold {{showEngineering ? 'ds-fold-open' : ''}}" src="/assets/ui/v4/chev-faint.svg" />
     </view>
-    <text class="fold-summary">{{showEngineering ? '收起技术状态' : '查看技术状态'}}</text>
     <block wx:if="{{showEngineering}}">
-      <view class="summary-row"><text class="summary-key">存储位置</text><text class="summary-value">云端</text></view>
-      <view class="summary-row"><text class="summary-key">加密</text><text class="summary-value">已开启</text></view>
-      <view class="summary-row"><text class="summary-key">档案版本</text><text class="summary-value">{{versions.length ? versions[0].version_number : '—'}}</text></view>
-      <block wx:if="{{versions.length}}">
-        <view wx:for="{{versions}}" wx:key="version_id" class="summary-row">
-          <text class="summary-key">版本 {{item.version_number || '—'}}</text>
-          <text class="summary-value">{{item.status}} · {{item.manifest_sha256 ? '已绑定资料摘要' : '资料待整理'}}</text>
+      <view wx:for="{{view.versionRows}}" wx:key="versionId" class="list-row">
+        <view class="row-copy">
+          <text class="row-title">版本 {{item.number || '—'}}</text>
+          <text class="row-meta">{{item.statusLabel}} · {{item.manifestLabel}}</text>
         </view>
-      </block>
-      <text wx:else class="caption">尚未构建数字分身版本。</text>
-      <text class="caption">复杂的版本构建、评测、冻结、传承授权和密码确认仍由服务端高风险流程收口；小程序不会绕过这些保护。</text>
+      </view>
+      <view wx:if="{{!view.versionRows.length}}" class="list-row"><text class="row-meta">尚未生成版本。</text></view>
     </block>
   </view>
+  <text wx:if="{{showEngineering}}" class="caption">版本构建、评测、冻结、传承授权和密码确认都走服务端的高风险流程，小程序不会绕过这些保护。</text>
 </view>

@@ -2,7 +2,5 @@
   "navigationBarTitleText": "记忆档案",
   "navigationStyle": "custom",
   "enablePullDownRefresh": true,
-  "usingComponents": {
-    "mp-icon": "/components/mp-icon/index"
-  }
+  "usingComponents": {}
 }

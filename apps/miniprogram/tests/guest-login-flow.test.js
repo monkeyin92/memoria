@@ -128,7 +128,7 @@ test("auth cleanup broadcasts to every page that can hold private state", () => 
   );
   assert.match(
     digitalSelfScript,
-    /_clearPrivateState\(\)[\s\S]*persona:\s*null[\s\S]*versions:\s*\[\]/,
+    /_clearPrivateState\(\)[\s\S]*view:\s*digitalSelfView\(\)/,
   );
 });
 
