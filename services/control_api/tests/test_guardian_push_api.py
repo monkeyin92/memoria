@@ -349,6 +349,15 @@ async def test_guardian_records_subscriptions_for_its_own_wechat_identity(
         config = await client.get("/v1/guardian/push-config", headers=headers)
         assert config.json() == {"enabled": True, "template_ids": {"crisis": TEMPLATE}}
 
+        empty = await client.get("/v1/guardian/push-subscriptions", headers=headers)
+        assert empty.status_code == 200
+        assert empty.json() == {
+            "template_id": TEMPLATE,
+            "remaining": 0,
+            "last_result": None,
+            "subscribed": False,
+        }
+
         accepted = await client.post(
             "/v1/guardian/push-subscriptions",
             headers=headers,
@@ -357,6 +366,14 @@ async def test_guardian_records_subscriptions_for_its_own_wechat_identity(
         assert accepted.status_code == 200
         assert accepted.json() == {"template_id": TEMPLATE, "result": "accept", "remaining": 1}
         assert "openid" not in accepted.text
+
+        status = await client.get("/v1/guardian/push-subscriptions", headers=headers)
+        assert status.json() == {
+            "template_id": TEMPLATE,
+            "remaining": 1,
+            "last_result": "accept",
+            "subscribed": True,
+        }
 
         rejected = await client.post(
             "/v1/guardian/push-subscriptions",
@@ -395,12 +412,31 @@ async def test_guardian_records_subscriptions_for_its_own_wechat_identity(
         )
         assert invalid_result.status_code == 422
 
+        opted_out = await client.post(
+            "/v1/guardian/push-subscriptions",
+            headers=headers,
+            json={"template_id": TEMPLATE, "result": "opt_out"},
+        )
+        assert opted_out.status_code == 200
+        assert opted_out.json() == {
+            "template_id": TEMPLATE,
+            "result": "opt_out",
+            "remaining": 0,
+        }
+        after_opt_out = await client.get("/v1/guardian/push-subscriptions", headers=headers)
+        assert after_opt_out.json() == {
+            "template_id": TEMPLATE,
+            "remaining": 0,
+            "last_result": "opt_out",
+            "subscribed": False,
+        }
+
         store = app.state.guardian_store
         subscription = await store.push_subscription(
             guardian_user_id=guardian_id,
             template_id=TEMPLATE,
         )
-        assert subscription is not None and subscription.remaining == 1
+        assert subscription is not None and subscription.remaining == 0
 
         # An account without a bound WeChat identity is never prompted.
         _, plain_headers = await _register(client, "push-plain-account")

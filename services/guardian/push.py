@@ -26,7 +26,7 @@ from typing import Literal, Protocol, cast
 
 logger = logging.getLogger(__name__)
 
-PushSubscriptionResult = Literal["accept", "reject", "ban"]
+PushSubscriptionResult = Literal["accept", "reject", "ban", "opt_out"]
 CrisisPushOutcome = Literal["delivered", "no_subscription", "failed", "retry"]
 
 # WeChat does not cap stored one-time acceptances, but an unbounded balance is
@@ -233,7 +233,7 @@ DisplayNameResolver = Callable[[str, str], Awaitable[str | None]]
 
 
 def validate_push_subscription_result(result: str) -> PushSubscriptionResult:
-    if result not in {"accept", "reject", "ban"}:
+    if result not in {"accept", "reject", "ban", "opt_out"}:
         raise ValueError("push subscription result is invalid")
     return cast(PushSubscriptionResult, result)
 

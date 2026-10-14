@@ -437,25 +437,59 @@ CREATE TABLE IF NOT EXISTS guardian_push_subscriptions (
     template_id TEXT NOT NULL CHECK (template_id ~ '^[A-Za-z0-9_-]{1,128}$'),
     openid TEXT CHECK (openid IS NULL OR char_length(openid) BETWEEN 1 AND 128),
     remaining INTEGER NOT NULL DEFAULT 0 CHECK (remaining BETWEEN 0 AND 20),
-    last_result TEXT NOT NULL CHECK (last_result IN ('accept', 'reject', 'ban')),
+    last_result TEXT NOT NULL CHECK (
+        last_result IN ('accept', 'reject', 'ban', 'opt_out')
+    ),
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (guardian_user_id, template_id),
     CHECK (remaining = 0 OR openid IS NOT NULL)
 );
 
--- Append-only audit of every wx.requestSubscribeMessage answer.  The balance
--- row above is the live ledger; this table keeps each accept/reject/ban.
+-- Append-only audit of every wx.requestSubscribeMessage answer plus
+-- guardian opt-outs.  The balance row above is the live ledger.
 CREATE TABLE IF NOT EXISTS guardian_push_subscription_events (
     event_id UUID PRIMARY KEY,
     guardian_user_id TEXT NOT NULL CHECK (
         char_length(guardian_user_id) BETWEEN 1 AND 128
     ),
     template_id TEXT NOT NULL CHECK (template_id ~ '^[A-Za-z0-9_-]{1,128}$'),
-    result TEXT NOT NULL CHECK (result IN ('accept', 'reject', 'ban')),
+    result TEXT NOT NULL CHECK (result IN ('accept', 'reject', 'ban', 'opt_out')),
     remaining_after INTEGER NOT NULL CHECK (remaining_after BETWEEN 0 AND 20),
     recorded_at TIMESTAMPTZ NOT NULL
 );
+
+-- Existing deployments created the narrower accept/reject/ban checks.
+DO $guardian_push_result_opt_out$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'guardian_push_subscriptions'::regclass
+          AND conname = 'guardian_push_subscriptions_last_result_check'
+          AND pg_get_constraintdef(oid) NOT LIKE '%opt_out%'
+    ) THEN
+        ALTER TABLE guardian_push_subscriptions
+            DROP CONSTRAINT guardian_push_subscriptions_last_result_check;
+        ALTER TABLE guardian_push_subscriptions
+            ADD CONSTRAINT guardian_push_subscriptions_last_result_check CHECK (
+                last_result IN ('accept', 'reject', 'ban', 'opt_out')
+            );
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'guardian_push_subscription_events'::regclass
+          AND conname = 'guardian_push_subscription_events_result_check'
+          AND pg_get_constraintdef(oid) NOT LIKE '%opt_out%'
+    ) THEN
+        ALTER TABLE guardian_push_subscription_events
+            DROP CONSTRAINT guardian_push_subscription_events_result_check;
+        ALTER TABLE guardian_push_subscription_events
+            ADD CONSTRAINT guardian_push_subscription_events_result_check CHECK (
+                result IN ('accept', 'reject', 'ban', 'opt_out')
+            );
+    END IF;
+END
+$guardian_push_result_opt_out$;
 
 CREATE INDEX IF NOT EXISTS idx_guardian_push_subscription_events_guardian
 ON guardian_push_subscription_events(guardian_user_id, recorded_at DESC, event_id DESC);

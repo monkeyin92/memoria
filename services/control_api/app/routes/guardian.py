@@ -694,6 +694,43 @@ async def guardian_push_config(
     }
 
 
+@router.get("/push-subscriptions")
+async def guardian_push_subscription_status(
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+) -> dict[str, Any]:
+    """Return this guardian's crisis subscribe-message ledger balance.
+
+    ``remaining > 0`` means the settings toggle should read as on.  WeChat
+    one-time accepts cannot be revoked client-side; a later ``opt_out``
+    zeroes the server balance so we stop sending pushes.
+    """
+
+    _require_wechat_guardian(request, user)
+    settings = _settings(request)
+    template_id = settings.wechat_subscribe_crisis_template_id.strip()
+    if not template_id:
+        return {"template_id": "", "remaining": 0, "last_result": None, "subscribed": False}
+    subscription = await _push_store(request).push_subscription(
+        guardian_user_id=user.user_id,
+        template_id=template_id,
+    )
+    if subscription is None:
+        return {
+            "template_id": template_id,
+            "remaining": 0,
+            "last_result": None,
+            "subscribed": False,
+        }
+    remaining = int(subscription.remaining)
+    return {
+        "template_id": subscription.template_id,
+        "remaining": remaining,
+        "last_result": subscription.last_result,
+        "subscribed": remaining > 0,
+    }
+
+
 @router.post("/push-subscriptions")
 async def record_guardian_push_subscription(
     body: GuardianPushSubscriptionCreate,
