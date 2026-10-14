@@ -9,11 +9,11 @@
 const guardianPush = require("./guardian-push");
 
 const BIND_SUBSCRIBE_UNAVAILABLE =
-  "安全提醒尚未开通，暂时不能完成这类绑定。请稍后再试，或联系支持。";
+  "订阅安全提醒尚未开通，暂时不能完成这类绑定。请稍后再试，或联系支持。";
 const BIND_SUBSCRIBE_REQUIRED =
-  "需要先允许一次微信安全提醒，才能完成绑定。提醒不含对话内容。";
+  "需要先完成订阅安全提醒，才能完成绑定。提醒不含对话内容。";
 const BIND_SUBSCRIBE_REJECTED =
-  "未开启安全提醒，绑定未提交。请再次点击并选择允许。";
+  "未完成订阅安全提醒，绑定未提交。请再次点击并选择允许。";
 
 function normalizeAlert(item) {
   if (!item || typeof item !== "object") return null;

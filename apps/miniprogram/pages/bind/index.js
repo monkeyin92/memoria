@@ -614,7 +614,7 @@ Page({
       });
     } catch (error) {
       this.setData({
-        error: error?.message || "安全提醒开启失败，绑定未提交。",
+        error: error?.message || "订阅安全提醒失败，绑定未提交。",
       });
       return;
     }

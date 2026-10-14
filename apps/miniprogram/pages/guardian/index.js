@@ -294,9 +294,9 @@ Page({
   async enableCrisisPush() {
     try {
       const outcome = await guardianPush.subscribeCrisisAlerts({ config: this.data.crisisPush, api });
-      if (outcome.result === "accept") wx.showToast({ title: "已开启一次安全提醒", icon: "none" });
+      if (outcome.result === "accept") wx.showToast({ title: "已完成订阅安全提醒", icon: "none" });
     } catch (error) {
-      this.setData({ error: error?.message || "安全提醒开启失败，请稍后再试。" });
+      this.setData({ error: error?.message || "订阅安全提醒失败，请稍后再试。" });
     }
   },
 

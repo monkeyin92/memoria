@@ -353,7 +353,7 @@ test("parent_for_child bind does not complete when WeChat subscribe is rejected"
   await page.submitBinding();
   assert.equal(page.data.step, "review");
   assert.equal(lastWxRequest, null);
-  assert.match(page.data.error, /未开启安全提醒/);
+  assert.match(page.data.error, /未完成订阅安全提醒/);
 });
 
 test("parent_for_child asks before submitting an unusually short quiet-hours window", async () => {

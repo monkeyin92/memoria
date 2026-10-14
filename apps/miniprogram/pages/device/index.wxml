@@ -254,7 +254,7 @@
           <text class="row-meta">{{item.minor_display_name}}：{{item.message}}</text>
           <text class="caption">{{item.occurred_at}}</text>
         </view>
-        <button wx:if="{{elderCrisisPush.enabled}}" class="secondary-button card-action" bindtap="enableElderCrisisPush">开启一次微信提醒</button>
+        <button wx:if="{{elderCrisisPush.enabled}}" class="secondary-button card-action" bindtap="enableElderCrisisPush">订阅安全提醒</button>
       </view>
 
       <view wx:if="{{sensitiveEntries.length > 0}}" class="list">

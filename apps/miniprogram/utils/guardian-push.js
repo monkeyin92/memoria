@@ -1,14 +1,17 @@
 /*
  * 监护人危机提醒订阅（小程序一次性订阅消息）。
  *
+ * 家长可见文案统一用「订阅安全提醒」，不用「危机提醒」。
  * - 服务端 push-config 关闭时不返回模板 ID，这里就永远不弹订阅框。
  * - wx.requestSubscribeMessage 只能由用户点击触发：subscribeCrisisAlerts
  *   在第一个 await 之前同步调起它，调用方必须直接在 tap 处理函数里调用。
  * - 每次“允许”只换来一次提醒；结果回传服务端记账，accept 附带 wx.login code。
  */
 
+const PARENT_SUBSCRIBE_LABEL = "订阅安全提醒";
+
 const CRISIS_PUSH_EXPLANATION =
-  "开启后，孩子可能需要帮助时，微信会提醒你打开小程序查看。提醒不含任何对话内容，每次允许可收到一次。";
+  "订阅安全提醒后，孩子可能需要帮助时，微信会提醒你打开小程序查看。提醒不含任何对话内容，每次允许可收到一次。";
 
 const RECORDABLE_RESULTS = Object.freeze(["accept", "reject", "ban"]);
 // 20004：用户关闭了小程序订阅消息总开关，等同于 ban。
@@ -73,9 +76,9 @@ function offerCrisisSubscription({ config, api, wxApi = globalThis.wx } = {}) {
   }
   return new Promise((resolve, reject) => {
     wxApi.showModal({
-      title: "开启安全提醒",
+      title: PARENT_SUBSCRIBE_LABEL,
       content: config.explanation || CRISIS_PUSH_EXPLANATION,
-      confirmText: "开启",
+      confirmText: "订阅",
       cancelText: "暂不",
       success(choice) {
         if (!choice?.confirm) {
@@ -93,6 +96,7 @@ function offerCrisisSubscription({ config, api, wxApi = globalThis.wx } = {}) {
 
 module.exports = {
   CRISIS_PUSH_EXPLANATION,
+  PARENT_SUBSCRIBE_LABEL,
   loadCrisisPushConfig,
   normalizeCrisisPushConfig,
   offerCrisisSubscription,

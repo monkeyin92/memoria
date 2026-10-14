@@ -24,10 +24,10 @@
     <view wx:if="{{crisisPush.enabled}}" class="l2-card">
       <view class="card-lead">
         <glass-icon name="bell" size="72"></glass-icon>
-        <text class="l2-card-title">微信安全提醒</text>
+        <text class="l2-card-title">订阅安全提醒</text>
       </view>
       <text class="l2-card-sub">{{crisisPush.explanation}}</text>
-      <button size="mini" bindtap="enableCrisisPush">开启一次提醒</button>
+      <button size="mini" bindtap="enableCrisisPush">订阅安全提醒</button>
     </view>
 
     <view class="seg">

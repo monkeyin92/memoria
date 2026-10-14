@@ -132,9 +132,13 @@ test("bind requires subscribe before create; memory pins undelivered alerts", ()
   assert.ok(gateAt > submitAt && createAt > gateAt);
   // WeChat subscribe must start before any other await in the submit tap stack.
   assert.ok(quietAt > gateAt && quietAt < createAt);
-  assert.match(bindWxml, /开启提醒并绑定/);
-  assert.match(bindWxml, /安全提醒是完成绑定的前提/);
+  assert.match(bindWxml, /订阅安全提醒并绑定/);
+  assert.match(bindWxml, /订阅安全提醒是完成绑定的前提/);
   assert.doesNotMatch(bindJs, /offerCrisisSubscription/);
+  assert.doesNotMatch(bindWxml, /危机提醒/);
+  assert.doesNotMatch(memoryWxml, /危机提醒/);
+  assert.doesNotMatch(homeWxml, /危机提醒/);
   assert.match(memoryWxml, /pinnedCrisisAlerts/);
+  assert.match(memoryWxml, /订阅安全提醒/);
   assert.match(homeWxml, /pinnedCrisisAlerts/);
 });
