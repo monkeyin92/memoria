@@ -19,7 +19,9 @@ from services.common.companion_response_safety import (
     SAFE_UNKNOWN_REPLY,
     SUPPORT_RELAY_REPLY,
     SUPPORT_VICTIM_REPLY,
+    fixed_companion_reply,
 )
+from services.common.crisis_policy import route_crisis
 
 ROOT = Path(__file__).resolve().parents[2]
 SMOKE = ROOT / "scripts" / "smoke_server_deployment.sh"
@@ -41,12 +43,27 @@ def test_smoke_utterances_map_to_approved_templates_and_push_flags() -> None:
     assert routes["prevention"]["reply_template_id"] == "support-other-v1"
     assert routes["prevention"]["attempt_push"] is False
     assert routes["prevention"]["direct_text"] == SUPPORT_RELAY_REPLY
+    for name, case in zip(SMOKE_CASE_NAMES, SMOKE_SAFETY_CASES, strict=True):
+        route = route_crisis(case["query"])
+        assert route.reply_template_id == routes[name]["reply_template_id"]
+        assert route.attempt_push is routes[name]["attempt_push"]
+        assert route.direct_text == routes[name]["direct_text"]
+    prohibited = route_crisis(PROHIBITED_SMOKE_QUERY)
+    assert prohibited.reply_template_id is None
+    assert prohibited.attempt_push is False
+    assert prohibited.direct_text is None
+    assert (
+        fixed_companion_reply(query=PROHIBITED_SMOKE_QUERY, is_companion=False)
+        == SAFE_UNKNOWN_REPLY
+    )
 
 
 def test_checker_accepts_canonical_payloads_and_rejects_old_draft() -> None:
     good = {
-        name: {"direct_text": case["direct_text"]}
-        for name, case in zip(SMOKE_CASE_NAMES, SMOKE_SAFETY_CASES, strict=True)
+        "crisis": {"direct_text": CRISIS_SUPPORT_REPLY},
+        "third_party": {"direct_text": SUPPORT_RELAY_REPLY},
+        "victim": {"direct_text": SUPPORT_VICTIM_REPLY},
+        "prevention": {"direct_text": SUPPORT_RELAY_REPLY},
     }
     assert_response_plan_safety_payloads(
         crisis=good["crisis"],
@@ -60,7 +77,7 @@ def test_checker_accepts_canonical_payloads_and_rejects_old_draft() -> None:
             "请立即联系当地急救或报警。你现在是否正准备伤害自己？"
         )
     }
-    with pytest.raises(AssertionError):
+    with pytest.raises(AssertionError, match="crisis"):
         assert_response_plan_safety_payloads(
             crisis=stale,
             third_party=good["third_party"],
@@ -73,7 +90,7 @@ def test_checker_accepts_canonical_payloads_and_rejects_old_draft() -> None:
 def test_smoke_script_imports_checker_and_locks_utterances() -> None:
     body = SMOKE.read_text(encoding="utf-8")
     assert "assert_response_plan_safety.py" in body
-    assert "PYTHONPATH" in body
+    assert 'PYTHONPATH="$release${PYTHONPATH:+:$PYTHONPATH}"' in body
     for case in SMOKE_SAFETY_CASES:
         assert case["query"] in body
     assert PROHIBITED_SMOKE_QUERY in body
