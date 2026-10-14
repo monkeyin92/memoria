@@ -291,6 +291,7 @@ class PostgresGuardianCrisisMixin:
                         WHEN 'accept'
                         THEN LEAST(guardian_push_subscriptions.remaining + 1, $6)
                         WHEN 'ban' THEN 0
+                        WHEN 'opt_out' THEN 0
                         ELSE guardian_push_subscriptions.remaining
                     END,
                     last_result = EXCLUDED.last_result,

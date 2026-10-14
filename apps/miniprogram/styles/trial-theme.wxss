@@ -136,3 +136,11 @@
   color: var(--trial-muted);
   font-size: 28rpx;
 }
+
+.trial-inset-caption {
+  display: block;
+  padding: 0 32rpx 28rpx;
+  color: var(--trial-muted);
+  font-size: 24rpx;
+  line-height: 1.45;
+}

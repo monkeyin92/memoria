@@ -536,6 +536,11 @@ function getGuardianPushConfig() {
   return rawRequest("/v1/guardian/push-config");
 }
 
+/* 当前监护人危机模板的剩余推送次数；subscribed 表示设置页开关应为开。 */
+function getGuardianPushSubscription() {
+  return rawRequest("/v1/guardian/push-subscriptions");
+}
+
 /* accept 必须附带新的 wx.login code，由服务端核对 openid 属于当前监护人。 */
 function recordGuardianPushSubscription({ templateId, result, loginCode = "" }) {
   return rawRequest("/v1/guardian/push-subscriptions", {
@@ -1438,6 +1443,7 @@ module.exports = {
   readAgeEvidence,
   getGuardianNotifications,
   getGuardianPushConfig,
+  getGuardianPushSubscription,
   recordGuardianPushSubscription,
   wechatLoginCode,
   updateProfile,

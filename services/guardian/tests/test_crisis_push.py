@@ -200,6 +200,17 @@ async def test_ledger_counts_acceptances_and_bans_void_the_balance(
     ]
     stamp = await _accept(store, stamp, times=40)
     assert await _remaining(store) == 20  # bounded ledger
+    opted_out = await store.record_push_subscription(
+        guardian_user_id="guardian-a",
+        template_id=TEMPLATE,
+        result="opt_out",
+        openid=None,
+        now=stamp,
+    )
+    stamp += timedelta(seconds=1)
+    assert (opted_out.remaining, opted_out.last_result) == (0, "opt_out")
+    stamp = await _accept(store, stamp, times=1)
+    assert await _remaining(store) == 1
     banned = await store.record_push_subscription(
         guardian_user_id="guardian-a",
         template_id=TEMPLATE,
@@ -223,7 +234,9 @@ async def test_ledger_counts_acceptances_and_bans_void_the_balance(
     audit = await store.push_subscription_events(guardian_user_id="guardian-a")
     assert audit[0].result == "ban"
     assert audit[0].remaining_after == 0
-    assert len(audit) == 44
+    assert any(event.result == "opt_out" and event.remaining_after == 0 for event in audit)
+    # 2 accept + reject + 40 accept + opt_out + accept + ban
+    assert len(audit) == 46
 
 
 def test_undelivered_statuses_are_pinned_for_the_mini_program() -> None:
