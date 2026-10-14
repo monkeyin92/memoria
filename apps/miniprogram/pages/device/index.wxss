@@ -1,3 +1,18 @@
+@import "../../styles/trial-theme.wxss";
+
+.device-trial-head {
+  padding: 8rpx 0 12rpx;
+  margin: 0 -32rpx;
+  padding-left: 32rpx;
+  padding-right: 32rpx;
+  padding-bottom: 8rpx;
+  background: #faf7f2;
+}
+
+.page-shell {
+  background: #faf7f2;
+}
+
 .device-header {
   padding: 8rpx 0 12rpx;
 }

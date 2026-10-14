@@ -21,6 +21,7 @@ const {
   nightModeQuietHoursLabel,
   confirmUnusualQuietHours,
 } = require("../../utils/quiet-hours");
+const { offersSafetySubscribe } = require("../../utils/trial-device-card");
 
 // 与绑定页的「单次使用时长」选项一致。
 const SESSION_MINUTE_OPTIONS = [15, 30, 45, 60, 90, 120];
@@ -291,6 +292,9 @@ Page({
     degradation: null,
     sensitiveEntries: [],
     sessionLimits: null,
+    trialSettingsVisible: false,
+    safetySubscribeOn: false,
+    safetySubscribeBusy: false,
     limitsSheetVisible: false,
     limitsSaving: false,
     limitsError: "",
@@ -410,7 +414,10 @@ Page({
       switching: false,
       degradation: null,
       sensitiveEntries: [],
-    sessionLimits: null,
+      sessionLimits: null,
+      trialSettingsVisible: false,
+      safetySubscribeOn: false,
+      safetySubscribeBusy: false,
       currentUserLabel: "",
       currentUserLabelConfirmed: false,
       subjectAliasLabel: "",
@@ -418,11 +425,11 @@ Page({
       personaSheetVisible: false,
       limitsSheetVisible: false,
       ageRows: [],
-    subjectPersonas: [],
-    elderSafetyVisible: false,
-    elderAlerts: [],
-    elderCrisisPush: { enabled: false, templateId: "", explanation: "" },
-    personaResetting: false,
+      subjectPersonas: [],
+      elderSafetyVisible: false,
+      elderAlerts: [],
+      elderCrisisPush: { enabled: false, templateId: "", explanation: "" },
+      personaResetting: false,
       ageSaving: false,
       ageError: "",
       activation: null,
@@ -496,16 +503,121 @@ Page({
       guardianPush.loadCrisisPushConfig(api).catch(() => ({ enabled: false, templateId: "", explanation: "" })),
     ]);
     if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
-    this.setData({ elderSafetyVisible: true, elderAlerts: alerts, elderCrisisPush: crisisPush });
+    this.setData({
+      elderSafetyVisible: true,
+      elderAlerts: alerts,
+      elderCrisisPush: crisisPush,
+      safetySubscribeOn: Boolean(crisisPush?.enabled && this.data.safetySubscribeOn),
+    });
+    this._safetyPushConfig = crisisPush;
+  },
+
+  async _loadTrialSafetySubscribe(binding, flowSeq, authEpoch) {
+    if (!offersSafetySubscribe(binding)) return;
+    const crisisPush = await guardianPush.loadCrisisPushConfig(api).catch(() => ({
+      enabled: false,
+      templateId: "",
+      explanation: "",
+    }));
+    if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
+    this._safetyPushConfig = crisisPush;
+    this.setData({
+      safetySubscribeOn: Boolean(crisisPush.enabled && this.data.safetySubscribeOn),
+    });
   },
 
   /* 必须直接绑定在按钮 tap 上：订阅框只能由用户点击调起。 */
   async enableElderCrisisPush() {
     try {
       const outcome = await guardianPush.subscribeCrisisAlerts({ config: this.data.elderCrisisPush, api });
+<<<<<<< HEAD
       if (outcome.result === "accept") wx.showToast({ title: "已完成订阅安全提醒", icon: "none" });
+=======
+      if (outcome.result === "accept") {
+        this.setData({ safetySubscribeOn: true });
+        wx.showToast({ title: "已开启一次安全提醒", icon: "none" });
+      }
+>>>>>>> f0e5575d (feat(miniprogram): iOS-style trial settings group on device)
     } catch (error) {
       wx.showToast({ title: error?.message || "订阅安全提醒失败，请稍后再试。", icon: "none" });
+    }
+  },
+
+  async onTrialDailyCapChange(event) {
+    const index = Number(event.detail.value);
+    const options = this.data.limitsMinuteOptions || SESSION_MINUTE_OPTIONS;
+    const minutes = options[index];
+    const limits = this.data.sessionLimits;
+    const binding = this.data.binding;
+    if (!Number.isInteger(minutes) || !limits || !binding?.device_id) return;
+    this.setData({ limitsMinuteIndex: index, limitsSaving: true });
+    try {
+      await api.setSessionLimits(binding.device_id, {
+        maxSessionMinutes: minutes,
+        quietStart: limits.quietStart || DEFAULT_QUIET_HOURS.start,
+        quietEnd: limits.quietEnd || DEFAULT_QUIET_HOURS.end,
+      });
+      let profile = null;
+      try {
+        profile = await api.getRuntimeProfile(binding.device_id);
+      } catch (_error) {
+        profile = null;
+      }
+      const refreshed = profile ? sessionLimitsFromProfile(profile) : null;
+      this.setData({
+        ...(refreshed ? { profile, sessionLimits: refreshed, trialSettingsVisible: true } : {}),
+      });
+      wx.showToast({ title: "已保存", icon: "success" });
+    } catch (error) {
+      wx.showToast({ title: error?.message || "保存失败", icon: "none" });
+    } finally {
+      this.setData({ limitsSaving: false });
+    }
+  },
+
+  async onSafetySubscribeChange(event) {
+    const nextOn = Boolean(event.detail.value);
+    if (!nextOn) {
+      const confirmed = await new Promise((resolve) => {
+        wx.showModal({
+          title: "关闭安全提醒订阅？",
+          content: "关闭后，微信将无法再推送安全提醒。未读提醒仍会留在小程序里。",
+          confirmText: "关闭订阅",
+          cancelText: "保持开启",
+          success: (result) => resolve(Boolean(result?.confirm)),
+          fail: () => resolve(false),
+        });
+      });
+      if (!confirmed) {
+        this.setData({ safetySubscribeOn: true });
+        return;
+      }
+      this.setData({ safetySubscribeOn: false });
+      return;
+    }
+    this.setData({ safetySubscribeBusy: true });
+    try {
+      const config =
+        this._safetyPushConfig || (await guardianPush.loadCrisisPushConfig(api));
+      this._safetyPushConfig = config;
+      if (!config?.enabled || !config.templateId) {
+        this.setData({ safetySubscribeOn: false });
+        wx.showToast({ title: "安全提醒订阅尚未开通", icon: "none" });
+        return;
+      }
+      const outcome = await guardianPush.subscribeCrisisAlerts({ config, api });
+      if (outcome.result === "accept" && outcome.recorded) {
+        this.setData({ safetySubscribeOn: true });
+        wx.showToast({ title: "已订阅安全提醒", icon: "none" });
+      } else {
+        this.setData({ safetySubscribeOn: false });
+        wx.showToast({ title: "未完成订阅，请再试一次", icon: "none" });
+      }
+    } catch (error) {
+      this.setData({ safetySubscribeOn: false });
+      wx.showToast({ title: error?.message || "订阅失败，请稍后再试", icon: "none" });
+    } finally {
+      this.setData({ safetySubscribeBusy: false });
     }
   },
 
@@ -712,6 +824,15 @@ Page({
       );
       const accountCompanionId =
         typeof accountProfile?.companion_id === "string" ? accountProfile.companion_id : "";
+      const sessionLimits = sessionLimitsFromProfile(profile);
+      const limitsMinuteOptions =
+        !sessionLimits?.maxSessionMinutes ||
+        SESSION_MINUTE_OPTIONS.includes(sessionLimits.maxSessionMinutes)
+          ? SESSION_MINUTE_OPTIONS
+          : [...SESSION_MINUTE_OPTIONS, sessionLimits.maxSessionMinutes].sort((a, b) => a - b);
+      const limitsMinuteIndexRaw = limitsMinuteOptions.indexOf(sessionLimits?.maxSessionMinutes);
+      const limitsMinuteIndex =
+        limitsMinuteIndexRaw >= 0 ? limitsMinuteIndexRaw : limitsMinuteOptions.indexOf(30);
       this.setData({
         hasBinding: true,
         authenticated: true,
@@ -736,7 +857,10 @@ Page({
         ),
         degradation: profile ? degradationFor(profile) : null,
         sensitiveEntries: profile ? sensitiveEntriesFor(profile) : [],
-        sessionLimits: sessionLimitsFromProfile(profile),
+        sessionLimits,
+        trialSettingsVisible: Boolean(sessionLimits),
+        limitsMinuteOptions,
+        limitsMinuteIndex,
         currentUserLabel: speakerLabel ? subjectAliasLabel || speakerLabel : "未确认",
         currentUserLabelConfirmed: Boolean(speakerLabel),
         ageRows: ageDeclarationRows(binding),
@@ -808,6 +932,7 @@ Page({
       this._loadSubjectPersonas(binding, flowSeq, authEpoch);
       this._loadAgeRows(flowSeq, authEpoch);
       this._loadElderSafety(binding, flowSeq, authEpoch);
+      this._loadTrialSafetySubscribe(binding, flowSeq, authEpoch);
     } catch (error) {
       if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({
