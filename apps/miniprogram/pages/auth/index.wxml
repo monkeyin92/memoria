@@ -1,96 +1,104 @@
 <view class="page-shell auth-wrap sub-page" style="{{statusBarStyle}}">
-  <view class="nav-back" bindtap="goBack" aria-label="返回"><image class="nav-back-icon" src="/assets/ui/v4/back-strong.svg" /></view>
-  <view class="auth-copy">
-    <text class="pill pill-draft auth-chip">草稿 · 待律师审核</text>
-    <view class="auth-title">
-      <text class="page-title auth-copy-line">开始前，</text>
-      <text class="page-title auth-copy-line">请先确认这几件事</text>
+  <block wx:if="{{step === 'consent'}}">
+    <view class="auth-copy">
+      <text class="pill pill-draft auth-chip">草稿 · 待律师审核</text>
+      <view class="auth-title">
+        <text class="page-title auth-copy-line">开始前，</text>
+        <text class="page-title auth-copy-line">请先确认这几件事</text>
+      </view>
+      <text class="page-lede">作为孩子的监护人，你需要知道我们实际会处理哪些信息。</text>
     </view>
-    <text class="page-lede">登录前，先了解我们实际会处理哪些信息。</text>
-  </view>
 
-  <view class="card auth-facts">
-    <view class="auth-fact">
-      <mp-icon name="server" tone="ink"></mp-icon>
-      <view class="auth-fact-copy">
-        <text class="auth-fact-title">对话经过我们的服务器</text>
-        <text class="auth-fact-sub">孩子说的话经服务器处理后再回复</text>
+    <view class="card auth-facts">
+      <view class="auth-fact">
+        <mp-icon name="server" tone="ink"></mp-icon>
+        <view class="auth-fact-copy">
+          <text class="auth-fact-title">对话经过我们的服务器</text>
+          <text class="auth-fact-sub">孩子说的话会经服务器处理后再回复</text>
+        </view>
+      </view>
+      <view class="auth-fact">
+        <mp-icon name="note" tone="ink"></mp-icon>
+        <view class="auth-fact-copy">
+          <text class="auth-fact-title">保存对话摘要</text>
+          <text class="auth-fact-sub">按天查看，原话在入库前就去掉</text>
+        </view>
+      </view>
+      <view class="auth-fact">
+        <mp-icon name="star" tone="ink"></mp-icon>
+        <view class="auth-fact-copy">
+          <text class="auth-fact-title">长期只记三项</text>
+          <text class="auth-fact-sub">孩子的称呼、喜好、宠物名</text>
+        </view>
+      </view>
+      <view class="auth-fact">
+        <mp-icon name="info" tone="ink"></mp-icon>
+        <view class="auth-fact-copy">
+          <text class="auth-fact-title">回应由 AI 生成</text>
+          <text class="auth-fact-sub">会明确标识；模型训练默认关闭</text>
+        </view>
       </view>
     </view>
-    <view class="auth-fact">
-      <mp-icon name="note" tone="ink"></mp-icon>
-      <view class="auth-fact-copy">
-        <text class="auth-fact-title">保存对话摘要</text>
-        <text class="auth-fact-sub">按天查看，原话在入库前就去掉</text>
-      </view>
-    </view>
-    <view class="auth-fact">
-      <mp-icon name="star" tone="ink"></mp-icon>
-      <view class="auth-fact-copy">
-        <text class="auth-fact-title">长期只记三项</text>
-        <text class="auth-fact-sub">开启后只记孩子的称呼、兴趣和小名</text>
-      </view>
-    </view>
-    <view class="auth-fact">
-      <mp-icon name="info" tone="ink"></mp-icon>
-      <view class="auth-fact-copy">
-        <text class="auth-fact-title">回应由 AI 生成</text>
-        <text class="auth-fact-sub">会明确标识；模型训练默认关闭</text>
-      </view>
-    </view>
-  </view>
-  <text class="caption auth-caption">手机不录音，机器人本身不存录音。使用人由设备绑定确定，不通过声音识别身份。</text>
 
-  <view class="card auth-card">
-    <text wx:if="{{reasonHint}}" class="auth-intro">{{reasonHint}}</text>
-    <view class="auth-user">
-      <button
-        class="avatar-button"
-        open-type="chooseAvatar"
-        bindchooseavatar="onChooseAvatar"
+    <view class="auth-consent" bindtap="toggleConsent" aria-role="checkbox" aria-checked="{{consented}}">
+      <view class="auth-check {{consented ? 'auth-check-on' : ''}}">
+        <image wx:if="{{consented}}" class="auth-check-icon" src="/assets/ui/v4/check-white-bold.svg" />
+      </view>
+      <text class="auth-consent-copy">我是孩子的监护人，已阅读并同意<text class="privacy-link" catchtap="openPrivacy">《隐私保护指引》</text></text>
+    </view>
+
+    <text wx:if="{{error}}" class="error-text auth-error">{{error}}</text>
+    <button
+      class="trial-primary"
+      open-type="getPhoneNumber"
+      bindgetphonenumber="onGetPhoneNumber"
+      loading="{{loading}}"
+      disabled="{{loading || !consented}}"
+      aria-label="同意并授权手机号登录"
+    >同意并继续</button>
+    <button class="auth-decline" bindtap="goBack">暂不同意</button>
+    <text wx:if="{{reasonHint}}" class="login-note auth-reason">{{reasonHint}}</text>
+    <text class="login-note">已登录过的微信会自动恢复；首次登录需要授权手机号，只用于绑定账号，不会公开展示。</text>
+    <text class="login-note">手机不录音，机器人本身不存录音。使用人由设备绑定确定，不通过声音识别身份。</text>
+  </block>
+
+  <block wx:else>
+    <view class="nav-back" bindtap="backToConsent" aria-label="返回"><image class="nav-back-icon" src="/assets/ui/v4/back-strong.svg" /></view>
+    <text class="page-title">最后一步</text>
+    <text class="page-lede">首次注册后，我会在自然的对话里这样称呼你。</text>
+
+    <view class="card auth-card">
+      <view class="auth-user">
+        <button
+          class="avatar-button"
+          open-type="chooseAvatar"
+          bindchooseavatar="onChooseAvatar"
+          disabled="{{loading}}"
+          aria-label="选择微信头像"
+        >
+          <image wx:if="{{avatarPath}}" class="avatar-preview" src="{{avatarPath}}" mode="aspectFill" />
+          <view wx:else class="avatar-placeholder">选择头像</view>
+        </button>
+        <view class="auth-user-copy">
+          <text class="auth-user-name">微信用户</text>
+          <text class="auth-user-sub">头像可选，登录成功后会安全保存到 Memoria。</text>
+        </view>
+      </view>
+
+      <text class="field-label">怎么称呼你？{{needsSalutation ? ' *' : ''}}</text>
+      <input
+        class="field-input"
+        type="nickname"
+        value="{{nickname}}"
+        maxlength="24"
+        placeholder="例如：朋友、主人、小明"
+        placeholder-class="field-placeholder"
+        bindinput="onNicknameInput"
         disabled="{{loading}}"
-        aria-label="选择微信头像"
-      >
-        <image wx:if="{{avatarPath}}" class="avatar-preview" src="{{avatarPath}}" mode="aspectFill" />
-        <view wx:else class="avatar-placeholder">选择头像</view>
-      </button>
-      <view class="auth-user-copy">
-        <text class="auth-user-name">微信用户</text>
-        <text class="auth-user-sub">头像可选，登录成功后会安全保存到 Memoria。</text>
-      </view>
+      />
     </view>
 
-    <text class="field-label">怎么称呼你？{{needsSalutation ? ' *' : ''}}</text>
-    <input
-      class="field-input"
-      type="nickname"
-      value="{{nickname}}"
-      maxlength="24"
-      placeholder="例如：朋友、主人、小明"
-      placeholder-class="field-placeholder"
-      bindinput="onNicknameInput"
-      disabled="{{loading}}"
-    />
-    <text class="field-help">首次注册后，我会在自然的对话里这样称呼你。</text>
-  </view>
-
-  <checkbox-group class="consent-row" bindchange="onConsentChange">
-    <label class="consent-label">
-      <checkbox value="accepted" checked="{{consented}}" color="#4A52C9" />
-      <text>我已阅读并同意</text>
-    </label>
-    <text class="privacy-link" bindtap="openPrivacy">《隐私保护指引》</text>
-  </checkbox-group>
-
-  <text wx:if="{{error}}" class="error-text auth-error">{{error}}</text>
-  <button
-    class="primary-button auth-submit"
-    open-type="getPhoneNumber"
-    bindgetphonenumber="onGetPhoneNumber"
-    loading="{{loading}}"
-    disabled="{{loading || !consented}}"
-    aria-label="授权手机号并使用微信登录"
-  >授权手机号并登录</button>
-  <text class="login-note">已登录过的微信会自动恢复；首次登录需要手机号用于账号绑定，不会公开展示。</text>
-  <text class="login-note">登录仅用于绑定家庭设备，不会同步任何对话内容</text>
+    <text wx:if="{{error}}" class="error-text auth-error">{{error}}</text>
+    <button class="trial-primary auth-submit" bindtap="submitProfile" loading="{{loading}}" disabled="{{loading}}">完成登录</button>
+  </block>
 </view>

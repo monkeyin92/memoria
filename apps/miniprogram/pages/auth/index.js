@@ -18,9 +18,12 @@ function reasonText(reason) {
   }[reason] || "登录后即可继续刚才的操作。";
 }
 
+// consent: facts, guardian consent and phone authorization.
+// profile: first registration only, asks how to address the user before the held phone code is spent.
 Page({
   data: {
     statusBarStyle: statusBarStyle(),
+    step: "consent",
     nickname: "",
     avatarPath: "",
     consented: false,
@@ -80,11 +83,13 @@ Page({
     if (avatarPath) this.setData({ avatarPath, error: "" });
   },
 
-  onConsentChange(event) {
-    this.setData({
-      consented: (event.detail.value || []).includes("accepted"),
-      error: "",
-    });
+  toggleConsent() {
+    this.setData({ consented: !this.data.consented, error: "" });
+  },
+
+  backToConsent() {
+    this._phoneCode = "";
+    this.setData({ step: "consent", error: "" });
   },
 
   openPrivacy() {
@@ -117,16 +122,28 @@ Page({
       this.setData({ error: "需要手机号授权才能完成首次登录。" });
       return;
     }
-    const displayName = this.data.nickname.trim();
-    if (this.data.needsSalutation && !displayName) {
+    if (this.data.needsSalutation) {
+      this._phoneCode = phoneCode;
+      this.setData({ step: "profile", error: "" });
+      return;
+    }
+    await this.submitLogin(phoneCode);
+  },
+
+  async submitProfile() {
+    if (!this.data.nickname.trim()) {
       this.setData({ error: "先告诉我怎么称呼你吧。" });
       return;
     }
+    await this.submitLogin(this._phoneCode);
+  },
+
+  async submitLogin(phoneCode) {
     this.setData({ loading: true, error: "" });
     try {
       await api.loginWithWechat({
         phoneCode,
-        displayName,
+        displayName: this.data.nickname.trim(),
       });
       if (this.data.avatarPath) {
         try {
@@ -137,7 +154,9 @@ Page({
       }
       this.finishLogin();
     } catch (error) {
-      this.setData({ error: error?.message || "微信登录未完成，请稍后重试。" });
+      // WeChat phone codes are single use, so a failed login needs a fresh authorization.
+      this._phoneCode = "";
+      this.setData({ step: "consent", error: error?.message || "微信登录未完成，请稍后重试。" });
     } finally {
       this.setData({ loading: false });
     }

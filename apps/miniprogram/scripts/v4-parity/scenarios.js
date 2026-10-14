@@ -7,7 +7,7 @@ const fx = require("../mp-harness/fixtures");
 
 const PARITY = [
   { slug: "01-login", design: "01-login.png", page: "pages/home/index", harness: fx.guest() },
-  { slug: "02-consent", design: "02-consent.png", page: "pages/auth/index", harness: fx.guest() },
+  { slug: "02-consent", design: "02-consent.png", page: "pages/auth/index", harness: fx.guest(), actions: [["toggleConsent"]] },
   { slug: "03-home", design: "03-home.png", page: "pages/home/index", harness: fx.authed() },
   {
     slug: "04-summary",

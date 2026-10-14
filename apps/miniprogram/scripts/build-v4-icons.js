@@ -55,6 +55,7 @@ const VARIANTS = {
   faint: { stroke: "#B4B6C4", fill: "none" },
   rust: { stroke: "#9A4732", fill: "none" },
   white: { stroke: "#FFFFFF", fill: "none" },
+  "white-bold": { stroke: "#FFFFFF", fill: "none", width: 2.6 },
 };
 
 const WANTED = [
@@ -72,13 +73,14 @@ const WANTED = [
   ["back", "strong"],
   ["plus", "accent"],
   ["wechat", "white"],
+  ["check", "white-bold"],
 ];
 
 function svg(name, variant) {
-  const { stroke, fill } = VARIANTS[variant];
+  const { stroke, fill, width = 1.6 } = VARIANTS[variant];
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="${fill}" stroke="${stroke}" ` +
-    `stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>\n`
+    `stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>\n`
   );
 }
 

@@ -17,9 +17,23 @@ const OWNING_TAB = {
   "device-onboarding": "/pages/device/index",
 };
 
+// Auth's consent step leaves through 暂不同意 like the design; its profile step has the back button.
+const BACK_BUTTON_STATE = { auth: { step: "profile" } };
+
 function readPage(page, ext) {
   return fs.readFileSync(path.join(ROOT, "pages", page, `index.${ext}`), "utf8");
 }
+
+test("auth consent step exits through 暂不同意 instead of a back button", () => {
+  const harness = loadPage("pages/auth/index");
+  try {
+    const html = renderPage("pages/auth/index", harness.page.data);
+    assert.doesNotMatch(html, /class="nav-back"/);
+    assert.match(readPage("auth", "wxml"), /<button class="auth-decline" bindtap="goBack">暂不同意<\/button>/);
+  } finally {
+    harness.restore();
+  }
+});
 
 for (const [page, tab] of Object.entries(OWNING_TAB)) {
   test(`${page} draws its own round back button under the status bar instead of the native bar`, () => {
@@ -27,7 +41,7 @@ for (const [page, tab] of Object.entries(OWNING_TAB)) {
     const harness = loadPage(`pages/${page}/index`);
     try {
       assert.equal(harness.page.data.statusBarStyle, "--mp-status-bar: 47px; --mp-capsule-bottom: 83px;");
-      const html = renderPage(`pages/${page}/index`, harness.page.data);
+      const html = renderPage(`pages/${page}/index`, { ...harness.page.data, ...BACK_BUTTON_STATE[page] });
       assert.doesNotMatch(html, /class="wx-navbar"/);
       assert.match(html, /class="[^"]*\bsub-page\b[^"]*" style="--mp-status-bar: 47px; --mp-capsule-bottom: 83px;"/);
       assert.match(html, /class="nav-back"[^>]*><wx-image class="nav-back-icon"><img src="[^"]*\/assets\/ui\/v4\/back-strong\.svg"/);
