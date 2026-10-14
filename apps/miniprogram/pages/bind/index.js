@@ -21,6 +21,7 @@ const {
   confirmUnusualQuietHours,
 } = require("../../utils/quiet-hours");
 const guardianPush = require("../../utils/guardian-push");
+const { SUBSCRIPTION_PUSH_ENABLED } = require("../../config");
 const {
   requireCrisisSubscribeBeforeBind,
   requiresCrisisSubscribeBeforeBind,
@@ -157,6 +158,7 @@ Page({
     crisisPush: { enabled: false, templateId: "", explanation: "" },
     crisisSubscribeRequired: false,
     crisisSubscribeAccepted: false,
+    subscriptionPushEnabled: SUBSCRIPTION_PUSH_ENABLED,
   },
 
   onLoad(options = {}) {
@@ -517,7 +519,8 @@ Page({
       this.setData({ error });
       return;
     }
-    const crisisSubscribeRequired = requiresCrisisSubscribeBeforeBind(this.data.declaredMode);
+    const crisisSubscribeRequired =
+      SUBSCRIPTION_PUSH_ENABLED && requiresCrisisSubscribeBeforeBind(this.data.declaredMode);
     // Preload before the submit tap so requestSubscribeMessage can run in that gesture.
     const crisisPush = crisisSubscribeRequired
       ? await guardianPush.loadCrisisPushConfig(api)
@@ -529,7 +532,8 @@ Page({
       crisisSubscribeRequired,
       crisisPush,
       crisisSubscribeAccepted: false,
-      submitLabel: crisisSubscribeRequired ? "订阅安全提醒" : "提交绑定",
+      subscriptionPushEnabled: SUBSCRIPTION_PUSH_ENABLED,
+      submitLabel: crisisSubscribeRequired ? "开启安全提醒" : "提交绑定",
     });
   },
 

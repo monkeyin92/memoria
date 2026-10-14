@@ -1,0 +1,49 @@
+/* Parent v4: custom persona editor uses shared tokens and card chrome. */
+.page-shell {
+  padding-bottom: calc(48rpx + env(safe-area-inset-bottom));
+  background: var(--mp-bg);
+}
+
+.page-title {
+  font-size: var(--mp-type-display);
+  font-weight: 800;
+  letter-spacing: -1.2rpx;
+  line-height: var(--mp-lh-display);
+  color: var(--mp-ink);
+}
+
+.page-lede,
+.page-subtitle {
+  margin-top: 16rpx;
+  color: var(--mp-ink-2);
+  font-size: var(--mp-type-body);
+  line-height: var(--mp-lh-body);
+}
+
+.l2-card,
+.card,
+.list {
+  margin-top: var(--mp-gap-card);
+  padding: var(--mp-pad-card-lg);
+  border-radius: var(--mp-radius-card);
+  background: var(--mp-surface);
+  box-shadow: var(--mp-shadow-card);
+  border: none;
+}
+
+.primary-button,
+.secondary-button,
+.danger-button {
+  min-height: 112rpx;
+  border-radius: 32rpx;
+  font-size: var(--mp-type-button);
+}
+
+.field-input {
+  min-height: 96rpx;
+  padding: 24rpx 32rpx;
+  border-radius: 32rpx;
+  background: var(--mp-fill);
+  color: var(--mp-ink);
+  font-size: var(--mp-type-body);
+}

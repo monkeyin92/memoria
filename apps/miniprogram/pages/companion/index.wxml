@@ -1,7 +1,7 @@
 <view class="page-shell companion-shell">
   <page-backdrop theme="mist"></page-backdrop>
   <text class="page-title">角色</text>
-  <text class="page-lede">当前角色 · {{currentName}}在陪你</text>
+  <text class="page-lede">换个说话风格。它始终是陪孩子聊天、讲故事的 AI 助手。当前 · {{currentName}}</text>
 
   <!-- 堆叠卡组：当前卡在最前，其余角色叠在后面左右露出；左右拖动或点露出的卡切换 -->
   <view

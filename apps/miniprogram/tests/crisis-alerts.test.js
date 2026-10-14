@@ -77,11 +77,21 @@ test("requireCrisisSubscribeBeforeBind blocks parent bind without accept", async
     enabled: true,
     template_ids: { crisis: "tmpl-crisis" },
   });
+  const paused = await crisisAlerts.requireCrisisSubscribeBeforeBind({
+    declaredMode: "parent_for_child",
+    config,
+    api: fakeApi(),
+    wxApi: fakeWx({ "tmpl-crisis": "accept" }),
+    subscriptionPushEnabled: false,
+  });
+  assert.deepEqual(paused, { ok: true, kind: "paused" });
+
   const unavailable = await crisisAlerts.requireCrisisSubscribeBeforeBind({
     declaredMode: "parent_for_child",
     config: { enabled: false, templateId: "" },
     api: fakeApi(),
     wxApi: fakeWx({ "tmpl-crisis": "accept" }),
+    subscriptionPushEnabled: true,
   });
   assert.equal(unavailable.ok, false);
   assert.equal(unavailable.kind, "unavailable");
@@ -91,6 +101,7 @@ test("requireCrisisSubscribeBeforeBind blocks parent bind without accept", async
     config,
     api: fakeApi(),
     wxApi: fakeWx({ "tmpl-crisis": "reject" }),
+    subscriptionPushEnabled: true,
   });
   assert.equal(rejected.ok, false);
   assert.equal(rejected.kind, "not_accepted");
@@ -101,6 +112,7 @@ test("requireCrisisSubscribeBeforeBind blocks parent bind without accept", async
     config,
     api,
     wxApi: fakeWx({ "tmpl-crisis": "accept" }),
+    subscriptionPushEnabled: true,
   });
   assert.equal(accepted.ok, true);
   assert.equal(accepted.kind, "accepted");
@@ -113,18 +125,22 @@ test("requireCrisisSubscribeBeforeBind blocks parent bind without accept", async
     config,
     api: fakeApi(),
     wxApi: fakeWx({ "tmpl-crisis": "reject" }),
+    subscriptionPushEnabled: true,
   });
   assert.deepEqual(selfUse, { ok: true, kind: "not_required" });
 });
 
-test("bind requires subscribe before create; memory pins undelivered alerts", () => {
+test("bind keeps subscribe gate code but pauses UI while flag is off; memory pins alerts", () => {
   const bindJs = fs.readFileSync(path.join(root, "pages/bind/index.js"), "utf8");
   const bindWxml = fs.readFileSync(path.join(root, "pages/bind/index.wxml"), "utf8");
   const memoryWxml = fs.readFileSync(path.join(root, "pages/memory/index.wxml"), "utf8");
   const homeWxml = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
+  const configJs = fs.readFileSync(path.join(root, "config.js"), "utf8");
 
+  assert.match(configJs, /SUBSCRIPTION_PUSH_ENABLED\s*=\s*false/);
   assert.match(bindJs, /requireCrisisSubscribeBeforeBind/);
   assert.match(bindJs, /createDeviceBinding/);
+  assert.match(bindJs, /SUBSCRIPTION_PUSH_ENABLED/);
   const submitAt = bindJs.indexOf("async submitBinding");
   const gateAt = bindJs.indexOf("requireCrisisSubscribeBeforeBind", submitAt);
   const quietAt = bindJs.indexOf("confirmUnusualQuietHours", submitAt);
@@ -132,15 +148,15 @@ test("bind requires subscribe before create; memory pins undelivered alerts", ()
   assert.ok(gateAt > submitAt && createAt > gateAt);
   // WeChat subscribe must start before any other await in the submit tap stack.
   assert.ok(quietAt > gateAt && quietAt < createAt);
-  assert.match(bindWxml, /\{\{submitLabel\}\}|订阅安全提醒/);
-  assert.match(bindWxml, /订阅安全提醒是完成绑定的前提/);
+  assert.match(bindWxml, /\{\{submitLabel\}\}/);
+  assert.match(bindWxml, /subscriptionPushEnabled && crisisSubscribeRequired/);
   assert.doesNotMatch(bindJs, /offerCrisisSubscription/);
   assert.doesNotMatch(bindWxml, /危机提醒/);
   assert.doesNotMatch(memoryWxml, /危机提醒/);
   assert.doesNotMatch(homeWxml, /危机提醒/);
   assert.match(memoryWxml, /pinnedCrisisAlerts/);
-  assert.match(memoryWxml, /订阅安全提醒/);
-  assert.match(homeWxml, /pinnedCrisisAlerts/);
+  assert.match(memoryWxml, /subscriptionPushEnabled && crisisPush\.enabled/);
+  assert.match(homeWxml, /pinnedCrisisAlerts|unreadSafetyAlert/);
 });
 
 test("pinned home and memory alerts stay independent of the push toggle", () => {

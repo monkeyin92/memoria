@@ -57,9 +57,15 @@
   justify-content: center;
 }
 
+.memory-empty .button-row {
+  flex-wrap: wrap;
+  gap: 16rpx;
+}
+
 .memory-empty .button-row button {
-  flex: none;
-  min-width: 320rpx;
+  flex: 1 1 240rpx;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .recap-body {

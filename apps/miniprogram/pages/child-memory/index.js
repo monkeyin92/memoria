@@ -29,7 +29,7 @@ function operationKey(prefix) {
 
 function pageError(error, fallback) {
   if (error?.code === "guardian_memory_review_unavailable" || error?.status === 403) {
-    return "只有绑定这台设备的家长可以查看和删除孩子的记忆。";
+    return "只有绑定这台设备的家长可以打开孩子的记忆档案。";
   }
   if (error?.code === "child_layers_unavailable" || error?.status === 503) {
     return "记忆服务暂时不可用，请稍后再试。";

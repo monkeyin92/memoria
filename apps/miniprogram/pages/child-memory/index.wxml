@@ -32,7 +32,7 @@
 
   <view wx:if="{{!authenticated}}" class="trial-card cm-empty">
     <text class="cm-empty-title">请先登录</text>
-    <text class="cm-empty-copy">登录后即可查看和删除孩子的记忆。</text>
+    <text class="cm-empty-copy">登录后即可打开孩子的记忆档案。</text>
   </view>
 
   <view wx:elif="{{loadState === 'loading' || loading}}" class="trial-card">

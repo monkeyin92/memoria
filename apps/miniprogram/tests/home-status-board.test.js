@@ -49,18 +49,16 @@ test("online status reflects activation readiness", () => {
 test("home page is a status board without rooms or realtime chat", () => {
   const template = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
   const script = fs.readFileSync(path.join(root, "pages/home/index.js"), "utf8");
-  assert.match(template, /欢迎来到 Memoria|trial-title">\{\{greeting\}\}/);
+  assert.match(template, /Memoria|trial-title">今天/);
   assert.doesNotMatch(template, /startVoice|startText|sendText|可直接对话/);
   assert.doesNotMatch(template, /先了解怎么用|openHowItWorks|家中的设备/);
-  assert.match(template, /wx:if="\{\{!authenticated\}\}"[\s\S]*微信登录，找回我的设备/);
-  assert.match(template, /home-device-card/);
-  assert.match(template, /home-memory-card/);
-  assert.match(template, /home-toggle-card/);
-  assert.match(template, /statusLine/);
+  assert.match(template, /wx:if="\{\{!authenticated\}\}"[\s\S]*微信一键登录/);
+  assert.match(template, /home-usage-card|home-ring/);
+  assert.match(template, /home-stat|今日摘要/);
+  assert.match(template, /home-toggle-card|安静时段/);
   assert.match(template, /unreadSafetyCopy|unreadSafetyAlert/);
-  assert.match(template, /<face-badge/);
   assert.doesNotMatch(template, /status-chips|glass-icon|battery|电量/);
-  assert.doesNotMatch(template, /usageLabel|usageKnown|home-usage/);
+  assert.match(template, /usagePercent|usageDisplayMinutes|home-usage/);
   assert.match(script, /subscribeAuthCleared\(\(\) => this\._enterGuestState\(\)\)/);
   assert.doesNotMatch(script, /待在设备上确认/);
   assert.doesNotMatch(script, /resolveSessionSubject/);
@@ -69,6 +67,7 @@ test("home page is a status board without rooms or realtime chat", () => {
   assert.match(script, /readSubjectLabel/);
   assert.match(script, /buildTrialDeviceCard/);
   assert.match(script, /memoryPreviewItems/);
+  assert.match(script, /SUBSCRIPTION_PUSH_ENABLED/);
 });
 
 test("current user on home is the bind-time remark, not the WeChat name", () => {
@@ -145,11 +144,12 @@ test("trial device card helper uses profile quiet hours and usage limit", () => 
   assert.equal(hasUnreadSafetyAlert([{ pinned: false, delivery_status: "delivered" }]), false);
 });
 
-test("parent v3 tokens live in app.wxss and pages avoid third-party art", () => {
+test("parent v4 tokens live in app.wxss and pages avoid third-party art", () => {
   const appWxss = fs.readFileSync(path.join(root, "app.wxss"), "utf8");
-  assert.match(appWxss, /--mp-bg:\s*#faf5ec/i);
-  assert.match(appWxss, /--mp-accent:\s*#e2702a/i);
-  assert.match(appWxss, /--mp-surface:\s*#fffdf9/i);
+  assert.match(appWxss, /--mp-bg:\s*#f4f4f7/i);
+  assert.match(appWxss, /--mp-accent:\s*#4a52c9/i);
+  assert.match(appWxss, /--mp-surface:\s*#ffffff/i);
+  assert.match(appWxss, /--mp-shadow-card/);
   const surfaces = [
     "pages/home/index.wxml",
     "pages/home/index.wxss",

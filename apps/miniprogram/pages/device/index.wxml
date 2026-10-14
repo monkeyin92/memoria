@@ -51,25 +51,27 @@
         <text class="trial-caption">{{devicePlaceName}} · {{online ? '在线' : '离线'}}</text>
 
         <view wx:if="{{trialSettingsVisible}}" class="trial-inset">
-          <view class="trial-inset-row">
-            <view class="device-setting-copy">
-              <text class="trial-inset-label">安全提醒订阅</text>
-              <text class="trial-caption">{{safetySubscribeHelper}}</text>
+          <block wx:if="{{subscriptionPushEnabled}}">
+            <view class="trial-inset-row">
+              <view class="device-setting-copy">
+                <text class="trial-inset-label">安全提醒</text>
+                <text class="trial-caption">{{safetySubscribeHelper}}</text>
+              </view>
+              <switch
+                checked="{{safetySubscribeKnown && safetySubscribeOn}}"
+                color="#4A52C9"
+                disabled="{{!safetySubscribeKnown || safetySubscribeBusy}}"
+                bindchange="onSafetySubscribeChange"
+              />
             </view>
-            <switch
-              checked="{{safetySubscribeKnown && safetySubscribeOn}}"
-              color="#E2702A"
-              disabled="{{!safetySubscribeKnown || safetySubscribeBusy}}"
-              bindchange="onSafetySubscribeChange"
-            />
-          </view>
-          <text
-            wx:if="{{safetySubscribeOffCaption}}"
-            class="trial-caption trial-inset-caption {{safetySubscribeKnown ? '' : 'is-action'}}"
-            bindtap="retrySafetySubscribeState"
-          >{{safetySubscribeOffCaption}}</text>
+            <text
+              wx:if="{{safetySubscribeOffCaption}}"
+              class="trial-caption trial-inset-caption {{safetySubscribeKnown ? '' : 'is-action'}}"
+              bindtap="retrySafetySubscribeState"
+            >{{safetySubscribeOffCaption}}</text>
+          </block>
           <view class="trial-inset-row" bindtap="openLimitsSheet">
-            <text class="trial-inset-label">夜间时段</text>
+            <text class="trial-inset-label">安静时段</text>
             <text class="trial-inset-value">{{sessionLimits.quietHoursLabel || '21:00 – 07:00'}} ›</text>
           </view>
           <view class="trial-inset-row">
@@ -298,7 +300,7 @@
           <text class="row-meta">{{item.minor_display_name}}：{{item.message}}</text>
           <text class="caption">{{item.occurred_at}}</text>
         </view>
-        <button wx:if="{{elderCrisisPush.enabled && !trialSettingsVisible}}" class="secondary-button card-action" bindtap="enableElderCrisisPush">订阅安全提醒</button>
+        <button wx:if="{{subscriptionPushEnabled && elderCrisisPush.enabled && !trialSettingsVisible}}" class="secondary-button card-action" bindtap="enableElderCrisisPush">开启安全提醒</button>
       </view>
 
       <view wx:if="{{sensitiveEntries.length > 0}}" class="list">
@@ -411,7 +413,7 @@
         <button class="primary-button sheet-action" loading="{{settingsSaving}}" disabled="{{settingsSaving}}" bindtap="confirmWakeSheet">保存</button>
       </view>
 
-      <!-- 人格分配底部抽屉：按使用人选择内置伙伴或自建人格，或恢复默认 -->
+      <!-- 人格分配底部抽屉：按使用人选择内置角色或自建人格，或恢复默认 -->
       <view wx:if="{{personaSheetVisible}}" class="sheet-mask" bindtap="closePersonaSheet" catchtouchmove="noop"></view>
       <view wx:if="{{personaSheetVisible}}" class="sheet device-sheet">
         <view class="sheet-grab"></view>

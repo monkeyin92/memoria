@@ -158,6 +158,7 @@ Page({
     guardianError: "",
     pinnedCrisisAlerts: [],
     crisisPush: { enabled: false, templateId: "", explanation: "" },
+    subscriptionPushEnabled: require("../../config").SUBSCRIPTION_PUSH_ENABLED,
   },
 
   /*

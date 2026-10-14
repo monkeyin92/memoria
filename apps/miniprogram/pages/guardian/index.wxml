@@ -43,11 +43,11 @@
     <view class="l2-card">
       <view class="card-lead">
         <glass-icon name="family" size="72"></glass-icon>
-        <text class="l2-card-title">绑定家人的设备</text>
+        <text class="l2-card-title">绑定孩子的设备</text>
       </view>
-      <text class="l2-card-sub">打开家人的「我的」，复制「账号编号」后填在这里。生成的 8 位码由家人本人确认。</text>
-      <text class="field-label">家人账号编号</text>
-      <input class="field-input" value="{{minorUserId}}" placeholder="家人账号编号" bindinput="onMinorUserId" />
+      <text class="l2-card-sub">打开孩子的「我的」，复制「账号编号」后填在这里。生成的 8 位码由孩子本人确认。</text>
+      <text class="field-label">孩子账号编号</text>
+      <input class="field-input" value="{{minorUserId}}" placeholder="孩子账号编号" bindinput="onMinorUserId" />
       <button class="primary-button empty-button" loading="{{working}}" disabled="{{!minorUserId || !configOpen}}" bindtap="createLink">生成绑定码</button>
       <text wx:if="{{!configOpen}}" class="caption">{{configNote}}</text>
       <view wx:if="{{createdBindingCode}}" class="binding-result">
@@ -59,7 +59,7 @@
 
     <block wx:if="{{pendingLinks.length}}">
       <view class="section-head">
-        <text class="section-head-title">等待家人确认</text>
+        <text class="section-head-title">等待孩子确认</text>
       </view>
       <view wx:for="{{pendingLinks}}" wx:key="linkId" class="l2-card">
         <text class="l2-card-title">{{item.displayName}}</text>
@@ -152,7 +152,7 @@
     <view wx:elif="{{summaryState === 'ready'}}" class="l2-card">
       <view class="kept-head">
         <glass-icon name="chart" size="72"></glass-icon>
-        <text class="l2-card-title">家人的成长小结 · 本周</text>
+        <text class="l2-card-title">孩子的成长小结 · 本周</text>
         <text class="pill pill-teal">不含对话原文</text>
       </view>
       <text class="caption">{{summary.periodLabel}}</text>
@@ -166,13 +166,13 @@
       <text class="caption">不含对话原文，也不提供心理诊断或严重度评分。</text>
     </view>
 
-    <view wx:if="{{crisisPush.enabled}}" class="l2-card">
+    <view wx:if="{{subscriptionPushEnabled && crisisPush.enabled}}" class="l2-card">
       <view class="card-lead">
         <glass-icon name="bell" size="72"></glass-icon>
-        <text class="l2-card-title">订阅安全提醒</text>
+        <text class="l2-card-title">安全提醒</text>
       </view>
       <text class="l2-card-sub">{{crisisPush.explanation}}</text>
-      <button size="mini" bindtap="enableCrisisPush">订阅安全提醒</button>
+      <button size="mini" bindtap="enableCrisisPush">开启安全提醒</button>
     </view>
 
     <block wx:if="{{notifications.length}}">

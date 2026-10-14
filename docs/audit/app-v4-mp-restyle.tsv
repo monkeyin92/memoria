@@ -7,3 +7,4 @@ ts	phase	decision	why	evidence	result
 2026-10-14T15:46:07Z	frame	Monkey acceptance: exact v4 look, side-by-side every page, functional+perf numbers, fix diffs before PR	operator raised the visual parity bar	user follow-up	predicate tightened
 2026-10-14T15:53:27Z	frame	Monkey exact-parity bar: side-by-side every page, self-check, functional+perf numbers	operator acceptance raised	user follow-up	predicate tightened
 2026-10-14T15:53:27Z	harness	v4-parity compare+fixtures; side-by-sides under mp-screenshots; home wxml port started	build the lever before page loop	apps/miniprogram/scripts/v4-parity/	INCONCLUSIVE actual-vs-design until MP fixtures replace design HTML exports
+2026-10-14T15:55:52Z	inventory	applied explore findings: guardian 孩子 copy, hide subscribe UI, row-value wrap, bind swiper, persona-custom wxss, memory/child-memory promises	Map home data bindings + Inventory copy and bugs agents	bc-d11e8fe2 bc-d6e1227e	VERIFIED forbidden-copy green

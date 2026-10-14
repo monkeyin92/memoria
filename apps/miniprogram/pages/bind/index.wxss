@@ -274,20 +274,22 @@
   text-align: left;
 }
 
-/* 陪伴伙伴：左右滑动的卡片，两侧露出并压暗，当前卡片放大 */
+/* 角色卡片：左右滑动，两侧露出并压暗，当前卡片放大 */
 .persona-hint {
   margin-top: 0;
 }
 
 .persona-swiper {
-  height: 720rpx;
-  margin: 8rpx -32rpx 0;
+  height: auto;
+  min-height: 560rpx;
+  margin: 8rpx 0 0;
 }
 
 .persona-slide {
   display: flex;
   align-items: center;
   justify-content: center;
+  height: auto;
 }
 
 .persona-card {
@@ -297,8 +299,9 @@
   flex-direction: column;
   align-items: center;
   width: 100%;
-  height: 680rpx;
-  margin: 0 -18rpx;
+  height: auto;
+  min-height: 520rpx;
+  margin: 0;
   padding: 36rpx 32rpx 28rpx;
   border-radius: var(--mp-radius-card);
   background: linear-gradient(180deg, var(--role-soft) 0%, rgba(255, 255, 255, 0.92) 62%);
@@ -327,7 +330,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 280rpx;
+  min-height: 200rpx;
+  height: auto;
+  padding: 16rpx 0;
 }
 
 .persona-name {

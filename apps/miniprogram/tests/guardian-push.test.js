@@ -79,9 +79,9 @@ test("enabled push prompts for the crisis template and posts an accepted result"
   const config = await guardianPush.loadCrisisPushConfig(api);
   assert.equal(config.enabled, true);
   assert.equal(config.templateId, "tmpl-crisis");
-  assert.match(config.explanation, /订阅安全提醒/);
+  assert.match(config.explanation, /开启安全提醒|安全提醒/);
   assert.match(config.explanation, /不含任何对话内容/);
-  assert.equal(guardianPush.PARENT_SUBSCRIBE_LABEL, "订阅安全提醒");
+  assert.equal(guardianPush.PARENT_SUBSCRIBE_LABEL, "开启安全提醒");
 
   const outcome = await guardianPush.subscribeCrisisAlerts({ config, api, wxApi: wx });
 
@@ -159,9 +159,9 @@ test("guardian page wires the subscribe prompt to a tap and keeps alerts visible
   const template = fs.readFileSync(path.join(root, "pages/guardian/index.wxml"), "utf8");
   const api = fs.readFileSync(path.join(root, "utils/api.js"), "utf8");
 
-  assert.match(template, /wx:if="\{\{crisisPush\.enabled\}\}"/);
+  assert.match(template, /subscriptionPushEnabled && crisisPush\.enabled/);
   assert.match(template, /bindtap="enableCrisisPush"/);
-  assert.match(template, /订阅安全提醒/);
+  assert.match(template, /安全提醒/);
   assert.doesNotMatch(template, /危机提醒/);
   assert.match(template, /需要及时关注/);
   assert.match(script, /guardianPush\.subscribeCrisisAlerts/);
@@ -208,21 +208,21 @@ test("settings toggle loads remaining > 0 as on and opt_out clears the ledger", 
   ]);
   assert.equal(
     guardianPush.SAFETY_SUBSCRIBE_HELPER,
-    "可能通过微信推送提醒，打开小程序首页会置顶显示",
+    "家长打开小程序时首页会置顶显示",
   );
-  assert.equal(guardianPush.SAFETY_SUBSCRIBE_OFF_TITLE, "关闭安全提醒推送？");
+  assert.equal(guardianPush.SAFETY_SUBSCRIBE_OFF_TITLE, "关闭安全提醒？");
   assert.equal(
     guardianPush.SAFETY_SUBSCRIBE_OFF_CONFIRM,
-    "关闭后，我们不再通过微信给你推送安全提醒。如果孩子聊到需要你关注的话题，只会在你下次打开小程序时置顶显示，你可能不能及时知道。",
+    "关闭后，我们不再通过微信提醒你。如果孩子聊到需要你关注的话题，只会在你下次打开小程序时置顶显示，你可能不能及时知道。",
   );
   assert.equal(guardianPush.SAFETY_SUBSCRIBE_OFF_KEEP, "保持开启");
   assert.equal(guardianPush.SAFETY_SUBSCRIBE_OFF_PROCEED, "仍要关闭");
   assert.equal(
     guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION,
-    "安全提醒推送已关闭，打开小程序仍会看到置顶提醒。",
+    "安全提醒已关闭，打开小程序仍会看到置顶提醒。",
   );
-  assert.doesNotMatch(guardianPush.SAFETY_SUBSCRIBE_OFF_CONFIRM, /无法再推送|永久关闭|危机/);
-  assert.doesNotMatch(guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION, /无法再推送|永久关闭|危机/);
+  assert.doesNotMatch(guardianPush.SAFETY_SUBSCRIBE_OFF_CONFIRM, /无法再推送|永久关闭|危机|推送/);
+  assert.doesNotMatch(guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION, /无法再推送|永久关闭|危机|推送/);
 });
 
 test("subscription-state query failure is unknown, not pretended off", async () => {
@@ -249,8 +249,9 @@ test("subscription-state query failure is unknown, not pretended off", async () 
 test("device settings toggle uses ledger state and real opt-out, not UI-only off", () => {
   const script = fs.readFileSync(path.join(root, "pages/device/index.js"), "utf8");
   const template = fs.readFileSync(path.join(root, "pages/device/index.wxml"), "utf8");
-  assert.match(template, /安全提醒订阅/);
-  assert.match(template, /safetySubscribeHelper|可能通过微信推送提醒/);
+  assert.match(template, /subscriptionPushEnabled/);
+  assert.match(template, /安全提醒/);
+  assert.match(template, /safetySubscribeHelper|家长打开小程序时首页会置顶显示/);
   assert.match(template, /safetySubscribeOffCaption/);
   assert.match(template, /safetySubscribeKnown && safetySubscribeOn/);
   assert.match(template, /disabled="\{\{!safetySubscribeKnown \|\| safetySubscribeBusy\}\}"/);

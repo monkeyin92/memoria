@@ -9,7 +9,7 @@
  * - 设置页关闭走 opt_out：清零服务端剩余次数。微信一次性订阅无法在客户端撤销。
  */
 
-const PARENT_SUBSCRIBE_LABEL = "订阅安全提醒";
+const PARENT_SUBSCRIBE_LABEL = "开启安全提醒";
 
 const SAFETY_SUBSCRIBE_HELPER =
   "家长打开小程序时首页会置顶显示";

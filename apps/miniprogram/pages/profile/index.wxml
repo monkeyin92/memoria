@@ -131,7 +131,7 @@
       <view class="list-row" bindtap="copyAccountId">
         <view class="row-copy">
           <text class="row-title">账号编号</text>
-          <text class="row-meta">邀请家人时可提供给对方。{{accountId}}</text>
+          <text class="row-meta">邀请监护人时可提供给对方。{{accountId}}</text>
         </view>
       </view>
       <view class="list-row" bindtap="logout">

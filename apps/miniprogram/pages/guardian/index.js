@@ -31,7 +31,7 @@ const CONSENT_DEFINITIONS = Object.freeze([
   {
     kind: "child_archive",
     label: "长期记忆",
-    description: "兴趣等白名单内容；可在首页「孩子的记忆」里查看和删除",
+    description: "兴趣等白名单内容；可在首页「孩子的记忆」里按天整理",
     policyVersion: "child-archive-v1",
   },
 ]);
@@ -115,6 +115,7 @@ Page({
     minorDeleting: false,
     minorDeleteError: "",
     crisisPush: { enabled: false, templateId: "", explanation: "" },
+    subscriptionPushEnabled: require("../../config").SUBSCRIPTION_PUSH_ENABLED,
   },
 
   onLoad() {

@@ -67,14 +67,16 @@
 
 /* L3 行内数值：唤醒词、网络、备注的当前值 */
 .row-value {
-  flex-shrink: 0;
-  max-width: 240rpx;
-  overflow: hidden;
-  color: #474e54;
+  flex: 1;
+  min-width: 0;
+  max-width: none;
+  overflow: visible;
   color: var(--mp-ink-2);
   font-size: 26rpx;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.45;
+  text-align: right;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .row-value-warn {

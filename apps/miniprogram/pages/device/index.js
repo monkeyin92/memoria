@@ -23,6 +23,7 @@ const {
 } = require("../../utils/quiet-hours");
 const { offersSafetySubscribe } = require("../../utils/trial-device-card");
 const { BACKUP_RETENTION_LINE, PRIVACY_LINE } = require("../../utils/child-memory");
+const { SUBSCRIPTION_PUSH_ENABLED } = require("../../config");
 
 // 与绑定页的「单次使用时长」选项一致。
 const SESSION_MINUTE_OPTIONS = [15, 30, 45, 60];
@@ -297,6 +298,7 @@ Page({
     sensitiveEntries: [],
     sessionLimits: null,
     trialSettingsVisible: false,
+    subscriptionPushEnabled: SUBSCRIPTION_PUSH_ENABLED,
     safetySubscribeOn: false,
     safetySubscribeKnown: false,
     safetySubscribeBusy: false,
