@@ -47,8 +47,8 @@ class _RouteSpec:
     attempt_push: bool
 
 
-# Pin and push per deterministic decision. Each key's script comes from
-# script_for_decision, and a test locks these keys to the registry's.
+# Guardian event and push per deterministic decision. Each key's script comes
+# from script_for_decision, and a test locks these keys to the registry's.
 _DETERMINISTIC_ROUTES: Final[dict[SafetyDecision, _RouteSpec]] = {
     "crisis_self": _RouteSpec("crisis_support", notify_guardian=True, attempt_push=True),
     "support_victim": _RouteSpec("support_victim", notify_guardian=True, attempt_push=True),
