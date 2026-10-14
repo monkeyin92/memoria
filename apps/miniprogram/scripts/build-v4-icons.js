@@ -47,7 +47,7 @@ const ICONS = {
 };
 
 const VARIANTS = {
-  "tab-off": { stroke: "#7A7E92", fill: "none" },
+  "tab-off": { stroke: "#8E91A3", fill: "none" },
   "tab-on": { stroke: "#4A52C9", fill: "#EEEFFC" },
   accent: { stroke: "#4A52C9", fill: "none" },
   strong: { stroke: "#16182B", fill: "none" },
