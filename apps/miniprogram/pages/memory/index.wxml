@@ -1,132 +1,171 @@
-<view class="page-shell">
-  <text class="page-title">回顾</text>
-  <text class="page-lede">想记住的事，点确认后才会留下。</text>
+<view class="page-shell tab-page" style="{{statusBarStyle}}">
+  <text class="eyebrow">按天查看 · AI 整理</text>
+  <text class="page-title">对话回顾</text>
+  <text class="page-lede">{{guardianMode ? '这里只有摘要，不显示原话，也没有录音。' : '想记住的事，点确认后才会留下。'}}</text>
 
-  <view wx:if="{{!authenticated}}">
+  <view wx:if="{{!authenticated}}" class="memory-guest">
     <view class="notice">登录后打开你的专属回顾。未登录时不会读取或展示任何对话整理内容。</view>
-    <button class="primary-button empty-button" bindtap="loginForReview">微信登录后打开</button>
+    <button class="primary-button" bindtap="loginForReview">微信登录后打开</button>
   </view>
 
   <block wx:else>
     <block wx:if="{{pinnedCrisisAlerts.length}}">
-      <view
-        wx:for="{{pinnedCrisisAlerts}}"
-        wx:key="notificationId"
-        class="notice notice-warn"
-      >
-        <text class="l2-card-title">安全风险提醒 · {{item.minorDisplayName}}</text>
-        <text class="l2-card-sub">{{item.message}}</text>
-        <text class="caption">{{item.occurredAt}}</text>
+      <view wx:for="{{pinnedCrisisAlerts}}" wx:key="notificationId" class="card card-xl attention-card">
+        <view class="attention-mascot"><image class="attention-mascot-img" src="/assets/ui/v4/mascot-calm.jpg" mode="widthFix" /></view>
+        <text class="attention-title">{{item.message}}</text>
+        <text class="attention-time">{{item.timeLabel}}</text>
+        <text class="attention-well">孩子在聊天中提到了让 TA 不舒服的事。为了保护孩子，这里不展示对话内容。</text>
+      </view>
+      <text class="section-title">可以这样和孩子聊</text>
+      <view class="card attention-tips">
+        <view class="attention-tip">
+          <text class="attention-tip-num">1</text>
+          <view class="attention-tip-copy">
+            <text class="attention-tip-title">找一个放松的时间</text>
+            <text class="attention-tip-sub">比如睡前或散步时，不要急着追问</text>
+          </view>
+        </view>
+        <view class="attention-tip">
+          <text class="attention-tip-num">2</text>
+          <view class="attention-tip-copy">
+            <text class="attention-tip-title">先听，少评判</text>
+            <text class="attention-tip-sub">“愿意和我说说今天的事吗？”</text>
+          </view>
+        </view>
+        <view class="attention-tip">
+          <text class="attention-tip-num">3</text>
+          <view class="attention-tip-copy">
+            <text class="attention-tip-title">告诉孩子你在</text>
+            <text class="attention-tip-sub">“不管发生什么，你都可以来找我。”</text>
+          </view>
+        </view>
       </view>
     </block>
 
-    <view wx:if="{{subscriptionPushEnabled && crisisPush.enabled}}" class="l2-card">
+    <view wx:if="{{subscriptionPushEnabled && crisisPush.enabled}}" class="card memory-card">
       <view class="card-lead">
         <mp-icon name="bell"></mp-icon>
         <text class="l2-card-title">安全提醒</text>
       </view>
       <text class="l2-card-sub">{{crisisPush.explanation}}</text>
-      <button size="mini" bindtap="enableCrisisPush">开启安全提醒</button>
+      <button class="secondary-button btn-sm" bindtap="enableCrisisPush">开启安全提醒</button>
     </view>
 
-    <view class="seg">
+    <view class="seg memory-seg">
       <view class="seg-item {{memoryTab === 'reviews' ? 'seg-item-on' : ''}}" bindtap="showReviews">日常回顾</view>
       <view class="seg-item {{memoryTab === 'memories' ? 'seg-item-on' : ''}}" bindtap="showMemories">记住的事{{pendingCount ? ' · ' + pendingCount : ''}}</view>
     </view>
 
     <text wx:if="{{error}}" class="error-text">{{error}}</text>
-    <view wx:if="{{loading}}" class="card"><text class="loading-text">正在读取回顾…</text></view>
+    <view wx:if="{{loading}}" class="card memory-card"><text class="loading-text">正在读取回顾…</text></view>
 
     <block wx:elif="{{memoryTab === 'reviews'}}">
-      <view wx:if="{{guardianMode}}" class="notice">这台机器人的使用人是你绑定的孩子。为保护孩子的隐私，这里只显示 AI 的概括，不会显示孩子的原话。</view>
       <view wx:if="{{guardianError}}" class="notice notice-warn">{{guardianError}}</view>
-      <button class="primary-button memory-summarize" loading="{{summarizing}}" bindtap="summarizeSelectedDay">生成 / 更新选中日期的回顾</button>
-      <button class="secondary-button memory-share" open-type="share" data-date="{{selectedDate}}">分享选中日期的回顾</button>
-      <view wx:if="{{!days.length}}" class="l2-card memory-empty">
-        <mp-icon name="note" size="176"></mp-icon>
+      <view wx:if="{{days.length}}" class="card memory-strip">
+        <view
+          wx:for="{{days}}"
+          wx:key="date"
+          wx:if="{{index < 6}}"
+          class="memory-strip-day {{selectedDate === item.date ? 'memory-strip-on' : ''}}"
+          data-date="{{item.date}}"
+          bindtap="chooseDay"
+        >
+          <text class="memory-strip-week">{{item.weekday}}</text>
+          <text class="memory-strip-num">{{item.dayNum}}</text>
+        </view>
+      </view>
+      <view wx:else class="card memory-card memory-empty">
+        <mp-icon name="note" size="112"></mp-icon>
         <text class="l2-card-title">还没有可回顾的内容</text>
         <text class="l2-card-sub">{{guardianMode ? '孩子还没有聊过天，或者还没有开启孩子的长期记忆。' : '这里还空空的，没关系。需要时再来看看，一切由你决定。'}}</text>
-        <text class="caption">{{guardianMode ? '孩子和机器人聊几句后，再回来看看。' : '在设备上说几句后，再回来看看。AI 整理可能有偏差，摘要按天整理。'}}</text>
+        <text class="caption">{{guardianMode ? '孩子和机器人聊几句后，再回来看看。' : '在设备上说几句后，再回来看看。'}}</text>
         <view class="button-row">
           <button class="secondary-button btn-sm" bindtap="goCompanion">去和角色聊聊</button>
         </view>
       </view>
-      <view wx:for="{{days}}" wx:key="date" class="memory-day">
-        <text class="timeline-time">{{item.date}}</text>
-        <view class="timeline-card {{selectedDate === item.date ? 'memory-day-selected' : ''}}" data-date="{{item.date}}" bindtap="chooseDay">
-          <view class="timeline-dot"></view>
-          <view class="memory-day-copy">
-            <text class="pill pill-neutral">AI 整理</text>
-            <text class="l2-card-title">{{item.title}}</text>
-            <text class="l2-card-sub">{{item.overview}}</text>
-            <view class="memory-tags">
-              <text wx:for="{{item.highlights}}" wx:for-item="tag" wx:key="*this" class="pill pill-neutral memory-tag">{{tag}}</text>
-            </view>
-            <text wx:if="{{item.suggestion}}" class="caption">{{item.suggestion}}</text>
-          </view>
+      <view
+        wx:for="{{days}}"
+        wx:key="date"
+        class="card memory-day"
+        data-date="{{item.date}}"
+        bindtap="chooseDay"
+      >
+        <view class="memory-day-head">
+          <text class="memory-day-label">{{item.dayLabel}}</text>
+          <text class="memory-day-meta">{{item.dateLabel}} · {{item.title}}</text>
         </view>
+        <view class="memory-line"><view class="memory-dot"></view><text class="memory-line-text">{{item.overview}}</text></view>
+        <view wx:for="{{item.highlights}}" wx:for-item="line" wx:key="*this" class="memory-line">
+          <view class="memory-dot"></view><text class="memory-line-text">{{line}}</text>
+        </view>
+        <text wx:if="{{item.suggestion}}" class="caption">{{item.suggestion}}</text>
       </view>
-      <view class="notice">AI 整理可能有偏差。未确认的内容不会自动变成长期记忆。</view>
-      <block wx:if="{{!guardianMode}}">
-      <view class="fold">
-        <text class="fold-summary">实际听到的回复</text>
-        <block wx:if="{{heardTurns.length}}">
-          <view wx:for="{{heardTurns}}" wx:key="event_id" class="diagnostic">
-            <text class="recap-body">{{item.text}}</text>
-            <text class="caption">{{item.approximate ? '近似播放记录' : '精确播放记录'}}</text>
-          </view>
-        </block>
-        <text wx:else class="caption">还没有可展示的听到记录。</text>
+      <view wx:if="{{days.length}}" class="button-row memory-actions">
+        <button class="primary-button btn-sm" loading="{{summarizing}}" bindtap="summarizeSelectedDay">整理选中这一天</button>
+        <button class="secondary-button btn-sm" open-type="share" data-date="{{selectedDate}}">分享这一天</button>
       </view>
+      <text class="caption memory-note">AI 整理可能有偏差。未确认的内容不会自动变成长期记忆。</text>
 
-      <view class="section-head conversation-section-head">
-        <text class="section-head-title">最近对话</text>
-        <text class="caption">仅显示当前主体可见内容</text>
-      </view>
-      <view wx:if="{{conversationSessions.length}}" class="conversation-list">
-        <view
-          wx:for="{{conversationSessions}}"
-          wx:key="session_id"
-          class="l2-card conversation-card {{selectedConversationSessionId === item.session_id ? 'conversation-card-selected' : ''}}"
-          data-session-id="{{item.session_id}}"
-          bindtap="openConversation"
-        >
-          <view class="conversation-card-head">
-            <text class="l2-card-title">{{item.occurred_label}}</text>
-            <text class="pill pill-neutral">{{item.turn_count}} 轮</text>
+      <block wx:if="{{!guardianMode}}">
+        <text class="section-title">实际听到的回复</text>
+        <view class="card memory-card">
+          <block wx:if="{{heardTurns.length}}">
+            <view wx:for="{{heardTurns}}" wx:key="event_id" class="memory-heard">
+              <text class="l2-card-sub">{{item.text}}</text>
+              <text class="caption">{{item.approximate ? '近似播放记录' : '精确播放记录'}}</text>
+            </view>
+          </block>
+          <text wx:else class="caption">还没有可展示的听到记录。</text>
+        </view>
+
+        <view class="section-head">
+          <text class="section-head-title">最近对话</text>
+          <text class="caption">仅显示当前主体可见内容</text>
+        </view>
+        <view wx:if="{{conversationSessions.length}}">
+          <view
+            wx:for="{{conversationSessions}}"
+            wx:key="session_id"
+            class="card memory-card conversation-card {{selectedConversationSessionId === item.session_id ? 'conversation-card-selected' : ''}}"
+            data-session-id="{{item.session_id}}"
+            bindtap="openConversation"
+          >
+            <view class="conversation-card-head">
+              <text class="l2-card-title">{{item.occurred_label}}</text>
+              <text class="pill pill-neutral">{{item.turn_count}} 轮</text>
+            </view>
+            <text wx:if="{{item.preview}}" class="l2-card-sub">{{item.preview}}</text>
+            <text class="section-link">打开对话详情</text>
           </view>
-          <text wx:if="{{item.preview}}" class="l2-card-sub">{{item.preview}}</text>
-          <text class="section-link">打开对话详情 ›</text>
         </view>
-      </view>
-      <view wx:elif="{{conversationSessionsUnavailable}}" class="notice">最近对话暂时无法加载，请稍后重试。</view>
-      <view wx:elif="{{!loading}}" class="notice">还没有可展示的对话记录。</view>
-      <view wx:if="{{conversationLoading}}" class="card"><text class="loading-text">正在读取对话详情…</text></view>
-      <view wx:if="{{selectedConversationSessionId && !conversationLoading}}" class="conversation-detail">
-        <view wx:for="{{conversationTurns}}" wx:key="turn_id" class="conversation-turn">
-          <text wx:if="{{item.owner_text}}" class="conversation-speaker">你</text>
-          <text wx:if="{{item.owner_text}}" class="conversation-text">{{item.owner_text}}</text>
-          <text wx:if="{{item.assistant_text}}" class="conversation-speaker assistant-speaker">Memoria</text>
-          <text wx:if="{{item.assistant_text}}" class="conversation-text assistant-text">{{item.assistant_text}}</text>
-          <text wx:if="{{item.assistant_text}}" class="caption">{{item.assistant_approximate === false ? '精确播放记录' : '近似播放记录'}}</text>
+        <view wx:elif="{{conversationSessionsUnavailable}}" class="notice">最近对话暂时无法加载，请稍后重试。</view>
+        <view wx:elif="{{!loading}}" class="notice">还没有可展示的对话记录。</view>
+        <view wx:if="{{conversationLoading}}" class="card memory-card"><text class="loading-text">正在读取对话详情…</text></view>
+        <view wx:if="{{selectedConversationSessionId && !conversationLoading}}" class="card memory-card">
+          <view wx:for="{{conversationTurns}}" wx:key="turn_id" class="conversation-turn">
+            <text wx:if="{{item.owner_text}}" class="conversation-speaker">你</text>
+            <text wx:if="{{item.owner_text}}" class="conversation-text">{{item.owner_text}}</text>
+            <text wx:if="{{item.assistant_text}}" class="conversation-speaker assistant-speaker">Memoria</text>
+            <text wx:if="{{item.assistant_text}}" class="conversation-text">{{item.assistant_text}}</text>
+            <text wx:if="{{item.assistant_text}}" class="caption">{{item.assistant_approximate === false ? '精确播放记录' : '近似播放记录'}}</text>
+          </view>
+          <text wx:if="{{!conversationTurns.length}}" class="caption">这段对话没有可展示的合格内容。</text>
         </view>
-        <text wx:if="{{!conversationTurns.length}}" class="caption">这段对话没有可展示的合格内容。</text>
-      </view>
       </block>
     </block>
 
     <block wx:else>
       <view wx:if="{{guardianMode}}" class="notice">这里是孩子和机器人聊天时可能被记住的事。只有你点了「确认记住」的，机器人才会在以后的聊天里提起；不想让它记的，点「不记这个」。</view>
       <view wx:if="{{guardianMode && guardianError}}" class="notice notice-warn">{{guardianError}}</view>
-      <view class="memory-chips">
-        <view class="pill {{memoryFilter === 'all' ? 'pill-teal' : 'pill-neutral'}}" data-filter="all" bindtap="setMemoryFilter">全部</view>
-        <view class="pill {{memoryFilter === 'pending' ? 'pill-teal' : 'pill-neutral'}}" data-filter="pending" bindtap="setMemoryFilter">待你确认的记忆 {{pendingCount}}</view>
-        <view class="pill {{memoryFilter === 'confirmed' ? 'pill-teal' : 'pill-neutral'}}" data-filter="confirmed" bindtap="setMemoryFilter">已确认的记忆</view>
+      <view class="seg memory-filter">
+        <view class="seg-item {{memoryFilter === 'all' ? 'seg-item-on' : ''}}" data-filter="all" bindtap="setMemoryFilter">全部</view>
+        <view class="seg-item {{memoryFilter === 'pending' ? 'seg-item-on' : ''}}" data-filter="pending" bindtap="setMemoryFilter">待你确认的记忆 {{pendingCount}}</view>
+        <view class="seg-item {{memoryFilter === 'confirmed' ? 'seg-item-on' : ''}}" data-filter="confirmed" bindtap="setMemoryFilter">已确认的记忆</view>
       </view>
 
       <block wx:if="{{visibleMemories.length}}">
-        <view wx:for="{{visibleMemories}}" wx:key="id" class="l2-card">
-          <text class="pill {{item.pending ? 'pill-amber' : 'pill-teal'}}">{{item.pending ? '待你确认' : '你已确认'}}</text>
+        <view wx:for="{{visibleMemories}}" wx:key="id" class="card memory-card">
+          <text class="pill {{item.pending ? 'pill-draft' : 'pill-neutral'}}">{{item.pending ? '待你确认' : '你已确认'}}</text>
           <text class="l2-card-title">{{item.title}}</text>
           <text class="l2-card-sub">{{item.body}}</text>
           <view wx:if="{{item.pending}}" class="button-row">
@@ -138,21 +177,21 @@
           </view>
         </view>
       </block>
-      <view wx:else class="l2-card memory-empty">
-        <mp-icon name="note" size="176"></mp-icon>
+      <view wx:else class="card memory-card memory-empty">
+        <mp-icon name="note" size="112"></mp-icon>
         <text class="l2-card-title">{{memoryFilter === 'pending' ? '待确认内容已处理完' : '这里还没有内容'}}</text>
         <text class="l2-card-sub">{{guardianMode ? '孩子让机器人记住的事、聊到的学习进度，会先出现在这里等你确认。' : '这里还空空的，没关系。需要时再来看看，一切由你决定。'}}</text>
         <view class="button-row">
           <button class="secondary-button btn-sm" bindtap="openArchive">打开我的记忆档案</button>
         </view>
       </view>
-      <view class="l2-card list-row memory-archive-row" bindtap="openArchive">
-        <view class="row-icon"><mp-icon name="note"></mp-icon></view>
+      <view class="card list-row memory-archive-row" bindtap="openArchive">
+        <mp-icon name="note"></mp-icon>
         <view class="row-copy">
           <text class="row-title">打开我的记忆档案</text>
           <text class="row-meta">已确认的偏好、来源与版本</text>
         </view>
-        <text class="row-chevron">›</text>
+        <image class="row-chev" src="/assets/ui/v4/chev-ink.svg" />
       </view>
     </block>
   </block>

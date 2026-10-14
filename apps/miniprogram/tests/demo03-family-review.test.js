@@ -572,7 +572,7 @@ test("DEMO-03 keeps share handlers; trial home drops the daily summary card", ()
   assert.match(homeScript, /onShareAppMessage/);
   assert.match(homeScript, /dailySummaryText/);
 
-  assert.match(memory, /分享选中日期的回顾/);
+  assert.match(memory, /分享这一天/);
   assert.match(memory, /open-type="share"/);
   assert.match(memory, /\{\{item\.preview\}\}/);
   assert.match(memoryScript, /onShareAppMessage/);

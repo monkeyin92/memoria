@@ -1,5 +1,6 @@
 {
   "navigationBarTitleText": "回顾",
+  "navigationStyle": "custom",
   "enablePullDownRefresh": true,
   "usingComponents": {
     "mp-icon": "/components/mp-icon/index"
