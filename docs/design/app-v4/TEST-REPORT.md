@@ -360,7 +360,7 @@ Older tests that asserted v3 strings, colours or structure now assert the v4 equ
 ## Gaps
 
 - Nothing ran in WeChat DevTools, through miniprogram-automator or on a phone. Images and timings come from Chrome on the VM, and native components such as `slider`, `switch` and `picker` are approximations.
-- CI has not run `v4-layout.test.js` yet. If the runner lacks Chrome it skips, and if it lacks CJK fonts the text metrics differ from these results.
+- CI runs only on pull requests, so it has not run `v4-layout.test.js` yet. A clean `npm ci --ignore-scripts` of this tree on the VM passes 472 of 472, with the 130 layouts checked. If the CI runner lacks Chrome the layout test skips, and if it lacks CJK fonts the text metrics differ from these results.
 - No screen is pixel-identical to the design. diffRatio stays between 0.245 and 0.647, mostly because real data changes how much content each screen holds and where it lands.
 - The design and the task brief assume a daily usage cap, but the device enforces only a per-session limit. The device slider now says 单次上限. The home ring still reads 「今天聊了」 above 「30 分钟上限」, which a parent may take as a daily figure. Relabelling the ring or adding a daily cap to the backend is a product decision.
 - Internal names still say daily. These are `onTrialDailyCapSlider` and `_saveDailyCapMinutes` in `pages/device/index.js`, and the unrendered `usageLabel` 「每日上限 N 分钟」 in `utils/trial-device-card.js`.
