@@ -126,88 +126,44 @@ class OfflineMenuMachine {
 public:
     OfflineMode mode() const { return mode_; }
     std::uint8_t menu_item() const { return menu_item_; }
-    bool retry_network() const { return retry_network_; }
 
     void Reset() {
         mode_ = OfflineMode::kInactive;
         menu_item_ = 1;
-        retry_network_ = false;
         reconnect_deadline_ms_ = 0;
         menu_idle_deadline_ms_ = 0;
-        from_menu_sleep_ = false;
     }
 
-    // First processed tap after chip deep sleep (or menu-idle sleep). Wake only.
-    OfflineMenuOutput OnDeepSleepWake(std::uint32_t now_ms, bool network_online) {
+    // The radio is down at reset, so an online wake is not a case here.
+    OfflineMenuOutput OnDeepSleepWake(std::uint32_t now_ms, bool in_quiet_hours) {
         OfflineMenuOutput out;
-        out.intercept = true;
-        if (network_online) {
-            Reset();
+        if (in_quiet_hours) {
             return out;
         }
         mode_ = OfflineMode::kAwakeReconnecting;
-        retry_network_ = true;
         reconnect_deadline_ms_ = now_ms + kOfflineReconnectTimeoutMs;
-        from_menu_sleep_ = false;
-        out.retry_network = true;
-        return out;
-    }
-
-    OfflineMenuOutput OnNetworkDown(std::uint32_t now_ms, bool in_conversation) {
-        OfflineMenuOutput out;
-        if (mode_ == OfflineMode::kPlaying || mode_ == OfflineMode::kPendingOnlineAfterStory ||
-            mode_ == OfflineMode::kMenu || mode_ == OfflineMode::kMidReconnecting ||
-            mode_ == OfflineMode::kAwakeReconnecting || mode_ == OfflineMode::kStandbyOffline) {
-            // Already offline-handling; keep retrying.
-            retry_network_ = true;
-            out.retry_network = true;
-            out.intercept = true;
-            return out;
-        }
-        if (in_conversation) {
-            mode_ = OfflineMode::kMidReconnecting;
-            retry_network_ = true;
-            reconnect_deadline_ms_ = now_ms + kOfflineReconnectTimeoutMs;
-            Push(out, kOfflineMidDrop);
-            Push(out, kOfflineMidAskParent);
-            Push(out, kOfflineMidRetry);
-            out.intercept = true;
-            out.retry_network = true;
-            return out;
-        }
-        // Idle/standby drop: silent background retry only.
-        mode_ = OfflineMode::kStandbyOffline;
-        retry_network_ = true;
-        reconnect_deadline_ms_ = 0;
         out.intercept = true;
         out.retry_network = true;
         return out;
     }
 
-    OfflineMenuOutput OnNetworkUp(std::uint32_t /*now_ms*/) {
-        OfflineMenuOutput out;
-        out.intercept = true;
-        switch (mode_) {
-            case OfflineMode::kPlaying:
-                mode_ = OfflineMode::kPendingOnlineAfterStory;
-                retry_network_ = false;
-                out.stop_retry_network = true;
-                return out;
-            case OfflineMode::kPendingOnlineAfterStory:
-                return out;
-            case OfflineMode::kMenu:
-            case OfflineMode::kMidReconnecting:
-            case OfflineMode::kAwakeReconnecting:
-            case OfflineMode::kStandbyOffline:
-                Push(out, kOnlineRestored);
-                Push(out, kOnlineRestoredChat);
-                Reset();
-                out.stop_retry_network = true;
-                return out;
-            case OfflineMode::kInactive:
-                break;
+    OfflineMenuOutput OnNetworkSample(std::uint32_t now_ms, bool online, bool in_conversation) {
+        const bool was_online = last_sample_online_;
+        last_sample_online_ = online;
+        if (was_online && !online) {
+            return OnNetworkDown(now_ms, in_conversation);
         }
-        return OfflineMenuOutput{};
+        if (!was_online && online) {
+            return OnNetworkUp(now_ms);
+        }
+        return {};
+    }
+
+    bool WantsTap(bool online, bool device_idle) const {
+        if (mode_ == OfflineMode::kInactive) {
+            return !online && device_idle;
+        }
+        return true;
     }
 
     OfflineMenuOutput OnTimer(std::uint32_t now_ms) {
@@ -234,8 +190,6 @@ public:
         if (mode_ == OfflineMode::kMenu && menu_idle_deadline_ms_ != 0 &&
             now_ms >= menu_idle_deadline_ms_) {
             Push(out, kOfflineMenuIdle);
-            from_menu_sleep_ = true;
-            retry_network_ = false;
             mode_ = OfflineMode::kInactive;
             menu_idle_deadline_ms_ = 0;
             reconnect_deadline_ms_ = 0;
@@ -268,7 +222,7 @@ public:
     // Quiet hours: caller must handle night soothe and not call this.
     // Online idle: caller uses TapWakeActionFor; this returns intercept=false.
     OfflineMenuOutput OnTap(std::uint32_t now_ms, std::uint32_t hold_ms, bool network_online,
-                            bool device_idle, bool in_conversation) {
+                            bool device_idle) {
         OfflineMenuOutput out;
         const bool long_press = OfflineIsLongPress(hold_ms);
 
@@ -281,7 +235,6 @@ public:
             menu_idle_deadline_ms_ = 0;
             out.intercept = true;
             out.retry_network = true;
-            retry_network_ = true;
             return out;
         }
 
@@ -333,16 +286,62 @@ public:
             return out;
         }
 
-        (void)in_conversation;
         return out;
     }
 
-    bool ConsumesTap() const {
-        return mode_ != OfflineMode::kInactive;
+private:
+    OfflineMenuOutput OnNetworkDown(std::uint32_t now_ms, bool in_conversation) {
+        OfflineMenuOutput out;
+        if (mode_ == OfflineMode::kPlaying || mode_ == OfflineMode::kPendingOnlineAfterStory ||
+            mode_ == OfflineMode::kMenu || mode_ == OfflineMode::kMidReconnecting ||
+            mode_ == OfflineMode::kAwakeReconnecting || mode_ == OfflineMode::kStandbyOffline) {
+            // Already offline-handling; keep retrying.
+            out.retry_network = true;
+            out.intercept = true;
+            return out;
+        }
+        if (in_conversation) {
+            mode_ = OfflineMode::kMidReconnecting;
+            reconnect_deadline_ms_ = now_ms + kOfflineReconnectTimeoutMs;
+            Push(out, kOfflineMidDrop);
+            Push(out, kOfflineMidAskParent);
+            Push(out, kOfflineMidRetry);
+            out.intercept = true;
+            out.retry_network = true;
+            return out;
+        }
+        // Idle/standby drop: silent background retry only.
+        mode_ = OfflineMode::kStandbyOffline;
+        reconnect_deadline_ms_ = 0;
+        out.intercept = true;
+        out.retry_network = true;
+        return out;
     }
 
-    bool from_menu_sleep() const { return from_menu_sleep_; }
-    void ClearMenuSleepFlag() { from_menu_sleep_ = false; }
+    OfflineMenuOutput OnNetworkUp(std::uint32_t /*now_ms*/) {
+        OfflineMenuOutput out;
+        out.intercept = true;
+        switch (mode_) {
+            case OfflineMode::kPlaying:
+                mode_ = OfflineMode::kPendingOnlineAfterStory;
+                out.stop_retry_network = true;
+                return out;
+            case OfflineMode::kPendingOnlineAfterStory:
+                return out;
+            case OfflineMode::kMenu:
+            case OfflineMode::kMidReconnecting:
+            case OfflineMode::kAwakeReconnecting:
+            case OfflineMode::kStandbyOffline:
+                Push(out, kOnlineRestored);
+                Push(out, kOnlineRestoredChat);
+                Reset();
+                out.stop_retry_network = true;
+                return out;
+            case OfflineMode::kInactive:
+                break;
+        }
+        return OfflineMenuOutput{};
+    }
 
 private:
     void Push(OfflineMenuOutput& out, const char* clip) {
@@ -390,10 +389,10 @@ public:
 private:
     OfflineMode mode_ = OfflineMode::kInactive;
     std::uint8_t menu_item_ = 1;
-    bool retry_network_ = false;
     std::uint32_t reconnect_deadline_ms_ = 0;
     std::uint32_t menu_idle_deadline_ms_ = 0;
-    bool from_menu_sleep_ = false;
+    // The station is down at power-on. The first offline sample is not an edge.
+    bool last_sample_online_ = false;
 };
 
 }  // namespace memoria

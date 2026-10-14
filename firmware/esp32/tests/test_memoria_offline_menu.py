@@ -55,21 +55,33 @@ int main() {
             printf("ok mode=%s item=%u\n", memoria::OfflineModeName(menu.mode()), menu.menu_item());
         } else if (strncmp(line, "wake ", 5) == 0) {
             unsigned now = 0;
-            int online = 0;
-            if (sscanf(line + 5, "%u %d", &now, &online) != 2) return 2;
-            print_out(menu.OnDeepSleepWake(now, online != 0));
+            int quiet = 0;
+            if (sscanf(line + 5, "%u %d", &now, &quiet) != 2) return 2;
+            print_out(menu.OnDeepSleepWake(now, quiet != 0));
             printf("mode=%s\n", memoria::OfflineModeName(menu.mode()));
         } else if (strncmp(line, "down ", 5) == 0) {
             unsigned now = 0;
             int convo = 0;
             if (sscanf(line + 5, "%u %d", &now, &convo) != 2) return 2;
-            print_out(menu.OnNetworkDown(now, convo != 0));
+            // An offline edge needs a prior online sample. Discard that sample.
+            menu.OnNetworkSample(now, true, convo != 0);
+            print_out(menu.OnNetworkSample(now, false, convo != 0));
             printf("mode=%s\n", memoria::OfflineModeName(menu.mode()));
         } else if (strncmp(line, "up ", 3) == 0) {
             unsigned now = 0;
             if (sscanf(line + 3, "%u", &now) != 1) return 2;
-            print_out(menu.OnNetworkUp(now));
+            print_out(menu.OnNetworkSample(now, true, false));
             printf("mode=%s\n", memoria::OfflineModeName(menu.mode()));
+        } else if (strncmp(line, "net ", 4) == 0) {
+            unsigned now = 0;
+            int online = 0, convo = 0;
+            if (sscanf(line + 4, "%u %d %d", &now, &online, &convo) != 3) return 2;
+            print_out(menu.OnNetworkSample(now, online != 0, convo != 0));
+            printf("mode=%s\n", memoria::OfflineModeName(menu.mode()));
+        } else if (strncmp(line, "wants ", 6) == 0) {
+            int online = 0, idle = 0;
+            if (sscanf(line + 6, "%d %d", &online, &idle) != 2) return 2;
+            printf("%s\n", menu.WantsTap(online != 0, idle != 0) ? "yes" : "no");
         } else if (strncmp(line, "timer ", 6) == 0) {
             unsigned now = 0;
             if (sscanf(line + 6, "%u", &now) != 1) return 2;
@@ -77,9 +89,9 @@ int main() {
             printf("mode=%s item=%u\n", memoria::OfflineModeName(menu.mode()), menu.menu_item());
         } else if (strncmp(line, "tap ", 4) == 0) {
             unsigned now = 0, hold = 0;
-            int online = 0, idle = 0, convo = 0;
-            if (sscanf(line + 4, "%u %u %d %d %d", &now, &hold, &online, &idle, &convo) != 5) return 2;
-            print_out(menu.OnTap(now, hold, online != 0, idle != 0, convo != 0));
+            int online = 0, idle = 0;
+            if (sscanf(line + 4, "%u %u %d %d", &now, &hold, &online, &idle) != 4) return 2;
+            print_out(menu.OnTap(now, hold, online != 0, idle != 0));
             printf("mode=%s item=%u\n", memoria::OfflineModeName(menu.mode()), menu.menu_item());
         } else if (strncmp(line, "done ", 5) == 0) {
             unsigned now = 0;
@@ -260,6 +272,79 @@ def test_online_idle_tap_is_not_intercepted(tool: pathlib.Path) -> None:
     lines = _run(tool, "reset", "tap 1000 100 1 1 0")
     assert lines[1].startswith("intercept=0 mode_clips=0")
     assert lines[2] == "mode=inactive item=1"
+
+
+def test_awake_known_offline_tap_skips_20s_reconnect(tool: pathlib.Path) -> None:
+    lines = _run(
+        tool,
+        "reset",
+        "tap 1000 100 0 1 0",
+        "note 2000",
+        "timer 33000",
+        "tap 34000 100 0 1 0",
+    )
+    assert "offline-menu-idle-v1" in lines[4]
+    assert lines[5].startswith("mode=inactive")
+    joined = "\n".join(lines)
+    assert "awake_reconnecting" not in joined
+    assert "offline-wake-no-network-v1" in lines[6]
+    assert "offline-menu-intro-v2" in lines[6]
+    assert lines[7] == "mode=menu item=1"
+
+
+def test_deep_sleep_wake_arms_20s_reconnect_then_menu(tool: pathlib.Path) -> None:
+    lines = _run(tool, "reset", "wake 300 0", "wants 0 0", "tap 2000 100 0 0 0", "timer 20300")
+    assert lines[1].startswith("intercept=1 mode_clips=0")
+    assert lines[2] == "mode=awake_reconnecting"
+    assert lines[3] == "yes"
+    assert "offline-reconnecting-v1" in lines[4]
+    assert "offline-wake-no-network-v1" in lines[6]
+    assert "offline-menu-intro-v2" in lines[6]
+    assert lines[7].startswith("mode=menu item=1")
+
+
+def test_deep_sleep_wake_in_quiet_hours_stays_inactive(tool: pathlib.Path) -> None:
+    lines = _run(tool, "reset", "wake 300 1", "wants 0 0")
+    assert lines[1].startswith("intercept=0 mode_clips=0")
+    assert lines[2] == "mode=inactive"
+    assert lines[3] == "no"
+
+
+def test_deep_sleep_wake_reconnect_says_restored(tool: pathlib.Path) -> None:
+    lines = _run(tool, "reset", "wake 300 0", "up 1000")
+    assert lines[2] == "mode=awake_reconnecting"
+    assert "online-restored-v1" in lines[3]
+    assert "online-restored-chat-v1" in lines[3]
+    assert lines[4] == "mode=inactive"
+
+
+def test_cold_boot_samples_never_speak(tool: pathlib.Path) -> None:
+    lines = _run(tool, "reset", "net 1000 0 0", "net 4000 1 0")
+    assert lines[1].startswith("intercept=0 mode_clips=0")
+    assert lines[2] == "mode=inactive"
+    assert lines[3].startswith("intercept=0 mode_clips=0")
+    assert lines[4] == "mode=inactive"
+
+
+def test_idle_drop_restore_still_says_network_is_back(tool: pathlib.Path) -> None:
+    lines = _run(tool, "reset", "net 1000 1 0", "net 2000 0 0", "net 3000 1 0")
+    assert lines[1].startswith("intercept=0 mode_clips=0")
+    assert lines[2] == "mode=inactive"
+    assert lines[3].startswith("intercept=1 mode_clips=0")
+    assert lines[4] == "mode=standby_offline"
+    assert "online-restored-v1" in lines[5]
+    assert "online-restored-chat-v1" in lines[5]
+    assert lines[6] == "mode=inactive"
+
+
+def test_mid_conversation_drop_keeps_20s_reconnect(tool: pathlib.Path) -> None:
+    lines = _run(tool, "reset", "net 500 1 0", "net 1000 0 1", "timer 21000")
+    assert lines[1].startswith("intercept=0 mode_clips=0")
+    assert "offline-mid-drop-v2" in lines[3]
+    assert lines[4] == "mode=mid_reconnecting"
+    assert "offline-menu-intro-v2" in lines[5]
+    assert "offline-wake-no-network-v1" not in lines[5]
+    assert lines[6].startswith("mode=menu item=1")
 
 
 VOICE = {

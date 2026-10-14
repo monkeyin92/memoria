@@ -26,17 +26,19 @@ int main() {
         line[strcspn(line, "\r\n")] = '\0';
         if (line[0] == '\0' || line[0] == '#') continue;
         if (strncmp(line, "tap ", 4) == 0) {
-            char phase[32];
-            int idle = 0, quiet = 0;
-            if (sscanf(line + 4, "%31s %d %d", phase, &idle, &quiet) != 3) return 2;
-            memoria::PowerPhase p = memoria::PowerPhase::kWifiHold;
-            if (strcmp(phase, "deep_sleep") == 0) p = memoria::PowerPhase::kDeepSleep;
-            else if (strcmp(phase, "wifi_hold") == 0) p = memoria::PowerPhase::kWifiHold;
-            else if (strcmp(phase, "conversing") == 0) p = memoria::PowerPhase::kConversing;
-            else if (strcmp(phase, "waking") == 0) p = memoria::PowerPhase::kWaking;
-            else if (strcmp(phase, "night") == 0) p = memoria::PowerPhase::kNightSoothing;
-            printf("%s\n", memoria::TapWakeActionName(
-                memoria::TapWakeActionFor(p, idle != 0, quiet != 0)));
+            char device[32];
+            int quiet = 0, wants = 0;
+            if (sscanf(line + 4, "%31s %d %d", device, &quiet, &wants) != 3) return 2;
+            memoria::TapDevice tap_device = memoria::TapDevice::kBusy;
+            if (strcmp(device, "starting") == 0) tap_device = memoria::TapDevice::kStarting;
+            else if (strcmp(device, "idle") == 0) tap_device = memoria::TapDevice::kIdle;
+            else if (strcmp(device, "busy") == 0) tap_device = memoria::TapDevice::kBusy;
+            else return 2;
+            memoria::TapFacts facts;
+            facts.device = tap_device;
+            facts.in_quiet_hours = quiet != 0;
+            facts.offline_wants_tap = wants != 0;
+            printf("%s\n", memoria::TapWakeActionName(memoria::TapWakeActionFor(facts)));
         } else if (strncmp(line, "mic ", 4) == 0) {
             char phase[32];
             int open = 0;
@@ -113,16 +115,24 @@ def test_headers_stay_host_compilable() -> None:
             assert forbidden not in source, name
 
 
-def test_tap_actions_follow_the_power_phase(tool: pathlib.Path) -> None:
-    assert _run(
-        tool,
-        "tap deep_sleep 1 0",
-        "tap deep_sleep 1 1",
-        "tap wifi_hold 1 0",
-        "tap wifi_hold 1 1",
-        "tap conversing 0 0",
-        "tap waking 1 0",
-    ) == ["start", "night", "resume", "night", "ignore", "ignore"]
+def test_starting_offline_tap_opens_the_menu_not_the_hotspot(tool: pathlib.Path) -> None:
+    assert _run(tool, "tap starting 0 1", "tap starting 0 0") == ["offline", "wifi_config"]
+
+
+def test_quiet_idle_tap_soothes_and_skips_the_offline_menu(tool: pathlib.Path) -> None:
+    assert _run(tool, "tap idle 1 1", "tap idle 1 0") == ["night", "night"]
+
+
+def test_awake_idle_tap_opens_the_menu_only_when_offline_wants_it(tool: pathlib.Path) -> None:
+    assert _run(tool, "tap idle 0 1", "tap idle 0 0") == ["offline", "start"]
+
+
+def test_busy_tap_reaches_the_offline_menu_only_when_it_wants_the_tap(tool: pathlib.Path) -> None:
+    assert _run(tool, "tap busy 0 0", "tap busy 0 1", "tap busy 1 0") == [
+        "ignore",
+        "offline",
+        "ignore",
+    ]
 
 
 def test_idle_keep_awake_park_does_not_want_the_mic_open(tool: pathlib.Path) -> None:
