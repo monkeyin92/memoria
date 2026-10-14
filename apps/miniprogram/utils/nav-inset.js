@@ -10,8 +10,21 @@ function statusBarHeight() {
   }
 }
 
+// Bottom edge of the WeChat capsule, so content on the right of the first row
+// can sit below it. Android places the capsule lower than iOS.
+function capsuleBottom(statusBar) {
+  try {
+    const rect = wx.getMenuButtonBoundingClientRect();
+    const bottom = Number(rect && rect.bottom);
+    return Number.isFinite(bottom) && bottom > statusBar ? Math.round(bottom) : statusBar + 40;
+  } catch (error) {
+    return statusBar + 40;
+  }
+}
+
 function statusBarStyle() {
-  return `--mp-status-bar: ${statusBarHeight()}px;`;
+  const statusBar = statusBarHeight();
+  return `--mp-status-bar: ${statusBar}px; --mp-capsule-bottom: ${capsuleBottom(statusBar)}px;`;
 }
 
 module.exports = { statusBarHeight, statusBarStyle };

@@ -26,10 +26,10 @@ for (const [page, tab] of Object.entries(OWNING_TAB)) {
     assert.equal(JSON.parse(readPage(page, "json")).navigationStyle, "custom");
     const harness = loadPage(`pages/${page}/index`);
     try {
-      assert.equal(harness.page.data.statusBarStyle, "--mp-status-bar: 47px;");
+      assert.equal(harness.page.data.statusBarStyle, "--mp-status-bar: 47px; --mp-capsule-bottom: 83px;");
       const html = renderPage(`pages/${page}/index`, harness.page.data);
       assert.doesNotMatch(html, /class="wx-navbar"/);
-      assert.match(html, /class="[^"]*\bsub-page\b[^"]*" style="--mp-status-bar: 47px;"/);
+      assert.match(html, /class="[^"]*\bsub-page\b[^"]*" style="--mp-status-bar: 47px; --mp-capsule-bottom: 83px;"/);
       assert.match(html, /class="nav-back"[^>]*><wx-image class="nav-back-icon"><img src="[^"]*\/assets\/ui\/v4\/back-strong\.svg"/);
       assert.doesNotMatch(readPage(page, "wxml"), /back-row|‹/);
     } finally {

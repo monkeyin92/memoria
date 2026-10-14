@@ -88,6 +88,9 @@
   flex-shrink: 0;
   width: 80rpx;
   height: 80rpx;
+  /* Measured from the tab-page top padding (status bar + 32rpx) so the avatar
+     always starts 8px below the capsule, even when rpx shrinks on 320pt phones. */
+  margin-top: calc(var(--mp-capsule-bottom) - var(--mp-status-bar) - 32rpx + 8px);
   margin-bottom: 8rpx;
   border-radius: 50%;
   background: var(--mp-surface);
