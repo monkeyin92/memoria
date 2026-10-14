@@ -1,3 +1,5 @@
+@import "../../styles/trial-theme.wxss";
+
 .memory-guest .primary-button {
   margin-top: 16px;
 }
@@ -117,110 +119,10 @@
   justify-content: center;
 }
 
-.attention-card {
-  padding: 24px 24px 16px;
-  text-align: center;
-}
-
-.attention-mascot {
-  display: flex;
-  justify-content: center;
-  width: 80px;
-  height: 80px;
-  margin: 0 auto;
-  overflow: hidden;
-  border-radius: 50%;
-  background: var(--mp-rust-bg);
-}
-
-.attention-mascot-img {
-  width: 96px;
-  margin-top: 8px;
-  mix-blend-mode: multiply;
-}
-
-.attention-title {
-  display: block;
-  margin-top: 16px;
-  color: var(--mp-ink);
-  font-size: var(--mp-type-title);
-  font-weight: 700;
-  letter-spacing: -0.4px;
-  line-height: 28px;
-}
-
-.attention-time {
-  display: block;
-  margin-top: 4px;
-  color: var(--mp-ink-2);
-  font-size: var(--mp-type-body);
-  line-height: var(--mp-lh-body);
-}
-
-.attention-well {
-  display: block;
-  margin-top: 16px;
-  padding: 16px;
-  border-radius: var(--mp-radius-inset);
-  background: var(--mp-rust-bg);
-  color: var(--mp-rust);
-  font-size: var(--mp-type-caption);
-  line-height: var(--mp-lh-body);
-  text-align: left;
-}
-
-.attention-card + .section-title {
-  margin: 16px 0 8px;
-}
-
-.attention-tips {
-  padding: 0;
-}
-
-.attention-tip {
-  display: flex;
-  align-items: flex-start;
-  gap: 16px;
-  padding: 16px;
-}
-
-.attention-tip + .attention-tip {
-  box-shadow: inset 0 0.5px 0 var(--mp-line);
-}
-
-.attention-tip-num {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.memory-chev {
   flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: var(--mp-fill);
-  color: var(--mp-ink-2);
-  font-size: var(--mp-type-caption);
-  font-weight: 700;
-}
-
-.attention-tip-copy {
-  flex: 1;
-  min-width: 0;
-}
-
-.attention-tip-title {
-  display: block;
-  color: var(--mp-ink);
-  font-size: var(--mp-type-body);
-  font-weight: 600;
-  line-height: var(--mp-lh-body);
-}
-
-.attention-tip-sub {
-  display: block;
-  margin-top: 4px;
-  color: var(--mp-ink-2);
-  font-size: var(--mp-type-caption);
-  line-height: var(--mp-lh-caption);
+  width: 18px;
+  height: 18px;
 }
 
 .memory-heard + .memory-heard {

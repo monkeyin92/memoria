@@ -14,6 +14,7 @@ const OWNING_TAB = {
   privacy: "/pages/profile/index",
   "digital-self": "/pages/profile/index",
   "child-memory": "/pages/home/index",
+  attention: "/pages/home/index",
   "device-onboarding": "/pages/device/index",
 };
 

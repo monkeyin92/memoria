@@ -8,6 +8,7 @@
     "pages/persona-custom/index",
     "pages/guardian/index",
     "pages/child-memory/index",
+    "pages/attention/index",
     "pages/auth/index",
     "pages/digital-self/index",
     "pages/privacy/index",

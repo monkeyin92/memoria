@@ -13,6 +13,7 @@ page {
   --mp-rust: #9a4732;
   --mp-rust-bg: #fbeee9;
   --mp-rust-ink: #8a5848;
+  --mp-rust-deep: #7a3d2c;
   --mp-rust-tile: #f5dcd3;
   --mp-sage: #23805f;
   --mp-sage-bg: #e7f4ee;

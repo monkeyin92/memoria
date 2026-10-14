@@ -1,0 +1,98 @@
+const assert = require("node:assert/strict");
+const test = require("node:test");
+
+process.env.TZ = "Asia/Shanghai";
+
+const { loadPage } = require("../scripts/mp-harness/runtime");
+const { renderPage } = require("../scripts/mp-harness/render");
+const fx = require("../scripts/mp-harness/fixtures");
+
+const SECOND_ALERT = { ...fx.PINNED_ALERT, notification_id: "n2", occurred_at: "2026-10-12T08:05:00+08:00" };
+
+function visibleText(html) {
+  return html.replace(/<head>[\s\S]*?<\/head>/, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+async function openAttention(query, overrides) {
+  const harness = loadPage("pages/attention/index", fx.authed(overrides));
+  await harness.run(query);
+  return harness;
+}
+
+test("the attention page shows the alert, three conversation tips and 我知道了, never the words or a hotline", async () => {
+  const harness = await openAttention({ id: "n1" });
+  try {
+    assert.equal(
+      visibleText(renderPage("pages/attention/index", harness.page.data)),
+      "有一条需要你关注的对话 今天 19:42 孩子在聊天中提到了让 TA 不舒服的事。为了保护孩子，这里不展示对话内容。 " +
+        "可以这样和孩子聊 1 找一个放松的时间 比如睡前或散步时，不要急着追问 2 先听，少评判 “愿意和我说说今天的事吗？” " +
+        "3 告诉孩子你在 “不管发生什么，你都可以来找我。” 我知道了",
+    );
+  } finally {
+    harness.restore();
+  }
+});
+
+test("the attention page opens the alert it was linked to", async () => {
+  const harness = await openAttention({ id: "n2" }, {
+    getGuardianNotifications: async () => ({ items: [fx.PINNED_ALERT, SECOND_ALERT] }),
+  });
+  try {
+    assert.deepEqual(harness.page.data.alert, { notificationId: "n2", message: "有一条需要你关注的对话", timeLabel: "10月12日 08:05" });
+  } finally {
+    harness.restore();
+  }
+});
+
+test("a stale attention link says nothing needs attention instead of showing an old alert", async () => {
+  const harness = await openAttention({ id: "gone" }, { getGuardianNotifications: async () => ({ items: [] }) });
+  try {
+    assert.equal(harness.page.data.alert, null);
+    assert.equal(
+      visibleText(renderPage("pages/attention/index", harness.page.data)),
+      "现在没有需要关注的对话 有新的提醒时，首页会置顶显示。 我知道了",
+    );
+  } finally {
+    harness.restore();
+  }
+});
+
+test("我知道了 goes back to where the parent came from", async () => {
+  const harness = await openAttention({ id: "n1" });
+  try {
+    global.getCurrentPages = () => [{ route: "pages/home/index" }, { route: "pages/attention/index" }];
+    harness.page.goBack();
+    const navigation = harness.wxCalls.filter((call) => call.name === "navigateBack").map((call) => call.args[0]);
+    assert.deepEqual(navigation, [{ delta: 1 }]);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("the home attention card and the review banner both open the attention page", async () => {
+  const home = loadPage("pages/home/index", fx.authed());
+  try {
+    await home.run();
+    home.page.openUnreadSafety();
+    assert.deepEqual(
+      home.wxCalls.filter((call) => call.name === "navigateTo").map((call) => call.args[0].url),
+      ["/pages/attention/index?id=n1"],
+    );
+  } finally {
+    home.restore();
+  }
+
+  const memory = loadPage("pages/memory/index", fx.authed());
+  try {
+    await memory.run();
+    const text = visibleText(renderPage("pages/memory/index", memory.page.data, { tabBar: false }));
+    assert.match(text, /^按天查看 对话回顾 这里只有摘要，不显示原话，也没有录音。 有一条需要你关注的对话 今天 19:42 三 14 /);
+    memory.page.openAttention({ currentTarget: { dataset: { id: "n1" } } });
+    assert.deepEqual(
+      memory.wxCalls.filter((call) => call.name === "navigateTo").map((call) => call.args[0].url),
+      ["/pages/attention/index?id=n1"],
+    );
+  } finally {
+    memory.restore();
+  }
+});

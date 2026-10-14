@@ -2,7 +2,7 @@ const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
 const { requireLogin } = require("../../utils/auth-gate");
 const guardianPush = require("../../utils/guardian-push");
-const { loadPinnedCrisisAlerts } = require("../../utils/crisis-alerts");
+const { attentionUrl, loadPinnedCrisisAlerts } = require("../../utils/crisis-alerts");
 const { alertTimeLabel } = require("../../utils/trial-device-card");
 
 function today() {
@@ -438,6 +438,10 @@ Page({
         });
       }
     }
+  },
+
+  openAttention(event) {
+    wx.navigateTo({ url: attentionUrl(event.currentTarget.dataset.id) });
   },
 
   chooseDay(event) {

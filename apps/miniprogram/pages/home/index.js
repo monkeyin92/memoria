@@ -16,7 +16,7 @@ const {
   boundChildFromManifest,
   normalizeSessionSummaries,
 } = require("../../utils/child-memory");
-const { loadPinnedCrisisAlerts, shouldOfferCrisisSubscription } = require("../../utils/crisis-alerts");
+const { attentionUrl, loadPinnedCrisisAlerts, shouldOfferCrisisSubscription } = require("../../utils/crisis-alerts");
 const guardianPush = require("../../utils/guardian-push");
 const {
   UNREAD_SAFETY_COPY,
@@ -286,8 +286,7 @@ Page({
   },
 
   openUnreadSafety() {
-    // Pinned safety alerts land on the memory tab (#229); keep that route.
-    this.openMemory();
+    wx.navigateTo({ url: attentionUrl(this.data.pinnedCrisisAlerts[0]?.notificationId) });
   },
 
   async onSafetySubscribeChange(event) {

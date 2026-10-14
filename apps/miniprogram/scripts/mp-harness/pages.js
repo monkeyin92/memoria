@@ -39,6 +39,15 @@ const PAGES = [
   },
   { slug: "persona-custom", page: "pages/persona-custom/index", harness: authed(fx.personaApi) },
   { slug: "auth", page: "pages/auth/index", harness: guest(), query: { reason: "view_device" } },
+  {
+    slug: "auth-profile",
+    page: "pages/auth/index",
+    harness: guest(),
+    query: { reason: "view_device", skip_restore: "1" },
+    actions: [["toggleConsent"], ["onGetPhoneNumber", { detail: { code: "phone-code" } }]],
+  },
+  { slug: "attention", page: "pages/attention/index", harness: authed(), query: { id: "n1" } },
+  { slug: "attention-empty", page: "pages/attention/index", harness: authed({ getGuardianNotifications: async () => ({ items: [] }) }) },
   { slug: "privacy", page: "pages/privacy/index", harness: authed() },
   {
     slug: "privacy-granted",

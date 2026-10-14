@@ -52,6 +52,10 @@ async function loadPinnedCrisisAlerts(api) {
   }
 }
 
+function attentionUrl(notificationId) {
+  return `/pages/attention/index?id=${encodeURIComponent(notificationId || "")}`;
+}
+
 function shouldOfferCrisisSubscription(binding) {
   if (!binding || (binding.status && binding.status !== "active")) return false;
   return (
@@ -101,6 +105,7 @@ module.exports = {
   BIND_SUBSCRIBE_REJECTED,
   BIND_SUBSCRIBE_REQUIRED,
   BIND_SUBSCRIBE_UNAVAILABLE,
+  attentionUrl,
   loadPinnedCrisisAlerts,
   normalizeAlert,
   pinnedAlerts,
