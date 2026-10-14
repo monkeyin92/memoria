@@ -1937,6 +1937,7 @@ test("trial safety subscribe toggle loads ledger state and opt-outs on the serve
       1,
       0,
     );
+    assert.equal(page.data.safetySubscribeKnown, true);
     assert.equal(page.data.safetySubscribeOn, true);
     assert.equal(page.data.safetySubscribeOffCaption, "");
     await page.onSafetySubscribeChange({ detail: { value: false } });
@@ -1944,6 +1945,7 @@ test("trial safety subscribe toggle loads ledger state and opt-outs on the serve
     assert.equal(modals[0].content, guardianPush.SAFETY_SUBSCRIBE_OFF_CONFIRM);
     assert.equal(modals[0].confirmText, guardianPush.SAFETY_SUBSCRIBE_OFF_KEEP);
     assert.equal(modals[0].cancelText, guardianPush.SAFETY_SUBSCRIBE_OFF_PROCEED);
+    assert.equal(page.data.safetySubscribeKnown, true);
     assert.equal(page.data.safetySubscribeOn, false);
     assert.equal(page.data.safetySubscribeOffCaption, guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION);
     assert.deepEqual(recorded, [
@@ -1953,7 +1955,11 @@ test("trial safety subscribe toggle loads ledger state and opt-outs on the serve
     // Primary confirm keeps the subscription on without writing opt_out again.
     recorded.length = 0;
     remaining = 1;
-    page.setData({ safetySubscribeOn: true, safetySubscribeOffCaption: "" });
+    page.setData({
+      safetySubscribeKnown: true,
+      safetySubscribeOn: true,
+      safetySubscribeOffCaption: "",
+    });
     global.wx.showModal = (options) => {
       modals.push(options);
       options.success({ confirm: true, cancel: false });
@@ -1973,5 +1979,61 @@ test("trial safety subscribe toggle loads ledger state and opt-outs on the serve
     Object.assign(api, originals);
     if (previousWx === undefined) delete global.wx;
     else global.wx = previousWx;
+  }
+});
+
+test("failed subscription-state load shows unknown caption and retry restores the toggle", async () => {
+  const api = require("../utils/api");
+  const guardianPush = require("../utils/guardian-push");
+  const originals = {
+    getGuardianPushConfig: api.getGuardianPushConfig,
+    getGuardianPushSubscription: api.getGuardianPushSubscription,
+    currentAuthEpoch: api.currentAuthEpoch,
+    isAuthEpochCurrent: api.isAuthEpochCurrent,
+  };
+  let failOnce = true;
+  api.getGuardianPushConfig = async () => ({
+    enabled: true,
+    template_ids: { crisis: "tmpl-crisis" },
+  });
+  api.getGuardianPushSubscription = async () => {
+    if (failOnce) {
+      failOnce = false;
+      throw new Error("network");
+    }
+    return {
+      template_id: "tmpl-crisis",
+      remaining: 1,
+      subscribed: true,
+      last_result: "accept",
+    };
+  };
+  api.currentAuthEpoch = () => 1;
+  api.isAuthEpochCurrent = () => true;
+  const page = instantiate(pageDefinition);
+  page._flowSeq = 1;
+  page.setData({
+    binding: { declared_mode: "parent_for_child", status: "active" },
+  });
+  try {
+    await page._loadTrialSafetySubscribe(page.data.binding, 1, 1);
+    assert.equal(page.data.safetySubscribeKnown, false);
+    assert.equal(page.data.safetySubscribeOn, false);
+    assert.equal(
+      page.data.safetySubscribeOffCaption,
+      guardianPush.SAFETY_SUBSCRIBE_UNKNOWN_CAPTION,
+    );
+    assert.notEqual(
+      page.data.safetySubscribeOffCaption,
+      guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION,
+    );
+
+    await page.retrySafetySubscribeState();
+    assert.equal(page.data.safetySubscribeKnown, true);
+    assert.equal(page.data.safetySubscribeOn, true);
+    assert.equal(page.data.safetySubscribeOffCaption, "");
+    assert.equal(page.data.safetySubscribeBusy, false);
+  } finally {
+    Object.assign(api, originals);
   }
 });

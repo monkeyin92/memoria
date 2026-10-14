@@ -64,13 +64,17 @@
           <view class="trial-inset-row">
             <text class="trial-inset-label">安全提醒订阅</text>
             <switch
-              checked="{{safetySubscribeOn}}"
+              checked="{{safetySubscribeKnown && safetySubscribeOn}}"
               color="#3CB8A0"
-              disabled="{{safetySubscribeBusy}}"
+              disabled="{{!safetySubscribeKnown || safetySubscribeBusy}}"
               bindchange="onSafetySubscribeChange"
             />
           </view>
-          <text wx:if="{{safetySubscribeOffCaption}}" class="trial-caption trial-inset-caption">{{safetySubscribeOffCaption}}</text>
+          <text
+            wx:if="{{safetySubscribeOffCaption}}"
+            class="trial-caption trial-inset-caption {{safetySubscribeKnown ? '' : 'is-action'}}"
+            bindtap="retrySafetySubscribeState"
+          >{{safetySubscribeOffCaption}}</text>
         </view>
       </view>
 

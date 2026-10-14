@@ -21,6 +21,7 @@ const SAFETY_SUBSCRIBE_OFF_KEEP = "保持开启";
 const SAFETY_SUBSCRIBE_OFF_PROCEED = "仍要关闭";
 const SAFETY_SUBSCRIBE_OFF_CAPTION =
   "安全提醒推送已关闭，打开小程序仍会看到置顶提醒。";
+const SAFETY_SUBSCRIBE_UNKNOWN_CAPTION = "状态获取失败，点击重试";
 
 const RECORDABLE_RESULTS = Object.freeze(["accept", "reject", "ban"]);
 // 20004：用户关闭了小程序订阅消息总开关，等同于 ban。
@@ -49,6 +50,7 @@ async function loadCrisisPushConfig(api) {
 function normalizePushSubscription(payload) {
   const remaining = Number.isInteger(payload?.remaining) ? payload.remaining : 0;
   return {
+    known: true,
     templateId: typeof payload?.template_id === "string" ? payload.template_id : "",
     remaining: remaining > 0 ? remaining : 0,
     lastResult: typeof payload?.last_result === "string" ? payload.last_result : "",
@@ -56,12 +58,39 @@ function normalizePushSubscription(payload) {
   };
 }
 
+function unknownPushSubscription() {
+  return {
+    known: false,
+    templateId: "",
+    remaining: 0,
+    lastResult: "",
+    subscribed: false,
+  };
+}
+
 async function loadCrisisPushSubscription(api) {
   try {
     return normalizePushSubscription(await api.getGuardianPushSubscription());
   } catch (_error) {
-    return normalizePushSubscription(null);
+    return unknownPushSubscription();
   }
+}
+
+function safetySubscribeView(safety) {
+  if (!safety?.safetySubscribeKnown) {
+    return {
+      safetySubscribeKnown: false,
+      safetySubscribeOn: false,
+      safetySubscribeOffCaption: SAFETY_SUBSCRIBE_UNKNOWN_CAPTION,
+    };
+  }
+  return {
+    safetySubscribeKnown: true,
+    safetySubscribeOn: safety.safetySubscribeOn === true,
+    safetySubscribeOffCaption: safety.safetySubscribeOn
+      ? ""
+      : SAFETY_SUBSCRIBE_OFF_CAPTION,
+  };
 }
 
 async function loadSafetySubscribeState(api) {
@@ -69,9 +98,18 @@ async function loadSafetySubscribeState(api) {
     loadCrisisPushConfig(api),
     loadCrisisPushSubscription(api),
   ]);
+  if (!subscription.known) {
+    return {
+      config,
+      subscription,
+      safetySubscribeKnown: false,
+      safetySubscribeOn: false,
+    };
+  }
   return {
     config,
     subscription,
+    safetySubscribeKnown: true,
     safetySubscribeOn: Boolean(config.enabled && subscription.subscribed),
   };
 }
@@ -155,6 +193,7 @@ module.exports = {
   SAFETY_SUBSCRIBE_OFF_KEEP,
   SAFETY_SUBSCRIBE_OFF_PROCEED,
   SAFETY_SUBSCRIBE_OFF_TITLE,
+  SAFETY_SUBSCRIBE_UNKNOWN_CAPTION,
   loadCrisisPushConfig,
   loadCrisisPushSubscription,
   loadSafetySubscribeState,
@@ -162,5 +201,7 @@ module.exports = {
   normalizePushSubscription,
   offerCrisisSubscription,
   optOutCrisisPushAlerts,
+  safetySubscribeView,
   subscribeCrisisAlerts,
+  unknownPushSubscription,
 };

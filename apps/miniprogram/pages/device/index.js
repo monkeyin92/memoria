@@ -294,6 +294,7 @@ Page({
     sessionLimits: null,
     trialSettingsVisible: false,
     safetySubscribeOn: false,
+    safetySubscribeKnown: false,
     safetySubscribeBusy: false,
     safetySubscribeOffCaption: "",
     limitsSheetVisible: false,
@@ -418,6 +419,7 @@ Page({
       sessionLimits: null,
       trialSettingsVisible: false,
       safetySubscribeOn: false,
+      safetySubscribeKnown: false,
       safetySubscribeBusy: false,
       safetySubscribeOffCaption: "",
       currentUserLabel: "",
@@ -510,10 +512,7 @@ Page({
       elderSafetyVisible: true,
       elderAlerts: alerts,
       elderCrisisPush: safety.config,
-      safetySubscribeOn: safety.safetySubscribeOn,
-      safetySubscribeOffCaption: safety.safetySubscribeOn
-        ? ""
-        : guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION,
+      ...guardianPush.safetySubscribeView(safety),
     });
   },
 
@@ -522,12 +521,28 @@ Page({
     const safety = await guardianPush.loadSafetySubscribeState(api);
     if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
     this._safetyPushConfig = safety.config;
+    this.setData(guardianPush.safetySubscribeView(safety));
+  },
+
+  async retrySafetySubscribeState() {
+    if (this.data.safetySubscribeBusy || this.data.safetySubscribeKnown) return;
+    const binding = this.data.binding;
+    if (!offersSafetySubscribe(binding)) return;
+    const flowSeq = this._flowSeq;
+    const authEpoch = api.currentAuthEpoch();
     this.setData({
-      safetySubscribeOn: safety.safetySubscribeOn,
-      safetySubscribeOffCaption: safety.safetySubscribeOn
-        ? ""
-        : guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION,
+      safetySubscribeBusy: true,
+      safetySubscribeKnown: false,
+      safetySubscribeOffCaption: "",
     });
+    try {
+      await this._loadTrialSafetySubscribe(binding, flowSeq, authEpoch);
+      if (binding?.declared_mode === "child_for_parent") {
+        await this._loadElderSafety(binding, flowSeq, authEpoch);
+      }
+    } finally {
+      if (flowSeq === this._flowSeq) this.setData({ safetySubscribeBusy: false });
+    }
   },
 
   /* 必须直接绑定在按钮 tap 上：订阅框只能由用户点击调起。 */
@@ -576,6 +591,10 @@ Page({
   },
 
   async onSafetySubscribeChange(event) {
+    if (!this.data.safetySubscribeKnown || this.data.safetySubscribeBusy) {
+      this.setData({ safetySubscribeOn: this.data.safetySubscribeOn });
+      return;
+    }
     const nextOn = Boolean(event.detail.value);
     if (!nextOn) {
       // Primary confirm = 保持开启; secondary cancel = 仍要关闭.
@@ -597,10 +616,12 @@ Page({
       try {
         const config = this._safetyPushConfig;
         if (!config?.templateId) {
-          this.setData({
-            safetySubscribeOn: false,
-            safetySubscribeOffCaption: guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION,
-          });
+          this.setData(
+            guardianPush.safetySubscribeView({
+              safetySubscribeKnown: true,
+              safetySubscribeOn: false,
+            }),
+          );
           return;
         }
         const outcome = await guardianPush.optOutCrisisPushAlerts({ config, api });
@@ -609,10 +630,12 @@ Page({
           wx.showToast({ title: "关闭失败，请稍后再试", icon: "none" });
           return;
         }
-        this.setData({
-          safetySubscribeOn: false,
-          safetySubscribeOffCaption: guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION,
-        });
+        this.setData(
+          guardianPush.safetySubscribeView({
+            safetySubscribeKnown: true,
+            safetySubscribeOn: false,
+          }),
+        );
       } catch (error) {
         this.setData({ safetySubscribeOn: true });
         wx.showToast({ title: error?.message || "关闭失败，请稍后再试", icon: "none" });
@@ -626,29 +649,40 @@ Page({
     this.setData({ safetySubscribeBusy: true });
     try {
       if (!config?.enabled || !config.templateId) {
-        this.setData({
-          safetySubscribeOn: false,
-          safetySubscribeOffCaption: guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION,
-        });
+        this.setData(
+          guardianPush.safetySubscribeView({
+            safetySubscribeKnown: true,
+            safetySubscribeOn: false,
+          }),
+        );
         wx.showToast({ title: "安全提醒订阅尚未开通", icon: "none" });
         return;
       }
       const outcome = await guardianPush.subscribeCrisisAlerts({ config, api });
       if (outcome.result === "accept" && outcome.recorded) {
-        this.setData({ safetySubscribeOn: true, safetySubscribeOffCaption: "" });
+        this.setData(
+          guardianPush.safetySubscribeView({
+            safetySubscribeKnown: true,
+            safetySubscribeOn: true,
+          }),
+        );
         wx.showToast({ title: "已订阅安全提醒", icon: "none" });
       } else {
-        this.setData({
-          safetySubscribeOn: false,
-          safetySubscribeOffCaption: guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION,
-        });
+        this.setData(
+          guardianPush.safetySubscribeView({
+            safetySubscribeKnown: true,
+            safetySubscribeOn: false,
+          }),
+        );
         wx.showToast({ title: "未完成订阅，请再试一次", icon: "none" });
       }
     } catch (error) {
-      this.setData({
-        safetySubscribeOn: false,
-        safetySubscribeOffCaption: guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION,
-      });
+      this.setData(
+        guardianPush.safetySubscribeView({
+          safetySubscribeKnown: true,
+          safetySubscribeOn: false,
+        }),
+      );
       wx.showToast({ title: error?.message || "订阅失败，请稍后再试", icon: "none" });
     } finally {
       this.setData({ safetySubscribeBusy: false });
