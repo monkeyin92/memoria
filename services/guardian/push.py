@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol, cast
 
+from services.common.companion_response_safety import GUARDIAN_ATTENTION_COPY
+
 logger = logging.getLogger(__name__)
 
 PushSubscriptionResult = Literal["accept", "reject", "ban", "opt_out"]
@@ -36,9 +38,9 @@ MAX_PUSH_SUBSCRIPTION_BALANCE = 20
 # delivery was switched on); it stays visible on the guardian page.
 CRISIS_PUSH_MAX_AGE = timedelta(hours=24)
 
-CRISIS_PUSH_TITLE = "安全提醒"
-# Neutral wording: the recipient may be a parent or an elder's child (P0-04 D7).
-CRISIS_PUSH_TIP = "请打开小程序查看并尽快联系TA"
+# Parent-facing only. Never name the hazard, never use 「危机」, never list details.
+CRISIS_PUSH_TITLE = GUARDIAN_ATTENTION_COPY
+CRISIS_PUSH_TIP = GUARDIAN_ATTENTION_COPY
 CRISIS_PUSH_DEFAULT_CHILD_NAME = "TA"
 
 

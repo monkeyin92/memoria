@@ -26,6 +26,8 @@ from services.agent.src.response_planner_client import (
 from services.common.companion_response_safety import (
     CRISIS_SUPPORT_REPLY,
     SAFE_UNKNOWN_REPLY,
+    SUPPORT_RELAY_REPLY,
+    SUPPORT_VICTIM_REPLY,
     companion_identity_replies,
     fixed_companion_reply,
 )
@@ -81,7 +83,13 @@ def plan_matches_mode_policy(
         if unknown_safe_direct:
             return True
         companion = companion_definition(policy.companion_style_id)
-        allowed_companion_direct_text = {None, SAFE_UNKNOWN_REPLY, CRISIS_SUPPORT_REPLY}
+        allowed_companion_direct_text = {
+            None,
+            SAFE_UNKNOWN_REPLY,
+            CRISIS_SUPPORT_REPLY,
+            SUPPORT_VICTIM_REPLY,
+            SUPPORT_RELAY_REPLY,
+        }
         if companion is not None:
             allowed_companion_direct_text |= companion_identity_replies(
                 companion.display_name, companion.style_description
@@ -100,7 +108,16 @@ def plan_matches_mode_policy(
         refusal_safe = (
             policy.mode in {"self_preview", "legacy"}
             and plan.instructions == _LOCAL_SAFE_REFUSAL_INSTRUCTIONS
-            and (plan.direct_text in {_LOCAL_SAFE_REFUSAL_TEXT, CRISIS_SUPPORT_REPLY} or is_safe_realtime_reply(plan.direct_text))
+            and (
+                plan.direct_text
+                in {
+                    _LOCAL_SAFE_REFUSAL_TEXT,
+                    CRISIS_SUPPORT_REPLY,
+                    SUPPORT_VICTIM_REPLY,
+                    SUPPORT_RELAY_REPLY,
+                }
+                or is_safe_realtime_reply(plan.direct_text)
+            )
             and not plan.grounded_items
             and not plan.provenance.source_refs
             and plan.disclosures
@@ -349,7 +366,8 @@ def build_local_safe_plan(
             fixed_reply
             if companion
             or anonymous_public
-            or fixed_reply == CRISIS_SUPPORT_REPLY
+            or fixed_reply
+            in {CRISIS_SUPPORT_REPLY, SUPPORT_VICTIM_REPLY, SUPPORT_RELAY_REPLY}
             or fixed_reply in BRIDGE_PHRASES
             or is_safe_realtime_reply(fixed_reply)
             else _LOCAL_SAFE_REFUSAL_TEXT

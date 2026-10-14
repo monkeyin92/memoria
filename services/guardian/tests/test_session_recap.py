@@ -109,6 +109,9 @@ def test_name_and_health_post_check_does_not_mangle_unrelated_words() -> None:
     assert accept_parent_summary("聊了学校和周末安排", turns) == "聊了学校和周末安排"
     assert accept_parent_summary("聊了阳光小学的操场", turns) is None
     assert accept_parent_summary("提到了幸福路12号", turns) is None
+    assert accept_parent_summary("聊了被打和被性侵", turns) is None
+    assert accept_parent_summary("提到了危机情况", turns) is None
+    assert accept_parent_summary("和小明聊了画画", turns) == "和小明聊了画画"
     assert "只写昵称" in __import__(
         "services.guardian.session_recap", fromlist=["SESSION_SUMMARY_USER_PROMPT_PREFIX"]
     ).SESSION_SUMMARY_USER_PROMPT_PREFIX

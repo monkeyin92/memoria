@@ -32,7 +32,7 @@ function normalizeAlert(item) {
     message:
       typeof item.message === "string" && item.message
         ? item.message
-        : "TA此刻可能需要可信任的人陪伴，请尽快联系并确认安全；紧急时联系当地急救或报警。",
+        : "有一条需要你关注的对话",
   };
 }
 

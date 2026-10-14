@@ -1141,10 +1141,18 @@ class MediaOutputStreamMixin:
             minor_limits,
             session_limit_reached,
         )
-        from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
+        from services.common.companion_response_safety import (
+            CRISIS_SUPPORT_REPLY,
+            SUPPORT_RELAY_REPLY,
+            SUPPORT_VICTIM_REPLY,
+        )
 
         assistant_text = context.output.assistant_text.strip()
-        if assistant_text == CRISIS_SUPPORT_REPLY:
+        if assistant_text in {
+            CRISIS_SUPPORT_REPLY,
+            SUPPORT_VICTIM_REPLY,
+            SUPPORT_RELAY_REPLY,
+        }:
             context.crisis_reply_heard = True
         max_seconds, _quiet_hours = minor_limits(context.runtime.mode_policy.runtime_profile)
         if (

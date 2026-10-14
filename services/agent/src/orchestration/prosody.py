@@ -269,7 +269,8 @@ def _semantic_speech_plan_for_turn(
     serious = (
         label in {"sad", "angry", "fearful", "disgusted"}
         or provider_label in {"sad", "angry", "fearful", "disgusted"}
-        or companion_safety_decision(text) in {"crisis_self", "support_request"}
+        or companion_safety_decision(text)
+        in {"crisis_self", "support_victim", "support_relay"}
         or any(marker in text.lower() for marker in _SERIOUS_CONTEXT_MARKERS)
     )
     if serious:
@@ -578,7 +579,11 @@ def _speech_plan_for_turn(
         use_markup_tags=use_markup_tags,
     )
     styled = _apply_explicit_voice_style(plan, text)
-    if companion_safety_decision(text) not in {"crisis_self", "support_request"}:
+    if companion_safety_decision(text) not in {
+        "crisis_self",
+        "support_victim",
+        "support_relay",
+    }:
         companion = companion_definition(companion_id)
         if companion is None or _style_command_body(text) is not None:
             return styled

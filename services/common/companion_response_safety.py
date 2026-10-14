@@ -7,7 +7,8 @@ from typing import Final, Literal
 
 SafetyDecision = Literal[
     "crisis_self",
-    "support_request",
+    "support_victim",
+    "support_relay",
     "prohibited_request",
     "none",
 ]
@@ -19,6 +20,17 @@ CRISIS_SUPPORT_REPLY: Final = (
     "如果你已经准备行动或受伤，请立即联系当地急救或报警。"
     "你现在是否正准备伤害自己？"
 )
+# Tier 1: the child is currently a victim. Exact fixed reply.
+SUPPORT_VICTIM_REPLY: Final = (
+    "你说的事情很重要。现在马上去找身边的大人，爸爸妈妈、老师都可以。"
+    "如果有危险，请大人帮你打 110。"
+)
+# Tier 2: relaying someone else or asking how to prevent. Exact fixed reply.
+SUPPORT_RELAY_REPLY: Final = (
+    "谢谢你告诉我，你是个关心别人的好孩子。"
+    "这件事要请大人帮忙，现在就去告诉爸爸妈妈或者老师吧。"
+)
+GUARDIAN_ATTENTION_COPY: Final = "有一条需要你关注的对话"
 CRISIS_CONTEXT_MARKERS: Final = (
     "自杀",
     "自残",
@@ -212,9 +224,12 @@ _IDENTITY_ENGLISH_RE = re.compile(
 
 def companion_safety_decision(query: str) -> SafetyDecision:
     """Classify one current-turn query without granting facts or permissions."""
-    if _UNQUOTED_REPORTED_SELF_HARM_RE.search(query):
-        return "support_request"
-    crisis_query = _QUOTED_TEXT_RE.sub("", query)
+    stripped_of_quotes = _QUOTED_TEXT_RE.sub("", query)
+    # Reported self-harm must survive quote stripping; otherwise fiction /
+    # analysis that only quotes risk language would still trip the relay path.
+    if _UNQUOTED_REPORTED_SELF_HARM_RE.search(stripped_of_quotes):
+        return "support_relay"
+    crisis_query = stripped_of_quotes
     if crisis_query == query or not _REPORTED_OR_ANALYTICAL_RE.search(crisis_query):
         crisis_query = query
     normalized = re.sub(r"[\s，。！？、,.!?：:\-—_]+", "", crisis_query).lower()
@@ -228,11 +243,13 @@ def companion_safety_decision(query: str) -> SafetyDecision:
         return "crisis_self"
     full_normalized = re.sub(r"[\s，。！？、,.!?：:\-—_]+", "", query).lower()
     if any(term in full_normalized for term in _VICTIM_SUPPORT_TERMS):
-        return "support_request"
+        return "support_victim"
     if _SAFETY_PREVENTION_RE.search(full_normalized):
-        return "support_request"
-    if any(marker in query.lower() for marker in CRISIS_CONTEXT_MARKERS):
-        return "support_request"
+        return "support_relay"
+    # Markers follow the same quote-stripped surface as crisis_self, so fiction
+    # / analysis that only quotes risk language does not become a support hit.
+    if any(marker in crisis_query.lower() for marker in CRISIS_CONTEXT_MARKERS):
+        return "support_relay"
     if any(term in full_normalized for term in _PROHIBITED_CONTENT_TERMS) or (
         _PROHIBITED_ENGLISH_RE.search(query.lower())
     ):
@@ -285,6 +302,10 @@ def fixed_companion_reply(
     decision = companion_safety_decision(query)
     if decision == "crisis_self":
         return CRISIS_SUPPORT_REPLY
+    if decision == "support_victim":
+        return SUPPORT_VICTIM_REPLY
+    if decision == "support_relay":
+        return SUPPORT_RELAY_REPLY
     if decision == "prohibited_request":
         return SAFE_UNKNOWN_REPLY
     normalized = re.sub(r"[\s，。！？、,.!?：:\-—_]+", "", query).lower()

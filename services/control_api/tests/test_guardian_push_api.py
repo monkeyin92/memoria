@@ -206,10 +206,10 @@ async def test_wechat_sender_posts_only_the_fixed_alert(monkeypatch: pytest.Monk
         "miniprogram_state": "formal",
         "lang": "zh_CN",
         "data": {
-            "thing1": {"value": "安全提醒"},
+            "thing1": {"value": "有一条需要你关注的对话"},
             "name2": {"value": "小明号"},
             "time3": {"value": "2026-09-25 10:30"},
-            "thing4": {"value": "请打开小程序查看并尽快联系TA"},
+            "thing4": {"value": "有一条需要你关注的对话"},
         },
     }
     body = json.dumps(posts[0]["json"], ensure_ascii=False)

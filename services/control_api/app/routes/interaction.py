@@ -2194,8 +2194,7 @@ async def response_plan(
             or scope.age_band in {"under_14", "14_17"}
         )
         notify = (
-            crisis.action == "crisis_support"
-            and crisis.notify_guardian
+            crisis.notify_guardian
             and crisis.script_version is not None
             and active_subject_id is not None
         )
@@ -2216,6 +2215,7 @@ async def response_plan(
                     script_version=crisis.script_version or "",
                     occurred_at=now,
                     declared_guardian_ids=contacts,
+                    attempt_push=crisis.attempt_push,
                 )
             except Exception:
                 logger.exception(

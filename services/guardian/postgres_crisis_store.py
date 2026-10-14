@@ -108,6 +108,7 @@ class PostgresGuardianCrisisMixin:
         occurred_at: datetime,
         script_version: str,
         declared_guardian_ids: tuple[str, ...] = (),
+        attempt_push: bool = True,
     ) -> CrisisNotificationReceipt:
         event_uuid = _uuid(crisis_event_id, field="crisis_event_id")
         occurred = _timestamp(occurred_at, field="occurred_at")
@@ -123,8 +124,8 @@ class PostgresGuardianCrisisMixin:
                 """
                 INSERT INTO guardian_crisis_events(
                     crisis_event_id, evidence_event_id, minor_user_id,
-                    occurred_at, script_version, created_at
-                ) VALUES ($1,$2,$3,$4,$5,$6)
+                    occurred_at, script_version, created_at, attempt_push
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7)
                 ON CONFLICT(crisis_event_id) DO NOTHING
                 RETURNING *
                 """,
@@ -134,6 +135,7 @@ class PostgresGuardianCrisisMixin:
                 occurred,
                 script_version,
                 created,
+                attempt_push,
             )
             if row is None:
                 row = await connection.fetchrow(
@@ -146,6 +148,7 @@ class PostgresGuardianCrisisMixin:
                 str(row["evidence_event_id"]) != evidence_event_id
                 or str(row["minor_user_id"]) != minor_user_id
                 or str(row["script_version"]) != script_version
+                or bool(row["attempt_push"]) is not attempt_push
             ):
                 raise GuardianConflictError("crisis event id is immutable")
             guardians = await connection.fetch(

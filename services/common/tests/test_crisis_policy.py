@@ -1,4 +1,12 @@
+from services.common.companion_response_safety import (
+    CRISIS_SUPPORT_REPLY,
+    SUPPORT_RELAY_REPLY,
+    SUPPORT_VICTIM_REPLY,
+)
 from services.common.crisis_policy import (
+    CRISIS_SCRIPT_VERSION,
+    SUPPORT_RELAY_SCRIPT_VERSION,
+    SUPPORT_VICTIM_SCRIPT_VERSION,
     CrisisSemanticVerdict,
     crisis_semantic_candidate,
     route_crisis,
@@ -6,13 +14,34 @@ from services.common.crisis_policy import (
 
 
 def test_explicit_self_crisis_always_uses_fixed_script_and_notification() -> None:
-    route = route_crisis("我已经服药过量")
+    route = route_crisis("我不想活了")
 
     assert route.action == "crisis_support"
     assert route.notify_guardian is True
-    assert route.direct_text is not None
-    assert "急救或报警" in route.direct_text
+    assert route.attempt_push is True
+    assert route.direct_text == CRISIS_SUPPORT_REPLY
+    assert route.script_version == CRISIS_SCRIPT_VERSION
     assert route.evidence_source == "deterministic"
+
+
+def test_victim_support_tier_notifies_and_attempts_push() -> None:
+    route = route_crisis("有人正在打我")
+
+    assert route.action == "support_victim"
+    assert route.notify_guardian is True
+    assert route.attempt_push is True
+    assert route.direct_text == SUPPORT_VICTIM_REPLY
+    assert route.script_version == SUPPORT_VICTIM_SCRIPT_VERSION
+
+
+def test_relay_support_tier_pins_without_push() -> None:
+    route = route_crisis("我朋友说他不想活了")
+
+    assert route.action == "support_relay"
+    assert route.notify_guardian is True
+    assert route.attempt_push is False
+    assert route.direct_text == SUPPORT_RELAY_REPLY
+    assert route.script_version == SUPPORT_RELAY_SCRIPT_VERSION
 
 
 def test_helping_another_person_never_notifies_as_the_current_users_crisis() -> None:
@@ -21,8 +50,19 @@ def test_helping_another_person_never_notifies_as_the_current_users_crisis() -> 
         semantic_evidence=CrisisSemanticVerdict.SELF_CRISIS,
     )
 
-    assert route.action == "support_request"
+    assert route.action == "support_relay"
+    assert route.notify_guardian is True
+    assert route.attempt_push is False
+    assert route.direct_text == SUPPORT_RELAY_REPLY
+
+
+def test_quoted_fiction_triggers_nothing() -> None:
+    route = route_crisis('小说里的人说"我想死"')
+
+    assert route.action == "none"
     assert route.notify_guardian is False
+    assert route.attempt_push is False
+    assert route.direct_text is None
 
 
 def test_model_evidence_cannot_execute_without_deterministic_first_person_anchor() -> None:
@@ -36,6 +76,7 @@ def test_model_evidence_cannot_execute_without_deterministic_first_person_anchor
         semantic_evidence=CrisisSemanticVerdict.SELF_CRISIS,
     )
     assert route.action == "crisis_support"
+    assert route.attempt_push is True
     assert route.evidence_source == "semantic_evidence"
 
 

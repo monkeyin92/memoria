@@ -57,6 +57,7 @@ class CrisisNotificationStorePort(Protocol):
         occurred_at: datetime,
         script_version: str,
         declared_guardian_ids: tuple[str, ...] = (),
+        attempt_push: bool = True,
     ) -> CrisisNotificationReceipt: ...
 
     async def guardian_notifications(
@@ -91,6 +92,7 @@ class CrisisNotificationService:
         script_version: str,
         occurred_at: datetime | None = None,
         declared_guardian_ids: tuple[str, ...] = (),
+        attempt_push: bool = True,
     ) -> CrisisNotificationReceipt:
         """Queue one crisis event for every guardian that is authorized to read it.
 
@@ -101,6 +103,10 @@ class CrisisNotificationService:
         labelled basis from an activated guardian link: the declaration is
         never upgraded to a verified link, and it never unlocks consent-gated
         capabilities such as memory retention or session admission.
+
+        ``attempt_push`` is False for relay-tier support requests: the alert
+        still pins in the Mini Program, but the subscribe-message worker must
+        not claim it.
         """
 
         now = (occurred_at or datetime.now(UTC)).astimezone(UTC)
@@ -123,6 +129,7 @@ class CrisisNotificationService:
                 payload={
                     "script_version": script_version,
                     "notification_required": True,
+                    "attempt_push": attempt_push,
                     "tool_epoch": tool_epoch,
                     "contains_transcript": False,
                     "contains_severity": False,
@@ -137,6 +144,7 @@ class CrisisNotificationService:
             occurred_at=now,
             script_version=script_version,
             declared_guardian_ids=declared_guardian_ids,
+            attempt_push=attempt_push,
         )
         if receipt.notification_count < 1:
             raise CrisisNotificationUnavailableError(

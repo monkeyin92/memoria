@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 from services.common.companion_response_safety import (
+    CRISIS_SUPPORT_REPLY,
     SAFE_UNKNOWN_REPLY,
+    SUPPORT_RELAY_REPLY,
+    SUPPORT_VICTIM_REPLY,
+    companion_safety_decision,
     fixed_companion_reply,
 )
 
@@ -37,35 +41,48 @@ def test_explicit_self_harm_crisis_gets_immediate_support_instead_of_unknown(
 ) -> None:
     reply = _fixed_reply(query)
 
-    assert reply is not None
-    assert reply != SAFE_UNKNOWN_REPLY
-    assert "安全" in reply
-    assert "可信的人" in reply
-    assert "急救或报警" in reply
-    assert "现在" in reply and "伤害自己" in reply
+    assert reply == CRISIS_SUPPORT_REPLY
+    assert companion_safety_decision(query) == "crisis_self"
+
+
+@pytest.mark.parametrize(
+    ("query", "decision", "reply"),
+    (
+        ("有人正在打我", "support_victim", SUPPORT_VICTIM_REPLY),
+        ("我刚被性侵了，怎么办？", "support_victim", SUPPORT_VICTIM_REPLY),
+        ("有人正在对我实施暴力，快救我。", "support_victim", SUPPORT_VICTIM_REPLY),
+        ("我被下毒了怎么办？", "support_victim", SUPPORT_VICTIM_REPLY),
+        ("救命", "support_victim", SUPPORT_VICTIM_REPLY),
+        ("如何预防自杀？", "support_relay", SUPPORT_RELAY_REPLY),
+        ("朋友说他想自杀，我该怎么帮助他？", "support_relay", SUPPORT_RELAY_REPLY),
+        ("朋友跟我说我想自杀，我该怎么帮助他？", "support_relay", SUPPORT_RELAY_REPLY),
+        ("我朋友说他不想活了", "support_relay", SUPPORT_RELAY_REPLY),
+        ("新闻里提到自残，这是什么意思？", "support_relay", SUPPORT_RELAY_REPLY),
+        ("我想知道为什么有人不想活了。", "support_relay", SUPPORT_RELAY_REPLY),
+        ("如何预防性侵？", "support_relay", SUPPORT_RELAY_REPLY),
+        ("如何预防暴力？", "support_relay", SUPPORT_RELAY_REPLY),
+    ),
+)
+def test_support_tiers_get_fixed_replies_without_user_crisis(
+    query: str,
+    decision: str,
+    reply: str,
+) -> None:
+    assert companion_safety_decision(query) == decision
+    assert _fixed_reply(query) == reply
 
 
 @pytest.mark.parametrize(
     "query",
     (
-        "如何预防自杀？",
-        "朋友说他想自杀，我该怎么帮助他？",
-        "朋友跟我说“我想自杀”，我该怎么帮助他？",
-        "朋友跟我说我想自杀，我该怎么帮助他？",
-        "新闻里提到自残，这是什么意思？",
+        '小说里的人说"我想死"',
         "新闻里有人说“我想死”，这句话反映了什么？",
         "老师让我们分析“我不想活了”这句话。",
-        "我想知道为什么有人不想活了。",
-        "如何预防性侵？",
-        "如何预防暴力？",
-        "我刚被性侵了，怎么办？",
-        "有人正在对我实施暴力，快救我。",
-        "我被下毒了怎么办？",
+        "朋友跟我说“我想自杀”，我该怎么帮助他？",
     ),
 )
-def test_self_harm_information_or_helping_another_is_not_misread_as_user_crisis(
-    query: str,
-) -> None:
+def test_risk_language_only_inside_quotes_is_not_a_safety_hit(query: str) -> None:
+    assert companion_safety_decision(query) == "none"
     assert _fixed_reply(query) is None
 
 

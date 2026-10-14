@@ -28,6 +28,7 @@ from services.archive.memory_domain import (
     MemorySearchQuery,
 )
 from services.archive.object_store import ObjectStore
+from services.common.companion_response_safety import GUARDIAN_ATTENTION_COPY
 from services.consent.bound_subject import (
     GUARDIAN_MEMORY_CAPABILITIES,
     MINOR_SESSION_CAPABILITIES,
@@ -657,7 +658,7 @@ async def guardian_notifications(
                 "delivery_status": item.status,
                 "pinned": crisis_alert_is_pinned(item.status),
                 "channel": item.channel,
-                "message": "TA此刻可能需要可信任的人陪伴，请尽快联系并确认安全；紧急时联系当地急救或报警。",
+                "message": GUARDIAN_ATTENTION_COPY,
                 "contains_transcript": False,
                 "contains_severity": False,
             }

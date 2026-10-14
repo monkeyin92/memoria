@@ -88,6 +88,7 @@ async def test_minor_crisis_is_idempotent_and_contains_no_transcript_or_severity
     assert dict(event.payload) == {
         "script_version": "crisis-transfer-draft-v1",
         "notification_required": True,
+        "attempt_push": True,
         "tool_epoch": 1,
         "contains_transcript": False,
         "contains_severity": False,

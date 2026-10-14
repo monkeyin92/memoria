@@ -16,8 +16,17 @@ from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
-from services.common.crisis_policy import CRISIS_SCRIPT_VERSION
+from services.common.companion_response_safety import (
+    CRISIS_SUPPORT_REPLY,
+    GUARDIAN_ATTENTION_COPY,
+    SUPPORT_RELAY_REPLY,
+    SUPPORT_VICTIM_REPLY,
+)
+from services.common.crisis_policy import (
+    CRISIS_SCRIPT_VERSION,
+    SUPPORT_RELAY_SCRIPT_VERSION,
+    SUPPORT_VICTIM_SCRIPT_VERSION,
+)
 from services.control_api.app.device_binding_token import mint_device_binding_token
 from services.control_api.app.main import create_app
 from services.control_api.tests.test_interaction_api import (
@@ -250,6 +259,8 @@ async def test_minor_crisis_queues_one_notification_and_fixed_text_reaches_the_d
         # 边界：本阶段没有发送 worker，入队不等于家长已收到。
         assert item["delivery_status"] == "pending"
         assert item["pinned"] is True
+        assert item["message"] == GUARDIAN_ATTENTION_COPY
+        assert "危机" not in item["message"]
         assert item["contains_transcript"] is False
         assert item["contains_severity"] is False
 
@@ -266,9 +277,101 @@ async def test_minor_crisis_queues_one_notification_and_fixed_text_reaches_the_d
         assert len(events) == 1
         payload = dict(events[0].payload)
         assert payload["script_version"] == CRISIS_SCRIPT_VERSION
+        assert payload["attempt_push"] is True
         assert payload["contains_transcript"] is False
         assert payload["contains_severity"] is False
         assert _CRISIS_QUERY not in json.dumps(payload, ensure_ascii=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("query", "reply", "script_version", "attempt_push", "expect_notification"),
+    (
+        ("我不想活了", CRISIS_SUPPORT_REPLY, CRISIS_SCRIPT_VERSION, True, True),
+        ("有人正在打我", SUPPORT_VICTIM_REPLY, SUPPORT_VICTIM_SCRIPT_VERSION, True, True),
+        (
+            "我朋友说他不想活了",
+            SUPPORT_RELAY_REPLY,
+            SUPPORT_RELAY_SCRIPT_VERSION,
+            False,
+            True,
+        ),
+        ('小说里的人说"我想死"', None, None, None, False),
+    ),
+)
+async def test_support_tier_and_crisis_behavior_matrix(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    query: str,
+    reply: str | None,
+    script_version: str | None,
+    attempt_push: bool | None,
+    expect_notification: bool,
+) -> None:
+    """Crisis push+pin; victim push+pin+reply; relay pin only; quoted fiction nothing."""
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        key = abs(hash(query)) % 10_000
+        _, parent_headers, link, child, child_headers = await _bind_family(
+            client,
+            app,
+            parent_username=f"tier-parent-{key}",
+            child_username=f"tier-child-{key}",
+            binding_key=f"tier-{key}",
+        )
+        session = await _minor_session(
+            client,
+            app,
+            child=child,
+            child_headers=child_headers,
+            link=link,
+            parent_headers=parent_headers,
+            binding_key=f"tier-{key}",
+        )
+        plan = await _response_plan(
+            client,
+            session_id=session["session_id"],
+            query=query,
+            turn_id=1,
+            generation_id=1,
+        )
+        assert plan.status_code == 200, plan.text
+        body = plan.json()
+        assert body["direct_text"] == reply
+        if reply is not None:
+            assert "危机" not in reply
+            assert "伙伴" not in reply
+            assert "家人" not in reply
+            assert "好朋友" not in reply
+
+        notifications = await client.get("/v1/guardian/notifications", headers=parent_headers)
+        assert notifications.status_code == 200, notifications.text
+        items = notifications.json()["items"]
+        if not expect_notification:
+            assert items == []
+            assert await _crisis_event_count(app, minor_user_id=child["user_id"]) == 0
+            return
+
+        assert len(items) == 1
+        item = items[0]
+        assert item["pinned"] is True
+        assert item["delivery_status"] == "pending"
+        assert item["message"] == GUARDIAN_ATTENTION_COPY
+        blob = json.dumps(notifications.json(), ensure_ascii=False)
+        assert "被打" not in blob
+        assert "性侵" not in blob
+        events = await app.state.life_archive.evidence_window(
+            account_id=child["user_id"],
+            occurred_after=datetime(1970, 1, 1, tzinfo=UTC),
+            occurred_before=datetime.now(UTC),
+            event_types=("guardian.crisis_event",),
+        )
+        assert len(events) == 1
+        payload = dict(events[0].payload)
+        assert payload["script_version"] == script_version
+        assert payload["attempt_push"] is attempt_push
 
 
 @pytest.mark.asyncio
