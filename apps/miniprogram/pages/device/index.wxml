@@ -46,11 +46,64 @@
 
     <block wx:else>
       <view class="trial-page device-trial-head">
-        <text class="trial-title">设置</text>
-        <text class="trial-caption">{{devicePlaceName}} · {{online ? '在线' : '离线'}}</text>
+        <text class="eyebrow">设备 · {{devicePlaceName}}</text>
+        <text class="trial-title">使用时长</text>
+        <text class="page-lede">到时间后，机器人会温柔地提醒孩子休息。</text>
 
-        <view wx:if="{{trialSettingsVisible}}" class="trial-inset">
-          <block wx:if="{{subscriptionPushEnabled}}">
+        <block wx:if="{{trialSettingsVisible}}">
+          <view class="trial-card trial-card-xl device-usage-card">
+            <view class="device-ring">
+              <view class="device-ring-inner">
+                <text class="device-ring-num">{{sessionLimits.maxSessionMinutes || 30}}</text>
+                <text class="device-ring-cap">分钟上限</text>
+              </view>
+            </view>
+            <view class="device-usage-copy">
+              <text class="device-usage-title">用量暂未统计</text>
+              <view class="trial-status-pill {{online ? '' : 'is-off'}}">
+                <view class="trial-status-dot"></view>
+                <text>{{online ? '在线' : '离线'}}</text>
+              </view>
+            </view>
+          </view>
+
+          <view class="trial-card device-limit-card">
+            <view class="device-limit-head">
+              <text class="device-limit-label">每日上限</text>
+              <view>
+                <text class="device-limit-num">{{sessionLimits.maxSessionMinutes || 30}}</text>
+                <text class="device-limit-unit"> 分钟</text>
+              </view>
+            </view>
+            <slider
+              class="device-slider"
+              min="{{limitsSliderMin}}"
+              max="{{limitsSliderMax}}"
+              step="{{limitsSliderStep}}"
+              value="{{sessionLimits.maxSessionMinutes || 30}}"
+              disabled="{{limitsSaving}}"
+              bindchange="onTrialDailyCapSlider"
+              activeColor="#4A52C9"
+              backgroundColor="#ECECF2"
+              block-color="#ffffff"
+              block-size="28"
+            />
+            <view class="device-limit-range">
+              <text>{{limitsSliderMin}} 分钟</text>
+              <text>{{limitsSliderMax}} 分钟</text>
+            </view>
+          </view>
+
+          <view class="trial-card device-quiet-card" bindtap="openLimitsSheet">
+            <mp-icon name="moon" tone="ink"></mp-icon>
+            <view class="device-setting-copy">
+              <text class="trial-inset-label">安静时段</text>
+              <text class="trial-caption">{{sessionLimits.quietHoursLabel || '未设置'}}，孩子睡觉的时间机器人不陪聊</text>
+            </view>
+            <image class="row-chev" src="/assets/ui/v4/chev-ink.svg" />
+          </view>
+
+          <view wx:if="{{subscriptionPushEnabled}}" class="trial-inset">
             <view class="trial-inset-row">
               <view class="device-setting-copy">
                 <text class="trial-inset-label">安全提醒</text>
@@ -68,47 +121,24 @@
               class="trial-caption trial-inset-caption {{safetySubscribeKnown ? '' : 'is-action'}}"
               bindtap="retrySafetySubscribeState"
             >{{safetySubscribeOffCaption}}</text>
-          </block>
-          <view class="trial-inset-row" bindtap="openLimitsSheet">
-            <text class="trial-inset-label">安静时段</text>
-            <text class="trial-inset-value">{{sessionLimits.quietHoursLabel || '21:00 – 07:00'}} ›</text>
           </view>
-          <view class="trial-inset-row">
-            <text class="trial-inset-label">每日上限</text>
-            <text class="trial-inset-value">{{sessionLimits.maxSessionLabel || '30 分钟'}}</text>
-          </view>
-          <view class="device-slider-block">
-            <slider
-              min="{{limitsSliderMin}}"
-              max="{{limitsSliderMax}}"
-              step="{{limitsSliderStep}}"
-              value="{{sessionLimits.maxSessionMinutes || 30}}"
-              disabled="{{limitsSaving}}"
-              bindchange="onTrialDailyCapSlider"
-              activeColor="#E2702A"
-              backgroundColor="#F2EADF"
-              block-color="#ffffff"
-              block-size="24"
-            />
-          </view>
-        </view>
+        </block>
 
         <view class="trial-inset device-privacy-block">
           <view class="trial-inset-row" bindtap="openPrivacyNote">
             <text class="trial-inset-label">隐私说明</text>
-            <text class="trial-inset-value">›</text>
+            <image class="row-chev" src="/assets/ui/v4/chev-ink.svg" />
           </view>
           <view wx:if="{{guardianExportVisible}}" class="trial-inset-row" bindtap="openGuardianExport">
             <text class="trial-inset-label">管理与导出数据</text>
-            <text class="trial-inset-value">›</text>
+            <image class="row-chev" src="/assets/ui/v4/chev-ink.svg" />
           </view>
           <view class="trial-inset-row" bindtap="openUnbindSheet">
             <text class="trial-inset-label">解绑设备</text>
-            <text class="trial-inset-value">›</text>
+            <image class="row-chev" src="/assets/ui/v4/chev-ink.svg" />
           </view>
-          <view class="mp-privacy-well">{{privacyNote}}</view>
-          <view class="mp-privacy-well">{{backupRetentionLine}}</view>
         </view>
+        <view class="mp-privacy-well">{{privacyNote}}</view>
       </view>
 
       <text wx:if="{{bindingSyncError}}" class="notice notice-warn">{{bindingSyncError}}</text>

@@ -1,16 +1,10 @@
 @import "../../styles/trial-theme.wxss";
 
 .device-trial-head {
-  padding: 8rpx 0 12rpx;
-  margin: 0 -32rpx;
-  padding-left: 32rpx;
-  padding-right: 32rpx;
-  padding-bottom: 8rpx;
-  background: var(--mp-bg);
-}
-
-.page-shell {
-  background: var(--mp-bg);
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
 }
 
 .device-setting-copy {
@@ -19,11 +13,119 @@
 }
 
 .device-setting-copy .trial-caption {
-  margin-top: 4rpx;
+  margin-top: 8rpx;
 }
 
-.device-slider-block {
-  padding: 8rpx 32rpx 28rpx;
+.device-usage-card {
+  display: flex;
+  align-items: center;
+  gap: 48rpx;
+  margin-top: 48rpx;
+  padding: 32rpx 48rpx;
+}
+
+.device-ring {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 224rpx;
+  height: 224rpx;
+  border-radius: 50%;
+  background: var(--mp-track);
+}
+
+.device-ring-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 176rpx;
+  height: 176rpx;
+  border-radius: 50%;
+  background: var(--mp-surface);
+}
+
+.device-ring-num {
+  color: var(--mp-ink);
+  font-size: var(--mp-type-display);
+  font-weight: 700;
+  line-height: 64rpx;
+  letter-spacing: -2rpx;
+  font-variant-numeric: tabular-nums;
+}
+
+.device-ring-cap {
+  margin-top: 8rpx;
+  color: var(--mp-ink-3);
+  font-size: var(--mp-type-tab);
+}
+
+.device-usage-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.device-usage-title {
+  display: block;
+  margin-bottom: 24rpx;
+  color: var(--mp-ink);
+  font-size: var(--mp-type-button);
+  font-weight: 600;
+  line-height: var(--mp-lh-card);
+}
+
+.device-limit-card {
+  margin-top: var(--mp-gap-card);
+  padding: 48rpx;
+}
+
+.device-limit-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.device-limit-label {
+  color: var(--mp-ink);
+  font-size: var(--mp-type-card);
+  font-weight: 600;
+}
+
+.device-limit-num {
+  color: var(--mp-ink);
+  font-size: var(--mp-type-display);
+  font-weight: 700;
+  letter-spacing: -2rpx;
+  font-variant-numeric: tabular-nums;
+}
+
+.device-limit-unit {
+  color: var(--mp-ink-2);
+  font-size: var(--mp-type-caption);
+}
+
+.device-slider {
+  margin: 32rpx 0 8rpx;
+}
+
+.device-limit-range {
+  display: flex;
+  justify-content: space-between;
+  color: var(--mp-ink-3);
+  font-size: var(--mp-type-meta);
+}
+
+.device-quiet-card {
+  display: flex;
+  align-items: center;
+  gap: 32rpx;
+  margin-top: var(--mp-gap-card);
+  padding: 32rpx;
+}
+
+.device-quiet-card .trial-inset-label {
+  font-weight: 600;
 }
 
 .device-privacy-block {

@@ -23,7 +23,7 @@ const {
   confirmUnusualQuietHours,
 } = require("../../utils/quiet-hours");
 const { offersSafetySubscribe } = require("../../utils/trial-device-card");
-const { BACKUP_RETENTION_LINE, PRIVACY_LINE } = require("../../utils/child-memory");
+const { PRIVACY_LINE } = require("../../utils/child-memory");
 const { SUBSCRIPTION_PUSH_ENABLED } = require("../../config");
 
 // 与绑定页的「单次使用时长」选项一致。
@@ -307,7 +307,6 @@ Page({
     safetySubscribeOffCaption: "",
     safetySubscribeHelper: guardianPush.SAFETY_SUBSCRIBE_HELPER,
     privacyNote: PRIVACY_LINE,
-    backupRetentionLine: BACKUP_RETENTION_LINE,
     guardianExportVisible: false,
     limitsSheetVisible: false,
     limitsSaving: false,
@@ -992,7 +991,6 @@ Page({
         guardianExportVisible: offersSafetySubscribe(binding),
         safetySubscribeHelper: guardianPush.SAFETY_SUBSCRIBE_HELPER,
         privacyNote: PRIVACY_LINE,
-    backupRetentionLine: BACKUP_RETENTION_LINE,
         elderAlerts: [],
         subjectAliasLabel,
         personaRows: personaRows(
