@@ -514,7 +514,7 @@ async def test_reclaim_after_a_crashed_worker_reuses_its_reservation(
 
 
 @pytest.mark.asyncio
-async def test_relay_tier_alert_pins_without_being_claimed_for_push(
+async def test_relay_tier_alert_is_neither_pinned_nor_pushed(
     guardian_postgres_store: PostgresGuardianStore,
     archive: PostgresLifeArchive,
 ) -> None:
@@ -542,18 +542,16 @@ async def test_relay_tier_alert_pins_without_being_claimed_for_push(
         turn_id=9,
         generation_id=1,
         tool_epoch=1,
-        script_version="support-relay-pin-v1",
-        reply_template_id="support-relay-reply",
+        script_version="support-other-v1",
+        reply_template_id="support-other-v1",
         occurred_at=occurred,
         attempt_push=False,
     )
-    assert receipt.notification_count == 1
+    assert receipt.notification_count == 0
     await _accept(store, occurred)
     sender = FakeSender(PushSendResult("delivered"))
     assert await _worker(store, sender, Clock(occurred + timedelta(seconds=5))).run_once() == 0
-    notification = await _only_notification(store)
-    assert notification.status == "pending"
-    assert crisis_alert_is_pinned(notification.status)
+    assert await store.guardian_notifications(guardian_user_id="guardian-a") == ()
     assert sender.calls == []
 
 

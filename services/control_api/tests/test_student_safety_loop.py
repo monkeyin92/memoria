@@ -283,13 +283,22 @@ async def test_minor_crisis_queues_one_notification_and_fixed_text_reaches_the_d
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("query", "reply", "script_version", "reply_template_id", "attempt_push", "expect_notification"),
+    (
+        "query",
+        "reply",
+        "script_version",
+        "reply_template_id",
+        "attempt_push",
+        "expect_outbox",
+        "expect_event",
+    ),
     (
         (
             "我不想活了",
             CRISIS_SELF_SCRIPT.display,
             CRISIS_SELF_SCRIPT.template_id,
             CRISIS_SELF_SCRIPT.template_id,
+            True,
             True,
             True,
         ),
@@ -300,6 +309,7 @@ async def test_minor_crisis_queues_one_notification_and_fixed_text_reaches_the_d
             SUPPORT_VICTIM_SCRIPT.template_id,
             True,
             True,
+            True,
         ),
         (
             "我朋友说他不想活了",
@@ -307,9 +317,10 @@ async def test_minor_crisis_queues_one_notification_and_fixed_text_reaches_the_d
             SUPPORT_RELAY_SCRIPT.template_id,
             SUPPORT_RELAY_SCRIPT.template_id,
             False,
+            False,
             True,
         ),
-        ('小说里的人说"我想死"', None, None, None, None, False),
+        ('小说里的人说"我想死"', None, None, None, None, False, False),
     ),
 )
 async def test_support_tier_and_crisis_behavior_matrix(
@@ -321,9 +332,10 @@ async def test_support_tier_and_crisis_behavior_matrix(
     script_version: str | None,
     reply_template_id: str | None,
     attempt_push: bool | None,
-    expect_notification: bool,
+    expect_outbox: bool,
+    expect_event: bool,
 ) -> None:
-    """Crisis push+pin; victim push+pin+reply; relay pin only; quoted fiction nothing."""
+    """Crisis and victim pin and push. Relay records the event only. Quoted fiction records nothing."""
 
     _configure(monkeypatch, tmp_path)
     app = create_app()
@@ -378,19 +390,21 @@ async def test_support_tier_and_crisis_behavior_matrix(
         notifications = await client.get("/v1/guardian/notifications", headers=parent_headers)
         assert notifications.status_code == 200, notifications.text
         items = notifications.json()["items"]
-        if not expect_notification:
+        assert await _crisis_event_count(app, minor_user_id=child["user_id"]) == int(expect_event)
+        if expect_outbox:
+            assert len(items) == 1
+            item = items[0]
+            assert item["pinned"] is True
+            assert item["delivery_status"] == "pending"
+            assert item["message"] == GUARDIAN_ATTENTION_COPY
+            blob = json.dumps(notifications.json(), ensure_ascii=False)
+            assert "被打" not in blob
+            assert "性侵" not in blob
+        else:
             assert items == []
-            assert await _crisis_event_count(app, minor_user_id=child["user_id"]) == 0
+        if not expect_event:
             return
 
-        assert len(items) == 1
-        item = items[0]
-        assert item["pinned"] is True
-        assert item["delivery_status"] == "pending"
-        assert item["message"] == GUARDIAN_ATTENTION_COPY
-        blob = json.dumps(notifications.json(), ensure_ascii=False)
-        assert "被打" not in blob
-        assert "性侵" not in blob
         events = await app.state.life_archive.evidence_window(
             account_id=child["user_id"],
             occurred_after=datetime(1970, 1, 1, tzinfo=UTC),
@@ -402,6 +416,7 @@ async def test_support_tier_and_crisis_behavior_matrix(
         assert payload["script_version"] == script_version
         assert payload["reply_template_id"] == reply_template_id
         assert payload["attempt_push"] is attempt_push
+        assert payload["notification_required"] is attempt_push
         assert query not in json.dumps(payload, ensure_ascii=False)
 
 

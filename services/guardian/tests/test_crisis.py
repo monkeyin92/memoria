@@ -12,11 +12,14 @@ from datetime import UTC, datetime, timedelta
 
 import asyncpg
 import pytest
+from services.archive.domain import IdempotencyConflictError
 from services.archive.postgres_archive import PostgresLifeArchive
 from services.guardian.crisis import (
+    CrisisNotificationReceipt,
     CrisisNotificationService,
     CrisisNotificationUnavailableError,
 )
+from services.guardian.domain import GuardianConflictError
 from services.guardian.postgres_store import PostgresGuardianStore
 from testing.guardian_seed import declare_binding_guardian
 from testing.postgres_harness import TestDatabase
@@ -115,6 +118,78 @@ async def test_minor_crisis_is_idempotent_and_contains_no_transcript_or_severity
     assert row is not None
     assert str(row["reply_template_id"]) == "crisis-support-reply"
     assert str(row["script_version"]) == "crisis-transfer-draft-v1"
+
+
+@pytest.mark.asyncio
+async def test_relay_tier_crisis_records_event_and_evidence_without_notifying(
+    postgres_database: TestDatabase,
+    guardian_postgres_store: PostgresGuardianStore,
+    archive: PostgresLifeArchive,
+) -> None:
+    store = guardian_postgres_store
+    now = datetime.now(UTC)
+    digest = hashlib.sha256(b"binding-code").hexdigest()
+    link = await store.create_link(
+        guardian_user_id="guardian-a",
+        minor_user_id="minor-a",
+        relation="parent",
+        verified_via="wechat_identity",
+        binding_code_hash=digest,
+        binding_expires_at=now + timedelta(minutes=15),
+        now=now,
+    )
+    await store.confirm_link(
+        link_id=link.link_id,
+        minor_user_id="minor-a",
+        binding_code_hash=digest,
+        now=now,
+    )
+    service = CrisisNotificationService(store, archive)
+
+    async def record(*, attempt_push: bool) -> CrisisNotificationReceipt:
+        return await service.record_minor_crisis(
+            minor_user_id="minor-a",
+            session_id="voice-session-relay",
+            turn_id=6,
+            generation_id=1,
+            tool_epoch=1,
+            script_version="support-other-v1",
+            reply_template_id="support-other-v1",
+            occurred_at=now,
+            attempt_push=attempt_push,
+        )
+
+    first = await record(attempt_push=False)
+    replay = await record(attempt_push=False)
+    with pytest.raises(IdempotencyConflictError):
+        await record(attempt_push=True)
+    with pytest.raises(GuardianConflictError):
+        await store.enqueue_crisis_event(
+            crisis_event_id=first.crisis_event_id,
+            evidence_event_id=first.evidence_event_id,
+            minor_user_id="minor-a",
+            occurred_at=now,
+            script_version="support-other-v1",
+            reply_template_id="support-other-v1",
+            attempt_push=True,
+        )
+
+    assert first == replay
+    assert first.notification_count == 0
+    assert await store.guardian_notifications(guardian_user_id="guardian-a") == ()
+    event = await archive.event(account_id="minor-a", event_id=first.evidence_event_id)
+    assert event is not None
+    assert event.payload["notification_required"] is False
+    assert event.payload["attempt_push"] is False
+    admin = await asyncpg.connect(postgres_database.owner_dsn())
+    try:
+        attempt_push = await admin.fetchval(
+            "SELECT attempt_push FROM guardian_crisis_events WHERE crisis_event_id = $1::uuid",
+            first.crisis_event_id,
+        )
+    finally:
+        await admin.close()
+    assert attempt_push is False
 
 
 @pytest.mark.asyncio
