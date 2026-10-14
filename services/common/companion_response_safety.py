@@ -6,6 +6,12 @@ import re
 from collections.abc import Sequence
 from typing import Final, Literal
 
+from services.common.fixed_safety_scripts import (
+    CRISIS_SELF_SCRIPT,
+    SUPPORT_RELAY_SCRIPT,
+    SUPPORT_VICTIM_SCRIPT,
+)
+
 SafetyDecision = Literal[
     "crisis_self",
     "support_victim",
@@ -15,27 +21,13 @@ SafetyDecision = Literal[
 ]
 
 SAFE_UNKNOWN_REPLY = "我不知道。"
-# Product/compliance approved copy.
-CRISIS_SUPPORT_REPLY: Final = (
-    "你说的话很重要，这件事一定要请大人来帮你。现在就去找爸爸妈妈或者身边的大人，"
-    "告诉他们你刚才说的话。请大人陪着你，也可以请大人拨打心理援助热线 12356。"
-    "如果你已经受伤了，马上告诉大人，请大人打 120。"
-)
-# Tier 1: the child is currently a victim. Exact fixed reply.
-SUPPORT_VICTIM_REPLY: Final = (
-    "你说的事情很重要。现在马上去找身边的大人，爸爸妈妈、老师都可以。"
-    "如果有危险，请大人帮你打 110。"
-)
-# Tier 2: relaying someone else or asking how to prevent. Exact fixed reply.
-SUPPORT_RELAY_REPLY: Final = (
-    "谢谢你告诉我，你是个关心别人的好孩子。"
-    "这件事要请大人帮忙，现在就去告诉爸爸妈妈或者老师吧。"
-)
+CRISIS_SUPPORT_REPLY: Final = CRISIS_SELF_SCRIPT.display
+SUPPORT_VICTIM_REPLY: Final = SUPPORT_VICTIM_SCRIPT.display
+SUPPORT_RELAY_REPLY: Final = SUPPORT_RELAY_SCRIPT.display
 GUARDIAN_ATTENTION_COPY: Final = "有一条需要你关注的对话"
-# Template id and script_version share one id per route.
-CRISIS_SUPPORT_REPLY_TEMPLATE_ID: Final = "crisis-self-v1"
-SUPPORT_VICTIM_REPLY_TEMPLATE_ID: Final = "victim-support-v1"
-SUPPORT_RELAY_REPLY_TEMPLATE_ID: Final = "support-other-v1"
+CRISIS_SUPPORT_REPLY_TEMPLATE_ID: Final = CRISIS_SELF_SCRIPT.template_id
+SUPPORT_VICTIM_REPLY_TEMPLATE_ID: Final = SUPPORT_VICTIM_SCRIPT.template_id
+SUPPORT_RELAY_REPLY_TEMPLATE_ID: Final = SUPPORT_RELAY_SCRIPT.template_id
 FIXED_SAFETY_REPLIES: Final = frozenset(
     {CRISIS_SUPPORT_REPLY, SUPPORT_VICTIM_REPLY, SUPPORT_RELAY_REPLY}
 )
