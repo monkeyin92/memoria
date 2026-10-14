@@ -930,15 +930,15 @@ class ReplyPipeline:
             plan = None
             fetch_reason = "mode_policy_mismatch"
         if plan is None:
-            crisis = route_crisis(text)
+            script = route_crisis(text).script
             plan = self._local_safe_plan(
                 fence=fence,
                 speaker=speaker,
                 reason=fetch_reason,
                 query=text,
             )
-            if crisis.direct_text is not None and plan.direct_text != crisis.direct_text:
-                plan = replace(plan, direct_text=crisis.direct_text)
+            if script is not None and plan.direct_text != script.display:
+                plan = replace(plan, direct_text=script.display)
         if (
             input_modality == "audio"
             and output_policy.generation_voice_must_match_plan(policy)
@@ -979,15 +979,15 @@ class ReplyPipeline:
             )
             snapshot = None
         if snapshot is None:
-            crisis = route_crisis(text)
+            script = route_crisis(text).script
             plan = self._local_safe_plan(
                 fence=fence,
                 speaker=speaker,
                 reason="context_snapshot_unavailable",
                 query=text,
             )
-            if crisis.direct_text is not None and plan.direct_text != crisis.direct_text:
-                plan = replace(plan, direct_text=crisis.direct_text)
+            if script is not None and plan.direct_text != script.display:
+                plan = replace(plan, direct_text=script.display)
             if (
                 input_modality == "audio"
                 and output_policy.generation_voice_must_match_plan(policy)

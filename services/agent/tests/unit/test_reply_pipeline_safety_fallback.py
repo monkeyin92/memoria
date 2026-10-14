@@ -67,23 +67,23 @@ def _pipeline(runtime: DuplexRuntime, planner: _MismatchPlanner) -> ReplyPipelin
 @pytest.mark.parametrize(
     ("query", "expected"),
     [
-        ("我不想活了", CRISIS_SELF_SCRIPT.display),
-        ("有人正在打我", SUPPORT_VICTIM_SCRIPT.display),
-        ("有人在打我", SUPPORT_VICTIM_SCRIPT.display),
-        ("我朋友说他不想活了", SUPPORT_RELAY_SCRIPT.display),
-        ("我不想活了。", CRISIS_SELF_SCRIPT.display),
-        ("我想伤害自己。", CRISIS_SELF_SCRIPT.display),
-        ("我不想或了。", CRISIS_SELF_SCRIPT.display),
-        ("有个大人老是打我，还不让我告诉妈妈。", SUPPORT_VICTIM_SCRIPT.display),
-        ("有人摸我身体，我不喜欢。", SUPPORT_VICTIM_SCRIPT.display),
-        ("有个叔叔老是大我。", SUPPORT_VICTIM_SCRIPT.display),
-        ("我同桌说她爸爸打她，我该怎么帮她？", SUPPORT_RELAY_SCRIPT.display),
-        ("我朋友说有人欺负她。", SUPPORT_RELAY_SCRIPT.display),
-        ("我同学被人打了。", SUPPORT_RELAY_SCRIPT.display),
+        ("我不想活了", CRISIS_SELF_SCRIPT),
+        ("有人正在打我", SUPPORT_VICTIM_SCRIPT),
+        ("有人在打我", SUPPORT_VICTIM_SCRIPT),
+        ("我朋友说他不想活了", SUPPORT_RELAY_SCRIPT),
+        ("我不想活了。", CRISIS_SELF_SCRIPT),
+        ("我想伤害自己。", CRISIS_SELF_SCRIPT),
+        ("我不想或了。", CRISIS_SELF_SCRIPT),
+        ("有个大人老是打我，还不让我告诉妈妈。", SUPPORT_VICTIM_SCRIPT),
+        ("有人摸我身体，我不喜欢。", SUPPORT_VICTIM_SCRIPT),
+        ("有个叔叔老是大我。", SUPPORT_VICTIM_SCRIPT),
+        ("我同桌说她爸爸打她，我该怎么帮她？", SUPPORT_RELAY_SCRIPT),
+        ("我朋友说有人欺负她。", SUPPORT_RELAY_SCRIPT),
+        ("我同学被人打了。", SUPPORT_RELAY_SCRIPT),
     ],
 )
 async def test_fence_mismatch_fallback_still_speaks_fixed_safety_replies(
-    query: str, expected: str
+    query: str, expected: FixedSafetyScript
 ) -> None:
     runtime = _runtime("safety-fallback")
     planner = _MismatchPlanner()
@@ -91,17 +91,14 @@ async def test_fence_mismatch_fallback_still_speaks_fixed_safety_replies(
     assert response_plan_sidecar.applies(planner, runtime, runtime.fence)
     pipeline = _pipeline(runtime, planner)
     fence = await pipeline.prepare_committed_turn(query)
-    spoken: list[str] = []
-    async for token in pipeline.stream(
-        LanguageModelRequest(
-            user_text=query,
-            cancellation=CancellationContext.capture(fence),
+    spoken = [
+        token
+        async for token in pipeline.stream(
+            LanguageModelRequest(
+                user_text=query,
+                cancellation=CancellationContext.capture(fence),
+            )
         )
-    ):
-        if isinstance(token, FixedSafetyScript):
-            spoken.append(token.display)
-        else:
-            spoken.append(token)
-    assert "".join(spoken) == expected
-    assert "模型不该开口" not in "".join(spoken)
+    ]
+    assert spoken == [expected]
     await runtime.close()
