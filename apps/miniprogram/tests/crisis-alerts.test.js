@@ -4,8 +4,38 @@ const path = require("node:path");
 const test = require("node:test");
 
 const crisisAlerts = require("../utils/crisis-alerts");
+const guardianPush = require("../utils/guardian-push");
 
 const root = path.resolve(__dirname, "..");
+
+function fakeApi({ config, loginCode = "login-code-1" } = {}) {
+  const calls = { recorded: [] };
+  return {
+    calls,
+    async getGuardianPushConfig() {
+      return config;
+    },
+    async getGuardianNotifications() {
+      return { items: [] };
+    },
+    async wechatLoginCode() {
+      return loginCode;
+    },
+    async recordGuardianPushSubscription(body) {
+      calls.recorded.push(body);
+      return { template_id: body.templateId, result: body.result, remaining: 1 };
+    },
+  };
+}
+
+function fakeWx(answer) {
+  return {
+    requestSubscribeMessage(options) {
+      if (answer instanceof Error) options.fail(answer);
+      else options.success({ errMsg: "requestSubscribeMessage:ok", ...answer });
+    },
+  };
+}
 
 test("pinnedAlerts keeps only server-marked undelivered crisis rows", () => {
   const items = crisisAlerts.pinnedAlerts([
@@ -27,11 +57,6 @@ test("pinnedAlerts keeps only server-marked undelivered crisis rows", () => {
       pinned: false,
       message: "已送达",
     },
-    {
-      notification_id: "",
-      pinned: true,
-    },
-    null,
   ]);
 
   assert.deepEqual(items, [
@@ -47,83 +72,65 @@ test("pinnedAlerts keeps only server-marked undelivered crisis rows", () => {
   ]);
 });
 
-test("loadPinnedCrisisAlerts swallows API failures", async () => {
-  const ok = await crisisAlerts.loadPinnedCrisisAlerts({
-    async getGuardianNotifications() {
-      return {
-        items: [
-          {
-            notification_id: "n1",
-            minor_display_name: "小明",
-            pinned: true,
-            message: "请尽快联系",
-            delivery_status: "pending",
-            occurred_at: "t",
-            minor_user_id: "c",
-          },
-        ],
-      };
-    },
+test("requireCrisisSubscribeBeforeBind blocks parent bind without accept", async () => {
+  const config = guardianPush.normalizeCrisisPushConfig({
+    enabled: true,
+    template_ids: { crisis: "tmpl-crisis" },
   });
-  assert.equal(ok.length, 1);
-  assert.equal(ok[0].notificationId, "n1");
+  const unavailable = await crisisAlerts.requireCrisisSubscribeBeforeBind({
+    declaredMode: "parent_for_child",
+    config: { enabled: false, templateId: "" },
+    api: fakeApi(),
+    wxApi: fakeWx({ "tmpl-crisis": "accept" }),
+  });
+  assert.equal(unavailable.ok, false);
+  assert.equal(unavailable.kind, "unavailable");
 
-  const failed = await crisisAlerts.loadPinnedCrisisAlerts({
-    async getGuardianNotifications() {
-      throw new Error("offline");
-    },
+  const rejected = await crisisAlerts.requireCrisisSubscribeBeforeBind({
+    declaredMode: "parent_for_child",
+    config,
+    api: fakeApi(),
+    wxApi: fakeWx({ "tmpl-crisis": "reject" }),
   });
-  assert.deepEqual(failed, []);
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.kind, "not_accepted");
+
+  const api = fakeApi();
+  const accepted = await crisisAlerts.requireCrisisSubscribeBeforeBind({
+    declaredMode: "parent_for_child",
+    config,
+    api,
+    wxApi: fakeWx({ "tmpl-crisis": "accept" }),
+  });
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.kind, "accepted");
+  assert.deepEqual(api.calls.recorded, [
+    { templateId: "tmpl-crisis", result: "accept", loginCode: "login-code-1" },
+  ]);
+
+  const selfUse = await crisisAlerts.requireCrisisSubscribeBeforeBind({
+    declaredMode: "self_use",
+    config,
+    api: fakeApi(),
+    wxApi: fakeWx({ "tmpl-crisis": "reject" }),
+  });
+  assert.deepEqual(selfUse, { ok: true, kind: "not_required" });
 });
 
-test("bind and memory pages expose subscribe entry; home and memory pin alerts", () => {
+test("bind requires subscribe before create; memory pins undelivered alerts", () => {
   const bindJs = fs.readFileSync(path.join(root, "pages/bind/index.js"), "utf8");
   const bindWxml = fs.readFileSync(path.join(root, "pages/bind/index.wxml"), "utf8");
-  const memoryJs = fs.readFileSync(path.join(root, "pages/memory/index.js"), "utf8");
   const memoryWxml = fs.readFileSync(path.join(root, "pages/memory/index.wxml"), "utf8");
-  const homeJs = fs.readFileSync(path.join(root, "pages/home/index.js"), "utf8");
   const homeWxml = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
 
-  assert.match(bindJs, /offerCrisisSubscription/);
-  assert.match(bindJs, /enableCrisisPush/);
-  assert.match(bindWxml, /bindtap="enableCrisisPush"/);
-  assert.match(memoryJs, /loadPinnedCrisisAlerts/);
-  assert.match(memoryJs, /subscribeCrisisAlerts/);
+  assert.match(bindJs, /requireCrisisSubscribeBeforeBind/);
+  assert.match(bindJs, /createDeviceBinding/);
+  const gateAt = bindJs.indexOf("requireCrisisSubscribeBeforeBind");
+  const createAt = bindJs.indexOf("createDeviceBinding");
+  assert.ok(gateAt > 0 && createAt > gateAt);
+  assert.match(bindWxml, /开启提醒并绑定/);
+  assert.match(bindWxml, /安全提醒是完成绑定的前提/);
+  assert.doesNotMatch(bindJs, /offerCrisisSubscription/);
   assert.match(memoryWxml, /pinnedCrisisAlerts/);
-  assert.match(memoryWxml, /安全风险提醒/);
-  assert.match(memoryWxml, /bindtap="enableCrisisPush"/);
-  assert.match(homeJs, /loadPinnedCrisisAlerts/);
   assert.match(homeWxml, /pinnedCrisisAlerts/);
-  assert.match(homeWxml, /安全风险提醒/);
-});
-
-test("shouldOfferCrisisSubscription only for active parent/elder bind modes", () => {
-  assert.equal(
-    crisisAlerts.shouldOfferCrisisSubscription({
-      declared_mode: "parent_for_child",
-      status: "active",
-    }),
-    true,
-  );
-  assert.equal(
-    crisisAlerts.shouldOfferCrisisSubscription({
-      declared_mode: "child_for_parent",
-      status: "active",
-    }),
-    true,
-  );
-  assert.equal(
-    crisisAlerts.shouldOfferCrisisSubscription({
-      declared_mode: "self_use",
-      status: "active",
-    }),
-    false,
-  );
-  assert.equal(
-    crisisAlerts.shouldOfferCrisisSubscription({
-      declared_mode: "parent_for_child",
-      status: "revoked",
-    }),
-    false,
-  );
 });

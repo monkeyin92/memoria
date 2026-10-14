@@ -549,6 +549,46 @@ def _binding_roles(
     return ()
 
 
+async def _require_crisis_subscribe_for_binding(
+    request: Request,
+    *,
+    user_id: str,
+    declared_mode: str,
+) -> None:
+    """When crisis push is live, parent/elder binds need one unused acceptance.
+
+    The Mini Program must record an accept before create.  Push disabled leaves
+    API tests and offline binds alone; the client still fail-closes those modes.
+    """
+
+    if declared_mode not in {"parent_for_child", "child_for_parent"}:
+        return
+    settings = request.app.state.settings
+    if not settings.guardian_push_enabled:
+        return
+    template_id = settings.wechat_subscribe_crisis_template_id.strip()
+    if not template_id:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "guardian_push_required"},
+        )
+    store = getattr(request.app.state, "guardian_store", None)
+    if store is None or not hasattr(store, "push_subscription"):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "guardian_push_required"},
+        )
+    subscription = await store.push_subscription(
+        guardian_user_id=user_id,
+        template_id=template_id,
+    )
+    if subscription is None or int(subscription.remaining) < 1:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "guardian_crisis_subscribe_required"},
+        )
+
+
 @router.get("/v1/device-bindings")
 async def list_device_bindings(
     request: Request,
@@ -639,6 +679,11 @@ async def create_device_binding(
             status_code=403,
             detail={"code": "account_owner_mismatch"},
         )
+    await _require_crisis_subscribe_for_binding(
+        request,
+        user_id=user.user_id,
+        declared_mode=body.declared_mode,
+    )
     now = datetime.now(UTC)
     try:
         onboarding: DeviceOnboardingService | None = None

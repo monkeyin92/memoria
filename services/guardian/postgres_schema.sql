@@ -395,7 +395,12 @@ ALTER TABLE guardian_notification_outbox
     ADD COLUMN IF NOT EXISTS reserved_template_id TEXT CHECK (
         reserved_template_id IS NULL
         OR reserved_template_id ~ '^[A-Za-z0-9_-]{1,128}$'
-    );
+    ),
+    ADD COLUMN IF NOT EXISTS settled_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_guardian_notification_settled_status
+ON guardian_notification_outbox(settled_at, status)
+WHERE settled_at IS NOT NULL;
 
 DO $guardian_outbox_status$
 BEGIN
@@ -1340,6 +1345,10 @@ BEGIN
     UPDATE guardian_notification_outbox
     SET status = CASE WHEN p_outcome = 'retry' THEN 'pending' ELSE p_outcome END,
         delivered_at = CASE WHEN p_outcome = 'delivered' THEN p_now ELSE NULL END,
+        settled_at = CASE
+            WHEN p_outcome IN ('delivered', 'failed', 'no_subscription') THEN p_now
+            ELSE NULL
+        END,
         last_error_code = CASE WHEN p_outcome = 'delivered' THEN NULL ELSE p_error_code END,
         claimed_by = NULL,
         lease_until = NULL,

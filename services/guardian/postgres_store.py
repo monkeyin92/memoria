@@ -40,10 +40,12 @@ from services.guardian.domain import (
 from services.guardian.push import (
     MAX_PUSH_SUBSCRIPTION_BALANCE,
     CrisisPushOutcome,
+    CrisisReachBreakdown,
     PendingCrisisPush,
     PushSubscription,
     PushSubscriptionEvent,
     PushSubscriptionResult,
+    crisis_reach_breakdown,
     push_identifier,
     push_openid,
     push_template_id,
@@ -2059,6 +2061,40 @@ class PostgresGuardianStore:
                 template_id,
             )
         return self._push_subscription(row) if row is not None else None
+
+    async def crisis_reach_for_window(
+        self,
+        *,
+        since: datetime,
+        until: datetime,
+    ) -> CrisisReachBreakdown:
+        """Count outbox statuses created in ``[since, until)`` for recruit gates."""
+
+        start = _timestamp(since, field="since")
+        end = _timestamp(until, field="until")
+        if end <= start:
+            raise ValueError("crisis reach window requires until > since")
+        maintenance_pool = await self._ready_role_pool(
+            dsn=self._maintenance_dsn,
+            pool_attr="_maintenance_pool",
+            expected_role="memoria_guardian_maintenance",
+            operation="crisis reach accounting",
+        )
+        async with maintenance_pool.acquire() as connection, connection.transaction():
+            await connection.execute(
+                "SELECT set_config('memoria.guardian_maintenance_scope', '1', true)"
+            )
+            rows = await connection.fetch(
+                """
+                SELECT status
+                FROM guardian_notification_outbox
+                WHERE created_at >= $1 AND created_at < $2
+                ORDER BY created_at, notification_id
+                """,
+                start,
+                end,
+            )
+        return crisis_reach_breakdown(tuple(str(row["status"]) for row in rows))
 
     async def _crisis_push_pool(self) -> asyncpg.Pool:
         return await self._ready_role_pool(

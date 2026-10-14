@@ -29,6 +29,7 @@ from services.guardian.push import (
     CrisisPushWorker,
     PushSendResult,
     crisis_push_retry_delay_s,
+    crisis_reach_breakdown,
 )
 from testing.postgres_harness import TestDatabase
 
@@ -233,6 +234,18 @@ def test_undelivered_statuses_are_pinned_for_the_mini_program() -> None:
     assert not crisis_alert_is_pinned("retry")
 
 
+def test_crisis_reach_breakdown_exposes_wechat_and_pin_rates() -> None:
+    stats = crisis_reach_breakdown(
+        ("delivered", "delivered", "no_subscription", "failed", "pending")
+    )
+    assert stats.total == 5
+    assert stats.settled == 4
+    assert stats.wechat_delivery_rate == 0.5
+    assert stats.pin_fallback_rate == 0.5
+    assert stats.push_or_pin_rate == 1.0
+    assert crisis_reach_breakdown(()).wechat_delivery_rate is None
+
+
 @pytest.mark.asyncio
 async def test_worker_delivers_fixed_content_and_consumes_one_acceptance(
     guardian_postgres_store: PostgresGuardianStore,
@@ -252,6 +265,11 @@ async def test_worker_delivers_fixed_content_and_consumes_one_acceptance(
     assert notification.status == "delivered"
     assert not crisis_alert_is_pinned(notification.status)
     assert notification.delivered_at is not None
+    reach = await store.crisis_reach_for_window(
+        since=occurred - timedelta(minutes=1),
+        until=occurred + timedelta(hours=1),
+    )
+    assert (reach.delivered, reach.total, reach.wechat_delivery_rate) == (1, 1, 1.0)
     assert await _remaining(store) == 1
     assert len(sender.calls) == 1
     openid, template_id, content = sender.calls[0]
@@ -292,6 +310,13 @@ async def test_guardian_without_acceptance_is_marked_no_subscription(
     assert notification.last_error_code == "no_subscription"
     assert crisis_alert_is_pinned(notification.status)
     assert sender.calls == []
+    reach = await store.crisis_reach_for_window(
+        since=occurred - timedelta(minutes=1),
+        until=occurred + timedelta(hours=1),
+    )
+    assert reach.no_subscription == 1
+    assert reach.wechat_delivery_rate == 0.0
+    assert reach.push_or_pin_rate == 1.0
 
 
 @pytest.mark.asyncio

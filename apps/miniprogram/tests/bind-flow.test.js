@@ -14,6 +14,10 @@ let nextResponse = null;
 const navigations = [];
 const profileWrites = [];
 
+const CRISIS_TEMPLATE = "tmpl-crisis-bind";
+let pushConfigEnabled = false;
+let subscribeAnswer = "accept";
+
 global.wx = {
   getStorageSync: (key) => storage[key],
   setStorageSync: (key, value) => {
@@ -30,6 +34,16 @@ global.wx = {
   showModal(options) {
     options.success?.({ confirm: true });
   },
+  login(options) {
+    options.success?.({ code: "bind-login-code" });
+  },
+  requestSubscribeMessage(options) {
+    const templateId = options.tmplIds?.[0];
+    options.success?.({
+      errMsg: "requestSubscribeMessage:ok",
+      [templateId]: subscribeAnswer,
+    });
+  },
   navigateTo(options) {
     navigations.push(options.url);
   },
@@ -42,17 +56,28 @@ global.wx = {
       options.success({ statusCode: 200, data: { user_id: "person_owner", ...options.data } });
       return;
     }
-    // Crisis subscribe config / notifications are side reads after bind; do not
-    // overwrite the binding request the suite asserts on.
-    if (
-      options.url.includes("/v1/guardian/push-config") ||
-      options.url.includes("/v1/guardian/notifications") ||
-      options.url.includes("/v1/guardian/push-subscriptions")
-    ) {
+    if (options.url.includes("/v1/guardian/push-config")) {
       options.success({
         statusCode: 200,
-        data: { enabled: false, template_ids: {}, items: [] },
+        data: pushConfigEnabled
+          ? { enabled: true, template_ids: { crisis: CRISIS_TEMPLATE } }
+          : { enabled: false, template_ids: {} },
       });
+      return;
+    }
+    if (options.url.includes("/v1/guardian/push-subscriptions")) {
+      options.success({
+        statusCode: 200,
+        data: {
+          template_id: options.data?.template_id || CRISIS_TEMPLATE,
+          result: options.data?.result || "accept",
+          remaining: 1,
+        },
+      });
+      return;
+    }
+    if (options.url.includes("/v1/guardian/notifications")) {
+      options.success({ statusCode: 200, data: { items: [] } });
       return;
     }
     lastWxRequest = options;
@@ -134,6 +159,8 @@ function defaultManifestResponse(declaredMode) {
 }
 
 async function bootToMode(mode) {
+  pushConfigEnabled = mode === "parent_for_child" || mode === "child_for_parent";
+  subscribeAnswer = "accept";
   const page = instantiate(pageDefinition);
   page.onLoad({ claim_id: "claim_test_1", onboarding_session_id: "onb_test_1" });
   await page.onShow();
@@ -198,11 +225,11 @@ test("binding page collects a required subject remark after choosing who it is f
   nextResponse = successResponse(defaultManifestResponse("self_use"));
   const page = await bootToMode("self_use");
   assert.equal(page.data.form.selfNickname, "");
-  page.goToReview();
+  await page.goToReview();
   assert.ok(page.data.error.includes("备注"));
   assert.equal(page.data.step, "form");
   page.setData({ "form.selfNickname": "亲爱的儿子" });
-  page.goToReview();
+  await page.goToReview();
   assert.equal(page.data.step, "review");
   assert.equal(page.data.reviewSubjectLabel, "亲爱的儿子");
   await page.submitBinding();
@@ -215,7 +242,7 @@ test("the companion picked while binding becomes the account's companion", async
   const page = await bootSelfUseReady("阿宁");
   const index = page.data.personaOptions.findIndex((option) => option.id === "mianmian");
   page.onPersonaSwipe({ detail: { current: index } });
-  page.goToReview();
+  await page.goToReview();
   await page.submitBinding();
   assert.equal(page.data.step, "done");
   assert.equal(lastWxRequest.data.persona_selection, "mianmian");
@@ -234,7 +261,7 @@ test("self_use flow keeps sensitive offers off by default and submits clean payl
   assert.equal(offers.find((offer) => offer.id === "offer_self_digital_self_v1").checked, false);
   assert.equal(offers.find((offer) => offer.id === "offer_self_legacy_v1").checked, false);
 
-  page.goToReview();
+  await page.goToReview();
   assert.equal(page.data.step, "review");
   await page.submitBinding();
   assert.equal(page.data.step, "done");
@@ -266,7 +293,7 @@ test("checking digital self includes it in the submitted consent offers", async 
     page.data.offers.find((offer) => offer.id === "offer_self_digital_self_v1").checked,
     true,
   );
-  page.goToReview();
+  await page.goToReview();
   await page.submitBinding();
   assert.ok(lastWxRequest.data.consent_offer_ids.includes("offer_self_digital_self_v1"));
 });
@@ -283,12 +310,12 @@ test("parent_for_child flow validates minimal info and submits guardian relation
     "夜间模式：21:00–07:00（这段时间点屏只会说晚安）",
   );
 
-  page.goToReview();
+  await page.goToReview();
   assert.ok(page.data.error.includes("备注"));
   assert.equal(page.data.step, "form");
 
   page.setData({ "form.childNickname": "小乐" });
-  page.goToReview();
+  await page.goToReview();
   assert.equal(page.data.step, "review");
   await page.submitBinding();
   assert.equal(page.data.step, "done");
@@ -313,6 +340,20 @@ test("parent_for_child flow validates minimal info and submits guardian relation
   assert.ok(!page.data.offers.some((offer) => offer.id === "offer_guardian_weekly_summary_v1"));
   assert.ok(!payload.consent_offer_ids.includes("offer_emergency_contact_v1"));
   assert.equal(readSubjectLabel(page.data.manifest), "小乐");
+  assert.equal(page.data.crisisSubscribeAccepted, true);
+});
+
+test("parent_for_child bind does not complete when WeChat subscribe is rejected", async () => {
+  nextResponse = successResponse(defaultManifestResponse("parent_for_child"));
+  const page = await bootToMode("parent_for_child");
+  subscribeAnswer = "reject";
+  page.setData({ "form.childNickname": "小乐" });
+  await page.goToReview();
+  lastWxRequest = null;
+  await page.submitBinding();
+  assert.equal(page.data.step, "review");
+  assert.equal(lastWxRequest, null);
+  assert.match(page.data.error, /未开启安全提醒/);
 });
 
 test("parent_for_child asks before submitting an unusually short quiet-hours window", async () => {
@@ -369,7 +410,7 @@ test("minor long-term memory defaults unticked and sends memory_level none", asy
   assert.ok(!page.data.acceptedOfferIds.includes("offer_minor_memory_retention_v1"));
 
   page.setData({ "form.childNickname": "小乐" });
-  page.goToReview();
+  await page.goToReview();
   await page.submitBinding();
   assert.equal(page.data.step, "done");
   const payload = lastWxRequest.data;
@@ -381,7 +422,7 @@ test("ticking minor long-term memory sends memory_level growth_summary", async (
   nextResponse = successResponse(defaultManifestResponse("parent_for_child"));
   const page = await bootToMode("parent_for_child");
   page.setData({ "form.childNickname": "小乐" });
-  page.goToReview();
+  await page.goToReview();
   page.toggleOffer({ currentTarget: { dataset: { id: "offer_minor_memory_retention_v1" } } });
   assert.ok(page.data.acceptedOfferIds.includes("offer_minor_memory_retention_v1"));
   await page.submitBinding();
@@ -406,7 +447,7 @@ test("parent_for_child can reuse an existing linked child profile", async () => 
   await Promise.resolve();
   assert.equal(page.data.existingSubjectOptions.length, 1);
   page.setData({ "form.subjectSource": "existing" });
-  page.goToReview();
+  await page.goToReview();
   assert.equal(page.data.step, "review");
   await page.submitBinding();
   const payload = lastWxRequest.data;
@@ -475,7 +516,7 @@ test("a child declared by an earlier binding can be reused when no guardian link
       ]);
 
       page.setData({ "form.subjectSource": "existing" });
-      page.goToReview();
+      await page.goToReview();
       assert.equal(page.data.step, "review");
       await page.submitBinding();
       const payload = lastWxRequest.data;
@@ -509,7 +550,7 @@ test("choosing 使用已有档案 in the 孩子档案 picker binds the child pic
       assert.equal(page.data.form.subjectSource, "existing");
       page.onExistingSubjectChange({ detail: { value: "1" } });
 
-      page.goToReview();
+      await page.goToReview();
       assert.equal(page.data.error, "");
       assert.equal(page.data.step, "review");
       await page.submitBinding();
@@ -599,7 +640,7 @@ test("a child already chosen keeps its place when the slower lookup adds more", 
         "person_child",
       ]);
       assert.equal(page.data.form.existingSubjectIndex, 0);
-      page.goToReview();
+      await page.goToReview();
       await page.submitBinding();
       assert.equal(lastWxRequest.data.primary_subject.person_id, "person_child_b");
     },
@@ -719,7 +760,7 @@ test("the finish step shows the companion picked while binding, not a generic ro
   const index = page.data.personaOptions.findIndex((option) => option.id === "taoxi");
   assert.ok(index >= 0);
   page.onPersonaSwipe({ detail: { current: index } });
-  page.goToReview();
+  await page.goToReview();
   await page.submitBinding();
   assert.equal(page.data.step, "done");
   // The two bindings the finish card reads.
@@ -733,7 +774,7 @@ test("continuing to activation hands the picked companion to the onboarding page
   const page = await bootSelfUseReady("阿宁");
   const index = page.data.personaOptions.findIndex((option) => option.id === "taoxi");
   page.onPersonaSwipe({ detail: { current: index } });
-  page.goToReview();
+  await page.goToReview();
   await page.submitBinding();
 
   const handedOver = [];
@@ -779,7 +820,7 @@ test("child_for_parent defaults proxy memory consent off and keeps admin scope",
   assert.match(memoryOffer.label, /我代父母同意/);
 
   page.setData({ "form.parentNickname": "妈妈" });
-  page.goToReview();
+  await page.goToReview();
   assert.equal(page.data.step, "review");
   await page.submitBinding();
   const payload = lastWxRequest.data;
@@ -801,7 +842,7 @@ test("child_for_parent binder can tick proxy memory consent on the parent's beha
   nextResponse = successResponse(defaultManifestResponse("child_for_parent"));
   const page = await bootToMode("child_for_parent");
   page.setData({ "form.parentNickname": "妈妈" });
-  page.goToReview();
+  await page.goToReview();
   page.toggleOffer({ currentTarget: { dataset: { id: "offer_senior_memory_retention_v1" } } });
   assert.ok(page.data.acceptedOfferIds.includes("offer_senior_memory_retention_v1"));
   await page.submitBinding();
@@ -819,10 +860,10 @@ test("family_shared flow keeps extra members off the binding request", async () 
 
   nextResponse = successResponse(defaultManifestResponse("family_shared"));
   const page = await bootToMode("family_shared");
-  page.goToReview();
+  await page.goToReview();
   assert.ok(page.data.error.includes("备注"));
   page.setData({ "form.subjectAlias": "老爸" });
-  page.goToReview();
+  await page.goToReview();
   assert.equal(page.data.step, "review");
   await page.submitBinding();
   const payload = lastWxRequest.data;
@@ -843,7 +884,7 @@ test("binding failures surface explainable errors and stay on review", async () 
     data: { detail: { code: "device_claim_token_invalid", message: "设备码无效" } },
   };
   const page = await bootSelfUseReady();
-  page.goToReview();
+  await page.goToReview();
   await page.submitBinding();
   assert.equal(page.data.step, "review");
   assert.ok(page.data.error);
@@ -853,7 +894,7 @@ test("binding failures surface explainable errors and stay on review", async () 
 test("done step shows the binding manifest and offers device management", async () => {
   nextResponse = successResponse(defaultManifestResponse("self_use"));
   const page = await bootSelfUseReady();
-  page.goToReview();
+  await page.goToReview();
   await page.submitBinding();
   assert.equal(page.data.step, "done");
   assert.equal(page.data.manifest.binding_id, "bd_test_1");

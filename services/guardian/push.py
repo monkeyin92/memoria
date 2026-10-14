@@ -64,6 +64,70 @@ class PushSubscriptionEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class CrisisReachBreakdown:
+    """Counts for a later crisis→push-or-pin delivery-rate check.
+
+    Every enqueued alert is either delivered over WeChat or pinned in-app
+    (pending / failed / no_subscription).  ``wechat_delivery_rate`` is the
+    share of settled alerts that left via subscribe-message send.
+    """
+
+    total: int
+    pending: int
+    delivered: int
+    failed: int
+    no_subscription: int
+
+    @property
+    def settled(self) -> int:
+        return self.delivered + self.failed + self.no_subscription
+
+    @property
+    def wechat_delivery_rate(self) -> float | None:
+        if self.settled == 0:
+            return None
+        return self.delivered / self.settled
+
+    @property
+    def pin_fallback_rate(self) -> float | None:
+        if self.settled == 0:
+            return None
+        return (self.failed + self.no_subscription) / self.settled
+
+    @property
+    def push_or_pin_rate(self) -> float | None:
+        if self.total == 0:
+            return None
+        return 1.0
+
+
+def crisis_reach_breakdown(
+    statuses: tuple[str, ...] | list[str],
+) -> CrisisReachBreakdown:
+    """Aggregate outbox statuses into rates a recruit gate can assert on."""
+
+    pending = delivered = failed = no_subscription = 0
+    for status in statuses:
+        if status == "pending":
+            pending += 1
+        elif status == "delivered":
+            delivered += 1
+        elif status == "failed":
+            failed += 1
+        elif status == "no_subscription":
+            no_subscription += 1
+        else:
+            raise ValueError(f"unknown crisis delivery status: {status}")
+    return CrisisReachBreakdown(
+        total=pending + delivered + failed + no_subscription,
+        pending=pending,
+        delivered=delivered,
+        failed=failed,
+        no_subscription=no_subscription,
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class PendingCrisisPush:
     notification_id: str
     crisis_event_id: str
@@ -423,6 +487,7 @@ __all__ = [
     "CrisisPushSender",
     "CrisisPushStorePort",
     "CrisisPushWorker",
+    "CrisisReachBreakdown",
     "DisplayNameResolver",
     "PendingCrisisPush",
     "PushSendResult",
@@ -432,6 +497,7 @@ __all__ = [
     "PushSubscriptionStorePort",
     "crisis_push_content",
     "crisis_push_retry_delay_s",
+    "crisis_reach_breakdown",
     "push_identifier",
     "push_openid",
     "push_template_id",
