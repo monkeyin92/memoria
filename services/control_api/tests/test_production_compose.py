@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -24,6 +25,25 @@ def test_production_services_use_separate_env_files_and_persistent_agent_spool()
     assert "source: /etc/memoria-media-runtime" in control
     assert "target: /etc/memoria-media-runtime" in control
     assert "read_only: true" in control
+
+
+def test_production_pins_the_pcm_tap_off_for_every_agent_image_service() -> None:
+    compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
+    services = compose.split("\nservices:\n", 1)[1]
+    parts = re.split(r"\n  ([a-z0-9-]+):\n", "\n" + services)
+    blocks = dict(zip(parts[1::2], parts[2::2], strict=True))
+    agent_services = sorted(
+        name for name, block in blocks.items() if 'image: "memoria-agent:' in block
+    )
+
+    assert agent_services == ["media-slo-reporter", "voice-core-media-bridge"]
+    for name in agent_services:
+        assert '      MEDIA_PCM_TAP_DIR: ""\n' in blocks[name], name
+
+
+def test_production_env_split_refuses_the_pcm_tap() -> None:
+    with pytest.raises(ValueError, match="MEDIA_PCM_TAP_DIR is development-only"):
+        split_env({"ENVIRONMENT": "production", "MEDIA_PCM_TAP_DIR": "/tmp/pcm"})
 
 
 def test_media_bridge_uses_the_shared_production_agent_session_factory() -> None:

@@ -108,6 +108,17 @@ def validate_doubao_auth(
         )
 
 
+def pcm_tap_directory(environment: str, configured: str) -> str | None:
+    directory = configured.strip()
+    if not directory:
+        return None
+    if environment != "development":
+        raise ValueError(
+            "MEDIA_PCM_TAP_DIR is development-only: the tap writes unencrypted device audio"
+        )
+    return directory
+
+
 class AgentSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -167,6 +178,7 @@ class AgentSettings(BaseSettings):
         le=600.0,
         alias="MEDIA_MAX_USER_SPEECH_DURATION_S",
     )
+    media_pcm_tap_dir: str = Field(default="", alias="MEDIA_PCM_TAP_DIR")
     media_slo_report_enabled: bool = Field(
         default=False, alias="MEDIA_SLO_REPORT_ENABLED"
     )
@@ -537,6 +549,7 @@ class AgentSettings(BaseSettings):
                 "DOUBAO_TTS_WS_URL must use wss:// in production and contain no userinfo "
                 "or fragment"
             )
+        pcm_tap_directory(self.environment, self.media_pcm_tap_dir)
         if self.environment == "production":
             if self.media_slo_report_enabled:
                 if not _secure_internal_url(self.media_slo_report_url):

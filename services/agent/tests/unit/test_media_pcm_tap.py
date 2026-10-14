@@ -52,6 +52,7 @@ def test_maybe_create_tap_disabled_without_env(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_maybe_create_tap_enabled(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "development")
     monkeypatch.setenv("MEDIA_PCM_TAP_DIR", str(tmp_path))
     tap = maybe_create_tap("sess-1", 3)
     assert tap is not None
@@ -112,6 +113,7 @@ def test_tap_max_bytes_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_ingress_tap_frame_lazy_init(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "development")
     monkeypatch.setenv("MEDIA_PCM_TAP_DIR", str(tmp_path))
     state = MediaAudioIngressState.create(max_frames=4)
     context = _fake_context(state)
@@ -122,6 +124,26 @@ def test_ingress_tap_frame_lazy_init(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     state.pcm_tap.close()
     _, _, _, frames = _read_wav(Path(state.pcm_tap.path))
     assert frames == frame.payload * 2
+
+
+@pytest.mark.parametrize("environment", ["production", "staging", None])
+def test_ingress_writes_no_uplink_audio_outside_development(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    environment: str | None,
+) -> None:
+    if environment is None:
+        monkeypatch.delenv("ENVIRONMENT", raising=False)
+    else:
+        monkeypatch.setenv("ENVIRONMENT", environment)
+    monkeypatch.setenv("MEDIA_PCM_TAP_DIR", str(tmp_path))
+    state = MediaAudioIngressState.create(max_frames=4)
+    context = _fake_context(state)
+    frame = SimpleNamespace(payload=_pcm((7, -7)))
+    MediaAudioIngress._tap_frame(context, frame)
+    MediaAudioIngress._tap_frame(context, frame)
+    assert state.pcm_tap is None
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_ingress_tap_frame_disabled_without_env(

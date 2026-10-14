@@ -436,6 +436,17 @@ def test_production_rejects_unsafe_doubao_websocket_urls(
         AgentSettings()
 
 
+@pytest.mark.parametrize("environment", ["production", "staging"])
+def test_pcm_tap_dir_refuses_agent_start_outside_development(environment: str) -> None:
+    with pytest.raises(ValidationError, match="MEDIA_PCM_TAP_DIR is development-only"):
+        AgentSettings(_env_file=None, ENVIRONMENT=environment, MEDIA_PCM_TAP_DIR="/tmp/pcm")
+
+
+def test_pcm_tap_dir_is_accepted_in_development() -> None:
+    settings = AgentSettings(_env_file=None, ENVIRONMENT="development", MEDIA_PCM_TAP_DIR="/tmp/pcm")
+    assert settings.media_pcm_tap_dir == "/tmp/pcm"
+
+
 def test_production_enabled_capabilities_require_independent_tokens(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

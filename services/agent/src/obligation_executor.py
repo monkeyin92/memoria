@@ -10,7 +10,8 @@ subject/profile/receipt identity (remediation doc 4.3/6.2).
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from typing import Literal
 
 from services.agent.src.receipt_evidence import (
     VerifiedReceiptEvidence,
@@ -42,10 +43,13 @@ _EXECUTABLE_ACTION_OBLIGATIONS = frozenset(
 )
 
 
+ContentCeiling = Literal["verbatim", "metadata_only", "aggregate_only"]
+
+
 @dataclass(frozen=True, slots=True)
 class PersistenceDecision:
     allowed: bool
-    aggregate_only: bool = False
+    content_ceiling: ContentCeiling = "metadata_only"
     no_model_training: bool = True
     raw_audio_allowed: bool = False
     device_id: str | None = None
@@ -60,6 +64,10 @@ class PersistenceDecision:
     memory_capture_receipt_id: str | None = None
     raw_audio_receipt_id: str | None = None
     training_receipt_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.allowed is False and self.content_ceiling != "metadata_only":
+            raise ValueError("a denied persistence decision cannot carry turn content")
 
 
 def decide_persistence(
@@ -152,24 +160,13 @@ def decide_persistence(
     )
     if "DO_NOT_PERSIST" in obligations or not (receipt_authorized or grant_authorized):
         return common
-    return PersistenceDecision(
-        allowed=True,
-        aggregate_only=bool(_AGGREGATE_OBLIGATIONS & obligations),
-        no_model_training=no_model_training,
-        raw_audio_allowed=common.raw_audio_allowed,
-        device_id=common.device_id,
-        subject_revision=common.subject_revision,
-        subject_id=common.subject_id,
-        runtime_profile_id=common.runtime_profile_id,
-        session_epoch=common.session_epoch,
-        actor_id=common.actor_id,
-        binding_id=common.binding_id,
-        binding_version=common.binding_version,
-        memory_scope=common.memory_scope,
-        memory_capture_receipt_id=common.memory_capture_receipt_id,
-        raw_audio_receipt_id=common.raw_audio_receipt_id,
-        training_receipt_id=common.training_receipt_id,
-    )
+    if _AGGREGATE_OBLIGATIONS & obligations:
+        content_ceiling: ContentCeiling = "aggregate_only"
+    elif profile.profile.subject_category == "adult":
+        content_ceiling = "verbatim"
+    else:
+        content_ceiling = "metadata_only"
+    return replace(common, allowed=True, content_ceiling=content_ceiling)
 
 
 def execute_action_obligations(
@@ -217,6 +214,7 @@ def execute_action_obligations(
 
 
 __all__ = [
+    "ContentCeiling",
     "PersistenceDecision",
     "decide_persistence",
     "execute_action_obligations",

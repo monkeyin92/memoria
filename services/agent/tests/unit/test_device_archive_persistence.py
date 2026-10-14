@@ -14,20 +14,31 @@ with the same retention and no-training obligations.
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
+from cryptography.fernet import Fernet
 from packages.contracts.generated.python.multi_subject_contracts import (
     ObligationParams,
     PolicyObligation,
     PolicyObligationSpec,
 )
+from services.agent.src.archive_sink import ArchiveSink, ArchiveSinkConfig
+from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.event_identity import archive_evidence
 from services.agent.src.media_agent_factory import ProductionMediaSessionFactory
 from services.agent.src.mode_policy_client import ModePolicy
-from services.agent.src.obligation_executor import decide_persistence
+from services.agent.src.obligation_executor import (
+    ContentCeiling,
+    PersistenceDecision,
+    decide_persistence,
+)
 from services.agent.src.runtime_profile import VerifiedRuntimeProfile, parse_runtime_profile
 from services.agent.src.voice_core.media_protocol import SessionIdentity
 from services.session_runtime.profile_service import (
@@ -42,6 +53,15 @@ _ACTOR = "person-parent"
 _CHILD = "person-child"
 _DEVICE = "dev-archive"
 _BINDING = "bind-archive"
+_COMPANION = {
+    "history_eligible": False,
+    "interaction_mode": "companion",
+    "mode_policy_version": "policy-v2",
+    "owner_projection_eligible": False,
+    "simulated_output": False,
+}
+_USER_METADATA = {**_COMPANION, "persona_eligible": False, "prompt_kind": "spontaneous"}
+_ASSISTANT_METADATA = {**_COMPANION, "actual_heard": True}
 
 
 def _obligation(code: PolicyObligation, **params: Any) -> PolicyObligationSpec:
@@ -220,11 +240,14 @@ async def test_adult_device_turn_is_archived_under_the_profile_memory_grant() ->
         # No memory_capture receipt exists at session level; the archive
         # re-verifies the same signed profile instead of a claimed receipt.
         assert event["policy_receipt_id"] is None
-    assert archived[0]["payload"]["text"] == "我今天学会骑自行车了。"  # type: ignore[index]
+    assert [event["payload"] for event in archived] == [
+        {**_USER_METADATA, "text": "我今天学会骑自行车了。"},
+        {**_ASSISTANT_METADATA, "text": "太棒了，骑车时记得戴头盔。"},
+    ]
 
 
 @pytest.mark.asyncio
-async def test_consented_minor_device_turn_is_archived_under_the_guardian_grant() -> None:
+async def test_consented_minor_device_turn_is_archived_without_its_words() -> None:
     # The child's profile lists memory_recall_private only while the
     # guardian's long-term-memory consent holds, so the grant is the consent.
     session_id = "device-archive-minor"
@@ -248,8 +271,87 @@ async def test_consented_minor_device_turn_is_archived_under_the_guardian_grant(
         assert event["memory_scope"] == "personal_private"
         assert event["no_model_training"] is True
         assert event["policy_receipt_id"] is None
-        assert event["payload"].get("aggregate_only") is not True  # type: ignore[union-attr]
-    assert archived[0]["payload"]["text"] == "我今天学会骑自行车了。"  # type: ignore[index]
+    assert [event["payload"] for event in archived] == [_USER_METADATA, _ASSISTANT_METADATA]
+
+
+@pytest.mark.asyncio
+async def test_consented_minor_turn_reaches_the_spool_without_its_words(tmp_path: Path) -> None:
+    key = Fernet.generate_key().decode()
+    spool = tmp_path / "archive.spool"
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(503)))
+    sink = ArchiveSink(
+        ArchiveSinkConfig(
+            endpoint="http://control-api:8000/v1/archive/session-events",
+            internal_token="archive-write-token",
+            spool_path=spool,
+            spool_key=key,
+        ),
+        client=client,
+    )
+    runtime = _device_runtime(
+        "device-archive-minor-spool",
+        _control_profile(
+            "device-archive-minor-spool",
+            capabilities=("chat", "tutor", "english_practice", "memory_recall_private"),
+            minor=True,
+        ),
+    )
+
+    async def publish(event: dict[str, object]) -> None:
+        await sink.publish(event)
+
+    runtime.set_evidence_publisher(publish)
+    fence = runtime.fence
+    runtime.publish_transcript(
+        speaker="user", text="我今天学会骑自行车了。", final=True, fence=fence
+    )
+    runtime.publish_transcript(
+        speaker="assistant",
+        text="太棒了，骑车时记得戴头盔。",
+        final=True,
+        heard=True,
+        fence=fence,
+    )
+    await asyncio.sleep(0)
+    await runtime.close()
+    rows = [json.loads(Fernet(key).decrypt(line)) for line in spool.read_bytes().splitlines()]
+    plaintext = "".join(json.dumps(row, ensure_ascii=False) for row in rows)
+
+    assert [row["body"]["payload"] for row in rows] == [_USER_METADATA, _ASSISTANT_METADATA]
+    assert "骑自行车" not in plaintext
+    assert "头盔" not in plaintext
+    await client.aclose()
+
+
+def test_metadata_only_drops_the_four_transcript_keys_from_any_event_type() -> None:
+    words = {"text": "a", "transcript": "b", "user_text": "c", "assistant_text": "d"}
+    kept = {"actual_heard": True, "prompt_kind": "open"}
+
+    def build(ceiling: ContentCeiling) -> dict[str, object]:
+        return archive_evidence(
+            event_type="assistant.playout_progressed",
+            session_id="s",
+            speaker_class="assistant",
+            payload={**words, **kept},
+            source="generation_fence.actual_heard",
+            fence=GenerationFence(session_id="s", turn_id=1, generation_id=1, tool_epoch=0),
+            decision=PersistenceDecision(allowed=True, content_ceiling=ceiling),
+            fingerprint="f",
+            event_sequence=1,
+        )
+
+    assert build("metadata_only")["payload"] == {"actual_heard": True, "prompt_kind": "open"}
+    assert build("verbatim")["payload"] == {**words, **kept}
+
+
+def test_denied_persistence_cannot_carry_turn_content() -> None:
+    with pytest.raises(ValueError, match="denied persistence decision"):
+        PersistenceDecision(allowed=False, content_ceiling="verbatim")
+    with pytest.raises(ValueError, match="denied persistence decision"):
+        PersistenceDecision(allowed=False, content_ceiling="aggregate_only")
+    denied = decide_persistence(None)
+    assert denied.allowed is False
+    assert denied.content_ceiling == "metadata_only"
 
 
 @pytest.mark.asyncio
@@ -337,7 +439,7 @@ def test_memory_grant_obeys_signed_obligations_and_leaves_raw_audio_closed() -> 
     )
     decision = decide_persistence(granted, session_memory_grant=True)
     assert decision.allowed is True
-    assert decision.aggregate_only is False
+    assert decision.content_ceiling == "verbatim"
     # Raw audio keeps needing its own action-time receipt.
     assert decision.raw_audio_allowed is False
     assert decision.memory_capture_receipt_id is None
@@ -348,7 +450,7 @@ def test_memory_grant_obeys_signed_obligations_and_leaves_raw_audio_closed() -> 
     minor = _control_profile("grant-rules-minor", capabilities=("chat", "memory_recall_private"))
     minor_decision = decide_persistence(minor, session_memory_grant=True)
     assert minor_decision.allowed is True
-    assert minor_decision.aggregate_only is False
+    assert minor_decision.content_ceiling == "metadata_only"
     assert minor_decision.raw_audio_allowed is False
     minor_ungranted = _control_profile("grant-rules-minor-none", capabilities=("chat",))
     assert decide_persistence(minor_ungranted, session_memory_grant=True).allowed is False
@@ -367,4 +469,13 @@ def test_memory_grant_obeys_signed_obligations_and_leaves_raw_audio_closed() -> 
     )
     aggregated = decide_persistence(aggregate, session_memory_grant=True)
     assert aggregated.allowed is True
-    assert aggregated.aggregate_only is True
+    assert aggregated.content_ceiling == "aggregate_only"
+    minor_aggregate = _control_profile(
+        "grant-rules-minor-aggregate",
+        capabilities=("chat", "memory_recall_private"),
+        extra_obligations=(PolicyObligation.POLICY_OBLIGATION_PERSIST_AGGREGATE_ONLY,),
+    )
+    assert (
+        decide_persistence(minor_aggregate, session_memory_grant=True).content_ceiling
+        == "aggregate_only"
+    )

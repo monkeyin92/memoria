@@ -202,12 +202,11 @@ async def _grant_guardian_consents(app: Any, *, child_id: str, kinds: tuple[str,
 
 
 @pytest.mark.asyncio
-async def test_consented_child_turn_is_kept_for_the_child(
+async def test_consented_child_turn_is_kept_without_its_words(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # A child whose guardian ticked long-term memory: Control signs the memory
-    # grant into the child's profile, the Agent archives the turn, and the
-    # archive keeps the words for that child (not an aggregate).
+    # grant into the child's profile and the Agent archives the turn.
     _configure(monkeypatch, tmp_path)
     monkeypatch.setenv("MEMORIA_INTERACTION_POLICY_TOKEN", _POLICY_TOKEN)
     app = create_app()
@@ -236,6 +235,7 @@ async def test_consented_child_turn_is_kept_for_the_child(
             "assistant.playout_stopped",
         ]
         for event in evidence:
+            assert "text" not in event["payload"]
             assert event["payload"].get("aggregate_only") is not True
             stored = await client.post("/v1/archive/session-events", headers=_ARCHIVE, json=event)
             assert stored.status_code == 201, stored.text
@@ -251,13 +251,11 @@ async def test_consented_child_turn_is_kept_for_the_child(
 
     assert kept is not None
     assert kept.subject_id == account_id
-    assert kept.payload.get("text") == _USER_TEXT
+    assert kept.payload.get("text") is None
     assert kept.payload.get("history_eligible") is True
     assert kept.payload.get("memory_retention") == "retained"
     assert history.status_code == 200, history.text
-    assert [
-        (turn["owner_text"], turn["assistant_text"]) for turn in history.json()["turns"]
-    ] == [(_USER_TEXT, _REPLY_TEXT)]
+    assert history.json()["turns"] == []
 
 
 @pytest.mark.asyncio

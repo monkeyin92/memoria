@@ -13,6 +13,7 @@ from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
 from services.common.companions import designed_voice_speaker_sha256
+from services.guardian.child_memory import TRANSCRIPT_KEYS
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -269,6 +270,34 @@ async def test_actual_heard_assistant_binds_bounded_response_provenance_to_exact
     assert published[0]["payload"]["response_provenance"] == provenance
     assert published[0]["tool_epoch"] == runtime.fence.tool_epoch
     await runtime.close()
+
+
+def test_bind_rejects_each_transcript_key() -> None:
+    runtime = DuplexRuntime.create(session_id="session-transcript-keys")
+    provenance = {
+        "planner_policy_version": "digital-self-response-planner-v2",
+        "interaction_mode": "companion",
+        "mode_policy_version": "test-policy",
+        "speaker_class": "owner",
+        "source_refs": [
+            {
+                "kind": "memory_claim",
+                "item_id": "claim-1",
+                "source_event_ids": ["event-1"],
+            }
+        ],
+    }
+
+    assert runtime.bind_response_provenance(runtime.fence, provenance) is True
+    for key in TRANSCRIPT_KEYS:
+        assert (
+            runtime.bind_response_provenance(
+                runtime.fence,
+                {**provenance, key: "我今天学会骑自行车了。"},
+            )
+            is False
+        )
+    assert runtime.bind_response_provenance(runtime.fence, provenance) is True
 
 
 def test_generation_voice_snapshot_is_hashed_and_rejects_stale_fences() -> None:
