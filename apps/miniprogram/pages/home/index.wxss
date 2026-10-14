@@ -7,7 +7,7 @@
   border-radius: var(--mp-radius-card-xl);
   overflow: hidden;
   background: var(--mp-ink);
-  box-shadow: var(--mp-shadow-card);
+  box-shadow: var(--mp-shadow-hero);
 }
 
 .home-login-art {
@@ -22,8 +22,8 @@
   left: 0;
   right: 0;
   top: 0;
-  height: 50%;
-  background: linear-gradient(180deg, var(--mp-scrim), transparent);
+  bottom: 0;
+  background: linear-gradient(180deg, var(--mp-hero-scrim), transparent 48%);
 }
 
 .home-login-brand {
@@ -39,7 +39,6 @@
   display: block;
   font-size: var(--mp-type-num-xl);
   font-weight: 800;
-  line-height: 48px;
   letter-spacing: -1px;
 }
 
@@ -47,13 +46,24 @@
   display: block;
   margin-top: 8px;
   font-size: var(--mp-type-body);
-  line-height: var(--mp-lh-body);
   opacity: 0.95;
 }
 
 .home-login-body {
-  padding-top: 32px;
+  padding-top: 40px;
   text-align: center;
+}
+
+.home-login-wechat {
+  margin-top: 32px;
+}
+
+.home-login-phone {
+  margin-top: 16px;
+}
+
+.home-guest .home-login-note {
+  margin-top: 24px;
 }
 
 .home-login-hello {

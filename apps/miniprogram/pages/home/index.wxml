@@ -11,10 +11,11 @@
     <view class="home-login-body">
       <text class="home-login-hello">{{greeting}}</text>
       <text class="page-lede">登录后查看孩子今天聊了什么</text>
-      <button class="trial-primary home-cta-btn" bindtap="loginFromHome">
+      <button class="trial-primary home-login-wechat" bindtap="loginFromHome">
         <image class="home-btn-icon" src="/assets/ui/v4/wechat-white.svg" />微信一键登录
       </button>
-      <text class="home-note">登录即表示你已阅读《用户协议》和《隐私说明》</text>
+      <button class="trial-secondary home-login-phone" bindtap="loginWithPhone">手机号登录</button>
+      <text class="home-note home-login-note">登录即表示你已阅读《用户协议》和《隐私说明》</text>
     </view>
   </view>
 

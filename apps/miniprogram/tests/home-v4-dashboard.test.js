@@ -19,7 +19,7 @@ async function loadHome(options = {}) {
 }
 
 function visibleText(html) {
-  return html.replace(/<style>[\s\S]*?<\/style>/, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+  return html.replace(/<head>[\s\S]*?<\/head>/, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 }
 
 test("home ring shows the daily limit without inventing used minutes", async () => {
@@ -94,14 +94,54 @@ test("home never renders battery, story counts or a recommendation card", async 
   assert.doesNotMatch(text, /电量|电池|个故事|今晚推荐/);
 });
 
-test("guest home shows the v4 login hero", async () => {
+test("guest home is the full-bleed v4 login screen with no tab bar", async () => {
   const harness = loadPage("pages/home/index", { api: fx.baseApi(fx.GUEST_API), now: fx.NOW });
-  const data = await harness.run();
-  harness.restore();
-  assert.equal(data.authenticated, false);
-  const text = visibleText(renderPage("pages/home/index", data));
-  assert.match(text, /Memoria 陪孩子聊天、讲故事的 AI 助手/);
-  assert.match(text, /微信一键登录/);
+  try {
+    const data = await harness.run();
+    assert.equal(data.authenticated, false);
+    assert.deepEqual(harness.tabBar.data, { selected: 0, hidden: true });
+    const text = visibleText(renderPage("pages/home/index", data, { tabBar: false }));
+    assert.equal(
+      text.trim(),
+      "Memoria 陪孩子聊天、讲故事的 AI 助手 晚上好，欢迎回来 登录后查看孩子今天聊了什么 微信一键登录 手机号登录 登录即表示你已阅读《用户协议》和《隐私说明》",
+    );
+  } finally {
+    harness.restore();
+  }
+});
+
+test("guest 手机号登录 opens the phone authorization page and returns home", async () => {
+  const harness = loadPage("pages/home/index", { api: fx.baseApi(fx.GUEST_API), now: fx.NOW });
+  try {
+    await harness.run();
+    global.getCurrentPages = () => [{ route: "pages/home/index", options: {} }];
+    harness.page.loginWithPhone();
+    const navigations = harness.wxCalls.filter((call) => call.name === "navigateTo").map((call) => call.args[0].url);
+    assert.deepEqual(navigations, ["/pages/auth/index?redirect=%2Fpages%2Fhome%2Findex&reason=view_dashboard"]);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("the tab bar returns once the guest signs in from home", async () => {
+  let signedIn = false;
+  const api = fx.baseApi({
+    hasAuthenticatedSession: () => signedIn,
+    restoreWechatIdentity: async () => {
+      signedIn = true;
+    },
+  });
+  const harness = loadPage("pages/home/index", { api, now: fx.NOW });
+  try {
+    await harness.run();
+    assert.equal(harness.tabBar.data.hidden, true);
+    await harness.page.loginFromHome();
+    await harness.settle();
+    assert.equal(harness.page.data.authenticated, true);
+    assert.deepEqual(harness.tabBar.data, { selected: 0, hidden: false });
+  } finally {
+    harness.restore();
+  }
 });
 
 test("alert time label reads today or the calendar day", () => {

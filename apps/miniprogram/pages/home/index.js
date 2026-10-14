@@ -1,7 +1,7 @@
 const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
 const { SUBSCRIPTION_PUSH_ENABLED } = require("../../config");
-const { requireLogin } = require("../../utils/auth-gate");
+const { openLogin, requireLogin } = require("../../utils/auth-gate");
 const { companionById, defaultCompanionId } = require("../../utils/companions");
 const { MODE_META, readBindingManifest } = require("../../utils/device-binding");
 const {
@@ -39,6 +39,10 @@ function countCreatedToday(summaries, now = new Date()) {
     const created = Date.parse(item.createdAt);
     return Number.isFinite(created) && todayKey(new Date(created)) === today;
   }).length;
+}
+
+function guestGreeting() {
+  return `${greetingFor()}，欢迎回来`;
 }
 
 function avatarGlyphFrom(name) {
@@ -135,7 +139,7 @@ function bindingChoiceItems(bindings) {
 Page({
   data: {
     statusBarStyle: statusBarStyle(),
-    greeting: `${greetingFor()}，朋友`,
+    greeting: guestGreeting(),
     authenticated: false,
     ...emptyDashboard(),
     todoExpanded: true,
@@ -149,22 +153,20 @@ Page({
   },
 
   onShow() {
-    if (typeof this.getTabBar === "function" && this.getTabBar()) {
-      this.getTabBar().setData({ selected: 0 });
-    }
     const authenticated = api.hasAuthenticatedSession();
-    const identity = api.currentIdentity();
-    const name = identity?.display_name || "朋友";
-    this.setData({
-      authenticated,
-      greeting: `${greetingFor()}，${name}`,
-      pageLede: formatDateLabel(),
-    });
+    this.setData({ authenticated, pageLede: formatDateLabel() });
     if (!authenticated) {
       this._enterGuestState();
       return;
     }
     this.loadHome();
+  },
+
+  // The guest login screen is full-bleed like the design; tabs appear once there is a dashboard.
+  _syncTabBar(authenticated) {
+    if (typeof this.getTabBar === "function" && this.getTabBar()) {
+      this.getTabBar().setData({ selected: 0, hidden: !authenticated });
+    }
   },
 
   toggleTodo() {
@@ -200,9 +202,10 @@ Page({
 
   _enterGuestState() {
     this._flowSeq = (this._flowSeq || 0) + 1;
+    this._syncTabBar(false);
     this.setData({
       authenticated: false,
-      greeting: `${greetingFor()}，朋友`,
+      greeting: guestGreeting(),
       pageLede: "把设备连好，再慢慢留下日常。",
       ...emptyDashboard(),
     });
@@ -212,6 +215,10 @@ Page({
     if (!(await requireLogin({ reason: "view_dashboard" }))) return;
     this.setData({ authenticated: true });
     await this.loadHome();
+  },
+
+  loginWithPhone() {
+    openLogin({ reason: "view_dashboard" });
   },
 
   showSyncHelp() {
@@ -410,6 +417,7 @@ Page({
   },
 
   async loadHome() {
+    this._syncTabBar(true);
     const flowSeq = (this._flowSeq = (this._flowSeq || 0) + 1);
     const authEpoch = api.currentAuthEpoch();
     const cachedBinding = readBindingManifest();
