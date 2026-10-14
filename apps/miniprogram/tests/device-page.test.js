@@ -633,7 +633,7 @@ test("ordinary parent_for_child can resolve and confirm with app_confirm", async
   assert.match(template, /申报不是核验/);
   assert.match(
     template,
-    /trialSettingsVisible[\s\S]*安全提醒订阅[\s\S]*夜间时段[\s\S]*每日上限|wx:if="\{\{sessionLimits && !trialSettingsVisible\}\}"[\s\S]*使用时段/,
+    /trialSettingsVisible[\s\S]*安全提醒订阅[\s\S]*夜间时段[\s\S]*单次上限|wx:if="\{\{sessionLimits && !trialSettingsVisible\}\}"[\s\S]*使用时段/,
   );
   assert.doesNotMatch(template, /已核验|adult/);
 

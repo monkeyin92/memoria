@@ -69,7 +69,7 @@
 
           <view class="trial-card device-limit-card">
             <view class="device-limit-head">
-              <text class="device-limit-label">每日上限</text>
+              <text class="device-limit-label">单次上限</text>
               <view>
                 <text class="device-limit-num">{{sessionLimits.maxSessionMinutes || 30}}</text>
                 <text class="device-limit-unit"> 分钟</text>
@@ -252,7 +252,7 @@
       <text wx:if="{{personaRows.length > 0}}" class="caption">「角色与声音」里选的角色会自动分配给主要使用者；想用自建人格，在这里单独分配。分配从下一次对话起生效。</text>
       <text wx:if="{{personaAssignmentError && !personaSheetVisible}}" class="error-text">{{personaAssignmentError}}</text>
 
-      <!-- P0-04 D3：试用设置卡已展示夜间时段与每日上限；无试用卡时保留原使用时段卡。 -->
+      <!-- P0-04 D3：试用设置卡已展示夜间时段与单次上限；无试用卡时保留原使用时段卡。 -->
       <view wx:if="{{sessionLimits && !trialSettingsVisible}}" class="l2-card">
         <view class="card-lead">
           <text class="l2-card-title">使用时段</text>
