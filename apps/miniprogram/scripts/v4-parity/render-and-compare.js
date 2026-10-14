@@ -1,140 +1,51 @@
 #!/usr/bin/env node
-/**
- * Render each mapped mini-program page fixture in Chrome, screenshot,
- * and write side-by-side comparisons against docs/design/app-v4 baselines.
- *
- * Fixtures live in scripts/v4-parity/fixtures/<slug>.html and must mirror the
- * live WXML layout for that page (kept in sync by the restyle).
+/*
+ * Renders each live mini-program page state mapped in scenarios.js at the
+ * design frame (390×844 CSS @2x, iPhone 14 safe areas) and writes
+ * mp-screenshots/{actual,side-by-side,metrics}/<slug> against the design PNG.
+ *   node scripts/v4-parity/render-and-compare.js [slug ...]
  */
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
-const puppeteer = require("puppeteer-core");
 
-const ROOT = path.join(__dirname, "../..");
-const REPO = path.join(ROOT, "../..");
+const { launch, shoot } = require("../mp-harness/shoot");
+const { PARITY } = require("./scenarios");
+
+process.env.TZ = "Asia/Shanghai";
+
+const REPO = path.join(__dirname, "../../../..");
 const DESIGN = path.join(REPO, "docs/design/app-v4");
 const OUT = path.join(DESIGN, "mp-screenshots");
-const FIXTURES = path.join(__dirname, "fixtures");
-
-const PAGES = [
-  { slug: "01-login", design: "01-login.png", fixture: "01-login.html" },
-  { slug: "02-consent", design: "02-consent.png", fixture: "02-consent.html" },
-  { slug: "03-home", design: "03-home.png", fixture: "03-home.html" },
-  { slug: "04-summary", design: "04-summary.png", fixture: "04-summary.html" },
-  { slug: "05-attention", design: "05-attention.png", fixture: "05-attention.html" },
-  { slug: "06-usage", design: "06-usage.png", fixture: "06-usage.html" },
-  { slug: "07-content", design: "07-content.png", fixture: "07-content.html" },
-  { slug: "08-roles", design: "08-roles.png", fixture: "08-roles.html" },
-  { slug: "09-memory", design: "09-memory.png", fixture: "09-memory.html" },
-  { slug: "10-profile", design: "10-profile.png", fixture: "10-profile.html" },
-];
-
-const WIDTH = 780;
-const HEIGHT = 1688;
-const CSS_WIDTH = 390;
-const CSS_HEIGHT = 844;
-
-function chromePath() {
-  return (
-    process.env.CHROME_PATH ||
-    (fs.existsSync("/usr/local/bin/google-chrome")
-      ? "/usr/local/bin/google-chrome"
-      : "/usr/bin/google-chrome")
-  );
-}
-
-async function screenshotFixture(browser, fixturePath, outPath) {
-  const page = await browser.newPage();
-  // Match design PNGs at 780×1688 (390×844 CSS @2x).
-  await page.setViewport({
-    width: CSS_WIDTH,
-    height: CSS_HEIGHT,
-    deviceScaleFactor: 2,
-  });
-  await page.goto(`file://${fixturePath}`, { waitUntil: "networkidle0" });
-  await page.evaluate(async () => {
-    await Promise.all(
-      Array.from(document.images).map((img) =>
-        img.complete
-          ? null
-          : new Promise((res) => {
-              img.onload = res;
-              img.onerror = res;
-            }),
-      ),
-    );
-  });
-  fs.mkdirSync(path.dirname(outPath), { recursive: true });
-  await page.screenshot({ path: outPath, type: "png" });
-  await page.close();
-}
+const FRAME = { width: 390, height: 844, dpr: 2, safeTop: 47, safeBottom: 34 };
 
 function compare(actual, design, sideOut, jsonOut) {
-  const script = path.join(__dirname, "compare-side-by-side.js");
   const result = spawnSync(
     process.execPath,
-    [
-      script,
-      "--actual",
-      actual,
-      "--design",
-      design,
-      "--out",
-      sideOut,
-      "--json",
-      jsonOut,
-      "--width",
-      String(WIDTH),
-      "--height",
-      String(HEIGHT),
-    ],
-    { encoding: "utf8", cwd: __dirname },
+    [path.join(__dirname, "compare-side-by-side.js"), "--actual", actual, "--design", design, "--out", sideOut, "--json", jsonOut, "--width", "780", "--height", "1688"],
+    { encoding: "utf8" },
   );
-  if (result.status !== 0) {
-    throw new Error(result.stderr || result.stdout || "compare failed");
-  }
+  if (result.status !== 0) throw new Error(result.stderr || result.stdout || "compare failed");
   return JSON.parse(result.stdout.trim().split("\n").pop());
 }
 
 async function main() {
-  const browser = await puppeteer.launch({
-    executablePath: chromePath(),
-    headless: "new",
-    args: [
-      "--no-sandbox",
-      "--disable-gpu",
-      "--font-render-hinting=none",
-      "--allow-file-access-from-files",
-    ],
-  });
+  const only = process.argv.slice(2);
+  const browser = await launch();
   const summary = [];
   try {
-    for (const pageSpec of PAGES) {
-      const fixture = path.join(FIXTURES, pageSpec.fixture);
-      if (!fs.existsSync(fixture)) {
-        summary.push({ slug: pageSpec.slug, status: "MISSING_FIXTURE" });
-        continue;
-      }
-      const actualPath = path.join(OUT, "actual", `${pageSpec.slug}.png`);
-      const sidePath = path.join(OUT, "side-by-side", `${pageSpec.slug}.png`);
-      const jsonPath = path.join(OUT, "metrics", `${pageSpec.slug}.json`);
-      await screenshotFixture(browser, fixture, actualPath);
-      const metrics = compare(
-        actualPath,
-        path.join(DESIGN, pageSpec.design),
-        sidePath,
-        jsonPath,
-      );
-      summary.push({ slug: pageSpec.slug, status: "OK", ...metrics });
-      console.error(`${pageSpec.slug}: diffRatio=${metrics.diffRatio}`);
+    for (const scenario of PARITY.filter((item) => !only.length || only.includes(item.slug))) {
+      const actualPath = path.join(OUT, "actual", `${scenario.slug}.png`);
+      const layout = await shoot(browser, scenario, FRAME, actualPath);
+      const metrics = compare(actualPath, path.join(DESIGN, scenario.design), path.join(OUT, "side-by-side", `${scenario.slug}.png`), path.join(OUT, "metrics", `${scenario.slug}.json`));
+      const { htmlPath, ...kept } = layout;
+      summary.push({ slug: scenario.slug, page: scenario.page, diffRatio: metrics.diffRatio, rmse: metrics.rmse, overflow: kept.overflow, underCapsule: kept.underCapsule, tabClearance: kept.tabClearance });
+      console.error(`${scenario.slug}: diffRatio=${metrics.diffRatio} rmse=${metrics.rmse} overflow=${kept.overflow.length} underCapsule=${kept.underCapsule.length}`);
     }
   } finally {
     await browser.close();
   }
-  const reportPath = path.join(OUT, "compare-summary.json");
-  fs.writeFileSync(reportPath, `${JSON.stringify(summary, null, 2)}\n`);
-  console.log(JSON.stringify({ reportPath, summary }, null, 2));
+  if (!only.length) fs.writeFileSync(path.join(OUT, "compare-summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
 }
 
 main().catch((error) => {

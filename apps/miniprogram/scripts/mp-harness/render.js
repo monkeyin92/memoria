@@ -274,6 +274,7 @@ function htmlAttrs(attrs, scope, ctx, extraStyle = "") {
   style += extraStyle;
   if (style) out.push(`style="${escapeHtml(style)}"`);
   if (attrs.id) out.push(`id="${escapeHtml(interpolate(attrs.id, scope))}"`);
+  if (Object.keys(attrs).some((key) => /^(bind|catch):?tap$/.test(key))) out.push("data-tap");
   return out.length ? ` ${out.join(" ")}` : "";
 }
 
@@ -294,8 +295,8 @@ function renderElement(node, scope, ctx, slot) {
   if (name === "image") {
     const mode = attr("mode") || "scaleToFill";
     const fit = { aspectFit: "contain", aspectFill: "cover", widthFix: "cover", heightFix: "cover", scaleToFill: "fill" }[mode] || "fill";
-    const extra = mode === "widthFix" ? ";height:auto" : "";
-    const imgStyle = mode === "widthFix" ? "height:auto" : `object-fit:${fit}`;
+    const extra = { widthFix: ";height:auto", heightFix: ";width:auto" }[mode] || "";
+    const imgStyle = { widthFix: "height:auto", heightFix: "width:auto" }[mode] || `object-fit:${fit}`;
     return `<wx-image${htmlAttrs(attrs, scope, ctx, extra)}><img src="${escapeHtml(assetUrl(attr("src")))}" style="${imgStyle}" alt=""></wx-image>`;
   }
   if (name === "button") {
@@ -367,6 +368,7 @@ function convertCss(css, ctx) {
   out = out.replace(/(?:env|constant)\(safe-area-inset-top\)/g, `${ctx.safeTop}px`);
   out = out.replace(/(?:env|constant)\(safe-area-inset-(left|right)\)/g, "0px");
   out = rpxToPx(out, ctx);
+  if (ctx.navHeight) out = out.replace(/(\d*\.?\d+)vh\b/g, (_, number) => `calc(${number}vh - ${+((Number(number) * ctx.navHeight) / 100).toFixed(2)}px)`);
   if (ctx.fontScale !== 1) {
     out = out.replace(/((?:^|[;{\s])(?:font-size|--mp-type-[\w-]+)\s*:\s*)(-?\d*\.?\d+)px/g, (_, prefix, number) => `${prefix}${+(Number(number) * ctx.fontScale).toFixed(3)}px`);
   }
@@ -377,7 +379,7 @@ function baseCss(ctx) {
   return `
 html, body { margin: 0; padding: 0; }
 body { width: ${ctx.width}px; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
-.mp-page { display: block; min-height: 100vh; font-size: ${16 * ctx.fontScale}px; }
+.mp-page { display: block; min-height: calc(100vh - ${ctx.navHeight || 0}px); font-size: ${16 * ctx.fontScale}px; }
 view, scroll-view, swiper, swiper-item, picker, navigator, page-container, label, slider, rich-text { display: block; }
 scroll-view { overflow: auto; }
 text { display: inline; white-space: pre-line; }
@@ -421,6 +423,8 @@ function renderPage(pagePath, data, options = {}) {
   const base = path.join(ROOT, pagePath);
   const pageJson = readJson(`${base}.json`);
   const appJson = readJson(path.join(ROOT, "app.json"));
+  const customNav = (pageJson.navigationStyle || appJson.window?.navigationStyle) === "custom";
+  ctx.navHeight = customNav || options.navBar === false ? 0 : ctx.safeTop + 44;
   ctx.usingStack.push({ ...(appJson.usingComponents || {}), ...(pageJson.usingComponents || {}) });
   const appCss = cssFromFile(path.join(ROOT, "app.wxss"), ctx);
   const pageCss = cssFromFile(`${base}.wxss`, ctx);
@@ -433,8 +437,17 @@ function renderPage(pagePath, data, options = {}) {
     body += `<div class="wx-tabbar-host">${renderElement(tabNode, {}, ctx)}</div>`;
     ctx.css.push(".wx-tabbar-host { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50; }");
   }
-  const title = escapeHtml(pageJson.navigationBarTitleText || appJson.window?.navigationBarTitleText || "");
-  return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=${ctx.width}"><title>${title}</title><style>${baseCss(ctx)}\n${appCss}\n${ctx.css.join("\n")}\n${pageCss}</style></head><body><div class="mp-page">${body}</div></body></html>`;
+  const title = escapeHtml(pageJson.navigationBarTitleText ?? appJson.window?.navigationBarTitleText ?? "");
+  let navBar = "";
+  if (ctx.navHeight) {
+    const navBg = pageJson.navigationBarBackgroundColor || appJson.window?.navigationBarBackgroundColor || "#ffffff";
+    navBar = `<div class="wx-navbar" style="height:${ctx.navHeight}px;padding-top:${ctx.safeTop}px;background:${escapeHtml(navBg)}"><span class="wx-nav-back"></span><span class="wx-nav-title">${title}</span></div>`;
+    ctx.css.push(`.wx-navbar { position: fixed; z-index: 60; left: 0; right: 0; top: 0; box-sizing: border-box; display: flex; align-items: center; justify-content: center; font-size: 17px; font-weight: 600; color: #000; }
+.wx-nav-back { position: absolute; left: 14px; bottom: 15px; width: 11px; height: 11px; border-left: 2px solid #000; border-bottom: 2px solid #000; transform: rotate(45deg); }
+.wx-nav-title { line-height: 44px; }
+.mp-page { padding-top: ${ctx.navHeight}px; }`);
+  }
+  return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=${ctx.width}"><title>${title}</title><style>${baseCss(ctx)}\n${appCss}\n${ctx.css.join("\n")}\n${pageCss}</style></head><body data-nav="${customNav ? "custom" : "native"}">${navBar}<div class="mp-page">${body}</div></body></html>`;
 }
 
 module.exports = { ROOT, TAB_PAGES, convertCss, evaluate, interpolate, parseWxml, renderPage };
