@@ -1,0 +1,103 @@
+/*
+ * Sample API responses for the page runtime harness. Names and numbers are
+ * examples. Any api function not listed resolves to null, matching a backend
+ * that returned nothing, so pages must render their honest empty states.
+ */
+
+const NOW = new Date("2026-10-14T19:42:00+08:00");
+
+function isoMinutesAgo(minutes) {
+  return new Date(NOW.getTime() - minutes * 60 * 1000).toISOString();
+}
+
+function dayKey(offsetDays) {
+  const date = new Date(NOW.getTime() - offsetDays * 86400000);
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+const IDENTITY = { user_id: "u_parent", display_name: "乐乐妈妈", account_id: "AC8F2K9Q" };
+
+const BINDING = {
+  binding_id: "bind_1",
+  device_id: "dev_1",
+  declared_mode: "parent_for_child",
+  status: "active",
+  account_owner_id: "u_parent",
+  primary_subject_ids: ["u_parent", "p_child"],
+};
+
+const RUNTIME_PROFILE = {
+  valid: true,
+  subject_category: "minor",
+  obligations: [
+    { code: "QUIET_HOURS", params: { quiet_hours: ["21:00", "07:00"] } },
+    { code: "MAX_SESSION_SECONDS", params: { max_session_seconds: 1800 } },
+  ],
+  persona: { persona_id: "starlight" },
+};
+
+const SUMMARIES = [
+  { record_id: "s1", text: "讲了《大熊和森林里的悄悄话》", created_at: isoMinutesAgo(30) },
+  { record_id: "s2", text: "聊到了幼儿园的新朋友", created_at: isoMinutesAgo(120) },
+  { record_id: "s3", text: "一起数了天上的星星", created_at: isoMinutesAgo(200) },
+  { record_id: "s4", text: "问了很多关于恐龙的问题", created_at: isoMinutesAgo(60 * 26) },
+];
+
+const PINNED_ALERT = {
+  notification_id: "n1",
+  minor_user_id: "p_child",
+  minor_display_name: "乐乐",
+  occurred_at: isoMinutesAgo(0),
+  delivery_status: "no_subscription",
+  pinned: true,
+};
+
+function baseApi(overrides = {}) {
+  const known = {
+    hasAuthenticatedSession: () => true,
+    currentIdentity: () => IDENTITY,
+    currentAuthEpoch: () => 1,
+    isAuthEpochCurrent: () => true,
+    selectDeviceBinding: () => {},
+    readBindingManifest: () => BINDING,
+    requireRuntimeCapability: () => true,
+    syncDeviceBindings: async () => ({ status: "ready", binding: BINDING }),
+    getActivationStatus: async () => ({ status: "ready_for_conversation", network: { internet: true } }),
+    getRuntimeProfile: async () => RUNTIME_PROFILE,
+    getDeviceSettings: async () => ({ wake_word_display: "小乐小乐", volume_limit: 60 }),
+    getProfile: async () => ({ user_id: "u_parent", display_name: "乐乐妈妈", companion_id: "starlight", auto_summary: true }),
+    getMemoryDays: async () => ({
+      items: [
+        { day: dayKey(0), message_count: 3, summary: { title: "今天", overview: "聊到了幼儿园的新朋友" } },
+        { day: dayKey(1), message_count: 2, summary: { title: "昨天", overview: "问了很多关于恐龙的问题" } },
+      ],
+    }),
+    getConversationReview: async () => ({ memory_candidates: [] }),
+    getConversationSessions: async () => ({ items: [] }),
+    getChildSessionSummaries: async () => ({ items: SUMMARIES }),
+    getChildArchive: async () => ({ items: [] }),
+    getGuardianNotifications: async () => ({ items: [PINNED_ALERT] }),
+    getGuardianLinks: async () => ({ items: [] }),
+    listPersonas: async () => ({ custom_personas: [], builtin_personas: [] }),
+    getWakeWordCatalog: async () => ({ items: [] }),
+    listPersonaAssignments: async () => ({ items: [] }),
+    getPersonConsents: async () => ({ items: [] }),
+    getGuardianConsents: async () => ({ items: [] }),
+    getDeliveredCapabilities: async () => ({ items: [] }),
+    getGuardianPushConfig: async () => ({ enabled: false }),
+  };
+  const merged = { ...known, ...overrides };
+  return new Proxy(merged, {
+    get(target, name) {
+      if (name in target) return target[name];
+      if (typeof name !== "string" || name === "then") return undefined;
+      return async () => null;
+    },
+  });
+}
+
+const GUEST_API = { hasAuthenticatedSession: () => false, currentIdentity: () => null };
+
+module.exports = { BINDING, IDENTITY, NOW, PINNED_ALERT, RUNTIME_PROFILE, SUMMARIES, GUEST_API, baseApi, dayKey, isoMinutesAgo };
