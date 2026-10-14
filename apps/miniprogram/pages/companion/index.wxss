@@ -3,23 +3,24 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  height: var(--mp-tap);
+  height: 48px;
   margin-top: var(--mp-gap-card);
   border-radius: var(--mp-radius-inset);
   background: var(--mp-surface);
   box-shadow: var(--mp-shadow-card);
   color: var(--mp-accent);
-  font-size: var(--mp-type-body);
+  font-size: var(--mp-type-card);
   font-weight: 600;
 }
 
 .role-new-icon {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
 }
 
 .role-hint {
-  margin-top: 16px;
+  margin-top: 8px;
+  line-height: 16px;
   text-align: center;
 }
 
