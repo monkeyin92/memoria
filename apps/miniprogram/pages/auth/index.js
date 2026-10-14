@@ -2,6 +2,7 @@ const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
 const { leavePage } = require("../../utils/nav-back");
 const { isTabRoute, routeOf } = require("../../utils/tab-routes");
+const { openPrivacyContract } = require("../../utils/privacy-contract");
 
 function reasonText(reason) {
   return {
@@ -93,23 +94,7 @@ Page({
   },
 
   openPrivacy() {
-    if (typeof wx.openPrivacyContract === "function") {
-      wx.openPrivacyContract({
-        fail: () => this.showPrivacySummary(),
-      });
-      return;
-    }
-    this.showPrivacySummary();
-  },
-
-  showPrivacySummary() {
-    wx.showModal({
-      title: "隐私说明",
-      content:
-        "首次登录仅使用微信提供的登录凭证、手机号授权结果，以及你主动选择的昵称和头像来建立账号。未登录浏览不会读取个人回顾或资料。",
-      showCancel: false,
-      confirmText: "知道了",
-    });
+    openPrivacyContract();
   },
 
   async onGetPhoneNumber(event) {
