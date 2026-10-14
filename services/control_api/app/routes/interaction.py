@@ -1247,7 +1247,6 @@ async def reconcile_tool_effect(
 
 class ResponsePlanFence(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
     session_id: str = Field(min_length=1, max_length=128)
     turn_id: int = Field(ge=0, le=2**31 - 1)
     generation_id: int = Field(ge=0, le=2**31 - 1)
