@@ -22,9 +22,13 @@ const {
   confirmUnusualQuietHours,
 } = require("../../utils/quiet-hours");
 const { offersSafetySubscribe } = require("../../utils/trial-device-card");
+const { PRIVACY_LINE } = require("../../utils/child-memory");
 
 // 与绑定页的「单次使用时长」选项一致。
 const SESSION_MINUTE_OPTIONS = [15, 30, 45, 60, 90, 120];
+const LIMITS_SLIDER_MIN = 15;
+const LIMITS_SLIDER_MAX = 120;
+const LIMITS_SLIDER_STEP = 15;
 const { isTabRoute, routeOf } = require("../../utils/tab-routes");
 
 
@@ -297,11 +301,17 @@ Page({
     safetySubscribeKnown: false,
     safetySubscribeBusy: false,
     safetySubscribeOffCaption: "",
+    safetySubscribeHelper: guardianPush.SAFETY_SUBSCRIBE_HELPER,
+    privacyNote: PRIVACY_LINE,
+    guardianExportVisible: false,
     limitsSheetVisible: false,
     limitsSaving: false,
     limitsError: "",
     limitsMinuteOptions: SESSION_MINUTE_OPTIONS,
     limitsMinuteIndex: 1,
+    limitsSliderMin: LIMITS_SLIDER_MIN,
+    limitsSliderMax: LIMITS_SLIDER_MAX,
+    limitsSliderStep: LIMITS_SLIDER_STEP,
     limitsQuietStart: DEFAULT_QUIET_HOURS.start,
     limitsQuietEnd: DEFAULT_QUIET_HOURS.end,
     limitsQuietLabel: nightModeQuietHoursLabel(DEFAULT_QUIET_HOURS),
@@ -431,6 +441,7 @@ Page({
       ageRows: [],
       subjectPersonas: [],
       elderSafetyVisible: false,
+      guardianExportVisible: false,
       elderAlerts: [],
       elderCrisisPush: { enabled: false, templateId: "", explanation: "" },
       personaResetting: false,
@@ -562,10 +573,35 @@ Page({
     const index = Number(event.detail.value);
     const options = this.data.limitsMinuteOptions || SESSION_MINUTE_OPTIONS;
     const minutes = options[index];
+    if (!Number.isInteger(minutes)) return;
+    this.setData({ limitsMinuteIndex: index });
+    await this._saveDailyCapMinutes(minutes);
+  },
+
+  async onTrialDailyCapSlider(event) {
+    const raw = Number(event.detail.value);
+    if (!Number.isFinite(raw)) return;
+    const options = this.data.limitsMinuteOptions || SESSION_MINUTE_OPTIONS;
+    let minutes = options[0];
+    let best = Math.abs(raw - minutes);
+    for (const option of options) {
+      const distance = Math.abs(raw - option);
+      if (distance < best) {
+        best = distance;
+        minutes = option;
+      }
+    }
+    const index = options.indexOf(minutes);
+    this.setData({ limitsMinuteIndex: index >= 0 ? index : this.data.limitsMinuteIndex });
+    await this._saveDailyCapMinutes(minutes);
+  },
+
+  async _saveDailyCapMinutes(minutes) {
     const limits = this.data.sessionLimits;
     const binding = this.data.binding;
     if (!Number.isInteger(minutes) || !limits || !binding?.device_id) return;
-    this.setData({ limitsMinuteIndex: index, limitsSaving: true });
+    if (limits.maxSessionMinutes === minutes) return;
+    this.setData({ limitsSaving: true });
     try {
       await api.setSessionLimits(binding.device_id, {
         maxSessionMinutes: minutes,
@@ -588,6 +624,19 @@ Page({
     } finally {
       this.setData({ limitsSaving: false });
     }
+  },
+
+  openPrivacyNote() {
+    wx.showModal({
+      title: "隐私说明",
+      content: this.data.privacyNote || PRIVACY_LINE,
+      showCancel: false,
+      confirmText: "知道了",
+    });
+  },
+
+  openGuardianExport() {
+    wx.navigateTo({ url: "/pages/guardian/index" });
   },
 
   async onSafetySubscribeChange(event) {
@@ -935,6 +984,9 @@ Page({
         ageError: "",
         subjectPersonas: [],
         elderSafetyVisible: false,
+        guardianExportVisible: offersSafetySubscribe(binding),
+        safetySubscribeHelper: guardianPush.SAFETY_SUBSCRIBE_HELPER,
+        privacyNote: PRIVACY_LINE,
         elderAlerts: [],
         subjectAliasLabel,
         personaRows: personaRows(
