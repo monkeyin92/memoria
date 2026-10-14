@@ -1252,6 +1252,7 @@ class ResponsePlanFence(BaseModel):
     turn_id: int = Field(ge=0, le=2**31 - 1)
     generation_id: int = Field(ge=0, le=2**31 - 1)
     tool_epoch: int = Field(ge=0, le=2**31 - 1)
+    session_epoch: int = Field(default=0, ge=0, le=2**31 - 1)
 
 
 class ResponsePlanSpeakerDecision(BaseModel):

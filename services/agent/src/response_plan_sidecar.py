@@ -1,19 +1,15 @@
-"""The response-plan request of a turn whose plan the client can never apply, sent without waiting for it.
+"""Legacy path: send a response-plan request the client once could not apply, without waiting.
 
-``ResponsePlannerClient`` rebuilds the plan's fence from the wire, and the wire carries turn, generation and
-tool epoch only.  A device fence has ``session_epoch >= 1``, so ``plan.fence.matches(fence)`` cannot hold and
-every answer ends as ``fence_mismatch`` (round 10, 2026-10-02: 28 of 38 device turns; the other 10 hit the
-client's 0.8 s timeout).  The reply used to wait for that answer anyway, p50 0.81 s, and then answered with the
-local safe plan.
+Historically the wire fence omitted ``session_epoch``, so every device fence
+(``session_epoch >= 1``) mismatch-failed and the reply waited for a plan it
+could never use. This module kept the control-route side effects (crisis
+routing, guardian notify, tutor accounting) by firing the request in a durable
+background task while the reply used the local safe plan.
 
-The request is still made, once per turn, because of what the control route does with it before it builds
-anything: crisis routing and the guardian's notification (``record_minor_crisis``), and the tutor turn
-accounting.  Those run server side whenever the request arrives, whether or not this client stays to hear the
-answer (a plain async route is not cancelled by the caller going away), so sending it from a task nobody
-awaits keeps them and no longer holds the reply.  The task gets a wider bound than the old 0.8 s timeout, so
-fewer requests are cut off by this client, and it never retries.  It is a durable task: closing the session
-waits for it (up to the runtime's drain bound) instead of cancelling it, so a crisis reply followed at once by
-the end of the session still queues the notification.
+``ResponsePlannerClient.echoes_session_epoch`` is now True, so
+:func:`applies` is false for the real client and device turns await the plan
+again. The helpers remain for tests and any client that still declares it
+cannot echo the epoch.
 """
 
 from __future__ import annotations

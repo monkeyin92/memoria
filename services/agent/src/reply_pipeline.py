@@ -20,7 +20,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncGenerator, Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
 
 from services.agent.src import generation_output_policy as output_policy
@@ -75,6 +75,7 @@ from services.agent.src.response_planner_client import (
 )
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_profile_client import VoiceProfileClient
+from services.common.crisis_policy import route_crisis
 from services.common.realtime_information import (
     REALTIME_UNAVAILABLE_REPLY,
     is_incomplete_realtime_reply,
@@ -912,12 +913,9 @@ class ReplyPipeline:
             )
             raise StopResponse()
         if plan is None and fetch_reason == "fence_mismatch":
-            # The planner contract echoes turn/generation/tool_epoch only, so for every fence with
-            # session_epoch >= 1 (each device session) the client reports a mismatch even when the plan
-            # is for this very turn. Staleness of the turn itself was decided by the runtime-fence check
-            # above; dropping here silenced the reply whenever the result was accepted in time
-            # (2026-10-01: 5 of 7 first questions in a quiet room). The plan is unusable, not the turn:
-            # answer with the fallback plan, as every other fetch failure does.
+            # Staleness of the turn itself was decided by the runtime-fence check
+            # above. A mismatched plan is unusable, not the turn: answer with the
+            # fallback plan, as every other fetch failure does.
             logger.info(
                 "response plan ignored session_id=%s turn_id=%s reason=fetch_fence",
                 self._runtime.session_id,
@@ -937,12 +935,15 @@ class ReplyPipeline:
             plan = None
             fetch_reason = "mode_policy_mismatch"
         if plan is None:
+            crisis = route_crisis(text)
             plan = self._local_safe_plan(
                 fence=fence,
                 speaker=speaker,
                 reason=fetch_reason,
                 query=text,
             )
+            if crisis.direct_text is not None and plan.direct_text != crisis.direct_text:
+                plan = replace(plan, direct_text=crisis.direct_text)
         if (
             input_modality == "audio"
             and output_policy.generation_voice_must_match_plan(policy)
@@ -983,12 +984,15 @@ class ReplyPipeline:
             )
             snapshot = None
         if snapshot is None:
+            crisis = route_crisis(text)
             plan = self._local_safe_plan(
                 fence=fence,
                 speaker=speaker,
                 reason="context_snapshot_unavailable",
                 query=text,
             )
+            if crisis.direct_text is not None and plan.direct_text != crisis.direct_text:
+                plan = replace(plan, direct_text=crisis.direct_text)
             if (
                 input_modality == "audio"
                 and output_policy.generation_voice_must_match_plan(policy)

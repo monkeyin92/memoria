@@ -1,13 +1,10 @@
-"""A device turn no longer waits for a response plan the client can never apply.
+"""Sidecar behavior for clients that still cannot echo ``session_epoch``.
 
-Round 10 (2026-10-02, 38 device turns): every plan request came back unusable -- 28 ``fence_mismatch`` (the
-wire fence carries no ``session_epoch``, so with a device fence of epoch >= 1 the answer can never match) and
-10 cut off by the client's 0.8 s timeout -- yet each reply waited for it (p50 0.81 s) before the model was
-asked.  The request itself is not optional: the control route runs the crisis routing and enqueues the
-guardian's notification before it builds anything, so it is still sent exactly once per turn, but as a
-background task that no reply waits for.  These pin that split: the reply is not held, the request is still
-made, the prompt the model sees is the same, a failure never reaches the turn, and closing the session lets
-the request finish (up to the runtime's drain bound) and then leaves no task behind.
+The real ``ResponsePlannerClient`` now echoes ``session_epoch``, so device turns
+await the plan. These tests keep a double with ``echoes_session_epoch = False``
+to pin the legacy split: the reply is not held, the request is still made once
+per turn (crisis routing / guardian notify), failures never reach the turn, and
+closing the session drains the durable task.
 """
 
 from __future__ import annotations
@@ -321,8 +318,8 @@ async def test_without_the_memory_grant_no_request_is_made_at_all() -> None:
     await runtime.close()
 
 
-def test_the_real_client_declares_that_it_cannot_echo_the_epoch() -> None:
-    assert ResponsePlannerClient.echoes_session_epoch is False
+def test_the_real_client_declares_that_it_echoes_the_epoch() -> None:
+    assert ResponsePlannerClient.echoes_session_epoch is True
 
 
 @pytest.mark.asyncio

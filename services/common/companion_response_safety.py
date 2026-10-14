@@ -172,20 +172,20 @@ _UNQUOTED_REPORTED_SELF_HARM_RE = re.compile(
     r"(?:跟我说|告诉我|说|表示|提到).{0,12}"
     r"(?:我想自杀|我想死|我不想活|想自残|想轻生|想结束生命)"
 )
-_VICTIM_SUPPORT_TERMS = (
-    "我刚被性侵",
-    "我被性侵",
-    "我遭到性侵",
-    "我刚被强奸",
-    "我被强奸",
-    "有人正在对我实施暴力",
-    "有人正在打我",
-    "我正在被打",
-    "我被下毒",
-    "我中毒",
-    "有人要杀我",
-    "救命",
-    "快救我",
+# Compiled so ASR near-variants (dropped 正, 救救我, 杀了) still hit, while short
+# 救命 does not fire on idioms like 救命稻草.
+_VICTIM_SUPPORT_RE = re.compile(
+    r"(?:"
+    r"我刚被性侵|我被性侵|我遭到性侵|"
+    r"我刚被强奸|我被强奸|"
+    r"有人正在对我实施暴力|"
+    r"(?:有人|别人)(?:正在|在)?打我|"
+    r"我正在被打|"
+    r"我被下毒|我中毒|"
+    r"有人要杀(?:了)?我|"
+    r"快救我|救救我|"
+    r"(?<!稻草)救命(?!稻草)"
+    r")"
 )
 _EXPLICIT_SELF_HARM_EXACT = frozenset(
     (
@@ -283,7 +283,7 @@ def companion_safety_decision(query: str) -> SafetyDecision:
     ):
         return "crisis_self"
     full_normalized = re.sub(r"[\s，。！？、,.!?：:\-—_]+", "", query).lower()
-    if any(term in full_normalized for term in _VICTIM_SUPPORT_TERMS):
+    if _VICTIM_SUPPORT_RE.search(full_normalized):
         return "support_victim"
     if _SAFETY_PREVENTION_RE.search(full_normalized):
         return "support_relay"
