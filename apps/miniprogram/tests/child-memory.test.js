@@ -95,16 +95,17 @@ function stubApi(overrides) {
   };
 }
 
-test("home routes unread safety banner into child memory for parent bindings", () => {
+test("home routes unread safety banner and shows the child memory card", () => {
   const home = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
   const homeJs = fs.readFileSync(path.join(root, "pages/home/index.js"), "utf8");
   const appConfig = require("../app.json");
   assert.ok(appConfig.pages.includes("pages/child-memory/index"));
   assert.match(home, /openUnreadSafety|unreadSafetyAlert/);
+  assert.match(home, /home-memory-card/);
+  assert.match(home, /的记忆/);
   assert.match(homeJs, /openChildMemory/);
   assert.match(homeJs, /openUnreadSafety/);
   assert.match(homeJs, /boundChildFromManifest/);
-  assert.doesNotMatch(home, /home-child-memory|孩子的记忆/);
 });
 
 test("page copy and structure match product acceptance", () => {
@@ -114,13 +115,22 @@ test("page copy and structure match product acceptance", () => {
   assert.match(wxml, /长期记忆/);
   assert.match(wxml, /privacyLine|cm-privacy/);
   assert.match(wxml, /askClearSummaries/);
-  assert.match(wxml, /onSummaryTouchStart/);
+  assert.match(wxml, /askDeleteSummary/);
+  assert.match(wxml, /mp-sheet/);
+  assert.match(wxml, /再想想|deleteKeepLabel/);
+  assert.doesNotMatch(wxml, /onSummaryTouchStart/);
   assert.doesNotMatch(wxml, /transcript|utterance|audio_url|user_text|assistant_text/);
   assert.doesNotMatch(wxml, /cm-illus/);
-  assert.match(wxss, /#faf7f2|#FAF7F2/i);
-  assert.match(wxss, /#3cb8a0|#3CB8A0/i);
+  assert.match(wxss, /--mp-bg|var\(--mp-bg\)/);
   assert.doesNotMatch(wxss, /cartoon|completeness|score|radar/i);
-  assert.equal(childMemory.PRIVACY_LINE, "我们自己的服务器不保存录音和原话。摘要 30 天后自动删除。");
+  assert.equal(
+    childMemory.PRIVACY_LINE,
+    "孩子说的原话，我们的服务器在入库前就去掉了；机器人本身不存录音。",
+  );
+  assert.equal(childMemory.DELETE_KEEP, "再想想");
+  assert.equal(childMemory.memoryHeaderTitle("星澜", "小明"), "星澜记得的小明");
+  assert.equal(childMemory.memoryEmptyTitle("星澜", "小明"), "星澜还没有记住小明的事");
+  assert.equal(childMemory.memoryHeaderCaption(3), "共 3 条 · 可以随时删除");
   assert.equal(
     childMemory.EMPTY_RECENT,
     "还没有记忆。孩子和 memoria 聊过之后，这里会出现摘要。",
@@ -215,7 +225,7 @@ test("child memory API helpers hit the guardian layer endpoints", async () => {
   });
 });
 
-test("recent tab lists summaries, swipe-delete confirms, clear-all shows remaining 0", async () => {
+test("recent tab lists summaries, delete sheet confirms, clear-all shows remaining 0", async () => {
   await withWx(async () => {
     let summaries = [
       {
@@ -257,6 +267,8 @@ test("recent tab lists summaries, swipe-delete confirms, clear-all shows remaini
 
       page.askDeleteSummary({ currentTarget: { dataset: { recordId: "sum_1" } } });
       assert.equal(page.data.confirm.body, childMemory.DELETE_CONFIRM);
+      assert.equal(page.data.confirm.quote, "孩子今天聊了小狗和画画。");
+      assert.equal(page.data.deleteKeepLabel, childMemory.DELETE_KEEP);
       await page.runConfirm();
       assert.equal(page.data.summaries.length, 0);
       assert.equal(page.data.confirm, null);

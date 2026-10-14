@@ -143,19 +143,21 @@ test("bind requires subscribe before create; memory pins undelivered alerts", ()
   assert.match(homeWxml, /pinnedCrisisAlerts/);
 });
 
-test("pinned home and memory alerts stay independent of the settings push toggle", () => {
+test("pinned home and memory alerts stay independent of the push toggle", () => {
   const homeJs = fs.readFileSync(path.join(root, "pages/home/index.js"), "utf8");
   const memoryJs = fs.readFileSync(path.join(root, "pages/memory/index.js"), "utf8");
   const deviceJs = fs.readFileSync(path.join(root, "pages/device/index.js"), "utf8");
   assert.match(homeJs, /loadPinnedCrisisAlerts/);
   assert.match(memoryJs, /loadPinnedCrisisAlerts/);
-  assert.doesNotMatch(homeJs, /safetySubscribeOn|optOutCrisisPushAlerts/);
+  assert.match(homeJs, /safetySubscribeOn|optOutCrisisPushAlerts/);
   assert.doesNotMatch(memoryJs, /safetySubscribeOn|optOutCrisisPushAlerts/);
   // Opting out only clears the WeChat push ledger; it must not clear pinned rows.
-  const optOutAt = deviceJs.indexOf("optOutCrisisPushAlerts");
-  assert.ok(optOutAt > 0);
-  const optOutChunk = deviceJs.slice(optOutAt, optOutAt + 500);
-  assert.doesNotMatch(optOutChunk, /pinnedCrisisAlerts|elderAlerts\s*:\s*\[\]/);
+  for (const script of [deviceJs, homeJs]) {
+    const optOutAt = script.indexOf("optOutCrisisPushAlerts");
+    assert.ok(optOutAt > 0);
+    const optOutChunk = script.slice(optOutAt, optOutAt + 500);
+    assert.doesNotMatch(optOutChunk, /pinnedCrisisAlerts|elderAlerts\s*:\s*\[\]/);
+  }
   assert.equal(
     crisisAlerts.pinnedAlerts([
       {
