@@ -6,12 +6,16 @@
  * - wx.requestSubscribeMessage 只能由用户点击触发：subscribeCrisisAlerts
  *   在第一个 await 之前同步调起它，调用方必须直接在 tap 处理函数里调用。
  * - 每次“允许”只换来一次提醒；结果回传服务端记账，accept 附带 wx.login code。
+ * - 设置页关闭走 opt_out：清零服务端剩余次数。微信一次性订阅无法在客户端撤销。
  */
 
 const PARENT_SUBSCRIBE_LABEL = "订阅安全提醒";
 
 const CRISIS_PUSH_EXPLANATION =
   "订阅安全提醒后，孩子可能需要帮助时，微信会提醒你打开小程序查看。提醒不含任何对话内容，每次允许可收到一次。";
+
+const SAFETY_SUBSCRIBE_OFF_CONFIRM =
+  "关闭后我们不再给你发送安全提醒推送，打开小程序时仍会置顶显示";
 
 const RECORDABLE_RESULTS = Object.freeze(["accept", "reject", "ban"]);
 // 20004：用户关闭了小程序订阅消息总开关，等同于 ban。
@@ -35,6 +39,50 @@ async function loadCrisisPushConfig(api) {
     // 读不到配置就当作关闭：绝不因为错误而弹订阅框。
     return disabledCrisisPush();
   }
+}
+
+function normalizePushSubscription(payload) {
+  const remaining = Number.isInteger(payload?.remaining) ? payload.remaining : 0;
+  return {
+    templateId: typeof payload?.template_id === "string" ? payload.template_id : "",
+    remaining: remaining > 0 ? remaining : 0,
+    lastResult: typeof payload?.last_result === "string" ? payload.last_result : "",
+    subscribed: payload?.subscribed === true || remaining > 0,
+  };
+}
+
+async function loadCrisisPushSubscription(api) {
+  try {
+    return normalizePushSubscription(await api.getGuardianPushSubscription());
+  } catch (_error) {
+    return normalizePushSubscription(null);
+  }
+}
+
+async function loadSafetySubscribeState(api) {
+  const [config, subscription] = await Promise.all([
+    loadCrisisPushConfig(api),
+    loadCrisisPushSubscription(api),
+  ]);
+  return {
+    config,
+    subscription,
+    safetySubscribeOn: Boolean(config.enabled && subscription.subscribed),
+  };
+}
+
+async function optOutCrisisPushAlerts({ config, api } = {}) {
+  const templateId = config?.templateId || "";
+  if (!templateId || typeof api?.recordGuardianPushSubscription !== "function") {
+    return { ok: false, remaining: 0 };
+  }
+  const recorded = await api.recordGuardianPushSubscription({
+    templateId,
+    result: "opt_out",
+    loginCode: "",
+  });
+  const remaining = Number.isInteger(recorded?.remaining) ? recorded.remaining : 0;
+  return { ok: remaining === 0, remaining };
 }
 
 function requestSubscribe(wxApi, templateId) {
@@ -97,8 +145,13 @@ function offerCrisisSubscription({ config, api, wxApi = globalThis.wx } = {}) {
 module.exports = {
   CRISIS_PUSH_EXPLANATION,
   PARENT_SUBSCRIBE_LABEL,
+  SAFETY_SUBSCRIBE_OFF_CONFIRM,
   loadCrisisPushConfig,
+  loadCrisisPushSubscription,
+  loadSafetySubscribeState,
   normalizeCrisisPushConfig,
+  normalizePushSubscription,
   offerCrisisSubscription,
+  optOutCrisisPushAlerts,
   subscribeCrisisAlerts,
 };

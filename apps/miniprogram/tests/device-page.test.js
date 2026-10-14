@@ -1849,6 +1849,7 @@ test("an elder's binder sees safety alerts on the device page (P0-04 D7)", async
   const originals = {
     getGuardianNotifications: api.getGuardianNotifications,
     getGuardianPushConfig: api.getGuardianPushConfig,
+    getGuardianPushSubscription: api.getGuardianPushSubscription,
     isAuthEpochCurrent: api.isAuthEpochCurrent,
   };
   api.getGuardianNotifications = async () => ({
@@ -1862,6 +1863,12 @@ test("an elder's binder sees safety alerts on the device page (P0-04 D7)", async
     ],
   });
   api.getGuardianPushConfig = async () => ({ enabled: false });
+  api.getGuardianPushSubscription = async () => ({
+    template_id: "",
+    remaining: 0,
+    subscribed: false,
+    last_result: null,
+  });
   api.isAuthEpochCurrent = () => true;
   const page = instantiate(pageDefinition);
   page._flowSeq = 1;
@@ -1874,7 +1881,65 @@ test("an elder's binder sees safety alerts on the device page (P0-04 D7)", async
     assert.equal(page.data.elderAlerts.length, 1);
     assert.equal(page.data.elderAlerts[0].minor_display_name, "老爸");
     assert.doesNotMatch(page.data.elderAlerts[0].message, /孩子/);
+    assert.equal(page.data.safetySubscribeOn, false);
   } finally {
     Object.assign(api, originals);
+  }
+});
+
+test("trial safety subscribe toggle loads ledger state and opt-outs on the server", async () => {
+  const api = require("../utils/api");
+  const originals = {
+    getGuardianPushConfig: api.getGuardianPushConfig,
+    getGuardianPushSubscription: api.getGuardianPushSubscription,
+    recordGuardianPushSubscription: api.recordGuardianPushSubscription,
+    wechatLoginCode: api.wechatLoginCode,
+    isAuthEpochCurrent: api.isAuthEpochCurrent,
+  };
+  const previousWx = global.wx;
+  const recorded = [];
+  api.getGuardianPushConfig = async () => ({
+    enabled: true,
+    template_ids: { crisis: "tmpl-crisis" },
+  });
+  api.getGuardianPushSubscription = async () => ({
+    template_id: "tmpl-crisis",
+    remaining: 1,
+    subscribed: true,
+    last_result: "accept",
+  });
+  api.recordGuardianPushSubscription = async (body) => {
+    recorded.push(body);
+    return { template_id: body.templateId, result: body.result, remaining: 0 };
+  };
+  api.wechatLoginCode = async () => "login-code";
+  api.isAuthEpochCurrent = () => true;
+  global.wx = {
+    showModal({ success }) {
+      success({ confirm: true });
+    },
+    showToast() {},
+    requestSubscribeMessage({ tmplIds, success }) {
+      success({ [tmplIds[0]]: "accept" });
+    },
+  };
+  const page = instantiate(pageDefinition);
+  page._flowSeq = 1;
+  try {
+    await page._loadTrialSafetySubscribe(
+      { declared_mode: "parent_for_child", status: "active" },
+      1,
+      0,
+    );
+    assert.equal(page.data.safetySubscribeOn, true);
+    await page.onSafetySubscribeChange({ detail: { value: false } });
+    assert.equal(page.data.safetySubscribeOn, false);
+    assert.deepEqual(recorded, [
+      { templateId: "tmpl-crisis", result: "opt_out", loginCode: "" },
+    ]);
+  } finally {
+    Object.assign(api, originals);
+    if (previousWx === undefined) delete global.wx;
+    else global.wx = previousWx;
   }
 });

@@ -7,8 +7,8 @@ const guardianPush = require("../utils/guardian-push");
 
 const root = path.resolve(__dirname, "..");
 
-function fakeApi({ config, loginCode = "login-code-1" } = {}) {
-  const calls = { config: 0, login: 0, recorded: [] };
+function fakeApi({ config, subscription, loginCode = "login-code-1" } = {}) {
+  const calls = { config: 0, subscription: 0, login: 0, recorded: [] };
   return {
     calls,
     async getGuardianPushConfig() {
@@ -16,13 +16,19 @@ function fakeApi({ config, loginCode = "login-code-1" } = {}) {
       if (config instanceof Error) throw config;
       return config;
     },
+    async getGuardianPushSubscription() {
+      calls.subscription += 1;
+      if (subscription instanceof Error) throw subscription;
+      return subscription;
+    },
     async wechatLoginCode() {
       calls.login += 1;
       return loginCode;
     },
     async recordGuardianPushSubscription(body) {
       calls.recorded.push(body);
-      return { template_id: body.templateId, result: body.result, remaining: 1 };
+      const remaining = body.result === "accept" ? 1 : 0;
+      return { template_id: body.templateId, result: body.result, remaining };
     },
   };
 }
@@ -162,4 +168,48 @@ test("guardian page wires the subscribe prompt to a tap and keeps alerts visible
   assert.match(script, /guardianPush\.offerCrisisSubscription/);
   assert.match(api, /\/v1\/guardian\/push-config/);
   assert.match(api, /\/v1\/guardian\/push-subscriptions/);
+  assert.match(api, /getGuardianPushSubscription/);
+});
+
+test("settings toggle loads remaining > 0 as on and opt_out clears the ledger", async () => {
+  const enabledConfig = { enabled: true, template_ids: { crisis: "tmpl-crisis" } };
+  const onApi = fakeApi({
+    config: enabledConfig,
+    subscription: { template_id: "tmpl-crisis", remaining: 2, subscribed: true, last_result: "accept" },
+  });
+  const onState = await guardianPush.loadSafetySubscribeState(onApi);
+  assert.equal(onState.safetySubscribeOn, true);
+  assert.equal(onState.subscription.remaining, 2);
+  assert.equal(onApi.calls.config, 1);
+  assert.equal(onApi.calls.subscription, 1);
+
+  const offApi = fakeApi({
+    config: enabledConfig,
+    subscription: { template_id: "tmpl-crisis", remaining: 0, subscribed: false, last_result: "opt_out" },
+  });
+  const offState = await guardianPush.loadSafetySubscribeState(offApi);
+  assert.equal(offState.safetySubscribeOn, false);
+
+  const config = guardianPush.normalizeCrisisPushConfig(enabledConfig);
+  const cleared = await guardianPush.optOutCrisisPushAlerts({ config, api: offApi });
+  assert.deepEqual(cleared, { ok: true, remaining: 0 });
+  assert.deepEqual(offApi.calls.recorded, [
+    { templateId: "tmpl-crisis", result: "opt_out", loginCode: "" },
+  ]);
+  assert.match(guardianPush.SAFETY_SUBSCRIBE_OFF_CONFIRM, /不再给你发送安全提醒推送/);
+  assert.match(guardianPush.SAFETY_SUBSCRIBE_OFF_CONFIRM, /置顶显示/);
+  assert.doesNotMatch(guardianPush.SAFETY_SUBSCRIBE_OFF_CONFIRM, /危机/);
+});
+
+test("device settings toggle uses ledger state and real opt-out, not UI-only off", () => {
+  const script = fs.readFileSync(path.join(root, "pages/device/index.js"), "utf8");
+  const template = fs.readFileSync(path.join(root, "pages/device/index.wxml"), "utf8");
+  assert.match(template, /安全提醒订阅/);
+  assert.match(template, /bindchange="onSafetySubscribeChange"/);
+  assert.match(script, /loadSafetySubscribeState/);
+  assert.match(script, /optOutCrisisPushAlerts/);
+  assert.match(script, /SAFETY_SUBSCRIBE_OFF_CONFIRM/);
+  assert.match(script, /subscribeCrisisAlerts/);
+  assert.doesNotMatch(script, /关闭后，微信将无法再推送安全提醒/);
+  assert.doesNotMatch(script, /危机/);
 });

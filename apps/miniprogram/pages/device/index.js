@@ -498,31 +498,27 @@ Page({
   // P0-04 D7：给父母使用的绑定，绑定人在这里看到老人的安全提醒并开启微信推送。
   async _loadElderSafety(binding, flowSeq, authEpoch) {
     if (binding?.declared_mode !== "child_for_parent" || (binding.status && binding.status !== "active")) return;
-    const [alerts, crisisPush] = await Promise.all([
+    const [alerts, safety] = await Promise.all([
       api.getGuardianNotifications().then((payload) => (Array.isArray(payload?.items) ? payload.items : []), () => []),
-      guardianPush.loadCrisisPushConfig(api).catch(() => ({ enabled: false, templateId: "", explanation: "" })),
+      guardianPush.loadSafetySubscribeState(api),
     ]);
     if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
+    this._safetyPushConfig = safety.config;
     this.setData({
       elderSafetyVisible: true,
       elderAlerts: alerts,
-      elderCrisisPush: crisisPush,
-      safetySubscribeOn: Boolean(crisisPush?.enabled && this.data.safetySubscribeOn),
+      elderCrisisPush: safety.config,
+      safetySubscribeOn: safety.safetySubscribeOn,
     });
-    this._safetyPushConfig = crisisPush;
   },
 
   async _loadTrialSafetySubscribe(binding, flowSeq, authEpoch) {
     if (!offersSafetySubscribe(binding)) return;
-    const crisisPush = await guardianPush.loadCrisisPushConfig(api).catch(() => ({
-      enabled: false,
-      templateId: "",
-      explanation: "",
-    }));
+    const safety = await guardianPush.loadSafetySubscribeState(api);
     if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
-    this._safetyPushConfig = crisisPush;
+    this._safetyPushConfig = safety.config;
     this.setData({
-      safetySubscribeOn: Boolean(crisisPush.enabled && this.data.safetySubscribeOn),
+      safetySubscribeOn: safety.safetySubscribeOn,
     });
   },
 
@@ -577,7 +573,7 @@ Page({
       const confirmed = await new Promise((resolve) => {
         wx.showModal({
           title: "关闭安全提醒订阅？",
-          content: "关闭后，微信将无法再推送安全提醒。未读提醒仍会留在小程序里。",
+          content: guardianPush.SAFETY_SUBSCRIBE_OFF_CONFIRM,
           confirmText: "关闭订阅",
           cancelText: "保持开启",
           success: (result) => resolve(Boolean(result?.confirm)),
@@ -588,14 +584,33 @@ Page({
         this.setData({ safetySubscribeOn: true });
         return;
       }
-      this.setData({ safetySubscribeOn: false });
+      this.setData({ safetySubscribeBusy: true });
+      try {
+        const config = this._safetyPushConfig;
+        if (!config?.templateId) {
+          this.setData({ safetySubscribeOn: false });
+          return;
+        }
+        const outcome = await guardianPush.optOutCrisisPushAlerts({ config, api });
+        if (!outcome.ok) {
+          this.setData({ safetySubscribeOn: true });
+          wx.showToast({ title: "关闭失败，请稍后再试", icon: "none" });
+          return;
+        }
+        this.setData({ safetySubscribeOn: false });
+        wx.showToast({ title: "已关闭安全提醒推送", icon: "none" });
+      } catch (error) {
+        this.setData({ safetySubscribeOn: true });
+        wx.showToast({ title: error?.message || "关闭失败，请稍后再试", icon: "none" });
+      } finally {
+        this.setData({ safetySubscribeBusy: false });
+      }
       return;
     }
+    // Config must already be loaded: requestSubscribeMessage needs this gesture stack.
+    const config = this._safetyPushConfig;
     this.setData({ safetySubscribeBusy: true });
     try {
-      const config =
-        this._safetyPushConfig || (await guardianPush.loadCrisisPushConfig(api));
-      this._safetyPushConfig = config;
       if (!config?.enabled || !config.templateId) {
         this.setData({ safetySubscribeOn: false });
         wx.showToast({ title: "安全提醒订阅尚未开通", icon: "none" });
