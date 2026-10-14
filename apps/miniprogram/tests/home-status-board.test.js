@@ -91,7 +91,7 @@ test("device wake word copy tells users it syncs then restarts", () => {
 test("profile has no voice-sample entry points after voice-clone removal", () => {
   const template = fs.readFileSync(path.join(root, "pages/profile/index.wxml"), "utf8");
   const script = fs.readFileSync(path.join(root, "pages/profile/index.js"), "utf8");
-  assert.match(template, /自定义人格/);
+  assert.match(template, /授权与隐私说明/);
   assert.doesNotMatch(template, /对着麦克风录|上传音频|声音复刻|自定义人格与声音/);
   assert.doesNotMatch(script, /uploadVoiceSample|enrollVoiceClone|getRecorderManager/);
   assert.doesNotMatch(script, /评估/);

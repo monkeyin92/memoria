@@ -24,8 +24,8 @@
   display: block;
   margin-top: 4px;
   color: var(--mp-ink-2);
-  font-size: var(--mp-type-caption);
-  line-height: var(--mp-lh-caption);
+  font-size: var(--mp-type-small);
+  line-height: var(--mp-lh-body);
 }
 
 .user-avatar,
@@ -60,8 +60,6 @@
 }
 
 .device-art {
-  display: flex;
-  justify-content: center;
   flex-shrink: 0;
   width: 56px;
   height: 56px;
@@ -70,17 +68,19 @@
   background: var(--mp-accent-soft);
 }
 
-.device-fig {
-  flex-shrink: 0;
+.device-art-img {
+  display: block;
+  width: 72px;
   margin-top: 8px;
+  mix-blend-mode: multiply;
 }
 
 .device-name {
   display: block;
   color: var(--mp-ink);
-  font-size: var(--mp-type-body);
+  font-size: var(--mp-type-card);
   font-weight: 600;
-  line-height: var(--mp-lh-body);
+  line-height: normal;
 }
 
 .device-pill {
@@ -97,11 +97,21 @@
 
 .list .row-title.row-copy {
   font-size: var(--mp-type-card);
-  font-weight: 500;
+  font-weight: 400;
 }
 
-.profile-caption {
-  margin: 12px 4px 0;
+/* WeChat buttons ship a fixed width, padding, radius, fill and bold text; the feedback row must read as a plain row. */
+.profile-menu > button.list-row {
+  width: calc(100% + 2 * var(--mp-pad-card));
+  margin: 0 calc(-1 * var(--mp-pad-card));
+  padding: 16px var(--mp-pad-card);
+  border-radius: 0;
+  background: transparent;
+  color: var(--mp-ink);
+  font-size: inherit;
+  font-weight: 400;
+  line-height: inherit;
+  text-align: left;
 }
 
 .modal-card .field-input {
@@ -112,4 +122,17 @@
   display: block;
   margin-top: 24px;
   text-align: center;
+}
+
+.profile-version {
+  display: block;
+  margin-top: 24px;
+  color: var(--mp-ink-3);
+  font-size: var(--mp-type-meta);
+  line-height: 16px;
+  text-align: center;
+}
+
+.privacy-note + .profile-version {
+  margin-top: 8px;
 }

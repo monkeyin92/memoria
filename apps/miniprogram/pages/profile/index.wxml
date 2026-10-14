@@ -1,24 +1,13 @@
 <view class="page-shell tab-page" style="{{statusBarStyle}}">
-  <view wx:if="{{!authenticated}}">
-    <text class="page-title">我的</text>
+  <text class="page-title">我的</text>
+
+  <block wx:if="{{!authenticated}}">
     <text class="page-lede">设备与记录，登录后跟随账号。</text>
     <view class="notice">登录后即可管理你的资料。未登录时不会读取资料、统计或回顾。</view>
     <button class="primary-button empty-button" bindtap="loginFromProfile">微信登录</button>
-    <view class="list" style="margin-top: 16px;">
-      <view class="list-row" bindtap="openPrivacy">
-        <mp-icon name="shield" tone="ink"></mp-icon>
-        <view class="row-copy">
-          <text class="row-title">授权与隐私说明</text>
-          <text class="row-meta">先了解，再决定</text>
-        </view>
-        <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
-      </view>
-    </view>
-  </view>
+  </block>
 
   <block wx:else>
-    <text class="page-title">我的</text>
-
     <view class="card card-xl account-card">
       <image wx:if="{{profile.avatar_url}}" class="user-avatar" src="{{profile.avatar_url}}" mode="aspectFill" />
       <view wx:else class="hero-initial" aria-hidden="true">
@@ -26,14 +15,14 @@
       </view>
       <view class="account-copy">
         <text class="account-name">{{profile.display_name || '新朋友'}}</text>
-        <text class="account-sub">{{deviceBindingStateLabel}} · {{deviceBindingCountLabel}}</text>
+        <text class="account-sub">{{deviceBindingSummary}}</text>
       </view>
     </view>
 
     <view class="card device-card" bindtap="openDevice">
-      <view class="device-art"><view class="device-fig"><face-badge role="{{profile.companion_id}}" size="md" plain="{{true}}"></face-badge></view></view>
+      <view class="device-art" aria-hidden="true"><image class="device-art-img" src="/assets/ui/v4/mascot-happy.jpg" mode="widthFix" /></view>
       <view class="row-copy">
-        <text class="device-name">{{deviceBindingLabel || '我的设备'}}</text>
+        <text class="device-name">{{deviceName || '我的设备'}}</text>
         <view class="device-pill pill {{deviceBindingState === 'ready' || deviceBindingState === 'cached' ? 'pill-online' : 'pill-neutral'}}">{{deviceBindingStateLabel}}</view>
         <text wx:if="{{deviceBindingState !== 'ready'}}" class="row-meta">{{deviceBindingDetail}}</text>
       </view>
@@ -61,67 +50,48 @@
       disabled="{{deviceBindingSyncing}}"
       bindtap="retryDeviceBindingSync"
     >重新同步设备</button>
+  </block>
 
-    <view class="list">
-      <view class="list-row" bindtap="openDevice">
-        <mp-icon name="dev" tone="ink"></mp-icon>
-        <text class="row-title row-copy">设备管理</text>
-        <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
-      </view>
-      <view class="list-row" bindtap="openCompanion">
-        <mp-icon name="star" tone="ink"></mp-icon>
-        <view class="row-copy">
-          <text class="row-title">{{personaHeadline}}</text>
-          <text class="row-meta">下次唤醒才会换成对应声音</text>
-        </view>
-        <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
-      </view>
-      <view wx:if="{{guardianEntryAllowed}}" class="list-row" bindtap="openGuardianSummary">
-        <mp-icon name="user" tone="ink"></mp-icon>
-        <view class="row-copy">
-          <text class="row-title">监护与成长小结</text>
-          <text class="row-meta">成长小结与监护授权</text>
-        </view>
-        <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
-      </view>
-      <view wx:if="{{digitalSelfEntryAllowed}}" class="list-row" bindtap="openDigitalSelf">
-        <mp-icon name="note" tone="ink"></mp-icon>
-        <view class="row-copy">
-          <text class="row-title">我的记忆档案</text>
-          <text class="row-meta">只保留你确认的事</text>
-        </view>
-        <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
-      </view>
-      <view wx:if="{{rawVoiceEntryAllowed}}" class="list-row" bindtap="openPrivacy">
-        <mp-icon name="shield" tone="ink"></mp-icon>
-        <view class="row-copy">
-          <text class="row-title">授权与隐私说明</text>
-          <text class="row-meta">授权、导出与删除</text>
-        </view>
-        <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
-      </view>
-      <view class="list-row" bindtap="openCustomPersona">
-        <mp-icon name="wave" tone="ink"></mp-icon>
-        <view class="row-copy">
-          <text class="row-title">自定义人格</text>
-          <text class="row-meta">{{customPersonaLabel || '还没有分配到自定义人格'}}</text>
-        </view>
-        <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
-      </view>
+  <view class="list profile-menu">
+    <view wx:if="{{authenticated}}" class="list-row" bindtap="openDevice">
+      <mp-icon name="dev" tone="ink"></mp-icon>
+      <text class="row-title row-copy">设备管理</text>
+      <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
     </view>
-    <text class="caption profile-caption">对话只在机器人上进行。自定义人格用你写的名字说话，可创建、删除或分配给使用人。</text>
-
-    <text class="group-label">偏好</text>
-    <view class="list">
-      <view class="setting-row">
-        <view class="row-copy">
-          <text class="setting-name">自动整理日常回顾</text>
-          <text class="setting-desc">开启后生成待查看的草稿，不自动保存为记忆</text>
-        </view>
-        <switch checked="{{profile.auto_summary}}" data-key="auto_summary" bindchange="onSwitch" color="#4A52C9" />
+    <view wx:if="{{guardianEntryAllowed}}" class="list-row" bindtap="openGuardianSummary">
+      <mp-icon name="user" tone="ink"></mp-icon>
+      <view class="row-copy">
+        <text class="row-title">监护与成长小结</text>
+        <text class="row-meta">成长小结与监护授权</text>
       </view>
+      <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
     </view>
+    <view wx:if="{{digitalSelfEntryAllowed}}" class="list-row" bindtap="openDigitalSelf">
+      <mp-icon name="note" tone="ink"></mp-icon>
+      <view class="row-copy">
+        <text class="row-title">我的记忆档案</text>
+        <text class="row-meta">只保留你确认的事</text>
+      </view>
+      <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
+    </view>
+    <view class="list-row" bindtap="openPrivacy">
+      <mp-icon name="shield" tone="ink"></mp-icon>
+      <text class="row-title row-copy">授权与隐私说明</text>
+      <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
+    </view>
+    <button class="list-row" open-type="feedback" hover-class="none">
+      <mp-icon name="help" tone="ink"></mp-icon>
+      <text class="row-title row-copy">帮助与反馈</text>
+      <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
+    </button>
+    <view class="list-row" bindtap="openAbout">
+      <mp-icon name="info" tone="ink"></mp-icon>
+      <text class="row-title row-copy">关于</text>
+      <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
+    </view>
+  </view>
 
+  <block wx:if="{{authenticated}}">
     <text class="group-label">账号</text>
     <view class="list">
       <view class="list-row" bindtap="copyAccountId">
@@ -158,4 +128,6 @@
       </view>
     </view>
   </block>
+
+  <text wx:if="{{appVersionLabel}}" class="profile-version">{{appVersionLabel}}</text>
 </view>

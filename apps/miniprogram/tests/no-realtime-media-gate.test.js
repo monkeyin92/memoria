@@ -176,7 +176,7 @@ test("voiceprint and voice cloning are gone from every page", () => {
   const complianceSource = fs.readFileSync(path.join(root, "utils", "compliance.js"), "utf8");
   assert.doesNotMatch(complianceSource, /声纹/);
   const profile = fs.readFileSync(path.join(root, "pages", "profile", "index.wxml"), "utf8");
-  assert.match(profile, /自定义人格/);
+  assert.match(profile, /授权与隐私说明/);
   assert.doesNotMatch(profile, /声音复刻|对着麦克风录|上传音频/);
   assert.equal(
     CONSENT_OFFERS.some((offer) => offer.id === "offer_self_voice_clone_v1"),

@@ -1,28 +1,31 @@
 const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
 const compliance = require("../../utils/compliance");
-const { companions, companionById, defaultCompanionId } = require("../../utils/companions");
+const { companionById, defaultCompanionId } = require("../../utils/companions");
 const { requireLogin } = require("../../utils/auth-gate");
 const { MODE_META, readBindingManifest, entryAllowed } = require("../../utils/device-binding");
+const { devicePlaceName } = require("../../utils/device-status");
+const { openPrivacyContract } = require("../../utils/privacy-contract");
 const contracts = require("../../utils/multi-subject-contracts");
 
 const defaultProfile = {
   display_name: "新朋友",
-  auto_summary: true,
-  gentle_reminders: false,
   companion_id: defaultCompanionId,
   subject_category: null,
 };
 
 const DELETE_CONFIRMATION_TEXT = "永久删除我的全部数据";
 
-
-// 只有服务端会把自定义人格写进 Runtime Profile 的 persona；非 cu_ 前缀表示
-// 内置人格，克隆声音时不该带 custom_persona_id。
-function customPersonaIdFor(profile) {
-  const personaId = profile?.persona?.persona_id;
-  if (typeof personaId !== "string" || !personaId.startsWith("cu_")) return "";
-  return personaId;
+// Only release builds carry miniProgram.version; develop and trial builds report just their channel.
+function appVersionLabel() {
+  let info = null;
+  try {
+    info = wx.getAccountInfoSync?.().miniProgram;
+  } catch {
+    return "";
+  }
+  if (info?.version) return "版本 " + info.version;
+  return { develop: "开发版", trial: "体验版" }[info?.envVersion] || "";
 }
 
 function mediaTypeForPath(filePath) {
@@ -86,8 +89,9 @@ function deviceBindingReset(accountId = "", syncing = false) {
       : "登录后从服务端同步账号可见设备。",
     deviceBindingError: "",
     deviceBinding: null,
-    deviceBindingCountLabel: "未确认",
+    deviceBindingSummary: syncing ? "正在同步设备" : "设备待同步",
     deviceBindingChoices: [],
+    deviceName: "",
   };
 }
 
@@ -101,16 +105,16 @@ function deviceBindingStateData(state) {
     deviceBindingSyncing: false,
     deviceBindingError: error,
     deviceBinding: binding,
-    deviceBindingCountLabel: "未确认",
+    deviceBindingSummary: "设备暂未同步",
     deviceBindingChoices: [],
   };
 
   if ((status === "ready" || status === "cached") && binding) {
     view.deviceBindingLabel = deviceBindingLabel(binding);
     view.deviceBindingModeLabel = deviceBindingModeLabel(binding);
-    view.deviceBindingCountLabel = status === "cached"
-      ? "当前 1 台（列表未同步）"
-      : bindings.length ? bindings.length + " 台" : "当前 1 台";
+    view.deviceBindingSummary = status === "cached"
+      ? "已绑定 1 台设备（列表未同步）"
+      : "已绑定 " + (bindings.length || 1) + " 台设备";
   } else {
     view.deviceBindingLabel = "";
     view.deviceBindingModeLabel = "";
@@ -125,15 +129,16 @@ function deviceBindingStateData(state) {
     view.deviceBindingDetail = view.deviceBindingModeLabel + " · " + view.deviceBindingLabel +
       "；设备列表暂时无法同步，当前为本机保存的绑定。";
   } else if (status === "empty") {
-    view.deviceBindingCountLabel = "0 台";
+    view.deviceBindingSummary = "还没有绑定设备";
     view.deviceBindingStateLabel = "未绑定设备";
     view.deviceBindingDetail = "服务端确认这个账号还没有生效绑定。";
   } else if (status === "choose") {
-    view.deviceBindingCountLabel = bindings.length + " 台待选择";
+    view.deviceBindingSummary = "找到 " + bindings.length + " 台设备，待选择";
     view.deviceBindingStateLabel = "待选择设备";
     view.deviceBindingDetail = "服务端找到多台生效设备，请选择当前设备。";
     view.deviceBindingChoices = deviceBindingChoiceItems(bindings);
   } else if (status === "syncing") {
+    view.deviceBindingSummary = "正在同步设备";
     view.deviceBindingStateLabel = "同步中";
     view.deviceBindingDetail = "正在从服务端恢复账号可见设备。";
   } else {
@@ -206,10 +211,8 @@ Page({
     identity: null,
     profile: defaultProfile,
     profileInitial: profileInitialFor(defaultProfile.display_name),
-    companions,
     stats: { totalDays: 0, moments: 0, streak: 0 },
     loading: false,
-    saving: false,
     error: "",
     showDelete: false,
     deleteConfirmation: "",
@@ -218,7 +221,6 @@ Page({
     deleteConfirmText: DELETE_CONFIRMATION_TEXT,
     authenticated: false,
     isMinor: false,
-    personaHeadline: `${companionById(defaultCompanionId).name}，你的日常角色`,
     accountId: "",
     hasRuntimeProfile: false,
     runtimeCapabilities: [],
@@ -229,8 +231,7 @@ Page({
     profileUnavailableReason: "",
     deliveredCapabilities: [],
     deliveredCapabilitiesLoading: false,
-    customPersonaId: "",
-    customPersonaLabel: "",
+    appVersionLabel: "",
     ...deviceBindingReset(),
     complianceCopy: {
       positioning: compliance.PRODUCT_POSITIONING,
@@ -241,6 +242,7 @@ Page({
   },
 
   onLoad() {
+    this.setData({ appVersionLabel: appVersionLabel() });
     const app = getApp();
     if (typeof app?.subscribeAuthCleared === "function") {
       this._unsubscribeAuthCleared = app.subscribeAuthCleared(() => this._enterGuestState());
@@ -301,7 +303,6 @@ Page({
       profile: defaultProfile,
       profileInitial: profileInitialFor(defaultProfile.display_name),
       stats: { totalDays: 0, moments: 0, streak: 0 },
-      saving: false,
       error: "",
       showDelete: false,
       deleteConfirmation: "",
@@ -317,8 +318,6 @@ Page({
       profileUnavailableReason: "",
       deliveredCapabilities: [],
       deliveredCapabilitiesLoading: false,
-      customPersonaId: "",
-      customPersonaLabel: "",
       ...deviceBindingReset(),
     });
   },
@@ -431,6 +430,12 @@ Page({
     return request;
   },
 
+  async loginFromProfile() {
+    if (!(await requireLogin({ reason: "view_profile" }))) return;
+    this.setData({ authenticated: true });
+    await this._loadAuthenticatedData();
+  },
+
   async retryDeviceBindingSync() {
     if (!(await requireLogin({ reason: "view_profile" }))) {
       this._enterGuestState();
@@ -479,25 +484,17 @@ Page({
       const profile = { ...defaultProfile, ...(await api.getProfile(identity.user_id)) };
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       // 使用人身份来自设备绑定，这里不再读取说话人识别（speaker enrollment）状态。
-      const [capabilityState] = await Promise.all([
-        this.loadRuntimeCapabilities(),
-              ]);
-      const customPersonaState = capabilityState.customPersonaId
-        ? await this.loadCustomPersonaLabel(capabilityState.customPersonaId)
-        : { customPersonaId: "", customPersonaLabel: "" };
+      const capabilityState = await this.loadRuntimeCapabilities();
       if (!api.isAuthEpochCurrent(authEpoch)) return;
-      const companion = companionById(profile.companion_id);
+      const binding = this.data.deviceBinding;
       this.setData({
         profile,
         profileInitial: profileInitialFor(profile.display_name),
         isMinor: profile.subject_category === "minor",
-        customPersonaId: customPersonaState.customPersonaId,
-        customPersonaLabel: customPersonaState.customPersonaLabel,
-        personaHeadline: `${companion.name}，你的日常角色`,
+        deviceName: binding ? devicePlaceName(binding, companionById(profile.companion_id).name) : "",
         accountId: identity.user_id,
         ...capabilityState,
       });
-      // 回到这一页（onShow 会重新加载）时，若服务端仍在生成就把进度接上。
     } catch (error) {
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ error: error?.message || "个人资料无法加载。" });
@@ -523,7 +520,6 @@ Page({
         digitalSelfEntryAllowed: false,
         guardianEntryAllowed: false,
         rawVoiceEntryAllowed: false,
-        customPersonaId: "",
         profileUnavailableReason: reasonByState[this.data.deviceBindingState] ||
           "设备绑定状态不完整，无法取得 Runtime Profile。",
       };
@@ -539,7 +535,6 @@ Page({
           digitalSelfEntryAllowed: false,
           guardianEntryAllowed: false,
           rawVoiceEntryAllowed: false,
-          customPersonaId: "",
           profileUnavailableReason: "能力状态正在刷新，请稍后重试。",
         };
       }
@@ -551,7 +546,6 @@ Page({
           digitalSelfEntryAllowed: false,
           guardianEntryAllowed: false,
           rawVoiceEntryAllowed: false,
-          customPersonaId: "",
           profileUnavailableReason: "服务端返回的 Runtime Profile 校验失败，敏感能力已关闭。",
         };
       }
@@ -563,7 +557,6 @@ Page({
         digitalSelfEntryAllowed: entryAllowed(profile, contracts.Capability.DigitalSelfPreview),
         guardianEntryAllowed: entryAllowed(profile, contracts.Capability.GuardianSummaryView),
         rawVoiceEntryAllowed: entryAllowed(profile, contracts.Capability.RawAudioRetention),
-        customPersonaId: customPersonaIdFor(profile),
         profileUnavailableReason: "",
       };
       this._lastCapabilityState = state;
@@ -576,7 +569,6 @@ Page({
         digitalSelfEntryAllowed: false,
         guardianEntryAllowed: false,
         rawVoiceEntryAllowed: false,
-        customPersonaId: "",
         profileUnavailableReason: "Runtime Profile 获取失败，敏感能力入口已关闭。",
       };
     }
@@ -619,96 +611,6 @@ Page({
     }
   },
 
-  onSwitch(event) {
-    const key = event.currentTarget.dataset.key;
-    const next = event.detail.value;
-    const previous = this.data.profile[key];
-    this.setData({ [`profile.${key}`]: next, error: "" });
-    this._savePreference(key, next, previous);
-  },
-
-  async _savePreference(key, next, previous) {
-    const identity = api.currentIdentity();
-    if (!identity) {
-      this.setData({ [`profile.${key}`]: previous });
-      return;
-    }
-    const authEpoch = api.currentAuthEpoch();
-    try {
-      const profile = await api.updateProfile(identity.user_id, {
-        ...this.data.profile,
-        [key]: next,
-      });
-      if (!api.isAuthEpochCurrent(authEpoch)) return;
-      this.setData({ profile: { ...this.data.profile, ...profile } });
-      wx.showToast({ title: "已保存", icon: "success" });
-    } catch (error) {
-      if (!api.isAuthEpochCurrent(authEpoch)) return;
-      this.setData({
-        [`profile.${key}`]: previous,
-        error: error?.message || "保存失败。",
-      });
-      wx.showToast({ title: "没保存成功，已恢复原来的设置", icon: "none" });
-    }
-  },
-
-  async chooseCompanion(event) {
-    if (!(await requireLogin({ reason: "edit_profile" }))) return;
-    const companionId = event.currentTarget.dataset.id;
-    const nextProfile = {
-      ...this.data.profile,
-      companion_id: companionId,
-    };
-    this.setData({ profile: nextProfile });
-    await this.saveProfile();
-  },
-
-  // 自定义人格是账号级的不可变记录（cu_*），只在专门的页面里创建/删除；
-  // 这里只负责显示当前分配给它的人。
-  openCustomPersona() {
-    wx.navigateTo({ url: "/pages/persona-custom/index" });
-  },
-
-  async loadCustomPersonaLabel(personaId) {
-    const authEpoch = api.currentAuthEpoch();
-    try {
-      const payload = await api.listPersonas();
-      if (!api.isAuthEpochCurrent(authEpoch)) return { customPersonaId: "", customPersonaLabel: "" };
-      const record = (payload?.custom_personas || []).find(
-        (item) => item.persona_id === personaId,
-      );
-      if (!record) return { customPersonaId: "", customPersonaLabel: "" };
-      return { customPersonaId: record.persona_id, customPersonaLabel: record.display_name };
-    } catch {
-      // 目录读取失败只影响展示：不提交 custom_persona_id，避免把未知 id 交给服务端。
-      return { customPersonaId: "", customPersonaLabel: "" };
-    }
-  },
-
-  async saveProfile() {
-    if (!(await requireLogin({ reason: "edit_profile" }))) return;
-    const identity = api.currentIdentity();
-    if (!identity || this.data.saving) return;
-    const authEpoch = api.currentAuthEpoch();
-    this.setData({ saving: true, error: "" });
-    try {
-      const profile = await api.updateProfile(identity.user_id, this.data.profile);
-      if (!api.isAuthEpochCurrent(authEpoch)) return;
-      const merged = { ...this.data.profile, ...profile };
-      this.setData({
-        profile: merged,
-        profileInitial: profileInitialFor(merged.display_name),
-      });
-      wx.showToast({ title: "已保存", icon: "success" });
-    } catch (error) {
-      if (!api.isAuthEpochCurrent(authEpoch)) return;
-      this.setData({ error: error?.message || "保存失败。" });
-    } finally {
-      if (api.isAuthEpochCurrent(authEpoch)) this.setData({ saving: false });
-    }
-  },
-
-  // 轮询会反复取回同一份快照：只有视图真的变了才写回，避免无谓渲染。
   copyAccountId() {
     const accountId = this.data.accountId;
     if (!accountId) return;
@@ -722,11 +624,6 @@ Page({
     if (!(await requireLogin({ reason: "view_profile" }))) return;
     if (!this._allowSensitiveEntry("数字分身", contracts.Capability.DigitalSelfPreview)) return;
     wx.navigateTo({ url: "/pages/digital-self/index" });
-  },
-
-
-  openCompanion() {
-    wx.switchTab({ url: "/pages/companion/index" });
   },
 
   openDevice() {
@@ -746,7 +643,6 @@ Page({
     const flagByCapability = {
       [contracts.Capability.DigitalSelfPreview]: "digitalSelfEntryAllowed",
       [contracts.Capability.GuardianSummaryView]: "guardianEntryAllowed",
-      [contracts.Capability.RawAudioRetention]: "rawVoiceEntryAllowed",
     };
     const flag = flagByCapability[capability];
     if (flag ? this.data[flag] === true : this.data.runtimeCapabilities.includes(capability)) {
@@ -757,11 +653,22 @@ Page({
     return false;
   },
 
+  // The privacy page manages raw-audio consent and needs that capability; everyone else still gets the guideline.
   openPrivacy() {
-    if (!this._allowSensitiveEntry("原始语音授权", contracts.Capability.RawAudioRetention)) {
+    if (this.data.rawVoiceEntryAllowed) {
+      wx.navigateTo({ url: "/pages/privacy/index" });
       return;
     }
-    wx.navigateTo({ url: "/pages/privacy/index" });
+    openPrivacyContract();
+  },
+
+  openAbout() {
+    wx.showModal({
+      title: "关于 Memoria",
+      content: ["陪孩子聊天、讲故事的 AI 助手。", this.data.appVersionLabel].filter(Boolean).join("\n"),
+      showCancel: false,
+      confirmText: "知道了",
+    });
   },
 
   async _finishLogout() {
