@@ -165,3 +165,40 @@ def test_ordinary_reply_text_keeps_arabic_helpline_looking_digits() -> None:
 def test_session_had_fixed_safety_reply_detects_prior_spoken_script() -> None:
     assert session_had_fixed_safety_reply([SUPPORT_RELAY_REPLY]) is True
     assert session_had_fixed_safety_reply(["你好"]) is False
+
+
+@pytest.mark.parametrize(
+    "query",
+    (
+        "有人在打我",
+        "有人打我",
+        "救救我",
+        "有人要杀了我",
+        "别人正在打我",
+    ),
+)
+def test_victim_matching_tolerates_speaker_to_mic_asr_slips(query: str) -> None:
+    """Exact _VICTIM_SUPPORT_TERMS substrings miss common ASR near-variants."""
+
+    assert companion_safety_decision(query) == "support_victim"
+    assert _fixed_reply(query) == SUPPORT_VICTIM_REPLY
+
+
+@pytest.mark.parametrize(
+    "query",
+    (
+        "今天天气真好",
+        "我想吃饭",
+        "打篮球很好玩",
+        "我打游戏",
+        "今天打雷了",
+        "你打一下电话给妈妈",
+        "有人打我电话",
+        "有人打我的电话",
+        "救命稻草是什么意思",
+        "性教育课讲了什么",
+    ),
+)
+def test_ordinary_chat_is_not_victim_support(query: str) -> None:
+    assert companion_safety_decision(query) == "none"
+    assert _fixed_reply(query) is None

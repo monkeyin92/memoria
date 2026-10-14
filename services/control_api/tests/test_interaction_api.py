@@ -1014,6 +1014,7 @@ def _response_plan_body(session_id: str, *, classification: str = "owner") -> di
             "turn_id": 7,
             "generation_id": 3,
             "tool_epoch": 2,
+            "session_epoch": 0,
         },
         "speaker_decision": {
             "classification": classification,

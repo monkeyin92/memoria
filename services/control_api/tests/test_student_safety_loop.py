@@ -187,6 +187,7 @@ async def _response_plan(
                 "turn_id": turn_id,
                 "generation_id": generation_id,
                 "tool_epoch": 0,
+                "session_epoch": 0,
             },
             "speaker_decision": {
                 "classification": speaker_classification,
