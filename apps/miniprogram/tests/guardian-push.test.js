@@ -196,20 +196,34 @@ test("settings toggle loads remaining > 0 as on and opt_out clears the ledger", 
   assert.deepEqual(offApi.calls.recorded, [
     { templateId: "tmpl-crisis", result: "opt_out", loginCode: "" },
   ]);
-  assert.match(guardianPush.SAFETY_SUBSCRIBE_OFF_CONFIRM, /不再给你发送安全提醒推送/);
-  assert.match(guardianPush.SAFETY_SUBSCRIBE_OFF_CONFIRM, /置顶显示/);
-  assert.doesNotMatch(guardianPush.SAFETY_SUBSCRIBE_OFF_CONFIRM, /危机/);
+  assert.equal(guardianPush.SAFETY_SUBSCRIBE_OFF_TITLE, "关闭安全提醒推送？");
+  assert.equal(
+    guardianPush.SAFETY_SUBSCRIBE_OFF_CONFIRM,
+    "关闭后，我们不再通过微信给你推送安全提醒。如果孩子聊到需要你关注的话题，只会在你下次打开小程序时置顶显示，你可能不能及时知道。",
+  );
+  assert.equal(guardianPush.SAFETY_SUBSCRIBE_OFF_KEEP, "保持开启");
+  assert.equal(guardianPush.SAFETY_SUBSCRIBE_OFF_PROCEED, "仍要关闭");
+  assert.equal(
+    guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION,
+    "安全提醒推送已关闭，打开小程序仍会看到置顶提醒。",
+  );
+  assert.doesNotMatch(guardianPush.SAFETY_SUBSCRIBE_OFF_CONFIRM, /无法再推送|永久关闭|危机/);
+  assert.doesNotMatch(guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION, /无法再推送|永久关闭|危机/);
 });
 
 test("device settings toggle uses ledger state and real opt-out, not UI-only off", () => {
   const script = fs.readFileSync(path.join(root, "pages/device/index.js"), "utf8");
   const template = fs.readFileSync(path.join(root, "pages/device/index.wxml"), "utf8");
   assert.match(template, /安全提醒订阅/);
+  assert.match(template, /safetySubscribeOffCaption/);
   assert.match(template, /bindchange="onSafetySubscribeChange"/);
   assert.match(script, /loadSafetySubscribeState/);
   assert.match(script, /optOutCrisisPushAlerts/);
-  assert.match(script, /SAFETY_SUBSCRIBE_OFF_CONFIRM/);
+  assert.match(script, /SAFETY_SUBSCRIBE_OFF_TITLE/);
+  assert.match(script, /SAFETY_SUBSCRIBE_OFF_KEEP/);
+  assert.match(script, /SAFETY_SUBSCRIBE_OFF_PROCEED/);
+  assert.match(script, /SAFETY_SUBSCRIBE_OFF_CAPTION/);
   assert.match(script, /subscribeCrisisAlerts/);
-  assert.doesNotMatch(script, /关闭后，微信将无法再推送安全提醒/);
+  assert.doesNotMatch(script, /无法再推送|永久关闭/);
   assert.doesNotMatch(script, /危机/);
 });

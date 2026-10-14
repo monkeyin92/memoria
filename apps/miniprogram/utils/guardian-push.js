@@ -14,8 +14,13 @@ const PARENT_SUBSCRIBE_LABEL = "订阅安全提醒";
 const CRISIS_PUSH_EXPLANATION =
   "订阅安全提醒后，孩子可能需要帮助时，微信会提醒你打开小程序查看。提醒不含任何对话内容，每次允许可收到一次。";
 
+const SAFETY_SUBSCRIBE_OFF_TITLE = "关闭安全提醒推送？";
 const SAFETY_SUBSCRIBE_OFF_CONFIRM =
-  "关闭后我们不再给你发送安全提醒推送，打开小程序时仍会置顶显示";
+  "关闭后，我们不再通过微信给你推送安全提醒。如果孩子聊到需要你关注的话题，只会在你下次打开小程序时置顶显示，你可能不能及时知道。";
+const SAFETY_SUBSCRIBE_OFF_KEEP = "保持开启";
+const SAFETY_SUBSCRIBE_OFF_PROCEED = "仍要关闭";
+const SAFETY_SUBSCRIBE_OFF_CAPTION =
+  "安全提醒推送已关闭，打开小程序仍会看到置顶提醒。";
 
 const RECORDABLE_RESULTS = Object.freeze(["accept", "reject", "ban"]);
 // 20004：用户关闭了小程序订阅消息总开关，等同于 ban。
@@ -145,7 +150,11 @@ function offerCrisisSubscription({ config, api, wxApi = globalThis.wx } = {}) {
 module.exports = {
   CRISIS_PUSH_EXPLANATION,
   PARENT_SUBSCRIBE_LABEL,
+  SAFETY_SUBSCRIBE_OFF_CAPTION,
   SAFETY_SUBSCRIBE_OFF_CONFIRM,
+  SAFETY_SUBSCRIBE_OFF_KEEP,
+  SAFETY_SUBSCRIBE_OFF_PROCEED,
+  SAFETY_SUBSCRIBE_OFF_TITLE,
   loadCrisisPushConfig,
   loadCrisisPushSubscription,
   loadSafetySubscribeState,

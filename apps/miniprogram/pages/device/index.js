@@ -295,6 +295,7 @@ Page({
     trialSettingsVisible: false,
     safetySubscribeOn: false,
     safetySubscribeBusy: false,
+    safetySubscribeOffCaption: "",
     limitsSheetVisible: false,
     limitsSaving: false,
     limitsError: "",
@@ -418,6 +419,7 @@ Page({
       trialSettingsVisible: false,
       safetySubscribeOn: false,
       safetySubscribeBusy: false,
+      safetySubscribeOffCaption: "",
       currentUserLabel: "",
       currentUserLabelConfirmed: false,
       subjectAliasLabel: "",
@@ -509,6 +511,9 @@ Page({
       elderAlerts: alerts,
       elderCrisisPush: safety.config,
       safetySubscribeOn: safety.safetySubscribeOn,
+      safetySubscribeOffCaption: safety.safetySubscribeOn
+        ? ""
+        : guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION,
     });
   },
 
@@ -519,6 +524,9 @@ Page({
     this._safetyPushConfig = safety.config;
     this.setData({
       safetySubscribeOn: safety.safetySubscribeOn,
+      safetySubscribeOffCaption: safety.safetySubscribeOn
+        ? ""
+        : guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION,
     });
   },
 
@@ -570,17 +578,18 @@ Page({
   async onSafetySubscribeChange(event) {
     const nextOn = Boolean(event.detail.value);
     if (!nextOn) {
-      const confirmed = await new Promise((resolve) => {
+      // Primary confirm = 保持开启; secondary cancel = 仍要关闭.
+      const keepOn = await new Promise((resolve) => {
         wx.showModal({
-          title: "关闭安全提醒订阅？",
+          title: guardianPush.SAFETY_SUBSCRIBE_OFF_TITLE,
           content: guardianPush.SAFETY_SUBSCRIBE_OFF_CONFIRM,
-          confirmText: "关闭订阅",
-          cancelText: "保持开启",
+          confirmText: guardianPush.SAFETY_SUBSCRIBE_OFF_KEEP,
+          cancelText: guardianPush.SAFETY_SUBSCRIBE_OFF_PROCEED,
           success: (result) => resolve(Boolean(result?.confirm)),
-          fail: () => resolve(false),
+          fail: () => resolve(true),
         });
       });
-      if (!confirmed) {
+      if (keepOn) {
         this.setData({ safetySubscribeOn: true });
         return;
       }
@@ -588,7 +597,10 @@ Page({
       try {
         const config = this._safetyPushConfig;
         if (!config?.templateId) {
-          this.setData({ safetySubscribeOn: false });
+          this.setData({
+            safetySubscribeOn: false,
+            safetySubscribeOffCaption: guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION,
+          });
           return;
         }
         const outcome = await guardianPush.optOutCrisisPushAlerts({ config, api });
@@ -597,8 +609,10 @@ Page({
           wx.showToast({ title: "关闭失败，请稍后再试", icon: "none" });
           return;
         }
-        this.setData({ safetySubscribeOn: false });
-        wx.showToast({ title: "已关闭安全提醒推送", icon: "none" });
+        this.setData({
+          safetySubscribeOn: false,
+          safetySubscribeOffCaption: guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION,
+        });
       } catch (error) {
         this.setData({ safetySubscribeOn: true });
         wx.showToast({ title: error?.message || "关闭失败，请稍后再试", icon: "none" });
@@ -612,20 +626,29 @@ Page({
     this.setData({ safetySubscribeBusy: true });
     try {
       if (!config?.enabled || !config.templateId) {
-        this.setData({ safetySubscribeOn: false });
+        this.setData({
+          safetySubscribeOn: false,
+          safetySubscribeOffCaption: guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION,
+        });
         wx.showToast({ title: "安全提醒订阅尚未开通", icon: "none" });
         return;
       }
       const outcome = await guardianPush.subscribeCrisisAlerts({ config, api });
       if (outcome.result === "accept" && outcome.recorded) {
-        this.setData({ safetySubscribeOn: true });
+        this.setData({ safetySubscribeOn: true, safetySubscribeOffCaption: "" });
         wx.showToast({ title: "已订阅安全提醒", icon: "none" });
       } else {
-        this.setData({ safetySubscribeOn: false });
+        this.setData({
+          safetySubscribeOn: false,
+          safetySubscribeOffCaption: guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION,
+        });
         wx.showToast({ title: "未完成订阅，请再试一次", icon: "none" });
       }
     } catch (error) {
-      this.setData({ safetySubscribeOn: false });
+      this.setData({
+        safetySubscribeOn: false,
+        safetySubscribeOffCaption: guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION,
+      });
       wx.showToast({ title: error?.message || "订阅失败，请稍后再试", icon: "none" });
     } finally {
       this.setData({ safetySubscribeBusy: false });

@@ -1889,6 +1889,7 @@ test("an elder's binder sees safety alerts on the device page (P0-04 D7)", async
 
 test("trial safety subscribe toggle loads ledger state and opt-outs on the server", async () => {
   const api = require("../utils/api");
+  const guardianPush = require("../utils/guardian-push");
   const originals = {
     getGuardianPushConfig: api.getGuardianPushConfig,
     getGuardianPushSubscription: api.getGuardianPushSubscription,
@@ -1898,25 +1899,30 @@ test("trial safety subscribe toggle loads ledger state and opt-outs on the serve
   };
   const previousWx = global.wx;
   const recorded = [];
+  const modals = [];
+  let remaining = 1;
   api.getGuardianPushConfig = async () => ({
     enabled: true,
     template_ids: { crisis: "tmpl-crisis" },
   });
   api.getGuardianPushSubscription = async () => ({
     template_id: "tmpl-crisis",
-    remaining: 1,
-    subscribed: true,
-    last_result: "accept",
+    remaining,
+    subscribed: remaining > 0,
+    last_result: remaining > 0 ? "accept" : "opt_out",
   });
   api.recordGuardianPushSubscription = async (body) => {
     recorded.push(body);
-    return { template_id: body.templateId, result: body.result, remaining: 0 };
+    remaining = body.result === "accept" ? 1 : 0;
+    return { template_id: body.templateId, result: body.result, remaining };
   };
   api.wechatLoginCode = async () => "login-code";
   api.isAuthEpochCurrent = () => true;
   global.wx = {
-    showModal({ success }) {
-      success({ confirm: true });
+    showModal(options) {
+      modals.push(options);
+      // Primary confirm = 保持开启; secondary cancel = 仍要关闭.
+      options.success({ confirm: false, cancel: true });
     },
     showToast() {},
     requestSubscribeMessage({ tmplIds, success }) {
@@ -1932,10 +1938,36 @@ test("trial safety subscribe toggle loads ledger state and opt-outs on the serve
       0,
     );
     assert.equal(page.data.safetySubscribeOn, true);
+    assert.equal(page.data.safetySubscribeOffCaption, "");
     await page.onSafetySubscribeChange({ detail: { value: false } });
+    assert.equal(modals[0].title, guardianPush.SAFETY_SUBSCRIBE_OFF_TITLE);
+    assert.equal(modals[0].content, guardianPush.SAFETY_SUBSCRIBE_OFF_CONFIRM);
+    assert.equal(modals[0].confirmText, guardianPush.SAFETY_SUBSCRIBE_OFF_KEEP);
+    assert.equal(modals[0].cancelText, guardianPush.SAFETY_SUBSCRIBE_OFF_PROCEED);
     assert.equal(page.data.safetySubscribeOn, false);
+    assert.equal(page.data.safetySubscribeOffCaption, guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION);
     assert.deepEqual(recorded, [
       { templateId: "tmpl-crisis", result: "opt_out", loginCode: "" },
+    ]);
+
+    // Primary confirm keeps the subscription on without writing opt_out again.
+    recorded.length = 0;
+    remaining = 1;
+    page.setData({ safetySubscribeOn: true, safetySubscribeOffCaption: "" });
+    global.wx.showModal = (options) => {
+      modals.push(options);
+      options.success({ confirm: true, cancel: false });
+    };
+    await page.onSafetySubscribeChange({ detail: { value: false } });
+    assert.equal(page.data.safetySubscribeOn, true);
+    assert.deepEqual(recorded, []);
+
+    // Re-enable requests WeChat subscribe and clears the off caption.
+    await page.onSafetySubscribeChange({ detail: { value: true } });
+    assert.equal(page.data.safetySubscribeOn, true);
+    assert.equal(page.data.safetySubscribeOffCaption, "");
+    assert.deepEqual(recorded, [
+      { templateId: "tmpl-crisis", result: "accept", loginCode: "login-code" },
     ]);
   } finally {
     Object.assign(api, originals);

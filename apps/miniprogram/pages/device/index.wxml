@@ -70,6 +70,7 @@
               bindchange="onSafetySubscribeChange"
             />
           </view>
+          <text wx:if="{{safetySubscribeOffCaption}}" class="trial-caption trial-inset-caption">{{safetySubscribeOffCaption}}</text>
         </view>
       </view>
 
