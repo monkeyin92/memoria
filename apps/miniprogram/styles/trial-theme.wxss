@@ -1,4 +1,5 @@
-/* Trial parent UI: Apple Home / Mi Home calm cards. Palette is fixed by product. */
+/* Trial parent UI. Calm card layout (style reference only; no third-party assets).
+   Palette is fixed by product. Shapes are CSS only. */
 .trial-page {
   --trial-bg: #faf7f2;
   --trial-apricot: #f5ebdd;

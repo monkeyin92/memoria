@@ -130,3 +130,30 @@ test("trial device card helper uses profile quiet hours and usage limit", () => 
   );
   assert.equal(hasUnreadSafetyAlert([{ pinned: false, delivery_status: "delivered" }]), false);
 });
+
+test("trial pages use CSS chrome only, no new bitmap or third-party art", () => {
+  const surfaces = [
+    "pages/home/index.wxml",
+    "pages/home/index.wxss",
+    "pages/child-memory/index.wxml",
+    "pages/child-memory/index.wxss",
+    "pages/bind/index.wxml",
+    "pages/bind/index.wxss",
+    "pages/device/index.wxml",
+    "pages/device/index.wxss",
+    "styles/trial-theme.wxss",
+    "design-preview/trial-ui-after.html",
+  ];
+  for (const relative of surfaces) {
+    const source = fs.readFileSync(path.join(root, relative), "utf8");
+    assert.doesNotMatch(
+      source,
+      /assets\/(companions|mascots|icons)\/|\.png|\.webp|\.jpg|\.svg|cm-illus|background-image\s*:/,
+      relative,
+    );
+    assert.doesNotMatch(source, /apple\.com|mi\.com|homekit|sf-symbol/i, relative);
+  }
+  const preview = fs.readFileSync(path.join(root, "design-preview/trial-ui-after.html"), "utf8");
+  assert.doesNotMatch(preview, /<img\b/);
+  assert.match(preview, /style reference only/i);
+});

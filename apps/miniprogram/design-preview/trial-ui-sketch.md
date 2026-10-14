@@ -37,3 +37,7 @@ Rejected: four copies of the same mint/apricot tokens drift on the next tweak.
 ## Synthesis
 
 B wins on one palette source and one home view helper. No new page. No fifth route for alerts.
+
+## Asset compliance
+
+Style references to Apple Home / Mi Home are layout cues only. Do not ship their icons, illustrations, or screenshots. Do not add AI-generated art. Trial chrome uses CSS/system shapes; any bitmap must already live in the repo (for example bind persona `face-badge`).
