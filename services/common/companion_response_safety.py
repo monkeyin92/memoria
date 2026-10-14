@@ -172,8 +172,6 @@ _UNQUOTED_REPORTED_SELF_HARM_RE = re.compile(
     r"(?:跟我说|告诉我|说|表示|提到).{0,12}"
     r"(?:我想自杀|我想死|我不想活|想自残|想轻生|想结束生命)"
 )
-# Compiled so ASR near-variants (dropped 正, 救救我, 杀了) still hit, while short
-# 救命 does not fire on idioms like 救命稻草.
 _VICTIM_SUPPORT_RE = re.compile(
     r"(?:"
     r"我刚被性侵|我被性侵|我遭到性侵|"

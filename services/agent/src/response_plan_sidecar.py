@@ -1,17 +1,3 @@
-"""Legacy path: send a response-plan request the client once could not apply, without waiting.
-
-Historically the wire fence omitted ``session_epoch``, so every device fence
-(``session_epoch >= 1``) mismatch-failed and the reply waited for a plan it
-could never use. This module kept the control-route side effects (crisis
-routing, guardian notify, tutor accounting) by firing the request in a durable
-background task while the reply used the local safe plan.
-
-``ResponsePlannerClient.echoes_session_epoch`` is now True, so
-:func:`applies` is false for the real client and device turns await the plan
-again. The helpers remain for tests and any client that still declares it
-cannot echo the epoch.
-"""
-
 from __future__ import annotations
 
 import asyncio

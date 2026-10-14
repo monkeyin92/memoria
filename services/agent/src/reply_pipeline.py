@@ -913,9 +913,6 @@ class ReplyPipeline:
             )
             raise StopResponse()
         if plan is None and fetch_reason == "fence_mismatch":
-            # Staleness of the turn itself was decided by the runtime-fence check
-            # above. A mismatched plan is unusable, not the turn: answer with the
-            # fallback plan, as every other fetch failure does.
             logger.info(
                 "response plan ignored session_id=%s turn_id=%s reason=fetch_fence",
                 self._runtime.session_id,

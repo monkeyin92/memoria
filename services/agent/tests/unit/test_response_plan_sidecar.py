@@ -1,12 +1,3 @@
-"""Sidecar behavior for clients that still cannot echo ``session_epoch``.
-
-The real ``ResponsePlannerClient`` now echoes ``session_epoch``, so device turns
-await the plan. These tests keep a double with ``echoes_session_epoch = False``
-to pin the legacy split: the reply is not held, the request is still made once
-per turn (crisis routing / guardian notify), failures never reach the turn, and
-closing the session drains the durable task.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -33,11 +24,8 @@ CRISIS = "我不想活了"
 
 
 class _Planner:
-    """The real client's verdict for a device fence: the wire fence lacks ``session_epoch``."""
-
     def __init__(self, *, sidecar: bool = True, delay_s: float = 0.0, outcome: Any = None) -> None:
         if sidecar:
-            # What ResponsePlannerClient declares; a double that does not say so is awaited as before.
             self.echoes_session_epoch = False
         self.delay_s = delay_s
         self.outcome = outcome
