@@ -56,6 +56,14 @@ function createWx({ storage = {}, systemInfo = {}, onCall } = {}) {
         calls.push({ name, args });
         onCall?.(name, args);
         if (name in target) return target[name](...args);
+        const options = args[0];
+        if (options && typeof options === "object" && (options.fail || options.complete)) {
+          const result = { errMsg: `${name}:fail not available in harness` };
+          setImmediate(() => {
+            options.fail?.(result);
+            options.complete?.(result);
+          });
+        }
         return undefined;
       };
     },

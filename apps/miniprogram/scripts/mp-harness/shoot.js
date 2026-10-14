@@ -26,9 +26,12 @@ function launch() {
   });
 }
 
-async function scenarioData(scenario) {
+async function scenarioData(scenario, view = {}) {
   const started = process.hrtime.bigint();
-  const harness = loadPage(scenario.page, scenario.harness || {});
+  const systemInfo = view.width
+    ? { windowWidth: view.width, screenWidth: view.width, windowHeight: view.height, screenHeight: view.height, statusBarHeight: view.safeTop }
+    : {};
+  const harness = loadPage(scenario.page, { ...(scenario.harness || {}), systemInfo });
   try {
     await harness.run(scenario.query || {});
     const loadMs = Number(process.hrtime.bigint() - started) / 1e6;
@@ -94,7 +97,7 @@ async function measure(page, { width, safeTop }) {
 }
 
 async function shoot(browser, scenario, view, outPath) {
-  const { data, setDataLog, loadMs } = await scenarioData(scenario);
+  const { data, setDataLog, loadMs } = await scenarioData(scenario, view);
   const renderStarted = process.hrtime.bigint();
   const html = renderPage(scenario.page, data, { width: view.width, safeTop: view.safeTop, safeBottom: view.safeBottom, fontScale: view.fontScale || 1 });
   const renderMs = Number(process.hrtime.bigint() - renderStarted) / 1e6;

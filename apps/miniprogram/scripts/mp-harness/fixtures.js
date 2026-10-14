@@ -51,6 +51,22 @@ const RECAP = {
   highlights: ["聊到了幼儿园的新朋友", "一起数了天上的星星"],
 };
 
+const ARCHIVE = [
+  { record_id: "a1", field: "appellation", text: "乐乐", created_at: isoMinutesAgo(60 * 24 * 9) },
+  { record_id: "a2", field: "preference", text: "恐龙", last_mentioned_at: isoMinutesAgo(60 * 3) },
+  { record_id: "a3", field: "preference", text: "画画", last_mentioned_at: isoMinutesAgo(60 * 30) },
+  { record_id: "a4", field: "pet_name", text: "小乐宝", created_at: isoMinutesAgo(60 * 24 * 5) },
+];
+
+const ARCHIVE_CONSENT = {
+  items: [{ consent_kind: "child_archive", consent_id: "c_archive", active: true, granted_at: isoMinutesAgo(60 * 24 * 10) }],
+};
+
+const archiveApi = {
+  getPersonConsents: async () => ARCHIVE_CONSENT,
+  getChildArchive: async () => ({ items: ARCHIVE }),
+};
+
 const PINNED_ALERT = {
   notification_id: "n1",
   minor_user_id: "p_child",
@@ -111,4 +127,4 @@ function baseApi(overrides = {}) {
 
 const GUEST_API = { hasAuthenticatedSession: () => false, currentIdentity: () => null };
 
-module.exports = { BINDING, IDENTITY, NOW, PINNED_ALERT, RECAP, RUNTIME_PROFILE, SUMMARIES, GUEST_API, baseApi, dayKey, isoMinutesAgo };
+module.exports = { ARCHIVE, BINDING, IDENTITY, NOW, PINNED_ALERT, RECAP, RUNTIME_PROFILE, SUMMARIES, GUEST_API, archiveApi, baseApi, dayKey, isoMinutesAgo };
