@@ -152,3 +152,15 @@ def test_render_aigc_notices_refuses_without_credentials() -> None:
     assert "TODO: DOUBAO_TTS_APP_ID" in completed.stderr
     assert "下面是 AI 合成的声音给你讲故事。" in completed.stderr
     assert "AI 合成的声音陪你睡觉啦。" in completed.stderr
+
+
+def test_render_aigc_notices_matches_current_doubao_api() -> None:
+    script = (
+        FIRMWARE_ROOT.parents[1] / "scripts" / "render_aigc_notices.py"
+    ).read_text(encoding="utf-8")
+    assert "sample_rate=DOUBAO_SAMPLE_RATE_HZ" in script or "sample_rate=24_000" in script
+    assert "DOUBAO_SAMPLE_RATE_HZ = 24_000" in script
+    assert "synthesize_stream_text([text], fence=fence)" in script
+    assert "await tts.start()" not in script
+    assert "await tts.aclose()" in script
+    assert "GenerationFence(" in script

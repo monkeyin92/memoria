@@ -16,7 +16,7 @@
 - The 25 #244 production oggs were retagged **metadata-only** (`scripts/retag_offline_aigc_metadata.py`); audio-packet and ffmpeg-PCM SHA-256 unchanged. Table: `metadata-retag-25.json`.
 - `SERVICE_PROVIDER=Volcengine Doubao`, `ARTIST=zh_female_tianmeitaozi_uranus_bigtts`, `DATE=2026-10-14`, `CONTENT_PRODUCER=Memoria`.
 - `llm_*` placeholders carry the full implicit set (still `TITLE=*_placeholder`; not Doubao speech).
-- Spoken intros are required in the pack; CI fails if absent. No fabricated audio.
+- Spoken intros `aigc_story_intro` / `aigc_soothe_intro` committed as-is from Doubao render (sha256 match README). Whisper large-v3 ASR in `asr-transcripts.json`.
 
 ## Explicit labels
 

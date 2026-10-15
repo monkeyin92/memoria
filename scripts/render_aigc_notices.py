@@ -8,23 +8,24 @@ Texts (also listed in docs/design/offline-lines-v2.md):
 
 Requires DOUBAO_TTS_APP_ID and DOUBAO_TTS_ACCESS_TOKEN. Voice
 zh_female_tianmeitaozi_uranus_bigtts at normal speed and normal volume
-(no speech_rate / loudness override). Writes implicit AIGC OpusTags
+(speech_rate / loudness_rate / pitch = 0). Synthesizes 24 kHz PCM (provider
+requirement), then ffmpeg-encodes 16 kHz Opus with implicit AIGC OpusTags
 (CONTENT_ID, SERVICE_PROVIDER=Volcengine Doubao, AI_GENERATED, ARTIST, DATE,
 CONTENT_PRODUCER=Memoria).
 
-TODO: No Doubao credentials in this environment. Do not fabricate audio.
-      Run this script when credentials are available, then copy the oggs into
-      firmware/.../assets/offline_lines/ and re-run build_offline_stories.py.
+Do not fabricate audio when credentials are missing.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 import json
 import os
 import subprocess
 import sys
+import wave
 from datetime import date
 from pathlib import Path
 
@@ -46,6 +47,8 @@ ARCHIVE_ROOT = REPO / "docs" / "acceptance" / "run-20261015-aigc-labels" / "arch
 VOICE_ID = "zh_female_tianmeitaozi_uranus_bigtts"
 SERVICE_PROVIDER = "Volcengine Doubao"
 CONTENT_PRODUCER = "Memoria"
+DOUBAO_SAMPLE_RATE_HZ = 24_000
+PACK_SAMPLE_RATE_HZ = 16_000
 
 LINES = (
     ("aigc_story_intro", "下面是 AI 合成的声音给你讲故事。"),
@@ -68,7 +71,7 @@ def _ffmpeg_from_wav(wav: Path, ogg: Path, *, line_id: str, generated: str) -> N
             "-i",
             str(wav),
             "-ar",
-            "16000",
+            str(PACK_SAMPLE_RATE_HZ),
             "-ac",
             "1",
             "-c:a",
@@ -95,41 +98,46 @@ def _ffmpeg_from_wav(wav: Path, ogg: Path, *, line_id: str, generated: str) -> N
     )
 
 
-async def _doubao_wav(path: Path, text: str) -> None:
+async def _doubao_wav(path: Path, text: str, *, generation: int) -> str:
+    """Synthesize 24 kHz PCM via the current DoubaoTTS API; return task_id."""
+
+    from services.agent.src.contracts.ids import GenerationFence
     from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
 
-    config = DoubaoTTSConfig.from_env(os.environ)
-    # Normal speed and normal volume: keep provider defaults for speech_rate
-    # and loudness_rate (no speed-up, no attenuation).
-    config = DoubaoTTSConfig(
-        app_id=config.app_id,
-        access_token=config.access_token,
-        resource_id=config.resource_id,
-        ws_url=config.ws_url,
+    base = DoubaoTTSConfig.from_env({**os.environ, "DOUBAO_TTS_POOL_SIZE": "1"})
+    config = dataclasses.replace(
+        base,
         speaker=VOICE_ID,
-        sample_rate=16_000,
-        speech_rate=config.speech_rate,
-        loudness_rate=config.loudness_rate,
-        pitch=config.pitch,
-        pool_size=1,
-        connect_timeout_s=config.connect_timeout_s,
-        first_audio_timeout_s=config.first_audio_timeout_s,
-        total_timeout_s=config.total_timeout_s,
-        hard_deadline_s=config.hard_deadline_s,
+        sample_rate=DOUBAO_SAMPLE_RATE_HZ,
+        speech_rate=0,
+        loudness_rate=0,
+        pitch=0,
+        style_control_enabled=False,
+        instruction=None,
     )
     tts = DoubaoTTS(config)
-    await tts.start()
     try:
-        pcm = bytearray()
-        async for chunk in tts.synthesize_stream_text(text):
-            pcm.extend(chunk)
-        import wave
-
+        fence = GenerationFence("aigc-intro", generation, 1, 0)
+        tts.bind_fence(fence)
+        tts.apply_speech_plan(
+            emotion="neutral",
+            rate=1.0,
+            instruction="",
+            pitch=0,
+            fence=fence,
+        )
+        result = await tts.synthesize_stream_text([text], fence=fence)
+        if result.discarded or not result.pcm:
+            raise RuntimeError(
+                f"Doubao returned no PCM for {path.name} "
+                f"(task={result.task_id!r} discarded={result.discarded})"
+            )
         with wave.open(str(path), "wb") as handle:
             handle.setnchannels(1)
             handle.setsampwidth(2)
-            handle.setframerate(16_000)
-            handle.writeframes(bytes(pcm))
+            handle.setframerate(DOUBAO_SAMPLE_RATE_HZ)
+            handle.writeframes(result.pcm)
+        return str(result.task_id or "")
     finally:
         await tts.aclose()
 
@@ -165,14 +173,17 @@ def main(argv: list[str] | None = None) -> int:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     ARCHIVE_ROOT.mkdir(parents=True, exist_ok=True)
     records: list[dict[str, object]] = []
-    for line_id, text in LINES:
+    for generation, (line_id, text) in enumerate(LINES, start=1):
         ogg = args.out_dir / f"{line_id}.ogg"
-        tmp = args.out_dir / f".{line_id}-16k.wav"
+        wav24 = args.out_dir / f"{line_id}-24k.wav"
         try:
-            asyncio.run(_doubao_wav(tmp, text))
-            _ffmpeg_from_wav(tmp, ogg, line_id=line_id, generated=today)
+            task_id = asyncio.run(_doubao_wav(wav24, text, generation=generation))
+            _ffmpeg_from_wav(wav24, ogg, line_id=line_id, generated=today)
         finally:
-            tmp.unlink(missing_ok=True)
+            # Keep the 24 kHz WAV beside the ogg for provenance when writing to
+            # an archive/out dir; only delete the temp name under offline_lines.
+            if args.out_dir.resolve() == OFFLINE_ROOT.resolve():
+                wav24.unlink(missing_ok=True)
         records.append(
             {
                 "id": line_id,
@@ -182,6 +193,9 @@ def main(argv: list[str] | None = None) -> int:
                 "voice_id": VOICE_ID,
                 "service_provider": SERVICE_PROVIDER,
                 "content_producer": CONTENT_PRODUCER,
+                "doubao_sample_rate_hz": DOUBAO_SAMPLE_RATE_HZ,
+                "pack_sample_rate_hz": PACK_SAMPLE_RATE_HZ,
+                "task_id": task_id,
                 "offline_ogg": str(ogg),
             }
         )
