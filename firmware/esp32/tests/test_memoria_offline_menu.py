@@ -432,9 +432,9 @@ def test_check_only_passes_with_production_pack() -> None:
     assert completed.returncode == 0, completed.stderr
     fields = dict(line.split("=", 1) for line in completed.stdout.splitlines() if "=" in line)
     assert int(fields["free_margin_bytes"]) >= 512 * 1024
-    assert fields["production_clips"] == "25"
-    assert fields["placeholder_clips"] == "2"
-    assert fields["pending_placeholder_clips"] == "2"
+    assert fields["production_clips"] == "27"
+    assert fields["placeholder_clips"] == "0"
+    assert fields["pending_placeholder_clips"] == "0"
 
 
 def test_default_run_never_writes_audio_and_converges(tmp_path: pathlib.Path) -> None:
@@ -494,7 +494,7 @@ def test_clip_without_opus_tags_is_not_production(tmp_path: pathlib.Path) -> Non
     assert completed.returncode == 1
     assert "offline_lines/offline-menu-idle-v1.ogg: no OpusTags header" in completed.stderr
     assert target.read_bytes() == blob
-    assert "pending_placeholder_clips=2" in completed.stdout
+    assert "pending_placeholder_clips=0" in completed.stdout
 
 
 def test_missing_clip_fails_without_creating_it(tmp_path: pathlib.Path) -> None:
@@ -530,14 +530,7 @@ def test_manifests_record_production_voice() -> None:
         assert manifest["voice"] == VOICE
         entries = manifest["stories"] if "stories" in manifest else manifest["lines"]
         assert entries
-        if "stories" in manifest:
-            assert all(entry["placeholder"] is False for entry in entries)
-        else:
-            assert all(
-                entry["placeholder"] is False
-                or entry["id"] in {"llm_unavailable", "llm_thinking"}
-                for entry in entries
-            )
+        assert all(entry["placeholder"] is False for entry in entries)
 
 
 def test_offline_line_manifest_matches_pack() -> None:
@@ -551,15 +544,14 @@ def test_offline_line_manifest_matches_pack() -> None:
     assert ids[20] == "llm_unavailable"
     assert ids[21] == "llm_thinking"
     by_id = {entry["id"]: entry for entry in manifest["lines"]}
-    assert by_id["llm_unavailable"]["placeholder"] is True
+    assert by_id["llm_unavailable"]["placeholder"] is False
     assert by_id["llm_unavailable"]["text"] == (
         "我现在有点卡住了，等一会儿再来找我聊吧。"
     )
-    assert by_id["llm_thinking"]["placeholder"] is True
+    assert by_id["llm_thinking"]["placeholder"] is False
     assert by_id["llm_thinking"]["text"] == "嗯，我想一想。"
     for entry in manifest["lines"]:
-        if entry["id"] not in {"llm_unavailable", "llm_thinking"}:
-            assert entry["placeholder"] is False
+        assert entry["placeholder"] is False
         filename = entry["file"]
         assert len(filename) <= 32
         assert (BOARD_ASSETS / "offline_lines" / filename).is_file()

@@ -610,6 +610,9 @@ class ExistingVoiceProviderAdapter:
         llm_stream = self.language_model.stream(
             LanguageModelRequest(user_text=user_text, cancellation=cancellation)
         )
+        from services.common.labelled_lines import labelled_catalogue
+
+        catalogue = labelled_catalogue()
         try:
             async for item in self._cancel_aware_items(llm_stream, cancel_event):
                 if isinstance(item, FixedSafetyScript):
@@ -619,6 +622,14 @@ class ExistingVoiceProviderAdapter:
                         yield phrase
                     continue
                 if not item:
+                    continue
+                if isinstance(item, str) and catalogue.by_text(item) is not None:
+                    for segment in segmenter.flush(end_of_stream=True):
+                        if cancel_event.is_set():
+                            return
+                        yield SpokenPhrase.verbatim(segment.text)
+                    segmenter.reset(fence)
+                    yield SpokenPhrase.verbatim(item.strip())
                     continue
                 for segment in segmenter.push_token(item):
                     yield SpokenPhrase.verbatim(segment.text)
@@ -641,6 +652,20 @@ class ExistingVoiceProviderAdapter:
         cancel_event: asyncio.Event,
     ) -> AsyncGenerator[bytes, None]:
         """Yield the provider's actual asynchronous PCM chunks when available."""
+
+        from services.common.labelled_lines import labelled_catalogue
+
+        labelled = labelled_catalogue().by_text(spoken)
+        if labelled is not None:
+            logger.info(
+                "labelled line pcm content_id=%s ai_generated=%s session=%s turn=%s",
+                labelled.aigc["content_id"],
+                labelled.aigc["ai_generated"],
+                fence.session_id,
+                fence.turn_id,
+            )
+            yield labelled.pcm_s16le
+            return
 
         request = SpeechSynthesisRequest(
             phrases=(spoken,),
@@ -939,6 +964,49 @@ class ExistingVoiceProviderAdapter:
         )
         self._output_sample = phrase_audio_end
 
+    async def _emit_labelled_line(
+        self,
+        line: Any,
+        *,
+        display: str,
+        fence: GenerationFence,
+        source_start_sample: int,
+        first: bool,
+        final: bool,
+    ) -> AsyncIterator[MediaReplyChunk]:
+        from services.agent.src.voice_core.media_session import MediaReplyChunk, MediaTextSpan
+
+        frame_samples = self.output_frame_samples
+        audio_start = source_start_sample
+        last: MediaReplyChunk | None = None
+        for pcm, start, is_first, is_final, text_delta in line.frame_pcm(
+            source_start_sample=source_start_sample,
+            frame_samples=frame_samples,
+            announce_text=True,
+        ):
+            audio_end = start + frame_samples
+            chunk = MediaReplyChunk(
+                pcm_s16le=pcm,
+                source_start_sample=start,
+                text=display if is_final else "",
+                assistant_text_delta=text_delta,
+                first=first and is_first,
+                final=False,
+                text_audio_start_sample=audio_start if is_final else None,
+                text_audio_end_sample=audio_end if is_final else None,
+                text_spans=(
+                    (MediaTextSpan(display, audio_start, audio_end),) if is_final else ()
+                ),
+            )
+            if last is not None:
+                yield last
+            last = chunk
+        if last is None:
+            raise RuntimeError(f"labelled line {line.line_id} produced no PCM frames")
+        yield replace(last, final=final)
+        self._output_sample = last.source_start_sample + frame_samples
+        self._generation_output_ends[fence] = self._output_sample
+
     async def _stream_incremental_generation(
         self,
         user_text: str,
@@ -957,6 +1025,79 @@ class ExistingVoiceProviderAdapter:
         """
 
         from services.agent.src.voice_core.media_session import MediaReplyChunk, MediaTextSpan
+        from services.common.labelled_lines import labelled_catalogue
+
+        catalogue = labelled_catalogue()
+        reply = self._reply_phrases(user_text, fence, cancellation, cancel_event)
+        reply_iter = aiter(reply)
+        try:
+            first_phrase = await anext(reply_iter)
+        except StopAsyncIteration:
+            await reply.aclose()
+            return
+
+        sample_origin = 0
+        if catalogue.prefix_candidate(first_phrase.spoken):
+            labelled_phrases: list[SpokenPhrase] = [first_phrase]
+            try:
+                async for phrase in reply_iter:
+                    labelled_phrases.append(phrase)
+            finally:
+                await reply.aclose()
+            joined = "".join(item.spoken for item in labelled_phrases)
+            joined_line = catalogue.by_text(joined)
+            if joined_line is not None:
+                logger.info(
+                    "labelled line reply content_id=%s ai_generated=%s "
+                    "session=%s turn=%s",
+                    joined_line.aigc["content_id"],
+                    joined_line.aigc["ai_generated"],
+                    fence.session_id,
+                    fence.turn_id,
+                )
+                self._generation_output_ends[fence] = 0
+                async for chunk in self._emit_labelled_line(
+                    joined_line,
+                    display=joined_line.text,
+                    fence=fence,
+                    source_start_sample=sample_origin,
+                    first=True,
+                    final=True,
+                ):
+                    yield chunk
+                return
+            if all(catalogue.by_text(item.spoken) is not None for item in labelled_phrases):
+                self._generation_output_ends[fence] = 0
+                for index, phrase in enumerate(labelled_phrases):
+                    line = catalogue.by_text(phrase.spoken)
+                    assert line is not None
+                    logger.info(
+                        "labelled line reply content_id=%s ai_generated=%s "
+                        "session=%s turn=%s",
+                        line.aigc["content_id"],
+                        line.aigc["ai_generated"],
+                        fence.session_id,
+                        fence.turn_id,
+                    )
+                    async for chunk in self._emit_labelled_line(
+                        line,
+                        display=phrase.display,
+                        fence=fence,
+                        source_start_sample=sample_origin,
+                        first=index == 0,
+                        final=index + 1 == len(labelled_phrases),
+                    ):
+                        sample_origin = chunk.source_start_sample + chunk.frame_samples
+                        yield chunk
+                return
+
+            async def _replay_all() -> AsyncGenerator[SpokenPhrase, None]:
+                for phrase in labelled_phrases:
+                    yield phrase
+
+            reply = _replay_all()
+            reply_iter = aiter(reply)
+            first_phrase = await anext(reply_iter)
 
         bind_fence = getattr(self.speech_synthesis, "bind_fence", None)
         if callable(bind_fence):
@@ -977,9 +1118,16 @@ class ExistingVoiceProviderAdapter:
         phrases: list[str] = []
         pending_announcements: deque[str] = deque()
         first_phrase_ready = asyncio.Event()
+        trailing_labelled: list[tuple[Any, str]] = []
 
         async def push_phrase(phrase: SpokenPhrase) -> None:
             if cancel_event.is_set() or not phrase.spoken:
+                return
+            labelled = labelled_catalogue().by_text(phrase.spoken)
+            if labelled is not None:
+                phrases.append(phrase.display)
+                trailing_labelled.append((labelled, phrase.display))
+                first_phrase_ready.set()
                 return
             phrases.append(phrase.display)
             pending_announcements.append(phrase.display)
@@ -989,9 +1137,9 @@ class ExistingVoiceProviderAdapter:
             first_phrase_ready.set()
 
         async def produce_text() -> None:
-            reply = self._reply_phrases(user_text, fence, cancellation, cancel_event)
             try:
-                async for phrase in reply:
+                await push_phrase(first_phrase)
+                async for phrase in reply_iter:
                     await push_phrase(phrase)
             finally:
                 await reply.aclose()
@@ -1072,48 +1220,65 @@ class ExistingVoiceProviderAdapter:
                     self._output_sample = output_sample
                 held_frame = bytes(buffered) + b"\x00" * (frame_bytes - len(buffered))
                 held_frame_received_at = monotonic()
-            if held_frame is None:
-                raise RuntimeError("speech provider returned no valid PCM")
             complete_text = "".join(phrases)
-            if not complete_text:
+            if held_frame is None and not trailing_labelled:
                 if cancel_event.is_set():
                     return
-                raise RuntimeError("language model returned no speakable text")
-            audio_end = output_sample + frame_samples
-            announcement = take_announcement()
-            timed_text_spans = await self._heard_text_spans(
-                fence,
-                stream,
-                max_audio_end_sample=audio_end,
-            )
-            if not timed_text_spans:
-                # No usable provider timing (none exposed, a degraded
-                # alignment or a malformed timeline): the whole reply is one
-                # ledger span over all of its audio.  Only an exact watermark
-                # at the last sample promotes it, so a fully played reply
-                # still becomes heard history while a stopped or
-                # approximately acknowledged one claims nothing.
-                alignment = getattr(stream, "timed_transcript_alignment", None)
-                logger.info(
-                    "media reply without provider text timing; one whole-reply "
-                    "ledger span session=%s turn_id=%s generation_id=%s alignment=%s",
-                    fence.session_id,
-                    fence.turn_id,
-                    fence.generation_id,
-                    alignment() if callable(alignment) else "unavailable",
+                if not complete_text:
+                    raise RuntimeError("language model returned no speakable text")
+                raise RuntimeError("speech provider returned no valid PCM")
+            if held_frame is not None:
+                audio_end = output_sample + frame_samples
+                announcement = take_announcement()
+                timed_text_spans = await self._heard_text_spans(
+                    fence,
+                    stream,
+                    max_audio_end_sample=audio_end,
                 )
-                timed_text_spans = (MediaTextSpan(complete_text, 0, audio_end),)
-            self._record_tts_frame_age(held_frame_received_at)
-            yield MediaReplyChunk(
-                pcm_s16le=held_frame,
-                source_start_sample=output_sample,
-                assistant_text_delta=announcement,
-                first=output_sample == 0,
-                final=True,
-                text_spans=timed_text_spans,
-            )
-            self._output_sample = audio_end
-            self._generation_output_ends[fence] = audio_end
+                if not timed_text_spans:
+                    # No usable provider timing (none exposed, a degraded
+                    # alignment or a malformed timeline): the whole reply is one
+                    # ledger span over all of its audio.  Only an exact watermark
+                    # at the last sample promotes it, so a fully played reply
+                    # still becomes heard history while a stopped or
+                    # approximately acknowledged one claims nothing.
+                    alignment = getattr(stream, "timed_transcript_alignment", None)
+                    logger.info(
+                        "media reply without provider text timing; one whole-reply "
+                        "ledger span session=%s turn_id=%s generation_id=%s alignment=%s",
+                        fence.session_id,
+                        fence.turn_id,
+                        fence.generation_id,
+                        alignment() if callable(alignment) else "unavailable",
+                    )
+                    tts_text = "".join(
+                        part for part in phrases
+                        if labelled_catalogue().by_text(part) is None
+                    ) or complete_text
+                    timed_text_spans = (MediaTextSpan(tts_text, 0, audio_end),)
+                self._record_tts_frame_age(held_frame_received_at)
+                yield MediaReplyChunk(
+                    pcm_s16le=held_frame,
+                    source_start_sample=output_sample,
+                    assistant_text_delta=announcement,
+                    first=output_sample == 0,
+                    final=not trailing_labelled,
+                    text_spans=timed_text_spans,
+                )
+                output_sample = audio_end
+                self._output_sample = audio_end
+                self._generation_output_ends[fence] = audio_end
+            for index, (labelled, display) in enumerate(trailing_labelled):
+                async for chunk in self._emit_labelled_line(
+                    labelled,
+                    display=display,
+                    fence=fence,
+                    source_start_sample=output_sample,
+                    first=output_sample == 0,
+                    final=index + 1 == len(trailing_labelled),
+                ):
+                    output_sample = chunk.source_start_sample + chunk.frame_samples
+                    yield chunk
         finally:
             if not producer.done():
                 producer.cancel()

@@ -1809,3 +1809,150 @@ def test_production_provider_factory_rejects_raw_llm_fallback(
 
     with pytest.raises(ValueError, match="full Agent pipeline"):
         build_production_provider_factory(cast(Any, SimpleNamespace()))
+
+
+class _CountingStreamingTTS:
+    def __init__(self) -> None:
+        self.stream_calls = 0
+        self.phrases: list[str] = []
+        self.synthesize_calls = 0
+
+    def stream(self) -> FakeStreamingSpeech:
+        self.stream_calls += 1
+        speech = FakeStreamingSpeech((b"\x09\x00" * 8,))
+        original_push = speech.push_text
+
+        def push_text(text: str) -> None:
+            self.phrases.append(text)
+            original_push(text)
+
+        speech.push_text = push_text  # type: ignore[method-assign]
+        return speech
+
+    async def synthesize(self, request: SpeechSynthesisRequest) -> Any:
+        self.synthesize_calls += 1
+        assert request.phrases
+        return SimpleNamespace(pcm=b"\x09\x00" * 8)
+
+
+class _FixedLineLLM:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def stream(self, request: LanguageModelRequest) -> AsyncIterator[str]:
+        _ = request
+
+        async def tokens() -> AsyncIterator[str]:
+            yield self.text
+
+        return tokens()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("line_id", "text"),
+    [
+        ("llm_unavailable", "我现在有点卡住了，等一会儿再来找我聊吧。"),
+        ("llm_thinking", "嗯，我想一想。"),
+    ],
+)
+async def test_labelled_line_reply_skips_streaming_tts_and_keeps_aigc(
+    line_id: str, text: str
+) -> None:
+    from pathlib import Path
+
+    from services.common.labelled_lines import (
+        LabelledLine,
+        LabelledLineCatalogue,
+        override_labelled_catalogue,
+    )
+
+    pcm = b"\x04\x00" * 960
+    line = LabelledLine(
+        line_id=line_id,
+        text=text,
+        aigc={
+            "content_id": line_id,
+            "service_provider": "Memoria",
+            "ai_generated": True,
+        },
+        pcm_s16le=pcm,
+        sample_rate_hz=24_000,
+        ogg_path=Path(f"{line_id}.ogg"),
+    )
+    override_labelled_catalogue(LabelledLineCatalogue({line_id: line}))
+    tts = _CountingStreamingTTS()
+    try:
+        adapter = ExistingVoiceProviderAdapter(
+            asr_session_factory=cast(Any, lambda: FakeASR()),
+            language_model=cast(Any, _FixedLineLLM(text)),
+            speech_synthesis=cast(Any, tts),
+        )
+        identity = SessionIdentity(f"labelled-{line_id}", stream_epoch=1)
+        fence = GenerationFence(identity.session_id, 1, 1, 0)
+        chunks = await _collect(adapter.generate_reply(identity, "hi", fence))
+        assert tts.stream_calls == 0
+        assert tts.phrases == []
+        assert tts.synthesize_calls == 0
+        assert chunks
+        assert chunks[0].first is True
+        assert chunks[-1].final is True
+        assert "".join(chunk.assistant_text_delta for chunk in chunks) == text
+        assert b"".join(chunk.pcm_s16le for chunk in chunks).startswith(pcm[:4])
+        assert line.aigc["ai_generated"] is True
+        assert line.aigc["content_id"] == line_id
+    finally:
+        override_labelled_catalogue(None)
+
+
+@pytest.mark.asyncio
+async def test_labelled_tts_source_output_skips_streaming_tts() -> None:
+    from pathlib import Path
+
+    from services.common.labelled_lines import (
+        LabelledLine,
+        LabelledLineCatalogue,
+        override_labelled_catalogue,
+    )
+    from services.common.llm_failover import LLM_UNAVAILABLE_LINE_ID, LLM_UNAVAILABLE_TEXT
+
+    pcm = b"\x05\x00" * 480
+    line = LabelledLine(
+        line_id=LLM_UNAVAILABLE_LINE_ID,
+        text=LLM_UNAVAILABLE_TEXT,
+        aigc={
+            "content_id": LLM_UNAVAILABLE_LINE_ID,
+            "service_provider": "Memoria",
+            "ai_generated": True,
+        },
+        pcm_s16le=pcm,
+        sample_rate_hz=24_000,
+        ogg_path=Path("llm_unavailable.ogg"),
+    )
+    override_labelled_catalogue(LabelledLineCatalogue({LLM_UNAVAILABLE_LINE_ID: line}))
+    tts = _CountingStreamingTTS()
+    try:
+        adapter = ExistingVoiceProviderAdapter(
+            asr_session_factory=cast(Any, lambda: FakeASR()),
+            language_model=cast(Any, FakeLLM()),
+            speech_synthesis=cast(Any, tts),
+        )
+        identity = SessionIdentity("labelled-tts-source", stream_epoch=1)
+        fence = GenerationFence(identity.session_id, 1, 1, 0)
+        chunks = await _collect(
+            adapter.generate_output(
+                identity,
+                media_pb2.OutputIntent(tts_source=LLM_UNAVAILABLE_TEXT),
+                fence,
+                work_id="unavailable-work",
+                source_start_sample=0,
+            )
+        )
+        assert tts.stream_calls == 0
+        assert tts.phrases == []
+        assert tts.synthesize_calls == 0
+        assert chunks
+        assert chunks[0].assistant_text_delta == LLM_UNAVAILABLE_TEXT
+        assert line.aigc["ai_generated"] is True
+    finally:
+        override_labelled_catalogue(None)
