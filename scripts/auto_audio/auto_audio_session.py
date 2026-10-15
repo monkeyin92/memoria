@@ -139,11 +139,8 @@ FIRST_FRAME = re.compile(r"event=first_frame_sent")
 SPEAKER_REJECT = re.compile(r"speaker_reject context=(?P<context>\S+) reason=(?P<reason>\S+)")
 SPEAKER_ALLOW = re.compile(r"speaker_gate_allow reason=(?P<reason>\S+)")
 TURN_IGNORED = re.compile(r"user_turn_ignored reason=(?P<reason>\S+)")
-WEATHER = re.compile(r"open meteo weather lookup completed .*elapsed_ms=(?P<ms>\d+)")
+WEATHER = re.compile(r"domestic weather lookup completed .*elapsed_ms=(?P<ms>\d+)")
 SLOW_WEATHER = re.compile(r"slow weather lookup detected .*elapsed_ms=(?P<ms>\d+)")
-GEOCODE = re.compile(
-    r"GET https://geocoding-api\.open-meteo\.com/v1/search\?name=(?P<name>[^&\s]+)"
-)
 TOOL_EPOCH = re.compile(r"tool_epoch=(?P<tool_epoch>\d+)")
 
 # Markers that identify a control or completion event.  Without a session id they cannot
@@ -153,7 +150,7 @@ CONTROL_MARKERS = (
     "speaker_reject", "speaker_gate_allow", "turn_ignored",
 )
 # Provider/HTTP lines carry no session; they are correlation evidence only, never identity.
-CORRELATION_KINDS = ("weather_lookup", "slow_weather_lookup", "geocode_request")
+CORRELATION_KINDS = ("weather_lookup", "slow_weather_lookup")
 RUNTIME_STATUS_CODE = (
     "import json, sys, httpx\n"
     "from datetime import datetime, timezone\n"
@@ -574,11 +571,6 @@ def classify(source: str, raw: str, arrived: float) -> LogLine | None:
     if match:
         arrival.kind = "slow_weather_lookup"
         arrival.fields = {"elapsed_ms": int(match.group("ms"))}
-        return arrival
-    match = GEOCODE.search(raw)
-    if match:
-        arrival.kind = "geocode_request"
-        arrival.fields = {"name": match.group("name")}
         return arrival
     return None
 
