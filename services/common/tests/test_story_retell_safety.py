@@ -10,6 +10,8 @@ import pytest
 from services.common.companion_response_safety import (
     companion_safety_decision,
     fixed_companion_reply,
+    guardian_attention_copy,
+    is_story_retell_context,
 )
 from services.common.crisis_policy import route_crisis
 from services.common.fixed_safety_scripts import (
@@ -97,9 +99,15 @@ def test_story_retell_corpus_routes_by_product_tier(
     if script is None:
         assert fixed_companion_reply(query=query, is_companion=True) is None
         assert route.notify_guardian is False
+        assert route.possibly_story_retell is False
     else:
         assert fixed_companion_reply(query=query, is_companion=True) == script.display
         assert route.notify_guardian is True
+        assert route.possibly_story_retell is True
+        assert is_story_retell_context(query) is True
+        assert "可能是在复述故事" in guardian_attention_copy(
+            possibly_story_retell=True
+        )
 
 
 @pytest.mark.parametrize(
@@ -119,3 +127,15 @@ def test_word_class_patterns_fire_without_exact_corpus_wording(
     query: str, decision: str
 ) -> None:
     assert companion_safety_decision(query) == decision
+
+
+def test_ordinary_parent_pin_copy_has_no_story_note() -> None:
+    assert guardian_attention_copy(possibly_story_retell=False) == "有一条需要你关注的对话"
+    assert "复述故事" not in guardian_attention_copy(possibly_story_retell=False)
+
+
+def test_non_story_self_harm_is_not_annotated_as_retell() -> None:
+    route = route_crisis("我不想活了")
+    assert route.script is CRISIS_SELF_SCRIPT
+    assert route.possibly_story_retell is False
+    assert is_story_retell_context("我不想活了") is False

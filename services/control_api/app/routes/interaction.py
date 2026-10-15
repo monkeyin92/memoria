@@ -2215,6 +2215,7 @@ async def response_plan(
                     occurred_at=now,
                     declared_guardian_ids=contacts,
                     attempt_push=crisis.attempt_push,
+                    possibly_story_retell=crisis.possibly_story_retell,
                 )
             except Exception:
                 logger.exception(

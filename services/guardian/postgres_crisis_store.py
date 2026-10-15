@@ -97,6 +97,9 @@ class PostgresGuardianCrisisMixin:
                 if row["last_error_code"] is not None
                 else None
             ),
+            possibly_story_retell=bool(row["possibly_story_retell"])
+            if "possibly_story_retell" in row.keys()
+            else False,
         )
 
     async def enqueue_crisis_event(
@@ -110,6 +113,7 @@ class PostgresGuardianCrisisMixin:
         reply_template_id: str,
         declared_guardian_ids: tuple[str, ...] = (),
         attempt_push: bool = True,
+        possibly_story_retell: bool = False,
     ) -> CrisisNotificationReceipt:
         event_uuid = _uuid(crisis_event_id, field="crisis_event_id")
         occurred = _timestamp(occurred_at, field="occurred_at")
@@ -126,8 +130,8 @@ class PostgresGuardianCrisisMixin:
                 INSERT INTO guardian_crisis_events(
                     crisis_event_id, evidence_event_id, minor_user_id,
                     occurred_at, script_version, reply_template_id,
-                    created_at, attempt_push
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                    created_at, attempt_push, possibly_story_retell
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
                 ON CONFLICT(crisis_event_id) DO NOTHING
                 RETURNING *
                 """,
@@ -139,6 +143,7 @@ class PostgresGuardianCrisisMixin:
                 reply_template_id,
                 created,
                 attempt_push,
+                possibly_story_retell,
             )
             if row is None:
                 row = await connection.fetchrow(
@@ -153,6 +158,7 @@ class PostgresGuardianCrisisMixin:
                 or str(row["script_version"]) != script_version
                 or str(row["reply_template_id"]) != reply_template_id
                 or bool(row["attempt_push"]) is not attempt_push
+                or bool(row["possibly_story_retell"]) is not possibly_story_retell
             ):
                 raise GuardianConflictError("crisis event id is immutable")
             guardians = await connection.fetch(
@@ -239,7 +245,7 @@ class PostgresGuardianCrisisMixin:
                 )
                 rows = await connection.fetch(
                     """
-                    SELECT outbox.*, crisis.minor_user_id
+                    SELECT outbox.*, crisis.minor_user_id, crisis.possibly_story_retell
                     FROM guardian_notification_outbox outbox
                     JOIN guardian_crisis_events crisis
                       ON crisis.crisis_event_id = outbox.crisis_event_id

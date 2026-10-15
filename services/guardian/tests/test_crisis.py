@@ -96,6 +96,7 @@ async def test_minor_crisis_is_idempotent_and_contains_no_transcript_or_severity
         "reply_template_id": "crisis-support-reply",
         "notification_required": True,
         "attempt_push": True,
+        "possibly_story_retell": False,
         "tool_epoch": 1,
         "contains_transcript": False,
         "contains_severity": False,
