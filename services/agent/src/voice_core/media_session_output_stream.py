@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import logging
 import time
@@ -1091,8 +1092,9 @@ class MediaOutputStreamMixin:
         try:
             await asyncio.wait((first_reply,), timeout=wait_s)
             if not first_reply.done() and self._llm_thinking_filler_may_play(context, fence):
-                filler.mark_played(turn_id=fence.turn_id)
-                async for chunk in self._llm_thinking_filler_chunks(context, fence, offset):
+                async for chunk in self._llm_thinking_filler_before(
+                    context, fence, offset, first_reply
+                ):
                     offset = chunk.source_start_sample + chunk.frame_samples
                     yield chunk
             try:
@@ -1123,6 +1125,41 @@ class MediaOutputStreamMixin:
             and not self._fixed_safety_reply_active(context)
             and context.llm_thinking_filler.should_play(turn_id=fence.turn_id, now=time.monotonic())
         )
+
+    async def _llm_thinking_filler_before(
+        self,
+        context: _MediaVoiceSession,
+        fence: GenerationFence,
+        source_start_sample: int,
+        reply: asyncio.Future[MediaReplyChunk],
+    ) -> AsyncIterator[MediaReplyChunk]:
+        """Play the filler only if its first frame is ready before the reply's; a tie goes to the reply."""
+
+        async with contextlib.aclosing(
+            self._llm_thinking_filler_chunks(context, fence, source_start_sample)
+        ) as chunks:
+            lead = asyncio.ensure_future(anext(chunks))
+            try:
+                await asyncio.wait((reply, lead), return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                if not lead.done():
+                    lead.cancel()
+                    await asyncio.gather(lead, return_exceptions=True)
+            if reply.done():
+                logger.info(
+                    "llm thinking filler dropped; reply ready first session=%s turn=%s",
+                    fence.session_id,
+                    fence.turn_id,
+                )
+                return
+            try:
+                chunk = lead.result()
+            except StopAsyncIteration:
+                return
+            context.llm_thinking_filler.mark_played(turn_id=fence.turn_id)
+            yield chunk
+            async for chunk in chunks:
+                yield chunk
 
     async def _llm_thinking_filler_chunks(
         self,
@@ -1158,17 +1195,18 @@ class MediaOutputStreamMixin:
             )
             if inspect.isawaitable(produced):
                 produced = await produced
-            async for chunk in produced:
-                yield replace(
-                    chunk,
-                    text="",
-                    assistant_text_delta="",
-                    final=False,
-                    text_audio_start_sample=None,
-                    text_audio_end_sample=None,
-                    text_spans=(),
-                    thinking_filler=True,
-                )
+            async with contextlib.aclosing(produced):
+                async for chunk in produced:
+                    yield replace(
+                        chunk,
+                        text="",
+                        assistant_text_delta="",
+                        final=False,
+                        text_audio_start_sample=None,
+                        text_audio_end_sample=None,
+                        text_spans=(),
+                        thinking_filler=True,
+                    )
         except Exception:
             logger.warning(
                 "llm thinking filler failed session=%s turn=%s",
