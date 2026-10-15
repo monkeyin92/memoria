@@ -424,10 +424,15 @@ class DomesticWeather:
 
 
 def build_domestic_weather(settings: AgentSettings) -> DomesticWeather | None:
-    if settings.weather_lookup_provider == "off":
+    provider = str(getattr(settings, "weather_lookup_provider", "off") or "off")
+    if provider == "off":
         return None
-    key = settings.qweather_api_key.get_secret_value().strip()
-    host = settings.qweather_api_host.strip()
+    raw_key = getattr(settings, "qweather_api_key", "")
+    if hasattr(raw_key, "get_secret_value"):
+        key = str(raw_key.get_secret_value()).strip()
+    else:
+        key = str(raw_key or "").strip()
+    host = str(getattr(settings, "qweather_api_host", "") or "").strip()
     if not key or not host:
         logger.warning("weather lookup disabled reason=missing_credentials provider=domestic")
         return None

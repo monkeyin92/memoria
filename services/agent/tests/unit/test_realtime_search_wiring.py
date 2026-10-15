@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
 import pytest
 from services.agent.src.config import AgentSettings
-from services.agent.src.providers.domestic_weather import DomesticWeather
+from services.agent.src.providers.domestic_weather import (
+    DomesticWeather,
+    build_domestic_weather,
+)
 from services.agent.src.providers.handlers import build_realtime_search_resolver
 from services.agent.src.providers.weather_places import City
 
@@ -133,3 +137,7 @@ async def test_domestic_without_a_host_builds_no_weather_client() -> None:
 
     assert resolver.weather is None
     await resolver.aclose()
+
+
+def test_build_domestic_weather_defaults_missing_settings_to_off() -> None:
+    assert build_domestic_weather(SimpleNamespace()) is None
