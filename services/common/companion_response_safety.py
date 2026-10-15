@@ -39,15 +39,30 @@ AFTER_FIXED_SAFETY_SESSION_INSTRUCTION: Final = (
     "用户接下来如果是普通聊天，就按当前这件事用一两句短话回答。"
     "如果用户再次提出同类自伤、受害或转述他人危险的求助，系统会给出固定话术，你不要另写。"
 )
-_DILUTION_LINE: Final = "刚才的事别担心"
+_SOOTHING_DILUTION_PHRASES: Final[tuple[str, ...]] = (
+    "刚才的事别担心",
+    "别害怕",
+    "不要怕",
+    "没事的",
+    "没关系",
+    "别担心",
+    "不用担心",
+    "会好起来的",
+    "一切都会好的",
+    "我陪着你",
+)
 
 
-def assistant_text_repeats_or_dilutes_safety(text: str) -> bool:
+def assistant_text_repeats_or_dilutes_safety(
+    text: str,
+    *,
+    include_soothing: bool = True,
+) -> bool:
     stripped = text.strip()
     if not stripped:
         return False
     compact = "".join(ch for ch in stripped if not ch.isspace())
-    if _DILUTION_LINE in compact:
+    if include_soothing and any(phrase in compact for phrase in _SOOTHING_DILUTION_PHRASES):
         return True
     if len(compact) < 4:
         return False

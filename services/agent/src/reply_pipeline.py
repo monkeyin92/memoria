@@ -241,6 +241,7 @@ class ReplyPipeline:
         ] = {}
         self._realtime_tool_registered = False
         self._warmed_memory: _WarmedMemory | None = None
+        self._block_soothing_on_next_reply = False
         if callable(getattr(response_planner_client, "prefetch_context", None)):
             runtime.orchestrator.context_snapshots.builder = self._build_prefetched_context_snapshot
         runtime.set_fast_model_warmer(fast_model_warmer)
@@ -255,6 +256,10 @@ class ReplyPipeline:
     @property
     def runtime(self) -> DuplexRuntime:
         return self._runtime
+
+    def _note_fixed_safety_script(self, display: str) -> None:
+        self._runtime.note_fixed_safety_spoken(display)
+        self._block_soothing_on_next_reply = True
 
     @property
     def response_plans(self) -> ResponsePlanCache:
@@ -943,7 +948,7 @@ class ReplyPipeline:
             if script is not None and plan.direct_text != script.display:
                 plan = replace(plan, direct_text=script.display)
         if plan.fixed_safety_script is not None:
-            self._runtime.note_fixed_safety_spoken(plan.fixed_safety_script.display)
+            self._note_fixed_safety_script(plan.fixed_safety_script.display)
         if (
             input_modality == "audio"
             and output_policy.generation_voice_must_match_plan(policy)
@@ -1003,7 +1008,7 @@ class ReplyPipeline:
             if snapshot is None:
                 raise StopResponse()
         if plan.fixed_safety_script is not None:
-            self._runtime.note_fixed_safety_spoken(plan.fixed_safety_script.display)
+            self._note_fixed_safety_script(plan.fixed_safety_script.display)
         self.cache_response_plan(plan)
         self._mark_context_ready(fence)
         logger.info(
@@ -1270,6 +1275,7 @@ class ReplyPipeline:
             return
         speaker_class = response_plan.provenance.speaker_class
         script = response_plan.fixed_safety_script
+        block_soothing = script is None and self._block_soothing_on_next_reply
         if resume_interrupted_reply or script is not None:
             realtime_request, resume_realtime_request = None, False
         else:
@@ -1302,6 +1308,8 @@ class ReplyPipeline:
         if segmenter is None:
             raise RuntimeError("PhraseSegmenter is not configured")
         segmenter.reset(fence)
+        if script is None:
+            self._block_soothing_on_next_reply = False
         reply_chars = 0
         reply_sentences = 0
         reply_budget_exhausted = False
@@ -1390,7 +1398,9 @@ class ReplyPipeline:
         def _follow_up_blocked(text: str) -> bool:
             if script is not None or not self._runtime.fixed_safety_heard:
                 return False
-            if not assistant_text_repeats_or_dilutes_safety(text):
+            if not assistant_text_repeats_or_dilutes_safety(
+                text, include_soothing=block_soothing
+            ):
                 return False
             logger.info(
                 "post_fixed_safety_follow_up_dropped session_id=%s turn_id=%s",
@@ -1407,7 +1417,7 @@ class ReplyPipeline:
         try:
             self._runtime.mark_audio_event("llm_request_started")
             if script is not None:
-                self._runtime.note_fixed_safety_spoken(script.display)
+                self._note_fixed_safety_script(script.display)
                 self._runtime.mark_audio_event("llm_first_content_token")
                 gated = self._runtime.gate_llm_token(cancellation, script.display)
                 if gated is not None and cancellation.is_current(self._runtime.fence):
