@@ -293,31 +293,14 @@ async def live_run(cases: list[dict[str, Any]]) -> dict[str, Any]:
         await dm.aclose()
 
     rule_rows = baseline_rule_crisis_rows(cases)
-    neg_fp_rows = [
-        {
-            "id": r["id"],
-            "labels": {"crisis_tier": r.get("crisis_tier_label"), "must_route_12356": False},
-            "text": next(c["text"] for c in cases if c.get("id") == r["id"]),
-        }
-        for r in dm_rows
-        if r.get("crisis_tier_label") == "none" and not r.get("must_route_12356")
-    ]
+    # Same negative set as score_crisis_negative_fp: crisis-neg-* ids.
+    neg_rows = [r for r in dm_rows if str(r.get("id", "")).startswith("crisis-neg-")]
+    fp_n = sum(1 for r in neg_rows if r.get("composite_routes_12356"))
     composite_fp = {
-        "negative_n": len(neg_fp_rows),
-        "false_positives": sum(
-            1
-            for r in dm_rows
-            if r.get("crisis_tier_label") == "none"
-            and not r.get("must_route_12356")
-            and r.get("composite_routes_12356")
-        ),
+        "negative_n": len(neg_rows),
+        "false_positives": fp_n,
+        "false_positive_rate": None if not neg_rows else fp_n / len(neg_rows),
     }
-    if composite_fp["negative_n"]:
-        composite_fp["false_positive_rate"] = (
-            composite_fp["false_positives"] / composite_fp["negative_n"]
-        )
-    else:
-        composite_fp["false_positive_rate"] = None
 
     report: dict[str, Any] = {
         "mode": "live",
