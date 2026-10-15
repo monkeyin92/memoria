@@ -99,6 +99,7 @@ from services.agent.src.runtime_provenance import (
 )
 from services.agent.src.runtime_shutdown import DuplexRuntimeShutdownMixin
 from services.agent.src.runtime_speaker import DuplexSpeakerMixin, _InactiveFormalEnrollment
+from services.agent.src.voice_core.playback_lifecycle import CrisisPlaybackMixin
 from services.agent.src.voice_floor import FloorSnapshot, VoiceFloorState
 from services.common.companion_response_safety import SAFE_UNKNOWN_REPLY
 from services.common.evidence_policy import classify_prompt_kind
@@ -154,6 +155,7 @@ class DuplexRuntime(
     DuplexSpeakerMixin,
     DuplexRuntimeProvenanceMixin,
     DuplexRuntimeEmotionMixin,
+    CrisisPlaybackMixin,
 ):
     """Session-scoped orchestration bound to one voice-core media session."""
 
@@ -214,12 +216,6 @@ class DuplexRuntime(
     _last_committed_user_text_normalized: str = ""
     fixed_safety_heard: bool = False
     fixed_safety_echo_text: str = ""
-    safety_reply_playing: bool = False
-    guardian_pin_confirmed: bool = False
-    guardian_crisis_event_id: str | None = None
-    guardian_crisis_template_id: str = ""
-    playback_stop_suppressed: bool = False
-    report_crisis_script_interrupted: Any | None = None
     _paused_reply_available: bool = False
     _reply_speaker_binding: ResumeSpeakerBinding | None = None
     _paused_reply_binding: ResumeSpeakerBinding | None = None
@@ -2377,8 +2373,7 @@ class DuplexRuntime(
         fence: GenerationFence,
         heard_text: str,
         *,
-        tools_active: bool = False,
-        resume_listening: bool = True,
+        tools_active: bool = False, resume_listening: bool = True,
     ) -> bool:
         """Commit exact sample-ACKed media-v1 playback text and arm echo guard.
 
@@ -2412,20 +2407,9 @@ class DuplexRuntime(
             last_playback_completed_ns=time.monotonic_ns(),
         )
         self.note_fixed_safety_spoken(floor.played_assistant_text)
-        from services.agent.src.voice_core.playback_lifecycle import (
-            resume_listening_after_playback,
-        )
-
-        open_listening = resume_listening_after_playback(
-            tools_active=tools_active,
-            resume_listening=resume_listening,
-        )
         if tools_active:
-            self.set_interaction_phase(
-                InteractionPhase.TOOL_WAITING,
-                cause="media_playback_ack",
-            )
-        elif open_listening:
+            self.set_interaction_phase(InteractionPhase.TOOL_WAITING, cause="media_playback_ack")
+        elif resume_listening:
             self.set_interaction_phase(InteractionPhase.LISTENING, cause="media_playback_ack")
         self.clear_safety_reply_playing()
         return True
@@ -2771,34 +2755,6 @@ class DuplexRuntime(
             return
         self.fixed_safety_heard = True
         self.fixed_safety_echo_text = echo
-
-    def note_guardian_crisis_playback(
-        self,
-        *,
-        pin_confirmed: bool,
-        crisis_event_id: str | None,
-        template_id: str,
-    ) -> None:
-        """Remember whether this crisis script may be stopped.
-
-        The event id is the guardian pin record. Child speech is not stored.
-        """
-
-        self.safety_reply_playing = True
-        self.guardian_pin_confirmed = bool(pin_confirmed)
-        self.guardian_crisis_event_id = crisis_event_id if pin_confirmed else None
-        self.guardian_crisis_template_id = template_id
-        self.playback_stop_suppressed = not pin_confirmed
-
-    def clear_safety_reply_playing(self) -> None:
-        self.safety_reply_playing = False
-        self.playback_stop_suppressed = False
-
-    def set_crisis_script_interrupt_reporter(
-        self,
-        reporter: Callable[[str], Awaitable[bool]],
-    ) -> None:
-        self.report_crisis_script_interrupted = reporter
 
     def post_playback_guard_reason(self, text: str, *, now_ns: int | None = None) -> str | None:
         script = self.fixed_safety_echo_text

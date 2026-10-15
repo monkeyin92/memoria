@@ -8,7 +8,8 @@ pinned record is confirmed written. Neither path stores or logs ASR text.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, TypedDict
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,12 @@ def crisis_script_may_stop(*, template_id: str | None, pin_confirmed: bool) -> b
     return pin_confirmed
 
 
-def safety_interrupt_args(runtime: object) -> dict[str, bool]:
+class SafetyInterruptArgs(TypedDict):
+    safety_reply: bool
+    safety_pin_confirmed: bool
+
+
+def safety_interrupt_args(runtime: object) -> SafetyInterruptArgs:
     return {
         "safety_reply": bool(getattr(runtime, "safety_reply_playing", False)),
         "safety_pin_confirmed": bool(getattr(runtime, "guardian_pin_confirmed", False)),
@@ -102,3 +108,37 @@ def resume_listening_after_playback(*, tools_active: bool, resume_listening: boo
     if tools_active:
         return False
     return resume_listening
+
+
+class CrisisPlaybackMixin:
+    """Crisis-script stop state. Kept off DuplexRuntime so that file stays in budget."""
+
+    safety_reply_playing: bool
+    guardian_pin_confirmed: bool
+    guardian_crisis_event_id: str | None
+    guardian_crisis_template_id: str
+    playback_stop_suppressed: bool
+    report_crisis_script_interrupted: Callable[[str], Awaitable[bool]] | None
+
+    def note_guardian_crisis_playback(
+        self,
+        *,
+        pin_confirmed: bool,
+        crisis_event_id: str | None,
+        template_id: str,
+    ) -> None:
+        self.safety_reply_playing = True
+        self.guardian_pin_confirmed = bool(pin_confirmed)
+        self.guardian_crisis_event_id = crisis_event_id if pin_confirmed else None
+        self.guardian_crisis_template_id = template_id
+        self.playback_stop_suppressed = not pin_confirmed
+
+    def clear_safety_reply_playing(self) -> None:
+        self.safety_reply_playing = False
+        self.playback_stop_suppressed = False
+
+    def set_crisis_script_interrupt_reporter(
+        self,
+        reporter: Callable[[str], Awaitable[bool]],
+    ) -> None:
+        self.report_crisis_script_interrupted = reporter

@@ -612,6 +612,8 @@ class ResponsePlannerClient:
             raise ValueError("a confirmed guardian pin needs an event id")
         if not confirmed:
             return False, None
+        if not isinstance(event_id, str):
+            raise ValueError("a confirmed guardian pin needs an event id")
         return True, event_id.strip()
 
     async def report_script_interrupted(self, crisis_event_id: str) -> bool:

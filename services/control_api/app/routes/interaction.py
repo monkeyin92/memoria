@@ -66,6 +66,10 @@ from services.control_api.app.response_plan_cache import (
     ResponsePlanCacheKey as _ResponsePlanCacheKey,
 )
 from services.control_api.app.response_plan_cache import response_plan_cache as _response_plan_cache
+from services.control_api.app.routes.crisis_script_pin import (
+    attach_crisis_script_routes,
+    write_guardian_crisis_pin,
+)
 from services.control_api.app.security import (
     AuthenticatedUser,
     require_active_voice_session,
@@ -2118,26 +2122,11 @@ async def _append_legacy_plan_audit(
         raise _response_plan_unavailable() from exc
 
 
-class CrisisScriptInterruptedBody(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    crisis_event_id: str = Field(min_length=1, max_length=64)
-
-
-@router.post("/crisis-script-interrupted")
-async def crisis_script_interrupted(
-    request: Request,
-    body: CrisisScriptInterruptedBody,
-    _: Annotated[None, Depends(_require_response_plan_token)],
-) -> dict[str, Any]:
-    """Mark a confirmed crisis pin as unheard. The body is an event id, never ASR text."""
-
-    template_id = await _crisis_notifications(request).mark_script_interrupted(
-        crisis_event_id=body.crisis_event_id,
-    )
-    if template_id is None:
-        raise HTTPException(status_code=404, detail="crisis pin was not found")
-    return {"reply_template_id": template_id, "script_interrupted": True}
+attach_crisis_script_routes(
+    router,
+    require_token=_require_response_plan_token,
+    notifications=_crisis_notifications,
+)
 
 
 @router.post("/response-plan")
@@ -2225,34 +2214,11 @@ async def response_plan(
             if notify and active_subject_id is not None
             else ()
         )
-        guardian_pin_confirmed = False
-        guardian_crisis_event_id: str | None = None
-        if notify and script is not None and active_subject_id is not None and (
-            is_minor_student or contacts
-        ):
-            try:
-                receipt = await _crisis_notifications(request).record_minor_crisis(
-                    minor_user_id=active_subject_id,
-                    session_id=body.session_id,
-                    turn_id=body.fence.turn_id,
-                    generation_id=body.fence.generation_id,
-                    tool_epoch=body.fence.tool_epoch,
-                    script_version=script.template_id,
-                    reply_template_id=script.template_id,
-                    occurred_at=now,
-                    declared_guardian_ids=contacts,
-                    attempt_push=crisis.attempt_push, possibly_story_retell=crisis.possibly_story_retell,
-                )
-                guardian_pin_confirmed = True
-                guardian_crisis_event_id = receipt.crisis_event_id
-            except Exception:
-                logger.exception(
-                    "minor crisis notification enqueue failed; preserving fixed safety reply "
-                    "session_id=%s turn_id=%s",
-                    body.session_id,
-                    body.fence.turn_id,
-                )
-                # Notification failure must never suppress the fixed safety reply.
+        guardian_pin_confirmed, guardian_crisis_event_id = await write_guardian_crisis_pin(
+            request, _crisis_notifications, body, now, crisis, script,
+            notify=notify, active_subject_id=active_subject_id,
+            is_minor_student=is_minor_student, contacts=contacts,
+        )
         tutor_directive: str | None = None
         if fixed_reply is None and frozen.session_focus in {
             "tutor_english",
