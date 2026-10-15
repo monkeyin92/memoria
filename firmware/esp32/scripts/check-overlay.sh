@@ -206,12 +206,20 @@ rg -Fq 'CONFIG_SR_MN_CN_MULTINET6_QUANT=y' "$board_dir/config.json" && \
     die "quiet hours header missing"
 [[ -f "$MEMORIA_FIRMWARE_ROOT/overlay/files/main/memoria/memoria_offline_menu.h" ]] || \
     die "offline menu policy header missing"
+[[ -f "$MEMORIA_FIRMWARE_ROOT/overlay/files/main/memoria/memoria_aigc_label.h" ]] || \
+    die "AIGC explicit-label policy header missing"
 rg -Fq 'offline_menu_' "$board_dir/memoria_esp_vocat.cc" || \
     die "board must wire OfflineMenuMachine"
+rg -Fq 'kAigcNoticeBedtimeFile' "$board_dir/memoria_esp_vocat.cc" || \
+    die "night soothe must prepend the spoken AIGC notice"
+rg -Fq 'aigc_badge_' "$board_dir/memoria_mascot_display.cc" || \
+    die "mascot display must wire the AIGC corner badge"
 rg -Fq 'HoldDurationMsOnRelease' "$board_dir/memoria_esp_vocat.cc" || \
     die "touch task must measure hold duration for the offline menu"
 "$python_bin" "$MEMORIA_FIRMWARE_ROOT/scripts/build_offline_stories.py" --check-only || \
     die "offline story/line assets failed budget or manifest checks"
+"$python_bin" "$MEMORIA_FIRMWARE_ROOT/scripts/check_device_ogg_aigc.py" || \
+    die "board asset oggs failed decode or AIGC OpusTags checks"
 rg -q 'espressif/libsodium:[[:space:]]*\^1\.0\.22' "$MEMORIA_UPSTREAM_DIR/main/idf_component.yml" || \
     die "libsodium dependency missing"
 rg -q 'memoria/device_identity\.cc' "$MEMORIA_UPSTREAM_DIR/main/CMakeLists.txt" || die "device identity is not in CMake"

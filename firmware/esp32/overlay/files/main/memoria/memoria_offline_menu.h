@@ -32,6 +32,8 @@ inline constexpr const char* kOfflineMenuEnd = "offline-menu-end-v1";
 inline constexpr const char* kOfflineMenuIdle = "offline-menu-idle-v1";
 inline constexpr const char* kLlmUnavailable = "llm_unavailable";
 inline constexpr const char* kLlmThinking = "llm_thinking";
+inline constexpr const char* kAigcNoticeStory = "aigc_story_intro";
+inline constexpr const char* kAigcNoticeBedtime = "aigc_soothe_intro";
 
 // TODO(release-blocker): offline clips use a trial/demo-only Doubao voice; clear Volcengine terms or re-voice before final firmware
 inline constexpr const char* kOfflineLineIds[] = {
@@ -42,7 +44,7 @@ inline constexpr const char* kOfflineLineIds[] = {
     kOfflineMenuConfirmHow,   kOfflineMenuItem01,      kOfflineMenuItem02,
     kOfflineMenuItem03,       kOfflineMenuChoose,      kOfflineMenuStart,
     kOfflineMenuEnd,          kOfflineMenuIdle,        kLlmUnavailable,
-    kLlmThinking,
+    kLlmThinking,             kAigcNoticeStory,        kAigcNoticeBedtime,
 };
 inline constexpr std::size_t kOfflineLineCount =
     sizeof(kOfflineLineIds) / sizeof(kOfflineLineIds[0]);
@@ -269,6 +271,7 @@ public:
         if (mode_ == OfflineMode::kMenu) {
             if (long_press) {
                 Push(out, kOfflineMenuStart);
+                Push(out, kAigcNoticeStory);
                 out.start_story = true;
                 out.story_index = menu_item_;
                 mode_ = OfflineMode::kPlaying;

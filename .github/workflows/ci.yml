@@ -94,6 +94,8 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
+      - name: Install ffmpeg for board ogg AIGC decode check
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - name: Require host C++ compiler
         run: c++ --version
       - name: Firmware host regression tests
@@ -115,7 +117,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Tools for the overlay check
-        run: apt-get update -qq && apt-get install -y -qq ripgrep
+        run: apt-get update -qq && apt-get install -y -qq ripgrep ffmpeg
       - name: Trust the workspace checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       # GitHub's container: skips the image entrypoint, so the IDF Python env

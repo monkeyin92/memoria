@@ -29,6 +29,7 @@
 #include "memoria_bootstrap.h"
 #include "memoria_display_hooks.h"
 #include "memoria_mascot_display.h"
+#include "memoria_aigc_label.h"
 #include "memoria_offline_menu.h"
 #include "memoria_pat.h"
 #include "memoria_power_policy.h"
@@ -663,7 +664,15 @@ private:
         return memoria::TapDevice::kBusy;
     }
 
+    void SyncAigcOfflineBadge() {
+        if (display_ == nullptr) {
+            return;
+        }
+        display_->SetAigcOfflineActive(offline_menu_.mode() != memoria::OfflineMode::kInactive);
+    }
+
     void ApplyOfflineMenuOutput(const memoria::OfflineMenuOutput& out) {
+        SyncAigcOfflineBadge();
         if (out.stop_retry_network) {
             ESP_LOGI(TAG, "offline menu stop network retry");
         }
@@ -684,16 +693,25 @@ private:
             if (generation != offline_play_generation_.load(std::memory_order_relaxed)) {
                 return;
             }
+            bool story_intro_ok = false;
             for (std::size_t i = 0; i < out.clip_count; ++i) {
                 if (generation != offline_play_generation_.load(std::memory_order_relaxed)) {
                     return;
                 }
                 const std::string name = std::string(out.clips[i]) + ".ogg";
-                PlayLocalAssetClip(name.c_str());
+                const bool played = PlayLocalAssetClip(name.c_str());
+                if (std::string_view(out.clips[i]) == memoria::kAigcNoticeStory) {
+                    story_intro_ok = played;
+                }
                 vTaskDelay(pdMS_TO_TICKS(1600));
             }
             if (out.start_story) {
                 if (generation != offline_play_generation_.load(std::memory_order_relaxed)) {
+                    return;
+                }
+                if (!story_intro_ok) {
+                    ESP_LOGE(TAG, "refusing story without AIGC intro %s",
+                             memoria::kAigcNoticeStoryFile);
                     return;
                 }
                 PlayLocalAssetClip(memoria::OfflineStoryFile(out.story_index));
@@ -731,6 +749,7 @@ private:
         ApplyOfflineMenuOutput(offline_menu_.OnNetworkSample(
             now_ms, NetworkLooksOnline(), DeviceInConversation(state)));
         ApplyOfflineMenuOutput(offline_menu_.OnTimer(now_ms));
+        SyncAigcOfflineBadge();
     }
 
     void EnterTapDeepSleep() {
@@ -824,6 +843,12 @@ private:
                 return;
             case memoria::TapWakeAction::kNightSoothing:
                 power.SetPhase(memoria::PowerPhase::kNightSoothing);
+                // Screen is dimmed in quiet hours; spoken AIGC intro is required.
+                if (!PlayLocalAssetClip(memoria::kAigcNoticeBedtimeFile)) {
+                    ESP_LOGE(TAG, "refusing night_soothe without AIGC intro %s",
+                             memoria::kAigcNoticeBedtimeFile);
+                    return;
+                }
                 PlayLocalAssetClip("night_soothe.ogg");
                 app.Schedule([this]() {
                     vTaskDelay(pdMS_TO_TICKS(2500));

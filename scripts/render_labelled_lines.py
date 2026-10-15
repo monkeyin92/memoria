@@ -43,7 +43,14 @@ LINES = (
 )
 
 
-def _ffmpeg_from_wav(wav: Path, ogg: Path, *, line_id: str, sample_rate: int) -> None:
+def _ffmpeg_from_wav(
+    wav: Path,
+    ogg: Path,
+    *,
+    line_id: str,
+    sample_rate: int,
+    generated: str,
+) -> None:
     subprocess.run(
         [
             "ffmpeg",
@@ -66,11 +73,17 @@ def _ffmpeg_from_wav(wav: Path, ogg: Path, *, line_id: str, sample_rate: int) ->
             "-metadata",
             f"CONTENT_ID={line_id}",
             "-metadata",
-            "SERVICE_PROVIDER=Memoria",
+            "SERVICE_PROVIDER=Volcengine Doubao",
             "-metadata",
             "AI_GENERATED=true",
             "-metadata",
             f"ARTIST={VOICE_ID}",
+            "-metadata",
+            f"VOICE_ID={VOICE_ID}",
+            "-metadata",
+            f"DATE={generated}",
+            "-metadata",
+            "CONTENT_PRODUCER=Memoria",
             str(ogg),
         ],
         check=True,
@@ -185,8 +198,12 @@ def main(argv: list[str] | None = None) -> int:
         try:
             asyncio.run(_doubao_wav(tmp_online, text, sample_rate=24_000))
             asyncio.run(_doubao_wav(tmp_offline, text, sample_rate=16_000))
-            _ffmpeg_from_wav(tmp_online, online, line_id=line_id, sample_rate=24_000)
-            _ffmpeg_from_wav(tmp_offline, offline, line_id=line_id, sample_rate=16_000)
+            _ffmpeg_from_wav(
+                tmp_online, online, line_id=line_id, sample_rate=24_000, generated=today
+            )
+            _ffmpeg_from_wav(
+                tmp_offline, offline, line_id=line_id, sample_rate=16_000, generated=today
+            )
             subprocess.run(
                 [
                     "ffmpeg",

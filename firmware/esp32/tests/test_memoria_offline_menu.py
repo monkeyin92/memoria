@@ -200,6 +200,8 @@ def test_menu_tap_cycles_items(tool: pathlib.Path) -> None:
 def test_menu_long_press_starts_story(tool: pathlib.Path) -> None:
     lines = _run(tool, "reset", "tap 1000 100 0 1 0", "tap 2000 800 0 1 0")
     assert "offline-menu-start-v1" in lines[3]
+    assert "aigc_story_intro" in lines[3]
+    assert lines[3].index("offline-menu-start-v1") < lines[3].index("aigc_story_intro")
     assert "start_story=1" in lines[3]
     assert lines[4] == "mode=playing item=1"
 
@@ -427,19 +429,77 @@ def _ogg_with_title(title: str) -> bytes:
     )
 
 
-def test_check_only_passes_with_production_pack() -> None:
+def _install_required_intro_stubs(root: pathlib.Path) -> None:
+    """Copy a short production clip and retag CONTENT_ID for pack-gate tests.
+
+    Never used as shipped audio; the real intros come from Doubao via
+    scripts/render_aigc_notices.py.
+    """
+    import sys
+
+    repo = BUILD_SCRIPT.resolve().parents[3]
+    if str(repo) not in sys.path:
+        sys.path.insert(0, str(repo))
+    from services.common.aigc_opus import rewrite_opus_comments
+
+    src = (root / "offline_lines" / "offline-menu-start-v1.ogg").read_bytes()
+    for intro_id in ("aigc_story_intro", "aigc_soothe_intro"):
+        tagged = rewrite_opus_comments(
+            src,
+            aigc={
+                "CONTENT_ID": intro_id,
+                "SERVICE_PROVIDER": "Volcengine Doubao",
+                "AI_GENERATED": "true",
+                "ARTIST": "zh_female_tianmeitaozi_uranus_bigtts",
+                "VOICE_ID": "zh_female_tianmeitaozi_uranus_bigtts",
+                "DATE": "2026-10-14",
+                "CONTENT_PRODUCER": "Memoria",
+            },
+        )
+        (root / "offline_lines" / f"{intro_id}.ogg").write_bytes(tagged)
+
+
+def test_check_only_requires_aigc_intros_in_board_pack() -> None:
     completed = _pack_script("--check-only")
+    story = BOARD_ASSETS / "offline_lines" / "aigc_story_intro.ogg"
+    soothe = BOARD_ASSETS / "offline_lines" / "aigc_soothe_intro.ogg"
+    if story.is_file() and soothe.is_file():
+        assert completed.returncode == 0, completed.stderr
+        fields = dict(line.split("=", 1) for line in completed.stdout.splitlines() if "=" in line)
+        assert fields["production_clips"] == "29"
+        assert fields["placeholder_clips"] == "0"
+        assert fields["pending_placeholder_clips"] == "0"
+        assert fields["required_aigc_intros"] == "2"
+        assert "pending_aigc_audit_exceptions" not in completed.stdout
+    else:
+        assert completed.returncode == 1
+        assert "missing required AIGC intro offline_lines/aigc_story_intro.ogg" in completed.stderr
+        assert "missing required AIGC intro offline_lines/aigc_soothe_intro.ogg" in completed.stderr
+
+
+def test_check_only_passes_with_intro_stubs(tmp_path: pathlib.Path) -> None:
+    root = tmp_path / "assets"
+    shutil.copytree(BOARD_ASSETS, root)
+    _install_required_intro_stubs(root)
+    completed = _pack_script("--assets-root", str(root), "--check-only")
+    # Manifests may be stale until a write pass; run once to refresh then check.
+    if completed.returncode != 0 and "is stale" in completed.stderr:
+        written = _pack_script("--assets-root", str(root))
+        assert written.returncode == 0, written.stderr
+        completed = _pack_script("--assets-root", str(root), "--check-only")
     assert completed.returncode == 0, completed.stderr
     fields = dict(line.split("=", 1) for line in completed.stdout.splitlines() if "=" in line)
     assert int(fields["free_margin_bytes"]) >= 512 * 1024
-    assert fields["production_clips"] == "25"
-    assert fields["placeholder_clips"] == "2"
-    assert fields["pending_placeholder_clips"] == "2"
+    assert fields["production_clips"] == "29"
+    assert fields["placeholder_clips"] == "0"
+    assert fields["pending_placeholder_clips"] == "0"
+    assert fields["required_aigc_intros"] == "2"
 
 
 def test_default_run_never_writes_audio_and_converges(tmp_path: pathlib.Path) -> None:
     root = tmp_path / "assets"
     shutil.copytree(BOARD_ASSETS, root)
+    _install_required_intro_stubs(root)
     before = _ogg_bytes(root)
     first = _pack_script("--assets-root", str(root))
     assert first.returncode == 0, first.stderr
@@ -462,6 +522,7 @@ def test_default_run_never_writes_audio_and_converges(tmp_path: pathlib.Path) ->
 def test_placeholder_clip_fails_check(tmp_path: pathlib.Path) -> None:
     root = tmp_path / "assets"
     shutil.copytree(BOARD_ASSETS, root)
+    _install_required_intro_stubs(root)
     target = root / "stories" / "story_01.ogg"
     blob = _ogg_with_title("story_01_placeholder")
     target.write_bytes(blob)
@@ -474,6 +535,7 @@ def test_placeholder_clip_fails_check(tmp_path: pathlib.Path) -> None:
 def test_missing_stories_index_fails_check_only(tmp_path: pathlib.Path) -> None:
     root = tmp_path / "assets"
     shutil.copytree(BOARD_ASSETS, root)
+    _install_required_intro_stubs(root)
     prepared = _pack_script("--assets-root", str(root))
     assert prepared.returncode == 0, prepared.stderr
     index = root / "stories" / "index.json"
@@ -487,6 +549,7 @@ def test_missing_stories_index_fails_check_only(tmp_path: pathlib.Path) -> None:
 def test_clip_without_opus_tags_is_not_production(tmp_path: pathlib.Path) -> None:
     root = tmp_path / "assets"
     shutil.copytree(BOARD_ASSETS, root)
+    _install_required_intro_stubs(root)
     target = root / "offline_lines" / "offline-menu-idle-v1.ogg"
     blob = b"OggS" + b"\x00" * 32
     target.write_bytes(blob)
@@ -494,12 +557,13 @@ def test_clip_without_opus_tags_is_not_production(tmp_path: pathlib.Path) -> Non
     assert completed.returncode == 1
     assert "offline_lines/offline-menu-idle-v1.ogg: no OpusTags header" in completed.stderr
     assert target.read_bytes() == blob
-    assert "pending_placeholder_clips=2" in completed.stdout
+    assert "pending_placeholder_clips=0" in completed.stdout
 
 
 def test_missing_clip_fails_without_creating_it(tmp_path: pathlib.Path) -> None:
     root = tmp_path / "assets"
     shutil.copytree(BOARD_ASSETS, root)
+    _install_required_intro_stubs(root)
     target = root / "stories" / "story_03.ogg"
     target.unlink()
     completed = _pack_script("--assets-root", str(root))
@@ -508,9 +572,32 @@ def test_missing_clip_fails_without_creating_it(tmp_path: pathlib.Path) -> None:
     assert not target.exists()
 
 
+def test_unlabelled_production_clip_fails_check(tmp_path: pathlib.Path) -> None:
+    root = tmp_path / "assets"
+    shutil.copytree(BOARD_ASSETS, root)
+    _install_required_intro_stubs(root)
+    target = root / "offline_lines" / "offline-menu-idle-v1.ogg"
+    vendor = b"Lavf-test"
+    comment = b"encoder=test"
+    body = (
+        b"OpusTags"
+        + struct.pack("<I", len(vendor))
+        + vendor
+        + struct.pack("<I", 1)
+        + struct.pack("<I", len(comment))
+        + comment
+    )
+    # Tiny Ogg-shaped blob with OpusTags but no implicit AIGC keys.
+    target.write_bytes(b"OggS" + b"\x00" * 23 + bytes([1, len(body)]) + body)
+    completed = _pack_script("--assets-root", str(root))
+    assert completed.returncode == 1
+    assert "offline_lines/offline-menu-idle-v1.ogg missing implicit AIGC labels" in completed.stderr
+
+
 def test_hand_edited_manifest_fails_check_only(tmp_path: pathlib.Path) -> None:
     root = tmp_path / "assets"
     shutil.copytree(BOARD_ASSETS, root)
+    _install_required_intro_stubs(root)
     prepared = _pack_script("--assets-root", str(root))
     assert prepared.returncode == 0, prepared.stderr
     manifest = root / "stories" / "index.json"
@@ -530,36 +617,34 @@ def test_manifests_record_production_voice() -> None:
         assert manifest["voice"] == VOICE
         entries = manifest["stories"] if "stories" in manifest else manifest["lines"]
         assert entries
-        if "stories" in manifest:
-            assert all(entry["placeholder"] is False for entry in entries)
-        else:
-            assert all(
-                entry["placeholder"] is False
-                or entry["id"] in {"llm_unavailable", "llm_thinking"}
-                for entry in entries
-            )
+        assert all(entry["placeholder"] is False for entry in entries)
 
 
 def test_offline_line_manifest_matches_pack() -> None:
     manifest = json.loads((BOARD_ASSETS / "offline_lines" / "index.json").read_text(encoding="utf-8"))
     ids = [entry["id"] for entry in manifest["lines"]]
-    assert len(ids) == 22
+    assert len(ids) == 24
     assert "offline-chat-request-v1" not in ids
     assert ids[0] == "offline-wake-no-network-v1"
     assert ids[15] == "offline-menu-item-03-v2"
     assert ids[19] == "offline-menu-idle-v1"
     assert ids[20] == "llm_unavailable"
     assert ids[21] == "llm_thinking"
+    assert ids[22] == "aigc_story_intro"
+    assert ids[23] == "aigc_soothe_intro"
     by_id = {entry["id"]: entry for entry in manifest["lines"]}
-    assert by_id["llm_unavailable"]["placeholder"] is True
+    assert by_id["llm_unavailable"]["placeholder"] is False
     assert by_id["llm_unavailable"]["text"] == (
         "我现在有点卡住了，等一会儿再来找我聊吧。"
     )
-    assert by_id["llm_thinking"]["placeholder"] is True
+    assert by_id["llm_thinking"]["placeholder"] is False
     assert by_id["llm_thinking"]["text"] == "嗯，我想一想。"
+    assert by_id["aigc_story_intro"]["text"] == "下面是 AI 合成的声音给你讲故事。"
+    assert by_id["aigc_soothe_intro"]["text"] == "AI 合成的声音陪你睡觉啦。"
+    assert "pending_tts" not in by_id["aigc_story_intro"]
+    assert "pending_tts" not in by_id["aigc_soothe_intro"]
     for entry in manifest["lines"]:
-        if entry["id"] not in {"llm_unavailable", "llm_thinking"}:
-            assert entry["placeholder"] is False
+        assert entry["placeholder"] is False
         filename = entry["file"]
         assert len(filename) <= 32
         assert (BOARD_ASSETS / "offline_lines" / filename).is_file()
@@ -597,3 +682,88 @@ def test_story_03_title_renamed() -> None:
     script = BUILD_SCRIPT.read_text(encoding="utf-8")
     assert "大熊和森林里的悄悄话" in script
     assert "一只会听的熊" not in script
+
+
+def _run_device_ogg_aigc_check(assets_root: pathlib.Path) -> subprocess.CompletedProcess[str]:
+    script = FIRMWARE_ROOT / "scripts" / "check_device_ogg_aigc.py"
+    return subprocess.run(
+        ["python3", str(script), "--assets-root", str(assets_root)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _retag_board_ogg(
+    root: pathlib.Path,
+    rel: str,
+    *,
+    service_provider: str,
+    artist: str,
+    voice_id: str,
+) -> None:
+    import sys
+
+    repo = BUILD_SCRIPT.resolve().parents[3]
+    if str(repo) not in sys.path:
+        sys.path.insert(0, str(repo))
+    from services.common.aigc_opus import CANONICAL_AI_GENERATED, rewrite_opus_comments
+
+    path = root / rel
+    stem = path.stem
+    tagged = rewrite_opus_comments(
+        path.read_bytes(),
+        aigc={
+            "CONTENT_ID": stem,
+            "SERVICE_PROVIDER": service_provider,
+            "AI_GENERATED": CANONICAL_AI_GENERATED,
+            "ARTIST": artist,
+            "VOICE_ID": voice_id,
+            "DATE": "2026-10-15",
+            "CONTENT_PRODUCER": "Memoria",
+        },
+    )
+    path.write_bytes(tagged)
+
+
+def test_device_ogg_aigc_check_passes_on_board_pack() -> None:
+    completed = _run_device_ogg_aigc_check(BOARD_ASSETS)
+    assert completed.returncode == 0, completed.stderr
+    assert "checked_oggs=29" in completed.stdout
+    assert "canonical_service_provider=Volcengine Doubao" in completed.stdout
+    assert completed.stderr == ""
+
+
+def test_device_ogg_aigc_check_rejects_wrong_service_provider(
+    tmp_path: pathlib.Path,
+) -> None:
+    root = tmp_path / "assets"
+    shutil.copytree(BOARD_ASSETS, root)
+    _retag_board_ogg(
+        root,
+        "offline_lines/llm_thinking.ogg",
+        service_provider="Memoria",
+        artist="zh_female_tianmeitaozi_uranus_bigtts",
+        voice_id="zh_female_tianmeitaozi_uranus_bigtts",
+    )
+    completed = _run_device_ogg_aigc_check(root)
+    assert completed.returncode == 1
+    assert "SERVICE_PROVIDER must be 'Volcengine Doubao'" in completed.stderr
+    assert "got 'Memoria'" in completed.stderr
+
+
+def test_device_ogg_aigc_check_rejects_artist_ne_voice_id(tmp_path: pathlib.Path) -> None:
+    root = tmp_path / "assets"
+    shutil.copytree(BOARD_ASSETS, root)
+    _retag_board_ogg(
+        root,
+        "offline_lines/llm_thinking.ogg",
+        service_provider="Volcengine Doubao",
+        artist="other_voice",
+        voice_id="zh_female_tianmeitaozi_uranus_bigtts",
+    )
+    completed = _run_device_ogg_aigc_check(root)
+    assert completed.returncode == 1
+    assert "ARTIST must equal VOICE_ID" in completed.stderr
+    assert "ARTIST='other_voice'" in completed.stderr
+    assert "VOICE_ID='zh_female_tianmeitaozi_uranus_bigtts'" in completed.stderr
