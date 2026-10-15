@@ -111,6 +111,10 @@ int main() {
         long long now = 0;
         if (line[0] == '\0' || line[0] == '#') {
             continue;
+        } else if (std::strcmp(line, "armline") == 0) {
+            char out[diag::kPcmdLineCapacity];
+            const std::size_t length = diag::PcmdArmedLine(out, sizeof(out), 0xabcdu, 7000000);
+            std::printf("%s\n", length > 0 ? out : "overflow");
         } else if (std::sscanf(line, "arm %lx %lld", &id, &now) == 2) {
             const char* refused = g_recorder.Arm(static_cast<std::uint32_t>(id), now);
             std::printf("%s\n", refused ? refused : "ok");

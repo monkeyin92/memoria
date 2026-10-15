@@ -6,7 +6,7 @@ lines. The format is documented in firmware/esp32/overlay/files/main/memoria/mem
 
     PCMD <id> begin fmt=memoria-diagpcm-v1 bytes=<B> chunks=<N>
     PCMD <id> <seq>/<N> <crc> <base64>
-    PCMD <id> end <N> <B> <crc> mic=<m> blocks=<p>,<f>,<a>,<r> drops=<p>,<f>,<a>,<r> cut=<p>,<f>,<a>,<r>
+    PCMD <id> end <N> <B> <crc> mic=<m> blocks=<p>,<f>,<a>,<r> drops=<p>,<f>,<a>,<r> cut=<p>,<f>,<a>,<r> raw_hz=<hz> raw_bits=<bits> raw_slots=<n>
     PCMD <id> failed reason=<why>
 
     python scripts/diag_pcm_extract.py robot.log --out pcm/            # the latest journal
@@ -85,6 +85,7 @@ _LINE = re.compile(
     r"|begin fmt=(?P<fmt>\S+) bytes=(?P<begin_bytes>\d+) chunks=(?P<begin_total>\d+)"
     r"|end (?P<end_total>\d+) (?P<end_bytes>\d+) (?P<end_crc>[0-9a-f]{8}) mic=(?P<mic>\d+)"
     r" blocks=(?P<blocks>\d+(?:,\d+){3}) drops=(?P<drops>\d+(?:,\d+){3}) cut=(?P<cut>\d+(?:,\d+){3})"
+    r" raw_hz=(?P<raw_hz>\d+) raw_bits=(?P<raw_bits>\d+) raw_slots=(?P<raw_slots>\d+)"
     r"|failed reason=(?P<reason>[a-z_]+)"
     r"|(?P<armed>armed) "
     r")"
@@ -120,6 +121,9 @@ class EndLine:
     blocks: tuple[int, ...]
     drops: tuple[int, ...]
     cut: tuple[int, ...]
+    raw_hz: int
+    raw_bits: int
+    raw_slots: int
 
 
 @dataclass
@@ -225,6 +229,9 @@ def collect(text: str) -> dict[str, Transcript]:
                 _triple(match["blocks"]),
                 _triple(match["drops"]),
                 _triple(match["cut"]),
+                int(match["raw_hz"]),
+                int(match["raw_bits"]),
+                int(match["raw_slots"]),
             )
         else:
             _add_chunk(t, int(match["seq"]), int(match["total"]), match["crc"], match["data"])
@@ -465,6 +472,9 @@ def export(t: Transcript, out: Path, *, partial: bool = False) -> Verdict:
         "checks": {check.value: ok for check, ok in verdict.checks.items()},
         "details": verdict.details,
         "timebase": "mic_clock@16000",
+        "raw_hz": t.end.raw_hz if t.end else None,
+        "raw_bits": t.end.raw_bits if t.end else None,
+        "raw_slots": t.end.raw_slots if t.end else None,
         "window_ms": verdict.preamble.window_ms if verdict.preamble else None,
         "mic_samples_at_seal": verdict.preamble.mic_samples_at_seal if verdict.preamble else None,
         "lanes": [

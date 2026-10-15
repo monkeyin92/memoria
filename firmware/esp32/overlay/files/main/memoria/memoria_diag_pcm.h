@@ -32,11 +32,11 @@
 //
 // Wire lines (the CRC is the one zlib.crc32 computes; chunk base64 as in memoria_bench_snap.h):
 //
-//   PCMD <id> armed window_ms=<ms> lanes=<lane specs> psram_free=<n>
+//   PCMD <id> armed window_ms=<ms> lanes=<lane specs> psram_free=<n> raw_hz=<hz> raw_bits=<bits> raw_slots=<n>
 //   PCMD <id> sealed mic=<samples> bytes=<journal bytes>
 //   PCMD <id> begin fmt=memoria-diagpcm-v1 bytes=<B> chunks=<N>
 //   PCMD <id> <seq>/<N> <crc> <base64>
-//   PCMD <id> end <N> <B> <crc> mic=<m> blocks=<p>,<f>,<a>,<r> drops=<p>,<f>,<a>,<r> cut=<p>,<f>,<a>,<r>
+//   PCMD <id> end <N> <B> <crc> mic=<m> blocks=<p>,<f>,<a>,<r> drops=<p>,<f>,<a>,<r> cut=<p>,<f>,<a>,<r> raw_hz=<hz> raw_bits=<bits> raw_slots=<n>
 //   PCMD <id> failed reason=<recording|busy|empty|no_psram|console|encode>
 //
 // scripts/diag_pcm_extract.py verifies the journal and writes one WAV per channel. This header has no ESP-IDF
@@ -65,6 +65,8 @@ namespace diag {
 constexpr std::uint32_t kWindowMs = 3000;
 constexpr std::uint32_t kMicRate = 16000;
 constexpr std::uint32_t kPlayRate = 24000;
+constexpr unsigned kRawTdmBits = 16;
+constexpr unsigned kRawTdmSlots = 4;
 
 enum class Lane : std::uint8_t { kPlay = 0, kFeed = 1, kPostAfe = 2, kRawTdm = 3 };
 constexpr std::size_t kLaneCount = 4;
@@ -452,10 +454,12 @@ inline std::size_t PcmdArmedLine(char* out, std::size_t capacity, std::uint32_t 
     return FinishLine(
         std::snprintf(out, capacity,
                       "PCMD %08x armed window_ms=%u lanes=play_pre_i2s@%ux1,pre_afe_mic+pre_afe_ref@%ux2,"
-                      "post_afe@%ux1,es7210_slot0+es7210_slot1+es7210_slot2+es7210_slot3@%ux4 psram_free=%u",
+                      "post_afe@%ux1,es7210_slot0+es7210_slot1+es7210_slot2+es7210_slot3@%ux4 psram_free=%u "
+                      "raw_hz=%u raw_bits=%u raw_slots=%u",
                       static_cast<unsigned>(id), static_cast<unsigned>(kWindowMs), static_cast<unsigned>(kPlayRate),
                       static_cast<unsigned>(kMicRate), static_cast<unsigned>(kMicRate),
-                      static_cast<unsigned>(kPlayRate), static_cast<unsigned>(psram_free)),
+                      static_cast<unsigned>(kPlayRate), static_cast<unsigned>(psram_free),
+                      static_cast<unsigned>(kPlayRate), kRawTdmBits, kRawTdmSlots),
         capacity);
 }
 
@@ -490,12 +494,13 @@ inline std::size_t PcmdEndLine(char* out, std::size_t capacity, std::uint32_t id
     const LaneSummary* l = p.lanes;
     return FinishLine(
         std::snprintf(out, capacity,
-                      "PCMD %08x end %zu %zu %08x mic=%u blocks=%u,%u,%u,%u drops=%u,%u,%u,%u cut=%u,%u,%u,%u",
+                      "PCMD %08x end %zu %zu %08x mic=%u blocks=%u,%u,%u,%u drops=%u,%u,%u,%u cut=%u,%u,%u,%u "
+                      "raw_hz=%u raw_bits=%u raw_slots=%u",
                       static_cast<unsigned>(id), total, bytes, static_cast<unsigned>(crc),
                       static_cast<unsigned>(p.mic_samples_at_seal), static_cast<unsigned>(l[0].blocks),
                       static_cast<unsigned>(l[1].blocks), static_cast<unsigned>(l[2].blocks),
                       static_cast<unsigned>(l[3].blocks), l[0].drops, l[1].drops, l[2].drops, l[3].drops, l[0].cut,
-                      l[1].cut, l[2].cut, l[3].cut),
+                      l[1].cut, l[2].cut, l[3].cut, static_cast<unsigned>(kPlayRate), kRawTdmBits, kRawTdmSlots),
         capacity);
 }
 

@@ -44,6 +44,10 @@
 #include <ctime>
 #if CONFIG_MEMORIA_BENCH_SERIAL
 #include "memoria_diag_pcm.h"
+#include "memoria_bench_tone.h"
+#include "memoria_software_aec_ref.h"
+
+#include <vector>
 #endif
 
 #if CONFIG_MEMORIA_KEEP_AWAKE
@@ -981,6 +985,56 @@ private:
         }
         display_->BenchRequestStatus();
     }
+
+    // Idle does not read the codec, and the raw TDM hook lives inside Read.
+    // Play the sine and read matching input frames so the journal's slot lane
+    // contains the speaker while the tone is the only thing playing.
+    void HandleUsbTone() {
+        auto* codec = GetAudioCodec();
+        auto& audio = Application::GetInstance().GetAudioService();
+        if (codec == nullptr || codec->output_sample_rate() <= 0 || codec->input_channels() <= 0) {
+            ESP_LOGI(kUsbTag, "usb tone ignored reason=no_codec");
+            return;
+        }
+        if (!audio.IsPlaybackIdle()) {
+            ESP_LOGI(kUsbTag, "usb tone ignored reason=busy");
+            return;
+        }
+        if (codec->input_enabled()) {
+            ESP_LOGI(kUsbTag, "usb tone ignored reason=mic_open");
+            return;
+        }
+        const int rate = codec->output_sample_rate();
+        const int frame = rate / 100;
+        if (frame <= 0) {
+            ESP_LOGI(kUsbTag, "usb tone ignored reason=rate");
+            return;
+        }
+        constexpr int kFrames = 280;
+        const bool output_was_enabled = codec->output_enabled();
+        memoria::diag::Arm();
+        codec->EnableInput(true);
+        codec->EnableOutput(true);
+        std::uint32_t phase = 0;
+        std::vector<int16_t> play(static_cast<size_t>(frame));
+        std::vector<int16_t> mic(static_cast<size_t>(frame) * static_cast<size_t>(codec->input_channels()));
+        int queued = 0;
+        for (int i = 0; i < kFrames; ++i) {
+            if (memoria::FillBenchTone(play.data(), play.size(), rate, 1000, &phase, 12000) != play.size()) {
+                break;
+            }
+            memoria::diag::RecordPlay(play.data(), play.size(), rate, 0);
+            memoria::WritePlay(play.data(), play.size());
+            codec->OutputData(play);
+            codec->InputData(mic);
+            ++queued;
+        }
+        codec->EnableInput(false);
+        if (!output_was_enabled) {
+            codec->EnableOutput(false);
+        }
+        ESP_LOGI(kUsbTag, "usb tone hz=1000 rate=%d bits=16 frames=%d raw_slots=4", rate, queued);
+    }
 #endif
 
     // The USB-Serial-JTAG port is the secondary console: stdin is read from the UART, so the lines the host
@@ -1000,7 +1054,7 @@ private:
         // The marker is what makes the firmware publisher refuse this image; logging it keeps the linker
         // from dropping it.
         ESP_LOGI(kUsbTag,
-                 "usb command console ready commands=wake,sleep,poweroff,temp,snap,status,pcmarm,pcmdump %s",
+                 "usb command console ready commands=wake,sleep,poweroff,temp,snap,status,pcmarm,pcmdump,tone %s",
                  memoria_bench_build_marker);
 #else
         ESP_LOGI(kUsbTag, "usb command console ready commands=wake,sleep,poweroff,temp");
@@ -1041,6 +1095,9 @@ private:
                             break;
                         case memoria::UsbLineEvent::kPcmDump:
                             memoria::diag::Dump();
+                            break;
+                        case memoria::UsbLineEvent::kTone:
+                            self->HandleUsbTone();
                             break;
 #endif
                         case memoria::UsbLineEvent::kUnknown:

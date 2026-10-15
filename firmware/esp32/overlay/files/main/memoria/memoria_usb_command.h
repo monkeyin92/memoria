@@ -22,13 +22,15 @@
 //   snap\n    stream a screenshot of the display as SNAP log lines
 //   status\n  log one line of key=value state (frames drawn, render cost, device state, memory)
 //
-// and two that record what the audio path handled (memoria_diag_pcm.h, TODOLIST N-10):
+// and two that record what the audio path handled (memoria_diag_pcm.h, TODOLIST N-10), plus one that
+// plays a sine so that recording can be made while a known tone leaves the speaker:
 //
 //   pcmarm\n   record a fixed window of playback, AFE input and AFE output into PSRAM
 //   pcmdump\n  stream that recording as PCMD log lines
+//   tone\n     play a 1 kHz sine and read the codec so the raw ES7210 slots are in that window
 //
-// None changes what the robot does. They are compiled in only under that switch: a product image has no
-// such enumerators, no such verbs and no code behind them.
+// snap, status, pcmarm and pcmdump do not change what the robot does. tone plays audio on a bench
+// image only. A product image has no such enumerators, no such verbs and no code behind them.
 //
 // This header has no ESP-IDF dependency so the host tests compile the real parser, line assembler and wake
 // policy (in both configurations); the task that reads the port and calls the application lives in the
@@ -67,6 +69,7 @@ enum class UsbCommand : unsigned char {
     kStatus,
     kPcmArm,
     kPcmDump,
+    kTone,
 #endif
 };
 
@@ -120,6 +123,9 @@ inline UsbCommand ParseUsbCommand(const char* line, std::size_t length) {
     if (usb_command_detail::IsVerb(verb, verb_length, "pcmdump")) {
         return UsbCommand::kPcmDump;
     }
+    if (usb_command_detail::IsVerb(verb, verb_length, "tone")) {
+        return UsbCommand::kTone;
+    }
 #endif
     return UsbCommand::kUnknown;
 }
@@ -137,6 +143,7 @@ enum class UsbLineEvent : unsigned char {
     kStatus,  // bench builds only: a complete `status` line
     kPcmArm,   // bench builds only: a complete `pcmarm` line
     kPcmDump,  // bench builds only: a complete `pcmdump` line
+    kTone,     // bench builds only: a complete `tone` line
 #endif
 };
 
@@ -203,6 +210,8 @@ private:
                 return UsbLineEvent::kPcmArm;
             case UsbCommand::kPcmDump:
                 return UsbLineEvent::kPcmDump;
+            case UsbCommand::kTone:
+                return UsbLineEvent::kTone;
 #endif
             case UsbCommand::kUnknown:
                 break;

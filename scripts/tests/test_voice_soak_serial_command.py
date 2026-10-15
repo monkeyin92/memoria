@@ -209,15 +209,16 @@ def test_default_socket_path_is_short_and_follows_the_port() -> None:
 
 
 def test_the_wire_table_holds_exactly_the_words_the_robot_knows() -> None:
-    # `wake` is in every image; the others change nothing the robot does, and only a bench image answers them.
+    # `wake` is in every image. `tone` plays a sine on a bench image. The rest are bench reads.
     assert logger.WIRE_COMMANDS == {
         "wake": b"wake\n",
         "snap": b"snap\n",
         "status": b"status\n",
         "pcmarm": b"pcmarm\n",
         "pcmdump": b"pcmdump\n",
+        "tone": b"tone\n",
     }
-    assert set(command.COMMANDS) == {"wake", "snap", "status", "pcmarm", "pcmdump", "ping"}
+    assert set(command.COMMANDS) == {"wake", "snap", "status", "pcmarm", "pcmdump", "tone", "ping"}
     assert set(command.BENCH_COMMANDS) == {"snap", "status", "pcmarm", "pcmdump"}
 
 
@@ -301,7 +302,8 @@ class FakeRobot(FakePort):
             answer = [
                 "I (9) MemoriaDiagPcm: PCMD 0000abcd armed window_ms=3000 "
                 "lanes=play_pre_i2s@24000x1,pre_afe_mic+pre_afe_ref@16000x2,post_afe@16000x1,"
-                "es7210_slot0+es7210_slot1+es7210_slot2+es7210_slot3@24000x4 psram_free=7000000"
+                "es7210_slot0+es7210_slot1+es7210_slot2+es7210_slot3@24000x4 psram_free=7000000 "
+                "raw_hz=24000 raw_bits=16 raw_slots=4"
             ]
         elif payload == b"pcmdump\n":
             answer = ["I (9) MemoriaDiagPcm: PCMD 0000abcd failed reason=recording"]

@@ -112,9 +112,22 @@ def test_a_rearm_after_the_seal_starts_a_fresh_journal(tool: pathlib.Path) -> No
     assert lines[:4] == ["ok", "sealed", "ok", "sealed"]
     begin, *_, end = [line for line in lines if line.startswith("PCMD ")]
     assert begin == "PCMD 00000021 begin fmt=memoria-diagpcm-v1 bytes=776 chunks=3"
-    assert end.endswith("mic=160 blocks=0,1,0,0 drops=0,0,0,0 cut=0,0,0,0")
+    assert end.endswith(
+        "mic=160 blocks=0,1,0,0 drops=0,0,0,0 cut=0,0,0,0 raw_hz=24000 raw_bits=16 raw_slots=4"
+    )
+
+
+def test_the_armed_line_names_the_raw_tdm_format(tool: pathlib.Path) -> None:
+    assert _run(tool, "armline") == [
+        "PCMD 0000abcd armed window_ms=3000 "
+        "lanes=play_pre_i2s@24000x1,pre_afe_mic+pre_afe_ref@16000x2,post_afe@16000x1,"
+        "es7210_slot0+es7210_slot1+es7210_slot2+es7210_slot3@24000x4 psram_free=7000000 "
+        "raw_hz=24000 raw_bits=16 raw_slots=4"
+    ]
 
 
 def test_a_reference_channel_that_is_missing_is_a_drop_not_a_relabel(tool: pathlib.Path) -> None:
     lines = _run(tool, "arm 00000030 0", "feed 160 1 0 10", "tick 3000000", "dump")
-    assert lines[-1].endswith("mic=160 blocks=0,0,0,0 drops=0,1,0,0 cut=0,0,0,0")
+    assert lines[-1].endswith(
+        "mic=160 blocks=0,0,0,0 drops=0,1,0,0 cut=0,0,0,0 raw_hz=24000 raw_bits=16 raw_slots=4"
+    )

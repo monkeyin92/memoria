@@ -1,0 +1,44 @@
+--- a/main/audio/audio_service.cc
++++ b/main/audio/audio_service.cc
+@@ -35,6 +35,7 @@
+ #endif
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
+ #include "memoria_software_aec_ref.h"
++#include "memoria_ref_mic_delay.h"
+ #endif
+ #if CONFIG_HEAP_POISONING_COMPREHENSIVE
+ #include <esp_heap_caps.h>
+@@ -291,6 +292,16 @@
+         /* Inject play PCM into R at the codec rate (24 kHz) before the 24→16 kHz resampler. */
+         memoria::ApplyToFeed(data.data(), data.size() / codec_->input_channels(),
+                              codec_->input_channels());
++        {
++            memoria::DelayEstimate aec_delay;
++            if (memoria::ObserveRefMicDelay(data.data(), data.size() / codec_->input_channels(),
++                                            codec_->input_channels(), codec_->input_sample_rate(),
++                                            &aec_delay)) {
++                ESP_LOGI(TAG, "aec-ref delay lag_ms=%d lag_samples=%d corr=%.3f mic_rms=%d ref_rms=%d",
++                         aec_delay.lag_ms, aec_delay.lag_samples, aec_delay.corr_milli / 1000.0,
++                         aec_delay.mic_rms, aec_delay.ref_rms);
++            }
++        }
+ #endif
+         if (input_resampler_ != nullptr) {
+             std::lock_guard<std::mutex> lock(input_resampler_mutex_);
+@@ -312,6 +323,16 @@
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
+         memoria::ApplyToFeed(data.data(), data.size() / codec_->input_channels(),
+                              codec_->input_channels());
++        {
++            memoria::DelayEstimate aec_delay;
++            if (memoria::ObserveRefMicDelay(data.data(), data.size() / codec_->input_channels(),
++                                            codec_->input_channels(), codec_->input_sample_rate(),
++                                            &aec_delay)) {
++                ESP_LOGI(TAG, "aec-ref delay lag_ms=%d lag_samples=%d corr=%.3f mic_rms=%d ref_rms=%d",
++                         aec_delay.lag_ms, aec_delay.lag_samples, aec_delay.corr_milli / 1000.0,
++                         aec_delay.mic_rms, aec_delay.ref_rms);
++            }
++        }
+ #endif
+     }
+ 

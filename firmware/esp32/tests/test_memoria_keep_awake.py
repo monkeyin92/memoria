@@ -131,7 +131,7 @@ def test_scripts_select_the_keep_awake_profile_and_keep_it_off_the_product() -> 
     flash = _read(SCRIPTS / "flash.sh")
     check = _read(SCRIPTS / "check-overlay.sh")
     assert 'artifact_name="$MEMORIA_BOARD_NAME-keep-awake"' in build
-    assert "build_args+=(--config config.keep-awake.json)" in build
+    assert 'config_name="config.keep-awake.json"' in build
     assert "pass only one of --bench and --keep-awake" in build
     assert build.index("generated sdkconfig lacks CONFIG_MEMORIA_KEEP_AWAKE=y") < build.index(
         'cp "$merged"'
@@ -142,7 +142,8 @@ def test_scripts_select_the_keep_awake_profile_and_keep_it_off_the_product() -> 
     assert "the build in the tree is a KEEP-AWAKE image" in flash
     assert "--keep-awake was given but the build in the tree is not a keep-awake image" in flash
     assert flash.index("tree_is_keep_awake") < flash.index('idf.py -p "$port" flash')
-    assert '["MEMORIA_BENCH_SERIAL", "MEMORIA_KEEP_AWAKE"]' in check
+    assert "MEMORIA_BENCH_SERIAL, MEMORIA_KEEP_AWAKE, " in check
+    assert "MEMORIA_PLAYBACK_STOP, MEMORIA_STANDBY_AFTER_PLAYBACK" in check
     assert "config.json and config.bench.json must omit MEMORIA_KEEP_AWAKE" in check
     assert "config.keep-awake.json must be config.json plus CONFIG_MEMORIA_KEEP_AWAKE=y and heap poisoning" in check
     assert "this is not a keep-awake build" in check

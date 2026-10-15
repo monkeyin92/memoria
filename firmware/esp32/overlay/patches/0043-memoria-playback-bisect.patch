@@ -1,0 +1,94 @@
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -9,6 +9,7 @@
+ #include "memoria/memoria_power_policy.h"
+ #include "memoria/memoria_wake_mode.h"
+ #include "memoria/memoria_wake_word.h"
++#include "memoria/memoria_playback_bisect.h"
+ #include "memoria_protocol.h"
+ #include "memoria_bootstrap.h"
+ #include "display/lcd_display.h"
+@@ -973,10 +974,14 @@
+ #endif
+                     if (GetDeviceState() == kDeviceStateSpeaking) {
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
+-                        auto* standby_protocol =
+-                            static_cast<memoria::MemoriaProtocol*>(protocol_.get());
+-                        if ((standby_protocol != nullptr &&
+-                             standby_protocol->ConsumeStandbyAfterPlayback()) ||
++                        bool standby_after_playback = false;
++                        if constexpr (memoria::kStandbyAfterPlaybackEnabled) {
++                            auto* standby_protocol =
++                                static_cast<memoria::MemoriaProtocol*>(protocol_.get());
++                            standby_after_playback = standby_protocol != nullptr &&
++                                standby_protocol->ConsumeStandbyAfterPlayback();
++                        }
++                        if (standby_after_playback ||
+                             listening_mode_ == kListeningModeManualStop) {
+ #else
+                         if (listening_mode_ == kListeningModeManualStop) {
+@@ -1570,20 +1575,26 @@
+     // mode on the AEC/NS output so the owner can stop playback by voice; each
+     // hit re-checks that a generation is really playing (LocalStopKeywordArmed).
+     // The decision is logged on every speaking entry, including a failure.
+-    auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
+-    const bool may_arm = memoria::kLocalStopKeywordEnabled && memoria_protocol != nullptr &&
+-        memoria_protocol->StopKeywordMayArm();
+-    const bool armed = may_arm && audio_service_.EnableStopKeywordDetection();
+-    if (memoria_protocol != nullptr) {
+-        memoria_protocol->LogStopArmAtSpeaking(armed, may_arm && !armed);
++    // A bisect image drops the detector here. The product Kconfig default is on.
++    if constexpr (!memoria::kPlaybackStopEnabled) {
++        ESP_LOGI(TAG, "stop-arm speaking armed=0 reason=build_disabled");
++        audio_service_.EnableWakeWordDetection(false);
+     } else {
+-        ESP_LOGI(TAG, "stop-arm speaking armed=0 reason=no_protocol");
+-    }
+-    if (armed) {
+-        ESP_LOGI(TAG, "Local stop keyword armed for playback");
+-        return;
+-    }
+-    audio_service_.EnableWakeWordDetection(false);
++        auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
++        const bool may_arm = memoria::kLocalStopKeywordEnabled && memoria_protocol != nullptr &&
++            memoria_protocol->StopKeywordMayArm();
++        const bool armed = may_arm && audio_service_.EnableStopKeywordDetection();
++        if (memoria_protocol != nullptr) {
++            memoria_protocol->LogStopArmAtSpeaking(armed, may_arm && !armed);
++        } else {
++            ESP_LOGI(TAG, "stop-arm speaking armed=0 reason=no_protocol");
++        }
++        if (armed) {
++            ESP_LOGI(TAG, "Local stop keyword armed for playback");
++            return;
++        }
++        audio_service_.EnableWakeWordDetection(false);
++    }
+ }
+ 
+ void Application::HandleLocalStopKeyword(const std::string& phrase_id, float score) {
+--- a/main/Kconfig.projbuild
++++ b/main/Kconfig.projbuild
+@@ -1109,4 +1109,22 @@
+         only with build.sh --keep-awake (config.keep-awake.json). The firmware publisher
+         refuses the image.
+ 
++config MEMORIA_PLAYBACK_STOP
++    bool "Arm MultiNet stop keywords during playback"
++    depends on BOARD_TYPE_MEMORIA_ESP_VOCAT
++    default y
++    help
++        Spoken stop stays on in the product image. A bench or keep-awake build
++        passes build.sh --disable-playback-stop to compile this path out while
++        heap poisoning stays on, so a device test can bisect a heap smash.
++
++config MEMORIA_STANDBY_AFTER_PLAYBACK
++    bool "Idle after a terminal phrase instead of listening"
++    depends on BOARD_TYPE_MEMORIA_ESP_VOCAT
++    default y
++    help
++        The product image honors standby_after_playback. A bench or keep-awake
++        build passes build.sh --disable-standby-after-playback to compile that
++        branch out. The server still sets the flag. The device ignores it.
++
+ endmenu

@@ -113,7 +113,9 @@ def test_an_intact_journal_passes_every_check_and_exports_sample_exact_channels(
     lines = run(tool, *SCENARIO)
     assert lines[0] == "ok" and lines[1] == "sealed"
     assert pcmd(lines)[-1].endswith(
-        "end 27 10008 " + pcmd(lines)[-1].split()[5] + " mic=480 blocks=2,3,2,0 drops=0,0,0,0 cut=0,0,0,0"
+        "end 27 10008 "
+        + pcmd(lines)[-1].split()[5]
+        + " mic=480 blocks=2,3,2,0 drops=0,0,0,0 cut=0,0,0,0 raw_hz=24000 raw_bits=16 raw_slots=4"
     )
 
     (t,) = extract.collect(log_of(lines)).values()
@@ -143,6 +145,7 @@ def test_an_intact_journal_passes_every_check_and_exports_sample_exact_channels(
     manifest = json.loads((tmp_path / "manifest.json").read_text())
     assert manifest["intact"] is True
     assert manifest["timebase"] == "mic_clock@16000"
+    assert (manifest["raw_hz"], manifest["raw_bits"], manifest["raw_slots"]) == (24000, 16, 4)
     assert [lane["channels"] for lane in manifest["lanes"]] == [
         ["play_pre_i2s"],
         ["pre_afe_mic", "pre_afe_ref"],

@@ -66,6 +66,10 @@ BENCH_ONLY = [
     r"\bUsbCommand::kPcm(Arm|Dump)\b",
     r'"pcmarm"',
     r'"pcmdump"',
+    r'"tone"',
+    r"\bHandleUsbTone\b",
+    r"\bUsbLineEvent::kTone\b",
+    r"\bUsbCommand::kTone\b",
     r"\bMemoriaDiagPcm\b",
     r"\bStreamJournal\b",
 ]
@@ -396,7 +400,7 @@ def test_the_marker_the_publisher_refuses_is_defined_once_and_logged_at_boot() -
     ]
     assert definitions == [BENCH_SOURCE.name]
     boot_log = _read(BOARD_CC)
-    assert "usb command console ready commands=wake,sleep,poweroff,temp,snap,status,pcmarm,pcmdump %s" in boot_log
+    assert "usb command console ready commands=wake,sleep,poweroff,temp,snap,status,pcmarm,pcmdump,tone %s" in boot_log
     assert "memoria_bench_build_marker" in boot_log
     assert "usb command console ready commands=wake,sleep,poweroff,temp" in boot_log
 
@@ -412,7 +416,7 @@ def test_the_scripts_keep_a_bench_image_and_a_product_image_apart() -> None:
     # build.sh: the artifact name carries "-bench", the bench manifest is passed explicitly, and the generated
     # sdkconfig is checked both ways before anything is copied.
     assert 'artifact_name="$MEMORIA_BOARD_NAME-bench"' in build
-    assert "build_args+=(--config config.bench.json)" in build
+    assert 'config_name="config.bench.json"' in build
     assert "CONFIG_MEMORIA_BENCH_SERIAL=y" in build
     assert build.index("generated sdkconfig lacks") < build.index('cp "$merged"')
     assert build.index("product build carries") < build.index('cp "$merged"')

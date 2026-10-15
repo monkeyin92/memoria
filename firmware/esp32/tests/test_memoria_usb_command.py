@@ -43,6 +43,7 @@ static const char* EventName(memoria::UsbLineEvent event) {
         case memoria::UsbLineEvent::kStatus: return "status";
         case memoria::UsbLineEvent::kPcmArm: return "pcmarm";
         case memoria::UsbLineEvent::kPcmDump: return "pcmdump";
+        case memoria::UsbLineEvent::kTone: return "tone";
 #endif
     }
     return nullptr;
@@ -60,6 +61,7 @@ static const char* CommandName(memoria::UsbCommand command) {
         case memoria::UsbCommand::kStatus: return "status";
         case memoria::UsbCommand::kPcmArm: return "pcmarm";
         case memoria::UsbCommand::kPcmDump: return "pcmdump";
+        case memoria::UsbCommand::kTone: return "tone";
 #endif
     }
     return "unknown";
@@ -365,11 +367,12 @@ def test_a_product_image_knows_no_bench_verbs(tool: pathlib.Path) -> None:
         "parse status",
         "parse pcmarm",
         "parse pcmdump",
+        "parse tone",
         _feed(0, "snap\n"),
         _feed(0, "status\r\n"),
         _feed(0, "snap\nwake\nstatus\n"),
         _feed(0, "pcmarm\nwake\npcmdump\n"),
-    ) == ["unknown"] * 6 + ["unknown wake unknown"] * 2
+    ) == ["unknown"] * 7 + ["unknown wake unknown"] * 2
 
 
 def test_the_task_stack_grows_only_in_a_bench_build(tool: pathlib.Path, bench_tool: pathlib.Path) -> None:
@@ -385,10 +388,12 @@ def test_a_product_image_cannot_even_name_the_bench_commands(tmp_path: pathlib.P
         "UsbCommand::kStatus",
         "UsbCommand::kPcmArm",
         "UsbCommand::kPcmDump",
+        "UsbCommand::kTone",
         "UsbLineEvent::kSnap",
         "UsbLineEvent::kStatus",
         "UsbLineEvent::kPcmArm",
         "UsbLineEvent::kPcmDump",
+        "UsbLineEvent::kTone",
     ):
         source = snippet % name
         product = _compile(tmp_path / "product", "-DCONFIG_MEMORIA_BENCH_SERIAL=0", source=source)
@@ -406,7 +411,9 @@ def test_a_bench_build_reads_the_pcm_verbs_exactly(bench_tool: pathlib.Path) -> 
         "parse  pcmarm\t",
         "parse pcmdump",
         "parse \tpcmdump ",
-    ) == ["pcmarm", "pcmarm", "pcmdump", "pcmdump"]
+        "parse tone",
+        "parse \ttone ",
+    ) == ["pcmarm", "pcmarm", "pcmdump", "pcmdump", "tone", "tone"]
     # No arguments ride the line: the window is compiled in and the dump has no options.
     assert _run(
         bench_tool,

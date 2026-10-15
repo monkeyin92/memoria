@@ -48,6 +48,12 @@ if any("MEMORIA_BENCH" in option for option in product_options):
     raise SystemExit("the product manifest must not name the bench switch")
 if any("MEMORIA_KEEP_AWAKE" in option for option in product_options + bench_options):
     raise SystemExit("config.json and config.bench.json must omit MEMORIA_KEEP_AWAKE")
+for option in product_options:
+    if option in {
+        "CONFIG_MEMORIA_PLAYBACK_STOP=n",
+        "CONFIG_MEMORIA_STANDBY_AFTER_PLAYBACK=n",
+    }:
+        raise SystemExit("the product manifest must leave playback stop and standby-after-playback on")
 if bench_options != product_options + [
     "CONFIG_MEMORIA_BENCH_SERIAL=y",
     "CONFIG_LV_USE_SNAPSHOT=y",
@@ -69,10 +75,16 @@ for label, manifest in (("config.bench.json", bench), ("config.keep-awake.json",
     if stripped != product:
         raise SystemExit(f"{label} may differ from config.json only in sdkconfig_append")
 PY
-rg -Fq -- '--config config.bench.json' "$SCRIPT_DIR/build.sh" || \
+rg -Fq -- 'config_name="config.bench.json"' "$SCRIPT_DIR/build.sh" || \
     die "build.sh --bench must build from config.bench.json"
-rg -Fq -- '--config config.keep-awake.json' "$SCRIPT_DIR/build.sh" || \
+rg -Fq -- 'config_name="config.keep-awake.json"' "$SCRIPT_DIR/build.sh" || \
     die "build.sh --keep-awake must build from config.keep-awake.json"
+rg -Fq -- '--disable-playback-stop' "$SCRIPT_DIR/build.sh" || \
+    die "build.sh must be able to compile out playback stop on a debug image"
+rg -Fq -- '--disable-standby-after-playback' "$SCRIPT_DIR/build.sh" || \
+    die "build.sh must be able to compile out standby-after-playback on a debug image"
+rg -Fq 'bisect switches require --bench or --keep-awake' "$SCRIPT_DIR/build.sh" || \
+    die "bisect switches must stay off the product image"
 rg -Fq 'CONFIG_MEMORIA_BENCH_SERIAL=y' "$SCRIPT_DIR/flash.sh" || \
     die "flash.sh must tell a bench image from a product image"
 rg -Fq 'CONFIG_MEMORIA_KEEP_AWAKE=y' "$SCRIPT_DIR/flash.sh" || \
@@ -141,6 +153,14 @@ rg -Fq 'memoria::diag::RecordRawTdm(' "$MEMORIA_UPSTREAM_DIR/main/audio/codecs/b
     die "bench raw ES7210 TDM must be recorded inside BoxAudioCodec::Read"
 rg -Fq 'heap_caps_check_integrity_all(true)' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
     die "PlaySound must check heap integrity when poisoning is on"
+rg -Fq 'aec-ref delay lag_ms=' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
+    die "ReadAudioData must log the software-reference versus mic delay"
+rg -Fq 'reason=build_disabled' "$MEMORIA_UPSTREAM_DIR/main/application.cc" || \
+    die "a playback-stop bisect image must log reason=build_disabled"
+rg -Fq 'kStandbyAfterPlaybackEnabled' "$MEMORIA_UPSTREAM_DIR/main/application.cc" || \
+    die "standby-after-playback must be gated by its Kconfig switch"
+rg -Fq 'usb tone hz=1000' "$board_dir/memoria_esp_vocat.cc" || \
+    die "bench tone command must log rate, width and slot count"
 "$python_bin" - "$MEMORIA_UPSTREAM_DIR/main/Kconfig.projbuild" <<'PY'
 import pathlib
 import re
@@ -148,20 +168,33 @@ import sys
 
 kconfig = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 symbols = re.findall(r"^config (MEMORIA_\w+)", kconfig, re.MULTILINE)
-if symbols != ["MEMORIA_BENCH_SERIAL", "MEMORIA_KEEP_AWAKE"]:
+if symbols != [
+    "MEMORIA_BENCH_SERIAL",
+    "MEMORIA_KEEP_AWAKE",
+    "MEMORIA_PLAYBACK_STOP",
+    "MEMORIA_STANDBY_AFTER_PLAYBACK",
+]:
     raise SystemExit(
-        "Memoria Kconfig options must be MEMORIA_BENCH_SERIAL then MEMORIA_KEEP_AWAKE"
+        "Memoria Kconfig options must be MEMORIA_BENCH_SERIAL, MEMORIA_KEEP_AWAKE, "
+        "MEMORIA_PLAYBACK_STOP, MEMORIA_STANDBY_AFTER_PLAYBACK"
     )
 
 def block(name: str) -> str:
     return kconfig.split(f"config {name}\n", 1)[1].split("\nconfig ", 1)[0].split("\nendmenu", 1)[0]
 
+defaults_off = {"MEMORIA_BENCH_SERIAL", "MEMORIA_KEEP_AWAKE"}
+defaults_on = {"MEMORIA_PLAYBACK_STOP", "MEMORIA_STANDBY_AFTER_PLAYBACK"}
 for name in symbols:
     body = block(name)
-    if "default n" not in body or "depends on BOARD_TYPE_MEMORIA_ESP_VOCAT" not in body:
-        raise SystemExit(f"{name} must default to n and depend on the Memoria board")
-    if "default y" in body:
-        raise SystemExit(f"{name} must not default to y")
+    lines = [line.strip() for line in body.splitlines()]
+    if "depends on BOARD_TYPE_MEMORIA_ESP_VOCAT" not in body:
+        raise SystemExit(f"{name} must depend on the Memoria board")
+    if name in defaults_off:
+        if "default n" not in lines or "default y" in lines:
+            raise SystemExit(f"{name} must default to n")
+    if name in defaults_on:
+        if "default y" not in lines or "default n" in lines:
+            raise SystemExit(f"{name} must default to y")
 PY
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_input_settle.h" ]] || die "input settle header missing"
 rg -Fq 'input_settle_.Arm();' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \

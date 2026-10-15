@@ -8,13 +8,15 @@ source "$SCRIPT_DIR/common.sh"
 CLEAN=0
 BENCH=0
 KEEP_AWAKE=0
+DISABLE_PLAYBACK_STOP=0
+DISABLE_STANDBY=0
 LANGUAGE="${MEMORIA_FIRMWARE_LANGUAGE:-zh-CN}"
 WAKE_WORD_MODEL="${MEMORIA_FIRMWARE_WAKE_WORD_MODEL:-}"
 NO_IDF_INSTALL=0
 
 usage() {
     cat <<'EOF'
-Usage: build.sh [--clean] [--bench] [--keep-awake] [--language LOCALE] [--wake-word MODEL|disabled] [--no-idf-install]
+Usage: build.sh [--clean] [--bench] [--keep-awake] [--disable-playback-stop] [--disable-standby-after-playback] [--language LOCALE] [--wake-word MODEL|disabled] [--no-idf-install]
 
 The product build uses zh-CN. Idle keyword wake stays off (tap only).
 The image still packages MultiNet6 so spoken 「停」 can arm during
@@ -23,7 +25,7 @@ image. The upstream build.py still performs the real merge-bin.
 
 --bench builds the test-rig image from the board's config.bench.json: the
 product build plus CONFIG_MEMORIA_BENCH_SERIAL (the USB console also answers
-`snap`, `status`, `pcmarm` and `pcmdump`, see TODOLIST M-2 and N-10). It is
+`snap`, `status`, `pcmarm`, `pcmdump` and `tone`, see TODOLIST M-2 and N-10). It is
 written next to the product artifacts as memoria-esp-vocat-bench-*.bin,
 carries a marker the firmware publisher refuses, and flash.sh flashes it only
 with --bench.
@@ -33,6 +35,10 @@ product build plus CONFIG_MEMORIA_KEEP_AWAKE. Chip deep sleep stays off so
 USB serial remains enumerated. The microphone stays closed until a screen
 tap or USB wake. Artifacts are memoria-esp-vocat-keep-awake-*.bin. The
 firmware publisher refuses them. Do not combine with --bench.
+
+--disable-playback-stop and --disable-standby-after-playback compile out one
+path on a --bench or --keep-awake image. Those images already set
+CONFIG_HEAP_POISONING_COMPREHENSIVE. The product image leaves both paths on.
 EOF
 }
 
@@ -41,6 +47,8 @@ while (($# > 0)); do
         --clean) CLEAN=1 ;;
         --bench) BENCH=1 ;;
         --keep-awake) KEEP_AWAKE=1 ;;
+        --disable-playback-stop) DISABLE_PLAYBACK_STOP=1 ;;
+        --disable-standby-after-playback) DISABLE_STANDBY=1 ;;
         --language) shift; (($# > 0)) || die "--language requires a value"; LANGUAGE="$1" ;;
         --wake-word) shift; (($# > 0)) || die "--wake-word requires a value"; WAKE_WORD_MODEL="$1" ;;
         --no-idf-install) NO_IDF_INSTALL=1 ;;
@@ -52,6 +60,9 @@ done
 
 if [[ "$BENCH" == 1 && "$KEEP_AWAKE" == 1 ]]; then
     die "pass only one of --bench and --keep-awake"
+fi
+if [[ ("$DISABLE_PLAYBACK_STOP" == 1 || "$DISABLE_STANDBY" == 1) && "$BENCH" != 1 && "$KEEP_AWAKE" != 1 ]]; then
+    die "bisect switches require --bench or --keep-awake so heap poisoning stays on"
 fi
 
 if [[ "$NO_IDF_INSTALL" == 1 ]]; then
@@ -84,7 +95,7 @@ artifact_name="$MEMORIA_BOARD_NAME"
 if [[ "$BENCH" == 1 ]]; then
     artifact_name="$MEMORIA_BOARD_NAME-bench"
     printf '%s\n' \
-        '*** BENCH BUILD: the USB console answers snap, status, pcmarm and pcmdump (CONFIG_MEMORIA_BENCH_SERIAL). ***' \
+        '*** BENCH BUILD: the USB console answers snap, status, pcmarm, pcmdump and tone (CONFIG_MEMORIA_BENCH_SERIAL). ***' \
         '*** For the test rig only: never publish it, never ship it. ***' >&2
 elif [[ "$KEEP_AWAKE" == 1 ]]; then
     artifact_name="$MEMORIA_BOARD_NAME-keep-awake"
@@ -101,10 +112,29 @@ build_args=(
     --name "$MEMORIA_BOARD_NAME"
     --language "$LANGUAGE"
 )
+board_dir="$MEMORIA_UPSTREAM_DIR/main/boards/$MEMORIA_BOARD_PATH"
+config_name="config.json"
 if [[ "$BENCH" == 1 ]]; then
-    build_args+=(--config config.bench.json)
+    config_name="config.bench.json"
 elif [[ "$KEEP_AWAKE" == 1 ]]; then
-    build_args+=(--config config.keep-awake.json)
+    config_name="config.keep-awake.json"
+fi
+if [[ "$DISABLE_PLAYBACK_STOP" == 1 || "$DISABLE_STANDBY" == 1 ]]; then
+    bisect_config="$board_dir/config.bisect.json"
+    compose=( "$python_bin" "$SCRIPT_DIR/compose_bisect_config.py" "$board_dir/$config_name" "$bisect_config" )
+    if [[ "$DISABLE_PLAYBACK_STOP" == 1 ]]; then
+        compose+=(--disable-playback-stop)
+        artifact_name="${artifact_name}-no-stop"
+    fi
+    if [[ "$DISABLE_STANDBY" == 1 ]]; then
+        compose+=(--disable-standby-after-playback)
+        artifact_name="${artifact_name}-no-standby"
+    fi
+    "${compose[@]}"
+    config_name="config.bisect.json"
+fi
+if [[ "$config_name" != "config.json" ]]; then
+    build_args+=(--config "$config_name")
 fi
 if [[ -n "$WAKE_WORD_MODEL" ]]; then
     build_args+=(--wake-word "$WAKE_WORD_MODEL")
@@ -134,6 +164,20 @@ if [[ "$KEEP_AWAKE" == 1 && "$built_keep_awake" != 1 ]]; then
 fi
 if [[ "$KEEP_AWAKE" != 1 && "$built_keep_awake" == 1 ]]; then
     die "product build carries CONFIG_MEMORIA_KEEP_AWAKE=y; the keep-awake switch must stay out of config.json"
+fi
+if [[ "$DISABLE_PLAYBACK_STOP" == 1 ]]; then
+    grep -q '^# CONFIG_MEMORIA_PLAYBACK_STOP is not set$' "$sdkconfig_file" || \
+        die "bisect build requested, but sdkconfig still enables CONFIG_MEMORIA_PLAYBACK_STOP"
+else
+    grep -q '^CONFIG_MEMORIA_PLAYBACK_STOP=y$' "$sdkconfig_file" || \
+        die "sdkconfig lacks CONFIG_MEMORIA_PLAYBACK_STOP=y; the product path must stay on"
+fi
+if [[ "$DISABLE_STANDBY" == 1 ]]; then
+    grep -q '^# CONFIG_MEMORIA_STANDBY_AFTER_PLAYBACK is not set$' "$sdkconfig_file" || \
+        die "bisect build requested, but sdkconfig still enables CONFIG_MEMORIA_STANDBY_AFTER_PLAYBACK"
+else
+    grep -q '^CONFIG_MEMORIA_STANDBY_AFTER_PLAYBACK=y$' "$sdkconfig_file" || \
+        die "sdkconfig lacks CONFIG_MEMORIA_STANDBY_AFTER_PLAYBACK=y; the product path must stay on"
 fi
 
 merged="$MEMORIA_UPSTREAM_DIR/build/merged-binary.bin"

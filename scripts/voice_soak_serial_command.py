@@ -25,6 +25,7 @@ with `--log FILE` (the logger's output) this client waits for it:
                                               the robot to say it armed
     pcmdump --log robot.log [--out DIR]       stream the sealed recording, verify it and write one WAV per
                                               channel plus manifest.json (scripts/diag_pcm_extract.py)
+    tone                                      play a 1 kHz sine on a bench image and capture raw ES7210 slots
 
 Without `--log` the request is only sent and the answer is left in the log for scripts/snap_to_png.py,
 scripts/bench_status.py and scripts/diag_pcm_extract.py to read later.
@@ -49,7 +50,7 @@ import snap_to_png  # noqa: E402
 DEFAULT_PORT = "/dev/cu.usbmodem2101"
 
 # What the logger accepts on its socket. All but `ping` reach the robot; `ping` just proves the logger is alive.
-COMMANDS = ("wake", "snap", "status", "pcmarm", "pcmdump", "ping")
+COMMANDS = ("wake", "snap", "status", "pcmarm", "pcmdump", "tone", "ping")
 # The ones only a bench image answers.
 BENCH_COMMANDS = ("snap", "status", "pcmarm", "pcmdump")
 # Which commands each option belongs to.
