@@ -21,7 +21,11 @@ from services.common.llm_thinking import ThinkingMode
 def _provider_env(monkeypatch: pytest.MonkeyPatch, provider: str, *, deepseek_key: str) -> None:
     monkeypatch.setenv("LLM_PROVIDER", provider)
     monkeypatch.setenv("DASHSCOPE_API_KEY", "dashscope-test-key")
-    monkeypatch.setenv("DASHSCOPE_COMPATIBLE_BASE_URL", "https://dashscope.example.invalid/v1")
+    # qwen / bailian_deepseek validate Beijing-only; deepseek primary does not.
+    monkeypatch.setenv(
+        "DASHSCOPE_COMPATIBLE_BASE_URL",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    )
     monkeypatch.setenv("DEEPSEEK_API_KEY", deepseek_key)
     monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://deepseek.example.invalid")
     monkeypatch.setenv("DEEPSEEK_FAST_MODEL", "deepseek-flash")
@@ -61,7 +65,7 @@ def test_dashscope_providers_keep_each_classifier_on_its_own_qwen_model(
     close = build_close_intent_semantic_classifier(settings)
 
     assert live is not None and close is not None
-    base = ("dashscope-test-key", "https://dashscope.example.invalid/v1")
+    base = ("dashscope-test-key", "https://dashscope.aliyuncs.com/compatible-mode/v1")
     assert _endpoint(live._config) == (*base, "qwen-live", "dashscope")
     assert _endpoint(close._config) == (*base, "qwen-close", "dashscope")
 

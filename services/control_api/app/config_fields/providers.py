@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, model_validator
+
+from services.common.llm_failover import (
+    dashscope_endpoint_in_use,
+    normalize_dashscope_compatible_base_url,
+)
 
 
 class ProviderFields(BaseModel):
@@ -128,3 +133,13 @@ class ProviderFields(BaseModel):
         le=120.0,
         alias="DEEPSEEK_SUMMARY_TIMEOUT_S",
     )
+
+    @model_validator(mode="after")
+    def _beijing_dashscope_when_in_use(self) -> ProviderFields:
+        # Summaries/recaps and other control text calls use DashScope when the
+        # provider is qwen or bailian_deepseek. DeepSeek-only skips the check.
+        if dashscope_endpoint_in_use(llm_provider=self.llm_provider):
+            self.dashscope_base_url = normalize_dashscope_compatible_base_url(
+                self.dashscope_base_url
+            )
+        return self

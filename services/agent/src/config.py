@@ -14,6 +14,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from services.agent.src.contracts.errors import ConfigValidationError
 from services.common.llm_failover import (
     DASHSCOPE_CN_COMPATIBLE_BASE_URL,
+    dashscope_endpoint_in_use,
     normalize_dashscope_compatible_base_url,
 )
 
@@ -22,6 +23,7 @@ LLMProvider = Literal["qwen", "bailian_deepseek", "deepseek"]
 TTSProvider = Literal["doubao"]
 DEFAULT_LLM_BACKUP_MODEL = "qwen3.8-flash"
 DEFAULT_LLM_FIRST_TOKEN_TIMEOUT_S = 5.0
+DEFAULT_LLM_INTER_TOKEN_TIMEOUT_S = 8.0
 
 SELF_HOSTED_ENDPOINTING_MIN_DELAY_S = 1.50
 SELF_HOSTED_ENDPOINTING_MAX_DELAY_S = 2.20
@@ -248,6 +250,12 @@ class AgentSettings(BaseSettings):
         gt=0.0,
         le=60.0,
         alias="LLM_FIRST_TOKEN_TIMEOUT_S",
+    )
+    llm_inter_token_timeout_s: float = Field(
+        default=DEFAULT_LLM_INTER_TOKEN_TIMEOUT_S,
+        gt=0.0,
+        le=120.0,
+        alias="LLM_INTER_TOKEN_TIMEOUT_S",
     )
     llm_backup_model: str = Field(
         default=DEFAULT_LLM_BACKUP_MODEL,
@@ -528,11 +536,6 @@ class AgentSettings(BaseSettings):
             return configured
         return self.archive_internal_token.get_secret_value()
 
-    @field_validator("dashscope_compatible_base_url")
-    @classmethod
-    def _dashscope_cn_base_url(cls, v: str) -> str:
-        return normalize_dashscope_compatible_base_url(v)
-
     @field_validator("llm_backup_model")
     @classmethod
     def _backup_model_id(cls, v: str) -> str:
@@ -577,6 +580,13 @@ class AgentSettings(BaseSettings):
             raise ValueError(
                 "LLM_FAILOVER_ENABLED requires DASHSCOPE_API_KEY for the "
                 "China North 2 (Beijing) backup endpoint"
+            )
+        if dashscope_endpoint_in_use(
+            llm_provider=self.llm_provider,
+            llm_failover_enabled=self.llm_failover_enabled,
+        ):
+            self.dashscope_compatible_base_url = normalize_dashscope_compatible_base_url(
+                self.dashscope_compatible_base_url
             )
         if self.doubao_tts_resource_id != "seed-tts-2.0":
             raise ValueError("DOUBAO_TTS_RESOURCE_ID must be seed-tts-2.0")

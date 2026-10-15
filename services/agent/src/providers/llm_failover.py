@@ -1,11 +1,13 @@
-"""Primary→backup chat failover with a first-token deadline.
+"""Primary→backup chat failover with first-token and inter-token deadlines.
 
 When enabled, one turn tries the primary model first. If no visible content
 arrives before ``first_token_timeout_s``, that attempt is closed and the same
-messages are retried on the backup. Both endpoints receive identical messages
-and thinking-disabled extra_body fields. Backup text is gated by product
-forbidden-copy before it is yielded. When both attempts fail, raise
-``LlmUnavailableError``.
+messages are retried on the backup. After the first content token, a stall of
+``inter_token_timeout_s`` without a new chunk ends the turn with
+``LlmUnavailableError`` and does **not** call the backup (no mid-sentence
+stitch). Backup text is gated by product forbidden-copy before it is yielded.
+When both pre-content attempts fail, or a mid-stream stall/error occurs after
+content was already yielded, raise ``LlmUnavailableError``.
 """
 
 from __future__ import annotations
@@ -27,10 +29,10 @@ ProviderRole = Literal["primary", "backup"]
 
 
 class LlmUnavailableError(APIConnectionError):
-    """Both primary and backup chat endpoints failed before usable content."""
+    """Chat unavailable: both pre-content attempts failed, or a mid-stream stall."""
 
-    def __init__(self) -> None:
-        super().__init__("llm unavailable after primary and backup attempts", retryable=False)
+    def __init__(self, message: str = "llm unavailable after primary and backup attempts") -> None:
+        super().__init__(message, retryable=False)
 
 
 @dataclass(slots=True)
@@ -48,12 +50,16 @@ class FailoverChatModel:
         primary: Any,
         backup: Any,
         first_token_timeout_s: float,
+        inter_token_timeout_s: float,
     ) -> None:
         if first_token_timeout_s <= 0:
             raise ValueError("first_token_timeout_s must be positive")
+        if inter_token_timeout_s <= 0:
+            raise ValueError("inter_token_timeout_s must be positive")
         self._primary = FailoverEndpoint("primary", primary)
         self._backup = FailoverEndpoint("backup", backup)
         self._first_token_timeout_s = first_token_timeout_s
+        self._inter_token_timeout_s = inter_token_timeout_s
         self.last_active_role: ProviderRole | None = None
 
     @property
@@ -134,25 +140,46 @@ class FailoverChatStream:
 
     async def _run(self) -> AsyncGenerator[ChatChunk, None]:
         primary_error: BaseException | None = None
+        content_started = False
         try:
             async for chunk in self._attempt(self._owner._primary, apply_forbidden_copy=False):
+                content_started = True
                 yield chunk
             return
         except (asyncio.CancelledError, GeneratorExit):
             raise
         except BaseException as exc:
+            if content_started:
+                logger.warning(
+                    "llm primary mid-stream failure; ending turn without backup stitch "
+                    "error_type=%s",
+                    type(exc).__name__,
+                )
+                raise LlmUnavailableError(
+                    "llm unavailable after mid-stream stall or error"
+                ) from exc
             primary_error = exc
             logger.warning(
                 "llm primary attempt failed; retrying on backup error_type=%s",
                 type(exc).__name__,
             )
+        backup_content_started = False
         try:
             async for chunk in self._attempt(self._owner._backup, apply_forbidden_copy=True):
+                backup_content_started = True
                 yield chunk
             return
         except (asyncio.CancelledError, GeneratorExit):
             raise
         except BaseException as backup_error:
+            if backup_content_started:
+                logger.warning(
+                    "llm backup mid-stream failure error_type=%s",
+                    type(backup_error).__name__,
+                )
+                raise LlmUnavailableError(
+                    "llm unavailable after mid-stream stall or error"
+                ) from backup_error
             logger.warning(
                 "llm backup attempt failed error_type=%s primary_error_type=%s",
                 type(backup_error).__name__,
@@ -172,11 +199,11 @@ class FailoverChatStream:
             apply_forbidden_copy=apply_forbidden_copy,
         )
         first_content = False
-        deadline = asyncio.get_running_loop().time() + self._owner._first_token_timeout_s
+        first_deadline = asyncio.get_running_loop().time() + self._owner._first_token_timeout_s
         try:
             while True:
                 if not first_content:
-                    remaining = deadline - asyncio.get_running_loop().time()
+                    remaining = first_deadline - asyncio.get_running_loop().time()
                     if remaining <= 0:
                         raise APIConnectionError(
                             f"{endpoint.role} first token timeout",
@@ -199,9 +226,17 @@ class FailoverChatStream:
                         ) from exc
                 else:
                     try:
-                        chunk = await iterator.__anext__()
+                        chunk = await asyncio.wait_for(
+                            iterator.__anext__(),
+                            timeout=self._owner._inter_token_timeout_s,
+                        )
                     except StopAsyncIteration:
                         return
+                    except TimeoutError as exc:
+                        raise APIConnectionError(
+                            f"{endpoint.role} inter-token stall",
+                            retryable=False,
+                        ) from exc
                 text = _chunk_text(chunk)
                 if text:
                     first_content = True

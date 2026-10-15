@@ -1184,7 +1184,8 @@ class MediaOutputStreamMixin:
             context.output.assistant_text.strip()
             or context.output.playback.actual_heard_text(fence).strip()
         )
-        if assistant_text != LLM_UNAVAILABLE_TEXT:
+        # Mid-stream stall appends the fixed line after a partial reply.
+        if not assistant_text.endswith(LLM_UNAVAILABLE_TEXT):
             return
         request_standby = getattr(self, "_request_device_standby", None)
         if callable(request_standby):

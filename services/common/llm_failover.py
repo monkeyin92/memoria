@@ -22,6 +22,17 @@ _BLOCKED_DASHSCOPE_HOST_MARKERS: Final = (
     "dashscope-us",
     "dashscope-eu",
 )
+DASHSCOPE_LLM_PROVIDERS: Final = frozenset({"qwen", "bailian_deepseek"})
+
+
+def dashscope_endpoint_in_use(
+    *,
+    llm_provider: str,
+    llm_failover_enabled: bool = False,
+) -> bool:
+    """True when a configured path will call the DashScope compatible endpoint."""
+
+    return llm_failover_enabled or llm_provider in DASHSCOPE_LLM_PROVIDERS
 
 # Same words as apps/miniprogram forbidden-ui-copy (product dept).
 PRODUCT_FORBIDDEN_COPY: Final = frozenset(
@@ -71,12 +82,14 @@ def gate_backup_reply_copy(text: str) -> str:
 
 __all__ = [
     "DASHSCOPE_CN_COMPATIBLE_BASE_URL",
+    "DASHSCOPE_LLM_PROVIDERS",
     "LLM_UNAVAILABLE_AIGC",
     "LLM_UNAVAILABLE_LINE_ID",
     "LLM_UNAVAILABLE_STANDBY_REASON",
     "LLM_UNAVAILABLE_TEXT",
     "PRODUCT_FORBIDDEN_COPY",
     "backup_reply_passes_forbidden_copy",
+    "dashscope_endpoint_in_use",
     "gate_backup_reply_copy",
     "normalize_dashscope_compatible_base_url",
 ]

@@ -117,6 +117,7 @@ def build_language_model_handler(
         primary=primary,
         backup=backup,
         first_token_timeout_s=settings.llm_first_token_timeout_s,
+        inter_token_timeout_s=settings.llm_inter_token_timeout_s,
     )
 
 

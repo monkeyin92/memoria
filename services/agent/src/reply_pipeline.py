@@ -1637,16 +1637,18 @@ class ReplyPipeline:
                             )
                             break
             except LlmUnavailableError:
-                if realtime_request is not None or first_content_marked:
+                if realtime_request is not None:
                     raise
                 logger.warning(
-                    "llm unavailable after primary and backup session_id=%s "
-                    "turn_id=%s generation_id=%s",
+                    "llm unavailable session_id=%s turn_id=%s generation_id=%s "
+                    "partial_content=%s",
                     fence.session_id,
                     fence.turn_id,
                     fence.generation_id,
+                    first_content_marked,
                 )
-                self._runtime.mark_audio_event("llm_first_content_token")
+                if not first_content_marked:
+                    self._runtime.mark_audio_event("llm_first_content_token")
                 gated = self._runtime.gate_llm_token(cancellation, LLM_UNAVAILABLE_TEXT)
                 if gated is not None:
                     for segment in segmenter.push_token(gated):
