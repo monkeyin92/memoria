@@ -349,6 +349,43 @@ class BoundSubjectConsentService:
             revoked += 1
         return revoked
 
+    async def _guardian_session_chains(
+        self, *, actor_person_id: str, subject_person_id: str, binding_id: str
+    ) -> list[ConsentEvidence]:
+        """This guardian's live minor-session consents on the binding.
+
+        ``LookupError`` when the actor holds none (no guardian offer was
+        accepted, or someone else granted it).
+        """
+
+        binding = await self._identity.get_binding(binding_id, actor_person_id=actor_person_id)
+        chains = [
+            chain
+            for chain in await self.active(
+                subject_person_id=subject_person_id,
+                binding_id=binding.binding_id,
+                binding_version=binding.binding_version,
+            )
+            if chain.actor_id == actor_person_id
+            and chain.actor_kind == "guardian"
+            and chain.capability in MINOR_SESSION_CAPABILITIES
+        ]
+        if not chains:
+            raise LookupError("no guardian session consent on this binding")
+        return chains
+
+    async def session_limits(
+        self, *, actor_person_id: str, subject_person_id: str, binding_id: str
+    ) -> ConsentParams:
+        """The session length and quiet hours ``update_session_limits`` last wrote."""
+
+        chains = await self._guardian_session_chains(
+            actor_person_id=actor_person_id,
+            subject_person_id=subject_person_id,
+            binding_id=binding_id,
+        )
+        return chains[0].params
+
     async def update_session_limits(
         self,
         *,
@@ -367,20 +404,11 @@ class BoundSubjectConsentService:
         (no guardian offer was accepted, or someone else granted it).
         """
 
-        binding = await self._identity.get_binding(binding_id, actor_person_id=actor_person_id)
-        chains = [
-            chain
-            for chain in await self.active(
-                subject_person_id=subject_person_id,
-                binding_id=binding.binding_id,
-                binding_version=binding.binding_version,
-            )
-            if chain.actor_id == actor_person_id
-            and chain.actor_kind == "guardian"
-            and chain.capability in MINOR_SESSION_CAPABILITIES
-        ]
-        if not chains:
-            raise LookupError("no guardian session consent on this binding")
+        chains = await self._guardian_session_chains(
+            actor_person_id=actor_person_id,
+            subject_person_id=subject_person_id,
+            binding_id=binding_id,
+        )
         # Only the two limits change; any other param the grant carries stays.
         current = chains[0].params
         params = replace(
@@ -394,7 +422,7 @@ class BoundSubjectConsentService:
             BoundSubjectGrant(
                 actor_person_id=actor_person_id,
                 subject_person_id=subject_person_id,
-                binding_id=binding.binding_id,
+                binding_id=binding_id,
                 kind="guardian",
                 capabilities=MINOR_SESSION_CAPABILITIES,
                 source_key=f"limits:{self._now().isoformat()}",

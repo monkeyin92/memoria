@@ -957,6 +957,76 @@ class SessionLimitsRequest(BaseModel):
     quiet_hours: QuietHoursRequest | None = None
 
 
+class SessionLimitsView(BaseModel):
+    """What the guardian set, in the shape PUT accepts, plus a usage slot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_session_minutes: int | None
+    quiet_hours: QuietHoursRequest | None
+    #: Always null. Nothing tallies minutes per day, and the device enforces
+    #: MAX_SESSION_SECONDS one session at a time.
+    today_used_minutes: None = None
+
+
+async def _session_limits_binding(
+    request: Request, *, device_id: str, user_id: str, now: datetime
+) -> BindingManifest:
+    """The parent_for_child binding whose limits this owner or admin may read or replace."""
+
+    try:
+        manifest = await _runtime(request).require_binding_member(
+            device_id=device_id, user_id=user_id, now=now
+        )
+    except IdentityAccessDeniedError as exc:
+        raise _binding_forbidden() from exc
+    except IdentityNotFoundError as exc:
+        raise _binding_not_found() from exc
+    if user_id not in {manifest.account_owner_id, *manifest.device_admin_ids}:
+        raise _binding_forbidden()
+    if manifest.declared_mode != "parent_for_child" or len(manifest.primary_subject_ids) != 1:
+        raise HTTPException(status_code=409, detail={"code": "session_limits_not_applicable"})
+    return manifest
+
+
+@router.get("/v1/devices/{device_id}/session-limits", response_model=SessionLimitsView)
+async def get_device_session_limits(
+    device_id: str,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+) -> SessionLimitsView:
+    service = cast(
+        BoundSubjectConsentService | None,
+        getattr(request.app.state, "bound_subject_consent", None),
+    )
+    if service is None:
+        raise HTTPException(status_code=409, detail={"code": "session_limits_unavailable"})
+    manifest = await _session_limits_binding(
+        request, device_id=device_id, user_id=user.user_id, now=datetime.now(UTC)
+    )
+    try:
+        params = await service.session_limits(
+            actor_person_id=user.user_id,
+            subject_person_id=manifest.primary_subject_ids[0],
+            binding_id=manifest.binding_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=409, detail={"code": "session_limits_not_applicable"}
+        ) from exc
+    except IdentityAccessDeniedError as exc:
+        raise _binding_forbidden() from exc
+    except IdentityNotFoundError as exc:
+        raise _binding_not_found() from exc
+    quiet = params.quiet_hours
+    return SessionLimitsView(
+        max_session_minutes=(
+            None if params.max_session_seconds is None else params.max_session_seconds // 60
+        ),
+        quiet_hours=None if quiet is None else QuietHoursRequest(start=quiet[0], end=quiet[1]),
+    )
+
+
 @router.put("/v1/devices/{device_id}/session-limits")
 async def set_device_session_limits(
     device_id: str,
@@ -979,18 +1049,9 @@ async def set_device_session_limits(
     control = _runtime(request)
     if service is None or not isinstance(control, PostgresMultiSubjectRuntimeControl):
         raise HTTPException(status_code=409, detail={"code": "session_limits_unavailable"})
-    try:
-        manifest = await control.require_binding_member(
-            device_id=device_id, user_id=user.user_id, now=now
-        )
-    except IdentityAccessDeniedError as exc:
-        raise _binding_forbidden() from exc
-    except IdentityNotFoundError as exc:
-        raise _binding_not_found() from exc
-    if user.user_id not in {manifest.account_owner_id, *manifest.device_admin_ids}:
-        raise _binding_forbidden()
-    if manifest.declared_mode != "parent_for_child" or len(manifest.primary_subject_ids) != 1:
-        raise HTTPException(status_code=409, detail={"code": "session_limits_not_applicable"})
+    manifest = await _session_limits_binding(
+        request, device_id=device_id, user_id=user.user_id, now=now
+    )
     quiet = body.quiet_hours
     quiet_hours = (
         (quiet.start, quiet.end) if quiet is not None and quiet.start != quiet.end else None
