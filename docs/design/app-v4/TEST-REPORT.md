@@ -106,7 +106,7 @@ The session-limits and stories change redraws 03-home and 06-usage, and only tho
 
 01-login scores its floor, so its bands are drift in the hero image and the type. On every other screen the bands above 0.2 line up with one of the data, copy or structure differences listed under its image. Each pair was also read by eye.
 
-07-content has no live page. It is a story catalogue with play buttons, and the app has no story list or story data, so a mapped page would need invented stories.
+07-content has no live page. It is a story catalogue with play buttons. The device page lists the three firmware titles under 离线故事, and the app cannot play a clip from the phone, so a mapped 07-content page would still need play UI the API does not offer.
 
 ### 01-login
 

@@ -113,6 +113,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             not _APP_POSTGRES
             and any(root in str(item.path) for root in _APP_POSTGRES_ROOTS)
             and item.get_closest_marker("sqlite_only") is None
+            and item.get_closest_marker("hermetic") is None
         ):
             item.add_marker(skip_app)
 
