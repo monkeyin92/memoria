@@ -88,6 +88,7 @@ from services.agent.tests.unit.media_session_support import (
 )
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
 from services.agent.tests.unit.runtime_state_helpers import set_floor
+from services.common.llm_thinking_filler import LLM_THINKING_TEXT
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -3837,7 +3838,7 @@ async def test_answer_still_delivered_after_same_turn_generation_bump() -> None:
             media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT,
         ]
         assert LIVE_LOOKUP_FILLER in provider.output_texts
-        assert BRIDGE_PHRASES[4] not in provider.output_texts
+        assert LLM_THINKING_TEXT not in provider.output_texts
         claim = context.output.delegation_output_claims.get(fence)
         assert claim is not None
         assert claim.state is DelegationOutputState.COMPLETED
