@@ -684,14 +684,86 @@ def test_story_03_title_renamed() -> None:
     assert "一只会听的熊" not in script
 
 
-def test_device_ogg_aigc_check_passes_on_board_pack() -> None:
+def _run_device_ogg_aigc_check(assets_root: pathlib.Path) -> subprocess.CompletedProcess[str]:
     script = FIRMWARE_ROOT / "scripts" / "check_device_ogg_aigc.py"
-    completed = subprocess.run(
-        ["python3", str(script), "--assets-root", str(BOARD_ASSETS)],
+    return subprocess.run(
+        ["python3", str(script), "--assets-root", str(assets_root)],
         check=False,
         capture_output=True,
         text=True,
     )
+
+
+def _retag_board_ogg(
+    root: pathlib.Path,
+    rel: str,
+    *,
+    service_provider: str,
+    artist: str,
+    voice_id: str,
+) -> None:
+    import sys
+
+    repo = BUILD_SCRIPT.resolve().parents[3]
+    if str(repo) not in sys.path:
+        sys.path.insert(0, str(repo))
+    from services.common.aigc_opus import CANONICAL_AI_GENERATED, rewrite_opus_comments
+
+    path = root / rel
+    stem = path.stem
+    tagged = rewrite_opus_comments(
+        path.read_bytes(),
+        aigc={
+            "CONTENT_ID": stem,
+            "SERVICE_PROVIDER": service_provider,
+            "AI_GENERATED": CANONICAL_AI_GENERATED,
+            "ARTIST": artist,
+            "VOICE_ID": voice_id,
+            "DATE": "2026-10-15",
+            "CONTENT_PRODUCER": "Memoria",
+        },
+    )
+    path.write_bytes(tagged)
+
+
+def test_device_ogg_aigc_check_passes_on_board_pack() -> None:
+    completed = _run_device_ogg_aigc_check(BOARD_ASSETS)
     assert completed.returncode == 0, completed.stderr
     assert "checked_oggs=29" in completed.stdout
+    assert "canonical_service_provider=Volcengine Doubao" in completed.stdout
     assert completed.stderr == ""
+
+
+def test_device_ogg_aigc_check_rejects_wrong_service_provider(
+    tmp_path: pathlib.Path,
+) -> None:
+    root = tmp_path / "assets"
+    shutil.copytree(BOARD_ASSETS, root)
+    _retag_board_ogg(
+        root,
+        "offline_lines/llm_thinking.ogg",
+        service_provider="Memoria",
+        artist="zh_female_tianmeitaozi_uranus_bigtts",
+        voice_id="zh_female_tianmeitaozi_uranus_bigtts",
+    )
+    completed = _run_device_ogg_aigc_check(root)
+    assert completed.returncode == 1
+    assert "SERVICE_PROVIDER must be 'Volcengine Doubao'" in completed.stderr
+    assert "got 'Memoria'" in completed.stderr
+
+
+def test_device_ogg_aigc_check_rejects_artist_ne_voice_id(tmp_path: pathlib.Path) -> None:
+    root = tmp_path / "assets"
+    shutil.copytree(BOARD_ASSETS, root)
+    _retag_board_ogg(
+        root,
+        "offline_lines/llm_thinking.ogg",
+        service_provider="Volcengine Doubao",
+        artist="other_voice",
+        voice_id="zh_female_tianmeitaozi_uranus_bigtts",
+    )
+    completed = _run_device_ogg_aigc_check(root)
+    assert completed.returncode == 1
+    assert "ARTIST must equal VOICE_ID" in completed.stderr
+    assert "ARTIST='other_voice'" in completed.stderr
+    assert "VOICE_ID='zh_female_tianmeitaozi_uranus_bigtts'" in completed.stderr

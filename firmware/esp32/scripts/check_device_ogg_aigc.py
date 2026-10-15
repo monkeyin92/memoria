@@ -2,8 +2,10 @@
 """Decode every board-asset Ogg and require the full implicit AIGC OpusTags set.
 
 Fails CI when any ``*.ogg`` under the Memoria ESP-VoCat assets tree cannot
-decode through ffmpeg, or is missing any of CONTENT_ID, SERVICE_PROVIDER,
-AI_GENERATED, ARTIST, VOICE_ID, DATE, CONTENT_PRODUCER.
+decode through ffmpeg, is missing any of CONTENT_ID, SERVICE_PROVIDER,
+AI_GENERATED, ARTIST, VOICE_ID, DATE, CONTENT_PRODUCER, has a
+SERVICE_PROVIDER other than ``CANONICAL_SERVICE_PROVIDER``, or has
+ARTIST != VOICE_ID.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from services.common.aigc_opus import (  # noqa: E402
+    CANONICAL_SERVICE_PROVIDER,
     IMPLICIT_AIGC_TAG_KEYS,
     pcm_digest,
     require_aigc_tags,
@@ -51,11 +54,23 @@ def check_assets(root: Path) -> int:
             errors.append(f"{rel} decode failed: {exc}")
             continue
         try:
-            require_aigc_tags(blob[:65536], content_id=path.stem, implicit=True)
+            tags = require_aigc_tags(blob[:65536], content_id=path.stem, implicit=True)
         except ValueError as exc:
             errors.append(f"{rel} missing AIGC tags: {exc}")
+            continue
+        if tags["service_provider"] != CANONICAL_SERVICE_PROVIDER:
+            errors.append(
+                f"{rel} SERVICE_PROVIDER must be {CANONICAL_SERVICE_PROVIDER!r}, "
+                f"got {tags['service_provider']!r}"
+            )
+        if tags["artist"] != tags["voice_id"]:
+            errors.append(
+                f"{rel} ARTIST must equal VOICE_ID, "
+                f"got ARTIST={tags['artist']!r} VOICE_ID={tags['voice_id']!r}"
+            )
     print(f"checked_oggs={len(oggs)}")
     print(f"required_tags={','.join(IMPLICIT_AIGC_TAG_KEYS)}")
+    print(f"canonical_service_provider={CANONICAL_SERVICE_PROVIDER}")
     for message in errors:
         print(f"error: {message}", file=sys.stderr)
     return 1 if errors else 0
