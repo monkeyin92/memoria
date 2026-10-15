@@ -1,10 +1,3 @@
-"""Voice-clone kill switch and the only reader and writer of consent rows.
-
-A consent authorizes cloning only when it is unrevoked and its notice version
-is on the current allowlist. Revocation and provider deletion take no admission,
-so erasure still runs while the switch is off.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -23,12 +16,6 @@ ConsentStanding = Literal["valid", "absent", "revoked", "notice_required"]
 
 
 class VoiceCloneDisabledError(PermissionError):
-    """``VOICE_CLONE_ENABLED`` is false.
-
-    Distinct from ``VoiceConsentRequiredError`` so a caller can tell a closed
-    switch from an account that has not consented.
-    """
-
     code: Final = "voice_clone_disabled"
 
     def __init__(self) -> None:
@@ -37,8 +24,6 @@ class VoiceCloneDisabledError(PermissionError):
 
 @final
 class CloneAdmission:
-    """Notice stamp issued only by ``VoiceCloneAuthority.admit``."""
-
     __slots__ = ("notice_version",)
 
     def __init__(self, seal: object, notice_version: str) -> None:
@@ -53,16 +38,12 @@ class VoiceCloneAuthority:
     enabled: bool
 
     def admit(self) -> CloneAdmission:
-        """Admit one clone-creating step, before any database or network IO."""
-
         if not self.enabled:
             raise VoiceCloneDisabledError
         return CloneAdmission(_SEAL, _CURRENT_NOTICE)
 
 
 def consent_standing(consent: VoiceConsent | None) -> ConsentStanding:
-    """Whether this consent authorizes a clone. Revocation wins over the notice."""
-
     if consent is None:
         return "absent"
     if consent.revoked_at is not None:
@@ -100,8 +81,6 @@ async def load_consent(
     *,
     for_update: bool = False,
 ) -> VoiceConsent | None:
-    """The account's consent row, inside the caller's scoped transaction."""
-
     suffix = " FOR UPDATE" if for_update else ""
     row = await connection.fetchrow(
         "SELECT * FROM voice_clone_consents WHERE account_id = $1" + suffix,
@@ -118,8 +97,6 @@ async def require_clone_consent(
     *,
     for_update: bool = False,
 ) -> VoiceConsent:
-    """The consent when it authorizes cloning. The message names the standing."""
-
     consent = await load_consent(connection, account_id, for_update=for_update)
     standing = consent_standing(consent)
     if standing != "valid":
@@ -147,11 +124,6 @@ async def record_grant(
     event_id: str,
     granted_at: datetime,
 ) -> VoiceConsent:
-    """Upsert the account row stamped with ``admission.notice_version``.
-
-    A re-grant clears revocation and restamps the notice.
-    """
-
     row = await connection.fetchrow(
         """
         INSERT INTO voice_clone_consents (
@@ -183,8 +155,6 @@ async def record_revocation(
     event_id: str,
     revoked_at: datetime,
 ) -> None:
-    """Mark the row revoked. No admission, so this stays open while cloning is off."""
-
     await connection.execute(
         """
         UPDATE voice_clone_consents

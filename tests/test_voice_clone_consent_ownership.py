@@ -1,5 +1,3 @@
-"""One module writes and reads voice-clone consent rows."""
-
 from __future__ import annotations
 
 import re

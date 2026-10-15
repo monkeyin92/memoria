@@ -1,5 +1,3 @@
-"""Clone-creating calls refuse before any database, object-store, or provider IO."""
-
 from __future__ import annotations
 
 import inspect
@@ -122,7 +120,6 @@ def _manager(*, enabled: bool) -> tuple[PostgresVoiceProfileManager, _RecordingP
 
 
 def _request() -> VoiceEnrollmentRequest:
-    # Undecodable bytes. A late admission would fail sample validation instead.
     return VoiceEnrollmentRequest(
         account_id="acct",
         audio=b"nope",

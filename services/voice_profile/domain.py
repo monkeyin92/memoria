@@ -130,7 +130,6 @@ class ProviderVoiceDeletionUnsupportedError(RuntimeError):
 class VoiceConsent:
     account_id: str
     policy_version: str
-    #: Separate-notice stamp. ``clone_authority.consent_standing`` decides if it counts.
     notice_version: str
     granted_at: datetime
     revoked_at: datetime | None = None

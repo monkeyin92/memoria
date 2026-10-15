@@ -1,5 +1,3 @@
-"""Consent notice column, kill switch, and erasure against PostgreSQL."""
-
 from __future__ import annotations
 
 import uuid
@@ -84,7 +82,7 @@ def _manager(
 ) -> PostgresVoiceProfileManager:
     return PostgresVoiceProfileManager(
         database.role_dsn("memoria_app"),
-        object_store=store,  # type: ignore[arg-type]
+        object_store=store,
         provider=provider,
         sample_url_factory=_sample_url,
         provider_region="cn-beijing",

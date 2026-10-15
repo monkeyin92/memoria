@@ -1,5 +1,3 @@
-"""Standing rule and admission seal, with no database."""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime

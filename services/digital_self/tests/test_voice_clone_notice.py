@@ -1,5 +1,3 @@
-"""A pre-notice voice-clone consent does not enter the digital-self manifest."""
-
 from __future__ import annotations
 
 import uuid
@@ -137,7 +135,7 @@ async def test_manifest_omits_a_clone_until_the_separate_notice_is_granted(
 
         manager = PostgresVoiceProfileManager(
             dsn,
-            object_store=_UnusedStore(),  # type: ignore[arg-type]
+            object_store=_UnusedStore(),
             provider=_UnusedProvider(),
             sample_url_factory=lambda sample_id: f"https://samples.example/{sample_id}",
             provider_region="cn-beijing",

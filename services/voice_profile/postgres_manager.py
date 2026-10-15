@@ -1240,8 +1240,6 @@ class PostgresVoiceProfileManager:
         ):
             raise ValueError("exactly one enrollment reconciliation outcome is required")
         if provider_voice is not None:
-            # Recording a supplied provider voice creates clone material.
-            # Unwinding an ambiguous upload does not, and stays available while cloning is off.
             self._clone.admit()
         operation = await self._operation(
             account_id=account_id,

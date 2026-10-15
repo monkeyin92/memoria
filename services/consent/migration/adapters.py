@@ -84,7 +84,6 @@ class VoiceCloneConsentRow:
     revoked_at: datetime | None
     grant_event_id: str
     revoke_event_id: str | None
-    #: Separate-notice stamp. Empty does not authorize a clone.
     notice_version: str = ""
 
 

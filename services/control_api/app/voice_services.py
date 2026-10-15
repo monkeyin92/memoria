@@ -1,5 +1,3 @@
-"""Voice-profile wiring for control API. One clone authority for the process."""
-
 from __future__ import annotations
 
 import base64
