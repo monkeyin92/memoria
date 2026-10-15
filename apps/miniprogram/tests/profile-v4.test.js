@@ -109,13 +109,19 @@ test("帮助与反馈 is WeChat's native feedback button", () => {
   );
 });
 
-test("关于 shows the release version, or the build channel before release", async () => {
+test("关于 names the filed chat model and the release version, or the build channel before release", async () => {
   const develop = await openProfile(fx.authed());
   try {
     develop.page.openAbout();
     assert.deepEqual(callsTo(develop, "showModal"), [
-      { title: "关于 Memoria", content: "陪孩子聊天、讲故事的 AI 助手。\n开发版", showCancel: false, confirmText: "知道了" },
+      {
+        title: "关于 Memoria",
+        content: "陪孩子聊天、讲故事的 AI 助手。\n对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）\n开发版",
+        showCancel: false,
+        confirmText: "知道了",
+      },
     ]);
+    assert.doesNotMatch(callsTo(develop, "showModal")[0].content, /qwen|通义|千问/i);
   } finally {
     develop.restore();
   }
@@ -126,7 +132,10 @@ test("关于 shows the release version, or the build channel before release", as
   try {
     assert.match(profileText(release), / 版本 1\.4\.0$/);
     release.page.openAbout();
-    assert.equal(callsTo(release, "showModal")[0].content, "陪孩子聊天、讲故事的 AI 助手。\n版本 1.4.0");
+    assert.equal(
+      callsTo(release, "showModal")[0].content,
+      "陪孩子聊天、讲故事的 AI 助手。\n对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）\n版本 1.4.0",
+    );
   } finally {
     release.restore();
   }

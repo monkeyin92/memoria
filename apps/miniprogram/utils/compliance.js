@@ -8,6 +8,7 @@ const PRODUCT_POSITIONING =
 const AI_DISCLOSURE =
   "设备回应由人工智能生成，会在交互中明确标识。";
 const TRAINING_DEFAULT_OFF = "你的对话与声音默认不用于模型训练。";
+const CHAT_MODEL_FILING = "对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）";
 const MINOR_RESTRICTIONS =
   "未成年人账号不提供虚拟亲属或伴侣角色，敏感能力由服务端按主体授权。";
 
@@ -65,6 +66,7 @@ module.exports = {
   PRODUCT_POSITIONING,
   AI_DISCLOSURE,
   TRAINING_DEFAULT_OFF,
+  CHAT_MODEL_FILING,
   MINOR_RESTRICTIONS,
   startForegroundSession,
   endForegroundSession,
