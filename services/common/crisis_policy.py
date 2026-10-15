@@ -81,6 +81,7 @@ def route_crisis(
     """Resolve evidence without allowing a model verdict to execute an action alone."""
 
     deterministic = companion_safety_decision(query)
+    # Annotation only: cue word required, and never set on a none route.
     story = is_story_retell_context(query)
     if deterministic in _DETERMINISTIC_ROUTES:
         return _route(

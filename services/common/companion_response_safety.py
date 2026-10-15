@@ -32,11 +32,8 @@ AFTER_FIXED_SAFETY_SESSION_INSTRUCTION: Final = (
     "本会话已经对用户说过固定安全话术。不要继续讨论或追问刚才的安全话题；"
     "若用户再次提出同类自伤、受害或转述他人危险的求助，系统会再次给出同一句固定话术，你不要另写。"
 )
-_STORY_RETELL_FRAME_RE = re.compile(
-    r"(?:故事|绘本|动画片|童话|神话)|"
-    r"老师讲|"
-    r"哪吒"
-)
+# Cue words only. A crisis without one of these never gets the retell pin note.
+_STORY_RETELL_FRAME_RE = re.compile(r"(?:故事|绘本|动画片|童话|神话|哪吒)")
 
 
 def guardian_attention_copy(*, possibly_story_retell: bool = False) -> str:
@@ -48,7 +45,7 @@ def guardian_attention_copy(*, possibly_story_retell: bool = False) -> str:
 
 
 def is_story_retell_context(query: str) -> bool:
-    """True when the utterance is framed as story / cartoon / picture-book retelling."""
+    """True only when the utterance contains an explicit story-medium cue word."""
 
     return _STORY_RETELL_FRAME_RE.search(query) is not None
 

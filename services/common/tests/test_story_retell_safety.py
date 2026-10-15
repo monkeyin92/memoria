@@ -134,8 +134,53 @@ def test_ordinary_parent_pin_copy_has_no_story_note() -> None:
     assert "复述故事" not in guardian_attention_copy(possibly_story_retell=False)
 
 
-def test_non_story_self_harm_is_not_annotated_as_retell() -> None:
-    route = route_crisis("我不想活了")
+def test_plain_crisis_self_is_not_marked_as_story_retell() -> None:
+    """「我不想活了」 must crisis-route and must not get the retell pin note."""
+
+    query = "我不想活了"
+    assert companion_safety_decision(query) == "crisis_self"
+    route = route_crisis(query)
     assert route.script is CRISIS_SELF_SCRIPT
+    assert route.action == "crisis_support"
     assert route.possibly_story_retell is False
-    assert is_story_retell_context("我不想活了") is False
+    assert is_story_retell_context(query) is False
+    assert "复述故事" not in guardian_attention_copy(possibly_story_retell=False)
+
+
+@pytest.mark.parametrize(
+    "query",
+    (
+        "我刚才听的故事里，坏人把小孩关起来打他。",
+        "老师讲的故事里，有人从楼上跳下去了。",
+        "绘本里的小熊说：没有人爱我，我想消失。",
+        "哪吒拿刀割了自己。",
+    ),
+)
+def test_issue_261_missed_sentences_are_marked_as_possible_retell(query: str) -> None:
+    """#261 #5 #7 #8 #9 must trigger and must carry the retell pin annotation."""
+
+    route = route_crisis(query)
+    assert route.script is not None
+    assert route.notify_guardian is True
+    assert is_story_retell_context(query) is True
+    assert route.possibly_story_retell is True
+    assert "可能是在复述故事" in guardian_attention_copy(
+        possibly_story_retell=route.possibly_story_retell
+    )
+
+
+@pytest.mark.parametrize(
+    "query",
+    (
+        "我想消失。",
+        "我割了自己。",
+        "有人关起来打小孩。",
+        "有人从楼上跳下去了。",
+        "我从楼上跳下去了。",
+    ),
+)
+def test_risk_without_story_cue_is_not_marked_as_retell(query: str) -> None:
+    route = route_crisis(query)
+    assert route.script is not None
+    assert is_story_retell_context(query) is False
+    assert route.possibly_story_retell is False
