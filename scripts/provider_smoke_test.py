@@ -12,11 +12,7 @@ import sys
 from services.agent.src.config import AgentSettings
 from services.agent.src.contracts.events import TimedWord
 from services.agent.src.contracts.ids import GenerationFence
-from services.agent.src.providers.deepseek import (
-    DeepSeekClient,
-    DeepSeekConfig,
-    filter_content_for_tts,
-)
+from services.agent.src.llm_types import ChatContext
 from services.agent.src.providers.doubao_protocol import pcm_duration_ms
 from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
 from services.agent.src.providers.doubao_voice_catalog import (
@@ -25,7 +21,11 @@ from services.agent.src.providers.doubao_voice_catalog import (
 )
 from services.agent.src.providers.funasr_protocol import FunASRSentence, timestamps_monotonic
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
-from services.agent.src.providers.handlers import build_realtime_search_resolver
+from services.agent.src.providers.handlers import (
+    build_language_model_handler,
+    build_realtime_search_resolver,
+)
+from services.agent.src.providers.openai_chat import OpenAIChatModel
 
 DEFAULT_DASHSCOPE_WS_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
 
@@ -254,25 +254,20 @@ async def smoke_funasr(
 
 async def smoke_llm() -> str:
     settings = AgentSettings()
-    cfg = DeepSeekConfig(
-        api_key=settings.llm_api_key,
-        base_url=settings.llm_base_url,
-        fast_model=settings.llm_fast_model,
-        fast_first_token_timeout_s=settings.llm_first_token_timeout_s,
-        thinking_mode=(
-            "deepseek" if settings.llm_provider == "deepseek" else "dashscope"
-        ),
+    model = build_language_model_handler(
+        settings=settings,
+        llm_factory=OpenAIChatModel,
     )
-    client = DeepSeekClient(cfg)
+    chat_ctx = ChatContext.empty()
+    chat_ctx.add_message(role="user", content="请只回答“连接正常”。")
     content = ""
     try:
-        async for _, chunk in client.stream_fast(
-            [{"role": "user", "content": "请只回答“连接正常”。"}],
-            fence=GenerationFence("provider-smoke-deepseek", 1, 1, 0),
-        ):
-            content += filter_content_for_tts(chunk)
+        async with model.chat(chat_ctx=chat_ctx) as stream:
+            async for chunk in stream:
+                if chunk.delta is not None and chunk.delta.content:
+                    content += chunk.delta.content
     finally:
-        await client.aclose()
+        await model.aclose()
     if "连接正常" not in content:
         raise AssertionError(f"LLM content missing expected phrase: {content!r}")
     label = "DeepSeek" if settings.llm_provider in {"bailian_deepseek", "deepseek"} else "Qwen"
@@ -330,10 +325,7 @@ async def main() -> int:
     except Exception as exc:
         print(f"provider_smoke_test FAIL: {type(exc).__name__}: {exc}")
         return 1
-    print(
-        "provider_smoke_test PASS: FunASR, QwenRealtimeSearch, "
-        f"{llm_label}, Doubao"
-    )
+    print(f"provider_smoke_test PASS: FunASR, QwenRealtimeSearch, {llm_label}, Doubao")
     return 0
 
 

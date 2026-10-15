@@ -64,6 +64,7 @@ from services.agent.tests.unit.media_session_support import (
     _seed_pending_media_turn,
     _wait_until,
 )
+from services.common.llm_thinking_filler import LLM_THINKING_TEXT
 
 
 @pytest.mark.asyncio
@@ -2996,7 +2997,7 @@ async def test_slow_lookup_uses_a_single_cue() -> None:
         # Slow lookup remains pending; the old second cue fired after ~2.5s.
         await asyncio.sleep(0.6)
         assert provider.output_texts == [LIVE_LOOKUP_FILLER]
-        assert BRIDGE_PHRASES[4] not in provider.output_texts
+        assert LLM_THINKING_TEXT not in provider.output_texts
         assert provider.output_kinds == [
             media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT,
         ]

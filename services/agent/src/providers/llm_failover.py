@@ -5,9 +5,8 @@ arrives before ``first_token_timeout_s``, that attempt is closed and the same
 messages are retried on the backup. After the first content token, a stall of
 ``inter_token_timeout_s`` without a new chunk ends the turn with
 ``LlmUnavailableError`` and does **not** call the backup (no mid-sentence
-stitch). Backup text is gated by product forbidden-copy before it is yielded.
-When both pre-content attempts fail, or a mid-stream stall/error occurs after
-content was already yielded, raise ``LlmUnavailableError``.
+stitch). When both pre-content attempts fail, or a mid-stream stall/error
+occurs after content was already yielded, raise ``LlmUnavailableError``.
 """
 
 from __future__ import annotations
@@ -21,7 +20,8 @@ from typing import Any, Literal
 
 from services.agent.src.llm_types import ChatChunk, ChatContext, ChoiceDelta
 from services.agent.src.providers.provider_errors import APIConnectionError, APIError
-from services.common.llm_failover import gate_backup_reply_copy
+from services.common.companion_response_safety import SAFE_UNKNOWN_REPLY
+from services.common.llm_failover import backup_reply_passes_forbidden_copy
 
 logger = logging.getLogger(__name__)
 
@@ -96,23 +96,20 @@ class FailoverChatModel:
         apply_forbidden_copy: bool,
     ) -> AsyncGenerator[ChatChunk, None]:
         self.last_active_role = endpoint.role
+        content_yielded = False
         async with endpoint.model.chat(chat_ctx=chat_ctx, tools=[]) as stream:
-            first = True
             async for chunk in stream:
                 text = _chunk_text(chunk)
-                if first and text:
-                    first = False
-                if apply_forbidden_copy and text:
-                    gated = gate_backup_reply_copy(text)
-                    if gated != text:
+                if apply_forbidden_copy and text and not backup_reply_passes_forbidden_copy(text):
+                    if not content_yielded:
                         yield ChatChunk(
                             id=getattr(chunk, "id", "") or "backup-gated",
-                            delta=ChoiceDelta(content=gated),
+                            delta=ChoiceDelta(content=SAFE_UNKNOWN_REPLY),
                         )
-                        return
-                    yield chunk
-                else:
-                    yield chunk
+                    return
+                if text:
+                    content_yielded = True
+                yield chunk
 
 
 class FailoverChatStream:

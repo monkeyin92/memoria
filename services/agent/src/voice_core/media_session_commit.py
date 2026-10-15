@@ -1463,6 +1463,10 @@ class MediaSessionCommitMixin:
         )
         context.output.begin_turn_output(fence)
         context.turn_started_ns = time.monotonic_ns()
+        context.llm_thinking_filler.arm(
+            turn_id=fence.turn_id,
+            now=context.pending.child_speech_ended_mono or time.monotonic(),
+        )
         if should_pause_asr_for_playback(context.identity):
             await context.provider.pause_asr_for_playback(context.identity)
         task_epoch, context_version = self._event_versions(context, fence)

@@ -219,6 +219,38 @@ async def test_backup_forbidden_copy_is_replaced_with_safe_unknown() -> None:
     assert gate_backup_reply_copy(f"我们是{word}") == SAFE_UNKNOWN_REPLY
 
 
+@pytest.mark.asyncio
+async def test_backup_mid_stream_forbidden_copy_ends_without_gluing_safe_unknown() -> None:
+    word = "家人"
+    assert word in PRODUCT_FORBIDDEN_COPY
+    prefix = (
+        "从前有只小兔子，它最爱吃胡萝卜。有一天，它发现了一根特别大的胡萝卜，"
+        "高兴得蹦了起来。它把"
+    )
+    primary = _FakeModel(
+        name="deepseek-flash",
+        error=APIConnectionError("primary first token timeout", retryable=True),
+    )
+    backup = _FakeModel(
+        name="qwen3.8-flash",
+        chunks=[
+            _text_chunk(prefix, chunk_id="b1"),
+            _text_chunk(f"胡萝卜送给{word}。", chunk_id="b2"),
+            _text_chunk("然后回家睡觉。", chunk_id="b3"),
+        ],
+    )
+    model = _failover(primary, backup, first_token_timeout_s=0.2)
+    async with model.chat(
+        chat_ctx=_ctx(("user", "给我讲一个很短的小兔子故事"))
+    ) as stream:
+        texts = [chunk.delta.content async for chunk in stream if chunk.delta.content]
+    spoken = "".join(texts)
+    assert spoken == prefix
+    assert SAFE_UNKNOWN_REPLY not in spoken
+    assert spoken.endswith("它把")
+    assert f"它把{SAFE_UNKNOWN_REPLY}" not in spoken
+
+
 def test_flag_off_build_returns_primary_only(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_FAILOVER_ENABLED", "false")
     monkeypatch.setenv("DASHSCOPE_API_KEY", "dash-key")
@@ -246,7 +278,7 @@ def test_flag_on_wraps_beijing_backup_with_thinking_disabled(
     monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-key")
     monkeypatch.setenv("LLM_BACKUP_MODEL", "qwen3.8-flash")
     monkeypatch.setenv("LLM_FIRST_TOKEN_TIMEOUT_S", "5")
-    monkeypatch.setenv("LLM_INTER_TOKEN_TIMEOUT_S", "8")
+    monkeypatch.setenv("LLM_INTER_TOKEN_TIMEOUT_S", "4")
     settings = AgentSettings(_env_file=None)
     captured: list[dict[str, Any]] = []
 

@@ -4,6 +4,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from services.common.companion_response_safety import NAMELESS_IDENTITY_REPLY
+from services.common.llm_thinking_filler import LLM_THINKING_TEXT
 from services.tutor.prompts import TUTOR_STYLE
 
 COMPANION_STYLE = """
@@ -42,6 +43,7 @@ _SAFETY_CORE_BODY = """
 你的输出会立即进入 TTS，因此只输出要真正说出口的正文。
 默认只使用普通话和用户正在练习的英语。除非用户明确要求切换语言，
 不要解释或模仿孤立的韩文、日文、粤语字符；遇到极短异常转写时等待用户重说。
+不说自己喜欢或讨厌什么，可以说我是 AI 没有这种感觉，再反问孩子。
 用户问你自己的喜好（最喜欢什么颜色、食物等）时，用一句孩子听得懂的话说明你是 AI、
 没有那种感受，再把话题转回孩子，例如“我是 AI，没有眼睛看颜色，你最喜欢什么颜色呀？”。
 不要编造自己的喜好，不要说“我也喜欢”，不要用书面腔。
@@ -76,10 +78,9 @@ BRIDGE_PHRASES = (
     "稍等，我查询一下可能要一会儿。",
     "刚才没有听清，可以再说一遍吗？",
     "现在连接不太稳定，我们再试一次。",
-    "稍等，我想一下。",
+    LLM_THINKING_TEXT,
 )
 LIVE_LOOKUP_FILLER = BRIDGE_PHRASES[1]
-THINKING_FILLER = BRIDGE_PHRASES[4]
 
 DEVICE_WAKE_PHRASES = (
     "我在。",
@@ -294,7 +295,6 @@ __all__ = [
     "BRIDGE_PHRASES",
     "COMPANION_STYLE",
     "LIVE_LOOKUP_FILLER",
-    "THINKING_FILLER",
     "DEVICE_WAKE_PHRASES",
     "DEVICE_WAKE_GREETING_PHRASES",
     "SAFETY_CORE",

@@ -31,6 +31,7 @@ inline constexpr const char* kOfflineMenuStart = "offline-menu-start-v1";
 inline constexpr const char* kOfflineMenuEnd = "offline-menu-end-v1";
 inline constexpr const char* kOfflineMenuIdle = "offline-menu-idle-v1";
 inline constexpr const char* kLlmUnavailable = "llm_unavailable";
+inline constexpr const char* kLlmThinking = "llm_thinking";
 
 // TODO(release-blocker): offline clips use a trial/demo-only Doubao voice; clear Volcengine terms or re-voice before final firmware
 inline constexpr const char* kOfflineLineIds[] = {
@@ -41,6 +42,7 @@ inline constexpr const char* kOfflineLineIds[] = {
     kOfflineMenuConfirmHow,   kOfflineMenuItem01,      kOfflineMenuItem02,
     kOfflineMenuItem03,       kOfflineMenuChoose,      kOfflineMenuStart,
     kOfflineMenuEnd,          kOfflineMenuIdle,        kLlmUnavailable,
+    kLlmThinking,
 };
 inline constexpr std::size_t kOfflineLineCount =
     sizeof(kOfflineLineIds) / sizeof(kOfflineLineIds[0]);
