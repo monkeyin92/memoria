@@ -1,0 +1,25 @@
+{
+  "mode": "dry_run",
+  "blocked_reason": "DASHSCOPE_API_KEY and/or DECISION_MODEL_URL missing, or DECISION_MODEL_EVAL_LIVE not set. No live model numbers fabricated.",
+  "case_counts": {
+    "total": 267,
+    "with_live_label": 267,
+    "with_close_label": 267,
+    "with_crisis_label": 267,
+    "must_route_12356": 9,
+    "explicit_crisis_self_fixtures": 8
+  },
+  "rule_crisis_12356_recall_explicit_fixtures": {
+    "required_n": 8,
+    "hits": 8,
+    "recall": 1.0
+  },
+  "rule_crisis_12356_recall_all_labeled": {
+    "required_n": 9,
+    "hits": 8,
+    "recall": 0.8888888888888888
+  },
+  "note": "All-labeled rule recall may be <1.0 when semantic-candidate utterances (crisis-amb-*) need additive evidence under route_crisis. Explicit crisis-self-* fixtures must stay at recall 1.0.",
+  "compliance": "Crisis detection keeps companion_safety_decision / route_crisis in front. Decision-model adapter is additive only and disabled by default.",
+  "live_metrics": null
+}

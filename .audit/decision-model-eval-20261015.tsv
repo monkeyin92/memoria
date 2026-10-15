@@ -1,0 +1,9 @@
+ts	phase	decision	why	evidence	result
+2026-10-15T09:21:44Z	start	started decision-model offline eval run	figure-it-out for Bailian decision-model vs qwen judgment paths	agent-run	open
+2026-10-15T09:21:44Z	frame	done predicate: report at docs/eval/decision-model-20261015.md + flagged-off harness/adapter + PR; live metrics only if DASHSCOPE_API_KEY present	falsifiable deliverable; no prod behavior change by default	user_query	framed
+2026-10-15T09:21:44Z	frame	DASHSCOPE_API_KEY absent; live dual-run blocked; will ship harness default-off and report blocked	env check showed empty key; do not fabricate numbers	env DASHSCOPE_API_KEY length 0	blocked_on_key
+2026-10-15T09:21:57Z	frame	crisis detection must never rely solely on preview decision model; rule-based safety stays in front/alongside; adapter additive only	operator compliance constraint; report must state this	user follow-up	constraint_locked
+2026-10-15T09:21:57Z	frame	rigor medium-high: safety paths audited, harness default-off, no live numbers without key	reversible code + safety claim needs explicit non-regression wording	Phase A	framed
+2026-10-15T09:22:19Z	design	workflow: map paths, fixture eval set, flagged-off System One adapter, dry harness, report with additive-crisis constraint, PR	riskiest unknown is API schema + whether key exists (key absent); scaffold harness before any live call	Phase B	designed
+2026-10-15T09:23:02Z	design	reuse docs/acceptance/run-20261003-decision-model datasets; add crisis cases; adapter default-off; crisis always behind route_crisis	prior eval already covered live+close; user asked for three stages + compliance	findings.md + crisis_policy.py	reuse_prior
+2026-10-15T09:28:52Z	verify	unit tests green; dry-run recall 1.0 on crisis-self fixtures; live metrics blocked on key	prove-it-works against harness output and pytest	pytest test_decision_model.py; docs/eval/decision-model-20261015-dry-run.json	VERIFIED
