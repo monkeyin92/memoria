@@ -55,6 +55,10 @@
   font-variant-numeric: tabular-nums;
 }
 
+.device-ring-num.is-unset {
+  font-size: var(--mp-type-title);
+}
+
 .device-ring-cap {
   margin-top: 4px;
   color: var(--mp-ink-3);

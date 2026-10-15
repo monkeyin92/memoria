@@ -5,26 +5,17 @@ const UNREAD_SAFETY_META_SUFFIX = "打开时首页会置顶显示";
 const SAFETY_SUBSCRIBE_HELPER =
   "家长打开小程序时首页会置顶显示";
 
-function formatQuietHoursLine(sessionLimits) {
-  if (!sessionLimits?.quietStart || !sessionLimits?.quietEnd) return "";
-  return `夜间 ${sessionLimits.quietStart}–${sessionLimits.quietEnd}`;
-}
-
 function buildTrialDeviceCard({ online, runtimeProfile, usedMinutes } = {}) {
   const limits = sessionLimitsFromProfile(runtimeProfile);
-  const limitMinutes =
-    limits?.maxSessionMinutes && limits.maxSessionMinutes > 0 ? limits.maxSessionMinutes : 30;
   const usageKnown = Number.isInteger(usedMinutes) && usedMinutes >= 0;
-  const quietHoursLine = formatQuietHoursLine(limits) || "夜间 21:00–07:00";
   return {
     online: online === true,
     statusPill: online === true ? "在线" : "离线",
     statusLine: `${online === true ? "在线" : "离线"} · 已绑定`,
     usageKnown,
     usageUsedMinutes: usageKnown ? usedMinutes : null,
-    usageLimitMinutes: limitMinutes,
-    quietHoursLine,
-    quietHoursLabel: limits?.quietHoursLabel || "21:00 – 07:00",
+    usageLimitMinutes: limits?.maxSessionMinutes ?? null,
+    quietHoursLabel: limits?.quietHoursLabel || "",
     nightModeOn: Boolean(limits?.quietStart && limits?.quietEnd),
   };
 }
@@ -79,7 +70,6 @@ module.exports = {
   SAFETY_SUBSCRIBE_HELPER,
   alertTimeLabel,
   buildTrialDeviceCard,
-  formatQuietHoursLine,
   hasUnreadSafetyAlert,
   memoryPreviewItems,
   offersSafetySubscribe,

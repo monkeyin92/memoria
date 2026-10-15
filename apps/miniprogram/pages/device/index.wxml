@@ -54,8 +54,8 @@
           <view class="trial-card trial-card-xl device-usage-card">
             <view class="device-ring">
               <view class="device-ring-inner">
-                <text class="device-ring-num">{{sessionLimits.maxSessionMinutes || 30}}</text>
-                <text class="device-ring-cap">分钟上限</text>
+                <text class="device-ring-num {{sessionLimits.maxSessionMinutes ? '' : 'is-unset'}}">{{sessionLimits.maxSessionMinutes || '未设置'}}</text>
+                <text class="device-ring-cap">{{sessionLimits.maxSessionMinutes ? '分钟 · 单次上限' : '单次上限'}}</text>
               </view>
             </view>
             <view class="device-usage-copy">
@@ -71,8 +71,8 @@
             <view class="device-limit-head">
               <text class="device-limit-label">单次上限</text>
               <view>
-                <text class="device-limit-num">{{sessionLimits.maxSessionMinutes || 30}}</text>
-                <text class="device-limit-unit"> 分钟</text>
+                <text class="device-limit-num">{{sessionLimits.maxSessionMinutes || '未设置'}}</text>
+                <text wx:if="{{sessionLimits.maxSessionMinutes}}" class="device-limit-unit"> 分钟</text>
               </view>
             </view>
             <mp-slider
@@ -80,7 +80,7 @@
               min="{{limitsSliderMin}}"
               max="{{limitsSliderMax}}"
               step="{{limitsSliderStep}}"
-              value="{{sessionLimits.maxSessionMinutes || 30}}"
+              value="{{sessionLimits.maxSessionMinutes || limitsSliderMin}}"
               disabled="{{limitsSaving}}"
               bindchange="onLimitsMinutesSlider"
             ></mp-slider>

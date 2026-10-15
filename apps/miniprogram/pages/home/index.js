@@ -27,11 +27,6 @@ const {
   pinnedAlertMeta,
 } = require("../../utils/trial-device-card");
 
-function usageRingPercent({ usageKnown, usageUsedMinutes, usageLimitMinutes }) {
-  if (usageKnown !== true || !(usageLimitMinutes > 0)) return 0;
-  return Math.max(0, Math.min(100, Math.round((usageUsedMinutes / usageLimitMinutes) * 100)));
-}
-
 function countCreatedToday(summaries, now = new Date()) {
   const today = todayKey(now);
   return summaries.filter((item) => {
@@ -102,13 +97,11 @@ function emptyDashboard() {
     statusLine: "离线 · 已绑定",
     usageKnown: false,
     usageUsedMinutes: null,
-    usageLimitMinutes: 30,
-    usagePercent: 0,
+    usageLimitMinutes: null,
     summaryCount: 0,
     avatarGlyph: "M",
     subscriptionPushEnabled: SUBSCRIPTION_PUSH_ENABLED,
-    quietHoursLine: "夜间 21:00–07:00",
-    quietHoursLabel: "21:00 – 07:00",
+    quietHoursLabel: "",
     nightModeOn: false,
     nightToggleBusy: false,
     showSafetyNightCard: false,
@@ -605,8 +598,6 @@ Page({
       usageKnown: trialCard.usageKnown,
       usageUsedMinutes: trialCard.usageUsedMinutes,
       usageLimitMinutes: trialCard.usageLimitMinutes,
-      usagePercent: usageRingPercent(trialCard),
-      quietHoursLine: trialCard.quietHoursLine,
       quietHoursLabel: trialCard.quietHoursLabel,
       nightModeOn: trialCard.nightModeOn,
       showSafetyNightCard: offerSafety,

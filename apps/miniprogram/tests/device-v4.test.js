@@ -44,3 +44,21 @@ test("the usage slider names the per-session limit the device enforces, never a 
   assert.match(text, /单次上限 30 分钟/);
   assert.doesNotMatch(text, /每日上限|每天上限/);
 });
+
+test("the usage screen reads 未设置 when the signed profile has quiet hours but no cap", async () => {
+  const quietOnly = {
+    ...fx.RUNTIME_PROFILE,
+    obligations: fx.RUNTIME_PROFILE.obligations.filter((item) => item.code === "QUIET_HOURS"),
+  };
+  const harness = loadPage("pages/device/index", fx.authed({ getRuntimeProfile: async () => quietOnly }));
+  try {
+    const data = await harness.run();
+    assert.equal(data.sessionLimits.maxSessionMinutes, null);
+    const text = visibleText(renderPage("pages/device/index", data));
+    assert.match(text, /未设置 单次上限 用量暂未统计/);
+    assert.match(text, /单次上限 未设置 15 分钟 60 分钟/);
+    assert.doesNotMatch(text, /\b30\b/);
+  } finally {
+    harness.restore();
+  }
+});

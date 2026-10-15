@@ -600,8 +600,8 @@ Page({
     try {
       await api.setSessionLimits(binding.device_id, {
         maxSessionMinutes: minutes,
-        quietStart: limits.quietStart || DEFAULT_QUIET_HOURS.start,
-        quietEnd: limits.quietEnd || DEFAULT_QUIET_HOURS.end,
+        quietStart: limits.quietStart,
+        quietEnd: limits.quietEnd,
       });
       let profile = null;
       try {

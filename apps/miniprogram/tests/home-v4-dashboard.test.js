@@ -22,25 +22,29 @@ function visibleText(html) {
   return html.replace(/<head>[\s\S]*?<\/head>/, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 }
 
-test("home ring shows the daily limit without inventing used minutes", async () => {
+test("home ring shows the per-session cap without inventing used minutes", async () => {
   const { data } = await loadHome();
   assert.equal(data.usageKnown, false);
   assert.equal(data.usageUsedMinutes, null);
-  assert.equal(data.usagePercent, 0);
   assert.equal(data.usageLimitMinutes, 30);
-  const text = visibleText(renderPage("pages/home/index", data));
-  assert.match(text, /30 分钟上限/);
-  assert.match(text, /用量暂未统计/);
-  assert.doesNotMatch(text, /\d+%/);
+  const html = renderPage("pages/home/index", data);
+  const text = visibleText(html);
+  assert.match(text, /30 分钟 · 单次上限 今天聊了 用量暂未统计/);
+  assert.doesNotMatch(text, /\d+%|每日上限/);
+  assert.doesNotMatch(html, /conic-gradient/);
 });
 
-test("home ring fills from a real used-minutes tally when one exists", async () => {
-  const { data } = await loadHome();
-  const html = renderPage("pages/home/index", { ...data, usageKnown: true, usageUsedMinutes: 18, usagePercent: 60 });
-  const text = visibleText(html);
-  assert.match(text, /60% 上限 30 分钟/);
-  assert.match(text, /今天聊了 18 分钟/);
-  assert.match(html, /conic-gradient\(var\(--mp-accent\) 0 60%, var\(--mp-track\) 60% 100%\)/);
+test("home ring reads 未设置 when the signed profile carries no session cap", async () => {
+  const { data } = await loadHome({
+    api: { getRuntimeProfile: async () => ({ ...fx.RUNTIME_PROFILE, obligations: [] }) },
+    config: { CONTROL_API_BASE_URL: "https://example.invalid", SUBSCRIPTION_PUSH_ENABLED: true },
+  });
+  assert.equal(data.usageLimitMinutes, null);
+  assert.equal(data.quietHoursLabel, "");
+  const text = visibleText(renderPage("pages/home/index", data));
+  assert.match(text, /未设置 单次上限 今天聊了 用量暂未统计/);
+  assert.match(text, /安静时段 未设置/);
+  assert.doesNotMatch(text, /21:00|\b30\b/);
 });
 
 test("home counts only today's summaries and today's conversations", async () => {

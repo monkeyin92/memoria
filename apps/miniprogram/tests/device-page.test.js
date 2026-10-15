@@ -775,6 +775,36 @@ test("the guardian edits session limits from the device page and sees the signed
   limitsFailure = false;
 });
 
+test("the 单次上限 slider keeps an unset quiet window unset on the wire", async () => {
+  limitsCalls.length = 0;
+  limitsFailure = false;
+  binding.saveBindingManifest(parentChildManifest());
+  profilePayload = wireProfile({
+    signature_schema: "runtime-profile-v2",
+    runtime_profile_id: "rp_cap_only",
+    session_id: "ses_cap_only",
+    active_subject_id: "person_child",
+    subject_category: "minor",
+    age_band: "under_14",
+    service_mode: "student_minor",
+    signature: "f".repeat(64),
+    obligations: [
+      {
+        code: "MAX_SESSION_SECONDS",
+        params: { max_session_seconds: 1800, retention_ttl_seconds: null, quiet_hours: null, extras: [] },
+      },
+    ],
+  });
+  resolutionPayload = null;
+  const page = instantiate(pageDefinition);
+  await page.onShow();
+  assert.equal(page.data.sessionLimits.quietStart, "");
+  await page.onLimitsMinutesSlider({ detail: { value: 60 } });
+  assert.deepEqual(limitsCalls, [
+    { method: "PUT", deviceId: "dev_1", data: { max_session_minutes: 60, quiet_hours: null } },
+  ]);
+});
+
 test("parent_for_child without app_confirm cannot switch", async () => {
   activeSubjectCalls.length = 0;
   binding.saveBindingManifest(parentChildManifest());

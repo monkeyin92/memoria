@@ -123,8 +123,12 @@ test("trial device card helper uses profile quiet hours and usage limit", () => 
   assert.equal(unknown.usageUsedMinutes, null);
   assert.equal(unknown.usageLimitMinutes, 30);
   assert.equal(unknown.statusLine, "在线 · 已绑定");
-  assert.equal(unknown.quietHoursLine, "夜间 21:00–07:00");
+  assert.equal(unknown.quietHoursLabel, "21:00 – 次日 07:00");
   assert.equal(unknown.nightModeOn, true);
+  const unset = buildTrialDeviceCard({ online: true, runtimeProfile: { ...profile, obligations: [] } });
+  assert.equal(unset.usageLimitMinutes, null);
+  assert.equal(unset.quietHoursLabel, "");
+  assert.equal(unset.nightModeOn, false);
   const known = buildTrialDeviceCard({
     online: true,
     runtimeProfile: profile,
