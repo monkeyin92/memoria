@@ -105,7 +105,7 @@ test("a guest still gets privacy, feedback and about, and 微信登录 opens the
       profileText(harness),
       "我的 设备与记录，登录后跟随账号。 登录后即可管理你的资料。未登录时不会读取资料、统计或回顾。 微信登录 授权与隐私说明 帮助与反馈 关于 开发版",
     );
-    assert.deepEqual(aboutCard(harness), [ABOUT_LEAD, DEEPSEEK_LINE, "开发版"]);
+    assert.deepEqual(aboutCard(harness), [ABOUT_LEAD, "开发版"]);
     harness.page.closeAbout();
     assert.equal(harness.page.data.showAbout, false);
     assert.doesNotMatch(profileText(harness), /关于 Memoria/);
@@ -128,13 +128,11 @@ test("帮助与反馈 is WeChat's native feedback button", () => {
   );
 });
 
-test("关于 names the filed chat model and the release version, or the build channel before release", async () => {
+test("关于 shows the release version, or the build channel before release, and no model filing the server did not report", async () => {
   const develop = await openProfile(fx.authed());
   try {
     assert.deepEqual(develop.page.data.chatLlmProviders, []);
-    const lines = aboutCard(develop);
-    assert.deepEqual(lines, [ABOUT_LEAD, DEEPSEEK_LINE, "开发版"]);
-    assert.doesNotMatch(lines.join("\n"), /qwen|通义|千问/i);
+    assert.deepEqual(aboutCard(develop), [ABOUT_LEAD, "开发版"]);
   } finally {
     develop.restore();
   }
@@ -144,9 +142,21 @@ test("关于 names the filed chat model and the release version, or the build ch
   });
   try {
     assert.match(profileText(release), / 版本 1\.4\.0$/);
-    assert.deepEqual(aboutCard(release), [ABOUT_LEAD, DEEPSEEK_LINE, "版本 1.4.0"]);
+    assert.deepEqual(aboutCard(release), [ABOUT_LEAD, "版本 1.4.0"]);
   } finally {
     release.restore();
+  }
+});
+
+test("chat_llm_providers empty, before the voice agent reports its models, shows no model filing", async () => {
+  const harness = await openProfile(fx.authed({
+    getDeliveredCapabilities: async () => ({ chat_llm_providers: [] }),
+  }));
+  try {
+    assert.deepEqual(harness.page.data.chatLlmProviders, []);
+    assert.deepEqual(aboutCard(harness), [ABOUT_LEAD, "开发版"]);
+  } finally {
+    harness.restore();
   }
 });
 

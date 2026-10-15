@@ -19,7 +19,6 @@ function chatModelFilingLines(providers) {
   const filings = Object.keys(CHAT_MODEL_FILING_LINES)
     .filter((family) => providers.includes(family))
     .map((family) => CHAT_MODEL_FILING_LINES[family]);
-  if (filings.length === 0) return [CHAT_MODEL_FILING_LINES.deepseek];
   return filings.length > 1 ? [CHAT_MODEL_DUAL_DISCLOSURE, ...filings] : filings;
 }
 
