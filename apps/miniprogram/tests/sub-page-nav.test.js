@@ -11,6 +11,7 @@ const OWNING_TAB = {
   bind: "/pages/profile/index",
   "persona-custom": "/pages/profile/index",
   auth: "/pages/home/index",
+  "guardian-consent": "/pages/home/index",
   privacy: "/pages/profile/index",
   "digital-self": "/pages/profile/index",
   attention: "/pages/home/index",
