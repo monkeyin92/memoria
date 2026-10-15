@@ -11,12 +11,14 @@ import pytest
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.voice_core.media_protocol import (
+    MediaEnvelope,
     PlaybackEventType,
     PlaybackProgress,
     SessionIdentity,
 )
 from services.agent.src.voice_core.media_session import (
     MediaReplyChunk,
+    MediaTextSpan,
     MediaVoiceCoreRegistry,
 )
 from services.agent.src.voice_core.speech_timeline import (
@@ -26,8 +28,8 @@ from services.agent.src.voice_core.speech_timeline import (
 )
 from services.agent.tests.unit.media_session_support import (
     FakeMediaProvider,
-    _CapturingGenerationBridge,
     _device_identity,
+    _FenceCheckingBridge,
     _wait_until,
 )
 
@@ -99,12 +101,44 @@ class _HeldReplyProvider(FakeMediaProvider):
         return chunks()
 
 
+class _TimedReplyProvider(_HeldReplyProvider):
+    """Streams the reply like live TTS: text with the first frame, timing only once stopped."""
+
+    def generate_reply(
+        self,
+        _identity: SessionIdentity,
+        _user_text: str,
+        _fence: GenerationFence,
+    ) -> AsyncIterator[MediaReplyChunk]:
+        async def chunks() -> AsyncIterator[MediaReplyChunk]:
+            self.reply_started.set()
+            try:
+                await self.release_reply.wait()
+                yield MediaReplyChunk(
+                    pcm_s16le=_REPLY_PCM,
+                    source_start_sample=0,
+                    assistant_text_delta=_REPLY_TEXT,
+                    first=True,
+                )
+                await asyncio.Event().wait()
+            finally:
+                self.reply_closed.set()
+
+        return chunks()
+
+    async def interrupted_timed_text_spans(
+        self, _fence: GenerationFence
+    ) -> tuple[MediaTextSpan, ...]:
+        return (MediaTextSpan(_REPLY_TEXT, 0, 2),)
+
+
 async def _open_device_session(
     session_id: str,
+    provider: _HeldReplyProvider | None = None,
     **registry_options: Any,
-) -> tuple[MediaVoiceCoreRegistry, _HeldReplyProvider, _CapturingGenerationBridge, Any, Any]:
-    provider = _HeldReplyProvider()
-    bridge = _CapturingGenerationBridge()
+) -> tuple[MediaVoiceCoreRegistry, _HeldReplyProvider, _FenceCheckingBridge, Any, Any]:
+    provider = provider or _HeldReplyProvider()
+    bridge = _FenceCheckingBridge()
     registry = MediaVoiceCoreRegistry(
         bridge=bridge,
         provider_factory=lambda _identity: provider,
@@ -285,6 +319,67 @@ async def test_a_reply_ready_before_the_filler_renders_plays_without_it() -> Non
     finally:
         provider.release_reply.set()
         provider.filler_rendered.set()
+        await registry.finalize_session(context.identity.session_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("rendered_sample_end", "heard"), [(2, ""), (4, _REPLY_TEXT)])
+async def test_a_stop_after_the_filler_counts_only_reply_audio_the_child_heard(
+    rendered_sample_end: int, heard: str
+) -> None:
+    registry, provider, bridge, session, context = await _open_device_session(
+        f"llm-thinking-stop-at-{rendered_sample_end}", _TimedReplyProvider()
+    )
+    try:
+        await _commit_spoken_turn(registry, session, context)
+        await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
+        provider.release_reply.set()
+        await _wait_until(lambda: len(bridge.frames) == 2, timeout=2.0)
+        fence = context.runtime.fence
+        await registry.on_playback_progress(
+            session,
+            PlaybackProgress(
+                identity=context.identity,
+                generation_id=fence.generation_id,
+                received_sequence=bridge.frames[-1].sequence,
+                rendered_sample_end=rendered_sample_end,
+                client_monotonic_ms=2,
+                turn_id=fence.turn_id,
+                tool_epoch=fence.tool_epoch,
+                event_type=PlaybackEventType.PROGRESS,
+                approximate=False,
+            ),
+        )
+        transcripts: list[str | None] = []
+        finalize = context.runtime.on_media_playback_interrupted
+
+        async def record(
+            *, interrupted_from: GenerationFence, synchronized_transcript: str | None
+        ) -> str | None:
+            transcripts.append(synchronized_transcript)
+            return await finalize(
+                interrupted_from=interrupted_from,
+                synchronized_transcript=synchronized_transcript,
+            )
+
+        context.runtime.on_media_playback_interrupted = record
+        stop = MediaEnvelope.create(
+            type="client.stop_assistant",
+            event_id="stop-after-filler",
+            session_id=context.identity.session_id,
+            stream_epoch=context.identity.stream_epoch,
+            sequence=1,
+            turn_id=fence.turn_id,
+            generation_id=fence.generation_id,
+            tool_epoch=fence.tool_epoch,
+            payload={"idempotency_key": "stop-after-filler", "reason": "test"},
+        )
+        assert session.accept_client_stop(stop)
+        await registry.on_client_event(session, stop)
+
+        assert transcripts == [heard]
+    finally:
+        provider.release_reply.set()
         await registry.finalize_session(context.identity.session_id)
 
 
