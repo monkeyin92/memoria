@@ -211,6 +211,10 @@ class DuplexRuntime(
     _interaction_decision: InteractionDecision | None = None
     _interaction_decision_text: str = ""
     _last_committed_user_text_normalized: str = ""
+    # Set when this session has spoken an approved fixed safety script. Stops
+    # proactive local-safe LLM chat after that script; does not reject genuine
+    # child turns.
+    fixed_safety_heard: bool = False
     _paused_reply_available: bool = False
     _reply_speaker_binding: ResumeSpeakerBinding | None = None
     _paused_reply_binding: ResumeSpeakerBinding | None = None
@@ -2757,15 +2761,19 @@ class DuplexRuntime(
         if completed_ns is None:
             return None
         elapsed_ms = ((now_ns or time.monotonic_ns()) - completed_ns) // 1_000_000
-        if not 0 <= elapsed_ms <= POST_PLAYBACK_ECHO_GUARD_MS:
-            return None
         reason = self.input_guard.guarded_reason(
             text,
-            duration_ms=int(elapsed_ms),
+            duration_ms=int(max(0, elapsed_ms)),
             assistant_text=self._voice_floor.played_assistant_text,
         )
-        if reason == "assistant_echo":
+        # After a fixed safety script, keep rejecting echo of that script even
+        # past POST_PLAYBACK_ECHO_GUARD_MS. Do not reject non-echo child speech.
+        if reason == "assistant_echo" and (
+            self.fixed_safety_heard or 0 <= elapsed_ms <= POST_PLAYBACK_ECHO_GUARD_MS
+        ):
             return reason
+        if not 0 <= elapsed_ms <= POST_PLAYBACK_ECHO_GUARD_MS:
+            return None
         if elapsed_ms <= POST_PLAYBACK_BACKCHANNEL_GUARD_MS and (
             reason == "backchannel" or self.input_guard.enabled
         ):

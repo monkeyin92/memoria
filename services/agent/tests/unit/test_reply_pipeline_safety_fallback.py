@@ -9,6 +9,7 @@ from services.agent.src import response_plan_sidecar
 from services.agent.src.contracts.ids import CancellationContext
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.orchestration.handlers import LanguageModelRequest
+from services.agent.src.llm_types import StopResponse
 from services.agent.src.reply_pipeline import ReplyPipeline
 from services.agent.src.response_planner_client import ResponsePlanFetch
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
@@ -101,4 +102,76 @@ async def test_fence_mismatch_fallback_still_speaks_fixed_safety_replies(
         )
     ]
     assert spoken == [expected]
+    await runtime.close()
+
+
+class _InvalidPayloadPlanner:
+    echoes_session_epoch = True
+
+    async def fetch(self, **kwargs: Any) -> ResponsePlanFetch:
+        return ResponsePlanFetch(None, "request_or_payload_invalid")
+
+
+@pytest.mark.asyncio
+async def test_after_fixed_safety_local_safe_fallback_does_not_speak_chat(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Product rule: after a fixed safety script the server must not speak again
+    on its own. An echo/invalid follow-up that hits local-safe LLM fallback is
+    suppressed. The child's speech is still accepted into prepare; only the
+    proactive invented reply is stopped.
+    """
+
+    import logging
+
+    runtime = _runtime("post-safety-suppress")
+    pipeline = _pipeline(runtime, _InvalidPayloadPlanner())
+    first = await pipeline.prepare_committed_turn("我想伤害自己。")
+    spoken_safety = [
+        token
+        async for token in pipeline.stream(
+            LanguageModelRequest(
+                user_text="我想伤害自己。",
+                cancellation=CancellationContext.capture(first),
+            )
+        )
+    ]
+    assert spoken_safety == [CRISIS_SELF_SCRIPT]
+    assert runtime.fixed_safety_heard is True
+
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(StopResponse):
+            await pipeline.prepare_committed_turn("嗯嗯好的大人陪着你")
+    assert any(
+        "post_fixed_safety_fallback_suppressed" in record.getMessage()
+        for record in caplog.records
+    )
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_after_fixed_safety_a_new_safety_hit_still_speaks_fixed_script() -> None:
+    runtime = _runtime("post-safety-retrigger")
+    pipeline = _pipeline(runtime, _InvalidPayloadPlanner())
+    first = await pipeline.prepare_committed_turn("我想伤害自己。")
+    async for _ in pipeline.stream(
+        LanguageModelRequest(
+            user_text="我想伤害自己。",
+            cancellation=CancellationContext.capture(first),
+        )
+    ):
+        pass
+    assert runtime.fixed_safety_heard is True
+
+    second = await pipeline.prepare_committed_turn("有个叔叔老是大我。")
+    spoken = [
+        token
+        async for token in pipeline.stream(
+            LanguageModelRequest(
+                user_text="有个叔叔老是大我。",
+                cancellation=CancellationContext.capture(second),
+            )
+        )
+    ]
+    assert spoken == [SUPPORT_VICTIM_SCRIPT]
     await runtime.close()
