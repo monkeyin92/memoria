@@ -1112,6 +1112,10 @@ function getDeviceSettings(deviceId) {
   return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/settings`);
 }
 
+function getOfflineStories(deviceId) {
+  return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/stories`);
+}
+
 function getWakeWordCatalog() {
   return rawRequest("/v1/devices/wake-word-catalog");
 }
@@ -1316,6 +1320,10 @@ function setPersonaAssignment(deviceId, personId, personaSelection) {
   );
 }
 
+function getSessionLimits(deviceId) {
+  return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/session-limits`);
+}
+
 function setSessionLimits(deviceId, { maxSessionMinutes, quietStart, quietEnd }) {
   const manifest = readBindingManifest();
   if (!manifest || manifest.device_id !== deviceId) {
@@ -1484,6 +1492,7 @@ module.exports = {
   selectDeviceBinding,
   unbindDevice,
   getDeviceSettings,
+  getOfflineStories,
   getWakeWordCatalog,
   validateWakeWord,
   getDeviceDiagnostics,
@@ -1494,6 +1503,7 @@ module.exports = {
   setActiveSubject,
   listPersonaAssignments,
   setPersonaAssignment,
+  getSessionLimits,
   setSessionLimits,
   clearPersonaAssignment,
   listPersonas,

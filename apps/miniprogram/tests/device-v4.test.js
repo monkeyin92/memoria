@@ -12,12 +12,15 @@ const { loadPage } = require("../scripts/mp-harness/runtime");
 
 const visibleText = (html) => html.replace(/<style>[\s\S]*?<\/style>/g, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 
-test("the usage screen shows the real quiet window as the card chip and the privacy rows below", async () => {
+test("the usage screen shows the real quiet window as the card chip, then the offline stories and the privacy rows", async () => {
   const scenario = PAGES.find((item) => item.slug === "device");
   const { data } = await scenarioData(scenario);
   const html = renderPage(scenario.page, data);
   const text = visibleText(html);
-  assert.match(text, /安静时段 孩子睡觉的时间，机器人不陪聊 21:00–07:00 隐私说明 管理与导出数据 解绑设备/);
+  assert.match(
+    text,
+    /安静时段 孩子睡觉的时间，机器人不陪聊 21:00–07:00 离线故事 不联网也能听 小星星的枕头 月亮不着急 大熊和森林里的悄悄话 隐私说明 管理与导出数据 解绑设备/,
+  );
   assert.doesNotMatch(text, /即将上线/);
   assert.match(html, /class="mps-fill" style="width: 33\.3%;"/);
 });

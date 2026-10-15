@@ -65,6 +65,12 @@ const RUNTIME_PROFILE = {
   persona: { persona_id: "starlight" },
 };
 
+const OFFLINE_STORIES = [
+  { id: "story_01", title: "小星星的枕头" },
+  { id: "story_02", title: "月亮不着急" },
+  { id: "story_03", title: "大熊和森林里的悄悄话" },
+];
+
 const SUMMARIES = [
   { record_id: "s1", text: "讲了《大熊和森林里的悄悄话》", created_at: isoMinutesAgo(30) },
   { record_id: "s2", text: "聊到了幼儿园的新朋友", created_at: isoMinutesAgo(120) },
@@ -205,6 +211,12 @@ function baseApi(overrides = {}) {
     getGuardianLinks: async () => [],
     listPersonas: async () => ({ custom_personas: [], builtin_personas: [] }),
     getWakeWordCatalog: async () => ({ items: [] }),
+    getOfflineStories: async () => ({ items: OFFLINE_STORIES }),
+    getSessionLimits: async () => ({
+      max_session_minutes: 30,
+      quiet_hours: { start: "21:00", end: "07:00" },
+      today_used_minutes: null,
+    }),
     listPersonaAssignments: async () => ({ items: [] }),
     getPersonConsents: async () => ({ items: [] }),
     getGuardianConsents: async () => ({ items: [] }),

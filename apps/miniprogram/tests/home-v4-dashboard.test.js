@@ -34,6 +34,36 @@ test("home ring shows the per-session cap without inventing used minutes", async
   assert.doesNotMatch(html, /conic-gradient/);
 });
 
+test("home shows today's minutes only when the session-limits read carries them", async () => {
+  const reads = [];
+  const { data } = await loadHome({
+    api: {
+      getSessionLimits: async (deviceId) => {
+        reads.push(deviceId);
+        return { max_session_minutes: 30, quiet_hours: null, today_used_minutes: 18 };
+      },
+    },
+  });
+  assert.deepEqual(reads, ["dev_1"]);
+  assert.equal(data.usageKnown, true);
+  assert.equal(data.usageUsedMinutes, 18);
+  const html = renderPage("pages/home/index", data);
+  const text = visibleText(html);
+  assert.match(text, /30 分钟 · 单次上限 今天聊了 18 分钟/);
+  assert.doesNotMatch(text, /用量暂未统计|\d+%/);
+  assert.doesNotMatch(html, /conic-gradient/);
+
+  const failed = await loadHome({
+    api: {
+      getSessionLimits: async () => {
+        throw new Error("session_limits_unavailable");
+      },
+    },
+  });
+  assert.equal(failed.data.usageKnown, false);
+  assert.match(visibleText(renderPage("pages/home/index", failed.data)), /今天聊了 用量暂未统计/);
+});
+
 test("home ring reads 未设置 when the signed profile carries no session cap", async () => {
   const { data } = await loadHome({
     api: { getRuntimeProfile: async () => ({ ...fx.RUNTIME_PROFILE, obligations: [] }) },

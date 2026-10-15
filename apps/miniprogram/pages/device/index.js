@@ -259,6 +259,13 @@ function shouldResolveSubject(profile, resolution) {
   return methods.includes("app_confirm");
 }
 
+function offlineStoriesFrom(result) {
+  const items = result.status === "fulfilled" ? result.value?.items : null;
+  return (Array.isArray(items) ? items : [])
+    .filter((item) => typeof item?.id === "string" && typeof item?.title === "string" && item.title)
+    .map((item) => ({ id: item.id, title: item.title }));
+}
+
 function bindingChoiceItems(bindings) {
   const companion = companionById(defaultCompanionId);
   return (bindings || []).map((binding) => ({
@@ -300,6 +307,7 @@ Page({
     sensitiveEntries: [],
     sessionLimits: null,
     trialSettingsVisible: false,
+    offlineStories: [],
     subscriptionPushEnabled: SUBSCRIPTION_PUSH_ENABLED,
     safetySubscribeOn: false,
     safetySubscribeKnown: false,
@@ -432,6 +440,7 @@ Page({
       sensitiveEntries: [],
       sessionLimits: null,
       trialSettingsVisible: false,
+      offlineStories: [],
       safetySubscribeOn: false,
       safetySubscribeKnown: false,
       safetySubscribeBusy: false,
@@ -840,7 +849,7 @@ Page({
     }
     try {
       const identity = api.currentIdentity();
-      const [profileResult, activationResult, settingsResult, diagnosticsResult, wakeWordCatalogResult, personaAssignmentsResult, personasResult, accountProfileResult] =
+      const [profileResult, activationResult, settingsResult, diagnosticsResult, wakeWordCatalogResult, personaAssignmentsResult, personasResult, accountProfileResult, storiesResult] =
         await Promise.allSettled([
           api.getRuntimeProfile(binding.device_id),
           api.getActivationStatus(binding.device_id),
@@ -850,6 +859,7 @@ Page({
           api.listPersonaAssignments(binding.device_id),
           api.listPersonas(),
           identity ? api.getProfile(identity.user_id) : Promise.resolve(null),
+          api.getOfflineStories(binding.device_id),
         ]);
       if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return; // 晚到响应丢弃
       const profile =
@@ -968,6 +978,7 @@ Page({
         sensitiveEntries: profile ? sensitiveEntriesFor(profile) : [],
         sessionLimits,
         trialSettingsVisible: Boolean(sessionLimits),
+        offlineStories: offlineStoriesFrom(storiesResult),
         limitsMinuteOptions,
         limitsMinuteIndex,
         currentUserLabel: speakerLabel ? subjectAliasLabel || speakerLabel : "未确认",

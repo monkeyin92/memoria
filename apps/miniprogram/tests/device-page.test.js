@@ -8,6 +8,9 @@ const api = require("../utils/api");
 const binding = require("../utils/device-binding");
 const { canonicalManifest } = require("./manifest-fixtures");
 const { readSubjectLabel } = require("../utils/subject-label");
+const { renderPage } = require("../scripts/mp-harness/render");
+
+const visibleText = (html) => html.replace(/<style>[\s\S]*?<\/style>/g, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 
 const storage = {};
 const activeSubjectCalls = [];
@@ -24,6 +27,7 @@ const settingsPatchCalls = [];
 const personaCalls = [];
 const limitsCalls = [];
 let limitsFailure = false;
+let storiesFailure = false;
 let personaFailure = false;
 let personaPayload = () => ({
   assignments: [],
@@ -179,7 +183,30 @@ global.wx = {
         options.success({ statusCode: 409, data: { detail: { code: "session_limits_not_applicable" } } });
         return;
       }
-      options.success({ statusCode: 200, data: { changed: true } });
+      options.success({
+        statusCode: 200,
+        data:
+          (options.method || "GET") === "GET"
+            ? { max_session_minutes: 30, quiet_hours: { start: "21:00", end: "07:00" }, today_used_minutes: null }
+            : { changed: true },
+      });
+      return;
+    }
+    if (pathname === "/v1/devices/dev_1/stories") {
+      options.success(
+        storiesFailure
+          ? { statusCode: 404, data: { detail: { code: "device_not_bound_to_account" } } }
+          : {
+              statusCode: 200,
+              data: {
+                items: [
+                  { id: "story_01", title: "小星星的枕头" },
+                  { id: "story_02", title: "月亮不着急" },
+                  { id: "story_03", title: "大熊和森林里的悄悄话" },
+                ],
+              },
+            },
+      );
       return;
     }
     if (pathname === "/v1/personas") {
@@ -803,6 +830,32 @@ test("the 单次上限 slider keeps an unset quiet window unset on the wire", as
   assert.deepEqual(limitsCalls, [
     { method: "PUT", deviceId: "dev_1", data: { max_session_minutes: 60, quiet_hours: null } },
   ]);
+});
+
+test("the device lists its offline story titles, and says so when it has none to show", async () => {
+  binding.saveBindingManifest(familyManifest());
+  profilePayload = wireProfile();
+  resolutionPayload = null;
+  storiesFailure = false;
+  const page = instantiate(pageDefinition);
+  await page.onShow();
+  assert.deepEqual(page.data.offlineStories, [
+    { id: "story_01", title: "小星星的枕头" },
+    { id: "story_02", title: "月亮不着急" },
+    { id: "story_03", title: "大熊和森林里的悄悄话" },
+  ]);
+  const text = visibleText(renderPage("pages/device/index", page.data));
+  assert.match(text, /离线故事 不联网也能听 小星星的枕头 月亮不着急 大熊和森林里的悄悄话 隐私说明/);
+  assert.doesNotMatch(text, /暂无可显示的离线故事/);
+
+  storiesFailure = true;
+  try {
+    await page.onShow();
+    assert.deepEqual(page.data.offlineStories, []);
+    assert.match(visibleText(renderPage("pages/device/index", page.data)), /离线故事 不联网也能听 暂无可显示的离线故事 隐私说明/);
+  } finally {
+    storiesFailure = false;
+  }
 });
 
 test("parent_for_child without app_confirm cannot switch", async () => {

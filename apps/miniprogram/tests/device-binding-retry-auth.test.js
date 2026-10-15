@@ -199,6 +199,7 @@ test("home retry 恢复登录后正常同步", async () => {
     getRuntimeProfile: async () => null,
     getDeviceSettings: async () => null,
     getDeviceDiagnostics: async () => null,
+    getSessionLimits: async () => null,
     getProfile: async () => ({ display_name: "主人" }),
     requireRuntimeCapability: async () => ({ allowed: false }),
   });
@@ -276,6 +277,7 @@ test("device retry 恢复登录后正常同步", async () => {
     getDeviceSettings: async () => null,
     getDeviceDiagnostics: async () => null,
     getWakeWordCatalog: async () => ({ items: [] }),
+    getOfflineStories: async () => ({ items: [] }),
   });
   await withPage("../pages/device/index", async (page) => {
     await page.retryBindingSync();

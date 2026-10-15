@@ -464,6 +464,7 @@ Page({
       profileResult,
       todayResult,
       diagnosticsResult,
+      limitsResult,
     ] = await Promise.allSettled([
       api.getActivationStatus(binding.device_id),
       api.getRuntimeProfile(binding.device_id),
@@ -471,6 +472,7 @@ Page({
       identity ? api.getProfile(identity.user_id) : Promise.resolve(null),
       this._loadToday(identity),
       api.getDeviceDiagnostics(binding.device_id),
+      api.getSessionLimits(binding.device_id),
     ]);
     if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
 
@@ -541,6 +543,7 @@ Page({
     const trialCard = buildTrialDeviceCard({
       online,
       runtimeProfile: runtime,
+      usedMinutes: limitsResult.status === "fulfilled" ? limitsResult.value?.today_used_minutes : null,
     });
     const unreadSafetyAlert = pinnedCrisisAlerts.length > 0;
     const firstAlert = pinnedCrisisAlerts[0] || null;

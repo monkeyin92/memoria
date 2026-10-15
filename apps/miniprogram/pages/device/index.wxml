@@ -120,6 +120,20 @@
           </view>
         </block>
 
+        <view class="trial-inset device-story-block">
+          <view class="trial-inset-row">
+            <mp-icon name="book" tone="ink"></mp-icon>
+            <view class="device-setting-copy">
+              <text class="trial-inset-label">离线故事</text>
+              <text class="trial-caption">不联网也能听</text>
+            </view>
+          </view>
+          <view wx:for="{{offlineStories}}" wx:key="id" class="trial-inset-row">
+            <text class="trial-inset-label">{{item.title}}</text>
+          </view>
+          <text wx:if="{{!offlineStories.length}}" class="trial-caption trial-inset-caption">暂无可显示的离线故事</text>
+        </view>
+
         <view class="trial-inset device-privacy-block">
           <view class="trial-inset-row" bindtap="openPrivacyNote">
             <mp-icon name="shield" tone="ink"></mp-icon>
