@@ -33,6 +33,10 @@ from services.agent.src.voice_core.media_session_types import (
 )
 from services.agent.src.voice_core.playback_ledger import PlaybackSpan
 from services.agent.src.voice_core.reply_delivery import ReplyDeliveryEvent
+from services.common.llm_failover import (
+    LLM_UNAVAILABLE_STANDBY_REASON,
+    LLM_UNAVAILABLE_TEXT,
+)
 
 if TYPE_CHECKING:
     from services.agent.src.orchestration.conversation_projection import TurnPhase
@@ -1162,6 +1166,30 @@ class MediaOutputStreamMixin:
             await speak(context, MINOR_SESSION_LIMIT_PHRASE)
             await request_standby(context, reason="minor_max_session")
 
+    async def _maybe_standby_after_llm_unavailable(
+        self,
+        context: _MediaVoiceSession,
+        fence: GenerationFence,
+    ) -> None:
+        """Close into the offline story menu after the fixed llm_unavailable line."""
+
+        if (
+            context.closed
+            or context.standby_requested
+            or context.identity.client_type != "device"
+            or not context.runtime.fence.matches(fence)
+        ):
+            return
+        assistant_text = (
+            context.output.assistant_text.strip()
+            or context.output.playback.actual_heard_text(fence).strip()
+        )
+        if assistant_text != LLM_UNAVAILABLE_TEXT:
+            return
+        request_standby = getattr(self, "_request_device_standby", None)
+        if callable(request_standby):
+            await request_standby(context, reason=LLM_UNAVAILABLE_STANDBY_REASON)
+
     @staticmethod
     def _record_playback_boundary(context: _MediaVoiceSession) -> None:
         """Snapshot the uplink capture boundary of a just-ended playback.
@@ -1231,6 +1259,7 @@ class MediaOutputStreamMixin:
         )
         await self._maybe_standby_after_farewell_complete(context, fence)
         await self._maybe_standby_after_session_limit(context, fence)
+        await self._maybe_standby_after_llm_unavailable(context, fence)
         self.clear_device_wake_ack_fence(context, fence)
         if not context.standby_requested:
             self.flush_pending_missed_hearing_nudge(context)

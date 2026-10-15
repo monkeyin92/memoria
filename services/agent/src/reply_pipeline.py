@@ -62,6 +62,7 @@ from services.agent.src.orchestration.delegation_coordinator import (
 from services.agent.src.orchestration.handlers import LanguageModelRequest, ReplyItem
 from services.agent.src.orchestration.task_manager import ToolSpec
 from services.agent.src.prompts import LIVE_LOOKUP_FILLER
+from services.agent.src.providers.llm_failover import LlmUnavailableError
 from services.agent.src.response_plan_cache import ResponsePlanCache
 from services.agent.src.response_planner_client import (
     RECALL_CONTEXT_ITEM_MAX_CHARS,
@@ -76,6 +77,7 @@ from services.agent.src.response_planner_client import (
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_profile_client import VoiceProfileClient
 from services.common.crisis_policy import route_crisis
+from services.common.llm_failover import LLM_UNAVAILABLE_TEXT
 from services.common.realtime_information import (
     REALTIME_UNAVAILABLE_REPLY,
     is_incomplete_realtime_reply,
@@ -1583,54 +1585,82 @@ class ReplyPipeline:
                 stream = self._forced_realtime_search_stream(query=realtime_request.query)
             else:
                 stream = self._model_stream(safe_chat_ctx)
-            async for chunk in stream:
-                if task is not None and task.cancelled():
-                    break
-                if self._runtime.orchestrator.tts_cancel_event().is_set():
-                    break
-                text = _chunk_text(chunk)
-                if text:
-                    if not first_content_marked:
-                        self._runtime.mark_audio_event("llm_first_content_token")
-                        first_content_marked = True
-                    gated = self._runtime.gate_llm_token(cancellation, text)
-                    if gated is None:
-                        # Stale generation — stop yielding into TTS pipeline.
-                        logger.info(
-                            "stale llm token dropped generation_id=%s",
-                            fence.generation_id,
-                        )
+            try:
+                async for chunk in stream:
+                    if task is not None and task.cancelled():
                         break
-                    if realtime_request is not None:
-                        (
-                            accepted_realtime,
-                            realtime_buffer_chars,
-                            realtime_buffer_sentences,
-                            realtime_buffer_exhausted,
-                        ) = _fit_segment(
-                            gated,
-                            used_chars=realtime_buffer_chars,
-                            used_sentences=realtime_buffer_sentences,
-                        )
-                        if accepted_realtime is not None:
-                            realtime_reply += accepted_realtime
-                    else:
-                        for segment in segmenter.push_token(gated):
+                    if self._runtime.orchestrator.tts_cancel_event().is_set():
+                        break
+                    text = _chunk_text(chunk)
+                    if text:
+                        if not first_content_marked:
+                            self._runtime.mark_audio_event("llm_first_content_token")
+                            first_content_marked = True
+                        gated = self._runtime.gate_llm_token(cancellation, text)
+                        if gated is None:
+                            # Stale generation — stop yielding into TTS pipeline.
+                            logger.info(
+                                "stale llm token dropped generation_id=%s",
+                                fence.generation_id,
+                            )
+                            break
+                        if realtime_request is not None:
+                            (
+                                accepted_realtime,
+                                realtime_buffer_chars,
+                                realtime_buffer_sentences,
+                                realtime_buffer_exhausted,
+                            ) = _fit_segment(
+                                gated,
+                                used_chars=realtime_buffer_chars,
+                                used_sentences=realtime_buffer_sentences,
+                            )
+                            if accepted_realtime is not None:
+                                realtime_reply += accepted_realtime
+                        else:
+                            for segment in segmenter.push_token(gated):
+                                accepted_segment = _ready_segment(segment.text)
+                                if accepted_segment is None:
+                                    break
+                                yield accepted_segment
+                        if reply_budget_exhausted or realtime_buffer_exhausted:
+                            logger.info(
+                                "voice_reply_budget_reached chars=%s sentences=%s",
+                                realtime_buffer_chars
+                                if realtime_request is not None
+                                else reply_chars,
+                                (
+                                    realtime_buffer_sentences
+                                    if realtime_request is not None
+                                    else reply_sentences
+                                ),
+                            )
+                            break
+            except LlmUnavailableError:
+                if realtime_request is not None or first_content_marked:
+                    raise
+                logger.warning(
+                    "llm unavailable after primary and backup session_id=%s "
+                    "turn_id=%s generation_id=%s",
+                    fence.session_id,
+                    fence.turn_id,
+                    fence.generation_id,
+                )
+                self._runtime.mark_audio_event("llm_first_content_token")
+                gated = self._runtime.gate_llm_token(cancellation, LLM_UNAVAILABLE_TEXT)
+                if gated is not None:
+                    for segment in segmenter.push_token(gated):
+                        accepted_segment = _ready_segment(segment.text)
+                        if accepted_segment is None:
+                            break
+                        yield accepted_segment
+                    if cancellation.is_current(self._runtime.fence) and not reply_budget_exhausted:
+                        for segment in segmenter.flush(end_of_stream=True):
                             accepted_segment = _ready_segment(segment.text)
                             if accepted_segment is None:
                                 break
                             yield accepted_segment
-                    if reply_budget_exhausted or realtime_buffer_exhausted:
-                        logger.info(
-                            "voice_reply_budget_reached chars=%s sentences=%s",
-                            realtime_buffer_chars if realtime_request is not None else reply_chars,
-                            (
-                                realtime_buffer_sentences
-                                if realtime_request is not None
-                                else reply_sentences
-                            ),
-                        )
-                        break
+                return
             realtime_completed = bool(realtime_reply) and not is_incomplete_realtime_reply(
                 realtime_reply,
                 query=realtime_request.query if realtime_request is not None else "",
