@@ -285,7 +285,7 @@ def test_flag_on_wraps_beijing_backup_with_thinking_disabled(
     monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-key")
     monkeypatch.setenv("LLM_BACKUP_MODEL", "qwen3.8-flash")
     monkeypatch.setenv("LLM_FIRST_TOKEN_TIMEOUT_S", "5")
-    monkeypatch.setenv("LLM_INTER_TOKEN_TIMEOUT_S", "8")
+    monkeypatch.setenv("LLM_INTER_TOKEN_TIMEOUT_S", "4")
     settings = AgentSettings(_env_file=None)
     captured: list[dict[str, Any]] = []
 

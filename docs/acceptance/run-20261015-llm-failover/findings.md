@@ -39,4 +39,4 @@ All cases green. Module budgets and ruff on the touched Python paths pass. No pr
 - [ ] About page shows qwen filing number `ZheJiang-TongYiQianWen-20230901` when the flag is enabled
 - [ ] Prompt/safety passthrough tests green on the release candidate
 - [ ] Forbidden-words gate exercised on a live backup sample
-- [ ] `LLM_FAILOVER_ENABLED=true` with `LLM_FIRST_TOKEN_TIMEOUT_S=5`, `LLM_INTER_TOKEN_TIMEOUT_S=8`, and Beijing `DASHSCOPE_COMPATIBLE_BASE_URL` only
+- [ ] `LLM_FAILOVER_ENABLED=true` with `LLM_FIRST_TOKEN_TIMEOUT_S=5`, `LLM_INTER_TOKEN_TIMEOUT_S=4`, and Beijing `DASHSCOPE_COMPATIBLE_BASE_URL` only
