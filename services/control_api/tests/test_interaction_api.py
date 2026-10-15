@@ -1408,7 +1408,8 @@ async def test_response_plan_consumes_bounded_crisis_semantic_evidence(
             await client.post("/v1/sessions", headers=user_headers, json={})
         ).json()["session_id"]
         body = _response_plan_body(session_id)
-        body["query"] = "我真的找不到活下去的理由"
+        # Rules own 找不到活下去的理由; 撑不下去 still exercises the semantic lane.
+        body["query"] = "我撑不下去了"
         response = await client.post(
             "/v1/interaction/response-plan",
             headers=token,
@@ -1416,7 +1417,7 @@ async def test_response_plan_consumes_bounded_crisis_semantic_evidence(
         )
 
     assert response.status_code == 200
-    assert evidence.calls == ["我真的找不到活下去的理由"]
+    assert evidence.calls == ["我撑不下去了"]
     assert "12356" in response.json()["direct_text"]
 
 

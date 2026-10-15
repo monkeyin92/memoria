@@ -352,7 +352,7 @@ async def test_guardian_binding_consent_revocation_and_summary_are_end_to_end(
 
         class SemanticEvidence:
             async def classify(self, *, current_text: str) -> CrisisSemanticVerdict:
-                assert current_text == "我真的找不到活下去的理由"
+                assert current_text == "我撑不下去了"
                 return CrisisSemanticVerdict.SELF_CRISIS
 
         class UnavailableNotifications:
@@ -370,7 +370,7 @@ async def test_guardian_binding_consent_revocation_and_summary_are_end_to_end(
             },
             json={
                 "session_id": session.json()["session_id"],
-                "query": "我真的找不到活下去的理由",
+                "query": "我撑不下去了",
                 "utterance_intent": "chat",
                 "fence": {
                     "session_id": session.json()["session_id"],

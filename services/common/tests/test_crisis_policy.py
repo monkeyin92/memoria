@@ -82,8 +82,12 @@ def test_model_evidence_cannot_execute_without_deterministic_first_person_anchor
         semantic_evidence=CrisisSemanticVerdict.SELF_CRISIS,
     ).action == "none"
 
+    # Phrase-group rules own 找不到活下去的理由; 撑不下去 still needs the anchor.
+    assert (
+        route_crisis("我真的找不到活下去的理由").evidence_source == "deterministic"
+    )
     route = route_crisis(
-        "我真的找不到活下去的理由",
+        "我撑不下去了",
         semantic_evidence=CrisisSemanticVerdict.SELF_CRISIS,
     )
     assert route.action == "crisis_support"
@@ -93,7 +97,8 @@ def test_model_evidence_cannot_execute_without_deterministic_first_person_anchor
 
 
 def test_semantic_call_candidate_is_bounded_to_unresolved_first_person_risk() -> None:
-    assert crisis_semantic_candidate("我真的找不到活下去的理由") is True
+    assert crisis_semantic_candidate("我撑不下去了") is True
+    assert crisis_semantic_candidate("我真的找不到活下去的理由") is False
     assert crisis_semantic_candidate("我已经服药过量") is False
     assert crisis_semantic_candidate("同学找不到活下去的理由") is False
 
