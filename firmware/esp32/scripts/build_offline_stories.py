@@ -11,6 +11,10 @@ A clip whose OpusTags TITLE ends in "_placeholder" is a placeholder. Any other
 title, including none, is production. The pack ships production clips only.
 Upstream packs DEFAULT_ASSETS_EXTRA_FILES by basename, so names stay <= 32
 characters. The 8 MiB assets partition keeps >= 0.5 MiB free.
+
+Implicit AIGC Vorbis comments (CONTENT_ID, SERVICE_PROVIDER, AI_GENERATED,
+ARTIST, DATE, CONTENT_PRODUCER) are required on every shipped clip except the
+pending-audit exception list. Provider-embedded marks are never stripped.
 """
 
 from __future__ import annotations
@@ -18,12 +22,22 @@ from __future__ import annotations
 import argparse
 import enum
 import json
-import struct
 import sys
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 
 REPO = Path(__file__).resolve().parents[3]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+from services.common.aigc_opus import (  # noqa: E402
+    IMPLICIT_AIGC_TAG_KEYS,
+    OPUS_TAGS_SCAN_BYTES,
+    aigc_tag_map,
+    opus_tag_pairs,
+    require_aigc_tags,
+)
+
 BOARD_ASSETS = (
     REPO
     / "firmware"
@@ -39,7 +53,6 @@ BOARD_ASSETS = (
 ASSETS_PARTITION_BYTES = 8 * 1024 * 1024
 MIN_FREE_MARGIN_BYTES = 512 * 1024
 MAX_ASSET_NAME_LEN = 32
-OPUS_TAGS_SCAN_BYTES = 64 * 1024
 
 VOICE = {
     "id": "zh_female_tianmeitaozi_uranus_bigtts",
@@ -76,12 +89,49 @@ OFFLINE_LINES = (
     ("offline-menu-idle-v1", "我先休息一下，点屏幕就能叫醒我。"),
     ("llm_unavailable", "我现在有点卡住了，等一会儿再来找我聊吧。"),
     ("llm_thinking", "嗯，我想一想。"),
+    ("aigc-notice-story", "下面是 AI 合成的声音给你讲故事。"),
+    ("aigc-notice-bedtime", "AI 合成的声音陪你睡觉啦。"),
 )
 
 # Placeholders allowed until production voice is copied in. Each must carry
-# Appendix-E AIGC OpusTags (CONTENT_ID / SERVICE_PROVIDER / AI_GENERATED).
+# full implicit AIGC OpusTags.
 PENDING_PLACEHOLDER_LINE_IDS = frozenset({"llm_unavailable", "llm_thinking"})
-REQUIRED_AIGC_TAG_KEYS = ("CONTENT_ID", "SERVICE_PROVIDER", "AI_GENERATED")
+
+# Spoken AIGC notices: recipe in scripts/render_aigc_notices.py. Absent until
+# Doubao credentials render them. Do not fabricate audio.
+PENDING_TTS_GENERATION_LINE_IDS = frozenset({"aigc-notice-story", "aigc-notice-bedtime"})
+
+# Provenance under audit: do not relabel or rewrite these 25 production oggs
+# in this change. The pack check skips the implicit-tag gate for them only.
+PENDING_AIGC_AUDIT_EXCEPTIONS = frozenset(
+    {
+        PurePosixPath("stories/story_01.ogg"),
+        PurePosixPath("stories/story_02.ogg"),
+        PurePosixPath("stories/story_03.ogg"),
+        PurePosixPath("wo_zai_ne.ogg"),
+        PurePosixPath("night_soothe.ogg"),
+        PurePosixPath("offline_lines/offline-wake-no-network-v1.ogg"),
+        PurePosixPath("offline_lines/offline-wake-ask-parent-v1.ogg"),
+        PurePosixPath("offline_lines/offline-wake-story-hint-v2.ogg"),
+        PurePosixPath("offline_lines/offline-mid-drop-v2.ogg"),
+        PurePosixPath("offline_lines/offline-mid-ask-parent-v1.ogg"),
+        PurePosixPath("offline_lines/offline-mid-retry-v1.ogg"),
+        PurePosixPath("offline_lines/offline-reconnecting-v1.ogg"),
+        PurePosixPath("offline_lines/online-restored-v1.ogg"),
+        PurePosixPath("offline_lines/online-restored-chat-v1.ogg"),
+        PurePosixPath("offline_lines/online-restored-in-story-v2.ogg"),
+        PurePosixPath("offline_lines/offline-menu-intro-v2.ogg"),
+        PurePosixPath("offline_lines/offline-menu-how-v1.ogg"),
+        PurePosixPath("offline_lines/offline-menu-confirm-how-v2.ogg"),
+        PurePosixPath("offline_lines/offline-menu-item-01-v2.ogg"),
+        PurePosixPath("offline_lines/offline-menu-item-02-v2.ogg"),
+        PurePosixPath("offline_lines/offline-menu-item-03-v2.ogg"),
+        PurePosixPath("offline_lines/offline-menu-choose-v2.ogg"),
+        PurePosixPath("offline_lines/offline-menu-start-v1.ogg"),
+        PurePosixPath("offline_lines/offline-menu-end-v1.ogg"),
+        PurePosixPath("offline_lines/offline-menu-idle-v1.ogg"),
+    }
+)
 
 BOARD_CLIPS = ("wo_zai_ne", "night_soothe")
 
@@ -102,41 +152,11 @@ def clip_paths() -> tuple[PurePosixPath, ...]:
     )
 
 
-def opus_tag_pairs(head: bytes) -> list[tuple[str, str]]:
-    if not head.startswith(b"OggS"):
-        raise ValueError("not an Ogg stream")
-    at = head.find(b"OpusTags")
-    if at < 0:
-        raise ValueError("no OpusTags header")
-    pos = at + len(b"OpusTags")
-    pairs: list[tuple[str, str]] = []
-    try:
-        (vendor_len,) = struct.unpack_from("<I", head, pos)
-        pos += 4 + vendor_len
-        (count,) = struct.unpack_from("<I", head, pos)
-        pos += 4
-        for _ in range(count):
-            (length,) = struct.unpack_from("<I", head, pos)
-            pos += 4
-            raw = head[pos : pos + length]
-            pos += length
-            key, sep, value = raw.decode("utf-8").partition("=")
-            if sep:
-                pairs.append((key, value))
-    except (struct.error, UnicodeDecodeError) as exc:
-        raise ValueError("truncated OpusTags") from exc
-    return pairs
-
-
 def asset_kind(head: bytes) -> AssetKind:
     for key, value in opus_tag_pairs(head):
         if key.lower() == "title" and value.endswith("_placeholder"):
             return AssetKind.PLACEHOLDER
     return AssetKind.PRODUCTION
-
-
-def aigc_tag_map(head: bytes) -> dict[str, str]:
-    return {key.upper(): value for key, value in opus_tag_pairs(head)}
 
 
 def _manifest_text(payload: Mapping[str, object]) -> str:
@@ -172,8 +192,14 @@ def derive_manifests(kinds: Mapping[PurePosixPath, AssetKind]) -> dict[PurePosix
                 "id": line_id,
                 "text": text,
                 "file": f"{line_id}.ogg",
-                "placeholder": kinds[PurePosixPath("offline_lines") / f"{line_id}.ogg"]
-                is AssetKind.PLACEHOLDER,
+                "placeholder": (
+                    kinds[PurePosixPath("offline_lines") / f"{line_id}.ogg"]
+                    is AssetKind.PLACEHOLDER
+                    if PurePosixPath("offline_lines") / f"{line_id}.ogg" in kinds
+                    else False
+                ),
+                "pending_tts": line_id in PENDING_TTS_GENERATION_LINE_IDS
+                and PurePosixPath("offline_lines") / f"{line_id}.ogg" not in kinds,
             }
             for line_id, text in OFFLINE_LINES
         ],
@@ -188,6 +214,17 @@ def _tree_bytes(root: Path) -> int:
     return sum(path.stat().st_size for path in root.rglob("*") if path.is_file())
 
 
+def _check_implicit_tags(rel: PurePosixPath, path: Path, errors: list[str]) -> None:
+    try:
+        require_aigc_tags(
+            path.read_bytes()[:OPUS_TAGS_SCAN_BYTES],
+            content_id=rel.stem,
+            implicit=True,
+        )
+    except ValueError as exc:
+        errors.append(f"{rel.as_posix()} missing implicit AIGC labels: {exc}")
+
+
 def check_pack(root: Path, *, write_manifests: bool) -> int:
     errors: list[str] = []
     kinds: dict[PurePosixPath, AssetKind] = {}
@@ -196,7 +233,15 @@ def check_pack(root: Path, *, write_manifests: bool) -> int:
         if not 0 < len(name) <= MAX_ASSET_NAME_LEN:
             errors.append(f"filename too long ({len(name)}): {name}")
         path = root / rel
+        line_id = rel.stem
         if not path.is_file() or path.stat().st_size <= 0:
+            if line_id in PENDING_TTS_GENERATION_LINE_IDS and rel.parts[0] == "offline_lines":
+                print(
+                    f"TODO: pending TTS generation for {rel.as_posix()}; "
+                    "run scripts/render_aigc_notices.py with DOUBAO_TTS_*",
+                    file=sys.stderr,
+                )
+                continue
             errors.append(f"missing asset {rel.as_posix()}; copy the production clip")
             continue
         try:
@@ -204,7 +249,13 @@ def check_pack(root: Path, *, write_manifests: bool) -> int:
         except ValueError as exc:
             errors.append(f"{rel.as_posix()}: {exc}")
 
-    if len(kinds) == len(clip_paths()):
+    present_required = [rel for rel in clip_paths() if rel in kinds]
+    missing_required = [
+        rel
+        for rel in clip_paths()
+        if rel not in kinds and rel.stem not in PENDING_TTS_GENERATION_LINE_IDS
+    ]
+    if not missing_required and len(present_required) == len(kinds):
         for rel, text in derive_manifests(kinds).items():
             dest = root / rel
             if write_manifests:
@@ -218,41 +269,62 @@ def check_pack(root: Path, *, write_manifests: bool) -> int:
                 errors.append(f"{rel.as_posix()} is stale; run build_offline_stories.py")
 
     pending_placeholders = 0
+    pending_audit = 0
     for rel, kind in kinds.items():
-        if kind is not AssetKind.PLACEHOLDER:
-            continue
         line_id = rel.stem
-        if line_id in PENDING_PLACEHOLDER_LINE_IDS and rel.parts[0] == "offline_lines":
+        if rel in PENDING_AIGC_AUDIT_EXCEPTIONS:
+            pending_audit += 1
+            if kind is AssetKind.PLACEHOLDER:
+                errors.append(f"{rel.as_posix()} is a placeholder; copy the production clip")
+            continue
+        if (
+            kind is AssetKind.PLACEHOLDER
+            and line_id in PENDING_PLACEHOLDER_LINE_IDS
+            and rel.parts[0] == "offline_lines"
+        ):
             tags = aigc_tag_map((root / rel).read_bytes()[:OPUS_TAGS_SCAN_BYTES])
-            missing = [key for key in REQUIRED_AIGC_TAG_KEYS if not tags.get(key, "").strip()]
+            missing = [key for key in IMPLICIT_AIGC_TAG_KEYS if not tags.get(key, "").strip()]
             if missing:
                 errors.append(
                     f"{rel.as_posix()} pending placeholder missing AIGC tags: "
                     + ", ".join(missing)
                 )
-            elif tags.get("CONTENT_ID", "").strip() != line_id:
-                errors.append(
-                    f"{rel.as_posix()} pending placeholder CONTENT_ID must be {line_id}"
-                )
-            elif tags.get("AI_GENERATED", "").strip().lower() not in {"true", "1", "yes"}:
-                errors.append(
-                    f"{rel.as_posix()} pending placeholder AI_GENERATED must be true"
-                )
             else:
-                pending_placeholders += 1
+                try:
+                    require_aigc_tags(
+                        (root / rel).read_bytes()[:OPUS_TAGS_SCAN_BYTES],
+                        content_id=line_id,
+                        implicit=True,
+                    )
+                except ValueError as exc:
+                    errors.append(f"{rel.as_posix()} pending placeholder: {exc}")
+                else:
+                    pending_placeholders += 1
             continue
-        errors.append(f"{rel.as_posix()} is a placeholder; copy the production clip")
+        if kind is AssetKind.PLACEHOLDER:
+            errors.append(f"{rel.as_posix()} is a placeholder; copy the production clip")
+            continue
+        _check_implicit_tags(rel, root / rel, errors)
+
+    if len(PENDING_AIGC_AUDIT_EXCEPTIONS) != 25:
+        errors.append(
+            f"PENDING_AIGC_AUDIT_EXCEPTIONS must list exactly 25 clips, "
+            f"got {len(PENDING_AIGC_AUDIT_EXCEPTIONS)}"
+        )
 
     total = _tree_bytes(root) if root.is_dir() else 0
     free = ASSETS_PARTITION_BYTES - total
     production = sum(kind is AssetKind.PRODUCTION for kind in kinds.values())
     placeholder = sum(kind is AssetKind.PLACEHOLDER for kind in kinds.values())
+    pending_tts = len(PENDING_TTS_GENERATION_LINE_IDS - {p.stem for p in kinds})
     print(f"board_assets_bytes={total}")
     print(f"assets_partition_bytes={ASSETS_PARTITION_BYTES}")
     print(f"free_margin_bytes={free}")
     print(f"production_clips={production}")
     print(f"placeholder_clips={placeholder}")
     print(f"pending_placeholder_clips={pending_placeholders}")
+    print(f"pending_aigc_audit_exceptions={pending_audit}")
+    print(f"pending_tts_generation={pending_tts}")
     if free < MIN_FREE_MARGIN_BYTES:
         errors.append(f"free margin {free} < required {MIN_FREE_MARGIN_BYTES}")
 
