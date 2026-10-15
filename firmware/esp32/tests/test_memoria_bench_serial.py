@@ -395,9 +395,9 @@ def test_the_marker_the_publisher_refuses_is_defined_once_and_logged_at_boot() -
     ]
     assert definitions == [BENCH_SOURCE.name]
     boot_log = _read(BOARD_CC)
-    assert "usb command console ready commands=wake,sleep,poweroff,snap,status,pcmarm,pcmdump %s" in boot_log
+    assert "usb command console ready commands=wake,sleep,poweroff,temp,snap,status,pcmarm,pcmdump %s" in boot_log
     assert "memoria_bench_build_marker" in boot_log
-    assert "usb command console ready commands=wake,sleep,poweroff" in boot_log
+    assert "usb command console ready commands=wake,sleep,poweroff,temp" in boot_log
 
 
 @pytest.mark.parametrize("script", ["build.sh", "flash.sh", "check-overlay.sh"])

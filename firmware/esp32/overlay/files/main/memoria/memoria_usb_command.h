@@ -9,9 +9,10 @@
 //   wake\n       start a conversation on an idle device, under the same gate as a screen tap
 //   sleep\n      stop speaking/listening and park in wifi hold without entering chip deep sleep
 //   poweroff\n   same stop as sleep, then disconnect station Wi-Fi if the stack allows it
+//   temp\n       log the on-chip temperature sensor reading in Celsius (read-only)
 //
 // Limits: USB-Serial-JTAG keeps powering the board, so sleep/poweroff cannot cut USB power or force a
-// true power-off. They do not change CONFIG_MEMORIA_KEEP_AWAKE or enable deep sleep by default. Auto
+// true power-off. They do not change the keep-awake build switch or enable deep sleep by default. Auto
 // deep-sleep from wifi hold stays disarmed on this path (hold not armed), so a USB test rig stays up.
 //
 // A bench build (CONFIG_MEMORIA_BENCH_SERIAL, TODOLIST M-2; never published, see memoria_bench_snap.h) also
@@ -60,6 +61,7 @@ enum class UsbCommand : unsigned char {
     kWake,
     kSleep,
     kPowerOff,
+    kTemp,
 #if CONFIG_MEMORIA_BENCH_SERIAL
     kSnap,
     kStatus,
@@ -102,6 +104,9 @@ inline UsbCommand ParseUsbCommand(const char* line, std::size_t length) {
     if (usb_command_detail::IsVerb(verb, verb_length, "poweroff")) {
         return UsbCommand::kPowerOff;
     }
+    if (usb_command_detail::IsVerb(verb, verb_length, "temp")) {
+        return UsbCommand::kTemp;
+    }
 #if CONFIG_MEMORIA_BENCH_SERIAL
     if (usb_command_detail::IsVerb(verb, verb_length, "snap")) {
         return UsbCommand::kSnap;
@@ -124,6 +129,7 @@ enum class UsbLineEvent : unsigned char {
     kWake,      // a complete line that is the wake command
     kSleep,     // a complete line that is the sleep command
     kPowerOff,  // a complete line that is the poweroff command
+    kTemp,      // a complete line that is the temp command
     kUnknown,   // a complete line that is not a command
     kTooLong,   // a line longer than kMaxLine just ended; it was dropped whole
 #if CONFIG_MEMORIA_BENCH_SERIAL
@@ -186,6 +192,8 @@ private:
                 return UsbLineEvent::kSleep;
             case UsbCommand::kPowerOff:
                 return UsbLineEvent::kPowerOff;
+            case UsbCommand::kTemp:
+                return UsbLineEvent::kTemp;
 #if CONFIG_MEMORIA_BENCH_SERIAL
             case UsbCommand::kSnap:
                 return UsbLineEvent::kSnap;

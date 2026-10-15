@@ -8,8 +8,8 @@ import pytest
 from services.agent.src import response_plan_sidecar
 from services.agent.src.contracts.ids import CancellationContext
 from services.agent.src.duplex_runtime import DuplexRuntime
-from services.agent.src.orchestration.handlers import LanguageModelRequest
 from services.agent.src.llm_types import StopResponse
+from services.agent.src.orchestration.handlers import LanguageModelRequest
 from services.agent.src.reply_pipeline import ReplyPipeline
 from services.agent.src.response_planner_client import ResponsePlanFetch
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy

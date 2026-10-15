@@ -1,13 +1,9 @@
-"""Host-side checks for USB `wake` / `sleep` / `poweroff` and the bench-only `snap`/`status`.
+"""Host-side checks for USB `wake` / `sleep` / `poweroff` / `temp` and the bench-only `snap`/`status`.
 
 `memoria_usb_command.h` has no ESP-IDF dependency, so the exact parser, line assembler and wake policy
 compile on the host, in both configurations: a product image (`CONFIG_MEMORIA_BENCH_SERIAL` off) and a bench
 build (on). The task that reads the port and the board handler are checked as source text, because those
 only build inside ESP-IDF.
-
-Product rules: computer-driven tests wake over USB; `sleep` / `poweroff` stop speaking/listening and park
-without enabling chip deep sleep (USB still powers the board). A bench build also answers read-only
-`snap` / `status` / pcm verbs.
 """
 
 from __future__ import annotations
@@ -39,6 +35,7 @@ static const char* EventName(memoria::UsbLineEvent event) {
         case memoria::UsbLineEvent::kWake: return "wake";
         case memoria::UsbLineEvent::kSleep: return "sleep";
         case memoria::UsbLineEvent::kPowerOff: return "poweroff";
+        case memoria::UsbLineEvent::kTemp: return "temp";
         case memoria::UsbLineEvent::kUnknown: return "unknown";
         case memoria::UsbLineEvent::kTooLong: return "too-long";
 #if CONFIG_MEMORIA_BENCH_SERIAL
@@ -57,6 +54,7 @@ static const char* CommandName(memoria::UsbCommand command) {
         case memoria::UsbCommand::kWake: return "wake";
         case memoria::UsbCommand::kSleep: return "sleep";
         case memoria::UsbCommand::kPowerOff: return "poweroff";
+        case memoria::UsbCommand::kTemp: return "temp";
 #if CONFIG_MEMORIA_BENCH_SERIAL
         case memoria::UsbCommand::kSnap: return "snap";
         case memoria::UsbCommand::kStatus: return "status";
@@ -229,7 +227,9 @@ def test_only_the_exact_product_verbs_are_commands(tool: pathlib.Path) -> None:
         "parse   sleep  ",
         "parse poweroff",
         "parse \tpoweroff\t",
-    ) == ["wake"] * 4 + ["sleep"] * 2 + ["poweroff"] * 2
+        "parse temp",
+        "parse   temp  ",
+    ) == ["wake"] * 4 + ["sleep"] * 2 + ["poweroff"] * 2 + ["temp"] * 2
     # A stray terminal, a pasted log line or line noise cannot wake the robot.
     assert _run(
         tool,
@@ -247,9 +247,11 @@ def test_only_the_exact_product_verbs_are_commands(tool: pathlib.Path) -> None:
         "parse sleep now",
         "parse power-off",
         "parse power off",
+        "parse temperature",
+        "parse Temp",
         "parse I (1234) MemoriaUsbCommand: usb wake accepted",
         "null",
-    ) == ["unknown"] * 16
+    ) == ["unknown"] * 18
 
 
 def test_cr_lf_and_crlf_all_end_a_line(tool: pathlib.Path) -> None:
@@ -554,11 +556,13 @@ def test_the_task_only_reads_the_secondary_console_and_product_verbs_reach_handl
     assert task.count("HandleUsbWake()") == 1
     assert "case memoria::UsbLineEvent::kSleep:" in task
     assert "case memoria::UsbLineEvent::kPowerOff:" in task
+    assert "case memoria::UsbLineEvent::kTemp:" in task
     assert "HandleUsbSleepOrPowerOff(false)" in task
     assert "HandleUsbSleepOrPowerOff(true)" in task
+    assert "HandleUsbTemp()" in task
     # A failed open ends the task instead of spinning.
-    assert "vTaskDelete(NULL)" in task[: task.index("ready commands=wake,sleep,poweroff")]
-    assert "ready commands=wake,sleep,poweroff" in source
+    assert "vTaskDelete(NULL)" in task[: task.index("ready commands=wake,sleep,poweroff,temp")]
+    assert "ready commands=wake,sleep,poweroff,temp" in source
     # The poll yields every round, so the loop can never starve a lower-priority task.
     assert "vTaskDelay(pdMS_TO_TICKS(kUsbPollMs))" in task
     assert "kUsbPollMs = 25" in source
@@ -575,6 +579,17 @@ def test_usb_sleep_and_poweroff_stop_without_deep_sleep() -> None:
     assert "esp_deep_sleep_start" not in handler
     assert "StopStation" in handler
     assert "USB still powers the board" in handler
+
+
+def test_usb_temp_reads_chip_sensor_without_side_effects() -> None:
+    source = BOARD.read_text(encoding="utf-8")
+    handler = _function(source, "void HandleUsbTemp()")
+    assert "temperature_sensor_get_celsius" in handler
+    assert "usb temp celsius=" in handler
+    assert "reason=no_sensor" in handler
+    assert "esp_deep_sleep_start" not in handler
+    assert "StopStation" not in handler
+    assert "ToggleChatState" not in handler
 
 
 def test_the_task_is_started_with_the_board_at_low_priority_off_the_audio_core() -> None:

@@ -1698,7 +1698,7 @@ def test_network_disconnect_actively_recovers_the_same_session() -> None:
     assert "app.Schedule([this]() { EnterWifiConfigMode(); })" in board_source
     touch = board_source[
         board_source.index("void HandleScreenTouchRelease(std::uint32_t hold_ms)") : board_source.index(
-            "void InitializeI2c()"
+            "void HandleUsbWake()"
         )
     ]
     # Tap-only power policy: a tap wakes or soothes, and never stops a conversation.

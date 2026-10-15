@@ -1,5 +1,3 @@
-"""Host checks for the safety-sentence ASR reproduction harness."""
-
 from __future__ import annotations
 
 import importlib.util

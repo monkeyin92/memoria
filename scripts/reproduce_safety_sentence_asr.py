@@ -89,7 +89,6 @@ async def _recognize(pcm: bytes, *, sample_rate: int) -> str:
 
     config = FunASRConfig.from_env()
     if config.sample_rate != sample_rate and pcm:
-        # Production FunASR expects the configured rate; Doubao TTS matches 16 kHz.
         pass
     session = FunASRSession(config)
     await session.connect()

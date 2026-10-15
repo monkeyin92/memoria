@@ -939,9 +939,6 @@ class ReplyPipeline:
             )
             if script is not None and plan.direct_text != script.display:
                 plan = replace(plan, direct_text=script.display)
-            # After a fixed safety script, do not invent proactive chat via
-            # local-safe LLM fallback. A new safety hit still speaks its script.
-            # Genuine child turns with a successful planner response still proceed.
             if (
                 self._runtime.fixed_safety_heard
                 and script is None

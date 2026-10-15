@@ -211,9 +211,6 @@ class DuplexRuntime(
     _interaction_decision: InteractionDecision | None = None
     _interaction_decision_text: str = ""
     _last_committed_user_text_normalized: str = ""
-    # Set when this session has spoken an approved fixed safety script. Stops
-    # proactive local-safe LLM chat after that script; does not reject genuine
-    # child turns.
     fixed_safety_heard: bool = False
     _paused_reply_available: bool = False
     _reply_speaker_binding: ResumeSpeakerBinding | None = None
@@ -2766,8 +2763,6 @@ class DuplexRuntime(
             duration_ms=int(max(0, elapsed_ms)),
             assistant_text=self._voice_floor.played_assistant_text,
         )
-        # After a fixed safety script, keep rejecting echo of that script even
-        # past POST_PLAYBACK_ECHO_GUARD_MS. Do not reject non-echo child speech.
         if reason == "assistant_echo" and (
             self.fixed_safety_heard or 0 <= elapsed_ms <= POST_PLAYBACK_ECHO_GUARD_MS
         ):
