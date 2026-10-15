@@ -2,17 +2,29 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from typing import Any
 
 import pytest
 from services.agent.src import response_plan_sidecar
 from services.agent.src.contracts.ids import CancellationContext
-from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.duplex_runtime import POST_PLAYBACK_ECHO_GUARD_MS, DuplexRuntime
+from services.agent.src.llm_types import StopResponse
 from services.agent.src.orchestration.handlers import LanguageModelRequest
 from services.agent.src.reply_pipeline import ReplyPipeline
-from services.agent.src.response_planner_client import ResponsePlanFetch
+from services.agent.src.response_planner_client import (
+    ResponsePlan,
+    ResponsePlanFetch,
+    ResponseProvenance,
+    ResponseVoiceTarget,
+)
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
-from services.agent.tests.unit.runtime_state_helpers import ScriptedChatModel, bind_owner_speaker
+from services.agent.tests.unit.runtime_state_helpers import (
+    ScriptedChatModel,
+    bind_owner_speaker,
+    set_floor,
+)
 from services.common.fixed_safety_scripts import (
     CRISIS_SELF_SCRIPT,
     SUPPORT_RELAY_SCRIPT,
@@ -101,4 +113,246 @@ async def test_fence_mismatch_fallback_still_speaks_fixed_safety_replies(
         )
     ]
     assert spoken == [expected]
+    await runtime.close()
+
+
+class _InvalidPayloadPlanner:
+    echoes_session_epoch = True
+
+    async def fetch(self, **kwargs: Any) -> ResponsePlanFetch:
+        return ResponsePlanFetch(None, "request_or_payload_invalid")
+
+
+@pytest.mark.asyncio
+async def test_after_fixed_safety_local_safe_fallback_does_not_speak_chat(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Product rule: after a fixed safety script the server must not speak again
+    on its own. An echo/invalid follow-up that hits local-safe LLM fallback is
+    suppressed. The child's speech is still accepted into prepare; only the
+    proactive invented reply is stopped.
+    """
+
+    import logging
+
+    runtime = _runtime("post-safety-suppress")
+    pipeline = _pipeline(runtime, _InvalidPayloadPlanner())
+    first = await pipeline.prepare_committed_turn("我想伤害自己。")
+    spoken_safety = [
+        token
+        async for token in pipeline.stream(
+            LanguageModelRequest(
+                user_text="我想伤害自己。",
+                cancellation=CancellationContext.capture(first),
+            )
+        )
+    ]
+    assert spoken_safety == [CRISIS_SELF_SCRIPT]
+    assert runtime.fixed_safety_heard is True
+
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(StopResponse):
+            await pipeline.prepare_committed_turn("嗯嗯好的大人陪着你")
+    assert any(
+        "post_fixed_safety_fallback_suppressed" in record.getMessage()
+        for record in caplog.records
+    )
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_after_fixed_safety_a_new_safety_hit_still_speaks_fixed_script() -> None:
+    runtime = _runtime("post-safety-retrigger")
+    pipeline = _pipeline(runtime, _InvalidPayloadPlanner())
+    first = await pipeline.prepare_committed_turn("我想伤害自己。")
+    async for _ in pipeline.stream(
+        LanguageModelRequest(
+            user_text="我想伤害自己。",
+            cancellation=CancellationContext.capture(first),
+        )
+    ):
+        pass
+    assert runtime.fixed_safety_heard is True
+
+    second = await pipeline.prepare_committed_turn("有个叔叔老是大我。")
+    spoken = [
+        token
+        async for token in pipeline.stream(
+            LanguageModelRequest(
+                user_text="有个叔叔老是大我。",
+                cancellation=CancellationContext.capture(second),
+            )
+        )
+    ]
+    assert spoken == [SUPPORT_VICTIM_SCRIPT]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("follow_up", ["嗯嗯好的大人陪着你", "你叫什么名字"])
+async def test_after_fixed_safety_local_safe_chat_text_is_not_spoken(
+    follow_up: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    runtime = _runtime("post-safety-no-chat")
+    pipeline = _pipeline(runtime, _InvalidPayloadPlanner())
+    first = await pipeline.prepare_committed_turn("我想伤害自己。")
+    spoken_safety = [
+        token
+        async for token in pipeline.stream(
+            LanguageModelRequest(
+                user_text="我想伤害自己。",
+                cancellation=CancellationContext.capture(first),
+            )
+        )
+    ]
+    assert spoken_safety == [CRISIS_SELF_SCRIPT]
+
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(StopResponse):
+            await pipeline.prepare_committed_turn(follow_up)
+    assert any(
+        "post_fixed_safety_fallback_suppressed" in record.getMessage()
+        and "request_or_payload_invalid" in record.getMessage()
+        for record in caplog.records
+    )
+    await runtime.close()
+
+
+def _companion_chat_plan(fence: Any) -> ResponsePlan:
+    return ResponsePlan(
+        fence=fence,
+        instructions="按当前控制计划自然回答。",
+        direct_text=None,
+        epistemic_status="not_applicable",
+        epistemic_reason_codes=("test",),
+        grounded_items=(),
+        disclosures=(),
+        voice_target=ResponseVoiceTarget(
+            kind="companion",
+            profile_id="warm_companion",
+            model="seed-tts-2.0",
+        ),
+        provenance=ResponseProvenance(
+            planner_policy_version="digital-self-response-planner-v2",
+            interaction_mode="companion",
+            mode_policy_version="test-policy",
+            digital_self_version_id=None,
+            manifest_sha256=None,
+            persona_version_id=None,
+            persona_version_number=None,
+            persona_style_only=False,
+            relationship_profile_id=None,
+            relationship_profile_version=None,
+            speaker_class="owner",
+            speaker_reason_code="owner_match",
+            speaker_profile_id="owner",
+            speaker_model_version="test",
+            speaker_template_version=1,
+            source_refs=(),
+            epistemic_status="not_applicable",
+            epistemic_reason_codes=("test",),
+            disclosures=(),
+        ),
+    )
+
+
+class _ParkChatPlanner:
+    echoes_session_epoch = True
+
+    async def fetch(self, **kwargs: Any) -> ResponsePlanFetch:
+        query = str(kwargs["query"])
+        if query == "我们去公园玩吧":
+            return ResponsePlanFetch(_companion_chat_plan(kwargs["fence"]), "ok")
+        return ResponsePlanFetch(None, "request_or_payload_invalid")
+
+
+@pytest.mark.asyncio
+async def test_after_fixed_safety_a_real_plan_still_speaks_chat() -> None:
+    runtime = _runtime("post-safety-real-plan")
+
+    async def model(_safe_ctx: Any, _tools: list[Any]) -> Any:
+        async def one() -> Any:
+            yield "公园很好玩。"
+
+        return one()
+
+    pipeline = _pipeline(runtime, _ParkChatPlanner())
+    pipeline.language_model = ScriptedChatModel(model)
+    first = await pipeline.prepare_committed_turn("我想伤害自己。")
+    spoken_safety = [
+        token
+        async for token in pipeline.stream(
+            LanguageModelRequest(
+                user_text="我想伤害自己。",
+                cancellation=CancellationContext.capture(first),
+            )
+        )
+    ]
+    assert spoken_safety == [CRISIS_SELF_SCRIPT]
+
+    second = await pipeline.prepare_committed_turn("我们去公园玩吧")
+    spoken = [
+        token
+        async for token in pipeline.stream(
+            LanguageModelRequest(
+                user_text="我们去公园玩吧",
+                cancellation=CancellationContext.capture(second),
+            )
+        )
+    ]
+    assert "".join(spoken) == "公园很好玩。"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_fixed_safety_script_echo_stays_rejected_after_the_guard_window() -> None:
+    runtime = _runtime("post-safety-echo")
+    pipeline = _pipeline(runtime, _InvalidPayloadPlanner())
+    first = await pipeline.prepare_committed_turn("我想伤害自己。")
+    spoken_safety = [
+        token
+        async for token in pipeline.stream(
+            LanguageModelRequest(
+                user_text="我想伤害自己。",
+                cancellation=CancellationContext.capture(first),
+            )
+        )
+    ]
+    assert spoken_safety == [CRISIS_SELF_SCRIPT]
+    aged = time.monotonic_ns() - (POST_PLAYBACK_ECHO_GUARD_MS + 1_000) * 1_000_000
+    set_floor(
+        runtime,
+        played_assistant_text=CRISIS_SELF_SCRIPT.display,
+        last_playback_completed_ns=aged,
+        assistant_speaking=False,
+    )
+    echo = "你说的话很重要"
+    accepted, reason = runtime.accept_user_turn(
+        echo,
+        input_modality="audio",
+        speech_anchored=True,
+        canonical_speech_epoch=runtime._speaker_epoch,
+    )
+    assert accepted is False
+    assert reason == "assistant_echo"
+
+    set_floor(runtime, played_assistant_text="今天天气不错呀", last_playback_completed_ns=aged)
+    accepted, reason = runtime.accept_user_turn(
+        echo,
+        input_modality="audio",
+        speech_anchored=True,
+        canonical_speech_epoch=runtime._speaker_epoch,
+    )
+    assert accepted is False
+    assert reason == "assistant_echo"
+
+    accepted, reason = runtime.accept_user_turn(
+        "我们去公园玩吧",
+        input_modality="audio",
+        speech_anchored=True,
+        canonical_speech_epoch=runtime._speaker_epoch,
+    )
+    assert accepted is True
+    assert reason is None
     await runtime.close()

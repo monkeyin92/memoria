@@ -129,12 +129,21 @@ class _Session(MediaSessionProjectionMixin, MediaOutputStreamMixin):
 
 
 def _context(profile: VerifiedRuntimeProfile, *, started_ago: float = 0.0, reply: str = "") -> Any:
+    runtime = SimpleNamespace(
+        mode_policy=SimpleNamespace(runtime_profile=profile),
+        fence=SimpleNamespace(matches=lambda _fence: True),
+        fixed_safety_heard=False,
+        fixed_safety_echo_text="",
+    )
+
+    def note_fixed_safety_spoken(text: str) -> None:
+        runtime.fixed_safety_heard = True
+        runtime.fixed_safety_echo_text = text
+
+    runtime.note_fixed_safety_spoken = note_fixed_safety_spoken
     return SimpleNamespace(
         identity=SimpleNamespace(client_type="device", session_id="ses-limits"),
-        runtime=SimpleNamespace(
-            mode_policy=SimpleNamespace(runtime_profile=profile),
-            fence=SimpleNamespace(matches=lambda _fence: True),
-        ),
+        runtime=runtime,
         device_wake_ack_pending=True,
         closed=False,
         standby_requested=False,

@@ -880,6 +880,58 @@ private:
                  memoria::WakeModeName(mode));
     }
 
+    void HandleUsbSleepOrPowerOff(bool stop_wifi) {
+        auto& app = Application::GetInstance();
+        const auto state = app.GetDeviceState();
+        if (memoria::MemoriaBootstrap::GetInstance().active()) {
+            ESP_LOGI(kUsbTag, "usb %s ignored reason=pairing state=%d",
+                     stop_wifi ? "poweroff" : "sleep", static_cast<int>(state));
+            return;
+        }
+        if (state == kDeviceStateStarting) {
+            ESP_LOGI(kUsbTag, "usb %s ignored reason=starting state=%d",
+                     stop_wifi ? "poweroff" : "sleep", static_cast<int>(state));
+            return;
+        }
+        ESP_LOGI(kUsbTag, "usb %s accepted state=%d", stop_wifi ? "poweroff" : "sleep",
+                 static_cast<int>(state));
+        offline_story_cancel_.store(true, std::memory_order_relaxed);
+        offline_play_generation_.fetch_add(1, std::memory_order_relaxed);
+        if (state == kDeviceStateListening) {
+            app.StopListening();
+        } else if (state == kDeviceStateSpeaking) {
+            app.AbortSpeaking(kAbortReasonNone);
+        } else if (state == kDeviceStateConnecting || state == kDeviceStateRecovering) {
+            app.ToggleChatState();
+        }
+        if (auto* codec = GetAudioCodec()) {
+            codec->EnableOutput(false);
+            codec->EnableInput(false);
+        }
+        auto& power = memoria::PowerPolicyRegistry::GetInstance();
+        power.SetPhase(memoria::PowerPhase::kWifiHold);
+        wifi_hold_since_ms_.store(kWifiHoldNotArmed, std::memory_order_relaxed);
+        if (stop_wifi && WifiManager::GetInstance().IsInitialized()) {
+            WifiManager::GetInstance().StopStation();
+            ESP_LOGI(kUsbTag, "usb poweroff stopped wifi station; USB still powers the board");
+        }
+    }
+
+    void HandleUsbTemp() {
+        if (temp_sensor == NULL) {
+            ESP_LOGI(kUsbTag, "usb temp ignored reason=no_sensor");
+            return;
+        }
+        float celsius = 0.0f;
+        const esp_err_t err = temperature_sensor_get_celsius(temp_sensor, &celsius);
+        if (err != ESP_OK) {
+            ESP_LOGI(kUsbTag, "usb temp ignored reason=read_failed err=0x%x", static_cast<unsigned>(err));
+            return;
+        }
+        tsens_value = celsius;
+        ESP_LOGI(kUsbTag, "usb temp celsius=%.1f", static_cast<double>(celsius));
+    }
+
 #if CONFIG_MEMORIA_BENCH_SERIAL
     // The two read-only requests of a test-rig image (TODOLIST M-2): neither changes anything on the robot.
     // A product image does not compile them in, and its parser does not know the verbs.
@@ -917,9 +969,11 @@ private:
 #if CONFIG_MEMORIA_BENCH_SERIAL
         // The marker is what makes the firmware publisher refuse this image; logging it keeps the linker
         // from dropping it.
-        ESP_LOGI(kUsbTag, "usb command console ready commands=wake,snap,status,pcmarm,pcmdump %s", memoria_bench_build_marker);
+        ESP_LOGI(kUsbTag,
+                 "usb command console ready commands=wake,sleep,poweroff,temp,snap,status,pcmarm,pcmdump %s",
+                 memoria_bench_build_marker);
 #else
-        ESP_LOGI(kUsbTag, "usb command console ready commands=wake");
+        ESP_LOGI(kUsbTag, "usb command console ready commands=wake,sleep,poweroff,temp");
 #endif
         memoria::UsbLineAssembler assembler;
         uint8_t chunk[16];
@@ -935,6 +989,15 @@ private:
                     switch (assembler.Feed(chunk[i], now_ms)) {
                         case memoria::UsbLineEvent::kWake:
                             self->HandleUsbWake();
+                            break;
+                        case memoria::UsbLineEvent::kSleep:
+                            self->HandleUsbSleepOrPowerOff(false);
+                            break;
+                        case memoria::UsbLineEvent::kPowerOff:
+                            self->HandleUsbSleepOrPowerOff(true);
+                            break;
+                        case memoria::UsbLineEvent::kTemp:
+                            self->HandleUsbTemp();
                             break;
 #if CONFIG_MEMORIA_BENCH_SERIAL
                         case memoria::UsbLineEvent::kSnap:

@@ -102,6 +102,7 @@ from services.agent.src.runtime_speaker import DuplexSpeakerMixin, _InactiveForm
 from services.agent.src.voice_floor import FloorSnapshot, VoiceFloorState
 from services.common.companion_response_safety import SAFE_UNKNOWN_REPLY
 from services.common.evidence_policy import classify_prompt_kind
+from services.common.fixed_safety_scripts import fixed_safety_echo_reference
 from services.common.realtime_information import (
     is_incomplete_realtime_reply,
     is_realtime_followup_nudge,
@@ -211,6 +212,8 @@ class DuplexRuntime(
     _interaction_decision: InteractionDecision | None = None
     _interaction_decision_text: str = ""
     _last_committed_user_text_normalized: str = ""
+    fixed_safety_heard: bool = False
+    fixed_safety_echo_text: str = ""
     _paused_reply_available: bool = False
     _reply_speaker_binding: ResumeSpeakerBinding | None = None
     _paused_reply_binding: ResumeSpeakerBinding | None = None
@@ -2401,9 +2404,8 @@ class DuplexRuntime(
             assistant_speaking=False,
             last_playback_completed_ns=time.monotonic_ns(),
         )
+        self.note_fixed_safety_spoken(floor.played_assistant_text)
         if tools_active:
-            # Filler / acknowledgement playback is not the turn terminal while
-            # an OWNED same-turn delegation is still waiting to speak.
             self.set_interaction_phase(
                 InteractionPhase.TOOL_WAITING,
                 cause="media_playback_ack",
@@ -2747,12 +2749,19 @@ class DuplexRuntime(
             mid_reply=mid_reply,
         )
 
-    def post_playback_guard_reason(
-        self,
-        text: str,
-        *,
-        now_ns: int | None = None,
-    ) -> str | None:
+    def note_fixed_safety_spoken(self, text: str) -> None:
+        echo = fixed_safety_echo_reference(text)
+        if echo is None:
+            return
+        self.fixed_safety_heard = True
+        self.fixed_safety_echo_text = echo
+
+    def post_playback_guard_reason(self, text: str, *, now_ns: int | None = None) -> str | None:
+        script = self.fixed_safety_echo_text
+        if script and self.input_guard.guarded_reason(
+            text, duration_ms=POST_PLAYBACK_ECHO_GUARD_MS, assistant_text=script,
+        ) == "assistant_echo":
+            return "assistant_echo"
         completed_ns = self._voice_floor.last_playback_completed_ns
         if completed_ns is None:
             return None
@@ -2760,8 +2769,7 @@ class DuplexRuntime(
         if not 0 <= elapsed_ms <= POST_PLAYBACK_ECHO_GUARD_MS:
             return None
         reason = self.input_guard.guarded_reason(
-            text,
-            duration_ms=int(elapsed_ms),
+            text, duration_ms=int(elapsed_ms),
             assistant_text=self._voice_floor.played_assistant_text,
         )
         if reason == "assistant_echo":
@@ -2775,25 +2783,17 @@ class DuplexRuntime(
     async def close(self) -> None:
         if self.begin_close():
             return
-        # A classification already in flight can still emit the final
-        # speaker.classified evidence. Give its own bounded provider timeout a
-        # chance to finish before closing the evidence admission gate.
         speaker_task = self._speaker_classification_task
         if speaker_task is not None and not speaker_task.done():
             await asyncio.wait(
                 {speaker_task},
                 timeout=self._speaker_classify_timeout_s + 0.1,
             )
-        # Stop admitting new evidence, then give already-created durable tasks
-        # a bounded drain window. ArchiveSink persists a task before a timeout
-        # cancellation can propagate.
         self._evidence_publisher = None
         await self.close_classifier_calls()
         await self.drain_durable_tasks()
         await self.drain_background_tasks()
         await self.orchestrator.close()
-        # Closing the orchestrator can still run callbacks that hand work back
-        # to this runtime; drain again so close() leaves nothing behind.
         await self.drain_background_tasks()
         if self._durable_task_errors:
             raise RuntimeError("one or more durable evidence tasks failed") from (

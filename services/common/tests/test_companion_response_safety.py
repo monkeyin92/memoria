@@ -162,6 +162,8 @@ def test_crisis_self_matching_tolerates_huo_homophone_asr_slips(query: str) -> N
         "我不想做作业了",
         "我不想喝了",
         "我不想玩了",
+        "我不想和同学玩了",
+        "我不想和同学玩",
     ),
 )
 def test_ordinary_chat_is_not_victim_support(query: str) -> None:

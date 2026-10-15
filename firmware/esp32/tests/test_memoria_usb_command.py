@@ -1,15 +1,9 @@
-"""Host-side checks for the USB `wake` command (firmware build 20) and the bench-only `snap`/`status`.
+"""Host-side checks for USB `wake` / `sleep` / `poweroff` / `temp` and the bench-only `snap`/`status`.
 
 `memoria_usb_command.h` has no ESP-IDF dependency, so the exact parser, line assembler and wake policy
 compile on the host, in both configurations: a product image (`CONFIG_MEMORIA_BENCH_SERIAL` off) and a bench
 build (on). The task that reads the port and the board handler are checked as source text, because those
 only build inside ESP-IDF.
-
-Product rules pinned here (user, 2026-10-02): the wake word false-triggers, so the computer-driven tests wake
-the robot over the USB cable instead; the one command does what a tap on the round screen does, under the
-same gate, and nothing else: it cannot stop the robot talking, close a session or change a setting. A
-product image accepts no other line. A bench build (TODOLIST M-2, never published) also answers two
-read-only requests, `snap` and `status`, so a computer can look at the screen with nobody at the robot.
 """
 
 from __future__ import annotations
@@ -39,6 +33,9 @@ static const char* EventName(memoria::UsbLineEvent event) {
     switch (event) {
         case memoria::UsbLineEvent::kNone: return nullptr;
         case memoria::UsbLineEvent::kWake: return "wake";
+        case memoria::UsbLineEvent::kSleep: return "sleep";
+        case memoria::UsbLineEvent::kPowerOff: return "poweroff";
+        case memoria::UsbLineEvent::kTemp: return "temp";
         case memoria::UsbLineEvent::kUnknown: return "unknown";
         case memoria::UsbLineEvent::kTooLong: return "too-long";
 #if CONFIG_MEMORIA_BENCH_SERIAL
@@ -55,6 +52,9 @@ static const char* CommandName(memoria::UsbCommand command) {
     switch (command) {
         case memoria::UsbCommand::kUnknown: return "unknown";
         case memoria::UsbCommand::kWake: return "wake";
+        case memoria::UsbCommand::kSleep: return "sleep";
+        case memoria::UsbCommand::kPowerOff: return "poweroff";
+        case memoria::UsbCommand::kTemp: return "temp";
 #if CONFIG_MEMORIA_BENCH_SERIAL
         case memoria::UsbCommand::kSnap: return "snap";
         case memoria::UsbCommand::kStatus: return "status";
@@ -216,14 +216,20 @@ def test_header_stays_free_of_esp_dependencies() -> None:
     assert '#if __has_include("sdkconfig.h")' in source
 
 
-def test_only_the_exact_wake_verb_is_a_command(tool: pathlib.Path) -> None:
+def test_only_the_exact_product_verbs_are_commands(tool: pathlib.Path) -> None:
     assert _run(
         tool,
         "parse wake",
         "parse   wake",
         "parse wake  ",
         "parse \twake\t",
-    ) == ["wake"] * 4
+        "parse sleep",
+        "parse   sleep  ",
+        "parse poweroff",
+        "parse \tpoweroff\t",
+        "parse temp",
+        "parse   temp  ",
+    ) == ["wake"] * 4 + ["sleep"] * 2 + ["poweroff"] * 2 + ["temp"] * 2
     # A stray terminal, a pasted log line or line noise cannot wake the robot.
     assert _run(
         tool,
@@ -237,9 +243,15 @@ def test_only_the_exact_wake_verb_is_a_command(tool: pathlib.Path) -> None:
         "parse wak",
         "parse xwake",
         "parse screen_tap",
+        "parse Sleep",
+        "parse sleep now",
+        "parse power-off",
+        "parse power off",
+        "parse temperature",
+        "parse Temp",
         "parse I (1234) MemoriaUsbCommand: usb wake accepted",
         "null",
-    ) == ["unknown"] * 12
+    ) == ["unknown"] * 18
 
 
 def test_cr_lf_and_crlf_all_end_a_line(tool: pathlib.Path) -> None:
@@ -531,7 +543,7 @@ def test_board_handler_only_wakes_an_idle_device_under_the_taps_gate() -> None:
         assert forbidden not in handler, f"the USB wake must not call {forbidden}"
 
 
-def test_the_task_only_reads_the_secondary_console_and_only_wake_reaches_the_handler() -> None:
+def test_the_task_only_reads_the_secondary_console_and_product_verbs_reach_handlers() -> None:
     source = BOARD.read_text(encoding="utf-8")
     task = _function(source, "static void usb_command_task(void* arg)")
     # Read-only device node of the secondary (USB-Serial-JTAG) console: no driver, no interrupt, no TX.
@@ -539,15 +551,53 @@ def test_the_task_only_reads_the_secondary_console_and_only_wake_reaches_the_han
     for forbidden in ("write(", "fwrite", "printf(", "usb_serial_jtag_", "O_WRONLY", "O_RDWR"):
         assert forbidden not in task, f"the command task must not use {forbidden}"
     assert "memoria::UsbLineAssembler assembler;" in task
-    # Only the wake event reaches the application; everything else is just logged.
     wake_case = task.index("case memoria::UsbLineEvent::kWake:")
     assert task.index("self->HandleUsbWake()") > wake_case
     assert task.count("HandleUsbWake()") == 1
+    assert "case memoria::UsbLineEvent::kSleep:" in task
+    assert "case memoria::UsbLineEvent::kPowerOff:" in task
+    assert "case memoria::UsbLineEvent::kTemp:" in task
+    assert "HandleUsbSleepOrPowerOff(false)" in task
+    assert "HandleUsbSleepOrPowerOff(true)" in task
+    assert "HandleUsbTemp()" in task
     # A failed open ends the task instead of spinning.
-    assert "vTaskDelete(NULL)" in task[: task.index("ready commands=wake")]
+    assert "vTaskDelete(NULL)" in task[: task.index("ready commands=wake,sleep,poweroff,temp")]
+    assert "ready commands=wake,sleep,poweroff,temp" in source
     # The poll yields every round, so the loop can never starve a lower-priority task.
     assert "vTaskDelay(pdMS_TO_TICKS(kUsbPollMs))" in task
     assert "kUsbPollMs = 25" in source
+
+
+def test_usb_sleep_and_poweroff_stop_without_deep_sleep() -> None:
+    source = BOARD.read_text(encoding="utf-8")
+    handler = _function(source, "void HandleUsbSleepOrPowerOff(bool stop_wifi)")
+    assert "AbortSpeaking" in handler
+    assert "StopListening" in handler
+    assert "ToggleChatState" in handler
+    assert "PowerPhase::kWifiHold" in handler
+    assert "kWifiHoldNotArmed" in handler
+    assert "esp_deep_sleep_start" not in handler
+    assert "StopStation" in handler
+    assert "USB still powers the board" in handler
+    assert "EnableInput(false)" in handler
+    assert "EnableOutput(false)" in handler
+    assert handler.index("EnableOutput(false)") < handler.index("EnableInput(false)")
+    assert "offline_story_cancel_" in handler
+    assert "state != kDeviceStateIdle" not in handler
+    listening = handler.split("kDeviceStateListening", 1)[1]
+    assert listening.index("StopListening()") < listening.index("ToggleChatState()")
+    assert "kDeviceStateSpeaking" in listening[: listening.index("ToggleChatState()")]
+
+
+def test_usb_temp_reads_chip_sensor_without_side_effects() -> None:
+    source = BOARD.read_text(encoding="utf-8")
+    handler = _function(source, "void HandleUsbTemp()")
+    assert "temperature_sensor_get_celsius" in handler
+    assert "usb temp celsius=" in handler
+    assert "reason=no_sensor" in handler
+    assert "esp_deep_sleep_start" not in handler
+    assert "StopStation" not in handler
+    assert "ToggleChatState" not in handler
 
 
 def test_the_task_is_started_with_the_board_at_low_priority_off_the_audio_core() -> None:

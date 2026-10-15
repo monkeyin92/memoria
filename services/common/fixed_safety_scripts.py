@@ -102,6 +102,23 @@ def spoken_prefix_for_display(text: str) -> str | None:
     return _SPOKEN_BY_DISPLAY_PREFIX.get(text)
 
 
+def fixed_safety_echo_reference(text: str | None) -> str | None:
+    if text is None:
+        return None
+    stripped = text.strip()
+    if not stripped:
+        return None
+    script = script_for_display(stripped)
+    if script is not None:
+        return script.display
+    if spoken_prefix_for_display(stripped) is not None:
+        return stripped
+    for candidate in (CRISIS_SELF_SCRIPT, SUPPORT_VICTIM_SCRIPT, SUPPORT_RELAY_SCRIPT):
+        if stripped == candidate.spoken:
+            return candidate.display
+    return None
+
+
 def log_fixed_safety_playout(logger: logging.Logger, script: FixedSafetyScript) -> None:
     logger.info(
         "fixed_safety_playout reply_template_id=%s script_version=%s tts_text=%s",
@@ -118,6 +135,7 @@ __all__ = [
     "FixedSafetyScript",
     "FixedSafetyTemplateId",
     "SpokenPhrase",
+    "fixed_safety_echo_reference",
     "log_fixed_safety_playout",
     "script_for_decision",
     "script_for_display",
