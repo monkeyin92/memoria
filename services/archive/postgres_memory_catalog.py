@@ -1648,7 +1648,7 @@ class PostgresMemoryCatalog:
             embedding: tuple[float, ...] | None = None
             if embedder is not None:
                 try:
-                    embedding = await embedder.embed(query.text.strip())
+                    embedding = await embedder.embed(redact_pii(query.text.strip()))
                 except MemoryEmbeddingUnavailableError:
                     if self._fail_on_embedding_error:
                         raise

@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 
 from services.common.llm_thinking import ThinkingMode, thinking_disabled
+from services.common.redaction import redact_pii
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ class LiveLookupSemanticClassifier:
             "model": self._config.model,
             "messages": [
                 {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": (current_text or "").strip()[-_MAX_TEXT_CHARS:]},
+                {"role": "user", "content": redact_pii((current_text or "").strip())[-_MAX_TEXT_CHARS:]},
             ],
             "temperature": 0,
             "stream": False,
