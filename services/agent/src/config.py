@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 from collections.abc import Mapping
 from typing import Literal
 from urllib.parse import urlsplit
@@ -21,6 +22,8 @@ from services.common.llm_failover import (
 DeploymentProfile = Literal["livekit_cloud", "cn_self_hosted"]
 LLMProvider = Literal["qwen", "bailian_deepseek", "deepseek"]
 TTSProvider = Literal["doubao"]
+WeatherLookupProvider = Literal["off", "domestic"]
+_QWEATHER_HOST = re.compile(r"(?:[a-z0-9-]+\.)+qweatherapi\.com")
 DEFAULT_LLM_BACKUP_MODEL = "qwen3.8-flash"
 DEFAULT_LLM_FIRST_TOKEN_TIMEOUT_S = 5.0
 DEFAULT_LLM_INTER_TOKEN_TIMEOUT_S = 4.0
@@ -264,6 +267,11 @@ class AgentSettings(BaseSettings):
     )
     qwen_fast_model: str = Field(default="qwen3.7-flash", alias="QWEN_FAST_MODEL")
     qwen_deep_model: str = Field(default="qwen-plus", alias="QWEN_DEEP_MODEL")
+    weather_lookup_provider: WeatherLookupProvider = Field(
+        default="off", alias="WEATHER_LOOKUP_PROVIDER"
+    )
+    qweather_api_key: SecretStr = Field(default=SecretStr(""), alias="QWEATHER_API_KEY")
+    qweather_api_host: str = Field(default="", alias="QWEATHER_API_HOST")
     live_lookup_semantic_enabled: bool = Field(
         default=True,
         alias="LIVE_LOOKUP_SEMANTIC_ENABLED",
@@ -546,6 +554,17 @@ class AgentSettings(BaseSettings):
                 "(compliance-locked DashScope model id)"
             )
         return cleaned
+
+    @field_validator("qweather_api_host")
+    @classmethod
+    def _qweather_host(cls, v: str) -> str:
+        host = v.strip().lower()
+        if host and _QWEATHER_HOST.fullmatch(host) is None:
+            raise ValueError(
+                "QWEATHER_API_HOST must be a bare *.qweatherapi.com hostname "
+                "(no scheme, port, path or userinfo)"
+            )
+        return host
 
     @field_validator("funasr_sample_rate")
     @classmethod
