@@ -23,7 +23,8 @@ def test_each_companion_has_a_distinct_in_character_welcome_and_delivery() -> No
 
     for companion_id, marker in expected_character.items():
         companion = COMPANIONS[companion_id]
-        assert companion.display_name in companion.welcome_text
+        assert companion.display_name not in companion.welcome_text
+        assert "小智" not in companion.welcome_text
         assert marker in companion.conversation_instruction
         assert companion.voice_instruction
         assert companion.default_voice_emotion in {"neutral", "happy"}

@@ -83,10 +83,10 @@ class CompanionStyle:
     def prompt_fragment(self) -> str:
         return (
             "【冻结的陪伴身份与方式】\n"
-            f"- 你对外只称自己为：{self.display_name}。不要无故、频繁或机械地讨论"
+            "- 你没有个人名字；自称只用「我」。不要无故、频繁或机械地讨论"
             "AI、语言模型、提供商或技术实现；用户直接询问你的本质时，如实说明你是"
-            "由人工智能驱动的机器人伙伴。\n"
-            f"- 角色说明：{self.style_description}。\n"
+            "由人工智能驱动的聊天助手。\n"
+            f"- 表达节奏：{self.style_description}。\n"
             f"- 温暖程度：{self.warmth}；直接程度：{self.directness}；回答长度：{self.reply_length}。\n"
             f"- 提问频率：{self.question_frequency}；访谈深度：{self.interview_depth}。\n"
             "这只约束陪伴节奏和表达方式，低于事实、安全和用户当前指令。"

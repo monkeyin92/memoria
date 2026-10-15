@@ -1,4 +1,9 @@
-from services.agent.src.prompts import VOICE_SYSTEM_PROMPT
+from services.agent.src.prompts import (
+    AI_IDENTITY_RULE_TRANSPARENT,
+    VOICE_SYSTEM_PROMPT,
+)
+from services.common.companion_response_safety import NAMELESS_IDENTITY_REPLY
+from services.common.companions import COMPANIONS
 
 
 def test_voice_prompt_has_bounded_thinking_preambles_and_variety() -> None:
@@ -20,6 +25,53 @@ def test_voice_prompt_mirrors_laughter_only_in_safe_contexts() -> None:
 def test_voice_prompt_does_not_turn_self_harm_disclosure_into_unknown_refusal() -> None:
     assert "自伤、轻生或正在发生的紧迫危险不属于上述固定拒答" in VOICE_SYSTEM_PROMPT
     assert "不能回答“我不知道。”" in VOICE_SYSTEM_PROMPT
+
+
+def test_voice_prompt_is_nameless_and_redirects_preference_questions() -> None:
+    assert "没有个人名字" in VOICE_SYSTEM_PROMPT
+    assert "自称只用「我」" in VOICE_SYSTEM_PROMPT
+    assert NAMELESS_IDENTITY_REPLY in VOICE_SYSTEM_PROMPT
+    assert "没有眼睛看颜色" in VOICE_SYSTEM_PROMPT
+    assert "不要说“我也喜欢”" in VOICE_SYSTEM_PROMPT
+    assert "机器人名称" not in VOICE_SYSTEM_PROMPT
+
+
+def test_no_hard_coded_assistant_name_appears_in_prompt_surfaces() -> None:
+    """qwen3.8-flash once invented 小智 from framework priors; prompts must not seed any name."""
+
+    from services.agent.src import prompt_composition as pc
+    from services.agent.src import prompts
+    from services.agent.src.mode_policy_client import CompanionStyle
+    from services.agent.src.orchestration.orchestrator import Orchestrator
+    from services.agent.src.tutor_session import voice_system_prompt
+
+    forbidden_names = ("小智", "xiaozhi", "XiaoZhi", "Xiao Zhi")
+    catalog_names = tuple(c.display_name for c in COMPANIONS.values())
+    surfaces = [
+        prompts.SAFETY_CORE,
+        prompts.VOICE_SYSTEM_PROMPT,
+        AI_IDENTITY_RULE_TRANSPARENT,
+        voice_system_prompt("chat"),
+        voice_system_prompt("tutor_english"),
+        pc.SERVICE_MODE_BLOCKS["student_minor"],
+        pc.SERVICE_MODE_BLOCKS["senior_companion"],
+        CompanionStyle(
+            display_name="桃喜",
+            style_description="轻快回应",
+            warmth="bright",
+            directness="direct",
+            reply_length="brief",
+            question_frequency="occasional",
+            interview_depth="light",
+        ).prompt_fragment(),
+        pc.render_persona_block(pc.persona_definition_from_companion(COMPANIONS["taoxi"])),
+    ]
+    context = Orchestrator.__dataclass_fields__["context"].default_factory()  # type: ignore[misc]
+    surfaces.append(context.system_prompt)
+
+    for text in surfaces:
+        for name in (*forbidden_names, *catalog_names):
+            assert name not in text, f"{name!r} leaked into prompt surface"
 
 
 def test_every_prompt_path_carries_only_the_transparent_identity_rule() -> None:

@@ -62,10 +62,10 @@ def test_plain_turns_never_mechanically_self_report() -> None:
 @pytest.mark.parametrize(
     ("category", "markers"),
     [
-        ("student", ("AI 伙伴", "不是真正的小朋友")),
-        ("adult", ("AI", "不是真人")),
+        ("student", ("AI 助手", "不是真正的小朋友")),
+        ("adult", ("AI 助手", "不是真人")),
         ("senior", ("不是真人", "联系家人")),
-        ("unknown", ("AI 伙伴", "不是真人")),
+        ("unknown", ("AI 助手", "不是真人")),
     ],
 )
 def test_asked_are_you_real_is_truthful_per_category(
@@ -78,7 +78,9 @@ def test_asked_are_you_real_is_truthful_per_category(
     )
     for marker in markers:
         assert marker in text
-    assert "星澜" in text
+    assert "星澜" not in text
+    assert "小智" not in text
+    assert "AI 助手" in text
 
 
 def test_asked_answers_differ_across_categories() -> None:
@@ -180,17 +182,17 @@ def test_first_use_intro_per_category() -> None:
     unknown = render_identity_expression(
         _obligation("FIRST_USE_INTRO", "FIRST_USE"), "unknown", STARLIGHT
     )
-    assert "AI 伙伴" in student and "不是真正的小朋友" in student
-    assert "由 AI 驱动" in adult
+    assert "AI 助手" in student and "不是真正的小朋友" in student
+    assert "AI 助手" in adult and "没有个人名字" in adult
     assert "不是真人" in senior and "不是您的家人" in senior
-    assert "AI 伙伴" in unknown and "不会记录私人内容" in unknown
+    assert "AI 助手" in unknown and "不会记录私人内容" in unknown
 
 
 def test_unknown_category_renders_safe_generic() -> None:
     text = render_identity_expression(
         _obligation("AI_IDENTITY_CLARIFICATION", "USER_ASKED"), "unknown", STARLIGHT
     )
-    assert "AI 伙伴" in text
+    assert "AI 助手" in text
     assert "不是真人" in text
 
 

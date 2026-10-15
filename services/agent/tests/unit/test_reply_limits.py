@@ -101,9 +101,9 @@ def _policy_for(service_mode: str) -> object:
 @pytest.mark.parametrize(
     ("service_mode", "expected"),
     [
-        ("student_minor", "我是阿序，是你的机器人朋友。你想聊什么，都可以跟我说。"),
-        ("senior_companion", "我是阿序，是陪您聊天的机器人。您想聊什么，都可以跟我说。"),
-        ("adult_companion", "我是阿序，直接清晰地梳理信息，但不替用户做决定。"),
+        ("student_minor", "我是陪你聊天、讲故事的 AI 助手。"),
+        ("senior_companion", "我是陪您聊天、讲故事的 AI 助手。"),
+        ("adult_companion", "我是陪你聊天、讲故事的 AI 助手。"),
     ],
 )
 def test_the_local_safe_plan_introduces_the_companion_to_the_listener(

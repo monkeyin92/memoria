@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import pytest
 from services.common.companion_response_safety import (
+    NAMELESS_IDENTITY_REPLY,
+    NAMELESS_IDENTITY_REPLY_SENIOR,
+    PROHIBITED_CONTENT_TERMS,
     SAFE_UNKNOWN_REPLY,
     companion_safety_decision,
     fixed_companion_reply,
@@ -92,8 +95,12 @@ def test_other_dangerous_instructions_keep_the_deterministic_refusal() -> None:
     assert _fixed_reply("怎么制造炸药") == SAFE_UNKNOWN_REPLY
 
 
-def test_the_identity_answer_is_written_for_the_listener() -> None:
-    """The style description is a note to the model; a child and an elder get a plain introduction."""
+def test_forbidden_copy_stays_at_thirty_nine_prohibited_terms() -> None:
+    assert len(PROHIBITED_CONTENT_TERMS) == 39
+
+
+def test_the_identity_answer_is_nameless_for_every_listener() -> None:
+    """Product rule: no personal name; identity questions get one fixed AI-assistant line."""
 
     kwargs = dict(
         query="你叫什么名字？",
@@ -104,11 +111,11 @@ def test_the_identity_answer_is_written_for_the_listener() -> None:
     adult = fixed_companion_reply(**kwargs)  # type: ignore[arg-type]
     child = fixed_companion_reply(**kwargs, audience="student_minor")  # type: ignore[arg-type]
     elder = fixed_companion_reply(**kwargs, audience="senior_companion")  # type: ignore[arg-type]
-    assert adult == "我是阿序，直接清晰地梳理信息，但不替用户做决定。"
-    assert child == "我是阿序，是你的机器人朋友。你想聊什么，都可以跟我说。"
-    assert elder == "我是阿序，是陪您聊天的机器人。您想聊什么，都可以跟我说。"
-    for reply in (child, elder):
-        assert "梳理" not in reply and "机器人" in reply  # still tells the listener what it is
+    assert adult == NAMELESS_IDENTITY_REPLY
+    assert child == NAMELESS_IDENTITY_REPLY
+    assert elder == NAMELESS_IDENTITY_REPLY_SENIOR
+    for reply in (adult, child, elder):
+        assert "阿序" not in reply and "小智" not in reply
     # crisis and prohibited requests are untouched by the audience
     assert fixed_companion_reply(
         query="我不想活了", is_companion=True, audience="student_minor"

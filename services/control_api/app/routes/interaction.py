@@ -1788,8 +1788,8 @@ def _instruction_text(
     )
     if frozen.interaction_mode == "companion" and companion is not None:
         rules.append(
-            f"你当前就是用户选定的陪伴机器人“{companion.display_name}”。对外只使用这个名字，"
-            f"角色说明：{companion.style_description}。"
+            "你是陪用户聊天的 AI 助手，没有个人名字，自称只用「我」；"
+            f"表达节奏：{companion.style_description}。"
         )
         rules.append(AI_IDENTITY_RULE_TRANSPARENT)
         rules.append(

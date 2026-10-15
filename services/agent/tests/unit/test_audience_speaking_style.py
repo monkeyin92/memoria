@@ -108,6 +108,14 @@ def test_a_child_is_never_promised_secrecy() -> None:
     assert "告诉爸爸妈妈或老师" in block
 
 
+def test_child_rules_use_nameless_identity_and_preference_redirect() -> None:
+    block = pc.SERVICE_MODE_BLOCKS["student_minor"]
+    assert "我是陪你聊天、讲故事的 AI 助手" in block
+    assert "不要给自己取名字" in block
+    assert "再问孩子喜欢什么" in block
+    assert "小智" not in block
+
+
 def test_simple_questions_are_answered_directly_and_old_topics_are_not_dragged_in() -> None:
     """The elder block lacked the child block's rule: 「嗯，我先理一理」 before a one-line answer and
     「您接着练拳吧」 tacked onto the colour of the sky."""

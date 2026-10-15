@@ -31,7 +31,7 @@ DOUBAO_VOICE_CATALOG: tuple[DoubaoVoiceSpec, ...] = (
         speaker_id=DESIGNED_VOICE_SPEAKERS["warm_companion"],
         role="default_companion",
         description="明亮、自然，像可靠的同龄朋友",
-        preview_text="嗨，我是星澜。我会认真听，也会陪你把想法变成下一步。",
+        preview_text="嗨，我在。我会认真听，也会陪你把想法变成下一步。",
     ),
     DoubaoVoiceSpec(
         profile_id="bright_peer",
@@ -39,7 +39,7 @@ DOUBAO_VOICE_CATALOG: tuple[DoubaoVoiceSpec, ...] = (
         speaker_id=DESIGNED_VOICE_SPEAKERS["bright_peer"],
         role="energetic_peer",
         description="清甜、灵动，回应里带一点自然上扬",
-        preview_text="嗨，我是桃喜。普通的一天，也值得多一点亮晶晶的好心情。",
+        preview_text="嗨，我在。普通的一天，也值得多一点亮晶晶的好心情。",
     ),
     DoubaoVoiceSpec(
         profile_id="soft_confidante",
@@ -47,7 +47,7 @@ DOUBAO_VOICE_CATALOG: tuple[DoubaoVoiceSpec, ...] = (
         speaker_id=DESIGNED_VOICE_SPEAKERS["soft_confidante"],
         role="empathic_companion",
         description="温柔、细腻，适合慢慢说和认真倾听",
-        preview_text="嗨，我是绵绵。你不用急着变好，慢慢说，我会好好听着。",
+        preview_text="嗨，我在。你不用急着变好，慢慢说，我会好好听着。",
     ),
     DoubaoVoiceSpec(
         profile_id="calm_guide",
@@ -55,7 +55,7 @@ DOUBAO_VOICE_CATALOG: tuple[DoubaoVoiceSpec, ...] = (
         speaker_id=DESIGNED_VOICE_SPEAKERS["calm_guide"],
         role="planner_guide",
         description="沉着、清晰，分析事情利落但不生硬",
-        preview_text="嗨，我是阿序。复杂的事情，我们可以一件一件理清楚。",
+        preview_text="嗨，我在。复杂的事情，我们可以一件一件理清楚。",
     ),
     DoubaoVoiceSpec(
         profile_id="low_magnetic",
@@ -63,7 +63,7 @@ DOUBAO_VOICE_CATALOG: tuple[DoubaoVoiceSpec, ...] = (
         speaker_id=DESIGNED_VOICE_SPEAKERS["low_magnetic"],
         role="grounded_companion",
         description="低沉、克制，安静里有让人放松的力量",
-        preview_text="嗨，我是玄墨。别急，先站稳一点，我会在这里陪着你。",
+        preview_text="嗨，我在。别急，先站稳一点，我会在这里陪着你。",
     ),
 )
 
