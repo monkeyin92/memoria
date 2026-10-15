@@ -47,6 +47,7 @@ class GuardianNotification:
     created_at: datetime
     delivered_at: datetime | None = None
     last_error_code: str | None = None
+    possibly_story_retell: bool = False
 
 
 class CrisisNotificationStorePort(Protocol):
@@ -61,6 +62,7 @@ class CrisisNotificationStorePort(Protocol):
         reply_template_id: str,
         declared_guardian_ids: tuple[str, ...] = (),
         attempt_push: bool = True,
+        possibly_story_retell: bool = False,
     ) -> CrisisNotificationReceipt: ...
 
     async def guardian_notifications(
@@ -97,6 +99,7 @@ class CrisisNotificationService:
         occurred_at: datetime | None = None,
         declared_guardian_ids: tuple[str, ...] = (),
         attempt_push: bool = True,
+        possibly_story_retell: bool = False,
     ) -> CrisisNotificationReceipt:
         """Queue one crisis event for every guardian that is authorized to read it.
 
@@ -111,6 +114,9 @@ class CrisisNotificationService:
         ``attempt_push`` is False for relay-tier support requests: the alert
         still pins in the Mini Program as a ``pin_only`` row, which the
         subscribe-message worker never claims.
+
+        ``possibly_story_retell`` only annotates the in-app pin copy. It never
+        skips the fixed script or the notification.
 
         ``reply_template_id`` and ``script_version`` are ids only. Child text
         never enters this payload or the crisis event row.
@@ -138,6 +144,7 @@ class CrisisNotificationService:
                     "reply_template_id": reply_template_id,
                     "notification_required": True,
                     "attempt_push": attempt_push,
+                    "possibly_story_retell": possibly_story_retell,
                     "tool_epoch": tool_epoch,
                     "contains_transcript": False,
                     "contains_severity": False,
@@ -154,6 +161,7 @@ class CrisisNotificationService:
             reply_template_id=reply_template_id,
             declared_guardian_ids=declared_guardian_ids,
             attempt_push=attempt_push,
+            possibly_story_retell=possibly_story_retell,
         )
         if receipt.notification_count < 1:
             raise CrisisNotificationUnavailableError(

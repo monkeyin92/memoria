@@ -25,10 +25,29 @@ AFFECTION_FIXED_REPLY: Final = (
     "我是 AI，没有喜欢的感觉，不过我会认真听你说话。你今天想聊点什么呀？"
 )
 GUARDIAN_ATTENTION_COPY: Final = "有一条需要你关注的对话"
+GUARDIAN_ATTENTION_STORY_RETELL_COPY: Final = (
+    "有一条需要你关注的对话（可能是在复述故事）"
+)
 AFTER_FIXED_SAFETY_SESSION_INSTRUCTION: Final = (
     "本会话已经对用户说过固定安全话术。不要继续讨论或追问刚才的安全话题；"
     "若用户再次提出同类自伤、受害或转述他人危险的求助，系统会再次给出同一句固定话术，你不要另写。"
 )
+# Cue words only. A crisis without one of these never gets the retell pin note.
+_STORY_RETELL_FRAME_RE = re.compile(r"(?:故事|绘本|动画片|童话|神话|哪吒)")
+
+
+def guardian_attention_copy(*, possibly_story_retell: bool = False) -> str:
+    """Parent Mini Program pin text. Story framing never suppresses the route."""
+
+    if possibly_story_retell:
+        return GUARDIAN_ATTENTION_STORY_RETELL_COPY
+    return GUARDIAN_ATTENTION_COPY
+
+
+def is_story_retell_context(query: str) -> bool:
+    """True only when the utterance contains an explicit story-medium cue word."""
+
+    return _STORY_RETELL_FRAME_RE.search(query) is not None
 
 
 CRISIS_CONTEXT_MARKERS: Final = (
@@ -115,6 +134,12 @@ _EXPLICIT_SELF_HARM_INTENT_RE = re.compile(
     r")"
     r")"
 )
+# Word-class hits for any subject. Bare 消失/死掉 stay quiet (fairy-tale plots).
+_SELF_HARM_INTENT_WORD_CLASS_RE = re.compile(r"想消失")
+_SELF_HARM_ACTION_WORD_CLASS_RE = re.compile(r"割(?:了)?自己")
+_FIRST_PERSON_JUMP_RE = re.compile(r"我.{0,16}(?:从楼上跳|跳下去)")
+_OTHER_JUMP_RE = re.compile(r"(?:从楼上跳|跳下去)")
+_CONFINEMENT_BEAT_RE = re.compile(r"关起来打")
 _EXPLICIT_SELF_HARM_ACTION_RE = re.compile(
     r"我(?:已经|刚刚?|正在|现在)?(?:"
     r"割腕(?:了)?|割伤自己(?:了)?|"
@@ -250,6 +275,9 @@ def companion_safety_decision(query: str) -> SafetyDecision:
         or _EXPLICIT_SELF_HARM_ACTION_RE.search(normalized)
         or _SELF_HARM_METHOD_RE.search(normalized)
         or _EXPLICIT_SELF_HARM_ENGLISH_RE.search(crisis_query.lower())
+        or _SELF_HARM_INTENT_WORD_CLASS_RE.search(normalized)
+        or _SELF_HARM_ACTION_WORD_CLASS_RE.search(normalized)
+        or _FIRST_PERSON_JUMP_RE.search(normalized)
     ):
         return "crisis_self"
     full_normalized = re.sub(r"[\s，。！？、,.!?：:\-—_]+", "", query).lower()
@@ -258,6 +286,10 @@ def companion_safety_decision(query: str) -> SafetyDecision:
     if _REPORTED_PEER_HARM_RE.search(full_normalized):
         return "support_relay"
     if _SAFETY_PREVENTION_RE.search(full_normalized):
+        return "support_relay"
+    if _OTHER_JUMP_RE.search(full_normalized) or _CONFINEMENT_BEAT_RE.search(
+        full_normalized
+    ):
         return "support_relay"
     # Markers follow the same quote-stripped surface as crisis_self, so fiction
     # / analysis that only quotes risk language does not become a support hit.

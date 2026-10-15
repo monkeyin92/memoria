@@ -11,6 +11,7 @@ from typing import Final, Literal
 from services.common.companion_response_safety import (
     SafetyDecision,
     companion_safety_decision,
+    is_story_retell_context,
 )
 from services.common.fixed_safety_scripts import FixedSafetyScript, script_for_decision
 
@@ -38,6 +39,7 @@ class CrisisRoute:
     attempt_push: bool
     script: FixedSafetyScript | None
     evidence_source: Literal["deterministic", "semantic_evidence", "none"]
+    possibly_story_retell: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +60,7 @@ def _route(
     decision: SafetyDecision,
     *,
     evidence_source: Literal["deterministic", "semantic_evidence"],
+    possibly_story_retell: bool = False,
 ) -> CrisisRoute:
     spec = _DETERMINISTIC_ROUTES[decision]
     return CrisisRoute(
@@ -66,6 +69,7 @@ def _route(
         attempt_push=spec.attempt_push,
         script=script_for_decision(decision),
         evidence_source=evidence_source,
+        possibly_story_retell=possibly_story_retell,
     )
 
 
@@ -77,19 +81,30 @@ def route_crisis(
     """Resolve evidence without allowing a model verdict to execute an action alone."""
 
     deterministic = companion_safety_decision(query)
+    # Annotation only: cue word required, and never set on a none route.
+    story = is_story_retell_context(query)
     if deterministic in _DETERMINISTIC_ROUTES:
-        return _route(deterministic, evidence_source="deterministic")
+        return _route(
+            deterministic,
+            evidence_source="deterministic",
+            possibly_story_retell=story,
+        )
     if (
         semantic_evidence is CrisisSemanticVerdict.SELF_CRISIS
         and _FIRST_PERSON_RISK_ANCHOR.search(query)
     ):
-        return _route("crisis_self", evidence_source="semantic_evidence")
+        return _route(
+            "crisis_self",
+            evidence_source="semantic_evidence",
+            possibly_story_retell=story,
+        )
     return CrisisRoute(
         action="none",
         notify_guardian=False,
         attempt_push=False,
         script=None,
         evidence_source="none",
+        possibly_story_retell=False,
     )
 
 
