@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+import time
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
+import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 from packages.contracts.generated.python.multi_subject_contracts import (
@@ -13,8 +16,12 @@ from packages.contracts.generated.python.multi_subject_contracts import (
     RuntimeProfileSignedV2,
     RuntimeProfileV2,
 )
+from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.mode_policy_client import ModePolicyClient
-from services.agent.src.response_planner_client import ResponsePlannerClient
+from services.agent.src.response_planner_client import (
+    ResponsePlannerClient,
+    ResponsePlannerClientConfig,
+)
 from services.archive.memory_domain import (
     MemorySearchItem,
     MemorySearchQuery,
@@ -42,6 +49,7 @@ from services.session_runtime.profile_service import (
     sign_runtime_profile_payload,
 )
 from services.session_runtime.service import PersistentSessionDenied
+from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
 @pytest.fixture
@@ -1134,6 +1142,21 @@ class _MemoryCatalog:
         return MemorySearchResult(items=items)
 
 
+class _SlowMemoryCatalog(_MemoryCatalog):
+    """Memory search that outlives the agent response-plan client budget."""
+
+    def __init__(self, delay_s: float = 2.0) -> None:
+        super().__init__()
+        self.delay_s = delay_s
+        self.context_calls = 0
+
+    async def context(self, query: object) -> MemorySearchResult:
+        self.context_calls += 1
+        self.queries.append(query)
+        await asyncio.sleep(self.delay_s)
+        return MemorySearchResult(items=())
+
+
 class _ChangingMemoryCatalog:
     def __init__(self) -> None:
         self.calls = 0
@@ -1813,6 +1836,80 @@ async def test_response_plan_is_the_single_owner_context_path_and_matches_agent_
     assert isinstance(memory_query, MemorySearchQuery)
     assert "我在杭州的求学经历是什么？" in memory_query.text
     assert "周六去苏州" in memory_query.text
+
+
+def _plan_speaker() -> SpeakerDecision:
+    return SpeakerDecision(
+        classification="owner",
+        score=0.91,
+        quality_score=0.88,
+        reason_code="trusted",
+        model_version="campplus-test-v1",
+        template_version=1,
+        profile_id="speaker-profile-1",
+        permissions=permissions_for_speaker("owner"),
+    )
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_slow_companion_memory_still_returns_a_plan_inside_the_client_budget(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A memory embed that runs for seconds must not become request_or_payload_invalid.
+
+    The agent client gives the response-plan call 0.8s. Companion context has to
+    finish inside that budget and still return a parseable plan.
+    """
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    catalog = _SlowMemoryCatalog(2.0)
+    app.state.memory_catalog = catalog
+    app.state.persona_engine = _PersonaEngine()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, user_headers = await _identity(client)
+        session_id = (await client.post("/v1/sessions", headers=user_headers, json={})).json()[
+            "session_id"
+        ]
+        _mark_verified_adult(app, user_id)
+
+    fence = GenerationFence(
+        session_id=session_id,
+        turn_id=7,
+        generation_id=3,
+        tool_epoch=2,
+        session_epoch=0,
+    )
+    started = time.perf_counter()
+    async with httpx.AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        timeout=5.0,
+    ) as http_client:
+        planner = ResponsePlannerClient(
+            ResponsePlannerClientConfig(
+                endpoint="http://test/v1/interaction/response-plan",
+                internal_token="response-plan-token-that-is-long-enough",
+                timeout_s=0.8,
+            ),
+            client=http_client,
+        )
+        fetch = await planner.fetch(
+            session_id=session_id,
+            query="我找不到我的橡皮了",
+            fence=fence,
+            speaker_decision=_plan_speaker(),
+        )
+        await planner.aclose()
+    elapsed = time.perf_counter() - started
+
+    assert catalog.context_calls == 1
+    assert elapsed < 1.0
+    assert fetch.reason == "ok"
+    assert fetch.plan is not None
+    assert fetch.plan.grounded_items == ()
 
 
 @pytest.mark.asyncio

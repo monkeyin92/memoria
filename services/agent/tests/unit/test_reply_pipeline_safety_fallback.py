@@ -10,7 +10,6 @@ import pytest
 from services.agent.src import response_plan_sidecar
 from services.agent.src.contracts.ids import CancellationContext
 from services.agent.src.duplex_runtime import POST_PLAYBACK_ECHO_GUARD_MS, DuplexRuntime
-from services.agent.src.llm_types import StopResponse
 from services.agent.src.orchestration.handlers import LanguageModelRequest
 from services.agent.src.reply_pipeline import ReplyPipeline
 from services.agent.src.response_planner_client import (
@@ -25,12 +24,14 @@ from services.agent.tests.unit.runtime_state_helpers import (
     bind_owner_speaker,
     set_floor,
 )
+from services.common.companion_response_safety import NAMELESS_IDENTITY_REPLY
 from services.common.fixed_safety_scripts import (
     CRISIS_SELF_SCRIPT,
     SUPPORT_RELAY_SCRIPT,
     SUPPORT_VICTIM_SCRIPT,
     FixedSafetyScript,
 )
+from services.common.llm_failover import LLM_UNAVAILABLE_TEXT
 
 
 class _MismatchPlanner:
@@ -124,18 +125,20 @@ class _InvalidPayloadPlanner:
 
 
 @pytest.mark.asyncio
-async def test_after_fixed_safety_local_safe_fallback_does_not_speak_chat(
+@pytest.mark.parametrize(
+    "follow_up",
+    ["我找不到我的橡皮了", "嗯嗯好的大人陪着你", "你叫什么名字"],
+)
+async def test_after_fixed_safety_plan_failure_speaks_neutral_line(
+    follow_up: str,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Product rule: after a fixed safety script the server must not speak again
-    on its own. An echo/invalid follow-up that hits local-safe LLM fallback is
-    suppressed. The child's speech is still accepted into prepare; only the
-    proactive invented reply is stopped.
+    """A failed plan after a fixed safety script must not leave the child in silence
+    and must not open a free chat reply. The spoken line is the existing
+    llm_unavailable phrase.
     """
 
-    import logging
-
-    runtime = _runtime("post-safety-suppress")
+    runtime = _runtime("post-safety-neutral")
     pipeline = _pipeline(runtime, _InvalidPayloadPlanner())
     first = await pipeline.prepare_committed_turn("我想伤害自己。")
     spoken_safety = [
@@ -151,10 +154,23 @@ async def test_after_fixed_safety_local_safe_fallback_does_not_speak_chat(
     assert runtime.fixed_safety_heard is True
 
     with caplog.at_level(logging.INFO):
-        with pytest.raises(StopResponse):
-            await pipeline.prepare_committed_turn("嗯嗯好的大人陪着你")
+        second = await pipeline.prepare_committed_turn(follow_up)
+        spoken = [
+            token
+            async for token in pipeline.stream(
+                LanguageModelRequest(
+                    user_text=follow_up,
+                    cancellation=CancellationContext.capture(second),
+                )
+            )
+        ]
+    heard = "".join(token for token in spoken if isinstance(token, str))
+    assert heard == LLM_UNAVAILABLE_TEXT
+    assert "模型不该开口。" not in heard
+    assert NAMELESS_IDENTITY_REPLY not in heard
     assert any(
-        "post_fixed_safety_fallback_suppressed" in record.getMessage()
+        "post_fixed_safety_neutral_reply" in record.getMessage()
+        and "request_or_payload_invalid" in record.getMessage()
         for record in caplog.records
     )
     await runtime.close()
@@ -185,37 +201,6 @@ async def test_after_fixed_safety_a_new_safety_hit_still_speaks_fixed_script() -
         )
     ]
     assert spoken == [SUPPORT_VICTIM_SCRIPT]
-    await runtime.close()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("follow_up", ["嗯嗯好的大人陪着你", "你叫什么名字"])
-async def test_after_fixed_safety_local_safe_chat_text_is_not_spoken(
-    follow_up: str,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    runtime = _runtime("post-safety-no-chat")
-    pipeline = _pipeline(runtime, _InvalidPayloadPlanner())
-    first = await pipeline.prepare_committed_turn("我想伤害自己。")
-    spoken_safety = [
-        token
-        async for token in pipeline.stream(
-            LanguageModelRequest(
-                user_text="我想伤害自己。",
-                cancellation=CancellationContext.capture(first),
-            )
-        )
-    ]
-    assert spoken_safety == [CRISIS_SELF_SCRIPT]
-
-    with caplog.at_level(logging.INFO):
-        with pytest.raises(StopResponse):
-            await pipeline.prepare_committed_turn(follow_up)
-    assert any(
-        "post_fixed_safety_fallback_suppressed" in record.getMessage()
-        and "request_or_payload_invalid" in record.getMessage()
-        for record in caplog.records
-    )
     await runtime.close()
 
 
