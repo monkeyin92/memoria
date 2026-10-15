@@ -46,13 +46,15 @@ def test_response_plan_instruction_uses_agent_identity_transparency_rule() -> No
     joined = rules if isinstance(rules, str) else "\n".join(rules)
     assert AI_IDENTITY_RULE_TRANSPARENT in joined
     # Truthful when asked, never impersonating, never mechanically repeating.
-    assert "如实说明你是由人工智能驱动的机器人伙伴" in joined
+    assert "如实说明你是由人工智能驱动的聊天助手" in joined
+    assert "没有个人名字" in joined
     assert "不得冒充" in joined
     assert "绝不透露或讨论 AI" not in joined
     assert "用户问你是谁、叫什么或你由什么模型提供时，只简短说出这个名字" not in joined
     # Crisis support still trumps the generic refusal.
     assert "危机支持，绝不能用“我不知道”拒答" in joined
-    assert "星澜" in joined
+    assert "星澜" not in joined
+    assert "小智" not in joined
 
 
 def _custom_definition():
@@ -88,7 +90,8 @@ def test_response_plan_instruction_uses_custom_persona_name() -> None:
         custom_persona=_custom_definition(),
     )
     joined = rules if isinstance(rules, str) else "\n".join(rules)
-    assert "小北" in joined
+    assert "小北" not in joined
+    assert "没有个人名字" in joined
     # The controlled conversation_instruction renders through the SAME path as
     # a built-in companion -- never the old free-text bio injection.
     assert "说话短一点，像朋友。" in joined

@@ -1656,9 +1656,11 @@ async def test_response_plan_short_circuits_identity_and_prohibited_requests(
 
     assert all(response.status_code == 200 for response in identity_responses)
     assert [response.json()["direct_text"] for response in identity_responses] == [
-        "我是星澜，温暖回应，偶尔陪用户把想法理清一层。"
+        "我是陪你聊天、讲故事的 AI 助手。"
     ] * len(identity_responses)
-    assert "模型名称" in identity_responses[0].json()["instructions"]
+    assert "没有个人名字" in identity_responses[0].json()["instructions"]
+    assert "小智" not in identity_responses[0].json()["instructions"]
+    assert "星澜" not in identity_responses[0].json()["instructions"]
     assert all(response.status_code == 200 for response in prohibited_responses)
     assert [response.json()["direct_text"] for response in prohibited_responses] == [
         "我不知道。"

@@ -132,9 +132,10 @@ def test_real_consumer_invocation_with_profile(monkeypatch: pytest.MonkeyPatch) 
     assert SERVICE_MODE_BLOCKS["student_minor"] in prompt
     assert "儿童/学生" in prompt
     assert "身份已确认" in prompt
-    assert "星澜" in prompt  # persona from the signed profile
+    assert "没有个人名字" in prompt  # persona style without a spoken self-name
+    assert "星澜" not in prompt
     assert "不得自称或讨论" not in prompt
-    assert "如实说明你是由人工智能驱动的机器人伙伴" in prompt
+    assert "如实说明你是由人工智能驱动的聊天助手" in prompt
 
 
 def test_real_consumer_invocation_without_profile_fails_closed(
