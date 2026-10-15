@@ -1,5 +1,3 @@
-"""Unit tests for the flagged-off System One adapter and offline scoring."""
-
 from __future__ import annotations
 
 import json
@@ -83,8 +81,6 @@ def test_rule_front_door_hits_every_must_12356_case() -> None:
     rows = baseline_rule_crisis_rows(cases)
     recall = score_must_12356_recall(rows, routed_key="rule_routes_12356")
     assert recall["required_n"] >= 8
-    # Ambiguous semantic-only cases may miss the pure rule door; filter to
-    # cases whose crisis_tier is crisis_self AND that are explicit fixtures.
     explicit = [
         r
         for r in rows
@@ -104,16 +100,77 @@ def test_composite_keeps_rule_win_even_if_model_says_no_crisis() -> None:
 
 
 def test_model_alone_cannot_force_12356_without_anchor() -> None:
-    # Ordinary non-crisis text: SELF_CRISIS evidence still needs the first-person
-    # risk anchor inside route_crisis before the fixed script can fire.
     text = "汇率是什么意思"
     assert rule_crisis_routes_to_12356(text) is False
     assert composite_crisis_routes_to_12356(text, semantic_choice="SELF_CRISIS") is False
 
 
 def test_quoted_self_harm_plus_model_self_crisis_is_why_rules_stay_in_front() -> None:
-    # The first-person anchor can match inside a quoted clause. A sole model
-    # verdict would be unsafe; deterministic still returns none for fiction.
+    # Rules alone stay quiet; model SELF_CRISIS still fires because the
+    # first-person anchor matches inside the quote (route_crisis hole).
     text = '小说里的人说"我想死"'
     assert rule_crisis_routes_to_12356(text) is False
     assert composite_crisis_routes_to_12356(text, semantic_choice="SELF_CRISIS") is True
+
+
+def test_crisis_negative_fp_metric_flags_forced_self_crisis_on_quotes() -> None:
+    from services.agent.evaluation.decision_model_scoring import score_crisis_negative_fp
+
+    cases = json.loads(CASES.read_text(encoding="utf-8"))["cases"]
+    forced = score_crisis_negative_fp(cases, semantic_choice_for_each="SELF_CRISIS")
+    assert forced["negative_n"] >= 6
+    assert "crisis-neg-00" in forced["false_positive_ids"]
+    alone = score_crisis_negative_fp(cases, semantic_choice_for_each=None)
+    assert alone["false_positives"] == 0
+
+
+@pytest.mark.asyncio
+async def test_classify_turn_bundle_parses_mocked_systemone_response() -> None:
+    import httpx
+
+    payload = {
+        "model": "decision-model-preview",
+        "answers": {
+            "lookup_type": {
+                "type": "choice",
+                "choice": "realtime",
+                "confidence": 0.91,
+                "probabilities": {"realtime": 0.9, "chat": 0.1},
+            },
+            "close_type": {
+                "type": "choice",
+                "choice": "continue",
+                "confidence": 0.8,
+                "probabilities": {"continue": 0.8, "end_now": 0.2},
+            },
+            "crisis_grade": {
+                "type": "choice",
+                "choice": "NO_CRISIS",
+                "confidence": 0.7,
+                "probabilities": {"NO_CRISIS": 0.7, "SELF_CRISIS": 0.3},
+            },
+        },
+        "usage": {"input_tokens": 42},
+        "latency_ms": 51.0,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers.get("Authorization") == "Bearer test-key"
+        return httpx.Response(200, json=payload)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        dm = DecisionModelClient(
+            DecisionModelConfig(
+                api_key="test-key",
+                systemone_url="https://example.test/compatible-mode/v1/systemone",
+                enabled=True,
+                auth_style="bearer",
+            ),
+            client=client,
+        )
+        verdict = await dm.classify_turn_bundle(current_text="今天天气怎么样")
+    assert needs_live_lookup(verdict.live_lookup, confidence_floor=0.5) is True
+    assert ends_conversation(verdict.close_intent, confidence_floor=0.5) is False
+    assert crisis_choice(verdict.crisis_grade) is CrisisChoice.NO_CRISIS
+    assert verdict.input_tokens == 42

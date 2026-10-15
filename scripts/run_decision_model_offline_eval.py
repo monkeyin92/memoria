@@ -3,14 +3,20 @@
 
 Default (no live calls):
   - Loads the synthetic fixture set.
-  - Scores the deterministic crisis front door (must hit 100% on 12356 cases).
-  - Prints a blocked summary when DASHSCOPE_API_KEY / DECISION_MODEL_URL are absent.
+  - Scores the deterministic crisis front door on explicit crisis-self fixtures.
+  - Scores the known composite FP hole on crisis negatives under forced SELF_CRISIS.
+  - Prints a blocked summary when keys / DECISION_MODEL_EVAL_LIVE are absent.
 
 Live dual-run (opt-in):
   export DECISION_MODEL_EVAL_LIVE=1
   export DASHSCOPE_API_KEY=...
   export DECISION_MODEL_URL=https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/systemone
-  # optional: DEEPSEEK_API_KEY to also run production close/live classifiers
+  # Production baseline (preferred when set):
+  export DEEPSEEK_API_KEY=...
+  # Optional DashScope qwen-flash arm: DECISION_MODEL_EVAL_RUN_QWEN=1 (default on)
+  # Auth: DECISION_MODEL_AUTH_STYLE=bearer|raw (default bearer; use raw if 401)
+  # Floors: DECISION_MODEL_CONFIDENCE_FLOOR (live, default 0.5)
+  #         DECISION_MODEL_CLOSE_CONFIDENCE_FLOOR (close, default 0.9)
 
 Synthetic texts only. No device. No production behavior change.
 """
@@ -34,7 +40,9 @@ from services.agent.evaluation.decision_model_scoring import (  # noqa: E402
     baseline_rule_crisis_rows,
     composite_crisis_routes_to_12356,
     latency_summary,
+    rows_for_split,
     score_binary_labeled,
+    score_crisis_negative_fp,
     score_must_12356_recall,
 )
 from services.agent.src.providers.decision_model import (  # noqa: E402
@@ -49,8 +57,8 @@ from services.agent.src.providers.decision_model import (  # noqa: E402
 CASES_PATH = ROOT / "services/agent/evaluation/decision_model_offline_cases.json"
 
 
-def _env_truthy(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+def _env_on(name: str, default: str = "0") -> bool:
+    return os.environ.get(name, default).strip().lower() not in {"0", "false", "no", "off", ""}
 
 
 def load_cases(path: Path) -> list[dict[str, Any]]:
@@ -61,15 +69,33 @@ def load_cases(path: Path) -> list[dict[str, Any]]:
     return cases
 
 
+def _binary_by_split(
+    rows: list[dict[str, Any]],
+    *,
+    label_key: str,
+    pred_key: str,
+) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "all": score_binary_labeled(rows, label_key=label_key, pred_key=pred_key).as_dict()
+    }
+    for split in ("dev", "heldout", "crisis"):
+        subset = list(rows_for_split(rows, split=split))
+        if not subset:
+            continue
+        out[split] = score_binary_labeled(
+            subset, label_key=label_key, pred_key=pred_key
+        ).as_dict()
+    return out
+
+
 def dry_run_report(cases: list[dict[str, Any]]) -> dict[str, Any]:
     rule_rows = baseline_rule_crisis_rows(cases)
-    # Explicit crisis-self fixtures must hit 12356 with rules alone.
     explicit_rows = [r for r in rule_rows if str(r.get("id", "")).startswith("crisis-self-")]
     explicit_recall = score_must_12356_recall(explicit_rows, routed_key="rule_routes_12356")
     full_recall = score_must_12356_recall(rule_rows, routed_key="rule_routes_12356")
-    live_n = sum(1 for c in cases if (c.get("labels") or {}).get("needs_live_lookup") is not None)
-    close_n = sum(1 for c in cases if (c.get("labels") or {}).get("ends_conversation") is not None)
-    crisis_n = sum(1 for c in cases if (c.get("labels") or {}).get("crisis_tier") is not None)
+    # Diagnostic: forced SELF_CRISIS on crisis_tier=none exposes the fiction-anchor hole.
+    forced_fp = score_crisis_negative_fp(cases, semantic_choice_for_each="SELF_CRISIS")
+    rule_only_fp = score_crisis_negative_fp(cases, semantic_choice_for_each=None)
     return {
         "mode": "dry_run",
         "blocked_reason": (
@@ -78,18 +104,20 @@ def dry_run_report(cases: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "case_counts": {
             "total": len(cases),
-            "with_live_label": live_n,
-            "with_close_label": close_n,
-            "with_crisis_label": crisis_n,
+            "dev": sum(1 for c in cases if c.get("split") == "dev"),
+            "heldout": sum(1 for c in cases if c.get("split") == "heldout"),
+            "crisis": sum(1 for c in cases if c.get("split") == "crisis"),
             "must_route_12356": full_recall["required_n"],
             "explicit_crisis_self_fixtures": explicit_recall["required_n"],
         },
         "rule_crisis_12356_recall_explicit_fixtures": explicit_recall,
         "rule_crisis_12356_recall_all_labeled": full_recall,
-        "note": (
-            "All-labeled rule recall may be <1.0 when semantic-candidate utterances "
-            "(crisis-amb-*) need additive evidence under route_crisis. Explicit "
-            "crisis-self-* fixtures must stay at recall 1.0."
+        "crisis_negative_fp_rules_alone": rule_only_fp,
+        "crisis_negative_fp_forced_SELF_CRISIS_evidence": forced_fp,
+        "limits": (
+            "Explicit crisis-self recall 1.0 only proves the fixtures still match the "
+            "rules they were copied from. It is not an independent safety proof. "
+            "Forced SELF_CRISIS FP on quoted fiction is a known route_crisis hole."
         ),
         "compliance": (
             "Crisis detection keeps companion_safety_decision / route_crisis in front. "
@@ -99,7 +127,14 @@ def dry_run_report(cases: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-async def _qwen_pair(text: str, *, api_key: str, base_url: str, model: str) -> dict[str, Any]:
+async def _llm_pair(
+    text: str,
+    *,
+    api_key: str,
+    base_url: str,
+    model: str,
+    thinking_mode: str,
+) -> dict[str, Any]:
     import httpx
     from services.agent.src.providers.close_intent_semantic_classifier import (
         CloseIntentSemanticClassifier,
@@ -111,6 +146,9 @@ async def _qwen_pair(text: str, *, api_key: str, base_url: str, model: str) -> d
         LiveLookupSemanticClassifierConfig,
         LiveLookupSemanticVerdict,
     )
+    from services.common.llm_thinking import ThinkingMode
+
+    mode: ThinkingMode = "deepseek" if thinking_mode == "deepseek" else "dashscope"
 
     async with httpx.AsyncClient() as client:
         live = LiveLookupSemanticClassifier(
@@ -119,6 +157,7 @@ async def _qwen_pair(text: str, *, api_key: str, base_url: str, model: str) -> d
                 base_url=base_url,
                 model=model,
                 timeout_s=10.0,
+                thinking_mode=mode,
             ),
             client=client,
         )
@@ -128,6 +167,7 @@ async def _qwen_pair(text: str, *, api_key: str, base_url: str, model: str) -> d
                 base_url=base_url,
                 model=model,
                 timeout_s=10.0,
+                thinking_mode=mode,
             ),
             client=client,
         )
@@ -154,18 +194,19 @@ async def live_run(cases: list[dict[str, Any]]) -> dict[str, Any]:
             "live mode needs DASHSCOPE_API_KEY and DECISION_MODEL_URL "
             "(Beijing systemone endpoint with WorkspaceId)"
         )
-    confidence_floor = float(os.environ.get("DECISION_MODEL_CONFIDENCE_FLOOR", "0.5"))
+    live_floor = float(os.environ.get("DECISION_MODEL_CONFIDENCE_FLOOR", "0.5"))
+    close_floor = float(os.environ.get("DECISION_MODEL_CLOSE_CONFIDENCE_FLOOR", "0.9"))
+    auth_style = os.environ.get("DECISION_MODEL_AUTH_STYLE", "bearer").strip().lower()
     qwen_base = os.environ.get(
         "DASHSCOPE_COMPATIBLE_BASE_URL",
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
     ).strip()
     qwen_model = os.environ.get("LIVE_LOOKUP_SEMANTIC_MODEL", "qwen-flash").strip()
-    run_qwen = os.environ.get("DECISION_MODEL_EVAL_RUN_QWEN", "1").strip().lower() not in {
-        "0",
-        "false",
-        "no",
-        "off",
-    }
+    run_qwen = _env_on("DECISION_MODEL_EVAL_RUN_QWEN", "1")
+    deepseek_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+    run_deepseek = bool(deepseek_key) and _env_on("DECISION_MODEL_EVAL_RUN_DEEPSEEK", "1")
+    deepseek_base = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip()
+    deepseek_model = os.environ.get("DEEPSEEK_FAST_MODEL", "deepseek-flash").strip()
 
     dm = DecisionModelClient(
         DecisionModelConfig(
@@ -173,53 +214,56 @@ async def live_run(cases: list[dict[str, Any]]) -> dict[str, Any]:
             systemone_url=dm_url,
             enabled=True,
             timeout_s=float(os.environ.get("DECISION_MODEL_TIMEOUT_S", "10")),
-            confidence_floor=confidence_floor,
+            confidence_floor=live_floor,
+            auth_style=auth_style,
         )
     )
     dm_rows: list[dict[str, Any]] = []
     qwen_rows: list[dict[str, Any]] = []
+    deepseek_rows: list[dict[str, Any]] = []
     try:
         for case in cases:
             labels = case.get("labels") or {}
             text = str(case["text"])
+            split = case.get("split")
             verdict = await dm.classify_turn_bundle(current_text=text)
-            pred_live = needs_live_lookup(
-                verdict.live_lookup, confidence_floor=confidence_floor
-            )
+            pred_live = needs_live_lookup(verdict.live_lookup, confidence_floor=live_floor)
             pred_close = ends_conversation(
-                verdict.close_intent, confidence_floor=confidence_floor
+                verdict.close_intent, confidence_floor=close_floor
             )
             grade = crisis_choice(verdict.crisis_grade)
-            dm_only_self = grade is CrisisChoice.SELF_CRISIS
-            composite_12356 = composite_crisis_routes_to_12356(
-                text, semantic_choice=grade.value
-            )
             dm_rows.append(
                 {
                     "id": case.get("id"),
+                    "split": split,
                     "label_live": labels.get("needs_live_lookup"),
                     "label_close": labels.get("ends_conversation"),
                     "must_route_12356": bool(labels.get("must_route_12356")),
+                    "crisis_tier_label": labels.get("crisis_tier"),
                     "pred_live": pred_live,
                     "pred_close": pred_close,
                     "dm_crisis_choice": grade.value,
-                    "dm_alone_self_crisis": dm_only_self,
-                    "composite_routes_12356": composite_12356,
+                    "dm_alone_self_crisis": grade is CrisisChoice.SELF_CRISIS,
+                    "composite_routes_12356": composite_crisis_routes_to_12356(
+                        text, semantic_choice=grade.value
+                    ),
                     "pair_ms": verdict.latency_ms,
                     "server_ms": verdict.server_latency_ms,
                     "input_tokens": verdict.input_tokens,
-                    "live_confidence": verdict.live_lookup.confidence,
-                    "close_confidence": verdict.close_intent.confidence,
-                    "crisis_confidence": verdict.crisis_grade.confidence,
                 }
             )
             if run_qwen:
-                q = await _qwen_pair(
-                    text, api_key=api_key, base_url=qwen_base, model=qwen_model
+                q = await _llm_pair(
+                    text,
+                    api_key=api_key,
+                    base_url=qwen_base,
+                    model=qwen_model,
+                    thinking_mode="dashscope",
                 )
                 qwen_rows.append(
                     {
                         "id": case.get("id"),
+                        "split": split,
                         "label_live": labels.get("needs_live_lookup"),
                         "label_close": labels.get("ends_conversation"),
                         "pred_live": q["pred_live"],
@@ -227,78 +271,122 @@ async def live_run(cases: list[dict[str, Any]]) -> dict[str, Any]:
                         "pair_ms": q["pair_ms"],
                     }
                 )
+            if run_deepseek:
+                d = await _llm_pair(
+                    text,
+                    api_key=deepseek_key,
+                    base_url=deepseek_base,
+                    model=deepseek_model,
+                    thinking_mode="deepseek",
+                )
+                deepseek_rows.append(
+                    {
+                        "id": case.get("id"),
+                        "split": split,
+                        "label_live": labels.get("needs_live_lookup"),
+                        "label_close": labels.get("ends_conversation"),
+                        "pred_live": d["pred_live"],
+                        "pred_close": d["pred_close"],
+                        "pair_ms": d["pair_ms"],
+                    }
+                )
     finally:
         await dm.aclose()
 
     rule_rows = baseline_rule_crisis_rows(cases)
+    # Composite FP from the model's actual crisis answers on negatives.
+    neg_fp_rows = [
+        {
+            "id": r["id"],
+            "labels": {"crisis_tier": r.get("crisis_tier_label"), "must_route_12356": False},
+            "text": next(c["text"] for c in cases if c.get("id") == r["id"]),
+        }
+        for r in dm_rows
+        if r.get("crisis_tier_label") == "none" and not r.get("must_route_12356")
+    ]
+    # Score using each row's actual composite prediction.
+    composite_fp = {
+        "negative_n": len(neg_fp_rows),
+        "false_positives": sum(
+            1
+            for r in dm_rows
+            if r.get("crisis_tier_label") == "none"
+            and not r.get("must_route_12356")
+            and r.get("composite_routes_12356")
+        ),
+    }
+    if composite_fp["negative_n"]:
+        composite_fp["false_positive_rate"] = (
+            composite_fp["false_positives"] / composite_fp["negative_n"]
+        )
+    else:
+        composite_fp["false_positive_rate"] = None
+
     report: dict[str, Any] = {
         "mode": "live",
-        "confidence_floor": confidence_floor,
+        "confidence_floors": {"live_lookup": live_floor, "close_intent": close_floor},
+        "auth_style": auth_style,
         "case_counts": {"total": len(cases)},
-        "rule_crisis_12356_recall": score_must_12356_recall(
-            rule_rows, routed_key="rule_routes_12356"
+        "rule_crisis_12356_recall_explicit_fixtures": score_must_12356_recall(
+            [r for r in rule_rows if str(r.get("id", "")).startswith("crisis-self-")],
+            routed_key="rule_routes_12356",
+        ),
+        "crisis_negative_fp_forced_SELF_CRISIS_evidence": score_crisis_negative_fp(
+            cases, semantic_choice_for_each="SELF_CRISIS"
         ),
         "decision_model": {
-            "live_lookup": score_binary_labeled(
+            "live_lookup": _binary_by_split(
                 dm_rows, label_key="label_live", pred_key="pred_live"
-            ).as_dict(),
-            "close_intent": score_binary_labeled(
+            ),
+            "close_intent": _binary_by_split(
                 dm_rows, label_key="label_close", pred_key="pred_close"
-            ).as_dict(),
+            ),
             "crisis_12356_recall_composite": score_must_12356_recall(
                 dm_rows, routed_key="composite_routes_12356"
             ),
-            "crisis_12356_recall_model_alone_NOT_FOR_PROD": score_must_12356_recall(
-                [
-                    {
-                        "must_route_12356": r["must_route_12356"],
-                        "dm_alone": r["dm_alone_self_crisis"],
-                    }
-                    for r in dm_rows
-                ],
-                routed_key="dm_alone",
-            ),
+            "crisis_negative_fp_composite": composite_fp,
             "latency": latency_summary(r["pair_ms"] for r in dm_rows),
-            "mean_input_tokens": (
-                sum(r["input_tokens"] or 0 for r in dm_rows)
-                / max(1, sum(1 for r in dm_rows if r["input_tokens"] is not None))
-            ),
         },
         "compliance": (
-            "Report composite crisis recall for product decisions. "
-            "Model-alone crisis recall is diagnostic only and must not gate production."
+            "Report composite crisis recall and crisis-negative FP for product decisions. "
+            "Model-alone crisis metrics must not gate production."
         ),
     }
     if qwen_rows:
         report["qwen_flash"] = {
-            "live_lookup": score_binary_labeled(
+            "live_lookup": _binary_by_split(
                 qwen_rows, label_key="label_live", pred_key="pred_live"
-            ).as_dict(),
-            "close_intent": score_binary_labeled(
+            ),
+            "close_intent": _binary_by_split(
                 qwen_rows, label_key="label_close", pred_key="pred_close"
-            ).as_dict(),
+            ),
             "latency": latency_summary(r["pair_ms"] for r in qwen_rows),
+        }
+    if deepseek_rows:
+        report["deepseek_flash"] = {
+            "live_lookup": _binary_by_split(
+                deepseek_rows, label_key="label_live", pred_key="pred_live"
+            ),
+            "close_intent": _binary_by_split(
+                deepseek_rows, label_key="label_close", pred_key="pred_close"
+            ),
+            "latency": latency_summary(r["pair_ms"] for r in deepseek_rows),
+        }
+    elif not deepseek_key:
+        report["deepseek_flash"] = {
+            "skipped": True,
+            "reason": "DEEPSEEK_API_KEY unset; production baseline not measured this run",
         }
     return report
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--cases",
-        type=Path,
-        default=CASES_PATH,
-        help="path to decision_model_offline_cases.json",
-    )
-    parser.add_argument(
-        "--out",
-        type=Path,
-        default=None,
-        help="optional JSON report path",
-    )
+    parser.add_argument("--cases", type=Path, default=CASES_PATH)
+    parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
     cases = load_cases(args.cases)
-    if _env_truthy("DECISION_MODEL_EVAL_LIVE"):
+    if _env_on("DECISION_MODEL_EVAL_LIVE", "0"):
         report = asyncio.run(live_run(cases))
     else:
         report = dry_run_report(cases)

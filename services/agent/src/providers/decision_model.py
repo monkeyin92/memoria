@@ -1,15 +1,3 @@
-"""Bailian decision-model-preview (TypeSafe System One) client for offline eval.
-
-This module is intentionally unused by production duplex / crisis routing.
-Enable only via the offline harness (``DECISION_MODEL_EVAL_LIVE=1``) or a
-future shadow flag that defaults off.
-
-Compliance: crisis detection must never rely solely on this preview model.
-``route_crisis`` / ``companion_safety_decision`` stay in front. Any future
-wiring may pass a model verdict only as ``semantic_evidence`` into
-``route_crisis``, never as a sole executor.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -25,7 +13,6 @@ DECISION_MODEL_NAME: Final = "decision-model-preview"
 _MAX_QUESTIONS: Final = 16
 _MAX_STATE_CHARS: Final = 8_000
 
-# v2-style choice questions from docs/acceptance/run-20261003-decision-model.
 LIVE_LOOKUP_QUESTION: Final[dict[str, Any]] = {
     "type": "choice",
     "instructions": (
@@ -67,7 +54,6 @@ CLOSE_INTENT_QUESTION: Final[dict[str, Any]] = {
     },
 }
 
-# Additive evidence only. Mirrors CrisisSemanticVerdict labels; never executes a route alone.
 CRISIS_GRADE_QUESTION: Final[dict[str, Any]] = {
     "type": "choice",
     "instructions": (
@@ -93,7 +79,7 @@ TURN_BUNDLE_QUESTIONS: Final[dict[str, Any]] = {
 
 
 class DecisionModelDisabled(RuntimeError):
-    """Raised when the adapter is constructed or called while the flag is off."""
+    pass
 
 
 class CrisisChoice(StrEnum):
@@ -105,14 +91,14 @@ class CrisisChoice(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class DecisionModelConfig:
-    """Boundary config. ``enabled`` defaults False so production stays untouched."""
-
     api_key: str
     systemone_url: str
     enabled: bool = False
     model: str = DECISION_MODEL_NAME
     timeout_s: float = 1.2
     confidence_floor: float = 0.5
+    # API reference uses Bearer; 2026-10-03 bridge scripts used the raw key.
+    auth_style: str = "bearer"
 
     def __post_init__(self) -> None:
         if self.enabled and not self.api_key.strip():
@@ -123,6 +109,8 @@ class DecisionModelConfig:
             raise ValueError("decision model timeout must be positive")
         if not 0.0 <= self.confidence_floor <= 1.0:
             raise ValueError("confidence_floor must be in [0, 1]")
+        if self.auth_style not in {"bearer", "raw"}:
+            raise ValueError("auth_style must be 'bearer' or 'raw'")
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,8 +122,6 @@ class ChoiceAnswer:
 
 @dataclass(frozen=True, slots=True)
 class TurnBundleVerdict:
-    """One System One forward for live-lookup, close-intent, and crisis grade."""
-
     live_lookup: ChoiceAnswer
     close_intent: ChoiceAnswer
     crisis_grade: ChoiceAnswer
@@ -146,8 +132,6 @@ class TurnBundleVerdict:
 
 
 def parse_choice_answer(raw: Mapping[str, Any] | None) -> ChoiceAnswer:
-    """Parse one System One ``choice`` answer at the HTTP boundary."""
-
     if not isinstance(raw, Mapping):
         return ChoiceAnswer(choice="UNSURE", confidence=None, probabilities={})
     choice = raw.get("choice")
@@ -165,7 +149,6 @@ def parse_choice_answer(raw: Mapping[str, Any] | None) -> ChoiceAnswer:
     except (TypeError, ValueError, KeyError):
         confidence = None
     if not isinstance(choice, str) or not choice:
-        # Fall back to argmax when the model omits ``choice``.
         choice = max(probabilities, key=probabilities.get) if probabilities else "UNSURE"
     return ChoiceAnswer(choice=choice, confidence=confidence, probabilities=probabilities)
 
@@ -200,8 +183,6 @@ def low_confidence(answer: ChoiceAnswer, *, confidence_floor: float) -> bool:
 
 
 class DecisionModelClient:
-    """POST ``/compatible-mode/v1/systemone``. No-op unless ``config.enabled``."""
-
     def __init__(
         self,
         config: DecisionModelConfig,
@@ -238,9 +219,13 @@ class DecisionModelClient:
             "state": (state or "").strip()[-_MAX_STATE_CHARS:],
             "questions": dict(questions),
         }
-        # Prior acceptance scripts used the raw key; official docs use Bearer.
+        auth = (
+            f"Bearer {self._config.api_key}"
+            if self._config.auth_style == "bearer"
+            else self._config.api_key
+        )
         headers = {
-            "Authorization": f"Bearer {self._config.api_key}",
+            "Authorization": auth,
             "Content-Type": "application/json",
         }
         t0 = time.perf_counter()
@@ -260,8 +245,6 @@ class DecisionModelClient:
         return payload, wall_ms
 
     async def classify_turn_bundle(self, *, current_text: str) -> TurnBundleVerdict:
-        """One forward with live-lookup, close-intent, and crisis-grade questions."""
-
         payload, wall_ms = await self.decide(
             state=current_text,
             questions=TURN_BUNDLE_QUESTIONS,

@@ -99,11 +99,14 @@ python scripts/run_decision_model_offline_eval.py --out /tmp/dm-eval.json
 
 Gates to report from that run (do not invent them here):
 
-- live-lookup / close-intent accuracy vs qwen-flash (and DeepSeek if configured)
-- crisis **composite** 12356 recall (must be **100%** of the rule baseline on explicit `crisis-self-*` fixtures; no regression)
-- false-positive rate on close-intent and on crisis negatives
-- wall-clock p50 / p95 for the one-call turn bundle vs parallel qwen pair
+- live-lookup / close-intent accuracy **split by `dev` / `heldout`**, vs **DeepSeek** when `DEEPSEEK_API_KEY` is set (production baseline) and optionally qwen-flash
+- close-intent floor defaults to **0.9** (`DECISION_MODEL_CLOSE_CONFIDENCE_FLOOR`); live-lookup floor defaults to 0.5
+- crisis **composite** 12356 recall on `must_route_12356` (no regression vs rule baseline on explicit `crisis-self-*`)
+- crisis-negative **false-positive rate** under composite answers (and the forced-`SELF_CRISIS` diagnostic)
+- wall-clock p50 / p95 for the one-call turn bundle vs the baseline pair
 - mean `input_tokens` for cost estimates
+
+Auth: `DECISION_MODEL_AUTH_STYLE=bearer` (default) or `raw` if the account matches the 2026-10-03 bridge setup.
 
 ### Prior measured baseline (cite only; not re-run here)
 
@@ -136,11 +139,11 @@ Until a non-preview price is published, treat decision-model cost as **unknown a
 | --- | --- | --- | --- |
 | Live-lookup | **Best supplement candidate.** Keyword path already covers many hits; model only for ambiguous turns. One System One call can carry this with close-intent. | Small if shadow-only; medium for cascade (new wiring + thresholds + metrics). | Chinese short-utterance bias; false live lookups waste search latency. |
 | Close-intent | **Supplement only, high precision required.** False END_SESSION puts the device on standby. Prior eval needed thr ≈ 0.9 and still trailed DeepSeek. | Same as above. | Mis-standby UX; preview model + data-processing terms for child speech. |
-| Crisis / danger | **Do not replace. Additive evidence only.** Keep rules + fixed 12356 script. Optional: use decision-model choice as `semantic_evidence` under the same `crisis_semantic_candidate` gate that qwen uses today, never alone. | Small for offline eval (done). Production swap of the crisis classifier: **out of scope / refuse** without a separate safety review. | Adversarial / fiction bleed; any sole-model miss is a child-safety incident. Quoted self-harm text can still match the first-person risk anchor, so a model `SELF_CRISIS` without the deterministic fiction filter would fire the fixed script. That is why rules stay in front. |
+| Crisis / danger | **Do not replace. Additive evidence only.** Keep rules + fixed 12356 script. Optional: use decision-model choice as `semantic_evidence` under the same `crisis_semantic_candidate` gate that qwen uses today, never alone. | Small for offline eval (done). Production swap of the crisis classifier: **out of scope / refuse** without a separate safety review. | Known hole: quoted fiction can still match `_FIRST_PERSON_RISK_ANCHOR`, so **rules + model `SELF_CRISIS` fires 12356 and can notify**, even though rules alone stay quiet. Dry-run scores that FP on `crisis-neg-*`. Do not treat fixture recall 1.0 as independent safety proof. |
 
 ### Suggested sequence (unchanged in spirit from TODOLIST N-14)
 
-1. Keep this harness; run live when a key is available; freeze thresholds before looking at held-out.
+1. Keep this harness; run live when a key is available. Tune floors on `split=dev` only, then read `heldout` once. Rebuild cases with `scripts/build_decision_model_offline_cases.py`.
 2. Shadow mode for live+close only (operator must accept data egress of utterance text to the preview endpoint).
 3. Cascade only if commit-path `close_ms` data shows the classifier is actually on the critical path.
 4. Crisis stays rule-first forever in this design; preview model may only duplicate today’s bounded evidence role.
