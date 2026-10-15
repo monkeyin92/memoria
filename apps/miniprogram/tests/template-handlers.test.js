@@ -65,10 +65,11 @@ function missingHandlers(kind) {
 test("template handler scan reads static and conditional bindings", () => {
   assert.deepEqual(templateHandlers("pages/profile").slice(0, 4), [
     "chooseDeviceBinding",
+    "closeAbout",
     "closeDeleteModal",
     "confirmDelete",
-    "copyAccountId",
   ]);
+  assert.ok(templateHandlers("pages/profile").includes("copyAccountId"));
   assert.ok(templateHandlers("pages/profile").includes("loginFromProfile"));
   assert.ok(templateHandlers("pages/device").includes("showConnectionHelp"));
 });
