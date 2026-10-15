@@ -19,7 +19,7 @@ Missing intro → build/CI fail; at runtime the story/soothe path is refused.
 Voice: `zh_female_tianmeitaozi_uranus_bigtts`, normal speed, normal volume.
 Render: `scripts/render_aigc_notices.py` (requires `DOUBAO_TTS_*`). Each file
 must carry implicit AIGC OpusTags (`CONTENT_ID`, `SERVICE_PROVIDER=Volcengine Doubao`,
-`AI_GENERATED`, `ARTIST`, `DATE`, `CONTENT_PRODUCER=Memoria`).
+`AI_GENERATED`, `ARTIST`, `VOICE_ID`, `DATE`, `CONTENT_PRODUCER=Memoria`).
 
 ## Live dialogue (screen on)
 
@@ -28,8 +28,21 @@ conversation is active. Fallback end-of-turn tone is behind
 `kAigcTurnToneEnabled` (default off) and only applies when the badge cannot
 render. No per-session spoken notice.
 
+### Dialogue system lines (no spoken AI intro)
+
+Hidden tags only. Voice: `zh_female_tianmeitaozi_uranus_bigtts`.
+
+| id | Text |
+|---|---|
+| `llm_thinking` | 嗯，我想一想。 |
+| `llm_unavailable` | 我现在有点卡住了，等一会儿再来找我聊吧。 |
+
+定稿 v2，产品部 2026-10-15 确认
+
 ## Pack gate
 
 `firmware/esp32/scripts/build_offline_stories.py` fails CI when any shipped
 clip lacks implicit tags, including the 25 production oggs from #244 (metadata-only
-retag; audio packets unchanged). Do not strip provider-embedded marks.
+retag; audio packets unchanged). `check_device_ogg_aigc.py` also requires every
+board ``*.ogg`` to decode and to carry `VOICE_ID`. Do not strip provider-embedded
+marks.
