@@ -148,7 +148,7 @@ def parse_choice_answer(raw: Mapping[str, Any] | None) -> ChoiceAnswer:
     except (TypeError, ValueError, KeyError):
         confidence = None
     if not isinstance(choice, str) or not choice:
-        choice = max(probabilities, key=probabilities.get) if probabilities else "UNSURE"
+        choice = max(probabilities, key=lambda key: probabilities[key]) if probabilities else "UNSURE"
     return ChoiceAnswer(choice=choice, confidence=confidence, probabilities=probabilities)
 
 
