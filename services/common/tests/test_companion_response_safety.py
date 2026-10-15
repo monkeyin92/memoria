@@ -136,8 +136,21 @@ def test_victim_matching_tolerates_speaker_to_mic_asr_slips(query: str) -> None:
     "query",
     (
         "我不想或了",
+        "我不想或了。",
+        "我不想或",
+        "我不想或。",
+        "我不想或啊",
+        "我不想或者了",
+        "我不想或者了。",
+        "我不想或者了呀",
         "我不想霍了",
+        "我不想霍",
+        "我不想霍。",
+        "我不想霍呀",
         "我不想货了",
+        "我不想货",
+        "我不想货。",
+        "我不想货吧",
         "我不想和了",
     ),
 )
@@ -162,6 +175,8 @@ def test_crisis_self_matching_tolerates_huo_homophone_asr_slips(query: str) -> N
         "我不想做作业了",
         "我不想喝了",
         "我不想玩了",
+        "我不想和同学玩了",
+        "我不想和同学玩",
     ),
 )
 def test_ordinary_chat_is_not_victim_support(query: str) -> None:

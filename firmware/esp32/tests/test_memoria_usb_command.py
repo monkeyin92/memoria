@@ -579,6 +579,14 @@ def test_usb_sleep_and_poweroff_stop_without_deep_sleep() -> None:
     assert "esp_deep_sleep_start" not in handler
     assert "StopStation" in handler
     assert "USB still powers the board" in handler
+    assert "EnableInput(false)" in handler
+    assert "EnableOutput(false)" in handler
+    assert handler.index("EnableOutput(false)") < handler.index("EnableInput(false)")
+    assert "offline_story_cancel_" in handler
+    assert "state != kDeviceStateIdle" not in handler
+    listening = handler.split("kDeviceStateListening", 1)[1]
+    assert listening.index("StopListening()") < listening.index("ToggleChatState()")
+    assert "kDeviceStateSpeaking" in listening[: listening.index("ToggleChatState()")]
 
 
 def test_usb_temp_reads_chip_sensor_without_side_effects() -> None:
