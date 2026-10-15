@@ -69,7 +69,7 @@
               </view>
             </view>
             <view class="device-usage-copy">
-              <text wx:if="{{sessionLimits.dailyChatMinutes && dailyUsage}}" class="device-usage-title">今天还可以聊 {{sessionLimits.dailyChatMinutes > dailyUsage.usedMinutes ? sessionLimits.dailyChatMinutes - dailyUsage.usedMinutes : 0}} 分钟</text>
+              <text wx:if="{{sessionLimits.dailyChatMinutes && dailyUsage}}" class="device-usage-title">今天还可以聊 <text class="device-usage-remaining">{{sessionLimits.dailyChatMinutes > dailyUsage.usedMinutes ? sessionLimits.dailyChatMinutes - dailyUsage.usedMinutes : 0}} 分钟</text></text>
               <text wx:else class="device-usage-title">用量暂未统计</text>
               <view class="trial-status-pill {{online ? '' : 'is-off'}}">
                 <view class="trial-status-dot"></view>

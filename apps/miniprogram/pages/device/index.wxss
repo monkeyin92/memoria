@@ -79,6 +79,10 @@
   line-height: var(--mp-lh-card);
 }
 
+.device-usage-remaining {
+  white-space: nowrap;
+}
+
 .device-limit-card {
   margin-top: var(--mp-gap-card);
   padding: 24px;
