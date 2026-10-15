@@ -109,3 +109,46 @@ Tool: `faster-whisper` model `small`, `language=zh`, `vad_filter=True`, CPU int8
 | Audible disclosure spoken in the clips | **not ear-verified**; ASR shows no clear preamble |
 | Exact Volcengine license grant for shipping trial voice | **unresolved**; HANDOFF release-blocker still open |
 | Who produced the external “recording drop” and from which prompt texts | **missing** outside PR prose |
+
+## Doubao preset vs Alibaba designed voice (per file)
+
+Catalogs checked:
+
+- Doubao presets: `infra/voices/doubao_voice_ids.json` (`speaker_id`, model `seed-tts-2.0`)
+- Alibaba designed: `infra/voices/designed_voice_ids.json` (`cosyvoice-v3.5-flash-vd-warmboy|softgirl|calmguide|brightpeer|lowmag-…`)
+
+**No file among the 25 names any Alibaba designed `voice_id`.** No generation script in-repo synthesized these bytes. Records are pack manifests, `build_offline_stories.py` `VOICE`, PR #244 / commit `c262de1a`, and `HANDOFF.md`. OpusTags carry no voice id.
+
+| file | recorded voice source | id | evidence |
+|---|---|---|---|
+| `night_soothe.ogg` | Doubao preset (pack-level; **no per-file manifest row**) | `zh_female_tianmeitaozi_uranus_bigtts` | PR #244 (“25 … Doubao trial … 甜美桃子 2.0” / same speaker id); `VOICE` in `build_offline_stories.py`; HANDOFF trial-Doubao blocker. Alibaba designed: **no record** |
+| `wo_zai_ne.ogg` | Doubao preset (pack-level; **no per-file manifest row**) | `zh_female_tianmeitaozi_uranus_bigtts` | same |
+| `stories/story_01.ogg` | Doubao preset | `zh_female_tianmeitaozi_uranus_bigtts` | `stories/index.json` `voice.id`; PR #244; pack `VOICE`. Alibaba designed: **no record** |
+| `stories/story_02.ogg` | Doubao preset | `zh_female_tianmeitaozi_uranus_bigtts` | same |
+| `stories/story_03.ogg` | Doubao preset | `zh_female_tianmeitaozi_uranus_bigtts` | same |
+| `offline_lines/offline-wake-no-network-v1.ogg` | Doubao preset | `zh_female_tianmeitaozi_uranus_bigtts` | `offline_lines/index.json` `voice.id`; PR #244; pack `VOICE`. Alibaba designed: **no record** |
+| `offline_lines/offline-wake-ask-parent-v1.ogg` | Doubao preset | `zh_female_tianmeitaozi_uranus_bigtts` | same |
+| `offline_lines/offline-wake-story-hint-v2.ogg` | Doubao preset | `zh_female_tianmeitaozi_uranus_bigtts` | same |
+| `offline_lines/offline-mid-drop-v2.ogg` | Doubao preset | `zh_female_tianmeitaozi_uranus_bigtts` | same |
+| `offline_lines/offline-mid-ask-parent-v1.ogg` | Doubao preset | `zh_female_tianmeitaozi_uranus_bigtts` | same |
+| `offline_lines/offline-mid-retry-v1.ogg` | Doubao preset | `zh_female_tianmeitaozi_uranus_bigtts` | same |
+| `offline_lines/offline-reconnecting-v1.ogg` | Doubao preset | `zh_female_tianmeitaozi_uranus_bigtts` | same |
+| `offline_lines/online-restored-v1.ogg` | Doubao preset | `zh_female_tianmeitaozi_uranus_bigtts` | same |
+| `offline_lines/online-restored-chat-v1.ogg` | Doubao preset | `zh_female_tianmeitaozi_uranus_bigtts` | same |
+| `offline_lines/online-restored-in-story-v2.ogg` | Doubao preset | `zh_female_tianmeitaozi_uranus_bigtts` | same |
+| `offline_lines/offline-menu-intro-v2.ogg` | Doubao preset | `zh_female_tianmeitaozi_uranus_bigtts` | same |
+| `offline_lines/offline-menu-how-v1.ogg` | Doubao preset | `zh_female_tianmeitaozi_uranus_bigtts` | same |
+| `offline_lines/offline-menu-confirm-how-v2.ogg` | Doubao preset | `zh_female_tianmeitaozi_uranus_bigtts` | same |
+| `offline_lines/offline-menu-item-01-v2.ogg` | Doubao preset | `zh_female_tianmeitaozi_uranus_bigtts` | same |
+| `offline_lines/offline-menu-item-02-v2.ogg` | Doubao preset | `zh_female_tianmeitaozi_uranus_bigtts` | same |
+| `offline_lines/offline-menu-item-03-v2.ogg` | Doubao preset | `zh_female_tianmeitaozi_uranus_bigtts` | same |
+| `offline_lines/offline-menu-choose-v2.ogg` | Doubao preset | `zh_female_tianmeitaozi_uranus_bigtts` | same |
+| `offline_lines/offline-menu-start-v1.ogg` | Doubao preset | `zh_female_tianmeitaozi_uranus_bigtts` | same |
+| `offline_lines/offline-menu-end-v1.ogg` | Doubao preset | `zh_female_tianmeitaozi_uranus_bigtts` | same |
+| `offline_lines/offline-menu-idle-v1.ogg` | Doubao preset | `zh_female_tianmeitaozi_uranus_bigtts` | same |
+
+Notes:
+
+- Doubao catalog field name is `speaker_id`, not `voice_type`. Manifest field is `voice.id`. Same string: `zh_female_tianmeitaozi_uranus_bigtts` (display 甜美桃子 2.0 in `doubao_voice_ids.json`).
+- No record of `cosyvoice-v3.5-flash-vd-warmboy|softgirl|calmguide|brightpeer|lowmag-*` for any of these 25 paths.
+- No in-file tag proves the claimed speaker. Attribution is metadata + PR prose only.
