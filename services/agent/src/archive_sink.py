@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import fcntl
-import io
 import json
 import logging
 import os
-import wave
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -28,8 +25,8 @@ class ArchiveSpoolKeyError(RuntimeError):
     """The spool cannot be decrypted with the configured key."""
 
 
+# raw_audio remains only so older encrypted spool rows can decode and discard.
 ArchiveTarget = Literal["event", "raw_audio"]
-MAX_RAW_VOICE_PCM_BYTES = 1_920_000
 logger = logging.getLogger(__name__)
 
 
@@ -57,10 +54,6 @@ class ArchiveSinkConfig:
             Fernet(self.spool_key.encode("ascii"))
         except (ValueError, UnicodeEncodeError) as exc:
             raise ValueError("archive spool key must be a valid Fernet key") from exc
-
-    @property
-    def raw_audio_endpoint(self) -> str:
-        return self.endpoint.removesuffix("/session-events") + "/session-raw-audio"
 
     @property
     def consent_endpoint(self) -> str:
@@ -123,7 +116,8 @@ class ArchiveSink:
         pcm: bytes,
         sample_rate: int,
     ) -> bool:
-        """Archive owner WAV only with live consent; transcript always survives."""
+        """Archive the owner transcript; raw-audio HTTP upload is removed."""
+        del pcm, sample_rate
         try:
             consent = await self._active_raw_voice_consent(
                 str(event.get("session_id") or "")
@@ -131,45 +125,13 @@ class ArchiveSink:
         except asyncio.CancelledError:
             await asyncio.shield(self.publish(event))
             raise
-        if (
-            consent is None
-            or event.get("speaker_class") != "owner"
-            or sample_rate != 16_000
-            or not pcm
-            or len(pcm) % 2
-            or len(pcm) > MAX_RAW_VOICE_PCM_BYTES
-        ):
+        if consent is None or event.get("speaker_class") != "owner":
             return await self.publish(event)
-        corpus_recording = consent.get("archive_purpose") == "corpus_recording"
-        shared_event = (
-            dict(event)
-            if corpus_recording
-            else {**event, "consent_grant_id": consent["consent_grant_id"]}
+        if consent.get("archive_purpose") == "corpus_recording":
+            return await self.publish(dict(event))
+        return await self.publish(
+            {**event, "consent_grant_id": consent["consent_grant_id"]}
         )
-        transcript_delivered = await self.publish(shared_event)
-        wav = self._wav(pcm, sample_rate=sample_rate)
-        raw_event = {
-            **shared_event,
-            "audio_base64": base64.b64encode(wav).decode("ascii"),
-            "media_type": "audio/wav",
-            "retention_policy": consent["retention_policy"],
-        }
-        if corpus_recording:
-            raw_event.update(
-                {
-                    "consent_grant_id": consent["consent_grant_id"],
-                    "archive_purpose": "corpus_recording",
-                }
-            )
-        try:
-            raw_delivered = await self.publish(raw_event, target="raw_audio")
-        except ArchiveSpoolFullError:
-            logger.error(
-                "raw voice dropped because shared archive spool is full event_id=%s",
-                event.get("event_id"),
-            )
-            return transcript_delivered
-        return transcript_delivered and raw_delivered
 
     async def _active_raw_voice_consent(self, session_id: str) -> dict[str, str] | None:
         if not session_id:
@@ -207,16 +169,6 @@ class ArchiveSink:
         result = {key: str(payload[key]) for key in required}
         result["archive_purpose"] = str(archive_purpose)
         return result
-
-    @staticmethod
-    def _wav(pcm: bytes, *, sample_rate: int) -> bytes:
-        output = io.BytesIO()
-        with wave.open(output, "wb") as writer:
-            writer.setnchannels(1)
-            writer.setsampwidth(2)
-            writer.setframerate(sample_rate)
-            writer.writeframes(pcm)
-        return output.getvalue()
 
     async def _append_after_cancellation(self, payload: bytes) -> None:
         async with self._lock:
@@ -270,12 +222,16 @@ class ArchiveSink:
 
     async def _deliver(self, payload: bytes) -> bool:
         target, body = self._decode_envelope(payload)
-        endpoint = (
-            self._config.raw_audio_endpoint if target == "raw_audio" else self._config.endpoint
-        )
+        if target == "raw_audio":
+            # POST /v1/archive/session-raw-audio is gone. Drop leftover spool rows.
+            logger.error(
+                "raw voice spool row discarded; upload route removed event_id=%s",
+                body.get("event_id"),
+            )
+            return True
         try:
             response = await self._client.post(
-                endpoint,
+                self._config.endpoint,
                 headers={
                     "X-Memoria-Internal-Token": self._config.internal_token,
                     "Content-Type": "application/json",
@@ -290,13 +246,6 @@ class ArchiveSink:
             # Derived evidence can race its canonical parent across retries.
             # Keep it encrypted until the parent turn is durably visible.
             return False
-        if target == "raw_audio" and response.status_code in {403, 409, 410, 413, 422}:
-            logger.error(
-                "raw voice spool row discarded after permanent response status=%s event_id=%s",
-                response.status_code,
-                body.get("event_id"),
-            )
-            return True
         if response.status_code == 410:
             # A deleted-session tombstone is permanent. Keeping this row would
             # violate deletion and head-of-line block every later event.

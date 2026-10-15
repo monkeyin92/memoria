@@ -3,13 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import binascii
 import hashlib
 import hmac
-import io
 import logging
-import wave
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -40,7 +36,7 @@ from services.archive.memory_domain import (
     MemorySensitivity,
 )
 from services.archive.memory_write_policy import EXPLICIT_MEMORY_INTENT
-from services.archive.object_store import ObjectRef, ObjectStore
+from services.archive.object_store import ObjectStore
 from services.common.companions import (
     DEFAULT_COMPANION_ID,
     DESIGNED_VOICE_MODEL,
@@ -115,8 +111,6 @@ logger = logging.getLogger(__name__)
 _LOCAL_SAFE_PLANNER_POLICY_VERSION = "local-safe-fallback-v1"
 _DOUBAO_TTS_PROVIDER = "volcengine_doubao"
 _DOUBAO_PERSONAL_VOICE_MODEL = "seed-icl-2.0"
-MAX_RAW_VOICE_WAV_BYTES = 2 * 1024 * 1024
-MAX_RAW_VOICE_BASE64_CHARS = ((MAX_RAW_VOICE_WAV_BYTES + 2) // 3) * 4
 SESSION_BOUND_EVENT_TYPES = frozenset(
     {
         "speech.utterance_finalized",
@@ -275,30 +269,6 @@ class RawVoiceConsentCreate(BaseModel):
         pattern=r"^[a-z0-9][a-z0-9._-]*$",
     )
     retention_policy: Literal["account_lifetime"] = "account_lifetime"
-
-
-class SessionRawAudioCreate(SessionEvidenceEventCreate):
-    event_type: Literal["speech.utterance_finalized"]
-    speaker_class: Literal["owner", "guest", "uncertain"]
-    audio_base64: str = Field(min_length=1, max_length=MAX_RAW_VOICE_BASE64_CHARS)
-    media_type: Literal["audio/wav"] = "audio/wav"
-    retention_policy: Literal["account_lifetime", "corpus_time_bounded"] = (
-        "account_lifetime"
-    )
-    archive_purpose: Literal["raw_voice_archive", "corpus_recording"] = (
-        "raw_voice_archive"
-    )
-
-    @model_validator(mode="after")
-    def match_raw_audio_purpose(self) -> SessionRawAudioCreate:
-        expected = (
-            "corpus_time_bounded"
-            if self.archive_purpose == "corpus_recording"
-            else "account_lifetime"
-        )
-        if self.retention_policy != expected:
-            raise ValueError("raw audio purpose and retention policy do not match")
-        return self
 
 
 class ResponseSourceRefCreate(BaseModel):
@@ -1223,69 +1193,6 @@ def _consent_payload(consent: RawVoiceConsent) -> dict[str, Any]:
     }
 
 
-def _decode_owner_wav(encoded: str) -> bytes:
-    try:
-        audio = base64.b64decode(encoded, validate=True)
-    except (binascii.Error, ValueError) as exc:
-        raise HTTPException(status_code=422, detail="audio_base64 must be valid base64") from exc
-    if not audio or len(audio) > MAX_RAW_VOICE_WAV_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"raw voice WAV must not exceed {MAX_RAW_VOICE_WAV_BYTES} bytes",
-        )
-    try:
-        with wave.open(io.BytesIO(audio), "rb") as reader:
-            frame_count = reader.getnframes()
-            frame_bytes = reader.readframes(frame_count)
-            valid = (
-                reader.getnchannels() == 1
-                and reader.getsampwidth() == 2
-                and reader.getframerate() == 16_000
-                and reader.getcomptype() == "NONE"
-                and frame_count > 0
-                and len(frame_bytes) == frame_count * 2
-            )
-    except (EOFError, wave.Error) as exc:
-        raise HTTPException(status_code=422, detail="raw voice must be a valid WAV") from exc
-    if not valid:
-        raise HTTPException(
-            status_code=422,
-            detail="raw voice WAV must be mono PCM16 at 16000 Hz",
-        )
-    return audio
-
-
-async def _put_archive_object(
-    store: ObjectStore,
-    *,
-    account_id: str,
-    data: bytes,
-    purpose: str = "raw-voice-archive",
-) -> ObjectRef:
-    task = asyncio.create_task(
-        store.put(
-            account_id=account_id,
-            purpose=purpose,
-            data=data,
-            media_type="audio/wav",
-        )
-    )
-    try:
-        return await asyncio.shield(task)
-    except asyncio.CancelledError:
-        reference = await asyncio.shield(task)
-        await asyncio.shield(store.delete(reference))
-        raise
-
-
-async def _delete_object_safely(store: ObjectStore, reference: ObjectRef) -> None:
-    try:
-        await asyncio.shield(store.delete(reference))
-    except Exception:
-        logger.exception("raw voice object compensation failed object_key=%s", reference.object_key)
-        raise
-
-
 def _require_internal_token(
     request: Request,
     capability: Literal["archive_write"],
@@ -2066,114 +1973,6 @@ async def session_raw_voice_consent(
         "policy_version": consent.policy_version,
         "retention_policy": consent.retention_policy,
     }
-
-
-async def _append_minor_corpus_audio(
-    body: SessionRawAudioCreate,
-    request: Request,
-    *,
-    account_id: str,
-) -> JSONResponse:
-    """Child corpus recording is abolished (Scheme A)."""
-
-    del body, request, account_id
-    raise HTTPException(
-        status_code=403, detail={"code": "child_corpus_recording_abolished"}
-    )
-
-
-@router.post("/session-raw-audio")
-async def append_session_raw_audio(
-    body: SessionRawAudioCreate,
-    request: Request,
-    _: Annotated[None, Depends(_require_archive_write_token)],
-) -> JSONResponse:
-    session = require_active_voice_session(request, body.session_id)
-    if body.speaker_class != "owner":
-        raise HTTPException(status_code=422, detail="raw voice archive is restricted to the owner")
-    account_id = str(session["user_id"])
-    profile = _store(request).get_subject_profile(user_id=account_id)
-    if profile is not None and profile.get("subject_category") == "minor":
-        return await _append_minor_corpus_audio(body, request, account_id=account_id)
-    require_capability_for_account_id(
-        account_id,
-        "raw_voice_archive",
-        store=_store(request),
-    )
-    archive = _archive(request)
-    store = _archive_objects(request)
-    active = await archive.active_raw_voice_consent(account_id=account_id)
-    if active is None:
-        raise HTTPException(status_code=410, detail="raw voice consent is no longer active")
-    if (
-        active.consent_grant_id != body.consent_grant_id
-        or active.retention_policy != body.retention_policy
-    ):
-        raise HTTPException(status_code=403, detail="raw voice consent grant does not match")
-    audio = _decode_owner_wav(body.audio_base64)
-    event = await archive.event(account_id=account_id, event_id=body.event_id)
-    if event is None:
-        raise HTTPException(
-            status_code=425,
-            detail={"code": "parent_turn_not_recorded"},
-        )
-    if (
-        event.session_id != body.session_id
-        or event.turn_id != body.turn_id
-        or event.generation_id != body.generation_id
-        or event.event_type != "speech.utterance_finalized"
-        or event.speaker_class != "owner"
-        or event.subject_id != account_id
-        or event.consent_grant_id != body.consent_grant_id
-        or _canonical_turn_eligibility(event) != (True, True)
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "raw_audio_parent_mismatch"},
-        )
-    reference: ObjectRef | None = None
-    try:
-        async with _account_write(request, account_id):
-            reference = await _put_archive_object(
-                store,
-                account_id=account_id,
-                data=audio,
-            )
-            result = await archive.record_with_blob(
-                event,
-                reference,
-                retention_policy=body.retention_policy,
-            )
-            if result.blob_duplicate is True:
-                await _delete_object_safely(store, reference)
-    except RawVoiceConsentRequiredError as exc:
-        if reference is not None:
-            await _delete_object_safely(store, reference)
-        raise HTTPException(
-            status_code=410, detail="raw voice consent is no longer active"
-        ) from exc
-    except IdempotencyConflictError as exc:
-        if reference is not None:
-            await _delete_object_safely(store, reference)
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except asyncio.CancelledError:
-        if reference is not None:
-            await _delete_object_safely(store, reference)
-        raise
-    except Exception:
-        if reference is not None:
-            await _delete_object_safely(store, reference)
-        raise
-    return JSONResponse(
-        status_code=200 if result.duplicate else 201,
-        content={
-            "event_id": result.event_id,
-            "outbox_id": result.outbox_id,
-            "recorded_at": result.recorded_at.isoformat(),
-            "duplicate": result.duplicate,
-            "blob_archived": True,
-        },
-    )
 
 
 @router.get("/timeline")

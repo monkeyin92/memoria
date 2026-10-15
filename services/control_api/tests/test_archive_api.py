@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-import asyncio
-import base64
 import hashlib
-import io
 import os
 import uuid
-import wave
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,12 +17,9 @@ from services.archive.domain import (
     ContextBundle,
     ContextQuery,
     EvidenceEvent,
-    LifeArchivePort,
-    RawVoiceRevocation,
     SpeakerClass,
 )
 from services.archive.memory_domain import MemorySearchResult, ReviewedClaim
-from services.archive.object_store import ObjectRef
 from services.archive.postgres_archive import PostgresLifeArchive
 from services.common.companions import designed_voice_speaker_sha256
 from services.common.redaction import redact_pii
@@ -117,87 +110,6 @@ class LegacyVersionStub:
         return self.version
 
 
-class TrackingArchiveObjectStore:
-    def __init__(self) -> None:
-        self.objects: dict[str, bytes] = {}
-
-    async def put(
-        self,
-        *,
-        account_id: str,
-        purpose: str,
-        data: bytes,
-        media_type: str,
-    ) -> ObjectRef:
-        key = f"{account_id}/{purpose}/{uuid.uuid4()}.fernet"
-        self.objects[key] = data
-        return ObjectRef(
-            account_id=account_id,
-            object_key=key,
-            media_type=media_type,
-            byte_count=len(data),
-            content_sha256=hashlib.sha256(data).hexdigest(),
-            encryption_key_version="archive-test-v1",
-            backend="test",
-        )
-
-    async def get(self, reference: ObjectRef) -> bytes:
-        return self.objects[reference.object_key]
-
-    async def delete(self, reference: ObjectRef) -> None:
-        self.objects.pop(reference.object_key, None)
-
-
-class FailOnceDeleteObjectStore(TrackingArchiveObjectStore):
-    def __init__(self) -> None:
-        super().__init__()
-        self._failed = False
-
-    async def delete(self, reference: ObjectRef) -> None:
-        if not self._failed:
-            self._failed = True
-            raise RuntimeError("simulated object deletion failure")
-        await super().delete(reference)
-
-
-class CancellingBlobArchive:
-    def __init__(self, delegate: object, started: asyncio.Event) -> None:
-        self._delegate = delegate
-        self._started = started
-
-    def __getattr__(self, name: str) -> object:
-        return getattr(self._delegate, name)
-
-    async def record_with_blob(self, *args: object, **kwargs: object) -> None:
-        del args, kwargs
-        self._started.set()
-        await asyncio.Future()
-
-
-class SnapshotPausingArchive:
-    def __init__(self, delegate: LifeArchivePort) -> None:
-        self._delegate = delegate
-        self.snapshot_taken = asyncio.Event()
-        self.continue_revocation = asyncio.Event()
-
-    def __getattr__(self, name: str) -> object:
-        return getattr(self._delegate, name)
-
-    async def revoke_raw_voice_consent(
-        self,
-        *,
-        account_id: str,
-        revoked_at: datetime,
-    ) -> RawVoiceRevocation:
-        revocation = await self._delegate.revoke_raw_voice_consent(
-            account_id=account_id,
-            revoked_at=revoked_at,
-        )
-        self.snapshot_taken.set()
-        await self.continue_revocation.wait()
-        return revocation
-
-
 def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("MEMORIA_DB_PATH", str(tmp_path / "memoria.sqlite3"))
     monkeypatch.setenv("MEMORIA_AUTH_SECRET", "test-auth-material-that-is-long-enough")
@@ -271,16 +183,6 @@ async def _register_minor(
     logged_in = logged_in_response.json()
     assert logged_in["user_id"] == registered["user_id"]
     return logged_in
-
-
-def _wav(pcm: bytes = b"\x00\x00" * 1600) -> bytes:
-    output = io.BytesIO()
-    with wave.open(output, "wb") as writer:
-        writer.setnchannels(1)
-        writer.setsampwidth(2)
-        writer.setframerate(16_000)
-        writer.writeframes(pcm)
-    return output.getvalue()
 
 
 def _response_provenance(
@@ -1339,19 +1241,13 @@ async def test_late_persona_background_task_is_rejected_by_the_deletion_fence(
     )
 
     assert engine.observations == 0
-
-
 @pytest.mark.asyncio
-async def test_raw_voice_consent_archives_owner_audio_and_revocation_deletes_blobs(
+async def test_raw_voice_consent_grant_revoke_and_upload_route_is_gone(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     _configure(monkeypatch, tmp_path)
     app = create_app()
-    objects = TrackingArchiveObjectStore()
-    app.state.archive_object_store = objects
-    wav = _wav()
-    changed_wav = _wav(b"\x01\x00" * 1600)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         identity = await _register_verified_adult(
             client,
@@ -1376,75 +1272,25 @@ async def test_raw_voice_consent_archives_owner_audio_and_revocation_deletes_blo
             headers=internal,
             params={"session_id": session["session_id"]},
         )
-        event = {
-            "event_id": "raw-audio-owner-event",
-            "session_id": session["session_id"],
-            "event_type": "speech.utterance_finalized",
-            "occurred_at": datetime.now(UTC).isoformat(),
-            "speaker_class": "owner",
-            "source": "funasr.authoritative_final",
-            "consent_grant_id": grant["consent_grant_id"],
-            "active_subject_id": identity["user_id"],
-            "payload": {"text": "保存这一段主人声音。"},
-        }
-        transcript = await client.post(
-            "/v1/archive/session-events",
-            headers=internal,
-            json=event,
-        )
-        transcript_payload = (await client.get("/v1/archive/timeline", headers=headers)).json()[
-            "items"
-        ][0]["payload"]
-        body = {
-            **event,
-            "payload": transcript_payload,
-            "audio_base64": base64.b64encode(wav).decode("ascii"),
-            "media_type": "audio/wav",
-            "retention_policy": "account_lifetime",
-        }
-        guest_audio = await client.post(
-            "/v1/archive/session-raw-audio",
-            headers=internal,
-            json={**body, "event_id": "guest-raw-audio", "speaker_class": "guest"},
-        )
-        invalid_audio = await client.post(
+        removed = await client.post(
             "/v1/archive/session-raw-audio",
             headers=internal,
             json={
-                **body,
-                "event_id": "invalid-raw-audio",
-                "audio_base64": base64.b64encode(b"RIFF-not-a-wav").decode("ascii"),
-            },
-        )
-        archived = await client.post(
-            "/v1/archive/session-raw-audio",
-            headers=internal,
-            json=body,
-        )
-        duplicate = await client.post(
-            "/v1/archive/session-raw-audio",
-            headers=internal,
-            json=body,
-        )
-        conflict = await client.post(
-            "/v1/archive/session-raw-audio",
-            headers=internal,
-            json={
-                **body,
-                "audio_base64": base64.b64encode(changed_wav).decode("ascii"),
+                "event_id": "raw-audio-gone",
+                "session_id": session["session_id"],
+                "event_type": "speech.utterance_finalized",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": "owner",
+                "source": "funasr.authoritative_final",
+                "consent_grant_id": grant["consent_grant_id"],
+                "payload": {"text": "upload route removed"},
+                "audio_base64": "AA==",
+                "media_type": "audio/wav",
+                "retention_policy": "account_lifetime",
             },
         )
         revoked = await client.delete("/v1/archive/raw-voice-consent", headers=headers)
-        revoked_retry = await client.delete(
-            "/v1/archive/raw-voice-consent",
-            headers=headers,
-        )
         after_revoke = await client.get("/v1/archive/raw-voice-consent", headers=headers)
-        late = await client.post(
-            "/v1/archive/session-raw-audio",
-            headers=internal,
-            json={**body, "event_id": "late-raw-audio"},
-        )
 
     assert empty.json() == {"consent": None}
     assert granted.status_code == 201
@@ -1454,277 +1300,10 @@ async def test_raw_voice_consent_archives_owner_audio_and_revocation_deletes_blo
         "policy_version": "raw-voice-archive-v1",
         "retention_policy": "account_lifetime",
     }
-    assert transcript.status_code == 201
-    assert guest_audio.status_code == 422
-    assert invalid_audio.status_code == 422
-    assert archived.status_code == 200
-    assert archived.json()["blob_archived"] is True
-    assert duplicate.status_code == 200
-    assert duplicate.json()["duplicate"] is True
-    assert conflict.status_code == 409
+    assert removed.status_code == 404
     assert revoked.status_code == 200
     assert revoked.json()["revoked_at"] is not None
-    assert revoked_retry.status_code == 200
-    assert revoked_retry.json() == revoked.json()
     assert after_revoke.json() == {"consent": None}
-    assert late.status_code == 410
-    assert objects.objects == {}
-
-
-@pytest.mark.asyncio
-async def test_raw_audio_waits_for_an_existing_canonical_owner_transcript(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    _configure(monkeypatch, tmp_path)
-    app = create_app()
-    objects = TrackingArchiveObjectStore()
-    app.state.archive_object_store = objects
-    internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        identity = await _register_verified_adult(
-            client,
-            app,
-            username="missing-raw-parent",
-        )
-        headers = {"Authorization": f"Bearer {identity['access_token']}"}
-        session = (await client.post("/v1/sessions", headers=headers, json={})).json()
-        grant = (
-            await client.post(
-                "/v1/archive/raw-voice-consent",
-                headers=headers,
-                json={"policy_version": "raw-voice-archive-v1"},
-            )
-        ).json()
-        raw_audio = await client.post(
-            "/v1/archive/session-raw-audio",
-            headers=internal,
-            json={
-                "event_id": "missing-raw-parent",
-                "session_id": session["session_id"],
-                "event_type": "speech.utterance_finalized",
-                "occurred_at": datetime.now(UTC).isoformat(),
-                "speaker_class": "owner",
-                "source": "funasr.authoritative_final",
-                "consent_grant_id": grant["consent_grant_id"],
-                "payload": {"text": "不能由音频创建话轮。", "persona_eligible": True},
-                "audio_base64": base64.b64encode(_wav()).decode("ascii"),
-            },
-        )
-        traits = await client.get("/v1/persona/traits?include_candidates=true", headers=headers)
-
-    assert raw_audio.status_code == 425
-    assert raw_audio.json()["detail"] == {"code": "parent_turn_not_recorded"}
-    assert objects.objects == {}
-    assert traits.json() == {"items": []}
-
-
-@pytest.mark.asyncio
-async def test_raw_voice_revocation_cannot_orphan_a_concurrent_upload(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    _configure(monkeypatch, tmp_path)
-    app = create_app()
-    objects = TrackingArchiveObjectStore()
-    app.state.archive_object_store = objects
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as setup:
-        identity = await _register_verified_adult(
-            setup,
-            app,
-            username="raw-voice-race",
-        )
-        headers = {"Authorization": f"Bearer {identity['access_token']}"}
-        internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
-        session = (await setup.post("/v1/sessions", headers=headers, json={})).json()
-        grant = (
-            await setup.post(
-                "/v1/archive/raw-voice-consent",
-                headers=headers,
-                json={
-                    "policy_version": "raw-voice-archive-v1",
-                    "retention_policy": "account_lifetime",
-                },
-            )
-        ).json()
-
-    delegate = app.state.life_archive
-    pausing_archive = SnapshotPausingArchive(delegate)
-    app.state.life_archive = pausing_archive
-    body = {
-        "event_id": "raw-audio-revocation-race",
-        "session_id": session["session_id"],
-        "event_type": "speech.utterance_finalized",
-        "occurred_at": datetime.now(UTC).isoformat(),
-        "speaker_class": "owner",
-        "source": "funasr.authoritative_final",
-        "consent_grant_id": grant["consent_grant_id"],
-        "payload": {"text": "撤销并发上传不能留下对象。"},
-        "audio_base64": base64.b64encode(_wav()).decode("ascii"),
-        "media_type": "audio/wav",
-        "retention_policy": "account_lifetime",
-    }
-    async with (
-        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as owner,
-        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as agent,
-    ):
-        revocation = asyncio.create_task(
-            owner.delete("/v1/archive/raw-voice-consent", headers=headers)
-        )
-        await asyncio.wait_for(pausing_archive.snapshot_taken.wait(), timeout=1)
-        try:
-            upload = await agent.post(
-                "/v1/archive/session-raw-audio",
-                headers=internal,
-                json=body,
-            )
-        finally:
-            pausing_archive.continue_revocation.set()
-        revoked = await asyncio.wait_for(revocation, timeout=1)
-
-    assert revoked.status_code == 200
-    assert upload.status_code == 410
-    assert objects.objects == {}
-    assert await delegate.raw_voice_blobs(account_id=identity["user_id"]) == ()
-
-
-@pytest.mark.asyncio
-async def test_raw_voice_revocation_keeps_manifest_until_object_deletion_retries(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    _configure(monkeypatch, tmp_path)
-    app = create_app()
-    objects = FailOnceDeleteObjectStore()
-    app.state.archive_object_store = objects
-    archive = app.state.life_archive
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        identity = await _register_verified_adult(
-            client,
-            app,
-            username="raw-voice-retry",
-        )
-        headers = {"Authorization": f"Bearer {identity['access_token']}"}
-        internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
-        session = (await client.post("/v1/sessions", headers=headers, json={})).json()
-        grant = (
-            await client.post(
-                "/v1/archive/raw-voice-consent",
-                headers=headers,
-                json={
-                    "policy_version": "raw-voice-archive-v1",
-                    "retention_policy": "account_lifetime",
-                },
-            )
-        ).json()
-        parent = await client.post(
-            "/v1/archive/session-events",
-            headers=internal,
-            json={
-                "event_id": "raw-audio-revocation-retry",
-                "session_id": session["session_id"],
-                "event_type": "speech.utterance_finalized",
-                "occurred_at": datetime.now(UTC).isoformat(),
-                "speaker_class": "owner",
-                "source": "funasr.authoritative_final",
-                "consent_grant_id": grant["consent_grant_id"],
-                "active_subject_id": identity["user_id"],
-                "payload": {"text": "对象删除失败时保留清单供重试。"},
-            },
-        )
-        uploaded = await client.post(
-            "/v1/archive/session-raw-audio",
-            headers=internal,
-            json={
-                "event_id": "raw-audio-revocation-retry",
-                "session_id": session["session_id"],
-                "event_type": "speech.utterance_finalized",
-                "occurred_at": datetime.now(UTC).isoformat(),
-                "speaker_class": "owner",
-                "source": "funasr.authoritative_final",
-                "consent_grant_id": grant["consent_grant_id"],
-                "active_subject_id": identity["user_id"],
-                "payload": {"text": "对象删除失败时保留清单供重试。"},
-                "audio_base64": base64.b64encode(_wav()).decode("ascii"),
-                "media_type": "audio/wav",
-                "retention_policy": "account_lifetime",
-            },
-        )
-        failed = await client.delete("/v1/archive/raw-voice-consent", headers=headers)
-        retained = await archive.raw_voice_blobs(account_id=identity["user_id"])
-        objects_after_failed = dict(objects.objects)
-        retried = await client.delete("/v1/archive/raw-voice-consent", headers=headers)
-
-    assert parent.status_code == 201
-    assert uploaded.status_code == 200
-    assert failed.status_code == 503
-    assert len(retained) == 1
-    assert retained[0].object_key in objects_after_failed
-    assert retried.status_code == 200
-    assert objects.objects == {}
-    assert await archive.raw_voice_blobs(account_id=identity["user_id"]) == ()
-
-
-@pytest.mark.asyncio
-async def test_raw_voice_upload_rejects_another_accounts_consent_grant(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    _configure(monkeypatch, tmp_path)
-    app = create_app()
-    objects = TrackingArchiveObjectStore()
-    app.state.archive_object_store = objects
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        first = await _register_verified_adult(
-            client,
-            app,
-            username="raw-voice-first",
-        )
-        second = await _register_verified_adult(
-            client,
-            app,
-            username="raw-voice-second",
-        )
-        first_headers = {"Authorization": f"Bearer {first['access_token']}"}
-        second_headers = {"Authorization": f"Bearer {second['access_token']}"}
-        session = (await client.post("/v1/sessions", headers=first_headers, json={})).json()
-        grant_body = {
-            "policy_version": "raw-voice-archive-v1",
-            "retention_policy": "account_lifetime",
-        }
-        await client.post(
-            "/v1/archive/raw-voice-consent",
-            headers=first_headers,
-            json=grant_body,
-        )
-        second_grant = (
-            await client.post(
-                "/v1/archive/raw-voice-consent",
-                headers=second_headers,
-                json=grant_body,
-            )
-        ).json()
-
-        response = await client.post(
-            "/v1/archive/session-raw-audio",
-            headers={"X-Memoria-Internal-Token": "test-internal-archive-token"},
-            json={
-                "event_id": "cross-account-raw-audio",
-                "session_id": session["session_id"],
-                "event_type": "speech.utterance_finalized",
-                "occurred_at": datetime.now(UTC).isoformat(),
-                "speaker_class": "owner",
-                "source": "funasr.authoritative_final",
-                "consent_grant_id": second_grant["consent_grant_id"],
-                "payload": {"text": "不能借用另一账户的授权。"},
-                "audio_base64": base64.b64encode(_wav()).decode("ascii"),
-                "media_type": "audio/wav",
-                "retention_policy": "account_lifetime",
-            },
-        )
-
-    assert response.status_code == 403
-    assert objects.objects == {}
 
 
 @pytest.mark.asyncio
@@ -1732,7 +1311,7 @@ async def test_raw_voice_upload_rejects_another_accounts_consent_grant(
     not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
     reason="set MEMORIA_TEST_POSTGRES_DSN for the PostgreSQL HTTP raw voice contract",
 )
-async def test_postgres_control_api_raw_voice_contract_matches_sqlite(
+async def test_postgres_control_api_raw_voice_consent_matches_sqlite(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -1742,8 +1321,6 @@ async def test_postgres_control_api_raw_voice_contract_matches_sqlite(
     await archive.initialize()
     app = create_app()
     app.state.life_archive = archive
-    objects = TrackingArchiveObjectStore()
-    app.state.archive_object_store = objects
     account_id: str | None = None
     try:
         async with AsyncClient(
@@ -1773,28 +1350,19 @@ async def test_postgres_control_api_raw_voice_contract_matches_sqlite(
                 headers=internal,
                 params={"session_id": session["session_id"]},
             )
-            event = {
-                "event_id": "postgres-http-raw-event",
-                "session_id": session["session_id"],
-                "event_type": "speech.utterance_finalized",
-                "occurred_at": datetime.now(UTC).isoformat(),
-                "speaker_class": "owner",
-                "source": "funasr.authoritative_final",
-                "consent_grant_id": grant["consent_grant_id"],
-                "active_subject_id": identity["user_id"],
-                "payload": {"text": "验证 PostgreSQL HTTP 原始语音合同。"},
-            }
-            transcript = await client.post(
-                "/v1/archive/session-events",
-                headers=internal,
-                json=event,
-            )
-            raw_audio = await client.post(
+            removed = await client.post(
                 "/v1/archive/session-raw-audio",
                 headers=internal,
                 json={
-                    **event,
-                    "audio_base64": base64.b64encode(_wav()).decode("ascii"),
+                    "event_id": "postgres-http-raw-event",
+                    "session_id": session["session_id"],
+                    "event_type": "speech.utterance_finalized",
+                    "occurred_at": datetime.now(UTC).isoformat(),
+                    "speaker_class": "owner",
+                    "source": "funasr.authoritative_final",
+                    "consent_grant_id": grant["consent_grant_id"],
+                    "payload": {"text": "upload route removed"},
+                    "audio_base64": "AA==",
                     "media_type": "audio/wav",
                     "retention_policy": "account_lifetime",
                 },
@@ -1806,12 +1374,9 @@ async def test_postgres_control_api_raw_voice_contract_matches_sqlite(
 
         assert granted.status_code == 201
         assert session_consent.json()["consent_grant_id"] == grant["consent_grant_id"]
-        assert transcript.status_code == 201
-        assert raw_audio.status_code == 200
-        assert raw_audio.json()["blob_archived"] is True
+        assert removed.status_code == 404
         assert revoked.status_code == 200
         assert await archive.raw_voice_blobs(account_id=account_id) == ()
-        assert objects.objects == {}
     finally:
         if account_id is not None:
             connection = await asyncpg.connect(dsn)
@@ -1828,81 +1393,6 @@ async def test_postgres_control_api_raw_voice_contract_matches_sqlite(
                 await connection.close()
         await archive.close()
 
-
-@pytest.mark.asyncio
-async def test_cancelled_raw_audio_request_deletes_the_uncommitted_object(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    _configure(monkeypatch, tmp_path)
-    app = create_app()
-    objects = TrackingArchiveObjectStore()
-    app.state.archive_object_store = objects
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        identity = await _register_verified_adult(
-            client,
-            app,
-            username="cancel-raw-owner",
-        )
-        headers = {"Authorization": f"Bearer {identity['access_token']}"}
-        internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
-        session = (await client.post("/v1/sessions", headers=headers, json={})).json()
-        grant = (
-            await client.post(
-                "/v1/archive/raw-voice-consent",
-                headers=headers,
-                json={
-                    "policy_version": "raw-voice-archive-v1",
-                    "retention_policy": "account_lifetime",
-                },
-            )
-        ).json()
-        parent = await client.post(
-            "/v1/archive/session-events",
-            headers=internal,
-            json={
-                "event_id": "cancelled-raw-audio",
-                "session_id": session["session_id"],
-                "event_type": "speech.utterance_finalized",
-                "occurred_at": datetime.now(UTC).isoformat(),
-                "speaker_class": "owner",
-                "source": "funasr.authoritative_final",
-                "consent_grant_id": grant["consent_grant_id"],
-                "active_subject_id": identity["user_id"],
-                "payload": {"text": "请求取消仍需补偿对象。"},
-            },
-        )
-        assert parent.status_code == 201
-        started = asyncio.Event()
-        app.state.life_archive = CancellingBlobArchive(app.state.life_archive, started)
-        request_task = asyncio.create_task(
-            client.post(
-                "/v1/archive/session-raw-audio",
-                headers=internal,
-                json={
-                    "event_id": "cancelled-raw-audio",
-                    "session_id": session["session_id"],
-                    "event_type": "speech.utterance_finalized",
-                    "occurred_at": datetime.now(UTC).isoformat(),
-                    "speaker_class": "owner",
-                    "source": "funasr.authoritative_final",
-                    "consent_grant_id": grant["consent_grant_id"],
-                    "active_subject_id": identity["user_id"],
-                    "payload": {"text": "请求取消仍需补偿对象。"},
-                    "audio_base64": base64.b64encode(_wav()).decode("ascii"),
-                    "media_type": "audio/wav",
-                    "retention_policy": "account_lifetime",
-                },
-            )
-        )
-        # Guard the wait: a request rejected before the canonical blob write
-        # would otherwise block the whole suite instead of failing here.
-        await asyncio.wait_for(started.wait(), timeout=10)
-        request_task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await request_task
-
-    assert objects.objects == {}
 
 
 @pytest.mark.asyncio

@@ -653,16 +653,10 @@ def test_agent_image_runs_the_media_bridge_without_the_retired_keyword_spotter()
     assert "services.agent.src.main" not in agent_dockerfile
 
 
-def test_nginx_bounds_raw_voice_upload_without_raising_all_api_body_limits() -> None:
+def test_nginx_has_no_session_raw_audio_upload_location() -> None:
     nginx = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
 
-    exact = "location = /memoria-api/v1/archive/session-raw-audio {"
-    assert nginx.count(exact) == 1
-    block = nginx.split(exact, 1)[1].split("}", 1)[0]
-    assert "client_max_body_size 4m;" in block
-    assert "limit_req_status 429;" in block
-    assert "limit_req zone=memoria_api burst=6 nodelay;" in block
-    assert "proxy_pass http://127.0.0.1:8791/v1/archive/session-raw-audio;" in block
+    assert "session-raw-audio" not in nginx
     generic = nginx.split("location ^~ /memoria-api/ {", 1)[1].split("}", 1)[0]
     assert "client_max_body_size 4m;" not in generic
 

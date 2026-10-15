@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import io
 import json
-import wave
 from pathlib import Path
 
 import httpx
@@ -353,17 +351,13 @@ async def test_cancelled_delivery_is_durable_before_cancellation_propagates(
         json.loads(Fernet(spool_key.encode("ascii")).decrypt(line)) for line in encrypted_lines
     ] == [{"target": "event", "body": event}]
     await client.aclose()
-
-
 @pytest.mark.asyncio
-async def test_owner_audio_uses_consent_and_the_shared_encrypted_spool_target(
+async def test_owner_turn_attaches_consent_without_raw_audio_upload(
     tmp_path: Path,
 ) -> None:
-    raw_online = False
     requests: list[tuple[str, dict[str, object]]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal raw_online
         if request.method == "GET":
             return httpx.Response(
                 200,
@@ -376,19 +370,16 @@ async def test_owner_audio_uses_consent_and_the_shared_encrypted_spool_target(
             )
         body = json.loads(request.content)
         requests.append((request.url.path, body))
-        if request.url.path.endswith("/session-raw-audio") and not raw_online:
-            return httpx.Response(503)
         return httpx.Response(201, json={"duplicate": False})
 
     spool_path = tmp_path / "archive.spool"
-    spool_key = Fernet.generate_key().decode("ascii")
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     sink = ArchiveSink(
         ArchiveSinkConfig(
             endpoint="https://control.test/v1/archive/session-events",
             internal_token="internal-test-token",
             spool_path=spool_path,
-            spool_key=spool_key,
+            spool_key=Fernet.generate_key().decode("ascii"),
             spool_max_bytes=512 * 1024,
         ),
         client=client,
@@ -403,37 +394,22 @@ async def test_owner_audio_uses_consent_and_the_shared_encrypted_spool_target(
         "payload": {"text": "这段声音经过了单独授权。"},
     }
 
-    assert await sink.publish_owner_turn(event, pcm=b"\x00\x00" * 1600, sample_rate=16_000) is False
-    encrypted = [line for line in spool_path.read_bytes().splitlines() if line]
-    assert b"RIFF" not in spool_path.read_bytes()
-    envelope = json.loads(Fernet(spool_key.encode("ascii")).decrypt(encrypted[0]))
-    assert envelope["target"] == "raw_audio"
-    assert envelope["body"]["consent_grant_id"] == "raw-grant-001"
-    wav = base64.b64decode(envelope["body"]["audio_base64"])
-    with wave.open(io.BytesIO(wav), "rb") as reader:
-        assert (reader.getnchannels(), reader.getsampwidth(), reader.getframerate()) == (
-            1,
-            2,
-            16_000,
+    assert await sink.publish_owner_turn(event, pcm=b"\x00\x00" * 1600, sample_rate=16_000)
+    assert requests == [
+        (
+            "/v1/archive/session-events",
+            {**event, "consent_grant_id": "raw-grant-001"},
         )
-    assert requests[0] == (
-        "/v1/archive/session-events",
-        {**event, "consent_grant_id": "raw-grant-001"},
-    )
-
-    raw_online = True
-    assert await sink.replay() == 1
-    assert requests[-1][0].endswith("/session-raw-audio")
-    assert spool_path.read_bytes() == b""
+    ]
+    assert not spool_path.exists() or spool_path.read_bytes() == b""
     await client.aclose()
 
 
 @pytest.mark.asyncio
-async def test_missing_or_revoked_raw_consent_keeps_the_transcript_without_audio(
+async def test_missing_raw_consent_keeps_the_transcript_without_audio(
     tmp_path: Path,
 ) -> None:
     consent_allowed = False
-    raw_returns_revoked = False
     requests: list[tuple[str, dict[str, object]]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -443,7 +419,7 @@ async def test_missing_or_revoked_raw_consent_keeps_the_transcript_without_audio
                 json=(
                     {
                         "allowed": True,
-                        "consent_grant_id": "stale-grant",
+                        "consent_grant_id": "live-grant",
                         "policy_version": "raw-voice-archive-v1",
                         "retention_policy": "account_lifetime",
                     }
@@ -453,8 +429,6 @@ async def test_missing_or_revoked_raw_consent_keeps_the_transcript_without_audio
             )
         body = json.loads(request.content)
         requests.append((request.url.path, body))
-        if request.url.path.endswith("/session-raw-audio") and raw_returns_revoked:
-            return httpx.Response(410)
         return httpx.Response(201)
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -484,26 +458,22 @@ async def test_missing_or_revoked_raw_consent_keeps_the_transcript_without_audio
     )
 
     consent_allowed = True
-    raw_returns_revoked = True
     assert await sink.publish_owner_turn(
-        {**event, "event_id": "revoked-owner-event"},
+        {**event, "event_id": "consented-owner-event"},
         pcm=b"\x00\x00" * 1600,
         sample_rate=16_000,
     )
-    transcript_request, raw_request = requests[-2:]
-    shared_event = {
-        **event,
-        "event_id": "revoked-owner-event",
-        "consent_grant_id": "stale-grant",
-    }
-    assert transcript_request == ("/v1/archive/session-events", shared_event)
-    assert raw_request[0].endswith("/session-raw-audio")
-    assert {
-        key: value
-        for key, value in raw_request[1].items()
-        if key not in {"audio_base64", "media_type", "retention_policy"}
-    } == shared_event
+    assert requests[-1] == (
+        "/v1/archive/session-events",
+        {
+            **event,
+            "event_id": "consented-owner-event",
+            "consent_grant_id": "live-grant",
+        },
+    )
+    assert all(not path.endswith("/session-raw-audio") for path, _ in requests)
     await client.aclose()
+
 
 
 @pytest.mark.asyncio
@@ -555,9 +525,24 @@ async def test_minor_corpus_consent_never_uploads_raw_audio(tmp_path: Path) -> N
     assert requests == [("/v1/archive/session-events", event)]
     await client.aclose()
 
+def _seed_encrypted_spool(path: Path, key: str, envelopes: list[dict[str, object]]) -> None:
+    fernet = Fernet(key.encode("ascii"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(
+        b"".join(
+            fernet.encrypt(
+                json.dumps(envelope, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+                    "utf-8"
+                )
+            )
+            + b"\n"
+            for envelope in envelopes
+        )
+    )
+
 
 @pytest.mark.asyncio
-async def test_permanent_raw_rejection_does_not_block_later_transcript_replay(
+async def test_leftover_raw_audio_spool_rows_are_discarded_without_blocking_transcripts(
     tmp_path: Path,
 ) -> None:
     online = False
@@ -567,19 +552,18 @@ async def test_permanent_raw_rejection_does_not_block_later_transcript_replay(
         body = json.loads(request.content)
         if not online:
             return httpx.Response(503)
-        if request.url.path.endswith("/session-raw-audio"):
-            return httpx.Response(403)
         delivered_events.append(str(body["event_id"]))
         return httpx.Response(201)
 
     spool_path = tmp_path / "archive.spool"
+    spool_key = Fernet.generate_key().decode("ascii")
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     sink = ArchiveSink(
         ArchiveSinkConfig(
             endpoint="https://control.test/v1/archive/session-events",
             internal_token="internal-test-token",
             spool_path=spool_path,
-            spool_key=Fernet.generate_key().decode("ascii"),
+            spool_key=spool_key,
             spool_max_bytes=256 * 1024,
         ),
         client=client,
@@ -592,139 +576,30 @@ async def test_permanent_raw_rejection_does_not_block_later_transcript_replay(
         "source": "funasr.authoritative_final",
         "payload": {"text": "保留转写。"},
     }
-    raw = {
-        **base,
-        "event_id": "stale-raw",
-        "consent_grant_id": "stale-grant",
-        "audio_base64": base64.b64encode(b"RIFF-stale").decode("ascii"),
-        "media_type": "audio/wav",
-        "retention_policy": "account_lifetime",
-    }
-    later = {**base, "event_id": "later-text"}
-
-    assert await sink.publish(raw, target="raw_audio") is False
-    assert await sink.publish(later) is False
+    _seed_encrypted_spool(
+        spool_path,
+        spool_key,
+        [
+            {
+                "target": "raw_audio",
+                "body": {
+                    **base,
+                    "event_id": "stale-raw",
+                    "consent_grant_id": "stale-grant",
+                    "audio_base64": base64.b64encode(b"RIFF-stale").decode("ascii"),
+                    "media_type": "audio/wav",
+                    "retention_policy": "account_lifetime",
+                },
+            },
+            {"target": "event", "body": {**base, "event_id": "later-text"}},
+        ],
+    )
     online = True
     assert await sink.replay() == 2
     assert delivered_events == ["later-text"]
     assert spool_path.read_bytes() == b""
     await client.aclose()
 
-
-@pytest.mark.asyncio
-async def test_transient_raw_failure_does_not_block_later_transcript_replay(
-    tmp_path: Path,
-) -> None:
-    transcript_online = False
-    delivered_events: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content)
-        if request.url.path.endswith("/session-raw-audio"):
-            return httpx.Response(503)
-        if not transcript_online:
-            return httpx.Response(503)
-        delivered_events.append(str(body["event_id"]))
-        return httpx.Response(201)
-
-    spool_path = tmp_path / "archive.spool"
-    spool_key = Fernet.generate_key().decode("ascii")
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    sink = ArchiveSink(
-        ArchiveSinkConfig(
-            endpoint="https://control.test/v1/archive/session-events",
-            internal_token="internal-test-token",
-            spool_path=spool_path,
-            spool_key=spool_key,
-            spool_max_bytes=256 * 1024,
-        ),
-        client=client,
-    )
-    base = {
-        "session_id": "session-owner",
-        "event_type": "speech.utterance_finalized",
-        "occurred_at": "2026-07-19T08:00:00+00:00",
-        "speaker_class": "owner",
-        "source": "funasr.authoritative_final",
-        "payload": {"text": "音频失败不能阻塞这条转写。"},
-    }
-    raw = {
-        **base,
-        "event_id": "transient-raw",
-        "consent_grant_id": "raw-grant",
-        "audio_base64": base64.b64encode(b"RIFF-transient").decode("ascii"),
-        "media_type": "audio/wav",
-        "retention_policy": "account_lifetime",
-    }
-    transcript = {**base, "event_id": "later-transcript"}
-
-    assert await sink.publish(raw, target="raw_audio") is False
-    assert await sink.publish(transcript) is False
-
-    transcript_online = True
-    assert await sink.replay() == 1
-    assert delivered_events == ["later-transcript"]
-    encrypted_lines = [line for line in spool_path.read_bytes().splitlines() if line]
-    assert [
-        json.loads(Fernet(spool_key.encode("ascii")).decrypt(line))["target"]
-        for line in encrypted_lines
-    ] == ["raw_audio"]
-    await client.aclose()
-
-
-@pytest.mark.asyncio
-async def test_queued_raw_audio_does_not_block_a_new_transcript_delivery(
-    tmp_path: Path,
-) -> None:
-    delivered_events: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content)
-        if request.url.path.endswith("/session-raw-audio"):
-            return httpx.Response(503)
-        delivered_events.append(str(body["event_id"]))
-        return httpx.Response(201)
-
-    spool_path = tmp_path / "archive.spool"
-    spool_key = Fernet.generate_key().decode("ascii")
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    sink = ArchiveSink(
-        ArchiveSinkConfig(
-            endpoint="https://control.test/v1/archive/session-events",
-            internal_token="internal-test-token",
-            spool_path=spool_path,
-            spool_key=spool_key,
-            spool_max_bytes=256 * 1024,
-        ),
-        client=client,
-    )
-    base = {
-        "session_id": "session-owner",
-        "event_type": "speech.utterance_finalized",
-        "occurred_at": "2026-07-19T08:00:00+00:00",
-        "speaker_class": "owner",
-        "source": "funasr.authoritative_final",
-        "payload": {"text": "新转写应直接交付。"},
-    }
-    raw = {
-        **base,
-        "event_id": "queued-raw",
-        "consent_grant_id": "raw-grant",
-        "audio_base64": base64.b64encode(b"RIFF-queued").decode("ascii"),
-        "media_type": "audio/wav",
-        "retention_policy": "account_lifetime",
-    }
-
-    assert await sink.publish(raw, target="raw_audio") is False
-    assert await sink.publish({**base, "event_id": "live-transcript"}) is True
-
-    assert delivered_events == ["live-transcript"]
-    encrypted_lines = [line for line in spool_path.read_bytes().splitlines() if line]
-    assert [
-        json.loads(Fernet(spool_key.encode("ascii")).decrypt(line))["target"]
-        for line in encrypted_lines
-    ] == ["raw_audio"]
-    await client.aclose()
 
 
 @pytest.mark.asyncio
@@ -779,8 +654,6 @@ async def test_raw_spool_overflow_never_removes_the_already_spooled_transcript(
         "body": {**event, "consent_grant_id": "raw-grant"},
     }
     await client.aclose()
-
-
 @pytest.mark.asyncio
 async def test_existing_raw_audio_is_evicted_before_a_new_transcript_is_lost(
     tmp_path: Path,
@@ -818,15 +691,23 @@ async def test_existing_raw_audio_is_evicted_before_a_new_transcript_is_lost(
         "source": "funasr.authoritative_final",
         "payload": {"text": "权威转写优先于可选原始音频。"},
     }
-    old_raw = {
-        **base,
-        "event_id": "old-raw",
-        "consent_grant_id": "raw-grant",
-        "audio_base64": "A" * 2600,
-        "media_type": "audio/wav",
-        "retention_policy": "account_lifetime",
-    }
-    assert await sink.publish(old_raw, target="raw_audio") is False
+    _seed_encrypted_spool(
+        spool_path,
+        spool_key,
+        [
+            {
+                "target": "raw_audio",
+                "body": {
+                    **base,
+                    "event_id": "old-raw",
+                    "consent_grant_id": "raw-grant",
+                    "audio_base64": "A" * 2600,
+                    "media_type": "audio/wav",
+                    "retention_policy": "account_lifetime",
+                },
+            }
+        ],
+    )
 
     new_event = {**base, "event_id": "new-transcript"}
     assert await sink.publish_owner_turn(
@@ -847,6 +728,7 @@ async def test_existing_raw_audio_is_evicted_before_a_new_transcript_is_lost(
         }
     ]
     await client.aclose()
+
 
 
 @pytest.mark.asyncio

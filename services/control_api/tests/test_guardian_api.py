@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import io
 import json
-import wave
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -76,16 +73,6 @@ def _mark_verified_adult(app: Any, user_id: str) -> None:
         age_evidence_status="verified",
         now=datetime.now(UTC).isoformat(),
     )
-
-
-def _wav_base64() -> str:
-    output = io.BytesIO()
-    with wave.open(output, "wb") as writer:
-        writer.setnchannels(1)
-        writer.setsampwidth(2)
-        writer.setframerate(16_000)
-        writer.writeframes(b"\x00\x00" * 1600)
-    return base64.b64encode(output.getvalue()).decode("ascii")
 
 
 @pytest.mark.asyncio
@@ -454,10 +441,8 @@ async def test_guardian_summary_requires_exact_active_link_and_weekly_consent(
 
     assert response.status_code == 403
     assert response.json()["detail"] == {"code": "guardian_link_required"}
-
-
 @pytest.mark.asyncio
-async def test_authorized_child_corpus_is_time_bounded_and_revocation_deletes_audio(
+async def test_authorized_child_corpus_consent_cannot_upload_raw_audio(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -528,7 +513,11 @@ async def test_authorized_child_corpus_is_time_bounded_and_revocation_deletes_au
             headers=archive_headers,
             params={"session_id": session_id},
         )
-        assert consent_snapshot.json()["archive_purpose"] == "corpus_recording"
+        assert consent_snapshot.json() == {
+            "allowed": False,
+            "subject_category": "minor",
+            "reason": "child_corpus_recording_abolished",
+        }
         event = {
             "event_id": "minor-authorized-corpus-turn",
             "session_id": session_id,
@@ -555,15 +544,14 @@ async def test_authorized_child_corpus_is_time_bounded_and_revocation_deletes_au
                 "consent_grant_id": corpus.json()["consent_id"],
                 "archive_purpose": "corpus_recording",
                 "retention_policy": "corpus_time_bounded",
-                "audio_base64": _wav_base64(),
+                "audio_base64": "AA==",
                 "media_type": "audio/wav",
             },
         )
         assert transcript.status_code == 201
-        assert audio.status_code == 201
+        assert audio.status_code == 404
         samples = await app.state.guardian_store.corpus_samples(minor_user_id=child["user_id"])
-        assert len(samples) == 1
-        assert await app.state.archive_object_store.get(samples[0].reference)
+        assert samples == ()
 
         revoked = await client.delete(
             f"/v1/guardian/links/{link['link_id']}/consents/{corpus.json()['consent_id']}",
@@ -571,13 +559,6 @@ async def test_authorized_child_corpus_is_time_bounded_and_revocation_deletes_au
         )
         assert revoked.status_code == 200
 
-    deleted = await app.state.guardian_store.corpus_sample_by_event(
-        minor_user_id=child["user_id"],
-        source_event_id=event["event_id"],
-    )
-    assert deleted is not None and deleted.deleted_at is not None
-    with pytest.raises(FileNotFoundError):
-        await app.state.archive_object_store.get(deleted.reference)
 
 
 class _SubjectStore:

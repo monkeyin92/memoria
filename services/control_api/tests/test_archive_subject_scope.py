@@ -1,7 +1,6 @@
 """Subject privacy at the real HTTP exits, including pre-fence evidence."""
 from __future__ import annotations
 
-import base64
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -19,7 +18,6 @@ from services.control_api.tests.test_archive_api import (
     _register_minor,
     _register_verified_adult,
     _response_provenance,
-    _wav,
 )
 from services.guardian.domain import PersonConsentRecord
 from testing import app_store
@@ -316,10 +314,8 @@ async def test_retained_foreign_speech_cannot_train_the_account_persona(
             )
             assert event.payload["history_eligible"] is True
             assert persona.observations == i - 1
-
-
 @pytest.mark.asyncio
-async def test_account_raw_audio_consent_cannot_attach_to_foreign_or_unknown_parent(
+async def test_account_raw_audio_upload_route_is_gone(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _configure(monkeypatch, tmp_path)
@@ -332,33 +328,22 @@ async def test_account_raw_audio_consent_cannot_attach_to_foreign_or_unknown_par
             account_id=owner["user_id"], policy_version="test-v1",
             retention_policy="account_lifetime", granted_at=datetime.now(UTC),
         )
-        for i, subject in enumerate(("child", None), 1):
-            await app.state.life_archive.record(EvidenceEvent(
-                event_id=f"raw-parent-{i}", account_id=owner["user_id"], subject_id=subject,
-                session_id=session["session_id"], turn_id=i, generation_id=1,
-                event_type="speech.utterance_finalized", speaker_class="owner",
-                source="test.pre-fence", occurred_at=datetime.now(UTC),
-                consent_grant_id=consent.consent_grant_id,
-                payload={"history_eligible": True, "owner_projection_eligible": True,
-                         "interaction": {"history_eligible": True,
-                                         "owner_projection_eligible": True}},
-            ))
-            result = await client.post(
-                "/v1/archive/session-raw-audio", headers=INTERNAL,
-                json={
-                    "event_id": f"raw-parent-{i}", "session_id": session["session_id"],
-                    "turn_id": i, "generation_id": 1, "speaker_class": "owner",
-                    "event_type": "speech.utterance_finalized",
-                    "source": "test", "payload": {},
-                    "occurred_at": datetime.now(UTC).isoformat(),
-                    "consent_grant_id": consent.consent_grant_id,
-                    "retention_policy": "account_lifetime",
-                    "audio_base64": base64.b64encode(_wav()).decode(),
-                },
-            )
-            assert result.status_code == 409, result.text
-            assert result.json()["detail"]["code"] == "raw_audio_parent_mismatch"
+        result = await client.post(
+            "/v1/archive/session-raw-audio", headers=INTERNAL,
+            json={
+                "event_id": "raw-parent-gone", "session_id": session["session_id"],
+                "turn_id": 1, "generation_id": 1, "speaker_class": "owner",
+                "event_type": "speech.utterance_finalized",
+                "source": "test", "payload": {},
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "consent_grant_id": consent.consent_grant_id,
+                "retention_policy": "account_lifetime",
+                "audio_base64": "AA==",
+            },
+        )
+        assert result.status_code == 404, result.text
         assert await app.state.life_archive.raw_voice_blobs(account_id=owner["user_id"]) == ()
+
 
 
 @pytest.mark.asyncio
