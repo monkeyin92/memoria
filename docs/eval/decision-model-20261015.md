@@ -30,7 +30,7 @@ This matches the existing contract in `services/common/crisis_policy.py` (`route
 | Latency path | Started at ASR final / endpoint pin; commit joins in-flight verdict via `classifier_inflight` (not a second call). Blocks commit only when the verdict is still pending after follow-up grace. |
 | Endpoint | `services/agent/src/semantic_endpoint.py` (follows `LLM_PROVIDER`; DeepSeek uses `DEEPSEEK_FAST_MODEL`, else DashScope + configured model) |
 
-Note: broader CHAT / INTERRUPT routing is rule-based in `utterance_router.py`, not this qwen call. The qwen “intent” stage in scope is **end-session**.
+Note: broader CHAT / INTERRUPT routing is rule-based in `utterance_router.py`, not this model call. The semantic “intent” stage in scope is **end-session** only. Production example env sets `LLM_PROVIDER=deepseek`, so the live close/live classifiers often hit `deepseek-flash`, not `qwen-flash`. The offline harness’s optional qwen arm is still useful as a DashScope baseline.
 
 ### 2. Danger-topic grading / crisis detection
 
@@ -44,7 +44,9 @@ Note: broader CHAT / INTERRUPT routing is rule-based in `utterance_router.py`, n
 | Build | `services/control_api/app/text_models.py` `build_crisis_semantic_classifier` (flag `crisis_semantic_enabled`) |
 | Candidate gate | `crisis_semantic_candidate` (first-person risk anchor + deterministic miss) |
 
-Latency path: only when deterministic is `none` and the utterance is a semantic candidate. Timeout / error → `UNSURE` → no crisis action.
+Latency path: awaited inside Control API `POST /response-plan` only when deterministic is `none` and `crisis_semantic_candidate` is true. It is **not** on the voice `prepare_turn` gather with close/live. Timeout / error → `UNSURE` → no crisis action. On device sessions the spoken line can still come from the regex script while the background response-plan POST may enqueue a guardian alert from semantic evidence.
+
+Parent notify today is **not** tied to classifier confidence. The three production classifiers return enums, not scores. `UNSURE` / timeout never notifies. Guardian notify runs only from `CrisisRoute.notify_guardian` inside response-plan (`interaction.py`). A future “low confidence → parent notify” idea would be new product behavior, not a drop-in for this adapter.
 
 ### 3. Pre-web-search (live lookup) decision
 
@@ -121,6 +123,12 @@ From `docs/acceptance/run-20261003-decision-model/findings.md` (production bridg
 API shape: [Decision model API](https://docs.bailian.console.aliyun.com/zh/model-studio/decision-model-api) / [help.aliyun.com mirror](https://help.aliyun.com/zh/model-studio/decision-model-api). Beijing endpoint form: `https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/systemone`. SDK hint: `pip install typesafe-sdk`.
 
 Until a non-preview price is published, treat decision-model cost as **unknown after the free window**; do not budget production traffic on “free forever.”
+
+### Auth and gateway notes (from official pages)
+
+- API reference uses workspace host `https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/systemone` and `Authorization: Bearer $DASHSCOPE_API_KEY` ([decision-model API](https://docs.bailian.console.aliyun.com/zh/model-studio/decision-model-api)).
+- The 2026-10-03 acceptance scripts and a tuning-guide FAQ also mention a raw-key header and, in places, the DashScope host. This harness follows the API reference (`Bearer`). If a live run returns 401, try the account’s known-good header from that prior bridge setup before changing code.
+- Token Plan personal edition says the key must not drive automated scripts; an offline eval is a script. Prefer the pay-as-you-go / model-card free window path for harness runs ([Token Plan overview](https://help.aliyun.com/zh/model-studio/token-plan-personal-overview)).
 
 ## Recommendation by stage
 
