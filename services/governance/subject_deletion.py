@@ -53,6 +53,7 @@ _STEPS: Final[tuple[str, ...]] = (
     "guardian_rows_deleted",
     "memory_scope_erased",
     "corpus_purged",
+    "chat_usage_purged",
     "identity_redacted",
     "verified_empty",
     "completed",
@@ -291,6 +292,7 @@ class _Lineage:
 
 type SessionTerminator = Callable[[str], Awaitable[int]]
 type CorpusPurger = Callable[[str], Awaitable[int]]
+type ChatUsagePurger = Callable[[str], Awaitable[int]]
 type IdentityRedactor = Callable[[str, str], Awaitable[None]]
 
 
@@ -317,6 +319,7 @@ class SubjectDeletionService:
         memory_scope: SubjectMemoryScopePort | None = None,
         terminate_sessions: SessionTerminator | None = None,
         purge_corpus: CorpusPurger | None = None,
+        purge_chat_usage: ChatUsagePurger | None = None,
         redact_identity: IdentityRedactor | None = None,
         persona: PersonaForgetter | None = None,
     ) -> None:
@@ -327,6 +330,7 @@ class SubjectDeletionService:
         self._memory_scope = memory_scope
         self._terminate_sessions = terminate_sessions
         self._purge_corpus = purge_corpus
+        self._purge_chat_usage = purge_chat_usage
         self._redact_identity = redact_identity
         self._persona = persona
         self._lock = asyncio.Lock()
@@ -501,6 +505,14 @@ class SubjectDeletionService:
                     else 0
                 )
                 await checkpoint("corpus_purged")
+
+            if due("chat_usage_purged"):
+                progress["control.daily_chat_usage"] = (
+                    await self._purge_chat_usage(scope.subject_id)
+                    if self._purge_chat_usage is not None
+                    else 0
+                )
+                await checkpoint("chat_usage_purged")
 
             if due("identity_redacted"):
                 if redact and self._redact_identity is not None:

@@ -5,6 +5,7 @@ Moved out of ``main.py`` (TODOLIST P2-08: split ``_wire_services`` by domain).
 
 from __future__ import annotations
 
+import asyncio
 from typing import cast
 
 from fastapi import FastAPI
@@ -15,6 +16,7 @@ from services.archive.object_store import (
 from services.control_api.app.account_gate import AccountOperationGate
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
+from services.control_api.app.database.chat_usage import delete_chat_usage
 from services.control_api.app.session_termination import (
     AccountSessionTerminator,
     RealtimeConnectionRegistry,
@@ -72,6 +74,14 @@ def install_subject_deletion(
 
     async def purge_corpus(subject_id: str) -> int:
         return await corpus_retention_service.purge_minor(minor_user_id=subject_id)
+
+    async def purge_chat_usage(subject_id: str) -> int:
+        def purge() -> int:
+            with app.state.memory_store.connection() as connection:
+                return delete_chat_usage(connection, subject_id=subject_id)
+
+        return await asyncio.to_thread(purge)
+
     service = SubjectDeletionService(
         ledger=ledger,
         archive=subject_archive(settings),
@@ -80,6 +90,7 @@ def install_subject_deletion(
         memory_scope=getattr(app.state, "subject_memory_scope", None),
         terminate_sessions=session_terminator.terminate_subject,
         purge_corpus=purge_corpus,
+        purge_chat_usage=purge_chat_usage,
         redact_identity=redact,
         persona=app.state.persona_engine,
     )
