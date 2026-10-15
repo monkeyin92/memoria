@@ -92,8 +92,6 @@ class ChatEndpoint:
             }
         )
         if self.mode == "stall":
-            # The client aborts on the first-token deadline. Notice that and
-            # return instead of holding the test for a fixed sleep.
             for _ in range(200):
                 transport = request.transport
                 if transport is None or transport.is_closing():
@@ -134,7 +132,6 @@ def _configure(
         "DASHSCOPE_COMPATIBLE_BASE_URL",
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
     )
-    # build_language_model_handler pins the backup to the Beijing constant.
     monkeypatch.setattr(
         "services.agent.src.providers.handlers.DASHSCOPE_CN_COMPATIBLE_BASE_URL",
         backup.v1,
@@ -168,8 +165,6 @@ async def test_failover_smoke_passes_when_primary_stalls_and_backup_answers(
     endpoints: Any,
 ) -> None:
     primary, backup = await endpoints("stall")
-    # Long enough for the local server to accept, short enough that the stall
-    # is still a first-token timeout.
     _configure(
         monkeypatch,
         failover=True,

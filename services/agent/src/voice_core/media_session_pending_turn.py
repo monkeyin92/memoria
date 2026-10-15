@@ -37,8 +37,6 @@ class PendingTurn:
     turn_input_fence: GenerationFence | None = None
     turn_end_sample: int | None = None
     turn_endpoint_sample: int | None = None
-    # Wall clock when the child last stopped speaking (VAD end). Thinking
-    # filler measures its 3s delay from this stamp, not from turn commit.
     child_speech_ended_at: float | None = None
     turn_retire_sample: int | None = None
     turn_endpoint_grace_deadline: float | None = None

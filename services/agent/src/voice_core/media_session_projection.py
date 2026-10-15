@@ -483,8 +483,6 @@ class MediaSessionProjectionMixin:
         context: _MediaVoiceSession,
         fence: GenerationFence,
     ) -> None:
-        """Reply audio or spoken reply text started; never play the filler after this."""
-
         context.llm_thinking_filler.note_reply_spoken(turn_id=fence.turn_id)
         self._cancel_llm_thinking_filler(context)
 
@@ -493,8 +491,6 @@ class MediaSessionProjectionMixin:
         context: _MediaVoiceSession,
         fence: GenerationFence,
     ) -> None:
-        """Arm the filler from child speech end; sleep only the remaining delay."""
-
         self._cancel_llm_thinking_filler(context)
         now = time.monotonic()
         speech_ended = context.pending.child_speech_ended_at or now

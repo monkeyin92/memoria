@@ -253,13 +253,11 @@ async def smoke_funasr(
 
 
 async def smoke_llm() -> str:
-    """Run the production reply chat path and require the phrase 连接正常.
-
-    LLM_FAILOVER_ENABLED wraps that path in FailoverChatModel. A primary
-    first-token timeout still passes when the Beijing backup returns the phrase.
-    """
-
     settings = AgentSettings()
+    if settings.llm_failover_enabled and not str(settings.dashscope_api_key or "").strip():
+        raise AssertionError(
+            "LLM_FAILOVER_ENABLED requires DASHSCOPE_API_KEY for the Beijing backup"
+        )
     model = build_language_model_handler(
         settings=settings,
         llm_factory=OpenAIChatModel,
@@ -276,7 +274,6 @@ async def smoke_llm() -> str:
         await model.aclose()
     if "连接正常" not in content:
         raise AssertionError(f"LLM content missing expected phrase: {content!r}")
-    # refresh_readiness.sh matches DeepSeek or Qwen, not the backup model id.
     label = "DeepSeek" if settings.llm_provider in {"bailian_deepseek", "deepseek"} else "Qwen"
     print(f"{label} smoke: PASS (streaming content, thinking disabled)")
     return label

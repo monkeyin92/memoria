@@ -372,6 +372,7 @@ class MediaSessionInputMixin:
             context.pending.turn_endpoint_timeout_handle.cancel()
             context.pending.turn_endpoint_timeout_handle = None
         context.pending.turn_endpoint_sample = endpoint_sample
+        context.pending.child_speech_ended_at = time.monotonic()
         context.pending.turn_retire_sample = max(
             context.pending.turn_retire_sample or 0, endpoint_sample
         )

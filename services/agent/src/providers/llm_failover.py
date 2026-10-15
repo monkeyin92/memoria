@@ -105,10 +105,6 @@ class FailoverChatModel:
                 if apply_forbidden_copy and text:
                     gated = gate_backup_reply_copy(text)
                     if gated != text:
-                        # First content that fails the gate still becomes the
-                        # safe line. After any content already left the stream,
-                        # stop cleanly so we never glue 「我不知道」 onto a
-                        # spoken fragment (reported rabbit-story truncation).
                         if not content_yielded:
                             yield ChatChunk(
                                 id=getattr(chunk, "id", "") or "backup-gated",

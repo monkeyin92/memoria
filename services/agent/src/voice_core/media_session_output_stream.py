@@ -938,8 +938,6 @@ class MediaOutputStreamMixin:
                         (time.monotonic_ns() - context.turn_started_ns) / 1_000_000_000,
                     )
                     context.output.first_audio_observed = True
-                    # The thinking filler's own audio must not cancel itself.
-                    # Any other audible reply means the filler must not play.
                     spoken = (chunk.text or context.output.assistant_text or "").strip()
                     if spoken != LLM_THINKING_TEXT:
                         self.note_llm_thinking_reply_started(context, fence)
