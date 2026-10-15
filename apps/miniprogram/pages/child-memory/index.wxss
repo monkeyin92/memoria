@@ -1,7 +1,7 @@
 @import "../../styles/trial-theme.wxss";
 
 .cm-page {
-  padding-top: 24px;
+  padding-top: calc(var(--mp-status-bar, 20px) + var(--mp-tab-top));
   padding-bottom: var(--mp-page-foot);
   background: var(--mp-bg);
   color: var(--mp-ink);

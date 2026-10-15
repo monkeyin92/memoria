@@ -1,6 +1,5 @@
 const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
-const { leavePage } = require("../../utils/nav-back");
 const { requireLogin } = require("../../utils/auth-gate");
 const { companionById, defaultCompanionId } = require("../../utils/companions");
 const { readBindingManifest } = require("../../utils/device-binding");
@@ -88,10 +87,6 @@ Page({
     },
     confirm: null,
     statusBanner: "",
-  },
-
-  goBack() {
-    leavePage("/pages/home/index");
   },
 
   onLoad(query) {

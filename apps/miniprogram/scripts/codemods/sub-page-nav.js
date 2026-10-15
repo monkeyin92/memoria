@@ -3,6 +3,8 @@
  * Moves a secondary page to custom navigation with the v4 round back button:
  * json navigationStyle custom, statusBarStyle data, goBack via leavePage,
  * and the in-page back row replaced by .nav-back. Idempotent.
+ * child-memory matches the design tab page and stays off this list, so a
+ * rerun cannot put .nav-back back on that page.
  *   node scripts/codemods/sub-page-nav.js
  */
 const fs = require("node:fs");
@@ -16,7 +18,6 @@ const PAGES = {
   auth: "/pages/home/index",
   privacy: "/pages/profile/index",
   "digital-self": "/pages/profile/index",
-  "child-memory": "/pages/home/index",
   "device-onboarding": "/pages/device/index",
 };
 const NAV_BACK =

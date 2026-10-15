@@ -1,5 +1,4 @@
-<view class="cm-page trial-page sub-page" style="{{statusBarStyle}}">
-  <view class="nav-back" bindtap="goBack" aria-label="返回"><image class="nav-back-icon" src="/assets/ui/v4/back-strong.svg" /></view>
+<view class="cm-page trial-page" style="{{statusBarStyle}}">
   <text class="eyebrow">长期记住的事</text>
   <text class="trial-title">{{headerTitle}}</text>
   <text class="page-lede">机器人长期只记住这三件事，用来更自然地和孩子聊天。</text>

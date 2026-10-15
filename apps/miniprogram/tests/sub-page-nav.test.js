@@ -13,7 +13,6 @@ const OWNING_TAB = {
   auth: "/pages/home/index",
   privacy: "/pages/profile/index",
   "digital-self": "/pages/profile/index",
-  "child-memory": "/pages/home/index",
   attention: "/pages/home/index",
   "device-onboarding": "/pages/device/index",
 };
@@ -30,6 +29,17 @@ test("auth consent step exits through 暂不同意 instead of a back button", ()
     const html = renderPage("pages/auth/index", harness.page.data);
     assert.doesNotMatch(html, /class="nav-back"/);
     assert.match(readPage("auth", "wxml"), /<button class="auth-decline" bindtap="goBack">暂不同意<\/button>/);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("child-memory opens on its heading like the design's tab page, with no back button", () => {
+  const harness = loadPage("pages/child-memory/index");
+  try {
+    const html = renderPage("pages/child-memory/index", harness.page.data);
+    assert.doesNotMatch(html, /class="nav-back"/);
+    assert.match(html, /class="cm-page trial-page" style="--mp-status-bar: 47px; --mp-capsule-bottom: 83px;"/);
   } finally {
     harness.restore();
   }
