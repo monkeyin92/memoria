@@ -1,13 +1,9 @@
-"""Fixed allowlist of Chinese cities a weather lookup may name."""
-
 from __future__ import annotations
 
 import re
 from collections.abc import Mapping
 from enum import Enum
 
-# District and spoken aliases. A name that belongs to two cities is absent,
-# so the child is asked which city instead of being guessed.
 _DISTRICTS: tuple[tuple[str, str], ...] = (
     ("七里河", "兰州"),
     ("七里河区", "兰州"),
@@ -923,8 +919,7 @@ _DISTRICTS: tuple[tuple[str, str], ...] = (
 
 
 # Wire names and provinces are QWeather Location_Name_ZH and Adm1_Name_ZH
-# (China-City-List v202506200). Geo verification compares both, so a shorter
-# spoken form is an alias and never the string on the wire.
+# (China-City-List v202506200).
 # 海南藏族自治州 is absent: its QWeather name is 海南, the province a child means.
 class City(Enum):
     上海 = ("上海", "上海市")
@@ -1269,8 +1264,6 @@ class City(Enum):
 
     @property
     def standard_name(self) -> str:
-        """The only place-derived string allowed on the wire."""
-
         name, _province = self.value
         return str(name)
 
@@ -1281,8 +1274,6 @@ class City(Enum):
 
 
 def _aliases() -> dict[str, City]:
-    """Map every spoken form onto one city. A clash fails import."""
-
     found: dict[str, City] = {}
 
     def add(alias: str, city: City) -> None:
@@ -1326,9 +1317,6 @@ _STOPWORDS = (
     "看看",
     "的",
 )
-# These characters continue a different place (南京路, 吉林省) rather than
-# starting the rest of the sentence (上海哪里). 区 is handled separately so
-# 海淀区 still matches and 朝阳区 does not.
 _BLOCKED_SUFFIX = frozenset("路街巷道桥省")
 
 
@@ -1347,13 +1335,6 @@ def _cleaned_prefix(text: str) -> str:
 
 
 def find_city(text: str) -> City | None:
-    """The one allowlisted city named before 天气, or None.
-
-    Spans are exact alias hits in the cleaned prefix. Zero hits, or two
-    different cities, return None. A city that appears only after 天气 is
-    not a span.
-    """
-
     clean = _cleaned_prefix(text)
     found: set[City] = set()
     index = 0

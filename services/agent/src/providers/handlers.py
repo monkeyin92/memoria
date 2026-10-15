@@ -22,8 +22,6 @@ if TYPE_CHECKING:
 
 
 class PublicRealtimeSearch:
-    """Answer weather from the domestic source when configured. Everything else goes to Qwen."""
-
     def __init__(
         self,
         *,

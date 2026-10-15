@@ -1,5 +1,3 @@
-"""Env-gated domestic weather lookup that only ever names an allowlisted city."""
-
 from __future__ import annotations
 
 import asyncio
@@ -74,13 +72,6 @@ LocationId = NewType("LocationId", str)
 
 
 class _DropWeatherHostUrls(logging.Filter):
-    """Drop httpx records that name the weather host.
-
-    Constructing DomesticWeather raises the httpx logger to WARNING.
-    That logger is process-wide, so other httpx clients stop emitting
-    INFO request lines at the same time.
-    """
-
     def filter(self, record: logging.LogRecord) -> bool:
         return "qweatherapi.com" not in record.getMessage()
 
@@ -114,11 +105,13 @@ class QWeatherConfig:
 
 @dataclass(frozen=True, slots=True)
 class _ForecastWindow:
-    """Days to answer for. 0 <= start_offset, 1 <= days, and the end is at most 7."""
-
     start_offset: int = 0
     days: int = 1
     wants_now: bool = False
+
+    def __post_init__(self) -> None:
+        if self.start_offset < 0 or self.days < 1 or self.end > _MAX_FORECAST_DAYS:
+            raise ValueError("forecast window is out of range")
 
     @property
     def end(self) -> int:
@@ -145,18 +138,16 @@ class _Now:
 
 @dataclass(frozen=True, slots=True)
 class _Skip:
-    """Not a weather question, or a span this lookup cannot speak."""
+    pass
 
 
 @dataclass(frozen=True, slots=True)
 class _AskCity:
-    """A weather question that does not name exactly one allowlisted city."""
+    pass
 
 
 @dataclass(frozen=True, slots=True)
 class _Ready:
-    """The only value that may call QWeather. The utterance is not stored."""
-
     city: City
     window: _ForecastWindow
 
@@ -202,8 +193,6 @@ def _wants_now(query: str) -> bool:
 
 
 def _forecast_window(query: str) -> _ForecastWindow | None:
-    """The requested days, or None when the range cannot be spoken in 7 days."""
-
     compact = re.sub(r"\s", "", query or "")
     wants_now = _wants_now(query)
     marker_count = len(_RANGE_MARKER_RE.findall(compact))
@@ -297,8 +286,6 @@ def _format(
 
 
 class _QWeather:
-    """HTTPS client. Every method takes a City or a LocationId parsed from QWeather."""
-
     def __init__(self, config: QWeatherConfig, client: httpx.AsyncClient) -> None:
         self._config = config
         self._client = client
@@ -373,8 +360,6 @@ class _QWeather:
 
 
 class DomesticWeather:
-    """Answer one allowlisted city, ask which city, or return None."""
-
     model = "qweather"
 
     def __init__(self, config: QWeatherConfig, *, client: httpx.AsyncClient | None = None) -> None:
@@ -439,8 +424,6 @@ class DomesticWeather:
 
 
 def build_domestic_weather(settings: AgentSettings) -> DomesticWeather | None:
-    """None means this process has no weather client."""
-
     if settings.weather_lookup_provider == "off":
         return None
     key = settings.qweather_api_key.get_secret_value().strip()
