@@ -3,12 +3,30 @@
 from __future__ import annotations
 
 import struct
+from pathlib import Path
 
 import pytest
 from services.common.aigc_opus import (
     IMPLICIT_AIGC_TAG_KEYS,
     REQUIRED_AIGC_TAG_KEYS,
+    audio_packets_digest,
+    pcm_digest,
     require_aigc_tags,
+    rewrite_opus_comments,
+)
+
+BOARD_NIGHT = (
+    Path(__file__).resolve().parents[3]
+    / "firmware"
+    / "esp32"
+    / "overlay"
+    / "files"
+    / "main"
+    / "boards"
+    / "memoria"
+    / "esp-vocat"
+    / "assets"
+    / "night_soothe.ogg"
 )
 
 
@@ -68,3 +86,24 @@ def test_implicit_tags_reject_partial_label() -> None:
     )
     with pytest.raises(ValueError, match="DATE, CONTENT_PRODUCER"):
         require_aigc_tags(head, content_id="demo", implicit=True)
+
+
+def test_rewrite_opus_comments_keeps_audio_and_pcm_digests() -> None:
+    before = BOARD_NIGHT.read_bytes()
+    before_packets = audio_packets_digest(before)
+    before_pcm = pcm_digest(before)
+    after = rewrite_opus_comments(
+        before,
+        aigc={
+            "CONTENT_ID": "night_soothe",
+            "SERVICE_PROVIDER": "Volcengine Doubao",
+            "AI_GENERATED": "true",
+            "ARTIST": "zh_female_tianmeitaozi_uranus_bigtts",
+            "DATE": "2026-10-14",
+            "CONTENT_PRODUCER": "Memoria",
+        },
+    )
+    assert audio_packets_digest(after) == before_packets
+    assert pcm_digest(after) == before_pcm
+    tags = require_aigc_tags(after[:65536], content_id="night_soothe", implicit=True)
+    assert tags["service_provider"] == "Volcengine Doubao"

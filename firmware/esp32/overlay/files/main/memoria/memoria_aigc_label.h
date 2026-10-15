@@ -13,8 +13,8 @@ namespace memoria {
 inline constexpr bool kAigcTurnToneEnabled = false;
 
 // Basename files for spoken notices (ids live in memoria_offline_menu.h).
-inline constexpr const char* kAigcNoticeStoryFile = "aigc-notice-story.ogg";
-inline constexpr const char* kAigcNoticeBedtimeFile = "aigc-notice-bedtime.ogg";
+inline constexpr const char* kAigcNoticeStoryFile = "aigc_story_intro.ogg";
+inline constexpr const char* kAigcNoticeBedtimeFile = "aigc_soothe_intro.ogg";
 
 // 360x360 round panel. Every badge corner must stay within radius-8 of centre.
 inline constexpr int kAigcBadgePanelSize = 360;

@@ -13,8 +13,10 @@ Upstream packs DEFAULT_ASSETS_EXTRA_FILES by basename, so names stay <= 32
 characters. The 8 MiB assets partition keeps >= 0.5 MiB free.
 
 Implicit AIGC Vorbis comments (CONTENT_ID, SERVICE_PROVIDER, AI_GENERATED,
-ARTIST, DATE, CONTENT_PRODUCER) are required on every shipped clip except the
-pending-audit exception list. Provider-embedded marks are never stripped.
+ARTIST, DATE, CONTENT_PRODUCER) are required on every shipped clip.
+Provider-embedded marks are never stripped. Spoken AIGC intros
+(aigc_story_intro / aigc_soothe_intro) are required in the pack; CI fails if
+either is absent.
 """
 
 from __future__ import annotations
@@ -89,49 +91,16 @@ OFFLINE_LINES = (
     ("offline-menu-idle-v1", "我先休息一下，点屏幕就能叫醒我。"),
     ("llm_unavailable", "我现在有点卡住了，等一会儿再来找我聊吧。"),
     ("llm_thinking", "嗯，我想一想。"),
-    ("aigc-notice-story", "下面是 AI 合成的声音给你讲故事。"),
-    ("aigc-notice-bedtime", "AI 合成的声音陪你睡觉啦。"),
+    ("aigc_story_intro", "下面是 AI 合成的声音给你讲故事。"),
+    ("aigc_soothe_intro", "AI 合成的声音陪你睡觉啦。"),
 )
 
 # Placeholders allowed until production voice is copied in. Each must carry
 # full implicit AIGC OpusTags.
 PENDING_PLACEHOLDER_LINE_IDS = frozenset({"llm_unavailable", "llm_thinking"})
 
-# Spoken AIGC notices: recipe in scripts/render_aigc_notices.py. Absent until
-# Doubao credentials render them. Do not fabricate audio.
-PENDING_TTS_GENERATION_LINE_IDS = frozenset({"aigc-notice-story", "aigc-notice-bedtime"})
-
-# Provenance under audit: do not relabel or rewrite these 25 production oggs
-# in this change. The pack check skips the implicit-tag gate for them only.
-PENDING_AIGC_AUDIT_EXCEPTIONS = frozenset(
-    {
-        PurePosixPath("stories/story_01.ogg"),
-        PurePosixPath("stories/story_02.ogg"),
-        PurePosixPath("stories/story_03.ogg"),
-        PurePosixPath("wo_zai_ne.ogg"),
-        PurePosixPath("night_soothe.ogg"),
-        PurePosixPath("offline_lines/offline-wake-no-network-v1.ogg"),
-        PurePosixPath("offline_lines/offline-wake-ask-parent-v1.ogg"),
-        PurePosixPath("offline_lines/offline-wake-story-hint-v2.ogg"),
-        PurePosixPath("offline_lines/offline-mid-drop-v2.ogg"),
-        PurePosixPath("offline_lines/offline-mid-ask-parent-v1.ogg"),
-        PurePosixPath("offline_lines/offline-mid-retry-v1.ogg"),
-        PurePosixPath("offline_lines/offline-reconnecting-v1.ogg"),
-        PurePosixPath("offline_lines/online-restored-v1.ogg"),
-        PurePosixPath("offline_lines/online-restored-chat-v1.ogg"),
-        PurePosixPath("offline_lines/online-restored-in-story-v2.ogg"),
-        PurePosixPath("offline_lines/offline-menu-intro-v2.ogg"),
-        PurePosixPath("offline_lines/offline-menu-how-v1.ogg"),
-        PurePosixPath("offline_lines/offline-menu-confirm-how-v2.ogg"),
-        PurePosixPath("offline_lines/offline-menu-item-01-v2.ogg"),
-        PurePosixPath("offline_lines/offline-menu-item-02-v2.ogg"),
-        PurePosixPath("offline_lines/offline-menu-item-03-v2.ogg"),
-        PurePosixPath("offline_lines/offline-menu-choose-v2.ogg"),
-        PurePosixPath("offline_lines/offline-menu-start-v1.ogg"),
-        PurePosixPath("offline_lines/offline-menu-end-v1.ogg"),
-        PurePosixPath("offline_lines/offline-menu-idle-v1.ogg"),
-    }
-)
+# Spoken AIGC intros required in the shipped pack (no skip-if-missing).
+REQUIRED_AIGC_INTRO_LINE_IDS = frozenset({"aigc_story_intro", "aigc_soothe_intro"})
 
 BOARD_CLIPS = ("wo_zai_ne", "night_soothe")
 
@@ -192,14 +161,8 @@ def derive_manifests(kinds: Mapping[PurePosixPath, AssetKind]) -> dict[PurePosix
                 "id": line_id,
                 "text": text,
                 "file": f"{line_id}.ogg",
-                "placeholder": (
-                    kinds[PurePosixPath("offline_lines") / f"{line_id}.ogg"]
-                    is AssetKind.PLACEHOLDER
-                    if PurePosixPath("offline_lines") / f"{line_id}.ogg" in kinds
-                    else False
-                ),
-                "pending_tts": line_id in PENDING_TTS_GENERATION_LINE_IDS
-                and PurePosixPath("offline_lines") / f"{line_id}.ogg" not in kinds,
+                "placeholder": kinds.get(PurePosixPath("offline_lines") / f"{line_id}.ogg")
+                is AssetKind.PLACEHOLDER,
             }
             for line_id, text in OFFLINE_LINES
         ],
@@ -233,15 +196,7 @@ def check_pack(root: Path, *, write_manifests: bool) -> int:
         if not 0 < len(name) <= MAX_ASSET_NAME_LEN:
             errors.append(f"filename too long ({len(name)}): {name}")
         path = root / rel
-        line_id = rel.stem
         if not path.is_file() or path.stat().st_size <= 0:
-            if line_id in PENDING_TTS_GENERATION_LINE_IDS and rel.parts[0] == "offline_lines":
-                print(
-                    f"TODO: pending TTS generation for {rel.as_posix()}; "
-                    "run scripts/render_aigc_notices.py with DOUBAO_TTS_*",
-                    file=sys.stderr,
-                )
-                continue
             errors.append(f"missing asset {rel.as_posix()}; copy the production clip")
             continue
         try:
@@ -249,13 +204,14 @@ def check_pack(root: Path, *, write_manifests: bool) -> int:
         except ValueError as exc:
             errors.append(f"{rel.as_posix()}: {exc}")
 
-    present_required = [rel for rel in clip_paths() if rel in kinds]
-    missing_required = [
+    # Refresh manifests whenever every non-intro clip is present so the index
+    # tables stay in sync while AIGC intros are still being dropped in.
+    non_intro_missing = [
         rel
         for rel in clip_paths()
-        if rel not in kinds and rel.stem not in PENDING_TTS_GENERATION_LINE_IDS
+        if rel not in kinds and rel.stem not in REQUIRED_AIGC_INTRO_LINE_IDS
     ]
-    if not missing_required and len(present_required) == len(kinds):
+    if not non_intro_missing:
         for rel, text in derive_manifests(kinds).items():
             dest = root / rel
             if write_manifests:
@@ -269,14 +225,8 @@ def check_pack(root: Path, *, write_manifests: bool) -> int:
                 errors.append(f"{rel.as_posix()} is stale; run build_offline_stories.py")
 
     pending_placeholders = 0
-    pending_audit = 0
     for rel, kind in kinds.items():
         line_id = rel.stem
-        if rel in PENDING_AIGC_AUDIT_EXCEPTIONS:
-            pending_audit += 1
-            if kind is AssetKind.PLACEHOLDER:
-                errors.append(f"{rel.as_posix()} is a placeholder; copy the production clip")
-            continue
         if (
             kind is AssetKind.PLACEHOLDER
             and line_id in PENDING_PLACEHOLDER_LINE_IDS
@@ -306,25 +256,25 @@ def check_pack(root: Path, *, write_manifests: bool) -> int:
             continue
         _check_implicit_tags(rel, root / rel, errors)
 
-    if len(PENDING_AIGC_AUDIT_EXCEPTIONS) != 25:
-        errors.append(
-            f"PENDING_AIGC_AUDIT_EXCEPTIONS must list exactly 25 clips, "
-            f"got {len(PENDING_AIGC_AUDIT_EXCEPTIONS)}"
-        )
+    for intro_id in sorted(REQUIRED_AIGC_INTRO_LINE_IDS):
+        intro_rel = PurePosixPath("offline_lines") / f"{intro_id}.ogg"
+        if intro_rel not in kinds:
+            errors.append(
+                f"missing required AIGC intro {intro_rel.as_posix()}; "
+                "run scripts/render_aigc_notices.py and copy the ogg into the pack"
+            )
 
     total = _tree_bytes(root) if root.is_dir() else 0
     free = ASSETS_PARTITION_BYTES - total
     production = sum(kind is AssetKind.PRODUCTION for kind in kinds.values())
     placeholder = sum(kind is AssetKind.PLACEHOLDER for kind in kinds.values())
-    pending_tts = len(PENDING_TTS_GENERATION_LINE_IDS - {p.stem for p in kinds})
     print(f"board_assets_bytes={total}")
     print(f"assets_partition_bytes={ASSETS_PARTITION_BYTES}")
     print(f"free_margin_bytes={free}")
     print(f"production_clips={production}")
     print(f"placeholder_clips={placeholder}")
     print(f"pending_placeholder_clips={pending_placeholders}")
-    print(f"pending_aigc_audit_exceptions={pending_audit}")
-    print(f"pending_tts_generation={pending_tts}")
+    print(f"required_aigc_intros={len(REQUIRED_AIGC_INTRO_LINE_IDS)}")
     if free < MIN_FREE_MARGIN_BYTES:
         errors.append(f"free margin {free} < required {MIN_FREE_MARGIN_BYTES}")
 

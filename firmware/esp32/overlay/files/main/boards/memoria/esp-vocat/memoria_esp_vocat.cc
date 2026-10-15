@@ -693,16 +693,25 @@ private:
             if (generation != offline_play_generation_.load(std::memory_order_relaxed)) {
                 return;
             }
+            bool story_intro_ok = false;
             for (std::size_t i = 0; i < out.clip_count; ++i) {
                 if (generation != offline_play_generation_.load(std::memory_order_relaxed)) {
                     return;
                 }
                 const std::string name = std::string(out.clips[i]) + ".ogg";
-                PlayLocalAssetClip(name.c_str());
+                const bool played = PlayLocalAssetClip(name.c_str());
+                if (std::string_view(out.clips[i]) == memoria::kAigcNoticeStory) {
+                    story_intro_ok = played;
+                }
                 vTaskDelay(pdMS_TO_TICKS(1600));
             }
             if (out.start_story) {
                 if (generation != offline_play_generation_.load(std::memory_order_relaxed)) {
+                    return;
+                }
+                if (!story_intro_ok) {
+                    ESP_LOGE(TAG, "refusing story without AIGC intro %s",
+                             memoria::kAigcNoticeStoryFile);
                     return;
                 }
                 PlayLocalAssetClip(memoria::OfflineStoryFile(out.story_index));
@@ -834,8 +843,12 @@ private:
                 return;
             case memoria::TapWakeAction::kNightSoothing:
                 power.SetPhase(memoria::PowerPhase::kNightSoothing);
-                // Screen is dimmed in quiet hours; spoken AIGC notice precedes soothe.
-                PlayLocalAssetClip(memoria::kAigcNoticeBedtimeFile);
+                // Screen is dimmed in quiet hours; spoken AIGC intro is required.
+                if (!PlayLocalAssetClip(memoria::kAigcNoticeBedtimeFile)) {
+                    ESP_LOGE(TAG, "refusing night_soothe without AIGC intro %s",
+                             memoria::kAigcNoticeBedtimeFile);
+                    return;
+                }
                 PlayLocalAssetClip("night_soothe.ogg");
                 app.Schedule([this]() {
                     vTaskDelay(pdMS_TO_TICKS(2500));

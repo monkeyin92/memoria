@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Render spoken AIGC notice clips for offline story and bedtime playback.
+"""Render spoken AIGC intro clips for offline story and bedtime playback.
 
 Texts (also listed in docs/design/offline-lines-v2.md):
 
-* aigc-notice-story: 「下面是 AI 合成的声音给你讲故事。」
-* aigc-notice-bedtime: 「AI 合成的声音陪你睡觉啦。」
+* aigc_story_intro: 「下面是 AI 合成的声音给你讲故事。」
+* aigc_soothe_intro: 「AI 合成的声音陪你睡觉啦。」
 
 Requires DOUBAO_TTS_APP_ID and DOUBAO_TTS_ACCESS_TOKEN. Voice
 zh_female_tianmeitaozi_uranus_bigtts at normal speed and normal volume
 (no speech_rate / loudness override). Writes implicit AIGC OpusTags
-(CONTENT_ID, SERVICE_PROVIDER, AI_GENERATED, ARTIST, DATE, CONTENT_PRODUCER).
+(CONTENT_ID, SERVICE_PROVIDER=Volcengine Doubao, AI_GENERATED, ARTIST, DATE,
+CONTENT_PRODUCER=Memoria).
 
 TODO: No Doubao credentials in this environment. Do not fabricate audio.
       Run this script when credentials are available, then copy the oggs into
@@ -43,11 +44,12 @@ OFFLINE_ROOT = (
 )
 ARCHIVE_ROOT = REPO / "docs" / "acceptance" / "run-20261015-aigc-labels" / "archive"
 VOICE_ID = "zh_female_tianmeitaozi_uranus_bigtts"
+SERVICE_PROVIDER = "Volcengine Doubao"
 CONTENT_PRODUCER = "Memoria"
 
 LINES = (
-    ("aigc-notice-story", "下面是 AI 合成的声音给你讲故事。"),
-    ("aigc-notice-bedtime", "AI 合成的声音陪你睡觉啦。"),
+    ("aigc_story_intro", "下面是 AI 合成的声音给你讲故事。"),
+    ("aigc_soothe_intro", "AI 合成的声音陪你睡觉啦。"),
 )
 
 
@@ -78,7 +80,7 @@ def _ffmpeg_from_wav(wav: Path, ogg: Path, *, line_id: str, generated: str) -> N
             "-metadata",
             f"CONTENT_ID={line_id}",
             "-metadata",
-            f"SERVICE_PROVIDER={CONTENT_PRODUCER}",
+            f"SERVICE_PROVIDER={SERVICE_PROVIDER}",
             "-metadata",
             "AI_GENERATED=true",
             "-metadata",
@@ -139,6 +141,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="print the planned lines and exit without calling TTS",
     )
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=OFFLINE_ROOT,
+        help="directory for aigc_story_intro.ogg / aigc_soothe_intro.ogg",
+    )
     args = parser.parse_args(argv)
     today = date.today().isoformat()
     if args.dry_run:
@@ -154,12 +162,12 @@ def main(argv: list[str] | None = None) -> int:
         for line_id, text in LINES:
             print(f"  {line_id}: {text}", file=sys.stderr)
         return 2
-    OFFLINE_ROOT.mkdir(parents=True, exist_ok=True)
+    args.out_dir.mkdir(parents=True, exist_ok=True)
     ARCHIVE_ROOT.mkdir(parents=True, exist_ok=True)
     records: list[dict[str, object]] = []
     for line_id, text in LINES:
-        ogg = OFFLINE_ROOT / f"{line_id}.ogg"
-        tmp = OFFLINE_ROOT / f".{line_id}-16k.wav"
+        ogg = args.out_dir / f"{line_id}.ogg"
+        tmp = args.out_dir / f".{line_id}-16k.wav"
         try:
             asyncio.run(_doubao_wav(tmp, text))
             _ffmpeg_from_wav(tmp, ogg, line_id=line_id, generated=today)
@@ -172,15 +180,17 @@ def main(argv: list[str] | None = None) -> int:
                 "tool": "doubao-seed-tts-2.0",
                 "date": today,
                 "voice_id": VOICE_ID,
+                "service_provider": SERVICE_PROVIDER,
                 "content_producer": CONTENT_PRODUCER,
-                "offline_ogg": str(ogg.relative_to(REPO)),
+                "offline_ogg": str(ogg),
             }
         )
-        print(f"wrote {ogg.relative_to(REPO)}")
+        print(f"wrote {ogg}")
     provenance = {
         "generated": today,
         "voice": {"id": VOICE_ID, "terms": "trial/demo only pending Volcengine terms"},
         "tool": "doubao-seed-tts-2.0",
+        "service_provider": SERVICE_PROVIDER,
         "lines": records,
     }
     (ARCHIVE_ROOT / "provenance.json").write_text(

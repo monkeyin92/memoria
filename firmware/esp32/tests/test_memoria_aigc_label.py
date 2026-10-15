@@ -91,7 +91,7 @@ def tool() -> pathlib.Path:
 def test_badge_is_primary_and_turn_tone_defaults_off(tool: pathlib.Path) -> None:
     completed = subprocess.run([str(tool)], check=True, capture_output=True, text=True)
     assert "idle=0 badge=1 tone_off=0 flag=0" in completed.stdout
-    assert "story=aigc-notice-story.ogg bedtime=aigc-notice-bedtime.ogg" in completed.stdout
+    assert "story=aigc_story_intro.ogg bedtime=aigc_soothe_intro.ogg" in completed.stdout
     assert "badge_vis=1 tone_want=0 offline_vis=1 layout_ok=1" in completed.stdout
     assert "corners_ok=1" in completed.stdout
     assert "clipped_rejected=1" in completed.stdout
@@ -117,12 +117,19 @@ def test_board_syncs_badge_for_offline_menu() -> None:
     assert "offline_menu_.mode() != memoria::OfflineMode::kInactive" in board
 
 
-def test_night_soothe_prepends_spoken_notice() -> None:
+def test_night_soothe_requires_spoken_intro() -> None:
     board = BOARD_CC.read_text(encoding="utf-8")
     night = board[board.index("case memoria::TapWakeAction::kNightSoothing") :]
     night = night[: night.index("case memoria::TapWakeAction::kOfflineMenu")]
     assert "kAigcNoticeBedtimeFile" in night
+    assert "refusing night_soothe without AIGC intro" in night
     assert night.index("kAigcNoticeBedtimeFile") < night.index('PlayLocalAssetClip("night_soothe.ogg")')
+
+
+def test_story_path_refuses_without_intro() -> None:
+    board = BOARD_CC.read_text(encoding="utf-8")
+    assert "refusing story without AIGC intro" in board
+    assert "story_intro_ok" in board
 
 
 def test_sdkconfig_enables_montserrat_20() -> None:
