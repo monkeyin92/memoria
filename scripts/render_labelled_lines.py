@@ -161,21 +161,32 @@ def main(argv: list[str] | None = None) -> int:
     tool = "doubao-seed-tts-2.0" if use_doubao else "ffmpeg-libopus-scaffold"
     today = date.today().isoformat()
     records: list[dict[str, object]] = []
-    for line_id, text, duration, hz in LINES:
+    for line_id, text, _duration, _hz in LINES:
         online = ONLINE_ROOT / f"{line_id}.ogg"
         offline = OFFLINE_ROOT / f"{line_id}.ogg"
+        pcm_sidecar = ONLINE_ROOT / f"{line_id}.s16le"
+        record: dict[str, object] = {
+            "id": line_id,
+            "prompt": text,
+            "tool": tool,
+            "date": today,
+            "voice_id": VOICE_ID,
+            "playable": use_doubao,
+            "online_sample_rate_hz": 24_000,
+            "offline_sample_rate_hz": 16_000,
+        }
+        if not use_doubao:
+            # Scaffold tones must not land on any play path or overwrite offline placeholders.
+            records.append(record)
+            print(f"skip audio for {line_id}: scaffold is not playable; need DOUBAO_TTS_*")
+            continue
         tmp_online = ONLINE_ROOT / f".{line_id}-24k.wav"
         tmp_offline = ONLINE_ROOT / f".{line_id}-16k.wav"
         try:
-            if use_doubao:
-                asyncio.run(_doubao_wav(tmp_online, text, sample_rate=24_000))
-                asyncio.run(_doubao_wav(tmp_offline, text, sample_rate=16_000))
-            else:
-                _scaffold_wav(tmp_online, duration=duration, hz=hz, sample_rate=24_000)
-                _scaffold_wav(tmp_offline, duration=duration, hz=hz, sample_rate=16_000)
+            asyncio.run(_doubao_wav(tmp_online, text, sample_rate=24_000))
+            asyncio.run(_doubao_wav(tmp_offline, text, sample_rate=16_000))
             _ffmpeg_from_wav(tmp_online, online, line_id=line_id, sample_rate=24_000)
             _ffmpeg_from_wav(tmp_offline, offline, line_id=line_id, sample_rate=16_000)
-            pcm_sidecar = ONLINE_ROOT / f"{line_id}.s16le"
             subprocess.run(
                 [
                     "ffmpeg",
@@ -200,23 +211,13 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             tmp_online.unlink(missing_ok=True)
             tmp_offline.unlink(missing_ok=True)
-        records.append(
-            {
-                "id": line_id,
-                "prompt": text,
-                "tool": tool,
-                "date": today,
-                "voice_id": VOICE_ID,
-                "online_ogg": str(online.relative_to(REPO)),
-                "online_pcm": str((ONLINE_ROOT / f"{line_id}.s16le").relative_to(REPO)),
-                "offline_ogg": str(offline.relative_to(REPO)),
-                "online_sample_rate_hz": 24_000,
-                "offline_sample_rate_hz": 16_000,
-            }
-        )
+        record["online_ogg"] = str(online.relative_to(REPO))
+        record["online_pcm"] = str(pcm_sidecar.relative_to(REPO))
+        record["offline_ogg"] = str(offline.relative_to(REPO))
+        records.append(record)
         print(
             f"wrote {online.relative_to(REPO)}, "
-            f"{(ONLINE_ROOT / f'{line_id}.s16le').relative_to(REPO)}, "
+            f"{pcm_sidecar.relative_to(REPO)}, "
             f"and {offline.relative_to(REPO)} via {tool}"
         )
     provenance = {
@@ -226,6 +227,7 @@ def main(argv: list[str] | None = None) -> int:
             "terms": "trial/demo only pending Volcengine terms",
         },
         "tool": tool,
+        "status": "playable" if use_doubao else "no_playable_online_assets",
         "lines": records,
     }
     payload = json.dumps(provenance, ensure_ascii=False, indent=2) + "\n"

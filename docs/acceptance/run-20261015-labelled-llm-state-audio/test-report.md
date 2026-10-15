@@ -1,4 +1,4 @@
-# Test report: labelled online `llm_thinking` / `llm_unavailable`
+# Test report: restore labelled speech path / TTS fallback
 
 Date: 2026-10-15
 
@@ -8,8 +8,8 @@ Date: 2026-10-15
 uv run pytest --no-cov \
   services/common/tests/test_labelled_lines.py \
   services/agent/tests/unit/test_media_session_llm_thinking_filler.py \
+  services/agent/tests/unit/test_phrase_segmenter.py \
   services/agent/tests/unit/test_provider_adapter.py \
-  services/agent/tests/unit/test_llm_failover.py \
   firmware/esp32/tests/test_memoria_offline_menu.py -q
 ```
 
@@ -17,21 +17,11 @@ uv run pytest --no-cov \
 
 | Case | Outcome |
 |---|---|
-| Shipped online ogg assets embed Appendix-E AIGC tags | pass |
-| Catalogue rejects clips missing `AI_GENERATED` | pass |
-| Slow reply plays filler PCM with `generate_output_calls == 0` and AIGC flag | pass |
-| Thinking timing: 3s from voiced end, once/turn, skipped when reply starts first | pass |
-| `generate_reply` for both fixed lines: `stream_calls == 0`, AIGC retained | pass |
-| `generate_output(tts_source=llm_unavailable)` skips streaming TTS | pass |
-| Offline pack: 27 production clips, 0 placeholders; both lines AIGC-labelled | pass |
-| LLM failover unit suite still green | pass |
-| Chunk join does not emit doubled 「。。」 (normalize + streaming) | pass |
+| Scaffold provenance rows are not loaded into the play catalogue | pass |
+| Synthetic tone + scaffold provenance still excluded from play | pass |
+| Doubao provenance + AIGC ogg + s16le loads for play | pass |
+| Thinking filler still works with override catalogue (no TTS) | pass |
+| Offline pack: 25 production / 2 pending AIGC placeholders restored | pass |
+| Chunk join does not emit doubled 「。。」 | pass |
 
-All listed cases green. Ruff clean on touched Python paths.
-
-Punctuation command:
-
-```bash
-uv run pytest --no-cov services/agent/tests/unit/test_phrase_segmenter.py -q
-```
-
+See also `verification-restore.md`.

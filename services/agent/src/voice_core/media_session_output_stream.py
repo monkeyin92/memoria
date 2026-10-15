@@ -39,7 +39,7 @@ from services.common.llm_failover import (
     LLM_UNAVAILABLE_STANDBY_REASON,
     LLM_UNAVAILABLE_TEXT,
 )
-from services.common.llm_thinking_filler import LLM_THINKING_LINE_ID
+from services.common.llm_thinking_filler import LLM_THINKING_LINE_ID, LLM_THINKING_TEXT
 
 if TYPE_CHECKING:
     from services.agent.src.orchestration.conversation_projection import TurnPhase
@@ -1114,10 +1114,11 @@ class MediaOutputStreamMixin:
             yield _shift_reply_chunk(reply, offset, after_filler=after_filler)
 
     def _llm_thinking_filler_supported(self, context: _MediaVoiceSession) -> bool:
-        return (
-            context.identity.client_type == "device"
-            and labelled_catalogue().get(LLM_THINKING_LINE_ID) is not None
-        )
+        if context.identity.client_type != "device":
+            return False
+        if labelled_catalogue().get(LLM_THINKING_LINE_ID) is not None:
+            return True
+        return callable(getattr(context.provider, "generate_output", None))
 
     def _llm_thinking_filler_may_play(
         self, context: _MediaVoiceSession, fence: GenerationFence
@@ -1170,49 +1171,88 @@ class MediaOutputStreamMixin:
         fence: GenerationFence,
         source_start_sample: int,
     ) -> AsyncGenerator[MediaReplyChunk, None]:
-        """Play the AIGC-labelled thinking clip; history and transcripts stay reply-only."""
+        """Play labelled speech when present; otherwise stream TTS. History stays reply-only."""
 
-        try:
-            line = labelled_catalogue().require(LLM_THINKING_LINE_ID)
-        except Exception:
-            logger.warning(
-                "llm thinking filler missing labelled clip session=%s turn=%s",
+        line = labelled_catalogue().get(LLM_THINKING_LINE_ID)
+        if line is not None:
+            frame_samples = int(getattr(context.provider, "output_frame_samples", 480) or 480)
+            logger.info(
+                "llm thinking filler labelled session=%s turn=%s generation=%s "
+                "content_id=%s ai_generated=%s",
                 fence.session_id,
                 fence.turn_id,
-                exc_info=True,
+                fence.generation_id,
+                line.aigc["content_id"],
+                line.aigc["ai_generated"],
             )
+            try:
+                for pcm, start, first, _final, _text in line.frame_pcm(
+                    source_start_sample=source_start_sample,
+                    frame_samples=frame_samples,
+                    announce_text=False,
+                ):
+                    yield MediaReplyChunk(
+                        pcm_s16le=pcm,
+                        source_start_sample=start,
+                        text="",
+                        assistant_text_delta="",
+                        first=first,
+                        final=False,
+                        text_audio_start_sample=None,
+                        text_audio_end_sample=None,
+                        text_spans=(),
+                        thinking_filler=True,
+                    )
+            except Exception:
+                logger.warning(
+                    "llm thinking filler labelled failed session=%s turn=%s",
+                    fence.session_id,
+                    fence.turn_id,
+                    exc_info=True,
+                )
             return
-        frame_samples = int(getattr(context.provider, "output_frame_samples", 480) or 480)
+
+        coordinator = context.runtime.orchestrator.delegation
+        now_ms = int(time.time() * 1_000)
+        intent = coordinator.bridge_acknowledgement(
+            LLM_THINKING_TEXT,
+            fence=fence,
+            context_version=coordinator.current_context_version(fence.session_id),
+            expires_at_ms=now_ms + 8_000,
+            now_ms=now_ms,
+        )
         logger.info(
-            "llm thinking filler session=%s turn=%s generation=%s "
-            "content_id=%s ai_generated=%s",
+            "llm thinking filler tts session=%s turn=%s generation=%s",
             fence.session_id,
             fence.turn_id,
             fence.generation_id,
-            line.aigc["content_id"],
-            line.aigc["ai_generated"],
         )
+        provider: Any = context.provider
         try:
-            for pcm, start, first, _final, _text in line.frame_pcm(
+            produced = provider.generate_output(
+                context.identity,
+                intent,
+                fence,
+                work_id=str(intent.intent_id),
                 source_start_sample=source_start_sample,
-                frame_samples=frame_samples,
-                announce_text=False,
-            ):
-                yield MediaReplyChunk(
-                    pcm_s16le=pcm,
-                    source_start_sample=start,
-                    text="",
-                    assistant_text_delta="",
-                    first=first,
-                    final=False,
-                    text_audio_start_sample=None,
-                    text_audio_end_sample=None,
-                    text_spans=(),
-                    thinking_filler=True,
-                )
+            )
+            if inspect.isawaitable(produced):
+                produced = await produced
+            async with contextlib.aclosing(produced):
+                async for chunk in produced:
+                    yield replace(
+                        chunk,
+                        text="",
+                        assistant_text_delta="",
+                        final=False,
+                        text_audio_start_sample=None,
+                        text_audio_end_sample=None,
+                        text_spans=(),
+                        thinking_filler=True,
+                    )
         except Exception:
             logger.warning(
-                "llm thinking filler failed session=%s turn=%s",
+                "llm thinking filler tts failed session=%s turn=%s",
                 fence.session_id,
                 fence.turn_id,
                 exc_info=True,

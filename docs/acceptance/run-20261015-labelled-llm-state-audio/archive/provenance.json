@@ -5,7 +5,8 @@
     "terms": "trial/demo only pending Volcengine terms"
   },
   "tool": "ffmpeg-libopus-scaffold",
-  "note": "Scaffold cadence tones with Appendix-E AIGC OpusTags so online playback and CI can validate labels without Doubao credentials. Re-run scripts/render_labelled_lines.py with DOUBAO_TTS_* to replace audio with peach-voice speech for the archived prompts.",
+  "status": "no_playable_online_assets",
+  "note": "No Doubao-rendered speech is checked in. Scaffold tones must not enter any play path. Run scripts/render_labelled_lines.py with DOUBAO_TTS_* to produce playable online ogg + s16le (tool doubao-seed-tts-2.0) before loading the catalogue.",
   "lines": [
     {
       "id": "llm_thinking",
@@ -13,11 +14,9 @@
       "tool": "ffmpeg-libopus-scaffold",
       "date": "2026-10-15",
       "voice_id": "zh_female_tianmeitaozi_uranus_bigtts",
-      "online_ogg": "services/common/assets/labelled_lines/llm_thinking.ogg",
-      "offline_ogg": "firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/assets/offline_lines/llm_thinking.ogg",
+      "playable": false,
       "online_sample_rate_hz": 24000,
-      "offline_sample_rate_hz": 16000,
-      "online_pcm": "services/common/assets/labelled_lines/llm_thinking.s16le"
+      "offline_sample_rate_hz": 16000
     },
     {
       "id": "llm_unavailable",
@@ -25,11 +24,9 @@
       "tool": "ffmpeg-libopus-scaffold",
       "date": "2026-10-15",
       "voice_id": "zh_female_tianmeitaozi_uranus_bigtts",
-      "online_ogg": "services/common/assets/labelled_lines/llm_unavailable.ogg",
-      "offline_ogg": "firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/assets/offline_lines/llm_unavailable.ogg",
+      "playable": false,
       "online_sample_rate_hz": 24000,
-      "offline_sample_rate_hz": 16000,
-      "online_pcm": "services/common/assets/labelled_lines/llm_unavailable.s16le"
+      "offline_sample_rate_hz": 16000
     }
   ]
 }
