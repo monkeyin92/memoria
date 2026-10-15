@@ -117,7 +117,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Tools for the overlay check
-        run: apt-get update -qq && apt-get install -y -qq ripgrep
+        run: apt-get update -qq && apt-get install -y -qq ripgrep ffmpeg
       - name: Trust the workspace checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       # GitHub's container: skips the image entrypoint, so the IDF Python env
