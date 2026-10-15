@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from scripts.split_production_env import _RETIRED_KEYS, _aliases
+from scripts.split_production_env import _RETIRED_KEYS, _aliases, split_env
 from services.agent.src.config import AgentSettings
 from services.control_api.app.config import ControlSettings
 
@@ -56,31 +56,21 @@ def test_the_exemption_list_names_only_real_settings() -> None:
     assert set(NOT_IN_PRODUCTION) <= aliases
 
 
-def test_retired_media_chain_keys_are_gone_from_both_templates() -> None:
-    """LiveKit, its worker and the Python media gateways were retired.
-
-    split_production_env still accepts these keys from old operator files and
-    routes them nowhere, but the templates must not advertise them again.
+def test_retired_keys_are_gone_from_both_templates() -> None:
+    """split_production_env still accepts retired keys from old operator files
+    and routes them nowhere, but the templates must not advertise them again.
     """
 
     aliases = _aliases(ControlSettings) | _aliases(AgentSettings)
-    retired = {
-        key
-        for key in _RETIRED_KEYS
-        if key.startswith(("LIVEKIT_", "MINIPROGRAM_GATEWAY_", "DEVICE_MEDIA_GATEWAY_"))
-        or key
-        in {
-            "DEVICE_MEDIA_RUNTIME",
-            "MEDIA_RUNTIME_DEFAULT",
-            "MINIPROGRAM_MEDIA_GATEWAY_URL",
-            "MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET",
-            "MEMORIA_DEVICE_GATEWAY_TICKET_SECRET",
-        }
-    }
-    assert retired
     # A retired key that a service still reads would be silently dropped.
     assert not set(_RETIRED_KEYS) & aliases
     for template_path in (TEMPLATE, TEMPLATE.parents[1] / ".env.example"):
         template = template_path.read_text(encoding="utf-8")
-        named = sorted(key for key in retired if _named(template, key))
+        named = sorted(key for key in _RETIRED_KEYS if _named(template, key))
         assert named == [], f"{template_path.name} still names retired keys: {named}"
+
+
+def test_an_old_pii_redaction_flag_is_accepted_and_reaches_no_service() -> None:
+    files = split_env({"PII_REDACTION_ENABLED": "false", "LOG_LEVEL": "INFO"})
+
+    assert [sorted(env) for env in files] == [["LOG_LEVEL"], ["LOG_LEVEL"], [], []]

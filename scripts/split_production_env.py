@@ -60,7 +60,6 @@ _CONTROL_EXTRA_KEYS = frozenset(
         "AUDIO_RETENTION_ENABLED",
         "LOG_LEVEL",
         "OTEL_EXPORTER_OTLP_ENDPOINT",
-        "PII_REDACTION_ENABLED",
         "PROMETHEUS_PORT",
         "SENTRY_DSN",
     }
@@ -133,6 +132,9 @@ _RETIRED_KEYS = frozenset(
         # /v1/evolution (and its validator token) was removed on 2026-09-28;
         # it had no caller.
         "MEMORIA_EVOLUTION_VALIDATOR_TOKEN",
+        # Never read by any service; redaction became unconditional at every
+        # third-party send on 2026-10-15.
+        "PII_REDACTION_ENABLED",
         # The agent-side persona capsule fetch and its control endpoint were
         # removed on 2026-09-26; persona reaches the agent via response-plan.
         # /v1/archive/session-context and its memory_read token were removed

@@ -50,9 +50,6 @@ async def idle_filter(
             """,
             subjects,
         )
-    except asyncpg.UndefinedTableError:
-        # No activity table yet: treat every archive subject as idle.
-        return subjects
     finally:
         await connection.close()
     active = {
