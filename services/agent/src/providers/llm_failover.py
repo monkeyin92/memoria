@@ -20,10 +20,8 @@ from typing import Any, Literal
 
 from services.agent.src.llm_types import ChatChunk, ChatContext, ChoiceDelta
 from services.agent.src.providers.provider_errors import APIConnectionError, APIError
-from services.common.llm_failover import (
-    SAFE_UNKNOWN_REPLY,
-    backup_reply_passes_forbidden_copy,
-)
+from services.common.companion_response_safety import SAFE_UNKNOWN_REPLY
+from services.common.llm_failover import backup_reply_passes_forbidden_copy
 
 logger = logging.getLogger(__name__)
 
