@@ -1,3 +1,9 @@
+"""Kill switch and sole production owner of ``voice_clone_consents``.
+
+Revocation and provider deletion take no admission, so erasure still runs
+while the switch is off.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -16,6 +22,8 @@ ConsentStanding = Literal["valid", "absent", "revoked", "notice_required"]
 
 
 class VoiceCloneDisabledError(PermissionError):
+    """Closed switch. Distinct from ``VoiceConsentRequiredError``."""
+
     code: Final = "voice_clone_disabled"
 
     def __init__(self) -> None:
