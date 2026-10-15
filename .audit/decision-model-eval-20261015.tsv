@@ -7,3 +7,4 @@ ts	phase	decision	why	evidence	result
 2026-10-15T09:22:19Z	design	workflow: map paths, fixture eval set, flagged-off System One adapter, dry harness, report with additive-crisis constraint, PR	riskiest unknown is API schema + whether key exists (key absent); scaffold harness before any live call	Phase B	designed
 2026-10-15T09:23:02Z	design	reuse docs/acceptance/run-20261003-decision-model datasets; add crisis cases; adapter default-off; crisis always behind route_crisis	prior eval already covered live+close; user asked for three stages + compliance	findings.md + crisis_policy.py	reuse_prior
 2026-10-15T09:28:52Z	verify	unit tests green; dry-run recall 1.0 on crisis-self fixtures; live metrics blocked on key	prove-it-works against harness output and pytest	pytest test_decision_model.py; docs/eval/decision-model-20261015-dry-run.json	VERIFIED
+2026-10-15T09:29:58Z	ship	committed and pushed cursor/decision-model-eval-8032	PR next; no prod wiring	git push	pushed
