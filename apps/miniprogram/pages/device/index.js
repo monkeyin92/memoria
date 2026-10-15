@@ -83,6 +83,11 @@ function indexOfOption(options, value, key = "value") {
   return index >= 0 ? index : 0;
 }
 
+function nearestMinuteOption(raw, options) {
+  if (!Number.isFinite(raw) || !options.length) return null;
+  return options.reduce((best, option) => (Math.abs(raw - option) < Math.abs(raw - best) ? option : best));
+}
+
 // 目录里的 note 是写给工程的（板卡、模型、音节建议），给用户看的说明按字数给。
 function wakeWordNoteFor(item) {
   const syllables = Number(item?.syllables);
@@ -266,6 +271,23 @@ function offlineStoriesFrom(result) {
     .map((item) => ({ id: item.id, title: item.title }));
 }
 
+// 每天上限滑杆只停在服务端给的档位上；旧服务端不给档位时不显示这条滑杆，也就不会发这个字段。
+function dailyChatFrom(result) {
+  const limits = result.status === "fulfilled" ? result.value : null;
+  const used = limits?.today_used_minutes;
+  const choices = limits?.daily_chat_minute_choices;
+  const ascending =
+    Array.isArray(choices) &&
+    choices.length > 1 &&
+    choices.every((minutes, index) => Number.isInteger(minutes) && minutes > (index ? choices[index - 1] : 0));
+  return {
+    dailyUsage: Number.isInteger(used) && used >= 0 ? { usedMinutes: used } : null,
+    dailyChatSlider: ascending
+      ? { choices, min: choices[0], max: choices[choices.length - 1], step: choices[1] - choices[0] }
+      : null,
+  };
+}
+
 function bindingChoiceItems(bindings) {
   const companion = companionById(defaultCompanionId);
   return (bindings || []).map((binding) => ({
@@ -306,6 +328,8 @@ Page({
     degradation: null,
     sensitiveEntries: [],
     sessionLimits: null,
+    dailyUsage: null,
+    dailyChatSlider: null,
     trialSettingsVisible: false,
     offlineStories: [],
     subscriptionPushEnabled: SUBSCRIPTION_PUSH_ENABLED,
@@ -439,6 +463,8 @@ Page({
       degradation: null,
       sensitiveEntries: [],
       sessionLimits: null,
+      dailyUsage: null,
+      dailyChatSlider: null,
       trialSettingsVisible: false,
       offlineStories: [],
       safetySubscribeOn: false,
@@ -583,34 +609,34 @@ Page({
   },
 
   async onLimitsMinutesSlider(event) {
-    const raw = Number(event.detail.value);
-    if (!Number.isFinite(raw)) return;
     const options = this.data.limitsMinuteOptions || SESSION_MINUTE_OPTIONS;
-    let minutes = options[0];
-    let best = Math.abs(raw - minutes);
-    for (const option of options) {
-      const distance = Math.abs(raw - option);
-      if (distance < best) {
-        best = distance;
-        minutes = option;
-      }
-    }
+    const minutes = nearestMinuteOption(Number(event.detail.value), options);
+    if (minutes === null) return;
     const index = options.indexOf(minutes);
     this.setData({ limitsMinuteIndex: index >= 0 ? index : this.data.limitsMinuteIndex });
-    await this._saveMaxSessionMinutes(minutes);
+    await this._saveSessionLimits({ maxSessionMinutes: minutes });
   },
 
-  async _saveMaxSessionMinutes(minutes) {
+  async onDailyChatMinutesSlider(event) {
+    const choices = this.data.dailyChatSlider?.choices || [];
+    const minutes = nearestMinuteOption(Number(event.detail.value), choices);
+    if (minutes === null) return;
+    await this._saveSessionLimits({ dailyChatMinutes: minutes });
+  },
+
+  async _saveSessionLimits(change) {
     const limits = this.data.sessionLimits;
     const binding = this.data.binding;
-    if (!Number.isInteger(minutes) || !limits || !binding?.device_id) return;
-    if (limits.maxSessionMinutes === minutes) return;
+    if (this.data.limitsSaving || !limits || !binding?.device_id) return;
+    if (Object.entries(change).every(([key, value]) => limits[key] === value)) return;
     this.setData({ limitsSaving: true });
     try {
+      // PUT 会替换单次上限与夜间时段，所以每次都带上现值。
       await api.setSessionLimits(binding.device_id, {
-        maxSessionMinutes: minutes,
+        maxSessionMinutes: limits.maxSessionMinutes,
         quietStart: limits.quietStart,
         quietEnd: limits.quietEnd,
+        ...change,
       });
       let profile = null;
       try {
@@ -849,7 +875,7 @@ Page({
     }
     try {
       const identity = api.currentIdentity();
-      const [profileResult, activationResult, settingsResult, diagnosticsResult, wakeWordCatalogResult, personaAssignmentsResult, personasResult, accountProfileResult, storiesResult] =
+      const [profileResult, activationResult, settingsResult, diagnosticsResult, wakeWordCatalogResult, personaAssignmentsResult, personasResult, accountProfileResult, storiesResult, limitsResult] =
         await Promise.allSettled([
           api.getRuntimeProfile(binding.device_id),
           api.getActivationStatus(binding.device_id),
@@ -860,6 +886,7 @@ Page({
           api.listPersonas(),
           identity ? api.getProfile(identity.user_id) : Promise.resolve(null),
           api.getOfflineStories(binding.device_id),
+          api.getSessionLimits(binding.device_id),
         ]);
       if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return; // 晚到响应丢弃
       const profile =
@@ -977,6 +1004,7 @@ Page({
         degradation: profile ? degradationFor(profile) : null,
         sensitiveEntries: profile ? sensitiveEntriesFor(profile) : [],
         sessionLimits,
+        ...dailyChatFrom(limitsResult),
         trialSettingsVisible: Boolean(sessionLimits),
         offlineStories: offlineStoriesFrom(storiesResult),
         limitsMinuteOptions,

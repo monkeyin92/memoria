@@ -26,7 +26,9 @@ let settingsPatchResult = null;
 const settingsPatchCalls = [];
 const personaCalls = [];
 const limitsCalls = [];
+const limitsWrites = () => limitsCalls.filter((call) => call.method === "PUT");
 let limitsFailure = false;
+let limitsPayload = null;
 let storiesFailure = false;
 let personaFailure = false;
 let personaPayload = () => ({
@@ -187,7 +189,7 @@ global.wx = {
         statusCode: 200,
         data:
           (options.method || "GET") === "GET"
-            ? { max_session_minutes: 30, quiet_hours: { start: "21:00", end: "07:00" }, today_used_minutes: null }
+            ? limitsPayload || { max_session_minutes: 30, quiet_hours: { start: "21:00", end: "07:00" }, today_used_minutes: null }
             : { changed: true },
       });
       return;
@@ -737,7 +739,7 @@ test("the guardian edits session limits from the device page and sees the signed
   );
   profilePayload = limitsProfile(60, "22:00", "07:00", 2);
   await page.confirmLimitsSheet();
-  assert.deepEqual(limitsCalls, [
+  assert.deepEqual(limitsWrites(), [
     {
       method: "PUT",
       deviceId: "dev_1",
@@ -827,9 +829,137 @@ test("the 单次上限 slider keeps an unset quiet window unset on the wire", as
   await page.onShow();
   assert.equal(page.data.sessionLimits.quietStart, "");
   await page.onLimitsMinutesSlider({ detail: { value: 60 } });
-  assert.deepEqual(limitsCalls, [
+  assert.deepEqual(limitsWrites(), [
     { method: "PUT", deviceId: "dev_1", data: { max_session_minutes: 60, quiet_hours: null } },
   ]);
+});
+
+function dailyLimitsProfile(sessionId, { maxSeconds = 1800, dailySeconds = 2700, epoch = 1 } = {}) {
+  return wireProfile({
+    signature_schema: "runtime-profile-v2",
+    runtime_profile_id: `rp_${sessionId}_${epoch}`,
+    session_id: sessionId,
+    session_epoch: epoch,
+    active_subject_id: "person_child",
+    subject_category: "minor",
+    age_band: "under_14",
+    service_mode: "student_minor",
+    signature: "f".repeat(64),
+    obligations: [
+      {
+        code: "MAX_SESSION_SECONDS",
+        params: {
+          max_session_seconds: maxSeconds,
+          retention_ttl_seconds: null,
+          quiet_hours: null,
+          extras: dailySeconds === null ? [] : [["daily_chat_seconds", String(dailySeconds)]],
+        },
+      },
+      {
+        code: "QUIET_HOURS",
+        params: { max_session_seconds: null, retention_ttl_seconds: null, quiet_hours: ["21:00", "07:00"], extras: [] },
+      },
+    ],
+  });
+}
+
+const DAILY_LIMITS = {
+  max_session_minutes: 30,
+  quiet_hours: { start: "21:00", end: "07:00" },
+  daily_chat_minutes: 45,
+  daily_chat_minute_choices: [15, 30, 45, 60],
+  today_used_minutes: 18,
+};
+
+async function showDailyLimits(limits, profile) {
+  limitsPayload = limits;
+  binding.saveBindingManifest(parentChildManifest());
+  profilePayload = profile;
+  resolutionPayload = null;
+  const page = instantiate(pageDefinition);
+  await page.onShow();
+  return { page, text: visibleText(renderPage("pages/device/index", page.data)) };
+}
+
+test("the 每天上限 slider saves the daily budget with the current cap and quiet window, and the cap slider leaves it alone", async () => {
+  limitsCalls.length = 0;
+  limitsFailure = false;
+  try {
+    const { page, text } = await showDailyLimits(DAILY_LIMITS, dailyLimitsProfile("ses_daily_save"));
+    assert.match(text, /单次上限 30 分钟 15 分钟 60 分钟 每天上限 45 分钟 15 分钟 60 分钟/);
+
+    await page.onDailyChatMinutesSlider({ detail: { value: 50 } });
+    assert.deepEqual(limitsWrites(), [], "a release that snaps back to the stored 45 saves nothing");
+
+    profilePayload = dailyLimitsProfile("ses_daily_save", { dailySeconds: 3600, epoch: 2 });
+    await page.onDailyChatMinutesSlider({ detail: { value: 55 } });
+    assert.deepEqual(limitsWrites(), [
+      {
+        method: "PUT",
+        deviceId: "dev_1",
+        data: { max_session_minutes: 30, quiet_hours: { start: "21:00", end: "07:00" }, daily_chat_minutes: 60 },
+      },
+    ]);
+    assert.match(visibleText(renderPage("pages/device/index", page.data)), /18 \/ 60 分钟 今天还可以聊 42 分钟/);
+
+    limitsCalls.length = 0;
+    profilePayload = dailyLimitsProfile("ses_daily_save", { maxSeconds: 2700, dailySeconds: 3600, epoch: 3 });
+    await page.onLimitsMinutesSlider({ detail: { value: 45 } });
+    assert.deepEqual(limitsWrites(), [
+      { method: "PUT", deviceId: "dev_1", data: { max_session_minutes: 45, quiet_hours: { start: "21:00", end: "07:00" } } },
+    ]);
+  } finally {
+    limitsPayload = null;
+  }
+});
+
+test("a slider released while another limits save is in flight sends nothing", async () => {
+  limitsCalls.length = 0;
+  limitsFailure = false;
+  try {
+    const { page } = await showDailyLimits(DAILY_LIMITS, dailyLimitsProfile("ses_daily_race"));
+    await Promise.all([
+      page.onDailyChatMinutesSlider({ detail: { value: 60 } }),
+      page.onLimitsMinutesSlider({ detail: { value: 45 } }),
+    ]);
+    assert.deepEqual(limitsWrites().map((call) => call.data), [
+      { max_session_minutes: 30, quiet_hours: { start: "21:00", end: "07:00" }, daily_chat_minutes: 60 },
+    ]);
+  } finally {
+    limitsPayload = null;
+  }
+});
+
+test("the usage ring counts today's minutes against the signed daily budget and says when it cannot", async () => {
+  limitsFailure = false;
+  const profile = dailyLimitsProfile("ses_daily_ring");
+  try {
+    assert.match((await showDailyLimits(DAILY_LIMITS, profile)).text, /18 \/ 45 分钟 今天还可以聊 27 分钟/);
+    assert.match(
+      (await showDailyLimits({ ...DAILY_LIMITS, today_used_minutes: 50 }, profile)).text,
+      /50 \/ 45 分钟 今天还可以聊 0 分钟/,
+    );
+
+    const unread = await showDailyLimits({ ...DAILY_LIMITS, today_used_minutes: null }, profile);
+    assert.match(unread.text, /45 分钟 · 每天上限 用量暂未统计/);
+    assert.match(unread.text, /每天上限 45 分钟 15 分钟 60 分钟/);
+
+    limitsFailure = true;
+    limitsCalls.length = 0;
+    const failed = await showDailyLimits(DAILY_LIMITS, profile);
+    assert.match(failed.text, /45 分钟 · 每天上限 用量暂未统计/);
+    assert.doesNotMatch(failed.text, /每天上限 45 分钟/, "no slider stops without the server's choices");
+    await failed.page.onDailyChatMinutesSlider({ detail: { value: 60 } });
+    assert.deepEqual(limitsWrites(), []);
+    limitsFailure = false;
+
+    const older = await showDailyLimits(null, dailyLimitsProfile("ses_daily_older", { dailySeconds: null }));
+    assert.match(older.text, /30 分钟 · 单次上限 用量暂未统计/);
+    assert.doesNotMatch(older.text, /每天上限/);
+  } finally {
+    limitsFailure = false;
+    limitsPayload = null;
+  }
 });
 
 test("the device lists its offline story titles, and says so when it has none to show", async () => {

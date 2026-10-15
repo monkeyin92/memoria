@@ -278,6 +278,7 @@ test("device retry 恢复登录后正常同步", async () => {
     getDeviceDiagnostics: async () => null,
     getWakeWordCatalog: async () => ({ items: [] }),
     getOfflineStories: async () => ({ items: [] }),
+    getSessionLimits: async () => null,
   });
   await withPage("../pages/device/index", async (page) => {
     await page.retryBindingSync();

@@ -116,6 +116,12 @@
   font-size: var(--mp-type-meta);
 }
 
+.device-limit-divider {
+  height: 1px;
+  margin: 16px 0;
+  background: var(--mp-line);
+}
+
 .device-quiet-card {
   display: flex;
   align-items: center;
