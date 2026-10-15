@@ -493,7 +493,7 @@ class MediaSessionProjectionMixin:
     ) -> None:
         self._cancel_llm_thinking_filler(context)
         now = time.monotonic()
-        speech_ended = context.pending.child_speech_ended_at or now
+        speech_ended = context.pending.child_speech_ended_mono or now
         context.llm_thinking_filler.arm(turn_id=fence.turn_id, now=speech_ended)
         remaining = max(0.0, LLM_THINKING_DELAY_S - (now - speech_ended))
         context.llm_thinking_task = asyncio.create_task(

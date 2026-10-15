@@ -37,7 +37,7 @@ class PendingTurn:
     turn_input_fence: GenerationFence | None = None
     turn_end_sample: int | None = None
     turn_endpoint_sample: int | None = None
-    child_speech_ended_at: float | None = None
+    child_speech_ended_mono: float | None = None
     turn_retire_sample: int | None = None
     turn_endpoint_grace_deadline: float | None = None
     turn_endpoint_tail_deadline: float | None = None
@@ -151,7 +151,7 @@ class PendingTurn:
         self.turn_input_fence = None
         self.turn_end_sample = None
         self.turn_endpoint_sample = None
-        self.child_speech_ended_at = None
+        self.child_speech_ended_mono = None
         self.turn_retire_sample = None
         self.turn_endpoint_grace_deadline = None
         self.turn_endpoint_tail_deadline = None

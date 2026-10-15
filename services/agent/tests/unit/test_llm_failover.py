@@ -221,13 +221,6 @@ async def test_backup_forbidden_copy_is_replaced_with_safe_unknown() -> None:
 
 @pytest.mark.asyncio
 async def test_backup_mid_stream_forbidden_copy_ends_without_gluing_safe_unknown() -> None:
-    """DeepSeek too slow → qwen backup; a later forbidden chunk must not glue 我不知道.
-
-    Reported: 「给我讲一个很短的小兔子故事」 yielded a truncated rabbit story ending
-    in 「它把我不知道。」 after the backup stream's forbidden-copy gate replaced one
-    mid-stream chunk once earlier text had already left the model.
-    """
-
     word = "家人"
     assert word in PRODUCT_FORBIDDEN_COPY
     prefix = (

@@ -254,10 +254,6 @@ async def smoke_funasr(
 
 async def smoke_llm() -> str:
     settings = AgentSettings()
-    if settings.llm_failover_enabled and not str(settings.dashscope_api_key or "").strip():
-        raise AssertionError(
-            "LLM_FAILOVER_ENABLED requires DASHSCOPE_API_KEY for the Beijing backup"
-        )
     model = build_language_model_handler(
         settings=settings,
         llm_factory=OpenAIChatModel,

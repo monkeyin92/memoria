@@ -1,10 +1,3 @@
-"""Once-per-turn LLM thinking filler gate (clock-injected).
-
-After the child stops speaking, if no reply audio has started within
-``LLM_THINKING_DELAY_S``, the device may speak ``LLM_THINKING_TEXT`` once.
-Any reply text for that turn cancels the filler permanently for the turn.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -22,8 +15,6 @@ LLM_THINKING_AIGC: Final = {
 
 @dataclass(slots=True)
 class LlmThinkingFiller:
-    """Pure gate: arm on speech end, play at most once before reply audio."""
-
     delay_s: float = LLM_THINKING_DELAY_S
     _armed_turn_id: int | None = None
     _armed_mono: float | None = None

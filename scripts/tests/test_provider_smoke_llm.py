@@ -1,9 +1,8 @@
-"""smoke_llm follows LLM_FAILOVER_ENABLED against local chat endpoints."""
-
 from __future__ import annotations
 
 import asyncio
 import json
+import socket
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -35,6 +34,7 @@ BACKUP_BODY = {
 }
 
 ChatMode = Literal["reply", "stall", "reject"]
+STALL_FIRST_TOKEN_TIMEOUT_S = "1.5"
 
 
 def _chunk(text: str) -> dict[str, Any]:
@@ -53,10 +53,17 @@ def _chunk(text: str) -> dict[str, Any]:
     }
 
 
+async def _wait_for_client_disconnect(request: web.Request) -> web.StreamResponse:
+    for _ in range(200):
+        transport = request.transport
+        if transport is None or transport.is_closing():
+            return web.Response(status=499)
+        await asyncio.sleep(0.05)
+    return web.Response(status=504)
+
+
 @dataclass
 class ChatEndpoint:
-    """OpenAI-compatible chat server. ``stall`` holds the socket until the client leaves."""
-
     mode: ChatMode
     reply: str = "连接正常"
     requests: list[dict[str, Any]] = field(default_factory=list)
@@ -73,9 +80,11 @@ class ChatEndpoint:
         app.router.add_post("/v1/chat/completions", self._handle)
         self._runner = web.AppRunner(app)
         await self._runner.setup()
-        site = web.TCPSite(self._runner, "127.0.0.1", 0)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        site = web.TCPSite(self._runner, "127.0.0.1", port)
         await site.start()
-        port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
         self.origin = f"http://127.0.0.1:{port}"
 
     async def stop(self) -> None:
@@ -92,12 +101,7 @@ class ChatEndpoint:
             }
         )
         if self.mode == "stall":
-            for _ in range(200):
-                transport = request.transport
-                if transport is None or transport.is_closing():
-                    return web.Response(status=499)
-                await asyncio.sleep(0.05)
-            return web.Response(status=504)
+            return await _wait_for_client_disconnect(request)
         if self.mode == "reject":
             return web.json_response({"error": {"message": "primary down"}}, status=400)
         response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
@@ -170,7 +174,7 @@ async def test_failover_smoke_passes_when_primary_stalls_and_backup_answers(
         failover=True,
         primary=primary,
         backup=backup,
-        first_token_timeout_s="1.5",
+        first_token_timeout_s=STALL_FIRST_TOKEN_TIMEOUT_S,
     )
 
     assert await smoke_llm() == "DeepSeek"

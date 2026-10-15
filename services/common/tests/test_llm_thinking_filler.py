@@ -1,5 +1,3 @@
-"""Timing and once-per-turn rules for the LLM thinking filler gate."""
-
 from __future__ import annotations
 
 from services.common.llm_thinking_filler import (
@@ -44,8 +42,6 @@ def test_filler_text_is_the_fixed_line() -> None:
 
 
 def test_filler_delay_is_measured_from_speech_end_not_commit() -> None:
-    """Commit lag counts toward the 3s; arm with speech-end time."""
-
     gate = LlmThinkingFiller()
     speech_ended = 100.0
     commit_at = 101.5

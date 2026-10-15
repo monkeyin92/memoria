@@ -164,6 +164,7 @@ jobs:
           uv run pytest --import-mode=importlib --no-cov
           scripts/tests/test_verify_agent_release_artifact.py
           scripts/tests/test_resolve_target_images.py
+          scripts/tests/test_provider_smoke_llm.py
       - name: Agent source-overlay script syntax
         run: bash -n scripts/deploy_agent_component.sh
 
@@ -214,6 +215,7 @@ jobs:
           scripts/tests/test_control_release_contract.py
           scripts/tests/test_verify_control_release_artifact.py
           scripts/tests/test_resolve_target_images.py
+          scripts/tests/test_provider_smoke_llm.py
       - name: Control release artifact smoke (offline)
         env:
           ENVIRONMENT: development
