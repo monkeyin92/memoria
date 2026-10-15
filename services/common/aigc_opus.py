@@ -44,7 +44,7 @@ def require_aigc_tags(
     head: bytes,
     *,
     content_id: str,
-) -> dict[str, str]:
+) -> dict[str, object]:
     """Return normalised AIGC tags or raise ``ValueError`` when the clip is unlabelled."""
 
     tags = aigc_tag_map(head)

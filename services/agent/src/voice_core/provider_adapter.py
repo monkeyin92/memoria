@@ -1038,13 +1038,13 @@ class ExistingVoiceProviderAdapter:
 
         sample_origin = 0
         if catalogue.prefix_candidate(first_phrase.spoken):
-            buffered: list[SpokenPhrase] = [first_phrase]
+            labelled_phrases: list[SpokenPhrase] = [first_phrase]
             try:
                 async for phrase in reply_iter:
-                    buffered.append(phrase)
+                    labelled_phrases.append(phrase)
             finally:
                 await reply.aclose()
-            joined = "".join(item.spoken for item in buffered)
+            joined = "".join(item.spoken for item in labelled_phrases)
             joined_line = catalogue.by_text(joined)
             if joined_line is not None:
                 logger.info(
@@ -1066,9 +1066,9 @@ class ExistingVoiceProviderAdapter:
                 ):
                     yield chunk
                 return
-            if all(catalogue.by_text(item.spoken) is not None for item in buffered):
+            if all(catalogue.by_text(item.spoken) is not None for item in labelled_phrases):
                 self._generation_output_ends[fence] = 0
-                for index, phrase in enumerate(buffered):
+                for index, phrase in enumerate(labelled_phrases):
                     line = catalogue.by_text(phrase.spoken)
                     assert line is not None
                     logger.info(
@@ -1085,14 +1085,14 @@ class ExistingVoiceProviderAdapter:
                         fence=fence,
                         source_start_sample=sample_origin,
                         first=index == 0,
-                        final=index + 1 == len(buffered),
+                        final=index + 1 == len(labelled_phrases),
                     ):
                         sample_origin = chunk.source_start_sample + chunk.frame_samples
                         yield chunk
                 return
 
             async def _replay_all() -> AsyncGenerator[SpokenPhrase, None]:
-                for phrase in buffered:
+                for phrase in labelled_phrases:
                     yield phrase
 
             reply = _replay_all()
