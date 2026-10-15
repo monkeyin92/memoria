@@ -156,5 +156,4 @@ class MediaVoiceSessionState:
     missed_hearing_nudge_count: int = 0
     last_missed_hearing_nudge_at: float | None = None
     llm_thinking_filler: LlmThinkingFiller = field(default_factory=LlmThinkingFiller)
-    llm_thinking_task: asyncio.Task[None] | None = None
     closed: bool = False

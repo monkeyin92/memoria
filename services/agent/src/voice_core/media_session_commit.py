@@ -323,12 +323,6 @@ class MediaSessionCommitMixin:
 
         async def _stop_reply_for_voice_command(self, context: _MediaVoiceSession) -> bool: ...
 
-        def arm_llm_thinking_filler(
-            self,
-            context: _MediaVoiceSession,
-            fence: GenerationFence,
-        ) -> None: ...
-
     async def accept_asr_result(self, session_id: str, result: ASRResult) -> bool:
         """Compatibility bool seam; use the normalized decision internally."""
 
@@ -1469,7 +1463,10 @@ class MediaSessionCommitMixin:
         )
         context.output.begin_turn_output(fence)
         context.turn_started_ns = time.monotonic_ns()
-        self.arm_llm_thinking_filler(context, fence)
+        context.llm_thinking_filler.arm(
+            turn_id=fence.turn_id,
+            now=context.pending.child_speech_ended_mono or time.monotonic(),
+        )
         if should_pause_asr_for_playback(context.identity):
             await context.provider.pause_asr_for_playback(context.identity)
         task_epoch, context_version = self._event_versions(context, fence)
