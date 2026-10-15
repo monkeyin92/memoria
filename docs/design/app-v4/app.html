@@ -74,7 +74,7 @@ S.push(`<div style="position:absolute;left:24px;right:24px;top:80px;height:400px
 S.push(`<div class="c"><span class="chip draft">草稿 · 待律师审核</span><h1 style="margin-top:16px">开始前，<br>请先确认这几件事</h1>
 <div class="sub">作为孩子的监护人，你需要知道我们实际会处理哪些信息。</div>
 <div class="k" style="margin-top:24px;padding:8px 0">
-${[['server','对话经过我们的服务器','孩子说的话会经服务器处理后再回复'],['note','保存对话摘要','家长可以按天查看，不保存原话和录音'],['star','长期只存三项','孩子的称呼、喜好、宠物名'],['cam','设备没有摄像头','不拍照，也不录像']].map(r=>`<div class="row" style="align-items:flex-start">${ic(r[0])}<div><div style="font-weight:600">${r[1]}</div><div style="font-size:13px;color:var(--ink2);margin-top:4px;line-height:20px">${r[2]}</div></div></div>`).join('')}</div>
+${[['server','对话经过我们的服务器','孩子说的话会经服务器处理后再回复'],['note','保存对话摘要','家长可以按天查看，不保存原话和录音'],['star','长期只存三项','孩子的称呼、喜好、宠物名'],['cam','设备没有摄像头，也不采集图像']].map(r=>`<div class="row" style="align-items:flex-start">${ic(r[0])}<div><div style="font-weight:600">${r[1]}</div>${r[2]?`<div style="font-size:13px;color:var(--ink2);margin-top:4px;line-height:20px">${r[2]}</div>`:''}</div></div>`).join('')}</div>
 <div style="display:flex;gap:16px;align-items:flex-start;margin:24px 0;font-size:14px;line-height:24px;color:var(--ink2)"><span style="flex:none;width:24px;height:24px;border-radius:8px;background:var(--acc);color:#fff;display:grid;place-items:center">${I.check}</span><span>我是孩子的监护人，已阅读并同意<b style="color:var(--ink);font-weight:600">《监护人同意书》</b>（草稿）</span></div>
 <div class="btn">同意并继续</div><div style="text-align:center;margin-top:16px;font-size:15px;color:var(--ink2)">暂不同意</div></div>`);
 /* 3 home */

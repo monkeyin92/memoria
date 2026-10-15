@@ -127,7 +127,7 @@ Four fact strings differ from the design on purpose.
 - Fact 2 ends with 「原话在入库前就去掉」, not 「不保存原话和录音」. A family that opts in on the privacy page has raw audio kept until it revokes, so 「不保存录音」 would be false for that family.
 - Fact 3 reads 「长期只记三项」, the wording of the memory page's 「机器人长期只记住这三件事」. The design says 「长期只存三项」.
 - Fact 4 stays 「回应由 AI 生成」, with the sub 「会明确标识；模型训练默认关闭」. The design has no AI fact.
-- Fact 5 is 「设备没有摄像头，也不采集图像」. The design's camera row uses the shorter title 「设备没有摄像头」 and the sub 「不拍照，也不录像」. The live title is the full sentence a parent reads. It does not mention later hardware or a connector. The icon is `cam`.
+- Fact 5 is 「设备没有摄像头，也不采集图像」. Live and design use that exact sentence as the camera row title, with no subtitle and no claim about later hardware or a connector. The icon is `cam`.
 
 The checkbox reads 「我是孩子的监护人，已阅读并同意《隐私保护指引（草稿）》和《监护人同意书（草稿）》」. Each title is its own link, so a tap opens that document instead of only toggling the box. 《隐私保护指引（草稿）》 still calls `wx.openPrivacyContract`. 《监护人同意书（草稿）》 opens `pages/guardian-consent/index`. The page chip is 「草稿 · 待律师审核」. Its paragraphs match `docs/compliance/guardian-consent-draft.md`. No standalone guardian consent file existed under `docs/` before that draft. The page footer cites `docs/compliance/child-audio-transcript-ephemeral.md`. Notes on login and recording still follow 「暂不同意」.
 
