@@ -1,0 +1,18 @@
+diff --git a/main/audio/audio_service.h b/main/audio/audio_service.h
+--- a/main/audio/audio_service.h
++++ b/main/audio/audio_service.h
+@@ -44,7 +44,12 @@
+ #else
+ #define OPUS_FRAME_DURATION_MS 60
+ #endif
+-#define MAX_ENCODE_TASKS_IN_QUEUE 2
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++#include "memoria_encode_budget.h"
++#define MAX_ENCODE_TASKS_IN_QUEUE MEMORIA_ENCODE_QUEUE_DEPTH
++#else
++#define MAX_ENCODE_TASKS_IN_QUEUE 2
++#endif
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
+ #define MAX_PLAYBACK_TASKS_IN_QUEUE 8
+ #else
+
