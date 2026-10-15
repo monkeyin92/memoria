@@ -1,16 +1,18 @@
 #pragma once
 
-// A debug command line on the robot's USB-Serial-JTAG port (firmware build 20).
+// A debug command line on the robot's USB-Serial-JTAG port (firmware build 20+).
 //
 // Until build 19 the USB port only printed logs, so the computer-driven tests could wake the robot only by
-// playing the wake word through the Mac's speaker, and the wake word false-triggers (TODOLIST N-1). One
-// command now does what a tap on the round screen does:
+// playing the wake word through the Mac's speaker, and the wake word false-triggers (TODOLIST N-1). Product
+// images accept these exact verbs (cable only; no network entry):
 //
-//   wake\n    start a conversation on an idle device, under the same gate as a screen tap
+//   wake\n       start a conversation on an idle device, under the same gate as a screen tap
+//   sleep\n      stop speaking/listening and park in wifi hold without entering chip deep sleep
+//   poweroff\n   same stop as sleep, then disconnect station Wi-Fi if the stack allows it
 //
-// A product image accepts nothing else: the port is reachable only with the cable plugged in (no network
-// entry), the command cannot stop, abort or reconfigure anything, and a device that is not idle, is pairing
-// or is starting up ignores it and says why in the log.
+// Limits: USB-Serial-JTAG keeps powering the board, so sleep/poweroff cannot cut USB power or force a
+// true power-off. They do not change CONFIG_MEMORIA_KEEP_AWAKE or enable deep sleep by default. Auto
+// deep-sleep from wifi hold stays disarmed on this path (hold not armed), so a USB test rig stays up.
 //
 // A bench build (CONFIG_MEMORIA_BENCH_SERIAL, TODOLIST M-2; never published, see memoria_bench_snap.h) also
 // answers two read-only requests, so a computer can look at the round screen without anyone standing at the
@@ -56,6 +58,8 @@ constexpr std::size_t kUsbTaskStackBytes = CONFIG_MEMORIA_BENCH_SERIAL ? 12 * 10
 enum class UsbCommand : unsigned char {
     kUnknown,
     kWake,
+    kSleep,
+    kPowerOff,
 #if CONFIG_MEMORIA_BENCH_SERIAL
     kSnap,
     kStatus,
@@ -92,6 +96,12 @@ inline UsbCommand ParseUsbCommand(const char* line, std::size_t length) {
     if (usb_command_detail::IsVerb(verb, verb_length, "wake")) {
         return UsbCommand::kWake;
     }
+    if (usb_command_detail::IsVerb(verb, verb_length, "sleep")) {
+        return UsbCommand::kSleep;
+    }
+    if (usb_command_detail::IsVerb(verb, verb_length, "poweroff")) {
+        return UsbCommand::kPowerOff;
+    }
 #if CONFIG_MEMORIA_BENCH_SERIAL
     if (usb_command_detail::IsVerb(verb, verb_length, "snap")) {
         return UsbCommand::kSnap;
@@ -110,10 +120,12 @@ inline UsbCommand ParseUsbCommand(const char* line, std::size_t length) {
 }
 
 enum class UsbLineEvent : unsigned char {
-    kNone,     // nothing complete yet, or an empty line (CR LF arrives as two terminators)
-    kWake,     // a complete line that is the wake command
-    kUnknown,  // a complete line that is not a command
-    kTooLong,  // a line longer than kMaxLine just ended; it was dropped whole
+    kNone,      // nothing complete yet, or an empty line (CR LF arrives as two terminators)
+    kWake,      // a complete line that is the wake command
+    kSleep,     // a complete line that is the sleep command
+    kPowerOff,  // a complete line that is the poweroff command
+    kUnknown,   // a complete line that is not a command
+    kTooLong,   // a line longer than kMaxLine just ended; it was dropped whole
 #if CONFIG_MEMORIA_BENCH_SERIAL
     kSnap,    // bench builds only: a complete `snap` line
     kStatus,  // bench builds only: a complete `status` line
@@ -170,6 +182,10 @@ private:
         switch (command) {
             case UsbCommand::kWake:
                 return UsbLineEvent::kWake;
+            case UsbCommand::kSleep:
+                return UsbLineEvent::kSleep;
+            case UsbCommand::kPowerOff:
+                return UsbLineEvent::kPowerOff;
 #if CONFIG_MEMORIA_BENCH_SERIAL
             case UsbCommand::kSnap:
                 return UsbLineEvent::kSnap;
