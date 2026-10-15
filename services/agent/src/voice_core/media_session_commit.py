@@ -323,6 +323,12 @@ class MediaSessionCommitMixin:
 
         async def _stop_reply_for_voice_command(self, context: _MediaVoiceSession) -> bool: ...
 
+        def arm_llm_thinking_filler(
+            self,
+            context: _MediaVoiceSession,
+            fence: GenerationFence,
+        ) -> None: ...
+
     async def accept_asr_result(self, session_id: str, result: ASRResult) -> bool:
         """Compatibility bool seam; use the normalized decision internally."""
 

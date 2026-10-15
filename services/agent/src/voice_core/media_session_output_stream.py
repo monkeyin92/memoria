@@ -37,6 +37,7 @@ from services.common.llm_failover import (
     LLM_UNAVAILABLE_STANDBY_REASON,
     LLM_UNAVAILABLE_TEXT,
 )
+from services.common.llm_thinking_filler import LLM_THINKING_TEXT
 
 if TYPE_CHECKING:
     from services.agent.src.orchestration.conversation_projection import TurnPhase
@@ -190,6 +191,12 @@ class MediaOutputStreamMixin:
         ) -> None: ...
 
         def flush_pending_missed_hearing_nudge(self, context: _MediaVoiceSession) -> None: ...
+
+        def note_llm_thinking_reply_started(
+            self,
+            context: _MediaVoiceSession,
+            fence: GenerationFence,
+        ) -> None: ...
 
         def clear_device_wake_ack_fence(
             self,
@@ -931,8 +938,6 @@ class MediaOutputStreamMixin:
                         (time.monotonic_ns() - context.turn_started_ns) / 1_000_000_000,
                     )
                     context.output.first_audio_observed = True
-                    from services.common.llm_thinking_filler import LLM_THINKING_TEXT
-
                     # The thinking filler's own audio must not cancel itself.
                     # Any other audible reply means the filler must not play.
                     spoken = (chunk.text or context.output.assistant_text or "").strip()

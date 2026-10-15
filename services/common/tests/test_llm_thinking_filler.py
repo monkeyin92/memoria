@@ -41,3 +41,14 @@ def test_new_turn_can_play_again() -> None:
 
 def test_filler_text_is_the_fixed_line() -> None:
     assert LLM_THINKING_TEXT == "嗯，我想一想。"
+
+
+def test_filler_delay_is_measured_from_speech_end_not_commit() -> None:
+    """Commit lag counts toward the 3s; arm with speech-end time."""
+
+    gate = LlmThinkingFiller()
+    speech_ended = 100.0
+    commit_at = 101.5
+    gate.arm(turn_id=7, now=speech_ended)
+    assert gate.should_play(turn_id=7, now=commit_at) is False
+    assert gate.should_play(turn_id=7, now=speech_ended + LLM_THINKING_DELAY_S) is True

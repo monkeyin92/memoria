@@ -493,13 +493,15 @@ class MediaSessionProjectionMixin:
         context: _MediaVoiceSession,
         fence: GenerationFence,
     ) -> None:
-        """Start the 3s once-per-turn thinking filler clock after the child stops."""
+        """Arm the filler from child speech end; sleep only the remaining delay."""
 
         self._cancel_llm_thinking_filler(context)
         now = time.monotonic()
-        context.llm_thinking_filler.arm(turn_id=fence.turn_id, now=now)
+        speech_ended = context.pending.child_speech_ended_at or now
+        context.llm_thinking_filler.arm(turn_id=fence.turn_id, now=speech_ended)
+        remaining = max(0.0, LLM_THINKING_DELAY_S - (now - speech_ended))
         context.llm_thinking_task = asyncio.create_task(
-            self._llm_thinking_filler_wait(context, fence),
+            self._llm_thinking_filler_wait(context, fence, delay_s=remaining),
             name=f"llm-thinking-{context.identity.session_id}-{fence.turn_id}",
         )
 
@@ -507,9 +509,12 @@ class MediaSessionProjectionMixin:
         self,
         context: _MediaVoiceSession,
         fence: GenerationFence,
+        *,
+        delay_s: float,
     ) -> None:
         try:
-            await asyncio.sleep(LLM_THINKING_DELAY_S)
+            if delay_s > 0:
+                await asyncio.sleep(delay_s)
         except asyncio.CancelledError:
             raise
         if context.closed or context.standby_requested:
