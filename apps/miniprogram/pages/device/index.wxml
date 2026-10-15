@@ -82,7 +82,7 @@
               step="{{limitsSliderStep}}"
               value="{{sessionLimits.maxSessionMinutes || 30}}"
               disabled="{{limitsSaving}}"
-              bindchange="onTrialDailyCapSlider"
+              bindchange="onLimitsMinutesSlider"
             ></mp-slider>
             <view class="device-limit-range">
               <text>{{limitsSliderMin}} 分钟</text>

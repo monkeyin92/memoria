@@ -573,16 +573,7 @@ Page({
     }
   },
 
-  async onTrialDailyCapChange(event) {
-    const index = Number(event.detail.value);
-    const options = this.data.limitsMinuteOptions || SESSION_MINUTE_OPTIONS;
-    const minutes = options[index];
-    if (!Number.isInteger(minutes)) return;
-    this.setData({ limitsMinuteIndex: index });
-    await this._saveDailyCapMinutes(minutes);
-  },
-
-  async onTrialDailyCapSlider(event) {
+  async onLimitsMinutesSlider(event) {
     const raw = Number(event.detail.value);
     if (!Number.isFinite(raw)) return;
     const options = this.data.limitsMinuteOptions || SESSION_MINUTE_OPTIONS;
@@ -597,10 +588,10 @@ Page({
     }
     const index = options.indexOf(minutes);
     this.setData({ limitsMinuteIndex: index >= 0 ? index : this.data.limitsMinuteIndex });
-    await this._saveDailyCapMinutes(minutes);
+    await this._saveMaxSessionMinutes(minutes);
   },
 
-  async _saveDailyCapMinutes(minutes) {
+  async _saveMaxSessionMinutes(minutes) {
     const limits = this.data.sessionLimits;
     const binding = this.data.binding;
     if (!Number.isInteger(minutes) || !limits || !binding?.device_id) return;

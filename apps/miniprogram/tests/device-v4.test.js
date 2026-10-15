@@ -27,7 +27,7 @@ test("releasing the 单次上限 slider at 60 saves 60 minutes with the stored q
   const harness = loadPage("pages/device/index", fx.authed({ setSessionLimits: async (...args) => saved.push(args) }));
   try {
     await harness.run();
-    await harness.page.onTrialDailyCapSlider({ detail: { value: 60 } });
+    await harness.page.onLimitsMinutesSlider({ detail: { value: 60 } });
     assert.deepEqual(saved, [["dev_1", { maxSessionMinutes: 60, quietStart: "21:00", quietEnd: "07:00" }]]);
     assert.equal(harness.page.data.limitsSaving, false);
   } finally {

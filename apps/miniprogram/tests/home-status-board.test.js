@@ -108,7 +108,6 @@ test("trial device card helper uses profile quiet hours and usage limit", () => 
   const {
     buildTrialDeviceCard,
     hasUnreadSafetyAlert,
-    usageLabel,
   } = require("../utils/trial-device-card");
   const profile = {
     valid: true,
@@ -123,7 +122,6 @@ test("trial device card helper uses profile quiet hours and usage limit", () => 
   assert.equal(unknown.usageKnown, false);
   assert.equal(unknown.usageUsedMinutes, null);
   assert.equal(unknown.usageLimitMinutes, 30);
-  assert.equal(unknown.usageLabel, "每日上限 30 分钟");
   assert.equal(unknown.statusLine, "在线 · 已绑定");
   assert.equal(unknown.quietHoursLine, "夜间 21:00–07:00");
   assert.equal(unknown.nightModeOn, true);
@@ -134,9 +132,6 @@ test("trial device card helper uses profile quiet hours and usage limit", () => 
   });
   assert.equal(known.usageKnown, true);
   assert.equal(known.usageUsedMinutes, 12);
-  assert.equal(known.usageLabel, "今日已用 / 30 分钟");
-  assert.equal(usageLabel({ limitMinutes: 45 }), "每日上限 45 分钟");
-  assert.equal(usageLabel({ limitMinutes: 45, usedMinutes: 0 }), "今日已用 / 45 分钟");
   assert.equal(
     hasUnreadSafetyAlert([{ pinned: true, delivery_status: "no_subscription" }]),
     true,

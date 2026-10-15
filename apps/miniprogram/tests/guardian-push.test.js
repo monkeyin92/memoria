@@ -257,7 +257,7 @@ test("device settings toggle uses ledger state and real opt-out, not UI-only off
   assert.match(template, /disabled="\{\{!safetySubscribeKnown \|\| safetySubscribeBusy\}\}"/);
   assert.match(template, /bindtap="retrySafetySubscribeState"/);
   assert.match(template, /bindchange="onSafetySubscribeChange"/);
-  assert.match(template, /onTrialDailyCapSlider|每日上限/);
+  assert.match(template, /bindchange="onLimitsMinutesSlider"/);
   assert.match(template, /隐私说明/);
   assert.match(template, /解绑设备/);
   assert.match(template, /mp-privacy-well|privacyNote/);

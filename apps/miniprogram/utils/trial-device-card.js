@@ -1,8 +1,8 @@
 /*
  * Parent home v3 board fields.
  * Limit minutes come from Runtime Profile MAX_SESSION_SECONDS.
- * Used minutes are only shown when a real tally is passed in; otherwise the
- * card shows the daily limit label alone (no fake 0). No battery fields.
+ * Used minutes show only when a real tally is passed in, never a fake 0.
+ * No battery fields.
  */
 
 const { sessionLimitsFromProfile } = require("./session-limits");
@@ -15,14 +15,6 @@ const SAFETY_SUBSCRIBE_HELPER =
 function formatQuietHoursLine(sessionLimits) {
   if (!sessionLimits?.quietStart || !sessionLimits?.quietEnd) return "";
   return `夜间 ${sessionLimits.quietStart}–${sessionLimits.quietEnd}`;
-}
-
-function usageLabel({ limitMinutes, usedMinutes } = {}) {
-  const limit = Number.isInteger(limitMinutes) && limitMinutes > 0 ? limitMinutes : 30;
-  if (Number.isInteger(usedMinutes) && usedMinutes >= 0) {
-    return `今日已用 / ${limit} 分钟`;
-  }
-  return `每日上限 ${limit} 分钟`;
 }
 
 function buildTrialDeviceCard({ online, runtimeProfile, usedMinutes } = {}) {
@@ -38,10 +30,6 @@ function buildTrialDeviceCard({ online, runtimeProfile, usedMinutes } = {}) {
     usageKnown,
     usageUsedMinutes: usageKnown ? usedMinutes : null,
     usageLimitMinutes: limitMinutes,
-    usageLabel: usageLabel({
-      limitMinutes,
-      usedMinutes: usageKnown ? usedMinutes : undefined,
-    }),
     quietHoursLine,
     quietHoursLabel: limits?.quietHoursLabel || "21:00 – 07:00",
     nightModeOn: Boolean(limits?.quietStart && limits?.quietEnd),
@@ -103,5 +91,4 @@ module.exports = {
   memoryPreviewItems,
   offersSafetySubscribe,
   pinnedAlertMeta,
-  usageLabel,
 };
