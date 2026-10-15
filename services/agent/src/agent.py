@@ -25,7 +25,6 @@ from services.common.companion_response_safety import (
 from services.common.companion_turn_policy import companion_plan_instructions
 from services.common.companions import DESIGNED_VOICE_MODEL, companion_definition
 from services.common.fixed_safety_scripts import script_for_display
-from services.common.llm_failover import LLM_UNAVAILABLE_TEXT
 from services.common.realtime_information import (
     current_local_time,
     fixed_realtime_reply,
@@ -76,7 +75,7 @@ def plan_matches_mode_policy(
         if unknown_safe_direct:
             return True
         companion = companion_definition(policy.companion_style_id)
-        allowed_companion_direct_text = {None, SAFE_UNKNOWN_REPLY, LLM_UNAVAILABLE_TEXT}
+        allowed_companion_direct_text = {None, SAFE_UNKNOWN_REPLY}
         if companion is not None:
             allowed_companion_direct_text |= companion_identity_replies(
                 companion.display_name, companion.style_description

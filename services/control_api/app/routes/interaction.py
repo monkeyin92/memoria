@@ -52,6 +52,7 @@ from services.control_api.app.bound_subject import (
     claims_device_bound_subject,
     runtime_profile_trusts_bound_subject,
 )
+from services.control_api.app.companion_context import gather_companion_context
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.device_control import RuntimeProfileLedger
@@ -1631,9 +1632,6 @@ def _source_ref_payload(ref: Any) -> dict[str, Any]:
     }
 
 
-_COMPANION_CONTEXT_BUDGET_S = 0.45
-
-
 async def _companion_items(
     *,
     request: Request,
@@ -1706,23 +1704,12 @@ async def _companion_items(
         and persona_subject is not None
         else None
     )
-    pending = [task for task in (memory_task, persona_task) if task is not None]
-    if pending:
-        try:
-            completed = await asyncio.wait_for(
-                asyncio.gather(*pending, return_exceptions=True),
-                timeout=_COMPANION_CONTEXT_BUDGET_S,
-            )
-        except TimeoutError:
-            for task in pending:
-                task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
-            logger.warning("response planner companion context exceeded budget")
-            completed = []
-            memory_task = None
-            persona_task = None
-    else:
+    completed = await gather_companion_context(memory_task, persona_task)
+    if completed is None:
+        logger.warning("response planner companion context exceeded budget")
         completed = []
+        memory_task = None
+        persona_task = None
     cursor = iter(completed)
     memory_result = next(cursor) if memory_task is not None else None
     persona_result = next(cursor) if persona_task is not None else None
