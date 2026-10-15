@@ -43,6 +43,8 @@ class MediaReplyChunk:
     text_audio_start_sample: int | None = None
     text_audio_end_sample: int | None = None
     text_spans: tuple[MediaTextSpan, ...] = ()
+    # Audio that covers a slow reply; it is not the reply, so it never ends reply latency.
+    thinking_filler: bool = False
 
     def __post_init__(self) -> None:
         if not self.pcm_s16le or len(self.pcm_s16le) % 2:

@@ -731,7 +731,12 @@ class MediaOutputStreamMixin:
         # This clock starts when the selected provider/output iterator is first
         # consumed.  It deliberately ends at the Edge-accepted PCM boundary;
         # device DAC/Actual Heard remain separate playback evidence.
-        context.output.tts_started_ns = time.monotonic_ns() if measure_tts_first_frame else None
+        delivery = context.output.reply_delivery.get(fence)
+        context.output.tts_started_ns = (
+            time.monotonic_ns()
+            if measure_tts_first_frame and (delivery is None or not delivery.first_frame_sent)
+            else None
+        )
 
         async def abort_for_session_close() -> OutputDispatchResult:
             await self._abort_unheard_stream(
@@ -942,16 +947,13 @@ class MediaOutputStreamMixin:
                         "playback_rejected",
                         emitted_audio,
                     )
-                delivery_before = context.output.reply_delivery.get(fence)
                 self._record_reply_delivery_event(
                     context,
                     fence,
                     ReplyDeliveryEvent.FIRST_FRAME_SENT,
                     "downlink_frame_accepted",
                 )
-                if (
-                    delivery_before is None or not delivery_before.first_frame_sent
-                ) and context.output.tts_started_ns is not None:
+                if not chunk.thinking_filler and context.output.tts_started_ns is not None:
                     self.metrics.observe_voice_latency(
                         "tts_first_frame",
                         (time.monotonic_ns() - context.output.tts_started_ns) / 1_000_000_000,
@@ -959,7 +961,11 @@ class MediaOutputStreamMixin:
                     context.output.tts_started_ns = None
                 emitted_audio = True
                 _bump_output_stall_deadline(stall_deadline, self.output_generation_timeout_s)
-                if not context.output.first_audio_observed and context.turn_started_ns is not None:
+                if (
+                    not chunk.thinking_filler
+                    and not context.output.first_audio_observed
+                    and context.turn_started_ns is not None
+                ):
                     self.metrics.observe_voice_latency(
                         "first_audio",
                         (time.monotonic_ns() - context.turn_started_ns) / 1_000_000_000,
@@ -1161,6 +1167,7 @@ class MediaOutputStreamMixin:
                     text_audio_start_sample=None,
                     text_audio_end_sample=None,
                     text_spans=(),
+                    thinking_filler=True,
                 )
         except Exception:
             logger.warning(
