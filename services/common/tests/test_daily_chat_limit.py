@@ -10,7 +10,7 @@ from services.common.daily_chat_limit import (
 @pytest.mark.parametrize("minutes", [14, 20, 61, 0, True, 30.0, "30"])
 def test_budget_rejects_minutes_outside_the_choices(minutes: object) -> None:
     with pytest.raises(ValueError):
-        DailyChatBudget(minutes)  # type: ignore[arg-type]
+        DailyChatBudget(minutes)
 
 
 def test_budget_admits_a_new_session_only_below_the_allowance() -> None:

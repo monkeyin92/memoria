@@ -250,12 +250,6 @@ class MediaSessionConnectionMixin:
             context.runtime.orchestrator.context.clear_turns()
 
     async def _record_daily_chat_usage(self, context: _MediaVoiceSession) -> None:
-        """Report an admitted governed session once.
-
-        Awaited before the recap publish, which waits on a summary model, so the
-        next wake's admission already counts this session.
-        """
-
         accrual, client = context.daily_chat_accrual, self.daily_chat_client
         if accrual is None or client is None:
             return

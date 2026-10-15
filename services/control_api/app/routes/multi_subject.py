@@ -1062,7 +1062,6 @@ async def get_device_session_limits(
 
 
 async def _chat_usage_today(request: Request, subject_id: str) -> ChatUsageToday | None:
-    """Today's usage for the parent view. None, after a warning, when the ledger can't be read."""
     try:
         return await asyncio.to_thread(_chat_usage_ledger(request).used_today, subject_id)
     except Exception as exc:
@@ -1155,8 +1154,6 @@ async def set_device_session_limits(
 
 
 class ChatUsageRecordRequest(BaseModel):
-    """One admitted device session's elapsed time, reported once by the agent at close."""
-
     model_config = ConfigDict(extra="forbid", strict=True)
 
     accrual_id: str = Field(pattern=r"^[0-9a-f]{32}$")

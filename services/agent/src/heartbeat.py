@@ -3,8 +3,7 @@
 The bridge process posts ``{release_tag, boot_id, worker_ready, last_loop_at,
 chat_llm_providers}`` to ``/internal/readiness/agent-heartbeat``.
 ``worker_ready`` is true only while the bridge's gRPC server is serving.
-``chat_llm_providers`` names the chat model families the bridge builds, which
-About discloses. Each accepted ready heartbeat refreshes a local state file,
+Each accepted ready heartbeat refreshes a local state file,
 which the container healthcheck reads through
 ``python -m services.agent.src.heartbeat --check-health``.
 """

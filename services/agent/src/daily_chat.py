@@ -1,10 +1,3 @@
-"""A minor's daily chat budget on the device, against Control's usage ledger.
-
-Admission asks Control for today's total before a governed session starts.
-Close reports that session's elapsed seconds once. Control owns the day and
-the midnight reset. The agent only measures durations on its monotonic clock.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -29,22 +22,17 @@ type DailyChatRefusal = Literal["exhausted", "unavailable"]
 
 @dataclass(frozen=True, slots=True)
 class GovernedDailyChat:
-    """A minor's signed budget with the subject it is counted against."""
-
     subject_id: str
     budget: DailyChatBudget
 
 
 @dataclass(frozen=True, slots=True)
 class DailyChatAccrual:
-    """An admitted governed session. Close reports it exactly once."""
-
     subject_id: str
     accrual_id: str
 
 
 def governed_daily_chat(profile: VerifiedRuntimeProfile | None) -> GovernedDailyChat | None:
-    """The budget to enforce. Only a minor's signed profile that carries one has it."""
     if profile is None:
         return None
     signed = profile.profile
@@ -87,11 +75,6 @@ class DailyChatClient:
         self._headers = {"X-Memoria-Internal-Token": config.internal_token}
 
     async def admit(self, governed: GovernedDailyChat) -> DailyChatAccrual | DailyChatRefusal:
-        """Admit while today's use is below the budget.
-
-        "unavailable" when Control cannot say: a transport error, a timeout, a
-        non-2xx answer, or a body without a non-negative integer ``used_seconds``.
-        """
         used = await self._used_today(governed.subject_id)
         if used is None:
             return "unavailable"
@@ -100,12 +83,6 @@ class DailyChatClient:
         return DailyChatAccrual(subject_id=governed.subject_id, accrual_id=uuid4().hex)
 
     async def record(self, accrual: DailyChatAccrual, *, elapsed_seconds: int) -> None:
-        """Report one closed session. Never raises.
-
-        Safe to retry because Control keeps the first write per accrual. A report
-        that still fails after the last attempt is logged and lost, so today's
-        total under-counts that session.
-        """
         body = {
             "accrual_id": accrual.accrual_id,
             "subject_id": accrual.subject_id,
@@ -148,12 +125,10 @@ class DailyChatClient:
 
 
 def chat_usage_endpoint(interaction_policy_url: str) -> str:
-    """The ledger on the policy endpoint's host. It shares that endpoint's token and network."""
     return str(httpx.URL(interaction_policy_url).join(CHAT_USAGE_PATH))
 
 
 def build_daily_chat_client(settings: Any) -> DailyChatClient | None:
-    """None without an interaction policy token. Production sessions cannot start without one either."""
     token = settings.internal_token("interaction_policy")
     if not token:
         return None

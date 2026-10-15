@@ -646,11 +646,11 @@ def _minor_session(capability: str, params: FakeConsentParams | None) -> PolicyD
             ),
             consent_evidence=(
                 make_consent(
-                    capability=capability,  # type: ignore[arg-type]
+                    capability=capability,
                     subject_id="person-child",
                     actor_id="person-parent",
                     actor_kind="guardian",
-                    purpose=canonical_runtime_purpose_for_capability(capability),  # type: ignore[arg-type]
+                    purpose=canonical_runtime_purpose_for_capability(capability),
                     params=params,
                     now=now,
                 ),

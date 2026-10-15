@@ -95,8 +95,7 @@ def build_language_model_handler(
 
     No tools are offered to the reply model, so no ``tool_choice`` is sent.
     When ``LLM_FAILOVER_ENABLED`` is on, wrap the primary with a Beijing
-    DashScope backup (``qwen3.8-flash``, thinking off). The models built are
-    the ``chat_llm_plan`` the heartbeat reports for About.
+    DashScope backup (``qwen3.8-flash``, thinking off).
     """
 
     plan = chat_llm_plan(

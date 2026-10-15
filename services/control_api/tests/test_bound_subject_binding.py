@@ -769,8 +769,6 @@ async def test_session_limits_write_is_refused_without_the_postgres_authority(
 def test_a_limits_write_keeps_resets_or_sets_the_daily_budget(
     body: dict[str, object], expected: object
 ) -> None:
-    """App builds from before the daily budget never send it, so omitting it keeps it."""
-
     from services.control_api.app.routes.multi_subject import SessionLimitsRequest
 
     assert SessionLimitsRequest.model_validate(body).daily_chat_change() == expected

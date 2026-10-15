@@ -327,13 +327,6 @@ class MediaSessionProjectionMixin:
         return True
 
     async def _refuse_minor_daily_limit(self, context: _MediaVoiceSession) -> bool:
-        """A minor's wake after today's signed chat budget is spent gets a fixed goodbye.
-
-        Runs after quiet hours. Fails closed: when today's use is unknown, or no
-        client is wired, the wake is refused with the allowlisted connection
-        phrase. An admitted session keeps its accrual for close.
-        """
-
         if context.identity.client_type != "device":
             return False
         governed = governed_daily_chat(context.runtime.mode_policy.runtime_profile)

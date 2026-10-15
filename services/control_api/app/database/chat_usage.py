@@ -1,11 +1,3 @@
-"""Per-child daily device chat usage. The only reader and writer of ``daily_chat_usage``.
-
-A usage day is the calendar day in ``MEMORIA_TIMEZONE`` (Asia/Shanghai) on this
-process's clock, so the reset is local midnight. Only today's total is ever read.
-A session that straddles midnight credits today with the part after midnight,
-and every write prunes earlier days.
-"""
-
 from __future__ import annotations
 
 import math
@@ -34,14 +26,11 @@ class ChatUsageConflictError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class ChatUsageToday:
-    """A subject's device chat so far on ``day``."""
-
     day: date
     seconds: int
 
     @property
     def minutes(self) -> int:
-        """Rounded down, so a budget of N minutes is spent exactly when this reaches N."""
         return self.seconds // 60
 
 
@@ -86,7 +75,6 @@ class ChatUsageLedger:
             connection.execute("DELETE FROM daily_chat_usage WHERE usage_day < ?", (today,))
 
     def used_today(self, subject_id: str) -> ChatUsageToday:
-        """The subject's total on today's local date, 0 without a row."""
         today = self._now().date()
         with self._store.connection() as connection:
             total = connection.execute(
@@ -101,7 +89,6 @@ class ChatUsageLedger:
 
 
 def delete_chat_usage(connection: DbConnection, *, subject_id: str) -> int:
-    """Erase a subject's rows inside the caller's transaction. Returns the count."""
     return connection.execute(
         "DELETE FROM daily_chat_usage WHERE subject_id = ?", (subject_id,)
     ).rowcount

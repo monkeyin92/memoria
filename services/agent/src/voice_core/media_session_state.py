@@ -156,7 +156,6 @@ class MediaVoiceSessionState:
     # and whether it heard the crisis reply (never cut short afterwards).
     started_at: float = field(default_factory=time.monotonic)
     crisis_reply_heard: bool = False
-    # Set when a governed minor wake is admitted; close reports it once.
     daily_chat_accrual: DailyChatAccrual | None = None
     pending_missed_hearing_nudge: bool = False
     missed_hearing_nudge_count: int = 0

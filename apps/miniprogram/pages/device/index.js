@@ -271,7 +271,6 @@ function offlineStoriesFrom(result) {
     .map((item) => ({ id: item.id, title: item.title }));
 }
 
-// 旧服务端不给档位，这时不显示每天上限滑杆，也就不会发 daily_chat_minutes。
 function dailyChatFrom(result) {
   const limits = result.status === "fulfilled" ? result.value : null;
   const used = limits?.today_used_minutes;
@@ -631,7 +630,6 @@ Page({
     if (Object.entries(change).every(([key, value]) => limits[key] === value)) return;
     this.setData({ limitsSaving: true });
     try {
-      // PUT 会替换单次上限与夜间时段，所以每次都带上现值。
       await api.setSessionLimits(binding.device_id, {
         maxSessionMinutes: limits.maxSessionMinutes,
         quietStart: limits.quietStart,

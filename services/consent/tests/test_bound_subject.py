@@ -383,7 +383,7 @@ async def test_update_session_limits_keeps_sets_or_resets_the_daily_budget(
     parent, child_id, binding_id = await _parent_and_child(identity)
     clock = [NOW]
     service = BoundSubjectConsentService(
-        store=_AsyncStore(),  # type: ignore[arg-type]
+        store=_AsyncStore(),
         identity=identity,
         now=lambda: clock[0],
     )

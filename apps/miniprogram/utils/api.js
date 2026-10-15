@@ -1340,7 +1340,6 @@ function setSessionLimits(deviceId, { maxSessionMinutes, quietStart, quietEnd, d
     data: {
       max_session_minutes: maxSessionMinutes,
       quiet_hours: quietStart && quietEnd ? { start: quietStart, end: quietEnd } : null,
-      // 不传即保留服务端已存的每天上限。
       ...(dailyChatMinutes === undefined ? {} : { daily_chat_minutes: dailyChatMinutes }),
     },
   });

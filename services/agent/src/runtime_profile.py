@@ -460,12 +460,7 @@ def parse_runtime_profile(
 
 
 def _session_limits(signed: object) -> dict[str, Any]:
-    """The signed MAX_SESSION_SECONDS / QUIET_HOURS parameters, if present.
-
-    Policy signs the daily chat budget into the MAX_SESSION_SECONDS extras. A
-    malformed budget raises, which rejects the profile like any other
-    malformed parameter.
-    """
+    """The signed MAX_SESSION_SECONDS / QUIET_HOURS parameters, if present."""
 
     limits: dict[str, Any] = {}
     for item in getattr(signed, "obligations", ()):

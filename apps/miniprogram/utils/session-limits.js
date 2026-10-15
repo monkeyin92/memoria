@@ -1,14 +1,7 @@
-/*
- * 孩子模式的使用时段（P0-04 D3）：监护人设定的夜间休息时间、单次时长与每天上限。
- * 只读已签名 Runtime Profile 里的义务（QUIET_HOURS / MAX_SESSION_SECONDS），
- * 这就是设备实际执行的值；profile 无效、不是未成年人或缺义务时不展示。
- */
-
 const QUIET_HOUR_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 // 设备按北京时间执行休息时段（agent 的 MEMORIA_TIMEZONE 默认 Asia/Shanghai）。
 const DEVICE_UTC_OFFSET_MINUTES = 8 * 60;
 const MAX_SESSION_MINUTES_CAP = 60;
-// 与 services/common/daily_chat_limit.py 的 DAILY_CHAT_SECONDS_KEY 一致，Python 测试会读这一行。
 const DAILY_CHAT_SECONDS_KEY = "daily_chat_seconds";
 
 function obligationParams(profile, code) {
@@ -17,7 +10,6 @@ function obligationParams(profile, code) {
   return hit && hit.params && typeof hit.params === "object" ? hit.params : null;
 }
 
-/* 旧服务端不签这个键，此时为 null。 */
 function dailyChatMinutesFrom(params) {
   const extras = Array.isArray(params?.extras) ? params.extras : [];
   const pair = extras.find((item) => Array.isArray(item) && item[0] === DAILY_CHAT_SECONDS_KEY);

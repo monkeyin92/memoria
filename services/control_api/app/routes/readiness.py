@@ -311,7 +311,6 @@ def _agent_state(request: Request, settings: ControlSettings) -> dict[str, objec
 
 
 def agent_chat_llm_providers(request: Request) -> list[ChatLlmFamily]:
-    """The chat model families the voice agent last reported building. [] before its first heartbeat."""
     heartbeat = cast(AgentHeartbeat | None, getattr(request.app.state, "agent_heartbeat", None))
     return [] if heartbeat is None else list(heartbeat.chat_llm_providers)
 

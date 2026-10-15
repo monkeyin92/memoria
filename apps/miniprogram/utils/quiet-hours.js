@@ -4,7 +4,6 @@
  * than 12 hours ask for an explicit confirm before submit.
  */
 
-// The window services/policy/engine.py signs by default. A Python test reads this line.
 const DEFAULT_QUIET_HOURS = Object.freeze({ start: "21:00", end: "07:00" });
 const MIN_USUAL_MINUTES = 60;
 const MAX_USUAL_MINUTES = 12 * 60;

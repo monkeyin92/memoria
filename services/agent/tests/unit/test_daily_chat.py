@@ -1,5 +1,3 @@
-"""The agent's side of a minor's daily chat budget: the ledger client and the close report."""
-
 from __future__ import annotations
 
 import json
@@ -208,8 +206,6 @@ def _settings(token: str) -> SimpleNamespace:
 
 
 async def _close_minor_session(accrual: DailyChatAccrual | None) -> tuple[list[Any], list[int]]:
-    """Close a minor's session after it ran 412.2 seconds. Returns the reports and,
-    for each recap, how many reports Control had already received."""
     identity = SessionIdentity("daily-chat-close", account_id="parent")
     bridge = MediaBridgeGrpcServer()
     open_bridge_connection(bridge, identity)

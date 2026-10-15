@@ -318,12 +318,7 @@ def _obligations(
 def _session_params(
     code: PolicyObligationCode, consent: ConsentEvidencePort | None
 ) -> GeneratedObligationParams | None:
-    """The guardian's own session limits from the binding consent (P0-04 D3).
-
-    MAX_SESSION_SECONDS always carries the daily chat budget in its extras.
-    Policy attaches that obligation only to a minor's chat, tutor and
-    english_practice, which are exactly the sessions the budget governs.
-    """
+    """The guardian's own session limits from the binding consent (P0-04 D3)."""
 
     params = getattr(consent, "params", None)
     max_seconds = getattr(params, "max_session_seconds", None)
