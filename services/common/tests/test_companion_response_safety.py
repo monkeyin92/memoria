@@ -100,6 +100,38 @@ def test_forbidden_copy_stays_at_thirty_nine_prohibited_terms() -> None:
     assert len(PROHIBITED_CONTENT_TERMS) == 39
 
 
+_IDENTITY_LIST = (
+    "你是谁",
+    "你到底是谁",
+    "你是什么",
+    "你叫什么",
+    "你叫什么名字",
+    "你叫啥",
+    "你叫啥名字",
+    "你有名字吗",
+    "你是真人吗",
+    "你是不是真人",
+    "你是真的人吗",
+    "你是人吗",
+    "你是不是人",
+    "你是机器人吗",
+    "你是不是机器人",
+    "你是AI吗",
+)
+_AFFECTION_LIST = (
+    "你喜欢我吗",
+    "你喜不喜欢我",
+    "你爱我吗",
+    "你爱不爱我",
+    "你想我吗",
+    "你想不想我",
+    "你会想我吗",
+    "你是我的朋友吗",
+    "你是我的好朋友吗",
+)
+_TRAILING_PARTICLES = ("", "呀", "啊", "呢", "嘛", "哦")
+
+
 def test_identity_and_affection_fixed_replies_have_exact_product_copy() -> None:
     assert NAMELESS_IDENTITY_REPLY == (
         "我是 AI 助手，不是真人，可以陪你聊天、讲故事。你今天想聊什么呀？"
@@ -109,54 +141,49 @@ def test_identity_and_affection_fixed_replies_have_exact_product_copy() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    "query",
-    (
-        "你是谁",
-        "你是谁？",
-        "你叫什么名字",
-        "你叫什么名字？",
-        "你是真人吗",
-        "你是真人吗？",
-        "你是人吗",
-        "你是人吗？",
-        "你是机器人吗",
-        "你是机器人吗？",
-    ),
-)
-def test_closed_identity_queries_use_nameless_fixed_reply(query: str) -> None:
-    assert (
-        fixed_companion_reply(
-            query=query,
-            is_companion=True,
-            display_name="桃喜",
-            style_description="轻快回应",
+@pytest.mark.parametrize("base", _IDENTITY_LIST)
+@pytest.mark.parametrize("particle", _TRAILING_PARTICLES)
+def test_closed_identity_queries_use_nameless_fixed_reply(
+    base: str, particle: str
+) -> None:
+    for query in (base + particle, base + particle + "？", "  " + base + particle + "。"):
+        assert (
+            fixed_companion_reply(
+                query=query,
+                is_companion=True,
+                display_name="桃喜",
+                style_description="轻快回应",
+            )
+            == NAMELESS_IDENTITY_REPLY
         )
-        == NAMELESS_IDENTITY_REPLY
-    )
 
 
-@pytest.mark.parametrize(
-    "query",
-    (
-        "你喜欢我吗",
-        "你喜欢我吗？",
-        "你爱我吗",
-        "你爱我吗？",
-        "你想我吗",
-        "你想我吗？",
-    ),
-)
-def test_closed_affection_queries_use_affection_fixed_reply(query: str) -> None:
-    assert (
-        fixed_companion_reply(
-            query=query,
-            is_companion=True,
-            display_name="桃喜",
-            style_description="轻快回应",
+@pytest.mark.parametrize("base", ("你是AI吗", "你是ai吗", "你是Ai吗"))
+@pytest.mark.parametrize("particle", _TRAILING_PARTICLES)
+def test_identity_ai_query_is_case_insensitive(base: str, particle: str) -> None:
+    assert _fixed_reply(base + particle) == NAMELESS_IDENTITY_REPLY
+
+
+def test_repeated_trailing_particles_still_match() -> None:
+    assert _fixed_reply("你是谁呀啊呢") == NAMELESS_IDENTITY_REPLY
+    assert _fixed_reply("你喜欢我吗嘛哦呀") == AFFECTION_FIXED_REPLY
+
+
+@pytest.mark.parametrize("base", _AFFECTION_LIST)
+@pytest.mark.parametrize("particle", _TRAILING_PARTICLES)
+def test_closed_affection_queries_use_affection_fixed_reply(
+    base: str, particle: str
+) -> None:
+    for query in (base + particle, base + particle + "？"):
+        assert (
+            fixed_companion_reply(
+                query=query,
+                is_companion=True,
+                display_name="桃喜",
+                style_description="轻快回应",
+            )
+            == AFFECTION_FIXED_REPLY
         )
-        == AFFECTION_FIXED_REPLY
-    )
 
 
 def test_fixed_replies_never_claim_love_or_best_friend() -> None:
@@ -169,13 +196,16 @@ def test_fixed_replies_never_claim_love_or_best_friend() -> None:
     "query",
     (
         "你是千问吗？",
-        "你是什么",
-        "你是不是真人",
-        "你喜不喜欢我",
         "who are you",
+        "你是真人",
+        "你到底喜欢我吗",
+        "你是我朋友吗",
+        "你有没有名字",
+        "你是不是AI",
+        "你会不会想我",
     ),
 )
-def test_nearby_identity_or_affection_wording_is_not_a_fixed_reply(query: str) -> None:
+def test_non_list_identity_or_affection_wording_is_not_a_fixed_reply(query: str) -> None:
     assert _fixed_reply(query) is None
 
 

@@ -183,23 +183,42 @@ _EXPLICIT_SELF_HARM_ENGLISH_RE = re.compile(
     r"how (?:can|do|should) i (?:kill|hurt) myself"
     r")(?![a-z])"
 )
-# Closed product sets: normalized query (punctuation stripped) must match exactly.
+# Closed product sets: match after punctuation/whitespace strip, lowercasing,
+# and repeated trailing-particle strip (呀/啊/呢/嘛/哦). AI/ai is case-folded.
 _IDENTITY_FIXED_QUERIES: Final[frozenset[str]] = frozenset(
     (
         "你是谁",
+        "你到底是谁",
+        "你是什么",
+        "你叫什么",
         "你叫什么名字",
+        "你叫啥",
+        "你叫啥名字",
+        "你有名字吗",
         "你是真人吗",
+        "你是不是真人",
+        "你是真的人吗",
         "你是人吗",
+        "你是不是人",
         "你是机器人吗",
+        "你是不是机器人",
+        "你是ai吗",
     )
 )
 _AFFECTION_FIXED_QUERIES: Final[frozenset[str]] = frozenset(
     (
         "你喜欢我吗",
+        "你喜不喜欢我",
         "你爱我吗",
+        "你爱不爱我",
         "你想我吗",
+        "你想不想我",
+        "你会想我吗",
+        "你是我的朋友吗",
+        "你是我的好朋友吗",
     )
 )
+_TRAILING_PARTICLES: Final[frozenset[str]] = frozenset("呀啊呢嘛哦")
 _FIXED_REPLY_FORBIDDEN_PHRASES: Final[tuple[str, ...]] = (
     "我喜欢你",
     "我爱你",
@@ -208,7 +227,10 @@ _FIXED_REPLY_FORBIDDEN_PHRASES: Final[tuple[str, ...]] = (
 
 
 def _normalize_query(query: str) -> str:
-    return re.sub(r"[\s，。！？、,.!?：:\-—_]+", "", query).lower()
+    text = re.sub(r"[\s，。！？、,.!?：:\-—_]+", "", query).lower()
+    while text and text[-1] in _TRAILING_PARTICLES:
+        text = text[:-1]
+    return text
 
 
 def companion_safety_decision(query: str) -> SafetyDecision:

@@ -31,6 +31,8 @@ def test_voice_prompt_is_nameless_and_redirects_preference_questions() -> None:
     assert "没有个人名字" in VOICE_SYSTEM_PROMPT
     assert "自称只用「我」" in VOICE_SYSTEM_PROMPT
     assert NAMELESS_IDENTITY_REPLY in VOICE_SYSTEM_PROMPT
+    assert "固定清单外" in VOICE_SYSTEM_PROMPT
+    assert "必须明确说你是 AI、不是真人" in VOICE_SYSTEM_PROMPT
     assert "没有眼睛看颜色" in VOICE_SYSTEM_PROMPT
     assert "不要说“我也喜欢”" in VOICE_SYSTEM_PROMPT
     assert "机器人名称" not in VOICE_SYSTEM_PROMPT
