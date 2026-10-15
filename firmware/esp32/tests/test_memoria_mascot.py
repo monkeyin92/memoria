@@ -623,8 +623,9 @@ def test_board_wires_the_mascot_display() -> None:
     display = (BOARD_DIR / "memoria_mascot_display.cc").read_text(encoding="utf-8")
     assert "bg_image_src" in display
     assert "emoji_box_, LV_OBJ_FLAG_HIDDEN" in display
-    # Below every audio task: AFE 3, Opus 5, output 6, input 8.
-    assert '"mascot_anim", 6144, this, 2,' in display
+    assert '"mascot_anim", 6144, this, 1,' in display
+    assert "brand_mark.mma" in display
+    assert "scene_->SetBrand(&brand_)" in display
     # The audio tasks' level taps drive the mouth and the glow: drained inside the display lock on every
     # frame (lit or not, so nothing stale plays back after the screen was off) and handed to the scene
     # before it renders.

@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -951,6 +952,73 @@ def test_decode_queue_overflow_is_not_a_terminal_playback_error() -> None:
     queue_drop = additions[additions.index("kServerPacketQueueFull") :]
     queue_drop = queue_drop[: queue_drop.index("NotifyPlaybackDecodeError()")]
     assert "return;" in queue_drop
+
+
+ENCODE_DROP_LOG = "Encode queue is full, dropping oldest frame (dropped %lu so far)"
+_ENCODE_QUEUE_DEPTH = re.compile(r"MAX_ENCODE_TASKS_IN_QUEUE(?:\s+|\s*=\s*)(\d+)")
+
+
+def _pinned(text: str, name: str, handle: str) -> tuple[int, int]:
+    pattern = re.compile(
+        rf'"{re.escape(name)}",\s*[^,]+,\s*[^,]+,\s*(\d+)\s*,\s*'
+        rf"{re.escape(handle)}\s*,\s*(\d+)"
+    )
+    matches = list(pattern.finditer(text))
+    assert len(matches) == 1, (name, len(matches))
+    return int(matches[0].group(1)), int(matches[0].group(2))
+
+
+def test_memoria_opus_outranks_mascot() -> None:
+    display = (
+        Path(__file__).parents[1]
+        / "overlay"
+        / "files"
+        / "main"
+        / "boards"
+        / "memoria"
+        / "esp-vocat"
+        / "memoria_mascot_display.cc"
+    ).read_text(encoding="utf-8")
+    opus_prio, opus_core = _pinned(PATCH_0023, "opus_codec", "&opus_codec_task_handle_")
+    output_prio, output_core = _pinned(PATCH_0023, "audio_output", "&audio_output_task_handle_")
+    mascot_prio, mascot_core = _pinned(display, "mascot_anim", "&task_")
+    assert opus_prio > mascot_prio
+    assert (opus_prio, opus_core) == (5, 1)
+    assert (output_prio, output_core) == (6, 1)
+    assert (mascot_prio, mascot_core) == (1, 1)
+    assert '}, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_);' in PATCH_0023
+
+
+def test_encode_drop_log_and_queue_depth_are_not_patched_away() -> None:
+    encode_drop_gate = "now - last_encode_drop_log_time_ >= 1000000"
+    patches = sorted(Path(__file__).parents[1].joinpath("overlay", "patches").glob("*.patch"))
+    saw_queue_depth = False
+    for patch_path in patches:
+        text = patch_path.read_text(encoding="utf-8")
+        removed = [
+            line[1:]
+            for line in text.splitlines()
+            if line.startswith("-") and not line.startswith("---")
+        ]
+        added = [
+            line[1:]
+            for line in text.splitlines()
+            if line.startswith("+") and not line.startswith("+++")
+        ]
+        removed_text = "\n".join(removed)
+        added_text = "\n".join(added)
+        assert ENCODE_DROP_LOG not in removed_text
+        assert ENCODE_DROP_LOG not in added_text
+        assert "encode_drop_count" not in removed_text
+        assert "last_encode_drop_log_time_" not in removed_text
+        assert encode_drop_gate not in removed_text
+        for line in text.splitlines():
+            match = _ENCODE_QUEUE_DEPTH.search(line)
+            if match is None:
+                continue
+            saw_queue_depth = True
+            assert match.group(1) == "2", line
+    assert saw_queue_depth
 
 
 def test_generation_zero_has_no_valid_playback() -> None:
