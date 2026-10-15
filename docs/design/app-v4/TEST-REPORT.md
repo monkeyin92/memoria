@@ -184,7 +184,17 @@ content: 陪孩子聊天、讲故事的 AI 助手。
 showCancel: false, confirmText: 知道了
 ```
 
-The same file has a flag-on case. With `LLM_FAILOVER_ENABLED` set to `true` in the harness config, the modal adds one line under DeepSeek. That line is 「备用对话大模型：通义千问（算法备案号 网信算备330110507206401230035号，模型备案号 ZheJiang-TongYiQianWen-20230901）」. If the injected config omits `LLM_FAILOVER_ENABLED`, the modal stays on the three-line DeepSeek text.
+The same file has a flag-on case. When the harness config sets `LLM_FAILOVER_ENABLED` to `true`, the develop-build body is these five lines.
+
+```text
+陪孩子聊天、讲故事的 AI 助手。
+对话可能由 DeepSeek 或阿里云通义千问生成
+DeepSeek（备案号 Beijing-DeepseekChat-202404280016）
+通义千问（算法备案号 网信算备330110507206401230035号，模型备案号 ZheJiang-TongYiQianWen-20230901）
+开发版
+```
+
+If the injected config omits `LLM_FAILOVER_ENABLED`, the modal stays on the three-line DeepSeek text.
 
 The device card reads 孩子的星澜 with 已绑定设备, not 小乐 with 在线, because the profile page does not fetch presence. The two bottom bands are the 账号 group with 账号编号, 退出当前设备, 退出所有设备 and 永久注销, which the design does not show. The design's 「绑定新设备请在 Memoria 小程序中完成」 is gone, because this is the mini program and binding lives on the 设备 tab. The version line reads 「版本 x.y.z」 in a release build and 开发版 or 体验版 before release, never 「版本 0.1 设计稿」.
 
@@ -422,7 +432,7 @@ Each v4 test file loads the live page through the harness, drives its handlers t
 - A guest still gets privacy, feedback and about, and 微信登录 opens the login page.
 - 帮助与反馈 is WeChat's native feedback button.
 - 关于 names the filed chat model and the release version, or the build channel before release. With the shipped default it pins the three-line modal, including 「对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）」. That default content does not contain qwen, 通义, or 千问.
-- With `LLM_FAILOVER_ENABLED` true in the harness config, 关于 adds the 通义千问 backup line under DeepSeek, with the full 算法备案号 and 模型备案号.
+- With `LLM_FAILOVER_ENABLED` true in the harness config, 关于 shows five lines. After the tagline they are 「对话可能由 DeepSeek 或阿里云通义千问生成」, 「DeepSeek（备案号 Beijing-DeepseekChat-202404280016）」, 「通义千问（算法备案号 网信算备330110507206401230035号，模型备案号 ZheJiang-TongYiQianWen-20230901）」, and 开发版.
 - When the injected config omits `LLM_FAILOVER_ENABLED`, 关于 stays on the three-line DeepSeek modal.
 - 授权与隐私说明 opens the consent page when raw-audio consent is open, and the WeChat privacy guideline otherwise.
 

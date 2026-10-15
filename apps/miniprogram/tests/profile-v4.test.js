@@ -142,17 +142,23 @@ test("关于 names the filed chat model and the release version, or the build ch
   }
 });
 
-test("with LLM_FAILOVER_ENABLED on, 关于 lists the 通义千问 backup filing under DeepSeek", async () => {
+test("with LLM_FAILOVER_ENABLED on, 关于 names DeepSeek and 通义千问", async () => {
   const harness = await openProfile({ ...fx.authed(), config: { ...SHIPPED_CONFIG, LLM_FAILOVER_ENABLED: true } });
   try {
     harness.page.openAbout();
-    assert.equal(
-      callsTo(harness, "showModal")[0].content,
-      "陪孩子聊天、讲故事的 AI 助手。\n" +
-        "对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）\n" +
-        "备用对话大模型：通义千问（算法备案号 网信算备330110507206401230035号，模型备案号 ZheJiang-TongYiQianWen-20230901）\n" +
+    const shown = callsTo(harness, "showModal")[0];
+    assert.deepEqual(shown, {
+      title: "关于 Memoria",
+      content:
+        "陪孩子聊天、讲故事的 AI 助手。\n" +
+        "对话可能由 DeepSeek 或阿里云通义千问生成\n" +
+        "DeepSeek（备案号 Beijing-DeepseekChat-202404280016）\n" +
+        "通义千问（算法备案号 网信算备330110507206401230035号，模型备案号 ZheJiang-TongYiQianWen-20230901）\n" +
         "开发版",
-    );
+      showCancel: false,
+      confirmText: "知道了",
+    });
+    assert.doesNotMatch(shown.content, /备用/);
   } finally {
     harness.restore();
   }
