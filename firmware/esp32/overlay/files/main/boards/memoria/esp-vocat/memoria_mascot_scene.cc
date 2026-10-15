@@ -8,6 +8,7 @@
 #include <cstdlib>
 
 #include "memoria_mascot_scene.h"
+#include "memoria_encode_budget.h"
 
 #include <cmath>
 #include <cstring>
@@ -431,6 +432,13 @@ uint8_t MascotScene::caption_mix(uint32_t now_ms) const {
 }
 
 uint32_t MascotScene::FrameIntervalMs(uint32_t now_ms) const {
+    switch (phase_) {
+        case ScenePhase::kListening:
+        case ScenePhase::kThinking:
+            return MEMORIA_UPLINK_MASCOT_INTERVAL_MS;
+        default:
+            break;
+    }
     const bool moving = motion_ != Motion::kNone || now_ms < wobble_until_ms_ ||
                         pending_pose_ != MascotFrame::kCount ||
                         now_ms - caption_since_ms_ < kCaptionMs;

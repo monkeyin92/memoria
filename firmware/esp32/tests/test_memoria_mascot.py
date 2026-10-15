@@ -84,7 +84,7 @@ def test_scripted_day_redraws_exactly(harness, preview) -> None:
     stats = _play(harness, preview.TIMELINE)
     assert stats["mismatches"] == 0
     # The mascot breathes and sways in sub-pixel steps, so in a lit state nearly every 40 ms tick redraws its
-    # box (test_every_state_moves_visibly_20_frames_a_second counts what shows). What stays bounded is the
+    # box (test_uplink_states_slow_down_and_the_rest_stay_near_20_frames counts what shows). What stays bounded is the
     # area: the mascot's box plus the ring, never a full-screen repaint every frame.
     assert stats["redraw_px"] < stats["frame_count"] * 360 * 360 * 0.7
     # A redraw of the ring alone leaves the middle of the screen alone, so composing never costs more than
@@ -92,7 +92,7 @@ def test_scripted_day_redraws_exactly(harness, preview) -> None:
     assert stats["composed_px"] < stats["redraw_px"] * 0.95
 
 
-def test_every_state_moves_visibly_20_frames_a_second(harness, preview) -> None:
+def test_uplink_states_slow_down_and_the_rest_stay_near_20_frames(harness, preview) -> None:
     """TODOLIST M-6: the mascot used to hold still for most of the second (4 visible frames in idle and
     listening, 7-8 in thinking and speaking, measured on this same script).
 
@@ -102,10 +102,16 @@ def test_every_state_moves_visibly_20_frames_a_second(harness, preview) -> None:
     """
     stats = _play(harness, preview.LIVELINESS_DAY)
     assert stats["mismatches"] == 0
+    uplink = {"listening", "thinking"}
     for state, (start, end) in preview.LIVELINESS_WINDOWS.items():
         per_second = preview.visible_frames_per_second(stats["frames"], start, end)
-        assert sorted(per_second)[len(per_second) // 2] >= 20, (state, per_second)
-        assert min(per_second) >= 18, (state, per_second)
+        if state in uplink:
+            assert sorted(per_second)[len(per_second) // 2] >= 4, (state, per_second)
+            assert min(per_second) >= 4, (state, per_second)
+            assert max(per_second) <= 6, (state, per_second)
+        else:
+            assert sorted(per_second)[len(per_second) // 2] >= 20, (state, per_second)
+            assert min(per_second) >= 18, (state, per_second)
 
 
 def test_the_display_invalidates_everything_the_scene_composed(harness, preview) -> None:
