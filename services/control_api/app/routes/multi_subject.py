@@ -958,22 +958,16 @@ class SessionLimitsRequest(BaseModel):
 
 
 class SessionLimitsView(BaseModel):
-    """What the guardian set, in the shape PUT accepts, plus a usage slot."""
-
     model_config = ConfigDict(extra="forbid")
 
     max_session_minutes: int | None
     quiet_hours: QuietHoursRequest | None
-    #: Always null. Nothing tallies minutes per day, and the device enforces
-    #: MAX_SESSION_SECONDS one session at a time.
     today_used_minutes: None = None
 
 
 async def _session_limits_binding(
     request: Request, *, device_id: str, user_id: str, now: datetime
 ) -> BindingManifest:
-    """The parent_for_child binding whose limits this owner or admin may read or replace."""
-
     try:
         manifest = await _runtime(request).require_binding_member(
             device_id=device_id, user_id=user_id, now=now
