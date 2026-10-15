@@ -94,6 +94,48 @@ test("opening from anywhere else stays at the archive", async () => {
   }
 });
 
+test("a logged-in parent whose memory read is refused does not see the raw login line", async () => {
+  const { ApiError } = require("../utils/api");
+  const harness = await openChildMemory({
+    getChildSessionSummaries: async () => {
+      throw new ApiError("请先使用微信登录。", { status: 401 });
+    },
+  });
+  try {
+    assert.equal(harness.page.data.authenticated, false);
+    assert.equal(harness.page.data.error, "");
+    const text = visibleText(renderPage("pages/child-memory/index", harness.page.data, { tabBar: false }));
+    assert.match(text, /请先登录 登录后即可打开孩子的记忆档案/);
+    assert.doesNotMatch(text, /请先使用微信登录/);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("a guest return clears a stale login error instead of leaving it above the empty state", async () => {
+  const options = fx.guest();
+  options.api.restoreWechatIdentity = async () => {
+    throw Object.assign(new Error("no session"), { code: "no_session" });
+  };
+  const harness = loadPage("pages/child-memory/index", options);
+  try {
+    await harness.page.onLoad(CHILD);
+    harness.page.setData({
+      error: "请先使用微信登录。",
+      authenticated: true,
+      loadState: "error",
+    });
+    await harness.page.onShow();
+    assert.equal(harness.page.data.authenticated, false);
+    assert.equal(harness.page.data.error, "");
+    const text = visibleText(renderPage("pages/child-memory/index", harness.page.data, { tabBar: false }));
+    assert.match(text, /请先登录 登录后即可打开孩子的记忆档案/);
+    assert.doesNotMatch(text, /请先使用微信登录/);
+  } finally {
+    harness.restore();
+  }
+});
+
 test("the home memory card opens the summaries section", async () => {
   const harness = loadPage("pages/home/index", fx.authed());
   try {

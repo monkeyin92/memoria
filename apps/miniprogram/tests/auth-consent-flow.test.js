@@ -135,6 +135,23 @@ test("a failed registration returns to consent for a fresh phone authorization",
   }
 });
 
+test("a request timeout on the consent screen shows a friendly network line", async () => {
+  const realApi = require("../utils/api");
+  const harness = loadPage("pages/auth/index", { api: realApi });
+  global.wx.login = (options) => options.success({ code: "login-code" });
+  global.wx.request = (options) => options.fail({ errMsg: "request:fail timeout" });
+  try {
+    await harness.run({ redirect: "/pages/home/index", reason: "view_dashboard" });
+    assert.equal(harness.page.data.error, "网络不太好，请稍后再试。");
+    const text = visibleText(renderPage("pages/auth/index", harness.page.data));
+    assert.match(text, /网络不太好，请稍后再试。/);
+    assert.doesNotMatch(harness.page.data.error, /request:fail/);
+    assert.doesNotMatch(text, /request:fail/);
+  } finally {
+    harness.restore();
+  }
+});
+
 test("the profile step's back button returns to consent and drops the held code", async () => {
   const { harness, page } = await openAuth();
   try {
