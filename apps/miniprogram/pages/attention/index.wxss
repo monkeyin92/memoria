@@ -1,0 +1,115 @@
+@import "../../styles/trial-theme.wxss";
+
+.attention-card {
+  margin-top: 9px;
+  padding: 24px 24px 16px;
+  border-radius: var(--mp-radius-card-xl);
+  text-align: center;
+}
+
+.attention-mascot {
+  width: 80px;
+  height: 80px;
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--mp-rust-bg);
+}
+
+.attention-mascot-img {
+  display: block;
+  width: 96px;
+  margin-top: 8px;
+  mix-blend-mode: multiply;
+}
+
+.attention-title {
+  display: block;
+  margin-top: 16px;
+  color: var(--mp-ink);
+  font-size: var(--mp-type-heading);
+  font-weight: 700;
+  letter-spacing: -0.4px;
+}
+
+.attention-time {
+  display: block;
+  margin-top: 4px;
+  color: var(--mp-ink-2);
+  font-size: var(--mp-type-body);
+  line-height: var(--mp-lh-body);
+}
+
+.attention-well {
+  display: block;
+  margin-top: 16px;
+  padding: 16px;
+  border-radius: var(--mp-radius-inset);
+  background: var(--mp-rust-bg);
+  color: var(--mp-rust-deep);
+  font-size: var(--mp-type-small);
+  line-height: var(--mp-lh-body);
+  text-align: left;
+}
+
+.attention-tips-title {
+  display: block;
+  margin: 16px 0 8px;
+  color: var(--mp-ink);
+  font-size: var(--mp-type-title);
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+
+.attention-tips {
+  margin-top: 0;
+  padding: 0;
+}
+
+.attention-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 16px;
+}
+
+.attention-tip + .attention-tip {
+  box-shadow: inset 0 1px 0 var(--mp-line);
+}
+
+.attention-tip-num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--mp-fill);
+  color: var(--mp-ink-2);
+  font-size: var(--mp-type-caption);
+  font-weight: 700;
+}
+
+.attention-tip-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.attention-tip-title {
+  display: block;
+  color: var(--mp-ink);
+  font-size: var(--mp-type-body);
+  font-weight: 600;
+}
+
+.attention-tip-sub {
+  display: block;
+  margin-top: 4px;
+  color: var(--mp-ink-2);
+  font-size: var(--mp-type-caption);
+}
+
+.attention-done {
+  margin-top: 16px;
+}

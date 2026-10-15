@@ -1,4 +1,6 @@
 const api = require("../../utils/api");
+const { statusBarStyle } = require("../../utils/nav-inset");
+const { leavePage } = require("../../utils/nav-back");
 const { companions } = require("../../utils/companions");
 const { requireLogin } = require("../../utils/auth-gate");
 const {
@@ -21,6 +23,7 @@ const {
   confirmUnusualQuietHours,
 } = require("../../utils/quiet-hours");
 const guardianPush = require("../../utils/guardian-push");
+const { SUBSCRIPTION_PUSH_ENABLED } = require("../../config");
 const {
   requireCrisisSubscribeBeforeBind,
   requiresCrisisSubscribeBeforeBind,
@@ -119,6 +122,7 @@ function defaultForm(mode, identity) {
 
 Page({
   data: {
+    statusBarStyle: statusBarStyle(),
     step: "loading",
     claimId: "",
     onboardingSessionId: "",
@@ -157,6 +161,11 @@ Page({
     crisisPush: { enabled: false, templateId: "", explanation: "" },
     crisisSubscribeRequired: false,
     crisisSubscribeAccepted: false,
+    subscriptionPushEnabled: SUBSCRIPTION_PUSH_ENABLED,
+  },
+
+  goBack() {
+    leavePage("/pages/profile/index");
   },
 
   onLoad(options = {}) {
@@ -261,7 +270,8 @@ Page({
         mode === "parent_for_child"
           ? nightModeQuietHoursLabel(form.quietHoursStart, form.quietHoursEnd)
           : nightModeQuietHoursLabel(DEFAULT_QUIET_HOURS),
-      submitLabel: requiresCrisisSubscribeBeforeBind(mode) ? "订阅安全提醒" : "提交绑定",
+      submitLabel:
+        SUBSCRIPTION_PUSH_ENABLED && requiresCrisisSubscribeBeforeBind(mode) ? "开启安全提醒" : "提交绑定",
       error: "",
     });
     if (mode === "parent_for_child") {
@@ -378,13 +388,6 @@ Page({
     const key = event.currentTarget.dataset.key;
     const index = Number(event.detail.value);
     this.setData({ [`form.${key}`]: index, error: "" });
-  },
-
-  onPersonaSwipe(event) {
-    const index = Number(event.detail.current);
-    if (!Number.isInteger(index) || index === this.data.personaIndex) return;
-    this._stopPreview();
-    this.setData({ personaIndex: index });
   },
 
   onPersonaTap(event) {
@@ -517,7 +520,8 @@ Page({
       this.setData({ error });
       return;
     }
-    const crisisSubscribeRequired = requiresCrisisSubscribeBeforeBind(this.data.declaredMode);
+    const crisisSubscribeRequired =
+      SUBSCRIPTION_PUSH_ENABLED && requiresCrisisSubscribeBeforeBind(this.data.declaredMode);
     // Preload before the submit tap so requestSubscribeMessage can run in that gesture.
     const crisisPush = crisisSubscribeRequired
       ? await guardianPush.loadCrisisPushConfig(api)
@@ -529,7 +533,8 @@ Page({
       crisisSubscribeRequired,
       crisisPush,
       crisisSubscribeAccepted: false,
-      submitLabel: crisisSubscribeRequired ? "订阅安全提醒" : "提交绑定",
+      subscriptionPushEnabled: SUBSCRIPTION_PUSH_ENABLED,
+      submitLabel: crisisSubscribeRequired ? "开启安全提醒" : "提交绑定",
     });
   },
 
@@ -664,18 +669,13 @@ Page({
     }
   },
 
-  // The binding only sets the device's persona. Home, 设备 and 伙伴 read the
-  // account's companion, so the pick made here must become it too; otherwise
-  // they keep an older companion and the next save there switches the robot
-  // back. Best effort: the binding already succeeded, and the 伙伴 page can
-  // still set it.
   async _adoptPickedCompanion(companionId) {
     const identity = api.currentIdentity();
     if (!identity || !companions.some((item) => item.id === companionId)) return;
     try {
       await api.updateProfile(identity.user_id, { companion_id: companionId });
     } catch {
-      // Keep the binding result; the 伙伴 page remains the way to fix it.
+      return;
     }
   },
 

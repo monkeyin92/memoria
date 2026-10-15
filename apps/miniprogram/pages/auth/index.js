@@ -1,5 +1,8 @@
 const api = require("../../utils/api");
+const { statusBarStyle } = require("../../utils/nav-inset");
+const { leavePage } = require("../../utils/nav-back");
 const { isTabRoute, routeOf } = require("../../utils/tab-routes");
+const { openPrivacyContract } = require("../../utils/privacy-contract");
 
 function reasonText(reason) {
   return {
@@ -18,6 +21,8 @@ function reasonText(reason) {
 
 Page({
   data: {
+    statusBarStyle: statusBarStyle(),
+    step: "consent",
     nickname: "",
     avatarPath: "",
     consented: false,
@@ -26,6 +31,10 @@ Page({
     redirect: "/pages/home/index",
     reasonHint: "",
     needsSalutation: false,
+  },
+
+  goBack() {
+    leavePage("/pages/home/index");
   },
 
   onLoad(options) {
@@ -73,36 +82,26 @@ Page({
     if (avatarPath) this.setData({ avatarPath, error: "" });
   },
 
-  onConsentChange(event) {
-    this.setData({
-      consented: (event.detail.value || []).includes("accepted"),
-      error: "",
-    });
+  toggleConsent() {
+    this.setData({ consented: !this.data.consented, error: "" });
+  },
+
+  backToConsent() {
+    this._phoneCode = "";
+    this.setData({ step: "consent", error: "" });
   },
 
   openPrivacy() {
-    if (typeof wx.openPrivacyContract === "function") {
-      wx.openPrivacyContract({
-        fail: () => this.showPrivacySummary(),
-      });
-      return;
-    }
-    this.showPrivacySummary();
+    openPrivacyContract();
   },
 
-  showPrivacySummary() {
-    wx.showModal({
-      title: "隐私说明",
-      content:
-        "首次登录仅使用微信提供的登录凭证、手机号授权结果，以及你主动选择的昵称和头像来建立账号。未登录浏览不会读取个人回顾或资料。",
-      showCancel: false,
-      confirmText: "知道了",
-    });
+  openGuardianConsent() {
+    wx.navigateTo({ url: "/pages/guardian-consent/index" });
   },
 
   async onGetPhoneNumber(event) {
     if (!this.data.consented) {
-      this.setData({ error: "请先阅读并同意《隐私保护指引》。" });
+      this.setData({ error: "请先阅读并同意《隐私保护指引（草稿）》和《监护人同意书（草稿）》。" });
       return;
     }
     const phoneCode = event.detail?.code;
@@ -110,16 +109,28 @@ Page({
       this.setData({ error: "需要手机号授权才能完成首次登录。" });
       return;
     }
-    const displayName = this.data.nickname.trim();
-    if (this.data.needsSalutation && !displayName) {
+    if (this.data.needsSalutation) {
+      this._phoneCode = phoneCode;
+      this.setData({ step: "profile", error: "" });
+      return;
+    }
+    await this.submitLogin(phoneCode);
+  },
+
+  async submitProfile() {
+    if (!this.data.nickname.trim()) {
       this.setData({ error: "先告诉我怎么称呼你吧。" });
       return;
     }
+    await this.submitLogin(this._phoneCode);
+  },
+
+  async submitLogin(phoneCode) {
     this.setData({ loading: true, error: "" });
     try {
       await api.loginWithWechat({
         phoneCode,
-        displayName,
+        displayName: this.data.nickname.trim(),
       });
       if (this.data.avatarPath) {
         try {
@@ -130,7 +141,9 @@ Page({
       }
       this.finishLogin();
     } catch (error) {
-      this.setData({ error: error?.message || "微信登录未完成，请稍后重试。" });
+      // WeChat phone codes are single use, so a failed login needs a fresh authorization.
+      this._phoneCode = "";
+      this.setData({ step: "consent", error: error?.message || "微信登录未完成，请稍后重试。" });
     } finally {
       this.setData({ loading: false });
     }

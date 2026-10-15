@@ -1,8 +1,5 @@
 {
   "navigationBarTitleText": "自定义人格",
-  "usingComponents": {
-    "page-backdrop": "/components/page-backdrop/index",
-    "glass-icon": "/components/glass-icon/index",
-    "device-screen": "/components/device-screen/index"
-  }
+  "navigationStyle": "custom",
+  "usingComponents": {}
 }

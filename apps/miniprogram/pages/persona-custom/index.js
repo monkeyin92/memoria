@@ -1,6 +1,8 @@
 // 自定义人格创建页（P1-03/P1-04）：名字 + 描述，或手填服务端同一套受控字段。
 // 服务端只接受十一个受控字段（超域值拒绝、不收窄），创建即冻结 v1。
 const api = require("../../utils/api");
+const { statusBarStyle } = require("../../utils/nav-inset");
+const { leavePage } = require("../../utils/nav-back");
 const { requireLogin } = require("../../utils/auth-gate");
 const { companions } = require("../../utils/companions");
 
@@ -88,6 +90,7 @@ function indexOfOption(options, value) {
 
 Page({
   data: {
+    statusBarStyle: statusBarStyle(),
     loading: false,
     loadingError: "",
     personas: [],
@@ -109,6 +112,10 @@ Page({
     rateValue: 100,
   },
 
+  goBack() {
+    leavePage("/pages/profile/index");
+  },
+
   async onShow() {
     if (
       !(await requireLogin({
@@ -127,8 +134,12 @@ Page({
     try {
       const payload = await api.listPersonas();
       if (!api.isAuthEpochCurrent(authEpoch)) return;
+      const personas = Array.isArray(payload?.custom_personas) ? payload.custom_personas : [];
       this.setData({
-        personas: Array.isArray(payload?.custom_personas) ? payload.custom_personas : [],
+        personas: personas.map((item) => ({
+          ...item,
+          voiceName: companions.find((companion) => companion.id === item?.fallback_designed_voice)?.name || "",
+        })),
       });
     } catch (error) {
       if (!api.isAuthEpochCurrent(authEpoch)) return;
@@ -269,7 +280,7 @@ Page({
       wx.showModal({
         title: "删除自定义人格？",
         content: "删除后无法恢复；仍在使用中的话会先让你确认一次。",
-        confirmColor: "#ba4255",
+        confirmColor: "#9A4732",
         success: (result) => resolve(result.confirm),
       });
     });

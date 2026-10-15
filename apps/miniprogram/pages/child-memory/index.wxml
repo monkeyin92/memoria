@@ -1,45 +1,78 @@
-<view class="cm-page trial-page">
-  <view class="cm-hero">
-    <view class="cm-hero-copy">
-      <text class="trial-title">{{headerTitle}}</text>
-      <text class="trial-caption">{{headerCaption}}</text>
-    </view>
-    <face-badge
-      wx:if="{{showHeaderMascot}}"
-      role="{{companionId}}"
-      size="md"
-      mood="happy"
-      plain
-    ></face-badge>
-  </view>
-
-  <text class="cm-privacy">{{privacyLine}}</text>
-  <text class="cm-privacy">{{backupRetentionLine}}</text>
-
-  <view class="cm-tabs">
-    <view
-      class="cm-tab {{activeTab === 'recent' ? 'cm-tab-on' : ''}}"
-      bindtap="showRecent"
-    >近期摘要</view>
-    <view
-      class="cm-tab {{activeTab === 'archive' ? 'cm-tab-on' : ''}}"
-      bindtap="showArchive"
-    >长期记忆</view>
-  </view>
+<view class="cm-page trial-page" style="{{statusBarStyle}}">
+  <text class="eyebrow">长期记住的事</text>
+  <text class="trial-title">{{headerTitle}}</text>
+  <text class="page-lede">机器人长期只记住这三件事，用来更自然地和孩子聊天。</text>
 
   <text wx:if="{{error}}" class="cm-error">{{error}}</text>
   <text wx:if="{{statusBanner}}" class="cm-banner">{{statusBanner}}</text>
 
   <view wx:if="{{!authenticated}}" class="trial-card cm-empty">
     <text class="cm-empty-title">请先登录</text>
-    <text class="cm-empty-copy">登录后即可查看和删除孩子的记忆。</text>
+    <text class="cm-empty-copy">登录后即可打开孩子的记忆档案。</text>
   </view>
 
-  <view wx:elif="{{loadState === 'loading' || loading}}" class="trial-card">
+  <view wx:elif="{{loadState === 'loading' || loading}}" class="trial-card cm-first">
     <text class="cm-loading">正在读取…</text>
   </view>
 
-  <block wx:elif="{{activeTab === 'recent'}}">
+  <block wx:else>
+    <block wx:if="{{archiveConsent.active}}">
+      <view wx:if="{{!archiveFlat.length}}" class="cm-empty-state">
+        <face-badge role="{{companionId}}" size="empty" mood="thinking" plain></face-badge>
+        <text class="cm-empty-title">暂无长期记忆</text>
+        <text class="cm-empty-copy">{{emptyArchiveOn}}</text>
+      </view>
+
+      <block wx:else>
+        <view class="trial-card trial-card-xl cm-archive cm-first">
+          <view wx:for="{{archiveGroups}}" wx:key="field" class="cm-field">
+            <mp-icon name="{{item.field === 'appellation' ? 'tag' : item.field === 'preference' ? 'heart' : 'paw'}}"></mp-icon>
+            <view class="cm-field-body">
+              <text class="cm-field-label">{{item.label}}</text>
+              <view wx:for="{{item.items}}" wx:for-item="fact" wx:key="recordId" class="cm-fact">
+                <view class="cm-fact-copy">
+                  <text class="cm-fact-text">{{fact.text}}</text>
+                  <text class="cm-meta">{{fact.dateLabel}}</text>
+                </view>
+                <view class="cm-delete" data-record-id="{{fact.recordId}}" bindtap="askDeleteArchive" aria-label="删除">
+                  <view class="cm-trash" aria-hidden="true">
+                    <view class="cm-trash-lid"></view>
+                    <view class="cm-trash-body"></view>
+                  </view>
+                </view>
+              </view>
+            </view>
+          </view>
+        </view>
+
+        <view class="trial-card cm-note">
+          <view class="cm-note-art" aria-hidden="true"><image src="/assets/ui/v4/mascot-curious.jpg" mode="widthFix"></image></view>
+          <text class="cm-note-text">除这三项外，不长期保存其他信息。</text>
+        </view>
+      </block>
+    </block>
+
+    <view class="trial-card cm-consent {{archiveConsent.active ? '' : 'cm-first'}}">
+      <view class="cm-consent-row">
+        <view class="cm-consent-copy">
+          <text class="cm-consent-title">{{archiveConsent.label}}</text>
+          <text class="cm-consent-desc">{{archiveConsent.description}}</text>
+        </view>
+        <switch
+          checked="{{archiveConsent.active}}"
+          color="#4A52C9"
+          disabled="{{working}}"
+          bindchange="onArchiveConsentChange"
+          aria-label="长期记忆"
+        />
+      </view>
+    </view>
+
+    <view wx:if="{{archiveConsent.active && archiveFlat.length}}" class="cm-footer">
+      <text class="cm-muted-link" bindtap="askClearArchive">清空长期记忆</text>
+    </view>
+
+    <text id="cm-recent" class="section-title">近期摘要</text>
     <view wx:if="{{!summaries.length}}" class="cm-empty-state">
       <face-badge role="{{companionId}}" size="empty" mood="thinking" plain></face-badge>
       <text class="cm-empty-title">{{emptyTitle}}</text>
@@ -70,69 +103,12 @@
       </view>
 
       <view class="cm-footer">
-        <text class="cm-muted-link" bindtap="askClearSummaries">清空全部</text>
+        <text class="cm-muted-link" bindtap="askClearSummaries">清空全部摘要</text>
       </view>
     </block>
   </block>
 
-  <block wx:elif="{{activeTab === 'archive'}}">
-    <view class="trial-card cm-consent">
-      <view class="cm-consent-row">
-        <view class="cm-consent-copy">
-          <text class="cm-consent-title">{{archiveConsent.label}}</text>
-          <text class="cm-consent-desc">{{archiveConsent.description}}</text>
-        </view>
-        <switch
-          checked="{{archiveConsent.active}}"
-          color="#E2702A"
-          disabled="{{working}}"
-          bindchange="onArchiveConsentChange"
-          aria-label="长期记忆"
-        />
-      </view>
-    </view>
-
-    <block wx:if="{{!archiveConsent.active}}">
-    </block>
-
-    <view wx:elif="{{!archiveFlat.length}}" class="cm-empty-state">
-      <face-badge role="{{companionId}}" size="empty" mood="thinking" plain></face-badge>
-      <text class="cm-empty-title">暂无长期记忆</text>
-      <text class="cm-empty-copy">{{emptyArchiveOn}}</text>
-    </view>
-
-    <block wx:else>
-      <view wx:for="{{archiveGroups}}" wx:key="field" class="cm-group">
-        <text class="cm-group-title">{{item.label}}</text>
-        <view
-          wx:for="{{item.items}}"
-          wx:for-item="fact"
-          wx:key="recordId"
-          class="trial-card cm-row"
-        >
-          <view class="cm-row-body">
-            <text class="cm-summary-text">{{fact.text}}</text>
-            <text class="cm-meta">{{fact.dateLabel}}</text>
-          </view>
-          <view
-            class="cm-delete"
-            data-record-id="{{fact.recordId}}"
-            bindtap="askDeleteArchive"
-            aria-label="删除"
-          >
-            <view class="cm-trash" aria-hidden="true">
-              <view class="cm-trash-lid"></view>
-              <view class="cm-trash-body"></view>
-            </view>
-          </view>
-        </view>
-      </view>
-
-      <view class="cm-footer">
-        <text class="cm-muted-link" bindtap="askClearArchive">清空全部</text>
-      </view>
-    </block>
-  </block>
+  <text class="cm-privacy">{{privacyLine}}</text>
 
   <view wx:if="{{confirm}}" class="mp-sheet-mask" bindtap="closeConfirm" catchtouchmove="noop"></view>
   <view wx:if="{{confirm}}" class="mp-sheet" catchtap="noop">

@@ -8,9 +8,11 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.js",
+    "check:forbidden-copy": "node scripts/check-forbidden-ui-copy.js",
     "upload:test": "node ../../scripts/upload_miniprogram_test.js"
   },
   "devDependencies": {
-    "miniprogram-ci": "^2.1.31"
+    "miniprogram-ci": "^2.1.31",
+    "puppeteer-core": "^24.43.1"
   }
 }

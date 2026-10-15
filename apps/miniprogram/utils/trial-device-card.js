@@ -1,51 +1,32 @@
-/*
- * Parent home v3 board fields.
- * Limit minutes come from Runtime Profile MAX_SESSION_SECONDS.
- * Used minutes are only shown when a real tally is passed in; otherwise the
- * card shows the daily limit label alone (no fake 0). No battery fields.
- */
-
 const { sessionLimitsFromProfile } = require("./session-limits");
 
 const UNREAD_SAFETY_COPY = "有一条需要你关注的对话";
-const UNREAD_SAFETY_META_SUFFIX = "点按查看";
+const UNREAD_SAFETY_META_SUFFIX = "打开时首页会置顶显示";
 const SAFETY_SUBSCRIBE_HELPER =
-  "可能通过微信推送提醒，打开小程序首页会置顶显示";
-
-function formatQuietHoursLine(sessionLimits) {
-  if (!sessionLimits?.quietStart || !sessionLimits?.quietEnd) return "";
-  return `夜间 ${sessionLimits.quietStart}–${sessionLimits.quietEnd}`;
-}
-
-function usageLabel({ limitMinutes, usedMinutes } = {}) {
-  const limit = Number.isInteger(limitMinutes) && limitMinutes > 0 ? limitMinutes : 30;
-  if (Number.isInteger(usedMinutes) && usedMinutes >= 0) {
-    return `今日已用 / ${limit} 分钟`;
-  }
-  return `每日上限 ${limit} 分钟`;
-}
+  "家长打开小程序时首页会置顶显示";
 
 function buildTrialDeviceCard({ online, runtimeProfile, usedMinutes } = {}) {
   const limits = sessionLimitsFromProfile(runtimeProfile);
-  const limitMinutes =
-    limits?.maxSessionMinutes && limits.maxSessionMinutes > 0 ? limits.maxSessionMinutes : 30;
   const usageKnown = Number.isInteger(usedMinutes) && usedMinutes >= 0;
-  const quietHoursLine = formatQuietHoursLine(limits) || "夜间 21:00–07:00";
   return {
     online: online === true,
     statusPill: online === true ? "在线" : "离线",
     statusLine: `${online === true ? "在线" : "离线"} · 已绑定`,
     usageKnown,
     usageUsedMinutes: usageKnown ? usedMinutes : null,
-    usageLimitMinutes: limitMinutes,
-    usageLabel: usageLabel({
-      limitMinutes,
-      usedMinutes: usageKnown ? usedMinutes : undefined,
-    }),
-    quietHoursLine,
-    quietHoursLabel: limits?.quietHoursLabel || "21:00 – 07:00",
+    usageLimitMinutes: limits?.maxSessionMinutes ?? null,
+    quietHoursLabel: limits?.quietHoursLabel || "",
     nightModeOn: Boolean(limits?.quietStart && limits?.quietEnd),
   };
+}
+
+function alertTimeLabel(occurredAt, now = new Date()) {
+  const at = new Date(typeof occurredAt === "string" ? occurredAt : NaN);
+  if (Number.isNaN(at.getTime())) return "";
+  const clock = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+  return at.toDateString() === now.toDateString()
+    ? `今天 ${clock}`
+    : `${at.getMonth() + 1}月${at.getDate()}日 ${clock}`;
 }
 
 function pinnedAlertMeta({ childName, occurredAt } = {}) {
@@ -87,11 +68,10 @@ module.exports = {
   UNREAD_SAFETY_COPY,
   UNREAD_SAFETY_META_SUFFIX,
   SAFETY_SUBSCRIBE_HELPER,
+  alertTimeLabel,
   buildTrialDeviceCard,
-  formatQuietHoursLine,
   hasUnreadSafetyAlert,
   memoryPreviewItems,
   offersSafetySubscribe,
   pinnedAlertMeta,
-  usageLabel,
 };

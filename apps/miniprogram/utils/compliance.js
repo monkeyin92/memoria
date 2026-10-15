@@ -8,6 +8,21 @@ const PRODUCT_POSITIONING =
 const AI_DISCLOSURE =
   "设备回应由人工智能生成，会在交互中明确标识。";
 const TRAINING_DEFAULT_OFF = "你的对话与声音默认不用于模型训练。";
+
+const CHAT_MODEL_FILING_LINES = Object.freeze({
+  deepseek: "对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）",
+  qwen: "对话大模型：通义千问（网信算备 330110507206401230035 号，登记号 ZheJiang-TongYiQianWen-20230901）",
+});
+const CHAT_MODEL_DUAL_DISCLOSURE = "对话可能由 DeepSeek 或阿里云通义千问生成";
+
+function chatModelFilingLines(providers) {
+  const filings = Object.keys(CHAT_MODEL_FILING_LINES)
+    .filter((family) => providers.includes(family))
+    .map((family) => CHAT_MODEL_FILING_LINES[family]);
+  if (filings.length === 0) return [CHAT_MODEL_FILING_LINES.deepseek];
+  return filings.length > 1 ? [CHAT_MODEL_DUAL_DISCLOSURE, ...filings] : filings;
+}
+
 const MINOR_RESTRICTIONS =
   "未成年人账号不提供虚拟亲属或伴侣角色，敏感能力由服务端按主体授权。";
 
@@ -69,4 +84,5 @@ module.exports = {
   startForegroundSession,
   endForegroundSession,
   checkContinuousUseReminder,
+  chatModelFilingLines,
 };

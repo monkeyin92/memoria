@@ -1,0 +1,22 @@
+.field-label.pc-first {
+  margin-top: 0;
+}
+
+.pc-action {
+  margin-top: 16px;
+  background: var(--mp-accent-soft);
+  color: var(--mp-accent);
+  box-shadow: none;
+}
+
+.pc-create {
+  margin-top: var(--mp-gap-card);
+}
+
+.pc-delete {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  color: var(--mp-rust);
+  font-size: var(--mp-type-caption);
+  font-weight: 600;
+}

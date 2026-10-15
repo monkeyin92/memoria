@@ -156,7 +156,7 @@ test("空缓存只进入同步中，不能推断账号没有设备", async () =>
       assert.equal(syncCalls, 1);
       assert.equal(page.data.deviceBindingState, "syncing");
       assert.equal(page.data.deviceBindingStateLabel, "同步中");
-      assert.equal(page.data.deviceBindingCountLabel, "未确认");
+      assert.equal(page.data.deviceBindingSummary, "正在同步设备");
       assert.notEqual(page.data.deviceBindingStateLabel, "未绑定设备");
       deferred.resolve({
         status: "ready",
@@ -166,7 +166,7 @@ test("空缓存只进入同步中，不能推断账号没有设备", async () =>
       await loading;
       assert.equal(page.data.deviceBindingState, "ready");
       assert.equal(page.data.deviceBindingStateLabel, "已绑定设备");
-      assert.equal(page.data.deviceBindingCountLabel, "1 台");
+      assert.equal(page.data.deviceBindingSummary, "已绑定 1 台设备");
     } finally {
       restore();
     }
@@ -193,7 +193,7 @@ test("服务端同步失败（405）显示同步失败，而不是没有设备",
       await page._loadAuthenticatedData();
       assert.equal(page.data.deviceBindingState, "error");
       assert.equal(page.data.deviceBindingStateLabel, "同步失败");
-      assert.equal(page.data.deviceBindingCountLabel, "未确认");
+      assert.equal(page.data.deviceBindingSummary, "设备暂未同步");
       assert.ok(page.data.deviceBindingDetail.includes("这不代表未绑定"));
       assert.ok(page.data.deviceBindingDetail.includes("无需重新配网"));
       assert.ok(!page.data.deviceBindingDetail.includes("Method Not Allowed"));
@@ -230,7 +230,7 @@ test("服务端确认 empty 才显示未绑定设备，且保持 fail-closed", a
       await page._loadAuthenticatedData();
       assert.equal(page.data.deviceBindingState, "empty");
       assert.equal(page.data.deviceBindingStateLabel, "未绑定设备");
-      assert.equal(page.data.deviceBindingCountLabel, "0 台");
+      assert.equal(page.data.deviceBindingSummary, "还没有绑定设备");
       assert.ok(page.data.deviceBindingDetail.includes("服务端确认"));
       assert.ok(page.data.profileUnavailableReason.includes("服务端确认还没有绑定设备"));
       assert.equal(gateCalls, 0, "empty 时 loadStats 不应重复走 requireRuntimeCapability");
@@ -261,7 +261,7 @@ test("cached 状态保留本机绑定并提示列表未同步", async () => {
       await page._loadAuthenticatedData();
       assert.equal(page.data.deviceBindingState, "cached");
       assert.equal(page.data.deviceBindingStateLabel, "已绑定设备");
-      assert.ok(page.data.deviceBindingCountLabel.includes("列表未同步"));
+      assert.equal(page.data.deviceBindingSummary, "已绑定 1 台设备（列表未同步）");
       assert.ok(page.data.deviceBindingDetail.includes("设备列表暂时无法同步"));
       assert.ok(page.data.deviceBindingError);
       assert.equal(
@@ -304,7 +304,7 @@ test("多台设备进入待选择，选择后按所选设备刷新", async () =>
       await page._loadAuthenticatedData();
       assert.equal(page.data.deviceBindingState, "choose");
       assert.equal(page.data.deviceBindingStateLabel, "待选择设备");
-      assert.equal(page.data.deviceBindingCountLabel, "2 台待选择");
+      assert.equal(page.data.deviceBindingSummary, "找到 2 台设备，待选择");
       assert.equal(page.data.deviceBindingChoices.length, 2);
       assert.ok(page.data.profileUnavailableReason.includes("请先选择当前设备"));
 
@@ -624,13 +624,13 @@ test("onUnload 后迟到加载不得改写页面且必须释放忙位", async ()
   });
 });
 
-test("伙伴入口用 switchTab 打开伙伴 tab（navigateTo 打不开 tab 页）", async () => {
+test("设备入口用 switchTab 打开设备 tab（navigateTo 打不开 tab 页）", async () => {
   await withWx(async () => {
     const calls = [];
     global.wx.switchTab = ({ url }) => calls.push(["switchTab", url]);
     global.wx.navigateTo = ({ url }) => calls.push(["navigateTo", url]);
     const page = newPage();
-    page.openCompanion();
-    assert.deepEqual(calls, [["switchTab", "/pages/companion/index"]]);
+    page.openDevice();
+    assert.deepEqual(calls, [["switchTab", "/pages/device/index"]]);
   });
 });

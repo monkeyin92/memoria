@@ -228,6 +228,32 @@ async def test_device_settings_matrix_and_learning_mode_versioning(
 
 
 @pytest.mark.asyncio
+async def test_offline_stories_list_titles_for_an_owned_device_only(tmp_path: Path) -> None:
+    app, _manifest = _profile_app(tmp_path, category="adult")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owned = await client.get("/v1/devices/dev_test_01/stories")
+        foreign = await client.get("/v1/devices/dev_someone_else/stories")
+    assert owned.status_code == 200, owned.text
+    assert owned.json() == {
+        "items": [
+            {"id": "story_01", "title": "小星星的枕头"},
+            {"id": "story_02", "title": "月亮不着急"},
+            {"id": "story_03", "title": "大熊和森林里的悄悄话"},
+        ]
+    }
+    assert foreign.status_code == 404
+    assert foreign.json()["detail"] == {"code": "device_not_bound_to_account"}
+
+
+@pytest.mark.asyncio
+async def test_offline_stories_fail_closed_without_a_subject_category(tmp_path: Path) -> None:
+    app, _manifest = _profile_app(tmp_path, category=None)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/v1/devices/dev_test_01/stories")
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_device_settings_dispatches_runtime_invalidation_at_the_right_boundary(
     tmp_path: Path,
 ) -> None:

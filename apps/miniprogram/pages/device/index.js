@@ -1,4 +1,5 @@
 const api = require("../../utils/api");
+const { statusBarStyle } = require("../../utils/nav-inset");
 const guardianPush = require("../../utils/guardian-push");
 const { requireLogin } = require("../../utils/auth-gate");
 const {
@@ -22,7 +23,8 @@ const {
   confirmUnusualQuietHours,
 } = require("../../utils/quiet-hours");
 const { offersSafetySubscribe } = require("../../utils/trial-device-card");
-const { BACKUP_RETENTION_LINE, PRIVACY_LINE } = require("../../utils/child-memory");
+const { PRIVACY_LINE } = require("../../utils/child-memory");
+const { SUBSCRIPTION_PUSH_ENABLED } = require("../../config");
 
 // 与绑定页的「单次使用时长」选项一致。
 const SESSION_MINUTE_OPTIONS = [15, 30, 45, 60];
@@ -113,7 +115,7 @@ function personaSubjects(binding) {
 
 // 分配结果只用于展示：override 优先、binding 默认兜底，与服务端同一顺序。
 // 显示名来自同一份目录（内置 + 自建），未知 id 原样显示，不猜名字。
-// 「选TA陪伴」保存后，服务端把所选伙伴写成主要使用者的单独分配；与账号伙伴
+// 「选TA陪伴」保存后，服务端把所选角色写成主要使用者的单独分配；与账号角色
 // 一致的分配读作“跟随陪伴选择”，而不是一条来历不明的手动分配。
 function personaRows(binding, payload, options, accountCompanionId = "") {
   const labels = new Map((options || []).map((item) => [item.id, item.label]));
@@ -151,7 +153,7 @@ function personaRows(binding, payload, options, accountCompanionId = "") {
   });
 }
 
-// 人格选择器目录：内置伙伴在前，账号自建人格在后并显式标注。
+// 人格选择器目录：内置角色在前，账号自建人格在后并显式标注。
 function personaOptionItems(personas) {
   const custom = Array.isArray(personas?.custom_personas) ? personas.custom_personas : [];
   return [
@@ -257,6 +259,13 @@ function shouldResolveSubject(profile, resolution) {
   return methods.includes("app_confirm");
 }
 
+function offlineStoriesFrom(result) {
+  const items = result.status === "fulfilled" ? result.value?.items : null;
+  return (Array.isArray(items) ? items : [])
+    .filter((item) => typeof item?.id === "string" && typeof item?.title === "string" && item.title)
+    .map((item) => ({ id: item.id, title: item.title }));
+}
+
 function bindingChoiceItems(bindings) {
   const companion = companionById(defaultCompanionId);
   return (bindings || []).map((binding) => ({
@@ -269,6 +278,7 @@ function bindingChoiceItems(bindings) {
 
 Page({
   data: {
+    statusBarStyle: statusBarStyle(),
     authenticated: false,
     loading: true,
     devicePlaceName: "设备",
@@ -297,13 +307,14 @@ Page({
     sensitiveEntries: [],
     sessionLimits: null,
     trialSettingsVisible: false,
+    offlineStories: [],
+    subscriptionPushEnabled: SUBSCRIPTION_PUSH_ENABLED,
     safetySubscribeOn: false,
     safetySubscribeKnown: false,
     safetySubscribeBusy: false,
     safetySubscribeOffCaption: "",
     safetySubscribeHelper: guardianPush.SAFETY_SUBSCRIBE_HELPER,
     privacyNote: PRIVACY_LINE,
-    backupRetentionLine: BACKUP_RETENTION_LINE,
     guardianExportVisible: false,
     limitsSheetVisible: false,
     limitsSaving: false,
@@ -429,6 +440,7 @@ Page({
       sensitiveEntries: [],
       sessionLimits: null,
       trialSettingsVisible: false,
+      offlineStories: [],
       safetySubscribeOn: false,
       safetySubscribeKnown: false,
       safetySubscribeBusy: false,
@@ -570,16 +582,7 @@ Page({
     }
   },
 
-  async onTrialDailyCapChange(event) {
-    const index = Number(event.detail.value);
-    const options = this.data.limitsMinuteOptions || SESSION_MINUTE_OPTIONS;
-    const minutes = options[index];
-    if (!Number.isInteger(minutes)) return;
-    this.setData({ limitsMinuteIndex: index });
-    await this._saveDailyCapMinutes(minutes);
-  },
-
-  async onTrialDailyCapSlider(event) {
+  async onLimitsMinutesSlider(event) {
     const raw = Number(event.detail.value);
     if (!Number.isFinite(raw)) return;
     const options = this.data.limitsMinuteOptions || SESSION_MINUTE_OPTIONS;
@@ -594,10 +597,10 @@ Page({
     }
     const index = options.indexOf(minutes);
     this.setData({ limitsMinuteIndex: index >= 0 ? index : this.data.limitsMinuteIndex });
-    await this._saveDailyCapMinutes(minutes);
+    await this._saveMaxSessionMinutes(minutes);
   },
 
-  async _saveDailyCapMinutes(minutes) {
+  async _saveMaxSessionMinutes(minutes) {
     const limits = this.data.sessionLimits;
     const binding = this.data.binding;
     if (!Number.isInteger(minutes) || !limits || !binding?.device_id) return;
@@ -606,8 +609,8 @@ Page({
     try {
       await api.setSessionLimits(binding.device_id, {
         maxSessionMinutes: minutes,
-        quietStart: limits.quietStart || DEFAULT_QUIET_HOURS.start,
-        quietEnd: limits.quietEnd || DEFAULT_QUIET_HOURS.end,
+        quietStart: limits.quietStart,
+        quietEnd: limits.quietEnd,
       });
       let profile = null;
       try {
@@ -846,7 +849,7 @@ Page({
     }
     try {
       const identity = api.currentIdentity();
-      const [profileResult, activationResult, settingsResult, diagnosticsResult, wakeWordCatalogResult, personaAssignmentsResult, personasResult, accountProfileResult] =
+      const [profileResult, activationResult, settingsResult, diagnosticsResult, wakeWordCatalogResult, personaAssignmentsResult, personasResult, accountProfileResult, storiesResult] =
         await Promise.allSettled([
           api.getRuntimeProfile(binding.device_id),
           api.getActivationStatus(binding.device_id),
@@ -856,6 +859,7 @@ Page({
           api.listPersonaAssignments(binding.device_id),
           api.listPersonas(),
           identity ? api.getProfile(identity.user_id) : Promise.resolve(null),
+          api.getOfflineStories(binding.device_id),
         ]);
       if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return; // 晚到响应丢弃
       const profile =
@@ -931,12 +935,9 @@ Page({
       );
       const subjectAliasLabel = readSubjectLabel(binding);
       const speakerLabel = currentUserLabel(profile, candidates);
-      // 与首页、伙伴页同源：以账号选定的伙伴为准；Runtime Profile 读不到时也不回落成默认伙伴。
       const accountProfile =
         accountProfileResult.status === "fulfilled" ? accountProfileResult.value : null;
-      const companion = companionById(
-        accountProfile?.companion_id || profile?.persona?.persona_id,
-      );
+      const companion = companionById(accountProfile?.companion_id);
       const personaOptions = personaOptionItems(
         personasResult.status === "fulfilled" ? personasResult.value : null,
       );
@@ -977,6 +978,7 @@ Page({
         sensitiveEntries: profile ? sensitiveEntriesFor(profile) : [],
         sessionLimits,
         trialSettingsVisible: Boolean(sessionLimits),
+        offlineStories: offlineStoriesFrom(storiesResult),
         limitsMinuteOptions,
         limitsMinuteIndex,
         currentUserLabel: speakerLabel ? subjectAliasLabel || speakerLabel : "未确认",
@@ -988,7 +990,6 @@ Page({
         guardianExportVisible: offersSafetySubscribe(binding),
         safetySubscribeHelper: guardianPush.SAFETY_SUBSCRIBE_HELPER,
         privacyNote: PRIVACY_LINE,
-    backupRetentionLine: BACKUP_RETENTION_LINE,
         elderAlerts: [],
         subjectAliasLabel,
         personaRows: personaRows(
@@ -1104,7 +1105,7 @@ Page({
     this.loadDevice().finally(() => wx.stopPullDownRefresh());
   },
 
-  // 伙伴页是 tabBar 页，navigateTo 打不开它。
+  // 角色页是 tabBar 页，navigateTo 打不开它。
   openCompanion() {
     wx.switchTab({ url: "/pages/companion/index" });
   },

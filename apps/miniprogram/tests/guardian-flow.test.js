@@ -39,7 +39,7 @@ test("student notice and bind consent remain explicit client choices", () => {
   // 声纹已下线：「我的」页不再有主人声纹登记与旁人声音过滤。
   assert.doesNotMatch(profile, /speakerEnrollment|主人声纹|reject_non_owner_voice|过滤明显旁人/);
   assert.match(profile, /digitalSelfEntryAllowed/);
-  assert.match(profile, /rawVoiceEntryAllowed/);
+  assert.match(profileScript, /if \(this\.data\.rawVoiceEntryAllowed\)/);
   assert.doesNotMatch(profile, /canUseAdultCapabilities|_allowAdultExperience/);
   assert.match(profile, /成长小结与监护授权/);
   assert.match(profileScript, /敏感能力入口已关闭/);

@@ -1,7 +1,9 @@
 const api = require("../../utils/api");
+const { statusBarStyle } = require("../../utils/nav-inset");
 const { requireLogin } = require("../../utils/auth-gate");
 const guardianPush = require("../../utils/guardian-push");
-const { loadPinnedCrisisAlerts } = require("../../utils/crisis-alerts");
+const { attentionUrl, loadPinnedCrisisAlerts } = require("../../utils/crisis-alerts");
+const { alertTimeLabel } = require("../../utils/trial-device-card");
 
 function today() {
   const date = new Date();
@@ -10,9 +12,27 @@ function today() {
   return `${date.getFullYear()}-${month}-${day}`;
 }
 
+const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
+
+function dayLabels(dateKey) {
+  const [year, month, day] = String(dateKey).split("-").map(Number);
+  if (!year || !month || !day) return { dayLabel: dateKey, dateLabel: "", weekday: "", dayNum: "" };
+  const date = new Date(year, month - 1, day);
+  const now = new Date();
+  const daysAgo = Math.round((new Date(now.getFullYear(), now.getMonth(), now.getDate()) - date) / 86400000);
+  const weekday = WEEKDAYS[date.getDay()];
+  return {
+    dayLabel: daysAgo === 0 ? "今天" : daysAgo === 1 ? "昨天" : `周${weekday}`,
+    dateLabel: `${month}月${day}日`,
+    weekday,
+    dayNum: String(day),
+  };
+}
+
 function normalizeDay(item) {
   const summary = item.summary || {};
   return {
+    ...dayLabels(item.day || item.date || ""),
     date: item.day || item.date || "",
     count: item.message_count || 0,
     title: summary.title || item.title || "这一天的回顾",
@@ -31,10 +51,11 @@ function normalizeDay(item) {
 function normalizeGuardianDay(item) {
   const count = Number(item.message_count) || 0;
   return {
+    ...dayLabels(item.day || ""),
     date: item.day || "",
     count,
     title: `孩子聊了 ${count} 次`,
-    overview: "点上面的「生成 / 更新选中日期的回顾」，查看 AI 对这一天的概括。",
+    overview: `孩子聊了 ${count} 次，还没整理`,
     highlights: [],
     suggestion: "",
   };
@@ -132,6 +153,7 @@ function privatePartitionsClear() {
 
 Page({
   data: {
+    statusBarStyle: statusBarStyle(),
     days: [],
     heardTurns: [],
     memoryCandidates: [],
@@ -158,6 +180,7 @@ Page({
     guardianError: "",
     pinnedCrisisAlerts: [],
     crisisPush: { enabled: false, templateId: "", explanation: "" },
+    subscriptionPushEnabled: require("../../config").SUBSCRIPTION_PUSH_ENABLED,
   },
 
   /*
@@ -205,7 +228,10 @@ Page({
       loadPinnedCrisisAlerts(api),
       guardianPush.loadCrisisPushConfig(api),
     ]);
-    this.setData({ pinnedCrisisAlerts, crisisPush });
+    this.setData({
+      pinnedCrisisAlerts: pinnedCrisisAlerts.map((alert) => ({ ...alert, timeLabel: alertTimeLabel(alert.occurredAt) })),
+      crisisPush,
+    });
   },
 
   /* 必须直接绑定在按钮 tap 上：订阅框只能由用户点击调起。 */
@@ -412,6 +438,10 @@ Page({
         });
       }
     }
+  },
+
+  openAttention(event) {
+    wx.navigateTo({ url: attentionUrl(event.currentTarget.dataset.id) });
   },
 
   chooseDay(event) {

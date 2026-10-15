@@ -1,30 +1,28 @@
-<view class="page-shell">
-  <page-backdrop theme="mist"></page-backdrop>
-  <view class="back-row"><navigator class="back-link" url="/pages/profile/index" open-type="switchTab">‹ 我的</navigator></view>
-  <view class="page-head">
-    <text class="page-title">自定义人格</text>
-    <text class="page-subtitle">创建即冻结，改内容要新建一个</text>
-  </view>
+<view class="page-shell sub-page" style="{{statusBarStyle}}">
+  <view class="nav-back" bindtap="goBack" aria-label="返回"><image class="nav-back-icon" src="/assets/ui/v4/back-strong.svg" /></view>
+  <text class="eyebrow">角色</text>
+  <text class="page-title">自定义人格</text>
+  <text class="page-lede">写下名字和说话方式。创建后这套设置固定为 v1，想改内容就新建一个。</text>
 
   <view wx:if="{{loading}}" class="card">
-    <text class="caption">正在读取自定义人格…</text>
+    <text class="loading-text">正在读取自定义人格…</text>
   </view>
 
   <block wx:else>
     <view class="card">
-      <text class="setting-name">创建自定义人格</text>
-      <text class="setting-desc">名字和描述只是起点；创建后这套设置就冻结为 v1，改内容要新建一个。对话仍然只发生在机器人上。</text>
-
-      <text class="field-label">人格名字</text>
+      <text class="field-label pc-first">人格名字</text>
       <input class="field-input" value="{{name}}" maxlength="16" placeholder="例如：小北" placeholder-class="field-placeholder" bindinput="onNameInput" />
 
       <text class="field-label">你希望它怎么说话</text>
       <textarea class="field-textarea" value="{{freeText}}" maxlength="420" placeholder="用几句话描述说话方式、关心的方式。" placeholder-class="field-placeholder" bindinput="onFreeTextInput" auto-height />
-      <button class="secondary-button empty-button" loading="{{structuring}}" disabled="{{structuring}}" bindtap="structure">让 AI 帮我整理</button>
-      <text wx:if="{{draftId}}" class="caption">整理结果编号 {{draftId}}（仅用于重试，不落库）。</text>
+      <button class="secondary-button pc-action" loading="{{structuring}}" disabled="{{structuring}}" bindtap="structure">让 AI 帮我整理</button>
+      <text wx:if="{{draftId}}" class="caption">已整理到下面的设置里，可以继续修改。</text>
+    </view>
 
+    <text class="group-label">说话设置</text>
+    <view class="card">
       <view wx:for="{{textFields}}" wx:key="key">
-        <text class="field-label">{{item.label}}</text>
+        <text class="field-label {{index === 0 ? 'pc-first' : ''}}">{{item.label}}</text>
         <input class="field-input" value="{{fields[item.key]}}" maxlength="{{item.maxlength}}" placeholder="{{item.placeholder}}" placeholder-class="field-placeholder" data-field="{{item.key}}" bindinput="onTextFieldInput" />
       </view>
 
@@ -33,43 +31,39 @@
         <picker mode="selector" range="{{item.options}}" range-key="label" value="{{item.index}}" data-field="{{item.key}}" bindchange="onEnumChange">
           <view class="picker-row">
             <text class="picker-value">{{item.options[item.index].label}}</text>
-            <text class="row-chevron">›</text>
+            <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
           </view>
         </picker>
       </view>
 
       <text class="field-label">语速（0.90 - 1.10）</text>
-      <slider min="90" max="110" step="1" value="{{rateValue}}" show-value="{{true}}" bindchange="onRateChange" />
+      <slider min="90" max="110" step="1" value="{{rateValue}}" show-value="{{true}}" activeColor="#4A52C9" backgroundColor="#ECECF2" block-size="24" bindchange="onRateChange" />
 
       <text class="field-label">没有克隆声音时用谁的音色</text>
       <picker mode="selector" range="{{voiceOptions}}" range-key="name" value="{{voiceIndex}}" bindchange="onVoiceChange">
         <view class="picker-row">
           <text class="picker-value">{{voiceOptions[voiceIndex].name}}</text>
-          <text class="row-chevron">›</text>
+          <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
       </picker>
-
-      <button class="primary-button empty-button" loading="{{acting}}" disabled="{{acting}}" bindtap="create">创建并冻结</button>
-      <text wx:if="{{notice}}" class="setting-desc">{{notice}}</text>
-      <text wx:if="{{error}}" class="error-text">{{error}}</text>
-      <text wx:if="{{loadingError}}" class="error-text">{{loadingError}}</text>
     </view>
 
+    <button class="primary-button pc-create" loading="{{acting}}" disabled="{{acting}}" bindtap="create">创建并冻结</button>
+    <text wx:if="{{notice}}" class="notice">{{notice}}</text>
+    <text wx:if="{{error}}" class="error-text">{{error}}</text>
+    <text wx:if="{{loadingError}}" class="error-text">{{loadingError}}</text>
+
+    <text class="group-label">我的人格</text>
     <view class="list">
-      <view class="list-row">
-        <view class="row-copy">
-          <text class="row-title">我的人格</text>
-          <text class="row-meta">这些名字是账号级的，可分配给同账号下任意绑定的使用人。</text>
-        </view>
-      </view>
       <view wx:for="{{personas}}" wx:key="persona_id" class="list-row">
         <view class="row-copy">
           <text class="row-title">{{item.display_name}}</text>
-          <text class="row-meta">{{item.persona_id}} · v{{item.persona_version}} · 回落 {{item.fallback_designed_voice}}</text>
+          <text class="row-meta">v{{item.persona_version}}{{item.voiceName ? ' · 音色 ' + item.voiceName : ''}}</text>
         </view>
-        <button class="text-button" data-persona-id="{{item.persona_id}}" disabled="{{acting}}" bindtap="remove">删除</button>
+        <view class="pc-delete" data-persona-id="{{item.persona_id}}" bindtap="remove">删除</view>
       </view>
-      <text wx:if="{{personas.length === 0}}" class="caption">还没有自定义人格。</text>
+      <view wx:if="{{personas.length === 0}}" class="list-row"><text class="row-meta">还没有自定义人格。</text></view>
     </view>
+    <text class="caption">这些人格是账号级的，可以分配给同账号下任意绑定的使用人。对话仍然只发生在机器人上。</text>
   </block>
 </view>

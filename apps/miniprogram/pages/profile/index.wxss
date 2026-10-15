@@ -1,8 +1,8 @@
-.account {
+.account-card {
   display: flex;
   align-items: center;
-  gap: 24rpx;
-  margin-bottom: 8rpx;
+  gap: 16px;
+  margin-top: 24px;
 }
 
 .account-copy {
@@ -10,16 +10,29 @@
   min-width: 0;
 }
 
-.account-lede {
-  margin: 4rpx 0 0;
+.account-name {
+  display: block;
+  color: var(--mp-ink);
+  font-size: var(--mp-type-title);
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  line-height: 28px;
+  word-break: break-all;
+}
+
+.account-sub {
+  display: block;
+  margin-top: 4px;
+  color: var(--mp-ink-2);
+  font-size: var(--mp-type-small);
+  line-height: var(--mp-lh-body);
 }
 
 .user-avatar,
 .hero-initial {
-  width: 112rpx;
-  height: 112rpx;
-  border-radius: 50%;
   flex-shrink: 0;
+  width: 64px;
+  height: 64px;
 }
 
 .user-avatar {
@@ -28,85 +41,111 @@
 
 .hero-initial {
   display: flex;
+  border-radius: 50%;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(160deg, #e6eef8 0%, #c9d8ea 100%);
-  box-shadow: 0 12rpx 28rpx rgba(34, 52, 84, 0.14), inset 0 2rpx 0 #ffffff;
+  background: var(--mp-accent-soft);
 }
 
 .hero-initial-text {
-  color: #22344d;
-  font-size: 40rpx;
+  color: var(--mp-accent);
+  font-size: var(--mp-type-headline);
+  font-weight: 700;
+}
+
+.device-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.device-art {
+  flex-shrink: 0;
+  width: 56px;
+  height: 56px;
+  overflow: hidden;
+  border-radius: var(--mp-radius-inset);
+  background: var(--mp-accent-soft);
+}
+
+.device-art-img {
+  display: block;
+  width: 72px;
+  margin-top: 8px;
+  mix-blend-mode: multiply;
+}
+
+.device-name {
+  display: block;
+  color: var(--mp-ink);
+  font-size: var(--mp-type-card);
   font-weight: 600;
+  line-height: normal;
 }
 
-.binding-choices {
-  padding-bottom: 20rpx;
+.device-pill {
+  margin-top: 8px;
 }
 
-/* 永久注销：居中弹窗复用全局 .modal-wrap / .modal-card，只补输入框间距 */
+.binding-choices .list-row {
+  min-height: var(--mp-tap);
+}
+
+.resync-button {
+  margin-top: var(--mp-gap-card);
+}
+
+.list .row-title.row-copy {
+  font-size: var(--mp-type-card);
+  font-weight: 400;
+}
+
+/* WeChat buttons ship a fixed width, padding, radius, fill and bold text; the feedback row must read as a plain row. */
+.profile-menu > button.list-row {
+  width: calc(100% + 2 * var(--mp-pad-card));
+  margin: 0 calc(-1 * var(--mp-pad-card));
+  padding: 16px var(--mp-pad-card);
+  border-radius: 0;
+  background: transparent;
+  color: var(--mp-ink);
+  font-size: inherit;
+  font-weight: 400;
+  line-height: inherit;
+  text-align: left;
+}
+
 .modal-card .field-input {
-  margin-top: 24rpx;
+  margin-top: 12px;
+}
+
+.about-line {
+  display: block;
+  margin-top: 8px;
+  color: var(--mp-ink-2);
+  font-size: var(--mp-type-body);
+  line-height: var(--mp-lh-body);
+  text-align: left;
+}
+
+.about-dismiss {
+  margin-top: 16px;
 }
 
 .foot-link {
   display: block;
+  margin-top: 24px;
   text-align: center;
 }
 
-.enrollment-progress {
-  margin-top: 16rpx;
-  padding: 24rpx 26rpx;
-  border-radius: 28rpx;
-  background: rgba(255, 255, 255, 0.55);
-  border: 1rpx solid rgba(255, 255, 255, 0.8);
-}
-
-.enrollment-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16rpx;
-}
-
-.enrollment-stage {
-  min-width: 0;
-  color: #16191c;
-  color: var(--text-primary);
-  font-size: 26rpx;
-  font-weight: 500;
-  line-height: 1.6;
-}
-
-.enrollment-percent {
-  flex-shrink: 0;
-  color: #285c5e;
-  color: var(--brand-teal);
-  font-size: 24rpx;
-  font-weight: 600;
-  line-height: 1.6;
-}
-
-.enrollment-bar {
-  height: 8rpx;
-  margin-top: 14rpx;
-  overflow: hidden;
-  border-radius: 999rpx;
-  background: rgba(30, 45, 70, 0.08);
-}
-
-.enrollment-bar-fill {
-  height: 100%;
-  border-radius: 999rpx;
-  background: #326e70;
-  transition: width 240ms ease;
-}
-
-.enrollment-hint {
+.profile-version {
   display: block;
-  margin-top: 14rpx;
-  color: #474e54;
-  color: var(--text-secondary);
-  font-size: 24rpx;
-  line-height: 1.65;
+  margin-top: 24px;
+  color: var(--mp-ink-3);
+  font-size: var(--mp-type-meta);
+  line-height: 16px;
+  text-align: center;
+}
+
+.privacy-note + .profile-version {
+  margin-top: 8px;
 }

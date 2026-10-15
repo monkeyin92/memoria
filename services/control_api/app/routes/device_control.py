@@ -39,6 +39,7 @@ from services.control_api.app.device_control import (
     stable_profile_fingerprint,
 )
 from services.control_api.app.media_runtime import DEVICE_STREAM_EPOCH_MAX
+from services.control_api.app.offline_stories import OFFLINE_STORIES
 from services.control_api.app.security import (
     AuthenticatedUser,
     require_authenticated_user,
@@ -454,6 +455,17 @@ async def get_device_settings(
         binding_version=int(cast(int, activation["binding_version"])),
         runtime_apply_status=runtime_apply_status,
     )
+
+
+@router.get("/{device_id}/stories")
+async def get_device_offline_stories(
+    device_id: str,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+) -> dict[str, object]:
+    _require_capability(request, user, "device_settings_read")
+    _require_device_activation(request, account_id=user.user_id, device_id=device_id)
+    return {"items": [{"id": story_id, "title": title} for story_id, title in OFFLINE_STORIES]}
 
 
 @router.patch(

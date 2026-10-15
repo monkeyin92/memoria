@@ -238,6 +238,12 @@ function errorFromResponse(response) {
   return new ApiError(message, { status: response.statusCode || 0, code });
 }
 
+function apiErrorFromWxFail(error, fallback) {
+  const errMsg = typeof error?.errMsg === "string" ? error.errMsg : "";
+  if (errMsg.includes("request:fail")) return new ApiError("网络不太好，请稍后再试。");
+  return new ApiError(fallback);
+}
+
 function rawRequest(path, options = {}) {
   const {
     method = "GET",
@@ -279,7 +285,7 @@ function rawRequest(path, options = {}) {
         reject(error);
       },
       fail(error) {
-        reject(new ApiError(error?.errMsg || "网络连接失败，请稍后重试。"));
+        reject(apiErrorFromWxFail(error, "网络连接失败，请稍后重试。"));
       },
     });
   });
@@ -293,7 +299,7 @@ function wechatLoginCode() {
         else reject(new ApiError("微信登录凭证获取失败。"));
       },
       fail(error) {
-        reject(new ApiError(error?.errMsg || "微信登录凭证获取失败。"));
+        reject(apiErrorFromWxFail(error, "微信登录凭证获取失败。"));
       },
     });
   });
@@ -343,7 +349,7 @@ function readFileBase64(filePath) {
         resolve(result.data);
       },
       fail(error) {
-        reject(new ApiError(error?.errMsg || "头像读取失败。"));
+        reject(apiErrorFromWxFail(error, "头像读取失败。"));
       },
     });
   });
@@ -1112,6 +1118,10 @@ function getDeviceSettings(deviceId) {
   return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/settings`);
 }
 
+function getOfflineStories(deviceId) {
+  return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/stories`);
+}
+
 function getWakeWordCatalog() {
   return rawRequest("/v1/devices/wake-word-catalog");
 }
@@ -1316,6 +1326,10 @@ function setPersonaAssignment(deviceId, personId, personaSelection) {
   );
 }
 
+function getSessionLimits(deviceId) {
+  return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/session-limits`);
+}
+
 function setSessionLimits(deviceId, { maxSessionMinutes, quietStart, quietEnd }) {
   const manifest = readBindingManifest();
   if (!manifest || manifest.device_id !== deviceId) {
@@ -1484,6 +1498,7 @@ module.exports = {
   selectDeviceBinding,
   unbindDevice,
   getDeviceSettings,
+  getOfflineStories,
   getWakeWordCatalog,
   validateWakeWord,
   getDeviceDiagnostics,
@@ -1494,6 +1509,7 @@ module.exports = {
   setActiveSubject,
   listPersonaAssignments,
   setPersonaAssignment,
+  getSessionLimits,
   setSessionLimits,
   clearPersonaAssignment,
   listPersonas,

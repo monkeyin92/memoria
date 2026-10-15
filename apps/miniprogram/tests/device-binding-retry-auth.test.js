@@ -199,6 +199,7 @@ test("home retry 恢复登录后正常同步", async () => {
     getRuntimeProfile: async () => null,
     getDeviceSettings: async () => null,
     getDeviceDiagnostics: async () => null,
+    getSessionLimits: async () => null,
     getProfile: async () => ({ display_name: "主人" }),
     requireRuntimeCapability: async () => ({ allowed: false }),
   });
@@ -276,6 +277,7 @@ test("device retry 恢复登录后正常同步", async () => {
     getDeviceSettings: async () => null,
     getDeviceDiagnostics: async () => null,
     getWakeWordCatalog: async () => ({ items: [] }),
+    getOfflineStories: async () => ({ items: [] }),
   });
   await withPage("../pages/device/index", async (page) => {
     await page.retryBindingSync();
@@ -286,6 +288,32 @@ test("device retry 恢复登录后正常同步", async () => {
     // Runtime Profile 读不到时，形象与名字仍跟随账号选定的伙伴，而不是回落成默认伙伴。
     assert.equal(page.data.heroRoleId, "taoxi");
     assert.equal(page.data.personaName, "桃喜");
+  });
+  restore();
+});
+
+test("device companion follows the account profile companion_id", async () => {
+  const state = makeAuth();
+  const restore = stubApi({
+    ...authStubs(state),
+    getProfile: async () => ({ user_id: "person_owner" }),
+    syncDeviceBindings: async () => ({
+      status: "ready",
+      binding: readyBinding(),
+      bindings: [readyBinding()],
+    }),
+    getRuntimeProfile: async () => ({
+      persona: { persona_id: "taoxi", version: 1 },
+    }),
+    getActivationStatus: async () => null,
+    getDeviceSettings: async () => null,
+    getDeviceDiagnostics: async () => null,
+    getWakeWordCatalog: async () => ({ items: [] }),
+  });
+  await withPage("../pages/device/index", async (page) => {
+    await page.loadDevice();
+    assert.equal(page.data.heroRoleId, "starlight");
+    assert.equal(page.data.personaName, "星澜");
   });
   restore();
 });

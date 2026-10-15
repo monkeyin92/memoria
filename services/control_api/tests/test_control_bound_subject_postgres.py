@@ -534,6 +534,10 @@ async def test_a_changed_session_limit_reaches_the_reissued_profile(
             max_session_seconds=3600,
             quiet_hours=("22:30", "06:00"),
         )
+        stored = await consent.session_limits(
+            actor_person_id="parent-1", subject_person_id="child-1", binding_id="b-child"
+        )
+        assert (stored.max_session_seconds, stored.quiet_hours) == (3600, ("22:30", "06:00"))
         # A plain read still serves the stored profile; the explicit refresh
         # is what makes the guardian's change reach the device.
         assert limits(await _read(control, manifest, now=now + timedelta(minutes=2))) == (

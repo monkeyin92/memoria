@@ -1,5 +1,7 @@
 const api = require("../../utils/api");
-const { requireLogin } = require("../../utils/auth-gate");
+const { statusBarStyle } = require("../../utils/nav-inset");
+const { SUBSCRIPTION_PUSH_ENABLED } = require("../../config");
+const { openLogin, requireLogin } = require("../../utils/auth-gate");
 const { companionById, defaultCompanionId } = require("../../utils/companions");
 const { MODE_META, readBindingManifest } = require("../../utils/device-binding");
 const {
@@ -14,15 +16,33 @@ const {
   boundChildFromManifest,
   normalizeSessionSummaries,
 } = require("../../utils/child-memory");
-const { loadPinnedCrisisAlerts, shouldOfferCrisisSubscription } = require("../../utils/crisis-alerts");
+const { attentionUrl, loadPinnedCrisisAlerts, shouldOfferCrisisSubscription } = require("../../utils/crisis-alerts");
 const guardianPush = require("../../utils/guardian-push");
 const {
   UNREAD_SAFETY_COPY,
   SAFETY_SUBSCRIBE_HELPER,
+  alertTimeLabel,
   buildTrialDeviceCard,
   memoryPreviewItems,
   pinnedAlertMeta,
 } = require("../../utils/trial-device-card");
+
+function countCreatedToday(summaries, now = new Date()) {
+  const today = todayKey(now);
+  return summaries.filter((item) => {
+    const created = Date.parse(item.createdAt);
+    return Number.isFinite(created) && todayKey(new Date(created)) === today;
+  }).length;
+}
+
+function guestGreeting() {
+  return `${greetingFor()}，欢迎回来`;
+}
+
+function avatarGlyphFrom(name) {
+  const text = typeof name === "string" ? name.trim() : "";
+  return text ? text.slice(0, 1) : "M";
+}
 
 function todayKey(date = new Date()) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -77,10 +97,11 @@ function emptyDashboard() {
     statusLine: "离线 · 已绑定",
     usageKnown: false,
     usageUsedMinutes: null,
-    usageLimitMinutes: 30,
-    usageLabel: "每日上限 30 分钟",
-    quietHoursLine: "夜间 21:00–07:00",
-    quietHoursLabel: "21:00 – 07:00",
+    usageLimitMinutes: null,
+    summaryCount: 0,
+    avatarGlyph: "M",
+    subscriptionPushEnabled: SUBSCRIPTION_PUSH_ENABLED,
+    quietHoursLabel: "",
     nightModeOn: false,
     nightToggleBusy: false,
     showSafetyNightCard: false,
@@ -108,7 +129,8 @@ function bindingChoiceItems(bindings) {
 
 Page({
   data: {
-    greeting: `${greetingFor()}，朋友`,
+    statusBarStyle: statusBarStyle(),
+    greeting: guestGreeting(),
     authenticated: false,
     ...emptyDashboard(),
     todoExpanded: true,
@@ -122,22 +144,19 @@ Page({
   },
 
   onShow() {
-    if (typeof this.getTabBar === "function" && this.getTabBar()) {
-      this.getTabBar().setData({ selected: 0 });
-    }
     const authenticated = api.hasAuthenticatedSession();
-    const identity = api.currentIdentity();
-    const name = identity?.display_name || "朋友";
-    this.setData({
-      authenticated,
-      greeting: `${greetingFor()}，${name}`,
-      pageLede: formatDateLabel(),
-    });
+    this.setData({ authenticated, pageLede: formatDateLabel() });
     if (!authenticated) {
       this._enterGuestState();
       return;
     }
     this.loadHome();
+  },
+
+  _syncTabBar(authenticated) {
+    if (typeof this.getTabBar === "function" && this.getTabBar()) {
+      this.getTabBar().setData({ selected: 0, hidden: !authenticated });
+    }
   },
 
   toggleTodo() {
@@ -173,9 +192,10 @@ Page({
 
   _enterGuestState() {
     this._flowSeq = (this._flowSeq || 0) + 1;
+    this._syncTabBar(false);
     this.setData({
       authenticated: false,
-      greeting: `${greetingFor()}，朋友`,
+      greeting: guestGreeting(),
       pageLede: "把设备连好，再慢慢留下日常。",
       ...emptyDashboard(),
     });
@@ -185,6 +205,10 @@ Page({
     if (!(await requireLogin({ reason: "view_dashboard" }))) return;
     this.setData({ authenticated: true });
     await this.loadHome();
+  },
+
+  loginWithPhone() {
+    openLogin({ reason: "view_dashboard" });
   },
 
   showSyncHelp() {
@@ -247,13 +271,12 @@ Page({
     if (!minorId) return;
     const name = this.data.childMemoryName || "孩子";
     wx.navigateTo({
-      url: `/pages/child-memory/index?minorId=${encodeURIComponent(minorId)}&name=${encodeURIComponent(name)}`,
+      url: `/pages/child-memory/index?minorId=${encodeURIComponent(minorId)}&name=${encodeURIComponent(name)}&section=recent`,
     });
   },
 
   openUnreadSafety() {
-    // Pinned safety alerts land on the memory tab (#229); keep that route.
-    this.openMemory();
+    wx.navigateTo({ url: attentionUrl(this.data.pinnedCrisisAlerts[0]?.notificationId) });
   },
 
   async onSafetySubscribeChange(event) {
@@ -383,6 +406,7 @@ Page({
   },
 
   async loadHome() {
+    this._syncTabBar(true);
     const flowSeq = (this._flowSeq = (this._flowSeq || 0) + 1);
     const authEpoch = api.currentAuthEpoch();
     const cachedBinding = readBindingManifest();
@@ -440,6 +464,7 @@ Page({
       profileResult,
       todayResult,
       diagnosticsResult,
+      limitsResult,
     ] = await Promise.allSettled([
       api.getActivationStatus(binding.device_id),
       api.getRuntimeProfile(binding.device_id),
@@ -447,6 +472,7 @@ Page({
       identity ? api.getProfile(identity.user_id) : Promise.resolve(null),
       this._loadToday(identity),
       api.getDeviceDiagnostics(binding.device_id),
+      api.getSessionLimits(binding.device_id),
     ]);
     if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
 
@@ -501,11 +527,14 @@ Page({
     }
 
     let memoryPreviews = [];
+    let summaryCount = 0;
     if (boundChild?.personId) {
       try {
         const summaryPayload = await api.getChildSessionSummaries(boundChild.personId);
         if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
-        memoryPreviews = memoryPreviewItems(normalizeSessionSummaries(summaryPayload), 3);
+        const summaries = normalizeSessionSummaries(summaryPayload);
+        memoryPreviews = memoryPreviewItems(summaries, 3);
+        summaryCount = countCreatedToday(summaries);
       } catch {
         memoryPreviews = [];
       }
@@ -514,13 +543,16 @@ Page({
     const trialCard = buildTrialDeviceCard({
       online,
       runtimeProfile: runtime,
+      usedMinutes: limitsResult.status === "fulfilled" ? limitsResult.value?.today_used_minutes : null,
     });
     const unreadSafetyAlert = pinnedCrisisAlerts.length > 0;
     const firstAlert = pinnedCrisisAlerts[0] || null;
     const unreadSafetyMeta = pinnedAlertMeta({
-      childName: boundChild?.displayName || firstAlert?.minor_display_name || "",
-      occurredAt: firstAlert?.occurred_at || "",
+      occurredAt: alertTimeLabel(firstAlert?.occurredAt),
     });
+    const placeName = devicePlaceName(binding, personaName);
+    const childName = boundChild?.displayName || "";
+    const todayCount = today.todayCount || 0;
 
     this.setData({
       loading: false,
@@ -543,7 +575,7 @@ Page({
       personaVoice,
       personaSummary,
       heroRoleId: companion.id,
-      devicePlaceName: devicePlaceName(binding, personaName),
+      devicePlaceName: placeName,
       pageLede: formatDateLabel(),
       heroTitle: online ? "给今天，留一点回味。" : "等它回来，记录还在。",
       heroCaption: online
@@ -551,14 +583,17 @@ Page({
         : "可查看已同步的回顾。设备恢复连接后再记录。",
       heroFoot: online ? "在设备上使用，手机不录音" : "绑定关系不受影响",
       pendingCount: today.pendingCount || 0,
-      todayCount: today.todayCount || 0,
+      todayCount,
       todayMeta: today.todayMeta || "",
       todayTitle: today.todayTitle || "",
       todayOverview: today.todayOverview || "",
       dailySummaryText: today.dailySummaryText || "",
+      summaryCount,
+      avatarGlyph: avatarGlyphFrom(identity?.display_name),
+      subscriptionPushEnabled: SUBSCRIPTION_PUSH_ENABLED,
       showChildMemory: Boolean(boundChild),
       childMemoryMinorId: boundChild?.personId || "",
-      childMemoryName: boundChild?.displayName || "",
+      childMemoryName: childName,
       memoryPreviews,
       pinnedCrisisAlerts,
       statusPill: trialCard.statusPill,
@@ -566,8 +601,6 @@ Page({
       usageKnown: trialCard.usageKnown,
       usageUsedMinutes: trialCard.usageUsedMinutes,
       usageLimitMinutes: trialCard.usageLimitMinutes,
-      usageLabel: trialCard.usageLabel,
-      quietHoursLine: trialCard.quietHoursLine,
       quietHoursLabel: trialCard.quietHoursLabel,
       nightModeOn: trialCard.nightModeOn,
       showSafetyNightCard: offerSafety,

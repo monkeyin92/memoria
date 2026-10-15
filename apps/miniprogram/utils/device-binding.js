@@ -87,8 +87,9 @@ const CONSENT_OFFERS = Object.freeze([
   {
     id: "offer_emergency_contact_v1",
     modes: ["parent_for_child"],
-    label: "紧急联系人通知",
-    description: "仅在风险场景下通知你设定的紧急联系人",
+    label: "紧急联系人提醒",
+    description: "仅在风险场景下提醒你设定的紧急联系人",
+
     defaultChecked: false,
     requiresParentSelfAcceptance: false,
   },
@@ -154,15 +155,16 @@ const CONSENT_OFFERS = Object.freeze([
     id: "offer_senior_anti_fraud_v1",
     modes: ["child_for_parent"],
     label: "防诈骗提醒",
-    description: "转账、冒充家人等场景给出提醒",
+    description: "转账、冒充亲属等场景给出提醒",
     defaultChecked: true,
     requiresParentSelfAcceptance: false,
   },
   {
     id: "offer_senior_emergency_contact_v1",
     modes: ["child_for_parent"],
-    label: "紧急联系人与联系家人",
+    label: "紧急联系人与联系亲属",
     description: "需要时联系父母本人设定的紧急联系人",
+
     defaultChecked: false,
     requiresParentSelfAcceptance: false,
   },

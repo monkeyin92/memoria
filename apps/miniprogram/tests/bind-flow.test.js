@@ -17,6 +17,7 @@ const profileWrites = [];
 const CRISIS_TEMPLATE = "tmpl-crisis-bind";
 let pushConfigEnabled = false;
 let subscribeAnswer = "accept";
+let subscribePrompts = 0;
 
 global.wx = {
   getStorageSync: (key) => storage[key],
@@ -38,6 +39,7 @@ global.wx = {
     options.success?.({ code: "bind-login-code" });
   },
   requestSubscribeMessage(options) {
+    subscribePrompts += 1;
     const templateId = options.tmplIds?.[0];
     options.success?.({
       errMsg: "requestSubscribeMessage:ok",
@@ -251,7 +253,7 @@ test("the companion picked while binding becomes the account's companion", async
   profileWrites.length = 0;
   const page = await bootSelfUseReady("阿宁");
   const index = page.data.personaOptions.findIndex((option) => option.id === "mianmian");
-  page.onPersonaSwipe({ detail: { current: index } });
+  page.onPersonaTap({ currentTarget: { dataset: { index } } });
   await page.goToReview();
   await page.submitBinding();
   assert.equal(page.data.step, "done");
@@ -319,9 +321,9 @@ test("parent_for_child flow validates minimal info and submits guardian relation
     page.data.quietHoursLabel,
     "夜间模式：21:00–07:00（这段时间点屏只会说晚安）",
   );
-  assert.equal(page.data.submitLabel, "订阅安全提醒");
+  assert.equal(page.data.submitLabel, "提交绑定");
   const bindTemplate = fs.readFileSync(path.join(root, "pages/bind/index.wxml"), "utf8");
-  assert.match(bindTemplate, /夜间模式默认 21:00–07:00，可改/);
+  assert.match(bindTemplate, /点下方的开始、结束时间可以修改/);
   assert.match(bindTemplate, /\{\{submitLabel\}\}/);
 
   await page.goToReview();
@@ -331,7 +333,7 @@ test("parent_for_child flow validates minimal info and submits guardian relation
   page.setData({ "form.childNickname": "小乐" });
   await page.goToReview();
   assert.equal(page.data.step, "review");
-  assert.equal(page.data.submitLabel, "订阅安全提醒");
+  assert.equal(page.data.submitLabel, "提交绑定");
   await page.submitBinding();
   assert.equal(page.data.step, "done");
   const payload = lastWxRequest.data;
@@ -355,20 +357,25 @@ test("parent_for_child flow validates minimal info and submits guardian relation
   assert.ok(!page.data.offers.some((offer) => offer.id === "offer_guardian_weekly_summary_v1"));
   assert.ok(!payload.consent_offer_ids.includes("offer_emergency_contact_v1"));
   assert.equal(readSubjectLabel(page.data.manifest), "小乐");
-  assert.equal(page.data.crisisSubscribeAccepted, true);
+  assert.equal(page.data.crisisSubscribeAccepted, false);
 });
 
-test("parent_for_child bind does not complete when WeChat subscribe is rejected", async () => {
+test("parent_for_child bind completes without a subscribe prompt while the push flag is off", async () => {
   nextResponse = successResponse(defaultManifestResponse("parent_for_child"));
   const page = await bootToMode("parent_for_child");
   subscribeAnswer = "reject";
+  subscribePrompts = 0;
   page.setData({ "form.childNickname": "小乐" });
   await page.goToReview();
+  assert.equal(page.data.crisisSubscribeRequired, false);
+  assert.equal(page.data.subscriptionPushEnabled, false);
   lastWxRequest = null;
   await page.submitBinding();
-  assert.equal(page.data.step, "review");
-  assert.equal(lastWxRequest, null);
-  assert.match(page.data.error, /未完成订阅安全提醒/);
+  assert.equal(page.data.step, "done");
+  assert.equal(page.data.error, "");
+  assert.notEqual(lastWxRequest, null);
+  assert.equal(subscribePrompts, 0);
+  subscribeAnswer = "accept";
 });
 
 test("parent_for_child asks before submitting an unusually short quiet-hours window", async () => {
@@ -774,7 +781,7 @@ test("the finish step shows the companion picked while binding, not a generic ro
   const page = await bootSelfUseReady("阿宁");
   const index = page.data.personaOptions.findIndex((option) => option.id === "taoxi");
   assert.ok(index >= 0);
-  page.onPersonaSwipe({ detail: { current: index } });
+  page.onPersonaTap({ currentTarget: { dataset: { index } } });
   await page.goToReview();
   await page.submitBinding();
   assert.equal(page.data.step, "done");
@@ -788,7 +795,7 @@ test("continuing to activation hands the picked companion to the onboarding page
   nextResponse = successResponse(defaultManifestResponse("self_use"));
   const page = await bootSelfUseReady("阿宁");
   const index = page.data.personaOptions.findIndex((option) => option.id === "taoxi");
-  page.onPersonaSwipe({ detail: { current: index } });
+  page.onPersonaTap({ currentTarget: { dataset: { index } } });
   await page.goToReview();
   await page.submitBinding();
 

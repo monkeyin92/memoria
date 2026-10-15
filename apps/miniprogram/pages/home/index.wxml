@@ -1,33 +1,45 @@
-<view class="page-shell trial-page home-trial">
-  <view wx:if="{{!authenticated}}">
-    <text class="trial-title">你好，欢迎来到 Memoria</text>
-    <text class="trial-caption">把设备连好，再慢慢留下日常。</text>
-    <view class="trial-card home-guest-card">
-      <text class="home-guest-lead">记住哪些事，由你决定。</text>
-      <text class="trial-caption">在设备上记录，在这里确认与整理。</text>
+<view class="page-shell trial-page tab-page home-v4" style="{{statusBarStyle}}">
+  <view wx:if="{{!authenticated}}" class="home-guest">
+    <view class="home-login-hero">
+      <image class="home-login-art" src="/assets/ui/v4/dusk.jpg" mode="heightFix" />
+      <view class="home-login-scrim"></view>
+      <view class="home-login-brand">
+        <text class="home-login-title">Memoria</text>
+        <text class="home-login-tag">陪孩子聊天、讲故事的 AI 助手</text>
+      </view>
     </view>
-    <view class="home-cta">
-      <button class="trial-primary" bindtap="loginFromHome">微信登录，找回我的设备</button>
+    <view class="home-login-body">
+      <text class="home-login-hello">{{greeting}}</text>
+      <text class="page-lede">登录后查看孩子今天聊了什么</text>
+      <button class="trial-primary home-login-wechat" bindtap="loginFromHome">
+        <image class="home-btn-icon" src="/assets/ui/v4/wechat-white.svg" />微信一键登录
+      </button>
+      <button class="trial-secondary home-login-phone" bindtap="loginWithPhone">手机号登录</button>
+      <text class="home-note home-login-note">登录即表示你已阅读《用户协议》和《隐私说明》</text>
     </view>
-    <text class="trial-caption home-foot">对话在设备上完成。手机用来连接、确认和整理，不录音。</text>
   </view>
 
   <block wx:else>
-    <text class="trial-title">{{greeting}}</text>
-    <text class="trial-caption">{{pageLede}}</text>
+    <view class="home-head">
+      <view class="home-head-copy">
+        <text class="eyebrow">{{pageLede}}</text>
+        <text class="trial-title">今天</text>
+      </view>
+      <view class="home-avatar" bindtap="openProfile">{{avatarGlyph}}</view>
+    </view>
 
     <view wx:if="{{loading}}" class="trial-card home-pad">
       <text class="trial-caption">{{syncingBindings ? '正在同步你的设备…' : '正在读取状态…'}}</text>
     </view>
 
     <view wx:elif="{{bindingSyncError && !hasBinding && !needsBindingChoice}}" class="trial-card home-pad">
-      <text class="home-empty-title">设备信息暂未同步</text>
+      <text class="home-card-title">设备信息暂未同步</text>
       <text class="trial-caption">这不代表未绑定，无需重新配网。{{bindingSyncError}}</text>
       <button class="trial-primary home-cta-btn" bindtap="retryBindingSync">重新同步</button>
     </view>
 
     <view wx:elif="{{needsBindingChoice}}">
-      <text class="trial-caption">设备信息已从账号找到。选择你要查看的设备。</text>
+      <text class="trial-caption home-choice-lede">设备信息已从账号找到。选择你要查看的设备。</text>
       <view
         wx:for="{{bindingChoices}}"
         wx:key="bindingId"
@@ -36,17 +48,17 @@
         bindtap="chooseDeviceBinding"
       >
         <view class="home-choice-copy">
-          <text class="home-choice-title">{{item.label}}</text>
+          <text class="home-card-title">{{item.label}}</text>
           <text class="trial-caption">{{item.modeLabel}}</text>
         </view>
-        <text class="trial-banner-chevron">›</text>
+        <image class="home-chev" src="/assets/ui/v4/chev-faint.svg" />
       </view>
       <text class="trial-caption">切换设备不会赋予查看其他成员私密内容的权限。</text>
       <text wx:if="{{bindingSyncError}}" class="home-error">{{bindingSyncError}}</text>
     </view>
 
     <view wx:elif="{{!hasBinding}}" class="trial-card home-pad">
-      <text class="home-empty-title">还没有绑定设备</text>
+      <text class="home-card-title">还没有绑定设备</text>
       <text class="trial-caption">已完成账号同步。请接通设备电源，在手机旁完成首次启用。</text>
       <button class="trial-primary home-cta-btn" bindtap="openOnboarding">{{hasPendingOnboarding ? '继续上次启用' : '添加第一台设备'}}</button>
       <button class="home-text-btn" bindtap="showSyncHelp">其他手机上已经有设备？</button>
@@ -55,48 +67,67 @@
     <block wx:else>
       <view
         wx:if="{{unreadSafetyAlert || pinnedCrisisAlerts.length}}"
-        class="trial-banner"
+        class="trial-banner home-attention"
         bindtap="openUnreadSafety"
       >
-        <view class="trial-banner-dot"></view>
+        <view class="trial-banner-icon"><image src="/assets/ui/v4/heart-rust.svg" /></view>
         <view class="trial-banner-copy">
           <text class="trial-banner-title">{{unreadSafetyCopy}}</text>
           <text class="trial-banner-meta">{{unreadSafetyMeta}}</text>
         </view>
-        <text class="trial-banner-chevron">›</text>
+        <image class="home-chev" src="/assets/ui/v4/chev-rust.svg" />
       </view>
 
-      <view class="trial-card home-device-card" bindtap="openDevice">
-        <view class="mp-mascot-tile">
-          <face-badge role="{{heroRoleId}}" size="tile" mood="default" plain></face-badge>
+      <view class="trial-card trial-card-xl home-usage-card" bindtap="openDevice">
+        <view class="home-ring">
+          <view class="home-ring-inner">
+            <text class="home-ring-num">{{usageLimitMinutes || '未设置'}}</text>
+            <text class="home-ring-cap">{{usageLimitMinutes ? '分钟 · 单次上限' : '单次上限'}}</text>
+          </view>
         </view>
-        <view class="home-device-copy">
-          <text class="home-device-name">{{devicePlaceName}}</text>
+        <view class="home-usage-copy">
+          <text class="home-lbl">今天聊了</text>
+          <view wx:if="{{usageKnown}}" class="home-usage-line">
+            <text class="home-usage-num">{{usageUsedMinutes}}</text>
+            <text class="home-usage-unit"> 分钟</text>
+          </view>
+          <text wx:else class="home-usage-pending">用量暂未统计</text>
           <view class="trial-status-pill {{online ? '' : 'is-off'}}">
             <view class="trial-status-dot"></view>
-            <text>{{statusLine}}</text>
+            <text>{{personaName}}{{online ? '在线' : '离线'}}</text>
           </view>
         </view>
       </view>
 
-      <view wx:if="{{showChildMemory}}" class="trial-card home-memory-card">
-        <view class="home-memory-head">
+      <view class="home-stat-grid">
+        <view class="trial-card home-stat" bindtap="openMemory">
+          <view class="mp-icon-tile"><image src="/assets/ui/v4/book-accent.svg" /></view>
+          <text class="home-lbl">今天对话</text>
+          <view class="home-stat-line">
+            <text class="home-stat-num">{{todayCount}}</text>
+            <text class="home-stat-unit"> 次</text>
+          </view>
+        </view>
+        <view class="trial-card home-stat" bindtap="openMemory">
+          <view class="mp-icon-tile"><image src="/assets/ui/v4/note-accent.svg" /></view>
+          <text class="home-lbl">今日摘要</text>
+          <view class="home-stat-line">
+            <text class="home-stat-num">{{summaryCount}}</text>
+            <text class="home-stat-unit"> 条</text>
+          </view>
+        </view>
+      </view>
+
+      <view wx:if="{{showChildMemory}}" class="trial-card home-row-card" bindtap="openChildMemory">
+        <mp-icon name="heart" size="96"></mp-icon>
+        <view class="home-row-copy">
           <text class="home-card-title">{{childMemoryName}}的记忆</text>
-          <text class="trial-link" bindtap="openChildMemory">查看全部</text>
+          <text class="home-row-sub">{{memoryPreviews.length ? '最近：' + memoryPreviews[0].text : '还没有摘要，聊过之后会出现在这里'}}</text>
         </view>
-        <view wx:if="{{memoryPreviews.length}}" class="home-memory-list">
-          <view
-            wx:for="{{memoryPreviews}}"
-            wx:key="recordId"
-            class="home-memory-preview"
-          >
-            <text class="home-memory-text">{{item.text}}</text>
-          </view>
-        </view>
-        <text wx:else class="trial-caption home-memory-empty">还没有摘要。聊过之后会出现在这里。</text>
+        <image class="home-chev" src="/assets/ui/v4/chev-faint.svg" />
       </view>
 
-      <view wx:if="{{showSafetyNightCard}}" class="trial-card home-toggle-card">
+      <view wx:if="{{showSafetyNightCard && subscriptionPushEnabled}}" class="trial-card home-toggle-card">
         <view class="home-toggle-row">
           <view class="home-toggle-copy">
             <text class="home-card-title">安全提醒</text>
@@ -104,26 +135,22 @@
           </view>
           <switch
             checked="{{safetySubscribeKnown && safetySubscribeOn}}"
-            color="#E2702A"
+            color="#4A52C9"
             disabled="{{!safetySubscribeKnown || safetySubscribeBusy}}"
             bindchange="onSafetySubscribeChange"
           />
         </view>
         <view class="home-toggle-row" bindtap="openNightSettings">
+          <view class="mp-icon-tile home-moon"><image src="/assets/ui/v4/moon-ink.svg" /></view>
           <view class="home-toggle-copy">
-            <text class="home-card-title">夜间模式</text>
-            <text class="trial-caption">{{quietHoursLabel}}</text>
+            <text class="home-card-title">安静时段</text>
+            <text class="trial-caption">{{nightModeOn ? quietHoursLabel : '未设置'}}</text>
           </view>
-          <switch
-            checked="{{nightModeOn}}"
-            color="#E2702A"
-            disabled="{{nightToggleBusy}}"
-            catchchange="onNightModeChange"
-          />
+          <image class="home-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
       </view>
     </block>
 
-    <text class="trial-caption home-foot">在设备上使用，手机不录音。对话由人工智能生成，会明确标识。</text>
+    <text class="home-note">在设备上使用，手机不录音，回应由 AI 生成。</text>
   </block>
 </view>

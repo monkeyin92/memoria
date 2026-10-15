@@ -15,6 +15,7 @@ from services.consent.bound_subject import (
     MINOR_SESSION_CAPABILITIES,
     BoundSubjectGrant,
 )
+from services.consent.evidence import ConsentParams
 from services.control_api.app.device_binding_token import mint_device_binding_token
 from services.control_api.app.main import create_app
 from services.control_api.tests.test_guardian_api import _configure, _mark_verified_adult
@@ -26,6 +27,8 @@ class _RecordingConsent:
 
     grants: list[BoundSubjectGrant] = field(default_factory=list)
     revokes: list[dict[str, Any]] = field(default_factory=list)
+    limit_reads: list[dict[str, Any]] = field(default_factory=list)
+    limits: ConsentParams | None = None
 
     async def grant(self, request: BoundSubjectGrant) -> tuple[()]:
         self.grants.append(request)
@@ -34,6 +37,12 @@ class _RecordingConsent:
     async def revoke(self, **kwargs: Any) -> int:
         self.revokes.append(kwargs)
         return 1
+
+    async def session_limits(self, **kwargs: Any) -> ConsentParams:
+        self.limit_reads.append(kwargs)
+        if self.limits is None:
+            raise LookupError("no guardian session consent on this binding")
+        return self.limits
 
 
 async def _owner(client: AsyncClient, app: Any, username: str) -> tuple[str, dict[str, str]]:
@@ -394,7 +403,9 @@ async def test_guardian_memory_toggle_moves_the_consent_authority_too(
 _ARCHIVE_TOKEN = {"X-Memoria-Internal-Token": "guardian-test-archive-token-that-is-long-enough"}
 
 
-async def _speech(client: AsyncClient, *, session_id: str, event_id: str, subject: str | None) -> None:
+async def _speech(
+    client: AsyncClient, *, session_id: str, event_id: str, subject: str | None
+) -> None:
     body: dict[str, Any] = {
         "event_id": event_id,
         "session_id": session_id,
@@ -437,9 +448,13 @@ async def test_deleting_a_childs_data_keeps_the_parents_and_unbind_redacts_the_n
         assert created.status_code == 201, created.text
         child_id = created.json()["primary_subject_ids"][0]
         child_session = (await client.post("/v1/sessions", headers=headers, json={})).json()
-        await _speech(client, session_id=child_session["session_id"], event_id="child-turn", subject=child_id)
+        await _speech(
+            client, session_id=child_session["session_id"], event_id="child-turn", subject=child_id
+        )
         parent_session = (await client.post("/v1/sessions", headers=headers, json={})).json()
-        await _speech(client, session_id=parent_session["session_id"], event_id="parent-turn", subject=None)
+        await _speech(
+            client, session_id=parent_session["session_id"], event_id="parent-turn", subject=None
+        )
 
         deleted = await client.post(
             f"/v1/guardian/minors/{child_id}/delete",
@@ -569,9 +584,13 @@ async def test_binder_sees_only_style_labels_and_can_reset_the_bound_persona(
             version_number=2,
             entries=(
                 PersonaCapsuleEntry(
-                    trait_id="t1", category="sentence_length",
-                    description="日常表达偏好短句，先给出核心意思", context="",
-                    counterexample="", confidence=0.9, source_event_ids=(),
+                    trait_id="t1",
+                    category="sentence_length",
+                    description="日常表达偏好短句，先给出核心意思",
+                    context="",
+                    counterexample="",
+                    confidence=0.9,
+                    source_event_ids=(),
                 ),
             ),
             prompt_fragment="",
@@ -587,8 +606,14 @@ async def test_binder_sees_only_style_labels_and_can_reset_the_bound_persona(
         app.state.bound_subject_consent = recorder
         owner_id, headers = await _owner(client, app, "persona-view-owner")
         created = await _bind(
-            client, app, owner_id=owner_id, headers=headers, device_id="device-persona-view",
-            declared_mode="parent_for_child", relationship="guardian_of", age_band="under_14",
+            client,
+            app,
+            owner_id=owner_id,
+            headers=headers,
+            device_id="device-persona-view",
+            declared_mode="parent_for_child",
+            relationship="guardian_of",
+            age_band="under_14",
             offers=["offer_minor_voice_session_v1"],
         )
         assert created.status_code == 201, created.text
@@ -681,3 +706,99 @@ async def test_session_limits_write_is_refused_without_the_postgres_authority(
             json={"max_session_minutes": 0},
         )
         assert invalid.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_session_limits_read_returns_what_the_guardian_set_and_no_usage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    recorder = _RecordingConsent(
+        limits=ConsentParams(max_session_seconds=1800, quiet_hours=("21:00", "07:00"))
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        app.state.bound_subject_consent = recorder
+        owner_id, headers = await _owner(client, app, "limits-reader")
+        _stranger_id, stranger = await _owner(client, app, "limits-stranger")
+        created = await _bind(
+            client,
+            app,
+            owner_id=owner_id,
+            headers=headers,
+            device_id="device-limits-read",
+            declared_mode="parent_for_child",
+            relationship="guardian_of",
+            age_band="under_14",
+            offers=["offer_minor_voice_session_v1"],
+        )
+        assert created.status_code == 201, created.text
+        path = "/v1/devices/device-limits-read/session-limits"
+
+        set_limits = await client.get(path, headers=headers)
+        recorder.limits = ConsentParams()
+        no_limits = await client.get(path, headers=headers)
+        recorder.limits = None
+        not_granted = await client.get(path, headers=headers)
+        foreign = await client.get(path, headers=stranger)
+        app.state.bound_subject_consent = None
+        unavailable = await client.get(path, headers=headers)
+
+    assert set_limits.status_code == 200, set_limits.text
+    assert set_limits.json() == {
+        "max_session_minutes": 30,
+        "quiet_hours": {"start": "21:00", "end": "07:00"},
+        "today_used_minutes": None,
+    }
+    assert recorder.limit_reads[0] == {
+        "actor_person_id": owner_id,
+        "subject_person_id": created.json()["primary_subject_ids"][0],
+        "binding_id": created.json()["binding_id"],
+    }
+    assert no_limits.json() == {
+        "max_session_minutes": None,
+        "quiet_hours": None,
+        "today_used_minutes": None,
+    }
+    assert (not_granted.status_code, not_granted.json()["detail"]) == (
+        409,
+        {"code": "session_limits_not_applicable"},
+    )
+    assert (foreign.status_code, foreign.json()["detail"]) == (404, {"code": "binding_not_found"})
+    assert (unavailable.status_code, unavailable.json()["detail"]) == (
+        409,
+        {"code": "session_limits_unavailable"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_session_limits_read_is_refused_outside_parent_for_child(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    recorder = _RecordingConsent(limits=ConsentParams(max_session_seconds=1800))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        app.state.bound_subject_consent = recorder
+        owner_id, headers = await _owner(client, app, "limits-elder-owner")
+        created = await _bind(
+            client,
+            app,
+            owner_id=owner_id,
+            headers=headers,
+            device_id="device-limits-elder",
+            declared_mode="child_for_parent",
+            relationship="child_of",
+            age_band="adult",
+            offers=["offer_admin_device_management_v1"],
+        )
+        assert created.status_code == 201, created.text
+        refused = await client.get(
+            "/v1/devices/device-limits-elder/session-limits", headers=headers
+        )
+
+    assert (refused.status_code, refused.json()["detail"]) == (
+        409,
+        {"code": "session_limits_not_applicable"},
+    )
+    assert recorder.limit_reads == []

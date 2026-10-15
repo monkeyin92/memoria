@@ -1,10 +1,6 @@
 {
   "navigationBarTitleText": "记忆档案",
+  "navigationStyle": "custom",
   "enablePullDownRefresh": true,
-  "usingComponents": {
-    "face-badge": "/components/face-badge/index",
-    "page-backdrop": "/components/page-backdrop/index",
-    "glass-icon": "/components/glass-icon/index",
-    "device-screen": "/components/device-screen/index"
-  }
+  "usingComponents": {}
 }

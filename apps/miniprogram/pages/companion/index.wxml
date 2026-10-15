@@ -1,85 +1,47 @@
-<view class="page-shell companion-shell">
-  <page-backdrop theme="mist"></page-backdrop>
+<view class="page-shell tab-page" style="{{statusBarStyle}}">
+  <text class="eyebrow">说话风格</text>
   <text class="page-title">角色</text>
-  <text class="page-lede">当前角色 · {{currentName}}在陪你</text>
+  <text class="page-lede">换个说话风格。它始终是陪孩子聊天、讲故事的 AI 助手。</text>
 
-  <!-- 堆叠卡组：当前卡在最前，其余角色叠在后面左右露出；左右拖动或点露出的卡切换 -->
-  <view
-    class="deck {{dragging ? 'deck-dragging' : ''}}"
-    bindtouchstart="onDeckTouchStart"
-    bindtouchmove="onDeckTouchMove"
-    bindtouchend="onDeckTouchEnd"
-    bindtouchcancel="onDeckTouchEnd"
-  >
+  <view class="role-grid">
     <view
       wx:for="{{cards}}"
       wx:key="id"
-      class="deck-card {{item.front ? 'deck-card-front' : 'deck-card-back'}} {{profile.companion_id === item.id ? 'deck-card-picked' : ''}}"
-      style="{{item.style}}"
-      data-role="{{item.id}}"
-      data-offset="{{item.offset}}"
-      bindtap="onCardTap"
+      class="role-card {{profile.companion_id === item.id ? 'role-card-on' : ''}}"
+      data-id="{{item.id}}"
+      bindtap="chooseCompanion"
     >
-      <view class="deck-body">
-      <view wx:if="{{profile.companion_id === item.id}}" class="pill pill-teal deck-current">当前角色</view>
-      <view class="deck-face">
-        <face-badge role="{{item.id}}" size="xl" plain="{{true}}" animated="{{item.front}}"></face-badge>
+      <view class="role-art">
+        <view class="role-fig"><face-badge role="{{item.id}}" size="lg" plain="{{true}}"></face-badge></view>
       </view>
-      <text class="deck-name">{{item.name}}</text>
-      <text class="deck-tagline">{{item.tagline}}</text>
-      <text class="deck-desc">{{item.description}}</text>
-      <view class="deck-voice">
-        <text class="deck-voice-name">声音 · {{item.voiceName}}（{{item.tone}}）</text>
-        <button
-          wx:if="{{item.front}}"
-          class="deck-play {{previewingId === item.id ? 'deck-play-on' : ''}}"
-          data-id="{{item.id}}"
-          catchtap="togglePreview"
-        >{{previewingId === item.id ? '停止' : '▶ 试听'}}</button>
-      </view>
-      </view>
+      <text class="role-name">{{item.name}}</text>
+      <text class="role-tagline">{{item.tagline}}</text>
+      <view wx:if="{{profile.companion_id === item.id}}" class="pill pill-online role-chip">正在使用</view>
+      <view wx:else class="pill pill-neutral role-chip">切换</view>
     </view>
   </view>
 
-  <view class="deck-dots">
-    <view
-      wx:for="{{cards}}"
-      wx:key="id"
-      class="deck-dot {{index === currentIndex ? 'deck-dot-on' : ''}}"
-      data-index="{{index}}"
-      bindtap="onDotTap"
-    ></view>
+  <view class="role-new" bindtap="openCustomPersona">
+    <image class="role-new-icon" src="/assets/ui/v4/plus-accent.svg" aria-hidden="true"></image>
+    <text>新建角色</text>
   </view>
+  <text class="caption role-hint">换角色后，机器人下一次对话起换成 TA 的声音。</text>
 
-  <button
-    wx:if="{{profile.companion_id === browsingId}}"
-    class="secondary-button deck-action"
-    disabled="true"
-  >✓ {{browsingName}}正在陪你</button>
-  <button
-    wx:else
-    class="primary-button deck-action"
-    loading="{{saving}}"
-    disabled="{{saving}}"
-    data-id="{{browsingId}}"
-    bindtap="chooseCompanion"
-  >选{{browsingName}}陪伴</button>
-  <text class="caption deck-hint">左右滑动卡片，认识每一位角色</text>
-
-  <view class="section-head">
-    <text class="section-head-title">声音</text>
-  </view>
-  <view class="l2-card companion-voice">
+  <text class="section-title">声音</text>
+  <view class="card companion-voice">
     <view class="setting-row">
-      <view class="row-icon"><glass-icon name="volume" size="72"></glass-icon></view>
+      <mp-icon name="volume"></mp-icon>
       <view class="row-copy">
         <text class="row-title">角色默认声音</text>
         <text class="row-meta">{{currentName}} · {{currentTone}}</text>
       </view>
-      <view class="pill pill-teal">使用中</view>
+      <view
+        class="pill pill-teal role-play"
+        data-id="{{profile.companion_id}}"
+        catchtap="togglePreview"
+      >{{previewingId === profile.companion_id ? '停止' : '试听'}}</view>
     </view>
   </view>
 
-  <text class="caption">角色只影响表达风格，不改变你的资料权限。换角色后，机器人下一次对话起换成 TA 的声音。</text>
-  <text class="privacy-note">角色音色来自产品设计音色，可在上方切换角色。</text>
+  <text class="privacy-note">角色只影响表达风格，不改变你的资料权限。角色音色来自产品设计音色。</text>
 </view>

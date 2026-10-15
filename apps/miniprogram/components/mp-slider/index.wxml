@@ -1,0 +1,17 @@
+<view
+  class="mps {{disabled ? 'mps-off' : ''}}"
+  aria-role="slider"
+  aria-label="{{label}}"
+  aria-valuemin="{{min}}"
+  aria-valuemax="{{max}}"
+  aria-valuenow="{{value}}"
+  bindtouchstart="onTouchStart"
+  catchtouchmove="onTouchMove"
+  bindtouchend="onTouchEnd"
+  bindtouchcancel="onTouchCancel"
+>
+  <view class="mps-track">
+    <view class="mps-fill" style="width: {{percent}}%;"></view>
+    <view class="mps-thumb" style="left: calc({{percent}}% - 16px);"></view>
+  </view>
+</view>

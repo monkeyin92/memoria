@@ -1,6 +1,5 @@
 <page-meta page-style="{{sheetOpen ? 'overflow: hidden;' : ''}}"></page-meta>
-<view class="page-shell">
-  <page-backdrop theme="mist"></page-backdrop>
+<view class="page-shell tab-page" style="{{statusBarStyle}}">
   <view wx:if="{{!authenticated}}">
     <text class="page-title">设备</text>
     <text class="page-lede">跟随账号同步，无需在每个端重新绑定。</text>
@@ -33,7 +32,7 @@
           <text class="row-title">{{item.label}}</text>
           <text class="row-meta">{{item.modeLabel}}</text>
         </view>
-        <text class="row-chevron">›</text>
+        <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
       </view>
       <text class="caption">切换设备不会赋予查看其他成员私密内容的权限。</text>
       <text wx:if="{{bindingSyncError}}" class="error-text">{{bindingSyncError}}</text>
@@ -47,67 +46,112 @@
 
     <block wx:else>
       <view class="trial-page device-trial-head">
-        <text class="trial-title">设置</text>
-        <text class="trial-caption">{{devicePlaceName}} · {{online ? '在线' : '离线'}}</text>
+        <text class="eyebrow">设备 · {{devicePlaceName}}</text>
+        <text class="trial-title">使用时长</text>
+        <text class="page-lede">到时间后，机器人会温柔地提醒孩子休息。</text>
 
-        <view wx:if="{{trialSettingsVisible}}" class="trial-inset">
-          <view class="trial-inset-row">
-            <view class="device-setting-copy">
-              <text class="trial-inset-label">安全提醒订阅</text>
-              <text class="trial-caption">{{safetySubscribeHelper}}</text>
+        <block wx:if="{{trialSettingsVisible}}">
+          <view class="trial-card trial-card-xl device-usage-card">
+            <view class="device-ring">
+              <view class="device-ring-inner">
+                <text class="device-ring-num {{sessionLimits.maxSessionMinutes ? '' : 'is-unset'}}">{{sessionLimits.maxSessionMinutes || '未设置'}}</text>
+                <text class="device-ring-cap">{{sessionLimits.maxSessionMinutes ? '分钟 · 单次上限' : '单次上限'}}</text>
+              </view>
             </view>
-            <switch
-              checked="{{safetySubscribeKnown && safetySubscribeOn}}"
-              color="#E2702A"
-              disabled="{{!safetySubscribeKnown || safetySubscribeBusy}}"
-              bindchange="onSafetySubscribeChange"
-            />
+            <view class="device-usage-copy">
+              <text class="device-usage-title">用量暂未统计</text>
+              <view class="trial-status-pill {{online ? '' : 'is-off'}}">
+                <view class="trial-status-dot"></view>
+                <text>{{online ? '在线' : '离线'}}</text>
+              </view>
+            </view>
           </view>
-          <text
-            wx:if="{{safetySubscribeOffCaption}}"
-            class="trial-caption trial-inset-caption {{safetySubscribeKnown ? '' : 'is-action'}}"
-            bindtap="retrySafetySubscribeState"
-          >{{safetySubscribeOffCaption}}</text>
-          <view class="trial-inset-row" bindtap="openLimitsSheet">
-            <text class="trial-inset-label">夜间时段</text>
-            <text class="trial-inset-value">{{sessionLimits.quietHoursLabel || '21:00 – 07:00'}} ›</text>
-          </view>
-          <view class="trial-inset-row">
-            <text class="trial-inset-label">每日上限</text>
-            <text class="trial-inset-value">{{sessionLimits.maxSessionLabel || '30 分钟'}}</text>
-          </view>
-          <view class="device-slider-block">
-            <slider
+
+          <view class="trial-card device-limit-card">
+            <view class="device-limit-head">
+              <text class="device-limit-label">单次上限</text>
+              <view>
+                <text class="device-limit-num">{{sessionLimits.maxSessionMinutes || '未设置'}}</text>
+                <text wx:if="{{sessionLimits.maxSessionMinutes}}" class="device-limit-unit"> 分钟</text>
+              </view>
+            </view>
+            <mp-slider
+              label="单次上限"
               min="{{limitsSliderMin}}"
               max="{{limitsSliderMax}}"
               step="{{limitsSliderStep}}"
-              value="{{sessionLimits.maxSessionMinutes || 30}}"
+              value="{{sessionLimits.maxSessionMinutes || limitsSliderMin}}"
               disabled="{{limitsSaving}}"
-              bindchange="onTrialDailyCapSlider"
-              activeColor="#E2702A"
-              backgroundColor="#F2EADF"
-              block-color="#ffffff"
-              block-size="24"
-            />
+              bindchange="onLimitsMinutesSlider"
+            ></mp-slider>
+            <view class="device-limit-range">
+              <text>{{limitsSliderMin}} 分钟</text>
+              <text>{{limitsSliderMax}} 分钟</text>
+            </view>
           </view>
+
+          <view class="trial-card device-quiet-card" bindtap="openLimitsSheet">
+            <mp-icon name="moon" tone="ink"></mp-icon>
+            <view class="device-setting-copy">
+              <text class="device-quiet-title">安静时段</text>
+              <text class="trial-caption">孩子睡觉的时间，机器人不陪聊</text>
+            </view>
+            <text class="device-quiet-chip">{{sessionLimits.quietStart ? sessionLimits.quietStart + '–' + sessionLimits.quietEnd : '未设置'}}</text>
+          </view>
+
+          <view wx:if="{{subscriptionPushEnabled}}" class="trial-inset">
+            <view class="trial-inset-row">
+              <view class="device-setting-copy">
+                <text class="trial-inset-label">安全提醒</text>
+                <text class="trial-caption">{{safetySubscribeHelper}}</text>
+              </view>
+              <switch
+                checked="{{safetySubscribeKnown && safetySubscribeOn}}"
+                color="#4A52C9"
+                disabled="{{!safetySubscribeKnown || safetySubscribeBusy}}"
+                bindchange="onSafetySubscribeChange"
+              />
+            </view>
+            <text
+              wx:if="{{safetySubscribeOffCaption}}"
+              class="trial-caption trial-inset-caption {{safetySubscribeKnown ? '' : 'is-action'}}"
+              bindtap="retrySafetySubscribeState"
+            >{{safetySubscribeOffCaption}}</text>
+          </view>
+        </block>
+
+        <view class="trial-inset device-story-block">
+          <view class="trial-inset-row">
+            <mp-icon name="book" tone="ink"></mp-icon>
+            <view class="device-setting-copy">
+              <text class="trial-inset-label">离线故事</text>
+              <text class="trial-caption">不联网也能听</text>
+            </view>
+          </view>
+          <view wx:for="{{offlineStories}}" wx:key="id" class="trial-inset-row">
+            <text class="trial-inset-label">{{item.title}}</text>
+          </view>
+          <text wx:if="{{!offlineStories.length}}" class="trial-caption trial-inset-caption">暂无可显示的离线故事</text>
         </view>
 
         <view class="trial-inset device-privacy-block">
           <view class="trial-inset-row" bindtap="openPrivacyNote">
+            <mp-icon name="shield" tone="ink"></mp-icon>
             <text class="trial-inset-label">隐私说明</text>
-            <text class="trial-inset-value">›</text>
+            <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
           </view>
           <view wx:if="{{guardianExportVisible}}" class="trial-inset-row" bindtap="openGuardianExport">
+            <mp-icon name="export" tone="ink"></mp-icon>
             <text class="trial-inset-label">管理与导出数据</text>
-            <text class="trial-inset-value">›</text>
+            <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
           </view>
           <view class="trial-inset-row" bindtap="openUnbindSheet">
+            <mp-icon name="dev" tone="ink"></mp-icon>
             <text class="trial-inset-label">解绑设备</text>
-            <text class="trial-inset-value">›</text>
+            <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
           </view>
-          <view class="mp-privacy-well">{{privacyNote}}</view>
-          <view class="mp-privacy-well">{{backupRetentionLine}}</view>
         </view>
+        <view class="mp-privacy-well">{{privacyNote}}</view>
       </view>
 
       <text wx:if="{{bindingSyncError}}" class="notice notice-warn">{{bindingSyncError}}</text>
@@ -131,27 +175,27 @@
           </view>
           <text class="volume-num">{{settings.volume_limit}}%</text>
         </view>
-        <slider min="0" max="100" step="5" value="{{settings.volume_limit}}" bindchange="changeVolume" disabled="{{settingsSaving}}" activeColor="#3CB8A0" backgroundColor="#f5ebdd" block-color="#ffffff" block-size="24" />
+        <mp-slider label="设备音量" min="0" max="100" step="5" value="{{settings.volume_limit}}" disabled="{{settingsSaving}}" bindchange="changeVolume"></mp-slider>
         <view class="slider-scale"><text>安静</text><text>响亮</text></view>
       </view>
 
       <!-- 角色与声音 / 唤醒词 / 网络 -->
       <view class="list">
         <view class="list-row" hover-class="list-row-hover" bindtap="openCompanion">
-          <view class="row-icon"><glass-icon name="star" size="72"></glass-icon></view>
+          <view class="row-icon"><mp-icon name="star"></mp-icon></view>
           <view class="row-copy">
             <text class="row-title">角色与声音</text>
             <text class="row-meta">{{personaName}} · {{personaVoice}}</text>
           </view>
-          <text class="row-chevron">›</text>
+          <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
         <view class="list-row" hover-class="{{online ? 'none' : 'list-row-hover'}}" bindtap="{{online ? '' : 'showConnectionHelp'}}">
-          <view class="row-icon"><glass-icon name="wifi" size="72"></glass-icon></view>
+          <view class="row-icon"><mp-icon name="wifi"></mp-icon></view>
           <view class="row-copy">
             <text class="row-title">网络连接</text>
           </view>
           <text class="row-value {{online ? '' : 'row-value-warn'}}">{{online ? '已连接' : '未连接'}}</text>
-          <text wx:if="{{!online}}" class="row-chevron">›</text>
+          <image wx:if="{{!online}}" class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
       </view>
 
@@ -185,21 +229,21 @@
       </view>
       <view class="list">
         <view class="list-row" hover-class="list-row-hover" bindtap="editSubjectAlias">
-          <view class="row-icon"><glass-icon name="pen" size="72"></glass-icon></view>
+          <view class="row-icon"><mp-icon name="pen"></mp-icon></view>
           <view class="row-copy">
             <text class="row-title">使用者备注</text>
             <text class="row-meta">首页用这个称呼 TA，不按客厅、卧室这类房间来标记</text>
           </view>
           <text class="row-value">{{subjectAliasLabel || '未设置'}}</text>
-          <text class="row-chevron">›</text>
+          <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
         <view class="list-row" hover-class="list-row-hover" bindtap="openGuardian">
-          <view class="row-icon"><glass-icon name="family" size="72"></glass-icon></view>
+          <view class="row-icon"><mp-icon name="user"></mp-icon></view>
           <view class="row-copy">
             <text class="row-title">家庭成员</text>
             <text class="row-meta">邀请与权限分别管理</text>
           </view>
-          <text class="row-chevron">›</text>
+          <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
         <view
           wx:for="{{personaRows}}"
@@ -209,19 +253,18 @@
           data-person-id="{{item.person_id}}"
           bindtap="openPersonaSheet"
         >
-          <view class="row-icon"><glass-icon name="star" size="72"></glass-icon></view>
+          <view class="row-icon"><mp-icon name="star"></mp-icon></view>
           <view class="row-copy">
             <text class="row-title">{{item.role_label}}的人格</text>
             <text class="row-meta">{{item.source_label}} · 可选自建人格</text>
           </view>
           <text class="row-value">{{item.persona_name}}</text>
-          <text class="row-chevron">›</text>
+          <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
       </view>
       <text wx:if="{{personaRows.length > 0}}" class="caption">「角色与声音」里选的角色会自动分配给主要使用者；想用自建人格，在这里单独分配。分配从下一次对话起生效。</text>
       <text wx:if="{{personaAssignmentError && !personaSheetVisible}}" class="error-text">{{personaAssignmentError}}</text>
 
-      <!-- P0-04 D3：试用设置卡已展示夜间时段与每日上限；无试用卡时保留原使用时段卡。 -->
       <view wx:if="{{sessionLimits && !trialSettingsVisible}}" class="l2-card">
         <view class="card-lead">
           <text class="l2-card-title">使用时段</text>
@@ -298,7 +341,7 @@
           <text class="row-meta">{{item.minor_display_name}}：{{item.message}}</text>
           <text class="caption">{{item.occurred_at}}</text>
         </view>
-        <button wx:if="{{elderCrisisPush.enabled && !trialSettingsVisible}}" class="secondary-button card-action" bindtap="enableElderCrisisPush">订阅安全提醒</button>
+        <button wx:if="{{subscriptionPushEnabled && elderCrisisPush.enabled && !trialSettingsVisible}}" class="secondary-button card-action" bindtap="enableElderCrisisPush">开启安全提醒</button>
       </view>
 
       <view wx:if="{{sensitiveEntries.length > 0}}" class="list">
@@ -307,7 +350,7 @@
             <text class="row-title">{{item.title}}</text>
             <text class="row-meta">{{item.description}}</text>
           </view>
-          <text class="row-chevron">›</text>
+          <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
       </view>
 
@@ -317,26 +360,26 @@
       </view>
       <view class="list">
         <view class="list-row" hover-class="list-row-hover" bindtap="openReprovision">
-          <view class="row-icon"><glass-icon name="bluetooth" size="72"></glass-icon></view>
+          <view class="row-icon"><mp-icon name="bluetooth"></mp-icon></view>
           <view class="row-copy">
             <text class="row-title">重新配网</text>
             <text class="row-meta">换了 Wi‑Fi 时用，不解除绑定</text>
           </view>
-          <text class="row-chevron">›</text>
+          <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
         <view class="list-row" hover-class="list-row-hover" bindtap="openOnboarding">
-          <view class="row-icon"><glass-icon name="device" size="72"></glass-icon></view>
+          <view class="row-icon"><mp-icon name="dev"></mp-icon></view>
           <view class="row-copy">
             <text class="row-title">添加其他设备</text>
           </view>
-          <text class="row-chevron">›</text>
+          <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
         <view class="list-row" hover-class="list-row-hover" bindtap="toggleDiag">
-          <view class="row-icon"><glass-icon name="receipt" size="72"></glass-icon></view>
+          <view class="row-icon"><mp-icon name="note"></mp-icon></view>
           <view class="row-copy">
             <text class="row-title">设备信息与诊断</text>
           </view>
-          <text class="row-chevron">{{diagExpanded ? '﹀' : '›'}}</text>
+          <image class="row-chev row-chev-fold {{diagExpanded ? 'row-chev-open' : ''}}" src="/assets/ui/v4/chev-faint.svg" />
         </view>
         <view wx:if="{{diagExpanded}}" class="diagnostic">
           <view class="summary-row"><text class="summary-key">设备用途</text><text class="summary-value">{{bindingModeLabel}}</text></view>
@@ -354,12 +397,12 @@
           <button class="text-button" bindtap="retryBindingSync">重新同步账号设备</button>
         </view>
         <view class="list-row" hover-class="list-row-hover" bindtap="openUnbindSheet">
-          <view class="row-icon"><glass-icon name="shield" size="72"></glass-icon></view>
+          <view class="row-icon"><mp-icon name="shield"></mp-icon></view>
           <view class="row-copy">
             <text class="row-title row-title-danger">解除绑定</text>
             <text class="row-meta">停止记忆，再决定保留还是删除 TA 的数据</text>
           </view>
-          <text class="row-chevron">›</text>
+          <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
       </view>
 
@@ -411,7 +454,7 @@
         <button class="primary-button sheet-action" loading="{{settingsSaving}}" disabled="{{settingsSaving}}" bindtap="confirmWakeSheet">保存</button>
       </view>
 
-      <!-- 人格分配底部抽屉：按使用人选择内置伙伴或自建人格，或恢复默认 -->
+      <!-- 人格分配底部抽屉：按使用人选择内置角色或自建人格，或恢复默认 -->
       <view wx:if="{{personaSheetVisible}}" class="sheet-mask" bindtap="closePersonaSheet" catchtouchmove="noop"></view>
       <view wx:if="{{personaSheetVisible}}" class="sheet device-sheet">
         <view class="sheet-grab"></view>

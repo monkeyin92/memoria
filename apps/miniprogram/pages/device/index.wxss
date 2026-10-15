@@ -1,16 +1,10 @@
 @import "../../styles/trial-theme.wxss";
 
 .device-trial-head {
-  padding: 8rpx 0 12rpx;
-  margin: 0 -32rpx;
-  padding-left: 32rpx;
-  padding-right: 32rpx;
-  padding-bottom: 8rpx;
-  background: var(--mp-bg);
-}
-
-.page-shell {
-  background: var(--mp-bg);
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
 }
 
 .device-setting-copy {
@@ -19,39 +13,161 @@
 }
 
 .device-setting-copy .trial-caption {
-  margin-top: 4rpx;
+  margin-top: 4px;
 }
 
-.device-slider-block {
-  padding: 8rpx 32rpx 28rpx;
+.device-usage-card {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin-top: 24px;
+  padding: 16px 24px;
+}
+
+.device-ring {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+  background: var(--mp-track);
+}
+
+.device-ring-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  background: var(--mp-surface);
+}
+
+.device-ring-num {
+  color: var(--mp-ink);
+  font-size: var(--mp-type-display);
+  font-weight: 700;
+  line-height: 32px;
+  letter-spacing: -1px;
+  font-variant-numeric: tabular-nums;
+}
+
+.device-ring-num.is-unset {
+  font-size: var(--mp-type-title);
+}
+
+.device-ring-cap {
+  margin-top: 4px;
+  color: var(--mp-ink-3);
+  font-size: var(--mp-type-micro);
+}
+
+.device-usage-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.device-usage-title {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--mp-ink);
+  font-size: var(--mp-type-button);
+  font-weight: 600;
+  line-height: var(--mp-lh-card);
+}
+
+.device-limit-card {
+  margin-top: var(--mp-gap-card);
+  padding: 24px;
+}
+
+.device-limit-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.device-limit-label {
+  color: var(--mp-ink);
+  font-size: var(--mp-type-card);
+  font-weight: 600;
+}
+
+.device-limit-num {
+  color: var(--mp-ink);
+  font-size: var(--mp-type-display);
+  font-weight: 700;
+  letter-spacing: -1px;
+  font-variant-numeric: tabular-nums;
+}
+
+.device-limit-unit {
+  color: var(--mp-ink-2);
+  font-size: var(--mp-type-small);
+}
+
+.device-limit-range {
+  display: flex;
+  justify-content: space-between;
+  color: var(--mp-ink-3);
+  font-size: var(--mp-type-meta);
+}
+
+.device-quiet-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: var(--mp-gap-card);
+  padding: 16px;
+}
+
+.device-quiet-title {
+  color: var(--mp-ink);
+  font-size: var(--mp-type-card);
+  font-weight: 600;
+}
+
+.device-quiet-card .trial-caption {
+  line-height: normal;
+}
+
+.device-quiet-chip {
+  flex-shrink: 0;
+  height: 24px;
+  padding: 0 12px;
+  border-radius: var(--mp-radius-pill);
+  background: var(--mp-accent-soft);
+  color: var(--mp-accent);
+  font-size: var(--mp-type-meta);
+  font-weight: 600;
+  line-height: 24px;
+  white-space: nowrap;
 }
 
 .device-privacy-block {
-  margin-top: var(--mp-gap-settings);
+  margin-top: var(--mp-gap-card);
+}
+
+.device-privacy-block .trial-inset-label {
+  flex: 1;
 }
 
 .device-header {
-  padding: 8rpx 0 12rpx;
+  padding: 4px 0 6px;
 }
 
 .device-header .page-title {
-  margin-bottom: 12rpx;
-}
-
-/* L1 hero 胶囊行：复用全局 .pill，只补间距 */
-.hero-pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12rpx;
-  margin-top: 20rpx;
+  margin-bottom: 6px;
 }
 
 /* L2 音量卡：复用全局 l2-card / slider，只补数字与刻度 */
 .volume-num {
   flex-shrink: 0;
-  color: #16191c;
-  color: var(--text-primary);
-  font-size: 40rpx;
+  color: var(--mp-ink);
+  font-size: var(--mp-type-title);
   font-weight: 600;
 }
 
@@ -59,27 +175,27 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 8rpx;
-  color: #5a6167;
-  color: var(--text-tertiary);
-  font-size: 22rpx;
+  margin-top: 4px;
+  color: var(--mp-ink-3);
+  font-size: var(--mp-type-meta);
 }
 
 /* L3 行内数值：唤醒词、网络、备注的当前值 */
 .row-value {
-  flex-shrink: 0;
-  max-width: 240rpx;
-  overflow: hidden;
-  color: #474e54;
-  color: var(--text-secondary);
-  font-size: 26rpx;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 50%;
+  overflow: visible;
+  color: var(--mp-ink-2);
+  font-size: var(--mp-type-caption);
+  line-height: var(--mp-lh-caption);
+  text-align: right;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .row-value-warn {
-  color: #8a4c10;
-  color: var(--warning);
+  color: var(--mp-sun);
 }
 
 .list-row-hover {
@@ -88,67 +204,63 @@
 
 .row-title-danger,
 .row-copy .row-title-danger {
-  color: #a3221b;
-  color: var(--danger);
+  color: var(--mp-rust);
 }
 
 /* 年龄申报：三个选项各占一格，间距分开 */
 .option-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 16rpx;
-  margin-top: 24rpx;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 .option-chip {
   box-sizing: border-box;
-  flex: 1 1 180rpx;
-  min-height: 84rpx;
-  padding: 18rpx 20rpx;
-  border: 2rpx solid rgba(30, 45, 70, 0.12);
-  border-radius: 24rpx;
-  background: rgba(255, 255, 255, 0.7);
-  color: #16191c;
-  color: var(--text-primary);
-  font-size: 26rpx;
+  flex: 1 1 90px;
+  min-height: 42px;
+  padding: 9px 10px;
+  border: 1px solid var(--mp-line);
+  border-radius: var(--mp-radius-icon);
+  background: var(--mp-surface);
+  color: var(--mp-ink);
+  font-size: var(--mp-type-caption);
   line-height: 1.4;
   text-align: center;
 }
 
 .option-chip-on {
-  border-color: #326e70;
-  background: rgba(227, 237, 236, 0.9);
-  color: #285c5e;
-  color: var(--brand-teal);
+  border-color: var(--mp-accent);
+  background: var(--mp-accent-soft);
+  color: var(--mp-accent);
   font-weight: 600;
 }
 
 .card-action {
-  margin-top: 28rpx;
+  margin-top: 14px;
 }
 
 .style-labels {
   display: flex;
   flex-wrap: wrap;
-  gap: 12rpx;
-  margin-top: 20rpx;
+  gap: 6px;
+  margin-top: 10px;
 }
 
 .alert-row {
-  margin-top: 16rpx;
+  margin-top: 8px;
 }
 
 .summary-row {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 24rpx;
-  padding: 12rpx 0;
+  gap: 12px;
+  padding: 6px 0;
 }
 
 .summary-key {
-  color: #474e54;
-  color: var(--text-secondary);
+  color: var(--mp-ink-2);
 }
 
 .summary-value {
@@ -171,36 +283,36 @@
 }
 
 .sheet-custom {
-  padding: 4rpx 4rpx 12rpx;
+  padding: 2px 2px 6px;
 }
 
 .sheet-action {
   flex-shrink: 0;
-  margin-top: 24rpx;
+  margin-top: 12px;
 }
 
 .sheet-cancel {
   flex-shrink: 0;
   width: 100%;
-  margin-top: 8rpx;
+  margin-top: 4px;
 }
 
 /* 底部抽屉选项：复用全局 .sheet / .sheet-grab / .sheet-title / .sheet-sub */
 .sheet-opt {
   display: flex;
   align-items: center;
-  gap: 20rpx;
-  min-height: 112rpx;
-  margin-top: 16rpx;
-  padding: 20rpx 24rpx;
-  border: 2rpx solid rgba(30, 45, 70, 0.1);
-  border-radius: 28rpx;
-  background: rgba(255, 255, 255, 0.62);
+  gap: 10px;
+  min-height: 56px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--mp-line);
+  border-radius: var(--mp-radius-inset);
+  background: var(--mp-surface);
 }
 
 .sheet-opt.on {
-  border-color: #326e70;
-  background: rgba(227, 237, 236, 0.86);
+  border-color: var(--mp-accent);
+  background: var(--mp-accent-soft);
 }
 
 .sheet-opt .opt-check {
@@ -208,28 +320,24 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 36rpx;
-  height: 36rpx;
-  color: #285c5e;
-  color: var(--brand-teal);
+  width: 18px;
+  height: 18px;
+  color: var(--mp-accent);
 }
 
 .sheet-opt.on .opt-check {
   display: flex;
 }
 
-.sheet-opt.on .choice-radio { border-color: #172f43; background: #172f43; box-shadow: inset 0 0 0 8rpx #fff; }
-
-/* hero 是深色品牌底，胶囊文字保持浅青 */
-.hero-pills .pill-teal { color: #9fe3d8; }
+.sheet-opt.on .choice-radio { border-color: var(--mp-accent); background: var(--mp-accent); box-shadow: inset 0 0 0 4px var(--mp-surface); }
 
 /* 使用时段：卡片标题行的「修改」与抽屉里的选择行 */
-.limits-edit { margin: 0; padding: 0 0 0 24rpx; }
+.limits-edit { margin: 0; padding: 0 0 0 12px; }
 .limits-quiet-label {
   display: block;
-  margin: 8rpx 0 0;
-  color: #1e2d46;
-  font-size: 28rpx;
+  margin: 4px 0 0;
+  color: var(--mp-ink);
+  font-size: var(--mp-type-body);
   font-weight: 600;
   line-height: 1.45;
 }
@@ -237,8 +345,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 96rpx;
-  border-bottom: 1rpx solid rgba(30, 45, 70, 0.08);
+  min-height: 48px;
+  border-bottom: 1px solid var(--mp-line);
 }
 
 /* 唤醒方式：两个开关（唤醒词 / 点击屏幕）与说明 */
@@ -246,16 +354,15 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 24rpx;
+  gap: 12px;
 }
 .wake-mode-row {
   display: flex;
   align-items: center;
-  gap: 24rpx;
-  min-height: 120rpx;
-  padding: 16rpx 0;
-  border-bottom: 1rpx solid rgba(30, 45, 70, 0.08);
-  border-bottom: 1rpx solid var(--border-default);
+  gap: 12px;
+  min-height: 60px;
+  padding: 8px 0;
+  border-bottom: 0.5px solid var(--mp-line);
 }
-.wake-mode-note { margin-top: 16rpx; }
-.wake-mode-note-warn { color: #8a4c10; color: var(--warning); }
+.wake-mode-note { margin-top: 8px; }
+.wake-mode-note-warn { color: var(--mp-sun); }

@@ -1,0 +1,35 @@
+@import "../../styles/trial-theme.wxss";
+
+.guardian-consent-chip {
+  margin-top: 8px;
+}
+
+.guardian-consent-title {
+  margin-top: 16px;
+}
+
+.guardian-consent-copy {
+  margin-top: 16px;
+}
+
+.guardian-consent-p {
+  display: block;
+  margin-top: 12px;
+  color: var(--mp-ink);
+  font-size: var(--mp-type-body);
+  line-height: var(--mp-lh-body);
+  text-align: left;
+}
+
+.guardian-consent-p:first-child {
+  margin-top: 0;
+}
+
+.guardian-consent-source {
+  display: block;
+  margin-top: 24px;
+  color: var(--mp-ink-3);
+  font-size: var(--mp-type-meta);
+  line-height: var(--mp-lh-caption);
+  text-align: left;
+}

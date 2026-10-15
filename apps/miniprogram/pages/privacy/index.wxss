@@ -1,47 +1,19 @@
-.back-row {
-  padding: 8rpx 0 4rpx;
-}
-
-.back-link {
-  display: inline-flex;
-  align-items: center;
-  min-height: 88rpx;
-  color: #285c5e;
-  color: var(--brand-teal);
-  font-size: 28rpx;
-  font-weight: 500;
-}
-
-.page-head {
-  padding: 12rpx 0 4rpx;
-}
-
-.auth-card-head {
+.privacy-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 20rpx;
+  gap: 12px;
 }
 
-.auth-card-head .l2-card-title {
-  flex: 1;
-  min-width: 0;
+.privacy-copy {
+  display: block;
+  margin-top: 12px;
+  color: var(--mp-ink-2);
+  font-size: var(--mp-type-caption);
+  line-height: var(--mp-lh-caption);
 }
 
-.l2-card .setting-desc {
-  margin-top: 12rpx;
-  line-height: 1.7;
-}
-
-.auth-card-foot {
+.privacy-foot {
   display: flex;
   justify-content: flex-end;
-  margin-top: 16rpx;
-  padding-top: 16rpx;
-  border-top: 1rpx solid rgba(30, 45, 70, 0.08);
-}
-
-.auth-card-foot .primary-button {
-  width: auto;
-  flex: 1;
+  margin-top: 16px;
 }

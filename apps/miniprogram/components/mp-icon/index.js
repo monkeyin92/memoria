@@ -1,0 +1,27 @@
+const { TILE_ICONS } = require("./tile-icons");
+
+const TONES = Object.freeze(["accent", "ink"]);
+
+function view(name, tone, size) {
+  const icon = TILE_ICONS.includes(name) ? name : "star";
+  const safeTone = TONES.includes(tone) ? tone : "accent";
+  return {
+    src: `/assets/ui/v4/${icon}-${safeTone}.svg`,
+    toneClass: `mi-${safeTone}${size >= 96 ? " mi-lg" : ""}`,
+    glyph: Math.round(size * 0.6),
+  };
+}
+
+Component({
+  properties: {
+    name: { type: String, value: "star" },
+    tone: { type: String, value: "accent" },
+    size: { type: Number, value: 80 },
+  },
+  data: view("star", "accent", 80),
+  observers: {
+    "name, tone, size"(name, tone, size) {
+      this.setData(view(name, tone, size));
+    },
+  },
+});

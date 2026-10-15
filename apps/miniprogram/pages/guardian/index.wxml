@@ -1,18 +1,9 @@
-<view class="page-shell">
-  <page-backdrop theme="mist"></page-backdrop>
-  <view class="nav-back" bindtap="goBack"><text>‹ 我的</text></view>
+<view class="page-shell sub-page" style="{{statusBarStyle}}">
+  <view class="nav-back" bindtap="goBack" aria-label="返回"><image class="nav-back-icon" src="/assets/ui/v4/back-strong.svg" /></view>
 
-  <!-- L1 情感层 -->
-  <view class="mem-hero">
-    <text class="mem-hero-eyebrow">家庭监护 · 只看趋势</text>
-    <view class="mem-hero-row">
-      <view class="row-copy">
-        <text class="mem-hero-title">{{role === 'minor' ? '学生模式与监护授权' : '家庭与监护'}}</text>
-        <text class="mem-hero-sub">{{role === 'minor' ? '绑定由孩子本人确认，授权变化会立即生效。' : '只看聚合趋势，不展示孩子与角色的对话原文。'}}</text>
-      </view>
-      <glass-icon name="family" size="112"></glass-icon>
-    </view>
-  </view>
+  <text class="eyebrow">家庭监护 · 只看趋势</text>
+  <text class="page-title">{{role === 'minor' ? '学生模式与监护授权' : '家庭与监护'}}</text>
+  <text class="page-lede">{{role === 'minor' ? '绑定由孩子本人确认，授权变化会立即生效。' : '只看聚合趋势，不展示孩子与角色的对话原文。'}}</text>
 
   <text wx:if="{{error}}" class="error-text">{{error}}</text>
 
@@ -42,12 +33,12 @@
     <!-- L2 功能层：绑定卡 -->
     <view class="l2-card">
       <view class="card-lead">
-        <glass-icon name="family" size="72"></glass-icon>
-        <text class="l2-card-title">绑定家人的设备</text>
+        <mp-icon name="user"></mp-icon>
+        <text class="l2-card-title">绑定孩子的设备</text>
       </view>
-      <text class="l2-card-sub">打开家人的「我的」，复制「账号编号」后填在这里。生成的 8 位码由家人本人确认。</text>
-      <text class="field-label">家人账号编号</text>
-      <input class="field-input" value="{{minorUserId}}" placeholder="家人账号编号" bindinput="onMinorUserId" />
+      <text class="l2-card-sub">打开孩子的「我的」，复制「账号编号」后填在这里。生成的 8 位码由孩子本人确认。</text>
+      <text class="field-label">孩子账号编号</text>
+      <input class="field-input" value="{{minorUserId}}" placeholder="孩子账号编号" bindinput="onMinorUserId" />
       <button class="primary-button empty-button" loading="{{working}}" disabled="{{!minorUserId || !configOpen}}" bindtap="createLink">生成绑定码</button>
       <text wx:if="{{!configOpen}}" class="caption">{{configNote}}</text>
       <view wx:if="{{createdBindingCode}}" class="binding-result">
@@ -59,7 +50,7 @@
 
     <block wx:if="{{pendingLinks.length}}">
       <view class="section-head">
-        <text class="section-head-title">等待家人确认</text>
+        <text class="section-head-title">等待孩子确认</text>
       </view>
       <view wx:for="{{pendingLinks}}" wx:key="linkId" class="l2-card">
         <text class="l2-card-title">{{item.displayName}}</text>
@@ -78,7 +69,8 @@
             <text class="row-title">{{item.displayName}}</text>
             <text class="row-meta">{{item.relation}} · 已绑定</text>
           </view>
-          <text class="row-chevron">查看小结 ›</text>
+          <text class="row-link">查看小结</text>
+          <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
         <view wx:for="{{item.consentRows}}" wx:for-item="consent" wx:key="kind" class="setting-row">
           <view class="row-copy">
@@ -88,7 +80,7 @@
           </view>
           <switch
             checked="{{consent.active}}"
-            color="#326e70"
+            color="#4A52C9"
             disabled="{{working || !configOpen}}"
             data-link-id="{{item.linkId}}"
             data-kind="{{consent.kind}}"
@@ -121,7 +113,7 @@
           </view>
           <switch
             checked="{{consent.active}}"
-            color="#326e70"
+            color="#4A52C9"
             disabled="{{working || !!item.loadError}}"
             data-person-id="{{item.personId}}"
             data-kind="{{consent.kind}}"
@@ -131,7 +123,7 @@
             bindchange="togglePersonConsent"
           />
         </view>
-        <view class="button-row">
+        <view class="button-row subject-actions">
           <button class="secondary-button" disabled="{{working}}" data-person-id="{{item.personId}}" bindtap="exportMinorData">导出 TA 的数据</button>
           <button class="danger-button" disabled="{{working}}" data-person-id="{{item.personId}}" bindtap="openMinorDelete">删除 TA 的数据</button>
         </view>
@@ -151,8 +143,8 @@
     <view wx:elif="{{summaryState === 'empty'}}" class="l2-card"><text class="empty-copy">本周还没有足够的成长记录。</text></view>
     <view wx:elif="{{summaryState === 'ready'}}" class="l2-card">
       <view class="kept-head">
-        <glass-icon name="chart" size="72"></glass-icon>
-        <text class="l2-card-title">家人的成长小结 · 本周</text>
+        <mp-icon name="chart"></mp-icon>
+        <text class="l2-card-title">本周成长小结</text>
         <text class="pill pill-teal">不含对话原文</text>
       </view>
       <text class="caption">{{summary.periodLabel}}</text>
@@ -166,23 +158,23 @@
       <text class="caption">不含对话原文，也不提供心理诊断或严重度评分。</text>
     </view>
 
-    <view wx:if="{{crisisPush.enabled}}" class="l2-card">
+    <view wx:if="{{subscriptionPushEnabled && crisisPush.enabled}}" class="l2-card">
       <view class="card-lead">
-        <glass-icon name="bell" size="72"></glass-icon>
-        <text class="l2-card-title">订阅安全提醒</text>
+        <mp-icon name="bell"></mp-icon>
+        <text class="l2-card-title">安全提醒</text>
       </view>
       <text class="l2-card-sub">{{crisisPush.explanation}}</text>
-      <button size="mini" bindtap="enableCrisisPush">订阅安全提醒</button>
+      <button size="mini" bindtap="enableCrisisPush">开启安全提醒</button>
     </view>
 
     <block wx:if="{{notifications.length}}">
       <view class="section-head">
         <text class="section-head-title">需要及时关注</text>
       </view>
-      <view wx:for="{{notifications}}" wx:key="notification_id" class="l2-card">
-        <text class="l2-card-title">{{item.minor_display_name}}</text>
+      <view wx:for="{{notifications}}" wx:key="notificationId" class="l2-card">
+        <text class="l2-card-title">{{item.minorDisplayName}}</text>
         <text class="l2-card-sub">{{item.message}}</text>
-        <text class="caption">{{item.occurred_at}} · {{item.delivery_status}}</text>
+        <text wx:if="{{item.timeLabel}}" class="caption">{{item.timeLabel}}</text>
       </view>
     </block>
   </block>

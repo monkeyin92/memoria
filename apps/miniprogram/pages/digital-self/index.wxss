@@ -1,29 +1,10 @@
-.back-row {
-  padding: 8rpx 0 4rpx;
-}
-
-.back-link {
-  display: inline-flex;
-  align-items: center;
-  min-height: 88rpx;
-  color: #285c5e;
-  color: var(--brand-teal);
-  font-size: 28rpx;
-  font-weight: 500;
-}
-
-.page-head {
-  padding: 12rpx 0 4rpx;
-}
-
 .ds-hero {
   display: flex;
-  align-items: center;
-  gap: 32rpx;
-  margin-top: 28rpx;
-  padding: 40rpx 36rpx;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: var(--mp-pad-card-lg);
 }
-
 
 .ds-copy {
   flex: 1;
@@ -32,74 +13,36 @@
 
 .ds-num {
   display: block;
-  color: #22344d;
-  font-size: 68rpx;
-  font-weight: 700;
+  color: var(--mp-ink);
+  font-size: var(--mp-type-num-xl);
+  font-weight: 800;
+  letter-spacing: -0.8px;
   line-height: 1;
+}
+
+.ds-unit {
+  display: block;
+  margin-top: 8px;
+  color: var(--mp-ink);
+  font-size: var(--mp-type-card);
+  font-weight: 600;
 }
 
 .ds-sub {
   display: block;
-  margin-top: 12rpx;
-  color: #474e54;
-  color: var(--text-secondary);
-  font-size: 24rpx;
+  margin-top: 4px;
+  color: var(--mp-ink-2);
+  font-size: var(--mp-type-caption);
+  line-height: var(--mp-lh-caption);
 }
 
-.dim-row {
-  padding: 24rpx 0;
+.ds-count {
+  flex-shrink: 0;
+  color: var(--mp-ink-2);
+  font-size: var(--mp-type-caption);
+  font-variant-numeric: tabular-nums;
 }
 
-.dim-row + .dim-row {
-  border-top: 1rpx solid rgba(30, 45, 70, 0.08);
-}
-
-.dim-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 20rpx;
-  margin-bottom: 16rpx;
-}
-
-.dim-name {
-  font-size: 28rpx;
-  font-weight: 500;
-}
-
-.dim-meta {
-  flex: none;
-  color: #5a6167;
-  color: var(--text-tertiary);
-  font-size: 24rpx;
-}
-
-.fold-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20rpx;
-}
-
-.fold-title {
-  font-size: 30rpx;
-  font-weight: 600;
-}
-
-.fold-chevron {
-  color: #5a6167;
-  color: var(--text-tertiary);
-  transition: transform 250ms;
-}
-
-.fold-chevron-open {
-  transform: rotate(180deg);
-}
-
-.fold-summary {
-  display: block;
-  padding: 16rpx 0;
-  color: #474e54;
-  color: var(--text-secondary);
-  font-size: 26rpx;
+.ds-pending {
+  color: var(--mp-sun);
 }

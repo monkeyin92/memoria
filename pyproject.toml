@@ -99,6 +99,10 @@ testpaths = ["services", "tests"]
 pythonpath = ["."]
 filterwarnings = ["ignore::DeprecationWarning"]
 addopts = "-q --tb=short --import-mode=importlib"
+markers = [
+    "sqlite_only: runs without MEMORIA_TEST_POSTGRES_DSN; skipped when the control backend is postgres",
+    "hermetic: pure unit test under an app-postgres root; runs without MEMORIA_TEST_POSTGRES_DSN",
+]
 
 [tool.coverage.run]
 source = ["services"]

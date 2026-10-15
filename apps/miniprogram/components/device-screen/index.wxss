@@ -4,7 +4,7 @@
   flex-shrink: 0;
   padding: 4.5%;
   background: linear-gradient(150deg, #a6acb3 0%, #43474d 24%, #1a1c20 56%, #33373d 82%, #858a91 100%);
-  box-shadow: 0 24rpx 48rpx rgba(4, 10, 24, 0.38), inset 0 2rpx 2rpx rgba(255, 255, 255, 0.45);
+  box-shadow: 0 12px 24px rgba(4, 10, 24, 0.38), inset 0 1px 1px rgba(255, 255, 255, 0.45);
 }
 
 .ds-screen {
@@ -13,7 +13,7 @@
   height: 100%;
   overflow: hidden;
   background: radial-gradient(ellipse at 50% 42%, #0d1a26 0%, #030405 70%);
-  box-shadow: inset 0 0 0 3rpx #0b0c0e;
+  box-shadow: inset 0 0 0 1.5px #0b0c0e;
 }
 
 .ds-cam {
@@ -25,7 +25,7 @@
   margin-left: -2.5%;
   border-radius: 50%;
   background: #15181c;
-  box-shadow: inset 0 0 0 2rpx #2a2f35;
+  box-shadow: inset 0 0 0 1px #2a2f35;
 }
 
 .ds-face {
@@ -43,9 +43,9 @@
 .ds-eye {
   width: 13%;
   height: 100%;
-  border-radius: 999rpx;
+  border-radius: 499.5px;
   background: #8ff3ff;
-  box-shadow: 0 0 18rpx rgba(96, 232, 255, 0.85), 0 0 36rpx rgba(96, 232, 255, 0.35);
+  box-shadow: 0 0 9px rgba(96, 232, 255, 0.85), 0 0 18px rgba(96, 232, 255, 0.35);
   animation: dsBlink 4.6s ease-in-out infinite;
 }
 
@@ -56,8 +56,8 @@
   width: 16%;
   height: 8%;
   margin-left: -8%;
-  border-bottom: 5rpx solid rgba(143, 243, 255, 0.75);
-  border-radius: 0 0 999rpx 999rpx;
+  border-bottom: 2.5px solid rgba(143, 243, 255, 0.75);
+  border-radius: 0 0 499.5px 499.5px;
 }
 
 .ds-glare {

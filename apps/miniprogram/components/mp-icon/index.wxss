@@ -1,0 +1,23 @@
+.mi {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--mp-radius-icon);
+}
+
+.mi-lg {
+  border-radius: var(--mp-radius-inset);
+}
+
+.mi-accent {
+  background: var(--mp-accent-soft);
+}
+
+.mi-ink {
+  background: var(--mp-fill);
+}
+
+.mi-glyph {
+  display: block;
+}

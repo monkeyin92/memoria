@@ -7,8 +7,7 @@
     data-index="{{index}}"
     bindtap="onTapTab"
   >
-    <view class="mem-tab-indicator" wx:if="{{index === selected}}"></view>
-    <view class="mem-tab-icon"><rich-text nodes="{{item.icon}}"></rich-text></view>
+    <image class="mem-tab-icon" src="{{index === selected ? item.iconOn : item.icon}}" mode="aspectFit"></image>
     <text class="mem-tab-text">{{item.text}}</text>
   </view>
 </view>

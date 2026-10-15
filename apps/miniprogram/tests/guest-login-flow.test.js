@@ -15,12 +15,12 @@ test("tab pages keep a useful guest state instead of redirecting on show", () =>
   const memory = read("pages/memory/index.wxml");
   const profile = read("pages/profile/index.wxml");
 
-  assert.match(home, /wx:if="\{\{!authenticated\}\}"[\s\S]*微信登录，找回我的设备/);
+  assert.match(home, /wx:if="\{\{!authenticated\}\}"[\s\S]*bindtap="loginFromHome"[\s\S]*微信一键登录/);
   assert.doesNotMatch(
     device,
     /onShow\(\)\s*\{[\s\S]{0,220}navigateTo\(\{\s*url:\s*"\/pages\/auth\/index"/,
   );
-  assert.match(memory, /wx:if="\{\{!authenticated\}\}"[\s\S]*登录后查看你的专属回顾/);
+  assert.match(memory, /wx:if="\{\{!authenticated\}\}"[\s\S]*登录后打开你的专属回顾/);
   assert.match(profile, /wx:if="\{\{!authenticated\}\}"[\s\S]*登录后即可管理你的资料/);
 });
 
@@ -74,7 +74,9 @@ test("login uses WeChat phone authorization with optional nickname and avatar co
   assert.match(authTemplate, /open-type="getPhoneNumber"/);
   assert.match(authTemplate, /open-type="chooseAvatar"/);
   assert.match(authTemplate, /type="nickname"/);
-  assert.match(authTemplate, /《隐私保护指引》/);
+  assert.match(authTemplate, /catchtap="openPrivacy">《隐私保护指引（草稿）》<\/text>和<text class="privacy-link" catchtap="openGuardianConsent">《监护人同意书（草稿）》/);
+  assert.doesNotMatch(authTemplate, /已阅读并同意<text class="privacy-link" catchtap="openPrivacy">《隐私保护指引》<\/text>/);
+  assert.match(authScript, /navigateTo\(\{ url: "\/pages\/guardian-consent\/index" \}\)/);
   assert.doesNotMatch(authTemplate, />用户名</);
   assert.doesNotMatch(authTemplate, />密码</);
   assert.doesNotMatch(authTemplate, /开始匿名体验/);
@@ -128,7 +130,7 @@ test("auth cleanup broadcasts to every page that can hold private state", () => 
   );
   assert.match(
     digitalSelfScript,
-    /_clearPrivateState\(\)[\s\S]*persona:\s*null[\s\S]*versions:\s*\[\]/,
+    /_clearPrivateState\(\)[\s\S]*view:\s*digitalSelfView\(\)/,
   );
 });
 

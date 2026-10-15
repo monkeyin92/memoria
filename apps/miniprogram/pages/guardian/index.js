@@ -1,4 +1,6 @@
 const api = require("../../utils/api");
+const { statusBarStyle } = require("../../utils/nav-inset");
+const { leavePage } = require("../../utils/nav-back");
 const { guardianSummaryErrorState } = require("../../utils/guardian");
 const { requireLogin } = require("../../utils/auth-gate");
 const contracts = require("../../utils/multi-subject-contracts");
@@ -8,6 +10,8 @@ const {
   CONFIG_GATE_PENDING_MESSAGE,
 } = require("../../utils/device-binding");
 const guardianPush = require("../../utils/guardian-push");
+const { normalizeAlert } = require("../../utils/crisis-alerts");
+const { alertTimeLabel } = require("../../utils/trial-device-card");
 
 const CONSENT_DEFINITIONS = Object.freeze([
   {
@@ -31,7 +35,7 @@ const CONSENT_DEFINITIONS = Object.freeze([
   {
     kind: "child_archive",
     label: "长期记忆",
-    description: "兴趣等白名单内容；可在首页「孩子的记忆」里查看和删除",
+    description: "兴趣等白名单内容；可在首页「孩子的记忆」里按天整理",
     policyVersion: "child-archive-v1",
   },
 ]);
@@ -81,6 +85,7 @@ function personConsentError(error) {
 
 Page({
   data: {
+    statusBarStyle: statusBarStyle(),
     configOpen: false,
     configNote: CONFIG_GATE_PENDING_MESSAGE,
     authenticated: false,
@@ -115,6 +120,7 @@ Page({
     minorDeleting: false,
     minorDeleteError: "",
     crisisPush: { enabled: false, templateId: "", explanation: "" },
+    subscriptionPushEnabled: require("../../config").SUBSCRIPTION_PUSH_ENABLED,
   },
 
   onLoad() {
@@ -142,7 +148,7 @@ Page({
 
   /* 纯展示：非 tab 页经导航返回。 */
   goBack() {
-    wx.navigateBack({ delta: 1 });
+    leavePage("/pages/profile/index");
   },
 
   _enterGuestState() {
@@ -283,7 +289,10 @@ Page({
 
   async _loadNotifications() {
     const payload = await api.getGuardianNotifications();
-    this.setData({ notifications: Array.isArray(payload?.items) ? payload.items : [] });
+    const alerts = (Array.isArray(payload?.items) ? payload.items : []).map(normalizeAlert).filter(Boolean);
+    this.setData({
+      notifications: alerts.map((alert) => ({ ...alert, timeLabel: alertTimeLabel(alert.occurredAt) })),
+    });
   },
 
   async _loadCrisisPush() {

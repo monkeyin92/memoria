@@ -5,29 +5,28 @@
  */
 
 const ARCHIVE_FIELD_LABELS = Object.freeze({
-  preference: "兴趣",
+  preference: "喜好",
   appellation: "称呼",
-  pet_name: "小名",
+  pet_name: "宠物名",
 });
 
-const ARCHIVE_FIELD_ORDER = Object.freeze(["preference", "appellation", "pet_name"]);
+const ARCHIVE_FIELD_ORDER = Object.freeze(["appellation", "preference", "pet_name"]);
 
 const CHILD_ARCHIVE_CONSENT = Object.freeze({
   kind: "child_archive",
   label: "长期记忆",
   description:
-    "开启后，memoria 会记住孩子提到的兴趣等白名单内容。你可以随时关闭，关闭后已有内容可删除。",
+    "开启后，Memoria 会记住孩子提到的称呼、喜好和宠物名。你可以随时关闭，关闭后不再记新的内容。",
   policyVersion: "child-archive-v1",
 });
 
 const PRIVACY_LINE =
   "孩子说的原话，我们的服务器在入库前就去掉了；机器人本身不存录音。";
-const BACKUP_RETENTION_LINE = "删除的数据会在 7 天内从备份中清除";
 const EMPTY_RECENT =
-  "还没有记忆。孩子和 memoria 聊过之后，这里会出现摘要。";
-const EMPTY_ARCHIVE_ON = "开启后，孩子聊到的兴趣会出现在这里。";
+  "还没有记忆。孩子和 Memoria 聊过之后，这里会出现摘要。";
+const EMPTY_ARCHIVE_ON = "开启后，孩子聊到的喜好会出现在这里。";
 const CONSENT_OFF_DIALOG =
-  "关闭后不会再写入新内容。已有内容可以继续查看和删除。";
+  "关闭后不会再写入新内容。已有内容仍按当前授权管理。";
 const DELETE_CONFIRM =
   "删除后，这条记忆会从服务器上删除，无法恢复，不影响其他记忆。";
 const DELETE_KEEP = "再想想";
@@ -36,11 +35,6 @@ const CLEARED_TOAST = "已清空，剩余 0 条";
 function memoryHeaderTitle(_companionName, childName) {
   const child = childName || "孩子";
   return `${child}的记忆`;
-}
-
-function memoryHeaderCaption(count) {
-  const n = Number.isInteger(count) && count >= 0 ? count : 0;
-  return `共 ${n} 条 · 可以随时删除`;
 }
 
 function memoryEmptyTitle(companionName, childName) {
@@ -193,7 +187,6 @@ module.exports = {
   ARCHIVE_FIELD_LABELS,
   ARCHIVE_FIELD_ORDER,
   CHILD_ARCHIVE_CONSENT,
-  BACKUP_RETENTION_LINE,
   CLEARED_TOAST,
   CONSENT_OFF_DIALOG,
   DELETE_CONFIRM,
@@ -207,7 +200,6 @@ module.exports = {
   displayDateLabel,
   groupArchiveByCategory,
   memoryEmptyTitle,
-  memoryHeaderCaption,
   memoryHeaderTitle,
   normalizeChildArchive,
   normalizeSessionSummaries,
