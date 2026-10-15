@@ -211,6 +211,7 @@ class DuplexRuntime(
     _interaction_decision: InteractionDecision | None = None
     _interaction_decision_text: str = ""
     _last_committed_user_text_normalized: str = ""
+    # After a fixed safety script: suppress proactive local-safe chat; child turns still proceed.
     fixed_safety_heard: bool = False
     _paused_reply_available: bool = False
     _reply_speaker_binding: ResumeSpeakerBinding | None = None
@@ -2770,7 +2771,6 @@ class DuplexRuntime(
         ):
             return reason
         return None
-
 
     async def close(self) -> None:
         if self.begin_close():

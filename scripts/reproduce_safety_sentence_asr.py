@@ -88,8 +88,10 @@ async def _recognize(pcm: bytes, *, sample_rate: int) -> str:
     from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
 
     config = FunASRConfig.from_env()
-    if config.sample_rate != sample_rate and pcm:
-        pass
+    if config.sample_rate != sample_rate:
+        raise RuntimeError(
+            f"funasr sample_rate={config.sample_rate} != tts sample_rate={sample_rate}"
+        )
     session = FunASRSession(config)
     await session.connect()
     try:
