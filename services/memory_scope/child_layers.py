@@ -480,6 +480,30 @@ class ChildLayerStore:
             )
         return {"erased": erased, "remaining": remaining}
 
+    async def purge_archive(self, *, subject_id: str) -> Mapping[str, Any]:
+        erased = await self.erase_kind(
+            subject_id=subject_id, kind=KIND_CHILD_ARCHIVE, only_expired=False
+        )
+        remaining = await self.remaining_kind(
+            subject_id=subject_id, kind=KIND_CHILD_ARCHIVE, only_expired=False
+        )
+        if int(remaining.get("memory_records", 0)):
+            raise RuntimeError(
+                f"child_archive remaining after purge subject={subject_id}"
+                f" remaining={remaining}"
+            )
+        return {"erased": erased, "remaining": remaining}
+
+    async def kind_subjects(
+        self, kind: ChildMemoryKind, *, only_expired: bool = False
+    ) -> tuple[str, ...]:
+        """Subjects holding rows of ``kind``; only those with expired rows if asked."""
+
+        function = "memory_kind_due_subjects" if only_expired else "memory_kind_subjects"
+        async with (await self._maintenance()).acquire() as connection:
+            subjects = await connection.fetchval(f"SELECT {function}($1)", kind)
+        return tuple(str(item) for item in subjects or ())
+
 
 def _jsonb(raw: object) -> dict[str, Any]:
     if isinstance(raw, dict):
