@@ -2758,22 +2758,19 @@ class DuplexRuntime(
         if completed_ns is None:
             return None
         elapsed_ms = ((now_ns or time.monotonic_ns()) - completed_ns) // 1_000_000
+        within = 0 <= elapsed_ms <= POST_PLAYBACK_ECHO_GUARD_MS
         reason = self.input_guard.guarded_reason(
-            text,
-            duration_ms=int(max(0, elapsed_ms)),
+            text, duration_ms=int(max(0, elapsed_ms)),
             assistant_text=self._voice_floor.played_assistant_text,
         )
-        if reason == "assistant_echo" and (
-            self.fixed_safety_heard or 0 <= elapsed_ms <= POST_PLAYBACK_ECHO_GUARD_MS
-        ):
+        if reason == "assistant_echo" and (self.fixed_safety_heard or within):
             return reason
-        if not 0 <= elapsed_ms <= POST_PLAYBACK_ECHO_GUARD_MS:
-            return None
-        if elapsed_ms <= POST_PLAYBACK_BACKCHANNEL_GUARD_MS and (
+        if within and elapsed_ms <= POST_PLAYBACK_BACKCHANNEL_GUARD_MS and (
             reason == "backchannel" or self.input_guard.enabled
         ):
             return reason
         return None
+
 
     async def close(self) -> None:
         if self.begin_close():
