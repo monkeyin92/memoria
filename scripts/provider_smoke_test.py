@@ -12,11 +12,7 @@ import sys
 from services.agent.src.config import AgentSettings
 from services.agent.src.contracts.events import TimedWord
 from services.agent.src.contracts.ids import GenerationFence
-from services.agent.src.providers.deepseek import (
-    DeepSeekClient,
-    DeepSeekConfig,
-    filter_content_for_tts,
-)
+from services.agent.src.llm_types import ChatContext
 from services.agent.src.providers.doubao_protocol import pcm_duration_ms
 from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
 from services.agent.src.providers.doubao_voice_catalog import (
@@ -25,7 +21,11 @@ from services.agent.src.providers.doubao_voice_catalog import (
 )
 from services.agent.src.providers.funasr_protocol import FunASRSentence, timestamps_monotonic
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
-from services.agent.src.providers.handlers import build_realtime_search_resolver
+from services.agent.src.providers.handlers import (
+    build_language_model_handler,
+    build_realtime_search_resolver,
+)
+from services.agent.src.providers.openai_chat import OpenAIChatModel
 
 DEFAULT_DASHSCOPE_WS_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
 
@@ -253,28 +253,41 @@ async def smoke_funasr(
 
 
 async def smoke_llm() -> str:
+    """Exercise the production reply chat path (FailoverChatModel when enabled).
+
+    Readiness used to call DeepSeekClient directly, so a primary first-token
+    timeout failed the smoke even when ``LLM_FAILOVER_ENABLED`` backup worked.
+    """
+
     settings = AgentSettings()
-    cfg = DeepSeekConfig(
-        api_key=settings.llm_api_key,
-        base_url=settings.llm_base_url,
-        fast_model=settings.llm_fast_model,
-        fast_first_token_timeout_s=settings.llm_first_token_timeout_s,
-        thinking_mode=(
-            "deepseek" if settings.llm_provider == "deepseek" else "dashscope"
-        ),
+    if settings.llm_failover_enabled and not str(settings.dashscope_api_key or "").strip():
+        raise AssertionError(
+            "LLM_FAILOVER_ENABLED requires DASHSCOPE_API_KEY for the Beijing backup"
+        )
+    model = build_language_model_handler(
+        settings=settings,
+        llm_factory=OpenAIChatModel,
     )
-    client = DeepSeekClient(cfg)
+    chat_ctx = ChatContext.empty()
+    chat_ctx.add_message(role="user", content="请只回答“连接正常”。")
     content = ""
     try:
-        async for _, chunk in client.stream_fast(
-            [{"role": "user", "content": "请只回答“连接正常”。"}],
-            fence=GenerationFence("provider-smoke-deepseek", 1, 1, 0),
-        ):
-            content += filter_content_for_tts(chunk)
+        async with model.chat(chat_ctx=chat_ctx) as stream:
+            async for chunk in stream:
+                delta = getattr(chunk, "delta", None)
+                text = getattr(delta, "content", None) if delta is not None else None
+                if isinstance(text, str) and text:
+                    content += text
     finally:
-        await client.aclose()
+        closer = getattr(model, "aclose", None)
+        if callable(closer):
+            result = closer()
+            if asyncio.iscoroutine(result):
+                await result
     if "连接正常" not in content:
         raise AssertionError(f"LLM content missing expected phrase: {content!r}")
+    # Keep the readiness matcher label stable (DeepSeek|Qwen). Failover is an
+    # implementation detail of the stream path when LLM_FAILOVER_ENABLED is on.
     label = "DeepSeek" if settings.llm_provider in {"bailian_deepseek", "deepseek"} else "Qwen"
     print(f"{label} smoke: PASS (streaming content, thinking disabled)")
     return label
