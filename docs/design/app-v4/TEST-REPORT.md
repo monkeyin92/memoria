@@ -14,7 +14,7 @@ The performance table comes from runs on 2026-10-14. The unit tests, forbidden-c
 | `node --check` on every tracked JS file in the app | 0 failures in 138 files |
 | Page screenshots at five views (`scripts/screenshot-pages.js`) | 145 shots, 0 layout issues |
 | Parity side-by-sides (`scripts/v4-parity/render-and-compare.js`) | 9 mapped screens, diffRatio 0.056 to 0.298, down from 0.245 to 0.647 |
-| Main package before minification (`scripts/package-size.js`) | 1880.9 KiB of the 2048 KiB limit |
+| Main package before minification (`scripts/package-size.js`) | 1880.8 KiB of the 2048 KiB limit |
 
 ## How the harness works
 
@@ -329,7 +329,7 @@ Frame intervals sit at 16.7 ms, the 60 Hz frame clock of headless Chrome on the 
 
 ### Package size
 
-The shipped files total 1926019 B, 1880.9 KiB of WeChat's 2048 KiB main package limit before minification. The base commit of the daily chat limit change measures 1876.5 KiB the same way, so that change adds 4.4 KiB, most of it in `pages/device`. `package-size.js` follows `packOptions.ignore` in `project.config.example.json` plus the folders the runtime never loads. It skips `tests`, `design-preview`, `scripts`, `node_modules`, `assets/companions`, `package.json`, `package-lock.json`, `project.config*.json` and Markdown files. The profile mascot, `assets/ui/v4/mascot-happy.jpg`, adds 32.4 KiB.
+The shipped files total 1925984 B, 1880.8 KiB of WeChat's 2048 KiB main package limit before minification. The base commit of the daily chat limit change measures 1921540 B, 1876.5 KiB, the same way. That change adds 4444 B, 4.3 KiB, most of it in `pages/device`. `package-size.js` follows `packOptions.ignore` in `project.config.example.json` plus the folders the runtime never loads. It skips `tests`, `design-preview`, `scripts`, `node_modules`, `assets/companions`, `package.json`, `package-lock.json`, `project.config*.json` and Markdown files. The profile mascot, `assets/ui/v4/mascot-happy.jpg`, adds 32.4 KiB.
 
 | Folder | Size (KiB) |
 |---|---:|
@@ -338,7 +338,7 @@ The shipped files total 1926019 B, 1880.9 KiB of WeChat's 2048 KiB main package 
 | utils/device-onboarding | 166.1 |
 | assets/voices | 145.8 |
 | assets/bg | 138.7 |
-| pages/device | 104.8 |
+| pages/device | 104.7 |
 | utils/device-binding.js | 60.4 |
 | utils/api.js | 52.2 |
 | pages/bind | 44.9 |
