@@ -3,8 +3,8 @@
   "clips": [
     {
       "file": "offline_lines/aigc_story_intro.ogg",
-      "sha256": "3b4761aded3784daed29e4e2a7c35bfdc894a10102bbbf6ef45a6078e090ee72",
-      "bytes": 6993,
+      "sha256": "12ea632912c403bd76daeb2a6beff65fec2f31a119f1b8758069e95014633681",
+      "bytes": 7042,
       "ffmpeg_ok": true,
       "model": "whisper-large-v3",
       "transcript": "下面是AI合成的声音给你讲故事",
@@ -18,8 +18,8 @@
     },
     {
       "file": "offline_lines/aigc_soothe_intro.ogg",
-      "sha256": "3d8f52d61bd1bfe09974a16dfb62fddfc376628b4046ed90a90449da4750b12a",
-      "bytes": 5430,
+      "sha256": "de1ca83de97c4b276176591fce9d4c9f7af7a07865716b5a6a816a0cc26a13fd",
+      "bytes": 5479,
       "ffmpeg_ok": true,
       "model": "whisper-large-v3",
       "transcript": "AI合成的声音陪你睡觉啦",
@@ -33,21 +33,38 @@
     },
     {
       "file": "offline_lines/llm_thinking.ogg",
-      "sha256": "99f981388179300e46587e9dd9ca562e8f21a53f31cd1ef6bebcc58c245ee9a8",
-      "bytes": 267,
-      "ffmpeg_ok": false,
+      "sha256": "01a0fda11ebb3167d2007955c5211215089e8892f213e995bb726ea576675744",
+      "bytes": 3652,
+      "ffmpeg_ok": true,
       "model": "whisper-large-v3",
-      "transcript": null,
-      "asr_error": "[ogg @ 0x557b55167f00] CRC mismatch!\n[in#0 @ 0x557b55167e00] Error opening input: End of file\nError opening input file firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/assets/offline_lines/llm_thinking.ogg.\nError opening input files: End of file"
+      "transcript": "嗯我想一想",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 1.56,
+          "text": "嗯我想一想"
+        }
+      ]
     },
     {
       "file": "offline_lines/llm_unavailable.ogg",
-      "sha256": "4e7f57502595e4f0d55eab788dc21f33a82c42ea8911348ae8cee0e8031215a9",
-      "bytes": 273,
-      "ffmpeg_ok": false,
+      "sha256": "5988e08b881f788eb4f6a653049bc0d9a8d950df675d92ef016a92dd0c8c1a7a",
+      "bytes": 6989,
+      "ffmpeg_ok": true,
       "model": "whisper-large-v3",
-      "transcript": null,
-      "asr_error": "[ogg @ 0x55e8f94f6f00] CRC mismatch!\n[in#0 @ 0x55e8f94f6e00] Error opening input: End of file\nError opening input file firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/assets/offline_lines/llm_unavailable.ogg.\nError opening input files: End of file"
+      "transcript": "我现在有点卡住了等一会儿再来找我聊吧",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 1.78,
+          "text": "我现在有点卡住了"
+        },
+        {
+          "start": 1.78,
+          "end": 3.2,
+          "text": "等一会儿再来找我聊吧"
+        }
+      ]
     }
   ]
 }

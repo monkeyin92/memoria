@@ -3,24 +3,22 @@
 Model: `openai-whisper large-v3`
 
 ## `offline_lines/aigc_story_intro.ogg`
-- sha256: `3b4761aded3784daed29e4e2a7c35bfdc894a10102bbbf6ef45a6078e090ee72`
-- bytes: 6993
+- sha256: `12ea632912c403bd76daeb2a6beff65fec2f31a119f1b8758069e95014633681`
+- bytes: 7042
 - transcript: 下面是AI合成的声音给你讲故事
 
 ## `offline_lines/aigc_soothe_intro.ogg`
-- sha256: `3d8f52d61bd1bfe09974a16dfb62fddfc376628b4046ed90a90449da4750b12a`
-- bytes: 5430
+- sha256: `de1ca83de97c4b276176591fce9d4c9f7af7a07865716b5a6a816a0cc26a13fd`
+- bytes: 5479
 - transcript: AI合成的声音陪你睡觉啦
 
 ## `offline_lines/llm_thinking.ogg`
-- sha256: `99f981388179300e46587e9dd9ca562e8f21a53f31cd1ef6bebcc58c245ee9a8`
-- bytes: 267
-- transcript: _(none — [ogg @ 0x557b55167f00] CRC mismatch!
-[in#0 @ 0x557b55167e00])_
+- sha256: `01a0fda11ebb3167d2007955c5211215089e8892f213e995bb726ea576675744`
+- bytes: 3652
+- transcript: 嗯我想一想
 
 ## `offline_lines/llm_unavailable.ogg`
-- sha256: `4e7f57502595e4f0d55eab788dc21f33a82c42ea8911348ae8cee0e8031215a9`
-- bytes: 273
-- transcript: _(none — [ogg @ 0x55e8f94f6f00] CRC mismatch!
-[in#0 @ 0x55e8f94f6e00])_
+- sha256: `5988e08b881f788eb4f6a653049bc0d9a8d950df675d92ef016a92dd0c8c1a7a`
+- bytes: 6989
+- transcript: 我现在有点卡住了等一会儿再来找我聊吧
 
