@@ -106,33 +106,50 @@ _catalogue_override: LabelledLineCatalogue | None = None
 
 
 def _decode_ogg_pcm(path: Path, *, sample_rate_hz: int) -> bytes:
-    completed = subprocess.run(
-        [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-i",
-            str(path),
-            "-f",
-            "s16le",
-            "-acodec",
-            "pcm_s16le",
-            "-ac",
-            "1",
-            "-ar",
-            str(sample_rate_hz),
-            "pipe:1",
-        ],
-        check=False,
-        capture_output=True,
-    )
+    try:
+        completed = subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(path),
+                "-f",
+                "s16le",
+                "-acodec",
+                "pcm_s16le",
+                "-ac",
+                "1",
+                "-ar",
+                str(sample_rate_hz),
+                "pipe:1",
+            ],
+            check=False,
+            capture_output=True,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            f"ffmpeg is required to decode {path} when no .s16le sidecar is present"
+        ) from exc
     if completed.returncode != 0 or not completed.stdout:
         detail = completed.stderr.decode("utf-8", errors="replace").strip()
         raise RuntimeError(f"ffmpeg failed decoding {path}: {detail or completed.returncode}")
     if len(completed.stdout) % 2:
         raise RuntimeError(f"ffmpeg returned odd PCM length for {path}")
     return completed.stdout
+
+
+def _load_pcm(ogg_path: Path, *, sample_rate_hz: int) -> bytes:
+    """Prefer the shipped s16le sidecar so runtime and CI need no ffmpeg."""
+
+    sidecar = ogg_path.with_suffix(".s16le")
+    if sidecar.is_file():
+        pcm = sidecar.read_bytes()
+        if not pcm or len(pcm) % 2:
+            raise RuntimeError(f"{sidecar} must be non-empty 16-bit PCM")
+        return pcm
+    return _decode_ogg_pcm(ogg_path, sample_rate_hz=sample_rate_hz)
 
 
 def load_catalogue(
@@ -152,7 +169,7 @@ def load_catalogue(
             raise ValueError(
                 f"{line_id} SERVICE_PROVIDER must be {expected_aigc['service_provider']}"
             )
-        pcm = _decode_ogg_pcm(path, sample_rate_hz=sample_rate_hz)
+        pcm = _load_pcm(path, sample_rate_hz=sample_rate_hz)
         loaded[line_id] = LabelledLine(
             line_id=line_id,
             text=text,

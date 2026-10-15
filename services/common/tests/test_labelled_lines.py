@@ -49,6 +49,20 @@ def test_ogg_files_themselves_embed_aigc_tags() -> None:
         assert tags["service_provider"] == "Memoria"
 
 
+def test_catalogue_loads_from_s16le_sidecar_without_ffmpeg(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _forbid_ffmpeg(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("ffmpeg must not run when .s16le sidecars are present")
+
+    monkeypatch.setattr("services.common.labelled_lines.subprocess.run", _forbid_ffmpeg)
+    catalogue = load_catalogue()
+    thinking = catalogue.require(LLM_THINKING_LINE_ID)
+    assert thinking.pcm_s16le == (
+        DEFAULT_ASSETS_ROOT / f"{LLM_THINKING_LINE_ID}.s16le"
+    ).read_bytes()
+
+
 def test_missing_aigc_tag_fails_at_catalogue_boundary(tmp_path: Path) -> None:
     import subprocess
     import tempfile
@@ -102,6 +116,10 @@ def test_missing_aigc_tag_fails_at_catalogue_boundary(tmp_path: Path) -> None:
     (tmp_path / f"{LLM_UNAVAILABLE_LINE_ID}.ogg").write_bytes(
         (DEFAULT_ASSETS_ROOT / f"{LLM_UNAVAILABLE_LINE_ID}.ogg").read_bytes()
     )
+    for line_id in (LLM_THINKING_LINE_ID, LLM_UNAVAILABLE_LINE_ID):
+        (tmp_path / f"{line_id}.s16le").write_bytes(
+            (DEFAULT_ASSETS_ROOT / f"{line_id}.s16le").read_bytes()
+        )
     with pytest.raises(ValueError, match="AI_GENERATED"):
         load_catalogue(tmp_path)
 

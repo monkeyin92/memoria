@@ -175,6 +175,28 @@ def main(argv: list[str] | None = None) -> int:
                 _scaffold_wav(tmp_offline, duration=duration, hz=hz, sample_rate=16_000)
             _ffmpeg_from_wav(tmp_online, online, line_id=line_id, sample_rate=24_000)
             _ffmpeg_from_wav(tmp_offline, offline, line_id=line_id, sample_rate=16_000)
+            pcm_sidecar = ONLINE_ROOT / f"{line_id}.s16le"
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-i",
+                    str(tmp_online),
+                    "-f",
+                    "s16le",
+                    "-acodec",
+                    "pcm_s16le",
+                    "-ac",
+                    "1",
+                    "-ar",
+                    "24000",
+                    str(pcm_sidecar),
+                ],
+                check=True,
+            )
         finally:
             tmp_online.unlink(missing_ok=True)
             tmp_offline.unlink(missing_ok=True)
@@ -186,12 +208,17 @@ def main(argv: list[str] | None = None) -> int:
                 "date": today,
                 "voice_id": VOICE_ID,
                 "online_ogg": str(online.relative_to(REPO)),
+                "online_pcm": str((ONLINE_ROOT / f"{line_id}.s16le").relative_to(REPO)),
                 "offline_ogg": str(offline.relative_to(REPO)),
                 "online_sample_rate_hz": 24_000,
                 "offline_sample_rate_hz": 16_000,
             }
         )
-        print(f"wrote {online.relative_to(REPO)} and {offline.relative_to(REPO)} via {tool}")
+        print(
+            f"wrote {online.relative_to(REPO)}, "
+            f"{(ONLINE_ROOT / f'{line_id}.s16le').relative_to(REPO)}, "
+            f"and {offline.relative_to(REPO)} via {tool}"
+        )
     provenance = {
         "generated": today,
         "voice": {

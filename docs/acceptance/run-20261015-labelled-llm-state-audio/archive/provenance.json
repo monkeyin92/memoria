@@ -16,7 +16,8 @@
       "online_ogg": "services/common/assets/labelled_lines/llm_thinking.ogg",
       "offline_ogg": "firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/assets/offline_lines/llm_thinking.ogg",
       "online_sample_rate_hz": 24000,
-      "offline_sample_rate_hz": 16000
+      "offline_sample_rate_hz": 16000,
+      "online_pcm": "services/common/assets/labelled_lines/llm_thinking.s16le"
     },
     {
       "id": "llm_unavailable",
@@ -27,7 +28,8 @@
       "online_ogg": "services/common/assets/labelled_lines/llm_unavailable.ogg",
       "offline_ogg": "firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/assets/offline_lines/llm_unavailable.ogg",
       "online_sample_rate_hz": 24000,
-      "offline_sample_rate_hz": 16000
+      "offline_sample_rate_hz": 16000,
+      "online_pcm": "services/common/assets/labelled_lines/llm_unavailable.s16le"
     }
   ]
 }
