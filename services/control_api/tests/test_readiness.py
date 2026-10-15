@@ -273,6 +273,7 @@ async def test_fresh_agent_heartbeat_opens_production_readiness(
                 "worker_ready": True,
                 "livekit_ready": True,
                 "last_loop_at": datetime.now(UTC).isoformat(),
+                "chat_llm_providers": ["deepseek"],
             },
         )
         heartbeat = await client.post(
@@ -283,6 +284,7 @@ async def test_fresh_agent_heartbeat_opens_production_readiness(
                 "boot_id": "8f819a3b-ec8f-4319-94ab-7cace979145f",
                 "worker_ready": True,
                 "last_loop_at": datetime.now(UTC).isoformat(),
+                "chat_llm_providers": ["deepseek"],
             },
         )
         ready = await client.get("/health/ready")
@@ -341,6 +343,7 @@ async def test_stale_agent_heartbeat_closes_production_readiness(
                     datetime.now(UTC).timestamp() - 46,
                     tz=UTC,
                 ).isoformat(),
+                "chat_llm_providers": ["deepseek"],
             },
         )
         stale = await client.get("/health/ready")
@@ -348,6 +351,40 @@ async def test_stale_agent_heartbeat_closes_production_readiness(
     assert heartbeat.status_code == 200
     assert stale.status_code == 503
     assert stale.json()["checks"]["agent"]["status"] == "stale"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("chat_llm_providers", "status_code"),
+    [(None, 422), ([], 422), (["openai"], 422), (["qwen", "deepseek"], 200)],
+    ids=["missing", "empty", "unfiled-family", "both-filed"],
+)
+async def test_an_agent_heartbeat_names_the_filed_chat_models_it_builds(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    chat_llm_providers: list[str] | None,
+    status_code: int,
+) -> None:
+    _configure_local(monkeypatch, tmp_path)
+    monkeypatch.setenv("MEMORIA_AGENT_HEARTBEAT_TOKEN", "agent-heartbeat-token")
+    monkeypatch.setenv("MEMORIA_RELEASE_TAG", "release-heartbeat-test")
+    body: dict[str, object] = {
+        "release_tag": "release-heartbeat-test",
+        "boot_id": "8f819a3b-ec8f-4319-94ab-7cace979145f",
+        "worker_ready": True,
+        "last_loop_at": datetime.now(UTC).isoformat(),
+    }
+    if chat_llm_providers is not None:
+        body["chat_llm_providers"] = chat_llm_providers
+
+    async with AsyncClient(transport=ASGITransport(app=create_app()), base_url="http://test") as client:
+        response = await client.post(
+            "/internal/readiness/agent-heartbeat",
+            headers={"X-Memoria-Internal-Token": "agent-heartbeat-token"},
+            json=body,
+        )
+
+    assert response.status_code == status_code
 
 
 @pytest.mark.asyncio

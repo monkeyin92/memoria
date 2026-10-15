@@ -35,6 +35,7 @@ def _heartbeat(
             endpoint=_ENDPOINT,
             internal_token="agent-heartbeat-token",
             release_tag=release_tag,
+            chat_llm_providers=("deepseek", "qwen"),
             state_path=state_path,
             interval_s=interval_s,
         ),
@@ -73,6 +74,7 @@ async def test_heartbeat_reports_the_bridge_contract_without_livekit_fields(
         "boot_id": "8f819a3b-ec8f-4319-94ab-7cace979145f",
         "worker_ready": True,
         "last_loop_at": "2026-07-22T10:11:12+00:00",
+        "chat_llm_providers": ["deepseek", "qwen"],
     }
     assert [payload["worker_ready"] for payload in payloads] == [False, True, False]
 
@@ -217,23 +219,48 @@ def test_heartbeat_endpoint_targets_the_archive_host_readiness_route() -> None:
     )
 
 
-def test_build_agent_heartbeat_is_production_only(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.asyncio
+async def test_build_agent_heartbeat_is_production_only_and_reports_the_chat_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("MEMORIA_RELEASE_TAG", "release-under-test")
     tokens: list[str] = []
+    posted: list[dict[str, object]] = []
 
     def internal_token(capability: str) -> str:
         tokens.append(capability)
         return "x" * 32
 
+    async def control(request: httpx.Request) -> httpx.Response:
+        posted.append(json.loads(request.content))
+        return httpx.Response(200, json={"status": "recorded"})
+
     production = SimpleNamespace(
         environment="production",
         archive_session_events_url="http://control-api:8000/v1/archive/session-events",
         internal_token=internal_token,
+        llm_provider="bailian_deepseek",
+        llm_failover_enabled=True,
     )
 
     assert build_agent_heartbeat(SimpleNamespace(environment="development")) is None
-    assert isinstance(build_agent_heartbeat(production), AgentHeartbeat)
+    heartbeat = build_agent_heartbeat(production)
+    assert isinstance(heartbeat, AgentHeartbeat)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as client:
+        await heartbeat.report(client)
     assert tokens == ["agent_heartbeat"]
+    assert [payload["chat_llm_providers"] for payload in posted] == [["deepseek", "qwen"]]
+
+
+def test_a_heartbeat_must_name_the_chat_model_families_it_builds(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="chat model families"):
+        AgentHeartbeatConfig(
+            endpoint=_ENDPOINT,
+            internal_token="agent-heartbeat-token",
+            release_tag="release-heartbeat-test",
+            chat_llm_providers=(),
+            state_path=tmp_path / "heartbeat.json",
+        )
 
 
 @pytest.mark.parametrize(
