@@ -42,7 +42,11 @@ class _HeldReplyProvider(FakeMediaProvider):
         self.output_texts: list[str] = []
         self.release_reply = asyncio.Event()
         self.reply_started = asyncio.Event()
+        self.reply_ready = asyncio.Event()
         self.reply_closed = asyncio.Event()
+        self.filler_rendered = asyncio.Event()
+        self.filler_rendered.set()
+        self.filler_closed = asyncio.Event()
 
     def generate_output(
         self,
@@ -57,13 +61,17 @@ class _HeldReplyProvider(FakeMediaProvider):
         self.output_texts.append(str(intent.tts_source))
 
         async def chunks() -> AsyncIterator[MediaReplyChunk]:
-            yield MediaReplyChunk(
-                pcm_s16le=_FILLER_PCM,
-                source_start_sample=source_start_sample,
-                text=str(intent.tts_source),
-                first=True,
-                final=True,
-            )
+            try:
+                await self.filler_rendered.wait()
+                yield MediaReplyChunk(
+                    pcm_s16le=_FILLER_PCM,
+                    source_start_sample=source_start_sample,
+                    text=str(intent.tts_source),
+                    first=True,
+                    final=True,
+                )
+            finally:
+                self.filler_closed.set()
 
         return chunks()
 
@@ -77,6 +85,7 @@ class _HeldReplyProvider(FakeMediaProvider):
             self.reply_started.set()
             try:
                 await self.release_reply.wait()
+                self.reply_ready.set()
                 yield MediaReplyChunk(
                     pcm_s16le=_REPLY_PCM,
                     source_start_sample=0,
@@ -252,6 +261,30 @@ async def test_reply_that_starts_before_the_delay_plays_no_filler() -> None:
         assert provider.output_texts == []
         assert _wire(bridge.frames) == [(_REPLY_PCM, 0, True, True)]
     finally:
+        await registry.finalize_session(context.identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_a_reply_ready_before_the_filler_renders_plays_without_it() -> None:
+    registry, provider, bridge, session, context = await _open_device_session(
+        "llm-thinking-reply-beats-render"
+    )
+    provider.filler_rendered.clear()
+    try:
+        await _commit_spoken_turn(registry, session, context)
+        await _wait_until(lambda: provider.output_texts == ["嗯，我想一想。"], timeout=2.0)
+        provider.release_reply.set()
+        await asyncio.wait_for(provider.reply_ready.wait(), timeout=2.0)
+        provider.filler_rendered.set()
+        await _wait_until(
+            lambda: any(frame.pcm_s16le == _REPLY_PCM for frame in bridge.frames), timeout=2.0
+        )
+
+        assert _wire(bridge.frames) == [(_REPLY_PCM, 0, True, True)]
+        assert provider.filler_closed.is_set()
+    finally:
+        provider.release_reply.set()
+        provider.filler_rendered.set()
         await registry.finalize_session(context.identity.session_id)
 
 
