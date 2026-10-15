@@ -128,6 +128,12 @@
       "text": "我先休息一下，点屏幕就能叫醒我。",
       "file": "offline-menu-idle-v1.ogg",
       "placeholder": false
+    },
+    {
+      "id": "llm_unavailable",
+      "text": "我现在有点卡住了，等一会儿再来找我聊吧。",
+      "file": "llm_unavailable.ogg",
+      "placeholder": true
     }
   ]
 }

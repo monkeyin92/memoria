@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import logging
 import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from services.agent.src.providers.llm_failover import FailoverChatModel
 from services.agent.src.providers.open_meteo_weather import (
     OpenMeteoWeather,
     is_weather_query,
@@ -17,11 +17,11 @@ from services.agent.src.providers.qwen_realtime_search import (
     QwenRealtimeSearch,
     QwenRealtimeSearchConfig,
 )
+from services.common.llm_failover import DASHSCOPE_CN_COMPATIBLE_BASE_URL
+from services.common.llm_thinking import thinking_disabled, thinking_mode_for
 
 if TYPE_CHECKING:
     from services.agent.src.config import AgentSettings
-
-logger = logging.getLogger(__name__)
 
 
 class PublicRealtimeSearch:
@@ -54,6 +54,37 @@ class PublicRealtimeSearch:
             await self.qwen.aclose()
 
 
+def _reply_extra_body(*, llm_provider: str) -> dict[str, Any]:
+    extra_body: dict[str, Any] = {
+        "max_tokens": int(os.getenv("DEEPSEEK_FAST_MAX_TOKENS", "240")),
+    }
+    extra_body.update(thinking_disabled(thinking_mode_for(llm_provider)))
+    if thinking_mode_for(llm_provider) == "dashscope":
+        # qwen3.8-flash defaults to thinking; keep both keys for Bailian gateways.
+        extra_body["enable_thinking"] = False
+        extra_body["thinking"] = {"type": "disabled"}
+    return extra_body
+
+
+def _build_chat_model(
+    *,
+    llm_factory: Callable[..., Any],
+    model: str,
+    api_key: str,
+    base_url: str,
+    llm_provider: str,
+) -> Any:
+    return llm_factory(
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        temperature=float(os.getenv("DEEPSEEK_FAST_TEMPERATURE", "0.45")),
+        max_retries=0,
+        timeout=httpx.Timeout(connect=3.0, read=12.0, write=5.0, pool=3.0),
+        extra_body=_reply_extra_body(llm_provider=llm_provider),
+    )
+
+
 def build_language_model_handler(
     *,
     settings: AgentSettings,
@@ -62,24 +93,31 @@ def build_language_model_handler(
     """Build the session's streaming chat model (``OpenAIChatModel`` in production).
 
     No tools are offered to the reply model, so no ``tool_choice`` is sent.
+    When ``LLM_FAILOVER_ENABLED`` is on, wrap the primary with a Beijing
+    DashScope backup (``qwen3.8-flash``, thinking off).
     """
 
-    extra_body: dict[str, Any] = {
-        "max_tokens": int(os.getenv("DEEPSEEK_FAST_MAX_TOKENS", "240")),
-    }
-    if settings.llm_provider == "deepseek":
-        extra_body["thinking"] = {"type": "disabled"}
-    else:
-        extra_body["enable_thinking"] = False
-        extra_body["thinking"] = {"type": "disabled"}
-    return llm_factory(
+    primary = _build_chat_model(
+        llm_factory=llm_factory,
         model=settings.llm_fast_model,
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
-        temperature=float(os.getenv("DEEPSEEK_FAST_TEMPERATURE", "0.45")),
-        max_retries=0,
-        timeout=httpx.Timeout(connect=3.0, read=12.0, write=5.0, pool=3.0),
-        extra_body=extra_body,
+        llm_provider=settings.llm_provider,
+    )
+    if not settings.llm_failover_enabled:
+        return primary
+    backup = _build_chat_model(
+        llm_factory=llm_factory,
+        model=settings.llm_backup_model,
+        api_key=settings.dashscope_api_key,
+        base_url=DASHSCOPE_CN_COMPATIBLE_BASE_URL,
+        llm_provider="qwen",
+    )
+    return FailoverChatModel(
+        primary=primary,
+        backup=backup,
+        first_token_timeout_s=settings.llm_first_token_timeout_s,
+        inter_token_timeout_s=settings.llm_inter_token_timeout_s,
     )
 
 
@@ -96,7 +134,7 @@ def build_realtime_search_resolver(*, settings: AgentSettings) -> PublicRealtime
                     getattr(
                         settings,
                         "dashscope_compatible_base_url",
-                        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                        DASHSCOPE_CN_COMPATIBLE_BASE_URL,
                     )
                 ),
                 model=str(getattr(settings, "qwen_deep_model", "qwen-plus")),

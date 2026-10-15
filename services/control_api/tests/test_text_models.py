@@ -28,7 +28,7 @@ _REAL_ASYNC_CLIENT = httpx.AsyncClient
 # Only the extractors send the DashScope workspace header; DeepSeek never gets it.
 _EXPECTED: dict[Provider, dict[str, Any]] = {
     "qwen": {
-        "url": "https://dashscope.example.invalid/v1/chat/completions",
+        "url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
         "key": "dashscope-test-key",
         "models": ["qwen-crisis", "qwen-extract", "qwen-extract", "qwen-structure"],
         "workspaces": [None, "ws-test", "ws-test", "ws-test"],
@@ -52,7 +52,7 @@ def _settings(provider: Provider, *, deepseek_key: str = "deepseek-test-key") ->
         OFFLINE_MOCK=False,
         LLM_PROVIDER=provider,
         DASHSCOPE_API_KEY="dashscope-test-key",
-        DASHSCOPE_BASE_URL="https://dashscope.example.invalid/v1",
+        DASHSCOPE_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1",
         DASHSCOPE_WORKSPACE_ID="ws-test",
         DEEPSEEK_API_KEY=deepseek_key,
         DEEPSEEK_BASE_URL="https://deepseek.example.invalid",

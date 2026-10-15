@@ -74,7 +74,13 @@ OFFLINE_LINES = (
     ("offline-menu-start-v1", "好的，现在开始。"),
     ("offline-menu-end-v1", "讲完啦。点一下屏幕，再选一个。"),
     ("offline-menu-idle-v1", "我先休息一下，点屏幕就能叫醒我。"),
+    ("llm_unavailable", "我现在有点卡住了，等一会儿再来找我聊吧。"),
 )
+
+# Placeholders allowed until production voice is copied in. Each must carry
+# Appendix-E AIGC OpusTags (CONTENT_ID / SERVICE_PROVIDER / AI_GENERATED).
+PENDING_PLACEHOLDER_LINE_IDS = frozenset({"llm_unavailable"})
+REQUIRED_AIGC_TAG_KEYS = ("CONTENT_ID", "SERVICE_PROVIDER", "AI_GENERATED")
 
 BOARD_CLIPS = ("wo_zai_ne", "night_soothe")
 
@@ -95,13 +101,14 @@ def clip_paths() -> tuple[PurePosixPath, ...]:
     )
 
 
-def asset_kind(head: bytes) -> AssetKind:
+def opus_tag_pairs(head: bytes) -> list[tuple[str, str]]:
     if not head.startswith(b"OggS"):
         raise ValueError("not an Ogg stream")
     at = head.find(b"OpusTags")
     if at < 0:
         raise ValueError("no OpusTags header")
     pos = at + len(b"OpusTags")
+    pairs: list[tuple[str, str]] = []
     try:
         (vendor_len,) = struct.unpack_from("<I", head, pos)
         pos += 4 + vendor_len
@@ -113,11 +120,22 @@ def asset_kind(head: bytes) -> AssetKind:
             raw = head[pos : pos + length]
             pos += length
             key, sep, value = raw.decode("utf-8").partition("=")
-            if sep and key.lower() == "title" and value.endswith("_placeholder"):
-                return AssetKind.PLACEHOLDER
+            if sep:
+                pairs.append((key, value))
     except (struct.error, UnicodeDecodeError) as exc:
         raise ValueError("truncated OpusTags") from exc
+    return pairs
+
+
+def asset_kind(head: bytes) -> AssetKind:
+    for key, value in opus_tag_pairs(head):
+        if key.lower() == "title" and value.endswith("_placeholder"):
+            return AssetKind.PLACEHOLDER
     return AssetKind.PRODUCTION
+
+
+def aigc_tag_map(head: bytes) -> dict[str, str]:
+    return {key.upper(): value for key, value in opus_tag_pairs(head)}
 
 
 def _manifest_text(payload: Mapping[str, object]) -> str:
@@ -198,9 +216,31 @@ def check_pack(root: Path, *, write_manifests: bool) -> int:
             if not (root / rel).is_file():
                 errors.append(f"{rel.as_posix()} is stale; run build_offline_stories.py")
 
+    pending_placeholders = 0
     for rel, kind in kinds.items():
-        if kind is AssetKind.PLACEHOLDER:
-            errors.append(f"{rel.as_posix()} is a placeholder; copy the production clip")
+        if kind is not AssetKind.PLACEHOLDER:
+            continue
+        line_id = rel.stem
+        if line_id in PENDING_PLACEHOLDER_LINE_IDS and rel.parts[0] == "offline_lines":
+            tags = aigc_tag_map((root / rel).read_bytes()[:OPUS_TAGS_SCAN_BYTES])
+            missing = [key for key in REQUIRED_AIGC_TAG_KEYS if not tags.get(key, "").strip()]
+            if missing:
+                errors.append(
+                    f"{rel.as_posix()} pending placeholder missing AIGC tags: "
+                    + ", ".join(missing)
+                )
+            elif tags.get("CONTENT_ID", "").strip() != line_id:
+                errors.append(
+                    f"{rel.as_posix()} pending placeholder CONTENT_ID must be {line_id}"
+                )
+            elif tags.get("AI_GENERATED", "").strip().lower() not in {"true", "1", "yes"}:
+                errors.append(
+                    f"{rel.as_posix()} pending placeholder AI_GENERATED must be true"
+                )
+            else:
+                pending_placeholders += 1
+            continue
+        errors.append(f"{rel.as_posix()} is a placeholder; copy the production clip")
 
     total = _tree_bytes(root) if root.is_dir() else 0
     free = ASSETS_PARTITION_BYTES - total
@@ -211,6 +251,7 @@ def check_pack(root: Path, *, write_manifests: bool) -> int:
     print(f"free_margin_bytes={free}")
     print(f"production_clips={production}")
     print(f"placeholder_clips={placeholder}")
+    print(f"pending_placeholder_clips={pending_placeholders}")
     if free < MIN_FREE_MARGIN_BYTES:
         errors.append(f"free margin {free} < required {MIN_FREE_MARGIN_BYTES}")
 

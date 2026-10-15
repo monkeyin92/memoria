@@ -107,6 +107,24 @@ int main() {
             unsigned hold = 0;
             if (sscanf(line + 5, "%u", &hold) != 1) return 2;
             printf("%s\n", memoria::OfflineIsLongPress(hold) ? "long" : "tap");
+        } else if (strncmp(line, "llm ", 4) == 0) {
+            unsigned now = 0;
+            int play = 0;
+            if (sscanf(line + 4, "%u %d", &now, &play) != 2) return 2;
+            print_out(menu.OnLlmUnavailable(now, play != 0));
+            printf("mode=%s item=%u\n", memoria::OfflineModeName(menu.mode()), menu.menu_item());
+        } else if (strncmp(line, "post_llm ", 9) == 0) {
+            int play = 0;
+            if (sscanf(line + 9, "%d", &play) != 1) return 2;
+            memoria::OfflineMenuSignals::PostLlmUnavailable(play != 0);
+            printf("ok\n");
+        } else if (strcmp(line, "consume_llm") == 0) {
+            bool play = false;
+            if (!memoria::OfflineMenuSignals::ConsumeLlmUnavailable(&play)) {
+                printf("none\n");
+            } else {
+                printf("play=%d\n", play ? 1 : 0);
+            }
         } else {
             return 2;
         }
@@ -347,6 +365,33 @@ def test_mid_conversation_drop_keeps_20s_reconnect(tool: pathlib.Path) -> None:
     assert lines[6].startswith("mode=menu item=1")
 
 
+def test_llm_unavailable_enters_menu_without_replay_when_server_spoke(
+    tool: pathlib.Path,
+) -> None:
+    lines = _run(tool, "reset", "llm 1000 0", "net 2000 1 0")
+    assert "llm_unavailable" not in lines[1]
+    assert "offline-menu-intro-v2" in lines[1]
+    assert lines[2].startswith("mode=menu item=1")
+    # Still online: a steady online sample must not fire OnNetworkUp.
+    assert lines[3].startswith("intercept=0 mode_clips=0")
+    assert lines[4] == "mode=menu"
+
+
+def test_llm_unavailable_can_play_local_line(tool: pathlib.Path) -> None:
+    lines = _run(tool, "reset", "llm 1000 1")
+    assert "llm_unavailable" in lines[1]
+    assert "offline-menu-intro-v2" in lines[1]
+    assert lines[2].startswith("mode=menu item=1")
+
+
+def test_offline_menu_signals_post_and_consume(tool: pathlib.Path) -> None:
+    lines = _run(tool, "consume_llm", "post_llm 0", "consume_llm", "consume_llm")
+    assert lines[0] == "none"
+    assert lines[1] == "ok"
+    assert lines[2] == "play=0"
+    assert lines[3] == "none"
+
+
 VOICE = {
     "id": "zh_female_tianmeitaozi_uranus_bigtts",
     "generated": "2026-10-14",
@@ -388,7 +433,8 @@ def test_check_only_passes_with_production_pack() -> None:
     fields = dict(line.split("=", 1) for line in completed.stdout.splitlines() if "=" in line)
     assert int(fields["free_margin_bytes"]) >= 512 * 1024
     assert fields["production_clips"] == "25"
-    assert fields["placeholder_clips"] == "0"
+    assert fields["placeholder_clips"] == "1"
+    assert fields["pending_placeholder_clips"] == "1"
 
 
 def test_default_run_never_writes_audio_and_converges(tmp_path: pathlib.Path) -> None:
@@ -448,7 +494,7 @@ def test_clip_without_opus_tags_is_not_production(tmp_path: pathlib.Path) -> Non
     assert completed.returncode == 1
     assert "offline_lines/offline-menu-idle-v1.ogg: no OpusTags header" in completed.stderr
     assert target.read_bytes() == blob
-    assert "placeholder_clips=0" in completed.stdout
+    assert "pending_placeholder_clips=1" in completed.stdout
 
 
 def test_missing_clip_fails_without_creating_it(tmp_path: pathlib.Path) -> None:
@@ -484,19 +530,33 @@ def test_manifests_record_production_voice() -> None:
         assert manifest["voice"] == VOICE
         entries = manifest["stories"] if "stories" in manifest else manifest["lines"]
         assert entries
-        assert all(entry["placeholder"] is False for entry in entries)
+        if "stories" in manifest:
+            assert all(entry["placeholder"] is False for entry in entries)
+        else:
+            assert all(
+                entry["placeholder"] is False
+                or entry["id"] == "llm_unavailable"
+                for entry in entries
+            )
 
 
 def test_offline_line_manifest_matches_pack() -> None:
     manifest = json.loads((BOARD_ASSETS / "offline_lines" / "index.json").read_text(encoding="utf-8"))
     ids = [entry["id"] for entry in manifest["lines"]]
-    assert len(ids) == 20
+    assert len(ids) == 21
     assert "offline-chat-request-v1" not in ids
     assert ids[0] == "offline-wake-no-network-v1"
     assert ids[15] == "offline-menu-item-03-v2"
     assert ids[19] == "offline-menu-idle-v1"
+    assert ids[20] == "llm_unavailable"
+    by_id = {entry["id"]: entry for entry in manifest["lines"]}
+    assert by_id["llm_unavailable"]["placeholder"] is True
+    assert by_id["llm_unavailable"]["text"] == (
+        "我现在有点卡住了，等一会儿再来找我聊吧。"
+    )
     for entry in manifest["lines"]:
-        assert entry["placeholder"] is False
+        if entry["id"] != "llm_unavailable":
+            assert entry["placeholder"] is False
         filename = entry["file"]
         assert len(filename) <= 32
         assert (BOARD_ASSETS / "offline_lines" / filename).is_file()
@@ -509,7 +569,7 @@ def test_offline_line_ids_match_header_and_script() -> None:
     header = (MEMORIA_DIR / "memoria_offline_menu.h").read_text(encoding="utf-8")
     consts = dict(
         re.findall(
-            r'inline constexpr const char\* (k\w+) = "([a-z0-9-]+)";',
+            r'inline constexpr const char\* (k\w+) = "([a-z0-9_-]+)";',
             header,
         )
     )

@@ -12,10 +12,18 @@ from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from services.agent.src.contracts.errors import ConfigValidationError
+from services.common.llm_failover import (
+    DASHSCOPE_CN_COMPATIBLE_BASE_URL,
+    dashscope_endpoint_in_use,
+    normalize_dashscope_compatible_base_url,
+)
 
 DeploymentProfile = Literal["livekit_cloud", "cn_self_hosted"]
 LLMProvider = Literal["qwen", "bailian_deepseek", "deepseek"]
 TTSProvider = Literal["doubao"]
+DEFAULT_LLM_BACKUP_MODEL = "qwen3.8-flash"
+DEFAULT_LLM_FIRST_TOKEN_TIMEOUT_S = 5.0
+DEFAULT_LLM_INTER_TOKEN_TIMEOUT_S = 8.0
 
 SELF_HOSTED_ENDPOINTING_MIN_DELAY_S = 1.50
 SELF_HOSTED_ENDPOINTING_MAX_DELAY_S = 2.20
@@ -233,8 +241,26 @@ class AgentSettings(BaseSettings):
     dashscope_api_key: str = Field(default="", alias="DASHSCOPE_API_KEY")
     dashscope_ws_url: str = Field(default="", alias="DASHSCOPE_WS_URL")
     dashscope_compatible_base_url: str = Field(
-        default="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        default=DASHSCOPE_CN_COMPATIBLE_BASE_URL,
         alias="DASHSCOPE_COMPATIBLE_BASE_URL",
+    )
+    llm_failover_enabled: bool = Field(default=False, alias="LLM_FAILOVER_ENABLED")
+    llm_first_token_timeout_s: float = Field(
+        default=DEFAULT_LLM_FIRST_TOKEN_TIMEOUT_S,
+        gt=0.0,
+        le=60.0,
+        alias="LLM_FIRST_TOKEN_TIMEOUT_S",
+    )
+    llm_inter_token_timeout_s: float = Field(
+        default=DEFAULT_LLM_INTER_TOKEN_TIMEOUT_S,
+        gt=0.0,
+        le=120.0,
+        alias="LLM_INTER_TOKEN_TIMEOUT_S",
+    )
+    llm_backup_model: str = Field(
+        default=DEFAULT_LLM_BACKUP_MODEL,
+        min_length=1,
+        alias="LLM_BACKUP_MODEL",
     )
     qwen_fast_model: str = Field(default="qwen3.7-flash", alias="QWEN_FAST_MODEL")
     qwen_deep_model: str = Field(default="qwen-plus", alias="QWEN_DEEP_MODEL")
@@ -510,6 +536,17 @@ class AgentSettings(BaseSettings):
             return configured
         return self.archive_internal_token.get_secret_value()
 
+    @field_validator("llm_backup_model")
+    @classmethod
+    def _backup_model_id(cls, v: str) -> str:
+        cleaned = v.strip()
+        if cleaned != DEFAULT_LLM_BACKUP_MODEL:
+            raise ValueError(
+                f"LLM_BACKUP_MODEL must be {DEFAULT_LLM_BACKUP_MODEL} "
+                "(compliance-locked DashScope model id)"
+            )
+        return cleaned
+
     @field_validator("funasr_sample_rate")
     @classmethod
     def _funasr_sr(cls, v: int) -> int:
@@ -539,6 +576,18 @@ class AgentSettings(BaseSettings):
             access_token=self.doubao_tts_access_token.get_secret_value(),
             required=False,
         )
+        if self.llm_failover_enabled and not self.dashscope_api_key.strip():
+            raise ValueError(
+                "LLM_FAILOVER_ENABLED requires DASHSCOPE_API_KEY for the "
+                "China North 2 (Beijing) backup endpoint"
+            )
+        if dashscope_endpoint_in_use(
+            llm_provider=self.llm_provider,
+            llm_failover_enabled=self.llm_failover_enabled,
+        ):
+            self.dashscope_compatible_base_url = normalize_dashscope_compatible_base_url(
+                self.dashscope_compatible_base_url
+            )
         if self.doubao_tts_resource_id != "seed-tts-2.0":
             raise ValueError("DOUBAO_TTS_RESOURCE_ID must be seed-tts-2.0")
         if not _valid_websocket_url(

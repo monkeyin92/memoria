@@ -258,6 +258,7 @@ async def smoke_llm() -> str:
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
         fast_model=settings.llm_fast_model,
+        fast_first_token_timeout_s=settings.llm_first_token_timeout_s,
         thinking_mode=(
             "deepseek" if settings.llm_provider == "deepseek" else "dashscope"
         ),
