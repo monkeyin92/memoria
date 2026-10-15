@@ -138,6 +138,19 @@ _EXPLICIT_SELF_HARM_INTENT_RE = re.compile(
 _SELF_HARM_INTENT_WORD_CLASS_RE = re.compile(r"想消失")
 _SELF_HARM_ACTION_WORD_CLASS_RE = re.compile(r"割(?:了)?自己")
 _FIRST_PERSON_JUMP_RE = re.compile(r"我.{0,16}(?:从楼上跳|跳下去)")
+# Despair phrase group: reason-to-live, meaninglessness, wish-not-to-exist.
+# Any-subject for 找不到…理由 (story-retell). 不在了就好 stays first-person.
+_NO_REASON_TO_LIVE_RE = re.compile(r"找不[到着](?:继续)?活下去的理由")
+_LIFE_MEANINGLESS_RE = re.compile(r"活着(?:真的)?没意思")
+_WISH_NOT_EXIST_RE = re.compile(r"(?:要是|如果)?我不在了就好(?:了)?")
+_CRISIS_SELF_WORD_CLASS_RES: Final[tuple[re.Pattern[str], ...]] = (
+    _SELF_HARM_INTENT_WORD_CLASS_RE,
+    _SELF_HARM_ACTION_WORD_CLASS_RE,
+    _FIRST_PERSON_JUMP_RE,
+    _NO_REASON_TO_LIVE_RE,
+    _LIFE_MEANINGLESS_RE,
+    _WISH_NOT_EXIST_RE,
+)
 _OTHER_JUMP_RE = re.compile(r"(?:从楼上跳|跳下去)")
 _CONFINEMENT_BEAT_RE = re.compile(r"关起来打")
 _EXPLICIT_SELF_HARM_ACTION_RE = re.compile(
@@ -275,9 +288,7 @@ def companion_safety_decision(query: str) -> SafetyDecision:
         or _EXPLICIT_SELF_HARM_ACTION_RE.search(normalized)
         or _SELF_HARM_METHOD_RE.search(normalized)
         or _EXPLICIT_SELF_HARM_ENGLISH_RE.search(crisis_query.lower())
-        or _SELF_HARM_INTENT_WORD_CLASS_RE.search(normalized)
-        or _SELF_HARM_ACTION_WORD_CLASS_RE.search(normalized)
-        or _FIRST_PERSON_JUMP_RE.search(normalized)
+        or any(pattern.search(normalized) for pattern in _CRISIS_SELF_WORD_CLASS_RES)
     ):
         return "crisis_self"
     full_normalized = re.sub(r"[\s，。！？、,.!?：:\-—_]+", "", query).lower()
