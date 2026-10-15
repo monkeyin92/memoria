@@ -219,6 +219,45 @@ async def test_backup_forbidden_copy_is_replaced_with_safe_unknown() -> None:
     assert gate_backup_reply_copy(f"我们是{word}") == SAFE_UNKNOWN_REPLY
 
 
+@pytest.mark.asyncio
+async def test_backup_mid_stream_forbidden_copy_ends_without_gluing_safe_unknown() -> None:
+    """DeepSeek too slow → qwen backup; a later forbidden chunk must not glue 我不知道.
+
+    Reported: 「给我讲一个很短的小兔子故事」 yielded a truncated rabbit story ending
+    in 「它把我不知道。」 after the backup stream's forbidden-copy gate replaced one
+    mid-stream chunk once earlier text had already left the model.
+    """
+
+    word = "家人"
+    assert word in PRODUCT_FORBIDDEN_COPY
+    prefix = (
+        "从前有只小兔子，它最爱吃胡萝卜。有一天，它发现了一根特别大的胡萝卜，"
+        "高兴得蹦了起来。它把"
+    )
+    primary = _FakeModel(
+        name="deepseek-flash",
+        error=APIConnectionError("primary first token timeout", retryable=True),
+    )
+    backup = _FakeModel(
+        name="qwen3.8-flash",
+        chunks=[
+            _text_chunk(prefix, chunk_id="b1"),
+            _text_chunk(f"胡萝卜送给{word}。", chunk_id="b2"),
+            _text_chunk("然后回家睡觉。", chunk_id="b3"),
+        ],
+    )
+    model = _failover(primary, backup, first_token_timeout_s=0.2)
+    async with model.chat(
+        chat_ctx=_ctx(("user", "给我讲一个很短的小兔子故事"))
+    ) as stream:
+        texts = [chunk.delta.content async for chunk in stream if chunk.delta.content]
+    spoken = "".join(texts)
+    assert spoken == prefix
+    assert SAFE_UNKNOWN_REPLY not in spoken
+    assert spoken.endswith("它把")
+    assert f"它把{SAFE_UNKNOWN_REPLY}" not in spoken
+
+
 def test_flag_off_build_returns_primary_only(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_FAILOVER_ENABLED", "false")
     monkeypatch.setenv("DASHSCOPE_API_KEY", "dash-key")
