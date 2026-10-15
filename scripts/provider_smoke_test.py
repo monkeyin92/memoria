@@ -253,17 +253,13 @@ async def smoke_funasr(
 
 
 async def smoke_llm() -> str:
-    """Exercise the production reply chat path (FailoverChatModel when enabled).
+    """Run the production reply chat path and require the phrase 连接正常.
 
-    Readiness used to call DeepSeekClient directly, so a primary first-token
-    timeout failed the smoke even when ``LLM_FAILOVER_ENABLED`` backup worked.
+    LLM_FAILOVER_ENABLED wraps that path in FailoverChatModel. A primary
+    first-token timeout still passes when the Beijing backup returns the phrase.
     """
 
     settings = AgentSettings()
-    if settings.llm_failover_enabled and not str(settings.dashscope_api_key or "").strip():
-        raise AssertionError(
-            "LLM_FAILOVER_ENABLED requires DASHSCOPE_API_KEY for the Beijing backup"
-        )
     model = build_language_model_handler(
         settings=settings,
         llm_factory=OpenAIChatModel,
@@ -274,20 +270,13 @@ async def smoke_llm() -> str:
     try:
         async with model.chat(chat_ctx=chat_ctx) as stream:
             async for chunk in stream:
-                delta = getattr(chunk, "delta", None)
-                text = getattr(delta, "content", None) if delta is not None else None
-                if isinstance(text, str) and text:
-                    content += text
+                if chunk.delta is not None and chunk.delta.content:
+                    content += chunk.delta.content
     finally:
-        closer = getattr(model, "aclose", None)
-        if callable(closer):
-            result = closer()
-            if asyncio.iscoroutine(result):
-                await result
+        await model.aclose()
     if "连接正常" not in content:
         raise AssertionError(f"LLM content missing expected phrase: {content!r}")
-    # Keep the readiness matcher label stable (DeepSeek|Qwen). Failover is an
-    # implementation detail of the stream path when LLM_FAILOVER_ENABLED is on.
+    # refresh_readiness.sh matches DeepSeek or Qwen, not the backup model id.
     label = "DeepSeek" if settings.llm_provider in {"bailian_deepseek", "deepseek"} else "Qwen"
     print(f"{label} smoke: PASS (streaming content, thinking disabled)")
     return label
@@ -343,10 +332,7 @@ async def main() -> int:
     except Exception as exc:
         print(f"provider_smoke_test FAIL: {type(exc).__name__}: {exc}")
         return 1
-    print(
-        "provider_smoke_test PASS: FunASR, QwenRealtimeSearch, "
-        f"{llm_label}, Doubao"
-    )
+    print(f"provider_smoke_test PASS: FunASR, QwenRealtimeSearch, {llm_label}, Doubao")
     return 0
 
 

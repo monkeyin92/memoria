@@ -1,167 +1,244 @@
-"""Provider smoke LLM path must honor LLM_FAILOVER_ENABLED."""
+"""smoke_llm follows LLM_FAILOVER_ENABLED against local chat endpoints."""
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
-from types import TracebackType
-from typing import Any
+import asyncio
+import json
+from dataclasses import dataclass, field
+from typing import Any, Literal
 
 import pytest
-from services.agent.src.llm_types import ChatChunk, ChatContext, ChoiceDelta
-from services.agent.src.providers.llm_failover import FailoverChatModel
-from services.agent.src.providers.provider_errors import APIConnectionError
+from aiohttp import web
+from scripts.provider_smoke_test import smoke_llm
+from services.agent.src.providers.provider_errors import APIStatusError
+
+PROMPT = "请只回答“连接正常”。"
+PASS_LINE = "DeepSeek smoke: PASS (streaming content, thinking disabled)\n"
+PRIMARY_BODY = {
+    "messages": [{"role": "user", "content": PROMPT}],
+    "model": "deepseek-flash",
+    "stream": True,
+    "stream_options": {"include_usage": True},
+    "temperature": 0.45,
+    "max_tokens": 240,
+    "thinking": {"type": "disabled"},
+}
+BACKUP_BODY = {
+    "messages": [{"role": "user", "content": PROMPT}],
+    "model": "qwen3.8-flash",
+    "stream": True,
+    "stream_options": {"include_usage": True},
+    "temperature": 0.45,
+    "max_tokens": 240,
+    "enable_thinking": False,
+    "thinking": {"type": "disabled"},
+}
+
+ChatMode = Literal["reply", "stall", "reject"]
 
 
-class _FakeStream:
-    def __init__(self, chunks: list[ChatChunk]) -> None:
-        self._chunks = chunks
-
-    async def __aenter__(self) -> _FakeStream:
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> None:
-        return None
-
-    def __aiter__(self) -> AsyncIterator[ChatChunk]:
-        return self._iterate()
-
-    async def _iterate(self) -> AsyncIterator[ChatChunk]:
-        for chunk in self._chunks:
-            yield chunk
+def _chunk(text: str) -> dict[str, Any]:
+    return {
+        "id": "chunk-1",
+        "object": "chat.completion.chunk",
+        "created": 0,
+        "model": "mock",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"role": "assistant", "content": text},
+                "finish_reason": "stop",
+            }
+        ],
+    }
 
 
-class _FakeModel:
-    def __init__(
-        self,
-        *,
-        name: str,
-        chunks: list[ChatChunk] | None = None,
-        error: BaseException | None = None,
-    ) -> None:
-        self.model = name
-        self._chunks = chunks or []
-        self._error = error
-        self.calls = 0
+@dataclass
+class ChatEndpoint:
+    """OpenAI-compatible chat server. ``stall`` holds the socket until the client leaves."""
 
-    def chat(self, *, chat_ctx: ChatContext, tools: Sequence[Any] = ()) -> _FakeStream:
-        del chat_ctx, tools
-        self.calls += 1
-        if self._error is not None:
-            raise self._error
-        return _FakeStream(self._chunks)
+    mode: ChatMode
+    reply: str = "连接正常"
+    requests: list[dict[str, Any]] = field(default_factory=list)
+    origin: str = ""
+    _runner: web.AppRunner | None = None
 
-    async def aclose(self) -> None:
-        return None
+    @property
+    def v1(self) -> str:
+        return f"{self.origin}/v1"
+
+    async def start(self) -> None:
+        app = web.Application()
+        app.router.add_post("/chat/completions", self._handle)
+        app.router.add_post("/v1/chat/completions", self._handle)
+        self._runner = web.AppRunner(app)
+        await self._runner.setup()
+        site = web.TCPSite(self._runner, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+        self.origin = f"http://127.0.0.1:{port}"
+
+    async def stop(self) -> None:
+        if self._runner is not None:
+            await self._runner.cleanup()
+
+    async def _handle(self, request: web.Request) -> web.StreamResponse:
+        body = await request.json()
+        self.requests.append(
+            {
+                "path": request.path,
+                "authorization": request.headers.get("Authorization", ""),
+                "body": body,
+            }
+        )
+        if self.mode == "stall":
+            # The client aborts on the first-token deadline. Notice that and
+            # return instead of holding the test for a fixed sleep.
+            for _ in range(200):
+                transport = request.transport
+                if transport is None or transport.is_closing():
+                    return web.Response(status=499)
+                await asyncio.sleep(0.05)
+            return web.Response(status=504)
+        if self.mode == "reject":
+            return web.json_response({"error": {"message": "primary down"}}, status=400)
+        response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
+        await response.prepare(request)
+        payload = json.dumps(_chunk(self.reply), ensure_ascii=False)
+        await response.write(f"data: {payload}\n\n".encode())
+        await response.write(b"data: [DONE]\n\n")
+        await response.write_eof()
+        return response
 
 
-@pytest.mark.asyncio
-async def test_smoke_llm_uses_failover_when_flag_on(
+def _configure(
     monkeypatch: pytest.MonkeyPatch,
+    *,
+    failover: bool,
+    primary: ChatEndpoint,
+    backup: ChatEndpoint,
+    first_token_timeout_s: str,
 ) -> None:
-    monkeypatch.setenv("LLM_FAILOVER_ENABLED", "true")
+    monkeypatch.setenv("LLM_FAILOVER_ENABLED", "true" if failover else "false")
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-key")
     monkeypatch.setenv("DASHSCOPE_API_KEY", "dash-key")
-    monkeypatch.setenv("LLM_FIRST_TOKEN_TIMEOUT_S", "0.05")
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", primary.origin)
+    monkeypatch.setenv("DEEPSEEK_FAST_MODEL", "deepseek-flash")
+    monkeypatch.setenv("DEEPSEEK_FAST_TEMPERATURE", "0.45")
+    monkeypatch.setenv("DEEPSEEK_FAST_MAX_TOKENS", "240")
+    monkeypatch.setenv("LLM_BACKUP_MODEL", "qwen3.8-flash")
+    monkeypatch.setenv("LLM_FIRST_TOKEN_TIMEOUT_S", first_token_timeout_s)
     monkeypatch.setenv("LLM_INTER_TOKEN_TIMEOUT_S", "4")
-
-    primary = _FakeModel(
-        name="deepseek-flash",
-        error=APIConnectionError("primary first token timeout", retryable=True),
+    monkeypatch.setenv(
+        "DASHSCOPE_COMPATIBLE_BASE_URL",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
     )
-    backup = _FakeModel(
-        name="qwen3.8-flash",
-        chunks=[ChatChunk(id="b1", delta=ChoiceDelta(content="连接正常"))],
-    )
-    built: list[Any] = []
-
-    def factory(**kwargs: Any) -> _FakeModel:
-        model_name = str(kwargs["model"])
-        if "qwen" in model_name:
-            built.append(("backup", kwargs))
-            return backup
-        built.append(("primary", kwargs))
-        return primary
-
-    import scripts.provider_smoke_test as smoke
-
-    monkeypatch.setattr(smoke, "OpenAIChatModel", factory)
+    # build_language_model_handler pins the backup to the Beijing constant.
     monkeypatch.setattr(
-        smoke,
-        "build_language_model_handler",
-        lambda **kwargs: __import__(
-            "services.agent.src.providers.handlers", fromlist=["build_language_model_handler"]
-        ).build_language_model_handler(**kwargs),
+        "services.agent.src.providers.handlers.DASHSCOPE_CN_COMPATIBLE_BASE_URL",
+        backup.v1,
     )
 
-    label = await smoke.smoke_llm()
-    assert label == "DeepSeek"
-    assert primary.calls == 1
-    assert backup.calls == 1
-    assert any(role == "backup" for role, _ in built)
+
+@pytest.fixture
+async def endpoints() -> Any:
+    started: list[ChatEndpoint] = []
+
+    async def open_pair(
+        primary_mode: ChatMode,
+        backup_mode: ChatMode = "reply",
+    ) -> tuple[ChatEndpoint, ChatEndpoint]:
+        primary = ChatEndpoint(primary_mode)
+        backup = ChatEndpoint(backup_mode, reply="连接正常")
+        await primary.start()
+        await backup.start()
+        started.extend((primary, backup))
+        return primary, backup
+
+    yield open_pair
+    for endpoint in started:
+        await endpoint.stop()
 
 
 @pytest.mark.asyncio
-async def test_smoke_llm_flag_off_stays_on_primary(
+async def test_failover_smoke_passes_when_primary_stalls_and_backup_answers(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    endpoints: Any,
 ) -> None:
-    monkeypatch.setenv("LLM_FAILOVER_ENABLED", "false")
-    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-key")
-    monkeypatch.setenv("DASHSCOPE_API_KEY", "dash-key")
-
-    primary = _FakeModel(
-        name="deepseek-flash",
-        chunks=[ChatChunk(id="p1", delta=ChoiceDelta(content="连接正常"))],
-    )
-    backup = _FakeModel(
-        name="qwen3.8-flash",
-        chunks=[ChatChunk(id="b1", delta=ChoiceDelta(content="备用"))],
-    )
-
-    def factory(**kwargs: Any) -> _FakeModel:
-        if "qwen" in str(kwargs["model"]):
-            return backup
-        return primary
-
-    import scripts.provider_smoke_test as smoke
-
-    monkeypatch.setattr(smoke, "OpenAIChatModel", factory)
-
-    label = await smoke.smoke_llm()
-    assert label == "DeepSeek"
-    assert primary.calls == 1
-    assert backup.calls == 0
-
-
-@pytest.mark.asyncio
-async def test_failover_stream_survives_primary_first_token_timeout() -> None:
-    """Readiness depends on FailoverChatModel absorbing primary first-token timeout."""
-
-    primary = _FakeModel(
-        name="deepseek-flash",
-        error=APIConnectionError("primary first token timeout", retryable=True),
-    )
-    backup = _FakeModel(
-        name="qwen3.8-flash",
-        chunks=[ChatChunk(id="b1", delta=ChoiceDelta(content="连接正常"))],
-    )
-    model = FailoverChatModel(
+    primary, backup = await endpoints("stall")
+    # Long enough for the local server to accept, short enough that the stall
+    # is still a first-token timeout.
+    _configure(
+        monkeypatch,
+        failover=True,
         primary=primary,
         backup=backup,
-        first_token_timeout_s=0.2,
-        inter_token_timeout_s=4.0,
+        first_token_timeout_s="1.5",
     )
-    chat_ctx = ChatContext.empty()
-    chat_ctx.add_message(role="user", content="请只回答“连接正常”。")
-    texts: list[str] = []
-    async with model.chat(chat_ctx=chat_ctx) as stream:
-        async for chunk in stream:
-            if chunk.delta and chunk.delta.content:
-                texts.append(chunk.delta.content)
-    assert "".join(texts) == "连接正常"
+
+    assert await smoke_llm() == "DeepSeek"
+    assert capsys.readouterr().out == PASS_LINE
+    assert primary.requests == [
+        {
+            "path": "/chat/completions",
+            "authorization": "Bearer ds-key",
+            "body": PRIMARY_BODY,
+        }
+    ]
+    assert backup.requests == [
+        {
+            "path": "/v1/chat/completions",
+            "authorization": "Bearer dash-key",
+            "body": BACKUP_BODY,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_flag_off_smoke_uses_only_the_primary_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    endpoints: Any,
+) -> None:
+    primary, backup = await endpoints("reply")
+    _configure(
+        monkeypatch,
+        failover=False,
+        primary=primary,
+        backup=backup,
+        first_token_timeout_s="0.25",
+    )
+
+    assert await smoke_llm() == "DeepSeek"
+    assert capsys.readouterr().out == PASS_LINE
+    assert primary.requests == [
+        {
+            "path": "/chat/completions",
+            "authorization": "Bearer ds-key",
+            "body": PRIMARY_BODY,
+        }
+    ]
+    assert backup.requests == []
+
+
+@pytest.mark.asyncio
+async def test_flag_off_primary_failure_does_not_call_backup(
+    monkeypatch: pytest.MonkeyPatch,
+    endpoints: Any,
+) -> None:
+    primary, backup = await endpoints("reject")
+    _configure(
+        monkeypatch,
+        failover=False,
+        primary=primary,
+        backup=backup,
+        first_token_timeout_s="0.25",
+    )
+
+    with pytest.raises(APIStatusError):
+        await smoke_llm()
+    assert len(primary.requests) == 1
+    assert primary.requests[0]["body"]["messages"] == [{"role": "user", "content": PROMPT}]
+    assert backup.requests == []
