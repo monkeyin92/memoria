@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from services.common.companion_response_safety import companion_safety_decision
 
+ASK_WEATHER_CITY_REPLY = "你想查哪个城市呀？"
 _WEEKDAYS = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
 _STRIP = re.compile(r"[\s，,。！？!?；;：:、]")
 _SAFE_REPLY = re.compile(
