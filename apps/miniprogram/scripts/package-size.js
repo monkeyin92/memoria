@@ -40,7 +40,7 @@ function packageSize() {
   return { total, limit: MAIN_PACKAGE_LIMIT, byFolder };
 }
 
-module.exports = { MAIN_PACKAGE_LIMIT, packageSize };
+module.exports = { MAIN_PACKAGE_LIMIT, packageSize, shippedFiles };
 
 if (require.main === module) {
   const { total, limit, byFolder } = packageSize();

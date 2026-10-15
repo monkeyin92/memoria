@@ -34,6 +34,13 @@
           <text class="attention-tip-sub">“不管发生什么，你都可以来找我。”</text>
         </view>
       </view>
+      <view class="attention-tip">
+        <text class="attention-tip-num">4</text>
+        <view class="attention-tip-copy">
+          <text class="attention-tip-title">需要时寻求帮助</text>
+          <text class="attention-tip-sub">可拨打 12356 心理援助热线</text>
+        </view>
+      </view>
     </view>
   </block>
 

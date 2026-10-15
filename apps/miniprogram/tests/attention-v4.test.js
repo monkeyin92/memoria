@@ -1,9 +1,12 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const test = require("node:test");
 
 process.env.TZ = "Asia/Shanghai";
 
-const { loadPage } = require("../scripts/mp-harness/runtime");
+const { ROOT, loadPage } = require("../scripts/mp-harness/runtime");
+const { shippedFiles } = require("../scripts/package-size");
 const { renderPage } = require("../scripts/mp-harness/render");
 const fx = require("../scripts/mp-harness/fixtures");
 
@@ -19,14 +22,14 @@ async function openAttention(query, overrides) {
   return harness;
 }
 
-test("the attention page shows the alert, three conversation tips and 我知道了, never the words or a hotline", async () => {
+test("four conversation tips ending with the 12356 hotline, and 我知道了, never the words", async () => {
   const harness = await openAttention({ id: "n1" });
   try {
     assert.equal(
       visibleText(renderPage("pages/attention/index", harness.page.data)),
       "有一条需要你关注的对话 今天 19:42 孩子在聊天中提到了让 TA 不舒服的事。为了保护孩子，这里不展示对话内容。 " +
         "可以这样和孩子聊 1 找一个放松的时间 比如睡前或散步时，不要急着追问 2 先听，少评判 “愿意和我说说今天的事吗？” " +
-        "3 告诉孩子你在 “不管发生什么，你都可以来找我。” 我知道了",
+        "3 告诉孩子你在 “不管发生什么，你都可以来找我。” 4 需要时寻求帮助 可拨打 12356 心理援助热线 我知道了",
     );
   } finally {
     harness.restore();
@@ -95,4 +98,11 @@ test("the home attention card and the review banner both open the attention page
   } finally {
     memory.restore();
   }
+});
+
+test("12356 ships only in the attention page's fourth tip", () => {
+  const hits = shippedFiles()
+    .filter((file) => /\.(js|wxml|json|wxss)$/.test(file))
+    .filter((file) => fs.readFileSync(path.join(ROOT, file), "utf8").includes("12356"));
+  assert.deepEqual(hits, ["pages/attention/index.wxml"]);
 });
