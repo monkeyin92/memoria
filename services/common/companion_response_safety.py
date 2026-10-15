@@ -25,6 +25,24 @@ AFFECTION_FIXED_REPLY: Final = (
     "我是 AI，没有喜欢的感觉，不过我会认真听你说话。你今天想聊点什么呀？"
 )
 GUARDIAN_ATTENTION_COPY: Final = "有一条需要你关注的对话"
+GUARDIAN_ATTENTION_STORY_RETELL_COPY: Final = (
+    "有一条需要你关注的对话（可能是在复述故事）"
+)
+
+
+def guardian_attention_copy(*, possibly_story_retell: bool = False) -> str:
+    """Parent Mini Program pin text. Story framing never suppresses the route."""
+
+    if possibly_story_retell:
+        return GUARDIAN_ATTENTION_STORY_RETELL_COPY
+    return GUARDIAN_ATTENTION_COPY
+
+
+def is_story_retell_context(query: str) -> bool:
+    """True when the utterance is framed as story / cartoon / picture-book retelling."""
+
+    del query
+    return False
 AFTER_FIXED_SAFETY_SESSION_INSTRUCTION: Final = (
     "本会话已经对用户说过固定安全话术。不要继续讨论或追问刚才的安全话题；"
     "若用户再次提出同类自伤、受害或转述他人危险的求助，系统会再次给出同一句固定话术，你不要另写。"

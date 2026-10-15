@@ -38,6 +38,7 @@ class CrisisRoute:
     attempt_push: bool
     script: FixedSafetyScript | None
     evidence_source: Literal["deterministic", "semantic_evidence", "none"]
+    possibly_story_retell: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +59,7 @@ def _route(
     decision: SafetyDecision,
     *,
     evidence_source: Literal["deterministic", "semantic_evidence"],
+    possibly_story_retell: bool = False,
 ) -> CrisisRoute:
     spec = _DETERMINISTIC_ROUTES[decision]
     return CrisisRoute(
@@ -66,6 +68,7 @@ def _route(
         attempt_push=spec.attempt_push,
         script=script_for_decision(decision),
         evidence_source=evidence_source,
+        possibly_story_retell=possibly_story_retell,
     )
 
 
