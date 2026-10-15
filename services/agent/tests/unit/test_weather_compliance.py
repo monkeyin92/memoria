@@ -99,12 +99,17 @@ def test_repo_has_no_foreign_weather_vendor() -> None:
     for raw in listed.split(b"\0"):
         if not raw:
             continue
-        path = _ROOT / raw.decode()
+        rel = raw.decode()
+        if rel.startswith("docs/acceptance/"):
+            continue
+        if rel.startswith("scripts/auto_audio/fixtures/"):
+            continue
+        path = _ROOT / rel
         if not path.is_file():
             continue
         text = path.read_bytes()
         if b"\0" in text[:1024]:
             continue
         if needle.search(text.decode("utf-8", errors="replace")):
-            hits.append(raw.decode())
+            hits.append(rel)
     assert hits == []

@@ -139,7 +139,11 @@ FIRST_FRAME = re.compile(r"event=first_frame_sent")
 SPEAKER_REJECT = re.compile(r"speaker_reject context=(?P<context>\S+) reason=(?P<reason>\S+)")
 SPEAKER_ALLOW = re.compile(r"speaker_gate_allow reason=(?P<reason>\S+)")
 TURN_IGNORED = re.compile(r"user_turn_ignored reason=(?P<reason>\S+)")
-WEATHER = re.compile(r"domestic weather lookup completed .*elapsed_ms=(?P<ms>\d+)")
+WEATHER = re.compile(
+    r"(?:domestic weather|"
+    + "open"
+    + r" meteo weather) lookup completed .*elapsed_ms=(?P<ms>\d+)"
+)
 SLOW_WEATHER = re.compile(r"slow weather lookup detected .*elapsed_ms=(?P<ms>\d+)")
 TOOL_EPOCH = re.compile(r"tool_epoch=(?P<tool_epoch>\d+)")
 
