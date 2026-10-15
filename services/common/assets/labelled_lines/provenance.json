@@ -1,0 +1,33 @@
+{
+  "generated": "2026-10-15",
+  "voice": {
+    "id": "zh_female_tianmeitaozi_uranus_bigtts",
+    "terms": "trial/demo only pending Volcengine terms"
+  },
+  "tool": "ffmpeg-libopus-scaffold",
+  "note": "Scaffold cadence tones with Appendix-E AIGC OpusTags so online playback and CI can validate labels without Doubao credentials. Re-run scripts/render_labelled_lines.py with DOUBAO_TTS_* to replace audio with peach-voice speech for the archived prompts.",
+  "lines": [
+    {
+      "id": "llm_thinking",
+      "prompt": "嗯，我想一想。",
+      "tool": "ffmpeg-libopus-scaffold",
+      "date": "2026-10-15",
+      "voice_id": "zh_female_tianmeitaozi_uranus_bigtts",
+      "online_ogg": "services/common/assets/labelled_lines/llm_thinking.ogg",
+      "offline_ogg": "firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/assets/offline_lines/llm_thinking.ogg",
+      "online_sample_rate_hz": 24000,
+      "offline_sample_rate_hz": 16000
+    },
+    {
+      "id": "llm_unavailable",
+      "prompt": "我现在有点卡住了，等一会儿再来找我聊吧。",
+      "tool": "ffmpeg-libopus-scaffold",
+      "date": "2026-10-15",
+      "voice_id": "zh_female_tianmeitaozi_uranus_bigtts",
+      "online_ogg": "services/common/assets/labelled_lines/llm_unavailable.ogg",
+      "offline_ogg": "firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/assets/offline_lines/llm_unavailable.ogg",
+      "online_sample_rate_hz": 24000,
+      "offline_sample_rate_hz": 16000
+    }
+  ]
+}
