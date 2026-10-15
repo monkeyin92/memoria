@@ -80,8 +80,9 @@ OFFLINE_LINES = (
 
 # Placeholders allowed until production voice is copied in. Each must carry
 # Appendix-E AIGC OpusTags (CONTENT_ID / SERVICE_PROVIDER / AI_GENERATED).
-PENDING_PLACEHOLDER_LINE_IDS = frozenset({"llm_unavailable", "llm_thinking"})
+PENDING_PLACEHOLDER_LINE_IDS = frozenset()
 REQUIRED_AIGC_TAG_KEYS = ("CONTENT_ID", "SERVICE_PROVIDER", "AI_GENERATED")
+LABELLED_PRODUCTION_LINE_IDS = frozenset({"llm_unavailable", "llm_thinking"})
 
 BOARD_CLIPS = ("wo_zai_ne", "night_soothe")
 
@@ -219,9 +220,30 @@ def check_pack(root: Path, *, write_manifests: bool) -> int:
 
     pending_placeholders = 0
     for rel, kind in kinds.items():
+        line_id = rel.stem
+        if (
+            kind is AssetKind.PRODUCTION
+            and line_id in LABELLED_PRODUCTION_LINE_IDS
+            and rel.parts[0] == "offline_lines"
+        ):
+            tags = aigc_tag_map((root / rel).read_bytes()[:OPUS_TAGS_SCAN_BYTES])
+            missing = [key for key in REQUIRED_AIGC_TAG_KEYS if not tags.get(key, "").strip()]
+            if missing:
+                errors.append(
+                    f"{rel.as_posix()} labelled production clip missing AIGC tags: "
+                    + ", ".join(missing)
+                )
+            elif tags.get("CONTENT_ID", "").strip() != line_id:
+                errors.append(
+                    f"{rel.as_posix()} labelled production CONTENT_ID must be {line_id}"
+                )
+            elif tags.get("AI_GENERATED", "").strip().lower() not in {"true", "1", "yes"}:
+                errors.append(
+                    f"{rel.as_posix()} labelled production AI_GENERATED must be true"
+                )
+            continue
         if kind is not AssetKind.PLACEHOLDER:
             continue
-        line_id = rel.stem
         if line_id in PENDING_PLACEHOLDER_LINE_IDS and rel.parts[0] == "offline_lines":
             tags = aigc_tag_map((root / rel).read_bytes()[:OPUS_TAGS_SCAN_BYTES])
             missing = [key for key in REQUIRED_AIGC_TAG_KEYS if not tags.get(key, "").strip()]

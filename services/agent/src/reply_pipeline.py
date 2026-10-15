@@ -1651,17 +1651,9 @@ class ReplyPipeline:
                     self._runtime.mark_audio_event("llm_first_content_token")
                 gated = self._runtime.gate_llm_token(cancellation, LLM_UNAVAILABLE_TEXT)
                 if gated is not None:
-                    for segment in segmenter.push_token(gated):
-                        accepted_segment = _ready_segment(segment.text)
-                        if accepted_segment is None:
-                            break
+                    accepted_segment = _ready_segment(gated)
+                    if accepted_segment is not None:
                         yield accepted_segment
-                    if cancellation.is_current(self._runtime.fence) and not reply_budget_exhausted:
-                        for segment in segmenter.flush(end_of_stream=True):
-                            accepted_segment = _ready_segment(segment.text)
-                            if accepted_segment is None:
-                                break
-                            yield accepted_segment
                 return
             realtime_completed = bool(realtime_reply) and not is_incomplete_realtime_reply(
                 realtime_reply,
