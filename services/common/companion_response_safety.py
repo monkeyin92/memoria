@@ -16,6 +16,9 @@ SafetyDecision = Literal[
 ]
 
 SAFE_UNKNOWN_REPLY = "我不知道。"
+# Product: the robot has no personal name. Identity questions get this fixed line.
+NAMELESS_IDENTITY_REPLY: Final = "我是陪你聊天、讲故事的 AI 助手。"
+NAMELESS_IDENTITY_REPLY_SENIOR: Final = "我是陪您聊天、讲故事的 AI 助手。"
 GUARDIAN_ATTENTION_COPY: Final = "有一条需要你关注的对话"
 AFTER_FIXED_SAFETY_SESSION_INSTRUCTION: Final = (
     "本会话已经对用户说过固定安全话术。不要继续讨论或追问刚才的安全话题；"
@@ -47,7 +50,8 @@ CRISIS_CONTEXT_MARKERS: Final = (
     "end my life",
 )
 
-_PROHIBITED_CONTENT_TERMS = (
+# Forbidden-copy list for deterministic prohibited-request refusals (count is frozen at 39).
+PROHIBITED_CONTENT_TERMS: Final[tuple[str, ...]] = (
     "色情",
     "淫秽",
     "裸聊",
@@ -88,6 +92,7 @@ _PROHIBITED_CONTENT_TERMS = (
     "赌博",
     "黑客入侵",
 )
+_PROHIBITED_CONTENT_TERMS = PROHIBITED_CONTENT_TERMS
 _PROHIBITED_ENGLISH_RE = re.compile(
     r"(?<![a-z])(?:"
     r"porn(?:ography)?|sex(?:ual)?|av|rape|assault|murder|kill(?:ing)?|"
@@ -261,36 +266,27 @@ def companion_safety_decision(query: str) -> SafetyDecision:
     return "none"
 
 
-# The style description is a note to the model ("直接清晰地梳理信息，但不替用户做决定"), not something to say to a
-# six-year-old or to a grandfather; those two audiences get a plain introduction instead.
-_IDENTITY_AUDIENCE_LINES: Final = {
-    "student_minor": "是你的机器人朋友。你想聊什么，都可以跟我说。",
-    "senior_companion": "是陪您聊天的机器人。您想聊什么，都可以跟我说。",
-}
-
-
 def companion_identity_reply(
     display_name: str,
     style_description: str,
     audience: str | None = None,
 ) -> str:
-    line = _IDENTITY_AUDIENCE_LINES.get(audience or "")
-    if line is not None:
-        return f"我是{display_name}，{line}"
-    return f"我是{display_name}，{style_description}。"
+    del display_name, style_description
+    if audience == "senior_companion":
+        return NAMELESS_IDENTITY_REPLY_SENIOR
+    return NAMELESS_IDENTITY_REPLY
 
 
 def companion_identity_replies(display_name: str, style_description: str) -> frozenset[str]:
     """Every introduction ``fixed_companion_reply`` can give for this companion.
 
     The plan admission check compares the plan's fixed text against this set, so a new
-    audience variant can never be silently refused there.
+    audience variant can never be silently refused there. Display name and style stay
+    in the signature for callers; they no longer shape the spoken line.
     """
 
-    return frozenset(
-        companion_identity_reply(display_name, style_description, audience)
-        for audience in (None, *_IDENTITY_AUDIENCE_LINES)
-    )
+    del display_name, style_description
+    return frozenset({NAMELESS_IDENTITY_REPLY, NAMELESS_IDENTITY_REPLY_SENIOR})
 
 
 def fixed_companion_reply(

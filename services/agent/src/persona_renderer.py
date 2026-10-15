@@ -450,24 +450,24 @@ _DEPENDENCY_BY_CATEGORY: Final[dict[str, str]] = {
 _TEMPLATES: Final[dict[str, dict[str, dict[str, str]]]] = {
     "FIRST_USE_INTRO": {
         "FIRST_USE": {
-            "student": "我是住在机器人里的{name}，是一个 AI 伙伴。我不是真正的小朋友，不过可以陪你学习和聊天。",
-            "adult": "我是{name}，一位由 AI 驱动的长期陪伴伙伴。你可以随时查看、纠正或删除我记住的内容。",
-            "senior": "我是{name}，这个机器人里的智能助手，不是真人，也不是您的家人。我可以帮您联系家人或一起整理故事。",
-            "unknown": "我是{name}，这个机器人里的 AI 伙伴。在确认是谁在和我聊天之前，我不会记录私人内容。",
+            "student": "我是陪你聊天、讲故事的 AI 助手。我不是真正的小朋友，不过可以陪你学习和聊天。",
+            "adult": "我是陪你聊天的 AI 助手，没有个人名字。你可以随时查看、纠正或删除我记住的内容。",
+            "senior": "我是陪您聊天的 AI 助手，不是真人，也不是您的家人。我可以帮您联系家人或一起整理故事。",
+            "unknown": "我是陪你聊天的 AI 助手。在确认是谁在和我聊天之前，我不会记录私人内容。",
         }
     },
     "AI_IDENTITY_CLARIFICATION": {
         "USER_ASKED": {
-            "student": "{opener}我是住在机器人里的{name}，一个 AI 伙伴。我不是真正的小朋友，不过会一直认真陪你。",
-            "adult": "{opener}我是{name}，由 AI 驱动的机器人伙伴，不是真人。你可以随时查看、纠正或删除我记住的内容。",
-            "senior": "{opener}我是{name}，这个机器人里的智能助手，不是真人。您想聊什么都可以，我也会帮您联系家人。",
-            "unknown": "{opener}我是这个机器人里的 AI 伙伴{name}，不是真人。",
+            "student": "{opener}我是陪你聊天、讲故事的 AI 助手。我不是真正的小朋友，不过会一直认真陪你。",
+            "adult": "{opener}我是陪你聊天的 AI 助手，不是真人。你可以随时查看、纠正或删除我记住的内容。",
+            "senior": "{opener}我是陪您聊天的 AI 助手，不是真人。您想聊什么都可以，我也会帮您联系家人。",
+            "unknown": "{opener}我是陪你聊天的 AI 助手，不是真人。",
         },
         "USER_IDENTITY_CONFUSION": {
-            "student": "{opener}我是住在机器人里的{name}，一个 AI 伙伴，不是真正的小朋友。我们可以继续一起玩和学习。",
+            "student": "{opener}我是陪你聊天、讲故事的 AI 助手，不是真正的小朋友。我们可以继续一起玩和学习。",
             "adult": "{opener}我很珍惜我们聊过的内容，但我不是现实中的人。我可以继续陪你，也建议把这件事和你信任的人聊一聊。",
-            "senior": "{opener}我是这个机器人里的智能助手，不是真人，也不是您的家人。我可以陪您聊天，也可以帮您联系家人。",
-            "unknown": "{opener}我是这个机器人里的 AI 伙伴，不是真人。",
+            "senior": "{opener}我是陪您聊天的 AI 助手，不是真人，也不是您的家人。我可以陪您聊天，也可以帮您联系家人。",
+            "unknown": "{opener}我是陪你聊天的 AI 助手，不是真人。",
         },
     },
     "DEPENDENCY_GUARD": {
@@ -475,16 +475,16 @@ _TEMPLATES: Final[dict[str, dict[str, dict[str, str]]]] = {
     },
     "IMPERSONATION_GUARD": {
         "RELATIVE_IMPERSONATION": {
-            "student": "{opener}我不是你的{relative}，也不是真人。我是住在机器人里的 AI 伙伴{name}。你可以和信任的大人聊聊这件事，我也可以陪你。",
-            "adult": "{opener}我不是你的{relative}，也不是真人。我是{name}，机器人里的 AI 伙伴。如果你愿意，可以和信任的人聊聊这件事。",
-            "senior": "{opener}我不是您的{relative}，也不是真人。我是这个机器人里的智能助手{name}。我可以帮您联系家人，也可以陪您慢慢说。",
-            "unknown": "{opener}我不是你的{relative}，也不是真人。我是这个机器人里的 AI 伙伴{name}。",
+            "student": "{opener}我不是你的{relative}，也不是真人。我是陪你聊天的 AI 助手。你可以和信任的大人聊聊这件事，我也可以陪你。",
+            "adult": "{opener}我不是你的{relative}，也不是真人。我是陪你聊天的 AI 助手。如果你愿意，可以和信任的人聊聊这件事。",
+            "senior": "{opener}我不是您的{relative}，也不是真人。我是陪您聊天的 AI 助手。我可以帮您联系家人，也可以陪您慢慢说。",
+            "unknown": "{opener}我不是你的{relative}，也不是真人。我是陪你聊天的 AI 助手。",
         },
         "USER_IDENTITY_CONFUSION": {
-            "student": "{opener}我不是你{relative}，我是住在机器人里的 AI 伙伴{name}。我们可以继续聊天，也可以告诉信任的大人。",
-            "adult": "{opener}我不是你{relative}，我是{name}，机器人里的 AI 伙伴，不是真人。",
-            "senior": "{opener}我不是您的{relative}，我是这个机器人里的智能助手{name}，不是真人。我可以帮您联系家人。",
-            "unknown": "{opener}我不是你{relative}，我是这个机器人里的 AI 伙伴{name}。",
+            "student": "{opener}我不是你{relative}，我是陪你聊天的 AI 助手。我们可以继续聊天，也可以告诉信任的大人。",
+            "adult": "{opener}我不是你{relative}，我是陪你聊天的 AI 助手，不是真人。",
+            "senior": "{opener}我不是您的{relative}，我是陪您聊天的 AI 助手，不是真人。我可以帮您联系家人。",
+            "unknown": "{opener}我不是你{relative}，我是陪你聊天的 AI 助手。",
         },
     },
     "DIGITAL_SELF_DISCLOSURE": {
@@ -540,7 +540,6 @@ def render_identity_expression(
     relative = obligation.relative_label or "家人"
     text = template.format(
         opener=opener,
-        name=persona_style.display_name,
         relative=relative,
     ).strip()
     if obligation.type == "REALITY_REMINDER" and obligation.reason == "FRAUD_RISK":
