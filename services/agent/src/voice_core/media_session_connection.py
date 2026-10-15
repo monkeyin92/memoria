@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from typing import TYPE_CHECKING
 
@@ -21,6 +22,9 @@ from services.agent.src.voice_core.media_session_state import (
     MediaVoiceSessionState as _MediaVoiceSession,
 )
 
+if TYPE_CHECKING:
+    from services.agent.src.daily_chat import DailyChatClient
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,6 +36,7 @@ class MediaSessionConnectionMixin:
         metrics: MetricsRegistry
         reconnect_grace_s: float
         session_recap_publisher: object | None
+        daily_chat_client: DailyChatClient | None
         _sessions: dict[str, _MediaVoiceSession]
         _cleanup_tasks: dict[str, asyncio.Task[None]]
 
@@ -244,6 +249,19 @@ class MediaSessionConnectionMixin:
             # Scheme A: drop the ephemeral child transcript after the write attempt.
             context.runtime.orchestrator.context.clear_turns()
 
+    async def _record_daily_chat_usage(self, context: _MediaVoiceSession) -> None:
+        """Report an admitted governed session once.
+
+        Awaited before the recap publish, which waits on a summary model, so the
+        next wake's admission already counts this session.
+        """
+
+        accrual, client = context.daily_chat_accrual, self.daily_chat_client
+        if accrual is None or client is None:
+            return
+        elapsed = max(1, math.ceil(time.monotonic() - context.started_at))
+        await client.record(accrual, elapsed_seconds=elapsed)
+
     async def finalize_session(self, session_id: str) -> None:
         cleanup = self._cleanup_tasks.pop(session_id, None)
         current_task = asyncio.current_task()
@@ -315,6 +333,7 @@ class MediaSessionConnectionMixin:
             context.pending.evidence_less_hold_handle.cancel()
             context.pending.evidence_less_hold_handle = None
         await self._cancel_audio_pump(context)
+        await self._record_daily_chat_usage(context)
         await self._publish_child_session_recap(context)
         await context.runtime.close()
         await context.provider.close(context.identity)

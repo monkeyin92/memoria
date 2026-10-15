@@ -9,10 +9,16 @@ import logging
 import os
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, assert_never
 
 from services.agent.src.agent_voice_profile import generation_tts_voice_can_bind
 from services.agent.src.contracts.ids import GenerationFence, same_turn_generation_allows
+from services.agent.src.daily_chat import (
+    DailyChatAccrual,
+    DailyChatClient,
+    DailyChatRefusal,
+    governed_daily_chat,
+)
 from services.agent.src.orchestration.conversation_projection import (
     CommittedTurn,
     FloorState,
@@ -28,7 +34,9 @@ from services.agent.src.orchestration.delegation_coordinator import (
 from services.agent.src.orchestration.state_machine import ConversationState, InteractionPhase
 from services.agent.src.prompts import (
     BRIDGE_PHRASES,
+    CONNECTION_RETRY_PHRASE,
     LIVE_LOOKUP_FILLER,
+    MINOR_DAILY_LIMIT_PHRASE,
     device_wake_phrase,
     hours_since_device_wake,
     remember_device_wake,
@@ -166,6 +174,7 @@ class MediaSessionProjectionMixin:
     if TYPE_CHECKING:
         bridge: MediaBridgeGrpcServer
         metrics: MetricsRegistry
+        daily_chat_client: DailyChatClient | None
 
         def _stream_epoch_is_current(
             self, context: _MediaVoiceSession, stream_epoch: int
@@ -315,6 +324,38 @@ class MediaSessionProjectionMixin:
         context.device_wake_ack_pending = False
         await self._speak_device_enrollment_phrase(context, MINOR_QUIET_HOURS_PHRASE)
         await self._request_device_standby(context, reason="minor_quiet_hours")
+        return True
+
+    async def _refuse_minor_daily_limit(self, context: _MediaVoiceSession) -> bool:
+        """A minor's wake after today's signed chat budget is spent gets a fixed goodbye.
+
+        Runs after quiet hours. Fails closed: when today's use is unknown, or no
+        client is wired, the wake is refused with the allowlisted connection
+        phrase. An admitted session keeps its accrual for close.
+        """
+
+        if context.identity.client_type != "device":
+            return False
+        governed = governed_daily_chat(context.runtime.mode_policy.runtime_profile)
+        if governed is None:
+            return False
+        client = self.daily_chat_client
+        outcome: DailyChatAccrual | DailyChatRefusal = (
+            await client.admit(governed) if client is not None else "unavailable"
+        )
+        if isinstance(outcome, DailyChatAccrual):
+            context.daily_chat_accrual = outcome
+            return False
+        match outcome:
+            case "exhausted":
+                phrase, reason = MINOR_DAILY_LIMIT_PHRASE, "minor_daily_limit"
+            case "unavailable":
+                phrase, reason = CONNECTION_RETRY_PHRASE, "minor_daily_usage_unavailable"
+            case _:
+                assert_never(outcome)
+        context.device_wake_ack_pending = False
+        await self._speak_device_enrollment_phrase(context, phrase)
+        await self._request_device_standby(context, reason=reason)
         return True
 
     async def _speak_device_enrollment_phrase(

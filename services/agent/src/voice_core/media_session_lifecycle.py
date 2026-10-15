@@ -183,6 +183,8 @@ class MediaSessionLifecycleMixin:
 
         async def _refuse_minor_quiet_hours(self, context: _MediaVoiceSession) -> bool: ...
 
+        async def _refuse_minor_daily_limit(self, context: _MediaVoiceSession) -> bool: ...
+
         def _cancel_max_user_speech_watchdog(
             self, context: _MediaVoiceSession
         ) -> None: ...
@@ -621,6 +623,8 @@ class MediaSessionLifecycleMixin:
             self.metrics.set_media_active_sessions(len(self._sessions))
             self._arm_owner_silence_timer(created, reset=True)
             if await self._refuse_minor_quiet_hours(created):
+                return created
+            if await self._refuse_minor_daily_limit(created):
                 return created
             await self._speak_device_wake_ack(created)
             return created

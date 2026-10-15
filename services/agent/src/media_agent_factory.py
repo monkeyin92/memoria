@@ -17,6 +17,7 @@ from services.agent.src.archive_sink import ArchiveSink, ArchiveSinkConfig
 from services.agent.src.conversation_close_wiring import (
     install_conversation_close_semantic_resolver,
 )
+from services.agent.src.daily_chat import DailyChatClient, build_daily_chat_client
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.generation_output_policy import frozen_companion_clone_permitted
 from services.agent.src.live_lookup_wiring import install_live_lookup_semantic_resolver
@@ -126,6 +127,7 @@ class ProductionMediaSessionFactory:
     llm_factory: Any
     archive_sink: ArchiveSink | None = None
     session_recap_sink: SessionRecapSink | None = None
+    daily_chat_client: DailyChatClient | None = None
 
     async def __call__(self, identity: SessionIdentity) -> MediaSessionResources:
         if not identity.session_id:
@@ -415,6 +417,8 @@ class ProductionMediaSessionFactory:
             await self.archive_sink.close()
         if self.session_recap_sink is not None:
             await self.session_recap_sink.aclose()
+        if self.daily_chat_client is not None:
+            await self.daily_chat_client.aclose()
 
 
 def build_production_media_session_factory(settings: Any) -> ProductionMediaSessionFactory:
@@ -461,6 +465,7 @@ def build_production_media_session_factory(settings: Any) -> ProductionMediaSess
         llm_factory=OpenAIChatModel,
         archive_sink=archive_sink,
         session_recap_sink=session_recap_sink,
+        daily_chat_client=build_daily_chat_client(settings),
     )
 
 

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from services.agent.src.contracts.ids import GenerationFence
+from services.agent.src.daily_chat import DailyChatAccrual
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.orchestration.conversation_projection import ConversationProjection
 from services.agent.src.voice_core.asr_stream_supervisor import ASRStreamSupervisor
@@ -155,6 +156,8 @@ class MediaVoiceSessionState:
     # and whether it heard the crisis reply (never cut short afterwards).
     started_at: float = field(default_factory=time.monotonic)
     crisis_reply_heard: bool = False
+    # Set when a governed minor wake is admitted; close reports it once.
+    daily_chat_accrual: DailyChatAccrual | None = None
     pending_missed_hearing_nudge: bool = False
     missed_hearing_nudge_count: int = 0
     last_missed_hearing_nudge_at: float | None = None
