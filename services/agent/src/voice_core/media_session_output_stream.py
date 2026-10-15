@@ -7,7 +7,7 @@ import contextlib
 import inspect
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -1167,7 +1167,7 @@ class MediaOutputStreamMixin:
         context: _MediaVoiceSession,
         fence: GenerationFence,
         source_start_sample: int,
-    ) -> AsyncIterator[MediaReplyChunk]:
+    ) -> AsyncGenerator[MediaReplyChunk, None]:
         """Render the filler as unannounced audio so history and transcripts stay reply-only."""
 
         coordinator = context.runtime.orchestrator.delegation
