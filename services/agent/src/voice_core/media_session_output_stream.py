@@ -1082,32 +1082,33 @@ class MediaOutputStreamMixin:
 
         filler = context.llm_thinking_filler
         replies = aiter(context.provider.generate_reply(context.identity, text, fence))
-        wait_s = filler.seconds_until_due(turn_id=fence.turn_id, now=time.monotonic())
-        if wait_s is None or not self._llm_thinking_filler_supported(context):
-            async for reply in replies:
-                yield reply
-            return
-        first_reply = asyncio.ensure_future(anext(replies))
         offset = source_start_sample
-        try:
-            await asyncio.wait((first_reply,), timeout=wait_s)
-            if not first_reply.done() and self._llm_thinking_filler_may_play(context, fence):
-                async for chunk in self._llm_thinking_filler_before(
-                    context, fence, offset, first_reply
-                ):
-                    offset = chunk.source_start_sample + chunk.frame_samples
-                    yield chunk
+        context.output.reply_audio_origin = (fence, offset)
+        lead: MediaReplyChunk | None = None
+        wait_s = filler.seconds_until_due(turn_id=fence.turn_id, now=time.monotonic())
+        if wait_s is not None and self._llm_thinking_filler_supported(context):
+            first_reply = asyncio.ensure_future(anext(replies))
             try:
-                reply = await first_reply
-            except StopAsyncIteration:
-                return
-        finally:
-            if not first_reply.done():
-                first_reply.cancel()
-                await asyncio.gather(first_reply, return_exceptions=True)
-        filler.note_reply_spoken(turn_id=fence.turn_id)
+                await asyncio.wait((first_reply,), timeout=wait_s)
+                if not first_reply.done() and self._llm_thinking_filler_may_play(context, fence):
+                    async for chunk in self._llm_thinking_filler_before(
+                        context, fence, offset, first_reply
+                    ):
+                        offset = chunk.source_start_sample + chunk.frame_samples
+                        context.output.reply_audio_origin = (fence, offset)
+                        yield chunk
+                try:
+                    lead = await first_reply
+                except StopAsyncIteration:
+                    return
+            finally:
+                if not first_reply.done():
+                    first_reply.cancel()
+                    await asyncio.gather(first_reply, return_exceptions=True)
+            filler.note_reply_spoken(turn_id=fence.turn_id)
         after_filler = offset != source_start_sample
-        yield _shift_reply_chunk(reply, offset, after_filler=after_filler)
+        if lead is not None:
+            yield _shift_reply_chunk(lead, offset, after_filler=after_filler)
         async for reply in replies:
             yield _shift_reply_chunk(reply, offset, after_filler=after_filler)
 

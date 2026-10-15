@@ -37,6 +37,9 @@ class OutputState:
     assistant_text: str = ""
     tts_started_ns: int | None = None
     first_audio_observed: bool = False
+    # Provider timing counts from the reply's own first sample; the reply sits after any
+    # thinking filler already sent on the same generation.
+    reply_audio_origin: tuple[GenerationFence, int] | None = None
     provider_complete: bool = False
     output_complete_emitted: bool = False
     reply_lock: asyncio.Lock = field(default_factory=asyncio.Lock)

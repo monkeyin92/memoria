@@ -219,6 +219,8 @@ class MediaOutputOwnerMixin:
             spans = await spans
         if not isinstance(spans, (tuple, list)):
             return
+        origin = context.output.reply_audio_origin
+        offset = origin[1] if origin is not None and origin[0].matches(fence) else 0
         for span in spans:
             text = getattr(span, "text", None)
             start = getattr(span, "audio_start_sample", None)
@@ -237,8 +239,8 @@ class MediaOutputOwnerMixin:
                     fence=fence,
                     text_start=text_start,
                     text_end=context.output.output_text_offset,
-                    audio_start_sample=start,
-                    audio_end_sample=end,
+                    audio_start_sample=start + offset,
+                    audio_end_sample=end + offset,
                     text=text,
                 )
             )
