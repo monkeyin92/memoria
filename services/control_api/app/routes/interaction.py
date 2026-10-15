@@ -52,6 +52,7 @@ from services.control_api.app.bound_subject import (
     claims_device_bound_subject,
     runtime_profile_trusts_bound_subject,
 )
+from services.control_api.app.companion_context import gather_companion_context
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.device_control import RuntimeProfileLedger
@@ -1703,14 +1704,12 @@ async def _companion_items(
         and persona_subject is not None
         else None
     )
-    completed = (
-        await asyncio.gather(
-            *(task for task in (memory_task, persona_task) if task is not None),
-            return_exceptions=True,
-        )
-        if memory_task is not None or persona_task is not None
-        else []
-    )
+    completed = await gather_companion_context(memory_task, persona_task)
+    if completed is None:
+        logger.warning("response planner companion context exceeded budget")
+        completed = []
+        memory_task = None
+        persona_task = None
     cursor = iter(completed)
     memory_result = next(cursor) if memory_task is not None else None
     persona_result = next(cursor) if persona_task is not None else None

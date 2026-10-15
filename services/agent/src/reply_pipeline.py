@@ -76,6 +76,7 @@ from services.agent.src.response_planner_client import (
 )
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_profile_client import VoiceProfileClient
+from services.common.companion_response_safety import assistant_text_repeats_or_dilutes_safety
 from services.common.crisis_policy import route_crisis
 from services.common.llm_failover import LLM_UNAVAILABLE_TEXT
 from services.common.realtime_information import (
@@ -941,15 +942,6 @@ class ReplyPipeline:
             )
             if script is not None and plan.direct_text != script.display:
                 plan = replace(plan, direct_text=script.display)
-            if self._runtime.fixed_safety_heard and script is None and plan_is_local_safe(plan):
-                logger.info(
-                    "post_fixed_safety_fallback_suppressed reason=%s "
-                    "session_id=%s turn_id=%s",
-                    fetch_reason,
-                    self._runtime.session_id,
-                    fence.turn_id,
-                )
-                raise StopResponse()
         if plan.fixed_safety_script is not None:
             self._runtime.note_fixed_safety_spoken(plan.fixed_safety_script.display)
         if (
@@ -1001,14 +993,6 @@ class ReplyPipeline:
             )
             if script is not None and plan.direct_text != script.display:
                 plan = replace(plan, direct_text=script.display)
-            if self._runtime.fixed_safety_heard and script is None and plan_is_local_safe(plan):
-                logger.info(
-                    "post_fixed_safety_fallback_suppressed reason=context_snapshot_unavailable "
-                    "session_id=%s turn_id=%s",
-                    self._runtime.session_id,
-                    fence.turn_id,
-                )
-                raise StopResponse()
             if (
                 input_modality == "audio"
                 and output_policy.generation_voice_must_match_plan(policy)
@@ -1403,6 +1387,18 @@ class ReplyPipeline:
             _mark_first_phrase()
             return accepted
 
+        def _follow_up_blocked(text: str) -> bool:
+            if script is not None or not self._runtime.fixed_safety_heard:
+                return False
+            if not assistant_text_repeats_or_dilutes_safety(text):
+                return False
+            logger.info(
+                "post_fixed_safety_follow_up_dropped session_id=%s turn_id=%s",
+                self._runtime.session_id,
+                fence.turn_id,
+            )
+            return True
+
         stream: Any = None
         realtime_reply = ""
         realtime_buffer_chars = 0
@@ -1417,18 +1413,6 @@ class ReplyPipeline:
                 if gated is not None and cancellation.is_current(self._runtime.fence):
                     _mark_first_phrase()
                     yield script
-                return
-            if (
-                self._runtime.fixed_safety_heard
-                and plan_is_local_safe(response_plan)
-                and response_plan.fixed_safety_script is None
-            ):
-                logger.info(
-                    "post_fixed_safety_fallback_suppressed reason=stream "
-                    "session_id=%s turn_id=%s",
-                    self._runtime.session_id,
-                    fence.turn_id,
-                )
                 return
             if response_plan.direct_text is not None and realtime_request is None:
                 self._runtime.mark_audio_event("llm_first_content_token")
@@ -1477,7 +1461,9 @@ class ReplyPipeline:
             depth_policy = response_depth_for(
                 last_user,
                 realtime=realtime_request is not None,
-                controlled=not self._runtime.barge_in_enabled,
+                controlled=(
+                    not self._runtime.barge_in_enabled or self._runtime.fixed_safety_heard
+                ),
                 audience=audience,
             )
             delivery_instruction = speech_plan.llm_instruction.strip()
@@ -1501,6 +1487,7 @@ class ReplyPipeline:
                 ),
                 session_turns=frozen_session_turns,
                 delivery_instruction=delivery_instruction,
+                after_fixed_safety=self._runtime.fixed_safety_heard and script is None,
                 context_snapshot=(
                     context_snapshot
                     if not plan_is_local_safe(response_plan)
@@ -1532,6 +1519,9 @@ class ReplyPipeline:
                 realtime=realtime_request is not None,
                 audience=audience,
             )
+            if self._runtime.fixed_safety_heard and depth_policy.depth is ResponseDepth.BRIEF:
+                max_chars = min(max_chars, MAX_CONTROLLED_VOICE_REPLY_CHARS)
+                max_sentences = min(max_sentences, 2)
             if realtime_request is not None and not resume_realtime_request:
                 handle = await self._get_or_start_realtime_delegation(
                     query=realtime_request.query,
@@ -1619,6 +1609,8 @@ class ReplyPipeline:
                                 realtime_reply += accepted_realtime
                         else:
                             for segment in segmenter.push_token(gated):
+                                if _follow_up_blocked(segment.text):
+                                    continue
                                 accepted_segment = _ready_segment(segment.text)
                                 if accepted_segment is None:
                                     break
@@ -1684,6 +1676,8 @@ class ReplyPipeline:
                     self._runtime.complete_realtime_request(realtime_request)
             if cancellation.is_current(self._runtime.fence) and not reply_budget_exhausted:
                 for segment in segmenter.flush(end_of_stream=True):
+                    if _follow_up_blocked(segment.text):
+                        continue
                     accepted_segment = _ready_segment(segment.text)
                     if accepted_segment is None:
                         break
