@@ -195,25 +195,28 @@ def pcm_digest(data: bytes) -> str:
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "in.ogg"
         src.write_bytes(data)
-        completed = subprocess.run(
-            [
-                "ffmpeg",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-i",
-                str(src),
-                "-f",
-                "s16le",
-                "-acodec",
-                "pcm_s16le",
-                "-ac",
-                "1",
-                "-",
-            ],
-            check=False,
-            capture_output=True,
-        )
+        try:
+            completed = subprocess.run(
+                [
+                    "ffmpeg",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    str(src),
+                    "-f",
+                    "s16le",
+                    "-acodec",
+                    "pcm_s16le",
+                    "-ac",
+                    "1",
+                    "-",
+                ],
+                check=False,
+                capture_output=True,
+            )
+        except FileNotFoundError as exc:
+            raise ValueError("ffmpeg is not installed") from exc
         if completed.returncode != 0 or not completed.stdout:
             raise ValueError(
                 "ffmpeg decode failed: "
