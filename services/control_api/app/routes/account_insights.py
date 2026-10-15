@@ -7,6 +7,8 @@ from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Request
 
+from services.common.chat_llm_providers import chat_llm_providers
+from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.security import AuthenticatedUser, require_authenticated_user
 
@@ -26,6 +28,7 @@ async def delivered_capabilities(
 
     store = _store(request)
     account_id = user.user_id
+    settings = cast(ControlSettings, request.app.state.settings)
     profile = store.get_subject_profile(user_id=account_id) or {}
     memory_activity = store.memory_activity_summary(user_id=account_id)
     return {
@@ -33,6 +36,10 @@ async def delivered_capabilities(
         "account_id": account_id,
         "product_positioning": "family_archive_terminal",
         "ai_disclosure_required": True,
+        "chat_llm_providers": chat_llm_providers(
+            llm_provider=settings.llm_provider,
+            llm_failover_enabled=settings.llm_failover_enabled,
+        ),
         "wechat_bound": store.has_external_identity(
             user_id=account_id,
             provider="wechat_openid",

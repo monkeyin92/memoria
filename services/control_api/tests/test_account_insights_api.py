@@ -30,6 +30,8 @@ def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("MEMORIA_DB_PATH", str(tmp_path / "memoria.sqlite3"))
     monkeypatch.setenv("MEMORIA_AUTH_SECRET", "test-auth-material-that-is-long-enough")
     monkeypatch.setenv("OFFLINE_MOCK", "true")
+    monkeypatch.setenv("LLM_PROVIDER", "qwen")
+    monkeypatch.setenv("LLM_FAILOVER_ENABLED", "false")
 
 
 @pytest.mark.asyncio
@@ -65,6 +67,7 @@ async def test_delivered_capabilities_reports_identity_signals_only(
     assert payload["devices_bound"] == 0
     assert payload["memory_days_with_activity"] == 0
     assert payload["total_messages"] == 0
+    assert payload["chat_llm_providers"] == ["qwen"]
     assert "TAM" not in payload["notes"]
 
 
@@ -123,3 +126,42 @@ async def test_delivered_capabilities_counts_memory_and_devices(
     assert payload["devices_bound"] == 1
     assert payload["memory_days_with_activity"] == 1
     assert payload["total_messages"] == 2
+
+
+@pytest.mark.asyncio
+async def test_delivered_capabilities_reports_chat_llm_providers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("LLM_FAILOVER_ENABLED", "true")
+    app = create_app()
+    app.state.speaker_authority = SpeakerAuthority.sqlite(
+        tmp_path / "speakers.sqlite3",
+        template_key=Fernet.generate_key().decode("ascii"),
+        adapter=FakeEmbeddingAdapter(),
+    )
+    cases = (
+        ("deepseek", False, ["deepseek"]),
+        ("qwen", False, ["qwen"]),
+        ("deepseek", True, ["deepseek", "qwen"]),
+        ("bailian_deepseek", False, ["deepseek"]),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        registered = await client.post(
+            "/v1/auth/register",
+            json={"username": "dash-providers", "password": "safe-password"},
+        )
+        headers = {"Authorization": f"Bearer {registered.json()['access_token']}"}
+        assert app.state.settings.llm_provider == "deepseek"
+        assert app.state.settings.llm_failover_enabled is True
+        for llm_provider, llm_failover_enabled, families in cases:
+            app.state.settings.llm_provider = llm_provider
+            app.state.settings.llm_failover_enabled = llm_failover_enabled
+            response = await client.get("/v1/account/delivered-capabilities", headers=headers)
+            assert response.status_code == 200
+            assert response.json()["chat_llm_providers"] == families, (
+                llm_provider,
+                llm_failover_enabled,
+            )

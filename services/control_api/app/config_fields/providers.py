@@ -17,6 +17,7 @@ class ProviderFields(BaseModel):
         default="qwen",
         alias="LLM_PROVIDER",
     )
+    llm_failover_enabled: bool = Field(default=False, alias="LLM_FAILOVER_ENABLED")
     tts_provider: Literal["cosyvoice", "doubao"] = Field(
         default="doubao",
         alias="TTS_PROVIDER",
