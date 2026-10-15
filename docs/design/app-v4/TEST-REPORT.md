@@ -2,19 +2,19 @@
 
 This report records how the v4 restyle of the Memoria WeChat mini program was tested on branch `cursor/miniprogram-design-v4-14a0`. It covers every page under `apps/miniprogram/pages`. It lists the commands, the measured results, side-by-side images against the design PNGs in this folder, and each place where the mini program still differs from the design.
 
-Every number comes from runs on 2026-10-14 on a Linux cloud VM with 4 cores, Node v22.14.0 and headless Chrome driven by puppeteer-core. Nothing ran in WeChat DevTools, through miniprogram-automator or on a phone, because none of them is available on the VM. The harness approximates the WeChat renderer. Read the images as close evidence of layout and copy, not as proof of on-device pixels.
+The performance table comes from runs on 2026-10-14. The unit tests, forbidden-copy check, package size, layout shots and the 05-attention and 09-memory parity ratios were measured again on 2026-10-15. Both days used a Linux cloud VM with 4 cores, Node v22.14.0 and headless Chrome driven by puppeteer-core. Nothing ran in WeChat DevTools, through miniprogram-automator or on a phone, because none of them is available on the VM. The harness approximates the WeChat renderer. Read the images as close evidence of layout and copy, not as proof of on-device pixels.
 
 ## Results
 
 | Check | Result |
 |---|---|
-| Unit, function, perf and layout tests (`npm test`) | 524 of 524 pass, 0 skipped |
+| Unit, function, perf and layout tests (`npm test`) | 525 of 525 pass, 0 skipped |
 | Forbidden UI copy (`npm run check:forbidden-copy`) | Pass on 63 files |
-| `12356` in shipped `.js`, `.wxml`, `.json` and `.wxss` files | Absent |
+| `12356` in shipped `.js`, `.wxml`, `.json` and `.wxss` files | Only in `pages/attention/index.wxml`, tip 4, pinned by `attention-v4.test.js` |
 | `node --check` on every tracked JS file in the app | 0 failures in 134 files |
 | Page screenshots at five views (`scripts/screenshot-pages.js`) | 145 shots, 0 layout issues |
-| Parity side-by-sides (`scripts/v4-parity/render-and-compare.js`) | 9 mapped screens, diffRatio 0.057 to 0.356, down from 0.245 to 0.647 |
-| Main package before minification (`scripts/package-size.js`) | 1874.3 KiB of the 2048 KiB limit |
+| Parity side-by-sides (`scripts/v4-parity/render-and-compare.js`) | 9 mapped screens, diffRatio 0.056 to 0.298, down from 0.245 to 0.647 |
+| Main package before minification (`scripts/package-size.js`) | 1870.4 KiB of the 2048 KiB limit |
 
 ## How the harness works
 
@@ -78,13 +78,13 @@ Do not run `npm --prefix apps/miniprogram exec -- node scripts/v4-parity/render-
 | 02-consent | `pages/auth`, guest | 0.3906 | 0.0945 | 0.0883 |
 | 03-home | `pages/home`, signed in | 0.3162 | 0.0703 | 0.0490 |
 | 04-summary | `pages/memory`, today summarized | 0.3394 | 0.1901 | 0.0430 |
-| 05-attention | `pages/attention`, one open alert | 0.4991 | 0.1938 | 0.0536 |
+| 05-attention | `pages/attention`, one open alert | 0.4991 | 0.0561 | 0.0536 |
 | 06-usage | `pages/device`, child usage settings | 0.2527 | 0.1825 | 0.0527 |
 | 08-roles | `pages/companion` | 0.3539 | 0.1810 | 0.0727 |
-| 09-memory | `pages/child-memory`, long-term memory | 0.3706 | 0.3560 | 0.0279 |
+| 09-memory | `pages/child-memory`, long-term memory | 0.3706 | 0.2984 | 0.0279 |
 | 10-profile | `pages/profile`, signed in | 0.2450 | 0.0715 | 0.0116 |
 
-Before is the committed `compare-summary.json` at `b63fa853`. That run shot 05-attention on the review tab, where the alert rendered inline. It now shoots the attention detail page the design shows. Reruns on an unchanged tree give identical ratios. The last two full runs differ only on 02-consent, the one screen whose copy changed between them.
+Before is the committed `compare-summary.json` at `b63fa853`. That run shot 05-attention on the review tab, where the alert rendered inline. It now shoots the attention detail page the design shows. A rerun on 2026-10-15 with Noto Sans CJK SC left 01-login byte-identical to the committed shot. The other screens whose pages did not change moved by at most 0.006 against the design, from font raster differences, so their shots stay. 05-attention and 09-memory are the screens this change redraws.
 
 ### Where the remaining difference sits
 
@@ -96,10 +96,10 @@ Before is the committed `compare-summary.json` at `b63fa853`. That run shot 05-a
 | 02-consent | 0.019 | 0.039 | 0.043 | 0.139 | 0.098 | 0.232 | 0.111 | 0.075 |
 | 03-home | 0.016 | 0.065 | 0.072 | 0.122 | 0.032 | 0.116 | 0.122 | 0.017 |
 | 04-summary | 0.017 | 0.059 | 0.040 | 0.063 | 0.055 | 0.349 | 0.769 | 0.168 |
-| 05-attention | 0.004 | 0.008 | 0.030 | 0.082 | 0.052 | 0.077 | 0.565 | 0.732 |
+| 05-attention | 0.004 | 0.008 | 0.030 | 0.082 | 0.052 | 0.077 | 0.108 | 0.088 |
 | 06-usage | 0.024 | 0.066 | 0.161 | 0.045 | 0.260 | 0.444 | 0.287 | 0.172 |
 | 08-roles | 0.013 | 0.068 | 0.260 | 0.110 | 0.268 | 0.126 | 0.543 | 0.061 |
-| 09-memory | 0.064 | 0.193 | 0.331 | 0.107 | 0.131 | 0.283 | 0.761 | 0.979 |
+| 09-memory | 0.039 | 0.076 | 0.029 | 0.100 | 0.110 | 0.377 | 0.688 | 0.969 |
 | 10-profile | 0.000 | 0.039 | 0.030 | 0.032 | 0.015 | 0.015 | 0.262 | 0.179 |
 
 01-login scores its floor, so its bands are drift in the hero image and the type. On every other screen the bands above 0.2 line up with one of the data, copy or structure differences listed under its image. Each pair was also read by eye.
@@ -140,7 +140,7 @@ The 「按天查看」 header, the day strip and today's card match the design. 
 
 ![05-attention, live page left, design right](mp-screenshots/side-by-side/05-attention.png)
 
-The attention detail page is new. Home's attention card and the review banner open it. It has the design's back button, mascot, peach box, numbered tips and 「我知道了」, which returns to where the parent came from. No band above 633 CSS px exceeds 0.082. The two bottom bands are the design's fourth tip, the 12356 hotline, which the copy rules remove, so 「我知道了」 sits one row higher. The peach box says TA where the design says 他, the neutral pronoun the guardian alerts already use.
+The attention detail page is new. Home's attention card and the review banner open it. It has the design's back button, mascot, peach box, four numbered tips and 「我知道了」, which returns to where the parent came from. Tip 4 now matches the design, 「需要时寻求帮助」 and 「可拨打 12356 心理援助热线」. The full-screen diffRatio was 0.1938 before this change and is 0.0561 now, just above the floor of 0.0536. The bands at 633 and 738 CSS px fell from 0.565 and 0.732 to 0.108 and 0.088. The bands above 633 CSS px are unchanged. The peach box says TA where the design says 他, the neutral pronoun the guardian alerts already use.
 
 ### 06-usage
 
@@ -158,9 +158,9 @@ The grid cards, the selected border, the 正在使用 pill and the 48 px 新建�
 
 ![09-memory, live page left, design right](mp-screenshots/side-by-side/09-memory.png)
 
-The archive leads the page with the design's labels 称呼, 喜好 and 宠物名, their icons, and the mascot card 「除这三项外，不长期保存其他信息。」. The page is secondary, so it opens with a back button and has no tab bar. That button pushes everything 31 CSS px down, which explains most of the top half. `node scripts/v4-parity/diff-bands.js --shift 62 09-memory` moves the live image up by that offset, and the bands from 105 and 211 CSS px drop from 0.193 and 0.331 to 0.074 and 0.029.
+The archive leads the page with the design's labels 称呼, 喜好 and 宠物名, their icons, and the mascot card 「除这三项外，不长期保存其他信息。」. The page opens at the tab-page inset, the status bar plus the 17 px tab gap, with no back button and no tab bar. The parent leaves with WeChat's edge swipe or the system back button. The full-screen diffRatio was 0.3560 before this change and is 0.2984 now. The bands at 105 and 211 CSS px fell from 0.193 and 0.331 to 0.076 and 0.029. The band from 527 CSS px rose from 0.283 to 0.377 because the consent card now sits higher.
 
-Three content differences remain. The title names the child, 乐乐的记忆, where the design says 记忆. Each fact has its own line with its date and a delete button, so 喜好 lists 恐龙 and 画画 separately where the design joins 「恐龙、画画、草莓」, and the dates take the place of the design's captions such as 「孩子喜欢被这样叫」. Below the mascot card come the 长期记忆 consent card and the summaries. The design ends there with 「以上内容为示例」 and its tab bar, which accounts for the bands at 0.761 and 0.979.
+Three content differences remain. The title names the child, 乐乐的记忆, where the design says 记忆. Each fact has its own line with its date and a delete button, so 喜好 lists 恐龙 and 画画 separately where the design joins 「恐龙、画画、草莓」, and the dates take the place of the design's captions such as 「孩子喜欢被这样叫」. Below the mascot card come the 长期记忆 consent card and the summaries. The design ends there with 「以上内容为示例」 and its tab bar, which accounts for the bands at 0.688 and 0.969.
 
 ### 10-profile
 
@@ -177,15 +177,18 @@ The device card reads 孩子的星澜 with 已绑定设备, not 小乐 with 在�
 These come from WeChat or the test machine, and no page change removes them.
 
 - With `navigationStyle: "custom"`, WeChat still draws its menu capsule at the top right. The home avatar moves down to clear the capsule's real rect from `wx.getMenuButtonBoundingClientRect`, which sits lower on Android than on iOS.
-- Custom navigation removes the native back button, so secondary pages draw their own round back button under the status bar. On 09-memory, a tab page in the design, that button shifts the page 31 px down.
+- Custom navigation removes the native back button, so secondary pages draw their own round back button under the status bar.
 - Lengths are px, not the recipe's rpx at twice the design px. Those rpx values are exact only on a 375 pt screen and render 4% larger at the 390 design frame. In px the design frame renders 1:1, and 320 and 430 screens keep the design's sizes.
 - `<button open-type="feedback">` is the only way to open WeChat's feedback page, and WeChat buttons ship their own width, padding, radius, fill and bold text. The profile stylesheet resets them so the row matches the other three.
 - The VM renders CJK text in Noto Sans CJK SC. A phone uses PingFang SC or the Android system font, so line widths differ slightly on device.
 
 ### Differences the data and copy rules require
 
-- No used minutes, story counts, recommendation card or battery appear, because no API field backs them.
-- No 12356 appears, and none of 危机, 伙伴, 好朋友, 家人, 推送 or 通知 appears in the UI.
+- Used minutes. No call in `utils/api.js` returns minutes used per day, and `pages/home/index.js` builds the card without `usedMinutes`. The ring shows the limit on an empty track with 「用量暂未统计」.
+- Stories. The firmware holds three offline story clips, `kOfflineStoryCount = 3` in `firmware/esp32/overlay/files/main/memoria/memoria_offline_menu.h`. `firmware/esp32/scripts/build_offline_stories.py` packs them as ffmpeg sine placeholders until product recordings replace them. The firmware titles are 小星星的枕头, 月亮不着急 and 大熊和森林里的悄悄话. The design catalogue titles are 大熊和森林里的悄悄话, 小兔的纸船月亮 and 小狐狸收集星星. Neither list is shown in the parent app. `utils/api.js` has no story call, so home shows 「今天对话 N 次」 in place of a story count or 今晚推荐, and 07-content has no page.
+- Daily cap. The signed Runtime Profile carries only `MAX_SESSION_SECONDS` and `QUIET_HOURS` for a minor, in `services/agent/src/voice_core/minor_session_limits.py`. The only limit write is `setSessionLimits` with `max_session_minutes`. Nothing enforces a per-day budget, so 06-usage has one 单次上限 slider.
+- Battery. No battery level appears, because no API field backs it.
+- 12356 appears only as attention tip 4. None of 危机, 伙伴, 好朋友, 家人, 推送 or 通知 appears in the UI.
 - Subscription and push UI stays behind `subscriptionPushEnabled`, which defaults to false.
 - Fixture names, roles, dates and counts replace the design's samples and its 「数字为示例」 captions.
 - Usage has one per-session slider, because the device has no daily cap.
@@ -195,7 +198,7 @@ These come from WeChat or the test machine, and no page change removes them.
 
 ### Differences that follow the app's structure
 
-- Long-term memory is a secondary page with a back button and no tab bar, and it keeps per-fact dates and delete buttons.
+- Long-term memory opens without a back button like the design, has no tab bar, and keeps per-fact dates and delete buttons.
 - 记住的事 opens from a row under the day cards, not a switcher.
 - The quiet-hours chip shows the real window, and the privacy rows follow it on the usage screen.
 - The profile keeps the account and deletion actions below the menu, and drops the design's binding note.
@@ -296,7 +299,7 @@ Frame intervals sit at 16.7 ms, the 60 Hz frame clock of headless Chrome on the 
 
 ### Package size
 
-The shipped files total 1919234 B, 1874.3 KiB of WeChat's 2048 KiB main package limit before minification. `package-size.js` follows `packOptions.ignore` in `project.config.example.json` plus the folders the runtime never loads. It skips `tests`, `design-preview`, `scripts`, `node_modules`, `assets/companions`, `package.json`, `package-lock.json`, `project.config*.json` and Markdown files. The profile mascot, `assets/ui/v4/mascot-happy.jpg`, adds 32.4 KiB.
+The shipped files total 1915266 B, 1870.4 KiB of WeChat's 2048 KiB main package limit before minification. `package-size.js` follows `packOptions.ignore` in `project.config.example.json` plus the folders the runtime never loads. It skips `tests`, `design-preview`, `scripts`, `node_modules`, `assets/companions`, `package.json`, `package-lock.json`, `project.config*.json` and Markdown files. The profile mascot, `assets/ui/v4/mascot-happy.jpg`, adds 32.4 KiB.
 
 | Folder | Size (KiB) |
 |---|---:|
@@ -305,7 +308,7 @@ The shipped files total 1919234 B, 1874.3 KiB of WeChat's 2048 KiB main package 
 | utils/device-onboarding | 166.1 |
 | assets/voices | 145.8 |
 | assets/bg | 138.7 |
-| pages/device | 100.6 |
+| pages/device | 99.9 |
 | utils/device-binding.js | 60.4 |
 | utils/api.js | 51.6 |
 | pages/bind | 45.3 |
@@ -346,13 +349,14 @@ Each v4 test file loads the live page through the harness, drives its handlers t
 - 整理选中这一天 turns today's card into the recap highlights.
 - 记住的事 opens from a row under the days, and 日常回顾 goes back.
 
-`attention-v4.test.js` has 5 tests.
+`attention-v4.test.js` has 6 tests.
 
-- The attention page shows the alert, three conversation tips and 我知道了, never the words or a hotline.
+- Four conversation tips ending with the 12356 hotline, and 我知道了, never the words.
 - The attention page opens the alert it was linked to.
 - A stale attention link says nothing needs attention instead of showing an old alert.
 - 我知道了 goes back to where the parent came from.
 - The home attention card and the review banner both open the attention page.
+- 12356 ships only in the attention page's fourth tip.
 
 `device-v4.test.js` has 3 tests.
 
@@ -441,11 +445,12 @@ Each v4 test file loads the live page through the harness, drives its handlers t
 - A persona whose fallback voice is unknown shows no voice instead of the first companion.
 - Pickers and the rate slider use the shared v4 field chrome.
 
-`sub-page-nav.test.js` runs 2 tests for each of the 9 secondary pages, plus one for the auth consent step.
+`sub-page-nav.test.js` runs 2 tests for each of the 8 secondary pages, plus the auth consent step and child-memory.
 
 - The page draws its own round back button under the status bar instead of the native bar.
 - Back pops the stack, or opens the right tab when it is the first page.
 - The auth consent step exits through 暂不同意 instead of a back button.
+- child-memory opens on its heading with no back button.
 
 `nav-inset.test.js` has 2 tests.
 
@@ -475,11 +480,10 @@ Older tests that asserted v3 strings, structure or removed rows now assert the v
 
 - Nothing ran in WeChat DevTools, through miniprogram-automator or on a phone. Images and timings come from Chrome on the VM, and native components such as `switch` and `picker` are approximations.
 - CI runs only on pull requests, and no pull request is open for this branch, so CI has not run `v4-layout.test.js`. If the CI runner lacks Chrome, the layout test skips. If it lacks CJK fonts, the text metrics differ from these results.
-- No screen is pixel-identical to the design. 01-login scores its floor. The others sit 0.006 to 0.33 above their floors, for the reasons listed under each image.
+- No screen is pixel-identical to the design. 01-login scores its floor. The others sit 0.002 to 0.27 above their floors, for the reasons listed under each image.
 - The home ring reads 「今天聊了」 above 「30 分钟上限」, which a parent may take as a daily figure, while the device enforces only a per-session limit. Relabelling the ring or adding a daily cap to the backend is a product decision.
 - The design's long-term memory rows carry a caption per field, such as 「孩子喜欢被这样叫」. The app shows each fact's date there. Swapping the dates for the captions is a product decision.
 - The profile no longer shows the 自动整理日常回顾 switch. The control API stores and exports `auto_summary`, but no summarizer reads it, so the switch changed nothing. It can return on the review tab once the server honours it.
-- Internal names still say daily. These are `onTrialDailyCapSlider` and `_saveDailyCapMinutes` in `pages/device/index.js`, the unrendered `usageLabel` 「每日上限 30 分钟」 in `pages/home/index.js`, and its builder in `utils/trial-device-card.js`.
 - `pages/profile/index.js` still holds voice-clone helpers such as `mediaTypeForPath` and the `deliveredCapabilities` state, which no profile row uses now.
 - `components/device-screen` and `components/face-badge` keep their own illustration palettes, outside the token test.
 - The persona-custom placeholder 「例如：说话短一点，像朋友。」 still uses 朋友. The forbidden-copy check does not ban that word.
