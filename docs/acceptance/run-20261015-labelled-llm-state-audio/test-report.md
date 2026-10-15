@@ -25,5 +25,13 @@ uv run pytest --no-cov \
 | `generate_output(tts_source=llm_unavailable)` skips streaming TTS | pass |
 | Offline pack: 27 production clips, 0 placeholders; both lines AIGC-labelled | pass |
 | LLM failover unit suite still green | pass |
+| Chunk join does not emit doubled 「。。」 (normalize + streaming) | pass |
 
 All listed cases green. Ruff clean on touched Python paths.
+
+Punctuation command:
+
+```bash
+uv run pytest --no-cov services/agent/tests/unit/test_phrase_segmenter.py -q
+```
+
