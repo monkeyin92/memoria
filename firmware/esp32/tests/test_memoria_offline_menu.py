@@ -684,7 +684,7 @@ def test_story_03_title_renamed() -> None:
     assert "一只会听的熊" not in script
 
 
-def test_device_ogg_aigc_check_fails_on_undecodable_llm_placeholders() -> None:
+def test_device_ogg_aigc_check_passes_on_board_pack() -> None:
     script = FIRMWARE_ROOT / "scripts" / "check_device_ogg_aigc.py"
     completed = subprocess.run(
         ["python3", str(script), "--assets-root", str(BOARD_ASSETS)],
@@ -692,7 +692,6 @@ def test_device_ogg_aigc_check_fails_on_undecodable_llm_placeholders() -> None:
         capture_output=True,
         text=True,
     )
-    assert completed.returncode == 1
-    assert "offline_lines/llm_thinking.ogg decode failed" in completed.stderr
-    assert "offline_lines/llm_unavailable.ogg decode failed" in completed.stderr
+    assert completed.returncode == 0, completed.stderr
     assert "checked_oggs=29" in completed.stdout
+    assert completed.stderr == ""
