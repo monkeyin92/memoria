@@ -20,8 +20,8 @@
   {
     "slug": "03-home",
     "page": "pages/home/index",
-    "diffRatio": 0.070298,
-    "rmse": 26.178,
+    "diffRatio": 0.071123,
+    "rmse": 26.283,
     "overflow": [],
     "underCapsule": [],
     "tabClearance": {
@@ -44,8 +44,8 @@
   {
     "slug": "06-usage",
     "page": "pages/device/index",
-    "diffRatio": 0.182486,
-    "rmse": 28.465,
+    "diffRatio": 0.182281,
+    "rmse": 29.037,
     "overflow": [],
     "underCapsule": [],
     "tabClearance": {

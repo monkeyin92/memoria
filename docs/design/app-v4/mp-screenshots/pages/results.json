@@ -11,11 +11,11 @@
       "gap": 146
     },
     "underCapsule": [],
-    "loadMs": 9.6,
-    "renderMs": 5,
-    "layoutMs": 63,
+    "loadMs": 9.9,
+    "renderMs": 5.4,
+    "layoutMs": 62,
     "setDataCalls": 3,
-    "setDataBytes": 2462
+    "setDataBytes": 2367
   },
   {
     "slug": "home",
@@ -29,11 +29,11 @@
       "gap": 112
     },
     "underCapsule": [],
-    "loadMs": 1.8,
+    "loadMs": 2.2,
     "renderMs": 1.6,
-    "layoutMs": 39,
+    "layoutMs": 45,
     "setDataCalls": 3,
-    "setDataBytes": 2462
+    "setDataBytes": 2367
   },
   {
     "slug": "home",
@@ -47,11 +47,11 @@
       "gap": 112
     },
     "underCapsule": [],
-    "loadMs": 2.8,
-    "renderMs": 1.8,
-    "layoutMs": 44,
+    "loadMs": 2,
+    "renderMs": 1.7,
+    "layoutMs": 43,
     "setDataCalls": 3,
-    "setDataBytes": 2462
+    "setDataBytes": 2367
   },
   {
     "slug": "home",
@@ -65,11 +65,11 @@
       "gap": 220
     },
     "underCapsule": [],
-    "loadMs": 2.7,
-    "renderMs": 1.9,
-    "layoutMs": 40,
+    "loadMs": 2,
+    "renderMs": 1.4,
+    "layoutMs": 44,
     "setDataCalls": 3,
-    "setDataBytes": 2462
+    "setDataBytes": 2367
   },
   {
     "slug": "home",
@@ -83,11 +83,11 @@
       "gap": 146
     },
     "underCapsule": [],
-    "loadMs": 2,
-    "renderMs": 2,
-    "layoutMs": 46,
+    "loadMs": 2.1,
+    "renderMs": 2.1,
+    "layoutMs": 48,
     "setDataCalls": 3,
-    "setDataBytes": 2462
+    "setDataBytes": 2367
   },
   {
     "slug": "home-guest",
@@ -619,43 +619,43 @@
     "view": "390",
     "issues": [],
     "scrollWidth": 390,
-    "scrollHeight": 2667,
+    "scrollHeight": 2955,
     "overflow": [],
     "tabClearance": {
       "tabHeight": 88,
       "gap": 146
     },
     "underCapsule": [],
-    "loadMs": 4.5,
-    "renderMs": 4,
-    "layoutMs": 58,
+    "loadMs": 5,
+    "renderMs": 4.6,
+    "layoutMs": 56,
     "setDataCalls": 7,
-    "setDataBytes": 5122
+    "setDataBytes": 5291
   },
   {
     "slug": "device",
     "view": "320",
     "issues": [],
     "scrollWidth": 320,
-    "scrollHeight": 2863,
+    "scrollHeight": 3151,
     "overflow": [],
     "tabClearance": {
       "tabHeight": 54,
       "gap": 112
     },
     "underCapsule": [],
-    "loadMs": 2,
-    "renderMs": 4.6,
-    "layoutMs": 49,
+    "loadMs": 4.2,
+    "renderMs": 3.4,
+    "layoutMs": 50,
     "setDataCalls": 7,
-    "setDataBytes": 5122
+    "setDataBytes": 5291
   },
   {
     "slug": "device",
     "view": "375",
     "issues": [],
     "scrollWidth": 375,
-    "scrollHeight": 2666,
+    "scrollHeight": 2954,
     "overflow": [],
     "tabClearance": {
       "tabHeight": 54,
@@ -663,46 +663,46 @@
     },
     "underCapsule": [],
     "loadMs": 2.2,
-    "renderMs": 2.3,
-    "layoutMs": 54,
+    "renderMs": 2.6,
+    "layoutMs": 55,
     "setDataCalls": 7,
-    "setDataBytes": 5122
+    "setDataBytes": 5291
   },
   {
     "slug": "device",
     "view": "430",
     "issues": [],
     "scrollWidth": 430,
-    "scrollHeight": 2659,
+    "scrollHeight": 2947,
     "overflow": [],
     "tabClearance": {
       "tabHeight": 88,
       "gap": 146
     },
     "underCapsule": [],
-    "loadMs": 2.1,
-    "renderMs": 2.2,
-    "layoutMs": 49,
+    "loadMs": 2.2,
+    "renderMs": 2.3,
+    "layoutMs": 50,
     "setDataCalls": 7,
-    "setDataBytes": 5122
+    "setDataBytes": 5291
   },
   {
     "slug": "device",
     "view": "390-large-font",
     "issues": [],
     "scrollWidth": 390,
-    "scrollHeight": 2910,
+    "scrollHeight": 3204,
     "overflow": [],
     "tabClearance": {
       "tabHeight": 88,
       "gap": 146
     },
     "underCapsule": [],
-    "loadMs": 2.1,
-    "renderMs": 2.5,
-    "layoutMs": 51,
+    "loadMs": 2.3,
+    "renderMs": 2.2,
+    "layoutMs": 54,
     "setDataCalls": 7,
-    "setDataBytes": 5122
+    "setDataBytes": 5291
   },
   {
     "slug": "profile",
