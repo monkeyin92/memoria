@@ -127,7 +127,15 @@ async def _open_device_session(
     return registry, provider, bridge, session, context
 
 
-async def _commit_spoken_turn(registry: MediaVoiceCoreRegistry, session: Any, context: Any) -> None:
+async def _commit_spoken_turn(
+    registry: MediaVoiceCoreRegistry,
+    session: Any,
+    context: Any,
+    *,
+    vad_end_sample: int = 320,
+) -> None:
+    """The child speaks samples 0-320; the device reports VAD end at ``vad_end_sample``."""
+
     identity = context.identity
 
     async def vad(segment_id: str, sample: int, *, final: bool) -> None:
@@ -143,7 +151,7 @@ async def _commit_spoken_turn(registry: MediaVoiceCoreRegistry, session: Any, co
                 capture_start_sample=sample,
                 capture_end_sample=sample + 1,
                 final=final,
-                voiced_end_sample=sample if final else None,
+                voiced_end_sample=320 if final else None,
             ),
         )
 
@@ -153,7 +161,7 @@ async def _commit_spoken_turn(registry: MediaVoiceCoreRegistry, session: Any, co
     )
     assert await registry.accept_asr_result(identity.session_id, final)
     registry._observe_final_asr_result(context, final)
-    await vad("end", 320, final=True)
+    await vad("end", vad_end_sample, final=True)
 
 
 def _wire(frames: list[Any]) -> list[tuple[bytes, int, bool, bool]]:
@@ -206,6 +214,25 @@ async def test_latency_metrics_time_the_reply_not_the_filler() -> None:
         assert context.turn_started_ns is not None
         assert first_audio >= (released_ns - context.turn_started_ns) / 1_000_000_000
         assert len(metrics.latency_samples["tts_first_frame"][before["tts_first_frame"] :]) == 1
+    finally:
+        provider.release_reply.set()
+        await registry.finalize_session(context.identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_the_delay_counts_from_the_last_voiced_sample_not_the_vad_end() -> None:
+    registry, provider, _bridge, session, context = await _open_device_session(
+        "llm-thinking-voiced-end"
+    )
+    try:
+        sent_at = time.monotonic()
+        await _commit_spoken_turn(registry, session, context, vad_end_sample=320 + 8_000)
+        handled_by = time.monotonic()
+        await asyncio.wait_for(provider.reply_started.wait(), timeout=2.0)
+
+        hangover_s = 8_000 / 16_000
+        assert sent_at - hangover_s <= context.llm_thinking_filler.armed_at
+        assert context.llm_thinking_filler.armed_at <= handled_by - hangover_s
     finally:
         provider.release_reply.set()
         await registry.finalize_session(context.identity.session_id)

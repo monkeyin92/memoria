@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from services.common.llm_thinking_filler import LlmThinkingFiller
+from services.common.llm_thinking_filler import LlmThinkingFiller, speech_end_monotonic
 
 
 def test_filler_is_due_three_seconds_after_speech_end_not_commit() -> None:
@@ -10,6 +10,23 @@ def test_filler_is_due_three_seconds_after_speech_end_not_commit() -> None:
     assert gate.seconds_until_due(turn_id=1, now=commit_at) == 1.5
     assert gate.should_play(turn_id=1, now=102.99) is False
     assert gate.should_play(turn_id=1, now=103.0) is True
+
+
+def test_speech_end_is_backdated_to_the_last_voiced_sample() -> None:
+    assert (
+        speech_end_monotonic(received_at=10.0, event_sample=80_000, voiced_end_sample=72_000)
+        == 9.5
+    )
+
+
+def test_speech_end_without_an_earlier_voiced_sample_is_the_receipt() -> None:
+    for voiced_end_sample in (None, 80_000, 96_000):
+        assert (
+            speech_end_monotonic(
+                received_at=10.0, event_sample=80_000, voiced_end_sample=voiced_end_sample
+            )
+            == 10.0
+        )
 
 
 def test_filler_plays_at_most_once_per_turn() -> None:
