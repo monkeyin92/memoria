@@ -664,7 +664,15 @@ private:
         return memoria::TapDevice::kBusy;
     }
 
+    void SyncAigcOfflineBadge() {
+        if (display_ == nullptr) {
+            return;
+        }
+        display_->SetAigcOfflineActive(offline_menu_.mode() != memoria::OfflineMode::kInactive);
+    }
+
     void ApplyOfflineMenuOutput(const memoria::OfflineMenuOutput& out) {
+        SyncAigcOfflineBadge();
         if (out.stop_retry_network) {
             ESP_LOGI(TAG, "offline menu stop network retry");
         }
@@ -732,6 +740,7 @@ private:
         ApplyOfflineMenuOutput(offline_menu_.OnNetworkSample(
             now_ms, NetworkLooksOnline(), DeviceInConversation(state)));
         ApplyOfflineMenuOutput(offline_menu_.OnTimer(now_ms));
+        SyncAigcOfflineBadge();
     }
 
     void EnterTapDeepSleep() {

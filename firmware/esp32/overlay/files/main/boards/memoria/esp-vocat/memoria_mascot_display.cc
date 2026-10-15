@@ -30,7 +30,6 @@ constexpr uint32_t kErrorHoldMs = 8000;
 constexpr int kPillRadius = 18;
 // app-v4 indigo; small corner badge must not cover the face.
 constexpr uint32_t kAigcBadgeIndigo = 0x4A52C9;
-constexpr int kAigcBadgeRadius = 12;
 
 struct CompanionName {
     const char* id;
@@ -325,14 +324,15 @@ void MemoriaMascotDisplay::ApplyChrome() {
     }
     if (aigc_badge_ != nullptr) {
         lv_obj_set_style_bg_color(aigc_badge_, Color(kAigcBadgeIndigo), 0);
-        lv_obj_set_style_bg_opa(aigc_badge_, LV_OPA_80, 0);
-        lv_obj_set_style_radius(aigc_badge_, kAigcBadgeRadius, 0);
+        lv_obj_set_style_bg_opa(aigc_badge_, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(aigc_badge_, memoria::kAigcBadgeCornerRadius, 0);
         lv_obj_set_style_pad_hor(aigc_badge_, 10, 0);
         lv_obj_set_style_pad_ver(aigc_badge_, 4, 0);
         lv_obj_set_style_text_color(aigc_badge_, lv_color_white(), 0);
+        lv_obj_set_style_text_font(aigc_badge_, &lv_font_montserrat_20, 0);
         lv_obj_set_style_border_width(aigc_badge_, 0, 0);
-        // Top-right of the round panel, clear of the face and status line.
-        lv_obj_align(aigc_badge_, LV_ALIGN_TOP_RIGHT, -40, 36);
+        // ~1 o'clock inside the round panel (see memoria_aigc_label.h geometry).
+        lv_obj_set_pos(aigc_badge_, memoria::kAigcBadgeX, memoria::kAigcBadgeY);
     }
     StyleQrCard();
     ApplyChromeOpacity(chrome_opa_);
@@ -352,6 +352,10 @@ void MemoriaMascotDisplay::EnsureAigcBadge() {
     aigc_badge_visible_ = false;
 }
 
+void MemoriaMascotDisplay::SetAigcOfflineActive(bool active) {
+    aigc_offline_active_.store(active);
+}
+
 void MemoriaMascotDisplay::UpdateAigcBadge(memoria::ScenePhase phase) {
     EnsureAigcBadge();
     if (aigc_badge_ == nullptr) {
@@ -359,7 +363,8 @@ void MemoriaMascotDisplay::UpdateAigcBadge(memoria::ScenePhase phase) {
     }
     using memoria::ScenePhase;
     const bool conversation = phase == ScenePhase::kListening || phase == ScenePhase::kThinking ||
-                              phase == ScenePhase::kSpeaking || phase == ScenePhase::kConnecting;
+                              phase == ScenePhase::kSpeaking || phase == ScenePhase::kConnecting ||
+                              aigc_offline_active_.load();
     const auto mode = memoria::AigcExplicitModeFor(conversation, /*badge_can_render=*/true);
     const bool show = memoria::AigcBadgeVisible(mode) && !qr_visible_.load() && !screen_off_;
     if (show == aigc_badge_visible_) {
@@ -653,7 +658,8 @@ void MemoriaMascotDisplay::UpdateIdleScreen(memoria::ScenePhase phase, uint32_t 
     if (backlight_ == nullptr) {
         return;
     }
-    if (phase != memoria::ScenePhase::kIdle) {
+    // Offline menu (including stuck → menu) keeps the panel lit so the badge stays visible.
+    if (phase != memoria::ScenePhase::kIdle || aigc_offline_active_.load()) {
         idle_ = false;
         if (screen_off_) {
             screen_off_ = false;

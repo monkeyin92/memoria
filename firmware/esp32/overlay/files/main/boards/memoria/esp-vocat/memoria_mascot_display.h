@@ -52,6 +52,9 @@ public:
     // Switch to another companion (persisted, applied by the animation task).
     // Unknown ids are ignored.
     void SetCompanion(const char* companion_id);
+    // Keep the AIGC badge (and screen) up during stuck → offline menu and other
+    // active offline-menu modes, even when DeviceState is idle.
+    void SetAigcOfflineActive(bool active);
     // Body gestures from the IMU.
     void Pat();
     void Shake();
@@ -139,6 +142,7 @@ private:
     lv_obj_t* qr_title_ = nullptr;
     lv_obj_t* aigc_badge_ = nullptr;
     bool aigc_badge_visible_ = false;
+    std::atomic<bool> aigc_offline_active_{false};
 
     // Inputs from other tasks, consumed by the animation task.
     SemaphoreHandle_t input_mutex_ = nullptr;

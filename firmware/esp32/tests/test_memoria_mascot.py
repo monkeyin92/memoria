@@ -700,3 +700,6 @@ def test_display_wires_aigc_corner_badge() -> None:
     assert 'lv_label_set_text(aigc_badge_, "AI")' in display
     assert "UpdateAigcBadge(phase)" in display
     assert "0x4A52C9" in display
+    assert "lv_font_montserrat_20" in display
+    assert "memoria::kAigcBadgeX" in display
+    assert "SetAigcOfflineActive" in display
