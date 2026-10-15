@@ -5,7 +5,12 @@ from __future__ import annotations
 import re
 from typing import Final, Literal
 
-from services.common.fixed_safety_scripts import script_for_decision
+from services.common.fixed_safety_scripts import (
+    CRISIS_SELF_SCRIPT,
+    SUPPORT_RELAY_SCRIPT,
+    SUPPORT_VICTIM_SCRIPT,
+    script_for_decision,
+)
 
 SafetyDecision = Literal[
     "crisis_self",
@@ -29,9 +34,31 @@ GUARDIAN_ATTENTION_STORY_RETELL_COPY: Final = (
     "有一条需要你关注的对话（可能是在复述故事）"
 )
 AFTER_FIXED_SAFETY_SESSION_INSTRUCTION: Final = (
-    "本会话已经对用户说过固定安全话术。不要继续讨论或追问刚才的安全话题；"
-    "若用户再次提出同类自伤、受害或转述他人危险的求助，系统会再次给出同一句固定话术，你不要另写。"
+    "本会话已经对用户说过固定安全话术，那一句已经说完。"
+    "不要重复它，不要改写它，不要把它截短，也不要在后面加安慰或叫对方别担心的话。"
+    "用户接下来如果是普通聊天，就按当前这件事用一两句短话回答。"
+    "如果用户再次提出同类自伤、受害或转述他人危险的求助，系统会给出固定话术，你不要另写。"
 )
+_DILUTION_LINE: Final = "刚才的事别担心"
+
+
+def assistant_text_repeats_or_dilutes_safety(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    compact = "".join(ch for ch in stripped if not ch.isspace())
+    if _DILUTION_LINE in compact:
+        return True
+    if len(compact) < 4:
+        return False
+    for script in (CRISIS_SELF_SCRIPT, SUPPORT_VICTIM_SCRIPT, SUPPORT_RELAY_SCRIPT):
+        display = "".join(ch for ch in script.display if not ch.isspace())
+        spoken = "".join(ch for ch in script.spoken if not ch.isspace())
+        if compact in display or compact in spoken:
+            return True
+    return False
+
+
 # Cue words only. A crisis without one of these never gets the retell pin note.
 _STORY_RETELL_FRAME_RE = re.compile(r"(?:故事|绘本|动画片|童话|神话|哪吒)")
 

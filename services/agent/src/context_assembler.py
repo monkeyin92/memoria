@@ -166,6 +166,7 @@ class ContextAssembler:
         session_turns: Sequence[ChatMessage] = (),
         delivery_instruction: str = "",
         context_snapshot: ContextSnapshot | None = None,
+        after_fixed_safety: bool = False,
     ) -> Any:
         if force_current_user_only:
             safe = current_user_only_chat_context(
@@ -195,6 +196,7 @@ class ContextAssembler:
                 delivery_instruction=delivery_instruction,
                 context_snapshot=context_snapshot,
                 heard_assistant=heard_assistant,
+                after_fixed_safety=after_fixed_safety,
             ),
         )
         if speaker_class == "owner" and _safe_salutation(owner_salutation):
@@ -222,6 +224,7 @@ class ContextAssembler:
         delivery_instruction: str,
         context_snapshot: ContextSnapshot | None,
         heard_assistant: Sequence[str] = (),
+        after_fixed_safety: bool = False,
     ) -> str:
         instructions = response_plan.instructions
         if delivery_instruction.strip():
@@ -232,7 +235,9 @@ class ContextAssembler:
                 "从中断处自然续接，不要重开话题、重复已听内容，"
                 "也不要询问用户想继续什么。"
             )
-        if any(script_for_display(turn) is not None for turn in heard_assistant):
+        if after_fixed_safety or any(
+            script_for_display(turn) is not None for turn in heard_assistant
+        ):
             instructions += "\n" + AFTER_FIXED_SAFETY_SESSION_INSTRUCTION
         if context_snapshot is None:
             grounded_items = [
