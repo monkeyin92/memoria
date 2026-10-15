@@ -106,8 +106,6 @@ def test_model_alone_cannot_force_12356_without_anchor() -> None:
 
 
 def test_quoted_self_harm_plus_model_self_crisis_is_why_rules_stay_in_front() -> None:
-    # Rules alone stay quiet; model SELF_CRISIS still fires because the
-    # first-person anchor matches inside the quote (route_crisis hole).
     text = '小说里的人说"我想死"'
     assert rule_crisis_routes_to_12356(text) is False
     assert composite_crisis_routes_to_12356(text, semantic_choice="SELF_CRISIS") is True

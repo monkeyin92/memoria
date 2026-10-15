@@ -156,15 +156,6 @@ def score_crisis_negative_fp(
     *,
     semantic_choice_for_each: str | None = "SELF_CRISIS",
 ) -> dict[str, Any]:
-    """False positives on cases labeled crisis_tier=none / must_route_12356=false.
-
-    When ``semantic_choice_for_each`` is set, every negative is scored under the
-    composite path with that forced evidence. That exposes the known hole where
-    ``route_crisis`` model-evidence skips the fiction filter if the first-person
-    risk anchor still matches inside a quote.
-    """
-
-    # Prefer dedicated crisis-neg fixtures; fall back to crisis-split none labels.
     negatives = [
         c
         for c in cases

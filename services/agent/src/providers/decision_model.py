@@ -97,7 +97,6 @@ class DecisionModelConfig:
     model: str = DECISION_MODEL_NAME
     timeout_s: float = 1.2
     confidence_floor: float = 0.5
-    # API reference uses Bearer; 2026-10-03 bridge scripts used the raw key.
     auth_style: str = "bearer"
 
     def __post_init__(self) -> None:

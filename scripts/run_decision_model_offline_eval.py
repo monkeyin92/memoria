@@ -93,7 +93,6 @@ def dry_run_report(cases: list[dict[str, Any]]) -> dict[str, Any]:
     explicit_rows = [r for r in rule_rows if str(r.get("id", "")).startswith("crisis-self-")]
     explicit_recall = score_must_12356_recall(explicit_rows, routed_key="rule_routes_12356")
     full_recall = score_must_12356_recall(rule_rows, routed_key="rule_routes_12356")
-    # Diagnostic: forced SELF_CRISIS on crisis_tier=none exposes the fiction-anchor hole.
     forced_fp = score_crisis_negative_fp(cases, semantic_choice_for_each="SELF_CRISIS")
     rule_only_fp = score_crisis_negative_fp(cases, semantic_choice_for_each=None)
     return {
@@ -294,7 +293,6 @@ async def live_run(cases: list[dict[str, Any]]) -> dict[str, Any]:
         await dm.aclose()
 
     rule_rows = baseline_rule_crisis_rows(cases)
-    # Composite FP from the model's actual crisis answers on negatives.
     neg_fp_rows = [
         {
             "id": r["id"],
@@ -304,7 +302,6 @@ async def live_run(cases: list[dict[str, Any]]) -> dict[str, Any]:
         for r in dm_rows
         if r.get("crisis_tier_label") == "none" and not r.get("must_route_12356")
     ]
-    # Score using each row's actual composite prediction.
     composite_fp = {
         "negative_n": len(neg_fp_rows),
         "false_positives": sum(
