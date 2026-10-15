@@ -146,13 +146,14 @@ BOARD_SOURCE = (
 CONTRACTS_README = FIRMWARE_README
 
 
-def test_product_build_is_tap_only_without_multinet() -> None:
+def test_product_build_packages_multinet_for_spoken_stop() -> None:
     assert 'WAKE_WORD_MODEL="${MEMORIA_FIRMWARE_WAKE_WORD_MODEL:-}"' in BUILD_SCRIPT
     sdkconfig = BOARD_CONFIG["builds"][0]["sdkconfig_append"]
-    assert "CONFIG_WAKE_WORD_DISABLED=y" in sdkconfig
-    assert "CONFIG_USE_CUSTOM_WAKE_WORD=y" not in sdkconfig
-    assert "CONFIG_SR_MN_CN_NONE=y" in sdkconfig
-    assert "CONFIG_SR_MN_CN_MULTINET6_QUANT=y" not in sdkconfig
+    assert "CONFIG_USE_CUSTOM_WAKE_WORD=y" in sdkconfig
+    assert 'CONFIG_CUSTOM_WAKE_WORD="mo li"' in sdkconfig
+    assert "CONFIG_SR_MN_CN_MULTINET6_QUANT=y" in sdkconfig
+    assert "CONFIG_WAKE_WORD_DISABLED=y" not in sdkconfig
+    assert "CONFIG_SR_MN_CN_NONE=y" not in sdkconfig
     assert "CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y" in sdkconfig
     assert "CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y" not in sdkconfig
     assert "CONFIG_SEND_WAKE_WORD_DATA=n" in sdkconfig

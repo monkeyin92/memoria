@@ -48,10 +48,21 @@ if any("MEMORIA_BENCH" in option for option in product_options):
     raise SystemExit("the product manifest must not name the bench switch")
 if any("MEMORIA_KEEP_AWAKE" in option for option in product_options + bench_options):
     raise SystemExit("config.json and config.bench.json must omit MEMORIA_KEEP_AWAKE")
-if bench_options != product_options + ["CONFIG_MEMORIA_BENCH_SERIAL=y", "CONFIG_LV_USE_SNAPSHOT=y"]:
-    raise SystemExit("config.bench.json must be config.json plus the two bench options, in that order")
-if keep_options != product_options + ["CONFIG_MEMORIA_KEEP_AWAKE=y"]:
-    raise SystemExit("config.keep-awake.json must be config.json plus CONFIG_MEMORIA_KEEP_AWAKE=y")
+if bench_options != product_options + [
+    "CONFIG_MEMORIA_BENCH_SERIAL=y",
+    "CONFIG_LV_USE_SNAPSHOT=y",
+    "CONFIG_HEAP_POISONING_COMPREHENSIVE=y",
+]:
+    raise SystemExit(
+        "config.bench.json must be config.json plus the bench options and heap poisoning, in that order"
+    )
+if keep_options != product_options + [
+    "CONFIG_MEMORIA_KEEP_AWAKE=y",
+    "CONFIG_HEAP_POISONING_COMPREHENSIVE=y",
+]:
+    raise SystemExit(
+        "config.keep-awake.json must be config.json plus CONFIG_MEMORIA_KEEP_AWAKE=y and heap poisoning"
+    )
 for label, manifest in (("config.bench.json", bench), ("config.keep-awake.json", keep)):
     stripped = json.loads(json.dumps(manifest))
     stripped["builds"][0]["sdkconfig_append"] = product_options
@@ -126,6 +137,10 @@ rg -Fq 'memoria::diag::RecordPlay(' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_serv
     die "the bench PCM journal must record what AudioOutputTask hands to the codec"
 rg -Fq 'memoria::diag::RecordPostAfe(' "$MEMORIA_UPSTREAM_DIR/main/audio/engines/afe_audio_engine.cc" || \
     die "the bench PCM journal must record the AFE fetch result before its consumers"
+rg -Fq 'memoria::diag::RecordRawTdm(' "$MEMORIA_UPSTREAM_DIR/main/audio/codecs/box_audio_codec.cc" || \
+    die "bench raw ES7210 TDM must be recorded inside BoxAudioCodec::Read"
+rg -Fq 'heap_caps_check_integrity_all(true)' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
+    die "PlaySound must check heap integrity when poisoning is on"
 "$python_bin" - "$MEMORIA_UPSTREAM_DIR/main/Kconfig.projbuild" <<'PY'
 import pathlib
 import re
@@ -190,14 +205,14 @@ rg -Fq '16MB Flash (N16R16)' "$MEMORIA_UPSTREAM_DIR/partitions/v2/16m.csv" || \
     die "partition table must document N16R16 / 16MB flash"
 rg -q 'CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y' "$board_dir/config.json" || \
     die "board must claim 16MB flash (N16R16), not 32MB"
-rg -Fq 'CONFIG_WAKE_WORD_DISABLED=y' "$board_dir/config.json" || \
-    die "product build must disable keyword wake"
-rg -Fq 'CONFIG_SR_MN_CN_NONE=y' "$board_dir/config.json" || \
-    die "product build must not package MultiNet6 (mn6_cn)"
-rg -Fq 'CONFIG_USE_CUSTOM_WAKE_WORD=y' "$board_dir/config.json" && \
-    die "custom wake word must stay off after tap-only product change"
-rg -Fq 'CONFIG_SR_MN_CN_MULTINET6_QUANT=y' "$board_dir/config.json" && \
-    die "MultiNet6 must stay off after tap-only product change"
+rg -Fq 'CONFIG_USE_CUSTOM_WAKE_WORD=y' "$board_dir/config.json" || \
+    die "product build must package the custom MultiNet wake graph for local stop"
+rg -Fq 'CONFIG_SR_MN_CN_MULTINET6_QUANT=y' "$board_dir/config.json" || \
+    die "product build must package MultiNet6 (mn6_cn) so spoken stop can arm"
+rg -Fq 'CONFIG_WAKE_WORD_DISABLED=y' "$board_dir/config.json" && \
+    die "WAKE_WORD_DISABLED cannot be set together with the MultiNet stop model"
+rg -Fq 'CONFIG_SR_MN_CN_NONE=y' "$board_dir/config.json" && \
+    die "product build must not select MN_NONE while local stop is on"
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_power_policy.h" ]] || \
     die "power policy header missing"
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_mic_gate.h" ]] || \
@@ -257,22 +272,23 @@ with open(sys.argv[1], encoding="utf-8") as handle:
 sdkconfig = set(manifest["builds"][0]["sdkconfig_append"])
 required = {
     "CONFIG_USE_DEVICE_AEC=y",
-    "CONFIG_WAKE_WORD_DISABLED=y",
+    "CONFIG_USE_CUSTOM_WAKE_WORD=y",
+    "CONFIG_CUSTOM_WAKE_WORD=\"mo li\"",
+    "CONFIG_SR_MN_CN_MULTINET6_QUANT=y",
     "CONFIG_OTA_URL=\"\"",
     "CONFIG_SEND_WAKE_WORD_DATA=n",
     "CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS=n",
     "CONFIG_SR_WN_WN9L_NIHAOXIAOZHI_TTS3=n",
-    "CONFIG_SR_MN_CN_NONE=y",
     "CONFIG_SR_NSN_WEBRTC=y",
     "CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y",
 }
 missing = sorted(required - sdkconfig)
 if missing:
     raise SystemExit("missing Memoria tap-wake settings: " + ", ".join(missing))
-if "CONFIG_USE_CUSTOM_WAKE_WORD=y" in sdkconfig:
-    raise SystemExit("Memoria product must not enable custom keyword wake")
-if "CONFIG_SR_MN_CN_MULTINET6_QUANT=y" in sdkconfig:
-    raise SystemExit("Memoria product must not package mn6_cn")
+if "CONFIG_WAKE_WORD_DISABLED=y" in sdkconfig:
+    raise SystemExit("Memoria product must package MultiNet; WAKE_WORD_DISABLED leaves stop unarmed")
+if "CONFIG_SR_MN_CN_NONE=y" in sdkconfig:
+    raise SystemExit("Memoria product must package mn6_cn for spoken stop")
 if "CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y" in sdkconfig:
     raise SystemExit("Memoria board is N16R16; FLASHSIZE_32MB is wrong")
 if any(
@@ -280,11 +296,11 @@ if any(
     for item in sdkconfig
 ):
     raise SystemExit("Memoria board must not enable an upstream Xiaozhi WakeNet model")
-if any(
+if not any(
     item.startswith("CONFIG_SR_MN_CN_MULTINET") and item.endswith("=y")
     for item in sdkconfig
 ):
-    raise SystemExit("Memoria board must not enable a MultiNet model")
+    raise SystemExit("Memoria board must enable a MultiNet model for spoken stop")
 PY
 "$python_bin" - "$MEMORIA_UPSTREAM_DIR/main/Kconfig.projbuild" <<'PY'
 import pathlib
@@ -564,10 +580,10 @@ flasher_args="$MEMORIA_UPSTREAM_DIR/build/flasher_args.json"
 if [[ ! -s "$sdkconfig" ]]; then
     printf 'check-overlay: sdkconfig not built yet; skipping post-build assertions\n' >&2
 else
-rg -q '^CONFIG_WAKE_WORD_DISABLED=y$' "$sdkconfig" || \
-    die "final sdkconfig must disable keyword wake"
-rg -q '^CONFIG_SR_MN_CN_NONE=y$' "$sdkconfig" || \
-    die "final sdkconfig must not package MultiNet6"
+rg -q '^CONFIG_USE_CUSTOM_WAKE_WORD=y$' "$sdkconfig" || \
+    die "final sdkconfig must enable the MultiNet graph for local stop"
+rg -q '^CONFIG_SR_MN_CN_MULTINET6_QUANT=y$' "$sdkconfig" || \
+    die "final sdkconfig must package MultiNet6"
 rg -q '^CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y$' "$sdkconfig" || \
     die "final sdkconfig must claim 16MB flash (N16R16)"
 rg -q '^CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y$' "$sdkconfig" || \
@@ -580,11 +596,11 @@ done
 if rg -q '^CONFIG_USE_SERVER_AEC=y$' "$sdkconfig"; then
     die "final sdkconfig must use device-side AEC, not server-side AEC"
 fi
-if rg -q '^CONFIG_USE_CUSTOM_WAKE_WORD=y$' "$sdkconfig"; then
-    die "final sdkconfig must not enable custom keyword wake"
+if rg -q '^CONFIG_WAKE_WORD_DISABLED=y$' "$sdkconfig"; then
+    die "final sdkconfig must not disable the MultiNet graph while local stop is on"
 fi
-if rg -q '^CONFIG_SR_MN_CN_MULTINET6_QUANT=y$' "$sdkconfig"; then
-    die "final sdkconfig must not package mn6_cn"
+if rg -q '^CONFIG_SR_MN_CN_NONE=y$' "$sdkconfig"; then
+    die "final sdkconfig must not select MN_NONE while local stop is on"
 fi
 rg -q '^CONFIG_OTA_URL=""$' "$sdkconfig" || die "final sdkconfig still exposes an OTA endpoint"
 if rg -n 'api\.tenclass\.net/xiaozhi/ota|CONFIG_OTA_URL="https?://' "$sdkconfig"; then

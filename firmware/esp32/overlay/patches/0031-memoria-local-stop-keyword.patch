@@ -47,7 +47,7 @@ diff --git a/main/application.cc b/main/application.cc
  #endif
              }
              audio_service_.ResetDecoder();
-@@ -1503,9 +1518,50 @@
+@@ -1503,9 +1518,57 @@
      if (play_popup_on_listening_) {
          play_popup_on_listening_ = false;
          audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
@@ -56,13 +56,20 @@ diff --git a/main/application.cc b/main/application.cc
 +
 +#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +void Application::ConfigureStopKeywordForSpeaking() {
-+    // Wake words stay ignored during playback. With the signed "keyword"
-+    // barge-in source the MultiNet detector keeps running in stop-only mode
-+    // on the AEC/NS output so the owner can stop playback by voice; each hit
-+    // re-checks that a generation is really playing (LocalStopKeywordArmed).
++    // Wake words stay ignored during playback. MultiNet runs in stop-only
++    // mode on the AEC/NS output so the owner can stop playback by voice; each
++    // hit re-checks that a generation is really playing (LocalStopKeywordArmed).
++    // The decision is logged on every speaking entry, including a failure.
 +    auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
-+    if (memoria::kLocalStopKeywordEnabled && memoria_protocol != nullptr && memoria_protocol->StopKeywordMayArm() &&
-+        audio_service_.EnableStopKeywordDetection()) {
++    const bool may_arm = memoria::kLocalStopKeywordEnabled && memoria_protocol != nullptr &&
++        memoria_protocol->StopKeywordMayArm();
++    const bool armed = may_arm && audio_service_.EnableStopKeywordDetection();
++    if (memoria_protocol != nullptr) {
++        memoria_protocol->LogStopArmAtSpeaking(armed, may_arm && !armed);
++    } else {
++        ESP_LOGI(TAG, "stop-arm speaking armed=0 reason=no_protocol");
++    }
++    if (armed) {
 +        ESP_LOGI(TAG, "Local stop keyword armed for playback");
 +        return;
      }
@@ -339,7 +346,7 @@ diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/c
      
      multinet_->print_active_speech_commands(multinet_model_data_);
  #if CONFIG_SEND_WAKE_WORD_DATA
-@@ -152,6 +174,63 @@
+@@ -152,6 +174,68 @@
      wake_word_detected_callback_ = callback;
  }
  
@@ -390,8 +397,13 @@ diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/c
 +                ? commands_[index].text.c_str()
 +                : commands_[index].command.c_str();
 +        }
-+        const int written = snprintf(line + used, sizeof(line) - used, "%s%s=%.3f",
-+                                     i == 0 ? "" : " ", name, static_cast<double>(result->prob[i]));
++        const bool stop_row = index >= 0 && index < static_cast<int>(commands_.size()) &&
++            commands_[index].action == memoria::kLocalStopAction;
++        const int written = stop_row
++            ? snprintf(line + used, sizeof(line) - used, "%sid=%s=%.3f",
++                       i == 0 ? "" : " ", name, static_cast<double>(result->prob[i]))
++            : snprintf(line + used, sizeof(line) - used, "%s%s=%.3f",
++                       i == 0 ? "" : " ", name, static_cast<double>(result->prob[i]));
 +        if (written < 0 || written >= static_cast<int>(sizeof(line)) - used) {
 +            break;
 +        }
@@ -403,7 +415,7 @@ diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/c
  void CustomWakeWord::Start() {
      running_ = true;
  }
-@@ -201,10 +280,45 @@
+@@ -201,10 +280,50 @@
          
          if (mn_state == ESP_MN_STATE_DETECTED) {
              esp_mn_results_t *mn_result = multinet_->get_results(multinet_model_data_);
@@ -418,6 +430,11 @@ diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/c
 +                    continue;
 +                }
 +                auto& command = commands_[command_index];
++                // Every accepted window, including wake words and scores that
++                // the stop gate will reject. Serial grep: "MultiNet hit id=".
++                ESP_LOGI(TAG, "MultiNet hit id=%s command_id=%d prob=%.3f stop_only=%d",
++                         command.text.c_str(), mn_result->command_id[i],
++                         static_cast<double>(mn_result->prob[i]), stop_only_.load() ? 1 : 0);
 +                if (command.action == memoria::kLocalStopAction) {
 +                    HandleStopCommand(command, mn_result->prob[i]);
 +                    continue;

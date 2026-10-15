@@ -1026,6 +1026,32 @@ bool MemoriaProtocol::StopKeywordMayArm() const {
            !stop_keyword_suppressed_ && !stop_suppressed_for_generation_;
 }
 
+void MemoriaProtocol::LogStopArmAtSpeaking(bool armed, bool detector_missing) const {
+    std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+    const char* reason = "armed";
+    if (!armed) {
+        if (protocol_version_ != kProtocolVersionV2 || stream_epoch_ == 0) {
+            reason = "no_session";
+        } else if (stop_keyword_suppressed_) {
+            reason = "barge_in_none";
+        } else if (stop_suppressed_for_generation_) {
+            reason = "safety_pin_unconfirmed";
+        } else if (detector_missing) {
+            reason = "no_multinet";
+        } else {
+            reason = "not_armed";
+        }
+    }
+    // voice/keyword mirror signed allowed_barge_in. none is the only value
+    // that suppresses 「停」; a button-only allowlist leaves both at 0 and
+    // still arms when a MultiNet model is in the image.
+    ESP_LOGI(kTag,
+             "stop-arm speaking armed=%d reason=%s epoch=%u voice=%d keyword=%d none=%d pin_suppressed=%d",
+             armed ? 1 : 0, reason, static_cast<unsigned>(stream_epoch_),
+             voice_barge_in_allowed_ ? 1 : 0, keyword_barge_in_allowed_ ? 1 : 0,
+             stop_keyword_suppressed_ ? 1 : 0, stop_suppressed_for_generation_ ? 1 : 0);
+}
+
 bool MemoriaProtocol::LocalStopKeywordArmed() {
     std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
     // "none" and an unconfirmed crisis pin suppress 「停」. A button-only

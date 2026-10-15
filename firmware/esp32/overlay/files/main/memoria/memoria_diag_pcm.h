@@ -21,6 +21,10 @@
 //                             hardware ADC channel.
 //   post_afe                  afe_fetch_result_t::data: AEC and NS merged. One AFE instance offers no separate
 //                             post-AEC or post-NS buffer, so this lane is never split or renamed that way.
+//   es7210_slot0..3           bench only: the four ES7210 TDM slots at 24 kHz, copied inside BoxAudioCodec::Read
+//                             before slots 0 and 1 are packed into the 2-channel buffer and before ApplyToFeed
+//                             overwrites channel 1. This is the raw ADC, so hardware can see which slot already
+//                             carries the ES8311 loopback.
 //
 // Every block carries one invented timebase, the mic clock: 16 kHz samples read for Feed since arm. Downlink
 // sample positions are a different clock and are not used. Writers never wrap or wait; the USB task seals
@@ -32,7 +36,7 @@
 //   PCMD <id> sealed mic=<samples> bytes=<journal bytes>
 //   PCMD <id> begin fmt=memoria-diagpcm-v1 bytes=<B> chunks=<N>
 //   PCMD <id> <seq>/<N> <crc> <base64>
-//   PCMD <id> end <N> <B> <crc> mic=<m> blocks=<p>,<f>,<a> drops=<p>,<f>,<a> cut=<p>,<f>,<a>
+//   PCMD <id> end <N> <B> <crc> mic=<m> blocks=<p>,<f>,<a>,<r> drops=<p>,<f>,<a>,<r> cut=<p>,<f>,<a>,<r>
 //   PCMD <id> failed reason=<recording|busy|empty|no_psram|console|encode>
 //
 // scripts/diag_pcm_extract.py verifies the journal and writes one WAV per channel. This header has no ESP-IDF
@@ -62,8 +66,8 @@ constexpr std::uint32_t kWindowMs = 3000;
 constexpr std::uint32_t kMicRate = 16000;
 constexpr std::uint32_t kPlayRate = 24000;
 
-enum class Lane : std::uint8_t { kPlay = 0, kFeed = 1, kPostAfe = 2 };
-constexpr std::size_t kLaneCount = 3;
+enum class Lane : std::uint8_t { kPlay = 0, kFeed = 1, kPostAfe = 2, kRawTdm = 3 };
+constexpr std::size_t kLaneCount = 4;
 
 struct LaneSpec {
     std::uint32_t rate;
@@ -82,6 +86,7 @@ constexpr LaneSpec kLaneSpecs[kLaneCount] = {
     {kPlayRate, 1, LaneCapacity(kPlayRate, 1), "play_pre_i2s"},
     {kMicRate, 2, LaneCapacity(kMicRate, 2), "pre_afe_mic,pre_afe_ref"},
     {kMicRate, 1, LaneCapacity(kMicRate, 1), "post_afe"},
+    {kPlayRate, 4, LaneCapacity(kPlayRate, 4), "es7210_slot0,es7210_slot1,es7210_slot2,es7210_slot3"},
 };
 
 constexpr std::uint32_t kArenaBytes =
@@ -135,7 +140,7 @@ struct JournalPreamble {
     std::uint32_t lane_count;
     LaneSummary lanes[kLaneCount];
 };
-static_assert(sizeof(JournalPreamble) == 92, "memoria-diagpcm-v1 preamble");
+static_assert(sizeof(JournalPreamble) == 112, "memoria-diagpcm-v1 preamble");
 constexpr char kPreambleMagic[8] = {'M', 'D', 'P', 'C', 'M', '1', '\0', '\0'};
 
 // The dump: the preamble, then each lane's committed bytes in Lane order.
@@ -154,10 +159,14 @@ struct JournalView {
 
     // Copies up to `want` bytes of the journal starting `offset` bytes in; returns the bytes copied.
     std::size_t Gather(std::size_t offset, std::uint8_t* out, std::size_t want) const {
-        const std::uint8_t* spans[kLaneCount + 1] = {reinterpret_cast<const std::uint8_t*>(preamble),
-                                                     lane_base[0], lane_base[1], lane_base[2]};
-        const std::size_t sizes[kLaneCount + 1] = {sizeof(JournalPreamble), lane_bytes[0], lane_bytes[1],
-                                                   lane_bytes[2]};
+        const std::uint8_t* spans[kLaneCount + 1] = {};
+        std::size_t sizes[kLaneCount + 1] = {};
+        spans[0] = reinterpret_cast<const std::uint8_t*>(preamble);
+        sizes[0] = sizeof(JournalPreamble);
+        for (std::size_t lane = 0; lane < kLaneCount; ++lane) {
+            spans[lane + 1] = lane_base[lane];
+            sizes[lane + 1] = lane_bytes[lane];
+        }
         std::size_t copied = 0;
         std::size_t span_start = 0;
         for (std::size_t i = 0; i < kLaneCount + 1 && copied < want; ++i) {
@@ -316,6 +325,14 @@ public:
         Append(Lane::kPlay, mic_clock_.load(std::memory_order_relaxed), pcm, samples, 1, flags, now_us);
     }
 
+    // Codec Read, before the 2-channel pack and before ApplyToFeed. Does not move the mic clock:
+    // this lane is the 24 kHz TDM clock, stamped against the mic clock only so blocks.jsonl can
+    // line it up with the other lanes.
+    void RecordRawTdm(const std::int16_t* interleaved, std::size_t frames, int channels, std::int64_t now_us) {
+        Append(Lane::kRawTdm, mic_clock_.load(std::memory_order_relaxed), interleaved, frames, channels, 0,
+               now_us);
+    }
+
 private:
     void Refuse(Lane lane) {
         LaneCursor& cursor = cursors_[static_cast<std::size_t>(lane)];
@@ -435,10 +452,10 @@ inline std::size_t PcmdArmedLine(char* out, std::size_t capacity, std::uint32_t 
     return FinishLine(
         std::snprintf(out, capacity,
                       "PCMD %08x armed window_ms=%u lanes=play_pre_i2s@%ux1,pre_afe_mic+pre_afe_ref@%ux2,"
-                      "post_afe@%ux1 psram_free=%u",
+                      "post_afe@%ux1,es7210_slot0+es7210_slot1+es7210_slot2+es7210_slot3@%ux4 psram_free=%u",
                       static_cast<unsigned>(id), static_cast<unsigned>(kWindowMs), static_cast<unsigned>(kPlayRate),
                       static_cast<unsigned>(kMicRate), static_cast<unsigned>(kMicRate),
-                      static_cast<unsigned>(psram_free)),
+                      static_cast<unsigned>(kPlayRate), static_cast<unsigned>(psram_free)),
         capacity);
 }
 
@@ -472,11 +489,13 @@ inline std::size_t PcmdEndLine(char* out, std::size_t capacity, std::uint32_t id
                                std::size_t bytes, std::uint32_t crc, const JournalPreamble& p) {
     const LaneSummary* l = p.lanes;
     return FinishLine(
-        std::snprintf(out, capacity, "PCMD %08x end %zu %zu %08x mic=%u blocks=%u,%u,%u drops=%u,%u,%u cut=%u,%u,%u",
+        std::snprintf(out, capacity,
+                      "PCMD %08x end %zu %zu %08x mic=%u blocks=%u,%u,%u,%u drops=%u,%u,%u,%u cut=%u,%u,%u,%u",
                       static_cast<unsigned>(id), total, bytes, static_cast<unsigned>(crc),
                       static_cast<unsigned>(p.mic_samples_at_seal), static_cast<unsigned>(l[0].blocks),
-                      static_cast<unsigned>(l[1].blocks), static_cast<unsigned>(l[2].blocks), l[0].drops, l[1].drops,
-                      l[2].drops, l[0].cut, l[1].cut, l[2].cut),
+                      static_cast<unsigned>(l[1].blocks), static_cast<unsigned>(l[2].blocks),
+                      static_cast<unsigned>(l[3].blocks), l[0].drops, l[1].drops, l[2].drops, l[3].drops, l[0].cut,
+                      l[1].cut, l[2].cut, l[3].cut),
         capacity);
 }
 
@@ -523,6 +542,7 @@ bool StreamJournal(const JournalView& view, std::uint32_t id, Emit&& emit) {
 void RecordFeed(const std::int16_t* interleaved, std::size_t frames, int channels, std::uint8_t flags);
 void RecordPostAfe(const std::int16_t* pcm, std::size_t samples, std::uint8_t flags);
 void RecordPlay(const std::int16_t* pcm, std::size_t samples, int sample_rate, std::uint8_t flags);
+void RecordRawTdm(const std::int16_t* interleaved, std::size_t frames, int channels);
 void Arm();
 void Tick();
 void Dump();

@@ -393,7 +393,12 @@ class MediaSessionProjectionMixin:
         )
         if not spoken:
             return False
-        return await self._wait_for_output_idle(context, wait_for_start=True)
+        # The phrase is already on the output path. A missed idle observation
+        # (the device can finish and go idle before this loop sees the busy
+        # bit, or the session can close underneath it) must not hide the
+        # phrase id. Callers still wait so standby follows the audio.
+        await self._wait_for_output_idle(context, wait_for_start=True)
+        return True
 
 
     def _owner_speech_is_established(self, context: _MediaVoiceSession) -> bool:

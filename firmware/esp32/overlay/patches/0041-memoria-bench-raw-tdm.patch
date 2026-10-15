@@ -1,0 +1,103 @@
+diff --git a/main/audio/codecs/box_audio_codec.cc b/main/audio/codecs/box_audio_codec.cc
+--- a/main/audio/codecs/box_audio_codec.cc
++++ b/main/audio/codecs/box_audio_codec.cc
+@@ -4,9 +4,39 @@
+ #include <esp_attr.h>
+ #include <driver/i2c_master.h>
+ #include <driver/i2s_tdm.h>
++#if CONFIG_MEMORIA_BENCH_SERIAL
++#include "memoria_diag_pcm.h"
++
++#include <esp_heap_caps.h>
++#endif
+ 
+ #define TAG "BoxAudioCodec"
+ 
++#if CONFIG_MEMORIA_BENCH_SERIAL
++namespace {
++int16_t* bench_tdm_scratch = nullptr;
++size_t bench_tdm_scratch_frames = 0;
++bool bench_tdm_open = false;
++
++// One codec. The scratch stays for the process: Read does not take the
++// data-if mutex, so freeing it from EnableInput would race the input task.
++bool EnsureBenchTdmScratch(size_t frames) {
++    if (bench_tdm_scratch != nullptr && bench_tdm_scratch_frames >= frames) {
++        return true;
++    }
++    const size_t want = frames < 1024 ? 1024 : frames;
++    auto* grown = static_cast<int16_t*>(heap_caps_realloc(
++        bench_tdm_scratch, want * 4 * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
++    if (grown == nullptr) {
++        return bench_tdm_scratch != nullptr && bench_tdm_scratch_frames >= frames;
++    }
++    bench_tdm_scratch = grown;
++    bench_tdm_scratch_frames = want;
++    return true;
++}
++}  // namespace
++#endif
++
+ bool IRAM_ATTR BoxAudioCodec::OnOutputSent(i2s_chan_handle_t handle,
+                                           i2s_event_data_t* event,
+                                           void* user_ctx) {
+@@ -226,6 +256,22 @@
+         if (input_reference_) {
+             fs.channel_mask |= ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1);
+         }
++#if CONFIG_MEMORIA_BENCH_SERIAL
++        // Slots 2 and 3 stay out of the AFE buffer. Widen the open only when
++        // the scratch exists: a 4-slot read into the caller's 2-channel
++        // buffer would overrun it.
++        static bool reported = false;
++        bench_tdm_open = EnsureBenchTdmScratch(1024);
++        if (bench_tdm_open) {
++            fs.channel_mask |= ESP_CODEC_DEV_MAKE_CHANNEL_MASK(2);
++            fs.channel_mask |= ESP_CODEC_DEV_MAKE_CHANNEL_MASK(3);
++        }
++        if (!reported) {
++            reported = true;
++            ESP_LOGI(TAG, "bench raw ES7210 TDM %s, before software reference overwrite",
++                     bench_tdm_open ? "4 slots" : "unavailable");
++        }
++#endif
+         ESP_ERROR_CHECK(esp_codec_dev_open(input_dev_, &fs));
+         ESP_ERROR_CHECK(esp_codec_dev_set_in_channel_gain(
+             input_dev_, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0), input_gain_));
+@@ -266,6 +312,36 @@
+ 
+ int BoxAudioCodec::Read(int16_t* dest, int samples) {
+     if (input_enabled_) {
++#if CONFIG_MEMORIA_BENCH_SERIAL
++        if (bench_tdm_open && input_channels_ > 0 && samples > 0 && samples % input_channels_ == 0) {
++            const int frames = samples / input_channels_;
++            int done = 0;
++            while (done < frames) {
++                int chunk = frames - done;
++                if (static_cast<size_t>(chunk) > bench_tdm_scratch_frames &&
++                    !EnsureBenchTdmScratch(static_cast<size_t>(chunk))) {
++                    chunk = static_cast<int>(bench_tdm_scratch_frames);
++                }
++                if (chunk <= 0 || bench_tdm_scratch == nullptr) {
++                    ESP_LOGW(TAG, "bench ES7210 TDM scratch missing");
++                    return samples;
++                }
++                const size_t bytes = static_cast<size_t>(chunk) * 4 * sizeof(int16_t);
++                if (esp_codec_dev_read(input_dev_, bench_tdm_scratch, bytes) != ESP_OK) {
++                    ESP_LOGW(TAG, "bench ES7210 4-slot read failed");
++                    return samples;
++                }
++                memoria::diag::RecordRawTdm(bench_tdm_scratch, static_cast<size_t>(chunk), 4);
++                for (int i = 0; i < chunk; ++i) {
++                    for (int ch = 0; ch < input_channels_ && ch < 4; ++ch) {
++                        dest[(done + i) * input_channels_ + ch] = bench_tdm_scratch[i * 4 + ch];
++                    }
++                }
++                done += chunk;
++            }
++            return samples;
++        }
++#endif
+         ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_read(input_dev_, (void*)dest, samples * sizeof(int16_t)));
+     }
+     return samples;

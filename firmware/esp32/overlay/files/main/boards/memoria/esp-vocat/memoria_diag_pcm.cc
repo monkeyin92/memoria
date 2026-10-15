@@ -53,6 +53,10 @@ void RecordPlay(const std::int16_t* pcm, std::size_t samples, int sample_rate, s
     g_recorder.RecordPlay(pcm, samples, sample_rate, flags, esp_timer_get_time());
 }
 
+void RecordRawTdm(const std::int16_t* interleaved, std::size_t frames, int channels) {
+    g_recorder.RecordRawTdm(interleaved, frames, channels, esp_timer_get_time());
+}
+
 void Arm() {
     const std::uint32_t id = NowMs();
     // The arena is taken on the first arm and kept until reboot: a bench image that never records costs nothing.

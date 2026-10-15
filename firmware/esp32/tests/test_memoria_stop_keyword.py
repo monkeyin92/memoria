@@ -223,10 +223,10 @@ def test_wake_word_acceptance_requires_consistent_text_for_weak_hits(gate_tool: 
     ) == ["wake", "wake", "wake", "wake", "wake"]
 
 
-def test_board_sdkconfig_is_tap_only_without_custom_wake_threshold() -> None:
-    # Tap-only product policy (#215): keyword wake packaging is off. The
-    # MultiNet detect floor stays in memoria_stop_keyword.h for local stop
-    # phrases, but it is no longer mirrored by CONFIG_CUSTOM_WAKE_WORD_THRESHOLD.
+def test_board_sdkconfig_packages_multinet6_for_spoken_stop() -> None:
+    # Idle keyword wake stays off in ArmIdleWakeWord. The product image still
+    # has to contain mn6_cn, or EnableStopKeywordDetection returns false and
+    # speaking logs no hit.
     board = json.loads(
         (
             FIRMWARE_ROOT
@@ -240,11 +240,13 @@ def test_board_sdkconfig_is_tap_only_without_custom_wake_threshold() -> None:
         ).read_text(encoding="utf-8")
     )
     sdkconfig = board["builds"][0]["sdkconfig_append"]
-    assert "CONFIG_WAKE_WORD_DISABLED=y" in sdkconfig
-    assert not any(item.startswith("CONFIG_USE_CUSTOM_WAKE_WORD=") for item in sdkconfig)
-    assert not any(
-        item.startswith("CONFIG_CUSTOM_WAKE_WORD_THRESHOLD=") for item in sdkconfig
-    )
+    assert "CONFIG_USE_CUSTOM_WAKE_WORD=y" in sdkconfig
+    assert 'CONFIG_CUSTOM_WAKE_WORD="mo li"' in sdkconfig
+    assert "CONFIG_CUSTOM_WAKE_WORD_THRESHOLD=10" in sdkconfig
+    assert "CONFIG_SR_MN_CN_MULTINET6_QUANT=y" in sdkconfig
+    assert "CONFIG_WAKE_WORD_DISABLED=y" not in sdkconfig
+    assert "CONFIG_SR_MN_CN_NONE=y" not in sdkconfig
+    assert "CONFIG_SEND_WAKE_WORD_DATA=n" in sdkconfig
 
 
 def test_gate_requires_stop_only_mode_and_the_phrase_threshold(gate_tool: pathlib.Path) -> None:
@@ -469,6 +471,7 @@ def test_multinet_registers_stop_phrases_and_ignores_wake_in_stop_only_mode() ->
     )
     # Misses are visible: detection windows and timeouts log their candidates
     # while stop-only mode is armed.
+    assert 'ESP_LOGI(TAG, "MultiNet hit id=%s command_id=%d prob=%.3f stop_only=%d",' in wake
     assert 'LogStopModeCandidates("detected", mn_result);' in wake
     assert 'LogStopModeCandidates("timeout", multinet_->get_results(multinet_model_data_));' in wake
     assert wake.count("if (stop_only_.load()) {") == 2
@@ -518,6 +521,8 @@ def test_application_arms_stop_keyword_only_for_playback_with_keyword_barge_in()
     assert "memoria::kLocalStopKeywordEnabled && memoria_protocol != nullptr" in configure
     assert "memoria_protocol->StopKeywordMayArm()" in configure
     assert "audio_service_.EnableStopKeywordDetection()" in configure
+    assert "memoria_protocol->LogStopArmAtSpeaking(armed, may_arm && !armed)" in configure
+    assert 'ESP_LOGI(TAG, "stop-arm speaking armed=0 reason=no_protocol")' in configure
     assert "audio_service_.EnableWakeWordDetection(false);" in configure
     assert app.count("ConfigureStopKeywordForSpeaking();") == 2
     # Leaving Speaking disarms stop-only mode before the next state's config.

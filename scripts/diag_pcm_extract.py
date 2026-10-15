@@ -6,7 +6,7 @@ lines. The format is documented in firmware/esp32/overlay/files/main/memoria/mem
 
     PCMD <id> begin fmt=memoria-diagpcm-v1 bytes=<B> chunks=<N>
     PCMD <id> <seq>/<N> <crc> <base64>
-    PCMD <id> end <N> <B> <crc> mic=<m> blocks=<p>,<f>,<a> drops=<p>,<f>,<a> cut=<p>,<f>,<a>
+    PCMD <id> end <N> <B> <crc> mic=<m> blocks=<p>,<f>,<a>,<r> drops=<p>,<f>,<a>,<r> cut=<p>,<f>,<a>,<r>
     PCMD <id> failed reason=<why>
 
     python scripts/diag_pcm_extract.py robot.log --out pcm/            # the latest journal
@@ -18,8 +18,10 @@ writes the WAVs too, and the manifest still says damaged). Exit 0 intact, 2 dama
 
 The channels and only these: play_pre_i2s (24 kHz, the bytes written to I2S, not the exact DAC signal),
 pre_afe_mic and pre_afe_ref (16 kHz; ref is the second ES7210 ADC channel, not a copy of playback), post_afe
-(16 kHz, AEC and NS merged). blocks.jsonl stamps every block with mic_clock, 16 kHz mic samples since arm, the
-one timebase all lanes share. Standard library only.
+(16 kHz, AEC and NS merged), and es7210_slot0..3 (24 kHz, the four TDM slots copied inside the codec read,
+before the software reference overwrites slot 1). blocks.jsonl stamps every block with mic_clock, 16 kHz mic
+samples since arm, the one timebase all lanes share. The raw TDM lane does not advance that clock. Standard
+library only.
 """
 
 from __future__ import annotations
@@ -46,13 +48,13 @@ PREAMBLE_MAGIC = b"MDPCM1\0\0"
 _PREAMBLE = struct.Struct("<8s6I")
 _LANE_SUMMARY = struct.Struct("<BBHIIIHH")
 _BLOCK = struct.Struct("<HBBIIIIHH")
-PREAMBLE_BYTES = _PREAMBLE.size + 3 * _LANE_SUMMARY.size
 
 
 class Lane(enum.IntEnum):
     PLAY = 0
     FEED = 1
     POST_AFE = 2
+    RAW_TDM = 3
 
 
 @dataclass(frozen=True)
@@ -65,7 +67,10 @@ LANES: dict[Lane, LaneSpec] = {
     Lane.PLAY: LaneSpec(24000, ("play_pre_i2s",)),
     Lane.FEED: LaneSpec(16000, ("pre_afe_mic", "pre_afe_ref")),
     Lane.POST_AFE: LaneSpec(16000, ("post_afe",)),
+    Lane.RAW_TDM: LaneSpec(24000, ("es7210_slot0", "es7210_slot1", "es7210_slot2", "es7210_slot3")),
 }
+
+PREAMBLE_BYTES = _PREAMBLE.size + len(Lane) * _LANE_SUMMARY.size
 
 FLAGS = {
     1 << 0: "settle_dropped",
@@ -79,7 +84,7 @@ _LINE = re.compile(
     r"(?P<seq>\d+)/(?P<total>\d+) (?P<crc>[0-9a-f]{8}) (?P<data>[A-Za-z0-9+/=]+)"
     r"|begin fmt=(?P<fmt>\S+) bytes=(?P<begin_bytes>\d+) chunks=(?P<begin_total>\d+)"
     r"|end (?P<end_total>\d+) (?P<end_bytes>\d+) (?P<end_crc>[0-9a-f]{8}) mic=(?P<mic>\d+)"
-    r" blocks=(?P<blocks>\d+,\d+,\d+) drops=(?P<drops>\d+,\d+,\d+) cut=(?P<cut>\d+,\d+,\d+)"
+    r" blocks=(?P<blocks>\d+(?:,\d+){3}) drops=(?P<drops>\d+(?:,\d+){3}) cut=(?P<cut>\d+(?:,\d+){3})"
     r"|failed reason=(?P<reason>[a-z_]+)"
     r"|(?P<armed>armed) "
     r")"
@@ -392,7 +397,7 @@ def verify(t: Transcript) -> Verdict:
 
     checks[Check.NO_DROPS] = all(s.drops == 0 for s in summaries)
     if not checks[Check.NO_DROPS]:
-        details.append("drops " + ",".join(str(s.drops) for s in summaries) + " (play, feed, post_afe)")
+        details.append("drops " + ",".join(str(s.drops) for s in summaries) + " (play, feed, post_afe, raw_tdm)")
     if any(s.cut for s in summaries):
         details.append("cut " + ",".join(str(s.cut) for s in summaries) + " (a block raced the seal; reported only)")
     return verdict

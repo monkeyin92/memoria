@@ -5,6 +5,7 @@
 //   feed <frames> <channels> <flags> <now_us>  mic = running counter, ref = its negation
 //   post <samples> <flags> <now_us>
 //   play <samples> <rate> <flags> <now_us>
+//   raw <frames> <now_us>                     four ES7210 slots, constants 10..13; does not move mic clock
 //   tick <now_us>                              -> sealed | -
 //   dump                                       -> the PCMD lines, or one failed line
 //   state                                      -> idle | rec | sealed | dumping
@@ -121,6 +122,15 @@ int main() {
         } else if (std::sscanf(line, "play %lu %d %lu %lld", &frames, &rate, &flags, &now) == 4) {
             Mono(g_play, frames, pcm);
             g_recorder.RecordPlay(pcm.data(), frames, rate, static_cast<std::uint8_t>(flags), now);
+        } else if (std::sscanf(line, "raw %lu %lld", &frames, &now) == 2) {
+            pcm.resize(frames * 4);
+            for (unsigned long i = 0; i < frames; ++i) {
+                pcm[i * 4 + 0] = 10;
+                pcm[i * 4 + 1] = 11;
+                pcm[i * 4 + 2] = 12;
+                pcm[i * 4 + 3] = 13;
+            }
+            g_recorder.RecordRawTdm(pcm.data(), frames, 4, now);
         } else if (std::sscanf(line, "tick %lld", &now) == 1) {
             std::printf("%s\n", g_recorder.Tick(now) ? "sealed" : "-");
         } else if (std::strcmp(line, "dump") == 0) {

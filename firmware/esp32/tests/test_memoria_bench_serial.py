@@ -358,18 +358,19 @@ def test_the_status_log_line_is_written_by_the_animation_task_only() -> None:
     assert callers == [DISPLAY_CC.name]
 
 
-def test_the_bench_manifest_is_the_product_manifest_plus_the_two_bench_options() -> None:
+def test_the_bench_manifest_is_the_product_manifest_plus_the_bench_options() -> None:
     product = json.loads(_read(BOARD / "config.json"))
     bench = json.loads(_read(BOARD / "config.bench.json"))
     product_options = product["builds"][0]["sdkconfig_append"]
     assert not any(
-        "BENCH" in option or "SNAPSHOT" in option or "KEEP_AWAKE" in option
+        "BENCH" in option or "SNAPSHOT" in option or "KEEP_AWAKE" in option or "HEAP_POISONING" in option
         for option in product_options
     )
     assert bench["builds"][0]["sdkconfig_append"] == [
         *product_options,
         "CONFIG_MEMORIA_BENCH_SERIAL=y",
         "CONFIG_LV_USE_SNAPSHOT=y",
+        "CONFIG_HEAP_POISONING_COMPREHENSIVE=y",
     ]
     bench["builds"][0]["sdkconfig_append"] = product_options
     assert bench == product  # the build name stays the board's: the protocol hello reports it

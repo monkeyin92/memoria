@@ -43,13 +43,15 @@ def test_product_and_bench_manifests_omit_keep_awake() -> None:
     assert not any("KEEP_AWAKE" in option for option in product_options + bench_options)
 
 
-def test_keep_awake_manifest_is_the_product_manifest_plus_one_line() -> None:
+def test_keep_awake_manifest_is_the_product_manifest_plus_keep_awake_and_heap_poisoning() -> None:
     product = json.loads(_read(BOARD / "config.json"))
     keep = json.loads(_read(BOARD / "config.keep-awake.json"))
     product_options = product["builds"][0]["sdkconfig_append"]
+    assert "CONFIG_HEAP_POISONING_COMPREHENSIVE=y" not in product_options
     assert keep["builds"][0]["sdkconfig_append"] == [
         *product_options,
         "CONFIG_MEMORIA_KEEP_AWAKE=y",
+        "CONFIG_HEAP_POISONING_COMPREHENSIVE=y",
     ]
     keep["builds"][0]["sdkconfig_append"] = product_options
     assert keep == product
@@ -142,7 +144,7 @@ def test_scripts_select_the_keep_awake_profile_and_keep_it_off_the_product() -> 
     assert flash.index("tree_is_keep_awake") < flash.index('idf.py -p "$port" flash')
     assert '["MEMORIA_BENCH_SERIAL", "MEMORIA_KEEP_AWAKE"]' in check
     assert "config.json and config.bench.json must omit MEMORIA_KEEP_AWAKE" in check
-    assert "config.keep-awake.json must be config.json plus CONFIG_MEMORIA_KEEP_AWAKE=y" in check
+    assert "config.keep-awake.json must be config.json plus CONFIG_MEMORIA_KEEP_AWAKE=y and heap poisoning" in check
     assert "this is not a keep-awake build" in check
 
 

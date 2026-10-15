@@ -1,0 +1,28 @@
+diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
+--- a/main/audio/audio_service.cc
++++ b/main/audio/audio_service.cc
+@@ -36,6 +36,9 @@
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
+ #include "memoria_software_aec_ref.h"
+ #endif
++#if CONFIG_HEAP_POISONING_COMPREHENSIVE
++#include <esp_heap_caps.h>
++#endif
+ 
+ #define TAG "AudioService"
+ 
+@@ -1001,7 +1004,14 @@
+ }
+ 
+ void AudioService::PlaySound(const std::string_view& ogg) {
++#if CONFIG_HEAP_POISONING_COMPREHENSIVE
++    // The USB-wake crash was a later malloc on a heap smashed earlier.
++    // Name the bad block here, before make_unique<AudioStreamPacket>.
++    if (!heap_caps_check_integrity_all(true)) {
++        ESP_LOGE(TAG, "heap integrity failed before PlaySound");
++    }
++#endif
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
+     input_settle_.NoteLocalSound(static_cast<uint64_t>(esp_timer_get_time() / 1000));
+ #endif
+     if (!codec_->output_enabled()) {

@@ -308,6 +308,41 @@ async def test_a_minor_wake_is_refused_when_today_is_spent_or_unknown(
     assert context.standby_after_playback is True
 
 
+class _MissedIdleSession(MediaSessionProjectionMixin, MediaOutputStreamMixin):
+    """The device can finish the clip before the idle waiter sees the busy bit."""
+
+    def __init__(self) -> None:
+        self.enqueued: list[str] = []
+
+    async def _speak_allowlisted_bridge_phrase(
+        self, context: Any, phrase: str, *, require_idle_input: bool = False
+    ) -> bool:
+        del context, require_idle_input
+        self.enqueued.append(phrase)
+        return True
+
+    async def _wait_for_output_idle(self, context: Any, *, wait_for_start: bool = False) -> bool:
+        del context, wait_for_start
+        return False
+
+
+@pytest.mark.asyncio
+async def test_a_played_limit_line_is_logged_when_the_idle_wait_misses(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+    session = _MissedIdleSession()
+    context = _context(_profile(daily_chat_seconds="2700"))
+    context.runtime.open_assistant_floor = lambda: None
+
+    assert await session._speak_terminal_phrase(context, MINOR_DAILY_LIMIT_PHRASE) is True
+
+    assert session.enqueued == [MINOR_DAILY_LIMIT_PHRASE]
+    assert "fixed_phrase_played phrase_id=minor_daily_limit session=ses-limits" in caplog.text
+    assert MINOR_DAILY_LIMIT_PHRASE not in caplog.text
+    assert context.standby_after_playback is True
+
+
 @pytest.mark.asyncio
 async def test_daily_limit_logs_the_phrase_id_and_does_not_open_listening(
     caplog: pytest.LogCaptureFixture,

@@ -51,6 +51,10 @@ public:
     // button-only allowlist does not. A crisis generation whose guardian pin
     // is unconfirmed also suppresses it.
     bool StopKeywordMayArm() const;
+    // One serial line at every speaking entry. armed is the detector actually
+    // running. detector_missing means the session allowed 「停」 but MultiNet
+    // did not start (the model is not in this image).
+    void LogStopArmAtSpeaking(bool armed, bool detector_missing) const;
     // StopKeywordMayArm() and a generation is actually playing audio.
     bool LocalStopKeywordArmed();
     // generation.completed reason standby_after_playback: the next tts stop

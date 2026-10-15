@@ -16,9 +16,10 @@ usage() {
     cat <<'EOF'
 Usage: build.sh [--clean] [--bench] [--keep-awake] [--language LOCALE] [--wake-word MODEL|disabled] [--no-idf-install]
 
-The product build uses zh-CN. Board config disables keyword wake
-(CONFIG_WAKE_WORD_DISABLED); pass --wake-word only to override for a
-diagnostic image. The upstream build.py still performs the real merge-bin.
+The product build uses zh-CN. Idle keyword wake stays off (tap only).
+The image still packages MultiNet6 so spoken 「停」 can arm during
+playback. Pass --wake-word only to override the model for a diagnostic
+image. The upstream build.py still performs the real merge-bin.
 
 --bench builds the test-rig image from the board's config.bench.json: the
 product build plus CONFIG_MEMORIA_BENCH_SERIAL (the USB console also answers

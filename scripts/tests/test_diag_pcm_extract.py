@@ -36,10 +36,10 @@ SCENARIO = [
     "dump",
 ]
 
-# Byte offsets of the scenario's blocks: 92-byte preamble, then play (2 x 24+2880), feed (3 x 24+640),
-# post_afe (2 x 24+1024).
-PLAY_2 = 92 + 2904
-FEED_0 = 92 + 2 * 2904
+# Byte offsets of the scenario's blocks: 112-byte preamble (4 lane summaries), then play (2 x 24+2880),
+# feed (3 x 24+640), post_afe (2 x 24+1024). The raw TDM lane is empty in this scenario.
+PLAY_2 = 112 + 2904
+FEED_0 = 112 + 2 * 2904
 POST_0 = FEED_0 + 3 * 664
 POST_2 = POST_0 + 1048
 MIC_CLOCK, LANE_SEQ, LANE_SAMPLE = 12, 4, 8
@@ -112,7 +112,9 @@ def end_tail(lines: list[str]) -> str:
 def test_an_intact_journal_passes_every_check_and_exports_sample_exact_channels(tool, tmp_path) -> None:
     lines = run(tool, *SCENARIO)
     assert lines[0] == "ok" and lines[1] == "sealed"
-    assert pcmd(lines)[-1].endswith("end 27 9988 " + pcmd(lines)[-1].split()[5] + " mic=480 blocks=2,3,2 drops=0,0,0 cut=0,0,0")
+    assert pcmd(lines)[-1].endswith(
+        "end 27 10008 " + pcmd(lines)[-1].split()[5] + " mic=480 blocks=2,3,2,0 drops=0,0,0,0 cut=0,0,0,0"
+    )
 
     (t,) = extract.collect(log_of(lines)).values()
     verdict = extract.export(t, tmp_path)
@@ -141,10 +143,48 @@ def test_an_intact_journal_passes_every_check_and_exports_sample_exact_channels(
     manifest = json.loads((tmp_path / "manifest.json").read_text())
     assert manifest["intact"] is True
     assert manifest["timebase"] == "mic_clock@16000"
-    assert [lane["channels"] for lane in manifest["lanes"]] == [["play_pre_i2s"], ["pre_afe_mic", "pre_afe_ref"], ["post_afe"]]
+    assert [lane["channels"] for lane in manifest["lanes"]] == [
+        ["play_pre_i2s"],
+        ["pre_afe_mic", "pre_afe_ref"],
+        ["post_afe"],
+        ["es7210_slot0", "es7210_slot1", "es7210_slot2", "es7210_slot3"],
+    ]
     assert sorted(manifest["files"]) == sorted(
-        ["blocks.jsonl", "play_pre_i2s.wav", "pre_afe_mic.wav", "pre_afe_ref.wav", "post_afe.wav"]
+        [
+            "blocks.jsonl",
+            "play_pre_i2s.wav",
+            "pre_afe_mic.wav",
+            "pre_afe_ref.wav",
+            "post_afe.wav",
+            "es7210_slot0.wav",
+            "es7210_slot1.wav",
+            "es7210_slot2.wav",
+            "es7210_slot3.wav",
+        ]
     )
+    assert wav("es7210_slot0") == (24000, ())
+
+
+def test_raw_tdm_exports_four_slots_and_does_not_move_the_mic_clock(tool, tmp_path) -> None:
+    lines = run(tool, "arm 00000041 0", "raw 4 10", "tick 3000000", "dump")
+    assert lines[0] == "ok" and lines[1] == "sealed"
+    end = pcmd(lines)[-1]
+    assert " mic=0 " in end
+    assert "blocks=0,0,0,1" in end
+    (t,) = extract.collect(log_of(lines)).values()
+    verdict = extract.export(t, tmp_path)
+    assert verdict.intact, verdict.details
+
+    def wav(name: str) -> tuple[int, ...]:
+        with wave.open(str(tmp_path / f"{name}.wav")) as handle:
+            frames = handle.readframes(handle.getnframes())
+            assert handle.getframerate() == 24000
+            return struct.unpack(f"<{len(frames) // 2}h", frames)
+
+    assert wav("es7210_slot0") == (10, 10, 10, 10)
+    assert wav("es7210_slot1") == (11, 11, 11, 11)
+    assert wav("es7210_slot2") == (12, 12, 12, 12)
+    assert wav("es7210_slot3") == (13, 13, 13, 13)
 
 
 def test_a_re_dump_of_the_same_journal_is_one_journal(tool) -> None:

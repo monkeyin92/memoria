@@ -300,7 +300,8 @@ class FakeRobot(FakePort):
         elif payload == b"pcmarm\n":
             answer = [
                 "I (9) MemoriaDiagPcm: PCMD 0000abcd armed window_ms=3000 "
-                "lanes=play_pre_i2s@24000x1,pre_afe_mic+pre_afe_ref@16000x2,post_afe@16000x1 psram_free=7000000"
+                "lanes=play_pre_i2s@24000x1,pre_afe_mic+pre_afe_ref@16000x2,post_afe@16000x1,"
+                "es7210_slot0+es7210_slot1+es7210_slot2+es7210_slot3@24000x4 psram_free=7000000"
             ]
         elif payload == b"pcmdump\n":
             answer = ["I (9) MemoriaDiagPcm: PCMD 0000abcd failed reason=recording"]

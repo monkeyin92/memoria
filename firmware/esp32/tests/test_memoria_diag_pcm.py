@@ -44,6 +44,21 @@ def _run(tool: pathlib.Path, *lines: str) -> list[str]:
     return done.stdout.splitlines()
 
 
+def test_raw_tdm_is_copied_inside_the_codec_read_on_bench_only() -> None:
+    patch = (FIRMWARE_ROOT / "overlay" / "patches" / "0041-memoria-bench-raw-tdm.patch").read_text(
+        encoding="utf-8"
+    )
+    assert patch.count("#if CONFIG_MEMORIA_BENCH_SERIAL") >= 3
+    read = patch[patch.index("int BoxAudioCodec::Read") :]
+    assert read.index("memoria::diag::RecordRawTdm") < read.index(
+        "esp_codec_dev_read(input_dev_, (void*)dest"
+    )
+    product = (FIRMWARE_ROOT / "overlay/files/main/boards/memoria/esp-vocat/config.json").read_text(
+        encoding="utf-8"
+    )
+    assert "CONFIG_MEMORIA_BENCH_SERIAL" not in product
+
+
 def test_the_header_stays_free_of_esp_dependencies() -> None:
     source = HEADER.read_text(encoding="utf-8")
     code = re.sub(r"//[^\n]*", "", source)
@@ -96,10 +111,10 @@ def test_a_rearm_after_the_seal_starts_a_fresh_journal(tool: pathlib.Path) -> No
     )
     assert lines[:4] == ["ok", "sealed", "ok", "sealed"]
     begin, *_, end = [line for line in lines if line.startswith("PCMD ")]
-    assert begin == "PCMD 00000021 begin fmt=memoria-diagpcm-v1 bytes=756 chunks=2"
-    assert end.endswith("mic=160 blocks=0,1,0 drops=0,0,0 cut=0,0,0")
+    assert begin == "PCMD 00000021 begin fmt=memoria-diagpcm-v1 bytes=776 chunks=3"
+    assert end.endswith("mic=160 blocks=0,1,0,0 drops=0,0,0,0 cut=0,0,0,0")
 
 
 def test_a_reference_channel_that_is_missing_is_a_drop_not_a_relabel(tool: pathlib.Path) -> None:
     lines = _run(tool, "arm 00000030 0", "feed 160 1 0 10", "tick 3000000", "dump")
-    assert lines[-1].endswith("mic=160 blocks=0,0,0 drops=0,1,0 cut=0,0,0")
+    assert lines[-1].endswith("mic=160 blocks=0,0,0,0 drops=0,1,0,0 cut=0,0,0,0")
