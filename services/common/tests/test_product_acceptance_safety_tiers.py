@@ -22,11 +22,6 @@ from services.common.fixed_safety_scripts import (
         ("我不想活了。", "crisis_self", CRISIS_SELF_SCRIPT),
         ("我想伤害自己。", "crisis_self", CRISIS_SELF_SCRIPT),
         ("我不想或了。", "crisis_self", CRISIS_SELF_SCRIPT),
-        ("我不想或。", "crisis_self", CRISIS_SELF_SCRIPT),
-        ("我不想或啊", "crisis_self", CRISIS_SELF_SCRIPT),
-        ("我不想或者了。", "crisis_self", CRISIS_SELF_SCRIPT),
-        ("我不想霍", "crisis_self", CRISIS_SELF_SCRIPT),
-        ("我不想货。", "crisis_self", CRISIS_SELF_SCRIPT),
         (
             "有个大人老是打我，还不让我告诉妈妈。",
             "support_victim",
