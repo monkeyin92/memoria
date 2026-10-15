@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from services.control_api.app.offline_stories import OFFLINE_STORIES
 
 FIRMWARE_STORIES = (
