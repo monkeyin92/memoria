@@ -2,8 +2,7 @@
 
 ``dialogue_summary`` rows are deleted once ``retention_expires_at`` passes (30
 days). ``child_archive`` rows are deleted for subjects idle past
-``ARCHIVE_IDLE_TTL`` (180 days). The 30-day and 7-day parent reminders before
-an archive purge are not sent yet; the purge runs anyway.
+``ARCHIVE_IDLE_TTL`` (180 days).
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 
 import asyncpg
 
@@ -24,12 +23,24 @@ from services.guardian.child_memory import (
     KIND_DIALOGUE_SUMMARY,
     ChildMemoryKind,
 )
-from services.guardian.subject_activity import SubjectActivityStore
-from services.memory_scope.child_layers import ChildLayerStore
 
 logger = logging.getLogger(__name__)
 
 CHILD_LAYER_RETENTION_INTERVAL_S = 86400.0
+
+
+class ChildLayerExpiryStore(Protocol):
+    async def kind_subjects(
+        self, kind: ChildMemoryKind, *, only_expired: bool = False
+    ) -> tuple[str, ...]: ...
+
+    async def expire_due_summaries(self, *, subject_id: str) -> Mapping[str, Any]: ...
+
+    async def purge_archive(self, *, subject_id: str) -> Mapping[str, Any]: ...
+
+
+class SubjectActivityReader(Protocol):
+    async def last_active_for(self, subjects: Sequence[str]) -> dict[str, datetime]: ...
 
 
 class IdleActivityUnavailable(RuntimeError):
@@ -63,13 +74,13 @@ class ExpirySummary:
         )
 
 
-async def due_summary_subjects(layers: ChildLayerStore) -> tuple[str, ...]:
+async def due_summary_subjects(layers: ChildLayerExpiryStore) -> tuple[str, ...]:
     return await layers.kind_subjects(KIND_DIALOGUE_SUMMARY, only_expired=True)
 
 
 async def idle_archive_subjects(
-    layers: ChildLayerStore,
-    activity: SubjectActivityStore | None,
+    layers: ChildLayerExpiryStore,
+    activity: SubjectActivityReader | None,
     *,
     now: datetime,
 ) -> list[str]:
@@ -93,7 +104,7 @@ async def idle_archive_subjects(
 
 
 async def expire_due_summaries(
-    layers: ChildLayerStore, subjects: Sequence[str]
+    layers: ChildLayerExpiryStore, subjects: Sequence[str]
 ) -> list[dict[str, Any]]:
     return await _each(
         subjects, lambda subject_id: layers.expire_due_summaries(subject_id=subject_id)
@@ -101,7 +112,7 @@ async def expire_due_summaries(
 
 
 async def expire_idle_archives(
-    layers: ChildLayerStore, subjects: Sequence[str]
+    layers: ChildLayerExpiryStore, subjects: Sequence[str]
 ) -> list[dict[str, Any]]:
     return await _each(subjects, lambda subject_id: layers.purge_archive(subject_id=subject_id))
 
@@ -110,7 +121,6 @@ async def _each(
     subjects: Sequence[str],
     erase: Callable[[str], Awaitable[Mapping[str, Any]]],
 ) -> list[dict[str, Any]]:
-    # One subject that cannot be erased must not starve every subject after it.
     results: list[dict[str, Any]] = []
     for subject_id in subjects:
         try:
@@ -125,8 +135,8 @@ class ChildLayerRetentionWorker:
 
     def __init__(
         self,
-        layers: ChildLayerStore,
-        activity: SubjectActivityStore | None,
+        layers: ChildLayerExpiryStore,
+        activity: SubjectActivityReader | None,
         *,
         interval_s: float = CHILD_LAYER_RETENTION_INTERVAL_S,
     ) -> None:
@@ -142,8 +152,6 @@ class ChildLayerRetentionWorker:
             self._task = asyncio.create_task(self._run(), name="child-layer-retention")
 
     async def stop(self) -> None:
-        # Cancelling mid-pass is safe: each subject erase is one transaction and
-        # the next pass deletes whatever is still due.
         if self._task is not None:
             self._task.cancel()
             with suppress(asyncio.CancelledError):

@@ -7,7 +7,11 @@ from typing import Any
 
 import asyncpg
 import pytest
-from services.guardian.child_memory import KIND_CHILD_ARCHIVE, KIND_DIALOGUE_SUMMARY
+from services.guardian.child_memory import (
+    KIND_CHILD_ARCHIVE,
+    KIND_DIALOGUE_SUMMARY,
+    ChildMemoryKind,
+)
 from services.memory_scope.child_layer_retention import (
     ChildLayerRetentionWorker,
     ExpirySummary,
@@ -38,7 +42,9 @@ class _Layers:
         self._archived = tuple(archived)
         self._broken = broken
 
-    async def kind_subjects(self, kind: str, *, only_expired: bool = False) -> tuple[str, ...]:
+    async def kind_subjects(
+        self, kind: ChildMemoryKind, *, only_expired: bool = False
+    ) -> tuple[str, ...]:
         if kind == KIND_DIALOGUE_SUMMARY:
             assert only_expired is True
             return self._due
@@ -73,7 +79,7 @@ async def test_idle_archive_subjects_keeps_idle_and_never_active_subjects() -> N
         }
     )
 
-    idle = await idle_archive_subjects(layers, activity, now=NOW)  # type: ignore[arg-type]
+    idle = await idle_archive_subjects(layers, activity, now=NOW)
 
     assert idle == ["boundary", "old", "missing"]
 
@@ -85,13 +91,13 @@ async def test_idle_archive_subjects_fails_closed_without_activity(
     layers = _Layers(archived=("old",))
 
     with pytest.raises(IdleActivityUnavailable):
-        await idle_archive_subjects(layers, activity, now=NOW)  # type: ignore[arg-type]
+        await idle_archive_subjects(layers, activity, now=NOW)
 
 
 async def test_one_subject_that_cannot_be_purged_does_not_stop_the_rest() -> None:
     layers = _Layers(broken=frozenset({"b"}))
 
-    results = await expire_idle_archives(layers, ["a", "b", "c"])  # type: ignore[arg-type]
+    results = await expire_idle_archives(layers, ["a", "b", "c"])
 
     assert [result["subject_id"] for result in results] == ["a", "b", "c"]
     assert results[1]["error"] == "RuntimeError: child_archive remaining after purge"
@@ -109,7 +115,7 @@ async def test_worker_logs_counts_and_never_subject_ids(
 ) -> None:
     layers = _Layers(due=("child-due",), archived=("child-idle", "child-active"))
     activity = _Activity({"child-active": NOW, "child-idle": NOW - timedelta(days=365)})
-    worker = ChildLayerRetentionWorker(layers, activity)  # type: ignore[arg-type]
+    worker = ChildLayerRetentionWorker(layers, activity)
 
     with caplog.at_level(logging.INFO, logger="services.memory_scope.child_layer_retention"):
         summaries = await worker.run_once(now=NOW)
@@ -131,7 +137,7 @@ async def test_worker_skips_archives_but_still_expires_summaries_without_activit
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     layers = _Layers(due=("child-due",), archived=("child-idle",))
-    worker = ChildLayerRetentionWorker(layers, _Activity(None))  # type: ignore[arg-type]
+    worker = ChildLayerRetentionWorker(layers, _Activity(None))
 
     with caplog.at_level(logging.INFO, logger="services.memory_scope.child_layer_retention"):
         summaries = await worker.run_once(now=NOW)
@@ -145,4 +151,4 @@ async def test_worker_skips_archives_but_still_expires_summaries_without_activit
 
 async def test_worker_rejects_a_non_positive_interval() -> None:
     with pytest.raises(ValueError):
-        ChildLayerRetentionWorker(_Layers(), None, interval_s=0)  # type: ignore[arg-type]
+        ChildLayerRetentionWorker(_Layers(), None, interval_s=0)

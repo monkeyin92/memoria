@@ -498,7 +498,7 @@ async def test_recall_embeds_a_redacted_query_and_matches_lexically_on_the_raw_o
         await catalog.compile_pending(limit=1000)
         embedder.inputs.clear()
 
-        async def keyword_bonus_events(text: str) -> set[str]:
+        async def search_scores(text: str) -> dict[str, float]:
             result = await catalog.search(
                 MemorySearchQuery(
                     account_id=account_id,
@@ -507,17 +507,16 @@ async def test_recall_embeds_a_redacted_query_and_matches_lexically_on_the_raw_o
                     include_candidates=True,
                 )
             )
-            # Identical vectors: 0.45 semantic + 0.2 metadata, plus the keyword bonus if any.
             return {
-                item.source_event_id
+                item.source_event_id: item.score
                 for item in result.items
-                if item.score - (0.45 + 0.2 * (0.35 * item.stability + 0.65 * item.salience)) > 0.1
+                if item.source_event_id in event_ids
             }
 
-        # The stored number matches lexically; a different number does not, which a
-        # redacted lexical query ("[手机号]" for both) could not tell apart.
-        assert await keyword_bonus_events("13812345678") == {event_ids[0]}
-        assert await keyword_bonus_events("13900000000") == set()
+        matched = await search_scores("13812345678")
+        assert matched[event_ids[0]] > matched[event_ids[1]]
+        unmatched = await search_scores("13900000000")
+        assert unmatched[event_ids[0]] == pytest.approx(unmatched[event_ids[1]])
         assert embedder.inputs == ["[手机号]", "[手机号]"]
     finally:
         await connection.execute(

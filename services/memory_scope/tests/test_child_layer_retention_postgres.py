@@ -15,6 +15,7 @@ from services.guardian.child_memory import (
     KIND_CHILD_ARCHIVE,
     KIND_DIALOGUE_SUMMARY,
     ArchiveFact,
+    ChildMemoryKind,
     DialogueSummary,
 )
 from services.guardian.subject_activity import SubjectActivityStore
@@ -79,10 +80,10 @@ async def _seed(store: ChildLayerStore) -> None:
         )
 
 
-async def _texts(store: ChildLayerStore, subject_id: str, kind: str) -> list[str]:
+async def _texts(store: ChildLayerStore, subject_id: str, kind: ChildMemoryKind) -> list[str]:
     records = await store.list(
         subject_id=subject_id,
-        kind=kind,  # type: ignore[arg-type]
+        kind=kind,
         viewer_subject_id=PARENT,
     )
     return [record.text for record in records]

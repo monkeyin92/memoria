@@ -132,8 +132,7 @@ _RETIRED_KEYS = frozenset(
         # /v1/evolution (and its validator token) was removed on 2026-09-28;
         # it had no caller.
         "MEMORIA_EVOLUTION_VALIDATOR_TOKEN",
-        # Never read by any service; redaction became unconditional at every
-        # third-party send on 2026-10-15.
+        # Never read; redaction is unconditional at every third-party send.
         "PII_REDACTION_ENABLED",
         # The agent-side persona capsule fetch and its control endpoint were
         # removed on 2026-09-26; persona reaches the agent via response-plan.

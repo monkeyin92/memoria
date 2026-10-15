@@ -60,7 +60,7 @@ def redact_pii(text: str) -> str:
     """Replace common Chinese PII and credential shapes with stable markers.
 
     Idempotent. Never changes the crisis or realtime-lookup decision of an
-    utterance (pinned by the glue corpus in services/common/tests/test_redaction.py).
+    utterance.
     """
     redacted = text
     for pattern, replacement in _PII_PATTERNS:

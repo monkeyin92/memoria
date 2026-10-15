@@ -1,8 +1,4 @@
-"""Every outbound semantic classifier sends redacted text to its provider.
-
-Interruption has no outbound classifier: ``InterruptSemanticVerdict`` is a
-local enum and nothing posts interrupt text, so it is not in this table.
-"""
+"""Every outbound semantic classifier sends redacted text to its provider."""
 
 from __future__ import annotations
 
@@ -58,7 +54,6 @@ async def _sent_user_content(classifier_type: type[Any], config_type: type[Any],
 async def test_classifier_redacts_before_the_length_bound(
     classifier_type: type[Any], config_type: type[Any]
 ) -> None:
-    # Slicing first would cut the number to "345678" and send it unredacted.
     content = await _sent_user_content(classifier_type, config_type, "13812345678" + "好" * 506)
 
     assert content == "[手机号]" + "好" * 506

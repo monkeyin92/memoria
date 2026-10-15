@@ -57,10 +57,6 @@ def test_the_exemption_list_names_only_real_settings() -> None:
 
 
 def test_retired_keys_are_gone_from_both_templates() -> None:
-    """split_production_env still accepts retired keys from old operator files
-    and routes them nowhere, but the templates must not advertise them again.
-    """
-
     aliases = _aliases(ControlSettings) | _aliases(AgentSettings)
     # A retired key that a service still reads would be silently dropped.
     assert not set(_RETIRED_KEYS) & aliases
