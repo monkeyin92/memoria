@@ -15,7 +15,8 @@ _SAFE_REPLY = re.compile(
     r"^(?:今天是\d{4}年\d{1,2}月\d{1,2}日，星期[一二三四五六日]。|"
     r"现在是北京时间\d{1,2}点\d{2}分。|"
     r"现在是\d{4}年\d{1,2}月\d{1,2}日，星期[一二三四五六日]，北京时间\d{1,2}点\d{2}分。|"
-    r"你想查哪个城市的天气？)$"
+    + re.escape(ASK_WEATHER_CITY_REPLY)
+    + r")$"
 )
 _WEATHER_WITHOUT_LOCATION = frozenset(
     {
@@ -160,7 +161,7 @@ def fixed_realtime_reply(*, query: str, now: datetime) -> str | None:
     if asks_time and not has_live_topic:
         return f"现在是北京时间{now.hour}点{now.minute:02d}分。"
     if compact in _WEATHER_WITHOUT_LOCATION:
-        return "你想查哪个城市的天气？"
+        return ASK_WEATHER_CITY_REPLY
     return None
 
 

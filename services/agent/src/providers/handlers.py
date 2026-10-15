@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from services.agent.src.providers.domestic_weather import DomesticWeather, build_domestic_weather
 from services.agent.src.providers.llm_failover import FailoverChatModel
 from services.agent.src.providers.qwen_realtime_search import (
     QwenRealtimeSearch,
@@ -21,17 +22,30 @@ if TYPE_CHECKING:
 
 
 class PublicRealtimeSearch:
-    """Answer public live questions through Qwen."""
+    """Answer weather from the domestic source when configured. Everything else goes to Qwen."""
 
-    def __init__(self, *, qwen: QwenRealtimeSearch | None) -> None:
+    def __init__(
+        self,
+        *,
+        weather: DomesticWeather | None,
+        qwen: QwenRealtimeSearch | None,
+    ) -> None:
+        self.weather = weather
         self.qwen = qwen
+        self.model = "+".join(source.model for source in (weather, qwen) if source is not None)
 
     async def resolve(self, *, query: str) -> str | None:
+        if self.weather is not None:
+            answer = await self.weather.resolve(query=query)
+            if answer is not None:
+                return answer
         if self.qwen is None:
             return None
         return await self.qwen.resolve(query=query)
 
     async def aclose(self) -> None:
+        if self.weather is not None:
+            await self.weather.aclose()
         if self.qwen is not None:
             await self.qwen.aclose()
 
@@ -122,4 +136,4 @@ def build_realtime_search_resolver(*, settings: AgentSettings) -> PublicRealtime
                 model=str(getattr(settings, "qwen_deep_model", "qwen-plus")),
             )
         )
-    return PublicRealtimeSearch(qwen=qwen)
+    return PublicRealtimeSearch(weather=build_domestic_weather(settings), qwen=qwen)
