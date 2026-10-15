@@ -197,7 +197,7 @@ async def test_phone_beside_an_allowlisted_city_sends_only_that_city(
             {"location": "101190101"},
         ),
     ]
-    assert all(b"13812345678" not in request.url.raw_path for request in requests)
+    assert all("13812345678" not in str(request.url) for request in requests)
     assert all(request.content == b"" for request in requests)
 
 
