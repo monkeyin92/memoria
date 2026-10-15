@@ -46,6 +46,19 @@ test("the daily chat budget shows only when signed as whole minutes in seconds",
       DAY,
     ).dailyChatMinutes;
   assert.equal(dailyFrom([["daily_chat_seconds", "900"]]), 15);
+  const dailyOnly = sessionLimitsFromProfile(
+    profile({
+      obligations: [
+        {
+          code: "MAX_SESSION_SECONDS",
+          params: { max_session_seconds: null, retention_ttl_seconds: null, quiet_hours: null, extras: [["daily_chat_seconds", "1800"]] },
+        },
+      ],
+    }),
+    DAY,
+  );
+  assert.equal(dailyOnly.dailyChatMinutes, 30);
+  assert.equal(dailyOnly.maxSessionMinutes, null);
   assert.equal(dailyFrom([["retention_hint", "x"], ["daily_chat_seconds", "3600"]]), 60);
   for (const extras of [
     [],
