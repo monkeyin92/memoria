@@ -27,7 +27,7 @@ ALLOWED_EDGES: dict[str, frozenset[str]] = {
     ),
     "archive": frozenset({"common", "evolution", "governance"}),
     "companionship": frozenset({"control_api"}),
-    "consent": frozenset({"guardian", "identity", "policy"}),
+    "consent": frozenset({"guardian", "identity", "policy", "voice_profile"}),
     "control_api": frozenset(
         {
             "agent",
@@ -53,7 +53,7 @@ ALLOWED_EDGES: dict[str, frozenset[str]] = {
         }
     ),
     "device_fleet": frozenset({"policy"}),
-    "digital_self": frozenset({"archive", "common", "persona", "self_model"}),
+    "digital_self": frozenset({"archive", "common", "persona", "self_model", "voice_profile"}),
     "evolution": frozenset({"archive", "common"}),
     "governance": frozenset(
         {

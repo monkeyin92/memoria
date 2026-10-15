@@ -119,6 +119,7 @@ _ARCHIVE_CONSENT_SECTIONS: Final[tuple[tuple[str, tuple[str, ...], tuple[str, ..
             "revoked_at",
             "grant_event_id",
             "revoke_event_id",
+            "notice_version",
         ),
     ),
 )

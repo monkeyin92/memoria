@@ -29,6 +29,9 @@ from services.consent.migration.normalizer import (
     normalize_rows,
 )
 from services.guardian.domain import ConsentRecord, GuardianLink
+from services.voice_profile.clone_authority import VoiceCloneAuthority
+
+NOTICE = VoiceCloneAuthority(enabled=True).admit().notice_version
 
 
 class _FakeGuardianSource:
@@ -79,6 +82,7 @@ def legacy_row(
     policy_version: str = "policy-v1",
     binding_clue: str | None = "link_1",
     binding_status: str | None = "active",
+    raw: dict[str, object] | None = None,
 ) -> RawLegacyConsent:
     return RawLegacyConsent(
         source=source,
@@ -95,7 +99,7 @@ def legacy_row(
         policy_version=policy_version,
         binding_clue=binding_clue,
         binding_status=binding_status,
-        raw={},
+        raw={} if raw is None else raw,
     )
 
 
@@ -195,6 +199,7 @@ def test_voice_clone_consent_is_provable_when_self_granted() -> None:
         revoked_at=None,
         grant_event_id="evt_voice_grant",
         revoke_event_id=None,
+        notice_version=NOTICE,
     )
     legacy = list(VoiceCloneConsentAdapter(_FakeVoiceSource((row,))).iter_rows())[0]
     outcome = normalize_row(legacy, now=NOW)
@@ -217,10 +222,61 @@ def test_sensitive_capability_with_non_subject_actor_quarantines() -> None:
         evidence_clue="evt_1",
         binding_clue=None,
         binding_status=None,
+        raw={"notice_version": NOTICE},
     )
     outcome = normalize_row(row, now=NOW)
     assert isinstance(outcome, QuarantineEntry)
     assert outcome.reason == "actor_not_subject_for_sensitive"
+
+
+def test_pre_notice_voice_clone_consent_quarantines() -> None:
+    missing = normalize_row(
+        legacy_row(
+            source="voice_clone",
+            legacy_id="acct_1",
+            subject_clue="acct_1",
+            actor_clue="acct_1",
+            capability_clue="voice_clone",
+            purpose_clue="voice_clone",
+            binding_clue=None,
+            binding_status=None,
+        ),
+        now=NOW,
+    )
+    stamped = normalize_row(
+        legacy_row(
+            source="voice_clone",
+            legacy_id="acct_1",
+            subject_clue="acct_1",
+            actor_clue="acct_1",
+            capability_clue="voice_clone",
+            purpose_clue="voice_clone",
+            binding_clue=None,
+            binding_status=None,
+            raw={"notice_version": "pre-separate-notice"},
+        ),
+        now=NOW,
+    )
+    assert isinstance(missing, QuarantineEntry)
+    assert isinstance(stamped, QuarantineEntry)
+    assert missing.reason == "pre_separate_notice"
+    assert stamped.reason == "pre_separate_notice"
+
+
+def test_revoked_pre_notice_voice_clone_consent_stays_expired() -> None:
+    row = VoiceCloneConsentRow(
+        account_id="acct_1",
+        policy_version="voice-policy-v2",
+        granted_at=datetime(2026, 2, 1, tzinfo=UTC),
+        revoked_at=datetime(2026, 3, 1, tzinfo=UTC),
+        grant_event_id="evt_voice_grant",
+        revoke_event_id="evt_voice_revoke",
+        notice_version="pre-separate-notice",
+    )
+    legacy = list(VoiceCloneConsentAdapter(_FakeVoiceSource((row,))).iter_rows())[0]
+    outcome = normalize_row(legacy, now=NOW)
+    assert isinstance(outcome, QuarantineEntry)
+    assert outcome.reason == "expired_only"
 
 
 def test_raw_audio_consent_is_provable() -> None:

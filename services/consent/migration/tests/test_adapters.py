@@ -174,6 +174,7 @@ def test_voice_clone_adapter_maps_row() -> None:
     assert legacy.granted_at == granted
     assert legacy.revoked_at is None
     assert legacy.policy_version == "voice-policy-v2"
+    assert legacy.raw["notice_version"] == ""
 
 
 def test_voice_clone_adapter_carries_revocation() -> None:

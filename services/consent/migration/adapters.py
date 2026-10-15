@@ -84,6 +84,8 @@ class VoiceCloneConsentRow:
     revoked_at: datetime | None
     grant_event_id: str
     revoke_event_id: str | None
+    #: Separate-notice stamp. Empty does not authorize a clone.
+    notice_version: str = ""
 
 
 class VoiceCloneConsentRowSource(Protocol):
@@ -181,6 +183,7 @@ def map_voice_clone_row(row: VoiceCloneConsentRow) -> RawLegacyConsent:
             "account_id": row.account_id,
             "grant_event_id": row.grant_event_id,
             "revoke_event_id": row.revoke_event_id,
+            "notice_version": row.notice_version,
         },
     )
 
