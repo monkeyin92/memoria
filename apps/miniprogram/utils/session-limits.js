@@ -7,7 +7,6 @@
 const QUIET_HOUR_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 // 设备按北京时间执行休息时段（agent 的 MEMORIA_TIMEZONE 默认 Asia/Shanghai）。
 const DEVICE_UTC_OFFSET_MINUTES = 8 * 60;
-// Parent UI per-session ceiling. Older bindings may still store 90/120; clamp on read only.
 const MAX_SESSION_MINUTES_CAP = 60;
 
 function obligationParams(profile, code) {

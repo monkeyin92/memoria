@@ -1,10 +1,3 @@
-/*
- * Parent home v3 board fields.
- * Limit minutes come from Runtime Profile MAX_SESSION_SECONDS.
- * Used minutes show only when a real tally is passed in, never a fake 0.
- * No battery fields.
- */
-
 const { sessionLimitsFromProfile } = require("./session-limits");
 
 const UNREAD_SAFETY_COPY = "有一条需要你关注的对话";
