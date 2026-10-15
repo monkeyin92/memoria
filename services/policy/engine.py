@@ -293,9 +293,11 @@ def _params(
     )
 
 
+DEFAULT_QUIET_HOURS: Final[tuple[str, str]] = ("21:00", "07:00")
+
 _OBLIGATION_PARAMS: Final[dict[PolicyObligationCode, GeneratedObligationParams]] = {
     "MAX_SESSION_SECONDS": _params(max_session_seconds=1800),
-    "QUIET_HOURS": _params(quiet_hours=("21:30", "06:30")),
+    "QUIET_HOURS": _params(quiet_hours=DEFAULT_QUIET_HOURS),
     "RETENTION_TTL": _params(retention_ttl_seconds=30 * 24 * 3600),
 }
 

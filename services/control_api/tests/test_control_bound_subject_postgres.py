@@ -380,7 +380,7 @@ async def test_self_use_owner_without_verified_age_stays_unconfirmed(
     ("session_params", "expected_limits"),
     [
         # No bind-form values: the policy defaults.
-        (None, (1800, ["21:30", "06:30"])),
+        (None, (1800, ["21:00", "07:00"])),
         # The parent's session length and quiet hours (P0-04 D3).
         ((2700, ("21:00", "07:00")), (2700, ["21:00", "07:00"])),
     ],

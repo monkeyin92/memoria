@@ -45,6 +45,7 @@ from services.identity.domain import (
     IdentityNotFoundError,
 )
 from services.identity.service import IdentityService
+from services.policy.engine import DEFAULT_QUIET_HOURS
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,6 @@ MASCOT_COMPANION_IDS: frozenset[str] = frozenset(
 
 DISPLAY_PROFILE_SCHEMA_VERSION = 1
 _DISPLAY_VERSION_DOMAIN = b"memoria-device-display-profile-v1\0"
-DEFAULT_DISPLAY_QUIET_HOURS: Final[tuple[str, str]] = ("21:00", "07:00")
 _ALL_DAY_QUIET_HOURS: Final[tuple[str, str]] = ("00:00", "23:59")
 
 
@@ -75,7 +75,7 @@ def anti_addiction_quiet_hours(
     if do_not_disturb:
         return _ALL_DAY_QUIET_HOURS
     if night_mode:
-        return consent_quiet_hours or DEFAULT_DISPLAY_QUIET_HOURS
+        return consent_quiet_hours or DEFAULT_QUIET_HOURS
     return None
 
 
@@ -302,7 +302,6 @@ async def resolve_device_display_profile(
 
 
 __all__ = [
-    "DEFAULT_DISPLAY_QUIET_HOURS",
     "DISPLAY_PROFILE_SCHEMA_VERSION",
     "DeviceDisplayProfile",
     "DisplayBindingUnavailable",
