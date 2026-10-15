@@ -693,3 +693,10 @@ def test_idle_clock_is_never_shown_on_the_screen() -> None:
     set_status = set_status[: set_status.index("void MemoriaMascotDisplay::ShowNotification")]
     clock_branch = set_status[: set_status.index('LvglDisplay::SetStatus("");')]
     assert "IsClockText(status)" in clock_branch
+
+
+def test_display_wires_aigc_corner_badge() -> None:
+    display = (BOARD_DIR / "memoria_mascot_display.cc").read_text(encoding="utf-8")
+    assert 'lv_label_set_text(aigc_badge_, "AI")' in display
+    assert "UpdateAigcBadge(phase)" in display
+    assert "0x4A52C9" in display

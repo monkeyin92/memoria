@@ -200,6 +200,8 @@ def test_menu_tap_cycles_items(tool: pathlib.Path) -> None:
 def test_menu_long_press_starts_story(tool: pathlib.Path) -> None:
     lines = _run(tool, "reset", "tap 1000 100 0 1 0", "tap 2000 800 0 1 0")
     assert "offline-menu-start-v1" in lines[3]
+    assert "aigc-notice-story" in lines[3]
+    assert lines[3].index("offline-menu-start-v1") < lines[3].index("aigc-notice-story")
     assert "start_story=1" in lines[3]
     assert lines[4] == "mode=playing item=1"
 
@@ -435,6 +437,10 @@ def test_check_only_passes_with_production_pack() -> None:
     assert fields["production_clips"] == "25"
     assert fields["placeholder_clips"] == "2"
     assert fields["pending_placeholder_clips"] == "2"
+    assert fields["pending_aigc_audit_exceptions"] == "25"
+    assert fields["pending_tts_generation"] == "2"
+    assert "TODO: pending TTS generation for offline_lines/aigc-notice-story.ogg" in completed.stderr
+    assert "TODO: pending TTS generation for offline_lines/aigc-notice-bedtime.ogg" in completed.stderr
 
 
 def test_default_run_never_writes_audio_and_converges(tmp_path: pathlib.Path) -> None:
@@ -543,13 +549,15 @@ def test_manifests_record_production_voice() -> None:
 def test_offline_line_manifest_matches_pack() -> None:
     manifest = json.loads((BOARD_ASSETS / "offline_lines" / "index.json").read_text(encoding="utf-8"))
     ids = [entry["id"] for entry in manifest["lines"]]
-    assert len(ids) == 22
+    assert len(ids) == 24
     assert "offline-chat-request-v1" not in ids
     assert ids[0] == "offline-wake-no-network-v1"
     assert ids[15] == "offline-menu-item-03-v2"
     assert ids[19] == "offline-menu-idle-v1"
     assert ids[20] == "llm_unavailable"
     assert ids[21] == "llm_thinking"
+    assert ids[22] == "aigc-notice-story"
+    assert ids[23] == "aigc-notice-bedtime"
     by_id = {entry["id"]: entry for entry in manifest["lines"]}
     assert by_id["llm_unavailable"]["placeholder"] is True
     assert by_id["llm_unavailable"]["text"] == (
@@ -557,11 +565,18 @@ def test_offline_line_manifest_matches_pack() -> None:
     )
     assert by_id["llm_thinking"]["placeholder"] is True
     assert by_id["llm_thinking"]["text"] == "嗯，我想一想。"
+    assert by_id["aigc-notice-story"]["text"] == "下面是 AI 合成的声音给你讲故事。"
+    assert by_id["aigc-notice-bedtime"]["text"] == "AI 合成的声音陪你睡觉啦。"
+    assert by_id["aigc-notice-story"]["pending_tts"] is True
+    assert by_id["aigc-notice-bedtime"]["pending_tts"] is True
     for entry in manifest["lines"]:
         if entry["id"] not in {"llm_unavailable", "llm_thinking"}:
             assert entry["placeholder"] is False
         filename = entry["file"]
         assert len(filename) <= 32
+        if entry.get("pending_tts"):
+            assert not (BOARD_ASSETS / "offline_lines" / filename).exists()
+            continue
         assert (BOARD_ASSETS / "offline_lines" / filename).is_file()
 
 
