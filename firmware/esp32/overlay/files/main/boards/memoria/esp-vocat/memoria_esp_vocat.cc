@@ -722,6 +722,11 @@ private:
     void TickOfflineMenuNetwork() {
         const std::uint32_t now_ms =
             static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+        bool play_llm_unavailable = false;
+        if (memoria::OfflineMenuSignals::ConsumeLlmUnavailable(&play_llm_unavailable)) {
+            ApplyOfflineMenuOutput(
+                offline_menu_.OnLlmUnavailable(now_ms, play_llm_unavailable));
+        }
         const auto state = Application::GetInstance().GetDeviceState();
         ApplyOfflineMenuOutput(offline_menu_.OnNetworkSample(
             now_ms, NetworkLooksOnline(), DeviceInConversation(state)));

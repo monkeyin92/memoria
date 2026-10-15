@@ -30,6 +30,7 @@ inline constexpr const char* kOfflineMenuChoose = "offline-menu-choose-v2";
 inline constexpr const char* kOfflineMenuStart = "offline-menu-start-v1";
 inline constexpr const char* kOfflineMenuEnd = "offline-menu-end-v1";
 inline constexpr const char* kOfflineMenuIdle = "offline-menu-idle-v1";
+inline constexpr const char* kLlmUnavailable = "llm_unavailable";
 
 // TODO(release-blocker): offline clips use a trial/demo-only Doubao voice; clear Volcengine terms or re-voice before final firmware
 inline constexpr const char* kOfflineLineIds[] = {
@@ -39,7 +40,7 @@ inline constexpr const char* kOfflineLineIds[] = {
     kOnlineRestoredInStory,   kOfflineMenuIntro,       kOfflineMenuHow,
     kOfflineMenuConfirmHow,   kOfflineMenuItem01,      kOfflineMenuItem02,
     kOfflineMenuItem03,       kOfflineMenuChoose,      kOfflineMenuStart,
-    kOfflineMenuEnd,          kOfflineMenuIdle,
+    kOfflineMenuEnd,          kOfflineMenuIdle,        kLlmUnavailable,
 };
 inline constexpr std::size_t kOfflineLineCount =
     sizeof(kOfflineLineIds) / sizeof(kOfflineLineIds[0]);
@@ -151,6 +152,21 @@ public:
             return OnNetworkUp();
         }
         return {};
+    }
+
+    // Server spoke the llm_unavailable line (or the device must). Enter the
+    // story menu while the station stays online so OnNetworkUp does not fire.
+    OfflineMenuOutput OnLlmUnavailable(std::uint32_t now_ms, bool play_line) {
+        OfflineMenuOutput out;
+        out.intercept = true;
+        last_sample_online_ = true;
+        if (play_line) {
+            Push(out, kLlmUnavailable);
+        }
+        AppendMenuEntry(out);
+        menu_idle_deadline_ms_ = 0;
+        (void)now_ms;
+        return out;
     }
 
     bool WantsTap(bool online, bool device_idle) const {
@@ -378,6 +394,30 @@ private:
     std::uint32_t menu_idle_deadline_ms_ = 0;
     // The station is down at power-on. The first offline sample is not an edge.
     bool last_sample_online_ = false;
+};
+
+// Protocol posts; the board tick consumes and drives OnLlmUnavailable.
+class OfflineMenuSignals {
+public:
+    static void PostLlmUnavailable(bool play_line) {
+        play_line_ = play_line;
+        pending_ = true;
+    }
+
+    static bool ConsumeLlmUnavailable(bool* play_line_out) {
+        if (!pending_) {
+            return false;
+        }
+        pending_ = false;
+        if (play_line_out != nullptr) {
+            *play_line_out = play_line_;
+        }
+        return true;
+    }
+
+private:
+    static inline bool pending_ = false;
+    static inline bool play_line_ = false;
 };
 
 }  // namespace memoria
