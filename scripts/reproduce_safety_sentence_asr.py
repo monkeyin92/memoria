@@ -148,10 +148,9 @@ def main(argv: list[str] | None = None) -> int:
                     "error": "missing_provider_credentials",
                     "missing": missing,
                     "hint": (
-                        "Run inside the voice bridge container with production secrets, "
-                        "or set DASHSCOPE_API_KEY and Doubao TTS credentials. "
-                        "On a test device, set MEMORIA_LOG_FINAL_ASR_TEXT=true "
-                        "(default false) to log final ASR text to the container log only."
+                        "Run inside the voice bridge / offline lab environment with "
+                        "DASHSCOPE_API_KEY and Doubao TTS credentials. Without those "
+                        "providers this harness cannot print recognized text."
                     ),
                 },
                 ensure_ascii=False,

@@ -21,7 +21,7 @@ So the proactive speech is the local-safe fallback LLM path after an echo or inv
 
 ## Sentence 3 note
 
-「我不想或了」 still routed to `none` on device. The server does not log ASR text by design. Matching work for that sentence waits on an offline TTS→ASR harness (or an opt-in, log-only final-ASR debug flag on a test device). Do not widen the matcher from guessed characters.
+「我不想或了」 still routed to `none` on device. The server does not log ASR text by design. Matching work for that sentence waits on the offline TTS→ASR harness (`scripts/reproduce_safety_sentence_asr.py`) printing the exact recognized text. Do not widen the matcher from guessed characters.
 
 ## Follow-up fix (separate commit)
 

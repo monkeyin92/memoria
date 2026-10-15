@@ -44,4 +44,4 @@ def test_harness_exits_when_provider_credentials_are_missing(
     assert module.main([]) == 2
     err = capsys.readouterr().err
     assert "missing_provider_credentials" in err
-    assert "MEMORIA_LOG_FINAL_ASR_TEXT" in err
+    assert "DASHSCOPE_API_KEY" in err
