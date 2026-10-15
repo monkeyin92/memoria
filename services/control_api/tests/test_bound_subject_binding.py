@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from services.common.daily_chat_limit import DailyChatBudget
 from services.consent.bound_subject import (
     GUARDIAN_MEMORY_CAPABILITIES,
     MEMORY_CAPABILITIES,
@@ -16,8 +18,10 @@ from services.consent.bound_subject import (
     BoundSubjectGrant,
 )
 from services.consent.evidence import ConsentParams
+from services.control_api.app.database.chat_usage import ChatUsageLedger
 from services.control_api.app.device_binding_token import mint_device_binding_token
 from services.control_api.app.main import create_app
+from services.control_api.app.routes import multi_subject as multi_subject_routes
 from services.control_api.tests.test_guardian_api import _configure, _mark_verified_adult
 
 
@@ -401,6 +405,38 @@ async def test_guardian_memory_toggle_moves_the_consent_authority_too(
 
 
 _ARCHIVE_TOKEN = {"X-Memoria-Internal-Token": "guardian-test-archive-token-that-is-long-enough"}
+_POLICY_TOKEN = {"X-Memoria-Internal-Token": "guardian-test-policy-token-that-is-long-enough"}
+_NOON_IN_SHANGHAI = datetime(2026, 10, 15, 4, 0, tzinfo=UTC)
+
+
+def _freeze_chat_usage_day(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        multi_subject_routes,
+        "ChatUsageLedger",
+        partial(ChatUsageLedger, clock=lambda: _NOON_IN_SHANGHAI),
+    )
+
+
+class _UnreadableLedger:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def used_today(self, subject_id: str) -> Any:
+        raise ConnectionError("control store unreachable")
+
+
+async def _report_chat(
+    client: AsyncClient, *, accrual_id: str, subject_id: str, elapsed_seconds: int
+) -> Any:
+    return await client.post(
+        "/v1/internal/chat-usage",
+        headers=_POLICY_TOKEN,
+        json={
+            "accrual_id": accrual_id,
+            "subject_id": subject_id,
+            "elapsed_seconds": elapsed_seconds,
+        },
+    )
 
 
 async def _speech(
@@ -431,6 +467,7 @@ async def test_deleting_a_childs_data_keeps_the_parents_and_unbind_redacts_the_n
     from services.identity.service import REDACTED_DISPLAY_NAME
 
     _configure(monkeypatch, tmp_path)
+    _freeze_chat_usage_day(monkeypatch)
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         owner_id, headers = await _owner(client, app, "bound-erase-owner")
@@ -455,6 +492,10 @@ async def test_deleting_a_childs_data_keeps_the_parents_and_unbind_redacts_the_n
         await _speech(
             client, session_id=parent_session["session_id"], event_id="parent-turn", subject=None
         )
+        chatted = await _report_chat(
+            client, accrual_id="d" * 32, subject_id=child_id, elapsed_seconds=600
+        )
+        assert chatted.status_code == 200, chatted.text
 
         deleted = await client.post(
             f"/v1/guardian/minors/{child_id}/delete",
@@ -463,9 +504,12 @@ async def test_deleting_a_childs_data_keeps_the_parents_and_unbind_redacts_the_n
         )
         assert deleted.status_code == 200, deleted.text
         assert deleted.json()["status"] == "completed"
+        usage = await client.get(f"/v1/internal/chat-usage/{child_id}/today", headers=_POLICY_TOKEN)
 
         archive = app.state.life_archive
         assert deleted.json()["deleted_counts"]["lineage.owner_events"] == 1, deleted.text
+        assert deleted.json()["deleted_counts"]["control.daily_chat_usage"] == 1, deleted.text
+        assert usage.json()["used_seconds"] == 0
         assert (await archive.event(account_id=owner_id, event_id="child-turn")) is None
         assert (await archive.event(account_id=owner_id, event_id="parent-turn")) is not None
         # The device still serves the child, so their name stays until unbind.
@@ -706,16 +750,43 @@ async def test_session_limits_write_is_refused_without_the_postgres_authority(
             json={"max_session_minutes": 0},
         )
         assert invalid.status_code == 422
+        off_the_slider = await client.put(
+            "/v1/devices/device-limits/session-limits",
+            headers=headers,
+            json={"max_session_minutes": 30, "daily_chat_minutes": 20},
+        )
+        assert off_the_slider.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ({"max_session_minutes": 30}, "keep"),
+        ({"max_session_minutes": 30, "daily_chat_minutes": None}, "default"),
+        ({"max_session_minutes": 30, "daily_chat_minutes": 45}, DailyChatBudget(45)),
+    ],
+)
+def test_a_limits_write_keeps_resets_or_sets_the_daily_budget(
+    body: dict[str, object], expected: object
+) -> None:
+    from services.control_api.app.routes.multi_subject import SessionLimitsRequest
+
+    assert SessionLimitsRequest.model_validate(body).daily_chat_change() == expected
 
 
 @pytest.mark.asyncio
-async def test_session_limits_read_returns_what_the_guardian_set_and_no_usage(
+async def test_session_limits_read_returns_what_the_guardian_set_and_todays_usage(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _configure(monkeypatch, tmp_path)
+    _freeze_chat_usage_day(monkeypatch)
     app = create_app()
     recorder = _RecordingConsent(
-        limits=ConsentParams(max_session_seconds=1800, quiet_hours=("21:00", "07:00"))
+        limits=ConsentParams(
+            max_session_seconds=1800,
+            quiet_hours=("21:00", "07:00"),
+            extras=(("daily_chat_seconds", "2700"),),
+        )
     )
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         app.state.bound_subject_consent = recorder
@@ -734,10 +805,15 @@ async def test_session_limits_read_returns_what_the_guardian_set_and_no_usage(
         )
         assert created.status_code == 201, created.text
         path = "/v1/devices/device-limits-read/session-limits"
+        child_id = created.json()["primary_subject_ids"][0]
 
         set_limits = await client.get(path, headers=headers)
+        await _report_chat(client, accrual_id="a" * 32, subject_id=child_id, elapsed_seconds=1080)
+        await _report_chat(client, accrual_id="b" * 32, subject_id="another-child", elapsed_seconds=60)
         recorder.limits = ConsentParams()
         no_limits = await client.get(path, headers=headers)
+        monkeypatch.setattr(multi_subject_routes, "ChatUsageLedger", _UnreadableLedger)
+        unreadable = await client.get(path, headers=headers)
         recorder.limits = None
         not_granted = await client.get(path, headers=headers)
         foreign = await client.get(path, headers=stranger)
@@ -748,18 +824,23 @@ async def test_session_limits_read_returns_what_the_guardian_set_and_no_usage(
     assert set_limits.json() == {
         "max_session_minutes": 30,
         "quiet_hours": {"start": "21:00", "end": "07:00"},
-        "today_used_minutes": None,
+        "daily_chat_minutes": 45,
+        "daily_chat_minute_choices": [15, 30, 45, 60],
+        "today_used_minutes": 0,
     }
     assert recorder.limit_reads[0] == {
         "actor_person_id": owner_id,
-        "subject_person_id": created.json()["primary_subject_ids"][0],
+        "subject_person_id": child_id,
         "binding_id": created.json()["binding_id"],
     }
     assert no_limits.json() == {
         "max_session_minutes": None,
         "quiet_hours": None,
-        "today_used_minutes": None,
+        "daily_chat_minutes": 30,
+        "daily_chat_minute_choices": [15, 30, 45, 60],
+        "today_used_minutes": 18,
     }
+    assert unreadable.json()["today_used_minutes"] is None
     assert (not_granted.status_code, not_granted.json()["detail"]) == (
         409,
         {"code": "session_limits_not_applicable"},
@@ -769,6 +850,44 @@ async def test_session_limits_read_returns_what_the_guardian_set_and_no_usage(
         409,
         {"code": "session_limits_unavailable"},
     )
+
+
+@pytest.mark.asyncio
+async def test_the_agents_chat_usage_report_counts_once_behind_the_policy_token(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    _freeze_chat_usage_day(monkeypatch)
+    app = create_app()
+    report = {"accrual_id": "e" * 32, "subject_id": "child-1", "elapsed_seconds": 412}
+    today = "/v1/internal/chat-usage/child-1/today"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post("/v1/internal/chat-usage", headers=_POLICY_TOKEN, json=report)
+        repeated = await client.post("/v1/internal/chat-usage", headers=_POLICY_TOKEN, json=report)
+        conflicting = await client.post(
+            "/v1/internal/chat-usage",
+            headers=_POLICY_TOKEN,
+            json={**report, "elapsed_seconds": 500},
+        )
+        malformed = await client.post(
+            "/v1/internal/chat-usage",
+            headers=_POLICY_TOKEN,
+            json={**report, "accrual_id": "E" * 32},
+        )
+        anonymous_write = await client.post("/v1/internal/chat-usage", json=report)
+        wrong_token_read = await client.get(today, headers={"X-Memoria-Internal-Token": "wrong"})
+        used = await client.get(today, headers=_POLICY_TOKEN)
+
+    assert (first.status_code, first.json()) == (200, {"status": "recorded"})
+    assert (repeated.status_code, repeated.json()) == (200, {"status": "recorded"})
+    assert (conflicting.status_code, conflicting.json()["detail"]) == (
+        409,
+        {"code": "chat_usage_conflict"},
+    )
+    assert malformed.status_code == 422
+    assert anonymous_write.status_code == 401
+    assert wrong_token_read.status_code == 401
+    assert used.json() == {"subject_id": "child-1", "usage_day": "2026-10-15", "used_seconds": 412}
 
 
 @pytest.mark.asyncio

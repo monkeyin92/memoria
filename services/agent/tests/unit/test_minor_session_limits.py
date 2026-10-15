@@ -7,13 +7,22 @@ from datetime import UTC, datetime, time, timedelta
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 from packages.contracts.generated.python.multi_subject_contracts import (
     ObligationParams,
     PolicyObligation,
     PolicyObligationSpec,
 )
+from services.agent.src.daily_chat import (
+    DailyChatClient,
+    DailyChatClientConfig,
+    GovernedDailyChat,
+    governed_daily_chat,
+)
 from services.agent.src.prompts import (
+    CONNECTION_RETRY_PHRASE,
+    MINOR_DAILY_LIMIT_PHRASE,
     MINOR_QUIET_HOURS_PHRASE,
     MINOR_SESSION_LIMIT_PHRASE,
     is_allowlisted_device_phrase,
@@ -23,6 +32,7 @@ from services.agent.src.voice_core import media_session_projection
 from services.agent.src.voice_core.media_session_output_stream import MediaOutputStreamMixin
 from services.agent.src.voice_core.media_session_projection import MediaSessionProjectionMixin
 from services.agent.src.voice_core.minor_session_limits import in_quiet_hours, minor_limits
+from services.common.daily_chat_limit import DailyChatBudget
 from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
 from services.session_runtime.profile_service import (
     RuntimeProfile,
@@ -31,6 +41,7 @@ from services.session_runtime.profile_service import (
 )
 
 _KEY = "minor-session-limits-key"
+_LEDGER = "http://control-api:8000/v1/internal/chat-usage"
 
 
 def _obligation(code: PolicyObligation, **params: Any) -> PolicyObligationSpec:
@@ -44,9 +55,12 @@ def _obligation(code: PolicyObligation, **params: Any) -> PolicyObligationSpec:
     return PolicyObligationSpec(code=code, params=ObligationParams(**values))
 
 
-def _profile(category: str = "minor") -> VerifiedRuntimeProfile:
+def _signed_payload(
+    category: str = "minor", *, daily_chat_seconds: str | None = None
+) -> dict[str, Any]:
     now = datetime.now(UTC)
     minor = category == "minor"
+    daily = () if daily_chat_seconds is None else (("daily_chat_seconds", daily_chat_seconds),)
     issued = RuntimeProfile(
         runtime_profile_id="rp-limits",
         device_id="dev-limits",
@@ -68,7 +82,11 @@ def _profile(category: str = "minor") -> VerifiedRuntimeProfile:
         policy_bundle_version="policy-v2",
         capabilities=("chat",),
         obligations=(
-            _obligation(PolicyObligation.POLICY_OBLIGATION_MAX_SESSION_SECONDS, max_session_seconds=1800),
+            _obligation(
+                PolicyObligation.POLICY_OBLIGATION_MAX_SESSION_SECONDS,
+                max_session_seconds=1800,
+                extras=daily,
+            ),
             _obligation(PolicyObligation.POLICY_OBLIGATION_QUIET_HOURS, quiet_hours=("21:30", "06:30")),
         ),
         policy_receipt_ids=("receipt-1",),
@@ -79,6 +97,13 @@ def _profile(category: str = "minor") -> VerifiedRuntimeProfile:
     )
     payload = runtime_profile_wire_payload(issued)
     payload["signature"] = sign_runtime_profile_payload(payload, signing_key=_KEY.encode())
+    return payload
+
+
+def _profile(
+    category: str = "minor", *, daily_chat_seconds: str | None = None
+) -> VerifiedRuntimeProfile:
+    payload = _signed_payload(category, daily_chat_seconds=daily_chat_seconds)
     verified = parse_runtime_profile(payload, verify_key=_KEY)
     assert verified is not None
     return verified
@@ -114,8 +139,32 @@ def test_signed_limits_reach_the_agent_and_apply_to_minors_only() -> None:
     assert is_allowlisted_device_phrase(MINOR_SESSION_LIMIT_PHRASE)
 
 
+def test_the_signed_daily_budget_reaches_the_runtime_profile() -> None:
+    assert _profile(daily_chat_seconds="2700").profile.daily_chat_budget == DailyChatBudget(45)
+    assert _profile().profile.daily_chat_budget is None
+
+
+def test_only_a_minors_signed_daily_budget_is_governed() -> None:
+    assert governed_daily_chat(_profile(daily_chat_seconds="2700")) == GovernedDailyChat(
+        subject_id="person-child", budget=DailyChatBudget(45)
+    )
+    assert governed_daily_chat(_profile()) is None
+    assert governed_daily_chat(_profile("adult", daily_chat_seconds="2700")) is None
+    assert governed_daily_chat(None) is None
+    assert is_allowlisted_device_phrase(MINOR_DAILY_LIMIT_PHRASE)
+    assert is_allowlisted_device_phrase(CONNECTION_RETRY_PHRASE)
+
+
+@pytest.mark.parametrize("seconds", ["1200", "2000", "45m"])
+def test_a_malformed_signed_daily_budget_rejects_the_whole_profile(seconds: str) -> None:
+    payload = _signed_payload(daily_chat_seconds=seconds)
+
+    assert parse_runtime_profile(payload, verify_key=_KEY) is None
+
+
 class _Session(MediaSessionProjectionMixin, MediaOutputStreamMixin):
-    def __init__(self) -> None:
+    def __init__(self, daily_chat_client: DailyChatClient | None = None) -> None:
+        self.daily_chat_client = daily_chat_client
         self.spoken: list[str] = []
         self.standby: list[str] = []
 
@@ -128,7 +177,13 @@ class _Session(MediaSessionProjectionMixin, MediaOutputStreamMixin):
         context.standby_requested = True
 
 
-def _context(profile: VerifiedRuntimeProfile, *, started_ago: float = 0.0, reply: str = "") -> Any:
+def _context(
+    profile: VerifiedRuntimeProfile,
+    *,
+    started_ago: float = 0.0,
+    reply: str = "",
+    client_type: str = "device",
+) -> Any:
     runtime = SimpleNamespace(
         mode_policy=SimpleNamespace(runtime_profile=profile),
         fence=SimpleNamespace(matches=lambda _fence: True),
@@ -142,7 +197,7 @@ def _context(profile: VerifiedRuntimeProfile, *, started_ago: float = 0.0, reply
 
     runtime.note_fixed_safety_spoken = note_fixed_safety_spoken
     return SimpleNamespace(
-        identity=SimpleNamespace(client_type="device", session_id="ses-limits"),
+        identity=SimpleNamespace(client_type=client_type, session_id="ses-limits"),
         runtime=runtime,
         device_wake_ack_pending=True,
         closed=False,
@@ -150,6 +205,18 @@ def _context(profile: VerifiedRuntimeProfile, *, started_ago: float = 0.0, reply
         crisis_reply_heard=False,
         output=SimpleNamespace(assistant_text=reply),
         started_at=monotonic_clock.monotonic() - started_ago,
+        daily_chat_accrual=None,
+    )
+
+
+def _ledger(used: httpx.Response, asked: list[str]) -> DailyChatClient:
+    def answer(request: httpx.Request) -> httpx.Response:
+        asked.append(str(request.url))
+        return used
+
+    return DailyChatClient(
+        DailyChatClientConfig(endpoint=_LEDGER, internal_token="policy-token", read_timeout_s=0.4),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(answer)),
     )
 
 
@@ -201,3 +268,56 @@ async def test_a_minor_session_past_its_limit_ends_after_the_reply(
 
     assert session.spoken == ([MINOR_SESSION_LIMIT_PHRASE] if ends else [])
     assert session.standby == (["minor_max_session"] if ends else [])
+
+
+@pytest.mark.asyncio
+async def test_a_minor_wake_inside_the_daily_budget_is_admitted_and_kept_for_close() -> None:
+    asked: list[str] = []
+    session = _Session(_ledger(httpx.Response(200, json={"used_seconds": 2699}), asked))
+    context = _context(_profile(daily_chat_seconds="2700"))
+
+    assert await session._refuse_minor_daily_limit(context) is False
+    assert (session.spoken, session.standby) == ([], [])
+    assert asked == [f"{_LEDGER}/person-child/today"]
+    assert context.daily_chat_accrual.subject_id == "person-child"
+    assert context.device_wake_ack_pending is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("ledger", "phrase", "reason"),
+    [
+        (httpx.Response(200, json={"used_seconds": 2700}), MINOR_DAILY_LIMIT_PHRASE, "minor_daily_limit"),
+        (httpx.Response(503), CONNECTION_RETRY_PHRASE, "minor_daily_usage_unavailable"),
+        (None, CONNECTION_RETRY_PHRASE, "minor_daily_usage_unavailable"),
+    ],
+    ids=["spent", "ledger-down", "no-ledger-client"],
+)
+async def test_a_minor_wake_is_refused_when_today_is_spent_or_unknown(
+    ledger: httpx.Response | None, phrase: str, reason: str
+) -> None:
+    session = _Session(None if ledger is None else _ledger(ledger, []))
+    context = _context(_profile(daily_chat_seconds="2700"))
+
+    assert await session._refuse_minor_daily_limit(context) is True
+    assert session.spoken == [phrase]
+    assert session.standby == [reason]
+    assert context.daily_chat_accrual is None
+    assert context.device_wake_ack_pending is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("category", "daily_chat_seconds", "client_type"),
+    [("adult", "2700", "device"), ("minor", None, "device"), ("minor", "2700", "app")],
+    ids=["adult", "no-signed-budget", "not-the-device"],
+)
+async def test_only_a_minors_device_wake_with_a_signed_budget_asks_the_ledger(
+    category: str, daily_chat_seconds: str | None, client_type: str
+) -> None:
+    asked: list[str] = []
+    session = _Session(_ledger(httpx.Response(200, json={"used_seconds": 86_400}), asked))
+    profile = _profile(category, daily_chat_seconds=daily_chat_seconds)
+
+    assert await session._refuse_minor_daily_limit(_context(profile, client_type=client_type)) is False
+    assert (asked, session.spoken, session.standby) == ([], [], [])

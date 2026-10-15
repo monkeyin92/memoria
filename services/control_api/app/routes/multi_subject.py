@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import hmac
 import logging
 import re
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated, Any, Literal, cast
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from packages.contracts.generated.python.multi_subject_contracts import (
@@ -14,8 +17,13 @@ from packages.contracts.generated.python.multi_subject_contracts import (
     CapabilityValue,
     DeviceDeclaredModeValue,
 )
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from services.common.daily_chat_limit import (
+    DAILY_CHAT_MINUTE_CHOICES,
+    DailyChatBudget,
+    effective_daily_chat_budget,
+)
 from services.consent.binding_snapshot import BINDING_OFFER_CATALOG
 from services.consent.bound_subject import (
     GUARDIAN_MEMORY_CAPABILITIES,
@@ -23,6 +31,7 @@ from services.consent.bound_subject import (
     MINOR_SESSION_CAPABILITIES,
     BoundSubjectConsentService,
     BoundSubjectGrant,
+    DailyChatChange,
 )
 from services.consent.evidence import ConsentParams
 from services.control_api.app.account_gate import (
@@ -30,6 +39,11 @@ from services.control_api.app.account_gate import (
     require_writable_account,
 )
 from services.control_api.app.database import MemoryStore
+from services.control_api.app.database.chat_usage import (
+    ChatUsageConflictError,
+    ChatUsageLedger,
+    ChatUsageToday,
+)
 from services.control_api.app.device_binding_token import (
     DeviceBindingTokenError,
     verify_device_binding_token,
@@ -949,12 +963,33 @@ class QuietHoursRequest(BaseModel):
 
 
 class SessionLimitsRequest(BaseModel):
-    """The guardian's replacement limits; ``None`` removes that limit."""
+    """The guardian's limits.
+
+    ``max_session_minutes`` and ``quiet_hours`` are replaced, so ``None`` or an
+    omitted field removes them. ``daily_chat_minutes`` is kept when omitted,
+    because clients that predate it never send it. An explicit ``null`` resets
+    it to the 30-minute default.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     max_session_minutes: int | None = Field(default=None, ge=15, le=60)
     quiet_hours: QuietHoursRequest | None = None
+    daily_chat_minutes: int | None = None
+
+    @field_validator("daily_chat_minutes")
+    @classmethod
+    def validate_daily_chat_minutes(cls, minutes: int | None) -> int | None:
+        if minutes is not None and minutes not in DAILY_CHAT_MINUTE_CHOICES:
+            raise ValueError(f"daily_chat_minutes must be one of {DAILY_CHAT_MINUTE_CHOICES}")
+        return minutes
+
+    def daily_chat_change(self) -> DailyChatChange:
+        if "daily_chat_minutes" not in self.model_fields_set:
+            return "keep"
+        if self.daily_chat_minutes is None:
+            return "default"
+        return DailyChatBudget(self.daily_chat_minutes)
 
 
 class SessionLimitsView(BaseModel):
@@ -962,7 +997,9 @@ class SessionLimitsView(BaseModel):
 
     max_session_minutes: int | None
     quiet_hours: QuietHoursRequest | None
-    today_used_minutes: None = None
+    daily_chat_minutes: int
+    daily_chat_minute_choices: tuple[int, ...] = DAILY_CHAT_MINUTE_CHOICES
+    today_used_minutes: int | None = Field(ge=0)
 
 
 async def _session_limits_binding(
@@ -1013,11 +1050,29 @@ async def get_device_session_limits(
     except IdentityNotFoundError as exc:
         raise _binding_not_found() from exc
     quiet = params.quiet_hours
+    used = await _chat_usage_today(request, manifest.primary_subject_ids[0])
     return SessionLimitsView(
         max_session_minutes=(
             None if params.max_session_seconds is None else params.max_session_seconds // 60
         ),
         quiet_hours=None if quiet is None else QuietHoursRequest(start=quiet[0], end=quiet[1]),
+        daily_chat_minutes=effective_daily_chat_budget(params.extras).minutes,
+        today_used_minutes=None if used is None else used.minutes,
+    )
+
+
+async def _chat_usage_today(request: Request, subject_id: str) -> ChatUsageToday | None:
+    try:
+        return await asyncio.to_thread(_chat_usage_ledger(request).used_today, subject_id)
+    except Exception as exc:
+        logger.warning("chat usage read failed error=%s", type(exc).__name__)
+        return None
+
+
+def _chat_usage_ledger(request: Request) -> ChatUsageLedger:
+    return ChatUsageLedger(
+        request.app.state.memory_store,
+        zone=ZoneInfo(request.app.state.settings.memoria_timezone),
     )
 
 
@@ -1028,7 +1083,7 @@ async def set_device_session_limits(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, object]:
-    """Change the child's session length and quiet hours after binding.
+    """Change the child's session length, quiet hours and daily chat budget after binding.
 
     Only the guardian who set them at binding may replace them: the write
     re-grants that guardian's own session consents, so the signed Runtime
@@ -1059,6 +1114,7 @@ async def set_device_session_limits(
                 body.max_session_minutes * 60 if body.max_session_minutes is not None else None
             ),
             quiet_hours=quiet_hours,
+            daily_chat=body.daily_chat_change(),
         )
     except LookupError as exc:
         raise HTTPException(
@@ -1095,6 +1151,64 @@ async def set_device_session_limits(
         ),
         "quiet_hours": list(quiet_hours) if quiet_hours is not None else None,
     }
+
+
+class ChatUsageRecordRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    accrual_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    subject_id: str = Field(min_length=1, max_length=128)
+    elapsed_seconds: int = Field(ge=1, le=86_400)
+
+
+class ChatUsageTodayView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    subject_id: str
+    usage_day: date
+    used_seconds: int = Field(ge=0)
+
+
+def _require_interaction_policy_token(
+    request: Request,
+    token: Annotated[str | None, Header(alias="X-Memoria-Internal-Token")] = None,
+) -> None:
+    expected = request.app.state.settings.internal_token("interaction_policy")
+    if not expected or token is None or not hmac.compare_digest(token, expected):
+        raise HTTPException(
+            status_code=401, detail="valid internal interaction policy token required"
+        )
+
+
+@router.get("/v1/internal/chat-usage/{subject_id}/today", response_model=ChatUsageTodayView)
+def get_chat_usage_today(
+    subject_id: str,
+    request: Request,
+    _: Annotated[None, Depends(_require_interaction_policy_token)],
+) -> ChatUsageTodayView:
+    """The agent's admission read. Sync, so FastAPI runs the store read off the event loop."""
+    today = _chat_usage_ledger(request).used_today(subject_id)
+    return ChatUsageTodayView(
+        subject_id=subject_id, usage_day=today.day, used_seconds=today.seconds
+    )
+
+
+@router.post("/v1/internal/chat-usage")
+def record_chat_usage(
+    body: ChatUsageRecordRequest,
+    request: Request,
+    _: Annotated[None, Depends(_require_interaction_policy_token)],
+) -> dict[str, str]:
+    """The agent's close report. ``{"status": "recorded"}`` for a new or a repeated accrual."""
+    try:
+        _chat_usage_ledger(request).record(
+            accrual_id=body.accrual_id,
+            subject_id=body.subject_id,
+            elapsed_seconds=body.elapsed_seconds,
+        )
+    except ChatUsageConflictError as exc:
+        raise HTTPException(status_code=409, detail={"code": "chat_usage_conflict"}) from exc
+    return {"status": "recorded"}
 
 
 @router.post("/v1/sessions/resolve-subject")

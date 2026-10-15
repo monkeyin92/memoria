@@ -133,6 +133,7 @@ def _service(tmp_path: Path, **overrides: Any) -> tuple[SubjectDeletionService, 
         "memory_scope": _MemoryScope(),
         "sessions": [],
         "corpus": [],
+        "chat_usage": [],
         "redacted": [],
         "persona": _Persona(),
     }
@@ -146,6 +147,10 @@ def _service(tmp_path: Path, **overrides: Any) -> tuple[SubjectDeletionService, 
         parts["corpus"].append(subject_id)
         return 0
 
+    async def purge_chat_usage(subject_id: str) -> int:
+        parts["chat_usage"].append(subject_id)
+        return 2
+
     async def redact(subject_id: str, account_id: str) -> None:
         parts["redacted"].append((subject_id, account_id))
 
@@ -157,6 +162,7 @@ def _service(tmp_path: Path, **overrides: Any) -> tuple[SubjectDeletionService, 
         memory_scope=parts["memory_scope"],
         terminate_sessions=terminate,
         purge_corpus=purge,
+        purge_chat_usage=purge_chat_usage,
         redact_identity=redact,
         persona=parts["persona"],
     )
@@ -177,6 +183,8 @@ async def test_deletes_only_the_subject_and_proves_it(tmp_path: Path) -> None:
     assert parts["archive"].owner_events == set()
     assert parts["archive"].subject_events == set()
     assert parts["corpus"] == ["child"]
+    assert parts["chat_usage"] == ["child"]
+    assert result["deleted_counts"]["control.daily_chat_usage"] == 2
     assert parts["persona"].forgotten == [("parent", "child")]
     assert result["deleted_counts"]["persona.rows"] == 4
     # Still served by the device: the name stays.
@@ -198,6 +206,7 @@ async def test_a_failed_store_resumes_from_its_checkpoint(tmp_path: Path) -> Non
     # Lineage was captured once and reused, sessions were not closed twice.
     assert archive.calls.count("subject_event_ids") == 1
     assert parts["sessions"] == ["child"]
+    assert parts["chat_usage"] == ["child"]
     assert archive.owner_events == set()
 
 

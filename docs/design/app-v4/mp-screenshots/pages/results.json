@@ -11,29 +11,29 @@
       "gap": 146
     },
     "underCapsule": [],
-    "loadMs": 9.9,
-    "renderMs": 5.4,
-    "layoutMs": 62,
+    "loadMs": 10.3,
+    "renderMs": 5.1,
+    "layoutMs": 63,
     "setDataCalls": 3,
-    "setDataBytes": 2367
+    "setDataBytes": 2364
   },
   {
     "slug": "home",
     "view": "320",
     "issues": [],
     "scrollWidth": 320,
-    "scrollHeight": 865,
+    "scrollHeight": 826,
     "overflow": [],
     "tabClearance": {
       "tabHeight": 54,
       "gap": 112
     },
     "underCapsule": [],
-    "loadMs": 2.2,
+    "loadMs": 2,
     "renderMs": 1.6,
     "layoutMs": 45,
     "setDataCalls": 3,
-    "setDataBytes": 2367
+    "setDataBytes": 2364
   },
   {
     "slug": "home",
@@ -47,11 +47,11 @@
       "gap": 112
     },
     "underCapsule": [],
-    "loadMs": 2,
-    "renderMs": 1.7,
+    "loadMs": 1.8,
+    "renderMs": 1.6,
     "layoutMs": 43,
     "setDataCalls": 3,
-    "setDataBytes": 2367
+    "setDataBytes": 2364
   },
   {
     "slug": "home",
@@ -65,11 +65,11 @@
       "gap": 220
     },
     "underCapsule": [],
-    "loadMs": 2,
+    "loadMs": 1.9,
     "renderMs": 1.4,
     "layoutMs": 44,
     "setDataCalls": 3,
-    "setDataBytes": 2367
+    "setDataBytes": 2364
   },
   {
     "slug": "home",
@@ -83,11 +83,11 @@
       "gap": 146
     },
     "underCapsule": [],
-    "loadMs": 2.1,
+    "loadMs": 1.9,
     "renderMs": 2.1,
     "layoutMs": 48,
     "setDataCalls": 3,
-    "setDataBytes": 2367
+    "setDataBytes": 2364
   },
   {
     "slug": "home-guest",
@@ -619,90 +619,90 @@
     "view": "390",
     "issues": [],
     "scrollWidth": 390,
-    "scrollHeight": 2955,
+    "scrollHeight": 3084,
     "overflow": [],
     "tabClearance": {
       "tabHeight": 88,
       "gap": 146
     },
     "underCapsule": [],
-    "loadMs": 5,
-    "renderMs": 4.6,
-    "layoutMs": 56,
+    "loadMs": 5.7,
+    "renderMs": 4.8,
+    "layoutMs": 63,
     "setDataCalls": 7,
-    "setDataBytes": 5291
+    "setDataBytes": 5458
   },
   {
     "slug": "device",
     "view": "320",
     "issues": [],
     "scrollWidth": 320,
-    "scrollHeight": 3151,
+    "scrollHeight": 3280,
     "overflow": [],
     "tabClearance": {
       "tabHeight": 54,
       "gap": 112
     },
     "underCapsule": [],
-    "loadMs": 4.2,
-    "renderMs": 3.4,
-    "layoutMs": 50,
+    "loadMs": 2.5,
+    "renderMs": 6.1,
+    "layoutMs": 69,
     "setDataCalls": 7,
-    "setDataBytes": 5291
+    "setDataBytes": 5458
   },
   {
     "slug": "device",
     "view": "375",
     "issues": [],
     "scrollWidth": 375,
-    "scrollHeight": 2954,
+    "scrollHeight": 3083,
     "overflow": [],
     "tabClearance": {
       "tabHeight": 54,
       "gap": 112
     },
     "underCapsule": [],
-    "loadMs": 2.2,
-    "renderMs": 2.6,
-    "layoutMs": 55,
+    "loadMs": 2.5,
+    "renderMs": 3.2,
+    "layoutMs": 74,
     "setDataCalls": 7,
-    "setDataBytes": 5291
+    "setDataBytes": 5458
   },
   {
     "slug": "device",
     "view": "430",
     "issues": [],
     "scrollWidth": 430,
-    "scrollHeight": 2947,
+    "scrollHeight": 3076,
     "overflow": [],
     "tabClearance": {
       "tabHeight": 88,
       "gap": 146
     },
     "underCapsule": [],
-    "loadMs": 2.2,
-    "renderMs": 2.3,
-    "layoutMs": 50,
+    "loadMs": 2.6,
+    "renderMs": 2.6,
+    "layoutMs": 69,
     "setDataCalls": 7,
-    "setDataBytes": 5291
+    "setDataBytes": 5458
   },
   {
     "slug": "device",
     "view": "390-large-font",
     "issues": [],
     "scrollWidth": 390,
-    "scrollHeight": 3204,
+    "scrollHeight": 3349,
     "overflow": [],
     "tabClearance": {
       "tabHeight": 88,
       "gap": 146
     },
     "underCapsule": [],
-    "loadMs": 2.3,
-    "renderMs": 2.2,
-    "layoutMs": 54,
+    "loadMs": 2.9,
+    "renderMs": 3.1,
+    "layoutMs": 63,
     "setDataCalls": 7,
-    "setDataBytes": 5291
+    "setDataBytes": 5458
   },
   {
     "slug": "profile",

@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from services.archive.domain import ContextQuery, LifeArchivePort
 from services.archive.memory_domain import MemoryCatalogPort
 from services.archive.object_store import ObjectStore
+from services.common.chat_llm_providers import CHAT_LLM_FAMILIES, ChatLlmFamily
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.evolution.store import EvolutionStore
@@ -67,6 +68,7 @@ class AgentHeartbeat(BaseModel):
     boot_id: UUID
     worker_ready: bool
     last_loop_at: datetime
+    chat_llm_providers: tuple[ChatLlmFamily, ...] = Field(min_length=1, max_length=2)
 
     @field_validator("last_loop_at")
     @classmethod
@@ -74,6 +76,11 @@ class AgentHeartbeat(BaseModel):
         if value.tzinfo is None:
             raise ValueError("agent heartbeat timestamp must include timezone")
         return value.astimezone(UTC)
+
+    @field_validator("chat_llm_providers")
+    @classmethod
+    def in_disclosure_order(cls, value: tuple[ChatLlmFamily, ...]) -> tuple[ChatLlmFamily, ...]:
+        return tuple(family for family in CHAT_LLM_FAMILIES if family in value)
 
 
 def _settings(request: Request) -> ControlSettings:
@@ -301,6 +308,11 @@ def _agent_state(request: Request, settings: ControlSettings) -> dict[str, objec
     else:
         status = "ready"
     return {"status": status, **state}
+
+
+def agent_chat_llm_providers(request: Request) -> list[ChatLlmFamily]:
+    heartbeat = cast(AgentHeartbeat | None, getattr(request.app.state, "agent_heartbeat", None))
+    return [] if heartbeat is None else list(heartbeat.chat_llm_providers)
 
 
 @router.post("/internal/readiness/agent-heartbeat")

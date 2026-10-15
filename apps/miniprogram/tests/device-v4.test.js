@@ -38,14 +38,16 @@ test("releasing the 单次上限 slider at 60 saves 60 minutes with the stored q
   }
 });
 
-test("the usage slider names the per-session limit the device enforces, never a daily cap", async () => {
+test("the usage screen counts today's chat against the daily budget the guardian sets beside the per-session cap", async () => {
   const scenario = PAGES.find((item) => item.slug === "device");
   const { data } = await scenarioData(scenario);
   assert.equal(data.trialSettingsVisible, true);
   assert.equal(data.sessionLimits.maxSessionMinutes, 30);
+  assert.equal(data.sessionLimits.dailyChatMinutes, 30);
   const text = visibleText(renderPage(scenario.page, data));
-  assert.match(text, /单次上限 30 分钟/);
-  assert.doesNotMatch(text, /每日上限|每天上限/);
+  assert.match(text, /18 \/ 30 分钟 今天还可以聊 12 分钟/);
+  assert.match(text, /单次上限 30 分钟 15 分钟 60 分钟 每天上限 30 分钟 15 分钟 60 分钟 安静时段/);
+  assert.doesNotMatch(text, /每日上限/);
 });
 
 test("the usage screen reads 未设置 when the signed profile has quiet hours but no cap", async () => {

@@ -15,6 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from services.agent.src.daily_chat import DailyChatClient
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.observability.metrics import GLOBAL_METRICS, MetricsRegistry
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
@@ -117,6 +118,7 @@ class MediaVoiceCoreRegistry(
     max_user_speech_duration_s: float = 0.0
     reply_delivery_publisher: Callable[[dict[str, Any]], bool] | None = None
     session_recap_publisher: Callable[..., Any] | None = None
+    daily_chat_client: DailyChatClient | None = None
     _sessions: dict[str, _MediaVoiceSession] = field(default_factory=dict, init=False)
     _cleanup_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict, init=False)
     _creation_futures: dict[str, asyncio.Future[_MediaVoiceSession]] = field(

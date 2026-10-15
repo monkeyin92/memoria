@@ -1330,7 +1330,7 @@ function getSessionLimits(deviceId) {
   return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/session-limits`);
 }
 
-function setSessionLimits(deviceId, { maxSessionMinutes, quietStart, quietEnd }) {
+function setSessionLimits(deviceId, { maxSessionMinutes, quietStart, quietEnd, dailyChatMinutes }) {
   const manifest = readBindingManifest();
   if (!manifest || manifest.device_id !== deviceId) {
     return Promise.reject(new ApiError("还没有绑定设备，无法修改使用时段。", { status: 403 }));
@@ -1340,6 +1340,7 @@ function setSessionLimits(deviceId, { maxSessionMinutes, quietStart, quietEnd })
     data: {
       max_session_minutes: maxSessionMinutes,
       quiet_hours: quietStart && quietEnd ? { start: quietStart, end: quietEnd } : null,
+      ...(dailyChatMinutes === undefined ? {} : { daily_chat_minutes: dailyChatMinutes }),
     },
   });
 }

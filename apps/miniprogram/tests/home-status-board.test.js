@@ -114,14 +114,14 @@ test("trial device card helper uses profile quiet hours and usage limit", () => 
     subject_category: "minor",
     obligations: [
       { code: "QUIET_HOURS", params: { quiet_hours: ["21:00", "07:00"] } },
-      { code: "MAX_SESSION_SECONDS", params: { max_session_seconds: 1800 } },
+      { code: "MAX_SESSION_SECONDS", params: { max_session_seconds: 1800, extras: [["daily_chat_seconds", "2700"]] } },
     ],
   };
   const unknown = buildTrialDeviceCard({ online: true, runtimeProfile: profile });
   assert.equal(unknown.statusPill, "在线");
   assert.equal(unknown.usageKnown, false);
   assert.equal(unknown.usageUsedMinutes, null);
-  assert.equal(unknown.usageLimitMinutes, 30);
+  assert.equal(unknown.usageLimitMinutes, 45);
   assert.equal(unknown.statusLine, "在线 · 已绑定");
   assert.equal(unknown.quietHoursLabel, "21:00 – 次日 07:00");
   assert.equal(unknown.nightModeOn, true);

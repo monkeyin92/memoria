@@ -24,6 +24,7 @@ import pytest
 from packages.contracts.generated.python.multi_subject_contracts import (
     RuntimeProfileSignedV2,
 )
+from services.common.daily_chat_limit import DailyChatBudget
 from services.consent.bound_subject import (
     GUARDIAN_MEMORY_CAPABILITIES,
     MEMORY_CAPABILITIES,
@@ -380,7 +381,7 @@ async def test_self_use_owner_without_verified_age_stays_unconfirmed(
     ("session_params", "expected_limits"),
     [
         # No bind-form values: the policy defaults.
-        (None, (1800, ["21:30", "06:30"])),
+        (None, (1800, ["21:00", "07:00"])),
         # The parent's session length and quiet hours (P0-04 D3).
         ((2700, ("21:00", "07:00")), (2700, ["21:00", "07:00"])),
     ],
@@ -503,12 +504,13 @@ async def test_a_changed_session_limit_reaches_the_reissued_profile(
     )
     control = _control(store, manifest, {"child-1": ("minor", "under_14")})
 
-    def limits(profile: RuntimeProfileSignedV2) -> tuple[int | None, list[str] | None]:
+    def limits(profile: RuntimeProfileSignedV2) -> tuple[object, ...]:
         params = {item.code.value: item.params for item in profile.obligations}
         quiet = params["QUIET_HOURS"].quiet_hours
         return (
             params["MAX_SESSION_SECONDS"].max_session_seconds,
             list(quiet) if quiet else None,
+            params["MAX_SESSION_SECONDS"].extras,
         )
 
     consent, consent_store = await _consent_service(bootstrap_dsn)
@@ -525,7 +527,7 @@ async def test_a_changed_session_limit_reaches_the_reissued_profile(
             )
         )
         before = await _read(control, manifest, now=now + timedelta(minutes=1))
-        assert limits(before) == (1800, ["21:00", "07:00"])
+        assert limits(before) == (1800, ["21:00", "07:00"], (("daily_chat_seconds", "1800"),))
 
         assert await consent.update_session_limits(
             actor_person_id="parent-1",
@@ -533,6 +535,7 @@ async def test_a_changed_session_limit_reaches_the_reissued_profile(
             binding_id="b-child",
             max_session_seconds=3600,
             quiet_hours=("22:30", "06:00"),
+            daily_chat=DailyChatBudget(45),
         )
         stored = await consent.session_limits(
             actor_person_id="parent-1", subject_person_id="child-1", binding_id="b-child"
@@ -543,6 +546,7 @@ async def test_a_changed_session_limit_reaches_the_reissued_profile(
         assert limits(await _read(control, manifest, now=now + timedelta(minutes=2))) == (
             1800,
             ["21:00", "07:00"],
+            (("daily_chat_seconds", "1800"),),
         )
         after = await control.refresh_profile(
             device_id="dev-child", actor_id="parent-1", now=now + timedelta(minutes=3)
@@ -550,13 +554,11 @@ async def test_a_changed_session_limit_reaches_the_reissued_profile(
     finally:
         await consent_store.close()
 
-    assert limits(after) == (3600, ["22:30", "06:00"])
+    changed = (3600, ["22:30", "06:00"], (("daily_chat_seconds", "2700"),))
+    assert limits(after) == changed
     assert after.session_epoch > before.session_epoch
     assert after.active_subject_id == "child-1"
-    assert limits(await _read(control, manifest, now=now + timedelta(minutes=4))) == (
-        3600,
-        ["22:30", "06:00"],
-    )
+    assert limits(await _read(control, manifest, now=now + timedelta(minutes=4))) == changed
 
 
 @requires_postgres

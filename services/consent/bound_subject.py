@@ -29,6 +29,7 @@ from typing import Final, Literal, cast
 
 from packages.contracts.generated.python.multi_subject_contracts import CapabilityValue
 
+from services.common.daily_chat_limit import DailyChatBudget, with_daily_chat_budget
 from services.consent.authority import AsyncConsentAuthority, SubjectProof
 from services.consent.evidence import (
     BindingEvidence,
@@ -48,6 +49,7 @@ __all__ = [
     "MINOR_SESSION_CAPABILITIES",
     "BoundSubjectConsentService",
     "BoundSubjectGrant",
+    "DailyChatChange",
     "IdentityEvidenceResolver",
 ]
 
@@ -77,6 +79,9 @@ _PROXY_RELATIONS: Final[frozenset[str]] = frozenset(
 )
 
 type GrantKind = Literal["subject", "guardian", "delegate"]
+# "keep" is what a client that predates the budget sends by omitting it.
+# "default" drops the key so the 30-minute default applies.
+type DailyChatChange = Literal["keep", "default"] | DailyChatBudget
 
 
 def _relationship_evidence(relationship: Relationship, *, binding_id: str) -> RelationshipEvidence:
@@ -386,8 +391,9 @@ class BoundSubjectConsentService:
         binding_id: str,
         max_session_seconds: int | None,
         quiet_hours: tuple[str, str] | None,
+        daily_chat: DailyChatChange = "keep",
     ) -> bool:
-        """Replace the session length and quiet hours the guardian set.
+        """Replace the session length and quiet hours, and change the daily budget as told.
 
         Re-grants the guardian's minor-session consents with the new params;
         the grant supersedes the current head atomically, so the old limits
@@ -401,10 +407,19 @@ class BoundSubjectConsentService:
             subject_person_id=subject_person_id,
             binding_id=binding_id,
         )
-        # Only the two limits change; any other param the grant carries stays.
         current = chains[0].params
         params = replace(
-            current, max_session_seconds=max_session_seconds, quiet_hours=quiet_hours
+            current,
+            max_session_seconds=max_session_seconds,
+            quiet_hours=quiet_hours,
+            extras=(
+                current.extras
+                if daily_chat == "keep"
+                else with_daily_chat_budget(
+                    current.extras,
+                    daily_chat if isinstance(daily_chat, DailyChatBudget) else None,
+                )
+            ),
         )
         if all(chain.params == params for chain in chains) and {
             chain.capability for chain in chains

@@ -47,6 +47,8 @@ from packages.contracts.generated.python.multi_subject_contracts import (
     ServiceMode,
 )
 
+from services.common.daily_chat_limit import DailyChatBudget, parse_daily_chat_budget
+
 VERIFY_KEY_ENV: Final[str] = "MEMORIA_RUNTIME_PROFILE_VERIFY_KEY"
 SIGNATURE_SCHEMA: Final[str] = "runtime-profile-v1"
 RUNTIME_PROFILE_V2_SIGNATURE_SCHEMA: Final[str] = "runtime-profile-v2"
@@ -129,6 +131,7 @@ class RuntimeProfile:
     # Signed obligation parameters the device session enforces (P0-04 D3).
     max_session_seconds: int | None = None
     quiet_hours: tuple[str, str] | None = None
+    daily_chat_budget: DailyChatBudget | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -186,6 +189,8 @@ class RuntimeProfile:
                 "active_subject_id is required unless speaker is unconfirmed "
                 "and service_mode is unknown_safe"
             )
+        if self.daily_chat_budget is not None and self.active_subject_id is None:
+            raise ValueError("a daily chat budget needs the subject it is counted against")
         if (
             not isinstance(self.session_epoch, int)
             or isinstance(self.session_epoch, bool)
@@ -463,8 +468,12 @@ def _session_limits(signed: object) -> dict[str, Any]:
         code = getattr(getattr(item, "code", None), "value", None)
         if params is None:
             continue
-        if code == "MAX_SESSION_SECONDS" and params.max_session_seconds is not None:
-            limits["max_session_seconds"] = int(params.max_session_seconds)
+        if code == "MAX_SESSION_SECONDS":
+            if params.max_session_seconds is not None:
+                limits["max_session_seconds"] = int(params.max_session_seconds)
+            budget = parse_daily_chat_budget(params.extras)
+            if budget is not None:
+                limits["daily_chat_budget"] = budget
         if code == "QUIET_HOURS" and params.quiet_hours is not None:
             start, end = params.quiet_hours
             limits["quiet_hours"] = (str(start), str(end))

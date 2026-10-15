@@ -1,17 +1,35 @@
 from __future__ import annotations
 
-from typing import Final
+from dataclasses import dataclass
+from typing import Final, Literal, assert_never, get_args
 
-_FAMILY_BY_PROVIDER: Final = {
-    "deepseek": "deepseek",
-    "bailian_deepseek": "deepseek",
-    "qwen": "qwen",
-}
-_FAMILY_ORDER: Final = ("deepseek", "qwen")
+ChatLlmProvider = Literal["qwen", "bailian_deepseek", "deepseek"]
+ChatLlmFamily = Literal["deepseek", "qwen"]
+CHAT_LLM_FAMILIES: Final[tuple[ChatLlmFamily, ...]] = get_args(ChatLlmFamily)
 
 
-def chat_llm_providers(*, llm_provider: str, llm_failover_enabled: bool) -> list[str]:
-    families = {_FAMILY_BY_PROVIDER[llm_provider]}
-    if llm_failover_enabled:
-        families.add("qwen")
-    return [family for family in _FAMILY_ORDER if family in families]
+def _family(provider: ChatLlmProvider) -> ChatLlmFamily:
+    match provider:
+        case "deepseek" | "bailian_deepseek":
+            return "deepseek"
+        case "qwen":
+            return "qwen"
+        case _:
+            assert_never(provider)
+
+
+@dataclass(frozen=True, slots=True)
+class ChatLlmPlan:
+    primary: ChatLlmProvider
+    backup: ChatLlmProvider | None
+
+    @property
+    def families(self) -> tuple[ChatLlmFamily, ...]:
+        built = {_family(self.primary)}
+        if self.backup is not None:
+            built.add(_family(self.backup))
+        return tuple(family for family in CHAT_LLM_FAMILIES if family in built)
+
+
+def chat_llm_plan(*, llm_provider: ChatLlmProvider, llm_failover_enabled: bool) -> ChatLlmPlan:
+    return ChatLlmPlan(primary=llm_provider, backup="qwen" if llm_failover_enabled else None)

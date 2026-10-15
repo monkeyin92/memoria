@@ -79,6 +79,10 @@
   line-height: var(--mp-lh-card);
 }
 
+.device-usage-remaining {
+  white-space: nowrap;
+}
+
 .device-limit-card {
   margin-top: var(--mp-gap-card);
   padding: 24px;
@@ -114,6 +118,12 @@
   justify-content: space-between;
   color: var(--mp-ink-3);
   font-size: var(--mp-type-meta);
+}
+
+.device-limit-divider {
+  height: 1px;
+  margin: 16px 0;
+  background: var(--mp-line);
 }
 
 .device-quiet-card {

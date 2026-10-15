@@ -14,6 +14,7 @@ from services.agent.src.providers.qwen_realtime_search import (
     QwenRealtimeSearch,
     QwenRealtimeSearchConfig,
 )
+from services.common.chat_llm_providers import chat_llm_plan
 from services.common.llm_failover import DASHSCOPE_CN_COMPATIBLE_BASE_URL
 from services.common.llm_thinking import thinking_disabled, thinking_mode_for
 
@@ -91,21 +92,25 @@ def build_language_model_handler(
     DashScope backup (``qwen3.8-flash``, thinking off).
     """
 
+    plan = chat_llm_plan(
+        llm_provider=settings.llm_provider,
+        llm_failover_enabled=settings.llm_failover_enabled,
+    )
     primary = _build_chat_model(
         llm_factory=llm_factory,
         model=settings.llm_fast_model,
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
-        llm_provider=settings.llm_provider,
+        llm_provider=plan.primary,
     )
-    if not settings.llm_failover_enabled:
+    if plan.backup is None:
         return primary
     backup = _build_chat_model(
         llm_factory=llm_factory,
         model=settings.llm_backup_model,
         api_key=settings.dashscope_api_key,
         base_url=DASHSCOPE_CN_COMPATIBLE_BASE_URL,
-        llm_provider="qwen",
+        llm_provider=plan.backup,
     )
     return FailoverChatModel(
         primary=primary,

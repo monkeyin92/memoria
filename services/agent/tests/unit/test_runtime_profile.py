@@ -19,6 +19,7 @@ from services.agent.tests.unit.runtime_profile_test_helpers import (
     UNKNOWN_SAFE_OBLIGATIONS,
     canonical_wire_payload,
 )
+from services.common.daily_chat_limit import DailyChatBudget
 
 
 def test_valid_profile_parses_with_canonical_values() -> None:
@@ -902,4 +903,33 @@ def test_runtime_profile_requires_aware_expiry() -> None:
             expires_at=datetime(2099, 1, 1),  # naive
             session_id="ses",
             device_id="dev",
+        )
+
+
+def test_a_daily_chat_budget_needs_the_subject_it_is_counted_against() -> None:
+    with pytest.raises(ValueError, match="daily chat budget needs the subject"):
+        RuntimeProfile(
+            runtime_profile_id="rp",
+            actor_id="a",
+            binding_id="b",
+            binding_version=1,
+            subject_revision=1,
+            active_subject_id=None,
+            subject_category="unknown",
+            age_band="unknown",
+            speaker_state="unconfirmed",
+            speaker_confidence=None,
+            service_mode="unknown_safe",
+            persona_assignment_id="p:v1",
+            persona_id="starlight",
+            persona_version=4,
+            relationship_stage="familiar",
+            policy_bundle_version="v5",
+            policy_receipt_ids=(),
+            session_epoch=1,
+            issued_at=datetime(2098, 1, 1, tzinfo=UTC),
+            expires_at=datetime(2099, 1, 1, tzinfo=UTC),
+            session_id="ses",
+            device_id="dev",
+            daily_chat_budget=DailyChatBudget(30),
         )

@@ -22,15 +22,25 @@ function visibleText(html) {
   return html.replace(/<head>[\s\S]*?<\/head>/, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 }
 
-test("home ring shows the per-session cap without inventing used minutes", async () => {
-  const { data } = await loadHome();
+test("home ring shows the daily budget without inventing minutes the ledger could not read", async () => {
+  const { data } = await loadHome({
+    api: {
+      getSessionLimits: async () => ({
+        max_session_minutes: 30,
+        quiet_hours: null,
+        daily_chat_minutes: 30,
+        daily_chat_minute_choices: [15, 30, 45, 60],
+        today_used_minutes: null,
+      }),
+    },
+  });
   assert.equal(data.usageKnown, false);
   assert.equal(data.usageUsedMinutes, null);
   assert.equal(data.usageLimitMinutes, 30);
   const html = renderPage("pages/home/index", data);
   const text = visibleText(html);
-  assert.match(text, /30 分钟 · 单次上限 今天聊了 用量暂未统计/);
-  assert.doesNotMatch(text, /\d+%|每日上限/);
+  assert.match(text, /30 分钟 · 每天上限 今天聊了 用量暂未统计/);
+  assert.doesNotMatch(text, /\d+%|单次上限/);
   assert.doesNotMatch(html, /conic-gradient/);
 });
 
@@ -49,7 +59,7 @@ test("home shows today's minutes only when the session-limits read carries them"
   assert.equal(data.usageUsedMinutes, 18);
   const html = renderPage("pages/home/index", data);
   const text = visibleText(html);
-  assert.match(text, /30 分钟 · 单次上限 今天聊了 18 分钟/);
+  assert.match(text, /30 分钟 · 每天上限 今天聊了 18 分钟/);
   assert.doesNotMatch(text, /用量暂未统计|\d+%/);
   assert.doesNotMatch(html, /conic-gradient/);
 
@@ -64,15 +74,20 @@ test("home shows today's minutes only when the session-limits read carries them"
   assert.match(visibleText(renderPage("pages/home/index", failed.data)), /今天聊了 用量暂未统计/);
 });
 
-test("home ring reads 未设置 when the signed profile carries no session cap", async () => {
+test("home ring reads 未设置 when the signed profile carries a session cap but no daily budget", async () => {
   const { data } = await loadHome({
-    api: { getRuntimeProfile: async () => ({ ...fx.RUNTIME_PROFILE, obligations: [] }) },
+    api: {
+      getRuntimeProfile: async () => ({
+        ...fx.RUNTIME_PROFILE,
+        obligations: [{ code: "MAX_SESSION_SECONDS", params: { max_session_seconds: 1800, extras: [] } }],
+      }),
+    },
     config: { CONTROL_API_BASE_URL: "https://example.invalid", SUBSCRIPTION_PUSH_ENABLED: true },
   });
   assert.equal(data.usageLimitMinutes, null);
   assert.equal(data.quietHoursLabel, "");
   const text = visibleText(renderPage("pages/home/index", data));
-  assert.match(text, /未设置 单次上限 今天聊了 用量暂未统计/);
+  assert.match(text, /未设置 每天上限 今天聊了 18 分钟/);
   assert.match(text, /安静时段 未设置/);
   assert.doesNotMatch(text, /21:00|\b30\b/);
 });

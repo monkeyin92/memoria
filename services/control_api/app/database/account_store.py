@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 from services.control_api.app.database.backend import DbConnection
+from services.control_api.app.database.chat_usage import delete_chat_usage
 from services.guardian.domain import (
     AgeEvidenceStatus,
     BirthYearBand,
@@ -828,6 +829,7 @@ class AccountStoreMixin:
                 (user_id, user_id, user_id),
             )
             connection.execute("DELETE FROM device_media_sessions WHERE subject_id = ?", (user_id,))
+            counts["daily_chat_usage"] = delete_chat_usage(connection, subject_id=user_id)
             connection.execute("DELETE FROM profiles WHERE user_id = ?", (user_id,))
             combined = {**deleted_counts, **counts}
             connection.execute(

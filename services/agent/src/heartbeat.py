@@ -1,9 +1,10 @@
 """Voice-core media bridge heartbeat reported through the Control API.
 
-The bridge process posts ``{release_tag, boot_id, worker_ready, last_loop_at}``
-to ``/internal/readiness/agent-heartbeat``. ``worker_ready`` is true only while
-the bridge's gRPC server is serving. Each accepted ready heartbeat refreshes a
-local state file, which the container healthcheck reads through
+The bridge process posts ``{release_tag, boot_id, worker_ready, last_loop_at,
+chat_llm_providers}`` to ``/internal/readiness/agent-heartbeat``.
+``worker_ready`` is true only while the bridge's gRPC server is serving.
+Each accepted ready heartbeat refreshes a local state file,
+which the container healthcheck reads through
 ``python -m services.agent.src.heartbeat --check-health``.
 """
 
@@ -25,6 +26,8 @@ from uuid import UUID, uuid4
 
 import httpx
 
+from services.common.chat_llm_providers import ChatLlmFamily, chat_llm_plan
+
 logger = logging.getLogger(__name__)
 
 HEARTBEAT_PATH = "/internal/readiness/agent-heartbeat"
@@ -37,6 +40,7 @@ class AgentHeartbeatConfig:
     endpoint: str
     internal_token: str
     release_tag: str
+    chat_llm_providers: tuple[ChatLlmFamily, ...]
     interval_s: float = 10.0
     timeout_s: float = 3.0
     state_path: Path = HEARTBEAT_STATE_PATH
@@ -48,6 +52,8 @@ class AgentHeartbeatConfig:
             or not self.release_tag.strip()
         ):
             raise ValueError("agent heartbeat requires endpoint, token and release tag")
+        if not self.chat_llm_providers:
+            raise ValueError("agent heartbeat requires the chat model families it builds")
         if self.interval_s <= 0 or self.timeout_s <= 0:
             raise ValueError("agent heartbeat timing must be positive")
 
@@ -81,6 +87,7 @@ class AgentHeartbeat:
                 "boot_id": str(self._boot_id),
                 "worker_ready": worker_ready,
                 "last_loop_at": self._clock().astimezone(UTC).isoformat(),
+                "chat_llm_providers": list(self._config.chat_llm_providers),
             },
         )
         response.raise_for_status()
@@ -143,6 +150,10 @@ def build_agent_heartbeat(settings: Any) -> AgentHeartbeat | None:
             endpoint=heartbeat_endpoint(settings.archive_session_events_url),
             internal_token=settings.internal_token("agent_heartbeat"),
             release_tag=os.environ.get("MEMORIA_RELEASE_TAG", "development"),
+            chat_llm_providers=chat_llm_plan(
+                llm_provider=settings.llm_provider,
+                llm_failover_enabled=settings.llm_failover_enabled,
+            ).families,
         )
     )
 

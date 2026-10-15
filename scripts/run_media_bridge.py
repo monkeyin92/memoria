@@ -176,6 +176,7 @@ async def run() -> None:
                 session_recap_publisher=(
                     recap_sink.publish_session_end if recap_sink is not None else None
                 ),
+                daily_chat_client=getattr(session_factory, "daily_chat_client", None),
             )
             registry.install()
             logger.info("media bridge shared Agent session registry installed")

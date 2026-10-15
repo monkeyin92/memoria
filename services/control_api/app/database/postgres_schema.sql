@@ -400,6 +400,19 @@ CREATE TABLE IF NOT EXISTS media_reply_delivery_events (
 CREATE INDEX IF NOT EXISTS idx_media_reply_delivery_events_received
 ON media_reply_delivery_events(received_at);
 
+CREATE TABLE IF NOT EXISTS daily_chat_usage (
+    accrual_id TEXT PRIMARY KEY CHECK (length(accrual_id) = 32),
+    subject_id TEXT NOT NULL,
+    usage_day TEXT NOT NULL CHECK (length(usage_day) = 10),
+    elapsed_seconds BIGINT NOT NULL CHECK (elapsed_seconds BETWEEN 1 AND 86400),
+    seconds BIGINT NOT NULL CHECK (seconds >= 1),
+    recorded_at TEXT NOT NULL,
+    CHECK (seconds <= elapsed_seconds)
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_chat_usage_subject_day
+ON daily_chat_usage(subject_id, usage_day);
+
 CREATE TABLE IF NOT EXISTS subject_deletions (
     account_id_hash TEXT NOT NULL,
     subject_id_hash TEXT NOT NULL,
@@ -528,7 +541,8 @@ BEGIN
         'device_challenges', 'device_control_intents', 'device_acoustic_capabilities',
         'device_media_epoch_counters', 'device_media_sessions',
         'device_runtime_profile_ledger', 'device_runtime_profile_acks',
-        'device_settings', 'media_reply_delivery_events', 'subject_deletions',
+        'device_settings', 'media_reply_delivery_events', 'daily_chat_usage',
+        'subject_deletions',
         'digital_self_preview_grants', 'digital_self_preview_feedback',
         'digital_self_fidelity_evaluations', 'digital_self_fidelity_trials'
     ] LOOP

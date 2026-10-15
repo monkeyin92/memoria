@@ -54,12 +54,23 @@
           <view class="trial-card trial-card-xl device-usage-card">
             <view class="device-ring">
               <view class="device-ring-inner">
-                <text class="device-ring-num {{sessionLimits.maxSessionMinutes ? '' : 'is-unset'}}">{{sessionLimits.maxSessionMinutes || '未设置'}}</text>
-                <text class="device-ring-cap">{{sessionLimits.maxSessionMinutes ? '分钟 · 单次上限' : '单次上限'}}</text>
+                <block wx:if="{{sessionLimits.dailyChatMinutes && dailyUsage}}">
+                  <text class="device-ring-num">{{dailyUsage.usedMinutes}}</text>
+                  <text class="device-ring-cap">/ {{sessionLimits.dailyChatMinutes}} 分钟</text>
+                </block>
+                <block wx:elif="{{sessionLimits.dailyChatMinutes}}">
+                  <text class="device-ring-num">{{sessionLimits.dailyChatMinutes}}</text>
+                  <text class="device-ring-cap">分钟 · 每天上限</text>
+                </block>
+                <block wx:else>
+                  <text class="device-ring-num {{sessionLimits.maxSessionMinutes ? '' : 'is-unset'}}">{{sessionLimits.maxSessionMinutes || '未设置'}}</text>
+                  <text class="device-ring-cap">{{sessionLimits.maxSessionMinutes ? '分钟 · 单次上限' : '单次上限'}}</text>
+                </block>
               </view>
             </view>
             <view class="device-usage-copy">
-              <text class="device-usage-title">用量暂未统计</text>
+              <text wx:if="{{sessionLimits.dailyChatMinutes && dailyUsage}}" class="device-usage-title">今天还可以聊 <text class="device-usage-remaining">{{sessionLimits.dailyChatMinutes > dailyUsage.usedMinutes ? sessionLimits.dailyChatMinutes - dailyUsage.usedMinutes : 0}} 分钟</text></text>
+              <text wx:else class="device-usage-title">用量暂未统计</text>
               <view class="trial-status-pill {{online ? '' : 'is-off'}}">
                 <view class="trial-status-dot"></view>
                 <text>{{online ? '在线' : '离线'}}</text>
@@ -88,6 +99,29 @@
               <text>{{limitsSliderMin}} 分钟</text>
               <text>{{limitsSliderMax}} 分钟</text>
             </view>
+            <block wx:if="{{sessionLimits.dailyChatMinutes && dailyChatSlider}}">
+              <view class="device-limit-divider"></view>
+              <view class="device-limit-head">
+                <text class="device-limit-label">每天上限</text>
+                <view>
+                  <text class="device-limit-num">{{sessionLimits.dailyChatMinutes}}</text>
+                  <text class="device-limit-unit"> 分钟</text>
+                </view>
+              </view>
+              <mp-slider
+                label="每天上限"
+                min="{{dailyChatSlider.min}}"
+                max="{{dailyChatSlider.max}}"
+                step="{{dailyChatSlider.step}}"
+                value="{{sessionLimits.dailyChatMinutes}}"
+                disabled="{{limitsSaving}}"
+                bindchange="onDailyChatMinutesSlider"
+              ></mp-slider>
+              <view class="device-limit-range">
+                <text>{{dailyChatSlider.min}} 分钟</text>
+                <text>{{dailyChatSlider.max}} 分钟</text>
+              </view>
+            </block>
           </view>
 
           <view class="trial-card device-quiet-card" bindtap="openLimitsSheet">
