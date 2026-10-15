@@ -7,7 +7,12 @@ const CONTROL_API_BASE_URL = "https://aginice.cn:8443/memoria-api";
 
 const SUBSCRIPTION_PUSH_ENABLED = false;
 
+// 镜像 agent 的 LLM_FAILOVER_ENABLED，服务端不下发这个开关。
+// 打开时先发布 true 的小程序再改 agent；关闭时先改 agent 再发布 false。
+const LLM_FAILOVER_ENABLED = false;
+
 module.exports = {
   CONTROL_API_BASE_URL,
   SUBSCRIPTION_PUSH_ENABLED,
+  LLM_FAILOVER_ENABLED,
 };

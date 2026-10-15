@@ -664,7 +664,7 @@ Page({
   openAbout() {
     wx.showModal({
       title: "关于 Memoria",
-      content: ["陪孩子聊天、讲故事的 AI 助手。", compliance.CHAT_MODEL_FILING, this.data.appVersionLabel]
+      content: ["陪孩子聊天、讲故事的 AI 助手。", ...compliance.chatModelFilingLines(), this.data.appVersionLabel]
         .filter(Boolean)
         .join("\n"),
       showCancel: false,

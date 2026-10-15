@@ -8,7 +8,23 @@ const PRODUCT_POSITIONING =
 const AI_DISCLOSURE =
   "设备回应由人工智能生成，会在交互中明确标识。";
 const TRAINING_DEFAULT_OFF = "你的对话与声音默认不用于模型训练。";
-const CHAT_MODEL_FILING = "对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）";
+const config = require("../config");
+
+// 每个可能回答对话的大模型都要在「关于」里展示备案。servedWhen 为 null 表示该模型始终在服务。
+const CHAT_MODEL_FILINGS = Object.freeze([
+  { servedWhen: null, line: "对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）" },
+  {
+    servedWhen: "LLM_FAILOVER_ENABLED",
+    line: "备用对话大模型：通义千问（算法备案号 网信算备330110507206401230035号，模型备案号 ZheJiang-TongYiQianWen-20230901）",
+  },
+]);
+
+function chatModelFilingLines(flags = config) {
+  return CHAT_MODEL_FILINGS.filter(
+    (row) => row.servedWhen === null || flags[row.servedWhen] === true,
+  ).map((row) => row.line);
+}
+
 const MINOR_RESTRICTIONS =
   "未成年人账号不提供虚拟亲属或伴侣角色，敏感能力由服务端按主体授权。";
 
@@ -66,9 +82,9 @@ module.exports = {
   PRODUCT_POSITIONING,
   AI_DISCLOSURE,
   TRAINING_DEFAULT_OFF,
-  CHAT_MODEL_FILING,
   MINOR_RESTRICTIONS,
   startForegroundSession,
   endForegroundSession,
   checkContinuousUseReminder,
+  chatModelFilingLines,
 };

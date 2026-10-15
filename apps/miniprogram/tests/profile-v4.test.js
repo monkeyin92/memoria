@@ -10,6 +10,7 @@ const { parseWxml, renderPage } = require("../scripts/mp-harness/render");
 const fx = require("../scripts/mp-harness/fixtures");
 
 const PAGE = "pages/profile/index";
+const SHIPPED_CONFIG = { ...require("../config") };
 
 function visibleText(html) {
   return html.replace(/<head>[\s\S]*?<\/head>/, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
@@ -138,6 +139,37 @@ test("关于 names the filed chat model and the release version, or the build ch
     );
   } finally {
     release.restore();
+  }
+});
+
+test("with LLM_FAILOVER_ENABLED on, 关于 lists the 通义千问 backup filing under DeepSeek", async () => {
+  const harness = await openProfile({ ...fx.authed(), config: { ...SHIPPED_CONFIG, LLM_FAILOVER_ENABLED: true } });
+  try {
+    harness.page.openAbout();
+    assert.equal(
+      callsTo(harness, "showModal")[0].content,
+      "陪孩子聊天、讲故事的 AI 助手。\n" +
+        "对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）\n" +
+        "备用对话大模型：通义千问（算法备案号 网信算备330110507206401230035号，模型备案号 ZheJiang-TongYiQianWen-20230901）\n" +
+        "开发版",
+    );
+  } finally {
+    harness.restore();
+  }
+});
+
+test("with LLM_FAILOVER_ENABLED omitted from config, 关于 lists only DeepSeek", async () => {
+  const withoutFlag = { ...SHIPPED_CONFIG };
+  delete withoutFlag.LLM_FAILOVER_ENABLED;
+  const harness = await openProfile({ ...fx.authed(), config: withoutFlag });
+  try {
+    harness.page.openAbout();
+    assert.equal(
+      callsTo(harness, "showModal")[0].content,
+      "陪孩子聊天、讲故事的 AI 助手。\n对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）\n开发版",
+    );
+  } finally {
+    harness.restore();
   }
 });
 
