@@ -7,7 +7,10 @@ function profile(overrides = {}) {
     valid: true,
     subject_category: "minor",
     obligations: [
-      { code: "MAX_SESSION_SECONDS", params: { max_session_seconds: 1800, retention_ttl_seconds: null, quiet_hours: null, extras: [] } },
+      {
+        code: "MAX_SESSION_SECONDS",
+        params: { max_session_seconds: 1800, retention_ttl_seconds: null, quiet_hours: null, extras: [["daily_chat_seconds", "2700"]] },
+      },
       { code: "QUIET_HOURS", params: { max_session_seconds: null, retention_ttl_seconds: null, quiet_hours: ["21:00", "07:00"], extras: [] } },
     ],
     ...overrides,
@@ -27,8 +30,35 @@ test("a minor's signed obligations become the displayed session limits", () => {
     quietHoursLabel: "21:00 – 次日 07:00",
     inQuietHours: true,
     maxSessionLabel: "30 分钟",
+    dailyChatMinutes: 45,
   });
   assert.equal(sessionLimitsFromProfile(profile(), DAY).inQuietHours, false);
+});
+
+test("the daily chat budget shows only when signed as whole minutes in seconds", () => {
+  const dailyFrom = (extras) =>
+    sessionLimitsFromProfile(
+      profile({
+        obligations: [
+          { code: "MAX_SESSION_SECONDS", params: { max_session_seconds: 1800, retention_ttl_seconds: null, quiet_hours: null, extras } },
+        ],
+      }),
+      DAY,
+    ).dailyChatMinutes;
+  assert.equal(dailyFrom([["daily_chat_seconds", "900"]]), 15);
+  assert.equal(dailyFrom([["retention_hint", "x"], ["daily_chat_seconds", "3600"]]), 60);
+  for (const extras of [
+    [],
+    [["daily_chat_seconds", "1801"]],
+    [["daily_chat_seconds", "+900"]],
+    [["daily_chat_seconds", "-60"]],
+    [["daily_chat_seconds", "0"]],
+    [["daily_chat_seconds", "abc"]],
+    [["daily_chat_seconds", "１８００"]],
+    [["daily_chat_minutes", "30"]],
+  ]) {
+    assert.equal(dailyFrom(extras), null, JSON.stringify(extras));
+  }
 });
 
 test("nothing is shown for adults, invalid profiles or missing obligations", () => {
@@ -56,7 +86,7 @@ test("a same-day window has no 次日 marker", () => {
   assert.equal(limits.maxSessionLabel, "");
 });
 
-test("stored daily limits above 60 minutes clamp to 60 on read", () => {
+test("stored per-session limits above 60 minutes clamp to 60 on read", () => {
   for (const minutes of [90, 120]) {
     const limits = sessionLimitsFromProfile(
       profile({
