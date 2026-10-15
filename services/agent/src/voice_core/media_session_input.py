@@ -30,6 +30,7 @@ from services.agent.src.voice_core.media_session_state import (
     MediaVoiceSessionState as _MediaVoiceSession,
 )
 from services.agent.src.voice_core.speech_timeline import SegmentKind, SpeechSegment
+from services.common.llm_thinking_filler import speech_end_monotonic
 
 if TYPE_CHECKING:
     from services.agent.src.observability.metrics import MetricsRegistry
@@ -537,6 +538,7 @@ class MediaSessionInputMixin:
             ):
                 return
             if segment.final:
+                received_at = time.monotonic()
                 if (
                     context.pending.active_vad_stream_epoch == segment.stream_epoch
                     and context.pending.active_vad_start_sample is not None
@@ -664,7 +666,11 @@ class MediaSessionInputMixin:
                         context.pending.turn_endpoint_timeout_handle = None
                     context.pending.turn_endpoint_grace_deadline = None
                     context.pending.turn_endpoint_tail_deadline = None
-                    context.pending.child_speech_ended_mono = time.monotonic()
+                    context.pending.child_speech_ended_mono = speech_end_monotonic(
+                        received_at=received_at,
+                        event_sample=segment.capture_start_sample,
+                        voiced_end_sample=segment.voiced_end_sample,
+                    )
                 context.pending.turn_retire_sample = max(
                     context.pending.turn_retire_sample or 0,
                     segment.capture_start_sample,
