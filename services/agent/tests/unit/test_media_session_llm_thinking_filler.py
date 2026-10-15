@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -32,23 +33,73 @@ from services.agent.tests.unit.media_session_support import (
     _FenceCheckingBridge,
     _wait_until,
 )
+from services.common.labelled_lines import (
+    LabelledLine,
+    LabelledLineCatalogue,
+    override_labelled_catalogue,
+)
+from services.common.llm_failover import LLM_UNAVAILABLE_LINE_ID, LLM_UNAVAILABLE_TEXT
+from services.common.llm_thinking_filler import LLM_THINKING_LINE_ID, LLM_THINKING_TEXT
 
 _FILLER_PCM = b"\x02\x00\x03\x00"
 _REPLY_PCM = b"\x07\x00\x08\x00"
 _REPLY_TEXT = "我是 AI，你最喜欢什么颜色呀？"
 
 
+def _install_test_catalogue() -> None:
+    thinking = LabelledLine(
+        line_id=LLM_THINKING_LINE_ID,
+        text=LLM_THINKING_TEXT,
+        aigc={
+            "content_id": LLM_THINKING_LINE_ID,
+            "service_provider": "Memoria",
+            "ai_generated": True,
+        },
+        pcm_s16le=_FILLER_PCM,
+        sample_rate_hz=24_000,
+        ogg_path=Path("llm_thinking.ogg"),
+    )
+    unavailable = LabelledLine(
+        line_id=LLM_UNAVAILABLE_LINE_ID,
+        text=LLM_UNAVAILABLE_TEXT,
+        aigc={
+            "content_id": LLM_UNAVAILABLE_LINE_ID,
+            "service_provider": "Memoria",
+            "ai_generated": True,
+        },
+        pcm_s16le=b"\x04\x00\x05\x00",
+        sample_rate_hz=24_000,
+        ogg_path=Path("llm_unavailable.ogg"),
+    )
+    override_labelled_catalogue(
+        LabelledLineCatalogue(
+            {
+                LLM_THINKING_LINE_ID: thinking,
+                LLM_UNAVAILABLE_LINE_ID: unavailable,
+            }
+        )
+    )
+
+
+@pytest.fixture(autouse=True)
+def _labelled_catalogue_fixture() -> Any:
+    _install_test_catalogue()
+    try:
+        yield
+    finally:
+        override_labelled_catalogue(None)
+
+
 class _HeldReplyProvider(FakeMediaProvider):
     def __init__(self) -> None:
         super().__init__()
         self.output_texts: list[str] = []
+        self.generate_output_calls = 0
+        self.output_frame_samples = 2
         self.release_reply = asyncio.Event()
         self.reply_started = asyncio.Event()
         self.reply_ready = asyncio.Event()
         self.reply_closed = asyncio.Event()
-        self.filler_rendered = asyncio.Event()
-        self.filler_rendered.set()
-        self.filler_closed = asyncio.Event()
 
     def generate_output(
         self,
@@ -60,20 +111,20 @@ class _HeldReplyProvider(FakeMediaProvider):
         source_start_sample: int,
     ) -> AsyncIterator[MediaReplyChunk]:
         _ = work_id
-        self.output_texts.append(str(intent.tts_source))
+        text = str(getattr(intent, "tts_source", "") or "")
+        if text == LLM_THINKING_TEXT:
+            raise AssertionError("streaming TTS must not render llm_thinking")
+        self.generate_output_calls += 1
+        self.output_texts.append(text)
 
         async def chunks() -> AsyncIterator[MediaReplyChunk]:
-            try:
-                await self.filler_rendered.wait()
-                yield MediaReplyChunk(
-                    pcm_s16le=_FILLER_PCM,
-                    source_start_sample=source_start_sample,
-                    text=str(intent.tts_source),
-                    first=True,
-                    final=True,
-                )
-            finally:
-                self.filler_closed.set()
+            yield MediaReplyChunk(
+                pcm_s16le=_FILLER_PCM,
+                source_start_sample=source_start_sample,
+                text=text,
+                first=True,
+                final=True,
+            )
 
         return chunks()
 
@@ -166,6 +217,7 @@ async def _open_device_session(
     )
     bridge.frames.clear()
     provider.output_texts.clear()
+    provider.generate_output_calls = 0
     context.llm_thinking_filler.delay_s = 0.05
     return registry, provider, bridge, session, context
 
@@ -222,7 +274,8 @@ async def test_slow_reply_plays_filler_then_the_reply_in_one_generation() -> Non
         provider.release_reply.set()
         await _wait_until(lambda: len(bridge.frames) == 2, timeout=2.0)
 
-        assert provider.output_texts == ["嗯，我想一想。"]
+        assert provider.generate_output_calls == 0
+        assert provider.output_texts == []
         assert _wire(bridge.frames) == [
             (_FILLER_PCM, 0, True, False),
             (_REPLY_PCM, 2, False, True),
@@ -231,6 +284,9 @@ async def test_slow_reply_plays_filler_then_the_reply_in_one_generation() -> Non
             context.runtime.fence.generation_id
         }
         assert context.output.assistant_text == _REPLY_TEXT
+        from services.common.labelled_lines import labelled_catalogue
+
+        assert labelled_catalogue().require(LLM_THINKING_LINE_ID).aigc["ai_generated"] is True
     finally:
         provider.release_reply.set()
         await registry.finalize_session(context.identity.session_id)
@@ -295,30 +351,6 @@ async def test_reply_that_starts_before_the_delay_plays_no_filler() -> None:
         assert provider.output_texts == []
         assert _wire(bridge.frames) == [(_REPLY_PCM, 0, True, True)]
     finally:
-        await registry.finalize_session(context.identity.session_id)
-
-
-@pytest.mark.asyncio
-async def test_a_reply_ready_before_the_filler_renders_plays_without_it() -> None:
-    registry, provider, bridge, session, context = await _open_device_session(
-        "llm-thinking-reply-beats-render"
-    )
-    provider.filler_rendered.clear()
-    try:
-        await _commit_spoken_turn(registry, session, context)
-        await _wait_until(lambda: provider.output_texts == ["嗯，我想一想。"], timeout=2.0)
-        provider.release_reply.set()
-        await asyncio.wait_for(provider.reply_ready.wait(), timeout=2.0)
-        provider.filler_rendered.set()
-        await _wait_until(
-            lambda: any(frame.pcm_s16le == _REPLY_PCM for frame in bridge.frames), timeout=2.0
-        )
-
-        assert _wire(bridge.frames) == [(_REPLY_PCM, 0, True, True)]
-        assert provider.filler_closed.is_set()
-    finally:
-        provider.release_reply.set()
-        provider.filler_rendered.set()
         await registry.finalize_session(context.identity.session_id)
 
 
