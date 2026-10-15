@@ -7,6 +7,11 @@ CREATE TABLE IF NOT EXISTS voice_clone_consents (
     revoke_event_id TEXT
 );
 
+-- Permanent default so existing rows and any writer that skips a stamp stay
+-- invalid for clone. Do not UPDATE rows and do not drop this default.
+ALTER TABLE voice_clone_consents
+ADD COLUMN IF NOT EXISTS notice_version TEXT NOT NULL DEFAULT 'pre-separate-notice';
+
 CREATE TABLE IF NOT EXISTS voice_samples (
     sample_id UUID PRIMARY KEY,
     account_id TEXT NOT NULL REFERENCES voice_clone_consents(account_id) ON DELETE CASCADE,

@@ -7,6 +7,7 @@ from typing import Any, cast
 
 import httpx
 
+from services.voice_profile.clone_authority import VoiceCloneAuthority
 from services.voice_profile.domain import ProviderVoice
 
 
@@ -30,9 +31,11 @@ class CosyVoiceEnrollmentClient:
         config: CosyVoiceEnrollmentConfig,
         *,
         client: httpx.AsyncClient | None = None,
+        clone: VoiceCloneAuthority,
     ) -> None:
         self._config = config
         self._client = client
+        self._clone = clone
 
     async def create_voice(
         self,
@@ -41,6 +44,7 @@ class CosyVoiceEnrollmentClient:
         prefix: str,
         sample_url: str,
     ) -> ProviderVoice:
+        self._clone.admit()
         if not target_model.startswith("cosyvoice-v3.5-"):
             raise ValueError("voice clone target must be a CosyVoice v3.5 model")
         if not prefix.isalnum() or not 1 <= len(prefix) <= 10:
@@ -105,6 +109,9 @@ class CosyVoiceEnrollmentClient:
 
 
 class UnavailableVoiceEnrollmentProvider:
+    def __init__(self, *, clone: VoiceCloneAuthority) -> None:
+        self._clone = clone
+
     async def create_voice(
         self,
         *,
@@ -112,6 +119,7 @@ class UnavailableVoiceEnrollmentProvider:
         prefix: str,
         sample_url: str,
     ) -> ProviderVoice:
+        self._clone.admit()
         del target_model, prefix, sample_url
         raise RuntimeError("voice enrollment provider is not configured")
 

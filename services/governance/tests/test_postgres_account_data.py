@@ -21,6 +21,7 @@ from services.governance.tests.test_account_data import (
     SessionTerminatorStub,
     VoiceProviderStub,
 )
+from services.voice_profile.clone_authority import VoiceCloneAuthority
 from services.voice_profile.domain import VoiceEnrollmentRequest
 from services.voice_profile.postgres_manager import PostgresVoiceProfileManager
 from services.voice_profile.testing_audio import voice_sample_wav
@@ -521,6 +522,7 @@ async def test_postgres_deletion_saga_removes_rows_objects_and_provider_voice(
         sample_url_factory=lambda sample_id: f"https://control.test/samples/{sample_id}",
         provider_region="cn-beijing",
         target_model="cosyvoice-v3.5-flash",
+        clone=VoiceCloneAuthority(enabled=True),
     )
     await voice.initialize()
     await voice.grant_consent(account_id=account_id, policy_version="voice-clone-v1")

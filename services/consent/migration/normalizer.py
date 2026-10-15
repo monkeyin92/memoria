@@ -22,6 +22,8 @@ from typing import Literal
 from packages.contracts.generated.python.multi_subject_contracts import CapabilityValue
 
 from services.consent.migration.adapters import RawLegacyConsent, _require_aware
+from services.voice_profile.clone_authority import consent_standing
+from services.voice_profile.domain import VoiceConsent
 
 # ---------------------------------------------------------------------------
 # Capability policy tables (single decision point for the migration mapping)
@@ -97,6 +99,7 @@ QuarantineReason = Literal[
     "actor_not_subject_for_sensitive",
     "ambiguous_binding",
     "expired_only",
+    "pre_separate_notice",
     "unsupported_capability",
     "subject_unknown",
 ]
@@ -213,12 +216,27 @@ def _quarantine_fields(
     }
 
 
+def _voice_clone_notice_stands(row: RawLegacyConsent) -> bool:
+    notice = row.raw.get("notice_version")
+    if not isinstance(notice, str):
+        return False
+    standing = consent_standing(
+        VoiceConsent(
+            account_id=row.legacy_id,
+            policy_version=row.policy_version,
+            notice_version=notice,
+            granted_at=row.granted_at,
+        )
+    )
+    return standing == "valid"
+
+
 def normalize_row(row: RawLegacyConsent, *, now: datetime) -> NormalizedConsent | QuarantineEntry:
     """Classify one legacy row, fail closed.
 
     Check order (deterministic, first failure wins):
-    revoked/expired -> capability mapping -> guardian binding -> subject proof
-    -> purpose -> evidence -> sensitive actor rule.
+    revoked/expired -> voice-clone notice allowlist -> capability mapping ->
+    guardian binding -> subject proof -> purpose -> evidence -> sensitive actor rule.
     """
     _require_aware(now, field="now")
 
@@ -248,6 +266,11 @@ def normalize_row(row: RawLegacyConsent, *, now: datetime) -> NormalizedConsent 
         return quarantine(
             "expired_only",
             f"consent expired at {_iso(row.expires_at)}; expiry is not a grant",
+        )
+    if row.source == "voice_clone" and not _voice_clone_notice_stands(row):
+        return quarantine(
+            "pre_separate_notice",
+            "voice-clone consent has no current separate-notice stamp",
         )
 
     mapped_capability = CAPABILITY_MAPPING.get(row.capability_clue)

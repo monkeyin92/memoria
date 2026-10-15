@@ -68,6 +68,7 @@ from services.self_model.domain import RelationshipProfile
 from services.self_model.postgres_registry import PostgresSelfModelRegistry
 from services.speaker.authority import SpeakerAuthority
 from services.speaker.domain import EmbeddingResult, EnrollmentRequest, EnrollmentSample
+from services.voice_profile.clone_authority import VoiceCloneAuthority
 from services.voice_profile.domain import ProviderVoice, VoiceEnrollmentRequest
 from services.voice_profile.postgres_manager import PostgresVoiceProfileManager
 from services.voice_profile.testing_audio import voice_sample_wav
@@ -705,6 +706,7 @@ async def _fixture(
         sample_url_factory=lambda sample_id: f"https://control.test/samples/{sample_id}",
         provider_region="cn-beijing",
         target_model="cosyvoice-v3.5-flash",
+        clone=VoiceCloneAuthority(enabled=True),
         pool=db.pool,
     )
     await voice.grant_consent(account_id=account_id, policy_version="voice-clone-v1")

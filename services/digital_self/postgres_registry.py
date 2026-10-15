@@ -48,6 +48,7 @@ from services.self_model.domain import (
     SourceRelation,
 )
 from services.self_model.policy import is_effective
+from services.voice_profile.clone_authority import clone_consent_valid
 
 _TRANSITIONS: dict[str, tuple[VersionStatus, VersionStatus]] = {
     "begin_testing": ("draft", "testing"),
@@ -498,6 +499,8 @@ class PostgresDigitalSelfRegistry:
         )
         if not tables_exist:
             return None
+        if not await clone_consent_valid(connection, account_id):
+            return None
         row = await connection.fetchrow(
             """
             SELECT profile_id, version_number, provider, target_model,
@@ -512,10 +515,6 @@ class PostgresDigitalSelfRegistry:
               AND provider_voice_id IS NOT NULL
               AND provider_expires_at IS NOT NULL
               AND provider_expires_at > CURRENT_TIMESTAMP
-              AND EXISTS (
-                  SELECT 1 FROM voice_clone_consents
-                  WHERE account_id = $1 AND revoked_at IS NULL
-              )
             """,
             account_id,
         )
