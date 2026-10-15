@@ -38,13 +38,19 @@
           <text class="auth-fact-sub">会明确标识；模型训练默认关闭</text>
         </view>
       </view>
+      <view class="auth-fact">
+        <mp-icon name="cam" tone="ink"></mp-icon>
+        <view class="auth-fact-copy">
+          <text class="auth-fact-title">设备没有摄像头，也不采集图像</text>
+        </view>
+      </view>
     </view>
 
     <view class="auth-consent" bindtap="toggleConsent" aria-role="checkbox" aria-checked="{{consented}}">
       <view class="auth-check {{consented ? 'auth-check-on' : ''}}">
         <image wx:if="{{consented}}" class="auth-check-icon" src="/assets/ui/v4/check-white-bold.svg" />
       </view>
-      <text class="auth-consent-copy">我是孩子的监护人，已阅读并同意<text class="privacy-link" catchtap="openPrivacy">《隐私保护指引》</text></text>
+      <text class="auth-consent-copy">我是孩子的监护人，已阅读并同意<text class="privacy-link" catchtap="openPrivacy">《隐私保护指引（草稿）》</text>和<text class="privacy-link" catchtap="openGuardianConsent">《监护人同意书（草稿）》</text></text>
     </view>
 
     <text wx:if="{{error}}" class="error-text auth-error">{{error}}</text>

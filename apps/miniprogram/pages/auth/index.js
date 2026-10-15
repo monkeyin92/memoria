@@ -95,9 +95,13 @@ Page({
     openPrivacyContract();
   },
 
+  openGuardianConsent() {
+    wx.navigateTo({ url: "/pages/guardian-consent/index" });
+  },
+
   async onGetPhoneNumber(event) {
     if (!this.data.consented) {
-      this.setData({ error: "请先阅读并同意《隐私保护指引》。" });
+      this.setData({ error: "请先阅读并同意《隐私保护指引（草稿）》和《监护人同意书（草稿）》。" });
       return;
     }
     const phoneCode = event.detail?.code;

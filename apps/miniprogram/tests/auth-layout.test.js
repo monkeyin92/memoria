@@ -25,9 +25,18 @@ test("auth header puts the draft chip and the two-line title on separate lines",
 
 test("auth facts state only what the product does and promise no view or delete", () => {
   const facts = [...authTemplate.matchAll(/<text class="auth-fact-title">([^<]+)<\/text>/g)].map((m) => m[1]);
-  assert.deepEqual(facts, ["对话经过我们的服务器", "保存对话摘要", "长期只记三项", "回应由 AI 生成"]);
+  assert.deepEqual(facts, [
+    "对话经过我们的服务器",
+    "保存对话摘要",
+    "长期只记三项",
+    "回应由 AI 生成",
+    "设备没有摄像头，也不采集图像",
+  ]);
+  assert.match(authTemplate, /家长可以按天查看，原话在入库前就去掉/);
+  assert.match(authTemplate, /会明确标识；模型训练默认关闭/);
   assert.match(authTemplate, /孩子的称呼、喜好、宠物名/);
-  assert.doesNotMatch(authTemplate, /摄像头|随时查看|删除可证明|device-screen/);
+  assert.match(authTemplate, /<mp-icon name="cam" tone="ink"><\/mp-icon>/);
+  assert.doesNotMatch(authTemplate, /随时查看|删除可证明|device-screen|未来|连接器|后续|预留|将配备|下一代/);
 });
 
 test("auth header has no unselected mascot placeholder or redundant subtitle", () => {
