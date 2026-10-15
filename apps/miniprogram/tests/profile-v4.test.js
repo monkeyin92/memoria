@@ -10,10 +10,21 @@ const { parseWxml, renderPage } = require("../scripts/mp-harness/render");
 const fx = require("../scripts/mp-harness/fixtures");
 
 const PAGE = "pages/profile/index";
-const DEEPSEEK_ABOUT =
-  "陪孩子聊天、讲故事的 AI 助手。\n对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）\n开发版";
+const ABOUT_LEAD = "陪孩子聊天、讲故事的 AI 助手。";
+const DEEPSEEK_LINE = "对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）";
 const QWEN_FILING =
-  "通义千问（网信算备 330110507206401230035 号，登记号 ZheJiang-TongYiQianWen-20230901）";
+  "对话大模型：通义千问（网信算备 330110507206401230035 号，登记号 ZheJiang-TongYiQianWen-20230901）";
+
+function aboutCard(harness) {
+  const modalsBefore = callsTo(harness, "showModal").length;
+  harness.page.openAbout();
+  assert.equal(callsTo(harness, "showModal").length, modalsBefore);
+  const html = renderPage(PAGE, harness.page.data, { tabBar: false });
+  assert.match(html, /\.about-line\s*\{[^}]*text-align:\s*left/);
+  assert.match(html, /<text class="modal-title">关于 Memoria<\/text>/);
+  assert.match(html, /<button[^>]*about-dismiss[^>]*>知道了<\/button>/);
+  return [...html.matchAll(/<text class="about-line">([^<]*)<\/text>/g)].map((match) => match[1]);
+}
 
 function visibleText(html) {
   return html.replace(/<head>[\s\S]*?<\/head>/, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
@@ -94,8 +105,10 @@ test("a guest still gets privacy, feedback and about, and 微信登录 opens the
       profileText(harness),
       "我的 设备与记录，登录后跟随账号。 登录后即可管理你的资料。未登录时不会读取资料、统计或回顾。 微信登录 授权与隐私说明 帮助与反馈 关于 开发版",
     );
-    harness.page.openAbout();
-    assert.equal(callsTo(harness, "showModal")[0].content, DEEPSEEK_ABOUT);
+    assert.deepEqual(aboutCard(harness), [ABOUT_LEAD, DEEPSEEK_LINE, "开发版"]);
+    harness.page.closeAbout();
+    assert.equal(harness.page.data.showAbout, false);
+    assert.doesNotMatch(profileText(harness), /关于 Memoria/);
     await harness.page.loginFromProfile();
     assert.deepEqual(callsTo(harness, "navigateTo"), [
       { url: "/pages/auth/index?redirect=%2Fpages%2Fhome%2Findex&reason=view_profile" },
@@ -119,16 +132,9 @@ test("关于 names the filed chat model and the release version, or the build ch
   const develop = await openProfile(fx.authed());
   try {
     assert.deepEqual(develop.page.data.chatLlmProviders, []);
-    develop.page.openAbout();
-    assert.deepEqual(callsTo(develop, "showModal"), [
-      {
-        title: "关于 Memoria",
-        content: "陪孩子聊天、讲故事的 AI 助手。\n对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）\n开发版",
-        showCancel: false,
-        confirmText: "知道了",
-      },
-    ]);
-    assert.doesNotMatch(callsTo(develop, "showModal")[0].content, /qwen|通义|千问/i);
+    const lines = aboutCard(develop);
+    assert.deepEqual(lines, [ABOUT_LEAD, DEEPSEEK_LINE, "开发版"]);
+    assert.doesNotMatch(lines.join("\n"), /qwen|通义|千问/i);
   } finally {
     develop.restore();
   }
@@ -138,11 +144,7 @@ test("关于 names the filed chat model and the release version, or the build ch
   });
   try {
     assert.match(profileText(release), / 版本 1\.4\.0$/);
-    release.page.openAbout();
-    assert.equal(
-      callsTo(release, "showModal")[0].content,
-      "陪孩子聊天、讲故事的 AI 助手。\n对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）\n版本 1.4.0",
-    );
+    assert.deepEqual(aboutCard(release), [ABOUT_LEAD, DEEPSEEK_LINE, "版本 1.4.0"]);
   } finally {
     release.restore();
   }
@@ -154,8 +156,7 @@ test("chat_llm_providers deepseek keeps the DeepSeek filing", async () => {
   }));
   try {
     assert.deepEqual(harness.page.data.chatLlmProviders, ["deepseek"]);
-    harness.page.openAbout();
-    assert.equal(callsTo(harness, "showModal")[0].content, DEEPSEEK_ABOUT);
+    assert.deepEqual(aboutCard(harness), [ABOUT_LEAD, DEEPSEEK_LINE, "开发版"]);
   } finally {
     harness.restore();
   }
@@ -167,11 +168,7 @@ test("chat_llm_providers qwen lists only the 通义千问 filing", async () => {
   }));
   try {
     assert.deepEqual(harness.page.data.chatLlmProviders, ["qwen"]);
-    harness.page.openAbout();
-    assert.equal(
-      callsTo(harness, "showModal")[0].content,
-      "陪孩子聊天、讲故事的 AI 助手。\n" + QWEN_FILING + "\n开发版",
-    );
+    assert.deepEqual(aboutCard(harness), [ABOUT_LEAD, QWEN_FILING, "开发版"]);
   } finally {
     harness.restore();
   }
@@ -183,17 +180,15 @@ test("chat_llm_providers deepseek and qwen discloses both filings", async () => 
   }));
   try {
     assert.deepEqual(harness.page.data.chatLlmProviders, ["deepseek", "qwen"]);
-    harness.page.openAbout();
-    const content = callsTo(harness, "showModal")[0].content;
-    assert.equal(
-      content,
-      "陪孩子聊天、讲故事的 AI 助手。\n" +
-        "对话可能由 DeepSeek 或阿里云通义千问生成\n" +
-        "对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）\n" +
-        QWEN_FILING +
-        "\n开发版",
-    );
-    assert.doesNotMatch(content, /备用/);
+    const lines = aboutCard(harness);
+    assert.deepEqual(lines, [
+      ABOUT_LEAD,
+      "对话可能由 DeepSeek 或阿里云通义千问生成",
+      DEEPSEEK_LINE,
+      QWEN_FILING,
+      "开发版",
+    ]);
+    assert.doesNotMatch(lines.join("\n"), /备用/);
   } finally {
     harness.restore();
   }

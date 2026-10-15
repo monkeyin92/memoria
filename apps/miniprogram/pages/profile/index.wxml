@@ -130,4 +130,12 @@
   </block>
 
   <text wx:if="{{appVersionLabel}}" class="profile-version">{{appVersionLabel}}</text>
+
+  <view wx:if="{{showAbout}}" class="modal-wrap" bindtap="closeAbout">
+    <view class="modal-card" catchtap="noop">
+      <text class="modal-title">关于 Memoria</text>
+      <text wx:for="{{aboutLines}}" wx:key="*this" class="about-line">{{item}}</text>
+      <button class="primary-button about-dismiss" bindtap="closeAbout">知道了</button>
+    </view>
+  </view>
 </view>

@@ -118,6 +118,19 @@
   margin-top: 12px;
 }
 
+.about-line {
+  display: block;
+  margin-top: 8px;
+  color: var(--mp-ink-2);
+  font-size: var(--mp-type-body);
+  line-height: var(--mp-lh-body);
+  text-align: left;
+}
+
+.about-dismiss {
+  margin-top: 16px;
+}
+
 .foot-link {
   display: block;
   margin-top: 24px;

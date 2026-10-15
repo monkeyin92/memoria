@@ -238,6 +238,8 @@ Page({
     deliveredCapabilitiesLoading: false,
     chatLlmProviders: [],
     appVersionLabel: "",
+    showAbout: false,
+    aboutLines: [],
     ...deviceBindingReset(),
     complianceCopy: {
       positioning: compliance.PRODUCT_POSITIONING,
@@ -670,18 +672,18 @@ Page({
   },
 
   openAbout() {
-    wx.showModal({
-      title: "关于 Memoria",
-      content: [
+    this.setData({
+      showAbout: true,
+      aboutLines: [
         "陪孩子聊天、讲故事的 AI 助手。",
         ...compliance.chatModelFilingLines(this.data.chatLlmProviders),
         this.data.appVersionLabel,
-      ]
-        .filter(Boolean)
-        .join("\n"),
-      showCancel: false,
-      confirmText: "知道了",
+      ].filter(Boolean),
     });
+  },
+
+  closeAbout() {
+    this.setData({ showAbout: false });
   },
 
   async _finishLogout() {
