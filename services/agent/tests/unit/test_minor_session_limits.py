@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time as monotonic_clock
 from datetime import UTC, datetime, time, timedelta
 from types import SimpleNamespace
@@ -304,6 +305,37 @@ async def test_a_minor_wake_is_refused_when_today_is_spent_or_unknown(
     assert session.standby == [reason]
     assert context.daily_chat_accrual is None
     assert context.device_wake_ack_pending is False
+    assert context.standby_after_playback is True
+
+
+@pytest.mark.asyncio
+async def test_daily_limit_logs_the_phrase_id_and_does_not_open_listening(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from services.agent.src.voice_core.playback_lifecycle import (
+        generation_control_reason,
+        resume_listening_after_playback,
+    )
+
+    caplog.set_level(logging.INFO)
+    session = _Session(_ledger(httpx.Response(200, json={"used_seconds": 2700}), []))
+    context = _context(_profile(daily_chat_seconds="2700"))
+
+    assert await session._refuse_minor_daily_limit(context) is True
+
+    text = caplog.text
+    assert "fixed_phrase_played phrase_id=minor_daily_limit session=ses-limits" in text
+    assert MINOR_DAILY_LIMIT_PHRASE not in text
+    assert generation_control_reason(context, "provider_reply_complete", terminal=True) == (
+        "standby_after_playback"
+    )
+    assert (
+        resume_listening_after_playback(
+            tools_active=False,
+            resume_listening=not context.standby_after_playback,
+        )
+        is False
+    )
 
 
 @pytest.mark.asyncio

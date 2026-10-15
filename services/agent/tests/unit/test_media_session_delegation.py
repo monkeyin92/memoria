@@ -3113,9 +3113,15 @@ async def test_playback_ack_without_text_spans_still_completes_speaking() -> Non
         heard_text: str,
         *,
         tools_active: bool = False,
+        resume_listening: bool = True,
     ) -> bool:
         completed.append((done_fence, heard_text))
-        return await original(done_fence, heard_text, tools_active=tools_active)
+        return await original(
+            done_fence,
+            heard_text,
+            tools_active=tools_active,
+            resume_listening=resume_listening,
+        )
 
     context.runtime.on_media_playback_done = spy  # type: ignore[method-assign]
     await registry.on_playback_progress(

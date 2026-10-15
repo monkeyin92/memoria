@@ -1863,6 +1863,8 @@ def _response_plan_payload(
     evolution_protocol: str = "",
     tutor_directive: str | None = None,
     custom_persona: CompanionDefinition | None = None,
+    guardian_pin_confirmed: bool = False,
+    guardian_crisis_event_id: str | None = None,
 ) -> dict[str, Any]:
     source_refs = [
         _source_ref_payload(ref) for ref in plan.provenance.source_refs[:16] if ref.source_event_ids
@@ -2041,6 +2043,8 @@ def _response_plan_payload(
         "disclosures": disclosures,
         "voice_target": voice_target,
         "provenance": provenance,
+        "guardian_pin_confirmed": guardian_pin_confirmed,
+        "guardian_crisis_event_id": guardian_crisis_event_id,
     }
 
 
@@ -2112,6 +2116,28 @@ async def _append_legacy_plan_audit(
             )
     except (LegacyAccessDeniedError, LegacyNotFoundError) as exc:
         raise _response_plan_unavailable() from exc
+
+
+class CrisisScriptInterruptedBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    crisis_event_id: str = Field(min_length=1, max_length=64)
+
+
+@router.post("/crisis-script-interrupted")
+async def crisis_script_interrupted(
+    request: Request,
+    body: CrisisScriptInterruptedBody,
+    _: Annotated[None, Depends(_require_response_plan_token)],
+) -> dict[str, Any]:
+    """Mark a confirmed crisis pin as unheard. The body is an event id, never ASR text."""
+
+    template_id = await _crisis_notifications(request).mark_script_interrupted(
+        crisis_event_id=body.crisis_event_id,
+    )
+    if template_id is None:
+        raise HTTPException(status_code=404, detail="crisis pin was not found")
+    return {"reply_template_id": template_id, "script_interrupted": True}
 
 
 @router.post("/response-plan")
@@ -2199,11 +2225,13 @@ async def response_plan(
             if notify and active_subject_id is not None
             else ()
         )
+        guardian_pin_confirmed = False
+        guardian_crisis_event_id: str | None = None
         if notify and script is not None and active_subject_id is not None and (
             is_minor_student or contacts
         ):
             try:
-                await _crisis_notifications(request).record_minor_crisis(
+                receipt = await _crisis_notifications(request).record_minor_crisis(
                     minor_user_id=active_subject_id,
                     session_id=body.session_id,
                     turn_id=body.fence.turn_id,
@@ -2215,6 +2243,8 @@ async def response_plan(
                     declared_guardian_ids=contacts,
                     attempt_push=crisis.attempt_push, possibly_story_retell=crisis.possibly_story_retell,
                 )
+                guardian_pin_confirmed = True
+                guardian_crisis_event_id = receipt.crisis_event_id
             except Exception:
                 logger.exception(
                     "minor crisis notification enqueue failed; preserving fixed safety reply "
@@ -2341,6 +2371,8 @@ async def response_plan(
                     persona_capsule=persona_capsule,
                     now=now,
                     evolution_artifacts=evolution_artifacts,
+                    guardian_pin_confirmed=guardian_pin_confirmed,
+                    guardian_crisis_event_id=guardian_crisis_event_id,
                     evolution_account_id=account_id,
                     evolution_receipt_secret=settings.evolution_internal_token(),
                     evolution_protocol=evolution_protocol,

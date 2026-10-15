@@ -37,6 +37,27 @@ function fakeWx(answer) {
   };
 }
 
+test("normalizeAlert keeps an interrupted-script detail and drops an empty one", () => {
+  const withDetail = crisisAlerts.normalizeAlert({
+    notification_id: "n9",
+    pinned: true,
+    message: "有一条需要你关注的对话",
+    detail: "这次的提醒话术孩子没有听完，如需帮助可拨打心理援助热线110",
+  });
+  assert.equal(withDetail.message, "有一条需要你关注的对话");
+  assert.equal(
+    withDetail.detail,
+    "这次的提醒话术孩子没有听完，如需帮助可拨打心理援助热线110",
+  );
+  const plain = crisisAlerts.normalizeAlert({
+    notification_id: "n8",
+    pinned: true,
+    message: "有一条需要你关注的对话",
+    detail: "",
+  });
+  assert.equal(Object.hasOwn(plain, "detail"), false);
+});
+
 test("pinnedAlerts keeps only server-marked undelivered crisis rows", () => {
   const items = crisisAlerts.pinnedAlerts([
     {

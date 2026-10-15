@@ -45,11 +45,17 @@ public:
     // so the device must suppress its own echo-triggered VAD.
     bool VoiceBargeInAllowed() const;
     // True when this v2 session's signed allowed_barge_in contains keyword
-    // (and not none). Application only arms the local stop keyword then.
+    // (and not none).
     bool KeywordBargeInAllowed() const;
-    // KeywordBargeInAllowed() and a generation is actually playing audio:
-    // the only window in which a local stop keyword may stop playback.
+    // True when this v2 session may arm 「停」. "none" suppresses it. A
+    // button-only allowlist does not. A crisis generation whose guardian pin
+    // is unconfirmed also suppresses it.
+    bool StopKeywordMayArm() const;
+    // StopKeywordMayArm() and a generation is actually playing audio.
     bool LocalStopKeywordArmed();
+    // generation.completed reason standby_after_playback: the next tts stop
+    // goes idle instead of opening a listening turn. One-shot.
+    bool ConsumeStandbyAfterPlayback();
     // Called from Application's one-second clock tick. A quiet server is
     // healthy when it answers WebSocket Ping with Pong; only a missed active
     // probe retires the fenced transport and enters normal media recovery.
@@ -247,7 +253,10 @@ private:
     uint32_t settings_version_ = 0;
     std::string audio_mode_;                    // negotiated; empty until session.accepted
     bool voice_barge_in_allowed_ = false;      // signed allowed_barge_in contains voice
-    bool keyword_barge_in_allowed_ = false;    // signed allowed_barge_in contains keyword
+    bool keyword_barge_in_allowed_ = false;
+    bool stop_keyword_suppressed_ = false;
+    bool stop_suppressed_for_generation_ = false;
+    bool standby_after_playback_ = false;
     bool runtime_profile_pending_ = false;
     uint32_t runtime_profile_pending_version_ = 0;
     ProfileApplyMode runtime_profile_apply_mode_ = ProfileApplyMode::kNextSession;

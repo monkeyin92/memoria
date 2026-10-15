@@ -53,6 +53,9 @@ async def test_production_media_factory_builds_one_policy_bound_agent_session(
         async def aclose(self) -> None:
             closed.append("planner")
 
+        async def report_script_interrupted(self, crisis_event_id: str) -> None:
+            assert crisis_event_id
+
     class LanguageModelStream:
         async def __aenter__(self) -> LanguageModelStream:
             return self
@@ -208,6 +211,9 @@ async def test_production_media_factory_does_not_replay_archive_during_session_c
         async def aclose(self) -> None:
             return None
 
+        async def report_script_interrupted(self, crisis_event_id: str) -> None:
+            assert crisis_event_id
+
     class Orchestrator:
         def __init__(self) -> None:
             self.metrics = MetricsRegistry()
@@ -256,6 +262,9 @@ async def test_production_media_factory_does_not_replay_archive_during_session_c
 
         def set_runtime_profile_refresher(self, refresher: object) -> None:
             assert callable(refresher)
+
+        def set_crisis_script_interrupt_reporter(self, reporter: object) -> None:
+            assert callable(reporter)
 
         def set_live_lookup_semantic_resolver(self, resolver: object) -> None:
             assert resolver is None or callable(resolver)

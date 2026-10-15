@@ -946,10 +946,16 @@ class MediaPlaybackStopMixin:
         session stays open: this is never the END_SESSION path.
         """
 
+        from services.agent.src.voice_core.playback_lifecycle import (
+            crisis_playback_stop_blocked,
+            mark_played_crisis_script_interrupted,
+        )
+
         if (
             context.closed
             or context.standby_requested
             or not context.runtime.floor.interruptible
+            or crisis_playback_stop_blocked(context)
         ):
             return False
         previous_fence = context.output.playback.current_fence or context.runtime.fence
@@ -1008,6 +1014,7 @@ class MediaPlaybackStopMixin:
             cancelled.generation_id,
             flush_required,
         )
+        await mark_played_crisis_script_interrupted(context)
         return True
 
 

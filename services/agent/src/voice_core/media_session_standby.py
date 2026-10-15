@@ -262,6 +262,11 @@ class MediaSessionStandbyMixin:
     ) -> None:
         """Count silence only while the Python authority says it is listening."""
 
+        if getattr(context, "standby_after_playback", False):
+            # A terminal phrase must not resume the leftover silence budget.
+            # That remainder is the ~25s listening window after the limit line.
+            self._pause_owner_silence_timer(context)
+            return
         if phase == "listening":
             # Resume the owner's remaining budget; do not mint a fresh window
             # here. Assistant-only speech (a missed-hearing nudge) also lands

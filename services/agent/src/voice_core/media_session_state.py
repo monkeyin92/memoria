@@ -151,6 +151,9 @@ class MediaVoiceSessionState:
     conversation_yield_candidate_fence: GenerationFence | None = None
     device_wake_ack_fence: GenerationFence | None = None
     device_wake_ack_pending: bool = False
+    # A fixed phrase (daily limit and the same standby lines) must not open
+    # a listening turn when its audio ends.
+    standby_after_playback: bool = False
     speaker_enrollment_task: asyncio.Task[None] | None = None
     # P0-04 D3: when the session began (monotonic) for a minor's time limit,
     # and whether it heard the crisis reply (never cut short afterwards).

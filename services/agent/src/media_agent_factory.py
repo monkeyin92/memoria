@@ -180,6 +180,9 @@ class ProductionMediaSessionFactory:
             runtime.set_runtime_profile_refresher(_refresh_profile)
             response_planner_client = self._response_planner_client()
             owned.append(response_planner_client)
+            runtime.set_crisis_script_interrupt_reporter(
+                response_planner_client.report_script_interrupted
+            )
             voice_profile_client = await self._bind_voice_profile(runtime, tts)
             if voice_profile_client is not None:
                 owned.append(voice_profile_client)

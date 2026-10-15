@@ -7,6 +7,7 @@
     <view class="card attention-card">
       <view class="attention-mascot"><image class="attention-mascot-img" src="/assets/ui/v4/mascot-calm.jpg" mode="widthFix" /></view>
       <text class="attention-title">{{alert.message}}</text>
+      <text wx:if="{{alert.detail}}" class="attention-well">{{alert.detail}}</text>
       <text class="attention-time">{{alert.timeLabel}}</text>
       <text class="attention-well">孩子在聊天中提到了让 TA 不舒服的事。为了保护孩子，这里不展示对话内容。</text>
     </view>

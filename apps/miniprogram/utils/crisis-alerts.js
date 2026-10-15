@@ -20,7 +20,7 @@ function normalizeAlert(item) {
   if (!item || typeof item !== "object") return null;
   const notificationId = typeof item.notification_id === "string" ? item.notification_id : "";
   if (!notificationId) return null;
-  return {
+  const alert = {
     notificationId,
     minorUserId: typeof item.minor_user_id === "string" ? item.minor_user_id : "",
     minorDisplayName:
@@ -35,6 +35,10 @@ function normalizeAlert(item) {
         ? item.message
         : "有一条需要你关注的对话",
   };
+  if (typeof item.detail === "string" && item.detail) {
+    alert.detail = item.detail;
+  }
+  return alert;
 }
 
 function pinnedAlerts(items) {

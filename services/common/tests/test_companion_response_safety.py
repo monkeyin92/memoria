@@ -3,12 +3,15 @@ from __future__ import annotations
 import pytest
 from services.common.companion_response_safety import (
     AFFECTION_FIXED_REPLY,
+    GUARDIAN_ATTENTION_COPY,
+    GUARDIAN_ATTENTION_STORY_RETELL_COPY,
     NAMELESS_IDENTITY_REPLY,
     PROHIBITED_CONTENT_TERMS,
     SAFE_UNKNOWN_REPLY,
     companion_identity_replies,
     companion_safety_decision,
     fixed_companion_reply,
+    parent_pinned_alert,
 )
 from services.common.fixed_safety_scripts import (
     CRISIS_SELF_SCRIPT,
@@ -282,3 +285,36 @@ def test_crisis_self_matching_tolerates_huo_homophone_asr_slips(query: str) -> N
 def test_ordinary_chat_is_not_victim_support(query: str) -> None:
     assert companion_safety_decision(query) == "none"
     assert _fixed_reply(query) is None
+
+
+def test_an_interrupted_crisis_script_keeps_the_pin_headline_and_names_the_hotline() -> None:
+    self_harm = parent_pinned_alert(
+        script_interrupted=True, reply_template_id="crisis-self-v1"
+    )
+    victim = parent_pinned_alert(
+        script_interrupted=True, reply_template_id="victim-support-v1"
+    )
+    relay = parent_pinned_alert(
+        script_interrupted=True, reply_template_id="support-other-v1"
+    )
+    heard = parent_pinned_alert(
+        script_interrupted=False, reply_template_id="crisis-self-v1"
+    )
+    story = parent_pinned_alert(
+        possibly_story_retell=True,
+        script_interrupted=True,
+        reply_template_id="crisis-self-v1",
+    )
+
+    assert self_harm == {
+        "message": GUARDIAN_ATTENTION_COPY,
+        "detail": "这次的提醒话术孩子没有听完，如需帮助可拨打心理援助热线12356",
+    }
+    assert victim == {
+        "message": GUARDIAN_ATTENTION_COPY,
+        "detail": "这次的提醒话术孩子没有听完，如需帮助可拨打心理援助热线110",
+    }
+    assert relay == {"message": GUARDIAN_ATTENTION_COPY, "detail": None}
+    assert heard == {"message": GUARDIAN_ATTENTION_COPY, "detail": None}
+    assert story["message"] == GUARDIAN_ATTENTION_STORY_RETELL_COPY
+    assert story["detail"] == self_harm["detail"]

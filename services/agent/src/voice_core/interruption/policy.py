@@ -95,6 +95,7 @@ class InterruptionPolicy:
         local_hard_stop: bool = False,
         speaker_profile: SpeakerProfile = "adult",
         safety_reply: bool = False,
+        safety_pin_confirmed: bool = False,
         device_conversation: bool = False,
     ) -> InterruptionPolicyDecision:
         """Evaluate one interruption candidate. First matching rule wins."""
@@ -110,6 +111,13 @@ class InterruptionPolicy:
         #    follow, even while a crisis fixed reply is playing.
         if evidence.source is InterruptionSource.BUTTON:
             return self._decide(InterruptionVerdict.HARD_STOP, "physical_button_stop")
+        # A crisis script accepts 「停」 only after the guardian pinned record
+        # is confirmed written. Until then keep playing and say nothing.
+        if safety_reply and not safety_pin_confirmed:
+            return self._decide(
+                InterruptionVerdict.FALSE_POSITIVE,
+                "safety_reply_pin_unconfirmed",
+            )
         # 2) An offline stop keyword already flushed the device.  The shared
         #    event's authenticated hard_stop bit says whether the local model
         #    classified this keyword as a stop; a wake word must not cancel.

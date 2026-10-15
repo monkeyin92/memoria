@@ -808,11 +808,15 @@ class MediaOutputDispatchMixin:
         if should_pause_asr_for_playback(context.identity):
             await context.provider.pause_asr_for_playback(context.identity)
         task_epoch, context_version = self._event_versions(context, next_fence)
+        from services.agent.src.voice_core.playback_lifecycle import (
+            generation_control_reason,
+        )
+
         if not await self.bridge.emit_generation(
             next_fence.session_id,
             next_fence,
             action=media_pb2.GENERATION_ACTION_START,
-            reason="auxiliary_output",
+            reason=generation_control_reason(context, "auxiliary_output", terminal=False),
             task_epoch=task_epoch,
             context_version=context_version,
         ):
@@ -847,11 +851,17 @@ class MediaOutputDispatchMixin:
         if session.generation_active and session.fence.matches(fence):
             return True
         task_epoch, context_version = self._event_versions(context, fence)
+        from services.agent.src.voice_core.playback_lifecycle import (
+            generation_control_reason,
+        )
+
         return await self.bridge.emit_generation(
             fence.session_id,
             fence,
             action=media_pb2.GENERATION_ACTION_START,
-            reason="output_generation_start",
+            reason=generation_control_reason(
+                context, "output_generation_start", terminal=False
+            ),
             task_epoch=task_epoch,
             context_version=context_version,
         )

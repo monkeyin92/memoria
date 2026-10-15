@@ -1020,11 +1020,24 @@ bool MemoriaProtocol::KeywordBargeInAllowed() const {
            keyword_barge_in_allowed_;
 }
 
+bool MemoriaProtocol::StopKeywordMayArm() const {
+    std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+    return protocol_version_ == kProtocolVersionV2 && stream_epoch_ != 0 &&
+           !stop_keyword_suppressed_ && !stop_suppressed_for_generation_;
+}
+
 bool MemoriaProtocol::LocalStopKeywordArmed() {
     std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
-    // Edge ignores keyword.detected without the signed keyword source, and a
-    // stop outside real playback would flush nothing but still report one.
-    return KeywordBargeInAllowed() && HasActivePlaybackGeneration();
+    // "none" and an unconfirmed crisis pin suppress 「停」. A button-only
+    // allowlist does not. A stop outside real playback flushes nothing.
+    return StopKeywordMayArm() && HasActivePlaybackGeneration();
+}
+
+bool MemoriaProtocol::ConsumeStandbyAfterPlayback() {
+    std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+    const bool standby = standby_after_playback_;
+    standby_after_playback_ = false;
+    return standby;
 }
 
 bool MemoriaProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
@@ -1446,6 +1459,7 @@ bool MemoriaProtocol::HandleSessionAccepted(const cJSON* root) {
         audio_mode_ = audio_mode;
         voice_barge_in_allowed_ = voice_barge_in_allowed;
         keyword_barge_in_allowed_ = keyword_barge_in_allowed;
+        stop_keyword_suppressed_ = barge_in_none;
     }
     ESP_LOGI(kTag, "barge-in sources: voice=%d keyword=%d",
              voice_barge_in_allowed ? 1 : 0, keyword_barge_in_allowed ? 1 : 0);
@@ -1462,7 +1476,12 @@ bool MemoriaProtocol::HandleSessionAccepted(const cJSON* root) {
 }
 
 bool MemoriaProtocol::HandleGenerationStarted(const cJSON* root, const GenerationFence& fence) {
-    (void)root;
+    std::string start_reason;
+    GetString(root, "reason", &start_reason, 128);
+    {
+        std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+        stop_suppressed_for_generation_ = start_reason == "safety_pin_unconfirmed";
+    }
     if (!fence.valid()) {
         return false;
     }
@@ -1551,7 +1570,8 @@ bool MemoriaProtocol::HandleGenerationPauseResume(const cJSON* root,
 bool MemoriaProtocol::HandleGenerationTerminal(const cJSON* root,
                                                const GenerationFence& fence,
                                                bool cancelled) {
-    (void)root;
+    std::string terminal_reason;
+    GetString(root, "reason", &terminal_reason, 128);
     if (!fence.valid()) {
         return false;
     }
@@ -1616,6 +1636,10 @@ bool MemoriaProtocol::HandleGenerationTerminal(const cJSON* root,
     // drains. When the queue is already empty, finalize immediately through
     // the Application-injected idle probe.
     playback_completion_pending_ = true;
+    if (terminal_reason == "standby_after_playback") {
+        std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+        standby_after_playback_ = true;
+    }
     if (playback_terminal_receipted_ ||
         (is_playback_idle_ != nullptr && is_playback_idle_())) {
         FinalizePlaybackEnded();
@@ -2867,6 +2891,9 @@ void MemoriaProtocol::ResetSessionState() {
     audio_mode_.clear();
     voice_barge_in_allowed_ = false;
     keyword_barge_in_allowed_ = false;
+    stop_keyword_suppressed_ = false;
+    stop_suppressed_for_generation_ = false;
+    standby_after_playback_ = false;
     runtime_profile_pending_ = false;
     runtime_profile_pending_version_ = 0;
     runtime_profile_apply_mode_ = ProfileApplyMode::kNextSession;

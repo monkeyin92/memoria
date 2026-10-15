@@ -322,7 +322,7 @@ class MediaSessionProjectionMixin:
         if not in_quiet_hours(now.time(), quiet_hours):
             return False
         context.device_wake_ack_pending = False
-        await self._speak_device_enrollment_phrase(context, MINOR_QUIET_HOURS_PHRASE)
+        await self._speak_terminal_phrase(context, MINOR_QUIET_HOURS_PHRASE)
         await self._request_device_standby(context, reason="minor_quiet_hours")
         return True
 
@@ -347,9 +347,38 @@ class MediaSessionProjectionMixin:
             case _:
                 assert_never(outcome)
         context.device_wake_ack_pending = False
-        await self._speak_device_enrollment_phrase(context, phrase)
+        await self._speak_terminal_phrase(context, phrase)
         await self._request_device_standby(context, reason=reason)
         return True
+
+    async def _speak_terminal_phrase(
+        self,
+        context: _MediaVoiceSession,
+        phrase: str,
+    ) -> bool:
+        """Speak a fixed line that must end in standby, and log its phrase id.
+
+        The id is the only field written. The phrase text and ASR text stay out
+        of the log. The standby flag is set before audio so generation.completed
+        can tell the device not to open a listening turn.
+        """
+
+        from services.agent.src.prompts import TERMINAL_STANDBY_PHRASE_IDS, fixed_phrase_id
+
+        phrase_id = fixed_phrase_id(phrase)
+        if phrase_id in TERMINAL_STANDBY_PHRASE_IDS:
+            context.standby_after_playback = True
+            pause = getattr(self, "_pause_owner_silence_timer", None)
+            if callable(pause):
+                pause(context)
+        played = await self._speak_device_enrollment_phrase(context, phrase)
+        if played and phrase_id is not None:
+            logger.info(
+                "fixed_phrase_played phrase_id=%s session=%s",
+                phrase_id,
+                context.identity.session_id,
+            )
+        return played
 
     async def _speak_device_enrollment_phrase(
         self,

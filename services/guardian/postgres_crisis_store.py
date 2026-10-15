@@ -100,6 +100,12 @@ class PostgresGuardianCrisisMixin:
             possibly_story_retell=bool(row["possibly_story_retell"])
             if "possibly_story_retell" in row.keys()
             else False,
+            script_interrupted=bool(row["script_interrupted"])
+            if "script_interrupted" in row.keys()
+            else False,
+            reply_template_id=str(row["reply_template_id"])
+            if "reply_template_id" in row.keys() and row["reply_template_id"] is not None
+            else "",
         )
 
     async def enqueue_crisis_event(
@@ -245,7 +251,8 @@ class PostgresGuardianCrisisMixin:
                 )
                 rows = await connection.fetch(
                     """
-                    SELECT outbox.*, crisis.minor_user_id, crisis.possibly_story_retell
+                    SELECT outbox.*, crisis.minor_user_id, crisis.possibly_story_retell,
+                           crisis.script_interrupted, crisis.reply_template_id
                     FROM guardian_notification_outbox outbox
                     JOIN guardian_crisis_events crisis
                       ON crisis.crisis_event_id = outbox.crisis_event_id
@@ -257,6 +264,33 @@ class PostgresGuardianCrisisMixin:
                     limit,
                 )
         return tuple(self._notification(row) for row in rows)
+
+    async def mark_script_interrupted(self, *, crisis_event_id: str) -> str | None:
+        """Set the interrupted flag under the maintenance role. Ids only."""
+
+        event_uuid = _uuid(crisis_event_id, field="crisis_event_id")
+        maintenance_pool = await self._ready_role_pool(
+            dsn=self._maintenance_dsn,
+            pool_attr="_maintenance_pool",
+            expected_role="memoria_guardian_maintenance",
+            operation="crisis script interrupted",
+        )
+        async with maintenance_pool.acquire() as connection, connection.transaction():
+            await connection.execute(
+                "SELECT set_config('memoria.guardian_maintenance_scope', '1', true)"
+            )
+            row = await connection.fetchrow(
+                """
+                UPDATE guardian_crisis_events
+                SET script_interrupted = TRUE
+                WHERE crisis_event_id = $1
+                RETURNING reply_template_id
+                """,
+                event_uuid,
+            )
+        if row is None:
+            return None
+        return str(row["reply_template_id"])
 
     @staticmethod
     def _push_subscription(row: asyncpg.Record) -> PushSubscription:

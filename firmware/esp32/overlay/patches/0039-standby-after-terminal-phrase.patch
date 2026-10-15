@@ -1,0 +1,21 @@
+diff --git a/main/application.cc b/main/application.cc
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -564,7 +564,15 @@ bool Application::InitializeProtocol() {
+ #endif
+                     if (GetDeviceState() == kDeviceStateSpeaking) {
+-                        if (listening_mode_ == kListeningModeManualStop) {
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++                        auto* standby_protocol =
++                            static_cast<memoria::MemoriaProtocol*>(protocol_.get());
++                        if ((standby_protocol != nullptr &&
++                             standby_protocol->ConsumeStandbyAfterPlayback()) ||
++                            listening_mode_ == kListeningModeManualStop) {
++#else
++                        if (listening_mode_ == kListeningModeManualStop) {
++#endif
+                             SetDeviceState(kDeviceStateIdle);
+                         } else {
+                             SetDeviceState(kDeviceStateListening);
+                         }
+                     }

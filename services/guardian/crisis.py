@@ -48,6 +48,8 @@ class GuardianNotification:
     delivered_at: datetime | None = None
     last_error_code: str | None = None
     possibly_story_retell: bool = False
+    script_interrupted: bool = False
+    reply_template_id: str = ""
 
 
 class CrisisNotificationStorePort(Protocol):
@@ -71,6 +73,13 @@ class CrisisNotificationStorePort(Protocol):
         guardian_user_id: str,
         limit: int = 50,
     ) -> tuple[GuardianNotification, ...]: ...
+
+    async def mark_script_interrupted(self, *, crisis_event_id: str) -> str | None:
+        """Set the interrupted flag. Returns the reply template id, or None if missing.
+
+        Callers pass the pin's event id only. Child speech is not accepted.
+        """
+        ...
 
 
 class CrisisNotificationUnavailableError(RuntimeError):
@@ -168,6 +177,9 @@ class CrisisNotificationService:
                 "minor crisis has no authorized guardian notification target"
             )
         return receipt
+
+    async def mark_script_interrupted(self, *, crisis_event_id: str) -> str | None:
+        return await self._store.mark_script_interrupted(crisis_event_id=crisis_event_id)
 
 
 __all__ = [

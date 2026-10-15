@@ -86,6 +86,48 @@ def guardian_attention_copy(*, possibly_story_retell: bool = False) -> str:
     return GUARDIAN_ATTENTION_COPY
 
 
+# Parent detail when a confirmed crisis script was interrupted. Headline stays
+# GUARDIAN_ATTENTION_COPY. These lines are for the guardian, not the child.
+INTERRUPTED_CRISIS_SELF_DETAIL: Final = (
+    "这次的提醒话术孩子没有听完，如需帮助可拨打心理援助热线12356"
+)
+INTERRUPTED_VICTIM_SUPPORT_DETAIL: Final = (
+    "这次的提醒话术孩子没有听完，如需帮助可拨打心理援助热线110"
+)
+
+
+def interrupted_crisis_script_detail(reply_template_id: str) -> str | None:
+    """Detail for a 家长端置顶提醒 after the child did not hear the whole script.
+
+    ``support-other-v1`` has no interrupted detail. The headline is unchanged.
+    """
+
+    if reply_template_id == "crisis-self-v1":
+        return INTERRUPTED_CRISIS_SELF_DETAIL
+    if reply_template_id == "victim-support-v1":
+        return INTERRUPTED_VICTIM_SUPPORT_DETAIL
+    return None
+
+
+def parent_pinned_alert(
+    *,
+    possibly_story_retell: bool = False,
+    script_interrupted: bool = False,
+    reply_template_id: str = "",
+) -> dict[str, str | None]:
+    """Headline plus optional interrupted-script detail. Never a transcript."""
+
+    detail = (
+        interrupted_crisis_script_detail(reply_template_id)
+        if script_interrupted
+        else None
+    )
+    return {
+        "message": guardian_attention_copy(possibly_story_retell=possibly_story_retell),
+        "detail": detail,
+    }
+
+
 def is_story_retell_context(query: str) -> bool:
     """True only when the utterance contains an explicit story-medium cue word."""
 

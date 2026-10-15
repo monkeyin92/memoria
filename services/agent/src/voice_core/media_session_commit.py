@@ -49,6 +49,7 @@ from services.agent.src.voice_core.media_session_types import (
     OutputDispatchResult,
     OutputDispatchStatus,
 )
+from services.agent.src.voice_core.playback_lifecycle import safety_interrupt_args
 from services.agent.src.voice_core.speech_timeline import (
     ASRResult,
     SegmentKind,
@@ -1224,6 +1225,7 @@ class MediaSessionCommitMixin:
                         else "adult"
                     ),
                     device_conversation=context.identity.client_type == "device",
+                    **safety_interrupt_args(context.runtime),
                 )
                 interaction = replace(
                     interaction,
@@ -1470,11 +1472,15 @@ class MediaSessionCommitMixin:
         if should_pause_asr_for_playback(context.identity):
             await context.provider.pause_asr_for_playback(context.identity)
         task_epoch, context_version = self._event_versions(context, fence)
+        from services.agent.src.voice_core.playback_lifecycle import (
+            generation_control_reason,
+        )
+
         generation_started = await self.bridge.emit_generation(
             session_id,
             fence,
             action=media_pb2.GENERATION_ACTION_START,
-            reason="user_turn_committed",
+            reason=generation_control_reason(context, "user_turn_committed", terminal=False),
             task_epoch=task_epoch,
             context_version=context_version,
         )

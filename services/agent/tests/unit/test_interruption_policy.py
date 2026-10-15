@@ -178,14 +178,45 @@ def test_safety_reply_keeps_physical_stop_but_rejects_semantic_interrupt() -> No
     assert policy.evaluate(
         evidence(InterruptionSource.BUTTON),
         safety_reply=True,
+        safety_pin_confirmed=True,
     ).cancel_generation
     semantic = policy.evaluate(
         evidence(InterruptionSource.CLOUD_ASR, duration_ms=900),
         asr_text="我想说话",
         safety_reply=True,
+        safety_pin_confirmed=True,
     )
     assert semantic.verdict is InterruptionVerdict.FALSE_POSITIVE
+    assert semantic.reason == "safety_reply_protected"
     assert not semantic.cancel_generation
+
+
+@pytest.mark.parametrize("template_id", ["crisis-self-v1", "victim-support-v1"])
+def test_crisis_script_stop_waits_for_the_guardian_pin(template_id: str) -> None:
+    from services.agent.src.voice_core.playback_lifecycle import crisis_script_may_stop
+
+    policy = InterruptionPolicy()
+    held = policy.evaluate(
+        evidence(InterruptionSource.CLOUD_ASR, duration_ms=400),
+        asr_text="停",
+        safety_reply=True,
+        safety_pin_confirmed=False,
+    )
+    released = policy.evaluate(
+        evidence(InterruptionSource.LOCAL_KWS, duration_ms=350),
+        asr_text="停",
+        local_hard_stop=True,
+        safety_reply=True,
+        safety_pin_confirmed=True,
+    )
+
+    assert crisis_script_may_stop(template_id=template_id, pin_confirmed=False) is False
+    assert crisis_script_may_stop(template_id=template_id, pin_confirmed=True) is True
+    assert held.verdict is InterruptionVerdict.FALSE_POSITIVE
+    assert held.reason == "safety_reply_pin_unconfirmed"
+    assert held.cancel_generation is False
+    assert released.verdict is InterruptionVerdict.HARD_STOP
+    assert released.cancel_generation is True
 
 
 def test_known_bystander_speech_never_cancels_the_playing_generation() -> None:

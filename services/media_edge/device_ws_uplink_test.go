@@ -34,6 +34,33 @@ func TestBargeInSourceAllowed(t *testing.T) {
 	}
 }
 
+func TestLocalStopHardStopAccepted(t *testing.T) {
+	stop := deviceKeywordEvent{KeywordID: "ting", HardStop: true}
+	cases := []struct {
+		name    string
+		allowed []string
+		event   deviceKeywordEvent
+		want    bool
+	}{
+		{"button only still accepts 停", []string{"button"}, stop, true},
+		{"empty allowlist still accepts 停", []string{}, stop, true},
+		{"none drops 停", []string{"none"}, stop, false},
+		{"none mixed with keyword drops 停", []string{"none", "keyword"}, stop, false},
+		{"wake word is not a stop", []string{"button"}, deviceKeywordEvent{KeywordID: "mo_li", HardStop: true}, false},
+		{"soft keyword is not a hard stop", []string{"button"}, deviceKeywordEvent{KeywordID: "ting", HardStop: false}, false},
+		{"停停", []string{"button"}, deviceKeywordEvent{KeywordID: "ting_ting", HardStop: true}, true},
+		{"停一下", []string{"button"}, deviceKeywordEvent{KeywordID: "ting_yi_xia", HardStop: true}, true},
+		{"别说了", []string{"button"}, deviceKeywordEvent{KeywordID: "bie_shuo_le", HardStop: true}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := localStopHardStopAccepted(tc.allowed, tc.event); got != tc.want {
+				t.Fatalf("localStopHardStopAccepted(%v, %+v) = %v, want %v", tc.allowed, tc.event, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDeviceWSSBargeInIngressRequiresSignedSources(t *testing.T) {
 	env := newDeviceTestEnv(t, func(server *DeviceWSServer) {
 		server.SessionCloseReportHook = func(DeviceSessionCloseReport) {}

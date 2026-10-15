@@ -61,7 +61,7 @@ diff --git a/main/application.cc b/main/application.cc
 +    // on the AEC/NS output so the owner can stop playback by voice; each hit
 +    // re-checks that a generation is really playing (LocalStopKeywordArmed).
 +    auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
-+    if (memoria::kLocalStopKeywordEnabled && memoria_protocol != nullptr && memoria_protocol->KeywordBargeInAllowed() &&
++    if (memoria::kLocalStopKeywordEnabled && memoria_protocol != nullptr && memoria_protocol->StopKeywordMayArm() &&
 +        audio_service_.EnableStopKeywordDetection()) {
 +        ESP_LOGI(TAG, "Local stop keyword armed for playback");
 +        return;

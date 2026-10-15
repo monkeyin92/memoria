@@ -1036,11 +1036,17 @@ class MediaOutputStreamMixin:
             )
             if not context.output.output_complete_emitted:
                 task_epoch, context_version = self._event_versions(context, fence)
+                from services.agent.src.voice_core.playback_lifecycle import (
+                    generation_control_reason,
+                )
+
                 context.output.output_complete_emitted = await self.bridge.emit_generation(
                     fence.session_id,
                     fence,
                     action=media_pb2.GENERATION_ACTION_COMPLETE,
-                    reason="provider_reply_complete",
+                    reason=generation_control_reason(
+                        context, "provider_reply_complete", terminal=True
+                    ),
                     task_epoch=task_epoch,
                     context_version=context_version,
                 )
@@ -1369,7 +1375,11 @@ class MediaOutputStreamMixin:
         speak = getattr(self, "_speak_device_enrollment_phrase", None)
         request_standby = getattr(self, "_request_device_standby", None)
         if callable(speak) and callable(request_standby):
-            await speak(context, MINOR_SESSION_LIMIT_PHRASE)
+            speak_terminal = getattr(self, "_speak_terminal_phrase", None)
+            if callable(speak_terminal):
+                await speak_terminal(context, MINOR_SESSION_LIMIT_PHRASE)
+            else:
+                await speak(context, MINOR_SESSION_LIMIT_PHRASE)
             await request_standby(context, reason="minor_max_session")
 
     async def _maybe_standby_after_llm_unavailable(
@@ -1447,11 +1457,17 @@ class MediaOutputStreamMixin:
             self._release_output_owner(context, fence, reason="playback_completed")
         if not context.output.output_complete_emitted:
             task_epoch, context_version = self._event_versions(context, fence)
+            from services.agent.src.voice_core.playback_lifecycle import (
+                generation_control_reason,
+            )
+
             context.output.output_complete_emitted = await self.bridge.emit_generation(
                 fence.session_id,
                 fence,
                 action=media_pb2.GENERATION_ACTION_COMPLETE,
-                reason="provider_reply_complete",
+                reason=generation_control_reason(
+                    context, "provider_reply_complete", terminal=True
+                ),
                 task_epoch=task_epoch,
                 context_version=context_version,
             )
@@ -1463,6 +1479,7 @@ class MediaOutputStreamMixin:
                 context.output.output_work,
                 fence,
             ),
+            resume_listening=not context.standby_after_playback,
         )
         await self._maybe_standby_after_farewell_complete(context, fence)
         await self._maybe_standby_after_session_limit(context, fence)

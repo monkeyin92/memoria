@@ -257,10 +257,6 @@ class ReplyPipeline:
     def runtime(self) -> DuplexRuntime:
         return self._runtime
 
-    def _note_fixed_safety_script(self, display: str) -> None:
-        self._runtime.note_fixed_safety_spoken(display)
-        self._block_soothing_on_next_reply = True
-
     @property
     def response_plans(self) -> ResponsePlanCache:
         """Response plans by exact fence; ``stream`` serves only these."""
@@ -492,6 +488,18 @@ class ReplyPipeline:
         profile = getattr(current, "profile", None)
         profile_id = getattr(profile, "runtime_profile_id", None)
         return profile_id if isinstance(profile_id, str) and profile_id else None
+
+    def _note_plan_crisis_playback(self, plan: ResponsePlan) -> None:
+        script = plan.fixed_safety_script
+        if script is None:
+            return
+        self._runtime.note_fixed_safety_spoken(script.display)
+        self._block_soothing_on_next_reply = True
+        self._runtime.note_guardian_crisis_playback(
+            pin_confirmed=plan.guardian_pin_confirmed,
+            crisis_event_id=plan.guardian_crisis_event_id,
+            template_id=script.template_id,
+        )
 
     def cache_response_plan(self, plan: ResponsePlan) -> None:
         """Cache ``plan`` stamped with the profile authorizing this session now."""
@@ -947,8 +955,7 @@ class ReplyPipeline:
             )
             if script is not None and plan.direct_text != script.display:
                 plan = replace(plan, direct_text=script.display)
-        if plan.fixed_safety_script is not None:
-            self._note_fixed_safety_script(plan.fixed_safety_script.display)
+        self._note_plan_crisis_playback(plan)
         if (
             input_modality == "audio"
             and output_policy.generation_voice_must_match_plan(policy)
@@ -1007,8 +1014,7 @@ class ReplyPipeline:
             snapshot = self._runtime.freeze_current_context_for_generation(fence)
             if snapshot is None:
                 raise StopResponse()
-        if plan.fixed_safety_script is not None:
-            self._note_fixed_safety_script(plan.fixed_safety_script.display)
+        self._note_plan_crisis_playback(plan)
         self.cache_response_plan(plan)
         self._mark_context_ready(fence)
         logger.info(
@@ -1417,7 +1423,7 @@ class ReplyPipeline:
         try:
             self._runtime.mark_audio_event("llm_request_started")
             if script is not None:
-                self._note_fixed_safety_script(script.display)
+                self._note_plan_crisis_playback(response_plan)
                 self._runtime.mark_audio_event("llm_first_content_token")
                 gated = self._runtime.gate_llm_token(cancellation, script.display)
                 if gated is not None and cancellation.is_current(self._runtime.fence):

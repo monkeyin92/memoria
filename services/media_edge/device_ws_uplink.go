@@ -182,7 +182,8 @@ func (c *DeviceConnection) handleKeyword(envelope deviceControlEnvelope, runtime
 		c.sendSessionError("invalid_control", false)
 		return false
 	}
-	if !bargeInSourceAllowed(c.claims.DeviceSettings.AllowedBargeIn, "keyword") {
+	if !bargeInSourceAllowed(c.claims.DeviceSettings.AllowedBargeIn, "keyword") &&
+		!localStopHardStopAccepted(c.claims.DeviceSettings.AllowedBargeIn, event) {
 		c.ignoreForbiddenBarge("keyword")
 		return true
 	}
@@ -567,6 +568,29 @@ func int16ToLittleEndian(samples []int16) []byte {
 // permits the given barge-in source. The "none" source disables every other
 // source even if the claim mixes entries, matching applyBargeInPolicy's
 // fail-closed behavior at the event ingress boundary.
+// localStopHardStopAccepted is the spoken 「停」 during playback. A button-only
+// allowlist must not drop it. "none" still disables every stop.
+func localStopHardStopAccepted(allowed []string, event deviceKeywordEvent) bool {
+	if !event.HardStop || containsBargeNone(allowed) {
+		return false
+	}
+	switch event.KeywordID {
+	case "ting", "ting_ting", "ting_yi_xia", "bie_shuo_le":
+		return true
+	default:
+		return false
+	}
+}
+
+func containsBargeNone(allowed []string) bool {
+	for _, kind := range allowed {
+		if kind == "none" {
+			return true
+		}
+	}
+	return false
+}
+
 func bargeInSourceAllowed(allowed []string, source string) bool {
 	allowNone := false
 	for _, kind := range allowed {

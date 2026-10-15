@@ -377,7 +377,11 @@ def test_keyword_barge_in_is_parsed_from_signed_settings_and_reset() -> None:
     assert "protocol_version_ == kProtocolVersionV2" in allowed
     assert "keyword_barge_in_allowed_" in allowed
     armed = _function_body(PROTOCOL_SOURCE, "bool MemoriaProtocol::LocalStopKeywordArmed(")
-    assert "KeywordBargeInAllowed() && HasActivePlaybackGeneration()" in armed
+    assert "StopKeywordMayArm() && HasActivePlaybackGeneration()" in armed
+    assert "bool StopKeywordMayArm() const;" in PROTOCOL_HEADER
+    may_arm = _function_body(PROTOCOL_SOURCE, "bool MemoriaProtocol::StopKeywordMayArm(")
+    assert "!stop_keyword_suppressed_" in may_arm
+    assert "!stop_suppressed_for_generation_" in may_arm
 
 
 def test_keyword_stop_reuses_the_button_local_flush_and_fence() -> None:
@@ -403,12 +407,29 @@ def test_keyword_stop_reuses_the_button_local_flush_and_fence() -> None:
     assert hard_stop.index("playback_terminal_receipted_ = true;") < keyword
 
 
-def test_local_stop_keyword_is_off_and_registers_no_phrase(gate_tool: pathlib.Path) -> None:
-    # 2026-09-30: MultiNet during playback starved the idle task, so playback
-    # is back to build 10's load; the cloud path stops the reply.
+def test_local_stop_keyword_is_on_and_registers_the_four_phrases(
+    gate_tool: pathlib.Path,
+) -> None:
+    # Cloud ASR misses a short 「停」 under reply echo, and a button-only
+    # allowlist drops playback VAD, so the device has to hear the stop itself.
     _, constants = _table(gate_tool)
-    assert constants["enabled"] == 0
-    assert constants["registered"] == 0
+    assert constants["enabled"] == 1
+    assert constants["registered"] == 4
+
+
+def test_terminal_phrase_completion_idles_instead_of_listening() -> None:
+    patch = (
+        FIRMWARE_ROOT / "overlay" / "patches" / "0039-standby-after-terminal-phrase.patch"
+    ).read_text(encoding="utf-8")
+    assert "standby_protocol->ConsumeStandbyAfterPlayback()" in patch
+    assert "SetDeviceState(kDeviceStateIdle)" in patch
+    assert "standby_after_playback_" in PROTOCOL_SOURCE
+    completed = PROTOCOL_SOURCE[PROTOCOL_SOURCE.index("bool MemoriaProtocol::HandleGenerationTerminal") :]
+    completed = completed[: completed.index("bool MemoriaProtocol::HandlePlaybackFlushV2")]
+    assert 'terminal_reason == "standby_after_playback"' in completed
+    assert 'EmitLegacyTts("stop")' not in completed[
+        completed.index("// generation.completed is an authoritative") :
+    ]
 
 
 def test_hello_declares_the_local_stop_keyword() -> None:
@@ -495,7 +516,7 @@ def test_application_arms_stop_keyword_only_for_playback_with_keyword_barge_in()
     configure = app[app.index("void Application::ConfigureStopKeywordForSpeaking()") :]
     configure = configure[: configure.index("void Application::HandleLocalStopKeyword")]
     assert "memoria::kLocalStopKeywordEnabled && memoria_protocol != nullptr" in configure
-    assert "memoria_protocol->KeywordBargeInAllowed()" in configure
+    assert "memoria_protocol->StopKeywordMayArm()" in configure
     assert "audio_service_.EnableStopKeywordDetection()" in configure
     assert "audio_service_.EnableWakeWordDetection(false);" in configure
     assert app.count("ConfigureStopKeywordForSpeaking();") == 2

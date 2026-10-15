@@ -296,6 +296,37 @@ def is_allowlisted_device_phrase(phrase: str) -> bool:
     )
 
 
+# Ids only. Logs name the id and never the phrase text or any ASR transcript.
+_FIXED_PHRASE_IDS: dict[str, str] = {
+    MINOR_DAILY_LIMIT_PHRASE: "minor_daily_limit",
+    MINOR_QUIET_HOURS_PHRASE: "minor_quiet_hours",
+    MINOR_SESSION_LIMIT_PHRASE: "minor_session_limit",
+    CONNECTION_RETRY_PHRASE: "connection_retry",
+    BRIDGE_PHRASES[0]: "bridge_hold",
+    BRIDGE_PHRASES[1]: "bridge_lookup",
+    BRIDGE_PHRASES[2]: "bridge_repeat",
+    LLM_THINKING_TEXT: "llm_thinking",
+}
+TERMINAL_STANDBY_PHRASE_IDS = frozenset(
+    {
+        "minor_daily_limit",
+        "minor_quiet_hours",
+        "minor_session_limit",
+        "connection_retry",
+    }
+)
+
+
+def fixed_phrase_id(phrase: str) -> str | None:
+    """Stable id for an existing finalized phrase. Unknown text has no id."""
+
+    if phrase in DEVICE_WAKE_GREETING_PHRASES:
+        return "device_wake_greeting"
+    if phrase in SPEAKER_ENROLLMENT_PHRASES:
+        return "speaker_enrollment"
+    return _FIXED_PHRASE_IDS.get(phrase)
+
+
 __all__ = [
     "AI_IDENTITY_RULE_TRANSPARENT",
     "BRIDGE_PHRASES",
@@ -313,7 +344,9 @@ __all__ = [
     "SPEAKER_ENROLLMENT_SAMPLE_PROMPTS",
     "TUTOR_STYLE",
     "VOICE_SYSTEM_PROMPT",
+    "TERMINAL_STANDBY_PHRASE_IDS",
     "device_wake_phrase",
+    "fixed_phrase_id",
     "hours_since_device_wake",
     "is_allowlisted_device_phrase",
     "remember_device_wake",

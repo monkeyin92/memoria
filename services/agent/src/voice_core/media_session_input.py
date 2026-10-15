@@ -29,6 +29,11 @@ from services.agent.src.voice_core.media_protocol import (
 from services.agent.src.voice_core.media_session_state import (
     MediaVoiceSessionState as _MediaVoiceSession,
 )
+from services.agent.src.voice_core.playback_lifecycle import (
+    crisis_playback_stop_blocked,
+    mark_played_crisis_script_interrupted,
+    safety_interrupt_args,
+)
 from services.agent.src.voice_core.speech_timeline import SegmentKind, SpeechSegment
 from services.common.llm_thinking_filler import speech_end_monotonic
 
@@ -520,6 +525,7 @@ class MediaSessionInputMixin:
                         else "adult"
                     ),
                     device_conversation=context.identity.client_type == "device",
+                    **safety_interrupt_args(context.runtime),
                 )
             else:
                 interruption = None
@@ -727,8 +733,9 @@ class MediaSessionInputMixin:
                 asr_text=segment.text,
                 local_hard_stop=segment.hard_stop,
                 device_conversation=context.identity.client_type == "device",
+                **safety_interrupt_args(context.runtime),
             )
-            if interruption.cancel_generation:
+            if interruption.cancel_generation and not crisis_playback_stop_blocked(context):
                 # Never subtract an Edge wall-clock timestamp from Core's
                 # monotonic clock. The only trustworthy local measurement is
                 # this handler's own work; end-to-end timing is fail-closed
@@ -793,6 +800,7 @@ class MediaSessionInputMixin:
                             "interrupt_core_stop",
                             (time.monotonic_ns() - stop_started_ns) / 1_000_000_000,
                         )
+                        await mark_played_crisis_script_interrupted(context)
             fence = context.runtime.fence
             task_epoch, context_version = self._event_versions(context, fence)
             await self.bridge.emit_event(

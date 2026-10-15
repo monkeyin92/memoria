@@ -58,6 +58,9 @@ _UTTERANCE_INTENTS = frozenset(
         "resume",
     }
 )
+_PLAN_OPTIONAL_KEYS = frozenset(
+    {"guardian_pin_confirmed", "guardian_crisis_event_id"}
+)
 _PLAN_KEYS = frozenset(
     {
         "fence",
@@ -326,6 +329,8 @@ class ResponsePlan:
     disclosures: tuple[Disclosure, ...]
     voice_target: ResponseVoiceTarget
     provenance: ResponseProvenance
+    guardian_pin_confirmed: bool = False
+    guardian_crisis_event_id: str | None = None
 
     @property
     def fixed_safety_script(self) -> FixedSafetyScript | None:
@@ -533,7 +538,7 @@ class ResponsePlannerClient:
     def _parse(cls, payload: Any) -> ResponsePlan:
         if not isinstance(payload, dict):
             raise ValueError("response plan must be an object")
-        cls._require_keys(payload, _PLAN_KEYS, label="response plan")
+        cls._require_plan_keys(payload)
         fence = cls._fence(payload.get("fence"))
         instructions = cls._text(payload, "instructions", 8000)
         direct_text = cls._optional_text(payload, "direct_text", 1000)
@@ -570,6 +575,7 @@ class ResponsePlannerClient:
         ):
             raise ValueError("response plan provenance disagrees with the plan")
         cls._validate_grounded_source_refs(grounded_items, provenance.source_refs)
+        pin_confirmed, crisis_event_id = cls._guardian_pin(payload)
         return ResponsePlan(
             fence=fence,
             instructions=instructions,
@@ -580,7 +586,52 @@ class ResponsePlannerClient:
             disclosures=disclosures,
             voice_target=voice_target,
             provenance=provenance,
+            guardian_pin_confirmed=pin_confirmed,
+            guardian_crisis_event_id=crisis_event_id,
         )
+
+    @classmethod
+    def _require_plan_keys(cls, value: dict[str, Any]) -> None:
+        present = set(value)
+        if not _PLAN_KEYS <= present or not present <= _PLAN_KEYS | _PLAN_OPTIONAL_KEYS:
+            raise ValueError("response plan fields are invalid")
+
+    @classmethod
+    def _guardian_pin(cls, payload: dict[str, Any]) -> tuple[bool, str | None]:
+        if "guardian_pin_confirmed" not in payload and "guardian_crisis_event_id" not in payload:
+            return False, None
+        confirmed = payload.get("guardian_pin_confirmed")
+        event_id = payload.get("guardian_crisis_event_id")
+        if not isinstance(confirmed, bool):
+            raise ValueError("guardian pin confirmation is invalid")
+        if event_id is not None and (
+            not isinstance(event_id, str) or not event_id.strip() or len(event_id) > 64
+        ):
+            raise ValueError("guardian crisis event id is invalid")
+        if confirmed and not event_id:
+            raise ValueError("a confirmed guardian pin needs an event id")
+        if not confirmed:
+            return False, None
+        return True, event_id.strip()
+
+    async def report_script_interrupted(self, crisis_event_id: str) -> bool:
+        """Tell Control the child did not hear the whole crisis script.
+
+        The body is the pin's event id only. ASR text is not sent.
+        """
+
+        event_id = crisis_event_id.strip()
+        if not event_id or len(event_id) > 64:
+            return False
+        endpoint = httpx.URL(self._config.endpoint)
+        path = endpoint.path.rsplit("/", 1)[0] + "/crisis-script-interrupted"
+        response = await self._client.post(
+            endpoint.copy_with(path=path),
+            headers={"X-Memoria-Internal-Token": self._config.internal_token},
+            json={"crisis_event_id": event_id},
+            timeout=self._config.timeout_s,
+        )
+        return response.status_code == 200
 
     @classmethod
     def _grounded_item(cls, value: Any) -> ResponseGroundedItem:

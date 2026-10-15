@@ -359,7 +359,8 @@ CREATE TABLE IF NOT EXISTS guardian_crisis_events (
     ),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     attempt_push BOOLEAN NOT NULL DEFAULT TRUE,
-    possibly_story_retell BOOLEAN NOT NULL DEFAULT FALSE
+    possibly_story_retell BOOLEAN NOT NULL DEFAULT FALSE,
+    script_interrupted BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 -- Relay-tier support requests pin without WeChat push: their outbox rows are
@@ -374,6 +375,11 @@ ALTER TABLE guardian_crisis_events
 -- Story-retell framing annotates the in-app pin only; it never skips the script.
 ALTER TABLE guardian_crisis_events
     ADD COLUMN IF NOT EXISTS possibly_story_retell BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Set when a confirmed crisis script was stopped before the child heard it all.
+-- The flag is an id-level fact. Child speech is not stored here.
+ALTER TABLE guardian_crisis_events
+    ADD COLUMN IF NOT EXISTS script_interrupted BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE INDEX IF NOT EXISTS idx_guardian_crisis_minor_occurred
 ON guardian_crisis_events(minor_user_id, occurred_at DESC);
@@ -1892,10 +1898,19 @@ BEGIN
                 )
             )
             WITH CHECK (
-                COALESCE(current_setting('memoria.guardian_actor_id', true), '') <> ''
-                AND COALESCE(current_setting('memoria.guardian_subject_id', true), '') <> ''
-                AND minor_user_id = current_setting('memoria.guardian_subject_id', true)
-                AND minor_user_id = current_setting('memoria.guardian_actor_id', true)
+                (
+                    current_user = 'memoria_guardian_maintenance'
+                    AND COALESCE(
+                        current_setting('memoria.guardian_maintenance_scope', true),
+                        ''
+                    ) = '1'
+                )
+                OR (
+                    COALESCE(current_setting('memoria.guardian_actor_id', true), '') <> ''
+                    AND COALESCE(current_setting('memoria.guardian_subject_id', true), '') <> ''
+                    AND minor_user_id = current_setting('memoria.guardian_subject_id', true)
+                    AND minor_user_id = current_setting('memoria.guardian_actor_id', true)
+                )
             );
 
         DROP POLICY IF EXISTS guardian_controller_notification_outbox
