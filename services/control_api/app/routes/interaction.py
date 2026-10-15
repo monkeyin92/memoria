@@ -1631,6 +1631,9 @@ def _source_ref_payload(ref: Any) -> dict[str, Any]:
     }
 
 
+_COMPANION_CONTEXT_BUDGET_S = 0.45
+
+
 async def _companion_items(
     *,
     request: Request,
@@ -1703,14 +1706,23 @@ async def _companion_items(
         and persona_subject is not None
         else None
     )
-    completed = (
-        await asyncio.gather(
-            *(task for task in (memory_task, persona_task) if task is not None),
-            return_exceptions=True,
-        )
-        if memory_task is not None or persona_task is not None
-        else []
-    )
+    pending = [task for task in (memory_task, persona_task) if task is not None]
+    if pending:
+        try:
+            completed = await asyncio.wait_for(
+                asyncio.gather(*pending, return_exceptions=True),
+                timeout=_COMPANION_CONTEXT_BUDGET_S,
+            )
+        except TimeoutError:
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            logger.warning("response planner companion context exceeded budget")
+            completed = []
+            memory_task = None
+            persona_task = None
+    else:
+        completed = []
     cursor = iter(completed)
     memory_result = next(cursor) if memory_task is not None else None
     persona_result = next(cursor) if persona_task is not None else None

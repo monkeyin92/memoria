@@ -77,6 +77,7 @@ from services.agent.src.response_planner_client import (
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_profile_client import VoiceProfileClient
 from services.common.crisis_policy import route_crisis
+from services.common.fixed_safety_scripts import FixedSafetyScript
 from services.common.llm_failover import LLM_UNAVAILABLE_TEXT
 from services.common.realtime_information import (
     REALTIME_UNAVAILABLE_REPLY,
@@ -474,6 +475,28 @@ class ReplyPipeline:
             tts_model=self._tts_model,
             query=query,
         )
+
+    def _neutral_reply_after_fixed_safety(
+        self,
+        plan: ResponsePlan,
+        *,
+        script: FixedSafetyScript | None,
+        reason: str,
+        turn_id: int,
+    ) -> ResponsePlan:
+        if not (
+            self._runtime.fixed_safety_heard and script is None and plan_is_local_safe(plan)
+        ):
+            return plan
+        logger.info(
+            "post_fixed_safety_neutral_reply reason=%s session_id=%s turn_id=%s",
+            reason,
+            self._runtime.session_id,
+            turn_id,
+        )
+        if plan.direct_text == LLM_UNAVAILABLE_TEXT:
+            return plan
+        return replace(plan, direct_text=LLM_UNAVAILABLE_TEXT)
 
     def _current_authorizing_profile_id(self) -> str | None:
         """The ``runtime_profile_id`` currently authorizing this session, if any.
@@ -941,15 +964,12 @@ class ReplyPipeline:
             )
             if script is not None and plan.direct_text != script.display:
                 plan = replace(plan, direct_text=script.display)
-            if self._runtime.fixed_safety_heard and script is None and plan_is_local_safe(plan):
-                logger.info(
-                    "post_fixed_safety_fallback_suppressed reason=%s "
-                    "session_id=%s turn_id=%s",
-                    fetch_reason,
-                    self._runtime.session_id,
-                    fence.turn_id,
-                )
-                raise StopResponse()
+            plan = self._neutral_reply_after_fixed_safety(
+                plan,
+                script=script,
+                reason=fetch_reason,
+                turn_id=fence.turn_id,
+            )
         if plan.fixed_safety_script is not None:
             self._runtime.note_fixed_safety_spoken(plan.fixed_safety_script.display)
         if (
@@ -1001,14 +1021,12 @@ class ReplyPipeline:
             )
             if script is not None and plan.direct_text != script.display:
                 plan = replace(plan, direct_text=script.display)
-            if self._runtime.fixed_safety_heard and script is None and plan_is_local_safe(plan):
-                logger.info(
-                    "post_fixed_safety_fallback_suppressed reason=context_snapshot_unavailable "
-                    "session_id=%s turn_id=%s",
-                    self._runtime.session_id,
-                    fence.turn_id,
-                )
-                raise StopResponse()
+            plan = self._neutral_reply_after_fixed_safety(
+                plan,
+                script=script,
+                reason="context_snapshot_unavailable",
+                turn_id=fence.turn_id,
+            )
             if (
                 input_modality == "audio"
                 and output_policy.generation_voice_must_match_plan(policy)
@@ -1422,14 +1440,15 @@ class ReplyPipeline:
                 self._runtime.fixed_safety_heard
                 and plan_is_local_safe(response_plan)
                 and response_plan.fixed_safety_script is None
+                and response_plan.direct_text is None
             ):
                 logger.info(
-                    "post_fixed_safety_fallback_suppressed reason=stream "
+                    "post_fixed_safety_neutral_reply reason=stream "
                     "session_id=%s turn_id=%s",
                     self._runtime.session_id,
                     fence.turn_id,
                 )
-                return
+                response_plan = replace(response_plan, direct_text=LLM_UNAVAILABLE_TEXT)
             if response_plan.direct_text is not None and realtime_request is None:
                 self._runtime.mark_audio_event("llm_first_content_token")
                 gated = self._runtime.gate_llm_token(

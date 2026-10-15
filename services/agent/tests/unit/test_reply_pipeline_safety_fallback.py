@@ -133,11 +133,6 @@ async def test_after_fixed_safety_plan_failure_speaks_neutral_line(
     follow_up: str,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A failed plan after a fixed safety script must not leave the child in silence
-    and must not open a free chat reply. The spoken line is the existing
-    llm_unavailable phrase.
-    """
-
     runtime = _runtime("post-safety-neutral")
     pipeline = _pipeline(runtime, _InvalidPayloadPlanner())
     first = await pipeline.prepare_committed_turn("我想伤害自己。")

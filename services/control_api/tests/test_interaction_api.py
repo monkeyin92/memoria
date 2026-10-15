@@ -1143,8 +1143,6 @@ class _MemoryCatalog:
 
 
 class _SlowMemoryCatalog(_MemoryCatalog):
-    """Memory search that outlives the agent response-plan client budget."""
-
     def __init__(self, delay_s: float = 2.0) -> None:
         super().__init__()
         self.delay_s = delay_s
@@ -1857,12 +1855,6 @@ async def test_slow_companion_memory_still_returns_a_plan_inside_the_client_budg
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """A memory embed that runs for seconds must not become request_or_payload_invalid.
-
-    The agent client gives the response-plan call 0.8s. Companion context has to
-    finish inside that budget and still return a parseable plan.
-    """
-
     _configure(monkeypatch, tmp_path)
     app = create_app()
     catalog = _SlowMemoryCatalog(2.0)
