@@ -36,6 +36,24 @@ function pageError(error, fallback) {
   return error?.message || fallback;
 }
 
+function loginRequired(error) {
+  return error?.message === "请先使用微信登录。";
+}
+
+function guestMemoryPatch() {
+  return {
+    authenticated: false,
+    summaries: [],
+    archiveGroups: [],
+    archiveFlat: [],
+    loadState: "idle",
+    loading: false,
+    error: "",
+    statusBanner: "",
+    confirm: null,
+  };
+}
+
 function resolveMinor(query) {
   const fromQuery =
     typeof query?.minorId === "string" && query.minorId
@@ -102,16 +120,7 @@ Page({
     });
     const app = getApp();
     this._unsubscribeAuthCleared = app?.subscribeAuthCleared?.(() => {
-      this.setData({
-        authenticated: false,
-        summaries: [],
-        archiveGroups: [],
-        archiveFlat: [],
-        loadState: "idle",
-        error: "",
-        statusBanner: "",
-        confirm: null,
-      });
+      this.setData(guestMemoryPatch());
     });
   },
 
@@ -121,7 +130,7 @@ Page({
 
   async onShow() {
     if (!(await requireLogin({ reason: "view_child_memory" }))) {
-      this.setData({ authenticated: false });
+      this.setData(guestMemoryPatch());
       return;
     }
     this.setData({ authenticated: true });
@@ -193,6 +202,10 @@ Page({
         error: "",
       });
     } catch (error) {
+      if (loginRequired(error)) {
+        this.setData(guestMemoryPatch());
+        return;
+      }
       if (api.isAuthEpochCurrent(authEpoch)) {
         this.setData({
           loadState: "error",
@@ -298,6 +311,10 @@ Page({
       });
       await this.refresh();
     } catch (error) {
+      if (loginRequired(error)) {
+        this.setData(guestMemoryPatch());
+        return;
+      }
       this.setData({ error: pageError(error, "长期记忆授权未能更新。") });
       await this.refresh();
     } finally {
@@ -351,6 +368,10 @@ Page({
         await this.refresh();
       }
     } catch (error) {
+      if (loginRequired(error)) {
+        this.setData(guestMemoryPatch());
+        return;
+      }
       this.setData({ error: pageError(error, "操作失败，请稍后再试。") });
     } finally {
       this.setData({ working: false });

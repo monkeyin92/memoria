@@ -136,7 +136,9 @@ test("a failed registration returns to consent for a fresh phone authorization",
 });
 
 test("a request timeout on the consent screen shows a friendly network line", async () => {
-  const realApi = require("../utils/api");
+  const apiPath = require.resolve("../utils/api");
+  delete require.cache[apiPath];
+  const realApi = require(apiPath);
   const harness = loadPage("pages/auth/index", { api: realApi });
   global.wx.login = (options) => options.success({ code: "login-code" });
   global.wx.request = (options) => options.fail({ errMsg: "request:fail timeout" });

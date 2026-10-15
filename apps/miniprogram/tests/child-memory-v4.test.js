@@ -95,10 +95,11 @@ test("opening from anywhere else stays at the archive", async () => {
 });
 
 test("a logged-in parent whose memory read is refused does not see the raw login line", async () => {
-  const { ApiError } = require("../utils/api");
+  const refused = new Error("请先使用微信登录。");
+  refused.status = 401;
   const harness = await openChildMemory({
     getChildSessionSummaries: async () => {
-      throw new ApiError("请先使用微信登录。", { status: 401 });
+      throw refused;
     },
   });
   try {
