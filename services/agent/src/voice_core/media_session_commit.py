@@ -1422,8 +1422,8 @@ class MediaSessionCommitMixin:
             await self._discard_projection(context, projection_result.value)
             return None, projection_result.value
         committed: CommittedTurn = projection_result
-        self._log_media_turn_committed(context, fence, stream_epoch)
         context.last_committed_turn_text = normalize_short(committed.text)
+        self._log_media_turn_committed(context, fence, stream_epoch)
         context.last_committed_turn_fence = fence
         context.last_committed_turn_at = time.monotonic()
         self._observe_committed_conversation_turn(
@@ -1500,4 +1500,23 @@ class MediaSessionCommitMixin:
             "turn_id=%s generation_id=%s tool_epoch=%s",
             context.identity.session_id, fence.session_epoch, stream_epoch,
             fence.turn_id, fence.generation_id, fence.tool_epoch,
+        )
+        MediaSessionCommitMixin._maybe_log_final_asr_text(context)
+
+    @staticmethod
+    def _maybe_log_final_asr_text(context: _MediaVoiceSession) -> None:
+        """Opt-in test-device log of final ASR text. Never persists beyond the log."""
+
+        import os
+
+        flag = os.environ.get("MEMORIA_LOG_FINAL_ASR_TEXT", "").strip().lower()
+        if flag not in {"1", "true", "yes", "on"}:
+            return
+        text = (context.last_committed_turn_text or "").strip()
+        if not text:
+            return
+        logger.info(
+            "final_asr_text session=%s text=%s",
+            context.identity.session_id,
+            text,
         )

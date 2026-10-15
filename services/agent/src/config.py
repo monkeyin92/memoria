@@ -273,6 +273,9 @@ class AgentSettings(BaseSettings):
     funasr_sample_rate: int = Field(default=16000, alias="FUNASR_SAMPLE_RATE")
     funasr_max_sentence_silence_ms: int = Field(default=550, alias="FUNASR_MAX_SENTENCE_SILENCE_MS")
     funasr_context_enabled: bool = Field(default=False, alias="FUNASR_CONTEXT_ENABLED")
+    # Test-device only: log final ASR text to the process log. Never persist beyond
+    # that log. Default off. Do not enable on production child devices.
+    log_final_asr_text: bool = Field(default=False, alias="MEMORIA_LOG_FINAL_ASR_TEXT")
     funasr_vocabulary_id: str = Field(default="", alias="FUNASR_VOCABULARY_ID")
     funasr_speech_noise_threshold: float | None = Field(
         default=None,

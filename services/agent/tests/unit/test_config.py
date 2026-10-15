@@ -50,6 +50,11 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.media_slo_report_interval_s == 30.0
 
 
+def test_log_final_asr_text_defaults_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MEMORIA_LOG_FINAL_ASR_TEXT", raising=False)
+    assert AgentSettings().log_final_asr_text is False
+
+
 def test_production_media_bridge_requires_mtls_material(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
