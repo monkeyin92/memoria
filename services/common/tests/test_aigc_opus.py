@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 from services.common.aigc_opus import (
+    CANONICAL_AI_GENERATED,
+    CANONICAL_SERVICE_PROVIDER,
     IMPLICIT_AIGC_TAG_KEYS,
     REQUIRED_AIGC_TAG_KEYS,
     audio_packets_digest,
@@ -60,18 +62,25 @@ def test_implicit_tags_require_voice_date_and_producer() -> None:
     head = _ogg_with_comments(
         [
             "CONTENT_ID=demo",
-            "SERVICE_PROVIDER=Memoria",
-            "AI_GENERATED=true",
+            f"SERVICE_PROVIDER={CANONICAL_SERVICE_PROVIDER}",
+            f"AI_GENERATED={CANONICAL_AI_GENERATED}",
             "ARTIST=zh_female_tianmeitaozi_uranus_bigtts",
+            "VOICE_ID=zh_female_tianmeitaozi_uranus_bigtts",
             "DATE=2026-10-15",
             "CONTENT_PRODUCER=Memoria",
         ]
     )
     tags = require_aigc_tags(head, content_id="demo", implicit=True)
+    assert tags["artist"] == "zh_female_tianmeitaozi_uranus_bigtts"
     assert tags["voice_id"] == "zh_female_tianmeitaozi_uranus_bigtts"
     assert tags["date"] == "2026-10-15"
     assert tags["content_producer"] == "Memoria"
-    assert IMPLICIT_AIGC_TAG_KEYS[-3:] == ("ARTIST", "DATE", "CONTENT_PRODUCER")
+    assert IMPLICIT_AIGC_TAG_KEYS[-4:] == (
+        "ARTIST",
+        "VOICE_ID",
+        "DATE",
+        "CONTENT_PRODUCER",
+    )
     assert REQUIRED_AIGC_TAG_KEYS == ("CONTENT_ID", "SERVICE_PROVIDER", "AI_GENERATED")
 
 
@@ -84,7 +93,7 @@ def test_implicit_tags_reject_partial_label() -> None:
             "ARTIST=zh_female_tianmeitaozi_uranus_bigtts",
         ]
     )
-    with pytest.raises(ValueError, match="DATE, CONTENT_PRODUCER"):
+    with pytest.raises(ValueError, match="VOICE_ID, DATE, CONTENT_PRODUCER"):
         require_aigc_tags(head, content_id="demo", implicit=True)
 
 
@@ -96,9 +105,10 @@ def test_rewrite_opus_comments_keeps_audio_and_pcm_digests() -> None:
         before,
         aigc={
             "CONTENT_ID": "night_soothe",
-            "SERVICE_PROVIDER": "Volcengine Doubao",
-            "AI_GENERATED": "true",
+            "SERVICE_PROVIDER": CANONICAL_SERVICE_PROVIDER,
+            "AI_GENERATED": CANONICAL_AI_GENERATED,
             "ARTIST": "zh_female_tianmeitaozi_uranus_bigtts",
+            "VOICE_ID": "zh_female_tianmeitaozi_uranus_bigtts",
             "DATE": "2026-10-14",
             "CONTENT_PRODUCER": "Memoria",
         },
@@ -106,4 +116,5 @@ def test_rewrite_opus_comments_keeps_audio_and_pcm_digests() -> None:
     assert audio_packets_digest(after) == before_packets
     assert pcm_digest(after) == before_pcm
     tags = require_aigc_tags(after[:65536], content_id="night_soothe", implicit=True)
-    assert tags["service_provider"] == "Volcengine Doubao"
+    assert tags["service_provider"] == CANONICAL_SERVICE_PROVIDER
+    assert tags["voice_id"] == "zh_female_tianmeitaozi_uranus_bigtts"

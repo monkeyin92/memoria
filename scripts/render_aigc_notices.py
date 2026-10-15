@@ -10,8 +10,8 @@ Requires DOUBAO_TTS_APP_ID and DOUBAO_TTS_ACCESS_TOKEN. Voice
 zh_female_tianmeitaozi_uranus_bigtts at normal speed and normal volume
 (speech_rate / loudness_rate / pitch = 0). Synthesizes 24 kHz PCM (provider
 requirement), then ffmpeg-encodes 16 kHz Opus with implicit AIGC OpusTags
-(CONTENT_ID, SERVICE_PROVIDER=Volcengine Doubao, AI_GENERATED, ARTIST, DATE,
-CONTENT_PRODUCER=Memoria).
+(CONTENT_ID, SERVICE_PROVIDER=Volcengine Doubao, AI_GENERATED, ARTIST, VOICE_ID,
+DATE, CONTENT_PRODUCER=Memoria).
 
 Do not fabricate audio when credentials are missing.
 """
@@ -88,6 +88,8 @@ def _ffmpeg_from_wav(wav: Path, ogg: Path, *, line_id: str, generated: str) -> N
             "AI_GENERATED=true",
             "-metadata",
             f"ARTIST={VOICE_ID}",
+            "-metadata",
+            f"VOICE_ID={VOICE_ID}",
             "-metadata",
             f"DATE={generated}",
             "-metadata",

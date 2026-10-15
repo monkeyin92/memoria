@@ -451,6 +451,7 @@ def _install_required_intro_stubs(root: pathlib.Path) -> None:
                 "SERVICE_PROVIDER": "Volcengine Doubao",
                 "AI_GENERATED": "true",
                 "ARTIST": "zh_female_tianmeitaozi_uranus_bigtts",
+                "VOICE_ID": "zh_female_tianmeitaozi_uranus_bigtts",
                 "DATE": "2026-10-14",
                 "CONTENT_PRODUCER": "Memoria",
             },
@@ -465,9 +466,9 @@ def test_check_only_requires_aigc_intros_in_board_pack() -> None:
     if story.is_file() and soothe.is_file():
         assert completed.returncode == 0, completed.stderr
         fields = dict(line.split("=", 1) for line in completed.stdout.splitlines() if "=" in line)
-        assert fields["production_clips"] == "27"
-        assert fields["placeholder_clips"] == "2"
-        assert fields["pending_placeholder_clips"] == "2"
+        assert fields["production_clips"] == "29"
+        assert fields["placeholder_clips"] == "0"
+        assert fields["pending_placeholder_clips"] == "0"
         assert fields["required_aigc_intros"] == "2"
         assert "pending_aigc_audit_exceptions" not in completed.stdout
     else:
@@ -489,9 +490,9 @@ def test_check_only_passes_with_intro_stubs(tmp_path: pathlib.Path) -> None:
     assert completed.returncode == 0, completed.stderr
     fields = dict(line.split("=", 1) for line in completed.stdout.splitlines() if "=" in line)
     assert int(fields["free_margin_bytes"]) >= 512 * 1024
-    assert fields["production_clips"] == "27"
-    assert fields["placeholder_clips"] == "2"
-    assert fields["pending_placeholder_clips"] == "2"
+    assert fields["production_clips"] == "29"
+    assert fields["placeholder_clips"] == "0"
+    assert fields["pending_placeholder_clips"] == "0"
     assert fields["required_aigc_intros"] == "2"
 
 
@@ -556,7 +557,7 @@ def test_clip_without_opus_tags_is_not_production(tmp_path: pathlib.Path) -> Non
     assert completed.returncode == 1
     assert "offline_lines/offline-menu-idle-v1.ogg: no OpusTags header" in completed.stderr
     assert target.read_bytes() == blob
-    assert "pending_placeholder_clips=2" in completed.stdout
+    assert "pending_placeholder_clips=0" in completed.stdout
 
 
 def test_missing_clip_fails_without_creating_it(tmp_path: pathlib.Path) -> None:
@@ -616,14 +617,7 @@ def test_manifests_record_production_voice() -> None:
         assert manifest["voice"] == VOICE
         entries = manifest["stories"] if "stories" in manifest else manifest["lines"]
         assert entries
-        if "stories" in manifest:
-            assert all(entry["placeholder"] is False for entry in entries)
-        else:
-            assert all(
-                entry["placeholder"] is False
-                or entry["id"] in {"llm_unavailable", "llm_thinking"}
-                for entry in entries
-            )
+        assert all(entry["placeholder"] is False for entry in entries)
 
 
 def test_offline_line_manifest_matches_pack() -> None:
@@ -639,24 +633,20 @@ def test_offline_line_manifest_matches_pack() -> None:
     assert ids[22] == "aigc_story_intro"
     assert ids[23] == "aigc_soothe_intro"
     by_id = {entry["id"]: entry for entry in manifest["lines"]}
-    assert by_id["llm_unavailable"]["placeholder"] is True
+    assert by_id["llm_unavailable"]["placeholder"] is False
     assert by_id["llm_unavailable"]["text"] == (
         "我现在有点卡住了，等一会儿再来找我聊吧。"
     )
-    assert by_id["llm_thinking"]["placeholder"] is True
+    assert by_id["llm_thinking"]["placeholder"] is False
     assert by_id["llm_thinking"]["text"] == "嗯，我想一想。"
     assert by_id["aigc_story_intro"]["text"] == "下面是 AI 合成的声音给你讲故事。"
     assert by_id["aigc_soothe_intro"]["text"] == "AI 合成的声音陪你睡觉啦。"
     assert "pending_tts" not in by_id["aigc_story_intro"]
     assert "pending_tts" not in by_id["aigc_soothe_intro"]
     for entry in manifest["lines"]:
-        if entry["id"] not in {"llm_unavailable", "llm_thinking"}:
-            assert entry["placeholder"] is False
+        assert entry["placeholder"] is False
         filename = entry["file"]
         assert len(filename) <= 32
-        if entry["id"] in {"aigc_story_intro", "aigc_soothe_intro"}:
-            # Required in CI; may still be absent until Doubao render lands.
-            continue
         assert (BOARD_ASSETS / "offline_lines" / filename).is_file()
 
 
@@ -692,3 +682,17 @@ def test_story_03_title_renamed() -> None:
     script = BUILD_SCRIPT.read_text(encoding="utf-8")
     assert "大熊和森林里的悄悄话" in script
     assert "一只会听的熊" not in script
+
+
+def test_device_ogg_aigc_check_fails_on_undecodable_llm_placeholders() -> None:
+    script = FIRMWARE_ROOT / "scripts" / "check_device_ogg_aigc.py"
+    completed = subprocess.run(
+        ["python3", str(script), "--assets-root", str(BOARD_ASSETS)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 1
+    assert "offline_lines/llm_thinking.ogg decode failed" in completed.stderr
+    assert "offline_lines/llm_unavailable.ogg decode failed" in completed.stderr
+    assert "checked_oggs=29" in completed.stdout

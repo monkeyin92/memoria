@@ -13,10 +13,11 @@ Upstream packs DEFAULT_ASSETS_EXTRA_FILES by basename, so names stay <= 32
 characters. The 8 MiB assets partition keeps >= 0.5 MiB free.
 
 Implicit AIGC Vorbis comments (CONTENT_ID, SERVICE_PROVIDER, AI_GENERATED,
-ARTIST, DATE, CONTENT_PRODUCER) are required on every shipped clip.
+ARTIST, VOICE_ID, DATE, CONTENT_PRODUCER) are required on every shipped clip.
 Provider-embedded marks are never stripped. Spoken AIGC intros
 (aigc_story_intro / aigc_soothe_intro) are required in the pack; CI fails if
-either is absent.
+either is absent. Decode-and-tag CI for every board ``*.ogg`` lives in
+``check_device_ogg_aigc.py`` (this script never shells out to a decoder).
 """
 
 from __future__ import annotations
@@ -95,9 +96,9 @@ OFFLINE_LINES = (
     ("aigc_soothe_intro", "AI 合成的声音陪你睡觉啦。"),
 )
 
-# Placeholders allowed until production voice is copied in. Each must carry
-# full implicit AIGC OpusTags.
-PENDING_PLACEHOLDER_LINE_IDS = frozenset({"llm_unavailable", "llm_thinking"})
+# No pending placeholder line ids. Product locked llm_* copy on 2026-10-15;
+# replacement speech oggs still outstanding (check_device_ogg_aigc.py fails them).
+PENDING_PLACEHOLDER_LINE_IDS: frozenset[str] = frozenset()
 
 # Spoken AIGC intros required in the shipped pack (no skip-if-missing).
 REQUIRED_AIGC_INTRO_LINE_IDS = frozenset({"aigc_story_intro", "aigc_soothe_intro"})

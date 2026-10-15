@@ -1,8 +1,9 @@
 """Appendix-E AIGC OpusTags on Ogg Opus clips.
 
 Implicit labels for shipped audio follow GB 45438-2025 style Vorbis comments:
-CONTENT_ID, SERVICE_PROVIDER, AI_GENERATED, ARTIST (voice id), DATE, and
-CONTENT_PRODUCER. Provider-embedded marks are never stripped.
+CONTENT_ID, SERVICE_PROVIDER, AI_GENERATED, ARTIST, VOICE_ID, DATE, and
+CONTENT_PRODUCER. ARTIST and VOICE_ID both carry the TTS voice id.
+Provider-embedded marks are never stripped.
 
 ``rewrite_opus_comments`` replaces only the OpusTags comment packet and leaves
 audio packets byte-identical (verified by ``audio_packets_digest``).
@@ -21,9 +22,12 @@ IMPLICIT_AIGC_TAG_KEYS: Final = (
     "SERVICE_PROVIDER",
     "AI_GENERATED",
     "ARTIST",
+    "VOICE_ID",
     "DATE",
     "CONTENT_PRODUCER",
 )
+CANONICAL_SERVICE_PROVIDER: Final = "Volcengine Doubao"
+CANONICAL_AI_GENERATED: Final = "true"
 OPUS_TAGS_SCAN_BYTES: Final = 64 * 1024
 
 
@@ -96,8 +100,8 @@ def require_aigc_tags(
         raise ValueError("missing AIGC tags: " + ", ".join(missing))
     if tags.get("CONTENT_ID", "").strip() != content_id:
         raise ValueError(f"CONTENT_ID must be {content_id}")
-    if tags.get("AI_GENERATED", "").strip().lower() not in {"true", "1", "yes"}:
-        raise ValueError("AI_GENERATED must be true")
+    if tags.get("AI_GENERATED", "").strip() != CANONICAL_AI_GENERATED:
+        raise ValueError(f"AI_GENERATED must be {CANONICAL_AI_GENERATED}")
     if not tags.get("SERVICE_PROVIDER", "").strip():
         raise ValueError("SERVICE_PROVIDER must be non-empty")
     result: dict[str, object] = {
@@ -106,7 +110,8 @@ def require_aigc_tags(
         "ai_generated": True,
     }
     if implicit:
-        result["voice_id"] = tags["ARTIST"].strip()
+        result["artist"] = tags["ARTIST"].strip()
+        result["voice_id"] = tags["VOICE_ID"].strip()
         result["date"] = tags["DATE"].strip()
         result["content_producer"] = tags["CONTENT_PRODUCER"].strip()
     return result
@@ -298,16 +303,19 @@ def merge_aigc_comments(
     existing: list[tuple[str, str]],
     *,
     aigc: Mapping[str, str],
+    drop_keys: frozenset[str] | None = None,
 ) -> list[tuple[str, str]]:
     """Keep non-AIGC comments; set/overwrite the implicit AIGC keys."""
 
     aigc_upper = {key.upper(): value for key, value in aigc.items()}
+    drop_upper = {key.upper() for key in (drop_keys or frozenset())}
     for key in IMPLICIT_AIGC_TAG_KEYS:
         if key not in aigc_upper or not aigc_upper[key].strip():
             raise ValueError(f"missing AIGC value for {key}")
     kept: list[tuple[str, str]] = []
     for key, value in existing:
-        if key.upper() in IMPLICIT_AIGC_TAG_KEYS:
+        upper = key.upper()
+        if upper in IMPLICIT_AIGC_TAG_KEYS or upper in drop_upper:
             continue
         kept.append((key, value))
     for key in IMPLICIT_AIGC_TAG_KEYS:
@@ -319,6 +327,7 @@ def rewrite_opus_comments(
     data: bytes,
     *,
     aigc: Mapping[str, str],
+    drop_keys: frozenset[str] | None = None,
 ) -> bytes:
     """Rewrite OpusTags only. Audio packets stay byte-identical."""
 
@@ -360,7 +369,9 @@ def rewrite_opus_comments(
         raise ValueError("failed to isolate OpusTags pages")
 
     vendor, existing = _parse_opus_tags_packet(packets[1])
-    new_tags = _build_opus_tags_packet(vendor, merge_aigc_comments(existing, aigc=aigc))
+    new_tags = _build_opus_tags_packet(
+        vendor, merge_aigc_comments(existing, aigc=aigc, drop_keys=drop_keys)
+    )
 
     # Rebuild tags as a single fresh page using the original stream serial / page no.
     tags_page = pages[tags_page_start]
@@ -387,6 +398,8 @@ def rewrite_opus_comments(
 
 
 __all__ = [
+    "CANONICAL_AI_GENERATED",
+    "CANONICAL_SERVICE_PROVIDER",
     "IMPLICIT_AIGC_TAG_KEYS",
     "OPUS_TAGS_SCAN_BYTES",
     "REQUIRED_AIGC_TAG_KEYS",

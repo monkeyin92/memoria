@@ -218,6 +218,8 @@ rg -Fq 'HoldDurationMsOnRelease' "$board_dir/memoria_esp_vocat.cc" || \
     die "touch task must measure hold duration for the offline menu"
 "$python_bin" "$MEMORIA_FIRMWARE_ROOT/scripts/build_offline_stories.py" --check-only || \
     die "offline story/line assets failed budget or manifest checks"
+"$python_bin" "$MEMORIA_FIRMWARE_ROOT/scripts/check_device_ogg_aigc.py" || \
+    die "board asset oggs failed decode or AIGC OpusTags checks"
 rg -q 'espressif/libsodium:[[:space:]]*\^1\.0\.22' "$MEMORIA_UPSTREAM_DIR/main/idf_component.yml" || \
     die "libsodium dependency missing"
 rg -q 'memoria/device_identity\.cc' "$MEMORIA_UPSTREAM_DIR/main/CMakeLists.txt" || die "device identity is not in CMake"
