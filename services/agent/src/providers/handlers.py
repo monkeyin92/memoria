@@ -8,11 +8,8 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from services.agent.src.providers.domestic_weather import DomesticWeather, build_domestic_weather
 from services.agent.src.providers.llm_failover import FailoverChatModel
-from services.agent.src.providers.open_meteo_weather import (
-    OpenMeteoWeather,
-    is_weather_query,
-)
 from services.agent.src.providers.qwen_realtime_search import (
     QwenRealtimeSearch,
     QwenRealtimeSearchConfig,
@@ -25,31 +22,28 @@ if TYPE_CHECKING:
 
 
 class PublicRealtimeSearch:
-    """Route weather to a deterministic public API and other topics to Qwen."""
-
     def __init__(
         self,
         *,
-        weather: OpenMeteoWeather,
+        weather: DomesticWeather | None,
         qwen: QwenRealtimeSearch | None,
     ) -> None:
         self.weather = weather
         self.qwen = qwen
-        self.model = (
-            f"{weather.model}+{qwen.model}" if qwen is not None else weather.model
-        )
+        self.model = "+".join(source.model for source in (weather, qwen) if source is not None)
 
     async def resolve(self, *, query: str) -> str | None:
-        if is_weather_query(query):
-            weather = await self.weather.resolve(query=query)
-            if weather:
-                return weather
+        if self.weather is not None:
+            answer = await self.weather.resolve(query=query)
+            if answer is not None:
+                return answer
         if self.qwen is None:
             return None
         return await self.qwen.resolve(query=query)
 
     async def aclose(self) -> None:
-        await self.weather.aclose()
+        if self.weather is not None:
+            await self.weather.aclose()
         if self.qwen is not None:
             await self.qwen.aclose()
 
@@ -140,4 +134,4 @@ def build_realtime_search_resolver(*, settings: AgentSettings) -> PublicRealtime
                 model=str(getattr(settings, "qwen_deep_model", "qwen-plus")),
             )
         )
-    return PublicRealtimeSearch(weather=OpenMeteoWeather(), qwen=qwen)
+    return PublicRealtimeSearch(weather=build_domestic_weather(settings), qwen=qwen)

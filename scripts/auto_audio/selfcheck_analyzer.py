@@ -535,8 +535,8 @@ def continuation_lines() -> list[tuple[float, str, str]]:
                       session=OTHER_SESSION, epoch=7, turn=9, generation=9),
         # A reconnect that still carries the previous stream epoch.
         scoped_commit(21.100, 3, 5, stream_epoch=1954),
-        bridge_line(25.414, "services.agent.src.providers.open_meteo_weather:open meteo weather "
-                            "lookup completed model=open-meteo start_offset=0 days=3 elapsed_ms=7930"),
+        bridge_line(25.414, "services.agent.src.providers.domestic_weather:domestic weather "
+                            "lookup completed model=qweather start_offset=0 days=3 elapsed_ms=7930"),
         phase_line(25.798, "thinking_silent", "speaking", "assistant_speaking", generation=5),
         delivery_line(25.800, "event=first_frame_sent terminal= first_frame_sent=True",
                       generation=5),

@@ -447,6 +447,33 @@ def test_pcm_tap_dir_is_accepted_in_development() -> None:
     assert settings.media_pcm_tap_dir == "/tmp/pcm"
 
 
+def test_weather_lookup_provider_rejects_unknown_values() -> None:
+    with pytest.raises(ValidationError, match="WEATHER_LOOKUP_PROVIDER"):
+        AgentSettings(_env_file=None, WEATHER_LOOKUP_PROVIDER="on")
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "https://abcd.re.qweatherapi.com",
+        "abcd.re.qweatherapi.com:443",
+        "abcd.re.qweatherapi.com/v7",
+        "user@abcd.re.qweatherapi.com",
+        "qweatherapi.com",
+        "abcd.qweatherapi.com.evil.example",
+        "api.example.com",
+    ],
+)
+def test_qweather_host_must_be_a_bare_qweatherapi_hostname(host: str) -> None:
+    with pytest.raises(ValidationError, match="QWEATHER_API_HOST"):
+        AgentSettings(_env_file=None, QWEATHER_API_HOST=host)
+
+
+def test_qweather_host_is_normalized() -> None:
+    settings = AgentSettings(_env_file=None, QWEATHER_API_HOST=" ABCD.re.QWeatherAPI.com ")
+    assert settings.qweather_api_host == "abcd.re.qweatherapi.com"
+
+
 def test_production_enabled_capabilities_require_independent_tokens(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

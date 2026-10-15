@@ -31,6 +31,7 @@
 - 助手要说的文字发往火山引擎豆包 TTS（默认 `wss://openspeech.bytedance.com/api/v3/tts/bidirection`）。孩子的话若被复述，会夹在这段文字里。
 - 记忆抽取读取已落库的证据文本，抽取模型同样走百炼。
 - 声纹嵌入经 CampPlus HTTP 提交 `audio_base64`（`services/speaker/campplus_http.py`）。该服务的部署位置由环境决定，仓库没有写死地域。
+- 天气查询在 `WEATHER_LOOKUP_PROVIDER=domestic` 且和风天气密钥与专属域名都已配置时，把允许表里的城市标准名发往该域名。出站字段见 `docs/compliance/weather-lookup-data-flow.md`。默认 `off`，这时没有天气客户端，也不发出这类请求。
 
 这些厂商保存多久、存在哪一地，本仓库不能强制。告知里必须单独一行，不能写成「用完即删」。
 
@@ -71,7 +72,7 @@ ESP32-S3 内存中的 Opus 上行
 | 表达风格 | PostgreSQL `speech_style_stats`（句数、字数、时长、停顿、`tic_counts` 口头禅计数）和 `persona_traits.description`（可由口头禅生成短句，如常用某个词起句）。证据指针在 `persona_evidence`，指向 `archive_evidence_events`，本身不存整段转写。未成年人只学风格，不学价值取向和决策习惯（P0-04 D2）。同机。 | 无期限。 | 不随对话结束删除。按使用人删除会擦除并在删除末尾核对。口头禅计数是孩子用语的片段，不是整句转写，但属于儿童个人信息。 |
 | 辅导记录 | PostgreSQL `tutor_practice_evidence.envelope_json` 与 `tutor_commit_outbox.archive_payload_json`。评估信封的字段是分数、技能、标准 id、时长和围栏，没有转写字段（`services/tutor/authority.py` 的 `_unsigned_payload`）。`tutor_study_progress` 是秒数、活跃日、薄弱点和已掌握技能的 JSON。同机。 | 无期限。 | 不随对话结束删除。按使用人删除覆盖这些行。实现时须用测试锁住信封键集合，防止以后把原话放进去。 |
 | 危机提醒与每周小结 | `guardian_crisis_events` 只存证据 id、时间、话术版本。家长文案是固定句，不含原文，也不含严重程度（`services/guardian/crisis.py`，P0-04）。每周小结由计数聚合投影，测试要求载荷不含转写（`services/guardian/weekly_report.py`）。同机。 | 无期限。危机提醒留作监护记录。 | 不随对话结束删除。按使用人删除覆盖监护行。 |
-| 厂商处理中的音频和文本 | 见上文「离开自有主机」的四个终点。不是 MinIO，也不是本仓库的表。 | 本仓库没有厂商保留期限，也不能在厂商侧到期删除。 | 不能填写「到期删除」。告知必须写明会交给哪一类厂商、目的是识别、生成回复或抽取记忆，以及拒绝后的后果是无法完成对话或无法形成长期记忆。 |
+| 厂商处理中的音频和文本 | 见上文「离开自有主机」的五个终点。不是 MinIO，也不是本仓库的表。 | 本仓库没有厂商保留期限，也不能在厂商侧到期删除。 | 不能填写「到期删除」。告知必须写明会交给哪一类厂商、目的是识别、生成回复或抽取记忆，以及拒绝后的后果是无法完成对话或无法形成长期记忆。 |
 | 备份里的上述副本 | 发布手册中的 `pg_dump`，以及主机上的 `/var/backups/memoria`。WAL 归档手册记为 2026-10-06 起关闭。备份在同一台生产主机上，不在单独的异地桶描述里。 | 无儿童数据到期政策。空间清理明确不动数据卷和这份备份。 | 库内删除不会自动改写已有备份。恢复库会把已删的音频或原文带回来，除非先按 `scripts/replay_subject_deletions.py` 重放删除。对话结束没有对应动作。 |
 
 现状里和验收直接冲突的有三处：

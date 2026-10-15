@@ -4,6 +4,7 @@ from services.common.companions import COMPANIONS
 from services.common.realtime_information import (
     fixed_realtime_reply,
     is_incomplete_realtime_reply,
+    is_safe_realtime_reply,
     requires_realtime_lookup,
 )
 
@@ -42,6 +43,8 @@ def test_clock_reply_does_not_hide_a_second_live_information_request() -> None:
     assert fixed_realtime_reply(query="今天星期几", now=now) == ("今天是2026年7月30日，星期四。")
     assert fixed_realtime_reply(query="现在几点了", now=now) == ("现在是北京时间18点42分。")
     assert fixed_realtime_reply(query="今天星期几，杭州天气怎么样", now=now) is None
+    assert fixed_realtime_reply(query="今天天气怎么样", now=now) == "你想查哪个城市呀？"
+    assert is_safe_realtime_reply("你想查哪个城市呀？") is True
 
 
 def test_realtime_lookup_predicate_keeps_safety_requests_out_of_network_search() -> None:

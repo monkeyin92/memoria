@@ -1582,7 +1582,7 @@ async def test_response_plan_grounds_clock_and_requires_a_city_for_weather(
     )
     assert date_plan["direct_text"] == "今天是2026年7月30日，星期四。"
     assert time_plan["direct_text"] == "现在是北京时间18点42分。"
-    assert missing_city_plan["direct_text"] == "你想查哪个城市的天气？"
+    assert missing_city_plan["direct_text"] == "你想查哪个城市呀？"
     assert city_weather_plan["direct_text"] is None
     assert "2026-07-30 18:42" in city_weather_plan["instructions"]
     assert "星期四" in city_weather_plan["instructions"]

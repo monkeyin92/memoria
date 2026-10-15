@@ -382,7 +382,7 @@ target_image_id="$(docker image inspect "$target_image" --format '{{.Id}}')"
 docker run --rm --network none \
   --entrypoint /app/.venv/bin/python \
   "$target_image" \
-  -c 'import scripts.run_media_bridge; from services.agent.src.media_agent_factory import build_production_media_session_factory; from services.agent.src.reply_pipeline import ReplyPipeline; from services.agent.src.providers.open_meteo_weather import OpenMeteoWeather; from services.agent.src.providers.qwen_realtime_search import QwenRealtimeSearch; print("agent_component_import_smoke=PASS")'
+  -c 'import scripts.run_media_bridge; from services.agent.src.media_agent_factory import build_production_media_session_factory; from services.agent.src.reply_pipeline import ReplyPipeline; from services.agent.src.providers.qwen_realtime_search import QwenRealtimeSearch; from services.agent.src.providers.domestic_weather import DomesticWeather; print("agent_component_import_smoke=PASS")'
 
 {
   printf 'agent_component_build=PASS\n'
