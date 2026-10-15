@@ -16,7 +16,7 @@ Feature flag `LLM_FAILOVER_ENABLED` defaults off. Primary DeepSeek; when on, fir
 | DeepSeek thinking body exactly `{"thinking":{"type":"disabled"}}` | pass |
 | Qwen reply body has `enable_thinking=false` | pass |
 | Offline `OnLlmUnavailable(play_line=false)` enters menu while online | pass |
-| `llm_unavailable.ogg` AIGC-labelled production clip | pass |
+| Pending `llm_unavailable.ogg` placeholder with Appendix-E AIGC tags | pass |
 
 Command:
 

@@ -1,16 +1,18 @@
-"""Labelled online lines carry AIGC tags and never need streaming TTS to load."""
+"""Labelled online lines load only real Doubao speech; scaffold never plays."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-import pytest
-from services.common.aigc_opus import require_aigc_tags
+from services.common.aigc_opus import require_aigc_tags, title_is_placeholder
 from services.common.labelled_lines import (
     DEFAULT_ASSETS_ROOT,
-    ONLINE_SAMPLE_RATE_HZ,
+    PLAYABLE_RENDER_TOOLS,
+    SYNTHETIC_RENDER_TOOLS,
     LabelledLine,
     LabelledLineCatalogue,
+    is_synthetic_render_tool,
     load_catalogue,
     override_labelled_catalogue,
 )
@@ -18,59 +20,53 @@ from services.common.llm_failover import LLM_UNAVAILABLE_LINE_ID, LLM_UNAVAILABL
 from services.common.llm_thinking_filler import LLM_THINKING_LINE_ID, LLM_THINKING_TEXT
 
 
-def test_shipped_assets_have_aigc_labels_and_pcm() -> None:
+def test_shipped_provenance_scaffold_is_not_loaded_for_play() -> None:
+    provenance = json.loads((DEFAULT_ASSETS_ROOT / "provenance.json").read_text(encoding="utf-8"))
     catalogue = load_catalogue()
-    thinking = catalogue.require(LLM_THINKING_LINE_ID)
-    unavailable = catalogue.require(LLM_UNAVAILABLE_LINE_ID)
-    assert thinking.text == LLM_THINKING_TEXT
-    assert unavailable.text == LLM_UNAVAILABLE_TEXT
-    assert thinking.aigc == {
-        "content_id": LLM_THINKING_LINE_ID,
-        "service_provider": "Memoria",
-        "ai_generated": True,
-    }
-    assert unavailable.aigc == {
-        "content_id": LLM_UNAVAILABLE_LINE_ID,
-        "service_provider": "Memoria",
-        "ai_generated": True,
-    }
-    assert thinking.sample_rate_hz == ONLINE_SAMPLE_RATE_HZ
-    assert len(thinking.pcm_s16le) > 1000
-    assert len(unavailable.pcm_s16le) > len(thinking.pcm_s16le)
-    assert catalogue.by_text(LLM_THINKING_TEXT) is thinking
-    assert catalogue.by_text(LLM_UNAVAILABLE_TEXT) is unavailable
+    for entry in provenance["lines"]:
+        assert is_synthetic_render_tool(entry["tool"])
+        assert entry.get("playable") is False
+        assert catalogue.get(str(entry["id"])) is None
+    assert catalogue.get(LLM_THINKING_LINE_ID) is None
+    assert catalogue.get(LLM_UNAVAILABLE_LINE_ID) is None
+    assert catalogue.by_text(LLM_THINKING_TEXT) is None
+    assert catalogue.by_text(LLM_UNAVAILABLE_TEXT) is None
 
 
-def test_ogg_files_themselves_embed_aigc_tags() -> None:
-    for line_id in (LLM_THINKING_LINE_ID, LLM_UNAVAILABLE_LINE_ID):
-        path = DEFAULT_ASSETS_ROOT / f"{line_id}.ogg"
-        tags = require_aigc_tags(path.read_bytes()[:64_000], content_id=line_id)
-        assert tags["ai_generated"] is True
-        assert tags["service_provider"] == "Memoria"
-
-
-def test_catalogue_loads_from_s16le_sidecar_without_ffmpeg(
-    monkeypatch: pytest.MonkeyPatch,
+def test_catalogue_excludes_synthetic_tone_even_when_ogg_and_pcm_exist(
+    tmp_path: Path,
 ) -> None:
-    def _forbid_ffmpeg(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("ffmpeg must not run when .s16le sidecars are present")
+    """A scaffold provenance row must never become a playable catalogue entry."""
 
-    monkeypatch.setattr("services.common.labelled_lines.subprocess.run", _forbid_ffmpeg)
-    catalogue = load_catalogue()
-    thinking = catalogue.require(LLM_THINKING_LINE_ID)
-    assert thinking.pcm_s16le == (
-        DEFAULT_ASSETS_ROOT / f"{LLM_THINKING_LINE_ID}.s16le"
-    ).read_bytes()
-
-
-def test_missing_aigc_tag_fails_at_catalogue_boundary(tmp_path: Path) -> None:
     import subprocess
-    import tempfile
 
-    bare = tmp_path / f"{LLM_THINKING_LINE_ID}.ogg"
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wav:
-        wav_path = Path(wav.name)
-    try:
+    (tmp_path / "provenance.json").write_text(
+        json.dumps(
+            {
+                "generated": "2026-10-15",
+                "tool": "ffmpeg-libopus-scaffold",
+                "lines": [
+                    {
+                        "id": LLM_THINKING_LINE_ID,
+                        "prompt": LLM_THINKING_TEXT,
+                        "tool": "ffmpeg-libopus-scaffold",
+                        "playable": False,
+                    },
+                    {
+                        "id": LLM_UNAVAILABLE_LINE_ID,
+                        "prompt": LLM_UNAVAILABLE_TEXT,
+                        "tool": "ffmpeg-libopus-scaffold",
+                        "playable": False,
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    for line_id in (LLM_THINKING_LINE_ID, LLM_UNAVAILABLE_LINE_ID):
+        ogg = tmp_path / f"{line_id}.ogg"
+        pcm = tmp_path / f"{line_id}.s16le"
         subprocess.run(
             [
                 "ffmpeg",
@@ -86,10 +82,61 @@ def test_missing_aigc_tag_fails_at_catalogue_boundary(tmp_path: Path) -> None:
                 "24000",
                 "-ac",
                 "1",
-                str(wav_path),
+                "-c:a",
+                "libopus",
+                "-metadata",
+                f"CONTENT_ID={line_id}",
+                "-metadata",
+                "SERVICE_PROVIDER=Memoria",
+                "-metadata",
+                "AI_GENERATED=true",
+                "-metadata",
+                "ARTIST=zh_female_tianmeitaozi_uranus_bigtts",
+                str(ogg),
             ],
             check=True,
         )
+        pcm.write_bytes(b"\x01\x00" * 480)
+        tags = require_aigc_tags(ogg.read_bytes()[:64_000], content_id=line_id)
+        assert tags["ai_generated"] is True
+
+    catalogue = load_catalogue(tmp_path)
+    assert set(SYNTHETIC_RENDER_TOOLS) == {"ffmpeg-libopus-scaffold"}
+    assert "doubao-seed-tts-2.0" in PLAYABLE_RENDER_TOOLS
+    assert catalogue.get(LLM_THINKING_LINE_ID) is None
+    assert catalogue.get(LLM_UNAVAILABLE_LINE_ID) is None
+
+
+def test_doubao_provenance_loads_labelled_speech(tmp_path: Path) -> None:
+    import subprocess
+
+    (tmp_path / "provenance.json").write_text(
+        json.dumps(
+            {
+                "generated": "2026-10-15",
+                "tool": "doubao-seed-tts-2.0",
+                "lines": [
+                    {
+                        "id": LLM_THINKING_LINE_ID,
+                        "prompt": LLM_THINKING_TEXT,
+                        "tool": "doubao-seed-tts-2.0",
+                        "playable": True,
+                    },
+                    {
+                        "id": LLM_UNAVAILABLE_LINE_ID,
+                        "prompt": LLM_UNAVAILABLE_TEXT,
+                        "tool": "doubao-seed-tts-2.0",
+                        "playable": True,
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    for line_id in (LLM_THINKING_LINE_ID, LLM_UNAVAILABLE_LINE_ID):
+        ogg = tmp_path / f"{line_id}.ogg"
+        pcm = tmp_path / f"{line_id}.s16le"
         subprocess.run(
             [
                 "ffmpeg",
@@ -97,31 +144,34 @@ def test_missing_aigc_tag_fails_at_catalogue_boundary(tmp_path: Path) -> None:
                 "-loglevel",
                 "error",
                 "-y",
+                "-f",
+                "lavfi",
                 "-i",
-                str(wav_path),
+                "sine=frequency=220:duration=0.15",
+                "-ar",
+                "24000",
+                "-ac",
+                "1",
                 "-c:a",
                 "libopus",
-                "-b:a",
-                "16000",
                 "-metadata",
-                f"CONTENT_ID={LLM_THINKING_LINE_ID}",
+                f"TITLE={line_id}",
+                "-metadata",
+                f"CONTENT_ID={line_id}",
                 "-metadata",
                 "SERVICE_PROVIDER=Memoria",
-                str(bare),
+                "-metadata",
+                "AI_GENERATED=true",
+                str(ogg),
             ],
             check=True,
         )
-    finally:
-        wav_path.unlink(missing_ok=True)
-    (tmp_path / f"{LLM_UNAVAILABLE_LINE_ID}.ogg").write_bytes(
-        (DEFAULT_ASSETS_ROOT / f"{LLM_UNAVAILABLE_LINE_ID}.ogg").read_bytes()
-    )
-    for line_id in (LLM_THINKING_LINE_ID, LLM_UNAVAILABLE_LINE_ID):
-        (tmp_path / f"{line_id}.s16le").write_bytes(
-            (DEFAULT_ASSETS_ROOT / f"{line_id}.s16le").read_bytes()
-        )
-    with pytest.raises(ValueError, match="AI_GENERATED"):
-        load_catalogue(tmp_path)
+        pcm.write_bytes(b"\x02\x00" * 960)
+        assert not title_is_placeholder(ogg.read_bytes()[:64_000])
+
+    catalogue = load_catalogue(tmp_path)
+    assert catalogue.require(LLM_THINKING_LINE_ID).pcm_s16le == b"\x02\x00" * 960
+    assert catalogue.by_text(LLM_UNAVAILABLE_TEXT) is not None
 
 
 def test_override_catalogue_is_restored() -> None:

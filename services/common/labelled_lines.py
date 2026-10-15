@@ -1,7 +1,13 @@
-"""Pre-recorded AIGC-labelled lines played online instead of streaming TTS."""
+"""Pre-recorded AIGC-labelled lines played online instead of streaming TTS.
+
+Only Doubao-rendered speech listed in provenance.json is playable. Scaffold
+tones (``ffmpeg-libopus-scaffold``) and Opus TITLE placeholders never enter
+the catalogue, so they cannot reach a play path.
+"""
 
 from __future__ import annotations
 
+import json
 import subprocess
 import threading
 from collections.abc import Iterator, Mapping
@@ -10,7 +16,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Final
 
-from services.common.aigc_opus import OPUS_TAGS_SCAN_BYTES, require_aigc_tags
+from services.common.aigc_opus import (
+    OPUS_TAGS_SCAN_BYTES,
+    require_aigc_tags,
+    title_is_placeholder,
+)
 from services.common.llm_failover import (
     LLM_UNAVAILABLE_AIGC,
     LLM_UNAVAILABLE_LINE_ID,
@@ -26,6 +36,8 @@ ONLINE_SAMPLE_RATE_HZ: Final = 24_000
 DEFAULT_ASSETS_ROOT: Final = (
     Path(__file__).resolve().parent / "assets" / "labelled_lines"
 )
+PLAYABLE_RENDER_TOOLS: Final = frozenset({"doubao-seed-tts-2.0"})
+SYNTHETIC_RENDER_TOOLS: Final = frozenset({"ffmpeg-libopus-scaffold"})
 
 LINE_SPECS: Final[tuple[tuple[str, str, Mapping[str, object]], ...]] = (
     (LLM_THINKING_LINE_ID, LLM_THINKING_TEXT, LLM_THINKING_AIGC),
@@ -105,6 +117,21 @@ _catalogue_lock = threading.Lock()
 _catalogue_override: LabelledLineCatalogue | None = None
 
 
+def _provenance_lines(root: Path) -> list[dict[str, object]]:
+    path = root / "provenance.json"
+    if not path.is_file():
+        return []
+    data = json.loads(path.read_text(encoding="utf-8"))
+    lines = data.get("lines")
+    if not isinstance(lines, list):
+        return []
+    return [entry for entry in lines if isinstance(entry, dict)]
+
+
+def is_synthetic_render_tool(tool: object) -> bool:
+    return str(tool or "") in SYNTHETIC_RENDER_TOOLS
+
+
 def _decode_ogg_pcm(path: Path, *, sample_rate_hz: int) -> bytes:
     try:
         completed = subprocess.run(
@@ -158,12 +185,25 @@ def load_catalogue(
     sample_rate_hz: int = ONLINE_SAMPLE_RATE_HZ,
 ) -> LabelledLineCatalogue:
     root = assets_root if assets_root is not None else DEFAULT_ASSETS_ROOT
+    by_id = {
+        str(entry["id"]): entry
+        for entry in _provenance_lines(root)
+        if entry.get("id") is not None
+    }
     loaded: dict[str, LabelledLine] = {}
     for line_id, text, expected_aigc in LINE_SPECS:
+        record = by_id.get(line_id)
+        if record is None:
+            continue
+        tool = str(record.get("tool") or "")
+        if is_synthetic_render_tool(tool) or tool not in PLAYABLE_RENDER_TOOLS:
+            continue
         path = root / f"{line_id}.ogg"
         if not path.is_file():
             raise FileNotFoundError(f"labelled line asset missing: {path}")
         head = path.read_bytes()[:OPUS_TAGS_SCAN_BYTES]
+        if title_is_placeholder(head):
+            raise ValueError(f"{line_id} TITLE marks a placeholder; refusing play catalogue")
         aigc = require_aigc_tags(head, content_id=line_id)
         if aigc["service_provider"] != expected_aigc["service_provider"]:
             raise ValueError(
@@ -207,8 +247,11 @@ __all__ = [
     "DEFAULT_ASSETS_ROOT",
     "LINE_SPECS",
     "ONLINE_SAMPLE_RATE_HZ",
+    "PLAYABLE_RENDER_TOOLS",
+    "SYNTHETIC_RENDER_TOOLS",
     "LabelledLine",
     "LabelledLineCatalogue",
+    "is_synthetic_render_tool",
     "labelled_catalogue",
     "load_catalogue",
     "override_labelled_catalogue",

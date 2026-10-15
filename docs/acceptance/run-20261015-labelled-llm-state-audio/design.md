@@ -27,4 +27,8 @@ Caching synthesized PCM inside Doubao still calls streaming TTS on first miss an
 
 ## Synthesis
 
-Candidate A. Data shape is a registry of frozen `LabelledLine` values. Call sites are `labelled_line_chunks(...)` from the thinking splice and `catalogue.by_text(phrase.spoken)` before any `push_text` / `synthesize`.
+Candidate A. Data shape is a registry of frozen `LabelledLine` values. Call sites are catalogue PCM from the thinking splice and `catalogue.by_text(phrase.spoken)` before any `push_text` / `synthesize`.
+
+## Correction after #254 review
+
+Git history shows the pre-#254 offline `llm_thinking` / `llm_unavailable` files were 172/179-byte AIGC **placeholders**, not Doubao speech. #254 overwrote them with ffmpeg scaffold tones. Those tones must not play online. Until Doubao credentials produce `tool: doubao-seed-tts-2.0` assets, the catalogue stays empty and online playback falls back to streaming TTS. Offline placeholders are restored byte-for-byte. Details in `verification-restore.md`.
