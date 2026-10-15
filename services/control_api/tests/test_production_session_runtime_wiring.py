@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from pydantic import SecretStr
-from services.control_api.app import main
+from services.control_api.app import child_compliance_wiring, main
 from services.control_api.app.multi_subject_runtime import (
     PostgresMultiSubjectRuntimeControl,
 )
 from services.control_api.app.routes import readiness as readiness_routes
 from services.control_api.tests.test_tutor_config import _production_settings
+from services.memory_scope.child_layer_retention import ChildLayerRetentionWorker
 from services.session_runtime.service import PostgresSessionRuntimeService
 from testing.postgres_harness import TestDatabase
 
@@ -61,6 +63,35 @@ class _ReadinessStore:
         if self.error is not None:
             raise self.error
         return self.result
+
+
+class _FakeChildLayerStore:
+    def __init__(self, events: list[str], retention_ran: asyncio.Event) -> None:
+        self._events = events
+        self._retention_ran = retention_ran
+
+    async def initialize(self) -> None:
+        self._events.append("child_layers_initialized")
+
+    async def close(self) -> None:
+        self._events.append("child_layers_closed")
+
+    async def kind_subjects(self, kind: str, *, only_expired: bool = False) -> tuple[str, ...]:
+        self._events.append(f"child_layer_retention:{kind}")
+        if kind == "child_archive":
+            self._retention_ran.set()
+        return ()
+
+
+class _FakeSubjectActivityStore:
+    def __init__(self, _dsn: str) -> None:
+        return None
+
+    async def initialize(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
 
 
 class _FakeMemoryWiring:
@@ -133,6 +164,13 @@ def _patch_production_lifespan_dependencies(
     memory_wirings: list[_FakeMemoryWiring] = []
     memory_install_kwargs: list[dict[str, object]] = []
     events: list[str] = []
+    retention_ran = asyncio.Event()
+    monkeypatch.setattr(
+        child_compliance_wiring,
+        "ChildLayerStore",
+        lambda **_kwargs: _FakeChildLayerStore(events, retention_ran),
+    )
+    monkeypatch.setattr(child_compliance_wiring, "SubjectActivityStore", _FakeSubjectActivityStore)
 
     async def fake_session_initialize(store: object) -> None:
         session_initialized.append(store)
@@ -188,6 +226,7 @@ def _patch_production_lifespan_dependencies(
         memory_wirings=memory_wirings,
         memory_install_kwargs=memory_install_kwargs,
         events=events,
+        retention_ran=retention_ran,
     )
 
 
@@ -281,6 +320,29 @@ async def test_production_lifespan_closes_initialized_store_when_startup_body_fa
     assert lifecycle.events.index("memory_closed") < lifecycle.events.index("session_closed")
 
 
+@pytest.mark.asyncio
+async def test_production_lifespan_runs_child_layer_retention_at_startup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    postgres_database: TestDatabase,
+) -> None:
+    app, lifecycle = _patch_production_lifespan_dependencies(
+        monkeypatch, tmp_path, postgres_database
+    )
+
+    async with main.lifespan(app):
+        await asyncio.wait_for(lifecycle.retention_ran.wait(), timeout=5)
+        assert type(app.state.child_layer_retention_worker) is ChildLayerRetentionWorker
+
+    retention = [event for event in lifecycle.events if event.startswith("child_layer")]
+    assert retention == [
+        "child_layers_initialized",
+        "child_layer_retention:dialogue_summary",
+        "child_layer_retention:child_archive",
+        "child_layers_closed",
+    ]
+
+
 def test_production_create_app_eager_state_has_no_memory_runtime_fallback(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -294,6 +356,8 @@ def test_production_create_app_eager_state_has_no_memory_runtime_fallback(
     assert app.state.session_runtime_service is None
     assert app.state.multi_subject_runtime is None
     assert app.state.policy_receipt_writer is None
+    assert app.state.child_layer_store is None
+    assert app.state.child_layer_retention_worker is None
 
 
 @pytest.mark.asyncio
