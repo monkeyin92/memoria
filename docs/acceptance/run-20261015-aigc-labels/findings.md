@@ -19,9 +19,10 @@
 
 ## Explicit labels
 
-- Primary: LVGL 「AI」 badge, indigo `#4A52C9`, top-right, while listening / thinking / speaking / connecting.
+- Primary: LVGL 「AI」 badge, indigo `#4A52C9` at 100% opacity, ~20px Montserrat, layout `228,40,50×30` (~1 o'clock). Every corner stays within radius 172 (`static_assert` + host test).
+- Visible while listening / thinking / speaking / connecting, and while offline menu is active (stuck → menu), with the panel kept lit.
 - Fallback: end-of-turn tone behind `kAigcTurnToneEnabled` (default off), only when the badge cannot render.
-- Mockups: `docs/acceptance/run-20261015-aigc-labels/mockups/`.
+- Mockups: `docs/acceptance/run-20261015-aigc-labels/mockups/` (includes `badge-stuck-offline-menu.png`).
 
 ## Verification
 
