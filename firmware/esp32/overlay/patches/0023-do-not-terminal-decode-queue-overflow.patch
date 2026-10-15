@@ -34,9 +34,9 @@ diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
  
 -    /* Start the audio output task */
 +    /* Start the audio output task.
-+     * audio_input is priority 8 on core 0. audio_output is priority 6 on
-+     * core 1. opus_codec is priority 5 on core 1. Lower priority on core 0
-+     * fills the 2.4 s decode queue and used to become a terminal playback.error.
++     * audio_input is priority 8 on core 0. Keep audio_output (6) and
++     * opus_codec (5) on core 1, off capture. Sharing core 0 under
++     * audio_input filled the 2.4 s decode queue into playback.error.
 +     */
 +#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +    xTaskCreatePinnedToCore([](void* arg) {
