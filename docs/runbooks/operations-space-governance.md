@@ -55,9 +55,12 @@ sudo systemctl enable --now memoria-freeze-dump-cleanup.timer
 docker compose -f docker-compose.production.yml logs control-api | grep 'child layer retention'
 ~~~
 
-每一轮两行，形如 `child layer retention kind=dialogue_summary subjects=0 failed=0 memory_records=0 memory_status_events=0`；`kind=child_archive ... skipped reason=...` 表示档案这一轮没有删。手工核对用一次性 Control API 容器，先不带 `--apply` 看候选，带 `--apply` 才删；重复 `--apply` 删除计数为零、退出码 0，`failed` 非零时退出码 1：
+每一轮两行，形如 `child layer retention kind=dialogue_summary subjects=0 failed=0 memory_records=0 memory_status_events=0`；`kind=child_archive ... skipped reason=...` 表示档案这一轮没有删。手工核对用一次性 Control API 容器，先不带 `--apply` 看候选，带 `--apply` 才删；重复 `--apply` 删除计数为零、退出码 0，`failed` 非零时退出码 1。生产 compose 需要 `MEMORIA_RELEASE_TAG` 和 `MEMORIA_RELEASE_COMMIT`，从运行中的 control-api 容器导出后再跑：
 
 ~~~bash
+control=memoria-control-api-1
+export MEMORIA_RELEASE_TAG="$(docker exec "$control" printenv MEMORIA_RELEASE_TAG)"
+export MEMORIA_RELEASE_COMMIT="$(docker exec "$control" printenv MEMORIA_RELEASE_COMMIT)"
 docker compose -f docker-compose.production.yml run --rm --no-deps control-api /app/.venv/bin/python -m scripts.expire_child_dialogue_summaries
 docker compose -f docker-compose.production.yml run --rm --no-deps control-api /app/.venv/bin/python -m scripts.expire_idle_child_archive
 ~~~
