@@ -2,19 +2,19 @@
 
 This report records how the v4 restyle of the Memoria WeChat mini program was tested on branch `cursor/miniprogram-design-v4-14a0`. It covers every page under `apps/miniprogram/pages`. It lists the commands, the measured results, side-by-side images against the design PNGs in this folder, and each place where the mini program still differs from the design.
 
-The performance table comes from runs on 2026-10-14. The unit tests, forbidden-copy check, package size, layout shots and the 05-attention and 09-memory parity ratios were measured again on 2026-10-15. Later that day, the session-limits and stories change made home and device read two new parent APIs. The tests, package size, 03-home and 06-usage parity shots, and the home and device page shots were then measured a third time. Both days used a Linux cloud VM with 4 cores, Node v22.14.0 and headless Chrome driven by puppeteer-core. Nothing ran in WeChat DevTools, through miniprogram-automator or on a phone, because none of them is available on the VM. The harness approximates the WeChat renderer. Read the images as close evidence of layout and copy, not as proof of on-device pixels.
+The performance table comes from runs on 2026-10-14. The unit tests, forbidden-copy check, package size, layout shots and the 05-attention and 09-memory parity ratios were measured again on 2026-10-15. Later that day, the session-limits and stories change made home and device read two new parent APIs. The tests, package size, 03-home and 06-usage parity shots, and the home and device page shots were then measured a third time. After 关于 began reading its filing lines from the server, the tests and package size were measured once more. Both days used a Linux cloud VM with 4 cores, Node v22.14.0 and headless Chrome driven by puppeteer-core. Nothing ran in WeChat DevTools, through miniprogram-automator or on a phone, because none of them is available on the VM. The harness approximates the WeChat renderer. Read the images as close evidence of layout and copy, not as proof of on-device pixels.
 
 ## Results
 
 | Check | Result |
 |---|---|
-| Unit, function, perf and layout tests (`npm test`) | 529 of 529 pass, 0 skipped |
+| Unit, function, perf and layout tests (`npm test`) | 532 of 532 pass, 0 skipped |
 | Forbidden UI copy (`npm run check:forbidden-copy`) | Pass on 63 files |
 | `12356` in shipped `.js`, `.wxml`, `.json` and `.wxss` files | Only in `pages/attention/index.wxml`, tip 4, pinned by `attention-v4.test.js` |
 | `node --check` on every tracked JS file in the app | 0 failures in 135 files |
 | Page screenshots at five views (`scripts/screenshot-pages.js`) | 145 shots, 0 layout issues |
 | Parity side-by-sides (`scripts/v4-parity/render-and-compare.js`) | 9 mapped screens, diffRatio 0.056 to 0.298, down from 0.245 to 0.647 |
-| Main package before minification (`scripts/package-size.js`) | 1870.9 KiB of the 2048 KiB limit |
+| Main package before minification (`scripts/package-size.js`) | 1903.9 KiB of the 2048 KiB limit |
 
 ## How the harness works
 
@@ -321,7 +321,7 @@ Frame intervals sit at 16.7 ms, the 60 Hz frame clock of headless Chrome on the 
 
 ### Package size
 
-The shipped files total 1915848 B, 1870.9 KiB of WeChat's 2048 KiB main package limit before minification. `package-size.js` follows `packOptions.ignore` in `project.config.example.json` plus the folders the runtime never loads. It skips `tests`, `design-preview`, `scripts`, `node_modules`, `assets/companions`, `package.json`, `package-lock.json`, `project.config*.json` and Markdown files. The profile mascot, `assets/ui/v4/mascot-happy.jpg`, adds 32.4 KiB.
+The shipped files total 1949571 B, 1903.9 KiB of WeChat's 2048 KiB main package limit before minification. `package-size.js` follows `packOptions.ignore` in `project.config.example.json` plus the folders the runtime never loads. It skips `tests`, `design-preview`, `scripts`, `node_modules`, `assets/companions`, `package.json`, `package-lock.json`, `project.config*.json` and Markdown files. The profile mascot, `assets/ui/v4/mascot-happy.jpg`, adds 32.4 KiB.
 
 | Folder | Size (KiB) |
 |---|---:|

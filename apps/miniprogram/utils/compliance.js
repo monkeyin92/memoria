@@ -16,18 +16,11 @@ const CHAT_MODEL_FILING_LINES = Object.freeze({
 const CHAT_MODEL_DUAL_DISCLOSURE = "对话可能由 DeepSeek 或阿里云通义千问生成";
 
 function chatModelFilingLines(providers) {
-  const present = new Set();
-  if (Array.isArray(providers)) {
-    for (const name of providers) {
-      if (Object.prototype.hasOwnProperty.call(CHAT_MODEL_FILING_LINES, name)) present.add(name);
-    }
-  }
-  if (present.size === 0) present.add("deepseek");
-  const lines = [];
-  if (present.has("deepseek") && present.has("qwen")) lines.push(CHAT_MODEL_DUAL_DISCLOSURE);
-  if (present.has("deepseek")) lines.push(CHAT_MODEL_FILING_LINES.deepseek);
-  if (present.has("qwen")) lines.push(CHAT_MODEL_FILING_LINES.qwen);
-  return lines;
+  const filings = Object.keys(CHAT_MODEL_FILING_LINES)
+    .filter((family) => providers.includes(family))
+    .map((family) => CHAT_MODEL_FILING_LINES[family]);
+  if (filings.length === 0) return [CHAT_MODEL_FILING_LINES.deepseek];
+  return filings.length > 1 ? [CHAT_MODEL_DUAL_DISCLOSURE, ...filings] : filings;
 }
 
 const MINOR_RESTRICTIONS =
