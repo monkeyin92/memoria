@@ -23,6 +23,7 @@ from services.agent.src.voice_core import media_session_projection
 from services.agent.src.voice_core.media_session_output_stream import MediaOutputStreamMixin
 from services.agent.src.voice_core.media_session_projection import MediaSessionProjectionMixin
 from services.agent.src.voice_core.minor_session_limits import in_quiet_hours, minor_limits
+from services.common.daily_chat_limit import DailyChatBudget
 from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
 from services.session_runtime.profile_service import (
     RuntimeProfile,
@@ -44,9 +45,12 @@ def _obligation(code: PolicyObligation, **params: Any) -> PolicyObligationSpec:
     return PolicyObligationSpec(code=code, params=ObligationParams(**values))
 
 
-def _profile(category: str = "minor") -> VerifiedRuntimeProfile:
+def _signed_payload(
+    category: str = "minor", *, daily_chat_seconds: str | None = None
+) -> dict[str, Any]:
     now = datetime.now(UTC)
     minor = category == "minor"
+    daily = () if daily_chat_seconds is None else (("daily_chat_seconds", daily_chat_seconds),)
     issued = RuntimeProfile(
         runtime_profile_id="rp-limits",
         device_id="dev-limits",
@@ -68,7 +72,11 @@ def _profile(category: str = "minor") -> VerifiedRuntimeProfile:
         policy_bundle_version="policy-v2",
         capabilities=("chat",),
         obligations=(
-            _obligation(PolicyObligation.POLICY_OBLIGATION_MAX_SESSION_SECONDS, max_session_seconds=1800),
+            _obligation(
+                PolicyObligation.POLICY_OBLIGATION_MAX_SESSION_SECONDS,
+                max_session_seconds=1800,
+                extras=daily,
+            ),
             _obligation(PolicyObligation.POLICY_OBLIGATION_QUIET_HOURS, quiet_hours=("21:30", "06:30")),
         ),
         policy_receipt_ids=("receipt-1",),
@@ -79,6 +87,13 @@ def _profile(category: str = "minor") -> VerifiedRuntimeProfile:
     )
     payload = runtime_profile_wire_payload(issued)
     payload["signature"] = sign_runtime_profile_payload(payload, signing_key=_KEY.encode())
+    return payload
+
+
+def _profile(
+    category: str = "minor", *, daily_chat_seconds: str | None = None
+) -> VerifiedRuntimeProfile:
+    payload = _signed_payload(category, daily_chat_seconds=daily_chat_seconds)
     verified = parse_runtime_profile(payload, verify_key=_KEY)
     assert verified is not None
     return verified
@@ -112,6 +127,18 @@ def test_signed_limits_reach_the_agent_and_apply_to_minors_only() -> None:
     assert minor_limits(None) == (None, None)
     assert is_allowlisted_device_phrase(MINOR_QUIET_HOURS_PHRASE)
     assert is_allowlisted_device_phrase(MINOR_SESSION_LIMIT_PHRASE)
+
+
+def test_the_signed_daily_budget_reaches_the_runtime_profile() -> None:
+    assert _profile(daily_chat_seconds="2700").profile.daily_chat_budget == DailyChatBudget(45)
+    assert _profile().profile.daily_chat_budget is None
+
+
+@pytest.mark.parametrize("seconds", ["1200", "2000", "45m"])
+def test_a_malformed_signed_daily_budget_rejects_the_whole_profile(seconds: str) -> None:
+    payload = _signed_payload(daily_chat_seconds=seconds)
+
+    assert parse_runtime_profile(payload, verify_key=_KEY) is None
 
 
 class _Session(MediaSessionProjectionMixin, MediaOutputStreamMixin):
