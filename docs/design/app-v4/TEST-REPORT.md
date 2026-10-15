@@ -8,8 +8,8 @@ The performance table comes from runs on 2026-10-14. The unit tests, forbidden-c
 
 | Check | Result |
 |---|---|
-| Unit, function, perf and layout tests (`npm test`) | 532 of 532 pass, 0 skipped |
-| Forbidden UI copy (`npm run check:forbidden-copy`) | Pass on 63 files |
+| Unit, function, perf and layout tests (`npm test`) | 539 of 539 pass, 0 skipped |
+| Forbidden UI copy (`npm run check:forbidden-copy`) | Pass on 67 files |
 | `12356` in shipped `.js`, `.wxml`, `.json` and `.wxss` files | Only in `pages/attention/index.wxml`, tip 4, pinned by `attention-v4.test.js` |
 | `node --check` on every tracked JS file in the app | 0 failures in 135 files |
 | Page screenshots at five views (`scripts/screenshot-pages.js`) | 145 shots, 0 layout issues |
@@ -75,7 +75,7 @@ Do not run `npm --prefix apps/miniprogram exec -- node scripts/v4-parity/render-
 | Screen | Live page and state | Before | Now | Floor |
 |---|---|---:|---:|---:|
 | 01-login | `pages/home`, guest | 0.6475 | 0.0575 | 0.0572 |
-| 02-consent | `pages/auth`, guest | 0.3906 | 0.0945 | 0.0883 |
+| 02-consent | `pages/auth`, guest | 0.3906 | 0.2740 | 0.0883 |
 | 03-home | `pages/home`, signed in | 0.3162 | 0.0711 | 0.0490 |
 | 04-summary | `pages/memory`, today summarized | 0.3394 | 0.1901 | 0.0430 |
 | 05-attention | `pages/attention`, one open alert | 0.4991 | 0.0561 | 0.0536 |
@@ -88,6 +88,8 @@ Before is the committed `compare-summary.json` at `b63fa853`. That run shot 05-a
 
 The session-limits and stories change redraws 03-home and 06-usage, and only those two were shot again. 03-home went from 0.0703 to 0.0711. Its ring band, from 316 CSS px, rose from 0.122 to 0.125 when the caption grew from 「分钟上限」 to 「分钟 · 单次上限」. 06-usage went from 0.1825 to 0.1823. The new 离线故事 card fills the space below 安静时段 where the privacy rows were. The design shows other content there, so the card counts as a difference just as the rows did. 10-profile was not shot again. The closed page looks the same. 关于 now opens a left-aligned card on that page, and `profile-v4.test.js` renders the card.
 
+The consent change reshot only 02-consent. diffRatio went from 0.0945 to 0.2740.
+
 ### Where the remaining difference sits
 
 `diff-bands.js` splits each pair into eight bands of 211 device px, about 105 CSS px each, and prints the diffRatio of each band. The columns below are the band's top edge in CSS px.
@@ -95,7 +97,7 @@ The session-limits and stories change redraws 03-home and 06-usage, and only tho
 | Screen | 0 | 105 | 211 | 316 | 422 | 527 | 633 | 738 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | 01-login | 0.001 | 0.063 | 0.001 | 0.095 | 0.191 | 0.044 | 0.034 | 0.031 |
-| 02-consent | 0.019 | 0.039 | 0.043 | 0.139 | 0.098 | 0.232 | 0.111 | 0.075 |
+| 02-consent | 0.019 | 0.088 | 0.043 | 0.139 | 0.098 | 0.415 | 0.854 | 0.537 |
 | 03-home | 0.016 | 0.066 | 0.072 | 0.125 | 0.033 | 0.116 | 0.122 | 0.020 |
 | 04-summary | 0.017 | 0.059 | 0.040 | 0.063 | 0.055 | 0.349 | 0.769 | 0.168 |
 | 05-attention | 0.004 | 0.008 | 0.030 | 0.082 | 0.052 | 0.077 | 0.108 | 0.088 |
@@ -118,13 +120,16 @@ The guest home is the full-bleed login screen with no tab bar. The greeting foll
 
 ![02-consent, live page left, design right](mp-screenshots/side-by-side/02-consent.png)
 
-The consent screen leads the auth page, with the facts card, the guardian tick, 「同意并继续」 and 「暂不同意」 above the fold. The name and avatar step comes after phone authorization, and only on a first registration. Three fact strings differ from the design on purpose.
+The consent screen leads the auth page. The facts card, the guardian tick, 「同意并继续」 and 「暂不同意」 sit above the fold. The name and avatar step comes after phone authorization, and only on a first registration. This reshoot is the only screen that changed. diffRatio went from 0.0945 to 0.2740. Horizontal overflow and content under the capsule are both 0. The bands from 527 CSS px rose to 0.415, 0.854 and 0.537 because a fifth fact and a longer checkbox push 「暂不同意」 and the login notes into the area where the design has already ended.
+
+Four fact strings differ from the design on purpose.
 
 - Fact 2 ends with 「原话在入库前就去掉」, not 「不保存原话和录音」. A family that opts in on the privacy page has raw audio kept until it revokes, so 「不保存录音」 would be false for that family.
-- Fact 3 reads 「长期只记三项」, the wording of the memory page's 「机器人长期只记住这三件事」.
-- Fact 4 is 「回应由 AI 生成」 in place of 「设备没有摄像头」. `auth-layout.test.js` pins the four facts and rejects a camera claim.
+- Fact 3 reads 「长期只记三项」, the wording of the memory page's 「机器人长期只记住这三件事」. The design says 「长期只存三项」.
+- Fact 4 stays 「回应由 AI 生成」, with the sub 「会明确标识；模型训练默认关闭」. The design has no AI fact.
+- Fact 5 is 「设备没有摄像头，也不采集图像」. The design's camera row uses the shorter title 「设备没有摄像头」 and the sub 「不拍照，也不录像」. The live title is the full sentence a parent reads. It does not mention later hardware or a connector. The icon is `cam`.
 
-The checkbox names 《隐私保护指引》, the document `wx.openPrivacyContract` opens, because the app has no separate guardian consent document. Notes on login and recording follow 「暂不同意」, below the design's last line. The highest band, from 527 CSS px, is the fourth fact and the checkbox line.
+The checkbox reads 「我是孩子的监护人，已阅读并同意《隐私保护指引（草稿）》和《监护人同意书（草稿）》」. Each title is its own link, so a tap opens that document instead of only toggling the box. 《隐私保护指引（草稿）》 still calls `wx.openPrivacyContract`. 《监护人同意书（草稿）》 opens `pages/guardian-consent/index`. The page chip is 「草稿 · 待律师审核」. Its paragraphs match `docs/compliance/guardian-consent-draft.md`. No standalone guardian consent file existed under `docs/` before that draft. The page footer cites `docs/compliance/child-audio-transcript-ephemeral.md`. Notes on login and recording still follow 「暂不同意」.
 
 ### 03-home
 
@@ -212,7 +217,7 @@ These come from WeChat or the test machine, and no page change removes them.
 - Subscription and push UI stays behind `subscriptionPushEnabled`, which defaults to false.
 - Fixture names, roles, dates and counts replace the design's samples and its 「数字为示例」 captions.
 - Usage has one per-session slider, because the device has no daily cap.
-- Three consent facts and the consent link differ, as listed under 02-consent.
+- Five consent facts and two draft links differ from the design, as listed under 02-consent.
 - The attention copy uses TA.
 - 07-content has no page.
 
@@ -368,6 +373,10 @@ Each v4 test file loads the live page through the harness, drives its handlers t
 - A request timeout on the consent screen shows 「网络不太好，请稍后再试。」 and does not show `request:fail`.
 - The name step's back button returns to consent and drops the held code.
 
+`guardian-consent.test.js` has 1 test.
+
+- The draft page shows 「草稿 · 待律师审核」, the source path `docs/compliance/child-audio-transcript-ephemeral.md`, and the paragraphs from `docs/compliance/guardian-consent-draft.md` in order. The rendered text includes 「设备没有摄像头，也不采集图像」 and does not claim a later camera or connector.
+
 `memory-v4.test.js` has 3 tests.
 
 - Summary days carry the date only, and a day without a summary says how many chats it had.
@@ -476,7 +485,7 @@ Each v4 test file loads the live page through the harness, drives its handlers t
 - A persona whose fallback voice is unknown shows no voice instead of the first companion.
 - Pickers and the rate slider use the shared v4 field chrome.
 
-`sub-page-nav.test.js` runs 2 tests for each of the 8 secondary pages, plus the auth consent step and child-memory.
+`sub-page-nav.test.js` runs 2 tests for each of the 9 secondary pages, plus the auth consent step and child-memory.
 
 - The page draws its own round back button under the status bar instead of the native bar.
 - Back pops the stack, or opens the right tab when it is the first page.
@@ -497,7 +506,7 @@ These files guard structure, styles and budgets.
 
 Older tests that asserted v3 strings, structure or removed rows now assert the v4 equivalents.
 
-- `auth-layout.test.js` pins the four consent facts and rejects a camera or view-and-delete promise.
+- `auth-layout.test.js` pins the five consent facts, including 「设备没有摄像头，也不采集图像」, and rejects a view-or-delete promise and any later-hardware claim.
 - `child-memory.test.js` asserts the field order and icons, and no retention-period copy.
 - `profile-device-binding.test.js` asserts the account card's 「已绑定 N 台设备」 for each binding state, and that `openDevice`, bound to the device card and the 设备管理 row, opens the 设备 tab.
 - `profile-mascot.test.js` asserts that roles and custom personas live on the 角色 tab, not on the profile.
