@@ -47,6 +47,21 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now memoria-freeze-dump-cleanup.timer
 ~~~
 
+儿童记忆两层的到期物理删除不装 systemd timer。control-api 启动时跑一次，之后每 24 小时跑一次（`ChildLayerRetentionWorker`，`services/memory_scope/child_layer_retention.py`）：先删已过 `retention_expires_at` 的 `kind=dialogue_summary`，再删连续 180 天无活跃的 `kind=child_archive`。读不到 `guardian_subject_activity` 时跳过档案、照删摘要。日志只有计数，不含使用人 id。control-api 停机的日子不会补跑，下一次启动会补上。清除前 30 天、7 天的家长提醒还没有发送，180 天清除照常执行。
+
+确认它在跑：
+
+~~~bash
+docker compose -f docker-compose.production.yml logs control-api | grep 'child layer retention'
+~~~
+
+每一轮两行，形如 `child layer retention kind=dialogue_summary subjects=0 failed=0 memory_records=0 memory_status_events=0`；`kind=child_archive ... skipped reason=...` 表示档案这一轮没有删。手工核对用一次性 Control API 容器，先不带 `--apply` 看候选，带 `--apply` 才删；重复 `--apply` 删除计数为零、退出码 0，`failed` 非零时退出码 1：
+
+~~~bash
+docker compose -f docker-compose.production.yml run --rm --no-deps control-api /app/.venv/bin/python -m scripts.expire_child_dialogue_summaries
+docker compose -f docker-compose.production.yml run --rm --no-deps control-api /app/.venv/bin/python -m scripts.expire_idle_child_archive
+~~~
+
 ## 发布制品的手工清理（2026-10-01 首次执行，经用户授权）
 
 规则（与 `release-rollback.md` 一致）：只保留当前发布和一个可运行的紧邻回滚，更早的普通制品核验后按授权清理。`docker_image_retention.sh` 因保护全部 `rollback-*` 与 runtime-base 而给不出候选（TODOLIST「定期运维」跟踪），所以本次是手工清单：先只读盘点并生成候选清单与它的 sha256，复核后带着这个 sha256 才能执行，执行时逐项 `docker rmi <repo:tag>`，不用 `docker system prune`，不动数据卷。

@@ -435,7 +435,8 @@ def test_readiness_refresh_passes_required_provider_gate_into_run_container() ->
     delta_builder = (ROOT / "scripts" / "delta_build_images.sh").read_text(encoding="utf-8")
     maintenance_scripts = (
         "COPY scripts/mark_readiness.py scripts/rebuild_memory_projections.py "
-        "scripts/replay_subject_deletions.py scripts/migrate_control_sqlite_to_postgres.py ./scripts/"
+        "scripts/replay_subject_deletions.py scripts/migrate_control_sqlite_to_postgres.py "
+        "scripts/expire_child_dialogue_summaries.py scripts/expire_idle_child_archive.py ./scripts/"
     )
     assert maintenance_scripts in control_dockerfile
     assert maintenance_scripts in delta_builder
