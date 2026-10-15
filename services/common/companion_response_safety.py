@@ -97,8 +97,8 @@ _PROHIBITED_ENGLISH_RE = re.compile(
 )
 _EXPLICIT_SELF_HARM_INTENT_RE = re.compile(
     r"我(?:真(?:的)?|现在)?(?:"
-    # 或/霍/货/和 are speaker-to-mic slips for 活 in 不想活了.
-    r"不想(?:再|继续)?(?:活(?:下去)?(?:了)?|[或霍货和]了)|"
+    # 或/霍/货 may omit 了. 和 still requires 了, so 不想和同学玩了 stays chat.
+    r"不想(?:再|继续)?(?:活(?:下去)?(?:了)?|[或霍货](?:了)?|和了)|"
     r"活不下去(?:了)?|"
     r"(?:想|要|准备|打算)(?:去)?(?:"
     r"死|自杀|自残|自尽|轻生|结束生命|杀(?:了|死)?自己|跳楼|伤害自己"

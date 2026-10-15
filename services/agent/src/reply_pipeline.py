@@ -939,12 +939,7 @@ class ReplyPipeline:
             )
             if script is not None and plan.direct_text != script.display:
                 plan = replace(plan, direct_text=script.display)
-            if (
-                self._runtime.fixed_safety_heard
-                and script is None
-                and plan_is_local_safe(plan)
-                and plan.direct_text is None
-            ):
+            if self._runtime.fixed_safety_heard and script is None and plan_is_local_safe(plan):
                 logger.info(
                     "post_fixed_safety_fallback_suppressed reason=%s "
                     "session_id=%s turn_id=%s",
@@ -954,7 +949,7 @@ class ReplyPipeline:
                 )
                 raise StopResponse()
         if plan.fixed_safety_script is not None:
-            self._runtime.fixed_safety_heard = True
+            self._runtime.note_fixed_safety_spoken(plan.fixed_safety_script.display)
         if (
             input_modality == "audio"
             and output_policy.generation_voice_must_match_plan(policy)
@@ -1004,12 +999,7 @@ class ReplyPipeline:
             )
             if script is not None and plan.direct_text != script.display:
                 plan = replace(plan, direct_text=script.display)
-            if (
-                self._runtime.fixed_safety_heard
-                and script is None
-                and plan_is_local_safe(plan)
-                and plan.direct_text is None
-            ):
+            if self._runtime.fixed_safety_heard and script is None and plan_is_local_safe(plan):
                 logger.info(
                     "post_fixed_safety_fallback_suppressed reason=context_snapshot_unavailable "
                     "session_id=%s turn_id=%s",
@@ -1027,7 +1017,7 @@ class ReplyPipeline:
             if snapshot is None:
                 raise StopResponse()
         if plan.fixed_safety_script is not None:
-            self._runtime.fixed_safety_heard = True
+            self._runtime.note_fixed_safety_spoken(plan.fixed_safety_script.display)
         self.cache_response_plan(plan)
         self._mark_context_ready(fence)
         logger.info(
@@ -1419,7 +1409,7 @@ class ReplyPipeline:
         try:
             self._runtime.mark_audio_event("llm_request_started")
             if script is not None:
-                self._runtime.fixed_safety_heard = True
+                self._runtime.note_fixed_safety_spoken(script.display)
                 self._runtime.mark_audio_event("llm_first_content_token")
                 gated = self._runtime.gate_llm_token(cancellation, script.display)
                 if gated is not None and cancellation.is_current(self._runtime.fence):
@@ -1430,7 +1420,6 @@ class ReplyPipeline:
                 self._runtime.fixed_safety_heard
                 and plan_is_local_safe(response_plan)
                 and response_plan.fixed_safety_script is None
-                and response_plan.direct_text is None
             ):
                 logger.info(
                     "post_fixed_safety_fallback_suppressed reason=stream "

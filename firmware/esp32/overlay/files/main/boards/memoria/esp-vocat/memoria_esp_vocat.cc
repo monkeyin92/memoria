@@ -895,14 +895,18 @@ private:
         }
         ESP_LOGI(kUsbTag, "usb %s accepted state=%d", stop_wifi ? "poweroff" : "sleep",
                  static_cast<int>(state));
-        if (state == kDeviceStateSpeaking) {
-            app.AbortSpeaking(kAbortReasonNone);
-        }
+        offline_story_cancel_.store(true, std::memory_order_relaxed);
+        offline_play_generation_.fetch_add(1, std::memory_order_relaxed);
         if (state == kDeviceStateListening) {
             app.StopListening();
-        }
-        if (state != kDeviceStateIdle && state != kDeviceStateWifiConfiguring) {
+        } else if (state == kDeviceStateSpeaking) {
+            app.AbortSpeaking(kAbortReasonNone);
+        } else if (state == kDeviceStateConnecting || state == kDeviceStateRecovering) {
             app.ToggleChatState();
+        }
+        if (auto* codec = GetAudioCodec()) {
+            codec->EnableOutput(false);
+            codec->EnableInput(false);
         }
         auto& power = memoria::PowerPolicyRegistry::GetInstance();
         power.SetPhase(memoria::PowerPhase::kWifiHold);

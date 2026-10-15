@@ -1145,7 +1145,7 @@ class MediaOutputStreamMixin:
 
         if script_for_display(context.output.assistant_text.strip()) is not None:
             context.crisis_reply_heard = True
-            context.runtime.fixed_safety_heard = True
+            context.runtime.note_fixed_safety_spoken(context.output.assistant_text.strip())
         max_seconds, _quiet_hours = minor_limits(context.runtime.mode_policy.runtime_profile)
         if (
             context.closed
