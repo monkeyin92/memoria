@@ -29,6 +29,7 @@
 #include "memoria_bootstrap.h"
 #include "memoria_display_hooks.h"
 #include "memoria_mascot_display.h"
+#include "memoria_aigc_label.h"
 #include "memoria_offline_menu.h"
 #include "memoria_pat.h"
 #include "memoria_power_policy.h"
@@ -824,6 +825,8 @@ private:
                 return;
             case memoria::TapWakeAction::kNightSoothing:
                 power.SetPhase(memoria::PowerPhase::kNightSoothing);
+                // Screen is dimmed in quiet hours; spoken AIGC notice precedes soothe.
+                PlayLocalAssetClip(memoria::kAigcNoticeBedtimeFile);
                 PlayLocalAssetClip("night_soothe.ogg");
                 app.Schedule([this]() {
                     vTaskDelay(pdMS_TO_TICKS(2500));
