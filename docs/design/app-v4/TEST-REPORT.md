@@ -191,7 +191,7 @@ A guest, a payload that omits `chat_llm_providers`, and an empty list all show t
 知道了
 ```
 
-`chat_llm_providers: ["deepseek"]` uses those same lines. `["qwen"]` replaces the filing line with 「对话大模型：通义千问（网信算备 330110507206401230035 号，登记号 ZheJiang-TongYiQianWen-20230901）」. `["deepseek", "qwen"]` inserts 「对话可能由 DeepSeek 或阿里云通义千问生成」 and then the DeepSeek filing and the 通义千问 filing. Both filings start with 「对话大模型：」. None of the lines contain 「备用」.
+`chat_llm_providers: ["deepseek"]` uses those same lines. `["qwen"]` replaces the filing line with 「对话大模型：通义千问（网信算备330110507206401230035号，登记号 ZheJiang-TongYiQianWen-20230901）」. `["deepseek", "qwen"]` inserts 「对话可能由 DeepSeek 或阿里云通义千问生成」 and then the DeepSeek filing and the 通义千问 filing. Both filings start with 「对话大模型：」. None of the lines contain 「备用」.
 
 The device card reads 孩子的星澜 with 已绑定设备, not 小乐 with 在线, because the profile page does not fetch presence. The two bottom bands are the 账号 group with 账号编号, 退出当前设备, 退出所有设备 and 永久注销, which the design does not show. The design's 「绑定新设备请在 Memoria 小程序中完成」 is gone, because this is the mini program and binding lives on the 设备 tab. The version line reads 「版本 x.y.z」 in a release build and 开发版 or 体验版 before release, never 「版本 0.1 设计稿」.
 
@@ -438,7 +438,7 @@ Each v4 test file loads the live page through the harness, drives its handlers t
 - 帮助与反馈 is WeChat's native feedback button.
 - 关于 names the filed chat model and the release version, or the build channel before release. With no `chat_llm_providers` the card's lines are the intro, 「对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）」, and 开发版. Those lines do not contain qwen, 通义, or 千问. Opening 关于 does not call `wx.showModal`.
 - `chat_llm_providers: ["deepseek"]` keeps that same DeepSeek line, and the page stores the list.
-- `chat_llm_providers: ["qwen"]` shows 「对话大模型：通义千问（网信算备 330110507206401230035 号，登记号 ZheJiang-TongYiQianWen-20230901）」 as the only filing line.
+- `chat_llm_providers: ["qwen"]` shows 「对话大模型：通义千问（网信算备330110507206401230035号，登记号 ZheJiang-TongYiQianWen-20230901）」 as the only filing line.
 - `chat_llm_providers: ["deepseek", "qwen"]` shows 「对话可能由 DeepSeek 或阿里云通义千问生成」, then both filings, and the page stores that list. The joined lines do not contain 「备用」.
 - 授权与隐私说明 opens the consent page when raw-audio consent is open, and the WeChat privacy guideline otherwise.
 

@@ -23,7 +23,7 @@
 - 正文每一行单独一块，左对齐。第一行是「陪孩子聊天、讲故事的 AI 助手。」，最后一行是版本。正式版写「版本 x.y.z」，开发版和体验版只写渠道名。
 - 中间几行来自 `GET /v1/account/delivered-capabilities` 的 `chat_llm_providers`。「我的」页把这个数组存在 `chatLlmProviders`。control-api 用 `LLM_PROVIDER` 和 `LLM_FAILOVER_ENABLED` 算出备案族。`deepseek` 和 `bailian_deepseek` 都归入 `deepseek`，`qwen` 归入 `qwen`。`LLM_FAILOVER_ENABLED` 为 true 时再加上 `qwen`。同一族只保留一次，`deepseek` 在前，`qwen` 在后。
 - 列表是 `["deepseek"]`，或字段缺失、为空时，中间一行是「对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）」。未登录时同样只显示这一行。
-- 列表是 `["qwen"]` 时，中间一行是「对话大模型：通义千问（网信算备 330110507206401230035 号，登记号 ZheJiang-TongYiQianWen-20230901）」。
+- 列表是 `["qwen"]` 时，中间一行是「对话大模型：通义千问（网信算备330110507206401230035号，登记号 ZheJiang-TongYiQianWen-20230901）」。
 - 列表是 `["deepseek", "qwen"]` 时，中间先写「对话可能由 DeepSeek 或阿里云通义千问生成」，再写上面两行备案。两行备案都以「对话大模型：」开头。
 
 ## 两轮视觉检查

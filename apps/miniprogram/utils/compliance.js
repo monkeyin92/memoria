@@ -11,7 +11,7 @@ const TRAINING_DEFAULT_OFF = "你的对话与声音默认不用于模型训练�
 
 const CHAT_MODEL_FILING_LINES = Object.freeze({
   deepseek: "对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）",
-  qwen: "对话大模型：通义千问（网信算备 330110507206401230035 号，登记号 ZheJiang-TongYiQianWen-20230901）",
+  qwen: "对话大模型：通义千问（网信算备330110507206401230035号，登记号 ZheJiang-TongYiQianWen-20230901）",
 });
 const CHAT_MODEL_DUAL_DISCLOSURE = "对话可能由 DeepSeek 或阿里云通义千问生成";
 

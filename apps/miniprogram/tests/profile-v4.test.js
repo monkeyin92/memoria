@@ -13,7 +13,7 @@ const PAGE = "pages/profile/index";
 const ABOUT_LEAD = "陪孩子聊天、讲故事的 AI 助手。";
 const DEEPSEEK_LINE = "对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）";
 const QWEN_FILING =
-  "对话大模型：通义千问（网信算备 330110507206401230035 号，登记号 ZheJiang-TongYiQianWen-20230901）";
+  "对话大模型：通义千问（网信算备330110507206401230035号，登记号 ZheJiang-TongYiQianWen-20230901）";
 
 function aboutCard(harness) {
   const modalsBefore = callsTo(harness, "showModal").length;
