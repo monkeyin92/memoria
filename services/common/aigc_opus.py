@@ -226,7 +226,7 @@ def _build_opus_tags_packet(
     body += vendor
     body += struct.pack("<I", len(comments))
     for key, value in comments:
-        raw = f"{key}={value}".encode("utf-8")
+        raw = f"{key}={value}".encode()
         body += struct.pack("<I", len(raw))
         body += raw
     return bytes(body)
