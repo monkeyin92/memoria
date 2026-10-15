@@ -8,22 +8,26 @@ const PRODUCT_POSITIONING =
 const AI_DISCLOSURE =
   "设备回应由人工智能生成，会在交互中明确标识。";
 const TRAINING_DEFAULT_OFF = "你的对话与声音默认不用于模型训练。";
-const config = require("../config");
 
-const CHAT_MODEL_FILINGS = Object.freeze({
-  off: Object.freeze([
-    "对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）",
-  ]),
-  on: Object.freeze([
-    "对话可能由 DeepSeek 或阿里云通义千问生成",
-    "DeepSeek（备案号 Beijing-DeepseekChat-202404280016）",
-    "通义千问（算法备案号 网信算备330110507206401230035号，模型备案号 ZheJiang-TongYiQianWen-20230901）",
-  ]),
+const CHAT_MODEL_FILING_LINES = Object.freeze({
+  deepseek: "对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）",
+  qwen: "通义千问（网信算备 330110507206401230035 号，登记号 ZheJiang-TongYiQianWen-20230901）",
 });
+const CHAT_MODEL_DUAL_DISCLOSURE = "对话可能由 DeepSeek 或阿里云通义千问生成";
 
-function chatModelFilingLines(flags = config) {
-  const failoverOn = flags != null && flags.LLM_FAILOVER_ENABLED === true;
-  return CHAT_MODEL_FILINGS[failoverOn ? "on" : "off"].slice();
+function chatModelFilingLines(providers) {
+  const present = new Set();
+  if (Array.isArray(providers)) {
+    for (const name of providers) {
+      if (Object.prototype.hasOwnProperty.call(CHAT_MODEL_FILING_LINES, name)) present.add(name);
+    }
+  }
+  if (present.size === 0) present.add("deepseek");
+  const lines = [];
+  if (present.has("deepseek") && present.has("qwen")) lines.push(CHAT_MODEL_DUAL_DISCLOSURE);
+  if (present.has("deepseek")) lines.push(CHAT_MODEL_FILING_LINES.deepseek);
+  if (present.has("qwen")) lines.push(CHAT_MODEL_FILING_LINES.qwen);
+  return lines;
 }
 
 const MINOR_RESTRICTIONS =

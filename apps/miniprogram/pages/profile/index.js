@@ -173,6 +173,11 @@ function computeStats(items) {
   return { totalDays, moments, streak };
 }
 
+function chatLlmProvidersFrom(payload) {
+  const raw = payload && payload.chat_llm_providers;
+  return Array.isArray(raw) ? raw.slice() : [];
+}
+
 function formatDeliveredCapabilityRows(payload) {
   if (!payload || typeof payload !== "object") return [];
   return [
@@ -231,6 +236,7 @@ Page({
     profileUnavailableReason: "",
     deliveredCapabilities: [],
     deliveredCapabilitiesLoading: false,
+    chatLlmProviders: [],
     appVersionLabel: "",
     ...deviceBindingReset(),
     complianceCopy: {
@@ -318,6 +324,7 @@ Page({
       profileUnavailableReason: "",
       deliveredCapabilities: [],
       deliveredCapabilitiesLoading: false,
+      chatLlmProviders: [],
       ...deviceBindingReset(),
     });
   },
@@ -582,10 +589,11 @@ Page({
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({
         deliveredCapabilities: formatDeliveredCapabilityRows(payload),
+        chatLlmProviders: chatLlmProvidersFrom(payload),
       });
     } catch {
       if (!api.isAuthEpochCurrent(authEpoch)) return;
-      this.setData({ deliveredCapabilities: [] });
+      this.setData({ deliveredCapabilities: [], chatLlmProviders: [] });
     } finally {
       if (api.isAuthEpochCurrent(authEpoch)) {
         this.setData({ deliveredCapabilitiesLoading: false });
@@ -664,7 +672,11 @@ Page({
   openAbout() {
     wx.showModal({
       title: "关于 Memoria",
-      content: ["陪孩子聊天、讲故事的 AI 助手。", ...compliance.chatModelFilingLines(), this.data.appVersionLabel]
+      content: [
+        "陪孩子聊天、讲故事的 AI 助手。",
+        ...compliance.chatModelFilingLines(this.data.chatLlmProviders),
+        this.data.appVersionLabel,
+      ]
         .filter(Boolean)
         .join("\n"),
       showCancel: false,

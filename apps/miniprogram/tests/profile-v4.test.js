@@ -10,7 +10,10 @@ const { parseWxml, renderPage } = require("../scripts/mp-harness/render");
 const fx = require("../scripts/mp-harness/fixtures");
 
 const PAGE = "pages/profile/index";
-const SHIPPED_CONFIG = { ...require("../config") };
+const DEEPSEEK_ABOUT =
+  "陪孩子聊天、讲故事的 AI 助手。\n对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）\n开发版";
+const QWEN_FILING =
+  "通义千问（网信算备 330110507206401230035 号，登记号 ZheJiang-TongYiQianWen-20230901）";
 
 function visibleText(html) {
   return html.replace(/<head>[\s\S]*?<\/head>/, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
@@ -91,6 +94,8 @@ test("a guest still gets privacy, feedback and about, and 微信登录 opens the
       profileText(harness),
       "我的 设备与记录，登录后跟随账号。 登录后即可管理你的资料。未登录时不会读取资料、统计或回顾。 微信登录 授权与隐私说明 帮助与反馈 关于 开发版",
     );
+    harness.page.openAbout();
+    assert.equal(callsTo(harness, "showModal")[0].content, DEEPSEEK_ABOUT);
     await harness.page.loginFromProfile();
     assert.deepEqual(callsTo(harness, "navigateTo"), [
       { url: "/pages/auth/index?redirect=%2Fpages%2Fhome%2Findex&reason=view_profile" },
@@ -113,6 +118,7 @@ test("帮助与反馈 is WeChat's native feedback button", () => {
 test("关于 names the filed chat model and the release version, or the build channel before release", async () => {
   const develop = await openProfile(fx.authed());
   try {
+    assert.deepEqual(develop.page.data.chatLlmProviders, []);
     develop.page.openAbout();
     assert.deepEqual(callsTo(develop, "showModal"), [
       {
@@ -142,38 +148,52 @@ test("关于 names the filed chat model and the release version, or the build ch
   }
 });
 
-test("with LLM_FAILOVER_ENABLED on, 关于 names DeepSeek and 通义千问", async () => {
-  const harness = await openProfile({ ...fx.authed(), config: { ...SHIPPED_CONFIG, LLM_FAILOVER_ENABLED: true } });
+test("chat_llm_providers deepseek keeps the DeepSeek filing", async () => {
+  const harness = await openProfile(fx.authed({
+    getDeliveredCapabilities: async () => ({ chat_llm_providers: ["deepseek"] }),
+  }));
   try {
+    assert.deepEqual(harness.page.data.chatLlmProviders, ["deepseek"]);
     harness.page.openAbout();
-    const shown = callsTo(harness, "showModal")[0];
-    assert.deepEqual(shown, {
-      title: "关于 Memoria",
-      content:
-        "陪孩子聊天、讲故事的 AI 助手。\n" +
-        "对话可能由 DeepSeek 或阿里云通义千问生成\n" +
-        "DeepSeek（备案号 Beijing-DeepseekChat-202404280016）\n" +
-        "通义千问（算法备案号 网信算备330110507206401230035号，模型备案号 ZheJiang-TongYiQianWen-20230901）\n" +
-        "开发版",
-      showCancel: false,
-      confirmText: "知道了",
-    });
-    assert.doesNotMatch(shown.content, /备用/);
+    assert.equal(callsTo(harness, "showModal")[0].content, DEEPSEEK_ABOUT);
   } finally {
     harness.restore();
   }
 });
 
-test("with LLM_FAILOVER_ENABLED omitted from config, 关于 lists only DeepSeek", async () => {
-  const withoutFlag = { ...SHIPPED_CONFIG };
-  delete withoutFlag.LLM_FAILOVER_ENABLED;
-  const harness = await openProfile({ ...fx.authed(), config: withoutFlag });
+test("chat_llm_providers qwen lists only the 通义千问 filing", async () => {
+  const harness = await openProfile(fx.authed({
+    getDeliveredCapabilities: async () => ({ chat_llm_providers: ["qwen"] }),
+  }));
   try {
+    assert.deepEqual(harness.page.data.chatLlmProviders, ["qwen"]);
     harness.page.openAbout();
     assert.equal(
       callsTo(harness, "showModal")[0].content,
-      "陪孩子聊天、讲故事的 AI 助手。\n对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）\n开发版",
+      "陪孩子聊天、讲故事的 AI 助手。\n" + QWEN_FILING + "\n开发版",
     );
+  } finally {
+    harness.restore();
+  }
+});
+
+test("chat_llm_providers deepseek and qwen discloses both filings", async () => {
+  const harness = await openProfile(fx.authed({
+    getDeliveredCapabilities: async () => ({ chat_llm_providers: ["deepseek", "qwen"] }),
+  }));
+  try {
+    assert.deepEqual(harness.page.data.chatLlmProviders, ["deepseek", "qwen"]);
+    harness.page.openAbout();
+    const content = callsTo(harness, "showModal")[0].content;
+    assert.equal(
+      content,
+      "陪孩子聊天、讲故事的 AI 助手。\n" +
+        "对话可能由 DeepSeek 或阿里云通义千问生成\n" +
+        "对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）\n" +
+        QWEN_FILING +
+        "\n开发版",
+    );
+    assert.doesNotMatch(content, /备用/);
   } finally {
     harness.restore();
   }
