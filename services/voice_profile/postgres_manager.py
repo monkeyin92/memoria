@@ -7,6 +7,7 @@ import json
 import secrets
 import uuid
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, cast
@@ -15,6 +16,14 @@ import asyncpg
 
 from services.archive.domain import EvidenceEvent, EvidenceNotFoundError
 from services.archive.object_store import ObjectRef, ObjectStore
+from services.voice_profile.clone_authority import (
+    VoiceCloneAuthority,
+    clone_consent_valid,
+    load_consent,
+    record_grant,
+    record_revocation,
+    require_clone_consent,
+)
 from services.voice_profile.domain import (
     EvaluationRequiredError,
     ProviderSample,
@@ -65,6 +74,7 @@ class PostgresVoiceProfileManager:
         sample_url_factory: Callable[[str], str],
         provider_region: str,
         target_model: str,
+        clone: VoiceCloneAuthority,
         provider_name: str = "alibaba_model_studio",
         pool: asyncpg.Pool | None = None,
     ) -> None:
@@ -76,6 +86,7 @@ class PostgresVoiceProfileManager:
         self._sample_url_factory = sample_url_factory
         self._provider_region = provider_region
         self._target_model = target_model
+        self._clone = clone
         if not provider_name.strip():
             raise ValueError("voice provider name is required")
         self._provider_name = provider_name
@@ -115,50 +126,37 @@ class PostgresVoiceProfileManager:
         account_id: str,
         policy_version: str,
     ) -> VoiceConsent:
+        admission = self._clone.admit()
         if not account_id.strip() or not policy_version.strip():
             raise ValueError("voice consent requires account_id and policy_version")
         now = datetime.now(UTC)
         event = self._event(
             account_id,
             "voice_clone.consent_granted",
-            {"policy_version": policy_version},
+            {
+                "policy_version": policy_version,
+                "notice_version": admission.notice_version,
+            },
         )
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, account_id)
             await self._insert_evidence(connection, event)
-            await connection.execute(
-                """
-                INSERT INTO voice_clone_consents (
-                    account_id, policy_version, granted_at, grant_event_id
-                ) VALUES ($1, $2, $3, $4)
-                ON CONFLICT(account_id) DO UPDATE SET
-                    policy_version = excluded.policy_version,
-                    granted_at = excluded.granted_at,
-                    revoked_at = NULL,
-                    grant_event_id = excluded.grant_event_id,
-                    revoke_event_id = NULL
-                """,
-                account_id,
-                policy_version,
-                now,
-                event.event_id,
+            return await record_grant(
+                connection,
+                admission,
+                account_id=account_id,
+                policy_version=policy_version,
+                event_id=event.event_id,
+                granted_at=now,
             )
-        return VoiceConsent(account_id, policy_version, now)
 
     async def revoke_consent(self, *, account_id: str) -> VoiceConsent:
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, account_id)
-            row = await connection.fetchrow(
-                """
-                SELECT * FROM voice_clone_consents
-                WHERE account_id = $1
-                FOR UPDATE
-                """,
-                account_id,
-            )
-            if row is None:
+            consent = await load_consent(connection, account_id, for_update=True)
+            if consent is None:
                 raise VoiceConsentRequiredError("active voice-clone consent is required")
             profile_ids = [
                 str(item["profile_id"])
@@ -177,22 +175,17 @@ class PostgresVoiceProfileManager:
                     account_id,
                 )
             ]
-            if row["revoked_at"] is None:
+            revoked_at = consent.revoked_at
+            if revoked_at is None:
                 revoked_at = datetime.now(UTC)
                 event = self._event(account_id, "voice_clone.consent_revoked", {})
                 await self._insert_evidence(connection, event)
-                await connection.execute(
-                    """
-                    UPDATE voice_clone_consents
-                    SET revoked_at = $1, revoke_event_id = $2
-                    WHERE account_id = $3
-                    """,
-                    revoked_at,
-                    event.event_id,
-                    account_id,
+                await record_revocation(
+                    connection,
+                    account_id=account_id,
+                    event_id=event.event_id,
+                    revoked_at=revoked_at,
                 )
-            else:
-                revoked_at = cast(datetime, row["revoked_at"])
         deletion_incomplete = False
         for profile_id in profile_ids:
             try:
@@ -208,29 +201,13 @@ class PostgresVoiceProfileManager:
             raise VoiceEnrollmentReconciliationRequiredError(
                 "voice profile deletion incomplete; retry consent revocation"
             )
-        return VoiceConsent(
-            account_id=account_id,
-            policy_version=str(row["policy_version"]),
-            granted_at=cast(datetime, row["granted_at"]),
-            revoked_at=revoked_at,
-        )
+        return replace(consent, revoked_at=revoked_at)
 
     async def consent(self, *, account_id: str) -> VoiceConsent | None:
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, account_id)
-            row = await connection.fetchrow(
-                "SELECT * FROM voice_clone_consents WHERE account_id = $1",
-                account_id,
-            )
-        if row is None:
-            return None
-        return VoiceConsent(
-            account_id=account_id,
-            policy_version=str(row["policy_version"]),
-            granted_at=cast(datetime, row["granted_at"]),
-            revoked_at=cast(datetime | None, row["revoked_at"]),
-        )
+            return await load_consent(connection, account_id)
 
     async def enroll(self, request: VoiceEnrollmentRequest) -> VoiceProfile:
         """Accept and complete an enrollment in one call.
@@ -253,6 +230,7 @@ class PostgresVoiceProfileManager:
         ``VoiceSampleRejectedError`` when the recording cannot be cloned --
         before anything is written, so a refused sample leaves no trace.
         """
+        self._clone.admit()
         # Measure first: a sample that cannot be cloned must not create an
         # operation row, a stored object or a profile. Nothing can be cloned
         # from audio that does not decode, so this refusal is unconditional;
@@ -339,6 +317,7 @@ class PostgresVoiceProfileManager:
         self, *, account_id: str, profile_id: str
     ) -> VoiceProfile:
         """Drive an accepted enrollment through the provider and finalize it."""
+        self._clone.admit()
         operation = await self._operation_for_profile(account_id, profile_id)
         if operation is None or str(operation["account_id"]) != account_id:
             raise EvidenceNotFoundError(profile_id)
@@ -410,7 +389,7 @@ class PostgresVoiceProfileManager:
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, request.account_id)
-            await self._require_consent(connection, request.account_id, for_update=True)
+            await require_clone_consent(connection, request.account_id, for_update=True)
             existing = await connection.fetchrow(
                 """
                 SELECT * FROM voice_enrollment_operations
@@ -472,7 +451,7 @@ class PostgresVoiceProfileManager:
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, request.account_id)
-            await self._require_consent(connection, request.account_id, for_update=True)
+            await require_clone_consent(connection, request.account_id, for_update=True)
             await connection.execute(
                 """
                 INSERT INTO voice_samples (
@@ -622,24 +601,24 @@ class PostgresVoiceProfileManager:
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, str(operation["account_id"]))
-            row = await connection.fetchrow(
-                """
-                UPDATE voice_profiles
-                SET provider_voice_id = $1, provider_expires_at = $2,
-                    status = 'candidate', updated_at = $3
-                WHERE profile_id = $4 AND account_id = $5 AND status = 'enrolling'
-                  AND EXISTS (
-                      SELECT 1 FROM voice_clone_consents
-                      WHERE account_id = $5 AND revoked_at IS NULL
-                  )
-                RETURNING *
-                """,
-                provider_voice_id,
-                operation["provider_expires_at"],
-                now,
-                operation["profile_id"],
-                str(operation["account_id"]),
-            )
+            row = None
+            if await clone_consent_valid(
+                connection, str(operation["account_id"]), for_update=True
+            ):
+                row = await connection.fetchrow(
+                    """
+                    UPDATE voice_profiles
+                    SET provider_voice_id = $1, provider_expires_at = $2,
+                        status = 'candidate', updated_at = $3
+                    WHERE profile_id = $4 AND account_id = $5 AND status = 'enrolling'
+                    RETURNING *
+                    """,
+                    provider_voice_id,
+                    operation["provider_expires_at"],
+                    now,
+                    operation["profile_id"],
+                    str(operation["account_id"]),
+                )
             if row is not None:
                 await self._insert_evidence(connection, event)
                 await connection.execute(
@@ -733,6 +712,7 @@ class PostgresVoiceProfileManager:
             )
 
     async def provider_sample(self, *, sample_id: str) -> ProviderSample:
+        self._clone.admit()
         try:
             sample_uuid = uuid.UUID(sample_id)
         except ValueError as exc:
@@ -754,15 +734,14 @@ class PostgresVoiceProfileManager:
                 raise VoiceConsentRequiredError("voice sample is unavailable")
             account_id = str(row["account_id"])
             await self._scope(connection, account_id)
+            if not await clone_consent_valid(connection, account_id):
+                raise VoiceConsentRequiredError("voice sample is unavailable")
             allowed = await connection.fetchval(
                 """
-                SELECT 1 FROM voice_profiles AS profile
-                JOIN voice_clone_consents AS consent
-                  ON consent.account_id = profile.account_id
-                WHERE profile.sample_id = $1
-                  AND profile.account_id = $2
-                  AND consent.revoked_at IS NULL
-                  AND profile.status IN ('enrolling', 'candidate', 'active')
+                SELECT 1 FROM voice_profiles
+                WHERE sample_id = $1
+                  AND account_id = $2
+                  AND status IN ('enrolling', 'candidate', 'active')
                 """,
                 sample_uuid,
                 account_id,
@@ -792,7 +771,7 @@ class PostgresVoiceProfileManager:
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, account_id)
-            await self._require_consent(connection, account_id)
+            await require_clone_consent(connection, account_id)
             await connection.execute(
                 """
                 INSERT INTO voice_blind_trials (
@@ -832,7 +811,7 @@ class PostgresVoiceProfileManager:
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, account_id)
-            await self._require_consent(connection, account_id)
+            await require_clone_consent(connection, account_id)
             row = await connection.fetchrow(
                 """
                 SELECT trial.*, profile.target_model, profile.provider_voice_id,
@@ -890,7 +869,7 @@ class PostgresVoiceProfileManager:
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, account_id)
-            await self._require_consent(connection, account_id)
+            await require_clone_consent(connection, account_id)
             row = await connection.fetchrow(
                 """
                 SELECT candidate_slot, previewed_a, previewed_b
@@ -923,7 +902,7 @@ class PostgresVoiceProfileManager:
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, request.account_id)
-            await self._require_consent(connection, request.account_id)
+            await require_clone_consent(connection, request.account_id)
             row = await connection.fetchrow(
                 """
                 SELECT status FROM voice_profiles
@@ -996,7 +975,7 @@ class PostgresVoiceProfileManager:
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, request.account_id)
-            await self._require_consent(connection, request.account_id)
+            await require_clone_consent(connection, request.account_id)
             profile = await connection.fetchrow(
                 """
                 SELECT status FROM voice_profiles
@@ -1086,7 +1065,7 @@ class PostgresVoiceProfileManager:
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, account_id)
-            await self._require_consent(connection, account_id, for_update=True)
+            await require_clone_consent(connection, account_id, for_update=True)
             row = await connection.fetchrow(
                 """
                 SELECT * FROM voice_profiles
@@ -1151,13 +1130,7 @@ class PostgresVoiceProfileManager:
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, account_id)
-            consent = await connection.fetchval(
-                """
-                SELECT 1 FROM voice_clone_consents
-                WHERE account_id = $1 AND revoked_at IS NULL
-                """,
-                account_id,
-            )
+            consent_valid = await clone_consent_valid(connection, account_id)
             row = await connection.fetchrow(
                 """
                 SELECT * FROM voice_profiles
@@ -1174,7 +1147,7 @@ class PostgresVoiceProfileManager:
                 account_id,
                 custom_persona_id,
             )
-        if consent is None or row is None or row["provider_voice_id"] is None:
+        if not consent_valid or row is None or row["provider_voice_id"] is None:
             return VoiceResolution(mode="fallback")
         expires = cast(datetime | None, row["provider_expires_at"])
         if row["provider"] == "volcengine_doubao" and expires is None:
@@ -1266,6 +1239,10 @@ class PostgresVoiceProfileManager:
             != 1
         ):
             raise ValueError("exactly one enrollment reconciliation outcome is required")
+        if provider_voice is not None:
+            # Recording a supplied provider voice creates clone material.
+            # Unwinding an ambiguous upload does not, and stays available while cloning is off.
+            self._clone.admit()
         operation = await self._operation(
             account_id=account_id,
             enrollment_key=enrollment_key.strip(),
@@ -1324,7 +1301,7 @@ class PostgresVoiceProfileManager:
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, account_id)
-            await self._require_consent(connection, account_id)
+            await require_clone_consent(connection, account_id)
             row = await connection.fetchrow(
                 """
                 SELECT * FROM voice_profiles
@@ -1578,25 +1555,6 @@ class PostgresVoiceProfileManager:
             )
         assert updated is not None
         return profile_from_row(updated)
-
-    @staticmethod
-    async def _require_consent(
-        connection: asyncpg.Connection,
-        account_id: str,
-        *,
-        for_update: bool = False,
-    ) -> None:
-        suffix = " FOR UPDATE" if for_update else ""
-        row = await connection.fetchval(
-            """
-            SELECT 1 FROM voice_clone_consents
-            WHERE account_id = $1 AND revoked_at IS NULL
-            """
-            + suffix,
-            account_id,
-        )
-        if row is None:
-            raise VoiceConsentRequiredError("active voice-clone consent is required")
 
     @staticmethod
     def _reference(row: asyncpg.Record) -> ObjectRef:

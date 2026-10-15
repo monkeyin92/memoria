@@ -11,6 +11,7 @@ from typing import Any, Literal, cast
 
 import httpx
 
+from services.voice_profile.clone_authority import VoiceCloneAuthority
 from services.voice_profile.domain import (
     ProviderVoice,
     ProviderVoiceDeletionUnsupportedError,
@@ -67,9 +68,11 @@ class DoubaoVoiceCloneClient:
         config: DoubaoVoiceCloneConfig,
         *,
         client: httpx.AsyncClient | None = None,
+        clone: VoiceCloneAuthority,
     ) -> None:
         self._config = config
         self._client = client
+        self._clone = clone
 
     async def create_voice(
         self,
@@ -78,6 +81,7 @@ class DoubaoVoiceCloneClient:
         prefix: str,
         sample_url: str,
     ) -> ProviderVoice:
+        self._clone.admit()
         if target_model != DOUBAO_VOICE_CLONE_MODEL:
             raise ValueError("Doubao voice clone target must be seed-icl-2.0")
         if not 8 <= len(prefix) <= 256 or not prefix[0].isalpha() or not all(

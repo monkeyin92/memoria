@@ -106,6 +106,7 @@ from services.control_api.app.text_models import (
     build_persona_structurer,
 )
 from services.control_api.app.unconfigured_store import UnconfiguredStore
+from services.control_api.app.voice_services import voice_profile_services
 from services.control_api.app.wiring import Wiring, run_eagerly
 from services.device_fleet.bootstrap_postgres_store import PostgresBootstrapStore
 from services.device_fleet.bootstrap_service import (
@@ -185,26 +186,12 @@ from services.speaker.campplus_http import (
 )
 from services.speaker.domain import SpeakerAuthorityPort, SpeakerEmbeddingAdapter
 from services.speaker.postgres_authority import PostgresSpeakerAuthority
-from services.voice_profile.cosyvoice_enrollment import (
-    CosyVoiceEnrollmentClient,
-    CosyVoiceEnrollmentConfig,
-    UnavailableVoiceEnrollmentProvider,
-)
 from services.voice_profile.cosyvoice_preview import (
     CosyVoicePreviewRenderer,
     UnavailableVoicePreviewRenderer,
 )
-from services.voice_profile.domain import (
-    VoiceEnrollmentProvider,
-    VoicePreviewRenderer,
-    VoiceProfilePort,
-)
-from services.voice_profile.doubao_voice_clone import (
-    DoubaoVoiceCloneClient,
-    DoubaoVoiceCloneConfig,
-)
+from services.voice_profile.domain import VoicePreviewRenderer
 from services.voice_profile.postgres_manager import PostgresVoiceProfileManager
-from services.voice_profile.sample_url import VoiceSampleURLSigner
 
 
 def _memory_account_guard(
@@ -372,93 +359,6 @@ def _speaker_authority(
 def _unconfigured(store: str) -> Any:
     """Eager wiring without an archive DSN: the archive family is PostgreSQL-only."""
     return UnconfiguredStore(store, "MEMORIA_ARCHIVE_DATABASE_URL")
-
-
-def _voice_profile_services(
-    settings: ControlSettings, *, archive_pool: asyncpg.Pool | None = None
-) -> tuple[VoiceProfilePort, VoiceSampleURLSigner, ObjectStore]:
-    configured_key = settings.voice_sample_encryption_key.get_secret_value()
-    object_key = configured_key or base64.urlsafe_b64encode(
-        hashlib.sha256(b"memoria-development-voice-sample-key").digest()
-    ).decode("ascii")
-    object_store: ObjectStore
-    if settings.voice_object_bucket:
-        object_store = EncryptedS3ObjectStore.from_boto3(
-            bucket=settings.voice_object_bucket,
-            key=object_key,
-            key_version=settings.voice_sample_key_version,
-            read_keys=settings.voice_sample_read_key_map(),
-            endpoint_url=settings.voice_object_endpoint or None,
-            region_name=settings.voice_object_region or None,
-            access_key_id=(settings.voice_object_access_key.get_secret_value().strip() or None),
-            secret_access_key=(settings.voice_object_secret_key.get_secret_value().strip() or None),
-            prefix=settings.voice_object_prefix,
-        )
-    else:
-        object_store = EncryptedLocalObjectStore(
-            root=Path(settings.voice_sample_store_path),
-            key=object_key,
-            key_version=settings.voice_sample_key_version,
-            read_keys=settings.voice_sample_read_key_map(),
-        )
-    configured_signer = settings.voice_sample_url_secret.get_secret_value()
-    signer_secret = (
-        configured_signer or hashlib.sha256(b"memoria-development-voice-sample-url").hexdigest()
-    )
-    signer = VoiceSampleURLSigner(
-        secret=signer_secret,
-        public_base_url=settings.public_base_url,
-        ttl_s=settings.voice_sample_url_ttl_s,
-    )
-    provider: VoiceEnrollmentProvider
-    if settings.offline_mock:
-        provider = UnavailableVoiceEnrollmentProvider()
-    elif settings.voice_clone_provider == "volcengine_doubao":
-        api_key = settings.doubao_voice_api_key.get_secret_value()
-        if not api_key:
-            provider = UnavailableVoiceEnrollmentProvider()
-        else:
-            provider = DoubaoVoiceCloneClient(
-                DoubaoVoiceCloneConfig(
-                    endpoint=settings.doubao_voice_clone_url,
-                    query_endpoint=settings.doubao_voice_query_url,
-                    api_key=api_key,
-                    timeout_s=settings.voice_enrollment_timeout_s,
-                    poll_interval_s=settings.doubao_voice_clone_poll_interval_s,
-                    synth_ready_id_mode=settings.doubao_voice_synth_ready_id_mode,
-                    synth_ready_id_field=settings.doubao_voice_synth_ready_id_field,
-                    expires_at_field=settings.doubao_voice_expires_at_field,
-                    expires_at_format=settings.doubao_voice_expires_at_format,
-                )
-            )
-    else:
-        api_key = settings.dashscope_api_key.get_secret_value()
-        if not api_key:
-            provider = UnavailableVoiceEnrollmentProvider()
-        else:
-            provider = CosyVoiceEnrollmentClient(
-                CosyVoiceEnrollmentConfig(
-                    endpoint=settings.voice_enrollment_url,
-                    api_key=api_key,
-                    timeout_s=settings.voice_enrollment_timeout_s,
-                )
-            )
-    archive_url = settings.archive_database_url.get_secret_value()
-    manager: VoiceProfilePort
-    if archive_url:
-        manager = PostgresVoiceProfileManager(
-            archive_url,
-            object_store=object_store,
-            provider=provider,
-            sample_url_factory=signer.url,
-            provider_region=settings.voice_provider_region,
-            target_model=settings.voice_target_model,
-            provider_name=settings.voice_clone_provider,
-            pool=archive_pool,
-        )
-    else:
-        manager = _unconfigured("voice_profile")
-    return manager, signer, object_store
 
 
 def _archive_object_store(settings: ControlSettings) -> ObjectStore:
@@ -1018,9 +918,13 @@ async def _wire_services(w: Wiring) -> None:
     else:
         app.state.growth_reader = _unconfigured("growth")
 
-    voice_profile_manager, voice_sample_signer, voice_object_store = _voice_profile_services(
-        settings, archive_pool=archive_pool
-    )
+    (
+        voice_profile_manager,
+        voice_sample_signer,
+        voice_object_store,
+        voice_clone,
+    ) = voice_profile_services(settings, archive_pool=archive_pool)
+    app.state.voice_clone_authority = voice_clone
     if isinstance(voice_profile_manager, PostgresVoiceProfileManager):
         await w.open(voice_profile_manager.initialize, voice_profile_manager.close)
     app.state.voice_profile_manager = voice_profile_manager

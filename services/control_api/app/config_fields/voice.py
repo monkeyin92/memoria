@@ -150,3 +150,4 @@ class VoiceFields(BaseModel):
         default="epoch_ms",
         alias="MEMORIA_DOUBAO_VOICE_EXPIRES_AT_FORMAT",
     )
+    voice_clone_enabled: bool = Field(default=False, alias="VOICE_CLONE_ENABLED")

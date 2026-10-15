@@ -130,6 +130,8 @@ class ProviderVoiceDeletionUnsupportedError(RuntimeError):
 class VoiceConsent:
     account_id: str
     policy_version: str
+    #: Separate-notice stamp. ``clone_authority.consent_standing`` decides if it counts.
+    notice_version: str
     granted_at: datetime
     revoked_at: datetime | None = None
 
@@ -378,25 +380,33 @@ class VoiceProfilePort(Protocol):
         *,
         account_id: str,
         policy_version: str,
-    ) -> VoiceConsent: ...
+    ) -> VoiceConsent:
+        """Raises VoiceCloneDisabledError while cloning is off."""
 
     async def revoke_consent(self, *, account_id: str) -> VoiceConsent: ...
 
     async def consent(self, *, account_id: str) -> VoiceConsent | None: ...
 
-    async def enroll(self, request: VoiceEnrollmentRequest) -> VoiceProfile: ...
+    async def enroll(self, request: VoiceEnrollmentRequest) -> VoiceProfile:
+        """Raises VoiceCloneDisabledError while cloning is off."""
 
     async def accept_enrollment(self, request: VoiceEnrollmentRequest) -> VoiceProfile:
-        """Measure, store and register one enrollment; no provider call."""
-        ...
+        """Measure, store and register one enrollment; no provider call.
+
+        Raises VoiceCloneDisabledError while cloning is off, before any sample
+        is stored.
+        """
 
     async def complete_enrollment(
         self, *, account_id: str, profile_id: str
     ) -> VoiceProfile:
-        """Drive an accepted enrollment through the provider and finalize it."""
-        ...
+        """Drive an accepted enrollment through the provider and finalize it.
 
-    async def provider_sample(self, *, sample_id: str) -> ProviderSample: ...
+        Raises VoiceCloneDisabledError while cloning is off.
+        """
+
+    async def provider_sample(self, *, sample_id: str) -> ProviderSample:
+        """Raises VoiceCloneDisabledError while cloning is off."""
 
     async def evaluate(self, request: VoiceEvaluationRequest) -> VoiceEvaluation: ...
 
@@ -454,7 +464,8 @@ class VoiceProfilePort(Protocol):
         provider_voice: ProviderVoice | None = None,
         provider_asset_absent: bool = False,
         sample_asset_absent: bool = False,
-    ) -> VoiceProfile: ...
+    ) -> VoiceProfile:
+        """Raises VoiceCloneDisabledError while cloning is off and a provider voice is supplied."""
 
     async def preview_target(
         self,

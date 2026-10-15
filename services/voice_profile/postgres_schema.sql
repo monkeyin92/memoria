@@ -7,6 +7,13 @@ CREATE TABLE IF NOT EXISTS voice_clone_consents (
     revoke_event_id TEXT
 );
 
+-- Permanent default. A row that does not stamp a separate-notice version,
+-- including every row from before this column existed, stays on record and
+-- never authorizes a clone. Do not UPDATE existing rows and do not drop
+-- this default.
+ALTER TABLE voice_clone_consents
+ADD COLUMN IF NOT EXISTS notice_version TEXT NOT NULL DEFAULT 'pre-separate-notice';
+
 CREATE TABLE IF NOT EXISTS voice_samples (
     sample_id UUID PRIMARY KEY,
     account_id TEXT NOT NULL REFERENCES voice_clone_consents(account_id) ON DELETE CASCADE,
