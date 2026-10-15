@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 
+from services.common.redaction import redact_pii
 from services.common.response_depth import ResponseDepth, response_depth_for
 
 logger = logging.getLogger(__name__)
@@ -83,7 +84,7 @@ class QwenRealtimeSearch:
                                 "role": "system",
                                 "content": f"{_SYSTEM_PROMPT}\n{depth.instruction}",
                             },
-                            {"role": "user", "content": query},
+                            {"role": "user", "content": redact_pii(query)},
                         ],
                         "stream": False,
                         "max_tokens": max_tokens,

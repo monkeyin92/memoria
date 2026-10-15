@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Literal, cast
 
@@ -67,6 +68,20 @@ class SubjectActivityStore:
                 subject_person_id,
             )
         return cast(datetime | None, value)
+
+    async def last_active_for(
+        self, subject_person_ids: Sequence[str]
+    ) -> dict[str, datetime]:
+        async with (await self._require_pool()).acquire() as connection:
+            rows = await connection.fetch(
+                """
+                SELECT subject_person_id, last_active_at
+                FROM guardian_subject_activity
+                WHERE subject_person_id = ANY($1::text[])
+                """,
+                list(subject_person_ids),
+            )
+        return {str(row["subject_person_id"]): row["last_active_at"] for row in rows}
 
 
 __all__ = ["ActivitySource", "SubjectActivityStore"]

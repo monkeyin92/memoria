@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from datetime import UTC, datetime
@@ -113,6 +114,27 @@ async def test_qwen_memory_embedder_uses_the_bounded_embeddings_contract() -> No
     )
 
     assert await embedder.embed("城市经历") == (0.25, 0.75)
+
+
+@pytest.mark.asyncio
+async def test_qwen_memory_embedder_posts_its_argument_unchanged() -> None:
+    inputs: list[object] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        inputs.append(json.loads(request.content)["input"])
+        return httpx.Response(200, json={"data": [{"embedding": [0.25, 0.75]}]})
+
+    embedder = QwenMemoryEmbedder(
+        endpoint="https://dashscope.test/compatible-mode/v1/embeddings",
+        api_key="test-key",
+        model="text-embedding-v4",
+        dimensions=2,
+        transport=httpx.MockTransport(handler),
+    )
+
+    await embedder.embed("电话13812345678")
+
+    assert inputs == ["电话13812345678"]
 
 
 def _postgres_dsn(dsn: str, *, user: str, password: str, database: str) -> str:
@@ -410,6 +432,92 @@ async def test_vector_search_gives_the_keyword_bonus_only_to_terms_that_name_som
         assert all(
             bonus == pytest.approx(0.175, abs=1e-3) for event, bonus in bonuses if event == event_ids[0]
         )
+    finally:
+        await connection.execute(
+            "DELETE FROM archive_evidence_events WHERE account_id = $1",
+            account_id,
+        )
+        await connection.close()
+        await catalog.close()
+        await archive.close()
+
+
+class RecordingEmbedderStub(ConstantEmbedderStub):
+    model = "recording-test-v1"
+
+    def __init__(self) -> None:
+        self.inputs: list[str] = []
+
+    async def embed(self, text: str) -> tuple[float, ...]:
+        self.inputs.append(text)
+        return await super().embed(text)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
+    reason="set MEMORIA_TEST_POSTGRES_DSN to a pgvector PostgreSQL for recall redaction",
+)
+async def test_recall_embeds_a_redacted_query_and_matches_lexically_on_the_raw_one() -> None:
+    dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
+    account_id = f"recall-redaction-{uuid.uuid4()}"
+    event_ids = (f"recall-phone-{uuid.uuid4()}", f"recall-family-{uuid.uuid4()}")
+    archive = PostgresLifeArchive(dsn)
+    embedder = RecordingEmbedderStub()
+    catalog = PostgresMemoryCatalog(
+        dsn,
+        extractor=RuleBasedMemoryExtractor(),
+        embedder=embedder,
+        require_vector=True,
+    )
+    await archive.initialize()
+    await catalog.initialize()
+    connection = await asyncpg.connect(dsn)
+    try:
+        for event_id, text in zip(
+            event_ids,
+            ("我以前的电话是13812345678。", "我们家的家训是勤俭持家。"),
+            strict=True,
+        ):
+            await archive.record(
+                EvidenceEvent(
+                    event_id=event_id,
+                    account_id=account_id,
+                    event_type="speech.utterance_finalized",
+                    occurred_at=datetime.now(UTC),
+                    speaker_class="owner",
+                    source="recall-redaction-test",
+                    payload={
+                        "text": text,
+                        "interaction_mode": "companion",
+                        "prompt_kind": "spontaneous",
+                        "owner_projection_eligible": True,
+                    },
+                )
+            )
+        await catalog.compile_pending(limit=1000)
+        embedder.inputs.clear()
+
+        async def search_scores(text: str) -> dict[str, float]:
+            result = await catalog.search(
+                MemorySearchQuery(
+                    account_id=account_id,
+                    speaker_class="owner",
+                    text=text,
+                    include_candidates=True,
+                )
+            )
+            return {
+                item.source_event_id: item.score
+                for item in result.items
+                if item.source_event_id in event_ids
+            }
+
+        matched = await search_scores("13812345678")
+        assert matched[event_ids[0]] > matched[event_ids[1]]
+        unmatched = await search_scores("13900000000")
+        assert unmatched[event_ids[0]] == pytest.approx(unmatched[event_ids[1]])
+        assert embedder.inputs == ["[手机号]", "[手机号]"]
     finally:
         await connection.execute(
             "DELETE FROM archive_evidence_events WHERE account_id = $1",

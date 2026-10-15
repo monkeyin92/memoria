@@ -169,6 +169,38 @@ async def test_now_adds_the_current_conditions_request() -> None:
     assert "小明" not in str(requests[0].url) and "海淀" not in str(requests[0].url)
 
 
+@pytest.mark.parametrize(
+    ("query", "reply"),
+    [
+        ("我的手机13812345678，明天南京天气怎么样", "南京明天多云，15到24度。"),
+        ("我手机13812345678江苏省南京市天气", "南京今天多云，15到24度。"),
+    ],
+)
+async def test_phone_beside_an_allowlisted_city_sends_only_that_city(
+    query: str, reply: str
+) -> None:
+    requests: list[httpx.Request] = []
+    weather = _weather(requests)
+
+    assert await weather.resolve(query=query) == reply
+    assert _wire(requests) == [
+        (
+            "GET",
+            "abcd.re.qweatherapi.com",
+            "/geo/v2/city/lookup",
+            {"location": "南京", "range": "cn", "number": "10"},
+        ),
+        (
+            "GET",
+            "abcd.re.qweatherapi.com",
+            "/v7/weather/3d",
+            {"location": "101190101"},
+        ),
+    ]
+    assert all("13812345678" not in str(request.url) for request in requests)
+    assert all(request.content == b"" for request in requests)
+
+
 async def test_five_day_span_uses_the_seven_day_endpoint() -> None:
     requests: list[httpx.Request] = []
     weather = _weather(requests)
@@ -202,6 +234,8 @@ async def test_seven_day_span_is_the_longest_spoken_range() -> None:
         "东京天气怎么样",
         "今天天气怎么样",
         "北京和上海天气",
+        "13812345678天气",
+        "中山路1号天气",
     ],
 )
 async def test_no_allowlist_match_asks_for_city_without_http(query: str) -> None:

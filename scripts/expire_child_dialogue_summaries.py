@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Physically delete expired ``dialogue_summary`` rows and verify remaining=0.
 
-Uses the maintenance role via ``memory_kind_erase(..., only_expired=true)``.
-Does not touch production unless you pass a real DSN; default is dry-run
-listing of due subjects only.
+control-api runs the same expiry at startup and daily
+(``ChildLayerRetentionWorker``); this script is the manual check. Uses the
+maintenance role via ``memory_kind_erase(..., only_expired=true)``. Default is
+a dry-run listing of due subjects only. A repeated ``--apply`` erases zero rows
+and still exits 0.
 
 Example (local):
 
@@ -19,24 +21,16 @@ import asyncio
 import json
 import os
 import sys
+from dataclasses import asdict
 from urllib.parse import urlsplit
 
-import asyncpg
 from services.guardian.child_memory import KIND_DIALOGUE_SUMMARY
+from services.memory_scope.child_layer_retention import (
+    ExpirySummary,
+    due_summary_subjects,
+    expire_due_summaries,
+)
 from services.memory_scope.child_layers import ChildLayerStore
-
-
-async def _due_subjects(maintenance_dsn: str) -> list[str]:
-    connection = await asyncpg.connect(maintenance_dsn)
-    try:
-        subjects = await connection.fetchval(
-            "SELECT memory_kind_due_subjects($1)", KIND_DIALOGUE_SUMMARY
-        )
-    finally:
-        await connection.close()
-    if not subjects:
-        return []
-    return [str(item) for item in subjects]
 
 
 async def main() -> int:
@@ -71,26 +65,21 @@ async def main() -> int:
         )
         return 2
 
-    subjects = list(args.subject) or await _due_subjects(maintenance_dsn)
-    report: dict[str, object] = {
-        "dry_run": not args.apply,
-        "subjects": subjects,
-        "results": [],
-    }
-    if not args.apply:
-        print(json.dumps(report, ensure_ascii=False, indent=2))
-        return 0
-
     store = ChildLayerStore(api_dsn=api_dsn, maintenance_dsn=maintenance_dsn)
     await store.initialize()
     try:
-        for subject_id in subjects:
-            result = await store.expire_due_summaries(subject_id=subject_id)
-            report["results"].append({"subject_id": subject_id, **result})  # type: ignore[arg-type]
+        subjects = list(args.subject) or list(await due_summary_subjects(store))
+        results = await expire_due_summaries(store, subjects) if args.apply else []
     finally:
         await store.close()
+    report = {
+        "dry_run": not args.apply,
+        "subjects": subjects,
+        "results": results,
+        "summary": asdict(ExpirySummary.of(KIND_DIALOGUE_SUMMARY, subjects, results)),
+    }
     print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
-    return 0
+    return 1 if any("error" in result for result in results) else 0
 
 
 if __name__ == "__main__":

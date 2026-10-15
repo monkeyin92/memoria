@@ -41,3 +41,30 @@ async def test_qwen_realtime_search_sends_only_the_public_query_with_forced_sear
     assert "联网结果必须由你先整理后再回答用户" in payload["messages"][0]["content"]
     assert payload["messages"][1] == {"role": "user", "content": "今天南京天气怎么样"}
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_qwen_realtime_search_redacts_the_user_message() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "明天南京晴。"}}]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    resolver = QwenRealtimeSearch(
+        QwenRealtimeSearchConfig(
+            api_key="test-key",
+            base_url="https://qwen.example/v1",
+            model="qwen-deep",
+        ),
+        client=client,
+    )
+
+    assert await resolver.resolve(query="我的手机13812345678，明天南京天气怎么样") == "明天南京晴。"
+    assert await resolver.resolve(query="今日新闻南京市中山路1号") == "明天南京晴。"
+    assert [json.loads(request.content)["messages"][1]["content"] for request in requests] == [
+        "我的手机[手机号]，明天南京天气怎么样",
+        "今日新闻南京市[地址]",
+    ]
+    await client.aclose()
