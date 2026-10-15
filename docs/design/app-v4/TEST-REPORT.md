@@ -2,19 +2,19 @@
 
 This report records how the v4 restyle of the Memoria WeChat mini program was tested on branch `cursor/miniprogram-design-v4-14a0`. It covers every page under `apps/miniprogram/pages`. It lists the commands, the measured results, side-by-side images against the design PNGs in this folder, and each place where the mini program still differs from the design.
 
-The performance table comes from runs on 2026-10-14. The unit tests, forbidden-copy check, package size, layout shots and the 05-attention and 09-memory parity ratios were measured again on 2026-10-15. Later that day, the session-limits and stories change made home and device read two new parent APIs. The tests, package size, 03-home and 06-usage parity shots, and the home and device page shots were then measured a third time. After 关于 began reading its filing lines from the server, the tests and package size were measured once more. Both days used a Linux cloud VM with 4 cores, Node v22.14.0 and headless Chrome driven by puppeteer-core. Nothing ran in WeChat DevTools, through miniprogram-automator or on a phone, because none of them is available on the VM. The harness approximates the WeChat renderer. Read the images as close evidence of layout and copy, not as proof of on-device pixels.
+The performance table comes from runs on 2026-10-14. The unit tests, forbidden-copy check, package size, layout shots and the 05-attention and 09-memory parity ratios were measured again on 2026-10-15. Later that day, the session-limits and stories change made home and device read two new parent APIs. The tests, package size, 03-home and 06-usage parity shots, and the home and device page shots were then measured a third time. After 关于 began reading its filing lines from the server, the tests and package size were measured once more. The daily chat limit change then gave device a 每天上限 slider and made home and device count today's minutes against that budget. For it, the tests, package size, layout checks, home and device page shots, and 03-home and 06-usage parity shots were measured again. Both days used a Linux cloud VM with 4 cores, Node v22.14.0 and headless Chrome driven by puppeteer-core. Nothing ran in WeChat DevTools, through miniprogram-automator or on a phone, because none of them is available on the VM. The harness approximates the WeChat renderer. Read the images as close evidence of layout and copy, not as proof of on-device pixels.
 
 ## Results
 
 | Check | Result |
 |---|---|
-| Unit, function, perf and layout tests (`npm test`) | 539 of 539 pass, 0 skipped |
+| Unit, function, perf and layout tests (`npm test`) | 544 of 544 pass, 0 skipped |
 | Forbidden UI copy (`npm run check:forbidden-copy`) | Pass on 67 files |
 | `12356` in shipped `.js`, `.wxml`, `.json` and `.wxss` files | Only in `pages/attention/index.wxml`, tip 4, pinned by `attention-v4.test.js` |
-| `node --check` on every tracked JS file in the app | 0 failures in 135 files |
+| `node --check` on every tracked JS file in the app | 0 failures in 138 files |
 | Page screenshots at five views (`scripts/screenshot-pages.js`) | 145 shots, 0 layout issues |
 | Parity side-by-sides (`scripts/v4-parity/render-and-compare.js`) | 9 mapped screens, diffRatio 0.056 to 0.298, down from 0.245 to 0.647 |
-| Main package before minification (`scripts/package-size.js`) | 1903.9 KiB of the 2048 KiB limit |
+| Main package before minification (`scripts/package-size.js`) | 1880.9 KiB of the 2048 KiB limit |
 
 ## How the harness works
 
@@ -54,7 +54,7 @@ node scripts/perf-report.js
 node scripts/package-size.js
 ```
 
-The Chrome steps need `puppeteer-core` from `package.json` and Chrome at `CHROME_PATH`, `/usr/local/bin/google-chrome` or `/usr/bin/google-chrome`. Without them `v4-layout.test.js` skips and reports why.
+The Chrome steps need `puppeteer-core` from `package.json` and Chrome at `CHROME_PATH`, `/usr/local/bin/google-chrome` or `/usr/bin/google-chrome`. Without them `v4-layout.test.js` skips and reports why. The shots also need the Noto Sans CJK SC font, which the `fonts-noto-cjk` package installs on Ubuntu. Without it Chrome draws CJK text in another font, and the unchanged companion page then differs from its committed 320 shot in 29% of its pixels.
 
 Do not run `npm --prefix apps/miniprogram exec -- node scripts/v4-parity/render-and-compare.js` from the repo root. `npm exec` keeps the caller's working directory, so the script path resolves against the repo root and Node exits with `MODULE_NOT_FOUND`.
 
@@ -76,10 +76,10 @@ Do not run `npm --prefix apps/miniprogram exec -- node scripts/v4-parity/render-
 |---|---|---:|---:|---:|
 | 01-login | `pages/home`, guest | 0.6475 | 0.0575 | 0.0572 |
 | 02-consent | `pages/auth`, guest | 0.3906 | 0.2740 | 0.0883 |
-| 03-home | `pages/home`, signed in | 0.3162 | 0.0711 | 0.0490 |
+| 03-home | `pages/home`, signed in | 0.3162 | 0.0669 | 0.0490 |
 | 04-summary | `pages/memory`, today summarized | 0.3394 | 0.1901 | 0.0430 |
 | 05-attention | `pages/attention`, one open alert | 0.4991 | 0.0561 | 0.0536 |
-| 06-usage | `pages/device`, child usage settings | 0.2527 | 0.1823 | 0.0527 |
+| 06-usage | `pages/device`, child usage settings | 0.2527 | 0.0828 | 0.0527 |
 | 08-roles | `pages/companion` | 0.3539 | 0.1810 | 0.0727 |
 | 09-memory | `pages/child-memory`, long-term memory | 0.3706 | 0.2984 | 0.0279 |
 | 10-profile | `pages/profile`, signed in | 0.2450 | 0.0715 | 0.0116 |
@@ -90,6 +90,8 @@ The session-limits and stories change redraws 03-home and 06-usage, and only tho
 
 The consent change reshot only 02-consent. diffRatio went from 0.0945 to 0.2740.
 
+The daily chat limit change redraws 03-home and 06-usage, and only those two were shot again. The base commit, rendered on the same VM, scores 0.0706 and 0.1812 on them. 03-home is now 0.0669. Its bands from 211 and 316 CSS px fell from 0.072 and 0.125 to 0.061 and 0.106, because the copy beside the ring now shows 「18 分钟」 as the design does. 06-usage is now 0.0828. Its four bands from 422 CSS px fell from 0.260, 0.444, 0.273 and 0.172 to 0.082, 0.043, 0.145 and 0.108, because the 每天上限 slider now sits where the design puts it. The base render reproduces the committed 01-login, 04-summary, 05-attention, 08-roles and 10-profile shots byte for byte. It does not reproduce the committed 02-consent, 03-home, 06-usage and 09-memory shots, so those four came from an earlier state of their pages. 02-consent and 09-memory stay as committed, and a rerun scores them 0.2678 and 0.2978.
+
 ### Where the remaining difference sits
 
 `diff-bands.js` splits each pair into eight bands of 211 device px, about 105 CSS px each, and prints the diffRatio of each band. The columns below are the band's top edge in CSS px.
@@ -98,10 +100,10 @@ The consent change reshot only 02-consent. diffRatio went from 0.0945 to 0.2740.
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | 01-login | 0.001 | 0.063 | 0.001 | 0.095 | 0.191 | 0.044 | 0.034 | 0.031 |
 | 02-consent | 0.019 | 0.088 | 0.043 | 0.139 | 0.098 | 0.415 | 0.854 | 0.537 |
-| 03-home | 0.016 | 0.066 | 0.072 | 0.125 | 0.033 | 0.116 | 0.122 | 0.020 |
+| 03-home | 0.016 | 0.065 | 0.061 | 0.106 | 0.032 | 0.116 | 0.122 | 0.017 |
 | 04-summary | 0.017 | 0.059 | 0.040 | 0.063 | 0.055 | 0.349 | 0.769 | 0.168 |
 | 05-attention | 0.004 | 0.008 | 0.030 | 0.082 | 0.052 | 0.077 | 0.108 | 0.088 |
-| 06-usage | 0.027 | 0.070 | 0.165 | 0.045 | 0.260 | 0.444 | 0.273 | 0.175 |
+| 06-usage | 0.024 | 0.066 | 0.150 | 0.045 | 0.082 | 0.043 | 0.145 | 0.108 |
 | 08-roles | 0.013 | 0.068 | 0.260 | 0.110 | 0.268 | 0.126 | 0.543 | 0.061 |
 | 09-memory | 0.039 | 0.076 | 0.029 | 0.100 | 0.110 | 0.377 | 0.688 | 0.969 |
 | 10-profile | 0.000 | 0.039 | 0.030 | 0.032 | 0.015 | 0.015 | 0.262 | 0.179 |
@@ -135,9 +137,9 @@ The checkbox reads 「我是孩子的监护人，已阅读并同意《隐私保�
 
 ![03-home, live page left, design right](mp-screenshots/side-by-side/03-home.png)
 
-The cards, radii, shadows, gaps, type scale and icon tiles follow the design. The three bands above 0.1 are the ring, the stat units and the memory card. The ring shows the per-session cap from the signed Runtime Profile, 30 with 「分钟 · 单次上限」, on a track that never fills. Before this change the caption read 「分钟上限」, and the page had a fill path for a used-minutes tally divided by that cap. A per-day total over a per-session cap is the wrong ratio, so that path is gone. When the profile has no cap, the ring reads 未设置 above 单次上限, where it used to show a made-up 30.
+The cards, radii, shadows, gaps, type scale and icon tiles follow the design. The three bands above 0.1 are the ring, the stat units and the memory card. The ring shows the daily budget from the signed Runtime Profile, 30 with 「分钟 · 每天上限」, on a track that never fills. The policy signs that budget as `daily_chat_seconds` in the extras of the `MAX_SESSION_SECONDS` obligation. When the profile carries no budget, as from an older server, the ring reads 未设置 above 每天上限. The design fills the ring to 60% and prints the percentage. Used minutes over the daily budget is the right ratio for that fill, but the page draws none.
 
-Home now reads `today_used_minutes` from `GET /v1/devices/{device_id}/session-limits`. The server always returns null, because nothing tallies minutes per day, so the line beside the ring reads 「用量暂未统计」. A number would show as 「今天聊了 N 分钟」 without a client release. `home-v4-dashboard.test.js` covers null, 18 and a failed call. 「今天对话 3 次」 replaces 「今天讲了 3 个故事」, and the 孩子的记忆 card replaces 今晚推荐, because no story field exists. The AI disclosure line replaces 「名字和数字均为示例」, and the pill names the fixture's role, 星澜.
+Home reads `today_used_minutes` from `GET /v1/devices/{device_id}/session-limits`. The control API sums the child's chat seconds since midnight in Asia/Shanghai from its chat usage ledger and returns whole minutes, so the fixture's 18 shows as 「今天聊了 18 分钟」. The field is null only when the ledger read fails, and then the line reads 「用量暂未统计」. `home-v4-dashboard.test.js` covers null, 18 and a failed call. 「今天对话 3 次」 replaces 「今天讲了 3 个故事」, and the 孩子的记忆 card replaces 今晚推荐, because no story field exists. The AI disclosure line replaces 「名字和数字均为示例」, and the pill names the fixture's role, 星澜.
 
 ### 04-summary
 
@@ -155,9 +157,11 @@ The attention detail page is new. Home's attention card and the review banner op
 
 ![06-usage, live page left, design right](mp-screenshots/side-by-side/06-usage.png)
 
-The slider card, the quiet-hours card, the online pill and the row chrome follow the design. The band from 211 CSS px is the ring. It shows the cap with 「分钟 · 单次上限」 and 「用量暂未统计」 for the same reason as home, and reads 未设置 when the profile has no cap. From 422 CSS px down, the difference is the design's second slider, 每天上限. The device enforces only the signed per-session `MAX_SESSION_SECONDS` limit, in `services/agent/src/voice_core/minor_session_limits.py`, so the page has one 单次上限 slider from 15 to 60 minutes. The design's 单次上限 runs from 10 to 30. 安静时段 shows the real window from 21:00 to 07:00 in place of 即将上线. `design-notes.md` now says the page shows that saved range. There is still no 每天上限 slider, because that cap is not enforced. That chip is wider, so the card copy wraps one character earlier. The eyebrow names the device with `devicePlaceName`, so it reads 「设备 · 孩子的星澜」.
+The slider card, the quiet-hours card, the online pill and the row chrome follow the design. The ring shows today's minutes over the daily budget, 18 / 30 分钟, and the title beside it reads 「今天还可以聊 12 分钟」. The design also fills the ring to 60% and prints 「已用 60% · 数字为示例」 where the page has the online pill, so the band from 211 CSS px still differs, at 0.150. When today's minutes are unknown, the ring shows the budget with 「分钟 · 每天上限」 and the title reads 「用量暂未统计」. When the profile carries no budget, the ring shows the per-session cap with 「分钟 · 单次上限」, and it reads 未设置 when the profile has no cap either.
 
-Before this change, the 隐私说明 and 管理与导出数据 rows came next. Now the 离线故事 card sits there, with the caption 「不联网也能听」 and one row per title from `GET /v1/devices/{device_id}/stories`. The first title, 小星星的枕头, is the last row above the tab bar. The privacy rows moved below the fold, and the full page grew by 288 px at 390. When the call fails or the list is empty, the card reads 「暂无可显示的离线故事」. The card shows titles only, with no play button, because the clips play on the robot. The band from 633 CSS px fell from 0.287 to 0.273.
+The slider card holds 单次上限 and 每天上限, split by a rule as in the design. 单次上限 runs from 15 to 60 minutes, where the design's runs from 10 to 30. 每天上限 stops only at the minutes in `daily_chat_minute_choices` from the GET, which are 15, 30, 45 and 60. The page hides that slider when the GET carries no choices, so it never sends `daily_chat_minutes` to an older server. 安静时段 shows the real window from 21:00 to 07:00 in place of 即将上线. That chip is wider, so the card copy wraps one character earlier. `design-notes.md` now says the page shows that saved range. The eyebrow names the device with `devicePlaceName`, so it reads 「设备 · 孩子的星澜」.
+
+Before the stories change, the 隐私说明 and 管理与导出数据 rows came next. Now the 离线故事 card sits there, with the caption 「不联网也能听」 and one row per title from `GET /v1/devices/{device_id}/stories`. With the second slider above it, only the top edge of that card shows above the tab bar. The privacy rows sit below the fold, and the full page is 3084 px tall at 390, 129 px more than with one slider. When the call fails or the list is empty, the card reads 「暂无可显示的离线故事」. The card shows titles only, with no play button, because the clips play on the robot.
 
 ### 08-roles
 
@@ -179,19 +183,18 @@ Three content differences remain. The title names the child, 乐乐的记忆, wh
 
 The page has the design's title, the account card with 「已绑定 1 台设备」, the device card with the mascot, and the four rows 设备管理, 授权与隐私说明, 帮助与反馈 and 关于. 帮助与反馈 is WeChat's native feedback button. 授权与隐私说明 opens the raw-audio consent page when that capability is open, and WeChat's privacy guideline otherwise. The role and custom persona rows moved to the 角色 tab.
 
-关于 opens the same centered card as account deletion. The title is 「关于 Memoria」. One button, 「知道了」, closes it, and so does a tap on the scrim. Guests can open it. Each body line is its own left-aligned text block. The body starts with 「陪孩子聊天、讲故事的 AI 助手。」 and ends with the version. The lines between come from `chat_llm_providers` on `GET /v1/account/delivered-capabilities`, which the profile page stores on `chatLlmProviders`. Control API builds that list from `LLM_PROVIDER` and `LLM_FAILOVER_ENABLED`. `deepseek` and `bailian_deepseek` map to the family `deepseek`. `qwen` maps to `qwen`. When `LLM_FAILOVER_ENABLED` is true, the list also includes `qwen`. Duplicates drop out, and `deepseek` stays before `qwen`.
+关于 opens the same centered card as account deletion. The title is 「关于 Memoria」. One button, 「知道了」, closes it, and so does a tap on the scrim. Guests can open it. Each body line is its own left-aligned text block. The body starts with 「陪孩子聊天、讲故事的 AI 助手。」 and ends with the version. The lines between come from `chat_llm_providers` on `GET /v1/account/delivered-capabilities`, which the profile page stores on `chatLlmProviders`. Control API returns the families from the voice agent's last heartbeat, so the list names the chat models the agent builds. The agent maps its `LLM_PROVIDER` to a family. `deepseek` and `bailian_deepseek` map to `deepseek`, and `qwen` maps to `qwen`. When the agent's `LLM_FAILOVER_ENABLED` is true, the agent also builds the qwen backup and reports `qwen`. Duplicates drop out, and `deepseek` stays before `qwen`. Before the agent's first heartbeat, the list is empty.
 
-A guest, a payload that omits `chat_llm_providers`, and an empty list all show the DeepSeek filing only. `profile-v4.test.js` renders the card in a develop build when the loaded payload omits the field. The lines are:
+A guest, a payload that omits `chat_llm_providers`, and an empty list show no filing line. `profile-v4.test.js` renders the card in a develop build when the loaded payload omits the field. The lines are:
 
 ```text
 关于 Memoria
 陪孩子聊天、讲故事的 AI 助手。
-对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）
 开发版
 知道了
 ```
 
-`chat_llm_providers: ["deepseek"]` uses those same lines. `["qwen"]` replaces the filing line with 「对话大模型：通义千问（网信算备330110507206401230035号，登记号 ZheJiang-TongYiQianWen-20230901）」. `["deepseek", "qwen"]` inserts 「对话可能由 DeepSeek 或阿里云通义千问生成」 and then the DeepSeek filing and the 通义千问 filing. Both filings start with 「对话大模型：」. None of the lines contain 「备用」.
+`chat_llm_providers: ["deepseek"]` adds 「对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）」 between the intro and the version. `["qwen"]` adds 「对话大模型：通义千问（网信算备330110507206401230035号，登记号 ZheJiang-TongYiQianWen-20230901）」 there instead. `["deepseek", "qwen"]` adds 「对话可能由 DeepSeek 或阿里云通义千问生成」 and then the DeepSeek filing and the 通义千问 filing. Both filings start with 「对话大模型：」. None of the lines contain 「备用」.
 
 The device card reads 孩子的星澜 with 已绑定设备, not 小乐 with 在线, because the profile page does not fetch presence. The two bottom bands are the 账号 group with 账号编号, 退出当前设备, 退出所有设备 and 永久注销, which the design does not show. The design's 「绑定新设备请在 Memoria 小程序中完成」 is gone, because this is the mini program and binding lives on the 设备 tab. The version line reads 「版本 x.y.z」 in a release build and 开发版 or 体验版 before release, never 「版本 0.1 设计稿」.
 
@@ -209,14 +212,14 @@ These come from WeChat or the test machine, and no page change removes them.
 
 ### Differences the data and copy rules require
 
-- Used minutes. Home reads `today_used_minutes` from `GET /v1/devices/{device_id}/session-limits` and passes it to the card. The field is typed as always null, because nothing tallies minutes per day, so home shows 「用量暂未统计」. The ring shows the per-session cap and does not fill.
+- Used minutes. Home and device read `today_used_minutes` from `GET /v1/devices/{device_id}/session-limits`, which the control API sums from its chat usage ledger. Both rings show minutes and never a percentage, and neither ring fills.
 - Stories. The firmware holds three offline story clips, `kOfflineStoryCount = 3` in `firmware/esp32/overlay/files/main/memoria/memoria_offline_menu.h`. The clips are Opus recordings copied in by hand. `firmware/esp32/scripts/build_offline_stories.py` checks them and writes `stories/index.json`, which marks all three as production clips and their voice as 「trial/demo only pending Volcengine terms」. The firmware titles are 小星星的枕头, 月亮不着急 and 大熊和森林里的悄悄话. The device page lists them under 离线故事 from `GET /v1/devices/{device_id}/stories`. The control API copies the titles in `OFFLINE_STORIES`, and `test_offline_stories.py` fails when the copy and `index.json` disagree. The design catalogue titles, 大熊和森林里的悄悄话, 小兔的纸船月亮 and 小狐狸收集星星, appear nowhere. Home still shows 「今天对话 N 次」 in place of a story count or 今晚推荐, and 07-content has no page, because the app cannot play a story.
-- Daily cap. The signed Runtime Profile carries only `MAX_SESSION_SECONDS` and `QUIET_HOURS` for a minor, in `services/agent/src/voice_core/minor_session_limits.py`. The guardian writes them with `PUT /v1/devices/{device_id}/session-limits` and can read them back with the GET, which has no daily field. Nothing enforces a per-day budget, so 06-usage has one 单次上限 slider. A slider save with no stored quiet window sends `quiet_hours: null` instead of writing 21:00 to 07:00.
+- Daily cap. The policy signs a minor's daily budget as `daily_chat_seconds` in the extras of `MAX_SESSION_SECONDS`. The budget is 30 minutes unless the guardian picks 15, 45 or 60 with `daily_chat_minutes` on `PUT /v1/devices/{device_id}/session-limits`. Before a session starts, the voice agent asks the control API for today's total. Once that total reaches the budget, the agent says 「今天的聊天时间用完啦，明天再来找我。」 and the robot goes to standby. The day turns over at midnight in Asia/Shanghai. When the session closes, the agent reports its seconds to the ledger before it publishes the session recap. The PUT replaces the per-session cap and the quiet window, so every slider save resends both. A slider save with no stored quiet window sends `quiet_hours: null` instead of writing 21:00 to 07:00.
 - Battery. No battery level appears, because no API field backs it.
 - 12356 appears only as attention tip 4. None of 危机, 伙伴, 好朋友, 家人, 推送 or 通知 appears in the UI.
 - Subscription and push UI stays behind `subscriptionPushEnabled`, which defaults to false.
 - Fixture names, roles, dates and counts replace the design's samples and its 「数字为示例」 captions.
-- Usage has one per-session slider, because the device has no daily cap.
+- The 单次上限 slider runs from 15 to 60 minutes, the range the control API accepts, where the design's runs from 10 to 30.
 - Five consent facts and two draft links differ from the design, as listed under 02-consent.
 - The attention copy uses TA.
 - 07-content has no page.
@@ -241,7 +244,7 @@ All 145 pass. `screenshot-pages.js` runs the same checks while it writes the PNG
 
 ## Page screenshots
 
-`mp-screenshots/pages/` holds one PNG per page state and view, named `<slug>-<view>.png`. The 390 full-page and 320 shots are committed, 58 files and 3.9 MB. The 375, 430 and large-font shots add 5.7 MB, so `pages/.gitignore` excludes them and `node scripts/screenshot-pages.js` regenerates them.
+`mp-screenshots/pages/` holds one PNG per page state and view, named `<slug>-<view>.png`. The 390 full-page and 320 shots are committed, 58 files and 3.9 MB. The 375, 430 and large-font shots add 5.7 MB, so `pages/.gitignore` excludes them and `node scripts/screenshot-pages.js` regenerates them. The daily chat limit change reshot `home` and `device` and took only their rows of `results.json` from the new run. At its base commit, the committed `auth`, `child-memory` and `child-memory-archive` shots already differed from what those pages render, and they stay as committed. `device-onboarding-progress` renders a few pixels differently from run to run at 390 and 430.
 
 The 29 page states are these:
 
@@ -307,7 +310,7 @@ These numbers come from one run at the 390 view.
 | device-onboarding-progress | 1.3 | 1.4 | 33 | 3 | 1371 | 2347 |
 | device-onboarding-complete | 1.3 | 1.4 | 34 | 3 | 1371 | 2316 |
 
-After the session-limits and stories change, home and device were measured again. Home makes 3 calls, the largest 2165 B, 2367 B in total. Its data no longer holds the ring percent or a quiet-hours line. Device makes 7 calls, the largest 4492 B, 5291 B in total. Its data now holds the three story titles. The table keeps the 2026-10-14 run.
+After the session-limits and stories change, home and device were measured again. Home makes 3 calls, the largest 2165 B, 2367 B in total. Its data no longer holds the ring percent or a quiet-hours line. Device makes 7 calls, the largest 4492 B, 5291 B in total. Its data now holds the three story titles. After the daily chat limit change, home makes 3 calls, the largest 2162 B, 2364 B in total. Device makes 7 calls, the largest 4659 B, 5458 B in total, because its data now holds the daily slider's stops and today's minutes. The table keeps the 2026-10-14 run.
 
 The test budget per state is at most 16 setData calls, no call over 16 KiB and at most 32 KiB in total. The largest call in the table is 4323 B on device, and the most calls are 11 on profile and guardian. home, device and device-onboarding load slowest because each is the first state of its page in the run and pays for the first require of its modules. The later states of home and device-onboarding load in 1.2 to 1.6 ms. That cause is inferred from the pattern, not profiled.
 
@@ -326,7 +329,7 @@ Frame intervals sit at 16.7 ms, the 60 Hz frame clock of headless Chrome on the 
 
 ### Package size
 
-The shipped files total 1949571 B, 1903.9 KiB of WeChat's 2048 KiB main package limit before minification. `package-size.js` follows `packOptions.ignore` in `project.config.example.json` plus the folders the runtime never loads. It skips `tests`, `design-preview`, `scripts`, `node_modules`, `assets/companions`, `package.json`, `package-lock.json`, `project.config*.json` and Markdown files. The profile mascot, `assets/ui/v4/mascot-happy.jpg`, adds 32.4 KiB.
+The shipped files total 1926019 B, 1880.9 KiB of WeChat's 2048 KiB main package limit before minification. The base commit of the daily chat limit change measures 1876.5 KiB the same way, so that change adds 4.4 KiB, most of it in `pages/device`. `package-size.js` follows `packOptions.ignore` in `project.config.example.json` plus the folders the runtime never loads. It skips `tests`, `design-preview`, `scripts`, `node_modules`, `assets/companions`, `package.json`, `package-lock.json`, `project.config*.json` and Markdown files. The profile mascot, `assets/ui/v4/mascot-happy.jpg`, adds 32.4 KiB.
 
 | Folder | Size (KiB) |
 |---|---:|
@@ -335,9 +338,9 @@ The shipped files total 1949571 B, 1903.9 KiB of WeChat's 2048 KiB main package 
 | utils/device-onboarding | 166.1 |
 | assets/voices | 145.8 |
 | assets/bg | 138.7 |
-| pages/device | 101.3 |
+| pages/device | 104.8 |
 | utils/device-binding.js | 60.4 |
-| utils/api.js | 51.8 |
+| utils/api.js | 52.2 |
 | pages/bind | 44.9 |
 | generated/multi-subject-contracts.js | 42.5 |
 
@@ -347,9 +350,9 @@ Each v4 test file loads the live page through the harness, drives its handlers t
 
 `home-v4-dashboard.test.js` has 13 tests.
 
-- The home ring shows the per-session cap without inventing used minutes.
+- The home ring shows the daily budget without inventing minutes the ledger could not read.
 - Home shows today's minutes only when the session-limits read carries them, as 「今天聊了 18 分钟」 with no percent, and 「用量暂未统计」 when the call fails.
-- The home ring reads 未设置 when the signed profile carries no session cap.
+- The home ring reads 未设置 when the signed profile carries a session cap but no daily budget.
 - Home counts only today's summaries and today's conversations.
 - Home pins the attention card with its time and the open-to-pin meta.
 - Home hides the safety subscribe card unless subscription push is enabled.
@@ -396,7 +399,7 @@ Each v4 test file loads the live page through the harness, drives its handlers t
 
 - The usage screen shows the real quiet window as the card chip, then the offline stories and the privacy rows.
 - Releasing the 单次上限 slider at 60 saves 60 minutes with the stored quiet window.
-- The usage slider names the per-session limit the device enforces, never a daily cap.
+- The usage screen counts today's chat against the daily budget, as 「18 / 30 分钟」 and 「今天还可以聊 12 分钟」, and shows the 每天上限 slider under the 单次上限 slider.
 - The usage screen reads 未设置 when the signed profile has quiet hours but no cap.
 
 `mp-slider.test.js` has 10 tests.
@@ -430,14 +433,15 @@ Each v4 test file loads the live page through the harness, drives its handlers t
 - A guest return clears a leftover 「请先使用微信登录。」 so it does not sit above the empty state.
 - The home memory card opens the summaries section.
 
-`profile-v4.test.js` has 9 tests.
+`profile-v4.test.js` has 10 tests.
 
 - Signed in, the page shows the account card, the robot card and the design's four menu rows.
 - Returning to the tab keeps the robot's name on screen while the profile refreshes.
-- A guest still gets privacy, feedback and about, and 微信登录 opens the login page. 关于 on that guest page is the DeepSeek filing only.
+- A guest still gets privacy, feedback and about, and 微信登录 opens the login page. 关于 on that guest page shows the intro and 开发版 only.
 - 帮助与反馈 is WeChat's native feedback button.
-- 关于 names the filed chat model and the release version, or the build channel before release. With no `chat_llm_providers` the card's lines are the intro, 「对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）」, and 开发版. Those lines do not contain qwen, 通义, or 千问. Opening 关于 does not call `wx.showModal`.
-- `chat_llm_providers: ["deepseek"]` keeps that same DeepSeek line, and the page stores the list.
+- 关于 shows the release version, or the build channel before release. With no `chat_llm_providers` the card's lines are the intro and 开发版, with no model filing. Opening 关于 does not call `wx.showModal`.
+- `chat_llm_providers: []`, before the voice agent reports its models, shows no model filing either.
+- `chat_llm_providers: ["deepseek"]` shows 「对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）」 between the intro and 开发版, and the page stores the list.
 - `chat_llm_providers: ["qwen"]` shows 「对话大模型：通义千问（网信算备330110507206401230035号，登记号 ZheJiang-TongYiQianWen-20230901）」 as the only filing line.
 - `chat_llm_providers: ["deepseek", "qwen"]` shows 「对话可能由 DeepSeek 或阿里云通义千问生成」, then both filings, and the page stores that list. The joined lines do not contain 「备用」.
 - 授权与隐私说明 opens the consent page when raw-audio consent is open, and the WeChat privacy guideline otherwise.
@@ -513,8 +517,8 @@ Older tests that asserted v3 strings, structure or removed rows now assert the v
 - `sensitive-entry-gates.test.js` asserts that a closed raw-audio capability opens the privacy guideline with no toast.
 - `guardian-flow.test.js`, `home-status-board.test.js` and `no-realtime-media-gate.test.js` follow the profile's new menu.
 - `bind-flow.test.js` completes a parent-for-child bind without a subscribe prompt while the push flag is off.
-- `device-page.test.js` asserts the 单次上限 label in the usage card. It also asserts that a slider save with no stored quiet window sends `quiet_hours: null`. Its mock routes `GET /stories`, and it checks the three titles and the empty line.
-- `home-status-board.test.js` asserts that an unset profile gives no cap, no quiet label and no night mode.
+- `device-page.test.js` asserts the 单次上限 label in the usage card. It also asserts that a slider save with no stored quiet window sends `quiet_hours: null`. Its mock routes `GET /stories`, and it checks the three titles and the empty line. Releasing 每天上限 sends `daily_chat_minutes` with the current cap and quiet window, and a 单次上限 save leaves that field out. A slider released while another save is in flight sends nothing. The ring reads today's minutes over the budget and the minutes left, and the title falls back to 「用量暂未统计」 when today's minutes are null or the read fails.
+- `home-status-board.test.js` asserts that an unset profile gives no cap, no quiet label and no night mode, and that the trial card takes its limit from the signed daily budget.
 - `guest-login-flow.test.js` asserts the 微信一键登录 hero on home and the guest prompt on the review tab.
 
 ## Gaps
@@ -522,8 +526,9 @@ Older tests that asserted v3 strings, structure or removed rows now assert the v
 - Nothing ran in WeChat DevTools, through miniprogram-automator or on a phone. Images and timings come from Chrome on the VM, and native components such as `switch` and `picker` are approximations.
 - CI runs only on pull requests, and no pull request is open for this branch, so CI has not run `v4-layout.test.js`. If the CI runner lacks Chrome, the layout test skips. If it lacks CJK fonts, the text metrics differ from these results.
 - No screen is pixel-identical to the design. 01-login scores its floor. The others sit 0.002 to 0.27 above their floors, for the reasons listed under each image.
-- The home ring no longer fills, which differs from the v4 design. Its caption reads 「分钟 · 单次上限」, so a parent no longer reads the cap as a daily figure. A filled ring needs a daily cap, and adding one to the backend is a product decision.
-- `today_used_minutes` is always null. The usage line fills in only once the server tallies minutes per day, and no such tally exists.
+- The home and device rings do not fill, which differs from the v4 design. Both now read today's minutes against the daily budget, so used over budget is the ratio a fill would draw.
+- `today_used_minutes` counts finished sessions only. The voice agent reports a session's seconds when the session closes, so a session in progress is missing from the number. A report that still fails after its second attempt is lost, and the day's total misses that session.
+- Only the start of a session checks the daily budget. A session that starts below the budget runs to its per-session cap, so a day can pass the budget by up to one session.
 - The 离线故事 titles are a copy in the control API, `services/control_api/app/offline_stories.py`, guarded by a parity test against the firmware `index.json`. The list does not vary by firmware build.
 - The design's long-term memory rows carry a caption per field, such as 「孩子喜欢被这样叫」. The app shows each fact's date there. Swapping the dates for the captions is a product decision.
 - The profile no longer shows the 自动整理日常回顾 switch. The control API stores and exports `auto_summary`, but no summarizer reads it, so the switch changed nothing. It can return on the review tab once the server honours it.
