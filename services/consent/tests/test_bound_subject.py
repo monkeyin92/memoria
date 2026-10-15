@@ -7,12 +7,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from services.common.daily_chat_limit import DailyChatBudget
 from services.consent.authority import SubjectProof
 from services.consent.bound_subject import (
     MEMORY_CAPABILITIES,
     MINOR_SESSION_CAPABILITIES,
     BoundSubjectConsentService,
     BoundSubjectGrant,
+    DailyChatChange,
     IdentityEvidenceResolver,
 )
 from services.consent.evidence import BindingEvidence, ConsentParams
@@ -372,6 +374,53 @@ async def test_update_session_limits_replaces_the_guardians_limits(tmp_path: Pat
     assert await update(None, None) is True
     params = await limits()
     assert {params[capability] for capability in MINOR_SESSION_CAPABILITIES} == {ConsentParams()}
+
+
+async def test_update_session_limits_keeps_sets_or_resets_the_daily_budget(
+    tmp_path: Path,
+) -> None:
+    identity = await _identity(tmp_path)
+    parent, child_id, binding_id = await _parent_and_child(identity)
+    clock = [NOW]
+    service = BoundSubjectConsentService(
+        store=_AsyncStore(),  # type: ignore[arg-type]
+        identity=identity,
+        now=lambda: clock[0],
+    )
+    await service.grant(
+        BoundSubjectGrant(
+            actor_person_id=parent,
+            subject_person_id=child_id,
+            binding_id=binding_id,
+            kind="guardian",
+            capabilities=MINOR_SESSION_CAPABILITIES,
+            source_key="snapshot-session",
+            params=ConsentParams(max_session_seconds=1200, extras=(("app", "a"),)),
+        )
+    )
+
+    async def update(
+        seconds: int, daily_chat: DailyChatChange
+    ) -> tuple[bool, set[tuple[int | None, tuple[tuple[str, str], ...]]]]:
+        clock[0] += timedelta(minutes=1)
+        changed = await service.update_session_limits(
+            actor_person_id=parent,
+            subject_person_id=child_id,
+            binding_id=binding_id,
+            max_session_seconds=seconds,
+            quiet_hours=None,
+            daily_chat=daily_chat,
+        )
+        active = await service.active(
+            subject_person_id=child_id, binding_id=binding_id, binding_version=1
+        )
+        return changed, {(item.params.max_session_seconds, item.params.extras) for item in active}
+
+    budget = (("app", "a"), ("daily_chat_seconds", "2700"))
+    assert await update(1200, DailyChatBudget(45)) == (True, {(1200, budget)})
+    assert await update(1200, DailyChatBudget(45)) == (False, {(1200, budget)})
+    assert await update(2700, "keep") == (True, {(2700, budget)})
+    assert await update(2700, "default") == (True, {(2700, (("app", "a"),))})
 
 
 async def test_update_session_limits_needs_the_guardians_own_session_consent(

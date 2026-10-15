@@ -3,10 +3,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from services.policy.context import canonical_runtime_purpose_for_capability
-from services.policy.engine import PolicyContext, PolicyEngine
+from services.policy.engine import PolicyContext, PolicyDecision, PolicyEngine
 from services.policy.obligations import obligation_codes
 from services.policy.receipt_store import InMemoryPolicyReceiptWriter
 from services.policy.tests.fakes import (
+    FakeConsentParams,
     make_binding,
     make_consent,
     make_consent_snapshot_ref,
@@ -622,6 +623,72 @@ def test_minor_chat_has_time_dependency_and_event_identity_guards() -> None:
         "AI_IDENTITY_CLARIFICATION",
         "NO_MODEL_TRAINING",
     )
+
+
+def _minor_session(capability: str, params: FakeConsentParams | None) -> PolicyDecision:
+    now = _context().evaluated_at
+    return PolicyEngine().decide(
+        _context(
+            capability=capability,
+            actor_id="person-child",
+            subject_id="person-child",
+            resource_owner_id="person-child",
+            subject_category="minor",
+            age_band="under_14",
+            speaker_state="confirmed",
+            relationship_roles=frozenset({"self"}),
+            current_session_mode="student_minor",
+            data_classification="ephemeral" if capability == "chat" else "study_progress",
+            relationship_evidence=(
+                make_relationship(
+                    relation_type="guardian_of", target_person_id="person-child", now=now
+                ),
+            ),
+            consent_evidence=(
+                make_consent(
+                    capability=capability,  # type: ignore[arg-type]
+                    subject_id="person-child",
+                    actor_id="person-parent",
+                    actor_kind="guardian",
+                    purpose=canonical_runtime_purpose_for_capability(capability),  # type: ignore[arg-type]
+                    params=params,
+                    now=now,
+                ),
+            ),
+            binding_evidence=make_binding(now=now),
+        )
+    )
+
+
+@pytest.mark.parametrize("capability", ["chat", "tutor", "english_practice"])
+@pytest.mark.parametrize(
+    ("params", "expected"),
+    [
+        (None, (1800, (("daily_chat_seconds", "1800"),), ("21:00", "07:00"))),
+        (
+            FakeConsentParams(
+                max_session_seconds=1200,
+                quiet_hours=("22:00", "06:00"),
+                extras=(("app", "a"), ("daily_chat_seconds", "2700")),
+            ),
+            (1200, (("daily_chat_seconds", "2700"),), ("22:00", "06:00")),
+        ),
+    ],
+)
+def test_minor_session_signs_the_guardians_limits_and_daily_budget(
+    capability: str,
+    params: FakeConsentParams | None,
+    expected: tuple[object, object, object],
+) -> None:
+    decision = _minor_session(capability, params)
+    signed = {item.code.value: item.params for item in decision.obligations}
+
+    assert decision.effect == "allow_with_obligations"
+    assert (
+        signed["MAX_SESSION_SECONDS"].max_session_seconds,
+        signed["MAX_SESSION_SECONDS"].extras,
+        signed["QUIET_HOURS"].quiet_hours,
+    ) == expected
 
 
 def test_unknown_tutor_is_temporary_and_cannot_write_progress() -> None:

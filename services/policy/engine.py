@@ -57,6 +57,7 @@ from packages.contracts.generated.python.multi_subject_contracts import (
     PolicyObligation as GeneratedPolicyObligation,
 )
 
+from services.common.daily_chat_limit import effective_daily_chat_budget, with_daily_chat_budget
 from services.policy.action_fence import capture_authority_hash
 from services.policy.context import (
     PolicyContext,
@@ -293,10 +294,10 @@ def _params(
     )
 
 
+_DEFAULT_MAX_SESSION_SECONDS: Final = 1800
 DEFAULT_QUIET_HOURS: Final[tuple[str, str]] = ("21:00", "07:00")
 
 _OBLIGATION_PARAMS: Final[dict[PolicyObligationCode, GeneratedObligationParams]] = {
-    "MAX_SESSION_SECONDS": _params(max_session_seconds=1800),
     "QUIET_HOURS": _params(quiet_hours=DEFAULT_QUIET_HOURS),
     "RETENTION_TTL": _params(retention_ttl_seconds=30 * 24 * 3600),
 }
@@ -317,13 +318,23 @@ def _obligations(
 def _session_params(
     code: PolicyObligationCode, consent: ConsentEvidencePort | None
 ) -> GeneratedObligationParams | None:
-    """The guardian's own session limits from the binding consent (P0-04 D3)."""
+    """The guardian's own session limits from the binding consent (P0-04 D3).
+
+    MAX_SESSION_SECONDS always carries the daily chat budget in its extras.
+    Policy attaches that obligation only to a minor's chat, tutor and
+    english_practice, which are exactly the sessions the budget governs.
+    """
 
     params = getattr(consent, "params", None)
     max_seconds = getattr(params, "max_session_seconds", None)
     quiet_hours = getattr(params, "quiet_hours", None)
-    if code == "MAX_SESSION_SECONDS" and max_seconds:
-        return _params(max_session_seconds=int(max_seconds))
+    if code == "MAX_SESSION_SECONDS":
+        return _params(
+            max_session_seconds=int(max_seconds or _DEFAULT_MAX_SESSION_SECONDS),
+            extras=with_daily_chat_budget(
+                (), effective_daily_chat_budget(getattr(params, "extras", ()))
+            ),
+        )
     if code == "QUIET_HOURS" and quiet_hours:
         start, end = quiet_hours
         return _params(quiet_hours=(str(start), str(end)))
