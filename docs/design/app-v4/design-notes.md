@@ -20,8 +20,11 @@
 
 ## 关于弹窗
 - 「我的」页点「关于」，弹出微信系统弹窗，标题「关于 Memoria」，只有一个「知道了」按钮。
-- `config.js` 里的 `LLM_FAILOVER_ENABLED` 默认是 `false`。默认正文三行，依次是「陪孩子聊天、讲故事的 AI 助手。」「对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）」和版本。版本行在正式版写「版本 x.y.z」，开发版和体验版只写渠道名。默认不写通义千问。
-- 只有 `LLM_FAILOVER_ENABLED` 严格等于 `true` 时，正文才是五行。首行仍是「陪孩子聊天、讲故事的 AI 助手。」。接下来三行依次是「对话可能由 DeepSeek 或阿里云通义千问生成」「DeepSeek（备案号 Beijing-DeepseekChat-202404280016）」「通义千问（算法备案号 网信算备330110507206401230035号，模型备案号 ZheJiang-TongYiQianWen-20230901）」。最后仍是版本行。开关缺失，或值不是 `true`，正文仍是默认三行。
+- 正文以「陪孩子聊天、讲故事的 AI 助手。」开头，以版本结尾。版本行在正式版写「版本 x.y.z」，开发版和体验版只写渠道名。
+- 中间几行来自 `GET /v1/account/delivered-capabilities` 的 `chat_llm_providers`。「我的」页把这个数组存在 `chatLlmProviders`。control-api 用 `LLM_PROVIDER` 和 `LLM_FAILOVER_ENABLED` 算出备案族。`deepseek` 和 `bailian_deepseek` 都归入 `deepseek`，`qwen` 归入 `qwen`。`LLM_FAILOVER_ENABLED` 为 true 时再加上 `qwen`。同一族只保留一次，`deepseek` 在前，`qwen` 在后。
+- 列表是 `["deepseek"]`，或字段缺失、为空时，中间一行是「对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）」。未登录时同样只显示这一行。
+- 列表是 `["qwen"]` 时，中间一行是「通义千问（网信算备 330110507206401230035 号，登记号 ZheJiang-TongYiQianWen-20230901）」。
+- 列表是 `["deepseek", "qwen"]` 时，中间先写「对话可能由 DeepSeek 或阿里云通义千问生成」，再写上面两行备案。
 
 ## 两轮视觉检查
 - 第 1 轮：关注详情页的「我知道了」按钮被裁掉；使用时长页的安静时段卡压在底栏下面；首页圆环和右侧都显示 18，信息重复；内容页推荐标题压在插画上；首页推荐缩略图里的吉祥物裁切奇怪。
