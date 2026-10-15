@@ -623,8 +623,6 @@ def test_board_wires_the_mascot_display() -> None:
     display = (BOARD_DIR / "memoria_mascot_display.cc").read_text(encoding="utf-8")
     assert "bg_image_src" in display
     assert "emoji_box_, LV_OBJ_FLAG_HIDDEN" in display
-    # audio_input 8/core0, audio_afe 3/unpinned, opus_codec 5/core1,
-    # audio_output 6/core1, this task 1/core1.
     assert '"mascot_anim", 6144, this, 1,' in display
     assert "brand_mark.mma" in display
     assert "scene_->SetBrand(&brand_)" in display

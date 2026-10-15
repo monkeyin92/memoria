@@ -217,7 +217,6 @@ void MemoriaMascotDisplay::SetupUI() {
     }
     scene_->StartIntro(NowMs());
     running_.store(true);
-    // audio_input 8/core0, audio_afe 3/unpinned, opus_codec 5/core1, audio_output 6/core1, this task 1/core1.
     if (xTaskCreatePinnedToCore(&MemoriaMascotDisplay::AnimationTask, "mascot_anim", 6144, this, 1,
                                 &task_, 1) != pdPASS) {
         task_ = nullptr;

@@ -989,9 +989,8 @@ def test_memoria_opus_outranks_mascot() -> None:
     assert '}, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_);' in PATCH_0023
 
 
-def test_encode_drop_log_stays_one_hertz_and_the_queue_stays_two() -> None:
-    # Upstream audio_service.cc owns the 1 Hz drop log. This job does not clone
-    # that tree, so a patch that deletes the log or the queue depth fails here.
+def test_encode_drop_log_and_queue_depth_are_not_patched_away() -> None:
+    encode_drop_gate = "now - last_encode_drop_log_time_ >= 1000000"
     patches = sorted(Path(__file__).parents[1].joinpath("overlay", "patches").glob("*.patch"))
     saw_queue_depth = False
     for patch_path in patches:
@@ -1012,6 +1011,7 @@ def test_encode_drop_log_stays_one_hertz_and_the_queue_stays_two() -> None:
         assert ENCODE_DROP_LOG not in added_text
         assert "encode_drop_count" not in removed_text
         assert "last_encode_drop_log_time_" not in removed_text
+        assert encode_drop_gate not in removed_text
         for line in text.splitlines():
             match = _ENCODE_QUEUE_DEPTH.search(line)
             if match is None:
