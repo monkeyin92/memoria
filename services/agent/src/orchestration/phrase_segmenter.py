@@ -11,6 +11,7 @@ from services.agent.src.contracts.ids import GenerationFence
 
 STRONG_BOUNDARY = set("。！？；\n")
 WEAK_BOUNDARY = set("，、：")
+_TERMINAL_PUNCT = frozenset("。！？；!?")
 HARD_LIMIT = 42
 FIRST_TARGET_MIN = 6
 WEAK_SUBMIT_MIN = 12
@@ -34,20 +35,33 @@ _PROTECTED = re.compile(
     r"\d+\.\d+"
     r")"
 )
+_DUP_TERMINAL_PUNCT = re.compile(r"([。！？；!?])(?:\s*[。！？；!?])+")
+
+
+def collapse_terminal_punctuation(text: str) -> str:
+    """Keep one terminal mark when sentence endings are stacked by joins or newlines."""
+
+    return _DUP_TERMINAL_PUNCT.sub(r"\1", text)
+
+
+def _punctuation_only(text: str) -> bool:
+    return bool(text) and all(ch in _TERMINAL_PUNCT or ch.isspace() for ch in text)
 
 
 def normalize_for_tts(text: str) -> tuple[str, str]:
     """Return (tts_text, canonical_text). Does not alter amounts/dates/order ids."""
     canonical = text
     t = _MD_STRIP.sub(lambda m: m.group(5) if m.group(5) else "", text)
-    t = re.sub(r"\n{2,}", "。", t)
-    t = re.sub(r"\n", "。", t)
+    # A newline after a sentence ending is not a second sentence.
+    t = re.sub(r"([。！？；!?])[ \t]*\n+", r"\1", t)
+    t = re.sub(r"\n+", "。", t)
     t = re.sub(
         r"[\U0001F300-\U0001FAFF\U00002700-\U000027BF]+",
         "",
         t,
     )
     t = re.sub(r"[ \t]{2,}", " ", t).strip()
+    t = collapse_terminal_punctuation(t)
     return t, canonical
 
 
@@ -116,7 +130,14 @@ class PhraseSegmenter:
         if self.first_token_ns is None:
             self.first_token_ns = now
         tts_part, _ = normalize_for_tts(token)
-        self.buffer += tts_part
+        if not tts_part:
+            return []
+        if self.buffer and self.buffer[-1] in _TERMINAL_PUNCT:
+            while tts_part and (tts_part[0] in _TERMINAL_PUNCT or tts_part[0] in " \t"):
+                tts_part = tts_part[1:]
+            if not tts_part:
+                return self._drain(now_ns=now, force=False)
+        self.buffer = collapse_terminal_punctuation(self.buffer + tts_part)
         return self._drain(now_ns=now, force=False)
 
     def flush(self, *, end_of_stream: bool = False) -> list[PhraseSegment]:
@@ -131,10 +152,11 @@ class PhraseSegmenter:
                 break
             piece = self.buffer[: cut + 1]
             self.buffer = self.buffer[cut + 1 :]
-            if piece.strip():
+            if piece.strip() and not _punctuation_only(piece):
                 out.append(self._emit(piece))
         if force and self.buffer.strip():
-            out.append(self._emit(self.buffer))
+            if not _punctuation_only(self.buffer):
+                out.append(self._emit(self.buffer))
             self.buffer = ""
         return out
 
