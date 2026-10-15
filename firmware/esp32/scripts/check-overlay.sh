@@ -155,6 +155,27 @@ rg -Fq 'heap_caps_check_integrity_all(true)' "$MEMORIA_UPSTREAM_DIR/main/audio/a
     die "PlaySound must check heap integrity when poisoning is on"
 rg -Fq 'aec-ref delay lag_ms=' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
     die "ReadAudioData must log the software-reference versus mic delay"
+rg -Fq 'afe input hz=' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
+    die "boot must log the sample rate AudioInputTask feeds the AFE"
+rg -Fq 'get_samp_rate' "$MEMORIA_UPSTREAM_DIR/main/audio/engines/afe_audio_engine.cc" || \
+    die "AFE init must log the library feed sample rate"
+"$python_bin" - "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+read = text[text.index("bool AudioService::ReadAudioData"): text.index("void AudioService::AudioInputTask")]
+if "esp_ae_rate_cvt_process" not in read:
+    raise SystemExit("ReadAudioData must resample with esp_ae_rate_cvt_process before it returns")
+if read.index("codec_->InputData") > read.index("esp_ae_rate_cvt_process"):
+    raise SystemExit("ReadAudioData must read the codec before the 24 kHz to 16 kHz resampler")
+task = text[text.index("void AudioService::AudioInputTask"): text.index("void AudioService::AudioOutputTask")]
+feed_at = task.index("audio_engine_->Feed")
+read_at = task.rindex("ReadAudioData(", 0, feed_at)
+call = task[read_at:feed_at].split(")", 1)[0]
+if "16000" not in call:
+    raise SystemExit("AudioInputTask must request 16 kHz from ReadAudioData before Feed")
+PY
 rg -Fq 'reason=build_disabled' "$MEMORIA_UPSTREAM_DIR/main/application.cc" || \
     die "a playback-stop bisect image must log reason=build_disabled"
 rg -Fq 'kStandbyAfterPlaybackEnabled' "$MEMORIA_UPSTREAM_DIR/main/application.cc" || \

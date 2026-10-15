@@ -987,8 +987,9 @@ private:
     }
 
     // Idle does not read the codec, and the raw TDM hook lives inside Read.
-    // Play the sine and read matching input frames so the journal's slot lane
-    // contains the speaker while the tone is the only thing playing.
+    // One Arm covers the 1 kHz sine and the chirp that follows, so both land
+    // in the same 3 s journal. The chirp is 100 ms, which keeps the pair
+    // inside that window after codec enable.
     void HandleUsbTone() {
         auto* codec = GetAudioCodec();
         auto& audio = Application::GetInstance().GetAudioService();
@@ -1010,16 +1011,17 @@ private:
             ESP_LOGI(kUsbTag, "usb tone ignored reason=rate");
             return;
         }
-        constexpr int kFrames = 280;
+        constexpr int kSineFrames = 280;
+        constexpr int kSweepFrames = 10;
         const bool output_was_enabled = codec->output_enabled();
-        memoria::diag::Arm();
         codec->EnableInput(true);
         codec->EnableOutput(true);
+        memoria::diag::Arm();
         std::uint32_t phase = 0;
         std::vector<int16_t> play(static_cast<size_t>(frame));
         std::vector<int16_t> mic(static_cast<size_t>(frame) * static_cast<size_t>(codec->input_channels()));
-        int queued = 0;
-        for (int i = 0; i < kFrames; ++i) {
+        int sine_queued = 0;
+        for (int i = 0; i < kSineFrames; ++i) {
             if (memoria::FillBenchTone(play.data(), play.size(), rate, 1000, &phase, 12000) != play.size()) {
                 break;
             }
@@ -1027,13 +1029,30 @@ private:
             memoria::WritePlay(play.data(), play.size());
             codec->OutputData(play);
             codec->InputData(mic);
-            ++queued;
+            ++sine_queued;
+        }
+        const auto sweep_samples = static_cast<std::uint32_t>(frame * kSweepFrames);
+        std::uint32_t sweep_index = 0;
+        int sweep_queued = 0;
+        for (int i = 0; i < kSweepFrames; ++i) {
+            if (memoria::FillBenchSweep(play.data(), play.size(), rate, 300, 4000, &sweep_index, sweep_samples,
+                                        12000) != play.size()) {
+                break;
+            }
+            memoria::diag::RecordPlay(play.data(), play.size(), rate, 0);
+            memoria::WritePlay(play.data(), play.size());
+            codec->OutputData(play);
+            codec->InputData(mic);
+            ++sweep_queued;
         }
         codec->EnableInput(false);
         if (!output_was_enabled) {
             codec->EnableOutput(false);
         }
-        ESP_LOGI(kUsbTag, "usb tone hz=1000 rate=%d bits=16 frames=%d raw_slots=4", rate, queued);
+        ESP_LOGI(kUsbTag,
+                 "usb tone hz=1000 sweep_start_hz=300 sweep_end_hz=4000 sweep_ms=100 rate=%d bits=16 "
+                 "sine_frames=%d sweep_frames=%d raw_slots=4",
+                 rate, sine_queued, sweep_queued);
     }
 #endif
 
