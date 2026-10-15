@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
 from services.agent.src.contracts.ids import GenerationFence
+from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.voice_core.media_protocol import (
     PlaybackEventType,
     PlaybackProgress,
@@ -90,6 +92,7 @@ class _HeldReplyProvider(FakeMediaProvider):
 
 async def _open_device_session(
     session_id: str,
+    **registry_options: Any,
 ) -> tuple[MediaVoiceCoreRegistry, _HeldReplyProvider, _CapturingGenerationBridge, Any, Any]:
     provider = _HeldReplyProvider()
     bridge = _CapturingGenerationBridge()
@@ -97,6 +100,7 @@ async def _open_device_session(
         bridge=bridge,
         provider_factory=lambda _identity: provider,
         turn_endpoint_grace_s=0.01,
+        **registry_options,
     )
     registry.install()
     identity = _device_identity(session_id)
@@ -176,6 +180,32 @@ async def test_slow_reply_plays_filler_then_the_reply_in_one_generation() -> Non
             context.runtime.fence.generation_id
         }
         assert context.output.assistant_text == _REPLY_TEXT
+    finally:
+        provider.release_reply.set()
+        await registry.finalize_session(context.identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_latency_metrics_time_the_reply_not_the_filler() -> None:
+    metrics = MetricsRegistry()
+    registry, provider, bridge, session, context = await _open_device_session(
+        "llm-thinking-latency", metrics=metrics
+    )
+    stages = ("first_audio", "tts_first_frame")
+    before = {stage: len(metrics.latency_samples[stage]) for stage in stages}
+    try:
+        await _commit_spoken_turn(registry, session, context)
+        await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
+        during_filler = {stage: metrics.latency_samples[stage][before[stage] :] for stage in stages}
+        released_ns = time.monotonic_ns()
+        provider.release_reply.set()
+        await _wait_until(lambda: len(bridge.frames) == 2, timeout=2.0)
+
+        assert during_filler == {"first_audio": [], "tts_first_frame": []}
+        (first_audio,) = metrics.latency_samples["first_audio"][before["first_audio"] :]
+        assert context.turn_started_ns is not None
+        assert first_audio >= (released_ns - context.turn_started_ns) / 1_000_000_000
+        assert len(metrics.latency_samples["tts_first_frame"][before["tts_first_frame"] :]) == 1
     finally:
         provider.release_reply.set()
         await registry.finalize_session(context.identity.session_id)
