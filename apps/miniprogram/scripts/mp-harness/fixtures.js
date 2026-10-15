@@ -60,7 +60,7 @@ const RUNTIME_PROFILE = {
   subject_category: "minor",
   obligations: [
     { code: "QUIET_HOURS", params: { quiet_hours: ["21:00", "07:00"] } },
-    { code: "MAX_SESSION_SECONDS", params: { max_session_seconds: 1800 } },
+    { code: "MAX_SESSION_SECONDS", params: { max_session_seconds: 1800, extras: [["daily_chat_seconds", "1800"]] } },
   ],
   persona: { persona_id: "starlight" },
 };
@@ -215,7 +215,9 @@ function baseApi(overrides = {}) {
     getSessionLimits: async () => ({
       max_session_minutes: 30,
       quiet_hours: { start: "21:00", end: "07:00" },
-      today_used_minutes: null,
+      daily_chat_minutes: 30,
+      daily_chat_minute_choices: [15, 30, 45, 60],
+      today_used_minutes: 18,
     }),
     listPersonaAssignments: async () => ({ items: [] }),
     getPersonConsents: async () => ({ items: [] }),

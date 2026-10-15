@@ -14,7 +14,7 @@ function buildTrialDeviceCard({ online, runtimeProfile, usedMinutes } = {}) {
     statusLine: `${online === true ? "在线" : "离线"} · 已绑定`,
     usageKnown,
     usageUsedMinutes: usageKnown ? usedMinutes : null,
-    usageLimitMinutes: limits?.maxSessionMinutes ?? null,
+    usageLimitMinutes: limits?.dailyChatMinutes ?? null,
     quietHoursLabel: limits?.quietHoursLabel || "",
     nightModeOn: Boolean(limits?.quietStart && limits?.quietEnd),
   };
