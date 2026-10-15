@@ -4,6 +4,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from services.common.companion_response_safety import NAMELESS_IDENTITY_REPLY
+from services.common.llm_thinking_filler import LLM_THINKING_TEXT
 from services.tutor.prompts import TUTOR_STYLE
 
 COMPANION_STYLE = """
@@ -78,9 +79,11 @@ BRIDGE_PHRASES = (
     "刚才没有听清，可以再说一遍吗？",
     "现在连接不太稳定，我们再试一次。",
     "稍等，我想一下。",
+    LLM_THINKING_TEXT,
 )
 LIVE_LOOKUP_FILLER = BRIDGE_PHRASES[1]
 THINKING_FILLER = BRIDGE_PHRASES[4]
+LLM_THINKING_FILLER = LLM_THINKING_TEXT
 
 DEVICE_WAKE_PHRASES = (
     "我在。",
@@ -295,6 +298,7 @@ __all__ = [
     "BRIDGE_PHRASES",
     "COMPANION_STYLE",
     "LIVE_LOOKUP_FILLER",
+    "LLM_THINKING_FILLER",
     "THINKING_FILLER",
     "DEVICE_WAKE_PHRASES",
     "DEVICE_WAKE_GREETING_PHRASES",

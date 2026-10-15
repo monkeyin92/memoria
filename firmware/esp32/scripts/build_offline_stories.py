@@ -75,11 +75,12 @@ OFFLINE_LINES = (
     ("offline-menu-end-v1", "讲完啦。点一下屏幕，再选一个。"),
     ("offline-menu-idle-v1", "我先休息一下，点屏幕就能叫醒我。"),
     ("llm_unavailable", "我现在有点卡住了，等一会儿再来找我聊吧。"),
+    ("llm_thinking", "嗯，我想一想。"),
 )
 
 # Placeholders allowed until production voice is copied in. Each must carry
 # Appendix-E AIGC OpusTags (CONTENT_ID / SERVICE_PROVIDER / AI_GENERATED).
-PENDING_PLACEHOLDER_LINE_IDS = frozenset({"llm_unavailable"})
+PENDING_PLACEHOLDER_LINE_IDS = frozenset({"llm_unavailable", "llm_thinking"})
 REQUIRED_AIGC_TAG_KEYS = ("CONTENT_ID", "SERVICE_PROVIDER", "AI_GENERATED")
 
 BOARD_CLIPS = ("wo_zai_ne", "night_soothe")

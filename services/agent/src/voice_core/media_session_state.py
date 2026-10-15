@@ -23,6 +23,7 @@ from services.agent.src.voice_core.media_session_types import (
 )
 from services.agent.src.voice_core.playback_ledger import PlaybackLedger
 from services.agent.src.voice_core.reply_delivery import ReplyDeliveryLedger
+from services.common.llm_thinking_filler import LlmThinkingFiller
 
 
 @dataclass(slots=True)
@@ -154,4 +155,6 @@ class MediaVoiceSessionState:
     pending_missed_hearing_nudge: bool = False
     missed_hearing_nudge_count: int = 0
     last_missed_hearing_nudge_at: float | None = None
+    llm_thinking_filler: LlmThinkingFiller = field(default_factory=LlmThinkingFiller)
+    llm_thinking_task: asyncio.Task[None] | None = None
     closed: bool = False

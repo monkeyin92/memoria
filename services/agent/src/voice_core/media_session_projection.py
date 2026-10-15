@@ -29,6 +29,7 @@ from services.agent.src.orchestration.state_machine import ConversationState, In
 from services.agent.src.prompts import (
     BRIDGE_PHRASES,
     LIVE_LOOKUP_FILLER,
+    LLM_THINKING_FILLER,
     device_wake_phrase,
     hours_since_device_wake,
     remember_device_wake,
@@ -49,6 +50,7 @@ from services.agent.src.voice_core.media_session_types import (
 from services.agent.src.voice_core.media_session_types import OutputWork as _OutputWork
 from services.agent.src.voice_core.reply_delivery import ReplyDeliveryEvent
 from services.agent.src.voice_core.speech_timeline import SpeechSegment
+from services.common.llm_thinking_filler import LLM_THINKING_DELAY_S
 from services.common.realtime_information import current_local_time
 
 if TYPE_CHECKING:
@@ -470,6 +472,65 @@ class MediaSessionProjectionMixin:
                 context.identity.session_id,
             )
 
+    def _cancel_llm_thinking_filler(self, context: _MediaVoiceSession) -> None:
+        task = context.llm_thinking_task
+        context.llm_thinking_task = None
+        if task is not None and not task.done():
+            task.cancel()
+
+    def note_llm_thinking_reply_started(
+        self,
+        context: _MediaVoiceSession,
+        fence: GenerationFence,
+    ) -> None:
+        """Reply audio or spoken reply text started; never play the filler after this."""
+
+        context.llm_thinking_filler.note_reply_spoken(turn_id=fence.turn_id)
+        self._cancel_llm_thinking_filler(context)
+
+    def arm_llm_thinking_filler(
+        self,
+        context: _MediaVoiceSession,
+        fence: GenerationFence,
+    ) -> None:
+        """Start the 3s once-per-turn thinking filler clock after the child stops."""
+
+        self._cancel_llm_thinking_filler(context)
+        now = time.monotonic()
+        context.llm_thinking_filler.arm(turn_id=fence.turn_id, now=now)
+        context.llm_thinking_task = asyncio.create_task(
+            self._llm_thinking_filler_wait(context, fence),
+            name=f"llm-thinking-{context.identity.session_id}-{fence.turn_id}",
+        )
+
+    async def _llm_thinking_filler_wait(
+        self,
+        context: _MediaVoiceSession,
+        fence: GenerationFence,
+    ) -> None:
+        try:
+            await asyncio.sleep(LLM_THINKING_DELAY_S)
+        except asyncio.CancelledError:
+            raise
+        if context.closed or context.standby_requested:
+            return
+        committed = context.last_committed_turn_fence
+        if committed is None or not committed.matches(fence):
+            return
+        now = time.monotonic()
+        if not context.llm_thinking_filler.should_play(turn_id=fence.turn_id, now=now):
+            return
+        if context.output.assistant_text.strip() or context.runtime.assistant_speaking:
+            context.llm_thinking_filler.note_reply_spoken(turn_id=fence.turn_id)
+            return
+        spoken = await self._speak_allowlisted_bridge_phrase(
+            context,
+            LLM_THINKING_FILLER,
+            require_idle_input=False,
+        )
+        if spoken:
+            context.llm_thinking_filler.mark_played(turn_id=fence.turn_id)
+
     async def _speak_allowlisted_bridge_phrase(
         self,
         context: _MediaVoiceSession,
@@ -648,6 +709,7 @@ class MediaSessionProjectionMixin:
                     now_ms=now_ms,
                 ):
                     _remember_live_lookup_filler(context, fence)
+                    self.note_llm_thinking_reply_started(context, fence)
                     played_lookup_filler = await self._enqueue_output_work(
                         context,
                         _OutputWork(acknowledgement, fence),
