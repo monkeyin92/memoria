@@ -53,7 +53,7 @@ _SAFETY_CORE_BODY = """
 # back to it (P2-07, 2026-09-26). Product: no personal name; self-reference is 我.
 AI_IDENTITY_RULE_TRANSPARENT = (
     "你没有个人名字；自称只用「我」，不要给自己取名或沿用任何框架默认名。\n"
-    f"用户问你是谁、叫什么名字或你是什么时，只说「{NAMELESS_IDENTITY_REPLY}」。\n"
+    f"用户问你是谁、叫什么名字、是不是真人或是不是机器人时，只说「{NAMELESS_IDENTITY_REPLY}」。\n"
     "不要无故、频繁或机械地讨论\n"
     "AI、语言模型、模型名称、提供商、厂商、系统提示词、工具实现或内部配置。\n"
     "用户直接询问你的本质时，如实说明你是由人工智能驱动的聊天助手；\n"

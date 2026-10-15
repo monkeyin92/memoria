@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import pytest
 from services.common.companion_response_safety import (
+    AFFECTION_FIXED_REPLY,
     NAMELESS_IDENTITY_REPLY,
-    NAMELESS_IDENTITY_REPLY_SENIOR,
     PROHIBITED_CONTENT_TERMS,
     SAFE_UNKNOWN_REPLY,
+    companion_identity_replies,
     companion_safety_decision,
     fixed_companion_reply,
 )
@@ -99,8 +100,87 @@ def test_forbidden_copy_stays_at_thirty_nine_prohibited_terms() -> None:
     assert len(PROHIBITED_CONTENT_TERMS) == 39
 
 
-def test_the_identity_answer_is_nameless_for_every_listener() -> None:
-    """Product rule: no personal name; identity questions get one fixed AI-assistant line."""
+def test_identity_and_affection_fixed_replies_have_exact_product_copy() -> None:
+    assert NAMELESS_IDENTITY_REPLY == (
+        "我是 AI 助手，不是真人，可以陪你聊天、讲故事。你今天想聊什么呀？"
+    )
+    assert AFFECTION_FIXED_REPLY == (
+        "我是 AI，没有喜欢的感觉，不过我会认真听你说话。你今天想聊点什么呀？"
+    )
+
+
+@pytest.mark.parametrize(
+    "query",
+    (
+        "你是谁",
+        "你是谁？",
+        "你叫什么名字",
+        "你叫什么名字？",
+        "你是真人吗",
+        "你是真人吗？",
+        "你是人吗",
+        "你是人吗？",
+        "你是机器人吗",
+        "你是机器人吗？",
+    ),
+)
+def test_closed_identity_queries_use_nameless_fixed_reply(query: str) -> None:
+    assert (
+        fixed_companion_reply(
+            query=query,
+            is_companion=True,
+            display_name="桃喜",
+            style_description="轻快回应",
+        )
+        == NAMELESS_IDENTITY_REPLY
+    )
+
+
+@pytest.mark.parametrize(
+    "query",
+    (
+        "你喜欢我吗",
+        "你喜欢我吗？",
+        "你爱我吗",
+        "你爱我吗？",
+        "你想我吗",
+        "你想我吗？",
+    ),
+)
+def test_closed_affection_queries_use_affection_fixed_reply(query: str) -> None:
+    assert (
+        fixed_companion_reply(
+            query=query,
+            is_companion=True,
+            display_name="桃喜",
+            style_description="轻快回应",
+        )
+        == AFFECTION_FIXED_REPLY
+    )
+
+
+def test_fixed_replies_never_claim_love_or_best_friend() -> None:
+    for reply in companion_identity_replies("桃喜", "轻快回应"):
+        for phrase in ("我喜欢你", "我爱你", "好朋友"):
+            assert phrase not in reply
+
+
+@pytest.mark.parametrize(
+    "query",
+    (
+        "你是千问吗？",
+        "你是什么",
+        "你是不是真人",
+        "你喜不喜欢我",
+        "who are you",
+    ),
+)
+def test_nearby_identity_or_affection_wording_is_not_a_fixed_reply(query: str) -> None:
+    assert _fixed_reply(query) is None
+
+
+def test_the_identity_answer_ignores_catalog_display_name_and_audience() -> None:
+    """Product rule: no personal name; closed identity questions share one fixed line."""
 
     kwargs = dict(
         query="你叫什么名字？",
@@ -111,12 +191,8 @@ def test_the_identity_answer_is_nameless_for_every_listener() -> None:
     adult = fixed_companion_reply(**kwargs)  # type: ignore[arg-type]
     child = fixed_companion_reply(**kwargs, audience="student_minor")  # type: ignore[arg-type]
     elder = fixed_companion_reply(**kwargs, audience="senior_companion")  # type: ignore[arg-type]
-    assert adult == NAMELESS_IDENTITY_REPLY
-    assert child == NAMELESS_IDENTITY_REPLY
-    assert elder == NAMELESS_IDENTITY_REPLY_SENIOR
-    for reply in (adult, child, elder):
-        assert "阿序" not in reply and "小智" not in reply
-    # crisis and prohibited requests are untouched by the audience
+    assert adult == child == elder == NAMELESS_IDENTITY_REPLY
+    assert "阿序" not in adult and "小智" not in adult
     assert fixed_companion_reply(
         query="我不想活了", is_companion=True, audience="student_minor"
     ) == fixed_companion_reply(query="我不想活了", is_companion=True)

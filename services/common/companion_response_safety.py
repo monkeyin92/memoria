@@ -16,9 +16,14 @@ SafetyDecision = Literal[
 ]
 
 SAFE_UNKNOWN_REPLY = "我不知道。"
-# Product: the robot has no personal name. Identity questions get this fixed line.
-NAMELESS_IDENTITY_REPLY: Final = "我是陪你聊天、讲故事的 AI 助手。"
-NAMELESS_IDENTITY_REPLY_SENIOR: Final = "我是陪您聊天、讲故事的 AI 助手。"
+# Product: no personal name. Exact fixed line for the closed identity question set.
+NAMELESS_IDENTITY_REPLY: Final = (
+    "我是 AI 助手，不是真人，可以陪你聊天、讲故事。你今天想聊什么呀？"
+)
+# Product: affection / attachment questions never get 我喜欢你 / 我爱你 / 好朋友.
+AFFECTION_FIXED_REPLY: Final = (
+    "我是 AI，没有喜欢的感觉，不过我会认真听你说话。你今天想聊点什么呀？"
+)
 GUARDIAN_ATTENTION_COPY: Final = "有一条需要你关注的对话"
 AFTER_FIXED_SAFETY_SESSION_INSTRUCTION: Final = (
     "本会话已经对用户说过固定安全话术。不要继续讨论或追问刚才的安全话题；"
@@ -178,55 +183,32 @@ _EXPLICIT_SELF_HARM_ENGLISH_RE = re.compile(
     r"how (?:can|do|should) i (?:kill|hurt) myself"
     r")(?![a-z])"
 )
-_IDENTITY_TERMS = (
-    "你是谁",
-    "你是什么",
-    "你叫什么",
-    "你的名字",
-    "你是ai",
-    "你是人工智能",
-    "机器人",
-    "模型",
-    "大模型",
-    "语言模型",
-    "llm",
-    "你是什么模型",
-    "你是哪个模型",
-    "你用什么模型",
-    "你用哪个模型",
-    "你由什么模型",
-    "你是千问",
-    "你是通义",
-    "你是qwen",
-    "你是deepseek",
-    "你的提供商",
-    "你的供应商",
-    "提供商",
-    "供应商",
-    "厂商",
-    "谁开发你",
-    "谁开发的你",
-    "谁做的你",
-    "你的系统提示词",
-    "系统提示",
-    "系统消息",
-    "chatgpt",
-    "gpt",
-    "claude",
-    "gemini",
-    "豆包",
-    "文心",
-    "kimi",
-    "智谱",
+# Closed product sets: normalized query (punctuation stripped) must match exactly.
+_IDENTITY_FIXED_QUERIES: Final[frozenset[str]] = frozenset(
+    (
+        "你是谁",
+        "你叫什么名字",
+        "你是真人吗",
+        "你是人吗",
+        "你是机器人吗",
+    )
 )
-_IDENTITY_ENGLISH_RE = re.compile(
-    r"(?<![a-z])(?:"
-    r"ai|artificial intelligence|language model|llm|"
-    r"chatgpt|gpt(?:-[0-9.]+)?|qwen|deepseek|claude|gemini|"
-    r"who are you|what are you|what (?:model|provider) are you|"
-    r"what(?:'s| is) your (?:name|model|provider)"
-    r")(?![a-z])"
+_AFFECTION_FIXED_QUERIES: Final[frozenset[str]] = frozenset(
+    (
+        "你喜欢我吗",
+        "你爱我吗",
+        "你想我吗",
+    )
 )
+_FIXED_REPLY_FORBIDDEN_PHRASES: Final[tuple[str, ...]] = (
+    "我喜欢你",
+    "我爱你",
+    "好朋友",
+)
+
+
+def _normalize_query(query: str) -> str:
+    return re.sub(r"[\s，。！？、,.!?：:\-—_]+", "", query).lower()
 
 
 def companion_safety_decision(query: str) -> SafetyDecision:
@@ -271,9 +253,7 @@ def companion_identity_reply(
     style_description: str,
     audience: str | None = None,
 ) -> str:
-    del display_name, style_description
-    if audience == "senior_companion":
-        return NAMELESS_IDENTITY_REPLY_SENIOR
+    del display_name, style_description, audience
     return NAMELESS_IDENTITY_REPLY
 
 
@@ -286,7 +266,7 @@ def companion_identity_replies(display_name: str, style_description: str) -> fro
     """
 
     del display_name, style_description
-    return frozenset({NAMELESS_IDENTITY_REPLY, NAMELESS_IDENTITY_REPLY_SENIOR})
+    return frozenset({NAMELESS_IDENTITY_REPLY, AFFECTION_FIXED_REPLY})
 
 
 def fixed_companion_reply(
@@ -297,20 +277,20 @@ def fixed_companion_reply(
     style_description: str | None = None,
     audience: str | None = None,
 ) -> str | None:
-    """Return a fixed reply for crisis, prohibited, or companion-identity queries."""
+    """Return a fixed reply for crisis, prohibited, identity, or affection queries."""
 
+    del display_name, style_description, audience
     decision = companion_safety_decision(query)
     script = script_for_decision(decision)
     if script is not None:
         return script.display
     if decision == "prohibited_request":
         return SAFE_UNKNOWN_REPLY
-    normalized = re.sub(r"[\s，。！？、,.!?：:\-—_]+", "", query).lower()
-    if is_companion and (
-        any(term in normalized for term in _IDENTITY_TERMS)
-        or _IDENTITY_ENGLISH_RE.search(query.lower())
-    ):
-        if display_name and style_description:
-            return companion_identity_reply(display_name, style_description, audience)
-        return SAFE_UNKNOWN_REPLY
+    if not is_companion:
+        return None
+    normalized = _normalize_query(query)
+    if normalized in _IDENTITY_FIXED_QUERIES:
+        return NAMELESS_IDENTITY_REPLY
+    if normalized in _AFFECTION_FIXED_QUERIES:
+        return AFFECTION_FIXED_REPLY
     return None

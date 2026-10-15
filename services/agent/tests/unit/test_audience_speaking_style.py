@@ -110,7 +110,7 @@ def test_a_child_is_never_promised_secrecy() -> None:
 
 def test_child_rules_use_nameless_identity_and_preference_redirect() -> None:
     block = pc.SERVICE_MODE_BLOCKS["student_minor"]
-    assert "我是陪你聊天、讲故事的 AI 助手" in block
+    assert "我是 AI 助手，不是真人，可以陪你聊天、讲故事。你今天想聊什么呀？" in block
     assert "不要给自己取名字" in block
     assert "再问孩子喜欢什么" in block
     assert "小智" not in block

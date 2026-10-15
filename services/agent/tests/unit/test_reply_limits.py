@@ -99,20 +99,17 @@ def _policy_for(service_mode: str) -> object:
 
 
 @pytest.mark.parametrize(
-    ("service_mode", "expected"),
-    [
-        ("student_minor", "我是陪你聊天、讲故事的 AI 助手。"),
-        ("senior_companion", "我是陪您聊天、讲故事的 AI 助手。"),
-        ("adult_companion", "我是陪你聊天、讲故事的 AI 助手。"),
-    ],
+    "service_mode",
+    ["student_minor", "senior_companion", "adult_companion"],
 )
 def test_the_local_safe_plan_introduces_the_companion_to_the_listener(
-    service_mode: str, expected: str
+    service_mode: str,
 ) -> None:
     from types import SimpleNamespace
 
     from services.agent.src.agent import build_local_safe_plan
     from services.agent.src.contracts.ids import GenerationFence
+    from services.common.companion_response_safety import NAMELESS_IDENTITY_REPLY
 
     plan = build_local_safe_plan(
         policy=_policy_for(service_mode),  # type: ignore[arg-type]
@@ -122,7 +119,7 @@ def test_the_local_safe_plan_introduces_the_companion_to_the_listener(
         tts_model="seed-tts-2.0",
         query="你叫什么名字？",
     )
-    assert plan.direct_text == expected
+    assert plan.direct_text == NAMELESS_IDENTITY_REPLY
 
 
 def test_the_reply_pipeline_hands_the_listener_to_the_depth_policy_and_the_limits() -> None:
