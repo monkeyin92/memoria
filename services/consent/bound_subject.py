@@ -407,7 +407,6 @@ class BoundSubjectConsentService:
             subject_person_id=subject_person_id,
             binding_id=binding_id,
         )
-        # Only the limits change; any other param the grant carries stays.
         current = chains[0].params
         params = replace(
             current,

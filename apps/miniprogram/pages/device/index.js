@@ -271,7 +271,7 @@ function offlineStoriesFrom(result) {
     .map((item) => ({ id: item.id, title: item.title }));
 }
 
-// 每天上限滑杆只停在服务端给的档位上；旧服务端不给档位时不显示这条滑杆，也就不会发这个字段。
+// 旧服务端不给档位，这时不显示每天上限滑杆，也就不会发 daily_chat_minutes。
 function dailyChatFrom(result) {
   const limits = result.status === "fulfilled" ? result.value : null;
   const used = limits?.today_used_minutes;
