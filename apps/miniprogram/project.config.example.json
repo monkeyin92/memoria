@@ -17,6 +17,10 @@
     ],
     "include": [
       {
+        "value": "legal/user-agreement.md",
+        "type": "file"
+      },
+      {
         "value": "assets/bg/night-stars.png",
         "type": "file"
       },

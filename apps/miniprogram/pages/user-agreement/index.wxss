@@ -1,0 +1,22 @@
+@import "../../styles/trial-theme.wxss";
+
+.agreement-pending {
+  margin-top: 16px;
+}
+
+.agreement-copy {
+  margin-top: 16px;
+}
+
+.agreement-p {
+  display: block;
+  margin-top: 12px;
+  color: var(--mp-ink);
+  font-size: var(--mp-type-body);
+  line-height: var(--mp-lh-body);
+  text-align: left;
+}
+
+.agreement-p:first-child {
+  margin-top: 0;
+}

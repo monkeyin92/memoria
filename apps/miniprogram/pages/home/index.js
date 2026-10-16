@@ -216,6 +216,14 @@ Page({
     openLogin({ reason: "view_dashboard" });
   },
 
+  openUserAgreement() {
+    wx.navigateTo({ url: "/pages/user-agreement/index" });
+  },
+
+  openPrivacyNotice() {
+    wx.navigateTo({ url: "/pages/privacy/index" });
+  },
+
   showSyncHelp() {
     wx.showModal({
       title: "手机和电脑显示不同？",

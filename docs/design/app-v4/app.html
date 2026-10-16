@@ -74,12 +74,12 @@ S.push(`<div style="position:absolute;left:24px;right:24px;top:80px;height:400px
 <div class="btn" style="margin-top:32px">${I.wechat}微信一键登录</div><div class="btn alt" style="margin-top:16px">手机号登录</div>
 <div class="note" style="margin-top:24px">登录即表示你已阅读《用户协议》和《隐私说明》</div></div>`);
 /* 2 consent */
-S.push(`<div class="c"><span class="chip draft">草稿 · 待律师审核</span><h1 style="margin-top:16px">开始前，<br>请先确认这几件事</h1>
+S.push(`<div class="c"><span class="chip soon">内测版</span><h1 style="margin-top:8px">开始前，<br>请先确认这几件事</h1>
 <div class="sub">作为孩子的监护人，你需要知道我们实际会处理哪些信息。</div>
-<div class="k" style="margin-top:24px;padding:8px 0">
-${[['server','对话经过我们的服务器','孩子说的话会经服务器处理后再回复'],['note','保存对话摘要','家长可以按天查看，不保存原话和录音'],['star','长期只存三项','孩子的称呼、喜好、宠物名'],['cam','设备没有摄像头，也不采集图像']].map(r=>`<div class="row" style="align-items:flex-start">${ic(r[0])}<div><div style="font-weight:600">${r[1]}</div>${r[2]?`<div style="font-size:13px;color:var(--ink2);margin-top:4px;line-height:20px">${r[2]}</div>`:''}</div></div>`).join('')}</div>
-<div style="display:flex;gap:16px;align-items:flex-start;margin:24px 0;font-size:14px;line-height:24px;color:var(--ink2)"><span style="flex:none;width:24px;height:24px;border-radius:8px;background:var(--acc);color:#fff;display:grid;place-items:center">${I.check}</span><span>我是孩子的监护人，已阅读并同意<b style="color:var(--ink);font-weight:600">《监护人同意书》</b>（草稿）</span></div>
-<div class="btn">同意并继续</div><div style="text-align:center;margin-top:16px;font-size:15px;color:var(--ink2)">暂不同意</div></div>`);
+<div class="k" style="margin-top:16px;padding:4px 0">
+${[['server','对话经过我们的服务器','孩子说的话会经服务器处理后再回复'],['note','保存对话摘要','原话和录音只用来当场回应，不保存'],['star','长期只存三项','孩子的称呼、喜好、宠物名'],['info','回应由 AI 生成','会明确标识；模型训练默认关闭'],['cam','设备没有摄像头','不拍照，也不录像']].map(r=>`<div class="row" style="align-items:flex-start;padding:10px 16px;min-height:0">${ic(r[0])}<div><div style="font-weight:600">${r[1]}</div><div style="font-size:13px;color:var(--ink2);margin-top:4px;line-height:20px">${r[2]}</div></div></div>`).join('')}</div>
+<div style="display:flex;gap:12px;align-items:flex-start;margin:12px 0;font-size:14px;line-height:24px;color:var(--ink2)"><span style="flex:none;width:24px;height:24px;border-radius:8px;background:var(--acc);color:#fff;display:grid;place-items:center">${I.check}</span><span>我是孩子的监护人，已阅读并同意<b style="color:var(--ink);font-weight:600">《隐私保护指引》</b>和<b style="color:var(--ink);font-weight:600">《监护人同意书》</b></span></div>
+<div class="btn">同意并继续</div><div style="text-align:center;margin-top:8px;font-size:15px;color:var(--ink2)">暂不同意</div></div>`);
 /* 3 home */
 S.push(`<div class="c"><div style="display:flex;justify-content:space-between;align-items:flex-end"><div><div class="eyebrow">10月14日 周三</div><h1>今天</h1></div><div style="width:40px;height:40px;border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(22,24,43,.08);display:grid;place-items:center;font-weight:700;font-size:15px;color:var(--acc)">乐</div></div>
 <div style="margin-top:24px;border-radius:24px;padding:16px;background:var(--rustbg);display:flex;gap:16px;align-items:center">${ic('heart','#F5DCD3','var(--rust)')}<div style="flex:1"><div style="font-weight:600;color:var(--rust);font-size:16px">有一条需要你关注的对话</div><div style="font-size:12px;color:#8A5848;margin-top:4px">今天 19:42 · 打开时首页会置顶显示</div></div><span style="color:var(--rust);display:flex">${I.chev}</span></div>

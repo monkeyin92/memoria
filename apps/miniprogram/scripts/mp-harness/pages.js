@@ -5,6 +5,16 @@
 const fx = require("./fixtures");
 
 const { authed, guest } = fx;
+const READY_AGREEMENT = "# 用户协议\n\n## 正文\n\n甲。\n";
+const FIXTURE_EFFECTIVE_ON = "2026年4月1日";
+
+function withReadyAgreement(harness) {
+  return {
+    ...harness,
+    files: { "legal/user-agreement.md": READY_AGREEMENT },
+    effectiveOn: FIXTURE_EFFECTIVE_ON,
+  };
+}
 
 const PAGES = [
   { slug: "home", page: "pages/home/index", harness: authed() },
@@ -39,16 +49,19 @@ const PAGES = [
   },
   { slug: "persona-custom", page: "pages/persona-custom/index", harness: authed(fx.personaApi) },
   { slug: "auth", page: "pages/auth/index", harness: guest(), query: { reason: "view_device" } },
+  { slug: "auth-ready", page: "pages/auth/index", harness: withReadyAgreement(guest()), query: { reason: "view_device" } },
   {
     slug: "auth-profile",
     page: "pages/auth/index",
-    harness: guest(),
+    harness: withReadyAgreement(guest()),
     query: { reason: "view_device", skip_restore: "1" },
     actions: [["toggleConsent"], ["onGetPhoneNumber", { detail: { code: "phone-code" } }]],
   },
   { slug: "attention", page: "pages/attention/index", harness: authed(), query: { id: "n1" } },
   { slug: "attention-empty", page: "pages/attention/index", harness: authed({ getGuardianNotifications: async () => ({ items: [] }) }) },
   { slug: "privacy", page: "pages/privacy/index", harness: authed() },
+  { slug: "privacy-guest", page: "pages/privacy/index", harness: guest() },
+  { slug: "user-agreement", page: "pages/user-agreement/index", harness: guest() },
   {
     slug: "privacy-granted",
     page: "pages/privacy/index",

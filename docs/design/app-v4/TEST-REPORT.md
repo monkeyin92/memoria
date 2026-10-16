@@ -122,16 +122,16 @@ The guest home is the full-bleed login screen with no tab bar. The greeting foll
 
 ![02-consent, live page left, design right](mp-screenshots/side-by-side/02-consent.png)
 
-The consent screen leads the auth page. The facts card, the guardian tick, 「同意并继续」 and 「暂不同意」 sit above the fold. The name and avatar step comes after phone authorization, and only on a first registration. This reshoot is the only screen that changed. diffRatio went from 0.0945 to 0.2740. Horizontal overflow and content under the capsule are both 0. The bands from 527 CSS px rose to 0.415, 0.854 and 0.537 because a fifth fact and a longer checkbox push 「暂不同意」 and the login notes into the area where the design has already ended.
+The consent screen leads the auth page. Five fact cards, the guardian tick, 「同意并继续」, 「暂不同意」 and the two notes under it sit inside the 390×844 frame. The tick stays locked when the agreement still has `<!-- agreement: pending -->`, or when `EFFECTIVE_ON` is blank. Either one is enough. The line under the tick reads 「用户协议正在定稿，定稿后才能勾选同意」. In that shipping state the last note ends at 833 CSS px. The tick works only after the body replaces the marker and the date constant is filled. The ready screenshot uses a fixture date, `2026年4月1日`, and is not the release date. The name and avatar step comes after phone authorization, and only on a first registration. Horizontal overflow and content under the capsule are both 0. This reshoot compares the locked live page with the five-card design. diffRatio is 0.213.
 
-Four fact strings differ from the design on purpose.
+The five cards now use the same sentences as the design.
 
-- Fact 2 ends with 「原话在入库前就去掉」, not 「不保存原话和录音」. A family that opts in on the privacy page has raw audio kept until it revokes, so 「不保存录音」 would be false for that family.
-- Fact 3 reads 「长期只记三项」, the wording of the memory page's 「机器人长期只记住这三件事」. The design says 「长期只存三项」.
-- Fact 4 stays 「回应由 AI 生成」, with the sub 「会明确标识；模型训练默认关闭」. The design has no AI fact.
-- Fact 5 is 「设备没有摄像头，也不采集图像」. Live and design use that exact sentence as the camera row title, with no subtitle and no claim about later hardware or a connector. The icon is `cam`.
+- Fact 2 subtitle is 「原话和录音只用来当场回应，不保存」.
+- Fact 3 title is 「长期只存三项」.
+- Fact 4 stays 「回应由 AI 生成」, with the sub 「会明确标识；模型训练默认关闭」.
+- Fact 5 title is 「设备没有摄像头」, and the subtitle is 「不拍照，也不录像」. The icon is `cam`.
 
-The checkbox reads 「我是孩子的监护人，已阅读并同意《隐私保护指引（草稿）》和《监护人同意书（草稿）》」. Each title is its own link, so a tap opens that document instead of only toggling the box. 《隐私保护指引（草稿）》 still calls `wx.openPrivacyContract`. 《监护人同意书（草稿）》 opens `pages/guardian-consent/index`. The page chip is 「草稿 · 待律师审核」. Its paragraphs match `docs/compliance/guardian-consent-draft.md`. No standalone guardian consent file existed under `docs/` before that draft. The page footer cites `docs/compliance/child-audio-transcript-ephemeral.md`. Notes on login and recording still follow 「暂不同意」.
+The checkbox reads 「我是孩子的监护人，已阅读并同意《隐私保护指引》和《监护人同意书》」. While the agreement marker is present or the effective date is blank, the row is locked and a tap does not tick it. After both are filled, a tap ticks it. Each title is its own link, so a tap opens that document. 《隐私保护指引》 calls `wx.openPrivacyContract`. 《监护人同意书》 opens `pages/guardian-consent/index`. The page chip is 「内测版」. The effective date stays blank until 融资合规部 sets it. Parent-visible copy does not say 「草稿」. Notes on login and recording still follow 「暂不同意」.
 
 ### 03-home
 
@@ -367,7 +367,7 @@ Each v4 test file loads the live page through the harness, drives its handlers t
 `auth-consent-flow.test.js` has 9 tests.
 
 - The consent screen shows the facts, the guardian consent and both choices before any login field.
-- Each draft link opens its document, and continuing without consent names both drafts.
+- Each document title opens its document, and continuing without consent names both documents.
 - 同意并继续 stays disabled until the guardian ticks consent.
 - 暂不同意 leaves the page without logging in.
 - A returning WeChat user logs in straight from the consent step.
@@ -378,7 +378,7 @@ Each v4 test file loads the live page through the harness, drives its handlers t
 
 `guardian-consent.test.js` has 1 test.
 
-- The draft page shows 「草稿 · 待律师审核」, the source path `docs/compliance/child-audio-transcript-ephemeral.md`, and the paragraphs from `docs/compliance/guardian-consent-draft.md` in order. The rendered text includes 「设备没有摄像头，也不采集图像」 and does not claim a later camera or connector.
+- The page chip is 「内测版」. Parent-visible text does not say 「草稿」. The source path is `docs/compliance/child-audio-transcript-ephemeral.md`, and the paragraphs follow `docs/compliance/guardian-consent-draft.md` in order. The rendered text includes 「设备没有摄像头，也不采集图像」 and does not claim a later camera or connector.
 
 `memory-v4.test.js` has 3 tests.
 
@@ -510,7 +510,7 @@ These files guard structure, styles and budgets.
 
 Older tests that asserted v3 strings, structure or removed rows now assert the v4 equivalents.
 
-- `auth-layout.test.js` pins the five consent facts, including 「设备没有摄像头，也不采集图像」, and rejects a view-or-delete promise and any later-hardware claim.
+- `auth-layout.test.js` pins the five consent facts, including 「设备没有摄像头」 and 「不拍照，也不录像」, and rejects a view-or-delete promise and any later-hardware claim.
 - `child-memory.test.js` asserts the field order and icons, and no retention-period copy.
 - `profile-device-binding.test.js` asserts the account card's 「已绑定 N 台设备」 for each binding state, and that `openDevice`, bound to the device card and the 设备管理 row, opens the 设备 tab.
 - `profile-mascot.test.js` asserts that roles and custom personas live on the 角色 tab, not on the profile.
