@@ -33,8 +33,9 @@ Usage: flash.sh [--port /dev/cu.*|auto] [--monitor] [--build] [--clean] [--bench
                merged.bin, and any file that covers memoria_identity, is refused
                unless --allow-danger-full-erase is also set.
   --allow-danger-full-erase
-               Permit one full-chip write. The memoria_identity namespace check
-               still runs afterwards.
+               Permit one full-chip write. The memoria_identity check still
+               runs. It fails only when namespace device was present before
+               the write and is absent afterwards.
   --list       List /dev/cu.* and exit.
 EOF
 }
@@ -157,7 +158,14 @@ if [[ "$ALLOW_DANGER_FULL_ERASE" == 1 ]]; then
     printf '*** full-chip erase image is allowed for this run ***\n' >&2
 fi
 printf 'flashing %s on %s\n' "$MEMORIA_BOARD_NAME" "$port"
-"$python_bin" "$SCRIPT_DIR/identity_guard.py" read --port "$port" --chip "$MEMORIA_ESP_IDF_TARGET" --phase before
+set +e
+before_line=$("$python_bin" "$SCRIPT_DIR/identity_guard.py" read --port "$port" --chip "$MEMORIA_ESP_IDF_TARGET" --phase before)
+before_rc=$?
+set -e
+printf '%s\n' "$before_line"
+if [[ "$before_rc" != 0 ]]; then
+    die "could not read memoria_identity before flash"
+fi
 set +e
 if [[ -n "$IMAGE" ]]; then
     write_args=(
@@ -176,17 +184,22 @@ else
     idf.py -p "$port" flash
     flash_rc=$?
 fi
-"$python_bin" "$SCRIPT_DIR/identity_guard.py" read --port "$port" --chip "$MEMORIA_ESP_IDF_TARGET" --phase after
+after_line=$("$python_bin" "$SCRIPT_DIR/identity_guard.py" read --port "$port" --chip "$MEMORIA_ESP_IDF_TARGET" --phase after)
 after_rc=$?
 set -e
+printf '%s\n' "$after_line"
 if [[ "$flash_rc" != 0 ]]; then
     printf 'error: flash failed\n' >&2
 fi
-if [[ "$after_rc" == 3 ]]; then
-    die "memoria_identity namespace device is absent after flash"
-fi
 if [[ "$after_rc" != 0 ]]; then
     die "could not read memoria_identity after flash"
+fi
+set +e
+"$python_bin" "$SCRIPT_DIR/identity_guard.py" verdict --before-status "$before_line" --after-status "$after_line"
+verdict_rc=$?
+set -e
+if [[ "$verdict_rc" != 0 ]]; then
+    exit "$verdict_rc"
 fi
 if [[ "$flash_rc" != 0 ]]; then
     exit "$flash_rc"

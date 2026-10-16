@@ -2,10 +2,16 @@
 """Guard the memoria_identity partition.
 
 A probe reports whether the NVS namespace "device" is present. It does not
-decode or print entry payloads. Flash refuses a full-chip image unless
---allow-danger-full-erase is set. Erase may name the default nvs partition
-or one namespace. Whole-chip erase, nvs_flash_erase() with no partition
-name, and any erase of this partition are rejected. A future factory-reset
+decode or print entry payloads. The flash verdict fails only when that
+namespace was present before the write and absent afterwards. A board with
+no namespace prints a warning and exits 0.
+
+Flash refuses a full-chip image unless --allow-danger-full-erase is set.
+Erase may name the default nvs partition or one namespace. Whole-chip erase,
+nvs_flash_erase() with no partition name, and any erase of this partition
+are rejected. esp_partition_erase_range and esp_flash_erase_region are
+rejected unless the file and function are listed in ERASE_RANGE_ALLOWLIST.
+esp_ota_* is a different API and is not on that list. A future factory-reset
 button uses the same erase rules.
 """
 
@@ -53,6 +59,37 @@ OPEN_IDENTITY = (
     r"nvs_open(?:_from_partition)?\s*\([^;\n]*(?:memoria_identity|kPartitionLabel)"
 )
 NAMESPACE_ERASE = r"\bnvs_erase_(?:all|key)\s*\("
+PARTITION_RANGE = r"\besp_partition_erase_range\s*\("
+FLASH_REGION = r"\besp_flash_erase_region\s*\("
+LOST_IDENTITY = (
+    "error: memoria_identity namespace device was present before flash "
+    "and is absent after flash"
+)
+UNPROVISIONED_WARNING = (
+    "WARNING: memoria_identity 尚未写入设备身份，需运行 provision_identity.py"
+)
+_FUNCTION_HEAD = re.compile(
+    r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\([^;]*\)\s*(?:const\s*)?\{?\s*$"
+)
+_NOT_A_FUNCTION = {"if", "for", "while", "switch", "catch"}
+
+
+@dataclass(frozen=True)
+class EraseRangeAllowance:
+    """One function that may call a ranged erase API.
+
+    path is a suffix of the scanned file. function is the C function that
+    contains the call. reason names the partition that call erases.
+    """
+
+    path: str
+    function: str
+    reason: str
+
+
+# No overlay or script calls esp_partition_erase_range or esp_flash_erase_region.
+# esp_ota_* is omitted on purpose. Those calls are not the two APIs above.
+ERASE_RANGE_ALLOWLIST: tuple[EraseRangeAllowance, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -106,12 +143,14 @@ def status_line(present: bool) -> str:
     return STATUS_ABSENT
 
 
-def phase_exit_code(phase: str, present: bool) -> int:
-    if phase == "before":
+def flash_identity_result(before_present: bool, after_present: bool) -> int:
+    if after_present:
         return 0
-    if phase == "after":
-        return 0 if present else 3
-    raise ValueError(f"unknown phase: {phase}")
+    if before_present:
+        print(LOST_IDENTITY, file=sys.stderr)
+        return 1
+    print(UNPROVISIONED_WARNING, file=sys.stderr)
+    return 0
 
 
 def is_danger_image_name(name: str) -> bool:
@@ -153,11 +192,18 @@ def scan_roots(roots: list[Path]) -> list[Violation]:
     return violations
 
 
-def scan_text(path: str, text: str, *, kind: str | None = None) -> list[Violation]:
+def scan_text(
+    path: str,
+    text: str,
+    *,
+    kind: str | None = None,
+    allowlist: tuple[EraseRangeAllowance, ...] | None = None,
+) -> list[Violation]:
     suffix = Path(path).suffix
     resolved = kind or _kind_for_suffix(suffix)
     stripped = _strip_comments(text, resolved)
-    return _violations_in_text(path, stripped)
+    chosen = ERASE_RANGE_ALLOWLIST if allowlist is None else allowlist
+    return _violations_in_text(path, stripped, chosen)
 
 
 def _scan_file(path: Path) -> list[Violation]:
@@ -266,7 +312,11 @@ def _strip_c_comments(text: str) -> str:
     return "".join(output)
 
 
-def _violations_in_text(path: str, text: str) -> list[Violation]:
+def _violations_in_text(
+    path: str,
+    text: str,
+    allowlist: tuple[EraseRangeAllowance, ...],
+) -> list[Violation]:
     lines = text.splitlines()
     violations: list[Violation] = []
     whole = re.compile(WHOLE_FLASH)
@@ -276,6 +326,8 @@ def _violations_in_text(path: str, text: str) -> list[Violation]:
     identity = re.compile(IDENTITY_TOKEN)
     opener = re.compile(OPEN_IDENTITY)
     namespace_erase = re.compile(NAMESPACE_ERASE)
+    partition_range = re.compile(PARTITION_RANGE)
+    flash_region = re.compile(FLASH_REGION)
     for number, line in enumerate(lines, start=1):
         if whole.search(line):
             violations.append(Violation(path, number, "whole_flash_erase"))
@@ -295,6 +347,15 @@ def _violations_in_text(path: str, text: str) -> list[Violation]:
                 violations.append(Violation(path, number, "identity_erase"))
         if identity.search(line) and _line_erases(line):
             violations.append(Violation(path, number, "identity_erase"))
+        ranged = None
+        if partition_range.search(line):
+            ranged = "partition_erase_range"
+        elif flash_region.search(line):
+            ranged = "flash_erase_region"
+        if ranged is not None and not _range_call_allowed(
+            path, _enclosing_function(lines, number), allowlist
+        ):
+            violations.append(Violation(path, number, ranged))
     for number, line in enumerate(lines, start=1):
         if opener.search(line) is None:
             continue
@@ -302,6 +363,34 @@ def _violations_in_text(path: str, text: str) -> list[Violation]:
         if namespace_erase.search(window) or unnamed.search(window):
             violations.append(Violation(path, number, "identity_erase"))
     return violations
+
+
+def _enclosing_function(lines: list[str], number: int) -> str | None:
+    for cursor in range(number - 2, -1, -1):
+        match = _FUNCTION_HEAD.search(lines[cursor].strip())
+        if match is None:
+            continue
+        name = match.group("name")
+        if name in _NOT_A_FUNCTION:
+            continue
+        return name
+    return None
+
+
+def _range_call_allowed(
+    path: str,
+    function: str | None,
+    allowlist: tuple[EraseRangeAllowance, ...],
+) -> bool:
+    if function is None:
+        return False
+    posix = Path(path).as_posix()
+    return any(
+        entry.reason.strip()
+        and posix.endswith(entry.path)
+        and function == entry.function
+        for entry in allowlist
+    )
 
 
 def _line_erases(line: str) -> bool:
@@ -321,6 +410,8 @@ def _refuse(name: str) -> int:
 
 
 def _probe_file(path: Path, phase: str) -> int:
+    if phase not in {"before", "after"}:
+        raise ValueError(f"unknown phase: {phase}")
     try:
         image = path.read_bytes()
         present = device_namespace_present(image)
@@ -328,7 +419,7 @@ def _probe_file(path: Path, phase: str) -> int:
         print(f"identity probe failed: {exc.__class__.__name__}", file=sys.stderr)
         return 1
     print(status_line(present))
-    return phase_exit_code(phase, present)
+    return 0
 
 
 def _run_esptool(python: Path, args: list[str]) -> int:
@@ -388,7 +479,7 @@ def _read_partition(python: Path, port: str, chip: str, baud: int, phase: str) -
         print("identity partition read failed", file=sys.stderr)
         return 1
     print(status_line(present))
-    return phase_exit_code(phase, present)
+    return 0
 
 
 def _check_image(path: Path, offset: int, *, allow_danger: bool) -> int:
@@ -457,6 +548,47 @@ def _write_image(python: Path, port: str, chip: str, baud: int, image: Path, *, 
     return 0
 
 
+def _presence(status: str) -> bool | None:
+    text = status.strip()
+    if text == STATUS_PRESENT:
+        return True
+    if text == STATUS_ABSENT:
+        return False
+    print("identity status is unreadable", file=sys.stderr)
+    return None
+
+
+def _verdict(
+    *,
+    before_image: Path | None,
+    after_image: Path | None,
+    before_status: str | None,
+    after_status: str | None,
+) -> int:
+    images = before_image is not None or after_image is not None
+    statuses = before_status is not None or after_status is not None
+    if images == statuses or (before_image is None) != (after_image is None):
+        print("verdict needs both images or both status lines", file=sys.stderr)
+        return 1
+    if before_status is not None or after_status is not None:
+        if before_status is None or after_status is None:
+            print("verdict needs both images or both status lines", file=sys.stderr)
+            return 1
+        before_present = _presence(before_status)
+        after_present = _presence(after_status)
+        if before_present is None or after_present is None:
+            return 1
+        return flash_identity_result(before_present, after_present)
+    assert before_image is not None and after_image is not None
+    try:
+        before_present = device_namespace_present(before_image.read_bytes())
+        after_present = device_namespace_present(after_image.read_bytes())
+    except (OSError, ValueError) as exc:
+        print(f"identity probe failed: {exc.__class__.__name__}", file=sys.stderr)
+        return 1
+    return flash_identity_result(before_present, after_present)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -492,6 +624,12 @@ def _parser() -> argparse.ArgumentParser:
 
     scan = commands.add_parser("scan")
     scan.add_argument("roots", type=Path, nargs="+")
+
+    verdict = commands.add_parser("verdict")
+    verdict.add_argument("--before-image", type=Path)
+    verdict.add_argument("--after-image", type=Path)
+    verdict.add_argument("--before-status")
+    verdict.add_argument("--after-status")
     return parser
 
 
@@ -523,6 +661,13 @@ def main(argv: list[str] | None = None) -> int:
         for violation in violations:
             print(violation.format(), file=sys.stderr)
         return 1 if violations else 0
+    if args.command == "verdict":
+        return _verdict(
+            before_image=args.before_image,
+            after_image=args.after_image,
+            before_status=args.before_status,
+            after_status=args.after_status,
+        )
     print("unknown command", file=sys.stderr)
     return 1
 

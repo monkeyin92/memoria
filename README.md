@@ -499,9 +499,9 @@ Mac 进入下载模式：按住 BOOT，轻按 RESET，松开 RESET，再松开 B
 
 Flash `0x10000..0x1ffff` 是独立 `memoria_identity` NVS。保留身份分区。普通固件更新不得写入该区，优先只刷 `0x20000` 的应用。`build.sh` 在上游写出整片镜像后删掉它，不把 `merged.bin` 放进 `artifacts/`。需要整片包时用 `build.sh --danger-full-erase`，文件名带 `DANGER_FULL_ERASE`。`flash.sh` 默认拒绝烧这类文件，也拒绝任何会盖住该分区的写入。只有同时带上 `--allow-danger-full-erase` 才放行这一次。
 
-`flash.sh` 在烧录前和烧录后各读一次该分区。它只判断 NVS namespace `device` 在不在，不读取、不打印任何键值。烧录后 namespace 不在，脚本失败退出。从未写过身份的板子也会在烧录后失败。
+`flash.sh` 在烧录前和烧录后各读一次该分区。它只判断 NVS namespace `device` 在不在，不读取、不打印任何键值。烧前 namespace 已在、烧后不在，脚本失败退出。烧前就没有身份时，脚本打印 `WARNING: memoria_identity 尚未写入设备身份，需运行 provision_identity.py`，退出码 0。
 
-解绑和恢复出厂都不擦身份分区。仓库里还没有恢复出厂擦除函数。将来的恢复出厂按键还没有定 GPIO。它只能按名字擦默认 `nvs` 分区，或擦一个具体 namespace。它不能调用不带分区名的 `nvs_flash_erase()`，不能做全片擦除，也不能擦 `memoria_identity`。`check-overlay.sh` 用同一套规则扫叠加层和脚本。
+解绑和恢复出厂都不擦身份分区。仓库里还没有恢复出厂擦除函数。将来的恢复出厂按键还没有定 GPIO。它只能按名字擦默认 `nvs` 分区，或擦一个具体 namespace。它不能调用不带分区名的 `nvs_flash_erase()`，不能做全片擦除，也不能擦 `memoria_identity`。`esp_partition_erase_range` 和 `esp_flash_erase_region` 默认也不允许。确需调用时，把文件和函数写进 `firmware/esp32/scripts/identity_guard.py` 的 `ERASE_RANGE_ALLOWLIST`，并写明擦的是哪一个分区。`esp_ota_*` 不在这条规则里。`check-overlay.sh` 用同一套规则扫叠加层和脚本。`nvs_open` 得到的句柄如果传到另一个函数里再调用 `nvs_erase_all`，这次静态检查看不到。那种写法仍然不能擦身份分区。
 
 长按 5 秒只重置网络配置，不清除身份分区，也不解除云端绑定。任何身份摘要变化、Manifest v2 验签失败或设备 SKU 不符都必须停止验收，禁止靠重置身份绕过。当前没有启用 Secure Boot、Flash Encryption 或 eFuse，量产安全不可由研发身份验收替代。
 

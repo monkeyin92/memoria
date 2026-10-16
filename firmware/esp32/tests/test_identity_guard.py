@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -13,6 +14,16 @@ SCRIPTS = FIRMWARE / "scripts"
 OVERLAY = FIRMWARE / "overlay"
 SECRET = b"SUPER_SECRET_SEED_VALUE!!!!!"
 PAGE_SIZE = 4096
+
+
+def _load_guard():
+    spec = importlib.util.spec_from_file_location("identity_guard_under_test", GUARD)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("identity_guard.py could not be loaded")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _run(*args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -65,33 +76,74 @@ def test_probe_reports_presence_without_printing_payload(tmp_path: Path) -> None
     assert SECRET.decode() not in absent_after.stdout + absent_after.stderr
 
 
-def test_probe_after_flash_fails_when_the_namespace_is_missing(tmp_path: Path) -> None:
-    blank = tmp_path / "blank.bin"
-    blank.write_bytes(b"\xff" * 0x10000)
+def test_verdict_fails_only_when_a_present_namespace_disappears(tmp_path: Path) -> None:
+    present = tmp_path / "present.bin"
+    present.write_bytes(_image(_page("device", payload=SECRET)))
+    absent = tmp_path / "absent.bin"
+    absent.write_bytes(b"\xff" * 0x10000)
+    value_only = tmp_path / "value.bin"
+    value_only.write_bytes(_image(_page("device", ns=1, payload=SECRET)))
     other = tmp_path / "other.bin"
     other.write_bytes(_image(_page("wifi")))
     erased = tmp_path / "erased.bin"
     erased.write_bytes(_image(_page("device", written=False)))
-    value_key = tmp_path / "value.bin"
-    value_key.write_bytes(_image(_page("device", ns=1, payload=SECRET)))
+    warning = "WARNING: memoria_identity 尚未写入设备身份，需运行 provision_identity.py"
 
-    before = _run("probe", "--image", str(blank), "--phase", "before")
-    after = _run("probe", "--image", str(blank), "--phase", "after")
-    other_after = _run("probe", "--image", str(other), "--phase", "after")
-    erased_after = _run("probe", "--image", str(erased), "--phase", "after")
-    value_after = _run("probe", "--image", str(value_key), "--phase", "after")
+    lost = _run("verdict", "--before-image", str(present), "--after-image", str(absent))
+    lost_value = _run(
+        "verdict", "--before-image", str(present), "--after-image", str(value_only)
+    )
+    lost_other = _run("verdict", "--before-image", str(present), "--after-image", str(other))
+    lost_erased = _run(
+        "verdict", "--before-image", str(present), "--after-image", str(erased)
+    )
+    unprovisioned = _run(
+        "verdict", "--before-image", str(absent), "--after-image", str(absent)
+    )
+    kept = _run("verdict", "--before-image", str(present), "--after-image", str(present))
+    gained = _run("verdict", "--before-image", str(absent), "--after-image", str(present))
 
-    assert before.returncode == 0
-    assert before.stdout == "device namespace: absent\n"
-    assert after.returncode == 3
-    assert other_after.returncode == 3
-    assert erased_after.returncode == 3
-    assert value_after.returncode == 3
+    assert lost.returncode == 1
+    assert "absent after flash" in lost.stderr
+    assert lost.stdout == ""
+    assert lost_value.returncode == 1
+    assert lost_other.returncode == 1
+    assert lost_erased.returncode == 1
+    assert unprovisioned.returncode == 0
+    assert unprovisioned.stderr.strip() == warning
+    assert unprovisioned.stdout == ""
+    assert kept.returncode == 0
+    assert kept.stdout == ""
+    assert kept.stderr == ""
+    assert gained.returncode == 0
+    assert gained.stderr == ""
     combined = "".join(
         item.stdout + item.stderr
-        for item in (before, after, other_after, erased_after, value_after)
+        for item in (lost, lost_value, lost_other, lost_erased, unprovisioned, kept, gained)
     )
     assert SECRET.decode() not in combined
+
+    before = _run("probe", "--image", str(present), "--phase", "before")
+    after = _run("probe", "--image", str(absent), "--phase", "after")
+    from_status = _run(
+        "verdict",
+        "--before-status",
+        before.stdout.strip(),
+        "--after-status",
+        after.stdout.strip(),
+    )
+    assert from_status.returncode == 1
+    assert SECRET.decode() not in from_status.stdout + from_status.stderr
+    leaked = _run(
+        "verdict",
+        "--before-status",
+        SECRET.decode(),
+        "--after-status",
+        "device namespace: absent",
+    )
+    assert leaked.returncode == 1
+    assert SECRET.decode() not in leaked.stdout + leaked.stderr
+    assert "unreadable" in leaked.stderr
 
 
 def test_full_chip_image_is_refused_unless_the_flag_is_set(tmp_path: Path) -> None:
@@ -214,7 +266,7 @@ def test_read_prints_only_the_namespace_status(tmp_path: Path) -> None:
     assert not output_path.exists()
 
 
-def test_read_after_a_blank_partition_fails_closed(tmp_path: Path) -> None:
+def test_read_after_a_blank_partition_reports_absent(tmp_path: Path) -> None:
     fake = tmp_path / "fake"
     package = fake / "esptool"
     package.mkdir(parents=True)
@@ -239,7 +291,7 @@ def test_read_after_a_blank_partition_fails_closed(tmp_path: Path) -> None:
         sys.executable,
         env=env,
     )
-    assert result.returncode == 3
+    assert result.returncode == 0
     assert result.stdout == "device namespace: absent\n"
 
 
@@ -333,6 +385,20 @@ def test_repository_erase_policy_is_clean() -> None:
             "}\n",
             "unnamed_nvs_erase",
         ),
+        (
+            "void FactoryResetFromGpio() {\n"
+            "  const esp_partition_t* part = esp_partition_find_first("
+            "ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, \"nvs\");\n"
+            "  esp_partition_erase_range(part, 0, 0x6000);\n"
+            "}\n",
+            "partition_erase_range",
+        ),
+        (
+            "void ClearRegion() {\n"
+            "  esp_flash_erase_region(NULL, 0x10000, 0x1000);\n"
+            "}\n",
+            "flash_erase_region",
+        ),
     ],
 )
 def test_erase_policy_rejects_factory_reset_and_full_chip_erases(
@@ -343,6 +409,65 @@ def test_erase_policy_rejects_factory_reset_and_full_chip_erases(
     result = _run("scan", str(path))
     assert result.returncode == 1
     assert rule in result.stderr
+
+
+def test_ota_calls_are_not_treated_as_ranged_erases(tmp_path: Path) -> None:
+    path = tmp_path / "memoria_firmware_update.cc"
+    path.write_text(
+        "void Install() {\n"
+        "  esp_ota_begin(slot, OTA_WITH_SEQUENTIAL_WRITES, &handle);\n"
+        "  esp_ota_write(handle, buffer, read);\n"
+        "  esp_ota_end(handle);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    result = _run("scan", str(path))
+    assert result.returncode == 0, result.stderr
+
+
+def test_listed_function_may_erase_a_range_and_other_functions_may_not(tmp_path: Path) -> None:
+    guard = _load_guard()
+    assert guard.ERASE_RANGE_ALLOWLIST == ()
+    path = "main/memoria/memoria_firmware_update.cc"
+    source = (
+        "void EraseInactiveAppSlot() {\n"
+        "  esp_partition_erase_range(slot, 0, size);\n"
+        "}\n"
+        "void FactoryResetFromGpio() {\n"
+        "  const esp_partition_t* part = esp_partition_find_first("
+        "ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, NULL);\n"
+        "  esp_partition_erase_range(part, 0, 0x1000);\n"
+        "}\n"
+    )
+    allowance = guard.EraseRangeAllowance(
+        path,
+        "EraseInactiveAppSlot",
+        "erases the inactive OTA app slot",
+    )
+    denied = guard.scan_text(path, source)
+    allowed = guard.scan_text(path, source, allowlist=(allowance,))
+    blank_reason = guard.scan_text(
+        path,
+        source,
+        allowlist=(guard.EraseRangeAllowance(path, "EraseInactiveAppSlot", "  "),),
+    )
+
+    assert [item.rule for item in denied] == [
+        "partition_erase_range",
+        "partition_erase_range",
+    ]
+    assert len(allowed) == 1
+    assert allowed[0].rule == "partition_erase_range"
+    assert "part, 0, 0x1000" in source.splitlines()[allowed[0].line - 1]
+    assert [item.rule for item in blank_reason] == [
+        "partition_erase_range",
+        "partition_erase_range",
+    ]
+    scanned = tmp_path / "memoria_firmware_update.cc"
+    scanned.write_text(source, encoding="utf-8")
+    cli = _run("scan", str(scanned))
+    assert cli.returncode == 1
+    assert cli.stderr.count("partition_erase_range") == 2
 
 
 def test_named_nvs_and_namespace_erases_stay_allowed(tmp_path: Path) -> None:
@@ -371,6 +496,9 @@ def test_build_does_not_publish_merged_bin_and_flash_checks_both_sides() -> None
     assert "--allow-danger-full-erase" in flash
     assert flash.index("--phase before") < flash.index('idf.py -p "$port" flash')
     assert flash.index('idf.py -p "$port" flash') < flash.index("--phase after")
+    assert flash.index("--phase after") < flash.index(
+        'verdict --before-status "$before_line" --after-status "$after_line"'
+    )
     assert "identity_guard.py" in check
     help_build = subprocess.run(
         ["bash", str(SCRIPTS / "build.sh"), "--help"],
