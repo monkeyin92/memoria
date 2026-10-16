@@ -1,7 +1,7 @@
 <view class="page-shell auth-wrap sub-page" style="{{statusBarStyle}}">
   <view class="nav-back" bindtap="goBack" aria-label="返回"><image class="nav-back-icon" src="/assets/ui/v4/back-strong.svg" /></view>
   <text class="page-title">登录</text>
-  <text class="page-lede">登录后可以绑定和管理你的设备。手机号只用于绑定账号，不会公开展示。</text>
+  <text class="page-lede">登录后可以绑定和管理你的设备。</text>
 
   <view class="auth-consent" bindtap="toggleAccountConsent" aria-role="checkbox" aria-checked="{{accountAgreed}}">
     <view class="auth-check {{accountAgreed ? 'auth-check-on' : ''}}">

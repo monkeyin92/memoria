@@ -127,7 +127,7 @@ test("auth cleanup broadcasts to every page that can hold private state", () => 
   assert.match(profileScript, /subscribeAuthCleared\(\(\) => this\._enterGuestState\(\)\)/);
   assert.match(profileScript, /_enterGuestState\(\)[\s\S]*identity:\s*null[\s\S]*stats:/);
   assert.match(privacyScript, /subscribeAuthCleared\(\(\) => this\._clearPrivateState\(\)\)/);
-  assert.match(privacyScript, /_clearPrivateState\(\)[\s\S]*consent:\s*null/);
+  assert.match(privacyScript, /_clearPrivateState\(\)[\s\S]*guest:\s*true/);
   assert.match(
     digitalSelfScript,
     /subscribeAuthCleared\(\(\) => this\._clearPrivateState\(\)\)/,

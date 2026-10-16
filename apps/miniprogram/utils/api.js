@@ -321,15 +321,6 @@ async function requestWechatIdentity({ phoneCode, displayName } = {}) {
 
 let restorePromise = null;
 
-function restoreWechatIdentity() {
-  if (hasAuthenticatedSession()) return Promise.resolve(currentIdentity());
-  if (restorePromise) return restorePromise;
-  restorePromise = requestWechatIdentity().finally(() => {
-    restorePromise = null;
-  });
-  return restorePromise;
-}
-
 function loginWithWechat({ phoneCode, displayName } = {}) {
   return requestWechatIdentity({ phoneCode, displayName });
 }
@@ -1445,7 +1436,6 @@ module.exports = {
   currentAuthEpoch,
   isAuthEpochCurrent,
   requireAuthenticatedIdentity,
-  restoreWechatIdentity,
   loginWithWechat,
   uploadWechatAvatar,
   logoutLocal,
