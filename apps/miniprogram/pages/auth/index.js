@@ -4,6 +4,7 @@ const { leavePage } = require("../../utils/nav-back");
 const { isTabRoute, routeOf } = require("../../utils/tab-routes");
 const { openPrivacyContract } = require("../../utils/privacy-contract");
 const { releaseChip } = require("../../utils/legal-release");
+const { CONSENT_AGREEMENT_HINT, loadUserAgreement } = require("../../utils/legal-doc");
 
 const CONSENT_FACTS = [
   { icon: "server", title: "对话经过我们的服务器", subtitle: "孩子说的话会经服务器处理后再回复" },
@@ -14,6 +15,14 @@ const CONSENT_FACTS = [
 ];
 
 const CONSENT_REQUIRED = "请先阅读并同意《隐私保护指引》和《监护人同意书》。";
+
+function agreementFields() {
+  const pending = loadUserAgreement().pending;
+  return {
+    agreementPending: pending,
+    agreementHint: pending ? CONSENT_AGREEMENT_HINT : "",
+  };
+}
 
 function reasonText(reason) {
   return {
@@ -44,6 +53,7 @@ Page({
     needsSalutation: false,
     releaseChip: releaseChip(),
     facts: CONSENT_FACTS,
+    ...agreementFields(),
   },
 
   goBack() {
@@ -64,6 +74,8 @@ Page({
   },
 
   onShow() {
+    const gate = agreementFields();
+    this.setData(gate.agreementPending ? { ...gate, consented: false } : gate);
     if (api.hasAuthenticatedSession()) {
       this.finishLogin();
       return;
@@ -96,6 +108,7 @@ Page({
   },
 
   toggleConsent() {
+    if (this.data.agreementPending) return;
     this.setData({ consented: !this.data.consented, error: "" });
   },
 

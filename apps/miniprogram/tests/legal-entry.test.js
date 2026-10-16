@@ -9,8 +9,6 @@ const fx = require("../scripts/mp-harness/fixtures");
 const { EFFECTIVE_ON, releaseChip } = require("../utils/legal-release");
 const { AGREEMENT_PENDING, presentUserAgreement } = require("../utils/legal-doc");
 
-const AGREEMENT_FILE = path.join(__dirname, "../legal/user-agreement.md");
-
 function visibleText(html) {
   return html.replace(/<head>[\s\S]*?<\/head>/, "").replace(/<style>[\s\S]*?<\/style>/, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -35,8 +33,14 @@ test("an empty effective date stays 内测版 and a given date is shown as given
   assert.equal(releaseChip("2026年4月1日"), "内测版 · 2026年4月1日生效");
 });
 
-test("consent links open their documents and the tick does not require opening them first", async () => {
-  const harness = loadPage("pages/auth/index", fx.guest());
+const READY_AGREEMENT = "# 用户协议\n\n## 正文\n\n甲。\n";
+const MARKED_AGREEMENT = "# 用户协议\n\n## 正文\n\n<!-- agreement: pending -->\n\n这是一段已经写好的协议正文，用来确认占位标记还在时不能勾选。\n";
+
+test("consent links open their documents, and a finished agreement can be ticked before those documents are opened", async () => {
+  const harness = loadPage("pages/auth/index", {
+    ...fx.guest(),
+    files: { "legal/user-agreement.md": READY_AGREEMENT },
+  });
   await harness.run({ redirect: "/pages/home/index", reason: "view_dashboard" });
   try {
     const html = renderPage("pages/auth/index", harness.page.data);
@@ -50,12 +54,39 @@ test("consent links open their documents and the tick does not require opening t
       [{ url: "/pages/guardian-consent/index" }],
     );
     assert.equal(harness.page.data.consented, false);
+    assert.equal(harness.page.data.agreementHint, "");
+    assert.doesNotMatch(html, /class="auth-consent auth-consent-locked"/);
     harness.page.toggleConsent();
     assert.equal(harness.page.data.consented, true);
     assert.equal(harness.page.data.releaseChip, "内测版");
     assert.doesNotMatch(visibleText(html), /草稿/);
   } finally {
     harness.restore();
+  }
+});
+
+test("a pending or missing agreement locks the consent tick and shows the exact hint", async () => {
+  assert.equal(presentUserAgreement(MARKED_AGREEMENT).pending, true);
+  assert.equal(presentUserAgreement("").pending, true);
+  const cases = [
+    ["legal/user-agreement.md", MARKED_AGREEMENT],
+    ["legal/user-agreement.md", ""],
+  ];
+  for (const [file, contents] of cases) {
+    const harness = loadPage("pages/auth/index", { ...fx.guest(), files: { [file]: contents } });
+    await harness.run({ reason: "view_dashboard" });
+    try {
+      const html = renderPage("pages/auth/index", harness.page.data);
+      const text = visibleText(html);
+      assert.match(html, /class="auth-consent auth-consent-locked"/);
+      assert.match(text, /用户协议正在定稿，定稿后才能勾选同意/);
+      assert.equal(harness.page.data.consented, false);
+      harness.page.toggleConsent();
+      assert.equal(harness.page.data.consented, false);
+      assert.doesNotMatch(text, /草稿/);
+    } finally {
+      harness.restore();
+    }
   }
 });
 
@@ -88,11 +119,13 @@ test("login titles open the agreement and the privacy notice without a login red
 });
 
 test("the user agreement page shows the document body, or a pending notice when that body is empty", async () => {
-  const onDisk = fs.readFileSync(AGREEMENT_FILE, "utf8");
-  const pending = loadPage("pages/user-agreement/index", fx.guest());
+  const pending = loadPage("pages/user-agreement/index", {
+    ...fx.guest(),
+    files: { "legal/user-agreement.md": MARKED_AGREEMENT },
+  });
   await pending.run();
   try {
-    assert.deepEqual(presentUserAgreement(onDisk), {
+    assert.deepEqual(presentUserAgreement(MARKED_AGREEMENT), {
       pending: true,
       notice: AGREEMENT_PENDING,
       paragraphs: [],
@@ -101,6 +134,7 @@ test("the user agreement page shows the document body, or a pending notice when 
     const text = visibleText(renderPage("pages/user-agreement/index", pending.page.data));
     assert.match(text, /^用户协议 用户协议正在定稿$/);
     assert.doesNotMatch(text, /草稿/);
+    assert.doesNotMatch(text, /agreement: pending/);
   } finally {
     pending.restore();
   }

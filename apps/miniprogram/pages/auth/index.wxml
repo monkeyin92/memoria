@@ -19,12 +19,13 @@
       </view>
     </view>
 
-    <view class="auth-consent" bindtap="toggleConsent" aria-role="checkbox" aria-checked="{{consented}}">
+    <view class="auth-consent {{agreementPending ? 'auth-consent-locked' : ''}}" bindtap="toggleConsent" aria-role="checkbox" aria-checked="{{consented}}" aria-disabled="{{agreementPending}}">
       <view class="auth-check {{consented ? 'auth-check-on' : ''}}">
         <image wx:if="{{consented}}" class="auth-check-icon" src="/assets/ui/v4/check-white-bold.svg" />
       </view>
       <view class="auth-consent-copy">我是孩子的监护人，已阅读并同意<text class="legal-link" catchtap="openPrivacy">《隐私保护指引》</text>和<text class="legal-link" catchtap="openGuardianConsent">《监护人同意书》</text></view>
     </view>
+    <text wx:if="{{agreementHint}}" class="login-note auth-agreement-hint">{{agreementHint}}</text>
 
     <text wx:if="{{error}}" class="error-text auth-error">{{error}}</text>
     <button

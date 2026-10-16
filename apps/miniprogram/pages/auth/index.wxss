@@ -71,6 +71,10 @@
   min-width: 0;
 }
 
+.auth-consent-locked {
+  opacity: 0.45;
+}
+
 .auth-check {
   display: flex;
   flex: none;

@@ -5,6 +5,11 @@
 const fx = require("./fixtures");
 
 const { authed, guest } = fx;
+const READY_AGREEMENT = "# 用户协议\n\n## 正文\n\n甲。\n";
+
+function withReadyAgreement(harness) {
+  return { ...harness, files: { "legal/user-agreement.md": READY_AGREEMENT } };
+}
 
 const PAGES = [
   { slug: "home", page: "pages/home/index", harness: authed() },
@@ -39,10 +44,11 @@ const PAGES = [
   },
   { slug: "persona-custom", page: "pages/persona-custom/index", harness: authed(fx.personaApi) },
   { slug: "auth", page: "pages/auth/index", harness: guest(), query: { reason: "view_device" } },
+  { slug: "auth-ready", page: "pages/auth/index", harness: withReadyAgreement(guest()), query: { reason: "view_device" } },
   {
     slug: "auth-profile",
     page: "pages/auth/index",
-    harness: guest(),
+    harness: withReadyAgreement(guest()),
     query: { reason: "view_device", skip_restore: "1" },
     actions: [["toggleConsent"], ["onGetPhoneNumber", { detail: { code: "phone-code" } }]],
   },

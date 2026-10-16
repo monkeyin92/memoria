@@ -24,9 +24,14 @@ function authApi({ restoreError = { code: "phone_authorization_required" }, logi
   return { api, logins };
 }
 
+const READY_AGREEMENT = "# 用户协议\n\n## 正文\n\n甲。\n";
+
 async function openAuth(options) {
   const { api, logins } = authApi(options);
-  const harness = loadPage("pages/auth/index", { api });
+  const harness = loadPage("pages/auth/index", {
+    api,
+    files: { "legal/user-agreement.md": READY_AGREEMENT },
+  });
   await harness.run({ redirect: "/pages/home/index", reason: "view_dashboard" });
   const navigations = () =>
     harness.wxCalls.filter((call) => ["switchTab", "redirectTo", "navigateBack"].includes(call.name)).map((call) => [call.name, call.args[0]]);
