@@ -738,8 +738,6 @@ async def test_parent_acknowledges_alerts_one_at_a_time_across_logins(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """我知道了 只记一次已读；换一次登录也只看到下一条未读，孩子原话不出现在任何返回里。"""
-
     _configure(monkeypatch, tmp_path)
     app = create_app()
     queries = (_CRISIS_QUERY, "有人正在打我", "我朋友说他不想活了")

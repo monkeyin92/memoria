@@ -387,8 +387,6 @@ class PostgresGuardianCrisisMixin:
             """,
             account_id,
         )
-        # A receipt is the parent's own act, so a child's export never says
-        # when the parent read the alert.
         reads = await connection.fetch(
             """
             SELECT notification_id, guardian_user_id, read_at

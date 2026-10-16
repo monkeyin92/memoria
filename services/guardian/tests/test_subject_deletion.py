@@ -246,7 +246,6 @@ async def test_subject_deletion_removes_only_the_subjects_guardian_rows(
     assert _ids(other_export["crisis_events"], "minor_user_id") == {OTHER_SUBJECT}
     notifications = await store.guardian_notifications(guardian_user_id=OWNER)
     assert [item.minor_user_id for item in notifications] == [OTHER_SUBJECT]
-    # The subject's receipt leaves with its alert; the other subject's stays.
     admin = await asyncpg.connect(postgres_database.owner_dsn())
     try:
         receipts = await admin.fetch("SELECT notification_id FROM guardian_notification_reads")

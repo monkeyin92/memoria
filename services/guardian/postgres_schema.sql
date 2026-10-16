@@ -445,8 +445,6 @@ CREATE INDEX IF NOT EXISTS idx_guardian_notification_push_claim
 ON guardian_notification_outbox(created_at, notification_id)
 WHERE status = 'pending';
 
--- The composite key lets a read receipt prove it belongs to the
--- notification's own recipient.
 DO $guardian_outbox_recipient_key$
 BEGIN
     IF NOT EXISTS (
@@ -461,9 +459,6 @@ BEGIN
 END
 $guardian_outbox_recipient_key$;
 
--- One row per alert the parent acknowledged with 我知道了. Delivery status
--- never means read; only this row does. It holds no tier, no summary, and
--- nothing of the child's. No role may UPDATE it, so the first read_at stays.
 CREATE TABLE IF NOT EXISTS guardian_notification_reads (
     notification_id UUID PRIMARY KEY,
     guardian_user_id TEXT NOT NULL,
@@ -1516,8 +1511,6 @@ BEGIN
                    guardian_crisis_events, guardian_notification_outbox,
                    guardian_push_subscriptions, guardian_push_subscription_events
                 TO memoria_guardian_maintenance;
-            -- Export only. Receipts leave with their outbox row by cascade,
-            -- and the shared list above would let read_at move.
             GRANT SELECT ON guardian_notification_reads TO memoria_guardian_maintenance;
         END IF;
 

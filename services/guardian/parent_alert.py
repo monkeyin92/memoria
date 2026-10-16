@@ -1,11 +1,3 @@
-"""What a parent is told about one safety alert.
-
-Every tier-dependent parent string lives here. The tier is the fixed script
-the robot already spoke, stored at crisis time as
-``guardian_crisis_events.reply_template_id``. Nothing here reads the child's
-words, so a summary cannot carry them. Editing a sentence relabels past alerts.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -53,22 +45,16 @@ PARENT_ALERT_COPY: Final[Mapping[FixedSafetyTemplateId, ParentAlertCopy]] = Mapp
 if set(PARENT_ALERT_COPY) != set(get_args(FixedSafetyTemplateId)):
     raise RuntimeError("every fixed safety script needs parent alert copy")
 
-# Rows written before the tiers carry 'legacy-unspecified' or an old draft id.
-# The self-harm guidance names 12356, so it is the safe reading of an unknown tier.
 _FALLBACK_TEMPLATE: Final[FixedSafetyTemplateId] = "crisis-self-v1"
 
 
 def parse_alert_template(reply_template_id: str) -> FixedSafetyTemplateId:
-    """Narrow a stored ``reply_template_id`` to a known script, or the fallback."""
-
     if reply_template_id in PARENT_ALERT_COPY:
         return cast(FixedSafetyTemplateId, reply_template_id)
     return _FALLBACK_TEMPLATE
 
 
 def alert_time_label(at: datetime, zone: tzinfo) -> str:
-    """``10月16日 19:42`` in ``zone``. Never relative, never 今天."""
-
     local = at.astimezone(zone)
     return f"{local.month}月{local.day}日 {local:%H:%M}"
 

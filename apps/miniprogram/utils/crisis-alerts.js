@@ -1,7 +1,4 @@
 /*
- * 安全提醒：首页和回顾读同一个服务端未读集合，「我知道了」写一次已读回执。
- * 分类、概括、机器人说了什么和建议都由服务端按固定话术给出，客户端不写求助电话。
- *
  * 绑定门禁必须在用户 tap 的同步调用栈里调起 requestSubscribeMessage，
  * 因此配置要在进入确认页时预加载，提交时不能先 await 配置。
  */
@@ -21,7 +18,6 @@ function text(value) {
   return typeof value === "string" ? value : "";
 }
 
-/* 只有缺 id 才丢弃；缺某个文案字段时显示空串，不能因此藏起一条提醒。 */
 function parseSafetyAlert(item) {
   if (!item || typeof item !== "object") return null;
   const notificationId = text(item.notification_id);

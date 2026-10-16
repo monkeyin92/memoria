@@ -190,18 +190,21 @@ const SAFETY_ALERT = {
   contains_severity: false,
 };
 
-/* Pass alerts newest first, as the server orders them. Share one instance across page loads to model a later login. */
 function safetyAlertApi(alerts) {
   const read = new Set();
+  const ordered = [...alerts].sort((left, right) => {
+    const byTime = String(right.occurred_at).localeCompare(String(left.occurred_at));
+    return byTime || String(right.notification_id).localeCompare(String(left.notification_id));
+  });
   const find = (id) => {
-    const alert = alerts.find((item) => item.notification_id === id);
+    const alert = ordered.find((item) => item.notification_id === id);
     if (!alert) throw Object.assign(new Error("guardian_notification_not_found"), { status: 404 });
     return alert;
   };
   return {
-    getGuardianNotifications: async () => ({ items: alerts }),
+    getGuardianNotifications: async () => ({ items: ordered }),
     getUnreadGuardianNotifications: async () => {
-      const [newest = null, ...others] = alerts.filter((alert) => !read.has(alert.notification_id));
+      const [newest = null, ...others] = ordered.filter((alert) => !read.has(alert.notification_id));
       return { newest, others_count: others.length };
     },
     getGuardianNotification: async (id) => find(id),

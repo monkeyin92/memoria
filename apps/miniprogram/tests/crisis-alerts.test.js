@@ -272,7 +272,6 @@ test("unread home and memory alerts stay independent of the push toggle", () => 
   assert.match(memoryJs, /loadUnreadSafetyAlerts/);
   assert.match(homeJs, /safetySubscribeOn|optOutCrisisPushAlerts/);
   assert.doesNotMatch(memoryJs, /safetySubscribeOn|optOutCrisisPushAlerts/);
-  // Opting out only clears the WeChat push ledger; it must not clear unread alerts.
   for (const script of [deviceJs, homeJs]) {
     const optOutAt = script.indexOf("optOutCrisisPushAlerts");
     assert.ok(optOutAt > 0);

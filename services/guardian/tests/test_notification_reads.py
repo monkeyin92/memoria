@@ -1,9 +1,3 @@
-"""Parent read receipts for safety alerts on the PostgreSQL guardian store.
-
-Only 我知道了 writes a receipt. Delivery never does, and the history list
-keeps every alert whether it was read or not.
-"""
-
 from __future__ import annotations
 
 import hashlib
