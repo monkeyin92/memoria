@@ -25,6 +25,31 @@ test("the usage screen shows the real quiet window as the card chip, then the of
   assert.match(html, /class="mps-fill" style="width: 33\.3%;"/);
 });
 
+test("the 单次上限 slider runs from 10 to 30 and shows a signed 15 minute cap", async () => {
+  const profile = {
+    ...fx.RUNTIME_PROFILE,
+    obligations: [
+      { code: "QUIET_HOURS", params: { quiet_hours: ["21:00", "07:00"] } },
+      {
+        code: "MAX_SESSION_SECONDS",
+        params: { max_session_seconds: 900, extras: [["daily_chat_seconds", "1800"]] },
+      },
+    ],
+  };
+  const harness = loadPage("pages/device/index", fx.authed({ getRuntimeProfile: async () => profile }));
+  try {
+    const data = await harness.run();
+    assert.equal(data.sessionLimits.maxSessionMinutes, 15);
+    assert.equal(data.limitsSliderMin, 10);
+    assert.equal(data.limitsSliderMax, 30);
+    assert.equal(data.limitsSliderStep, 1);
+    const text = visibleText(renderPage("pages/device/index", data));
+    assert.match(text, /单次上限 15 分钟 10 分钟 30 分钟/);
+  } finally {
+    harness.restore();
+  }
+});
+
 test("releasing the 单次上限 slider at 60 saves 60 minutes with the stored quiet window", async () => {
   const saved = [];
   const harness = loadPage("pages/device/index", fx.authed({ setSessionLimits: async (...args) => saved.push(args) }));

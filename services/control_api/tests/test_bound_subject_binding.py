@@ -690,12 +690,28 @@ async def test_binder_sees_only_style_labels_and_can_reset_the_bound_persona(
     assert forgotten == [(owner_id, child_id)]
 
 
+def test_session_limit_writes_accept_10_to_30_minutes_only() -> None:
+    from pydantic import ValidationError
+
+    from services.control_api.app.routes.multi_subject import SessionLimitsRequest
+
+    for minutes in (10, 15, 30):
+        assert SessionLimitsRequest.model_validate({"max_session_minutes": minutes}).max_session_minutes == minutes
+    for minutes in (9, 31, 45, 60):
+        with pytest.raises(ValidationError):
+            SessionLimitsRequest.model_validate({"max_session_minutes": minutes})
+
+
 @pytest.mark.parametrize(
     ("preferences", "expected"),
     [
         (
+            {"max_session_minutes": 20, "quiet_hours": {"start": "21:00", "end": "07:00"}},
+            (1200, ("21:00", "07:00")),
+        ),
+        (
             {"max_session_minutes": 45, "quiet_hours": {"start": "21:00", "end": "07:00"}},
-            (2700, ("21:00", "07:00")),
+            (None, ("21:00", "07:00")),
         ),
         ({}, (None, None)),
         # A malformed value never blocks the binding; the policy default applies.

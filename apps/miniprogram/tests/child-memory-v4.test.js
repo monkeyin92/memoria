@@ -33,6 +33,44 @@ test("the archive leads the page with the design's three labels and footer, summ
   }
 });
 
+test("an open long-term memory shows one fact card per field, joining values", async () => {
+  const harness = await openChildMemory(fx.archiveApi);
+  try {
+    const text = visibleText(renderPage("pages/child-memory/index", harness.page.data, { tabBar: false }));
+    assert.match(
+      text,
+      /称呼 乐乐 孩子喜欢被这样叫 喜好 恐龙、画画 聊天时会提到 宠物名 小乐宝 讲故事时可能出现 除这三项外，不长期保存其他信息。/,
+    );
+    assert.doesNotMatch(text, /10 月/);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("a closed long-term memory shows an empty state and does not list facts", async () => {
+  let archiveReads = 0;
+  const harness = await openChildMemory({
+    ...fx.archiveApi,
+    getPersonConsents: async () => ({
+      items: [{ consent_kind: "child_archive", consent_id: "c_archive", active: false }],
+    }),
+    getChildArchive: async () => {
+      archiveReads += 1;
+      return { items: fx.ARCHIVE };
+    },
+  });
+  try {
+    const text = visibleText(renderPage("pages/child-memory/index", harness.page.data, { tabBar: false }));
+    assert.equal(archiveReads, 0);
+    assert.equal(harness.page.data.archiveConsent.active, false);
+    assert.match(text, /长期记忆未开启/);
+    assert.match(text, /已经记下的内容还在/);
+    assert.doesNotMatch(text, /恐龙|画画|小乐宝|孩子喜欢被这样叫/);
+  } finally {
+    harness.restore();
+  }
+});
+
 test("with no summaries yet the section explains when they appear", async () => {
   const harness = await openChildMemory({ ...fx.archiveApi, ...fx.emptyMemoryApi });
   try {

@@ -345,7 +345,8 @@ test("parent_for_child flow validates minimal info and submits guardian relation
   });
   // 长期记忆默认不勾选，也不是完成绑定的前提。
   assert.equal(payload.service_preferences.memory_level, "none");
-  assert.equal(payload.service_preferences.max_session_minutes, 30);
+  assert.equal(page.data.form.maxSessionMinutes, 15);
+  assert.equal(payload.service_preferences.max_session_minutes, 15);
   assert.deepEqual(payload.service_preferences.quiet_hours, {
     start: "21:00",
     end: "07:00",

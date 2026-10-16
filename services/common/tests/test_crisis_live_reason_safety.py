@@ -41,12 +41,10 @@ def test_despair_phrase_group_routes_to_crisis_self_v1(
     assert fixed_companion_reply(query=query, is_companion=True) == CRISIS_SELF_SCRIPT.display
     assert route.possibly_story_retell is expect_story_note
     assert is_story_retell_context(query) is expect_story_note
-    if expect_story_note:
-        assert "可能是在复述故事" in guardian_attention_copy(
-            possibly_story_retell=True
-        )
-    else:
-        assert "复述故事" not in guardian_attention_copy(possibly_story_retell=False)
+    assert guardian_attention_copy(possibly_story_retell=expect_story_note) == (
+        "有一条需要你关注的对话"
+    )
+    assert "复述" not in guardian_attention_copy(possibly_story_retell=expect_story_note)
 
 
 @pytest.mark.parametrize(

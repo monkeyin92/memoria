@@ -44,6 +44,25 @@ test("home ring shows the daily budget without inventing minutes the ledger coul
   assert.doesNotMatch(html, /conic-gradient/);
 });
 
+test("home ring fills the used share of the daily budget", async () => {
+  const { data } = await loadHome({
+    api: {
+      getSessionLimits: async () => ({
+        max_session_minutes: 15,
+        quiet_hours: null,
+        daily_chat_minutes: 30,
+        today_used_minutes: 4,
+      }),
+    },
+  });
+  assert.equal(data.usageUsedMinutes, 4);
+  assert.equal(data.usageLimitMinutes, 30);
+  assert.equal(data.usageFillPercent, 13);
+  const html = renderPage("pages/home/index", data);
+  assert.match(html, /conic-gradient\(#4A52C9 0% 13%, #ECECF2 13% 100%\)/);
+  assert.match(visibleText(html), /今天聊了 4 分钟/);
+});
+
 test("home shows today's minutes only when the session-limits read carries them", async () => {
   const reads = [];
   const { data } = await loadHome({
