@@ -6,16 +6,10 @@ import pathlib
 
 FIRMWARE_ROOT = pathlib.Path(__file__).parents[1]
 PATCH = FIRMWARE_ROOT / "overlay" / "patches" / "0042-memoria-playsound-heap-check.patch"
-PRODUCT = (
-    FIRMWARE_ROOT
-    / "overlay"
-    / "files"
-    / "main"
-    / "boards"
-    / "memoria"
-    / "esp-vocat"
-    / "config.json"
-)
+BOARD = FIRMWARE_ROOT / "overlay" / "files" / "main" / "boards" / "memoria" / "esp-vocat"
+PRODUCT = BOARD / "config.json"
+BENCH = BOARD / "config.bench.json"
+KEEP_AWAKE = BOARD / "config.keep-awake.json"
 
 
 def test_playsound_checks_internal_ram_and_one_new_packet() -> None:
@@ -30,5 +24,10 @@ def test_playsound_checks_internal_ram_and_one_new_packet() -> None:
     assert 'xTaskCreate(PsramHeapCheckTask, "psram_heap", 4096, nullptr, 1, nullptr)' in patch
     assert "pdMS_TO_TICKS(30000)" in patch
     assert "CONFIG_HEAP_POISONING_COMPREHENSIVE" in patch
-    assert "CONFIG_ESP_INT_WDT_TIMEOUT_MS" not in PRODUCT.read_text(encoding="utf-8")
-    assert "CONFIG_HEAP_POISONING_COMPREHENSIVE" not in PRODUCT.read_text(encoding="utf-8")
+    product = PRODUCT.read_text(encoding="utf-8")
+    assert "CONFIG_ESP_INT_WDT_TIMEOUT_MS" not in product
+    assert "CONFIG_HEAP_POISONING_COMPREHENSIVE" not in product
+    for manifest in (BENCH, KEEP_AWAKE):
+        text = manifest.read_text(encoding="utf-8")
+        assert "CONFIG_HEAP_POISONING_COMPREHENSIVE=y" in text
+        assert "CONFIG_ESP_INT_WDT_TIMEOUT_MS=10000" in text
