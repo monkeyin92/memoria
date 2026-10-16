@@ -619,6 +619,8 @@ class ExistingVoiceProviderAdapter:
                     self._fixed_safety_fences.add(fence)
                     log_fixed_safety_playout(logger, item)
                     for phrase in item.phrases:
+                        if cancel_event.is_set():
+                            return
                         yield phrase
                     continue
                 if not item:

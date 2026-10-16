@@ -18,7 +18,6 @@ from services.agent.src.orchestration.interruption_guard import (
     is_backchannel,
     is_completion_ack_only,
     is_conversation_close_only,
-    is_embedded_short_stop,
     is_explicit_interrupt,
     is_interrupt_command_only,
     is_resume_command_only,
@@ -35,7 +34,6 @@ class UtteranceIntent(StrEnum):
     ENROLL = "enroll"
     # Explicit end-of-conversation phrase — close the media session and standby.
     END_SESSION = "end_session"
-    # Pure stop/wait command (等等 / 停一下 / 别说了) — ack only, no LLM.
     INTERRUPT_COMMAND = "interrupt_command"
     # Explicit interrupt wording plus real content (等一下我想问…) — interrupt then chat.
     INTERRUPT_THEN_CHAT = "interrupt_then_chat"
@@ -295,7 +293,7 @@ def route_utterance(
       1. speaker PENDING → enroll (blocks all chat, including stop phrases)
       2. resume command while a reply is paused → resume
       3. exact conversation-close phrase → end_session (no chat, no ack)
-      4. interrupt-command-only → interrupt_command (no chat, yield/stop ack)
+      4. interrupt-command-only → interrupt_command (no chat)
       5. sticky interrupt exact replay → interrupt_replay
       6. semantic control-only evidence → interrupt_command
       7. explicit interrupt + content → interrupt_then_chat
@@ -359,9 +357,7 @@ def route_utterance(
             enter_chat=False,
             should_interrupt=True,
             speaker_gate_override=True,
-            ack_phrase=(
-                None if is_embedded_short_stop(text) else interrupt_ack_phrase(text)
-            ),
+            ack_phrase=interrupt_ack_phrase(text),
             normalized_text=normalized,
         )
 
