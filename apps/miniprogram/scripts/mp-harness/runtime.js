@@ -3,11 +3,12 @@
  * Page globals and an injected utils/api fixture, then records every setData
  * payload. Used by tests (function + setData size) and the screenshot harness.
  */
+const fs = require("node:fs");
 const path = require("node:path");
 
 const ROOT = path.join(__dirname, "..", "..");
 
-function createWx({ storage = {}, systemInfo = {}, onCall } = {}) {
+function createWx({ storage = {}, systemInfo = {}, onCall, files = {} } = {}) {
   const store = new Map(Object.entries(storage));
   const calls = [];
   const info = {
@@ -44,6 +45,13 @@ function createWx({ storage = {}, systemInfo = {}, onCall } = {}) {
     showActionSheet: (options = {}) => options.fail?.({ errMsg: "cancel" }),
     nextTick: (fn) => setImmediate(fn),
     canIUse: () => true,
+    getFileSystemManager: () => ({
+      readFileSync(filePath, encoding) {
+        const rel = String(filePath || "").replace(/^\//, "");
+        if (Object.prototype.hasOwnProperty.call(files, rel)) return files[rel];
+        return fs.readFileSync(path.join(ROOT, rel), encoding || "utf8");
+      },
+    }),
     createInnerAudioContext: () => {
       const audio = {
         src: "",
@@ -141,9 +149,9 @@ function fixedDate(now) {
   return FixedDate;
 }
 
-function loadPage(pagePath, { api = {}, storage = {}, config, systemInfo, app = {}, now } = {}) {
+function loadPage(pagePath, { api = {}, storage = {}, config, systemInfo, app = {}, now, files } = {}) {
   clearProjectModules();
-  const { wx, calls } = createWx({ storage, systemInfo });
+  const { wx, calls } = createWx({ storage, systemInfo, files });
   let definition = null;
   const previous = {
     wx: global.wx,

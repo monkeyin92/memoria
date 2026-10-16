@@ -1,6 +1,6 @@
 <view class="page-shell sub-page" style="{{statusBarStyle}}">
   <view class="nav-back" bindtap="goBack" aria-label="返回"><image class="nav-back-icon" src="/assets/ui/v4/back-strong.svg" /></view>
-  <text class="pill pill-draft guardian-consent-chip">草稿 · 待律师审核</text>
+  <text class="pill pill-teal guardian-consent-chip">{{releaseChip}}</text>
   <text class="page-title guardian-consent-title">监护人同意书</text>
   <view class="guardian-consent-copy">
     <text class="guardian-consent-p" wx:for="{{paragraphs}}" wx:key="*this">{{item}}</text>

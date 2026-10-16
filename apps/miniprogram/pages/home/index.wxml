@@ -15,7 +15,7 @@
         <image class="home-btn-icon" src="/assets/ui/v4/wechat-white.svg" />微信一键登录
       </button>
       <button class="trial-secondary home-login-phone" bindtap="loginWithPhone">手机号登录</button>
-      <text class="home-note home-login-note">登录即表示你已阅读《用户协议》和《隐私说明》</text>
+      <view class="home-note home-login-note">登录即表示你已阅读<text class="legal-link" catchtap="openUserAgreement">《用户协议》</text>和<text class="legal-link" catchtap="openPrivacyNotice">《隐私说明》</text></view>
     </view>
   </view>
 

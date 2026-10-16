@@ -13,6 +13,7 @@
     "pages/guardian-consent/index",
     "pages/digital-self/index",
     "pages/privacy/index",
+    "pages/user-agreement/index",
     "pages/bind/index",
     "pages/device-onboarding/index"
   ],

@@ -187,7 +187,7 @@ test("guest home is the full-bleed v4 login screen with no tab bar", async () =>
     const text = visibleText(renderPage("pages/home/index", data, { tabBar: false }));
     assert.equal(
       text.trim(),
-      "Memoria 陪孩子聊天、讲故事的 AI 助手 晚上好，欢迎回来 登录后查看孩子今天聊了什么 微信一键登录 手机号登录 登录即表示你已阅读《用户协议》和《隐私说明》",
+      "Memoria 陪孩子聊天、讲故事的 AI 助手 晚上好，欢迎回来 登录后查看孩子今天聊了什么 微信一键登录 手机号登录 登录即表示你已阅读 《用户协议》 和 《隐私说明》",
     );
   } finally {
     harness.restore();

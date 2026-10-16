@@ -66,6 +66,11 @@
   margin-top: 24px;
 }
 
+.legal-link {
+  color: var(--mp-ink);
+  font-weight: 600;
+}
+
 .home-login-hello {
   display: block;
   color: var(--mp-ink);

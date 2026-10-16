@@ -13,6 +13,7 @@ const OWNING_TAB = {
   auth: "/pages/home/index",
   "guardian-consent": "/pages/home/index",
   privacy: "/pages/profile/index",
+  "user-agreement": "/pages/home/index",
   "digital-self": "/pages/profile/index",
   attention: "/pages/home/index",
   "device-onboarding": "/pages/device/index",

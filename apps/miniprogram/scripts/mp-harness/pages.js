@@ -49,6 +49,8 @@ const PAGES = [
   { slug: "attention", page: "pages/attention/index", harness: authed(), query: { id: "n1" } },
   { slug: "attention-empty", page: "pages/attention/index", harness: authed({ getGuardianNotifications: async () => ({ items: [] }) }) },
   { slug: "privacy", page: "pages/privacy/index", harness: authed() },
+  { slug: "privacy-guest", page: "pages/privacy/index", harness: guest() },
+  { slug: "user-agreement", page: "pages/user-agreement/index", harness: guest() },
   {
     slug: "privacy-granted",
     page: "pages/privacy/index",

@@ -1,7 +1,6 @@
 const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
 const { leavePage } = require("../../utils/nav-back");
-const { requireLogin } = require("../../utils/auth-gate");
 const contracts = require("../../utils/multi-subject-contracts");
 const {
   capabilityGateMessage,
@@ -25,6 +24,7 @@ Page({
     error: "",
     consent: null,
     consentLabel: "",
+    guest: false,
   },
 
   goBack() {
@@ -39,14 +39,26 @@ Page({
   },
 
   async onShow() {
-    if (
-      !(await requireLogin({
-        reason: "manage_privacy",
-        redirect: "/pages/privacy/index",
-      }))
-    ) return;
+    if (!api.hasAuthenticatedSession()) {
+      this._showGuestNotice();
+      return;
+    }
+    this.setData({ guest: false });
     await this.refreshConfigGate();
     this.loadConsent();
+  },
+
+  _showGuestNotice() {
+    this.setData({
+      guest: true,
+      configOpen: false,
+      configNote: "",
+      loading: false,
+      acting: false,
+      error: "",
+      consent: null,
+      consentLabel: "",
+    });
   },
 
   onUnload() {
@@ -57,15 +69,7 @@ Page({
   },
 
   _clearPrivateState() {
-    this.setData({
-      configOpen: false,
-      configNote: CONFIG_GATE_PENDING_MESSAGE,
-      loading: false,
-      acting: false,
-      error: "",
-      consent: null,
-      consentLabel: "",
-    });
+    this._showGuestNotice();
   },
 
   async refreshConfigGate() {

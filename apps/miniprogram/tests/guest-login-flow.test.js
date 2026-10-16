@@ -74,8 +74,8 @@ test("login uses WeChat phone authorization with optional nickname and avatar co
   assert.match(authTemplate, /open-type="getPhoneNumber"/);
   assert.match(authTemplate, /open-type="chooseAvatar"/);
   assert.match(authTemplate, /type="nickname"/);
-  assert.match(authTemplate, /catchtap="openPrivacy">《隐私保护指引（草稿）》<\/text>和<text class="privacy-link" catchtap="openGuardianConsent">《监护人同意书（草稿）》/);
-  assert.doesNotMatch(authTemplate, /已阅读并同意<text class="privacy-link" catchtap="openPrivacy">《隐私保护指引》<\/text>/);
+  assert.match(authTemplate, /catchtap="openPrivacy">《隐私保护指引》<\/text>和<text class="legal-link" catchtap="openGuardianConsent">《监护人同意书》/);
+  assert.doesNotMatch(authTemplate, /草稿/);
   assert.match(authScript, /navigateTo\(\{ url: "\/pages\/guardian-consent\/index" \}\)/);
   assert.doesNotMatch(authTemplate, />用户名</);
   assert.doesNotMatch(authTemplate, />密码</);
