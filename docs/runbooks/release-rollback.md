@@ -380,7 +380,11 @@ SQL 侧只多返回事实 `device_bound`，与开关无关，所以 `schema` 步
 
 服务回滚按最小组件：保留失败候选日志/manifest，恢复切前 image、软链和 env，等待健康与具名 gRPC/readiness，再验外部路由/provider 和设备重连。回滚镜像曾可运行不等于本次回滚演练通过。若回滚还需要恢复 `freeze` 写入的 PostgreSQL / 控制库快照，那些文件只保留 3 天（见上文「Freeze 转储保留 3 天」）；超过窗口后只能回滚镜像与配置，不能再从 `.cutover` 转储还原库。
 
-固件仅回写唯一紧邻 app 至 `0x20000`；写前备份当前 `0x20000/0x3f0000` 全槽、核摘要，写后回读并比较身份和全部非 app 保护区，再做启动/媒体验收。禁止 `flash.sh` 整包、`erase-all` 或误用旧 run 回滚件。
+固件仅回写唯一紧邻 app 至 `0x20000`；写前备份当前 `0x20000/0x3f0000` 全槽、核摘要，写后回读并比较身份和全部非 app 保护区，再做启动/媒体验收。禁止 `flash.sh` 整包、`erase-flash` 或误用旧 run 回滚件。
+
+`build.sh` 不再把整片镜像复制成 `merged.bin`。需要整片包时用 `--danger-full-erase`，产物文件名带 `DANGER_FULL_ERASE`。`flash.sh` 默认拒绝烧这类文件，也拒绝任何盖住 `memoria_identity` 的写入。该分区在 `0x10000`，长 64 KiB。只有 `--allow-danger-full-erase` 才允许这一次写入。烧录前和烧录后各只读一次该分区，只判断 NVS namespace `device` 是否存在，不读取、不打印键值。烧录后 namespace 不存在则失败退出。回滚时恢复 `build.sh`、`flash.sh` 和 `check-overlay.sh` 的上一版，并删除 `identity_guard.py`。
+
+保留身份分区。解绑、恢复出厂，以及将来还没定 GPIO 的恢复出厂按键，都不得擦除它。擦除只能按名字擦默认 `nvs` 分区，或擦具体 namespace。禁止全片擦除，也禁止不带分区名的 `nvs_flash_erase()`。仓库里还没有恢复出厂擦除函数。`check-overlay.sh` 已经按这套规则扫描叠加层和脚本，以后的按键代码走同一条检查。
 
 这块板的 USB-Serial-JTAG 上 `esptool read-flash` 会在个别 4 KB 块处确定性失败（2026-10-02：`0x106000`，4 MB 槽里另有约五处，报「No more data to read from the serial port」，同样的字节分成 2 KB 读就没事），所以整槽备份和保护区比较用 `firmware/esp32/scripts/flash_backup.py`（用 IDF 的 python；先停串口记录进程）：`backup` 分 64 KB 读，失败的片重连后改读 2 KB 帧，每个备份文件都与芯片自己算的 MD5 核对；`md5` 给出各区的设备端 MD5，写前写后各跑一次，比较引导/分区表、nvs、phy_init、身份区 `0x10000` 与 assets 不变（otadata 在新 app 首次启动后会被引导程序重写成与写前相同的记录，不要求保持空白）。写入只用 `esptool write-flash 0x20000 <app> 0xd000 <8 KiB 的 0xff>`，以其 `Hash of data verified.` 为写入校验；刷完用 `esptool … --after hard-reset read-mac` 或重开串口记录进程让板子回到 app。
 
