@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Literal, Protocol, get_args
 
 from services.archive.domain import EvidenceEvent, LifeArchivePort
+from services.common.fixed_safety_scripts import FixedSafetyTemplateId
 
 NotificationStatus = Literal["pending", "pin_only", "delivered", "failed", "no_subscription"]
 
@@ -45,9 +46,17 @@ class GuardianNotification:
     status: NotificationStatus
     attempts: int
     created_at: datetime
+    reply_template_id: FixedSafetyTemplateId
+    read_at: datetime | None
     delivered_at: datetime | None = None
     last_error_code: str | None = None
     possibly_story_retell: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class UnreadNotifications:
+    newest: GuardianNotification
+    others_count: int
 
 
 class CrisisNotificationStorePort(Protocol):
@@ -71,6 +80,32 @@ class CrisisNotificationStorePort(Protocol):
         guardian_user_id: str,
         limit: int = 50,
     ) -> tuple[GuardianNotification, ...]: ...
+
+    async def guardian_notification(
+        self,
+        *,
+        guardian_user_id: str,
+        notification_id: str,
+    ) -> GuardianNotification:
+        """Raise ``GuardianNotFoundError`` when the guardian cannot see it."""
+
+    async def unread_guardian_notifications(
+        self,
+        *,
+        guardian_user_id: str,
+    ) -> UnreadNotifications | None: ...
+
+    async def mark_guardian_notification_read(
+        self,
+        *,
+        guardian_user_id: str,
+        notification_id: str,
+        now: datetime,
+    ) -> datetime:
+        """Return the first ``read_at``; a repeat keeps it.
+
+        Raise ``GuardianNotFoundError`` when the guardian cannot see it.
+        """
 
 
 class CrisisNotificationUnavailableError(RuntimeError):
@@ -178,5 +213,6 @@ __all__ = [
     "CrisisNotificationUnavailableError",
     "GuardianNotification",
     "NotificationStatus",
+    "UnreadNotifications",
     "crisis_alert_is_pinned",
 ]

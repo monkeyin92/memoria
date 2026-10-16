@@ -16,8 +16,14 @@ from services.guardian.crisis import (
     CrisisNotificationReceipt,
     GuardianNotification,
     NotificationStatus,
+    UnreadNotifications,
 )
-from services.guardian.domain import GuardianAccessDeniedError, GuardianConflictError
+from services.guardian.domain import (
+    GuardianAccessDeniedError,
+    GuardianConflictError,
+    GuardianNotFoundError,
+)
+from services.guardian.parent_alert import parse_alert_template
 from services.guardian.push import (
     MAX_PUSH_SUBSCRIPTION_BALANCE,
     CrisisPushOutcome,
@@ -33,6 +39,27 @@ from services.guardian.push import (
     validate_crisis_push_claim,
     validate_crisis_push_outcome,
     validate_push_subscription_result,
+)
+
+_NOTIFICATION_SELECT = """
+SELECT outbox.*, crisis.minor_user_id, crisis.possibly_story_retell,
+       crisis.reply_template_id, reads.read_at
+FROM guardian_notification_outbox outbox
+JOIN guardian_crisis_events crisis
+  ON crisis.crisis_event_id = outbox.crisis_event_id
+LEFT JOIN guardian_notification_reads reads
+  ON reads.notification_id = outbox.notification_id
+WHERE outbox.guardian_user_id = $1
+"""
+
+_UNREAD_SELECT = (
+    "SELECT unread.*, count(*) OVER () AS unread_total FROM ("
+    + _NOTIFICATION_SELECT
+    + """  AND reads.notification_id IS NULL
+) unread
+ORDER BY unread.created_at DESC, unread.notification_id DESC
+LIMIT 1
+"""
 )
 
 
@@ -91,6 +118,8 @@ class PostgresGuardianCrisisMixin:
             status=cast(NotificationStatus, str(row["status"])),
             attempts=int(row["attempts"]),
             created_at=cast(datetime, row["created_at"]),
+            reply_template_id=parse_alert_template(str(row["reply_template_id"])),
+            read_at=cast(datetime | None, row["read_at"]),
             delivered_at=cast(datetime | None, row["delivered_at"]),
             last_error_code=(
                 str(row["last_error_code"])
@@ -244,19 +273,135 @@ class PostgresGuardianCrisisMixin:
                     subject_user_id=guardian_user_id,
                 )
                 rows = await connection.fetch(
-                    """
-                    SELECT outbox.*, crisis.minor_user_id, crisis.possibly_story_retell
-                    FROM guardian_notification_outbox outbox
-                    JOIN guardian_crisis_events crisis
-                      ON crisis.crisis_event_id = outbox.crisis_event_id
-                    WHERE outbox.guardian_user_id = $1
-                    ORDER BY outbox.created_at DESC, outbox.notification_id DESC
-                    LIMIT $2
-                    """,
+                    _NOTIFICATION_SELECT
+                    + "ORDER BY outbox.created_at DESC, outbox.notification_id DESC LIMIT $2",
                     guardian_user_id,
                     limit,
                 )
         return tuple(self._notification(row) for row in rows)
+
+    async def guardian_notification(
+        self,
+        *,
+        guardian_user_id: str,
+        notification_id: str,
+    ) -> GuardianNotification:
+        notification_uuid = _uuid(notification_id, field="notification_id")
+        pool = await self._ready_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            await self._set_api_context(
+                connection,
+                actor_user_id=guardian_user_id,
+                subject_user_id=guardian_user_id,
+            )
+            row = await connection.fetchrow(
+                _NOTIFICATION_SELECT + "AND outbox.notification_id = $2",
+                guardian_user_id,
+                notification_uuid,
+            )
+        if row is None:
+            raise GuardianNotFoundError("guardian notification not found")
+        return self._notification(row)
+
+    async def unread_guardian_notifications(
+        self,
+        *,
+        guardian_user_id: str,
+    ) -> UnreadNotifications | None:
+        pool = await self._ready_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            await self._set_api_context(
+                connection,
+                actor_user_id=guardian_user_id,
+                subject_user_id=guardian_user_id,
+            )
+            row = await connection.fetchrow(_UNREAD_SELECT, guardian_user_id)
+        if row is None:
+            return None
+        return UnreadNotifications(
+            newest=self._notification(row),
+            others_count=int(row["unread_total"]) - 1,
+        )
+
+    async def mark_guardian_notification_read(
+        self,
+        *,
+        guardian_user_id: str,
+        notification_id: str,
+        now: datetime,
+    ) -> datetime:
+        notification_uuid = _uuid(notification_id, field="notification_id")
+        timestamp = _timestamp(now, field="now")
+        pool = await self._ready_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            await self._set_api_context(
+                connection,
+                actor_user_id=guardian_user_id,
+                subject_user_id=guardian_user_id,
+            )
+            read_at = await connection.fetchval(
+                """
+                INSERT INTO guardian_notification_reads(
+                    notification_id, guardian_user_id, read_at
+                )
+                SELECT outbox.notification_id, outbox.guardian_user_id, $3
+                FROM guardian_notification_outbox outbox
+                WHERE outbox.notification_id = $1 AND outbox.guardian_user_id = $2
+                ON CONFLICT(notification_id) DO NOTHING
+                RETURNING read_at
+                """,
+                notification_uuid,
+                guardian_user_id,
+                timestamp,
+            )
+            if read_at is None:
+                # A new statement sees a receipt a concurrent tap just committed.
+                read_at = await connection.fetchval(
+                    """
+                    SELECT reads.read_at
+                    FROM guardian_notification_reads reads
+                    JOIN guardian_notification_outbox outbox
+                      USING (notification_id, guardian_user_id)
+                    WHERE reads.notification_id = $1 AND reads.guardian_user_id = $2
+                    """,
+                    notification_uuid,
+                    guardian_user_id,
+                )
+        if read_at is None:
+            raise GuardianNotFoundError("guardian notification not found")
+        return cast(datetime, read_at)
+
+    @staticmethod
+    async def _export_guardian_notifications(
+        connection: asyncpg.Connection,
+        *,
+        account_id: str,
+    ) -> dict[str, list[dict[str, object]]]:
+        notifications = await connection.fetch(
+            """
+            SELECT outbox.* FROM guardian_notification_outbox outbox
+            JOIN guardian_crisis_events crisis
+              ON crisis.crisis_event_id = outbox.crisis_event_id
+            WHERE outbox.guardian_user_id = $1 OR crisis.minor_user_id = $1
+            ORDER BY outbox.created_at, outbox.notification_id
+            """,
+            account_id,
+        )
+        # A receipt is the parent's own act, so a child's export never says
+        # when the parent read the alert.
+        reads = await connection.fetch(
+            """
+            SELECT notification_id, guardian_user_id, read_at
+            FROM guardian_notification_reads
+            WHERE guardian_user_id = $1
+            ORDER BY read_at, notification_id
+            """,
+            account_id,
+        )
+        return {
+            "guardian_notifications": [dict(row) for row in notifications],
+            "guardian_notification_reads": [dict(row) for row in reads],
+        }
 
     @staticmethod
     def _push_subscription(row: asyncpg.Record) -> PushSubscription:

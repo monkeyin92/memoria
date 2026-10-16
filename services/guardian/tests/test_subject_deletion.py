@@ -155,6 +155,10 @@ async def _seed(store: PostgresGuardianStore, database: TestDatabase) -> None:
             declared_guardian_ids=(OWNER,),
         )
         assert receipt.notification_count == 1
+    for notification in await store.guardian_notifications(guardian_user_id=OWNER):
+        await store.mark_guardian_notification_read(
+            guardian_user_id=OWNER, notification_id=notification.notification_id, now=NOW
+        )
     await store.grant_person_consent(
         PersonConsentRecord(
             consent_id="5c0b7a52-0000-4000-8000-000000000001",
@@ -242,6 +246,15 @@ async def test_subject_deletion_removes_only_the_subjects_guardian_rows(
     assert _ids(other_export["crisis_events"], "minor_user_id") == {OTHER_SUBJECT}
     notifications = await store.guardian_notifications(guardian_user_id=OWNER)
     assert [item.minor_user_id for item in notifications] == [OTHER_SUBJECT]
+    # The subject's receipt leaves with its alert; the other subject's stays.
+    admin = await asyncpg.connect(postgres_database.owner_dsn())
+    try:
+        receipts = await admin.fetch("SELECT notification_id FROM guardian_notification_reads")
+    finally:
+        await admin.close()
+    assert [str(row["notification_id"]) for row in receipts] == [
+        notifications[0].notification_id
+    ]
     # The consent audit and the guardian's subscribe-message ledger stay.
     assert [
         record.subject_person_id

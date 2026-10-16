@@ -445,6 +445,34 @@ CREATE INDEX IF NOT EXISTS idx_guardian_notification_push_claim
 ON guardian_notification_outbox(created_at, notification_id)
 WHERE status = 'pending';
 
+-- The composite key lets a read receipt prove it belongs to the
+-- notification's own recipient.
+DO $guardian_outbox_recipient_key$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'guardian_notification_outbox'::regclass
+          AND conname = 'guardian_notification_outbox_recipient_key'
+    ) THEN
+        ALTER TABLE guardian_notification_outbox
+            ADD CONSTRAINT guardian_notification_outbox_recipient_key
+            UNIQUE (notification_id, guardian_user_id);
+    END IF;
+END
+$guardian_outbox_recipient_key$;
+
+-- One row per alert the parent acknowledged with 我知道了. Delivery status
+-- never means read; only this row does. It holds no tier, no summary, and
+-- nothing of the child's. No role may UPDATE it, so the first read_at stays.
+CREATE TABLE IF NOT EXISTS guardian_notification_reads (
+    notification_id UUID PRIMARY KEY,
+    guardian_user_id TEXT NOT NULL,
+    read_at TIMESTAMPTZ NOT NULL,
+    FOREIGN KEY (notification_id, guardian_user_id)
+        REFERENCES guardian_notification_outbox(notification_id, guardian_user_id)
+        ON DELETE CASCADE
+);
+
 -- One-time WeChat subscribe-message acceptances per guardian and template.
 -- ``openid`` is the send address, written only from a server-side
 -- jscode2session exchange that matched the guardian's bound WeChat identity.
@@ -603,6 +631,12 @@ DROP TRIGGER IF EXISTS guardian_notification_outbox_delete_guard
 ON guardian_notification_outbox;
 CREATE TRIGGER guardian_notification_outbox_delete_guard
 BEFORE DELETE ON guardian_notification_outbox
+FOR EACH ROW EXECUTE FUNCTION guardian_delete_guard();
+
+DROP TRIGGER IF EXISTS guardian_notification_reads_delete_guard
+ON guardian_notification_reads;
+CREATE TRIGGER guardian_notification_reads_delete_guard
+BEFORE DELETE ON guardian_notification_reads
 FOR EACH ROW EXECUTE FUNCTION guardian_delete_guard();
 
 DROP TRIGGER IF EXISTS guardian_push_subscriptions_delete_guard
@@ -1436,6 +1470,7 @@ ALTER TABLE tutor_practice_evidence ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tutor_commit_outbox ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardian_crisis_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardian_notification_outbox ENABLE ROW LEVEL SECURITY;
+ALTER TABLE guardian_notification_reads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardian_push_subscriptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardian_push_subscription_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardian_links FORCE ROW LEVEL SECURITY;
@@ -1448,6 +1483,7 @@ ALTER TABLE tutor_practice_evidence FORCE ROW LEVEL SECURITY;
 ALTER TABLE tutor_commit_outbox FORCE ROW LEVEL SECURITY;
 ALTER TABLE guardian_crisis_events FORCE ROW LEVEL SECURITY;
 ALTER TABLE guardian_notification_outbox FORCE ROW LEVEL SECURITY;
+ALTER TABLE guardian_notification_reads FORCE ROW LEVEL SECURITY;
 ALTER TABLE guardian_push_subscriptions FORCE ROW LEVEL SECURITY;
 ALTER TABLE guardian_push_subscription_events FORCE ROW LEVEL SECURITY;
 
@@ -1466,6 +1502,7 @@ BEGIN
         GRANT SELECT, INSERT, UPDATE, DELETE ON tutor_commit_outbox TO memoria_guardian;
         GRANT SELECT, INSERT ON guardian_crisis_events TO memoria_guardian;
         GRANT SELECT ON guardian_notification_outbox TO memoria_guardian;
+        GRANT SELECT, INSERT ON guardian_notification_reads TO memoria_guardian;
         GRANT SELECT, INSERT, UPDATE ON guardian_push_subscriptions TO memoria_guardian;
         GRANT SELECT, INSERT ON guardian_push_subscription_events TO memoria_guardian;
 
@@ -1479,6 +1516,9 @@ BEGIN
                    guardian_crisis_events, guardian_notification_outbox,
                    guardian_push_subscriptions, guardian_push_subscription_events
                 TO memoria_guardian_maintenance;
+            -- Export only. Receipts leave with their outbox row by cascade,
+            -- and the shared list above would let read_at move.
+            GRANT SELECT ON guardian_notification_reads TO memoria_guardian_maintenance;
         END IF;
 
         DROP POLICY IF EXISTS guardian_controller_links ON guardian_links;
@@ -1985,6 +2025,38 @@ BEGIN
                     current_setting('memoria.guardian_push_delivery_scope', true),
                     ''
                 ) = '1'
+            );
+
+        -- The EXISTS runs under the outbox policy, so a guardian whose link
+        -- is gone cannot acknowledge an alert it can no longer see.
+        DROP POLICY IF EXISTS guardian_controller_notification_reads
+            ON guardian_notification_reads;
+        CREATE POLICY guardian_controller_notification_reads ON guardian_notification_reads
+            TO memoria_guardian, memoria_guardian_maintenance
+            USING (
+                (
+                    current_user = 'memoria_guardian_maintenance'
+                    AND COALESCE(
+                        current_setting('memoria.guardian_maintenance_scope', true),
+                        ''
+                    ) = '1'
+                )
+                OR (
+                    COALESCE(current_setting('memoria.guardian_actor_id', true), '') <> ''
+                    AND guardian_user_id = current_setting('memoria.guardian_actor_id', true)
+                    AND guardian_user_id = current_setting('memoria.guardian_subject_id', true)
+                )
+            )
+            WITH CHECK (
+                COALESCE(current_setting('memoria.guardian_actor_id', true), '') <> ''
+                AND guardian_user_id = current_setting('memoria.guardian_actor_id', true)
+                AND guardian_user_id = current_setting('memoria.guardian_subject_id', true)
+                AND EXISTS (
+                    SELECT 1
+                    FROM guardian_notification_outbox outbox
+                    WHERE outbox.notification_id = guardian_notification_reads.notification_id
+                      AND outbox.guardian_user_id = guardian_notification_reads.guardian_user_id
+                )
             );
 
         -- A guardian reads and writes only its own subscribe-message ledger,

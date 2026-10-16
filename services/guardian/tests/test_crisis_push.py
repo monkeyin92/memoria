@@ -312,6 +312,39 @@ async def test_worker_delivers_fixed_content_and_consumes_one_acceptance(
 
 
 @pytest.mark.asyncio
+async def test_delivered_alert_stays_unread_until_the_parent_acknowledges(
+    guardian_postgres_store: PostgresGuardianStore,
+    archive: PostgresLifeArchive,
+) -> None:
+    occurred = _now()
+    store, _ = await _store_with_crisis(
+        guardian_postgres_store, archive, occurred_at=occurred
+    )
+    await _accept(store, occurred)
+    clock = Clock(occurred + timedelta(seconds=5))
+    assert await _worker(store, FakeSender(), clock).run_once() == 1
+
+    delivered = await _only_notification(store)
+    assert (delivered.status, delivered.read_at) == ("delivered", None)
+    unread = await store.unread_guardian_notifications(guardian_user_id="guardian-a")
+    assert unread is not None
+    assert (unread.newest.notification_id, unread.others_count) == (
+        delivered.notification_id,
+        0,
+    )
+
+    read_at = clock() + timedelta(minutes=1)
+    assert await store.mark_guardian_notification_read(
+        guardian_user_id="guardian-a",
+        notification_id=delivered.notification_id,
+        now=read_at,
+    ) == read_at
+    acknowledged = await _only_notification(store)
+    assert (acknowledged.status, acknowledged.read_at) == ("delivered", read_at)
+    assert await store.unread_guardian_notifications(guardian_user_id="guardian-a") is None
+
+
+@pytest.mark.asyncio
 async def test_guardian_without_acceptance_is_marked_no_subscription(
     guardian_postgres_store: PostgresGuardianStore,
     archive: PostgresLifeArchive,
