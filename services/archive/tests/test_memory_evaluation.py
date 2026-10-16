@@ -45,13 +45,10 @@ UNSEEN_DATASET = Path(__file__).parents[1] / "evaluation" / "memory_eval_zh_v1_u
 HELDOUT_DATASET = Path(__file__).parents[1] / "evaluation" / "memory_eval_zh_v2_unseen.json"
 DEMO_DATASET = Path(__file__).parents[1] / "evaluation" / "demo_scenarios_zh_v1.json"
 
-# DEMO-02: the current fixed set is seven cases, not the original six storyboards.
-# Six are positive recalls and one is the minor negative case.  The mapping is pinned
-# so the set cannot drift away from the scenarios it exists to measure.
 DEMO_STORYBOARDS = {
-    "demo-student-math-weakness": "学生-学习进度：再次练习时召回分数应用题薄弱点",
-    "demo-student-learning-preference": "学生-学习偏好：几天后召回先跟读再自己说",
-    "demo-student-reading-preference": "学生-受限日常：显式确认后一周召回阅读偏好",
+    "demo-student-math-weakness": "学生-学习进度：未成年人证据不抽取，再次练习时不召回薄弱点",
+    "demo-student-learning-preference": "学生-学习偏好：未成年人证据不抽取，几天后不召回先跟读",
+    "demo-student-reading-preference": "学生-受限日常：未成年人证据不抽取，一周后不召回阅读偏好",
     "demo-student-unsupported-sensitive": "学生-不支持：情绪、家庭和主动跨会话关怀不进入长期记忆",
     "demo-elder-park-walk": "老年-日常陪伴：次日召回公园散步",
     "demo-elder-factory-story": "老年-人生故事留存：五天后接续纺织厂经历",
@@ -697,12 +694,6 @@ async def test_unseen_rewrite_set_reports_its_own_baseline(
 
 
 def test_demo_scenario_dataset_pairs_every_storyboard_with_a_later_recall() -> None:
-    """DEMO-02: fixed demo scenarios, each one checked on a later day.
-
-    Student cases declare the minor subject and stay inside the current long-term
-    allowlist.  The unsupported case is intentionally empty: emotion, family, and
-    proactive cross-session comfort are measured as failures, not as memories.
-    """
     dataset = load_memory_evaluation_dataset(DEMO_DATASET)
 
     assert dataset.version == "demo-scenarios-zh-v1"
@@ -710,12 +701,12 @@ def test_demo_scenario_dataset_pairs_every_storyboard_with_a_later_recall() -> N
     student_cases = [case for case in dataset.cases if case.case_id.startswith("demo-student-")]
     assert {case.subject_category for case in student_cases} == {"minor"}
     assert all(case.subject_category is None for case in dataset.cases if case not in student_cases)
-    unsupported = next(
-        case for case in dataset.cases if case.case_id == "demo-student-unsupported-sensitive"
-    )
-    assert unsupported.expected_memories == ()
-    assert unsupported.queries
-    assert all(any(term.strip() for term in query.forbidden_text) for query in unsupported.queries)
+    for case in student_cases:
+        assert case.expected_memories == (), case.case_id
+        assert case.queries, case.case_id
+        assert all(any(term.strip() for term in query.forbidden_text) for query in case.queries), (
+            case.case_id
+        )
     for case in dataset.cases:
         graded = set().union(*(query.relevance for query in case.queries))
         assert {memory.key for memory in case.expected_memories} <= graded, case.case_id
@@ -736,14 +727,6 @@ def test_demo_scenario_dataset_pairs_every_storyboard_with_a_later_recall() -> N
 async def test_demo_scenario_dataset_matches_its_measured_offline_state(
     make_eval_adapter: MakeEvalAdapter,
 ) -> None:
-    """Supported storyboards are reachable; the minor sensitive case stores nothing.
-
-    Student cases run through the same subject-category filter as catalog compilation.
-    Their supported memories are study progress, an explicit learning preference, and
-    one closed daily preference confirmed by the existing write policy.  Emotion,
-    family conflict, and a later proactive comfort question must not produce or recall
-    a long-term memory.  Elder cases stay on the historical unspecified path.
-    """
     dataset = load_memory_evaluation_dataset(DEMO_DATASET)
     adapter = make_eval_adapter()
 
@@ -765,7 +748,7 @@ async def test_demo_scenario_dataset_matches_its_measured_offline_state(
                 if any(_matches(expected, item) for item in result.items):
                     reachable.add(case.case_id)
     assert reachable == {
-        case_id for case_id in DEMO_STORYBOARDS if case_id != "demo-student-unsupported-sensitive"
+        case_id for case_id in DEMO_STORYBOARDS if case_id.startswith("demo-elder-")
     }
 
     report = await run_memory_evaluation(dataset, make_eval_adapter())
@@ -773,9 +756,7 @@ async def test_demo_scenario_dataset_matches_its_measured_offline_state(
     assert report.case_count == len(DEMO_STORYBOARDS)
     assert report.metrics.extraction_recall == pytest.approx(1.0)
     assert report.metrics.recall_at_5 == pytest.approx(1.0)
-    # Function-word n-grams no longer lift the rule knowledge question
-    # ("这段经历或原则是什么？") over the answering claim: 0.895 -> 0.947.
-    assert report.metrics.ndcg_at_10 == pytest.approx(0.9472756790816368)
+    assert report.metrics.ndcg_at_10 == pytest.approx(1.0)
     assert report.metrics.cross_session_recall_at_5 == pytest.approx(1.0)
     assert report.metrics.comfort_recall_at_5 == pytest.approx(1.0)
     assert report.metrics.cross_account_leakage == 0
