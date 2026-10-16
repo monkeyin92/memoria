@@ -19,9 +19,17 @@ Page({
   async loadAlert() {
     const alerts = await loadPinnedCrisisAlerts(api);
     const alert = alerts.find((item) => item.notificationId === this._notificationId) || alerts[0] || null;
+    const view = alert && {
+      notificationId: alert.notificationId,
+      message: alert.message,
+      timeLabel: alertTimeLabel(alert.occurredAt),
+    };
+    if (view && alert.detail) {
+      view.detail = alert.detail;
+    }
     this.setData({
       loading: false,
-      alert: alert && { notificationId: alert.notificationId, message: alert.message, timeLabel: alertTimeLabel(alert.occurredAt) },
+      alert: view,
     });
   },
 

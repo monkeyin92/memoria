@@ -36,6 +36,41 @@ test("four conversation tips ending with the 12356 hotline, and 我知道了, ne
   }
 });
 
+test("an interrupted crisis script keeps the headline and shows the unfinished line", async () => {
+  const interrupted = "这次的提醒话术孩子没有听完，如需帮助可拨打心理援助热线12356";
+  const victim = "如有危险请拨打110";
+  const harness = await openAttention({ id: "n1" }, {
+    getGuardianNotifications: async () => ({
+      items: [{ ...fx.PINNED_ALERT, notification_id: "n1", detail: interrupted }],
+    }),
+  });
+  try {
+    assert.equal(harness.page.data.alert.message, "有一条需要你关注的对话");
+    assert.equal(harness.page.data.alert.detail, interrupted);
+    const text = visibleText(renderPage("pages/attention/index", harness.page.data));
+    assert.ok(text.startsWith("有一条需要你关注的对话"));
+    assert.ok(text.includes(interrupted));
+    assert.equal(text.includes(victim), false);
+  } finally {
+    harness.restore();
+  }
+
+  const victimPage = await openAttention({ id: "n-victim" }, {
+    getGuardianNotifications: async () => ({
+      items: [{ ...fx.PINNED_ALERT, notification_id: "n-victim", detail: victim }],
+    }),
+  });
+  try {
+    assert.equal(victimPage.page.data.alert.message, "有一条需要你关注的对话");
+    assert.equal(victimPage.page.data.alert.detail, victim);
+    const text = visibleText(renderPage("pages/attention/index", victimPage.page.data));
+    assert.ok(text.includes(victim));
+    assert.equal(text.includes(interrupted), false);
+  } finally {
+    victimPage.restore();
+  }
+});
+
 test("a guessed retell note never becomes the attention title or the detail", async () => {
   const harness = await openAttention({ id: "n1" }, {
     getGuardianNotifications: async () => ({
