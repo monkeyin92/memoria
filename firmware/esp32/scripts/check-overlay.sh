@@ -157,12 +157,14 @@ rg -Fq 'memoria::diag::RecordRawTdm(' "$MEMORIA_UPSTREAM_DIR/main/audio/codecs/b
     die "bench raw ES7210 TDM must be recorded inside BoxAudioCodec::Read"
 rg -Fq 'heap_caps_check_integrity(MALLOC_CAP_INTERNAL, true)' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
     die "PlaySound must check internal heap integrity when poisoning is on"
-rg -Fq 'if (!esp_ptr_external_ram(packet.get()))' \
+[[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_poison_canary.h" ]] || \
+    die "single-block poison canary header missing"
+rg -Fq 'memoria::PoisonCanaryOk(packet.get(), sizeof(AudioStreamPacket))' \
     "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
-    die "PlaySound must skip the packet check when the packet is in PSRAM"
-rg -Fq 'heap_caps_check_integrity_addr(reinterpret_cast<intptr_t>(packet.get()), true)' \
-    "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
-    die "PlaySound must check an internal packet's heap region when poisoning is on"
+    die "PlaySound must check the new packet canaries when poisoning is on"
+if rg -Fq 'heap_caps_check_integrity_addr' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc"; then
+    die "PlaySound must not walk the heap region that holds the new packet"
+fi
 rg -Fq 'heap_caps_check_integrity(MALLOC_CAP_SPIRAM, true)' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
     die "a poisoned image must scan PSRAM on the background task"
 rg -Fq 'pdMS_TO_TICKS(30000)' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \

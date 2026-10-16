@@ -7,7 +7,7 @@ diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
  #endif
 +#if CONFIG_HEAP_POISONING_COMPREHENSIVE
 +#include <esp_heap_caps.h>
-+#include <esp_memory_utils.h>
++#include "memoria_poison_canary.h"
 +#endif
  
  #define TAG "AudioService"
@@ -61,15 +61,13 @@ diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
  #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
      input_settle_.NoteLocalSound(static_cast<uint64_t>(esp_timer_get_time() / 1000));
  #endif
-@@ -1016,6 +1048,13 @@
+@@ -1016,6 +1048,11 @@
      auto demuxer = std::make_unique<OggDemuxer>();
      demuxer->OnDemuxerFinished([this](const uint8_t* data, int sample_rate, size_t size){
          auto packet = std::make_unique<AudioStreamPacket>();
 +#if CONFIG_HEAP_POISONING_COMPREHENSIVE
-+        if (!esp_ptr_external_ram(packet.get())) {
-+            if (!heap_caps_check_integrity_addr(reinterpret_cast<intptr_t>(packet.get()), true)) {
-+                ESP_LOGE(TAG, "heap integrity failed on PlaySound packet");
-+            }
++        if (!memoria::PoisonCanaryOk(packet.get(), sizeof(AudioStreamPacket))) {
++            ESP_LOGE(TAG, "PlaySound packet canary failed");
 +        }
 +#endif
          packet->sample_rate = sample_rate;

@@ -16,12 +16,10 @@ def test_playsound_checks_internal_ram_and_one_new_packet() -> None:
     patch = PATCH.read_text(encoding="utf-8")
     assert "heap_caps_check_integrity_all" not in patch
     assert "heap_caps_check_integrity(MALLOC_CAP_INTERNAL, true)" in patch
-    guard = "if (!esp_ptr_external_ram(packet.get()))"
-    call = "heap_caps_check_integrity_addr(reinterpret_cast<intptr_t>(packet.get()), true)"
-    assert guard in patch
-    assert call in patch
-    assert patch.index(guard) < patch.index(call)
-    assert "#include <esp_memory_utils.h>" in patch
+    assert "heap_caps_check_integrity_addr" not in patch
+    assert "esp_ptr_external_ram" not in patch
+    assert "memoria::PoisonCanaryOk(packet.get(), sizeof(AudioStreamPacket))" in patch
+    assert '#include "memoria_poison_canary.h"' in patch
     assert "heap_caps_check_integrity(MALLOC_CAP_SPIRAM, true)" in patch
     assert 'xTaskCreate(PsramHeapCheckTask, "psram_heap", 4096, nullptr, 1, nullptr)' in patch
     assert "pdMS_TO_TICKS(30000)" in patch
