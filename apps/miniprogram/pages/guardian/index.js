@@ -10,7 +10,7 @@ const {
   CONFIG_GATE_PENDING_MESSAGE,
 } = require("../../utils/device-binding");
 const guardianPush = require("../../utils/guardian-push");
-const { normalizeAlert } = require("../../utils/crisis-alerts");
+const { parseSafetyAlert } = require("../../utils/crisis-alerts");
 const { alertTimeLabel } = require("../../utils/trial-device-card");
 
 const CONSENT_DEFINITIONS = Object.freeze([
@@ -289,7 +289,7 @@ Page({
 
   async _loadNotifications() {
     const payload = await api.getGuardianNotifications();
-    const alerts = (Array.isArray(payload?.items) ? payload.items : []).map(normalizeAlert).filter(Boolean);
+    const alerts = (Array.isArray(payload?.items) ? payload.items : []).map(parseSafetyAlert).filter(Boolean);
     this.setData({
       notifications: alerts.map((alert) => ({ ...alert, timeLabel: alertTimeLabel(alert.occurredAt) })),
     });

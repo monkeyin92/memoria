@@ -105,10 +105,7 @@ test("online hero caption names the device's configured wake word", () => {
 });
 
 test("trial device card helper uses profile quiet hours and usage limit", () => {
-  const {
-    buildTrialDeviceCard,
-    hasUnreadSafetyAlert,
-  } = require("../utils/trial-device-card");
+  const { buildTrialDeviceCard } = require("../utils/trial-device-card");
   const profile = {
     valid: true,
     subject_category: "minor",
@@ -136,11 +133,6 @@ test("trial device card helper uses profile quiet hours and usage limit", () => 
   });
   assert.equal(known.usageKnown, true);
   assert.equal(known.usageUsedMinutes, 12);
-  assert.equal(
-    hasUnreadSafetyAlert([{ pinned: true, delivery_status: "no_subscription" }]),
-    true,
-  );
-  assert.equal(hasUnreadSafetyAlert([{ pinned: false, delivery_status: "delivered" }]), false);
 });
 
 test("parent v4 tokens live in app.wxss and pages avoid third-party art", () => {

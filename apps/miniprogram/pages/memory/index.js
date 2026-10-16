@@ -2,7 +2,7 @@ const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
 const { requireLogin } = require("../../utils/auth-gate");
 const guardianPush = require("../../utils/guardian-push");
-const { attentionUrl, loadPinnedCrisisAlerts } = require("../../utils/crisis-alerts");
+const { attentionUrl, loadUnreadSafetyAlerts, moreUnreadLabel } = require("../../utils/crisis-alerts");
 const { alertTimeLabel } = require("../../utils/trial-device-card");
 
 function today() {
@@ -196,7 +196,7 @@ Page({
     guardianMode: false,
     guardianSubjectId: "",
     guardianError: "",
-    pinnedCrisisAlerts: [],
+    safetyBanner: null,
     crisisPush: { enabled: false, templateId: "", explanation: "" },
     subscriptionPushEnabled: require("../../config").SUBSCRIPTION_PUSH_ENABLED,
   },
@@ -237,17 +237,24 @@ Page({
   async _loadCrisisSafety() {
     if (!this._guardianSubject()) {
       this.setData({
-        pinnedCrisisAlerts: [],
+        safetyBanner: null,
         crisisPush: { enabled: false, templateId: "", explanation: "" },
       });
       return;
     }
-    const [pinnedCrisisAlerts, crisisPush] = await Promise.all([
-      loadPinnedCrisisAlerts(api),
+    const authEpoch = api.currentAuthEpoch();
+    const [unread, crisisPush] = await Promise.all([
+      loadUnreadSafetyAlerts(api),
       guardianPush.loadCrisisPushConfig(api),
     ]);
+    if (!api.isAuthEpochCurrent(authEpoch)) return;
     this.setData({
-      pinnedCrisisAlerts: pinnedCrisisAlerts.map((alert) => ({ ...alert, timeLabel: alertTimeLabel(alert.occurredAt) })),
+      safetyBanner: unread && {
+        notificationId: unread.newest.notificationId,
+        message: unread.newest.message,
+        timeLabel: alertTimeLabel(unread.newest.occurredAt),
+        moreLabel: moreUnreadLabel(unread.othersCount),
+      },
       crisisPush,
     });
   },
@@ -293,7 +300,7 @@ Page({
       guardianMode: false,
       guardianSubjectId: "",
       guardianError: "",
-      pinnedCrisisAlerts: [],
+      safetyBanner: null,
       crisisPush: { enabled: false, templateId: "", explanation: "" },
       loading: false,
       summarizing: false,

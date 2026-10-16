@@ -73,15 +73,6 @@ function memoryPreviewItems(summaries, limit = 3) {
     }));
 }
 
-function hasUnreadSafetyAlert(items) {
-  return (Array.isArray(items) ? items : []).some((item) => {
-    if (!item || typeof item !== "object") return false;
-    if (item.pinned === true) return true;
-    const status = typeof item.delivery_status === "string" ? item.delivery_status : "";
-    return status === "no_subscription" || status === "failed" || status === "pending";
-  });
-}
-
 function offersSafetySubscribe(binding) {
   if (!binding || (binding.status && binding.status !== "active")) return false;
   return (
@@ -99,7 +90,6 @@ module.exports = {
   usageFillPercent,
   usageRingStyle,
   usageCenterCopy,
-  hasUnreadSafetyAlert,
   memoryPreviewItems,
   offersSafetySubscribe,
   pinnedAlertMeta,

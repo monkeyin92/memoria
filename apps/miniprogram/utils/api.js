@@ -537,6 +537,22 @@ function getGuardianNotifications() {
   return rawRequest("/v1/guardian/notifications");
 }
 
+/* 最新一条未读安全提醒和其余未读条数；没有未读时 newest 为 null。 */
+function getUnreadGuardianNotifications() {
+  return rawRequest("/v1/guardian/notifications/unread");
+}
+
+function getGuardianNotification(notificationId) {
+  return rawRequest(`/v1/guardian/notifications/${encodeURIComponent(notificationId)}`);
+}
+
+/* 幂等：重复调用返回第一次的 read_at。 */
+function markGuardianNotificationRead(notificationId) {
+  return rawRequest(`/v1/guardian/notifications/${encodeURIComponent(notificationId)}/read`, {
+    method: "PUT",
+  });
+}
+
 /* 危机提醒订阅（一次性订阅消息）。关闭时服务端不下发模板 ID。 */
 function getGuardianPushConfig() {
   return rawRequest("/v1/guardian/push-config");
@@ -1457,6 +1473,9 @@ module.exports = {
   declareAgeEvidence,
   readAgeEvidence,
   getGuardianNotifications,
+  getUnreadGuardianNotifications,
+  getGuardianNotification,
+  markGuardianNotificationRead,
   getGuardianPushConfig,
   getGuardianPushSubscription,
   recordGuardianPushSubscription,

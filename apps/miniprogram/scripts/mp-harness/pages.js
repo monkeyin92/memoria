@@ -19,8 +19,13 @@ function withReadyAgreement(harness) {
 const PAGES = [
   { slug: "home", page: "pages/home/index", harness: authed() },
   { slug: "home-guest", page: "pages/home/index", harness: guest() },
-  { slug: "memory", page: "pages/memory/index", harness: authed({ getGuardianNotifications: async () => ({ items: [] }) }), actions: [["summarizeSelectedDay"]] },
+  { slug: "memory", page: "pages/memory/index", harness: authed(fx.safetyAlertApi([])), actions: [["summarizeSelectedDay"]] },
   { slug: "memory-attention", page: "pages/memory/index", harness: authed() },
+  {
+    slug: "memory-attention-more",
+    page: "pages/memory/index",
+    harness: authed(fx.safetyAlertApi(["n3", "n2", "n1"].map((id) => ({ ...fx.SAFETY_ALERT, notification_id: id })))),
+  },
   { slug: "memory-empty", page: "pages/memory/index", harness: authed(fx.emptyMemoryApi) },
   { slug: "memory-empty-memories", page: "pages/memory/index", harness: authed(fx.emptyMemoryApi), actions: [["showMemories"]] },
   { slug: "companion", page: "pages/companion/index", harness: authed() },
@@ -58,7 +63,18 @@ const PAGES = [
     actions: [["toggleConsent"], ["onGetPhoneNumber", { detail: { code: "phone-code" } }]],
   },
   { slug: "attention", page: "pages/attention/index", harness: authed(), query: { id: "n1" } },
-  { slug: "attention-empty", page: "pages/attention/index", harness: authed({ getGuardianNotifications: async () => ({ items: [] }) }) },
+  { slug: "attention-empty", page: "pages/attention/index", harness: authed(fx.safetyAlertApi([])), query: { id: "n1" } },
+  {
+    slug: "attention-ack-failed",
+    page: "pages/attention/index",
+    harness: authed({
+      markGuardianNotificationRead: async () => {
+        throw Object.assign(new Error("server"), { status: 503 });
+      },
+    }),
+    query: { id: "n1" },
+    actions: [["acknowledge"]],
+  },
   { slug: "privacy", page: "pages/privacy/index", harness: authed() },
   { slug: "privacy-guest", page: "pages/privacy/index", harness: guest() },
   { slug: "user-agreement", page: "pages/user-agreement/index", harness: guest() },
