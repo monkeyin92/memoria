@@ -11,18 +11,64 @@ diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
  
  #define TAG "AudioService"
  
-@@ -1001,7 +1004,14 @@
+@@ -174,6 +177,19 @@
+     esp_timer_create(&audio_power_timer_args, &audio_power_timer_);
+ }
+ 
++
++#if CONFIG_HEAP_POISONING_COMPREHENSIVE
++static void PsramHeapCheckTask(void* arg) {
++    (void)arg;
++    for (;;) {
++        vTaskDelay(pdMS_TO_TICKS(30000));
++        if (!heap_caps_check_integrity(MALLOC_CAP_SPIRAM, true)) {
++            ESP_LOGE(TAG, "PSRAM heap integrity failed");
++        }
++    }
++}
++#endif
++
+ void AudioService::Start() {
+     service_stopped_.store(false);
+     {
+@@ -239,6 +255,13 @@
+         vTaskDelete(NULL);
+     }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_);
+ #endif
++#if CONFIG_HEAP_POISONING_COMPREHENSIVE
++    static bool psram_heap_check_started = false;
++    if (!psram_heap_check_started) {
++        psram_heap_check_started = true;
++        xTaskCreate(PsramHeapCheckTask, "psram_heap", 4096, nullptr, 1, nullptr);
++    }
++#endif
+ }
+ 
+ void AudioService::Stop() {
+@@ -1001,6 +1024,14 @@
  }
  
  void AudioService::PlaySound(const std::string_view& ogg) {
 +#if CONFIG_HEAP_POISONING_COMPREHENSIVE
-+    // The USB-wake crash was a later malloc on a heap smashed earlier.
-+    // Name the bad block here, before make_unique<AudioStreamPacket>.
-+    if (!heap_caps_check_integrity_all(true)) {
++    // A full poisoned-PSRAM walk holds interrupts off long enough to trip the
++    // interrupt watchdog on the USB-wake alert. Internal RAM is the check
++    // this path can finish.
++    if (!heap_caps_check_integrity(MALLOC_CAP_INTERNAL, true)) {
 +        ESP_LOGE(TAG, "heap integrity failed before PlaySound");
 +    }
 +#endif
  #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
      input_settle_.NoteLocalSound(static_cast<uint64_t>(esp_timer_get_time() / 1000));
  #endif
-     if (!codec_->output_enabled()) {
+@@ -1016,6 +1047,11 @@
+     auto demuxer = std::make_unique<OggDemuxer>();
+     demuxer->OnDemuxerFinished([this](const uint8_t* data, int sample_rate, size_t size){
+         auto packet = std::make_unique<AudioStreamPacket>();
++#if CONFIG_HEAP_POISONING_COMPREHENSIVE
++        if (!heap_caps_check_integrity_addr(reinterpret_cast<intptr_t>(packet.get()), true)) {
++            ESP_LOGE(TAG, "heap integrity failed on PlaySound packet");
++        }
++#endif
+         packet->sample_rate = sample_rate;
+         packet->frame_duration = 60;
+         packet->payload.resize(size);

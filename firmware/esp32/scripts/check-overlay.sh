@@ -46,6 +46,8 @@ bench_options = bench["builds"][0]["sdkconfig_append"]
 keep_options = keep["builds"][0]["sdkconfig_append"]
 if any("MEMORIA_BENCH" in option for option in product_options):
     raise SystemExit("the product manifest must not name the bench switch")
+if any("HEAP_POISONING" in option or "ESP_INT_WDT" in option for option in product_options):
+    raise SystemExit("the product manifest must not poison the heap or lengthen the interrupt watchdog")
 if any("MEMORIA_KEEP_AWAKE" in option for option in product_options + bench_options):
     raise SystemExit("config.json and config.bench.json must omit MEMORIA_KEEP_AWAKE")
 for option in product_options:
@@ -58,6 +60,7 @@ if bench_options != product_options + [
     "CONFIG_MEMORIA_BENCH_SERIAL=y",
     "CONFIG_LV_USE_SNAPSHOT=y",
     "CONFIG_HEAP_POISONING_COMPREHENSIVE=y",
+    "CONFIG_ESP_INT_WDT_TIMEOUT_MS=10000",
 ]:
     raise SystemExit(
         "config.bench.json must be config.json plus the bench options and heap poisoning, in that order"
@@ -65,6 +68,7 @@ if bench_options != product_options + [
 if keep_options != product_options + [
     "CONFIG_MEMORIA_KEEP_AWAKE=y",
     "CONFIG_HEAP_POISONING_COMPREHENSIVE=y",
+    "CONFIG_ESP_INT_WDT_TIMEOUT_MS=10000",
 ]:
     raise SystemExit(
         "config.keep-awake.json must be config.json plus CONFIG_MEMORIA_KEEP_AWAKE=y and heap poisoning"
@@ -151,8 +155,18 @@ rg -Fq 'memoria::diag::RecordPostAfe(' "$MEMORIA_UPSTREAM_DIR/main/audio/engines
     die "the bench PCM journal must record the AFE fetch result before its consumers"
 rg -Fq 'memoria::diag::RecordRawTdm(' "$MEMORIA_UPSTREAM_DIR/main/audio/codecs/box_audio_codec.cc" || \
     die "bench raw ES7210 TDM must be recorded inside BoxAudioCodec::Read"
-rg -Fq 'heap_caps_check_integrity_all(true)' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
-    die "PlaySound must check heap integrity when poisoning is on"
+rg -Fq 'heap_caps_check_integrity(MALLOC_CAP_INTERNAL, true)' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
+    die "PlaySound must check internal heap integrity when poisoning is on"
+rg -Fq 'heap_caps_check_integrity_addr(reinterpret_cast<intptr_t>(packet.get()), true)' \
+    "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
+    die "PlaySound must check the new packet's heap region when poisoning is on"
+rg -Fq 'heap_caps_check_integrity(MALLOC_CAP_SPIRAM, true)' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
+    die "a poisoned image must scan PSRAM on the background task"
+rg -Fq 'pdMS_TO_TICKS(30000)' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
+    die "the PSRAM heap scan must run every 30 seconds"
+if rg -Fq 'heap_caps_check_integrity_all' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc"; then
+    die "PlaySound must not walk every heap"
+fi
 rg -Fq 'aec-ref delay lag_ms=' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
     die "ReadAudioData must log the software-reference versus mic delay"
 rg -Fq 'afe input hz=' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \

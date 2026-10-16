@@ -33,7 +33,8 @@
                 "CONFIG_MMAP_FILE_NAME_LENGTH=32",
                 "CONFIG_FLASH_EXPRESSION_ASSETS=y",
                 "CONFIG_MEMORIA_KEEP_AWAKE=y",
-                "CONFIG_HEAP_POISONING_COMPREHENSIVE=y"
+                "CONFIG_HEAP_POISONING_COMPREHENSIVE=y",
+                "CONFIG_ESP_INT_WDT_TIMEOUT_MS=10000"
             ]
         }
     ]
