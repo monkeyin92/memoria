@@ -1008,9 +1008,7 @@ def test_production_env_split_drops_a_voice_clone_key(
     values = {
         "MEMORIA_DOUBAO_VOICE_API_KEY": "shared-key",
         "VOICE_CLONE_ENABLED": "true",
-        "MEMORIA_VOICE_ENROLLMENT_URL": (
-            "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization"
-        ),
+        "MEMORIA_VOICE_ENROLLMENT_URL": "retired",
         runtime_secret: "shared-key",
     }
     if runtime_secret == "DOUBAO_TTS_ACCESS_TOKEN":

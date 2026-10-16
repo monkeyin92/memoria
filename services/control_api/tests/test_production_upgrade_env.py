@@ -644,9 +644,7 @@ def test_upgrade_env_drops_voice_clone_keys(tmp_path: Path) -> None:
             "MEMORIA_VOICE_TARGET_MODEL": "seed-icl-2.0",
             "MEMORIA_DOUBAO_VOICE_API_KEY": "control-only-clone-key",
             "MEMORIA_DOUBAO_VOICE_CLONE_URL": "https://openspeech.bytedance.com/api/v3/tts/voice_clone",
-            "MEMORIA_VOICE_ENROLLMENT_URL": (
-                "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization"
-            ),
+            "MEMORIA_VOICE_ENROLLMENT_URL": "retired",
             "VOICE_CLONE_ENABLED": "true",
             "QWEN_OMNI_VOICE_CLONE_ID": "cloned-voice-id",
         }

@@ -152,8 +152,7 @@ class CosyVoiceConfig:
         elif "v3.5" in model:
             raise ValueError(
                 "cosyvoice-v3.5 requires a designed voice_id. "
-                "Run scripts/design_cosyvoice_voices.py then set "
-                "COSYVOICE_VOICE or COSYVOICE_VOICE_PROFILE + registry."
+                "Set COSYVOICE_VOICE or COSYVOICE_VOICE_PROFILE plus a registry."
             )
         else:
             voice = "longanyang"

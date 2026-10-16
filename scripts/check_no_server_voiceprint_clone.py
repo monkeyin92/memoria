@@ -30,6 +30,11 @@ CHECKS: list[tuple[Path, re.Pattern[str], str]] = [
         "miniprogram voice clone gate must be deleted",
     ),
     (
+        ROOT / "scripts/design_cosyvoice_voices.py",
+        re.compile(r"."),
+        "CosyVoice voice design script must be deleted",
+    ),
+    (
         ROOT / "services/control_api/app/routes/speaker.py",
         re.compile(r"."),
         "speaker routes module must be deleted",
@@ -106,6 +111,7 @@ def main() -> int:
             "speaker_authority_client.py",
             "cosyvoice_enrollment.py",
             "doubao_voice_clone.py",
+            "design_cosyvoice_voices.py",
         }:
             if path.exists():
                 hits.append(f"{path.relative_to(ROOT)}: {label}")

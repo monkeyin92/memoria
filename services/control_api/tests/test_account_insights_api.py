@@ -184,10 +184,7 @@ async def test_delivered_capabilities_disclose_the_chat_models_the_agent_last_re
 @pytest.mark.hermetic
 def test_voice_clone_settings_are_not_a_switch(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VOICE_CLONE_ENABLED", "true")
-    monkeypatch.setenv(
-        "MEMORIA_VOICE_ENROLLMENT_URL",
-        "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization",
-    )
+    monkeypatch.setenv("MEMORIA_VOICE_ENROLLMENT_URL", "retired")
     settings = ControlSettings(_env_file=None)
     aliases = {
         field.alias
