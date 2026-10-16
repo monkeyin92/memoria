@@ -12,15 +12,87 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "sync-pstack.sh"
 
+CHILD_AUDIO_BULLET = "- Child-facing stories, lines, or audio → never synthesize or add from draft scripts on your own. Such PRs need 产品部 and 合规部 sign-off before merge. Fill `.github/pull_request_template.md` section 「儿童可听内容（故事/台词/音频）」. See also `AGENTS.md`."
+
+_UPSTREAM_POTETO = """\
+# Poteto mode
+
+Remaining triggers:
+
+- Nontrivial change → the **how** skill.
+"""
+
+_EXPECTED_POTETO = (
+    "# Poteto mode\n"
+    "\n"
+    "Remaining triggers:\n"
+    "\n"
+    + CHILD_AUDIO_BULLET
+    + "\n"
+    "- Nontrivial change → the **how** skill.\n"
+)
+
+_WEDGED_POTETO = (
+    "# Poteto mode\n"
+    "\n"
+    "Remaining triggers:\n"
+    + CHILD_AUDIO_BULLET
+    + "\n"
+    "\n"
+    "- Nontrivial change → the **how** skill.\n"
+)
+
+_RENAMED_HEADING = """\
+# Poteto mode
+
+Other triggers:
+
+- Nontrivial change → the **how** skill.
+"""
+
+_NO_BLANK = """\
+# Poteto mode
+
+Remaining triggers:
+- Nontrivial change → the **how** skill.
+"""
+
+_TWO_PAIRS = """\
+# Poteto mode
+
+Remaining triggers:
+
+- Nontrivial change → the **how** skill.
+
+Remaining triggers:
+
+- Any code.
+"""
+
+_TWO_HEADINGS_ONE_BLANK = """\
+# Poteto mode
+
+Remaining triggers:
+- Nontrivial change → the **how** skill.
+
+Remaining triggers:
+
+- Any code.
+"""
+
 
 def _git(cwd: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
 
 
-def _make_upstream(path: Path) -> None:
+def _make_upstream(path: Path, poteto_body: str | None = _UPSTREAM_POTETO) -> None:
     skill = path / "pstack" / "skills" / "ketchup"
     skill.mkdir(parents=True)
     (skill / "SKILL.md").write_text("# ketchup\n", encoding="utf-8")
+    if poteto_body is not None:
+        poteto = path / "pstack" / "skills" / "poteto-mode"
+        poteto.mkdir(parents=True)
+        (poteto / "SKILL.md").write_text(poteto_body, encoding="utf-8")
     _git(path, "init")
     _git(path, "config", "user.email", "test@example.com")
     _git(path, "config", "user.name", "test")
@@ -61,6 +133,15 @@ def _write_version(repo: Path, skills_line: str, upstream: Path) -> None:
         ),
         encoding="utf-8",
     )
+
+
+def _snapshot_skills(repo: Path) -> dict[str, bytes]:
+    root = repo / ".cursor" / "skills"
+    return {
+        str(path.relative_to(root)): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
 
 
 def _run_sync(repo: Path, upstream: Path) -> subprocess.CompletedProcess[str]:
@@ -176,3 +257,85 @@ def test_check_name_accepts_safe_name(tmp_path: Path) -> None:
 
 def test_script_is_valid_bash() -> None:
     subprocess.run(["bash", "-n", str(SCRIPT)], check=True)
+
+
+@pytest.mark.parametrize(
+    ("upstream_body", "local_poteto"),
+    [
+        pytest.param(_UPSTREAM_POTETO, None, id="upstream-lacks-bullet"),
+        pytest.param(_EXPECTED_POTETO, None, id="upstream-has-bullet"),
+        pytest.param(_WEDGED_POTETO, None, id="bullet-between-anchor-and-blank"),
+        pytest.param(
+            _UPSTREAM_POTETO,
+            CHILD_AUDIO_BULLET + "\n" + CHILD_AUDIO_BULLET + "\n",
+            id="local-leftover-twice",
+        ),
+    ],
+)
+def test_sync_leaves_child_audio_rule_exactly_once(
+    tmp_path: Path, upstream_body: str, local_poteto: str | None
+) -> None:
+    upstream = tmp_path / "upstream"
+    repo = tmp_path / "repo"
+    _make_upstream(upstream, upstream_body)
+    survivor = _seed_verify_memoria(repo)
+    if local_poteto is not None:
+        local_skill = repo / ".cursor" / "skills" / "poteto-mode"
+        local_skill.mkdir(parents=True)
+        (local_skill / "SKILL.md").write_text(local_poteto, encoding="utf-8")
+    _install_script(repo)
+    _write_version(repo, "ketchup poteto-mode", upstream)
+    skill = repo / ".cursor" / "skills" / "poteto-mode" / "SKILL.md"
+
+    for _ in range(2):
+        result = _run_sync(repo, upstream)
+        assert result.returncode == 0, result.stdout + result.stderr
+        text = skill.read_text(encoding="utf-8")
+        assert text == _EXPECTED_POTETO
+        assert text.splitlines().count(CHILD_AUDIO_BULLET) == 1
+        assert survivor.read_text(encoding="utf-8") == "local-only\n"
+        assert (
+            repo / ".cursor" / "skills" / "ketchup" / "SKILL.md"
+        ).read_text(encoding="utf-8") == "# ketchup\n"
+
+
+@pytest.mark.parametrize(
+    "poteto_body",
+    [
+        pytest.param(None, id="absent"),
+        pytest.param(_RENAMED_HEADING, id="renamed-heading"),
+        pytest.param(_NO_BLANK, id="no-blank"),
+        pytest.param(_TWO_PAIRS, id="two-pairs"),
+        pytest.param(_TWO_HEADINGS_ONE_BLANK, id="two-headings-one-blank"),
+    ],
+)
+def test_sync_refuses_without_unique_anchor_and_writes_nothing(
+    tmp_path: Path, poteto_body: str | None
+) -> None:
+    upstream = tmp_path / "upstream"
+    repo = tmp_path / "repo"
+    _make_upstream(upstream, poteto_body)
+    survivor = _seed_verify_memoria(repo)
+    poteto = repo / ".cursor" / "skills" / "poteto-mode"
+    poteto.mkdir(parents=True)
+    (poteto / "SKILL.md").write_text(_EXPECTED_POTETO, encoding="utf-8")
+    _install_script(repo)
+    before = _snapshot_skills(repo)
+
+    result = _run_sync(repo, upstream)
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "refuse" in result.stderr.lower()
+    assert _snapshot_skills(repo) == before
+    assert survivor.read_text(encoding="utf-8") == "local-only\n"
+
+
+def test_committed_poteto_mode_carries_child_audio_rule() -> None:
+    text = (ROOT / ".cursor" / "skills" / "poteto-mode" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    lines = text.splitlines()
+    assert lines.count(CHILD_AUDIO_BULLET) == 1
+    idx = lines.index("Remaining triggers:")
+    assert lines[idx + 1] == ""
+    assert lines[idx + 2] == CHILD_AUDIO_BULLET
