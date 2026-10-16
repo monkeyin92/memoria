@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Final, Literal
 
@@ -123,14 +124,13 @@ def crisis_semantic_candidate(query: str) -> bool:
 
 
 def fixed_safety_reply_log_fields(route: CrisisRoute) -> dict[str, str] | None:
-    """Ids and route for a spoken fixed safety reply. Never includes child text."""
+    """Template id and UTC time of a spoken fixed safety reply. Never child text."""
 
     if route.script is None:
         return None
     return {
-        "route": route.action,
         "reply_template_id": route.script.template_id,
-        "script_version": route.script.template_id,
+        "at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
 
 
@@ -141,8 +141,7 @@ def log_fixed_safety_reply(logger: logging.Logger, route: CrisisRoute) -> None:
     if fields is None:
         return
     logger.info(
-        "fixed_safety_reply route=%s reply_template_id=%s script_version=%s",
-        fields["route"],
+        "fixed_safety_reply reply_template_id=%s at=%s",
         fields["reply_template_id"],
-        fields["script_version"],
+        fields["at"],
     )

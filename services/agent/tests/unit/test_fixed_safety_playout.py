@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any, cast, get_args
@@ -143,11 +144,19 @@ async def test_live_speech_gets_spoken_copy_and_heard_history_gets_display_copy(
     assert speech.pushed == [phrase.spoken for phrase in CRISIS_SELF_SCRIPT.phrases]
     assert "".join(chunk.assistant_text_delta for chunk in chunks) == CRISIS_SELF_SCRIPT.display
     assert _spans(chunks[-1]) == [(CRISIS_SELF_SCRIPT.display, 0, FRAME * 4)]
-    assert _playout_lines(caplog) == [
-        "fixed_safety_playout reply_template_id=crisis-self-v1 "
-        f"script_version=crisis-self-v1 tts_text={CRISIS_SELF_SCRIPT.spoken}"
-    ]
-    assert not any(CHILD_TEXT in record.getMessage() for record in caplog.records)
+    playout = _playout_lines(caplog)
+    assert len(playout) == 1
+    assert re.fullmatch(
+        r"fixed_safety_playout reply_template_id=crisis-self-v1 "
+        r"at=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z",
+        playout[0],
+    )
+    for record in caplog.records:
+        message = record.getMessage()
+        assert CHILD_TEXT not in message
+        for phrase in CRISIS_SELF_SCRIPT.phrases:
+            assert phrase.spoken not in message
+            assert phrase.display not in message
 
 
 @pytest.mark.asyncio

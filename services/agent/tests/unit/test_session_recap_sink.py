@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Sequence
 
 import httpx
@@ -145,6 +146,62 @@ async def test_publish_skips_when_model_fails_without_raw_fallback() -> None:
         "archive_record_ids": [],
     }
     assert calls == 0
+
+
+@pytest.mark.asyncio
+async def test_failed_post_logs_type_and_status_never_the_body_or_error_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    planted = "河马在第八个书架后面藏了一首歌"
+    summary = "聊了恐龙和小狗"
+    responses: list[httpx.Response | Exception] = [
+        httpx.Response(422, json={"detail": planted}),
+        httpx.ConnectError(planted),
+    ]
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        outcome = responses.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    async def fake_summary(_: Sequence[SessionTurn]) -> str | None:
+        return summary
+
+    sink = SessionRecapSink(
+        HttpSessionRecapConfig(
+            endpoint="http://control.test/v1/internal/child-memory/session-recap",
+            internal_token="token-that-is-long-enough",
+        ),
+        _client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        _summary_generator=fake_summary,
+    )
+    turns = [
+        SessionTurn(role="user", text="我想听恐龙"),
+        SessionTurn(role="assistant", text="好呀"),
+        SessionTurn(role="user", text="还有小狗"),
+        SessionTurn(role="assistant", text="可爱"),
+    ]
+    caplog.set_level(logging.INFO)
+    for _ in range(2):
+        assert (
+            await sink.publish_session_end(
+                subject_id="child-1",
+                resource_owner_id="parent-1",
+                session_id="sess-1",
+                turns=turns,
+            )
+            is None
+        )
+    await sink.aclose()
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings == [
+        "session recap rejected error_type=HTTPStatusError error_code=422",
+        "session recap post failed error_type=ConnectError error_code=-",
+    ]
+    assert planted not in caplog.text
+    assert summary not in caplog.text
 
 
 def test_snapshot_then_clear_discards_transcript() -> None:

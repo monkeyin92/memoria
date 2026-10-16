@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
+import traceback
 
 import pytest
 from scripts import provider_smoke_test
@@ -736,6 +739,40 @@ async def test_stream_starts_audio_timeout_after_first_text() -> None:
     finally:
         await tts.aclose()
         server.stop()
+
+
+@pytest.mark.asyncio
+async def test_connection_failure_keeps_the_vendor_body_and_reply_out_of_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    planted = "火烈鸟在第五层楼梯上晒月光"
+    reply = "我们先深呼吸三次。"
+    server = MockDoubaoServer(
+        connection_failure_payload=json.dumps(
+            {"message": planted, "status_text": planted}, ensure_ascii=False
+        ).encode()
+    )
+    server.start()
+    caplog.set_level(logging.INFO)
+    tts = DoubaoTTS(_config(server))
+    try:
+        stream = tts.stream(conn_options=APIConnectOptions(max_retry=0))
+        stream.push_text(reply)
+        stream.end_input()
+        with pytest.raises(APIConnectionError) as caught:
+            async for _ in stream:
+                pass
+        await stream.aclose()
+    finally:
+        await tts.aclose()
+        server.stop()
+
+    assert str(caught.value).startswith("Doubao error ")
+    assert f"failed to synthesize speech text_len={len(reply)}" in caplog.text
+    rendered = "".join(traceback.format_exception(caught.value))
+    for text in (planted, reply):
+        assert text not in caplog.text
+        assert text not in rendered
 
 
 @pytest.mark.asyncio

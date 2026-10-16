@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from packages.contracts.generated.python.multi_subject_contracts import CapabilityValue
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from services.common.failure_log import failure_log
 from services.control_api.app.account_gate import (
     require_capability_for_account_id,
     require_writable_account,
@@ -495,9 +496,9 @@ async def _create_direct_device_media_session(
         )
     except PersistentSessionDenied as exc:
         logger.warning(
-            "persistent Session authority denied device media session_id=%s reason=%s",
+            "persistent Session authority denied device media session_id=%s %s",
             session_id,
-            exc,
+            failure_log(exc),
         )
         raise HTTPException(
             status_code=403,
@@ -509,9 +510,10 @@ async def _create_direct_device_media_session(
             detail={"code": "session_runtime_conflict"},
         ) from exc
     except PersistentSessionUnavailable as exc:
-        logger.exception(
-            "persistent Session authority failed device media session_id=%s",
+        logger.warning(
+            "persistent Session authority failed device media session_id=%s %s",
             session_id,
+            failure_log(exc),
         )
         raise HTTPException(
             status_code=503,

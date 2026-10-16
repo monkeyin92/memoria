@@ -310,12 +310,11 @@ class FunASRSession:
         self._last_task_failure = failure
         logger.warning(
             "FunASR task failure task_id=%s task_epoch=%s segment_epoch=%s "
-            "error_code=%s error_message=%s",
+            "error_type=FunASRTaskFailure error_code=%s",
             failure.task_id,
             failure.task_epoch,
             failure.segment_epoch,
             failure.error_code or "unknown",
-            failure.error_message,
         )
         return failure
 
@@ -326,14 +325,13 @@ class FunASRSession:
                 f"{prefix} task_id={self.task_id or 'unknown'} "
                 f"task_epoch={max(1, self._task_epoch)} "
                 f"segment_epoch={max(1, self._segment_epoch)} "
-                "error_code=unknown error_message=FunASR task failed"
+                "error_code=unknown"
             )
         return (
             f"{prefix} task_id={failure.task_id} "
             f"task_epoch={failure.task_epoch} "
             f"segment_epoch={failure.segment_epoch} "
-            f"error_code={failure.error_code or 'unknown'} "
-            f"error_message={failure.error_message}"
+            f"error_code={failure.error_code or 'unknown'}"
         )
 
     def _failure_exception(self, prefix: str) -> APIConnectionError:
@@ -685,7 +683,7 @@ class FunASRSession:
             except BaseException as exc:
                 last_error = exc
         assert last_error is not None
-        raise APIConnectionError(f"FunASR connect failed: {last_error}") from last_error
+        raise APIConnectionError("FunASR connect failed") from last_error
 
     async def _recv_loop(self) -> None:
         while not self._closed:
@@ -1166,9 +1164,7 @@ class FunASRSession:
             self._ready.clear()
             self._task_failed_event.set()
             self._ws = None
-            raise APIConnectionError(
-                f"FunASR provider task replacement failed: {exc}"
-            ) from exc
+            raise APIConnectionError("FunASR provider task replacement failed") from exc
 
         self._ws = ws
         self.task_id = task_id
@@ -1667,7 +1663,7 @@ class FunASRSession:
                 task_id=task_id,
                 task_epoch=self._task_epoch,
                 error_code="task_start_failed",
-                error_message=f"FunASR reused task failed to start: {exc}",
+                error_message="FunASR reused task failed to start",
                 failed_ws=ws,
             )
             raise self._failure_exception("FunASR reused task failed to start") from exc

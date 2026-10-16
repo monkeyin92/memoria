@@ -447,7 +447,7 @@ class CosyVoiceSynthesizeStream(SynthesizeStream):
                     )
                     await self._pool.discard(conn, reason="task-failed")
                     self._conn = None
-                    raise APIConnectionError(ev.error_message or "cosyvoice task-failed")
+                    raise APIConnectionError("cosyvoice task-failed")
 
             output_emitter.start_segment(segment_id=task_id)
 
@@ -544,7 +544,7 @@ class CosyVoiceSynthesizeStream(SynthesizeStream):
                         )
                         await self._pool.discard(conn, reason="task-failed")
                         self._conn = None
-                        raise APIConnectionError(ev.error_message or "cosyvoice task-failed")
+                        raise APIConnectionError("cosyvoice task-failed")
             finally:
                 send_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -889,7 +889,7 @@ class CosyVoiceTTS:
                         detail={"phase": "start"},
                     )
                     await self._pool.discard(conn, reason="task-failed")
-                    raise CosyVoiceBeforeAudioError(ev.error_message or "task-failed")
+                    raise CosyVoiceBeforeAudioError("cosyvoice task-failed")
 
             for text in texts:
                 if cancel_event is not None and cancel_event.is_set():
@@ -975,7 +975,7 @@ class CosyVoiceTTS:
                         detail={"phase": "stream"},
                     )
                     await self._pool.discard(conn, reason="task-failed")
-                    raise RuntimeError(ev.error_message or "task-failed")
+                    raise RuntimeError("cosyvoice task-failed")
 
             if not pcm_buf:
                 raise CosyVoiceFirstAudioTimeoutError()

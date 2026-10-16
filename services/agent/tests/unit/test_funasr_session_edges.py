@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import traceback
 
 import pytest
 from services.agent.src.observability.metrics import MetricsRegistry
@@ -1023,12 +1024,33 @@ async def test_funasr_task_failure_records_safe_context_and_logs_all_fences(
     assert "task_id=task-1" in caplog.text
     assert "task_epoch=4" in caplog.text
     assert "segment_epoch=9" in caplog.text
-    assert "error_code=InvalidParameter" in caplog.text
-    assert "error_message=request failed for [手机号]" in caplog.text
+    assert "error_type=FunASRTaskFailure error_code=InvalidParameter" in caplog.text
+    assert "request failed for" not in caplog.text
+    assert "error_message" not in caplog.text
     assert "13812345678" not in caplog.text
 
-    with pytest.raises(APIConnectionError, match="error_code=InvalidParameter"):
+    with pytest.raises(APIConnectionError, match="error_code=InvalidParameter") as caught:
         await session.wait_for_task_finished()
+    rendered = "".join(traceback.format_exception(caught.value))
+    assert "request failed for" not in rendered
+    assert "13812345678" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_funasr_connect_failure_names_the_cause_type_not_its_text() -> None:
+    planted = "企鹅在冰箱里练习小号"
+    session = FunASRSession(FunASRConfig(api_key="test", ws_url="ws://unused"))
+
+    async def refuse() -> object:
+        raise OSError(planted)
+
+    session._open_once = refuse  # type: ignore[method-assign,assignment]
+
+    with pytest.raises(APIConnectionError) as caught:
+        await session._open_with_retry()
+
+    assert str(caught.value) == "FunASR connect failed (caused by OSError)"
+    assert planted not in repr(caught.value)
 
 
 def test_ws_trace_disabled_emits_nothing(caplog: pytest.LogCaptureFixture) -> None:

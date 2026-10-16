@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from services.common.failure_log import failure_log
+
 
 class APIError(Exception):
     """A provider request failed."""
@@ -29,10 +31,7 @@ class APIError(Exception):
         return self.message
 
     def __repr__(self) -> str:
-        return (
-            f"{self.__class__.__name__}({self.message!r}, body={self.body!r}, "
-            f"retryable={self.retryable!r})"
-        )
+        return f"{self.__class__.__name__}({str(self)!r}, retryable={self.retryable!r})"
 
 
 class APIStatusError(APIError):
@@ -57,16 +56,8 @@ class APIStatusError(APIError):
         self.request_id = request_id
 
     def __str__(self) -> str:
-        parts = [
-            f"message={self.message!r}",
-            f"status_code={self.status_code}",
-            f"retryable={self.retryable}",
-        ]
-        if self.request_id:
-            parts.append(f"request_id={self.request_id}")
-        if self.body:
-            parts.append(f"body={self.body}")
-        return ", ".join(parts)
+        # Tracebacks print this. ``message`` and ``body`` quote the vendor reply.
+        return str(failure_log(self))
 
 
 class APIConnectionError(APIError):
@@ -76,9 +67,8 @@ class APIConnectionError(APIError):
         super().__init__(message, body=None, retryable=retryable)
 
     def __str__(self) -> str:
-        # Wrappers raise ``... from exc`` with a placeholder message of their
-        # own, so name the root of the ``__cause__`` chain (at most 10 deep and
-        # stopping at a cycle) to keep the actual failure in the log line.
+        # Name only the type at the root of the ``__cause__`` chain (at most 10
+        # deep, stopping at a cycle): driver and vendor text can quote the reply.
         root: BaseException | None = None
         seen = {id(self)}
         cause = self.__cause__
@@ -90,17 +80,7 @@ class APIConnectionError(APIError):
             cause = cause.__cause__
         if root is None:
             return self.message
-        if isinstance(root, APIConnectionError):
-            root_message = root.message
-        else:
-            try:
-                root_message = str(root)
-            except Exception:
-                root_message = ""
-        detail = type(root).__name__
-        if root_message:
-            detail += f": {root_message}"
-        return f"{self.message} (caused by {detail})"
+        return f"{self.message} (caused by {type(root).__name__})"
 
 
 class APITimeoutError(APIConnectionError):

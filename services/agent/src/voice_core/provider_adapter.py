@@ -405,7 +405,7 @@ class ExistingVoiceProviderAdapter:
             except asyncio.QueueEmpty:
                 break
             if event.event == "task-failed":
-                raise RuntimeError(event.error_message or "FunASR task failed")
+                raise RuntimeError(f"FunASR task failed error_code={event.error_code or 'unknown'}")
             if event.event != "result-generated" or event.sentence is None:
                 continue
             result = self._map_asr_event(asr, event, identity.stream_epoch)
@@ -456,7 +456,7 @@ class ExistingVoiceProviderAdapter:
             else:
                 event = asr.events.get_nowait()
             if event.event == "task-failed":
-                raise RuntimeError(event.error_message or "FunASR task failed")
+                raise RuntimeError(f"FunASR task failed error_code={event.error_code or 'unknown'}")
             if event.event == "result-generated" and event.sentence is not None:
                 result = self._map_asr_event(asr, event, identity.stream_epoch)
                 if result is not None:

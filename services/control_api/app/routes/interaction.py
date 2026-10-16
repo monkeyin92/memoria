@@ -37,6 +37,7 @@ from services.common.crisis_policy import (
     log_fixed_safety_reply,
     route_crisis,
 )
+from services.common.failure_log import failure_log
 from services.common.realtime_information import (
     current_local_time,
     fixed_realtime_reply,
@@ -642,9 +643,9 @@ async def _current_persistent_runtime_profile(
         )
     except (PersistentSessionNotFound, PersistentSessionUnavailable) as exc:
         logger.warning(
-            "persistent Runtime Profile unavailable session_id=%s reason=%s",
+            "persistent Runtime Profile unavailable session_id=%s %s",
             session_id,
-            exc,
+            failure_log(exc),
         )
         raise HTTPException(
             status_code=503,
@@ -1009,9 +1010,9 @@ async def action_policy(
         )
     except (PersistentSessionNotFound, PersistentSessionUnavailable) as exc:
         logger.warning(
-            "action-policy Runtime Profile unavailable session_id=%s reason=%s",
+            "action-policy Runtime Profile unavailable session_id=%s %s",
             body.session_id,
-            exc,
+            failure_log(exc),
         )
         raise HTTPException(
             status_code=503,
@@ -1084,9 +1085,9 @@ async def action_policy(
         ) from exc
     except (PersistentSessionNotFound, PersistentSessionUnavailable) as exc:
         logger.warning(
-            "action-policy authority unavailable session_id=%s reason=%s",
+            "action-policy authority unavailable session_id=%s %s",
             body.session_id,
-            exc,
+            failure_log(exc),
         )
         raise HTTPException(
             status_code=503,
@@ -1176,9 +1177,9 @@ async def commit_tool_effect(
         ) from exc
     except (PersistentSessionNotFound, PersistentSessionUnavailable) as exc:
         logger.warning(
-            "tool effect authority unavailable session_id=%s reason=%s",
+            "tool effect authority unavailable session_id=%s %s",
             body.session_id,
-            exc,
+            failure_log(exc),
         )
         raise HTTPException(
             status_code=503,
@@ -1226,7 +1227,7 @@ async def reconcile_tool_effect(
             idempotency_key=body.idempotency_key,
         )
     except Exception as exc:
-        logger.warning("tool effect reconcile authority unavailable: %s", exc)
+        logger.warning("tool effect reconcile authority unavailable %s", failure_log(exc))
         raise HTTPException(
             status_code=503,
             detail={"code": "tool_effect_authority_unknown", "state": "unknown"},

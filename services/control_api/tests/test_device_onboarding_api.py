@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sqlite3
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
@@ -7,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import asyncpg
 import jwt
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -1178,6 +1180,71 @@ async def test_direct_device_media_session_fails_closed_on_authority_errors(
     assert authority.profile is None
     assert authority.failed == []
     assert memory.get_device_media_session(session_id="") is None
+
+
+_PLANTED_SQL_VALUE = "INSERT INTO notes VALUES ('鲸鱼在第二个抽屉里唱歌')"
+
+
+def _caused_by(error: Exception, cause: BaseException) -> Exception:
+    error.__cause__ = cause
+    return error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("start_error", "expected_log"),
+    [
+        (
+            _caused_by(
+                PersistentSessionDenied(_PLANTED_SQL_VALUE),
+                asyncpg.exceptions.InsufficientPrivilegeError(_PLANTED_SQL_VALUE),
+            ),
+            "persistent Session authority denied device media session_id=%s "
+            "error_type=PersistentSessionDenied error_code=42501",
+        ),
+        (
+            PersistentSessionDenied("device_untrusted"),
+            "persistent Session authority denied device media session_id=%s "
+            "error_type=PersistentSessionDenied error_code=device_untrusted",
+        ),
+        (
+            _caused_by(
+                PersistentSessionUnavailable(_PLANTED_SQL_VALUE),
+                asyncpg.exceptions.SerializationError(_PLANTED_SQL_VALUE),
+            ),
+            "persistent Session authority failed device media session_id=%s "
+            "error_type=PersistentSessionUnavailable error_code=40001",
+        ),
+    ],
+)
+async def test_direct_device_media_authority_errors_log_type_and_code_only(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    start_error: Exception,
+    expected_log: str,
+) -> None:
+    service, store, device_key, payload = _fixture()
+    manifest = _activate_device(service, store, device_key, payload)
+    settings_value, _ = _direct_media_settings()
+    authority = _DirectSessionAuthority(
+        binding_id=str(manifest["binding_id"]),
+        binding_version=int(manifest["binding_version"]),
+        subject_id="person_a",
+        start_error=start_error,
+    )
+    app = _direct_app(service, _direct_memory(tmp_path), authority, settings_value)
+    caplog.set_level(logging.INFO)
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        session_response = await _post_direct_media_session(client, service, device_key)
+
+    assert session_response.status_code in {403, 503}, session_response.text
+    [command] = authority.started
+    assert expected_log % command.session_id in caplog.text
+    assert "鲸鱼在第二个抽屉里唱歌" not in caplog.text
+    assert "Traceback" not in caplog.text
 
 
 @pytest.mark.asyncio

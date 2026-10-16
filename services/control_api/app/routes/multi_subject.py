@@ -7,6 +7,7 @@ import hmac
 import logging
 import re
 import uuid
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from typing import Annotated, Any, Literal, cast
 from zoneinfo import ZoneInfo
@@ -24,6 +25,7 @@ from services.common.daily_chat_limit import (
     DailyChatBudget,
     effective_daily_chat_budget,
 )
+from services.common.failure_log import failure_log
 from services.common.session_length import (
     SESSION_MINUTES_MAX,
     SESSION_MINUTES_MIN,
@@ -99,9 +101,9 @@ router = APIRouter(tags=["multi-subject"])
 logger = logging.getLogger(__name__)
 
 # Session Runtime denials carry free-text messages (and, from the binding lock,
-# raw PostgreSQL error text).  Clients get only a fixed reason code from this
-# allowlist or a bare snake_case code (Device trust reasons); the full message
-# goes to the server log so the next denial is diagnosable.
+# raw PostgreSQL error text).  Clients and the server log get only a fixed
+# reason code from this allowlist or a bare snake_case code (Device trust
+# reasons); the message itself is never written anywhere.
 _SESSION_DENIAL_REASONS: dict[str, str] = {
     "runtime profile is expired": "profile_expired",
     "runtime profile signature is invalid": "profile_signature_invalid",
@@ -328,15 +330,13 @@ def _session_denied(
     if reason is None:
         reason = message if _SNAKE_CASE_REASON.fullmatch(message) else "denied"
     logger.warning(
-        "session runtime denied route=%s code=%s reason=%s device_id=%s "
-        "session_id=%s actor_id=%s message=%r",
+        "session runtime denied route=%s code=%s device_id=%s session_id=%s actor_id=%s %s",
         route,
         code,
-        reason,
         device_id,
         session_id,
         actor_id,
-        message,
+        replace(failure_log(exc), error_code=reason),
     )
     return HTTPException(status_code=403, detail={"code": code, "reason": reason})
 

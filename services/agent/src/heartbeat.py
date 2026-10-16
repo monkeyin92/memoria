@@ -27,6 +27,7 @@ from uuid import UUID, uuid4
 import httpx
 
 from services.common.chat_llm_providers import ChatLlmFamily, chat_llm_plan
+from services.common.failure_log import failure_log
 
 logger = logging.getLogger(__name__)
 
@@ -123,10 +124,9 @@ class AgentHeartbeat:
                 # reported tag, a permanent stack tag split is indistinguishable
                 # from Control API being unreachable.
                 logger.warning(
-                    "agent heartbeat rejected: status=%s release_tag=%s detail=%s",
-                    exc.response.status_code,
+                    "agent heartbeat rejected %s release_tag=%s",
+                    failure_log(exc),
                     self._config.release_tag,
-                    _response_detail(exc.response),
                 )
             except (httpx.HTTPError, OSError) as exc:
                 logger.warning("agent heartbeat failed: %s", type(exc).__name__)
@@ -156,19 +156,6 @@ def build_agent_heartbeat(settings: Any) -> AgentHeartbeat | None:
             ).families,
         )
     )
-
-
-def _response_detail(response: httpx.Response) -> str:
-    """Best-effort one-line reason from a rejected heartbeat response."""
-
-    try:
-        payload = response.json()
-    except ValueError:
-        return response.text[:200]
-    if isinstance(payload, dict):
-        reason = payload.get("detail") or payload.get("status") or payload
-        return str(reason)[:200]
-    return str(payload)[:200]
 
 
 def _write_heartbeat_state(state_path: Path, *, release_tag: str, accepted_at: datetime) -> None:

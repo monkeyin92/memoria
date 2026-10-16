@@ -99,6 +99,7 @@ from services.session_runtime.subject_resolver import (
 
 _DEFAULT_PROFILE_TTL = timedelta(minutes=5)
 _MAX_PROFILE_TTL = timedelta(seconds=86_400)
+_DENIAL_REASON_CODE: Final = re.compile(r"[a-z][a-z0-9_]{0,63}")
 #: Who may confirm and read consent for a sole subject other than themself.
 #: Mirrors the relations ``consent_discover_action_fence`` accepts for an
 #: actor that is not the subject; any other actor would make the discovery
@@ -113,6 +114,13 @@ class PersistentSessionUnavailable(RuntimeError):
 
 class PersistentSessionDenied(PermissionError):
     """The authenticated actor/binding cannot create this Session."""
+
+    @property
+    def error_code(self) -> str | None:
+        """The message when it is a bare snake_case reason code, else None."""
+
+        message = str(self)
+        return message if _DENIAL_REASON_CODE.fullmatch(message) else None
 
 
 class PersistentSessionExpired(PersistentSessionDenied):

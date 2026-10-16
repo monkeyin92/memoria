@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
@@ -321,6 +323,38 @@ async def test_device_settings_reports_applied_only_from_matching_live_device_ac
         current = await client.get("/v1/devices/dev_test_01/settings")
     assert current.status_code == 200, current.text
     assert current.json()["runtime_apply_status"] == "applied"
+
+
+@pytest.mark.asyncio
+async def test_device_runtime_status_failure_logs_type_and_status_only(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    app, _manifest = _profile_app(tmp_path, category="adult")
+    planted = "猫头鹰在第四个邮箱里写日记"
+
+    async def runtime_status(**_payload: object) -> dict[str, object]:
+        request = httpx.Request("POST", "https://edge.test/internal/device-runtime-status")
+        raise httpx.HTTPStatusError(
+            planted,
+            request=request,
+            response=httpx.Response(502, text=planted, request=request),
+        )
+
+    app.state.device_runtime_status_reader = runtime_status
+    caplog.set_level(logging.INFO)
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        current = await client.get("/v1/devices/dev_test_01/settings")
+
+    assert current.status_code == 200, current.text
+    assert (
+        "device runtime status unavailable device_id=dev_test_01 "
+        "error_type=HTTPStatusError error_code=502"
+    ) in caplog.text
+    assert planted not in caplog.text
 
 
 @pytest.mark.asyncio

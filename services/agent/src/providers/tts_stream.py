@@ -291,7 +291,7 @@ class SynthesizeStream(ABC):
                 emitter.end_input()
                 if self._pushed_text.strip():
                     if emitter.pushed_duration() <= 0.0:
-                        raise APIError(f"no audio frames were pushed for text: {self._pushed_text}")
+                        raise APIError("no audio frames were pushed")
                     if self._num_segments != emitter.num_segments:
                         raise APIError(
                             f"number of segments mismatch: expected {self._num_segments}, "
@@ -301,6 +301,12 @@ class SynthesizeStream(ABC):
             except APIError as exc:
                 if isinstance(exc, APIStatusError) and exc.status_code == 499:
                     return
+                provider_request_id = exc.request_id if isinstance(exc, APIStatusError) else None
+                logger.warning(
+                    "failed to synthesize speech text_len=%s request_id=%s",
+                    len(self._pushed_text),
+                    provider_request_id or emitter._request_id or "-",
+                )
                 pushed = emitter.pushed_duration()
                 if not (exc.retryable and pushed == 0.0 and attempt < options.max_retry):
                     if pushed > 0.0:
@@ -310,14 +316,7 @@ class SynthesizeStream(ABC):
                             pushed,
                         )
                     raise
-                interval = options.interval_for_retry(attempt)
-                logger.warning(
-                    "failed to synthesize speech: %s, retrying in %ss attempt=%s",
-                    exc,
-                    interval,
-                    attempt + 1,
-                )
-                await asyncio.sleep(interval)
+                await asyncio.sleep(options.interval_for_retry(attempt))
                 self._input_ch = Chan()
                 for item in self._input_buffer:
                     self._input_ch.send_nowait(item)

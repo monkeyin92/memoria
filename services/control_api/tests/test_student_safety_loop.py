@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -379,10 +380,13 @@ async def test_support_tier_and_crisis_behavior_matrix(
                 if "fixed_safety_reply" in record.getMessage()
             ]
             assert len(log_lines) == 1
-            assert f"reply_template_id={reply_template_id}" in log_lines[0]
-            assert f"script_version={script_version}" in log_lines[0]
-            assert query not in log_lines[0]
+            assert re.fullmatch(
+                rf"fixed_safety_reply reply_template_id={reply_template_id} "
+                r"at=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z",
+                log_lines[0],
+            )
             assert query not in caplog.text
+            assert reply not in caplog.text
         else:
             assert not any("fixed_safety_reply" in r.getMessage() for r in caplog.records)
 
