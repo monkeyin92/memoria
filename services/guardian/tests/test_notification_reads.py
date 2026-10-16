@@ -210,3 +210,48 @@ async def test_receipts_export_with_the_parent_and_leave_with_the_account(
         assert await admin.fetchval("SELECT count(*) FROM guardian_notification_reads") == 0
     finally:
         await admin.close()
+
+
+async def _counts(database: TestDatabase) -> tuple[int, int]:
+    admin = await asyncpg.connect(database.owner_dsn())
+    try:
+        outbox = await admin.fetchval("SELECT count(*) FROM guardian_notification_outbox")
+        reads = await admin.fetchval("SELECT count(*) FROM guardian_notification_reads")
+    finally:
+        await admin.close()
+    return int(outbox), int(reads)
+
+
+@pytest.mark.asyncio
+async def test_subject_and_account_deletion_remove_read_receipts(
+    postgres_database: TestDatabase,
+    guardian_postgres_store: PostgresGuardianStore,
+) -> None:
+    """Outbox deletion cascades receipts even though the delete guard is on both tables."""
+
+    store = guardian_postgres_store
+    await _link(store)
+    first = await _crisis(store, 0)
+    await _mark(store, first, NOW + timedelta(minutes=5))
+    assert await _counts(postgres_database) == (1, 1)
+
+    admin = await asyncpg.connect(postgres_database.owner_dsn())
+    try:
+        with pytest.raises(asyncpg.PostgresError, match="account deletion pipeline"):
+            await admin.execute(
+                "DELETE FROM guardian_notification_reads WHERE notification_id = $1",
+                uuid.UUID(first),
+            )
+    finally:
+        await admin.close()
+    assert await _counts(postgres_database) == (1, 1)
+
+    await store.delete_subject_rows(account_id="guardian-a", subject_id="minor-a")
+    assert await _counts(postgres_database) == (0, 0)
+
+    second = await _crisis(store, 1)
+    await _mark(store, second, NOW + timedelta(minutes=6))
+    assert await _counts(postgres_database) == (1, 1)
+
+    await store.delete_for_account(account_id="guardian-a")
+    assert await _counts(postgres_database) == (0, 0)
