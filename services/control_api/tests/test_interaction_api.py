@@ -1692,7 +1692,12 @@ async def test_weather_fallback_answers_both_turns_without_inventing_a_forecast(
 
     assert alone.status_code == 200
     assert alone.json()["direct_text"] is None
-    assert [plan["direct_text"] for plan in plans] == [fallback, fallback]
+    texts = [plan["direct_text"] for plan in plans]
+    assert texts == [fallback, fallback]
+    assert texts[0] != "你想查哪个城市呀？"
+    forecast_words = ("气温", "温度", "晴", "雨", "阴", "雪", "多云")
+    for text in texts:
+        assert [word for word in forecast_words if word in text] == []
 
 
 @pytest.mark.hermetic
