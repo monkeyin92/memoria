@@ -30,6 +30,7 @@ from services.control_api.app.main import create_app
 from services.control_api.tests.test_interaction_api import (
     _attach_signed_runtime_profile,
 )
+from services.guardian.crisis import minor_crisis_event_id
 from services.guardian.parent_alert import PARENT_ALERT_COPY, alert_time_label
 from services.session_runtime.profile_service import verify_runtime_profile_payload
 
@@ -954,13 +955,22 @@ async def test_unfinished_script_detail_is_fixed_copy_and_omits_the_child_words(
             )
             assert plan.status_code == 200, plan.text
 
+        templates = {
+            _CRISIS_QUERY: "crisis-self-v1",
+            "有人正在打我": "victim-support-v1",
+            "我朋友说他不想活了": "support-other-v1",
+        }
         quiet = await client.get("/v1/guardian/notifications", headers=parent_headers)
         assert quiet.status_code == 200, quiet.text
         for item in quiet.json()["items"]:
             assert "detail" not in item
             assert item["message"] == "有一条需要你关注的对话"
+            copy = next(
+                entry for entry in PARENT_ALERT_COPY.values() if entry.summary == item["summary"]
+            )
+            assert item["parent_action"] == copy.parent_action
 
-        for turn, (query, sentence) in enumerate(spoken, start=1):
+        for turn, (_query, _sentence) in enumerate(spoken, start=1):
             _record_terminal(
                 app,
                 session_id=session_id,
@@ -968,18 +978,31 @@ async def test_unfinished_script_detail_is_fixed_copy_and_omits_the_child_words(
                 generation_id=turn,
                 event_type="preempted",
             )
+        still_quiet = await client.get("/v1/guardian/notifications", headers=parent_headers)
+        for item in still_quiet.json()["items"]:
+            assert "detail" not in item
+
+        for turn, (query, sentence) in enumerate(spoken, start=1):
+            template_id = templates[query]
+            event_id = minor_crisis_event_id(
+                minor_user_id=child["user_id"],
+                session_id=session_id,
+                turn_id=turn,
+                generation_id=turn,
+                tool_epoch=0,
+            )
+            marked = await client.post(
+                "/v1/guardian/crisis-script-interrupted",
+                headers={"X-Memoria-Internal-Token": _RESPONSE_PLAN_TOKEN},
+                json={"crisis_event_id": event_id},
+            )
+            assert marked.status_code == 200, marked.text
+            assert marked.json() == {"crisis_event_id": event_id}
             listed = await client.get("/v1/guardian/notifications", headers=parent_headers)
             match = next(
                 item
                 for item in listed.json()["items"]
-                if item["summary"]
-                == PARENT_ALERT_COPY[
-                    {
-                        _CRISIS_QUERY: "crisis-self-v1",
-                        "有人正在打我": "victim-support-v1",
-                        "我朋友说他不想活了": "support-other-v1",
-                    }[query]
-                ].summary
+                if item["summary"] == PARENT_ALERT_COPY[template_id].summary
             )
             page = await client.get(
                 f"/v1/guardian/notifications/{match['notification_id']}",
@@ -988,6 +1011,7 @@ async def test_unfinished_script_detail_is_fixed_copy_and_omits_the_child_words(
             assert page.status_code == 200, page.text
             body = page.json()
             assert body["message"] == "有一条需要你关注的对话"
+            assert body["parent_action"] == PARENT_ALERT_COPY[template_id].parent_action
             rendered = json.dumps(body, ensure_ascii=False)
             assert query not in body["summary"]
             assert query not in rendered
@@ -1012,7 +1036,8 @@ async def test_unfinished_script_detail_is_fixed_copy_and_omits_the_child_words(
             for item in finished.json()["items"]
             if item["summary"] == PARENT_ALERT_COPY["crisis-self-v1"].summary
         )
-        assert "detail" not in self_harm_item
+        assert self_harm_item["detail"] == self_harm
+        assert self_harm_item["parent_action"] == PARENT_ALERT_COPY["crisis-self-v1"].parent_action
 
 
 @pytest.mark.asyncio
@@ -1056,6 +1081,22 @@ async def test_unknown_script_id_shows_the_title_and_logs_only_the_id(
         assert "legacy-unspecified" in caplog.text
         assert "不想活" not in caplog.text
         assert "打我" not in caplog.text
+        marked = await client.post(
+            "/v1/guardian/crisis-script-interrupted",
+            headers={"X-Memoria-Internal-Token": _RESPONSE_PLAN_TOKEN},
+            json={"crisis_event_id": "7d1f9c1e-0000-4000-8000-0000000000b1"},
+        )
+        assert marked.status_code == 200, marked.text
+        with caplog.at_level(logging.ERROR, logger="services.guardian.parent_alert"):
+            interrupted = await client.get("/v1/guardian/notifications", headers=parent_headers)
+        assert interrupted.status_code == 200, interrupted.text
+        (still,) = interrupted.json()["items"]
+        assert still["message"] == "有一条需要你关注的对话"
+        assert still["parent_action"] == ""
+        assert "detail" not in still
+        interrupted_blob = json.dumps(still, ensure_ascii=False)
+        assert "12356" not in interrupted_blob
+        assert "110" not in interrupted_blob
 
 
 @pytest.mark.asyncio

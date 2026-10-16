@@ -16,6 +16,7 @@ from services.guardian.parent_alert import (
     PARENT_ALERT_COPY,
     ParentAlertCopy,
     alert_time_label,
+    interrupted_parent_detail,
     parse_alert_template,
     playback_left_unfinished,
 )
@@ -135,6 +136,38 @@ def test_victim_action_is_the_final_sentence_and_does_not_describe_an_incident()
         blob = " ".join(_strings(copy))
         assert "打我" not in blob
         assert "不想活" not in blob
+
+
+def test_interrupted_detail_uses_the_tier_table_only_when_the_flag_is_set() -> None:
+    unfinished_self = "这次的提醒话术孩子没有听完，如需帮助可拨打心理援助热线12356"
+    unfinished_victim = "这次的提醒话术孩子没有听完，如有危险请拨打110"
+    assert (
+        interrupted_parent_detail("victim-support-v1", script_interrupted=False) is None
+    )
+    assert interrupted_parent_detail("crisis-self-v1", script_interrupted=False) is None
+    assert (
+        interrupted_parent_detail("victim-support-v1", script_interrupted=True)
+        == unfinished_victim
+    )
+    assert (
+        interrupted_parent_detail("crisis-self-v1", script_interrupted=True) == unfinished_self
+    )
+    assert interrupted_parent_detail("support-other-v1", script_interrupted=True) is None
+    assert interrupted_parent_detail("support-other-v1", script_interrupted=False) is None
+    assert interrupted_parent_detail("legacy-unspecified", script_interrupted=True) is None
+    assert interrupted_parent_detail("", script_interrupted=True) is None
+    assert interrupted_parent_detail(None, script_interrupted=True) is None
+    heard = (
+        PARENT_ALERT_COPY["victim-support-v1"].parent_action,
+        unfinished_victim,
+        PARENT_ALERT_COPY["crisis-self-v1"].parent_action,
+        unfinished_self,
+        PARENT_ALERT_COPY["support-other-v1"].parent_action,
+    )
+    for sentence in heard:
+        assert "我不会做题。我不想活了" not in sentence
+        assert "停" not in sentence
+        assert "自杀" not in sentence
 
 
 def test_alert_time_is_month_day_and_clock_in_the_server_zone() -> None:

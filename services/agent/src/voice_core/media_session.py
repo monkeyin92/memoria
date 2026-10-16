@@ -117,6 +117,7 @@ class MediaVoiceCoreRegistry(
     # production startup supplies the bounded AgentSettings value explicitly.
     max_user_speech_duration_s: float = 0.0
     reply_delivery_publisher: Callable[[dict[str, Any]], bool] | None = None
+    crisis_script_interrupt_publisher: Callable[[str], None] | None = None
     session_recap_publisher: Callable[..., Any] | None = None
     daily_chat_client: DailyChatClient | None = None
     _sessions: dict[str, _MediaVoiceSession] = field(default_factory=dict, init=False)

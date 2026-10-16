@@ -359,7 +359,8 @@ CREATE TABLE IF NOT EXISTS guardian_crisis_events (
     ),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     attempt_push BOOLEAN NOT NULL DEFAULT TRUE,
-    possibly_story_retell BOOLEAN NOT NULL DEFAULT FALSE
+    possibly_story_retell BOOLEAN NOT NULL DEFAULT FALSE,
+    script_interrupted BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 -- Relay-tier support requests pin without WeChat push: their outbox rows are
@@ -374,6 +375,11 @@ ALTER TABLE guardian_crisis_events
 -- Story-retell framing annotates the in-app pin only; it never skips the script.
 ALTER TABLE guardian_crisis_events
     ADD COLUMN IF NOT EXISTS possibly_story_retell BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- True only after an in-progress crisis-self or victim script was cancelled.
+-- The column is a boolean. It does not store the child utterance or the stop keyword.
+ALTER TABLE guardian_crisis_events
+    ADD COLUMN IF NOT EXISTS script_interrupted BOOLEAN NOT NULL DEFAULT FALSE;
 
 ALTER TABLE guardian_crisis_events
     ADD COLUMN IF NOT EXISTS reply_session_id TEXT,
@@ -1294,6 +1300,41 @@ BEGIN
 END
 $notification_enqueue_declared$;
 
+-- Flips one boolean on an existing crisis row and returns the stored template
+-- id. It does not insert a notification and it does not accept text. The API
+-- role has no UPDATE grant, so this SECURITY DEFINER function is the only
+-- write. WITH CHECK on the crisis table still requires the actor to be the
+-- minor, which this function sets from the row itself for the update only.
+CREATE OR REPLACE FUNCTION guardian_mark_script_interrupted(
+    p_crisis_event_id UUID
+) RETURNS TEXT
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $mark_script_interrupted$
+DECLARE
+    v_minor_user_id TEXT;
+    v_reply_template_id TEXT;
+BEGIN
+    PERFORM set_config('memoria.guardian_maintenance_scope', '1', true);
+    SELECT crisis.minor_user_id, crisis.reply_template_id
+      INTO v_minor_user_id, v_reply_template_id
+      FROM guardian_crisis_events crisis
+     WHERE crisis.crisis_event_id = p_crisis_event_id;
+    IF v_minor_user_id IS NULL THEN
+        PERFORM set_config('memoria.guardian_maintenance_scope', '0', true);
+        RETURN NULL;
+    END IF;
+    PERFORM set_config('memoria.guardian_actor_id', v_minor_user_id, true);
+    PERFORM set_config('memoria.guardian_subject_id', v_minor_user_id, true);
+    UPDATE guardian_crisis_events
+       SET script_interrupted = TRUE
+     WHERE crisis_event_id = p_crisis_event_id;
+    PERFORM set_config('memoria.guardian_actor_id', '', true);
+    PERFORM set_config('memoria.guardian_subject_id', '', true);
+    PERFORM set_config('memoria.guardian_maintenance_scope', '0', true);
+    RETURN v_reply_template_id;
+END
+$mark_script_interrupted$;
+
 -- Crisis push delivery.  These SECURITY DEFINER functions are owned by the
 -- maintenance role and executable ONLY by the worker role; the API role can
 -- neither claim a notification nor read a stored openid.  Each opens the
@@ -2189,6 +2230,12 @@ BEGIN
             GRANT EXECUTE ON FUNCTION guardian_enqueue_declared_notification(UUID, UUID, TEXT, TIMESTAMPTZ)
                 TO memoria_guardian;
             ALTER FUNCTION guardian_enqueue_declared_notification(UUID, UUID, TEXT, TIMESTAMPTZ)
+                OWNER TO memoria_guardian_maintenance;
+            REVOKE EXECUTE ON FUNCTION guardian_mark_script_interrupted(UUID)
+                FROM PUBLIC;
+            GRANT EXECUTE ON FUNCTION guardian_mark_script_interrupted(UUID)
+                TO memoria_guardian;
+            ALTER FUNCTION guardian_mark_script_interrupted(UUID)
                 OWNER TO memoria_guardian_maintenance;
             REVOKE EXECUTE ON FUNCTION guardian_crisis_push_claim(
                 TEXT, TIMESTAMPTZ, INTEGER, INTEGER, INTEGER, INTEGER
