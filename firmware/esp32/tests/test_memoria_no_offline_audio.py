@@ -1,5 +1,3 @@
-"""Bench image that packs no offline .ogg, and the checks that keep that switch bench-only."""
-
 from __future__ import annotations
 
 import json
@@ -28,7 +26,6 @@ _AIGC_CHECK = '"$MEMORIA_FIRMWARE_ROOT/scripts/check_device_ogg_aigc.py"'
 
 @pytest.fixture
 def assets_fixture(tmp_path: pathlib.Path) -> pathlib.Path:
-    """A copy of the real board assets, plus srmodels/mn6_cn and stories/nested/LOUD.OGG."""
     root = tmp_path / "assets"
     shutil.copytree(BOARD_ASSETS, root)
     model = root / "srmodels" / "mn6_cn"
@@ -42,7 +39,6 @@ def assets_fixture(tmp_path: pathlib.Path) -> pathlib.Path:
 
 
 def _stage(source: pathlib.Path, build_dir: pathlib.Path) -> pathlib.Path:
-    """Run the stager in cmake script mode. Fails when cmake is missing."""
     build_dir.mkdir(parents=True, exist_ok=True)
     completed = subprocess.run(
         ["cmake", f"-DMEMORIA_ASSETS_SOURCE={source}", "-P", str(STAGER)],

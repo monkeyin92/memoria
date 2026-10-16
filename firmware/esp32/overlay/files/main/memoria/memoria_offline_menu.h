@@ -232,9 +232,6 @@ public:
         return OfflineMenuOutput{};
     }
 
-    // The end clip and the in-story restore line describe a story that was
-    // heard. A refused intro means that story never started, so neither plays.
-    // Leaving kPlaying is what lets OnTimer idle and sleep.
     OfflineMenuOutput OnStoryRefused(std::uint32_t now_ms) {
         if (mode_ == OfflineMode::kPlaying) {
             OfflineMenuOutput out;

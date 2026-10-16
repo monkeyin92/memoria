@@ -51,7 +51,8 @@ extern "C" const char memoria_keep_awake_build_marker[] = "MEMORIA_KEEP_AWAKE_BU
 #endif
 
 #if CONFIG_MEMORIA_NO_OFFLINE_AUDIO
-extern "C" const char memoria_no_offline_audio_build_marker[] = "MEMORIA_NO_OFFLINE_AUDIO_BUILD=1;";
+extern "C" const char memoria_no_offline_audio_build_marker[]
+    __attribute__((used)) = "MEMORIA_NO_OFFLINE_AUDIO_BUILD=1;";
 #endif
 
 #if ESP_VOCAT_ENABLE_CAP_TOUCH_SENSOR
@@ -1491,7 +1492,6 @@ public:
         auto& power = memoria::PowerPolicyRegistry::GetInstance();
         power.LoadFromNvs();
 #if CONFIG_MEMORIA_NO_OFFLINE_AUDIO
-        // Referencing the marker keeps --gc-sections from dropping it.
         ESP_LOGW(TAG, "offline audio excluded from this image %s",
                  memoria_no_offline_audio_build_marker);
 #endif

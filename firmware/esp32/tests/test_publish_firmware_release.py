@@ -154,10 +154,14 @@ def test_the_no_offline_audio_marker_is_the_one_the_build_carries() -> None:
     publisher = _publisher()
     board = MEMORIA_DIR.parent / "boards" / "memoria" / "esp-vocat"
     source = (board / "memoria_esp_vocat.cc").read_text(encoding="utf-8")
-    defined = re.findall(r'memoria_no_offline_audio_build_marker\[\] = "([^"]+)";', source)
+    defined = re.findall(
+        r'memoria_no_offline_audio_build_marker\[\]\s*'
+        r'__attribute__\(\(used\)\) = "([^"]+)";',
+        source,
+    )
     assert defined == [publisher.NO_OFFLINE_AUDIO_MARKER.decode("ascii")]
     assert source.index("#if CONFIG_MEMORIA_NO_OFFLINE_AUDIO") < source.index(
-        "memoria_no_offline_audio_build_marker[] ="
+        "__attribute__((used)) = \"" + publisher.NO_OFFLINE_AUDIO_MARKER.decode("ascii")
     )
     ctor = source.index("MemoriaEspVocat() : boot_button_(BOOT_BUTTON_GPIO)")
     load = source.index("power.LoadFromNvs();", ctor)
