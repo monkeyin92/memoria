@@ -48,6 +48,7 @@ class GuardianNotification:
     last_error_code: str | None = None
     possibly_story_retell: bool = False
     reply_fence: ReplyFence | None = None
+    script_interrupted: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +109,8 @@ class CrisisNotificationStorePort(Protocol):
         Raise ``GuardianNotFoundError`` when the guardian cannot see it.
         """
 
+    async def mark_script_interrupted(self, *, crisis_event_id: str) -> str | None: ...
+
 
 class CrisisNotificationUnavailableError(RuntimeError):
     """A minor crisis could not be queued for any active guardian."""
@@ -159,9 +162,12 @@ class CrisisNotificationService:
         """
 
         now = (occurred_at or datetime.now(UTC)).astimezone(UTC)
-        fence_key = f"{minor_user_id}:{session_id}:{turn_id}:{generation_id}:{tool_epoch}"
-        crisis_event_id = str(
-            uuid.uuid5(uuid.NAMESPACE_URL, f"memoria:minor-crisis:{fence_key}")
+        crisis_event_id = minor_crisis_event_id(
+            minor_user_id=minor_user_id,
+            session_id=session_id,
+            turn_id=turn_id,
+            generation_id=generation_id,
+            tool_epoch=tool_epoch,
         )
         evidence_event_id = f"guardian-crisis:{crisis_event_id}"
         await self._archive.record(
@@ -210,6 +216,18 @@ class CrisisNotificationService:
         return receipt
 
 
+def minor_crisis_event_id(
+    *,
+    minor_user_id: str,
+    session_id: str,
+    turn_id: int,
+    generation_id: int,
+    tool_epoch: int,
+) -> str:
+    fence_key = f"{minor_user_id}:{session_id}:{turn_id}:{generation_id}:{tool_epoch}"
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"memoria:minor-crisis:{fence_key}"))
+
+
 __all__ = [
     "CrisisNotificationReceipt",
     "CrisisNotificationService",
@@ -219,4 +237,5 @@ __all__ = [
     "NotificationStatus",
     "ReplyFence",
     "UnreadNotifications",
+    "minor_crisis_event_id",
 ]

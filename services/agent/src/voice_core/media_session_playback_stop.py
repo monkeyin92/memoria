@@ -27,6 +27,10 @@ from services.agent.src.conversation_close_router import (
     lexical_playback_control_only,
     rule_conversation_close_only,
 )
+from services.agent.src.voice_core.crisis_script_interrupt import (
+    active_subject_id,
+    publish_crisis_self_interrupt,
+)
 from services.agent.src.voice_core.media_protocol import should_pause_asr_for_playback
 from services.agent.src.voice_core.speech_timeline import ASRResult
 
@@ -957,6 +961,9 @@ class MediaPlaybackStopMixin:
             # Another control already replaced this generation.
             return False
         stop_started_ns = time.monotonic_ns()
+        announced = context.output.assistant_text
+        crisis_heard = context.crisis_reply_heard
+        subject_id = active_subject_id(context)
         flush_required = self._device_playback_flush_required(context, previous_fence)
         await self._record_interrupted_timed_spans(context, previous_fence)
         heard = context.output.playback.actual_heard_text(previous_fence)
@@ -998,6 +1005,16 @@ class MediaPlaybackStopMixin:
         self.metrics.observe_voice_latency(
             "interrupt_core_stop",
             (time.monotonic_ns() - stop_started_ns) / 1_000_000_000,
+        )
+        publish_crisis_self_interrupt(
+            getattr(self, "crisis_script_interrupt_publisher", None),
+            announced_text=announced,
+            crisis_reply_heard=crisis_heard,
+            minor_user_id=subject_id,
+            session_id=previous_fence.session_id,
+            turn_id=previous_fence.turn_id,
+            generation_id=previous_fence.generation_id,
+            tool_epoch=previous_fence.tool_epoch,
         )
         logger.info(
             "media spoken stop interrupted reply session=%s turn=%s generation=%s "

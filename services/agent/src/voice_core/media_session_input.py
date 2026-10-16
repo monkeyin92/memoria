@@ -15,6 +15,10 @@ from services.agent.src.orchestration.interaction_plane import (
     InteractionSnapshot,
 )
 from services.agent.src.orchestration.interruption_guard import PlaybackInputDecision
+from services.agent.src.voice_core.crisis_script_interrupt import (
+    active_subject_id,
+    publish_crisis_self_interrupt,
+)
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.interruption import (
     InterruptionPolicy,
@@ -742,10 +746,18 @@ class MediaSessionInputMixin:
                     else session.generation.cancel(previous_fence)
                 )
                 if cancelled is not None:
+                    interrupted_playback = False
+                    announced = ""
+                    crisis_heard = False
+                    subject_id = ""
                     if (
                         not previous_fence.matches(cancelled)
                         and context.runtime.floor.interruptible
                     ):
+                        interrupted_playback = True
+                        announced = context.output.assistant_text
+                        crisis_heard = context.crisis_reply_heard
+                        subject_id = active_subject_id(context)
                         await self._record_interrupted_timed_spans(context, previous_fence)
                         heard = context.output.playback.actual_heard_text(previous_fence)
                         interrupted_fence = await context.runtime.on_real_interrupt(
@@ -793,6 +805,17 @@ class MediaSessionInputMixin:
                             "interrupt_core_stop",
                             (time.monotonic_ns() - stop_started_ns) / 1_000_000_000,
                         )
+                        if interrupted_playback:
+                            publish_crisis_self_interrupt(
+                                getattr(self, "crisis_script_interrupt_publisher", None),
+                                announced_text=announced,
+                                crisis_reply_heard=crisis_heard,
+                                minor_user_id=subject_id,
+                                session_id=previous_fence.session_id,
+                                turn_id=previous_fence.turn_id,
+                                generation_id=previous_fence.generation_id,
+                                tool_epoch=previous_fence.tool_epoch,
+                            )
             fence = context.runtime.fence
             task_epoch, context_version = self._event_versions(context, fence)
             await self.bridge.emit_event(

@@ -23,6 +23,10 @@ from services.agent.src.config import load_settings
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.heartbeat import build_agent_heartbeat
 from services.agent.src.observability.metrics import GLOBAL_METRICS
+from services.agent.src.voice_core.crisis_script_interrupt import (
+    CrisisScriptInterruptReporter,
+    crisis_script_interrupt_endpoint,
+)
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer, MediaBridgeTLS
 from services.agent.src.voice_core.media_protocol import SessionIdentity
 from services.agent.src.voice_core.media_session import MediaVoiceCoreRegistry
@@ -143,6 +147,20 @@ async def run() -> None:
     heartbeat = build_agent_heartbeat(settings)
     heartbeat_task: asyncio.Task[None] | None = None
     reply_delivery_reporter: ReplyDeliveryReporter | None = None
+    interrupt_reporter: CrisisScriptInterruptReporter | None = None
+    interrupt_publisher: Callable[[str], None] | None = None
+    token_method = getattr(settings, "internal_token", None)
+    response_plan_token = token_method("response_plan") if callable(token_method) else ""
+    response_plan_url = getattr(settings, "response_plan_url", "")
+    if len(response_plan_token) >= 32 and response_plan_url:
+        try:
+            interrupt_reporter = CrisisScriptInterruptReporter(
+                endpoint=crisis_script_interrupt_endpoint(response_plan_url),
+                token=response_plan_token,
+            )
+            interrupt_publisher = interrupt_reporter.submit
+        except ValueError:
+            logger.error("crisis script interrupt mark disabled")
     if bool(getattr(settings, "media_reply_delivery_enabled", False)):
         token = settings.media_reply_delivery_token.get_secret_value()
         reply_delivery_reporter = ReplyDeliveryReporter(
@@ -173,6 +191,7 @@ async def run() -> None:
                     if reply_delivery_reporter is not None
                     else None
                 ),
+                crisis_script_interrupt_publisher=interrupt_publisher,
                 session_recap_publisher=(
                     recap_sink.publish_session_end if recap_sink is not None else None
                 ),
@@ -197,6 +216,7 @@ async def run() -> None:
                         if reply_delivery_reporter is not None
                         else None
                     ),
+                    crisis_script_interrupt_publisher=interrupt_publisher,
                 )
                 if runtime_factory is not None
                 else MediaVoiceCoreRegistry(
@@ -210,6 +230,7 @@ async def run() -> None:
                         if reply_delivery_reporter is not None
                         else None
                     ),
+                    crisis_script_interrupt_publisher=interrupt_publisher,
                 )
             )
             registry.install()
@@ -269,6 +290,13 @@ async def run() -> None:
                 if close_error is None:
                     close_error = exc
                 logger.error("reply delivery reporter shutdown failed", exc_info=True)
+        if interrupt_reporter is not None:
+            try:
+                await interrupt_reporter.aclose()
+            except BaseException as exc:
+                if close_error is None:
+                    close_error = exc
+                logger.error("crisis script interrupt reporter shutdown failed", exc_info=True)
         if primary_error is None:
             if stop_error is not None:
                 raise stop_error

@@ -18,8 +18,10 @@ from services.guardian.crisis import (
     CrisisNotificationReceipt,
     CrisisNotificationService,
     CrisisNotificationUnavailableError,
+    minor_crisis_event_id,
 )
 from services.guardian.domain import GuardianConflictError
+from services.guardian.parent_alert import PARENT_ALERT_COPY, interrupted_parent_detail
 from services.guardian.postgres_store import PostgresGuardianStore
 from testing.guardian_seed import declare_binding_guardian
 from testing.postgres_harness import TestDatabase
@@ -261,3 +263,102 @@ async def test_minor_crisis_without_active_guardian_is_not_silently_accepted(
             reply_template_id="crisis-support-reply",
             attempt_push=attempt_push,
         )
+
+
+@pytest.mark.asyncio
+async def test_script_interrupted_mark_keeps_the_tier_copy_until_the_flag_is_set(
+    postgres_database: TestDatabase,
+    guardian_postgres_store: PostgresGuardianStore,
+    archive: PostgresLifeArchive,
+) -> None:
+    store = guardian_postgres_store
+    now = datetime.now(UTC)
+    digest = hashlib.sha256(b"binding-code-interrupt").hexdigest()
+    link = await store.create_link(
+        guardian_user_id="guardian-interrupt",
+        minor_user_id="minor-interrupt",
+        relation="parent",
+        verified_via="wechat_identity",
+        binding_code_hash=digest,
+        binding_expires_at=now + timedelta(minutes=15),
+        now=now,
+    )
+    await store.confirm_link(
+        link_id=link.link_id,
+        minor_user_id="minor-interrupt",
+        binding_code_hash=digest,
+        now=now,
+    )
+    service = CrisisNotificationService(store, archive)
+    receipt = await service.record_minor_crisis(
+        minor_user_id="minor-interrupt",
+        session_id="voice-session-interrupt",
+        turn_id=3,
+        generation_id=3,
+        tool_epoch=0,
+        script_version="victim-support-v1",
+        reply_template_id="victim-support-v1",
+        occurred_at=now,
+    )
+    event_id = minor_crisis_event_id(
+        minor_user_id="minor-interrupt",
+        session_id="voice-session-interrupt",
+        turn_id=3,
+        generation_id=3,
+        tool_epoch=0,
+    )
+    assert receipt.crisis_event_id == event_id
+    before = await store.guardian_notifications(guardian_user_id="guardian-interrupt")
+    assert len(before) == 1
+    assert before[0].script_interrupted is False
+    assert before[0].status == "pending"
+    assert (
+        interrupted_parent_detail(
+            before[0].reply_template_id,
+            script_interrupted=before[0].script_interrupted,
+        )
+        is None
+    )
+    assert (
+        PARENT_ALERT_COPY[before[0].reply_template_id].parent_action
+        == "尽快当面陪孩子聊聊，先让孩子安心，不反复追问细节。如有危险请拨打110"
+    )
+
+    assert await store.mark_script_interrupted(crisis_event_id=event_id) == "victim-support-v1"
+    assert await store.mark_script_interrupted(crisis_event_id=event_id) == "victim-support-v1"
+    assert (
+        await store.mark_script_interrupted(
+            crisis_event_id="00000000-0000-0000-0000-000000000000"
+        )
+        is None
+    )
+    after = await store.guardian_notifications(guardian_user_id="guardian-interrupt")
+    assert len(after) == 1
+    assert after[0].status == "pending"
+    assert after[0].script_interrupted is True
+    assert (
+        interrupted_parent_detail(
+            after[0].reply_template_id,
+            script_interrupted=after[0].script_interrupted,
+        )
+        == "这次的提醒话术孩子没有听完，如有危险请拨打110"
+    )
+    replay = await service.record_minor_crisis(
+        minor_user_id="minor-interrupt",
+        session_id="voice-session-interrupt",
+        turn_id=3,
+        generation_id=3,
+        tool_epoch=0,
+        script_version="victim-support-v1",
+        reply_template_id="victim-support-v1",
+        occurred_at=now,
+    )
+    assert replay.notification_count == 1
+    kept = await store.guardian_notifications(guardian_user_id="guardian-interrupt")
+    assert kept[0].script_interrupted is True
+    api = await asyncpg.connect(postgres_database.role_dsn("memoria_guardian"))
+    try:
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await api.execute("UPDATE guardian_crisis_events SET script_interrupted = FALSE")
+    finally:
+        await api.close()

@@ -49,6 +49,9 @@ from services.control_api.app.guardian_recap import (
     recap_for_day,
 )
 from services.control_api.app.response_plan_cache import forget_subject_plans
+from services.control_api.app.routes.crisis_script_interrupt import (
+    router as crisis_script_interrupt_router,
+)
 from services.control_api.app.security import AuthenticatedUser, require_authenticated_user
 from services.control_api.app.session_termination import AccountSessionTerminator
 from services.control_api.app.wechat_auth import WechatAuthError, code_to_session, openid_hash
@@ -90,7 +93,7 @@ from services.guardian.domain import (
 from services.guardian.parent_alert import (
     PARENT_ALERT_COPY,
     alert_time_label,
-    playback_left_unfinished,
+    interrupted_parent_detail,
 )
 from services.guardian.push import PushSubscriptionResult, PushSubscriptionStorePort
 from services.guardian.weekly_report import WeeklyReportProjector
@@ -101,6 +104,7 @@ from services.speaker.domain import RevokeSpeakerProfile, SpeakerAuthorityPort
 from services.voice_profile.domain import VoiceProfilePort
 
 router = APIRouter(prefix="/v1/guardian", tags=["guardian"])
+router.include_router(crisis_script_interrupt_router)
 _BINDING_TTL = timedelta(minutes=15)
 _CONSENT_KINDS: tuple[ConsentKind, ...] = (
     "minor_voice_session",
@@ -667,26 +671,11 @@ def _safety_alert_item(
     }
 
 
-def _interrupted_detail(request: Request, notification: GuardianNotification) -> str | None:
-    if notification.reply_template_id is None:
-        return None
-    sentence = PARENT_ALERT_COPY[notification.reply_template_id].interrupted_detail
-    fence = notification.reply_fence
-    if sentence is None or fence is None:
-        return None
-    store = getattr(request.app.state, "memory_store", None)
-    facts = getattr(store, "reply_playback_facts", None)
-    if facts is None:
-        return None
-    playback_ended, terminals = facts(
-        session_id=fence.session_id,
-        turn_id=fence.turn_id,
-        generation_id=fence.generation_id,
-        tool_epoch=fence.tool_epoch,
+def _interrupted_detail(notification: GuardianNotification) -> str | None:
+    return interrupted_parent_detail(
+        notification.reply_template_id,
+        script_interrupted=notification.script_interrupted,
     )
-    if not playback_left_unfinished(terminals=terminals, playback_ended=playback_ended):
-        return None
-    return sentence
 
 
 async def _safety_alert_items(
@@ -708,7 +697,7 @@ async def _safety_alert_items(
             ),
             zone=zone,
         )
-        detail = _interrupted_detail(request, item)
+        detail = _interrupted_detail(item)
         if detail is not None:
             payload["detail"] = detail
         items.append(payload)

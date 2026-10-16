@@ -44,7 +44,8 @@ from services.guardian.push import (
 
 _NOTIFICATION_SELECT = """
 SELECT outbox.*, crisis.minor_user_id, crisis.possibly_story_retell,
-       crisis.reply_template_id, crisis.reply_session_id, crisis.reply_turn_id,
+       crisis.reply_template_id, crisis.script_interrupted,
+       crisis.reply_session_id, crisis.reply_turn_id,
        crisis.reply_generation_id, crisis.reply_tool_epoch, reads.read_at
 FROM guardian_notification_outbox outbox
 JOIN guardian_crisis_events crisis
@@ -144,6 +145,9 @@ class PostgresGuardianCrisisMixin:
             if "possibly_story_retell" in row.keys()
             else False,
             reply_fence=_reply_fence(row),
+            script_interrupted=bool(row["script_interrupted"])
+            if "script_interrupted" in row.keys()
+            else False,
         )
 
     async def enqueue_crisis_event(
@@ -343,6 +347,18 @@ class PostgresGuardianCrisisMixin:
         if row is None:
             raise GuardianNotFoundError("guardian notification not found")
         return self._notification(row)
+
+    async def mark_script_interrupted(self, *, crisis_event_id: str) -> str | None:
+        event_uuid = _uuid(crisis_event_id, field="crisis_event_id")
+        pool = await self._ready_pool()
+        async with pool.acquire() as connection:
+            template_id = await connection.fetchval(
+                "SELECT guardian_mark_script_interrupted($1)",
+                event_uuid,
+            )
+        if template_id is None:
+            return None
+        return str(template_id)
 
     async def unread_guardian_notifications(
         self,

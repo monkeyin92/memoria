@@ -87,6 +87,36 @@ async def test_run_wires_max_user_speech_duration_to_session_registry(
     assert captured[0]["output_generation_timeout_s"] == 45.0
     assert captured[0]["owner_silence_timeout_s"] == 30.0
     assert captured[0]["max_user_speech_duration_s"] == 37.5
+    assert captured[0]["crisis_script_interrupt_publisher"] is None
+
+
+@pytest.mark.asyncio
+async def test_run_installs_crisis_interrupt_publisher_when_response_plan_token_is_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = _Server()
+    session_factory = _SessionFactory()
+    settings = _settings()
+    settings.internal_token = lambda capability: "t" * 32 if capability == "response_plan" else ""
+    settings.response_plan_url = "http://control-api:8000/v1/interaction/response-plan?x=1"
+    _patch_run(monkeypatch, server=server, session_factory=session_factory)
+    monkeypatch.setattr(run_media_bridge, "load_settings", lambda **_kwargs: settings)
+
+    captured: list[dict[str, object]] = []
+
+    class _Registry:
+        def __init__(self, **kwargs: object) -> None:
+            captured.append(kwargs)
+
+        def install(self) -> None:
+            return None
+
+    monkeypatch.setattr(run_media_bridge, "MediaVoiceCoreRegistry", _Registry)
+
+    await run_media_bridge.run()
+
+    assert len(captured) == 1
+    assert callable(captured[0]["crisis_script_interrupt_publisher"])
 
 
 @pytest.mark.asyncio

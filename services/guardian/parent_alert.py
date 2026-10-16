@@ -59,6 +59,20 @@ def parse_alert_template(reply_template_id: str) -> FixedSafetyTemplateId | None
     return None
 
 
+def interrupted_parent_detail(
+    reply_template_id: str | None, *, script_interrupted: bool
+) -> str | None:
+    """Unfinished-script sentence from the tier table, or none.
+
+    An unknown script id returns nothing, so the parent sees only the title.
+    A known tier returns its unfinished sentence only when the flag is set.
+    """
+
+    if not script_interrupted or reply_template_id not in PARENT_ALERT_COPY:
+        return None
+    return PARENT_ALERT_COPY[cast(FixedSafetyTemplateId, reply_template_id)].interrupted_detail
+
+
 def alert_time_label(at: datetime, zone: tzinfo) -> str:
     local = at.astimezone(zone)
     return f"{local.month}月{local.day}日 {local:%H:%M}"
@@ -80,6 +94,7 @@ __all__ = [
     "PARENT_ALERT_COPY",
     "ParentAlertCopy",
     "alert_time_label",
+    "interrupted_parent_detail",
     "parse_alert_template",
     "playback_left_unfinished",
 ]
