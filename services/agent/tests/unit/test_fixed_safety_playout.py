@@ -17,7 +17,9 @@ from services.agent.src.orchestration.handlers import (
 from services.agent.src.orchestration.orchestrator import OfflinePipeline, Orchestrator
 from services.agent.src.voice_core.media_protocol import SessionIdentity
 from services.agent.src.voice_core.provider_adapter import ExistingVoiceProviderAdapter
+from services.common.crisis_policy import route_crisis
 from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
+from services.guardian.crisis import crisis_alert_is_pinned
 
 CHILD_TEXT = "我不想活了"
 FRAME = 480
@@ -71,6 +73,19 @@ class SubtitledSpeech:
 
     async def aclose(self) -> None:
         return None
+
+
+class StoppingSpeech(SubtitledSpeech):
+    def __init__(self) -> None:
+        super().__init__()
+        self.cancel: Any = None
+
+    def push_text(self, text: str) -> None:
+        super().push_text(text)
+        cancel = self.cancel
+        self.cancel = None
+        if cancel is not None:
+            cancel()
 
 
 class RecordingSynthesis:
@@ -149,6 +164,34 @@ async def test_model_text_with_digits_reaches_the_engine_unchanged(
     assert speech.pushed == ["请打 120。"]
     assert _spans(chunks[-1]) == [("请打 120。", 0, FRAME)]
     assert _playout_lines(caplog) == []
+
+
+@pytest.mark.asyncio
+async def test_stop_cuts_the_crisis_script_and_leaves_the_guardian_pin() -> None:
+    crisis = route_crisis(CHILD_TEXT)
+    assert crisis.notify_guardian is True
+    assert crisis.attempt_push is True
+    assert crisis.script is CRISIS_SELF_SCRIPT
+    for status in ("pending", "pin_only", "delivered", "failed", "no_subscription"):
+        assert crisis_alert_is_pinned(status), status
+
+    speech = StoppingSpeech()
+    adapter = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), speech)
+    identity, fence = _generation("crisis-stopped")
+    first_spoken = CRISIS_SELF_SCRIPT.phrases[0].spoken
+    speech.cancel = lambda: adapter.cancel_generation(fence)
+    chunks = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
+
+    spoken = "".join(speech.pushed)
+    assert speech.pushed == [first_spoken]
+    assert "好的" not in spoken
+    assert "嗯，你说" not in spoken
+    for phrase in CRISIS_SELF_SCRIPT.phrases[1:]:
+        assert phrase.spoken not in spoken
+        assert phrase.display not in "".join(chunk.assistant_text_delta for chunk in chunks)
+    assert route_crisis(CHILD_TEXT).notify_guardian is True
+    assert crisis_alert_is_pinned("pending")
+    assert crisis_alert_is_pinned("delivered")
 
 
 @pytest.mark.asyncio

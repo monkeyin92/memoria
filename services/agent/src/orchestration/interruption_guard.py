@@ -116,7 +116,6 @@ _STOP_MAX_CHARS = 6
 @dataclass(frozen=True)
 class _ExactStop:
     phrase: str
-    ack: str
 
     def span_end(self, text: str, start: int) -> int | None:
         return len(text) if start == 0 and text == self.phrase else None
@@ -125,7 +124,6 @@ class _ExactStop:
 @dataclass(frozen=True)
 class _CharRunStop:
     character: str
-    ack: str
 
     def span_end(self, text: str, start: int) -> int | None:
         run = 0 < len(text) <= _STOP_MAX_CHARS and text == self.character * len(text)
@@ -135,7 +133,6 @@ class _CharRunStop:
 @dataclass(frozen=True)
 class _PrefixStop:
     phrase: str
-    ack: str
     glued_followers: tuple[str, ...] = ()
 
     def span_end(self, text: str, start: int) -> int | None:
@@ -148,22 +145,22 @@ class _PrefixStop:
 _StopLexeme = _ExactStop | _CharRunStop | _PrefixStop
 
 _STOP_LEXICON: tuple[_StopLexeme, ...] = (
-    _CharRunStop("停", _QUIET_ACK),
-    _PrefixStop("我不想听了", _QUIET_ACK),
-    _PrefixStop("不要说了", _QUIET_ACK),
-    _PrefixStop("不要讲了", _QUIET_ACK),
-    _PrefixStop("别说了", _QUIET_ACK),
-    _PrefixStop("别讲了", _QUIET_ACK),
-    _PrefixStop("不讲了", _QUIET_ACK),
-    _PrefixStop("不听了", _QUIET_ACK),
-    _PrefixStop("停一下", _YIELD_ACK),
-    _PrefixStop("停下", _QUIET_ACK, glued_followers=("来",)),
-    _ExactStop("停下来", _QUIET_ACK),
-    _PrefixStop("暂停", _QUIET_ACK),
-    _PrefixStop("安静", _QUIET_ACK),
-    _PrefixStop("闭嘴", _QUIET_ACK),
-    _ExactStop("嘘", _QUIET_ACK),
-    _ExactStop("stop", _QUIET_ACK),
+    _CharRunStop("停"),
+    _PrefixStop("我不想听了"),
+    _PrefixStop("不要说了"),
+    _PrefixStop("不要讲了"),
+    _PrefixStop("别说了"),
+    _PrefixStop("别讲了"),
+    _PrefixStop("不讲了"),
+    _PrefixStop("不听了"),
+    _PrefixStop("停一下"),
+    _PrefixStop("停下", glued_followers=("来",)),
+    _ExactStop("停下来"),
+    _PrefixStop("暂停"),
+    _PrefixStop("安静"),
+    _PrefixStop("闭嘴"),
+    _ExactStop("嘘"),
+    _ExactStop("stop"),
 )
 
 _STOP_NEGATORS = ("不想", "不能", "不会", "不用", "没有", "不要", "别", "不", "没")
@@ -553,19 +550,13 @@ def _peel_commands(normalized: str) -> tuple[list[_StopLexeme | str], str]:
         remainder = candidate[command[1] :]
 
 
-def interrupt_ack_phrase(text: str) -> str:
+def interrupt_ack_phrase(text: str) -> str | None:
     t = normalize_short(text)
     if not t:
         return _YIELD_ACK
-    if is_completion_ack_only(t):
-        return _QUIET_ACK
-    normalized = _normalize_stop_text(text)
-    commands, _ = _peel_commands(normalized)
-    acks = [command.ack for command in commands if not isinstance(command, str)]
-    if not acks:
-        match = _match_stop(normalized)
-        acks = [] if match is None or match.start > 0 else [match.lexeme.ack]
-    if _QUIET_ACK in acks or any(phrase in t for phrase in _STOP_TALKING_PHRASES):
+    if _match_stop(_normalize_stop_text(text)) is not None:
+        return None
+    if is_completion_ack_only(t) or any(phrase in t for phrase in _STOP_TALKING_PHRASES):
         return _QUIET_ACK
     return _YIELD_ACK
 

@@ -79,15 +79,15 @@ def test_interrupt_ack_phrase_by_semantics() -> None:
         is_interrupt_command_only,
     )
 
-    assert interrupt_ack_phrase("停一下") == "嗯，你说。"
+    assert interrupt_ack_phrase("停一下") is None
+    assert interrupt_ack_phrase("别说了") is None
+    assert interrupt_ack_phrase("暂停") is None
+    assert interrupt_ack_phrase("停下") is None
+    assert interrupt_ack_phrase("不要说了") is None
     assert interrupt_ack_phrase("等等") == "嗯，你说。"
     assert interrupt_ack_phrase("等下。") == "嗯，你说。"
     assert interrupt_ack_phrase("等一下我问你") == "嗯，你说。"
     assert interrupt_ack_phrase("听我说") == "嗯，你说。"
-    assert interrupt_ack_phrase("别说了") == "好的。"
-    assert interrupt_ack_phrase("暂停") == "好的。"
-    assert interrupt_ack_phrase("停下") == "好的。"
-    assert interrupt_ack_phrase("不要说了") == "好的。"
     assert interrupt_ack_phrase("好了，知道了") == "好的。"
     assert interrupt_ack_phrase("") == "嗯，你说。"
 
@@ -328,35 +328,42 @@ def test_repeated_bare_stop_is_a_command_but_stop_words_in_nouns_are_not() -> No
 
 
 @pytest.mark.parametrize(
-    ("text", "ack"),
+    "text",
     [
-        ("停", "好的。"),
-        ("停下", "好的。"),
-        ("停停", "好的。"),
-        ("停一下", "嗯，你说。"),
-        ("暂停", "好的。"),
-        ("别说了", "好的。"),
-        ("不要说了", "好的。"),
-        ("别讲了", "好的。"),
-        ("不要讲了", "好的。"),
-        ("不讲了", "好的。"),
-        ("不听了", "好的。"),
-        ("我不想听了", "好的。"),
-        ("够了", "好的。"),
-        ("安静", "好的。"),
-        ("闭嘴", "好的。"),
-        ("嘘", "好的。"),
-        ("stop", "好的。"),
-        ("STOP", "好的。"),
-        ("Stop.", "好的。"),
-        ("停！", "好的。"),
-        ("停，停", "好的。"),
+        "停",
+        "停下",
+        "停停",
+        "停一下",
+        "暂停",
+        "别说了",
+        "不要说了",
+        "别讲了",
+        "不要讲了",
+        "不讲了",
+        "不听了",
+        "我不想听了",
+        "安静",
+        "闭嘴",
+        "嘘",
+        "stop",
+        "STOP",
+        "Stop.",
+        "停！",
+        "停，停",
+        "停下来",
+        "请暂停",
+        "我想停一下",
     ],
 )
-def test_bare_stop_phrase_is_a_command_with_its_ack(text: str, ack: str) -> None:
+def test_bare_stop_phrase_is_a_command_with_no_spoken_reply(text: str) -> None:
     assert is_explicit_interrupt(text)
     assert is_interrupt_command_only(text)
-    assert interrupt_ack_phrase(text) == ack
+    assert interrupt_ack_phrase(text) is None
+
+
+def test_completion_ack_still_speaks_its_quiet_reply() -> None:
+    assert is_interrupt_command_only("够了")
+    assert interrupt_ack_phrase("够了") == "好的。"
 
 
 @pytest.mark.parametrize(

@@ -268,16 +268,16 @@ def test_h5_interruption_acceptance_corpus(
 
 def test_interrupt_command_ack_phrases() -> None:
     yield_route = route_utterance("停一下", speaker_state=SpeakerGateState.ENROLLED)
-    assert yield_route.ack_phrase == "嗯，你说。"
+    assert yield_route.ack_phrase is None
 
     wait_route = route_utterance("等等", speaker_state=SpeakerGateState.ENROLLED)
     assert wait_route.ack_phrase == "嗯，你说。"
 
     stop_route = route_utterance("别说了", speaker_state=SpeakerGateState.ENROLLED)
-    assert stop_route.ack_phrase == "好的。"
+    assert stop_route.ack_phrase is None
 
     pause_route = route_utterance("暂停")
-    assert pause_route.ack_phrase == "好的。"
+    assert pause_route.ack_phrase is None
 
     completion_route = route_utterance("好了，知道了")
     assert completion_route.intent is UtteranceIntent.INTERRUPT_COMMAND
@@ -470,7 +470,7 @@ def test_sticky_interrupt_does_not_override_enrollment_or_new_pure_control() -> 
 
     assert enroll.intent is UtteranceIntent.ENROLL
     assert stop.intent is UtteranceIntent.INTERRUPT_COMMAND
-    assert stop.ack_phrase == "好的。"
+    assert stop.ack_phrase is None
 
 
 def test_sticky_pure_interrupt_survives_empty_final_revision() -> None:

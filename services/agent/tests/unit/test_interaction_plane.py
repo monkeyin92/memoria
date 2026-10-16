@@ -7,7 +7,7 @@ from services.agent.src.orchestration.interaction_plane import (
     InteractionSnapshot,
 )
 from services.agent.src.orchestration.interruption_guard import PlaybackInputDecision
-from services.agent.src.orchestration.utterance_router import route_utterance
+from services.agent.src.orchestration.utterance_router import UtteranceIntent, route_utterance
 
 
 def test_vad_start_ducks_and_prewarms_without_waiting_for_turn_commit() -> None:
@@ -39,7 +39,7 @@ def test_hard_stop_keyword_cancels_without_asr_final() -> None:
 
     assert decision.cancel_generation
     assert not decision.persist_turn
-    assert decision.acknowledgement == "嗯，你说。"
+    assert decision.acknowledgement is None
 
 
 def test_hard_stop_wire_decision_is_not_reinterpreted_from_text() -> None:
@@ -148,6 +148,40 @@ def test_turn_detector_only_gates_commit_and_delegation_not_prefetch() -> None:
     assert provisional.start_prefetch and provisional.warm_fast_model
     assert not provisional.persist_turn and not provisional.start_delegation
     assert committed.persist_turn and committed.start_delegation
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["停", "暂停", "别说了", "停一下", "停下来", "请暂停", "我想停一下"],
+)
+def test_judged_stop_cancels_playback_with_an_empty_reply(text: str) -> None:
+    route = route_utterance(text)
+    decision = InteractionPlane().decide(
+        InteractionSnapshot(
+            event=InteractionEvent.TRANSCRIPT,
+            assistant_speaking=True,
+            text=text,
+            final=True,
+            turn_committed=True,
+            has_speech_energy=True,
+            utterance_route=route,
+        )
+    )
+
+    assert route.intent is UtteranceIntent.INTERRUPT_COMMAND
+    assert route.should_interrupt is True
+    assert route.enter_chat is False
+    assert route.ack_phrase is None
+    assert decision.cancel_generation is True
+    assert decision.acknowledgement is None
+    assert decision.start_delegation is False
+    assert decision.persist_turn is False
+    assert decision.warm_fast_model is False
+
+    follow = route_utterance("今天天气怎么样")
+    assert follow.intent is UtteranceIntent.CHAT
+    assert follow.enter_chat is True
+    assert follow.ack_phrase is None
 
 
 @pytest.mark.parametrize("text", ["请暂停", "我想停一下"])
