@@ -52,6 +52,7 @@ def test_keep_awake_manifest_is_the_product_manifest_plus_keep_awake_and_heap_po
         *product_options,
         "CONFIG_MEMORIA_KEEP_AWAKE=y",
         "CONFIG_HEAP_POISONING_COMPREHENSIVE=y",
+        "CONFIG_ESP_INT_WDT_TIMEOUT_MS=10000",
     ]
     keep["builds"][0]["sdkconfig_append"] = product_options
     assert keep == product
