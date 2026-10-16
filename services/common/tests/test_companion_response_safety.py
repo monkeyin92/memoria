@@ -4,7 +4,6 @@ import pytest
 from services.common.companion_response_safety import (
     AFFECTION_FIXED_REPLY,
     GUARDIAN_ATTENTION_COPY,
-    GUARDIAN_ATTENTION_STORY_RETELL_COPY,
     NAMELESS_IDENTITY_REPLY,
     PROHIBITED_CONTENT_TERMS,
     SAFE_UNKNOWN_REPLY,
@@ -316,5 +315,5 @@ def test_an_interrupted_crisis_script_keeps_the_pin_headline_and_names_the_hotli
     }
     assert relay == {"message": GUARDIAN_ATTENTION_COPY, "detail": None}
     assert heard == {"message": GUARDIAN_ATTENTION_COPY, "detail": None}
-    assert story["message"] == GUARDIAN_ATTENTION_STORY_RETELL_COPY
+    assert story["message"] == GUARDIAN_ATTENTION_COPY
     assert story["detail"] == self_harm["detail"]
