@@ -34,7 +34,7 @@ test("guardian consent renders the draft chip, the source note, and the complian
   try {
     const html = renderPage("pages/guardian-consent/index", harness.page.data);
     const text = visibleText(html);
-    assert.match(text, /^内测版 监护人同意书 /);
+    assert.match(text, /^内测版 · 2026-10-16生效 监护人同意书 /);
     assert.doesNotMatch(text, /草稿/);
     assert.match(text, /来源：docs\/compliance\/child-audio-transcript-ephemeral\.md$/);
     let cursor = 0;
