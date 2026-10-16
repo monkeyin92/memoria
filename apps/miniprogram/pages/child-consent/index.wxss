@@ -1,0 +1,130 @@
+@import "../../styles/trial-theme.wxss";
+
+.auth-wrap {
+  padding-bottom: calc(12px + env(safe-area-inset-bottom));
+}
+
+.auth-copy {
+  padding-top: var(--mp-tab-top);
+}
+
+.auth-copy-line {
+  display: block;
+}
+
+.auth-title {
+  margin-top: 8px;
+}
+
+.auth-title .page-title {
+  margin-top: 0;
+}
+
+.auth-facts {
+  margin-top: 16px;
+  padding: 4px 0;
+}
+
+.auth-fact {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 16px;
+}
+
+.auth-fact + .auth-fact {
+  box-shadow: inset 0 1px 0 var(--mp-line);
+}
+
+.auth-fact-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.auth-fact-title {
+  display: block;
+  color: var(--mp-ink);
+  font-size: var(--mp-type-card);
+  font-weight: 600;
+}
+
+.auth-fact-sub {
+  display: block;
+  margin-top: 4px;
+  color: var(--mp-ink-2);
+  font-size: var(--mp-type-caption);
+  line-height: var(--mp-lh-caption);
+}
+
+.auth-consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 8px 0;
+  color: var(--mp-ink-2);
+  font-size: var(--mp-type-small);
+  line-height: var(--mp-lh-body);
+}
+
+.auth-consent-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.auth-consent-locked {
+  opacity: 0.45;
+}
+
+.auth-check {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  background: var(--mp-surface);
+  box-shadow: inset 0 0 0 1.5px var(--mp-ink-4);
+}
+
+.auth-check-on {
+  background: var(--mp-accent);
+  box-shadow: none;
+}
+
+.auth-check-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.legal-link {
+  color: var(--mp-ink);
+  font-weight: 600;
+}
+
+.auth-decline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  margin: 5px 0 0;
+  padding: 0;
+  background: transparent;
+  color: var(--mp-ink-2);
+  font-size: var(--mp-type-body);
+  font-weight: 400;
+  line-height: normal;
+}
+
+.login-note {
+  display: block;
+  margin-top: 2px;
+  color: var(--mp-ink-3);
+  font-size: var(--mp-type-meta);
+  line-height: 16px;
+  text-align: center;
+}
+
+.auth-agreement-hint {
+  margin-bottom: 8px;
+}

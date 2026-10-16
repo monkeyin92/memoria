@@ -2,6 +2,12 @@ const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
 const { SUBSCRIPTION_PUSH_ENABLED } = require("../../config");
 const { openLogin, requireLogin } = require("../../utils/auth-gate");
+const {
+  GUEST_HOME,
+  LOGIN_GATED_ACTIONS,
+  guestAgreement,
+  loginGatedAction,
+} = require("../../utils/guest-access");
 const { companionById, defaultCompanionId } = require("../../utils/companions");
 const { MODE_META, readBindingManifest } = require("../../utils/device-binding");
 const {
@@ -136,6 +142,8 @@ Page({
   data: {
     statusBarStyle: statusBarStyle(),
     greeting: guestGreeting(),
+    guestHome: GUEST_HOME,
+    loginGatedActions: LOGIN_GATED_ACTIONS,
     authenticated: false,
     ...emptyDashboard(),
     todoExpanded: true,
@@ -206,22 +214,22 @@ Page({
     });
   },
 
-  async loginFromHome() {
-    if (!(await requireLogin({ reason: "view_dashboard" }))) return;
+  openAccountLogin() {
+    openLogin({ reason: "view_dashboard" });
+  },
+
+  async onGuestGatedAction(event) {
+    const action = loginGatedAction(event.currentTarget.dataset.id);
+    if (!action) return;
+    if (!(await requireLogin({ reason: action.reason }))) return;
     this.setData({ authenticated: true });
     await this.loadHome();
   },
 
-  loginWithPhone() {
-    openLogin({ reason: "view_dashboard" });
-  },
-
-  openUserAgreement() {
-    wx.navigateTo({ url: "/pages/user-agreement/index" });
-  },
-
-  openPrivacyNotice() {
-    wx.navigateTo({ url: "/pages/privacy/index" });
+  openGuestAgreement(event) {
+    const agreement = guestAgreement(event.currentTarget.dataset.id);
+    if (!agreement) return;
+    wx.navigateTo({ url: agreement.url });
   },
 
   showSyncHelp() {

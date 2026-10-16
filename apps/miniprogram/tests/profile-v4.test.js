@@ -101,14 +101,15 @@ test("a guest still gets privacy, feedback and about, and 微信登录 opens the
   };
   const harness = await openProfile(options);
   try {
-    assert.equal(
+    assert.match(
       profileText(harness),
-      "我的 设备与记录，登录后跟随账号。 登录后即可管理你的资料。未登录时不会读取资料、统计或回顾。 微信登录 授权与隐私说明 帮助与反馈 关于 开发版",
+      /^我的 设备与记录，登录后跟随账号。 登录后即可管理你的资料。未登录时不会读取资料、统计或回顾。 微信登录 授权与隐私说明 帮助与反馈 关于 开发版$/,
     );
     assert.deepEqual(aboutCard(harness), [ABOUT_LEAD, "开发版"]);
     harness.page.closeAbout();
     assert.equal(harness.page.data.showAbout, false);
     assert.doesNotMatch(profileText(harness), /关于 Memoria/);
+    global.wx.showModal = (options) => options.success?.({ confirm: true });
     await harness.page.loginFromProfile();
     assert.deepEqual(callsTo(harness, "navigateTo"), [
       { url: "/pages/auth/index?redirect=%2Fpages%2Fhome%2Findex&reason=view_profile" },
@@ -119,12 +120,15 @@ test("a guest still gets privacy, feedback and about, and 微信登录 opens the
   }
 });
 
-test("帮助与反馈 is WeChat's native feedback button", () => {
+test("帮助与反馈 is WeChat's native feedback button only after login", () => {
   const root = parseWxml(fs.readFileSync(path.join(ROOT, PAGE + ".wxml"), "utf8"));
-  const rows = findElements(root, (node) => textOf(node).trim() === "帮助与反馈" && node.attrs?.class === "list-row");
+  const rows = findElements(root, (node) => textOf(node).includes("帮助与反馈") && node.attrs?.class === "list-row");
   assert.deepEqual(
-    rows.map((node) => [node.name, node.attrs["open-type"]]),
-    [["button", "feedback"]],
+    rows.map((node) => [node.name, node.attrs["open-type"] || "", node.attrs["wx:if"] || node.attrs["wx:else"] || ""]),
+    [
+      ["button", "feedback", "{{authenticated}}"],
+      ["view", "", true],
+    ],
   );
 });
 

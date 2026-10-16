@@ -336,6 +336,7 @@ test("guardian config actions use the config seam, not the usage capability", as
     });
     try {
       delete storage["memoria:miniprogram:device:binding-manifest"];
+      storage["memoria:miniprogram:child-info-consent"] = "accepted";
       page.setData({ minorUserId: "person_child" });
       await page.createLink();
       assert.equal(createCalls, 0, "配置动作不得依赖使用类能力门禁");
@@ -356,6 +357,7 @@ test("guardian config actions use the config seam, not the usage capability", as
       assert.equal(grantCalls, 0);
       assert.match(page.data.error, /操作保持关闭/);
     } finally {
+      delete storage["memoria:miniprogram:child-info-consent"];
       restore();
     }
   });
@@ -385,6 +387,7 @@ test("guardian config actions proceed only when the policy decision allows", asy
         reason_code: "guardian_summary_forbidden",
         obligations: [],
       });
+      storage["memoria:miniprogram:child-info-consent"] = "accepted";
       page.setData({ minorUserId: "person_child" });
       await page.createLink();
       assert.equal(createCalls, 0);
@@ -416,6 +419,7 @@ test("guardian config actions proceed only when the policy decision allows", asy
       assert.equal(decision.data.safety_state, "normal");
       assert.equal(decision.data.runtime_profile_id, "rp_gate");
     } finally {
+      delete storage["memoria:miniprogram:child-info-consent"];
       restore();
       api.clearRuntimeProfileMemory();
     }

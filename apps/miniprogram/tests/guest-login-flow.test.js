@@ -15,7 +15,11 @@ test("tab pages keep a useful guest state instead of redirecting on show", () =>
   const memory = read("pages/memory/index.wxml");
   const profile = read("pages/profile/index.wxml");
 
-  assert.match(home, /wx:if="\{\{!authenticated\}\}"[\s\S]*bindtap="loginFromHome"[\s\S]*微信一键登录/);
+  const catalog = read("utils/guest-access.js");
+  assert.match(home, /wx:if="\{\{!authenticated\}\}"[\s\S]*guestHome\.features/);
+  assert.match(catalog, /陪聊[\s\S]*离线故事[\s\S]*每次和每天的时长上限[\s\S]*家长能查看和删除聊天摘要/);
+  assert.doesNotMatch(catalog, /服务器不存|导出/);
+  assert.doesNotMatch(home, /服务器不存孩子的录音|家长能导出|微信一键登录|登录即表示/);
   assert.doesNotMatch(
     device,
     /onShow\(\)\s*\{[\s\S]{0,220}navigateTo\(\{\s*url:\s*"\/pages\/auth\/index"/,
@@ -46,6 +50,13 @@ test("guest actions share one login gate with a return path", async () => {
     navigateTo({ url }) {
       navigated = url;
     },
+    showModal(options) {
+      assert.equal(options.content, "这个功能需要先登录，登录后才能绑定和管理你的设备");
+      options.success?.({ confirm: false, cancel: true });
+    },
+    login() {
+      throw new Error("guest mode must not call wx.login");
+    },
   };
   global.getCurrentPages = () => [{ route: "pages/device/index", options: {} }];
   delete require.cache[gatePath];
@@ -53,10 +64,7 @@ test("guest actions share one login gate with a return path", async () => {
 
   try {
     assert.equal(await requireLogin({ reason: "view_dashboard" }), false);
-    assert.match(navigated, /^\/pages\/auth\/index\?/);
-    assert.match(decodeURIComponent(navigated), /redirect=\/pages\/device\/index/);
-    assert.match(navigated, /reason=view_dashboard/);
-    assert.match(navigated, /skip_restore=1/);
+    assert.equal(navigated, "");
   } finally {
     delete require.cache[gatePath];
     delete require.cache[apiPath];
@@ -67,24 +75,20 @@ test("guest actions share one login gate with a return path", async () => {
   }
 });
 
-test("login uses WeChat phone authorization with optional nickname and avatar completion", () => {
+test("login uses WeChat phone authorization only after the account checkbox is on", () => {
   const authTemplate = read("pages/auth/index.wxml");
   const authScript = read("pages/auth/index.js");
+  const childScript = read("pages/child-consent/index.js");
 
-  assert.match(authTemplate, /open-type="getPhoneNumber"/);
-  assert.match(authTemplate, /open-type="chooseAvatar"/);
-  assert.match(authTemplate, /type="nickname"/);
-  assert.match(authTemplate, /catchtap="openPrivacy">《隐私保护指引》<\/text>和<text class="legal-link" catchtap="openGuardianConsent">《监护人同意书》/);
-  assert.doesNotMatch(authTemplate, /草稿/);
-  assert.match(authScript, /navigateTo\(\{ url: "\/pages\/guardian-consent\/index" \}\)/);
-  assert.doesNotMatch(authTemplate, />用户名</);
-  assert.doesNotMatch(authTemplate, />密码</);
-  assert.doesNotMatch(authTemplate, /开始匿名体验/);
-  assert.match(authScript, /loginWithWechat/);
-  assert.match(authScript, /uploadWechatAvatar/);
-  assert.match(authScript, /restoreWechatIdentity/);
-  assert.match(authScript, /openPrivacyContract/);
-  assert.match(authScript, /hasAuthenticatedSession\(\)[\s\S]*finishLogin\(\)/);
+  assert.match(authTemplate, /wx:if="\{\{accountAgreed\}\}"[\s\S]*open-type="getPhoneNumber"/);
+  assert.match(authTemplate, /wx:else[\s\S]*bindtap="onLoginWithoutConsent"/);
+  assert.doesNotMatch(authTemplate, /open-type="chooseAvatar"/);
+  assert.doesNotMatch(authTemplate, /type="nickname"/);
+  assert.doesNotMatch(authScript, /uploadWechatAvatar|restoreWechatIdentity|chooseAvatar/);
+  assert.match(authScript, /loginWithWechat\(\{ phoneCode \}\)/);
+  assert.match(childScript, /navigateTo\(\{ url: "\/pages\/guardian-consent\/index" \}\)/);
+  assert.match(childScript, /grantChildInfoConsent/);
+  assert.doesNotMatch(authScript, /grantChildInfoConsent/);
 });
 
 test("logout clears private profile state without relying on a tab navigation refresh", () => {

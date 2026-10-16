@@ -2,7 +2,8 @@ const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
 const { leavePage } = require("../../utils/nav-back");
 const { companions } = require("../../utils/companions");
-const { requireLogin } = require("../../utils/auth-gate");
+const { currentRoute, requireLogin } = require("../../utils/auth-gate");
+const { ensureChildInfoConsent } = require("../../utils/child-consent");
 const {
   MODE_META,
   PRIMARY_RELATIONSHIPS,
@@ -194,6 +195,7 @@ Page({
 
   async onShow() {
     if (!(await requireLogin({ reason: "bind_device" }))) return;
+    if (!ensureChildInfoConsent(currentRoute())) return;
     if (this._claimLoaded) return;
     await this.loadClaim();
   },

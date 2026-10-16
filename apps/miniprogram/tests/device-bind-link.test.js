@@ -101,7 +101,15 @@ test("introspect receives only the device payload from a bind link", async () =>
 test("opening the onboarding page from WeChat's scanner starts with the scanned link", async () => {
   const authPath = require.resolve("../utils/auth-gate");
   const previousAuth = require.cache[authPath];
-  require.cache[authPath] = { id: authPath, filename: authPath, loaded: true, exports: { requireLogin: async () => true } };
+  require.cache[authPath] = {
+    id: authPath,
+    filename: authPath,
+    loaded: true,
+    exports: {
+      requireLogin: async () => true,
+      currentRoute: () => "/pages/device-onboarding/index",
+    },
+  };
   let definition;
   global.Page = (value) => {
     definition = value;
@@ -117,6 +125,11 @@ test("opening the onboarding page from WeChat's scanner starts with the scanned 
     },
   };
   page.onLoad({ q: encodeURIComponent(LINK) });
+  const previousWx = global.wx;
+  global.wx = {
+    getStorageSync: () => "accepted",
+    navigateTo() {},
+  };
   const scanned = [];
   page._controller.introspectQr = async (value) => {
     scanned.push(value);
@@ -132,13 +145,23 @@ test("opening the onboarding page from WeChat's scanner starts with the scanned 
   delete require.cache[pagePath];
   if (previousAuth) require.cache[authPath] = previousAuth;
   else delete require.cache[authPath];
+  if (previousWx === undefined) delete global.wx;
+  else global.wx = previousWx;
   delete global.Page;
 });
 
 test("the in-app scanner falls back to the page path WeChat returns", async () => {
   const authPath = require.resolve("../utils/auth-gate");
   const previousAuth = require.cache[authPath];
-  require.cache[authPath] = { id: authPath, filename: authPath, loaded: true, exports: { requireLogin: async () => true } };
+  require.cache[authPath] = {
+    id: authPath,
+    filename: authPath,
+    loaded: true,
+    exports: {
+      requireLogin: async () => true,
+      currentRoute: () => "/pages/device-onboarding/index",
+    },
+  };
   let definition;
   global.Page = (value) => {
     definition = value;
@@ -160,6 +183,8 @@ test("the in-app scanner falls back to the page path WeChat returns", async () =
   };
   const previousWx = global.wx;
   global.wx = {
+    getStorageSync: () => "accepted",
+    navigateTo() {},
     scanCode: ({ success, complete }) => {
       success({
         result: "unrecognised text",

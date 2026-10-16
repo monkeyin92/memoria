@@ -52,7 +52,10 @@ const BINDING = {
   created_at: "2026-10-01T08:00:00.000Z",
 };
 
-const STORAGE = { "memoria:miniprogram:device:binding-manifest": BINDING };
+const STORAGE = {
+  "memoria:miniprogram:device:binding-manifest": BINDING,
+  "memoria:miniprogram:child-info-consent": "accepted",
+};
 
 const RUNTIME_PROFILE = {
   valid: true,

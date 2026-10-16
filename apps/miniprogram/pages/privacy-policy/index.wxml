@@ -1,0 +1,7 @@
+<view class="page-shell sub-page" style="{{statusBarStyle}}">
+  <view class="nav-back" bindtap="goBack" aria-label="返回"><image class="nav-back-icon" src="/assets/ui/v4/back-strong.svg" /></view>
+  <text class="page-title">隐私政策</text>
+  <view class="agreement-copy">
+    <text class="agreement-p" wx:for="{{paragraphs}}" wx:key="*this">{{item}}</text>
+  </view>
+</view>

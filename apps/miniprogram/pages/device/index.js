@@ -2,6 +2,7 @@ const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
 const guardianPush = require("../../utils/guardian-push");
 const { requireLogin } = require("../../utils/auth-gate");
+const { ensureChildInfoConsent } = require("../../utils/child-consent");
 const {
   MODE_META,
   readBindingManifest,
@@ -1390,6 +1391,7 @@ Page({
     const personId = event.currentTarget.dataset.personId;
     const row = (this.data.ageRows || []).find((item) => item.person_id === personId);
     if (this.data.ageSaving || !row) return;
+    if (!ensureChildInfoConsent("/pages/device/index")) return;
     const selected = AGE_DECLARATION_OPTIONS.find((option) => option.value === row.selected);
     if (!selected) return;
     this.setData({ ageSaving: true, ageError: "" });

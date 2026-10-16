@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "监护人确认",
+  "navigationStyle": "custom",
+  "usingComponents": {
+    "mp-icon": "/components/mp-icon/index"
+  }
+}

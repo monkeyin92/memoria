@@ -438,6 +438,12 @@ Page({
     return request;
   },
 
+  async loginForFeedback() {
+    if (!(await requireLogin({ reason: "help_feedback" }))) return;
+    this.setData({ authenticated: true });
+    await this._loadAuthenticatedData();
+  },
+
   async loginFromProfile() {
     if (!(await requireLogin({ reason: "view_profile" }))) return;
     this.setData({ authenticated: true });

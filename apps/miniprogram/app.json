@@ -10,6 +10,8 @@
     "pages/child-memory/index",
     "pages/attention/index",
     "pages/auth/index",
+    "pages/child-consent/index",
+    "pages/privacy-policy/index",
     "pages/guardian-consent/index",
     "pages/digital-self/index",
     "pages/privacy/index",

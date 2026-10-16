@@ -3,6 +3,7 @@ const { statusBarStyle } = require("../../utils/nav-inset");
 const { leavePage } = require("../../utils/nav-back");
 const { guardianSummaryErrorState } = require("../../utils/guardian");
 const { requireLogin } = require("../../utils/auth-gate");
+const { ensureChildInfoConsent } = require("../../utils/child-consent");
 const contracts = require("../../utils/multi-subject-contracts");
 const {
   capabilityGateMessage,
@@ -323,6 +324,7 @@ Page({
 
   async createLink() {
     if (!this.data.minorUserId || this.data.working) return;
+    if (!ensureChildInfoConsent("/pages/guardian/index")) return;
     if (!(await this._gateGuardianConfig())) return;
     this.setData({ working: true, error: "", createdBindingCode: "" });
     try {

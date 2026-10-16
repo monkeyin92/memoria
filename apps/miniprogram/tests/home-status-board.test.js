@@ -52,7 +52,7 @@ test("home page is a status board without rooms or realtime chat", () => {
   assert.match(template, /Memoria|trial-title">今天/);
   assert.doesNotMatch(template, /startVoice|startText|sendText|可直接对话/);
   assert.doesNotMatch(template, /先了解怎么用|openHowItWorks|家中的设备/);
-  assert.match(template, /wx:if="\{\{!authenticated\}\}"[\s\S]*微信一键登录/);
+  assert.match(template, /wx:if="\{\{!authenticated\}\}"[\s\S]*guestHome\.features/);
   assert.match(template, /home-usage-card|home-ring/);
   assert.match(template, /home-stat|今日摘要/);
   assert.match(template, /home-toggle-card|安静时段/);
