@@ -153,19 +153,7 @@ def _component(request: Request, name: str) -> object:
 
 
 async def _probe_object_store(store: ObjectStore) -> object:
-    # ponytail: use the existing public seam; add a cached native health probe if polling gets hot.
-    payload = b"memoria-readiness"
-    reference = await store.put(
-        account_id="memoria-readiness-probe",
-        purpose="readiness",
-        data=payload,
-        media_type="application/octet-stream",
-    )
-    try:
-        if await store.get(reference) != payload:
-            raise RuntimeError("object store readiness payload mismatch")
-    finally:
-        await store.delete(reference)
+    await store.probe()
     return None
 
 
