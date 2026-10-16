@@ -24,6 +24,10 @@ from typing import TYPE_CHECKING
 from services.device_fleet.bootstrap_domain import ClaimStatus, DeviceLifecycle, now_utc
 from services.device_fleet.bootstrap_port import BootstrapStorePort
 from services.device_fleet.bootstrap_store import SQLiteBootstrapStore
+from services.device_fleet.test_device_registration import (
+    postgres_delete_registration_audits,
+    sqlite_delete_registration_audits,
+)
 
 if TYPE_CHECKING:
     import asyncpg
@@ -101,6 +105,7 @@ def _release_sqlite(
                 ClaimStatus.COMMITTED.value,
             ),
         )
+        sqlite_delete_registration_audits(connection, device_id)
     return True
 
 
@@ -157,6 +162,7 @@ def _release_postgres(
             binding_id,
             ClaimStatus.COMMITTED.value,
         )
+        await postgres_delete_registration_audits(connection, device_id)
         return True
 
     return store._call(store._transaction(scope, operation))  # noqa: SLF001

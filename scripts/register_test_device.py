@@ -2,8 +2,8 @@
 """Register one device public key in the test onboarding registry.
 
 Set MEMORIA_ENVIRONMENT=memoria-test and pass --environment memoria-test.
-The command refuses any other environment, including DEPLOYMENT_PROFILE
-cn_self_hosted. The public key file is 32 raw bytes, the same file
+Any other value, including a missing MEMORIA_ENVIRONMENT, is refused.
+DEPLOYMENT_PROFILE is not a gate. The public key file is 32 raw bytes, the same file
 firmware/esp32/scripts/provision_identity.py takes as --activation-pubkey-in.
 A seed or a private key is not an argument. Repeating the command for the
 same public key does not insert or change a device row.
@@ -115,13 +115,12 @@ def main(argv: list[str] | None = None) -> int:
     print(
         json.dumps(
             {
-                "environment_id": result.audit.environment_id,
+                "environment_id": args.environment,
                 "device_id": result.device_id,
                 "requested_device_id": args.device_id,
                 "certificate_id": result.certificate_id,
                 "created": result.created,
                 "public_key_sha256": result.public_key_sha256,
-                "audit_event_id": result.audit.event_id,
                 "audit_created_at": created_at,
                 "private_key_stored": False,
             },

@@ -55,16 +55,15 @@ CREATE TABLE IF NOT EXISTS device_onboarding_devices (
     ))
 );
 
--- First registration of a test-environment public key. The row keeps the
--- fingerprint and the time. It has no seed column and no person column.
+-- Public-key registration audit. After a device is bound, device_id can
+-- identify a child, so the row stores only the fingerprint, the device id,
+-- the action, and the time.
 CREATE TABLE IF NOT EXISTS device_onboarding_registration_audits (
-    event_id TEXT PRIMARY KEY CHECK (char_length(event_id) BETWEEN 1 AND 160),
+    public_key_sha256 TEXT PRIMARY KEY CHECK (public_key_sha256 ~ '^[a-f0-9]{64}$'),
+    device_id TEXT NOT NULL REFERENCES device_onboarding_devices(device_id)
+        ON DELETE CASCADE,
     action TEXT NOT NULL CHECK (action = 'device.public_key_registered'),
-    device_id TEXT NOT NULL REFERENCES device_onboarding_devices(device_id),
-    public_key_sha256 TEXT NOT NULL CHECK (public_key_sha256 ~ '^[a-f0-9]{64}$'),
-    environment_id TEXT NOT NULL CHECK (environment_id = 'memoria-test'),
-    created_at TIMESTAMPTZ NOT NULL,
-    UNIQUE (public_key_sha256)
+    created_at TIMESTAMPTZ NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS device_onboarding_sessions (
@@ -445,7 +444,10 @@ BEGIN
     ) THEN
         CREATE POLICY device_onboarding_registration_audits_scope
         ON device_onboarding_registration_audits FOR ALL
-        USING (device_onboarding_scope_maintenance())
+        USING (
+            device_onboarding_scope_maintenance()
+            OR device_onboarding_scope_device(device_id)
+        )
         WITH CHECK (device_onboarding_scope_maintenance());
     END IF;
 END
@@ -487,9 +489,14 @@ GRANT SELECT, INSERT, UPDATE ON TABLE
     device_onboarding_activations
 TO memoria_device_onboarding_maintenance;
 
--- Select and insert only, so a later registration cannot rewrite the audit.
-GRANT SELECT, INSERT ON TABLE device_onboarding_registration_audits
+-- Maintenance inserts the row and cannot update it. A separate DELETE
+-- policy is AND-ed with this ALL policy, so device-scoped delete lives in
+-- the same USING expression. PostgreSQL also requires SELECT to scan the
+-- row. The API role can read and delete only the device in its scope.
+GRANT SELECT, INSERT, DELETE ON TABLE device_onboarding_registration_audits
 TO memoria_device_onboarding_maintenance;
+GRANT SELECT, DELETE ON TABLE device_onboarding_registration_audits
+TO memoria_device_onboarding_api;
 
 GRANT EXECUTE ON FUNCTION device_onboarding_scope_actor(TEXT),
     device_onboarding_scope_device(TEXT),

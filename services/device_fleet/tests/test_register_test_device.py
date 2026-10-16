@@ -13,6 +13,7 @@ import os
 import sqlite3
 import uuid
 from collections.abc import Mapping
+from dataclasses import fields
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote, urlsplit, urlunsplit
@@ -23,6 +24,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from scripts.register_test_device import main
 
+from services.device_fleet.binding_release import release_committed_binding
 from services.device_fleet.bootstrap_domain import (
     ClaimConflict,
     DevelopmentRegistrationDisabled,
@@ -36,9 +38,9 @@ from services.device_fleet.bootstrap_postgres_store import PostgresBootstrapStor
 from services.device_fleet.bootstrap_service import DeviceOnboardingService
 from services.device_fleet.bootstrap_store import SQLiteBootstrapStore
 from services.device_fleet.test_device_registration import (
-    PRODUCTION_DEPLOYMENT_PROFILE,
     REGISTRATION_ACTION,
     TEST_ENVIRONMENT_ID,
+    delete_registration_audits,
 )
 from services.device_fleet.test_device_registration import (
     TestEnvironment as RegistrationEnvironment,
@@ -50,12 +52,10 @@ from services.device_fleet.test_device_registration import (
 NOW = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
 LATER = NOW + timedelta(hours=1)
 AUDIT_COLUMNS = {
-    "event_id",
     "action",
+    "created_at",
     "device_id",
     "public_key_sha256",
-    "environment_id",
-    "created_at",
 }
 ADMIN_DSN = os.getenv(
     "MEMORIA_TEST_POSTGRES_DSN",
@@ -113,7 +113,7 @@ def _audit_rows(path: Path) -> list[sqlite3.Row]:
     try:
         return list(
             connection.execute(
-                "SELECT * FROM device_onboarding_registration_audits ORDER BY event_id"
+                "SELECT * FROM device_onboarding_registration_audits ORDER BY public_key_sha256"
             )
         )
     finally:
@@ -204,7 +204,6 @@ def _cli(
         (TEST_ENVIRONMENT_ID, None, None),
         (TEST_ENVIRONMENT_ID, "production", None),
         (TEST_ENVIRONMENT_ID, "cn_self_hosted", None),
-        (TEST_ENVIRONMENT_ID, TEST_ENVIRONMENT_ID, PRODUCTION_DEPLOYMENT_PROFILE),
         (" memoria-test", TEST_ENVIRONMENT_ID, None),
         ("MEMORIA-TEST", TEST_ENVIRONMENT_ID, None),
         ("offline-mock", TEST_ENVIRONMENT_ID, None),
@@ -232,6 +231,88 @@ def test_rejected_environment_creates_no_registry(
     assert code == 1
     assert "test environment" in capsys.readouterr().err
     assert not database.exists()
+
+
+def test_cn_self_hosted_with_memoria_test_registers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed, public_key = _public_key()
+    code, database = _cli(
+        tmp_path,
+        monkeypatch,
+        public_key,
+        memoria_environment=TEST_ENVIRONMENT_ID,
+        profile="cn_self_hosted",
+    )
+
+    assert code == 0
+    assert len(_device_rows(database)) == 1
+    audits = _audit_rows(database)
+    assert len(audits) == 1
+    assert set(audits[0].keys()) == AUDIT_COLUMNS
+
+
+def test_deleting_registration_audits_reports_only_count_and_time(tmp_path: Path) -> None:
+    _seed_a, key_a = _public_key()
+    _seed_b, key_b = _public_key()
+    database = tmp_path / "registry.sqlite"
+    service, store = _service(database, NOW)
+    try:
+        _register(service, public_key=key_a)
+        _register(
+            service,
+            public_key=key_b,
+            device_id="dev_synth_02",
+            certificate_id="cert_synth_02",
+        )
+        receipt = delete_registration_audits(store, device_id="dev_synth_01", now=LATER)
+        again = delete_registration_audits(store, device_id="dev_synth_01", now=LATER)
+    finally:
+        store.close()
+
+    assert {field.name for field in fields(type(receipt))} == {"deleted_count", "deleted_at"}
+    assert receipt.deleted_count == 1
+    assert receipt.deleted_at == LATER
+    assert again.deleted_count == 0
+    remaining = _audit_rows(database)
+    assert [row["device_id"] for row in remaining] == ["dev_synth_02"]
+    assert len(_device_rows(database)) == 2
+
+
+def test_unbinding_the_device_deletes_its_registration_audit(tmp_path: Path) -> None:
+    _seed, public_key = _public_key()
+    database = tmp_path / "registry.sqlite"
+    service, store = _service(database, NOW)
+    try:
+        _register(service, public_key=public_key)
+        connection = _connect(database)
+        connection.execute(
+            """
+            UPDATE device_onboarding_devices
+            SET lifecycle_status = 'bound', binding_id = ?, binding_version = 1,
+                actor_id = ?
+            WHERE device_id = ?
+            """,
+            ("bind_synth_01", "actor_synth_01", "dev_synth_01"),
+        )
+        connection.commit()
+        connection.close()
+        released = release_committed_binding(
+            store,
+            device_id="dev_synth_01",
+            binding_id="bind_synth_01",
+            reason_code="user_unbound",
+            now=LATER,
+        )
+    finally:
+        store.close()
+
+    devices = _device_rows(database)
+    assert released is True
+    assert _audit_rows(database) == []
+    assert devices[0]["lifecycle_status"] == "provisioned"
+    assert devices[0]["binding_id"] is None
 
 
 def test_command_rejects_seed_and_private_key_arguments() -> None:
@@ -308,7 +389,6 @@ def test_command_registers_the_public_key_and_audit_without_the_seed(
     assert code == 0
     assert payload == {
         "audit_created_at": audits[0]["created_at"],
-        "audit_event_id": f"{REGISTRATION_ACTION}:{_fingerprint(public_key)}",
         "certificate_id": "cert_synth_01",
         "created": True,
         "device_id": "dev_synth_01",
@@ -334,7 +414,6 @@ def test_command_registers_the_public_key_and_audit_without_the_seed(
     assert columns == AUDIT_COLUMNS
     assert audits[0]["action"] == REGISTRATION_ACTION
     assert audits[0]["public_key_sha256"] == _fingerprint(public_key)
-    assert audits[0]["environment_id"] == TEST_ENVIRONMENT_ID
     assert audits[0]["device_id"] == "dev_synth_01"
     assert audits[0]["created_at"]
 
@@ -393,7 +472,8 @@ def test_existing_device_id_with_a_different_key_is_left_unchanged(
 
     assert before == after
     assert before_audits == after_audits
-    assert after_audits[0][3] == _fingerprint(first_key)
+    assert _fingerprint(first_key) in after_audits[0]
+    assert _fingerprint(second_key) not in after_audits[0]
 
 
 def test_missing_audit_is_added_without_changing_the_device_row(tmp_path: Path) -> None:
@@ -467,7 +547,7 @@ def test_production_environment_value_cannot_be_constructed() -> None:
     with pytest.raises(RegistrationRejected):
         RegistrationEnvironment("production")
     with pytest.raises(RegistrationRejected):
-        RegistrationEnvironment(PRODUCTION_DEPLOYMENT_PROFILE)
+        RegistrationEnvironment("cn_self_hosted")
 
 
 def _dsn_with(dsn: str, *, database: str, user: str, password: str) -> str:
@@ -537,7 +617,7 @@ async def _postgres_tables(
         audits = [
             dict(row)
             for row in await connection.fetch(
-                "SELECT * FROM device_onboarding_registration_audits ORDER BY event_id"
+                "SELECT * FROM device_onboarding_registration_audits ORDER BY public_key_sha256"
             )
         ]
         columns = {
@@ -584,7 +664,6 @@ async def test_postgres_repeat_keeps_the_device_row_and_audit(
     assert len(again_devices) == 1
     assert len(again_audits) == 1
     assert again_audits[0]["public_key_sha256"] == _fingerprint(public_key)
-    assert again_audits[0]["environment_id"] == TEST_ENVIRONMENT_ID
     assert again_audits[0]["action"] == REGISTRATION_ACTION
     assert "person" not in columns
     assert "seed" not in columns
@@ -650,3 +729,56 @@ async def test_command_registers_on_postgres_and_a_repeat_is_a_no_op(
     assert devices == again_devices
     assert audits == again_audits
     assert len(again_audits) == 1
+
+
+@pytest.mark.asyncio
+async def test_postgres_api_unbind_deletes_the_registration_audit(
+    postgres_registration: tuple[PostgresBootstrapStore, PostgresBootstrapStore, str, str],
+) -> None:
+    maintenance, api, admin_dsn, _maintenance_dsn = postgres_registration
+    _seed, public_key = _public_key()
+    service = DeviceOnboardingService(maintenance, offline_mock=False, now_fn=lambda: NOW)
+    _register(service, public_key=public_key)
+    connection = await asyncpg.connect(admin_dsn)
+    try:
+        await connection.execute(
+            """
+            UPDATE device_onboarding_devices
+            SET lifecycle_status = 'bound', binding_id = $2, binding_version = 1,
+                actor_id = $3
+            WHERE device_id = $1
+            """,
+            "dev_synth_01",
+            "bind_synth_01",
+            "actor_synth_01",
+        )
+    finally:
+        await connection.close()
+
+    api_reader = await asyncpg.connect(
+        _dsn_with(
+            admin_dsn,
+            database=urlsplit(admin_dsn).path.lstrip("/"),
+            user="memoria_device_onboarding_api",
+            password=ROLE_PASSWORD,
+        )
+    )
+    try:
+        visible = await api_reader.fetch(
+            "SELECT public_key_sha256 FROM device_onboarding_registration_audits"
+        )
+    finally:
+        await api_reader.close()
+    assert visible == []
+    released = release_committed_binding(
+        api,
+        device_id="dev_synth_01",
+        binding_id="bind_synth_01",
+        reason_code="user_unbound",
+        now=LATER,
+    )
+    _devices, audits, columns = await _postgres_tables(admin_dsn)
+
+    assert released is True
+    assert audits == []
+    assert columns == AUDIT_COLUMNS
