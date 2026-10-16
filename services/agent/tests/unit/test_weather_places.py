@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import pytest
-from services.agent.src.providers.weather_places import _DISTRICTS, City, find_city
+from services.agent.src.providers.weather_places import (
+    _DISTRICTS,
+    City,
+    find_city,
+    is_city_name_report,
+)
 
 
 def test_every_district_parent_is_one_city() -> None:
@@ -48,6 +53,21 @@ def test_find_city_maps_one_allowlisted_place(query: str, expected: str) -> None
 )
 def test_find_city_asks_when_the_place_is_missing_or_ambiguous(query: str) -> None:
     assert find_city(query) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("杭州", True),
+        ("杭州呀", True),
+        ("杭州。", True),
+        ("在杭州", False),
+        ("我想去杭州玩", False),
+        ("今天天气怎么样", False),
+    ],
+)
+def test_city_name_report_is_only_the_city(text: str, expected: bool) -> None:
+    assert is_city_name_report(text) is expected
 
 
 def test_wire_name_is_the_qweather_standard_name() -> None:
