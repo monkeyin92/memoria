@@ -2,8 +2,8 @@
   {
     "slug": "01-login",
     "page": "pages/home/index",
-    "diffRatio": 0.057498,
-    "rmse": 10.654,
+    "diffRatio": 0.108054,
+    "rmse": 31.846,
     "overflow": [],
     "underCapsule": [],
     "tabClearance": null
@@ -11,8 +11,8 @@
   {
     "slug": "02-consent",
     "page": "pages/auth/index",
-    "diffRatio": 0.094465,
-    "rmse": 31.126,
+    "diffRatio": 0.20691,
+    "rmse": 55.85,
     "overflow": [],
     "underCapsule": [],
     "tabClearance": null
