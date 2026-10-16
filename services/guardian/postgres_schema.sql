@@ -375,6 +375,42 @@ ALTER TABLE guardian_crisis_events
 ALTER TABLE guardian_crisis_events
     ADD COLUMN IF NOT EXISTS possibly_story_retell BOOLEAN NOT NULL DEFAULT FALSE;
 
+ALTER TABLE guardian_crisis_events
+    ADD COLUMN IF NOT EXISTS reply_session_id TEXT,
+    ADD COLUMN IF NOT EXISTS reply_turn_id INTEGER,
+    ADD COLUMN IF NOT EXISTS reply_generation_id INTEGER,
+    ADD COLUMN IF NOT EXISTS reply_tool_epoch INTEGER;
+
+DO $guardian_crisis_reply_fence$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'guardian_crisis_events'::regclass
+          AND conname = 'guardian_crisis_events_reply_fence_check'
+    ) THEN
+        ALTER TABLE guardian_crisis_events
+            ADD CONSTRAINT guardian_crisis_events_reply_fence_check CHECK (
+                (
+                    reply_session_id IS NULL
+                    AND reply_turn_id IS NULL
+                    AND reply_generation_id IS NULL
+                    AND reply_tool_epoch IS NULL
+                )
+                OR (
+                    reply_session_id IS NOT NULL
+                    AND char_length(reply_session_id) BETWEEN 1 AND 128
+                    AND reply_turn_id IS NOT NULL
+                    AND reply_turn_id >= 0
+                    AND reply_generation_id IS NOT NULL
+                    AND reply_generation_id >= 0
+                    AND reply_tool_epoch IS NOT NULL
+                    AND reply_tool_epoch >= 0
+                )
+            );
+    END IF;
+END
+$guardian_crisis_reply_fence$;
+
 CREATE INDEX IF NOT EXISTS idx_guardian_crisis_minor_occurred
 ON guardian_crisis_events(minor_user_id, occurred_at DESC);
 

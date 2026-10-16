@@ -16,6 +16,7 @@ from services.guardian.crisis import (
     CrisisNotificationReceipt,
     GuardianNotification,
     NotificationStatus,
+    ReplyFence,
     UnreadNotifications,
 )
 from services.guardian.domain import (
@@ -43,7 +44,8 @@ from services.guardian.push import (
 
 _NOTIFICATION_SELECT = """
 SELECT outbox.*, crisis.minor_user_id, crisis.possibly_story_retell,
-       crisis.reply_template_id, reads.read_at
+       crisis.reply_template_id, crisis.reply_session_id, crisis.reply_turn_id,
+       crisis.reply_generation_id, crisis.reply_tool_epoch, reads.read_at
 FROM guardian_notification_outbox outbox
 JOIN guardian_crisis_events crisis
   ON crisis.crisis_event_id = outbox.crisis_event_id
@@ -61,6 +63,18 @@ ORDER BY unread.created_at DESC, unread.notification_id DESC
 LIMIT 1
 """
 )
+
+
+def _reply_fence(row: asyncpg.Record) -> ReplyFence | None:
+    session_id = row["reply_session_id"]
+    if session_id is None:
+        return None
+    return ReplyFence(
+        session_id=str(session_id),
+        turn_id=int(row["reply_turn_id"]),
+        generation_id=int(row["reply_generation_id"]),
+        tool_epoch=int(row["reply_tool_epoch"]),
+    )
 
 
 def _timestamp(value: datetime, *, field: str) -> datetime:
@@ -129,6 +143,7 @@ class PostgresGuardianCrisisMixin:
             possibly_story_retell=bool(row["possibly_story_retell"])
             if "possibly_story_retell" in row.keys()
             else False,
+            reply_fence=_reply_fence(row),
         )
 
     async def enqueue_crisis_event(
@@ -143,10 +158,26 @@ class PostgresGuardianCrisisMixin:
         declared_guardian_ids: tuple[str, ...] = (),
         attempt_push: bool = True,
         possibly_story_retell: bool = False,
+        reply_session_id: str | None = None,
+        reply_turn_id: int | None = None,
+        reply_generation_id: int | None = None,
+        reply_tool_epoch: int | None = None,
     ) -> CrisisNotificationReceipt:
         event_uuid = _uuid(crisis_event_id, field="crisis_event_id")
         occurred = _timestamp(occurred_at, field="occurred_at")
         created = datetime.now(UTC)
+        fence_parts = (
+            reply_session_id,
+            reply_turn_id,
+            reply_generation_id,
+            reply_tool_epoch,
+        )
+        if any(part is None for part in fence_parts) and any(
+            part is not None for part in fence_parts
+        ):
+            raise ValueError("reply fence is all four ids or none")
+        if reply_session_id is not None and not 1 <= len(reply_session_id) <= 128:
+            raise ValueError("reply_session_id must be 1 to 128 characters")
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._set_api_context(
@@ -159,8 +190,10 @@ class PostgresGuardianCrisisMixin:
                 INSERT INTO guardian_crisis_events(
                     crisis_event_id, evidence_event_id, minor_user_id,
                     occurred_at, script_version, reply_template_id,
-                    created_at, attempt_push, possibly_story_retell
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                    created_at, attempt_push, possibly_story_retell,
+                    reply_session_id, reply_turn_id, reply_generation_id,
+                    reply_tool_epoch
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
                 ON CONFLICT(crisis_event_id) DO NOTHING
                 RETURNING *
                 """,
@@ -173,6 +206,10 @@ class PostgresGuardianCrisisMixin:
                 created,
                 attempt_push,
                 possibly_story_retell,
+                reply_session_id,
+                reply_turn_id,
+                reply_generation_id,
+                reply_tool_epoch,
             )
             if row is None:
                 row = await connection.fetchrow(
@@ -188,6 +225,10 @@ class PostgresGuardianCrisisMixin:
                 or str(row["reply_template_id"]) != reply_template_id
                 or bool(row["attempt_push"]) is not attempt_push
                 or bool(row["possibly_story_retell"]) is not possibly_story_retell
+                or row["reply_session_id"] != reply_session_id
+                or row["reply_turn_id"] != reply_turn_id
+                or row["reply_generation_id"] != reply_generation_id
+                or row["reply_tool_epoch"] != reply_tool_epoch
             ):
                 raise GuardianConflictError("crisis event id is immutable")
             guardians = await connection.fetch(

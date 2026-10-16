@@ -25,6 +25,14 @@ class CrisisNotificationReceipt:
 
 
 @dataclass(frozen=True, slots=True)
+class ReplyFence:
+    session_id: str
+    turn_id: int
+    generation_id: int
+    tool_epoch: int
+
+
+@dataclass(frozen=True, slots=True)
 class GuardianNotification:
     notification_id: str
     crisis_event_id: str
@@ -39,6 +47,7 @@ class GuardianNotification:
     delivered_at: datetime | None = None
     last_error_code: str | None = None
     possibly_story_retell: bool = False
+    reply_fence: ReplyFence | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +69,10 @@ class CrisisNotificationStorePort(Protocol):
         declared_guardian_ids: tuple[str, ...] = (),
         attempt_push: bool = True,
         possibly_story_retell: bool = False,
+        reply_session_id: str | None = None,
+        reply_turn_id: int | None = None,
+        reply_generation_id: int | None = None,
+        reply_tool_epoch: int | None = None,
     ) -> CrisisNotificationReceipt: ...
 
     async def guardian_notifications(
@@ -185,6 +198,10 @@ class CrisisNotificationService:
             declared_guardian_ids=declared_guardian_ids,
             attempt_push=attempt_push,
             possibly_story_retell=possibly_story_retell,
+            reply_session_id=session_id,
+            reply_turn_id=turn_id,
+            reply_generation_id=generation_id,
+            reply_tool_epoch=tool_epoch,
         )
         if receipt.notification_count < 1:
             raise CrisisNotificationUnavailableError(
@@ -200,5 +217,6 @@ __all__ = [
     "CrisisNotificationUnavailableError",
     "GuardianNotification",
     "NotificationStatus",
+    "ReplyFence",
     "UnreadNotifications",
 ]

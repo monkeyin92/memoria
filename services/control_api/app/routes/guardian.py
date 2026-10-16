@@ -87,7 +87,11 @@ from services.guardian.domain import (
     SubjectTransitionError,
     validate_subject_transition,
 )
-from services.guardian.parent_alert import PARENT_ALERT_COPY, alert_time_label
+from services.guardian.parent_alert import (
+    PARENT_ALERT_COPY,
+    alert_time_label,
+    playback_left_unfinished,
+)
 from services.guardian.push import PushSubscriptionResult, PushSubscriptionStorePort
 from services.guardian.weekly_report import WeeklyReportProjector
 from services.identity.service import IdentityService
@@ -659,6 +663,26 @@ def _safety_alert_item(
     }
 
 
+def _interrupted_detail(request: Request, notification: GuardianNotification) -> str | None:
+    sentence = PARENT_ALERT_COPY[notification.reply_template_id].interrupted_detail
+    fence = notification.reply_fence
+    if sentence is None or fence is None:
+        return None
+    store = getattr(request.app.state, "memory_store", None)
+    facts = getattr(store, "reply_playback_facts", None)
+    if facts is None:
+        return None
+    playback_ended, terminals = facts(
+        session_id=fence.session_id,
+        turn_id=fence.turn_id,
+        generation_id=fence.generation_id,
+        tool_epoch=fence.tool_epoch,
+    )
+    if not playback_left_unfinished(terminals=terminals, playback_ended=playback_ended):
+        return None
+    return sentence
+
+
 async def _safety_alert_items(
     request: Request,
     user: AuthenticatedUser,
@@ -669,16 +693,20 @@ async def _safety_alert_items(
         getattr(request.app.state, "identity_service", None),
     )
     zone = ZoneInfo(_settings(request).memoria_timezone)
-    return [
-        _safety_alert_item(
+    items: list[dict[str, Any]] = []
+    for item in notifications:
+        payload = _safety_alert_item(
             item,
             minor_display_name=str(
                 await display_name(user.user_id, item.minor_user_id) or "TA"
             ),
             zone=zone,
         )
-        for item in notifications
-    ]
+        detail = _interrupted_detail(request, item)
+        if detail is not None:
+            payload["detail"] = detail
+        items.append(payload)
+    return items
 
 
 @router.get("/notifications")

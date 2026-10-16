@@ -16,6 +16,7 @@ from services.guardian.parent_alert import (
     ParentAlertCopy,
     alert_time_label,
     parse_alert_template,
+    playback_left_unfinished,
 )
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -34,12 +35,14 @@ def test_every_fixed_safety_script_has_the_approved_parent_copy() -> None:
         summary="孩子说到了和自己情绪、安全有关的内容",
         robot_said=ROBOT_SAID,
         parent_action="找个安静的时间陪孩子聊聊，先听孩子说，不急着讲道理。如需帮助可拨打心理援助热线12356",
+        interrupted_detail="这次的提醒话术孩子没有听完，如需帮助可拨打心理援助热线12356",
     )
     assert PARENT_ALERT_COPY["victim-support-v1"] == ParentAlertCopy(
         category_label="人身安全",
         summary="孩子说到了自己可能受到伤害",
         robot_said=ROBOT_SAID,
         parent_action="尽快当面问问孩子发生了什么，如有危险请拨打110",
+        interrupted_detail="这次的提醒话术孩子没有听完，如有危险请拨打110",
     )
     assert PARENT_ALERT_COPY["support-other-v1"] == ParentAlertCopy(
         category_label="孩子提到的安全话题",
@@ -62,11 +65,13 @@ def test_hotline_numbers_appear_only_in_their_own_tier_action() -> None:
         for template_id, copy in PARENT_ALERT_COPY.items()
         for field in dataclasses.fields(copy)
         for number in ("12356", "110")
-        if number in getattr(copy, field.name)
+        if isinstance(getattr(copy, field.name), str) and number in getattr(copy, field.name)
     }
     assert hits == {
         ("crisis-self-v1", "parent_action", "12356"),
+        ("crisis-self-v1", "interrupted_detail", "12356"),
         ("victim-support-v1", "parent_action", "110"),
+        ("victim-support-v1", "interrupted_detail", "110"),
     }
 
 
@@ -88,6 +93,33 @@ def test_a_known_script_id_is_its_own_tier(template_id: str) -> None:
 )
 def test_an_unknown_script_id_reads_as_the_self_harm_tier(stored: str) -> None:
     assert parse_alert_template(stored) == "crisis-self-v1"
+
+
+def test_an_unfinished_playback_uses_the_tier_sentence() -> None:
+    assert playback_left_unfinished(terminals=("preempted",), playback_ended=False) is True
+    assert playback_left_unfinished(terminals=("no_audio",), playback_ended=False) is True
+    assert playback_left_unfinished(terminals=(), playback_ended=False) is False
+    assert playback_left_unfinished(terminals=("playback_ended",), playback_ended=True) is False
+    assert playback_left_unfinished(terminals=("preempted",), playback_ended=True) is False
+    assert PARENT_ALERT_COPY["support-other-v1"].interrupted_detail is None
+    assert (
+        PARENT_ALERT_COPY["crisis-self-v1"].interrupted_detail
+        == "这次的提醒话术孩子没有听完，如需帮助可拨打心理援助热线12356"
+    )
+    assert (
+        PARENT_ALERT_COPY["victim-support-v1"].interrupted_detail
+        == "这次的提醒话术孩子没有听完，如有危险请拨打110"
+    )
+
+
+def test_what_happened_asks_and_does_not_describe_an_incident() -> None:
+    victim = PARENT_ALERT_COPY["victim-support-v1"]
+    assert victim.parent_action == "尽快当面问问孩子发生了什么，如有危险请拨打110"
+    assert victim.summary == "孩子说到了自己可能受到伤害"
+    for copy in PARENT_ALERT_COPY.values():
+        blob = " ".join(_strings(copy))
+        assert "打我" not in blob
+        assert "不想活" not in blob
 
 
 def test_alert_time_is_month_day_and_clock_in_the_server_zone() -> None:

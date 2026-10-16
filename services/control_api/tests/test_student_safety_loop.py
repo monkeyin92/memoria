@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -817,10 +818,17 @@ async def test_parent_acknowledges_alerts_one_at_a_time_across_logins(
         items = history.json()["items"]
         assert [item["notification_id"] for item in items][0] == newest["notification_id"]
         assert len(items) == 3
+        allowed_summaries = {copy.summary for copy in PARENT_ALERT_COPY.values()}
         for item in items:
             assert "pinned" not in item and "read_at" not in item
             assert item["contains_transcript"] is False
             assert item["contains_severity"] is False
+            assert item["message"] == "有一条需要你关注的对话"
+            assert item["summary"] in allowed_summaries
+            assert "detail" not in item
+            for query in queries:
+                assert query not in item["summary"]
+                assert query not in item.get("detail", "")
         assert newest["contains_transcript"] is False
 
         blob = json.dumps(payloads, ensure_ascii=False)
@@ -867,6 +875,143 @@ async def test_parent_acknowledges_alerts_one_at_a_time_across_logins(
             "/v1/guardian/notifications/unread", headers=other_headers
         )
         assert stranger_unread.json() == {"newest": None, "others_count": 0}
+
+
+def _record_terminal(
+    app: Any,
+    *,
+    session_id: str,
+    turn_id: int,
+    generation_id: int,
+    event_type: str,
+) -> None:
+    delivery_id = f"{session_id}/epoch-0/turn-{turn_id}/generation-{generation_id}/tool-0"
+    now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    app.state.memory_store.record_media_reply_delivery_event(
+        event_id=hashlib.sha256(f"{delivery_id}\0{event_type}".encode()).hexdigest(),
+        schema_version="reply-delivery-v1",
+        delivery_id=delivery_id,
+        session_id=session_id,
+        session_epoch=0,
+        turn_id=turn_id,
+        generation_id=generation_id,
+        tool_epoch=0,
+        event_type=event_type,
+        terminal_event=event_type,
+        terminal_reason=event_type,
+        first_frame_sent=True,
+        provider_completed=False,
+        actual_heard=False,
+        playback_ended=event_type == "playback_ended",
+        reason=event_type,
+        occurred_at=now,
+        received_at=now,
+    )
+
+
+@pytest.mark.asyncio
+async def test_unfinished_script_detail_is_fixed_copy_and_omits_the_child_words(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Interrupted detail is the script-id sentence. The child's words never enter it."""
+
+    self_harm = "这次的提醒话术孩子没有听完，如需帮助可拨打心理援助热线12356"
+    victim = "这次的提醒话术孩子没有听完，如有危险请拨打110"
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        _, parent_headers, link, child, child_headers = await _bind_family(
+            client,
+            app,
+            parent_username="safety-detail-parent",
+            child_username="safety-detail-child",
+            binding_key="safety-detail",
+        )
+        session = await _minor_session(
+            client,
+            app,
+            child=child,
+            child_headers=child_headers,
+            link=link,
+            parent_headers=parent_headers,
+            binding_key="safety-detail",
+        )
+        session_id = session["session_id"]
+        spoken = (
+            (_CRISIS_QUERY, self_harm),
+            ("有人正在打我", victim),
+            ("我朋友说他不想活了", None),
+        )
+        for turn, (query, _sentence) in enumerate(spoken, start=1):
+            plan = await _response_plan(
+                client,
+                session_id=session_id,
+                query=query,
+                turn_id=turn,
+                generation_id=turn,
+            )
+            assert plan.status_code == 200, plan.text
+
+        quiet = await client.get("/v1/guardian/notifications", headers=parent_headers)
+        assert quiet.status_code == 200, quiet.text
+        for item in quiet.json()["items"]:
+            assert "detail" not in item
+            assert item["message"] == "有一条需要你关注的对话"
+
+        for turn, (query, sentence) in enumerate(spoken, start=1):
+            _record_terminal(
+                app,
+                session_id=session_id,
+                turn_id=turn,
+                generation_id=turn,
+                event_type="preempted",
+            )
+            listed = await client.get("/v1/guardian/notifications", headers=parent_headers)
+            match = next(
+                item
+                for item in listed.json()["items"]
+                if item["summary"]
+                == PARENT_ALERT_COPY[
+                    {
+                        _CRISIS_QUERY: "crisis-self-v1",
+                        "有人正在打我": "victim-support-v1",
+                        "我朋友说他不想活了": "support-other-v1",
+                    }[query]
+                ].summary
+            )
+            page = await client.get(
+                f"/v1/guardian/notifications/{match['notification_id']}",
+                headers=parent_headers,
+            )
+            assert page.status_code == 200, page.text
+            body = page.json()
+            assert body["message"] == "有一条需要你关注的对话"
+            rendered = json.dumps(body, ensure_ascii=False)
+            assert query not in body["summary"]
+            assert query not in rendered
+            assert "不想活" not in rendered
+            assert "打我" not in rendered
+            if sentence is None:
+                assert "detail" not in body
+            else:
+                assert body["detail"] == sentence
+                assert query not in body["detail"]
+
+        _record_terminal(
+            app,
+            session_id=session_id,
+            turn_id=1,
+            generation_id=1,
+            event_type="playback_ended",
+        )
+        finished = await client.get("/v1/guardian/notifications", headers=parent_headers)
+        self_harm_item = next(
+            item
+            for item in finished.json()["items"]
+            if item["summary"] == PARENT_ALERT_COPY["crisis-self-v1"].summary
+        )
+        assert "detail" not in self_harm_item
 
 
 @pytest.mark.asyncio
