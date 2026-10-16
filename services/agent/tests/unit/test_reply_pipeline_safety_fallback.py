@@ -193,8 +193,24 @@ async def test_ordinary_follow_up_after_crisis_is_a_brief_normal_reply(
     await runtime.close()
 
 
+_SOOTHING_FOLLOW_UP_PHRASES = (
+    "刚才的事别担心",
+    "别害怕",
+    "不要怕",
+    "没事的",
+    "没关系",
+    "别担心",
+    "不用担心",
+    "会好起来的",
+    "一切都会好的",
+    "我陪着你",
+)
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize("phrase", _SOOTHING_FOLLOW_UP_PHRASES)
 async def test_ordinary_follow_up_drops_a_repeated_script_and_a_dilution_line(
+    phrase: str,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     runtime = _runtime("post-safety-dilution")
@@ -203,7 +219,7 @@ async def test_ordinary_follow_up_drops_a_repeated_script_and_a_dilution_line(
     async def model(_safe_ctx: Any, _tools: list[Any]) -> Any:
         async def one() -> Any:
             yield CRISIS_SELF_SCRIPT.display
-            yield "刚才的事别担心。橡皮可能在铅笔盒里。"
+            yield f"{phrase}。橡皮可能在铅笔盒里。"
 
         return one()
 
@@ -235,7 +251,181 @@ async def test_ordinary_follow_up_drops_a_repeated_script_and_a_dilution_line(
     heard = _heard(spoken)
     assert heard == "橡皮可能在铅笔盒里。"
     assert CRISIS_SELF_SCRIPT.display not in heard
-    assert "刚才的事别担心" not in heard
+    assert phrase not in heard
+    assert follow_up not in "\n".join(record.getMessage() for record in caplog.records)
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phrase", _SOOTHING_FOLLOW_UP_PHRASES)
+async def test_ordinary_chat_keeps_a_soothing_phrase(phrase: str, caplog: pytest.LogCaptureFixture) -> None:
+    runtime = _runtime("ordinary-soothing")
+    pipeline = _pipeline(runtime, _InvalidPayloadPlanner())
+    reply = f"{phrase}。橡皮可能在铅笔盒里。"
+
+    async def model(_safe_ctx: Any, _tools: list[Any]) -> Any:
+        async def one() -> Any:
+            yield reply
+
+        return one()
+
+    pipeline.language_model = ScriptedChatModel(model)
+    query = "我找不到我的橡皮了"
+    with caplog.at_level(logging.INFO):
+        fence = await pipeline.prepare_committed_turn(query)
+        spoken = [
+            token
+            async for token in pipeline.stream(
+                LanguageModelRequest(
+                    user_text=query,
+                    cancellation=CancellationContext.capture(fence),
+                )
+            )
+        ]
+    assert _heard(spoken) == reply
+    assert query not in "\n".join(record.getMessage() for record in caplog.records)
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phrase", _SOOTHING_FOLLOW_UP_PHRASES)
+async def test_soothing_phrase_on_the_turn_after_the_follow_up_stays(
+    phrase: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    runtime = _runtime("post-safety-later")
+    pipeline = _pipeline(runtime, _InvalidPayloadPlanner())
+
+    async def calm(_safe_ctx: Any, _tools: list[Any]) -> Any:
+        async def one() -> Any:
+            yield "橡皮可能在铅笔盒里。"
+
+        return one()
+
+    pipeline.language_model = ScriptedChatModel(calm)
+    first = await pipeline.prepare_committed_turn("我想伤害自己。")
+    spoken_safety = [
+        token
+        async for token in pipeline.stream(
+            LanguageModelRequest(
+                user_text="我想伤害自己。",
+                cancellation=CancellationContext.capture(first),
+            )
+        )
+    ]
+    assert spoken_safety == [CRISIS_SELF_SCRIPT]
+
+    second = await pipeline.prepare_committed_turn("我找不到我的橡皮了")
+    ordinary = [
+        token
+        async for token in pipeline.stream(
+            LanguageModelRequest(
+                user_text="我找不到我的橡皮了",
+                cancellation=CancellationContext.capture(second),
+            )
+        )
+    ]
+    assert _heard(ordinary) == "橡皮可能在铅笔盒里。"
+
+    reply = f"{phrase}。橡皮可能在铅笔盒里。"
+
+    async def later(_safe_ctx: Any, _tools: list[Any]) -> Any:
+        async def one() -> Any:
+            yield CRISIS_SELF_SCRIPT.display
+            yield reply
+
+        return one()
+
+    pipeline.language_model = ScriptedChatModel(later)
+    follow_up = "橡皮是红色的"
+    with caplog.at_level(logging.INFO):
+        third = await pipeline.prepare_committed_turn(follow_up)
+        spoken = [
+            token
+            async for token in pipeline.stream(
+                LanguageModelRequest(
+                    user_text=follow_up,
+                    cancellation=CancellationContext.capture(third),
+                )
+            )
+        ]
+    heard = _heard(spoken)
+    assert heard == reply
+    assert CRISIS_SELF_SCRIPT.display not in heard
+    assert follow_up not in "\n".join(record.getMessage() for record in caplog.records)
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_another_crisis_script_drops_soothing_on_the_following_reply(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    runtime = _runtime("post-safety-rearm")
+    pipeline = _pipeline(runtime, _InvalidPayloadPlanner())
+
+    async def calm(_safe_ctx: Any, _tools: list[Any]) -> Any:
+        async def one() -> Any:
+            yield "橡皮可能在铅笔盒里。"
+
+        return one()
+
+    pipeline.language_model = ScriptedChatModel(calm)
+    first = await pipeline.prepare_committed_turn("我想伤害自己。")
+    spoken_safety = [
+        token
+        async for token in pipeline.stream(
+            LanguageModelRequest(
+                user_text="我想伤害自己。",
+                cancellation=CancellationContext.capture(first),
+            )
+        )
+    ]
+    assert spoken_safety == [CRISIS_SELF_SCRIPT]
+    second = await pipeline.prepare_committed_turn("我找不到我的橡皮了")
+    ordinary = [
+        token
+        async for token in pipeline.stream(
+            LanguageModelRequest(
+                user_text="我找不到我的橡皮了",
+                cancellation=CancellationContext.capture(second),
+            )
+        )
+    ]
+    assert _heard(ordinary) == "橡皮可能在铅笔盒里。"
+
+    async def soothing(_safe_ctx: Any, _tools: list[Any]) -> Any:
+        async def one() -> Any:
+            yield "别害怕。橡皮可能在铅笔盒里。"
+
+        return one()
+
+    pipeline.language_model = ScriptedChatModel(soothing)
+    crisis_again = "有个叔叔老是大我。"
+    third = await pipeline.prepare_committed_turn(crisis_again)
+    spoken_again = [
+        token
+        async for token in pipeline.stream(
+            LanguageModelRequest(
+                user_text=crisis_again,
+                cancellation=CancellationContext.capture(third),
+            )
+        )
+    ]
+    assert spoken_again == [SUPPORT_VICTIM_SCRIPT]
+
+    follow_up = "我的铅笔盒是蓝色的"
+    with caplog.at_level(logging.INFO):
+        fourth = await pipeline.prepare_committed_turn(follow_up)
+        spoken = [
+            token
+            async for token in pipeline.stream(
+                LanguageModelRequest(
+                    user_text=follow_up,
+                    cancellation=CancellationContext.capture(fourth),
+                )
+            )
+        ]
+    assert _heard(spoken) == "橡皮可能在铅笔盒里。"
     assert follow_up not in "\n".join(record.getMessage() for record in caplog.records)
     await runtime.close()
 
