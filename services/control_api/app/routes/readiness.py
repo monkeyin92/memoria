@@ -93,7 +93,10 @@ def _store(request: Request) -> MemoryStore:
 
 def _missing_config(settings: ControlSettings) -> list[str]:
     missing: list[str] = []
-    if not settings.dashscope_api_key.get_secret_value():
+    if (
+        settings.asr_provider == "funasr"
+        and not settings.dashscope_api_key.get_secret_value()
+    ):
         missing.append("DASHSCOPE_API_KEY")
     if settings.llm_provider == "deepseek" and not settings.deepseek_api_key.get_secret_value():
         missing.append("DEEPSEEK_API_KEY")

@@ -22,6 +22,19 @@ class ProviderFields(BaseModel):
         alias="TTS_PROVIDER",
     )
     dashscope_api_key: SecretStr = Field(default=SecretStr(""), alias="DASHSCOPE_API_KEY")
+    # control-api does not run ASR. Readiness counts the DashScope key only for funasr.
+    asr_provider: Literal["none", "funasr"] = Field(default="none", alias="ASR_PROVIDER")
+    qwen_omni_session_enabled: bool = Field(
+        default=False, alias="QWEN_OMNI_SESSION_ENABLED"
+    )
+    live_search_qwen_enabled: bool = Field(
+        default=False, alias="LIVE_SEARCH_QWEN_ENABLED"
+    )
+    weather_lookup_provider: Literal["off", "domestic"] = Field(
+        default="off", alias="WEATHER_LOOKUP_PROVIDER"
+    )
+    qweather_api_key: SecretStr = Field(default=SecretStr(""), alias="QWEATHER_API_KEY")
+    qweather_api_host: str = Field(default="", alias="QWEATHER_API_HOST")
     dashscope_ws_url: str = Field(default="", alias="DASHSCOPE_WS_URL")
     dashscope_workspace_id: str = Field(default="", alias="DASHSCOPE_WORKSPACE_ID")
     # P1-8: fixed Memoria persona voice on Omni (DashScope preset; not free-form clone).

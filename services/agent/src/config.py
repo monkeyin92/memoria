@@ -267,6 +267,9 @@ class AgentSettings(BaseSettings):
     )
     qwen_fast_model: str = Field(default="qwen3.7-flash", alias="QWEN_FAST_MODEL")
     qwen_deep_model: str = Field(default="qwen-plus", alias="QWEN_DEEP_MODEL")
+    live_search_qwen_enabled: bool = Field(
+        default=False, alias="LIVE_SEARCH_QWEN_ENABLED"
+    )
     weather_lookup_provider: WeatherLookupProvider = Field(
         default="off", alias="WEATHER_LOOKUP_PROVIDER"
     )

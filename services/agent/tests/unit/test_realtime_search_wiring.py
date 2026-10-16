@@ -50,6 +50,7 @@ def sent(monkeypatch: pytest.MonkeyPatch) -> _Sent:
 def _domestic(**overrides: str) -> AgentSettings:
     values: dict[str, str] = {
         "DASHSCOPE_API_KEY": "k",
+        "LIVE_SEARCH_QWEN_ENABLED": "true",
         "WEATHER_LOOKUP_PROVIDER": "domestic",
         "QWEATHER_API_KEY": "test-key",
         "QWEATHER_API_HOST": "abcd.re.qweatherapi.com",
@@ -80,9 +81,29 @@ def _qweather_body(request: httpx.Request) -> dict[str, object]:
     }
 
 
-async def test_default_settings_send_weather_questions_only_to_dashscope(sent: _Sent) -> None:
+async def test_default_settings_do_not_call_qwen_realtime_search(sent: _Sent) -> None:
     resolver = build_realtime_search_resolver(
         settings=AgentSettings(_env_file=None, DASHSCOPE_API_KEY="k")
+    )
+
+    reply = await resolver.resolve(query="南京明天天气怎么样")
+    await resolver.aclose()
+
+    assert resolver.weather is None
+    assert resolver.qwen is None
+    assert resolver.model == ""
+    assert reply is None
+    assert sent.hosts == []
+    assert sent.qwen_queries == []
+
+
+async def test_live_search_flag_sends_weather_questions_only_to_dashscope(sent: _Sent) -> None:
+    resolver = build_realtime_search_resolver(
+        settings=AgentSettings(
+            _env_file=None,
+            DASHSCOPE_API_KEY="k",
+            LIVE_SEARCH_QWEN_ENABLED=True,
+        )
     )
 
     reply = await resolver.resolve(query="南京明天天气怎么样")

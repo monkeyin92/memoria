@@ -9,6 +9,8 @@ from zoneinfo import ZoneInfo
 from services.common.companion_response_safety import companion_safety_decision
 
 ASK_WEATHER_CITY_REPLY = "你想查哪个城市呀？"
+# Product copy weather-fallback-v1, 2026-10-16. Tests pin this string.
+WEATHER_LOOKUP_UNAVAILABLE_REPLY = "我现在还查不到天气，可以请爸爸妈妈帮你看看窗外或者手机哦。"
 _WEEKDAYS = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
 _STRIP = re.compile(r"[\s，,。！？!?；;：:、]")
 _SAFE_REPLY = re.compile(
@@ -16,6 +18,8 @@ _SAFE_REPLY = re.compile(
     r"现在是北京时间\d{1,2}点\d{2}分。|"
     r"现在是\d{4}年\d{1,2}月\d{1,2}日，星期[一二三四五六日]，北京时间\d{1,2}点\d{2}分。|"
     + re.escape(ASK_WEATHER_CITY_REPLY)
+    + r"|"
+    + re.escape(WEATHER_LOOKUP_UNAVAILABLE_REPLY)
     + r")$"
 )
 _WEATHER_WITHOUT_LOCATION = frozenset(
@@ -143,8 +147,48 @@ def is_fuzzy_weekday_query(query: str) -> bool:
     )
 
 
-def fixed_realtime_reply(*, query: str, now: datetime) -> str | None:
-    """Answer clock facts locally; ask for a city before searching weather."""
+def mentions_weather(query: str) -> bool:
+    return "天气" in _normalized(query)
+
+
+def weekday_lookup_query(query: str) -> str:
+    """Keep a weather mention intact when a fuzzy weekday shares the turn."""
+
+    if is_fuzzy_weekday_query(query) and not mentions_weather(query):
+        return "今天星期几"
+    return query
+
+
+def weather_lookup_configured(settings: object) -> bool:
+    """True when Qwen live search or a configured domestic weather source can answer."""
+
+    if bool(getattr(settings, "live_search_qwen_enabled", False)):
+        return True
+    provider = str(getattr(settings, "weather_lookup_provider", "off") or "off")
+    if provider != "domestic":
+        return False
+    raw_key = getattr(settings, "qweather_api_key", "")
+    if hasattr(raw_key, "get_secret_value"):
+        key = str(raw_key.get_secret_value())
+    else:
+        key = str(raw_key or "")
+    host = str(getattr(settings, "qweather_api_host", "") or "")
+    return bool(key.strip() and host.strip())
+
+
+def fixed_realtime_reply(
+    *,
+    query: str,
+    now: datetime,
+    weather_lookup_available: bool = True,
+    city_followup: bool = False,
+) -> str | None:
+    """Answer clock facts locally.
+
+    Ask for a city only when some weather source can use the answer.
+    With no source, a weather question and the following city report use the
+    fixed unavailable line.
+    """
 
     compact = _normalized(query)
     asks_date = _asks_for_date(query)
@@ -160,6 +204,8 @@ def fixed_realtime_reply(*, query: str, now: datetime) -> str | None:
         return f"今天是{now.year}年{now.month}月{now.day}日，{weekday}。"
     if asks_time and not has_live_topic:
         return f"现在是北京时间{now.hour}点{now.minute:02d}分。"
+    if not weather_lookup_available and (mentions_weather(query) or city_followup):
+        return WEATHER_LOOKUP_UNAVAILABLE_REPLY
     if compact in _WEATHER_WITHOUT_LOCATION:
         return ASK_WEATHER_CITY_REPLY
     return None
@@ -206,6 +252,8 @@ def is_realtime_followup_nudge(query: str) -> bool:
 def is_incomplete_realtime_reply(reply: str, *, query: str = "") -> bool:
     """Recognize a bridge, generic nudge, or explicit search failure as non-final."""
 
+    if is_safe_realtime_reply(reply):
+        return False
     compact = _normalized(reply)
     if query:
         compact = compact.replace(_normalized(query), "")

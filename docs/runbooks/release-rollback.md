@@ -2,6 +2,14 @@
 
 本文是从 `HANDOFF.md` 迁出的永久运维参考，保留原有发布、数据恢复和回滚底线。命令只表示操作基线，不表示本轮已经执行；生产执行、切流、恢复和固件操作仍需单独授权。
 
+## 百炼实时检索与 Omni 开关
+
+`LIVE_SEARCH_QWEN_ENABLED` 与 `QWEN_OMNI_SESSION_ENABLED` 默认都是 `false`。部署之后，除非环境里把它们写成 `true`，通义实时检索不再安装、不再出站，Qwen Omni 会话创建和 SDP 交换直接拒绝。`DASHSCOPE_API_KEY` 必须留下，agent 的 FunASR 仍读它。control-api 的 `ASR_PROVIDER` 默认 `none`，这时 readiness 不因为缺少这把密钥而 503。只有 `ASR_PROVIDER=funasr` 时 control-api 才把它算进缺失项。
+
+天气在实时检索关闭且未配和风天气数据源时，第一轮和孩子接着报城市的第二轮都回固定句 weather-fallback-v1，不调用模型，也不为这句合成音频。
+
+回滚这两条路径：把 `LIVE_SEARCH_QWEN_ENABLED=true` 和 `QWEN_OMNI_SESSION_ENABLED=true` 写回环境后重建对应进程。不要删 `DASHSCOPE_API_KEY`。只有在希望 control-api readiness 继续要求这把密钥时才设 `ASR_PROVIDER=funasr`。
+
 ## 生产拓扑与安全边界
 
 - `/opt/memoria/current` 指向当前整栈发布树（2026-10-13 19:02 起：`releases/20261013-guardian-summaries-v1`，有效栈 `MEMORIA_RELEASE_TAG=20261013-guardian-summaries-v1`，上一栈 `releases/20261010-n8-endpoint-diag-v1`；media-edge 是组件发布 `20261002-late-progress-v1`，它的编排仍是 `releases/20261004-first-warm-v1` 的 compose 加 `component-releases/20261002-late-progress-v1-media-edge/media-edge-component.override.yml`，所以那个发布树不能删）。目录名、栈 tag、组件 tag 是三个概念；readiness 刷新必须取有效栈配置。

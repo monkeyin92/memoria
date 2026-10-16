@@ -63,6 +63,7 @@ from services.agent.src.orchestration.handlers import LanguageModelRequest, Repl
 from services.agent.src.orchestration.task_manager import ToolSpec
 from services.agent.src.prompts import LIVE_LOOKUP_FILLER
 from services.agent.src.providers.llm_failover import LlmUnavailableError
+from services.agent.src.providers.weather_places import is_city_name_report
 from services.agent.src.response_plan_cache import ResponsePlanCache
 from services.agent.src.response_planner_client import (
     RECALL_CONTEXT_ITEM_MAX_CHARS,
@@ -82,6 +83,7 @@ from services.common.llm_failover import LLM_UNAVAILABLE_TEXT
 from services.common.realtime_information import (
     REALTIME_UNAVAILABLE_REPLY,
     is_incomplete_realtime_reply,
+    mentions_weather,
     strip_realtime_bridge_prefix,
 )
 from services.common.response_depth import SHORT_REPLY_AUDIENCES, ResponseDepth, response_depth_for
@@ -464,6 +466,29 @@ class ReplyPipeline:
             fence=fence,
         )
 
+    def _realtime_sources_available(self) -> bool:
+        resolver = self._realtime_search_resolver
+        if resolver is None:
+            return False
+        if not hasattr(resolver, "weather") and not hasattr(resolver, "qwen"):
+            return True
+        return (
+            getattr(resolver, "weather", None) is not None
+            or getattr(resolver, "qwen", None) is not None
+        )
+
+    def _prior_user_text(self, query: str) -> str:
+        context = getattr(getattr(self._runtime, "orchestrator", None), "context", None)
+        turns = getattr(context, "turns", ()) or ()
+        user_texts = [
+            str(turn.content)
+            for turn in turns
+            if getattr(turn, "role", None) == "user" and getattr(turn, "content", "")
+        ]
+        if user_texts and user_texts[-1] == query:
+            user_texts = user_texts[:-1]
+        return user_texts[-1] if user_texts else ""
+
     def _local_safe_plan(
         self,
         *,
@@ -472,6 +497,7 @@ class ReplyPipeline:
         reason: str,
         query: str = "",
     ) -> ResponsePlan:
+        prior = self._prior_user_text(query)
         return build_local_safe_plan(
             policy=self._runtime.mode_policy_for_fence(fence),
             fence=fence,
@@ -479,6 +505,10 @@ class ReplyPipeline:
             reason=reason,
             tts_model=self._tts_model,
             query=query,
+            weather_lookup_available=self._realtime_sources_available(),
+            city_followup=bool(query)
+            and is_city_name_report(query)
+            and mentions_weather(prior),
         )
 
     def _current_authorizing_profile_id(self) -> str | None:
@@ -1126,7 +1156,7 @@ class ReplyPipeline:
     ) -> None:
         await self._runtime.resolve_live_lookup_needed(text)
         if self._response_planner_client is None:
-            if self._runtime.live_lookup_needed(text):
+            if self._runtime.live_lookup_needed(text) and self._realtime_sources_available():
                 await self._get_or_start_realtime_delegation(query=text, fence=fence)
             return
         ready = self._context_ready_by_fence.setdefault(fence, asyncio.Event())
@@ -1138,7 +1168,7 @@ class ReplyPipeline:
             self._context_ready_by_fence.pop(fence, None)
         if not self._runtime.fence.matches(fence):
             return
-        if self._runtime.live_lookup_needed(text):
+        if self._runtime.live_lookup_needed(text) and self._realtime_sources_available():
             await self._get_or_start_realtime_delegation(query=text, fence=fence)
 
     async def _get_or_start_realtime_delegation(

@@ -30,6 +30,7 @@ from services.control_api.app.companion_delivery import freeze_companion_deliver
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.media_runtime import mint_streamcore_token
 from services.control_api.app.mode_policy import FrozenMode, ModePolicy
+from services.control_api.app.omni_session_gate import require_omni_api_key
 from services.control_api.app.security import (
     AuthenticatedUser,
     create_session_id,
@@ -790,8 +791,7 @@ async def create_session(
         return None
 
     if body.voice_backend in OMNI_BACKENDS:
-        if not settings.dashscope_api_key.get_secret_value():
-            raise HTTPException(status_code=503, detail="Qwen3.5-Omni 服务端尚未配置")
+        require_omni_api_key(settings)
         model = OMNI_MODELS[body.voice_backend]
         _omni_signaling_url(settings, model=model)
         learning_task_id = await persist_voice_session()
@@ -962,9 +962,7 @@ async def _exchange_omni_sdp(
     *,
     model: str = QWEN_OMNI_FLASH_MODEL,
 ) -> bytes:
-    api_key = settings.dashscope_api_key.get_secret_value()
-    if not api_key:
-        raise HTTPException(status_code=503, detail="Qwen3.5-Omni 服务端尚未配置")
+    api_key = require_omni_api_key(settings)
     try:
         async with httpx.AsyncClient(
             timeout=settings.qwen_omni_sdp_timeout_s,

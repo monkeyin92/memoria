@@ -1566,6 +1566,7 @@ async def test_response_plan_keeps_base_behavior_when_evolution_store_is_unavail
     assert response.json()["instructions"]
 
 
+@pytest.mark.hermetic
 @pytest.mark.asyncio
 async def test_response_plan_grounds_clock_and_requires_a_city_for_weather(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -1604,11 +1605,128 @@ async def test_response_plan_grounds_clock_and_requires_a_city_for_weather(
     )
     assert date_plan["direct_text"] == "今天是2026年7月30日，星期四。"
     assert time_plan["direct_text"] == "现在是北京时间18点42分。"
-    assert missing_city_plan["direct_text"] == "你想查哪个城市呀？"
-    assert city_weather_plan["direct_text"] is None
+    fallback = "我现在还查不到天气，可以请爸爸妈妈帮你看看窗外或者手机哦。"
+    assert missing_city_plan["direct_text"] == fallback
+    assert city_weather_plan["direct_text"] == fallback
     assert "2026-07-30 18:42" in city_weather_plan["instructions"]
     assert "星期四" in city_weather_plan["instructions"]
     assert "联网查询" in city_weather_plan["instructions"]
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_response_plan_asks_for_a_city_when_live_search_is_enabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv("LIVE_SEARCH_QWEN_ENABLED", "true")
+    fixed_now = datetime(2026, 7, 30, 18, 42, tzinfo=ZoneInfo("Asia/Shanghai"))
+    monkeypatch.setattr(
+        interaction_routes, "_local_now", lambda _settings: fixed_now, raising=False
+    )
+    app = create_app()
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        _, user_headers = await _identity(client)
+        session_id = (await client.post("/v1/sessions", headers=user_headers, json={})).json()[
+            "session_id"
+        ]
+        responses = []
+        for turn_id, query in enumerate(("今天天气怎么样", "杭州今天天气怎么样"), start=20):
+            body = _response_plan_body(session_id)
+            body["query"] = query
+            body["fence"]["turn_id"] = turn_id
+            responses.append(
+                await client.post(
+                    "/v1/interaction/response-plan",
+                    headers=token,
+                    json=body,
+                )
+            )
+
+    assert all(response.status_code == 200 for response in responses)
+    missing_city_plan, city_weather_plan = (response.json() for response in responses)
+    assert missing_city_plan["direct_text"] == "你想查哪个城市呀？"
+    assert city_weather_plan["direct_text"] is None
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_weather_fallback_answers_both_turns_without_inventing_a_forecast(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.delenv("LIVE_SEARCH_QWEN_ENABLED", raising=False)
+    monkeypatch.delenv("WEATHER_LOOKUP_PROVIDER", raising=False)
+    app = create_app()
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    fallback = "我现在还查不到天气，可以请爸爸妈妈帮你看看窗外或者手机哦。"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        _, user_headers = await _identity(client)
+        session_id = (await client.post("/v1/sessions", headers=user_headers, json={})).json()[
+            "session_id"
+        ]
+        plans = []
+        for turn_id, query in enumerate(("今天天气怎么样", "杭州"), start=40):
+            body = _response_plan_body(session_id)
+            body["query"] = query
+            body["fence"]["turn_id"] = turn_id
+            response = await client.post(
+                "/v1/interaction/response-plan",
+                headers=token,
+                json=body,
+            )
+            assert response.status_code == 200
+            plans.append(response.json())
+        other = (await client.post("/v1/sessions", headers=user_headers, json={})).json()[
+            "session_id"
+        ]
+        alone_body = _response_plan_body(other)
+        alone_body["query"] = "杭州"
+        alone_body["fence"]["turn_id"] = 1
+        alone = await client.post(
+            "/v1/interaction/response-plan",
+            headers=token,
+            json=alone_body,
+        )
+
+    assert alone.status_code == 200
+    assert alone.json()["direct_text"] is None
+    texts = [plan["direct_text"] for plan in plans]
+    assert texts == [fallback, fallback]
+    assert texts[0] != "你想查哪个城市呀？"
+    forecast_words = ("气温", "温度", "晴", "雨", "阴", "雪", "多云")
+    for text in texts:
+        assert [word for word in forecast_words if word in text] == []
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_response_plan_asks_for_a_city_when_domestic_weather_is_configured(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv("WEATHER_LOOKUP_PROVIDER", "domestic")
+    monkeypatch.setenv("QWEATHER_API_KEY", "test-key")
+    monkeypatch.setenv("QWEATHER_API_HOST", "abcd.re.qweatherapi.com")
+    app = create_app()
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        _, user_headers = await _identity(client)
+        session_id = (await client.post("/v1/sessions", headers=user_headers, json={})).json()[
+            "session_id"
+        ]
+        body = _response_plan_body(session_id)
+        body["query"] = "今天天气怎么样"
+        body["fence"]["turn_id"] = 8
+        response = await client.post(
+            "/v1/interaction/response-plan",
+            headers=token,
+            json=body,
+        )
+
+    assert response.status_code == 200
+    assert response.json()["direct_text"] == "你想查哪个城市呀？"
 
 
 @pytest.mark.asyncio

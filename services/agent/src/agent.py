@@ -28,9 +28,9 @@ from services.common.fixed_safety_scripts import script_for_display
 from services.common.realtime_information import (
     current_local_time,
     fixed_realtime_reply,
-    is_fuzzy_weekday_query,
     is_safe_realtime_reply,
     realtime_instruction,
+    weekday_lookup_query,
 )
 from services.speaker.domain import DEVICE_BOUND_SUBJECT_REASON
 
@@ -262,7 +262,7 @@ def build_local_safe_plan(
     speaker: object,
     reason: str,
     tts_model: str,
-    query: str = "",
+    query: str = "", weather_lookup_available: bool = True, city_followup: bool = False,
 ) -> ResponsePlan:
     """The fail-closed plan for ``fence`` when no authorized plan is usable."""
 
@@ -299,8 +299,8 @@ def build_local_safe_plan(
     )
     live_now = current_local_time(os.getenv("MEMORIA_TIMEZONE", "Asia/Shanghai"))
     if fixed_reply is None:
-        lookup_query = "今天星期几" if is_fuzzy_weekday_query(query) else query
-        fixed_reply = fixed_realtime_reply(query=lookup_query, now=live_now)
+        lookup_query = weekday_lookup_query(query)
+        fixed_reply = fixed_realtime_reply(query=lookup_query, now=live_now, weather_lookup_available=weather_lookup_available, city_followup=city_followup)
     if fixed_reply is None and is_primarily_non_chinese_script(query):
         fixed_reply = BRIDGE_PHRASES[2]
     if policy.mode == "unknown_safe" and fixed_reply is not None and (

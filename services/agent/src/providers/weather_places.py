@@ -1334,6 +1334,16 @@ def _cleaned_prefix(text: str) -> str:
     return before
 
 
+_TRAILING_PARTICLES = re.compile(r"[的呀呢啊吧嘛哦]+$")
+
+
+def is_city_name_report(text: str) -> bool:
+    """True when the turn is only one allowlisted city, plus optional particles."""
+
+    compact = _TRAILING_PARTICLES.sub("", _STRIP.sub("", text or ""))
+    return bool(compact) and compact in _ALIASES
+
+
 def find_city(text: str) -> City | None:
     clean = _cleaned_prefix(text)
     found: set[City] = set()
@@ -1360,4 +1370,4 @@ def find_city(text: str) -> City | None:
     return next(iter(found))
 
 
-__all__ = ["City", "find_city"]
+__all__ = ["City", "find_city", "is_city_name_report"]
