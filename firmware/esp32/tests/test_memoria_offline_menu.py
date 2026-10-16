@@ -98,6 +98,11 @@ int main() {
             if (sscanf(line + 5, "%u", &now) != 1) return 2;
             print_out(menu.OnStoryFinished(now));
             printf("mode=%s item=%u\n", memoria::OfflineModeName(menu.mode()), menu.menu_item());
+        } else if (strncmp(line, "refused ", 8) == 0) {
+            unsigned now = 0;
+            if (sscanf(line + 8, "%u", &now) != 1) return 2;
+            print_out(menu.OnStoryRefused(now));
+            printf("mode=%s item=%u\n", memoria::OfflineModeName(menu.mode()), menu.menu_item());
         } else if (strncmp(line, "note ", 5) == 0) {
             unsigned now = 0;
             if (sscanf(line + 5, "%u", &now) != 1) return 2;
@@ -227,6 +232,71 @@ def test_story_finished_offline_plays_end(tool: pathlib.Path) -> None:
     lines = _run(tool, "reset", "tap 1000 100 0 1 0", "tap 2000 800 0 1 0", "done 5000")
     assert "offline-menu-end-v1" in lines[5]
     assert lines[6] == "mode=menu item=1"
+
+
+def test_refused_story_returns_to_menu_silently_then_idles_to_sleep(tool: pathlib.Path) -> None:
+    lines = _run(
+        tool,
+        "reset",
+        "tap 1000 100 0 1 0",
+        "tap 2000 800 0 1 0",
+        "refused 2500",
+        "refused 2600",
+        "timer 32499",
+        "timer 32500",
+    )
+    assert lines[5] == "intercept=1 mode_clips=0"
+    assert "offline-menu-end-v1" not in lines[5]
+    assert "start_story" not in lines[5]
+    assert lines[6] == "mode=menu item=1"
+    assert lines[7] == "intercept=0 mode_clips=0"
+    assert lines[8] == "mode=menu item=1"
+    assert "deep_sleep" not in lines[9]
+    assert lines[10] == "mode=menu item=1"
+    assert "offline-menu-idle-v1" in lines[11]
+    assert "deep_sleep" in lines[11]
+    assert lines[12].startswith("mode=inactive")
+
+
+def test_a_story_that_never_finishes_never_idles(tool: pathlib.Path) -> None:
+    lines = _run(tool, "reset", "tap 1000 100 0 1 0", "tap 2000 800 0 1 0", "timer 33000")
+    assert "deep_sleep" not in lines[5]
+    assert lines[6] == "mode=playing item=1"
+
+
+def test_refused_story_after_network_returns_says_restored_not_in_story(tool: pathlib.Path) -> None:
+    lines = _run(
+        tool,
+        "reset",
+        "tap 1000 100 0 1 0",
+        "tap 2000 800 0 1 0",
+        "up 3000",
+        "refused 3500",
+    )
+    assert lines[6] == "mode=pending_online_after_story"
+    assert "online-restored-v1" in lines[7]
+    assert "online-restored-chat-v1" in lines[7]
+    assert "stop_retry" in lines[7]
+    assert "online-restored-in-story-v2" not in lines[7]
+    assert lines[8].startswith("mode=inactive")
+
+
+def test_refusal_outside_a_story_is_a_no_op(tool: pathlib.Path) -> None:
+    lines = _run(
+        tool,
+        "reset",
+        "refused 1000",
+        "tap 1000 100 0 1 0",
+        "tap 2000 800 0 1 0",
+        "refused 2500",
+        "refused 2600",
+    )
+    assert lines[1] == "intercept=0 mode_clips=0"
+    assert lines[2].startswith("mode=inactive")
+    assert lines[7] == "intercept=1 mode_clips=0"
+    assert lines[8] == "mode=menu item=1"
+    assert lines[9] == "intercept=0 mode_clips=0"
+    assert lines[10] == "mode=menu item=1"
 
 
 def test_mid_drop_then_reconnect_timeout_opens_menu(tool: pathlib.Path) -> None:

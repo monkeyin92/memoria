@@ -232,6 +232,29 @@ public:
         return OfflineMenuOutput{};
     }
 
+    // The end clip and the in-story restore line describe a story that was
+    // heard. A refused intro means that story never started, so neither plays.
+    // Leaving kPlaying is what lets OnTimer idle and sleep.
+    OfflineMenuOutput OnStoryRefused(std::uint32_t now_ms) {
+        if (mode_ == OfflineMode::kPlaying) {
+            OfflineMenuOutput out;
+            out.intercept = true;
+            mode_ = OfflineMode::kMenu;
+            ArmMenuIdle(now_ms);
+            return out;
+        }
+        if (mode_ == OfflineMode::kPendingOnlineAfterStory) {
+            OfflineMenuOutput out;
+            out.intercept = true;
+            Push(out, kOnlineRestored);
+            Push(out, kOnlineRestoredChat);
+            Reset();
+            out.stop_retry_network = true;
+            return out;
+        }
+        return OfflineMenuOutput{};
+    }
+
     OfflineMenuOutput OnTap(std::uint32_t now_ms, std::uint32_t hold_ms, bool network_online,
                             bool device_idle) {
         OfflineMenuOutput out;

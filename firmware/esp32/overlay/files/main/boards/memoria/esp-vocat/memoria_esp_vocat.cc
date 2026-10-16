@@ -712,6 +712,8 @@ private:
                 if (!story_intro_ok) {
                     ESP_LOGE(TAG, "refusing story without AIGC intro %s",
                              memoria::kAigcNoticeStoryFile);
+                    ApplyOfflineMenuOutput(offline_menu_.OnStoryRefused(
+                        static_cast<std::uint32_t>(esp_timer_get_time() / 1000)));
                     return;
                 }
                 PlayLocalAssetClip(memoria::OfflineStoryFile(out.story_index));

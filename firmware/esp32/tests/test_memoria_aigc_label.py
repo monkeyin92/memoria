@@ -126,6 +126,104 @@ def test_night_soothe_requires_spoken_intro() -> None:
     assert night.index("kAigcNoticeBedtimeFile") < night.index('PlayLocalAssetClip("night_soothe.ogg")')
 
 
+def _block_after(source: str, anchor: str) -> str:
+    start = source.index(anchor)
+    brace = source.index("{", start)
+    depth = 0
+    for index in range(brace, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[brace + 1 : index]
+    raise ValueError(f"unbalanced block after {anchor}")
+
+
+def _block_end(source: str, anchor: str) -> int:
+    start = source.index(anchor)
+    brace = source.index("{", start)
+    depth = 0
+    for index in range(brace, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+    raise ValueError(f"unbalanced block after {anchor}")
+
+
+def _without_block_return(source: str, anchor: str) -> str:
+    block = _block_after(source, anchor)
+    inner = source.index("{", source.index(anchor)) + 1
+    relative = block.rfind("return;")
+    if relative < 0:
+        raise AssertionError(f"{anchor} block has no return;")
+    at = inner + relative
+    line_start = source.rfind("\n", 0, at) + 1
+    line_end = source.find("\n", at)
+    if line_end < 0:
+        return source[:line_start]
+    return source[:line_start] + source[line_end + 1 :]
+
+
+_BEDTIME_REFUSAL = "if (!PlayLocalAssetClip(memoria::kAigcNoticeBedtimeFile))"
+_NIGHT_BODY = 'PlayLocalAssetClip("night_soothe.ogg")'
+_STORY_REFUSAL = "if (!story_intro_ok)"
+_STORY_BODY_NAMES = (
+    "OnStoryFinished",
+    "OfflineStoryFile",
+    "kOfflineMenuEnd",
+    "PlayLocalAssetClip",
+)
+
+
+def _bedtime_refusal_returns_before_body(source: str) -> bool:
+    try:
+        block = _block_after(source, _BEDTIME_REFUSAL)
+        end = _block_end(source, _BEDTIME_REFUSAL)
+    except ValueError:
+        return False
+    lines = [line.strip() for line in block.splitlines() if line.strip()]
+    if not lines or lines[-1] != "return;":
+        return False
+    if "night_soothe.ogg" in block:
+        return False
+    if source.count(_NIGHT_BODY) != 1:
+        return False
+    return source.index(_NIGHT_BODY) > end
+
+
+def _story_refusal_returns_before_body(source: str) -> bool:
+    try:
+        block = _block_after(source, _STORY_REFUSAL)
+    except ValueError:
+        return False
+    lines = [line.strip() for line in block.splitlines() if line.strip()]
+    if not lines or lines[-1] != "return;":
+        return False
+    if "offline_menu_.OnStoryRefused(" not in block:
+        return False
+    return all(name not in block for name in _STORY_BODY_NAMES)
+
+
+def test_bedtime_without_intro_returns_before_the_body() -> None:
+    source = BOARD_CC.read_text(encoding="utf-8")
+    assert _bedtime_refusal_returns_before_body(source)
+    mutated = _without_block_return(source, _BEDTIME_REFUSAL)
+    assert _NIGHT_BODY in mutated
+    assert not _bedtime_refusal_returns_before_body(mutated)
+
+
+def test_refused_story_tells_the_menu_and_never_plays_the_body() -> None:
+    source = BOARD_CC.read_text(encoding="utf-8")
+    assert _story_refusal_returns_before_body(source)
+    mutated = _without_block_return(source, _STORY_REFUSAL)
+    assert "offline_menu_.OnStoryRefused(" in mutated
+    assert not _story_refusal_returns_before_body(mutated)
+
+
 def test_story_path_refuses_without_intro() -> None:
     board = BOARD_CC.read_text(encoding="utf-8")
     assert "refusing story without AIGC intro" in board
