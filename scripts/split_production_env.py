@@ -128,6 +128,22 @@ _MEDIA_EDGE_EXTRA_KEYS = frozenset(
 # so they are accepted but routed to no service.
 _RETIRED_KEYS = frozenset(
     {
+        # Voice clone and custom-voice enrollment were removed. Preset Doubao
+        # TTS stays on DOUBAO_TTS_*. These keys must not reach a service.
+        "MEMORIA_DOUBAO_VOICE_API_KEY",
+        "MEMORIA_DOUBAO_VOICE_CLONE_POLL_INTERVAL_S",
+        "MEMORIA_DOUBAO_VOICE_CLONE_URL",
+        "MEMORIA_DOUBAO_VOICE_EXPIRES_AT_FIELD",
+        "MEMORIA_DOUBAO_VOICE_EXPIRES_AT_FORMAT",
+        "MEMORIA_DOUBAO_VOICE_QUERY_URL",
+        "MEMORIA_DOUBAO_VOICE_SYNTH_READY_ID_FIELD",
+        "MEMORIA_DOUBAO_VOICE_SYNTH_READY_ID_MODE",
+        "MEMORIA_VOICE_CLONE_PROVIDER",
+        "MEMORIA_VOICE_ENROLLMENT_TIMEOUT_S",
+        "MEMORIA_VOICE_ENROLLMENT_URL",
+        "MEMORIA_VOICE_TARGET_MODEL",
+        "QWEN_OMNI_VOICE_CLONE_ID",
+        "VOICE_CLONE_ENABLED",
         "MEDIA_BRIDGE_GO_SHADOW_ENABLED",
         # /v1/evolution (and its validator token) was removed on 2026-09-28;
         # it had no caller.
@@ -245,14 +261,6 @@ def split_env(
         required=False,
     )
     pcm_tap_directory(values.get("ENVIRONMENT", ""), values.get("MEDIA_PCM_TAP_DIR", ""))
-    clone_key = values.get("MEMORIA_DOUBAO_VOICE_API_KEY", "").strip()
-    runtime_tts_secrets = {
-        values.get("DOUBAO_TTS_API_KEY", "").strip(),
-        values.get("DOUBAO_TTS_ACCESS_TOKEN", "").strip(),
-    }
-    runtime_tts_secrets.discard("")
-    if clone_key and clone_key in runtime_tts_secrets:
-        raise ValueError("Doubao voice clone and runtime TTS credentials must be independent")
     if values.get("ENVIRONMENT", "").strip().lower() == "production":
         if values.get("MEMORIA_ARCHIVE_INTERNAL_TOKEN", "").strip():
             raise ValueError("production forbids the legacy all-access internal token")

@@ -99,13 +99,6 @@ def prepare(
     archive_secret = _required(minio, "MEMORIA_ARCHIVE_OBJECT_SECRET_KEY")
     voice_access = _required(minio, "MEMORIA_VOICE_OBJECT_ACCESS_KEY")
     voice_secret = _required(minio, "MEMORIA_VOICE_OBJECT_SECRET_KEY")
-    voice_clone_provider = (
-        values.get("MEMORIA_VOICE_CLONE_PROVIDER", "alibaba_model_studio").strip()
-        or "alibaba_model_studio"
-    )
-    default_voice_target = (
-        "seed-icl-2.0" if voice_clone_provider == "volcengine_doubao" else "cosyvoice-v3.5-flash"
-    )
     public_base_url = _required(values, "PUBLIC_BASE_URL")
     runtime_profile_signing_secret = _keep_or_create(
         values,
@@ -263,11 +256,6 @@ def prepare(
             "MEMORIA_VOICE_OBJECT_ACCESS_KEY": voice_access,
             "MEMORIA_VOICE_OBJECT_SECRET_KEY": voice_secret,
             "MEMORIA_VOICE_OBJECT_PREFIX": "voice-clone",
-            "MEMORIA_VOICE_CLONE_PROVIDER": voice_clone_provider,
-            "MEMORIA_VOICE_TARGET_MODEL": values.get(
-                "MEMORIA_VOICE_TARGET_MODEL", default_voice_target
-            ).strip()
-            or default_voice_target,
             "MEMORIA_ARCHIVE_OBJECT_ENCRYPTION_KEY": _keep_or_create(
                 values, "MEMORIA_ARCHIVE_OBJECT_ENCRYPTION_KEY", _fernet_key
             ),

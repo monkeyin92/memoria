@@ -28,8 +28,6 @@ class ProviderFields(BaseModel):
     # Qwen3.5-Omni Realtime voice (not Qwen-TTS names like Cherry).
     # Liora Mira = 清欢，温柔女声（官方 Omni 音色表）.
     qwen_omni_voice: str = Field(default="Liora Mira", alias="QWEN_OMNI_VOICE")
-    # Optional custom/cloned voice id from DashScope voice-clone product; wins over preset.
-    qwen_omni_voice_clone_id: str = Field(default="", alias="QWEN_OMNI_VOICE_CLONE_ID")
     qwen_omni_persona_label: str = Field(
         default="Memoria 人设声",
         alias="QWEN_OMNI_PERSONA_LABEL",

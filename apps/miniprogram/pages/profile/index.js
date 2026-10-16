@@ -7,8 +7,6 @@ const { MODE_META, readBindingManifest, entryAllowed } = require("../../utils/de
 const { devicePlaceName } = require("../../utils/device-status");
 const { openPrivacyContract } = require("../../utils/privacy-contract");
 const contracts = require("../../utils/multi-subject-contracts");
-const { isVoiceCloneOpen } = require("../../utils/voice-clone-gate");
-
 const defaultProfile = {
   display_name: "新朋友",
   companion_id: defaultCompanionId,
@@ -238,7 +236,6 @@ Page({
     deliveredCapabilities: [],
     deliveredCapabilitiesLoading: false,
     chatLlmProviders: [],
-    voiceCloneOpen: false,
     appVersionLabel: "",
     showAbout: false,
     aboutLines: [],
@@ -329,7 +326,6 @@ Page({
       deliveredCapabilities: [],
       deliveredCapabilitiesLoading: false,
       chatLlmProviders: [],
-      voiceCloneOpen: false,
       ...deviceBindingReset(),
     });
   },
@@ -595,14 +591,12 @@ Page({
       this.setData({
         deliveredCapabilities: formatDeliveredCapabilityRows(payload),
         chatLlmProviders: chatLlmProvidersFrom(payload),
-        voiceCloneOpen: isVoiceCloneOpen(payload),
       });
     } catch {
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({
         deliveredCapabilities: [],
         chatLlmProviders: [],
-        voiceCloneOpen: false,
       });
     } finally {
       if (api.isAuthEpochCurrent(authEpoch)) {

@@ -1,25 +1,16 @@
 from __future__ import annotations
 
+import importlib
 import inspect
-import json
 
-import httpx
 import pytest
 from services.archive.object_store import ObjectRef
 from services.voice_profile.clone_authority import (
     VoiceCloneAuthority,
     VoiceCloneDisabledError,
 )
-from services.voice_profile.cosyvoice_enrollment import (
-    CosyVoiceEnrollmentClient,
-    CosyVoiceEnrollmentConfig,
-    UnavailableVoiceEnrollmentProvider,
-)
+from services.voice_profile.closed_enrollment import ClosedVoiceEnrollmentProvider
 from services.voice_profile.domain import ProviderVoice, VoiceEnrollmentRequest, VoiceProfilePort
-from services.voice_profile.doubao_voice_clone import (
-    DoubaoVoiceCloneClient,
-    DoubaoVoiceCloneConfig,
-)
 from services.voice_profile.postgres_manager import PostgresVoiceProfileManager
 
 _DSN = "postgresql://refused.invalid/voice"
@@ -186,123 +177,21 @@ async def test_disabled_reconcile_can_still_unwind_an_absent_sample() -> None:
     assert store.calls == []
 
 
-def _http(handler: httpx.MockTransport) -> httpx.AsyncClient:
-    return httpx.AsyncClient(transport=handler)
-
-
-def _cosyvoice(http: httpx.AsyncClient, *, enabled: bool) -> CosyVoiceEnrollmentClient:
-    return CosyVoiceEnrollmentClient(
-        CosyVoiceEnrollmentConfig(endpoint="https://dashscope.example/enroll", api_key="key"),
-        client=http,
-        clone=VoiceCloneAuthority(enabled=enabled),
-    )
+@pytest.mark.hermetic
+def test_voice_clone_provider_modules_are_gone() -> None:
+    for name in (
+        "services.voice_profile.cosyvoice_enrollment",
+        "services.voice_profile.doubao_voice_clone",
+    ):
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(name)
 
 
 @pytest.mark.hermetic
-async def test_disabled_cosyvoice_create_sends_no_http() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise AssertionError(request.url)
-
-    http = _http(httpx.MockTransport(handler))
-    client = _cosyvoice(http, enabled=False)
-    try:
-        with pytest.raises(VoiceCloneDisabledError) as caught:
-            await client.create_voice(
-                target_model="cosyvoice-v3.5-flash",
-                prefix="abc",
-                sample_url="https://samples.example/a.wav",
-            )
-        assert caught.value.code == "voice_clone_disabled"
-    finally:
-        await http.aclose()
-
-
-@pytest.mark.hermetic
-async def test_enabled_cosyvoice_create_returns_the_provider_voice() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        del request
-        return httpx.Response(
-            200,
-            json={"output": {"voice_id": "cosy-1", "target_model": "cosyvoice-v3.5-flash"}},
-        )
-
-    http = _http(httpx.MockTransport(handler))
-    client = _cosyvoice(http, enabled=True)
-    try:
-        voice = await client.create_voice(
-            target_model="cosyvoice-v3.5-flash",
-            prefix="abc",
-            sample_url="https://samples.example/a.wav",
-        )
-        assert voice.voice_id == "cosy-1"
-        assert voice.target_model == "cosyvoice-v3.5-flash"
-    finally:
-        await http.aclose()
-
-
-@pytest.mark.hermetic
-async def test_disabled_cosyvoice_delete_still_posts() -> None:
-    seen: list[object] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(json.loads(request.content))
-        return httpx.Response(200, json={"output": {}})
-
-    http = _http(httpx.MockTransport(handler))
-    client = _cosyvoice(http, enabled=False)
-    try:
-        await client.delete_voice(voice_id="voice-1")
-        assert seen == [
-            {
-                "model": "voice-enrollment",
-                "input": {"action": "delete_voice", "voice_id": "voice-1"},
-            }
-        ]
-    finally:
-        await http.aclose()
-
-
-def _doubao(http: httpx.AsyncClient, *, enabled: bool) -> DoubaoVoiceCloneClient:
-    return DoubaoVoiceCloneClient(
-        DoubaoVoiceCloneConfig(
-            endpoint="https://voice.example/clone",
-            query_endpoint="https://voice.example/query",
-            api_key="key",
-            expires_at_field="expire_time",
-        ),
-        client=http,
-        clone=VoiceCloneAuthority(enabled=enabled),
-    )
-
-
-@pytest.mark.hermetic
-async def test_disabled_doubao_create_sends_no_http() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise AssertionError(request.url)
-
-    http = _http(httpx.MockTransport(handler))
-    client = _doubao(http, enabled=False)
-    try:
-        with pytest.raises(VoiceCloneDisabledError) as caught:
-            await client.create_voice(
-                target_model="seed-icl-2.0",
-                prefix="speaker01",
-                sample_url="https://samples.example/a.wav",
-            )
-        assert caught.value.code == "voice_clone_disabled"
-    finally:
-        await http.aclose()
-
-
-@pytest.mark.hermetic
-async def test_unavailable_provider_admits_before_the_configuration_error() -> None:
-    closed = UnavailableVoiceEnrollmentProvider(clone=VoiceCloneAuthority(enabled=False))
+async def test_closed_provider_refuses_create_and_delete() -> None:
+    closed = ClosedVoiceEnrollmentProvider()
     with pytest.raises(VoiceCloneDisabledError) as caught:
         await closed.create_voice(target_model="x", prefix="y", sample_url="z")
     assert caught.value.code == "voice_clone_disabled"
-
-    open_provider = UnavailableVoiceEnrollmentProvider(clone=VoiceCloneAuthority(enabled=True))
-    with pytest.raises(RuntimeError, match="not configured"):
-        await open_provider.create_voice(target_model="x", prefix="y", sample_url="z")
-    with pytest.raises(RuntimeError, match="not configured"):
+    with pytest.raises(VoiceCloneDisabledError):
         await closed.delete_voice(voice_id="voice-1")

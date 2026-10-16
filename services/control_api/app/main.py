@@ -922,9 +922,7 @@ async def _wire_services(w: Wiring) -> None:
         voice_profile_manager,
         voice_sample_signer,
         voice_object_store,
-        voice_clone,
     ) = voice_profile_services(settings, archive_pool=archive_pool)
-    app.state.voice_clone_authority = voice_clone
     if isinstance(voice_profile_manager, PostgresVoiceProfileManager):
         await w.open(voice_profile_manager.initialize, voice_profile_manager.close)
     app.state.voice_profile_manager = voice_profile_manager

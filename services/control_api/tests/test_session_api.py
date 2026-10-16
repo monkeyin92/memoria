@@ -134,6 +134,7 @@ async def test_create_omni_session_requires_only_dashscope_api_key(
 ) -> None:
     _configure(monkeypatch, tmp_path, offline=False)
     monkeypatch.setenv("DASHSCOPE_WORKSPACE_ID", "")
+    monkeypatch.setenv("QWEN_OMNI_VOICE_CLONE_ID", "cloned-voice-id")
     app = create_app()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
