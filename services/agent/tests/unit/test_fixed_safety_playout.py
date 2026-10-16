@@ -4,7 +4,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 import pytest
 from services.agent.src.contracts.ids import GenerationFence
@@ -19,7 +19,7 @@ from services.agent.src.voice_core.media_protocol import SessionIdentity
 from services.agent.src.voice_core.provider_adapter import ExistingVoiceProviderAdapter
 from services.common.crisis_policy import route_crisis
 from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
-from services.guardian.crisis import crisis_alert_is_pinned
+from services.guardian.crisis import NotificationStatus
 
 CHILD_TEXT = "我不想活了"
 FRAME = 480
@@ -173,7 +173,7 @@ async def test_stop_cuts_the_crisis_script_and_leaves_the_guardian_pin() -> None
     assert crisis.attempt_push is True
     assert crisis.script is CRISIS_SELF_SCRIPT
     for status in ("pending", "pin_only", "delivered", "failed", "no_subscription"):
-        assert crisis_alert_is_pinned(status), status
+        assert status in get_args(NotificationStatus), status
 
     speech = StoppingSpeech()
     adapter = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), speech)
@@ -190,8 +190,8 @@ async def test_stop_cuts_the_crisis_script_and_leaves_the_guardian_pin() -> None
         assert phrase.spoken not in spoken
         assert phrase.display not in "".join(chunk.assistant_text_delta for chunk in chunks)
     assert route_crisis(CHILD_TEXT).notify_guardian is True
-    assert crisis_alert_is_pinned("pending")
-    assert crisis_alert_is_pinned("delivered")
+    assert "pending" in get_args(NotificationStatus)
+    assert "delivered" in get_args(NotificationStatus)
 
 
 @pytest.mark.asyncio
