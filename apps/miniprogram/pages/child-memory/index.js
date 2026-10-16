@@ -9,10 +9,13 @@ const {
   CONSENT_OFF_DIALOG,
   DELETE_CONFIRM,
   DELETE_KEEP,
+  EMPTY_ARCHIVE_OFF,
+  EMPTY_ARCHIVE_OFF_TITLE,
   EMPTY_ARCHIVE_ON,
   EMPTY_RECENT,
   PRIVACY_LINE,
   archiveConsentFromPersonPayload,
+  archiveFactCards,
   assertsNoTranscriptFields,
   boundChildFromManifest,
   groupArchiveByCategory,
@@ -45,6 +48,7 @@ function guestMemoryPatch() {
     authenticated: false,
     summaries: [],
     archiveGroups: [],
+    archiveCards: [],
     archiveFlat: [],
     loadState: "idle",
     loading: false,
@@ -93,9 +97,12 @@ Page({
     privacyLine: PRIVACY_LINE,
     emptyRecent: EMPTY_RECENT,
     emptyArchiveOn: EMPTY_ARCHIVE_ON,
+    emptyArchiveOffTitle: EMPTY_ARCHIVE_OFF_TITLE,
+    emptyArchiveOff: EMPTY_ARCHIVE_OFF,
     deleteKeepLabel: DELETE_KEEP,
     summaries: [],
     archiveGroups: [],
+    archiveCards: [],
     archiveFlat: [],
     archiveConsent: {
       ...CHILD_ARCHIVE_CONSENT,
@@ -188,11 +195,13 @@ Page({
       const summaries = normalizeSessionSummaries(summaryPayload);
       assertsNoTranscriptFields(summaries);
       assertsNoTranscriptFields(archiveFlat);
+      const archiveGroups = groupArchiveByCategory(archiveFlat);
       const companion = companionById(profileResult?.companion_id || defaultCompanionId);
       this.setData({
         summaries,
         archiveFlat,
-        archiveGroups: groupArchiveByCategory(archiveFlat),
+        archiveGroups,
+        archiveCards: archiveFactCards(archiveGroups),
         archiveConsent,
         companionId: companion.id,
         companionName: companion.name,

@@ -25,6 +25,7 @@ const {
   buildTrialDeviceCard,
   memoryPreviewItems,
   pinnedAlertMeta,
+  usageRingStyle,
 } = require("../../utils/trial-device-card");
 
 function countCreatedToday(summaries, now = new Date()) {
@@ -98,6 +99,8 @@ function emptyDashboard() {
     usageKnown: false,
     usageUsedMinutes: null,
     usageLimitMinutes: null,
+    usageFillPercent: 0,
+    usageRingStyle: usageRingStyle(null, null),
     summaryCount: 0,
     avatarGlyph: "M",
     subscriptionPushEnabled: SUBSCRIPTION_PUSH_ENABLED,
@@ -601,6 +604,8 @@ Page({
       usageKnown: trialCard.usageKnown,
       usageUsedMinutes: trialCard.usageUsedMinutes,
       usageLimitMinutes: trialCard.usageLimitMinutes,
+      usageFillPercent: trialCard.usageFillPercent,
+      usageRingStyle: trialCard.usageRingStyle,
       quietHoursLabel: trialCard.quietHoursLabel,
       nightModeOn: trialCard.nightModeOn,
       showSafetyNightCard: offerSafety,

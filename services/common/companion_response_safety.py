@@ -30,9 +30,6 @@ AFFECTION_FIXED_REPLY: Final = (
     "我是 AI，没有喜欢的感觉，不过我会认真听你说话。你今天想聊点什么呀？"
 )
 GUARDIAN_ATTENTION_COPY: Final = "有一条需要你关注的对话"
-GUARDIAN_ATTENTION_STORY_RETELL_COPY: Final = (
-    "有一条需要你关注的对话（可能是在复述故事）"
-)
 AFTER_FIXED_SAFETY_SESSION_INSTRUCTION: Final = (
     "本会话已经对用户说过固定安全话术，那一句已经说完。"
     "不要重复它，不要改写它，不要把它截短，也不要在后面加安慰或叫对方别担心的话。"
@@ -74,15 +71,12 @@ def assistant_text_repeats_or_dilutes_safety(
     return False
 
 
-# Cue words only. A crisis without one of these never gets the retell pin note.
 _STORY_RETELL_FRAME_RE = re.compile(r"(?:故事|绘本|动画片|童话|神话|哪吒)")
 
 
 def guardian_attention_copy(*, possibly_story_retell: bool = False) -> str:
-    """Parent Mini Program pin text. Story framing never suppresses the route."""
+    """Parent title. ``possibly_story_retell`` stays on the row and is not written here."""
 
-    if possibly_story_retell:
-        return GUARDIAN_ATTENTION_STORY_RETELL_COPY
     return GUARDIAN_ATTENTION_COPY
 
 

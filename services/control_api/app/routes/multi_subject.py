@@ -24,6 +24,11 @@ from services.common.daily_chat_limit import (
     DailyChatBudget,
     effective_daily_chat_budget,
 )
+from services.common.session_length import (
+    SESSION_MINUTES_MAX,
+    SESSION_MINUTES_MIN,
+    session_seconds_from_minutes,
+)
 from services.consent.binding_snapshot import BINDING_OFFER_CATALOG
 from services.consent.bound_subject import (
     GUARDIAN_MEMORY_CAPABILITIES,
@@ -418,9 +423,7 @@ def _session_params(preferences: dict[str, object] | None) -> ConsentParams:
     quiet = (preferences or {}).get("quiet_hours")
     try:
         return ConsentParams(
-            max_session_seconds=(
-                minutes * 60 if isinstance(minutes, int) and not isinstance(minutes, bool) else None
-            ),
+            max_session_seconds=session_seconds_from_minutes(minutes),
             quiet_hours=(
                 (str(quiet["start"]), str(quiet["end"]))
                 if isinstance(quiet, dict) and {"start", "end"} <= quiet.keys()
@@ -973,7 +976,9 @@ class SessionLimitsRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    max_session_minutes: int | None = Field(default=None, ge=15, le=60)
+    max_session_minutes: int | None = Field(
+        default=None, ge=SESSION_MINUTES_MIN, le=SESSION_MINUTES_MAX
+    )
     quiet_hours: QuietHoursRequest | None = None
     daily_chat_minutes: int | None = None
 

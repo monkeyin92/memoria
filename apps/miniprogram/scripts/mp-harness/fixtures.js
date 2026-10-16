@@ -60,7 +60,7 @@ const RUNTIME_PROFILE = {
   subject_category: "minor",
   obligations: [
     { code: "QUIET_HOURS", params: { quiet_hours: ["21:00", "07:00"] } },
-    { code: "MAX_SESSION_SECONDS", params: { max_session_seconds: 1800, extras: [["daily_chat_seconds", "1800"]] } },
+    { code: "MAX_SESSION_SECONDS", params: { max_session_seconds: 900, extras: [["daily_chat_seconds", "1800"]] } },
   ],
   persona: { persona_id: "starlight" },
 };
@@ -213,7 +213,7 @@ function baseApi(overrides = {}) {
     getWakeWordCatalog: async () => ({ items: [] }),
     getOfflineStories: async () => ({ items: OFFLINE_STORIES }),
     getSessionLimits: async () => ({
-      max_session_minutes: 30,
+      max_session_minutes: 15,
       quiet_hours: { start: "21:00", end: "07:00" },
       daily_chat_minutes: 30,
       daily_chat_minute_choices: [15, 30, 45, 60],

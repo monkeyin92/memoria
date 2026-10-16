@@ -79,7 +79,7 @@
       </view>
 
       <view class="trial-card trial-card-xl home-usage-card" bindtap="openDevice">
-        <view class="home-ring">
+        <view class="home-ring" style="{{usageRingStyle}}">
           <view class="home-ring-inner">
             <text class="home-ring-num">{{usageLimitMinutes || '未设置'}}</text>
             <text class="home-ring-cap">{{usageLimitMinutes ? '分钟 · 每天上限' : '每天上限'}}</text>

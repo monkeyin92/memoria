@@ -41,7 +41,7 @@ test("home ring shows the daily budget without inventing minutes the ledger coul
   const text = visibleText(html);
   assert.match(text, /30 分钟 · 每天上限 今天聊了 用量暂未统计/);
   assert.doesNotMatch(text, /\d+%|单次上限/);
-  assert.doesNotMatch(html, /conic-gradient/);
+  assert.match(html, /conic-gradient\(#4A52C9 0% 0%, #ECECF2 0% 100%\)/);
 });
 
 test("home ring fills the used share of the daily budget", async () => {
@@ -80,7 +80,8 @@ test("home shows today's minutes only when the session-limits read carries them"
   const text = visibleText(html);
   assert.match(text, /30 分钟 · 每天上限 今天聊了 18 分钟/);
   assert.doesNotMatch(text, /用量暂未统计|\d+%/);
-  assert.doesNotMatch(html, /conic-gradient/);
+  assert.equal(data.usageFillPercent, 60);
+  assert.match(html, /conic-gradient\(#4A52C9 0% 60%, #ECECF2 60% 100%\)/);
 
   const failed = await loadHome({
     api: {

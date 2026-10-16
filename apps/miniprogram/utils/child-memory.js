@@ -12,6 +12,12 @@ const ARCHIVE_FIELD_LABELS = Object.freeze({
 
 const ARCHIVE_FIELD_ORDER = Object.freeze(["appellation", "preference", "pet_name"]);
 
+const ARCHIVE_FIELD_CAPTIONS = Object.freeze({
+  appellation: "孩子喜欢被这样叫",
+  preference: "聊天时会提到",
+  pet_name: "讲故事时可能出现",
+});
+
 const CHILD_ARCHIVE_CONSENT = Object.freeze({
   kind: "child_archive",
   label: "长期记忆",
@@ -25,6 +31,9 @@ const PRIVACY_LINE =
 const EMPTY_RECENT =
   "还没有记忆。孩子和 Memoria 聊过之后，这里会出现摘要。";
 const EMPTY_ARCHIVE_ON = "开启后，孩子聊到的喜好会出现在这里。";
+const EMPTY_ARCHIVE_OFF_TITLE = "长期记忆未开启";
+const EMPTY_ARCHIVE_OFF =
+  "开启后，这里会显示孩子的称呼、喜好和宠物名。已经记下的内容还在，不会被清掉。";
 const CONSENT_OFF_DIALOG =
   "关闭后不会再写入新内容。已有内容仍按当前授权管理。";
 const DELETE_CONFIRM =
@@ -121,6 +130,15 @@ function normalizeChildArchive(payload) {
   return items;
 }
 
+function archiveFactCards(groups) {
+  return (groups || []).map((group) => ({
+    field: group.field,
+    label: group.label,
+    value: group.items.map((item) => item.text).filter(Boolean).join("、"),
+    caption: ARCHIVE_FIELD_CAPTIONS[group.field] || "",
+  }));
+}
+
 function groupArchiveByCategory(items) {
   const buckets = new Map();
   for (const field of ARCHIVE_FIELD_ORDER) {
@@ -184,6 +202,7 @@ function assertsNoTranscriptFields(viewModels) {
 }
 
 module.exports = {
+  ARCHIVE_FIELD_CAPTIONS,
   ARCHIVE_FIELD_LABELS,
   ARCHIVE_FIELD_ORDER,
   CHILD_ARCHIVE_CONSENT,
@@ -191,10 +210,13 @@ module.exports = {
   CONSENT_OFF_DIALOG,
   DELETE_CONFIRM,
   DELETE_KEEP,
+  EMPTY_ARCHIVE_OFF,
+  EMPTY_ARCHIVE_OFF_TITLE,
   EMPTY_ARCHIVE_ON,
   EMPTY_RECENT,
   PRIVACY_LINE,
   archiveConsentFromPersonPayload,
+  archiveFactCards,
   assertsNoTranscriptFields,
   boundChildFromManifest,
   displayDateLabel,

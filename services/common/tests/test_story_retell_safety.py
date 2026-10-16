@@ -1,7 +1,7 @@
 """Story-retell utterances for issue #261 (产品部 10/15, 合规 tiers 10/14).
 
 Rules must fire on risk language even when framed as a story. Ordinary fairy-tale
-plots stay quiet. Parent pin copy may note possible retelling; scripts never change.
+plots stay quiet. The parent title never names a guessed reason. Scripts never change.
 """
 
 from __future__ import annotations
@@ -134,7 +134,7 @@ def test_ordinary_parent_pin_copy_has_no_story_note() -> None:
 
 
 def test_plain_crisis_self_is_not_marked_as_story_retell() -> None:
-    """「我不想活了」 must crisis-route and must not get the retell pin note."""
+    """「我不想活了」 must crisis-route and must not be marked as a story retell."""
 
     query = "我不想活了"
     assert companion_safety_decision(query) == "crisis_self"

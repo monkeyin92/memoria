@@ -18,6 +18,12 @@ const {
 const { readSubjectLabel, saveSubjectLabel } = require("../../utils/subject-label");
 const { sessionLimitsFromProfile } = require("../../utils/session-limits");
 const {
+  SESSION_MINUTE_OPTIONS,
+  SESSION_MINUTES_DEFAULT,
+  SESSION_MINUTES_MAX,
+  SESSION_MINUTES_MIN,
+} = require("../../utils/session-length");
+const {
   DEFAULT_QUIET_HOURS,
   nightModeQuietHoursLabel,
   confirmUnusualQuietHours,
@@ -26,11 +32,7 @@ const { offersSafetySubscribe } = require("../../utils/trial-device-card");
 const { PRIVACY_LINE } = require("../../utils/child-memory");
 const { SUBSCRIPTION_PUSH_ENABLED } = require("../../config");
 
-// 与绑定页的「单次使用时长」选项一致。
-const SESSION_MINUTE_OPTIONS = [15, 30, 45, 60];
-const LIMITS_SLIDER_MIN = 15;
-const LIMITS_SLIDER_MAX = 60;
-const LIMITS_SLIDER_STEP = 15;
+const LIMITS_SLIDER_STEP = 1;
 const { isTabRoute, routeOf } = require("../../utils/tab-routes");
 
 
@@ -343,9 +345,9 @@ Page({
     limitsSaving: false,
     limitsError: "",
     limitsMinuteOptions: SESSION_MINUTE_OPTIONS,
-    limitsMinuteIndex: 1,
-    limitsSliderMin: LIMITS_SLIDER_MIN,
-    limitsSliderMax: LIMITS_SLIDER_MAX,
+    limitsMinuteIndex: SESSION_MINUTE_OPTIONS.indexOf(SESSION_MINUTES_DEFAULT),
+    limitsSliderMin: SESSION_MINUTES_MIN,
+    limitsSliderMax: SESSION_MINUTES_MAX,
     limitsSliderStep: LIMITS_SLIDER_STEP,
     limitsQuietStart: DEFAULT_QUIET_HOURS.start,
     limitsQuietEnd: DEFAULT_QUIET_HOURS.end,
@@ -976,7 +978,7 @@ Page({
           : [...SESSION_MINUTE_OPTIONS, sessionLimits.maxSessionMinutes].sort((a, b) => a - b);
       const limitsMinuteIndexRaw = limitsMinuteOptions.indexOf(sessionLimits?.maxSessionMinutes);
       const limitsMinuteIndex =
-        limitsMinuteIndexRaw >= 0 ? limitsMinuteIndexRaw : limitsMinuteOptions.indexOf(30);
+        limitsMinuteIndexRaw >= 0 ? limitsMinuteIndexRaw : limitsMinuteOptions.indexOf(SESSION_MINUTES_DEFAULT);
       this.setData({
         hasBinding: true,
         authenticated: true,
@@ -1404,7 +1406,7 @@ Page({
       limitsSheetVisible: true,
       limitsError: "",
       limitsMinuteOptions: options,
-      limitsMinuteIndex: index >= 0 ? index : options.indexOf(30),
+      limitsMinuteIndex: index >= 0 ? index : options.indexOf(SESSION_MINUTES_DEFAULT),
       limitsQuietStart: quietStart,
       limitsQuietEnd: quietEnd,
       limitsQuietLabel: nightModeQuietHoursLabel(quietStart, quietEnd),

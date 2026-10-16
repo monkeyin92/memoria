@@ -67,7 +67,7 @@ test("pinnedAlerts keeps only server-marked undelivered crisis rows", () => {
       occurredAt: "2026-10-14T00:00:00+00:00",
       deliveryStatus: "no_subscription",
       pinned: true,
-      message: "请尽快联系",
+      message: "有一条需要你关注的对话",
     },
   ]);
 });

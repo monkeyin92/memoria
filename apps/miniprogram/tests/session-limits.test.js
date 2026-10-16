@@ -99,8 +99,8 @@ test("a same-day window has no 次日 marker", () => {
   assert.equal(limits.maxSessionLabel, "");
 });
 
-test("stored per-session limits above 60 minutes clamp to 60 on read", () => {
-  for (const minutes of [90, 120]) {
+test("stored per-session limits above 30 minutes clamp to 30 on read", () => {
+  for (const minutes of [45, 60, 90, 120]) {
     const limits = sessionLimitsFromProfile(
       profile({
         obligations: [
@@ -117,7 +117,7 @@ test("stored per-session limits above 60 minutes clamp to 60 on read", () => {
       }),
       DAY,
     );
-    assert.equal(limits.maxSessionMinutes, 60);
-    assert.equal(limits.maxSessionLabel, "60 分钟");
+    assert.equal(limits.maxSessionMinutes, 30);
+    assert.equal(limits.maxSessionLabel, "30 分钟");
   }
 });

@@ -25,7 +25,7 @@ test("the archive leads the page with the design's three labels and footer, summ
     const text = visibleText(renderPage("pages/child-memory/index", harness.page.data, { tabBar: false }));
     assert.match(
       text,
-      /^长期记住的事 乐乐的记忆 机器人长期只记住这三件事，用来更自然地和孩子聊天。 称呼 乐乐 10 月 5 日 喜好 恐龙 10 月 14 日 画画 10 月 13 日 宠物名 小乐宝 10 月 9 日 除这三项外，不长期保存其他信息。 长期记忆 开启后，Memoria 会记住孩子提到的称呼、喜好和宠物名。你可以随时关闭，关闭后不再记新的内容。 清空长期记忆 近期摘要 讲了/,
+      /^长期记住的事 乐乐的记忆 机器人长期只记住这三件事，用来更自然地和孩子聊天。 称呼 乐乐 孩子喜欢被这样叫 喜好 恐龙、画画 聊天时会提到 宠物名 小乐宝 讲故事时可能出现 除这三项外，不长期保存其他信息。 长期记忆 开启后，Memoria 会记住孩子提到的称呼、喜好和宠物名。你可以随时关闭，关闭后不再记新的内容。 清空长期记忆 近期摘要 讲了/,
     );
     assert.doesNotMatch(text, /兴趣|小名|共 \d+ 条/);
   } finally {
@@ -41,7 +41,7 @@ test("an open long-term memory shows one fact card per field, joining values", a
       text,
       /称呼 乐乐 孩子喜欢被这样叫 喜好 恐龙、画画 聊天时会提到 宠物名 小乐宝 讲故事时可能出现 除这三项外，不长期保存其他信息。/,
     );
-    assert.doesNotMatch(text, /10 月/);
+    assert.doesNotMatch(text.split("近期摘要")[0], /10 月/);
   } finally {
     harness.restore();
   }
@@ -65,7 +65,7 @@ test("a closed long-term memory shows an empty state and does not list facts", a
     assert.equal(harness.page.data.archiveConsent.active, false);
     assert.match(text, /长期记忆未开启/);
     assert.match(text, /已经记下的内容还在/);
-    assert.doesNotMatch(text, /恐龙|画画|小乐宝|孩子喜欢被这样叫/);
+    assert.doesNotMatch(text.split("近期摘要")[0], /恐龙|画画|小乐宝|孩子喜欢被这样叫/);
   } finally {
     harness.restore();
   }

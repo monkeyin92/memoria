@@ -50,13 +50,13 @@ test("the 单次上限 slider runs from 10 to 30 and shows a signed 15 minute ca
   }
 });
 
-test("releasing the 单次上限 slider at 60 saves 60 minutes with the stored quiet window", async () => {
+test("releasing the 单次上限 slider past 30 saves 30 minutes with the stored quiet window", async () => {
   const saved = [];
   const harness = loadPage("pages/device/index", fx.authed({ setSessionLimits: async (...args) => saved.push(args) }));
   try {
     await harness.run();
     await harness.page.onLimitsMinutesSlider({ detail: { value: 60 } });
-    assert.deepEqual(saved, [["dev_1", { maxSessionMinutes: 60, quietStart: "21:00", quietEnd: "07:00" }]]);
+    assert.deepEqual(saved, [["dev_1", { maxSessionMinutes: 30, quietStart: "21:00", quietEnd: "07:00" }]]);
     assert.equal(harness.page.data.limitsSaving, false);
   } finally {
     harness.restore();
@@ -67,11 +67,11 @@ test("the usage screen counts today's chat against the daily budget the guardian
   const scenario = PAGES.find((item) => item.slug === "device");
   const { data } = await scenarioData(scenario);
   assert.equal(data.trialSettingsVisible, true);
-  assert.equal(data.sessionLimits.maxSessionMinutes, 30);
+  assert.equal(data.sessionLimits.maxSessionMinutes, 15);
   assert.equal(data.sessionLimits.dailyChatMinutes, 30);
   const text = visibleText(renderPage(scenario.page, data));
   assert.match(text, /18 \/ 30 分钟 今天还可以聊 12 分钟/);
-  assert.match(text, /单次上限 30 分钟 15 分钟 60 分钟 每天上限 30 分钟 15 分钟 60 分钟 安静时段/);
+  assert.match(text, /单次上限 15 分钟 10 分钟 30 分钟 每天上限 30 分钟 15 分钟 60 分钟 安静时段/);
   assert.doesNotMatch(text, /每日上限/);
 });
 
@@ -86,8 +86,8 @@ test("the usage screen reads 未设置 when the signed profile has quiet hours b
     assert.equal(data.sessionLimits.maxSessionMinutes, null);
     const text = visibleText(renderPage("pages/device/index", data));
     assert.match(text, /未设置 单次上限 用量暂未统计/);
-    assert.match(text, /单次上限 未设置 15 分钟 60 分钟/);
-    assert.doesNotMatch(text, /\b30\b/);
+    assert.match(text, /单次上限 未设置 10 分钟 30 分钟/);
+    assert.doesNotMatch(text, /单次上限 15 分钟|单次上限 30 分钟/);
   } finally {
     harness.restore();
   }

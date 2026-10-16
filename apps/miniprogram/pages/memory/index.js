@@ -14,6 +14,23 @@ function today() {
 
 const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
 
+function reviewDateStrip(count = 6, now = new Date()) {
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const days = [];
+  for (let offset = 0; offset < count; offset += 1) {
+    const date = new Date(start);
+    date.setDate(start.getDate() - offset);
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    days.push({
+      date: `${date.getFullYear()}-${month}-${day}`,
+      weekday: WEEKDAYS[date.getDay()],
+      dayNum: String(date.getDate()),
+    });
+  }
+  return days;
+}
+
 function dayLabels(dateKey) {
   const [year, month, day] = String(dateKey).split("-").map(Number);
   if (!year || !month || !day) return { dayLabel: dateKey, dateLabel: "", weekday: "", dayNum: "" };
@@ -155,6 +172,7 @@ Page({
   data: {
     statusBarStyle: statusBarStyle(),
     days: [],
+    dateStrip: reviewDateStrip(),
     heardTurns: [],
     memoryCandidates: [],
     confirmedMemories: [],
@@ -260,6 +278,7 @@ Page({
     this.setData({
       authenticated: false,
       days: [],
+      dateStrip: [],
       heardTurns: [],
       memoryCandidates: [],
       confirmedMemories: [],
@@ -315,7 +334,7 @@ Page({
     const identity = api.currentIdentity();
     if (!identity) return "guest";
     const authEpoch = api.currentAuthEpoch();
-    this.setData({ loading: true, error: "" });
+    this.setData({ loading: true, error: "", dateStrip: reviewDateStrip() });
     try {
       const guardianSubject = this._guardianSubject();
       let guardianDays = null;

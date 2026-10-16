@@ -38,11 +38,10 @@
 
     <block wx:elif="{{memoryTab === 'reviews'}}">
       <view wx:if="{{guardianError}}" class="notice notice-warn">{{guardianError}}</view>
-      <view wx:if="{{days.length}}" class="card memory-strip">
+      <view class="card memory-strip">
         <view
-          wx:for="{{days}}"
+          wx:for="{{dateStrip}}"
           wx:key="date"
-          wx:if="{{index < 6}}"
           class="memory-strip-day {{selectedDate === item.date ? 'memory-strip-on' : ''}}"
           data-date="{{item.date}}"
           bindtap="chooseDay"
@@ -51,7 +50,7 @@
           <text class="memory-strip-num">{{item.dayNum}}</text>
         </view>
       </view>
-      <view wx:else class="card memory-card memory-empty">
+      <view wx:if="{{!days.length}}" class="card memory-card memory-empty">
         <mp-icon name="note" size="112"></mp-icon>
         <text class="l2-card-title">还没有可回顾的内容</text>
         <text class="l2-card-sub">{{guardianMode ? '孩子还没有聊过天，或者还没有开启孩子的长期记忆。' : '这里还空空的，没关系。需要时再来看看，一切由你决定。'}}</text>

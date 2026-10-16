@@ -58,6 +58,9 @@ from packages.contracts.generated.python.multi_subject_contracts import (
 )
 
 from services.common.daily_chat_limit import effective_daily_chat_budget, with_daily_chat_budget
+from services.common.session_length import (
+    DEFAULT_MAX_SESSION_SECONDS as _DEFAULT_MAX_SESSION_SECONDS,
+)
 from services.policy.action_fence import capture_authority_hash
 from services.policy.context import (
     PolicyContext,
@@ -294,7 +297,6 @@ def _params(
     )
 
 
-_DEFAULT_MAX_SESSION_SECONDS: Final = 1800
 DEFAULT_QUIET_HOURS: Final[tuple[str, str]] = ("21:00", "07:00")
 
 _OBLIGATION_PARAMS: Final[dict[PolicyObligationCode, GeneratedObligationParams]] = {
