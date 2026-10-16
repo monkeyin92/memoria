@@ -11,8 +11,8 @@
   {
     "slug": "02-consent",
     "page": "pages/auth/index",
-    "diffRatio": 0.20691,
-    "rmse": 55.85,
+    "diffRatio": 0.212515,
+    "rmse": 55.774,
     "overflow": [],
     "underCapsule": [],
     "tabClearance": null

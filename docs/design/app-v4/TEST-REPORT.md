@@ -122,7 +122,7 @@ The guest home is the full-bleed login screen with no tab bar. The greeting foll
 
 ![02-consent, live page left, design right](mp-screenshots/side-by-side/02-consent.png)
 
-The consent screen leads the auth page. Five fact cards, the guardian tick, 「同意并继续」, 「暂不同意」 and the two notes under it sit inside the 390×844 frame. The last note ends at 817 CSS px. The name and avatar step comes after phone authorization, and only on a first registration. Horizontal overflow and content under the capsule are both 0. This reshoot compares the live page with the updated five-card design. diffRatio is 0.207.
+The consent screen leads the auth page. Five fact cards, the guardian tick, 「同意并继续」, 「暂不同意」 and the two notes under it sit inside the 390×844 frame. While `<!-- agreement: pending -->` is still in the user agreement, the tick stays locked and the line under it reads 「用户协议正在定稿，定稿后才能勾选同意」. In that state the last note ends at 833 CSS px. Removing the marker and filling the agreement body hides the line and lets the tick work. The name and avatar step comes after phone authorization, and only on a first registration. Horizontal overflow and content under the capsule are both 0. This reshoot compares the locked live page with the five-card design. diffRatio is 0.213.
 
 The five cards now use the same sentences as the design.
 
@@ -131,7 +131,7 @@ The five cards now use the same sentences as the design.
 - Fact 4 stays 「回应由 AI 生成」, with the sub 「会明确标识；模型训练默认关闭」.
 - Fact 5 title is 「设备没有摄像头」, and the subtitle is 「不拍照，也不录像」. The icon is `cam`.
 
-The checkbox reads 「我是孩子的监护人，已阅读并同意《隐私保护指引》和《监护人同意书》」. Each title is its own link, so a tap opens that document instead of only toggling the box. 《隐私保护指引》 calls `wx.openPrivacyContract`. 《监护人同意书》 opens `pages/guardian-consent/index`. The page chip is 「内测版」. The effective date stays blank until 融资合规部 sets it. Parent-visible copy does not say 「草稿」. Notes on login and recording still follow 「暂不同意」.
+The checkbox reads 「我是孩子的监护人，已阅读并同意《隐私保护指引》和《监护人同意书》」. While the agreement marker is present, the row is locked and a tap does not tick it. After the body replaces the marker, a tap ticks it. Each title is its own link, so a tap opens that document. 《隐私保护指引》 calls `wx.openPrivacyContract`. 《监护人同意书》 opens `pages/guardian-consent/index`. The page chip is 「内测版」. The effective date stays blank until 融资合规部 sets it. Parent-visible copy does not say 「草稿」. Notes on login and recording still follow 「暂不同意」.
 
 ### 03-home
 
