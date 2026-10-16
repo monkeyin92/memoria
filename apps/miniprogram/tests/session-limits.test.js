@@ -122,7 +122,7 @@ test("stored seconds outside 10 to 30 minutes are not a parent choice", () => {
   }
 });
 
-test("stored per-session limits above 30 minutes clamp to 30 on read", () => {
+test("stored per-session limits above 30 minutes stay off the slider instead of clamping to 30", () => {
   for (const minutes of [45, 60, 90, 120]) {
     const limits = sessionLimitsFromProfile(
       profile({
@@ -140,7 +140,7 @@ test("stored per-session limits above 30 minutes clamp to 30 on read", () => {
       }),
       DAY,
     );
-    assert.equal(limits.maxSessionMinutes, 30);
-    assert.equal(limits.maxSessionLabel, "30 分钟");
+    assert.equal(limits.maxSessionMinutes, null);
+    assert.equal(limits.maxSessionLabel, "");
   }
 });
