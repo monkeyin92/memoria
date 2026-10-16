@@ -148,3 +148,25 @@ def test_turn_detector_only_gates_commit_and_delegation_not_prefetch() -> None:
     assert provisional.start_prefetch and provisional.warm_fast_model
     assert not provisional.persist_turn and not provisional.start_delegation
     assert committed.persist_turn and committed.start_delegation
+
+
+@pytest.mark.parametrize("text", ["请暂停", "我想停一下"])
+def test_short_embedded_stop_cancels_playback_without_speech_or_delegation(text: str) -> None:
+    route = route_utterance(text)
+    decision = InteractionPlane().decide(
+        InteractionSnapshot(
+            event=InteractionEvent.TRANSCRIPT,
+            assistant_speaking=True,
+            text=text,
+            final=True,
+            turn_committed=True,
+            has_speech_energy=True,
+            utterance_route=route,
+        )
+    )
+
+    assert decision.cancel_generation is True
+    assert decision.acknowledgement is None
+    assert decision.start_delegation is False
+    assert decision.persist_turn is False
+    assert decision.warm_fast_model is False

@@ -312,6 +312,41 @@ def test_conversation_close_phrases_are_hardware_scoped_and_exact() -> None:
     assert route.reason == "conversation_end_explicit"
 
 
+@pytest.mark.parametrize(
+    ("text", "intent"),
+    [
+        ("我不想听了你讲个别的", UtteranceIntent.INTERRUPT_THEN_CHAT),
+        ("小兔子停下来看了看", UtteranceIntent.CHAT),
+    ],
+)
+def test_stop_phrase_counts_at_the_start_of_a_sentence_only(
+    text: str,
+    intent: UtteranceIntent,
+) -> None:
+    assert route_utterance(text).intent is intent
+
+
+@pytest.mark.parametrize("text", ["停下来", "停下来。", "停下来！"])
+def test_bare_stop_coming_is_a_stop_command(text: str) -> None:
+    route = route_utterance(text)
+    assert route.intent is UtteranceIntent.INTERRUPT_COMMAND
+    assert route.should_interrupt is True
+    assert route.enter_chat is False
+
+
+@pytest.mark.parametrize("text", ["请暂停", "我想停一下"])
+def test_short_embedded_stop_cancels_without_a_reply_or_a_model_turn(text: str) -> None:
+    route = route_utterance(text)
+    assert route.intent is UtteranceIntent.INTERRUPT_COMMAND
+    assert route.should_interrupt is True
+    assert route.enter_chat is False
+    assert route.ack_phrase is None
+
+    follow = route_utterance("你讲个别的")
+    assert follow.intent is UtteranceIntent.CHAT
+    assert follow.enter_chat is True
+
+
 def test_interrupt_then_chat_has_no_control_ack() -> None:
     route = route_utterance("等一下我想问个事")
     assert route.intent is UtteranceIntent.INTERRUPT_THEN_CHAT

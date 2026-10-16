@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import pytest
 from services.agent.src.orchestration.interruption_guard import (
     ChineseInterruptionGuard,
     InterruptDecision,
     PlaybackInputDecision,
     PlaybackInputGuard,
+    interrupt_ack_phrase,
     is_backchannel,
     is_completion_ack_only,
     is_conversation_close_only,
     is_explicit_interrupt,
     is_interrupt_command_only,
     is_primarily_non_chinese_script,
+    is_resume_command_only,
     is_short_assistant_farewell_reply,
     user_turn_suggests_conversation_close,
 )
@@ -320,5 +323,68 @@ def test_primarily_non_chinese_script_detects_short_hangul_rescue() -> None:
 def test_repeated_bare_stop_is_a_command_but_stop_words_in_nouns_are_not() -> None:
     for text in ("停", "停停", "停停停", "停，停"):
         assert is_interrupt_command_only(text), text
-    for text in ("停车", "停电了", "停停车", "我想停一下"):
+    for text in ("停车", "停电了", "停停车"):
         assert not is_interrupt_command_only(text), text
+
+
+@pytest.mark.parametrize(
+    ("text", "ack"),
+    [
+        ("停", "好的。"),
+        ("停下", "好的。"),
+        ("停停", "好的。"),
+        ("停一下", "嗯，你说。"),
+        ("暂停", "好的。"),
+        ("别说了", "好的。"),
+        ("不要说了", "好的。"),
+        ("别讲了", "好的。"),
+        ("不要讲了", "好的。"),
+        ("不讲了", "好的。"),
+        ("不听了", "好的。"),
+        ("我不想听了", "好的。"),
+        ("够了", "好的。"),
+        ("安静", "好的。"),
+        ("闭嘴", "好的。"),
+        ("嘘", "好的。"),
+        ("stop", "好的。"),
+        ("STOP", "好的。"),
+        ("Stop.", "好的。"),
+        ("停！", "好的。"),
+        ("停，停", "好的。"),
+    ],
+)
+def test_bare_stop_phrase_is_a_command_with_its_ack(text: str, ack: str) -> None:
+    assert is_explicit_interrupt(text)
+    assert is_interrupt_command_only(text)
+    assert interrupt_ack_phrase(text) == ack
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "停车",
+        "别停",
+        "不要停",
+        "停电",
+        "雨停了",
+        "停在哪",
+        "小兔子停下来看了看",
+        "别停下",
+        "不要暂停",
+        "等下我",
+        "我们等下",
+    ],
+)
+def test_stop_character_without_a_stop_command_is_not_an_interrupt(text: str) -> None:
+    assert not is_explicit_interrupt(text)
+    assert not is_interrupt_command_only(text)
+
+
+def test_stop_phrase_with_a_request_interrupts_without_dropping_the_request() -> None:
+    assert is_explicit_interrupt("我不想听了你讲个别的")
+    assert not is_interrupt_command_only("我不想听了你讲个别的")
+
+
+def test_resume_strips_a_stop_phrase_but_not_a_noun_that_starts_with_stop() -> None:
+    assert is_resume_command_only("暂停。继续")
+    assert not is_resume_command_only("停车，继续")
