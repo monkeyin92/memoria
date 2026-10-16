@@ -8,7 +8,12 @@ scheduled unit failed every 12h until the smoke evidence crossed its 24h TTL and
 took production readiness to ``not_ready``.
 """
 
+import shlex
+import subprocess
 from pathlib import Path
+
+import pytest
+from scripts import provider_smoke_test
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -55,3 +60,165 @@ def test_smokes_run_in_the_media_bridge_after_the_livekit_retirement() -> None:
     # `config` renders profiled services only when their profile is active.
     assert script.count('--project-name "$project_name" --profile media-runtime') == 2
     assert "Doubao, InterruptSemantic" not in script
+
+
+def _shell_function(text: str, name: str) -> str:
+    start = text.index(f"{name}() {{")
+    end = text.index("\n}\n", start)
+    return text[start : end + 3]
+
+
+def _provider_expected(agent_env: Path) -> str:
+    """Run the script's own expected-line block against an agent env file."""
+
+    script = _script()
+    start = script.index('llm_provider="$(awk')
+    end = script.index("for attempt in 1 2;")
+    block = script[start:end]
+    preamble = ""
+    if "provider_expected_line() {" in script:
+        preamble = _shell_function(script, "provider_expected_line") + "\n"
+    program = (
+        "set -Eeuo pipefail\n"
+        f"agent_env={shlex.quote(str(agent_env))}\n"
+        + preamble
+        + block
+        + 'printf "%s\\n" "$provider_expected"\n'
+    )
+    result = subprocess.run(
+        ["bash", "-c", program],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+def _required_pass_line(*, search_on: bool, llm_label: str) -> str:
+    names = ["FunASR"]
+    if search_on:
+        names.append("QwenRealtimeSearch")
+    names.extend((llm_label, "Doubao"))
+    return "provider_smoke_test PASS: " + ", ".join(names)
+
+
+def _write_agent_env(
+    tmp_path: Path,
+    *,
+    search_value: str | None,
+    asr: str,
+    omni: str,
+    llm_provider: str,
+) -> Path:
+    lines = [
+        f"LLM_PROVIDER={llm_provider}",
+        f"ASR_PROVIDER={asr}",
+        f"QWEN_OMNI_SESSION_ENABLED={omni}",
+    ]
+    if search_value is not None:
+        lines.append(f"LIVE_SEARCH_QWEN_ENABLED={search_value}")
+    path = tmp_path / "agent.env"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+async def _smoke_pass_line(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    search_value: str | None,
+    asr: str,
+    omni: str,
+    llm_provider: str,
+    llm_label: str,
+) -> str:
+    monkeypatch.setenv("OFFLINE_MOCK", "false")
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "test-dashscope-key")
+    monkeypatch.setenv("DOUBAO_TTS_API_KEY", "test-doubao-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+    monkeypatch.setenv("DOUBAO_TTS_STYLE_CONTROL_ENABLED", "true")
+    monkeypatch.setenv("LLM_PROVIDER", llm_provider)
+    monkeypatch.setenv("ASR_PROVIDER", asr)
+    monkeypatch.setenv("QWEN_OMNI_SESSION_ENABLED", omni)
+    if search_value is None:
+        monkeypatch.delenv("LIVE_SEARCH_QWEN_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("LIVE_SEARCH_QWEN_ENABLED", search_value)
+
+    async def fake_doubao() -> list[tuple[bytes, tuple[str, ...], tuple[str, ...]]]:
+        return [(b"\x00\x00", ("测试",), ())]
+
+    async def fake_realtime_search(_settings: object) -> None:
+        return None
+
+    async def fake_funasr(
+        pcm: bytes,
+        *,
+        expected_markers: tuple[str, ...],
+        forbidden_markers: tuple[str, ...],
+    ) -> None:
+        assert pcm == b"\x00\x00"
+
+    async def fake_llm() -> str:
+        return llm_label
+
+    monkeypatch.setattr(provider_smoke_test, "smoke_doubao", fake_doubao)
+    monkeypatch.setattr(provider_smoke_test, "smoke_realtime_search", fake_realtime_search)
+    monkeypatch.setattr(provider_smoke_test, "smoke_funasr", fake_funasr)
+    monkeypatch.setattr(provider_smoke_test, "smoke_llm", fake_llm)
+
+    assert await provider_smoke_test.main() == 0
+    lines = [
+        line
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("provider_smoke_test PASS:")
+    ]
+    assert len(lines) == 1
+    return lines[0]
+
+
+@pytest.mark.parametrize(
+    ("search_value", "asr", "omni", "llm_provider", "llm_label", "search_on"),
+    [
+        ("false", "none", "false", "bailian_deepseek", "DeepSeek", False),
+        (None, "none", "false", "bailian_deepseek", "DeepSeek", False),
+        ("true", "none", "false", "bailian_deepseek", "DeepSeek", True),
+        ("True", "funasr", "true", "qwen", "Qwen", True),
+        ("0", "funasr", "true", "qwen", "Qwen", False),
+        ("yes", "none", "false", "deepseek", "DeepSeek", True),
+        ("no", "funasr", "true", "qwen", "Qwen", False),
+    ],
+)
+async def test_readiness_expected_line_matches_smoke_for_search_flag(
+    search_value: str | None,
+    asr: str,
+    omni: str,
+    llm_provider: str,
+    llm_label: str,
+    search_on: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    required = _required_pass_line(search_on=search_on, llm_label=llm_label)
+    agent_env = _write_agent_env(
+        tmp_path,
+        search_value=search_value,
+        asr=asr,
+        omni=omni,
+        llm_provider=llm_provider,
+    )
+    shell_line = _provider_expected(agent_env)
+    smoke_line = await _smoke_pass_line(
+        monkeypatch,
+        capsys,
+        search_value=search_value,
+        asr=asr,
+        omni=omni,
+        llm_provider=llm_provider,
+        llm_label=llm_label,
+    )
+
+    assert shell_line == required
+    assert smoke_line == required
