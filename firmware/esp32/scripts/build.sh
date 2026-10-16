@@ -8,17 +8,21 @@ source "$SCRIPT_DIR/common.sh"
 CLEAN=0
 BENCH=0
 KEEP_AWAKE=0
+DANGER_FULL_ERASE=0
 LANGUAGE="${MEMORIA_FIRMWARE_LANGUAGE:-zh-CN}"
 WAKE_WORD_MODEL="${MEMORIA_FIRMWARE_WAKE_WORD_MODEL:-}"
 NO_IDF_INSTALL=0
 
 usage() {
     cat <<'EOF'
-Usage: build.sh [--clean] [--bench] [--keep-awake] [--language LOCALE] [--wake-word MODEL|disabled] [--no-idf-install]
+Usage: build.sh [--clean] [--bench] [--keep-awake] [--danger-full-erase] [--language LOCALE] [--wake-word MODEL|disabled] [--no-idf-install]
 
 The product build uses zh-CN. Board config disables keyword wake
 (CONFIG_WAKE_WORD_DISABLED); pass --wake-word only to override for a
-diagnostic image. The upstream build.py still performs the real merge-bin.
+diagnostic image. The upstream build writes a full-chip image and this
+script deletes it. --danger-full-erase keeps one copy whose name contains
+DANGER_FULL_ERASE. flash.sh refuses that file unless
+--allow-danger-full-erase is set.
 
 --bench builds the test-rig image from the board's config.bench.json: the
 product build plus CONFIG_MEMORIA_BENCH_SERIAL (the USB console also answers
@@ -40,6 +44,7 @@ while (($# > 0)); do
         --clean) CLEAN=1 ;;
         --bench) BENCH=1 ;;
         --keep-awake) KEEP_AWAKE=1 ;;
+        --danger-full-erase) DANGER_FULL_ERASE=1 ;;
         --language) shift; (($# > 0)) || die "--language requires a value"; LANGUAGE="$1" ;;
         --wake-word) shift; (($# > 0)) || die "--wake-word requires a value"; WAKE_WORD_MODEL="$1" ;;
         --no-idf-install) NO_IDF_INSTALL=1 ;;
@@ -138,7 +143,10 @@ fi
 merged="$MEMORIA_UPSTREAM_DIR/build/merged-binary.bin"
 [[ -s "$merged" ]] || die "upstream did not produce a non-empty merged binary: $merged"
 mkdir -p "$MEMORIA_ARTIFACT_DIR"
-cp "$merged" "$MEMORIA_ARTIFACT_DIR/$artifact_name-merged.bin"
+if [[ "$DANGER_FULL_ERASE" == 1 ]]; then
+    danger="$MEMORIA_ARTIFACT_DIR/$artifact_name-DANGER_FULL_ERASE.bin"
+    cp "$merged" "$danger"
+fi
 for image in bootloader.bin partition-table.bin; do
     image_path="$MEMORIA_UPSTREAM_DIR/build/$image"
     if [[ "$image" == "bootloader.bin" ]]; then
@@ -182,8 +190,14 @@ cp "$app_image" "$MEMORIA_ARTIFACT_DIR/$artifact_name-app.bin"
 # Remove stale product-level aliases only. Identity/NVS data and rollback
 # backups live outside this top-level artifact glob and are not touched.
 find "$MEMORIA_ARTIFACT_DIR" -maxdepth 1 -type f -name '*-xiaozhi.bin' -delete
-printf 'merged binary: %s\n' "$MEMORIA_ARTIFACT_DIR/$artifact_name-merged.bin"
+rm -f "$merged"
+find "$MEMORIA_ARTIFACT_DIR" -maxdepth 1 -type f \
+    \( -name '*-merged.bin' -o -name 'merged.bin' -o -name 'merged-binary.bin' \) -delete
 printf 'application binary: %s\n' "$MEMORIA_ARTIFACT_DIR/$artifact_name-app.bin"
+if [[ "$DANGER_FULL_ERASE" == 1 ]]; then
+    printf 'DANGER_FULL_ERASE image: %s\n' "$danger"
+    printf 'flash.sh refuses this file unless --allow-danger-full-erase is set\n'
+fi
 if [[ "$BENCH" == 1 ]]; then
     printf 'BENCH image: flash it with flash.sh --bench; the firmware publisher refuses it\n'
 elif [[ "$KEEP_AWAKE" == 1 ]]; then

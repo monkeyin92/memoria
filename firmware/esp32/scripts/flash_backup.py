@@ -19,8 +19,8 @@ nvs, phy_init, memoria_identity, assets), since a bulk read-back of them would t
 the first boot of the new app the otadata sector holds the bootloader's record again, so it is not expected to
 stay blank (it was identical before and after the 2026-10-02 flash).
 
-Write only with `esptool write-flash 0x20000 <app> 0xd000 <8 KiB of 0xff>`: never `flash.sh`, merged.bin or
-erase-all (docs/runbooks/release-rollback.md).
+Write only with `esptool write-flash 0x20000 <app> 0xd000 <8 KiB of 0xff>`. Do not write a
+full-chip image. See docs/runbooks/release-rollback.md.
 """
 
 from __future__ import annotations
