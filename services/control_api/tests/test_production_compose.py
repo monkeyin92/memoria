@@ -390,12 +390,13 @@ def test_speaker_model_image_pins_the_authenticated_campplus_model() -> None:
     assert "soxr==" not in requirements
 
 
+@pytest.mark.hermetic
 def test_readiness_refresh_passes_required_provider_gate_into_run_container() -> None:
     script = (ROOT / "scripts" / "refresh_readiness.sh").read_text(encoding="utf-8")
 
     assert "-e MEMORIA_PROVIDER_SMOKE_REQUIRED=true" in script
     assert 'provider_output="$(run_required_provider_smoke 2>&1)"' in script
-    assert "provider_smoke_test PASS: FunASR, QwenRealtimeSearch, $llm_label, Doubao" in script
+    assert 'provider_expected="$(provider_expected_line "$llm_label")"' in script
     assert "InterruptSemantic" not in script
     assert 'agent_env="${MEMORIA_AGENT_ENV:-/etc/memoria-agent.env}"' in script
     assert '"$agent_env"' in script

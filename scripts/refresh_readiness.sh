@@ -170,6 +170,20 @@ run_required_provider_smoke() {
     --entrypoint /app/.venv/bin/python voice-core-media-bridge -m scripts.provider_smoke_test
 }
 
+provider_expected_line() {
+  local llm_label="$1" raw
+  raw="$(awk -F= '$1 == "LIVE_SEARCH_QWEN_ENABLED" {print $2}' "$agent_env" | tail -1)"
+  raw="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
+  case "$raw" in
+    1|true|yes|on|t|y)
+      printf 'provider_smoke_test PASS: FunASR, QwenRealtimeSearch, %s, Doubao\n' "$llm_label"
+      ;;
+    *)
+      printf 'provider_smoke_test PASS: FunASR, %s, Doubao\n' "$llm_label"
+      ;;
+  esac
+}
+
 compose_args_for "$bridge_container"
 require_live_service_image "$bridge_container" voice-core-media-bridge
 
@@ -179,7 +193,7 @@ case "${llm_provider:-bailian_deepseek}" in
   bailian_deepseek|deepseek) llm_label=DeepSeek ;;
   *) echo "invalid LLM_PROVIDER in $agent_env" >&2; exit 1 ;;
 esac
-provider_expected="provider_smoke_test PASS: FunASR, QwenRealtimeSearch, $llm_label, Doubao"
+provider_expected="$(provider_expected_line "$llm_label")"
 for attempt in 1 2; do
   if provider_output="$(run_required_provider_smoke 2>&1)" \
     && grep -Fqx "$provider_expected" <<<"$provider_output"; then
