@@ -42,7 +42,7 @@ class GuardianNotification:
     status: NotificationStatus
     attempts: int
     created_at: datetime
-    reply_template_id: FixedSafetyTemplateId
+    reply_template_id: FixedSafetyTemplateId | None
     read_at: datetime | None
     delivered_at: datetime | None = None
     last_error_code: str | None = None

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -41,7 +42,7 @@ def test_every_fixed_safety_script_has_the_approved_parent_copy() -> None:
         category_label="人身安全",
         summary="孩子说到了自己可能受到伤害",
         robot_said=ROBOT_SAID,
-        parent_action="尽快当面问问孩子发生了什么，如有危险请拨打110",
+        parent_action="尽快当面陪孩子聊聊，先让孩子安心，不反复追问细节。如有危险请拨打110",
         interrupted_detail="这次的提醒话术孩子没有听完，如有危险请拨打110",
     )
     assert PARENT_ALERT_COPY["support-other-v1"] == ParentAlertCopy(
@@ -91,8 +92,18 @@ def test_a_known_script_id_is_its_own_tier(template_id: str) -> None:
     "stored",
     ("legacy-unspecified", "crisis-support-reply", "crisis-transfer-draft-v2", ""),
 )
-def test_an_unknown_script_id_reads_as_the_self_harm_tier(stored: str) -> None:
-    assert parse_alert_template(stored) == "crisis-self-v1"
+def test_an_unknown_script_id_stays_unknown_and_logs_only_the_id(
+    stored: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.ERROR, logger="services.guardian.parent_alert"):
+        assert parse_alert_template(stored) is None
+    assert [record.args for record in caplog.records if record.levelno >= logging.ERROR] == [
+        (stored,)
+    ]
+    assert "12356" not in caplog.text
+    assert "110" not in caplog.text
+    assert "不想活" not in caplog.text
+    assert "打我" not in caplog.text
 
 
 def test_an_unfinished_playback_uses_the_tier_sentence() -> None:
@@ -112,9 +123,13 @@ def test_an_unfinished_playback_uses_the_tier_sentence() -> None:
     )
 
 
-def test_what_happened_asks_and_does_not_describe_an_incident() -> None:
+def test_victim_action_is_the_final_sentence_and_does_not_describe_an_incident() -> None:
     victim = PARENT_ALERT_COPY["victim-support-v1"]
-    assert victim.parent_action == "尽快当面问问孩子发生了什么，如有危险请拨打110"
+    assert (
+        victim.parent_action
+        == "尽快当面陪孩子聊聊，先让孩子安心，不反复追问细节。如有危险请拨打110"
+    )
+    assert "发生了什么" not in victim.parent_action
     assert victim.summary == "孩子说到了自己可能受到伤害"
     for copy in PARENT_ALERT_COPY.values():
         blob = " ".join(_strings(copy))

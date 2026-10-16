@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, tzinfo
@@ -7,6 +8,8 @@ from types import MappingProxyType
 from typing import Final, cast, get_args
 
 from services.common.fixed_safety_scripts import FixedSafetyTemplateId
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,7 +36,7 @@ PARENT_ALERT_COPY: Final[Mapping[FixedSafetyTemplateId, ParentAlertCopy]] = Mapp
             category_label="人身安全",
             summary="孩子说到了自己可能受到伤害",
             robot_said=_ROBOT_SAID_DEFAULT,
-            parent_action="尽快当面问问孩子发生了什么，如有危险请拨打110",
+            parent_action="尽快当面陪孩子聊聊，先让孩子安心，不反复追问细节。如有危险请拨打110",
             interrupted_detail="这次的提醒话术孩子没有听完，如有危险请拨打110",
         ),
         "support-other-v1": ParentAlertCopy(
@@ -48,13 +51,12 @@ PARENT_ALERT_COPY: Final[Mapping[FixedSafetyTemplateId, ParentAlertCopy]] = Mapp
 if set(PARENT_ALERT_COPY) != set(get_args(FixedSafetyTemplateId)):
     raise RuntimeError("every fixed safety script needs parent alert copy")
 
-_FALLBACK_TEMPLATE: Final[FixedSafetyTemplateId] = "crisis-self-v1"
 
-
-def parse_alert_template(reply_template_id: str) -> FixedSafetyTemplateId:
+def parse_alert_template(reply_template_id: str) -> FixedSafetyTemplateId | None:
     if reply_template_id in PARENT_ALERT_COPY:
         return cast(FixedSafetyTemplateId, reply_template_id)
-    return _FALLBACK_TEMPLATE
+    logger.error("unknown safety script id=%s", reply_template_id)
+    return None
 
 
 def alert_time_label(at: datetime, zone: tzinfo) -> str:

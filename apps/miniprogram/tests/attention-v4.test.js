@@ -17,7 +17,7 @@ const VICTIM_ALERT = {
   occurred_label: "10月12日 08:05",
   category_label: "人身安全",
   summary: "孩子说到了自己可能受到伤害",
-  parent_action: "尽快当面问问孩子发生了什么，如有危险请拨打110",
+  parent_action: "尽快当面陪孩子聊聊，先让孩子安心，不反复追问细节。如有危险请拨打110",
 };
 
 function visibleText(html) {
@@ -116,10 +116,35 @@ test("a guessed retell note never becomes the attention title or the detail", as
 test("the attention page opens the alert it was linked to", async () => {
   const harness = await openAttention({ id: "n2" }, fx.safetyAlertApi([fx.SAFETY_ALERT, VICTIM_ALERT]));
   try {
-    assert.match(
-      visibleText(renderPage("pages/attention/index", harness.page.data)),
-      /^有一条需要你关注的对话 10月12日 08:05 人身安全 孩子说到了自己可能受到伤害 /,
-    );
+    const text = visibleText(renderPage("pages/attention/index", harness.page.data));
+    assert.match(text, /^有一条需要你关注的对话 10月12日 08:05 人身安全 孩子说到了自己可能受到伤害 /);
+    assert.ok(text.includes("尽快当面陪孩子聊聊，先让孩子安心，不反复追问细节。如有危险请拨打110"));
+    assert.equal(text.includes("发生了什么"), false);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("an unknown script shows the title and neither a category nor a hotline", async () => {
+  const harness = await openAttention(
+    { id: "n-unknown" },
+    fx.safetyAlertApi([
+      {
+        ...fx.SAFETY_ALERT,
+        notification_id: "n-unknown",
+        category_label: "",
+        summary: "",
+        robot_said: "",
+        parent_action: "",
+      },
+    ]),
+  );
+  try {
+    const text = visibleText(renderPage("pages/attention/index", harness.page.data));
+    assert.equal(text, "有一条需要你关注的对话 10月14日 19:42 我知道了");
+    assert.equal(text.includes("12356"), false);
+    assert.equal(text.includes("110"), false);
+    assert.equal(text.includes("情绪和安全"), false);
   } finally {
     harness.restore();
   }

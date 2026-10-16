@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -1012,6 +1013,49 @@ async def test_unfinished_script_detail_is_fixed_copy_and_omits_the_child_words(
             if item["summary"] == PARENT_ALERT_COPY["crisis-self-v1"].summary
         )
         assert "detail" not in self_harm_item
+
+
+@pytest.mark.asyncio
+async def test_unknown_script_id_shows_the_title_and_logs_only_the_id(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        _parent, parent_headers, _link, child, _child_headers = await _bind_family(
+            client,
+            app,
+            parent_username="safety-unknown-parent",
+            child_username="safety-unknown-child",
+            binding_key="safety-unknown",
+        )
+        await app.state.guardian_store.enqueue_crisis_event(
+            crisis_event_id="7d1f9c1e-0000-4000-8000-0000000000b1",
+            evidence_event_id="guardian-crisis:legacy-unspecified",
+            minor_user_id=child["user_id"],
+            occurred_at=datetime.now(UTC),
+            script_version="legacy-unspecified",
+            reply_template_id="legacy-unspecified",
+        )
+        with caplog.at_level(logging.ERROR, logger="services.guardian.parent_alert"):
+            listed = await client.get("/v1/guardian/notifications", headers=parent_headers)
+        assert listed.status_code == 200, listed.text
+        (item,) = listed.json()["items"]
+        assert item["message"] == "有一条需要你关注的对话"
+        assert item["category_label"] == ""
+        assert item["summary"] == ""
+        assert item["robot_said"] == ""
+        assert item["parent_action"] == ""
+        assert "detail" not in item
+        blob = json.dumps(item, ensure_ascii=False)
+        assert "12356" not in blob
+        assert "110" not in blob
+        assert "不想活" not in blob
+        assert "legacy-unspecified" in caplog.text
+        assert "不想活" not in caplog.text
+        assert "打我" not in caplog.text
 
 
 @pytest.mark.asyncio

@@ -8,16 +8,16 @@
       <view class="attention-mascot"><image class="attention-mascot-img" src="/assets/ui/v4/mascot-calm.jpg" mode="widthFix" /></view>
       <text class="attention-title">{{alert.message}}</text>
       <text class="attention-time">{{alert.occurredLabel}}</text>
-      <text class="attention-category">{{alert.categoryLabel}}</text>
-      <view class="attention-well">
+      <text wx:if="{{alert.categoryLabel}}" class="attention-category">{{alert.categoryLabel}}</text>
+      <view wx:if="{{alert.summary}}" class="attention-well">
         <text class="attention-summary">{{alert.summary}}</text>
       </view>
       <text wx:if="{{alert.detail}}" class="attention-well">{{alert.detail}}</text>
     </view>
 
-    <view class="card attention-steps">
-      <text class="attention-step">{{alert.robotSaid}}</text>
-      <text class="attention-step">{{alert.parentAction}}</text>
+    <view wx:if="{{alert.robotSaid || alert.parentAction}}" class="card attention-steps">
+      <text wx:if="{{alert.robotSaid}}" class="attention-step">{{alert.robotSaid}}</text>
+      <text wx:if="{{alert.parentAction}}" class="attention-step">{{alert.parentAction}}</text>
     </view>
   </block>
 

@@ -126,7 +126,7 @@ async def test_template_id_is_parsed_once_with_a_safe_fallback(
         ).reply_template_id
         for notification_id in ids
     ]
-    assert templates == ["crisis-self-v1", "victim-support-v1", "crisis-self-v1"]
+    assert templates == ["crisis-self-v1", "victim-support-v1", None]
 
 
 @pytest.mark.asyncio

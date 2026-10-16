@@ -642,7 +642,11 @@ def _safety_alert_item(
     minor_display_name: str,
     zone: ZoneInfo,
 ) -> dict[str, Any]:
-    copy = PARENT_ALERT_COPY[notification.reply_template_id]
+    copy = (
+        PARENT_ALERT_COPY[notification.reply_template_id]
+        if notification.reply_template_id is not None
+        else None
+    )
     return {
         "notification_id": notification.notification_id,
         "minor_user_id": notification.minor_user_id,
@@ -654,16 +658,18 @@ def _safety_alert_item(
         "message": guardian_attention_copy(
             possibly_story_retell=notification.possibly_story_retell
         ),
-        "category_label": copy.category_label,
-        "summary": copy.summary,
-        "robot_said": copy.robot_said,
-        "parent_action": copy.parent_action,
+        "category_label": "" if copy is None else copy.category_label,
+        "summary": "" if copy is None else copy.summary,
+        "robot_said": "" if copy is None else copy.robot_said,
+        "parent_action": "" if copy is None else copy.parent_action,
         "contains_transcript": False,
         "contains_severity": False,
     }
 
 
 def _interrupted_detail(request: Request, notification: GuardianNotification) -> str | None:
+    if notification.reply_template_id is None:
+        return None
     sentence = PARENT_ALERT_COPY[notification.reply_template_id].interrupted_detail
     fence = notification.reply_fence
     if sentence is None or fence is None:
