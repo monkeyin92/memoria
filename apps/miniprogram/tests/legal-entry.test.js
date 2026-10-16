@@ -47,14 +47,14 @@ test("consent stays locked unless the agreement body and the effective date are 
     { name: "都齐", agreement: READY_AGREEMENT, effectiveOn: "2026年4月1日", locked: false },
   ];
   for (const item of cases) {
-    const harness = loadPage("pages/auth/index", {
+    const harness = loadPage("pages/child-consent/index", {
       ...fx.guest(),
       files: { "legal/user-agreement.md": item.agreement },
       effectiveOn: item.effectiveOn,
     });
     await harness.run({ reason: "view_dashboard", skip_restore: "1", debug: "1", consent: "1" });
     try {
-      const html = renderPage("pages/auth/index", harness.page.data);
+      const html = renderPage("pages/child-consent/index", harness.page.data);
       const text = visibleText(html);
       assert.equal(harness.page.data.consented, false, item.name);
       harness.page.toggleConsent();
@@ -77,14 +77,14 @@ test("consent stays locked unless the agreement body and the effective date are 
 });
 
 test("consent links open their documents before the guardian ticks a finished release", async () => {
-  const harness = loadPage("pages/auth/index", {
+  const harness = loadPage("pages/child-consent/index", {
     ...fx.guest(),
     files: { "legal/user-agreement.md": READY_AGREEMENT },
     effectiveOn: "2026年4月1日",
   });
-  await harness.run({ redirect: "/pages/home/index", reason: "view_dashboard" });
+  await harness.run({ redirect: "/pages/home/index" });
   try {
-    const html = renderPage("pages/auth/index", harness.page.data);
+    const html = renderPage("pages/child-consent/index", harness.page.data);
     assert.match(html, /<text class="legal-link" data-tap>《隐私保护指引》<\/text>/);
     assert.match(html, /<text class="legal-link" data-tap>《监护人同意书》<\/text>/);
     harness.page.openPrivacy();
@@ -107,11 +107,11 @@ test("login titles open the agreement and the privacy notice without a login red
   await home.run();
   try {
     const html = renderPage("pages/home/index", home.page.data);
-    assert.match(html, /<text class="legal-link" data-tap>《用户协议》<\/text>/);
-    assert.match(html, /<text class="legal-link" data-tap>《隐私说明》<\/text>/);
-    home.page.openUserAgreement();
-    home.page.openPrivacyNotice();
-    assert.deepEqual(navigations(home), ["/pages/user-agreement/index", "/pages/privacy/index"]);
+    assert.match(html, /<text class="legal-link" data-tap data-id="terms">《用户服务协议》<\/text>/);
+    assert.match(html, /<text class="legal-link" data-tap data-id="privacy">《隐私政策》<\/text>/);
+    home.page.openGuestAgreement({ currentTarget: { dataset: { id: "terms" } } });
+    home.page.openGuestAgreement({ currentTarget: { dataset: { id: "privacy" } } });
+    assert.deepEqual(navigations(home), ["/pages/user-agreement/index", "/pages/privacy-policy/index"]);
   } finally {
     home.restore();
   }
@@ -144,7 +144,7 @@ test("the user agreement page shows the document body, or a pending notice when 
     });
     assert.equal(pending.page.data.notice, "用户协议正在定稿");
     const text = visibleText(renderPage("pages/user-agreement/index", pending.page.data));
-    assert.match(text, /^用户协议 用户协议正在定稿$/);
+    assert.match(text, /^用户服务协议 用户协议正在定稿$/);
     assert.doesNotMatch(text, /草稿/);
     assert.doesNotMatch(text, /agreement: pending/);
   } finally {
@@ -159,7 +159,7 @@ test("the user agreement page shows the document body, or a pending notice when 
   await page.run();
   try {
     const text = visibleText(renderPage("pages/user-agreement/index", page.page.data));
-    assert.equal(text, "用户协议 解析示例甲。 解析示例乙。");
+    assert.equal(text, "用户服务协议 解析示例甲。 解析示例乙。");
     assert.doesNotMatch(text, /用户协议正在定稿/);
   } finally {
     page.restore();
@@ -169,6 +169,8 @@ test("the user agreement page shows the document body, or a pending notice when 
 test("parent-visible login and consent surfaces do not say 草稿", async () => {
   const surfaces = [
     ["pages/auth/index", fx.guest(), { reason: "view_dashboard" }],
+    ["pages/child-consent/index", fx.guest(), {}],
+    ["pages/privacy-policy/index", fx.guest(), {}],
     ["pages/guardian-consent/index", fx.guest(), {}],
     ["pages/home/index", fx.guest(), {}],
     ["pages/privacy/index", fx.guest(), {}],
@@ -181,7 +183,7 @@ test("parent-visible login and consent surfaces do not say 草稿", async () => 
       const text = visibleText(renderPage(page, harness.page.data));
       assert.equal(text.includes("草稿"), false, page);
       if (page === "pages/guardian-consent/index") assert.match(text, /^内测版 监护人同意书 /);
-      if (page === "pages/auth/index") assert.match(text, /^内测版 /);
+      if (page === "pages/child-consent/index") assert.match(text, /^内测版 /);
     } finally {
       harness.restore();
     }

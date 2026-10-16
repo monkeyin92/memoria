@@ -1,4 +1,5 @@
-const { requireLogin } = require("../../utils/auth-gate");
+const { currentRoute, requireLogin } = require("../../utils/auth-gate");
+const { ensureChildInfoConsent } = require("../../utils/child-consent");
 const { statusBarStyle } = require("../../utils/nav-inset");
 const { leavePage } = require("../../utils/nav-back");
 const { OnboardingController } = require("../../utils/device-onboarding/onboarding-controller");
@@ -168,6 +169,7 @@ Page({
     // Opened from the robot's QR: say why a login comes first.
     const reason = this._linkedQr ? "scan_device" : "manage_device";
     if (!(await requireLogin({ reason }))) return;
+    if (!ensureChildInfoConsent(currentRoute())) return;
     if (this._linkedQr) {
       const linkedQr = this._linkedQr;
       this._linkedQr = "";

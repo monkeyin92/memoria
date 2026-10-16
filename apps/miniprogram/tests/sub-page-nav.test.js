@@ -13,24 +13,25 @@ const OWNING_TAB = {
   auth: "/pages/home/index",
   "guardian-consent": "/pages/home/index",
   privacy: "/pages/profile/index",
+  "privacy-policy": "/pages/home/index",
   "user-agreement": "/pages/home/index",
   "digital-self": "/pages/profile/index",
   attention: "/pages/home/index",
   "device-onboarding": "/pages/device/index",
 };
 
-const BACK_BUTTON_STATE = { auth: { step: "profile" } };
+const BACK_BUTTON_STATE = {};
 
 function readPage(page, ext) {
   return fs.readFileSync(path.join(ROOT, "pages", page, `index.${ext}`), "utf8");
 }
 
-test("auth consent step exits through 暂不同意 instead of a back button", () => {
-  const harness = loadPage("pages/auth/index");
+test("child consent exits through 暂不同意 instead of a back button", () => {
+  const harness = loadPage("pages/child-consent/index");
   try {
-    const html = renderPage("pages/auth/index", harness.page.data);
+    const html = renderPage("pages/child-consent/index", harness.page.data);
     assert.doesNotMatch(html, /class="nav-back"/);
-    assert.match(readPage("auth", "wxml"), /<button class="auth-decline" bindtap="goBack">暂不同意<\/button>/);
+    assert.match(readPage("child-consent", "wxml"), /<button class="auth-decline" bindtap="decline">暂不同意<\/button>/);
   } finally {
     harness.restore();
   }

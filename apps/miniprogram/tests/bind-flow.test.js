@@ -8,7 +8,7 @@ const api = require("../utils/api");
 const { canonicalManifest } = require("./manifest-fixtures");
 const { readSubjectLabel } = require("../utils/subject-label");
 
-const storage = {};
+const storage = { "memoria:miniprogram:child-info-consent": "accepted" };
 let lastWxRequest = null;
 let nextResponse = null;
 const navigations = [];

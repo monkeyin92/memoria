@@ -1150,6 +1150,7 @@ test("age declaration offers only three bands and never claims verification", as
     }
     return originalRequest(options);
   };
+  storage["memoria:miniprogram:child-info-consent"] = "accepted";
   const page = instantiate(pageDefinition);
   await page.onShow();
   await new Promise((resolve) => setImmediate(resolve));
@@ -1172,6 +1173,7 @@ test("age declaration offers only three bands and never claims verification", as
   assert.equal(page.data.ageRows[0].declaredLabel, "申报 14 至 17 岁");
   assert.equal(page.data.ageRows[0].evidenceLabel, "未核验");
   assert.equal(page.data.profile.runtime_profile_id, "rp_age");
+  delete storage["memoria:miniprogram:child-info-consent"];
   global.wx.request = originalRequest;
 });
 
@@ -1212,6 +1214,7 @@ test("age declaration explains owner-only and unavailable authority failures", a
     }
     return originalRequest(options);
   };
+  storage["memoria:miniprogram:child-info-consent"] = "accepted";
   const page = instantiate(pageDefinition);
   await page.onShow();
   await page.declareAge({ currentTarget: { dataset: { personId: "person_child" } } });
@@ -1222,6 +1225,7 @@ test("age declaration explains owner-only and unavailable authority failures", a
   assert.match(page.data.ageError, /暂时无法确认/);
   assert.match(page.data.ageError, /受限模式/);
   assert.doesNotMatch(page.data.ageError, /能力/);
+  delete storage["memoria:miniprogram:child-info-consent"];
   global.wx.request = originalRequest;
 });
 

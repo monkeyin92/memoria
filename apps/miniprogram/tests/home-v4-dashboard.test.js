@@ -178,51 +178,52 @@ test("home never renders battery, story counts or a recommendation card", async 
   assert.doesNotMatch(text, /电量|电池|个故事|今晚推荐/);
 });
 
-test("guest home is the full-bleed v4 login screen with no tab bar", async () => {
+test("guest home lists the product intro and stays off the login screen", async () => {
   const harness = loadPage("pages/home/index", { api: fx.baseApi(fx.GUEST_API), now: fx.NOW });
   try {
     const data = await harness.run();
     assert.equal(data.authenticated, false);
     assert.deepEqual(harness.tabBar.data, { selected: 0, hidden: true });
     const text = visibleText(renderPage("pages/home/index", data, { tabBar: false }));
-    assert.equal(
-      text.trim(),
-      "Memoria 陪孩子聊天、讲故事的 AI 助手 晚上好，欢迎回来 登录后查看孩子今天聊了什么 微信一键登录 手机号登录 登录即表示你已阅读 《用户协议》 和 《隐私说明》",
-    );
+    assert.match(text, /Memoria 是给 3 到 10 岁孩子的陪伴机器人/);
+    assert.match(text, /陪聊 离线故事 每次和每天的时长上限 家长能查看和删除聊天摘要/);
+    assert.doesNotMatch(text, /服务器不存孩子的录音|导出|微信一键登录|登录即表示|选择头像/);
+    assert.equal(harness.wxCalls.filter((call) => call.name === "login").length, 0);
+    assert.equal(harness.wxCalls.filter((call) => call.name === "request").length, 0);
   } finally {
     harness.restore();
   }
 });
 
-test("guest 手机号登录 opens the phone authorization page and returns home", async () => {
+test("guest login opens the login page without wx.login", async () => {
   const harness = loadPage("pages/home/index", { api: fx.baseApi(fx.GUEST_API), now: fx.NOW });
   try {
     await harness.run();
     global.getCurrentPages = () => [{ route: "pages/home/index", options: {} }];
-    harness.page.loginWithPhone();
+    harness.page.openAccountLogin();
     const navigations = harness.wxCalls.filter((call) => call.name === "navigateTo").map((call) => call.args[0].url);
     assert.deepEqual(navigations, ["/pages/auth/index?redirect=%2Fpages%2Fhome%2Findex&reason=view_dashboard"]);
+    assert.equal(harness.wxCalls.filter((call) => call.name === "login").length, 0);
   } finally {
     harness.restore();
   }
 });
 
-test("the tab bar returns once the guest signs in from home", async () => {
-  let signedIn = false;
-  const api = fx.baseApi({
-    hasAuthenticatedSession: () => signedIn,
-    restoreWechatIdentity: async () => {
-      signedIn = true;
-    },
-  });
-  const harness = loadPage("pages/home/index", { api, now: fx.NOW });
+test("a guest gated action shows the login modal and does not obtain an identity", async () => {
+  const harness = loadPage("pages/home/index", { api: fx.baseApi(fx.GUEST_API), now: fx.NOW });
   try {
     await harness.run();
-    assert.equal(harness.tabBar.data.hidden, true);
-    await harness.page.loginFromHome();
-    await harness.settle();
-    assert.equal(harness.page.data.authenticated, true);
-    assert.deepEqual(harness.tabBar.data, { selected: 0, hidden: false });
+    global.wx.showModal = (options) => {
+      assert.equal(options.content, "这个功能需要先登录，登录后才能绑定和管理你的设备");
+      options.success?.({ confirm: true });
+    };
+    await harness.page.onGuestGatedAction({ currentTarget: { dataset: { id: "bind_device" } } });
+    const navigations = harness.wxCalls.filter((call) => call.name === "navigateTo").map((call) => call.args[0].url);
+    assert.equal(navigations.length, 1);
+    assert.match(navigations[0], /\/pages\/auth\/index\?/);
+    assert.match(navigations[0], /reason=bind_device/);
+    assert.equal(harness.wxCalls.filter((call) => call.name === "login").length, 0);
+    assert.equal(harness.page.data.authenticated, false);
   } finally {
     harness.restore();
   }

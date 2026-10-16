@@ -2,28 +2,7 @@ const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
 const { leavePage } = require("../../utils/nav-back");
 const { isTabRoute, routeOf } = require("../../utils/tab-routes");
-const { openPrivacyContract } = require("../../utils/privacy-contract");
-const legalRelease = require("../../utils/legal-release");
-const { CONSENT_AGREEMENT_HINT, loadUserAgreement } = require("../../utils/legal-doc");
-
-const CONSENT_FACTS = [
-  { icon: "server", title: "对话经过我们的服务器", subtitle: "孩子说的话会经服务器处理后再回复" },
-  { icon: "note", title: "保存对话摘要", subtitle: "原话和录音只用来当场回应，不保存" },
-  { icon: "star", title: "长期只存三项", subtitle: "孩子的称呼、喜好、宠物名" },
-  { icon: "info", title: "回应由 AI 生成", subtitle: "会明确标识；模型训练默认关闭" },
-  { icon: "cam", title: "设备没有摄像头", subtitle: "不拍照，也不录像" },
-];
-
-const CONSENT_REQUIRED = "请先阅读并同意《隐私保护指引》和《监护人同意书》。";
-
-function agreementFields() {
-  const locked = legalRelease.consentLocked(loadUserAgreement().pending, legalRelease.EFFECTIVE_ON);
-  return {
-    agreementPending: locked,
-    agreementHint: locked ? CONSENT_AGREEMENT_HINT : "",
-    releaseChip: legalRelease.releaseChip(),
-  };
-}
+const { ACCOUNT_CONSENT_PROMPT } = require("../../utils/guest-access");
 
 function reasonText(reason) {
   return {
@@ -37,23 +16,20 @@ function reasonText(reason) {
     scan_device: "已识别到你的机器人。请先用微信登录，登录后会自动回到配网，继续连接和绑定。",
     manage_device: "登录后即可添加和管理你的机器人。",
     bind_device: "登录后继续绑定这台机器人。",
+    view_child_memory: "登录后即可查看孩子的资料和聊天摘要。",
+    view_attention: "登录后即可查看置顶提醒。",
+    help_feedback: "登录后即可使用帮助与反馈。",
   }[reason] || "登录后即可继续刚才的操作。";
 }
 
 Page({
   data: {
     statusBarStyle: statusBarStyle(),
-    step: "consent",
-    nickname: "",
-    avatarPath: "",
-    consented: false,
+    accountAgreed: false,
     loading: false,
     error: "",
     redirect: "/pages/home/index",
     reasonHint: "",
-    needsSalutation: false,
-    facts: CONSENT_FACTS,
-    ...agreementFields(),
   },
 
   goBack() {
@@ -68,108 +44,46 @@ Page({
     this.setData({
       redirect,
       reasonHint: reasonText(options.reason),
-      needsSalutation: options.skip_restore === "1",
     });
-    this._restoreAttempted = options.skip_restore === "1";
   },
 
   onShow() {
-    const gate = agreementFields();
-    this.setData(gate.agreementPending ? { ...gate, consented: false } : gate);
-    if (api.hasAuthenticatedSession()) {
-      this.finishLogin();
-      return;
-    }
-    if (this._restoreAttempted) return;
-    this._restoreAttempted = true;
-    this.trySilentRestore();
+    if (api.hasAuthenticatedSession()) this.finishLogin();
   },
 
-  async trySilentRestore() {
-    try {
-      await api.restoreWechatIdentity();
-      this.finishLogin();
-    } catch (error) {
-      if (error?.code === "phone_authorization_required") {
-        this.setData({ needsSalutation: true });
-      } else {
-        this.setData({ error: error?.message || "暂时无法恢复微信登录。" });
-      }
-    }
+  toggleAccountConsent() {
+    this.setData({ accountAgreed: !this.data.accountAgreed, error: "" });
   },
 
-  onNicknameInput(event) {
-    this.setData({ nickname: event.detail.value, error: "" });
+  openUserAgreement() {
+    wx.navigateTo({ url: "/pages/user-agreement/index" });
   },
 
-  onChooseAvatar(event) {
-    const avatarPath = event.detail?.avatarUrl || "";
-    if (avatarPath) this.setData({ avatarPath, error: "" });
+  openPrivacyPolicy() {
+    wx.navigateTo({ url: "/pages/privacy-policy/index" });
   },
 
-  toggleConsent() {
-    if (this.data.agreementPending) return;
-    this.setData({ consented: !this.data.consented, error: "" });
-  },
-
-  backToConsent() {
-    this._phoneCode = "";
-    this.setData({ step: "consent", error: "" });
-  },
-
-  openPrivacy() {
-    openPrivacyContract();
-  },
-
-  openGuardianConsent() {
-    wx.navigateTo({ url: "/pages/guardian-consent/index" });
+  onLoginWithoutConsent() {
+    this.setData({ error: ACCOUNT_CONSENT_PROMPT });
+    wx.showToast({ title: ACCOUNT_CONSENT_PROMPT, icon: "none" });
   },
 
   async onGetPhoneNumber(event) {
-    if (!this.data.consented) {
-      this.setData({ error: CONSENT_REQUIRED });
+    if (!this.data.accountAgreed) {
+      this.onLoginWithoutConsent();
       return;
     }
     const phoneCode = event.detail?.code;
     if (!phoneCode) {
-      this.setData({ error: "需要手机号授权才能完成首次登录。" });
+      this.setData({ error: "需要手机号授权才能完成登录。" });
       return;
     }
-    if (this.data.needsSalutation) {
-      this._phoneCode = phoneCode;
-      this.setData({ step: "profile", error: "" });
-      return;
-    }
-    await this.submitLogin(phoneCode);
-  },
-
-  async submitProfile() {
-    if (!this.data.nickname.trim()) {
-      this.setData({ error: "先告诉我怎么称呼你吧。" });
-      return;
-    }
-    await this.submitLogin(this._phoneCode);
-  },
-
-  async submitLogin(phoneCode) {
     this.setData({ loading: true, error: "" });
     try {
-      await api.loginWithWechat({
-        phoneCode,
-        displayName: this.data.nickname.trim(),
-      });
-      if (this.data.avatarPath) {
-        try {
-          await api.uploadWechatAvatar(this.data.avatarPath);
-        } catch {
-          wx.showToast({ title: "已登录，头像稍后可再设置", icon: "none" });
-        }
-      }
+      await api.loginWithWechat({ phoneCode });
       this.finishLogin();
     } catch (error) {
-      // WeChat phone codes are single use, so a failed login needs a fresh authorization.
-      this._phoneCode = "";
-      this.setData({ step: "consent", error: error?.message || "微信登录未完成，请稍后重试。" });
+      this.setData({ error: error?.message || "微信登录未完成，请稍后重试。" });
     } finally {
       this.setData({ loading: false });
     }

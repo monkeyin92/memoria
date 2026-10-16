@@ -1,7 +1,4 @@
 {
   "navigationBarTitleText": "登录 Memoria",
-  "navigationStyle": "custom",
-  "usingComponents": {
-    "mp-icon": "/components/mp-icon/index"
-  }
+  "navigationStyle": "custom"
 }
