@@ -47,12 +47,20 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now memoria-freeze-dump-cleanup.timer
 ~~~
 
+容器日志（control-api 与 voice-core-media-bridge，`/var/log/memoria`）由 `memoria-log-rotate.timer` 每小时轮转：每个服务最坏约 160 MiB 未压缩，两个服务约 320 MiB；另有 Docker 本地缓存每个容器 30 MiB，在 `/var/lib/docker/containers/<id>/` 下，随容器删除。数字在 `infra/memoria-logs.logrotate` 与 `docker-compose.production.yml`。空间清理不动这个目录；安装、停写、清理与回滚只按 `docs/runbooks/release-rollback.md`「容器日志落盘」做，执行同样需另行授权。
+
 儿童记忆两层的到期物理删除不装 systemd timer。control-api 启动时跑一次，之后每 24 小时跑一次（`ChildLayerRetentionWorker`，`services/memory_scope/child_layer_retention.py`）：先删已过 `retention_expires_at` 的 `kind=dialogue_summary`，再删连续 180 天无活跃的 `kind=child_archive`。读不到 `guardian_subject_activity` 时跳过档案、照删摘要。日志只有计数，不含使用人 id。control-api 停机的日子不会补跑，下一次启动会补上。清除前 30 天、7 天的家长提醒还没有发送，180 天清除照常执行。
 
 确认它在跑：
 
 ~~~bash
 docker compose -f docker-compose.production.yml logs control-api | grep 'child layer retention'
+~~~
+
+这条只读当前容器的 Docker 缓存。跨重建的历史在主机文件里：
+
+~~~bash
+sudo sh -c "zgrep -h 'child layer retention' /var/log/memoria/control-api.log* | sort"
 ~~~
 
 每一轮两行，形如 `child layer retention kind=dialogue_summary subjects=0 failed=0 memory_records=0 memory_status_events=0`；`kind=child_archive ... skipped reason=...` 表示档案这一轮没有删。手工核对用一次性 Control API 容器，先不带 `--apply` 看候选，带 `--apply` 才删；重复 `--apply` 删除计数为零、退出码 0，`failed` 非零时退出码 1。生产 compose 需要 `MEMORIA_RELEASE_TAG` 和 `MEMORIA_RELEASE_COMMIT`，从运行中的 control-api 容器导出后再跑：

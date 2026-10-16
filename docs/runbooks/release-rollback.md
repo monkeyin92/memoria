@@ -30,7 +30,7 @@ Secret 仅在 root-only `/etc/memoria-*.env`（root:root 0600）；候选从真�
 - **数据层**：两台机上 `memoria-data` 项目都是从 `releases/20260827-architecture-split-v1/infra` 起的。`current/infra` 里的同名 compose 多一个 `011-control-schema.sql` 的 initdb 挂载（只在空库首次初始化时用）；在已有数据的库上用 `current/infra` 去 `up -d` 会让 compose 判定配置变了而重建 postgres 容器（推断，没试），不要顺手做。
 - **WAL 归档已关（P1-08，2026-10-06）**：`infra/memoria-data.production.yml` 的 postgres 参数是 `archive_mode=off`，不再有 `archive_timeout` / `archive_command`。原先每 5 分钟强制切一个 16 MB 段并拷进同盘的 `memoria-data_postgres_wal_archive` 卷：没有 base backup 可接，没有恢复价值，旧机实测每天涨约 0.6–1.1 GB。恢复靠每次整栈发布前 `freeze` 的 `memoria-pre-<tag>.dump`（见「数据层、备份与恢复」）。改这个参数必须重建 postgres 容器（`archive_mode` 要重启，`ALTER SYSTEM` 改不了：compose 的 `-c` 参数优先）；线上 compose 与仓库的同步和卷的清理是维护窗口里的一步，结果记在 HANDOFF。要重新启用（例如接异地备份 profile）：在 compose 里把 `archive_mode=on`、`archive_timeout=300s`、`archive_command=test ! -f /wal-archive/%f && cp %p /wal-archive/%f` 一并恢复，并保持该卷 `999:999 0700`，否则 `archive_command` 一直失败；同时要有 base backup 和按它裁剪的策略。
 - **磁盘（最近一次只读核验：2026-10-10 23:31）**：40GB盘、已用25GB（65%）、剩14GB；09:40既有清理删掉20261007旧镜像tag/incoming/源码树、保留`.cutover`。`incoming/`保留`20261009-textless-spare-v1`、`20261010-stale-interim-v1`和`20261010-n8-endpoint-diag-v1`三个目录，镜像保留当前与一个可运行回滚；详细收据见`docs/acceptance/run-20261010-verify/findings.md`。WAL归档关掉后主要增长是每次发布约4–5GB（镜像+包）与库本身；不要手删`pg_wal`。`memoria-disk-patrol.timer`只在75%/85%告警、不自动清理，生产清理另授权。
-- **systemd**：`memoria-readiness-refresh.timer`（12 小时一次提供方冒烟 + readiness 标记；迁移后 01:36:57 跑过一次，从新机出口 PASS）与 `memoria-disk-patrol.timer` 已在新机启用。`memoria-freeze-dump-cleanup.timer`（每日）应在下一次整栈发布时一并安装：只删 `/opt/memoria/releases/*/.cutover/` 下超过 3 天的 `memoria-pre-*.dump` 与 `memoria.pre-*.sqlite3`。
+- **systemd**：`memoria-readiness-refresh.timer`（12 小时一次提供方冒烟 + readiness 标记；迁移后 01:36:57 跑过一次，从新机出口 PASS）与 `memoria-disk-patrol.timer` 已在新机启用。`memoria-freeze-dump-cleanup.timer`（每日）应在下一次整栈发布时一并安装：只删 `/opt/memoria/releases/*/.cutover/` 下超过 3 天的 `memoria-pre-*.dump` 与 `memoria.pre-*.sqlite3`。`memoria-log-rotate.timer`（每小时轮转 `/var/log/memoria`）与 rsyslog drop-in `/etc/rsyslog.d/30-memoria.conf` 在第一次带 `logging:` 块的整栈发布里、`env` 之前安装，见「容器日志落盘」。
 
 ## 发布前门禁
 
@@ -106,6 +106,156 @@ tar --extract --file "$UPLOAD_DIR/source.tar" \
 ~~~
 
 不允许手工 retag 未绑定 manifest 的模型镜像。切流后运行 `scripts/smoke_server_deployment.sh`、真实 provider smoke、健康/私有 readiness/外部路由和延迟复核。
+
+## 容器日志落盘（control-api 与 voice-core-media-bridge）
+
+control-api 与 voice-core-media-bridge 的 stdout/stderr 由 Docker 的 syslog 驱动经 UDP 发到本机 rsyslog 的专用输入 `127.0.0.1:5514`，按服务写进两个文件。容器重建不影响这两个文件：
+
+- `/var/log/memoria/control-api.log`
+- `/var/log/memoria/voice-core-media-bridge.log`
+
+一行形如 `2026-10-17T10:02:03.123456+08:00 voice-core-media-bridge/3f2a1b9c8d7e INFO:...`。时间是 Docker 收到这一行的本机时间，斜杠后是写这一行的容器 id 前 12 位。重建后 id 变，文件接着写，同一文件里 id 换掉的地方就是重建点。`release-ops.sh env` 的一次性容器（Control 配置校验、`verify_env`、声纹开关检查、提供方冒烟）用候选 compose 的 `logging:` 块，也写进这两个文件。media-edge、device-state-redis、media-slo-reporter 不变，仍用 daemon 默认驱动。
+
+| 项目 | 数字 | 所在文件 |
+|---|---|---|
+| 当前文件轮转 | 超过 20 MiB（每小时查一次）或每天一次 | `infra/memoria-logs.logrotate`（`maxsize 20M`、`daily`） |
+| 保留的轮转份数 | 7 份，`.2` 起 gzip | `infra/memoria-logs.logrotate`（`rotate 7`、`compress`、`delaycompress`） |
+| 轮转文件的年龄上限 | 7 天 | `infra/memoria-logs.logrotate`（`maxage 7`） |
+| 一行在主机盘上最长留存 | 约 8 天（当前文件最多 1 天，加 7 次每日轮转）；timer 停跑的日子另计 | 由上三行推出 |
+| 每个服务的主机上限 | 最坏约 160 MiB 未压缩，另加一小时的写入 | 由上推出 |
+| Docker 本地缓存（`docker logs` 读它） | 每个容器 30 MiB，随容器删除 | `docker-compose.production.yml`（`cache-max-size: "10m"`、`cache-max-file: "3"`） |
+| 主机文件里的单行长度 | 超过 8 KiB 截断（rsyslog 默认）；Docker 缓存里是整行 | 未设置 |
+
+目录 `syslog:syslog 0700`，文件 `0600`。属主是 syslog，root 也能读，登录用户读不了。`ubuntu` 登录后一律 `sudo`；目录里的通配符要放进 `sudo sh -c '…'` 才能展开。目录放在 `/var/log` 下，是为了落在 rsyslogd 已有的写入范围里（Ubuntu 的 AppArmor 配置按 `/var/log` 放行，本机未核对，安装核对会证明）。轮转由 `memoria-log-rotate.timer` 每小时执行，用独立状态文件 `/var/lib/logrotate/memoria-logs.status`。配置不在 `/etc/logrotate.d`，系统每天的 logrotate 不会再轮转一次。配置不写 `notifempty`，并总是 `create` 当前文件，所以停写之后每天照样轮转，旧文件照样按份数和年龄删掉。
+
+**`docker logs` 照常可用。** Docker 20.10 起，非本地驱动也写一份本地缓存（dual logging），`docker logs -t`、`--since`、`--tail` 读它。浸泡与时延脚本（`scripts/voice_soak.py`、`scripts/voice_commit_timing.py`、`scripts/voice_soak_pause_split.py`、`scripts/voice_session_capture.py`）和 `wait_healthy` 的诊断不用改。这份缓存随容器删除，跨重建的历史只在 `/var/log/memoria`。若 `daemon.json` 设了 `cache-disabled`，`docker logs` 会报 `configured logging driver does not support reading`，上面这些脚本都会失败，所以预检先看它。
+
+**什么时候会丢行。** UDP 不会阻塞写日志，也不会让容器起不来。代价是 rsyslog 不在的时候（开机顺序、重启 rsyslog、drop-in 被换掉），这段时间的行不进主机文件，只留在 Docker 缓存里。没有常驻告警，下一次整栈发布的 `env` 会发现。每次重启 rsyslog 之后跑一次：
+
+~~~bash
+sudo journalctl -u docker --since -10min | grep -c 'Error writing log message'   # 0
+~~~
+
+不为零时，dockerd 可能把发送失败的那几行连同原文记进了共用的 journald。按下文「事故处理」算进事故范围；journald 的清理另行授权，因为主机共用。
+
+**只随整栈发布生效。** `logging:` 块在 `docker-compose.production.yml` 里。组件发布只接受只换镜像的 override，并按哈希固定基座 compose，带不上这个块。第一次带这个块的 `release_ops.sh` 整栈发布之后，基座提交含此块的组件发布沿用它。主机 `/root/memoria-release/release-ops.sh` 必须先换成合并后的版本（见「生产主机」一节），否则 `env` 里没有下面的门。新主机用 `scripts/bringup_shared_host.sh` 起栈、且发布树含此块时，先装主机部分再跑 `apps`；脚本本身不检查。
+
+### 只读预检
+
+~~~bash
+systemctl is-active rsyslog                                  # active
+ps -o user= -C rsyslogd                                      # syslog
+sudo grep -rn 'imudp' /etc/rsyslog.conf /etc/rsyslog.d/      # 无输出；已有时去掉 drop-in 里 module(load="imudp") 一行
+sudo ss -Hlun 'sport = :5514'                                # 无输出
+docker version --format '{{.Server.Version}}'                # 20.10 或更高
+sudo cat /etc/docker/daemon.json                             # 不得含 cache-disabled；只读，不改
+docker info --format '{{.LoggingDriver}}'                    # 记下；其他容器继续用它
+test -x /usr/lib/rsyslog/rsyslog-rotate && logrotate --version
+grep -n RepeatedMsgReduction /etc/rsyslog.conf               # 记下；安装核对会测它是否吞掉重复行
+~~~
+
+任何一项不符就停，不安装。
+
+### 安装（另行授权）
+
+在本次发布的 `verify-load`、`freeze` 之后、`env` 之前，从本次发布树运行：
+
+~~~bash
+cd "/opt/memoria/releases/$TAG"
+sudo install -d -o syslog -g syslog -m 0700 /var/log/memoria
+sudo install -m 0644 infra/rsyslog-memoria.conf /etc/rsyslog.d/30-memoria.conf
+sudo rsyslogd -N1 && sudo systemctl restart rsyslog
+sudo journalctl -u docker --since -10min | grep -c 'Error writing log message'   # 0
+sudo install -d -m 0755 /opt/memoria/ops-tools
+sudo install -m 0644 infra/memoria-logs.logrotate /opt/memoria/ops-tools/memoria-logs.logrotate
+sudo install -m 0644 infra/memoria-log-rotate.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now memoria-log-rotate.timer
+sudo systemctl start memoria-log-rotate.service && echo rotate=PASS
+for _ in 1 2; do logger -d -n 127.0.0.1 -P 5514 --rfc5424 -t control-api/install-check 'memoria log sink install check'; done
+sudo tail -n 2 /var/log/memoria/control-api.log              # 两行，都含 control-api/install-check
+~~~
+
+只有一行、或出现 `message repeated`，说明 `$RepeatedMsgReduction` 作用到了这两个文件。这时在 drop-in 第一行加 `$RepeatedMsgReduction off`、最后一行加 `$RepeatedMsgReduction on`，重装并重做核对（本机未试过）。核对写入的两行留在文件里，随轮转删除。
+
+### 发布时的门
+
+`release-ops.sh env` 在第一个一次性容器之前记下两个文件的大小。声纹开关检查之后、提供方冒烟之前，它要求两个文件里新出现本次的标记行：`control-api/<12 位 id> … control_env_valid=PASS` 与 `voice-core-media-bridge/<12 位 id> … speaker_authority_disabled=PASS`。缺一个就失败，线上不动：
+
+~~~text
+no control-api line with control_env_valid=PASS reached /var/log/memoria/control-api.log; install the host log sink (docs/runbooks/release-rollback.md, 容器日志落盘) and rerun env
+~~~
+
+轮转把当前文件改名为 `.1` 时，门从快照偏移接着读 `.1`。再轮转一次进 `.2` 才会漏掉标记，重跑 `env` 即可。
+
+### 读日志
+
+~~~bash
+ssh memoria-prod 'sudo tail -F /var/log/memoria/voice-core-media-bridge.log'
+ssh memoria-prod "sudo sh -c \"zgrep -h 'media turn committed' /var/log/memoria/voice-core-media-bridge.log* | sort\""
+ssh memoria-prod "docker inspect -f '{{.Id}}' memoria-voice-core-media-bridge-1 | cut -c1-12"   # 当前容器写在哪个 id 下
+~~~
+
+行首是时间，同一时区偏移下 `sort` 之后就是时间顺序。
+
+### 事故处理：日志里出现孩子原话
+
+1. 停写：按「回滚二」第 ① 步换上关闭版 drop-in。
+2. 删除并核对：
+
+~~~bash
+sudo find /var/log/memoria -type f -delete
+sudo find /var/log/memoria -type f | wc -l       # 0
+~~~
+
+3. 清 Docker 缓存。缓存随容器删除：经授权，用线上同一棵发布树重建这两个容器，`sudo env MEMORIA_RELEASE_TAG=… MEMORIA_RELEASE_COMMIT=… docker compose -f docker-compose.production.yml --profile media-runtime up -d --no-deps --no-build --force-recreate control-api voice-core-media-bridge`（与「media-edge 组件发布」第 3 步一样必须 `sudo env`）。重建后 `docker logs` 里不应再有那段原文。
+4. journald：跑上面的 `journalctl -u docker … | grep -c 'Error writing log message'`，不为零另行授权处理。
+5. 恢复写入：重装开启版 drop-in（「安装」一节第 3、4 行），重做安装核对。时间、范围和核对结果记进 `HANDOFF.md`。
+
+### 回滚
+
+**回滚一：发布回滚。** `release-ops.sh rollback` 不变。回滚到的 PREV 若没有 `logging:` 块（第一次带此块的发布就是这样），两个容器回到 daemon 默认驱动，`docker logs` 照常。`/var/log/memoria` 里已有的文件不再增长，timer 照常每天轮转，约 8 天内按份数删完，不需要手动操作。要立刻清掉，做「回滚二」第 ② 步。主机部分留着不碍事，下一次带此块的发布直接用它。
+
+**回滚二：拿掉这项功能。** 按顺序做，不能换。
+
+① 立刻停写，端口仍在听：
+
+~~~bash
+cd "/opt/memoria/releases/$TAG"                  # 任一含 infra/rsyslog-memoria-off.conf 的发布树
+sudo install -m 0644 infra/rsyslog-memoria-off.conf /etc/rsyslog.d/30-memoria.conf
+sudo rsyslogd -N1 && sudo systemctl restart rsyslog
+sudo journalctl -u docker --since -10min | grep -c 'Error writing log message'   # 0
+sudo sh -c 'stat -c "%s %n" /var/log/memoria/*.log; sleep 60; stat -c "%s %n" /var/log/memoria/*.log'   # 两次相同
+~~~
+
+关闭版只丢弃，不关端口。容器若往关闭的端口发，dockerd 可能把发送失败的行连同原文记进共用的 journald。
+
+② 处理已有文件。默认删除：
+
+~~~bash
+sudo find /var/log/memoria -type f -delete
+sudo find /var/log/memoria -type f | wc -l       # 0
+~~~
+
+要留作排障就不删，但 timer 必须一直开着，直到 `sudo sh -c 'zcat -f /var/log/memoria/* 2>/dev/null' | wc -c` 为 0（停写后最多约 8 天）。不能先停 timer：停了就没有东西再删这些文件。
+
+③ 从仓库拿掉：一个 PR 同时删去两个 `logging:` 块；`release_ops.sh` 里的 `HOST_LOG_DIR`、`host_log_size`、`assert_host_log_has`，以及 `step_env` 里记大小和两次断言的几行；两处测试；`infra/` 下的五个文件；本节，以及 `docs/compliance/child-audio-transcript-ephemeral.md` 里对应的句子。然后走一次整栈发布。在这之前，`env` 会拒绝任何仍带 `logging:` 块的候选，因为关闭版让标记行进不了文件。这是有意的。
+
+④ 那次发布 `finish` 之后，已经没有容器往 5514 发，再拆掉主机部分：
+
+~~~bash
+sudo sh -c 'zcat -f /var/log/memoria/* 2>/dev/null' | wc -c   # 0；不为 0 就回到第 ② 步，或等 timer 删完
+sudo rm /etc/rsyslog.d/30-memoria.conf
+sudo rsyslogd -N1 && sudo systemctl restart rsyslog
+sudo ss -Hlun 'sport = :5514'                    # 无输出
+sudo systemctl disable --now memoria-log-rotate.timer
+sudo rm /etc/systemd/system/memoria-log-rotate.service /etc/systemd/system/memoria-log-rotate.timer \
+  /opt/memoria/ops-tools/memoria-logs.logrotate /var/lib/logrotate/memoria-logs.status
+sudo systemctl daemon-reload
+sudo find /var/log/memoria -type f -delete && sudo rmdir /var/log/memoria
+~~~
+
+第 ④ 步之后若要回滚那次发布：PREV 带着 `logging:` 块，容器又会往 5514 发。先装回关闭版 drop-in（第 ① 步的前三行），再回滚。
 
 ## media-edge 组件发布（手工，只换 media-edge 一个容器）
 

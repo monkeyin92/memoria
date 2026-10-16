@@ -1,0 +1,8 @@
+[Unit]
+Description=Rotate and expire Memoria container logs in /var/log/memoria
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/logrotate --state /var/lib/logrotate/memoria-logs.status /opt/memoria/ops-tools/memoria-logs.logrotate
+User=root

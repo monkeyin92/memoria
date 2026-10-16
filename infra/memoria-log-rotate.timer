@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Memoria container log rotation hourly
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=5min
+Persistent=true
+Unit=memoria-log-rotate.service
+
+[Install]
+WantedBy=timers.target

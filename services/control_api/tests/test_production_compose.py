@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import fnmatch
 import re
 import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 from scripts.split_production_env import split_env
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -1276,3 +1278,102 @@ def test_env_templates_drop_the_retired_context_fetch_keys() -> None:
         text = template.read_text(encoding="utf-8")
         for key in RETIRED_CONTEXT_FETCH_KEYS:
             assert f"\n{key}=" not in text, f"{key} still in {template.name}"
+
+
+LOG_SINK = ROOT / "infra" / "rsyslog-memoria.conf"
+LOG_SINK_OFF = ROOT / "infra" / "rsyslog-memoria-off.conf"
+LOG_ROTATE = ROOT / "infra" / "memoria-logs.logrotate"
+
+
+def _imudp_sink_url(conf: str) -> str:
+    inputs = re.findall(
+        r'input\(\s*type="imudp"\s+address="([^"]+)"\s+port="([^"]+)"',
+        conf,
+    )
+    assert len(inputs) == 1
+    address, port = inputs[0]
+    return f"udp://{address}:{port}"
+
+
+def _omfile_path_by_service(conf: str) -> dict[str, str]:
+    return {
+        name: path
+        for name, path in re.findall(
+            r'if \$app-name startswith "([^"]+)/" then \{\s*'
+            r'action\(type="omfile" file="([^"]+)"',
+            conf,
+        )
+    }
+
+
+def test_python_services_ship_logs_to_the_host_sink_and_keep_python_as_pid_1() -> None:
+    compose = yaml.safe_load((ROOT / "docker-compose.production.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+    sink = _imudp_sink_url(LOG_SINK.read_text(encoding="utf-8"))
+    senders = sorted(
+        name
+        for name, service in services.items()
+        if ((service.get("logging") or {}).get("options") or {}).get("syslog-address") == sink
+    )
+    assert senders == ["control-api", "voice-core-media-bridge"]
+
+    rotate_text = LOG_ROTATE.read_text(encoding="utf-8")
+    log_glob = re.search(r"(?m)^(\S+)\s+\{", rotate_text)
+    assert log_glob is not None
+    routes = _omfile_path_by_service(LOG_SINK.read_text(encoding="utf-8"))
+    shared: dict[str, str] | None = None
+    for name in senders:
+        service = services[name]
+        logging_block = service["logging"]
+        assert logging_block["driver"] == "syslog"
+        options = dict(logging_block["options"])
+        assert options.pop("tag") == f"{name}/{{{{.ID}}}}"
+        assert len(name) + 1 + 12 <= 48
+        assert "cache-disabled" not in options
+        if shared is None:
+            shared = options
+        else:
+            assert options == shared
+        path = routes[name]
+        assert path == f"/var/log/memoria/{name}.log"
+        assert fnmatch.fnmatch(path, log_glob.group(1))
+        assert service["read_only"] is True
+        assert service["cap_drop"] == ["ALL"]
+        assert "user" not in service
+        assert "init" not in service
+        assert {volume["target"] for volume in service["volumes"]} == {
+            "/data",
+            "/etc/memoria-media-runtime",
+        }
+        dockerfile = ROOT / service["build"]["dockerfile"]
+        assert "USER 65532:65532" in dockerfile.read_text(encoding="utf-8")
+
+    bridge = services["voice-core-media-bridge"]
+    assert bridge["entrypoint"] == ["/app/.venv/bin/python"]
+    assert bridge["command"] == ["-m", "scripts.run_media_bridge"]
+    control = services["control-api"]
+    assert control["command"][0] == "/app/.venv/bin/uvicorn"
+    assert "--no-access-log" in control["command"]
+    assert "--log-config" not in control["command"]
+
+    off = LOG_SINK_OFF.read_text(encoding="utf-8")
+    assert _imudp_sink_url(off) == sink
+    assert "omfile" not in off
+
+    runbook = (ROOT / "docs" / "runbooks" / "release-rollback.md").read_text(encoding="utf-8")
+    start = runbook.index("## 容器日志落盘")
+    section = runbook[start:]
+    next_heading = re.search(r"\n## ", section)
+    assert next_heading is not None
+    section = section[: next_heading.start()]
+    compliance = (ROOT / "docs" / "compliance" / "child-audio-transcript-ephemeral.md").read_text(
+        encoding="utf-8"
+    )
+    rows = [line for line in compliance.splitlines() if line.startswith("| 应用日志 |")]
+    assert len(rows) == 1
+    for directive in ("maxsize", "rotate", "maxage"):
+        found = re.findall(rf"(?m)^\s*{directive} (\S+)\s*$", rotate_text)
+        assert len(found) == 1
+        token = f"{directive} {found[0]}"
+        assert token in section
+        assert token in rows[0]
