@@ -1,4 +1,4 @@
-const EFFECTIVE_ON = "2026-10-16";
+const EFFECTIVE_ON = "";
 
 function releaseDate(effectiveOn = EFFECTIVE_ON) {
   return typeof effectiveOn === "string" ? effectiveOn.trim() : "";
