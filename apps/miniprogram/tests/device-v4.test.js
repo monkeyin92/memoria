@@ -101,7 +101,7 @@ test("a missing per-session cap displays 15 minutes and the slider rests on 15",
   }
 });
 
-test("the usage screen reads 未设置 when the signed profile has quiet hours but no cap", async () => {
+test("a quiet-only profile keeps the signed cap empty and shows the 15 minute fallback", async () => {
   const quietOnly = {
     ...fx.RUNTIME_PROFILE,
     obligations: fx.RUNTIME_PROFILE.obligations.filter((item) => item.code === "QUIET_HOURS"),
@@ -111,9 +111,9 @@ test("the usage screen reads 未设置 when the signed profile has quiet hours b
     const data = await harness.run();
     assert.equal(data.sessionLimits.maxSessionMinutes, null);
     const text = visibleText(renderPage("pages/device/index", data));
-    assert.match(text, /未设置 单次上限 用量暂未统计/);
-    assert.match(text, /单次上限 未设置 10 分钟 30 分钟/);
-    assert.doesNotMatch(text, /单次上限 15 分钟|单次上限 30 分钟/);
+    assert.match(text, /15 分钟 · 单次上限 用量暂未统计/);
+    assert.match(text, /单次上限 15 分钟 10 分钟 30 分钟/);
+    assert.doesNotMatch(text, /未设置 单次上限|单次上限 未设置/);
   } finally {
     harness.restore();
   }

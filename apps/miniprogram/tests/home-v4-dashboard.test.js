@@ -39,7 +39,7 @@ test("home ring shows the daily budget without inventing minutes the ledger coul
   assert.equal(data.usageLimitMinutes, 30);
   const html = renderPage("pages/home/index", data);
   const text = visibleText(html);
-  assert.match(text, /30 分钟 · 每天上限 今天聊了 用量暂未统计/);
+  assert.match(text, /上限 30 分钟 今天聊了 用量暂未统计/);
   assert.doesNotMatch(text, /\d+%|单次上限/);
   assert.match(html, /conic-gradient\(#4A52C9 0% 0%, #ECECF2 0% 100%\)/);
 });
@@ -75,7 +75,7 @@ test("home ring fills the used share of the daily budget", async () => {
   assert.equal(data.usageFillPercent, 13);
   const html = renderPage("pages/home/index", data);
   assert.match(html, /conic-gradient\(#4A52C9 0% 13%, #ECECF2 13% 100%\)/);
-  assert.match(visibleText(html), /今天聊了 4 分钟/);
+  assert.match(visibleText(html), /13% 上限 30 分钟 今天聊了 4 分钟/);
 });
 
 test("home shows today's minutes only when the session-limits read carries them", async () => {
@@ -93,8 +93,8 @@ test("home shows today's minutes only when the session-limits read carries them"
   assert.equal(data.usageUsedMinutes, 18);
   const html = renderPage("pages/home/index", data);
   const text = visibleText(html);
-  assert.match(text, /30 分钟 · 每天上限 今天聊了 18 分钟/);
-  assert.doesNotMatch(text, /用量暂未统计|\d+%/);
+  assert.match(text, /60% 上限 30 分钟 今天聊了 18 分钟/);
+  assert.doesNotMatch(text, /用量暂未统计/);
   assert.equal(data.usageFillPercent, 60);
   assert.match(html, /conic-gradient\(#4A52C9 0% 60%, #ECECF2 60% 100%\)/);
 

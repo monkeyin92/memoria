@@ -16,6 +16,16 @@ function usageRingStyle(usedMinutes, limitMinutes) {
   return `background:conic-gradient(#4A52C9 0% ${percent}%, #ECECF2 ${percent}% 100%)`;
 }
 
+function usageCenterCopy(usedMinutes, limitMinutes) {
+  const hasLimit = Number.isInteger(limitMinutes) && limitMinutes > 0;
+  const known = Number.isInteger(usedMinutes) && usedMinutes >= 0;
+  if (!hasLimit) return { usageCenterLabel: "未设置", usageCapLabel: "每天上限" };
+  return {
+    usageCenterLabel: known ? `${usageFillPercent(usedMinutes, limitMinutes)}%` : "",
+    usageCapLabel: `上限 ${limitMinutes} 分钟`,
+  };
+}
+
 function buildTrialDeviceCard({ online, runtimeProfile, usedMinutes } = {}) {
   const limits = sessionLimitsFromProfile(runtimeProfile);
   const usageKnown = Number.isInteger(usedMinutes) && usedMinutes >= 0;
@@ -30,6 +40,7 @@ function buildTrialDeviceCard({ online, runtimeProfile, usedMinutes } = {}) {
     usageLimitMinutes,
     usageFillPercent: usageFillPercent(usageUsedMinutes, usageLimitMinutes),
     usageRingStyle: usageRingStyle(usageUsedMinutes, usageLimitMinutes),
+    ...usageCenterCopy(usageUsedMinutes, usageLimitMinutes),
     quietHoursLabel: limits?.quietHoursLabel || "",
     nightModeOn: Boolean(limits?.quietStart && limits?.quietEnd),
   };
@@ -87,6 +98,7 @@ module.exports = {
   buildTrialDeviceCard,
   usageFillPercent,
   usageRingStyle,
+  usageCenterCopy,
   hasUnreadSafetyAlert,
   memoryPreviewItems,
   offersSafetySubscribe,

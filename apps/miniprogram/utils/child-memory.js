@@ -135,6 +135,9 @@ function archiveFactCards(groups) {
     field: group.field,
     label: group.label,
     value: group.items.map((item) => item.text).filter(Boolean).join("、"),
+    facts: group.items
+      .filter((item) => item && item.recordId && item.text)
+      .map((item) => ({ recordId: item.recordId, text: item.text })),
     caption: ARCHIVE_FIELD_CAPTIONS[group.field] || "",
   }));
 }

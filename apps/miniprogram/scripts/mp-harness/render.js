@@ -274,6 +274,12 @@ function htmlAttrs(attrs, scope, ctx, extraStyle = "") {
   if (style) out.push(`style="${escapeHtml(style)}"`);
   if (attrs.id) out.push(`id="${escapeHtml(interpolate(attrs.id, scope))}"`);
   if (Object.keys(attrs).some((key) => /^(bind|catch):?tap$/.test(key))) out.push("data-tap");
+  for (const [key, raw] of Object.entries(attrs)) {
+    if (!key.startsWith("data-")) continue;
+    const value = interpolate(raw, scope);
+    if (value == null || value === false) continue;
+    out.push(`${key}="${escapeHtml(String(value))}"`);
+  }
   return out.length ? ` ${out.join(" ")}` : "";
 }
 
