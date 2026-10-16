@@ -56,7 +56,10 @@ def _obligation(code: PolicyObligation, **params: Any) -> PolicyObligationSpec:
 
 
 def _signed_payload(
-    category: str = "minor", *, daily_chat_seconds: str | None = None
+    category: str = "minor",
+    *,
+    daily_chat_seconds: str | None = None,
+    max_session_seconds: int = 1800,
 ) -> dict[str, Any]:
     now = datetime.now(UTC)
     minor = category == "minor"
@@ -84,7 +87,7 @@ def _signed_payload(
         obligations=(
             _obligation(
                 PolicyObligation.POLICY_OBLIGATION_MAX_SESSION_SECONDS,
-                max_session_seconds=1800,
+                max_session_seconds=max_session_seconds,
                 extras=daily,
             ),
             _obligation(PolicyObligation.POLICY_OBLIGATION_QUIET_HOURS, quiet_hours=("21:30", "06:30")),
@@ -101,9 +104,16 @@ def _signed_payload(
 
 
 def _profile(
-    category: str = "minor", *, daily_chat_seconds: str | None = None
+    category: str = "minor",
+    *,
+    daily_chat_seconds: str | None = None,
+    max_session_seconds: int = 1800,
 ) -> VerifiedRuntimeProfile:
-    payload = _signed_payload(category, daily_chat_seconds=daily_chat_seconds)
+    payload = _signed_payload(
+        category,
+        daily_chat_seconds=daily_chat_seconds,
+        max_session_seconds=max_session_seconds,
+    )
     verified = parse_runtime_profile(payload, verify_key=_KEY)
     assert verified is not None
     return verified
@@ -268,6 +278,44 @@ async def test_a_minor_session_past_its_limit_ends_after_the_reply(
 
     assert session.spoken == ([MINOR_SESSION_LIMIT_PHRASE] if ends else [])
     assert session.standby == (["minor_max_session"] if ends else [])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored_seconds", [2700, 3600, 300])
+async def test_an_out_of_range_stored_cap_is_issued_as_15_minutes_and_stops_the_session(
+    stored_seconds: int,
+) -> None:
+    from services.policy.tests.fakes import FakeConsentParams
+    from services.policy.tests.test_engine import _minor_session
+
+    stored = FakeConsentParams(
+        max_session_seconds=stored_seconds, quiet_hours=("21:30", "06:30")
+    )
+    decision = _minor_session("chat", stored)
+    issued = next(
+        item.params.max_session_seconds
+        for item in decision.obligations
+        if item.code.value == "MAX_SESSION_SECONDS"
+    )
+
+    assert stored.max_session_seconds == stored_seconds
+    assert issued == 900
+    profile = _profile(max_session_seconds=issued)
+    session = _Session()
+    await session._maybe_standby_after_session_limit(
+        _context(profile, started_ago=900.0, reply="好的。"),
+        fence=object(),  # type: ignore[arg-type]
+    )
+    assert session.spoken == [MINOR_SESSION_LIMIT_PHRASE]
+    assert session.standby == ["minor_max_session"]
+
+    earlier = _Session()
+    await earlier._maybe_standby_after_session_limit(
+        _context(profile, started_ago=899.0, reply="好的。"),
+        fence=object(),  # type: ignore[arg-type]
+    )
+    assert earlier.spoken == []
+    assert earlier.standby == []
 
 
 @pytest.mark.asyncio
