@@ -26,9 +26,9 @@ test("the agreement file is packed even though only a runtime path names it", ()
   );
 });
 
-test("the shipped date is 2026-10-16, and a blank date stays 内测版", () => {
-  assert.equal(EFFECTIVE_ON, "2026-10-16");
-  assert.equal(releaseChip(), "内测版 · 2026-10-16生效");
+test("the shipped date is blank, so the chip stays 内测版", () => {
+  assert.equal(EFFECTIVE_ON, "");
+  assert.equal(releaseChip(), "内测版");
   assert.equal(releaseChip(""), "内测版");
   assert.equal(releaseChip("  "), "内测版");
   assert.equal(releaseChip("2026年4月1日"), "内测版 · 2026年4月1日生效");
@@ -169,19 +169,18 @@ test("the user agreement page shows the document body, or a pending notice when 
 
 const SHIPPED_AGREEMENT_PARAGRAPHS = [
   "memoria 用户协议（内测版）",
-  "生效日期：2026-10-16",
-  "欢迎使用 memoria。memoria 是给 3 到 10 岁孩子用的陪伴机器人，配合微信小程序使用，现在还在内测阶段。这份协议是你（孩子的父母或其他监护人）和 memoria 运营方之间关于使用 memoria 的约定，请先读完再勾选同意。和孩子个人信息有关的内容，以《隐私说明》和《监护人同意书》为准。",
+  "欢迎使用 memoria。memoria 是给 3 到 10 岁孩子用的陪伴机器人，配合微信小程序使用，现在还在内测阶段。这份协议是你（孩子的父母或其他监护人）和 memoria 运营方之间关于使用 memoria 的约定，请先读完再勾选同意。和孩子个人信息有关的内容，包括收集哪些、保存多久，以《隐私保护指引》和《监护人同意书》为准。",
   "### 一、服务内容",
-  "1. memoria 提供 AI 陪伴对话、讲故事、睡前音频等功能，你可以在小程序里绑定设备、查看提醒和回顾、管理孩子的数据。\n2. 和孩子对话的是人工智能，不是真人。对话时设备屏幕上一直显示「AI」角标，离线故事和睡前音频开头会播报 AI 合成提示，小程序里由 AI 生成的总结也会标明。\n3. AI 生成的内容可能不准确、不完整，不能当作医疗、心理、教育或法律方面的专业意见。\n4. 内测期间功能会调整，具体以你实际看到的为准。",
+  "1. memoria 提供 AI 陪伴对话、讲故事、睡前音频等功能，你可以在小程序里绑定设备、查看提醒和回顾、管理孩子的数据。\n2. 和孩子对话的是人工智能，不是真人。对话时设备屏幕上一直显示「AI」角标。上线离线音频时，离线故事和睡前音频开头会播报 AI 合成提示。\n3. AI 生成的内容可能不准确、不完整，不能当作医疗、心理、教育或法律方面的专业意见。\n4. 内测期间功能会调整，具体以你实际看到的为准。",
   "### 二、监护人同意和监护人责任",
   "1. 孩子不满 14 周岁，使用 memoria 和我们处理孩子的个人信息，都要先取得你作为父母或其他监护人的同意。你勾选同意，就表示你是孩子的监护人，有权代孩子作出同意。\n2. memoria 不能替代你对孩子的照看。请你留意孩子的使用时长和状态，孩子使用时尽量有大人在旁边或能随时找到大人。\n3. 孩子聊到安全话题时，机器人会提醒孩子去找身边的大人，小程序里可能出现提醒。提醒不保证每次都能识别或及时送到，遇到紧急情况请直接拨打 110、120，心理援助可拨打 12356。",
   "### 三、账号",
-  "1. 你用微信登录小程序，账号仅限你本人和家里的监护人使用，请保管好手机和微信账号。\n2. 一台设备绑定到一个家庭。设备转给别人前，请先解绑并删除孩子的数据。\n3. 发现账号被别人使用，请尽快联系我们。",
+  "1. 你用微信登录小程序，账号仅限你本人和家里的监护人使用，请保管好手机和微信账号。\n2. 一台设备绑定到一个家庭。设备转给别人前，请先解绑并删除孩子的数据。\n3. 发现账号被别人使用，请到小程序「我的」页点「帮助与反馈」告诉我们。",
   "### 四、禁止行为",
   "使用 memoria 时请不要：\n1. 用它做违法的事，或者引导它生成违法、暴力、色情、侵害未成年人的内容；\n2. 破解、反向工程、修改设备固件或服务器接口，绕过安全和防沉迷设置；\n3. 冒用他人身份绑定设备，或在没有监护权的情况下替别人的孩子作出同意；\n4. 把设备或服务转卖、出租，或用于商业目的；\n5. 干扰服务正常运行，比如批量请求、植入恶意代码。",
   "出现上述情况，我们可以暂停或终止对应账号的服务，并依法处理。",
   "### 五、内测性质和停止服务",
-  "1. memoria 现在是内测版，可能有故障、中断或功能变动，我们会尽量修复，但不能保证服务一直不间断。\n2. 如果我们决定停止提供 memoria 服务，会至少提前 90 天在小程序里通知你。这段时间你可以导出和删除孩子的数据，停服后我们会按《隐私说明》处理剩下的数据。\n3. 内测设备的借用、归还等事项，以《内测协议》为准。",
+  "1. memoria 现在是内测版，可能有故障、中断或功能变动，我们会尽量修复，但不能保证服务一直不间断。\n2. 如果我们决定停止提供 memoria 服务，会至少提前 90 天在小程序里通知你。这段时间你可以在「家庭与监护」页导出孩子的授权和数据管理记录。这份导出不含对话原文。你也可以删除孩子的数据。停服后我们会按《隐私保护指引》处理剩下的数据。",
   "### 六、知识产权",
   "1. memoria 的软件、固件、界面设计、故事和儿歌文稿、合成音频等，权利归运营方或原权利人所有。\n2. 你可以在内测期间为家庭使用目的使用这些内容，不得复制、传播或用于商业用途。\n3. 你主动提交给我们的反馈和建议，我们可以用来改进产品，不会公开你和孩子的身份。",
   "### 七、免责和责任限制",
@@ -191,9 +190,10 @@ const SHIPPED_AGREEMENT_PARAGRAPHS = [
   "### 九、联系方式",
   "运营方名称和联系方式：公司注册后补充。",
   "内测期间对协议有疑问，可以在小程序「我的」页点「帮助与反馈」告诉我们。这是微信自带的反馈功能，不经过 memoria 的服务器。",
+  "投诉回复时限待定。",
 ];
 
-test("the shipped user agreement page shows the dated body", async () => {
+test("the shipped user agreement page shows the undated body", async () => {
   const harness = loadPage("pages/user-agreement/index", fx.guest());
   await harness.run();
   try {
@@ -205,6 +205,11 @@ test("the shipped user agreement page shows the dated body", async () => {
     assert.doesNotMatch(text, /agreement: pending/);
     assert.doesNotMatch(text, /正在定稿/);
     assert.doesNotMatch(text, /草稿/);
+    assert.doesNotMatch(text, /2026-10-16/);
+    assert.doesNotMatch(text, /隐私说明/);
+    assert.doesNotMatch(text, /内测协议/);
+    assert.doesNotMatch(text, /小程序里由 AI 生成的总结也会标明/);
+    assert.doesNotMatch(text, /请尽快联系我们/);
     let cursor = 0;
     for (const paragraph of SHIPPED_AGREEMENT_PARAGRAPHS) {
       const needle = paragraph.replace(/\s+/g, " ").trim();
@@ -231,8 +236,14 @@ test("parent-visible login and consent surfaces do not say 草稿", async () => 
     try {
       const text = visibleText(renderPage(page, harness.page.data));
       assert.equal(text.includes("草稿"), false, page);
-      if (page === "pages/guardian-consent/index") assert.match(text, /^内测版 · 2026-10-16生效 监护人同意书 /);
-      if (page === "pages/auth/index") assert.match(text, /^内测版 · 2026-10-16生效 /);
+      if (page === "pages/guardian-consent/index") {
+        assert.match(text, /^内测版 监护人同意书 /);
+        assert.doesNotMatch(text, /内测版 · /);
+      }
+      if (page === "pages/auth/index") {
+        assert.match(text, /^内测版 /);
+        assert.doesNotMatch(text, /生效/);
+      }
     } finally {
       harness.restore();
     }
