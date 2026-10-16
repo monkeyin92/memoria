@@ -37,6 +37,36 @@ function fakeWx(answer) {
   };
 }
 
+test("normalizeAlert keeps the approved interrupted and victim lines and drops an empty detail", () => {
+  const interrupted = "这次的提醒话术孩子没有听完，如需帮助可拨打心理援助热线12356";
+  const victim = "如有危险请拨打110";
+  const interruptedAlert = crisisAlerts.normalizeAlert({
+    notification_id: "n9",
+    pinned: true,
+    message: "请尽快联系",
+    detail: interrupted,
+  });
+  assert.equal(interruptedAlert.message, "有一条需要你关注的对话");
+  assert.equal(interruptedAlert.detail, interrupted);
+
+  const victimAlert = crisisAlerts.normalizeAlert({
+    notification_id: "n-victim",
+    pinned: true,
+    message: "请尽快联系",
+    detail: victim,
+  });
+  assert.equal(victimAlert.message, "有一条需要你关注的对话");
+  assert.equal(victimAlert.detail, victim);
+
+  const plain = crisisAlerts.normalizeAlert({
+    notification_id: "n8",
+    pinned: true,
+    message: "有一条需要你关注的对话",
+    detail: "",
+  });
+  assert.equal(Object.hasOwn(plain, "detail"), false);
+});
+
 test("pinnedAlerts keeps only server-marked undelivered crisis rows", () => {
   const items = crisisAlerts.pinnedAlerts([
     {
