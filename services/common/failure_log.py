@@ -1,7 +1,8 @@
 """The only fields a failure log line may carry: the exception type and a code.
 
 Provider, HTTP and driver exceptions can quote the reply, the request, SQL
-values or a vendor body in their text, so the text is never read here.
+values or a vendor body in their text. That text is logged only when the
+whole message is a snake_case token, which is how a denial names its reason.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from typing import Final
 
 _SQLSTATE: Final = re.compile(r"[A-Z0-9]{5}")
 _CODE_TOKEN: Final = re.compile(r"[A-Za-z0-9._-]{1,64}")
+_REASON_CODE: Final = re.compile(r"[a-z][a-z0-9_]{0,63}")
 _MAX_CAUSE_DEPTH: Final = 10
 
 
@@ -57,6 +59,12 @@ def _own_code(exc: BaseException) -> str | None:
         return str(code)
     if isinstance(code, str) and _CODE_TOKEN.fullmatch(code):
         return code
+    try:
+        message = str(exc)
+    except Exception:
+        return None
+    if _REASON_CODE.fullmatch(message):
+        return message
     return None
 
 

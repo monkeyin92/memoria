@@ -511,9 +511,7 @@ async def _create_direct_device_media_session(
         ) from exc
     except PersistentSessionUnavailable as exc:
         logger.warning(
-            "persistent Session authority failed device media session_id=%s %s",
-            session_id,
-            failure_log(exc),
+            "persistent Session authority failed device media session_id=%s %s", session_id, failure_log(exc)
         )
         raise HTTPException(
             status_code=503,

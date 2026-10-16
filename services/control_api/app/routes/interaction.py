@@ -643,9 +643,7 @@ async def _current_persistent_runtime_profile(
         )
     except (PersistentSessionNotFound, PersistentSessionUnavailable) as exc:
         logger.warning(
-            "persistent Runtime Profile unavailable session_id=%s %s",
-            session_id,
-            failure_log(exc),
+            "persistent Runtime Profile unavailable session_id=%s %s", session_id, failure_log(exc)
         )
         raise HTTPException(
             status_code=503,
