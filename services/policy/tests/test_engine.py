@@ -664,7 +664,7 @@ def _minor_session(capability: str, params: FakeConsentParams | None) -> PolicyD
 @pytest.mark.parametrize(
     ("params", "expected"),
     [
-        (None, (1800, (("daily_chat_seconds", "1800"),), ("21:00", "07:00"))),
+        (None, (900, (("daily_chat_seconds", "1800"),), ("21:00", "07:00"))),
         (
             FakeConsentParams(
                 max_session_seconds=1200,

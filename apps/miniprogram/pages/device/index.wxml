@@ -52,7 +52,7 @@
 
         <block wx:if="{{trialSettingsVisible}}">
           <view class="trial-card trial-card-xl device-usage-card">
-            <view class="device-ring">
+            <view class="device-ring" style="{{usageRingStyle}}">
               <view class="device-ring-inner">
                 <block wx:if="{{sessionLimits.dailyChatMinutes && dailyUsage}}">
                   <text class="device-ring-num">{{dailyUsage.usedMinutes}}</text>
@@ -63,8 +63,8 @@
                   <text class="device-ring-cap">分钟 · 每天上限</text>
                 </block>
                 <block wx:else>
-                  <text class="device-ring-num {{sessionLimits.maxSessionMinutes ? '' : 'is-unset'}}">{{sessionLimits.maxSessionMinutes || '未设置'}}</text>
-                  <text class="device-ring-cap">{{sessionLimits.maxSessionMinutes ? '分钟 · 单次上限' : '单次上限'}}</text>
+                  <text class="device-ring-num">{{sessionMinuteValue}}</text>
+                  <text class="device-ring-cap">分钟 · 单次上限</text>
                 </block>
               </view>
             </view>
@@ -82,8 +82,8 @@
             <view class="device-limit-head">
               <text class="device-limit-label">单次上限</text>
               <view>
-                <text class="device-limit-num">{{sessionLimits.maxSessionMinutes || '未设置'}}</text>
-                <text wx:if="{{sessionLimits.maxSessionMinutes}}" class="device-limit-unit"> 分钟</text>
+                <text class="device-limit-num">{{sessionMinuteValue}}</text>
+                <text class="device-limit-unit"> 分钟</text>
               </view>
             </view>
             <mp-slider
@@ -91,7 +91,7 @@
               min="{{limitsSliderMin}}"
               max="{{limitsSliderMax}}"
               step="{{limitsSliderStep}}"
-              value="{{sessionLimits.maxSessionMinutes || limitsSliderMin}}"
+              value="{{sessionMinuteValue}}"
               disabled="{{limitsSaving}}"
               bindchange="onLimitsMinutesSlider"
             ></mp-slider>

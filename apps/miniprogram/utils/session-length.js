@@ -1,0 +1,17 @@
+const SESSION_MINUTES_MIN = 10;
+const SESSION_MINUTES_MAX = 30;
+const SESSION_MINUTES_DEFAULT = 15;
+
+const SESSION_MINUTE_OPTIONS = Object.freeze(
+  Array.from(
+    { length: SESSION_MINUTES_MAX - SESSION_MINUTES_MIN + 1 },
+    (_, index) => SESSION_MINUTES_MIN + index,
+  ),
+);
+
+module.exports = {
+  SESSION_MINUTES_MIN,
+  SESSION_MINUTES_MAX,
+  SESSION_MINUTES_DEFAULT,
+  SESSION_MINUTE_OPTIONS,
+};

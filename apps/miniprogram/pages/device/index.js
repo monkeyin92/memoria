@@ -18,19 +18,21 @@ const {
 const { readSubjectLabel, saveSubjectLabel } = require("../../utils/subject-label");
 const { sessionLimitsFromProfile } = require("../../utils/session-limits");
 const {
+  SESSION_MINUTE_OPTIONS,
+  SESSION_MINUTES_DEFAULT,
+  SESSION_MINUTES_MAX,
+  SESSION_MINUTES_MIN,
+} = require("../../utils/session-length");
+const {
   DEFAULT_QUIET_HOURS,
   nightModeQuietHoursLabel,
   confirmUnusualQuietHours,
 } = require("../../utils/quiet-hours");
-const { offersSafetySubscribe } = require("../../utils/trial-device-card");
+const { offersSafetySubscribe, usageRingStyle } = require("../../utils/trial-device-card");
 const { PRIVACY_LINE } = require("../../utils/child-memory");
 const { SUBSCRIPTION_PUSH_ENABLED } = require("../../config");
 
-// 与绑定页的「单次使用时长」选项一致。
-const SESSION_MINUTE_OPTIONS = [15, 30, 45, 60];
-const LIMITS_SLIDER_MIN = 15;
-const LIMITS_SLIDER_MAX = 60;
-const LIMITS_SLIDER_STEP = 15;
+const LIMITS_SLIDER_STEP = 1;
 const { isTabRoute, routeOf } = require("../../utils/tab-routes");
 
 
@@ -271,6 +273,19 @@ function offlineStoriesFrom(result) {
     .map((item) => ({ id: item.id, title: item.title }));
 }
 
+function sessionMinuteValue(limits) {
+  if (!limits || limits.maxSessionMinutes == null) return SESSION_MINUTES_DEFAULT;
+  return limits.maxSessionMinutes;
+}
+
+function limitsPresentation(sessionLimits, dailyUsage) {
+  const used = dailyUsage && Number.isInteger(dailyUsage.usedMinutes) ? dailyUsage.usedMinutes : null;
+  return {
+    sessionMinuteValue: sessionMinuteValue(sessionLimits),
+    usageRingStyle: usageRingStyle(used, sessionLimits?.dailyChatMinutes ?? null),
+  };
+}
+
 function dailyChatFrom(result) {
   const limits = result.status === "fulfilled" ? result.value : null;
   const used = limits?.today_used_minutes;
@@ -327,6 +342,7 @@ Page({
     degradation: null,
     sensitiveEntries: [],
     sessionLimits: null,
+    ...limitsPresentation(null, null),
     dailyUsage: null,
     dailyChatSlider: null,
     trialSettingsVisible: false,
@@ -343,9 +359,9 @@ Page({
     limitsSaving: false,
     limitsError: "",
     limitsMinuteOptions: SESSION_MINUTE_OPTIONS,
-    limitsMinuteIndex: 1,
-    limitsSliderMin: LIMITS_SLIDER_MIN,
-    limitsSliderMax: LIMITS_SLIDER_MAX,
+    limitsMinuteIndex: SESSION_MINUTE_OPTIONS.indexOf(SESSION_MINUTES_DEFAULT),
+    limitsSliderMin: SESSION_MINUTES_MIN,
+    limitsSliderMax: SESSION_MINUTES_MAX,
     limitsSliderStep: LIMITS_SLIDER_STEP,
     limitsQuietStart: DEFAULT_QUIET_HOURS.start,
     limitsQuietEnd: DEFAULT_QUIET_HOURS.end,
@@ -462,6 +478,7 @@ Page({
       degradation: null,
       sensitiveEntries: [],
       sessionLimits: null,
+      ...limitsPresentation(null, null),
       dailyUsage: null,
       dailyChatSlider: null,
       trialSettingsVisible: false,
@@ -644,7 +661,14 @@ Page({
       }
       const refreshed = profile ? sessionLimitsFromProfile(profile) : null;
       this.setData({
-        ...(refreshed ? { profile, sessionLimits: refreshed, trialSettingsVisible: true } : {}),
+        ...(refreshed
+          ? {
+              profile,
+              sessionLimits: refreshed,
+              trialSettingsVisible: true,
+              ...limitsPresentation(refreshed, this.data.dailyUsage),
+            }
+          : {}),
       });
       wx.showToast({ title: "已保存", icon: "success" });
     } catch (error) {
@@ -969,6 +993,7 @@ Page({
       const accountCompanionId =
         typeof accountProfile?.companion_id === "string" ? accountProfile.companion_id : "";
       const sessionLimits = sessionLimitsFromProfile(profile);
+      const daily = dailyChatFrom(limitsResult);
       const limitsMinuteOptions =
         !sessionLimits?.maxSessionMinutes ||
         SESSION_MINUTE_OPTIONS.includes(sessionLimits.maxSessionMinutes)
@@ -976,7 +1001,7 @@ Page({
           : [...SESSION_MINUTE_OPTIONS, sessionLimits.maxSessionMinutes].sort((a, b) => a - b);
       const limitsMinuteIndexRaw = limitsMinuteOptions.indexOf(sessionLimits?.maxSessionMinutes);
       const limitsMinuteIndex =
-        limitsMinuteIndexRaw >= 0 ? limitsMinuteIndexRaw : limitsMinuteOptions.indexOf(30);
+        limitsMinuteIndexRaw >= 0 ? limitsMinuteIndexRaw : limitsMinuteOptions.indexOf(SESSION_MINUTES_DEFAULT);
       this.setData({
         hasBinding: true,
         authenticated: true,
@@ -1002,7 +1027,8 @@ Page({
         degradation: profile ? degradationFor(profile) : null,
         sensitiveEntries: profile ? sensitiveEntriesFor(profile) : [],
         sessionLimits,
-        ...dailyChatFrom(limitsResult),
+        ...daily,
+        ...limitsPresentation(sessionLimits, daily.dailyUsage),
         trialSettingsVisible: Boolean(sessionLimits),
         offlineStories: offlineStoriesFrom(storiesResult),
         limitsMinuteOptions,
@@ -1319,6 +1345,7 @@ Page({
       const candidates = resolutionNext ? resolutionNext.candidate_subjects || [] : [];
       const speakerLabel = currentUserLabel(nextProfile, candidates);
       const subjectAliasLabel = readSubjectLabel(this.data.binding);
+      const sessionLimits = sessionLimitsFromProfile(nextProfile);
       this.setData({
         profile: nextProfile,
         resolution: resolutionNext,
@@ -1332,7 +1359,8 @@ Page({
         ),
         degradation: degradationFor(nextProfile),
         sensitiveEntries: sensitiveEntriesFor(nextProfile),
-        sessionLimits: sessionLimitsFromProfile(nextProfile),
+        sessionLimits,
+        ...limitsPresentation(sessionLimits, this.data.dailyUsage),
         currentUserLabel: speakerLabel ? subjectAliasLabel || speakerLabel : "未确认",
         currentUserLabelConfirmed: Boolean(speakerLabel),
       });
@@ -1404,7 +1432,7 @@ Page({
       limitsSheetVisible: true,
       limitsError: "",
       limitsMinuteOptions: options,
-      limitsMinuteIndex: index >= 0 ? index : options.indexOf(30),
+      limitsMinuteIndex: index >= 0 ? index : options.indexOf(SESSION_MINUTES_DEFAULT),
       limitsQuietStart: quietStart,
       limitsQuietEnd: quietEnd,
       limitsQuietLabel: nightModeQuietHoursLabel(quietStart, quietEnd),
@@ -1466,7 +1494,9 @@ Page({
       }
       const refreshed = profile ? sessionLimitsFromProfile(profile) : null;
       this.setData({
-        ...(refreshed ? { profile, sessionLimits: refreshed } : {}),
+        ...(refreshed
+          ? { profile, sessionLimits: refreshed, ...limitsPresentation(refreshed, this.data.dailyUsage) }
+          : {}),
         limitsSheetVisible: false,
       });
       this._syncSheetOpen();

@@ -25,22 +25,27 @@
 
       <block wx:else>
         <view class="trial-card trial-card-xl cm-archive cm-first">
-          <view wx:for="{{archiveGroups}}" wx:key="field" class="cm-field">
+          <view wx:for="{{archiveCards}}" wx:key="field" class="cm-field">
             <mp-icon name="{{item.field === 'appellation' ? 'tag' : item.field === 'preference' ? 'heart' : 'paw'}}"></mp-icon>
             <view class="cm-field-body">
               <text class="cm-field-label">{{item.label}}</text>
-              <view wx:for="{{item.items}}" wx:for-item="fact" wx:key="recordId" class="cm-fact">
+              <view wx:for="{{item.facts}}" wx:for-item="fact" wx:key="recordId" class="cm-fact">
                 <view class="cm-fact-copy">
                   <text class="cm-fact-text">{{fact.text}}</text>
-                  <text class="cm-meta">{{fact.dateLabel}}</text>
                 </view>
-                <view class="cm-delete" data-record-id="{{fact.recordId}}" bindtap="askDeleteArchive" aria-label="删除">
+                <view
+                  class="cm-delete"
+                  data-record-id="{{fact.recordId}}"
+                  bindtap="askDeleteArchive"
+                  aria-label="删除"
+                >
                   <view class="cm-trash" aria-hidden="true">
                     <view class="cm-trash-lid"></view>
                     <view class="cm-trash-body"></view>
                   </view>
                 </view>
               </view>
+              <text class="cm-meta">{{item.caption}}</text>
             </view>
           </view>
         </view>
@@ -51,6 +56,11 @@
         </view>
       </block>
     </block>
+    <view wx:else class="cm-empty-state">
+      <face-badge role="{{companionId}}" size="empty" mood="thinking" plain></face-badge>
+      <text class="cm-empty-title">{{emptyArchiveOffTitle}}</text>
+      <text class="cm-empty-copy">{{emptyArchiveOff}}</text>
+    </view>
 
     <view class="trial-card cm-consent {{archiveConsent.active ? '' : 'cm-first'}}">
       <view class="cm-consent-row">

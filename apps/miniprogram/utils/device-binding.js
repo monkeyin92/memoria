@@ -18,6 +18,7 @@
  */
 
 const contracts = require("./multi-subject-contracts");
+const { SESSION_MINUTES_MAX, SESSION_MINUTES_MIN } = require("./session-length");
 const { clearSubjectLabel } = require("./subject-label");
 
 const MODE_META = Object.freeze({
@@ -555,11 +556,11 @@ function validatePreferenceValue(schema, value, key) {
     const isValidMinutes =
       typeof value === "number" &&
       Number.isFinite(value) &&
-      value >= 15 &&
-      value <= 60 &&
+      value >= SESSION_MINUTES_MIN &&
+      value <= SESSION_MINUTES_MAX &&
       Math.floor(value) === value;
     if (!isValidMinutes) {
-      throw new TypeError(`${key} 必须是 15 到 60 的整数分钟`);
+      throw new TypeError(`${key} 必须是 ${SESSION_MINUTES_MIN} 到 ${SESSION_MINUTES_MAX} 的整数分钟`);
     }
     return value;
   }

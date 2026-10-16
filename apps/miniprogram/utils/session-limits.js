@@ -1,7 +1,9 @@
+const { SESSION_MINUTES_MAX } = require("./session-length");
+
 const QUIET_HOUR_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 // 设备按北京时间执行休息时段（agent 的 MEMORIA_TIMEZONE 默认 Asia/Shanghai）。
 const DEVICE_UTC_OFFSET_MINUTES = 8 * 60;
-const MAX_SESSION_MINUTES_CAP = 60;
+const MAX_SESSION_MINUTES_CAP = SESSION_MINUTES_MAX;
 const DAILY_CHAT_SECONDS_KEY = "daily_chat_seconds";
 
 function obligationParams(profile, code) {

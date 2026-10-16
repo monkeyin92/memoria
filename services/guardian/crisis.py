@@ -124,8 +124,8 @@ class CrisisNotificationService:
         still pins in the Mini Program as a ``pin_only`` row, which the
         subscribe-message worker never claims.
 
-        ``possibly_story_retell`` only annotates the in-app pin copy. It never
-        skips the fixed script or the notification.
+        ``possibly_story_retell`` is stored on the row. It is not written into
+        the parent title. It never skips the fixed script or the notification.
 
         ``reply_template_id`` and ``script_version`` are ids only. Child text
         never enters this payload or the crisis event row.

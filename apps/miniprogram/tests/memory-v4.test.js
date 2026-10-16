@@ -31,6 +31,19 @@ test("summary days carry the date only and an unsummarised day says how many cha
   }
 });
 
+test("the date bar stays the last six calendar days when only one day has a summary", async () => {
+  const harness = await openMemory({
+    ...NO_ALERTS,
+    getGuardianChildDays: async () => ({ items: [{ day: fx.dayKey(0), message_count: 1 }] }),
+  });
+  try {
+    const text = visibleText(renderPage("pages/memory/index", harness.page.data, { tabBar: false }));
+    assert.match(text, /三 14 二 13 一 12 日 11 六 10 五 9/);
+  } finally {
+    harness.restore();
+  }
+});
+
 test("整理选中这一天 turns today's card into the recap highlights", async () => {
   const harness = await openMemory();
   try {

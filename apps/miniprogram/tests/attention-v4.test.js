@@ -70,6 +70,22 @@ test("an interrupted crisis script keeps the headline and shows the unfinished l
   }
 });
 
+test("a guessed retell note never becomes the attention title or the detail", async () => {
+  const harness = await openAttention({ id: "n1" }, {
+    getGuardianNotifications: async () => ({
+      items: [{ ...fx.PINNED_ALERT, message: "有一条需要你关注的对话（可能是在复述故事）" }],
+    }),
+  });
+  try {
+    assert.equal(harness.page.data.alert.message, "有一条需要你关注的对话");
+    const text = visibleText(renderPage("pages/attention/index", harness.page.data));
+    assert.match(text, /^有一条需要你关注的对话 今天 19:42 /);
+    assert.doesNotMatch(text, /复述|可能是/);
+  } finally {
+    harness.restore();
+  }
+});
+
 test("the attention page opens the alert it was linked to", async () => {
   const harness = await openAttention({ id: "n2" }, {
     getGuardianNotifications: async () => ({ items: [fx.PINNED_ALERT, SECOND_ALERT] }),
