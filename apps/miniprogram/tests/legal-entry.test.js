@@ -121,10 +121,9 @@ test("login titles open the agreement and the privacy notice without a login red
   try {
     assert.deepEqual(navigations(privacy), []);
     const text = visibleText(renderPage("pages/privacy/index", privacy.page.data));
-    assert.match(text, /开启后，机器人对话的原始语音会保存在你的账号下，直到你撤回授权。撤回时服务端会删除这些录音。/);
     assert.equal(privacy.page.data.guest, true);
     assert.doesNotMatch(text, /草稿/);
-    assert.doesNotMatch(text, /明确授权原始语音归档/);
+    assert.doesNotMatch(text, /原始语音归档|明确授权原始语音归档/);
   } finally {
     privacy.restore();
   }

@@ -162,6 +162,6 @@
       </view>
     </block>
 
-    <text class="home-note">在设备上使用，手机不录音，回应由 AI 生成。</text>
+    <text class="home-note">在设备上和孩子对话，手机端不收声，回应由 AI 生成。</text>
   </block>
 </view>
