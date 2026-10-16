@@ -1,9 +1,8 @@
-const { SESSION_MINUTES_MAX } = require("./session-length");
+const { SESSION_MINUTES_MAX, SESSION_MINUTES_MIN } = require("./session-length");
 
 const QUIET_HOUR_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 // 设备按北京时间执行休息时段（agent 的 MEMORIA_TIMEZONE 默认 Asia/Shanghai）。
 const DEVICE_UTC_OFFSET_MINUTES = 8 * 60;
-const MAX_SESSION_MINUTES_CAP = SESSION_MINUTES_MAX;
 const DAILY_CHAT_SECONDS_KEY = "daily_chat_seconds";
 
 function obligationParams(profile, code) {
@@ -38,6 +37,13 @@ function inQuietHours(window, now) {
   return start < end ? current >= start && current < end : current >= start || current < end;
 }
 
+function parentSessionMinutes(maxSeconds) {
+  if (!Number.isInteger(maxSeconds) || maxSeconds <= 0) return null;
+  const minutes = Math.round(maxSeconds / 60);
+  if (minutes < SESSION_MINUTES_MIN || minutes > SESSION_MINUTES_MAX) return null;
+  return minutes;
+}
+
 function sessionLimitsFromProfile(profile, now = new Date()) {
   if (!profile || profile.valid !== true || profile.subject_category !== "minor") return null;
   const quiet = obligationParams(profile, "QUIET_HOURS")?.quiet_hours;
@@ -52,11 +58,8 @@ function sessionLimitsFromProfile(profile, now = new Date()) {
   const hasMax = Number.isInteger(maxSeconds) && maxSeconds > 0;
   if (!hasQuiet && !hasMax && dailyChatMinutes === null) return null;
   const crossesMidnight = hasQuiet && minutesOf(quiet[0]) > minutesOf(quiet[1]);
-  const rawMinutes = hasMax ? Math.max(1, Math.round(maxSeconds / 60)) : null;
-  const maxSessionMinutes =
-    rawMinutes == null ? null : Math.min(MAX_SESSION_MINUTES_CAP, rawMinutes);
+  const maxSessionMinutes = parentSessionMinutes(hasMax ? maxSeconds : null);
   return {
-    // Clamped display/edit value; stored profile seconds are not rewritten.
     maxSessionMinutes,
     quietStart: hasQuiet ? quiet[0] : "",
     quietEnd: hasQuiet ? quiet[1] : "",
@@ -68,7 +71,6 @@ function sessionLimitsFromProfile(profile, now = new Date()) {
 }
 
 module.exports = {
-  MAX_SESSION_MINUTES_CAP,
   sessionLimitsFromProfile,
   inQuietHours,
 };

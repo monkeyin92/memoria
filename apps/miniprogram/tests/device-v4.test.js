@@ -101,6 +101,52 @@ test("a missing per-session cap displays 15 minutes and the slider rests on 15",
   }
 });
 
+test("a stored cap outside 10 to 30 minutes shows 15 and does not save or prompt", async () => {
+  for (const seconds of [2700, 3600, 300]) {
+    const profile = {
+      ...fx.RUNTIME_PROFILE,
+      obligations: [
+        { code: "QUIET_HOURS", params: { quiet_hours: ["21:00", "07:00"] } },
+        { code: "MAX_SESSION_SECONDS", params: { max_session_seconds: seconds, extras: [] } },
+      ],
+    };
+    const harness = loadPage("pages/device/index", fx.authed({ getRuntimeProfile: async () => profile }));
+    try {
+      const data = await harness.run();
+      assert.equal(data.sessionLimits.maxSessionMinutes, null, `${seconds}s`);
+      assert.equal(data.sessionMinuteValue, 15, `${seconds}s`);
+      const html = renderPage("pages/device/index", data);
+      const text = visibleText(html);
+      assert.match(text, /单次上限 15 分钟 10 分钟 30 分钟/);
+      assert.match(html, /class="mps-fill" style="width: 25%;"/);
+      assert.doesNotMatch(text, /单次上限 (?:5|30|45|60) 分钟/);
+      const writes = harness.wxCalls.filter((call) => {
+        const options = call.args?.[0];
+        return call.name === "request" && options?.method === "PUT" && String(options.url || "").includes("/session-limits");
+      });
+      assert.deepEqual(writes, []);
+      const prompts = harness.wxCalls.filter((call) => call.name === "showModal" || call.name === "showToast");
+      assert.deepEqual(prompts, []);
+    } finally {
+      harness.restore();
+    }
+  }
+});
+
+test("confirming a rebind sends 15 minutes, the same number an old cap displays", async () => {
+  const harness = loadPage("pages/bind/index", fx.authed());
+  try {
+    await harness.run({ claim_id: "claim_old", onboarding_session_id: "onb_old" });
+    await harness.page.chooseMode({ currentTarget: { dataset: { mode: "parent_for_child" } } });
+    harness.page.setData({ "form.childNickname": "小乐", "form.subjectAlias": "孩子" });
+    const request = harness.page._buildRequest();
+    assert.equal(request.service_preferences.max_session_minutes, 15);
+    assert.equal(harness.page.data.sessionMinuteOptions[harness.page.data.sessionMinuteIndex], 15);
+  } finally {
+    harness.restore();
+  }
+});
+
 test("a quiet-only profile keeps the signed cap empty and shows the 15 minute fallback", async () => {
   const quietOnly = {
     ...fx.RUNTIME_PROFILE,

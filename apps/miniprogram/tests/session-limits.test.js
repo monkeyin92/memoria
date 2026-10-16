@@ -99,7 +99,30 @@ test("a same-day window has no 次日 marker", () => {
   assert.equal(limits.maxSessionLabel, "");
 });
 
-test("stored per-session limits above 30 minutes clamp to 30 on read", () => {
+test("stored seconds outside 10 to 30 minutes are not a parent choice", () => {
+  for (const seconds of [2700, 3600, 300]) {
+    const limits = sessionLimitsFromProfile(
+      profile({
+        obligations: [
+          {
+            code: "MAX_SESSION_SECONDS",
+            params: {
+              max_session_seconds: seconds,
+              retention_ttl_seconds: null,
+              quiet_hours: null,
+              extras: [],
+            },
+          },
+        ],
+      }),
+      DAY,
+    );
+    assert.equal(limits.maxSessionMinutes, null, `${seconds}s`);
+    assert.equal(limits.maxSessionLabel, "");
+  }
+});
+
+test("stored per-session limits above 30 minutes stay off the slider instead of clamping to 30", () => {
   for (const minutes of [45, 60, 90, 120]) {
     const limits = sessionLimitsFromProfile(
       profile({
@@ -117,7 +140,7 @@ test("stored per-session limits above 30 minutes clamp to 30 on read", () => {
       }),
       DAY,
     );
-    assert.equal(limits.maxSessionMinutes, 30);
-    assert.equal(limits.maxSessionLabel, "30 分钟");
+    assert.equal(limits.maxSessionMinutes, null);
+    assert.equal(limits.maxSessionLabel, "");
   }
 });

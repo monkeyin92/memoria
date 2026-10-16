@@ -58,9 +58,7 @@ from packages.contracts.generated.python.multi_subject_contracts import (
 )
 
 from services.common.daily_chat_limit import effective_daily_chat_budget, with_daily_chat_budget
-from services.common.session_length import (
-    DEFAULT_MAX_SESSION_SECONDS as _DEFAULT_MAX_SESSION_SECONDS,
-)
+from services.common.session_length import issued_session_seconds
 from services.policy.action_fence import capture_authority_hash
 from services.policy.context import (
     PolicyContext,
@@ -327,7 +325,7 @@ def _session_params(
     quiet_hours = getattr(params, "quiet_hours", None)
     if code == "MAX_SESSION_SECONDS":
         return _params(
-            max_session_seconds=int(max_seconds or _DEFAULT_MAX_SESSION_SECONDS),
+            max_session_seconds=issued_session_seconds(max_seconds),
             extras=with_daily_chat_budget(
                 (), effective_daily_chat_budget(getattr(params, "extras", ()))
             ),
