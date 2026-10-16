@@ -19,7 +19,18 @@ def test_playsound_checks_internal_ram_and_one_new_packet() -> None:
     assert "heap_caps_check_integrity_addr" not in patch
     assert "esp_ptr_external_ram" not in patch
     assert "memoria::PoisonCanaryOk(packet.get(), sizeof(AudioStreamPacket))" in patch
+    assert "NoteCanaryUs(memoria::CanaryElapsedUs(canary_started, esp_timer_get_time()))" in patch
+    assert 'poison canary n=%" PRIu32 " min_us=%" PRIu32 " max_us=%" PRIu32' in patch
+    assert 'psram_scan_us=%" PRId64' in patch
     assert '#include "memoria_poison_canary.h"' in patch
+    header = (FIRMWARE_ROOT / "overlay" / "files" / "main" / "memoria" / "memoria_poison_canary.h").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        '#error "单块 canary 校验依赖 IDF v6.0.2 multi_heap_poisoning 私有布局，升级 IDF 前必须重核"'
+        in header
+    )
+    assert "#if CONFIG_HEAP_POISONING_COMPREHENSIVE" in header.split("#error", 1)[0]
     assert "heap_caps_check_integrity(MALLOC_CAP_SPIRAM, true)" in patch
     assert 'xTaskCreate(PsramHeapCheckTask, "psram_heap", 4096, nullptr, 1, nullptr)' in patch
     assert "pdMS_TO_TICKS(30000)" in patch

@@ -162,6 +162,15 @@ rg -Fq 'heap_caps_check_integrity(MALLOC_CAP_INTERNAL, true)' "$MEMORIA_UPSTREAM
 rg -Fq 'memoria::PoisonCanaryOk(packet.get(), sizeof(AudioStreamPacket))' \
     "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
     die "PlaySound must check the new packet canaries when poisoning is on"
+rg -Fq 'NoteCanaryUs(memoria::CanaryElapsedUs(canary_started, esp_timer_get_time()))' \
+    "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
+    die "PlaySound must time the new packet canary check when poisoning is on"
+rg -Fq 'psram_scan_us=' \
+    "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
+    die "the PSRAM scan must log canary timing with the scan duration"
+rg -Fq '单块 canary 校验依赖 IDF v6.0.2 multi_heap_poisoning 私有布局，升级 IDF 前必须重核' \
+    "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_poison_canary.h" || \
+    die "the canary header must refuse any IDF other than v6.0.2 when poisoning is on"
 if rg -Fq 'heap_caps_check_integrity_addr' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc"; then
     die "PlaySound must not walk the heap region that holds the new packet"
 fi

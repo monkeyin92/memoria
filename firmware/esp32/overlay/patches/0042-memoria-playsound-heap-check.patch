@@ -1,28 +1,56 @@
 diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
 --- a/main/audio/audio_service.cc
 +++ b/main/audio/audio_service.cc
-@@ -36,6 +36,10 @@
+@@ -36,6 +36,12 @@
  #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
  #include "memoria_software_aec_ref.h"
  #endif
 +#if CONFIG_HEAP_POISONING_COMPREHENSIVE
 +#include <esp_heap_caps.h>
 +#include "memoria_poison_canary.h"
++#include <cstdint>
++#include <inttypes.h>
 +#endif
  
  #define TAG "AudioService"
  
-@@ -174,6 +178,19 @@
+@@ -174,6 +180,45 @@
      esp_timer_create(&audio_power_timer_args, &audio_power_timer_);
  }
  
 +
 +#if CONFIG_HEAP_POISONING_COMPREHENSIVE
++static memoria::CanaryUsWindow g_canary_us;
++static portMUX_TYPE g_canary_us_mux = portMUX_INITIALIZER_UNLOCKED;
++
++static void NoteCanaryUs(uint32_t us) {
++    portENTER_CRITICAL(&g_canary_us_mux);
++    g_canary_us.Note(us);
++    portEXIT_CRITICAL(&g_canary_us_mux);
++}
++
 +static void PsramHeapCheckTask(void* arg) {
 +    (void)arg;
 +    for (;;) {
 +        vTaskDelay(pdMS_TO_TICKS(30000));
-+        if (!heap_caps_check_integrity(MALLOC_CAP_SPIRAM, true)) {
++        int64_t started = esp_timer_get_time();
++        bool ok = heap_caps_check_integrity(MALLOC_CAP_SPIRAM, true);
++        int64_t scan_us = esp_timer_get_time() - started;
++        if (scan_us < 0) {
++            scan_us = 0;
++        }
++        uint32_t n = 0;
++        uint32_t min_us = 0;
++        uint32_t max_us = 0;
++        uint32_t avg_us = 0;
++        portENTER_CRITICAL(&g_canary_us_mux);
++        g_canary_us.Take(n, min_us, max_us, avg_us);
++        portEXIT_CRITICAL(&g_canary_us_mux);
++        ESP_LOGI(TAG,
++                 "poison canary n=%" PRIu32 " min_us=%" PRIu32 " max_us=%" PRIu32
++                 " avg_us=%" PRIu32 " psram_scan_us=%" PRId64,
++                 n, min_us, max_us, avg_us, scan_us);
++        if (!ok) {
 +            ESP_LOGE(TAG, "PSRAM heap integrity failed");
 +        }
 +    }
@@ -32,7 +60,7 @@ diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
  void AudioService::Start() {
      service_stopped_.store(false);
      {
-@@ -239,6 +256,13 @@
+@@ -239,6 +284,13 @@
          vTaskDelete(NULL);
      }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_);
  #endif
@@ -46,14 +74,11 @@ diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
  }
  
  void AudioService::Stop() {
-@@ -1001,6 +1025,14 @@
+@@ -1001,6 +1053,11 @@
  }
  
  void AudioService::PlaySound(const std::string_view& ogg) {
 +#if CONFIG_HEAP_POISONING_COMPREHENSIVE
-+    // A full poisoned-PSRAM walk holds interrupts off long enough to trip the
-+    // interrupt watchdog on the USB-wake alert. Internal RAM is the check
-+    // this path can finish.
 +    if (!heap_caps_check_integrity(MALLOC_CAP_INTERNAL, true)) {
 +        ESP_LOGE(TAG, "heap integrity failed before PlaySound");
 +    }
@@ -61,12 +86,15 @@ diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
  #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
      input_settle_.NoteLocalSound(static_cast<uint64_t>(esp_timer_get_time() / 1000));
  #endif
-@@ -1016,6 +1048,11 @@
+@@ -1016,6 +1073,14 @@
      auto demuxer = std::make_unique<OggDemuxer>();
      demuxer->OnDemuxerFinished([this](const uint8_t* data, int sample_rate, size_t size){
          auto packet = std::make_unique<AudioStreamPacket>();
 +#if CONFIG_HEAP_POISONING_COMPREHENSIVE
-+        if (!memoria::PoisonCanaryOk(packet.get(), sizeof(AudioStreamPacket))) {
++        int64_t canary_started = esp_timer_get_time();
++        bool canary_ok = memoria::PoisonCanaryOk(packet.get(), sizeof(AudioStreamPacket));
++        NoteCanaryUs(memoria::CanaryElapsedUs(canary_started, esp_timer_get_time()));
++        if (!canary_ok) {
 +            ESP_LOGE(TAG, "PlaySound packet canary failed");
 +        }
 +#endif

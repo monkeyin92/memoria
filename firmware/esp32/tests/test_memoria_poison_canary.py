@@ -90,3 +90,148 @@ def test_one_block_ignores_a_smashed_neighbor() -> None:
         "size=bad",
         "bytes=12",
     ]
+
+
+WINDOW_HARNESS = r"""
+#include "memoria_poison_canary.h"
+
+#include <cstdio>
+#include <cstdint>
+
+int main() {
+    memoria::CanaryUsWindow window;
+    uint32_t n = 9;
+    uint32_t min_us = 9;
+    uint32_t max_us = 9;
+    uint32_t avg_us = 9;
+    window.Take(n, min_us, max_us, avg_us);
+    std::printf("empty=%u,%u,%u,%u\n", n, min_us, max_us, avg_us);
+
+    window.Note(10);
+    window.Note(30);
+    window.Note(20);
+    window.Take(n, min_us, max_us, avg_us);
+    std::printf("sample=%u,%u,%u,%u\n", n, min_us, max_us, avg_us);
+    window.Take(n, min_us, max_us, avg_us);
+    std::printf("reset=%u,%u,%u,%u\n", n, min_us, max_us, avg_us);
+
+    window.Note(1);
+    window.Note(2);
+    window.Take(n, min_us, max_us, avg_us);
+    std::printf("trunc=%u,%u,%u,%u\n", n, min_us, max_us, avg_us);
+
+    std::printf("elapsed=%u\n", memoria::CanaryElapsedUs(10, 40));
+    std::printf("backward=%u\n", memoria::CanaryElapsedUs(40, 10));
+    std::printf("clamp=%u\n", memoria::CanaryElapsedUs(0, static_cast<int64_t>(UINT32_MAX) + 5));
+    return 0;
+}
+"""
+
+VERSION_HARNESS = r"""
+#include "memoria_poison_canary.h"
+
+int main() {
+    return memoria::kPoisonCanaryBytes == 12 ? 0 : 1;
+}
+"""
+
+IDF_VERSION_ERROR = "单块 canary 校验依赖 IDF v6.0.2 multi_heap_poisoning 私有布局，升级 IDF 前必须重核"
+
+
+def _compile(source: pathlib.Path, binary: pathlib.Path, extra: list[str]) -> subprocess.CompletedProcess[str]:
+    compiler = shutil.which("clang++") or shutil.which("g++")
+    if compiler is None:
+        pytest.skip("no host C++ compiler available")
+    return subprocess.run(
+        [
+            compiler,
+            "-std=c++17",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            *extra,
+            str(source),
+            "-o",
+            str(binary),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def test_timing_window_reports_min_max_avg_then_clears() -> None:
+    compiler = shutil.which("clang++") or shutil.which("g++")
+    if compiler is None:
+        pytest.skip("no host C++ compiler available")
+    with tempfile.TemporaryDirectory() as tmp:
+        source = pathlib.Path(tmp) / "window.cc"
+        source.write_text(WINDOW_HARNESS, encoding="utf-8")
+        binary = pathlib.Path(tmp) / "window"
+        completed = _compile(source, binary, ["-I", str(HEADER.parent)])
+        assert completed.returncode == 0, completed.stderr
+        ran = subprocess.run([str(binary)], text=True, capture_output=True, check=True)
+    assert ran.stdout.splitlines() == [
+        "empty=0,0,0,0",
+        "sample=3,10,30,20",
+        "reset=0,0,0,0",
+        "trunc=2,1,2,1",
+        "elapsed=30",
+        "backward=0",
+        "clamp=4294967295",
+    ]
+
+
+def _idf_stub(directory: pathlib.Path, version: str) -> None:
+    (directory / "esp_idf_version.h").write_text(
+        "\n".join(
+            [
+                "#pragma once",
+                "#define ESP_IDF_VERSION_VAL(major, minor, patch) (((major) << 16) | ((minor) << 8) | (patch))",
+                f"#define ESP_IDF_VERSION ESP_IDF_VERSION_VAL({version})",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_poison_build_rejects_any_idf_other_than_6_0_2() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp)
+        _idf_stub(root, "6, 0, 1")
+        source = root / "version.cc"
+        source.write_text(VERSION_HARNESS, encoding="utf-8")
+        completed = _compile(
+            source,
+            root / "version",
+            [
+                "-DCONFIG_HEAP_POISONING_COMPREHENSIVE=1",
+                "-I",
+                str(root),
+                "-I",
+                str(HEADER.parent),
+            ],
+        )
+    assert completed.returncode != 0
+    assert IDF_VERSION_ERROR in completed.stderr
+
+
+def test_poison_build_accepts_idf_6_0_2() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp)
+        _idf_stub(root, "6, 0, 2")
+        source = root / "version.cc"
+        source.write_text(VERSION_HARNESS, encoding="utf-8")
+        completed = _compile(
+            source,
+            root / "version",
+            [
+                "-DCONFIG_HEAP_POISONING_COMPREHENSIVE=1",
+                "-I",
+                str(root),
+                "-I",
+                str(HEADER.parent),
+            ],
+        )
+    assert completed.returncode == 0, completed.stderr
