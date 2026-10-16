@@ -312,8 +312,11 @@ async def main() -> int:
     if required and os.getenv("DOUBAO_TTS_STYLE_CONTROL_ENABLED", "false").lower() != "true":
         print("provider_smoke_test FAIL: Doubao style control is required but disabled")
         return 1
+    passed = ["FunASR"]
     try:
-        await smoke_realtime_search(settings)
+        if settings.live_search_qwen_enabled:
+            await smoke_realtime_search(settings)
+            passed.append("QwenRealtimeSearch")
         samples = await smoke_doubao()
         for pcm_16k, expected_markers, forbidden_markers in samples:
             await smoke_funasr(
@@ -322,10 +325,11 @@ async def main() -> int:
                 forbidden_markers=forbidden_markers,
             )
         llm_label = await smoke_llm()
+        passed.extend((llm_label, "Doubao"))
     except Exception as exc:
         print(f"provider_smoke_test FAIL: {type(exc).__name__}: {exc}")
         return 1
-    print(f"provider_smoke_test PASS: FunASR, QwenRealtimeSearch, {llm_label}, Doubao")
+    print("provider_smoke_test PASS: " + ", ".join(passed))
     return 0
 
 

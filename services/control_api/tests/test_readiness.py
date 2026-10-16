@@ -510,6 +510,49 @@ async def test_readiness_reports_an_overdue_smoke_refresh_before_it_expires(
         assert body["warnings"] == warnings
 
 
+@pytest.mark.hermetic
+def test_missing_config_counts_dashscope_only_for_funasr() -> None:
+    funasr = ControlSettings(
+        _env_file=None,
+        ASR_PROVIDER="funasr",
+        MEMORIA_RELEASE_TAG="release-readiness-test",
+    )
+    present = ControlSettings(
+        _env_file=None,
+        ASR_PROVIDER="funasr",
+        DASHSCOPE_API_KEY="dashscope-key",
+        MEMORIA_RELEASE_TAG="release-readiness-test",
+    )
+    untouched = ControlSettings(
+        _env_file=None,
+        MEMORIA_RELEASE_TAG="release-readiness-test",
+    )
+
+    assert "DASHSCOPE_API_KEY" in readiness_routes._missing_config(funasr)
+    assert "DASHSCOPE_API_KEY" not in readiness_routes._missing_config(present)
+    assert untouched.asr_provider == "none"
+    assert "DASHSCOPE_API_KEY" not in readiness_routes._missing_config(untouched)
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_health_ready_is_503_when_funasr_has_no_dashscope_key(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_local(monkeypatch, tmp_path)
+    monkeypatch.setenv("OFFLINE_MOCK", "false")
+    monkeypatch.setenv("MEMORIA_RELEASE_TAG", "release-readiness-test")
+    monkeypatch.setenv("ASR_PROVIDER", "funasr")
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    app = create_app()
+
+    status, body = await _ready(app)
+
+    assert status == 503
+    assert "DASHSCOPE_API_KEY" in body["missing"]
+
+
 def test_overdue_threshold_follows_the_refresh_timer() -> None:
     timer = Path(__file__).parents[3] / "infra" / "memoria-readiness-refresh.timer"
     interval = next(

@@ -80,6 +80,7 @@ async def test_provider_smoke_runs_doubao_funasr_and_llm_without_network(
 ) -> None:
     monkeypatch.setenv("OFFLINE_MOCK", "false")
     monkeypatch.setenv("DASHSCOPE_API_KEY", "test-dashscope-key")
+    monkeypatch.setenv("LIVE_SEARCH_QWEN_ENABLED", "true")
     monkeypatch.setenv("DOUBAO_TTS_API_KEY", "test-doubao-key")
     monkeypatch.setenv("DOUBAO_TTS_STYLE_CONTROL_ENABLED", "true")
     monkeypatch.setenv("LLM_PROVIDER", "bailian_deepseek")
@@ -118,6 +119,51 @@ async def test_provider_smoke_runs_doubao_funasr_and_llm_without_network(
         "provider_smoke_test PASS: FunASR, QwenRealtimeSearch, DeepSeek, Doubao"
         in capsys.readouterr().out
     )
+
+
+@pytest.mark.asyncio
+async def test_provider_smoke_skips_realtime_search_when_the_switch_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("OFFLINE_MOCK", "false")
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "test-dashscope-key")
+    monkeypatch.delenv("LIVE_SEARCH_QWEN_ENABLED", raising=False)
+    monkeypatch.setenv("DOUBAO_TTS_API_KEY", "test-doubao-key")
+    monkeypatch.setenv("DOUBAO_TTS_STYLE_CONTROL_ENABLED", "true")
+    monkeypatch.setenv("LLM_PROVIDER", "bailian_deepseek")
+    calls: list[str] = []
+
+    async def fake_doubao() -> list[tuple[bytes, tuple[str, ...], tuple[str, ...]]]:
+        calls.append("doubao")
+        return [(b"\x00\x00", ("测试",), ())]
+
+    async def fake_realtime_search(_settings: object) -> None:
+        calls.append("realtime-search")
+
+    async def fake_funasr(
+        pcm: bytes,
+        *,
+        expected_markers: tuple[str, ...],
+        forbidden_markers: tuple[str, ...],
+    ) -> None:
+        assert pcm == b"\x00\x00"
+        calls.append("funasr")
+
+    async def fake_llm() -> str:
+        calls.append("llm")
+        return "DeepSeek"
+
+    monkeypatch.setattr(provider_smoke_test, "smoke_doubao", fake_doubao)
+    monkeypatch.setattr(provider_smoke_test, "smoke_realtime_search", fake_realtime_search)
+    monkeypatch.setattr(provider_smoke_test, "smoke_funasr", fake_funasr)
+    monkeypatch.setattr(provider_smoke_test, "smoke_llm", fake_llm)
+
+    assert await provider_smoke_test.main() == 0
+    assert calls == ["doubao", "funasr", "llm"]
+    captured = capsys.readouterr().out
+    assert "provider_smoke_test PASS: FunASR, DeepSeek, Doubao" in captured
+    assert "QwenRealtimeSearch" not in captured
 
 
 @pytest.mark.asyncio
