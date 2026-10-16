@@ -95,7 +95,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install ffmpeg for board ogg AIGC decode check
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg cmake
       - name: Require host C++ compiler
         run: c++ --version
       - name: Firmware host regression tests

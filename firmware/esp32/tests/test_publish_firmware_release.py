@@ -37,6 +37,7 @@ def _image(
     markers: int = 1,
     bench: bool = False,
     keep_awake: bool = False,
+    no_offline_audio: bool = False,
 ) -> bytes:
     header = bytes([0xE9]) + b"\0" * 31
     desc = (0xABCD5432).to_bytes(4, "little") + b"\0" * 12
@@ -44,7 +45,17 @@ def _image(
     marker = f"MEMORIA_FIRMWARE_BUILD={build};".encode()
     bench_marker = b"MEMORIA_BENCH_BUILD=1;" if bench else b""
     keep_marker = b"MEMORIA_KEEP_AWAKE_BUILD=1;" if keep_awake else b""
-    return header + desc + b"\x11" * 4096 + marker * markers + bench_marker + keep_marker + b"\x22" * 128
+    no_audio_marker = b"MEMORIA_NO_OFFLINE_AUDIO_BUILD=1;" if no_offline_audio else b""
+    return (
+        header
+        + desc
+        + b"\x11" * 4096
+        + marker * markers
+        + bench_marker
+        + keep_marker
+        + no_audio_marker
+        + b"\x22" * 128
+    )
 
 
 def _key(tmp_path: pathlib.Path) -> tuple[pathlib.Path, bytes]:
@@ -81,6 +92,9 @@ def test_sign_writes_a_release_the_server_accepts(tmp_path: pathlib.Path) -> Non
         # A test-rig image has the right project and the right build marker: only its own marker gives it away.
         (_image(7, bench=True), "bench"),
         (_image(7, keep_awake=True), "keep-awake"),
+        (_image(7, bench=True, no_offline_audio=True), "no-offline-audio"),
+        (_image(7, bench=True, no_offline_audio=True), "bench"),
+        (_image(7, no_offline_audio=True), "no-offline-audio"),
     ],
 )
 def test_sign_refuses_foreign_or_mismatched_images(
@@ -134,6 +148,25 @@ def test_the_keep_awake_marker_is_the_one_the_keep_awake_build_carries() -> None
     for path in (FIRMWARE_ROOT / "overlay" / "files" / "main").rglob("*"):
         if path.suffix in {".cc", ".h", ".c"} and path.name != "memoria_esp_vocat.cc":
             assert marker not in path.read_text(encoding="utf-8"), path.name
+
+
+def test_the_no_offline_audio_marker_is_the_one_the_build_carries() -> None:
+    publisher = _publisher()
+    board = MEMORIA_DIR.parent / "boards" / "memoria" / "esp-vocat"
+    source = (board / "memoria_esp_vocat.cc").read_text(encoding="utf-8")
+    defined = re.findall(r'memoria_no_offline_audio_build_marker\[\] = "([^"]+)";', source)
+    assert defined == [publisher.NO_OFFLINE_AUDIO_MARKER.decode("ascii")]
+    assert source.index("#if CONFIG_MEMORIA_NO_OFFLINE_AUDIO") < source.index(
+        "memoria_no_offline_audio_build_marker[] ="
+    )
+    ctor = source.index("MemoriaEspVocat() : boot_button_(BOOT_BUTTON_GPIO)")
+    load = source.index("power.LoadFromNvs();", ctor)
+    assert source.index("memoria_no_offline_audio_build_marker", load) > load
+    for path in (FIRMWARE_ROOT / "overlay" / "files" / "main").rglob("*"):
+        if path.suffix in {".cc", ".h", ".c"} and path.name != "memoria_esp_vocat.cc":
+            assert publisher.NO_OFFLINE_AUDIO_MARKER.decode("ascii") not in path.read_text(
+                encoding="utf-8"
+            ), path.name
 
 
 def test_sign_refuses_a_key_the_firmware_does_not_trust(tmp_path: pathlib.Path) -> None:

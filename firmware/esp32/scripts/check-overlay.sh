@@ -31,6 +31,9 @@ rg -Fq 'WAKE_WORD_MODEL="${MEMORIA_FIRMWARE_WAKE_WORD_MODEL:-}"' \
 "$python_bin" -m json.tool \
     "$MEMORIA_FIRMWARE_ROOT/overlay/files/main/boards/memoria/esp-vocat/config.keep-awake.json" \
     >/dev/null
+"$python_bin" -m json.tool \
+    "$MEMORIA_FIRMWARE_ROOT/overlay/files/main/boards/memoria/esp-vocat/config.bench.no-offline-audio.json" \
+    >/dev/null
 
 "$python_bin" - "$MEMORIA_FIRMWARE_ROOT/overlay/files/main/boards/memoria/esp-vocat" <<'PY'
 import json
@@ -38,21 +41,48 @@ import pathlib
 import sys
 
 board = pathlib.Path(sys.argv[1])
+names = sorted(path.name for path in board.glob("config*.json"))
+if names != [
+    "config.bench.json",
+    "config.bench.no-offline-audio.json",
+    "config.json",
+    "config.keep-awake.json",
+]:
+    raise SystemExit(
+        "the board manifests must be exactly config.json, config.bench.json, "
+        "config.keep-awake.json and config.bench.no-offline-audio.json"
+    )
 product = json.loads((board / "config.json").read_text(encoding="utf-8"))
 bench = json.loads((board / "config.bench.json").read_text(encoding="utf-8"))
 keep = json.loads((board / "config.keep-awake.json").read_text(encoding="utf-8"))
+no_audio = json.loads((board / "config.bench.no-offline-audio.json").read_text(encoding="utf-8"))
 product_options = product["builds"][0]["sdkconfig_append"]
 bench_options = bench["builds"][0]["sdkconfig_append"]
 keep_options = keep["builds"][0]["sdkconfig_append"]
+no_audio_options = no_audio["builds"][0]["sdkconfig_append"]
 if any("MEMORIA_BENCH" in option for option in product_options):
     raise SystemExit("the product manifest must not name the bench switch")
 if any("MEMORIA_KEEP_AWAKE" in option for option in product_options + bench_options):
     raise SystemExit("config.json and config.bench.json must omit MEMORIA_KEEP_AWAKE")
+if any(
+    "MEMORIA_NO_OFFLINE_AUDIO" in option
+    for option in product_options + bench_options + keep_options
+):
+    raise SystemExit("only config.bench.no-offline-audio.json may name MEMORIA_NO_OFFLINE_AUDIO")
 if bench_options != product_options + ["CONFIG_MEMORIA_BENCH_SERIAL=y", "CONFIG_LV_USE_SNAPSHOT=y"]:
     raise SystemExit("config.bench.json must be config.json plus the two bench options, in that order")
 if keep_options != product_options + ["CONFIG_MEMORIA_KEEP_AWAKE=y"]:
     raise SystemExit("config.keep-awake.json must be config.json plus CONFIG_MEMORIA_KEEP_AWAKE=y")
-for label, manifest in (("config.bench.json", bench), ("config.keep-awake.json", keep)):
+if no_audio_options != bench_options + ["CONFIG_MEMORIA_NO_OFFLINE_AUDIO=y"]:
+    raise SystemExit(
+        "config.bench.no-offline-audio.json must be config.bench.json plus "
+        "CONFIG_MEMORIA_NO_OFFLINE_AUDIO=y"
+    )
+for label, manifest in (
+    ("config.bench.json", bench),
+    ("config.keep-awake.json", keep),
+    ("config.bench.no-offline-audio.json", no_audio),
+):
     stripped = json.loads(json.dumps(manifest))
     stripped["builds"][0]["sdkconfig_append"] = product_options
     if stripped != product:
@@ -62,10 +92,14 @@ rg -Fq -- '--config config.bench.json' "$SCRIPT_DIR/build.sh" || \
     die "build.sh --bench must build from config.bench.json"
 rg -Fq -- '--config config.keep-awake.json' "$SCRIPT_DIR/build.sh" || \
     die "build.sh --keep-awake must build from config.keep-awake.json"
+rg -Fq -- '--config config.bench.no-offline-audio.json' "$SCRIPT_DIR/build.sh" || \
+    die "build.sh --bench --no-offline-audio must build from config.bench.no-offline-audio.json"
 rg -Fq 'CONFIG_MEMORIA_BENCH_SERIAL=y' "$SCRIPT_DIR/flash.sh" || \
     die "flash.sh must tell a bench image from a product image"
 rg -Fq 'CONFIG_MEMORIA_KEEP_AWAKE=y' "$SCRIPT_DIR/flash.sh" || \
     die "flash.sh must tell a keep-awake image from a product image"
+rg -Fq 'CONFIG_MEMORIA_NO_OFFLINE_AUDIO=y' "$SCRIPT_DIR/flash.sh" || \
+    die "flash.sh must tell a no-offline-audio image apart"
 
 "$SCRIPT_DIR/bootstrap.sh" --no-idf-install
 
@@ -133,9 +167,9 @@ import sys
 
 kconfig = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 symbols = re.findall(r"^config (MEMORIA_\w+)", kconfig, re.MULTILINE)
-if symbols != ["MEMORIA_BENCH_SERIAL", "MEMORIA_KEEP_AWAKE"]:
+if symbols != ["MEMORIA_BENCH_SERIAL", "MEMORIA_KEEP_AWAKE", "MEMORIA_NO_OFFLINE_AUDIO"]:
     raise SystemExit(
-        "Memoria Kconfig options must be MEMORIA_BENCH_SERIAL then MEMORIA_KEEP_AWAKE"
+        "Memoria Kconfig options must be MEMORIA_BENCH_SERIAL, MEMORIA_KEEP_AWAKE, then MEMORIA_NO_OFFLINE_AUDIO"
     )
 
 def block(name: str) -> str:
@@ -147,6 +181,10 @@ for name in symbols:
         raise SystemExit(f"{name} must default to n and depend on the Memoria board")
     if "default y" in body:
         raise SystemExit(f"{name} must not default to y")
+if "depends on BOARD_TYPE_MEMORIA_ESP_VOCAT && MEMORIA_BENCH_SERIAL" not in block("MEMORIA_NO_OFFLINE_AUDIO"):
+    raise SystemExit(
+        "MEMORIA_NO_OFFLINE_AUDIO must depend on MEMORIA_BENCH_SERIAL; it exists for bench images only"
+    )
 PY
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_input_settle.h" ]] || die "input settle header missing"
 rg -Fq 'input_settle_.Arm();' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
@@ -178,6 +216,25 @@ rg -Fq 'SetOnFirstFrame' "$board_dir/memoria_esp_vocat.cc" || \
 rg -Fq 'DEFAULT_ASSETS_EXTRA_FILES "${CMAKE_CURRENT_SOURCE_DIR}/boards/memoria/esp-vocat/assets"' \
     "$MEMORIA_UPSTREAM_DIR/main/CMakeLists.txt" || \
     die "mascot packs are not added to the assets partition"
+[[ -f "$board_dir/memoria_assets.cmake" ]] || die "the no-offline-audio asset stager is missing"
+rg -Fq 'memoria_no_offline_audio_build_marker' "$board_dir/memoria_esp_vocat.cc" || \
+    die "a no-offline-audio image must carry the marker the publisher refuses"
+"$python_bin" - "$MEMORIA_UPSTREAM_DIR/main/CMakeLists.txt" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+pinned = 'set(DEFAULT_ASSETS_EXTRA_FILES "${CMAKE_CURRENT_SOURCE_DIR}/boards/memoria/esp-vocat/assets")'
+guard = "if(CONFIG_MEMORIA_NO_OFFLINE_AUDIO AND NOT CMAKE_BUILD_EARLY_EXPANSION)"
+call = "memoria_strip_offline_audio(DEFAULT_ASSETS_EXTRA_FILES)"
+pinned_at = text.find(pinned)
+guard_at = text.find(guard)
+call_at = text.find(call)
+if text.count(call) != 1 or not (0 <= pinned_at < guard_at < call_at):
+    raise SystemExit(
+        "the no-offline-audio stage must follow the pinned board assets line, under its Kconfig guard"
+    )
+PY
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/device_identity.h" ]] || die "device identity header missing"
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/device_identity.cc" ]] || die "device identity source missing"
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_audio_frame.h" ]] || die "audio frame header missing"

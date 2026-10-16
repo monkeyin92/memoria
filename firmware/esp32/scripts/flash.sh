@@ -86,6 +86,7 @@ need_command idf.py
 # firmware (or the other way round) is stopped here.
 tree_is_bench=0
 tree_is_keep_awake=0
+tree_is_no_offline_audio=0
 if [[ -f "$MEMORIA_UPSTREAM_DIR/sdkconfig" ]] && \
     grep -q '^CONFIG_MEMORIA_BENCH_SERIAL=y$' "$MEMORIA_UPSTREAM_DIR/sdkconfig"; then
     tree_is_bench=1
@@ -93,6 +94,10 @@ fi
 if [[ -f "$MEMORIA_UPSTREAM_DIR/sdkconfig" ]] && \
     grep -q '^CONFIG_MEMORIA_KEEP_AWAKE=y$' "$MEMORIA_UPSTREAM_DIR/sdkconfig"; then
     tree_is_keep_awake=1
+fi
+if [[ -f "$MEMORIA_UPSTREAM_DIR/sdkconfig" ]] && \
+    grep -q '^CONFIG_MEMORIA_NO_OFFLINE_AUDIO=y$' "$MEMORIA_UPSTREAM_DIR/sdkconfig"; then
+    tree_is_no_offline_audio=1
 fi
 if [[ "$tree_is_bench" == 1 && "$tree_is_keep_awake" == 1 ]]; then
     die "the build in the tree enables both CONFIG_MEMORIA_BENCH_SERIAL and CONFIG_MEMORIA_KEEP_AWAKE; rebuild one profile"
@@ -120,6 +125,9 @@ cd "$MEMORIA_UPSTREAM_DIR"
 printf 'upstream cwd: %s\n' "$PWD"
 if [[ "$BENCH" == 1 ]]; then
     printf '*** flashing a BENCH image (snap, status, pcmarm, pcmdump over USB); put a product image back afterwards ***\n' >&2
+    if [[ "$tree_is_no_offline_audio" == 1 ]]; then
+        printf '*** its assets partition packs no .ogg (CONFIG_MEMORIA_NO_OFFLINE_AUDIO): offline lines, stories and bedtime stay silent until a product image is flashed ***\n' >&2
+    fi
 elif [[ "$KEEP_AWAKE" == 1 ]]; then
     printf '*** flashing a KEEP-AWAKE image (chip deep sleep off, mic still closed until tap or USB wake); put a product image back afterwards ***\n' >&2
 fi

@@ -63,6 +63,16 @@ _APP_DESC_MAGIC = 0xABCD5432
 # answers `snap` over USB with the screen, which a product image must never do.
 BENCH_MARKER = b"MEMORIA_BENCH_BUILD=1;"
 KEEP_AWAKE_MARKER = b"MEMORIA_KEEP_AWAKE_BUILD=1;"
+NO_OFFLINE_AUDIO_MARKER = b"MEMORIA_NO_OFFLINE_AUDIO_BUILD=1;"
+_REFUSED_BUILD_MARKERS: tuple[tuple[bytes, str], ...] = (
+    (
+        NO_OFFLINE_AUDIO_MARKER,
+        "a no-offline-audio build (its assets partition packs no .ogg, "
+        "so offline lines, stories and bedtime are silent)",
+    ),
+    (BENCH_MARKER, "a bench build (the test-rig serial screenshot is compiled in, TODOLIST M-2)"),
+    (KEEP_AWAKE_MARKER, "a keep-awake build (chip deep sleep is suppressed, so USB serial stays up)"),
+)
 
 
 def fail(message: str) -> None:
@@ -92,15 +102,12 @@ def inspect_image(image: bytes, build: int) -> str:
     project = _c_string(desc[48:80])
     if project != "memoria":
         fail(f"image project is {project!r}, not 'memoria'")
-    if BENCH_MARKER in image:
+    reasons = [reason for marker, reason in _REFUSED_BUILD_MARKERS if marker in image]
+    if reasons:
         fail(
-            "image is a bench build (the test-rig serial screenshot is compiled in, TODOLIST M-2); "
-            "bench images are never published: rebuild with build.sh"
-        )
-    if KEEP_AWAKE_MARKER in image:
-        fail(
-            "image is a keep-awake build (chip deep sleep is suppressed, so USB serial stays up); "
-            "keep-awake images are never published: rebuild with build.sh"
+            "image is "
+            + " and ".join(reasons)
+            + "; such images are never published; rebuild with build.sh"
         )
     markers = re.findall(rb"MEMORIA_FIRMWARE_BUILD=(\d+);", image)
     if markers != [str(build).encode()]:

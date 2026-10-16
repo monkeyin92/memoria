@@ -8,13 +8,14 @@ source "$SCRIPT_DIR/common.sh"
 CLEAN=0
 BENCH=0
 KEEP_AWAKE=0
+NO_OFFLINE_AUDIO=0
 LANGUAGE="${MEMORIA_FIRMWARE_LANGUAGE:-zh-CN}"
 WAKE_WORD_MODEL="${MEMORIA_FIRMWARE_WAKE_WORD_MODEL:-}"
 NO_IDF_INSTALL=0
 
 usage() {
     cat <<'EOF'
-Usage: build.sh [--clean] [--bench] [--keep-awake] [--language LOCALE] [--wake-word MODEL|disabled] [--no-idf-install]
+Usage: build.sh [--clean] [--bench [--no-offline-audio]] [--keep-awake] [--language LOCALE] [--wake-word MODEL|disabled] [--no-idf-install]
 
 The product build uses zh-CN. Board config disables keyword wake
 (CONFIG_WAKE_WORD_DISABLED); pass --wake-word only to override for a
@@ -26,6 +27,13 @@ product build plus CONFIG_MEMORIA_BENCH_SERIAL (the USB console also answers
 written next to the product artifacts as memoria-esp-vocat-bench-*.bin,
 carries a marker the firmware publisher refuses, and flash.sh flashes it only
 with --bench.
+
+--no-offline-audio, with --bench only, builds the bench image from
+config.bench.no-offline-audio.json: the bench build plus
+CONFIG_MEMORIA_NO_OFFLINE_AUDIO. The assets partition packs no .ogg, so
+offline lines, stories and bedtime stay silent. Mascots, the wordmark, fonts
+and emoji stay. Artifacts are memoria-esp-vocat-bench-no-offline-audio-*.bin.
+flash.sh --bench flashes it. The firmware publisher refuses it.
 
 --keep-awake builds the remote-test image from config.keep-awake.json: the
 product build plus CONFIG_MEMORIA_KEEP_AWAKE. Chip deep sleep stays off so
@@ -40,6 +48,7 @@ while (($# > 0)); do
         --clean) CLEAN=1 ;;
         --bench) BENCH=1 ;;
         --keep-awake) KEEP_AWAKE=1 ;;
+        --no-offline-audio) NO_OFFLINE_AUDIO=1 ;;
         --language) shift; (($# > 0)) || die "--language requires a value"; LANGUAGE="$1" ;;
         --wake-word) shift; (($# > 0)) || die "--wake-word requires a value"; WAKE_WORD_MODEL="$1" ;;
         --no-idf-install) NO_IDF_INSTALL=1 ;;
@@ -51,6 +60,9 @@ done
 
 if [[ "$BENCH" == 1 && "$KEEP_AWAKE" == 1 ]]; then
     die "pass only one of --bench and --keep-awake"
+fi
+if [[ "$NO_OFFLINE_AUDIO" == 1 && "$BENCH" != 1 ]]; then
+    die "--no-offline-audio builds a bench image only; pass --bench --no-offline-audio"
 fi
 
 if [[ "$NO_IDF_INSTALL" == 1 ]]; then
@@ -85,6 +97,11 @@ if [[ "$BENCH" == 1 ]]; then
     printf '%s\n' \
         '*** BENCH BUILD: the USB console answers snap, status, pcmarm and pcmdump (CONFIG_MEMORIA_BENCH_SERIAL). ***' \
         '*** For the test rig only: never publish it, never ship it. ***' >&2
+    if [[ "$NO_OFFLINE_AUDIO" == 1 ]]; then
+        artifact_name="$artifact_name-no-offline-audio"
+        printf '%s\n' \
+            '*** NO OFFLINE AUDIO: the assets partition packs no .ogg (CONFIG_MEMORIA_NO_OFFLINE_AUDIO). Offline lines, stories and bedtime stay silent. ***' >&2
+    fi
 elif [[ "$KEEP_AWAKE" == 1 ]]; then
     artifact_name="$MEMORIA_BOARD_NAME-keep-awake"
     printf '%s\n' \
@@ -100,7 +117,9 @@ build_args=(
     --name "$MEMORIA_BOARD_NAME"
     --language "$LANGUAGE"
 )
-if [[ "$BENCH" == 1 ]]; then
+if [[ "$BENCH" == 1 && "$NO_OFFLINE_AUDIO" == 1 ]]; then
+    build_args+=(--config config.bench.no-offline-audio.json)
+elif [[ "$BENCH" == 1 ]]; then
     build_args+=(--config config.bench.json)
 elif [[ "$KEEP_AWAKE" == 1 ]]; then
     build_args+=(--config config.keep-awake.json)
@@ -133,6 +152,95 @@ if [[ "$KEEP_AWAKE" == 1 && "$built_keep_awake" != 1 ]]; then
 fi
 if [[ "$KEEP_AWAKE" != 1 && "$built_keep_awake" == 1 ]]; then
     die "product build carries CONFIG_MEMORIA_KEEP_AWAKE=y; the keep-awake switch must stay out of config.json"
+fi
+built_no_offline_audio=0
+if grep -q '^CONFIG_MEMORIA_NO_OFFLINE_AUDIO=y$' "$sdkconfig_file"; then
+    built_no_offline_audio=1
+fi
+if [[ "$NO_OFFLINE_AUDIO" == 1 && "$built_no_offline_audio" != 1 ]]; then
+    die "no-offline-audio build requested, but the generated sdkconfig lacks CONFIG_MEMORIA_NO_OFFLINE_AUDIO=y"
+fi
+if [[ "$NO_OFFLINE_AUDIO" != 1 && "$built_no_offline_audio" == 1 ]]; then
+    die "this build carries CONFIG_MEMORIA_NO_OFFLINE_AUDIO=y without --no-offline-audio; only config.bench.no-offline-audio.json may set it"
+fi
+if [[ "$NO_OFFLINE_AUDIO" == 1 ]]; then
+    "$python_bin" - "$MEMORIA_UPSTREAM_DIR/build/generated_assets.bin" \
+        "$MEMORIA_UPSTREAM_DIR/main/boards/memoria/esp-vocat/assets" <<'PY' || \
+        die "the no-offline-audio assets partition failed its check; nothing was copied"
+import json
+import pathlib
+import struct
+import sys
+
+# Upstream pack_assets_simple layout, little endian, CONFIG_MMAP_FILE_NAME_LENGTH=32.
+#   header  u32 count, u32 checksum, u32 data_length                  12 bytes
+#   table   count rows of name[32], u32 size, u32 offset, u16 w, u16 h  44 bytes each
+#   data    file i starts at 12 + 44 * count + offset + 2 (0x5A5A prefix)
+NAME_LEN = 32
+ROW_LEN = 44
+HEADER_LEN = 12
+
+blob_path = pathlib.Path(sys.argv[1])
+board_assets = pathlib.Path(sys.argv[2])
+blob = blob_path.read_bytes() if blob_path.is_file() else b""
+if not blob:
+    raise SystemExit(
+        f"{blob_path} generated_assets.bin missing; Memoria no longer packs through FLASH_DEFAULT_ASSETS?"
+    )
+if len(blob) < HEADER_LEN:
+    raise SystemExit(f"{blob_path} is too small to be a packed assets image")
+count, _checksum, _data_length = struct.unpack_from("<III", blob, 0)
+table_end = HEADER_LEN + ROW_LEN * count
+if count > 100_000 or table_end > len(blob):
+    raise SystemExit(f"{blob_path} has an implausible asset count {count}")
+names = []
+index_payload = None
+for index in range(count):
+    at = HEADER_LEN + index * ROW_LEN
+    name = blob[at : at + NAME_LEN].split(b"\0", 1)[0].decode("utf-8", "replace")
+    size, data_offset = struct.unpack_from("<II", blob, at + NAME_LEN)
+    names.append(name)
+    if name == "index.json" and index_payload is None:
+        start = table_end + data_offset + 2
+        end = start + size
+        if end > len(blob):
+            raise SystemExit(f"{blob_path} index.json extends past the packed image")
+        index_payload = blob[start:end]
+if index_payload is None:
+    raise SystemExit(f"{blob_path} has no packed index.json")
+try:
+    index = json.loads(index_payload)
+except json.JSONDecodeError as exc:
+    raise SystemExit(f"{blob_path} packed index.json is not JSON: {exc}") from exc
+extra = index.get("extra_files", [])
+if not isinstance(extra, list):
+    extra = []
+oggs = sorted(
+    {
+        item
+        for item in [*names, *extra]
+        if isinstance(item, str) and item.lower().endswith(".ogg")
+    }
+)
+want = {
+    path.name
+    for path in board_assets.rglob("*")
+    if path.is_file()
+    and not path.name.startswith(".")
+    and not path.name.lower().endswith(".ogg")
+} - {"index.json"}
+missing = sorted(want - set(names))
+absent = [key for key in ("text_font", "emoji_collection") if key not in index]
+if oggs or missing or absent:
+    parts = []
+    if oggs:
+        parts.append("ogg: " + ", ".join(oggs))
+    if missing:
+        parts.append("missing: " + ", ".join(missing))
+    if absent:
+        parts.append("absent: " + ", ".join(absent))
+    raise SystemExit("; ".join(parts))
+PY
 fi
 
 merged="$MEMORIA_UPSTREAM_DIR/build/merged-binary.bin"
@@ -184,7 +292,9 @@ cp "$app_image" "$MEMORIA_ARTIFACT_DIR/$artifact_name-app.bin"
 find "$MEMORIA_ARTIFACT_DIR" -maxdepth 1 -type f -name '*-xiaozhi.bin' -delete
 printf 'merged binary: %s\n' "$MEMORIA_ARTIFACT_DIR/$artifact_name-merged.bin"
 printf 'application binary: %s\n' "$MEMORIA_ARTIFACT_DIR/$artifact_name-app.bin"
-if [[ "$BENCH" == 1 ]]; then
+if [[ "$BENCH" == 1 && "$NO_OFFLINE_AUDIO" == 1 ]]; then
+    printf 'BENCH image without offline audio: flash it with flash.sh --bench; the firmware publisher refuses it\n'
+elif [[ "$BENCH" == 1 ]]; then
     printf 'BENCH image: flash it with flash.sh --bench; the firmware publisher refuses it\n'
 elif [[ "$KEEP_AWAKE" == 1 ]]; then
     printf 'KEEP-AWAKE image: flash it with flash.sh --keep-awake; the firmware publisher refuses it\n'

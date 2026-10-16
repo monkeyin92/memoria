@@ -1,0 +1,31 @@
+--- a/main/Kconfig.projbuild
++++ b/main/Kconfig.projbuild
+@@ -1109,5 +1109,17 @@ config MEMORIA_KEEP_AWAKE
+         tap or the USB `wake` line. Product and bench images leave this off. Enable it
+         only with build.sh --keep-awake (config.keep-awake.json). The firmware publisher
+         refuses the image.
+ 
++config MEMORIA_NO_OFFLINE_AUDIO
++    bool "Memoria bench build without offline audio: pack no .ogg into the assets partition"
++    depends on BOARD_TYPE_MEMORIA_ESP_VOCAT && MEMORIA_BENCH_SERIAL
++    default n
++    help
++        Test-rig image only, set by config.bench.no-offline-audio.json through
++        build.sh --bench --no-offline-audio. The assets partition is packed from
++        a copy of the board assets with every .ogg removed. Offline lines,
++        stories and bedtime are silent. A refused story returns to the menu.
++        The image carries MEMORIA_NO_OFFLINE_AUDIO_BUILD=1; and the firmware
++        publisher refuses it. Product and keep-awake builds cannot enable it.
++
+ endmenu
+--- a/main/CMakeLists.txt
++++ b/main/CMakeLists.txt
+@@ -310,4 +310,8 @@
+     # Companion mascot packs and the boot wordmark (build_mascot_pack.py).
+     set(DEFAULT_ASSETS_EXTRA_FILES "${CMAKE_CURRENT_SOURCE_DIR}/boards/memoria/esp-vocat/assets")
++    if(CONFIG_MEMORIA_NO_OFFLINE_AUDIO AND NOT CMAKE_BUILD_EARLY_EXPANSION)
++        include("${CMAKE_CURRENT_SOURCE_DIR}/boards/memoria/esp-vocat/memoria_assets.cmake")
++        memoria_strip_offline_audio(DEFAULT_ASSETS_EXTRA_FILES)
++    endif()
+ elseif(CONFIG_BOARD_TYPE_ESP_SENSAIRSHUTTLE)
+     set(BOARD_DIR "espressif/esp-sensairshuttle")
