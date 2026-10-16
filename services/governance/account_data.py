@@ -20,6 +20,7 @@ from typing import Any, Literal, Protocol, cast
 import asyncpg
 
 from services.archive.object_store import ObjectNotFoundError, ObjectRef, ObjectStore
+from services.device_fleet.test_device_registration import RegistrationAuditDeletion
 from services.evolution.account_fence import AccountReadGuard, AccountWriteBlockedError
 from services.governance.subject_export import (
     build_subject_export,
@@ -210,6 +211,10 @@ class AccountRepository(Protocol):
     async def delete_account(self, account_id: str) -> dict[str, int]: ...
 
     async def remaining_account_rows(self, account_id: str) -> dict[str, int]: ...
+
+
+class BoundDeviceAuditDeleter(Protocol):
+    def delete_account_registration_audits(self, *, account_id: str) -> RegistrationAuditDeletion: ...
 
 
 class AccountProjectionRepository(Protocol):
@@ -686,6 +691,7 @@ class AccountDataGovernance:
         session_terminator: AccountSessionTerminator | None = None,
         operation_blocker: AccountOperationBlocker | None = None,
         account_read_guard: AccountReadGuard | None = None,
+        onboarding: BoundDeviceAuditDeleter | None = None,
     ) -> None:
         self._memory_store = memory_store
         self._archive_repository = archive_repository
@@ -699,6 +705,7 @@ class AccountDataGovernance:
         self._session_terminator = session_terminator
         self._operation_blocker = operation_blocker
         self._account_read_guard = account_read_guard or _unguarded_read
+        self._onboarding = onboarding
         # ponytail: deletion is rare; one lock avoids a per-account lock lifecycle.
         self._deletion_lock = asyncio.Lock()
 
@@ -826,6 +833,7 @@ class AccountDataGovernance:
         progress = {
             str(key): int(value) for key, value in dict(deletion["progress"]).items()
         }
+        registration_audits_deleted_at: str | None = None
 
         async def checkpoint(next_step: str, *, last_error: str | None = None) -> None:
             nonlocal step
@@ -1045,6 +1053,15 @@ class AccountDataGovernance:
                 raise AccountDeletionIncompleteError(
                     "assets or projections appeared while account deletion was running"
                 )
+            if self._onboarding is not None:
+                receipt = await asyncio.to_thread(
+                    self._onboarding.delete_account_registration_audits,
+                    account_id=account_id,
+                )
+                progress["onboarding.registration_audits"] = receipt.deleted_count
+                registration_audits_deleted_at = receipt.deleted_at.isoformat().replace(
+                    "+00:00", "Z"
+                )
             await checkpoint("verified_empty")
         except Exception as exc:
             await checkpoint(step, last_error=type(exc).__name__)
@@ -1058,13 +1075,16 @@ class AccountDataGovernance:
             completed_at=completed_at,
             deleted_counts=progress,
         )
-        return {
+        result: dict[str, Any] = {
             "request_id": request_id,
             "status": "completed",
             "completed_at": completed_at,
             "deleted_counts": finalized,
             "terminate_sessions": True,
         }
+        if registration_audits_deleted_at is not None:
+            result["registration_audits_deleted_at"] = registration_audits_deleted_at
+        return result
 
 
 async def _empty_projection_rows() -> dict[str, int]:

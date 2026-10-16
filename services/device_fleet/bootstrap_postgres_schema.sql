@@ -55,6 +55,17 @@ CREATE TABLE IF NOT EXISTS device_onboarding_devices (
     ))
 );
 
+-- Public-key registration audit. After a device is bound, device_id can
+-- identify a child, so the row stores only the fingerprint, the device id,
+-- the action, and the time.
+CREATE TABLE IF NOT EXISTS device_onboarding_registration_audits (
+    public_key_sha256 TEXT PRIMARY KEY CHECK (public_key_sha256 ~ '^[a-f0-9]{64}$'),
+    device_id TEXT NOT NULL REFERENCES device_onboarding_devices(device_id)
+        ON DELETE CASCADE,
+    action TEXT NOT NULL CHECK (action = 'device.public_key_registered'),
+    created_at TIMESTAMPTZ NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS device_onboarding_sessions (
     onboarding_session_id TEXT PRIMARY KEY CHECK (
         char_length(onboarding_session_id) BETWEEN 1 AND 128
@@ -254,6 +265,7 @@ ALTER TABLE device_media_challenges ENABLE ROW LEVEL SECURITY;
 ALTER TABLE device_onboarding_claims ENABLE ROW LEVEL SECURITY;
 ALTER TABLE device_onboarding_bindings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE device_onboarding_activations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE device_onboarding_registration_audits ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE device_onboarding_devices FORCE ROW LEVEL SECURITY;
 ALTER TABLE device_onboarding_sessions FORCE ROW LEVEL SECURITY;
@@ -263,6 +275,7 @@ ALTER TABLE device_media_challenges FORCE ROW LEVEL SECURITY;
 ALTER TABLE device_onboarding_claims FORCE ROW LEVEL SECURITY;
 ALTER TABLE device_onboarding_bindings FORCE ROW LEVEL SECURITY;
 ALTER TABLE device_onboarding_activations FORCE ROW LEVEL SECURITY;
+ALTER TABLE device_onboarding_registration_audits FORCE ROW LEVEL SECURITY;
 
 DO $policies$
 BEGIN
@@ -409,7 +422,7 @@ BEGIN
         WHERE schemaname = 'public' AND tablename = 'device_onboarding_activations'
           AND policyname = 'device_onboarding_activations_scope'
     ) THEN
-        CREATE POLICY device_onboarding_activations_scope
+            CREATE POLICY device_onboarding_activations_scope
         ON device_onboarding_activations FOR ALL
         USING (
             device_onboarding_scope_maintenance()
@@ -423,6 +436,20 @@ BEGIN
             OR device_onboarding_scope_actor(actor_id)
         );
     END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE schemaname = 'public' AND tablename = 'device_onboarding_registration_audits'
+          AND policyname = 'device_onboarding_registration_audits_scope'
+    ) THEN
+        CREATE POLICY device_onboarding_registration_audits_scope
+        ON device_onboarding_registration_audits FOR ALL
+        USING (
+            device_onboarding_scope_maintenance()
+            OR device_onboarding_scope_device(device_id)
+        )
+        WITH CHECK (device_onboarding_scope_maintenance());
+    END IF;
 END
 $policies$;
 
@@ -434,7 +461,8 @@ REVOKE ALL ON TABLE
     device_media_challenges,
     device_onboarding_claims,
     device_onboarding_bindings,
-    device_onboarding_activations
+    device_onboarding_activations,
+    device_onboarding_registration_audits
 FROM PUBLIC;
 
 GRANT USAGE ON SCHEMA public
@@ -460,6 +488,15 @@ GRANT SELECT, INSERT, UPDATE ON TABLE
     device_onboarding_bindings,
     device_onboarding_activations
 TO memoria_device_onboarding_maintenance;
+
+-- Maintenance inserts the row and cannot update it. A separate DELETE
+-- policy is AND-ed with this ALL policy, so device-scoped delete lives in
+-- the same USING expression. PostgreSQL also requires SELECT to scan the
+-- row. The API role can read and delete only the device in its scope.
+GRANT SELECT, INSERT, DELETE ON TABLE device_onboarding_registration_audits
+TO memoria_device_onboarding_maintenance;
+GRANT SELECT, DELETE ON TABLE device_onboarding_registration_audits
+TO memoria_device_onboarding_api;
 
 GRANT EXECUTE ON FUNCTION device_onboarding_scope_actor(TEXT),
     device_onboarding_scope_device(TEXT),

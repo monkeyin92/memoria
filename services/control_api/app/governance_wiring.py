@@ -22,6 +22,7 @@ from services.control_api.app.session_termination import (
     RealtimeConnectionRegistry,
 )
 from services.control_api.app.unconfigured_store import UnconfiguredStore
+from services.device_fleet.bootstrap_service import DeviceOnboardingService
 from services.governance.account_data import (
     AccountDataGovernance,
     AccountRepository,
@@ -111,6 +112,7 @@ def account_data_governance(
     guardian_repository: GuardianStorePort,
     corpus_retention_service: CorpusRetentionService,
     session_terminator: AccountSessionTerminator,
+    onboarding: DeviceOnboardingService | None = None,
 ) -> AccountDataGovernance:
     archive_url = settings.archive_database_url.get_secret_value()
     archive_repository = subject_archive(settings)
@@ -133,4 +135,5 @@ def account_data_governance(
         session_terminator=session_terminator,
         operation_blocker=account_operations,
         account_read_guard=account_operations.sync_read,
+        onboarding=onboarding,
     )

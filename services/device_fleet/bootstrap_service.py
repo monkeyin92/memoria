@@ -77,6 +77,13 @@ from services.device_fleet.bootstrap_domain import (
 )
 from services.device_fleet.bootstrap_port import BootstrapStorePort
 from services.device_fleet.bootstrap_store import SQLiteBootstrapStore
+from services.device_fleet.test_device_registration import (
+    RegistrationAuditDeletion,
+    TestDeviceRegistration,
+    apply_test_device_registration,
+    delete_registration_audits_for_account,
+    require_test_environment,
+)
 
 
 def _id(prefix: str) -> str:
@@ -1310,6 +1317,73 @@ class DeviceOnboardingService:
             "public_key": public_key_b64,
             "lifecycle_status": record.lifecycle_status.value,
         }
+
+    def register_test_device_public_key(
+        self,
+        *,
+        environment: str,
+        process_environment: Mapping[str, str],
+        device_id: str,
+        certificate_id: str,
+        public_key: bytes,
+        product_model: str,
+        hardware_revision: str,
+        firmware_version: str,
+        firmware_security_version: int,
+        capability_manifest_hash: str,
+        minimum_firmware_security_version: int = 0,
+    ) -> TestDeviceRegistration:
+        """Register a public key on the test environment.
+
+        A public key that is already stored is left untouched. The call adds
+        the audit row when that row is missing.
+        """
+
+        accepted = require_test_environment(
+            environment=environment,
+            process_environment=process_environment,
+        )
+        public_key_from_bytes(public_key)
+        if re.fullmatch(r"[a-f0-9]{64}", capability_manifest_hash) is None:
+            raise InvalidOnboardingRequest("capability_manifest_hash is invalid")
+        if firmware_security_version < minimum_firmware_security_version:
+            raise FirmwareBlocked()
+        record = DeviceRecord(
+            device_id=_safe_protocol_id(device_id, field="device_id"),
+            certificate_id=_safe_protocol_id(certificate_id, field="certificate_id"),
+            public_key=public_key,
+            product_model=_safe_protocol_id(product_model, field="product_model"),
+            hardware_revision=_safe_protocol_id(hardware_revision, field="hardware_revision"),
+            firmware_version=_safe_protocol_id(firmware_version, field="firmware_version"),
+            firmware_security_version=firmware_security_version,
+            capability_manifest_hash=capability_manifest_hash,
+            minimum_firmware_security_version=minimum_firmware_security_version,
+            lifecycle_status=DeviceLifecycle.MANUFACTURED,
+            last_monotonic_counter=0,
+            binding_id=None,
+            binding_version=None,
+            actor_id=None,
+            activation_version=0,
+            last_activation_counter=0,
+        )
+        return apply_test_device_registration(
+            self.store,
+            environment=accepted,
+            record=record,
+            now=now_utc(self.now_fn()),
+        )
+
+    def delete_account_registration_audits(self, *, account_id: str) -> RegistrationAuditDeletion:
+        """Drop registration audits for devices this account has bound.
+
+        Called from account deletion. The result is a count and a time.
+        """
+
+        return delete_registration_audits_for_account(
+            self.store,
+            account_id=account_id,
+            now=self._now(),
+        )
 
 
 def create_device_onboarding_service(

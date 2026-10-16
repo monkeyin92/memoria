@@ -218,6 +218,7 @@ def test_schema_is_forward_only_and_forces_rls_on_every_onboarding_table() -> No
         "device_onboarding_claims",
         "device_onboarding_bindings",
         "device_onboarding_activations",
+        "device_onboarding_registration_audits",
     )
     for table in tables:
         assert f"alter table {table} enable row level security" in sql
