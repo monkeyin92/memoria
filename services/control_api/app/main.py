@@ -234,8 +234,8 @@ def _evidence_subject_category_resolver(
     """Category of the person the evidence names, never of the login account.
 
     The account owner and a blank subject keep the existing profile lookup.
-    ``None`` from that lookup is an unknown category and still compiles on the
-    non-minor path; it is not a reason to skip.  Any other subject is read from
+    ``None`` from that lookup is not the string adult, so extraction_gate
+    withholds it. Any other subject is read from
     identity as the evidence account (an actor-less PostgreSQL read hides everyone).
     A fresh thread plus ``asyncio.run`` cannot use the Postgres identity pool,
     which is bound to the loop that created it, so that path is not a fallback.

@@ -4,7 +4,8 @@ CREATE TABLE IF NOT EXISTS memory_compile_receipts (
     account_id TEXT NOT NULL,
     extractor_version TEXT NOT NULL,
     outcome TEXT NOT NULL CHECK (outcome IN ('compiled', 'ignored')),
-    compiled_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    compiled_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    ignored_reason TEXT
 );
 
 CREATE TABLE IF NOT EXISTS memory_claims (
@@ -223,6 +224,21 @@ CREATE TABLE IF NOT EXISTS memory_search_documents (
     ) STORED,
     UNIQUE (kind, item_id)
 );
+
+ALTER TABLE memory_compile_receipts
+    ADD COLUMN IF NOT EXISTS ignored_reason TEXT;
+
+ALTER TABLE memory_compile_receipts
+    DROP CONSTRAINT IF EXISTS memory_compile_receipts_ignored_reason_check;
+
+ALTER TABLE memory_compile_receipts
+    ADD CONSTRAINT memory_compile_receipts_ignored_reason_check CHECK (
+        ignored_reason IS NULL
+        OR (
+            outcome = 'ignored'
+            AND ignored_reason IN ('minor_subject_skipped', 'not_explicit_adult')
+        )
+    );
 
 ALTER TABLE memory_claims
     ADD COLUMN IF NOT EXISTS domain_category TEXT,

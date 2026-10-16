@@ -21,28 +21,16 @@
           "session_id": "demo-math-s2"
         }
       ],
-      "reviews": [
-        {"source_event_id": "demo-math-001", "action": "confirm"},
-        {"source_event_id": "demo-math-002", "action": "confirm"}
-      ],
-      "expected_memories": [
-        {
-          "key": "demo-math-weakness",
-          "account_id": "demo-student-math",
-          "kind": "claim",
-          "memory_kind": "semantic",
-          "match_all": ["分数应用题", "薄弱点"],
-          "source_event_ids": ["demo-math-001"],
-          "valid_from": "2026-08-20T19:10:00+08:00"
-        }
-      ],
+      "reviews": [],
+      "expected_memories": [],
       "queries": [
         {
           "query_id": "demo-math-followup",
           "account_id": "demo-student-math",
           "text": "我们继续练习数学应用题。",
           "mode": "context",
-          "relevance": {"demo-math-weakness": 3},
+          "relevance": {},
+          "forbidden_text": ["分数应用题", "薄弱点"],
           "now": "2026-09-03T18:41:00+08:00"
         }
       ]
@@ -60,27 +48,16 @@
           "session_id": "demo-learning-s1"
         }
       ],
-      "reviews": [
-        {"source_event_id": "demo-learning-001", "action": "confirm"}
-      ],
-      "expected_memories": [
-        {
-          "key": "demo-learning-preference",
-          "account_id": "demo-student-learning",
-          "kind": "claim",
-          "memory_kind": "semantic",
-          "match_all": ["先跟读"],
-          "source_event_ids": ["demo-learning-001"],
-          "valid_from": "2026-09-01T17:30:00+08:00"
-        }
-      ],
+      "reviews": [],
+      "expected_memories": [],
       "queries": [
         {
           "query_id": "demo-learning-day3",
           "account_id": "demo-student-learning",
           "text": "还是学习时我喜欢先跟读吗？",
           "mode": "context",
-          "relevance": {"demo-learning-preference": 3},
+          "relevance": {},
+          "forbidden_text": ["先跟读"],
           "now": "2026-09-04T18:00:00+08:00"
         }
       ]
@@ -100,24 +77,15 @@
         }
       ],
       "reviews": [],
-      "expected_memories": [
-        {
-          "key": "demo-reading-preference",
-          "account_id": "demo-student-reading",
-          "kind": "claim",
-          "memory_kind": "semantic",
-          "match_all": ["阅读"],
-          "source_event_ids": ["demo-reading-001"],
-          "valid_from": "2026-08-28T19:00:00+08:00"
-        }
-      ],
+      "expected_memories": [],
       "queries": [
         {
           "query_id": "demo-reading-day7",
           "account_id": "demo-student-reading",
           "text": "我还是喜欢阅读吗？",
           "mode": "context",
-          "relevance": {"demo-reading-preference": 2},
+          "relevance": {},
+          "forbidden_text": ["阅读"],
           "now": "2026-09-04T19:00:00+08:00"
         }
       ]
@@ -159,6 +127,7 @@
     },
     {
       "case_id": "demo-elder-park-walk",
+      "subject_category": "adult",
       "scenario": "episodic_recall",
       "evidence": [
         {
@@ -196,6 +165,7 @@
     },
     {
       "case_id": "demo-elder-factory-story",
+      "subject_category": "adult",
       "scenario": "cross_session_followup",
       "evidence": [
         {
@@ -233,6 +203,7 @@
     },
     {
       "case_id": "demo-elder-son-visit",
+      "subject_category": "adult",
       "scenario": "comfort_recall",
       "evidence": [
         {

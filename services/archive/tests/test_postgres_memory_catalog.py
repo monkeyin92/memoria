@@ -190,11 +190,10 @@ async def test_compiler_role_claims_outbox_without_bypassing_account_rls() -> No
             """
         )
         await admin.execute(
-            f'CREATE ROLE "{app_role}" LOGIN PASSWORD \'{app_password}\' '
-            "NOSUPERUSER NOBYPASSRLS"
+            f"CREATE ROLE \"{app_role}\" LOGIN PASSWORD '{app_password}' NOSUPERUSER NOBYPASSRLS"
         )
         await admin.execute(
-            f'CREATE ROLE "{compiler_role}" LOGIN PASSWORD \'{compiler_password}\' '
+            f"CREATE ROLE \"{compiler_role}\" LOGIN PASSWORD '{compiler_password}' "
             "NOSUPERUSER NOBYPASSRLS IN ROLE memoria_archive_compiler"
         )
         await admin.execute(f'CREATE DATABASE "{database}" OWNER "{app_role}"')
@@ -211,13 +210,18 @@ async def test_compiler_role_claims_outbox_without_bypassing_account_rls() -> No
             database=database,
         )
         archive = PostgresLifeArchive(app_dsn)
-        ordinary = PostgresMemoryCatalog(app_dsn, extractor=RuleBasedMemoryExtractor())
+        ordinary = PostgresMemoryCatalog(
+            app_dsn,
+            extractor=RuleBasedMemoryExtractor(),
+            evidence_subject_category_resolver=lambda _event: "adult",
+        )
         compiler = PostgresMemoryCatalog(
             app_dsn,
             compiler_dsn=compiler_dsn,
             compiler_role=compiler_role,
             extractor=RuleBasedMemoryExtractor(),
             capture_evidence_projector=project_capture,
+            evidence_subject_category_resolver=lambda _event: "adult",
         )
         await archive.initialize()
         await ordinary.initialize()
@@ -299,6 +303,7 @@ async def test_pgvector_projection_and_hybrid_search_are_rebuildable() -> None:
         extractor=RuleBasedMemoryExtractor(),
         embedder=SemanticEmbedderStub(),
         require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
     )
     await archive.initialize()
     await catalog.initialize()
@@ -373,6 +378,7 @@ async def test_vector_search_gives_the_keyword_bonus_only_to_terms_that_name_som
         extractor=RuleBasedMemoryExtractor(),
         embedder=ConstantEmbedderStub(),
         require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
     )
     await archive.initialize()
     await catalog.initialize()
@@ -417,20 +423,24 @@ async def test_vector_search_gives_the_keyword_bonus_only_to_terms_that_name_som
             return [
                 (
                     item.source_event_id,
-                    item.score
-                    - (0.45 + 0.2 * (0.35 * item.stability + 0.65 * item.salience)),
+                    item.score - (0.45 + 0.2 * (0.35 * item.stability + 0.65 * item.salience)),
                 )
                 for item in result.items
             ]
 
         # A question word and word fragments ("什么", "处会") name nothing: no bonus, in
         # particular not for the knowledge boilerplate that contains "是什么".
-        assert all(bonus == pytest.approx(0.0, abs=1e-3) for _, bonus in await scored("身处高处会有什么反应？"))
+        assert all(
+            bonus == pytest.approx(0.0, abs=1e-3)
+            for _, bonus in await scored("身处高处会有什么反应？")
+        )
         # A real keyword still earns the bonus, and only on the memory that contains it.
         bonuses = await scored("阳台")
         assert {event for event, bonus in bonuses if bonus > 0.1} == {event_ids[0]}
         assert all(
-            bonus == pytest.approx(0.175, abs=1e-3) for event, bonus in bonuses if event == event_ids[0]
+            bonus == pytest.approx(0.175, abs=1e-3)
+            for event, bonus in bonuses
+            if event == event_ids[0]
         )
     finally:
         await connection.execute(
@@ -469,6 +479,7 @@ async def test_recall_embeds_a_redacted_query_and_matches_lexically_on_the_raw_o
         extractor=RuleBasedMemoryExtractor(),
         embedder=embedder,
         require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
     )
     await archive.initialize()
     await catalog.initialize()
@@ -543,6 +554,7 @@ async def test_embedding_outage_keeps_fulltext_projection_and_search_available()
         extractor=RuleBasedMemoryExtractor(),
         embedder=UnavailableEmbedderStub(),
         require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
     )
     await archive.initialize()
     await catalog.initialize()
@@ -611,6 +623,7 @@ async def test_strict_embedding_outage_fails_compile_and_search() -> None:
         embedder=UnavailableEmbedderStub(),
         require_vector=True,
         fail_on_embedding_error=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
     )
     await archive.initialize()
     await catalog.initialize()
@@ -671,12 +684,14 @@ async def test_hybrid_search_ignores_stale_vectors_from_an_older_model() -> None
         extractor=RuleBasedMemoryExtractor(),
         embedder=SemanticEmbedderStub(),
         require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
     )
     upgraded_catalog = PostgresMemoryCatalog(
         dsn,
         extractor=RuleBasedMemoryExtractor(),
         embedder=UpgradedEmbedderStub(),
         require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
     )
     await archive.initialize()
     await old_catalog.initialize()
@@ -739,7 +754,11 @@ async def test_postgres_one_canonical_key_merges_across_domains() -> None:
     suffix = uuid.uuid4().hex[:10]
     account_id = f"pg-episode-{suffix}"
     archive = PostgresLifeArchive(dsn)
-    catalog = PostgresMemoryCatalog(dsn, extractor=_DomainDriftCanonicalExtractor())
+    catalog = PostgresMemoryCatalog(
+        dsn,
+        extractor=_DomainDriftCanonicalExtractor(),
+        evidence_subject_category_resolver=lambda _event: "adult",
+    )
     await archive.initialize()
     await catalog.initialize()
     connection = await asyncpg.connect(dsn)
@@ -806,12 +825,8 @@ async def test_postgres_one_canonical_key_merges_across_domains() -> None:
         }
         assert "校园外卖创业" in memories.items[0].snippet
     finally:
-        await connection.execute(
-            "DELETE FROM episode_evidence WHERE account_id = $1", account_id
-        )
-        await connection.execute(
-            "DELETE FROM timeline_entries WHERE account_id = $1", account_id
-        )
+        await connection.execute("DELETE FROM episode_evidence WHERE account_id = $1", account_id)
+        await connection.execute("DELETE FROM timeline_entries WHERE account_id = $1", account_id)
         await connection.execute("DELETE FROM life_episodes WHERE account_id = $1", account_id)
         await connection.execute(
             "DELETE FROM archive_evidence_events WHERE account_id = $1", account_id
@@ -830,7 +845,11 @@ async def test_postgres_memory_catalog_matches_sqlite_contract_and_forces_rls() 
     dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
     account_id = "postgres-memory-account"
     archive = PostgresLifeArchive(dsn)
-    catalog = PostgresMemoryCatalog(dsn, extractor=RuleBasedMemoryExtractor())
+    catalog = PostgresMemoryCatalog(
+        dsn,
+        extractor=RuleBasedMemoryExtractor(),
+        evidence_subject_category_resolver=lambda _event: "adult",
+    )
     await archive.initialize()
     await catalog.initialize()
     connection = await asyncpg.connect(dsn)
@@ -892,9 +911,7 @@ async def test_postgres_memory_catalog_matches_sqlite_contract_and_forces_rls() 
     )
     people = await catalog.people(account_id=account_id)
     queue = await catalog.review_queue(account_id=account_id)
-    family_claim = next(
-        item for item in queue if item.source_event_id == "postgres-memory-0"
-    )
+    family_claim = next(item for item in queue if item.source_event_id == "postgres-memory-0")
     reviewed = await catalog.review(
         MemoryClaimReview(
             account_id=account_id,
@@ -910,9 +927,7 @@ async def test_postgres_memory_catalog_matches_sqlite_contract_and_forces_rls() 
         )
     )
     mother_claim = next(
-        item
-        for item in queue
-        if item.source_event_id == "postgres-memory-1" and item.value != "60"
+        item for item in queue if item.source_event_id == "postgres-memory-1" and item.value != "60"
     )
     await catalog.review(
         MemoryClaimReview(
@@ -935,9 +950,7 @@ async def test_postgres_memory_catalog_matches_sqlite_contract_and_forces_rls() 
     conflicts = [item for item in queue if item.reason == "conflicting_values"]
     assert {item.value for item in conflicts} == {"60", "61"}
     assert reviewed.status == "confirmed"
-    assert {
-        (item.kind, item.source_event_id, item.status) for item in context.items
-    } == {
+    assert {(item.kind, item.source_event_id, item.status) for item in context.items} == {
         ("claim", "postgres-memory-0", "confirmed"),
         ("knowledge", "postgres-memory-0", "confirmed"),
         ("episode", "postgres-memory-0", "confirmed"),
@@ -948,9 +961,7 @@ async def test_postgres_memory_catalog_matches_sqlite_contract_and_forces_rls() 
         "episodic",
         "procedural",
     }
-    assert [(item.display_name, item.status) for item in reviewed_people] == [
-        ("李梅", "confirmed")
-    ]
+    assert [(item.display_name, item.status) for item in reviewed_people] == [("李梅", "confirmed")]
     assert {item.value for item in queue_after_review if item.reason == "conflicting_values"} == {
         "60",
         "61",
@@ -1001,7 +1012,11 @@ async def test_postgres_person_alias_is_recallable_and_status_gated() -> None:
     account_id = f"person-alias-{uuid.uuid4()}"
     event_id = f"person-alias-event-{uuid.uuid4()}"
     archive = PostgresLifeArchive(dsn)
-    catalog = PostgresMemoryCatalog(dsn, extractor=RuleBasedMemoryExtractor())
+    catalog = PostgresMemoryCatalog(
+        dsn,
+        extractor=RuleBasedMemoryExtractor(),
+        evidence_subject_category_resolver=lambda _event: "adult",
+    )
     await archive.initialize()
     await catalog.initialize()
     try:
@@ -1079,14 +1094,7 @@ async def test_postgres_person_alias_is_recallable_and_status_gated() -> None:
     not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
     reason="set MEMORIA_TEST_POSTGRES_DSN for the PostgreSQL minor subject contract",
 )
-async def test_postgres_minor_subject_filter_keeps_only_allowlisted_demo_memories() -> None:
-    """The demo minor cases must survive the production PostgreSQL compiler.
-
-    The resolver is the only category authority.  A payload that claims adult,
-    or a retention marker that is not the compiler's input, must not reopen the
-    minor allowlist or drop an allowlisted projection.
-    """
-
+async def test_postgres_minor_subjects_are_never_extracted() -> None:
     admin_dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
     database = f"memoria_minor_demo_{uuid.uuid4().hex[:10]}"
     admin = await asyncpg.connect(admin_dsn)
@@ -1114,13 +1122,20 @@ async def test_postgres_minor_subject_filter_keeps_only_allowlisted_demo_memorie
             raise AssertionError(f"unexpected subject {subject_id}")
         return categories[subject_id]
 
+    extracted: list[str] = []
+
+    class CountingRuleExtractor(RuleBasedMemoryExtractor):
+        async def extract(self, event: EvidenceEvent) -> MemoryExtraction:
+            extracted.append(event.event_id)
+            return await super().extract(event)
+
     archive: PostgresLifeArchive | None = None
     catalog: PostgresMemoryCatalog | None = None
     try:
         archive = PostgresLifeArchive(dsn)
         catalog = PostgresMemoryCatalog(
             dsn,
-            extractor=RuleBasedMemoryExtractor(),
+            extractor=CountingRuleExtractor(),
             evidence_subject_category_resolver=resolve_category,
         )
         await archive.initialize()
@@ -1179,9 +1194,7 @@ async def test_postgres_minor_subject_filter_keeps_only_allowlisted_demo_memorie
                 },
             ),
         )
-        for index, (event_id, subject_id, text, explicit_memory, extra) in enumerate(
-            utterances
-        ):
+        for index, (event_id, subject_id, text, explicit_memory, extra) in enumerate(utterances):
             payload: dict[str, object] = {
                 "text": text,
                 "interaction_mode": "companion",
@@ -1244,24 +1257,24 @@ async def test_postgres_minor_subject_filter_keeps_only_allowlisted_demo_memorie
             )
         )
 
-        assert report.failed_events == 0
-        assert report.compiled_events == len(utterances)
-        assert {
-            (item.source_event_id, item.domain_category, item.status)
-            for item in study.items
-            if item.source_event_id in {"math-progress", "learning-preference"}
-        } == {
-            ("math-progress", "study_progress", "candidate"),
-            ("learning-preference", "learning_preference", "candidate"),
-        }
-        assert {
-            (item.source_event_id, item.domain_category, item.status)
-            for item in reading.items
-        } == {("reading-preference", "daily_life", "confirmed")}
-        assert all("阅读" in f"{item.title} {item.snippet}" for item in reading.items)
+        connection = await asyncpg.connect(dsn)
+        try:
+            receipts = await connection.fetch(
+                "SELECT event_id, outcome, ignored_reason FROM memory_compile_receipts"
+                " ORDER BY event_id"
+            )
+        finally:
+            await connection.close()
+
+        assert extracted == []
+        assert report == CompileReport(ignored_events=len(utterances))
+        assert [tuple(row) for row in receipts] == sorted(
+            (event_id, "ignored", "minor_subject_skipped") for event_id, *_ in utterances
+        )
+        assert study.items == ()
+        assert reading.items == ()
         assert sensitive.items == ()
-        assert any(item.source_event_id == "retention-cannot-drop" for item in retained.items)
-        assert all(item.source_event_id != "payload-cannot-widen" for item in sensitive.items)
+        assert retained.items == ()
     finally:
         if catalog is not None:
             await catalog.close()

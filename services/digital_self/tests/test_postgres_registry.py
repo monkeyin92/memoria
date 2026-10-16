@@ -107,7 +107,11 @@ async def test_postgres_registry_enforces_rls_crud_immutability_and_governance()
             database=database,
         )
         archive = PostgresLifeArchive(app_dsn)
-        catalog = PostgresMemoryCatalog(app_dsn, extractor=RuleBasedMemoryExtractor())
+        catalog = PostgresMemoryCatalog(
+            app_dsn,
+            extractor=RuleBasedMemoryExtractor(),
+            evidence_subject_category_resolver=lambda _event: "adult",
+        )
         persona = PostgresPersonaEngine(app_dsn)
         registry = PostgresDigitalSelfRegistry(app_dsn)
         await archive.initialize()

@@ -15,13 +15,16 @@ from typing import Any
 import pytest
 from httpx import ASGITransport, AsyncClient
 from services.archive.domain import EvidenceEvent
+from services.archive.memory_domain import CompileReport
 from services.control_api.app.main import create_app
+from services.control_api.app.routes.guardian import _idempotency_uuid
 from services.control_api.tests.test_bound_subject_binding import (
     _bind,
     _configure,
     _owner,
     _RecordingConsent,
 )
+from testing import app_store
 
 STUDY = "今天我练习了乘法口诀。"
 FAVOURITE = "帮我记住我最喜欢蓝色。"
@@ -83,12 +86,9 @@ async def _grant_memory(client: AsyncClient, child_id: str, headers: dict[str, s
     assert granted.status_code == 201, granted.text
 
 
-async def _record_and_compile(app: Any, owner_id: str, child_id: str) -> None:
+async def _record_and_compile(app: Any, owner_id: str, child_id: str) -> CompileReport:
     now = datetime.now(UTC)
     archive = app.state.life_archive
-    # The child's study sentence stays a candidate; the child's explicit request confirms itself
-    # (the robot's previous line was a question: prompt_kind "open"); the parent's own sentence is
-    # another subject's evidence in the same account.
     await archive.record(_turn("child-study", owner_id, child_id, STUDY, now, 1))
     await archive.record(
         _turn(
@@ -98,14 +98,54 @@ async def _record_and_compile(app: Any, owner_id: str, child_id: str) -> None:
             FAVOURITE,
             now + timedelta(minutes=1),
             2,
-            memory_write_intent={"kind": "explicit_remember", "policy_version": "explicit-memory-v2"},
+            memory_write_intent={
+                "kind": "explicit_remember",
+                "policy_version": "explicit-memory-v2",
+            },
         )
     )
     await archive.record(
         _turn("parent-study", owner_id, owner_id, "今天我练习了英语单词。", now, 3)
     )
-    report = await app.state.memory_catalog.compile_pending()
+    return await app.state.memory_catalog.compile_pending()
+
+
+async def _seed_claims_compiled_before_the_gate(app: Any, owner_id: str, child_id: str) -> None:
+    app.state.memory_catalog._evidence_subject_category_resolver = lambda _event: "adult"
+    report = await _record_and_compile(app, owner_id, child_id)
     assert report.failed_events == 0
+
+
+@pytest.mark.asyncio
+async def test_a_childs_turns_never_reach_the_guardian_memory_view(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner_id, child_id, headers = await _bound_child(client, app, monkeypatch)
+        await _grant_memory(client, child_id, headers)
+        report = await _record_and_compile(app, owner_id, child_id)
+        listed = await client.get(f"/v1/guardian/minors/{child_id}/memories", headers=headers)
+    receipts = app_store.fetch_all(
+        getattr(app.state.memory_catalog, "_path", ""),
+        "SELECT event_id, outcome, ignored_reason FROM memory_compile_receipts ORDER BY event_id",
+    )
+    consent_event = (
+        "guardian-person-consent-grant:"
+        f"{_idempotency_uuid('guardian-person-consent', 'child-memory-grant-0001')}"
+    )
+
+    assert report == CompileReport(compiled_events=1, ignored_events=3)
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["candidates"] == []
+    assert listed.json()["confirmed"] == []
+    assert receipts == [
+        ("child-favourite", "ignored", "minor_subject_skipped"),
+        ("child-study", "ignored", "minor_subject_skipped"),
+        (consent_event, "ignored", None),
+        ("parent-study", "compiled", None),
+    ]
 
 
 @pytest.mark.asyncio
@@ -121,7 +161,7 @@ async def test_the_binding_guardian_confirms_and_retracts_what_the_robot_may_rem
         # Closed until the guardian ticks long-term memory for the child, like every child view.
         closed = await client.get(url, headers=headers)
         await _grant_memory(client, child_id, headers)
-        await _record_and_compile(app, owner_id, child_id)
+        await _seed_claims_compiled_before_the_gate(app, owner_id, child_id)
 
         listed = await client.get(url, headers=headers)
         body = listed.json()
@@ -164,7 +204,7 @@ async def test_a_confirmed_memory_is_what_the_childs_conversation_may_recall(
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         owner_id, child_id, headers = await _bound_child(client, app, monkeypatch)
         await _grant_memory(client, child_id, headers)
-        await _record_and_compile(app, owner_id, child_id)
+        await _seed_claims_compiled_before_the_gate(app, owner_id, child_id)
         catalog = app.state.memory_catalog
 
         async def recall() -> list[str]:
@@ -183,7 +223,9 @@ async def test_a_confirmed_memory_is_what_the_childs_conversation_may_recall(
             return [item.snippet for item in found.items]
 
         before = await recall()
-        queue = (await client.get(f"/v1/guardian/minors/{child_id}/memories", headers=headers)).json()
+        queue = (
+            await client.get(f"/v1/guardian/minors/{child_id}/memories", headers=headers)
+        ).json()
         claim = queue["candidates"][0]["claim_id"]
         await client.post(
             f"/v1/guardian/minors/{child_id}/memories/{claim}/review",
@@ -205,7 +247,7 @@ async def test_nobody_else_can_open_or_review_this_childs_memories(
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         owner_id, child_id, headers = await _bound_child(client, app, monkeypatch)
         await _grant_memory(client, child_id, headers)
-        await _record_and_compile(app, owner_id, child_id)
+        await _seed_claims_compiled_before_the_gate(app, owner_id, child_id)
         url = f"/v1/guardian/minors/{child_id}/memories"
         claim = (await client.get(url, headers=headers)).json()["candidates"][0]["claim_id"]
         _, stranger_headers = await _owner(client, app, "child-memory-stranger")

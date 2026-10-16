@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import asyncpg
 import httpx
@@ -23,7 +23,7 @@ from services.archive.episode_consolidator import (
     EpisodeConsolidator,
     ExistingEpisode,
 )
-from services.archive.memory_catalog import SubjectCategoryUnresolved, _await_category
+from services.archive.extraction_gate import IgnoredReason, Withhold, extraction_gate
 from services.archive.memory_domain import (
     AccountWriteGuard,
     AccountWriteRejectedError,
@@ -288,9 +288,8 @@ class PostgresMemoryCatalog:
         # Compilation must ask about the evidence subject.  Callers that only
         # know the account owner keep the account resolver; it is not a guess
         # that every subject is that owner.
-        self._evidence_subject_category_resolver = (
-            evidence_subject_category_resolver
-            or (lambda event: self._subject_category_resolver(event.account_id))
+        self._evidence_subject_category_resolver = evidence_subject_category_resolver or (
+            lambda event: self._subject_category_resolver(event.account_id)
         )
         self._capture_evidence_projector = capture_evidence_projector
         self._outbox_lease_s = outbox_lease_s
@@ -543,43 +542,21 @@ class PostgresMemoryCatalog:
                     error_code=type(exc).__name__,
                 )
                 return "failed"
-        contribution = contribution_for(event)
-        if not contribution.accepted:
-            async with pool.acquire() as connection, connection.transaction():
-                await self._scope(connection, account_id)
-                await self._record_receipt(connection, event, outcome="ignored")
-                await self._complete_outbox(
-                    connection,
-                    outbox_id,
-                    fencing_token=fencing_token,
-                )
-            return "ignored"
+        if not contribution_for(event).accepted:
+            return await self._ignore(pool, event, outbox_id, fencing_token=fencing_token)
         try:
+            gate = await extraction_gate(self._evidence_subject_category_resolver, event)
+            if isinstance(gate, Withhold):
+                return await self._ignore(
+                    pool, event, outbox_id, fencing_token=fencing_token, reason=gate.ignored_reason
+                )
             extraction = await self._extractor.extract(event)
             if not isinstance(extraction, MemoryExtraction):
                 raise TypeError("memory extractor returned an invalid result")
-            try:
-                subject_category = await _await_category(
-                    self._evidence_subject_category_resolver(event)
-                )
-            except SubjectCategoryUnresolved:
-                # Identity could not classify this subject.  Do not project the
-                # row as the account owner (and do not guess adult); the archive
-                # evidence stays, and only this compile is withheld.  None is
-                # "category unknown" and still compiles on the non-minor path.
-                async with pool.acquire() as connection, connection.transaction():
-                    await self._scope(connection, account_id)
-                    await self._record_receipt(connection, event, outcome="ignored")
-                    await self._complete_outbox(
-                        connection,
-                        outbox_id,
-                        fencing_token=fencing_token,
-                    )
-                return "ignored"
             extraction = filter_extraction_for_subject(
                 event,
                 extraction,
-                subject_category=subject_category,
+                subject_category=gate.subject_category,
             )
             async with pool.acquire() as connection, connection.transaction():
                 await self._scope(connection, account_id)
@@ -591,7 +568,7 @@ class PostgresMemoryCatalog:
                         event=event,
                         extraction=extraction,
                     ),
-                    subject_category=subject_category,
+                    subject_category=gate.subject_category,
                 )
                 await self._write_extraction(connection, event, extraction)
                 await self._apply_memory_write_decision(
@@ -621,11 +598,24 @@ class PostgresMemoryCatalog:
                 max_attempts=max_attempts,
                 error_code=type(exc).__name__,
             )
-            if self._fail_on_embedding_error and isinstance(
-                exc, MemoryEmbeddingUnavailableError
-            ):
+            if self._fail_on_embedding_error and isinstance(exc, MemoryEmbeddingUnavailableError):
                 raise
             return "failed"
+
+    async def _ignore(
+        self,
+        pool: asyncpg.Pool,
+        event: EvidenceEvent,
+        outbox_id: uuid.UUID,
+        *,
+        fencing_token: int,
+        reason: IgnoredReason | None = None,
+    ) -> str:
+        async with pool.acquire() as connection, connection.transaction():
+            await self._scope(connection, event.account_id)
+            await self._record_receipt(connection, event, outcome="ignored", ignored_reason=reason)
+            await self._complete_outbox(connection, outbox_id, fencing_token=fencing_token)
+        return "ignored"
 
     async def _project_capture_evidence(self, event: EvidenceEvent) -> None:
         candidate = event.payload.get("memory_capture_candidate_v1")
@@ -755,9 +745,7 @@ class PostgresMemoryCatalog:
                     )
                 )[:8000],
                 domain_category=(
-                    extraction.claims[0].domain_category
-                    if extraction.claims
-                    else "daily_life"
+                    extraction.claims[0].domain_category if extraction.claims else "daily_life"
                 ),
                 entity_ids=(person_id,),
                 source_event_ids=(event.event_id,),
@@ -1575,20 +1563,22 @@ class PostgresMemoryCatalog:
         connection: asyncpg.Connection,
         event: EvidenceEvent,
         *,
-        outcome: str,
+        outcome: Literal["compiled", "ignored"],
         extractor_version: str = "",
+        ignored_reason: IgnoredReason | None = None,
     ) -> None:
         await connection.execute(
             """
             INSERT INTO memory_compile_receipts (
-                event_id, account_id, extractor_version, outcome
-            ) VALUES ($1, $2, $3, $4)
+                event_id, account_id, extractor_version, outcome, ignored_reason
+            ) VALUES ($1, $2, $3, $4, $5)
             ON CONFLICT DO NOTHING
             """,
             event.event_id,
             event.account_id,
             extractor_version or self._extractor.version,
             outcome,
+            ignored_reason,
         )
 
     @staticmethod
@@ -1664,7 +1654,8 @@ class PostgresMemoryCatalog:
 
             whole = like(query.text.strip())
             sparse = [
-                like(term) for term in search_terms(query.text, with_embedding=embedding is not None)
+                like(term)
+                for term in search_terms(query.text, with_embedding=embedding is not None)
             ]
             text_match = lexical_sql.text_match(text_index, whole, sparse)
             if embedding is None or embedder is None:
@@ -2233,7 +2224,7 @@ class PostgresMemoryCatalog:
                   SELECT document_id FROM memory_search_document_sources
                   WHERE account_id = $2 AND source_event_id = $3
               )
-              {_SCOPED_DOCUMENT_CASCADE_GUARD.replace('?', '$4') if subject_id is not None else ""}
+              {_SCOPED_DOCUMENT_CASCADE_GUARD.replace("?", "$4") if subject_id is not None else ""}
             """,
             projection_status,
             account_id,

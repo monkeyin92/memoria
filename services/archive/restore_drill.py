@@ -19,6 +19,7 @@ from urllib.parse import unquote, urlsplit, urlunsplit
 
 import asyncpg
 
+from services.archive.domain import EvidenceEvent
 from services.archive.memory_domain import MemoryEmbedder, MemoryExtractor
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
 from services.archive.object_store import EncryptedLocalObjectStore, ObjectRef
@@ -544,11 +545,17 @@ async def rebuild_postgres_memory_projections(
 
     if require_vector and embedder is None:
         raise ValueError("pgvector projection rebuild requires an embedder")
+
+    def stamped_subject_category(event: EvidenceEvent) -> str | None:
+        stamped = event.payload.get("subject_category")
+        return stamped if isinstance(stamped, str) else None
+
     catalog = PostgresMemoryCatalog(
         dsn,
         extractor=extractor or RuleBasedMemoryExtractor(),
         embedder=embedder,
         require_vector=require_vector,
+        evidence_subject_category_resolver=stamped_subject_category,
     )
     connection = await asyncpg.connect(dsn)
     skill_account_ids: tuple[str, ...] = ()
@@ -796,9 +803,7 @@ async def verify_postgres_rls(dsn: str) -> RLSRestoreReport:
             )
         )
         controller_tables = tuple(
-            str(row["table_name"])
-            for row in controller_metadata_rows
-            if bool(row["table_exists"])
+            str(row["table_name"]) for row in controller_metadata_rows if bool(row["table_exists"])
         )
         controller_counts = {
             table: int(
