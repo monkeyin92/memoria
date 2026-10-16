@@ -1002,17 +1002,23 @@ def test_production_env_split_rejects_ambiguous_or_partial_doubao_auth(
 
 
 @pytest.mark.parametrize("runtime_secret", ["DOUBAO_TTS_API_KEY", "DOUBAO_TTS_ACCESS_TOKEN"])
-def test_production_env_split_rejects_shared_clone_and_runtime_tts_secret(
+def test_production_env_split_drops_a_voice_clone_key(
     runtime_secret: str,
 ) -> None:
     values = {
         "MEMORIA_DOUBAO_VOICE_API_KEY": "shared-key",
+        "VOICE_CLONE_ENABLED": "true",
+        "MEMORIA_VOICE_ENROLLMENT_URL": "retired",
         runtime_secret: "shared-key",
     }
     if runtime_secret == "DOUBAO_TTS_ACCESS_TOKEN":
         values["DOUBAO_TTS_APP_ID"] = "doubao-app-id"
-    with pytest.raises(ValueError, match="must be independent"):
-        split_env(values)
+    control, agent, speaker_model, media_edge = split_env(values)
+    for routed in (control, agent, speaker_model, media_edge):
+        assert "MEMORIA_DOUBAO_VOICE_API_KEY" not in routed
+        assert "VOICE_CLONE_ENABLED" not in routed
+        assert "MEMORIA_VOICE_ENROLLMENT_URL" not in routed
+    assert agent[runtime_secret] == "shared-key"
 
 
 def test_production_env_split_rejects_the_legacy_all_access_token() -> None:

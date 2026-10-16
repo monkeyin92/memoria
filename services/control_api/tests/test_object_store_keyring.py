@@ -30,7 +30,7 @@ async def test_archive_and_voice_factories_read_rotated_objects(tmp_path: Path) 
         MEMORIA_VOICE_SAMPLE_KEY_VERSION="voice-v1",
     )
     old_archive = _archive_object_store(old_settings)
-    _, _, old_voice, _authority = voice_profile_services(old_settings)
+    _, _, old_voice = voice_profile_services(old_settings)
     archive_reference = await old_archive.put(
         account_id="owner-1",
         purpose="raw-voice-archive",
@@ -55,7 +55,7 @@ async def test_archive_and_voice_factories_read_rotated_objects(tmp_path: Path) 
         MEMORIA_VOICE_SAMPLE_READ_KEYS=json.dumps({"voice-v1": voice_old_key}),
     )
     rotated_archive = _archive_object_store(rotated_settings)
-    _, _, rotated_voice, _authority = voice_profile_services(rotated_settings)
+    _, _, rotated_voice = voice_profile_services(rotated_settings)
 
     assert await rotated_archive.get(archive_reference) == b"old archive object"
     assert await rotated_voice.get(voice_reference) == b"old voice object"

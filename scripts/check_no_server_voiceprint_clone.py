@@ -15,6 +15,26 @@ ROOT = Path(__file__).resolve().parents[1]
 
 CHECKS: list[tuple[Path, re.Pattern[str], str]] = [
     (
+        ROOT / "services/voice_profile/cosyvoice_enrollment.py",
+        re.compile(r"."),
+        "CosyVoice enrollment client must be deleted",
+    ),
+    (
+        ROOT / "services/voice_profile/doubao_voice_clone.py",
+        re.compile(r"."),
+        "Doubao voice clone client must be deleted",
+    ),
+    (
+        ROOT / "apps/miniprogram/utils/voice-clone-gate.js",
+        re.compile(r"."),
+        "miniprogram voice clone gate must be deleted",
+    ),
+    (
+        ROOT / "scripts/design_cosyvoice_voices.py",
+        re.compile(r"."),
+        "CosyVoice voice design script must be deleted",
+    ),
+    (
         ROOT / "services/control_api/app/routes/speaker.py",
         re.compile(r"."),
         "speaker routes module must be deleted",
@@ -33,6 +53,14 @@ CHECKS: list[tuple[Path, re.Pattern[str], str]] = [
         ROOT / "apps/miniprogram/utils/voice-enrollment-state.js",
         re.compile(r"."),
         "miniprogram voice enrollment util must be deleted",
+    ),
+    (
+        ROOT / "services/control_api/app",
+        re.compile(
+            r"tts/customization|DoubaoVoiceCloneClient|CosyVoiceEnrollmentClient|"
+            r"VOICE_CLONE_ENABLED|qwen_omni_voice_clone_id"
+        ),
+        "control-api still wires a voice clone client or switch",
     ),
     (
         ROOT / "services/control_api/app/routes/voice.py",
@@ -81,11 +109,14 @@ def main() -> int:
             "speaker.py",
             "formal_speaker_enrollment.py",
             "speaker_authority_client.py",
+            "cosyvoice_enrollment.py",
+            "doubao_voice_clone.py",
+            "design_cosyvoice_voices.py",
         }:
             if path.exists():
                 hits.append(f"{path.relative_to(ROOT)}: {label}")
             continue
-        if path.name == "voice-enrollment-state.js":
+        if path.name in {"voice-enrollment-state.js", "voice-clone-gate.js"}:
             if path.exists():
                 hits.append(f"{path.relative_to(ROOT)}: {label}")
             continue

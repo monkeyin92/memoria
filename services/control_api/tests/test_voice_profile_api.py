@@ -33,6 +33,7 @@ async def test_voice_clone_write_routes_are_gone() -> None:
             ("POST", "/v1/voices/consent"),
             ("POST", "/v1/voices/enrollments"),
             ("GET", "/v1/voices/profiles"),
+            ("GET", "/v1/voices/provider-samples/sample-1"),
             ("GET", "/v1/speakers"),
             ("POST", "/v1/speakers/enrollments"),
         ):
