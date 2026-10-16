@@ -69,19 +69,15 @@ def _shell_function(text: str, name: str) -> str:
 
 
 def _provider_expected(agent_env: Path) -> str:
-    """Run the script's own expected-line block against an agent env file."""
-
     script = _script()
     start = script.index('llm_provider="$(awk')
     end = script.index("for attempt in 1 2;")
     block = script[start:end]
-    preamble = ""
-    if "provider_expected_line() {" in script:
-        preamble = _shell_function(script, "provider_expected_line") + "\n"
     program = (
         "set -Eeuo pipefail\n"
         f"agent_env={shlex.quote(str(agent_env))}\n"
-        + preamble
+        + _shell_function(script, "provider_expected_line")
+        + "\n"
         + block
         + 'printf "%s\\n" "$provider_expected"\n'
     )
