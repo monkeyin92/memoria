@@ -110,6 +110,97 @@ def test_env_checks_speaker_authority_for_the_bridge() -> None:
     assert "voice-core-media-bridge -m scripts.provider_smoke_test" in env_step
 
 
+_LOG_ID = "3f2a1b9c8d7e"
+_STAMP = "2026-10-17T10:02:03.123456+08:00"
+_STARTUP = f"{_STAMP} control-api/{_LOG_ID} INFO:     Application startup complete.\n"
+_MARKER = f"{_STAMP} control-api/{_LOG_ID} control_env_valid=PASS\n"
+
+
+def _host_log_gate(log_dir: Path, before: int) -> subprocess.CompletedProcess[str]:
+    program = "\n".join(
+        (
+            "set -Eeuo pipefail",
+            "export TAG=t COMMIT=c",
+            f"source {shlex.quote(str(SCRIPT))}",
+            "sleep() { :; }",
+            f"HOST_LOG_DIR={shlex.quote(str(log_dir))}",
+            f"assert_host_log_has control-api {before} control_env_valid=PASS",
+        )
+    )
+    return subprocess.run(
+        ["bash", "-c", program],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("at_snapshot", "after_env", "passes"),
+    [
+        (_STARTUP, _STARTUP + _MARKER, True),
+        (_STARTUP, _STARTUP + _MARKER.replace("control-api/", "voice-core-media-bridge/"), False),
+        (_STARTUP, _STARTUP + f"{_STAMP} control_env_valid=PASS\n", False),
+        (_STARTUP + _MARKER, _STARTUP + _MARKER, False),
+        (_STARTUP * 50, _MARKER, True),
+        (None, None, False),
+    ],
+    ids=["own-marker", "other-service-tag", "untagged", "earlier-run-only", "rotated", "no-sink"],
+)
+def test_env_host_log_gate_accepts_only_this_runs_tagged_marker(
+    tmp_path: Path, at_snapshot: str | None, after_env: str | None, passes: bool
+) -> None:
+    log_path = tmp_path / "control-api.log"
+    if at_snapshot is None:
+        before = 0
+    else:
+        log_path.write_text(at_snapshot, encoding="utf-8")
+        before = log_path.stat().st_size
+    if after_env is not None:
+        log_path.write_text(after_env, encoding="utf-8")
+    result = _host_log_gate(tmp_path, before)
+    assert (result.returncode == 0) is passes, result.stdout + result.stderr
+    if not passes:
+        assert "容器日志落盘" in result.stderr
+
+
+def test_env_host_log_gate_reads_a_rotated_marker_past_the_snapshot(tmp_path: Path) -> None:
+    log_path = tmp_path / "control-api.log"
+    log_path.write_text(_STARTUP, encoding="utf-8")
+    before = log_path.stat().st_size
+    (tmp_path / "control-api.log.1").write_text(_STARTUP + _MARKER, encoding="utf-8")
+    log_path.write_text("", encoding="utf-8")
+    result = _host_log_gate(tmp_path, before)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_env_host_log_gate_ignores_a_marker_already_rotated_before_the_snapshot(
+    tmp_path: Path,
+) -> None:
+    prior = _STARTUP + _MARKER
+    log_path = tmp_path / "control-api.log"
+    log_path.write_text(prior, encoding="utf-8")
+    before = log_path.stat().st_size
+    (tmp_path / "control-api.log.1").write_text(prior, encoding="utf-8")
+    log_path.write_text("", encoding="utf-8")
+    result = _host_log_gate(tmp_path, before)
+    assert result.returncode != 0
+    assert "容器日志落盘" in result.stderr
+
+
+def test_env_proves_the_host_log_sink_before_the_provider_smoke() -> None:
+    env_step = _function("step_env")
+    first_run = env_step.index("new_compose run")
+    assert env_step.index("host_log_size control-api") < first_run
+    assert env_step.index("host_log_size voice-core-media-bridge") < first_run
+    assert env_step.index("assert_speaker_authority_disabled") < env_step.index(
+        "assert_host_log_has control-api"
+    )
+    assert env_step.index("assert_host_log_has voice-core-media-bridge") < env_step.index(
+        "provider_smoke_test"
+    )
+
+
 @pytest.mark.parametrize(
     ("value", "passes"),
     [

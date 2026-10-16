@@ -42,6 +42,10 @@ class ObjectRef:
 
 
 class ObjectStore(Protocol):
+    async def probe(self) -> None:
+        """Confirm the store is reachable without putting or deleting an object."""
+        ...
+
     async def put(
         self,
         *,
@@ -157,6 +161,11 @@ class EncryptedLocalObjectStore:
             read_keys=read_keys,
         )
 
+    async def probe(self) -> None:
+        self._root.mkdir(parents=True, exist_ok=True)
+        if not self._root.is_dir():
+            raise RuntimeError("object store root is not a directory")
+
     async def put(
         self,
         *,
@@ -244,6 +253,9 @@ class EncryptedS3ObjectStore:
             read_keys=read_keys,
         )
         self._prefix = prefix
+
+    async def probe(self) -> None:
+        await asyncio.to_thread(self._client.head_bucket, Bucket=self._bucket)
 
     @classmethod
     def from_boto3(

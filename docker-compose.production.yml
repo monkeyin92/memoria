@@ -64,6 +64,15 @@ services:
       - ALL
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
+    # UDP: a dead sink loses host lines but never blocks a write or fails a start.
+    logging:
+      driver: syslog
+      options:
+        syslog-address: "udp://127.0.0.1:5514"
+        syslog-format: rfc5424micro
+        tag: "control-api/{{.ID}}"
+        cache-max-size: "10m"
+        cache-max-file: "3"
 
   # Optional rollout sidecar in the media-runtime profile. It scrapes the
   # Voice Core media bridge's aggregate metrics; run it only once
@@ -171,6 +180,14 @@ services:
       - ALL
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
+    logging:
+      driver: syslog
+      options:
+        syslog-address: "udp://127.0.0.1:5514"
+        syslog-format: rfc5424micro
+        tag: "voice-core-media-bridge/{{.ID}}"
+        cache-max-size: "10m"
+        cache-max-file: "3"
 
   device-state-redis:
     profiles:

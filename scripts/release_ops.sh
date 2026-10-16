@@ -115,6 +115,35 @@ print("speaker_authority_disabled=PASS")' || { log "speaker authority must be di
   done
 }
 
+HOST_LOG_DIR=/var/log/memoria
+
+host_log_size() {
+  local service="$1"
+  stat -c %s "$HOST_LOG_DIR/$service.log" 2>/dev/null || echo 0
+}
+
+assert_host_log_has() {
+  local service="$1" before="$2" marker="$3"
+  local attempt size skip current older
+  for attempt in 1 2 3 4 5; do
+    size="$(host_log_size "$service")"
+    older=""
+    if [[ "$size" -lt "$before" ]]; then
+      skip=0
+      # The active file was replaced. Bytes past the snapshot now live in .1.
+      older="$(tail -c +$((before + 1)) "$HOST_LOG_DIR/$service.log.1" 2>/dev/null || true)"
+    else
+      skip=$before
+    fi
+    current="$(tail -c +$((skip + 1)) "$HOST_LOG_DIR/$service.log" 2>/dev/null || true)"
+    if printf '%s\n%s\n' "$older" "$current" | grep -Eq "^[^ ]+ ${service}/[0-9a-f]{12} .*${marker}"; then
+      return 0
+    fi
+    [[ "$attempt" == 5 ]] || sleep 1
+  done
+  fail "no $service line with $marker reached $HOST_LOG_DIR/$service.log; install the host log sink (docs/runbooks/release-rollback.md, 容器日志落盘) and rerun env"
+}
+
 wait_healthy() {
   local status
   for _ in $(seq 1 60); do
@@ -272,6 +301,9 @@ step_cleanup_freeze_dumps() {
 
 step_env() {
   [[ -f "$S/memoria-control-api.env" && -f "$S/memoria-postgres.env" ]] || { log "run freeze first"; exit 1; }
+  local control_log_before bridge_log_before
+  control_log_before="$(host_log_size control-api)"
+  bridge_log_before="$(host_log_size voice-core-media-bridge)"
   if ! grep -q '^MEMORIA_DB_MEMORY_MAINTENANCE_PASSWORD=' /etc/memoria-postgres.env; then
     local pw; pw="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
     printf 'MEMORIA_DB_MEMORY_MAINTENANCE_PASSWORD=%s\n' "$pw" >> /etc/memoria-postgres.env
@@ -307,6 +339,8 @@ except ValueError as e:
 print("control_env_valid=PASS")'
   new_compose run --rm --no-deps -T --entrypoint /app/.venv/bin/python voice-core-media-bridge -m scripts.verify_env
   assert_speaker_authority_disabled
+  assert_host_log_has control-api "$control_log_before" control_env_valid=PASS
+  assert_host_log_has voice-core-media-bridge "$bridge_log_before" speaker_authority_disabled=PASS
   new_compose run --rm --no-deps -T -e MEMORIA_PROVIDER_SMOKE_REQUIRED=true \
     --entrypoint /app/.venv/bin/python voice-core-media-bridge -m scripts.provider_smoke_test
   log "env=PASS"
