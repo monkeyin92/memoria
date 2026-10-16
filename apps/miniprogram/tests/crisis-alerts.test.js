@@ -37,69 +37,144 @@ function fakeWx(answer) {
   };
 }
 
-test("normalizeAlert keeps the approved interrupted and victim lines and drops an empty detail", () => {
-  const interrupted = "这次的提醒话术孩子没有听完，如需帮助可拨打心理援助热线12356";
-  const victim = "如有危险请拨打110";
-  const interruptedAlert = crisisAlerts.normalizeAlert({
-    notification_id: "n9",
-    pinned: true,
-    message: "请尽快联系",
-    detail: interrupted,
+async function withWxRequest(respond, fn) {
+  const previousWx = global.wx;
+  const previousGetApp = global.getApp;
+  const requests = [];
+  global.wx = {
+    getStorageSync: () => undefined,
+    setStorageSync() {},
+    removeStorageSync() {},
+    request(options) {
+      requests.push({ method: options.method || "GET", url: options.url });
+      respond(options);
+    },
+  };
+  global.getApp = () => ({
+    globalData: {
+      identity: { user_id: "u_parent", display_name: "乐乐妈妈" },
+      accessToken: "test-token",
+      accessTokenExpiresAt: Date.now() + 3600_000,
+      authEpoch: 0,
+    },
   });
-  assert.equal(interruptedAlert.message, "有一条需要你关注的对话");
-  assert.equal(interruptedAlert.detail, interrupted);
+  try {
+    return await fn(requests);
+  } finally {
+    global.wx = previousWx;
+    global.getApp = previousGetApp;
+  }
+}
 
-  const victimAlert = crisisAlerts.normalizeAlert({
-    notification_id: "n-victim",
-    pinned: true,
+test("parseSafetyAlert keeps a server detail sentence and drops an empty one", () => {
+  const selfHarm = "这次的提醒话术孩子没有听完，如需帮助可拨打心理援助热线12356";
+  const victim = "这次的提醒话术孩子没有听完，如有危险请拨打110";
+  const selfHarmAlert = crisisAlerts.parseSafetyAlert({
+    notification_id: "n9",
     message: "请尽快联系",
+    summary: "孩子说到了和自己情绪、安全有关的内容",
+    detail: selfHarm,
+  });
+  assert.equal(selfHarmAlert.message, "有一条需要你关注的对话");
+  assert.equal(selfHarmAlert.detail, selfHarm);
+  assert.equal(selfHarmAlert.summary.includes("不想活"), false);
+
+  const victimAlert = crisisAlerts.parseSafetyAlert({
+    notification_id: "n-victim",
+    message: "请尽快联系",
+    summary: "孩子说到了自己可能受到伤害",
     detail: victim,
   });
   assert.equal(victimAlert.message, "有一条需要你关注的对话");
   assert.equal(victimAlert.detail, victim);
+  assert.equal(victimAlert.detail.includes("如有危险请拨打110"), true);
+  assert.equal(victimAlert.summary.includes("打我"), false);
 
-  const plain = crisisAlerts.normalizeAlert({
+  const plain = crisisAlerts.parseSafetyAlert({
     notification_id: "n8",
-    pinned: true,
     message: "有一条需要你关注的对话",
     detail: "",
   });
   assert.equal(Object.hasOwn(plain, "detail"), false);
+
+  const relay = crisisAlerts.parseSafetyAlert({
+    notification_id: "n7",
+    summary: "孩子提到了别人的安全，或在问怎么预防",
+  });
+  assert.equal(Object.hasOwn(relay, "detail"), false);
 });
 
-test("pinnedAlerts keeps only server-marked undelivered crisis rows", () => {
-  const items = crisisAlerts.pinnedAlerts([
-    {
-      notification_id: "n1",
-      minor_user_id: "child-a",
-      minor_display_name: "小明",
-      occurred_at: "2026-10-14T00:00:00+00:00",
-      delivery_status: "no_subscription",
-      pinned: true,
-      message: "请尽快联系",
-    },
-    {
-      notification_id: "n2",
-      minor_user_id: "child-a",
-      minor_display_name: "小明",
-      occurred_at: "2026-10-13T00:00:00+00:00",
-      delivery_status: "delivered",
-      pinned: false,
-      message: "已送达",
-    },
-  ]);
-
-  assert.deepEqual(items, [
+test("parseSafetyAlert drops an item only when its id is missing", () => {
+  assert.equal(crisisAlerts.parseSafetyAlert(null), null);
+  assert.equal(crisisAlerts.parseSafetyAlert({ category_label: "情绪和安全" }), null);
+  assert.deepEqual(
+    crisisAlerts.parseSafetyAlert({ notification_id: "n1", delivery_status: "delivered", message: "已送达", summary: 7 }),
     {
       notificationId: "n1",
-      minorUserId: "child-a",
-      minorDisplayName: "小明",
-      occurredAt: "2026-10-14T00:00:00+00:00",
-      deliveryStatus: "no_subscription",
-      pinned: true,
+      minorUserId: "",
+      minorDisplayName: "TA",
+      occurredAt: "",
+      occurredLabel: "",
       message: "有一条需要你关注的对话",
+      categoryLabel: "",
+      summary: "",
+      robotSaid: "",
+      parentAction: "",
     },
-  ]);
+  );
+});
+
+test("loadUnreadSafetyAlerts gives the newest and how many more, and none on empty or error", async () => {
+  const load = (getUnreadGuardianNotifications) => crisisAlerts.loadUnreadSafetyAlerts({ getUnreadGuardianNotifications });
+  assert.equal(await load(async () => ({ newest: null, others_count: 0 })), null);
+  assert.equal(await load(async () => ({ newest: { category_label: "人身安全" }, others_count: 1 })), null);
+  assert.equal(await load(async () => { throw new Error("offline"); }), null);
+  const unread = await load(async () => ({ newest: { notification_id: "n3", category_label: "人身安全" }, others_count: 2 }));
+  assert.equal(unread.newest.notificationId, "n3");
+  assert.equal(unread.newest.categoryLabel, "人身安全");
+  assert.equal(unread.othersCount, 2);
+  assert.equal((await load(async () => ({ newest: { notification_id: "n3" }, others_count: "2" }))).othersCount, 0);
+});
+
+test("loadSafetyAlert returns only the alert it was asked for", async () => {
+  const asked = [];
+  const api = {
+    async getGuardianNotification(id) {
+      asked.push(id);
+      if (id !== "n1") throw Object.assign(new Error("guardian_notification_not_found"), { status: 404 });
+      return { notification_id: "n1", summary: "孩子说到了自己可能受到伤害" };
+    },
+  };
+  assert.equal(await crisisAlerts.loadSafetyAlert(api, ""), null);
+  assert.equal(await crisisAlerts.loadSafetyAlert(api, "n9"), null);
+  assert.equal((await crisisAlerts.loadSafetyAlert(api, "n1")).summary, "孩子说到了自己可能受到伤害");
+  assert.deepEqual(asked, ["n9", "n1"]);
+});
+
+test("acknowledgeSafetyAlert PUTs the receipt and says saved, gone, or failed", async () => {
+  const api = require("../utils/api");
+  const outcomes = [
+    [(options) => options.success({ statusCode: 200, data: { notification_id: "n 1", read_at: "2026-10-16T11:42:00+00:00" } }), "saved"],
+    [(options) => options.success({ statusCode: 404, data: { detail: { code: "guardian_notification_not_found" } } }), "gone"],
+    [(options) => options.success({ statusCode: 503, data: {} }), "failed"],
+    [(options) => options.fail({ errMsg: "request:fail timeout" }), "failed"],
+  ];
+  for (const [respond, expected] of outcomes) {
+    await withWxRequest(respond, async (requests) => {
+      assert.equal(await crisisAlerts.acknowledgeSafetyAlert(api, "n 1"), expected);
+      assert.deepEqual(
+        requests.map(({ method, url }) => [method, url.replace(/^.*(\/v1\/)/, "$1")]),
+        [["PUT", "/v1/guardian/notifications/n%201/read"]],
+      );
+    });
+  }
+});
+
+test("moreUnreadLabel counts the alerts not shown and says nothing for none", () => {
+  assert.equal(crisisAlerts.moreUnreadLabel(0), "");
+  assert.equal(crisisAlerts.moreUnreadLabel(undefined), "");
+  assert.equal(crisisAlerts.moreUnreadLabel(1), "还有 1 条");
+  assert.equal(crisisAlerts.moreUnreadLabel(2), "还有 2 条");
 });
 
 test("requireCrisisSubscribeBeforeBind blocks parent bind without accept", async () => {
@@ -184,35 +259,23 @@ test("bind keeps subscribe gate code but pauses UI while flag is off; memory pin
   assert.doesNotMatch(bindWxml, /危机提醒/);
   assert.doesNotMatch(memoryWxml, /危机提醒/);
   assert.doesNotMatch(homeWxml, /危机提醒/);
-  assert.match(memoryWxml, /pinnedCrisisAlerts/);
+  assert.match(memoryWxml, /safetyBanner/);
   assert.match(memoryWxml, /subscriptionPushEnabled && crisisPush\.enabled/);
-  assert.match(homeWxml, /pinnedCrisisAlerts|unreadSafetyAlert/);
+  assert.match(homeWxml, /unreadSafetyAlert/);
 });
 
-test("pinned home and memory alerts stay independent of the push toggle", () => {
+test("unread home and memory alerts stay independent of the push toggle", () => {
   const homeJs = fs.readFileSync(path.join(root, "pages/home/index.js"), "utf8");
   const memoryJs = fs.readFileSync(path.join(root, "pages/memory/index.js"), "utf8");
   const deviceJs = fs.readFileSync(path.join(root, "pages/device/index.js"), "utf8");
-  assert.match(homeJs, /loadPinnedCrisisAlerts/);
-  assert.match(memoryJs, /loadPinnedCrisisAlerts/);
+  assert.match(homeJs, /loadUnreadSafetyAlerts/);
+  assert.match(memoryJs, /loadUnreadSafetyAlerts/);
   assert.match(homeJs, /safetySubscribeOn|optOutCrisisPushAlerts/);
   assert.doesNotMatch(memoryJs, /safetySubscribeOn|optOutCrisisPushAlerts/);
-  // Opting out only clears the WeChat push ledger; it must not clear pinned rows.
   for (const script of [deviceJs, homeJs]) {
     const optOutAt = script.indexOf("optOutCrisisPushAlerts");
     assert.ok(optOutAt > 0);
     const optOutChunk = script.slice(optOutAt, optOutAt + 500);
-    assert.doesNotMatch(optOutChunk, /pinnedCrisisAlerts|elderAlerts\s*:\s*\[\]/);
+    assert.doesNotMatch(optOutChunk, /unreadSafetyAlert|safetyAlertId|elderAlerts\s*:\s*\[\]/);
   }
-  assert.equal(
-    crisisAlerts.pinnedAlerts([
-      {
-        notification_id: "n-pin",
-        pinned: true,
-        delivery_status: "no_subscription",
-        message: "有一条需要你关注的对话",
-      },
-    ]).length,
-    1,
-  );
 });

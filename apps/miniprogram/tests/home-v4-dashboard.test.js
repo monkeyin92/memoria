@@ -147,7 +147,7 @@ test("home pins the attention card with its time and the open-to-pin meta", asyn
   assert.equal(data.unreadSafetyMeta, "今天 19:42 · 打开时首页会置顶显示");
   const body = renderPage("pages/home/index", data).replace(/<style>[\s\S]*?<\/style>/, "");
   assert.ok(body.indexOf("有一条需要你关注的对话") < body.indexOf("home-usage-card"), "attention card renders above the usage ring");
-  const calm = await loadHome({ api: { getGuardianNotifications: async () => ({ items: [] }) } });
+  const calm = await loadHome({ api: fx.safetyAlertApi([]) });
   assert.equal(calm.data.unreadSafetyAlert, false);
   assert.doesNotMatch(renderPage("pages/home/index", calm.data), /需要你关注/);
 });

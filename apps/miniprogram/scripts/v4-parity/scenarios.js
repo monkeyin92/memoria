@@ -13,7 +13,7 @@ const PARITY = [
     slug: "04-summary",
     design: "04-summary.png",
     page: "pages/memory/index",
-    harness: fx.authed({ getGuardianNotifications: async () => ({ items: [] }) }),
+    harness: fx.authed(fx.safetyAlertApi([])),
     actions: [["summarizeSelectedDay"]],
   },
   { slug: "06-usage", design: "06-usage.png", page: "pages/device/index", harness: fx.authed() },

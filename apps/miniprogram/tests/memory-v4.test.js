@@ -7,7 +7,7 @@ const { loadPage } = require("../scripts/mp-harness/runtime");
 const { renderPage } = require("../scripts/mp-harness/render");
 const fx = require("../scripts/mp-harness/fixtures");
 
-const NO_ALERTS = { getGuardianNotifications: async () => ({ items: [] }) };
+const NO_ALERTS = fx.safetyAlertApi([]);
 
 function visibleText(html) {
   return html.replace(/<head>[\s\S]*?<\/head>/, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();

@@ -10,16 +10,16 @@
 
   <block wx:else>
     <view
-      wx:for="{{pinnedCrisisAlerts}}"
-      wx:key="notificationId"
+      wx:if="{{safetyBanner}}"
       class="trial-banner"
-      data-id="{{item.notificationId}}"
+      data-id="{{safetyBanner.notificationId}}"
       bindtap="openAttention"
     >
       <view class="trial-banner-icon"><image src="/assets/ui/v4/heart-rust.svg" /></view>
       <view class="trial-banner-copy">
-        <text class="trial-banner-title">{{item.message}}</text>
-        <text class="trial-banner-meta">{{item.timeLabel}}</text>
+        <text class="trial-banner-title">{{safetyBanner.message}}</text>
+        <text class="trial-banner-meta">{{safetyBanner.timeLabel}}</text>
+        <text wx:if="{{safetyBanner.moreLabel}}" class="trial-banner-meta">{{safetyBanner.moreLabel}}</text>
       </view>
       <image class="memory-chev" src="/assets/ui/v4/chev-rust.svg" />
     </view>

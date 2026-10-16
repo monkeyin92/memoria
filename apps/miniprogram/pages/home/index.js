@@ -16,7 +16,7 @@ const {
   boundChildFromManifest,
   normalizeSessionSummaries,
 } = require("../../utils/child-memory");
-const { attentionUrl, loadPinnedCrisisAlerts, shouldOfferCrisisSubscription } = require("../../utils/crisis-alerts");
+const { attentionUrl, loadUnreadSafetyAlerts, shouldOfferCrisisSubscription } = require("../../utils/crisis-alerts");
 const guardianPush = require("../../utils/guardian-push");
 const {
   UNREAD_SAFETY_COPY,
@@ -94,7 +94,7 @@ function emptyDashboard() {
     childMemoryMinorId: "",
     childMemoryName: "",
     memoryPreviews: [],
-    pinnedCrisisAlerts: [],
+    safetyAlertId: "",
     statusPill: "离线",
     statusLine: "离线 · 已绑定",
     usageKnown: false,
@@ -289,7 +289,7 @@ Page({
   },
 
   openUnreadSafety() {
-    wx.navigateTo({ url: attentionUrl(this.data.pinnedCrisisAlerts[0]?.notificationId) });
+    wx.navigateTo({ url: attentionUrl(this.data.safetyAlertId) });
   },
 
   async onSafetySubscribeChange(event) {
@@ -523,7 +523,7 @@ Page({
     const online = summary.online;
     const boundChild = boundChildFromManifest(binding);
     const offerSafety = shouldOfferCrisisSubscription(binding);
-    const pinnedCrisisAlerts = offerSafety ? await loadPinnedCrisisAlerts(api) : [];
+    const unread = offerSafety ? await loadUnreadSafetyAlerts(api) : null;
     if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
 
     let safetyView = {
@@ -558,10 +558,8 @@ Page({
       runtimeProfile: runtime,
       usedMinutes: limitsResult.status === "fulfilled" ? limitsResult.value?.today_used_minutes : null,
     });
-    const unreadSafetyAlert = pinnedCrisisAlerts.length > 0;
-    const firstAlert = pinnedCrisisAlerts[0] || null;
     const unreadSafetyMeta = pinnedAlertMeta({
-      occurredAt: alertTimeLabel(firstAlert?.occurredAt),
+      occurredAt: alertTimeLabel(unread?.newest.occurredAt),
     });
     const placeName = devicePlaceName(binding, personaName);
     const childName = boundChild?.displayName || "";
@@ -608,7 +606,7 @@ Page({
       childMemoryMinorId: boundChild?.personId || "",
       childMemoryName: childName,
       memoryPreviews,
-      pinnedCrisisAlerts,
+      safetyAlertId: unread?.newest.notificationId || "",
       statusPill: trialCard.statusPill,
       statusLine: trialCard.statusLine,
       usageKnown: trialCard.usageKnown,
@@ -621,7 +619,7 @@ Page({
       quietHoursLabel: trialCard.quietHoursLabel,
       nightModeOn: trialCard.nightModeOn,
       showSafetyNightCard: offerSafety,
-      unreadSafetyAlert,
+      unreadSafetyAlert: unread !== null,
       unreadSafetyCopy: UNREAD_SAFETY_COPY,
       unreadSafetyMeta,
       safetySubscribeHelper: SAFETY_SUBSCRIBE_HELPER,

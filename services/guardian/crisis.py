@@ -5,23 +5,12 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal, Protocol, get_args
+from typing import Literal, Protocol
 
 from services.archive.domain import EvidenceEvent, LifeArchivePort
+from services.common.fixed_safety_scripts import FixedSafetyTemplateId
 
 NotificationStatus = Literal["pending", "pin_only", "delivered", "failed", "no_subscription"]
-
-# SQL enqueue picks the insert status from attempt_push (pending for
-# crisis/victim, pin_only for relay). Push may later move a row to
-# delivered / failed / no_subscription. Every legal outbox status stays
-# pinned; delivery must never clear the home card.
-PINNED_CRISIS_ALERT_STATUSES = frozenset(get_args(NotificationStatus))
-
-
-def crisis_alert_is_pinned(status: str) -> bool:
-    """True when the parent must see this alert on next Mini Program open."""
-
-    return status in PINNED_CRISIS_ALERT_STATUSES
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +25,14 @@ class CrisisNotificationReceipt:
 
 
 @dataclass(frozen=True, slots=True)
+class ReplyFence:
+    session_id: str
+    turn_id: int
+    generation_id: int
+    tool_epoch: int
+
+
+@dataclass(frozen=True, slots=True)
 class GuardianNotification:
     notification_id: str
     crisis_event_id: str
@@ -45,9 +42,18 @@ class GuardianNotification:
     status: NotificationStatus
     attempts: int
     created_at: datetime
+    reply_template_id: FixedSafetyTemplateId | None
+    read_at: datetime | None
     delivered_at: datetime | None = None
     last_error_code: str | None = None
     possibly_story_retell: bool = False
+    reply_fence: ReplyFence | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UnreadNotifications:
+    newest: GuardianNotification
+    others_count: int
 
 
 class CrisisNotificationStorePort(Protocol):
@@ -63,6 +69,10 @@ class CrisisNotificationStorePort(Protocol):
         declared_guardian_ids: tuple[str, ...] = (),
         attempt_push: bool = True,
         possibly_story_retell: bool = False,
+        reply_session_id: str | None = None,
+        reply_turn_id: int | None = None,
+        reply_generation_id: int | None = None,
+        reply_tool_epoch: int | None = None,
     ) -> CrisisNotificationReceipt: ...
 
     async def guardian_notifications(
@@ -71,6 +81,32 @@ class CrisisNotificationStorePort(Protocol):
         guardian_user_id: str,
         limit: int = 50,
     ) -> tuple[GuardianNotification, ...]: ...
+
+    async def guardian_notification(
+        self,
+        *,
+        guardian_user_id: str,
+        notification_id: str,
+    ) -> GuardianNotification:
+        """Raise ``GuardianNotFoundError`` when the guardian cannot see it."""
+
+    async def unread_guardian_notifications(
+        self,
+        *,
+        guardian_user_id: str,
+    ) -> UnreadNotifications | None: ...
+
+    async def mark_guardian_notification_read(
+        self,
+        *,
+        guardian_user_id: str,
+        notification_id: str,
+        now: datetime,
+    ) -> datetime:
+        """Return the first ``read_at``; a repeat keeps it.
+
+        Raise ``GuardianNotFoundError`` when the guardian cannot see it.
+        """
 
 
 class CrisisNotificationUnavailableError(RuntimeError):
@@ -162,6 +198,10 @@ class CrisisNotificationService:
             declared_guardian_ids=declared_guardian_ids,
             attempt_push=attempt_push,
             possibly_story_retell=possibly_story_retell,
+            reply_session_id=session_id,
+            reply_turn_id=turn_id,
+            reply_generation_id=generation_id,
+            reply_tool_epoch=tool_epoch,
         )
         if receipt.notification_count < 1:
             raise CrisisNotificationUnavailableError(
@@ -171,12 +211,12 @@ class CrisisNotificationService:
 
 
 __all__ = [
-    "PINNED_CRISIS_ALERT_STATUSES",
     "CrisisNotificationReceipt",
     "CrisisNotificationService",
     "CrisisNotificationStorePort",
     "CrisisNotificationUnavailableError",
     "GuardianNotification",
     "NotificationStatus",
-    "crisis_alert_is_pinned",
+    "ReplyFence",
+    "UnreadNotifications",
 ]

@@ -59,6 +59,7 @@ _REQUIRED_TABLES = frozenset(
         "tutor_commit_outbox",
         "guardian_crisis_events",
         "guardian_notification_outbox",
+        "guardian_notification_reads",
         "guardian_push_subscriptions",
         "guardian_push_subscription_events",
     }
@@ -1762,15 +1763,8 @@ class PostgresGuardianStore(PostgresGuardianCrisisMixin):
                 """,
                 account_id,
             )
-            notifications = await connection.fetch(
-                """
-                SELECT outbox.* FROM guardian_notification_outbox outbox
-                JOIN guardian_crisis_events crisis
-                  ON crisis.crisis_event_id = outbox.crisis_event_id
-                WHERE outbox.guardian_user_id = $1 OR crisis.minor_user_id = $1
-                ORDER BY outbox.created_at, outbox.notification_id
-                """,
-                account_id,
+            notifications = await self._export_guardian_notifications(
+                connection, account_id=account_id
             )
             corpus_samples = await connection.fetch(
                 """
@@ -1833,7 +1827,7 @@ class PostgresGuardianStore(PostgresGuardianCrisisMixin):
             ),
             "tutor_commit_outbox": list(data.get("tutor_commit_outbox") or []),
             "crisis_events": [dict(row) for row in crisis_events],
-            "guardian_notifications": [dict(row) for row in notifications],
+            **notifications,
             "corpus_samples": [dict(row) for row in corpus_samples],
             "guardian_push_subscriptions": [dict(row) for row in push_subscriptions],
             "guardian_push_subscription_events": [

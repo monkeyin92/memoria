@@ -7,41 +7,17 @@
     <view class="card attention-card">
       <view class="attention-mascot"><image class="attention-mascot-img" src="/assets/ui/v4/mascot-calm.jpg" mode="widthFix" /></view>
       <text class="attention-title">{{alert.message}}</text>
+      <text class="attention-time">{{alert.occurredLabel}}</text>
+      <text wx:if="{{alert.categoryLabel}}" class="attention-category">{{alert.categoryLabel}}</text>
+      <view wx:if="{{alert.summary}}" class="attention-well">
+        <text class="attention-summary">{{alert.summary}}</text>
+      </view>
       <text wx:if="{{alert.detail}}" class="attention-well">{{alert.detail}}</text>
-      <text class="attention-time">{{alert.timeLabel}}</text>
-      <text class="attention-well">孩子在聊天中提到了让 TA 不舒服的事。为了保护孩子，这里不展示对话内容。</text>
     </view>
 
-    <text class="attention-tips-title">可以这样和孩子聊</text>
-    <view class="card attention-tips">
-      <view class="attention-tip">
-        <text class="attention-tip-num">1</text>
-        <view class="attention-tip-copy">
-          <text class="attention-tip-title">找一个放松的时间</text>
-          <text class="attention-tip-sub">比如睡前或散步时，不要急着追问</text>
-        </view>
-      </view>
-      <view class="attention-tip">
-        <text class="attention-tip-num">2</text>
-        <view class="attention-tip-copy">
-          <text class="attention-tip-title">先听，少评判</text>
-          <text class="attention-tip-sub">“愿意和我说说今天的事吗？”</text>
-        </view>
-      </view>
-      <view class="attention-tip">
-        <text class="attention-tip-num">3</text>
-        <view class="attention-tip-copy">
-          <text class="attention-tip-title">告诉孩子你在</text>
-          <text class="attention-tip-sub">“不管发生什么，你都可以来找我。”</text>
-        </view>
-      </view>
-      <view class="attention-tip">
-        <text class="attention-tip-num">4</text>
-        <view class="attention-tip-copy">
-          <text class="attention-tip-title">需要时寻求帮助</text>
-          <text class="attention-tip-sub">可拨打 12356 心理援助热线</text>
-        </view>
-      </view>
+    <view wx:if="{{alert.robotSaid || alert.parentAction}}" class="card attention-steps">
+      <text wx:if="{{alert.robotSaid}}" class="attention-step">{{alert.robotSaid}}</text>
+      <text wx:if="{{alert.parentAction}}" class="attention-step">{{alert.parentAction}}</text>
     </view>
   </block>
 
@@ -50,5 +26,6 @@
     <text class="attention-time">有新的提醒时，首页会置顶显示。</text>
   </view>
 
-  <button class="trial-primary attention-done" bindtap="goBack">我知道了</button>
+  <text wx:if="{{ackError}}" class="error-text attention-error">{{ackError}}</text>
+  <button class="trial-primary attention-done" bindtap="acknowledge" disabled="{{acknowledging}}">我知道了</button>
 </view>

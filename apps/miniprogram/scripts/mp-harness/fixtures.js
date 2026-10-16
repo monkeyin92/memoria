@@ -173,14 +173,48 @@ const CLAIM = {
 const bindApi = { getDeviceClaim: async () => CLAIM };
 const BIND_QUERY = { claim_id: CLAIM.claim_id, onboarding_session_id: CLAIM.onboarding_session_id };
 
-const PINNED_ALERT = {
+const SAFETY_ALERT = {
   notification_id: "n1",
   minor_user_id: "p_child",
   minor_display_name: "乐乐",
   occurred_at: isoMinutesAgo(0),
+  occurred_label: "10月14日 19:42",
   delivery_status: "no_subscription",
-  pinned: true,
+  channel: "wechat_subscription",
+  message: "有一条需要你关注的对话",
+  category_label: "情绪和安全",
+  summary: "孩子说到了和自己情绪、安全有关的内容",
+  robot_said: "机器人已提醒孩子去找身边的大人",
+  parent_action: "找个安静的时间陪孩子聊聊，先听孩子说，不急着讲道理。如需帮助可拨打心理援助热线12356",
+  contains_transcript: false,
+  contains_severity: false,
 };
+
+function safetyAlertApi(alerts) {
+  const read = new Set();
+  const ordered = [...alerts].sort((left, right) => {
+    const byTime = String(right.occurred_at).localeCompare(String(left.occurred_at));
+    return byTime || String(right.notification_id).localeCompare(String(left.notification_id));
+  });
+  const find = (id) => {
+    const alert = ordered.find((item) => item.notification_id === id);
+    if (!alert) throw Object.assign(new Error("guardian_notification_not_found"), { status: 404 });
+    return alert;
+  };
+  return {
+    getGuardianNotifications: async () => ({ items: ordered }),
+    getUnreadGuardianNotifications: async () => {
+      const [newest = null, ...others] = ordered.filter((alert) => !read.has(alert.notification_id));
+      return { newest, others_count: others.length };
+    },
+    getGuardianNotification: async (id) => find(id),
+    markGuardianNotificationRead: async (id) => {
+      find(id);
+      read.add(id);
+      return { notification_id: id, read_at: NOW.toISOString() };
+    },
+  };
+}
 
 function baseApi(overrides = {}) {
   const known = {
@@ -207,7 +241,7 @@ function baseApi(overrides = {}) {
     getConversationSessions: async () => ({ items: [] }),
     getChildSessionSummaries: async () => ({ items: SUMMARIES }),
     getChildArchive: async () => ({ items: [] }),
-    getGuardianNotifications: async () => ({ items: [PINNED_ALERT] }),
+    ...safetyAlertApi([SAFETY_ALERT]),
     getGuardianLinks: async () => [],
     listPersonas: async () => ({ custom_personas: [], builtin_personas: [] }),
     getWakeWordCatalog: async () => ({ items: [] }),
@@ -248,7 +282,7 @@ const guest = () => ({ api: baseApi(GUEST_API), now: NOW });
 
 function longMemoryApi(days) {
   return {
-    getGuardianNotifications: async () => ({ items: [] }),
+    ...safetyAlertApi([]),
     getGuardianChildDays: async () => ({
       items: Array.from({ length: days }, (_, offset) => ({ day: dayKey(offset), message_count: (offset % 5) + 1 })),
     }),
@@ -280,7 +314,7 @@ function longArchiveApi(facts) {
 const emptyMemoryApi = {
   getGuardianChildDays: async () => ({ items: [] }),
   getChildSessionSummaries: async () => ({ items: [] }),
-  getGuardianNotifications: async () => ({ items: [] }),
+  ...safetyAlertApi([]),
 };
 
 const ONBOARDING_DEVICE = { model: "Memoria M1", display_tail: "7F3A", firmware_version: "1.4.2", claim_status: "unclaimed" };
@@ -302,7 +336,7 @@ module.exports = {
   GUARDIAN_SUMMARY,
   IDENTITY,
   NOW,
-  PINNED_ALERT,
+  SAFETY_ALERT,
   WIFI_SCAN,
   RAW_VOICE_CONSENT,
   RECAP,
@@ -324,4 +358,5 @@ module.exports = {
   longMemoryApi,
   onboardingSnapshot,
   personaApi,
+  safetyAlertApi,
 };
