@@ -418,6 +418,7 @@ class MockCosyVoiceServer:
     host: str = "127.0.0.1"
     port: int = 0
     scenario: str = "happy"  # happy|late_ts|fail|slow|split_pcm|empty_ts_once|stall_after_pcm
+    failure_message: str = "fail"
     chunk_delay_s: float = 0.0
     closed_without_reuse: int = 0
     active: int = 0
@@ -486,7 +487,7 @@ class MockCosyVoiceServer:
                     json.dumps(
                         {
                             "header": {"event": "task-failed", "task_id": task_id},
-                            "payload": {"message": "fail"},
+                            "payload": {"message": self.failure_message},
                         }
                     )
                 )
@@ -679,6 +680,7 @@ class MockDoubaoServer:
     port: int = 0
     scenario: str = "happy"  # happy|split_pcm|split_pcm_odd|odd_pcm|stall_after_first_pcm|slow|slow_once|slow_after_first|slow_after_second|slow_after_sixth|expire_after_first|empty_ts|scaled_ts|degraded_ts
     chunk_delay_s: float = 0.0
+    connection_failure_payload: bytes | None = None
     connections: int = 0
     sessions: int = 0
     #: PCM frames actually sent, so a test proves how much the server streamed
@@ -756,6 +758,15 @@ class MockDoubaoServer:
             assert isinstance(raw, bytes)
             event, _, _ = _parse_doubao_client_frame(raw)
             assert event == EventType.START_CONNECTION
+            if self.connection_failure_payload is not None:
+                await ws.send(
+                    _doubao_server_frame(
+                        EventType.CONNECTION_FAILED,
+                        connect_id=connect_id,
+                        payload=self.connection_failure_payload,
+                    )
+                )
+                return
             await ws.send(
                 _doubao_server_frame(
                     EventType.CONNECTION_STARTED,

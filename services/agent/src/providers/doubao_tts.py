@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
-import json
 import logging
 import math
 import uuid
@@ -315,13 +314,7 @@ class _PcmContinuityGuard:
 
 
 def _error_message(message: ServerMessage) -> str:
-    if not message.payload:
-        return f"Doubao error {message.error_code or message.event}"
-    try:
-        value = message.json_payload()
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
-        return message.payload.decode("utf-8", "replace")
-    return str(value.get("message") or value.get("status_text") or value)
+    return f"Doubao error {message.error_code or message.event}"
 
 
 class DoubaoTTSPool:

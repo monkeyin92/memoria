@@ -307,12 +307,38 @@ async def test_omni_owner_can_publish_only_allowlisted_numeric_telemetry(
                 "error_message": "不得写入日志的上游正文",
             },
         )
+        planted = "刺猬把第十片云装进了口袋"
+        accepted_error = await client.post(
+            f"/v1/sessions/{created['session_id']}/telemetry",
+            headers=headers,
+            json={
+                "name": "omni_upstream_error",
+                "elapsed_ms": 5003,
+                "turn_id": 1,
+                "generation_id": 1,
+                "error_type": planted,
+                "error_code": planted,
+                "error_param": planted,
+            },
+        )
 
     assert accepted.status_code == 204
     assert rejected.status_code == 422
     assert rejected_message.status_code == 422
+    assert accepted_error.status_code == 204
     assert "不得上传文本" not in caplog.text
     assert "不得写入日志的上游正文" not in caplog.text
+    assert planted not in caplog.text
+    telemetry = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("omni_realtime_telemetry ")
+    ]
+    assert len(telemetry) == 2
+    assert "packets_lost" in telemetry[0]
+    for line in telemetry:
+        for key in ("error_type=", "error_code=", "error_param="):
+            assert key not in line
 
 
 @pytest.mark.asyncio

@@ -20,6 +20,7 @@ from packages.contracts.generated.python.multi_subject_contracts import (
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from services.common.companions import DEFAULT_COMPANION_ID, companion_definition
+from services.common.failure_log import failure_log
 from services.control_api.app.account_gate import (
     SubjectCapability,
     require_capability_for_account_id,
@@ -326,7 +327,7 @@ class OmniTelemetryBody(BaseModel):
     turn_id: int = Field(ge=0)
     generation_id: int = Field(ge=0)
     metrics: WebRTCMetrics | None = None
-    # Optional DashScope realtime error fields (short, no audio/credentials).
+    # Client free text: still accepted so existing clients get 204, never logged.
     error_type: str | None = Field(default=None, max_length=80)
     error_code: str | None = Field(default=None, max_length=80)
     error_param: str | None = Field(default=None, max_length=80)
@@ -632,9 +633,9 @@ async def create_session(
             )
         except PersistentSessionDenied as exc:
             logger.warning(
-                "persistent Session authority denied session_id=%s reason=%s",
+                "persistent Session authority denied session_id=%s %s",
                 session_id,
-                exc,
+                failure_log(exc),
             )
             raise HTTPException(
                 status_code=403,
@@ -646,9 +647,10 @@ async def create_session(
                 detail={"code": "session_runtime_conflict"},
             ) from exc
         except PersistentSessionUnavailable as exc:
-            logger.exception(
-                "persistent Session authority failed session_id=%s",
+            logger.warning(
+                "persistent Session authority failed session_id=%s %s",
                 session_id,
+                failure_log(exc),
             )
             raise HTTPException(
                 status_code=503,
@@ -925,17 +927,13 @@ async def publish_omni_telemetry(
         raise HTTPException(status_code=409, detail="session does not use realtime voice")
     telemetry_logger.info(
         "omni_realtime_telemetry session_id=%s name=%s elapsed_ms=%s "
-        "turn_id=%s generation_id=%s metrics=%s "
-        "error_type=%s error_code=%s error_param=%s",
+        "turn_id=%s generation_id=%s metrics=%s",
         session_id,
         body.name,
         body.elapsed_ms,
         body.turn_id,
         body.generation_id,
         body.metrics.model_dump(exclude_none=True) if body.metrics else {},
-        body.error_type,
-        body.error_code,
-        body.error_param,
     )
     return Response(status_code=204)
 

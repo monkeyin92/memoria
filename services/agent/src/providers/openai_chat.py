@@ -39,6 +39,7 @@ from services.agent.src.providers.provider_errors import (
     APIStatusError,
     APITimeoutError,
 )
+from services.common.failure_log import failure_log
 
 logger = logging.getLogger(__name__)
 
@@ -229,8 +230,8 @@ class OpenAIChatModel:
                     ) from exc
                 interval = options.interval_for_retry(attempt)
                 logger.warning(
-                    "failed to generate LLM completion: %s, retrying in %ss attempt=%s",
-                    exc,
+                    "failed to generate LLM completion %s, retrying in %ss attempt=%s",
+                    failure_log(exc),
                     interval,
                     attempt + 1,
                 )

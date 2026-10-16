@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import os
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -274,7 +275,10 @@ def test_control_session_is_keyed_by_binding_and_actor() -> None:
     assert PostgresMultiSubjectRuntimeControl.is_control_session(long_id)
 
 
-def test_session_denial_reason_is_a_fixed_code_and_never_raw_sql() -> None:
+def test_session_denial_reason_is_a_fixed_code_and_never_raw_sql(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
     expired = _session_denied(
         PersistentSessionExpired("runtime profile is expired"),
         code="runtime_profile_rejected",
@@ -309,6 +313,13 @@ def test_session_denial_reason_is_a_fixed_code_and_never_raw_sql() -> None:
         actor_id=_OWNER,
     )
     assert cast(dict[str, str], raw.detail)["reason"] == "denied"
+    assert "error_type=PersistentSessionExpired error_code=profile_expired" in caplog.text
+    assert "error_type=PersistentSessionDenied error_code=device_lifecycle_not_bound" in (
+        caplog.text
+    )
+    assert "error_type=PersistentSessionDenied error_code=denied\n" in caplog.text
+    for message in ("runtime profile is expired", "session is closed", "identity_x"):
+        assert message not in caplog.text
 
 
 @requires_postgres

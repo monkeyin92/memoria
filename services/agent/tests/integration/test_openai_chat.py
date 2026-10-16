@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
+import traceback
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -312,6 +314,31 @@ async def test_exhausted_retries_raise_a_connection_error(server_factory: Any) -
     assert caught.value.message == "failed to generate LLM completion after 3 attempts"
     assert isinstance(caught.value.__cause__, APIStatusError)
     assert len(server.requests) == 3
+
+
+async def test_retry_log_and_traceback_carry_no_vendor_body(
+    server_factory: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    planted = "海豚在第三号仓库数星星"
+    server = await server_factory(status(503, planted))
+    model = chat_model(server, conn_options=APIConnectOptions(max_retry=1, retry_interval=0.01))
+    caplog.set_level(logging.INFO)
+    try:
+        with pytest.raises(APIConnectionError) as caught:
+            await collect(model)
+    finally:
+        await model.aclose()
+
+    assert "error_type=APIStatusError error_code=503" in caplog.text
+    assert planted not in caplog.text
+    cause = caught.value.__cause__
+    assert isinstance(cause, APIStatusError)
+    assert planted in cause.message
+    assert str(cause) == "error_type=APIStatusError error_code=503"
+    rendered = "".join(traceback.format_exception(caught.value))
+    assert "caused by APIStatusError" in rendered
+    assert planted not in rendered
 
 
 async def test_status_499_ends_the_stream_quietly(server_factory: Any) -> None:
