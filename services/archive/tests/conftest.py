@@ -54,6 +54,11 @@ async def make_catalog(
     async def make(**kwargs: Any) -> PostgresMemoryCatalog:
         kwargs.setdefault("compiler_dsn", compiler_dsn)
         kwargs.setdefault("compiler_role", COMPILER_ROLE)
+        if (
+            "evidence_subject_category_resolver" not in kwargs
+            and "subject_category_resolver" not in kwargs
+        ):
+            kwargs["evidence_subject_category_resolver"] = lambda _event: "adult"
         catalog = PostgresMemoryCatalog(archive_dsn, **kwargs)
         await catalog.initialize()
         catalogs.append(catalog)

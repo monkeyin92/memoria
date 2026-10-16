@@ -26,9 +26,10 @@ EVENT = EvidenceEvent(
     payload={"text": "gate"},
 )
 MINOR_SKIPPED = Withhold("minor_subject_skipped")
+NOT_ADULT = Withhold("not_explicit_adult")
 GATE_BY_CONTRACT_VALUE = {
-    None: Extract(None),
-    "unknown": Extract("unknown"),
+    None: NOT_ADULT,
+    "unknown": NOT_ADULT,
     "adult": Extract("adult"),
     "minor": MINOR_SKIPPED,
     "under_14": MINOR_SKIPPED,
@@ -47,15 +48,15 @@ async def test_the_gate_decides_each_contract_value(
     assert await extraction_gate(lambda _event: value, EVENT) == expected
 
 
-@pytest.mark.parametrize("value", ["", "teen", "Minor", " minor"])
-async def test_a_label_outside_the_contract_stays_on_the_extract_path(value: str) -> None:
-    assert await extraction_gate(lambda _event: value, EVENT) == Extract(value)
+@pytest.mark.parametrize("value", ["", "teen", "Minor", " minor", "unknown"])
+async def test_a_label_that_is_not_explicit_adult_is_withheld(value: str) -> None:
+    assert await extraction_gate(lambda _event: value, EVENT) == NOT_ADULT
 
 
-@pytest.mark.parametrize("value", ["minor", "under_14", "14_17"])
-def test_extract_cannot_carry_a_minor_label(value: str) -> None:
+@pytest.mark.parametrize("value", ["minor", "under_14", "14_17", "unknown", "teen", None])
+def test_extract_accepts_only_an_explicit_adult(value: str | None) -> None:
     with pytest.raises(ValueError):
-        Extract(value)
+        Extract(value)  # type: ignore[arg-type]
 
 
 async def test_an_awaitable_resolver_is_awaited() -> None:

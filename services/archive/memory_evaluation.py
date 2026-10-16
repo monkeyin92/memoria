@@ -146,9 +146,6 @@ class MemoryEvaluationCase:
     expected_memories: tuple[ExpectedMemory, ...]
     queries: tuple[EvaluationQuery, ...]
     reviews: tuple[EvaluationReview, ...] = ()
-    # None keeps the historical adult/unspecified catalog path.  A declared
-    # category is the evidence-subject category the production compiler already
-    # asks for; it does not create a separate evaluation policy.
     subject_category: str | None = None
 
 
@@ -591,8 +588,8 @@ class CatalogMemoryEvaluationAdapter:
             case_dsn = _with_search_path(self._dsn, schema)
             extractor = _UsageTrackingExtractor(self._extractor)
 
-            def subject_category(_account_id: str) -> str | None:
-                return case.subject_category
+            def subject_category(_account_id: str) -> str:
+                return case.subject_category or "adult"
 
             archive = PostgresLifeArchive(case_dsn)
             catalog = PostgresMemoryCatalog(
@@ -606,9 +603,7 @@ class CatalogMemoryEvaluationAdapter:
                     if self._compiler_dsn is not None
                     else None
                 ),
-                subject_category_resolver=(
-                    subject_category if case.subject_category is not None else None
-                ),
+                subject_category_resolver=subject_category,
             )
             try:
                 return await self._observe(case, archive, catalog, extractor)

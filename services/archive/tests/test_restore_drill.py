@@ -334,7 +334,11 @@ async def test_postgres_restore_drill_rebuilds_reviewed_projection_and_rls(
     archive_restore_root = tmp_path / "archive-restored"
     await _database_command(admin_dsn, f'CREATE DATABASE "{source_database}"')
     archive = PostgresLifeArchive(source_dsn)
-    catalog = PostgresMemoryCatalog(source_dsn, extractor=RuleBasedMemoryExtractor())
+    catalog = PostgresMemoryCatalog(
+        source_dsn,
+        extractor=RuleBasedMemoryExtractor(),
+        evidence_subject_category_resolver=lambda _event: "adult",
+    )
     skills = PostgresSkillCatalog(source_dsn)
     skill_run_id = ""
     evolution_candidate_ids: tuple[str, str] = ("", "")
@@ -379,6 +383,7 @@ async def test_postgres_restore_drill_rebuilds_reviewed_projection_and_rls(
                         "interaction_mode": "companion",
                         "prompt_kind": "spontaneous",
                         "owner_projection_eligible": True,
+                        "subject_category": "adult",
                     },
                 )
             )
@@ -569,6 +574,7 @@ async def test_postgres_restore_drill_rebuilds_reviewed_projection_and_rls(
         restored = PostgresMemoryCatalog(
             restore_dsn,
             extractor=RuleBasedMemoryExtractor(),
+            evidence_subject_category_resolver=lambda _event: "adult",
         )
         restored_skills = PostgresSkillCatalog(restore_dsn)
         restored_self_model = PostgresSelfModelRegistry(restore_dsn)
@@ -715,6 +721,7 @@ async def test_projection_rebuild_requires_and_recreates_pgvector_documents() ->
             extractor=RuleBasedMemoryExtractor(),
             embedder=RebuildEmbedderStub(),
             require_vector=True,
+            evidence_subject_category_resolver=lambda _event: "adult",
         )
         await archive.initialize()
         await catalog.initialize()
@@ -731,6 +738,7 @@ async def test_projection_rebuild_requires_and_recreates_pgvector_documents() ->
                     "interaction_mode": "companion",
                     "prompt_kind": "spontaneous",
                     "owner_projection_eligible": True,
+                    "subject_category": "adult",
                 },
             )
         )

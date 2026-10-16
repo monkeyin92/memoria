@@ -55,6 +55,7 @@ async def _run(args: argparse.Namespace) -> str:
             dimensions=dimensions,
         ),
         require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
     )
     try:
         report = await benchmark_postgres_memory_search(

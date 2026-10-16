@@ -700,7 +700,7 @@ def test_demo_scenario_dataset_pairs_every_storyboard_with_a_later_recall() -> N
     assert [case.case_id for case in dataset.cases] == list(DEMO_STORYBOARDS)
     student_cases = [case for case in dataset.cases if case.case_id.startswith("demo-student-")]
     assert {case.subject_category for case in student_cases} == {"minor"}
-    assert all(case.subject_category is None for case in dataset.cases if case not in student_cases)
+    assert all(case.subject_category == "adult" for case in dataset.cases if case not in student_cases)
     for case in student_cases:
         assert case.expected_memories == (), case.case_id
         assert case.queries, case.case_id

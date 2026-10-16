@@ -147,6 +147,7 @@ async def test_legacy_vector_schema_upgrades_in_place_and_hnsw_is_used() -> None
             extractor=RuleBasedMemoryExtractor(),
             embedder=BenchmarkEmbedder(),
             require_vector=True,
+            evidence_subject_category_resolver=lambda _event: "adult",
         )
         await archive.initialize()
         await catalog.initialize()

@@ -127,6 +127,7 @@
     },
     {
       "case_id": "demo-elder-park-walk",
+      "subject_category": "adult",
       "scenario": "episodic_recall",
       "evidence": [
         {
@@ -164,6 +165,7 @@
     },
     {
       "case_id": "demo-elder-factory-story",
+      "subject_category": "adult",
       "scenario": "cross_session_followup",
       "evidence": [
         {
@@ -201,6 +203,7 @@
     },
     {
       "case_id": "demo-elder-son-visit",
+      "subject_category": "adult",
       "scenario": "comfort_recall",
       "evidence": [
         {

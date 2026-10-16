@@ -228,22 +228,17 @@ CREATE TABLE IF NOT EXISTS memory_search_documents (
 ALTER TABLE memory_compile_receipts
     ADD COLUMN IF NOT EXISTS ignored_reason TEXT;
 
-DO $memory_receipt_reason$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conrelid = 'memory_compile_receipts'::regclass
-          AND conname = 'memory_compile_receipts_ignored_reason_check'
-    ) THEN
-        ALTER TABLE memory_compile_receipts
-        ADD CONSTRAINT memory_compile_receipts_ignored_reason_check CHECK (
-            ignored_reason IS NULL
-            OR (outcome = 'ignored' AND ignored_reason IN ('minor_subject_skipped'))
-        );
-    END IF;
-END
-$memory_receipt_reason$;
+ALTER TABLE memory_compile_receipts
+    DROP CONSTRAINT IF EXISTS memory_compile_receipts_ignored_reason_check;
+
+ALTER TABLE memory_compile_receipts
+    ADD CONSTRAINT memory_compile_receipts_ignored_reason_check CHECK (
+        ignored_reason IS NULL
+        OR (
+            outcome = 'ignored'
+            AND ignored_reason IN ('minor_subject_skipped', 'not_explicit_adult')
+        )
+    );
 
 ALTER TABLE memory_claims
     ADD COLUMN IF NOT EXISTS domain_category TEXT,

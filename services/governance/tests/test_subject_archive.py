@@ -514,6 +514,7 @@ async def test_postgres_subject_deletion_removes_only_the_subjects_lineage(
         compiler_role="memoria_compiler",
         embedder=_EmbedderStub(),
         require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
     )
     skills = PostgresSkillCatalog(app_dsn)
     self_model = PostgresSelfModelRegistry(app_dsn)

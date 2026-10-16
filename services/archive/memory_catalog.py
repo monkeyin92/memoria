@@ -8,10 +8,9 @@ from __future__ import annotations
 
 
 class SubjectCategoryUnresolved(Exception):
-    """The evidence names another person whose category cannot be classified.
+    """Identity was down, or the named person is missing.
 
-    ``None`` from a resolver is "category unknown", and unknown still compiles
-    through the non-minor path.  Only a caller that looked and could not decide
-    -- identity down, or the person missing -- raises this.  The catalog then
-    records an ignored receipt and leaves the archive evidence unprojected.
+    The compiler records an ignored receipt with no reason and leaves the
+    archive evidence unprojected. A resolver that returns a category does not
+    raise this. extraction_gate extracts only the string adult.
     """

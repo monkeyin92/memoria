@@ -702,7 +702,7 @@ async def test_a_minor_subject_never_reaches_the_extractor(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("category", ["adult", "unknown", None, "teen"])
+@pytest.mark.parametrize("category", ["adult"])
 async def test_an_extractable_subject_is_extracted_exactly_once(
     archive: PostgresLifeArchive,
     make_catalog: MakeCatalog,
@@ -726,6 +726,36 @@ async def test_an_extractable_subject_is_extracted_exactly_once(
     assert extractor.calls == 1
     assert report == CompileReport(compiled_events=1)
     assert owner_sql(RECEIPT_SQL, "extractable-study") == [("compiled", None, "counting-test-v1")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("category", ["unknown", None, "teen"])
+async def test_a_subject_that_is_not_an_explicit_adult_is_not_extracted(
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
+    owner_sql: OwnerSql,
+    category: str | None,
+) -> None:
+    await _record(
+        archive,
+        event_id="not-adult-study",
+        text="我今天练习了英语口语，过去式还是薄弱点。",
+        subject_id="account-memory",
+    )
+    extractor = CountingExtractor()
+    catalog = await make_catalog(
+        extractor=extractor,
+        evidence_subject_category_resolver=lambda _event: category,
+    )
+
+    report = await catalog.compile_pending()
+
+    assert extractor.calls == 0
+    assert report == CompileReport(ignored_events=1)
+    assert owner_sql(RECEIPT_SQL, "not-adult-study") == [
+        ("ignored", "not_explicit_adult", "counting-test-v1")
+    ]
+    assert owner_sql(CLAIM_COUNT_SQL, "not-adult-study") == [(0,)]
 
 
 @pytest.mark.asyncio
@@ -1096,31 +1126,30 @@ async def test_single_value_claims_do_not_conflict_across_subjects(
 
 
 @pytest.mark.asyncio
-async def test_default_resolver_still_compiles_a_named_other_subject(
+async def test_a_missing_category_does_not_compile(
     archive: PostgresLifeArchive,
     make_catalog: MakeCatalog,
+    owner_sql: OwnerSql,
 ) -> None:
-    """None from the default resolver is unknown, not "do not project".
-
-    A catalog with no evidence resolver used to compile every accepted event.
-    Naming another subject must not change that: only an explicit unresolved
-    signal skips the projection.
-    """
-
     await _record(
         archive,
         event_id="other-subject-fact",
         text="我习惯先找事实，再讨论责任。",
         subject_id="person-other",
     )
-    catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
+    extractor = CountingExtractor()
+    catalog = await make_catalog(
+        extractor=extractor,
+        evidence_subject_category_resolver=lambda _event: None,
+    )
 
     report = await catalog.compile_pending()
 
-    assert report.compiled_events == 1
-    assert report.ignored_events == 0
-    queue = await catalog.review_queue(account_id="account-memory")
-    assert [item.source_event_id for item in queue] == ["other-subject-fact"]
+    assert extractor.calls == 0
+    assert report == CompileReport(ignored_events=1)
+    assert owner_sql(RECEIPT_SQL, "other-subject-fact") == [
+        ("ignored", "not_explicit_adult", "counting-test-v1")
+    ]
 
 
 @pytest.mark.asyncio
@@ -1129,8 +1158,6 @@ async def test_unresolved_other_subject_is_ignored_without_a_projection(
     make_catalog: MakeCatalog,
     owner_sql: OwnerSql,
 ) -> None:
-    """The sentinel, not None, is what withholds a long-term projection."""
-
     await _record(
         archive,
         event_id="owner-fact",
@@ -1148,7 +1175,7 @@ async def test_unresolved_other_subject_is_ignored_without_a_projection(
     def resolve(event: EvidenceEvent) -> str | None:
         if event.subject_id == "person-missing":
             raise SubjectCategoryUnresolved(event.subject_id)
-        return None
+        return "adult"
 
     catalog = await make_catalog(
         extractor=RuleBasedMemoryExtractor(),

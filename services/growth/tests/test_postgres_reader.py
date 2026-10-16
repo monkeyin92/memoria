@@ -46,7 +46,11 @@ async def test_postgres_reader_matches_sqlite_semantics_and_respects_force_rls()
         await admin.execute(f'CREATE DATABASE "{database}" OWNER "{role}"')
         app_dsn = _dsn(admin_dsn, user=role, password=password, database=database)
         archive = PostgresLifeArchive(app_dsn)
-        catalog = PostgresMemoryCatalog(app_dsn, extractor=RuleBasedMemoryExtractor())
+        catalog = PostgresMemoryCatalog(
+            app_dsn,
+            extractor=RuleBasedMemoryExtractor(),
+            evidence_subject_category_resolver=lambda _event: "adult",
+        )
         persona = PostgresPersonaEngine(app_dsn)
         registry = PostgresDigitalSelfRegistry(app_dsn)
         self_model = PostgresSelfModelRegistry(app_dsn)

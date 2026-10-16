@@ -210,13 +210,18 @@ async def test_compiler_role_claims_outbox_without_bypassing_account_rls() -> No
             database=database,
         )
         archive = PostgresLifeArchive(app_dsn)
-        ordinary = PostgresMemoryCatalog(app_dsn, extractor=RuleBasedMemoryExtractor())
+        ordinary = PostgresMemoryCatalog(
+            app_dsn,
+            extractor=RuleBasedMemoryExtractor(),
+            evidence_subject_category_resolver=lambda _event: "adult",
+        )
         compiler = PostgresMemoryCatalog(
             app_dsn,
             compiler_dsn=compiler_dsn,
             compiler_role=compiler_role,
             extractor=RuleBasedMemoryExtractor(),
             capture_evidence_projector=project_capture,
+            evidence_subject_category_resolver=lambda _event: "adult",
         )
         await archive.initialize()
         await ordinary.initialize()
@@ -298,6 +303,7 @@ async def test_pgvector_projection_and_hybrid_search_are_rebuildable() -> None:
         extractor=RuleBasedMemoryExtractor(),
         embedder=SemanticEmbedderStub(),
         require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
     )
     await archive.initialize()
     await catalog.initialize()
@@ -372,6 +378,7 @@ async def test_vector_search_gives_the_keyword_bonus_only_to_terms_that_name_som
         extractor=RuleBasedMemoryExtractor(),
         embedder=ConstantEmbedderStub(),
         require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
     )
     await archive.initialize()
     await catalog.initialize()
@@ -472,6 +479,7 @@ async def test_recall_embeds_a_redacted_query_and_matches_lexically_on_the_raw_o
         extractor=RuleBasedMemoryExtractor(),
         embedder=embedder,
         require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
     )
     await archive.initialize()
     await catalog.initialize()
@@ -546,6 +554,7 @@ async def test_embedding_outage_keeps_fulltext_projection_and_search_available()
         extractor=RuleBasedMemoryExtractor(),
         embedder=UnavailableEmbedderStub(),
         require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
     )
     await archive.initialize()
     await catalog.initialize()
@@ -614,6 +623,7 @@ async def test_strict_embedding_outage_fails_compile_and_search() -> None:
         embedder=UnavailableEmbedderStub(),
         require_vector=True,
         fail_on_embedding_error=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
     )
     await archive.initialize()
     await catalog.initialize()
@@ -674,12 +684,14 @@ async def test_hybrid_search_ignores_stale_vectors_from_an_older_model() -> None
         extractor=RuleBasedMemoryExtractor(),
         embedder=SemanticEmbedderStub(),
         require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
     )
     upgraded_catalog = PostgresMemoryCatalog(
         dsn,
         extractor=RuleBasedMemoryExtractor(),
         embedder=UpgradedEmbedderStub(),
         require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
     )
     await archive.initialize()
     await old_catalog.initialize()
@@ -742,7 +754,11 @@ async def test_postgres_one_canonical_key_merges_across_domains() -> None:
     suffix = uuid.uuid4().hex[:10]
     account_id = f"pg-episode-{suffix}"
     archive = PostgresLifeArchive(dsn)
-    catalog = PostgresMemoryCatalog(dsn, extractor=_DomainDriftCanonicalExtractor())
+    catalog = PostgresMemoryCatalog(
+        dsn,
+        extractor=_DomainDriftCanonicalExtractor(),
+        evidence_subject_category_resolver=lambda _event: "adult",
+    )
     await archive.initialize()
     await catalog.initialize()
     connection = await asyncpg.connect(dsn)
@@ -829,7 +845,11 @@ async def test_postgres_memory_catalog_matches_sqlite_contract_and_forces_rls() 
     dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
     account_id = "postgres-memory-account"
     archive = PostgresLifeArchive(dsn)
-    catalog = PostgresMemoryCatalog(dsn, extractor=RuleBasedMemoryExtractor())
+    catalog = PostgresMemoryCatalog(
+        dsn,
+        extractor=RuleBasedMemoryExtractor(),
+        evidence_subject_category_resolver=lambda _event: "adult",
+    )
     await archive.initialize()
     await catalog.initialize()
     connection = await asyncpg.connect(dsn)
@@ -992,7 +1012,11 @@ async def test_postgres_person_alias_is_recallable_and_status_gated() -> None:
     account_id = f"person-alias-{uuid.uuid4()}"
     event_id = f"person-alias-event-{uuid.uuid4()}"
     archive = PostgresLifeArchive(dsn)
-    catalog = PostgresMemoryCatalog(dsn, extractor=RuleBasedMemoryExtractor())
+    catalog = PostgresMemoryCatalog(
+        dsn,
+        extractor=RuleBasedMemoryExtractor(),
+        evidence_subject_category_resolver=lambda _event: "adult",
+    )
     await archive.initialize()
     await catalog.initialize()
     try:

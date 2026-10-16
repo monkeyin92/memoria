@@ -10,7 +10,7 @@ from packages.contracts.generated.python.multi_subject_contracts import AgeBand,
 from services.archive.domain import EvidenceEvent
 from services.archive.memory_catalog import SubjectCategoryUnresolved
 
-type IgnoredReason = Literal["minor_subject_skipped"]
+type IgnoredReason = Literal["minor_subject_skipped", "not_explicit_adult"]
 
 type SubjectCategoryResolver = Callable[[EvidenceEvent], str | None | Awaitable[str | None]]
 
@@ -20,15 +20,16 @@ _MINOR_CATEGORIES: frozenset[str] = frozenset(
         *(frozenset(AgeBand) - {AgeBand.AGE_BAND_UNKNOWN, AgeBand.AGE_BAND_ADULT}),
     }
 )
+_EXPLICIT_ADULT = SubjectCategory.SUBJECT_CATEGORY_ADULT
 
 
 @dataclass(frozen=True, slots=True)
 class Extract:
-    subject_category: str | None
+    subject_category: Literal["adult"]
 
     def __post_init__(self) -> None:
-        if self.subject_category in _MINOR_CATEGORIES:
-            raise ValueError(f"a minor subject is never extracted: {self.subject_category!r}")
+        if self.subject_category != _EXPLICIT_ADULT:
+            raise ValueError(f"only an explicit adult is extracted: {self.subject_category!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +48,8 @@ async def extraction_gate(
         category = await answer if inspect.isawaitable(answer) else answer
     except SubjectCategoryUnresolved:
         return Withhold(None)
+    if category == _EXPLICIT_ADULT:
+        return Extract("adult")
     if category in _MINOR_CATEGORIES:
         return Withhold("minor_subject_skipped")
-    return Extract(category)
+    return Withhold("not_explicit_adult")

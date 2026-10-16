@@ -111,7 +111,7 @@ async def _record_and_compile(app: Any, owner_id: str, child_id: str) -> Compile
 
 
 async def _seed_claims_compiled_before_the_gate(app: Any, owner_id: str, child_id: str) -> None:
-    app.state.memory_catalog._evidence_subject_category_resolver = lambda _event: "unknown"
+    app.state.memory_catalog._evidence_subject_category_resolver = lambda _event: "adult"
     report = await _record_and_compile(app, owner_id, child_id)
     assert report.failed_events == 0
 
