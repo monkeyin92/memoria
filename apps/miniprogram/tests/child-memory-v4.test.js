@@ -81,6 +81,43 @@ test("with no summaries yet the section explains when they appear", async () => 
   }
 });
 
+test("each fact can be deleted and the archive can be cleared, both only after confirm", async () => {
+  let archive = fx.ARCHIVE.map((item) => ({ ...item }));
+  const deleted = [];
+  const cleared = [];
+  const harness = await openChildMemory({
+    ...fx.archiveApi,
+    getChildArchive: async () => ({ items: archive }),
+    deleteChildArchiveFact: async (minorId, recordId) => {
+      deleted.push([minorId, recordId]);
+      archive = archive.filter((item) => item.record_id !== recordId);
+      return { deleted: true };
+    },
+    clearChildArchive: async (minorId) => {
+      cleared.push(minorId);
+      archive = [];
+      return { deleted: archive.length };
+    },
+  });
+  try {
+    const html = renderPage("pages/child-memory/index", harness.page.data, { tabBar: false });
+    assert.match(html, /data-record-id="a2"/);
+    assert.match(html, /data-record-id="a3"/);
+    assert.match(html, /清空长期记忆/);
+    harness.page.askDeleteArchive({ currentTarget: { dataset: { recordId: "a2" } } });
+    assert.equal(deleted.length, 0);
+    assert.equal(harness.page.data.confirm.title, "删除这条记忆？");
+    harness.page.closeConfirm();
+    harness.page.askClearArchive();
+    assert.equal(cleared.length, 0);
+    assert.equal(harness.page.data.confirm.title, "清空长期记忆？");
+    await harness.page.runConfirm();
+    assert.deepEqual(cleared, ["p_child"]);
+  } finally {
+    harness.restore();
+  }
+});
+
 test("deleting a fact from the archive card removes it on the server and from the page", async () => {
   let archive = [
     { record_id: "a2", field: "preference", text: "恐龙", created_at: "2026-10-14T03:00:00+00:00" },

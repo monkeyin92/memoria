@@ -44,6 +44,21 @@ test("home ring shows the daily budget without inventing minutes the ledger coul
   assert.match(html, /conic-gradient\(#4A52C9 0% 0%, #ECECF2 0% 100%\)/);
 });
 
+test("the home ring center reads the used percent and the daily cap", async () => {
+  const { data } = await loadHome({
+    api: {
+      getSessionLimits: async () => ({
+        max_session_minutes: 15,
+        quiet_hours: null,
+        daily_chat_minutes: 30,
+        today_used_minutes: 18,
+      }),
+    },
+  });
+  const text = visibleText(renderPage("pages/home/index", data));
+  assert.match(text, /60% 上限 30 分钟 今天聊了 18 分钟/);
+});
+
 test("home ring fills the used share of the daily budget", async () => {
   const { data } = await loadHome({
     api: {

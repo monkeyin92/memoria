@@ -75,6 +75,32 @@ test("the usage screen counts today's chat against the daily budget the guardian
   assert.doesNotMatch(text, /每日上限/);
 });
 
+test("the usage ring fills today's share of the daily budget", async () => {
+  const scenario = PAGES.find((item) => item.slug === "device");
+  const { data } = await scenarioData(scenario);
+  const html = renderPage(scenario.page, data);
+  assert.match(html, /class="device-ring"[^>]*style="[^"]*conic-gradient\(#4A52C9 0% 60%, #ECECF2 60% 100%\)/);
+});
+
+test("a missing per-session cap displays 15 minutes and the slider rests on 15", async () => {
+  const quietOnly = {
+    ...fx.RUNTIME_PROFILE,
+    obligations: fx.RUNTIME_PROFILE.obligations.filter((item) => item.code === "QUIET_HOURS"),
+  };
+  const harness = loadPage("pages/device/index", fx.authed({ getRuntimeProfile: async () => quietOnly }));
+  try {
+    const data = await harness.run();
+    assert.equal(data.sessionLimits.maxSessionMinutes, null);
+    assert.equal(data.sessionMinuteValue, 15);
+    const text = visibleText(renderPage("pages/device/index", data));
+    assert.match(text, /15 分钟 · 单次上限/);
+    assert.match(text, /单次上限 15 分钟 10 分钟 30 分钟/);
+    assert.doesNotMatch(text, /未设置 单次上限|单次上限 未设置/);
+  } finally {
+    harness.restore();
+  }
+});
+
 test("the usage screen reads 未设置 when the signed profile has quiet hours but no cap", async () => {
   const quietOnly = {
     ...fx.RUNTIME_PROFILE,
