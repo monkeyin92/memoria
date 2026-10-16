@@ -41,6 +41,7 @@ from services.device_fleet.test_device_registration import (
     REGISTRATION_ACTION,
     TEST_ENVIRONMENT_ID,
     delete_registration_audits,
+    delete_registration_audits_for_account,
 )
 from services.device_fleet.test_device_registration import (
     TestEnvironment as RegistrationEnvironment,
@@ -278,6 +279,183 @@ def test_deleting_registration_audits_reports_only_count_and_time(tmp_path: Path
     remaining = _audit_rows(database)
     assert [row["device_id"] for row in remaining] == ["dev_synth_02"]
     assert len(_device_rows(database)) == 2
+
+
+def _bind_device(
+    database: Path,
+    *,
+    device_id: str,
+    account_id: str,
+    status: str,
+) -> None:
+    stamp = NOW.isoformat().replace("+00:00", "Z")
+    later = LATER.isoformat().replace("+00:00", "Z")
+    digest = "a" * 64
+    connection = _connect(database)
+    try:
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute(
+            """
+            INSERT INTO device_onboarding_sessions (
+                onboarding_session_id, device_id, actor_id, client_onboarding_id,
+                qr_nonce_hash, pop_hash, mobile_nonce_hash, protocol_version,
+                ble_name, ble_service_uuid, state, first_seen_at, expires_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'synth', 'synth-service', 'consumed', ?, ?)
+            """,
+            (
+                f"sess_{device_id}",
+                device_id,
+                account_id,
+                f"client_{device_id}",
+                digest,
+                digest,
+                digest,
+                stamp,
+                later,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO device_onboarding_claims (
+                claim_id, onboarding_session_id, device_id, actor_id, status,
+                idempotency_key, reserved_at, expires_at
+            ) VALUES (?, ?, ?, ?, 'committed', ?, ?, ?)
+            """,
+            (
+                f"claim_{device_id}",
+                f"sess_{device_id}",
+                device_id,
+                account_id,
+                f"idem_{device_id}",
+                stamp,
+                later,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO device_onboarding_bindings (
+                binding_id, claim_id, device_id, actor_id, binding_version,
+                status, initialization_json, idempotency_key, created_at
+            ) VALUES (?, ?, ?, ?, 1, ?, '{}', ?, ?)
+            """,
+            (
+                f"bind_{device_id}",
+                f"claim_{device_id}",
+                device_id,
+                account_id,
+                status,
+                f"idem_bind_{device_id}",
+                stamp,
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def test_account_deletion_removes_only_that_accounts_bound_device_audits(
+    tmp_path: Path,
+) -> None:
+    _seed_a, key_a = _public_key()
+    _seed_b, key_b = _public_key()
+    _seed_c, key_c = _public_key()
+    database = tmp_path / "registry.sqlite"
+    service, store = _service(database, NOW)
+    try:
+        _register(service, public_key=key_a, device_id="dev_synth_01", certificate_id="cert_synth_01")
+        _register(service, public_key=key_b, device_id="dev_synth_02", certificate_id="cert_synth_02")
+        _register(service, public_key=key_c, device_id="dev_synth_03", certificate_id="cert_synth_03")
+        _bind_device(database, device_id="dev_synth_01", account_id="acct_synth_a", status="released")
+        _bind_device(database, device_id="dev_synth_02", account_id="acct_synth_b", status="committed")
+        _bind_device(database, device_id="dev_synth_03", account_id="acct_synth_a", status="draft")
+        receipt = delete_registration_audits_for_account(
+            store, account_id="acct_synth_a", now=LATER
+        )
+    finally:
+        store.close()
+
+    assert {field.name for field in fields(type(receipt))} == {"deleted_count", "deleted_at"}
+    assert receipt.deleted_count == 1
+    assert receipt.deleted_at == LATER
+    remaining = {row["device_id"] for row in _audit_rows(database)}
+    assert remaining == {"dev_synth_02", "dev_synth_03"}
+
+
+@pytest.mark.asyncio
+async def test_postgres_account_deletion_keeps_the_other_accounts_audit(
+    postgres_registration: tuple[PostgresBootstrapStore, PostgresBootstrapStore, str, str],
+) -> None:
+    maintenance, api, admin_dsn, _maintenance_dsn = postgres_registration
+    _seed_a, key_a = _public_key()
+    _seed_b, key_b = _public_key()
+    service = DeviceOnboardingService(maintenance, offline_mock=False, now_fn=lambda: NOW)
+    _register(service, public_key=key_a, device_id="dev_synth_01", certificate_id="cert_synth_01")
+    _register(service, public_key=key_b, device_id="dev_synth_02", certificate_id="cert_synth_02")
+    connection = await asyncpg.connect(admin_dsn)
+    try:
+        for device_id, account_id, status in (
+            ("dev_synth_01", "acct_synth_a", "released"),
+            ("dev_synth_02", "acct_synth_b", "committed"),
+        ):
+            digest = "ab" * 32
+            await connection.execute(
+                """
+                INSERT INTO device_onboarding_sessions (
+                    onboarding_session_id, device_id, actor_id, client_onboarding_id,
+                    qr_nonce_hash, pop_hash, mobile_nonce_hash, protocol_version,
+                    ble_name, ble_service_uuid, state, first_seen_at, expires_at
+                ) VALUES ($1, $2, $3, $4, $5, $5, $5, 1, 'synth', 'synth-service',
+                          'consumed', $6, $7)
+                """,
+                f"sess_{device_id}",
+                device_id,
+                account_id,
+                f"client_{device_id}",
+                digest,
+                NOW,
+                LATER,
+            )
+            await connection.execute(
+                """
+                INSERT INTO device_onboarding_claims (
+                    claim_id, onboarding_session_id, device_id, actor_id, status,
+                    idempotency_key, reserved_at, expires_at
+                ) VALUES ($1, $2, $3, $4, 'committed', $5, $6, $7)
+                """,
+                f"claim_{device_id}",
+                f"sess_{device_id}",
+                device_id,
+                account_id,
+                f"idem_{device_id}",
+                NOW,
+                LATER,
+            )
+            await connection.execute(
+                """
+                INSERT INTO device_onboarding_bindings (
+                    binding_id, claim_id, device_id, actor_id, binding_version,
+                    status, initialization_json, idempotency_key, created_at
+                ) VALUES ($1, $2, $3, $4, 1, $5, '{}'::jsonb, $6, $7)
+                """,
+                f"bind_{device_id}",
+                f"claim_{device_id}",
+                device_id,
+                account_id,
+                status,
+                f"idem_bind_{device_id}",
+                NOW,
+            )
+    finally:
+        await connection.close()
+
+    api_service = DeviceOnboardingService(api, offline_mock=False, now_fn=lambda: LATER)
+    receipt = api_service.delete_account_registration_audits(account_id="acct_synth_a")
+    _devices, audits, _columns = await _postgres_tables(admin_dsn)
+
+    assert {field.name for field in fields(type(receipt))} == {"deleted_count", "deleted_at"}
+    assert receipt.deleted_count == 1
+    assert receipt.deleted_at == LATER
+    assert [row["device_id"] for row in audits] == ["dev_synth_02"]
 
 
 def test_unbinding_the_device_deletes_its_registration_audit(tmp_path: Path) -> None:

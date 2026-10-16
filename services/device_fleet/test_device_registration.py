@@ -381,6 +381,67 @@ async def postgres_delete_registration_audits(
     return int(status.rsplit(" ", 1)[-1])
 
 
+def _bound_device_ids_sql(*, postgres: bool) -> str:
+    comparison = "$1" if postgres else "?"
+    return f"""
+        SELECT device_id FROM device_onboarding_bindings
+        WHERE actor_id = {comparison}
+          AND status IN ('committed', 'released')
+        UNION
+        SELECT device_id FROM device_onboarding_devices
+        WHERE actor_id = {comparison}
+          AND lifecycle_status = 'bound'
+    """
+
+
+def _require_account_id(account_id: str) -> str:
+    normalized = account_id.strip()
+    if not normalized or len(normalized) > 128:
+        raise InvalidOnboardingRequest("account_id is invalid")
+    return normalized
+
+
+def delete_registration_audits_for_account(
+    store: BootstrapStorePort,
+    *,
+    account_id: str,
+    now: datetime,
+) -> RegistrationAuditDeletion:
+    """Delete audit rows for devices this account has bound.
+
+    The result is the deleted row count and the time. It has no device id.
+    """
+
+    account_id = _require_account_id(account_id)
+    deleted_at = now_utc(now)
+    if isinstance(store, SQLiteBootstrapStore):
+        with store._write() as connection:
+            rows = connection.execute(
+                _bound_device_ids_sql(postgres=False),
+                (account_id, account_id),
+            )
+            device_ids = [str(row["device_id"]) for row in rows]
+            deleted_count = 0
+            for device_id in device_ids:
+                deleted_count += sqlite_delete_registration_audits(connection, device_id)
+        return RegistrationAuditDeletion(deleted_count=deleted_count, deleted_at=deleted_at)
+    if isinstance(store, PostgresBootstrapStore):
+        scope = store._scope(actor_id=account_id)
+
+        async def lookup(connection: asyncpg.Connection) -> list[str]:
+            rows = await connection.fetch(_bound_device_ids_sql(postgres=True), account_id)
+            return [str(row["device_id"]) for row in rows]
+
+        device_ids = store._call(store._transaction(scope, lookup))
+        deleted_count = 0
+        for device_id in device_ids:
+            deleted_count += delete_registration_audits(
+                store, device_id=device_id, now=deleted_at
+            ).deleted_count
+        return RegistrationAuditDeletion(deleted_count=deleted_count, deleted_at=deleted_at)
+    raise TestRegistrationRejected("registration requires the test environment")
+
+
 def delete_registration_audits(
     store: BootstrapStorePort,
     *,
@@ -415,6 +476,7 @@ __all__ = [
     "TestRegistrationRejected",
     "apply_test_device_registration",
     "delete_registration_audits",
+    "delete_registration_audits_for_account",
     "postgres_delete_registration_audits",
     "require_test_environment",
     "sqlite_delete_registration_audits",

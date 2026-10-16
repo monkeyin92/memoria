@@ -78,8 +78,10 @@ from services.device_fleet.bootstrap_domain import (
 from services.device_fleet.bootstrap_port import BootstrapStorePort
 from services.device_fleet.bootstrap_store import SQLiteBootstrapStore
 from services.device_fleet.test_device_registration import (
+    RegistrationAuditDeletion,
     TestDeviceRegistration,
     apply_test_device_registration,
+    delete_registration_audits_for_account,
     require_test_environment,
 )
 
@@ -1369,6 +1371,18 @@ class DeviceOnboardingService:
             environment=accepted,
             record=record,
             now=now_utc(self.now_fn()),
+        )
+
+    def delete_account_registration_audits(self, *, account_id: str) -> RegistrationAuditDeletion:
+        """Drop registration audits for devices this account has bound.
+
+        Called from account deletion. The result is a count and a time.
+        """
+
+        return delete_registration_audits_for_account(
+            self.store,
+            account_id=account_id,
+            now=self._now(),
         )
 
 

@@ -14,6 +14,7 @@ from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import asyncpg
 import pytest
@@ -522,6 +523,7 @@ async def _seed_legacy(
 async def _fixture(
     tmp_path: Path,
     db: ArchiveDatabase,
+    onboarding: Any = None,
 ) -> tuple[
     AccountDataGovernance,
     MemoryStore,
@@ -790,6 +792,7 @@ async def _fixture(
         voice_profiles=voice,
         archive_object_store=archive_objects,
         session_terminator=session_terminator,
+        onboarding=onboarding,
     )
     return (
         governance,
@@ -884,6 +887,33 @@ async def test_account_deletion_propagates_to_objects_provider_and_biometrics(
                 ).fetchone()[0]
                 == 0
             )
+
+
+@pytest.mark.asyncio
+async def test_account_deletion_records_only_the_audit_count(
+    tmp_path: Path,
+    archive_db: ArchiveDatabase,
+) -> None:
+    class _Audits:
+        def __init__(self) -> None:
+            self.account_ids: list[str] = []
+
+        def delete_account_registration_audits(self, *, account_id: str) -> object:
+            self.account_ids.append(account_id)
+            return type(
+                "Receipt",
+                (),
+                {"deleted_count": 2, "deleted_at": datetime(2026, 10, 16, 13, tzinfo=UTC)},
+            )()
+
+    audits = _Audits()
+    governance, *_rest = await _fixture(tmp_path, archive_db, onboarding=audits)
+    deleted = await governance.delete_account("account-governance")
+
+    assert audits.account_ids == ["account-governance"]
+    assert deleted["deleted_counts"]["onboarding.registration_audits"] == 2
+    assert deleted["registration_audits_deleted_at"] == "2026-10-16T13:00:00Z"
+    assert all(isinstance(value, int) for value in deleted["deleted_counts"].values())
 
 
 @pytest.mark.asyncio
