@@ -13,6 +13,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -27,6 +28,7 @@ from services.control_api.app.main import create_app
 from services.control_api.tests.test_interaction_api import (
     _attach_signed_runtime_profile,
 )
+from services.guardian.parent_alert import PARENT_ALERT_COPY, alert_time_label
 from services.session_runtime.profile_service import verify_runtime_profile_payload
 
 _RESPONSE_PLAN_TOKEN = "p0-04-student-safety-plan-token-long-enough"
@@ -256,7 +258,8 @@ async def test_minor_crisis_queues_one_notification_and_fixed_text_reaches_the_d
         assert item["channel"] == "wechat_subscription"
         # 边界：本阶段没有发送 worker，入队不等于家长已收到。
         assert item["delivery_status"] == "pending"
-        assert item["pinned"] is True
+        assert "pinned" not in item and "read_at" not in item
+        assert item["category_label"] == PARENT_ALERT_COPY["crisis-self-v1"].category_label
         assert item["message"] == GUARDIAN_ATTENTION_COPY
         assert "危机" not in item["message"]
         assert item["contains_transcript"] is False
@@ -392,7 +395,8 @@ async def test_support_tier_and_crisis_behavior_matrix(
             return
         assert len(items) == 1
         item = items[0]
-        assert item["pinned"] is True
+        assert reply_template_id in PARENT_ALERT_COPY
+        assert item["category_label"] == PARENT_ALERT_COPY[reply_template_id].category_label
         assert item["delivery_status"] == delivery_status
         assert item["message"] == GUARDIAN_ATTENTION_COPY
         blob = json.dumps(notifications.json(), ensure_ascii=False)
@@ -730,6 +734,144 @@ async def test_guardian_notification_list_is_guardian_scoped_and_needs_an_active
 
 
 @pytest.mark.asyncio
+async def test_parent_acknowledges_alerts_one_at_a_time_across_logins(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """我知道了 只记一次已读；换一次登录也只看到下一条未读，孩子原话不出现在任何返回里。"""
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    queries = (_CRISIS_QUERY, "有人正在打我", "我朋友说他不想活了")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        _, parent_headers, link, child, child_headers = await _bind_family(
+            client,
+            app,
+            parent_username="safety-ack-parent",
+            child_username="safety-ack-child",
+            binding_key="safety-ack",
+        )
+        session = await _minor_session(
+            client,
+            app,
+            child=child,
+            child_headers=child_headers,
+            link=link,
+            parent_headers=parent_headers,
+            binding_key="safety-ack",
+        )
+        empty = await client.get("/v1/guardian/notifications/unread", headers=parent_headers)
+        assert empty.status_code == 200, empty.text
+        assert empty.json() == {"newest": None, "others_count": 0}
+        for turn, query in enumerate(queries, start=1):
+            plan = await _response_plan(
+                client,
+                session_id=session["session_id"],
+                query=query,
+                turn_id=turn,
+                generation_id=turn,
+            )
+            assert plan.status_code == 200, plan.text
+
+        payloads: list[Any] = []
+        unread = await client.get("/v1/guardian/notifications/unread", headers=parent_headers)
+        assert unread.status_code == 200, unread.text
+        payloads.append(unread.json())
+        newest = unread.json()["newest"]
+        assert unread.json()["others_count"] == 2
+        assert newest["category_label"] == PARENT_ALERT_COPY["support-other-v1"].category_label
+        assert newest["parent_action"] == PARENT_ALERT_COPY["support-other-v1"].parent_action
+        assert newest["occurred_label"] == alert_time_label(
+            datetime.fromisoformat(newest["occurred_at"]), ZoneInfo("Asia/Shanghai")
+        )
+
+        detail = await client.get(
+            f"/v1/guardian/notifications/{newest['notification_id']}", headers=parent_headers
+        )
+        assert detail.status_code == 200, detail.text
+        assert detail.json() == newest
+        payloads.append(detail.json())
+
+        acked = await client.put(
+            f"/v1/guardian/notifications/{newest['notification_id']}/read",
+            headers=parent_headers,
+        )
+        assert acked.status_code == 200, acked.text
+        payloads.append(acked.json())
+        assert acked.json()["notification_id"] == newest["notification_id"]
+
+        fresh_headers = await _login(client, "safety-ack-parent")
+        after = await client.get("/v1/guardian/notifications/unread", headers=fresh_headers)
+        payloads.append(after.json())
+        assert after.json()["others_count"] == 1
+        assert after.json()["newest"]["notification_id"] != newest["notification_id"]
+        assert after.json()["newest"]["category_label"] == (
+            PARENT_ALERT_COPY["victim-support-v1"].category_label
+        )
+        repeat = await client.put(
+            f"/v1/guardian/notifications/{newest['notification_id']}/read",
+            headers=fresh_headers,
+        )
+        assert repeat.json() == acked.json()
+
+        history = await client.get("/v1/guardian/notifications", headers=fresh_headers)
+        payloads.append(history.json())
+        items = history.json()["items"]
+        assert [item["notification_id"] for item in items][0] == newest["notification_id"]
+        assert len(items) == 3
+        for item in items:
+            assert "pinned" not in item and "read_at" not in item
+            assert item["contains_transcript"] is False
+            assert item["contains_severity"] is False
+        assert newest["contains_transcript"] is False
+
+        blob = json.dumps(payloads, ensure_ascii=False)
+        for query in queries:
+            assert query not in blob
+        assert "不想活" not in blob
+        assert "打我" not in blob
+
+        for item in items:
+            done = await client.put(
+                f"/v1/guardian/notifications/{item['notification_id']}/read",
+                headers=fresh_headers,
+            )
+            assert done.status_code == 200, done.text
+        cleared = await client.get("/v1/guardian/notifications/unread", headers=fresh_headers)
+        assert cleared.json() == {"newest": None, "others_count": 0}
+
+        missing = "00000000-0000-4000-8000-000000000000"
+        gone = await client.get(f"/v1/guardian/notifications/{missing}", headers=fresh_headers)
+        assert gone.status_code == 404
+        assert gone.json()["detail"] == {"code": "guardian_notification_not_found"}
+        gone_ack = await client.put(
+            f"/v1/guardian/notifications/{missing}/read", headers=fresh_headers
+        )
+        assert gone_ack.status_code == 404
+
+        other, _ = await _register(client, "safety-ack-bystander")
+        _mark_verified_adult(app, other["user_id"])
+        other_headers = await _login(client, "safety-ack-bystander")
+        app.state.memory_store.bind_external_identities(
+            preferred_user_id=other["user_id"],
+            identities={"wechat_openid": "ack-bystander-openid"},
+            now=datetime.now(UTC).isoformat(),
+        )
+        for method, path in (
+            ("GET", f"/v1/guardian/notifications/{newest['notification_id']}"),
+            ("PUT", f"/v1/guardian/notifications/{newest['notification_id']}/read"),
+        ):
+            stranger = await client.request(method, path, headers=other_headers)
+            assert stranger.status_code == 404, (method, stranger.text)
+            child_view = await client.request(method, path, headers=child_headers)
+            assert child_view.status_code == 403, (method, child_view.text)
+        stranger_unread = await client.get(
+            "/v1/guardian/notifications/unread", headers=other_headers
+        )
+        assert stranger_unread.json() == {"newest": None, "others_count": 0}
+
+
+@pytest.mark.asyncio
 async def test_revoked_voice_consent_stops_the_next_minor_turn_immediately(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -930,7 +1072,6 @@ async def test_adult_account_manages_independent_under_14_subject_without_child_
         assert items[0]["minor_user_id"] == child_person_id
         assert items[0]["minor_display_name"] == "独立小明"
         assert items[0]["delivery_status"] == "pending"
-        assert items[0]["pinned"] is True
 
         # 5. 对照验证：若切换为成人使用人（例如家长本人），危机语句虽然给出通用固定话术，但绝不入队未成年危机通知
         _attach_signed_runtime_profile(

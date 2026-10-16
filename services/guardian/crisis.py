@@ -5,24 +5,12 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal, Protocol, get_args
+from typing import Literal, Protocol
 
 from services.archive.domain import EvidenceEvent, LifeArchivePort
 from services.common.fixed_safety_scripts import FixedSafetyTemplateId
 
 NotificationStatus = Literal["pending", "pin_only", "delivered", "failed", "no_subscription"]
-
-# SQL enqueue picks the insert status from attempt_push (pending for
-# crisis/victim, pin_only for relay). Push may later move a row to
-# delivered / failed / no_subscription. Every legal outbox status stays
-# pinned; delivery must never clear the home card.
-PINNED_CRISIS_ALERT_STATUSES = frozenset(get_args(NotificationStatus))
-
-
-def crisis_alert_is_pinned(status: str) -> bool:
-    """True when the parent must see this alert on next Mini Program open."""
-
-    return status in PINNED_CRISIS_ALERT_STATUSES
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,7 +194,6 @@ class CrisisNotificationService:
 
 
 __all__ = [
-    "PINNED_CRISIS_ALERT_STATUSES",
     "CrisisNotificationReceipt",
     "CrisisNotificationService",
     "CrisisNotificationStorePort",
@@ -214,5 +201,4 @@ __all__ = [
     "GuardianNotification",
     "NotificationStatus",
     "UnreadNotifications",
-    "crisis_alert_is_pinned",
 ]

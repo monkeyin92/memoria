@@ -15,11 +15,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from services.archive.postgres_archive import PostgresLifeArchive
-from services.guardian.crisis import (
-    CrisisNotificationService,
-    GuardianNotification,
-    crisis_alert_is_pinned,
-)
+from services.guardian.crisis import CrisisNotificationService, GuardianNotification
 from services.guardian.domain import GuardianAccessDeniedError
 from services.guardian.postgres_store import PostgresGuardianStore
 from services.guardian.push import (
@@ -240,17 +236,6 @@ async def test_ledger_counts_acceptances_and_bans_void_the_balance(
     assert len(audit) == 46
 
 
-def test_crisis_alert_statuses_stay_pinned_regardless_of_push_delivery() -> None:
-    from typing import get_args
-
-    from services.guardian.crisis import NotificationStatus
-
-    for status in get_args(NotificationStatus):
-        assert crisis_alert_is_pinned(status), status
-    assert crisis_alert_is_pinned("delivered")
-    assert not crisis_alert_is_pinned("retry")
-
-
 def test_crisis_reach_breakdown_exposes_wechat_and_pin_rates() -> None:
     stats = crisis_reach_breakdown(
         ("delivered", "delivered", "no_subscription", "failed", "pending", "pin_only")
@@ -282,7 +267,7 @@ async def test_worker_delivers_fixed_content_and_consumes_one_acceptance(
 
     notification = await _only_notification(store)
     assert notification.status == "delivered"
-    assert crisis_alert_is_pinned(notification.status)
+    assert notification.read_at is None
     assert notification.delivered_at is not None
     reach = await store.crisis_reach_for_window(
         since=occurred - timedelta(minutes=1),
@@ -360,7 +345,7 @@ async def test_guardian_without_acceptance_is_marked_no_subscription(
     notification = await _only_notification(store)
     assert notification.status == "no_subscription"
     assert notification.last_error_code == "no_subscription"
-    assert crisis_alert_is_pinned(notification.status)
+    assert notification.read_at is None
     assert sender.calls == []
     reach = await store.crisis_reach_for_window(
         since=occurred - timedelta(minutes=1),
@@ -388,7 +373,7 @@ async def test_wechat_refusal_marks_no_subscription_and_exhausts_the_ledger(
     notification = await _only_notification(store)
     assert notification.status == "no_subscription"
     assert notification.last_error_code == "wechat_43101"
-    assert crisis_alert_is_pinned(notification.status)
+    assert notification.read_at is None
     assert await _remaining(store) == 0
 
 
@@ -578,11 +563,11 @@ async def test_relay_tier_alert_pins_as_pin_only_and_is_never_claimed_for_push(
 
     notifications = await store.guardian_notifications(guardian_user_id="guardian-a")
     assert {
-        item.crisis_event_id: (item.status, crisis_alert_is_pinned(item.status))
+        item.crisis_event_id: (item.status, item.read_at)
         for item in notifications
     } == {
-        crisis_event_id: ("delivered", True),
-        relay.crisis_event_id: ("pin_only", True),
+        crisis_event_id: ("delivered", None),
+        relay.crisis_event_id: ("pin_only", None),
     }
     assert len(sender.calls) == 1
     assert await _remaining(store) == 1

@@ -8,8 +8,9 @@ only per-event values are the child's display name (already shown on the
 guardian page) and the time of the event.
 
 When a guardian has no remaining acceptance the notification is marked
-``no_subscription``.  Delivered and undelivered alerts both stay pinned on
-the memory and home pages.  Each subscribe-message answer is appended to an
+``no_subscription``.  Delivery never marks an alert read: delivered or not,
+it stays on the memory and home pages until the parent taps 我知道了.  Each
+subscribe-message answer is appended to an
 audit ledger in addition to updating the acceptance balance.
 """
 
