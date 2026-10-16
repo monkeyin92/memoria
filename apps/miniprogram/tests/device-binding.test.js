@@ -255,6 +255,25 @@ test("memory_level must follow the long-term memory offer selection", () => {
   assert.equal(binding.memoryLevelForOffers("self_use", []), null);
 });
 
+function parentPreferences(minutes) {
+  return validRequest({
+    service_preferences: {
+      tutor_enabled: true,
+      english_practice_enabled: true,
+      memory_level: "growth_summary",
+      max_session_minutes: minutes,
+      quiet_hours: { start: "21:00", end: "07:00" },
+    },
+  });
+}
+
+test("a child session accepts 10 to 30 minutes and rejects the minute outside that range", () => {
+  assert.equal(binding.buildBindingRequest(parentPreferences(10)).service_preferences.max_session_minutes, 10);
+  assert.equal(binding.buildBindingRequest(parentPreferences(30)).service_preferences.max_session_minutes, 30);
+  assert.throws(() => binding.buildBindingRequest(parentPreferences(9)), /10 到 30/);
+  assert.throws(() => binding.buildBindingRequest(parentPreferences(31)), /10 到 30/);
+});
+
 test("rejects unknown service preference keys and invalid values", () => {
   assert.throws(
     () =>
@@ -268,7 +287,7 @@ test("rejects unknown service preference keys and invalid values", () => {
       binding.buildBindingRequest(
         validRequest({ service_preferences: { max_session_minutes: 240 } }),
       ),
-    /15 到 60/,
+    /10 到 30/,
   );
   assert.throws(
     () =>

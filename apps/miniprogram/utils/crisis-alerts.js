@@ -8,6 +8,7 @@
 
 const guardianPush = require("./guardian-push");
 const { SUBSCRIPTION_PUSH_ENABLED } = require("../config");
+const { UNREAD_SAFETY_COPY } = require("./trial-device-card");
 
 const BIND_SUBSCRIBE_UNAVAILABLE =
   "安全提醒订阅尚未开通，暂时不能完成这类绑定。请稍后再试，或联系支持。";
@@ -30,10 +31,7 @@ function normalizeAlert(item) {
     occurredAt: typeof item.occurred_at === "string" ? item.occurred_at : "",
     deliveryStatus: typeof item.delivery_status === "string" ? item.delivery_status : "",
     pinned: item.pinned === true,
-    message:
-      typeof item.message === "string" && item.message
-        ? item.message
-        : "有一条需要你关注的对话",
+    message: UNREAD_SAFETY_COPY,
   };
 }
 

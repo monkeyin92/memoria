@@ -1,7 +1,7 @@
 """Story-retell utterances for issue #261 (产品部 10/15, 合规 tiers 10/14).
 
 Rules must fire on risk language even when framed as a story. Ordinary fairy-tale
-plots stay quiet. Parent pin copy may note possible retelling; scripts never change.
+plots stay quiet. The parent title never names a guessed reason. Scripts never change.
 """
 
 from __future__ import annotations
@@ -105,9 +105,8 @@ def test_story_retell_corpus_routes_by_product_tier(
         assert route.notify_guardian is True
         assert route.possibly_story_retell is True
         assert is_story_retell_context(query) is True
-        assert "可能是在复述故事" in guardian_attention_copy(
-            possibly_story_retell=True
-        )
+        assert guardian_attention_copy(possibly_story_retell=True) == "有一条需要你关注的对话"
+        assert "复述" not in guardian_attention_copy(possibly_story_retell=True)
 
 
 @pytest.mark.parametrize(
@@ -135,7 +134,7 @@ def test_ordinary_parent_pin_copy_has_no_story_note() -> None:
 
 
 def test_plain_crisis_self_is_not_marked_as_story_retell() -> None:
-    """「我不想活了」 must crisis-route and must not get the retell pin note."""
+    """「我不想活了」 must crisis-route and must not be marked as a story retell."""
 
     query = "我不想活了"
     assert companion_safety_decision(query) == "crisis_self"
@@ -164,9 +163,10 @@ def test_issue_261_missed_sentences_are_marked_as_possible_retell(query: str) ->
     assert route.notify_guardian is True
     assert is_story_retell_context(query) is True
     assert route.possibly_story_retell is True
-    assert "可能是在复述故事" in guardian_attention_copy(
-        possibly_story_retell=route.possibly_story_retell
+    assert guardian_attention_copy(possibly_story_retell=route.possibly_story_retell) == (
+        "有一条需要你关注的对话"
     )
+    assert "复述" not in guardian_attention_copy(possibly_story_retell=True)
 
 
 @pytest.mark.parametrize(

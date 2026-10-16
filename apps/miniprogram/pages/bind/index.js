@@ -28,8 +28,7 @@ const {
   requireCrisisSubscribeBeforeBind,
   requiresCrisisSubscribeBeforeBind,
 } = require("../../utils/crisis-alerts");
-
-const SESSION_MINUTE_OPTIONS = [15, 30, 45, 60];
+const { SESSION_MINUTE_OPTIONS, SESSION_MINUTES_DEFAULT } = require("../../utils/session-length");
 const FAMILY_MEMBER_AGE_BANDS = ["under_14", "14_17", "adult"];
 const MEMORY_LEVEL_OPTIONS = [
   { value: "personal", label: "完整个人记忆" },
@@ -89,7 +88,7 @@ function defaultForm(mode, identity) {
       childAgeBand: "under_14",
       tutorEnabled: true,
       englishPracticeEnabled: true,
-      maxSessionMinutes: 30,
+      maxSessionMinutes: SESSION_MINUTES_DEFAULT,
       quietHoursStart: DEFAULT_QUIET_HOURS.start,
       quietHoursEnd: DEFAULT_QUIET_HOURS.end,
       subjectSource: "new",
@@ -146,7 +145,7 @@ Page({
       { value: "existing", label: "使用已有档案" },
     ],
     sessionMinuteOptions: SESSION_MINUTE_OPTIONS,
-    sessionMinuteIndex: 1,
+    sessionMinuteIndex: SESSION_MINUTE_OPTIONS.indexOf(SESSION_MINUTES_DEFAULT),
     quietHoursLabel: nightModeQuietHoursLabel(DEFAULT_QUIET_HOURS),
     memoryLevelOptions: MEMORY_LEVEL_OPTIONS,
     interviewFrequencyOptions: INTERVIEW_FREQUENCY_OPTIONS,

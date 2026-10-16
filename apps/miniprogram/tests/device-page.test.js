@@ -731,23 +731,23 @@ test("the guardian edits session limits from the device page and sees the signed
     "夜间模式：21:00–07:00（这段时间点屏只会说晚安）",
   );
 
-  page.onLimitsMinutesChange({ detail: { value: "3" } });
+  page.onLimitsMinutesChange({ detail: { value: "15" } });
   page.onLimitsQuietStartChange({ detail: { value: "22:00" } });
   assert.equal(
     page.data.limitsQuietLabel,
     "夜间模式：22:00–07:00（这段时间点屏只会说晚安）",
   );
-  profilePayload = limitsProfile(60, "22:00", "07:00", 2);
+  profilePayload = limitsProfile(25, "22:00", "07:00", 2);
   await page.confirmLimitsSheet();
   assert.deepEqual(limitsWrites(), [
     {
       method: "PUT",
       deviceId: "dev_1",
-      data: { max_session_minutes: 60, quiet_hours: { start: "22:00", end: "07:00" } },
+      data: { max_session_minutes: 25, quiet_hours: { start: "22:00", end: "07:00" } },
     },
   ]);
   assert.equal(page.data.limitsSheetVisible, false);
-  assert.equal(page.data.sessionLimits.maxSessionLabel, "60 分钟");
+  assert.equal(page.data.sessionLimits.maxSessionLabel, "25 分钟");
   assert.equal(page.data.sessionLimits.quietStart, "22:00");
 
   // A window with the same start and end means "no rest time"; it is not sent.
@@ -778,13 +778,13 @@ test("the guardian edits session limits from the device page and sees the signed
       modals.push(options);
       options.success({ confirm: true });
     };
-    profilePayload = limitsProfile(60, "09:00", "22:00", 3);
+    profilePayload = limitsProfile(25, "09:00", "22:00", 3);
     await page.confirmLimitsSheet();
     assert.deepEqual(limitsCalls, [
       {
         method: "PUT",
         deviceId: "dev_1",
-        data: { max_session_minutes: 60, quiet_hours: { start: "09:00", end: "22:00" } },
+        data: { max_session_minutes: 25, quiet_hours: { start: "09:00", end: "22:00" } },
       },
     ]);
     assert.equal(page.data.sessionLimits.quietStart, "09:00");
@@ -800,7 +800,7 @@ test("the guardian edits session limits from the device page and sees the signed
   await page.confirmLimitsSheet();
   assert.equal(page.data.limitsSheetVisible, true);
   assert.notEqual(page.data.limitsError, "");
-  assert.equal(page.data.sessionLimits.maxSessionLabel, "60 分钟");
+  assert.equal(page.data.sessionLimits.maxSessionLabel, "25 分钟");
   limitsFailure = false;
 });
 
@@ -828,9 +828,9 @@ test("the 单次上限 slider keeps an unset quiet window unset on the wire", as
   const page = instantiate(pageDefinition);
   await page.onShow();
   assert.equal(page.data.sessionLimits.quietStart, "");
-  await page.onLimitsMinutesSlider({ detail: { value: 60 } });
+  await page.onLimitsMinutesSlider({ detail: { value: 10 } });
   assert.deepEqual(limitsWrites(), [
-    { method: "PUT", deviceId: "dev_1", data: { max_session_minutes: 60, quiet_hours: null } },
+    { method: "PUT", deviceId: "dev_1", data: { max_session_minutes: 10, quiet_hours: null } },
   ]);
 });
 
@@ -886,7 +886,7 @@ test("the 每天上限 slider saves the daily budget with the current cap and qu
   limitsFailure = false;
   try {
     const { page, text } = await showDailyLimits(DAILY_LIMITS, dailyLimitsProfile("ses_daily_save"));
-    assert.match(text, /单次上限 30 分钟 15 分钟 60 分钟 每天上限 45 分钟 15 分钟 60 分钟/);
+    assert.match(text, /单次上限 30 分钟 10 分钟 30 分钟 每天上限 45 分钟 15 分钟 60 分钟/);
 
     await page.onDailyChatMinutesSlider({ detail: { value: 50 } });
     assert.deepEqual(limitsWrites(), [], "a release that snaps back to the stored 45 saves nothing");
@@ -903,10 +903,10 @@ test("the 每天上限 slider saves the daily budget with the current cap and qu
     assert.match(visibleText(renderPage("pages/device/index", page.data)), /18 \/ 60 分钟 今天还可以聊 42 分钟/);
 
     limitsCalls.length = 0;
-    profilePayload = dailyLimitsProfile("ses_daily_save", { maxSeconds: 2700, dailySeconds: 3600, epoch: 3 });
-    await page.onLimitsMinutesSlider({ detail: { value: 45 } });
+    profilePayload = dailyLimitsProfile("ses_daily_save", { maxSeconds: 1200, dailySeconds: 3600, epoch: 3 });
+    await page.onLimitsMinutesSlider({ detail: { value: 20 } });
     assert.deepEqual(limitsWrites(), [
-      { method: "PUT", deviceId: "dev_1", data: { max_session_minutes: 45, quiet_hours: { start: "21:00", end: "07:00" } } },
+      { method: "PUT", deviceId: "dev_1", data: { max_session_minutes: 20, quiet_hours: { start: "21:00", end: "07:00" } } },
     ]);
   } finally {
     limitsPayload = null;

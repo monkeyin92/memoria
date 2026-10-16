@@ -5,6 +5,11 @@ from pathlib import Path
 
 import pytest
 from services.common.daily_chat_limit import DAILY_CHAT_SECONDS_KEY
+from services.common.session_length import (
+    SESSION_MINUTES_DEFAULT,
+    SESSION_MINUTES_MAX,
+    SESSION_MINUTES_MIN,
+)
 from services.policy.engine import DEFAULT_QUIET_HOURS
 
 MINIPROGRAM_UTILS = Path(__file__).resolve().parents[3] / "apps/miniprogram/utils"
@@ -26,3 +31,20 @@ def test_the_miniprogram_defaults_to_the_quiet_hours_the_policy_signs() -> None:
         source,
         re.MULTILINE,
     ) == [DEFAULT_QUIET_HOURS]
+
+
+@pytest.mark.hermetic
+def test_the_miniprogram_uses_the_same_session_length_range() -> None:
+    source = (MINIPROGRAM_UTILS / "session-length.js").read_text(encoding="utf-8")
+    found = dict(
+        re.findall(
+            r"^const (SESSION_MINUTES_(?:MIN|MAX|DEFAULT)) = (\d+);$",
+            source,
+            re.MULTILINE,
+        )
+    )
+    assert found == {
+        "SESSION_MINUTES_MIN": str(SESSION_MINUTES_MIN),
+        "SESSION_MINUTES_MAX": str(SESSION_MINUTES_MAX),
+        "SESSION_MINUTES_DEFAULT": str(SESSION_MINUTES_DEFAULT),
+    }
