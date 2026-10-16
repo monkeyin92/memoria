@@ -149,7 +149,7 @@ function fixedDate(now) {
   return FixedDate;
 }
 
-function loadPage(pagePath, { api = {}, storage = {}, config, systemInfo, app = {}, now, files } = {}) {
+function loadPage(pagePath, { api = {}, storage = {}, config, systemInfo, app = {}, now, files, effectiveOn } = {}) {
   clearProjectModules();
   const { wx, calls } = createWx({ storage, systemInfo, files });
   let definition = null;
@@ -173,6 +173,15 @@ function loadPage(pagePath, { api = {}, storage = {}, config, systemInfo, app = 
 
   injectModule("utils/api.js", api);
   if (config) injectModule("config.js", config);
+  if (effectiveOn !== undefined) {
+    const legalPath = require.resolve(path.join(ROOT, "utils/legal-release.js"));
+    const real = require(legalPath);
+    injectModule("utils/legal-release.js", {
+      EFFECTIVE_ON: effectiveOn,
+      consentLocked: real.consentLocked,
+      releaseChip: (value) => real.releaseChip(value === undefined ? effectiveOn : value),
+    });
+  }
   require(path.join(ROOT, pagePath));
   if (!definition) throw new Error(`${pagePath} did not call Page()`);
 

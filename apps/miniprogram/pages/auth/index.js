@@ -3,7 +3,7 @@ const { statusBarStyle } = require("../../utils/nav-inset");
 const { leavePage } = require("../../utils/nav-back");
 const { isTabRoute, routeOf } = require("../../utils/tab-routes");
 const { openPrivacyContract } = require("../../utils/privacy-contract");
-const { releaseChip } = require("../../utils/legal-release");
+const legalRelease = require("../../utils/legal-release");
 const { CONSENT_AGREEMENT_HINT, loadUserAgreement } = require("../../utils/legal-doc");
 
 const CONSENT_FACTS = [
@@ -17,10 +17,11 @@ const CONSENT_FACTS = [
 const CONSENT_REQUIRED = "请先阅读并同意《隐私保护指引》和《监护人同意书》。";
 
 function agreementFields() {
-  const pending = loadUserAgreement().pending;
+  const locked = legalRelease.consentLocked(loadUserAgreement().pending, legalRelease.EFFECTIVE_ON);
   return {
-    agreementPending: pending,
-    agreementHint: pending ? CONSENT_AGREEMENT_HINT : "",
+    agreementPending: locked,
+    agreementHint: locked ? CONSENT_AGREEMENT_HINT : "",
+    releaseChip: legalRelease.releaseChip(),
   };
 }
 
@@ -51,7 +52,6 @@ Page({
     redirect: "/pages/home/index",
     reasonHint: "",
     needsSalutation: false,
-    releaseChip: releaseChip(),
     facts: CONSENT_FACTS,
     ...agreementFields(),
   },

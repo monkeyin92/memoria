@@ -36,10 +36,51 @@ test("an empty effective date stays 内测版 and a given date is shown as given
 const READY_AGREEMENT = "# 用户协议\n\n## 正文\n\n甲。\n";
 const MARKED_AGREEMENT = "# 用户协议\n\n## 正文\n\n<!-- agreement: pending -->\n\n这是一段已经写好的协议正文，用来确认占位标记还在时不能勾选。\n";
 
-test("consent links open their documents, and a finished agreement can be ticked before those documents are opened", async () => {
+test("consent stays locked unless the agreement body and the effective date are both present", async () => {
+  const hint = "用户协议正在定稿，定稿后才能勾选同意";
+  const cases = [
+    { name: "只缺正文", agreement: MARKED_AGREEMENT, effectiveOn: "2026年4月1日", locked: true },
+    { name: "正文缺失", agreement: "", effectiveOn: "2026年4月1日", locked: true },
+    { name: "只缺日期", agreement: READY_AGREEMENT, effectiveOn: "", locked: true },
+    { name: "日期只有空白", agreement: READY_AGREEMENT, effectiveOn: "  ", locked: true },
+    { name: "都缺", agreement: MARKED_AGREEMENT, effectiveOn: "", locked: true },
+    { name: "都齐", agreement: READY_AGREEMENT, effectiveOn: "2026年4月1日", locked: false },
+  ];
+  for (const item of cases) {
+    const harness = loadPage("pages/auth/index", {
+      ...fx.guest(),
+      files: { "legal/user-agreement.md": item.agreement },
+      effectiveOn: item.effectiveOn,
+    });
+    await harness.run({ reason: "view_dashboard", skip_restore: "1", debug: "1", consent: "1" });
+    try {
+      const html = renderPage("pages/auth/index", harness.page.data);
+      const text = visibleText(html);
+      assert.equal(harness.page.data.consented, false, item.name);
+      harness.page.toggleConsent();
+      if (item.locked) {
+        assert.match(html, /class="auth-consent auth-consent-locked"/, item.name);
+        assert.match(text, new RegExp(hint), item.name);
+        assert.equal(harness.page.data.consented, false, item.name);
+      } else {
+        assert.doesNotMatch(html, /class="auth-consent auth-consent-locked"/, item.name);
+        assert.equal(harness.page.data.agreementHint, "", item.name);
+        assert.doesNotMatch(text, new RegExp(hint), item.name);
+        assert.equal(harness.page.data.consented, true, item.name);
+        assert.equal(harness.page.data.releaseChip, "内测版 · 2026年4月1日生效");
+      }
+      assert.doesNotMatch(text, /草稿/, item.name);
+    } finally {
+      harness.restore();
+    }
+  }
+});
+
+test("consent links open their documents before the guardian ticks a finished release", async () => {
   const harness = loadPage("pages/auth/index", {
     ...fx.guest(),
     files: { "legal/user-agreement.md": READY_AGREEMENT },
+    effectiveOn: "2026年4月1日",
   });
   await harness.run({ redirect: "/pages/home/index", reason: "view_dashboard" });
   try {
@@ -54,39 +95,10 @@ test("consent links open their documents, and a finished agreement can be ticked
       [{ url: "/pages/guardian-consent/index" }],
     );
     assert.equal(harness.page.data.consented, false);
-    assert.equal(harness.page.data.agreementHint, "");
-    assert.doesNotMatch(html, /class="auth-consent auth-consent-locked"/);
     harness.page.toggleConsent();
     assert.equal(harness.page.data.consented, true);
-    assert.equal(harness.page.data.releaseChip, "内测版");
-    assert.doesNotMatch(visibleText(html), /草稿/);
   } finally {
     harness.restore();
-  }
-});
-
-test("a pending or missing agreement locks the consent tick and shows the exact hint", async () => {
-  assert.equal(presentUserAgreement(MARKED_AGREEMENT).pending, true);
-  assert.equal(presentUserAgreement("").pending, true);
-  const cases = [
-    ["legal/user-agreement.md", MARKED_AGREEMENT],
-    ["legal/user-agreement.md", ""],
-  ];
-  for (const [file, contents] of cases) {
-    const harness = loadPage("pages/auth/index", { ...fx.guest(), files: { [file]: contents } });
-    await harness.run({ reason: "view_dashboard" });
-    try {
-      const html = renderPage("pages/auth/index", harness.page.data);
-      const text = visibleText(html);
-      assert.match(html, /class="auth-consent auth-consent-locked"/);
-      assert.match(text, /用户协议正在定稿，定稿后才能勾选同意/);
-      assert.equal(harness.page.data.consented, false);
-      harness.page.toggleConsent();
-      assert.equal(harness.page.data.consented, false);
-      assert.doesNotMatch(text, /草稿/);
-    } finally {
-      harness.restore();
-    }
   }
 });
 

@@ -6,9 +6,14 @@ const fx = require("./fixtures");
 
 const { authed, guest } = fx;
 const READY_AGREEMENT = "# 用户协议\n\n## 正文\n\n甲。\n";
+const FIXTURE_EFFECTIVE_ON = "2026年4月1日";
 
 function withReadyAgreement(harness) {
-  return { ...harness, files: { "legal/user-agreement.md": READY_AGREEMENT } };
+  return {
+    ...harness,
+    files: { "legal/user-agreement.md": READY_AGREEMENT },
+    effectiveOn: FIXTURE_EFFECTIVE_ON,
+  };
 }
 
 const PAGES = [

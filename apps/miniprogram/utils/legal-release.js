@@ -1,9 +1,17 @@
 const EFFECTIVE_ON = "";
 
+function releaseDate(effectiveOn = EFFECTIVE_ON) {
+  return typeof effectiveOn === "string" ? effectiveOn.trim() : "";
+}
+
 function releaseChip(effectiveOn = EFFECTIVE_ON) {
-  const date = typeof effectiveOn === "string" ? effectiveOn.trim() : "";
+  const date = releaseDate(effectiveOn);
   if (!date) return "内测版";
   return `内测版 · ${date}生效`;
 }
 
-module.exports = { EFFECTIVE_ON, releaseChip };
+function consentLocked(agreementPending, effectiveOn = EFFECTIVE_ON) {
+  return Boolean(agreementPending) || !releaseDate(effectiveOn);
+}
+
+module.exports = { EFFECTIVE_ON, consentLocked, releaseChip };

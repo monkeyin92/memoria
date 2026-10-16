@@ -25,12 +25,14 @@ function authApi({ restoreError = { code: "phone_authorization_required" }, logi
 }
 
 const READY_AGREEMENT = "# 用户协议\n\n## 正文\n\n甲。\n";
+const FIXTURE_EFFECTIVE_ON = "2026年4月1日";
 
 async function openAuth(options) {
   const { api, logins } = authApi(options);
   const harness = loadPage("pages/auth/index", {
     api,
     files: { "legal/user-agreement.md": READY_AGREEMENT },
+    effectiveOn: FIXTURE_EFFECTIVE_ON,
   });
   await harness.run({ redirect: "/pages/home/index", reason: "view_dashboard" });
   const navigations = () =>
@@ -44,7 +46,7 @@ test("consent screen shows facts, guardian consent and both choices before any l
     const text = visibleText(renderPage("pages/auth/index", harness.page.data));
     assert.equal(
       text,
-      "内测版 开始前， 请先确认这几件事 作为孩子的监护人，你需要知道我们实际会处理哪些信息。 " +
+      "内测版 · 2026年4月1日生效 开始前， 请先确认这几件事 作为孩子的监护人，你需要知道我们实际会处理哪些信息。 " +
         "对话经过我们的服务器 孩子说的话会经服务器处理后再回复 保存对话摘要 原话和录音只用来当场回应，不保存 " +
         "长期只存三项 孩子的称呼、喜好、宠物名 回应由 AI 生成 会明确标识；模型训练默认关闭 " +
         "设备没有摄像头 不拍照，也不录像 " +
