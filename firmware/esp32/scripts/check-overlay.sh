@@ -19,6 +19,10 @@ for script in "$SCRIPT_DIR"/*.sh; do
     rg -q '^set -euo pipefail$' "$script" || die "missing strict shell mode: $script"
 done
 
+"$python_bin" "$SCRIPT_DIR/identity_guard.py" scan \
+    "$MEMORIA_FIRMWARE_ROOT/overlay" \
+    "$SCRIPT_DIR"
+
 rg -Fq 'WAKE_WORD_MODEL="${MEMORIA_FIRMWARE_WAKE_WORD_MODEL:-}"' \
     "$SCRIPT_DIR/build.sh" || die "product build must use the board's Memoria wake word by default"
 
@@ -616,6 +620,12 @@ if any("xiaozhi" in str(value).casefold() for value in flash_files.values()):
 PY
 if find "$MEMORIA_ARTIFACT_DIR" -maxdepth 1 -type f -name '*-xiaozhi.bin' -print -quit | rg -q .; then
     die "upstream-named product artifact remains in artifacts/"
+fi
+if find "$MEMORIA_ARTIFACT_DIR" -maxdepth 1 -type f -name '*merged.bin' -print -quit | rg -q .; then
+    die "build published a merged.bin full-chip image"
+fi
+if [[ -e "$MEMORIA_UPSTREAM_DIR/build/merged-binary.bin" ]]; then
+    die "build left merged-binary.bin in the tree"
 fi
 if rg -q '^CONFIG_MEMORIA_KEEP_AWAKE=y$' "$sdkconfig"; then
     if rg -q '^CONFIG_MEMORIA_BENCH_SERIAL=y$' "$sdkconfig"; then
