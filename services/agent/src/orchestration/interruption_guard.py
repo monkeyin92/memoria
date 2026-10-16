@@ -158,6 +158,7 @@ _STOP_LEXICON: tuple[_StopLexeme, ...] = (
     _PrefixStop("不听了", _QUIET_ACK),
     _PrefixStop("停一下", _YIELD_ACK),
     _PrefixStop("停下", _QUIET_ACK, glued_followers=("来",)),
+    _ExactStop("停下来", _QUIET_ACK),
     _PrefixStop("暂停", _QUIET_ACK),
     _PrefixStop("安静", _QUIET_ACK),
     _PrefixStop("闭嘴", _QUIET_ACK),
@@ -477,16 +478,28 @@ def _stop_span_at(text: str, start: int) -> tuple[_StopLexeme, int] | None:
     return max(spans, key=lambda candidate: candidate[1], default=None)
 
 
-def _match_stop(normalized: str) -> _StopLexeme | None:
+@dataclass(frozen=True)
+class _StopHit:
+    lexeme: _StopLexeme
+    start: int
+    end: int
+
+
+def _match_stop(normalized: str) -> _StopHit | None:
     stripped = _strip_leading_interrupt_fillers(normalized)
     starts = range(len(stripped)) if len(normalized) <= _STOP_MAX_CHARS else range(1)
-    spans = [
-        (span[0], span[1] - start)
+    hits = [
+        _StopHit(span[0], start, span[1])
         for start in starts
         if start == 0 or not stripped[:start].endswith(_STOP_NEGATORS)
         if (span := _stop_span_at(stripped, start)) is not None
     ]
-    return max(spans, key=lambda candidate: candidate[1], default=(None, 0))[0]
+    return max(hits, key=lambda hit: hit.end - hit.start, default=None)
+
+
+def is_embedded_short_stop(text: str) -> bool:
+    hit = _match_stop(_normalize_stop_text(text))
+    return hit is not None and hit.start > 0
 
 
 def _strip_stop_spans(normalized: str) -> str:
@@ -551,7 +564,7 @@ def interrupt_ack_phrase(text: str) -> str:
     acks = [command.ack for command in commands if not isinstance(command, str)]
     if not acks:
         match = _match_stop(normalized)
-        acks = [] if match is None else [match.ack]
+        acks = [] if match is None or match.start > 0 else [match.lexeme.ack]
     if _QUIET_ACK in acks or any(phrase in t for phrase in _STOP_TALKING_PHRASES):
         return _QUIET_ACK
     return _YIELD_ACK
@@ -597,9 +610,10 @@ def is_interrupt_command_only(text: str) -> bool:
     """
     if is_completion_ack_only(text):
         return True
-    commands, remainder = _peel_commands(_normalize_stop_text(text))
+    normalized = _normalize_stop_text(text)
+    commands, remainder = _peel_commands(normalized)
     if not commands:
-        return False
+        return is_embedded_short_stop(text)
     while remainder:
         particle = next(
             (

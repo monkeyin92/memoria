@@ -323,7 +323,7 @@ def test_primarily_non_chinese_script_detects_short_hangul_rescue() -> None:
 def test_repeated_bare_stop_is_a_command_but_stop_words_in_nouns_are_not() -> None:
     for text in ("停", "停停", "停停停", "停，停"):
         assert is_interrupt_command_only(text), text
-    for text in ("停车", "停电了", "停停车", "我想停一下"):
+    for text in ("停车", "停电了", "停停车"):
         assert not is_interrupt_command_only(text), text
 
 

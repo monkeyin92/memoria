@@ -18,6 +18,7 @@ from services.agent.src.orchestration.interruption_guard import (
     is_backchannel,
     is_completion_ack_only,
     is_conversation_close_only,
+    is_embedded_short_stop,
     is_explicit_interrupt,
     is_interrupt_command_only,
     is_resume_command_only,
@@ -358,7 +359,9 @@ def route_utterance(
             enter_chat=False,
             should_interrupt=True,
             speaker_gate_override=True,
-            ack_phrase=interrupt_ack_phrase(text),
+            ack_phrase=(
+                None if is_embedded_short_stop(text) else interrupt_ack_phrase(text)
+            ),
             normalized_text=normalized,
         )
 
