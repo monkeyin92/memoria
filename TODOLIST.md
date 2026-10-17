@@ -1,14 +1,14 @@
 # Memoria 优先级执行清单
 
-更新于 2026-10-12｜**本文件只留未关闭事项**：做完的条目直接删除；收据在 `HANDOFF.md` 与 `docs/HANDOFF-archive-*.md`，真机轮次的数字在 `docs/acceptance/*/findings.md`，被删掉的全文在 git 历史里。条目编号被代码注释与文档引用，已完成而删掉的编号见文末「编号索引」。线上现状（当前发布、固件、小程序体验版、主机资源）以 `HANDOFF.md` 开头「当前生产快照」为准，这里只放不得越界宣称的边界。
+更新于 2026-10-17｜**本文件只留未关闭事项**：做完的条目直接删除；收据在 `HANDOFF.md` 与 `docs/HANDOFF-archive-*.md`，真机轮次的数字在 `docs/acceptance/*/findings.md`，被删掉的全文在 git 历史里。条目编号被代码注释与文档引用，已完成而删掉的编号见文末「编号索引」。线上现状（当前发布、固件、小程序体验版、主机资源）以 `HANDOFF.md` 开头「当前生产快照」为准，这里只放不得越界宣称的边界。
 
 ## 当前边界（不得越界宣称）
 
 ```yaml
-enabled_release: 20261010-stale-interim-v1  # 整栈，源 bef8e117（PR #198，07:58:53–07:59:39 CST 切流，08:01 finish）；旧临时文字不再当新边缘证据，继承 #197 的首帧之后保护。16:33–16:51 只读核验三角色 healthy/重启0、public ready；media-edge 仍为 20261002-late-progress-v1 / f3fe8742。回滚 → 20261009-textless-spare-v1（*:rollback-20261010-stale-interim-v1-pre，各 image id 与上一栈一致；本次未演练）。真实目标路径验收未通过，见 docs/acceptance/run-20261010-verify/findings.md
-production_host: 110.42.235.198（2026-10-05 01:37 起，原 pocketSparks 生产机，与 hr-tracker / MySQL / aginice.cn 共用；ssh 别名 memoria-prod；Control API 在 127.0.0.1:18791；4 vCPU、内存 3.7 GiB、盘 40 GB；无持续数据库备份，整栈回滚深度 1）；旧机 122.51.108.140（别名 memoria-prod-old）只剩 8443 中继，2026-10-06 到期
+enabled_release: 20261016-readiness-b54189c  # 整栈 control-api + bridge，镜像 revision b54189c5（PR #296），容器 10-17 09:13 CST 起，healthy/重启0，public ready、smokes passed（10-17 11:53–12:10 只读核对）。绕过 release-ops.sh 上线：无 freeze/cutover/finish 日志，current 树的 .cutover 拷自 20261016-log-redaction-v1，所以主机 rollback 会回到 20261016-session-cap-fallback-v1 / f6e46b56（跳过 #287 日志脱敏）；只退一步要手工用 *:20261016-log-redaction-v1 镜像。main 在它之后还有 #297–#302 未发布（#299 改了 control_api/governance/guardian 并带历史行兜底脚本 scripts/strip_minor_evidence_text.py，生产未跑）。media-edge 仍为 20261002-late-progress-v1 / f3fe8742；speaker-model 10-14 已退役（#225）。10-13 起 24 次发布见 HANDOFF「2026-10-13 至 10-17 整栈发布链」
+production_host: 110.42.235.198（2026-10-05 01:37 起，原 pocketSparks 生产机，与 hr-tracker / MySQL / aginice.cn 共用；ssh 别名 memoria-prod；Control API 在 127.0.0.1:18791；4 vCPU、内存 3.7 GiB（swap 已用约 1.2 GiB）、盘 40 GB，10-17 已用 76%（过 75% 告警线）；无持续数据库备份，只剩 10-16 三次 freeze 的 dump，b54189c 没 freeze）；旧机 122.51.108.140 实例与云盘已于 10-14 释放、无快照（见 docs/compliance/deletion-record-20261014.md 补记）
 public_domain: aginice.cn（2026-10-05 起，aigcnice.com 弃用、不做桥；证书 2027-01-02 到期，最迟 2026-12-19 换，见「定期运维」；小程序体验版、固件与机器人身份都已指向它）
-control_api_release_lane: 整栈走 scripts/release_ops.sh（见 docs/runbooks/release-rollback.md）；主机 /root/memoria-release/release-ops.sh SHA-256 为 a8dfb1ba…，PREV=20261009-textless-spare-v1 / 2f70ed2a…，与当前 20261010 发布时的回滚目标一致。当前候选分支已将仓库脚本及测试断言前移到 PREV=20261010-stale-interim-v1 / bef8e117；尚未安装到主机，生产文件未改。下次整栈发布前按既有流程安装并核对该版本。Control=18791、预检=28791/28891；media-edge compose 仍依赖 releases/20261004-first-warm-v1，不删；数据层依赖 20260827-architecture-split-v1/infra。component 快车道与依赖漂移限制见运行手册。
+control_api_release_lane: 整栈走 scripts/release_ops.sh（见 docs/runbooks/release-rollback.md）；主机 /root/memoria-release/release-ops.sh SHA-256 eafb6d78…，与 main 一致（10-17 核对）。自 #225 起 PREV 在 freeze 时从运行中的容器推出、写进 .cutover/prev-release，不再在脚本里手工 bump。服务只剩 control-api 与 voice-core-media-bridge；Control=18791、预检=28791/28891；media-edge compose 仍依赖 releases/20261004-first-warm-v1，不删；数据层依赖 20260827-architecture-split-v1/infra
 memory_candidate_visibility: code=main 0059368 / enabled=true（随整栈上线）/ verified=SQLite/HTTP/主体隔离/评测适配器回归；四份 2026-09-23 评测收据为上线前 parent_baseline（固定集 recall@5/10=0.857、未见集 0.4、双泄漏 0），真实 PG candidate 行为与线上带鉴权读口未单独取证
 direct_real_device_verified: false
 full_duplex_verified: false
@@ -21,9 +21,9 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 
 ## 下一步与执行边界
 
-1. **当前已发布，不重复发布 #198**：20261010-stale-interim-v1 / bef8e117 于 10-10 07:59 上线，六步 PASS；16:33–16:51 只读核对 current、三角色身份/health 与 public ready。回滚目标 20261009（本次未演练），清理 20261007 的收据已有，incoming 留 20261009/20261010。细节与已有两轮的复盘在 docs/acceptance/run-20261010-verify/findings.md。
-2. **真机窗口（每轮语音/每次刷机要你点头）**：10-10 已有两轮已复盘，不能算 #197/#198 的目标路径通过。输入、关闭及 ASR 重叠诊断与 `voice_soak` 新判据已在本地候选分支，Agent/脚本和本地门禁已通过，远端 CI 随候选 PR 核验；t038 差分回放没有证明行为缺陷，新 reopen-window 原因日志尚未发布。生产切流和每轮真机语音另需授权；获准进入设备窗口后，先核对正常问句的 VAD / endpoint / 终稿，再覆盖 #197/#198 目标事件与真实打断，之后完成 N-5 ≥30 分钟混合长稳。M 系列产品固件仍为 build24；动画新上板另问，不排在语音问题之前。后续 P0 窗口覆盖孩子绑定、跨天人格/记忆、撤销、TLS/WSS 重连、长答/故障矩阵和 P0-04 安全闭环；孩子真实声音取证仍按你此前决定暂不做。
-3. **不动线上就能直接做的代码项**：P0-04 剩余部分、P1-04 自定义声音闭环、P2-06 回放评测、P2-04 Python 侧进程退出注入。
+1. **线上现状要先补齐收据**：当前 `20261016-readiness-b54189c` 不是六步发布（见 HANDOFF「当前生产快照」）。下一次整栈发布照常走 `release_ops.sh`（freeze 会从运行容器取 PREV，回滚偏差随之消失），并把 #297–#302 一起带上；#299 的历史行兜底脚本要在发布后单独授权执行。10-15 stop-standby（#270 未合并分支）和 10-16 device-registration（#294）两次回滚的原因主机上没有记录，要从当时操作的会话补。发布前先腾盘（76%，10-14 已有一次 verify-load 盘满中止），清理须你授权。
+2. **真机窗口（每轮语音/每次刷机要你点头）**：10-10 已有两轮已复盘，不能算 #197/#198 的目标路径通过。输入、关闭及 ASR 重叠诊断与 `voice_soak` 新判据已在本地候选分支，Agent/脚本和本地门禁已通过，远端 CI 随候选 PR 核验；t038 差分回放没有证明行为缺陷，新 reopen-window 原因日志尚未发布。生产切流和每轮真机语音另需授权；获准进入设备窗口后，先核对正常问句的 VAD / endpoint / 终稿，再覆盖 #197/#198 目标事件与真实打断，之后完成 N-5 ≥30 分钟混合长稳。板上固件 10-05 之后没有刷机收据（issue #290 显示 App 2.4.2、身份分区不可用、USB wake 开麦即堆损坏重启，修复 PR #301 未合并），进设备窗口前先确认板上构建并处理 #290；动画新上板另问，不排在语音问题之前。后续 P0 窗口覆盖孩子绑定、跨天人格/记忆、撤销、TLS/WSS 重连、长答/故障矩阵和 P0-04 安全闭环；孩子真实声音取证仍按你此前决定暂不做。
+3. **不动线上就能直接做的代码项**：issue #291（解绑选「保留数据」仍硬删摘要与档案）、#281 / #282 / #283 解绑擦除与去原文、P0-04 剩余部分、P2-06 回放评测、P2-04 Python 侧进程退出注入。
 4. **要你定的事（汇总；细节与选项在各自条目里，不挡以上步骤）**：
    - 线上与运维：固件 OTA 指针留 21 还是指回 8（「2026-09-28 收尾待办」）；新机每夜 `pg_dump` 做不做（P1-08，默认不做）；是否轮换数据库角色口令；P1-09 readiness 逾期的告警渠道；P1-02 两项线上调整；`MEMORIA_GUARDIAN_PUSH_ENABLED` 与话术专业审核、未成年人人格学习口径（P0-04）。
    - 产品口径：N-1 关键字唤醒的代码与开关随不随一起删；N-4 监护人看不看孩子原文、周小结的数据从哪来；N-6 听感、危机话术、天气城市；N-9 孩子闭集词表、置信度余量、规划器；N-10 `FUNASR_VOCABULARY_ID`；N-8 尚未归因的识别/endpoint、重叠拒绝与安静房间假回合阈值；N-13 / N-14 的 2.2 s 阈值、0.8–0.9 s 宽限中间值、影子模式的数据去向、「前半句先提交、后半句被丢」要不要单独立项；P2-03 已知缺口接不接受；P2-07 第 2 / 3 项；P2-08 里的 `self_model` 版本保护、PCM tap 留存、控制词与静默计时。
@@ -37,7 +37,7 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 - [ ] **新机没有持续数据库备份（P1-08）**：WAL 归档已在 2026-10-06 09:58–10:00 关闭（`archive_mode=off`，postgres 容器重建，归档卷 39 个文件 / 654 MB 已清空，盘剩 14 GB），不再增长；现在靠发布前 `freeze` 的 dump。要不要另做每夜 `pg_dump`，你定（默认不做）；以后若要重开归档，归档卷必须是 `999:999 0700` 并先做 base backup。
 - [ ] 旧域名残留（2026-10-06 已做掉大半）：新机 `sites-enabled/memoria-prod`（aigcnice.com 站点，已移到 `/etc/nginx/backup-20261005-domain-switch/memoria-prod.site.removed-20261006`）、`/etc/nginx/ssl/aigcnice.com/`（已删）、`/root/domain-switch-20261005/`（旧证书私钥、env 备份与四个脚本已删；**头像原值 TSV 与那份旧 env 备份留在 `/root/domain-switch-20261005-kept/`**，见下条）、`ALLOWED_ORIGINS` 的旧机 IP（已换成 `https://aginice.cn:8443,https://www.aginice.cn:8443`，备份 `/etc/memoria-control-api.env.pre-aginice-origins-20261006`）。**仍开着**：`/etc/memoria-control-api.env` 与 `/etc/memoria-agent.env` 的 `LIVEKIT_URL` 还指旧机（LiveKit 已退役，代码只在 `scripts/split_production_env.py` 的键名列表与测试里出现，没有容器在跑；要动它得再重建一次 control-api 与 bridge，值本身没用了，删不删你定）；`outputs/` 里指旧域名的脚本核对（未做）。
 - [ ] 你定：域切换时头像改写的数据回滚记录（`/root/domain-switch-20261005-kept/profiles-avatar-preimage-20261005-091021.tsv`，867 B，含孩子头像 URL 原值；那份旧 env 备份只留了控制台口令类的键值）留不留。切换本身没回滚过，我留着它做原值比对；确认不需要就删这个目录。
-- [ ] 旧机 122.51.108.140 2026-10-06 到期（时刻不明）：**截至 10-06 11:50 仍可连（`ssh memoria-prod-old` 通）**，所以别名和 known_hosts 条目没动；到期后删掉 ssh 别名 `memoria-prod-old` 与 `~/.ssh/known_hosts` 里旧机的条目；旧机上没迁的东西（WMS、13 GB WAL、7.3 GB `incoming`、旧发布树与回滚镜像）随机器消失，按你的决定不再保留。`aigcnice.com` 不做桥（已定）：仍用旧域名的别的设备 / 旧版小程序在旧机到期后连不上，据我所知没有。
+- [ ] 旧机 122.51.108.140 实例与云盘已于 10-14 释放、无快照（[删除记录补记](docs/compliance/deletion-record-20261014.md)）；剩本机 ssh 别名 `memoria-prod-old` 与 `~/.ssh/known_hosts` 里旧机的条目可删。
 - [ ] 新机资源偏紧：内存 3.7 GiB（Memoria 栈约 1.3–1.4 GiB，可用约 1.7 GiB，swap 已用约 0.6 GiB，与 pocketSparks 的 MySQL / node 共用），4 vCPU 约比旧机慢 1.3 倍。发布后 1–2 天看 `docker stats`、`free -m` 与时延（对照第十六轮 24 轮时延场景说完 → 首帧 p50 2.92 s）；不够就扩内存（你在控制台做）。
 - [ ] build 24 的时钟修复仍无证据：2026-10-05 22:56 的重绑一次过，但时钟多半是 21:32 拔插 USB 后清空的，老版本也能过；要证明得让机器人时钟比清单 `issued` 落后 5 分钟以上再绑。不紧迫，碰上再看串口（那次的记录在本机 git-ignored 的 `outputs/serial/robot-20261005-trial3-rebind.log`）。
 - [ ] 你定：是否轮换数据库角色口令。**两次本机会话记录里出现过口令**：一次 grep 把各角色连接串打进了会话记录（更早的会话），2026-10-06 我做维护窗口时用 `docker compose config` 核对线上数据层 compose，它把 postgres 服务的环境变量展开成了明文（`MEMORIA_DB_*_PASSWORD` 五个角色的键与值都在输出里，只在会话记录、没进仓库、没进文档、没出机器）。库不发布到宿主端口，风险限于本机会话记录的读权限；要轮换就是一次 `ALTER ROLE` + 两份 env 的改写 + 重建 control-api/bridge，你说了我做。
@@ -331,13 +331,6 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 - 待完成：设备验收：同一台设备绑定孩子后隔天体现孩子自己的表达风格，账号本人的人格不串入；建后年龄申报 UI；guardian 邀请 / 授权与声音撤销的 consent 决策 seam；运行中会话的 `next_safe_point` 主动重协商与 device → session 映射；同 binding 两个 subject 的人格 / 音色设备实听。
 - 完成条件：切换推进版本并使旧签名、上下文和音频失效；取消分配回落默认，克隆未 ready 回落设计音色；PG 与设备证据分开记录。入口：`routes/{identity_lifecycle,persona_assignment,custom_personas,multi_subject}.py`、`services/session_runtime/profile_service.py`、`apps/miniprogram/pages/{device,persona-custom,guardian,privacy}/`。
 
-### [ ] P1-04 自定义声音：样本上传到设备出声
-
-- 待完成：取得真实 provider 克隆 → 分配 → 设备可听的端到端耗时与失败证据。
-- 离线已接通：enrollment 用单一状态表区分 `over_budget`（仍在处理，可以离开）与 `reconciliation_required`（需人工核对，不伪造进度）；隐私页声音样本撤回调用声音档案删除接口，未登录、门禁关闭或接口失败时失败关闭。记忆撤回仍是单独提示。
-- 保持 `reconciliation_required` 为可恢复语义，不伪造 ready 或百分比；声纹 / 声音样本使用单独同意，未 ready 回落设计音色。
-- 完成条件：录音 → 上传 → 真实解码 → 训练 → ready / failed / 超时 → 分配 → 设备实听，连同拒绝、取消、重放、撤销和样本处置全链通过。
-
 ### [ ] P1-05 补权威会话状态，再做小程序三端验收
 
 - 待完成：小程序手机 / 电脑 / 开发工具同版本验收、Edge → Control 受鉴权只读状态出口，以及生产 / 设备验收。
@@ -466,6 +459,7 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 - N-12 不用唤醒词唤醒机器人：固件 build 20 的 USB `wake` 命令（PR #176），用法见上「真机测试约定」，收据 `docs/HANDOFF-archive-0924-1003.md`。
 - P1-12 旧媒体链去留：2026-09-29 随 `20260929-livekit-retire-v1` 下线并清理。
 - P2-02 多成员声纹与不依赖小程序的选人：并入上面的「暂缓」。
+- P1-04 自定义声音：撤销。2026-10-13 方案 B 删除了克隆数据与百炼音色，#264 加 `VOICE_CLONE_ENABLED` 开关，#289 删掉 control-api 的克隆 enrollment；以后要重做另立项。
 - M-4 预览编译加 ASan / UBSan：`firmware/esp32/scripts/preview_memoria_mascot.py --sanitize` 与 `test_compositor_is_clean_under_sanitizers`（5 个伙伴 × 3 条时间线）已入库，没有发现。
 - 2026-09-28 收尾待办里删掉的四项：writer-teardown 版本切换后的设备重连（此后多轮真机已覆盖）；`response_plan_cached reason=no_verified_runtime_profile`（09-28 的两次发生在设备信任开关 2026-10-01 00:30 打开之前，2026-10-06 只读查新机 voice-core 容器近 24 h 日志该签名 0 次，设备会话现在走本地安全计划，见 N-9 的规划器一条）；SenseVoice 救援 `httpx.ReadTimeout`（归 P1-02 ①）；回复首音时延（归 N-14）。
 - 边界 yaml 里原有的 `subject_scope_batch`、`account_to_subject_migrations`、`read_path_postgres_parity` 三项：账号 → 主体迁移于 2026-09-28 第 2 批删除，人格改为按使用人学习与读取（P1-03）；表结构保留在各 schema，git 历史可恢复。
