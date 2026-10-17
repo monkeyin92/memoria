@@ -178,6 +178,9 @@ function loadPage(pagePath, { api = {}, storage = {}, config, systemInfo, app = 
     const real = require(legalPath);
     injectModule("utils/legal-release.js", {
       EFFECTIVE_ON: effectiveOn,
+      INTERNAL_TEST_CONSENT_UNLOCK: real.INTERNAL_TEST_CONSENT_UNLOCK,
+      GUIDE_VERSION: real.GUIDE_VERSION,
+      CONSENT_DOC_VERSION: real.CONSENT_DOC_VERSION,
       consentLocked: real.consentLocked,
       releaseChip: (value) => real.releaseChip(value === undefined ? effectiveOn : value),
     });

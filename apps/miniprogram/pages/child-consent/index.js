@@ -3,7 +3,7 @@ const { isTabRoute, routeOf } = require("../../utils/tab-routes");
 const { openPrivacyContract } = require("../../utils/privacy-contract");
 const legalRelease = require("../../utils/legal-release");
 const { CONSENT_AGREEMENT_HINT, loadUserAgreement } = require("../../utils/legal-doc");
-const { grantChildInfoConsent } = require("../../utils/child-consent");
+const { grantChildInfoConsent, recordInternalTestConsentVersions } = require("../../utils/child-consent");
 
 const CONSENT_FACTS = [
   { icon: "server", title: "对话经过我们的服务器", subtitle: "孩子说的话会经服务器处理后再回复" },
@@ -12,6 +12,12 @@ const CONSENT_FACTS = [
   { icon: "info", title: "回应由 AI 生成", subtitle: "会明确标识；模型训练默认关闭" },
   { icon: "cam", title: "设备没有摄像头", subtitle: "不拍照，也不录像" },
 ];
+
+function consentOpenedByUnlock() {
+  if (legalRelease.INTERNAL_TEST_CONSENT_UNLOCK !== true) return false;
+  const pending = loadUserAgreement().pending;
+  return legalRelease.consentLocked(pending, legalRelease.EFFECTIVE_ON, false) === true;
+}
 
 function agreementFields() {
   const locked = legalRelease.consentLocked(loadUserAgreement().pending, legalRelease.EFFECTIVE_ON);
@@ -56,7 +62,9 @@ Page({
 
   confirmChildConsent() {
     if (this.data.agreementPending || !this.data.consented) return;
+    const viaUnlock = consentOpenedByUnlock();
     grantChildInfoConsent();
+    if (viaUnlock) recordInternalTestConsentVersions(true);
     const redirect = this.data.redirect;
     const pages = getCurrentPages();
     if (pages.length > 1) {
