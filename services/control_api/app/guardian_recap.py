@@ -30,6 +30,7 @@ from services.archive.domain import EvidenceEvent
 from services.common.llm_thinking import ThinkingMode, thinking_disabled
 from services.common.redaction import redact_pii
 from services.control_api.app.config import ControlSettings
+from services.guardian.retention import TEXT_WITHHELD_SUBJECT_CATEGORIES
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,6 @@ MOODS: Final = ("positive", "calm", "mixed", "low", "tense")
 VERBATIM_WINDOW: Final = 10
 _MAX_TRANSCRIPT_CHARS: Final = 12_000
 _MAX_UTTERANCE_CHARS: Final = 300
-_TEXT_WITHHELD_SUBJECT_CATEGORIES: Final[frozenset[str]] = frozenset({"minor", "unknown"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,7 +65,7 @@ def child_utterances(
             and payload.get("history_eligible") is True
             and payload.get("owner_projection_eligible") is True
             and payload.get("memory_retention") != "ephemeral_only"
-            and payload.get("subject_category") not in _TEXT_WITHHELD_SUBJECT_CATEGORIES
+            and payload.get("subject_category") not in TEXT_WITHHELD_SUBJECT_CATEGORIES
             and isinstance(text, str)
             and text.strip()
             and event.event_id not in seen

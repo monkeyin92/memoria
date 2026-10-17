@@ -37,6 +37,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Final
 
+from services.guardian.retention import TEXT_WITHHELD_SUBJECT_CATEGORIES
+
 SUBJECT_EXPORT_FORMAT_VERSION: Final[int] = 2
 SERVICE_PROVIDER: Final[str] = "Memoria"
 SELF_AUDIENCE: Final[str] = "self"
@@ -146,7 +148,7 @@ _RETENTION_WITHHELD_KEYS: Final[tuple[str, ...]] = (
     "owner_projection_eligible",
 )
 _EPHEMERAL_RETENTION: Final[str] = "ephemeral_only"
-_TEXT_WITHHELD_SUBJECT_CATEGORIES: Final[frozenset[str]] = frozenset({"minor", "unknown"})
+
 
 # The guardian audience gets a fixed bucket vocabulary instead of raw
 # ``event_type`` strings: the column is free text, and governance metadata must
@@ -627,7 +629,7 @@ def _retention_withheld(payload: Mapping[str, Any], *, session_scoped: bool) -> 
     """
 
     def _withdraws(source: Mapping[str, Any]) -> bool:
-        if source.get("subject_category") in _TEXT_WITHHELD_SUBJECT_CATEGORIES:
+        if source.get("subject_category") in TEXT_WITHHELD_SUBJECT_CATEGORIES:
             return True
         for key in _RETENTION_WITHHELD_KEYS:
             if source.get(key) is False:

@@ -92,6 +92,7 @@ from services.guardian.domain import GuardianStorePort
 from services.guardian.retention import (
     apply_memory_retention_ceiling,
     memory_retention_allowed,
+    payload_text_allowed,
 )
 from services.identity.domain import IdentityNotFoundError
 from services.identity.service import IdentityService
@@ -111,16 +112,6 @@ logger = logging.getLogger(__name__)
 _LOCAL_SAFE_PLANNER_POLICY_VERSION = "local-safe-fallback-v1"
 _DOUBAO_TTS_PROVIDER = "volcengine_doubao"
 _DOUBAO_PERSONAL_VOICE_MODEL = "seed-icl-2.0"
-_TEXT_WITHHELD_SUBJECT_CATEGORIES = frozenset({"minor", "unknown"})
-
-
-def _payload_text_allowed(payload: Mapping[str, Any]) -> bool:
-    return (
-        payload.get("memory_retention") != "ephemeral_only"
-        and payload.get("subject_category") not in _TEXT_WITHHELD_SUBJECT_CATEGORIES
-    )
-
-
 SESSION_BOUND_EVENT_TYPES = frozenset(
     {
         "speech.utterance_finalized",
@@ -2012,7 +2003,7 @@ async def timeline(
                 "generation_id": event.generation_id,
             }
             for event in bundle.evidence
-            if _payload_text_allowed(event.payload)
+            if payload_text_allowed(event.payload)
             and (event.session_id is None or event.payload.get("history_eligible") is True)
         ]
     }
@@ -2027,7 +2018,7 @@ def _actual_heard_item(event: EvidenceEvent) -> dict[str, Any] | None:
         and payload.get("actual_heard") is True
         and payload.get("history_eligible") is True
         and payload.get("owner_projection_eligible") is True
-        and _payload_text_allowed(payload)
+        and payload_text_allowed(payload)
         and isinstance(text, str)
         and text.strip()
         and event.session_id is not None
@@ -2124,7 +2115,7 @@ def _owner_turn_item(event: EvidenceEvent) -> dict[str, Any] | None:
         and event.speaker_class == "owner"
         and payload.get("history_eligible") is True
         and payload.get("owner_projection_eligible") is True
-        and _payload_text_allowed(payload)
+        and payload_text_allowed(payload)
         and isinstance(text, str)
         and text.strip()
         and event.session_id is not None
@@ -2329,7 +2320,6 @@ async def conversation_sessions(
         reverse=True,
     )[:limit]
     return {"items": items}
-
 
 
 def _search_item(item: Any) -> dict[str, Any]:

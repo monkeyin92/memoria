@@ -3,7 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Final
+
+TEXT_WITHHELD_SUBJECT_CATEGORIES: Final[frozenset[str]] = frozenset({"minor", "unknown"})
+
+
+def payload_text_allowed(payload: Mapping[str, Any]) -> bool:
+    return (
+        payload.get("memory_retention") != "ephemeral_only"
+        and payload.get("subject_category") not in TEXT_WITHHELD_SUBJECT_CATEGORIES
+    )
 
 
 def memory_retention_allowed(
@@ -46,4 +55,9 @@ def apply_memory_retention_ceiling(
     return result
 
 
-__all__ = ["apply_memory_retention_ceiling", "memory_retention_allowed"]
+__all__ = [
+    "TEXT_WITHHELD_SUBJECT_CATEGORIES",
+    "apply_memory_retention_ceiling",
+    "memory_retention_allowed",
+    "payload_text_allowed",
+]
