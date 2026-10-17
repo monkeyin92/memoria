@@ -31,15 +31,16 @@ test("child consent facts state only what the product does", () => {
   try {
     assert.deepEqual(
       harness.page.data.facts.map((fact) => fact.title),
-      ["对话经过我们的服务器", "保存对话摘要", "长期只存三项", "回应由 AI 生成", "设备没有摄像头"],
+      ["对话经过我们的服务器", "会交给这三家服务商", "保存对话摘要", "长期只存三项", "回应由 AI 生成", "设备没有摄像头"],
     );
     assert.deepEqual(
       harness.page.data.facts.map((fact) => fact.subtitle),
       [
         "孩子说的话会经服务器处理后再回复",
-        "录音只用来当场回应，默认不保存",
-        "孩子的称呼、喜好、宠物名",
-        "会明确标识；模型训练默认关闭",
+        "阿里云百炼把孩子的语音转成文字，也用文字帮忙查找记忆；DeepSeek 生成回复、做安全判断和摘要；豆包只拿到回复，把它读出来",
+        "摘要保存 30 天，录音只用来当场回应，不保存",
+        "孩子的称呼、喜好、宠物名，180 天没用会自动清除",
+        "对话时屏幕上一直有 AI 标识",
         "不拍照，也不录像",
       ],
     );
