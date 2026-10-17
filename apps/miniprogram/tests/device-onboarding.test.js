@@ -817,6 +817,18 @@ test("the setup pages speak plainly: no protocol terms, enums, ids or timestamps
   }
 });
 
+test("the claim step presents its window as a deadline, not a retry", () => {
+  const onboarding = fs
+    .readFileSync(path.join(root, "pages/device-onboarding/index.wxml"), "utf8")
+    .replace(/<!--[\s\S]*?-->/g, "");
+  // A claim cannot be reserved again on the same QR; only a new code from the
+  // robot's screen can continue the setup, so the page must not promise retry.
+  assert.doesNotMatch(onboarding, /超时也没关系|重新确认一次|会自动释放/);
+  assert.match(onboarding, /请在这个时间前完成设置/);
+  assert.match(ERROR_MESSAGES.CLAIM_EXPIRED, /新二维码/);
+  assert.doesNotMatch(ERROR_MESSAGES.CLAIM_EXPIRED, /重新确认一次/);
+});
+
 test("the onboarding page shows networks by signal and the claim deadline as a clock time", () => {
   const previousPage = global.Page;
   const previousWx = global.wx;
