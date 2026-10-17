@@ -138,19 +138,3 @@ index bb028d17d9dae1505dcd2e7e4d19f26786a54b23..7d2fb9d71a050ccee7b39ca767800d19
  #endif
      }
  
-diff --git a/main/audio/codecs/box_audio_codec.cc b/main/audio/codecs/box_audio_codec.cc
-index b73a52bf1ba86946c1dbf1d8b9463734b81236ac..20ad73de9d50ed74d65f99da85d2f0de9377d0d6 100644
---- a/main/audio/codecs/box_audio_codec.cc
-+++ b/main/audio/codecs/box_audio_codec.cc
-@@ -218,9 +218,9 @@ void BoxAudioCodec::EnableInput(bool enable) {
-     if (enable) {
-         esp_codec_dev_sample_info_t fs = {
-             .bits_per_sample = 16,
--            .channel = 4,
-+            .channel = input_channels_,
-             .channel_mask = ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0),
--            .sample_rate = (uint32_t)output_sample_rate_,
-+            .sample_rate = (uint32_t)input_sample_rate_,
-             .mclk_multiple = 0,
-         };
-         if (input_reference_) {

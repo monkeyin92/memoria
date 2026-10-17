@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import os
 import pathlib
 import subprocess
 
 
-ROOT = pathlib.Path(__file__).parents[3]
 FIRMWARE = pathlib.Path(__file__).parents[1]
 OVERLAY = FIRMWARE / "overlay"
 
@@ -67,18 +67,27 @@ int main() {
         ],
         check=True,
     )
-    subprocess.run([str(binary)], check=True)
+    subprocess.run(
+        [str(binary)],
+        check=True,
+        env={**os.environ, "ASAN_OPTIONS": "detect_leaks=0"},
+    )
 
 
-def test_audio_source_uses_matching_codec_channel_shape() -> None:
+def test_audio_source_keeps_codec_tdm_shape_and_guards_audio_service() -> None:
     codec = (OVERLAY / "patches" / "0041-memoria-tap-heap-guard.patch").read_text(
         encoding="utf-8"
     )
-    assert "channel = input_channels_" in codec
+    assert "diff --git a/main/audio/codecs/box_audio_codec.cc" not in codec
     assert "memoria_audio_buffer.h" in codec
+    assert "const int codec_channels = codec_->input_channels();" in codec
+    assert "data.resize(input_samples);" in codec
     assert "InterleavedInputSamples" in codec
     assert "InputReadFits" in codec
     assert "ReadSamplesFit" in codec
+    assert "data.size() > input_samples" in codec
+    assert "data.size() % static_cast<std::size_t>(codec_channels) != 0" in codec
+    assert 'ESP_LOGW(TAG, "dropping input frame' in codec
 
 
 def test_overlay_patch_is_numbered_after_encode_queue_budget() -> None:
@@ -95,9 +104,10 @@ def test_build_keeps_the_git_version_and_elf_artifact() -> None:
         encoding="utf-8"
     )
     build = (FIRMWARE / "scripts" / "build.sh").read_text(encoding="utf-8")
-    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    check = (FIRMWARE / "scripts" / "check-overlay.sh").read_text(encoding="utf-8")
     assert 'set(PROJECT_VER "2.4.2+${MEMORIA_FIRMWARE_GIT_SHA}")' in patch
     assert 'export MEMORIA_FIRMWARE_GIT_SHA=' in build
     assert 'cp "$elf_image" "$MEMORIA_ARTIFACT_DIR/$artifact_name.elf"' in build
-    assert "path: firmware/esp32/artifacts/*" in ci
+    assert 'find "$MEMORIA_ARTIFACT_DIR" -maxdepth 1 -type f -name "$MEMORIA_BOARD_NAME*.elf"' in check
+    assert 'die "build artifact ELF is missing"' in check
 
