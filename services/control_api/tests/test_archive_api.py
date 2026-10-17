@@ -28,8 +28,10 @@ from services.control_api.app.persona_learning import observe_persona
 from services.control_api.app.routes.archive import (
     ResponseProvenanceCreate,
     _account_write,
+    _actual_heard_item,
     _canonical_actual_voice,
     _deletion_status_response,
+    _owner_turn_item,
 )
 from services.digital_self.domain import (
     DigitalSelfManifest,
@@ -108,6 +110,47 @@ class LegacyVersionStub:
             "version_id": self.version.version_id,
         }
         return self.version
+
+
+def test_retained_minor_and_unknown_rows_never_project_verbatim_turns() -> None:
+    base = {
+        "history_eligible": True,
+        "owner_projection_eligible": True,
+        "memory_retention": "retained",
+    }
+    owner = EvidenceEvent(
+        event_id="retained-minor-owner",
+        account_id="account",
+        subject_id="child",
+        event_type="speech.utterance_finalized",
+        occurred_at=datetime(2026, 10, 1, tzinfo=UTC),
+        speaker_class="owner",
+        source="test",
+        session_id="session",
+        turn_id=1,
+        generation_id=1,
+        payload={**base, "subject_category": "minor", "text": "child text"},
+    )
+    assistant = EvidenceEvent(
+        event_id="retained-unknown-assistant",
+        account_id="account",
+        subject_id="unknown",
+        event_type="assistant.playout_stopped",
+        occurred_at=datetime(2026, 10, 1, tzinfo=UTC),
+        speaker_class="assistant",
+        source="test",
+        session_id="session",
+        turn_id=1,
+        generation_id=1,
+        payload={
+            **base,
+            "subject_category": "unknown",
+            "actual_heard": True,
+            "text": "assistant text",
+        },
+    )
+    assert _owner_turn_item(owner) is None
+    assert _actual_heard_item(assistant) is None
 
 
 def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -3657,11 +3700,12 @@ async def test_retention_ceiling_follows_the_speaking_subject_not_the_account(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """P2-03: a child speaking on the owner's device must not be retained.
+    """P2-03: a child's evidence row stays metadata-only after consent.
 
     Before the subject column existed, the ingest decided retention from the
     ACCOUNT's category, so a minor speaking on an adult's family device was
-    stored as retained adult content and surfaced by the review exits.
+    stored as retained adult content and surfaced by the review exits. Consent
+    may retain metadata, but it must never retain verbatim turn text.
     """
     _configure(monkeypatch, tmp_path)
     app = create_app()
@@ -3710,6 +3754,18 @@ async def test_retention_ceiling_follows_the_speaking_subject_not_the_account(
         )
         assert bound.status_code == 201, bound.text
         child_id = bound.json()["primary_subject_ids"][0]
+        await app.state.guardian_store.grant_person_consent(
+            PersonConsentRecord(
+                consent_id=str(uuid.uuid4()),
+                subject_person_id=child_id,
+                grantor_person_id="subject-fence-guardian",
+                consent_kind="memory_retention",
+                policy_version="subject-fence-minor-memory-v1",
+                granted_at=datetime.now(UTC),
+                evidence_event_id="subject-fence-minor-retention-grant",
+            ),
+            actor_person_id="subject-fence-guardian",
+        )
         session = (await client.post("/v1/sessions", headers=owner_headers, json={})).json()
         internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
 
@@ -3747,9 +3803,13 @@ async def test_retention_ceiling_follows_the_speaking_subject_not_the_account(
     )
     assert child_event is not None and owner_event is not None
     assert child_event.subject_id == child_id
-    assert child_event.payload.get("history_eligible") is False
-    assert "text" not in child_event.payload
-    assert child_event.payload.get("memory_retention") != "retained"
+    assert child_event.payload.get("memory_retention") == "retained"
+    assert not {
+        "text",
+        "transcript",
+        "user_text",
+        "assistant_text",
+    }.intersection(child_event.payload)
     # 同一账户、同一会话：成人本人说话仍按账户保留，证明天花板随说话主体。
     assert owner_event.subject_id == owner["user_id"]
     assert owner_event.payload.get("history_eligible") is True
