@@ -146,6 +146,7 @@ _RETENTION_WITHHELD_KEYS: Final[tuple[str, ...]] = (
     "owner_projection_eligible",
 )
 _EPHEMERAL_RETENTION: Final[str] = "ephemeral_only"
+_TEXT_WITHHELD_SUBJECT_CATEGORIES: Final[frozenset[str]] = frozenset({"minor", "unknown"})
 
 # The guardian audience gets a fixed bucket vocabulary instead of raw
 # ``event_type`` strings: the column is free text, and governance metadata must
@@ -626,6 +627,8 @@ def _retention_withheld(payload: Mapping[str, Any], *, session_scoped: bool) -> 
     """
 
     def _withdraws(source: Mapping[str, Any]) -> bool:
+        if source.get("subject_category") in _TEXT_WITHHELD_SUBJECT_CATEGORIES:
+            return True
         for key in _RETENTION_WITHHELD_KEYS:
             if source.get(key) is False:
                 return True
@@ -667,7 +670,8 @@ def _evidence_section(
             "evidence rows without a proven subject, from another account, without "
             "a parseable payload, or whose payload withdrew the text from "
             "retention (history_eligible=false / owner_projection_eligible=false / "
-            "memory_retention=ephemeral_only) are omitted; a session row must also "
+            "memory_retention=ephemeral_only or subject_category in {minor,unknown}) "
+            "are omitted; a session row must also "
             "prove history_eligible=true like the review exits require"
         ),
     }
