@@ -1,0 +1,156 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index f17bdacf0957e064e49a43e9f0727e407b1ff7dc..86859964431c3b672718bede874bcb0422431461 100755
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -9,5 +9,19 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+ # "Trim" the build. Include the minimal set of components, main, and anything it depends on.
+ idf_build_set_property(MINIMAL_BUILD ON)
+ 
+-set(PROJECT_VER "2.4.2")
++set(MEMORIA_FIRMWARE_GIT_SHA "$ENV{MEMORIA_FIRMWARE_GIT_SHA}")
++if(NOT MEMORIA_FIRMWARE_GIT_SHA)
++    execute_process(
++        COMMAND git rev-parse --short=7 HEAD
++        WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
++        OUTPUT_VARIABLE MEMORIA_FIRMWARE_GIT_SHA
++        OUTPUT_STRIP_TRAILING_WHITESPACE
++        ERROR_QUIET
++    )
++endif()
++if(MEMORIA_FIRMWARE_GIT_SHA)
++    set(PROJECT_VER "2.4.2+${MEMORIA_FIRMWARE_GIT_SHA}")
++else()
++    set(PROJECT_VER "2.4.2")
++endif()
+ project(memoria)
+diff --git a/main/audio/audio_codec.cc b/main/audio/audio_codec.cc
+index 03e2baa3d52ac196c3bb6cfe667028570bd72f16..abeb82ffe7f5061bccf4b9b9c87206b101e95d78 100644
+--- a/main/audio/audio_codec.cc
++++ b/main/audio/audio_codec.cc
+@@ -4,6 +4,8 @@
+ 
+ #include <esp_log.h>
+ #include <cstring>
++#include <limits>
+ #include <driver/i2s_common.h>
++#include "memoria_audio_buffer.h"
+ 
+ #define TAG "AudioCodec"
+@@ -19,11 +20,20 @@ void AudioCodec::OutputData(std::vector<int16_t>& data) {
+ }
+ 
+ bool AudioCodec::InputData(std::vector<int16_t>& data) {
++    const std::size_t capacity = data.size();
++    if (capacity == 0 || capacity > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
++        ESP_LOGW(TAG, "dropping input frame with invalid capacity=%zu", capacity);
++        data.clear();
++        return false;
++    }
+     int samples = Read(data.data(), data.size());
+-    if (samples > 0) {
+-        return true;
++    if (!memoria::ReadSamplesFit(capacity, samples)) {
++        ESP_LOGW(TAG, "dropping input frame with read_samples=%d capacity=%zu", samples, capacity);
++        data.clear();
++        return false;
+     }
+-    return false;
++    data.resize(static_cast<std::size_t>(samples));
++    return true;
+ }
+ 
+ void AudioCodec::Start() {
+diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
+index bb028d17d9dae1505dcd2e7e4d19f26786a54b23..7d2fb9d71a050ccee7b39ca767800d198c988073 100644
+--- a/main/audio/audio_service.cc
++++ b/main/audio/audio_service.cc
+@@ -36,6 +36,7 @@
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
+ #include "memoria_software_aec_ref.h"
+ #endif
++#include "memoria_audio_buffer.h"
+ 
+ #define TAG "AudioService"
+ 
+@@ -279,36 +280,49 @@ bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, in
+ #endif
+     }
+ 
+-    if (codec_->input_sample_rate() != sample_rate) {
+-        data.resize(samples * codec_->input_sample_rate() / sample_rate * codec_->input_channels());
+-        if (!codec_->InputData(data)) {
+-            return false;
+-        }
++    const int codec_rate = codec_->input_sample_rate();
++    const int codec_channels = codec_->input_channels();
++    const std::size_t input_frames = memoria::InputFramesAtCodecRate(
++        samples > 0 ? static_cast<std::size_t>(samples) : 0, sample_rate, codec_rate);
++    const std::size_t input_samples = memoria::InterleavedInputSamples(input_frames, codec_channels);
++    if (!memoria::InputReadFits(input_samples, input_frames, codec_channels)) {
++        ESP_LOGW(TAG, "dropping input frame with invalid shape frames=%zu channels=%d", input_frames,
++                 codec_channels);
++        data.clear();
++        return false;
++    }
++    data.resize(input_samples);
++    if (!codec_->InputData(data)) {
++        return false;
++    }
++    if (codec_channels <= 0 || data.size() > input_samples ||
++        data.size() % static_cast<std::size_t>(codec_channels) != 0) {
++        ESP_LOGW(TAG, "dropping input frame with read_samples=%zu capacity=%zu channels=%d", data.size(),
++                 input_samples, codec_channels);
++        data.clear();
++        return false;
++    }
++
++    if (codec_rate != sample_rate) {
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
+         /* Inject play PCM into R at the codec rate (24 kHz) before the 24→16 kHz resampler. */
+-        memoria::ApplyToFeed(data.data(), data.size() / codec_->input_channels(),
+-                             codec_->input_channels());
++        memoria::ApplyToFeed(data.data(), data.size() / static_cast<std::size_t>(codec_channels), codec_channels);
+ #endif
+         if (input_resampler_ != nullptr) {
+             std::lock_guard<std::mutex> lock(input_resampler_mutex_);
+-            uint32_t in_sample_num = data.size() / codec_->input_channels();
++            uint32_t in_sample_num = data.size() / static_cast<std::size_t>(codec_channels);
+             uint32_t output_samples = 0;
+             esp_ae_rate_cvt_get_max_out_sample_num(input_resampler_, in_sample_num, &output_samples);
+-            auto resampled = std::vector<int16_t>(output_samples * codec_->input_channels());
++            auto resampled = std::vector<int16_t>(output_samples * static_cast<std::size_t>(codec_channels));
+             uint32_t actual_output = output_samples;
+             esp_ae_rate_cvt_process(input_resampler_, (esp_ae_sample_t)data.data(), in_sample_num,
+                                    (esp_ae_sample_t)resampled.data(), &actual_output);
+-            resampled.resize(actual_output * codec_->input_channels());
++            resampled.resize(actual_output * static_cast<std::size_t>(codec_channels));
+             data = std::move(resampled);
+         }
+     } else {
+-        data.resize(samples * codec_->input_channels());
+-        if (!codec_->InputData(data)) {
+-            return false;
+-        }
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
+-        memoria::ApplyToFeed(data.data(), data.size() / codec_->input_channels(),
+-                             codec_->input_channels());
++        memoria::ApplyToFeed(data.data(), data.size() / static_cast<std::size_t>(codec_channels), codec_channels);
+ #endif
+     }
+ 
+diff --git a/main/audio/codecs/box_audio_codec.cc b/main/audio/codecs/box_audio_codec.cc
+index b73a52bf1ba86946c1dbf1d8b9463734b81236ac..20ad73de9d50ed74d65f99da85d2f0de9377d0d6 100644
+--- a/main/audio/codecs/box_audio_codec.cc
++++ b/main/audio/codecs/box_audio_codec.cc
+@@ -218,9 +218,9 @@ void BoxAudioCodec::EnableInput(bool enable) {
+     if (enable) {
+         esp_codec_dev_sample_info_t fs = {
+             .bits_per_sample = 16,
+-            .channel = 4,
++            .channel = input_channels_,
+             .channel_mask = ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0),
+-            .sample_rate = (uint32_t)output_sample_rate_,
++            .sample_rate = (uint32_t)input_sample_rate_,
+             .mclk_multiple = 0,
+         };
+         if (input_reference_) {

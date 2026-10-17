@@ -76,6 +76,11 @@ export IDF_PATH="$idf_path"
 source "$IDF_PATH/export.sh"
 configure_python_tls "$python_bin" "$ca_file"
 
+firmware_repo_root="$(git -C "$MEMORIA_FIRMWARE_ROOT" rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -n "$firmware_repo_root" ]]; then
+    export MEMORIA_FIRMWARE_GIT_SHA="$(git -C "$firmware_repo_root" rev-parse --short=7 HEAD)"
+fi
+
 need_command idf.py
 
 if [[ "$CLEAN" == 1 ]]; then
@@ -187,6 +192,9 @@ PY
 app_image="$MEMORIA_UPSTREAM_DIR/build/$app_image_name"
 [[ -s "$app_image" ]] || die "upstream did not produce a non-empty application image: $app_image"
 cp "$app_image" "$MEMORIA_ARTIFACT_DIR/$artifact_name-app.bin"
+elf_image="$MEMORIA_UPSTREAM_DIR/build/memoria.elf"
+[[ -s "$elf_image" ]] || die "upstream did not produce a non-empty ELF: $elf_image"
+cp "$elf_image" "$MEMORIA_ARTIFACT_DIR/$artifact_name.elf"
 # Remove stale product-level aliases only. Identity/NVS data and rollback
 # backups live outside this top-level artifact glob and are not touched.
 find "$MEMORIA_ARTIFACT_DIR" -maxdepth 1 -type f -name '*-xiaozhi.bin' -delete

@@ -624,6 +624,10 @@ fi
 if find "$MEMORIA_ARTIFACT_DIR" -maxdepth 1 -type f -name '*merged.bin' -print -quit | rg -q .; then
     die "build published a merged.bin full-chip image"
 fi
+if [[ -d "$MEMORIA_ARTIFACT_DIR" ]]; then
+    find "$MEMORIA_ARTIFACT_DIR" -maxdepth 1 -type f -name "$MEMORIA_BOARD_NAME*.elf" \
+        -size +0c -print -quit | rg -q . || die "build artifact ELF is missing"
+fi
 if [[ -e "$MEMORIA_UPSTREAM_DIR/build/merged-binary.bin" ]]; then
     die "build left merged-binary.bin in the tree"
 fi
