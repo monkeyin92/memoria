@@ -300,6 +300,7 @@ jobs:
           MEMORIA_TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
           COVERAGE_FILE: coverage-shard-${{ matrix.shard }}.data
         run: |
+          set -o pipefail
           mapfile -t files < <(uv run python scripts/ci_test_shards.py --shards 4 --index ${{ matrix.shard }})
           echo "${#files[@]} test files"
           # Coverage is checked on the combined data; a shard alone is far below it.
