@@ -437,6 +437,66 @@ CREATE TRIGGER trg_memory_votes_immutable
 BEFORE UPDATE OR DELETE ON memory_shared_votes
 FOR EACH ROW EXECUTE FUNCTION memory_votes_immutable();
 
+-- B01 (ADR-001 s11.1): one head row per (subject, owner, purpose, authority
+-- scope).  Restriction and source-consent revisions only move forward, so a
+-- late message for an older grant can never lift a stop.
+CREATE TABLE IF NOT EXISTS memory_purpose_heads (
+    purpose_scope_id UUID PRIMARY KEY,
+    subject_id TEXT NOT NULL CHECK (char_length(subject_id) BETWEEN 1 AND 128),
+    resource_owner_id TEXT NOT NULL CHECK (char_length(resource_owner_id) BETWEEN 1 AND 128),
+    purpose TEXT NOT NULL CHECK (purpose IN ('memory_use', 'archive_custody')),
+    authority_scope_type TEXT NOT NULL CHECK (authority_scope_type IN (
+        'binding', 'custody_chain'
+    )),
+    authority_scope_id TEXT NOT NULL CHECK (char_length(authority_scope_id) BETWEEN 1 AND 128),
+    restriction_revision BIGINT NOT NULL DEFAULT 1 CHECK (restriction_revision >= 1),
+    source_consent_revision BIGINT NOT NULL DEFAULT 1 CHECK (source_consent_revision >= 1),
+    scope_generation BIGINT NOT NULL DEFAULT 1 CHECK (scope_generation >= 1),
+    allowed_actions JSONB NOT NULL DEFAULT '[]'::jsonb
+        CHECK (jsonb_typeof(allowed_actions) = 'array'),
+    valid_until TIMESTAMPTZ,
+    state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'stopping', 'stopped')),
+    stopped_at TIMESTAMPTZ,
+    evidence_sync_state TEXT NOT NULL DEFAULT 'synced'
+        CHECK (evidence_sync_state IN ('synced', 'pending', 'unknown')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT memory_purpose_heads_natural_key UNIQUE (
+        subject_id, resource_owner_id, purpose, authority_scope_type, authority_scope_id
+    ),
+    CONSTRAINT memory_purpose_heads_custody_term CHECK (
+        purpose <> 'archive_custody' OR valid_until IS NOT NULL
+    ),
+    CONSTRAINT memory_purpose_heads_stopped_at CHECK (
+        (state = 'stopped') = (stopped_at IS NOT NULL)
+    )
+);
+
+CREATE OR REPLACE FUNCTION memory_purpose_heads_monotonic() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.restriction_revision < OLD.restriction_revision
+       OR NEW.source_consent_revision < OLD.source_consent_revision
+       OR NEW.scope_generation < OLD.scope_generation THEN
+        RAISE EXCEPTION 'memory_purpose_heads revisions cannot move backwards';
+    END IF;
+    IF OLD.state = 'stopped' AND NEW.state <> 'stopped'
+       AND NEW.restriction_revision <= OLD.restriction_revision THEN
+        RAISE EXCEPTION 'a stopped purpose needs a newer restriction revision to reopen';
+    END IF;
+    NEW.updated_at := CURRENT_TIMESTAMP;
+    RETURN NEW;
+END
+$$;
+
+DROP TRIGGER IF EXISTS trg_memory_purpose_heads_monotonic ON memory_purpose_heads;
+CREATE TRIGGER trg_memory_purpose_heads_monotonic
+BEFORE UPDATE ON memory_purpose_heads
+FOR EACH ROW EXECUTE FUNCTION memory_purpose_heads_monotonic();
+
+CREATE INDEX IF NOT EXISTS idx_memory_purpose_heads_subject
+ON memory_purpose_heads(subject_id, resource_owner_id, purpose);
+
 -- ---------------------------------------------------------------------------
 -- Row-level security: transaction-level app context, minimal policies.
 -- The adapter sets app.memory.* inside each transaction; with FORCE RLS a
@@ -449,6 +509,7 @@ ALTER TABLE memory_shared_proposals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memory_shared_votes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memory_outbox ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memory_audit_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE memory_purpose_heads ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE memory_records FORCE ROW LEVEL SECURITY;
 ALTER TABLE memory_status_events FORCE ROW LEVEL SECURITY;
@@ -456,6 +517,7 @@ ALTER TABLE memory_shared_proposals FORCE ROW LEVEL SECURITY;
 ALTER TABLE memory_shared_votes FORCE ROW LEVEL SECURITY;
 ALTER TABLE memory_outbox FORCE ROW LEVEL SECURITY;
 ALTER TABLE memory_audit_events FORCE ROW LEVEL SECURITY;
+ALTER TABLE memory_purpose_heads FORCE ROW LEVEL SECURITY;
 
 DO $memory_policy$
 BEGIN
@@ -703,6 +765,21 @@ BEGIN
             TO memoria_memory_api, memoria_memory_worker
             USING (
                 pg_has_role(current_user, 'memoria_memory_worker', 'member')
+            );
+        GRANT SELECT, INSERT, UPDATE ON memory_purpose_heads
+            TO memoria_memory_api, memoria_memory_worker;
+
+        DROP POLICY IF EXISTS memory_purpose_heads_rw ON memory_purpose_heads;
+        CREATE POLICY memory_purpose_heads_rw ON memory_purpose_heads FOR ALL
+            TO memoria_memory_api, memoria_memory_worker
+            USING (
+                pg_has_role(current_user, 'memoria_memory_worker', 'member')
+                OR resource_owner_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
+                OR subject_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
+            )
+            WITH CHECK (
+                pg_has_role(current_user, 'memoria_memory_worker', 'member')
+                OR resource_owner_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
             );
     END IF;
 END
