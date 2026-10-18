@@ -24,6 +24,7 @@ const {
 } = require("../../utils/quiet-hours");
 const { offersSafetySubscribe } = require("../../utils/trial-device-card");
 const { PRIVACY_LINE } = require("../../utils/child-memory");
+const { unbindResultLines, unbindClearsChildLayers } = require("../../utils/unbind-result");
 const { SUBSCRIPTION_PUSH_ENABLED } = require("../../config");
 
 // 与绑定页的「单次使用时长」选项一致。
@@ -384,6 +385,7 @@ Page({
     sheetOpen: false,
     diagExpanded: false,
     unbindSheetVisible: false,
+    unbindClearsChildLayers: false,
     unbindPurgeChoice: "",
     unbinding: false,
     unbindError: "",
@@ -494,6 +496,7 @@ Page({
       bargeInChecked: {},
       allowedAudioModesLabel: "",
       unbindSheetVisible: false,
+      unbindClearsChildLayers: false,
       unbindPurgeChoice: "",
       unbinding: false,
       unbindError: "",
@@ -1155,7 +1158,12 @@ Page({
    */
   openUnbindSheet() {
     if (!this.data.binding?.device_id) return;
-    this.setData({ unbindSheetVisible: true, unbindPurgeChoice: "", unbindError: "" });
+    this.setData({
+      unbindSheetVisible: true,
+      unbindClearsChildLayers: unbindClearsChildLayers(this.data.binding.declared_mode),
+      unbindPurgeChoice: "",
+      unbindError: "",
+    });
     this._syncSheetOpen();
   },
 
@@ -1204,15 +1212,12 @@ Page({
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ unbindSheetVisible: false, unbindPurgeChoice: "" });
       this._syncSheetOpen();
-      // 删除分步执行、可续跑；未跑完时服务端返回 pending，后台会继续删完。
-      const purgePending = purgeSubjectData && result?.subject_deletion === "pending";
-      wx.showToast({
-        title: !purgeSubjectData
-          ? "已解除绑定"
-          : purgePending
-            ? "已解除绑定，数据正在删除"
-            : "已解除绑定并删除数据",
-        icon: "none",
+      // 把服务端实际清理的结果读给家长；pending 也要说，不能只报「已解除」。
+      wx.showModal({
+        title: "已解除绑定",
+        content: unbindResultLines(result).join("\n") || "设备已解除绑定。",
+        showCancel: false,
+        confirmText: "知道了",
       });
       await this.loadDevice();
     } catch (error) {

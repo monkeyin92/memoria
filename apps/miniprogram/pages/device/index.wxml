@@ -507,6 +507,7 @@
         <view class="sheet-grab"></view>
         <text class="sheet-title">解除绑定</text>
         <text class="sheet-sub">解除后设备会立即停止记忆 TA 的对话。TA 的数据怎么处理？</text>
+        <text wx:if="{{unbindClearsChildLayers}}" class="sheet-sub">无论选哪一项，TA 的近期摘要和长期记录都会随解绑一起清除，无法恢复。</text>
         <view class="sheet-opt {{unbindPurgeChoice === 'keep' ? 'on' : ''}}" data-choice="keep" bindtap="pickUnbindChoice">
           <view class="choice-radio"></view>
           <view class="row-copy">

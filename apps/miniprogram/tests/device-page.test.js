@@ -36,6 +36,7 @@ let personaPayload = () => ({
 let personasPayload = () => ({ custom_personas: [], builtin: [] });
 let accountProfilePayload = null;
 const unbindCalls = [];
+let unbindResponse = { binding_id: "bd_1", status: "revoked" };
 
 global.wx = {
   getStorageSync: (key) => storage[key],
@@ -219,7 +220,7 @@ global.wx = {
     }
     if (pathname === "/v1/devices/dev_1/binding/unbind") {
       unbindCalls.push({ method: options.method, data: options.data });
-      options.success({ statusCode: 200, data: { binding_id: "bd_1", status: "revoked" } });
+      options.success({ statusCode: 200, data: unbindResponse });
       return;
     }
     options.success(nextRequestResult);
@@ -1782,8 +1783,10 @@ test("unbind keeps the subject's data when the owner chooses to keep it", async 
     assert.equal(unbindCalls.length, 1);
     assert.equal(unbindCalls[0].method, "POST");
     assert.deepEqual(unbindCalls[0].data, { reason: "unbind", purge_subject_data: false });
-    // 保留数据不需要再弹删除确认。
-    assert.equal(modals.length, 0);
+    // 保留数据不需要再弹删除确认，只弹一次结果说明。
+    assert.equal(modals.length, 1);
+    assert.equal(modals[0].title, "已解除绑定");
+    assert.equal(modals[0].showCancel, false);
     assert.equal(binding.readBindingManifest(), null);
     assert.equal(page.data.unbindSheetVisible, false);
     assert.equal(page.data.hasBinding, false);
@@ -1814,13 +1817,51 @@ test("unbind with purge asks a second time and sends purge_subject_data true", a
 
     confirmPurge = true;
     await page.confirmUnbind();
-    assert.equal(modals.length, 2);
+    assert.equal(modals.length, 3);
+    assert.equal(modals[2].title, "已解除绑定");
     assert.equal(unbindCalls.length, 1);
     assert.deepEqual(unbindCalls[0].data, { reason: "unbind", purge_subject_data: true });
     assert.equal(binding.readBindingManifest(), null);
   } finally {
     global.wx.showModal = previousShowModal;
   }
+});
+
+test("unbind result modal reports what the server actually cleared, pending included", async () => {
+  unbindCalls.length = 0;
+  const modals = [];
+  const previousShowModal = global.wx.showModal;
+  global.wx.showModal = (options) => {
+    modals.push(options);
+    options.success?.({ confirm: true });
+  };
+  unbindResponse = {
+    binding_id: "bd_1",
+    status: "revoked",
+    consents_withdrawn: 2,
+    child_layers_purged: "pending",
+    subject_deletion: "pending",
+  };
+  try {
+    const page = await bootBoundDevicePage();
+    page.openUnbindSheet();
+    assert.equal(page.data.unbindClearsChildLayers, true);
+    page.pickUnbindChoice({ currentTarget: { dataset: { choice: "keep" } } });
+    await page.confirmUnbind();
+    assert.equal(modals.length, 1);
+    assert.match(modals[0].content, /近期摘要和长期记录没有全部清除/);
+    assert.match(modals[0].content, /正在删除/);
+    assert.match(modals[0].content, /已撤回 2 项授权/);
+  } finally {
+    unbindResponse = { binding_id: "bd_1", status: "revoked" };
+    global.wx.showModal = previousShowModal;
+  }
+});
+
+test("unbind sheet says the child's summaries and archive are cleared whichever option is picked", () => {
+  const wxml = fs.readFileSync(path.join(__dirname, "../pages/device/index.wxml"), "utf8");
+  assert.ok(wxml.includes('wx:if="{{unbindClearsChildLayers}}"'));
+  assert.ok(wxml.includes("无论选哪一项，TA 的近期摘要和长期记录都会随解绑一起清除，无法恢复。"));
 });
 
 test("unbinding also drops the enable session stored for that robot", async () => {
