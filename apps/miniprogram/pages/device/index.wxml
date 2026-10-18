@@ -511,16 +511,16 @@
         <view class="sheet-opt {{unbindPurgeChoice === 'keep' ? 'on' : ''}}" data-choice="keep" bindtap="pickUnbindChoice">
           <view class="choice-radio"></view>
           <view class="row-copy">
-            <text class="row-title">保留数据（重新绑定后可恢复）</text>
-            <text class="row-meta">记忆和对话数据继续保存，TA 重新绑定后接着用</text>
+            <text class="row-title">只解绑，保留其他数据</text>
+            <text class="row-meta">近期摘要和长期记录已随解绑清除；其他数据根据法律期限保留</text>
           </view>
           <view class="opt-check"><view class="icon-check"></view></view>
         </view>
         <view class="sheet-opt {{unbindPurgeChoice === 'purge' ? 'on' : ''}}" data-choice="purge" bindtap="pickUnbindChoice">
           <view class="choice-radio"></view>
           <view class="row-copy">
-            <text class="row-title">同时删除 TA 的记忆和对话数据</text>
-            <text class="row-meta">永久删除，重新绑定也无法恢复</text>
+            <text class="row-title">同时按法定期限删除全部数据</text>
+            <text class="row-meta">包括记忆声明、会话记录、使用人档案等；删除进度会显示在这里</text>
           </view>
           <view class="opt-check"><view class="icon-check"></view></view>
         </view>

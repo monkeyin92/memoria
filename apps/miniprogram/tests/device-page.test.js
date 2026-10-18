@@ -1899,8 +1899,8 @@ test("a failed unbind keeps the enable session", async () => {
 
 test("device page offers both unbind data choices", () => {
   const template = fs.readFileSync(path.join(__dirname, "../pages/device/index.wxml"), "utf8");
-  assert.match(template, /同时删除 TA 的记忆和对话数据/);
-  assert.match(template, /保留数据（重新绑定后可恢复）/);
+  assert.match(template, /同时按法定期限删除全部数据/);
+  assert.match(template, /只解绑，保留其他数据/);
   assert.match(template, /停止记忆/);
 });
 
