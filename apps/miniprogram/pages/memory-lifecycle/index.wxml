@@ -68,7 +68,7 @@
     <!-- 2.2 保管状态 - 期限未配置场景 -->
     <block wx:if="{{scenario === 'unconfigured'}}">
       <view class="card warning-card">
-        <mp-icon name="info" tone="warn"></mp-icon>
+        <mp-icon name="info" tone="accent"></mp-icon>
         <text class="warning-title">保管期限尚未配置</text>
         <text class="warning-text">
           {{message}}
@@ -166,7 +166,7 @@
       <view class="card chat-status-card">
         <text class="card-title">对话状态</text>
         <view class="chat-status-item">
-          <mp-icon name="chat" tone="ink"></mp-icon>
+          <mp-icon name="wave" tone="ink"></mp-icon>
           <text class="status-text">{{chatLabel}}</text>
         </view>
         <text class="card-notice">【模拟状态】</text>
