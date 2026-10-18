@@ -428,6 +428,7 @@ BEGIN
        AND NEW.purpose_links = OLD.purpose_links
        AND NEW.deletion_locked = OLD.deletion_locked
        AND NEW.record_version IN (OLD.record_version, OLD.record_version + 1) THEN
+        PERFORM memory_assert_purpose_open(OLD.subject_id, OLD.resource_owner_id);
         RETURN NEW;
     END IF;
     -- B01: lineage / lock / version maintenance.  The version must advance by
@@ -683,6 +684,57 @@ DROP TRIGGER IF EXISTS trg_memory_lifecycle_operations_guard ON memory_lifecycle
 CREATE TRIGGER trg_memory_lifecycle_operations_guard
 BEFORE UPDATE ON memory_lifecycle_operations
 FOR EACH ROW EXECUTE FUNCTION memory_lifecycle_operations_guard();
+
+-- B02: write gate.  A subject/owner pair that has purpose heads but no open
+-- memory_use head cannot gain or refresh child memory.  No heads at all means
+-- the lifecycle model is not enabled for that pair, and legacy behaviour
+-- stays.  Rows are locked FOR SHARE so a concurrent stop serialises with the
+-- write instead of racing it.
+CREATE OR REPLACE FUNCTION memory_assert_purpose_open(
+    p_subject_id TEXT, p_owner_id TEXT
+) RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = on
+AS $memory_assert_purpose_open$
+DECLARE
+    v_head RECORD;
+    v_seen BOOLEAN := false;
+    v_open BOOLEAN := false;
+BEGIN
+    FOR v_head IN
+        SELECT state, valid_until FROM memory_purpose_heads
+        WHERE subject_id = p_subject_id AND resource_owner_id = p_owner_id
+          AND purpose = 'memory_use'
+        FOR SHARE
+    LOOP
+        v_seen := true;
+        IF v_head.state = 'active'
+           AND (v_head.valid_until IS NULL OR v_head.valid_until > clock_timestamp()) THEN
+            v_open := true;
+        END IF;
+    END LOOP;
+    IF v_seen AND NOT v_open THEN
+        RAISE EXCEPTION 'memory purpose is stopped for this subject' USING ERRCODE = 'MC409';
+    END IF;
+END
+$memory_assert_purpose_open$;
+
+CREATE OR REPLACE FUNCTION memory_records_purpose_gate() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.payload ->> 'kind' IN ('dialogue_summary', 'child_archive') THEN
+        PERFORM memory_assert_purpose_open(NEW.subject_id, NEW.resource_owner_id);
+    END IF;
+    RETURN NEW;
+END
+$$;
+
+DROP TRIGGER IF EXISTS trg_memory_records_purpose_gate ON memory_records;
+CREATE TRIGGER trg_memory_records_purpose_gate
+BEFORE INSERT ON memory_records
+FOR EACH ROW EXECUTE FUNCTION memory_records_purpose_gate();
 
 -- ---------------------------------------------------------------------------
 -- Row-level security: transaction-level app context, minimal policies.
@@ -1024,6 +1076,9 @@ BEGIN
                 pg_has_role(current_user, 'memoria_memory_worker', 'member')
                 OR actor_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
             );
+        DROP POLICY IF EXISTS memory_purpose_heads_owner ON memory_purpose_heads;
+        CREATE POLICY memory_purpose_heads_owner ON memory_purpose_heads FOR ALL
+            TO memoria_memory_owner USING (true) WITH CHECK (true);
     END IF;
 END
 $memory_policy$;
