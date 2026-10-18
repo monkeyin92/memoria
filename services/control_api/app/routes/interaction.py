@@ -350,10 +350,18 @@ async def _subject_memory_retention_allowed(
     if layers is None:
         return allowed
     try:
-        return bool(await layers.memory_purpose_open(subject_id=subject_person_id))
+        purpose_open = bool(await layers.memory_purpose_open(subject_id=subject_person_id))
     except Exception:
         logger.exception("memory purpose check failed; denying memory")
-        return False
+        purpose_open = False
+    if not purpose_open:
+        recall_store = getattr(request.app.state, "subject_session_recall_store", None)
+        if recall_store is not None:
+            try:
+                await recall_store.erase_subject(subject_id=subject_person_id)
+            except Exception:
+                logger.exception("session recall erase failed after purpose stop")
+    return purpose_open
 
 
 def _confirmed_subject_id(value: object) -> str | None:
