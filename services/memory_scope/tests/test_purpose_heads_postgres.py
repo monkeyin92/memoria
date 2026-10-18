@@ -116,3 +116,51 @@ async def test_force_rls_hides_heads_without_context(
     finally:
         await admin.close()
         await store.close()
+
+
+async def test_custody_grant_rules(
+    pg_env: tuple[str, str, str, str, str],
+) -> None:
+    api_dsn, _w, _a, admin_db_dsn, password = pg_env
+    store = await _initialize_store(api_dsn, admin_db_dsn, password)
+    admin = await asyncpg.connect(admin_db_dsn)
+    try:
+        head = uuid.uuid4()
+        until = await admin.fetchval("SELECT now() + interval '30 days'")
+        await admin.execute(_INSERT, head, "archive_custody", "custody_chain", "c1", until)
+        sql = (
+            "INSERT INTO memory_custody_grants(grant_id, subject_id, resource_owner_id,"
+            " grantor_id, purpose_scope_id, custody_chain_id, consent_id, evidence_event_id,"
+            " policy_version, policy_hash, effective_at, expires_at, predecessor_grant_id,"
+            " status) VALUES ($1,'child-1','parent-1','parent-1',$2,'c1','k1',$3,'v1','h1',"
+            " now(), $4, $5, 'active')"
+        )
+        first, second = uuid.uuid4(), uuid.uuid4()
+        await admin.execute(sql, first, head, "ev1", until, None)
+        with pytest.raises(asyncpg.CheckViolationError):  # expiry must follow effect
+            await admin.execute(
+                sql,
+                uuid.uuid4(),
+                head,
+                "ev2",
+                await admin.fetchval("SELECT now() - interval '1 day'"),
+                None,
+            )
+        await admin.execute(sql, second, head, "ev3", until, first)
+        with pytest.raises(asyncpg.UniqueViolationError):  # one successor only
+            await admin.execute(sql, uuid.uuid4(), head, "ev4", until, first)
+        with pytest.raises(asyncpg.UniqueViolationError):  # evidence not reusable
+            await admin.execute(sql, uuid.uuid4(), head, "ev1", until, None)
+        app = await asyncpg.connect(api_dsn)
+        try:
+            assert await app.fetchval("SELECT count(*) FROM memory_custody_grants") == 0
+            async with app.transaction():
+                await app.execute(
+                    "SELECT set_config('app.memory.actor_subject_id', 'parent-1', true)"
+                )
+                assert await app.fetchval("SELECT count(*) FROM memory_custody_grants") == 2
+        finally:
+            await app.close()
+    finally:
+        await admin.close()
+        await store.close()

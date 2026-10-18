@@ -497,6 +497,46 @@ FOR EACH ROW EXECUTE FUNCTION memory_purpose_heads_monotonic();
 CREATE INDEX IF NOT EXISTS idx_memory_purpose_heads_subject
 ON memory_purpose_heads(subject_id, resource_owner_id, purpose);
 
+-- B01 (ADR-001 s11.1): execution projection of a Guardian custody consent.
+-- Guardian holds the consent evidence; this row only mirrors it for local
+-- checks.  A grant is never reactivated: renewal creates a successor.
+CREATE TABLE IF NOT EXISTS memory_custody_grants (
+    grant_id UUID PRIMARY KEY,
+    revision BIGINT NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    subject_id TEXT NOT NULL CHECK (char_length(subject_id) BETWEEN 1 AND 128),
+    resource_owner_id TEXT NOT NULL CHECK (char_length(resource_owner_id) BETWEEN 1 AND 128),
+    grantor_id TEXT NOT NULL CHECK (char_length(grantor_id) BETWEEN 1 AND 128),
+    purpose_scope_id UUID NOT NULL REFERENCES memory_purpose_heads(purpose_scope_id),
+    custody_chain_id TEXT NOT NULL CHECK (char_length(custody_chain_id) BETWEEN 1 AND 128),
+    source_binding_id TEXT CHECK (
+        source_binding_id IS NULL OR char_length(source_binding_id) BETWEEN 1 AND 128
+    ),
+    consent_id TEXT NOT NULL CHECK (char_length(consent_id) BETWEEN 1 AND 128),
+    evidence_event_id TEXT NOT NULL CHECK (char_length(evidence_event_id) BETWEEN 1 AND 128),
+    evidence_revision BIGINT NOT NULL DEFAULT 1 CHECK (evidence_revision >= 1),
+    policy_version TEXT NOT NULL CHECK (char_length(policy_version) BETWEEN 1 AND 64),
+    policy_hash TEXT NOT NULL CHECK (char_length(policy_hash) BETWEEN 1 AND 128),
+    effective_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    predecessor_grant_id UUID REFERENCES memory_custody_grants(grant_id),
+    status TEXT NOT NULL CHECK (status IN (
+        'pending', 'active', 'revoked', 'expired', 'superseded'
+    )),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT memory_custody_grants_term CHECK (expires_at > effective_at),
+    CONSTRAINT memory_custody_grants_not_self_successor CHECK (
+        predecessor_grant_id IS NULL OR predecessor_grant_id <> grant_id
+    )
+);
+
+-- At most one successor per predecessor; evidence is not reusable.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_custody_grants_successor
+ON memory_custody_grants(predecessor_grant_id) WHERE predecessor_grant_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_custody_grants_evidence
+ON memory_custody_grants(purpose_scope_id, evidence_event_id, evidence_revision);
+CREATE INDEX IF NOT EXISTS idx_memory_custody_grants_chain
+ON memory_custody_grants(custody_chain_id, status);
+
 -- ---------------------------------------------------------------------------
 -- Row-level security: transaction-level app context, minimal policies.
 -- The adapter sets app.memory.* inside each transaction; with FORCE RLS a
@@ -510,6 +550,7 @@ ALTER TABLE memory_shared_votes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memory_outbox ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memory_audit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memory_purpose_heads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE memory_custody_grants ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE memory_records FORCE ROW LEVEL SECURITY;
 ALTER TABLE memory_status_events FORCE ROW LEVEL SECURITY;
@@ -518,6 +559,7 @@ ALTER TABLE memory_shared_votes FORCE ROW LEVEL SECURITY;
 ALTER TABLE memory_outbox FORCE ROW LEVEL SECURITY;
 ALTER TABLE memory_audit_events FORCE ROW LEVEL SECURITY;
 ALTER TABLE memory_purpose_heads FORCE ROW LEVEL SECURITY;
+ALTER TABLE memory_custody_grants FORCE ROW LEVEL SECURITY;
 
 DO $memory_policy$
 BEGIN
@@ -776,6 +818,20 @@ BEGIN
                 pg_has_role(current_user, 'memoria_memory_worker', 'member')
                 OR resource_owner_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
                 OR subject_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
+            )
+            WITH CHECK (
+                pg_has_role(current_user, 'memoria_memory_worker', 'member')
+                OR resource_owner_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
+            );
+        GRANT SELECT, INSERT, UPDATE ON memory_custody_grants
+            TO memoria_memory_api, memoria_memory_worker;
+
+        DROP POLICY IF EXISTS memory_custody_grants_rw ON memory_custody_grants;
+        CREATE POLICY memory_custody_grants_rw ON memory_custody_grants FOR ALL
+            TO memoria_memory_api, memoria_memory_worker
+            USING (
+                pg_has_role(current_user, 'memoria_memory_worker', 'member')
+                OR resource_owner_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
             )
             WITH CHECK (
                 pg_has_role(current_user, 'memoria_memory_worker', 'member')
