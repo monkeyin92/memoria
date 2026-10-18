@@ -31,6 +31,7 @@ ConsentKind = Literal[
     "weekly_report",
     "corpus_recording",
     "child_archive",
+    "subject_custody",
 ]
 
 
@@ -198,8 +199,11 @@ class ConsentRecord:
                 raise ValueError("corpus recording consent requires an expiry")
             if self.expires_at - self.granted_at > timedelta(days=30):
                 raise ValueError("corpus recording consent cannot exceed 30 days")
+        elif self.consent_kind == "subject_custody":
+            if self.expires_at is None:
+                raise ValueError("subject custody consent requires an expiry")
         elif self.expires_at is not None:
-            raise ValueError("only corpus recording consent may expire")
+            raise ValueError("only corpus recording and subject custody consent may expire")
         if self.revoked_at is not None:
             object.__setattr__(self, "revoked_at", _utc(self.revoked_at, field="revoked_at"))
             if self.revocation_evidence_event_id is None:
@@ -272,8 +276,11 @@ class PersonConsentRecord:
                 raise ValueError("corpus recording consent requires an expiry")
             if self.expires_at - self.granted_at > timedelta(days=30):
                 raise ValueError("corpus recording consent cannot exceed 30 days")
+        elif self.consent_kind == "subject_custody":
+            if self.expires_at is None:
+                raise ValueError("subject custody consent requires an expiry")
         elif self.expires_at is not None:
-            raise ValueError("only corpus recording consent may expire")
+            raise ValueError("only corpus recording and subject custody consent may expire")
         if self.revoked_at is not None:
             object.__setattr__(self, "revoked_at", _utc(self.revoked_at, field="revoked_at"))
             if self.revocation_evidence_event_id is None:
