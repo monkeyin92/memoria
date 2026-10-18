@@ -17,7 +17,9 @@
     "pages/privacy/index",
     "pages/user-agreement/index",
     "pages/bind/index",
-    "pages/device-onboarding/index"
+    "pages/device-onboarding/index",
+    "pages/memory-lifecycle/index",
+    "pages/memory-lifecycle/operation-detail"
   ],
   "window": {
     "backgroundColor": "#F4F4F7",

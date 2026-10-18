@@ -1,0 +1,6 @@
+{
+  "navigationBarTitleText": "记忆管理",
+  "usingComponents": {
+    "mp-icon": "weui-miniprogram/components/icon/icon"
+  }
+}
