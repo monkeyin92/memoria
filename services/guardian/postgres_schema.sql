@@ -213,9 +213,33 @@ CREATE TABLE IF NOT EXISTS guardian_subject_activity (
 CREATE INDEX IF NOT EXISTS idx_guardian_subject_activity_idle
 ON guardian_subject_activity(last_active_at);
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_guardian_person_consents_active_kind
+ALTER TABLE guardian_person_consents ADD COLUMN IF NOT EXISTS superseded_at TIMESTAMPTZ;
+ALTER TABLE guardian_person_consents
+    ADD COLUMN IF NOT EXISTS superseded_by_consent_id UUID
+    REFERENCES guardian_person_consents(consent_id) DEFERRABLE INITIALLY DEFERRED;
+
+DO $guardian_person_consent_supersede$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'guardian_person_consents_supersede_pair'
+    ) THEN
+        ALTER TABLE guardian_person_consents
+            ADD CONSTRAINT guardian_person_consents_supersede_pair CHECK (
+                (superseded_at IS NULL AND superseded_by_consent_id IS NULL)
+                OR (consent_kind = 'subject_custody'
+                    AND superseded_at IS NOT NULL
+                    AND superseded_by_consent_id IS NOT NULL
+                    AND superseded_by_consent_id <> consent_id)
+            );
+    END IF;
+END
+$guardian_person_consent_supersede$;
+
+DROP INDEX IF EXISTS idx_guardian_person_consents_active_kind;
+CREATE UNIQUE INDEX idx_guardian_person_consents_active_kind
 ON guardian_person_consents(subject_person_id, consent_kind)
-WHERE revoked_at IS NULL;
+WHERE revoked_at IS NULL AND superseded_at IS NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_guardian_person_consents_grant_evidence
 ON guardian_person_consents(evidence_event_id);

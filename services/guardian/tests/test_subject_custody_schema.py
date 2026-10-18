@@ -68,3 +68,30 @@ async def test_upgrade_from_previous_schema(conn) -> None:
         await _insert(conn, "subject_custody", None)
     with pytest.raises(asyncpg.CheckViolationError):
         await _insert(conn, "child_archive", future)
+
+
+async def test_renewal_retires_old_row_without_unique_clash(conn) -> None:
+    await conn.execute(_SCHEMA.read_text(encoding="utf-8"))
+    future = await conn.fetchval("SELECT now() + interval '90 days'")
+    old_id, new_id = uuid.uuid4(), uuid.uuid4()
+    await conn.execute(_INSERT, old_id, "subject_custody", future, "ev-old")
+    with pytest.raises(asyncpg.UniqueViolationError):
+        await conn.execute(_INSERT, new_id, "subject_custody", future, "ev-dup")
+    async with conn.transaction():
+        await conn.execute(
+            "UPDATE guardian_person_consents SET superseded_at = now(),"
+            " superseded_by_consent_id = $2 WHERE consent_id = $1",
+            old_id,
+            new_id,
+        )
+        await conn.execute(_INSERT, new_id, "subject_custody", future, "ev-new")
+    active = await conn.fetchval(
+        "SELECT count(*) FROM guardian_person_consents"
+        " WHERE consent_kind = 'subject_custody' AND superseded_at IS NULL"
+    )
+    assert active == 1
+    with pytest.raises(asyncpg.CheckViolationError):
+        await conn.execute(
+            "UPDATE guardian_person_consents SET superseded_at = now() WHERE consent_id = $1",
+            new_id,
+        )
