@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS guardian_person_consents (
     ),
     consent_kind TEXT NOT NULL CHECK (consent_kind IN (
         'minor_voice_session', 'memory_retention',
-        'weekly_report', 'corpus_recording', 'child_archive'
+        'weekly_report', 'corpus_recording', 'child_archive', 'subject_custody'
     )),
     policy_version TEXT NOT NULL CHECK (
         char_length(policy_version) BETWEEN 1 AND 64
@@ -145,10 +145,12 @@ CREATE TABLE IF NOT EXISTS guardian_person_consents (
     ),
     CHECK (subject_person_id <> grantor_person_id),
     CHECK (expires_at IS NULL OR expires_at > granted_at),
-    CHECK (
+    CONSTRAINT guardian_person_consents_expiry_by_kind CHECK (
         (consent_kind = 'corpus_recording' AND expires_at IS NOT NULL
             AND expires_at <= granted_at + INTERVAL '30 days')
-        OR (consent_kind <> 'corpus_recording' AND expires_at IS NULL)
+        OR (consent_kind = 'subject_custody' AND expires_at IS NOT NULL)
+        OR (consent_kind NOT IN ('corpus_recording', 'subject_custody')
+            AND expires_at IS NULL)
     ),
     CHECK (
         (revoked_at IS NULL AND revocation_evidence_event_id IS NULL)
@@ -164,12 +166,40 @@ BEGIN
         ADD CONSTRAINT guardian_person_consents_consent_kind_check
         CHECK (consent_kind IN (
             'minor_voice_session', 'memory_retention',
-            'weekly_report', 'corpus_recording', 'child_archive'
+            'weekly_report', 'corpus_recording', 'child_archive', 'subject_custody'
         ));
 EXCEPTION
     WHEN duplicate_object THEN NULL;
 END
 $guardian_person_consent_kind_child_archive$;
+
+DO $guardian_person_consent_expiry_by_kind$
+DECLARE legacy TEXT;
+BEGIN
+    FOR legacy IN
+        SELECT conname FROM pg_constraint
+        WHERE conrelid = 'guardian_person_consents'::regclass AND contype = 'c'
+          AND conname <> 'guardian_person_consents_expiry_by_kind'
+          AND pg_get_constraintdef(oid) LIKE '%corpus_recording%'
+          AND pg_get_constraintdef(oid) LIKE '%expires_at%'
+    LOOP
+        EXECUTE format('ALTER TABLE guardian_person_consents DROP CONSTRAINT %I', legacy);
+    END LOOP;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'guardian_person_consents_expiry_by_kind'
+    ) THEN
+        ALTER TABLE guardian_person_consents
+            ADD CONSTRAINT guardian_person_consents_expiry_by_kind CHECK (
+                (consent_kind = 'corpus_recording' AND expires_at IS NOT NULL
+                    AND expires_at <= granted_at + INTERVAL '30 days')
+                OR (consent_kind = 'subject_custody' AND expires_at IS NOT NULL)
+                OR (consent_kind NOT IN ('corpus_recording', 'subject_custody')
+                    AND expires_at IS NULL)
+            );
+    END IF;
+END
+$guardian_person_consent_expiry_by_kind$;
 
 CREATE TABLE IF NOT EXISTS guardian_subject_activity (
     subject_person_id TEXT PRIMARY KEY CHECK (
