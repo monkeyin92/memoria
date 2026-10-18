@@ -143,6 +143,43 @@ CREATE INDEX IF NOT EXISTS idx_memory_records_family
 ON memory_records(family_space_id, scope, created_at);
 CREATE INDEX IF NOT EXISTS idx_memory_records_co_subject
 ON memory_records USING GIN (co_subject_ids);
+
+-- B01 (ADR-001 s11.1): per-record version, deletion lock and purpose lineage.
+-- Maintained by the repository through a guarded update path (see
+-- memory_records_immutable), never by client payload.
+CREATE OR REPLACE FUNCTION memory_purpose_links_valid(p_links JSONB) RETURNS BOOLEAN
+LANGUAGE sql IMMUTABLE AS $$
+    SELECT jsonb_typeof(p_links) = 'array' AND NOT EXISTS (
+        SELECT 1 FROM jsonb_array_elements(p_links) AS link
+        WHERE jsonb_typeof(link) <> 'object'
+           OR jsonb_typeof(link -> 'purpose_scope_id') IS DISTINCT FROM 'string'
+           OR jsonb_typeof(link -> 'source_revision') IS DISTINCT FROM 'number'
+           OR jsonb_typeof(link -> 'scope_generation') IS DISTINCT FROM 'number'
+           OR jsonb_typeof(link -> 'basis_ref') IS DISTINCT FROM 'string'
+           OR (link ->> 'source_revision')::numeric < 1
+           OR (link ->> 'scope_generation')::numeric < 1
+           OR char_length(link ->> 'basis_ref') NOT BETWEEN 1 AND 128
+    )
+$$;
+
+ALTER TABLE memory_records ADD COLUMN IF NOT EXISTS record_version BIGINT NOT NULL DEFAULT 1;
+ALTER TABLE memory_records ADD COLUMN IF NOT EXISTS deletion_locked BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE memory_records
+    ADD COLUMN IF NOT EXISTS purpose_links JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+DO $memory_records_b01_checks$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'memory_records_version_positive') THEN
+        ALTER TABLE memory_records
+            ADD CONSTRAINT memory_records_version_positive CHECK (record_version >= 1);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'memory_records_purpose_links_valid') THEN
+        ALTER TABLE memory_records
+            ADD CONSTRAINT memory_records_purpose_links_valid
+            CHECK (memory_purpose_links_valid(purpose_links));
+    END IF;
+END
+$memory_records_b01_checks$;
 -- At most one promoted record per shared proposal (fifth review): the
 -- atomic vote+promotion path depends on this uniqueness.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_memory_records_shared_proposal
@@ -371,6 +408,7 @@ LANGUAGE plpgsql AS $$
 DECLARE
     v_target TEXT := memory_subject_erase_target();
     v_touch TEXT := NULLIF(current_setting('app.memory.child_archive_touch', true), '');
+    v_lineage TEXT := NULLIF(current_setting('app.memory.record_lineage_update', true), '');
 BEGIN
     IF TG_OP = 'DELETE' AND v_target IS NOT NULL
        AND memory_subject_erase_names_record(OLD.record_id, v_target) THEN
@@ -386,7 +424,20 @@ BEGIN
        AND NEW.created_at IS NOT DISTINCT FROM OLD.created_at
        AND NEW.resource_owner_id IS NOT DISTINCT FROM OLD.resource_owner_id
        AND (NEW.payload - 'last_mentioned_at') = (OLD.payload - 'last_mentioned_at')
-       AND NEW.payload ? 'last_mentioned_at' THEN
+       AND NEW.payload ? 'last_mentioned_at'
+       AND NEW.purpose_links = OLD.purpose_links
+       AND NEW.deletion_locked = OLD.deletion_locked
+       AND NEW.record_version IN (OLD.record_version, OLD.record_version + 1) THEN
+        RETURN NEW;
+    END IF;
+    -- B01: lineage / lock / version maintenance.  The version must advance by
+    -- exactly one and nothing else about the record may change.
+    IF TG_OP = 'UPDATE'
+       AND v_lineage IS NOT NULL
+       AND v_lineage = OLD.record_id
+       AND NEW.record_version = OLD.record_version + 1
+       AND (to_jsonb(NEW) - 'record_version' - 'purpose_links' - 'deletion_locked')
+           = (to_jsonb(OLD) - 'record_version' - 'purpose_links' - 'deletion_locked') THEN
         RETURN NEW;
     END IF;
     RAISE EXCEPTION 'memory_records is append-only';

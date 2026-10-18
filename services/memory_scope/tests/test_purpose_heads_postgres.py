@@ -6,10 +6,13 @@ Skipped unless ``MEMORIA_TEST_POSTGRES_DSN`` is set.
 from __future__ import annotations
 
 import os
+import subprocess
 import uuid
+from pathlib import Path
 
 import asyncpg
 import pytest
+from services.memory_scope import postgres_store
 from services.memory_scope.tests import test_postgres_store
 from services.memory_scope.tests.test_postgres_store import _initialize_store
 
@@ -255,3 +258,126 @@ async def test_lifecycle_operation_idempotency_and_guards(
     finally:
         await admin.close()
         await store.close()
+
+
+async def test_record_version_links_and_guarded_update(
+    pg_env: tuple[str, str, str, str, str],
+) -> None:
+    api_dsn, _w, _a, admin_db_dsn, password = pg_env
+    store = await _initialize_store(api_dsn, admin_db_dsn, password)
+    admin = await asyncpg.connect(admin_db_dsn)
+    try:
+        await admin.execute(
+            "INSERT INTO memory_records(record_id, scope, subject_id, resource_owner_id,"
+            " created_at, payload, consent_snapshot_id, policy_receipt_id,"
+            " created_by_actor_id) VALUES ('r1','personal_private','child-1','parent-1',"
+            " now(), '{\"kind\":\"child_archive\"}', 'snap', 'rcpt', 'parent-1')"
+        )
+        row = await admin.fetchrow(
+            "SELECT record_version, deletion_locked, purpose_links FROM memory_records"
+            " WHERE record_id='r1'"
+        )
+        assert row is not None
+        assert (row["record_version"], row["deletion_locked"], row["purpose_links"]) == (
+            1,
+            False,
+            "[]",
+        )
+        link = (
+            f'[{{"purpose_scope_id":"{uuid.uuid4()}","source_revision":1,'
+            '"scope_generation":1,"basis_ref":"consent:k1"}]'
+        )
+        update = (
+            "UPDATE memory_records SET record_version = record_version + 1,"
+            " purpose_links = $1::jsonb, deletion_locked = $2 WHERE record_id='r1'"
+        )
+        # still append-only without the guarded path
+        with pytest.raises(asyncpg.RaiseError):
+            await admin.execute(update, link, False)
+        async with admin.transaction():
+            await admin.execute("SELECT set_config('app.memory.record_lineage_update','r1',true)")
+            await admin.execute(update, link, True)
+        assert (
+            await admin.fetchval("SELECT record_version FROM memory_records WHERE record_id='r1'")
+            == 2
+        )
+        # the guarded path may not skip versions or rewrite other columns
+        async with admin.transaction():
+            await admin.execute("SELECT set_config('app.memory.record_lineage_update','r1',true)")
+            with pytest.raises(asyncpg.RaiseError):
+                await admin.execute(
+                    "UPDATE memory_records SET record_version = 9 WHERE record_id='r1'"
+                )
+        async with admin.transaction():
+            await admin.execute("SELECT set_config('app.memory.record_lineage_update','r1',true)")
+            with pytest.raises(asyncpg.RaiseError):
+                await admin.execute(
+                    "UPDATE memory_records SET record_version = record_version + 1,"
+                    " subject_id = 'other' WHERE record_id='r1'"
+                )
+        # malformed lineage is rejected by the table itself
+        async with admin.transaction():
+            await admin.execute("SELECT set_config('app.memory.record_lineage_update','r1',true)")
+            with pytest.raises(asyncpg.CheckViolationError):
+                await admin.execute(update, '[{"purpose_scope_id":"x"}]', False)
+    finally:
+        await admin.close()
+        await store.close()
+
+
+async def test_upgrade_from_the_previous_schema_keeps_existing_rows(
+    pg_env: tuple[str, str, str, str, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api_dsn, _w, _a, admin_db_dsn, password = pg_env
+    old = subprocess.run(
+        ["git", "show", "c0cd19f6:services/memory_scope/postgres_schema.sql"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    old_path = tmp_path / "old_schema.sql"
+    old_path.write_text(old, encoding="utf-8")
+    with monkeypatch.context() as patch:
+        patch.setattr(postgres_store, "_SCHEMA_PATH", old_path)
+        before = await _initialize_store(api_dsn, admin_db_dsn, password)
+        await before.close()
+    admin = await asyncpg.connect(admin_db_dsn)
+    try:
+        await admin.execute(
+            "INSERT INTO memory_records(record_id, scope, subject_id, resource_owner_id,"
+            " created_at, payload, consent_snapshot_id, policy_receipt_id,"
+            " created_by_actor_id) VALUES ('legacy','personal_private','child-1','parent-1',"
+            " now(), '{}', 'snap', 'rcpt', 'parent-1')"
+        )
+        assert not await admin.fetchval(
+            "SELECT 1 FROM information_schema.tables WHERE table_name='memory_purpose_heads'"
+        )
+    finally:
+        await admin.close()
+    after = await _initialize_store(api_dsn, admin_db_dsn, password)  # new schema over old
+    await after.close()
+    admin = await asyncpg.connect(admin_db_dsn)
+    try:
+        row = await admin.fetchrow(
+            "SELECT record_version, deletion_locked, purpose_links FROM memory_records"
+            " WHERE record_id='legacy'"
+        )
+        assert row is not None
+        assert (row["record_version"], row["deletion_locked"], row["purpose_links"]) == (
+            1,
+            False,
+            "[]",
+        )
+        for table in (
+            "memory_purpose_heads",
+            "memory_custody_grants",
+            "memory_custody_items",
+            "memory_lifecycle_operations",
+        ):
+            assert await admin.fetchval(
+                "SELECT relforcerowsecurity FROM pg_class WHERE relname = $1", table
+            )
+    finally:
+        await admin.close()
