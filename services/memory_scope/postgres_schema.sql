@@ -537,6 +537,24 @@ ON memory_custody_grants(purpose_scope_id, evidence_event_id, evidence_revision)
 CREATE INDEX IF NOT EXISTS idx_memory_custody_grants_chain
 ON memory_custody_grants(custody_chain_id, status);
 
+-- B01 (ADR-001 s11.1): index of which records a custody grant covers.  It
+-- references records, never copies content; only eligible child_archive rows.
+CREATE TABLE IF NOT EXISTS memory_custody_items (
+    grant_id UUID NOT NULL REFERENCES memory_custody_grants(grant_id),
+    record_id TEXT NOT NULL REFERENCES memory_records(record_id),
+    source_purpose_scope_id UUID NOT NULL REFERENCES memory_purpose_heads(purpose_scope_id),
+    source_revision BIGINT NOT NULL CHECK (source_revision >= 1),
+    source_scope_generation BIGINT NOT NULL CHECK (source_scope_generation >= 1),
+    record_version BIGINT NOT NULL CHECK (record_version >= 1),
+    eligibility_code TEXT NOT NULL CHECK (eligibility_code IN ('child_archive_whitelist')),
+    basis_refs JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(basis_refs) = 'array'),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (grant_id, record_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_custody_items_record
+ON memory_custody_items(record_id);
+
 -- ---------------------------------------------------------------------------
 -- Row-level security: transaction-level app context, minimal policies.
 -- The adapter sets app.memory.* inside each transaction; with FORCE RLS a
@@ -551,6 +569,7 @@ ALTER TABLE memory_outbox ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memory_audit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memory_purpose_heads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memory_custody_grants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE memory_custody_items ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE memory_records FORCE ROW LEVEL SECURITY;
 ALTER TABLE memory_status_events FORCE ROW LEVEL SECURITY;
@@ -560,6 +579,7 @@ ALTER TABLE memory_outbox FORCE ROW LEVEL SECURITY;
 ALTER TABLE memory_audit_events FORCE ROW LEVEL SECURITY;
 ALTER TABLE memory_purpose_heads FORCE ROW LEVEL SECURITY;
 ALTER TABLE memory_custody_grants FORCE ROW LEVEL SECURITY;
+ALTER TABLE memory_custody_items FORCE ROW LEVEL SECURITY;
 
 DO $memory_policy$
 BEGIN
@@ -836,6 +856,27 @@ BEGIN
             WITH CHECK (
                 pg_has_role(current_user, 'memoria_memory_worker', 'member')
                 OR resource_owner_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
+            );
+        GRANT SELECT, INSERT, DELETE ON memory_custody_items
+            TO memoria_memory_api, memoria_memory_worker;
+
+        -- Visible only through a grant the actor may see (grants RLS applies).
+        DROP POLICY IF EXISTS memory_custody_items_rw ON memory_custody_items;
+        CREATE POLICY memory_custody_items_rw ON memory_custody_items FOR ALL
+            TO memoria_memory_api, memoria_memory_worker
+            USING (
+                pg_has_role(current_user, 'memoria_memory_worker', 'member')
+                OR EXISTS (
+                    SELECT 1 FROM memory_custody_grants g
+                    WHERE g.grant_id = memory_custody_items.grant_id
+                )
+            )
+            WITH CHECK (
+                pg_has_role(current_user, 'memoria_memory_worker', 'member')
+                OR EXISTS (
+                    SELECT 1 FROM memory_custody_grants g
+                    WHERE g.grant_id = memory_custody_items.grant_id
+                )
             );
     END IF;
 END

@@ -164,3 +164,44 @@ async def test_custody_grant_rules(
     finally:
         await admin.close()
         await store.close()
+
+
+async def test_custody_items_reference_records_without_copying(
+    pg_env: tuple[str, str, str, str, str],
+) -> None:
+    api_dsn, _w, _a, admin_db_dsn, password = pg_env
+    store = await _initialize_store(api_dsn, admin_db_dsn, password)
+    admin = await asyncpg.connect(admin_db_dsn)
+    try:
+        head, grant = uuid.uuid4(), uuid.uuid4()
+        until = await admin.fetchval("SELECT now() + interval '30 days'")
+        await admin.execute(_INSERT, head, "archive_custody", "custody_chain", "c1", until)
+        await admin.execute(
+            "INSERT INTO memory_custody_grants(grant_id, subject_id, resource_owner_id,"
+            " grantor_id, purpose_scope_id, custody_chain_id, consent_id, evidence_event_id,"
+            " policy_version, policy_hash, effective_at, expires_at, status)"
+            " VALUES ($1,'child-1','parent-1','parent-1',$2,'c1','k1','ev1','v1','h1',"
+            " now(), $3, 'active')",
+            grant,
+            head,
+            until,
+        )
+        item = (
+            "INSERT INTO memory_custody_items(grant_id, record_id, source_purpose_scope_id,"
+            " source_revision, source_scope_generation, record_version, eligibility_code)"
+            " VALUES ($1, $2, $3, 1, 1, 1, $4)"
+        )
+        # a record that does not exist cannot be indexed
+        with pytest.raises(asyncpg.ForeignKeyViolationError):
+            await admin.execute(item, grant, "missing", head, "child_archive_whitelist")
+        # only the whitelist eligibility code exists
+        with pytest.raises(asyncpg.CheckViolationError):
+            await admin.execute(item, grant, "missing", head, "claims")
+        app = await asyncpg.connect(api_dsn)
+        try:
+            assert await app.fetchval("SELECT count(*) FROM memory_custody_items") == 0
+        finally:
+            await app.close()
+    finally:
+        await admin.close()
+        await store.close()
