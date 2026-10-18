@@ -411,6 +411,30 @@ class ChildLayerStore:
             return None
         return _row_to_record(row)
 
+    async def memory_purpose_open(self, *, subject_id: str) -> bool:
+        """True when the subject has no lifecycle heads or one is open (B02).
+
+        Read gate for recall: a subject whose ``memory_use`` heads are all
+        stopped or expired must not have memory recalled or retained.
+        """
+
+        async with (await self._api()).acquire() as connection:
+            async with connection.transaction():
+                await _scope(connection, actor_subject_id=subject_id)
+                rows = await connection.fetch(
+                    "SELECT state, valid_until FROM memory_purpose_heads"
+                    " WHERE subject_id = $1 AND purpose = 'memory_use'",
+                    subject_id,
+                )
+        if not rows:
+            return True
+        now = datetime.now(UTC)
+        return any(
+            row["state"] == "active"
+            and (row["valid_until"] is None or row["valid_until"] > now)
+            for row in rows
+        )
+
     async def delete_record(
         self, *, subject_id: str, record_id: str
     ) -> Mapping[str, Any]:

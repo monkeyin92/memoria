@@ -145,3 +145,24 @@ async def test_touch_refresh_is_blocked_after_stop(
     finally:
         await admin.close()
         await _close_layers(store, bootstrap, admin_db_dsn)
+
+
+async def test_memory_purpose_open_reads_the_heads(
+    pg_env: tuple[str, str, str, str, str],
+) -> None:
+    store, bootstrap, admin_db_dsn = await _layers(pg_env)
+    admin = await asyncpg.connect(admin_db_dsn)
+    try:
+        assert await store.memory_purpose_open(subject_id=CHILD) is True  # no heads
+        head = await _head(admin, CHILD, "bind-r")
+        assert await store.memory_purpose_open(subject_id=CHILD) is True
+        await admin.execute(
+            "UPDATE memory_purpose_heads SET state='stopped', stopped_at=now(),"
+            " restriction_revision = restriction_revision + 1 WHERE purpose_scope_id=$1",
+            head,
+        )
+        assert await store.memory_purpose_open(subject_id=CHILD) is False
+        assert await store.memory_purpose_open(subject_id=OTHER) is True
+    finally:
+        await admin.close()
+        await _close_layers(store, bootstrap, admin_db_dsn)

@@ -338,10 +338,22 @@ async def _subject_memory_retention_allowed(
             )
             is not None
         )
-    return memory_retention_allowed(
+    allowed = memory_retention_allowed(
         subject_category=subject_category,
         active_consent=consent_active,
     )
+    if not allowed or not subject_person_id:
+        return allowed
+    # B02: a stopped memory purpose closes recall and retention at once, ahead
+    # of any runtime-profile refresh.  No lifecycle heads keeps legacy behaviour.
+    layers = getattr(request.app.state, "child_layer_store", None)
+    if layers is None:
+        return allowed
+    try:
+        return bool(await layers.memory_purpose_open(subject_id=subject_person_id))
+    except Exception:
+        logger.exception("memory purpose check failed; denying memory")
+        return False
 
 
 def _confirmed_subject_id(value: object) -> str | None:
