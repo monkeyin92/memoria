@@ -99,7 +99,7 @@ from services.guardian.push import PushSubscriptionResult, PushSubscriptionStore
 from services.guardian.weekly_report import WeeklyReportProjector
 from services.identity.service import IdentityService
 from services.legacy.domain import LegacyRegistryPort
-from services.memory_scope.child_layers import ChildLayerStore
+from services.memory_scope.child_layers import ChildLayerStore, MemoryPurposeStopped
 from services.speaker.domain import RevokeSpeakerProfile, SpeakerAuthorityPort
 from services.voice_profile.domain import VoiceProfilePort
 
@@ -1520,12 +1520,15 @@ async def create_session_summary(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail={"code": "invalid_dialogue_summary"}) from exc
-    record = await _child_layers(request).write_summary(
-        summary,
-        resource_owner_id=account_id,
-        actor_id=account_id,
-        consent_snapshot_id=consent_snapshot_id,
-    )
+    try:
+        record = await _child_layers(request).write_summary(
+            summary,
+            resource_owner_id=account_id,
+            actor_id=account_id,
+            consent_snapshot_id=consent_snapshot_id,
+        )
+    except MemoryPurposeStopped as exc:
+        raise HTTPException(status_code=409, detail={"code": "memory_purpose_stopped"}) from exc
     return {
         "record_id": record.record_id,
         "text": record.text,
@@ -1628,12 +1631,15 @@ async def create_child_archive_fact(
         fact = ArchiveFact(subject_id=minor_user_id, field=body.field, text=body.text)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail={"code": "invalid_child_archive_fact"}) from exc
-    record = await _child_layers(request).write_archive_fact(
-        fact,
-        resource_owner_id=account_id,
-        actor_id=account_id,
-        consent_snapshot_id=consent.consent_id,
-    )
+    try:
+        record = await _child_layers(request).write_archive_fact(
+            fact,
+            resource_owner_id=account_id,
+            actor_id=account_id,
+            consent_snapshot_id=consent.consent_id,
+        )
+    except MemoryPurposeStopped as exc:
+        raise HTTPException(status_code=409, detail={"code": "memory_purpose_stopped"}) from exc
     return {
         "record_id": record.record_id,
         "field": record.field,

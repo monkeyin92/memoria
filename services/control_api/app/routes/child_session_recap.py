@@ -15,7 +15,7 @@ from services.guardian.child_memory import (
     DialogueSummary,
 )
 from services.guardian.domain import GuardianStorePort
-from services.memory_scope.child_layers import ChildLayerStore
+from services.memory_scope.child_layers import ChildLayerStore, MemoryPurposeStopped
 
 router = APIRouter(prefix="/v1/internal/child-memory", tags=["child-memory-internal"])
 
@@ -113,12 +113,20 @@ async def ingest_session_recap(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail={"code": "invalid_dialogue_summary"}) from exc
 
-    summary_record = await layers.write_summary(
-        summary,
-        resource_owner_id=body.resource_owner_id,
-        actor_id=body.resource_owner_id,
-        consent_snapshot_id=memory_consent.consent_id,
-    )
+    try:
+        summary_record = await layers.write_summary(
+            summary,
+            resource_owner_id=body.resource_owner_id,
+            actor_id=body.resource_owner_id,
+            consent_snapshot_id=memory_consent.consent_id,
+        )
+    except MemoryPurposeStopped:
+        return {
+            "skipped": True,
+            "reason": "memory_purpose_stopped",
+            "summary_record_id": None,
+            "archive_record_ids": [],
+        }
 
     archive_ids: list[str] = []
     archive_consent = await guardian.active_consent(
@@ -132,12 +140,15 @@ async def ingest_session_recap(
                 )
             except ValueError:
                 continue
-            written = await layers.upsert_archive_fact(
-                fact,
-                resource_owner_id=body.resource_owner_id,
-                actor_id=body.resource_owner_id,
-                consent_snapshot_id=archive_consent.consent_id,
-            )
+            try:
+                written = await layers.upsert_archive_fact(
+                    fact,
+                    resource_owner_id=body.resource_owner_id,
+                    actor_id=body.resource_owner_id,
+                    consent_snapshot_id=archive_consent.consent_id,
+                )
+            except MemoryPurposeStopped:
+                break
             archive_ids.append(written.record_id)
 
     activity = getattr(request.app.state, "subject_activity_store", None)

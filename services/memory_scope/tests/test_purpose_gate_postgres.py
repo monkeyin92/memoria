@@ -11,6 +11,7 @@ import uuid
 import asyncpg
 import pytest
 from services.guardian.child_memory import ArchiveFact, DialogueSummary
+from services.memory_scope.child_layers import MemoryPurposeStopped
 from services.memory_scope.tests import test_postgres_store
 from services.memory_scope.tests.test_child_layers_postgres import (
     _close_layers,
@@ -80,9 +81,9 @@ async def test_writes_follow_the_purpose_head(
             " restriction_revision = restriction_revision + 1 WHERE purpose_scope_id=$1",
             head,
         )
-        with pytest.raises(asyncpg.PostgresError, match="stopped"):
+        with pytest.raises(MemoryPurposeStopped):
             await _write(store, CHILD, "e2")
-        with pytest.raises(asyncpg.PostgresError, match="stopped"):
+        with pytest.raises(MemoryPurposeStopped):
             await store.write_archive_fact(
                 ArchiveFact(subject_id=CHILD, field="pet_name", text="旺财"),
                 resource_owner_id=PARENT,
@@ -107,7 +108,7 @@ async def test_writes_follow_the_purpose_head(
             " restriction_revision = restriction_revision + 1"
             " WHERE authority_scope_id = 'bind-2'"
         )
-        with pytest.raises(asyncpg.PostgresError, match="stopped"):
+        with pytest.raises(MemoryPurposeStopped):
             await _write(store, CHILD, "e5")
     finally:
         await admin.close()
@@ -130,7 +131,7 @@ async def test_touch_refresh_is_blocked_after_stop(
             " restriction_revision = restriction_revision + 1 WHERE purpose_scope_id=$1",
             head,
         )
-        with pytest.raises(asyncpg.PostgresError, match="stopped"):
+        with pytest.raises(MemoryPurposeStopped):
             await store.upsert_archive_fact(
                 fact,
                 resource_owner_id=PARENT,

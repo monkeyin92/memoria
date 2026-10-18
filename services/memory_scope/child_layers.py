@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -41,6 +42,20 @@ async def _scope(connection: asyncpg.Connection, **values: str | None) -> None:
         await connection.execute(
             "SELECT set_config('app.memory.' || $1, $2, true)", key, text
         )
+
+
+class MemoryPurposeStopped(Exception):
+    """The subject's memory purpose is stopped; the write was refused (B02)."""
+
+
+@asynccontextmanager
+async def _purpose_gate() -> AsyncIterator[None]:
+    try:
+        yield
+    except asyncpg.PostgresError as exc:
+        if getattr(exc, "sqlstate", None) == "MC409":
+            raise MemoryPurposeStopped(str(exc)) from exc
+        raise
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,7 +183,7 @@ class ChildLayerStore:
         record_id = f"dlgsum:{uuid.uuid4()}"
         receipt = f"{policy_receipt_id}:{record_id}"
         payload = summary_payload(summary, created_at=stamped)
-        async with (await self._api()).acquire() as connection:
+        async with (await self._api()).acquire() as connection, _purpose_gate():
             async with connection.transaction():
                 await _scope(
                     connection,
@@ -252,7 +267,7 @@ class ChildLayerStore:
         record_id = f"charch:{uuid.uuid4()}"
         receipt = f"{policy_receipt_id}:{record_id}"
         payload = archive_payload(fact, created_at=stamped, last_mentioned_at=stamped)
-        async with (await self._api()).acquire() as connection:
+        async with (await self._api()).acquire() as connection, _purpose_gate():
             async with connection.transaction():
                 await _scope(
                     connection,
@@ -321,7 +336,7 @@ class ChildLayerStore:
             viewer_subject_id=resource_owner_id,
         )
         if existing is not None:
-            async with (await self._api()).acquire() as connection:
+            async with (await self._api()).acquire() as connection, _purpose_gate():
                 async with connection.transaction():
                     await connection.fetchval(
                         "SELECT memory_child_archive_touch_mentioned($1, $2, $3)",
