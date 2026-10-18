@@ -143,6 +143,43 @@ CREATE INDEX IF NOT EXISTS idx_memory_records_family
 ON memory_records(family_space_id, scope, created_at);
 CREATE INDEX IF NOT EXISTS idx_memory_records_co_subject
 ON memory_records USING GIN (co_subject_ids);
+
+-- B01 (ADR-001 s11.1): per-record version, deletion lock and purpose lineage.
+-- Maintained by the repository through a guarded update path (see
+-- memory_records_immutable), never by client payload.
+CREATE OR REPLACE FUNCTION memory_purpose_links_valid(p_links JSONB) RETURNS BOOLEAN
+LANGUAGE sql IMMUTABLE AS $$
+    SELECT jsonb_typeof(p_links) = 'array' AND NOT EXISTS (
+        SELECT 1 FROM jsonb_array_elements(p_links) AS link
+        WHERE jsonb_typeof(link) <> 'object'
+           OR jsonb_typeof(link -> 'purpose_scope_id') IS DISTINCT FROM 'string'
+           OR jsonb_typeof(link -> 'source_revision') IS DISTINCT FROM 'number'
+           OR jsonb_typeof(link -> 'scope_generation') IS DISTINCT FROM 'number'
+           OR jsonb_typeof(link -> 'basis_ref') IS DISTINCT FROM 'string'
+           OR (link ->> 'source_revision')::numeric < 1
+           OR (link ->> 'scope_generation')::numeric < 1
+           OR char_length(link ->> 'basis_ref') NOT BETWEEN 1 AND 128
+    )
+$$;
+
+ALTER TABLE memory_records ADD COLUMN IF NOT EXISTS record_version BIGINT NOT NULL DEFAULT 1;
+ALTER TABLE memory_records ADD COLUMN IF NOT EXISTS deletion_locked BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE memory_records
+    ADD COLUMN IF NOT EXISTS purpose_links JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+DO $memory_records_b01_checks$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'memory_records_version_positive') THEN
+        ALTER TABLE memory_records
+            ADD CONSTRAINT memory_records_version_positive CHECK (record_version >= 1);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'memory_records_purpose_links_valid') THEN
+        ALTER TABLE memory_records
+            ADD CONSTRAINT memory_records_purpose_links_valid
+            CHECK (memory_purpose_links_valid(purpose_links));
+    END IF;
+END
+$memory_records_b01_checks$;
 -- At most one promoted record per shared proposal (fifth review): the
 -- atomic vote+promotion path depends on this uniqueness.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_memory_records_shared_proposal
@@ -371,6 +408,7 @@ LANGUAGE plpgsql AS $$
 DECLARE
     v_target TEXT := memory_subject_erase_target();
     v_touch TEXT := NULLIF(current_setting('app.memory.child_archive_touch', true), '');
+    v_lineage TEXT := NULLIF(current_setting('app.memory.record_lineage_update', true), '');
 BEGIN
     IF TG_OP = 'DELETE' AND v_target IS NOT NULL
        AND memory_subject_erase_names_record(OLD.record_id, v_target) THEN
@@ -386,7 +424,20 @@ BEGIN
        AND NEW.created_at IS NOT DISTINCT FROM OLD.created_at
        AND NEW.resource_owner_id IS NOT DISTINCT FROM OLD.resource_owner_id
        AND (NEW.payload - 'last_mentioned_at') = (OLD.payload - 'last_mentioned_at')
-       AND NEW.payload ? 'last_mentioned_at' THEN
+       AND NEW.payload ? 'last_mentioned_at'
+       AND NEW.purpose_links = OLD.purpose_links
+       AND NEW.deletion_locked = OLD.deletion_locked
+       AND NEW.record_version IN (OLD.record_version, OLD.record_version + 1) THEN
+        RETURN NEW;
+    END IF;
+    -- B01: lineage / lock / version maintenance.  The version must advance by
+    -- exactly one and nothing else about the record may change.
+    IF TG_OP = 'UPDATE'
+       AND v_lineage IS NOT NULL
+       AND v_lineage = OLD.record_id
+       AND NEW.record_version = OLD.record_version + 1
+       AND (to_jsonb(NEW) - 'record_version' - 'purpose_links' - 'deletion_locked')
+           = (to_jsonb(OLD) - 'record_version' - 'purpose_links' - 'deletion_locked') THEN
         RETURN NEW;
     END IF;
     RAISE EXCEPTION 'memory_records is append-only';
@@ -437,6 +488,202 @@ CREATE TRIGGER trg_memory_votes_immutable
 BEFORE UPDATE OR DELETE ON memory_shared_votes
 FOR EACH ROW EXECUTE FUNCTION memory_votes_immutable();
 
+-- B01 (ADR-001 s11.1): one head row per (subject, owner, purpose, authority
+-- scope).  Restriction and source-consent revisions only move forward, so a
+-- late message for an older grant can never lift a stop.
+CREATE TABLE IF NOT EXISTS memory_purpose_heads (
+    purpose_scope_id UUID PRIMARY KEY,
+    subject_id TEXT NOT NULL CHECK (char_length(subject_id) BETWEEN 1 AND 128),
+    resource_owner_id TEXT NOT NULL CHECK (char_length(resource_owner_id) BETWEEN 1 AND 128),
+    purpose TEXT NOT NULL CHECK (purpose IN ('memory_use', 'archive_custody')),
+    authority_scope_type TEXT NOT NULL CHECK (authority_scope_type IN (
+        'binding', 'custody_chain'
+    )),
+    authority_scope_id TEXT NOT NULL CHECK (char_length(authority_scope_id) BETWEEN 1 AND 128),
+    restriction_revision BIGINT NOT NULL DEFAULT 1 CHECK (restriction_revision >= 1),
+    source_consent_revision BIGINT NOT NULL DEFAULT 1 CHECK (source_consent_revision >= 1),
+    scope_generation BIGINT NOT NULL DEFAULT 1 CHECK (scope_generation >= 1),
+    allowed_actions JSONB NOT NULL DEFAULT '[]'::jsonb
+        CHECK (jsonb_typeof(allowed_actions) = 'array'),
+    valid_until TIMESTAMPTZ,
+    state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'stopping', 'stopped')),
+    stopped_at TIMESTAMPTZ,
+    evidence_sync_state TEXT NOT NULL DEFAULT 'synced'
+        CHECK (evidence_sync_state IN ('synced', 'pending', 'unknown')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT memory_purpose_heads_natural_key UNIQUE (
+        subject_id, resource_owner_id, purpose, authority_scope_type, authority_scope_id
+    ),
+    CONSTRAINT memory_purpose_heads_custody_term CHECK (
+        purpose <> 'archive_custody' OR valid_until IS NOT NULL
+    ),
+    CONSTRAINT memory_purpose_heads_stopped_at CHECK (
+        (state = 'stopped') = (stopped_at IS NOT NULL)
+    )
+);
+
+CREATE OR REPLACE FUNCTION memory_purpose_heads_monotonic() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.restriction_revision < OLD.restriction_revision
+       OR NEW.source_consent_revision < OLD.source_consent_revision
+       OR NEW.scope_generation < OLD.scope_generation THEN
+        RAISE EXCEPTION 'memory_purpose_heads revisions cannot move backwards';
+    END IF;
+    IF OLD.state = 'stopped' AND NEW.state <> 'stopped'
+       AND NEW.restriction_revision <= OLD.restriction_revision THEN
+        RAISE EXCEPTION 'a stopped purpose needs a newer restriction revision to reopen';
+    END IF;
+    NEW.updated_at := CURRENT_TIMESTAMP;
+    RETURN NEW;
+END
+$$;
+
+DROP TRIGGER IF EXISTS trg_memory_purpose_heads_monotonic ON memory_purpose_heads;
+CREATE TRIGGER trg_memory_purpose_heads_monotonic
+BEFORE UPDATE ON memory_purpose_heads
+FOR EACH ROW EXECUTE FUNCTION memory_purpose_heads_monotonic();
+
+CREATE INDEX IF NOT EXISTS idx_memory_purpose_heads_subject
+ON memory_purpose_heads(subject_id, resource_owner_id, purpose);
+
+-- B01 (ADR-001 s11.1): execution projection of a Guardian custody consent.
+-- Guardian holds the consent evidence; this row only mirrors it for local
+-- checks.  A grant is never reactivated: renewal creates a successor.
+CREATE TABLE IF NOT EXISTS memory_custody_grants (
+    grant_id UUID PRIMARY KEY,
+    revision BIGINT NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    subject_id TEXT NOT NULL CHECK (char_length(subject_id) BETWEEN 1 AND 128),
+    resource_owner_id TEXT NOT NULL CHECK (char_length(resource_owner_id) BETWEEN 1 AND 128),
+    grantor_id TEXT NOT NULL CHECK (char_length(grantor_id) BETWEEN 1 AND 128),
+    purpose_scope_id UUID NOT NULL REFERENCES memory_purpose_heads(purpose_scope_id),
+    custody_chain_id TEXT NOT NULL CHECK (char_length(custody_chain_id) BETWEEN 1 AND 128),
+    source_binding_id TEXT CHECK (
+        source_binding_id IS NULL OR char_length(source_binding_id) BETWEEN 1 AND 128
+    ),
+    consent_id TEXT NOT NULL CHECK (char_length(consent_id) BETWEEN 1 AND 128),
+    evidence_event_id TEXT NOT NULL CHECK (char_length(evidence_event_id) BETWEEN 1 AND 128),
+    evidence_revision BIGINT NOT NULL DEFAULT 1 CHECK (evidence_revision >= 1),
+    policy_version TEXT NOT NULL CHECK (char_length(policy_version) BETWEEN 1 AND 64),
+    policy_hash TEXT NOT NULL CHECK (char_length(policy_hash) BETWEEN 1 AND 128),
+    effective_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    predecessor_grant_id UUID REFERENCES memory_custody_grants(grant_id),
+    status TEXT NOT NULL CHECK (status IN (
+        'pending', 'active', 'revoked', 'expired', 'superseded'
+    )),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT memory_custody_grants_term CHECK (expires_at > effective_at),
+    CONSTRAINT memory_custody_grants_not_self_successor CHECK (
+        predecessor_grant_id IS NULL OR predecessor_grant_id <> grant_id
+    )
+);
+
+-- At most one successor per predecessor; evidence is not reusable.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_custody_grants_successor
+ON memory_custody_grants(predecessor_grant_id) WHERE predecessor_grant_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_custody_grants_evidence
+ON memory_custody_grants(purpose_scope_id, evidence_event_id, evidence_revision);
+CREATE INDEX IF NOT EXISTS idx_memory_custody_grants_chain
+ON memory_custody_grants(custody_chain_id, status);
+
+-- B01 (ADR-001 s11.1): index of which records a custody grant covers.  It
+-- references records, never copies content; only eligible child_archive rows.
+CREATE TABLE IF NOT EXISTS memory_custody_items (
+    grant_id UUID NOT NULL REFERENCES memory_custody_grants(grant_id),
+    record_id TEXT NOT NULL REFERENCES memory_records(record_id),
+    source_purpose_scope_id UUID NOT NULL REFERENCES memory_purpose_heads(purpose_scope_id),
+    source_revision BIGINT NOT NULL CHECK (source_revision >= 1),
+    source_scope_generation BIGINT NOT NULL CHECK (source_scope_generation >= 1),
+    record_version BIGINT NOT NULL CHECK (record_version >= 1),
+    eligibility_code TEXT NOT NULL CHECK (eligibility_code IN ('child_archive_whitelist')),
+    basis_refs JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(basis_refs) = 'array'),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (grant_id, record_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_custody_items_record
+ON memory_custody_items(record_id);
+
+-- B01 (ADR-001 s11.1): durable coordination ledger for unbind / withdraw /
+-- renew / expire.  Idempotent per (actor, action, key); never stores child
+-- speech, tokens or raw database errors.
+CREATE TABLE IF NOT EXISTS memory_lifecycle_operations (
+    operation_id UUID PRIMARY KEY,
+    actor_id TEXT NOT NULL CHECK (char_length(actor_id) BETWEEN 1 AND 128),
+    subject_id TEXT NOT NULL CHECK (char_length(subject_id) BETWEEN 1 AND 128),
+    resource_owner_id TEXT NOT NULL CHECK (char_length(resource_owner_id) BETWEEN 1 AND 128),
+    action TEXT NOT NULL CHECK (action IN (
+        'unbind_device', 'withdraw_memory', 'withdraw_custody',
+        'renew_custody', 'expire_custody'
+    )),
+    idempotency_key TEXT NOT NULL CHECK (char_length(idempotency_key) BETWEEN 8 AND 128),
+    request_hash TEXT NOT NULL CHECK (char_length(request_hash) BETWEEN 1 AND 128),
+    resolved_scope JSONB NOT NULL DEFAULT '{}'::jsonb
+        CHECK (jsonb_typeof(resolved_scope) = 'object'),
+    scope_stops JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(scope_stops) = 'array'),
+    required_stop_targets JSONB NOT NULL DEFAULT '[]'::jsonb
+        CHECK (jsonb_typeof(required_stop_targets) = 'array'),
+    required_delete_domains JSONB NOT NULL DEFAULT '[]'::jsonb
+        CHECK (jsonb_typeof(required_delete_domains) = 'array'),
+    domain_set_revision BIGINT NOT NULL DEFAULT 1 CHECK (domain_set_revision >= 1),
+    scope_snapshot_hash TEXT CHECK (
+        scope_snapshot_hash IS NULL OR char_length(scope_snapshot_hash) BETWEEN 1 AND 128
+    ),
+    state_revision BIGINT NOT NULL DEFAULT 1 CHECK (state_revision >= 1),
+    phase TEXT NOT NULL DEFAULT 'accepted' CHECK (phase IN (
+        'accepted', 'access_stopping', 'access_stopped', 'scoping',
+        'deleting', 'verifying', 'completed'
+    )),
+    status TEXT NOT NULL DEFAULT 'running' CHECK (status IN (
+        'running', 'retryable_failed', 'blocked_review', 'completed'
+    )),
+    domain_results JSONB NOT NULL DEFAULT '{}'::jsonb
+        CHECK (jsonb_typeof(domain_results) = 'object'),
+    claim_token BIGINT NOT NULL DEFAULT 0 CHECK (claim_token >= 0),
+    lease_owner TEXT,
+    lease_until TIMESTAMPTZ,
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    next_retry_at TIMESTAMPTZ,
+    accepted_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    access_stopped_at TIMESTAMPTZ,
+    local_scope_verified_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    error_code TEXT CHECK (error_code IS NULL OR char_length(error_code) BETWEEN 1 AND 64),
+    CONSTRAINT memory_lifecycle_operations_idem UNIQUE (actor_id, action, idempotency_key),
+    CONSTRAINT memory_lifecycle_operations_done CHECK (
+        (status = 'completed') = (completed_at IS NOT NULL)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_lifecycle_operations_retry
+ON memory_lifecycle_operations(next_retry_at) WHERE status = 'retryable_failed';
+CREATE INDEX IF NOT EXISTS idx_memory_lifecycle_operations_owner
+ON memory_lifecycle_operations(resource_owner_id, accepted_at DESC);
+
+CREATE OR REPLACE FUNCTION memory_lifecycle_operations_guard() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.request_hash <> OLD.request_hash OR NEW.actor_id <> OLD.actor_id
+       OR NEW.action <> OLD.action OR NEW.idempotency_key <> OLD.idempotency_key THEN
+        RAISE EXCEPTION 'operation identity is immutable';
+    END IF;
+    IF NEW.state_revision < OLD.state_revision OR NEW.claim_token < OLD.claim_token THEN
+        RAISE EXCEPTION 'operation revisions cannot move backwards';
+    END IF;
+    IF OLD.status = 'completed' AND NEW.status <> 'completed' THEN
+        RAISE EXCEPTION 'a completed operation cannot reopen';
+    END IF;
+    RETURN NEW;
+END
+$$;
+
+DROP TRIGGER IF EXISTS trg_memory_lifecycle_operations_guard ON memory_lifecycle_operations;
+CREATE TRIGGER trg_memory_lifecycle_operations_guard
+BEFORE UPDATE ON memory_lifecycle_operations
+FOR EACH ROW EXECUTE FUNCTION memory_lifecycle_operations_guard();
+
 -- ---------------------------------------------------------------------------
 -- Row-level security: transaction-level app context, minimal policies.
 -- The adapter sets app.memory.* inside each transaction; with FORCE RLS a
@@ -449,6 +696,10 @@ ALTER TABLE memory_shared_proposals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memory_shared_votes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memory_outbox ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memory_audit_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE memory_purpose_heads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE memory_custody_grants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE memory_custody_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE memory_lifecycle_operations ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE memory_records FORCE ROW LEVEL SECURITY;
 ALTER TABLE memory_status_events FORCE ROW LEVEL SECURITY;
@@ -456,6 +707,10 @@ ALTER TABLE memory_shared_proposals FORCE ROW LEVEL SECURITY;
 ALTER TABLE memory_shared_votes FORCE ROW LEVEL SECURITY;
 ALTER TABLE memory_outbox FORCE ROW LEVEL SECURITY;
 ALTER TABLE memory_audit_events FORCE ROW LEVEL SECURITY;
+ALTER TABLE memory_purpose_heads FORCE ROW LEVEL SECURITY;
+ALTER TABLE memory_custody_grants FORCE ROW LEVEL SECURITY;
+ALTER TABLE memory_custody_items FORCE ROW LEVEL SECURITY;
+ALTER TABLE memory_lifecycle_operations FORCE ROW LEVEL SECURITY;
 
 DO $memory_policy$
 BEGIN
@@ -703,6 +958,71 @@ BEGIN
             TO memoria_memory_api, memoria_memory_worker
             USING (
                 pg_has_role(current_user, 'memoria_memory_worker', 'member')
+            );
+        GRANT SELECT, INSERT, UPDATE ON memory_purpose_heads
+            TO memoria_memory_api, memoria_memory_worker;
+
+        DROP POLICY IF EXISTS memory_purpose_heads_rw ON memory_purpose_heads;
+        CREATE POLICY memory_purpose_heads_rw ON memory_purpose_heads FOR ALL
+            TO memoria_memory_api, memoria_memory_worker
+            USING (
+                pg_has_role(current_user, 'memoria_memory_worker', 'member')
+                OR resource_owner_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
+                OR subject_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
+            )
+            WITH CHECK (
+                pg_has_role(current_user, 'memoria_memory_worker', 'member')
+                OR resource_owner_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
+            );
+        GRANT SELECT, INSERT, UPDATE ON memory_custody_grants
+            TO memoria_memory_api, memoria_memory_worker;
+
+        DROP POLICY IF EXISTS memory_custody_grants_rw ON memory_custody_grants;
+        CREATE POLICY memory_custody_grants_rw ON memory_custody_grants FOR ALL
+            TO memoria_memory_api, memoria_memory_worker
+            USING (
+                pg_has_role(current_user, 'memoria_memory_worker', 'member')
+                OR resource_owner_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
+            )
+            WITH CHECK (
+                pg_has_role(current_user, 'memoria_memory_worker', 'member')
+                OR resource_owner_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
+            );
+        GRANT SELECT, INSERT, DELETE ON memory_custody_items
+            TO memoria_memory_api, memoria_memory_worker;
+
+        -- Visible only through a grant the actor may see (grants RLS applies).
+        DROP POLICY IF EXISTS memory_custody_items_rw ON memory_custody_items;
+        CREATE POLICY memory_custody_items_rw ON memory_custody_items FOR ALL
+            TO memoria_memory_api, memoria_memory_worker
+            USING (
+                pg_has_role(current_user, 'memoria_memory_worker', 'member')
+                OR EXISTS (
+                    SELECT 1 FROM memory_custody_grants g
+                    WHERE g.grant_id = memory_custody_items.grant_id
+                )
+            )
+            WITH CHECK (
+                pg_has_role(current_user, 'memoria_memory_worker', 'member')
+                OR EXISTS (
+                    SELECT 1 FROM memory_custody_grants g
+                    WHERE g.grant_id = memory_custody_items.grant_id
+                )
+            );
+        GRANT SELECT, INSERT, UPDATE ON memory_lifecycle_operations
+            TO memoria_memory_api, memoria_memory_worker;
+
+        DROP POLICY IF EXISTS memory_lifecycle_operations_rw ON memory_lifecycle_operations;
+        CREATE POLICY memory_lifecycle_operations_rw ON memory_lifecycle_operations FOR ALL
+            TO memoria_memory_api, memoria_memory_worker
+            USING (
+                pg_has_role(current_user, 'memoria_memory_worker', 'member')
+                OR actor_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
+                OR resource_owner_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
+            )
+            WITH CHECK (
+                pg_has_role(current_user, 'memoria_memory_worker', 'member')
+                OR actor_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
             );
     END IF;
 END
