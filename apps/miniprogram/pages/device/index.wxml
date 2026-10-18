@@ -541,19 +541,20 @@
         <view class="sheet-grab"></view>
         <text class="sheet-title">解除绑定</text>
         <text class="sheet-sub">解除后设备会立即停止记忆 TA 的对话。TA 的数据怎么处理？</text>
+        <text wx:if="{{unbindClearsChildLayers}}" class="sheet-sub">无论选哪一项，TA 的近期摘要和长期记录都会随解绑一起清除，无法恢复。</text>
         <view class="sheet-opt {{unbindPurgeChoice === 'keep' ? 'on' : ''}}" data-choice="keep" bindtap="pickUnbindChoice">
           <view class="choice-radio"></view>
           <view class="row-copy">
-            <text class="row-title">保留数据（重新绑定后可恢复）</text>
-            <text class="row-meta">记忆和对话数据继续保存，TA 重新绑定后接着用</text>
+            <text class="row-title">只解绑，保留其他数据</text>
+            <text class="row-meta">只解绑，不运行完整的按使用人删除。部分审计记录按规定保留</text>
           </view>
           <view class="opt-check"><view class="icon-check"></view></view>
         </view>
         <view class="sheet-opt {{unbindPurgeChoice === 'purge' ? 'on' : ''}}" data-choice="purge" bindtap="pickUnbindChoice">
           <view class="choice-radio"></view>
           <view class="row-copy">
-            <text class="row-title">同时删除 TA 的记忆和对话数据</text>
-            <text class="row-meta">永久删除，重新绑定也无法恢复</text>
+            <text class="row-title">同时运行按使用人删除</text>
+            <text class="row-meta">会清除该使用人的归档记忆与对话证据。部分审计记录按规定保留</text>
           </view>
           <view class="opt-check"><view class="icon-check"></view></view>
         </view>
