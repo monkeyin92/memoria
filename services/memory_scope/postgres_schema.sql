@@ -1078,7 +1078,9 @@ BEGIN
             );
         DROP POLICY IF EXISTS memory_purpose_heads_owner ON memory_purpose_heads;
         CREATE POLICY memory_purpose_heads_owner ON memory_purpose_heads FOR ALL
-            TO memoria_memory_owner USING (true) WITH CHECK (true);
+            TO memoria_memory_owner
+            USING (pg_has_role(current_user, 'memoria_memory_owner', 'member'))
+            WITH CHECK (pg_has_role(current_user, 'memoria_memory_owner', 'member'));
     END IF;
 END
 $memory_policy$;
