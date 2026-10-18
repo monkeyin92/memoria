@@ -54,12 +54,9 @@ async def test_custody_needs_expiry_and_schema_is_reapplicable(conn) -> None:
 
 
 async def test_upgrade_from_previous_schema(conn) -> None:
-    import subprocess
-
-    old = subprocess.run(
-        ["git", "show", "c0cd19f6:services/guardian/postgres_schema.sql"],
-        capture_output=True, text=True, check=True,
-    ).stdout
+    old = (
+        Path(__file__).parent / "fixtures" / "postgres_schema_before_b01.sql"
+    ).read_text(encoding="utf-8")
     await conn.execute(old)
     await conn.execute(_SCHEMA.read_text(encoding="utf-8"))
     future = await conn.fetchval("SELECT now() + interval '90 days'")

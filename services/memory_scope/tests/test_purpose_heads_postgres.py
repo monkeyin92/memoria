@@ -6,7 +6,6 @@ Skipped unless ``MEMORIA_TEST_POSTGRES_DSN`` is set.
 from __future__ import annotations
 
 import os
-import subprocess
 import uuid
 from pathlib import Path
 
@@ -331,12 +330,9 @@ async def test_upgrade_from_the_previous_schema_keeps_existing_rows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     api_dsn, _w, _a, admin_db_dsn, password = pg_env
-    old = subprocess.run(
-        ["git", "show", "c0cd19f6:services/memory_scope/postgres_schema.sql"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
+    old = (Path(__file__).parent / "fixtures" / "postgres_schema_before_b01.sql").read_text(
+        encoding="utf-8"
+    )
     old_path = tmp_path / "old_schema.sql"
     old_path.write_text(old, encoding="utf-8")
     with monkeypatch.context() as patch:
