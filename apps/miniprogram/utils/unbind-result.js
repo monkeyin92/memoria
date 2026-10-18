@@ -7,14 +7,14 @@
  */
 
 function childLayersLine(value) {
-  if (value === "completed") return "TA 的近期摘要和长期记录已清除。";
-  if (value === "pending") return "TA 的近期摘要和长期记录没有全部清除，请不要当作已清除。";
+  if (value === "completed") return "TA 的近期摘要和长期记录已处理。";
+  if (value === "pending") return "TA 的近期摘要和长期记录仍在处理中，请稍候。";
   return "";
 }
 
 function subjectDeletionLine(value) {
-  if (value === "completed") return "TA 的记忆和对话数据已删除。";
-  if (value === "pending") return "TA 的记忆和对话数据正在删除，后台会继续完成。";
+  if (value === "completed") return "按使用人删除已完成。";
+  if (value === "pending") return "按使用人删除仍在进行中。";
   return "";
 }
 

@@ -512,15 +512,15 @@
           <view class="choice-radio"></view>
           <view class="row-copy">
             <text class="row-title">只解绑，保留其他数据</text>
-            <text class="row-meta">近期摘要和长期记录已随解绑清除；其他数据根据法律期限保留</text>
+            <text class="row-meta">只解绑，不运行完整的按使用人删除。部分审计记录按规定保留</text>
           </view>
           <view class="opt-check"><view class="icon-check"></view></view>
         </view>
         <view class="sheet-opt {{unbindPurgeChoice === 'purge' ? 'on' : ''}}" data-choice="purge" bindtap="pickUnbindChoice">
           <view class="choice-radio"></view>
           <view class="row-copy">
-            <text class="row-title">同时按法定期限删除全部数据</text>
-            <text class="row-meta">包括记忆声明、会话记录、使用人档案等；删除进度会显示在这里</text>
+            <text class="row-title">同时运行按使用人删除</text>
+            <text class="row-meta">会清除该使用人的归档记忆与对话证据。部分审计记录按规定保留</text>
           </view>
           <view class="opt-check"><view class="icon-check"></view></view>
         </view>

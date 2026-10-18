@@ -1849,8 +1849,8 @@ test("unbind result modal reports what the server actually cleared, pending incl
     page.pickUnbindChoice({ currentTarget: { dataset: { choice: "keep" } } });
     await page.confirmUnbind();
     assert.equal(modals.length, 1);
-    assert.match(modals[0].content, /近期摘要和长期记录没有全部清除/);
-    assert.match(modals[0].content, /正在删除/);
+    assert.match(modals[0].content, /近期摘要和长期记录仍在处理中/);
+    assert.match(modals[0].content, /按使用人删除仍在进行中/);
     assert.match(modals[0].content, /已撤回 2 项授权/);
   } finally {
     unbindResponse = { binding_id: "bd_1", status: "revoked" };
@@ -1899,7 +1899,7 @@ test("a failed unbind keeps the enable session", async () => {
 
 test("device page offers both unbind data choices", () => {
   const template = fs.readFileSync(path.join(__dirname, "../pages/device/index.wxml"), "utf8");
-  assert.match(template, /同时按法定期限删除全部数据/);
+  assert.match(template, /同时运行按使用人删除/);
   assert.match(template, /只解绑，保留其他数据/);
   assert.match(template, /停止记忆/);
 });

@@ -10,15 +10,15 @@ test("completed child layers and deletion are reported as done", () => {
       subject_deletion: "completed",
       consents_withdrawn: 1,
     }),
-    ["TA 的近期摘要和长期记录已清除。", "TA 的记忆和对话数据已删除。", "已撤回 1 项授权。"],
+    ["TA 的近期摘要和长期记录已处理。", "按使用人删除已完成。", "已撤回 1 项授权。"],
   );
 });
 
 test("pending is shown to the guardian, never reported as done", () => {
   const lines = unbindResultLines({ child_layers_purged: "pending", subject_deletion: "pending" });
   assert.deepEqual(lines, [
-    "TA 的近期摘要和长期记录没有全部清除，请不要当作已清除。",
-    "TA 的记忆和对话数据正在删除，后台会继续完成。",
+    "TA 的近期摘要和长期记录仍在处理中，请稍候。",
+    "按使用人删除仍在进行中。",
   ]);
 });
 
