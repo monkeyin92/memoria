@@ -555,6 +555,84 @@ CREATE TABLE IF NOT EXISTS memory_custody_items (
 CREATE INDEX IF NOT EXISTS idx_memory_custody_items_record
 ON memory_custody_items(record_id);
 
+-- B01 (ADR-001 s11.1): durable coordination ledger for unbind / withdraw /
+-- renew / expire.  Idempotent per (actor, action, key); never stores child
+-- speech, tokens or raw database errors.
+CREATE TABLE IF NOT EXISTS memory_lifecycle_operations (
+    operation_id UUID PRIMARY KEY,
+    actor_id TEXT NOT NULL CHECK (char_length(actor_id) BETWEEN 1 AND 128),
+    subject_id TEXT NOT NULL CHECK (char_length(subject_id) BETWEEN 1 AND 128),
+    resource_owner_id TEXT NOT NULL CHECK (char_length(resource_owner_id) BETWEEN 1 AND 128),
+    action TEXT NOT NULL CHECK (action IN (
+        'unbind_device', 'withdraw_memory', 'withdraw_custody',
+        'renew_custody', 'expire_custody'
+    )),
+    idempotency_key TEXT NOT NULL CHECK (char_length(idempotency_key) BETWEEN 8 AND 128),
+    request_hash TEXT NOT NULL CHECK (char_length(request_hash) BETWEEN 1 AND 128),
+    resolved_scope JSONB NOT NULL DEFAULT '{}'::jsonb
+        CHECK (jsonb_typeof(resolved_scope) = 'object'),
+    scope_stops JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(scope_stops) = 'array'),
+    required_stop_targets JSONB NOT NULL DEFAULT '[]'::jsonb
+        CHECK (jsonb_typeof(required_stop_targets) = 'array'),
+    required_delete_domains JSONB NOT NULL DEFAULT '[]'::jsonb
+        CHECK (jsonb_typeof(required_delete_domains) = 'array'),
+    domain_set_revision BIGINT NOT NULL DEFAULT 1 CHECK (domain_set_revision >= 1),
+    scope_snapshot_hash TEXT CHECK (
+        scope_snapshot_hash IS NULL OR char_length(scope_snapshot_hash) BETWEEN 1 AND 128
+    ),
+    state_revision BIGINT NOT NULL DEFAULT 1 CHECK (state_revision >= 1),
+    phase TEXT NOT NULL DEFAULT 'accepted' CHECK (phase IN (
+        'accepted', 'access_stopping', 'access_stopped', 'scoping',
+        'deleting', 'verifying', 'completed'
+    )),
+    status TEXT NOT NULL DEFAULT 'running' CHECK (status IN (
+        'running', 'retryable_failed', 'blocked_review', 'completed'
+    )),
+    domain_results JSONB NOT NULL DEFAULT '{}'::jsonb
+        CHECK (jsonb_typeof(domain_results) = 'object'),
+    claim_token BIGINT NOT NULL DEFAULT 0 CHECK (claim_token >= 0),
+    lease_owner TEXT,
+    lease_until TIMESTAMPTZ,
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    next_retry_at TIMESTAMPTZ,
+    accepted_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    access_stopped_at TIMESTAMPTZ,
+    local_scope_verified_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    error_code TEXT CHECK (error_code IS NULL OR char_length(error_code) BETWEEN 1 AND 64),
+    CONSTRAINT memory_lifecycle_operations_idem UNIQUE (actor_id, action, idempotency_key),
+    CONSTRAINT memory_lifecycle_operations_done CHECK (
+        (status = 'completed') = (completed_at IS NOT NULL)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_lifecycle_operations_retry
+ON memory_lifecycle_operations(next_retry_at) WHERE status = 'retryable_failed';
+CREATE INDEX IF NOT EXISTS idx_memory_lifecycle_operations_owner
+ON memory_lifecycle_operations(resource_owner_id, accepted_at DESC);
+
+CREATE OR REPLACE FUNCTION memory_lifecycle_operations_guard() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.request_hash <> OLD.request_hash OR NEW.actor_id <> OLD.actor_id
+       OR NEW.action <> OLD.action OR NEW.idempotency_key <> OLD.idempotency_key THEN
+        RAISE EXCEPTION 'operation identity is immutable';
+    END IF;
+    IF NEW.state_revision < OLD.state_revision OR NEW.claim_token < OLD.claim_token THEN
+        RAISE EXCEPTION 'operation revisions cannot move backwards';
+    END IF;
+    IF OLD.status = 'completed' AND NEW.status <> 'completed' THEN
+        RAISE EXCEPTION 'a completed operation cannot reopen';
+    END IF;
+    RETURN NEW;
+END
+$$;
+
+DROP TRIGGER IF EXISTS trg_memory_lifecycle_operations_guard ON memory_lifecycle_operations;
+CREATE TRIGGER trg_memory_lifecycle_operations_guard
+BEFORE UPDATE ON memory_lifecycle_operations
+FOR EACH ROW EXECUTE FUNCTION memory_lifecycle_operations_guard();
+
 -- ---------------------------------------------------------------------------
 -- Row-level security: transaction-level app context, minimal policies.
 -- The adapter sets app.memory.* inside each transaction; with FORCE RLS a
@@ -570,6 +648,7 @@ ALTER TABLE memory_audit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memory_purpose_heads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memory_custody_grants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memory_custody_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE memory_lifecycle_operations ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE memory_records FORCE ROW LEVEL SECURITY;
 ALTER TABLE memory_status_events FORCE ROW LEVEL SECURITY;
@@ -580,6 +659,7 @@ ALTER TABLE memory_audit_events FORCE ROW LEVEL SECURITY;
 ALTER TABLE memory_purpose_heads FORCE ROW LEVEL SECURITY;
 ALTER TABLE memory_custody_grants FORCE ROW LEVEL SECURITY;
 ALTER TABLE memory_custody_items FORCE ROW LEVEL SECURITY;
+ALTER TABLE memory_lifecycle_operations FORCE ROW LEVEL SECURITY;
 
 DO $memory_policy$
 BEGIN
@@ -877,6 +957,21 @@ BEGIN
                     SELECT 1 FROM memory_custody_grants g
                     WHERE g.grant_id = memory_custody_items.grant_id
                 )
+            );
+        GRANT SELECT, INSERT, UPDATE ON memory_lifecycle_operations
+            TO memoria_memory_api, memoria_memory_worker;
+
+        DROP POLICY IF EXISTS memory_lifecycle_operations_rw ON memory_lifecycle_operations;
+        CREATE POLICY memory_lifecycle_operations_rw ON memory_lifecycle_operations FOR ALL
+            TO memoria_memory_api, memoria_memory_worker
+            USING (
+                pg_has_role(current_user, 'memoria_memory_worker', 'member')
+                OR actor_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
+                OR resource_owner_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
+            )
+            WITH CHECK (
+                pg_has_role(current_user, 'memoria_memory_worker', 'member')
+                OR actor_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
             );
     END IF;
 END

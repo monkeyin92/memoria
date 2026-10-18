@@ -205,3 +205,53 @@ async def test_custody_items_reference_records_without_copying(
     finally:
         await admin.close()
         await store.close()
+
+
+async def test_lifecycle_operation_idempotency_and_guards(
+    pg_env: tuple[str, str, str, str, str],
+) -> None:
+    api_dsn, _w, _a, admin_db_dsn, password = pg_env
+    store = await _initialize_store(api_dsn, admin_db_dsn, password)
+    admin = await asyncpg.connect(admin_db_dsn)
+    try:
+        insert = (
+            "INSERT INTO memory_lifecycle_operations(operation_id, actor_id, subject_id,"
+            " resource_owner_id, action, idempotency_key, request_hash)"
+            " VALUES ($1, 'parent-1', 'child-1', 'parent-1', $2, $3, 'h1')"
+        )
+        op = uuid.uuid4()
+        await admin.execute(insert, op, "withdraw_memory", "key-00001")
+        with pytest.raises(asyncpg.UniqueViolationError):  # same key, same actor+action
+            await admin.execute(insert, uuid.uuid4(), "withdraw_memory", "key-00001")
+        await admin.execute(insert, uuid.uuid4(), "withdraw_custody", "key-00001")
+        with pytest.raises(asyncpg.CheckViolationError):  # key too short
+            await admin.execute(insert, uuid.uuid4(), "withdraw_memory", "short")
+        with pytest.raises(asyncpg.RaiseError):  # request hash is immutable
+            await admin.execute(
+                "UPDATE memory_lifecycle_operations SET request_hash='x' WHERE operation_id=$1",
+                op,
+            )
+        with pytest.raises(asyncpg.CheckViolationError):  # completed needs completed_at
+            await admin.execute(
+                "UPDATE memory_lifecycle_operations SET status='completed' WHERE operation_id=$1",
+                op,
+            )
+        await admin.execute(
+            "UPDATE memory_lifecycle_operations SET status='completed', completed_at=now()"
+            " WHERE operation_id=$1",
+            op,
+        )
+        with pytest.raises(asyncpg.RaiseError):  # no reopening
+            await admin.execute(
+                "UPDATE memory_lifecycle_operations SET status='running', completed_at=NULL"
+                " WHERE operation_id=$1",
+                op,
+            )
+        app = await asyncpg.connect(api_dsn)
+        try:
+            assert await app.fetchval("SELECT count(*) FROM memory_lifecycle_operations") == 0
+        finally:
+            await app.close()
+    finally:
+        await admin.close()
+        await store.close()
