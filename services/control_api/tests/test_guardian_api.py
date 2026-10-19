@@ -821,12 +821,15 @@ async def test_accountless_child_person_consent_lifts_and_reverts_the_retention_
             [consent_id, voice_consent_id]
         )
 
-        # 11. Unbind: the recorded grantor loses the ACTIVE binding but must
-        # keep a revoke entry.
+        # 11. Delete path: the recorded grantor loses the ACTIVE binding and
+        # the explicit deletion withdraws the consent with the data.
         unbind_res = await client.post(
             "/v1/devices/dev-child-person-consent/binding/unbind",
             headers=owner_headers,
-            json={"reason": "person consent lifecycle test"},
+            json={
+                "reason": "person consent lifecycle test",
+                "purge_subject_data": True,
+            },
         )
         assert unbind_res.status_code == 200, unbind_res.text
         assert unbind_res.json()["status"] == "revoked"
@@ -838,9 +841,8 @@ async def test_accountless_child_person_consent_lifts_and_reverts_the_retention_
         )
         assert stranger_delete.status_code == 404
 
-        # 13. Product decision (2026-09-25): unbinding stops memory, so the
-        # unbind itself withdrew the grantor's consents; a later revoke of
-        # the same grant finds it already withdrawn.
+        # 13. The explicit delete withdrew the grantor's consents with the
+        # data; a later revoke of the same grant finds it already withdrawn.
         assert unbind_res.json()["consents_withdrawn"] >= 1
         assert (
             await app.state.guardian_store.active_consent(
@@ -876,7 +878,7 @@ async def test_accountless_child_person_consent_lifts_and_reverts_the_retention_
             == "guardian_binding_owner_required"
         )
 
-        # 16. The voice-session grant was withdrawn by the unbind as well.
+        # 16. The explicit delete withdrew the voice-session grant as well.
         assert (
             await app.state.guardian_store.active_consent(
                 minor_user_id=child_id, consent_kind="minor_voice_session"

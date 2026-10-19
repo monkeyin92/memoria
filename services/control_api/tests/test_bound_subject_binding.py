@@ -299,7 +299,7 @@ async def test_elder_binding_registers_an_adult_and_grants_memory_as_a_delegate(
 
 
 @pytest.mark.asyncio
-async def test_unbind_withdraws_consents_and_refuses_erasure_when_unwired(
+async def test_unbind_keep_retains_consents_and_refuses_erasure_when_unwired(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _configure(monkeypatch, tmp_path)
@@ -343,17 +343,17 @@ async def test_unbind_withdraws_consents_and_refuses_erasure_when_unwired(
             json={"reason": "unbind", "purge_subject_data": False},
         )
         assert unbound.status_code == 200, unbound.text
-        assert unbound.json()["consents_withdrawn"] >= 1
+        assert unbound.json()["consents_withdrawn"] == 0
 
-    assert [(item["actor_person_id"], item["subject_person_id"]) for item in recorder.revokes] == [
-        (owner_id, child_id)
-    ]
-    assert (
-        await app.state.guardian_store.active_consent(
-            minor_user_id=child_id, consent_kind="memory_retention"
-        )
-        is None
+    # The keep branch leaves both the binding-scoped grant and the guardian's
+    # person-scoped retention consent as the basis for the stored data.
+    assert recorder.revokes == []
+    consents = await app.state.guardian_store.list_person_consents(
+        subject_person_id=child_id, actor_person_id=owner_id
     )
+    assert [
+        item.consent_kind for item in consents if item.revoked_at is None
+    ] == ["memory_retention"]
 
 
 @pytest.mark.asyncio
