@@ -468,7 +468,9 @@ esp_err_t MemoriaActivationClient::Activate(ActivationProfile* profile) {
             // screen; keep activation_ctr so the next binding cannot replay
             // the device's monotonic activation counter.
             Settings runtime("memoria_runtime", true);
-            runtime.SetInt("activation_v", 0);
+            if (runtime.GetInt("activation_v", 0) != 0) {
+                runtime.SetInt("activation_v", 0);
+            }
             ESP_LOGW(kTag, "Activation unavailable while device is unbound; bootstrap required");
             return ESP_ERR_INVALID_STATE;
         }

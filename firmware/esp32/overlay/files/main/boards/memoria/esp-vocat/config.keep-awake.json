@@ -29,6 +29,7 @@
                 "CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_2=n",
                 "CONFIG_MMAP_FILE_NAME_LENGTH=32",
                 "CONFIG_FLASH_EXPRESSION_ASSETS=y",
+                "CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY=n",
                 "CONFIG_MEMORIA_KEEP_AWAKE=y"
             ]
         }
