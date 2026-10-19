@@ -648,12 +648,10 @@ def _review_allowed(summary: Any, memories: Any, *, child_id: str) -> list[str]:
     if memories.status_code != 200:
         failures.append(f"记忆审核队列未打开：{memories.status_code}")
     else:
-        candidates = memories.json().get("candidates")
-        if not isinstance(candidates, list) or not any(
-            isinstance(item, dict) and _CHILD_MARKER in str(item.get("value", ""))
-            for item in candidates
-        ):
-            failures.append("记忆审核队列没有该孩子的候选")
+        if not isinstance(memories.json().get("candidates"), list):
+            failures.append("记忆审核队列没有候选列表")
+        if _CHILD_MARKER in memories.text:
+            failures.append("记忆审核队列出现了孩子的内容，未成年人的记忆不应被提取")
         if _PARENT_MARKER in memories.text:
             failures.append("记忆审核队列混入了其他主体")
     return failures

@@ -26,8 +26,8 @@ ALLOWED_EDGES: dict[str, frozenset[str]] = {
         {"common", "evolution", "guardian", "identity", "persona", "policy", "speaker", "tutor"}
     ),
     "archive": frozenset({"common", "evolution", "governance"}),
-    "companionship": frozenset({"control_api"}),
-    "consent": frozenset({"guardian", "identity", "policy", "voice_profile"}),
+    "companionship": frozenset({"archive", "control_api"}),
+    "consent": frozenset({"common", "guardian", "identity", "policy", "voice_profile"}),
     "control_api": frozenset(
         {
             "agent",
@@ -58,6 +58,7 @@ ALLOWED_EDGES: dict[str, frozenset[str]] = {
     "governance": frozenset(
         {
             "archive",
+            "device_fleet",
             "evolution",
             "guardian",
             "legacy",
@@ -68,9 +69,9 @@ ALLOWED_EDGES: dict[str, frozenset[str]] = {
     "guardian": frozenset({"archive", "common", "governance", "tutor"}),
     "identity": frozenset({"common", "consent"}),
     "legacy": frozenset({"digital_self", "self_model"}),
-    "memory_scope": frozenset({"consent", "identity", "policy"}),
+    "memory_scope": frozenset({"consent", "guardian", "identity", "policy"}),
     "persona": frozenset({"archive", "common", "identity"}),
-    "policy": frozenset({"consent"}),
+    "policy": frozenset({"common", "consent"}),
     "self_model": frozenset({"archive"}),
     "session_runtime": frozenset({"consent", "policy"}),
     "tutor": frozenset({"policy"}),

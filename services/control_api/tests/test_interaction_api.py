@@ -1448,6 +1448,7 @@ async def test_response_plan_consumes_reviewed_prompt_with_exact_provenance_and_
     tmp_path: Path,
 ) -> None:
     _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv("LIVE_SEARCH_QWEN_ENABLED", "true")
     app = create_app()
     token = {
         "X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough",
