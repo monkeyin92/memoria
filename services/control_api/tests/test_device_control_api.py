@@ -277,7 +277,7 @@ async def test_device_settings_dispatches_runtime_invalidation_at_the_right_boun
         )
         safety = await client.patch(
             "/v1/devices/dev_test_01/settings",
-            json={"changes": {"allowed_barge_in": ["button"]}},
+            json={"changes": {"allowed_barge_in": ["button", "keyword"]}},
         )
     assert ordinary.status_code == 200, ordinary.text
     assert ordinary.json()["runtime_apply_status"] == "dispatched"

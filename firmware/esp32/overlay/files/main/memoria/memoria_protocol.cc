@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <string_view>
@@ -11,11 +12,15 @@
 
 #include "board.h"
 #include "esp_app_desc.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "display/lcd_display.h"
 #include "http.h"
+#include "memoria_activation_error_page.h"
+#include "memoria_activation_error_text.h"
+#include "memoria_activation_retry_policy.h"
 #include "memoria_audio_frame.h"
 #include "application.h"
 #include "memoria_bootstrap.h"
@@ -25,6 +30,7 @@
 #include "memoria_stop_keyword.h"
 #include "memoria_wake_mode.h"
 #include "memoria_wake_word.h"
+#include "settings.h"
 #include "sodium.h"
 #include "web_socket.h"
 
@@ -36,7 +42,6 @@ constexpr int kHttpTimeoutMs = 10000;
 constexpr int kSessionReadyTimeoutMs = 10000;
 constexpr int64_t kTransportPingIntervalUs = 30LL * 1000LL * 1000LL;
 constexpr int64_t kTransportPongTimeoutUs = 10LL * 1000LL * 1000LL;
-constexpr uint32_t kActivationRetryDelayMs = 5000;
 // The phone's companion pick reaches an idle device within one poll.
 constexpr uint32_t kDisplayProfilePollMs = 20000;
 // A bound board whose display profile is unavailable rechecks the manifest
@@ -61,6 +66,35 @@ constexpr uint64_t kAfeVadHangoverSamples =
 // prevents one bad/noisy capture from holding a signed media session open
 // indefinitely; ordinary turns must still end through the AFE VAD callback.
 constexpr uint64_t kMaxVadSpeechSamples = static_cast<uint64_t>(kUplinkSampleRate) * 20;
+
+ActivationAttemptOutcome ActivationOutcomeFor(esp_err_t result) {
+    if (result == ESP_OK) {
+        return ActivationAttemptOutcome::kOk;
+    }
+    // Activate() maps a manifest 409 to INVALID_STATE after clearing the
+    // activation marker; the parent still has to scan the nearby QR.
+    if (result == ESP_ERR_INVALID_STATE) {
+        return ActivationAttemptOutcome::kServerUnbound;
+    }
+    return ActivationAttemptOutcome::kFailed;
+}
+
+// Read after Activate(): a 409 clears activation_v itself before returning, so
+// a bound board released by the server becomes unbound here too.
+bool ActivationAwaitingBinding() {
+    Settings runtime("memoria_runtime", true);
+    return runtime.GetInt("activation_v", 0) == 0 ||
+           MemoriaBootstrap::GetInstance().active();
+}
+
+std::string ActivationFailureDetail(esp_err_t result,
+                                    const MemoriaActivationClient& client) {
+    char detail[160];
+    std::snprintf(detail, sizeof(detail), kActivationNetworkErrorDetailFormat,
+                  esp_err_to_name(result), static_cast<int>(result),
+                  client.last_http_status(), client.last_transport_error());
+    return detail;
+}
 
 struct ScopedJson final {
     cJSON* value = nullptr;
@@ -354,14 +388,25 @@ bool MemoriaProtocol::Start() {
         MemoriaFirmwareUpdate::ConfirmRunningImage();
     }
     if (activation_result != ESP_OK) {
-        if (activation_result == ESP_ERR_INVALID_STATE) {
+        const ActivationAttemptOutcome outcome = ActivationOutcomeFor(activation_result);
+        if (ActivationRetryPolicy::ShouldRetryOnBoot(ActivationAwaitingBinding(), outcome)) {
             auto* display = dynamic_cast<LcdDisplay*>(Board::GetInstance().GetDisplay());
             if (display != nullptr &&
-                MemoriaBootstrap::GetInstance().Start(display) == ESP_OK) {
-                StartActivationRetry();
-                ESP_LOGW(kTag, "Device is unbound; nearby bootstrap remains available");
-                return false;
+                MemoriaBootstrap::GetInstance().Start(display) != ESP_OK) {
+                ESP_LOGE(kTag, "Unable to keep nearby bootstrap available; activation retry continues");
             }
+            ESP_LOGW(kTag,
+                     "Activation failed while unbound, code=%s (%d) http_status=%d transport_err=0x%x internal_free=%u internal_largest=%u",
+                     esp_err_to_name(activation_result),
+                     static_cast<int>(activation_result),
+                     activation_client.last_http_status(),
+                     activation_client.last_transport_error(),
+                     static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                     static_cast<unsigned>(
+                         heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
+            StartActivationRetry();
+            ESP_LOGW(kTag, "Device is unbound; nearby bootstrap remains available, activation retry started");
+            return false;
         }
         ESP_LOGE(kTag, "Memoria activation failed, code=%s", esp_err_to_name(activation_result));
         SetError("Memoria 激活失败");
@@ -404,8 +449,13 @@ void MemoriaProtocol::RunActivationRetry() {
     // so the first activation attempt can legitimately precede the manifest.
     // Keep the retry on its own task; never block Application's main loop on
     // the 10-second HTTPS timeout while the phone completes binding.
+    //
+    // Start() already logged the first failure, so the schedule begins here at
+    // failure 1 and waits 5 s, 10 s, then 20 s forever.
+    uint32_t failures = 1;
+    bool error_page_shown = false;
     while (true) {
-        vTaskDelay(pdMS_TO_TICKS(kActivationRetryDelayMs));
+        vTaskDelay(pdMS_TO_TICKS(ActivationRetryPolicy::DelayMsForFailureCount(failures)));
 
         MemoriaActivationClient activation_client(identity_);
         const esp_err_t result = activation_client.Activate(&activation_);
@@ -422,7 +472,39 @@ void MemoriaProtocol::RunActivationRetry() {
             vTaskDelay(pdMS_TO_TICKS(500));
             esp_restart();
         }
-        ESP_LOGW(kTag, "Activation retry pending, code=%s", esp_err_to_name(result));
+
+        ++failures;
+        const ActivationAttemptOutcome outcome = ActivationOutcomeFor(result);
+        ESP_LOGW(kTag, "Activation retry pending, code=%s (%d) http_status=%d transport_err=0x%x internal_free=%u internal_largest=%u",
+                 esp_err_to_name(result), static_cast<int>(result),
+                 activation_client.last_http_status(), activation_client.last_transport_error(),
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                 static_cast<unsigned>(
+                     heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
+
+        auto* display = dynamic_cast<LcdDisplay*>(Board::GetInstance().GetDisplay());
+        if (error_page_shown && display != nullptr &&
+            ActivationRetryPolicy::ShouldRestoreQr(outcome)) {
+            // Create the QR before deleting the page so the screen never goes
+            // blank, and leave the page up if the QR cannot be allocated.
+            if (MemoriaBootstrap::GetInstance().Start(display) == ESP_OK) {
+                HideActivationNetworkErrorPage(display);
+                error_page_shown = false;
+                ESP_LOGW(kTag, "Server reports the board unbound; QR restored");
+            }
+        }
+        if (display != nullptr &&
+            ActivationRetryPolicy::ShouldShowErrorPage(failures, outcome)) {
+            if (!error_page_shown) {
+                // Free the QR canvas before the next TLS attempt and replace it
+                // with the product's network-error page.
+                display->ClearQrCode();
+            }
+            if (ShowActivationNetworkErrorPage(
+                    display, ActivationFailureDetail(result, activation_client).c_str())) {
+                error_page_shown = true;
+            }
+        }
     }
 }
 

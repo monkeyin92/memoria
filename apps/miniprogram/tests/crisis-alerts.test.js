@@ -235,14 +235,14 @@ test("requireCrisisSubscribeBeforeBind blocks parent bind without accept", async
   assert.deepEqual(selfUse, { ok: true, kind: "not_required" });
 });
 
-test("bind keeps subscribe gate code but pauses UI while flag is off; memory pins alerts", () => {
+test("bind runs the subscribe gate before creating the binding; memory pins alerts", () => {
   const bindJs = fs.readFileSync(path.join(root, "pages/bind/index.js"), "utf8");
   const bindWxml = fs.readFileSync(path.join(root, "pages/bind/index.wxml"), "utf8");
   const memoryWxml = fs.readFileSync(path.join(root, "pages/memory/index.wxml"), "utf8");
   const homeWxml = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
   const configJs = fs.readFileSync(path.join(root, "config.js"), "utf8");
 
-  assert.match(configJs, /SUBSCRIPTION_PUSH_ENABLED\s*=\s*false/);
+  assert.match(configJs, /SUBSCRIPTION_PUSH_ENABLED\s*=\s*true/);
   assert.match(bindJs, /requireCrisisSubscribeBeforeBind/);
   assert.match(bindJs, /createDeviceBinding/);
   assert.match(bindJs, /SUBSCRIPTION_PUSH_ENABLED/);

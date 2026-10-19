@@ -13,7 +13,10 @@ ALLOWED_DOCUMENTS = {
 # these docs/ subtrees only; anything else is documentation sprawl.
 ALLOWED_DOCS_PREFIXES = (
     "docs/acceptance/",
+    "docs/audit/",
     "docs/compliance/",
+    "docs/design/",
+    "docs/eval/",
     "docs/runbooks/",
     "docs/strategy/",
 )
@@ -25,8 +28,14 @@ ALLOWED_DOCS_FILES = {
 # Evaluation receipts are data, kept next to the docs that cite them.
 ALLOWED_DOCS_DATA_PATTERN = "docs/memory-evaluation-*.json"
 DOCUMENT_SUFFIXES = {".md", ".markdown", ".mdown", ".rst", ".adoc", ".asciidoc"}
-# Agent skills are executable instructions for coding agents, not project docs.
-ALLOWED_AGENT_SKILL_PREFIX = ".cursor/skills/"
+# Vendored agent tooling (.cursor/) and files a tool or the mini program reads
+# at runtime are markdown by format, not project docs.
+ALLOWED_TOOLING_PREFIX = ".cursor/"
+ALLOWED_TOOLING_FILES = {
+    "AGENTS.md",
+    ".github/pull_request_template.md",
+    "apps/miniprogram/legal/user-agreement.md",
+}
 
 
 def test_repository_has_exactly_three_long_lived_documents() -> None:
@@ -52,7 +61,8 @@ def test_repository_has_exactly_three_long_lived_documents() -> None:
     top_level = {
         path
         for path in documents
-        if not path.startswith(("docs/", ALLOWED_AGENT_SKILL_PREFIX))
+        if not path.startswith(("docs/", ALLOWED_TOOLING_PREFIX))
+        and path not in ALLOWED_TOOLING_FILES
     }
     assert top_level == ALLOWED_DOCUMENTS
     stray = sorted(

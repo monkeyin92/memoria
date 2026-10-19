@@ -824,6 +824,7 @@ async def test_archive_accepts_only_the_exact_runtime_evolution_provenance(
     tmp_path: Path,
 ) -> None:
     _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv("LIVE_SEARCH_QWEN_ENABLED", "true")
     app = create_app()
     internal = {
         "X-Memoria-Internal-Token": "test-internal-archive-token",

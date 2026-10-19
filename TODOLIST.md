@@ -124,7 +124,8 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 - [x] **2026-10-13 三窗 bench PCM（修复前）**：见 [三窗收据](docs/acceptance/run-20261013-triwindow/findings.md)。`pre_afe_ref` 近静音；安静近端可达；双讲不可分。
 - [x] **2026-10-13 软件 AEC 参考 + 三窗复测**：`memoria_software_aec_ref.h`（patch 0037）在 24 kHz 把 pre-I2S 播放拷进 AFE R。复测见 [复测收据](docs/acceptance/run-20261013-triwindow-retest/findings.md)。只播粗 ERLE ≈ 5→23 dB，参考 ≈ −20 dBFS 且与 play NCC≈0.996；安静近端仍保留；**双讲停止词仍不可分**。不关 N-10；`aec_reference_verified` 仍 false。已刷回产品。
 - [ ] 口头停止的成功率随音量剧变：音量 30 为 1/24（放大 2 倍 1/12），50 为 8/10（第十一轮）；第十八轮音量 50 下 46 步停下 25 次（54 %；停止延迟 p50 0.74 s / p90 1.58 s；没停下的 21 步服务端没有任何 `stop_word=True` 的终稿，故事讲满）。未被接受的几乎都是 ASR 终稿里只有机器人自己的回声。含义：声音小或离得远的孩子靠嗓子停不住它（P1-07 的范围）；测试时音量要写进结果。
-- [ ] 「停」单字识别偏弱（第十轮 1/5，「别说了」11/15；第八轮基线 3/7）：热词仍会动生产 env，须另授权。参考路已修；双讲近端仍未过，热词不能替代 NLP/NS 调参。
+- [x] **2026-10-19 停止词热词表上线（`FUNASR_VOCABULARY_ID`，目标模型 `fun-asr-realtime`，「停」「别说了」权重 5）**：用户授权后改生产 env、只重建 bridge，无发版。首轮真机在音量 30 下 0 / 7 停下，但该音量的历史基线本来就是 1 / 24，分不出热词效应；**未验收**。要判断热词有没有用，须在音量 50 下复测并和第十一轮 8 / 10、第十八轮 25 / 46 比（要你点头升音量）。收据 [N-10 热词收据](docs/acceptance/run-20261019-n10-vocab/findings.md)。
+- [ ] 「停」单字识别偏弱（第十轮 1/5，「别说了」11/15；第八轮基线 3/7）：热词表 10-19 已上线（见上一条），效果未量。参考路已修；双讲近端仍未过，热词不能替代 NLP/NS 调参。
 - [ ] 机器人自己的声音透过回声消除漏进来（历史 −43…−51 dBFS）。只播复测后 `post_afe` ≈ −54 dBFS，回声泄漏应明显下降，须用停止 soak 再验。
 - [ ] **下一步（要你点头）**：在已有软件参考上调 AFE NLP / WebRTC NS（或参考时延/增益），目标是双讲窗停止词在 `post_afe` 上的 NCC 明显高于只播假峰；通过后再跑停止矩阵。不先上热词、不先松停止规则。
 
@@ -274,6 +275,7 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 ## 定期运维
 
 - [ ] **证书定期更换**：aginice.cn 现用的证书 2026-10-05 装入，**2027-01-02 23:59:59（GMT）到期**（腾讯云免费证书约 90 天一期、不会自动到服务器）；最迟 2026-12-19 前从腾讯云下载新一期 Nginx 格式（RSA）给我，我在新机原位替换 `/etc/nginx/ssl/aginice.cn/aginice.cn_bundle.crt` 与 `aginice.cn.key`（先备份、核对密钥与证书匹配 / SAN / 有效期 / 链，`nginx -t` 后 reload，核对 443 与 8443；做法见运行手册「生产主机」一节的换证书条）。这份证书与 pocketSparks 的其它站点共用，换的时候别碰它们的站点文件。
+- [ ] **换证书前先验固件的 TLS（2026-10-19 加）**：#313 把 `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY` 关了（修每次 TLS 校验泄漏 SRAM），依据是当前证书链已带跨签根且两个根都在固件证书包里。新证书若换了签发链，要在装证书之前确认一次：用刷了 #313 之后的固件连新证书（可先在 bench 板或测试机上），串口出现 `Certificate validated` 才算过；板子还没刷过 #313 的版本，则这条在刷机之后才有意义。
 - [x] **根分区（2026-10-08 清理）**：清理前 28 G / 40 G（75 %），清理后 21 G（55 %）；删了什么、保留什么见运行手册「2026-10-08 第四次手工清理」，收据在主机 `/root/memoria-release/cleanup-20261008.log` 与 `cleanup-20261008-pre/`。下一次整栈发布后再看（约每 6 次整栈清一次，或超过 70 % 时清）。
 - [ ] **发布制品随发布累积**：每次整栈约占 4 GB（`/opt/memoria/incoming/` 约 1.5 GB + 镜像 tag 约 2.2 GB）；清理按「当前 + 紧邻回滚」、清单带 sha256、逐项 `docker rmi` / 精确目录删除、不用 `docker system prune`，每次要你授权（规则、脚本与收据见 `docs/runbooks/operations-space-governance.md`），约每 5–6 次整栈清一次，或根分区超过 70 % 时。待做：`scripts/docker_image_retention.sh` 因保护全部 `rollback-*` / runtime-base 与 pre-state 引用仍是 0 候选，要改成「只保护当前发布的 rollback 与运行中引用」，否则下一轮仍要手工清理。新机的磁盘现状（40 GB 盘，2026-10-05 16:37 整栈发布后剩 17 GB）见「域名切换与新机收尾」的 WAL 一条。
 

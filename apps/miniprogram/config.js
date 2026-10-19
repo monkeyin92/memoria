@@ -5,7 +5,7 @@
  */
 const CONTROL_API_BASE_URL = "https://aginice.cn:8443/memoria-api";
 
-const SUBSCRIPTION_PUSH_ENABLED = false;
+const SUBSCRIPTION_PUSH_ENABLED = true;
 
 module.exports = {
   CONTROL_API_BASE_URL,
