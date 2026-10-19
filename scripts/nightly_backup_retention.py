@@ -6,12 +6,12 @@ Scans ``<backup_dir>/`` for:
 * ``control-YYYYMMDD-HHMM.sqlite3`` (SQLite control store backup)
 
 Applies the retention policy:
-- Days 1-7: keep all daily backups
-- Days 8-30: keep only Sunday backups (one per week)
-- Day 31+: delete all
+- Age 0-6 days: keep all daily backups
+- Age 7 days or more: delete all
 
 The newest dump and the newest control-store copy are always kept, whatever
-their age.
+their age. That is the only exception: it keeps one recoverable copy when
+backups have been failing for a week or longer.
 
 Returns 0 on success (or if no backups found).
 """
@@ -61,25 +61,14 @@ def should_keep(filename: str, date_int: int, time_int: int, now: datetime) -> b
     """Determine if a backup should be kept based on retention policy.
 
     Rules:
-    - Days 1-7: keep all
-    - Days 8-30: keep only if day-of-week is Sunday
-    - Day 31+: delete all
+    - Age 0-6 days: keep all
+    - Age 7 days or more: delete all, Sunday included
     """
     dt = date_to_datetime(date_int, time_int)
     age = now - dt
     age_days = age.days
 
-    # Days 0-6 (interpreted as 1-7 when counting from backup day): keep all
-    if age_days <= 6:
-        return True
-
-    # Days 7-29 (interpreted as 8-30 when counting from backup day): keep only Sunday
-    if age_days <= 29:
-        # Wednesday=2, Thursday=3, ..., Sunday=6
-        return dt.weekday() == 6  # Sunday
-
-    # Day 30+: delete
-    return False
+    return age_days <= 6
 
 
 def list_backup_candidates(backup_dir: Path) -> list[tuple[Path, str, int, int]]:

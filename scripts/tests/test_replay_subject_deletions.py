@@ -42,3 +42,31 @@ def test_replay_reports_counts_only(tmp_path: Path, dev_database_url: str) -> No
     result = _run(tmp_path, "--confirm-replay", database_url=dev_database_url)
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout.strip().splitlines()[-1]) == {"incomplete": 0, "replayed": 0}
+
+
+def test_export_ledger_writes_a_root_only_snapshot_and_prints_counts(
+    tmp_path: Path, dev_database_url: str
+) -> None:
+    snapshot = tmp_path / "ledger.json"
+    result = _run(tmp_path, "--export-ledger", str(snapshot), database_url=dev_database_url)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == {"exported": 0}
+    assert snapshot.stat().st_mode & 0o777 == 0o600
+    assert json.loads(snapshot.read_text(encoding="utf-8")) == {"version": 1, "rows": []}
+
+
+def test_ledger_snapshot_requires_confirmation(tmp_path: Path) -> None:
+    result = _run(tmp_path, "--ledger-snapshot", str(tmp_path / "ledger.json"))
+    assert result.returncode == 2
+    assert "--confirm-replay is required" in result.stderr
+
+
+def test_export_cannot_be_combined_with_replay(tmp_path: Path) -> None:
+    result = _run(
+        tmp_path,
+        "--export-ledger",
+        str(tmp_path / "ledger.json"),
+        "--confirm-replay",
+    )
+    assert result.returncode == 2
+    assert "cannot be combined" in result.stderr

@@ -2,8 +2,9 @@
 # Nightly database backup for PostgreSQL and SQLite control store.
 #
 # Backups both memoria PostgreSQL database and control-api SQLite store
-# to /var/lib/memoria/backups/nightly/ with retention policy (7 days full,
-# then weekly, then delete at 30+ days). Intended to run via systemd timer.
+# to /var/lib/memoria/backups/nightly/ with a 7-day retention policy (delete
+# everything aged 7 days or more; the newest dump and control copy always
+# stay). Intended to run via systemd timer.
 #
 # Exit codes:
 #   0  backup succeeded

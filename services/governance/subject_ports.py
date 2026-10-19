@@ -87,6 +87,16 @@ class SubjectArchivePort(Protocol):
         """Rows still attributable to these events (or ``subject_id``); empty when done."""
         ...
 
+    async def delete_subject_vectors(self, *, account_id: str, subject_id: str) -> int:
+        """Replay-only fallback: vectors reachable from the subject's evidence.
+
+        ``memory_vector_documents`` has no ``subject_id`` column. The normal
+        saga deletes vectors through the captured lineage, but a restored
+        vector can outlive that lineage while its evidence row still names the
+        subject. This join covers that gap; see ``replay_completed_deletions``.
+        """
+        ...
+
 
 class SubjectGuardianPort(Protocol):
     """Guardian/tutor store rows for one subject (crisis, notifications, tutor)."""

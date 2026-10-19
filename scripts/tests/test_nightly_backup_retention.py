@@ -66,57 +66,34 @@ class TestRetentionPolicy:
         time_int = int(yesterday.strftime("%H%M"))
         assert should_keep("memoria-20261019-0315.dump", date_int, time_int, now)
 
-    def test_day_7_kept(self) -> None:
-        """Day 7 backup should be kept."""
+    def test_age_6_days_kept(self) -> None:
+        """The last kept backup is the one less than 7 full days old."""
         now = self._now()
-        week_ago = now - timedelta(days=6)
-        date_int = int(week_ago.strftime("%Y%m%d"))
-        time_int = int(week_ago.strftime("%H%M"))
+        six_days_ago = now - timedelta(days=6)
+        date_int = int(six_days_ago.strftime("%Y%m%d"))
+        time_int = int(six_days_ago.strftime("%H%M"))
         assert should_keep("memoria-20261014-0315.dump", date_int, time_int, now)
 
-    def test_day_8_weekday_deleted(self) -> None:
-        """Day 8 backup on a non-Sunday should be deleted."""
-        # October 20, 2026 is a Sunday.
-        # October 12, 2026 is a Sunday.
-        # October 13, 2026 is a Monday (not Sunday, should be deleted).
-        now = datetime(2026, 10, 20, 3, 15, 0, tzinfo=timezone(timedelta(hours=8)))
-        # Create a date 8 days ago from now
-        eight_days_ago = now - timedelta(days=8)
-        # If that day is not a Sunday, it should be deleted
-        if eight_days_ago.weekday() != 6:
-            date_int = int(eight_days_ago.strftime("%Y%m%d"))
-            time_int = int(eight_days_ago.strftime("%H%M"))
-            assert not should_keep("memoria-old.dump", date_int, time_int, now)
+    def test_age_7_days_deleted(self) -> None:
+        """Exactly 7 full days old is deleted, whatever the weekday."""
+        now = self._now()
+        seven_days_ago = now - timedelta(days=7)
+        date_int = int(seven_days_ago.strftime("%Y%m%d"))
+        time_int = int(seven_days_ago.strftime("%H%M"))
+        assert not should_keep("memoria-20261013-0315.dump", date_int, time_int, now)
 
-    def test_day_8_sunday_kept(self) -> None:
-        """Day 8 backup on a Sunday should be kept."""
-        # October 18, 2026 is a Sunday
-        # October 10, 2026 is a Friday (not Sunday, -8d, should be deleted)
-        # October 11, 2026 is a Saturday (not Sunday, -7d, should be kept)
-        # October 4, 2026 is a Sunday (-14d, should be kept if within 30d range 8-30)
-        sunday_now = datetime(2026, 10, 18, 3, 15, 0, tzinfo=timezone(timedelta(hours=8)))
-        assert sunday_now.weekday() == 6  # Verify it's Sunday
-        # Go back 14 days to the previous Sunday
-        prev_sunday = sunday_now - timedelta(days=14)
-        assert prev_sunday.weekday() == 6  # Oct 4 is Sunday
-        date_int = int(prev_sunday.strftime("%Y%m%d"))
-        time_int = int(prev_sunday.strftime("%H%M"))
-        assert should_keep("memoria-20261004-0315.dump", date_int, time_int, sunday_now)
-
-    def test_day_30_sunday_kept(self) -> None:
-        """Day 30 backup on a Sunday should be kept."""
-        # 2026-10-20 is a Sunday.
-        # 30 days before: 2026-09-20, which is a Sunday.
-        sunday_now = datetime(2026, 10, 20, 3, 15, 0, tzinfo=timezone(timedelta(hours=8)))
-        thirty_days_ago = sunday_now - timedelta(days=29)
-        date_int = int(thirty_days_ago.strftime("%Y%m%d"))
-        time_int = int(thirty_days_ago.strftime("%H%M"))
-        # At exactly 29 days (which is still in the 8-30 range), a Sunday should be kept
-        if thirty_days_ago.weekday() == 6:
-            assert should_keep("memoria-old.dump", date_int, time_int, sunday_now)
+    def test_sunday_age_10_days_deleted(self) -> None:
+        """Sundays get no extension: 10 days old is deleted."""
+        # 2026-10-21 is a Wednesday; 10 days before is Sunday 2026-10-11.
+        now = datetime(2026, 10, 21, 3, 15, 0, tzinfo=timezone(timedelta(hours=8)))
+        ten_days_ago = now - timedelta(days=10)
+        assert ten_days_ago.weekday() == 6
+        date_int = int(ten_days_ago.strftime("%Y%m%d"))
+        time_int = int(ten_days_ago.strftime("%H%M"))
+        assert not should_keep("memoria-20261011-0315.dump", date_int, time_int, now)
 
     def test_day_31_deleted(self) -> None:
-        """Day 31+ backup should always be deleted."""
+        """Old backups are deleted regardless of weekday."""
         now = self._now()
         month_ago = now - timedelta(days=31)
         date_int = int(month_ago.strftime("%Y%m%d"))
@@ -135,13 +112,11 @@ class TestRetentionPolicy:
     def test_cross_month_boundary(self) -> None:
         """Test retention policy across month boundary."""
         now = datetime(2026, 11, 5, 3, 15, 0, tzinfo=timezone(timedelta(hours=8)))
-        # 10 days ago: 2026-10-26 (day 10 in policy, should be kept if Sunday or within 7)
+        # 10 days ago: 2026-10-26, past the 7-day window, so it is deleted.
         ten_days_ago = now - timedelta(days=10)
         date_int = int(ten_days_ago.strftime("%Y%m%d"))
         time_int = int(ten_days_ago.strftime("%H%M"))
-        # Oct 26 is a Monday (not Sunday), should be deleted
-        if ten_days_ago.weekday() != 6:
-            assert not should_keep("memoria-old.dump", date_int, time_int, now)
+        assert not should_keep("memoria-old.dump", date_int, time_int, now)
 
 
 class TestListCandidates:
@@ -175,12 +150,11 @@ class TestListCandidates:
 
 
 class TestBackupsToDelete:
-    def test_deletes_old_weekday_backup(self, tmp_path: Path) -> None:
+    def test_deletes_old_backup(self, tmp_path: Path) -> None:
         backup_dir = tmp_path / "backups"
-        # October 20, 2026 is a Sunday.
         now = datetime(2026, 10, 20, 3, 15, 0, tzinfo=timezone(timedelta(hours=8)))
 
-        # October 13, 2026 is a Monday (8 days before, not a Sunday -> delete)
+        # October 13 is exactly 7 full days old, so it goes.
         _touch(backup_dir / "memoria-20261013-0315.dump", date_int=20261013, time_int=315)
         # The newest copy of a kind is never deleted, so keep a newer one beside it.
         _touch(backup_dir / "memoria-20261020-0315.dump", date_int=20261020, time_int=315)
@@ -190,11 +164,10 @@ class TestBackupsToDelete:
 
     def test_keeps_recent_backups(self, tmp_path: Path) -> None:
         backup_dir = tmp_path / "backups"
-        # October 18, 2026 is a Sunday. Use this as "now".
         now = datetime(2026, 10, 18, 3, 15, 0, tzinfo=timezone(timedelta(hours=8)))
 
-        # Create backups for days 1-7 (all within first week, should be kept)
-        for i in range(1, 8):
+        # Ages 0-6 days are the whole retained window.
+        for i in range(0, 7):
             days_ago = now - timedelta(days=i)
             datestr = days_ago.strftime("%Y%m%d")
             _touch(
@@ -206,17 +179,15 @@ class TestBackupsToDelete:
         to_delete = backups_to_delete(backup_dir, now=now)
         assert len(to_delete) == 0
 
-    def test_keeps_weekly_sunday_backups(self, tmp_path: Path) -> None:
+    def test_deletes_old_sunday_backups(self, tmp_path: Path) -> None:
         backup_dir = tmp_path / "backups"
-        # October 18, 2026 is a Sunday.
         now = datetime(2026, 10, 18, 3, 15, 0, tzinfo=timezone(timedelta(hours=8)))
 
-        # Add backups on Sundays: Oct 11 (-7d), Oct 4 (-14d), Sep 27 (-21d)
-        # All are Sundays and within 30 days -> all kept
+        # Sundays Oct 11 (-7d), Oct 4 (-14d), Sep 27 (-21d): no weekly exception.
         sundays = [
-            (2026, 10, 11),  # -7 days, Sunday
-            (2026, 10, 4),   # -14 days, Sunday
-            (2026, 9, 27),   # -21 days, Sunday
+            (2026, 10, 11),
+            (2026, 10, 4),
+            (2026, 9, 27),
         ]
         for y, m, d in sundays:
             datestr = f"{y:04d}{m:02d}{d:02d}"
@@ -225,10 +196,15 @@ class TestBackupsToDelete:
                 date_int=int(datestr),
                 time_int=315,
             )
+        # A current dump keeps the newest-copy exception from masking the test.
+        _touch(backup_dir / "memoria-20261018-0315.dump", date_int=20261018, time_int=315)
 
         to_delete = backups_to_delete(backup_dir, now=now)
-        # All are Sundays, all within 30 days -> keep all
-        assert len(to_delete) == 0
+        assert sorted(p.name for p in to_delete) == [
+            "memoria-20260927-0315.dump",
+            "memoria-20261004-0315.dump",
+            "memoria-20261011-0315.dump",
+        ]
 
 
 class TestDeletePaths:
@@ -258,7 +234,7 @@ class TestMain:
         backup_dir = tmp_path / "backups"
         now = datetime(2026, 10, 20, 3, 15, 0, tzinfo=timezone(timedelta(hours=8)))
 
-        # Create a file 10 days old on a non-Sunday (should be deleted)
+        # Create a file 10 days old (should be deleted)
         ten_days_ago = now - timedelta(days=10)
         datestr = ten_days_ago.strftime("%Y%m%d")
         old_file = _touch(
@@ -266,6 +242,8 @@ class TestMain:
             date_int=int(datestr),
             time_int=315,
         )
+        # A newer dump keeps the newest-copy exception from masking the test.
+        _touch(backup_dir / "memoria-20261020-0315.dump", date_int=20261020, time_int=315)
 
         # Run in dry-run mode (no --apply)
         result = main(["--backup-dir", str(backup_dir)])
@@ -302,7 +280,7 @@ class TestMain:
         assert result == 0
 
 
-def test_the_newest_copy_of_each_kind_is_kept_even_when_far_past_retention(tmp_path: Path) -> None:
+def test_the_newest_copy_of_each_kind_is_kept_even_when_past_seven_days(tmp_path: Path) -> None:
     now = datetime(2026, 12, 1, 4, 0, tzinfo=timezone(timedelta(hours=8)))
     for name in (
         "memoria-20260101-0315.dump",
