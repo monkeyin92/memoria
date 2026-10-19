@@ -38,9 +38,101 @@ Secret 仅在 root-only `/etc/memoria-*.env`（root:root 0600）；候选从真�
 - **数据层**：两台机上 `memoria-data` 项目都是从 `releases/20260827-architecture-split-v1/infra` 起的。`current/infra` 里的同名 compose 多一个 `011-control-schema.sql` 的 initdb 挂载（只在空库首次初始化时用）；在已有数据的库上用 `current/infra` 去 `up -d` 会让 compose 判定配置变了而重建 postgres 容器（推断，没试），不要顺手做。
 - **WAL 归档已关（P1-08，2026-10-06）**：`infra/memoria-data.production.yml` 的 postgres 参数是 `archive_mode=off`，不再有 `archive_timeout` / `archive_command`。原先每 5 分钟强制切一个 16 MB 段并拷进同盘的 `memoria-data_postgres_wal_archive` 卷：没有 base backup 可接，没有恢复价值，旧机实测每天涨约 0.6–1.1 GB。恢复靠每次整栈发布前 `freeze` 的 `memoria-pre-<tag>.dump`（见「数据层、备份与恢复」）。改这个参数必须重建 postgres 容器（`archive_mode` 要重启，`ALTER SYSTEM` 改不了：compose 的 `-c` 参数优先）；线上 compose 与仓库的同步和卷的清理是维护窗口里的一步，结果记在 HANDOFF。要重新启用（例如接异地备份 profile）：在 compose 里把 `archive_mode=on`、`archive_timeout=300s`、`archive_command=test ! -f /wal-archive/%f && cp %p /wal-archive/%f` 一并恢复，并保持该卷 `999:999 0700`，否则 `archive_command` 一直失败；同时要有 base backup 和按它裁剪的策略。
 - **磁盘（最近一次只读核验：2026-10-10 23:31）**：40GB盘、已用25GB（65%）、剩14GB；09:40既有清理删掉20261007旧镜像tag/incoming/源码树、保留`.cutover`。`incoming/`保留`20261009-textless-spare-v1`、`20261010-stale-interim-v1`和`20261010-n8-endpoint-diag-v1`三个目录，镜像保留当前与一个可运行回滚；详细收据见`docs/acceptance/run-20261010-verify/findings.md`。WAL归档关掉后主要增长是每次发布约4–5GB（镜像+包）与库本身；不要手删`pg_wal`。`memoria-disk-patrol.timer`只在75%/85%告警、不自动清理，生产清理另授权。
-- **systemd**：`memoria-readiness-refresh.timer`（12 小时一次提供方冒烟 + readiness 标记；迁移后 01:36:57 跑过一次，从新机出口 PASS）与 `memoria-disk-patrol.timer` 已在新机启用。`memoria-freeze-dump-cleanup.timer`（每日）应在下一次整栈发布时一并安装：只删 `/opt/memoria/releases/*/.cutover/` 下超过 3 天的 `memoria-pre-*.dump` 与 `memoria.pre-*.sqlite3`。`memoria-log-rotate.timer`（每小时轮转 `/var/log/memoria`）与 rsyslog drop-in `/etc/rsyslog.d/30-memoria.conf` 在第一次带 `logging:` 块的整栈发布里、`env` 之前安装，见「容器日志落盘」。
+- **systemd**：`memoria-readiness-refresh.timer`（12 小时一次提供方冒烟 + readiness 标记；迁移后 01:36:57 跑过一次，从新机出口 PASS）与 `memoria-disk-patrol.timer` 已在新机启用。`memoria-freeze-dump-cleanup.timer`（每日）应在下一次整栈发布时一并安装：只删 `/opt/memoria/releases/*/.cutover/` 下超过 3 天的 `memoria-pre-*.dump` 与 `memoria.pre-*.sqlite3`。`memoria-log-rotate.timer`（每小时轮转 `/var/log/memoria`）与 rsyslog drop-in `/etc/rsyslog.d/30-memoria.conf` 在第一次带 `logging:` 块的整栈发布里、`env` 之前安装，见「容器日志落盘」。`memoria-nightly-backup.timer`（每日 03:15）备份 PostgreSQL 与 SQLite 控制库到 `/var/lib/memoria/backups/nightly/`，保留 7 天全量 + 周日备份至 30 天（详见 ADR-004）。
 
-## 发布前门禁
+## 数据层、备份与恢复
+
+### 夜间备份安装与运维（ADR-004）
+
+每日 03:15 CST 自动备份两个库到 `/var/lib/memoria/backups/nightly/`：
+- PostgreSQL：`memoria-<YYYYMMDD>-<HHMM>.dump`（pg_dump 自定义格式，约 4.4 MB）
+- SQLite 控制库：`control-<YYYYMMDD>-<HHMM>.sqlite3`（约 1-2 MB）
+
+保留策略：最近 7 天全保，8-30 天仅周日，30 天后删除。总容量约 73 MB。
+
+**安装（一次性，需授权）：**
+
+```bash
+# 1. 在生产主机上创建备份目录
+sudo install -d -m 0700 /var/lib/memoria/backups/nightly
+
+# 2. 从仓库复制脚本
+sudo cp scripts/nightly_backup.sh /usr/local/bin/
+sudo cp scripts/nightly_backup_retention.py /usr/local/bin/
+sudo chmod 0700 /usr/local/bin/nightly_backup.sh /usr/local/bin/nightly_backup_retention.py
+
+# 3. 安装 systemd 单元
+sudo cp infra/memoria-nightly-backup.service /etc/systemd/system/
+sudo cp infra/memoria-nightly-backup.timer /etc/systemd/system/
+
+# 4. 启用与启动定时任务
+sudo systemctl daemon-reload
+sudo systemctl enable memoria-nightly-backup.timer
+sudo systemctl start memoria-nightly-backup.timer
+
+# 5. 验证
+sudo systemctl status memoria-nightly-backup.timer
+sudo systemctl list-timers memoria-nightly-backup.timer
+```
+
+**监控与故障排查：**
+
+```bash
+# 查看最近备份运行状态
+sudo systemctl status memoria-nightly-backup.service
+
+# 查看完整日志
+sudo journalctl -u memoria-nightly-backup.service -n 100
+
+# 手动触发一次备份（测试）
+sudo /usr/local/bin/memoria-nightly-backup.sh
+
+# 查看备份文件
+ls -lh /var/lib/memoria/backups/nightly/
+
+# 列出将要被删除的备份（dry-run）
+python3 /usr/local/bin/nightly_backup_retention.py --backup-dir /var/lib/memoria/backups/nightly/
+```
+
+### 从备份恢复（ADR-004）
+
+**恢复 PostgreSQL 到临时库验证：**
+
+```bash
+# 选择一份备份
+BACKUP=/var/lib/memoria/backups/nightly/memoria-20261019-0315.dump
+
+# 创建临时数据库
+sudo docker exec memoria-data-postgres-1 psql -U postgres -c \
+  "CREATE DATABASE test_restore OWNER memoria_admin;"
+
+# 恢复备份
+sudo docker exec -i memoria-data-postgres-1 pg_restore -U memoria_admin -d test_restore < "$BACKUP"
+
+# 验证表数（应该 > 0）
+sudo docker exec memoria-data-postgres-1 psql -U memoria_admin -d test_restore -c \
+  "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public';"
+
+# 清理临时库
+sudo docker exec memoria-data-postgres-1 psql -U postgres -c "DROP DATABASE test_restore;"
+```
+
+**恢复 SQLite 控制库到临时文件：**
+
+```bash
+# 选择一份备份
+BACKUP=/var/lib/memoria/backups/nightly/control-20261019-0315.sqlite3
+
+# 验证备份有效
+sudo sqlite3 "$BACKUP" ".tables"
+
+# 复制到临时位置（离线检查）
+sudo cp "$BACKUP" /tmp/control-test.sqlite3
+sudo sqlite3 /tmp/control-test.sqlite3 ".dump" | head -30
+sudo rm /tmp/control-test.sqlite3
+```
+
+
 
 1. 干净 worktree 冻结目标 source/tag，按影响域运行定向/必需门禁；Agent/python CI 通过不代替跳过的镜像、固件和客户端检查。授权/schema/RLS 变动须带真实 `MEMORIA_TEST_POSTGRES_DSN` 跑受影响契约，跳过不算通过。
 2. 在候选镜像跑 Agent 发布门（`scripts.verify_agent_release_artifact`：bridge 与提供方适配器不导入 livekit、自有媒体遥测隐私 canary、DTLN 去噪器可加载）；镜像解析显式给 expected candidate 并对齐有效 overrides。已有自动门禁接线，当前候选/生产复验要求见 P1-01。
