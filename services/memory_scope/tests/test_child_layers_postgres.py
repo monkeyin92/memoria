@@ -232,3 +232,188 @@ async def test_child_archive_whitelist_and_unbind_purges_both_layers(
         assert int(left_archive["memory_records"]) == 0
     finally:
         await _close_layers(store, bootstrap, admin_db_dsn)
+
+
+async def _ensure_vector_table(admin_db_dsn: str) -> None:
+    """The archive vector table, which this service's schema does not create."""
+
+    admin = await asyncpg.connect(admin_db_dsn)
+    try:
+        await admin.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        await admin.execute(
+            """
+            CREATE TABLE IF NOT EXISTS memory_vector_documents (
+                item_id UUID NOT NULL,
+                account_id TEXT NOT NULL,
+                embedding_model TEXT NOT NULL,
+                embedding_dimensions INTEGER NOT NULL,
+                embedding vector NOT NULL,
+                source_event_id TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (item_id, embedding_model, embedding_dimensions)
+            )
+            """
+        )
+    finally:
+        await admin.close()
+
+
+async def _vector_total(admin_db_dsn: str) -> int:
+    admin = await asyncpg.connect(admin_db_dsn)
+    try:
+        return int(await admin.fetchval("SELECT count(*) FROM memory_vector_documents"))
+    finally:
+        await admin.close()
+
+
+async def _lock_records(admin: asyncpg.Connection, record_ids: set[str]) -> None:
+    """Set deletion_locked through the schema's guarded lineage-update escape."""
+
+    for record_id in record_ids:
+        await admin.execute(
+            "SELECT set_config('app.memory.record_lineage_update', $1, false)", record_id
+        )
+        await admin.execute(
+            "UPDATE memory_records SET deletion_locked = true,"
+            " record_version = record_version + 1 WHERE record_id = $1",
+            record_id,
+        )
+        await admin.execute("SELECT set_config('app.memory.record_lineage_update', '', false)")
+
+
+async def test_child_layer_writes_create_no_vectors(
+    pg_env: tuple[str, str, str, str, str],
+) -> None:
+    store, bootstrap, admin_db_dsn = await _layers(pg_env)
+    try:
+        await _ensure_vector_table(admin_db_dsn)
+        before = await _vector_total(admin_db_dsn)
+        summary = await store.write_summary(
+            DialogueSummary(
+                subject_id=CHILD,
+                text="孩子聊了小狗",
+                source_event_id="evt-no-vector-summary",
+                session_id="sess-no-vector",
+            ),
+            resource_owner_id=PARENT,
+            actor_id=PARENT,
+            consent_snapshot_id="consent-memory-no-vector",
+        )
+        assert await _vector_total(admin_db_dsn) == before
+        first = await store.write_archive_fact(
+            ArchiveFact(subject_id=CHILD, field="pet_name", text="宠物叫豆豆"),
+            resource_owner_id=PARENT,
+            actor_id=PARENT,
+            consent_snapshot_id="consent-archive-no-vector",
+        )
+        assert await _vector_total(admin_db_dsn) == before
+        second = await store.upsert_archive_fact(
+            ArchiveFact(subject_id=CHILD, field="preference", text="喜欢蓝色"),
+            resource_owner_id=PARENT,
+            actor_id=PARENT,
+            consent_snapshot_id="consent-archive-no-vector",
+        )
+        assert second.record_id != first.record_id
+        assert await _vector_total(admin_db_dsn) == before
+        touched = await store.upsert_archive_fact(
+            ArchiveFact(subject_id=CHILD, field="preference", text="喜欢蓝色"),
+            resource_owner_id=PARENT,
+            actor_id=PARENT,
+            consent_snapshot_id="consent-archive-no-vector",
+        )
+        assert touched.record_id == second.record_id
+        assert await _vector_total(admin_db_dsn) == before
+
+        erased = await store.delete_record(subject_id=CHILD, record_id=summary.record_id)
+        assert int(erased["memory_records"]) == 1
+        assert await _vector_total(admin_db_dsn) == before
+        await store.erase_kind(subject_id=CHILD, kind=KIND_CHILD_ARCHIVE)
+        assert await _vector_total(admin_db_dsn) == before
+        await store.purge_both_layers(subject_id=CHILD)
+        assert await _vector_total(admin_db_dsn) == before
+    finally:
+        await _close_layers(store, bootstrap, admin_db_dsn)
+
+
+async def test_deletion_locked_does_not_block_parent_delete_or_purge(
+    pg_env: tuple[str, str, str, str, str],
+) -> None:
+    store, bootstrap, admin_db_dsn = await _layers(pg_env)
+    admin = await asyncpg.connect(admin_db_dsn)
+    try:
+        summary = await store.write_summary(
+            DialogueSummary(
+                subject_id=CHILD,
+                text="孩子聊了天气",
+                source_event_id="evt-locked-summary",
+                session_id="sess-locked",
+            ),
+            resource_owner_id=PARENT,
+            actor_id=PARENT,
+            consent_snapshot_id="consent-locked-summary",
+        )
+        fact = await store.write_archive_fact(
+            ArchiveFact(subject_id=CHILD, field="pet_name", text="宠物叫豆豆"),
+            resource_owner_id=PARENT,
+            actor_id=PARENT,
+            consent_snapshot_id="consent-locked-archive",
+        )
+        await _lock_records(admin, {summary.record_id, fact.record_id})
+        locked = await admin.fetch(
+            "SELECT record_id, deletion_locked FROM memory_records WHERE subject_id = $1"
+            " ORDER BY record_id",
+            CHILD,
+        )
+        assert {str(row["record_id"]) for row in locked} == {
+            summary.record_id,
+            fact.record_id,
+        }
+        assert all(row["deletion_locked"] is True for row in locked)
+
+        erased = await store.delete_record(subject_id=CHILD, record_id=summary.record_id)
+        assert int(erased["memory_records"]) == 1
+        erased = await store.erase_kind(subject_id=CHILD, kind=KIND_CHILD_ARCHIVE)
+        assert int(erased["memory_records"]) == 1
+        assert await store.get(
+            subject_id=CHILD, record_id=summary.record_id, viewer_subject_id=PARENT
+        ) is None
+
+        again = await store.write_summary(
+            DialogueSummary(
+                subject_id=CHILD,
+                text="孩子聊了周末计划",
+                source_event_id="evt-locked-summary-2",
+                session_id="sess-locked-2",
+            ),
+            resource_owner_id=PARENT,
+            actor_id=PARENT,
+            consent_snapshot_id="consent-locked-summary-2",
+        )
+        await store.write_archive_fact(
+            ArchiveFact(subject_id=CHILD, field="appellation", text="小名豆豆"),
+            resource_owner_id=PARENT,
+            actor_id=PARENT,
+            consent_snapshot_id="consent-locked-archive-2",
+        )
+        remaining_ids = {
+            str(row["record_id"])
+            for row in await admin.fetch(
+                "SELECT record_id FROM memory_records WHERE subject_id = $1", CHILD
+            )
+        }
+        await _lock_records(admin, remaining_ids)
+        purged = await store.purge_both_layers(subject_id=CHILD)
+        assert int(purged["dialogue_summary"]["memory_records"]) >= 1
+        assert int(purged["child_archive"]["memory_records"]) >= 1
+        assert (
+            await admin.fetchval(
+                "SELECT count(*) FROM memory_records WHERE subject_id = $1", CHILD
+            )
+            == 0
+        )
+        assert again.record_id not in {
+            str(row["record_id"]) for row in await admin.fetch("SELECT record_id FROM memory_records")
+        }
+    finally:
+        await admin.close()
+        await _close_layers(store, bootstrap, admin_db_dsn)

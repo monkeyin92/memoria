@@ -170,7 +170,6 @@ class MemoryWriteDecision:
             payload={
                 "target_id": claim_id,
                 "action": "confirm",
-                "previous_value": claim_value,
                 "source_event_id": source.event_id,
                 "policy_version": EXPLICIT_MEMORY_POLICY_VERSION,
                 "reason": self.reason,

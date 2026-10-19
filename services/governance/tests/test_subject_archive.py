@@ -337,9 +337,12 @@ async def _assert_subject_deletion(
         "owner-work",
     }
     owner_claims = await values("memory_claims", "claim_id", "source_event_id", "owner-work")
+    child_claims = await values("memory_claims", "claim_id", "source_event_id", "child-work")
     person_ids = await values("person_entities", "person_id", "source_event_id", "owner-mother")
     elder_claims = await values("memory_claims", "claim_id", "source_event_id", "elder-turn")
-    assert owner_claims and person_ids and elder_claims
+    assert owner_claims and child_claims and person_ids and elder_claims
+    for claim_id in child_claims:
+        assert await values("memory_vector_documents", "item_id", "item_id", claim_id)
     assert await values("person_aliases", "alias", "source_event_id", "child-mother")
     before = await port.remaining_rows_for(
         account_id=_OWNER, event_ids=event_ids, subject_id=_CHILD
@@ -382,6 +385,8 @@ async def _assert_subject_deletion(
             set()
         )
     assert await values("memory_vector_documents", "item_id", "item_id", episode_id) == set()
+    for claim_id in child_claims:
+        assert await values("memory_vector_documents", "item_id", "item_id", claim_id) == set()
     for claim_id in owner_claims:
         assert await values("memory_vector_documents", "item_id", "item_id", claim_id)
     # Transcripts and blobs: the child's go, the owner's stay.
