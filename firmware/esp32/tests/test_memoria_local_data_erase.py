@@ -122,6 +122,20 @@ def test_erase_removes_exactly_the_child_keys_and_the_wifi_list(tool: pathlib.Pa
     _balanced(step)
 
 
+def test_wifi_clear_happens_last_after_all_nvs_keys(tool: pathlib.Path) -> None:
+    (step,) = _drive(tool, *SEED, "erase")
+
+    assert step.ok
+    wifi_clear_idx = step.trace.index("wifi_clear")
+    last_erase_idx = max(
+        (idx for idx, line in enumerate(step.trace) if line.startswith("erase_key ")),
+        default=-1,
+    )
+    assert last_erase_idx >= 0
+    assert wifi_clear_idx > last_erase_idx, "Wi-Fi clear must happen after all NVS key erases"
+
+
+
 def test_erase_only_opens_the_three_child_namespaces(tool: pathlib.Path) -> None:
     (step,) = _drive(tool, *SEED, "erase")
 
@@ -175,6 +189,16 @@ def test_unopenable_namespace_reports_failure_and_erases_the_others(tool: pathli
     assert ("memoria", "wake_word_id") in step.store
     assert ("memoria_ui", "wake_mode") not in step.store
     _balanced(step)
+
+
+def test_wifi_clear_failure_reports_overall_failure(tool: pathlib.Path) -> None:
+    (step,) = _drive(tool, *SEED, "fail_wifi_clear", "erase")
+
+    assert not step.ok
+    assert set(step.store) == set(KEPT_KEYS), "NVS keys should still be erased"
+    assert step.trace.count("wifi_clear") == 1
+    _balanced(step)
+
 
 
 def test_every_memoria_source_is_registered_in_the_firmware_build() -> None:

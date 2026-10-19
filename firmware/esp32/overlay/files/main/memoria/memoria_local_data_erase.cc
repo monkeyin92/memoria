@@ -41,12 +41,7 @@ constexpr EraseKey kEraseKeys[] = {
 bool EraseLocalChildData() {
     bool success = true;
 
-    // Erase Wi-Fi credentials via SsidManager
-    // The Clear() method erases all saved SSIDs and passwords from NVS "wifi" namespace.
-    SsidManager::GetInstance().Clear();
-    ESP_LOGI(kTag, "Erased Wi-Fi SSID/password credentials");
-
-    // Erase specific child-related keys from NVS namespaces
+    // Erase specific child-related keys from NVS namespaces first
     // Using nvs_erase_key to preserve non-child-related keys in the same namespaces
     for (const auto& erase_key : kEraseKeys) {
         nvs_handle_t handle;
@@ -89,6 +84,15 @@ bool EraseLocalChildData() {
         nvs_close(handle);
         ESP_LOGI(kTag, "Erased NVS key '%s' in namespace '%s'",
                  erase_key.key, erase_key.namespace_name);
+    }
+
+    // Erase Wi-Fi credentials LAST, only after all NVS keys succeeded
+    // The Clear() method erases all saved SSIDs and passwords from NVS "wifi" namespace.
+    if (!SsidManager::GetInstance().Clear()) {
+        ESP_LOGW(kTag, "Failed to clear Wi-Fi credentials");
+        success = false;
+    } else {
+        ESP_LOGI(kTag, "Erased Wi-Fi SSID/password credentials");
     }
 
     if (success) {

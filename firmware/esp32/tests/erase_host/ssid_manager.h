@@ -8,5 +8,8 @@ public:
         static SsidManager instance;
         return instance;
     }
-    void Clear() { fake::Trace("wifi_clear"); }
+    bool Clear() {
+        fake::Trace("wifi_clear");
+        return !fake::State().wifi_clear_fails;
+    }
 };

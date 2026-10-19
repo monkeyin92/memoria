@@ -121,11 +121,14 @@ int main() {
         } else if (command == "fail_commit") {
             in >> ns;
             nvs.failing_commits.insert(ns);
+        } else if (command == "fail_wifi_clear") {
+            nvs.wifi_clear_fails = true;
         } else if (command == "heal") {
             nvs.missing_namespaces.clear();
             nvs.broken_namespaces.clear();
             nvs.failing_erases.clear();
             nvs.failing_commits.clear();
+            nvs.wifi_clear_fails = false;
         } else if (command == "erase") {
             Report(memoria::EraseLocalChildData());
         } else {

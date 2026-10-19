@@ -18,6 +18,7 @@ struct Nvs {
     std::map<uint32_t, std::vector<std::string>> pending_erases;
     uint32_t next_handle = 0x1000;
     std::vector<std::string> trace;
+    bool wifi_clear_fails = false;
 };
 
 inline Nvs& State() {
