@@ -16,7 +16,7 @@
 | component | actual image/tag | image id | revision | health | restarts | startup time | receipt | rollback target |
 |---|---|---|---|---|---:|---|---|---|
 | Control API | `memoria-control-api:20261016-readiness-b54189c` | `6c72a0ea1a5d`（10-17 08:39 构建） | `b54189c5f13d240d24dbb10a6b9e604fb36b96d1` | healthy | 0 | `2026-10-17T01:13:09Z`（CST 09:13） | 无六步日志；`releases/20261016-readiness-b54189c/.cutover/` 是 log-redaction 的拷贝 | 见下方「回滚」 |
-| Bridge | `memoria-agent:20261016-readiness-b54189c` | `ace8c6c6bed7` | 同上 | healthy | 0 | `2026-10-17T01:13:09Z` | 同上 | 同上 |
+| Bridge | `memoria-agent:20261016-readiness-b54189c` | `ace8c6c6bed7` | 同上 | healthy | 0 | `2026-10-19T01:24Z`（10-19 09:24 CST 为加 `FUNASR_VOCABULARY_ID` 单独重建，镜像不变） | 同上 | 同上 |
 | Media Edge | `memoria-media-edge:20261002-late-progress-v1` | `8c3815357fd3` | `f3fe8742177e4002db652203b1fadffa549d1098` | healthy | 0 | 10-05 迁移后未重建 | `/opt/memoria/component-releases/20261002-late-progress-v1-media-edge/` | 新机上没有 |
 
 - **回滚（未演练，取决于走哪条路）**：主机 `release-ops.sh rollback` 读 `current` 树的 `.cutover/prev-release`，现在会回到 **`20261016-session-cap-fallback-v1` / `f6e46b56`**，跳过 log-redaction（#287 日志脱敏会一起退掉）。想只退一步，要手工用 `memoria-*:20261016-log-redaction-v1`（与 `rollback-20261016-device-registration-v1-pre` 是同一 image id：control-api `38118cbe132c`、agent `c7731da3b76f`）重建两个容器。下一次走 `release-ops.sh` 的发布会在 freeze 时从运行中的容器重新取 PREV，那时这个偏差自然消失。
@@ -41,6 +41,15 @@
 - **2026-10-13 三窗 bench PCM（只播 / 只近端 / 双讲）**：用户授权后在 bench build 24 上 `pcmarm`/`pcmdump` 三窗均 intact。测得 `play_pre_i2s` 播放期约 −20 dBFS，而 `pre_afe_ref` 约 −78 dBFS（peak ≤ 28）；安静时「别说了」在 mic/post 上 NCC ≈ \|0.56\|/\|0.58\|；双讲时落到 ≈ \|0.18\|/\|0.21\|（与只播假峰同级）。含义：AEC 参考能量不可用，双讲近端进不了可分上行；不宜先拧停止规则或热词。收据 [三窗采集](docs/acceptance/run-20261013-triwindow/findings.md)。采集后刷回产品镜像。N-5 / N-10 / P1-07 保持开放；三个全局 verified 仍为 false。
 - **2026-10-13 软件 AEC 参考与三窗复测**：板无硬件 loopback（README）；注入 `software_post_gain_pre_i2s`（`memoria_software_aec_ref.h` / patch 0037）。复测相对修复前：只播 `pre_afe_ref` −78→−20 dBFS，粗 ERLE 5→23 dB；安静近端保留；双讲停止词仍不可分。收据 [复测](docs/acceptance/run-20261013-triwindow-retest/findings.md)。已刷回产品；`aec_reference_verified` 仍 false。N-5 / N-10 / P1-07 保持开放。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)；历史归档 [2026-09-24 至 2026-10-03](docs/HANDOFF-archive-0924-1003.md)、[2026-09-16 至 2026-09-23](docs/HANDOFF-archive-0916-0923.md)、[2026-09-20 及更早](docs/HANDOFF-archive-before-0920.md)。下面各节里写着「2026-10-03 …」「2026-09-2x …」一节的引用，都到这些归档里找。
+
+## 2026-10-19 N-10 停止词热词表上线，首轮真机 0/7 未达标（用户：「按方案一来，你帮我到服务器上设置」「允许」）
+
+- **做了什么**：用 DashScope `VocabularyService` 建热词表 `vocab-memstop-88c0c5ee…`（目标模型 `fun-asr-realtime`，「停」「别说了」各权重 5），写入 `/etc/memoria-agent.env` 的 `FUNASR_VOCABULARY_ID`（改前备份 `/etc/memoria-agent.env.bak-n10-20261019`），09:24 CST 只重建 bridge（切前 `media_active_sessions 0.0`），healthy、readiness `ready` / `smokes=passed`、release tag 不变。没有发版：代码早就读这个变量。`DASHSCOPE_WORKSPACE_ID` 没设：ASR 链路不用它，且 `llm-qp8mf178biax7m6c` 已是 `routes/session.py` 的默认值。
+- **真机一轮（09:28–09:33，音量 30，USB 唤醒，Mac 音量与静音已恢复）**：10 步里 7 次打断素材送出，**0 次停下**；bridge 全程只有 1 次 `stop_word=True`（回复已播完）。N-10 目标 ≥ 80%，未达标，N-10 保持开放。热词表有没有被 ASR 采用，日志里看不出（不记识别文本和 vocabulary id）；10-13 三窗采集已量到双讲时停止词不可分，是更可能的限制，但这一轮没有重采，是推断。收据 [N-10 热词收据](docs/acceptance/run-20261019-n10-vocab/findings.md)。
+- **过程中的三处自纠**：先用了错的变量名；第一张热词表绑错模型（已删）；切换前的 provider 冒烟不读 `FUNASR_VOCABULARY_ID`，它的 PASS 验不到热词表。详见收据。
+- **回滚**：还原备份 env 后重建 bridge，命令在收据「回滚」一节。
+- **开发板**：本次串口启动记录是 `MEMORIA_FIRMWARE_BUILD=25; slot=ota_0`、激活清单 v8；上面「开发板固件」两条只登记到 build 24 / 10-17 的刷入，build 25 是什么时候、从哪里刷的，本文件没有记录。
+- **没做**：音量 50 的复测（要你点头）、热词对正常对话的副作用测量、热词表的删除/续期流程（百炼会不会回收未用的热词表，文档没说，未核对）。
 
 ## 2026-10-13 至 10-17 整栈发布链（10-17 从主机日志只读补记）
 
