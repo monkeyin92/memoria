@@ -9,14 +9,12 @@ import os
 from pathlib import Path
 
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
+from services.archive.memory_vector_cleanup import QwenMemoryEmbedder
 from services.archive.postgres_memory_benchmark import (
     benchmark_postgres_memory_search,
     benchmark_report_json,
 )
-from services.archive.postgres_memory_catalog import (
-    PostgresMemoryCatalog,
-    QwenMemoryEmbedder,
-)
+from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
 
 
 def _parser() -> argparse.ArgumentParser:

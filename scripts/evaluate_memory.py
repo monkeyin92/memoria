@@ -19,7 +19,7 @@ from services.archive.memory_evaluation import (
     run_memory_evaluation,
 )
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
-from services.archive.postgres_memory_catalog import QwenMemoryEmbedder
+from services.archive.memory_vector_cleanup import QwenMemoryEmbedder
 
 DEFAULT_DATASET = (
     Path(__file__).parents[1]

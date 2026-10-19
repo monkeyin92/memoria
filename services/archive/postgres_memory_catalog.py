@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import json
-import math
 import re
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -14,7 +13,6 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import asyncpg
-import httpx
 
 from services.archive import memory_lexical_sql as lexical_sql
 from services.archive.domain import EvidenceEvent, EvidenceNotFoundError
@@ -49,7 +47,13 @@ from services.archive.memory_domain import (
     subject_lineage_predicates,
 )
 from services.archive.memory_lexical_sql import search_terms
+from services.archive.memory_vector_backfill import (
+    BackfillReport,
+    ClaimVectorBackfill,
+    MissingVectorCount,
+)
 from services.archive.memory_vector_cleanup import (
+    claim_vector_body,
     ensure_vector_index,
     forget_claim_vectors,
     has_correction_review,
@@ -184,64 +188,6 @@ def _sensitivity(value: str) -> MemorySensitivity:
     return "personal"
 
 
-class QwenMemoryEmbedder:
-    def __init__(
-        self,
-        *,
-        endpoint: str,
-        api_key: str,
-        model: str,
-        dimensions: int,
-        timeout_s: float = 5.0,
-        transport: httpx.AsyncBaseTransport | None = None,
-    ) -> None:
-        if not endpoint.startswith(("http://", "https://")):
-            raise ValueError("memory embedding endpoint must use HTTP(S)")
-        if not api_key or not model.strip() or timeout_s <= 0 or not 1 <= dimensions <= 2000:
-            raise ValueError(
-                "memory embedding API key, model, dimensions 1..2000 and timeout are required"
-            )
-        self._endpoint = endpoint
-        self._api_key = api_key
-        self.model = model.strip()
-        self.dimensions = dimensions
-        self._timeout_s = timeout_s
-        self._transport = transport
-
-    async def embed(self, text: str) -> tuple[float, ...]:
-        if not text.strip():
-            raise ValueError("memory embedding text must not be blank")
-        try:
-            async with httpx.AsyncClient(
-                timeout=self._timeout_s,
-                transport=self._transport,
-            ) as client:
-                response = await client.post(
-                    self._endpoint,
-                    headers={"Authorization": f"Bearer {self._api_key}"},
-                    json={
-                        "model": self.model,
-                        "input": text,
-                        "encoding_format": "float",
-                        "dimensions": self.dimensions,
-                    },
-                )
-                response.raise_for_status()
-                values = response.json()["data"][0]["embedding"]
-            embedding = tuple(float(value) for value in values)
-        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
-            raise MemoryEmbeddingUnavailableError(
-                "memory embedding service returned an invalid response"
-            ) from exc
-        if len(embedding) != self.dimensions or any(
-            not math.isfinite(value) for value in embedding
-        ):
-            raise MemoryEmbeddingUnavailableError(
-                "memory embedding service returned an invalid vector dimension"
-            )
-        return embedding
-
-
 class PostgresMemoryCatalog:
     def __init__(
         self,
@@ -304,6 +250,7 @@ class PostgresMemoryCatalog:
         self._outbox_retry_max_s = outbox_retry_max_s
         self._worker_id = f"memory-compiler:{uuid.uuid4()}"
         self._vector_enabled = False
+        self._vector_backfill: ClaimVectorBackfill | None = None
         self._shared_pool = pool
         self._pool: asyncpg.Pool | None = None
         self._compiler_pool: asyncpg.Pool | None = None
@@ -333,6 +280,9 @@ class PostgresMemoryCatalog:
             await pool.close()
             raise RuntimeError("production memory catalog requires pgvector and an embedder")
         self._pool = pool
+        if self._vector_enabled and self._embedder is not None:
+            # Only a deployment with pgvector and an embedder can repair.
+            self._vector_backfill = ClaimVectorBackfill(pool, self._embedder)
         if self._compiler_dsn is not None:
             compiler_pool = await asyncpg.create_pool(
                 self._compiler_dsn, min_size=1, max_size=2, command_timeout=15
@@ -374,6 +324,49 @@ class PostgresMemoryCatalog:
         if self._pool is None:  # pragma: no cover
             raise RuntimeError("PostgreSQL memory catalog is not initialized")
         return self._pool
+
+    @property
+    def vector_enabled(self) -> bool:
+        """Whether this deployment has pgvector and an embedder.
+
+        The periodic repair and background scheduling both key off this flag.
+        """
+        return self._vector_enabled and self._embedder is not None
+
+    async def wait_for_vector_backfills(self) -> None:
+        if self._vector_backfill is not None:
+            await self._vector_backfill.wait()
+
+    async def count_missing_claim_vectors(self, *, account_id: str) -> MissingVectorCount:
+        """Read-only count of claims missing the current model's vector; zero when off."""
+
+        if self._vector_backfill is None:
+            return MissingVectorCount()
+        return await self._vector_backfill.count(account_id=account_id)
+
+    async def backfill_missing_claim_vectors(
+        self, *, account_ids: Sequence[str], limit: int
+    ) -> BackfillReport:
+        """Repair one round; the module rechecks every row under lock before writing."""
+
+        if self._vector_backfill is None:
+            return BackfillReport()
+        return await self._vector_backfill.backfill_accounts(account_ids=account_ids, limit=limit)
+
+    def _schedule_claim_vector_backfill(
+        self, *, account_id: str, items: tuple[MemorySearchItem, ...]
+    ) -> None:
+        """Queue repairs so recall never waits on embedding.
+
+        A task failure only logs a count; the search result is unchanged."""
+
+        if self._vector_backfill is None:
+            return
+        # Duplicate searches share the same in-flight key, so one claim is repaired once.
+        self._vector_backfill.schedule(
+            account_id=account_id,
+            claim_ids=(uuid.UUID(item.item_id) for item in items if item.kind == "claim"),
+        )
 
     @staticmethod
     async def _scope(connection: asyncpg.Connection, account_id: str) -> None:
@@ -820,10 +813,12 @@ class PostgresMemoryCatalog:
                 kind="claim",
                 memory_kind="semantic",
                 title=claim.value[:80],
-                body=(
-                    f"subject:{claim.subject_key} predicate:{claim.predicate} "
-                    f"value:{claim.value} context:{redact_pii(str(event.payload.get('text') or ''))[:240]}"
-                )[:8000],
+                body=claim_vector_body(
+                    claim.subject_key,
+                    claim.predicate,
+                    claim.value,
+                    context=redact_pii(str(event.payload.get("text") or ""))[:240],
+                ),
                 domain_category=claim.domain_category,
                 entity_ids=entity_ids,
                 source_event_ids=(event.event_id,),
@@ -1743,7 +1738,9 @@ class PostgresMemoryCatalog:
                 """,
                 *parameters,
             )
-        return MemorySearchResult(items=tuple(self._search_item(row) for row in rows))
+        items = tuple(self._search_item(row) for row in rows)
+        self._schedule_claim_vector_backfill(account_id=query.account_id, items=items)
+        return MemorySearchResult(items=items)
 
     async def timeline(
         self,
@@ -2151,14 +2148,14 @@ class PostgresMemoryCatalog:
             account_id,
         )
         source_text = redact_pii(str(source_event["text"] or "") if source_event else "")[:240]
-        corrected = replace_vector or await has_correction_review(
-            connection, claim_id, account_id
+        corrected = replace_vector or await has_correction_review(connection, claim_id, account_id)
+        # Keep the replaced wording out of the body, lexical row and vector.
+        contextual_body = claim_vector_body(
+            subject_key,
+            predicate,
+            value,
+            context=None if corrected else source_text,
         )
-        contextual_body = f"subject:{subject_key} predicate:{predicate} value:{value}"
-        if not corrected:
-            # Keep the replaced wording out of the body, lexical row and vector.
-            contextual_body += f" context:{source_text}"
-        contextual_body = contextual_body[:8000]
         episode_ids = await connection.fetch(
             """
             SELECT episode_id FROM episode_evidence
@@ -2368,6 +2365,9 @@ class PostgresMemoryCatalog:
         )
 
     async def close(self) -> None:
+        if self._vector_backfill is not None:
+            await self._vector_backfill.close()
+            self._vector_backfill = None
         if self._compiler_pool is not None:
             await self._compiler_pool.close()
             self._compiler_pool = None

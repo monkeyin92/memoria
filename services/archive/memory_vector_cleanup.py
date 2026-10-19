@@ -11,16 +11,104 @@ the parent replaced.
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from hashlib import sha256
 
 import asyncpg
+import httpx
 
 from services.archive.memory_domain import (
     MemoryEmbedder,
     MemoryEmbeddingUnavailableError,
     MemoryStatus,
 )
+
+
+def claim_vector_body(
+    subject_key: str,
+    predicate: str,
+    value: str,
+    *,
+    context: str | None = None,
+) -> str:
+    """The search body #330's correction writes for one claim.
+
+    ``context`` is the captured sentence and is only passed by the compile or
+    uncorrected-review paths.  A corrected claim, and every repair, must leave
+    it out: it usually states the wording the parent replaced.
+    """
+
+    body = f"subject:{subject_key} predicate:{predicate} value:{value}"
+    if context:
+        body += f" context:{context}"
+    return body[:8000]
+
+
+def claim_vector_title(value: str) -> str:
+    return value[:80]
+
+
+def document_embedding_input(title: str, body: str) -> str:
+    return " ".join(part for part in (title, body) if part)
+
+
+class QwenMemoryEmbedder:
+    def __init__(
+        self,
+        *,
+        endpoint: str,
+        api_key: str,
+        model: str,
+        dimensions: int,
+        timeout_s: float = 5.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        if not endpoint.startswith(("http://", "https://")):
+            raise ValueError("memory embedding endpoint must use HTTP(S)")
+        if not api_key or not model.strip() or timeout_s <= 0 or not 1 <= dimensions <= 2000:
+            raise ValueError(
+                "memory embedding API key, model, dimensions 1..2000 and timeout are required"
+            )
+        self._endpoint = endpoint
+        self._api_key = api_key
+        self.model = model.strip()
+        self.dimensions = dimensions
+        self._timeout_s = timeout_s
+        self._transport = transport
+
+    async def embed(self, text: str) -> tuple[float, ...]:
+        if not text.strip():
+            raise ValueError("memory embedding text must not be blank")
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._timeout_s,
+                transport=self._transport,
+            ) as client:
+                response = await client.post(
+                    self._endpoint,
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                    json={
+                        "model": self.model,
+                        "input": text,
+                        "encoding_format": "float",
+                        "dimensions": self.dimensions,
+                    },
+                )
+                response.raise_for_status()
+                values = response.json()["data"][0]["embedding"]
+            embedding = tuple(float(value) for value in values)
+        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
+            raise MemoryEmbeddingUnavailableError(
+                "memory embedding service returned an invalid response"
+            ) from exc
+        if len(embedding) != self.dimensions or any(
+            not math.isfinite(value) for value in embedding
+        ):
+            raise MemoryEmbeddingUnavailableError(
+                "memory embedding service returned an invalid vector dimension"
+            )
+        return embedding
 
 
 async def ensure_vector_index(
@@ -74,41 +162,17 @@ async def has_correction_review(
     )
 
 
-async def upsert_document_vector(
+async def write_document_vector(
     connection: asyncpg.Connection,
     embedder: MemoryEmbedder,
     *,
     item_id: uuid.UUID,
     account_id: str,
     source_event_id: str,
-    title: str,
-    body: str,
-    fail_on_embedding_error: bool,
+    embedding: tuple[float, ...],
 ) -> None:
-    """Embed one search document and upsert its vector, exactly as compile does.
+    """Upsert one already-computed embedding on the caller's connection."""
 
-    The embedding input is the search document's title and contextual body.
-    An unavailable embedding service removes the current model's row; the
-    caller decides whether that failure aborts the surrounding projection.
-    """
-
-    try:
-        embedding = await embedder.embed(" ".join(part for part in (title, body) if part))
-    except MemoryEmbeddingUnavailableError:
-        await connection.execute(
-            """
-            DELETE FROM memory_vector_documents
-            WHERE item_id = $1 AND account_id = $2
-              AND embedding_model = $3 AND embedding_dimensions = $4
-            """,
-            item_id,
-            account_id,
-            embedder.model,
-            embedder.dimensions,
-        )
-        if fail_on_embedding_error:
-            raise
-        return
     await connection.execute(
         """
         INSERT INTO memory_vector_documents (
@@ -127,6 +191,53 @@ async def upsert_document_vector(
         json.dumps(embedding, separators=(",", ":")),
         source_event_id,
     )
+
+
+async def upsert_document_vector(
+    connection: asyncpg.Connection,
+    embedder: MemoryEmbedder,
+    *,
+    item_id: uuid.UUID,
+    account_id: str,
+    source_event_id: str,
+    title: str,
+    body: str,
+    fail_on_embedding_error: bool,
+) -> bool:
+    """Embed one search document and upsert its vector, exactly as compile does.
+
+    The embedding input is the search document's title and contextual body.
+    An unavailable embedding service removes the current model's row; the
+    caller decides whether that failure aborts the surrounding projection.
+    Returns whether an embedding was written.
+    """
+
+    try:
+        embedding = await embedder.embed(document_embedding_input(title, body))
+    except MemoryEmbeddingUnavailableError:
+        await connection.execute(
+            """
+            DELETE FROM memory_vector_documents
+            WHERE item_id = $1 AND account_id = $2
+              AND embedding_model = $3 AND embedding_dimensions = $4
+            """,
+            item_id,
+            account_id,
+            embedder.model,
+            embedder.dimensions,
+        )
+        if fail_on_embedding_error:
+            raise
+        return False
+    await write_document_vector(
+        connection,
+        embedder,
+        item_id=item_id,
+        account_id=account_id,
+        source_event_id=source_event_id,
+        embedding=embedding,
+    )
+    return True
 
 
 async def forget_claim_vectors(

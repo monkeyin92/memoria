@@ -145,7 +145,7 @@ Home reads `today_used_minutes` from `GET /v1/devices/{device_id}/session-limits
 
 ![04-summary, live page left, design right](mp-screenshots/side-by-side/04-summary.png)
 
-The 「按天查看」 header, the day strip and today's card match the design. The high bands from 527 CSS px are the cards below today. The fixture has summaries for today only, so 昨天 and 周一 show the honest 「孩子聊了 N 次，还没整理」 where the design shows sample bullets, and a fourth card, 周日, fits on screen. The design's 「摘要内容为示例」 caption has no counterpart. 记住的事 moved from a switcher above the strip to a row under the day cards, below the fold.
+The 「最近几天」 header, the day strip and today's card match the design. The high bands from 527 CSS px are the cards below today. The fixture has summaries for today only, so 昨天 and 周一 show the honest 「孩子聊了 N 次，还没整理」 where the design shows sample bullets, and a fourth card, 周日, fits on screen. The design's 「摘要内容为示例」 caption has no counterpart. 记住的事 moved from a switcher above the strip to a row under the day cards, below the fold.
 
 ### 05-attention
 

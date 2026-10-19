@@ -127,6 +127,13 @@ class AccountStoreMixin:
             ).fetchone()
         return dict(row) if row is not None else None
 
+    def list_account_ids(self) -> tuple[str, ...]:
+        """Every registered account, for maintenance that must scope by account."""
+
+        with self._connection() as connection:
+            rows = connection.execute("SELECT user_id FROM accounts ORDER BY user_id").fetchall()
+        return tuple(str(row["user_id"]) for row in rows)
+
     def get_account(self, *, user_id: str) -> dict[str, Any] | None:
         with self._connection() as connection:
             row = connection.execute(

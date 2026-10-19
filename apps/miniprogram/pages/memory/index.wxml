@@ -1,5 +1,5 @@
 <view class="page-shell tab-page" style="{{statusBarStyle}}">
-  <text class="eyebrow">按天查看</text>
+  <text class="eyebrow">最近几天</text>
   <text class="page-title">对话回顾</text>
   <text class="page-lede">{{guardianMode ? '这里只有摘要，不显示原话，也没有录音。' : '想记住的事，点确认后才会留下。'}}</text>
 
