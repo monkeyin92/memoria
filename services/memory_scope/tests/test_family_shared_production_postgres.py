@@ -29,12 +29,10 @@ from services.memory_scope.shared_actions import (
     FamilySharedActionInput,
     PostgresFamilySharedActionExecutor,
 )
+from services.memory_scope.tests.postgres_helpers import dsn_with
 from services.memory_scope.tests.test_cross_domain_sensitive_write import (
-    _dsn_with,
     _install_schemas,
 )
-
-pytest_plugins = ("services.memory_scope.tests.test_cross_domain_sensitive_write",)
 
 ACTION_EXECUTOR_ROLE: Final[str] = "memoria_action_executor"
 API_ROLE: Final[str] = "memoria_memory_api"
@@ -687,7 +685,7 @@ async def test_production_executor_denies_unauthorized_and_admin_cannot_bypass(
                 ),
             )
 
-        api_dsn = _dsn_with(
+        api_dsn = dsn_with(
             fixture.admin_dsn,
             database=fixture.database,
             user=API_ROLE,

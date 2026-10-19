@@ -5,29 +5,15 @@ from __future__ import annotations
 import os
 import uuid
 from collections.abc import AsyncIterator
-from urllib.parse import quote, urlsplit, urlunsplit
 
 import asyncpg
 import pytest
-
-ACTION_EXECUTOR_ROLE = "memoria_action_executor"
-API_ROLE = "memoria_memory_api"
-WORKER_ROLE = "memoria_memory_worker"
-
-
-def _dsn_with(
-    dsn: str, *, database: str, user: str | None = None, password: str | None = None
-) -> str:
-    parsed = urlsplit(dsn)
-    host = parsed.hostname or "localhost"
-    if parsed.port is not None:
-        host = f"{host}:{parsed.port}"
-    username = quote(user or parsed.username or "postgres")
-    secret = quote(password if password is not None else parsed.password or "")
-    credentials = f"{username}:{secret}" if secret else username
-    return urlunsplit(
-        (parsed.scheme, f"{credentials}@{host}", f"/{database}", parsed.query, "")
-    )
+from services.memory_scope.tests.postgres_helpers import (
+    ACTION_EXECUTOR_ROLE,
+    API_ROLE,
+    WORKER_ROLE,
+    dsn_with,
+)
 
 
 @pytest.fixture
@@ -55,8 +41,8 @@ async def cross_db() -> AsyncIterator[tuple[str, str, str, str]]:
             )
     finally:
         await admin.close()
-    admin_db = _dsn_with(dsn, database=db_name)
-    executor = _dsn_with(
+    admin_db = dsn_with(dsn, database=db_name)
+    executor = dsn_with(
         admin_db, database=db_name, user=ACTION_EXECUTOR_ROLE, password=password
     )
     try:

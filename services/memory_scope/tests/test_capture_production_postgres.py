@@ -36,8 +36,6 @@ from services.memory_scope.tests.test_cross_domain_sensitive_write import (
     _install_schemas,
 )
 
-pytest_plugins = ("services.memory_scope.tests.test_cross_domain_sensitive_write",)
-
 
 async def _install_device_bridge(admin_dsn: str) -> None:
     root = Path(__file__).resolve().parents[3]
