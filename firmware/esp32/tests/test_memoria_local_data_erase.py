@@ -1,147 +1,191 @@
-"""Host-side checks for local data erase on device unbinding (issue #281)."""
+"""Host checks for local data erase on device unbinding (issue #281).
+
+memoria_local_data_erase.cc is compiled with the host C++ compiler against the
+fake NVS in tests/erase_host. The fake declares only nvs_open, nvs_erase_key,
+nvs_commit and nvs_close, so any other erase API makes the module stop compiling.
+"""
 
 from __future__ import annotations
 
 import pathlib
 import re
+import shutil
+import subprocess
+import tempfile
+from dataclasses import dataclass
 
 import pytest
 
 FIRMWARE_ROOT = pathlib.Path(__file__).parents[1]
 MEMORIA_DIR = FIRMWARE_ROOT / "overlay" / "files" / "main" / "memoria"
 PATCH_DIR = FIRMWARE_ROOT / "overlay" / "patches"
-ACTIVATION_CLIENT = MEMORIA_DIR / "memoria_activation_client.cc"
-HEADER = MEMORIA_DIR / "memoria_local_data_erase.h"
-IMPL = MEMORIA_DIR / "memoria_local_data_erase.cc"
+HOST_DIR = pathlib.Path(__file__).parent / "erase_host"
+ERASE_SOURCE = MEMORIA_DIR / "memoria_local_data_erase.cc"
+
+ERASED_KEYS = [
+    ("memoria_ui", "wake_mode"),
+    ("memoria_ui", "companion"),
+    ("memoria_power", "quiet_start"),
+    ("memoria_power", "quiet_end"),
+    ("memoria_power", "wifi_hold_ms"),
+    ("memoria", "wake_word_id"),
+    ("memoria", "wake_word_cmd"),
+    ("memoria", "wake_word_disp"),
+]
+KEPT_KEYS = [
+    ("memoria_ui", "brightness"),
+    ("memoria_power", "deep_sleep_s"),
+    ("memoria", "device_name"),
+    ("memoria_runtime", "activation_ctr"),
+    ("memoria_identity", "device_id"),
+]
+SEED = [f"put {ns} {key} 1" for ns, key in ERASED_KEYS + KEPT_KEYS]
 
 
-def test_erase_function_declared() -> None:
-    """Verify EraseLocalChildData function is declared."""
-    source = HEADER.read_text(encoding="utf-8")
-    assert "bool EraseLocalChildData()" in source
-    assert "memoria_identity" in source  # Must document that it's preserved
+@dataclass
+class Step:
+    trace: list[str]
+    store: dict[tuple[str, str], int]
+    ok: bool
+
+    def opened(self) -> list[str]:
+        return [line.split()[1] for line in self.trace if line.startswith("open ")]
+
+    def closed(self) -> list[str]:
+        return [line.split()[1] for line in self.trace if line.startswith("close ")]
+
+    def erase_attempts(self) -> list[tuple[str, str]]:
+        return [
+            (parts[1], parts[2])
+            for parts in (line.split() for line in self.trace)
+            if parts[0] == "erase_key"
+        ]
 
 
-def test_erase_guard_prevents_repeated_calls() -> None:
-    """Verify guard prevents erasure on every 409; only erase on state transition."""
-    source = ACTIVATION_CLIENT.read_text(encoding="utf-8")
+@pytest.fixture(scope="module")
+def tool():
+    compiler = shutil.which("g++") or shutil.which("clang++")
+    if compiler is None:
+        pytest.skip("no host C++ compiler available")
+    with tempfile.TemporaryDirectory() as tmp:
+        binary = pathlib.Path(tmp) / "erase_tool"
+        compiled = subprocess.run(
+            [
+                compiler, "-std=c++17", "-O0", "-Wall",
+                "-I", str(HOST_DIR), "-I", str(MEMORIA_DIR),
+                str(HOST_DIR / "erase_harness.cc"), str(ERASE_SOURCE),
+                "-o", str(binary),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if compiled.returncode != 0:
+            pytest.fail(f"erase module no longer compiles against the NVS fake:\n{compiled.stderr}")
+        yield binary
 
-    # Find the 409 handler block
-    match = re.search(
-        r"if\s*\(\s*manifest_status\s*==\s*409\s*\)\s*\{([^}]+)\}",
-        source,
-        re.DOTALL
+
+def _drive(tool: pathlib.Path, *commands: str) -> list[Step]:
+    completed = subprocess.run(
+        [str(tool)], input="\n".join(commands) + "\n", text=True, capture_output=True, check=True
     )
-    assert match, "409 handler block not found"
-    block = match.group(1)
-
-    # Must read activation_v BEFORE calling EraseLocalChildData
-    activation_v_read = "previous_activation_v = runtime.GetInt"
-    assert activation_v_read in block, "Must read activation_v before erase"
-
-    # Must have the guard condition
-    assert "if (previous_activation_v != 0)" in block, "Must guard erase with activation_v != 0"
-
-    # EraseLocalChildData must be inside the guard
-    erase_call_start = block.find("EraseLocalChildData()")
-    guard_start = block.find("if (previous_activation_v != 0)")
-    assert guard_start < erase_call_start, "Erase must be inside the guard"
-
-
-def test_no_nvs_erase_all() -> None:
-    """Verify nvs_erase_all is NOT used (would destroy activation_ctr and other keys)."""
-    impl = IMPL.read_text(encoding="utf-8")
-    assert "nvs_erase_all" not in impl, "Must not use nvs_erase_all; use nvs_erase_key instead"
+    steps: list[Step] = []
+    trace: list[str] = []
+    store: dict[tuple[str, str], int] = {}
+    for line in completed.stdout.splitlines():
+        kind, _, rest = line.partition(" ")
+        if kind == "t":
+            trace.append(rest)
+        elif kind == "s":
+            ns, key, value = rest.split(" ")
+            store[(ns, key)] = int(value)
+        elif kind == "r":
+            steps.append(Step(trace, store, rest == "true"))
+            trace, store = [], {}
+    return steps
 
 
-def test_erase_keys_list_matches_required() -> None:
-    """Verify the erase keys list includes exactly the required keys, no more, no less."""
-    impl = IMPL.read_text(encoding="utf-8")
-
-    # Extract all (namespace, key) pairs from the code
-    key_pairs = re.findall(
-        r'\{\s*"([^"]+)"\s*,\s*"([^"]+)"\s*\}',
-        impl
-    )
-    # Filter to only erase keys (exclude EraseKey struct definition itself)
-    # By checking they appear after the kEraseKeys array starts
-    erase_keys_start = impl.find("constexpr EraseKey kEraseKeys[]")
-    erase_keys_end = impl.find("};", erase_keys_start) + 2
-
-    erase_keys_section = impl[erase_keys_start:erase_keys_end]
-    key_pairs = re.findall(
-        r'\{\s*"([^"]+)"\s*,\s*"([^"]+)"\s*\}',
-        erase_keys_section
-    )
-
-    # Expected keys: (namespace, key)
-    expected = {
-        ("memoria_ui", "wake_mode"),
-        ("memoria_ui", "companion"),
-        ("memoria_power", "quiet_start"),
-        ("memoria_power", "quiet_end"),
-        ("memoria_power", "wifi_hold_ms"),
-        ("memoria", "wake_word_id"),
-        ("memoria", "wake_word_cmd"),
-        ("memoria", "wake_word_disp"),
-    }
-
-    actual = set(key_pairs)
-    assert actual == expected, f"Keys mismatch.\nExpected: {expected}\nActual: {actual}"
-
-    # Verify activation_ctr is NOT in the list
-    for ns, key in actual:
-        assert key != "activation_ctr", "CRITICAL: activation_ctr must not be erased (replay prevention)"
-        assert key != "memoria_identity", "CRITICAL: memoria_identity must not be erased"
+def _balanced(step: Step) -> None:
+    assert "bad_close" not in step.trace
+    assert sorted(step.opened()) == sorted(step.closed())
 
 
-def test_uses_ssidmanager_clear() -> None:
-    """Verify Wi-Fi credentials are erased via SsidManager::GetInstance().Clear()."""
-    impl = IMPL.read_text(encoding="utf-8")
-    assert "SsidManager::GetInstance().Clear()" in impl, "Must use SsidManager::GetInstance().Clear()"
-    assert "#include \"ssid_manager.h\"" in impl, "Must include ssid_manager.h"
-    # Verify no esp_wifi_set_config (incorrect approach)
-    assert "esp_wifi_set_config" not in impl, "Must not use esp_wifi_set_config; use SsidManager"
-    assert "wifi_config_t" not in impl, "wifi_config_t is not needed with SsidManager"
+def test_erase_removes_exactly_the_child_keys_and_the_wifi_list(tool: pathlib.Path) -> None:
+    (step,) = _drive(tool, *SEED, "erase")
+
+    assert step.ok
+    assert sorted(step.erase_attempts()) == sorted(ERASED_KEYS)
+    assert [ns for ns, _ in step.erase_attempts()].count("memoria_ui") == 2
+    assert [ns for ns, _ in step.erase_attempts()].count("memoria_power") == 3
+    assert [ns for ns, _ in step.erase_attempts()].count("memoria") == 3
+    assert step.trace.count("wifi_clear") == 1
+    assert set(step.store) == set(KEPT_KEYS)
+    _balanced(step)
 
 
-def test_activation_client_calls_erase_with_guard() -> None:
-    """Verify memoria_activation_client.cc calls EraseLocalChildData with proper guard."""
-    source = ACTIVATION_CLIENT.read_text(encoding="utf-8")
+def test_erase_only_opens_the_three_child_namespaces(tool: pathlib.Path) -> None:
+    (step,) = _drive(tool, *SEED, "erase")
 
-    # Find the erase call
-    assert "EraseLocalChildData()" in source, "EraseLocalChildData must be called"
-
-    # Find the 409 block and verify guard structure
-    match = re.search(
-        r"if\s*\(\s*manifest_status\s*==\s*409\s*\)\s*\{([^}]*if\s*\(\s*previous_activation_v[^}]+)\}",
-        source,
-        re.DOTALL
-    )
-    assert match, "409 handler with guard not found"
-    block = match.group(0)
-
-    # Verify the guard is present
-    assert "if (previous_activation_v != 0)" in block
-
-    # Verify EraseLocalChildData is called inside a guard
-    assert "EraseLocalChildData()" in block
+    assert set(step.opened()) == {"memoria_ui", "memoria_power", "memoria"}
+    assert "memoria_identity" not in step.opened()
+    assert ("memoria_identity", "device_id") in step.store
 
 
-def test_activation_client_includes_erase_header() -> None:
-    """Verify memoria_activation_client.cc includes the erase header."""
-    source = ACTIVATION_CLIENT.read_text(encoding="utf-8")
-    assert '#include "memoria_local_data_erase.h"' in source
+def test_erase_tolerates_keys_that_are_already_gone(tool: pathlib.Path) -> None:
+    (step,) = _drive(tool, "erase")
+
+    assert step.ok
+    assert sorted(step.erase_attempts()) == sorted(ERASED_KEYS)
+    _balanced(step)
 
 
-def test_no_nvs_erase_key_on_activation_ctr() -> None:
-    """Mutation: verify activation_ctr is NOT erased."""
-    impl = IMPL.read_text(encoding="utf-8")
-    # activation_ctr must NEVER appear in any erase context
-    for line in impl.split('\n'):
-        if 'activation_ctr' in line:
-            # Only allowed in comments explaining why we DON'T erase it
-            assert line.strip().startswith('//'), f"activation_ctr referenced outside comment: {line}"
+def test_missing_namespace_is_skipped_without_closing_a_handle_it_never_opened(
+    tool: pathlib.Path,
+) -> None:
+    (step,) = _drive(tool, *SEED, "missing memoria_power", "erase")
+
+    assert step.ok
+    assert "open_missing memoria_power" in step.trace
+    assert ("memoria_ui", "wake_mode") not in step.store
+    assert ("memoria_power", "quiet_start") in step.store
+    _balanced(step)
+
+
+def test_failed_key_erase_does_not_stop_the_rest_and_reports_failure(tool: pathlib.Path) -> None:
+    (step,) = _drive(tool, *SEED, "fail_erase memoria_power quiet_end", "erase")
+
+    assert not step.ok
+    assert ("memoria_power", "quiet_end") in step.store
+    assert set(ERASED_KEYS) - set(step.store) == set(ERASED_KEYS) - {("memoria_power", "quiet_end")}
+    _balanced(step)
+
+
+def test_failed_commit_reports_failure_and_still_closes_the_handle(tool: pathlib.Path) -> None:
+    (step,) = _drive(tool, *SEED, "fail_commit memoria_ui", "erase")
+
+    assert not step.ok
+    assert ("memoria_ui", "wake_mode") in step.store
+    assert ("memoria", "wake_word_id") not in step.store
+    _balanced(step)
+
+
+def test_unopenable_namespace_reports_failure_and_erases_the_others(tool: pathlib.Path) -> None:
+    (step,) = _drive(tool, *SEED, "broken memoria", "erase")
+
+    assert not step.ok
+    assert ("memoria", "wake_word_id") in step.store
+    assert ("memoria_ui", "wake_mode") not in step.store
+    _balanced(step)
+
+
+def test_every_memoria_source_is_registered_in_the_firmware_build() -> None:
+    registered: set[str] = set()
+    for patch in PATCH_DIR.glob("*.patch"):
+        registered.update(
+            re.findall(r'^\+\s+"(memoria/\w+\.cc)"', patch.read_text(encoding="utf-8"), re.MULTILINE)
+        )
+    sources = {f"memoria/{path.name}" for path in MEMORIA_DIR.glob("*.cc")}
+
+    assert sources - registered == set()
 
 
 def test_factory_reset_entry_not_yet_implemented() -> None:
