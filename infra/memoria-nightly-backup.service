@@ -7,7 +7,7 @@ Requires=docker.service
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/memoria
-ExecStart=/usr/local/bin/memoria-nightly-backup.sh
+ExecStart=/opt/memoria/ops-tools/nightly_backup.sh
 User=root
 StandardOutput=journal
 StandardError=journal
