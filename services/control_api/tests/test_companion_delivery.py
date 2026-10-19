@@ -95,9 +95,7 @@ async def test_catalog_companion_does_not_freeze_a_personal_clone() -> None:
 
 @pytest.mark.asyncio
 async def test_custom_persona_freezes_a_cosyvoice_clone_with_designed_fallback() -> None:
-    # Personal voice clones are no longer attached in frozen companion delivery (PR #310).
-    # freeze_companion_delivery returns design-time companion data only, voice resolution
-    # moved to runtime call-time. Test verifies the companion style is frozen correctly.
+    # PR #221 removed voice cloning: freezing no longer asks the voice manager for a clone.
     manager = _ResolutionStub(_cosyvoice_resolution())
     frozen = await freeze_companion_delivery(
         companion=_CUSTOM,
@@ -112,13 +110,12 @@ async def test_custom_persona_freezes_a_cosyvoice_clone_with_designed_fallback()
     assert frozen.voice_provider is None
     assert frozen.voice_model is None
     assert frozen.fallback_voice_profile_id is None
-    # Voice manager is no longer called during freeze.
     assert manager.seen_personas == []
 
 
 @pytest.mark.asyncio
 async def test_custom_persona_freezes_a_doubao_icl_clone() -> None:
-    # Personal voice clones are no longer attached during freeze (PR #310).
+    # PR #221 removed voice cloning: a resolved clone is no longer frozen into delivery.
     expires = datetime(2027, 7, 23, tzinfo=UTC)
     frozen = await freeze_companion_delivery(
         companion=_CUSTOM,
