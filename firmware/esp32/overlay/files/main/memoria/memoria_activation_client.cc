@@ -17,6 +17,7 @@
 #include "http.h"
 #include "settings.h"
 #include "sodium.h"
+#include "memoria_local_data_erase.h"
 
 #include <cJSON.h>
 
@@ -463,12 +464,21 @@ esp_err_t MemoriaActivationClient::Activate(ActivationProfile* profile) {
                       {"X-Device-Signature", request_signature}},
                      {}, &response, &manifest_status)) {
         if (manifest_status == 409) {
-            // A released device is intentionally not bound yet.  Do not let
-            // the previous activation version strand the board in an error
-            // screen; keep activation_ctr so the next binding cannot replay
-            // the device's monotonic activation counter.
+            // Device is released by the server. Erase child-related local data only during
+            // the state transition from bound (activation_v != 0) to unbound (409 means no manifest).
+            // This guard prevents repeated erasure on every polling retry (every 5 seconds while unbound).
+            // Only devices that were previously activated are released; newly-uninitialized devices
+            // get 409 on first activation attempt and must not trigger the erase.
             Settings runtime("memoria_runtime", true);
-            if (runtime.GetInt("activation_v", 0) != 0) {
+            const int32_t previous_activation_v = runtime.GetInt("activation_v", 0);
+
+            if (previous_activation_v != 0) {
+                // Transitioning from bound to released: erase child settings before clearing activation_v
+                EraseLocalChildData();
+            }
+
+            // Clear activation state (but keep activation_ctr for replay prevention)
+            if (previous_activation_v != 0) {
                 runtime.SetInt("activation_v", 0);
             }
             ESP_LOGW(kTag, "Activation unavailable while device is unbound; bootstrap required");
