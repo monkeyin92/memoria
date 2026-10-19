@@ -2,7 +2,9 @@
 
 The production host has no pg_restore and no sqlite3 binary, so the fake
 docker only accepts a dump that arrives on stdin, as the real container
-would. A script that validates on the host fails here the way it would there.
+would. The container's /tmp is a tmpfs there, which docker cp cannot read, so
+the fake refuses that too. A script that does either fails here the way it
+would on the host (both were found by a real run).
 """
 
 from __future__ import annotations
@@ -20,8 +22,8 @@ SCRIPT = ROOT / "scripts" / "nightly_backup.sh"
 FAKE_DOCKER = r"""#!/usr/bin/env bash
 set -u
 echo "docker $*" >> "$FAKE_ROOT/calls.log"
-box="$FAKE_ROOT/container/tmp"
-mkdir -p "$box"
+croot="$FAKE_ROOT/container"
+mkdir -p "$croot"
 if [[ "$1" == exec ]]; then
   shift
   [[ "$1" == -i ]] && shift
@@ -39,8 +41,9 @@ if [[ "$1" == exec ]]; then
       [[ "${FAKE_PGRESTORE:-ok}" == fail ]] && { echo "pg_restore: bad archive" >&2; exit 1; }
       exit 0 ;;
     "memoria-control-api-1 /app/.venv/bin/python")
-      dest="$(printf '%s' "$*" | grep -o "/tmp/memoria-backup-[0-9-]*\.sqlite3")"
-      target="$box/$(basename "$dest")"
+      dest="$(printf '%s' "$*" | grep -o "'/[^']*\.sqlite3'" | tail -1 | tr -d "'")"
+      target="$croot$dest"
+      mkdir -p "$(dirname "$target")"
       if [[ "${FAKE_SQLITE:-ok}" == corrupt ]]; then
         head -c 4096 /dev/urandom > "$target"
       else
@@ -55,7 +58,7 @@ c.commit()
       exit 0 ;;
     "memoria-control-api-1 rm")
       shift; shift
-      rm -f "$box/$(basename "${@: -1}")"
+      rm -f "$croot${@: -1}"
       exit 0 ;;
   esac
   echo "fake docker: unexpected exec: $name $*" >&2
@@ -63,7 +66,10 @@ c.commit()
 fi
 if [[ "$1" == cp ]]; then
   src="${2#memoria-control-api-1:}"
-  cp "$box/$(basename "$src")" "$3"
+  case "$src" in
+    /tmp/*) echo "Error response from daemon: Could not find the file $src in container" >&2; exit 1 ;;
+  esac
+  cp "$croot$src" "$3"
   exit 0
 fi
 echo "fake docker: unexpected: $*" >&2
@@ -109,8 +115,8 @@ class Sandbox:
         return log.read_text(encoding="utf-8") if log.exists() else ""
 
     def leftover_container_files(self) -> list[str]:
-        box = self.root / "container" / "tmp"
-        return sorted(p.name for p in box.iterdir()) if box.exists() else []
+        base = self.root / "container"
+        return sorted(str(p.relative_to(base)) for p in base.rglob("*") if p.is_file())
 
     def seed_old(self, *names: str) -> None:
         for name in names:

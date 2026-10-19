@@ -15,6 +15,8 @@ umask 077
 BACKUP_DIR="${NIGHTLY_BACKUP_DIR:-/var/lib/memoria/backups/nightly}"
 RETENTION_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/nightly_backup_retention.py"
 NOW_ISO=$(date +%Y%m%d-%H%M)
+# Not /tmp: that is a tmpfs in the container and docker cp cannot read it.
+CONTAINER_SQLITE="/data/memoria.nightly-${NOW_ISO}.sqlite3"
 
 # Cleanup handler: remove temporary files on any error or exit
 cleanup() {
@@ -25,7 +27,7 @@ cleanup() {
   fi
   # Remove SQLite temp file from container
   if [[ -n "${NOW_ISO:-}" ]]; then
-    docker exec memoria-control-api-1 rm -f "/tmp/memoria-backup-${NOW_ISO}.sqlite3" 2>/dev/null || true
+    docker exec memoria-control-api-1 rm -f "$CONTAINER_SQLITE" 2>/dev/null || true
   fi
   return $exit_code
 }
@@ -94,13 +96,14 @@ SQLITE_FINAL="$BACKUP_DIR/control-$NOW_ISO.sqlite3"
 
 # Create backup via Python in the container, then copy out
 if ! docker exec memoria-control-api-1 /app/.venv/bin/python -c \
-  "import sqlite3; s=sqlite3.connect('/data/memoria.sqlite3'); d=sqlite3.connect('/tmp/memoria-backup-$NOW_ISO.sqlite3'); s.backup(d); d.close()"; then
+  "import sqlite3; s=sqlite3.connect('/data/memoria.sqlite3'); d=sqlite3.connect('$CONTAINER_SQLITE'); s.backup(d); d.close()"; then
   fail "SQLite backup creation failed"
 fi
 
-if ! docker cp "memoria-control-api-1:/tmp/memoria-backup-$NOW_ISO.sqlite3" "$SQLITE_TEMP"; then
+if ! docker cp "memoria-control-api-1:$CONTAINER_SQLITE" "$SQLITE_TEMP"; then
   fail "cannot copy SQLite backup from container"
 fi
+chmod 0600 "$SQLITE_TEMP"  # docker cp keeps the container file mode and ignores umask
 
 # Verify SQLite dump is non-empty and valid (use Python, as sqlite3 CLI is not available on host)
 sqlite_size=$(stat -c %s "$SQLITE_TEMP" 2>/dev/null || stat -f %z "$SQLITE_TEMP" 2>/dev/null || echo 0)

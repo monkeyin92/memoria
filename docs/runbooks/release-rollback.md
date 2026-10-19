@@ -98,22 +98,24 @@ python3 /opt/memoria/ops-tools/nightly_backup_retention.py --backup-dir /var/lib
 **恢复 PostgreSQL 到临时库验证：**
 
 ```bash
-# 选择一份备份
+sudo bash <<'RESTORE'
+set -u
+# 选择一份备份（备份目录是 root 0700，重定向必须在 root shell 里做，不能写在 sudo 外面）
 BACKUP=/var/lib/memoria/backups/nightly/memoria-20261019-0315.dump
+q() { docker exec memoria-data-postgres-1 psql -U memoria_admin -d "$1" -Atc "$2"; }
 
-# 创建临时数据库
-sudo docker exec memoria-data-postgres-1 psql -U memoria_admin -d postgres -c \
-  "CREATE DATABASE test_restore OWNER memoria_admin;"
+# 恢复到一个临时库，不碰生产库 memoria（库里没有 postgres 角色，用 memoria_admin）
+q postgres "create database test_restore owner memoria_admin"
+docker exec -i memoria-data-postgres-1 pg_restore -U memoria_admin -d test_restore --no-owner < "$BACKUP"
+echo "pg_restore exit=$?"
 
-# 恢复备份
-sudo docker exec -i memoria-data-postgres-1 pg_restore -U memoria_admin -d test_restore < "$BACKUP"
-
-# 验证表数（应该 > 0）
-sudo docker exec memoria-data-postgres-1 psql -U memoria_admin -d test_restore -c \
-  "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public';"
+# 对照表数（2026-10-19 实测：恢复 168 张，线上 168 张）
+q test_restore "select count(*) from information_schema.tables where table_schema = 'public'"
+q memoria      "select count(*) from information_schema.tables where table_schema = 'public'"
 
 # 清理临时库
-sudo docker exec memoria-data-postgres-1 psql -U memoria_admin -d postgres -c "DROP DATABASE test_restore;"
+q postgres "drop database test_restore"
+RESTORE
 ```
 
 **恢复 SQLite 控制库到临时文件：**
