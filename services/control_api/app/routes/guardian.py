@@ -1756,9 +1756,10 @@ async def child_retracted_memories(
 ) -> dict[str, Any]:
     """Memories this child's guardian retracted, newest first, still restorable.
 
-    The review endpoint already puts a confirmed claim's vector back, so the
-    page needs the claim ids across page loads: the list is one query on the
-    child's own retracted claims, not a cached page in the mini program.
+    Corrections are not retractions and stay out of this list. The review
+    endpoint already puts a confirmed claim's vector back, so the page needs
+    the claim ids across page loads: the list is one query on the child's own
+    retracted claims, not a cached page in the mini program.
     """
 
     account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)

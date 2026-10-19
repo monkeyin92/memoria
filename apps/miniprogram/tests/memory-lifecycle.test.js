@@ -386,6 +386,8 @@ test("a retraction refreshes the authoritative list and is restorable", async ()
 
       const wxml = fs.readFileSync(LIFECYCLE_WXML, "utf8");
       assert.match(wxml, /bindtap="restoreMemory"/);
+      assert.match(wxml, /撤回的记忆机器人不会用到，可以随时恢复。/);
+      assert.doesNotMatch(wxml, /暂时不会提起/);
       assert.doesNotMatch(wxml, /恢复功能准备中/);
     } finally {
       restore();

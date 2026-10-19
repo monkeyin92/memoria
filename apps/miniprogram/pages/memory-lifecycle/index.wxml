@@ -72,7 +72,7 @@
 
         <view wx:if="{{retractedItems.length}}" class="lifecycle-group">
           <text class="section-title">已撤回</text>
-          <text class="caption">撤回的记忆机器人暂时不会提起，可以随时恢复。</text>
+          <text class="caption">撤回的记忆机器人不会用到，可以随时恢复。</text>
           <view wx:for="{{retractedItems}}" wx:key="id" class="card lifecycle-item lifecycle-item-retracted">
             <view class="lifecycle-item-head">
               <text class="l2-card-title">{{item.title}}</text>

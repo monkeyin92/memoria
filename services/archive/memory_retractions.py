@@ -1,4 +1,8 @@
-"""Read the retracted claims a guardian may still restore.
+"""Read the claims a guardian retracted and may still restore.
+
+Only a real retraction counts. A correction leaves the older value behind as a
+superseded version, but the guardian did not withdraw it, so it must never
+appear in the restorable list.
 
 A retraction is a review event, so ``retracted_at`` is that event's own time.
 The claim row keeps the value and category the guardian list needs; the
@@ -48,7 +52,11 @@ async def list_retracted_claims(
     subject_id: str,
     limit: int = 20,
 ) -> tuple[RetractedClaim, ...]:
-    """This subject's retracted claims, newest retraction first.
+    """This subject's parent-retracted claims, newest retraction first.
+
+    Only the ``retract`` review counts. A ``correct`` review is not a
+    retraction: the older value it superseded is not a restorable item, so it
+    is filtered out of this list.
 
     The read runs on the catalog's own pool under the same account scope as
     every other catalog query, so RLS and the explicit subject lineage both
@@ -84,7 +92,7 @@ async def list_retracted_claims(
              AND review.account_id = claim.account_id
             WHERE {" AND ".join(clauses)}
               AND review.event_type = 'memory.claim_reviewed'
-              AND review.payload->>'action' IN ('retract', 'correct')
+              AND review.payload->>'action' = 'retract'
             ORDER BY review.occurred_at DESC, claim.claim_id DESC
             LIMIT ${len(parameters)}
             """,

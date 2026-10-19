@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 from httpx import ASGITransport, AsyncClient
 from services.archive.domain import EvidenceEvent
+from services.archive.memory_domain import MemoryClaimReview
 from services.control_api.app.main import create_app
 from services.control_api.tests.test_bound_subject_binding import (
     _bind,
@@ -270,3 +271,63 @@ async def test_only_retracted_claims_are_listed(
     assert confirmed_id not in _retracted_ids(body)
     assert limited.status_code == 200, limited.text
     assert len(limited.json()["items"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_correction_is_not_restorable_as_a_retraction(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner_id, child_id, headers = await _bound_child(
+            client, app, "corrected-owner", "device-corrected-owner"
+        )
+        await _grant_memory(client, child_id, headers, "corrected-grant")
+        retracted_id = await _seed_claim(
+            app, owner_id, child_id, "corrected-retracted-turn", STUDY
+        )
+        corrected_id = await _seed_claim(
+            app, owner_id, child_id, "corrected-superseded-turn", COLOUR
+        )
+        await _review(client, child_id, retracted_id, headers, "retract")
+
+        corrected_value = "我最喜欢绿色。"
+        correction = await app.state.memory_catalog.review(
+            MemoryClaimReview(
+                account_id=owner_id,
+                claim_id=corrected_id,
+                action="correct",
+                corrected_value=corrected_value,
+                subject_id=child_id,
+            )
+        )
+        assert correction.value == corrected_value
+
+        listed = await client.get(_retracted_url(child_id), headers=headers)
+        assert listed.status_code == 200, listed.text
+        assert _retracted_ids(listed.json()) == [retracted_id]
+        assert corrected_id not in _retracted_ids(listed.json())
+
+        confirmed = await client.post(
+            f"/v1/guardian/minors/{child_id}/memories/{corrected_id}/review",
+            headers=headers,
+            json={"action": "confirm"},
+        )
+        after_correction_confirm = await client.get(_retracted_url(child_id), headers=headers)
+        restored = await client.post(
+            f"/v1/guardian/minors/{child_id}/memories/{retracted_id}/review",
+            headers=headers,
+            json={"action": "confirm"},
+        )
+        after_restore = await client.get(_retracted_url(child_id), headers=headers)
+
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["value"] == corrected_value
+    assert confirmed.json()["value"] != COLOUR
+    assert after_correction_confirm.status_code == 200, after_correction_confirm.text
+    assert corrected_id not in _retracted_ids(after_correction_confirm.json())
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["status"] == "confirmed"
+    assert retracted_id not in _retracted_ids(after_restore.json())
+    assert after_restore.json()["items"] == []
