@@ -53,9 +53,7 @@ bool EraseLocalChildData() {
         esp_err_t result = nvs_open(erase_key.namespace_name, NVS_READWRITE, &handle);
 
         if (result == ESP_ERR_NVS_NOT_FOUND) {
-            ESP_LOGD(kTag, "NVS namespace '%s' not found (not erasing key '%s')",
-                     erase_key.namespace_name, erase_key.key);
-            nvs_close(handle);
+            ESP_LOGD(kTag, "NVS namespace '%s' not found (skipping)", erase_key.namespace_name);
             continue;
         }
 

@@ -193,3 +193,48 @@ def test_factory_reset_entry_not_yet_implemented() -> None:
     usb_header = (MEMORIA_DIR / "memoria_usb_command.h").read_text(encoding="utf-8")
     assert "kFactoryReset" not in usb_header
     assert "factory" not in usb_header.lower()
+
+
+def test_activation_clear_only_on_success(tool: pathlib.Path) -> None:
+    """The 409 handler clears activation_v ONLY after EraseLocalChildData succeeds.
+
+    On failure, activation_v stays set, so the next 409 retries the erase. The module
+    itself doesn't touch activation_v (EraseLocalChildData returns bool). The caller
+    (memoria_activation_client.cc 409 handler) evaluates the result and sets
+    "activation_v" to 0 only on true. This test locks that ordering by checking the
+    ERASE_SOURCE text for:
+      if (EraseLocalChildData()) {
+        runtime.SetInt("activation_v", 0);
+      ...
+    And that the guard prevents repeated erase on unbound devices (activation_v == 0).
+    """
+    activation_client = (
+        (MEMORIA_DIR / "memoria_activation_client.cc").read_text(encoding="utf-8")
+    )
+
+    handler_409_start = activation_client.find("if (manifest_status == 409)")
+    assert handler_409_start > 0
+    handler_409_end = activation_client.find("return ESP_ERR_INVALID_STATE", handler_409_start)
+    assert handler_409_end > handler_409_start
+    handler_body = activation_client[handler_409_start:handler_409_end]
+
+    assert "EraseLocalChildData()" in handler_body
+    assert 'runtime.SetInt("activation_v", 0)' in handler_body
+    assert 'previous_activation_v = runtime.GetInt("activation_v"' in handler_body
+
+    guard_check = 'if (previous_activation_v != 0)'
+    erase_call = "EraseLocalChildData()"
+    clear_call = 'runtime.SetInt("activation_v", 0)'
+
+    assert guard_check in handler_body
+    guard_idx = handler_body.find(guard_check)
+    erase_idx = handler_body.find(erase_call)
+    clear_idx = handler_body.find(clear_call)
+
+    assert guard_idx < erase_idx, "Erase must be inside the guard"
+    assert erase_idx < clear_idx, "activation_v clear must come after erase"
+
+    if_erase_success = handler_body.find("if (EraseLocalChildData()")
+    assert if_erase_success > 0, "Caller must check erase result"
+    assert handler_body.find(clear_call, if_erase_success) < handler_body.find("} else", if_erase_success), \
+        "activation_v clear must be conditional on erase success"

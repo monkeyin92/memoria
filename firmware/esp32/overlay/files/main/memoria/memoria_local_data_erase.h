@@ -6,12 +6,11 @@
 namespace memoria {
 
 // Erase child-related local data (Wi-Fi credentials, wake word, UI settings, power settings).
-// Called ONLY when device transitions from bound state (activation_v != 0) to released state.
-// Preserves:
-//   - memoria_identity partition (device identity required for server connectivity)
-//   - activation_ctr in memoria_runtime (monotonic counter prevents replay attacks)
-//   - Any non-child-related keys
-// Returns true if all erasures succeeded, false if any failed (but best-effort attempted).
+// Call when device transitions from bound (activation_v != 0) to released (manifest 409).
+// Preserved without modification:
+//   - memoria_identity partition (device identity, server connectivity requires it)
+//   - activation_ctr (monotonic replay-attack prevention)
+// Returns true if all erasures succeeded, false if any failed (still best-effort attempted).
 bool EraseLocalChildData();
 
 }  // namespace memoria

@@ -464,24 +464,20 @@ esp_err_t MemoriaActivationClient::Activate(ActivationProfile* profile) {
                       {"X-Device-Signature", request_signature}},
                      {}, &response, &manifest_status)) {
         if (manifest_status == 409) {
-            // Device is released by the server. Erase child-related local data only during
-            // the state transition from bound (activation_v != 0) to unbound (409 means no manifest).
-            // This guard prevents repeated erasure on every polling retry (every 5 seconds while unbound).
-            // Only devices that were previously activated are released; newly-uninitialized devices
-            // get 409 on first activation attempt and must not trigger the erase.
+            // Device released by server. Erase child-related local data and clear the activation
+            // marker (but keep activation_ctr for replay prevention), only on successful erase.
+            // Failed erase keeps activation_v set, so the next 409 retries the erase.
             Settings runtime("memoria_runtime", true);
             const int32_t previous_activation_v = runtime.GetInt("activation_v", 0);
 
             if (previous_activation_v != 0) {
-                // Transitioning from bound to released: erase child settings before clearing activation_v
-                EraseLocalChildData();
+                if (EraseLocalChildData()) {
+                    runtime.SetInt("activation_v", 0);
+                    ESP_LOGW(kTag, "Device released; bootstrap required");
+                } else {
+                    ESP_LOGW(kTag, "Child data erase incomplete; release deferred to next 409");
+                }
             }
-
-            // Clear activation state (but keep activation_ctr for replay prevention)
-            if (previous_activation_v != 0) {
-                runtime.SetInt("activation_v", 0);
-            }
-            ESP_LOGW(kTag, "Activation unavailable while device is unbound; bootstrap required");
             return ESP_ERR_INVALID_STATE;
         }
         return ESP_FAIL;
