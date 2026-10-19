@@ -45,8 +45,18 @@ public:
     // manifest's request object with this path). Empty on failure.
     std::string SignGetRequest(const std::string& path) const;
 
+    // Best-effort failure detail for logs and the error page. The upstream
+    // Http interface has no separate TLS error accessor; GetLastError() on a
+    // failed Open() is the only transport/TLS code this overlay can see, and
+    // it is 0 when the failure happened after Open() succeeded. The HTTP
+    // status is 0 when no response status was reached.
+    int last_http_status() const { return last_http_status_; }
+    int last_transport_error() const { return last_transport_error_; }
+
 private:
     const DeviceIdentity& identity_;
+    int last_http_status_ = 0;
+    int last_transport_error_ = 0;
 };
 
 }  // namespace memoria

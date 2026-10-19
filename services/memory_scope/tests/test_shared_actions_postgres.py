@@ -15,6 +15,7 @@ from typing import Final, cast
 
 import asyncpg
 import pytest
+from services.memory_scope.tests.postgres_helpers import dsn_with
 from services.memory_scope.tests.test_cross_domain_sensitive_write import (
     TestActionAdapter,
     TestBindingAdapter,
@@ -23,7 +24,6 @@ from services.memory_scope.tests.test_cross_domain_sensitive_write import (
     TestPrincipalAdapter,
     _bridge_lock_receipt,
     _BridgePolicyReceiptRepository,
-    _dsn_with,
     _install_schemas,
     _make_context,
 )
@@ -39,8 +39,6 @@ from services.policy.production_wiring import (
     build_composite_action_authority,
 )
 from services.policy.receipts import PolicyReceiptV2
-
-pytest_plugins = ("services.memory_scope.tests.test_cross_domain_sensitive_write",)
 
 API_ROLE: Final[str] = "memoria_memory_api"
 
@@ -289,7 +287,7 @@ async def test_postgres_capture_ports_are_receipt_bound_and_atomic(
                 )
 
         # API/worker roles cannot invoke either narrow capture port.
-        api_dsn = _dsn_with(
+        api_dsn = dsn_with(
             admin_db_dsn,
             database=_db_name,
             user=API_ROLE,
