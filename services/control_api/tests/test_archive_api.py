@@ -157,7 +157,6 @@ def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("MEMORIA_DB_PATH", str(tmp_path / "memoria.sqlite3"))
     monkeypatch.setenv("MEMORIA_AUTH_SECRET", "test-auth-material-that-is-long-enough")
     monkeypatch.setenv("MEMORIA_ARCHIVE_INTERNAL_TOKEN", "test-internal-archive-token")
-    monkeypatch.setenv("MEMORIA_EVOLUTION_INTERNAL_TOKEN", "test-evolution-internal-token")
     monkeypatch.setenv("OFFLINE_MOCK", "true")
 
 
@@ -825,6 +824,7 @@ async def test_archive_accepts_only_the_exact_runtime_evolution_provenance(
     tmp_path: Path,
 ) -> None:
     _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv("LIVE_SEARCH_QWEN_ENABLED", "true")
     app = create_app()
     internal = {
         "X-Memoria-Internal-Token": "test-internal-archive-token",
