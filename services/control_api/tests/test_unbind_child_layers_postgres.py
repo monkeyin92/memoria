@@ -68,10 +68,24 @@ async def _bound_child(client: AsyncClient, app: Any) -> tuple[str, str, dict[st
         declared_mode="parent_for_child",
         relationship="guardian_of",
         age_band="under_14",
-        offers=["offer_minor_voice_session_v1"],
+        offers=[
+            "offer_minor_voice_session_v1",
+            "offer_minor_memory_retention_v1",
+        ],
+        preferences={"memory_level": "growth_summary"},
     )
     assert created.status_code == 201, created.text
-    return owner_id, created.json()["primary_subject_ids"][0], headers
+    child_id = created.json()["primary_subject_ids"][0]
+    granted = await client.post(
+        f"/v1/guardian/minors/{child_id}/consents",
+        headers={
+            **headers,
+            "Idempotency-Key": "unbind-layers-person-consent",
+        },
+        json={"consent_kind": "memory_retention", "policy_version": "minor-retention-v1"},
+    )
+    assert granted.status_code == 201, granted.text
+    return owner_id, child_id, headers
 
 
 async def _seed_layers(
@@ -177,17 +191,28 @@ async def _status_event_count(admin_db_dsn: str, record_ids: list[str]) -> int:
     return int(count)
 
 
-async def _child_layer_audit(admin_db_dsn: str) -> list[AuditRow]:
+async def _child_layer_audit(
+    admin_db_dsn: str, *, action: str = "child_layer_erase"
+) -> list[AuditRow]:
     admin = await asyncpg.connect(admin_db_dsn)
     try:
         rows = await admin.fetch(
             "SELECT * FROM memory_audit_events"
-            " WHERE action = 'child_layer_erase'"
-            " ORDER BY created_at, event_id"
+            " WHERE action = $1"
+            " ORDER BY created_at, event_id",
+            action,
         )
     finally:
         await admin.close()
     return [dict(row) for row in rows]
+
+
+async def _person_consents(
+    app: Any, *, owner_id: str, child_id: str
+) -> tuple[Any, ...]:
+    return await app.state.guardian_store.list_person_consents(
+        subject_person_id=child_id, actor_person_id=owner_id
+    )
 
 
 def _payload(row: AuditRow) -> dict[str, Any]:
@@ -279,17 +304,76 @@ async def test_keep_unbind_omitting_flag_preserves_all_layers_and_retention_expi
                 "long_term_profile": 1,
             }
             layer_calls = record_layer_erasures(monkeypatch, store)
+            consents_before = await _person_consents(
+                app, owner_id=owner_id, child_id=child_id
+            )
+            assert [item.consent_kind for item in consents_before] == [
+                "memory_retention"
+            ]
+            started_at = datetime.now(UTC)
 
             response = await _unbind(client, headers, purge=None)
 
+            finished_at = datetime.now(UTC)
             assert response.status_code == 200, response.text
             body = response.json()
             assert body["child_layers_purged"] == "not_requested"
             assert body["subject_deletion"] == "not_requested"
+            assert body["consents_withdrawn"] == 0
+            assert body["retention_basis_recorded"] is True
             assert layer_calls == []
             assert deletion.calls == []
             assert await _memory_counts(admin_db_dsn, child_id) == before
             assert await _child_layer_audit(admin_db_dsn) == []
+            consents_after = await _person_consents(
+                app, owner_id=owner_id, child_id=child_id
+            )
+            assert [item.consent_id for item in consents_after] == [
+                item.consent_id for item in consents_before
+            ]
+            assert all(item.revoked_at is None for item in consents_after)
+            # The grants stay, but the revoked binding fences them: Policy
+            # denies capture, recall and chat (test_device_bound_subject.py).
+            binding = await app.state.identity_service.get_binding(
+                body["binding_id"], actor_person_id=owner_id
+            )
+            assert binding.status == "revoked"
+
+            basis_audit = await _child_layer_audit(
+                admin_db_dsn, action="child_layer_retain"
+            )
+            assert len(basis_audit) == 1, basis_audit
+            basis = basis_audit[0]
+            assert basis["action"] == "child_layer_retain"
+            assert basis["actor_subject_id"] == "system:child_layer_retain"
+            assert basis["subject_id"] is None
+            assert basis["record_id"] is None
+            assert basis["proposal_id"] is None
+            assert _payload(basis) == {
+                "kind": "child_layer",
+                "dialogue_summary_count": 2,
+                "child_archive_count": 1,
+                "reason": "guardian_unbind_keep",
+            }
+            assert started_at <= basis["created_at"] <= finished_at
+            serialized_basis = _serialized(basis)
+            for value in (
+                child_id,
+                owner_id,
+                body["binding_id"],
+                DEVICE_ID,
+                fresh_summary.record_id,
+                expired_summary.record_id,
+                archive.record_id,
+                long_term_id,
+                SUMMARY_TEXT,
+                ARCHIVE_TEXT,
+                LONG_TERM_TEXT,
+                "使用人",
+                "evt-keep-fresh",
+                "sess-keep",
+            ):
+                assert value not in serialized_basis, value
             summaries = await store.list(
                 subject_id=child_id,
                 kind=KIND_DIALOGUE_SUMMARY,
@@ -484,6 +568,12 @@ async def test_unbind_purge_deletes_layers_and_writes_content_free_audit(
             summary, archive = await _seed_layers(
                 store, child_id=child_id, owner_id=owner_id
             )
+            consents_before = await _person_consents(
+                app, owner_id=owner_id, child_id=child_id
+            )
+            assert [item.consent_kind for item in consents_before] == [
+                "memory_retention"
+            ]
             started_at = datetime.now(UTC)
 
             response = await _unbind(client, headers, purge=True)
@@ -492,6 +582,21 @@ async def test_unbind_purge_deletes_layers_and_writes_content_free_audit(
             assert response.status_code == 200, response.text
             body = response.json()
             assert body["child_layers_purged"] == "completed"
+            assert body["consents_withdrawn"] >= 1
+            assert body["retention_basis_recorded"] is False
+            consents_after = await _person_consents(
+                app, owner_id=owner_id, child_id=child_id
+            )
+            assert [item.consent_id for item in consents_after] == [
+                item.consent_id for item in consents_before
+            ]
+            assert all(item.revoked_at is not None for item in consents_after)
+            assert (
+                await _child_layer_audit(
+                    admin_db_dsn, action="child_layer_retain"
+                )
+                == []
+            )
             assert await store.list(
                 subject_id=child_id,
                 kind=KIND_DIALOGUE_SUMMARY,

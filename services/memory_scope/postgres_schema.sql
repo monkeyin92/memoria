@@ -2858,6 +2858,8 @@ GRANT EXECUTE ON FUNCTION memory_subject_remaining(TEXT)
 -- covers both layers via memory_subject_erase.  Every call that deletes
 -- records appends one content-free ``child_layer_erase`` audit row (counts,
 -- kind and only_expired/reason only), including the retention expiry pass.
+-- A keep-on-unbind choice appends one ``child_layer_retain`` row with the
+-- same content-free shape.
 -- ---------------------------------------------------------------------------
 
 CREATE INDEX IF NOT EXISTS idx_memory_records_child_kind
@@ -2965,6 +2967,67 @@ BEGIN
     );
 END
 $memory_kind_erase$;
+
+-- Record the guardian's keep-on-unbind choice as the basis for continuing to
+-- store the child layers.  The row is content-free: type, time and counts
+-- only, with every identity/content column NULL.  It never reads or returns
+-- a subject id.
+CREATE OR REPLACE FUNCTION memory_child_layer_retain(p_subject_id TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = on
+AS $memory_child_layer_retain$
+DECLARE
+    v_summaries INTEGER;
+    v_archives INTEGER;
+BEGIN
+    IF NOT pg_has_role(session_user, 'memoria_memory_maintenance', 'member') THEN
+        RAISE EXCEPTION 'memory child layer retain requires the maintenance role'
+            USING ERRCODE = 'MC403';
+    END IF;
+    IF p_subject_id IS NULL OR btrim(p_subject_id) = ''
+       OR char_length(p_subject_id) > 128 THEN
+        RAISE EXCEPTION 'memory child layer retain needs a bounded subject id'
+            USING ERRCODE = 'MC403';
+    END IF;
+
+    SELECT
+        count(*) FILTER (WHERE payload ->> 'kind' = 'dialogue_summary'),
+        count(*) FILTER (WHERE payload ->> 'kind' = 'child_archive')
+    INTO v_summaries, v_archives
+    FROM memory_records
+    WHERE subject_id = p_subject_id
+      AND payload ->> 'kind' IN ('dialogue_summary', 'child_archive');
+
+    INSERT INTO memory_audit_events (
+        event_id, action, actor_subject_id, subject_id, record_id,
+        proposal_id, payload, created_at
+    ) VALUES (
+        gen_random_uuid()::TEXT,
+        'child_layer_retain',
+        'system:child_layer_retain',
+        NULL,
+        NULL,
+        NULL,
+        jsonb_build_object(
+            'kind', 'child_layer',
+            'dialogue_summary_count', v_summaries,
+            'child_archive_count', v_archives,
+            'reason', 'guardian_unbind_keep'
+        ),
+        clock_timestamp()
+    );
+
+    RETURN jsonb_build_object(
+        'kind', 'child_layer',
+        'dialogue_summary_count', v_summaries,
+        'child_archive_count', v_archives,
+        'reason', 'guardian_unbind_keep'
+    );
+END
+$memory_child_layer_retain$;
 
 CREATE OR REPLACE FUNCTION memory_kind_remaining(
     p_subject_id TEXT,
@@ -3175,12 +3238,15 @@ END
 $memory_child_archive_touch_mentioned$;
 
 REVOKE ALL ON FUNCTION memory_kind_erase(TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+REVOKE ALL ON FUNCTION memory_child_layer_retain(TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION memory_kind_remaining(TEXT, TEXT, BOOLEAN) FROM PUBLIC;
 REVOKE ALL ON FUNCTION memory_record_erase(TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION memory_kind_due_subjects(TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION memory_kind_subjects(TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION memory_child_archive_touch_mentioned(TEXT, TEXT, TIMESTAMPTZ) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION memory_kind_erase(TEXT, TEXT, BOOLEAN)
+    TO memoria_memory_maintenance;
+GRANT EXECUTE ON FUNCTION memory_child_layer_retain(TEXT)
     TO memoria_memory_maintenance;
 GRANT EXECUTE ON FUNCTION memory_kind_remaining(TEXT, TEXT, BOOLEAN)
     TO memoria_memory_maintenance;

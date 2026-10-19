@@ -453,8 +453,18 @@ class ChildLayerStore:
             )
         return _jsonb(raw)
 
+    async def record_retention_basis(self, *, subject_id: str) -> Mapping[str, Any]:
+        """Append the content-free basis for keeping the child layers on unbind."""
+
+        _require_subject(subject_id)
+        async with (await self._maintenance()).acquire() as connection:
+            raw = await connection.fetchval(
+                "SELECT memory_child_layer_retain($1)", subject_id
+            )
+        return _jsonb(raw)
+
     async def purge_both_layers(self, *, subject_id: str) -> dict[str, Mapping[str, Any]]:
-        """Unbind / PIPL art. 47: delete archive and all summaries, including fresh ones."""
+        """Guardian chose delete: remove the archive and every summary, including fresh ones."""
 
         summary = await self.erase_kind(
             subject_id=subject_id,

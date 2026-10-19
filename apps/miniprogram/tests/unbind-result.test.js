@@ -3,14 +3,33 @@ const test = require("node:test");
 
 const { unbindResultLines } = require("../utils/unbind-result");
 
-test("unbind keeping the data reports it and still reports withdrawn consents", () => {
+test("unbind keeping the data reports it without claiming any consent was withdrawn", () => {
   assert.deepEqual(
     unbindResultLines({
       child_layers_purged: "not_requested",
       subject_deletion: "not_requested",
       consents_withdrawn: 2,
     }),
-    ["TA 的数据已保留，重新绑定时可以选回 TA", "已撤回 2 项授权。"],
+    ["TA 的数据已保留，重新绑定时可以选回 TA"],
+  );
+  assert.deepEqual(
+    unbindResultLines({
+      child_layers_purged: "not_requested",
+      subject_deletion: "not_requested",
+      consents_withdrawn: 0,
+    }),
+    ["TA 的数据已保留，重新绑定时可以选回 TA"],
+  );
+});
+
+test("the delete path still reports the consents it withdrew", () => {
+  assert.deepEqual(
+    unbindResultLines({
+      child_layers_purged: "completed",
+      subject_deletion: "completed",
+      consents_withdrawn: 1,
+    }),
+    ["TA 的近期摘要和长期记录已删除", "已撤回 1 项授权。"],
   );
 });
 

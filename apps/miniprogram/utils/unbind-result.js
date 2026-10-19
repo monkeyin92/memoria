@@ -6,11 +6,15 @@
  * 缺字段或取值不认识时不写对应那一行，不替服务端补结论。
  */
 
+function keepSelected(payload) {
+  return (
+    payload.child_layers_purged === "not_requested" &&
+    payload.subject_deletion === "not_requested"
+  );
+}
+
 function keepLine(payload) {
-  if (
-    payload.child_layers_purged !== "not_requested" ||
-    payload.subject_deletion !== "not_requested"
-  ) {
+  if (!keepSelected(payload)) {
     return "";
   }
   return "TA 的数据已保留，重新绑定时可以选回 TA";
@@ -29,7 +33,14 @@ function deletionLine(payload) {
   return "";
 }
 
-function consentsLine(count) {
+function consentsLine(payload) {
+  // Keeping the data must not also claim that the basis for keeping it was
+  // withdrawn; the server returns 0 here, and an older response with a count
+  // must not contradict the keep line.
+  if (keepSelected(payload)) {
+    return "";
+  }
+  const count = payload.consents_withdrawn;
   return Number.isInteger(count) && count > 0 ? `已撤回 ${count} 项授权。` : "";
 }
 
@@ -38,7 +49,7 @@ function unbindResultLines(result) {
   return [
     keepLine(payload),
     deletionLine(payload),
-    consentsLine(payload.consents_withdrawn),
+    consentsLine(payload),
   ].filter(Boolean);
 }
 

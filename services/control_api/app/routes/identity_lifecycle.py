@@ -199,8 +199,9 @@ class UnbindRequest(BaseModel):
 
     reason: str = Field(default="unbind", min_length=1, max_length=256)
     #: Also purge the served person's child memory layers and run the
-    #: subject-scoped deletion saga. Unbinding always withdraws their
-    #: consents; without this flag the layers stay until retention expiry.
+    #: subject-scoped deletion saga, withdrawing the consents with the data.
+    #: Without this flag the layers stay, their consent basis stays, and the
+    #: revoked binding alone stops capture and recall.
     purge_subject_data: bool = False
 
 
@@ -696,20 +697,30 @@ async def unbind_device(
     withdrawn = 0
     subject_deletion = "not_requested"
     child_layers_purged = "not_applicable"
+    retention_basis_recorded = False
     if manifest is not None and manifest.account_owner_id == user.user_id:
-        withdrawn = await _withdraw_bound_subject_consents(
-            request,
-            user=user,
-            binding_id=manifest.binding_id,
-            subject_ids=manifest.primary_subject_ids,
-        )
         if not body.purge_subject_data:
-            # "Keep data" (PIPL art. 47 default): consents are withdrawn so
-            # memory stops, but the layers stay until their retention expiry.
+            # Keep the consent records. The revoked binding already fences
+            # every binding-scoped grant out of Policy, so capture, recall and
+            # chat stop; the guardian's person-scoped retention consent is the
+            # continuing basis for the layers that stay. Withdrawing it while
+            # keeping the data would remove that basis.
             child_layers_purged = "not_requested"
+            retention_basis_recorded = await _record_child_layer_retention_basis(
+                request,
+                subject_ids=manifest.primary_subject_ids,
+                owner_id=user.user_id,
+            )
         else:
-            # Owner asked to erase: delete child_archive and every
-            # dialogue_summary row, including those under 30 days.
+            # The guardian chose delete: withdraw the consents, then erase
+            # child_archive and every dialogue_summary row, including those
+            # under 30 days.
+            withdrawn = await _withdraw_bound_subject_consents(
+                request,
+                user=user,
+                binding_id=manifest.binding_id,
+                subject_ids=manifest.primary_subject_ids,
+            )
             child_layers = getattr(request.app.state, "child_layer_store", None)
             if child_layers is not None:
                 child_layers_purged = "completed"
@@ -742,9 +753,36 @@ async def unbind_device(
         "status": binding.status,
         "device_released": device_released,
         "consents_withdrawn": withdrawn,
+        "retention_basis_recorded": retention_basis_recorded,
         "subject_deletion": subject_deletion,
         "child_layers_purged": child_layers_purged,
     }
+
+
+async def _record_child_layer_retention_basis(
+    request: Request,
+    *,
+    subject_ids: tuple[str, ...],
+    owner_id: str,
+) -> bool:
+    """Write one content-free keep-on-unbind basis row per retained subject."""
+
+    store = getattr(request.app.state, "child_layer_store", None)
+    if store is None:
+        logger.error("child layer retention basis store is unavailable")
+        return False
+    recorded = True
+    attempted = False
+    for subject_id in subject_ids:
+        if subject_id == owner_id:
+            continue
+        attempted = True
+        try:
+            await store.record_retention_basis(subject_id=subject_id)
+        except Exception:
+            logger.exception("child layer retention basis write failed")
+            recorded = False
+    return attempted and recorded
 
 
 async def _release_fleet_binding(request: Request, *, device_id: str, binding_id: str) -> bool:
@@ -774,10 +812,12 @@ async def _withdraw_bound_subject_consents(
     binding_id: str,
     subject_ids: tuple[str, ...],
 ) -> int:
-    """Unbinding stops memory: withdraw what the owner granted for each person.
+    """Delete path: withdraw what the owner granted for each person.
 
-    The revoked binding already fences every grant out of Policy, so a failure
-    here cannot leave memory on; it is logged and the unbind still stands.
+    Only the explicit-delete branch calls this, before erasing the rows. The
+    revoked binding already fences every grant out of Policy, so a failure here
+    cannot leave memory on; it is logged and the unbind still stands. The
+    keep-data branch deliberately leaves these consents in place.
     """
 
     service = cast(

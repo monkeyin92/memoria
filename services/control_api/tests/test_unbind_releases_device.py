@@ -93,6 +93,55 @@ async def test_unbind_releases_the_fleet_binding(
     assert after.certificate_id == CERTIFICATE_ID
 
 
+class _FailingRetentionBasis:
+    async def record_retention_basis(self, **_kwargs: object) -> None:
+        raise RuntimeError("retention basis store unavailable in test")
+
+
+@pytest.mark.asyncio
+async def test_keep_unbind_reports_a_failed_retention_basis_write(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app = _app(monkeypatch, tmp_path, offline_mock=True)
+    key = Ed25519PrivateKey.generate()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner, child_id = await _bound_child_device(client, app, key)
+        app.state.memory_store.bind_external_identities(
+            preferred_user_id=str(owner["user_id"]),
+            identities={"wechat_openid": "wx-fleet-keep-owner"},
+            now=datetime.now(UTC).isoformat(),
+        )
+        granted = await client.post(
+            f"/v1/guardian/minors/{child_id}/consents",
+            headers={
+                "Authorization": f"Bearer {owner['access_token']}",
+                "Idempotency-Key": "fleet-keep-person-consent",
+            },
+            json={
+                "consent_kind": "memory_retention",
+                "policy_version": "minor-retention-v1",
+            },
+        )
+        assert granted.status_code == 201, granted.text
+        app.state.child_layer_store = _FailingRetentionBasis()
+        unbound = await client.post(
+            f"/v1/devices/{DEVICE_ID}/binding/unbind",
+            headers={"Authorization": f"Bearer {owner['access_token']}"},
+            json={"reason": "unbind", "purge_subject_data": False},
+        )
+        assert unbound.status_code == 200, unbound.text
+        body = unbound.json()
+        assert body["consents_withdrawn"] == 0
+        assert body["retention_basis_recorded"] is False
+
+    consents = await app.state.guardian_store.list_person_consents(
+        subject_person_id=child_id, actor_person_id=str(owner["user_id"])
+    )
+    assert [item.consent_kind for item in consents if item.revoked_at is None] == [
+        "memory_retention"
+    ]
+
+
 async def _layer_counts(
     store: ChildLayerStore, *, subject_id: str, owner_id: str
 ) -> tuple[int, int]:

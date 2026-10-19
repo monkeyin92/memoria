@@ -1900,7 +1900,7 @@ test("unbind defaults to keeping the data and submits without a choice", async (
   unbindResponse = {
     binding_id: "bd_1",
     status: "revoked",
-    consents_withdrawn: 1,
+    consents_withdrawn: 0,
     child_layers_purged: "not_requested",
     subject_deletion: "not_requested",
   };
@@ -1927,7 +1927,7 @@ test("unbind defaults to keeping the data and submits without a choice", async (
     assert.equal(modals[0].showCancel, false);
     assert.equal(
       modals[0].content,
-      "TA 的数据已保留，重新绑定时可以选回 TA\n已撤回 1 项授权。",
+      "TA 的数据已保留，重新绑定时可以选回 TA",
     );
     assert.equal(binding.readBindingManifest(), null);
     assert.equal(page.data.unbindSheetVisible, false);

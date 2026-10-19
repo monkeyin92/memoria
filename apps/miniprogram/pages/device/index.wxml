@@ -541,23 +541,25 @@
         <view class="sheet-grab"></view>
         <text class="sheet-title">解除绑定</text>
         <text class="sheet-sub">解除后设备会立即停止记忆 TA 的对话。TA 的数据怎么处理？</text>
-        <view class="sheet-opt {{unbindPurgeChoice === 'keep' ? 'on' : ''}}" data-choice="keep" bindtap="pickUnbindChoice">
-          <view class="choice-radio"></view>
-          <view class="row-copy">
-            <text class="row-title">解绑，保留 TA 的数据</text>
-            <text class="row-meta">TA 的近期摘要和长期记录继续留在你的账号里，重新绑定时可以选回 TA。到期规则照常，近期摘要 30 天后自动删除，长期记录 180 天不用自动清除</text>
+        <scroll-view class="sheet-scroll" scroll-y="true" enhanced="true" show-scrollbar="{{false}}">
+          <view class="sheet-opt {{unbindPurgeChoice === 'keep' ? 'on' : ''}}" data-choice="keep" bindtap="pickUnbindChoice">
+            <view class="choice-radio"></view>
+            <view class="row-copy">
+              <text class="row-title">解绑，保留 TA 的数据</text>
+              <text class="row-meta">TA 的近期摘要和长期记录继续留在你的账号里，重新绑定时可以选回 TA。到期规则照常，近期摘要 30 天后自动删除，长期记录 180 天不用自动清除</text>
+            </view>
+            <view class="opt-check"><view class="icon-check"></view></view>
           </view>
-          <view class="opt-check"><view class="icon-check"></view></view>
-        </view>
-        <view class="sheet-opt {{unbindPurgeChoice === 'purge' ? 'on' : ''}}" data-choice="purge" bindtap="pickUnbindChoice">
-          <view class="choice-radio"></view>
-          <view class="row-copy">
-            <text class="row-title">解绑，并删除 TA 的数据</text>
-            <text class="row-meta">TA 的近期摘要和长期记录会被永久删除，重新绑定也无法恢复。系统备份里最多再留 7 天，到期自动覆盖，这期间不会被使用，也不会被恢复回来</text>
+          <view class="sheet-opt {{unbindPurgeChoice === 'purge' ? 'on' : ''}}" data-choice="purge" bindtap="pickUnbindChoice">
+            <view class="choice-radio"></view>
+            <view class="row-copy">
+              <text class="row-title">解绑，并删除 TA 的数据</text>
+              <text class="row-meta">TA 的近期摘要和长期记录会被永久删除，重新绑定也无法恢复。系统备份里最多再留 7 天，到期自动覆盖，这期间不会被使用，也不会被恢复回来</text>
+            </view>
+            <view class="opt-check"><view class="icon-check"></view></view>
           </view>
-          <view class="opt-check"><view class="icon-check"></view></view>
-        </view>
-        <text class="sheet-sub">如果只是换网络或者重新配网，不用解绑</text>
+          <text class="sheet-sub">如果只是换网络或者重新配网，不用解绑</text>
+        </scroll-view>
         <text wx:if="{{unbindError}}" class="error-text">{{unbindError}}</text>
         <button class="danger-button sheet-action" loading="{{unbinding}}" disabled="{{unbinding}}" bindtap="confirmUnbind">解除绑定</button>
         <button class="text-button sheet-cancel" disabled="{{unbinding}}" bindtap="closeUnbindSheet">取消</button>
