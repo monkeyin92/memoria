@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,7 @@ from typing import Any
 import pytest
 from httpx import ASGITransport, AsyncClient
 from services.archive.domain import EvidenceEvent
+from services.archive.memory_domain import MemorySearchQuery
 from services.control_api.app.main import create_app
 from services.control_api.tests.test_bound_subject_binding import (
     _bind,
@@ -215,3 +217,49 @@ async def test_unbind_purging_subject_data_deletes_the_childs_vector(
             assert records == []
         finally:
             await layers.close()
+
+
+@pytest.mark.asyncio
+async def test_guardian_confirm_restores_the_childs_vector_for_the_next_turn(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner_id, child_id, headers = await _bound_child(
+            client, app, "vector-guardian-confirm-owner", "device-vector-guardian-confirm"
+        )
+        await _grant_memory(client, child_id, headers)
+        claim_id = await _seed_child_vector(app, owner_id, child_id)
+        url = f"/v1/guardian/minors/{child_id}/memories/{claim_id}/review"
+
+        retracted = await client.post(url, headers=headers, json={"action": "retract"})
+        assert retracted.status_code == 200, retracted.text
+        assert _vector_count(owner_id, claim_id) == 0
+
+        started = time.monotonic()
+        confirmed = await client.post(url, headers=headers, json={"action": "confirm"})
+        recalled = await app.state.memory_catalog.context(
+            MemorySearchQuery(
+                account_id=owner_id,
+                subject_id=child_id,
+                speaker_class="owner",
+                text="天空的颜色",
+                kinds=("claim",),
+                include_candidates=False,
+            )
+        )
+        elapsed = time.monotonic() - started
+
+        assert confirmed.status_code == 200, confirmed.text
+        assert confirmed.json()["status"] == "confirmed"
+        assert elapsed < 120, f"confirmation to recall took {elapsed:.3f}s"
+        assert [item.item_id for item in recalled.items] == [claim_id]
+        assert _vector_count(owner_id, claim_id) == 1
+        vectors = app_store.fetch_all(
+            "",
+            "SELECT embedding_model, embedding_dimensions FROM memory_vector_documents"
+            " WHERE account_id = ? AND item_id = ?",
+            (owner_id, claim_id),
+        )
+        assert vectors == [("vector-delete-api-test-v1", 2)]

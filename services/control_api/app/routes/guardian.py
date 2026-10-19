@@ -27,6 +27,7 @@ from services.archive.memory_domain import (
     MemoryClaimReview,
     MemorySearchQuery,
 )
+from services.archive.memory_retractions import list_retracted_claims
 from services.archive.object_store import ObjectStore
 from services.common.companion_response_safety import guardian_attention_copy
 from services.consent.bound_subject import (
@@ -1743,6 +1744,43 @@ async def child_memories(
             }
             for item in kept.items
         ],
+    }
+
+
+@router.get("/minors/{minor_user_id}/memories/retracted")
+async def child_retracted_memories(
+    minor_user_id: str,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+) -> dict[str, Any]:
+    """Memories this child's guardian retracted, newest first, still restorable.
+
+    The review endpoint already puts a confirmed claim's vector back, so the
+    page needs the claim ids across page loads: the list is one query on the
+    child's own retracted claims, not a cached page in the mini program.
+    """
+
+    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    items = await list_retracted_claims(
+        _catalog(request),
+        account_id=account_id,
+        subject_id=minor_user_id,
+        limit=limit,
+    )
+    return {
+        "subject_id": minor_user_id,
+        "items": [
+            {
+                "claim_id": item.claim_id,
+                "title": item.title,
+                "value": item.value,
+                "domain_category": item.domain_category,
+                "retracted_at": item.retracted_at.isoformat(),
+            }
+            for item in items
+        ],
+        "privacy": {"contains_transcript": False},
     }
 
 

@@ -19,12 +19,13 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import asyncpg
 import pytest
 from services.archive.domain import EvidenceEvent
-from services.archive.memory_domain import MemoryExtraction
+from services.archive.memory_domain import MemoryClaimReview, MemoryExtraction
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
 from services.archive.postgres_archive import PostgresLifeArchive
 from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
@@ -38,6 +39,7 @@ from services.archive.skill_domain import (
 )
 from services.archive.skill_executor import SkillExecutor
 from services.governance.subject_archive import PostgresSubjectArchive
+from services.governance.subject_deletion import SubjectDeletionLedger, SubjectDeletionService
 from services.governance.subject_ports import SubjectArchivePort, SubjectScope
 from services.governance.tests.test_account_data import SkillToolStub
 from services.self_model.postgres_registry import PostgresSelfModelRegistry
@@ -576,3 +578,173 @@ async def test_partial_deletion_unlinks_a_superseding_row_outside_the_set(
         )
         == {}
     )
+
+
+@pytest.mark.asyncio
+async def test_subject_deletion_removes_corrected_review_events_and_vectors(
+    postgres_database: TestDatabase,
+    tmp_path: Path,
+) -> None:
+    app_dsn = postgres_database.role_dsn("memoria_app")
+    archive = PostgresLifeArchive(app_dsn)
+    catalog = PostgresMemoryCatalog(
+        app_dsn,
+        extractor=RuleBasedMemoryExtractor(),
+        compiler_dsn=postgres_database.role_dsn("memoria_compiler"),
+        compiler_role="memoria_compiler",
+        embedder=_EmbedderStub(),
+        require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
+    )
+    account = f"corrected-delete-{uuid.uuid4()}"
+    child = f"corrected-child-{uuid.uuid4()}"
+    owner = f"corrected-owner-{uuid.uuid4()}"
+    child_event = f"corrected-child-turn-{uuid.uuid4()}"
+    owner_event = f"corrected-owner-turn-{uuid.uuid4()}"
+    admin = await asyncpg.connect(postgres_database.owner_dsn())
+    try:
+        await archive.initialize()
+        await catalog.initialize()
+        await archive.record(
+            _event(
+                child_event,
+                subject_id=child,
+                minute=1,
+                text="孩子喜欢蓝色。",
+                account_id=account,
+            )
+        )
+        await archive.record(
+            _event(
+                owner_event,
+                subject_id=owner,
+                minute=2,
+                text="家长喜欢红色。",
+                account_id=account,
+            )
+        )
+        assert (await catalog.compile_pending()).failed_events == 0
+        queue = await catalog.review_queue(account_id=account)
+        claims = {item.source_event_id: item.item_id for item in queue}
+        child_claim = uuid.UUID(claims[child_event])
+        owner_claim = uuid.UUID(claims[owner_event])
+
+        await catalog.review(
+            MemoryClaimReview(
+                account_id=account,
+                subject_id=child,
+                claim_id=str(child_claim),
+                action="correct",
+                corrected_value="孩子喜欢绿色。",
+            )
+        )
+        await catalog.review(
+            MemoryClaimReview(
+                account_id=account,
+                subject_id=owner,
+                claim_id=str(owner_claim),
+                action="correct",
+                corrected_value="家长喜欢黄色。",
+            )
+        )
+
+        child_corrections = await admin.fetch(
+            "SELECT event_id FROM archive_evidence_events"
+            " WHERE account_id = $1 AND subject_id = $2"
+            "   AND event_type = 'memory.claim_reviewed'"
+            "   AND payload ? 'corrected_value'",
+            account,
+            child,
+        )
+        owner_corrections = await admin.fetch(
+            "SELECT event_id FROM archive_evidence_events"
+            " WHERE account_id = $1 AND subject_id = $2"
+            "   AND event_type = 'memory.claim_reviewed'"
+            "   AND payload ? 'corrected_value'",
+            account,
+            owner,
+        )
+        assert len(child_corrections) == 1
+        assert len(owner_corrections) == 1
+        # A correction still keeps the pre-correction vector; this PR changes
+        # only the confirmation path.
+        assert (
+            await admin.fetchval(
+                "SELECT count(*) FROM memory_vector_documents"
+                " WHERE account_id = $1 AND item_id = $2",
+                account,
+                child_claim,
+            )
+            == 1
+        )
+
+        ledger = SubjectDeletionLedger(tmp_path / "subject-deletions.sqlite3")
+        ledger.initialize()
+        service = SubjectDeletionService(
+            ledger=ledger,
+            archive=PostgresSubjectArchive(app_dsn),
+            object_store=None,
+        )
+        result = await service.delete_subject(
+            SubjectScope(account_id=account, subject_id=child)
+        )
+
+        assert result["status"] == "completed"
+        assert (
+            await admin.fetchval(
+                "SELECT count(*) FROM archive_evidence_events"
+                " WHERE account_id = $1 AND subject_id = $2"
+                "   AND payload ? 'corrected_value'",
+                account,
+                child,
+            )
+            == 0
+        )
+        assert (
+            await admin.fetchval(
+                "SELECT count(*) FROM memory_claims WHERE account_id = $1 AND claim_id = $2",
+                account,
+                child_claim,
+            )
+            == 0
+        )
+        assert (
+            await admin.fetchval(
+                "SELECT count(*) FROM memory_vector_documents"
+                " WHERE account_id = $1 AND item_id = $2",
+                account,
+                child_claim,
+            )
+            == 0
+        )
+        assert (
+            await admin.fetchval(
+                "SELECT count(*) FROM archive_evidence_events WHERE event_id = $1",
+                owner_corrections[0]["event_id"],
+            )
+            == 1
+        )
+        assert (
+            await admin.fetchval(
+                "SELECT count(*) FROM memory_claims WHERE account_id = $1 AND claim_id = $2",
+                account,
+                owner_claim,
+            )
+            == 1
+        )
+        assert (
+            await admin.fetchval(
+                "SELECT count(*) FROM memory_vector_documents"
+                " WHERE account_id = $1 AND item_id = $2",
+                account,
+                owner_claim,
+            )
+            == 1
+        )
+    finally:
+        await admin.execute(
+            "DELETE FROM archive_evidence_events WHERE account_id = $1", account
+        )
+        await admin.close()
+        await catalog.close()
+        await archive.close()
