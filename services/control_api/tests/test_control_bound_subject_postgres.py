@@ -385,6 +385,10 @@ async def test_self_use_owner_without_verified_age_stays_unconfirmed(
         # The parent's session length and quiet hours (P0-04 D3).
         # Valid range: 10-30 minutes (600-1800 seconds).
         ((1800, ("21:00", "07:00")), (1800, ["21:00", "07:00"])),
+        ((600, ("21:00", "07:00")), (600, ["21:00", "07:00"])),
+        # Outside the range the stored value is issued as the 15-minute default.
+        ((599, ("21:00", "07:00")), (900, ["21:00", "07:00"])),
+        ((1801, ("21:00", "07:00")), (900, ["21:00", "07:00"])),
     ],
 )
 async def test_parent_for_child_opens_the_summary_but_the_guardian_never_reads_memory(
