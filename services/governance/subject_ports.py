@@ -81,9 +81,10 @@ class SubjectArchivePort(Protocol):
         Merged projections (episodes, search documents, their vectors) that
         cite any of these events are deleted before the evidence, since the
         lineage join disappears with it. When ``subject_id`` is given, claims
-        about that child (``about_subject_id``) go too, even when their source
-        evidence belongs to a parent. Idempotent: already-deleted ids are
-        skipped. Returns per-table deleted counts.
+        linked to that child through ``memory_claim_subjects`` go too, even
+        when their source evidence belongs to a parent; a claim linked to
+        several children goes when any one of them is deleted. Idempotent:
+        already-deleted ids are skipped. Returns per-table deleted counts.
         """
         ...
 
@@ -92,8 +93,8 @@ class SubjectArchivePort(Protocol):
     ) -> dict[str, int]:
         """Rows still attributable to these events (or ``subject_id``); empty when done.
 
-        A subject's claims about a child are included through
-        ``about_subject_id``, together with their search documents and vectors.
+        A subject's claims linked through ``memory_claim_subjects`` are
+        included, together with their search documents and vectors.
         """
         ...
 

@@ -19,9 +19,11 @@ The subject's own persona (traits, ``speech_style_stats``, ``persona_versions``)
 is keyed by subject since 2026-09-26 and removed by the saga's
 ``persona_forgotten`` step through the persona engine.
 
-Claims about the child whose source evidence belongs to a parent are collected
-through ``memory_claims.about_subject_id``; their search documents and vectors
-follow the claim ids, while the parent's evidence and own claims stay.
+Claims about a bound child whose source evidence belongs to a parent are collected
+through ``memory_claim_subjects``; their search documents and vectors follow the
+claim ids, while the parent's evidence and own claims stay.  A claim linked to
+several children is deleted whole when any one of them is deleted, even though
+the other bound child remains.
 
 Not covered (no row-level lineage to follow): ``digital_self_versions``
 snapshots and ``entity_ids`` arrays that may still name a deleted person.
@@ -190,9 +192,13 @@ def _delete_plan(*, subject: bool = False) -> tuple[_Step, ...]:
     self_model_collects, self_model_writes = _self_model_steps()
     claim_filter = "source_event_id IN :ids OR review_event_id IN :ids"
     if subject:
-        # A parent's turn can carry a claim about the child; its evidence is
-        # the parent's, so lineage alone never reaches it.
-        claim_filter += " OR about_subject_id = :subject"
+        # A parent's turn can carry a claim about one or more of the bound
+        # children; its evidence is the parent's, so lineage alone never
+        # reaches it.  Deleting any one linked child deletes the claim whole.
+        claim_filter += (
+            " OR claim_id IN (SELECT claim_id FROM memory_claim_subjects"
+            " WHERE account_id = :acct AND subject_id = :subject)"
+        )
     return (
         # -- collect every projection id citing a doomed event ------------------
         _collect("episodes", "episode_evidence", "episode_id", "source_event_id IN :ids"),
@@ -318,21 +324,21 @@ def _remaining_checks(*, subject: bool) -> tuple[_Write, ...]:
         *(
             (
                 count(
-                    "memory_claims.about_subject_id",
-                    "memory_claims",
-                    "about_subject_id = :subject",
+                    "memory_claim_subjects",
+                    "memory_claim_subjects",
+                    "subject_id = :subject",
                 ),
                 count(
                     "memory_search_documents.about_subject",
                     "memory_search_documents",
-                    "item_id IN (SELECT claim_id FROM memory_claims"
-                    " WHERE account_id = :acct AND about_subject_id = :subject)",
+                    "item_id IN (SELECT claim_id FROM memory_claim_subjects"
+                    " WHERE account_id = :acct AND subject_id = :subject)",
                 ),
                 count(
                     "memory_vector_documents.about_subject",
                     "memory_vector_documents",
-                    "item_id IN (SELECT claim_id FROM memory_claims"
-                    " WHERE account_id = :acct AND about_subject_id = :subject)",
+                    "item_id IN (SELECT claim_id FROM memory_claim_subjects"
+                    " WHERE account_id = :acct AND subject_id = :subject)",
                 ),
             )
             if subject

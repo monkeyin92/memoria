@@ -566,7 +566,7 @@ async def rebuild_postgres_memory_projections(
     )
     connection = await asyncpg.connect(dsn)
     skill_account_ids: tuple[str, ...] = ()
-    about_subject_by_claim: dict[uuid.UUID, str] = {}
+    claim_subjects: tuple[tuple[uuid.UUID, str, str], ...] = ()
     try:
         present = await _public_tables(connection)
         projections = tuple(table for table in _PROJECTION_TABLES if table in present)
@@ -584,14 +584,19 @@ async def rebuild_postgres_memory_projections(
                 "memory projection rebuild requires a maintenance role that bypasses RLS"
             )
         await catalog.initialize()
-        if "memory_claims" in present:
-            about_subject_by_claim = {
-                cast(uuid.UUID, row["claim_id"]): str(row["about_subject_id"])
-                for row in await connection.fetch(
-                    "SELECT claim_id, about_subject_id FROM memory_claims"
-                    " WHERE about_subject_id IS NOT NULL"
+        present = await _public_tables(connection)
+        projections = tuple(table for table in _PROJECTION_TABLES if table in present)
+        if "memory_claim_subjects" in present:
+            claim_subjects = tuple(
+                (
+                    cast(uuid.UUID, row["claim_id"]),
+                    str(row["account_id"]),
+                    str(row["subject_id"]),
                 )
-            }
+                for row in await connection.fetch(
+                    "SELECT claim_id, account_id, subject_id FROM memory_claim_subjects"
+                )
+            )
         protected_identity_projections = (
             {
                 "person_entities",
@@ -669,12 +674,17 @@ async def rebuild_postgres_memory_projections(
         await catalog.close()
     connection = await asyncpg.connect(dsn)
     try:
-        if about_subject_by_claim:
+        if claim_subjects:
             # Recompilation may run without identity; keep the association the
             # deleted projection rows carried before the rebuild.
             await connection.executemany(
-                "UPDATE memory_claims SET about_subject_id = $2 WHERE claim_id = $1",
-                list(about_subject_by_claim.items()),
+                """
+                INSERT INTO memory_claim_subjects (account_id, claim_id, subject_id)
+                SELECT $2, $1, $3
+                WHERE EXISTS (SELECT 1 FROM memory_claims WHERE claim_id = $1)
+                ON CONFLICT DO NOTHING
+                """,
+                list(claim_subjects),
             )
         incomplete = int(
             await connection.fetchval(
