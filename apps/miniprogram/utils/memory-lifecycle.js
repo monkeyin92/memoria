@@ -1,5 +1,5 @@
 const ISO_WITH_ZONE =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(Z|([+-])(\d{2}):(\d{2}))$/;
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?(Z|([+-])(\d{2}):(\d{2}))$/;
 
 function twoDigits(value) {
   return String(value).padStart(2, "0");
@@ -23,7 +23,8 @@ function formatBeijingTime(value) {
   const hour = Number(match[4]);
   const minute = Number(match[5]);
   const second = match[6] === undefined ? 0 : Number(match[6]);
-  const millisecond = match[7] === undefined ? 0 : Number(match[7].padEnd(3, "0"));
+  const millisecond =
+    match[7] === undefined ? 0 : Number(match[7].slice(0, 3).padEnd(3, "0"));
   if (
     month < 1 ||
     month > 12 ||

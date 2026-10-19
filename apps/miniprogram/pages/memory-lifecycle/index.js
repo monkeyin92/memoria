@@ -210,7 +210,7 @@ Page({
         title: "撤回这条记忆？",
         content:
           item.kind === "candidate"
-            ? "撤回后这条不会被记住。"
+            ? "撤回后机器人不会用到这条。"
             : "撤回后机器人不会再提起这件事。",
         confirmText: "撤回",
         cancelText: "取消",

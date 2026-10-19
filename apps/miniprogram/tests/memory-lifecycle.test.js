@@ -335,10 +335,16 @@ test("a retraction uses the current child, marks the row and disables restore", 
       assert.equal(page.data.pendingItems[0].statusLabel, "待确认");
       assert.equal(page.data.confirmedItems[0].occurredAtLabel, "10月19日 21:05");
 
-      global.wx.showModal = (options) => options.success?.({ confirm: true });
+      const modalPrompts = [];
+      global.wx.showModal = (options) => {
+        modalPrompts.push(options.content);
+        options.success?.({ confirm: true });
+      };
       await page.retractMemory({
         currentTarget: { dataset: { id: "claim_1", kind: "candidate" } },
       });
+
+      assert.deepEqual(modalPrompts, ["撤回后机器人不会用到这条。"]);
 
       assert.deepEqual(reviewCalls, [["person_child", "claim_1", "retract"]]);
       assert.equal(listCalls, 2, "the authoritative list is read again after a retraction");
@@ -364,6 +370,13 @@ test("ISO times become Beijing labels and bad input never prints NaN", () => {
   assert.equal(formatBeijingTime("2026-10-19T21:05:00+08:00"), "10月19日 21:05");
   assert.equal(formatBeijingTime("2026-10-19T16:30:00Z"), "10月20日 00:30");
   assert.equal(formatBeijingTime("2026-10-19T13:05:00.123Z"), "10月19日 21:05");
+  assert.equal(formatBeijingTime("2026-10-19T13:05:07.123456Z"), "10月19日 21:05");
+  assert.equal(formatBeijingTime("2026-10-19T13:05:07.123456+00:00"), "10月19日 21:05");
+  assert.equal(
+    formatBeijingTime("2026-10-19T13:05:59.999999Z"),
+    "10月19日 21:05",
+    "microseconds are truncated to milliseconds, not rounded",
+  );
   for (const value of [
     "",
     null,
@@ -372,6 +385,8 @@ test("ISO times become Beijing labels and bad input never prints NaN", () => {
     "2026-10-19",
     "not-a-date",
     "2026-02-31T00:00:00Z",
+    "2026-10-19T13:05:07.1234567Z",
+    "2026-10-19T13:05:07.1234567+00:00",
   ]) {
     const label = formatBeijingTime(value);
     assert.equal(label, "");
