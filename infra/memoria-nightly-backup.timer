@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Memoria nightly database backup every day at 03:15
+
+[Timer]
+OnBootSec=15min
+OnCalendar=*-*-* 03:15:00
+RandomizedDelaySec=5min
+Persistent=true
+Unit=memoria-nightly-backup.service
+
+[Install]
+WantedBy=timers.target

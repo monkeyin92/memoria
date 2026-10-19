@@ -1,211 +1,97 @@
-<!-- F01 记忆生命周期管理 - 内部 mock 页面 -->
 <view class="page-shell memory-lifecycle-page">
-  <!-- 内部草稿标识 -->
-  <view class="draft-banner">
-    <text class="draft-label">{{draftLabel}}</text>
-  </view>
+  <text class="eyebrow">孩子的记忆</text>
+  <text class="page-title">记忆管理</text>
+  <text class="page-lede">看看机器人记住了什么，确认它可以提起的事，或撤回不想让它再提起的事。</text>
 
-  <!-- 场景选择器（开发用，正式版不显示）-->
-  <view class="debug-scenario-selector">
-    <button type="default" size="mini" bindtap="openScenarioSelector">
-      切换场景 ({{scenario}})
-    </button>
-  </view>
+  <view wx:if="{{unavailable}}" class="notice">{{unavailable}}</view>
 
-  <!-- 主要内容 -->
-  <view class="page-content">
-    <!-- 1. 保管说明 -->
-    <view class="card info-card">
-      <text class="card-title">保管说明</text>
-      <text class="card-text">
-        保管用于换设备或重新绑定后，在重新取得相应记忆授权时延续白名单长期档案中的记忆。保管不包含近期摘要或对话原文，也不会自动恢复已撤回的记忆权限。
-      </text>
-      <text class="card-notice">【模拟状态】</text>
+  <block wx:else>
+    <view wx:if="{{loading}}" class="card lifecycle-loading">
+      <text class="loading-text">正在读取记忆…</text>
     </view>
 
-    <!-- 2. 保管状态 - 有效保管场景 -->
-    <block wx:if="{{scenario === 'active'}}">
-      <view class="card status-card">
-        <text class="card-title">当前保管</text>
-        <view wx:for="{{grants}}" wx:key="grantId" class="grant-item">
-          <view class="grant-header">
-            <text class="grant-status active">有效</text>
-            <text class="grant-expires">到期: {{grant.expiresAt | dateFormat}}</text>
-          </view>
-          <text class="grant-detail">距到期 {{grant.daysTillExpiry}} 天</text>
-          <view class="grant-actions">
-            <button
-              size="mini"
-              type="primary"
-              disabled="{{!canRenew}}"
-              bindtap="renewCustody"
-            >
-              续期
-            </button>
-            <button size="mini" type="warn" bindtap="withdrawCustody">
-              撤回
-            </button>
-          </view>
-        </view>
-      </view>
-
-      <!-- 续期和撤回的确认说明 -->
-      <view class="card action-instruction">
-        <text class="instruction-label">续期说明：</text>
-        <text class="instruction-text">
-          续期需再次主动确认。到期不自动续期。
-        </text>
-        <text class="instruction-label" style="margin-top: 12px;">
-          撤回说明：
-        </text>
-        <text class="instruction-text">
-          撤回这项保管后，将停止本项保管用途，并处理相应内容的删除。其他独立有效用途不在本次撤回范围内。进度可在操作记录查看。
-        </text>
-        <text class="card-notice">【模拟状态】</text>
-      </view>
-    </block>
-
-    <!-- 2.2 保管状态 - 期限未配置场景 -->
-    <block wx:if="{{scenario === 'unconfigured'}}">
-      <view class="card warning-card">
-        <mp-icon name="info" tone="accent"></mp-icon>
-        <text class="warning-title">保管期限尚未配置</text>
-        <text class="warning-text">
-          {{message}}
-        </text>
-      </view>
-    </block>
-
-    <!-- 2.3 保管状态 - 已撤回场景 -->
-    <block wx:if="{{scenario === 'withdrawn'}}">
-      <view class="card status-card">
-        <text class="card-title">保管已撤回</text>
-        <view wx:for="{{grants}}" wx:key="grantId" class="grant-item revoked">
-          <view class="grant-header">
-            <text class="grant-status revoked">已撤回</text>
-            <text class="grant-time">{{grant.revokedAt | dateFormat}}</text>
-          </view>
-        </view>
-      </view>
-
-      <!-- 操作进度 -->
-      <view wx:if="{{currentOperation}}" class="card operation-progress">
-        <text class="card-title">处理进度</text>
-        <text class="progress-message">{{currentOperation.message}}</text>
-        <view class="progress-stages">
-          <view class="stage completed">
-            <text class="stage-label">请求受理</text>
-            <text class="stage-time">{{currentOperation.acceptedAt | timeFormat}}</text>
-          </view>
-          <view class="stage completed">
-            <text class="stage-label">停止访问</text>
-            <text class="stage-time">{{currentOperation.accessStoppedAt | timeFormat}}</text>
-          </view>
-          <view class="stage in-progress">
-            <text class="stage-label">删除处理中</text>
-          </view>
-        </view>
-        <text class="card-notice">【模拟状态】</text>
-      </view>
-    </block>
-
-    <!-- 3. 操作历史 -->
-    <view class="card history-card">
-      <view class="history-header" bindtap="toggleOperationHistory">
-        <text class="card-title">操作记录</text>
-        <text class="expand-icon">{{showOperationHistory ? '▼' : '▶'}}</text>
-      </view>
-
-      <view wx:if="{{showOperationHistory}}">
-        <view
-          wx:for="{{operations}}"
-          wx:key="operationId"
-          class="history-item"
-          bindtap="showOperationDetail"
-          data-operation-id="{{item.operationId}}"
-        >
-          <view class="history-item-header">
-            <text class="history-action">{{item.action | actionLabel}}</text>
-            <text class="history-status" style="color: {{item.status === 'completed' ? '#07C160' : '#E8A500'}}">
-              {{item.status === 'completed' ? '已完成' : '进行中'}}
-            </text>
-          </view>
-          <text class="history-time">{{item.acceptedAt || item.completedAt | dateFormat}}</text>
-        </view>
-      </view>
+    <view wx:if="{{error}}" class="notice notice-warn">
+      <text class="notice-title">记忆暂时没有加载出来</text>
+      <text class="notice-copy">{{error}}</text>
+      <button class="secondary-button btn-sm lifecycle-retry" bindtap="loadMemories">重试</button>
     </view>
 
-    <!-- 4. 新增保管（仅有效和期限配置时显示） -->
-    <block wx:if="{{scenario === 'active'}}">
-      <view class="card new-custody-card">
-        <view class="custody-option">
-          <view class="checkbox-wrapper">
-            <checkbox></checkbox>
-            <text class="option-text">
-              我选择按本页说明，为孩子申请保管所列长期档案。
-            </text>
+    <block wx:if="{{!loading && !error}}">
+      <view wx:if="{{isEmpty}}" class="card empty-block">
+        <text class="empty-title">还没有需要管理的记忆</text>
+        <text class="empty-copy">机器人还没有记住什么。孩子和机器人聊过之后，这里会出现待确认和已记住的事。</text>
+      </view>
+
+      <block wx:else>
+        <view wx:if="{{pendingItems.length}}" class="lifecycle-group">
+          <text class="section-title">待确认</text>
+          <view wx:for="{{pendingItems}}" wx:key="id" class="card lifecycle-item">
+            <view class="lifecycle-item-head">
+              <text class="l2-card-title">{{item.title}}</text>
+              <text class="pill pill-draft">{{item.statusLabel}}</text>
+            </view>
+            <text class="l2-card-sub">{{item.body}}</text>
+            <view class="button-row">
+              <button
+                class="secondary-button btn-sm"
+                data-id="{{item.id}}"
+                disabled="{{reviewingId}}"
+                bindtap="confirmMemory"
+              >确认记住</button>
+              <button
+                class="secondary-button btn-sm"
+                data-id="{{item.id}}"
+                data-kind="candidate"
+                disabled="{{reviewingId}}"
+                bindtap="retractMemory"
+              >撤回</button>
+            </view>
           </view>
-          <text class="card-notice">【模拟选项】</text>
         </view>
-      </view>
-    </block>
 
-    <!-- 5. 不申请新保管 -->
-    <block wx:if="{{scenario === 'active' || scenario === 'withdrawn'}}">
-      <view class="card no-custody-card">
-        <text class="no-custody-title">本次不申请新保管</text>
-        <text class="no-custody-text">
-          本次不申请新保管。已有有效保管不会因此自动撤回；你可以在保管管理中单独撤回。其他记忆的处理结果请查看本次范围和进度。
-        </text>
-        <text class="card-notice">【模拟状态】</text>
-      </view>
-    </block>
-
-    <!-- 6. 解绑/撤回后对话状态 -->
-    <block wx:if="{{scenario === 'active'}}">
-      <view class="card chat-status-card">
-        <text class="card-title">对话状态</text>
-        <view class="chat-status-item">
-          <mp-icon name="wave" tone="ink"></mp-icon>
-          <text class="status-text">{{chatLabel}}</text>
+        <view wx:if="{{confirmedItems.length}}" class="lifecycle-group">
+          <text class="section-title">已记住</text>
+          <view wx:for="{{confirmedItems}}" wx:key="id" class="card lifecycle-item">
+            <view class="lifecycle-item-head">
+              <text class="l2-card-title">{{item.title}}</text>
+              <text class="pill pill-neutral">{{item.statusLabel}}</text>
+            </view>
+            <text wx:if="{{item.body}}" class="l2-card-sub">{{item.body}}</text>
+            <text wx:if="{{item.occurredAtLabel}}" class="lifecycle-time">{{item.occurredAtLabel}}</text>
+            <view class="button-row">
+              <button
+                class="secondary-button btn-sm"
+                data-id="{{item.id}}"
+                data-kind="confirmed"
+                disabled="{{reviewingId}}"
+                bindtap="retractMemory"
+              >撤回</button>
+            </view>
+          </view>
         </view>
-        <text class="card-notice">【模拟状态】</text>
-      </view>
+
+        <view wx:if="{{retractedItems.length}}" class="lifecycle-group">
+          <text class="section-title">本次已撤回</text>
+          <text class="caption">本次打开页面后撤回的记忆，机器人不会再提起。</text>
+          <view wx:for="{{retractedItems}}" wx:key="id" class="card lifecycle-item lifecycle-item-retracted">
+            <view class="lifecycle-item-head">
+              <text class="l2-card-title">{{item.title}}</text>
+              <text class="pill pill-neutral">{{item.statusLabel}}</text>
+            </view>
+            <text wx:if="{{item.body}}" class="l2-card-sub">{{item.body}}</text>
+            <text wx:if="{{item.retractedAtLabel}}" class="lifecycle-time">撤回于 {{item.retractedAtLabel}}</text>
+            <view class="lifecycle-restore">
+              <button class="secondary-button btn-sm" disabled="true">恢复</button>
+              <text class="lifecycle-restore-note">恢复功能准备中</text>
+            </view>
+          </view>
+        </view>
+      </block>
     </block>
+  </block>
+
+  <view class="card lifecycle-delete-hint">
+    <text class="l2-card-sub">想把孩子的数据全部删掉，可以在设备页解绑时选择删除数据</text>
+    <text class="text-button lifecycle-hint-link" bindtap="openUnbindDeletePath">去设备页解绑</text>
   </view>
 </view>
-
-<!-- 自定义过滤器 -->
-<wxs module="filters">
-  function dateFormat(dateStr) {
-    if (!dateStr) return "-";
-    var date = getDate(dateStr);
-    var month = date.getMonth() + 1;
-    var day = date.getDate();
-    return month + "月" + day + "日";
-  }
-
-  function timeFormat(dateStr) {
-    if (!dateStr) return "-";
-    var date = getDate(dateStr);
-    var hour = date.getHours();
-    var min = date.getMinutes();
-    return (hour < 10 ? "0" + hour : hour) + ":" + (min < 10 ? "0" + min : min);
-  }
-
-  function actionLabel(action) {
-    var labels = {
-      unbind_device: "设备解绑",
-      renew_custody: "续期保管",
-      withdraw_custody: "撤回保管",
-      withdraw_memory: "撤回记忆",
-    };
-    return labels[action] || action;
-  }
-
-  module.exports = {
-    dateFormat: dateFormat,
-    timeFormat: timeFormat,
-    actionLabel: actionLabel,
-  };
-</wxs>

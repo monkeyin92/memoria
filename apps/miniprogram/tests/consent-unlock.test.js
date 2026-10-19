@@ -70,8 +70,8 @@ test("an unlock-path grant records versions and keeps the consent string accepte
     const versions = storage[CHILD_INFO_CONSENT_VERSIONS_KEY];
     assert.equal(versions.guideVersion, legal.GUIDE_VERSION);
     assert.equal(versions.consentDocVersion, legal.CONSENT_DOC_VERSION);
-    assert.equal(versions.guideVersion, "internal-test-guide-20261017-r1");
-    assert.equal(versions.consentDocVersion, "internal-test-consent-20261017-r1");
+    assert.equal(versions.guideVersion, "internal-test-guide-20261017-r2");
+    assert.equal(versions.consentDocVersion, "internal-test-consent-20261017-r2");
     assert.equal(versions.unlock, "internal-test");
     assert.match(versions.acceptedAt, ISO_8601);
     const acceptedAt = Date.parse(versions.acceptedAt);

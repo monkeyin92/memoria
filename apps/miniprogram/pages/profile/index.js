@@ -4,6 +4,7 @@ const compliance = require("../../utils/compliance");
 const { companionById, defaultCompanionId } = require("../../utils/companions");
 const { requireLogin } = require("../../utils/auth-gate");
 const { MODE_META, readBindingManifest, entryAllowed } = require("../../utils/device-binding");
+const { guardianSubjectFromBinding } = require("../../utils/guardian");
 const { devicePlaceName } = require("../../utils/device-status");
 const { openPrivacyContract } = require("../../utils/privacy-contract");
 const contracts = require("../../utils/multi-subject-contracts");
@@ -231,6 +232,7 @@ Page({
     speakerEntryAllowed: false,
     digitalSelfEntryAllowed: false,
     guardianEntryAllowed: false,
+    memoryLifecycleEntryAllowed: false,
     rawVoiceEntryAllowed: false,
     profileUnavailableReason: "",
     deliveredCapabilities: [],
@@ -321,6 +323,7 @@ Page({
       speakerEntryAllowed: false,
       digitalSelfEntryAllowed: false,
       guardianEntryAllowed: false,
+      memoryLifecycleEntryAllowed: false,
       rawVoiceEntryAllowed: false,
       profileUnavailableReason: "",
       deliveredCapabilities: [],
@@ -533,11 +536,13 @@ Page({
         speakerEntryAllowed: false,
         digitalSelfEntryAllowed: false,
         guardianEntryAllowed: false,
+        memoryLifecycleEntryAllowed: false,
         rawVoiceEntryAllowed: false,
         profileUnavailableReason: reasonByState[this.data.deviceBindingState] ||
           "设备绑定状态不完整，无法取得 Runtime Profile。",
       };
     }
+    const guardianMinorUserId = guardianSubjectFromBinding(binding);
     try {
       const profile = await api.getRuntimeProfile(binding.device_id);
       if (profile === null) {
@@ -570,6 +575,9 @@ Page({
         speakerEntryAllowed: false,
         digitalSelfEntryAllowed: entryAllowed(profile, contracts.Capability.DigitalSelfPreview),
         guardianEntryAllowed: entryAllowed(profile, contracts.Capability.GuardianSummaryView),
+        memoryLifecycleEntryAllowed:
+          Boolean(guardianMinorUserId) &&
+          entryAllowed(profile, contracts.Capability.GuardianSummaryView),
         rawVoiceEntryAllowed: entryAllowed(profile, contracts.Capability.RawAudioRetention),
         profileUnavailableReason: "",
       };
@@ -582,6 +590,7 @@ Page({
         speakerEntryAllowed: false,
         digitalSelfEntryAllowed: false,
         guardianEntryAllowed: false,
+        memoryLifecycleEntryAllowed: false,
         rawVoiceEntryAllowed: false,
         profileUnavailableReason: "Runtime Profile 获取失败，敏感能力入口已关闭。",
       };
@@ -652,6 +661,12 @@ Page({
     if (!(await requireLogin({ reason: "view_guardian_summary" }))) return;
     if (!this._allowSensitiveEntry("成长小结", contracts.Capability.GuardianSummaryView)) return;
     wx.navigateTo({ url: "/pages/guardian/index" });
+  },
+
+  async openMemoryLifecycle() {
+    if (!(await requireLogin({ reason: "view_child_memory" }))) return;
+    if (!this._allowSensitiveEntry("记忆管理", contracts.Capability.GuardianSummaryView)) return;
+    wx.navigateTo({ url: "/pages/memory-lifecycle/index" });
   },
 
   // The *EntryAllowed flags come from entryAllowed(), which also opens
