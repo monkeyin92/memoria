@@ -342,6 +342,36 @@
 
 .sheet-opt.on .choice-radio { border-color: var(--mp-accent); background: var(--mp-accent); box-shadow: inset 0 0 0 4px var(--mp-surface); }
 
+/* 解绑结果：每行独立节点，长句在窄屏自动折行 */
+.unbind-result-card {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
+.unbind-result-lines {
+  margin-top: 12px;
+}
+
+.unbind-result-line {
+  display: block;
+  color: var(--mp-ink-2);
+  font-size: var(--mp-type-body);
+  line-height: var(--mp-lh-body);
+  text-align: center;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.unbind-result-line + .unbind-result-line {
+  margin-top: 6px;
+}
+
+.unbind-result-action {
+  margin-top: 20px;
+}
+
 /* 使用时段：卡片标题行的「修改」与抽屉里的选择行 */
 .limits-edit { margin: 0; padding: 0 0 0 12px; }
 .limits-quiet-label {

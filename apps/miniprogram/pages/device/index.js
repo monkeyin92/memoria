@@ -428,6 +428,8 @@ Page({
     unbindPurgeChoice: "keep",
     unbinding: false,
     unbindError: "",
+    unbindResultVisible: false,
+    unbindResultLines: [],
   },
 
   onLoad() {
@@ -541,6 +543,8 @@ Page({
       unbindPurgeChoice: "keep",
       unbinding: false,
       unbindError: "",
+      unbindResultVisible: false,
+      unbindResultLines: [],
       wakeSheetVisible: false,
     });
     this._syncSheetOpen();
@@ -1257,15 +1261,16 @@ Page({
       // it would offer 「继续上次启用」 for a robot nobody can resume any more.
       clearOnboardingSessionId();
       if (!api.isAuthEpochCurrent(authEpoch)) return;
-      this.setData({ unbindSheetVisible: false, unbindPurgeChoice: "keep" });
-      this._syncSheetOpen();
       // 把服务端实际清理的结果读给家长；pending 也要说，不能只报「已解除」。
-      wx.showModal({
-        title: "已解除绑定",
-        content: unbindResultLines(result).join("\n") || "设备已解除绑定。",
-        showCancel: false,
-        confirmText: "知道了",
+      // 一句一个节点渲染，不靠 showModal 的换行符排版。
+      const lines = unbindResultLines(result);
+      this.setData({
+        unbindSheetVisible: false,
+        unbindPurgeChoice: "keep",
+        unbindResultVisible: true,
+        unbindResultLines: lines.length ? lines : ["设备已解除绑定。"],
       });
+      this._syncSheetOpen();
       await this.loadDevice();
     } catch (error) {
       if (!api.isAuthEpochCurrent(authEpoch)) return;
@@ -1273,6 +1278,11 @@ Page({
     } finally {
       if (api.isAuthEpochCurrent(authEpoch)) this.setData({ unbinding: false });
     }
+  },
+
+  closeUnbindResult() {
+    this.setData({ unbindResultVisible: false });
+    this._syncSheetOpen();
   },
 
   selectCandidate(event) {
@@ -1833,6 +1843,7 @@ Page({
     const sheetOpen = Boolean(
       this.data.wakeSheetVisible ||
         this.data.unbindSheetVisible ||
+        this.data.unbindResultVisible ||
         this.data.personaSheetVisible ||
         this.data.limitsSheetVisible,
     );

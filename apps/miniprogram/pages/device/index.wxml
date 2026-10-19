@@ -565,5 +565,17 @@
         <button class="text-button sheet-cancel" disabled="{{unbinding}}" bindtap="closeUnbindSheet">取消</button>
       </view>
     </block>
+
+    <!-- 解绑结果：一句一行，不依赖换行符；点遮罩不关闭。
+         放在 hasBinding 分支之外，解绑后设备消失也不会把结果一起卸载。 -->
+    <view wx:if="{{unbindResultVisible}}" class="modal-wrap" catchtouchmove="noop">
+      <view class="modal-card unbind-result-card">
+        <text class="modal-title">已解除绑定</text>
+        <view class="unbind-result-lines">
+          <text wx:for="{{unbindResultLines}}" wx:key="*this" class="unbind-result-line">{{item}}</text>
+        </view>
+        <button class="primary-button unbind-result-action" bindtap="closeUnbindResult">知道了</button>
+      </view>
+    </view>
   </block>
 </view>
