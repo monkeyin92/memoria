@@ -1,6 +1,3 @@
 {
-  "navigationBarTitleText": "记忆管理",
-  "usingComponents": {
-    "mp-icon": "/components/mp-icon/index"
-  }
+  "navigationBarTitleText": "记忆管理"
 }

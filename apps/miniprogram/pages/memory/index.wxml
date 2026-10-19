@@ -179,6 +179,18 @@
         </view>
         <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
       </view>
+      <view
+        wx:if="{{guardianMode}}"
+        class="card list-row memory-lifecycle-row"
+        bindtap="openMemoryLifecycle"
+      >
+        <mp-icon name="shield"></mp-icon>
+        <view class="row-copy">
+          <text class="row-title">记忆管理</text>
+          <text class="row-meta">查看、确认或撤回机器人记住的事</text>
+        </view>
+        <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
+      </view>
     </block>
   </block>
 </view>

@@ -442,6 +442,9 @@ Page({
     if (typeof this.getTabBar === "function" && this.getTabBar()) {
       this.getTabBar().setData({ selected: 3, hidden: Boolean(this.data.sheetOpen) });
     }
+    const app = getApp();
+    const openUnbindSheet = Boolean(app?.globalData?.openUnbindSheetOnDevice);
+    if (openUnbindSheet && app?.globalData) app.globalData.openUnbindSheetOnDevice = false;
     const authenticated = api.hasAuthenticatedSession();
     this.setData({ authenticated });
     if (!authenticated) {
@@ -449,6 +452,7 @@ Page({
       return;
     }
     await this.loadDevice();
+    if (openUnbindSheet) this.openUnbindSheet();
   },
 
   onUnload() {
