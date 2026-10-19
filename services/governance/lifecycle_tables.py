@@ -62,6 +62,7 @@ POSTGRES_PROJECTION_ACCOUNT_TABLES = (
     "life_episodes",
     "person_entities",
     "memory_claims",
+    "memory_claim_subjects",
     "memory_compile_receipts",
 )
 

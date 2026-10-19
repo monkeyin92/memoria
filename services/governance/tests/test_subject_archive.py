@@ -885,15 +885,23 @@ async def test_deleting_a_child_removes_parent_sourced_claims_about_the_child(
         assert (await catalog.compile_pending()).failed_events == 0
 
         about_child = await admin.fetch(
-            "SELECT claim_id FROM memory_claims"
-            " WHERE account_id = $1 AND about_subject_id = $2",
+            """
+            SELECT DISTINCT claim.claim_id
+            FROM memory_claims claim
+            JOIN memory_claim_subjects link ON link.claim_id = claim.claim_id
+            WHERE claim.account_id = $1 AND link.subject_id = $2
+            """,
             account,
             child,
         )
         parent_about_child = await admin.fetch(
-            "SELECT claim_id FROM memory_claims"
-            " WHERE account_id = $1 AND source_event_id = $2"
-            "   AND about_subject_id = $3",
+            """
+            SELECT DISTINCT claim.claim_id
+            FROM memory_claims claim
+            JOIN memory_claim_subjects link ON link.claim_id = claim.claim_id
+            WHERE claim.account_id = $1 AND claim.source_event_id = $2
+              AND link.subject_id = $3
+            """,
             account,
             parent_event,
             child,
@@ -935,7 +943,7 @@ async def test_deleting_a_child_removes_parent_sourced_claims_about_the_child(
         before = await port.remaining_rows_for(
             account_id=account, event_ids=event_ids, subject_id=child
         )
-        assert before["memory_claims.about_subject_id"] == len(claim_ids)
+        assert before["memory_claim_subjects"] == len(claim_ids)
         assert before["memory_search_documents.about_subject"] == len(claim_ids)
         assert before["memory_vector_documents.about_subject"] == len(claim_ids)
 
@@ -946,8 +954,8 @@ async def test_deleting_a_child_removes_parent_sourced_claims_about_the_child(
         assert counts["archive_evidence_events"] == 1
         assert (
             await admin.fetchval(
-                "SELECT count(*) FROM memory_claims"
-                " WHERE account_id = $1 AND about_subject_id = $2",
+                "SELECT count(*) FROM memory_claim_subjects"
+                " WHERE account_id = $1 AND subject_id = $2",
                 account,
                 child,
             )
@@ -1022,6 +1030,177 @@ async def test_deleting_a_child_removes_parent_sourced_claims_about_the_child(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("victim_index", [0, 1])
+async def test_deleting_either_of_two_children_removes_a_parent_claim_about_a_daughter(
+    postgres_database: TestDatabase,
+    victim_index: int,
+) -> None:
+    app_dsn = postgres_database.role_dsn("memoria_app")
+    account = f"two-children-{uuid.uuid4()}"
+    first_child = f"two-children-a-{uuid.uuid4()}"
+    second_child = f"two-children-b-{uuid.uuid4()}"
+    children = (first_child, second_child)
+    victim = children[victim_index]
+    parent_event = f"two-children-parent-turn-{uuid.uuid4()}"
+
+    async def bound_child_subject_ids(account_id: str) -> tuple[str, ...]:
+        return children if account_id == account else ()
+
+    archive = PostgresLifeArchive(app_dsn)
+    catalog = PostgresMemoryCatalog(
+        app_dsn,
+        extractor=RuleBasedMemoryExtractor(),
+        compiler_dsn=postgres_database.role_dsn("memoria_compiler"),
+        compiler_role="memoria_compiler",
+        embedder=_EmbedderStub(),
+        require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
+        bound_child_subject_ids=bound_child_subject_ids,
+    )
+    admin = await asyncpg.connect(postgres_database.owner_dsn())
+    try:
+        await archive.initialize()
+        await catalog.initialize()
+        await archive.record(
+            _event(
+                parent_event,
+                subject_id=account,
+                minute=1,
+                text="我女儿叫小美，今年8岁。",
+                account_id=account,
+            )
+        )
+        assert (await catalog.compile_pending()).failed_events == 0
+
+        daughter_claim = await admin.fetchval(
+            "SELECT claim_id FROM memory_claims"
+            " WHERE account_id = $1 AND source_event_id = $2"
+            "   AND subject_key LIKE 'daughter:%'",
+            account,
+            parent_event,
+        )
+        assert daughter_claim is not None
+        linked = await admin.fetch(
+            "SELECT subject_id FROM memory_claim_subjects WHERE claim_id = $1",
+            daughter_claim,
+        )
+        if {row["subject_id"] for row in linked} != set(children):
+            raise AssertionError("claim subject link mismatch")
+        assert (
+            await admin.fetchval(
+                "SELECT count(*) FROM memory_search_documents"
+                " WHERE account_id = $1 AND item_id = $2",
+                account,
+                daughter_claim,
+            )
+            == 1
+        )
+        assert (
+            await admin.fetchval(
+                "SELECT count(*) FROM memory_vector_documents"
+                " WHERE account_id = $1 AND item_id = $2",
+                account,
+                daughter_claim,
+            )
+            == 1
+        )
+        parent_self_claim = await admin.fetchval(
+            "SELECT claim_id FROM memory_claims"
+            " WHERE account_id = $1 AND source_event_id = $2"
+            "   AND subject_key = 'self'",
+            account,
+            parent_event,
+        )
+        assert parent_self_claim is not None
+
+        port = PostgresSubjectArchive(app_dsn)
+        event_ids = await port.subject_event_ids(
+            SubjectScope(account_id=account, subject_id=victim)
+        )
+        assert event_ids == ()
+        before = await port.remaining_rows_for(
+            account_id=account, event_ids=event_ids, subject_id=victim
+        )
+        assert before["memory_claim_subjects"] == 1
+        assert before["memory_search_documents.about_subject"] == 1
+        assert before["memory_vector_documents.about_subject"] == 1
+
+        counts = await port.delete_events(
+            account_id=account, event_ids=event_ids, subject_id=victim
+        )
+
+        assert counts["memory_claims"] == 1
+        assert counts["memory_search_documents"] == 1
+        assert counts["memory_vector_documents"] == 1
+        assert (
+            await admin.fetchval(
+                "SELECT count(*) FROM memory_claims WHERE claim_id = $1",
+                daughter_claim,
+            )
+            == 0
+        )
+        assert (
+            await admin.fetchval(
+                "SELECT count(*) FROM memory_claim_subjects WHERE claim_id = $1",
+                daughter_claim,
+            )
+            == 0
+        )
+        assert (
+            await admin.fetchval(
+                "SELECT count(*) FROM memory_search_documents"
+                " WHERE account_id = $1 AND item_id = $2",
+                account,
+                daughter_claim,
+            )
+            == 0
+        )
+        assert (
+            await admin.fetchval(
+                "SELECT count(*) FROM memory_vector_documents"
+                " WHERE account_id = $1 AND item_id = $2",
+                account,
+                daughter_claim,
+            )
+            == 0
+        )
+        # The parent's evidence and own claim stay; only the daughter claim goes.
+        assert (
+            await admin.fetchval(
+                "SELECT count(*) FROM archive_evidence_events"
+                " WHERE account_id = $1 AND event_id = $2",
+                account,
+                parent_event,
+            )
+            == 1
+        )
+        assert (
+            await admin.fetchval(
+                "SELECT count(*) FROM memory_claims WHERE claim_id = $1",
+                parent_self_claim,
+            )
+            == 1
+        )
+        assert (
+            await port.remaining_rows_for(
+                account_id=account, event_ids=event_ids, subject_id=victim
+            )
+            == {}
+        )
+        retry = await port.delete_events(
+            account_id=account, event_ids=event_ids, subject_id=victim
+        )
+        assert set(retry.values()) == {0}
+    finally:
+        await admin.execute(
+            "DELETE FROM archive_evidence_events WHERE account_id = $1", account
+        )
+        await admin.close()
+        await catalog.close()
+        await archive.close()
+
+
+@pytest.mark.asyncio
 async def test_service_removes_about_claims_when_the_child_has_no_evidence(
     postgres_database: TestDatabase,
     tmp_path: Path,
@@ -1059,8 +1238,8 @@ async def test_service_removes_about_claims_when_the_child_has_no_evidence(
         assert (await catalog.compile_pending()).failed_events == 0
         assert (
             await admin.fetchval(
-                "SELECT count(*) FROM memory_claims"
-                " WHERE account_id = $1 AND about_subject_id = $2",
+                "SELECT count(*) FROM memory_claim_subjects"
+                " WHERE account_id = $1 AND subject_id = $2",
                 account,
                 child,
             )
@@ -1081,8 +1260,8 @@ async def test_service_removes_about_claims_when_the_child_has_no_evidence(
         assert result["status"] == "completed"
         assert (
             await admin.fetchval(
-                "SELECT count(*) FROM memory_claims"
-                " WHERE account_id = $1 AND about_subject_id = $2",
+                "SELECT count(*) FROM memory_claim_subjects"
+                " WHERE account_id = $1 AND subject_id = $2",
                 account,
                 child,
             )

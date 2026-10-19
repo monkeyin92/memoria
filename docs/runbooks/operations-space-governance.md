@@ -77,7 +77,7 @@ docker compose -f docker-compose.production.yml run --rm --no-deps control-api /
 
 家长纠正记忆或编译期嵌入失败时，best-effort 路径会提交审核、删掉旧向量，却可能没有写回当前模型的新向量；这类 claim 只缺向量通道，词法召回仍在。control-api 的 `MemoryVectorBackfillWorker` 默认每 3600 秒跑一轮（`MEMORIA_MEMORY_VECTOR_BACKFILL_INTERVAL_S`），每轮最多处理 `MEMORIA_MEMORY_VECTOR_BACKFILL_BATCH` 条（默认 200），只按 `memory_claims` 当前值重嵌，不读原话、历史 payload 或 search 行里的 `context:` 段。向量表或 embedder 未配置时不启动，日志里没有任何 ID。
 
-巡检脚本是只读的，只做 SELECT；输出一行 JSON 计数，`missing` 大于 0 时退出码 1，无缺口 0，脚本自身错误 3（同 `disk_patrol.sh` 的约定）。`unlinked_child_claims` 是观察项，不影响退出码：它统计 `subject_key` 以 `son:`/`daughter:` 开头（不区分大小写）、`about_subject_id` 为空、未撤回且源证据仍在的 claim。账户有多个绑定孩子时按「多孩不关联、宁缺不错」保持为空，这类记忆在删孩子时不会被连带删除，是已知且预期的状态，所以非 0 只用于观察，不报警、也不改退出码；只有向量缺口 `missing` 决定 1。
+巡检脚本是只读的，只做 SELECT；输出一行 JSON 计数，`missing` 大于 0 时退出码 1，无缺口 0，脚本自身错误 3（同 `disk_patrol.sh` 的约定）。`unlinked_child_claims` 是观察项，不影响退出码：它统计未撤回、源证据仍在、`memory_claim_subjects` 里没有任何关联行，且 `subject_key` 指向孩子的 claim。指向孩子的判据与编译期关联一致：`subject_key` 以 `son:`/`daughter:` 开头（不区分大小写、忽略首尾空白），或同账户 `person_entities` 里 `canonical_key = subject_key` 且 `relationship_to_owner` 为 `son`/`daughter`。现在编译时多孩全关联：一条家长说的「儿子/女儿」记忆会关联账户下所有绑定孩子，新编译的 claim 不会因此留下未关联行；升级前已经留下的未关联行不会自动回填。剩下的未关联只表示当时身份服务不可用、编译时没有绑定孩子等没关联上的情况，这类记忆在删孩子时不会被连带删除。非 0 仍只用于观察，不报警、也不改退出码；只有向量缺口 `missing` 决定 1。
 
 ~~~bash
 control=memoria-control-api-1
@@ -132,10 +132,20 @@ FROM memory_claims claim
 JOIN archive_evidence_events evidence
   ON evidence.event_id = claim.source_event_id
  AND evidence.account_id = claim.account_id
-WHERE claim.about_subject_id IS NULL
-  AND claim.status <> 'retracted'
+WHERE claim.status <> 'retracted'
+  AND NOT EXISTS (
+      SELECT 1 FROM memory_claim_subjects linked
+      WHERE linked.account_id = claim.account_id
+        AND linked.claim_id = claim.claim_id
+  )
   AND (lower(btrim(claim.subject_key)) LIKE 'son:%'
-       OR lower(btrim(claim.subject_key)) LIKE 'daughter:%');
+       OR lower(btrim(claim.subject_key)) LIKE 'daughter:%'
+       OR EXISTS (
+           SELECT 1 FROM person_entities person
+           WHERE person.account_id = claim.account_id
+             AND person.canonical_key = claim.subject_key
+             AND lower(person.relationship_to_owner) IN ('son', 'daughter')
+       ));
 ~~~
 
 定时任务每轮一行日志，形如 `memory vector backfill attempted=0 embedded=0 failed=0 skipped=0 remaining=0`，`remaining` 就是上面查询的总数。确认它在跑：

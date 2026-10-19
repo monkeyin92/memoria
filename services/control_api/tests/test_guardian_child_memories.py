@@ -334,7 +334,9 @@ async def test_a_parent_turn_about_the_bound_child_is_marked_for_deletion(
 
     rows = app_store.fetch_all(
         getattr(app.state.memory_catalog, "_path", ""),
-        "SELECT subject_key, about_subject_id FROM memory_claims WHERE account_id = ?",
+        "SELECT claim.subject_key, link.subject_id FROM memory_claims claim"
+        " LEFT JOIN memory_claim_subjects link ON link.claim_id = claim.claim_id"
+        " WHERE claim.account_id = ?",
         (owner_id,),
     )
     marked = [row for row in rows if row[1] == child_id]

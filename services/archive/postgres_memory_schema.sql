@@ -17,7 +17,6 @@ CREATE TABLE IF NOT EXISTS memory_claims (
         memory_kind IN ('semantic', 'episodic', 'procedural', 'relationship')
     ),
     subject_key TEXT NOT NULL,
-    about_subject_id TEXT,
     predicate TEXT NOT NULL,
     value TEXT NOT NULL,
     confidence DOUBLE PRECISION NOT NULL CHECK (confidence BETWEEN 0 AND 1),
@@ -47,6 +46,17 @@ CREATE TABLE IF NOT EXISTS memory_claims (
 
 CREATE INDEX IF NOT EXISTS idx_pg_memory_claim_account_subject
 ON memory_claims(account_id, subject_key, predicate, status);
+
+CREATE TABLE IF NOT EXISTS memory_claim_subjects (
+    account_id TEXT NOT NULL,
+    claim_id UUID NOT NULL
+        REFERENCES memory_claims(claim_id) ON DELETE CASCADE,
+    subject_id TEXT NOT NULL,
+    PRIMARY KEY (claim_id, subject_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pg_memory_claim_subject_account
+ON memory_claim_subjects(account_id, subject_id);
 
 CREATE TABLE IF NOT EXISTS person_entities (
     person_id UUID PRIMARY KEY,
@@ -245,7 +255,6 @@ ALTER TABLE memory_claims
     ADD COLUMN IF NOT EXISTS domain_category TEXT,
     ADD COLUMN IF NOT EXISTS memory_kind TEXT NOT NULL DEFAULT 'semantic',
     ADD COLUMN IF NOT EXISTS entity_ids UUID[] NOT NULL DEFAULT ARRAY[]::UUID[],
-    ADD COLUMN IF NOT EXISTS about_subject_id TEXT,
     ADD COLUMN IF NOT EXISTS valid_from TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS valid_to TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS observed_at TIMESTAMPTZ,
@@ -254,9 +263,35 @@ ALTER TABLE memory_claims
     ADD COLUMN IF NOT EXISTS sensitivity TEXT NOT NULL DEFAULT 'personal',
     ADD COLUMN IF NOT EXISTS conflict_state TEXT NOT NULL DEFAULT 'none';
 
-CREATE INDEX IF NOT EXISTS idx_pg_memory_claim_about_subject
-ON memory_claims(account_id, about_subject_id)
-WHERE about_subject_id IS NOT NULL;
+-- One claim can concern several bound children, so the single column becomes
+-- one link row per child.  Only a database that still has the old column needs
+-- RLS lifted for the copy; every other startup leaves RLS untouched.  The
+-- block restores ENABLE + FORCE before it returns, so a later failure cannot
+-- leave either table without forced RLS.
+DO $memory_claim_subjects$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = to_regclass('memory_claims')
+          AND attname = 'about_subject_id'
+          AND NOT attisdropped
+    ) THEN
+        ALTER TABLE memory_claims DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE memory_claim_subjects DISABLE ROW LEVEL SECURITY;
+        INSERT INTO memory_claim_subjects (account_id, claim_id, subject_id)
+        SELECT account_id, claim_id, about_subject_id
+        FROM memory_claims
+        WHERE about_subject_id IS NOT NULL
+        ON CONFLICT DO NOTHING;
+        DROP INDEX IF EXISTS idx_pg_memory_claim_about_subject;
+        ALTER TABLE memory_claims DROP COLUMN IF EXISTS about_subject_id;
+        ALTER TABLE memory_claims ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE memory_claims FORCE ROW LEVEL SECURITY;
+        ALTER TABLE memory_claim_subjects ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE memory_claim_subjects FORCE ROW LEVEL SECURITY;
+    END IF;
+END
+$memory_claim_subjects$;
 
 ALTER TABLE life_episodes
     ADD COLUMN IF NOT EXISTS domain_category TEXT,
@@ -426,6 +461,7 @@ ON CONFLICT DO NOTHING;
 
 ALTER TABLE memory_compile_receipts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memory_claims ENABLE ROW LEVEL SECURITY;
+ALTER TABLE memory_claim_subjects ENABLE ROW LEVEL SECURITY;
 ALTER TABLE person_entities ENABLE ROW LEVEL SECURITY;
 ALTER TABLE person_aliases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE relationships ENABLE ROW LEVEL SECURITY;
@@ -438,6 +474,7 @@ ALTER TABLE memory_search_document_sources ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE memory_compile_receipts FORCE ROW LEVEL SECURITY;
 ALTER TABLE memory_claims FORCE ROW LEVEL SECURITY;
+ALTER TABLE memory_claim_subjects FORCE ROW LEVEL SECURITY;
 ALTER TABLE person_entities FORCE ROW LEVEL SECURITY;
 ALTER TABLE person_aliases FORCE ROW LEVEL SECURITY;
 ALTER TABLE relationships FORCE ROW LEVEL SECURITY;
@@ -455,6 +492,11 @@ WITH CHECK (account_id = current_setting('app.account_id', true));
 
 DROP POLICY IF EXISTS memory_claim_account_policy ON memory_claims;
 CREATE POLICY memory_claim_account_policy ON memory_claims
+USING (account_id = current_setting('app.account_id', true))
+WITH CHECK (account_id = current_setting('app.account_id', true));
+
+DROP POLICY IF EXISTS memory_claim_subject_account_policy ON memory_claim_subjects;
+CREATE POLICY memory_claim_subject_account_policy ON memory_claim_subjects
 USING (account_id = current_setting('app.account_id', true))
 WITH CHECK (account_id = current_setting('app.account_id', true));
 

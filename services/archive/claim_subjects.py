@@ -1,22 +1,22 @@
-"""Which child subject a memory claim is about.
+"""Which child subjects a memory claim is about.
 
 A parent's turn can produce a claim about the child (``我儿子今年八岁``): the
 claim's ``subject_key`` names the child while its source evidence names the
-parent, or nobody.  The catalog records that link in
-``memory_claims.about_subject_id`` so subject deletion can collect the claim
-without touching the parent's evidence or the parent's own claims.
+parent, or nobody.  The catalog records every such link in
+``memory_claim_subjects`` so subject deletion can collect the claim without
+touching the parent's evidence or the parent's own claims.
 
 Resolution is deliberately conservative, in this order:
 
 1. Evidence whose ``subject_id`` is one of the account's bound children is
-   that child: its speaker is the subject.
+   that child: its speaker is the subject, and only that child is linked.
 2. ``subject_key = 'self'`` is never a child; it describes the speaker.
 3. Any other key must name a child by an explicit relationship code, either a
    ``son:``/``daughter:`` prefix or an archive person row whose
    ``relationship_to_owner`` is son/daughter.  Names are never matched.
-4. Only then, and only when the account has exactly one bound child, the claim
-   is about that child.  Several bound children are ambiguous and leave the
-   claim unassociated.
+4. Only then, every bound child is linked.  A parent's ``son:``/``daughter:``
+   claim can concern any of the bound children, so the link covers all of
+   them; one bound child still yields one link.
 
 A subject id outside the bound-child set is treated as a non-child speaker; an
 unbound minor in historical evidence therefore falls through to the same
@@ -44,6 +44,7 @@ from services.archive.domain import EvidenceEvent
 __all__ = [
     "BoundChildSubjectIds",
     "CHILD_KEY_PREFIXES",
+    "CHILD_RELATIONS",
     "bound_children",
     "claim_about_subject",
     "confirmed_evidence_subject",
@@ -54,7 +55,8 @@ logger = logging.getLogger(__name__)
 #: ``account_id`` -> every child subject bound to that account.
 BoundChildSubjectIds = Callable[[str], Awaitable[tuple[str, ...]]]
 
-_CHILD_RELATIONS: tuple[str, ...] = ("son", "daughter")
+#: ``relationship_to_owner`` values that name a child.
+CHILD_RELATIONS: tuple[str, ...] = ("son", "daughter")
 #: ``subject_key`` prefixes that name a child by an explicit relationship code.
 CHILD_KEY_PREFIXES: tuple[str, ...] = ("son:", "daughter:")
 
@@ -103,26 +105,24 @@ async def claim_about_subject(
     evidence_subject_id: str | None,
     subject_key: str,
     bound_child_ids: tuple[str, ...],
-) -> str | None:
-    """The child this claim is about, or None when the link is ambiguous."""
+) -> tuple[str, ...]:
+    """Every bound child this claim is about; empty when unassociated."""
 
     if (
         evidence_subject_id is not None
         and evidence_subject_id != account_id
         and evidence_subject_id in bound_child_ids
     ):
-        return evidence_subject_id
+        return (evidence_subject_id,)
     if subject_key.strip().casefold() == "self":
-        return None
+        return ()
     if not await _names_a_child(
         connection,
         account_id=account_id,
         subject_key=subject_key,
     ):
-        return None
-    if len(bound_child_ids) == 1:
-        return bound_child_ids[0]
-    return None
+        return ()
+    return tuple(bound_child_ids)
 
 
 async def _names_a_child(
@@ -148,6 +148,6 @@ async def _names_a_child(
             """,
             account_id,
             subject_key,
-            list(_CHILD_RELATIONS),
+            list(CHILD_RELATIONS),
         )
     )
