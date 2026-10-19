@@ -641,7 +641,6 @@ async def test_explicit_low_sensitivity_memory_is_immediately_confirmed(
     assert dict(audit_events[0].payload) == {
         "target_id": audit_events[0].payload["target_id"],
         "action": "confirm",
-        "previous_value": "我喜欢雨天散步。",
         "source_event_id": "explicit-memory-low-risk",
         "policy_version": "explicit-memory-v2",
         "reason": "explicit-memory-low-risk",
@@ -1319,7 +1318,6 @@ async def test_legacy_v1_policy_confirmation_cannot_promote_a_rebuilt_claim(
             payload={
                 "target_id": claim.item_id,
                 "action": "confirm",
-                "previous_value": claim.value,
                 "source_event_id": "legacy-v1-source",
                 "policy_version": "explicit-memory-v1",
                 "reason": "explicit-memory-low-risk",
@@ -1588,7 +1586,7 @@ async def test_correction_is_confirmed_searchable_and_written_as_audit_evidence(
         ("claim", "我认为做决定前应该等两天。")
     ]
     assert evidence.evidence[0].event_type == "memory.claim_reviewed"
-    assert evidence.evidence[0].payload["previous_value"] == "我认为做决定前应该等一天。"
+    assert "previous_value" not in evidence.evidence[0].payload
 
 
 @pytest.mark.asyncio
