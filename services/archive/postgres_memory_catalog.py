@@ -49,7 +49,11 @@ from services.archive.memory_domain import (
     subject_lineage_predicates,
 )
 from services.archive.memory_lexical_sql import search_terms
-from services.archive.memory_vector_cleanup import forget_claim_vectors
+from services.archive.memory_vector_cleanup import (
+    ensure_vector_index,
+    forget_claim_vectors,
+    restore_claim_vector,
+)
 from services.archive.memory_write_policy import (
     SINGLE_VALUE_PREDICATES,
     MemoryWriteDecision,
@@ -322,7 +326,7 @@ class PostgresMemoryCatalog:
                 )
             )
             if self._vector_enabled and self._embedder is not None:
-                await self._ensure_vector_index(connection)
+                await ensure_vector_index(connection, self._embedder)
         if self._require_vector and (not self._vector_enabled or self._embedder is None):
             await pool.close()
             raise RuntimeError("production memory catalog requires pgvector and an embedder")
@@ -362,25 +366,6 @@ class PostgresMemoryCatalog:
                 await pool.close()
                 raise
             self._compiler_pool = compiler_pool
-
-    async def _ensure_vector_index(self, connection: asyncpg.Connection) -> None:
-        if self._embedder is None:
-            return
-        digest = sha256(f"{self._embedder.model}:{self._embedder.dimensions}".encode()).hexdigest()[
-            :12
-        ]
-        index_name = f"idx_memory_vector_hnsw_{digest}"
-        model = self._embedder.model.replace("'", "''")
-        dimensions = self._embedder.dimensions
-        await connection.execute(
-            f"""
-            CREATE INDEX IF NOT EXISTS {index_name}
-            ON memory_vector_documents
-            USING hnsw ((embedding::vector({dimensions})) vector_cosine_ops)
-            WHERE embedding_model = '{model}'
-              AND embedding_dimensions = {dimensions}
-            """
-        )
 
     async def _ready_pool(self) -> asyncpg.Pool:
         await self.initialize()
@@ -2086,6 +2071,7 @@ class PostgresMemoryCatalog:
                 value=value,
                 review_event_id=review_event.event_id,
                 subject_id=command.subject_id,
+                restore_vector=command.action == "confirm",
             )
         return ReviewedClaim(
             claim_id=command.claim_id,
@@ -2150,6 +2136,7 @@ class PostgresMemoryCatalog:
         value: str,
         review_event_id: str,
         subject_id: str | None = None,
+        restore_vector: bool = False,
     ) -> None:
         source = await connection.fetchrow(
             """
@@ -2261,7 +2248,20 @@ class PostgresMemoryCatalog:
             predicate=predicate,
             subject_id=subject_id,
         )
-        await forget_claim_vectors(connection, status, claim_id, account_id, self._vector_enabled)
+        await forget_claim_vectors(connection, status, claim_id, account_id, self._vector_enabled, review_event_id)
+        if restore_vector and status == "confirmed":
+            # Only an explicit user confirmation sets the flag; replay and policy do not.
+            await restore_claim_vector(
+                connection,
+                self._embedder,
+                claim_id=claim_id,
+                account_id=account_id,
+                source_event_id=source_event_id,
+                title=title,
+                body=contextual_body,
+                vector_enabled=self._vector_enabled,
+                fail_on_embedding_error=self._fail_on_embedding_error,
+            )
 
     @staticmethod
     async def _insert_evidence(

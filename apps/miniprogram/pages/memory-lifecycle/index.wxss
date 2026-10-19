@@ -49,24 +49,6 @@
   border-left: 3px solid var(--mp-line);
 }
 
-.lifecycle-restore {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 16px;
-}
-
-.lifecycle-restore .secondary-button {
-  flex-shrink: 0;
-}
-
-.lifecycle-restore-note {
-  margin: 0;
-  color: var(--mp-ink-3);
-  font-size: var(--mp-type-meta);
-  line-height: var(--mp-lh-caption);
-}
-
 .lifecycle-delete-hint {
   margin-top: 24px;
 }

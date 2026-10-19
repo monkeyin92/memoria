@@ -1,9 +1,10 @@
-"""Retracting a claim must also forget its pgvector embedding."""
+"""Reviewing a claim keeps its pgvector embedding in step with the search row."""
 
 from __future__ import annotations
 
 import json
 import os
+import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -13,7 +14,11 @@ from typing import Any
 import asyncpg
 import pytest
 from services.archive.domain import EvidenceEvent
-from services.archive.memory_domain import MemoryClaimReview, MemorySearchQuery
+from services.archive.memory_domain import (
+    MemoryClaimReview,
+    MemoryEmbeddingUnavailableError,
+    MemorySearchQuery,
+)
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
 from services.archive.postgres_archive import PostgresLifeArchive
 from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
@@ -24,7 +29,28 @@ class _Embedder:
     dimensions = 2
 
     async def embed(self, text: str) -> tuple[float, ...]:
-        return (1.0, 0.0) if "蓝色" in text else (0.0, 1.0)
+        if "蓝色" in text or "天空" in text:
+            return (1.0, 0.0)
+        return (0.0, 1.0)
+
+
+class _CountingEmbedder(_Embedder):
+    def __init__(self) -> None:
+        self.inputs: list[str] = []
+
+    async def embed(self, text: str) -> tuple[float, ...]:
+        self.inputs.append(text)
+        return await super().embed(text)
+
+
+class _FlakyEmbedder(_Embedder):
+    def __init__(self) -> None:
+        self.unavailable = False
+
+    async def embed(self, text: str) -> tuple[float, ...]:
+        if self.unavailable:
+            raise MemoryEmbeddingUnavailableError("embedding service unavailable")
+        return await super().embed(text)
 
 
 def _dsn() -> str:
@@ -35,13 +61,19 @@ def _dsn() -> str:
 
 
 @asynccontextmanager
-async def _catalog(dsn: str) -> AsyncIterator[tuple[PostgresLifeArchive, PostgresMemoryCatalog]]:
+async def _catalog(
+    dsn: str,
+    embedder: _Embedder | None = None,
+    *,
+    fail_on_embedding_error: bool = False,
+) -> AsyncIterator[tuple[PostgresLifeArchive, PostgresMemoryCatalog]]:
     archive = PostgresLifeArchive(dsn)
     catalog = PostgresMemoryCatalog(
         dsn,
         extractor=RuleBasedMemoryExtractor(),
-        embedder=_Embedder(),
+        embedder=embedder or _Embedder(),
         require_vector=True,
+        fail_on_embedding_error=fail_on_embedding_error,
         evidence_subject_category_resolver=lambda _event: "adult",
     )
     await archive.initialize()
@@ -294,9 +326,9 @@ async def test_retracted_claim_can_be_confirmed_again() -> None:
             assert document is not None and document["status"] == "confirmed"
             assert [item.item_id for item in found.items] == [str(claim_id)]
             assert replayed.failed_events == 0
-            # The review replay reactivates the row; a full projection rebuild
-            # is what re-embeds it, so normal compile leaves it without a vector.
-            assert await _vector_count(connection, account_id, claim_id) == 0
+            # Confirmation restores the vector immediately, and replaying the
+            # earlier retraction must not delete it again.
+            assert await _vector_count(connection, account_id, claim_id) == 1
     finally:
         await _cleanup(connection, account_id)
         await connection.close()
@@ -334,6 +366,365 @@ async def test_policy_confirmation_payload_has_no_previous_value() -> None:
             assert payload["action"] == "confirm"
             assert "previous_value" not in payload
             assert "我喜欢雨天散步。" not in json.dumps(payload, ensure_ascii=False)
+    finally:
+        await _cleanup(connection, account_id)
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_confirm_restores_only_that_claims_vector_for_the_next_recall() -> None:
+    dsn = _dsn()
+    account_id = f"vector-restore-{uuid.uuid4()}"
+    other_account_id = f"vector-restore-other-{uuid.uuid4()}"
+    blue_event = f"vector-restore-blue-{uuid.uuid4()}"
+    red_event = f"vector-restore-red-{uuid.uuid4()}"
+    green_event = f"vector-restore-green-{uuid.uuid4()}"
+    yellow_event = f"vector-restore-yellow-{uuid.uuid4()}"
+    embedder = _CountingEmbedder()
+    connection = await asyncpg.connect(dsn)
+    try:
+        async with _catalog(dsn, embedder=embedder) as (archive, catalog):
+            await _record(
+                archive,
+                event_id=blue_event,
+                account_id=account_id,
+                subject_id=None,
+                text="我喜欢蓝色。",
+            )
+            await _record(
+                archive,
+                event_id=red_event,
+                account_id=account_id,
+                subject_id=None,
+                text="我喜欢红色。",
+            )
+            await _record(
+                archive,
+                event_id=green_event,
+                account_id=other_account_id,
+                subject_id=None,
+                text="我喜欢绿色。",
+            )
+            await _record(
+                archive,
+                event_id=yellow_event,
+                account_id=other_account_id,
+                subject_id=None,
+                text="我喜欢黄色。",
+            )
+            assert (await catalog.compile_pending()).failed_events == 0
+            claims = await _claim_ids(catalog, account_id)
+            other_claims = await _claim_ids(catalog, other_account_id)
+            blue_id = claims["我喜欢蓝色。"]
+            red_id = claims["我喜欢红色。"]
+            green_id = other_claims["我喜欢绿色。"]
+            yellow_id = other_claims["我喜欢黄色。"]
+
+            for claim_id in (blue_id, red_id):
+                await catalog.review(
+                    MemoryClaimReview(
+                        account_id=account_id,
+                        claim_id=str(claim_id),
+                        action="retract",
+                    )
+                )
+            for claim_id in (green_id,):
+                await catalog.review(
+                    MemoryClaimReview(
+                        account_id=other_account_id,
+                        claim_id=str(claim_id),
+                        action="retract",
+                    )
+                )
+
+            assert await _vector_count(connection, account_id, blue_id) == 0
+            assert await _vector_count(connection, account_id, red_id) == 0
+            assert await _vector_count(connection, other_account_id, green_id) == 0
+            assert await _vector_count(connection, other_account_id, yellow_id) == 1
+
+            query = MemorySearchQuery(
+                account_id=account_id,
+                speaker_class="owner",
+                text="天空的颜色",
+                kinds=("claim",),
+                include_candidates=False,
+            )
+            assert (await catalog.context(query)).items == ()
+
+            started = time.monotonic()
+            confirmed = await catalog.review(
+                MemoryClaimReview(
+                    account_id=account_id,
+                    claim_id=str(blue_id),
+                    action="confirm",
+                )
+            )
+            recalled = await catalog.context(query)
+            elapsed = time.monotonic() - started
+
+            assert confirmed.status == "confirmed"
+            assert [item.item_id for item in recalled.items] == [str(blue_id)]
+            assert elapsed < 120, f"confirmation to recall took {elapsed:.3f}s"
+            assert await _vector_count(connection, account_id, blue_id) == 1
+            vector = await connection.fetchrow(
+                "SELECT embedding_model, embedding_dimensions"
+                " FROM memory_vector_documents"
+                " WHERE account_id = $1 AND item_id = $2",
+                account_id,
+                blue_id,
+            )
+            assert vector is not None
+            assert (vector["embedding_model"], vector["embedding_dimensions"]) == (
+                embedder.model,
+                embedder.dimensions,
+            )
+            # Only the confirmed claim came back; the other retracted claim and
+            # every other account keep their previous vector state.
+            assert await _vector_count(connection, account_id, red_id) == 0
+            assert await _vector_count(connection, other_account_id, green_id) == 0
+            assert await _vector_count(connection, other_account_id, yellow_id) == 1
+            other_query = MemorySearchQuery(
+                account_id=other_account_id,
+                speaker_class="owner",
+                text="天空的颜色",
+                kinds=("claim",),
+                include_candidates=False,
+            )
+            assert (await catalog.context(other_query)).items == ()
+
+            lexical_only = PostgresMemoryCatalog(
+                dsn,
+                extractor=RuleBasedMemoryExtractor(),
+                embedder=None,
+                evidence_subject_category_resolver=lambda _event: "adult",
+            )
+            await lexical_only.initialize()
+            try:
+                assert (await lexical_only.context(query)).items == ()
+            finally:
+                await lexical_only.close()
+    finally:
+        await _cleanup(connection, account_id)
+        await _cleanup(connection, other_account_id)
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_compile_replay_of_a_confirmation_does_not_embed_again() -> None:
+    dsn = _dsn()
+    account_id = f"vector-replay-{uuid.uuid4()}"
+    event_id = f"vector-replay-turn-{uuid.uuid4()}"
+    embedder = _CountingEmbedder()
+    connection = await asyncpg.connect(dsn)
+    try:
+        async with _catalog(dsn, embedder=embedder) as (archive, catalog):
+            await _record(
+                archive,
+                event_id=event_id,
+                account_id=account_id,
+                subject_id=None,
+                text="我喜欢蓝色。",
+            )
+            assert (await catalog.compile_pending()).failed_events == 0
+            claim_id = (await _claim_ids(catalog, account_id))["我喜欢蓝色。"]
+            await catalog.review(
+                MemoryClaimReview(
+                    account_id=account_id,
+                    claim_id=str(claim_id),
+                    action="retract",
+                )
+            )
+            await catalog.review(
+                MemoryClaimReview(
+                    account_id=account_id,
+                    claim_id=str(claim_id),
+                    action="confirm",
+                )
+            )
+            document = await connection.fetchrow(
+                "SELECT title, body FROM memory_search_documents"
+                " WHERE account_id = $1 AND item_id = $2 AND kind = 'claim'",
+                account_id,
+                claim_id,
+            )
+            assert document is not None
+            document_text = " ".join(
+                part for part in (document["title"], document["body"]) if part
+            )
+            assert embedder.inputs.count(document_text) == 2
+            before_replay = embedder.inputs.count(document_text)
+
+            replayed = await catalog.compile_pending()
+
+            assert replayed.failed_events == 0
+            assert embedder.inputs.count(document_text) == before_replay
+            assert await _vector_count(connection, account_id, claim_id) == 1
+    finally:
+        await _cleanup(connection, account_id)
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_policy_auto_confirmation_does_not_restore_the_vector() -> None:
+    dsn = _dsn()
+    account_id = f"vector-policy-restore-{uuid.uuid4()}"
+    event_id = f"vector-policy-restore-turn-{uuid.uuid4()}"
+    embedder = _CountingEmbedder()
+    connection = await asyncpg.connect(dsn)
+    try:
+        async with _catalog(dsn, embedder=embedder) as (archive, catalog):
+            await _record(
+                archive,
+                event_id=event_id,
+                account_id=account_id,
+                subject_id=None,
+                text="请记住我喜欢雨天散步。",
+                memory_write_intent={
+                    "kind": "explicit_remember",
+                    "policy_version": "explicit-memory-v2",
+                },
+            )
+            assert (await catalog.compile_pending()).failed_events == 0
+            claim = await connection.fetchrow(
+                "SELECT claim_id, status FROM memory_claims WHERE account_id = $1",
+                account_id,
+            )
+            assert claim is not None and claim["status"] == "confirmed"
+            document = await connection.fetchrow(
+                "SELECT title, body FROM memory_search_documents"
+                " WHERE account_id = $1 AND item_id = $2 AND kind = 'claim'",
+                account_id,
+                claim["claim_id"],
+            )
+            assert document is not None
+            document_text = " ".join(
+                part for part in (document["title"], document["body"]) if part
+            )
+            # The policy path reuses the review writer; it must not embed the
+            # already-written claim a second time.
+            assert embedder.inputs.count(document_text) == 1
+            assert await _vector_count(connection, account_id, claim["claim_id"]) == 1
+
+            replayed = await catalog.compile_pending()
+
+            assert replayed.failed_events == 0
+            assert embedder.inputs.count(document_text) == 1
+    finally:
+        await _cleanup(connection, account_id)
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_confirm_rolls_back_when_embedding_failure_is_fatal() -> None:
+    dsn = _dsn()
+    account_id = f"vector-restore-fatal-{uuid.uuid4()}"
+    event_id = f"vector-restore-fatal-turn-{uuid.uuid4()}"
+    embedder = _FlakyEmbedder()
+    connection = await asyncpg.connect(dsn)
+    try:
+        async with _catalog(
+            dsn, embedder, fail_on_embedding_error=True
+        ) as (archive, catalog):
+            await _record(
+                archive,
+                event_id=event_id,
+                account_id=account_id,
+                subject_id=None,
+                text="我喜欢蓝色。",
+            )
+            assert (await catalog.compile_pending()).failed_events == 0
+            claim_id = (await _claim_ids(catalog, account_id))["我喜欢蓝色。"]
+            await catalog.review(
+                MemoryClaimReview(
+                    account_id=account_id,
+                    claim_id=str(claim_id),
+                    action="retract",
+                )
+            )
+            evidence_before = int(
+                await connection.fetchval(
+                    "SELECT count(*) FROM archive_evidence_events WHERE account_id = $1",
+                    account_id,
+                )
+            )
+            embedder.unavailable = True
+
+            with pytest.raises(MemoryEmbeddingUnavailableError):
+                await catalog.review(
+                    MemoryClaimReview(
+                        account_id=account_id,
+                        claim_id=str(claim_id),
+                        action="confirm",
+                    )
+                )
+
+            claim = await connection.fetchrow(
+                "SELECT status FROM memory_claims WHERE account_id = $1 AND claim_id = $2",
+                account_id,
+                claim_id,
+            )
+            assert claim is not None and claim["status"] == "retracted"
+            assert await _vector_count(connection, account_id, claim_id) == 0
+            assert (
+                int(
+                    await connection.fetchval(
+                        "SELECT count(*) FROM archive_evidence_events WHERE account_id = $1",
+                        account_id,
+                    )
+                )
+                == evidence_before
+            )
+    finally:
+        await _cleanup(connection, account_id)
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_confirm_commits_without_a_vector_when_embedding_is_best_effort() -> None:
+    dsn = _dsn()
+    account_id = f"vector-restore-best-effort-{uuid.uuid4()}"
+    event_id = f"vector-restore-best-effort-turn-{uuid.uuid4()}"
+    embedder = _FlakyEmbedder()
+    connection = await asyncpg.connect(dsn)
+    try:
+        async with _catalog(
+            dsn, embedder, fail_on_embedding_error=False
+        ) as (archive, catalog):
+            await _record(
+                archive,
+                event_id=event_id,
+                account_id=account_id,
+                subject_id=None,
+                text="我喜欢蓝色。",
+            )
+            assert (await catalog.compile_pending()).failed_events == 0
+            claim_id = (await _claim_ids(catalog, account_id))["我喜欢蓝色。"]
+            await catalog.review(
+                MemoryClaimReview(
+                    account_id=account_id,
+                    claim_id=str(claim_id),
+                    action="retract",
+                )
+            )
+            embedder.unavailable = True
+
+            confirmed = await catalog.review(
+                MemoryClaimReview(
+                    account_id=account_id,
+                    claim_id=str(claim_id),
+                    action="confirm",
+                )
+            )
+
+            assert confirmed.status == "confirmed"
+            assert await _vector_count(connection, account_id, claim_id) == 0
+            document = await connection.fetchrow(
+                "SELECT status FROM memory_search_documents"
+                " WHERE account_id = $1 AND item_id = $2 AND kind = 'claim'",
+                account_id,
+                claim_id,
+            )
+            assert document is not None and document["status"] == "confirmed"
     finally:
         await _cleanup(connection, account_id)
         await connection.close()

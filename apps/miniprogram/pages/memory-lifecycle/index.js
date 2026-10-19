@@ -39,6 +39,22 @@ function normalizeConfirmed(item) {
   };
 }
 
+function normalizeRetracted(item) {
+  const claimId = typeof item?.claim_id === "string" ? item.claim_id : "";
+  if (!claimId) return null;
+  const title = item.title || item.value || "已撤回的记忆";
+  const value = typeof item.value === "string" ? item.value : "";
+  return {
+    id: claimId,
+    kind: "retracted",
+    title,
+    body: value && value !== title ? value : "",
+    status: "retracted",
+    statusLabel: "已撤回",
+    retractedAtLabel: formatBeijingTime(item.retracted_at),
+  };
+}
+
 function friendlyError(error) {
   const status = Number(error?.status || 0);
   const code = error?.detail?.code || error?.code || "";
@@ -99,6 +115,7 @@ Page({
     this.setData({
       pendingItems: [],
       confirmedItems: [],
+      retractedItems: [],
       reviewingId: "",
       isEmpty: false,
       error: "",
@@ -137,9 +154,19 @@ Page({
       unavailable: "",
     });
     try {
-      const payload = await api.getGuardianChildMemories(minorUserId, 50);
+      const [payload, retractedPayload] = await Promise.all([
+        api.getGuardianChildMemories(minorUserId, 50),
+        api.getGuardianChildRetractedMemories(minorUserId, 20),
+      ]);
       if (seq !== this._loadSeq || !api.isAuthEpochCurrent(authEpoch)) return "stale";
-      const retractedIds = new Set(this.data.retractedItems.map((item) => item.id));
+      const retractedItems = (retractedPayload?.items || [])
+        .map(normalizeRetracted)
+        .filter(Boolean);
+      /*
+       * The retracted endpoint is the source of truth across page loads, so a
+       * claim still listed as active is filtered out until the next read.
+       */
+      const retractedIds = new Set(retractedItems.map((item) => item.id));
       const pendingItems = (payload?.candidates || [])
         .map(normalizeCandidate)
         .filter(Boolean)
@@ -151,11 +178,12 @@ Page({
       this.setData({
         pendingItems,
         confirmedItems,
+        retractedItems,
         loading: false,
         isEmpty:
           pendingItems.length === 0 &&
           confirmedItems.length === 0 &&
-          this.data.retractedItems.length === 0,
+          retractedItems.length === 0,
       });
       return "ok";
     } catch (error) {
@@ -163,6 +191,7 @@ Page({
       this.setData({
         pendingItems: [],
         confirmedItems: [],
+        retractedItems: [],
         loading: false,
         isEmpty: false,
         error: friendlyError(error),
@@ -234,7 +263,6 @@ Page({
         this.setData({ error: "撤回没有完成，请稍后重试。" });
         return;
       }
-      this._markRetracted(item, result, statusLabel);
       const refreshed = await this.loadMemories();
       if (refreshed === "ok") wx.showToast({ title: "已撤回", icon: "success" });
     } catch (error) {
@@ -245,26 +273,45 @@ Page({
     }
   },
 
-  _markRetracted(item, result, statusLabel) {
-    const retracted = {
-      ...item,
-      status: result.status,
-      statusLabel,
-      retractedAtLabel: formatBeijingTime(result.reviewed_at),
-    };
-    const mark = (list) =>
-      list.map((entry) =>
-        entry.id === item.id
-          ? { ...entry, status: result.status, statusLabel }
-          : entry,
-      );
-    const previous = this.data.retractedItems.filter((entry) => entry.id !== item.id);
-    this.setData({
-      pendingItems: mark(this.data.pendingItems),
-      confirmedItems: mark(this.data.confirmedItems),
-      retractedItems: [retracted, ...previous],
-      isEmpty: false,
+  async restoreMemory(event) {
+    const dataset = event?.currentTarget?.dataset || {};
+    const id = typeof dataset.id === "string" ? dataset.id : "";
+    if (!this.data.guardianMode || !this.data.minorUserId || !id || this.data.reviewingId) return;
+    if (!this.data.retractedItems.some((entry) => entry.id === id)) return;
+
+    const agreed = await new Promise((resolve) => {
+      wx.showModal({
+        title: "恢复这条记忆？",
+        content: "恢复后机器人又可以用到这条。",
+        confirmText: "恢复",
+        cancelText: "取消",
+        success: (result) => resolve(Boolean(result?.confirm)),
+        fail: () => resolve(false),
+      });
     });
+    if (!agreed) return;
+
+    const authEpoch = api.currentAuthEpoch();
+    this.setData({ reviewingId: id, error: "" });
+    try {
+      const result = await api.reviewGuardianChildMemory(
+        this.data.minorUserId,
+        id,
+        "confirm",
+      );
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
+      if (result?.status !== "confirmed") {
+        this.setData({ error: "恢复没有完成，请稍后重试。" });
+        return;
+      }
+      const refreshed = await this.loadMemories();
+      if (refreshed === "ok") wx.showToast({ title: "已恢复", icon: "success" });
+    } catch (error) {
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
+      this.setData({ error: friendlyError(error) });
+    } finally {
+      if (api.isAuthEpochCurrent(authEpoch)) this.setData({ reviewingId: "" });
+    }
   },
 
   openUnbindDeletePath() {
