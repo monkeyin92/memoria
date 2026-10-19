@@ -321,7 +321,7 @@ test("parent_for_child flow validates minimal info and submits guardian relation
     page.data.quietHoursLabel,
     "夜间模式：21:00–07:00（这段时间点屏只会说晚安）",
   );
-  assert.equal(page.data.submitLabel, "提交绑定");
+  assert.equal(page.data.submitLabel, "开启安全提醒");
   const bindTemplate = fs.readFileSync(path.join(root, "pages/bind/index.wxml"), "utf8");
   assert.match(bindTemplate, /点下方的开始、结束时间可以修改/);
   assert.match(bindTemplate, /\{\{submitLabel\}\}/);
@@ -333,7 +333,7 @@ test("parent_for_child flow validates minimal info and submits guardian relation
   page.setData({ "form.childNickname": "小乐" });
   await page.goToReview();
   assert.equal(page.data.step, "review");
-  assert.equal(page.data.submitLabel, "提交绑定");
+  assert.equal(page.data.submitLabel, "开启安全提醒");
   await page.submitBinding();
   assert.equal(page.data.step, "done");
   const payload = lastWxRequest.data;
@@ -358,24 +358,24 @@ test("parent_for_child flow validates minimal info and submits guardian relation
   assert.ok(!page.data.offers.some((offer) => offer.id === "offer_guardian_weekly_summary_v1"));
   assert.ok(!payload.consent_offer_ids.includes("offer_emergency_contact_v1"));
   assert.equal(readSubjectLabel(page.data.manifest), "小乐");
-  assert.equal(page.data.crisisSubscribeAccepted, false);
+  assert.equal(page.data.crisisSubscribeAccepted, true);
 });
 
-test("parent_for_child bind completes without a subscribe prompt while the push flag is off", async () => {
+test("parent_for_child bind does not complete when WeChat subscribe is rejected", async () => {
   nextResponse = successResponse(defaultManifestResponse("parent_for_child"));
   const page = await bootToMode("parent_for_child");
   subscribeAnswer = "reject";
   subscribePrompts = 0;
   page.setData({ "form.childNickname": "小乐" });
   await page.goToReview();
-  assert.equal(page.data.crisisSubscribeRequired, false);
-  assert.equal(page.data.subscriptionPushEnabled, false);
+  assert.equal(page.data.crisisSubscribeRequired, true);
+  assert.equal(page.data.subscriptionPushEnabled, true);
   lastWxRequest = null;
   await page.submitBinding();
-  assert.equal(page.data.step, "done");
-  assert.equal(page.data.error, "");
-  assert.notEqual(lastWxRequest, null);
-  assert.equal(subscribePrompts, 0);
+  assert.equal(page.data.step, "review");
+  assert.equal(lastWxRequest, null);
+  assert.equal(subscribePrompts, 1);
+  assert.match(page.data.error, /未完成安全提醒订阅/);
   subscribeAnswer = "accept";
 });
 
@@ -912,6 +912,75 @@ test("binding failures surface explainable errors and stay on review", async () 
   assert.equal(page.data.step, "review");
   assert.ok(page.data.error);
   assert.equal(page.data.manifest, null);
+});
+
+test("submit after the claim expired explains the timeout and offers a rescan", async () => {
+  nextResponse = {
+    statusCode: 410,
+    data: { detail: { code: "CLAIM_EXPIRED" } },
+  };
+  const page = await bootSelfUseReady("阿宁");
+  await page.goToReview();
+  await page.submitBinding();
+  assert.equal(page.data.step, "review");
+  // The server's 410 must not surface as "请求未完成（410）"; the person needs
+  // to know the confirmation timed out and that the robot wants a new code.
+  assert.doesNotMatch(page.data.error, /410|请求未完成/);
+  assert.match(page.data.error, /超时/);
+  assert.match(page.data.error, /新二维码/);
+  assert.equal(page.data.needsRescan, true);
+});
+
+test("submit after the onboarding session expired explains the expiry and offers a rescan", async () => {
+  nextResponse = {
+    statusCode: 410,
+    data: { detail: { code: "QR_SESSION_EXPIRED" } },
+  };
+  const page = await bootSelfUseReady("阿宁");
+  await page.goToReview();
+  await page.submitBinding();
+  assert.equal(page.data.step, "review");
+  assert.doesNotMatch(page.data.error, /410|请求未完成/);
+  assert.match(page.data.error, /过期/);
+  assert.match(page.data.error, /新二维码/);
+  assert.equal(page.data.needsRescan, true);
+});
+
+test("the review step refuses an expired claim before the WeChat prompt runs", async () => {
+  const originalGetDeviceClaim = api.getDeviceClaim;
+  let claimLookups = 0;
+  api.getDeviceClaim = async () => {
+    claimLookups += 1;
+    const expired = claimLookups > 1;
+    return {
+      claim_id: "claim_test_1",
+      device_id: "dev_test_1",
+      onboarding_session_id: "onb_test_1",
+      status: expired ? "expired" : "reserved",
+      expires_at: new Date(Date.now() + (expired ? -60_000 : 600_000)).toISOString(),
+      binding_id: null,
+      device: null,
+    };
+  };
+  subscribePrompts = 0;
+  lastWxRequest = null;
+  try {
+    const page = await bootToMode("parent_for_child");
+    page.setData({ "form.childNickname": "小乐" });
+    await page.goToReview();
+    assert.equal(page.data.step, "error");
+    assert.equal(page.data.needsRescan, true);
+    assert.match(page.data.error, /超时|失效/);
+    assert.match(page.data.error, /新二维码/);
+    // No subscribe prompt is spent on a binding the server would refuse.
+    assert.equal(subscribePrompts, 0);
+    assert.equal(lastWxRequest, null);
+    const template = fs.readFileSync(path.join(root, "pages/bind/index.wxml"), "utf8");
+    const errorStep = template.slice(template.indexOf("step === 'error'"), template.indexOf("<!-- 步骤 1"));
+    assert.match(errorStep, /needsRescan[\s\S]*rescanDevice/);
+  } finally {
+    api.getDeviceClaim = originalGetDeviceClaim;
+  }
 });
 
 test("done step shows the binding manifest and offers device management", async () => {

@@ -152,17 +152,17 @@ test("home pins the attention card with its time and the open-to-pin meta", asyn
   assert.doesNotMatch(renderPage("pages/home/index", calm.data), /需要你关注/);
 });
 
-test("home hides the safety subscribe card unless subscription push is enabled", async () => {
-  const off = await loadHome();
-  assert.equal(off.data.subscriptionPushEnabled, false);
-  const offText = visibleText(renderPage("pages/home/index", off.data));
-  assert.doesNotMatch(offText, /安全提醒|安静时段/);
-
-  const on = await loadHome({ config: { CONTROL_API_BASE_URL: "https://example.invalid", SUBSCRIPTION_PUSH_ENABLED: true } });
+test("home shows the safety subscribe card only while subscription push is enabled", async () => {
+  const on = await loadHome();
   assert.equal(on.data.subscriptionPushEnabled, true);
   const onText = visibleText(renderPage("pages/home/index", on.data));
   assert.match(onText, /安全提醒/);
   assert.match(onText, /安静时段 21:00 – 次日 07:00/);
+
+  const off = await loadHome({ config: { CONTROL_API_BASE_URL: "https://example.invalid", SUBSCRIPTION_PUSH_ENABLED: false } });
+  assert.equal(off.data.subscriptionPushEnabled, false);
+  const offText = visibleText(renderPage("pages/home/index", off.data));
+  assert.doesNotMatch(offText, /安全提醒|安静时段/);
 });
 
 test("home memory card previews the latest summary and opens child memory", async () => {

@@ -165,7 +165,7 @@
     <text class="l2-card-sub">机器人已经联网。确认后，这台机器人就先留给你的账号，请接着完成设置；之后重新配 Wi‑Fi，它也不会换主人。</text>
     <view wx:if="{{device}}" class="summary-row"><text class="summary-key">设备尾号</text><text class="summary-value">{{device.display_tail}}</text></view>
     <view wx:if="{{claim && claimExpiryLabel}}" class="summary-row"><text class="summary-key">请在这之前完成</text><text class="summary-value">{{claimExpiryLabel}}</text></view>
-    <text wx:if="{{claim}}" class="form-note">超时也没关系，会自动释放，回来重新确认一次就好。</text>
+    <text wx:if="{{claim}}" class="form-note">请在这个时间前完成设置。超时后这次确认会失效，需要轻点机器人屏幕换一张新二维码，再重新扫码。</text>
     <button wx:if="{{!claim}}" class="primary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="reserveClaim">确认这是我的机器人</button>
     <button wx:if="{{claim}}" class="primary-button onboarding-button" bindtap="continueInitialize">下一步：设置使用方式</button>
   </view>
