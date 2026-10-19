@@ -132,6 +132,20 @@ docker compose -f docker-compose.production.yml run --rm --no-deps control-api /
 
 结果：根分区 25 G → 21 G（65 % → 55 %，剩 18 G）；memoria 镜像标签 17 → 11 个；`docker system df` 的镜像可回收量为 4.2 G。清理后七个健康检查容器全部 healthy、SenseVoice 在跑、重启次数不变，本机与外部 readiness 200，`current` 不变，回滚目标 20261009 的三个镜像 id 与 compose 文件都在。`apply` 的最后一行 `docker system df | head -2` 因 SIGPIPE 退出 141，发生在所有删除与校验之后，不影响结果。收据在服务器 `/root/memoria-release/cleanup-20261010.log`、`cleanup-20261010-precheck.log` 与 `cleanup-20261010-pre/`。
 
+### 2026-10-19 第七次手工清理（经用户授权「允许磁盘清理」）
+
+同一套规则，距上次约 9 天，期间整栈发布 20 余次，根分区 29 G / 40 G（76 %，过了 75 % 告警线）。脚本 `/root/memoria-release/cleanup-20261019.sh`（root 0700）分 `pre`（只读）与 `apply`，候选写死，不用通配符、不 prune。`apply` 前后各过一遍门禁：没有发布或 docker 进程；六个带健康检查的容器 healthy 且 SenseVoice 在跑；bridge 与 control-api 在当前 tag；`current` 指向当前发布树；保留集镜像都在；本机与外部 readiness 通过。此外 `refs_check` 核对候选树不被任何容器的 compose 标签引用、候选镜像不被孤儿容器之外的容器使用。
+
+删除的：
+- 孤儿容器 `memoria-speaker-model-1`（speaker-model 10-13 退役后一直 exited，compose 每次都提示 orphan）和它的镜像 `memoria-speaker-model:20261013-guardian-summaries-v1`（627 M）。
+- 镜像标签 `memoria-{agent,control-api}:20261016-device-registration-v1`（这版 22:28 切流后 22:30 已回滚，镜像 id 与回滚点不同，逐个 `docker rmi`）。
+- `incoming/` 三个发布包各 1.2 G：`20261016-device-registration-v1`、`20261015-stop-standby-v1`（已回滚、对应 PR #270 已关闭）、`20261015-daily-chat-limit-v1`。
+- 22 棵旧发布树的源码，保留各自 `.cutover`（收据）；`20261014-support-tiers-v1`（verify-load 盘满中止的那版）本来就没有 `.cutover`。删除前核对：其中 21 棵的 tag 提交已在 `origin/main`；`20261015-stop-standby-v1`（提交 `0228dfdf`）不在 main，已存进本机 bundle，删后可恢复。
+
+有意保留：当前发布树 `20261016-readiness-b54189c`；回滚目标 `20261016-session-cap-fallback-v1`（`.cutover/prev-release` 指向它）和手工一步回退点 `20261016-log-redaction-v1`，两者的镜像、发布树、`incoming/` 包都在；compose 链 `releases/20260827-architecture-split-v1`、`releases/20261004-first-warm-v1` 与 `component-releases/20261002-late-progress-v1-media-edge`；media-edge、SenseVoice、redis、minio、pgvector 镜像；数据卷、journald、`/var/log`。
+
+结果：根分区 29 G → 21 G（76 % → 56 %，剩 17 G）；容器全部 healthy，外部 readiness 通过。收据在服务器 `/root/memoria-release/cleanup-20261019.log` 与 `cleanup-20261019-pre/`（root 0700，含三个 `incoming` 包的 sha256 与前后快照）。**下一次整栈发布**：当前版没有 `incoming/` 包可作增量种子，会走整包上传（约 1.5 GB，几分钟）。
+
 ### 2026-10-05 迁到 110.42.235.198 后的空间基线（新机，不是一次清理）
 
 生产从 2026-10-05 起在 110.42.235.198：40 GB 盘（旧机 118 GB），与 pocketSparks、hr-tracker 共用，迁移后已用约 17 GB（45%）。上文的 70% 触发线与「约每 5–6 次整栈清一次」是旧机的数字，在新机上要重算：整栈发布每次约 +4–5 GB（WAL 归档曾约 +0.6–1.1 GB/天，2026-10-06 起已关，见 [发布、恢复与回滚运维手册](release-rollback.md)「生产主机」），70% 是 28 GB，迁移后 17 GB、第一次整栈发布后 21 GB；`memoria-disk-patrol.timer` 的 75% / 85% 是百分比，同样适用，只告警不清理。规则不变：只清 `memoria-*` 镜像（`docker_image_retention.sh` 只处理这类 tag，不碰 pocketSparks、hr-tracker 和其他项目的镜像与卷）；每次发布核对完立刻删 `incoming` 里的包；镜像只留当前 + 一个回滚；数据卷仍不动，清理仍须另行授权。

@@ -673,6 +673,17 @@ def _minor_session(capability: str, params: FakeConsentParams | None) -> PolicyD
             ),
             (1200, (("daily_chat_seconds", "2700"),), ("22:00", "06:00")),
         ),
+        *(
+            (
+                FakeConsentParams(
+                    max_session_seconds=stored,
+                    quiet_hours=("22:00", "06:00"),
+                    extras=(("daily_chat_seconds", "2700"),),
+                ),
+                (issued, (("daily_chat_seconds", "2700"),), ("22:00", "06:00")),
+            )
+            for stored, issued in ((600, 600), (1800, 1800), (599, 900), (1801, 900))
+        ),
     ],
 )
 def test_minor_session_signs_the_guardians_limits_and_daily_budget(

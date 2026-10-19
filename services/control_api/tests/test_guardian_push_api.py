@@ -30,6 +30,7 @@ from services.guardian.push import (
     PendingCrisisPush,
     crisis_push_content,
 )
+from services.guardian.subject_activity import SubjectActivityStore
 
 TEMPLATE = "CrisisTemplate_01-x"
 LOGIN_CODE = "dev-guardian-push-login"
@@ -476,6 +477,8 @@ async def test_lifespan_starts_the_push_worker_only_when_enabled(
     monkeypatch.setattr(PostgresGuardianStore, "initialize", noop)
     monkeypatch.setattr(PostgresGuardianStore, "close", noop)
     monkeypatch.setattr(PostgresGuardianStore, "claim_crisis_pushes", no_pending)
+    monkeypatch.setattr(SubjectActivityStore, "initialize", noop)
+    monkeypatch.setattr(SubjectActivityStore, "close", noop)
     app = create_app()
     async with app.router.lifespan_context(app):
         assert app.state.crisis_push_worker is None

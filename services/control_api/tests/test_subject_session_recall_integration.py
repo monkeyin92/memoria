@@ -46,10 +46,10 @@ async def test_response_plan_merges_authoritative_session_recall_by_subject(
     token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         user_id, user_headers = await _identity(client)
-        _mark_verified_adult(app, user_id)
         created = await client.post("/v1/sessions", headers=user_headers, json={})
         assert created.status_code == 200, created.text
         session_id = created.json()["session_id"]
+        _mark_verified_adult(app, user_id)
         _attach_signed_runtime_profile(app, user_id=user_id, session_id=session_id)
         store = app.state.subject_session_recall_store
         await store.append(

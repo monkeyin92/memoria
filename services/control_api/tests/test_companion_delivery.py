@@ -95,6 +95,7 @@ async def test_catalog_companion_does_not_freeze_a_personal_clone() -> None:
 
 @pytest.mark.asyncio
 async def test_custom_persona_freezes_a_cosyvoice_clone_with_designed_fallback() -> None:
+    # PR #221 removed voice cloning: freezing no longer asks the voice manager for a clone.
     manager = _ResolutionStub(_cosyvoice_resolution())
     frozen = await freeze_companion_delivery(
         companion=_CUSTOM,
@@ -104,17 +105,17 @@ async def test_custom_persona_freezes_a_cosyvoice_clone_with_designed_fallback()
         voice_manager=manager,
     )
 
-    assert companion_personal_voice_contract_valid(frozen) is True
-    assert frozen.voice_provider == "alibaba_model_studio"
-    assert frozen.voice_model == "cosyvoice-v3.5-flash"
-    assert frozen.fallback_voice_profile_id == "bright_peer"
-    assert frozen.fallback_voice_model == "seed-tts-2.0"
-    # The clone is looked up in this persona's dimension, not the account's.
-    assert manager.seen_personas == [_CUSTOM_PERSONA_ID]
+    assert frozen.companion_style_id == _CUSTOM_PERSONA_ID
+    assert frozen.voice_profile_id is None
+    assert frozen.voice_provider is None
+    assert frozen.voice_model is None
+    assert frozen.fallback_voice_profile_id is None
+    assert manager.seen_personas == []
 
 
 @pytest.mark.asyncio
 async def test_custom_persona_freezes_a_doubao_icl_clone() -> None:
+    # PR #221 removed voice cloning: a resolved clone is no longer frozen into delivery.
     expires = datetime(2027, 7, 23, tzinfo=UTC)
     frozen = await freeze_companion_delivery(
         companion=_CUSTOM,
@@ -136,10 +137,10 @@ async def test_custom_persona_freezes_a_doubao_icl_clone() -> None:
         ),
     )
 
-    assert companion_personal_voice_contract_valid(frozen) is True
-    assert frozen.voice_provider == "volcengine_doubao"
-    assert frozen.voice_model == "seed-icl-2.0"
-    assert frozen.voice_provider_expires_at == expires.isoformat()
+    assert frozen.companion_style_id == _CUSTOM_PERSONA_ID
+    assert frozen.voice_profile_id is None
+    assert frozen.voice_provider is None
+    assert frozen.voice_provider_expires_at is None
 
 
 @pytest.mark.asyncio

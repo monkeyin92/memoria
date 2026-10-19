@@ -268,7 +268,11 @@ async def test_guardian_binding_consent_revocation_and_summary_are_end_to_end(
             event_id="minor-retained-turn",
         )
         assert retained_event is not None
-        assert retained_event.payload["text"] == "有留存同意后可以保存安全的学习原文"
+        # Scheme A: minor subjects never persist verbatim turn text in evidence
+        # events, even with memory_retention consent. Summaries are written
+        # separately as dialogue_summary rows.
+        assert "text" not in retained_event.payload
+        assert retained_event.payload["history_eligible"] is True
 
         now = datetime.now(UTC)
         await app.state.life_archive.record(
