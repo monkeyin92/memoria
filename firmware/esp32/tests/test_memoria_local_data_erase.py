@@ -196,18 +196,7 @@ def test_factory_reset_entry_not_yet_implemented() -> None:
 
 
 def test_activation_clear_only_on_success(tool: pathlib.Path) -> None:
-    """The 409 handler clears activation_v ONLY after EraseLocalChildData succeeds.
-
-    On failure, activation_v stays set, so the next 409 retries the erase. The module
-    itself doesn't touch activation_v (EraseLocalChildData returns bool). The caller
-    (memoria_activation_client.cc 409 handler) evaluates the result and sets
-    "activation_v" to 0 only on true. This test locks that ordering by checking the
-    ERASE_SOURCE text for:
-      if (EraseLocalChildData()) {
-        runtime.SetInt("activation_v", 0);
-      ...
-    And that the guard prevents repeated erase on unbound devices (activation_v == 0).
-    """
+    """Lock the 409 handler's activation_v clear is conditional on erase success."""
     activation_client = (
         (MEMORIA_DIR / "memoria_activation_client.cc").read_text(encoding="utf-8")
     )
@@ -238,3 +227,25 @@ def test_activation_clear_only_on_success(tool: pathlib.Path) -> None:
     assert if_erase_success > 0, "Caller must check erase result"
     assert handler_body.find(clear_call, if_erase_success) < handler_body.find("} else", if_erase_success), \
         "activation_v clear must be conditional on erase success"
+
+
+def test_erase_uses_only_narrow_nvs_apis_and_never_writes_identity() -> None:
+    """Lock the erase module's API surface: only nvs_open/erase_key/commit/close.
+
+    Forbidden APIs are absent from tests/erase_host headers: nvs_erase_all,
+    esp_partition_erase_range, esp_flash_erase_region, nvs_set_*, nvs_open_from_partition.
+
+    The identity_guard scan already confirms the overlay passes with no allowlist additions,
+    so this focuses on the source-level lock that the module never attempts nvs_erase_all or
+    ranged flash erase. The identity partition is protected by the stub's namespace tracking.
+    """
+    impl = ERASE_SOURCE.read_text(encoding="utf-8")
+
+    assert "nvs_erase_all" not in impl
+    assert "nvs_flash_erase" not in impl
+    assert "esp_partition_erase" not in impl
+    assert "esp_flash_erase" not in impl
+    assert "nvs_set_" not in impl
+    assert "nvs_open_from_partition" not in impl
+    assert "memoria_identity" in impl, "Header doc must mention it's preserved"
+    assert impl.count("memoria_identity") == 1, "Only in the header doc comment"
