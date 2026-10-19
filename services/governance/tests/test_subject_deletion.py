@@ -51,7 +51,13 @@ class _Archive:
     ) -> tuple[ObjectRef, ...]:
         return (_ref("blob-e1"),) if account_id == "parent" and "e1" in event_ids else ()
 
-    async def delete_events(self, *, account_id: str, event_ids: tuple[str, ...]) -> dict[str, int]:
+    async def delete_events(
+        self,
+        *,
+        account_id: str,
+        event_ids: tuple[str, ...],
+        subject_id: str | None = None,
+    ) -> dict[str, int]:
         if self.fail_delete_once:
             self.fail_delete_once = False
             raise RuntimeError("database went away")

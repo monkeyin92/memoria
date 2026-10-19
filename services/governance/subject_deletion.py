@@ -619,14 +619,17 @@ class SubjectDeletionService:
                 await checkpoint("objects_deleted")
 
             if due("archive_rows_deleted"):
-                for account_id, events in (
-                    (scope.account_id, lineage.owner_events),
-                    (scope.subject_id, lineage.subject_account_events),
+                # The owner call also collects claims about the child whose
+                # evidence is the parent's; it must run even when the child has
+                # no evidence of their own left.
+                for account_id, events, subject_id in (
+                    (scope.account_id, lineage.owner_events, scope.subject_id),
+                    (scope.subject_id, lineage.subject_account_events, None),
                 ):
-                    if not events:
+                    if not events and subject_id is None:
                         continue
                     counts = await self._archive.delete_events(
-                        account_id=account_id, event_ids=events
+                        account_id=account_id, event_ids=events, subject_id=subject_id
                     )
                     for table, count in counts.items():
                         progress[f"archive.{table}"] = progress.get(f"archive.{table}", 0) + count

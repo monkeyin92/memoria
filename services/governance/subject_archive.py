@@ -19,6 +19,10 @@ The subject's own persona (traits, ``speech_style_stats``, ``persona_versions``)
 is keyed by subject since 2026-09-26 and removed by the saga's
 ``persona_forgotten`` step through the persona engine.
 
+Claims about the child whose source evidence belongs to a parent are collected
+through ``memory_claims.about_subject_id``; their search documents and vectors
+follow the claim ids, while the parent's evidence and own claims stay.
+
 Not covered (no row-level lineage to follow): ``digital_self_versions``
 snapshots and ``entity_ids`` arrays that may still name a deleted person.
 """
@@ -182,8 +186,13 @@ def _self_model_steps() -> tuple[tuple[_Step, ...], tuple[_Step, ...]]:
     return collects, writes
 
 
-def _delete_plan() -> tuple[_Step, ...]:
+def _delete_plan(*, subject: bool = False) -> tuple[_Step, ...]:
     self_model_collects, self_model_writes = _self_model_steps()
+    claim_filter = "source_event_id IN :ids OR review_event_id IN :ids"
+    if subject:
+        # A parent's turn can carry a claim about the child; its evidence is
+        # the parent's, so lineage alone never reaches it.
+        claim_filter += " OR about_subject_id = :subject"
     return (
         # -- collect every projection id citing a doomed event ------------------
         _collect("episodes", "episode_evidence", "episode_id", "source_event_id IN :ids"),
@@ -198,7 +207,7 @@ def _delete_plan() -> tuple[_Step, ...]:
             "claims",
             "memory_claims",
             "claim_id",
-            "source_event_id IN :ids OR review_event_id IN :ids",
+            claim_filter,
         ),
         _collect("knowledge", "knowledge_items", "knowledge_id", "source_event_id IN :ids"),
         _collect("persons", "person_entities", "person_id", "source_event_id IN :ids"),
@@ -306,6 +315,29 @@ def _remaining_checks(*, subject: bool) -> tuple[_Write, ...]:
         count(_BLOBS, _BLOBS, "evidence_event_id IN :ids"),
         count(_TRANSCRIPTS, _TRANSCRIPTS, "evidence_event_id IN :ids"),
         count("memory_compile_receipts", "memory_compile_receipts", "event_id IN :ids"),
+        *(
+            (
+                count(
+                    "memory_claims.about_subject_id",
+                    "memory_claims",
+                    "about_subject_id = :subject",
+                ),
+                count(
+                    "memory_search_documents.about_subject",
+                    "memory_search_documents",
+                    "item_id IN (SELECT claim_id FROM memory_claims"
+                    " WHERE account_id = :acct AND about_subject_id = :subject)",
+                ),
+                count(
+                    "memory_vector_documents.about_subject",
+                    "memory_vector_documents",
+                    "item_id IN (SELECT claim_id FROM memory_claims"
+                    " WHERE account_id = :acct AND about_subject_id = :subject)",
+                ),
+            )
+            if subject
+            else ()
+        ),
         *(count(table, table, "source_event_id IN :ids") for table in _SOURCE_TABLES),
         *(
             count(f"{table}.{column}", table, f"{column} IN :ids")
@@ -464,18 +496,28 @@ class PostgresSubjectArchive(PostgresAccountRepository):
             await connection.close()
         return tuple(_object_ref(account_id, row) for row in rows)
 
-    async def delete_events(self, *, account_id: str, event_ids: tuple[str, ...]) -> dict[str, int]:
+    async def delete_events(
+        self,
+        *,
+        account_id: str,
+        event_ids: tuple[str, ...],
+        subject_id: str | None = None,
+    ) -> dict[str, int]:
         account_id, ids = _account(account_id), _event_ids(event_ids)
-        if not ids:
+        if subject_id is not None and (not subject_id.strip() or len(subject_id) > 128):
+            raise ValueError("subject_id must be a bounded non-empty id")
+        if not ids and subject_id is None:
             return {}
-        plan = _delete_plan()
+        plan = _delete_plan(subject=subject_id is not None)
         counts: dict[str, int] = {}
         connection = await asyncpg.connect(self._dsn)
         try:
             async with connection.transaction():
                 await self._scope(connection, account_id)
                 await connection.execute("SELECT set_config('app.self_model_delete', 'true', true)")
-                run = _PostgresRun(connection, {"acct": account_id})
+                run = _PostgresRun(
+                    connection, {"acct": account_id, "subject": subject_id or ""}
+                )
                 run.sets = {name: set() for name in _set_names(plan)}
                 run.sets["ids"] = set(ids)
                 for step in plan:

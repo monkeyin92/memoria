@@ -11,14 +11,17 @@ import re
 import shutil
 import subprocess
 import time
+import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 from urllib.parse import unquote, urlsplit, urlunsplit
 
 import asyncpg
 
+from services.archive.claim_subjects import BoundChildSubjectIds
 from services.archive.domain import EvidenceEvent
 from services.archive.memory_domain import MemoryEmbedder, MemoryExtractor
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
@@ -540,6 +543,7 @@ async def rebuild_postgres_memory_projections(
     extractor: MemoryExtractor | None = None,
     embedder: MemoryEmbedder | None = None,
     require_vector: bool = False,
+    bound_child_subject_ids: BoundChildSubjectIds | None = None,
 ) -> ProjectionRebuildReport:
     """Rebuild derived projections with the same components as the serving runtime."""
 
@@ -556,9 +560,13 @@ async def rebuild_postgres_memory_projections(
         embedder=embedder,
         require_vector=require_vector,
         evidence_subject_category_resolver=stamped_subject_category,
+        # A rebuild may run after a restore with no identity store; a caller
+        # that has one injects it so recompiled claims land on their child.
+        bound_child_subject_ids=bound_child_subject_ids,
     )
     connection = await asyncpg.connect(dsn)
     skill_account_ids: tuple[str, ...] = ()
+    about_subject_by_claim: dict[uuid.UUID, str] = {}
     try:
         present = await _public_tables(connection)
         projections = tuple(table for table in _PROJECTION_TABLES if table in present)
@@ -576,6 +584,14 @@ async def rebuild_postgres_memory_projections(
                 "memory projection rebuild requires a maintenance role that bypasses RLS"
             )
         await catalog.initialize()
+        if "memory_claims" in present:
+            about_subject_by_claim = {
+                cast(uuid.UUID, row["claim_id"]): str(row["about_subject_id"])
+                for row in await connection.fetch(
+                    "SELECT claim_id, about_subject_id FROM memory_claims"
+                    " WHERE about_subject_id IS NOT NULL"
+                )
+            }
         protected_identity_projections = (
             {
                 "person_entities",
@@ -653,6 +669,13 @@ async def rebuild_postgres_memory_projections(
         await catalog.close()
     connection = await asyncpg.connect(dsn)
     try:
+        if about_subject_by_claim:
+            # Recompilation may run without identity; keep the association the
+            # deleted projection rows carried before the rebuild.
+            await connection.executemany(
+                "UPDATE memory_claims SET about_subject_id = $2 WHERE claim_id = $1",
+                list(about_subject_by_claim.items()),
+            )
         incomplete = int(
             await connection.fetchval(
                 """

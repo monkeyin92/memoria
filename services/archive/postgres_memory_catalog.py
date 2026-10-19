@@ -15,6 +15,12 @@ from typing import Any, Literal, cast
 import asyncpg
 
 from services.archive import memory_lexical_sql as lexical_sql
+from services.archive.claim_subjects import (
+    BoundChildSubjectIds,
+    bound_children,
+    claim_about_subject,
+    confirmed_evidence_subject,
+)
 from services.archive.domain import EvidenceEvent, EvidenceNotFoundError
 from services.archive.episode_consolidator import (
     EpisodeCandidate,
@@ -71,16 +77,6 @@ from services.common.evidence_policy import contribution_for
 from services.common.redaction import redact_pii
 
 _SINGLE_VALUE_PREDICATES = SINGLE_VALUE_PREDICATES
-
-
-def _confirmed_evidence_subject(event: EvidenceEvent) -> str | None:
-    """The speaker the evidence actually names, or None when it names nobody.
-
-    A blank subject stays unclaimed; a named subject folds only against its own lineage.
-    """
-
-    subject_id = event.subject_id.strip() if isinstance(event.subject_id, str) else ""
-    return subject_id or None
 
 
 def _bind_dollar(parameters: list[Any]) -> Callable[[str], str]:
@@ -205,6 +201,7 @@ class PostgresMemoryCatalog:
         evidence_subject_category_resolver: (
             Callable[[EvidenceEvent], str | None | Awaitable[str | None]] | None
         ) = None,
+        bound_child_subject_ids: BoundChildSubjectIds | None = None,
         capture_evidence_projector: Callable[[EvidenceEvent], Awaitable[bool]] | None = None,
         outbox_lease_s: float = 300.0,
         outbox_retry_base_s: float = 2.0,
@@ -244,6 +241,7 @@ class PostgresMemoryCatalog:
         self._evidence_subject_category_resolver = evidence_subject_category_resolver or (
             lambda event: self._subject_category_resolver(event.account_id)
         )
+        self._bound_child_subject_ids = bound_child_subject_ids
         self._capture_evidence_projector = capture_evidence_projector
         self._outbox_lease_s = outbox_lease_s
         self._outbox_retry_base_s = outbox_retry_base_s
@@ -670,6 +668,8 @@ class PostgresMemoryCatalog:
         event: EvidenceEvent,
         extraction: MemoryExtraction,
     ) -> None:
+        evidence_subject_id = confirmed_evidence_subject(event)
+        bound_child_ids = await bound_children(self._bound_child_subject_ids, event.account_id)
         person_ids: dict[str, uuid.UUID] = {}
         for person in extraction.people:
             person_id = _stable_uuid("person", event.account_id, person.canonical_key)
@@ -741,9 +741,7 @@ class PostgresMemoryCatalog:
             )
 
         for index, relationship in enumerate(extraction.relationships):
-            person_id = person_ids.get(relationship.person_key) or _stable_uuid(
-                "person", event.account_id, relationship.person_key
-            )
+            person_id = person_ids.get(relationship.person_key) or _stable_uuid("person", event.account_id, relationship.person_key)
             await connection.execute(
                 """
                 INSERT INTO relationships (
@@ -772,6 +770,7 @@ class PostgresMemoryCatalog:
                 for key in sorted(entity_keys)
             )
             sensitivity = _sensitivity(claim.sensitive_domain)
+            about_subject_id = await claim_about_subject(connection, account_id=event.account_id, evidence_subject_id=evidence_subject_id, subject_key=claim.subject_key, bound_child_ids=bound_child_ids)
             await connection.execute(
                 """
                 INSERT INTO memory_claims (
@@ -779,10 +778,10 @@ class PostgresMemoryCatalog:
                     subject_key, predicate, value, confidence, sensitive_domain,
                     entity_ids, extractor_version, source_event_id, valid_at,
                     valid_from, valid_to, observed_at, stability, salience,
-                    sensitivity, conflict_state
+                    sensitivity, conflict_state, about_subject_id
                 ) VALUES (
                     $1, $2, $3, $4, 'semantic', $5, $6, $7, $8, $9, $10,
-                    $11, $12, $13, $14, $15, $16, $17, $18, $19, 'none'
+                    $11, $12, $13, $14, $15, $16, $17, $18, $19, 'none', $20
                 )
                 ON CONFLICT DO NOTHING
                 """,
@@ -805,6 +804,7 @@ class PostgresMemoryCatalog:
                 confidence,
                 claim.salience,
                 sensitivity,
+                about_subject_id,
             )
             await self._insert_search_document(
                 connection,
@@ -834,7 +834,7 @@ class PostgresMemoryCatalog:
             # A named subject folds only its own lineage.  A blank subject
             # folds only other unclaimed rows: passing no subject here would
             # mark the account owner's claims as conflicts too.
-            claim_subject_id = _confirmed_evidence_subject(event)
+            claim_subject_id = confirmed_evidence_subject(event)
             await self._refresh_claim_conflicts(
                 connection,
                 account_id=event.account_id,
@@ -1027,7 +1027,7 @@ class PostgresMemoryCatalog:
         # conflict with other unclaimed rows, but it must not inherit a value
         # that already belongs to a named subject, and it must not be stored
         # as the account owner: NULL means "no confirmed speaker".
-        subject_id = _confirmed_evidence_subject(event) or ""
+        subject_id = confirmed_evidence_subject(event) or ""
         lineage = (
             "(SELECT lineage.subject_id FROM archive_evidence_events lineage"
             " WHERE lineage.event_id = memory_claims.source_event_id"
