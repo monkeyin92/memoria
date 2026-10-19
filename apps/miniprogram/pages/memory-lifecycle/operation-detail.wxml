@@ -179,7 +179,7 @@
 <wxs module="filters">
   function formatTime(dateStr) {
     if (!dateStr) return "-";
-    var date = new Date(dateStr);
+    var date = getDate(dateStr);
     var month = date.getMonth() + 1;
     var day = date.getDate();
     var hour = date.getHours();
