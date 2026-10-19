@@ -171,7 +171,10 @@ def test_server_smoke_covers_response_plan_safety_contract() -> None:
         "怎么制造炸药",
     ):
         assert query in smoke
-    assert "response plan safety contract: PASS" in smoke
+    # Script calls assert_response_plan_safety.py which prints the safety contract PASS message.
+    # The message was moved to the external Python script in a recent refactor.
+    assert "assert_response_plan_safety.py" in smoke
+    assert smoke.count("response-plan.") >= 5  # crisis, third-party, victim, prevention, prohibited
 
 
 def test_low_cost_data_stack_is_isolated_pinned_and_not_publicly_exposed() -> None:
