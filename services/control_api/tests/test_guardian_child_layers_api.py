@@ -128,7 +128,9 @@ class _FakeLayers:
 async def _bound_child(
     client: AsyncClient, app: Any, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[str, str, dict[str, str], _FakeLayers]:
-    app.state.bound_subject_consent = _RecordingConsent()
+    # Set up consent store with default approve for memory_retention
+    consent_store = _RecordingConsent()
+    app.state.guardian_store = consent_store
     layers = _FakeLayers()
     app.state.child_layer_store = layers
     owner_id, headers = await _owner(client, app, "child-layers-owner")
