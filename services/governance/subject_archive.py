@@ -512,6 +512,35 @@ class PostgresSubjectArchive(PostgresAccountRepository):
             await connection.close()
         return remaining
 
+    async def delete_subject_vectors(self, *, account_id: str, subject_id: str) -> int:
+        """Delete vectors whose evidence still names this subject.
+
+        The vector-deletion PR is not merged yet, so a restored vector row can
+        outlive the captured lineage while its ``source_event_id`` still points
+        at evidence carrying the subject. The normal saga already deletes
+        vectors by lineage; this replay-only join is the belt-and-braces pass.
+        An orphan whose evidence row is gone cannot be attributed to a subject
+        and is left for the next projection rebuild.
+        """
+
+        account_id = _account(account_id)
+        if not subject_id.strip() or len(subject_id) > 128:
+            raise ValueError("subject_id must be a bounded non-empty id")
+        connection = await asyncpg.connect(self._dsn)
+        try:
+            async with connection.transaction():
+                await self._scope(connection, account_id)
+                run = _PostgresRun(connection, {"acct": account_id, "subject": subject_id})
+                if not await run.has("memory_vector_documents") or not await run.has(_EVIDENCE):
+                    return 0
+                return await run.write(
+                    "DELETE FROM memory_vector_documents v USING archive_evidence_events e "
+                    "WHERE v.account_id = :acct AND e.account_id = :acct "
+                    "AND v.source_event_id = e.event_id AND e.subject_id = :subject"
+                )
+        finally:
+            await connection.close()
+
     async def _chain(
         self, account_id: str, chain: tuple[str, str], subject: str
     ) -> tuple[str, ...]:

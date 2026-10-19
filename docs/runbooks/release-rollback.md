@@ -38,7 +38,168 @@ Secret 仅在 root-only `/etc/memoria-*.env`（root:root 0600）；候选从真�
 - **数据层**：两台机上 `memoria-data` 项目都是从 `releases/20260827-architecture-split-v1/infra` 起的。`current/infra` 里的同名 compose 多一个 `011-control-schema.sql` 的 initdb 挂载（只在空库首次初始化时用）；在已有数据的库上用 `current/infra` 去 `up -d` 会让 compose 判定配置变了而重建 postgres 容器（推断，没试），不要顺手做。
 - **WAL 归档已关（P1-08，2026-10-06）**：`infra/memoria-data.production.yml` 的 postgres 参数是 `archive_mode=off`，不再有 `archive_timeout` / `archive_command`。原先每 5 分钟强制切一个 16 MB 段并拷进同盘的 `memoria-data_postgres_wal_archive` 卷：没有 base backup 可接，没有恢复价值，旧机实测每天涨约 0.6–1.1 GB。恢复靠每次整栈发布前 `freeze` 的 `memoria-pre-<tag>.dump`（见「数据层、备份与恢复」）。改这个参数必须重建 postgres 容器（`archive_mode` 要重启，`ALTER SYSTEM` 改不了：compose 的 `-c` 参数优先）；线上 compose 与仓库的同步和卷的清理是维护窗口里的一步，结果记在 HANDOFF。要重新启用（例如接异地备份 profile）：在 compose 里把 `archive_mode=on`、`archive_timeout=300s`、`archive_command=test ! -f /wal-archive/%f && cp %p /wal-archive/%f` 一并恢复，并保持该卷 `999:999 0700`，否则 `archive_command` 一直失败；同时要有 base backup 和按它裁剪的策略。
 - **磁盘（最近一次只读核验：2026-10-10 23:31）**：40GB盘、已用25GB（65%）、剩14GB；09:40既有清理删掉20261007旧镜像tag/incoming/源码树、保留`.cutover`。`incoming/`保留`20261009-textless-spare-v1`、`20261010-stale-interim-v1`和`20261010-n8-endpoint-diag-v1`三个目录，镜像保留当前与一个可运行回滚；详细收据见`docs/acceptance/run-20261010-verify/findings.md`。WAL归档关掉后主要增长是每次发布约4–5GB（镜像+包）与库本身；不要手删`pg_wal`。`memoria-disk-patrol.timer`只在75%/85%告警、不自动清理，生产清理另授权。
-- **systemd**：`memoria-readiness-refresh.timer`（12 小时一次提供方冒烟 + readiness 标记；迁移后 01:36:57 跑过一次，从新机出口 PASS）与 `memoria-disk-patrol.timer` 已在新机启用。`memoria-freeze-dump-cleanup.timer`（每日）应在下一次整栈发布时一并安装：只删 `/opt/memoria/releases/*/.cutover/` 下超过 3 天的 `memoria-pre-*.dump` 与 `memoria.pre-*.sqlite3`。`memoria-log-rotate.timer`（每小时轮转 `/var/log/memoria`）与 rsyslog drop-in `/etc/rsyslog.d/30-memoria.conf` 在第一次带 `logging:` 块的整栈发布里、`env` 之前安装，见「容器日志落盘」。
+- **systemd**：`memoria-readiness-refresh.timer`（12 小时一次提供方冒烟 + readiness 标记；迁移后 01:36:57 跑过一次，从新机出口 PASS）与 `memoria-disk-patrol.timer` 已在新机启用。`memoria-freeze-dump-cleanup.timer`（每日）应在下一次整栈发布时一并安装：只删 `/opt/memoria/releases/*/.cutover/` 下超过 3 天的 `memoria-pre-*.dump` 与 `memoria.pre-*.sqlite3`。`memoria-log-rotate.timer`（每小时轮转 `/var/log/memoria`）与 rsyslog drop-in `/etc/rsyslog.d/30-memoria.conf` 在第一次带 `logging:` 块的整栈发布里、`env` 之前安装，见「容器日志落盘」。`memoria-nightly-backup.timer`（每日 03:15）备份 PostgreSQL 与 SQLite 控制库到 `/var/lib/memoria/backups/nightly/`，只保留最近 7 天（详见下方「夜间数据库备份」）。
+
+## 夜间数据库备份
+
+### 夜间备份决策（2026-10-19 用户批准）
+
+- **为什么做**：WAL 归档已于 2026-10-06 关闭，此前只有发布 `freeze` 步骤的 `pg_dump`（保留 3 天），发布间隔内没有备份；主机 40 GB 盘与 pocketSparks 共享。
+- **关键决定**：
+  - 每日 03:15 CST 由 systemd timer 触发（`RandomizedDelaySec=5min`、`Persistent=true`）。
+  - 备份目录 `/var/lib/memoria/backups/nightly/`（`0700`），不放 release 目录，避免与 `cleanup_freeze_dumps.py` 的 3 天清理冲突。
+  - PostgreSQL 用 `pg_dump -Fc`，SQLite 用 Python `sqlite3` backup API；只备份 `memoria.sqlite3`（与 freeze 一致；`evolution`、`identity` 两个 SQLite 属已退役服务）。
+  - 文件名 `memoria-YYYYMMDD-HHMM.dump` 与 `control-YYYYMMDD-HHMM.sqlite3`。
+  - 只保留最近 7 天：`age_days <= 6` 保留，满 7 天（含周日）全删，不再有周日至 30 天的第二档。唯一例外是最新一份 dump 与最新一份 control 永远保留，即使已超过 7 天；这样备份连续失败一周以上也不会把最后一份删光。
+  - 最新一份 dump 或 control 超过 48 小时没更新时，`memoria-backup-freshness.timer`（每 6 小时）让 `memoria-backup-freshness.service` 进入 failed 并在 journal 打 `ALERT backup freshness:`。报警后必须在 7 天内修好备份并跑出一份新备份，否则「最多再留 7 天」的承诺不成立；修好后手动跑一次 `nightly_backup.sh`，再跑一次 `--check-freshness` 确认退出 0，并 `systemctl reset-failed memoria-backup-freshness.service`。
+  - 容量约 38-45 MB，按 7 份重算：单份 dump 约 4.4 MB（freeze 的 `memoria-pre-*.dump` 实测 4,422,836 B）×7 ≈ 31 MB，control 单份约 1-2 MB ×7 ≈ 7-14 MB。
+  - 可用空间 <1 GB 时跳过备份但仍做清理、退出 1；备份或校验失败退出 1。成功静默，失败看 `journalctl`。
+- **不选的方案**：重开 WAL 归档（磁盘 0.6-1.1 GB/天扛不住）；云托管数据库（MVP 阶段成本）；只靠发布 freeze（RPO 1-3 天太长）。本方案 RPO 最多 24 小时。
+- **未解决**：无异地备份；只有 systemd 单元 failed + journal 的新鲜度检查（`memoria-backup-freshness.timer` 每 6 小时跑一次，最新 dump 或 control 超过 48 小时未更新就让服务 failed），没有推送到手机或群，需要有人看 `systemctl --failed`；DB 到单次备份 >500 MB 或日增 >50 MB 时重评 WAL + base backup。
+- **验收**：手动跑一次成功；`pg_restore --list` 能列对象；timer 连续 3 天无失败；首日备份满 7 天后由第 8 天凌晨的清理删除；模拟磁盘不足时跳过并记日志。
+
+### 夜间备份安装与运维
+
+每日 03:15 CST 自动备份两个库到 `/var/lib/memoria/backups/nightly/`：
+- PostgreSQL：`memoria-<YYYYMMDD>-<HHMM>.dump`（pg_dump 自定义格式，约 4.4 MB）
+- SQLite 控制库：`control-<YYYYMMDD>-<HHMM>.sqlite3`（约 1-2 MB）
+
+保留策略：最近 7 天全保，满 7 天（含周日）全删。唯一例外是最新一份 dump 与最新一份 control 永远保留，即使已超过 7 天。总容量约 38-45 MB，按 7 份 dump（约 4.4 MB/份）+ 7 份 control（约 1-2 MB/份）估算。
+
+**安装（一次性，需授权）：**
+
+```bash
+# 1. 在生产主机上创建备份目录
+sudo install -d -m 0700 /var/lib/memoria/backups/nightly
+
+# 2. 从仓库复制脚本
+sudo install -d -m 0755 /opt/memoria/ops-tools
+sudo install -m 0700 scripts/nightly_backup.sh scripts/nightly_backup_retention.py /opt/memoria/ops-tools/
+
+# 3. 安装 systemd 单元
+sudo cp infra/memoria-nightly-backup.service /etc/systemd/system/
+sudo cp infra/memoria-nightly-backup.timer /etc/systemd/system/
+sudo cp infra/memoria-backup-freshness.service /etc/systemd/system/
+sudo cp infra/memoria-backup-freshness.timer /etc/systemd/system/
+
+# 4. 启用与启动定时任务
+sudo systemctl daemon-reload
+sudo systemctl enable memoria-nightly-backup.timer
+sudo systemctl start memoria-nightly-backup.timer
+sudo systemctl enable --now memoria-backup-freshness.timer
+
+# 5. 验证
+sudo systemctl status memoria-nightly-backup.timer
+sudo systemctl list-timers memoria-nightly-backup.timer
+```
+
+**监控与故障排查：**
+
+```bash
+# 查看最近备份运行状态
+sudo systemctl status memoria-nightly-backup.service
+
+# 查看完整日志
+sudo journalctl -u memoria-nightly-backup.service -n 100
+
+# 手动触发一次备份（测试）
+sudo /opt/memoria/ops-tools/nightly_backup.sh
+
+# 查看备份文件
+ls -lh /var/lib/memoria/backups/nightly/
+
+# 列出将要被删除的备份（dry-run）
+python3 /opt/memoria/ops-tools/nightly_backup_retention.py --backup-dir /var/lib/memoria/backups/nightly/
+
+# 手动检查备份新鲜度（全部新鲜退出 0，过期或缺失退出 2）
+sudo python3 /opt/memoria/ops-tools/nightly_backup_retention.py --backup-dir /var/lib/memoria/backups/nightly --check-freshness
+
+# 查看新鲜度检查状态与日志
+sudo systemctl status memoria-backup-freshness.service
+sudo journalctl -u memoria-backup-freshness.service
+```
+
+### 从备份恢复
+
+恢复顺序固定，不能跳步：
+
+1. **停流量。** 停 control-api 与设备/小程序写入，确认没有新的归档、记忆或删除请求；恢复和 replay 期间的新写入会让账本与数据再次分叉。
+2. **导出线上账本快照。** 在仍可读的线上控制库上导出 `status=completed` 的删除记录。快照含 `subject_id`/`account_id`，放 root 0700 目录、文件 0600，用完即删。stdout 只有计数。
+3. **恢复。** PostgreSQL 用夜间 `memoria-*.dump`；控制库是 SQLite 时再用 `control-*.sqlite3`。先按下面「恢复 PostgreSQL 到临时库验证」核对，再按授权恢复到生产库/文件。
+4. **合并快照并 replay。** `--ledger-snapshot` 先把快照里恢复后账本缺失的 completed 行插入（已存在的不重复插入，幂等），再跑完整删除 saga。stdout 只有 `merged`/`existing`/`replayed`/`incomplete` 计数，不打印 `subject_id`/`account_id`。
+5. **检查 `incomplete=0`。** 非零时脚本退出 1；不要恢复流量，先让删除 worker 续跑并重跑这一步。
+6. **删快照。** 用 `shred -u` 删文件并删临时目录。
+7. **恢复流量和投影重建。** 先 `python -m scripts.rebuild_memory_projections --confirm-rebuild`，再恢复流量。
+
+命令在 Control API 一次性容器里执行；镜像需含本分支的 `scripts/replay_subject_deletions.py`，旧镜像按本节末尾的挂载说明处理：
+
+~~~bash
+SNAPSHOT_DIR=/root/memoria-restore
+sudo install -d -m 0700 "$SNAPSHOT_DIR"
+
+# 2. 导出线上账本（只读；stdout 只有 {"exported": N}）
+docker compose -f docker-compose.production.yml --profile media-runtime run --rm --no-deps \
+  --user 0:0 -v "$SNAPSHOT_DIR:/snapshot" \
+  control-api /app/.venv/bin/python -m scripts.replay_subject_deletions \
+  --export-ledger /snapshot/subject-deletions.json
+
+# 3. 恢复 PostgreSQL 与（如使用）SQLite 控制库（按授权执行；恢复前停 control-api）
+
+# 4. 合并快照并 replay（stdout 只有计数；incomplete 非零时退出码 1）
+docker compose -f docker-compose.production.yml --profile media-runtime run --rm --no-deps \
+  -v "$SNAPSHOT_DIR:/snapshot:ro" \
+  control-api /app/.venv/bin/python -m scripts.replay_subject_deletions \
+  --ledger-snapshot /snapshot/subject-deletions.json --confirm-replay
+
+# 6. 删快照
+sudo shred -u "$SNAPSHOT_DIR/subject-deletions.json"
+sudo rmdir "$SNAPSHOT_DIR"
+~~~
+
+**线上账本不可用时（例如整库损坏才恢复）：** 导出这一步做不了，只能使用备份时刻的账本。备份之后完成、只存在于线上账本里的删除不会出现在恢复后的账本中，replay 覆盖不到，这些数据会复活。这是已知缺口，不要声称已经覆盖；在恢复记录里写明备份时间、无法导出的原因和这段窗口，并按合规流程人工核查/补删。只要线上控制库还能读，就不要走这条路径。
+
+**daily_summaries。** 该表在控制库按 `user_id`（账户）存，没有 `subject_id`。subject 删除 saga 不删它。孩子没有独立账户时，摘要挂在家长账户下，subject 删除不涉及该表；孩子有独立账户时，`guardian.py` 的删除路径走 `delete_account(minor_user_id)`，由 `profiles` 的 `ON DELETE CASCADE` 删除该账户的摘要。replay 同样不操作该表。
+
+**向量。** replay 的 saga 按捕获的 lineage 删除 `memory_vector_documents`（`source_event_id IN` 或合并条目的 `item_id IN`）；replay 结束后还会按 `subject` 与 `archive_evidence_events.subject_id` 的 join 再删一次，作为未合向量删除 PR 的兜底。证据行已经不在的孤儿向量无法按 subject 归属，留给下一次投影重建。
+
+**恢复 PostgreSQL 到临时库验证：**
+
+```bash
+sudo bash <<'RESTORE'
+set -u
+# 选择一份备份（备份目录是 root 0700，重定向必须在 root shell 里做，不能写在 sudo 外面）
+BACKUP=/var/lib/memoria/backups/nightly/memoria-20261019-0315.dump
+q() { docker exec memoria-data-postgres-1 psql -U memoria_admin -d "$1" -Atc "$2"; }
+
+# 恢复到一个临时库，不碰生产库 memoria（库里没有 postgres 角色，用 memoria_admin）
+q postgres "create database test_restore owner memoria_admin"
+docker exec -i memoria-data-postgres-1 pg_restore -U memoria_admin -d test_restore --no-owner < "$BACKUP"
+echo "pg_restore exit=$?"
+
+# 对照表数（2026-10-19 实测：恢复 168 张，线上 168 张）
+q test_restore "select count(*) from information_schema.tables where table_schema = 'public'"
+q memoria      "select count(*) from information_schema.tables where table_schema = 'public'"
+
+# 清理临时库
+q postgres "drop database test_restore"
+RESTORE
+```
+
+**恢复 SQLite 控制库到临时文件：**
+
+```bash
+# 选择一份备份
+BACKUP=/var/lib/memoria/backups/nightly/control-20261019-0315.sqlite3
+
+# 只读打开，做完整性检查并列出各表行数（主机没有 sqlite3 命令行，用 python3）
+sudo python3 - "$BACKUP" <<'PYEOF'
+import sqlite3, sys
+c = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
+print("integrity_check:", c.execute("PRAGMA integrity_check").fetchone()[0])
+for (name,) in c.execute("select name from sqlite_master where type = 'table' order by 1"):
+    print(name, c.execute(f'select count(*) from "{name}"').fetchone()[0])
+PYEOF
+```
 
 ## 发布前门禁
 
@@ -304,13 +465,9 @@ sudo systemctl enable --now memoria-freeze-dump-cleanup.timer
 
 恢复集合须含 PostgreSQL base/WAL、MinIO versioned objects、SQLite 兼容快照、root-only env、manifest/回执。用 `scripts/run_offsite_restore_drill.sh` 在隔离环境校验备份、对象清单/哈希、外键和应用读取；不能拿缓存当权威。
 
-恢复后、恢复流量和重建投影之前，必须先重放已完成的按使用人删除：删除台账在控制库（切换前是 SQLite 文件，切换后在 PostgreSQL），使用人数据在 PostgreSQL/MinIO，恢复数据层会让已删除的孩子/老人数据复活而台账仍显示 completed。用一次性 Control API 容器执行（只输出计数，`incomplete` 非零则退出码 1，未完成项由删除 worker 续跑）：
+恢复后、恢复流量和重建投影之前，必须先按上文「从备份恢复」的完整顺序做：停流量 → 从线上控制库导出 completed 删除快照 → 恢复数据层 → `--ledger-snapshot` 合并快照并 replay → 确认 `incomplete=0` → 删快照 → 重建投影 → 恢复流量。只跑 `python -m scripts.replay_subject_deletions --confirm-replay` 只覆盖恢复后账本里仍然存在的 completed 行；备份之后才完成的删除，其账本行也随备份回滚了，必须靠恢复前导出的快照补回来。
 
-~~~bash
-python -m scripts.replay_subject_deletions --confirm-replay
-~~~
-
-**镜像里有没有这个脚本**：`infra/Dockerfile.control-api` 与 `scripts/delta_build_images.sh` 从 2026-10-05 的端口参数化改动起会复制 `scripts/replay_subject_deletions.py`，之后构建的 Control API 镜像可直接运行上面的命令（`20261005-subject-candidates-v1` 的线上容器里已确认有 `/app/scripts/replay_subject_deletions.py`，`python -m scripts.replay_subject_deletions --help` 能解析参数）；更早的镜像（含回滚目标 `20261004-first-warm-v1`）没有它，命令报 `No module named scripts.replay_subject_deletions`，可以从发布树把脚本只读挂进一次性容器：在 `docker compose run`（或 `docker run`）上加 `-v <发布树>/scripts/replay_subject_deletions.py:/app/scripts/replay_subject_deletions.py:ro`。2026-10-05 只在新机上用 `docker run` 验证过带挂载的 `--help` 能解析参数；带 `--confirm-replay` 的真实重放（会导入 `services.control_api.app.main.create_app` 并改库）没有跑过，首次使用前先在隔离的恢复库上试。
+**镜像里有没有这个脚本**：`infra/Dockerfile.control-api` 与 `scripts/delta_build_images.sh` 从 2026-10-05 的端口参数化改动起会复制 `scripts/replay_subject_deletions.py`；本分支新增的 `--export-ledger` 与 `--ledger-snapshot` 只存在于包含本分支代码的镜像。更早的镜像（含回滚目标 `20261004-first-warm-v1`）没有这个模块，命令报 `No module named scripts.replay_subject_deletions`，可以从发布树把脚本只读挂进一次性容器：在 `docker compose run`（或 `docker run`）上加 `-v <发布树>/scripts/replay_subject_deletions.py:/app/scripts/replay_subject_deletions.py:ro`。2026-10-05 只在新机上用 `docker run` 验证过带挂载的 `--help` 能解析参数；带 `--confirm-replay` 的真实重放（会导入 `services.control_api.app.main.create_app` 并改库）没有跑过，首次使用前先在隔离的恢复库上试。
 
 然后再恢复不可变 evidence/claims 的投影，在 Control API 镜像中重建：
 
