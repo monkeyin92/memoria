@@ -1,4 +1,4 @@
-"""Vector cleanup reaches the HTTP exits: guardian retract and unbind purge."""
+"""Vector cleanup reaches the HTTP exits: guardian retract, archive correction, unbind purge."""
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from services.archive.domain import EvidenceEvent
 from services.archive.memory_domain import MemorySearchQuery
+from services.archive.memory_extractor import RuleBasedMemoryExtractor
+from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
 from services.control_api.app.main import create_app
 from services.control_api.tests.test_bound_subject_binding import (
     _bind,
@@ -33,6 +35,18 @@ class _Embedder:
     async def embed(self, text: str) -> tuple[float, ...]:
         del text
         return (1.0, 0.0)
+
+
+class _CorrectionEmbedder:
+    """The replaced wording and the corrected wording land on opposite sides."""
+
+    model = "vector-correction-api-test-v1"
+    dimensions = 2
+
+    async def embed(self, text: str) -> tuple[float, ...]:
+        if "蓝色" in text:
+            return (1.0, 0.0)
+        return (0.0, 1.0)
 
 
 async def _bound_child(
@@ -94,6 +108,38 @@ def _vector_count(owner_id: str, item_id: str) -> int:
         (owner_id, item_id),
     )
     return int(rows[0][0])
+
+
+async def _seed_owner_claim(app: Any, owner_id: str, event_id: str, text: str) -> str:
+    catalog = app.state.memory_catalog
+    catalog._embedder = _CorrectionEmbedder()
+    catalog._evidence_subject_category_resolver = lambda _event: "adult"
+    await app.state.life_archive.record(
+        EvidenceEvent(
+            event_id=event_id,
+            account_id=owner_id,
+            subject_id=owner_id,
+            session_id="vector-correction-session",
+            turn_id=1,
+            generation_id=1,
+            event_type="speech.utterance_finalized",
+            occurred_at=datetime.now(UTC),
+            speaker_class="owner",
+            source="vector-correction-test",
+            payload={
+                "text": text,
+                "interaction_mode": "companion",
+                "prompt_kind": "spontaneous",
+                "owner_projection_eligible": True,
+            },
+        )
+    )
+    report = await catalog.compile_pending()
+    assert report.failed_events == 0, report
+    queue = await catalog.review_queue(account_id=owner_id, subject_id=owner_id)
+    matches = [item for item in queue if item.source_event_id == event_id]
+    assert matches, "no claim compiled from the seeded turn"
+    return matches[0].item_id
 
 
 @pytest.mark.asyncio
@@ -263,3 +309,57 @@ async def test_guardian_confirm_restores_the_childs_vector_for_the_next_turn(
             (owner_id, claim_id),
         )
         assert vectors == [("vector-delete-api-test-v1", 2)]
+
+
+@pytest.mark.asyncio
+async def test_archive_correction_reembeds_before_the_next_context_query(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner_id, headers = await _owner(client, app, "vector-correction-owner")
+        claim_id = await _seed_owner_claim(
+            app, owner_id, "vector-correction-turn", "我喜欢蓝色。"
+        )
+        catalog = app.state.memory_catalog
+        query = MemorySearchQuery(
+            account_id=owner_id,
+            subject_id=owner_id,
+            speaker_class="owner",
+            text="天边的火烧云",
+            kinds=("claim",),
+            include_candidates=False,
+        )
+        assert (await catalog.context(query)).items == ()
+
+        started = time.monotonic()
+        corrected = await client.post(
+            f"/v1/archive/memories/{claim_id}/review",
+            headers=headers,
+            json={"action": "correct", "corrected_value": "晚霞是红色。"},
+        )
+        recalled = await catalog.context(query)
+        elapsed = time.monotonic() - started
+
+        dsn = app.state.settings.archive_database_url.get_secret_value()
+        lexical_only = PostgresMemoryCatalog(
+            dsn,
+            extractor=RuleBasedMemoryExtractor(),
+            embedder=None,
+            evidence_subject_category_resolver=lambda _event: "adult",
+        )
+        await lexical_only.initialize()
+        try:
+            lexical = await lexical_only.context(query)
+        finally:
+            await lexical_only.close()
+
+    assert corrected.status_code == 200, corrected.text
+    assert corrected.json()["value"] == "晚霞是红色。"
+    assert elapsed < 120, f"correction to recall took {elapsed:.3f}s"
+    assert [item.item_id for item in recalled.items] == [claim_id]
+    assert recalled.items[0].snippet == "晚霞是红色。"
+    # The same query has no lexical overlap with the corrected row, so only
+    # the vector written by the correction can recall it.
+    assert lexical.items == ()

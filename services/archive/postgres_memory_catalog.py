@@ -52,7 +52,9 @@ from services.archive.memory_lexical_sql import search_terms
 from services.archive.memory_vector_cleanup import (
     ensure_vector_index,
     forget_claim_vectors,
+    has_correction_review,
     restore_claim_vector,
+    upsert_document_vector,
 )
 from services.archive.memory_write_policy import (
     SINGLE_VALUE_PREDICATES,
@@ -1504,44 +1506,20 @@ class PostgresMemoryCatalog:
             """,
             [(document_id, account_id, source_event_id) for source_event_id in source_event_ids],
         )
-        if self._vector_enabled and self._embedder is not None:
-            try:
-                embedding = await self._embedder.embed(
-                    " ".join(part for part in (title, body) if part)
-                )
-            except MemoryEmbeddingUnavailableError:
-                await connection.execute(
-                    """
-                    DELETE FROM memory_vector_documents
-                    WHERE item_id = $1 AND account_id = $2
-                      AND embedding_model = $3 AND embedding_dimensions = $4
-                    """,
-                    item_id,
-                    account_id,
-                    self._embedder.model,
-                    self._embedder.dimensions,
-                )
-                if self._fail_on_embedding_error:
-                    raise
-                return
-            vector = json.dumps(embedding, separators=(",", ":"))
-            await connection.execute(
-                """
-                INSERT INTO memory_vector_documents (
-                    item_id, account_id, embedding_model, embedding_dimensions,
-                    embedding, source_event_id
-                ) VALUES ($1, $2, $3, $4, $5::vector, $6)
-                ON CONFLICT (item_id, embedding_model, embedding_dimensions) DO UPDATE
-                SET embedding = EXCLUDED.embedding,
-                    source_event_id = EXCLUDED.source_event_id,
-                    created_at = now()
-                """,
-                item_id,
-                account_id,
-                self._embedder.model,
-                self._embedder.dimensions,
-                vector,
-                source_event_ids[0],
+        corrected = self._vector_enabled and kind == "claim" and await has_correction_review(
+            connection, item_id, account_id
+        )
+        if self._vector_enabled and self._embedder is not None and not corrected:
+            # A corrected claim is embedded by its review replay, not here.
+            await upsert_document_vector(
+                connection,
+                self._embedder,
+                item_id=item_id,
+                account_id=account_id,
+                source_event_id=source_event_ids[0],
+                title=title,
+                body=body,
+                fail_on_embedding_error=self._fail_on_embedding_error,
             )
 
     async def _record_receipt(
@@ -2072,6 +2050,7 @@ class PostgresMemoryCatalog:
                 review_event_id=review_event.event_id,
                 subject_id=command.subject_id,
                 restore_vector=command.action == "confirm",
+                replace_vector=command.action == "correct",
             )
         return ReviewedClaim(
             claim_id=command.claim_id,
@@ -2085,6 +2064,7 @@ class PostgresMemoryCatalog:
         connection: asyncpg.Connection,
         event: EvidenceEvent,
     ) -> None:
+        """Rebuild one review; a correction re-embeds and an older one never rewinds."""
         target_id = str(event.payload.get("target_id", ""))
         action = str(event.payload.get("action", ""))
         try:
@@ -2094,7 +2074,7 @@ class PostgresMemoryCatalog:
             raise ValueError("invalid memory review evidence") from exc
         row = await connection.fetchrow(
             """
-            SELECT value, source_event_id FROM memory_claims
+            SELECT value, source_event_id, review_event_id FROM memory_claims
             WHERE claim_id = $1 AND account_id = $2
             FOR UPDATE
             """,
@@ -2112,6 +2092,17 @@ class PostgresMemoryCatalog:
             value = str(event.payload.get("corrected_value", "")).strip()
             if not value:
                 raise ValueError("corrected memory value must not be blank")
+            applied = await connection.fetchrow(
+                "SELECT occurred_at FROM archive_evidence_events"
+                " WHERE event_id = $1 AND account_id = $2",
+                row["review_event_id"],
+                event.account_id,
+            )
+            if applied is not None and (
+                cast(datetime, applied["occurred_at"]),
+                str(row["review_event_id"]),
+            ) > (event.occurred_at, event.event_id):
+                return
         await self._write_review_projection(
             connection,
             account_id=event.account_id,
@@ -2122,6 +2113,7 @@ class PostgresMemoryCatalog:
             value=value,
             review_event_id=event.event_id,
             subject_id=event.subject_id,
+            replace_vector=action == "correct",
         )
 
     async def _write_review_projection(
@@ -2137,6 +2129,7 @@ class PostgresMemoryCatalog:
         review_event_id: str,
         subject_id: str | None = None,
         restore_vector: bool = False,
+        replace_vector: bool = False,
     ) -> None:
         source = await connection.fetchrow(
             """
@@ -2158,9 +2151,14 @@ class PostgresMemoryCatalog:
             account_id,
         )
         source_text = redact_pii(str(source_event["text"] or "") if source_event else "")[:240]
-        contextual_body = (
-            f"subject:{subject_key} predicate:{predicate} value:{value} context:{source_text}"
-        )[:8000]
+        corrected = replace_vector or await has_correction_review(
+            connection, claim_id, account_id
+        )
+        contextual_body = f"subject:{subject_key} predicate:{predicate} value:{value}"
+        if not corrected:
+            # Keep the replaced wording out of the body, lexical row and vector.
+            contextual_body += f" context:{source_text}"
+        contextual_body = contextual_body[:8000]
         episode_ids = await connection.fetch(
             """
             SELECT episode_id FROM episode_evidence
@@ -2249,8 +2247,9 @@ class PostgresMemoryCatalog:
             subject_id=subject_id,
         )
         await forget_claim_vectors(connection, status, claim_id, account_id, self._vector_enabled, review_event_id)
-        if restore_vector and status == "confirmed":
-            # Only an explicit user confirmation sets the flag; replay and policy do not.
+        if replace_vector or (restore_vector and status == "confirmed"):
+            # A correction replaces every model's copy; a confirmation only
+            # restores the one a retraction removed.
             await restore_claim_vector(
                 connection,
                 self._embedder,
@@ -2261,6 +2260,7 @@ class PostgresMemoryCatalog:
                 body=contextual_body,
                 vector_enabled=self._vector_enabled,
                 fail_on_embedding_error=self._fail_on_embedding_error,
+                replace_vectors=replace_vector,
             )
 
     @staticmethod

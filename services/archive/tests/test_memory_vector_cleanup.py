@@ -29,6 +29,8 @@ class _Embedder:
     dimensions = 2
 
     async def embed(self, text: str) -> tuple[float, ...]:
+        if "红色" in text or "晚霞" in text:
+            return (0.0, 1.0)
         if "蓝色" in text or "天空" in text:
             return (1.0, 0.0)
         return (0.0, 1.0)
@@ -131,6 +133,66 @@ async def _vector_count(connection: asyncpg.Connection, account_id: str, item_id
             item_id,
         )
     )
+
+
+async def _vector_text(
+    connection: asyncpg.Connection, account_id: str, item_id: uuid.UUID
+) -> str | None:
+    value = await connection.fetchval(
+        "SELECT embedding::text FROM memory_vector_documents"
+        " WHERE account_id = $1 AND item_id = $2",
+        account_id,
+        item_id,
+    )
+    return None if value is None else str(value)
+
+
+async def _vector_distance(
+    connection: asyncpg.Connection,
+    account_id: str,
+    item_id: uuid.UUID,
+    embedding: tuple[float, ...],
+) -> float | None:
+    value = await connection.fetchval(
+        "SELECT embedding <=> $3::vector FROM memory_vector_documents"
+        " WHERE account_id = $1 AND item_id = $2",
+        account_id,
+        item_id,
+        json.dumps(embedding, separators=(",", ":")),
+    )
+    return None if value is None else float(value)
+
+
+async def _claim_vectors_equal_count(
+    connection: asyncpg.Connection,
+    account_id: str,
+    embedding: tuple[float, ...],
+) -> int:
+    return int(
+        await connection.fetchval(
+            "SELECT count(*) FROM memory_vector_documents stored"
+            " JOIN memory_search_documents document"
+            "   ON document.item_id = stored.item_id"
+            "  AND document.account_id = stored.account_id"
+            " WHERE stored.account_id = $1 AND document.kind = 'claim'"
+            "   AND stored.embedding = $2::vector",
+            account_id,
+            json.dumps(embedding, separators=(",", ":")),
+        )
+    )
+
+
+async def _document_text(
+    connection: asyncpg.Connection, account_id: str, item_id: uuid.UUID
+) -> str:
+    row = await connection.fetchrow(
+        "SELECT title, body FROM memory_search_documents"
+        " WHERE account_id = $1 AND item_id = $2 AND kind = 'claim'",
+        account_id,
+        item_id,
+    )
+    assert row is not None
+    return " ".join(part for part in (row["title"], row["body"]) if part)
 
 
 async def _cleanup(connection: asyncpg.Connection, account_id: str) -> None:
@@ -725,6 +787,513 @@ async def test_confirm_commits_without_a_vector_when_embedding_is_best_effort() 
                 claim_id,
             )
             assert document is not None and document["status"] == "confirmed"
+    finally:
+        await _cleanup(connection, account_id)
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_correct_replaces_old_vector_and_never_returns_old_wording() -> None:
+    dsn = _dsn()
+    account_id = f"vector-correct-{uuid.uuid4()}"
+    event_id = f"vector-correct-turn-{uuid.uuid4()}"
+    old_text = "我喜欢蓝色。"
+    new_text = "晚霞是红色。"
+    embedder = _Embedder()
+    connection = await asyncpg.connect(dsn)
+    try:
+        async with _catalog(dsn, embedder) as (archive, catalog):
+            await _record(
+                archive,
+                event_id=event_id,
+                account_id=account_id,
+                subject_id=None,
+                text=old_text,
+            )
+            assert (await catalog.compile_pending()).failed_events == 0
+            claim_id = (await _claim_ids(catalog, account_id))[old_text]
+            old_document = await _document_text(connection, account_id, claim_id)
+            old_embedding = await embedder.embed(old_document)
+            assert old_text in old_document
+            assert await _vector_distance(connection, account_id, claim_id, old_embedding) == 0
+
+            corrected = await catalog.review(
+                MemoryClaimReview(
+                    account_id=account_id,
+                    claim_id=str(claim_id),
+                    action="correct",
+                    corrected_value=new_text,
+                )
+            )
+            new_document = await _document_text(connection, account_id, claim_id)
+            new_embedding = await embedder.embed(new_document)
+            row = await connection.fetchrow(
+                "SELECT title, body FROM memory_search_documents"
+                " WHERE account_id = $1 AND item_id = $2 AND kind = 'claim'",
+                account_id,
+                claim_id,
+            )
+            query = MemorySearchQuery(
+                account_id=account_id,
+                speaker_class="owner",
+                text=old_text,
+                kinds=("claim",),
+                include_candidates=False,
+            )
+            recalled = await catalog.context(query)
+
+            assert corrected.value == new_text
+            assert row is not None
+            assert old_text not in str(row["title"])
+            assert old_text not in str(row["body"])
+            assert old_text not in new_document
+            assert await _vector_count(connection, account_id, claim_id) == 1
+            assert await _vector_distance(
+                connection, account_id, claim_id, new_embedding
+            ) == pytest.approx(0.0, abs=1e-9)
+            assert (
+                await _vector_distance(connection, account_id, claim_id, old_embedding)
+            ) > 0.5
+            assert await _claim_vectors_equal_count(connection, account_id, old_embedding) == 0
+            assert (
+                await _claim_vectors_equal_count(
+                    connection, account_id, await embedder.embed(old_text)
+                )
+                == 0
+            )
+            # Claim vector candidates are returned without a similarity floor,
+            # so an old-wording query still reaches the corrected row. The
+            # retrieval logic stays as it is; the returned text must be new.
+            assert [item.snippet for item in recalled.items] == [new_text]
+            assert all(
+                old_text not in item.snippet and old_text not in item.title
+                for item in recalled.items
+            )
+
+            lexical_only = PostgresMemoryCatalog(
+                dsn,
+                extractor=RuleBasedMemoryExtractor(),
+                embedder=None,
+                evidence_subject_category_resolver=lambda _event: "adult",
+            )
+            await lexical_only.initialize()
+            try:
+                lexical = await lexical_only.context(query)
+            finally:
+                await lexical_only.close()
+            assert lexical.items == ()
+    finally:
+        await _cleanup(connection, account_id)
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_corrected_content_is_recalled_through_vector_channel_immediately() -> None:
+    dsn = _dsn()
+    account_id = f"vector-correct-recall-{uuid.uuid4()}"
+    event_id = f"vector-correct-recall-turn-{uuid.uuid4()}"
+    connection = await asyncpg.connect(dsn)
+    try:
+        async with _catalog(dsn) as (archive, catalog):
+            await _record(
+                archive,
+                event_id=event_id,
+                account_id=account_id,
+                subject_id=None,
+                text="我喜欢蓝色。",
+            )
+            assert (await catalog.compile_pending()).failed_events == 0
+            claim_id = (await _claim_ids(catalog, account_id))["我喜欢蓝色。"]
+            query = MemorySearchQuery(
+                account_id=account_id,
+                speaker_class="owner",
+                text="晚霞的颜色",
+                kinds=("claim",),
+                include_candidates=False,
+            )
+            assert (await catalog.context(query)).items == ()
+
+            started = time.monotonic()
+            corrected = await catalog.review(
+                MemoryClaimReview(
+                    account_id=account_id,
+                    claim_id=str(claim_id),
+                    action="correct",
+                    corrected_value="我喜欢红色。",
+                )
+            )
+            recalled = await catalog.context(query)
+            elapsed = time.monotonic() - started
+
+            assert corrected.value == "我喜欢红色。"
+            assert [item.item_id for item in recalled.items] == [str(claim_id)]
+            assert elapsed < 120, f"correction to recall took {elapsed:.3f}s"
+
+            lexical_only = PostgresMemoryCatalog(
+                dsn,
+                extractor=RuleBasedMemoryExtractor(),
+                embedder=None,
+                evidence_subject_category_resolver=lambda _event: "adult",
+            )
+            await lexical_only.initialize()
+            try:
+                assert (await lexical_only.context(query)).items == ()
+            finally:
+                await lexical_only.close()
+    finally:
+        await _cleanup(connection, account_id)
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_replaying_an_older_correction_does_not_reembed_superseded_text() -> None:
+    dsn = _dsn()
+    account_id = f"vector-correct-replay-{uuid.uuid4()}"
+    event_id = f"vector-correct-replay-turn-{uuid.uuid4()}"
+    embedder = _CountingEmbedder()
+    connection = await asyncpg.connect(dsn)
+    try:
+        async with _catalog(dsn, embedder) as (archive, catalog):
+            await _record(
+                archive,
+                event_id=event_id,
+                account_id=account_id,
+                subject_id=None,
+                text="我喜欢蓝色。",
+            )
+            assert (await catalog.compile_pending()).failed_events == 0
+            claim_id = (await _claim_ids(catalog, account_id))["我喜欢蓝色。"]
+            await catalog.review(
+                MemoryClaimReview(
+                    account_id=account_id,
+                    claim_id=str(claim_id),
+                    action="correct",
+                    corrected_value="我喜欢红色。",
+                )
+            )
+            first_document = await _document_text(connection, account_id, claim_id)
+            await catalog.review(
+                MemoryClaimReview(
+                    account_id=account_id,
+                    claim_id=str(claim_id),
+                    action="correct",
+                    corrected_value="我喜欢绿色。",
+                )
+            )
+            final_document = await _document_text(connection, account_id, claim_id)
+            embedder.inputs.clear()
+
+            replayed = await catalog.compile_pending()
+
+            assert replayed.failed_events == 0
+            # The older correction is superseded, so replay must not embed its
+            # text again; the latest correction still owns the final vector.
+            assert first_document not in embedder.inputs
+            assert final_document in embedder.inputs
+            assert await _vector_distance(
+                connection,
+                account_id,
+                claim_id,
+                await embedder.embed(final_document),
+            ) == pytest.approx(0.0, abs=1e-9)
+            claim = await connection.fetchrow(
+                "SELECT value FROM memory_claims WHERE account_id = $1 AND claim_id = $2",
+                account_id,
+                claim_id,
+            )
+            assert claim is not None and claim["value"] == "我喜欢绿色。"
+    finally:
+        await _cleanup(connection, account_id)
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_correct_keeps_other_claims_and_accounts_vectors() -> None:
+    dsn = _dsn()
+    account_id = f"vector-correct-scope-{uuid.uuid4()}"
+    other_account_id = f"vector-correct-scope-other-{uuid.uuid4()}"
+    blue_event = f"vector-correct-scope-blue-{uuid.uuid4()}"
+    red_event = f"vector-correct-scope-red-{uuid.uuid4()}"
+    green_event = f"vector-correct-scope-green-{uuid.uuid4()}"
+    connection = await asyncpg.connect(dsn)
+    try:
+        async with _catalog(dsn) as (archive, catalog):
+            for event, account, text in (
+                (blue_event, account_id, "我喜欢蓝色。"),
+                (red_event, account_id, "我喜欢红色。"),
+                (green_event, other_account_id, "我喜欢绿色。"),
+            ):
+                await _record(
+                    archive,
+                    event_id=event,
+                    account_id=account,
+                    subject_id=None,
+                    text=text,
+                )
+            assert (await catalog.compile_pending()).failed_events == 0
+            claims = await _claim_ids(catalog, account_id)
+            other_claims = await _claim_ids(catalog, other_account_id)
+            blue_id = claims["我喜欢蓝色。"]
+            red_id = claims["我喜欢红色。"]
+            green_id = other_claims["我喜欢绿色。"]
+            red_before = await _vector_text(connection, account_id, red_id)
+            green_before = await _vector_text(connection, other_account_id, green_id)
+
+            await catalog.review(
+                MemoryClaimReview(
+                    account_id=account_id,
+                    claim_id=str(blue_id),
+                    action="correct",
+                    corrected_value="我喜欢红色。",
+                )
+            )
+
+            assert await _vector_text(connection, account_id, red_id) == red_before
+            assert (
+                await _vector_text(connection, other_account_id, green_id)
+                == green_before
+            )
+            assert await _vector_count(connection, account_id, blue_id) == 1
+            assert (
+                await _vector_distance(
+                    connection,
+                    account_id,
+                    blue_id,
+                    await _Embedder().embed(
+                        await _document_text(connection, account_id, blue_id)
+                    ),
+                )
+                == pytest.approx(0.0, abs=1e-9)
+            )
+    finally:
+        await _cleanup(connection, account_id)
+        await _cleanup(connection, other_account_id)
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_correct_rolls_back_when_embedding_failure_is_fatal() -> None:
+    dsn = _dsn()
+    account_id = f"vector-correct-fatal-{uuid.uuid4()}"
+    event_id = f"vector-correct-fatal-turn-{uuid.uuid4()}"
+    embedder = _FlakyEmbedder()
+    connection = await asyncpg.connect(dsn)
+    try:
+        async with _catalog(
+            dsn, embedder, fail_on_embedding_error=True
+        ) as (archive, catalog):
+            await _record(
+                archive,
+                event_id=event_id,
+                account_id=account_id,
+                subject_id=None,
+                text="我喜欢蓝色。",
+            )
+            assert (await catalog.compile_pending()).failed_events == 0
+            claim_id = (await _claim_ids(catalog, account_id))["我喜欢蓝色。"]
+            old_vector = await _vector_text(connection, account_id, claim_id)
+            evidence_before = int(
+                await connection.fetchval(
+                    "SELECT count(*) FROM archive_evidence_events WHERE account_id = $1",
+                    account_id,
+                )
+            )
+            embedder.unavailable = True
+
+            with pytest.raises(MemoryEmbeddingUnavailableError):
+                await catalog.review(
+                    MemoryClaimReview(
+                        account_id=account_id,
+                        claim_id=str(claim_id),
+                        action="correct",
+                        corrected_value="我喜欢红色。",
+                    )
+                )
+
+            claim = await connection.fetchrow(
+                "SELECT value, status FROM memory_claims"
+                " WHERE account_id = $1 AND claim_id = $2",
+                account_id,
+                claim_id,
+            )
+            assert claim is not None and claim["value"] == "我喜欢蓝色。"
+            assert claim["status"] == "candidate"
+            assert await _vector_text(connection, account_id, claim_id) == old_vector
+            assert (
+                int(
+                    await connection.fetchval(
+                        "SELECT count(*) FROM archive_evidence_events"
+                        " WHERE account_id = $1 AND payload ? 'corrected_value'",
+                        account_id,
+                    )
+                )
+                == 0
+            )
+            assert (
+                int(
+                    await connection.fetchval(
+                        "SELECT count(*) FROM archive_evidence_events WHERE account_id = $1",
+                        account_id,
+                    )
+                )
+                == evidence_before
+            )
+    finally:
+        await _cleanup(connection, account_id)
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_correct_deletes_old_vector_and_commits_when_embedding_is_best_effort() -> None:
+    dsn = _dsn()
+    account_id = f"vector-correct-best-effort-{uuid.uuid4()}"
+    event_id = f"vector-correct-best-effort-turn-{uuid.uuid4()}"
+    embedder = _FlakyEmbedder()
+    connection = await asyncpg.connect(dsn)
+    try:
+        async with _catalog(
+            dsn, embedder, fail_on_embedding_error=False
+        ) as (archive, catalog):
+            await _record(
+                archive,
+                event_id=event_id,
+                account_id=account_id,
+                subject_id=None,
+                text="我喜欢蓝色。",
+            )
+            assert (await catalog.compile_pending()).failed_events == 0
+            claim_id = (await _claim_ids(catalog, account_id))["我喜欢蓝色。"]
+            embedder.unavailable = True
+
+            corrected = await catalog.review(
+                MemoryClaimReview(
+                    account_id=account_id,
+                    claim_id=str(claim_id),
+                    action="correct",
+                    corrected_value="我喜欢红色。",
+                )
+            )
+            recalled = await catalog.context(
+                MemorySearchQuery(
+                    account_id=account_id,
+                    speaker_class="owner",
+                    text="红色",
+                    kinds=("claim",),
+                    include_candidates=False,
+                )
+            )
+
+            assert corrected.value == "我喜欢红色。"
+            assert await _vector_count(connection, account_id, claim_id) == 0
+            assert [item.item_id for item in recalled.items] == [str(claim_id)]
+            document = await connection.fetchrow(
+                "SELECT title, body, status FROM memory_search_documents"
+                " WHERE account_id = $1 AND item_id = $2 AND kind = 'claim'",
+                account_id,
+                claim_id,
+            )
+            assert document is not None
+            assert document["title"] == "我喜欢红色。"
+            assert document["status"] == "confirmed"
+    finally:
+        await _cleanup(connection, account_id)
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_replaying_a_correction_before_a_retraction_leaves_it_forgotten() -> None:
+    dsn = _dsn()
+    account_id = f"vector-correct-retract-replay-{uuid.uuid4()}"
+    event_id = f"vector-correct-retract-replay-turn-{uuid.uuid4()}"
+    embedder = _CountingEmbedder()
+    connection = await asyncpg.connect(dsn)
+    try:
+        async with _catalog(dsn, embedder) as (archive, catalog):
+            await _record(
+                archive,
+                event_id=event_id,
+                account_id=account_id,
+                subject_id=None,
+                text="我喜欢蓝色。",
+            )
+            assert (await catalog.compile_pending()).failed_events == 0
+            claim_id = (await _claim_ids(catalog, account_id))["我喜欢蓝色。"]
+            await catalog.review(
+                MemoryClaimReview(
+                    account_id=account_id,
+                    claim_id=str(claim_id),
+                    action="correct",
+                    corrected_value="我喜欢红色。",
+                )
+            )
+            corrected_document = await _document_text(connection, account_id, claim_id)
+            await catalog.review(
+                MemoryClaimReview(
+                    account_id=account_id,
+                    claim_id=str(claim_id),
+                    action="retract",
+                )
+            )
+            embedder.inputs.clear()
+
+            replayed = await catalog.compile_pending()
+
+            assert replayed.failed_events == 0
+            assert corrected_document not in embedder.inputs
+            assert await _vector_count(connection, account_id, claim_id) == 0
+            claim = await connection.fetchrow(
+                "SELECT status FROM memory_claims WHERE account_id = $1 AND claim_id = $2",
+                account_id,
+                claim_id,
+            )
+            assert claim is not None and claim["status"] == "retracted"
+    finally:
+        await _cleanup(connection, account_id)
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_correct_without_an_embedder_still_deletes_the_old_vector() -> None:
+    dsn = _dsn()
+    account_id = f"vector-correct-no-embedder-{uuid.uuid4()}"
+    event_id = f"vector-correct-no-embedder-turn-{uuid.uuid4()}"
+    connection = await asyncpg.connect(dsn)
+    try:
+        async with _catalog(dsn) as (archive, catalog):
+            await _record(
+                archive,
+                event_id=event_id,
+                account_id=account_id,
+                subject_id=None,
+                text="我喜欢蓝色。",
+            )
+            assert (await catalog.compile_pending()).failed_events == 0
+            claim_id = (await _claim_ids(catalog, account_id))["我喜欢蓝色。"]
+            assert await _vector_count(connection, account_id, claim_id) == 1
+
+        archive = PostgresLifeArchive(dsn)
+        catalog = PostgresMemoryCatalog(
+            dsn,
+            extractor=RuleBasedMemoryExtractor(),
+            embedder=None,
+            evidence_subject_category_resolver=lambda _event: "adult",
+        )
+        await archive.initialize()
+        await catalog.initialize()
+        try:
+            corrected = await catalog.review(
+                MemoryClaimReview(
+                    account_id=account_id,
+                    claim_id=str(claim_id),
+                    action="correct",
+                    corrected_value="我喜欢红色。",
+                )
+            )
+            assert corrected.value == "我喜欢红色。"
+            assert await _vector_count(connection, account_id, claim_id) == 0
+        finally:
+            await catalog.close()
+            await archive.close()
     finally:
         await _cleanup(connection, account_id)
         await connection.close()

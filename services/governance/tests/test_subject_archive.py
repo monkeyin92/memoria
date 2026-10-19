@@ -99,7 +99,9 @@ class _EmbedderStub:
     dimensions = 2
 
     async def embed(self, text: str) -> tuple[float, ...]:
-        return (1.0, 0.0) if "项目" in text else (0.0, 1.0)
+        if "绿色" in text or "黄色" in text or "项目" in text:
+            return (1.0, 0.0)
+        return (0.0, 1.0)
 
 
 def _event(
@@ -666,8 +668,8 @@ async def test_subject_deletion_removes_corrected_review_events_and_vectors(
         )
         assert len(child_corrections) == 1
         assert len(owner_corrections) == 1
-        # A correction still keeps the pre-correction vector; this PR changes
-        # only the confirmation path.
+        # A correction replaces the pre-correction vector with the corrected
+        # text before the subject is deleted.
         assert (
             await admin.fetchval(
                 "SELECT count(*) FROM memory_vector_documents"
@@ -676,6 +678,15 @@ async def test_subject_deletion_removes_corrected_review_events_and_vectors(
                 child_claim,
             )
             == 1
+        )
+        assert (
+            await admin.fetchval(
+                "SELECT embedding::text FROM memory_vector_documents"
+                " WHERE account_id = $1 AND item_id = $2",
+                account,
+                child_claim,
+            )
+            == "[1,0]"
         )
 
         ledger = SubjectDeletionLedger(tmp_path / "subject-deletions.sqlite3")
@@ -740,6 +751,15 @@ async def test_subject_deletion_removes_corrected_review_events_and_vectors(
                 owner_claim,
             )
             == 1
+        )
+        assert (
+            await admin.fetchval(
+                "SELECT embedding::text FROM memory_vector_documents"
+                " WHERE account_id = $1 AND item_id = $2",
+                account,
+                owner_claim,
+            )
+            == "[1,0]"
         )
     finally:
         await admin.execute(
