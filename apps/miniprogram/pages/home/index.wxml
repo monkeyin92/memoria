@@ -121,7 +121,7 @@
         </view>
         <view class="trial-card home-stat" bindtap="openMemory">
           <view class="mp-icon-tile"><image src="/assets/ui/v4/note-accent.svg" /></view>
-          <text class="home-lbl">今日摘要</text>
+          <text class="home-lbl">近期摘要</text>
           <view class="home-stat-line">
             <text class="home-stat-num">{{summaryCount}}</text>
             <text class="home-stat-unit"> 条</text>

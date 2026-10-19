@@ -18,23 +18,6 @@ function today() {
 
 const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
 
-function reviewDateStrip(count = 6, now = new Date()) {
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const days = [];
-  for (let offset = 0; offset < count; offset += 1) {
-    const date = new Date(start);
-    date.setDate(start.getDate() - offset);
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    days.push({
-      date: `${date.getFullYear()}-${month}-${day}`,
-      weekday: WEEKDAYS[date.getDay()],
-      dayNum: String(date.getDate()),
-    });
-  }
-  return days;
-}
-
 function dayLabels(dateKey) {
   const [year, month, day] = String(dateKey).split("-").map(Number);
   if (!year || !month || !day) return { dayLabel: dateKey, dateLabel: "", weekday: "", dayNum: "" };
@@ -191,7 +174,6 @@ Page({
   data: {
     statusBarStyle: statusBarStyle(),
     days: [],
-    dateStrip: reviewDateStrip(),
     heardTurns: [],
     memoryCandidates: [],
     confirmedMemories: [],
@@ -200,7 +182,6 @@ Page({
       visibleMemories: [],
     loading: false,
     error: "",
-    selectedDate: today(),
     authenticated: false,
     memoryTab: "reviews",
     memoryFilter: "all",
@@ -303,7 +284,6 @@ Page({
     this.setData({
       authenticated: false,
       days: [],
-      dateStrip: [],
       heardTurns: [],
       memoryCandidates: [],
       confirmedMemories: [],
@@ -331,21 +311,6 @@ Page({
       return;
     }
     this.loadDays().finally(() => wx.stopPullDownRefresh());
-  },
-
-  /*
-   * 一键分享：优先用分享按钮上 data-date 指定的日期，其次用当前选中日期。
-   * 只分享已经过门禁加载的回顾标题；未登录或没有该日回顾时退回通用文案。
-   */
-  onShareAppMessage(options) {
-    const buttonDate = options?.from === "button" ? options?.target?.dataset?.date : "";
-    const date = buttonDate || this.data.selectedDate;
-    const day = (this.data.days || []).find((item) => item.date === date);
-    const summary = this.data.authenticated && day ? `Memoria 回顾 · ${day.title}` : "";
-    return {
-      title: (summary || "Memoria · 每天的对话回顾").slice(0, 80),
-      path: "/pages/memory/index",
-    };
   },
 
   /*
@@ -387,7 +352,7 @@ Page({
     const identity = api.currentIdentity();
     if (!identity) return "guest";
     const authEpoch = api.currentAuthEpoch();
-    this.setData({ loading: true, error: "", dateStrip: reviewDateStrip() });
+    this.setData({ loading: true, error: "" });
     try {
       const guardianSubject = this._guardianSubject();
       let guardianDays = null;
@@ -531,10 +496,6 @@ Page({
 
   openAttention(event) {
     wx.navigateTo({ url: attentionUrl(event.currentTarget.dataset.id) });
-  },
-
-  chooseDay(event) {
-    this.setData({ selectedDate: event.currentTarget.dataset.date });
   },
 
   showReviews() {

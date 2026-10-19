@@ -35,14 +35,6 @@ const {
   usageRingStyle,
 } = require("../../utils/trial-device-card");
 
-function countCreatedToday(summaries, now = new Date()) {
-  const today = todayKey(now);
-  return summaries.filter((item) => {
-    const created = Date.parse(item.createdAt);
-    return Number.isFinite(created) && todayKey(new Date(created)) === today;
-  }).length;
-}
-
 function guestGreeting() {
   return `${greetingFor()}，欢迎回来`;
 }
@@ -191,14 +183,9 @@ Page({
     this.loadHome().finally(() => wx.stopPullDownRefresh());
   },
 
-  /*
-   * 一键分享：只把已经过门禁加载的每日摘要文案带出去；未登录或没有摘要时
-   * 分享一张不含任何私人内容的通用卡片。
-   */
   onShareAppMessage() {
-    const summary = this.data.authenticated ? this.data.dailySummaryText : "";
     return {
-      title: (summary || "Memoria · 每天的对话回顾").slice(0, 80),
+      title: "Memoria · 每天的对话回顾",
       path: "/pages/home/index",
     };
   },
@@ -557,7 +544,7 @@ Page({
         const summaries = normalizeSessionSummaries(summaryPayload);
         memoryPreviews = memoryPreviewItems(summaries, 3);
         recentChildSummary = memoryPreviews[0]?.text || "";
-        summaryCount = countCreatedToday(summaries);
+        summaryCount = summaries.length;
       } catch {
         memoryPreviews = [];
       }

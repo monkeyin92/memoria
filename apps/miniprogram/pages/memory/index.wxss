@@ -8,41 +8,6 @@
   margin-top: var(--mp-gap-card);
 }
 
-.memory-strip {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 24px;
-  padding: 8px;
-}
-
-.memory-strip-day {
-  width: 48px;
-  padding: 8px 0;
-  border-radius: var(--mp-radius-inset);
-  color: var(--mp-ink-2);
-  text-align: center;
-}
-
-.memory-strip-on {
-  background: var(--mp-accent);
-  color: var(--mp-on-accent);
-}
-
-.memory-strip-week {
-  display: block;
-  font-size: var(--mp-type-micro);
-  font-weight: 500;
-  opacity: 0.85;
-}
-
-.memory-strip-num {
-  display: block;
-  margin-top: 4px;
-  font-size: var(--mp-type-lead);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
 .memory-day {
   margin-top: var(--mp-gap-card);
   padding: 16px 24px;
@@ -93,10 +58,6 @@
   color: var(--mp-ink-body);
   font-size: var(--mp-type-body);
   line-height: var(--mp-lh-body);
-}
-
-.memory-actions {
-  margin-top: 24px;
 }
 
 .memory-note {

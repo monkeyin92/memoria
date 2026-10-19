@@ -78,7 +78,7 @@ test("one unread alert shows on home and 回顾 without a 还有 line", async ()
   const store = fx.safetyAlertApi([fx.SAFETY_ALERT]);
   assert.deepEqual(await homeScreen(store), { pins: 1, opens: ["/pages/attention/index?id=n1"] });
   const review = await reviewScreen(store);
-  assert.match(review.text, / 有一条需要你关注的对话 今天 19:42 三 14 /);
+  assert.match(review.text, / 有一条需要你关注的对话 今天 19:42 今天 10月14日 /);
   assert.doesNotMatch(review.text, /还有/);
   assert.deepEqual(review.opens, ["/pages/attention/index?id=n1"]);
 });
@@ -88,7 +88,7 @@ test("three unread alerts show the newest once, and 回顾 says 还有 2 条", a
   assert.deepEqual(await homeScreen(store), { pins: 1, opens: ["/pages/attention/index?id=n3"] });
   const review = await reviewScreen(store);
   assert.equal((review.text.match(ALERT_COPY) || []).length, 1);
-  assert.match(review.text, / 有一条需要你关注的对话 今天 19:42 还有 2 条 三 14 /);
+  assert.match(review.text, / 有一条需要你关注的对话 今天 19:42 还有 2 条 今天 10月14日 /);
   assert.deepEqual(review.opens, ["/pages/attention/index?id=n3"]);
 });
 
@@ -99,7 +99,7 @@ test("after 我知道了 a later login shows the next unread alert, never the ac
 
   assert.deepEqual(await homeScreen(store), { pins: 1, opens: ["/pages/attention/index?id=n2"] });
   const review = await reviewScreen(store);
-  assert.match(review.text, / 有一条需要你关注的对话 今天 19:12 还有 1 条 三 14 /);
+  assert.match(review.text, / 有一条需要你关注的对话 今天 19:12 还有 1 条 今天 10月14日 /);
   assert.deepEqual(review.opens, ["/pages/attention/index?id=n2"]);
 
   for (const { opens } of [await homeScreen(store), await reviewScreen(store)]) {
@@ -117,7 +117,7 @@ test("coming back to 回顾 after 我知道了 drops the acknowledged alert", as
     harness.page.onShow();
     await harness.settle();
     const { text } = reviewBanner(harness);
-    assert.match(text, / 有一条需要你关注的对话 今天 19:12 三 14 /);
+    assert.match(text, / 有一条需要你关注的对话 今天 19:12 今天 10月14日 /);
     assert.doesNotMatch(text, /还有/);
   } finally {
     harness.restore();
