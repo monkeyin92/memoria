@@ -70,13 +70,19 @@ class SubjectArchivePort(Protocol):
         ...
 
     async def delete_events(
-        self, *, account_id: str, event_ids: tuple[str, ...]
+        self,
+        *,
+        account_id: str,
+        event_ids: tuple[str, ...],
+        subject_id: str | None = None,
     ) -> dict[str, int]:
         """Delete these events and everything derived from any of them.
 
         Merged projections (episodes, search documents, their vectors) that
         cite any of these events are deleted before the evidence, since the
-        lineage join disappears with it. Idempotent: already-deleted ids are
+        lineage join disappears with it. When ``subject_id`` is given, claims
+        about that child (``about_subject_id``) go too, even when their source
+        evidence belongs to a parent. Idempotent: already-deleted ids are
         skipped. Returns per-table deleted counts.
         """
         ...
@@ -84,7 +90,11 @@ class SubjectArchivePort(Protocol):
     async def remaining_rows_for(
         self, *, account_id: str, event_ids: tuple[str, ...], subject_id: str | None
     ) -> dict[str, int]:
-        """Rows still attributable to these events (or ``subject_id``); empty when done."""
+        """Rows still attributable to these events (or ``subject_id``); empty when done.
+
+        A subject's claims about a child are included through
+        ``about_subject_id``, together with their search documents and vectors.
+        """
         ...
 
     async def delete_subject_vectors(self, *, account_id: str, subject_id: str) -> int:

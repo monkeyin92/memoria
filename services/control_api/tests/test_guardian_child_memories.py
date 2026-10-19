@@ -310,3 +310,37 @@ async def test_another_account_cannot_retract_this_childs_memory(
     assert refused.status_code == 403
     assert refused.json()["detail"]["code"] == "guardian_memory_review_unavailable"
     assert after == before
+
+
+@pytest.mark.asyncio
+async def test_a_parent_turn_about_the_bound_child_is_marked_for_deletion(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner_id, child_id, _headers = await _bound_child(client, app, monkeypatch)
+        await app.state.life_archive.record(
+            _turn(
+                "parent-about-child",
+                owner_id,
+                owner_id,
+                "我儿子叫小明，今年8岁。",
+                datetime.now(UTC),
+                1,
+            )
+        )
+        report = await app.state.memory_catalog.compile_pending()
+
+    rows = app_store.fetch_all(
+        getattr(app.state.memory_catalog, "_path", ""),
+        "SELECT subject_key, about_subject_id FROM memory_claims WHERE account_id = ?",
+        (owner_id,),
+    )
+    marked = [row for row in rows if row[1] == child_id]
+    unmarked = [row for row in rows if row[1] is None]
+    assert report.failed_events == 0
+    assert len(marked) == 1
+    assert marked[0][0].startswith("son:")
+    assert unmarked
+    assert len(rows) == len(marked) + len(unmarked)

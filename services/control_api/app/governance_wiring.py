@@ -10,9 +10,8 @@ from typing import cast
 
 from fastapi import FastAPI
 
-from services.archive.object_store import (
-    ObjectStore,
-)
+from services.archive.claim_subjects import BoundChildSubjectIds
+from services.archive.object_store import ObjectStore
 from services.control_api.app.account_gate import AccountOperationGate
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
@@ -36,6 +35,7 @@ from services.guardian.corpus import (
     CorpusRetentionService,
 )
 from services.guardian.domain import GuardianStorePort
+from services.identity.domain import IdentityNotFoundError
 from services.identity.service import IdentityService
 from services.legacy.domain import LegacyRegistryPort
 from services.voice_profile.domain import (
@@ -53,6 +53,41 @@ def subject_archive(settings: ControlSettings) -> PostgresSubjectArchive:
         PostgresSubjectArchive,
         UnconfiguredStore("subject_archive", "MEMORIA_ARCHIVE_DATABASE_URL"),
     )
+
+
+def claim_bound_child_subject_ids(identity: IdentityService) -> BoundChildSubjectIds:
+    """Bound minors of one account, read through the identity binding authority.
+
+    Only an active ``parent_for_child`` binding owned by the account counts. A
+    person who cannot be read makes the whole list empty: a partial list could
+    turn two children into a false unique match.
+    """
+
+    async def resolve(account_id: str) -> tuple[str, ...]:
+        manifests = await identity.list_active_manifests_for_person(
+            account_id, actor_person_id=account_id
+        )
+        children: set[str] = set()
+        for manifest in manifests:
+            if (
+                manifest.declared_mode != "parent_for_child"
+                or manifest.account_owner_id != account_id
+            ):
+                continue
+            for subject_id in manifest.primary_subject_ids:
+                if subject_id == account_id:
+                    continue
+                try:
+                    person = await identity.get_person(
+                        subject_id, actor_person_id=account_id
+                    )
+                except IdentityNotFoundError:
+                    return ()
+                if person.subject_category == "minor":
+                    children.add(subject_id)
+        return tuple(sorted(children))
+
+    return resolve
 
 
 def install_subject_deletion(

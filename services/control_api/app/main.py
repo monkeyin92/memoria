@@ -51,6 +51,7 @@ from services.control_api.app.database import MemoryStore
 from services.control_api.app.device_registry import DeviceRegistry
 from services.control_api.app.governance_wiring import (
     account_data_governance,
+    claim_bound_child_subject_ids,
     install_subject_deletion,
 )
 from services.control_api.app.guardian_push import (
@@ -792,18 +793,17 @@ async def _wire_services(w: Wiring) -> None:
         postgres_catalog = PostgresMemoryCatalog(
             archive_url,
             extractor=extractor,
-            compiler_dsn=compiler_url or None,
-            compiler_role=settings.archive_compiler_role or None,
+            compiler_dsn=compiler_url or None, compiler_role=settings.archive_compiler_role or None,
             account_guard=account_guard,
             subject_category_resolver=_subject_category_resolver(store),
             evidence_subject_category_resolver=evidence_category,
+            bound_child_subject_ids=claim_bound_child_subject_ids(
+                cast(IdentityService, app.state.identity_service)
+            ),
             capture_evidence_projector=project_capture_evidence if production else None,
-            embedder=embedder,
-            require_vector=production,
-            outbox_lease_s=settings.archive_compile_lease_s,
-            outbox_retry_base_s=settings.archive_compile_retry_base_s,
-            outbox_retry_max_s=settings.archive_compile_retry_max_s,
-            pool=archive_pool,
+            embedder=embedder, require_vector=production,
+            outbox_lease_s=settings.archive_compile_lease_s, outbox_retry_base_s=settings.archive_compile_retry_base_s,
+            outbox_retry_max_s=settings.archive_compile_retry_max_s, pool=archive_pool,
         )
         await w.open(postgres_catalog.initialize, postgres_catalog.close)
         memory_catalog = postgres_catalog

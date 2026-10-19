@@ -281,6 +281,7 @@ CREATE TABLE IF NOT EXISTS memory_claims (
         memory_kind IN ('semantic', 'episodic', 'procedural', 'relationship')
     ),
     subject_key TEXT NOT NULL,
+    about_subject_id TEXT,
     predicate TEXT NOT NULL,
     value TEXT NOT NULL,
     confidence DOUBLE PRECISION NOT NULL CHECK (confidence BETWEEN 0 AND 1),
@@ -508,6 +509,7 @@ ALTER TABLE memory_claims
     ADD COLUMN IF NOT EXISTS domain_category TEXT,
     ADD COLUMN IF NOT EXISTS memory_kind TEXT NOT NULL DEFAULT 'semantic',
     ADD COLUMN IF NOT EXISTS entity_ids UUID[] NOT NULL DEFAULT ARRAY[]::UUID[],
+    ADD COLUMN IF NOT EXISTS about_subject_id TEXT,
     ADD COLUMN IF NOT EXISTS valid_from TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS valid_to TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS observed_at TIMESTAMPTZ,
@@ -515,6 +517,10 @@ ALTER TABLE memory_claims
     ADD COLUMN IF NOT EXISTS salience DOUBLE PRECISION NOT NULL DEFAULT 0.5,
     ADD COLUMN IF NOT EXISTS sensitivity TEXT NOT NULL DEFAULT 'personal',
     ADD COLUMN IF NOT EXISTS conflict_state TEXT NOT NULL DEFAULT 'none';
+
+CREATE INDEX IF NOT EXISTS idx_pg_memory_claim_about_subject
+ON memory_claims(account_id, about_subject_id)
+WHERE about_subject_id IS NOT NULL;
 
 ALTER TABLE life_episodes
     ADD COLUMN IF NOT EXISTS domain_category TEXT,
