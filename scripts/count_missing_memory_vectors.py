@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-"""Read-only count of claims missing the current embedder's vector.
+"""Read-only daily patrol counts for claim vectors and unlinked child claims.
 
 Prints exactly one JSON object with counts, never an account, claim, subject or
 event id:
 
-  {"corrected": 0, "missing": 2}
+  {"corrected": 0, "missing": 2, "unlinked_child_claims": 1}
+
+``unlinked_child_claims`` counts claims whose ``subject_key`` starts with
+``son:``/``daughter:`` (the prefixes from ``services/archive/claim_subjects.py``)
+but whose ``about_subject_id`` is null, with live source evidence and not
+retracted.  Several bound children leave such a claim unassociated by design,
+so a non-zero count is expected and does not change the exit code; it only
+makes the state visible.
 
 Exit codes follow ``disk_patrol.sh``: 0 means no gap, 1 means at least one
 claim is missing its current-model vector, 3 means this check could not run
@@ -72,12 +79,17 @@ async def _count(
         raise RuntimeError("failed to create the archive pool")
     try:
         helper = ClaimVectorBackfill(pool, embedder)
-        total = corrected = 0
+        total = corrected = unlinked = 0
         for account_id in account_ids:
             count = await helper.count(account_id=account_id)
             total += count.total
             corrected += count.corrected
-        return MissingVectorCount(total=total, corrected=corrected)
+            unlinked += count.unlinked_child_claims
+        return MissingVectorCount(
+            total=total,
+            corrected=corrected,
+            unlinked_child_claims=unlinked,
+        )
     finally:
         await pool.close()
 
@@ -91,7 +103,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception as exc:
         print(f"memory vector count failed: {type(exc).__name__}", file=sys.stderr)
         return 3
-    print(json.dumps({"missing": count.total, "corrected": count.corrected}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "missing": count.total,
+                "corrected": count.corrected,
+                "unlinked_child_claims": count.unlinked_child_claims,
+            },
+            sort_keys=True,
+        )
+    )
     return 1 if count.total else 0
 
 

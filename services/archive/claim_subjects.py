@@ -43,6 +43,7 @@ from services.archive.domain import EvidenceEvent
 
 __all__ = [
     "BoundChildSubjectIds",
+    "CHILD_KEY_PREFIXES",
     "bound_children",
     "claim_about_subject",
     "confirmed_evidence_subject",
@@ -54,7 +55,8 @@ logger = logging.getLogger(__name__)
 BoundChildSubjectIds = Callable[[str], Awaitable[tuple[str, ...]]]
 
 _CHILD_RELATIONS: tuple[str, ...] = ("son", "daughter")
-_CHILD_KEY_PREFIXES: tuple[str, ...] = ("son:", "daughter:")
+#: ``subject_key`` prefixes that name a child by an explicit relationship code.
+CHILD_KEY_PREFIXES: tuple[str, ...] = ("son:", "daughter:")
 
 
 def confirmed_evidence_subject(event: EvidenceEvent) -> str | None:
@@ -132,7 +134,7 @@ async def _names_a_child(
     """Whether ``subject_key`` carries an explicit son/daughter relationship code."""
 
     normalized = subject_key.strip().casefold()
-    if normalized.startswith(_CHILD_KEY_PREFIXES):
+    if normalized.startswith(CHILD_KEY_PREFIXES):
         return True
     return bool(
         await connection.fetchval(

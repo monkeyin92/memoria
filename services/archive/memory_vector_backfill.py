@@ -32,6 +32,7 @@ from typing import cast
 
 import asyncpg
 
+from services.archive.claim_subjects import CHILD_KEY_PREFIXES
 from services.archive.memory_domain import MemoryEmbedder, MemoryEmbeddingUnavailableError
 from services.archive.memory_vector_cleanup import (
     claim_vector_body,
@@ -41,6 +42,10 @@ from services.archive.memory_vector_cleanup import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ``claim_subjects`` normalizes the key and checks these ASCII prefixes; the
+# SQL below matches the same prefixes case-insensitively after lower(btrim()).
+_CHILD_KEY_PATTERNS = tuple(f"{prefix}%" for prefix in CHILD_KEY_PREFIXES)
 
 # ``PostgresSubjectArchive.delete_events`` deletes the subject's evidence and
 # cascades its claims, search rows and vectors in one transaction, so the
@@ -95,6 +100,21 @@ WHERE document.account_id = $1
   )
 """
 
+# Claims that name a child by key prefix but stay unassociated.  Several bound
+# children are ambiguous, so this is the designed "no association" state; the
+# count is observational and never a repair target.
+_UNLINKED_CHILD_CLAIM_COUNT = """
+SELECT count(*)
+FROM memory_claims claim
+JOIN archive_evidence_events evidence
+  ON evidence.event_id = claim.source_event_id
+ AND evidence.account_id = claim.account_id
+WHERE claim.account_id = $1
+  AND claim.about_subject_id IS NULL
+  AND claim.status <> 'retracted'
+  AND lower(btrim(claim.subject_key)) LIKE ANY($2::text[])
+"""
+
 _MISSING_CLAIM_COUNT = """
 SELECT count(*) AS total,
        count(*) FILTER (
@@ -145,6 +165,8 @@ FOR UPDATE OF claim
 class MissingVectorCount:
     total: int = 0
     corrected: int = 0
+    #: Observational; an unlinked child claim is an expected persisted state.
+    unlinked_child_claims: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +202,13 @@ class ClaimVectorBackfill:
             await _scope(connection, account_id)
             if not await _vector_table_exists(connection):
                 return MissingVectorCount()
+            unlinked = int(
+                await connection.fetchval(
+                    _UNLINKED_CHILD_CLAIM_COUNT,
+                    account_id,
+                    list(_CHILD_KEY_PATTERNS),
+                )
+            )
             row = await connection.fetchrow(
                 _MISSING_CLAIM_COUNT,
                 account_id,
@@ -191,6 +220,7 @@ class ClaimVectorBackfill:
         return MissingVectorCount(
             total=int(row["total"]),
             corrected=int(row["corrected"]),
+            unlinked_child_claims=unlinked,
         )
 
     async def backfill(self, *, account_id: str, limit: int) -> BackfillReport:
