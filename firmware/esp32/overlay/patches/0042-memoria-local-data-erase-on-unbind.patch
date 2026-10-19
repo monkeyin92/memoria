@@ -1,0 +1,53 @@
+diff --git a/main/memoria/memoria_activation_client.cc b/main/memoria/memoria_activation_client.cc
+index e2c44ffd..845484db 100644
+--- a/main/memoria/memoria_activation_client.cc
++++ b/main/memoria/memoria_activation_client.cc
+@@ -10,20 +10,21 @@
+ #include <string_view>
+ #include <sys/time.h>
+ #include <vector>
+
+ #include "board.h"
+ #include "esp_app_desc.h"
+ #include "esp_log.h"
+ #include "http.h"
+ #include "settings.h"
+ #include "sodium.h"
++#include "memoria_local_data_erase.h"
+
+ #include <cJSON.h>
+
+ namespace memoria {
+ namespace {
+
+ constexpr const char* kTag = "MemoriaActivation";
+ constexpr int kHttpTimeoutMs = 10000;
+ constexpr time_t kMinimumTrustedUnixTime = 1700000000;
+ constexpr time_t kMaximumManifestLifetimeSeconds = 31 * 24 * 60 * 60;
+@@ -456,20 +457,26 @@ esp_err_t MemoriaActivationClient::Activate(ActivationProfile* profile) {
+     if (request_payload.empty() || request_signature.empty()) {
+         return ESP_FAIL;
+     }
+     std::string response;
+     int manifest_status = 0;
+     if (!HttpRequest("GET", JoinUrl(identity_.control_api_url(), path),
+                      {{"X-Device-Certificate-ID", identity_.certificate_id()},
+                       {"X-Device-Signature", request_signature}},
+                      {}, &response, &manifest_status)) {
+         if (manifest_status == 409) {
++            // Device is released by the server. Erase child-related local data before
++            // clearing the activation version. This must happen before the restart so the device
++            // enters bootstrap (QR/BLE) with a clean slate. Do this BEFORE accessing NVS to
++            // avoid races with the erase operation.
++            EraseLocalChildData();
++
+             // A released device is intentionally not bound yet.  Do not let
+             // the previous activation version strand the board in an error
+             // screen; keep activation_ctr so the next binding cannot replay
+             // the device's monotonic activation counter.
+             Settings runtime("memoria_runtime", true);
+             if (runtime.GetInt("activation_v", 0) != 0) {
+                 runtime.SetInt("activation_v", 0);
+             }
+             ESP_LOGW(kTag, "Activation unavailable while device is unbound; bootstrap required");
+             return ESP_ERR_INVALID_STATE;
