@@ -285,3 +285,28 @@ async def test_nobody_else_can_open_or_review_this_childs_memories(
     assert unknown.status_code == 404
     assert bad_action.status_code == 422
     assert [item["claim_id"] for item in still_pending] == [claim]
+
+
+@pytest.mark.asyncio
+async def test_another_account_cannot_retract_this_childs_memory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner_id, child_id, headers = await _bound_child(client, app, monkeypatch)
+        await _grant_memory(client, child_id, headers)
+        await _seed_claims_compiled_before_the_gate(app, owner_id, child_id)
+        url = f"/v1/guardian/minors/{child_id}/memories"
+        before = (await client.get(url, headers=headers)).json()["candidates"]
+        claim = before[0]["claim_id"]
+        _, stranger_headers = await _owner(client, app, "child-memory-retract-stranger")
+
+        refused = await client.post(
+            f"{url}/{claim}/review", headers=stranger_headers, json={"action": "retract"}
+        )
+        after = (await client.get(url, headers=headers)).json()["candidates"]
+
+    assert refused.status_code == 403
+    assert refused.json()["detail"]["code"] == "guardian_memory_review_unavailable"
+    assert after == before

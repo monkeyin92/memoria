@@ -1,101 +1,84 @@
-/* F01 记忆生命周期管理 - 最小样式 */
-
 .memory-lifecycle-page {
   background-color: var(--mp-bg);
 }
 
-.draft-banner {
-  background-color: var(--mp-sun-bg);
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--mp-line);
+.lifecycle-loading {
+  margin-top: 24px;
 }
 
-.draft-label {
-  display: block;
-  font-size: var(--mp-type-meta);
-  color: var(--mp-ink);
-  text-align: center;
-}
-
-.page-content {
-  padding: 16px;
-}
-
-.card {
-  background-color: var(--mp-surface);
-  border-radius: var(--mp-radius-card);
-  padding: 16px;
-  margin-bottom: 12px;
-  box-shadow: var(--mp-shadow-card);
-}
-
-.card-title {
-  display: block;
-  font-size: var(--mp-type-card);
-  font-weight: 600;
-  color: var(--mp-ink);
-  margin-bottom: 12px;
-}
-
-.card-text {
-  display: block;
-  font-size: var(--mp-type-body);
-  color: var(--mp-ink-2);
-  line-height: 1.6;
-}
-
-.card-notice {
-  display: block;
-  font-size: var(--mp-type-meta);
-  color: var(--mp-ink-3);
+.lifecycle-group {
   margin-top: 8px;
 }
 
-.info-card,
-.action-instruction,
-.operation-progress,
-.new-custody-card,
-.status-card,
-.chat-status-card {
-  border-left: 4px solid var(--mp-accent);
-}
-
-.grant-item {
-  border: 1px solid var(--mp-line);
-  border-radius: var(--mp-radius-icon);
-  padding: 12px;
+.lifecycle-group .section-title {
+  margin-top: 24px;
   margin-bottom: 12px;
 }
 
-.grant-status {
-  display: inline-block;
-  font-size: var(--mp-type-meta);
-  font-weight: 600;
-  padding: 4px 8px;
-  border-radius: 4px;
+.lifecycle-item {
+  margin-top: 12px;
 }
 
-.grant-status.active {
-  background-color: var(--mp-sage-bg);
-  color: var(--mp-sage);
-}
-
-.history-item {
-  border-top: 1px solid var(--mp-line);
-  padding: 12px 0;
+.lifecycle-item-head {
   display: flex;
+  align-items: flex-start;
   justify-content: space-between;
+  gap: 12px;
 }
 
-.history-action {
-  display: block;
-  font-size: var(--mp-type-body);
-  font-weight: 500;
-  color: var(--mp-ink);
+.lifecycle-item-head .l2-card-title {
+  flex: 1;
+  min-width: 0;
 }
 
-.history-time {
+.lifecycle-time {
   display: block;
-  font-size: var(--mp-type-meta);
+  margin-top: 8px;
   color: var(--mp-ink-3);
+  font-size: var(--mp-type-meta);
+  line-height: var(--mp-lh-caption);
+}
+
+.lifecycle-retry {
+  align-self: flex-start;
+  width: auto;
+  margin-top: 12px;
+}
+
+.lifecycle-item-retracted {
+  border-left: 3px solid var(--mp-line);
+}
+
+.lifecycle-restore {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.lifecycle-restore .secondary-button {
+  flex-shrink: 0;
+}
+
+.lifecycle-restore-note {
+  margin: 0;
+  color: var(--mp-ink-3);
+  font-size: var(--mp-type-meta);
+  line-height: var(--mp-lh-caption);
+}
+
+.lifecycle-delete-hint {
+  margin-top: 24px;
+}
+
+.lifecycle-delete-hint .l2-card-sub {
+  margin: 0;
+}
+
+.lifecycle-hint-link {
+  display: block;
+  width: auto;
+  margin-top: 8px;
+  padding-left: 0;
+  text-align: left;
 }
