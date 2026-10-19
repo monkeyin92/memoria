@@ -6,12 +6,14 @@ event id:
 
   {"corrected": 0, "missing": 2, "unlinked_child_claims": 1}
 
-``unlinked_child_claims`` counts claims whose ``subject_key`` starts with
-``son:``/``daughter:`` (the prefixes from ``services/archive/claim_subjects.py``)
-but whose ``about_subject_id`` is null, with live source evidence and not
-retracted.  Several bound children leave such a claim unassociated by design,
-so a non-zero count is expected and does not change the exit code; it only
-makes the state visible.
+``unlinked_child_claims`` counts child claims that have no
+``memory_claim_subjects`` row: live source evidence, not retracted, and a
+``subject_key`` that names a child either by the ``son:``/``daughter:``
+prefixes from ``services/archive/claim_subjects.py`` or by an archive person
+row whose ``relationship_to_owner`` is son/daughter.  A parent claim linked to
+every bound child is the normal state, so a leftover count means identity was
+unavailable or no child was bound at compile time.  It does not change the
+exit code; it only makes the state visible.
 
 Exit codes follow ``disk_patrol.sh``: 0 means no gap, 1 means at least one
 claim is missing its current-model vector, 3 means this check could not run

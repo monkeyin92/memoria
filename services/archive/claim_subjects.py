@@ -44,6 +44,7 @@ from services.archive.domain import EvidenceEvent
 __all__ = [
     "BoundChildSubjectIds",
     "CHILD_KEY_PREFIXES",
+    "CHILD_RELATIONS",
     "bound_children",
     "claim_about_subject",
     "confirmed_evidence_subject",
@@ -54,7 +55,8 @@ logger = logging.getLogger(__name__)
 #: ``account_id`` -> every child subject bound to that account.
 BoundChildSubjectIds = Callable[[str], Awaitable[tuple[str, ...]]]
 
-_CHILD_RELATIONS: tuple[str, ...] = ("son", "daughter")
+#: ``relationship_to_owner`` values that name a child.
+CHILD_RELATIONS: tuple[str, ...] = ("son", "daughter")
 #: ``subject_key`` prefixes that name a child by an explicit relationship code.
 CHILD_KEY_PREFIXES: tuple[str, ...] = ("son:", "daughter:")
 
@@ -146,6 +148,6 @@ async def _names_a_child(
             """,
             account_id,
             subject_key,
-            list(_CHILD_RELATIONS),
+            list(CHILD_RELATIONS),
         )
     )

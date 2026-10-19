@@ -32,7 +32,7 @@ from typing import cast
 
 import asyncpg
 
-from services.archive.claim_subjects import CHILD_KEY_PREFIXES
+from services.archive.claim_subjects import CHILD_KEY_PREFIXES, CHILD_RELATIONS
 from services.archive.memory_domain import MemoryEmbedder, MemoryEmbeddingUnavailableError
 from services.archive.memory_vector_cleanup import (
     claim_vector_body,
@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 # ``claim_subjects`` normalizes the key and checks these ASCII prefixes; the
 # SQL below matches the same prefixes case-insensitively after lower(btrim()).
 _CHILD_KEY_PATTERNS = tuple(f"{prefix}%" for prefix in CHILD_KEY_PREFIXES)
+_CHILD_RELATION_VALUES = list(CHILD_RELATIONS)
 
 # ``PostgresSubjectArchive.delete_events`` deletes the subject's evidence and
 # cascades its claims, search rows and vectors in one transaction, so the
@@ -100,9 +101,13 @@ WHERE document.account_id = $1
   )
 """
 
-# Claims that name a child by key prefix but stay unassociated.  Several bound
-# children are ambiguous, so this is the designed "no association" state; the
-# count is observational and never a repair target.
+# Claims that name a child but have no ``memory_claim_subjects`` row.  The
+# child test matches ``claim_subjects._names_a_child``: a son:/daughter: key
+# prefix, or a person row with the same canonical key and a son/daughter
+# relation.  A linked claim is the normal state, including one parent claim
+# linked to every bound child; a leftover unlinked claim means identity was
+# unavailable or no child was bound at compile time.  The count is
+# observational and never a repair target.
 _UNLINKED_CHILD_CLAIM_COUNT = """
 SELECT count(*)
 FROM memory_claims claim
@@ -110,9 +115,21 @@ JOIN archive_evidence_events evidence
   ON evidence.event_id = claim.source_event_id
  AND evidence.account_id = claim.account_id
 WHERE claim.account_id = $1
-  AND claim.about_subject_id IS NULL
   AND claim.status <> 'retracted'
-  AND lower(btrim(claim.subject_key)) LIKE ANY($2::text[])
+  AND NOT EXISTS (
+      SELECT 1 FROM memory_claim_subjects linked
+      WHERE linked.account_id = claim.account_id
+        AND linked.claim_id = claim.claim_id
+  )
+  AND (
+      lower(btrim(claim.subject_key)) LIKE ANY($2::text[])
+      OR EXISTS (
+          SELECT 1 FROM person_entities person
+          WHERE person.account_id = claim.account_id
+            AND person.canonical_key = claim.subject_key
+            AND lower(person.relationship_to_owner) = ANY($3::text[])
+      )
+  )
 """
 
 _MISSING_CLAIM_COUNT = """
@@ -165,7 +182,7 @@ FOR UPDATE OF claim
 class MissingVectorCount:
     total: int = 0
     corrected: int = 0
-    #: Observational; an unlinked child claim is an expected persisted state.
+    #: Observational; an unlinked child claim did not resolve at compile time.
     unlinked_child_claims: int = 0
 
 
@@ -207,6 +224,7 @@ class ClaimVectorBackfill:
                     _UNLINKED_CHILD_CLAIM_COUNT,
                     account_id,
                     list(_CHILD_KEY_PATTERNS),
+                    _CHILD_RELATION_VALUES,
                 )
             )
             row = await connection.fetchrow(

@@ -264,11 +264,10 @@ ALTER TABLE memory_claims
     ADD COLUMN IF NOT EXISTS conflict_state TEXT NOT NULL DEFAULT 'none';
 
 -- One claim can concern several bound children, so the single column becomes
--- one link row per child.  RLS is disabled for the copy (and re-enabled below)
--- because a later startup cannot read the old rows under an unset account.
-ALTER TABLE memory_claims DISABLE ROW LEVEL SECURITY;
-ALTER TABLE memory_claim_subjects DISABLE ROW LEVEL SECURITY;
-
+-- one link row per child.  Only a database that still has the old column needs
+-- RLS lifted for the copy; every other startup leaves RLS untouched.  The
+-- block restores ENABLE + FORCE before it returns, so a later failure cannot
+-- leave either table without forced RLS.
 DO $memory_claim_subjects$
 BEGIN
     IF EXISTS (
@@ -277,6 +276,8 @@ BEGIN
           AND attname = 'about_subject_id'
           AND NOT attisdropped
     ) THEN
+        ALTER TABLE memory_claims DISABLE ROW LEVEL SECURITY;
+        ALTER TABLE memory_claim_subjects DISABLE ROW LEVEL SECURITY;
         INSERT INTO memory_claim_subjects (account_id, claim_id, subject_id)
         SELECT account_id, claim_id, about_subject_id
         FROM memory_claims
@@ -284,6 +285,10 @@ BEGIN
         ON CONFLICT DO NOTHING;
         DROP INDEX IF EXISTS idx_pg_memory_claim_about_subject;
         ALTER TABLE memory_claims DROP COLUMN IF EXISTS about_subject_id;
+        ALTER TABLE memory_claims ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE memory_claims FORCE ROW LEVEL SECURITY;
+        ALTER TABLE memory_claim_subjects ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE memory_claim_subjects FORCE ROW LEVEL SECURITY;
     END IF;
 END
 $memory_claim_subjects$;

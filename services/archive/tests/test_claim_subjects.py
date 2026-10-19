@@ -425,6 +425,18 @@ async def test_initialization_migrates_about_subject_id_into_claim_subjects(
             finally:
                 await catalog.close()
 
+        rls = dict(
+            (str(name), (bool(row_security), bool(force_row_security)))
+            for name, row_security, force_row_security in owner_sql(
+                "SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class"
+                " WHERE oid IN (to_regclass('memory_claims'),"
+                "               to_regclass('memory_claim_subjects'))"
+            )
+        )
+        assert rls == {
+            "memory_claims": (True, True),
+            "memory_claim_subjects": (True, True),
+        }
         columns = owner_sql(
             "SELECT count(*) FROM information_schema.columns"
             " WHERE table_schema = 'public' AND table_name = 'memory_claims'"

@@ -770,7 +770,7 @@ class PostgresMemoryCatalog:
                 for key in sorted(entity_keys)
             )
             sensitivity = _sensitivity(claim.sensitive_domain)
-            about_subject_ids = await claim_about_subject(connection, account_id=event.account_id, evidence_subject_id=evidence_subject_id, subject_key=claim.subject_key, bound_child_ids=bound_child_ids)
+            claim_subject_ids = await claim_about_subject(connection, account_id=event.account_id, evidence_subject_id=evidence_subject_id, subject_key=claim.subject_key, bound_child_ids=bound_child_ids)
             await connection.execute(
                 """
                 INSERT INTO memory_claims (
@@ -805,7 +805,7 @@ class PostgresMemoryCatalog:
                 claim.salience,
                 sensitivity,
             )
-            await connection.executemany("INSERT INTO memory_claim_subjects (account_id, claim_id, subject_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING", [(event.account_id, claim_id, subject_id) for subject_id in about_subject_ids])
+            await connection.executemany("INSERT INTO memory_claim_subjects (account_id, claim_id, subject_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING", [(event.account_id, claim_id, subject_id) for subject_id in claim_subject_ids])
             await self._insert_search_document(
                 connection,
                 account_id=event.account_id,
