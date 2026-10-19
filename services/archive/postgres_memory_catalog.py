@@ -49,6 +49,7 @@ from services.archive.memory_domain import (
     subject_lineage_predicates,
 )
 from services.archive.memory_lexical_sql import search_terms
+from services.archive.memory_vector_cleanup import forget_claim_vectors
 from services.archive.memory_write_policy import (
     SINGLE_VALUE_PREDICATES,
     MemoryWriteDecision,
@@ -2056,8 +2057,7 @@ class PostgresMemoryCatalog:
             )
             if row is None:
                 raise EvidenceNotFoundError(command.claim_id)
-            previous_value = str(row["value"])
-            value = (command.corrected_value or previous_value).strip()
+            value = (command.corrected_value or str(row["value"])).strip()
             status = _REVIEW_STATUS[command.action]
             review_event = EvidenceEvent(
                 event_id=str(uuid.uuid4()),
@@ -2069,7 +2069,6 @@ class PostgresMemoryCatalog:
                 payload={
                     "target_id": command.claim_id,
                     "action": command.action,
-                    "previous_value": previous_value,
                     **({"corrected_value": value} if command.action == "correct" else {}),
                 },
                 # The review inherits the reviewed claim's own speaker instead
@@ -2262,6 +2261,7 @@ class PostgresMemoryCatalog:
             predicate=predicate,
             subject_id=subject_id,
         )
+        await forget_claim_vectors(connection, status, claim_id, account_id, self._vector_enabled)
 
     @staticmethod
     async def _insert_evidence(
