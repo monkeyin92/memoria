@@ -48,6 +48,22 @@ class _RecordingConsent:
             raise LookupError("no guardian session consent on this binding")
         return self.limits
 
+    async def active_consent(
+        self, *, minor_user_id: str, consent_kind: str
+    ) -> dict[str, Any] | None:
+        """Return a mock consent by default for testing memory operations."""
+        del minor_user_id  # unused in mock
+        # Return None for unknown kinds; consent for memory/archive operations
+        if consent_kind in ("memory_retention", "child_archive", "weekly_report"):
+            return {
+                "consent_id": f"mock-{consent_kind}",
+                "link_id": "mock-link",
+                "consent_kind": consent_kind,
+                "policy_version": "v1",
+                "granted_at": "2026-01-01T00:00:00Z",
+            }
+        return None
+
 
 async def _owner(client: AsyncClient, app: Any, username: str) -> tuple[str, dict[str, str]]:
     now = datetime.now(UTC)
