@@ -23,6 +23,7 @@ from services.control_api.tests.test_bound_subject_binding import (
     _RecordingConsent,
 )
 from services.control_api.tests.test_vector_delete_api import _Embedder, _vector_count
+from testing import app_store
 
 STUDY = "今天我练习了乘法口诀。"
 COLOUR = "我最喜欢蓝色。"
@@ -79,6 +80,18 @@ async def _second_child(
     return created.json()["primary_subject_ids"][0]
 
 
+class _CorrectionEmbedder:
+    """The replaced wording and the corrected wording land on opposite sides."""
+
+    model = "guardian-correction-test-v1"
+    dimensions = 2
+
+    async def embed(self, text: str) -> tuple[float, ...]:
+        if "蓝色" in text:
+            return (1.0, 0.0)
+        return (0.0, 1.0)
+
+
 async def _seed_claim(
     app: Any, owner_id: str, child_id: str, event_id: str, text: str
 ) -> str:
@@ -109,7 +122,7 @@ async def _seed_claim(
     assert report.failed_events == 0, report
     queue = await catalog.review_queue(account_id=owner_id, subject_id=child_id)
     matches = [item for item in queue if item.source_event_id == event_id]
-    assert matches, f"no claim compiled from {text}"
+    assert matches, "no claim compiled from the seeded turn"
     return matches[0].item_id
 
 
@@ -274,7 +287,7 @@ async def test_only_retracted_claims_are_listed(
 
 
 @pytest.mark.asyncio
-async def test_a_correction_is_not_restorable_as_a_retraction(
+async def test_a_corrected_memory_is_not_listed_as_retracted_after_reembedding(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _configure(monkeypatch, tmp_path)
@@ -292,8 +305,11 @@ async def test_a_correction_is_not_restorable_as_a_retraction(
         )
         await _review(client, child_id, retracted_id, headers, "retract")
 
+        catalog = app.state.memory_catalog
+        embedder = _CorrectionEmbedder()
+        catalog._embedder = embedder
         corrected_value = "我最喜欢绿色。"
-        correction = await app.state.memory_catalog.review(
+        correction = await catalog.review(
             MemoryClaimReview(
                 account_id=owner_id,
                 claim_id=corrected_id,
@@ -305,9 +321,18 @@ async def test_a_correction_is_not_restorable_as_a_retraction(
         assert correction.value == corrected_value
 
         listed = await client.get(_retracted_url(child_id), headers=headers)
-        assert listed.status_code == 200, listed.text
-        assert _retracted_ids(listed.json()) == [retracted_id]
-        assert corrected_id not in _retracted_ids(listed.json())
+        corrected_document = app_store.fetch_all(
+            "",
+            "SELECT title, body FROM memory_search_documents"
+            " WHERE account_id = ? AND item_id = ? AND kind = 'claim'",
+            (owner_id, corrected_id),
+        )
+        corrected_vectors = app_store.fetch_all(
+            "",
+            "SELECT embedding_model, embedding::text FROM memory_vector_documents"
+            " WHERE account_id = ? AND item_id = ?",
+            (owner_id, corrected_id),
+        )
 
         confirmed = await client.post(
             f"/v1/guardian/minors/{child_id}/memories/{corrected_id}/review",
@@ -315,6 +340,18 @@ async def test_a_correction_is_not_restorable_as_a_retraction(
             json={"action": "confirm"},
         )
         after_correction_confirm = await client.get(_retracted_url(child_id), headers=headers)
+        confirmed_document = app_store.fetch_all(
+            "",
+            "SELECT title, body FROM memory_search_documents"
+            " WHERE account_id = ? AND item_id = ? AND kind = 'claim'",
+            (owner_id, corrected_id),
+        )
+        confirmed_vectors = app_store.fetch_all(
+            "",
+            "SELECT embedding_model, embedding::text FROM memory_vector_documents"
+            " WHERE account_id = ? AND item_id = ?",
+            (owner_id, corrected_id),
+        )
         restored = await client.post(
             f"/v1/guardian/minors/{child_id}/memories/{retracted_id}/review",
             headers=headers,
@@ -322,11 +359,26 @@ async def test_a_correction_is_not_restorable_as_a_retraction(
         )
         after_restore = await client.get(_retracted_url(child_id), headers=headers)
 
+    assert listed.status_code == 200, listed.text
+    assert _retracted_ids(listed.json()) == [retracted_id]
+    assert corrected_id not in _retracted_ids(listed.json())
+    assert COLOUR not in listed.text
+    assert corrected_document
+    document_text = " ".join(part for part in corrected_document[0] if part)
+    assert COLOUR not in document_text
+    assert await embedder.embed(document_text) == (0.0, 1.0)
+    assert corrected_vectors == [(_CorrectionEmbedder.model, "[0,1]")]
+
+    # Confirming a corrected claim must not fetch its old sentence back into
+    # the search row or the vector.
     assert confirmed.status_code == 200, confirmed.text
     assert confirmed.json()["value"] == corrected_value
     assert confirmed.json()["value"] != COLOUR
     assert after_correction_confirm.status_code == 200, after_correction_confirm.text
     assert corrected_id not in _retracted_ids(after_correction_confirm.json())
+    assert confirmed_document == corrected_document
+    assert confirmed_vectors == corrected_vectors
+
     assert restored.status_code == 200, restored.text
     assert restored.json()["status"] == "confirmed"
     assert retracted_id not in _retracted_ids(after_restore.json())

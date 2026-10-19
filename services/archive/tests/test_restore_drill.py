@@ -76,6 +76,20 @@ class RebuildEmbedderStub:
         return (1.0, 0.0) if "杭州" in text else (0.0, 1.0)
 
 
+class _RecordingEmbedder:
+    model = "rebuild-correction-test-v1"
+    dimensions = 2
+
+    def __init__(self) -> None:
+        self.inputs: list[str] = []
+
+    async def embed(self, text: str) -> tuple[float, ...]:
+        self.inputs.append(text)
+        if "红色" in text:
+            return (0.0, 1.0)
+        return (1.0, 0.0)
+
+
 def test_evolution_controller_rls_metadata_contract_includes_control_state() -> None:
     schema = (Path(__file__).resolve().parents[2] / "evolution" / "postgres_schema.sql").read_text(
         encoding="utf-8"
@@ -786,6 +800,154 @@ async def test_projection_rebuild_requires_and_recreates_pgvector_documents() ->
         assert {
             (str(row["embedding_model"]), int(row["embedding_dimensions"])) for row in models
         } == {("rebuild-vector-test-v1", 2)}
+    finally:
+        if catalog is not None:
+            await catalog.close()
+        if archive is not None:
+            await archive.close()
+        await _database_command(admin_dsn, f'DROP DATABASE IF EXISTS "{database}" WITH (FORCE)')
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
+    reason="set MEMORIA_TEST_POSTGRES_DSN for the pgvector correction rebuild contract",
+)
+async def test_projection_rebuild_reembeds_only_the_corrected_value() -> None:
+    admin_dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
+    database = f"memoria_rebuild_correct_{uuid.uuid4().hex[:12]}"
+    dsn = _database_dsn(admin_dsn, database)
+    account_id = "rebuild-correct-owner"
+    event_id = "rebuild-correct-event"
+    old_text = "我喜欢蓝色。"
+    new_text = "晚霞是红色。"
+    embedder = _RecordingEmbedder()
+    archive: PostgresLifeArchive | None = None
+    catalog: PostgresMemoryCatalog | None = None
+    await _database_command(admin_dsn, f'CREATE DATABASE "{database}"')
+    try:
+        archive = PostgresLifeArchive(dsn)
+        catalog = PostgresMemoryCatalog(
+            dsn,
+            extractor=RuleBasedMemoryExtractor(),
+            embedder=embedder,
+            require_vector=True,
+            evidence_subject_category_resolver=lambda _event: "adult",
+        )
+        await archive.initialize()
+        await catalog.initialize()
+        await archive.record(
+            EvidenceEvent(
+                event_id=event_id,
+                account_id=account_id,
+                event_type="speech.utterance_finalized",
+                occurred_at=datetime(2026, 8, 7, tzinfo=UTC),
+                speaker_class="owner",
+                source="rebuild-correction-test",
+                payload={
+                    "text": old_text,
+                    "interaction_mode": "companion",
+                    "prompt_kind": "spontaneous",
+                    "owner_projection_eligible": True,
+                    "subject_category": "adult",
+                },
+            )
+        )
+        assert (await catalog.compile_pending(limit=100)).failed_events == 0
+        claim = (await catalog.review_queue(account_id=account_id))[0]
+        connection = await asyncpg.connect(dsn)
+        try:
+            row = await connection.fetchrow(
+                "SELECT title, body FROM memory_search_documents"
+                " WHERE account_id = $1 AND item_id = $2 AND kind = 'claim'",
+                account_id,
+                uuid.UUID(claim.item_id),
+            )
+        finally:
+            await connection.close()
+        assert row is not None
+        old_document = " ".join(part for part in (row["title"], row["body"]) if part)
+
+        await catalog.review(
+            MemoryClaimReview(
+                account_id=account_id,
+                claim_id=claim.item_id,
+                action="correct",
+                corrected_value=new_text,
+            )
+        )
+        connection = await asyncpg.connect(dsn)
+        try:
+            row = await connection.fetchrow(
+                "SELECT title, body FROM memory_search_documents"
+                " WHERE account_id = $1 AND item_id = $2 AND kind = 'claim'",
+                account_id,
+                uuid.UUID(claim.item_id),
+            )
+        finally:
+            await connection.close()
+        assert row is not None
+        new_document = " ".join(part for part in (row["title"], row["body"]) if part)
+        assert old_text not in new_document
+        embedder.inputs.clear()
+
+        report = await rebuild_postgres_memory_projections(
+            dsn,
+            extractor=RuleBasedMemoryExtractor(),
+            embedder=embedder,
+            require_vector=True,
+        )
+
+        assert report.failed_events == 0
+        # The capture compile skips the superseded claim, so no claim embedding
+        # input carries the old wording during a full rebuild. Other projections
+        # of the same utterance still keep the sentence the user heard.
+        claim_inputs = [value for value in embedder.inputs if "predicate:" in value]
+        assert old_document not in claim_inputs
+        assert all(old_text not in value for value in claim_inputs)
+        assert new_document in claim_inputs
+
+        connection = await asyncpg.connect(dsn)
+        try:
+            rebuilt_row = await connection.fetchrow(
+                "SELECT title, body FROM memory_search_documents"
+                " WHERE account_id = $1 AND item_id = $2 AND kind = 'claim'",
+                account_id,
+                uuid.UUID(claim.item_id),
+            )
+            vector = await connection.fetchrow(
+                "SELECT embedding::text, embedding <=> $3::vector AS distance"
+                " FROM memory_vector_documents"
+                " WHERE account_id = $1 AND item_id = $2",
+                account_id,
+                uuid.UUID(claim.item_id),
+                json.dumps(await embedder.embed(new_document), separators=(",", ":")),
+            )
+            old_distance = await connection.fetchval(
+                "SELECT embedding <=> $3::vector FROM memory_vector_documents"
+                " WHERE account_id = $1 AND item_id = $2",
+                account_id,
+                uuid.UUID(claim.item_id),
+                json.dumps(await embedder.embed(old_document), separators=(",", ":")),
+            )
+            claim_value = await connection.fetchval(
+                "SELECT value FROM memory_claims WHERE account_id = $1 AND claim_id = $2",
+                account_id,
+                uuid.UUID(claim.item_id),
+            )
+        finally:
+            await connection.close()
+
+        assert rebuilt_row is not None
+        rebuilt_document = " ".join(
+            part for part in (rebuilt_row["title"], rebuilt_row["body"]) if part
+        )
+        assert rebuilt_document == new_document
+        assert old_text not in rebuilt_document
+        assert vector is not None
+        assert float(vector["distance"]) == pytest.approx(0.0, abs=1e-9)
+        assert float(old_distance) > 0.5
+        assert claim_value == new_text
     finally:
         if catalog is not None:
             await catalog.close()
