@@ -182,9 +182,11 @@ class TestBackupsToDelete:
 
         # October 13, 2026 is a Monday (8 days before, not a Sunday -> delete)
         _touch(backup_dir / "memoria-20261013-0315.dump", date_int=20261013, time_int=315)
+        # The newest copy of a kind is never deleted, so keep a newer one beside it.
+        _touch(backup_dir / "memoria-20261020-0315.dump", date_int=20261020, time_int=315)
 
         to_delete = backups_to_delete(backup_dir, now=now)
-        assert len(to_delete) == 1
+        assert [p.name for p in to_delete] == ["memoria-20261013-0315.dump"]
 
     def test_keeps_recent_backups(self, tmp_path: Path) -> None:
         backup_dir = tmp_path / "backups"
@@ -283,6 +285,14 @@ class TestMain:
             time_int=315,
         )
 
+        # The newest copy of a kind is never deleted, so keep a current one beside it.
+        today = datetime.now(tz=timezone(timedelta(hours=8))).strftime("%Y%m%d")
+        _touch(
+            backup_dir / f"memoria-{today}-0315.dump",
+            date_int=int(today),
+            time_int=315,
+        )
+
         result = main(["--backup-dir", str(backup_dir), "--apply"])
         assert result == 0
         assert not old_file.exists()
@@ -290,3 +300,25 @@ class TestMain:
     def test_missing_directory_returns_zero(self) -> None:
         result = main(["--backup-dir", "/nonexistent/path"])
         assert result == 0
+
+
+def test_the_newest_copy_of_each_kind_is_kept_even_when_far_past_retention(tmp_path: Path) -> None:
+    now = datetime(2026, 12, 1, 4, 0, tzinfo=timezone(timedelta(hours=8)))
+    for name in (
+        "memoria-20260101-0315.dump",
+        "memoria-20260102-0315.dump",
+        "control-20260101-0315.sqlite3",
+        "control-20260102-0315.sqlite3",
+    ):
+        (tmp_path / name).write_bytes(b"x" * 200)
+
+    gone = {p.name for p in backups_to_delete(tmp_path, now=now)}
+
+    assert gone == {"memoria-20260101-0315.dump", "control-20260101-0315.sqlite3"}
+
+
+def test_a_lone_ancient_backup_is_not_deleted(tmp_path: Path) -> None:
+    now = datetime(2027, 1, 1, 4, 0, tzinfo=timezone(timedelta(hours=8)))
+    (tmp_path / "memoria-20260101-0315.dump").write_bytes(b"x" * 200)
+
+    assert backups_to_delete(tmp_path, now=now) == []

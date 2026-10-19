@@ -10,6 +10,9 @@ Applies the retention policy:
 - Days 8-30: keep only Sunday backups (one per week)
 - Day 31+: delete all
 
+The newest dump and the newest control-store copy are always kept, whatever
+their age.
+
 Returns 0 on success (or if no backups found).
 """
 
@@ -109,13 +112,29 @@ def backups_to_delete(backup_dir: Path, now: datetime | None = None) -> list[Pat
         now = datetime.now(tz=timezone(timedelta(hours=8)))
 
     candidates = list_backup_candidates(backup_dir)
+    newest = _newest_per_kind(candidates)
     to_delete: list[Path] = []
 
     for path, filename, date_int, time_int in candidates:
+        if path in newest:
+            continue
         if not should_keep(filename, date_int, time_int, now):
             to_delete.append(path)
 
     return sorted(to_delete)
+
+
+def _newest_per_kind(candidates: Sequence[tuple[Path, str, int, int]]) -> set[Path]:
+    """The newest dump and the newest control-store copy are never deleted.
+
+    Without this, backups that fail for 30 days would let the next cleanup
+    remove the last copies there are.
+    """
+    newest: dict[str, Path] = {}
+    for path, filename, _date, _time in candidates:
+        kind = "dump" if DUMP_NAME_RE.match(filename) else "sqlite"
+        newest.setdefault(kind, path)
+    return set(newest.values())
 
 
 def delete_paths(paths: Sequence[Path]) -> list[Path]:

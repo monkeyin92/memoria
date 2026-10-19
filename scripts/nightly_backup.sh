@@ -10,6 +10,7 @@
 #   1  backup or cleanup failed
 #
 set -Eeuo pipefail
+umask 077
 
 BACKUP_DIR="${NIGHTLY_BACKUP_DIR:-/var/lib/memoria/backups/nightly}"
 RETENTION_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/nightly_backup_retention.py"
@@ -76,7 +77,7 @@ if [[ $dump_size -lt 100 ]]; then
 fi
 
 # Verify dump is valid (pg_restore --list must work)
-if ! docker exec -i memoria-data-postgres-1 pg_restore --list < "$DUMP_TEMP" >/dev/null 2>&1; then
+if ! docker exec -i memoria-data-postgres-1 pg_restore --list < "$DUMP_TEMP" >/dev/null; then
   rm -f "$DUMP_TEMP"
   fail "pg_dump validation failed (pg_restore --list error)"
 fi
@@ -110,19 +111,19 @@ fi
 
 # Verify SQLite file is valid using Python's sqlite3 library
 if ! python3 -c "
-import sqlite3
+import sqlite3, sys
 try:
     conn = sqlite3.connect('file:$SQLITE_TEMP?mode=ro', uri=True)
     result = conn.execute('PRAGMA integrity_check').fetchone()
     if result and result[0] == 'ok':
         exit(0)
     else:
-        print('integrity_check failed:', result)
+        print('integrity_check failed:', result, file=sys.stderr)
         exit(1)
 except Exception as e:
-    print('Error:', e)
+    print('Error:', e, file=sys.stderr)
     exit(1)
-" >/dev/null 2>&1; then
+"; then
   rm -f "$SQLITE_TEMP"
   fail "SQLite backup validation failed"
 fi

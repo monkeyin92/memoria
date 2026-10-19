@@ -66,8 +66,8 @@ SQLite 备份使用官方 backup API（`sqlite3.backup()`)，确保一致性。
 ## 实施细节
 
 ### 脚本与配置
-- **脚本：** `/usr/local/bin/memoria-nightly-backup.sh`（root 0700）
-- **保留策略：** `/usr/local/bin/nightly_backup_retention.py`（root 0700）
+- **脚本：** `/opt/memoria/ops-tools/nightly_backup.sh`（root 0700）
+- **保留策略：** `/opt/memoria/ops-tools/nightly_backup_retention.py`（root 0700）
 
 ### Systemd 配置
 ```ini
@@ -78,7 +78,7 @@ Requires=docker.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/memoria-nightly-backup.sh
+ExecStart=/opt/memoria/ops-tools/nightly_backup.sh
 
 # /etc/systemd/system/memoria-nightly-backup.timer
 [Unit]
@@ -114,7 +114,7 @@ Persistent=true
 BACKUP=/var/lib/memoria/backups/nightly/memoria-20261019-0315.dump
 
 # 2. 创建临时数据库和角色（仅供测试）
-docker exec memoria-data-postgres-1 psql -U postgres -c \
+docker exec memoria-data-postgres-1 psql -U memoria_admin -d postgres -c \
   "CREATE DATABASE test_restore OWNER memoria_admin;"
 
 # 3. 恢复备份
@@ -125,7 +125,7 @@ docker exec memoria-data-postgres-1 psql -U memoria_admin -d test_restore -c \
   "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public';"
 
 # 5. 清理临时库
-docker exec memoria-data-postgres-1 psql -U postgres -c \
+docker exec memoria-data-postgres-1 psql -U memoria_admin -d postgres -c \
   "DROP DATABASE test_restore;"
 ```
 
@@ -136,17 +136,14 @@ docker exec memoria-data-postgres-1 psql -U postgres -c \
 # 1. 选择一份备份文件
 BACKUP=/var/lib/memoria/backups/nightly/control-20261019-0315.sqlite3
 
-# 2. 验证备份
-sqlite3 "$BACKUP" ".dump" | head -20
-
-# 3. 复制到临时位置用于离线检查
-cp "$BACKUP" /tmp/control-test.sqlite3
-
-# 4. 查看表结构
-sqlite3 /tmp/control-test.sqlite3 ".schema"
-
-# 5. 清理临时文件
-rm /tmp/control-test.sqlite3
+# 2. 只读打开，做完整性检查并列出各表行数（主机没有 sqlite3 命令行，用 python3）
+python3 - "$BACKUP" <<'PYEOF'
+import sqlite3, sys
+c = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
+print("integrity_check:", c.execute("PRAGMA integrity_check").fetchone()[0])
+for (name,) in c.execute("select name from sqlite_master where type = 'table' order by 1"):
+    print(name, c.execute(f'select count(*) from "{name}"').fetchone()[0])
+PYEOF
 ```
 
 ## 未解决问题
@@ -186,7 +183,7 @@ rm /tmp/control-test.sqlite3
 ## 决策影响
 
 - **开发工作量:** 约 2 小时（脚本编写 + 测试 + 文档）
-- **磁盘占用:** 初期 ~620 MB，DB 每增长 10 MB 日均增加 ~100 MB
+- **磁盘占用:** 约 50 至 75 MB。依据是实测 dump 约 4.4 MB（freeze 的 `memoria-pre-*.dump` 为 4,422,836 B），最多同时保留 7 份日备份加 3 份周备份。数据库本体 62 MB，压缩后远小于它；占用随 dump 体积线性增长。
 - **运维负担:** 首月需每周检查日志，稳定后按月
 - **恢复能力:** RPO 提升至最多 24 小时（vs 当前 72 小时）
 

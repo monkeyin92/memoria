@@ -57,9 +57,8 @@ Secret 仅在 root-only `/etc/memoria-*.env`（root:root 0600）；候选从真�
 sudo install -d -m 0700 /var/lib/memoria/backups/nightly
 
 # 2. 从仓库复制脚本
-sudo cp scripts/nightly_backup.sh /usr/local/bin/
-sudo cp scripts/nightly_backup_retention.py /usr/local/bin/
-sudo chmod 0700 /usr/local/bin/nightly_backup.sh /usr/local/bin/nightly_backup_retention.py
+sudo install -d -m 0755 /opt/memoria/ops-tools
+sudo install -m 0700 scripts/nightly_backup.sh scripts/nightly_backup_retention.py /opt/memoria/ops-tools/
 
 # 3. 安装 systemd 单元
 sudo cp infra/memoria-nightly-backup.service /etc/systemd/system/
@@ -85,13 +84,13 @@ sudo systemctl status memoria-nightly-backup.service
 sudo journalctl -u memoria-nightly-backup.service -n 100
 
 # 手动触发一次备份（测试）
-sudo /usr/local/bin/memoria-nightly-backup.sh
+sudo /opt/memoria/ops-tools/nightly_backup.sh
 
 # 查看备份文件
 ls -lh /var/lib/memoria/backups/nightly/
 
 # 列出将要被删除的备份（dry-run）
-python3 /usr/local/bin/nightly_backup_retention.py --backup-dir /var/lib/memoria/backups/nightly/
+python3 /opt/memoria/ops-tools/nightly_backup_retention.py --backup-dir /var/lib/memoria/backups/nightly/
 ```
 
 ### 从备份恢复（ADR-004）
@@ -103,7 +102,7 @@ python3 /usr/local/bin/nightly_backup_retention.py --backup-dir /var/lib/memoria
 BACKUP=/var/lib/memoria/backups/nightly/memoria-20261019-0315.dump
 
 # 创建临时数据库
-sudo docker exec memoria-data-postgres-1 psql -U postgres -c \
+sudo docker exec memoria-data-postgres-1 psql -U memoria_admin -d postgres -c \
   "CREATE DATABASE test_restore OWNER memoria_admin;"
 
 # 恢复备份
@@ -114,7 +113,7 @@ sudo docker exec memoria-data-postgres-1 psql -U memoria_admin -d test_restore -
   "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public';"
 
 # 清理临时库
-sudo docker exec memoria-data-postgres-1 psql -U postgres -c "DROP DATABASE test_restore;"
+sudo docker exec memoria-data-postgres-1 psql -U memoria_admin -d postgres -c "DROP DATABASE test_restore;"
 ```
 
 **恢复 SQLite 控制库到临时文件：**
@@ -123,13 +122,14 @@ sudo docker exec memoria-data-postgres-1 psql -U postgres -c "DROP DATABASE test
 # 选择一份备份
 BACKUP=/var/lib/memoria/backups/nightly/control-20261019-0315.sqlite3
 
-# 验证备份有效
-sudo sqlite3 "$BACKUP" ".tables"
-
-# 复制到临时位置（离线检查）
-sudo cp "$BACKUP" /tmp/control-test.sqlite3
-sudo sqlite3 /tmp/control-test.sqlite3 ".dump" | head -30
-sudo rm /tmp/control-test.sqlite3
+# 只读打开，做完整性检查并列出各表行数（主机没有 sqlite3 命令行，用 python3）
+sudo python3 - "$BACKUP" <<'PYEOF'
+import sqlite3, sys
+c = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
+print("integrity_check:", c.execute("PRAGMA integrity_check").fetchone()[0])
+for (name,) in c.execute("select name from sqlite_master where type = 'table' order by 1"):
+    print(name, c.execute(f'select count(*) from "{name}"').fetchone()[0])
+PYEOF
 ```
 
 
