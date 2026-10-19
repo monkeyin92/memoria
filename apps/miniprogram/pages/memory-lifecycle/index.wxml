@@ -179,7 +179,7 @@
 <wxs module="filters">
   function dateFormat(dateStr) {
     if (!dateStr) return "-";
-    var date = new Date(dateStr);
+    var date = getDate(dateStr);
     var month = date.getMonth() + 1;
     var day = date.getDate();
     return month + "月" + day + "日";
@@ -187,7 +187,7 @@
 
   function timeFormat(dateStr) {
     if (!dateStr) return "-";
-    var date = new Date(dateStr);
+    var date = getDate(dateStr);
     var hour = date.getHours();
     var min = date.getMinutes();
     return (hour < 10 ? "0" + hour : hour) + ":" + (min < 10 ? "0" + min : min);
