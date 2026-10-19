@@ -19,7 +19,7 @@ function withReadyAgreement(harness) {
 const PAGES = [
   { slug: "home", page: "pages/home/index", harness: authed() },
   { slug: "home-guest", page: "pages/home/index", harness: guest() },
-  { slug: "memory", page: "pages/memory/index", harness: authed(fx.safetyAlertApi([])), actions: [["summarizeSelectedDay"]] },
+  { slug: "memory", page: "pages/memory/index", harness: authed(fx.safetyAlertApi([])) },
   { slug: "memory-attention", page: "pages/memory/index", harness: authed() },
   {
     slug: "memory-attention-more",

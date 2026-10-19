@@ -634,7 +634,9 @@ Page({
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ stats: computeStats(result.items) });
     } catch {
-      // 统计只作展示，失败时保持默认值，不打断页面。
+      // 统计只作展示。旧 daily_summaries 读接口关闭时回落到 0，不报错。
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
+      this.setData({ stats: { totalDays: 0, moments: 0, streak: 0 } });
     }
   },
 

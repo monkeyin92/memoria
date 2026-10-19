@@ -131,41 +131,6 @@ test("memory page loads the owner's own recap without consulting the Runtime Pro
   });
 });
 
-test("memory page summarize action does not consult the Runtime Profile", async () => {
-  await withWx(async () => {
-    const definition = loadPage("../pages/memory/index");
-    const page = instantiate(definition);
-    let summarizeCalls = 0;
-    let gateCalls = 0;
-    const restore = stubApi({
-      currentIdentity: () => ({ user_id: "person_owner" }),
-      isAuthEpochCurrent: () => true,
-      hasAuthenticatedSession: () => true,
-      requireRuntimeCapability: async () => {
-        gateCalls += 1;
-        return { allowed: false, reason: "capability_missing" };
-      },
-      summarizeDay: async () => {
-        summarizeCalls += 1;
-      },
-      getMemoryDays: async () => ({ items: [] }),
-      getConversationReview: async () => ({
-        actual_heard: [],
-        memory_candidates: [],
-        confirmed_memories: [],
-      }),
-      getConversationSessions: async () => ({ items: [] }),
-    });
-    try {
-      await page.summarizeSelectedDay();
-      assert.equal(gateCalls, 0);
-      assert.equal(summarizeCalls, 1);
-    } finally {
-      restore();
-    }
-  });
-});
-
 function policyProfile() {
   const now = Date.now();
   return {

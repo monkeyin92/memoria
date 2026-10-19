@@ -35,14 +35,6 @@ const {
   usageRingStyle,
 } = require("../../utils/trial-device-card");
 
-function countCreatedToday(summaries, now = new Date()) {
-  const today = todayKey(now);
-  return summaries.filter((item) => {
-    const created = Date.parse(item.createdAt);
-    return Number.isFinite(created) && todayKey(new Date(created)) === today;
-  }).length;
-}
-
 function guestGreeting() {
   return `${greetingFor()}，欢迎回来`;
 }
@@ -191,14 +183,9 @@ Page({
     this.loadHome().finally(() => wx.stopPullDownRefresh());
   },
 
-  /*
-   * 一键分享：只把已经过门禁加载的每日摘要文案带出去；未登录或没有摘要时
-   * 分享一张不含任何私人内容的通用卡片。
-   */
   onShareAppMessage() {
-    const summary = this.data.authenticated ? this.data.dailySummaryText : "";
     return {
-      title: (summary || "Memoria · 每天的对话回顾").slice(0, 80),
+      title: "Memoria · 每天的对话回顾",
       path: "/pages/home/index",
     };
   },
@@ -549,17 +536,28 @@ Page({
 
     let memoryPreviews = [];
     let summaryCount = 0;
+    let recentChildSummary = "";
     if (boundChild?.personId) {
       try {
         const summaryPayload = await api.getChildSessionSummaries(boundChild.personId);
         if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
         const summaries = normalizeSessionSummaries(summaryPayload);
         memoryPreviews = memoryPreviewItems(summaries, 3);
-        summaryCount = countCreatedToday(summaries);
+        recentChildSummary = memoryPreviews[0]?.text || "";
+        summaryCount = summaries.length;
       } catch {
         memoryPreviews = [];
       }
     }
+    const todayView =
+      today.daysUnavailable && recentChildSummary
+        ? {
+            ...today,
+            todayTitle: "近期摘要",
+            todayOverview: recentChildSummary,
+            dailySummaryText: `最近：${recentChildSummary}`,
+          }
+        : today;
 
     const trialCard = buildTrialDeviceCard({
       online,
@@ -601,12 +599,12 @@ Page({
         ? `在设备旁唤醒「${settings?.wake_word_display || "茉莉"}」。需要记住的事，稍后确认。`
         : "可查看已同步的回顾。设备恢复连接后再记录。",
       heroFoot: online ? "在设备上使用，手机不录音" : "绑定关系不受影响",
-      pendingCount: today.pendingCount || 0,
+      pendingCount: todayView.pendingCount || 0,
       todayCount,
-      todayMeta: today.todayMeta || "",
-      todayTitle: today.todayTitle || "",
-      todayOverview: today.todayOverview || "",
-      dailySummaryText: today.dailySummaryText || "",
+      todayMeta: todayView.todayMeta || "",
+      todayTitle: todayView.todayTitle || "",
+      todayOverview: todayView.todayOverview || "",
+      dailySummaryText: todayView.dailySummaryText || "",
       summaryCount,
       avatarGlyph: avatarGlyphFrom(identity?.display_name),
       subscriptionPushEnabled: SUBSCRIPTION_PUSH_ENABLED,
@@ -658,30 +656,34 @@ Page({
       todayTitle: "",
       todayOverview: "",
       dailySummaryText: "",
+      daysUnavailable: false,
     };
     if (!identity) return empty;
+    // A closed daily-summary read is a normal state in production: count today
+    // from conversation sessions, never from the legacy day rows.
     const [daysResult, reviewResult, sessionsResult] = await Promise.all([
-      api.getMemoryDays(identity.user_id, 7),
+      Promise.resolve().then(() => api.getMemoryDays(identity.user_id, 7)).catch(() => null),
       api.getConversationReview(),
       typeof api.getConversationSessions === "function"
         ? api.getConversationSessions(20).catch(() => null)
         : Promise.resolve(null),
     ]);
+    const daysUnavailable = daysResult === null;
     const today = todayKey();
-    const day = (daysResult.items || []).find((item) => (item.day || item.date) === today);
+    const day = (daysResult?.items || []).find((item) => (item.day || item.date) === today);
     const sessionsToday = ((sessionsResult && sessionsResult.items) || []).filter(
       (item) => item.occurred_at && todayKey(new Date(item.occurred_at)) === today,
     ).length;
-    const count = sessionsToday || day?.message_count || 0;
+    const count = sessionsToday;
     const pending = (reviewResult?.memory_candidates || []).length;
     const overview =
       day?.summary?.overview || day?.overview || day?.summary_text || "";
     const title = day?.summary?.title || day?.title || "";
-    if (!count && !pending) return empty;
+    if (!count && !pending) return { ...empty, daysUnavailable };
     const dailySummaryText = count
       ? overview
         ? `今天和 Memoria 聊了 ${count} 次。${overview}`
-        : `今天和 Memoria 聊了 ${count} 次。回顾还没生成，可在回顾页生成。`
+        : `今天和 Memoria 聊了 ${count} 次。`
       : "";
     return {
       pendingCount: pending,
@@ -690,6 +692,7 @@ Page({
       todayTitle: title || (pending ? "有内容等你确认" : ""),
       todayOverview: overview || "具体内容在回顾里。",
       dailySummaryText,
+      daysUnavailable,
     };
   },
 });

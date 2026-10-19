@@ -54,6 +54,7 @@ Secret 仅在 root-only `/etc/memoria-*.env`（root:root 0600）；候选从真�
   - 最新一份 dump 或 control 超过 48 小时没更新时，`memoria-backup-freshness.timer`（每 6 小时）让 `memoria-backup-freshness.service` 进入 failed 并在 journal 打 `ALERT backup freshness:`。报警后必须在 7 天内修好备份并跑出一份新备份，否则「最多再留 7 天」的承诺不成立；修好后手动跑一次 `nightly_backup.sh`，再跑一次 `--check-freshness` 确认退出 0，并 `systemctl reset-failed memoria-backup-freshness.service`。
   - 容量约 38-45 MB，按 7 份重算：单份 dump 约 4.4 MB（freeze 的 `memoria-pre-*.dump` 实测 4,422,836 B）×7 ≈ 31 MB，control 单份约 1-2 MB ×7 ≈ 7-14 MB。
   - 可用空间 <1 GB 时跳过备份但仍做清理、退出 1；备份或校验失败退出 1。成功静默，失败看 `journalctl`。
+  - **`daily_summaries` 的删除约束**：这张表可能含孩子原话（模型失败时 fallback 会把最多 3 句原话写进去），生产读写目前已全部关闭。若以后重新开写，按主体删除（`services/governance/subject_deletion.py` / `subject_archive.py`）、解绑删除（`services/control_api/app/routes/identity_lifecycle.py`）、恢复后重放删除（`scripts/replay_subject_deletions.py`）三条路径都必须覆盖这张表，并有测试。
 - **不选的方案**：重开 WAL 归档（磁盘 0.6-1.1 GB/天扛不住）；云托管数据库（MVP 阶段成本）；只靠发布 freeze（RPO 1-3 天太长）。本方案 RPO 最多 24 小时。
 - **未解决**：无异地备份；只有 systemd 单元 failed + journal 的新鲜度检查（`memoria-backup-freshness.timer` 每 6 小时跑一次，最新 dump 或 control 超过 48 小时未更新就让服务 failed），没有推送到手机或群，需要有人看 `systemctl --failed`；DB 到单次备份 >500 MB 或日增 >50 MB 时重评 WAL + base backup。
 - **验收**：手动跑一次成功；`pg_restore --list` 能列对象；timer 连续 3 天无失败；首日备份满 7 天后由第 8 天凌晨的清理删除；模拟磁盘不足时跳过并记日志。
@@ -118,6 +119,19 @@ sudo python3 /opt/memoria/ops-tools/nightly_backup_retention.py --backup-dir /va
 sudo systemctl status memoria-backup-freshness.service
 sudo journalctl -u memoria-backup-freshness.service
 ```
+
+**内测阶段每日人工检查（招 30 户前必须换成会有人收到的提醒）：**
+
+每天查一次新鲜度定时器和服务，发现 `failed`、`ALERT backup freshness:` 或超 48 小时没有新备份，把输出贴到 Memoria总部群：
+
+```bash
+sudo systemctl status memoria-backup-freshness.timer
+sudo systemctl status memoria-backup-freshness.service
+sudo systemctl list-timers memoria-backup-freshness.timer
+sudo journalctl -u memoria-backup-freshness.service -n 100
+```
+
+现在 failed 只在主机上可见，不推手机也不进群；招 30 户之前必须接一个有人会收到的提醒渠道，否则夜间的备份失败可能一周都没人发现。
 
 ### 从备份恢复
 

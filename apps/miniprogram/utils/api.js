@@ -593,13 +593,6 @@ function getMemoryDays(userId, limit = 14) {
   );
 }
 
-function summarizeDay(userId, date) {
-  return rawRequest(`/v1/memory/days/${encodeURIComponent(date)}/summary`, {
-    method: "POST",
-    data: { user_id: userId },
-  });
-}
-
 /*
  * 监护人看自己绑定的孩子：哪些天聊过（只有次数），以及某一天的 AI 概括。概括由服务端
  * 按请求现写、不落库，且不含孩子的原话（产品决定：家长只看小结、趋势和提醒）。
@@ -607,13 +600,6 @@ function summarizeDay(userId, date) {
 function getGuardianChildDays(minorUserId, limit = 30) {
   return rawRequest(
     `/v1/guardian/minors/${encodeURIComponent(minorUserId)}/days?limit=${encodeURIComponent(limit)}`,
-  );
-}
-
-function generateGuardianChildRecap(minorUserId, day) {
-  return rawRequest(
-    `/v1/guardian/minors/${encodeURIComponent(minorUserId)}/days/${encodeURIComponent(day)}/recap`,
-    { method: "POST", timeout: 30000, data: {} },
   );
 }
 
@@ -1481,9 +1467,7 @@ module.exports = {
   wechatLoginCode,
   updateProfile,
   getMemoryDays,
-  summarizeDay,
   getGuardianChildDays,
-  generateGuardianChildRecap,
   getGuardianChildMemories,
   getGuardianChildRetractedMemories,
   reviewGuardianChildMemory,

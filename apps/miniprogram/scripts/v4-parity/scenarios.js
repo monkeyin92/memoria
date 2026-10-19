@@ -14,7 +14,6 @@ const PARITY = [
     design: "04-summary.png",
     page: "pages/memory/index",
     harness: fx.authed(fx.safetyAlertApi([])),
-    actions: [["summarizeSelectedDay"]],
   },
   { slug: "06-usage", design: "06-usage.png", page: "pages/device/index", harness: fx.authed() },
   {

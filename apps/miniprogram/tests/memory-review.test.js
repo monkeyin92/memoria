@@ -543,17 +543,11 @@ test("guardian review endpoints are canonical and encode the child id and day", 
       options.success({ statusCode: 200, data: { items: [] } });
     };
     await api.getGuardianChildDays("person/child", 30);
-    await api.generateGuardianChildRecap("person/child", "2026-10-01");
     assert.equal(
       requests[0].url,
       `${CONTROL_API_BASE_URL}/v1/guardian/minors/person%2Fchild/days?limit=30`,
     );
     assert.equal(requests[0].method, "GET");
-    assert.equal(
-      requests[1].url,
-      `${CONTROL_API_BASE_URL}/v1/guardian/minors/person%2Fchild/days/2026-10-01/recap`,
-    );
-    assert.equal(requests[1].method, "POST");
   });
 });
 
@@ -611,44 +605,66 @@ test("a parent who bound the device for a child sees the child's days and never 
   });
 });
 
-test("the generate button writes one day's recap into that day's card only", async () => {
+test("a closed legacy day read shows the child's recent summary in a self-use account", async () => {
   await withWx(async () => {
     const page = instantiate(loadPage("../pages/memory/index"));
-    const recapCalls = [];
     const restore = guardianStubs({
-      requireRuntimeCapability: async () => allowedGate(),
-      generateGuardianChildRecap: async (minorId, day) => {
-        recapCalls.push([minorId, day]);
-        return {
-          day,
-          summary: {
-            title: "今天聊了画画",
-            overview: "孩子聊了学校里的画画，心情不错。",
-            highlights: ["画画"],
-            suggestion: "可以一起看看他的画。",
-          },
-        };
+      readBindingManifest: () => ({ ...CHILD_BINDING, declared_mode: "self_use" }),
+      getMemoryDays: async () => {
+        throw Object.assign(new Error("legacy daily summaries are unavailable in production"), {
+          status: 503,
+        });
       },
-      summarizeDay: async () => {
-        throw new Error("the account's own summary must not be generated for a child");
+      getGuardianLinks: async () => [{ minorUserId: "person_child", status: "active" }],
+      getChildSessionSummaries: async () => ({
+        items: [
+          {
+            record_id: "sum_1",
+            text: "最近在聊画画和幼儿园的新朋友。",
+            created_at: "2026-10-01T10:00:00Z",
+          },
+        ],
+      }),
+      getGuardianChildDays: async () => {
+        throw new Error("a self-use account must not read a child's days");
       },
     });
-    // requireLogin passes for an authenticated session.
-    const originalHas = api.hasAuthenticatedSession;
-    api.hasAuthenticatedSession = () => true;
     try {
       await page.loadDays();
-      page.setData({ selectedDate: "2026-09-30" });
-      await page.summarizeSelectedDay();
-      assert.deepEqual(recapCalls, [["person_child", "2026-09-30"]]);
-      const [first, second] = page.data.days;
-      assert.equal(first.title, "孩子聊了 8 次", "other days are untouched");
-      assert.equal(second.title, "今天聊了画画");
-      assert.deepEqual(second.highlights, ["画画"]);
-      assert.equal(second.suggestion, "可以一起看看他的画。");
-      assert.equal(page.data.summarizing, false);
+      assert.equal(page.data.guardianMode, false);
+      assert.equal(page.data.error, "");
+      assert.equal(page.data.days.length, 1);
+      assert.equal(page.data.days[0].title, "近期摘要");
+      assert.equal(page.data.days[0].overview, "最近在聊画画和幼儿园的新朋友。");
     } finally {
-      api.hasAuthenticatedSession = originalHas;
+      restore();
+    }
+  });
+});
+
+test("a closed legacy day read with no recent summary keeps the empty state and no error", async () => {
+  await withWx(async () => {
+    const page = instantiate(loadPage("../pages/memory/index"));
+    const restore = guardianStubs({
+      readBindingManifest: () => ({ ...CHILD_BINDING, declared_mode: "self_use" }),
+      getMemoryDays: async () => {
+        throw Object.assign(new Error("legacy daily summaries are unavailable in production"), {
+          status: 503,
+        });
+      },
+      getGuardianLinks: async () => {
+        throw new Error("guardian index unavailable");
+      },
+      getGuardianChildDays: async () => {
+        throw new Error("a self-use account must not read a child's days");
+      },
+    });
+    try {
+      await page.loadDays();
+      assert.equal(page.data.guardianMode, false);
+      assert.equal(page.data.error, "");
+      assert.deepEqual(page.data.days, []);
+    } finally {
       restore();
     }
   });
