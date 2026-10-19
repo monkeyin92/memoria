@@ -198,9 +198,9 @@ class UnbindRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     reason: str = Field(default="unbind", min_length=1, max_length=256)
-    #: Also erase the served person's memory and conversations. Unbinding
-    #: always withdraws their consents; erasure needs the subject-scoped
-    #: deletion saga, which does not exist yet (P2-03).
+    #: Also purge the served person's child memory layers and run the
+    #: subject-scoped deletion saga. Unbinding always withdraws their
+    #: consents; without this flag the layers stay until retention expiry.
     purge_subject_data: bool = False
 
 
@@ -703,37 +703,40 @@ async def unbind_device(
             binding_id=manifest.binding_id,
             subject_ids=manifest.primary_subject_ids,
         )
-        # PIPL art. 47 / owner decision: unbind always deletes child_archive
-        # and all dialogue_summary rows, including those under 30 days.
-        child_layers = getattr(request.app.state, "child_layer_store", None)
-        if child_layers is not None:
-            child_layers_purged = "completed"
-            for subject_id in manifest.primary_subject_ids:
-                if subject_id == user.user_id:
-                    continue
-                try:
-                    await child_layers.purge_both_layers(subject_id=subject_id)
-                except Exception:
-                    logger.exception(
-                        "child layer purge after unbind failed subject_id=%s", subject_id
-                    )
-                    child_layers_purged = "pending"
-        if body.purge_subject_data and deletion is not None:
-            subject_deletion = "completed"
-            for subject_id in manifest.primary_subject_ids:
-                if subject_id == user.user_id:
-                    continue
-                await forget_subject_plans(request.app.state, subject_id)
-                try:
-                    await deletion.delete_subject(
-                        SubjectScope(account_id=user.user_id, subject_id=subject_id),
-                        # Unbound now, so the name is no longer needed either.
-                        redact_identity=True,
-                    )
-                except Exception:
-                    # Checkpointed and fenced; the deletion worker resumes it.
-                    logger.exception("subject deletion after unbind is incomplete")
-                    subject_deletion = "pending"
+        if not body.purge_subject_data:
+            # "Keep data" (PIPL art. 47 default): consents are withdrawn so
+            # memory stops, but the layers stay until their retention expiry.
+            child_layers_purged = "not_requested"
+        else:
+            # Owner asked to erase: delete child_archive and every
+            # dialogue_summary row, including those under 30 days.
+            child_layers = getattr(request.app.state, "child_layer_store", None)
+            if child_layers is not None:
+                child_layers_purged = "completed"
+                for subject_id in manifest.primary_subject_ids:
+                    if subject_id == user.user_id:
+                        continue
+                    try:
+                        await child_layers.purge_both_layers(subject_id=subject_id)
+                    except Exception:
+                        logger.exception("child layer purge after unbind failed")
+                        child_layers_purged = "pending"
+            if deletion is not None:
+                subject_deletion = "completed"
+                for subject_id in manifest.primary_subject_ids:
+                    if subject_id == user.user_id:
+                        continue
+                    await forget_subject_plans(request.app.state, subject_id)
+                    try:
+                        await deletion.delete_subject(
+                            SubjectScope(account_id=user.user_id, subject_id=subject_id),
+                            # Unbound now, so the name is no longer needed either.
+                            redact_identity=True,
+                        )
+                    except Exception:
+                        # Checkpointed and fenced; the deletion worker resumes it.
+                        logger.exception("subject deletion after unbind is incomplete")
+                        subject_deletion = "pending"
     return {
         "binding_id": binding.binding_id,
         "status": binding.status,

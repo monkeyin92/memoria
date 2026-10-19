@@ -1111,7 +1111,7 @@ async function syncDeviceBindings() {
  */
 function unbindDevice(deviceId, { purgeSubjectData } = {}) {
   if (typeof purgeSubjectData !== "boolean") {
-    return Promise.reject(new TypeError("请先选择是否删除使用人的数据。"));
+    return Promise.reject(new TypeError("请先选择是否删除 TA 的数据。"));
   }
   return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/binding/unbind`, {
     method: "POST",
