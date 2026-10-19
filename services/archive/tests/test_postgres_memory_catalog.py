@@ -527,10 +527,8 @@ async def test_recall_embeds_a_redacted_query_and_matches_lexically_on_the_raw_o
         matched = await search_scores("13812345678")
         assert matched[event_ids[0]] > matched[event_ids[1]]
         unmatched = await search_scores("13900000000")
-        # Lexical scores for unmatched queries may have small floating-point variance
-        # due to embedding model precision; use rel tolerance for stability across
-        # database platforms and calculation orders (e.g., PR #309 refactoring).
-        assert unmatched[event_ids[0]] == pytest.approx(unmatched[event_ids[1]], rel=1e-2)
+        assert unmatched[event_ids[1]] == pytest.approx(matched[event_ids[1]])
+        assert matched[event_ids[0]] - unmatched[event_ids[0]] == pytest.approx(0.175, abs=1e-3)
         assert embedder.inputs == ["[手机号]", "[手机号]"]
     finally:
         await connection.execute(
