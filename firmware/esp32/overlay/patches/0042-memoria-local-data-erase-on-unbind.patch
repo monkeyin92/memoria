@@ -1,8 +1,13 @@
 diff --git a/main/memoria/memoria_activation_client.cc b/main/memoria/memoria_activation_client.cc
-index e2c44ffd..845484db 100644
+index e2c44ffd..d7cb87d2 100644
 --- a/main/memoria/memoria_activation_client.cc
 +++ b/main/memoria/memoria_activation_client.cc
-@@ -10,20 +10,21 @@
+@@ -5,30 +5,31 @@
+ #include <cerrno>
+ #include <cstdio>
+ #include <cstdlib>
+ #include <cstring>
+ #include <ctime>
  #include <string_view>
  #include <sys/time.h>
  #include <vector>
@@ -24,7 +29,17 @@ index e2c44ffd..845484db 100644
  constexpr int kHttpTimeoutMs = 10000;
  constexpr time_t kMinimumTrustedUnixTime = 1700000000;
  constexpr time_t kMaximumManifestLifetimeSeconds = 31 * 24 * 60 * 60;
-@@ -456,20 +457,26 @@ esp_err_t MemoriaActivationClient::Activate(ActivationProfile* profile) {
+
+ struct ScopedJson final {
+     cJSON* value = nullptr;
+     ~ScopedJson() { cJSON_Delete(value); }
+ };
+@@ -451,36 +452,45 @@ esp_err_t MemoriaActivationClient::Activate(ActivationProfile* profile) {
+         return ESP_ERR_INVALID_ARG;
+     }
+     const std::string path = "/v1/devices/" + identity_.device_id() + "/activation-manifest";
+     const std::string request_payload = BuildSignedGetPayload(identity_, path);
+     const std::string request_signature = SignedRequestHeader(identity_, request_payload);
      if (request_payload.empty() || request_signature.empty()) {
          return ESP_FAIL;
      }
@@ -35,19 +50,38 @@ index e2c44ffd..845484db 100644
                        {"X-Device-Signature", request_signature}},
                       {}, &response, &manifest_status)) {
          if (manifest_status == 409) {
-+            // Device is released by the server. Erase child-related local data before
-+            // clearing the activation version. This must happen before the restart so the device
-+            // enters bootstrap (QR/BLE) with a clean slate. Do this BEFORE accessing NVS to
-+            // avoid races with the erase operation.
-+            EraseLocalChildData();
-+
-             // A released device is intentionally not bound yet.  Do not let
-             // the previous activation version strand the board in an error
-             // screen; keep activation_ctr so the next binding cannot replay
-             // the device's monotonic activation counter.
+-            // A released device is intentionally not bound yet.  Do not let
+-            // the previous activation version strand the board in an error
+-            // screen; keep activation_ctr so the next binding cannot replay
+-            // the device's monotonic activation counter.
++            // Device is released by the server. Erase child-related local data only during
++            // the state transition from bound (activation_v != 0) to unbound (409 means no manifest).
++            // This guard prevents repeated erasure on every polling retry (every 5 seconds while unbound).
++            // Only devices that were previously activated are released; newly-uninitialized devices
++            // get 409 on first activation attempt and must not trigger the erase.
              Settings runtime("memoria_runtime", true);
-             if (runtime.GetInt("activation_v", 0) != 0) {
+-            if (runtime.GetInt("activation_v", 0) != 0) {
++            const int32_t previous_activation_v = runtime.GetInt("activation_v", 0);
++
++            if (previous_activation_v != 0) {
++                // Transitioning from bound to released: erase child settings before clearing activation_v
++                EraseLocalChildData();
++            }
++
++            // Clear activation state (but keep activation_ctr for replay prevention)
++            if (previous_activation_v != 0) {
                  runtime.SetInt("activation_v", 0);
              }
              ESP_LOGW(kTag, "Activation unavailable while device is unbound; bootstrap required");
              return ESP_ERR_INVALID_STATE;
+         }
+         return ESP_FAIL;
+     }
+     ScopedJson manifest{cJSON_ParseWithLength(response.data(), response.size())};
+     std::string config_hash;
+     std::string expires_at;
+     if (manifest.value == nullptr ||
+         !VerifyManifest(identity_, manifest.value, profile, &config_hash, &expires_at)) {
+         ESP_LOGE(kTag, "Activation Manifest validation failed");
+         return ESP_ERR_INVALID_RESPONSE;
+     }
