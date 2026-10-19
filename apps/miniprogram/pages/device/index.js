@@ -31,7 +31,7 @@ const {
 } = require("../../utils/quiet-hours");
 const { offersSafetySubscribe, usageRingStyle } = require("../../utils/trial-device-card");
 const { PRIVACY_LINE } = require("../../utils/child-memory");
-const { unbindResultLines, unbindClearsChildLayers } = require("../../utils/unbind-result");
+const { unbindResultLines } = require("../../utils/unbind-result");
 const { SUBSCRIPTION_PUSH_ENABLED } = require("../../config");
 
 const LIMITS_SLIDER_STEP = 1;
@@ -425,10 +425,11 @@ Page({
     sheetOpen: false,
     diagExpanded: false,
     unbindSheetVisible: false,
-    unbindClearsChildLayers: false,
-    unbindPurgeChoice: "",
+    unbindPurgeChoice: "keep",
     unbinding: false,
     unbindError: "",
+    unbindResultVisible: false,
+    unbindResultLines: [],
   },
 
   onLoad() {
@@ -543,10 +544,11 @@ Page({
       bargeInChecked: {},
       allowedAudioModesLabel: "",
       unbindSheetVisible: false,
-      unbindClearsChildLayers: false,
-      unbindPurgeChoice: "",
+      unbindPurgeChoice: "keep",
       unbinding: false,
       unbindError: "",
+      unbindResultVisible: false,
+      unbindResultLines: [],
       wakeSheetVisible: false,
     });
     this._syncSheetOpen();
@@ -1210,15 +1212,14 @@ Page({
   },
 
   /*
-   * 解除绑定：先说明会停止记忆，再让用户在「保留数据」与「同时删除」之间
-   * 明确二选一；选删除还要再确认一次。服务端按 purge_subject_data 执行。
+   * 解除绑定：先说明会停止记忆，默认保留 TA 的数据；选删除还要再确认一次。
+   * 服务端按 purge_subject_data 执行。
    */
   openUnbindSheet() {
     if (!this.data.binding?.device_id) return;
     this.setData({
       unbindSheetVisible: true,
-      unbindClearsChildLayers: unbindClearsChildLayers(this.data.binding.declared_mode),
-      unbindPurgeChoice: "",
+      unbindPurgeChoice: "keep",
       unbindError: "",
     });
     this._syncSheetOpen();
@@ -1226,7 +1227,7 @@ Page({
 
   closeUnbindSheet() {
     if (this.data.unbinding) return;
-    this.setData({ unbindSheetVisible: false, unbindPurgeChoice: "", unbindError: "" });
+    this.setData({ unbindSheetVisible: false, unbindPurgeChoice: "keep", unbindError: "" });
     this._syncSheetOpen();
   },
 
@@ -1240,7 +1241,8 @@ Page({
     return new Promise((resolve) => {
       wx.showModal({
         title: "确认删除 TA 的数据？",
-        content: "TA 的记忆和对话数据会被永久删除，重新绑定也无法恢复。",
+        content:
+          "TA 的记忆和对话数据会被永久删除，重新绑定也无法恢复。系统备份里最多再留 7 天，到期自动覆盖，这期间不会被使用，也不会被恢复回来。",
         confirmText: "删除",
         confirmColor: "#b3261e",
         cancelText: "再想想",
@@ -1253,10 +1255,6 @@ Page({
   async confirmUnbind() {
     const { binding, unbinding, unbindPurgeChoice } = this.data;
     if (unbinding || !binding?.device_id) return;
-    if (unbindPurgeChoice !== "keep" && unbindPurgeChoice !== "purge") {
-      this.setData({ unbindError: "请先选择是否删除 TA 的数据。" });
-      return;
-    }
     const purgeSubjectData = unbindPurgeChoice === "purge";
     if (purgeSubjectData && !(await this._confirmPurge())) return;
     const authEpoch = api.currentAuthEpoch();
@@ -1267,15 +1265,16 @@ Page({
       // it would offer 「继续上次启用」 for a robot nobody can resume any more.
       clearOnboardingSessionId();
       if (!api.isAuthEpochCurrent(authEpoch)) return;
-      this.setData({ unbindSheetVisible: false, unbindPurgeChoice: "" });
-      this._syncSheetOpen();
       // 把服务端实际清理的结果读给家长；pending 也要说，不能只报「已解除」。
-      wx.showModal({
-        title: "已解除绑定",
-        content: unbindResultLines(result).join("\n") || "设备已解除绑定。",
-        showCancel: false,
-        confirmText: "知道了",
+      // 一句一个节点渲染，不靠 showModal 的换行符排版。
+      const lines = unbindResultLines(result);
+      this.setData({
+        unbindSheetVisible: false,
+        unbindPurgeChoice: "keep",
+        unbindResultVisible: true,
+        unbindResultLines: lines.length ? lines : ["设备已解除绑定。"],
       });
+      this._syncSheetOpen();
       await this.loadDevice();
     } catch (error) {
       if (!api.isAuthEpochCurrent(authEpoch)) return;
@@ -1283,6 +1282,11 @@ Page({
     } finally {
       if (api.isAuthEpochCurrent(authEpoch)) this.setData({ unbinding: false });
     }
+  },
+
+  closeUnbindResult() {
+    this.setData({ unbindResultVisible: false });
+    this._syncSheetOpen();
   },
 
   selectCandidate(event) {
@@ -1843,6 +1847,7 @@ Page({
     const sheetOpen = Boolean(
       this.data.wakeSheetVisible ||
         this.data.unbindSheetVisible ||
+        this.data.unbindResultVisible ||
         this.data.personaSheetVisible ||
         this.data.limitsSheetVisible,
     );
