@@ -86,21 +86,25 @@ bool EraseLocalChildData() {
                  erase_key.key, erase_key.namespace_name);
     }
 
-    // Erase Wi-Fi credentials LAST, only after all NVS keys succeeded
-    // The Clear() method erases all saved SSIDs and passwords from NVS "wifi" namespace.
-    if (!SsidManager::GetInstance().Clear()) {
-        ESP_LOGW(kTag, "Failed to clear Wi-Fi credentials");
-        success = false;
-    } else {
-        ESP_LOGI(kTag, "Erased Wi-Fi SSID/password credentials");
+    // Erase Wi-Fi credentials LAST, and only once every child key erased: a
+    // failed settings erase must not take the saved network with it. Clear()
+    // returns void (managed component), so the wiped list is the evidence.
+    if (!success) {
+        ESP_LOGW(kTag, "Local data erase completed with errors; Wi-Fi credentials kept");
+        return false;
     }
 
-    if (success) {
-        ESP_LOGI(kTag, "All child-related local data erased successfully");
-    } else {
-        ESP_LOGW(kTag, "Local data erase completed with errors");
+    SsidManager& ssid_manager = SsidManager::GetInstance();
+    ssid_manager.Clear();
+    if (!ssid_manager.GetSsidList().empty()) {
+        ESP_LOGW(kTag, "Wi-Fi clear left %u saved SSID(s); release deferred",
+                 static_cast<unsigned>(ssid_manager.GetSsidList().size()));
+        return false;
     }
-    return success;
+
+    ESP_LOGI(kTag, "Erased Wi-Fi SSID/password credentials");
+    ESP_LOGI(kTag, "All child-related local data erased successfully");
+    return true;
 }
 
 }  // namespace memoria

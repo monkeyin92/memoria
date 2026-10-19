@@ -6,6 +6,7 @@
 #include "fake_nvs.h"
 #include "memoria_local_data_erase.h"
 #include "nvs.h"
+#include "ssid_manager.h"
 
 esp_err_t nvs_open(const char* name, nvs_open_mode_t mode, nvs_handle_t* out_handle) {
     auto& nvs = fake::State();
@@ -90,6 +91,7 @@ static void Report(bool ok) {
             printf("s %s %s %d\n", ns.c_str(), key.c_str(), value);
         }
     }
+    printf("w %zu\n", SsidManager::GetInstance().GetSsidList().size());
     printf("r %s\n", ok ? "true" : "false");
     fflush(stdout);
 }
@@ -121,6 +123,10 @@ int main() {
         } else if (command == "fail_commit") {
             in >> ns;
             nvs.failing_commits.insert(ns);
+        } else if (command == "ssid") {
+            std::string ssid, password;
+            in >> ssid >> password;
+            SsidManager::GetInstance().AddSsid(ssid, password);
         } else if (command == "fail_wifi_clear") {
             nvs.wifi_clear_fails = true;
         } else if (command == "heal") {

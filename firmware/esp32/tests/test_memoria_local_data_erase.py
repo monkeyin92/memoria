@@ -47,6 +47,7 @@ class Step:
     trace: list[str]
     store: dict[tuple[str, str], int]
     ok: bool
+    ssid_count: int
 
     def opened(self) -> list[str]:
         return [line.split()[1] for line in self.trace if line.startswith("open ")]
@@ -91,6 +92,7 @@ def _drive(tool: pathlib.Path, *commands: str) -> list[Step]:
     steps: list[Step] = []
     trace: list[str] = []
     store: dict[tuple[str, str], int] = {}
+    ssid_count = 0
     for line in completed.stdout.splitlines():
         kind, _, rest = line.partition(" ")
         if kind == "t":
@@ -98,8 +100,10 @@ def _drive(tool: pathlib.Path, *commands: str) -> list[Step]:
         elif kind == "s":
             ns, key, value = rest.split(" ")
             store[(ns, key)] = int(value)
+        elif kind == "w":
+            ssid_count = int(rest)
         elif kind == "r":
-            steps.append(Step(trace, store, rest == "true"))
+            steps.append(Step(trace, store, rest == "true", ssid_count))
             trace, store = [], {}
     return steps
 
@@ -118,12 +122,13 @@ def test_erase_removes_exactly_the_child_keys_and_the_wifi_list(tool: pathlib.Pa
     assert [ns for ns, _ in step.erase_attempts()].count("memoria_power") == 3
     assert [ns for ns, _ in step.erase_attempts()].count("memoria") == 3
     assert step.trace.count("wifi_clear") == 1
+    assert step.ssid_count == 0, "a saved SSID must not survive the erase"
     assert set(step.store) == set(KEPT_KEYS)
     _balanced(step)
 
 
 def test_wifi_clear_happens_last_after_all_nvs_keys(tool: pathlib.Path) -> None:
-    (step,) = _drive(tool, *SEED, "erase")
+    (step,) = _drive(tool, *SEED, "ssid home secret", "erase")
 
     assert step.ok
     wifi_clear_idx = step.trace.index("wifi_clear")
@@ -133,6 +138,16 @@ def test_wifi_clear_happens_last_after_all_nvs_keys(tool: pathlib.Path) -> None:
     )
     assert last_erase_idx >= 0
     assert wifi_clear_idx > last_erase_idx, "Wi-Fi clear must happen after all NVS key erases"
+
+
+def test_failed_child_key_erase_keeps_the_saved_ssids(tool: pathlib.Path) -> None:
+    (step,) = _drive(
+        tool, *SEED, "ssid home secret", "fail_erase memoria_power quiet_end", "erase"
+    )
+
+    assert not step.ok
+    assert "wifi_clear" not in step.trace, "a failed child erase must not trigger Clear()"
+    assert step.ssid_count == 1
 
 
 
@@ -192,12 +207,34 @@ def test_unopenable_namespace_reports_failure_and_erases_the_others(tool: pathli
 
 
 def test_wifi_clear_failure_reports_overall_failure(tool: pathlib.Path) -> None:
-    (step,) = _drive(tool, *SEED, "fail_wifi_clear", "erase")
+    (step,) = _drive(tool, *SEED, "ssid home secret", "fail_wifi_clear", "erase")
 
     assert not step.ok
     assert set(step.store) == set(KEPT_KEYS), "NVS keys should still be erased"
     assert step.trace.count("wifi_clear") == 1
+    assert step.ssid_count == 1, "a surviving SSID is the failure signal, not a return code"
     _balanced(step)
+
+
+def test_repeated_failure_then_heal_clears_the_wifi_list_once(tool: pathlib.Path) -> None:
+    first, second, third = _drive(
+        tool,
+        *SEED,
+        "ssid home secret",
+        "fail_wifi_clear",
+        "erase",
+        "fail_wifi_clear",
+        "erase",
+        "heal",
+        "erase",
+    )
+
+    assert not first.ok
+    assert first.ssid_count == 1
+    assert not second.ok
+    assert second.ssid_count == 1, "retry must not report success while the SSID survives"
+    assert third.ok
+    assert third.ssid_count == 0
 
 
 
