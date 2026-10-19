@@ -38,11 +38,26 @@ Secret 仅在 root-only `/etc/memoria-*.env`（root:root 0600）；候选从真�
 - **数据层**：两台机上 `memoria-data` 项目都是从 `releases/20260827-architecture-split-v1/infra` 起的。`current/infra` 里的同名 compose 多一个 `011-control-schema.sql` 的 initdb 挂载（只在空库首次初始化时用）；在已有数据的库上用 `current/infra` 去 `up -d` 会让 compose 判定配置变了而重建 postgres 容器（推断，没试），不要顺手做。
 - **WAL 归档已关（P1-08，2026-10-06）**：`infra/memoria-data.production.yml` 的 postgres 参数是 `archive_mode=off`，不再有 `archive_timeout` / `archive_command`。原先每 5 分钟强制切一个 16 MB 段并拷进同盘的 `memoria-data_postgres_wal_archive` 卷：没有 base backup 可接，没有恢复价值，旧机实测每天涨约 0.6–1.1 GB。恢复靠每次整栈发布前 `freeze` 的 `memoria-pre-<tag>.dump`（见「数据层、备份与恢复」）。改这个参数必须重建 postgres 容器（`archive_mode` 要重启，`ALTER SYSTEM` 改不了：compose 的 `-c` 参数优先）；线上 compose 与仓库的同步和卷的清理是维护窗口里的一步，结果记在 HANDOFF。要重新启用（例如接异地备份 profile）：在 compose 里把 `archive_mode=on`、`archive_timeout=300s`、`archive_command=test ! -f /wal-archive/%f && cp %p /wal-archive/%f` 一并恢复，并保持该卷 `999:999 0700`，否则 `archive_command` 一直失败；同时要有 base backup 和按它裁剪的策略。
 - **磁盘（最近一次只读核验：2026-10-10 23:31）**：40GB盘、已用25GB（65%）、剩14GB；09:40既有清理删掉20261007旧镜像tag/incoming/源码树、保留`.cutover`。`incoming/`保留`20261009-textless-spare-v1`、`20261010-stale-interim-v1`和`20261010-n8-endpoint-diag-v1`三个目录，镜像保留当前与一个可运行回滚；详细收据见`docs/acceptance/run-20261010-verify/findings.md`。WAL归档关掉后主要增长是每次发布约4–5GB（镜像+包）与库本身；不要手删`pg_wal`。`memoria-disk-patrol.timer`只在75%/85%告警、不自动清理，生产清理另授权。
-- **systemd**：`memoria-readiness-refresh.timer`（12 小时一次提供方冒烟 + readiness 标记；迁移后 01:36:57 跑过一次，从新机出口 PASS）与 `memoria-disk-patrol.timer` 已在新机启用。`memoria-freeze-dump-cleanup.timer`（每日）应在下一次整栈发布时一并安装：只删 `/opt/memoria/releases/*/.cutover/` 下超过 3 天的 `memoria-pre-*.dump` 与 `memoria.pre-*.sqlite3`。`memoria-log-rotate.timer`（每小时轮转 `/var/log/memoria`）与 rsyslog drop-in `/etc/rsyslog.d/30-memoria.conf` 在第一次带 `logging:` 块的整栈发布里、`env` 之前安装，见「容器日志落盘」。`memoria-nightly-backup.timer`（每日 03:15）备份 PostgreSQL 与 SQLite 控制库到 `/var/lib/memoria/backups/nightly/`，保留 7 天全量 + 周日备份至 30 天（详见 ADR-004）。
+- **systemd**：`memoria-readiness-refresh.timer`（12 小时一次提供方冒烟 + readiness 标记；迁移后 01:36:57 跑过一次，从新机出口 PASS）与 `memoria-disk-patrol.timer` 已在新机启用。`memoria-freeze-dump-cleanup.timer`（每日）应在下一次整栈发布时一并安装：只删 `/opt/memoria/releases/*/.cutover/` 下超过 3 天的 `memoria-pre-*.dump` 与 `memoria.pre-*.sqlite3`。`memoria-log-rotate.timer`（每小时轮转 `/var/log/memoria`）与 rsyslog drop-in `/etc/rsyslog.d/30-memoria.conf` 在第一次带 `logging:` 块的整栈发布里、`env` 之前安装，见「容器日志落盘」。`memoria-nightly-backup.timer`（每日 03:15）备份 PostgreSQL 与 SQLite 控制库到 `/var/lib/memoria/backups/nightly/`，保留 7 天全量 + 周日备份至 30 天（详见下方「夜间数据库备份」）。
 
-## 数据层、备份与恢复
+## 夜间数据库备份
 
-### 夜间备份安装与运维（ADR-004）
+### 夜间备份决策（2026-10-19 用户批准）
+
+- **为什么做**：WAL 归档已于 2026-10-06 关闭，此前只有发布 `freeze` 步骤的 `pg_dump`（保留 3 天），发布间隔内没有备份；主机 40 GB 盘与 pocketSparks 共享。
+- **关键决定**：
+  - 每日 03:15 CST 由 systemd timer 触发（`RandomizedDelaySec=5min`、`Persistent=true`）。
+  - 备份目录 `/var/lib/memoria/backups/nightly/`（`0700`），不放 release 目录，避免与 `cleanup_freeze_dumps.py` 的 3 天清理冲突。
+  - PostgreSQL 用 `pg_dump -Fc`，SQLite 用 Python `sqlite3` backup API；只备份 `memoria.sqlite3`（与 freeze 一致；`evolution`、`identity` 两个 SQLite 属已退役服务）。
+  - 文件名 `memoria-YYYYMMDD-HHMM.dump` 与 `control-YYYYMMDD-HHMM.sqlite3`。
+  - 保留 7 天全保、8-30 天仅周日、30 天后删除。
+  - 容量约 50-75 MB，依据实测 dump 约 4.4 MB（freeze 的 `memoria-pre-*.dump` 为 4,422,836 B）。
+  - 可用空间 <1 GB 时跳过备份但仍做清理、退出 0；备份或校验失败退出 1。成功静默，失败看 `journalctl`。
+- **不选的方案**：重开 WAL 归档（磁盘 0.6-1.1 GB/天扛不住）；云托管数据库（MVP 阶段成本）；只靠发布 freeze（RPO 1-3 天太长）。本方案 RPO 最多 24 小时。
+- **未解决**：无异地备份；无主动告警；DB 到单次备份 >500 MB 或日增 >50 MB 时重评 WAL + base backup。
+- **验收**：手动跑一次成功；`pg_restore --list` 能列对象；timer 连续 3 天无失败；第 8 天正确清理首日备份；模拟磁盘不足时跳过并记日志。
+
+### 夜间备份安装与运维
 
 每日 03:15 CST 自动备份两个库到 `/var/lib/memoria/backups/nightly/`：
 - PostgreSQL：`memoria-<YYYYMMDD>-<HHMM>.dump`（pg_dump 自定义格式，约 4.4 MB）
@@ -93,7 +108,7 @@ ls -lh /var/lib/memoria/backups/nightly/
 python3 /opt/memoria/ops-tools/nightly_backup_retention.py --backup-dir /var/lib/memoria/backups/nightly/
 ```
 
-### 从备份恢复（ADR-004）
+### 从备份恢复
 
 **恢复 PostgreSQL 到临时库验证：**
 
@@ -134,7 +149,7 @@ for (name,) in c.execute("select name from sqlite_master where type = 'table' or
 PYEOF
 ```
 
-
+## 发布前门禁
 
 1. 干净 worktree 冻结目标 source/tag，按影响域运行定向/必需门禁；Agent/python CI 通过不代替跳过的镜像、固件和客户端检查。授权/schema/RLS 变动须带真实 `MEMORIA_TEST_POSTGRES_DSN` 跑受影响契约，跳过不算通过。
 2. 在候选镜像跑 Agent 发布门（`scripts.verify_agent_release_artifact`：bridge 与提供方适配器不导入 livekit、自有媒体遥测隐私 canary、DTLN 去噪器可加载）；镜像解析显式给 expected candidate 并对齐有效 overrides。已有自动门禁接线，当前候选/生产复验要求见 P1-01。
