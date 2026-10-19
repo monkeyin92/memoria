@@ -7,6 +7,7 @@ App({
     accessTokenExpiresAt: 0,
     authEpoch: 0,
     identity: null,
+    openUnbindSheetOnDevice: false,
   },
   _authClearedListeners: new Set(),
   _reminderTimer: null,

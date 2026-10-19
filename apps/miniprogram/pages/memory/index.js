@@ -523,6 +523,10 @@ Page({
     wx.navigateTo({ url: "/pages/digital-self/index" });
   },
 
+  openMemoryLifecycle() {
+    wx.navigateTo({ url: "/pages/memory-lifecycle/index" });
+  },
+
   goCompanion() {
     wx.switchTab({ url: "/pages/companion/index" });
   },

@@ -7,9 +7,10 @@ const { grantChildInfoConsent, recordInternalTestConsentVersions } = require("..
 
 const CONSENT_FACTS = [
   { icon: "server", title: "对话经过我们的服务器", subtitle: "孩子说的话会经服务器处理后再回复" },
-  { icon: "note", title: "保存对话摘要", subtitle: "录音只用来当场回应，默认不保存" },
-  { icon: "star", title: "长期只存三项", subtitle: "孩子的称呼、喜好、宠物名" },
-  { icon: "info", title: "回应由 AI 生成", subtitle: "会明确标识；模型训练默认关闭" },
+  { icon: "shield", title: "会交给这三家服务商", subtitle: "阿里云百炼把孩子的语音转成文字，也用文字帮忙查找记忆；DeepSeek 生成回复、做安全判断和摘要；豆包只拿到回复，把它读出来" },
+  { icon: "note", title: "保存对话摘要", subtitle: "摘要保存 30 天，录音只用来当场回应，不保存" },
+  { icon: "star", title: "长期只存三项", subtitle: "孩子的称呼、喜好、宠物名，180 天没用会自动清除" },
+  { icon: "info", title: "回应由 AI 生成", subtitle: "对话时屏幕上一直有 AI 标识" },
   { icon: "cam", title: "设备没有摄像头", subtitle: "不拍照，也不录像" },
 ];
 

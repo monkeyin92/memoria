@@ -232,3 +232,22 @@ test("授权与隐私说明 opens the consent page when raw-audio consent is ope
     open.restore();
   }
 });
+
+test("a guardian with guardian_summary_view sees 记忆管理 beside privacy and opens it", async () => {
+  const harness = await openProfile(fx.authed({
+    getRuntimeProfile: async () => ({
+      ...fx.RUNTIME_PROFILE,
+      capabilities: ["guardian_summary_view"],
+    }),
+  }));
+  try {
+    assert.equal(harness.page.data.memoryLifecycleEntryAllowed, true);
+    assert.match(profileText(harness), /记忆管理 查看、确认或撤回机器人记住的事/);
+    await harness.page.openMemoryLifecycle();
+    assert.deepEqual(callsTo(harness, "navigateTo"), [
+      { url: "/pages/memory-lifecycle/index" },
+    ]);
+  } finally {
+    harness.restore();
+  }
+});

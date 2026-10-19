@@ -175,8 +175,24 @@ function guardianSummaryErrorState(error) {
   return "error";
 }
 
+/*
+ * The accountless child behind an active parent_for_child binding is the
+ * non-owner primary subject. The guardian memory endpoints take that person id
+ * as minor_user_id; nothing else in the binding authorizes child memory.
+ */
+function guardianSubjectFromBinding(binding) {
+  if (!binding || binding.declared_mode !== "parent_for_child" || binding.status !== "active") {
+    return "";
+  }
+  const ownerId =
+    typeof binding.account_owner_id === "string" ? binding.account_owner_id : "";
+  const subjects = Array.isArray(binding.primary_subject_ids) ? binding.primary_subject_ids : [];
+  return subjects.find((id) => typeof id === "string" && id && id !== ownerId) || "";
+}
+
 module.exports = {
   guardianSummaryErrorState,
+  guardianSubjectFromBinding,
   normalizeGuardianLinks,
   normalizeGuardianSummary,
 };

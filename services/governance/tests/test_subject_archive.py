@@ -337,9 +337,12 @@ async def _assert_subject_deletion(
         "owner-work",
     }
     owner_claims = await values("memory_claims", "claim_id", "source_event_id", "owner-work")
+    child_claims = await values("memory_claims", "claim_id", "source_event_id", "child-work")
     person_ids = await values("person_entities", "person_id", "source_event_id", "owner-mother")
     elder_claims = await values("memory_claims", "claim_id", "source_event_id", "elder-turn")
-    assert owner_claims and person_ids and elder_claims
+    assert owner_claims and child_claims and person_ids and elder_claims
+    for claim_id in child_claims:
+        assert await values("memory_vector_documents", "item_id", "item_id", claim_id)
     assert await values("person_aliases", "alias", "source_event_id", "child-mother")
     before = await port.remaining_rows_for(
         account_id=_OWNER, event_ids=event_ids, subject_id=_CHILD
@@ -382,6 +385,8 @@ async def _assert_subject_deletion(
             set()
         )
     assert await values("memory_vector_documents", "item_id", "item_id", episode_id) == set()
+    for claim_id in child_claims:
+        assert await values("memory_vector_documents", "item_id", "item_id", claim_id) == set()
     for claim_id in owner_claims:
         assert await values("memory_vector_documents", "item_id", "item_id", claim_id)
     # Transcripts and blobs: the child's go, the owner's stay.
@@ -571,3 +576,59 @@ async def test_partial_deletion_unlinks_a_superseding_row_outside_the_set(
         )
         == {}
     )
+
+
+@pytest.mark.asyncio
+async def test_replay_vector_fallback_deletes_only_the_subjects_vectors(
+    postgres_database: TestDatabase,
+) -> None:
+    """The replay fallback joins vectors to evidence by subject, not by ids."""
+
+    admin = await asyncpg.connect(postgres_database.owner_dsn())
+    child_item, owner_item = uuid.uuid4(), uuid.uuid4()
+    try:
+        await admin.execute(
+            """
+            INSERT INTO archive_evidence_events (
+                event_id, account_id, event_type, schema_version, occurred_at,
+                subject_id, speaker_class, source, payload, content_sha256
+            ) VALUES
+                ('fallback-child', $1, 'speech.utterance_finalized', 1, now(),
+                 $2, 'owner', 'asr', '{}'::jsonb, repeat('0', 64)),
+                ('fallback-owner', $1, 'speech.utterance_finalized', 1, now(),
+                 NULL, 'owner', 'asr', '{}'::jsonb, repeat('0', 64))
+            """,
+            _OWNER,
+            _CHILD,
+        )
+        for item_id, source_event_id in (
+            (child_item, "fallback-child"),
+            (owner_item, "fallback-owner"),
+        ):
+            await admin.execute(
+                """
+                INSERT INTO memory_vector_documents (
+                    item_id, account_id, embedding_model, embedding_dimensions,
+                    embedding, source_event_id
+                ) VALUES ($1, $2, 'fallback-test', 2, '[1,0]'::vector, $3)
+                """,
+                item_id,
+                _OWNER,
+                source_event_id,
+            )
+    finally:
+        await admin.close()
+
+    port = PostgresSubjectArchive(postgres_database.role_dsn("memoria_app"))
+
+    assert await port.delete_subject_vectors(account_id=_OWNER, subject_id=_CHILD) == 1
+    assert await port.delete_subject_vectors(account_id=_OWNER, subject_id=_CHILD) == 0
+
+    admin = await asyncpg.connect(postgres_database.owner_dsn())
+    try:
+        rows = await admin.fetch(
+            "SELECT item_id FROM memory_vector_documents WHERE account_id = $1", _OWNER
+        )
+    finally:
+        await admin.close()
+    assert [row["item_id"] for row in rows] == [owner_item]
