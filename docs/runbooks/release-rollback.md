@@ -51,10 +51,11 @@ Secret 仅在 root-only `/etc/memoria-*.env`（root:root 0600）；候选从真�
   - PostgreSQL 用 `pg_dump -Fc`，SQLite 用 Python `sqlite3` backup API；只备份 `memoria.sqlite3`（与 freeze 一致；`evolution`、`identity` 两个 SQLite 属已退役服务）。
   - 文件名 `memoria-YYYYMMDD-HHMM.dump` 与 `control-YYYYMMDD-HHMM.sqlite3`。
   - 只保留最近 7 天：`age_days <= 6` 保留，满 7 天（含周日）全删，不再有周日至 30 天的第二档。唯一例外是最新一份 dump 与最新一份 control 永远保留，即使已超过 7 天；这样备份连续失败一周以上也不会把最后一份删光。
+  - 最新一份 dump 或 control 超过 48 小时没更新时，`memoria-backup-freshness.timer`（每 6 小时）让 `memoria-backup-freshness.service` 进入 failed 并在 journal 打 `ALERT backup freshness:`。报警后必须在 7 天内修好备份并跑出一份新备份，否则「最多再留 7 天」的承诺不成立；修好后手动跑一次 `nightly_backup.sh`，再跑一次 `--check-freshness` 确认退出 0，并 `systemctl reset-failed memoria-backup-freshness.service`。
   - 容量约 38-45 MB，按 7 份重算：单份 dump 约 4.4 MB（freeze 的 `memoria-pre-*.dump` 实测 4,422,836 B）×7 ≈ 31 MB，control 单份约 1-2 MB ×7 ≈ 7-14 MB。
-  - 可用空间 <1 GB 时跳过备份但仍做清理、退出 0；备份或校验失败退出 1。成功静默，失败看 `journalctl`。
+  - 可用空间 <1 GB 时跳过备份但仍做清理、退出 1；备份或校验失败退出 1。成功静默，失败看 `journalctl`。
 - **不选的方案**：重开 WAL 归档（磁盘 0.6-1.1 GB/天扛不住）；云托管数据库（MVP 阶段成本）；只靠发布 freeze（RPO 1-3 天太长）。本方案 RPO 最多 24 小时。
-- **未解决**：无异地备份；无主动告警；DB 到单次备份 >500 MB 或日增 >50 MB 时重评 WAL + base backup。
+- **未解决**：无异地备份；只有 systemd 单元 failed + journal 的新鲜度检查（`memoria-backup-freshness.timer` 每 6 小时跑一次，最新 dump 或 control 超过 48 小时未更新就让服务 failed），没有推送到手机或群，需要有人看 `systemctl --failed`；DB 到单次备份 >500 MB 或日增 >50 MB 时重评 WAL + base backup。
 - **验收**：手动跑一次成功；`pg_restore --list` 能列对象；timer 连续 3 天无失败；首日备份满 7 天后由第 8 天凌晨的清理删除；模拟磁盘不足时跳过并记日志。
 
 ### 夜间备份安装与运维
@@ -78,11 +79,14 @@ sudo install -m 0700 scripts/nightly_backup.sh scripts/nightly_backup_retention.
 # 3. 安装 systemd 单元
 sudo cp infra/memoria-nightly-backup.service /etc/systemd/system/
 sudo cp infra/memoria-nightly-backup.timer /etc/systemd/system/
+sudo cp infra/memoria-backup-freshness.service /etc/systemd/system/
+sudo cp infra/memoria-backup-freshness.timer /etc/systemd/system/
 
 # 4. 启用与启动定时任务
 sudo systemctl daemon-reload
 sudo systemctl enable memoria-nightly-backup.timer
 sudo systemctl start memoria-nightly-backup.timer
+sudo systemctl enable --now memoria-backup-freshness.timer
 
 # 5. 验证
 sudo systemctl status memoria-nightly-backup.timer
@@ -106,6 +110,13 @@ ls -lh /var/lib/memoria/backups/nightly/
 
 # 列出将要被删除的备份（dry-run）
 python3 /opt/memoria/ops-tools/nightly_backup_retention.py --backup-dir /var/lib/memoria/backups/nightly/
+
+# 手动检查备份新鲜度（全部新鲜退出 0，过期或缺失退出 2）
+sudo python3 /opt/memoria/ops-tools/nightly_backup_retention.py --backup-dir /var/lib/memoria/backups/nightly --check-freshness
+
+# 查看新鲜度检查状态与日志
+sudo systemctl status memoria-backup-freshness.service
+sudo journalctl -u memoria-backup-freshness.service
 ```
 
 ### 从备份恢复

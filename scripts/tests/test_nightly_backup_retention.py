@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
 from scripts.nightly_backup_retention import (
     backups_to_delete,
     date_to_datetime,
@@ -11,7 +12,25 @@ from scripts.nightly_backup_retention import (
     main,
     parse_backup_filename,
     should_keep,
+    stale_backups,
 )
+
+ROOT = Path(__file__).resolve().parents[2]
+CST = timezone(timedelta(hours=8))
+
+
+def _backup_name(kind: str, when: datetime) -> str:
+    stamp = when.strftime("%Y%m%d-%H%M")
+    if kind == "dump":
+        return f"memoria-{stamp}.dump"
+    return f"control-{stamp}.sqlite3"
+
+
+def _write_backup(backup_dir: Path, kind: str, when: datetime) -> Path:
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    path = backup_dir / _backup_name(kind, when)
+    path.write_bytes(b"backup")
+    return path
 
 
 def _touch(path: Path, *, date_int: int, time_int: int) -> Path:
@@ -300,3 +319,151 @@ def test_a_lone_ancient_backup_is_not_deleted(tmp_path: Path) -> None:
     (tmp_path / "memoria-20260101-0315.dump").write_bytes(b"x" * 200)
 
     assert backups_to_delete(tmp_path, now=now) == []
+
+
+class TestStaleBackups:
+    NOW = datetime(2026, 10, 20, 3, 15, 0, tzinfo=CST)
+
+    def test_both_kinds_fresh_returns_empty(self, tmp_path: Path) -> None:
+        _write_backup(tmp_path, "dump", self.NOW - timedelta(hours=1))
+        _write_backup(tmp_path, "control", self.NOW - timedelta(hours=2))
+
+        assert stale_backups(tmp_path, now=self.NOW) == []
+
+    def test_dump_fifty_hours_old_is_stale(self, tmp_path: Path) -> None:
+        dump = _write_backup(tmp_path, "dump", self.NOW - timedelta(hours=50))
+        _write_backup(tmp_path, "control", self.NOW - timedelta(hours=1))
+
+        assert stale_backups(tmp_path, now=self.NOW) == [
+            f"dump stale: newest={dump.name} age_hours=50.0 max_hours=48"
+        ]
+
+    def test_control_missing(self, tmp_path: Path) -> None:
+        _write_backup(tmp_path, "dump", self.NOW - timedelta(hours=1))
+
+        assert stale_backups(tmp_path, now=self.NOW) == [
+            f"control missing: no control-*.sqlite3 in {tmp_path}"
+        ]
+
+    def test_exactly_forty_eight_hours_is_fresh(self, tmp_path: Path) -> None:
+        _write_backup(tmp_path, "dump", self.NOW - timedelta(hours=48))
+        _write_backup(tmp_path, "control", self.NOW - timedelta(hours=1))
+
+        assert stale_backups(tmp_path, now=self.NOW) == []
+
+    def test_forty_eight_hours_and_one_minute_is_stale(self, tmp_path: Path) -> None:
+        _write_backup(
+            tmp_path,
+            "dump",
+            self.NOW - timedelta(hours=48, minutes=1),
+        )
+        _write_backup(tmp_path, "control", self.NOW - timedelta(hours=1))
+
+        problems = stale_backups(tmp_path, now=self.NOW)
+        assert len(problems) == 1
+        assert problems[0].startswith("dump stale: newest=memoria-20261018-0314.dump")
+
+    def test_missing_directory_reports_both_missing(self, tmp_path: Path) -> None:
+        missing = tmp_path / "missing"
+
+        assert stale_backups(missing, now=self.NOW) == [
+            f"dump missing: no memoria-*.dump in {missing}",
+            f"control missing: no control-*.sqlite3 in {missing}",
+        ]
+
+
+class TestFreshnessCli:
+    def _fresh_dir(self, tmp_path: Path) -> tuple[Path, str, str]:
+        now = datetime.now(tz=CST)
+        dump = _write_backup(tmp_path, "dump", now - timedelta(hours=1))
+        control = _write_backup(tmp_path, "control", now - timedelta(hours=1))
+        return tmp_path, dump.name, control.name
+
+    def test_fresh_exits_zero(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        backup_dir, dump_name, control_name = self._fresh_dir(tmp_path)
+
+        result = main(["--backup-dir", str(backup_dir), "--check-freshness"])
+
+        captured = capsys.readouterr()
+        assert result == 0
+        assert captured.out.strip() == f"fresh dump={dump_name} control={control_name}"
+        assert captured.err == ""
+
+    def test_stale_dump_exits_two(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        now = datetime.now(tz=CST)
+        _write_backup(tmp_path, "dump", now - timedelta(hours=50))
+        _write_backup(tmp_path, "control", now - timedelta(hours=1))
+
+        result = main(["--backup-dir", str(tmp_path), "--check-freshness"])
+
+        captured = capsys.readouterr()
+        assert result == 2
+        assert "ALERT backup freshness: dump stale: newest=memoria-" in captured.err
+        assert "max_hours=48" in captured.err
+
+    def test_missing_control_exits_two(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        now = datetime.now(tz=CST)
+        _write_backup(tmp_path, "dump", now - timedelta(hours=1))
+
+        result = main(["--backup-dir", str(tmp_path), "--check-freshness"])
+
+        captured = capsys.readouterr()
+        assert result == 2
+        assert "ALERT backup freshness: control missing: no control-*.sqlite3" in captured.err
+
+    def test_missing_directory_exits_two(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        result = main(["--backup-dir", str(tmp_path / "missing"), "--check-freshness"])
+
+        captured = capsys.readouterr()
+        assert result == 2
+        assert "ALERT backup freshness: dump missing:" in captured.err
+        assert "ALERT backup freshness: control missing:" in captured.err
+
+    def test_check_freshness_deletes_nothing(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        now = datetime.now(tz=CST)
+        old_dump = _write_backup(tmp_path, "dump", now - timedelta(days=10))
+        _write_backup(tmp_path, "dump", now - timedelta(hours=1))
+        _write_backup(tmp_path, "control", now - timedelta(hours=1))
+
+        result = main(["--backup-dir", str(tmp_path), "--check-freshness"])
+
+        capsys.readouterr()
+        assert result == 0
+        assert old_dump.exists()
+
+    def test_apply_and_check_freshness_are_mutually_exclusive(self, tmp_path: Path) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            main(
+                [
+                    "--backup-dir",
+                    str(tmp_path),
+                    "--check-freshness",
+                    "--apply",
+                ]
+            )
+
+        assert excinfo.value.code != 0
+
+
+def test_freshness_units_wire_the_check() -> None:
+    service = (ROOT / "infra" / "memoria-backup-freshness.service").read_text()
+    timer = (ROOT / "infra" / "memoria-backup-freshness.timer").read_text()
+
+    assert (
+        "/usr/bin/python3 "
+        "/opt/memoria/ops-tools/nightly_backup_retention.py "
+        "--backup-dir /var/lib/memoria/backups/nightly "
+        "--check-freshness --max-age-hours 48"
+    ) in service
+    assert "Type=oneshot" in service
+    assert "User=root" in service
+    assert "OnUnitActiveSec=6h" in timer
+    assert "OnBootSec=20min" in timer
+    assert "RandomizedDelaySec=10min" in timer
+    assert "Persistent=true" in timer

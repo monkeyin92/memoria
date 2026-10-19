@@ -13,19 +13,26 @@ The newest dump and the newest control-store copy are always kept, whatever
 their age. That is the only exception: it keeps one recoverable copy when
 backups have been failing for a week or longer.
 
+``--check-freshness`` is a read-only mode that reports when the newest dump or
+control copy is missing or older than ``--max-age-hours`` (48 by default).
+
 Returns 0 on success (or if no backups found).
 """
 
 from __future__ import annotations
 
 import argparse
+import math
 import re
+import sys
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 DUMP_NAME_RE = re.compile(r"^memoria-(\d{8})-(\d{4})\.dump\Z")
 SQLITE_NAME_RE = re.compile(r"^control-(\d{8})-(\d{4})\.sqlite3\Z")
+
+CST = timezone(timedelta(hours=8))
 
 
 def parse_backup_filename(name: str) -> tuple[str, int, int] | None:
@@ -53,8 +60,7 @@ def date_to_datetime(date_int: int, time_int: int) -> datetime:
     day = int(datestr[6:8])
     hour = int(timestr[0:2])
     minute = int(timestr[2:4])
-    tz = timezone(timedelta(hours=8))  # CST
-    return datetime(year, month, day, hour, minute, 0, tzinfo=tz)
+    return datetime(year, month, day, hour, minute, 0, tzinfo=CST)
 
 
 def should_keep(filename: str, date_int: int, time_int: int, now: datetime) -> bool:
@@ -98,7 +104,7 @@ def backups_to_delete(backup_dir: Path, now: datetime | None = None) -> list[Pat
     If now is None, uses current time in CST.
     """
     if now is None:
-        now = datetime.now(tz=timezone(timedelta(hours=8)))
+        now = datetime.now(tz=CST)
 
     candidates = list_backup_candidates(backup_dir)
     newest = _newest_per_kind(candidates)
@@ -111,6 +117,52 @@ def backups_to_delete(backup_dir: Path, now: datetime | None = None) -> list[Pat
             to_delete.append(path)
 
     return sorted(to_delete)
+
+
+def _newest_backup_by_kind(
+    backup_dir: Path,
+) -> dict[str, tuple[Path, int, int]]:
+    """Return the newest dump and control copy, keyed by kind."""
+    newest: dict[str, tuple[Path, int, int]] = {}
+    for path, filename, date_int, time_int in list_backup_candidates(backup_dir):
+        kind = "dump" if DUMP_NAME_RE.match(filename) else "control"
+        newest.setdefault(kind, (path, date_int, time_int))
+    return newest
+
+
+def stale_backups(
+    backup_dir: Path,
+    now: datetime | None = None,
+    max_age: timedelta = timedelta(hours=48),
+) -> list[str]:
+    """Report missing or stale dump and control copies.
+
+    The newest file of each kind is checked. A file is stale only when its age
+    is strictly greater than max_age. A missing directory means both kinds are
+    missing.
+    """
+    if now is None:
+        now = datetime.now(tz=CST)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=CST)
+
+    newest = _newest_backup_by_kind(backup_dir)
+    problems: list[str] = []
+    for kind, pattern in (("dump", "memoria-*.dump"), ("control", "control-*.sqlite3")):
+        entry = newest.get(kind)
+        if entry is None:
+            problems.append(f"{kind} missing: no {pattern} in {backup_dir}")
+            continue
+        path, date_int, time_int = entry
+        age = now - date_to_datetime(date_int, time_int)
+        if age > max_age:
+            age_hours = age.total_seconds() / 3600
+            max_hours = max_age.total_seconds() / 3600
+            problems.append(
+                f"{kind} stale: newest={path.name} "
+                f"age_hours={age_hours:.1f} max_hours={max_hours:g}"
+            )
+    return problems
 
 
 def _newest_per_kind(candidates: Sequence[tuple[Path, str, int, int]]) -> set[Path]:
@@ -139,6 +191,28 @@ def delete_paths(paths: Sequence[Path]) -> list[Path]:
     return deleted
 
 
+def _positive_hours(value: str) -> float:
+    try:
+        hours = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be a number") from None
+    if not math.isfinite(hours) or hours <= 0:
+        raise argparse.ArgumentTypeError("must be a positive number")
+    return hours
+
+
+def _check_freshness(backup_dir: Path, max_age_hours: float) -> int:
+    problems = stale_backups(backup_dir, max_age=timedelta(hours=max_age_hours))
+    if problems:
+        for problem in problems:
+            print(f"ALERT backup freshness: {problem}", file=sys.stderr)
+        return 2
+
+    newest = _newest_backup_by_kind(backup_dir)
+    print(f"fresh dump={newest['dump'][0].name} control={newest['control'][0].name}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -147,14 +221,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=Path("/var/lib/memoria/backups/nightly"),
         help="Directory containing nightly backups",
     )
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--apply",
         action="store_true",
         help="delete old backups; without this flag only list them",
     )
+    mode.add_argument(
+        "--check-freshness",
+        action="store_true",
+        help="report missing or stale backups; never deletes anything",
+    )
+    parser.add_argument(
+        "--max-age-hours",
+        type=_positive_hours,
+        default=48.0,
+        metavar="HOURS",
+        help="maximum age for --check-freshness (default: 48)",
+    )
     args = parser.parse_args(argv)
 
     backup_dir = args.backup_dir.resolve()
+    if args.check_freshness:
+        return _check_freshness(backup_dir, args.max_age_hours)
+
     if not backup_dir.is_dir():
         print(f"no backup directory: {backup_dir}")
         return 0

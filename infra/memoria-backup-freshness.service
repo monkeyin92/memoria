@@ -1,0 +1,12 @@
+[Unit]
+Description=Memoria nightly backup freshness check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/memoria
+ExecStart=/usr/bin/python3 /opt/memoria/ops-tools/nightly_backup_retention.py --backup-dir /var/lib/memoria/backups/nightly --check-freshness --max-age-hours 48
+User=root
+StandardOutput=journal
+StandardError=journal
