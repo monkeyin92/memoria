@@ -640,3 +640,39 @@ test("the bottom connection to the unbind deletion path opens the device tab's u
     assert.match(wxml, /bindtap="openUnbindDeletePath"/);
   });
 });
+
+test("the retraction prompt is the same for a candidate and a confirmed memory", async () => {
+  await withWx(async () => {
+    const page = instantiate(loadPage("../pages/memory-lifecycle/index"));
+    const restore = stubApi({
+      readBindingManifest: () => BINDING,
+      hasAuthenticatedSession: () => true,
+      currentAuthEpoch: () => 0,
+      isAuthEpochCurrent: () => true,
+      getGuardianChildMemories: async () => MEMORIES,
+      getGuardianChildRetractedMemories: async () => ({ items: [] }),
+    });
+    try {
+      assert.equal(await page.loadMemories(), "ok");
+      const prompts = [];
+      global.wx.showModal = (options) => {
+        prompts.push(options.content);
+        options.success?.({ confirm: false });
+      };
+
+      await page.retractMemory({
+        currentTarget: { dataset: { id: "claim_1", kind: "candidate" } },
+      });
+      await page.retractMemory({
+        currentTarget: { dataset: { id: "mem_1", kind: "confirmed" } },
+      });
+
+      assert.deepEqual(prompts, [
+        "撤回后机器人不会用到这条。",
+        "撤回后机器人不会用到这条。",
+      ]);
+    } finally {
+      restore();
+    }
+  });
+});

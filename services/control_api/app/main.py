@@ -789,7 +789,6 @@ async def _wire_services(w: Wiring) -> None:
                 occurred_at=event.occurred_at,
                 candidate=cast(dict[str, object], candidate),
             )
-
         postgres_catalog = PostgresMemoryCatalog(
             archive_url,
             extractor=extractor,
@@ -808,6 +807,7 @@ async def _wire_services(w: Wiring) -> None:
         )
         await w.open(postgres_catalog.initialize, postgres_catalog.close)
         memory_catalog = postgres_catalog
+        w.start_memory_vector_backfill(app, settings, postgres_catalog, store.list_account_ids)
         postgres_skills = PostgresSkillCatalog(archive_url, pool=archive_pool)
         await w.open(postgres_skills.initialize, postgres_skills.close)
         skill_catalog = postgres_skills

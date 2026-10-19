@@ -269,7 +269,7 @@ test("the home attention card and the review banner both open the attention page
   try {
     await memory.run();
     const text = visibleText(renderPage("pages/memory/index", memory.page.data, { tabBar: false }));
-    assert.match(text, /^按天查看 对话回顾 这里只有摘要，不显示原话，也没有录音。 有一条需要你关注的对话 今天 19:42 今天 10月14日 /);
+    assert.match(text, /^最近几天 对话回顾 这里只有摘要，不显示原话，也没有录音。 有一条需要你关注的对话 今天 19:42 今天 10月14日 /);
     memory.page.openAttention({ currentTarget: { dataset: { id: "n1" } } });
     assert.deepEqual(
       memory.wxCalls.filter((call) => call.name === "navigateTo").map((call) => call.args[0].url),

@@ -73,6 +73,64 @@ docker compose -f docker-compose.production.yml run --rm --no-deps control-api /
 docker compose -f docker-compose.production.yml run --rm --no-deps control-api /app/.venv/bin/python -m scripts.expire_idle_child_archive
 ~~~
 
+## 记忆向量缺口巡检
+
+家长纠正记忆或编译期嵌入失败时，best-effort 路径会提交审核、删掉旧向量，却可能没有写回当前模型的新向量；这类 claim 只缺向量通道，词法召回仍在。control-api 的 `MemoryVectorBackfillWorker` 默认每 3600 秒跑一轮（`MEMORIA_MEMORY_VECTOR_BACKFILL_INTERVAL_S`），每轮最多处理 `MEMORIA_MEMORY_VECTOR_BACKFILL_BATCH` 条（默认 200），只按 `memory_claims` 当前值重嵌，不读原话、历史 payload 或 search 行里的 `context:` 段。向量表或 embedder 未配置时不启动，日志里没有任何 ID。
+
+巡检脚本是只读的，只做 SELECT；输出一行 JSON 计数，`missing` 大于 0 时退出码 1，无缺口 0，脚本自身错误 3（同 `disk_patrol.sh` 的约定）：
+
+~~~bash
+control=memoria-control-api-1
+export MEMORIA_RELEASE_TAG="$(docker exec "$control" printenv MEMORIA_RELEASE_TAG)"
+export MEMORIA_RELEASE_COMMIT="$(docker exec "$control" printenv MEMORIA_RELEASE_COMMIT)"
+docker compose -f docker-compose.production.yml run --rm --no-deps control-api /app/.venv/bin/python -m scripts.count_missing_memory_vectors
+# {"corrected": 0, "missing": 0}
+~~~
+
+直接在 postgres 容器里核对的等价只读查询如下；把 `<model>` 和 `<dimensions>` 换成控制面容器里的 `MEMORIA_MEMORY_EMBEDDING_MODEL` / `MEMORIA_MEMORY_EMBEDDING_DIMENSIONS`，不要靠猜：
+
+~~~sql
+WITH current AS (
+    SELECT '<model>'::text AS model, <dimensions>::integer AS dimensions
+)
+SELECT count(*) AS missing,
+       count(*) FILTER (
+           WHERE EXISTS (
+               SELECT 1 FROM archive_evidence_events review
+               WHERE review.account_id = claim.account_id
+                 AND review.event_type = 'memory.claim_reviewed'
+                 AND review.source = 'user.memory_review'
+                 AND review.payload->>'action' = 'correct'
+                 AND review.payload->>'target_id' = claim.claim_id::text
+           )
+       ) AS corrected
+FROM memory_search_documents document
+JOIN memory_claims claim
+  ON claim.claim_id = document.item_id
+ AND claim.account_id = document.account_id
+JOIN archive_evidence_events evidence
+  ON evidence.event_id = claim.source_event_id
+ AND evidence.account_id = claim.account_id
+CROSS JOIN current
+WHERE document.kind = 'claim'
+  AND document.status <> 'retracted'
+  AND claim.status <> 'retracted'
+  AND NOT EXISTS (
+      SELECT 1 FROM memory_vector_documents stored
+      WHERE stored.account_id = document.account_id
+        AND stored.item_id = document.item_id
+        AND stored.embedding_model = current.model
+        AND stored.embedding_dimensions = current.dimensions
+  );
+~~~
+
+定时任务每轮一行日志，形如 `memory vector backfill attempted=0 embedded=0 failed=0 skipped=0 remaining=0`，`remaining` 就是上面查询的总数。确认它在跑：
+
+~~~bash
+docker compose -f docker-compose.production.yml logs control-api | grep 'memory vector backfill'
+sudo sh -c "zgrep -h 'memory vector backfill' /var/log/memoria/control-api.log* | sort"
+~~~
+
 ## 发布制品的手工清理（2026-10-01 首次执行，经用户授权）
 
 规则（与 `release-rollback.md` 一致）：只保留当前发布和一个可运行的紧邻回滚，更早的普通制品核验后按授权清理。`docker_image_retention.sh` 因保护全部 `rollback-*` 与 runtime-base 而给不出候选（TODOLIST「定期运维」跟踪），所以本次是手工清单：先只读盘点并生成候选清单与它的 sha256，复核后带着这个 sha256 才能执行，执行时逐项 `docker rmi <repo:tag>`，不用 `docker system prune`，不动数据卷。

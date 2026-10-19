@@ -23,7 +23,7 @@ test("summary days carry the date only and an unsummarised day says how many cha
   const harness = await openMemory();
   try {
     const text = visibleText(renderPage("pages/memory/index", harness.page.data, { tabBar: false }));
-    assert.match(text, /^按天查看 对话回顾 这里只有摘要，不显示原话，也没有录音。 今天 10月14日 孩子聊了 3 次，还没整理 昨天 10月13日 孩子聊了 2 次，还没整理 /);
+    assert.match(text, /^最近几天 对话回顾 这里只有摘要，不显示原话，也没有录音。 今天 10月14日 孩子聊了 3 次，还没整理 昨天 10月13日 孩子聊了 2 次，还没整理 /);
     assert.doesNotMatch(text, /三 14 二 13 一 12 日 11 六 10 五 9/);
     assert.doesNotMatch(text, /日常回顾|· 孩子聊了/);
   } finally {

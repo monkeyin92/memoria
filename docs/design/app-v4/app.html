@@ -93,7 +93,7 @@ ${ring(60,112,12,`<div><div class="num" style="font-size:24px;line-height:32px">
 <div class="note" style="text-align:left">名字和数字均为示例</div></div>${tab('首页')}`);
 /* 4 summary */
 const days=[['今天','10月14日',['讲了《大熊和森林里的悄悄话》','聊到了幼儿园的新朋友','一起数了天上的星星']],['昨天','10月13日',['问了很多关于恐龙的问题','听了一个睡前故事']],['周一','10月12日',['说今天画了一只小猫']]];
-S.push(`<div class="c"><div class="eyebrow">按天查看</div><h1>对话回顾</h1><div class="sub">这里只有摘要，不显示原话，也没有录音。</div>
+S.push(`<div class="c"><div class="eyebrow">最近几天</div><h1>对话回顾</h1><div class="sub">这里只有摘要，不显示原话，也没有录音。</div>
 <div class="k" style="display:flex;justify-content:space-between;margin-top:24px;padding:8px">${['14','13','12','11','10','9'].map((d,i)=>`<div style="width:48px;padding:8px 0;text-align:center;border-radius:16px;${i==0?'background:var(--acc);color:#fff':'color:var(--ink2)'}"><div style="font-size:11px;font-weight:500;opacity:.85">${['三','二','一','日','六','五'][i]}</div><div class="num" style="font-size:18px;margin-top:4px;letter-spacing:0">${d}</div></div>`).join('')}</div>
 ${days.map(d=>`<div class="k" style="padding:16px 24px;margin-top:16px"><div style="display:flex;justify-content:space-between;align-items:baseline"><b style="font-size:17px;font-weight:700">${d[0]}</b><span style="font-size:12px;color:var(--ink3)">${d[1]}</span></div>${d[2].map(t=>`<div style="font-size:15px;margin-top:8px;color:#34374D;line-height:24px;display:flex;gap:8px;align-items:center"><span style="width:4px;height:4px;border-radius:50%;background:var(--acc);flex:none"></span>${t}</div>`).join('')}</div>`).join('')}
 <div class="note">摘要内容为示例</div></div>${tab('回顾')}`);

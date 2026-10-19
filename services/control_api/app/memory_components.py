@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from services.archive.memory_domain import MemoryEmbedder, MemoryExtractor
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
+from services.archive.memory_vector_cleanup import QwenMemoryEmbedder
 from services.archive.mood_followup import MoodFollowupEnsuringExtractor
-from services.archive.postgres_memory_catalog import QwenMemoryEmbedder
 from services.archive.qwen_memory_extractor import FallbackMemoryExtractor, QwenMemoryExtractor
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.text_models import text_model_endpoint

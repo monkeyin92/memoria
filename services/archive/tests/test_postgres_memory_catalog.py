@@ -20,8 +20,9 @@ from services.archive.memory_domain import (
     MemorySearchQuery,
 )
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
+from services.archive.memory_vector_cleanup import QwenMemoryEmbedder
 from services.archive.postgres_archive import PostgresLifeArchive
-from services.archive.postgres_memory_catalog import PostgresMemoryCatalog, QwenMemoryEmbedder
+from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
 
 
 class _DomainDriftCanonicalExtractor:

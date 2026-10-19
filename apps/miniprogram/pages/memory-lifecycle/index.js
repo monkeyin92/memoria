@@ -237,10 +237,7 @@ Page({
     const agreed = await new Promise((resolve) => {
       wx.showModal({
         title: "撤回这条记忆？",
-        content:
-          item.kind === "candidate"
-            ? "撤回后机器人不会用到这条。"
-            : "撤回后机器人不会再提起这件事。",
+        content: "撤回后机器人不会用到这条。",
         confirmText: "撤回",
         cancelText: "取消",
         success: (result) => resolve(Boolean(result?.confirm)),
