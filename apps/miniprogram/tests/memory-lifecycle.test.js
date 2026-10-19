@@ -48,6 +48,20 @@ const MEMORIES = {
   ],
 };
 
+const RETRACTED = {
+  subject_id: "person_child",
+  items: [
+    {
+      claim_id: "claim_1",
+      title: "喜欢蓝色",
+      value: "喜欢蓝色",
+      domain_category: "preference",
+      retracted_at: "2026-10-19T13:05:00Z",
+    },
+  ],
+  privacy: { contains_transcript: false },
+};
+
 const storage = {};
 let pageDefinition = null;
 
@@ -231,6 +245,7 @@ test("an empty list renders the empty state without throwing", async () => {
         calls.push([minorUserId, limit]);
         return { candidates: [], confirmed: [] };
       },
+      getGuardianChildRetractedMemories: async () => ({ items: [] }),
     });
     try {
       assert.equal(await page.loadMemories(), "ok");
@@ -256,6 +271,10 @@ test("without a bound child the page says how to get one and makes no request", 
       getGuardianChildMemories: async () => {
         requested = true;
         return { candidates: [], confirmed: [] };
+      },
+      getGuardianChildRetractedMemories: async () => {
+        requested = true;
+        return { items: [] };
       },
     });
     try {
@@ -287,6 +306,7 @@ test("a 403 or a failed list clears the rows and offers a retry", async () => {
       getGuardianChildMemories: async () => {
         throw forbidden;
       },
+      getGuardianChildRetractedMemories: async () => ({ items: [] }),
     });
     try {
       page.setData({ pendingItems: [{ id: "stale" }], confirmedItems: [{ id: "stale" }] });
@@ -302,12 +322,13 @@ test("a 403 or a failed list clears the rows and offers a retry", async () => {
   });
 });
 
-test("a retraction uses the current child, marks the row and disables restore", async () => {
+test("a retraction refreshes the authoritative list and is restorable", async () => {
   await withWx(async () => {
     const page = instantiate(loadPage("../pages/memory-lifecycle/index"));
     const reviewCalls = [];
     const snapshots = [];
     let listCalls = 0;
+    let retractedCalls = 0;
     const restore = stubApi({
       readBindingManifest: () => BINDING,
       hasAuthenticatedSession: () => true,
@@ -320,6 +341,10 @@ test("a retraction uses the current child, marks the row and disables restore", 
           retracted: page.data.retractedItems.map((item) => item.statusLabel),
         });
         return MEMORIES;
+      },
+      getGuardianChildRetractedMemories: async () => {
+        retractedCalls += 1;
+        return retractedCalls === 1 ? { items: [] } : RETRACTED;
       },
       reviewGuardianChildMemory: async (minorUserId, claimId, action) => {
         reviewCalls.push([minorUserId, claimId, action]);
@@ -345,10 +370,13 @@ test("a retraction uses the current child, marks the row and disables restore", 
       });
 
       assert.deepEqual(modalPrompts, ["撤回后机器人不会用到这条。"]);
-
       assert.deepEqual(reviewCalls, [["person_child", "claim_1", "retract"]]);
       assert.equal(listCalls, 2, "the authoritative list is read again after a retraction");
-      assert.equal(snapshots[1].pending[0], "已撤回", "the row is marked before the refresh");
+      assert.equal(
+        snapshots[1].pending[0],
+        "待确认",
+        "nothing is edited locally before the server read",
+      );
       assert.equal(page.data.pendingItems.length, 0);
       assert.equal(page.data.confirmedItems.length, 1);
       assert.equal(page.data.retractedItems.length, 1);
@@ -357,8 +385,144 @@ test("a retraction uses the current child, marks the row and disables restore", 
       assert.equal(page.data.reviewingId, "");
 
       const wxml = fs.readFileSync(LIFECYCLE_WXML, "utf8");
-      assert.match(wxml, /<button[^>]*disabled="true"[^>]*>恢复<\/button>/);
-      assert.match(wxml, /恢复功能准备中/);
+      assert.match(wxml, /bindtap="restoreMemory"/);
+      assert.doesNotMatch(wxml, /恢复功能准备中/);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("a reopened page reads retracted memories from the backend", async () => {
+  await withWx(async () => {
+    const calls = [];
+    const restore = stubApi({
+      readBindingManifest: () => BINDING,
+      hasAuthenticatedSession: () => true,
+      currentAuthEpoch: () => 0,
+      isAuthEpochCurrent: () => true,
+      getGuardianChildMemories: async () => ({ candidates: [], confirmed: [] }),
+      getGuardianChildRetractedMemories: async (minorUserId, limit) => {
+        calls.push([minorUserId, limit]);
+        return RETRACTED;
+      },
+    });
+    try {
+      const first = instantiate(loadPage("../pages/memory-lifecycle/index"));
+      first.onLoad();
+      assert.equal(await first.loadMemories(), "ok");
+      assert.equal(first.data.retractedItems.length, 1);
+
+      const reopened = instantiate(loadPage("../pages/memory-lifecycle/index"));
+      reopened.onLoad();
+      reopened.onShow();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      assert.deepEqual(calls, [
+        ["person_child", 20],
+        ["person_child", 20],
+      ]);
+      assert.equal(reopened.data.retractedItems.length, 1);
+      assert.equal(reopened.data.retractedItems[0].id, "claim_1");
+      assert.equal(reopened.data.retractedItems[0].title, "喜欢蓝色");
+      assert.equal(reopened.data.retractedItems[0].retractedAtLabel, "10月19日 21:05");
+      assert.equal(reopened.data.isEmpty, false);
+      assert.doesNotMatch(JSON.stringify(reopened.data), /NaN/);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("restoring a retracted memory confirms it and reloads both lists", async () => {
+  await withWx(async () => {
+    const page = instantiate(loadPage("../pages/memory-lifecycle/index"));
+    const reviewCalls = [];
+    const toasts = [];
+    let listCalls = 0;
+    let retractedCalls = 0;
+    const restore = stubApi({
+      readBindingManifest: () => BINDING,
+      hasAuthenticatedSession: () => true,
+      currentAuthEpoch: () => 0,
+      isAuthEpochCurrent: () => true,
+      getGuardianChildMemories: async () => {
+        listCalls += 1;
+        return { candidates: [], confirmed: [] };
+      },
+      getGuardianChildRetractedMemories: async () => {
+        retractedCalls += 1;
+        return retractedCalls === 1 ? RETRACTED : { items: [] };
+      },
+      reviewGuardianChildMemory: async (minorUserId, claimId, action) => {
+        reviewCalls.push([minorUserId, claimId, action]);
+        return {
+          claim_id: claimId,
+          status: "confirmed",
+          reviewed_at: "2026-10-19T13:05:00Z",
+        };
+      },
+    });
+    try {
+      assert.equal(await page.loadMemories(), "ok");
+      assert.equal(page.data.retractedItems.length, 1);
+
+      const modalOptions = [];
+      global.wx.showModal = (options) => {
+        modalOptions.push(options);
+        options.success?.({ confirm: true });
+      };
+      global.wx.showToast = (options) => toasts.push(options.title);
+
+      await page.restoreMemory({ currentTarget: { dataset: { id: "claim_1" } } });
+
+      assert.equal(modalOptions.length, 1);
+      assert.equal(modalOptions[0].content, "恢复后机器人又可以用到这条。");
+      assert.equal(modalOptions[0].confirmText, "恢复");
+      assert.deepEqual(reviewCalls, [["person_child", "claim_1", "confirm"]]);
+      assert.equal(listCalls, 2, "the list is read again after a restore");
+      assert.equal(retractedCalls, 2, "the retracted list is read again after a restore");
+      assert.deepEqual(page.data.retractedItems, []);
+      assert.equal(page.data.isEmpty, true);
+      assert.equal(page.data.reviewingId, "");
+      assert.deepEqual(toasts, ["已恢复"]);
+      assert.doesNotMatch(fs.readFileSync(LIFECYCLE_WXML, "utf8"), />删除</);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("a failed retracted read surfaces the error without NaN or a crash", async () => {
+  await withWx(async () => {
+    const page = instantiate(loadPage("../pages/memory-lifecycle/index"));
+    let fail = true;
+    const restore = stubApi({
+      readBindingManifest: () => BINDING,
+      hasAuthenticatedSession: () => true,
+      currentAuthEpoch: () => 0,
+      isAuthEpochCurrent: () => true,
+      getGuardianChildMemories: async () => ({ candidates: [], confirmed: [] }),
+      getGuardianChildRetractedMemories: async () => {
+        if (fail) throw new Error("retracted unavailable");
+        return {
+          items: [
+            { claim_id: "claim_bad", title: "", value: "", retracted_at: "not-a-date" },
+          ],
+        };
+      },
+    });
+    try {
+      assert.equal(await page.loadMemories(), "error");
+      assert.match(page.data.error, /retracted unavailable/);
+      assert.deepEqual(page.data.retractedItems, []);
+      assert.doesNotMatch(JSON.stringify(page.data), /NaN/);
+
+      fail = false;
+      assert.equal(await page.loadMemories(), "ok");
+      assert.equal(page.data.retractedItems.length, 1);
+      assert.equal(page.data.retractedItems[0].retractedAtLabel, "");
+      assert.doesNotMatch(JSON.stringify(page.data), /NaN/);
     } finally {
       restore();
     }
@@ -409,7 +573,9 @@ test("the guardian request URL carries the currently bound minor id, and another
     const requests = [];
     global.wx.request = (options) => {
       requests.push(options);
-      if (requests.length === 1) {
+      if (options.url.includes("/person_child/") && options.url.includes("/retracted?")) {
+        options.success({ statusCode: 200, data: RETRACTED });
+      } else if (options.url.includes("/person_child/memories?")) {
         options.success({ statusCode: 200, data: MEMORIES });
       } else {
         options.success({
@@ -429,17 +595,28 @@ test("the guardian request URL carries the currently bound minor id, and another
         `${CONTROL_API_BASE_URL}/v1/guardian/minors/person_child/memories?limit=50`,
       );
       assert.equal(requests[0].method, "GET");
-      assert.equal(page.data.pendingItems.length, 1);
+      assert.equal(
+        requests[1].url,
+        `${CONTROL_API_BASE_URL}/v1/guardian/minors/person_child/memories/retracted?limit=20`,
+      );
+      assert.equal(requests[1].method, "GET");
+      assert.equal(page.data.confirmedItems.length, 1);
+      assert.equal(page.data.retractedItems.length, 1);
 
       binding = OTHER_BINDING;
       assert.equal(await page.loadMemories(), "error");
       assert.equal(
-        requests[1].url,
+        requests[2].url,
         `${CONTROL_API_BASE_URL}/v1/guardian/minors/person_other/memories?limit=50`,
+      );
+      assert.equal(
+        requests[3].url,
+        `${CONTROL_API_BASE_URL}/v1/guardian/minors/person_other/memories/retracted?limit=20`,
       );
       assert.match(page.data.error, /暂时不能在这里管理/);
       assert.deepEqual(page.data.pendingItems, []);
       assert.deepEqual(page.data.confirmedItems, []);
+      assert.deepEqual(page.data.retractedItems, []);
     } finally {
       restore();
     }

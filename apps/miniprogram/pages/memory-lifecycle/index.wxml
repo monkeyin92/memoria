@@ -71,8 +71,8 @@
         </view>
 
         <view wx:if="{{retractedItems.length}}" class="lifecycle-group">
-          <text class="section-title">本次已撤回</text>
-          <text class="caption">本次打开页面后撤回的记忆，机器人不会再提起。</text>
+          <text class="section-title">已撤回</text>
+          <text class="caption">撤回的记忆机器人暂时不会提起，可以随时恢复。</text>
           <view wx:for="{{retractedItems}}" wx:key="id" class="card lifecycle-item lifecycle-item-retracted">
             <view class="lifecycle-item-head">
               <text class="l2-card-title">{{item.title}}</text>
@@ -80,9 +80,13 @@
             </view>
             <text wx:if="{{item.body}}" class="l2-card-sub">{{item.body}}</text>
             <text wx:if="{{item.retractedAtLabel}}" class="lifecycle-time">撤回于 {{item.retractedAtLabel}}</text>
-            <view class="lifecycle-restore">
-              <button class="secondary-button btn-sm" disabled="true">恢复</button>
-              <text class="lifecycle-restore-note">恢复功能准备中</text>
+            <view class="button-row">
+              <button
+                class="secondary-button btn-sm"
+                data-id="{{item.id}}"
+                disabled="{{reviewingId}}"
+                bindtap="restoreMemory"
+              >恢复</button>
             </view>
           </view>
         </view>

@@ -685,6 +685,13 @@ function getGuardianChildMemories(minorUserId, limit = 20) {
   );
 }
 
+/* 已撤回的记忆跨次显示：列表由服务端按孩子的 claim 重新读出，不缓存在页面。 */
+function getGuardianChildRetractedMemories(minorUserId, limit = 20) {
+  return rawRequest(
+    `/v1/guardian/minors/${encodeURIComponent(minorUserId)}/memories/retracted?limit=${encodeURIComponent(limit)}`,
+  );
+}
+
 function reviewGuardianChildMemory(minorUserId, claimId, action) {
   if (
     typeof minorUserId !== "string" ||
@@ -1478,6 +1485,7 @@ module.exports = {
   getGuardianChildDays,
   generateGuardianChildRecap,
   getGuardianChildMemories,
+  getGuardianChildRetractedMemories,
   reviewGuardianChildMemory,
   getChildSessionSummaries,
   deleteChildSessionSummary,
