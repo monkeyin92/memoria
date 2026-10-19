@@ -12,6 +12,9 @@ from services.control_api.app.main import create_app
 _LEGACY_MEMORY_WRITE_UNAVAILABLE_DETAIL = (
     "legacy memory writes are unavailable in production"
 )
+_LEGACY_DAILY_SUMMARY_READ_UNAVAILABLE_DETAIL = (
+    "legacy daily summaries are unavailable in production"
+)
 
 
 def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, production: bool) -> Path:
@@ -71,6 +74,34 @@ async def test_production_blocks_legacy_message_writes_without_touching_store(
 
     assert response.status_code == 503
     assert response.json()["detail"] == _LEGACY_MEMORY_WRITE_UNAVAILABLE_DETAIL
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_production_blocks_legacy_days_read_without_touching_store(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path, production=True)
+    app = create_app()
+    calls: list[dict[str, Any]] = []
+
+    def unexpected_list_days(**kwargs: Any) -> list[dict[str, Any]]:
+        calls.append(kwargs)
+        raise AssertionError("legacy days read reached the store in production")
+
+    monkeypatch.setattr(app.state.memory_store, "list_days", unexpected_list_days)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, headers = await _anonymous_identity(client)
+        response = await client.get(
+            "/v1/memory/days",
+            headers=headers,
+            params={"user_id": user_id, "limit": 7, "before": "2026-10-01"},
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == _LEGACY_DAILY_SUMMARY_READ_UNAVAILABLE_DETAIL
     assert calls == []
 
 
@@ -185,9 +216,16 @@ async def test_legacy_writes_still_work_outside_production(
             headers=headers,
             json={"user_id": user_id},
         )
+        days = await client.get(
+            "/v1/memory/days",
+            headers=headers,
+            params={"user_id": user_id, "limit": 7},
+        )
 
     assert created.status_code == 201
     assert summarized.status_code == 200
+    assert days.status_code == 200
+    assert [item["day"] for item in days.json()["items"]] == [_utc_today()]
     assert summarized.json()["source"] == "fallback"
     with app.state.memory_store.connection() as connection:
         assert connection.execute("SELECT count(*) FROM messages").fetchone()[0] == 1

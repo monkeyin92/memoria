@@ -81,11 +81,6 @@ const SUMMARIES = [
   { record_id: "s4", text: "问了很多关于恐龙的问题", created_at: isoMinutesAgo(60 * 26) },
 ];
 
-const RECAP = {
-  title: "孩子聊了 3 次",
-  overview: "讲了《大熊和森林里的悄悄话》",
-  highlights: ["聊到了幼儿园的新朋友", "一起数了天上的星星"],
-};
 
 const ARCHIVE = [
   { record_id: "a1", field: "appellation", text: "乐乐", created_at: isoMinutesAgo(60 * 24 * 9) },
@@ -266,7 +261,6 @@ function baseApi(overrides = {}) {
       items: [3, 2, 1, 2, 1, 4].map((count, offset) => ({ day: dayKey(offset), message_count: count })),
     }),
     getGuardianChildMemories: async () => ({ candidates: [], confirmed: [] }),
-    generateGuardianChildRecap: async () => ({ summary: RECAP }),
   };
   const merged = { ...known, ...overrides };
   return new Proxy(merged, {
@@ -342,7 +336,6 @@ module.exports = {
   SAFETY_ALERT,
   WIFI_SCAN,
   RAW_VOICE_CONSENT,
-  RECAP,
   RUNTIME_PROFILE,
   STORAGE,
   SUMMARIES,

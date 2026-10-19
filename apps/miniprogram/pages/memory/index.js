@@ -4,6 +4,10 @@ const { requireLogin } = require("../../utils/auth-gate");
 const guardianPush = require("../../utils/guardian-push");
 const { attentionUrl, loadUnreadSafetyAlerts, moreUnreadLabel } = require("../../utils/crisis-alerts");
 const { alertTimeLabel } = require("../../utils/trial-device-card");
+const {
+  boundChildFromManifest,
+  normalizeSessionSummaries,
+} = require("../../utils/child-memory");
 
 function today() {
   const date = new Date();
@@ -64,7 +68,7 @@ function normalizeDay(item) {
  * 下发 approximate=false，因此客户端默认按近似记录展示；只有显式 false
  * 才写成"精确播放记录"。
  */
-/* 监护人视图的一天：只有次数，概括要点按钮现生成（不含孩子原话）。 */
+/* 监护人视图的一天：只有次数，不含孩子原话。 */
 function normalizeGuardianDay(item) {
   const count = Number(item.message_count) || 0;
   return {
@@ -73,6 +77,21 @@ function normalizeGuardianDay(item) {
     count,
     title: `孩子聊了 ${count} 次`,
     overview: `孩子聊了 ${count} 次，还没整理`,
+    highlights: [],
+    suggestion: "",
+  };
+}
+
+/* 两层记录里的会话小结是转述，不含原话；只展示摘要文字。 */
+function normalizeRecentSummary(item, index) {
+  const date = String(item.createdAt || "").slice(0, 10) || today();
+  return {
+    ...dayLabels(date),
+    dayLabel: "近期摘要",
+    date: index ? `${date}-${index}` : date,
+    count: 0,
+    title: "近期摘要",
+    overview: item.text,
     highlights: [],
     suggestion: "",
   };
@@ -180,7 +199,6 @@ Page({
       pendingCount: 0,
       visibleMemories: [],
     loading: false,
-    summarizing: false,
     error: "",
     selectedDate: today(),
     authenticated: false,
@@ -303,7 +321,6 @@ Page({
       safetyBanner: null,
       crisisPush: { enabled: false, templateId: "", explanation: "" },
       loading: false,
-      summarizing: false,
       error: "",
     });
   },
@@ -329,6 +346,35 @@ Page({
       title: (summary || "Memoria · 每天的对话回顾").slice(0, 80),
       path: "/pages/memory/index",
     };
+  },
+
+  /*
+   * 旧 daily_summaries 读接口关闭后，改用两层记录里的近期摘要。先看当前设备绑定
+   * 的孩子，再看账号的监护关系；两处都没有就走空状态，不把失败变成错误文案。
+   */
+  async _recentChildSummaries(authEpoch) {
+    if (typeof api.getChildSessionSummaries !== "function") return [];
+    const boundChild = boundChildFromManifest(api.readBindingManifest?.() || null);
+    let minorId = this.data.guardianSubjectId || boundChild?.personId || "";
+    if (!minorId && typeof api.getGuardianLinks === "function") {
+      try {
+        const links = await api.getGuardianLinks();
+        const active = (Array.isArray(links) ? links : []).find(
+          (link) => link && link.minorUserId && link.status === "active",
+        );
+        minorId = active?.minorUserId || "";
+      } catch {
+        return [];
+      }
+    }
+    if (!minorId || !api.isAuthEpochCurrent(authEpoch)) return [];
+    try {
+      const payload = await api.getChildSessionSummaries(minorId, 3);
+      if (!api.isAuthEpochCurrent(authEpoch)) return [];
+      return normalizeSessionSummaries(payload);
+    } catch {
+      return [];
+    }
   },
 
   /*
@@ -359,8 +405,17 @@ Page({
           guardianError = guardianError || guardianErrorMessage(error);
         }
       }
+      let daysUnavailable = false;
+      const daysPromise = guardianSubject
+        ? Promise.resolve({ items: [] })
+        : Promise.resolve()
+            .then(() => api.getMemoryDays(identity.user_id, 30))
+            .catch(() => {
+              daysUnavailable = true;
+              return { items: [] };
+            });
       const [daysResult, reviewResult] = await Promise.all([
-        guardianSubject ? Promise.resolve({ items: [] }) : api.getMemoryDays(identity.user_id, 30),
+        daysPromise,
         api.getConversationReview(),
       ]);
       if (!api.isAuthEpochCurrent(authEpoch)) return "stale";
@@ -380,13 +435,21 @@ Page({
         }
       }
       if (!api.isAuthEpochCurrent(authEpoch)) return "stale";
+      let recentDays = [];
+      if (daysUnavailable) {
+        const summaries = await this._recentChildSummaries(authEpoch);
+        if (!api.isAuthEpochCurrent(authEpoch)) return "stale";
+        recentDays = summaries.map(normalizeRecentSummary);
+      }
       this.setData({
         guardianMode: Boolean(guardianSubject),
         guardianSubjectId: guardianSubject,
         guardianError,
         days: guardianSubject
           ? (guardianDays || []).map(normalizeGuardianDay)
-          : (daysResult.items || []).map(normalizeDay),
+          : (daysResult.items || []).length
+            ? (daysResult.items || []).map(normalizeDay)
+            : recentDays,
         heardTurns: review.heardTurns,
         memoryCandidates: memories.memoryCandidates,
         confirmedMemories: memories.confirmedMemories,
@@ -615,57 +678,6 @@ Page({
       this.setData({ error: error?.message || "操作失败，请稍后再试。" });
     } finally {
       if (api.isAuthEpochCurrent(authEpoch)) this.setData({ reviewingClaimId: "" });
-    }
-  },
-
-  async summarizeSelectedDay() {
-    if (!(await requireLogin({ reason: "generate_review" }))) return;
-    this.setData({ authenticated: true });
-    const identity = api.currentIdentity();
-    if (!identity || this.data.summarizing) return;
-    const authEpoch = api.currentAuthEpoch();
-    this.setData({ summarizing: true, error: "" });
-    if (this.data.guardianMode && this.data.guardianSubjectId) {
-      return this._summarizeChildDay(authEpoch);
-    }
-    try {
-      await api.summarizeDay(identity.user_id, this.data.selectedDate);
-      if (!api.isAuthEpochCurrent(authEpoch)) return;
-      await this.loadDays();
-      if (!api.isAuthEpochCurrent(authEpoch)) return;
-      wx.showToast({ title: "回顾已更新", icon: "success" });
-    } catch (error) {
-      if (!api.isAuthEpochCurrent(authEpoch)) return;
-      this.setData({ error: error?.message || "生成回顾失败。" });
-    } finally {
-      if (api.isAuthEpochCurrent(authEpoch)) this.setData({ summarizing: false });
-    }
-  },
-  /* 监护人：现生成选中日期的概括，只更新这一天的卡片；概括不落库，离开页面后要重新生成。 */
-  async _summarizeChildDay(authEpoch) {
-    const date = this.data.selectedDate;
-    try {
-      const result = await api.generateGuardianChildRecap(this.data.guardianSubjectId, date);
-      if (!api.isAuthEpochCurrent(authEpoch)) return;
-      const summary = result?.summary || {};
-      const days = this.data.days.map((day) =>
-        day.date === date
-          ? {
-              ...day,
-              title: summary.title || day.title,
-              overview: summary.overview || day.overview,
-              highlights: Array.isArray(summary.highlights) ? summary.highlights : [],
-              suggestion: summary.suggestion || "",
-            }
-          : day,
-      );
-      this.setData({ days });
-      wx.showToast({ title: "概括已生成", icon: "success" });
-    } catch (error) {
-      if (!api.isAuthEpochCurrent(authEpoch)) return;
-      this.setData({ error: guardianErrorMessage(error) });
-    } finally {
-      if (api.isAuthEpochCurrent(authEpoch)) this.setData({ summarizing: false });
     }
   },
 });

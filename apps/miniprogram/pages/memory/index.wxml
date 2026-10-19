@@ -77,7 +77,6 @@
         <text wx:if="{{item.suggestion}}" class="caption">{{item.suggestion}}</text>
       </view>
       <view wx:if="{{days.length}}" class="button-row memory-actions">
-        <button class="primary-button btn-sm" loading="{{summarizing}}" bindtap="summarizeSelectedDay">整理选中这一天</button>
         <button class="secondary-button btn-sm" open-type="share" data-date="{{selectedDate}}">分享这一天</button>
       </view>
       <view class="card list-row memory-claims-row" bindtap="showMemories">

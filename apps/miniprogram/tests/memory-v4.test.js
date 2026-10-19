@@ -44,23 +44,12 @@ test("the date bar stays the last six calendar days when only one day has a summ
   }
 });
 
-test("整理选中这一天 turns today's card into the recap highlights", async () => {
-  const harness = await openMemory();
-  try {
-    await harness.page.summarizeSelectedDay();
-    await harness.settle();
-    const text = visibleText(renderPage("pages/memory/index", harness.page.data, { tabBar: false }));
-    assert.match(text, / 今天 10月14日 讲了《大熊和森林里的悄悄话》 聊到了幼儿园的新朋友 一起数了天上的星星 昨天 10月13日 /);
-  } finally {
-    harness.restore();
-  }
-});
-
 test("记住的事 opens from a row under the days and 日常回顾 goes back", async () => {
   const harness = await openMemory();
   try {
     const reviews = visibleText(renderPage("pages/memory/index", harness.page.data, { tabBar: false }));
     assert.match(reviews, /分享这一天 记住的事 确认过的事，机器人才会在以后的聊天里提起 AI 整理可能有偏差/);
+    assert.doesNotMatch(reviews, /整理选中这一天|生成摘要/);
 
     harness.page.showMemories();
     assert.equal(harness.page.data.memoryTab, "memories");

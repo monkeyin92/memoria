@@ -130,7 +130,7 @@ test("home ring reads 未设置 when the signed profile carries a session cap bu
 test("home counts only today's summaries and today's conversations", async () => {
   const { data } = await loadHome();
   assert.equal(data.summaryCount, 3);
-  assert.equal(data.todayCount, 3);
+  assert.equal(data.todayCount, 0);
   assert.deepEqual(
     data.memoryPreviews.map((item) => item.text),
     ["讲了《大熊和森林里的悄悄话》", "聊到了幼儿园的新朋友", "一起数了天上的星星"],

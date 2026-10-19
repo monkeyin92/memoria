@@ -57,6 +57,9 @@ jobs:
               - 'infra/memoria-data.production.yml'
               - 'scripts/**/*.py'
               - 'scripts/**/*.sh'
+              - 'scripts/nightly_backup*.sh'
+              - 'scripts/nightly_backup_retention.py'
+              - 'infra/memoria-*backup*'
               - '!scripts/deploy_agent_component.sh'
               - 'scripts/deploy_control_component.sh'
               - 'infra/Dockerfile.agent*'
@@ -221,6 +224,11 @@ jobs:
           scripts/tests/test_verify_control_release_artifact.py
           scripts/tests/test_resolve_target_images.py
           scripts/tests/test_provider_smoke_llm.py
+      - name: Nightly backup script tests (fake docker and df)
+        run: >-
+          uv run pytest --import-mode=importlib --no-cov
+          scripts/tests/test_nightly_backup_script.py
+          scripts/tests/test_nightly_backup_retention.py
       - name: Control release artifact smoke (offline)
         env:
           ENVIRONMENT: development

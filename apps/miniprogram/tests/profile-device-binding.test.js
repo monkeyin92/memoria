@@ -634,3 +634,31 @@ test("设备入口用 switchTab 打开设备 tab（navigateTo 打不开 tab 页�
     assert.deepEqual(calls, [["switchTab", "/pages/device/index"]]);
   });
 });
+
+test("a closed legacy day read resets the profile stats to zero without an error", async () => {
+  await withWx(async () => {
+    for (const key of Object.keys(storage)) delete storage[key];
+    const page = newPage();
+    page.setData({
+      deviceBindingState: "ready",
+      stats: { totalDays: 9, moments: 21, streak: 4 },
+      error: "",
+    });
+    const restore = stubApi({
+      ...baseStubs({
+        getMemoryDays: async () => {
+          throw Object.assign(new Error("legacy daily summaries are unavailable in production"), {
+            status: 503,
+          });
+        },
+      }),
+    });
+    try {
+      await page.loadStats();
+      assert.deepEqual(page.data.stats, { totalDays: 0, moments: 0, streak: 0 });
+      assert.equal(page.data.error, "");
+    } finally {
+      restore();
+    }
+  });
+});

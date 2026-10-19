@@ -4,6 +4,7 @@ const path = require("node:path");
 const test = require("node:test");
 
 const api = require("../utils/api");
+const { renderPage } = require("../scripts/mp-harness/render");
 
 const root = path.join(__dirname, "..");
 const storage = {};
@@ -135,6 +136,10 @@ function homeApiStubs(overrides = {}) {
   };
 }
 
+function visibleText(html) {
+  return html.replace(/<head>[\s\S]*?<\/head>/, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+
 function todayKey(date = new Date()) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
@@ -177,6 +182,100 @@ test("home today count uses session reads and composes the daily summary", async
         "今天和 Memoria 聊了 1 次。他提到数学考了 95 分。",
       );
       assert.equal(result.pendingCount, 0);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("home keeps the recent child summary when the legacy day read is closed", async () => {
+  await withWx(async () => {
+    const definition = loadPage("../pages/home/index");
+    const page = instantiate(definition);
+    const restore = stubApi(
+      homeApiStubs({
+        syncDeviceBindings: async () => ({
+          status: "ready",
+          binding: {
+            binding_id: "bd_1",
+            device_id: "dev_1",
+            declared_mode: "parent_for_child",
+            status: "active",
+            account_owner_id: "person_owner",
+            primary_subject_ids: ["person_owner", "person_child"],
+          },
+        }),
+        getMemoryDays: async () => {
+          throw Object.assign(new Error("legacy daily summaries are unavailable in production"), {
+            status: 503,
+          });
+        },
+        getChildSessionSummaries: async () => ({
+          items: [
+            {
+              record_id: "sum_1",
+              text: "最近在聊画画和幼儿园的新朋友。",
+              created_at: new Date().toISOString(),
+            },
+          ],
+        }),
+        getConversationSessions: async () => ({
+          items: [{ session_id: "s_today", occurred_at: new Date().toISOString() }],
+        }),
+      }),
+    );
+    try {
+      page.setData({ authenticated: true });
+      await page.loadHome();
+      assert.equal(page.data.todayCount, 1, "today's count comes from sessions");
+      assert.equal(page.data.todayTitle, "近期摘要");
+      assert.equal(page.data.todayOverview, "最近在聊画画和幼儿园的新朋友。");
+      assert.equal(page.data.dailySummaryText, "最近：最近在聊画画和幼儿园的新朋友。");
+      assert.equal(page.data.memoryPreviews.length, 1);
+      const text = visibleText(renderPage("pages/home/index", page.data));
+      assert.match(text, /孩子的记忆 近期摘要：最近在聊画画和幼儿园的新朋友。/);
+      assert.doesNotMatch(text, /回顾暂时无法加载|daily summaries/);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("home shows the existing empty state when neither day rows nor child summaries exist", async () => {
+  await withWx(async () => {
+    const definition = loadPage("../pages/home/index");
+    const page = instantiate(definition);
+    const restore = stubApi(
+      homeApiStubs({
+        syncDeviceBindings: async () => ({
+          status: "ready",
+          binding: {
+            binding_id: "bd_1",
+            device_id: "dev_1",
+            declared_mode: "parent_for_child",
+            status: "active",
+            account_owner_id: "person_owner",
+            primary_subject_ids: ["person_owner", "person_child"],
+          },
+        }),
+        getMemoryDays: async () => {
+          throw Object.assign(new Error("legacy daily summaries are unavailable in production"), {
+            status: 503,
+          });
+        },
+        getChildSessionSummaries: async () => ({ items: [] }),
+      }),
+    );
+    try {
+      page.setData({ authenticated: true });
+      await page.loadHome();
+      assert.equal(page.data.todayTitle, "");
+      assert.equal(page.data.todayOverview, "");
+      assert.equal(page.data.dailySummaryText, "");
+      assert.deepEqual(page.data.memoryPreviews, []);
+      const text = visibleText(renderPage("pages/home/index", page.data));
+      assert.match(text, /还没有摘要，聊过之后会出现在这里/);
+      assert.doesNotMatch(text, /回顾暂时无法加载|daily summaries/);
     } finally {
       restore();
     }
@@ -248,7 +347,7 @@ test("loadHome wires a non-UTC local-day session through page data into sharing"
   });
 });
 
-test("loadHome falls back to the day count when the session list is unavailable", async () => {
+test("home never falls back to the day count when the session list is unavailable", async () => {
   await withWx(async () => {
     const definition = loadPage("../pages/home/index");
     const page = instantiate(definition);
@@ -263,13 +362,9 @@ test("loadHome falls back to the day count when the session list is unavailable"
     try {
       page.setData({ authenticated: true });
       await page.loadHome();
-      assert.equal(page.data.todayCount, 3);
-      assert.equal(page.data.todayMeta, "今天 · 3 次对话");
-      assert.equal(
-        page.data.dailySummaryText,
-        "今天和 Memoria 聊了 3 次。回顾还没生成，可在回顾页生成。",
-        "没有服务端回顾时不得编造摘要内容",
-      );
+      assert.equal(page.data.todayCount, 0, "the legacy day rows must not supply the count");
+      assert.equal(page.data.todayMeta, "");
+      assert.equal(page.data.dailySummaryText, "");
     } finally {
       restore();
     }
@@ -459,7 +554,9 @@ test("an older home flow cannot overwrite the latest private summary", async () 
             ],
           };
         },
-        getConversationSessions: async () => ({ items: [] }),
+        getConversationSessions: async () => ({
+          items: [{ session_id: "s-latest", occurred_at: new Date().toISOString() }],
+        }),
       }),
     );
     try {
