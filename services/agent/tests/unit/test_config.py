@@ -71,6 +71,7 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.media_output_generation_timeout_s == 45.0
     assert s.media_owner_silence_timeout_s == 15.0
     assert s.media_max_user_speech_duration_s == 60.0
+    assert s.media_speaking_stall_timeout_s == 15.0
     assert s.media_slo_report_enabled is False
     assert s.media_slo_metrics_url == "http://agent:9090/"
     assert s.media_slo_report_interval_s == 30.0

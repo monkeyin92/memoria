@@ -672,6 +672,12 @@ class MediaBridgeGrpcServer:
         if self._connections.get(session_id) is connection:
             self._connections.pop(session_id, None)
 
+    def has_live_connection(self, session_id: str) -> bool:
+        """True while a gRPC transport still owns this session's downlink."""
+
+        connection = self._connections.get(session_id)
+        return connection is not None and not connection.closed
+
     async def _finish_connection(self, connection: _Connection) -> None:
         """Detach one transport without closing a replacement epoch."""
 
@@ -713,15 +719,18 @@ class MediaBridgeGrpcServer:
             return
         if (
             event_name in {"audio", "vad", "keyword", "device", "playback"}
-            and not connection.session.accepts_input()
+            and not connection.session.accepts_uplink()
         ):
             # CLOSED is projected before lifecycle teardown completes.  Late
             # media must be dropped at the transport boundary so no callback
             # can call the registry's open_session and resurrect a runtime.
+            # The speaking watchdog revokes only the uplink; the downlink still
+            # carries its CANCEL and CLOSED.
             logger.info(
-                "media input rejected session=%s event=%s reason=terminal",
+                "media input rejected session=%s event=%s reason=%s",
                 connection.session.identity.session_id,
                 event_name,
+                "uplink_revoked" if connection.session.accepts_input() else "terminal",
             )
             return
         if event_name == "audio":
@@ -1250,7 +1259,15 @@ class MediaBridgeGrpcServer:
                 fence.generation_id,
                 fence.tool_epoch,
             )
-        return enqueued
+            return False
+        if action in {
+            media_pb2.GENERATION_ACTION_COMPLETE,
+            media_pb2.GENERATION_ACTION_CANCEL,
+        }:
+            # The terminal is on the wire: the watchdog must not send this
+            # generation a second end signal afterwards.
+            connection.session.mark_generation_terminal(fence)
+        return True
 
     async def emit_realtime_effect(
         self,

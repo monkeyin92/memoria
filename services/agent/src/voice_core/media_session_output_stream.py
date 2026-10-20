@@ -229,6 +229,12 @@ class MediaOutputStreamMixin:
             previous_phase: TurnPhase,
         ) -> None: ...
 
+        def _note_downlink_audio(
+            self,
+            context: _MediaVoiceSession,
+            fence: GenerationFence,
+        ) -> None: ...
+
         def flush_pending_missed_hearing_nudge(self, context: _MediaVoiceSession) -> None: ...
 
         @staticmethod
@@ -967,6 +973,7 @@ class MediaOutputStreamMixin:
                     )
                 if context.closed or context.standby_requested:
                     return await abort_for_session_close()
+                self._note_downlink_audio(context, fence)
                 if not context.output.playback.register_audio(
                     fence,
                     frame.sequence,

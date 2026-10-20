@@ -61,6 +61,10 @@ class MediaSessionConnectionMixin:
             self, context: _MediaVoiceSession
         ) -> None: ...
 
+        def _cancel_speaking_stall_watchdog(
+            self, context: _MediaVoiceSession
+        ) -> None: ...
+
         async def _record_interrupted_timed_spans(
             self, context: _MediaVoiceSession, fence: GenerationFence
         ) -> None: ...
@@ -340,6 +344,7 @@ class MediaSessionConnectionMixin:
                 enrollment_task.cancel()
             self._cancel_owner_silence_timer(context, preserve_remaining=False)
             self._cancel_max_user_speech_watchdog(context)
+            self._cancel_speaking_stall_watchdog(context)
             context.projection.discard_provisional(None, "session_closed")
             context.projection.reset_phase(stream_epoch=context.stream_epoch)
             self._clear_pending_turn_state(context)

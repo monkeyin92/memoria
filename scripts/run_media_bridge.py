@@ -133,6 +133,9 @@ async def run() -> None:
     max_user_speech_duration_s = float(
         getattr(settings, "media_max_user_speech_duration_s", 60.0)
     )
+    speaking_stall_timeout_s = float(
+        getattr(settings, "media_speaking_stall_timeout_s", 15.0)
+    )
     prometheus_port = int(getattr(settings, "prometheus_port", 0))
     if prometheus_port > 0:
         try:
@@ -192,6 +195,7 @@ async def run() -> None:
                 aigc_notice_config=notice_config,
                 aigc_round_logger=round_logger,
                 max_user_speech_duration_s=max_user_speech_duration_s,
+                speaking_stall_timeout_s=speaking_stall_timeout_s,
                 reply_delivery_publisher=(
                     reply_delivery_reporter.submit
                     if reply_delivery_reporter is not None
@@ -219,6 +223,7 @@ async def run() -> None:
                     aigc_notice_config=notice_config,
                     aigc_round_logger=round_logger,
                     max_user_speech_duration_s=max_user_speech_duration_s,
+                    speaking_stall_timeout_s=speaking_stall_timeout_s,
                     reply_delivery_publisher=(
                         reply_delivery_reporter.submit
                         if reply_delivery_reporter is not None
@@ -235,6 +240,7 @@ async def run() -> None:
                     aigc_notice_config=notice_config,
                     aigc_round_logger=round_logger,
                     max_user_speech_duration_s=max_user_speech_duration_s,
+                    speaking_stall_timeout_s=speaking_stall_timeout_s,
                     reply_delivery_publisher=(
                         reply_delivery_reporter.submit
                         if reply_delivery_reporter is not None

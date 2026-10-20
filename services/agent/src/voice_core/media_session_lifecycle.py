@@ -71,6 +71,7 @@ class MediaSessionLifecycleMixin:
         delegation_initial_decision_timeout_s: float
         owner_silence_timeout_s: float
         max_user_speech_duration_s: float
+        speaking_stall_timeout_s: float
         _sessions: dict[str, _MediaVoiceSession]
         _cleanup_tasks: dict[str, asyncio.Task[None]]
         _creation_futures: dict[str, asyncio.Future[_MediaVoiceSession]]
@@ -238,6 +239,11 @@ class MediaSessionLifecycleMixin:
             or self.max_user_speech_duration_s < 0
         ):
             raise ValueError("max_user_speech_duration_s must be finite and non-negative")
+        if (
+            not math.isfinite(self.speaking_stall_timeout_s)
+            or self.speaking_stall_timeout_s < 0
+        ):
+            raise ValueError("speaking_stall_timeout_s must be finite and non-negative")
         self._creation_semaphore = asyncio.Semaphore(self.session_creation_limit)
         self._audio_ingress = MediaAudioIngress(self)
 

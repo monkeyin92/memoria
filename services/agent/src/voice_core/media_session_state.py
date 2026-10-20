@@ -52,6 +52,14 @@ class OutputState:
     output_dispatch_task: asyncio.Task[OutputDispatchResult] | None = None
     output_retry_task: asyncio.Task[bool] | None = None
     output_results: list[OutputDispatchResult] = field(default_factory=list)
+    # Monotonic time of the last downlink PCM frame the transport accepted.
+    # The speaking watchdog closes a device session when this stops advancing
+    # while the runtime still believes the assistant is speaking.
+    last_downlink_audio_at: float | None = None
+    # The generation that last reached the device and may still owe it an end
+    # signal.  A frame, not provider production, is what arms the watchdog.
+    speaking_stall_fence: GenerationFence | None = None
+    speaking_stall_task: asyncio.Task[None] | None = None
     delegation_output_claims: dict[GenerationFence, DelegationOutputClaim] = field(
         default_factory=dict
     )

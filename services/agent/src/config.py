@@ -206,6 +206,24 @@ class AgentSettings(BaseSettings):
         le=600.0,
         alias="MEDIA_MAX_USER_SPEECH_DURATION_S",
     )
+    # Compliance 2026-10-20: a device reply the server still believes is
+    # speaking, with no accepted downlink PCM for this long and no generation
+    # terminal, is closed with a CANCEL plus standby so the device stops
+    # feeding the microphone.  Only the downlink resets it; provider
+    # production does not.  Registry direct/library construction keeps its own
+    # disabled (0s) default; the bridge wires this value explicitly.
+    media_speaking_stall_timeout_s: float = Field(
+        default=15.0,
+        ge=0.0,
+        le=120.0,
+        alias="MEDIA_SPEAKING_STALL_TIMEOUT_S",
+        description=(
+            "Seconds without an accepted downlink PCM frame after which a "
+            "speaking device reply is cancelled and the session stood by. "
+            "Field evidence: longest healthy reply ~12 s, downlink frame "
+            "interval 20 ms."
+        ),
+    )
     # AIGC notice hooks at the start and end of one device conversation round.
     # Compliance 2026-10-20 18:52: on by default, default mode is the
     # short-long / short-short pure-tone rhythm (generated from these
