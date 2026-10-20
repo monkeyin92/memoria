@@ -1177,6 +1177,7 @@ async def test_finalize_that_lands_inside_an_inflight_pcm_emit_aborts_the_stream
         *,
         reason: str = "cancelled",
         cancel_timeout_s: float = 5.0,
+        finalize_audible: bool = True,
     ) -> None:
         # Hold the finalizer after the terminal flag is set and before the reply
         # task is cancelled, so the in-flight emit window cannot be dissolved by
@@ -1189,6 +1190,7 @@ async def test_finalize_that_lands_inside_an_inflight_pcm_emit_aborts_the_stream
             fence,
             reason=reason,
             cancel_timeout_s=cancel_timeout_s,
+            finalize_audible=finalize_audible,
         )
 
     bridge.emit_pcm_when_connected = gated_emit_pcm_when_connected  # type: ignore[method-assign]

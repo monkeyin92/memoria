@@ -49,6 +49,9 @@ from services.agent.src.voice_core.media_session_playback_stop import (
 from services.agent.src.voice_core.media_session_projection import (
     MediaSessionProjectionMixin,
 )
+from services.agent.src.voice_core.media_session_speaking_watchdog import (
+    MediaSpeakingWatchdogMixin,
+)
 from services.agent.src.voice_core.media_session_standby import MediaSessionStandbyMixin
 from services.agent.src.voice_core.media_session_state import (
     MediaVoiceSessionState as _MediaVoiceSession,
@@ -78,6 +81,7 @@ def _default_runtime_factory(session_id: str) -> DuplexRuntime:
 @dataclass(slots=True)
 class MediaVoiceCoreRegistry(
     MediaSessionStandbyMixin,
+    MediaSpeakingWatchdogMixin,
     MediaSessionLifecycleMixin,
     MediaSessionConnectionMixin,
     MediaSessionProjectionMixin,
@@ -119,6 +123,11 @@ class MediaVoiceCoreRegistry(
     # Disabled for direct library construction; the production bridge wires
     # AgentSettings.MEDIA_OWNER_SILENCE_TIMEOUT_S (15s by default).
     owner_silence_timeout_s: float = 0.0
+    # A device reply the server still believes is speaking, with no downlink
+    # PCM frame for this long, is closed with a CANCEL plus standby.  Zero
+    # disables the watchdog for direct/library construction; the production
+    # bridge wires AgentSettings.MEDIA_SPEAKING_STALL_TIMEOUT_S.
+    speaking_stall_timeout_s: float = 0.0
     # Hard upper bound for one device utterance when Edge never emits VAD end.
     # Keep direct/library construction fail-safe by defaulting to disabled;
     # production startup supplies the bounded AgentSettings value explicitly.

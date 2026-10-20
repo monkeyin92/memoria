@@ -60,6 +60,10 @@ class MediaAudioIngressState:
     denoiser: TwoStageDenoiser = field(default_factory=_create_media_denoiser)
     pump_task: asyncio.Task[None] | None = None
     discontinuity_pending: bool = False
+    # Set when the speaking watchdog gives up on a lost device generation.
+    # The transport gate rejects the frame before payload parsing; this flag
+    # also stops any frame already queued in the pump from reaching ASR.
+    input_revoked: bool = False
     provider_failed: bool = False
     recovery_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     finalize_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -158,6 +162,8 @@ class MediaAudioIngress:
         ):
             return
         state = context.ingress
+        if state.input_revoked:
+            return
         if state.provider_failed:
             async with state.recovery_lock:
                 if state.provider_failed:
@@ -555,6 +561,8 @@ class MediaAudioIngress:
         callback_stream_epoch: int,
         observe_task_before_results: bool = True,
     ) -> None:
+        if context.ingress.input_revoked:
+            return
         if observe_task_before_results:
             await self._observe_provider_task(context)
         results = tuple(results)
@@ -625,6 +633,8 @@ class MediaAudioIngress:
         callback_stream_epoch = frame.identity.stream_epoch
         if not self._host._stream_epoch_is_current(context, callback_stream_epoch):
             return
+        if context.ingress.input_revoked:
+            return
 
         if frame.discontinuity or context.ingress.discontinuity_pending:
             await self._reset_discontinuity(context, frame)
@@ -644,6 +654,10 @@ class MediaAudioIngress:
 
         self._tap_frame(context, frame)
         results = await context.provider.ingest_audio(context.identity, frame)
+        if context.ingress.input_revoked:
+            # The watchdog may revoke input while the provider still owns this
+            # frame. Never admit its results or feed the speaker classifier.
+            return
         stall_s = time.monotonic() - enqueued_at
         if (
             stall_s > _PUMP_STALL_THRESHOLD_S
@@ -724,7 +738,11 @@ class MediaAudioIngress:
     async def _pump(self, context: _MediaVoiceSession) -> None:
         state = context.ingress
         try:
-            while not context.closed and not context.standby_requested:
+            while (
+                not context.closed
+                and not context.standby_requested
+                and not state.input_revoked
+            ):
                 try:
                     frame, enqueued_at = state.queue.get_nowait()
                 except asyncio.QueueEmpty:

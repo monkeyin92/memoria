@@ -87,6 +87,7 @@ async def test_run_wires_max_user_speech_duration_to_session_registry(
     assert captured[0]["output_generation_timeout_s"] == 45.0
     assert captured[0]["owner_silence_timeout_s"] == 30.0
     assert captured[0]["max_user_speech_duration_s"] == 37.5
+    assert captured[0]["speaking_stall_timeout_s"] == 15.0
     assert captured[0]["crisis_script_interrupt_publisher"] is None
 
 

@@ -1412,26 +1412,26 @@ class MediaTurnEndpointMixin:
                 )
             return reason
         owner = context.output.output_owner
-        if (
-            owner is not None
-            and not context.runtime.barge_in_enabled
-            and owner.fence.turn_id == fence.turn_id
-        ):
+        cancel_previous = True
+        if owner is not None and owner.fence.turn_id == fence.turn_id:
             delivery = context.output.reply_delivery.get(owner.fence)
             if delivery is not None and delivery.first_frame_sent:
                 logger.info(
-                    "skip same-turn cancel of heard playback session=%s "
-                    "owner_gen=%s new_gen=%s",
-                    context.identity.session_id,
-                    owner.fence.generation_id,
-                    fence.generation_id,
+                    "skip same-turn cancel session=%s owner_gen=%s new_gen=%s barge_in=%s",
+                    context.identity.session_id, owner.fence.generation_id,
+                    fence.generation_id, context.runtime.barge_in_enabled,
                 )
-                return "heard_output_in_flight"
+                if not context.runtime.barge_in_enabled:
+                    return "heard_output_in_flight"
+                # barge-in keeps the owner; the delegation claim or normal
+                # reply decides what may still play.
+                cancel_previous = False
         # A final ASR result can arrive while the previous answer is still
         # synthesizing.  Wait for that task to release the per-session reply
         # lock before scheduling the new turn; otherwise ``generate_reply``
         # sees a locked session and silently drops a valid user turn.
-        await self._cancel_reply_task(context, previous_fence)
+        if cancel_previous:
+            await self._cancel_reply_task(context, previous_fence)
         if context.closed or context.standby_requested:
             await self._abort_committed_turn(context, fence, reason="session_closed")
             return "session_closed"

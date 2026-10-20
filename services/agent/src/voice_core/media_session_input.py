@@ -119,6 +119,7 @@ class MediaSessionInputMixin:
             *,
             reason: str = "cancelled",
             cancel_timeout_s: float = 5.0,
+            finalize_audible: bool = True,
         ) -> None: ...
 
         def _event_versions(
@@ -401,8 +402,10 @@ class MediaSessionInputMixin:
     ) -> None:
         # The transport can finish a CLOSED projection before an in-flight
         # callback unwinds.  Reject at this seam before open_session so a
-        # late frame cannot resurrect a registry/runtime context.
-        if not session.accepts_input():
+        # late frame cannot resurrect a registry/runtime context.  The
+        # speaking watchdog revokes only the uplink, so a stalled reply still
+        # gets its CANCEL and CLOSED on the downlink.
+        if not session.accepts_uplink():
             return
         current = self._sessions.get(session.identity.session_id)
         if current is not None and (current.closed or current.standby_requested):
@@ -411,7 +414,7 @@ class MediaSessionInputMixin:
         if (
             context.closed
             or context.standby_requested
-            or not session.accepts_input()
+            or not session.accepts_uplink()
         ):
             return
         await self._audio_ingress.accept(context, frame)
@@ -422,7 +425,7 @@ class MediaSessionInputMixin:
         segment: SpeechSegment,
         detected_monotonic_ms: int = 0,
     ) -> None:
-        if not session.accepts_input():
+        if not session.accepts_uplink():
             return
         current = self._sessions.get(session.identity.session_id)
         if current is not None and (current.closed or current.standby_requested):
@@ -431,7 +434,7 @@ class MediaSessionInputMixin:
         if (
             context.closed
             or context.standby_requested
-            or not session.accepts_input()
+            or not session.accepts_uplink()
         ):
             return
         if _is_spurious_connect_vad(segment, context):
@@ -784,7 +787,11 @@ class MediaSessionInputMixin:
                         context.output.output_complete_emitted = False
                         if should_pause_asr_for_playback(context.identity):
                             await context.provider.pause_asr_for_playback(context.identity)
-                        await self._cancel_reply_task(context, previous_fence)
+                        await self._cancel_reply_task(
+                            context,
+                            previous_fence,
+                            finalize_audible=False,
+                        )
                         # A device hard-stop keyword is produced by the
                         # device's own local playback flush (the button.stop
                         # path); its firmware fail-closes a playback.flush for

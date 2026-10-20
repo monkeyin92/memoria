@@ -171,6 +171,7 @@ class MediaOutputStreamMixin:
             *,
             reason: str = "cancelled",
             cancel_timeout_s: float = 5.0,
+            finalize_audible: bool = True,
         ) -> None: ...
 
         async def _start_selected_output(self, context: _MediaVoiceSession) -> bool: ...
@@ -228,6 +229,12 @@ class MediaOutputStreamMixin:
             previous_phase: TurnPhase,
         ) -> None: ...
 
+        def _note_downlink_audio(
+            self,
+            context: _MediaVoiceSession,
+            fence: GenerationFence,
+        ) -> None: ...
+
         def flush_pending_missed_hearing_nudge(self, context: _MediaVoiceSession) -> None: ...
 
         @staticmethod
@@ -265,7 +272,12 @@ class MediaOutputStreamMixin:
                 ReplyDeliveryEvent.ERROR,
                 "session_closed",
             )
-            await self._cancel_reply_task(context, fence, reason="session_closed")
+            await self._cancel_reply_task(
+                context,
+                fence,
+                reason="session_closed",
+                finalize_audible=False,
+            )
             return
         # This dispatch may have sent nothing (its first frame was rejected) while an earlier output
         # of the same fence, e.g. a lookup acknowledgement, already put audio on the device: that
@@ -281,7 +293,12 @@ class MediaOutputStreamMixin:
                 current_context_version=coordinator.current_context_version(fence.session_id),
                 floor_allows_output=context.runtime.output_floor_allows_assistant,
             )
-        await self._cancel_reply_task(context, fence, reason=reason)
+        await self._cancel_reply_task(
+            context,
+            fence,
+            reason=reason,
+            finalize_audible=False,
+        )
         if emitted_audio and context.runtime.fence.matches(fence):
             # A higher-priority owner has its own preemption path.  If the
             # current owner instead disappeared because its intent expired (or
@@ -956,6 +973,7 @@ class MediaOutputStreamMixin:
                     )
                 if context.closed or context.standby_requested:
                     return await abort_for_session_close()
+                self._note_downlink_audio(context, fence)
                 if not context.output.playback.register_audio(
                     fence,
                     frame.sequence,
@@ -963,7 +981,12 @@ class MediaOutputStreamMixin:
                     frame.frame_samples,
                 ):
                     self.metrics.inc_media_stale_generation()
-                    await self._cancel_reply_task(context, fence, reason="playback_rejected")
+                    await self._cancel_reply_task(
+                        context,
+                        fence,
+                        reason="playback_rejected",
+                        finalize_audible=False,
+                    )
                     return OutputDispatchResult(
                         fence,
                         OutputDispatchStatus.ABORTED,
@@ -1541,7 +1564,12 @@ class MediaOutputStreamMixin:
             ReplyDeliveryEvent.ERROR,
             reason,
         )
-        await self._cancel_reply_task(context, fence, reason=reason)
+        await self._cancel_reply_task(
+            context,
+            fence,
+            reason=reason,
+            finalize_audible=False,
+        )
         cancelled = await self._advance_failed_output_generation(
             context,
             fence,
