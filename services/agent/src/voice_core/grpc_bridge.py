@@ -674,7 +674,6 @@ class MediaBridgeGrpcServer:
 
     def has_live_connection(self, session_id: str) -> bool:
         """True while a gRPC transport still owns this session's downlink."""
-
         connection = self._connections.get(session_id)
         return connection is not None and not connection.closed
 
@@ -724,13 +723,11 @@ class MediaBridgeGrpcServer:
             # CLOSED is projected before lifecycle teardown completes.  Late
             # media must be dropped at the transport boundary so no callback
             # can call the registry's open_session and resurrect a runtime.
-            # The speaking watchdog revokes only the uplink; the downlink still
-            # carries its CANCEL and CLOSED.
+            # The speaking watchdog revokes only the uplink.
+            revoked = "uplink_revoked" if connection.session.accepts_input() else "terminal"
             logger.info(
                 "media input rejected session=%s event=%s reason=%s",
-                connection.session.identity.session_id,
-                event_name,
-                "uplink_revoked" if connection.session.accepts_input() else "terminal",
+                connection.session.identity.session_id, event_name, revoked,
             )
             return
         if event_name == "audio":
@@ -1166,6 +1163,20 @@ class MediaBridgeGrpcServer:
                 return False
             await asyncio.sleep(min(0.02, remaining))
 
+
+    @staticmethod
+    def _reject_generation(
+        session_id: str, action: int, reason: str, fence: GenerationFence,
+        cause: str, detail: str = "",
+    ) -> bool:
+        logger.warning(
+            "media generation control rejected session=%s action=%s reason=%s cause=%s%s "
+            "fence=turn=%s/gen=%s/epoch=%s",
+            session_id, action, reason, cause, detail,
+            fence.turn_id, fence.generation_id, fence.tool_epoch,
+        )
+        return False
+
     async def emit_generation(
         self,
         session_id: str,
@@ -1178,17 +1189,9 @@ class MediaBridgeGrpcServer:
     ) -> bool:
         connection = self._connections.get(session_id)
         if connection is None or connection.closed or not connection.session.accepts_input():
-            logger.warning(
-                "media generation control rejected session=%s action=%s reason=%s "
-                "cause=connection_missing_or_terminal fence=turn=%s/gen=%s/epoch=%s",
-                session_id,
-                action,
-                reason,
-                fence.turn_id,
-                fence.generation_id,
-                fence.tool_epoch,
+            return self._reject_generation(
+                session_id, action, reason, fence, "connection_missing_or_terminal"
             )
-            return False
         task_epoch, context_version = connection.session.observe_versions(
             task_epoch,
             context_version,
@@ -1204,32 +1207,18 @@ class MediaBridgeGrpcServer:
         try:
             connection.session.generation.advance(fence)
         except ValueError as exc:
-            logger.warning(
-                "media generation control rejected session=%s action=%s reason=%s "
-                "cause=fence_advance_error error=%s fence=turn=%s/gen=%s/epoch=%s "
-                "current_fence=%s",
+            return self._reject_generation(
                 session_id,
                 action,
                 reason,
-                exc,
-                fence.turn_id,
-                fence.generation_id,
-                fence.tool_epoch,
-                connection.session.generation.current,
+                fence,
+                "fence_advance_error",
+                f" error={exc} current_fence={connection.session.generation.current}",
             )
-            return False
         if not connection.session.reset_downlink_generation(fence):
-            logger.warning(
-                "media generation control rejected session=%s action=%s reason=%s "
-                "cause=downlink_reset_rejected fence=turn=%s/gen=%s/epoch=%s",
-                session_id,
-                action,
-                reason,
-                fence.turn_id,
-                fence.generation_id,
-                fence.tool_epoch,
+            return self._reject_generation(
+                session_id, action, reason, fence, "downlink_reset_rejected"
             )
-            return False
         connection.session.generation_active = action != media_pb2.GENERATION_ACTION_CANCEL
         enqueued = await self._enqueue(
             connection,
@@ -1248,24 +1237,16 @@ class MediaBridgeGrpcServer:
             ),
         )
         if not enqueued:
-            logger.warning(
-                "media generation control rejected session=%s action=%s reason=%s "
-                "cause=enqueue_rejected connection_closed=%s fence=turn=%s/gen=%s/epoch=%s",
+            return self._reject_generation(
                 session_id,
                 action,
                 reason,
-                connection.closed,
-                fence.turn_id,
-                fence.generation_id,
-                fence.tool_epoch,
+                fence,
+                "enqueue_rejected",
+                f" connection_closed={connection.closed}",
             )
-            return False
-        if action in {
-            media_pb2.GENERATION_ACTION_COMPLETE,
-            media_pb2.GENERATION_ACTION_CANCEL,
-        }:
-            # The terminal is on the wire: the watchdog must not send this
-            # generation a second end signal afterwards.
+        if action in {media_pb2.GENERATION_ACTION_COMPLETE, media_pb2.GENERATION_ACTION_CANCEL}:
+            # On the wire: the speaking watchdog must not end this generation again.
             connection.session.mark_generation_terminal(fence)
         return True
 
