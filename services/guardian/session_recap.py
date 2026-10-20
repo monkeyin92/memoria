@@ -14,6 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final, Literal
 
+from services.common.crisis_policy import route_crisis
 from services.guardian.child_memory import (
     SUMMARY_MAX_CHARS,
     ArchiveFact,
@@ -39,9 +40,21 @@ INTEREST_TOPICS: Final[tuple[tuple[str, str], ...]] = (
     ("公园", "喜欢去公园"),
 )
 
-_STORY_ONLY_USER = re.compile(
-    r"^(再)?(讲|说|读)(一)?(个|则|段)?(故事|童话|绘本).{0,8}$"
+_STORY_ONLY_USER = re.compile(r"^(再)?(讲|说|读)(一)?(个|则|段)?(故事|童话|绘本).{0,8}$")
+# Child archive facts come only from what the child says about themselves. A
+# request such as 「给我讲个恐龙故事」 or a fear such as 「我怕小狗」 mentions the
+# same topic as a liking and must not become a preference.
+_SELF_STATEMENT_PREFIX = re.compile(r"^(?:嗯|那个|就是|其实|还有)+")
+_PREFERENCE_STATEMENT = re.compile(
+    r"(?:我|本人)(?:最|特别|超|很|非常|挺|比较|好|更|也|还|一直|就|可)?(?:喜欢|中意|钟意)"
 )
+_PREFERENCE_NEGATION = re.compile(r"(?:不|没|别)[再太怎么会]$")
+# Whose preference the sentence is about. A prefix before 「我」 only names people.
+_OTHER_PERSON = re.compile(
+    r"妈妈|爸爸|爷爷|奶奶|外公|外婆|姥姥|姥爷|姐姐|哥哥|弟弟|妹妹|老师|同学"
+    r"|朋友|阿姨|叔叔|舅舅|姑姑"
+)
+_TOPICS_IN_ORDER = tuple(sorted(INTEREST_TOPICS, key=lambda item: len(item[0]), reverse=True))
 # Named people only: a short name attached to the role word. Skip plurals like 同学们.
 _NAMED_ROLE_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:[\u4e00-\u9fff]{1,3}(?:老师|同学|班主任|校长)(?!们)"
@@ -209,24 +222,74 @@ def accept_parent_summary(text: str, turns: Sequence[SessionTurn]) -> str | None
     return cleaned
 
 
-def extract_interest_facts(subject_id: str, turns: Sequence[SessionTurn]) -> tuple[ArchiveFact, ...]:
-    """Whitelist preference hits from the session transcript (e.g. 恐龙 → 喜欢恐龙)."""
+def _self_preference_sentences(turns: Sequence[SessionTurn]) -> list[str]:
+    """Child sentences whose own statement about themselves names a liking.
 
-    blob = "".join(turn.text for turn in user_turns(turns))
+    A sentence without its own 「我喜欢」 (a request, a fear, a question to the
+    robot, a plain mention) is dropped whole, so its topic is never read.
+    """
+
+    found: list[str] = []
+    for turn in user_turns(turns):
+        for sentence in re.split(r"[。.!！?？;；\n]", turn.text):
+            body = _SELF_STATEMENT_PREFIX.sub("", " ".join(sentence.split()))
+            stating = False
+            for clause in re.split(r"[，,]", body):
+                match = _PREFERENCE_STATEMENT.search(clause)
+                if match is None or _PREFERENCE_NEGATION.search(clause[: match.start()]):
+                    continue
+                prefix = clause[: match.start()]
+                # 「我妈妈喜欢…」 and 「你喜欢…吗」 are about someone else.
+                if _OTHER_PERSON.search(prefix) is None and "你" not in prefix:
+                    stating = True
+            if stating:
+                found.append(body)
+    return found
+
+
+def extract_interest_facts(
+    subject_id: str, turns: Sequence[SessionTurn]
+) -> tuple[ArchiveFact, ...]:
+    """Preference facts from the child's own self-statements (e.g. 我最喜欢恐龙).
+
+    A request (「给我讲个恐龙故事」), a fear (「我怕小狗」), a sentence about someone
+    else, or a nickname / pet name writes nothing. The conservative default
+    holds until Monkey decides the write direction for names.
+    """
+
     found: list[ArchiveFact] = []
     seen: set[str] = set()
-    for needle, label in INTEREST_TOPICS:
-        if needle not in blob or label in seen:
-            continue
-        if forbidden_topic(label) or quotes_speech(label):
-            continue
-        try:
-            fact = ArchiveFact(subject_id=subject_id, field="preference", text=label)
-        except ValueError:
-            continue
-        found.append(fact)
-        seen.add(label)
+    for body in _self_preference_sentences(turns):
+        for topic_needle, label in _TOPICS_IN_ORDER:
+            if topic_needle not in body or label in seen:
+                continue
+            if forbidden_topic(label) or quotes_speech(label):
+                continue
+            try:
+                fact = ArchiveFact(subject_id=subject_id, field="preference", text=label)
+            except ValueError:
+                continue
+            found.append(fact)
+            seen.add(label)
     return tuple(found)
+
+
+def session_hits_crisis(turns: Sequence[SessionTurn]) -> bool:
+    """True when any turn of the session routes to a crisis action.
+
+    The child's own turns go through the deterministic route, as the reply
+    pipeline does. The robot's scripted safety lines are added so a session
+    where only the reply is a fixed safety reply still counts.
+    """
+
+    for turn in turns:
+        if not turn.text.strip():
+            continue
+        if route_crisis(turn.text).action != "none":
+            return True
+        if turn.role == "assistant" and route_crisis(turn.text).script is not None:
+            return True
+    return False
 
 
 def draft_session_recap(
@@ -248,6 +311,13 @@ def draft_session_recap(
             summary=None,
             archive_facts=(),
             skipped_reason=skip,
+            user_turn_count=len(users),
+        )
+    if session_hits_crisis(turns):
+        return SessionRecapDraft(
+            summary=None,
+            archive_facts=(),
+            skipped_reason="crisis_in_session",
             user_turn_count=len(users),
         )
     if skipped_reason is not None:
@@ -307,6 +377,7 @@ __all__ = [
     "extract_interest_facts",
     "is_story_playback_only",
     "redact_name_and_health_terms",
+    "session_hits_crisis",
     "session_summary_prompt",
     "skip_session_recap",
     "user_turns",
