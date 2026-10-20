@@ -133,6 +133,10 @@ async def test_device_bound_turn_reaches_the_owners_review(
         ]
         assert evidence[0]["speaker_class"] == "owner"
         assert evidence[0]["payload"]["speaker_reason_code"] == DEVICE_BOUND_SUBJECT_REASON
+        # #282: no turn text reaches the archive, so the review lists the
+        # session without a preview and the history has no turns to pair.
+        for event in evidence:
+            assert "text" not in event["payload"]
         for event in evidence:
             stored = await client.post("/v1/archive/session-events", headers=_ARCHIVE, json=event)
             assert stored.status_code == 201, stored.text
@@ -145,11 +149,16 @@ async def test_device_bound_turn_reaches_the_owners_review(
         )
 
     assert sessions.status_code == 200, sessions.text
-    assert [item["session_id"] for item in sessions.json()["items"]] == [session_id]
+    assert sessions.json()["items"] == [
+        {
+            "session_id": session_id,
+            "occurred_at": sessions.json()["items"][0]["occurred_at"],
+            "turn_count": 1,
+            "preview": "",
+        }
+    ]
     assert history.status_code == 200, history.text
-    assert [
-        (turn["owner_text"], turn["assistant_text"]) for turn in history.json()["turns"]
-    ] == [(_USER_TEXT, _REPLY_TEXT)]
+    assert history.json() == {"session_id": session_id, "turns": []}
 
 
 @pytest.mark.asyncio

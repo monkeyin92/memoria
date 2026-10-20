@@ -91,6 +91,7 @@ from services.governance.account_data import (
 from services.guardian.domain import GuardianStorePort
 from services.guardian.retention import (
     apply_memory_retention_ceiling,
+    conversation_turn_eligible,
     memory_retention_allowed,
     payload_text_allowed,
 )
@@ -2271,14 +2272,11 @@ async def conversation_sessions(
         if not events:
             break
         for event in events:
-            if event.session_id is None:
-                continue
-            eligible = (
-                _owner_turn_item(event)
-                if event.event_type == "speech.utterance_finalized"
-                else _actual_heard_item(event)
-            )
-            if eligible is None:
+            if event.session_id is None or not conversation_turn_eligible(
+                event_type=event.event_type,
+                speaker_class=event.speaker_class,
+                payload=event.payload,
+            ):
                 continue
             session = sessions.setdefault(
                 event.session_id,
@@ -2295,9 +2293,10 @@ async def conversation_sessions(
                 session["turns"].add((event.turn_id, event.generation_id))
             # Events arrive newest-first, so the first eligible utterance of a
             # session becomes its list preview. Only already-eligible text is
-            # reused; nothing is generated or summarised server-side.
+            # reused; nothing is generated or summarised server-side. Since
+            # #282 no real turn carries text, so sessions routinely have none.
             if not session["preview"]:
-                text = eligible.get("text")
+                text = event.payload.get("text")
                 if isinstance(text, str) and text.strip():
                     session["preview"] = text.strip()[:80]
         oldest = min(event.occurred_at for event in events)
