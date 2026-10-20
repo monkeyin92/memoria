@@ -1376,9 +1376,14 @@ class MediaOutputStreamMixin:
     ) -> None:
         """P0-04 D3: end a minor's session past its signed limit after the reply."""
 
+        from services.agent.src.minor_limit_bypass import (
+            MINOR_SESSION_LIMIT_BYPASSED_REASON,
+            configured_minor_limit_bypass,
+        )
         from services.agent.src.prompts import MINOR_SESSION_LIMIT_PHRASE
         from services.agent.src.voice_core.minor_session_limits import (
             minor_limits,
+            minor_subject_id,
             session_limit_reached,
         )
         from services.common.fixed_safety_scripts import script_for_display
@@ -1386,7 +1391,8 @@ class MediaOutputStreamMixin:
         if script_for_display(context.output.assistant_text.strip()) is not None:
             context.crisis_reply_heard = True
             context.runtime.note_fixed_safety_spoken(context.output.assistant_text.strip())
-        max_seconds, _quiet_hours = minor_limits(context.runtime.mode_policy.runtime_profile)
+        profile = context.runtime.mode_policy.runtime_profile
+        max_seconds, _quiet_hours = minor_limits(profile)
         if (
             context.closed
             or context.standby_requested
@@ -1394,6 +1400,11 @@ class MediaOutputStreamMixin:
             or context.identity.client_type != "device"
             or not context.runtime.fence.matches(fence)
             or not session_limit_reached(context.started_at, time.monotonic(), max_seconds)
+        ):
+            return
+        if configured_minor_limit_bypass(self).allows(
+            minor_subject_id(profile),
+            reason=MINOR_SESSION_LIMIT_BYPASSED_REASON,
         ):
             return
         speak = getattr(self, "_speak_device_enrollment_phrase", None)
