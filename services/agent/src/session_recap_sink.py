@@ -17,6 +17,7 @@ from services.common.failure_log import FailureLog, failure_log
 from services.guardian.session_recap import (
     SessionTurn,
     draft_session_recap,
+    session_hits_crisis,
     skip_session_recap,
 )
 
@@ -88,6 +89,8 @@ class SessionRecapSink:
 
         event_id = source_event_id or f"session-end:{session_id}"
         early_skip = skip_session_recap(turns)
+        if early_skip is None and session_hits_crisis(turns):
+            early_skip = "crisis_in_session"
         summary_text: str | None = None
         model_skip: str | None = early_skip
         if early_skip is None:
