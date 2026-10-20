@@ -8,6 +8,32 @@ from services.agent.src.config import AgentSettings, load_settings
 from services.agent.src.contracts.errors import ConfigValidationError
 
 
+def _without_deepseek_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DEEPSEEK_API_URL", raising=False)
+    monkeypatch.delenv("DEEPSEEK_BASE_URL", raising=False)
+
+
+def test_deepseek_api_url_is_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    _without_deepseek_url(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_URL", "https://api-url.example.invalid")
+
+    assert AgentSettings(_env_file=None).deepseek_base_url == "https://api-url.example.invalid"
+
+
+def test_deepseek_base_url_still_sets_the_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    _without_deepseek_url(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://base-url.example.invalid")
+
+    assert AgentSettings(_env_file=None).deepseek_base_url == "https://base-url.example.invalid"
+
+
+def test_deepseek_api_url_wins_over_the_legacy_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_URL", "https://api-url.example.invalid")
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://base-url.example.invalid")
+
+    assert AgentSettings(_env_file=None).deepseek_base_url == "https://api-url.example.invalid"
+
+
 @pytest.fixture(autouse=True)
 def mandatory_agent_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MEMORIA_AGENT_HEARTBEAT_TOKEN", "heartbeat-token-material-32-characters")

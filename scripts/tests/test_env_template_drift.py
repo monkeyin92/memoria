@@ -66,6 +66,20 @@ def test_retired_keys_are_gone_from_both_templates() -> None:
         assert named == [], f"{template_path.name} still names retired keys: {named}"
 
 
+def test_the_deepseek_endpoint_reaches_both_services_under_either_name() -> None:
+    split_signing = {
+        "MEMORIA_RUNTIME_PROFILE_SIGNING_SECRET": "runtime-profile-key-material",
+        "MEMORIA_RUNTIME_PROFILE_VERIFY_KEY": "runtime-profile-key-material",
+    }
+    for key in ("DEEPSEEK_API_URL", "DEEPSEEK_BASE_URL"):
+        control, agent, _, _ = split_env(
+            {"ENVIRONMENT": "production", "LOG_LEVEL": "INFO", **split_signing, key: "https://x"}
+        )
+        assert control[key] == agent[key] == "https://x"
+    assert "DEEPSEEK_API_URL" in _aliases(ControlSettings) & _aliases(AgentSettings)
+    assert not {"DEEPSEEK_API_URL", "DEEPSEEK_BASE_URL"} & _RETIRED_KEYS
+
+
 def test_an_old_pii_redaction_flag_is_accepted_and_reaches_no_service() -> None:
     files = split_env({"PII_REDACTION_ENABLED": "false", "LOG_LEVEL": "INFO"})
 
