@@ -142,6 +142,7 @@ class MediaSessionLifecycleMixin:
             *,
             reason: str = "cancelled",
             cancel_timeout_s: float = 5.0,
+            finalize_audible: bool = True,
         ) -> None: ...
 
         def _event_versions(
@@ -542,6 +543,7 @@ class MediaSessionLifecycleMixin:
                     current,
                     old_fence,
                     reason="identity_epoch_rotated",
+                    finalize_audible=False,
                 )
 
                 runtime_fence = current.runtime.fence

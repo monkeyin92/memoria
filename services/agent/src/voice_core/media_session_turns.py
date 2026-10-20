@@ -135,6 +135,7 @@ class MediaTurnEndpointMixin:
             *,
             reason: str = "cancelled",
             cancel_timeout_s: float = 5.0,
+            finalize_audible: bool = True,
         ) -> None: ...
 
         async def commit_user_turn(
@@ -1412,26 +1413,38 @@ class MediaTurnEndpointMixin:
                 )
             return reason
         owner = context.output.output_owner
-        if (
-            owner is not None
-            and not context.runtime.barge_in_enabled
-            and owner.fence.turn_id == fence.turn_id
-        ):
+        cancel_previous = True
+        if owner is not None and owner.fence.turn_id == fence.turn_id:
             delivery = context.output.reply_delivery.get(owner.fence)
             if delivery is not None and delivery.first_frame_sent:
+                if not context.runtime.barge_in_enabled:
+                    logger.info(
+                        "skip same-turn cancel of heard playback session=%s "
+                        "owner_gen=%s new_gen=%s",
+                        context.identity.session_id,
+                        owner.fence.generation_id,
+                        fence.generation_id,
+                    )
+                    return "heard_output_in_flight"
+                # In barge-in mode the commit still owns this turn: the commit
+                # that just returned created the filler owner, so the fence
+                # read before the await belongs to the previous turn.  Skip
+                # only the cancel and keep dispatching; the delegation claim
+                # or the normal reply will decide what may still play.
+                cancel_previous = False
                 logger.info(
-                    "skip same-turn cancel of heard playback session=%s "
-                    "owner_gen=%s new_gen=%s",
+                    "skip same-turn cancel of heard playback during barge-in "
+                    "session=%s owner_gen=%s new_gen=%s",
                     context.identity.session_id,
                     owner.fence.generation_id,
                     fence.generation_id,
                 )
-                return "heard_output_in_flight"
         # A final ASR result can arrive while the previous answer is still
         # synthesizing.  Wait for that task to release the per-session reply
         # lock before scheduling the new turn; otherwise ``generate_reply``
         # sees a locked session and silently drops a valid user turn.
-        await self._cancel_reply_task(context, previous_fence)
+        if cancel_previous:
+            await self._cancel_reply_task(context, previous_fence)
         if context.closed or context.standby_requested:
             await self._abort_committed_turn(context, fence, reason="session_closed")
             return "session_closed"

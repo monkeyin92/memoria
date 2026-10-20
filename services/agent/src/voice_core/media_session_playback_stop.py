@@ -168,6 +168,7 @@ class MediaPlaybackStopMixin:
             *,
             reason: str = "cancelled",
             cancel_timeout_s: float = 5.0,
+            finalize_audible: bool = True,
         ) -> None: ...
 
         @staticmethod
@@ -984,7 +985,12 @@ class MediaPlaybackStopMixin:
         context.output.output_complete_emitted = False
         if should_pause_asr_for_playback(context.identity):
             await context.provider.pause_asr_for_playback(context.identity)
-        await self._cancel_reply_task(context, previous_fence, reason=_PLAYBACK_STOP_CAUSE)
+        await self._cancel_reply_task(
+            context,
+            previous_fence,
+            reason=_PLAYBACK_STOP_CAUSE,
+            finalize_audible=False,
+        )
         flushed = await self._emit_cancel_generation(
             context,
             cancelled,

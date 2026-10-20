@@ -72,6 +72,7 @@ class MediaSessionConnectionMixin:
             *,
             reason: str = "cancelled",
             cancel_timeout_s: float = 5.0,
+            finalize_audible: bool = True,
         ) -> None: ...
 
         def _clear_pending_turn_state(self, context: _MediaVoiceSession) -> None: ...
@@ -137,7 +138,11 @@ class MediaSessionConnectionMixin:
         if should_pause_asr_for_playback(context.identity):
             await context.provider.pause_asr_for_playback(context.identity)
         if not previous_fence.matches(session.fence):
-            await self._cancel_reply_task(context, previous_fence)
+            await self._cancel_reply_task(
+                context,
+                previous_fence,
+                finalize_audible=False,
+            )
         self.metrics.observe_voice_latency(
             "interrupt_core_stop",
             (time.monotonic_ns() - stop_started_ns) / 1_000_000_000,
@@ -193,7 +198,11 @@ class MediaSessionConnectionMixin:
         context.output.output_complete_emitted = False
         if should_pause_asr_for_playback(context.identity):
             await context.provider.pause_asr_for_playback(context.identity)
-        await self._cancel_reply_task(context, previous_fence)
+        await self._cancel_reply_task(
+            context,
+            previous_fence,
+            finalize_audible=False,
+        )
 
     async def on_session_closed(self, session: MediaBridgeSession) -> None:
         session_id = session.identity.session_id
@@ -344,7 +353,11 @@ class MediaSessionConnectionMixin:
             if context.output.output_owner is not None
             else context.output.playback.current_fence or context.runtime.fence
         )
-        await self._cancel_reply_task(context, output_fence)
+        await self._cancel_reply_task(
+            context,
+            output_fence,
+            finalize_audible=False,
+        )
         if context.turn_endpoint_task is not None and not context.turn_endpoint_task.done():
             context.turn_endpoint_task.cancel()
         if context.pending.turn_endpoint_timeout_handle is not None:

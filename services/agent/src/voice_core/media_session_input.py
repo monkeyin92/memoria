@@ -119,6 +119,7 @@ class MediaSessionInputMixin:
             *,
             reason: str = "cancelled",
             cancel_timeout_s: float = 5.0,
+            finalize_audible: bool = True,
         ) -> None: ...
 
         def _event_versions(
@@ -784,7 +785,11 @@ class MediaSessionInputMixin:
                         context.output.output_complete_emitted = False
                         if should_pause_asr_for_playback(context.identity):
                             await context.provider.pause_asr_for_playback(context.identity)
-                        await self._cancel_reply_task(context, previous_fence)
+                        await self._cancel_reply_task(
+                            context,
+                            previous_fence,
+                            finalize_audible=False,
+                        )
                         # A device hard-stop keyword is produced by the
                         # device's own local playback flush (the button.stop
                         # path); its firmware fail-closes a playback.flush for
