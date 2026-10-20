@@ -19,6 +19,10 @@ from services.agent.src.daily_chat import (
     DailyChatRefusal,
     governed_daily_chat,
 )
+from services.agent.src.minor_limit_bypass import (
+    MINOR_DAILY_LIMIT_BYPASSED_REASON,
+    configured_minor_limit_bypass,
+)
 from services.agent.src.orchestration.conversation_projection import (
     CommittedTurn,
     FloorState,
@@ -341,6 +345,12 @@ class MediaSessionProjectionMixin:
             return False
         match outcome:
             case "exhausted":
+                if configured_minor_limit_bypass(self).allows(
+                    governed.subject_id,
+                    reason=MINOR_DAILY_LIMIT_BYPASSED_REASON,
+                ):
+                    context.daily_chat_accrual = DailyChatAccrual.new(governed.subject_id)
+                    return False
                 phrase, reason = MINOR_DAILY_LIMIT_PHRASE, "minor_daily_limit"
             case "unavailable":
                 phrase, reason = CONNECTION_RETRY_PHRASE, "minor_daily_usage_unavailable"

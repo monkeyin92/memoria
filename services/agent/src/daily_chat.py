@@ -31,6 +31,10 @@ class DailyChatAccrual:
     subject_id: str
     accrual_id: str
 
+    @classmethod
+    def new(cls, subject_id: str) -> DailyChatAccrual:
+        return cls(subject_id=subject_id, accrual_id=uuid4().hex)
+
 
 def governed_daily_chat(profile: VerifiedRuntimeProfile | None) -> GovernedDailyChat | None:
     if profile is None:
@@ -80,7 +84,7 @@ class DailyChatClient:
             return "unavailable"
         if not governed.budget.admits(used):
             return "exhausted"
-        return DailyChatAccrual(subject_id=governed.subject_id, accrual_id=uuid4().hex)
+        return DailyChatAccrual.new(governed.subject_id)
 
     async def record(self, accrual: DailyChatAccrual, *, elapsed_seconds: int) -> None:
         body = {
