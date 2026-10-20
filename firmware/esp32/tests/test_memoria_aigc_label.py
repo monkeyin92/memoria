@@ -62,7 +62,7 @@ int main() {
                 memoria::kAigcBadgeX, memoria::kAigcBadgeY,
                 memoria::kAigcBadgeW, memoria::kAigcBadgeH,
                 memoria::kAigcBadgeFontPx);
-    // Every corner must sit inside radius-8 (compile-time assert + runtime).
+    // Every corner must keep the 8 px edge margin (compile-time assert + runtime).
     const bool corners = AigcBadgeCornersInsideSafeCircle(
         memoria::kAigcBadgeX, memoria::kAigcBadgeY,
         memoria::kAigcBadgeW, memoria::kAigcBadgeH);
@@ -95,13 +95,13 @@ def test_badge_is_primary_and_turn_tone_defaults_off(tool: pathlib.Path) -> None
     assert "badge_vis=1 tone_want=0 offline_vis=1 layout_ok=1" in completed.stdout
     assert "corners_ok=1" in completed.stdout
     assert "clipped_rejected=1" in completed.stdout
-    assert "geom=228,40,50,30 font=20" in completed.stdout
+    assert "geom=163,10,34,22 font=16" in completed.stdout
 
 
-def test_display_wires_corner_badge_inside_safe_circle() -> None:
+def test_display_wires_top_centre_badge_inside_safe_circle() -> None:
     display = DISPLAY_CC.read_text(encoding="utf-8")
     assert 'lv_label_set_text(aigc_badge_, "AI")' in display
-    assert "lv_font_montserrat_20" in display
+    assert "lv_font_montserrat_16" in display
     assert "LV_OPA_COVER" in display
     assert "memoria::kAigcBadgeX" in display
     assert "lv_obj_set_pos(aigc_badge_" in display
@@ -132,11 +132,11 @@ def test_story_path_refuses_without_intro() -> None:
     assert "story_intro_ok" in board
 
 
-def test_sdkconfig_enables_montserrat_20() -> None:
+def test_sdkconfig_enables_montserrat_16() -> None:
     import json
 
     product = json.loads((BOARD_DIR / "config.json").read_text(encoding="utf-8"))
-    assert "CONFIG_LV_FONT_MONTSERRAT_20=y" in product["builds"][0]["sdkconfig_append"]
+    assert "CONFIG_LV_FONT_MONTSERRAT_16=y" in product["builds"][0]["sdkconfig_append"]
 
 
 def test_render_aigc_notices_refuses_without_credentials() -> None:

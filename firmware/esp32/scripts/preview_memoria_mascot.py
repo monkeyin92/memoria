@@ -10,6 +10,7 @@ writes:
 
 * ``scene.mp4`` (when ffmpeg is on PATH) and ``frames/NNNNN.png`` keyframes,
 * ``sheet.png``, a contact sheet of the labelled moments,
+* ``<state>.png`` stills for idle, listening, thinking, speaking and connecting,
 * ``stats.json``: redraw area per frame and the verification result.
 
 The scene runs on the device's clock: audio levels arrive in 20 ms blocks from
@@ -410,6 +411,15 @@ MOMENTS = [
     (41200, "back to idle"),
 ]
 
+# Named stills on the phone-facing states, taken from the same tour.
+STATE_STILLS = {
+    "idle": 6400,
+    "listening": 11200,
+    "thinking": 13200,
+    "speaking": 15000,
+    "connecting": 39000,
+}
+
 
 SANITIZER_FLAGS = [
     "-fsanitize=address,undefined",
@@ -668,6 +678,11 @@ def main() -> int:
             sheet.paste(image.resize((tile, tile), Image.LANCZOS), (x, y))
             draw.text((x + 8, y + tile + 4), label, fill=(230, 230, 230))
         sheet.save(out / "sheet.png")
+
+    if args.day == "tour":
+        for name, ms in STATE_STILLS.items():
+            index = min(ms // step, data.shape[0] - 1)
+            Image.fromarray(to_rgb(data[index])).save(out / f"{name}.png")
 
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg:

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import re
 import shutil
 import tempfile
 
@@ -516,6 +517,34 @@ def test_captioned_layout_leaves_the_text_band_free(harness) -> None:
         assert rows[ms][1] > 290
 
 
+def test_full_size_mascot_stands_clear_of_the_badge(harness) -> None:
+    preview, work, binary = harness
+    label = (MEMORIA_DIR / "memoria_aigc_label.h").read_text(encoding="utf-8")
+
+    def value(name: str) -> int:
+        return int(re.search(rf"kAigcBadge{name} = (\d+)", label).group(1))
+
+    badge_bottom = value("Y") + value("H")
+    stats, rows = _mascot_rows(
+        preview,
+        work,
+        binary,
+        [
+            (0, "phase", "setup"),
+            (400, "phase", "idle"),
+            (2000, "phase", "listening"),
+            (3000, "phase", "thinking"),
+            (4000, "phase", "speaking"),
+            (6000, "end", ""),
+        ],
+        [1600, 2200, 3200, 4200],
+    )
+    assert stats["mismatches"] == 0
+    for ms, (top, bottom) in rows.items():
+        assert top > badge_bottom + 6, f"mascot reaches row {top} at {ms} ms"
+        assert bottom > 290
+
+
 def test_captioned_layout_is_wired_to_network_states() -> None:
     display = (BOARD_DIR / "memoria_mascot_display.cc").read_text(encoding="utf-8")
     wants = display[display.index("bool MemoriaMascotDisplay::WantsCaption") :]
@@ -702,11 +731,32 @@ def test_idle_clock_is_never_shown_on_the_screen() -> None:
     assert "IsClockText(status)" in clock_branch
 
 
-def test_display_wires_aigc_corner_badge() -> None:
+def test_display_wires_aigc_top_centre_badge() -> None:
     display = (BOARD_DIR / "memoria_mascot_display.cc").read_text(encoding="utf-8")
     assert 'lv_label_set_text(aigc_badge_, "AI")' in display
     assert "UpdateAigcBadge(phase)" in display
     assert "0x4A52C9" in display
-    assert "lv_font_montserrat_20" in display
+    assert "lv_font_montserrat_16" in display
     assert "memoria::kAigcBadgeX" in display
+    assert "memoria::kAigcBadgeY" in display
+    assert "lv_obj_set_size(aigc_badge_, memoria::kAigcBadgeW, memoria::kAigcBadgeH)" in display
+    assert "lv_obj_set_style_opa(aigc_badge_, LV_OPA_COVER, 0)" in display
+    assert "lv_obj_move_foreground(aigc_badge_)" in display
+    badge = display[display.index("void MemoriaMascotDisplay::UpdateAigcBadge") :]
+    badge = badge[: badge.index("void MemoriaMascotDisplay::ApplyChromeOpacity")]
+    assert "ScenePhase::kIdle" in badge
+    assert "kDeviceStateStarting" in badge
+    assert "kDeviceStateActivating" in badge
+    assert "qr_visible_.load()" in badge
+    assert "screen_off_" in badge
     assert "SetAigcOfflineActive" in display
+
+
+def test_wifi_connecting_line_names_no_ssid() -> None:
+    display = (BOARD_DIR / "memoria_mascot_display.cc").read_text(encoding="utf-8")
+    assert 'kConnectingNetworkText = "正在连接网络…"' in display
+    notify = display[display.index("void MemoriaMascotDisplay::ShowNotification") :]
+    notify = notify[: notify.index("void MemoriaMascotDisplay::SetChatMessage")]
+    assert "Lang::Strings::CONNECT_TO" in notify
+    assert "LvglDisplay::ShowNotification(kConnectingNetworkText, duration_ms);" in notify
+    assert "notification +" not in notify

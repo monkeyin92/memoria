@@ -6,9 +6,10 @@
 namespace memoria {
 
 // Explicit AIGC label for live dialogue (GB 45438-2025 / art.4).
-// Primary: persistent 「AI」 corner badge while a conversation is active,
-// including stuck → offline menu. Fallback: short end-of-turn tone only when
-// the badge cannot render, gated by kAigcTurnToneEnabled (default off).
+// Primary: persistent 「AI」 badge while the companion is on screen, idle and
+// in conversation, including stuck → offline menu. Fallback: short end-of-turn
+// tone only when the badge cannot render, gated by kAigcTurnToneEnabled
+// (default off).
 
 inline constexpr bool kAigcTurnToneEnabled = false;
 
@@ -16,19 +17,22 @@ inline constexpr bool kAigcTurnToneEnabled = false;
 inline constexpr const char* kAigcNoticeStoryFile = "aigc_story_intro.ogg";
 inline constexpr const char* kAigcNoticeBedtimeFile = "aigc_soothe_intro.ogg";
 
-// 360x360 round panel. Every badge corner must stay within radius-8 of centre.
+// 360x360 round panel. Every badge corner stays at least 8 px inside the rim.
 inline constexpr int kAigcBadgePanelSize = 360;
 inline constexpr int kAigcBadgePanelRadius = 180;
 inline constexpr int kAigcBadgeEdgeMarginPx = 8;
 inline constexpr int kAigcBadgeMaxCornerRadius = kAigcBadgePanelRadius - kAigcBadgeEdgeMarginPx;
 
-// ~1 o'clock, hugging the inner edge, clear of eyes/mouth. Sized for ~20px "AI".
-inline constexpr int kAigcBadgeX = 228;
-inline constexpr int kAigcBadgeY = 40;
-inline constexpr int kAigcBadgeW = 50;
-inline constexpr int kAigcBadgeH = 30;
-inline constexpr int kAigcBadgeFontPx = 20;
-inline constexpr int kAigcBadgeCornerRadius = 12;
+// Top-centre, inside the circle. 16 px "AI" with 6 px horizontal and 2 px
+// vertical padding; the mascot stands below it (MascotScene::kRestFootY).
+inline constexpr int kAigcBadgeX = 163;
+inline constexpr int kAigcBadgeY = 10;
+inline constexpr int kAigcBadgeW = 34;
+inline constexpr int kAigcBadgeH = 22;
+inline constexpr int kAigcBadgeFontPx = 16;
+inline constexpr int kAigcBadgePadHorPx = 6;
+inline constexpr int kAigcBadgePadVerPx = 2;
+inline constexpr int kAigcBadgeCornerRadius = 8;
 
 enum class AigcExplicitMode : std::uint8_t {
     kNone = 0,
@@ -75,7 +79,7 @@ inline constexpr bool AigcBadgeLayoutInsideSafeCircle() {
 }
 
 static_assert(AigcBadgeLayoutInsideSafeCircle(),
-              "AIGC badge layout must keep every corner within radius-8 of the panel centre");
+              "AIGC badge layout must keep every corner 8 px inside the panel rim");
 
 }  // namespace memoria
 

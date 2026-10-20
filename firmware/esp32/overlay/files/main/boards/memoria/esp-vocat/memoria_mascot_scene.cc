@@ -904,17 +904,20 @@ MascotScene::Placement MascotScene::Compute(uint32_t now_ms) {
 
     // Captioned layout: the whole body, its motion included, shrinks about
     // the feet onto a higher ground row. The boot entrance keeps its stage.
-    float ground = static_cast<float>(kFootY);
-    float k = 1.0f;
+    // The rest pose is already slightly small and low so the AIGC badge has
+    // the top of the circle to itself.
+    const float rest_scale = kRestScaleQ / 256.0f;
+    float ground = static_cast<float>(kRestFootY);
+    float k = rest_scale;
     if (!intro_on) {
         const float c = caption_mix(now_ms) / 255.0f;
-        k = 1.0f - c * (1.0f - kCaptionScaleQ / 256.0f);
-        ground -= c * static_cast<float>(kFootY - kCaptionFootY);
-        dx *= k;
-        dy *= k;
-        sx *= k;
-        sy *= k;
+        k = rest_scale + c * (kCaptionScaleQ / 256.0f - rest_scale);
+        ground -= c * static_cast<float>(kRestFootY - kCaptionFootY);
     }
+    dx *= k;
+    dy *= k;
+    sx *= k;
+    sy *= k;
 
     p.sprite = true;
     p.frame = frame;
