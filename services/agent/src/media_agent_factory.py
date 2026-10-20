@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
@@ -31,7 +31,8 @@ from services.agent.src.orchestration.speaker_verify import (
     SpeakerVerifier,
     should_enable_legacy_speaker_verifier,
 )
-from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
+from services.agent.src.providers.asr_failover import build_asr_session_factory
+from services.agent.src.providers.funasr_stt import FunASRConfig
 from services.agent.src.providers.handlers import (
     build_language_model_handler,
     build_realtime_search_resolver,
@@ -128,6 +129,9 @@ class ProductionMediaSessionFactory:
     archive_sink: ArchiveSink | None = None
     session_recap_sink: SessionRecapSink | None = None
     daily_chat_client: DailyChatClient | None = None
+    # One factory per process: the failover breaker must be shared across
+    # sessions, not recreated for every device connection.
+    _asr_session_factory: Any = field(default=None, init=False, repr=False)
 
     async def __call__(self, identity: SessionIdentity) -> MediaSessionResources:
         if not identity.session_id:
@@ -225,11 +229,13 @@ class ProductionMediaSessionFactory:
                 delegation_enabled=realtime_search_resolver is not None,
             )
             asr_config = FunASRConfig.from_env()
-            provider = ExistingVoiceProviderAdapter(
-                asr_session_factory=lambda: FunASRSession(
-                    replace(asr_config),
+            if self._asr_session_factory is None:
+                self._asr_session_factory = build_asr_session_factory(
+                    funasr_config=asr_config,
                     metrics=GLOBAL_METRICS,
-                ),
+                )
+            provider = ExistingVoiceProviderAdapter(
+                asr_session_factory=self._asr_session_factory,
                 language_model=handler,
                 speech_synthesis=cast(SpeechSynthesisHandler, tts),
                 config=ExistingVoiceProviderConfig(
@@ -460,13 +466,20 @@ def build_production_media_session_factory(settings: Any) -> ProductionMediaSess
                 ),
                 summary_model=summary_model_config_from_settings(settings),
             )
-    return ProductionMediaSessionFactory(
+    factory = ProductionMediaSessionFactory(
         settings=settings,
         llm_factory=OpenAIChatModel,
         archive_sink=archive_sink,
         session_recap_sink=session_recap_sink,
         daily_chat_client=build_daily_chat_client(settings),
     )
+    # Resolve the ASR failover configuration at startup so a missing backup
+    # endpoint fails the deploy instead of every device session.
+    factory._asr_session_factory = build_asr_session_factory(
+        funasr_config=FunASRConfig.from_env(),
+        metrics=GLOBAL_METRICS,
+    )
+    return factory
 
 
 __all__ = ["ProductionMediaSessionFactory", "build_production_media_session_factory"]

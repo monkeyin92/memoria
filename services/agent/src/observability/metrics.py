@@ -26,6 +26,7 @@ _GAUGES = {
     "context_snapshot_size_chars",
     "asr_send_lag_ms",
     "asr_partial_age_ms",
+    "asr_first_result_ms",
     "tts_frame_age_ms",
     "voice_turn_end_candidate_latency_ms",
 }
