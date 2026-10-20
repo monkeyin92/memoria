@@ -28,7 +28,9 @@ constexpr const char* kSettingsNamespace = "memoria_ui";
 constexpr const char* kCompanionKey = "companion";
 constexpr uint32_t kErrorHoldMs = 8000;
 constexpr int kPillRadius = 18;
-// app-v4 indigo; small corner badge must not cover the face.
+// The Wi-Fi connecting line shows no SSID.
+constexpr const char* kConnectingNetworkText = "正在连接网络…";
+// app-v4 indigo; the top-centre label must not cover the face.
 constexpr uint32_t kAigcBadgeIndigo = 0x4A52C9;
 
 struct CompanionName {
@@ -285,7 +287,8 @@ void MemoriaMascotDisplay::ApplyChrome() {
     } else {
         if (status_bar_ != nullptr) {
             lv_obj_set_style_bg_opa(status_bar_, LV_OPA_TRANSP, 0);
-            lv_obj_align(status_bar_, LV_ALIGN_TOP_MID, 0, 26);
+            // Clear of the top-centre badge: the status line starts below it.
+            lv_obj_align(status_bar_, LV_ALIGN_TOP_MID, 0, 42);
         }
         if (status_label_ != nullptr) {
             lv_obj_set_width(status_label_, 200);
@@ -319,19 +322,10 @@ void MemoriaMascotDisplay::ApplyChrome() {
         lv_obj_set_size(low_battery_popup_, 200, LV_SIZE_CONTENT);
         lv_obj_set_style_pad_ver(low_battery_popup_, 6, 0);
         lv_obj_set_style_radius(low_battery_popup_, kPillRadius, 0);
-        lv_obj_align(low_battery_popup_, LV_ALIGN_TOP_MID, 0, 58);
+        lv_obj_align(low_battery_popup_, LV_ALIGN_TOP_MID, 0, 72);
     }
     if (aigc_badge_ != nullptr) {
-        lv_obj_set_style_bg_color(aigc_badge_, Color(kAigcBadgeIndigo), 0);
-        lv_obj_set_style_bg_opa(aigc_badge_, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(aigc_badge_, memoria::kAigcBadgeCornerRadius, 0);
-        lv_obj_set_style_pad_hor(aigc_badge_, 10, 0);
-        lv_obj_set_style_pad_ver(aigc_badge_, 4, 0);
-        lv_obj_set_style_text_color(aigc_badge_, lv_color_white(), 0);
-        lv_obj_set_style_text_font(aigc_badge_, &lv_font_montserrat_20, 0);
-        lv_obj_set_style_border_width(aigc_badge_, 0, 0);
-        // ~1 o'clock inside the round panel (see memoria_aigc_label.h geometry).
-        lv_obj_set_pos(aigc_badge_, memoria::kAigcBadgeX, memoria::kAigcBadgeY);
+        lv_obj_move_foreground(aigc_badge_);
     }
     StyleQrCard();
     ApplyChromeOpacity(chrome_opa_);
@@ -347,6 +341,21 @@ void MemoriaMascotDisplay::EnsureAigcBadge() {
         return;
     }
     lv_label_set_text(aigc_badge_, "AI");
+    // Top-centre, fully opaque, clear of the status text below it. The size is
+    // fixed so the safe-circle assert in memoria_aigc_label.h matches the glass.
+    lv_obj_set_size(aigc_badge_, memoria::kAigcBadgeW, memoria::kAigcBadgeH);
+    lv_obj_set_pos(aigc_badge_, memoria::kAigcBadgeX, memoria::kAigcBadgeY);
+    lv_obj_set_style_bg_color(aigc_badge_, Color(kAigcBadgeIndigo), 0);
+    lv_obj_set_style_bg_opa(aigc_badge_, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(aigc_badge_, memoria::kAigcBadgeCornerRadius, 0);
+    lv_obj_set_style_pad_hor(aigc_badge_, memoria::kAigcBadgePadHorPx, 0);
+    lv_obj_set_style_pad_ver(aigc_badge_, memoria::kAigcBadgePadVerPx, 0);
+    lv_obj_set_style_text_color(aigc_badge_, lv_color_white(), 0);
+    lv_obj_set_style_text_font(aigc_badge_, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_align(aigc_badge_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_border_width(aigc_badge_, 0, 0);
+    // Chrome opacity fades the status text, never the label.
+    lv_obj_set_style_opa(aigc_badge_, LV_OPA_COVER, 0);
     lv_obj_add_flag(aigc_badge_, LV_OBJ_FLAG_HIDDEN);
     aigc_badge_visible_ = false;
 }
@@ -361,10 +370,17 @@ void MemoriaMascotDisplay::UpdateAigcBadge(memoria::ScenePhase phase) {
         return;
     }
     using memoria::ScenePhase;
-    const bool conversation = phase == ScenePhase::kListening || phase == ScenePhase::kThinking ||
-                              phase == ScenePhase::kSpeaking || phase == ScenePhase::kConnecting ||
-                              aigc_offline_active_.load();
-    const auto mode = memoria::AigcExplicitModeFor(conversation, /*badge_can_render=*/true);
+    const DeviceState state = Application::GetInstance().GetDeviceState();
+    // Boot, activation and Wi-Fi setup own the screen; the label belongs to the
+    // companion states and the offline menu.
+    const bool boot_or_activation = state == kDeviceStateStarting ||
+                                    state == kDeviceStateWifiConfiguring ||
+                                    state == kDeviceStateActivating;
+    const bool label_wanted = phase == ScenePhase::kIdle || phase == ScenePhase::kListening ||
+                              phase == ScenePhase::kThinking || phase == ScenePhase::kSpeaking ||
+                              phase == ScenePhase::kConnecting || aigc_offline_active_.load();
+    const auto mode = memoria::AigcExplicitModeFor(label_wanted && !boot_or_activation,
+                                                   /*badge_can_render=*/true);
     const bool show = memoria::AigcBadgeVisible(mode) && !qr_visible_.load() && !screen_off_;
     if (show == aigc_badge_visible_) {
         return;
@@ -400,8 +416,8 @@ void MemoriaMascotDisplay::ApplyChromeOpacity(uint8_t opa) {
         }
     }
     if (aigc_badge_ != nullptr) {
-        // Badge stays readable during conversation; hide with QR via UpdateAigcBadge.
-        lv_obj_set_style_opa(aigc_badge_, opa, 0);
+        // The label is opaque in every state; QR hides it in UpdateAigcBadge.
+        lv_obj_set_style_opa(aigc_badge_, LV_OPA_COVER, 0);
     }
 }
 
@@ -553,6 +569,13 @@ void MemoriaMascotDisplay::SetStatus(const char* status) {
 
 void MemoriaMascotDisplay::ShowNotification(const char* notification, int duration_ms) {
     if (notification == nullptr) {
+        return;
+    }
+    // Upstream announces each Wi-Fi attempt as "连接 <ssid>..."; the screen
+    // shows one fixed line under the mascot instead, with no SSID.
+    const std::string connect_prefix = Lang::Strings::CONNECT_TO;
+    if (std::strncmp(notification, connect_prefix.c_str(), connect_prefix.size()) == 0) {
+        LvglDisplay::ShowNotification(kConnectingNetworkText, duration_ms);
         return;
     }
     // The boot animation carries the brand, and version numbers are for logs.
