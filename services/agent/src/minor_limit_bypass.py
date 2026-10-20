@@ -46,9 +46,16 @@ class MinorLimitBypass:
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> MinorLimitBypass:
         raw = (os.environ if environ is None else environ).get(MINOR_LIMIT_BYPASS_ENV, "")
-        return cls(
+        bypass = cls(
             frozenset(part.strip() for part in raw.split(",") if part.strip()),
         )
+        if bypass.enabled:
+            logger.warning(
+                "minor limit bypass active at=%s subject_sha256_8=%s",
+                _now(),
+                ",".join(subject_id_hash(subject_id) for subject_id in sorted(bypass.subject_ids)),
+            )
+        return bypass
 
     @property
     def enabled(self) -> bool:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time as monotonic_clock
 from datetime import UTC, datetime, time, timedelta
 from types import SimpleNamespace
@@ -442,6 +443,36 @@ def test_more_than_one_configured_subject_disables_the_bypass_with_a_warning(
     assert "person-other" not in caplog.text
 
 
+def test_an_active_whitelist_logs_one_startup_warning_with_only_hashes(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="services.agent.src.minor_limit_bypass"):
+        _bypass("person-child")
+
+    assert len(caplog.records) == 1
+    message = caplog.records[0].getMessage()
+    assert "minor limit bypass active" in message
+    assert re.search(r"at=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", message)
+    assert f"subject_sha256_8={subject_id_hash('person-child')}" in message
+    assert "person-child" not in message
+
+
+@pytest.mark.parametrize(
+    "configured",
+    ["", "   ", " , "],
+    ids=["empty", "whitespace-only", "separator-only"],
+)
+def test_a_blank_whitelist_logs_no_startup_warning(
+    configured: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="services.agent.src.minor_limit_bypass"):
+        bypass = MinorLimitBypass.from_env({MINOR_LIMIT_BYPASS_ENV: configured})
+
+    assert not bypass.enabled
+    assert caplog.records == []
+
+
 def test_the_media_registry_reads_the_whitelist_at_startup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -605,6 +636,64 @@ async def test_more_than_one_subject_leaves_the_session_limit_ending_the_session
 
     assert session.spoken == [MINOR_SESSION_LIMIT_PHRASE]
     assert session.standby == ["minor_max_session"]
+    assert MINOR_SESSION_LIMIT_BYPASSED_REASON not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "configured",
+    ["", "   ", " , "],
+    ids=["empty", "whitespace-only", "separator-only"],
+)
+async def test_an_empty_or_separator_only_whitelist_still_blocks_the_daily_limit(
+    configured: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setenv(MINOR_LIMIT_BYPASS_ENV, configured)
+    bypass = MinorLimitBypass.from_env()
+    session = _Session(
+        _ledger(httpx.Response(200, json={"used_seconds": 2700}), []),
+        minor_limit_bypass=bypass,
+    )
+    context = _context(_profile(daily_chat_seconds="2700"))
+
+    with caplog.at_level(logging.WARNING, logger="services.agent.src.minor_limit_bypass"):
+        refused = await session._refuse_minor_daily_limit(context)
+
+    assert bypass.subject_ids == frozenset()
+    assert refused is True
+    assert session.spoken == [MINOR_DAILY_LIMIT_PHRASE]
+    assert session.standby == ["minor_daily_limit"]
+    assert context.daily_chat_accrual is None
+    assert context.device_wake_ack_pending is False
+    assert MINOR_DAILY_LIMIT_BYPASSED_REASON not in caplog.text
+    assert MINOR_SESSION_LIMIT_BYPASSED_REASON not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "configured",
+    ["", "   ", " , "],
+    ids=["empty", "whitespace-only", "separator-only"],
+)
+async def test_an_empty_or_separator_only_whitelist_still_ends_the_session_at_its_limit(
+    configured: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setenv(MINOR_LIMIT_BYPASS_ENV, configured)
+    bypass = MinorLimitBypass.from_env()
+    session = _Session(minor_limit_bypass=bypass)
+    context = _context(_profile(max_session_seconds=900), started_ago=901.0, reply="好的。")
+
+    with caplog.at_level(logging.WARNING, logger="services.agent.src.minor_limit_bypass"):
+        await session._maybe_standby_after_session_limit(context, fence=object())  # type: ignore[arg-type]
+
+    assert bypass.subject_ids == frozenset()
+    assert session.spoken == [MINOR_SESSION_LIMIT_PHRASE]
+    assert session.standby == ["minor_max_session"]
+    assert MINOR_DAILY_LIMIT_BYPASSED_REASON not in caplog.text
     assert MINOR_SESSION_LIMIT_BYPASSED_REASON not in caplog.text
 
 
