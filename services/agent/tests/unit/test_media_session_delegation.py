@@ -1,4 +1,4 @@
-"""Media session: delegated lookups, fillers and QA flows."""
+"Media session: delegated lookups, fillers and QA flows."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ from services.agent.src.prompts import (
     is_allowlisted_device_phrase,
 )
 from services.agent.src.reply_pipeline import ReplyPipeline
+from services.agent.src.voice_core.aigc_notice import AigcNoticeConfig
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_protocol import (
@@ -65,6 +66,14 @@ from services.agent.tests.unit.media_session_support import (
     _wait_until,
 )
 from services.common.llm_thinking_filler import LLM_THINKING_TEXT
+
+
+def _aigc_notice_off(registry: MediaVoiceCoreRegistry) -> MediaVoiceCoreRegistry:
+    """These fixtures' first output is a wake ack, a cue or a reply, not an AIGC marker."""
+
+    registry.aigc_notice_config = AigcNoticeConfig(enabled=False)
+    registry.aigc_round_logger = None
+    return registry
 
 
 @pytest.mark.asyncio
@@ -695,9 +704,11 @@ async def test_slow_media_delegation_plays_typed_fast_ack_then_deep_result() -> 
 async def test_device_session_speaks_wake_ack_without_user_speech() -> None:
     provider = _AckCapturingProvider()
     bridge = _CapturingGenerationBridge()
-    registry = MediaVoiceCoreRegistry(
-        bridge=bridge,
-        provider_factory=lambda _identity: provider,
+    registry = _aigc_notice_off(
+        MediaVoiceCoreRegistry(
+            bridge=bridge,
+            provider_factory=lambda _identity: provider,
+        )
     )
     registry.install()
     identity = _device_identity("device-wake-ack")
@@ -722,9 +733,11 @@ async def test_device_session_speaks_wake_ack_without_user_speech() -> None:
 async def test_energy_connect_vad_after_sample_zero_skips_device_wake_ack() -> None:
     provider = _AckCapturingProvider()
     bridge = _CapturingGenerationBridge()
-    registry = MediaVoiceCoreRegistry(
-        bridge=bridge,
-        provider_factory=lambda _identity: provider,
+    registry = _aigc_notice_off(
+        MediaVoiceCoreRegistry(
+            bridge=bridge,
+            provider_factory=lambda _identity: provider,
+        )
     )
     registry.install()
     identity = _device_identity("device-energy-later-connect-vad-wake")
@@ -1180,9 +1193,11 @@ async def test_device_weather_recovery_commits_despite_post_reject_vad_jitter() 
 async def test_h5_session_does_not_speak_device_wake_ack() -> None:
     provider = _AckCapturingProvider()
     bridge = _CapturingGenerationBridge()
-    registry = MediaVoiceCoreRegistry(
-        bridge=bridge,
-        provider_factory=lambda _identity: provider,
+    registry = _aigc_notice_off(
+        MediaVoiceCoreRegistry(
+            bridge=bridge,
+            provider_factory=lambda _identity: provider,
+        )
     )
     registry.install()
     identity = SessionIdentity("h5-no-wake")

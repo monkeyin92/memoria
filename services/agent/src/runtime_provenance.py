@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from services.agent.src.mode_policy_client import ModePolicy
 
 RESPONSE_PROVENANCE_MAX_BYTES = 16 * 1024
+_TTS_SENTENCES_MAX = 64
 _RESPONSE_PROVENANCE_FORBIDDEN_KEYS = frozenset(
     {
         "query",
@@ -98,6 +99,36 @@ class DuplexRuntimeProvenanceMixin:
             return False
         self._generation_records.bind_response_provenance(fence, json.loads(encoded))
         return True
+
+    def record_tts_sentence_provenance(
+        self,
+        fence: GenerationFence,
+        *,
+        index: int,
+        engine: str,
+        model: str,
+        voice: str,
+        switched: bool,
+    ) -> bool:
+        """Append one spoken sentence's actual engine to the generation record."""
+
+        stored = self._generation_records.response_provenance_for(fence)
+        if stored is None:
+            return False
+        existing = stored.get("tts_sentences")
+        sentences = list(existing) if isinstance(existing, list) else []
+        sentences.append(
+            {
+                "index": index,
+                "engine": engine,
+                "model": model,
+                "voice": voice,
+                "switched": bool(switched),
+            }
+        )
+        payload = dict(stored)
+        payload["tts_sentences"] = sentences[:_TTS_SENTENCES_MAX]
+        return self.bind_response_provenance(fence, payload)
 
     def bind_generation_voice(
         self,

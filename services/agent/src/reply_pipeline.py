@@ -254,6 +254,9 @@ class ReplyPipeline:
         fallback_setter = getattr(runtime.tts, "set_voice_fallback_callback", None)
         if callable(fallback_setter):
             fallback_setter(self._observe_tts_voice_fallback)
+        sentence_setter = getattr(runtime.tts, "set_tts_sentence_callback", None)
+        if callable(sentence_setter):
+            sentence_setter(self._observe_tts_sentence)
 
     @property
     def runtime(self) -> DuplexRuntime:
@@ -386,6 +389,9 @@ class ReplyPipeline:
         *,
         llm_model: str | None = None,
     ) -> bool:
+        # Plan-level provenance is bound before synthesis. The selected TTS
+        # provider appends each spoken sentence's actual engine to the same
+        # generation record through ``_observe_tts_sentence``.
         voice = self._runtime.generation_voice_for(fence)
         text_only = self._runtime.input_modality_for_fence(fence) == "text"
         if self._runtime.tts is not None and voice is None and not text_only:
@@ -465,6 +471,33 @@ class ReplyPipeline:
             },
             fence=fence,
         )
+
+    def _observe_tts_sentence(
+        self,
+        fence: GenerationFence,
+        index: int,
+        engine: str,
+        model: str,
+        voice: str,
+        switched: bool,
+    ) -> None:
+        recorded = self._runtime.record_tts_sentence_provenance(
+            fence,
+            index=index,
+            engine=engine,
+            model=model,
+            voice=voice,
+            switched=switched,
+        )
+        if not recorded:
+            logger.warning(
+                "tts sentence provenance rejected session_id=%s turn_id=%s "
+                "generation_id=%s index=%s",
+                fence.session_id,
+                fence.turn_id,
+                fence.generation_id,
+                index,
+            )
 
     def _realtime_sources_available(self) -> bool:
         resolver = self._realtime_search_resolver

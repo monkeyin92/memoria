@@ -39,6 +39,7 @@ from services.agent.src.prompts import (
 )
 from services.agent.src.runtime_profile import VerifiedRuntimeProfile, parse_runtime_profile
 from services.agent.src.voice_core import media_session_projection
+from services.agent.src.voice_core.aigc_notice import AigcNoticeConfig
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_session import MediaVoiceCoreRegistry
 from services.agent.src.voice_core.media_session_connection import MediaSessionConnectionMixin
@@ -194,11 +195,25 @@ class _Session(MediaSessionProjectionMixin, MediaOutputStreamMixin):
         minor_limit_bypass: MinorLimitBypass | None = None,
     ) -> None:
         self.daily_chat_client = daily_chat_client
+        # This fixture exercises the refusal copy, not the AIGC round markers.
+        self.aigc_notice_config = AigcNoticeConfig(enabled=False)
         self.minor_limit_bypass = (
             minor_limit_bypass if minor_limit_bypass is not None else MinorLimitBypass()
         )
         self.spoken: list[str] = []
         self.standby: list[str] = []
+
+    async def _speak_aigc_opening_marker(self, context: Any) -> None:
+        return None
+
+    async def _wait_aigc_opening_lead_in(self, context: Any) -> None:
+        return None
+
+    async def _play_aigc_closing_marker(self, context: Any) -> bool:
+        return False
+
+    def _finish_aigc_round(self, context: Any, *, close_reason: str) -> None:
+        return None
 
     async def _speak_device_enrollment_phrase(self, context: Any, phrase: str) -> bool:
         self.spoken.append(phrase)

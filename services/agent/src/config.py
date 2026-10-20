@@ -18,10 +18,16 @@ from services.common.llm_failover import (
     dashscope_endpoint_in_use,
     normalize_dashscope_compatible_base_url,
 )
+from services.common.tts_defaults import (
+    DOUBAO_TTS_FALLBACK_SPEAKER,
+    STEPFUN_TTS_MODEL,
+    STEPFUN_TTS_VOICE,
+)
+from services.common.tts_voice_policy import is_clone_or_icl_voice, is_male_speaker
 
 DeploymentProfile = Literal["livekit_cloud", "cn_self_hosted"]
 LLMProvider = Literal["qwen", "bailian_deepseek", "deepseek"]
-TTSProvider = Literal["doubao"]
+TTSProvider = Literal["doubao", "stepfun_primary"]
 WeatherLookupProvider = Literal["off", "domestic"]
 _QWEATHER_HOST = re.compile(r"(?:[a-z0-9-]+\.)+qweatherapi\.com")
 DEFAULT_LLM_BACKUP_MODEL = "qwen3.8-flash"
@@ -140,6 +146,17 @@ class AgentSettings(BaseSettings):
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     llm_provider: LLMProvider = Field(default="qwen", alias="LLM_PROVIDER")
     tts_provider: TTSProvider = Field(default="doubao", alias="TTS_PROVIDER")
+    stepfun_tts_enabled: bool = Field(default=False, alias="STEPFUN_TTS_ENABLED")
+    stepfun_tts_model: str = Field(
+        default=STEPFUN_TTS_MODEL,
+        min_length=1,
+        alias="STEPFUN_TTS_MODEL",
+    )
+    stepfun_tts_voice: str = Field(
+        default=STEPFUN_TTS_VOICE,
+        min_length=1,
+        alias="STEPFUN_TTS_VOICE",
+    )
 
     media_bridge_grpc_enabled: bool = Field(
         default=False, alias="MEDIA_BRIDGE_GRPC_ENABLED"
@@ -188,6 +205,68 @@ class AgentSettings(BaseSettings):
         ge=0.0,
         le=600.0,
         alias="MEDIA_MAX_USER_SPEECH_DURATION_S",
+    )
+    # AIGC notice hooks at the start and end of one device conversation round.
+    # Compliance 2026-10-20 18:52: on by default, default mode is the
+    # short-long / short-short pure-tone rhythm (generated from these
+    # parameters in memory; no audio file, no spoken prompt text).
+    aigc_notice_enabled: bool = Field(default=True, alias="AIGC_NOTICE_ENABLED")
+    aigc_notice_mode: Literal["tone", "speech", "none"] = Field(
+        default="tone", alias="AIGC_NOTICE_MODE"
+    )
+    aigc_notice_opening_enabled: bool = Field(
+        default=True, alias="AIGC_NOTICE_OPENING_ENABLED"
+    )
+    aigc_notice_closing_enabled: bool = Field(
+        default=True, alias="AIGC_NOTICE_CLOSING_ENABLED"
+    )
+    aigc_notice_tone_pattern: str = Field(
+        default="SL SS", alias="AIGC_NOTICE_TONE_PATTERN"
+    )
+    aigc_notice_tone_frequency_hz: float = Field(
+        default=880.0, gt=0.0, le=8000.0, alias="AIGC_NOTICE_TONE_FREQUENCY_HZ"
+    )
+    aigc_notice_tone_short_ms: int = Field(
+        default=120, ge=1, le=2000, alias="AIGC_NOTICE_TONE_SHORT_MS"
+    )
+    aigc_notice_tone_long_ms: int = Field(
+        default=300, ge=1, le=3000, alias="AIGC_NOTICE_TONE_LONG_MS"
+    )
+    aigc_notice_tone_gap_ms: int = Field(
+        default=90, ge=0, le=1000, alias="AIGC_NOTICE_TONE_GAP_MS"
+    )
+    aigc_notice_tone_group_gap_ms: int = Field(
+        default=260, ge=0, le=2000, alias="AIGC_NOTICE_TONE_GROUP_GAP_MS"
+    )
+    # 0.20 of full scale sits at the volume of normal companion speech.
+    aigc_notice_tone_volume: float = Field(
+        default=0.20, ge=0.0, le=1.0, alias="AIGC_NOTICE_TONE_VOLUME"
+    )
+    # Interval between the opening marker and the following 「我在呢」 wake ack.
+    aigc_notice_lead_interval_ms: int = Field(
+        default=400, ge=0, le=5000, alias="AIGC_NOTICE_LEAD_INTERVAL_MS"
+    )
+    # Upper bound on waiting for one marker to finish; a stalled downlink must
+    # not hold a round open.
+    aigc_notice_marker_duration_ms: int = Field(
+        default=3000, ge=1, le=30000, alias="AIGC_NOTICE_MARKER_DURATION_MS"
+    )
+    # Speech mode only plays an external pre-rendered resource at normal speed;
+    # an empty id or a missing file plays nothing (never a synthesized stand-in).
+    aigc_notice_speech_resource: str = Field(
+        default="", alias="AIGC_NOTICE_SPEECH_RESOURCE"
+    )
+    aigc_notice_speech_root: str = Field(default="", alias="AIGC_NOTICE_SPEECH_ROOT")
+    aigc_notice_speech_sample_rate_hz: int = Field(
+        default=24000, alias="AIGC_NOTICE_SPEECH_SAMPLE_RATE_HZ"
+    )
+    aigc_generation_log_enabled: bool = Field(
+        default=True, alias="AIGC_GENERATION_LOG_ENABLED"
+    )
+    # Internal per-round record: time, provider/engine, content id. Never child
+    # speech or reply text. Empty path writes the structured log line only.
+    aigc_generation_log_path: str = Field(
+        default="", alias="AIGC_GENERATION_LOG_PATH"
     )
     media_pcm_tap_dir: str = Field(default="", alias="MEDIA_PCM_TAP_DIR")
     media_slo_report_enabled: bool = Field(
@@ -354,6 +433,12 @@ class AgentSettings(BaseSettings):
         alias="DOUBAO_TTS_VOICE_PROFILE",
     )
     doubao_tts_speaker: str = Field(default="", alias="DOUBAO_TTS_SPEAKER")
+    # StepFun-primary main/backup mode: voice for the Doubao backup. Product
+    # chose a designed female default; the pure-Doubao default is untouched and
+    # an operator override still wins.
+    doubao_tts_fallback_speaker: str = Field(
+        default=DOUBAO_TTS_FALLBACK_SPEAKER, alias="DOUBAO_TTS_FALLBACK_SPEAKER"
+    )
     doubao_tts_sample_rate: int = Field(default=24000, alias="DOUBAO_TTS_SAMPLE_RATE")
     doubao_tts_pool_size: int = Field(default=4, alias="DOUBAO_TTS_POOL_SIZE")
 
@@ -579,6 +664,21 @@ class AgentSettings(BaseSettings):
             raise ValueError("FUNASR_SAMPLE_RATE must be 16000")
         return v
 
+    @field_validator("aigc_notice_mode")
+    @classmethod
+    def _aigc_notice_mode(cls, v: str) -> str:
+        cleaned = v.strip().lower()
+        if cleaned not in {"tone", "speech", "none"}:
+            raise ValueError("AIGC_NOTICE_MODE must be tone, speech or none")
+        return cleaned
+
+    @field_validator("aigc_notice_tone_pattern")
+    @classmethod
+    def _aigc_notice_tone_pattern(cls, v: str) -> str:
+        from services.agent.src.voice_core.aigc_notice import validate_tone_pattern
+
+        return validate_tone_pattern(v)
+
     @field_validator("doubao_tts_sample_rate")
     @classmethod
     def _doubao_sr(cls, v: int) -> int:
@@ -615,6 +715,30 @@ class AgentSettings(BaseSettings):
             )
         if self.doubao_tts_resource_id != "seed-tts-2.0":
             raise ValueError("DOUBAO_TTS_RESOURCE_ID must be seed-tts-2.0")
+        # The main/backup mode keeps a designed preset on the Doubao leg. A
+        # personal clone (ICL seed-icl/S_ or a CosyVoice clone) is a different
+        # provider contract and must not ship as this branch's backup voice.
+        if self.tts_provider == "stepfun_primary" and self.stepfun_tts_enabled:
+            if is_clone_or_icl_voice(
+                voice=self.doubao_tts_fallback_speaker,
+                voice_kind="designed",
+                resource_id=self.doubao_tts_resource_id,
+                provider="volcengine_doubao",
+            ):
+                raise ValueError(
+                    "DOUBAO_TTS_FALLBACK_SPEAKER must be a designed preset voice, "
+                    "not a clone/ICL voice"
+                )
+            if is_male_speaker(self.doubao_tts_fallback_speaker):
+                raise ValueError(
+                    "DOUBAO_TTS_FALLBACK_SPEAKER must be the product's female "
+                    "backup voice, not a male preset"
+                )
+        if self.aigc_notice_mode == "speech" and not self.aigc_notice_speech_resource.strip():
+            raise ValueError(
+                "AIGC_NOTICE_MODE=speech requires AIGC_NOTICE_SPEECH_RESOURCE "
+                "(an external, product-approved clip); nothing is synthesized"
+            )
         if not _valid_websocket_url(
             self.doubao_tts_ws_url,
             require_tls=self.environment == "production",

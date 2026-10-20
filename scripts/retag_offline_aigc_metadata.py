@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """Metadata-only AIGC OpusTags rewrite for every board-asset Ogg.
 
-Rewrites Vorbis comments only (no re-encode). Verifies audio-packet SHA-256
-unchanged. When ffmpeg can decode the clip, also verifies PCM SHA-256 is
-unchanged. Writes a verification table under
+Rewrites Vorbis comments only (no re-encode) and adds the GB 45438-2025
+Appendix-E implicit label (LABEL=1, CONTENT_PROPAGATOR) for newly written
+files. Existing assets without those keys stay valid: the strict gate checks
+only CONTENT_ID / SERVICE_PROVIDER / AI_GENERATED. Verifies audio-packet
+SHA-256 unchanged. When ffmpeg can decode the clip, also verifies PCM SHA-256
+is unchanged. Writes a verification table under
 docs/acceptance/run-20261015-aigc-labels/.
+
+Our party identifiers come from AIGC_CONTENT_PRODUCER and
+AIGC_CONTENT_PROPAGATOR (the latter defaults to the producer).
 """
 
 from __future__ import annotations
@@ -23,8 +29,10 @@ from services.common.aigc_opus import (  # noqa: E402
     CANONICAL_AI_GENERATED,
     CANONICAL_SERVICE_PROVIDER,
     IMPLICIT_AIGC_TAG_KEYS,
+    aigc_identity_from_env,
     aigc_tag_map,
     audio_packets_digest,
+    implicit_label,
     pcm_digest,
     require_aigc_tags,
     rewrite_opus_comments,
@@ -51,7 +59,8 @@ REPORT = (
 )
 
 VOICE_ID = "zh_female_tianmeitaozi_uranus_bigtts"
-CONTENT_PRODUCER = "Memoria"
+# AIGC_CONTENT_PRODUCER / AIGC_CONTENT_PROPAGATOR configure our party ids.
+CONTENT_PRODUCER, CONTENT_PROPAGATOR = aigc_identity_from_env()
 DATE = "2026-10-14"
 INTRO_DATE = "2026-10-15"
 LLM_DATE = "2026-10-15"
@@ -65,15 +74,17 @@ def _date_for(stem: str) -> str:
 
 
 def _aigc_map(stem: str) -> dict[str, str]:
-    return {
-        "CONTENT_ID": stem,
-        "SERVICE_PROVIDER": CANONICAL_SERVICE_PROVIDER,
-        "AI_GENERATED": CANONICAL_AI_GENERATED,
-        "ARTIST": VOICE_ID,
-        "VOICE_ID": VOICE_ID,
-        "DATE": _date_for(stem),
-        "CONTENT_PRODUCER": CONTENT_PRODUCER,
-    }
+    return implicit_label(
+        content_id=stem,
+        aigc={
+            "SERVICE_PROVIDER": CANONICAL_SERVICE_PROVIDER,
+            "ARTIST": VOICE_ID,
+            "VOICE_ID": VOICE_ID,
+            "DATE": _date_for(stem),
+        },
+        content_producer=CONTENT_PRODUCER,
+        content_propagator=CONTENT_PROPAGATOR,
+    )
 
 
 def _safe_pcm_digest(data: bytes) -> str | None:
@@ -159,6 +170,8 @@ def _retag_one(path: Path) -> dict[str, object]:
         "voice_id": VOICE_ID,
         "date": _date_for(content_id),
         "content_producer": CONTENT_PRODUCER,
+        "content_propagator": CONTENT_PROPAGATOR,
+        "label": "1",
         "dropped_title": drop_keys is not None and "TITLE" in drop_keys,
         "tags_before": aigc_tag_map(before[:65536]),
     }
@@ -228,6 +241,8 @@ def main(argv: list[str] | None = None) -> int:
         "artist": VOICE_ID,
         "voice_id": VOICE_ID,
         "content_producer": CONTENT_PRODUCER,
+        "content_propagator": CONTENT_PROPAGATOR,
+        "label": "1",
         "files": rows,
     }
     if not args.dry_run:

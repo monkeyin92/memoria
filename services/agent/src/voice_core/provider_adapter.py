@@ -592,6 +592,12 @@ class ExistingVoiceProviderAdapter:
 
         return self.config.output_sample_rate * self.config.output_frame_ms // 1000
 
+    @property
+    def output_sample_rate(self) -> int:
+        """PCM sample rate of every output frame on the downlink."""
+
+        return self.config.output_sample_rate
+
     def _record_tts_frame_age(self, received_at: float | None) -> None:
         if received_at is not None and self.metrics is not None:
             self.metrics.set_media_metric(

@@ -19,6 +19,7 @@ from services.agent.src.orchestration.state_machine import (
     ConversationState,
     InteractionPhase,
 )
+from services.agent.src.voice_core.aigc_notice import AigcNoticeConfig
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_protocol import (
@@ -821,6 +822,10 @@ async def _open_device_overlap_session(
         bridge=bridge,
         session_factory=lambda _identity: MediaSessionResources(runtime, provider),
         turn_endpoint_grace_s=0.01,
+        # This fixture's device wake acknowledgement is the first output; the
+        # AIGC round hooks own their tests.
+        aigc_notice_config=AigcNoticeConfig(enabled=False),
+        aigc_round_logger=None,
     )
     registry.install()
     identity = _device_identity(session_id)

@@ -15,10 +15,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from services.agent.src.aigc_generation_log import AigcRoundLogger
 from services.agent.src.daily_chat import DailyChatClient
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.minor_limit_bypass import MinorLimitBypass
 from services.agent.src.observability.metrics import GLOBAL_METRICS, MetricsRegistry
+from services.agent.src.voice_core.aigc_notice import AigcNoticeConfig
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.grpc_bridge import (
     MediaBridgeGrpcServer,
@@ -26,6 +28,9 @@ from services.agent.src.voice_core.grpc_bridge import (
 from services.agent.src.voice_core.interruption import InterruptionPolicy
 from services.agent.src.voice_core.media_audio_ingress import (
     MediaAudioIngress,
+)
+from services.agent.src.voice_core.media_session_aigc_notice import (
+    MediaSessionAigcNoticeMixin,
 )
 from services.agent.src.voice_core.media_session_commit import (
     MediaSessionCommitMixin,
@@ -81,6 +86,7 @@ class MediaVoiceCoreRegistry(
     MediaPlaybackStopMixin,
     MediaTurnEndpointMixin,
     MediaOutputMixin,
+    MediaSessionAigcNoticeMixin,
 ):
     """Attach one provider-neutral Voice Core session to each media session."""
 
@@ -121,6 +127,10 @@ class MediaVoiceCoreRegistry(
     crisis_script_interrupt_publisher: Callable[[str], None] | None = None
     session_recap_publisher: Callable[..., Any] | None = None
     daily_chat_client: DailyChatClient | None = None
+    # AIGC markers default to the compliance-approved pure-tone rhythm; the
+    # round log is written per device conversation round without any text.
+    aigc_notice_config: AigcNoticeConfig = field(default_factory=AigcNoticeConfig)
+    aigc_round_logger: AigcRoundLogger | None = None
     # Read once when the process starts. Empty unless one test subject is
     # explicitly whitelisted; it never changes policy or stored usage.
     minor_limit_bypass: MinorLimitBypass = field(default_factory=MinorLimitBypass.from_env)
