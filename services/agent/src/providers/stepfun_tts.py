@@ -20,6 +20,7 @@ import contextlib
 import json
 import logging
 import math
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -39,23 +40,34 @@ from services.agent.src.providers.provider_errors import (
     APIError,
 )
 from services.agent.src.providers.tts_stream import AudioEmitter, SynthesizeStream
+from services.common.tts_defaults import (
+    STEPFUN_PROVIDER,
+    STEPFUN_TTS_MODEL,
+    STEPFUN_TTS_VOICE,
+)
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_WS_URL = "wss://api.stepfun.com/v1/realtime/audio"
-STEPFUN_TTS_MODEL = "stepaudio-3-tts"
-STEPFUN_TTS_VOICE = "wenrounvsheng"
-STEPFUN_PROVIDER = "stepfun"
 STEPFUN_TEXT_DELTA_MAX_CHARS = 1000
 STEPFUN_INSTRUCTION_MAX_CHARS = 500
 
-#: Default delivery instruction. StepFun treats parenthesised text as an
-#: inline instruction and has no official laughter/stutter switch, so this is
-#: the prompt-level guard required by the product acceptance criteria.
-DEFAULT_STEPFUN_INSTRUCTION = (
-    "请用温柔、自然、亲切的语气朗读。不要笑，不要结巴，不要重复字词，"
-    "不要添加“嗯”“呃”“啊”“哦”等语气词，也不要模仿或插入笑声。"
-)
+#: Default delivery guard; StepFun treats parenthesised text as an inline
+#: instruction and has no official laughter/stutter switch, so the delivery
+#: guard below is the prompt-level control required by the acceptance criteria.
+#: Deployment wording from STEPFUN_TTS_INSTRUCTION (the .env example carries
+#: it). It is a delivery guard for the voice, never child-facing script text;
+#: product-approved lines stay external. A blank value drops the guard.
+STEPFUN_INSTRUCTION_GUARD = os.getenv("STEPFUN_TTS_INSTRUCTION", "").strip()
+
+
+def _effective_instruction(instruction: str) -> str:
+    plan_instruction = instruction.strip()
+    if plan_instruction and STEPFUN_INSTRUCTION_GUARD:
+        return f"{plan_instruction}。{STEPFUN_INSTRUCTION_GUARD}"[:STEPFUN_INSTRUCTION_MAX_CHARS]
+    return (plan_instruction or STEPFUN_INSTRUCTION_GUARD)[:STEPFUN_INSTRUCTION_MAX_CHARS]
+
+
 
 _OPEN_BRACKETS = frozenset("（(")
 _CLOSE_BRACKETS = frozenset("）)")
@@ -184,7 +196,7 @@ class StepFunTTSConfig:
     model: str = STEPFUN_TTS_MODEL
     voice: str = STEPFUN_TTS_VOICE
     sample_rate: int = 24000
-    instruction: str = DEFAULT_STEPFUN_INSTRUCTION
+    instruction: str = STEPFUN_INSTRUCTION_GUARD
     pool_size: int = 2
     connect_timeout_s: float = 5.0
     first_audio_timeout_s: float = 1.5
@@ -232,10 +244,7 @@ class StepFunTTSConfig:
                 "StepFun TTS WebSocket URL must use wss in production and contain no "
                 "userinfo or fragment"
             )
-        instruction = values.get(
-            "STEPFUN_TTS_INSTRUCTION",
-            DEFAULT_STEPFUN_INSTRUCTION,
-        ).strip()
+        instruction = _effective_instruction(values.get("STEPFUN_TTS_INSTRUCTION", ""))
         return cls(
             ws_url=ws_url,
             api_key=api_key,
@@ -773,13 +782,7 @@ class StepFunTTS:
         fence: GenerationFence | None = None,
     ) -> None:
         del emotion, pitch, reference_contexts, fence
-        plan_instruction = instruction.strip()
-        combined = (
-            f"{plan_instruction}。{DEFAULT_STEPFUN_INSTRUCTION}"
-            if plan_instruction
-            else DEFAULT_STEPFUN_INSTRUCTION
-        )
-        self._config.instruction = combined[:STEPFUN_INSTRUCTION_MAX_CHARS]
+        self._config.instruction = _effective_instruction(instruction)
         self._config.sample_rate = self._base_config.sample_rate
 
     def apply_voice_profile(
@@ -844,7 +847,9 @@ class StepFunTTS:
 
 
 __all__ = [
-    "DEFAULT_STEPFUN_INSTRUCTION",
+    "STEPFUN_INSTRUCTION_GUARD",
+    "STEPFUN_TTS_MODEL",
+    "STEPFUN_TTS_VOICE",
     "DEFAULT_WS_URL",
     "STEPFUN_INSTRUCTION_MAX_CHARS",
     "STEPFUN_PROVIDER",

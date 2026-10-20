@@ -513,3 +513,49 @@ def test_production_enabled_capabilities_require_independent_tokens(
 
     with pytest.raises(ValidationError, match="capability tokens must be independent"):
         AgentSettings()
+
+
+def test_stepfun_defaults_and_main_backup_fallback_speaker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TTS_PROVIDER", "stepfun_primary")
+    monkeypatch.setenv("STEPFUN_TTS_ENABLED", "true")
+    monkeypatch.delenv("STEPFUN_TTS_MODEL", raising=False)
+    monkeypatch.delenv("STEPFUN_TTS_VOICE", raising=False)
+    monkeypatch.delenv("DOUBAO_TTS_FALLBACK_SPEAKER", raising=False)
+
+    settings = AgentSettings(_env_file=None)
+
+    assert settings.stepfun_tts_model == "stepaudio-3-tts"
+    assert settings.stepfun_tts_voice == "yuanqishaonv"
+    assert settings.doubao_tts_fallback_speaker == (
+        "zh_female_kailangjiejie_uranus_bigtts"
+    )
+    assert settings.aigc_notice_enabled is True
+    assert settings.aigc_notice_mode == "tone"
+
+
+def test_main_backup_mode_accepts_an_operator_fallback_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TTS_PROVIDER", "stepfun_primary")
+    monkeypatch.setenv("STEPFUN_TTS_ENABLED", "true")
+    monkeypatch.setenv("DOUBAO_TTS_FALLBACK_SPEAKER", "zh_female_linjianvhai_uranus_bigtts")
+
+    assert AgentSettings(_env_file=None).doubao_tts_fallback_speaker == (
+        "zh_female_linjianvhai_uranus_bigtts"
+    )
+
+
+@pytest.mark.parametrize(
+    "voice", ["S_personal_synth_ready", "zh_male_test_voice_uranus_bigtts"]
+)
+def test_main_backup_mode_rejects_clone_voice(
+    monkeypatch: pytest.MonkeyPatch, voice: str
+) -> None:
+    monkeypatch.setenv("TTS_PROVIDER", "stepfun_primary")
+    monkeypatch.setenv("STEPFUN_TTS_ENABLED", "true")
+    monkeypatch.setenv("DOUBAO_TTS_FALLBACK_SPEAKER", voice)
+
+    with pytest.raises(ValidationError, match="not a clone/ICL voice|not a male preset"):
+        AgentSettings(_env_file=None)

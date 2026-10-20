@@ -61,6 +61,7 @@ from services.common.realtime_information import current_local_time
 
 if TYPE_CHECKING:
     from services.agent.src.observability.metrics import MetricsRegistry
+    from services.agent.src.voice_core.aigc_notice import AigcNoticeConfig
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +176,23 @@ class MediaSessionProjectionMixin:
         bridge: MediaBridgeGrpcServer
         metrics: MetricsRegistry
         daily_chat_client: DailyChatClient | None
+        aigc_notice_config: AigcNoticeConfig
+
+        async def _speak_aigc_opening_marker(
+            self, context: _MediaVoiceSession
+        ) -> None: ...
+
+        async def _wait_aigc_opening_lead_in(
+            self, context: _MediaVoiceSession
+        ) -> None: ...
+
+        async def _play_aigc_closing_marker(
+            self, context: _MediaVoiceSession
+        ) -> bool: ...
+
+        def _finish_aigc_round(
+            self, context: _MediaVoiceSession, *, close_reason: str
+        ) -> None: ...
 
         def _stream_epoch_is_current(
             self, context: _MediaVoiceSession, stream_epoch: int
@@ -214,13 +232,14 @@ class MediaSessionProjectionMixin:
         ) -> None: ...
 
     async def _speak_device_wake_ack(self, context: _MediaVoiceSession) -> None:
-        if context.identity.client_type != "device" or not callable(
-            getattr(context.provider, "generate_output", None)
-        ):
+        if context.identity.client_type != "device":
             context.device_wake_ack_pending = False
             return
         now = current_local_time(os.getenv("MEMORIA_TIMEZONE", "Asia/Shanghai"))
         try:
+            if not callable(getattr(context.provider, "generate_output", None)):
+                context.device_wake_ack_pending = False
+                return
             if context.closed or context.standby_requested:
                 context.device_wake_ack_pending = False
                 return
@@ -321,8 +340,15 @@ class MediaSessionProjectionMixin:
         now = current_local_time(os.getenv("MEMORIA_TIMEZONE", "Asia/Shanghai"))
         if not in_quiet_hours(now.time(), quiet_hours):
             return False
+        # A refusal is the round's end: the opening marker, then the fixed
+        # refusal phrase, then the closing marker, then standby.
+        await self._speak_aigc_opening_marker(context)
+        await self._wait_aigc_opening_lead_in(context)
         context.device_wake_ack_pending = False
         await self._speak_device_enrollment_phrase(context, MINOR_QUIET_HOURS_PHRASE)
+        if self.aigc_notice_config.position_enabled("closing"):
+            await self._play_aigc_closing_marker(context)
+            self._finish_aigc_round(context, close_reason="minor_quiet_hours")
         await self._request_device_standby(context, reason="minor_quiet_hours")
         return True
 
@@ -346,8 +372,15 @@ class MediaSessionProjectionMixin:
                 phrase, reason = CONNECTION_RETRY_PHRASE, "minor_daily_usage_unavailable"
             case _:
                 assert_never(outcome)
+        # A refusal is the round's end: the opening marker, then the fixed
+        # refusal phrase, then the closing marker, then standby.
+        await self._speak_aigc_opening_marker(context)
+        await self._wait_aigc_opening_lead_in(context)
         context.device_wake_ack_pending = False
         await self._speak_device_enrollment_phrase(context, phrase)
+        if self.aigc_notice_config.position_enabled("closing"):
+            await self._play_aigc_closing_marker(context)
+            self._finish_aigc_round(context, close_reason=reason)
         await self._request_device_standby(context, reason=reason)
         return True
 

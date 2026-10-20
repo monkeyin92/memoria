@@ -6,6 +6,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from services.agent.src.voice_core.aigc_notice import AigcNoticeConfig
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.media_session_state import (
     MediaVoiceSessionState as _MediaVoiceSession,
@@ -36,6 +37,14 @@ class MediaSessionStandbyMixin:
         def _stream_epoch_is_current(
             self, context: _MediaVoiceSession, stream_epoch: int
         ) -> bool: ...
+
+        aigc_notice_config: AigcNoticeConfig
+
+        async def _play_aigc_closing_marker(self, context: _MediaVoiceSession) -> bool: ...
+
+        def _finish_aigc_round(
+            self, context: _MediaVoiceSession, *, close_reason: str
+        ) -> None: ...
 
         def _event_versions(
             self,
@@ -326,6 +335,41 @@ class MediaSessionStandbyMixin:
         if context.runtime.floor.listening_or_connecting:
             self._arm_owner_silence_timer(context, reset=False)
 
+    def _aigc_closing_marker_pending(self, context: _MediaVoiceSession) -> bool:
+        if context.aigc_closing_marker_state != "idle":
+            return False
+        return self.aigc_notice_config.position_enabled("closing")
+
+    async def _close_after_aigc_closing_marker(
+        self,
+        context: _MediaVoiceSession,
+        *,
+        reason: str,
+        expected_activity_revision: int,
+    ) -> bool:
+        """Close a timed-out round through its closing marker, once.
+
+        A reply already owning the output keeps its slot and the close proceeds
+        immediately; a marker that lost its slot closes at once as well.
+        """
+
+        if context.closed or context.standby_requested or context.standby_lock.locked():
+            return False
+        played = False
+        if self._aigc_closing_marker_pending(context):
+            played = await self._play_aigc_closing_marker(context)
+        if not played:
+            return False
+        self._finish_aigc_round(context, close_reason=reason)
+        if expected_activity_revision != context.owner_silence_activity_revision:
+            return True
+        await self._request_device_standby(
+            context,
+            reason=reason,
+            expected_activity_revision=expected_activity_revision,
+        )
+        return True
+
     async def _owner_silence_watch(
         self,
         context: _MediaVoiceSession,
@@ -372,6 +416,12 @@ class MediaSessionStandbyMixin:
         context.owner_silence_task = None
         context.owner_silence_deadline = None
         context.owner_silence_remaining_s = 0.0
+        if await self._close_after_aigc_closing_marker(
+            context,
+            reason="owner_silence_timeout",
+            expected_activity_revision=context.owner_silence_activity_revision,
+        ):
+            return
         await self._request_device_standby(
             context,
             reason="owner_silence_timeout",

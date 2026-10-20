@@ -16,6 +16,10 @@ from services.agent.src.orchestration.handlers import (
     SpeechSynthesisRequest,
 )
 from services.agent.src.orchestration.orchestrator import OfflinePipeline, Orchestrator
+from services.agent.src.providers.tts_failover import (
+    StepFunPrimaryTTS,
+    TTSFailoverBreaker,
+)
 from services.agent.src.voice_core.media_protocol import SessionIdentity
 from services.agent.src.voice_core.provider_adapter import ExistingVoiceProviderAdapter
 from services.common.crisis_policy import route_crisis
@@ -245,3 +249,161 @@ async def test_offline_pipeline_speaks_spoken_copy_and_keeps_display_copy() -> N
 
     assert synthesis.requests == [tuple(phrase.spoken for phrase in CRISIS_SELF_SCRIPT.phrases)]
     assert result["full_generated"] == CRISIS_SELF_SCRIPT.display
+
+
+class _FixedScriptPrimaryStream:
+    def __init__(self, *, fail_after_first_chunk: bool) -> None:
+        self.texts: list[str] = []
+        self._fail_after_first_chunk = fail_after_first_chunk
+        self._yielded = False
+
+    def push_text(self, text: str) -> None:
+        self.texts.append(text)
+
+    def end_input(self) -> None:
+        return None
+
+    async def aclose(self) -> None:
+        return None
+
+    def __aiter__(self) -> _FixedScriptPrimaryStream:
+        return self
+
+    async def __anext__(self) -> Any:
+        if self._fail_after_first_chunk and not self._yielded:
+            self._yielded = True
+            return SimpleNamespace(frame=SimpleNamespace(data=b"\x01\x00" * FRAME, sample_rate=24_000))
+        raise ConnectionError("stepfun primary unavailable")
+
+
+class _FixedScriptBackupStream:
+    def __init__(self) -> None:
+        self.texts: list[str] = []
+        self._yielded = False
+
+    def push_text(self, text: str) -> None:
+        self.texts.append(text)
+
+    def end_input(self) -> None:
+        return None
+
+    async def aclose(self) -> None:
+        return None
+
+    def __aiter__(self) -> _FixedScriptBackupStream:
+        return self
+
+    async def __anext__(self) -> Any:
+        if self._yielded:
+            raise StopAsyncIteration
+        self._yielded = True
+        return SimpleNamespace(frame=SimpleNamespace(data=b"\x01\x00" * FRAME, sample_rate=24_000))
+
+
+class _FixedScriptPrimary:
+    provider = "stepfun"
+    model = "stepaudio-3-tts"
+    sample_rate = 24_000
+
+    def __init__(self, *, fail_after_first_chunk: bool) -> None:
+        self.streams: list[_FixedScriptPrimaryStream] = []
+        self._fail_after_first_chunk = fail_after_first_chunk
+
+    def bind_fence(self, fence: GenerationFence) -> None:
+        del fence
+
+    def apply_speech_plan(self, **_kwargs: Any) -> None:
+        return None
+
+    def stream(self, *, conn_options: Any = None) -> _FixedScriptPrimaryStream:
+        del conn_options
+        stream = _FixedScriptPrimaryStream(
+            fail_after_first_chunk=self._fail_after_first_chunk
+        )
+        self.streams.append(stream)
+        return stream
+
+    async def aclose(self) -> None:
+        return None
+
+    @property
+    def received(self) -> list[str]:
+        return [text for stream in self.streams for text in stream.texts]
+
+
+class _FixedScriptBackup:
+    provider = "volcengine_doubao"
+    current_model = "seed-tts-2.0"
+    model = "seed-tts-2.0"
+    current_voice = "zh_female_kailangjiejie_uranus_bigtts"
+
+    def __init__(self) -> None:
+        self.streams: list[_FixedScriptBackupStream] = []
+
+    def bind_fence(self, fence: GenerationFence) -> None:
+        del fence
+
+    def apply_speech_plan(self, **_kwargs: Any) -> None:
+        return None
+
+    def stream(self, *, conn_options: Any = None) -> _FixedScriptBackupStream:
+        del conn_options
+        stream = _FixedScriptBackupStream()
+        self.streams.append(stream)
+        return stream
+
+    async def aclose(self) -> None:
+        return None
+
+    @property
+    def received(self) -> list[str]:
+        return [text for stream in self.streams for text in stream.texts]
+
+
+def _failover_speech(fail_after_first_chunk: bool) -> tuple[StepFunPrimaryTTS, Any, Any]:
+    primary = _FixedScriptPrimary(fail_after_first_chunk=fail_after_first_chunk)
+    backup = _FixedScriptBackup()
+
+    wrapper = StepFunPrimaryTTS(
+        primary=primary,
+        backup=backup,
+        breaker=TTSFailoverBreaker(failures=3, open_s=30),
+    )
+    return wrapper, primary, backup
+
+
+def _assert_spoken_only(received: list[str]) -> None:
+    spoken = [phrase.spoken for phrase in CRISIS_SELF_SCRIPT.phrases]
+    assert received
+    assert all(text in spoken for text in received)
+    assert all(not any(character.isdigit() for character in text) for text in received)
+    assert any(character.isdigit() for character in CRISIS_SELF_SCRIPT.display)
+
+
+@pytest.mark.asyncio
+async def test_fixed_safety_script_reaches_both_engines_as_spoken_on_first_packet_switch() -> None:
+    wrapper, primary, backup = _failover_speech(fail_after_first_chunk=False)
+    adapter = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), wrapper)
+    identity, fence = _generation("fixed-safety-failover-first-packet")
+
+    chunks = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
+
+    _assert_spoken_only(primary.received)
+    _assert_spoken_only(backup.received)
+    assert backup.received == [phrase.spoken for phrase in CRISIS_SELF_SCRIPT.phrases]
+    assert "".join(chunk.assistant_text_delta for chunk in chunks) == CRISIS_SELF_SCRIPT.display
+
+
+@pytest.mark.asyncio
+async def test_fixed_safety_script_reaches_both_engines_as_spoken_on_mid_sentence_switch() -> None:
+    wrapper, primary, backup = _failover_speech(fail_after_first_chunk=True)
+    adapter = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), wrapper)
+    identity, fence = _generation("fixed-safety-failover-mid-sentence")
+
+    chunks = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
+
+    _assert_spoken_only(primary.received)
+    _assert_spoken_only(backup.received)
+    assert primary.received == [CRISIS_SELF_SCRIPT.phrases[0].spoken]
+    assert backup.received == [phrase.spoken for phrase in CRISIS_SELF_SCRIPT.phrases[1:]]
+    assert "".join(chunk.assistant_text_delta for chunk in chunks) == CRISIS_SELF_SCRIPT.display

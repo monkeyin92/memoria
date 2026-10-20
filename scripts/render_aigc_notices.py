@@ -11,7 +11,8 @@ zh_female_tianmeitaozi_uranus_bigtts at normal speed and normal volume
 (speech_rate / loudness_rate / pitch = 0). Synthesizes 24 kHz PCM (provider
 requirement), then ffmpeg-encodes 16 kHz Opus with implicit AIGC OpusTags
 (CONTENT_ID, SERVICE_PROVIDER=Volcengine Doubao, AI_GENERATED, ARTIST, VOICE_ID,
-DATE, CONTENT_PRODUCER=Memoria).
+DATE, CONTENT_PRODUCER, CONTENT_PROPAGATOR, LABEL=1). Our party identifiers
+come from AIGC_CONTENT_PRODUCER and AIGC_CONTENT_PROPAGATOR.
 
 Do not fabricate audio when credentials are missing.
 """
@@ -30,6 +31,14 @@ from datetime import date
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+from services.common.aigc_opus import (  # noqa: E402
+    aigc_identity_from_env,
+    implicit_label,
+)
+
 OFFLINE_ROOT = (
     REPO
     / "firmware"
@@ -46,7 +55,7 @@ OFFLINE_ROOT = (
 ARCHIVE_ROOT = REPO / "docs" / "acceptance" / "run-20261015-aigc-labels" / "archive"
 VOICE_ID = "zh_female_tianmeitaozi_uranus_bigtts"
 SERVICE_PROVIDER = "Volcengine Doubao"
-CONTENT_PRODUCER = "Memoria"
+CONTENT_PRODUCER, CONTENT_PROPAGATOR = aigc_identity_from_env()
 DOUBAO_SAMPLE_RATE_HZ = 24_000
 PACK_SAMPLE_RATE_HZ = 16_000
 
@@ -61,6 +70,20 @@ def _have_doubao() -> bool:
 
 
 def _ffmpeg_from_wav(wav: Path, ogg: Path, *, line_id: str, generated: str) -> None:
+    aigc = implicit_label(
+        content_id=line_id,
+        aigc={
+            "SERVICE_PROVIDER": SERVICE_PROVIDER,
+            "ARTIST": VOICE_ID,
+            "VOICE_ID": VOICE_ID,
+            "DATE": generated,
+        },
+        content_producer=CONTENT_PRODUCER,
+        content_propagator=CONTENT_PROPAGATOR,
+    )
+    metadata = ["-metadata", f"TITLE={line_id}"]
+    for key, value in aigc.items():
+        metadata.extend(["-metadata", f"{key}={value}"])
     subprocess.run(
         [
             "ffmpeg",
@@ -78,22 +101,7 @@ def _ffmpeg_from_wav(wav: Path, ogg: Path, *, line_id: str, generated: str) -> N
             "libopus",
             "-b:a",
             "16000",
-            "-metadata",
-            f"TITLE={line_id}",
-            "-metadata",
-            f"CONTENT_ID={line_id}",
-            "-metadata",
-            f"SERVICE_PROVIDER={SERVICE_PROVIDER}",
-            "-metadata",
-            "AI_GENERATED=true",
-            "-metadata",
-            f"ARTIST={VOICE_ID}",
-            "-metadata",
-            f"VOICE_ID={VOICE_ID}",
-            "-metadata",
-            f"DATE={generated}",
-            "-metadata",
-            f"CONTENT_PRODUCER={CONTENT_PRODUCER}",
+            *metadata,
             str(ogg),
         ],
         check=True,
@@ -195,6 +203,8 @@ def main(argv: list[str] | None = None) -> int:
                 "voice_id": VOICE_ID,
                 "service_provider": SERVICE_PROVIDER,
                 "content_producer": CONTENT_PRODUCER,
+                "content_propagator": CONTENT_PROPAGATOR,
+                "label": "1",
                 "doubao_sample_rate_hz": DOUBAO_SAMPLE_RATE_HZ,
                 "pack_sample_rate_hz": PACK_SAMPLE_RATE_HZ,
                 "task_id": task_id,

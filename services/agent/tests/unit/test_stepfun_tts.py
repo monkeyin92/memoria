@@ -6,15 +6,18 @@ import asyncio
 import base64
 import json
 from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import websockets
 from services.agent.src.contracts.ids import GenerationFence
+from services.agent.src.providers import tts_factory
 from services.agent.src.providers.provider_errors import APIConnectOptions
 from services.agent.src.providers.stepfun_tts import (
-    DEFAULT_STEPFUN_INSTRUCTION,
+    STEPFUN_INSTRUCTION_GUARD,
     STEPFUN_TTS_MODEL,
+    STEPFUN_TTS_VOICE,
     StepFunTTS,
     StepFunTTSConfig,
     strip_bracket_instructions,
@@ -197,10 +200,10 @@ class FakePrimary:
     model = STEPFUN_TTS_MODEL
     sample_rate = RATE
     current_model = STEPFUN_TTS_MODEL
-    current_voice = "wenrounvsheng"
+    current_voice = STEPFUN_TTS_VOICE
     current_voice_kind = "designed"
     current_voice_profile_id = None
-    current_instruction = DEFAULT_STEPFUN_INSTRUCTION
+    current_instruction = STEPFUN_INSTRUCTION_GUARD
 
     def __init__(self, stream_factory: Callable[[], Any]) -> None:
         self._stream_factory = stream_factory
@@ -283,10 +286,11 @@ async def test_normal_synthesis_uses_documented_events_and_24k_pcm() -> None:
         0
     ].get("authorization") == "Bearer test-stepfun-secret"
     create = next(event["data"] for event in server.client_events if event["type"] == "tts.create")
-    assert create["voice_id"] == "wenrounvsheng"
+    assert create["voice_id"] == STEPFUN_TTS_VOICE == "yuanqishaonv"
     assert create["response_format"] == "pcm"
     assert create["sample_rate"] == 24000
-    assert create["instruction"] == DEFAULT_STEPFUN_INSTRUCTION
+    # A deployment with no STEPFUN_TTS_INSTRUCTION sends no guard wording.
+    assert "instruction" not in create
     assert server.texts == ["你好，今天天气很好。"]
     assert any(event["type"] == "tts.text.done" for event in server.client_events)
 
@@ -708,22 +712,25 @@ def test_factory_is_doubao_by_default_and_requires_both_switches(
     default_off = SimpleNamespace(tts_provider="stepfun_primary")
     assert tts_factory.build_tts(default_off) is sentinel
 
-    stepfun_sentinel = object()
-    monkeypatch.setattr(
-        stepfun_tts.StepFunTTS,
-        "from_env",
-        classmethod(lambda cls: stepfun_sentinel),
-    )
     monkeypatch.setattr(
         tts_factory,
         "PROCESS_TTS_BREAKER",
         TTSFailoverBreaker(),
         raising=False,
     )
-    enabled = SimpleNamespace(tts_provider="stepfun_primary", stepfun_tts_enabled=True)
+    monkeypatch.setenv("STEPFUN_TTS_MOCK_WS_URL", "ws://127.0.0.1:1")
+    monkeypatch.setenv("DOUBAO_TTS_MOCK_WS_URL", "ws://127.0.0.1:1")
+    enabled = SimpleNamespace(
+        tts_provider="stepfun_primary",
+        stepfun_tts_enabled=True,
+        stepfun_tts_model=STEPFUN_TTS_MODEL,
+        stepfun_tts_voice=STEPFUN_TTS_VOICE,
+        doubao_tts_fallback_speaker="zh_female_fallback_test",
+    )
     built = tts_factory.build_tts(enabled)
     assert isinstance(built, StepFunPrimaryTTS)
-    assert built.primary is stepfun_sentinel
+    assert isinstance(built.primary, stepfun_tts.StepFunTTS)
+    assert isinstance(built.backup, doubao_tts.DoubaoTTS)
     assert tts_factory.tts_provider_label(enabled) == "stepfun"
 
     assert tts_factory.build_tts(
@@ -731,16 +738,41 @@ def test_factory_is_doubao_by_default_and_requires_both_switches(
     ) is sentinel
 
 
-def test_env_defaults_include_the_instruction_and_hide_the_key() -> None:
+def test_env_defaults_use_stepaudio_3_and_yuanqishaonv_and_hide_the_key() -> None:
     config = StepFunTTSConfig.from_env(
         {
             "STEPFUN_API_KEY": "hidden-secret",
             "STEPFUN_TTS_MOCK_WS_URL": "ws://127.0.0.1:1",
         }
     )
-    assert config.instruction == DEFAULT_STEPFUN_INSTRUCTION
-    assert len(config.instruction) <= 500
+    assert config.model == STEPFUN_TTS_MODEL == "stepaudio-3-tts"
+    assert config.voice == STEPFUN_TTS_VOICE == "yuanqishaonv"
+    # The delivery guard is deployment wording, so code carries no default text.
+    assert config.instruction == ""
+    assert STEPFUN_INSTRUCTION_GUARD == ""
     assert "hidden-secret" not in repr(config)
+
+
+def test_env_instruction_guard_is_appended_after_a_plan_instruction() -> None:
+    guard = "用平和的语气朗读。"
+    config = StepFunTTSConfig.from_env(
+        {
+            "STEPFUN_API_KEY": "key",
+            "STEPFUN_TTS_MOCK_WS_URL": "ws://127.0.0.1:1",
+            "STEPFUN_TTS_INSTRUCTION": guard,
+        }
+    )
+    assert config.instruction == guard
+    assert len(config.instruction) <= 500
+    from services.agent.src.providers import stepfun_tts
+
+    original = stepfun_tts.STEPFUN_INSTRUCTION_GUARD
+    stepfun_tts.STEPFUN_INSTRUCTION_GUARD = guard
+    try:
+        assert stepfun_tts._effective_instruction("") == guard
+        assert stepfun_tts._effective_instruction("高兴一点") == f"高兴一点。{guard}"
+    finally:
+        stepfun_tts.STEPFUN_INSTRUCTION_GUARD = original
 
 
 def test_personal_voice_forces_the_doubao_backup() -> None:
@@ -784,7 +816,7 @@ def test_sentence_provenance_is_written_into_the_generation_record() -> None:
         index=0,
         engine="stepfun",
         model=STEPFUN_TTS_MODEL,
-        voice="wenrounvsheng",
+        voice=STEPFUN_TTS_VOICE,
         switched=False,
     )
     assert runtime.record_tts_sentence_provenance(
@@ -802,7 +834,7 @@ def test_sentence_provenance_is_written_into_the_generation_record() -> None:
             "index": 0,
             "engine": "stepfun",
             "model": STEPFUN_TTS_MODEL,
-            "voice": "wenrounvsheng",
+            "voice": STEPFUN_TTS_VOICE,
             "switched": False,
         },
         {
@@ -813,3 +845,125 @@ def test_sentence_provenance_is_written_into_the_generation_record() -> None:
             "switched": True,
         },
     ]
+
+
+def test_doubao_backup_defaults_to_the_product_voice_without_style_control(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DOUBAO_TTS_MOCK_WS_URL", "ws://127.0.0.1:1")
+    monkeypatch.setenv("DOUBAO_TTS_API_KEY", "test")
+    monkeypatch.setenv("DOUBAO_TTS_STYLE_CONTROL_ENABLED", "true")
+    settings = SimpleNamespace(
+        tts_provider="stepfun_primary",
+        stepfun_tts_enabled=True,
+        doubao_tts_fallback_speaker="",
+        doubao_tts_resource_id="seed-tts-2.0",
+    )
+
+    backup = tts_factory.build_doubao_backup(settings)
+
+    assert backup.current_voice == "zh_female_kailangjiejie_uranus_bigtts"
+    assert backup.current_instruction is None
+    assert backup.current_pitch == 0
+    assert backup._config.style_control_enabled is False
+
+
+def test_main_backup_rejects_a_clone_voice_before_construction() -> None:
+    settings = SimpleNamespace(
+        tts_provider="stepfun_primary",
+        stepfun_tts_enabled=True,
+        doubao_tts_fallback_speaker="S_personal_synth_ready",
+        doubao_tts_resource_id="seed-tts-2.0",
+    )
+
+    with pytest.raises(ValueError, match="clone/ICL"):
+        tts_factory.build_doubao_backup(settings)
+
+
+def test_stepfun_voice_profile_keeps_the_configured_backup_for_a_clone() -> None:
+    class RecordingBackup(FakeBackupTTS):
+        def __init__(self) -> None:
+            super().__init__()
+            self.profiles: list[dict[str, Any]] = []
+
+        def apply_voice_profile(self, **kwargs: Any) -> None:
+            self.profiles.append(kwargs)
+
+    backup = RecordingBackup()
+    wrapper = StepFunPrimaryTTS(
+        primary=FakePrimary(lambda: None),
+        backup=backup,
+        breaker=TTSFailoverBreaker(failures=3, open_s=30),
+    )
+
+    wrapper.apply_voice_profile(
+        model="seed-icl-2.0",
+        voice="S_personal_synth_ready",
+        profile_id="personal-profile",
+        provider="volcengine_doubao",
+        voice_kind="personal",
+        resource_id="seed-icl-2.0",
+    )
+
+    assert wrapper.degraded is True
+    assert backup.profiles == []
+
+
+@pytest.mark.asyncio
+async def test_stepfun_speech_plan_sends_no_emotion_or_voice_label() -> None:
+    async def handler(server: MockStepFunServer, ws: Any) -> None:
+        await _connection(server, ws)
+        while True:
+            event = await server.next_event(ws)
+            if event["type"] == "tts.create":
+                await ws.send(_event("tts.response.created", {"session_id": "mock-session"}))
+            elif event["type"] == "tts.text.delta":
+                await ws.send(_audio_event(PCM))
+            elif event["type"] == "tts.text.done":
+                await ws.send(_done_event(PCM))
+                return
+
+    async with MockStepFunServer(handler) as server:
+        tts = StepFunTTS(_config(server))
+        tts.apply_speech_plan(emotion="happy", rate=1.0, instruction="")
+        stream = tts.stream(conn_options=APIConnectOptions(max_retry=0))
+        stream.push_text("我在呢。")
+        stream.end_input()
+        _ = [event async for event in stream]
+        await tts.aclose()
+
+    create = next(event["data"] for event in server.client_events if event["type"] == "tts.create")
+    assert "emotion" not in create
+    assert "voice_label" not in create
+    assert "style_control" not in create
+    assert create["voice_id"] == STEPFUN_TTS_VOICE
+
+
+def test_env_example_matches_the_runtime_tts_defaults() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[4]
+    example = (root / ".env.example").read_text(encoding="utf-8")
+    production = (
+        root / "infra" / "memoria.env.production.example"
+    ).read_text(encoding="utf-8")
+
+    for text in (example, production):
+        assert "STEPFUN_TTS_MODEL=stepaudio-3-tts" in text
+        assert "STEPFUN_TTS_VOICE=yuanqishaonv" in text
+        assert (
+            "DOUBAO_TTS_FALLBACK_SPEAKER=zh_female_kailangjiejie_uranus_bigtts"
+            in text
+        )
+
+
+def test_main_backup_rejects_a_male_preset_before_construction() -> None:
+    settings = SimpleNamespace(
+        tts_provider="stepfun_primary",
+        stepfun_tts_enabled=True,
+        doubao_tts_fallback_speaker="zh_male_test_voice_uranus_bigtts",
+        doubao_tts_resource_id="seed-tts-2.0",
+    )
+
+    with pytest.raises(ValueError, match="male preset"):
+        tts_factory.build_doubao_backup(settings)

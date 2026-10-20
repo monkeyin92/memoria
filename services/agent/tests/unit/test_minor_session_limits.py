@@ -29,6 +29,7 @@ from services.agent.src.prompts import (
 )
 from services.agent.src.runtime_profile import VerifiedRuntimeProfile, parse_runtime_profile
 from services.agent.src.voice_core import media_session_projection
+from services.agent.src.voice_core.aigc_notice import AigcNoticeConfig
 from services.agent.src.voice_core.media_session_output_stream import MediaOutputStreamMixin
 from services.agent.src.voice_core.media_session_projection import MediaSessionProjectionMixin
 from services.agent.src.voice_core.minor_session_limits import in_quiet_hours, minor_limits
@@ -175,8 +176,22 @@ def test_a_malformed_signed_daily_budget_rejects_the_whole_profile(seconds: str)
 class _Session(MediaSessionProjectionMixin, MediaOutputStreamMixin):
     def __init__(self, daily_chat_client: DailyChatClient | None = None) -> None:
         self.daily_chat_client = daily_chat_client
+        # This fixture exercises the refusal copy, not the AIGC round markers.
+        self.aigc_notice_config = AigcNoticeConfig(enabled=False)
         self.spoken: list[str] = []
         self.standby: list[str] = []
+
+    async def _speak_aigc_opening_marker(self, context: Any) -> None:
+        return None
+
+    async def _wait_aigc_opening_lead_in(self, context: Any) -> None:
+        return None
+
+    async def _play_aigc_closing_marker(self, context: Any) -> bool:
+        return False
+
+    def _finish_aigc_round(self, context: Any, *, close_reason: str) -> None:
+        return None
 
     async def _speak_device_enrollment_phrase(self, context: Any, phrase: str) -> bool:
         self.spoken.append(phrase)

@@ -706,6 +706,41 @@ class DelegationCoordinator:
         )
 
     @staticmethod
+    def aigc_marker(
+        *,
+        fence: GenerationFence,
+        context_version: int,
+        expires_at_ms: int,
+        pcm_s16le: bytes,
+        now_ms: int | None = None,
+    ) -> Any:
+        """A non-text audible marker on the assistant output path.
+
+        It uses the fast-acknowledgement wire kind because the media protocol
+        has no separate compliance-cue kind, and its PCM source bypasses TTS.
+        """
+
+        if not pcm_s16le or len(pcm_s16le) % 2:
+            raise ValueError("AIGC marker PCM must be non-empty 16-bit audio")
+        now = int(time.time() * 1_000) if now_ms is None else now_ms
+        if context_version < 0 or expires_at_ms <= now:
+            raise ValueError("AIGC marker metadata is stale")
+        return media_pb2.OutputIntent(
+            intent_id=str(uuid.uuid4()),
+            session_id=fence.session_id,
+            turn_id=fence.turn_id,
+            generation_id=fence.generation_id,
+            tool_epoch=fence.tool_epoch,
+            kind=media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT,
+            priority=110,
+            created_at_ms=now,
+            expires_at_ms=expires_at_ms,
+            floor_requirement=media_pb2.FLOOR_REQUIREMENT_ASSISTANT_MAY_SPEAK,
+            context_version=context_version,
+            pcm_s16le=pcm_s16le,
+        )
+
+    @staticmethod
     def conversation_reply(
         *,
         fence: GenerationFence,

@@ -175,6 +175,12 @@ class MediaOutputStreamMixin:
 
         async def _start_selected_output(self, context: _MediaVoiceSession) -> bool: ...
 
+        def _on_aigc_marker_playback(
+            self,
+            context: _MediaVoiceSession,
+            progress: PlaybackProgress,
+        ) -> None: ...
+
         @staticmethod
         async def _advance_failed_output_generation(
             context: _MediaVoiceSession,
@@ -613,6 +619,13 @@ class MediaOutputStreamMixin:
                 (rendered - previously_rendered) * 1_000 / _DOWNLINK_PCM_SAMPLE_RATE,
             )
         self._observe_projection_playback_evidence(context, fence, progress.event_type)
+        # A marker is the device's notice for this round; it never becomes assistant text.
+        if getattr(context, "aigc_opening_marker_fence", None) is not None or getattr(
+            context, "aigc_closing_marker_fence", None
+        ) is not None:
+            if self._is_aigc_marker_fence(context, fence):
+                self._on_aigc_marker_playback(context, progress)
+                return
         # Publish the cumulative acknowledged prefix under one turn/revision;
         # publishing only the newly acknowledged span would make clients
         # replace a complete answer with its last phrase.
@@ -682,6 +695,14 @@ class MediaOutputStreamMixin:
                 text_delivered=True,
                 fence=fence,
             )
+
+    @staticmethod
+    def _is_aigc_marker_fence(context: _MediaVoiceSession, fence: GenerationFence) -> bool:
+        opening = context.aigc_opening_marker_fence
+        if opening is not None and fence.matches(opening):
+            return True
+        closing = context.aigc_closing_marker_fence
+        return closing is not None and fence.matches(closing)
 
     def _observe_projection_playback_evidence(
         self,
@@ -1025,6 +1046,15 @@ class MediaOutputStreamMixin:
             )
             raise
         if emitted_audio and context.runtime.fence.matches(fence):
+            if self._is_aigc_marker_fence(context, fence):
+                # The closing marker is the round's last audible output; the
+                # session closes after it, so it gets no completion lifecycle.
+                return OutputDispatchResult(
+                    fence,
+                    OutputDispatchStatus.COMPLETED,
+                    "aigc_marker_complete",
+                    emitted_audio,
+                )
             # Provider completion is not playback completion. Keep the runtime
             # speaking until the client watermark covers all emitted audio.
             context.output.provider_complete = True

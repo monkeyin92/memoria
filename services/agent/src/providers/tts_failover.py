@@ -23,6 +23,7 @@ from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.providers.provider_errors import APIConnectOptions
 from services.agent.src.providers.stepfun_tts import BracketInstructionFilter
 from services.agent.src.providers.tts_stream import SynthesizedAudio
+from services.common.tts_voice_policy import is_clone_or_icl_voice
 
 logger = logging.getLogger(__name__)
 
@@ -537,6 +538,20 @@ class StepFunPrimaryTTS:
         voice_kind: str | None = None,
         resource_id: str | None = None,
     ) -> None:
+        # A personal clone is a Doubao-only voice contract. StepFun must not
+        # speak a different voice under that identity, and this branch's backup
+        # keeps its configured designed voice instead of adopting the clone.
+        if is_clone_or_icl_voice(
+            voice=voice,
+            voice_kind=voice_kind,
+            resource_id=resource_id,
+            provider=provider,
+        ):
+            self._force_backup = voice_kind == "personal"
+            logger.warning(
+                "tts_failover_kept_configured_backup_voice reason=clone_or_icl_voice"
+            )
+            return
         apply_profile = getattr(self.backup, "apply_voice_profile", None)
         if callable(apply_profile):
             apply_profile(
@@ -547,9 +562,6 @@ class StepFunPrimaryTTS:
                 voice_kind=voice_kind,
                 resource_id=resource_id,
             )
-        # A personal clone is a Doubao-only voice contract. StepFun must not
-        # speak a different voice under that identity.
-        self._force_backup = voice_kind == "personal"
 
     def configure_personal_fallback(self, **kwargs: Any) -> None:
         configure = getattr(self.backup, "configure_personal_fallback", None)

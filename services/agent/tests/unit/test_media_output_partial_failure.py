@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.providers.provider_errors import APIConnectionError
+from services.agent.src.voice_core.aigc_notice import AigcNoticeConfig
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_protocol import (
@@ -143,6 +144,8 @@ async def _drive_partial_failure(
     registry = MediaVoiceCoreRegistry(
         bridge=bridge,
         provider_factory=lambda _identity: provider,
+        aigc_notice_config=AigcNoticeConfig(enabled=False),
+        aigc_round_logger=None,
     )
     registry.install()
     if generation_timeout_s is not None:
