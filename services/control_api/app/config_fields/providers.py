@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, SecretStr, model_validator
+from pydantic import AliasChoices, BaseModel, Field, SecretStr, model_validator
 
 from services.common.llm_failover import (
     dashscope_endpoint_in_use,
@@ -124,7 +124,7 @@ class ProviderFields(BaseModel):
     deepseek_api_key: SecretStr = Field(default=SecretStr(""), alias="DEEPSEEK_API_KEY")
     deepseek_base_url: str = Field(
         default="https://api.deepseek.com",
-        alias="DEEPSEEK_BASE_URL",
+        validation_alias=AliasChoices("DEEPSEEK_API_URL", "DEEPSEEK_BASE_URL"),
     )
     # With LLM_PROVIDER=deepseek the crisis evidence, memory/persona extraction and
     # persona structuring calls use this model; recap and daily summary use the next one.

@@ -125,7 +125,7 @@ def _configure(
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-key")
     monkeypatch.setenv("DASHSCOPE_API_KEY", "dash-key")
-    monkeypatch.setenv("DEEPSEEK_BASE_URL", primary.origin)
+    monkeypatch.setenv("DEEPSEEK_API_URL", primary.origin)
     monkeypatch.setenv("DEEPSEEK_FAST_MODEL", "deepseek-flash")
     monkeypatch.setenv("DEEPSEEK_FAST_TEMPERATURE", "0.45")
     monkeypatch.setenv("DEEPSEEK_FAST_MAX_TOKENS", "240")

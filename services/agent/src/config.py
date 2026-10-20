@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from services.agent.src.contracts.errors import ConfigValidationError
@@ -319,7 +319,10 @@ class AgentSettings(BaseSettings):
     )
 
     deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
-    deepseek_base_url: str = Field(default="https://api.deepseek.com", alias="DEEPSEEK_BASE_URL")
+    deepseek_base_url: str = Field(
+        default="https://api.deepseek.com",
+        validation_alias=AliasChoices("DEEPSEEK_API_URL", "DEEPSEEK_BASE_URL"),
+    )
     # deepseek-flash serves DeepSeek-V4.1-Flash; the old name deepseek-v4-flash is routed to it.
     deepseek_fast_model: str = Field(default="deepseek-flash", alias="DEEPSEEK_FAST_MODEL")
     deepseek_deep_model: str = Field(default="deepseek-flash", alias="DEEPSEEK_DEEP_MODEL")

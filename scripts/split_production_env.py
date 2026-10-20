@@ -8,6 +8,7 @@ import os
 import tempfile
 from pathlib import Path
 
+from pydantic import AliasChoices
 from services.agent.src.config import AgentSettings, pcm_tap_directory, validate_doubao_auth
 from services.control_api.app.config import ControlSettings
 
@@ -241,11 +242,14 @@ _RETIRED_KEYS = frozenset(
 
 
 def _aliases(settings_type: type[AgentSettings] | type[ControlSettings]) -> set[str]:
-    return {
-        str(field.alias)
-        for field in settings_type.model_fields.values()
-        if isinstance(field.alias, str)
-    }
+    names: set[str] = set()
+    for field in settings_type.model_fields.values():
+        validation_alias = field.validation_alias
+        if isinstance(validation_alias, AliasChoices):
+            names.update(str(choice) for choice in validation_alias.choices)
+        elif isinstance(validation_alias, str):
+            names.add(validation_alias)
+    return names
 
 
 def split_env(
