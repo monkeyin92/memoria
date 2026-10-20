@@ -258,7 +258,6 @@ async def test_classification_and_user_final_use_the_same_speaker_class() -> Non
         ("speech.utterance_finalized", "owner"),
     ]
     assert evidence[1]["payload"] == {
-        "text": "这是我的经历",
         "persona_eligible": False,
         "prompt_kind": "spontaneous",
         "speaker_reason_code": "owner_match",

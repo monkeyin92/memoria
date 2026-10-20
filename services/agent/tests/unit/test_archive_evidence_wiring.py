@@ -139,17 +139,13 @@ async def test_only_final_user_and_actual_heard_assistant_text_become_evidence()
         ("speech.utterance_finalized", "uncertain"),
         ("assistant.playout_stopped", "assistant"),
     ]
+    # #282: no turn text reaches the archive, the speaker's own included.
     assert published[0]["payload"] == {
-        "text": "我在杭州读过书。",
         "persona_eligible": False,
         "prompt_kind": "spontaneous",
         **_provenance(),
     }
-    assert published[1]["payload"] == {
-        "text": "原来你在杭州读过书。",
-        "actual_heard": True,
-        **_provenance(),
-    }
+    assert published[1]["payload"] == {"actual_heard": True, **_provenance()}
     assert published[0]["session_id"] == "session-001"
     assert published[0]["event_id"] != published[1]["event_id"]
     await runtime.close()
@@ -619,12 +615,15 @@ async def test_verified_owner_turn_snapshots_pcm_for_the_shared_archive_sink() -
     )
     await asyncio.sleep(0)
 
-    assert [event["event_type"] for event in ordinary] == ["speaker.classified"]
-    assert len(owner_turns) == 1
-    event, captured_pcm, sample_rate = owner_turns[0]
-    assert event["speaker_class"] == "owner"
-    assert captured_pcm == pcm
-    assert sample_rate == 16_000
+    # #282: an owner turn carries no text, so the sink's owner-turn path (raw
+    # audio plus transcript) never runs; its evidence takes the ordinary one.
+    assert owner_turns == []
+    assert [event["event_type"] for event in ordinary] == [
+        "speaker.classified",
+        "speech.utterance_finalized",
+    ]
+    assert ordinary[1]["speaker_class"] == "owner"
+    assert "text" not in ordinary[1]["payload"]  # type: ignore[operator]
     await runtime.close()
 
 
@@ -655,14 +654,14 @@ async def test_archived_transcripts_are_redacted_before_fingerprinting_and_deliv
 
     assert [event["payload"] for event in published] == [
         {
-            "text": "我的手机号是[手机号]，邮箱是[邮箱]。",
             "persona_eligible": False,
             "prompt_kind": "spontaneous",
             **_provenance(),
         },
-        {"text": "我记下了[手机号]。", "actual_heard": True, **_provenance()},
+        {"actual_heard": True, **_provenance()},
     ]
     assert "13800138000" not in json.dumps(published, ensure_ascii=False)
+    assert "手机号" not in json.dumps(published, ensure_ascii=False)
     await runtime.close()
 
 
@@ -693,7 +692,6 @@ async def test_runtime_close_drains_durable_evidence_instead_of_canceling_it() -
     await close_task
     assert [event["payload"] for event in published] == [
         {
-            "text": "关机前也要保存。",
             "persona_eligible": False,
             "prompt_kind": "spontaneous",
             **_provenance(),
@@ -745,7 +743,6 @@ async def test_runtime_close_timeout_spools_inflight_evidence(tmp_path: Path) ->
     assert [envelope["target"] for envelope in persisted] == ["event"]
     assert [envelope["body"]["payload"] for envelope in persisted] == [
         {
-            "text": "超时也必须落盘。",
             "persona_eligible": False,
             "prompt_kind": "spontaneous",
             **_provenance(),

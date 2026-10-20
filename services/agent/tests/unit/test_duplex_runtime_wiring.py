@@ -100,8 +100,8 @@ async def test_uncertain_user_evidence_carries_shadow_owner_provenance() -> None
         event for event in evidence if event.get("event_type") == "speech.utterance_finalized"
     )
     assert utterance["speaker_class"] == "uncertain"
+    # #282: the evidence never carries turn text.
     assert utterance["payload"] == {
-        "text": text,
         "persona_eligible": True,
         "prompt_kind": "spontaneous",
         "speaker_reason_code": "shadow_owner_candidate",

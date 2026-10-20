@@ -240,10 +240,8 @@ async def test_adult_device_turn_is_archived_under_the_profile_memory_grant() ->
         # No memory_capture receipt exists at session level; the archive
         # re-verifies the same signed profile instead of a claimed receipt.
         assert event["policy_receipt_id"] is None
-    assert [event["payload"] for event in archived] == [
-        {**_USER_METADATA, "text": "我今天学会骑自行车了。"},
-        {**_ASSISTANT_METADATA, "text": "太棒了，骑车时记得戴头盔。"},
-    ]
+    # #282: an adult turn takes the minor's metadata-only path; no text is stored.
+    assert [event["payload"] for event in archived] == [_USER_METADATA, _ASSISTANT_METADATA]
 
 
 @pytest.mark.asyncio
@@ -439,7 +437,7 @@ def test_memory_grant_obeys_signed_obligations_and_leaves_raw_audio_closed() -> 
     )
     decision = decide_persistence(granted, session_memory_grant=True)
     assert decision.allowed is True
-    assert decision.content_ceiling == "verbatim"
+    assert decision.content_ceiling == "metadata_only"
     # Raw audio keeps needing its own action-time receipt.
     assert decision.raw_audio_allowed is False
     assert decision.memory_capture_receipt_id is None
@@ -479,3 +477,44 @@ def test_memory_grant_obeys_signed_obligations_and_leaves_raw_audio_closed() -> 
         decide_persistence(minor_aggregate, session_memory_grant=True).content_ceiling
         == "aggregate_only"
     )
+
+
+def test_no_subject_category_stores_turn_text_on_the_memory_grant() -> None:
+    """#282: an adult takes the minor's de-verbatim path; misreading a child as an adult stores nothing."""
+
+    for category in ("adult", "minor", "under_14", "14_17"):
+        profile = _control_profile(
+            f"grant-text-{category}",
+            capabilities=("chat", "memory_recall_private"),
+            minor=category != "adult",
+        )
+        decision = decide_persistence(profile, session_memory_grant=True)
+        assert decision.allowed is True
+        assert decision.content_ceiling == "metadata_only", category
+        sentence = "我今天学会骑自行车了，这辆车是蓝色的。"
+        worded = {
+            "text": sentence,
+            "transcript": sentence,
+            "user_text": sentence,
+            "assistant_text": sentence,
+            "prompt_kind": "open",
+        }
+        event = archive_evidence(
+            event_type="speech.utterance_finalized",
+            session_id=f"session-{category}",
+            speaker_class="owner",
+            payload=worded,
+            source="funasr.authoritative_final",
+            fence=GenerationFence(
+                session_id=f"session-{category}", turn_id=1, generation_id=1, tool_epoch=0
+            ),
+            decision=decision,
+            fingerprint=f"fingerprint-{category}",
+            event_sequence=1,
+        )
+        payload = event["payload"]
+        assert isinstance(payload, dict)
+        for key in ("text", "transcript", "user_text", "assistant_text"):
+            assert key not in payload, category
+        assert category not in json.dumps(payload, ensure_ascii=False)
+        assert payload["prompt_kind"] == "open"
