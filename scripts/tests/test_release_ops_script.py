@@ -332,6 +332,8 @@ def test_delta_build_layers_every_ship_role_and_refuses_any_other() -> None:
 
 GUARDIAN = "20261013-guardian-summaries-v1"
 GUARDIAN_COMMIT = "42a095d241a3b33d2bf6f35437d19da3fe937576"
+HOST_BUILT = "20261016-readiness-b54189c"
+HOST_BUILT_COMMIT = "b54189c5f13d240d24dbb10a6b9e604fb36b96d1"
 RELEASE = "20261014-speaker-retire-v1"
 NEW_COMMIT = "1" * 40
 EDGE_TREE = "20261004-first-warm-v1"
@@ -464,14 +466,17 @@ class FakeHost:
         commit: str,
         running: bool = True,
         chain: str | None = None,
+        version: str | None = None,
+        release_tag: str | None = None,
     ) -> None:
         facts = {
             "chain": chain or str(self.release_dir(release) / "docker-compose.production.yml"),
             "image": f"{_HOST_REPO[service]}:{release}",
             "image-id": f"sha-{service}",
             "running": "true" if running else "false",
-            "version": release,
+            "version": release if version is None else version,
             "revision": commit,
+            "release-tag": release_tag or "",
         }
         box = self.fake / "containers" / f"memoria-{service}-1"
         box.mkdir(exist_ok=True)
@@ -538,6 +543,19 @@ def guardian_host(tmp_path: Path) -> FakeHost:
 
 def _up(*services: str) -> str:
     return " ".join(("compose up -d --no-deps --no-build --force-recreate", *services))
+
+
+def host_built_host(tmp_path: Path) -> FakeHost:
+    host = FakeHost(tmp_path, current=HOST_BUILT)
+    for service in ("control-api", "voice-core-media-bridge"):
+        host.container(
+            service,
+            release=HOST_BUILT,
+            commit=HOST_BUILT_COMMIT,
+            version="",
+            release_tag=HOST_BUILT,
+        )
+    return host
 
 
 def _finish_this_release(host: FakeHost) -> None:
@@ -614,6 +632,75 @@ def test_freeze_refuses_prev_images_that_disagree_on_commit(tmp_path: Path) -> N
 
     assert run.returncode == 1
     assert f"PREV images disagree on commit: {GUARDIAN_COMMIT} vs {'2' * 40}" in run.output
+    assert host.prev_record(RELEASE) is None
+
+
+def test_freeze_accepts_empty_version_when_revision_and_release_tag_match(tmp_path: Path) -> None:
+    host = host_built_host(tmp_path)
+
+    run = host.step("freeze", tag=RELEASE)
+
+    assert run.returncode == 0, run.output
+    for service in ("control-api", "voice-core-media-bridge"):
+        assert (
+            f"accepting empty version label for memoria-{service}-1: "
+            "revision b54189c matches tag suffix" in run.output
+        )
+    assert host.prev_record(RELEASE) == (
+        f"tag={HOST_BUILT}\n"
+        f"commit={HOST_BUILT_COMMIT}\n"
+        "services=control-api voice-core-media-bridge\n"
+    )
+
+
+def test_freeze_refuses_empty_version_when_tag_suffix_does_not_match(tmp_path: Path) -> None:
+    host = host_built_host(tmp_path)
+    host.container(
+        "control-api",
+        release=HOST_BUILT,
+        commit="a" * 40,
+        version="",
+        release_tag=HOST_BUILT,
+    )
+
+    run = host.step("freeze", tag=RELEASE)
+
+    assert run.returncode == 1
+    assert f"memoria-control-api-1 runs , not {HOST_BUILT}" in run.output
+    assert host.prev_record(RELEASE) is None
+
+
+def test_freeze_refuses_empty_version_when_container_release_tag_differs(tmp_path: Path) -> None:
+    host = host_built_host(tmp_path)
+    host.container(
+        "control-api",
+        release=HOST_BUILT,
+        commit=HOST_BUILT_COMMIT,
+        version="",
+        release_tag="20261015-other-v1",
+    )
+
+    run = host.step("freeze", tag=RELEASE)
+
+    assert run.returncode == 1
+    assert f"memoria-control-api-1 runs , not {HOST_BUILT}" in run.output
+    assert host.prev_record(RELEASE) is None
+
+
+def test_freeze_refuses_a_non_empty_version_that_differs(tmp_path: Path) -> None:
+    host = host_built_host(tmp_path)
+    host.container(
+        "control-api",
+        release=HOST_BUILT,
+        commit=HOST_BUILT_COMMIT,
+        version="20261015-other-v1",
+        release_tag=HOST_BUILT,
+    )
+
+    run = host.step("freeze", tag=RELEASE)
+
+    assert run.returncode == 1
+    assert f"memoria-control-api-1 runs 20261015-other-v1, not {HOST_BUILT}" in run.output
     assert host.prev_record(RELEASE) is None
 
 

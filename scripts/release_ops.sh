@@ -76,6 +76,8 @@ inspect_container() {   # <container> chain|version|revision|image|image-id|runn
     version|revision) format="{{index .Config.Labels \"org.opencontainers.image.$2\"}}" ;;
     image) format='{{.Config.Image}}' ;;
     image-id) format='{{.Image}}' ;;
+    # Filter inside docker inspect so no other env value leaves the daemon.
+    release-tag) format='{{range .Config.Env}}{{if and (ge (len .) 20) (eq (slice . 0 20) "MEMORIA_RELEASE_TAG=")}}{{slice . 20}}{{end}}{{end}}' ;;
     running) format='{{.State.Running}}' ;;
     *) fail "inspect_container: unknown field $2" ;;
   esac
@@ -185,7 +187,19 @@ derive_prev() {
     fi
     version="$(inspect_container "$c" version)" || fail "cannot read the image version of $c"
     revision="$(inspect_container "$c" revision)" || fail "cannot read the image revision of $c"
-    [[ "$version" == "$tag" ]] || fail "$c runs $version, not $tag"
+    # 20261016-readiness-b54189c reached production outside this script, built by
+    # hand with no OCI version label on control-api or the bridge. Accept only
+    # that shape: empty version, a 40-hex revision, a tag ending in the
+    # revision's short sha, and the container's own MEMORIA_RELEASE_TAG equal
+    # to the tag. Every other mismatch fails as before.
+    if [[ "$version" != "$tag" && -z "$version" \
+          && "$revision" =~ ^[0-9a-f]{40}$ \
+          && "$tag" == *-"${revision:0:7}" \
+          && "$(inspect_container "$c" release-tag)" == "$tag" ]]; then
+      log "accepting empty version label for $c: revision ${revision:0:7} matches tag suffix" >&2
+    else
+      [[ "$version" == "$tag" ]] || fail "$c runs $version, not $tag"
+    fi
     [[ "$revision" =~ ^[0-9a-f]{40}$ ]] || fail "$c image carries no commit label"
     [[ -z "$commit" || "$revision" == "$commit" ]] || fail "PREV images disagree on commit: $commit vs $revision"
     commit=$revision
