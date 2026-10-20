@@ -21,7 +21,7 @@ from services.common.llm_failover import (
 
 DeploymentProfile = Literal["livekit_cloud", "cn_self_hosted"]
 LLMProvider = Literal["qwen", "bailian_deepseek", "deepseek"]
-TTSProvider = Literal["doubao"]
+TTSProvider = Literal["doubao", "stepfun_primary"]
 WeatherLookupProvider = Literal["off", "domestic"]
 _QWEATHER_HOST = re.compile(r"(?:[a-z0-9-]+\.)+qweatherapi\.com")
 DEFAULT_LLM_BACKUP_MODEL = "qwen3.8-flash"
@@ -140,6 +140,7 @@ class AgentSettings(BaseSettings):
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     llm_provider: LLMProvider = Field(default="qwen", alias="LLM_PROVIDER")
     tts_provider: TTSProvider = Field(default="doubao", alias="TTS_PROVIDER")
+    stepfun_tts_enabled: bool = Field(default=False, alias="STEPFUN_TTS_ENABLED")
 
     media_bridge_grpc_enabled: bool = Field(
         default=False, alias="MEDIA_BRIDGE_GRPC_ENABLED"
