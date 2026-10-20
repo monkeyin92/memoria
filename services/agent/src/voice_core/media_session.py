@@ -17,6 +17,7 @@ from typing import Any
 
 from services.agent.src.daily_chat import DailyChatClient
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.minor_limit_bypass import MinorLimitBypass
 from services.agent.src.observability.metrics import GLOBAL_METRICS, MetricsRegistry
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.grpc_bridge import (
@@ -120,6 +121,9 @@ class MediaVoiceCoreRegistry(
     crisis_script_interrupt_publisher: Callable[[str], None] | None = None
     session_recap_publisher: Callable[..., Any] | None = None
     daily_chat_client: DailyChatClient | None = None
+    # Read once when the process starts. Empty unless one test subject is
+    # explicitly whitelisted; it never changes policy or stored usage.
+    minor_limit_bypass: MinorLimitBypass = field(default_factory=MinorLimitBypass.from_env)
     _sessions: dict[str, _MediaVoiceSession] = field(default_factory=dict, init=False)
     _cleanup_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict, init=False)
     _creation_futures: dict[str, asyncio.Future[_MediaVoiceSession]] = field(

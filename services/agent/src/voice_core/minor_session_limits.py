@@ -39,5 +39,13 @@ def minor_limits(profile: VerifiedRuntimeProfile | None) -> tuple[int | None, tu
     return profile.profile.max_session_seconds, profile.profile.quiet_hours
 
 
+def minor_subject_id(profile: VerifiedRuntimeProfile | None) -> str | None:
+    """The signed subject whose limits apply, or None for a non-minor profile."""
+
+    if profile is None or profile.profile.subject_category != "minor":
+        return None
+    return profile.profile.active_subject_id
+
+
 def session_limit_reached(started_at: float, now: float, max_seconds: int | None) -> bool:
     return max_seconds is not None and now - started_at >= max_seconds
