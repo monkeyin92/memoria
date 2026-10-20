@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -3582,9 +3583,82 @@ async def test_conversation_sessions_preview_uses_latest_nonblank_eligible_text_
     assert response.json()["items"] == [
         {
             "session_id": session["session_id"],
-            "occurred_at": (now + timedelta(seconds=1)).isoformat(),
-            "turn_count": 1,
+            "occurred_at": (now + timedelta(seconds=2)).isoformat(),
+            "turn_count": 2,
             "preview": "答" * 80,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_conversation_sessions_list_turns_that_carry_no_text(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # #282: archived turns hold metadata only, so the session list must not
+    # depend on a preview text that no real turn has.
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    now = datetime.now(UTC)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = await _register_verified_adult(
+            client, app, username="conversation-session-no-text"
+        )
+        headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        session = (await client.post("/v1/sessions", headers=headers, json={})).json()
+        subject_id = str(owner["user_id"])
+        for event in (
+            _conversation_session_event(
+                account_id=subject_id,
+                event_id="no-text-user",
+                subject_id=subject_id,
+                session_id=session["session_id"],
+                occurred_at=now,
+                text="",
+                turn_id=1,
+            ),
+            _conversation_session_event(
+                account_id=subject_id,
+                event_id="no-text-assistant",
+                subject_id=subject_id,
+                session_id=session["session_id"],
+                occurred_at=now,
+                text="",
+                turn_id=1,
+                speaker_class="assistant",
+            ),
+        ):
+            await app.state.life_archive.record(
+                replace(event, payload={k: v for k, v in event.payload.items() if k != "text"})
+            )
+        await app.state.life_archive.record(
+            EvidenceEvent(
+                event_id="no-text-ephemeral",
+                account_id=subject_id,
+                subject_id=subject_id,
+                event_type="speech.utterance_finalized",
+                occurred_at=now,
+                speaker_class="owner",
+                source="test",
+                session_id="no-text-ephemeral-session",
+                turn_id=1,
+                generation_id=1,
+                payload={
+                    "history_eligible": True,
+                    "owner_projection_eligible": True,
+                    "memory_retention": "ephemeral_only",
+                },
+            )
+        )
+        response = await client.get("/v1/archive/conversation-sessions", headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["items"] == [
+        {
+            "session_id": session["session_id"],
+            "occurred_at": now.isoformat(),
+            "turn_count": 1,
+            "preview": "",
         }
     ]
 
