@@ -815,6 +815,11 @@ async def test_guardian_notification_detail_rejects_unbound_accounts_and_guessed
         child_view = await client.get(detail_path, headers=child_headers)
         assert child_view.status_code == 403, child_view.text
 
+        # 解绑前仍绑定，家长列表里还有这一条。
+        still_bound = await client.get("/v1/guardian/notifications", headers=parent_headers)
+        assert still_bound.status_code == 200, still_bound.text
+        assert len(still_bound.json()["items"]) == 1
+
         # e) Revoking the link takes the alert away with it. There is no
         # self-service unlink route on this branch, so the owner row is moved to
         # the same revoked state the store contract tests use.
@@ -832,6 +837,17 @@ async def test_guardian_notification_detail_rejects_unbound_accounts_and_guessed
             f"{detail_path}/read", headers=parent_headers
         )
         assert after_unbind_read.status_code == 404, after_unbind_read.text
+
+        after_unbind_list = await client.get(
+            "/v1/guardian/notifications", headers=parent_headers
+        )
+        assert after_unbind_list.status_code == 200, after_unbind_list.text
+        assert after_unbind_list.json()["items"] == []
+        after_unbind_unread = await client.get(
+            "/v1/guardian/notifications/unread", headers=parent_headers
+        )
+        assert after_unbind_unread.status_code == 200, after_unbind_unread.text
+        assert after_unbind_unread.json() == {"newest": None, "others_count": 0}
 
 
 @pytest.mark.asyncio
