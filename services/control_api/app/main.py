@@ -59,6 +59,7 @@ from services.control_api.app.guardian_push import (
     build_crisis_push_worker,
 )
 from services.control_api.app.lifespan_resources import LifespanResources, SharedPostgresPools
+from services.control_api.app.logging_config import configure_logging
 from services.control_api.app.media_runtime import mint_streamcore_token
 from services.control_api.app.media_slo import MediaSLOGate
 from services.control_api.app.memory_components import build_memory_embedder, build_memory_extractor
@@ -1021,6 +1022,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     settings = ControlSettings()
+    configure_logging()
     production = settings.environment == "production"
     app = FastAPI(
         title="voice-agent-control-api",
