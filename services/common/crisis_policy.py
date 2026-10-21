@@ -31,11 +31,13 @@ class CrisisSemanticVerdict(StrEnum):
     NO_CRISIS = "NO_CRISIS"
     UNSURE = "UNSURE"
 
+# Bare self-absence, not a location: 「不在家」「不在学校」 must not reach the
+# marker, so only 了/也/都 may sit between 不在 and 没关系.
 _FIRST_PERSON_RISK_ANCHOR = re.compile(
     r"(?:我|本人).{0,16}(?:不想活|想死|自伤|自残|轻生|结束生命|"
     r"活下去的理由|撑不下去|准备行动|已经行动|"
     r"消失(?:了)?(?:就)?好|(?:没有|没)(?:被)?(?:生出来|生下来|出生)|"
-    r"睡着.{0,4}不醒|不在.{0,4}(?:没关系|没事|无所谓|不要紧)|"
+    r"睡着.{0,4}不醒|不在(?:了)?(?:也|都)?(?:没关系|没事|无所谓|不要紧)|"
     r"活着.{0,6}(?:没意思|没有意思|没意义))"
 )
 

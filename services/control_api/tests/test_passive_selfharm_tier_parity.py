@@ -32,6 +32,8 @@ _NOT_CRISIS = (
     "我累死了，不想写作业",
     "游戏里我又死了",
     "我的小鱼死了，我好难过",
+    "我不在家没关系",
+    "明天我不在学校也没事",
 )
 
 _C1_C9 = (
@@ -51,6 +53,11 @@ def _request() -> Any:
     return SimpleNamespace(
         app=SimpleNamespace(state=SimpleNamespace(crisis_semantic_classifier=None))
     )
+
+
+class _UnexpectedSemanticCall:
+    async def classify(self, *, current_text: str) -> Any:
+        raise AssertionError(f"semantic classifier called for {current_text!r}")
 
 
 def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -124,6 +131,21 @@ async def test_control_api_ordinary_death_and_meaninglessness_stay_out(query: st
     assert (control_api.script.template_id if control_api.script else None) == (
         local.script.template_id if local.script else None
     )
+
+
+@pytest.mark.hermetic
+@pytest.mark.parametrize("query", ("我不在家没关系", "明天我不在学校也没事"))
+@pytest.mark.asyncio
+async def test_location_absence_never_reaches_the_semantic_classifier(query: str) -> None:
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(crisis_semantic_classifier=_UnexpectedSemanticCall())
+        )
+    )
+    route = await _route_crisis_with_bounded_evidence(request, query)
+
+    assert route.action == "none"
+    assert route.script is None
 
 
 @pytest.mark.hermetic
