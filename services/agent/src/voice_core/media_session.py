@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from services.agent.src.aigc_generation_log import AigcRoundLogger
+from services.agent.src.asr_text_debug_log import AsrTextDebugSubjects
 from services.agent.src.daily_chat import DailyChatClient
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.minor_limit_bypass import MinorLimitBypass
@@ -143,6 +144,10 @@ class MediaVoiceCoreRegistry(
     # Read once when the process starts. Empty unless one test subject is
     # explicitly whitelisted; it never changes policy or stored usage.
     minor_limit_bypass: MinorLimitBypass = field(default_factory=MinorLimitBypass.from_env)
+    # Test-period ASR transcript logging. Empty is off; it only reads the text.
+    asr_text_debug_subjects: AsrTextDebugSubjects = field(
+        default_factory=AsrTextDebugSubjects.from_env
+    )
     _sessions: dict[str, _MediaVoiceSession] = field(default_factory=dict, init=False)
     _cleanup_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict, init=False)
     _creation_futures: dict[str, asyncio.Future[_MediaVoiceSession]] = field(

@@ -20,6 +20,12 @@ from dataclasses import dataclass, field, replace
 from time import monotonic
 from typing import TYPE_CHECKING, Any, cast
 
+from services.agent.src.asr_text_debug_log import (
+    AsrTextDebugSubjects,
+    asr_text_debug_line,
+    excerpt,
+    subject_tag,
+)
 from services.agent.src.contracts.ids import CancellationContext, GenerationFence
 from services.agent.src.orchestration.handlers import (
     LanguageModelHandler,
@@ -114,7 +120,11 @@ class ExistingVoiceProviderAdapter:
     metrics: MetricsRegistry | None = None
     owns_speech_synthesis: bool = False
     owns_language_model: bool = False
+    # Test-period transcript logging, off unless ASR_TEXT_DEBUG_LOG_SUBJECTS
+    # lists the session's subject or device. Never changes what is committed.
+    asr_text_debug_subjects: AsrTextDebugSubjects | None = None
     _asr: FunASRSession | None = field(default=None, init=False)
+    _asr_text_debug: AsrTextDebugSubjects | None = field(default=None, init=False)
     _stream_epoch: int = field(default=0, init=False)
     _asr_task_epoch_offset: int = field(default=0, init=False)
     _asr_task_epoch_floor: int = field(default=0, init=False)
@@ -363,7 +373,9 @@ class ExistingVoiceProviderAdapter:
             raise ValueError("ASR stream epoch moved backwards")
         await self._reset_asr_session(identity.stream_epoch)
 
-    async def _ensure_asr(self, stream_epoch: int) -> FunASRSession:
+    async def _ensure_asr(
+        self, stream_epoch: int, identity: SessionIdentity | None = None
+    ) -> FunASRSession:
         if self._closed:
             raise RuntimeError("media provider is closed")
         if stream_epoch < 1:
@@ -381,8 +393,73 @@ class ExistingVoiceProviderAdapter:
             raise ValueError("ASR stream epoch moved backwards")
         elif stream_epoch > self._stream_epoch:
             await self._reset_asr_session(stream_epoch)
-            return await self._ensure_asr(stream_epoch)
+            return await self._ensure_asr(stream_epoch, identity)
+        # Every provider session the bridge creates follows the whitelist, so
+        # a factory the deployment built keeps logging the same sessions.
+        self._asr_text_debug = self._asr_text_debug_for(identity)
+        self._asr.asr_text_debug = self._asr_text_debug
+        if identity is not None:
+            # The provider logs its own finals without this adapter around it.
+            self._asr.asr_text_debug_session_id = identity.session_id
+            self._asr.asr_text_debug_subject_ids = (
+                identity.subject_id,
+                identity.device_id,
+            )
         return self._asr
+
+    def _asr_text_debug_for(self, identity: SessionIdentity | None) -> AsrTextDebugSubjects:
+        """The subjects whose ASR text this adapter's provider session may log."""
+
+        subjects = self.asr_text_debug_subjects
+        if subjects is None or identity is None:
+            return AsrTextDebugSubjects()
+        return subjects.for_session(identity.subject_id, identity.device_id)
+
+    def _log_asr_text_debug_decision(
+        self,
+        identity: SessionIdentity,
+        result: ASRResult,
+        *,
+        source: str,
+    ) -> None:
+        """The final as the bridge normalized it, next to the playback-stop verdict.
+
+        The line also covers an empty final (``text_len=0``): a 「停」 that
+        FunASR dropped never reaches the stop guards visible at all.
+        """
+
+        # The mapped line stands for the audio this adapter delivered, so it
+        # is written where the audio runs, never only where a provider was made.
+        subjects = self.asr_text_debug_subjects
+        if subjects is None or not subjects.enabled:
+            return
+        boundary = getattr(identity, "last_playback_end_sample", None)
+        origin = boundary or 0
+        start_ms = (result.capture_start_sample - origin) * 1000 // self.config.sample_rate
+        end_ms = (result.capture_end_sample - origin) * 1000 // self.config.sample_rate
+        line = asr_text_debug_line(
+            subjects,
+            identity.subject_id,
+            identity.device_id,
+            source=source,
+            session_id=identity.session_id,
+            subject_sha256_8=subject_tag(identity.subject_id),
+            device_sha256_8=subject_tag(identity.device_id),
+            stream_epoch=result.stream_epoch,
+            task_epoch=result.task_epoch,
+            sentence_id=result.sentence_id,
+            final=result.is_final,
+            empty=not result.text.strip(),
+            text_len=len(result.text),
+            begin_ms=result.provider_begin_ms if result.provider_begin_ms is not None else start_ms,
+            end_ms=result.provider_end_ms if result.provider_end_ms is not None else end_ms,
+            begin_sample=result.capture_start_sample,
+            end_sample=result.capture_end_sample,
+            playback_boundary_sample=boundary,
+            text=excerpt(result.text) if result.text else None,
+        )
+        if line is not None:
+            logger.info(line)
 
     def _remember_asr_task(self, asr: FunASRSession, stream_epoch: int) -> None:
         task_id = str(getattr(asr, "task_id", "") or "")
@@ -408,7 +485,7 @@ class ExistingVoiceProviderAdapter:
             raise ValueError("provider frame identity does not match session")
         if len(frame.payload) % 2:
             raise ValueError("provider input must be 16-bit PCM")
-        asr = await self._ensure_asr(identity.stream_epoch)
+        asr = await self._ensure_asr(identity.stream_epoch, identity)
         self._remember_asr_task(asr, identity.stream_epoch)
         await asr.send_pcm(
             frame.payload,
@@ -442,7 +519,7 @@ class ExistingVoiceProviderAdapter:
 
         if self._asr is None or not self._audio_since_finalize:
             return ()
-        asr = await self._ensure_asr(identity.stream_epoch)
+        asr = await self._ensure_asr(identity.stream_epoch, identity)
         previous_task_id = str(getattr(asr, "task_id", "") or "")
         if not previous_task_id:
             raise RuntimeError("FunASR segment boundary has no active task id")
@@ -481,6 +558,7 @@ class ExistingVoiceProviderAdapter:
             if event.event == "result-generated" and event.sentence is not None:
                 result = self._map_asr_event(asr, event, identity.stream_epoch)
                 if result is not None:
+                    self._log_asr_text_debug_decision(identity, result, source="segment_final")
                     results.append(result)
                     if event.task_id == previous_task_id and result.is_final:
                         final_seen = True
@@ -1796,6 +1874,7 @@ def build_production_provider_factory(
         raise ValueError("orchestrated LLM builder did not return a session factory")
 
     asr_config = FunASRConfig.from_env()
+    asr_text_debug_subjects = AsrTextDebugSubjects.from_env()
     tts_config = DoubaoTTSConfig.from_env()
     if getattr(settings, "environment", "development") == "production":
         doubao_auth = tts_config.api_key.strip() or (
@@ -1837,8 +1916,11 @@ def build_production_provider_factory(
             asr_session_factory=lambda: FunASRSession(
                 replace(asr_config),
                 metrics=GLOBAL_METRICS,
+                asr_text_debug_session_id=identity.session_id,
+                asr_text_debug_subject_ids=(identity.subject_id, identity.device_id),
             ),
             language_model=language_model,
+            asr_text_debug_subjects=asr_text_debug_subjects,
             speech_synthesis=cast(
                 SpeechSynthesisHandler,
                 DoubaoTTS(replace(tts_config), metrics=GLOBAL_METRICS),
