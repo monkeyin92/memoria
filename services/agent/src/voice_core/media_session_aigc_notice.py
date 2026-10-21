@@ -264,20 +264,23 @@ class MediaSessionAigcNoticeMixin:
         context: _MediaVoiceSession,
         progress: PlaybackProgress,
     ) -> None:
-        """The device's terminal playback receipt ends the opening marker.
+        """A marker playback ACK never ends the opening marker.
 
-        ``STARTED`` and progress ACKs must not clear the fence: the switch to
-        the normal output path at stream completion would then leave the marker
-        owner and the speaking phase behind.
+        ``ENDED`` can arrive before the marker output stream completes. Clearing
+        the fence here would make ``_finish_aigc_opening_marker``'s guard skip
+        the owner release and leave the session in SPEAKING. That method owns
+        the single clear, after the owner is released and the floor is back.
         """
-
         fence = context.aigc_opening_marker_fence
         if (
             fence is not None
             and progress.generation_id == fence.generation_id
             and progress.event_type is PlaybackEventType.ENDED
         ):
-            context.aigc_opening_marker_fence = None
+            # The stream may still be draining when ENDED arrives. Keep the
+            # fence until _finish_aigc_opening_marker releases the owner and
+            # restores the listening phase.
+            return
 
     async def _finish_aigc_opening_marker(
         self, context: _MediaVoiceSession, fence: GenerationFence
