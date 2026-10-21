@@ -59,18 +59,10 @@ _TEMPLATE_IDS = (
 )
 # Exactly the four approved clips' PCM hashes from the reviewed manifest.
 _APPROVED_PCM_SHA256 = {
-    "crisis-self-v1": (
-        "f28af42f21ab1efc8c641c58bc4aba86cf9d7353812af6d3e90eac039f1fb545"
-    ),
-    "victim-support-v1": (
-        "6660d1446cd9fbcb6019cc86fe0cd0bc2f1333aa7cde427432008f20edcf5e3e"
-    ),
-    "support-other-v1": (
-        "67d919eca0a4d30089b171cfc9caa806b3788ac60180964cf2e0014b0c2a5a3c"
-    ),
-    "daily-limit": (
-        "c1fb628b85151b9588d49cc1663c516fcfc890e9e2953663e2b2bfade0b8bc93"
-    ),
+    "crisis-self-v1": ("f28af42f21ab1efc8c641c58bc4aba86cf9d7353812af6d3e90eac039f1fb545"),
+    "victim-support-v1": ("6660d1446cd9fbcb6019cc86fe0cd0bc2f1333aa7cde427432008f20edcf5e3e"),
+    "support-other-v1": ("67d919eca0a4d30089b171cfc9caa806b3788ac60180964cf2e0014b0c2a5a3c"),
+    "daily-limit": ("c1fb628b85151b9588d49cc1663c516fcfc890e9e2953663e2b2bfade0b8bc93"),
 }
 
 
@@ -295,9 +287,7 @@ async def test_fixed_safety_audio_crisis_tiers_and_daily_limit_play_prerecorded_
 
 
 @pytest.mark.asyncio
-async def test_fixed_safety_prerecorded_plays_before_any_realtime_tts_including_doubao() -> (
-    None
-):
+async def test_fixed_safety_prerecorded_plays_before_any_realtime_tts_including_doubao() -> None:
     catalog = _load()
     for template_id in _TEMPLATE_IDS:
         template = catalog.get(template_id)
@@ -329,6 +319,22 @@ async def test_fixed_safety_prerecorded_plays_before_any_realtime_tts_including_
             pcm = await _reply_pcm(adapter, identity, _fence(identity), script)
         assert inner.streams == 0
         assert pcm.startswith(template.pcm)
+
+
+@pytest.mark.asyncio
+async def test_doubao_only_provider_never_speaks_a_crisis_turn(tmp_path: Path) -> None:
+    """A broken configured clip goes to the shipped approved clip, not Doubao."""
+
+    broken_directory = _tampered_copy(tmp_path, pcm_sha256="0" * 64)
+    inner = _DoubaoRealtimeTTS()
+    wrapper = FixedSafetyTTS(inner, _load(broken_directory))
+    identity = _identity("doubao-never-crisis")
+    adapter = _adapter(CRISIS_SELF_SCRIPT, wrapper)
+
+    pcm = await _reply_pcm(adapter, identity, _fence(identity), CRISIS_SELF_SCRIPT)
+
+    assert inner.streams == 0
+    assert pcm.startswith(_load().get("crisis-self-v1").pcm or b"")
 
 
 @pytest.mark.asyncio
@@ -385,15 +391,11 @@ async def test_runtime_synthesized_crisis_audio_is_never_cached_as_approved(
     broken_adapter = _adapter(CRISIS_SELF_SCRIPT, broken_wrapper)
 
     with caplog.at_level("WARNING"):
-        first_pcm = await _reply_pcm(
-            broken_adapter, identity, broken_fence, CRISIS_SELF_SCRIPT
-        )
+        first_pcm = await _reply_pcm(broken_adapter, identity, broken_fence, CRISIS_SELF_SCRIPT)
 
     assert first_pcm == runtime_pcm
     assert runtime_inner.streams == 1
-    assert broken_adapter.fixed_safety_heard_complete(
-        broken_fence, len(runtime_pcm) // 2
-    ) is None
+    assert broken_adapter.fixed_safety_heard_complete(broken_fence, len(runtime_pcm) // 2) is None
     assert any(
         "template_id=crisis-self-v1" in record.getMessage()
         and "not_playable" in record.getMessage()

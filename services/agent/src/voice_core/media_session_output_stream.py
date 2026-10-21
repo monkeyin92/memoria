@@ -16,6 +16,10 @@ from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.orchestration.interruption_guard import (
     is_short_assistant_farewell_reply,
 )
+from services.agent.src.voice_core.crisis_script_interrupt import (
+    active_subject_id,
+    publish_crisis_self_interrupt,
+)
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.media_bridge_server import MediaBridgeSession, PCMFrame
 from services.agent.src.voice_core.media_protocol import PlaybackEventType, PlaybackProgress
@@ -190,6 +194,10 @@ class MediaOutputStreamMixin:
             self,
             context: _MediaVoiceSession,
             fence: GenerationFence,
+        ) -> None: ...
+
+        def _schedule_aigc_round_closing(
+            self, context: _MediaVoiceSession, *, close_reason: str
         ) -> None: ...
 
         @staticmethod
@@ -722,9 +730,10 @@ class MediaOutputStreamMixin:
             )
         self._observe_projection_playback_evidence(context, fence, progress.event_type)
         # A marker is the device's notice for this round; it never becomes assistant text.
-        if getattr(context, "aigc_opening_marker_fence", None) is not None or getattr(
-            context, "aigc_closing_marker_fence", None
-        ) is not None:
+        if (
+            getattr(context, "aigc_opening_marker_fence", None) is not None
+            or getattr(context, "aigc_closing_marker_fence", None) is not None
+        ):
             if self._is_aigc_marker_fence(context, fence):
                 self._on_aigc_marker_playback(context, progress)
                 return
@@ -1155,10 +1164,8 @@ class MediaOutputStreamMixin:
             raise
         if emitted_audio and context.runtime.fence.matches(fence):
             if self._is_aigc_marker_fence(context, fence):
-                # The closing marker is the round's last audible output; the
-                # session closes after it, so it gets no completion lifecycle.
-                # The opening marker owns the turn alone, so it must hand the
-                # floor back before the wake acknowledgement is admitted.
+                # Both markers own a wire-legal turn alone, so each hands the
+                # floor back before the next source is admitted.
                 await self._finish_aigc_opening_marker(context, fence)
                 return OutputDispatchResult(
                     fence,
@@ -1585,6 +1592,10 @@ class MediaOutputStreamMixin:
         if owner is not None and not owner.fence.matches(fence):
             return
         self._record_playback_boundary(context)
+        wake_ack = (
+            context.device_wake_ack_fence is not None
+            and context.device_wake_ack_fence.matches(fence)
+        )
         endpoint_overlap = getattr(self, "endpoint_overlapped_pending_after_playback", None)
         if callable(endpoint_overlap):
             endpoint_overlap(context)
@@ -1633,6 +1644,10 @@ class MediaOutputStreamMixin:
         # race between playback.ended and delegation completion, and could send
         # new PCM into a fence the device had already terminally closed.
         await self._start_selected_output(context)
+        self._schedule_aigc_round_closing(
+            context,
+            close_reason="wake_ack" if wake_ack else "reply_completed",
+        )
 
     async def _fail_playback_output(
         self,
@@ -1651,6 +1666,19 @@ class MediaOutputStreamMixin:
             fence,
             ReplyDeliveryEvent.ERROR,
             reason,
+        )
+        # A playback/transport failure is one of the three cases that may raise
+        # the parent's unfinished-script reminder. A user stop never reaches
+        # this method, and its announced text is cleared before any later close.
+        publish_crisis_self_interrupt(
+            getattr(self, "crisis_script_interrupt_publisher", None),
+            announced_text=context.output.assistant_text,
+            crisis_reply_heard=context.crisis_reply_heard,
+            minor_user_id=active_subject_id(context),
+            session_id=fence.session_id,
+            turn_id=fence.turn_id,
+            generation_id=fence.generation_id,
+            tool_epoch=fence.tool_epoch,
         )
         await self._cancel_reply_task(
             context,
@@ -1671,6 +1699,7 @@ class MediaOutputStreamMixin:
         context.output.output_complete_emitted = False
         if cancelled is None:
             await context.runtime.on_assistant_reply_aborted(fence, cause=reason)
+            self._schedule_aigc_round_closing(context, close_reason=reason)
             return
         task_epoch, context_version = self._event_versions(context, cancelled)
         await self.bridge.emit_generation(
@@ -1681,3 +1710,4 @@ class MediaOutputStreamMixin:
             task_epoch=task_epoch,
             context_version=context_version,
         )
+        self._schedule_aigc_round_closing(context, close_reason=reason)

@@ -40,7 +40,10 @@ from services.agent.src.providers.asr_failover import (
     build_asr_session_factory,
 )
 from services.agent.src.providers.asr_session import StreamingASRSession
-from services.agent.src.providers.fixed_safety_audio import heard_complete_by_sentence
+from services.agent.src.providers.fixed_safety_audio import (
+    heard_complete_by_sentence,
+    shipped_approved_catalog,
+)
 from services.agent.src.providers.funasr_protocol import (
     FunASRServerEvent,
     sentence_to_asr_result,
@@ -209,10 +212,7 @@ class ExistingVoiceProviderAdapter:
     def asr_rotation_pending(self) -> bool:
         """Whether the next provider task is deliberately waiting for PCM."""
 
-        return bool(
-            self._asr is not None
-            and getattr(self._asr, "rotation_pending", False)
-        )
+        return bool(self._asr is not None and getattr(self._asr, "rotation_pending", False))
 
     @property
     def current_asr_audio_task_snapshot(self) -> ProviderAudioTaskSnapshot | None:
@@ -534,9 +534,7 @@ class ExistingVoiceProviderAdapter:
         boundary_seen = False
         final_seen = False
         tail_deadline: float | None = None
-        tail_grace_s = float(
-            getattr(getattr(asr, "config", None), "post_finish_tail_grace_s", 0.0)
-        )
+        tail_grace_s = float(getattr(getattr(asr, "config", None), "post_finish_tail_grace_s", 0.0))
         # Audio ingestion continuously drains provider events. The larger
         # history bound is a fail-closed ceiling for the small tail that can
         # remain between the final PCM frame and task-finished.
@@ -567,10 +565,7 @@ class ExistingVoiceProviderAdapter:
                         final_seen = True
             if event.event == "task-finished" and event.task_id == previous_task_id:
                 boundary_seen = True
-                tail_deadline = (
-                    asyncio.get_running_loop().time()
-                    + tail_grace_s
-                )
+                tail_deadline = asyncio.get_running_loop().time() + tail_grace_s
         if not boundary_seen:
             raise RuntimeError("FunASR task boundary event was not available to the media adapter")
         self._audio_since_finalize = False
@@ -1115,9 +1110,7 @@ class ExistingVoiceProviderAdapter:
                 final=False,
                 text_audio_start_sample=audio_start if is_final else None,
                 text_audio_end_sample=audio_end if is_final else None,
-                text_spans=(
-                    (MediaTextSpan(display, audio_start, audio_end),) if is_final else ()
-                ),
+                text_spans=((MediaTextSpan(display, audio_start, audio_end),) if is_final else ()),
             )
             if last is not None:
                 yield last
@@ -1185,8 +1178,7 @@ class ExistingVoiceProviderAdapter:
             joined_line = catalogue.by_text(joined)
             if joined_line is not None:
                 logger.info(
-                    "labelled line reply content_id=%s ai_generated=%s "
-                    "session=%s turn=%s",
+                    "labelled line reply content_id=%s ai_generated=%s session=%s turn=%s",
                     joined_line.aigc["content_id"],
                     joined_line.aigc["ai_generated"],
                     fence.session_id,
@@ -1209,8 +1201,7 @@ class ExistingVoiceProviderAdapter:
                     line = catalogue.by_text(phrase.spoken)
                     assert line is not None
                     logger.info(
-                        "labelled line reply content_id=%s ai_generated=%s "
-                        "session=%s turn=%s",
+                        "labelled line reply content_id=%s ai_generated=%s session=%s turn=%s",
                         line.aigc["content_id"],
                         line.aigc["ai_generated"],
                         fence.session_id,
@@ -1388,10 +1379,12 @@ class ExistingVoiceProviderAdapter:
                         fence.generation_id,
                         alignment() if callable(alignment) else "unavailable",
                     )
-                    tts_text = "".join(
-                        part for part in phrases
-                        if labelled_catalogue().by_text(part) is None
-                    ) or complete_text
+                    tts_text = (
+                        "".join(
+                            part for part in phrases if labelled_catalogue().by_text(part) is None
+                        )
+                        or complete_text
+                    )
                     timed_text_spans = (MediaTextSpan(tts_text, 0, audio_end),)
                 self._record_tts_frame_age(held_frame_received_at)
                 yield MediaReplyChunk(
@@ -1437,16 +1430,12 @@ class ExistingVoiceProviderAdapter:
     ) -> AsyncIterator[MediaReplyChunk]:
         """Speak one approved safety script from its stored clip first.
 
-        The crisis line is the one reply a child must hear in full. The four
-        approved clips under ``infra/voices/fixed_safety`` are played directly,
-        without a live provider, whenever the manifest's ``pcm_sha256`` still
-        matches. Only a missing file or a failed PCM/file hash degrades to live
-        TTS, starting on StepFun by default
-        (``STEPFUN_TTS_FIXED_SAFETY_PRIMARY_FIRST``) or on Doubao when that
-        switch is off; nothing is synthesized into an approved cache. A live
-        take is still buffered whole so a dropped provider cannot truncate the
-        line, and the fallback is retried once inside the opening budget (C1,
-        2026-10-21 03:51:53Z).
+        The crisis line is the one reply a child must hear in full. The chain is
+        fixed: the configured approved clip, then StepFun realtime TTS, then the
+        four clips shipped with the image (re-verified by sha256). Doubao never
+        speaks a crisis turn. A live take is buffered whole so a dropped provider
+        cannot truncate the line, and the fallback is retried once inside the
+        opening budget (C1, 2026-10-21 03:51:53Z).
         """
 
         spoken = "".join(phrase.spoken for phrase in phrases)
@@ -1456,7 +1445,7 @@ class ExistingVoiceProviderAdapter:
             source = "prerecorded"
             self._prerecorded_fixed_safety[fence] = (template.spoken, len(pcm) // 2)
         else:
-            pcm, source = await self._fixed_safety_script_pcm(
+            pcm, source = await self._fixed_safety_live_then_shipped_clip(
                 spoken,
                 fence,
                 cancellation,
@@ -1479,13 +1468,58 @@ class ExistingVoiceProviderAdapter:
         ):
             yield chunk
 
+    async def _fixed_safety_live_then_shipped_clip(
+        self,
+        spoken: str,
+        fence: GenerationFence,
+        cancellation: CancellationContext,
+        cancel_event: asyncio.Event,
+    ) -> tuple[bytes, str]:
+        """StepFun realtime, then the shipped approved clip. Never Doubao."""
+
+        if self._fixed_safety_stepfun_available():
+            try:
+                return await self._fixed_safety_script_pcm(
+                    spoken,
+                    fence,
+                    cancellation,
+                    cancel_event,
+                )
+            except RuntimeError:
+                logger.warning(
+                    "fixed safety StepFun fallback produced no audio; using the shipped clip "
+                    "session=%s",
+                    fence.session_id,
+                )
+        else:
+            logger.warning(
+                "fixed safety live provider is not StepFun; using the shipped clip session=%s",
+                fence.session_id,
+            )
+        template = self._approved_prerecorded_template(
+            spoken,
+            catalog=shipped_approved_catalog(),
+        )
+        if template is None:
+            raise RuntimeError("fixed safety script produced no audio")
+        pcm = template.pcm or b""
+        self._prerecorded_fixed_safety[fence] = (template.spoken, len(pcm) // 2)
+        return pcm, "prerecorded_fallback"
+
+    def _fixed_safety_stepfun_available(self) -> bool:
+        provider = str(getattr(self.speech_synthesis, "provider", "stepfun"))
+        return provider not in {"doubao", "volcengine_doubao"}
+
     def _approved_prerecorded_template(
         self,
         spoken: str,
+        *,
+        catalog: Any | None = None,
     ) -> Any | None:
         """The stored clip for ``spoken``, only when its PCM matches the manifest."""
 
-        catalog = getattr(self.speech_synthesis, "fixed_safety_catalog", None)
+        if catalog is None:
+            catalog = getattr(self.speech_synthesis, "fixed_safety_catalog", None)
         match = getattr(catalog, "match", None)
         if not callable(match):
             logger.warning("fixed safety prerecorded unavailable reason=no_catalog")
@@ -1493,8 +1527,7 @@ class ExistingVoiceProviderAdapter:
         template = match(spoken)
         if template is None:
             logger.warning(
-                "fixed safety prerecorded unavailable reason=not_in_catalog "
-                "spoken_sha256_16=%s",
+                "fixed safety prerecorded unavailable reason=not_in_catalog spoken_sha256_16=%s",
                 hashlib.sha256(spoken.encode("utf-8")).hexdigest()[:16],
             )
             return None
@@ -1544,17 +1577,16 @@ class ExistingVoiceProviderAdapter:
         cancellation: CancellationContext,
         cancel_event: asyncio.Event,
     ) -> tuple[bytes, str]:
-        """Synthesize the whole approved script as the live fallback.
+        """Synthesize the whole approved script on StepFun as the live fallback.
 
-        Used only when the stored clip is missing or fails its manifest hash.
-        The script is pushed to the bound speech engine as one unit, so a
-        provider that loses the connection mid-unit still delivers the full line
-        (the failover wrapper buffers each engine's take, drops a partial one,
-        and speaks the whole text again on the next engine). That cascade
-        follows ``STEPFUN_TTS_FIXED_SAFETY_PRIMARY_FIRST`` inside its own
-        allowance; the deadline here bounds every attempt so a cold,
-        unreachable provider cannot exceed the five-second crisis budget.
-        Nothing synthesized here is stored as an approved take.
+        Used only when the stored clip is missing or fails its manifest hash, and
+        only while the bound engine is StepFun. The script is pushed as one unit,
+        so a provider that loses the connection mid-unit still delivers the full
+        line: the failover wrapper buffers the take, drops a partial one, and
+        retries the whole text. Doubao is never a candidate for this unit; a
+        StepFun failure moves to the shipped approved clip instead. The deadline
+        bounds every attempt inside the five-second crisis budget. Nothing
+        synthesized here is stored as an approved take.
         """
 
         deadline = monotonic() + self.config.fixed_safety_opening_budget_s

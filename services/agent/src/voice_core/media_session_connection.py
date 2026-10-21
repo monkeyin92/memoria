@@ -11,6 +11,10 @@ from typing import TYPE_CHECKING
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.session_recap_sink import snapshot_context_turns
+from services.agent.src.voice_core.crisis_script_interrupt import (
+    active_subject_id,
+    publish_crisis_self_interrupt,
+)
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_bridge_server import MediaBridgeSession
 from services.agent.src.voice_core.media_protocol import (
@@ -40,9 +44,9 @@ class MediaSessionConnectionMixin:
         _sessions: dict[str, _MediaVoiceSession]
         _cleanup_tasks: dict[str, asyncio.Task[None]]
 
-        def _finish_aigc_round(
-            self, context: _MediaVoiceSession, *, close_reason: str
-        ) -> None: ...
+        def _finish_aigc_round(self, context: _MediaVoiceSession, *, close_reason: str) -> None: ...
+
+        async def _cancel_aigc_round_closing(self, context: _MediaVoiceSession) -> None: ...
 
         async def open_session(self, identity: SessionIdentity) -> _MediaVoiceSession: ...
 
@@ -57,13 +61,9 @@ class MediaSessionConnectionMixin:
             preserve_remaining: bool,
         ) -> None: ...
 
-        def _cancel_max_user_speech_watchdog(
-            self, context: _MediaVoiceSession
-        ) -> None: ...
+        def _cancel_max_user_speech_watchdog(self, context: _MediaVoiceSession) -> None: ...
 
-        def _cancel_speaking_stall_watchdog(
-            self, context: _MediaVoiceSession
-        ) -> None: ...
+        def _cancel_speaking_stall_watchdog(self, context: _MediaVoiceSession) -> None: ...
 
         async def _record_interrupted_timed_spans(
             self, context: _MediaVoiceSession, fence: GenerationFence
@@ -107,9 +107,7 @@ class MediaSessionConnectionMixin:
         # A stop is a barge-in: a closing marker that has not started is dropped
         # (the next round's opening marker replaces it) and a playing one is released.
         context.aigc_closing_marker_state = (
-            "interrupted"
-            if context.aigc_closing_marker_state == "playing"
-            else "skipped"
+            "interrupted" if context.aigc_closing_marker_state == "playing" else "skipped"
         )
         context.aigc_closing_marker_fence = None
         # MediaBridgeSession has already advanced its authoritative generation
@@ -254,9 +252,7 @@ class MediaSessionConnectionMixin:
 
         publisher = getattr(self, "session_recap_publisher", None)
         profile = context.runtime.mode_policy.runtime_profile
-        subject_category = (
-            profile.profile.subject_category if profile is not None else None
-        )
+        subject_category = profile.profile.subject_category if profile is not None else None
         subject_id = (
             profile.profile.active_subject_id
             if profile is not None
@@ -374,11 +370,25 @@ class MediaSessionConnectionMixin:
         await self._cancel_audio_pump(context)
         await self._record_daily_chat_usage(context)
         await self._publish_child_session_recap(context)
+        # A power/network loss during an unfinished fixed safety script is the
+        # other case that raises the parent reminder. A user stop clears the
+        # announced text before this path, and a completed script is no longer
+        # audible.
+        if context.runtime.floor.fixed_safety_audible:
+            publish_crisis_self_interrupt(
+                getattr(self, "crisis_script_interrupt_publisher", None),
+                announced_text=context.output.assistant_text,
+                crisis_reply_heard=context.crisis_reply_heard,
+                minor_user_id=active_subject_id(context),
+                session_id=context.identity.session_id,
+                turn_id=context.runtime.fence.turn_id,
+                generation_id=context.runtime.fence.generation_id,
+                tool_epoch=context.runtime.fence.tool_epoch,
+            )
         # The round ends here for an explicit stop or a client close; a timed-out
         # silence round already recorded itself before its closing marker.
-        self._finish_aigc_round(
-            context, close_reason=context.standby_reason or "session_closed"
-        )
+        await self._cancel_aigc_round_closing(context)
+        self._finish_aigc_round(context, close_reason=context.standby_reason or "session_closed")
         await context.runtime.close()
         await context.provider.close(context.identity)
         # The registry owns the transport session created by the bridge. Once

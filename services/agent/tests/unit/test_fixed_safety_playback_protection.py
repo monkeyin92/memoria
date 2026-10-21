@@ -1,12 +1,11 @@
-"""A fixed safety script is interrupted only by an explicit stop word.
+"""A fixed safety script plays to completion even when the child says 「停」.
 
-Field 2026-10-21 H01 cut crisis-self-v1 after 5.4 s, before 12356, on a final
-the old guard read as a spoken stop.  Product/compliance 2026-10-21 (12:02):
-a crisis script may be ended at once by an explicit stop word (「停」「别说了」,
-the same judgment as an ordinary dialogue), without playing the number
-sentence first; every other interjection, noise, wait or completion turn
-still cannot cut it (#346).  After a stop the record, the pin and the parent
-push are unchanged, and crisis-self/victim mark the unfinished-script detail.
+Field 2026-10-21 H01 cut crisis-self-v1 after 5.4 s, before 12356. Product and
+compliance decided on 2026-10-22 00:40 that the fixed safety script is not
+interruptible by voice, exactly like a head pat or screen tap (#355 changes
+the earlier 2026-10-21 stop rule). A stop must not cut the line, and it must
+not raise the parent's unfinished-script reminder; that reminder is reserved
+for power loss, network loss and playback failure.
 """
 
 from __future__ import annotations
@@ -42,10 +41,10 @@ async def _finish_script(harness: _StoryHarness) -> None:
 
 @_SCRIPTS
 @pytest.mark.asyncio
-async def test_device_stop_word_ends_the_crisis_script_at_once(
+async def test_device_stop_word_does_not_cut_the_crisis_script(
     script: FixedSafetyScript,
 ) -> None:
-    """「停」 cuts the script before its number sentence; the pair still records."""
+    """「停」 is ignored while the fixed safety script is audible."""
 
     async def scenario(harness: _StoryHarness) -> None:
         published: list[str] = []
@@ -53,15 +52,14 @@ async def test_device_stop_word_ends_the_crisis_script_at_once(
         playing = await harness.start_story()
         assert harness.runtime.floor.fixed_safety_audible
         await harness.audio_frames(15, final_text="停")
-        await harness.wait_for(lambda: bool(harness.cancel_effects()))
-        harness.assert_story_stopped_session_open(playing)
+        await harness.assert_story_still_playing(playing)
+        assert published == []
         assert not harness.closed()
-        # crisis-self and victim mark the unfinished script for the parent;
-        # support-other has no hotline sentence in the tier table.
-        expected_marks = 0 if script is SUPPORT_RELAY_SCRIPT else 1
-        assert len(published) == expected_marks
-        if published:
-            assert "停" not in published[0]
+
+        await _finish_script(harness)
+        await harness.settle()
+        assert harness.cancel_effects() == []
+        assert published == []
 
     await _run_story(
         _device_identity(f"safety-stop-{script.template_id}"),

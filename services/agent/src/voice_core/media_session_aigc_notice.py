@@ -93,6 +93,14 @@ class MediaSessionAigcNoticeMixin:
 
         async def _speak_device_wake_ack(self, context: _MediaVoiceSession) -> None: ...
 
+        async def _wait_for_output_idle(
+            self,
+            context: _MediaVoiceSession,
+            *,
+            timeout_s: float = ...,
+            wait_for_start: bool = ...,
+        ) -> bool: ...
+
     # Round bookkeeping ---------------------------------------------------
 
     def _start_aigc_round(
@@ -106,6 +114,7 @@ class MediaSessionAigcNoticeMixin:
             return context.aigc_round
         round_logger = self.aigc_round_logger
         if round_logger is None:
+            context.aigc_round_active = True
             return None
         record = round_logger.start()
         context.aigc_round = record
@@ -122,22 +131,128 @@ class MediaSessionAigcNoticeMixin:
     def _finish_aigc_round(self, context: _MediaVoiceSession, *, close_reason: str) -> None:
         record = context.aigc_round
         round_logger = self.aigc_round_logger
-        if record is None or round_logger is None:
+        if record is None:
+            context.aigc_round_active = False
+            context.aigc_opening_marker_pending = False
             return
         context.aigc_round = None
+        context.aigc_round_active = False
         context.aigc_opening_marker_pending = False
-        if record.ended_at is not None:
+        if round_logger is None or record.ended_at is not None:
             return
         try:
             round_logger.finish(record, close_reason=close_reason_for(close_reason))
         except Exception:
             logger.exception("AIGC round log failed session=%s", context.identity.session_id)
 
+    async def _cancel_aigc_round_closing(self, context: _MediaVoiceSession) -> None:
+        task = context.aigc_closing_task
+        context.aigc_closing_task = None
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    def _reset_aigc_closing_marker(self, context: _MediaVoiceSession) -> None:
+        context.aigc_closing_marker_state = "idle"
+        context.aigc_closing_marker_fence = None
+        context.aigc_closing_marker_started_at = None
+
+    async def _begin_aigc_reply_round(
+        self, context: _MediaVoiceSession, *, reason: str = "reply_turn"
+    ) -> None:
+        """Open the notice pair for one reply turn before its first audio.
+
+        A previous round's closing marker is allowed to finish first; a reply
+        that starts on top of it would make the notice order depend on output
+        queue timing. The opening marker only needs to be admitted here: the
+        reply is queued behind it, so the child hears START before the answer.
+        """
+
+        if context.identity.client_type != "device":
+            return
+        opening_enabled = self.aigc_notice_config.position_enabled("opening")
+        closing_enabled = self.aigc_notice_config.position_enabled("closing")
+        if not opening_enabled and not closing_enabled:
+            return
+        closing_marker_was_active = context.aigc_closing_marker_state != "idle"
+        if await self._wait_aigc_round_closed(context) or closing_marker_was_active:
+            # A scheduled END marker may still be draining its output task even
+            # after it was heard. Let that dispatch retire before admitting the
+            # next START marker; a barge-in has no closing marker and must not wait.
+            await self._wait_for_output_idle(context, timeout_s=2.0)
+        self._finish_aigc_round(context, close_reason="superseded")
+        self._start_aigc_round(context, reason=reason)
+        self._reset_aigc_closing_marker(context)
+        context.aigc_opening_marker_pending = opening_enabled
+        if not opening_enabled:
+            context.aigc_opening_marker_ready_at = time.monotonic()
+            return
+        await self._speak_aigc_opening_marker(context)
+
+    def _schedule_aigc_round_closing(
+        self, context: _MediaVoiceSession, *, close_reason: str
+    ) -> None:
+        """Close one reply turn with its END marker, including a stopped turn."""
+
+        if context.identity.client_type != "device" or not getattr(
+            context, "aigc_round_active", False
+        ):
+            return
+        task = context.aigc_closing_task
+        if task is not None and not task.done():
+            return
+        if context.aigc_closing_marker_state != "idle":
+            return
+        context.aigc_closing_task = asyncio.create_task(
+            self._close_aigc_round(context, close_reason=close_reason),
+            name=f"aigc-round-close-{context.identity.session_id}",
+        )
+
+    async def _wait_aigc_round_closed(self, context: _MediaVoiceSession) -> bool:
+        task = context.aigc_closing_task
+        if task is not None and task is not asyncio.current_task():
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=6.0)
+            except TimeoutError:
+                logger.warning(
+                    "AIGC round close did not finish session=%s",
+                    context.identity.session_id,
+                )
+            return True
+        if getattr(context, "aigc_round_active", False):
+            # The wake acknowledgement can be superseded before its own close
+            # was scheduled. Give that audible turn its END marker too.
+            await self._close_aigc_round(context, close_reason="superseded")
+        return False
+
+    async def _close_aigc_round(self, context: _MediaVoiceSession, *, close_reason: str) -> None:
+        if getattr(context, "aigc_round_closing", False):
+            return
+        context.aigc_round_closing = True
+        current = asyncio.current_task()
+        try:
+            if not context.closed and not context.standby_requested:
+                await self._wait_for_output_idle(context, timeout_s=6.0)
+                if (
+                    self.aigc_notice_config.position_enabled("closing")
+                    and context.aigc_closing_marker_state == "idle"
+                ):
+                    # A stop closes the user turn but the allowed notice still
+                    # ends the round. Reopen the assistant floor only long
+                    # enough to admit the cue; no conversation reply follows.
+                    if not context.runtime.output_floor_allows_assistant:
+                        context.runtime.open_assistant_floor(cause="aigc_closing_marker")
+                    await self._play_aigc_closing_marker(context)
+                await self._wait_for_output_idle(context, timeout_s=2.0)
+            self._finish_aigc_round(context, close_reason=close_reason)
+        finally:
+            context.aigc_round_closing = False
+            if context.aigc_closing_task is current:
+                context.aigc_closing_task = None
+
     # Opening -------------------------------------------------------------
 
-    def _open_aigc_round(
-        self, context: _MediaVoiceSession, *, reason: str = "device_wake"
-    ) -> None:
+    def _open_aigc_round(self, context: _MediaVoiceSession, *, reason: str = "device_wake") -> None:
         """Start the round record and mark which hooks the open path must run."""
 
         if context.identity.client_type != "device":
@@ -160,9 +275,7 @@ class MediaSessionAigcNoticeMixin:
         await self._play_aigc_opening_marker(context, pcm)
         context.aigc_opening_marker_pending = False
 
-    async def _play_aigc_opening_marker(
-        self, context: _MediaVoiceSession, pcm: bytes
-    ) -> None:
+    async def _play_aigc_opening_marker(self, context: _MediaVoiceSession, pcm: bytes) -> None:
         try:
             request = await self._admit_aigc_marker(
                 context,
@@ -173,9 +286,7 @@ class MediaSessionAigcNoticeMixin:
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception(
-                "AIGC opening marker failed session=%s", context.identity.session_id
-            )
+            logger.exception("AIGC opening marker failed session=%s", context.identity.session_id)
             return
         finally:
             context.aigc_opening_marker_pending = False
@@ -233,9 +344,7 @@ class MediaSessionAigcNoticeMixin:
         )
         if request is None:
             context.aigc_closing_marker_state = "unavailable"
-            logger.warning(
-                "AIGC closing marker not played session=%s", context.identity.session_id
-            )
+            logger.warning("AIGC closing marker not played session=%s", context.identity.session_id)
             return False
         context.aigc_closing_marker_fence = request.fence
         context.aigc_closing_marker_started_at = time.monotonic()
@@ -294,14 +403,21 @@ class MediaSessionAigcNoticeMixin:
         """
 
         opening = context.aigc_opening_marker_fence
-        if opening is None or not fence.matches(opening):
+        closing = getattr(context, "aigc_closing_marker_fence", None)
+        opening_marker = opening is not None and fence.matches(opening)
+        if not opening_marker and not (closing is not None and fence.matches(closing)):
             return
-        context.aigc_opening_marker_fence = None
+        if opening_marker:
+            context.aigc_opening_marker_fence = None
+        else:
+            context.aigc_closing_marker_fence = None
         self._release_output_owner(context, fence, reason="aigc_marker_complete")
         if context.closed or context.standby_requested:
             return
         if not context.runtime.fence.matches(fence):
             return
+        # Both markers own a wire-legal turn. Returning the floor here clears
+        # assistant_speaking, so the next round can admit its START marker.
         await context.runtime.on_media_playback_done(fence, "")
 
     async def _finish_aigc_closing_marker(
@@ -309,7 +425,6 @@ class MediaSessionAigcNoticeMixin:
     ) -> None:
         await self._wait_aigc_marker_heard(context, request)
         context.aigc_closing_marker_state = "done"
-        context.aigc_closing_marker_fence = None
         logger.info(
             "AIGC closing marker finished session=%s duration_s=%.3f",
             context.identity.session_id,
@@ -406,9 +521,7 @@ class MediaSessionAigcNoticeMixin:
         previous_phase = runtime.interaction_phase
         if session is not None:
             session.generation_active = True
-        runtime.set_interaction_phase(
-            InteractionPhase.THINKING_SILENT, cause="aigc_notice_marker"
-        )
+        runtime.set_interaction_phase(InteractionPhase.THINKING_SILENT, cause="aigc_notice_marker")
         now_ms = int(time.time() * 1_000)
         context_version = coordinator.current_context_version(session_id)
         intent = DelegationCoordinator.aigc_marker(
