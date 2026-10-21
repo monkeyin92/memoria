@@ -249,12 +249,17 @@ def test_speaker_guard_accepts_only_values_every_reader_treats_as_off(
 
 def test_script_names_no_release_tag_but_the_data_tree() -> None:
     # Whitelisted component overrides are the only other dated names.
-    stale = re.findall(r"\b20\d{6}-[a-z0-9.-]+", _code())
-    assert set(stale) == {
+    stale = {
+        name.removesuffix(".yml")
+        for name in re.findall(r"\b20\d{6}-[a-z0-9.-]+", _code())
+    }
+    assert stale == {
         "20260827-architecture-split-v1",
         "20261021-a94c438-pr345-pr346-pr348-pr352",
         "20261021-a94c438-pr345-pr346-pr348-pr352-pr353-pr355",
         "20261021-stepfun-c272af5",
+        "20261021-pr368-dd98c4a",
+        "20261021-main-f14be64",
     }
     for retired in (
         "$OLD",
@@ -384,6 +389,20 @@ STEPFUN_CONTROL_OVERRIDE_SHA = (
 )
 STEPFUN_BRIDGE_OVERRIDE_SHA = (
     "a1b51ef44d4f87160649ee2015de815089a27f15d27a88d678196ef507fa5c3c"
+)
+PR368_CONTROL_IMAGE = "memoria-control-api:20261021-pr368-dd98c4a"
+PR368_CONTROL_OVERRIDE = (
+    "component-releases/20261021-pr368-dd98c4a/override-control-pr368-dd98c4a.yml"
+)
+PR368_CONTROL_OVERRIDE_SHA = (
+    "bde575b693d379e47af7bbfbcbbcd857487532b78faef2d2957b4facaf1217c0"
+)
+MAIN_F14BE64_BRIDGE_IMAGE = "memoria-agent:20261021-main-f14be64"
+MAIN_F14BE64_BRIDGE_OVERRIDE = (
+    "component-releases/20261021-main-f14be64/override-bridge-20261021-main-f14be64.yml"
+)
+MAIN_F14BE64_BRIDGE_OVERRIDE_SHA = (
+    "4cfa1733236927709435c3f068276835a009de8e3603ba2bba08571cc96610cf"
 )
 
 _HOST_REPO = {
@@ -733,6 +752,18 @@ def test_the_override_whitelist_pins_every_persisted_copy() -> None:
             STEPFUN_BRIDGE_OVERRIDE_SHA,
             "/tmp/override-bridge-stepfun-c272af5.yml",
         ),
+        (
+            "/opt/memoria/component-releases/20261021-pr368-dd98c4a/"
+            "override-control-pr368-dd98c4a.yml",
+            PR368_CONTROL_OVERRIDE_SHA,
+            "/tmp/override-control-pr368-dd98c4a.yml",
+        ),
+        (
+            "/opt/memoria/component-releases/20261021-main-f14be64/"
+            "override-bridge-20261021-main-f14be64.yml",
+            MAIN_F14BE64_BRIDGE_OVERRIDE_SHA,
+            "/tmp/override-bridge-20261021-main-f14be64.yml",
+        ),
     ):
         assert path in script
         assert sha in script
@@ -970,6 +1001,103 @@ def test_freeze_accepts_the_stepfun_whitelist_entries(tmp_path: Path) -> None:
         f"overrides=control-api {control} {STEPFUN_CONTROL_OVERRIDE_SHA} sha256:control-live "
         f"voice-core-media-bridge {bridge} {STEPFUN_BRIDGE_OVERRIDE_SHA} sha256:bridge-live\n"
         in record
+    )
+
+
+@pytest.mark.parametrize(
+    ("service", "persisted", "sha", "origin"),
+    [
+        (
+            "control-api",
+            "/opt/memoria/component-releases/20261021-pr368-dd98c4a/"
+            "override-control-pr368-dd98c4a.yml",
+            PR368_CONTROL_OVERRIDE_SHA,
+            "/tmp/override-control-pr368-dd98c4a.yml",
+        ),
+        (
+            "voice-core-media-bridge",
+            "/opt/memoria/component-releases/20261021-main-f14be64/"
+            "override-bridge-20261021-main-f14be64.yml",
+            MAIN_F14BE64_BRIDGE_OVERRIDE_SHA,
+            "/tmp/override-bridge-20261021-main-f14be64.yml",
+        ),
+    ],
+)
+def test_override_spec_recognizes_the_new_whitelist_entries(
+    service: str, persisted: str, sha: str, origin: str
+) -> None:
+    program = "\n".join(
+        (
+            "set -Eeuo pipefail",
+            "export TAG=t COMMIT=c",
+            f"source {shlex.quote(str(SCRIPT))}",
+            f"override_spec {shlex.quote(persisted)}",
+            f"override_spec {shlex.quote(origin)}",
+        )
+    )
+
+    run = subprocess.run(["bash", "-c", program], capture_output=True, text=True, check=False)
+
+    assert run.returncode == 0, run.stderr
+    assert run.stdout == f"{service}|{persisted}|{sha}|{origin}\n" * 2
+
+
+def test_freeze_accepts_the_pr368_and_main_f14be64_whitelist_entries(
+    tmp_path: Path,
+) -> None:
+    host = component_host(tmp_path)
+    base = host.release_dir(COMPONENT_STACK) / "docker-compose.production.yml"
+    control = host.override_file(
+        PR368_CONTROL_OVERRIDE, "control-api", PR368_CONTROL_IMAGE
+    )
+    bridge = host.override_file(
+        MAIN_F14BE64_BRIDGE_OVERRIDE,
+        "voice-core-media-bridge",
+        MAIN_F14BE64_BRIDGE_IMAGE,
+    )
+    control_origin = host.tmp_override(
+        "override-control-pr368-dd98c4a.yml", "control-api", PR368_CONTROL_IMAGE
+    )
+    bridge_origin = host.tmp_override(
+        "override-bridge-20261021-main-f14be64.yml",
+        "voice-core-media-bridge",
+        MAIN_F14BE64_BRIDGE_IMAGE,
+    )
+    for service, image, image_id, origin, version in (
+        (
+            "control-api",
+            PR368_CONTROL_IMAGE,
+            "sha256:control-live",
+            control_origin,
+            "20261021-pr368-dd98c4a",
+        ),
+        (
+            "voice-core-media-bridge",
+            MAIN_F14BE64_BRIDGE_IMAGE,
+            "sha256:bridge-live",
+            bridge_origin,
+            "20261021-main-f14be64",
+        ),
+    ):
+        host.container(
+            service,
+            release=COMPONENT_STACK,
+            commit="e" * 40,
+            chain=f"{base},{origin}",
+            version=version,
+            image=image,
+            image_id=image_id,
+        )
+
+    run = host.step("freeze", tag=RELEASE)
+
+    assert run.returncode == 0, run.output
+    record = host.prev_record(RELEASE)
+    assert record is not None
+    assert (
+        f"overrides=control-api {control} {PR368_CONTROL_OVERRIDE_SHA} sha256:control-live "
+        f"voice-core-media-bridge {bridge} {MAIN_F14BE64_BRIDGE_OVERRIDE_SHA} "
+        "sha256:bridge-live\n" in record
     )
 
 
