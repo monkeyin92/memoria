@@ -321,6 +321,20 @@ def load_fixed_safety_audio_catalog(
     return FixedSafetyAudioCatalog.load(directory, enabled=enabled)
 
 
+@lru_cache(maxsize=1)
+def shipped_approved_catalog() -> FixedSafetyAudioCatalog:
+    """The four clips that ship with the image, independent of deployment config.
+
+    This is the last rung of the crisis chain. If a deployment's
+    ``FIXED_SAFETY_AUDIO_DIR`` is stale or disabled, these files still carry
+    the reviewed copy and their sha256 manifest, so the child hears the
+    approved line without any live provider.
+    """
+
+    directory = Path(__file__).resolve().parents[4] / DEFAULT_FIXED_SAFETY_AUDIO_DIR
+    return FixedSafetyAudioCatalog.load(directory)
+
+
 def fixed_safety_audio_directory(settings: object) -> str:
     value = getattr(settings, "fixed_safety_audio_dir", None)
     raw = (
@@ -803,6 +817,7 @@ __all__ = [
     "load_fixed_safety_audio_catalog",
     "parse_wav_bytes",
     "sentence_spans",
+    "shipped_approved_catalog",
     "spoken_sha256",
     "verify_fixed_safety_audio_directory",
     "wrap_fixed_safety_tts",

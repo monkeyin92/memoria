@@ -32,6 +32,7 @@ import httpx
 import pytest
 from cryptography.fernet import Fernet
 from services.agent.src.archive_sink import ArchiveSink, ArchiveSinkConfig
+from services.agent.src.voice_core.aigc_notice import AigcNoticeConfig
 from services.agent.tests.unit.media_session_support import _bind_verified_owner_classifier
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
 from services.agent.tests.unit.test_media_session_playback_stop import (
@@ -51,6 +52,8 @@ class _DeviceSession(_StoryHarness):
 
     def __init__(self, session_id: str, provider: _LongStoryProvider) -> None:
         super().__init__(_device_identity(session_id), provider)
+        # These cases pin the stall/archive contract, not notice timing.
+        self.registry.aigc_notice_config = AigcNoticeConfig(enabled=False)
         bind_owner_policy(self.runtime)
         _bind_verified_owner_classifier(self.runtime)
         self.evidence: list[dict[str, Any]] = []

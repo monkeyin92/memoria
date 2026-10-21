@@ -316,19 +316,13 @@ class PlaybackLedger:
 
         if not self.is_transport_watermarked(fence):
             return False
-        return (
-            fence not in self._explicit_terminal_required
-            or fence in self._terminal_received
-        )
+        return fence not in self._explicit_terminal_required or fence in self._terminal_received
 
     def is_transport_watermarked(self, fence: GenerationFence) -> bool:
         """Return true when the watermark covers all registered audio."""
 
         received_end = self._received_sample_end.get(fence, 0)
-        return (
-            received_end > 0
-            and self._completion_sample_end.get(fence, 0) >= received_end
-        )
+        return received_end > 0 and self._completion_sample_end.get(fence, 0) >= received_end
 
     def terminal_received(self, fence: GenerationFence) -> bool:
         return fence in self._terminal_received
@@ -337,6 +331,27 @@ class PlaybackLedger:
         """Return only text whose complete mapped span was actually rendered."""
 
         return "".join(span.text for span in self.acknowledged_spans(fence) if span.text)
+
+    def playing_text(self, fence: GenerationFence) -> str | None:
+        """The text line the device is rendering now, or ``None`` without spans.
+
+        A stop word is echo only when the current line itself contains it. The
+        whole-reply tail is too broad: a 「停」 from an earlier sentence would
+        swallow a later real stop. ``None`` means this ledger has no text spans
+        to decide with, so the caller keeps its text fallback.
+        """
+
+        spans = tuple(span for span in self._spans.get(fence, ()) if span.text)
+        if not spans:
+            return None
+        rendered = self._rendered_sample_end.get(fence, 0)
+        for span in spans:
+            if span.audio_start_sample <= rendered < span.audio_end_sample:
+                return span.text
+        for span in spans:
+            if span.audio_end_sample > rendered:
+                return span.text
+        return ""
 
     def rendered_sample_end(self, fence: GenerationFence) -> int:
         return self._rendered_sample_end.get(fence, 0)

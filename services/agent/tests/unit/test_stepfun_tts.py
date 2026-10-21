@@ -8,7 +8,7 @@ import json
 import time
 from collections.abc import Callable
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import websockets
@@ -30,6 +30,8 @@ from services.agent.src.providers.tts_failover import (
 )
 from services.agent.src.providers.tts_stream import AudioFrame, SynthesizedAudio
 from services.agent.src.runtime_provenance import DuplexRuntimeProvenanceMixin
+from websockets.exceptions import ConnectionClosedOK
+from websockets.frames import Close
 
 RATE = 24000
 PCM = b"\x01\x00" * 2400  # 100 ms of 16-bit mono
@@ -42,7 +44,11 @@ def _event(event_type: str, data: dict[str, Any]) -> str:
 def _audio_event(pcm: bytes) -> str:
     return _event(
         "tts.response.audio.delta",
-        {"session_id": "mock-session", "status": "unfinished", "audio": base64.b64encode(pcm).decode()},
+        {
+            "session_id": "mock-session",
+            "status": "unfinished",
+            "audio": base64.b64encode(pcm).decode(),
+        },
     )
 
 
@@ -214,7 +220,9 @@ class FakePrimary:
     def bind_fence(self, fence: GenerationFence) -> None:
         self.fence = fence
 
-    def set_trace_callback(self, callback: Callable[[str, str, dict[str, Any] | None], None]) -> None:
+    def set_trace_callback(
+        self, callback: Callable[[str, str, dict[str, Any] | None], None]
+    ) -> None:
         self._trace_callback = callback
 
     def trace(self, name: str, status: str = "ok", detail: dict[str, Any] | None = None) -> None:
@@ -281,11 +289,14 @@ async def test_normal_synthesis_uses_documented_events_and_24k_pcm() -> None:
 
     pcm = b"".join(event.frame.data for event in events)
     assert pcm == PCM
-    assert all(event.frame.sample_rate == 24000 and event.frame.num_channels == 1 for event in events)
+    assert all(
+        event.frame.sample_rate == 24000 and event.frame.num_channels == 1 for event in events
+    )
     assert server.paths[0] == f"/v1/realtime/audio?model={STEPFUN_TTS_MODEL}"
-    assert server.headers[0].get("Authorization") == "Bearer test-stepfun-secret" or server.headers[
-        0
-    ].get("authorization") == "Bearer test-stepfun-secret"
+    assert (
+        server.headers[0].get("Authorization") == "Bearer test-stepfun-secret"
+        or server.headers[0].get("authorization") == "Bearer test-stepfun-secret"
+    )
     create = next(event["data"] for event in server.client_events if event["type"] == "tts.create")
     assert create["voice_id"] == STEPFUN_TTS_VOICE == "yuanqishaonv"
     assert create["response_format"] == "pcm"
@@ -338,7 +349,9 @@ async def test_first_packet_failure_replays_the_whole_sentence_on_doubao() -> No
 
     assert [event.frame.data for event in events] == [b"\x02\x00" * 240, b"\x02\x00" * 240]
     assert backup.received == ["第一句。", "第二句。"]
-    assert wrapper.degraded is True
+    # A failed unit uses the backup, but the next unit retries StepFun.
+    assert wrapper.degraded is False
+    assert wrapper.breaker.consecutive_failures == 2
     assert fragments == [
         (0, "volcengine_doubao", "seed-tts-2.0", "backup-voice", True),
         (1, "volcengine_doubao", "seed-tts-2.0", "backup-voice", True),
@@ -401,7 +414,7 @@ async def test_failure_after_a_sentence_audio_repeats_the_unit_on_doubao() -> No
     assert joined.startswith(PCM)
     assert joined.endswith(b"\x02\x00" * 240)
     assert len(joined) > len(PCM) + 240 * 2
-    assert server.texts == ["第一句。", "第二句。"]
+    assert server.texts == ["第一句。", "第二句。", "第三句。", "第四句。"]
     # A unit that dies after its first packet is re-spoken whole on Doubao: a
     # truncated sentence is worse than a repeated one, especially for the approved
     # fixed safety script, which the media adapter now pushes as a single unit.
@@ -409,8 +422,8 @@ async def test_failure_after_a_sentence_audio_repeats_the_unit_on_doubao() -> No
     assert fragments == [
         (0, "stepfun", False),
         (1, "stepfun", False),
-        (2, "volcengine_doubao", True),
-        (0, "volcengine_doubao", True),
+        (2, "stepfun", False),
+        (0, "stepfun", False),
     ]
     assert wrapper.degraded is True
 
@@ -454,7 +467,9 @@ async def test_failure_before_audio_retries_that_sentence_on_doubao() -> None:
         await wrapper.aclose()
 
     assert backup.received == ["第二句。", "第三句。"]
-    assert server.texts == ["第一句。", "第二句。"]
+    # The third sentence retries StepFun before it too falls to the backup.
+    assert server.texts == ["第一句。", "第二句。", "第三句。"]
+    assert wrapper.degraded is False
 
 
 @pytest.mark.asyncio
@@ -484,7 +499,7 @@ async def test_odd_pcm_length_falls_back() -> None:
         await wrapper.aclose()
 
     assert backup.received == ["第一句。"]
-    assert wrapper.degraded is True
+    assert wrapper.degraded is False
 
 
 @pytest.mark.asyncio
@@ -528,7 +543,11 @@ async def test_auth_error_opens_a_long_breaker_and_subsequent_sessions_use_douba
                 await ws.send(
                     _event(
                         "tts.response.error",
-                        {"session_id": "mock-session", "code": "402", "message": "insufficient balance"},
+                        {
+                            "session_id": "mock-session",
+                            "code": "402",
+                            "message": "insufficient balance",
+                        },
                     )
                 )
                 return
@@ -677,7 +696,7 @@ async def test_moderation_rejection_switches_that_sentence_to_doubao() -> None:
 
     assert backup.received == ["危机脚本。"]
     assert [event.frame.data for event in events] == [b"\x02\x00" * 240]
-    assert wrapper.degraded is True
+    assert wrapper.degraded is False
 
 
 @pytest.mark.asyncio
@@ -773,6 +792,68 @@ async def test_aclose_closes_the_websocket_for_a_barge_in() -> None:
         await tts.aclose()
 
 
+@pytest.mark.parametrize(
+    ("sender_error", "expected_error"),
+    [
+        (ValueError("sender bug"), ValueError),
+        (ConnectionClosedOK(Close(1000, "stop"), None), None),
+    ],
+)
+@pytest.mark.asyncio
+async def test_sender_cleanup_only_hides_a_clean_socket_close(
+    sender_error: Exception,
+    expected_error: type[Exception] | None,
+) -> None:
+    sender_failed = asyncio.Event()
+
+    class _Socket:
+        def __init__(self) -> None:
+            self._created = False
+
+        async def send(self, raw: str) -> None:
+            event = json.loads(raw)
+            if event["type"] == "tts.text.delta":
+                sender_failed.set()
+                raise sender_error
+
+        async def recv(self) -> str:
+            if not self._created:
+                self._created = True
+                return _event("tts.response.created", {"session_id": "mock-session"})
+            await asyncio.wait_for(sender_failed.wait(), timeout=1)
+            return _done_event(PCM)
+
+    class _Pool:
+        def __init__(self, socket: _Socket) -> None:
+            self._socket = socket
+            self.discarded: list[str] = []
+
+        async def acquire(self) -> SimpleNamespace:
+            return SimpleNamespace(session_id="mock-session", ws=self._socket)
+
+        async def discard(self, connection: SimpleNamespace, *, reason: str) -> None:
+            del connection
+            self.discarded.append(reason)
+
+        async def aclose(self) -> None:
+            return None
+
+    tts = StepFunTTS(
+        StepFunTTSConfig(pool_size=1),
+        pool=cast(Any, _Pool(_Socket())),
+    )
+    stream = tts.stream(conn_options=APIConnectOptions(max_retry=0))
+    stream.push_text("你好。")
+    stream.end_input()
+    if expected_error is None:
+        events = [event async for event in stream]
+        assert events
+    else:
+        with pytest.raises(expected_error, match="sender bug"):
+            _ = [event async for event in stream]
+    await tts.aclose()
+
+
 def test_breaker_opens_half_opens_and_keeps_auth_failures_long() -> None:
     now = [100.0]
     breaker = TTSFailoverBreaker(
@@ -801,6 +882,27 @@ def test_breaker_opens_half_opens_and_keeps_auth_failures_long() -> None:
     now[0] += 11
     assert breaker.allow() is False
     now[0] += 1000
+    assert breaker.allow() is True
+
+
+def test_bound_engine_follows_a_shared_open_breaker_without_consuming_a_probe() -> None:
+    now = [100.0]
+    breaker = TTSFailoverBreaker(failures=1, open_s=10, clock=lambda: now[0])
+    wrapper = StepFunPrimaryTTS(
+        primary=FakePrimary(lambda: None),
+        backup=FakeBackupTTS(),
+        breaker=breaker,
+    )
+
+    assert wrapper.bound_engine() is wrapper.primary
+    breaker.record_failure()
+    assert breaker.state == "open"
+    assert wrapper.degraded is False
+    assert wrapper.bound_engine() is wrapper.backup
+
+    now[0] += 10
+    assert wrapper.bound_engine() is wrapper.primary
+    # The provenance query must not claim the half-open probe; selection still may.
     assert breaker.allow() is True
 
 
@@ -844,9 +946,10 @@ def test_factory_is_doubao_by_default_and_requires_both_switches(
     assert isinstance(built.backup, doubao_tts.DoubaoTTS)
     assert tts_factory.tts_provider_label(enabled) == "stepfun"
 
-    assert tts_factory.build_tts(
-        SimpleNamespace(tts_provider="doubao", stepfun_tts_enabled=True)
-    ) is sentinel
+    assert (
+        tts_factory.build_tts(SimpleNamespace(tts_provider="doubao", stepfun_tts_enabled=True))
+        is sentinel
+    )
 
 
 def test_env_defaults_use_stepaudio_3_and_yuanqishaonv_and_hide_the_key() -> None:
@@ -1055,17 +1158,12 @@ def test_env_example_matches_the_runtime_tts_defaults() -> None:
 
     root = Path(__file__).resolve().parents[4]
     example = (root / ".env.example").read_text(encoding="utf-8")
-    production = (
-        root / "infra" / "memoria.env.production.example"
-    ).read_text(encoding="utf-8")
+    production = (root / "infra" / "memoria.env.production.example").read_text(encoding="utf-8")
 
     for text in (example, production):
         assert "STEPFUN_TTS_MODEL=stepaudio-3-tts" in text
         assert "STEPFUN_TTS_VOICE=yuanqishaonv" in text
-        assert (
-            "DOUBAO_TTS_FALLBACK_SPEAKER=zh_female_kailangjiejie_uranus_bigtts"
-            in text
-        )
+        assert "DOUBAO_TTS_FALLBACK_SPEAKER=zh_female_kailangjiejie_uranus_bigtts" in text
 
 
 def test_main_backup_rejects_a_male_preset_before_construction() -> None:

@@ -34,10 +34,6 @@ from services.agent.src.conversation_close_router import (
     rule_conversation_close_only,
 )
 from services.agent.src.orchestration.interruption_guard import is_stop_command_only
-from services.agent.src.voice_core.crisis_script_interrupt import (
-    active_subject_id,
-    publish_crisis_self_interrupt,
-)
 from services.agent.src.voice_core.media_protocol import should_pause_asr_for_playback
 from services.agent.src.voice_core.media_session_pending_turn import EndpointPinSource
 from services.agent.src.voice_core.speech_timeline import ASRResult
@@ -86,13 +82,49 @@ _FIXED_SAFETY_COMMIT_RECHECK_S = 0.5
 
 # Sentence-final particles / punctuation: a follow-up that ends here may commit after one grace.
 _FOLLOWUP_COMPLETE_SUFFIXES = (
-    "吗", "呢", "吧", "呀", "啊", "哦", "啦", "嘛", "哈", "嗯",
-    "谢谢", "再见", "拜拜", "。", "！", "？", "!", "?",
+    "吗",
+    "呢",
+    "吧",
+    "呀",
+    "啊",
+    "哦",
+    "啦",
+    "嘛",
+    "哈",
+    "嗯",
+    "谢谢",
+    "再见",
+    "拜拜",
+    "。",
+    "！",
+    "？",
+    "!",
+    "?",
 )
 # Clause-internal endings: FunASR often finalizes here mid-utterance; hold the commit.
 _FOLLOWUP_INCOMPLETE_SUFFIXES = (
-    "的", "了", "着", "和", "跟", "在", "把", "被", "是", "有", "想", "要",
-    "会", "能", "可以", "因为", "所以", "但是", "然后", "如果", "虽然", "听",
+    "的",
+    "了",
+    "着",
+    "和",
+    "跟",
+    "在",
+    "把",
+    "被",
+    "是",
+    "有",
+    "想",
+    "要",
+    "会",
+    "能",
+    "可以",
+    "因为",
+    "所以",
+    "但是",
+    "然后",
+    "如果",
+    "虽然",
+    "听",
 )
 
 
@@ -113,7 +145,9 @@ def playback_followup_grace_s() -> float:
         value = float("nan")
     if _PLAYBACK_FOLLOWUP_MIN_GRACE_S <= value <= _PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S:
         return value
-    logger.warning("%s=%r is not within 0.3-1.2 s; keeping the default", PLAYBACK_FOLLOWUP_GRACE_ENV, raw)
+    logger.warning(
+        "%s=%r is not within 0.3-1.2 s; keeping the default", PLAYBACK_FOLLOWUP_GRACE_ENV, raw
+    )
     return _PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S
 
 
@@ -185,6 +219,10 @@ class MediaPlaybackStopMixin:
             context: _MediaVoiceSession, fence: GenerationFence
         ) -> bool: ...
 
+        def _schedule_aigc_round_closing(
+            self, context: _MediaVoiceSession, *, close_reason: str
+        ) -> None: ...
+
         async def _emit_cancel_generation(
             self,
             context: _MediaVoiceSession,
@@ -213,6 +251,22 @@ class MediaPlaybackStopMixin:
         ) -> None: ...
 
     @staticmethod
+    def _playback_current_line(context: _MediaVoiceSession) -> str:
+        """The line the device is playing now, or the announced tail as a fallback.
+
+        The ledger has per-phrase spans, so the current line is exact. A test
+        double or an older path without spans keeps the previous tail window.
+        """
+
+        playback = getattr(context.output, "playback", None)
+        fence = getattr(context.runtime, "fence", None)
+        if playback is not None and fence is not None:
+            line = playback.playing_text(fence)
+            if line is not None:
+                return str(line)
+        return context.output.assistant_text[-_PLAYBACK_STOP_ECHO_TAIL_CHARS:]
+
+    @staticmethod
     def _playback_text_is_echo(context: _MediaVoiceSession, text: str) -> bool:
         """True when ``text`` repeats what the reply announced most recently."""
 
@@ -222,16 +276,23 @@ class MediaPlaybackStopMixin:
 
     @staticmethod
     def _playback_stop_is_echo(context: _MediaVoiceSession, text: str) -> bool:
-        """True when a stop phrase repeats what the reply itself just said.
+        """True when the line now playing itself contains the stop character.
 
         A single character such as 「停」 is below the generic assistant-echo
-        guard, so a story line like 「小兔子大喊：停！」 would otherwise stop
-        its own reply through an open microphone.
+        guard. Suppress it only while the current line carries 「停」 (a story
+        line like 「小兔子大喊：停！」); a stop heard against any other line is
+        the owner's command, even if an earlier sentence said 「停」.
         """
 
-        return lexical_playback_control_only(text) and (
-            MediaPlaybackStopMixin._playback_text_is_echo(context, text)
-        )
+        if not lexical_playback_control_only(text):
+            return False
+        return "停" in MediaPlaybackStopMixin._playback_current_line(context)
+
+    @staticmethod
+    def _playback_echo_for_guard(context: _MediaVoiceSession, text: str) -> bool:
+        if lexical_playback_control_only(text):
+            return MediaPlaybackStopMixin._playback_stop_is_echo(context, text)
+        return MediaPlaybackStopMixin._playback_text_is_echo(context, text)
 
     def _playback_stop_diagnosis(self, context: _MediaVoiceSession, result: ASRResult) -> str:
         """Why a final could or could not be a spoken stop, without its text.
@@ -247,7 +308,7 @@ class MediaPlaybackStopMixin:
             start = result.capture_start_sample
             return (
                 f"stop_word={lexical_playback_control_only(text)} "
-                f"echo={self._playback_text_is_echo(context, text)} "
+                f"echo={self._playback_echo_for_guard(context, text)} "
                 f"in_flight={self._reply_in_flight(context)} "
                 f"speaking={context.runtime.assistant_speaking} "
                 f"owner={context.output.output_owner is not None} "
@@ -473,8 +534,7 @@ class MediaPlaybackStopMixin:
             time.monotonic() + playback_followup_grace_s()
         )
         logger.info(
-            "media playback-followup endpoint session=%s boundary=%s "
-            "endpoint=%s text_len=%s",
+            "media playback-followup endpoint session=%s boundary=%s endpoint=%s text_len=%s",
             context.identity.session_id,
             playback_end,
             endpoint,
@@ -491,22 +551,6 @@ class MediaPlaybackStopMixin:
         """
 
         if context.runtime.floor.fixed_safety_audible:
-            # Compliance 2026-10-21: an explicit stop word may end a crisis
-            # script at once; every other turn still waits for its end.
-            stop_text = context.pending.playback_stop_text
-            if (
-                context.pending.turn_endpoint_sample == endpoint_sample
-                and stop_text is not None
-                and is_stop_command_only(stop_text)
-            ):
-                logger.info(
-                    "media turn commit released for an explicit stop during fixed safety "
-                    "session=%s endpoint=%s text_len=%s",
-                    context.identity.session_id,
-                    endpoint_sample,
-                    len(stop_text),
-                )
-                return False
             logger.info(
                 "media turn commit held for fixed safety playback session=%s endpoint=%s",
                 context.identity.session_id,
@@ -589,7 +633,10 @@ class MediaPlaybackStopMixin:
         if not text.strip():
             return
         duration_ms = (end - start) // _SAMPLES_PER_MS
-        if context.runtime.playback_guarded_reason(text, duration_ms=duration_ms) == "assistant_echo":
+        if (
+            context.runtime.playback_guarded_reason(text, duration_ms=duration_ms)
+            == "assistant_echo"
+        ):
             return
         pending.turn_endpoint_sample = end
         pending.turn_retire_sample = max(pending.turn_retire_sample or 0, end)
@@ -739,9 +786,10 @@ class MediaPlaybackStopMixin:
             return
         # Everything before a straddling follow-up lies inside the echo window;
         # a recovered final overlapping the pending range is no new sentence.
-        straddle = self._playback_followup_straddles(context, result) and (
-            context.pending.turn_end_sample or 0
-        ) <= result.capture_start_sample
+        straddle = (
+            self._playback_followup_straddles(context, result)
+            and (context.pending.turn_end_sample or 0) <= result.capture_start_sample
+        )
         overlap = context.pending.pending_turn_playback_overlap
         playback_end = context.last_playback_end_sample
         stale_echo_window = (
@@ -828,9 +876,7 @@ class MediaPlaybackStopMixin:
         """
 
         start = result.capture_start_sample
-        context.runtime.speech_timeline.evict_before(
-            stream_epoch=result.stream_epoch, sample=start
-        )
+        context.runtime.speech_timeline.evict_before(stream_epoch=result.stream_epoch, sample=start)
         pending = context.pending
         pending.clock_fact_partial_text = None
         pending.clock_fact_partial_stable_since = None
@@ -865,7 +911,9 @@ class MediaPlaybackStopMixin:
         if self._playback_window_holds_close(
             context, capture_end_sample, text=text, source=source, result=result
         ) or self._playback_holds_early_endpoint(
-            context, text, kind=f"conversation-close {source}",
+            context,
+            text,
+            kind=f"conversation-close {source}",
             echo_only=not source.startswith("semantic"),
         ):
             return
@@ -1029,14 +1077,11 @@ class MediaPlaybackStopMixin:
                 reason = "before_onset_floor"
         if reason:
             if in_flight or stop_word:
-                self._log_unpinned_final(
-                    context, reason=reason, diagnosis=diagnosis, source=source
-                )
+                self._log_unpinned_final(context, reason=reason, diagnosis=diagnosis, source=source)
             return
         if self._playback_stop_is_echo(context, text):
             logger.info(
-                "media playback stop ignored as reply echo session=%s text_len=%s "
-                "source=%s %s",
+                "media playback stop ignored as reply echo session=%s text_len=%s source=%s %s",
                 context.identity.session_id,
                 len(text),
                 source,
@@ -1066,22 +1111,7 @@ class MediaPlaybackStopMixin:
         )
         self._schedule_turn_commit(context)
 
-    def _prerecorded_fixed_safety_heard_complete(
-        self,
-        context: _MediaVoiceSession,
-        fence: GenerationFence,
-    ) -> bool | None:
-        """Whether the stored clip's final sentence finished before a stop."""
-
-        probe = getattr(context.provider, "fixed_safety_heard_complete", None)
-        if not callable(probe):
-            return None
-        result = probe(fence, context.output.playback.rendered_sample_end(fence))
-        return result if isinstance(result, bool) else None
-
-    async def _stop_reply_for_voice_command(
-        self, context: _MediaVoiceSession, text: str
-    ) -> bool:
+    async def _stop_reply_for_voice_command(self, context: _MediaVoiceSession, text: str) -> bool:
         """Carry out a Router-accepted spoken stop like a keyword stop.
 
         ``accept_user_turn`` only suppresses the control turn; the reply task,
@@ -1089,13 +1119,9 @@ class MediaPlaybackStopMixin:
         session stays open: this is never the END_SESSION path.
         """
 
-        if (
-            context.closed
-            or context.standby_requested
-            or not context.runtime.floor.interruptible
-        ):
+        if context.closed or context.standby_requested or not context.runtime.floor.interruptible:
             return False
-        if context.runtime.floor.fixed_safety_audible and not is_stop_command_only(text):
+        if context.runtime.floor.fixed_safety_audible:
             logger.info(
                 "media spoken stop ignored during fixed safety playback session=%s",
                 context.identity.session_id,
@@ -1105,13 +1131,14 @@ class MediaPlaybackStopMixin:
         if not previous_fence.matches(context.runtime.fence):
             # Another control already replaced this generation.
             return False
+        marker_fence = context.aigc_opening_marker_fence or context.aigc_closing_marker_fence
+        if marker_fence is not None and previous_fence.matches(marker_fence):
+            logger.info(
+                "media spoken stop ignored during AIGC notice session=%s",
+                context.identity.session_id,
+            )
+            return False
         stop_started_ns = time.monotonic_ns()
-        announced = context.output.assistant_text
-        crisis_heard = context.crisis_reply_heard
-        prerecorded_complete = self._prerecorded_fixed_safety_heard_complete(
-            context, previous_fence
-        )
-        subject_id = active_subject_id(context)
         flush_required = self._device_playback_flush_required(context, previous_fence)
         await self._record_interrupted_timed_spans(context, previous_fence)
         heard = context.output.playback.actual_heard_text(previous_fence)
@@ -1163,16 +1190,6 @@ class MediaPlaybackStopMixin:
             "interrupt_core_stop",
             (time.monotonic_ns() - stop_started_ns) / 1_000_000_000,
         )
-        publish_crisis_self_interrupt(
-            getattr(self, "crisis_script_interrupt_publisher", None),
-            announced_text=announced,
-            crisis_reply_heard=crisis_heard or bool(prerecorded_complete),
-            minor_user_id=subject_id,
-            session_id=previous_fence.session_id,
-            turn_id=previous_fence.turn_id,
-            generation_id=previous_fence.generation_id,
-            tool_epoch=previous_fence.tool_epoch,
-        )
         logger.info(
             "media spoken stop interrupted reply session=%s turn=%s generation=%s "
             "replacement_generation=%s flush=%s",
@@ -1182,6 +1199,7 @@ class MediaPlaybackStopMixin:
             cancelled.generation_id,
             flush_required,
         )
+        self._schedule_aigc_round_closing(context, close_reason=_PLAYBACK_STOP_CAUSE)
         return True
 
 

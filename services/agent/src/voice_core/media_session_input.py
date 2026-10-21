@@ -15,10 +15,6 @@ from services.agent.src.orchestration.interaction_plane import (
     InteractionSnapshot,
 )
 from services.agent.src.orchestration.interruption_guard import PlaybackInputDecision
-from services.agent.src.voice_core.crisis_script_interrupt import (
-    active_subject_id,
-    publish_crisis_self_interrupt,
-)
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.interruption import (
     InterruptionPolicy,
@@ -112,12 +108,6 @@ class MediaSessionInputMixin:
             self, context: _MediaVoiceSession, fence: GenerationFence
         ) -> None: ...
 
-        def _prerecorded_fixed_safety_heard_complete(
-            self,
-            context: _MediaVoiceSession,
-            fence: GenerationFence,
-        ) -> bool | None: ...
-
         async def _cancel_reply_task(
             self,
             context: _MediaVoiceSession,
@@ -132,6 +122,10 @@ class MediaSessionInputMixin:
             self, context: _MediaVoiceSession, fence: GenerationFence
         ) -> tuple[int, int]: ...
 
+        def _schedule_aigc_round_closing(
+            self, context: _MediaVoiceSession, *, close_reason: str
+        ) -> None: ...
+
         async def _emit_cancel_generation(
             self,
             context: _MediaVoiceSession,
@@ -143,9 +137,7 @@ class MediaSessionInputMixin:
             playback_flush_required: bool | None = None,
         ) -> bool: ...
 
-        def _sync_owner_silence_phase(
-            self, context: _MediaVoiceSession, phase: str
-        ) -> None: ...
+        def _sync_owner_silence_phase(self, context: _MediaVoiceSession, phase: str) -> None: ...
 
         def _arm_max_user_speech_watchdog(self, context: _MediaVoiceSession) -> None: ...
 
@@ -180,7 +172,10 @@ class MediaSessionInputMixin:
                 logger.info(
                     "media vad_start ignored after %s pin session=%s "
                     "pinned_endpoint=%s vad_start=%s",
-                    kind, context.identity.session_id, endpoint, segment.capture_start_sample,
+                    kind,
+                    context.identity.session_id,
+                    endpoint,
+                    segment.capture_start_sample,
                 )
                 return False
         if (
@@ -190,8 +185,10 @@ class MediaSessionInputMixin:
             logger.info(
                 "media vad_start ignored after live-query forced recovery "
                 "session=%s endpoint=%s vad_start=%s text_len=%s",
-                context.identity.session_id, context.pending.turn_endpoint_sample,
-                segment.capture_start_sample, len(context.pending.live_query_forced_text),
+                context.identity.session_id,
+                context.pending.turn_endpoint_sample,
+                segment.capture_start_sample,
+                len(context.pending.live_query_forced_text),
             )
             return False
         pending_endpoint = context.pending.turn_endpoint_sample
@@ -234,8 +231,11 @@ class MediaSessionInputMixin:
         logger.info(
             "media vad start admitted session=%s stream_epoch=%s sample=%s "
             "silence_remaining_s=%s grace_active=%s watchdog_armed=%s vad_revision=%s",
-            context.identity.session_id, context.stream_epoch, segment.capture_start_sample,
-            context.owner_silence_remaining_s, context.owner_silence_grace_deadline is not None,
+            context.identity.session_id,
+            context.stream_epoch,
+            segment.capture_start_sample,
+            context.owner_silence_remaining_s,
+            context.owner_silence_grace_deadline is not None,
             context.pending.max_user_speech_task is not None,
             context.owner_silence_activity_revision,
         )
@@ -332,9 +332,7 @@ class MediaSessionInputMixin:
         context.pending.reopen_evidence_turn_end = None
         context.pending.reopen_evidence_turn_start = None
         partial = context.pending.pending_partial
-        turn_end_advanced = (
-            context.pending.turn_end_sample or 0
-        ) > (turn_end_at_reopen or 0)
+        turn_end_advanced = (context.pending.turn_end_sample or 0) > (turn_end_at_reopen or 0)
         partial_after_endpoint = bool(
             partial is not None
             and partial.text.strip()
@@ -417,11 +415,7 @@ class MediaSessionInputMixin:
         if current is not None and (current.closed or current.standby_requested):
             return
         context = await self.open_session(session.identity)
-        if (
-            context.closed
-            or context.standby_requested
-            or not session.accepts_uplink()
-        ):
+        if context.closed or context.standby_requested or not session.accepts_uplink():
             return
         await self._audio_ingress.accept(context, frame)
 
@@ -437,16 +431,11 @@ class MediaSessionInputMixin:
         if current is not None and (current.closed or current.standby_requested):
             return
         context = await self.open_session(session.identity)
-        if (
-            context.closed
-            or context.standby_requested
-            or not session.accepts_uplink()
-        ):
+        if context.closed or context.standby_requested or not session.accepts_uplink():
             return
         if _is_spurious_connect_vad(segment, context):
             logger.info(
-                "media empty vad ignored session=%s sample=%s rms=%s final=%s "
-                "pending_wake_ack=%s",
+                "media empty vad ignored session=%s sample=%s rms=%s final=%s pending_wake_ack=%s",
                 context.identity.session_id,
                 segment.capture_start_sample,
                 segment.near_end_rms,
@@ -458,8 +447,10 @@ class MediaSessionInputMixin:
             logger.info(
                 "media vad ignored before pending turn boundary session=%s "
                 "stream_epoch=%s sample=%s floor=%s final=%s",
-                context.identity.session_id, segment.stream_epoch,
-                segment.capture_start_sample, context.pending.pending_turn_onset_floor,
+                context.identity.session_id,
+                segment.stream_epoch,
+                segment.capture_start_sample,
+                context.pending.pending_turn_onset_floor,
                 segment.final,
             )
             return
@@ -568,8 +559,7 @@ class MediaSessionInputMixin:
                     # board emits VAD edges once; dropping vad.end here would
                     # desynchronise the uplink for the rest of the session.
                     logger.info(
-                        "media vad_end ignored during playback session=%s "
-                        "endpoint_sample=%s",
+                        "media vad_end ignored during playback session=%s endpoint_sample=%s",
                         context.identity.session_id,
                         segment.voiced_end_sample or segment.capture_start_sample,
                     )
@@ -746,11 +736,11 @@ class MediaSessionInputMixin:
             # playback.flush for that stopped generation and reconnects
             # (2026-09-30, build 12 「停」).
             device_flushed = segment.hard_stop and context.identity.client_type == "device"
-            if (
-                interruption.cancel_generation
-                and not device_flushed
-                and context.runtime.floor.fixed_safety_audible
-            ):
+            if interruption.cancel_generation and context.runtime.floor.fixed_safety_audible:
+                # The bridge refuses a hard-stop keyword's Edge generation
+                # cancel before this handler runs, so this script keeps its
+                # fence even though the device already flushed its own queue.
+                # Ignoring the interrupt leaves both sides' state unchanged.
                 logger.info(
                     "media keyword interrupt ignored during fixed safety playback session=%s",
                     context.identity.session_id,
@@ -769,23 +759,10 @@ class MediaSessionInputMixin:
                     else session.generation.cancel(previous_fence)
                 )
                 if cancelled is not None:
-                    interrupted_playback = False
-                    announced = ""
-                    crisis_heard = False
-                    subject_id = ""
                     if (
                         not previous_fence.matches(cancelled)
                         and context.runtime.floor.interruptible
                     ):
-                        interrupted_playback = True
-                        announced = context.output.assistant_text
-                        crisis_heard = context.crisis_reply_heard
-                        prerecorded_complete = (
-                            self._prerecorded_fixed_safety_heard_complete(
-                                context, previous_fence
-                            )
-                        )
-                        subject_id = active_subject_id(context)
                         await self._record_interrupted_timed_spans(context, previous_fence)
                         heard = context.output.playback.actual_heard_text(previous_fence)
                         interrupted_fence = await context.runtime.on_real_interrupt(
@@ -829,18 +806,9 @@ class MediaSessionInputMixin:
                             "interrupt_core_stop",
                             (time.monotonic_ns() - stop_started_ns) / 1_000_000_000,
                         )
-                        if interrupted_playback:
-                            publish_crisis_self_interrupt(
-                                getattr(self, "crisis_script_interrupt_publisher", None),
-                                announced_text=announced,
-                                crisis_reply_heard=crisis_heard
-                                or bool(prerecorded_complete),
-                                minor_user_id=subject_id,
-                                session_id=previous_fence.session_id,
-                                turn_id=previous_fence.turn_id,
-                                generation_id=previous_fence.generation_id,
-                                tool_epoch=previous_fence.tool_epoch,
-                            )
+                        self._schedule_aigc_round_closing(
+                            context, close_reason="media_keyword_interrupt"
+                        )
             fence = context.runtime.fence
             task_epoch, context_version = self._event_versions(context, fence)
             await self.bridge.emit_event(

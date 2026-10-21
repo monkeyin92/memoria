@@ -38,6 +38,7 @@ from services.agent.src.providers.provider_errors import (
     DEFAULT_API_CONNECT_OPTIONS,
     APIConnectOptions,
     APIError,
+    APIStatusError,
 )
 from services.agent.src.providers.tts_stream import AudioEmitter, SynthesizeStream
 from services.common.tts_defaults import (
@@ -66,7 +67,6 @@ def _effective_instruction(instruction: str) -> str:
     if plan_instruction and STEPFUN_INSTRUCTION_GUARD:
         return f"{plan_instruction}。{STEPFUN_INSTRUCTION_GUARD}"[:STEPFUN_INSTRUCTION_MAX_CHARS]
     return (plan_instruction or STEPFUN_INSTRUCTION_GUARD)[:STEPFUN_INSTRUCTION_MAX_CHARS]
-
 
 
 _OPEN_BRACKETS = frozenset("（(")
@@ -248,17 +248,13 @@ class StepFunTTSConfig:
         return cls(
             ws_url=ws_url,
             api_key=api_key,
-            model=values.get("STEPFUN_TTS_MODEL", STEPFUN_TTS_MODEL).strip()
-            or STEPFUN_TTS_MODEL,
-            voice=values.get("STEPFUN_TTS_VOICE", STEPFUN_TTS_VOICE).strip()
-            or STEPFUN_TTS_VOICE,
+            model=values.get("STEPFUN_TTS_MODEL", STEPFUN_TTS_MODEL).strip() or STEPFUN_TTS_MODEL,
+            voice=values.get("STEPFUN_TTS_VOICE", STEPFUN_TTS_VOICE).strip() or STEPFUN_TTS_VOICE,
             sample_rate=int(values.get("STEPFUN_TTS_SAMPLE_RATE", "24000")),
             instruction=instruction,
             pool_size=int(values.get("STEPFUN_TTS_POOL_SIZE", "2")),
             connect_timeout_s=float(values.get("STEPFUN_TTS_CONNECT_TIMEOUT_S", "5")),
-            first_audio_timeout_s=float(
-                values.get("STEPFUN_TTS_FIRST_AUDIO_TIMEOUT_S", "1.5")
-            ),
+            first_audio_timeout_s=float(values.get("STEPFUN_TTS_FIRST_AUDIO_TIMEOUT_S", "1.5")),
             total_timeout_s=float(values.get("STEPFUN_TTS_TOTAL_TIMEOUT_S", "20")),
             hard_deadline_s=float(values.get("STEPFUN_TTS_HARD_DEADLINE_S", "180")),
         )
@@ -311,9 +307,7 @@ def _decode_audio(value: object) -> bytes:
     except (binascii.Error, ValueError) as exc:
         raise StepFunProtocolError("StepFun audio event has invalid base64") from exc
     if len(decoded) % 2:
-        raise StepFunPCMError(
-            f"StepFun PCM length is odd ({len(decoded)} bytes)"
-        )
+        raise StepFunPCMError(f"StepFun PCM length is odd ({len(decoded)} bytes)")
     return decoded
 
 
@@ -563,9 +557,7 @@ class StepFunSynthesizeStream(SynthesizeStream):
                     timeout=self._config.connect_timeout_s,
                 )
             except TimeoutError as exc:
-                raise StepFunHandshakeError(
-                    "StepFun TTS tts.response.created timed out"
-                ) from exc
+                raise StepFunHandshakeError("StepFun TTS tts.response.created timed out") from exc
             created = _parse_event(raw)
             if created["type"] == "tts.response.error":
                 raise _provider_event_error(created)
@@ -636,6 +628,22 @@ class StepFunSynthesizeStream(SynthesizeStream):
                         "StepFun TTS stalled after audio started",
                         retryable=False,
                     ) from exc
+                except ConnectionClosed as exc:
+                    if exc.code != 1000:
+                        raise
+                    # A user stop or barge-in closes the socket normally. That is
+                    # the end of this reply, not a provider outage: the failover
+                    # wrapper must not move the rest of the session to Doubao.
+                    if emitter_started:
+                        output_emitter.end_segment()
+                    await self._pool.discard(connection, reason="normal_close")
+                    self._connection = None
+                    if not got_audio:
+                        raise APIStatusError(
+                            "StepFun TTS closed normally before audio",
+                            status_code=499,
+                        ) from exc
+                    return
                 event = _parse_event(raw)
                 event_type = event["type"]
                 if event_type == "tts.response.audio.delta":
@@ -709,7 +717,12 @@ class StepFunSynthesizeStream(SynthesizeStream):
         finally:
             if send_task is not None:
                 send_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
+                # A clean socket close can leave the sender with
+                # ConnectionClosedOK. It is the same normal termination as the
+                # receive side and must not replace a cancellation or a complete
+                # audio take. Any other sender failure is a real bug and must
+                # surface.
+                with contextlib.suppress(asyncio.CancelledError, ConnectionClosed):
                     await send_task
             self._trace(
                 "stepfun_pcm_summary",

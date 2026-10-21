@@ -147,7 +147,7 @@ def _speech() -> tuple[StepFunPrimaryTTS, _Engine, _Engine]:
     wrapper = StepFunPrimaryTTS(
         primary=primary,
         backup=backup,
-        config=StepFunFailoverConfig(fixed_safety_primary_first=False),
+        config=StepFunFailoverConfig(),
         breaker=TTSFailoverBreaker(failures=3, open_s=30),
     )
     return wrapper, primary, backup
@@ -274,20 +274,17 @@ async def test_daily_limit_refusal_uses_bridge_acknowledgement_and_starts_on_ste
 
 
 @pytest.mark.asyncio
-async def test_an_approved_crisis_script_still_skips_stepfun_for_doubao() -> None:
+async def test_an_approved_crisis_script_stays_on_stepfun_and_never_uses_doubao() -> None:
     speech, primary, backup = _speech()
     adapter = _provider(speech, _CrisisReply())
     identity = _device_identity("crisis-tts-route")
     fence = GenerationFence(identity.session_id, 1, 1, 0)
 
-    chunks = [
-        chunk
-        async for chunk in adapter.generate_reply(identity, _CHILD_CRISIS_TEXT, fence)
-    ]
+    chunks = [chunk async for chunk in adapter.generate_reply(identity, _CHILD_CRISIS_TEXT, fence)]
 
-    # An approved crisis line must never spend its opening budget on StepFun
-    # moderation, so this is the one fixed copy that starts on Doubao.
-    assert primary.texts == []
-    assert backup.texts == [CRISIS_SELF_SCRIPT.spoken]
+    # A crisis line never moves to Doubao: StepFun speaks it, and the shipped
+    # approved clip is the next rung if StepFun fails.
+    assert primary.texts == [CRISIS_SELF_SCRIPT.spoken]
+    assert backup.texts == []
     assert any(chunk.pcm_s16le for chunk in chunks)
     assert "".join(chunk.assistant_text_delta for chunk in chunks) == CRISIS_SELF_SCRIPT.display

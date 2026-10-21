@@ -175,6 +175,7 @@ class MediaVoiceSessionState:
     # device wake acknowledgement are independent; the interval between them
     # only exists when an opening marker is configured to play.
     aigc_round: AigcRoundRecord | None = None
+    aigc_round_active: bool = False
     aigc_opening_marker_pending: bool = False
     aigc_opening_marker_fence: GenerationFence | None = None
     # The pre-user turn the opening marker opened. The wake acknowledgement may
@@ -185,5 +186,7 @@ class MediaVoiceSessionState:
     aigc_closing_marker_state: str = "idle"
     aigc_closing_marker_fence: GenerationFence | None = None
     aigc_closing_marker_started_at: float | None = None
+    aigc_closing_task: asyncio.Task[None] | None = None
+    aigc_round_closing: bool = False
     aigc_marker_previous_phase: InteractionPhase | None = None
     speaker_enrollment_task: asyncio.Task[None] | None = None

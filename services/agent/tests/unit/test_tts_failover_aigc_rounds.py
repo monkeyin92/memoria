@@ -1,20 +1,25 @@
-"""AIGC markers around rounds whose reply changes TTS engine.
+"""AIGC markers and failover around consecutive device reply rounds.
 
-Each scenario drives the real ``MediaVoiceCoreRegistry`` on a device session:
-the opening marker, one conversation reply that either stays on StepFun or
-fails over to Doubao (and, for a crisis line, from Doubao to StepFun), then the
-closing marker. Marker counts come from the real output dispatch, not from a
-counter the production path could forget to increment.
+Each scenario drives the real ``MediaVoiceCoreRegistry`` on a device session.
+A round is one audible assistant turn: it opens with a START marker before the
+reply and closes with an END marker after playback, a stop, or a failure.
+Marker counts come from the real output dispatch, not from a counter the
+production path could forget to increment. The last cases pin the 2026-10-22
+field failure: a clean StepFun close on stop must not move the session to
+Doubao, and a failed Doubao backup must not pin later turns to it.
 """
 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any, cast
 
 import httpx
 import pytest
+import services.agent.src.voice_core.media_session_aigc_notice as aigc_notice_module
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.orchestration.handlers import LanguageModelRequest
 from services.agent.src.orchestration.state_machine import (
@@ -37,6 +42,7 @@ from services.agent.src.voice_core.media_protocol import (
     SessionIdentity,
 )
 from services.agent.src.voice_core.media_session import MediaVoiceCoreRegistry
+from services.agent.src.voice_core.media_session_aigc_notice import MediaSessionAigcNoticeMixin
 from services.agent.src.voice_core.provider_adapter import ExistingVoiceProviderAdapter
 from services.agent.tests.unit.media_session_support import (
     _CapturingGenerationBridge,
@@ -45,6 +51,8 @@ from services.agent.tests.unit.media_session_support import (
 )
 from services.agent.tests.unit.test_minor_session_limits import _ledger
 from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
+from websockets.exceptions import ConnectionClosedOK
+from websockets.frames import Close
 
 _FRAME = 480
 _USER_TEXT = "你好呀"
@@ -87,6 +95,13 @@ class _RoundStream:
             raise APIStatusError("content moderation rejected", status_code=451)
         if engine.behavior == "connection":
             raise APIConnectionError("upstream closed before audio")
+        if engine.behavior == "forbidden":
+            raise APIStatusError("backup account in arrears", status_code=403)
+        if engine.behavior == "normal_close" and self._yielded:
+            raise ConnectionClosedOK(Close(1000, "stop"), None)
+        if engine.behavior == "hold" and self._yielded:
+            await engine.release.wait()
+            raise StopAsyncIteration
         if engine.behavior == "empty" or self._yielded:
             raise StopAsyncIteration
         self._yielded = True
@@ -115,6 +130,7 @@ class _RoundEngine:
         self.current_voice = f"{provider}-voice"
         self.behavior = behavior
         self.received: list[str] = []
+        self.release = asyncio.Event()
 
     def bind_fence(self, _fence: GenerationFence) -> None:
         return None
@@ -133,7 +149,9 @@ class _RoundEngine:
 class _MarkerRecordingAdapter(ExistingVoiceProviderAdapter):
     """Record every AIGC marker that reaches the real output dispatch."""
 
-    def __init__(self, *args: Any, markers: list[tuple[GenerationFence, bytes]], **kwargs: Any) -> None:
+    def __init__(
+        self, *args: Any, markers: list[tuple[GenerationFence, bytes]], **kwargs: Any
+    ) -> None:
         super().__init__(*args, **kwargs)
         self.markers = markers
 
@@ -146,9 +164,10 @@ class _MarkerRecordingAdapter(ExistingVoiceProviderAdapter):
         work_id: str,
         source_start_sample: int,
     ) -> AsyncIterator[Any]:
-        if int(intent.kind) == int(
-            media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT
-        ) and intent.pcm_s16le:
+        if (
+            int(intent.kind) == int(media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT)
+            and intent.pcm_s16le
+        ):
             self.markers.append((fence, bytes(intent.pcm_s16le)))
         async for chunk in super().generate_output(
             identity,
@@ -197,9 +216,7 @@ def _speech(
             failures=3,
             open_s=30,
             fixed_safety_budget_s=2.0,
-            fixed_safety_backup_first_audio_s=0.05,
             fixed_safety_primary_first_audio_s=0.05,
-            fixed_safety_primary_first=False,
         ),
         breaker=TTSFailoverBreaker(failures=3, open_s=30),
     )
@@ -217,8 +234,7 @@ async def _playback(
     frame = next(
         frame
         for frame in reversed(registry.bridge.frames)
-        if frame.generation_id == fence.generation_id
-        and frame.turn_id == fence.turn_id
+        if frame.generation_id == fence.generation_id and frame.turn_id == fence.turn_id
     )
     await registry.on_playback_progress(
         session,
@@ -237,6 +253,229 @@ async def _playback(
     )
 
 
+async def _round_audio(
+    registry: MediaVoiceCoreRegistry,
+    identity: SessionIdentity,
+    context: Any,
+    *,
+    markers: list[tuple[GenerationFence, bytes]],
+    expected_markers: int,
+    wait_provider: bool = True,
+) -> tuple[GenerationFence, asyncio.Task[bool]]:
+    """Drive one reply turn through its start marker and provider completion."""
+
+    await registry._wait_for_output_idle(context, timeout_s=4.0)
+    fence = await context.runtime.on_turn_committed(_USER_TEXT)
+    context.output.begin_turn_output(fence)
+    await registry._begin_aigc_reply_round(context)
+    task = asyncio.create_task(registry.generate_reply(identity.session_id, _USER_TEXT, fence))
+    context.output.reply_task = task
+    await _wait_until(lambda: len(markers) >= expected_markers, timeout=3.0)
+    if wait_provider:
+        await _wait_until(lambda: context.output.provider_complete, timeout=3.0)
+    return (
+        context.output.playback.current_fence or context.runtime.fence,
+        task,
+    )
+
+
+async def _ack_marker(
+    registry: MediaVoiceCoreRegistry,
+    identity: SessionIdentity,
+    session: Any,
+    fence: GenerationFence,
+) -> None:
+    await _wait_until(
+        lambda: any(
+            frame.generation_id == fence.generation_id and frame.turn_id == fence.turn_id
+            for frame in registry.bridge.frames
+        )
+    )
+    await _playback(registry, identity, session, fence)
+
+
+@pytest.mark.asyncio
+async def test_three_rounds_play_start_and_end_markers_after_normal_stop_and_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    notice = _notice_config()
+    markers: list[tuple[GenerationFence, bytes]] = []
+    speech, primary, backup = _speech("audio", "audio")
+    adapter = _MarkerRecordingAdapter(
+        asr_session_factory=cast(Any, lambda: None),
+        language_model=cast(Any, _RoundReply(_NORMAL_REPLY)),
+        speech_synthesis=cast(Any, speech),
+        markers=markers,
+    )
+    bridge = _RoundBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: adapter,
+        aigc_notice_config=notice,
+        aigc_round_logger=None,
+        daily_chat_client=_ledger(
+            httpx.Response(200, json={"used_seconds": 0}),
+            [],
+        ),
+        owner_silence_timeout_s=100,
+        speaking_stall_timeout_s=0.3,
+    )
+    registry.install()
+    identity = dataclasses.replace(
+        _device_identity("aigc-three-rounds"), audio_mode="interrupt_assist"
+    )
+
+    async def no_wake_ack(_registry: Any, _context: Any) -> None:
+        return None
+
+    monkeypatch.setattr(MediaVoiceCoreRegistry, "_speak_device_wake_ack", no_wake_ack)
+    session = bridge.bridge.open(identity)
+    context = await registry.open_session(identity)
+    if context.runtime.orchestrator.state is ConversationState.CONNECTING:
+        await context.runtime.orchestrator.ready()
+        context.runtime.set_interaction_phase(InteractionPhase.LISTENING, cause="test_ready")
+    try:
+        await _wait_until(lambda: len(markers) == 1)
+        # The wake acknowledgement is its own audible turn: open and close it
+        # before the three reply rounds so the loop starts at a clean boundary.
+        await registry._close_aigc_round(context, close_reason="wake_ack")
+        await _wait_until(lambda: len(markers) == 2)
+        await registry._wait_for_output_idle(context)
+        await _ack_marker(registry, identity, session, markers[1][0])
+        markers.clear()
+
+        # Round 1: ordinary StepFun reply.
+        fence, reply_task = await _round_audio(
+            registry, identity, context, markers=markers, expected_markers=1
+        )
+        await _playback(registry, identity, session, fence)
+        await _wait_until(lambda: len(markers) == 2)
+        await _ack_marker(registry, identity, session, markers[1][0])
+        assert [pcm for _fence, pcm in markers] == [notice.tone_pcm(), notice.tone_pcm()]
+        assert primary.received.count(_NORMAL_REPLY) >= 1
+        assert backup.received == []
+
+        # Round 2: the child stops a still-playing reply; the END marker plays.
+        primary.behavior = "hold"
+        primary.release.clear()
+        fence, reply_task = await _round_audio(
+            registry,
+            identity,
+            context,
+            markers=markers,
+            expected_markers=3,
+            wait_provider=False,
+        )
+        await _wait_until(
+            lambda: (
+                context.output.output_owner is not None
+                and int(context.output.output_owner.intent.kind)
+                != int(media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT)
+            )
+        )
+        await registry._cancel_reply_task(context, fence, reason="voice_stop_command")
+        registry._schedule_aigc_round_closing(context, close_reason="voice_stop_command")
+        primary.release.set()
+        await asyncio.gather(reply_task, return_exceptions=True)
+        await _wait_until(lambda: len(markers) == 4)
+        await _ack_marker(registry, identity, session, markers[3][0])
+        assert [pcm for _fence, pcm in markers[2:]] == [
+            notice.tone_pcm(),
+            notice.tone_pcm(),
+        ]
+        assert primary.received.count(_NORMAL_REPLY) >= 1
+        assert backup.received == []
+
+        # Round 3: StepFun drops before audio, Doubao serves the reply.
+        primary.behavior = "connection"
+        fence, reply_task = await _round_audio(
+            registry, identity, context, markers=markers, expected_markers=5
+        )
+        await _playback(registry, identity, session, fence)
+        await _wait_until(lambda: len(markers) == 6)
+        await _ack_marker(registry, identity, session, markers[5][0])
+        assert [pcm for _fence, pcm in markers[4:]] == [
+            notice.tone_pcm(),
+            notice.tone_pcm(),
+        ]
+        assert _NORMAL_REPLY in primary.received
+        assert _NORMAL_REPLY in backup.received
+        assert len(markers) == 6
+        await asyncio.gather(reply_task, return_exceptions=True)
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_clean_stepfun_close_on_stop_does_not_move_the_session_to_doubao() -> None:
+    speech, primary, backup = _speech("normal_close", "audio")
+
+    stream = speech.stream(conn_options=cast(Any, None))
+    stream.push_text(_NORMAL_REPLY)
+    stream.end_input()
+    events = [event async for event in stream]
+
+    assert len(events) == 1
+    assert backup.received == []
+    assert speech.degraded is False
+    assert speech.breaker.state == "closed"
+
+    # The next turn retries StepFun, not the backup.
+    primary.behavior = "audio"
+    second = speech.stream(conn_options=cast(Any, None))
+    second.push_text(_NORMAL_REPLY)
+    second.end_input()
+    assert [event async for event in second]
+    assert backup.received == []
+    assert primary.received == [_NORMAL_REPLY, _NORMAL_REPLY]
+
+
+@pytest.mark.asyncio
+async def test_one_stepfun_failure_does_not_pin_later_turns_to_doubao() -> None:
+    speech, primary, backup = _speech("connection", "audio")
+
+    first = speech.stream(conn_options=cast(Any, None))
+    first.push_text(_NORMAL_REPLY)
+    first.end_input()
+    assert [event async for event in first]
+
+    assert backup.received == [_NORMAL_REPLY]
+    assert speech.degraded is False
+    assert speech.breaker.state == "closed"
+
+    primary.behavior = "audio"
+    second = speech.stream(conn_options=cast(Any, None))
+    second.push_text(_NORMAL_REPLY)
+    second.end_input()
+    assert [event async for event in second]
+    assert primary.received == [_NORMAL_REPLY, _NORMAL_REPLY]
+    assert backup.received == [_NORMAL_REPLY]
+
+
+@pytest.mark.asyncio
+async def test_doubao_403_does_not_pin_later_turns_to_the_backup() -> None:
+    speech, primary, backup = _speech("connection", "forbidden")
+
+    first = speech.stream(conn_options=cast(Any, None))
+    first.push_text(_NORMAL_REPLY)
+    first.end_input()
+    with pytest.raises(APIStatusError):
+        _ = [event async for event in first]
+
+    assert speech.degraded is False
+    assert backup.received == [_NORMAL_REPLY]
+
+    primary.behavior = "audio"
+    backup.behavior = "audio"
+    second = speech.stream(conn_options=cast(Any, None))
+    second.push_text(_NORMAL_REPLY)
+    second.end_input()
+    events = [event async for event in second]
+    assert len(events) == 1
+    assert primary.received == [_NORMAL_REPLY, _NORMAL_REPLY]
+    assert backup.received == [_NORMAL_REPLY]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("primary_behavior", "backup_behavior", "reply"),
@@ -248,7 +487,7 @@ async def _playback(
     ],
     ids=("first_audio_timeout", "moderation_451", "connection_no_audio", "crisis"),
 )
-async def test_one_round_plays_each_aigc_marker_once(
+async def test_one_round_still_plays_each_marker_once(
     monkeypatch: pytest.MonkeyPatch,
     primary_behavior: str,
     backup_behavior: str,
@@ -289,52 +528,71 @@ async def test_one_round_plays_each_aigc_marker_once(
         await context.runtime.orchestrator.ready()
         context.runtime.set_interaction_phase(InteractionPhase.LISTENING, cause="test_ready")
     try:
-        await _wait_until(
-            lambda: context.output.output_owner is None
-            and context.runtime.interaction_phase is InteractionPhase.LISTENING
-        )
-        assert len(markers) == 1
+        await _wait_until(lambda: len(markers) == 1)
+        await registry._close_aigc_round(context, close_reason="wake_ack")
+        await _wait_until(lambda: len(markers) == 2)
+        await _ack_marker(registry, identity, session, markers[1][0])
+        await registry._wait_for_output_idle(context)
+        markers.clear()
 
-        fence = await context.runtime.on_turn_committed(_USER_TEXT)
-        context.output.begin_turn_output(fence)
-        await registry.generate_reply(identity.session_id, _USER_TEXT, fence)
-        await _wait_until(lambda: context.output.provider_complete)
+        fence, reply_task = await _round_audio(
+            registry, identity, context, markers=markers, expected_markers=1
+        )
         await _playback(registry, identity, session, fence)
-        await _wait_until(lambda: context.output.output_owner is None)
-
-        closing = asyncio.create_task(registry._play_aigc_closing_marker(context))
-        await _wait_until(lambda: len(markers) >= 2)
-        closing_fence = markers[1][0]
-        await _wait_until(
-            lambda: any(
-                frame.generation_id == closing_fence.generation_id
-                and frame.turn_id == closing_fence.turn_id
-                for frame in bridge.frames
-            )
-        )
-        assert await asyncio.wait_for(closing, timeout=2)
+        await _wait_until(lambda: len(markers) == 2)
+        await _ack_marker(registry, identity, session, markers[1][0])
 
         assert len(markers) == 2
         assert [pcm for _fence, pcm in markers] == [notice.tone_pcm(), notice.tone_pcm()]
-        for marker_fence, _pcm in markers:
-            actions = [
-                action
-                for action, fence in bridge.generations
-                if fence.matches(marker_fence)
-            ]
-            assert actions.count(media_pb2.GENERATION_ACTION_START) == 1
-            assert any(
-                frame.generation_id == marker_fence.generation_id
-                and frame.turn_id == marker_fence.turn_id
-                for frame in bridge.frames
-            )
         expected = reply.spoken if reply is _CRISIS_REPLY else _NORMAL_REPLY
         assert primary.received == [expected]
-        assert backup.received == [expected]
+        # A crisis unit never opens Doubao; an ordinary unit falls back once.
+        assert backup.received == ([] if reply is _CRISIS_REPLY else [expected])
         assert any(
-            frame.generation_id == fence.generation_id
-            and frame.turn_id == fence.turn_id
+            frame.generation_id == fence.generation_id and frame.turn_id == fence.turn_id
             for frame in bridge.frames
         )
     finally:
         await registry.finalize_session(identity.session_id)
+
+
+class _HangingCloseNotice(MediaSessionAigcNoticeMixin):
+    def __init__(self) -> None:
+        self.close_started = asyncio.Event()
+
+    async def _close_aigc_round(self, context: Any, *, close_reason: str) -> None:
+        _ = context, close_reason
+        self.close_started.set()
+        await asyncio.Event().wait()
+
+
+@pytest.mark.asyncio
+async def test_a_timed_out_round_close_is_cancelled_before_the_next_end_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale closing task must not suppress the next reply turn's END marker."""
+
+    monkeypatch.setattr(aigc_notice_module, "_AIGC_ROUND_CLOSE_WAIT_S", 0.01)
+    notices = _HangingCloseNotice()
+    context = SimpleNamespace(
+        identity=SimpleNamespace(session_id="aigc-close-timeout", client_type="device"),
+        aigc_closing_task=None,
+        aigc_closing_marker_state="idle",
+        aigc_round_active=True,
+    )
+    stale = asyncio.create_task(
+        notices._close_aigc_round(context, close_reason="stale"),
+        name="stale-aigc-close",
+    )
+    context.aigc_closing_task = stale
+    await notices.close_started.wait()
+
+    assert await notices._wait_aigc_round_closed(context) is True
+    assert stale.cancelled()
+    assert context.aigc_closing_task is None
+
+    notices._schedule_aigc_round_closing(context, close_reason="next_turn")
+    replacement = context.aigc_closing_task
+    assert replacement is not None and replacement is not stale
+    replacement.cancel()
+    await asyncio.gather(replacement, return_exceptions=True)

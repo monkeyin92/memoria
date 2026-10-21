@@ -60,25 +60,35 @@ def _context(
     start: int | None = None,
     words: str = "",
     spoken: str = STORY,
+    playing: str | None = None,
     **pending: Any,
 ) -> Any:
     """A device session mid-story; ``words`` is the text the timeline holds in the pinned range."""
 
+    fence = GenerationFence("s1", 1, 1, 0)
+    playback = SimpleNamespace(playing_text=lambda _fence: playing) if playing is not None else None
     return SimpleNamespace(
         identity=SimpleNamespace(client_type="device", session_id="s1", stream_epoch=1),
         stream_epoch=1,
         closed=False,
         standby_requested=False,
         pending=PendingTurn(turn_endpoint_sample=endpoint, turn_start_sample=start, **pending),
-        output=SimpleNamespace(assistant_text=spoken, output_owner=GenerationFence("s1", 1, 4, 0)),
+        output=SimpleNamespace(
+            assistant_text=spoken,
+            output_owner=GenerationFence("s1", 1, 4, 0),
+            playback=playback,
+        ),
         runtime=SimpleNamespace(
             assistant_speaking=True,
+            fence=fence,
             speech_timeline=SimpleNamespace(projected_text=lambda **_: words),
         ),
     )
 
 
-def _final(text: str, *, start: int = 160_000, end: int = 176_000, is_final: bool = True) -> ASRResult:
+def _final(
+    text: str, *, start: int = 160_000, end: int = 176_000, is_final: bool = True
+) -> ASRResult:
     return ASRResult(
         task_epoch=1,
         sentence_id="sentence-1",
@@ -91,7 +101,9 @@ def _final(text: str, *, start: int = 160_000, end: int = 176_000, is_final: boo
 
 
 def _lines(caplog: pytest.LogCaptureFixture, prefix: str) -> list[str]:
-    return [record.getMessage() for record in caplog.records if record.getMessage().startswith(prefix)]
+    return [
+        record.getMessage() for record in caplog.records if record.getMessage().startswith(prefix)
+    ]
 
 
 def test_a_stop_word_after_an_earlier_pin_says_the_endpoint_was_taken(
@@ -241,13 +253,51 @@ def test_a_clear_stop_word_still_pins_the_stop(caplog: pytest.LogCaptureFixture)
 def test_a_stop_word_the_reply_itself_just_said_is_still_echo(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    session, context = _Session(), _context(spoken="小兔子大喊：停！")
+    session, context = (
+        _Session(),
+        _context(
+            spoken="小兔子大喊：停！",
+            playing="小兔子大喊：停！",
+        ),
+    )
     with caplog.at_level(logging.INFO, logger=LOGGER):
         session._maybe_pin_playback_stop(context, _final("停"), source="final")
 
     assert context.pending.turn_endpoint_sample is None and session.commits == 0
     [line] = _lines(caplog, "media playback stop ignored as reply echo")
     assert "echo=True" in line
+
+
+def test_a_stop_word_is_allowed_when_the_current_line_has_no_stop_character(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An earlier 「停」 in the reply must not swallow a later real stop."""
+
+    session, context = (
+        _Session(),
+        _context(
+            spoken="小兔子大喊：停！然后继续跑。",
+            playing="然后继续跑。",
+        ),
+    )
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        session._maybe_pin_playback_stop(context, _final("停"), source="final")
+
+    assert context.pending.turn_endpoint_sample == 176_000 and session.commits == 1
+    [line] = _lines(caplog, "media early playback-stop endpoint")
+    assert "stop_word=True" in line and "echo=False" in line
+    assert not _lines(caplog, "media playback stop ignored as reply echo")
+
+
+def test_a_stop_word_is_allowed_when_the_playing_line_is_unknown(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    session, context = _Session(), _context(spoken="小兔子大喊：停！", playing="")
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        session._maybe_pin_playback_stop(context, _final("停"), source="final")
+
+    assert context.pending.turn_endpoint_sample == 176_000 and session.commits == 1
+    assert not _lines(caplog, "media playback stop ignored as reply echo")
 
 
 def test_ordinary_speech_outside_playback_logs_nothing(caplog: pytest.LogCaptureFixture) -> None:
@@ -269,7 +319,10 @@ def test_a_rejected_final_says_whether_it_was_a_stop_word(caplog: pytest.LogCapt
             "s1", _final("别说了。"), ASRDecisionReason.INTERVAL_CONFLICT, stage="transcript"
         )
         session._reject_accepted_final(
-            "s1", _final("别说", is_final=False), ASRDecisionReason.INTERVAL_CONFLICT, stage="transcript"
+            "s1",
+            _final("别说", is_final=False),
+            ASRDecisionReason.INTERVAL_CONFLICT,
+            stage="transcript",
         )
 
     assert decision.accepted is None and decision.reason is ASRDecisionReason.INTERVAL_CONFLICT

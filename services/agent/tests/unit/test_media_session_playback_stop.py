@@ -159,9 +159,10 @@ class _StoryHarness(_Harness):
         ]
 
     def closed(self) -> bool:
-        return self.count(
-            "state", lambda state: state.state == media_pb2.CONVERSATION_STATE_CLOSED
-        ) > 0
+        return (
+            self.count("state", lambda state: state.state == media_pb2.CONVERSATION_STATE_CLOSED)
+            > 0
+        )
 
     def deliveries_for(self, fence: GenerationFence) -> list[dict[str, Any]]:
         return [
@@ -379,6 +380,23 @@ async def test_device_wait_that_grows_into_a_question_does_not_stop() -> None:
         assert not harness.cancel_effects()
 
     await _run_story(_device_identity("stop-word-grows"), script)
+
+
+@pytest.mark.asyncio
+async def test_device_stop_is_allowed_when_the_playing_line_has_no_stop_character() -> None:
+    """A stop against a line without 「停」 is the owner's command, not echo."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(15, final_text="停")
+        await harness.wait_for(lambda: bool(harness.cancel_effects()))
+        harness.assert_story_stopped_session_open(story)
+
+    await _run_story(
+        _device_identity("stop-word-clean-line"),
+        script,
+        opening="小兔子跑到河边，大声喊。",
+    )
 
 
 @pytest.mark.asyncio
@@ -649,9 +667,7 @@ async def test_h5_vad_endpointed_stop_word_stops_the_reply() -> None:
         await harness.utterance("停一下", frames=15)
         await harness.wait_for(lambda: bool(harness.cancel_effects()))
         harness.assert_story_stopped_session_open(story)
-        assert harness.count(
-            "generation", _is_action(media_pb2.GENERATION_ACTION_START)
-        ) == 1
+        assert harness.count("generation", _is_action(media_pb2.GENERATION_ACTION_START)) == 1
 
     await _run_story(_h5_identity("h5-stop-word"), script)
 
@@ -824,9 +840,7 @@ async def test_device_question_after_a_stop_word_at_the_natural_end_is_answered(
         assert _user_turn_texts(harness.context) == ["你好", "给我讲一个故事吧"]
         assert not harness.closed()
 
-    await _run_story(
-        _device_identity("question-after-stop-at-natural-end"), script, story_call=0
-    )
+    await _run_story(_device_identity("question-after-stop-at-natural-end"), script, story_call=0)
 
 
 @pytest.mark.asyncio
@@ -872,9 +886,7 @@ class _TaskScriptProvider(_LongStoryProvider):
         identity: SessionIdentity,
         frame: AudioFrame,
     ) -> Sequence[ASRResult]:
-        scripted = self.by_end.pop(
-            (frame.identity.stream_epoch, frame.capture_end_sample), None
-        )
+        scripted = self.by_end.pop((frame.identity.stream_epoch, frame.capture_end_sample), None)
         if scripted is None:
             return await super().ingest_audio(identity, frame)
         self.audio_calls.append(frame.sequence)

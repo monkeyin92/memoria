@@ -702,6 +702,20 @@ class MediaBridgeGrpcServer:
         if self.on_session_closed is not None:
             await self.on_session_closed(session)
 
+    def _apply_keyword_stop(self, session: MediaBridgeSession, segment: SpeechSegment) -> None:
+        """Refuse a local stop while Voice Core protects a fixed-safety script."""
+        confidence = float(segment.confidence or 0.0)
+        min_confidence = KWS_HARD_STOP_MIN_CONFIDENCE
+        if not (segment.hard_stop and confidence >= min_confidence):
+            return
+        if (guard := session.local_stop_guard) is not None and not guard():
+            logger.info(
+                "media local keyword stop refused during fixed safety playback session=%s",
+                session.identity.session_id,
+            )
+            return
+        session.apply_local_keyword_stop(confidence=confidence, min_confidence=min_confidence)
+
     async def _handle_request(
         self,
         connection: _Connection,
@@ -804,15 +818,8 @@ class MediaBridgeGrpcServer:
             if not connection.session.accepts_input():
                 return
             accepted = connection.session.timeline.add(segment)
-            if (
-                accepted
-                and segment.hard_stop
-                and (segment.confidence or 0.0) >= KWS_HARD_STOP_MIN_CONFIDENCE
-            ):
-                connection.session.apply_local_keyword_stop(
-                    confidence=float(segment.confidence or 0.0),
-                    min_confidence=KWS_HARD_STOP_MIN_CONFIDENCE,
-                )
+            if accepted:
+                self._apply_keyword_stop(connection.session, segment)
             if accepted and self.on_speech_segment is not None:
                 await self.on_speech_segment(connection.session, segment, 0)
             return
@@ -839,15 +846,8 @@ class MediaBridgeGrpcServer:
             if not connection.session.accepts_input():
                 return
             accepted = connection.session.timeline.add(segment)
-            if (
-                accepted
-                and segment.hard_stop
-                and (segment.confidence or 0.0) >= KWS_HARD_STOP_MIN_CONFIDENCE
-            ):
-                connection.session.apply_local_keyword_stop(
-                    confidence=float(segment.confidence or 0.0),
-                    min_confidence=KWS_HARD_STOP_MIN_CONFIDENCE,
-                )
+            if accepted:
+                self._apply_keyword_stop(connection.session, segment)
             if accepted and self.on_speech_segment is not None:
                 await self.on_speech_segment(
                     connection.session,

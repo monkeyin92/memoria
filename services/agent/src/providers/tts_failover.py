@@ -1,23 +1,19 @@
-"""StepFun primary with a one-way Doubao backup per media session.
+"""StepFun primary with a Doubao backup for ordinary media replies.
 
 The wrapper keeps the state machine out of either vendor adapter. A session
-starts on StepFun; the first failure moves it to Doubao and it never moves
-back. A failed unit is re-spoken whole on the next engine, even when part of it
-already reached the caller: a truncated sentence is worse than a repeated one,
-especially for an approved fixed-safety script.
+starts on StepFun; a failed unit is re-spoken whole on the backup, and the next
+unit returns to StepFun unless the process breaker is open. A single failure
+never pins the session to Doubao.
 
 An approved fixed-safety script is normally served by the pre-synthesized clip
 before this wrapper is reached. If that clip is missing or fails its manifest
-hash, the live cascade starts on StepFun by default
-(``STEPFUN_TTS_FIXED_SAFETY_PRIMARY_FIRST=true``) and moves to Doubao, or the
-reverse when the switch is off. It is the one unit that may move the other way,
-and it is buffered per engine: if the first engine fails before or after
-producing part of the line, that partial audio is discarded before it reaches
-the caller and the next engine synthesizes the whole text again inside the
-remaining opening budget. If both fail there is no runtime audio to approve, so
-the media adapter reports a loud failure instead of leaving the child in
-silence. Only a complete take is ever forwarded, so a half line can never join
-a whole line.
+hash, only StepFun is a candidate: the four shipped approved clips are the
+media adapter's next rung, and Doubao never speaks a crisis turn. A fixed-safety
+take is buffered whole, so a drop after part of the line is discarded before it
+reaches the caller. If StepFun fails there is no runtime audio to approve, and
+the adapter falls back to its sha256-verified clip instead of leaving the child
+in silence. Only a complete take is ever forwarded, so a half line can never
+join a whole line.
 """
 
 from __future__ import annotations
@@ -30,6 +26,8 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from time import monotonic
 from typing import Any
+
+from websockets.exceptions import ConnectionClosed
 
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.providers.provider_errors import APIConnectOptions
@@ -60,12 +58,15 @@ def _env_bool(values: dict[str, str], name: str, default: bool) -> bool:
 class StepFunFailoverConfig:
     """Process-level circuit thresholds and the fixed-safety opening budget.
 
-    A crisis line must reach the child inside five seconds. The first engine
-    gets at most ``fixed_safety_primary_first_audio_s`` when StepFun leads or
-    ``fixed_safety_backup_first_audio_s`` when Doubao leads, the second engine
-    gets the other allowance, and both attempts share
+    A crisis line must reach the child inside five seconds. StepFun gets at most
+    ``fixed_safety_primary_first_audio_s`` and the attempts share
     ``fixed_safety_budget_s``. This budget applies only to the live fallback
-    used when the approved stored clip is unavailable.
+    used when the approved stored clip is unavailable. Doubao is not a
+    candidate for that unit.
+
+    ``fixed_safety_primary_first`` is accepted for deployed configuration
+    compatibility and has no effect: a crisis unit always starts on StepFun and
+    then moves to the shipped approved clip, never to Doubao.
     """
 
     failures: int = 3
@@ -73,7 +74,6 @@ class StepFunFailoverConfig:
     auth_open_s: float = 3600.0
     pool_size: int = 2
     fixed_safety_budget_s: float = 4.5
-    fixed_safety_backup_first_audio_s: float = 1.8
     fixed_safety_primary_first_audio_s: float = 1.5
     fixed_safety_primary_first: bool = True
 
@@ -86,7 +86,6 @@ class StepFunFailoverConfig:
             raise ValueError("StepFun failover pool_size must be positive")
         for name in (
             "fixed_safety_budget_s",
-            "fixed_safety_backup_first_audio_s",
             "fixed_safety_primary_first_audio_s",
         ):
             value = getattr(self, name)
@@ -103,12 +102,7 @@ class StepFunFailoverConfig:
             open_s=float(values.get("STEPFUN_TTS_BREAKER_OPEN_S", "30")),
             auth_open_s=float(values.get("STEPFUN_TTS_AUTH_BREAKER_OPEN_S", "3600")),
             pool_size=int(values.get("STEPFUN_TTS_POOL_SIZE", "2")),
-            fixed_safety_budget_s=float(
-                values.get("STEPFUN_TTS_FIXED_SAFETY_BUDGET_S", "4.5")
-            ),
-            fixed_safety_backup_first_audio_s=float(
-                values.get("STEPFUN_TTS_FIXED_SAFETY_BACKUP_FIRST_AUDIO_S", "1.8")
-            ),
+            fixed_safety_budget_s=float(values.get("STEPFUN_TTS_FIXED_SAFETY_BUDGET_S", "4.5")),
             fixed_safety_primary_first_audio_s=float(
                 values.get("STEPFUN_TTS_FIXED_SAFETY_PRIMARY_FIRST_AUDIO_S", "1.5")
             ),
@@ -162,17 +156,24 @@ class TTSFailoverBreaker:
         if self._state == "closed":
             self._current_open_s = config.open_s
 
-    def allow(self) -> bool:
+    def available(self) -> bool:
+        """Whether a unit could start now without claiming the half-open probe."""
+
         if self._state == "closed":
             return True
         if self._state == "open":
             elapsed = self._clock() - (self._opened_at or 0.0)
             if elapsed < self._current_open_s:
                 return False
-            self._state = "half_open"
-        if self._probe_in_flight:
+        return not self._probe_in_flight
+
+    def allow(self) -> bool:
+        if not self.available():
             return False
-        self._probe_in_flight = True
+        if self._state == "open":
+            self._state = "half_open"
+        if self._state == "half_open":
+            self._probe_in_flight = True
         return True
 
     def record_success(self) -> None:
@@ -211,6 +212,20 @@ class _StreamEnd:
 
 
 _STREAM_END = _StreamEnd()
+
+
+def is_benign_stream_close(exc: BaseException) -> bool:
+    """True for a normal close or a cancellation caused by stop/barge-in.
+
+    ``websockets`` reports a server-side clean close as ``ConnectionClosedOK``
+    (code 1000). The provider task can also surface it while a stop tears the
+    socket down. Neither is a provider outage, and moving the session to the
+    backup for it is what silenced every later turn in the 2026-10-22 field run.
+    """
+
+    if isinstance(exc, asyncio.CancelledError):
+        return True
+    return isinstance(exc, ConnectionClosed) and exc.code == 1000
 
 
 @dataclass(slots=True)
@@ -329,9 +344,7 @@ class StepFunFailoverStream:
                 use_primary = candidates[attempt]
                 has_next = attempt + 1 < len(candidates)
                 if deadline is not None and monotonic() >= deadline:
-                    self._put_failure(
-                        TimeoutError("fixed safety opening budget exhausted")
-                    )
+                    self._put_failure(TimeoutError("fixed safety opening budget exhausted"))
                     return
                 # A fixed-safety attempt is held until it finishes, so a drop
                 # after part of the line never reaches the caller. The adapter
@@ -345,7 +358,12 @@ class StepFunFailoverStream:
                 try:
                     stream = await self._open_stream(use_primary)
                 except Exception as exc:
+                    if is_benign_stream_close(exc):
+                        self._events.put_nowait(_STREAM_END)
+                        return
                     if not has_next:
+                        if not use_primary:
+                            self._owner.record_backup_failure()
                         self._put_failure(exc)
                         return
                     self._record_engine_failure(
@@ -374,7 +392,6 @@ class StepFunFailoverStream:
                         buffered=buffered,
                         first_audio_timeout=self._first_audio_timeout(
                             fixed_safety_unit,
-                            use_primary,
                             deadline,
                         ),
                     )
@@ -388,7 +405,14 @@ class StepFunFailoverStream:
                         # yet, so discard the partial take and speak the whole
                         # approved line from scratch on StepFun.
                         buffered.clear()
+                    if is_benign_stream_close(exc):
+                        if use_primary and attempt_progress.audio_started:
+                            self._owner.record_success()
+                        self._events.put_nowait(_STREAM_END)
+                        return
                     if not has_next:
+                        if not use_primary:
+                            self._owner.record_backup_failure()
                         self._put_failure(exc)
                         return
                     self._record_engine_failure(
@@ -399,11 +423,7 @@ class StepFunFailoverStream:
                         fixed_safety_unit=fixed_safety_unit,
                         chars=len(unit),
                     )
-                    if (
-                        use_primary
-                        and attempt_progress.audio_started
-                        and first_engine is None
-                    ):
+                    if use_primary and attempt_progress.audio_started and first_engine is None:
                         first_engine = (self._owner.primary, True)
                     attempt += 1
                     continue
@@ -422,6 +442,8 @@ class StepFunFailoverStream:
                         )
                         attempt += 1
                         continue
+                    if not use_primary:
+                        self._owner.record_backup_failure()
                     self._put_failure(RuntimeError("fixed safety script produced no audio"))
                     return
                 if buffered is not None:
@@ -441,37 +463,31 @@ class StepFunFailoverStream:
     def _engine_candidates(self, fixed_safety_unit: bool) -> tuple[bool, ...]:
         """Engine order for one unit; ``True`` means the StepFun primary.
 
-        A fixed-safety fallback follows ``fixed_safety_primary_first``: StepFun
-        then Doubao by default, reversed when the switch is off. Every other
-        unit starts on StepFun and moves to Doubao once.
+        A fixed-safety unit has exactly one candidate. Doubao never speaks a
+        crisis turn: a StepFun failure raises and the media adapter moves to
+        its sha256-verified approved clip. Every other unit starts on StepFun
+        and may use Doubao for that unit only; the next unit retries StepFun
+        as soon as the breaker allows, so a single failure is not sticky.
         """
 
         if fixed_safety_unit:
-            if self._owner._config.fixed_safety_primary_first:
-                return (True, False)
-            return (False, True)
-        use_primary = not self._owner.degraded and self._owner.breaker.allow()
-        if not use_primary:
-            self._owner.mark_degraded("breaker_open")
-            return (False,)
-        return (True, False)
+            return (True,)
+        if self._owner.primary_allowed():
+            self._owner.clear_degraded("breaker_closed")
+            return (True, False)
+        self._owner.mark_degraded("breaker_open")
+        return (False,)
 
     def _first_audio_timeout(
         self,
         fixed_safety_unit: bool,
-        use_primary: bool,
         deadline: float | None,
     ) -> float | None:
-        """Seconds allowed before this engine must deliver its first packet."""
+        """Seconds allowed before StepFun must deliver its first packet."""
 
         if not fixed_safety_unit:
             return None
-        config = self._owner._config
-        per_engine = (
-            config.fixed_safety_primary_first_audio_s
-            if use_primary
-            else config.fixed_safety_backup_first_audio_s
-        )
+        per_engine = self._owner._config.fixed_safety_primary_first_audio_s
         if deadline is None:
             return per_engine
         return max(0.0, min(per_engine, deadline - monotonic()))
@@ -537,9 +553,7 @@ class StepFunFailoverStream:
 
         if not buffered:
             return
-        self._owner._last_engine = (
-            self._owner.primary if use_primary else self._owner.backup
-        )
+        self._owner._last_engine = self._owner.primary if use_primary else self._owner.backup
         self._owner._report_sentence(index=index, use_primary=use_primary)
         for event in buffered:
             self._events.put_nowait(event)
@@ -556,7 +570,10 @@ class StepFunFailoverStream:
     ) -> None:
         if use_primary:
             self._owner.record_failure(exc)
-            self._owner.mark_degraded(type(exc).__name__)
+            # One failed unit may use Doubao, but it must not pin the session
+            # there. Only an open breaker keeps later units on the backup.
+            if not self._owner.primary_allowed():
+                self._owner.mark_degraded("breaker_open")
             logger.warning(
                 "StepFun TTS failed; switching sentence to Doubao "
                 "sentence_index=%s audio_started=%s error_type=%s auth=%s",
@@ -566,6 +583,10 @@ class StepFunFailoverStream:
                 getattr(exc, "auth_failure", False),
             )
             return
+        # The backup's failure must not pin the rest of the session to it. The
+        # next unit starts on StepFun again, so a Doubao 403 cannot leave every
+        # later turn silent after a one-off StepFun cancellation.
+        self._owner.record_backup_failure()
         logger.warning(
             "Doubao TTS failed%s sentence_index=%s audio_started=%s error_type=%s",
             " for an approved safety script" if fixed_safety_unit else "",
@@ -720,6 +741,29 @@ class StepFunPrimaryTTS:
                 {"reason": reason},
             )
 
+    def clear_degraded(self, reason: str) -> None:
+        """Return to StepFun once the breaker allows it again."""
+
+        if self._force_backup or not self._degraded:
+            return
+        self._degraded = False
+        self._degrade_reason = ""
+        self.trace("tts_primary_recovered", "ok", {"reason": reason})
+
+    def primary_allowed(self) -> bool:
+        """Whether the next ordinary unit may start on StepFun."""
+
+        if self._force_backup:
+            return False
+        return self.breaker.allow()
+
+    def primary_available(self) -> bool:
+        """Whether StepFun could start now, without claiming a half-open probe."""
+
+        if self._force_backup:
+            return False
+        return self.breaker.available()
+
     def record_failure(self, exc: BaseException) -> None:
         auth = bool(getattr(exc, "auth_failure", False))
         self.breaker.record_failure(auth=auth)
@@ -739,6 +783,11 @@ class StepFunPrimaryTTS:
     def record_success(self) -> None:
         self.breaker.record_success()
 
+    def record_backup_failure(self) -> None:
+        """Forget a primary downgrade once the backup also failed this unit."""
+
+        self.clear_degraded("backup_failed")
+
     def bind_fence(self, fence: GenerationFence) -> None:
         self._fence = fence
         self._last_engine = None
@@ -755,11 +804,11 @@ class StepFunPrimaryTTS:
         return self.bound_engine()
 
     def bound_engine(self) -> Any:
-        """The engine a pushed unit starts on, given degradation, breaker and voice binding."""
+        """The engine a pushed unit starts on, given degradation and voice binding."""
 
-        if not self._degraded and self.breaker.allow() and not self._force_backup:
-            return self.primary
-        return self.backup
+        if self._degraded or not self.primary_available():
+            return self.backup
+        return self.primary
 
     def set_trace_callback(
         self,
@@ -841,9 +890,7 @@ class StepFunPrimaryTTS:
             provider=provider,
         ):
             self._force_backup = voice_kind == "personal"
-            logger.warning(
-                "tts_failover_kept_configured_backup_voice reason=clone_or_icl_voice"
-            )
+            logger.warning("tts_failover_kept_configured_backup_voice reason=clone_or_icl_voice")
             return
         apply_profile = getattr(self.backup, "apply_voice_profile", None)
         if callable(apply_profile):
@@ -917,9 +964,7 @@ class StepFunPrimaryTTS:
         callback = self._sentence_callback
         if fence is None or callback is None:
             return
-        engine = str(
-            getattr(provider, "provider", "volcengine_doubao" if switched else "stepfun")
-        )
+        engine = str(getattr(provider, "provider", "volcengine_doubao" if switched else "stepfun"))
         model = str(getattr(provider, "current_model", getattr(provider, "model", "")))
         voice = str(
             getattr(

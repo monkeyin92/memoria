@@ -69,6 +69,7 @@ from services.agent.tests.unit.media_session_support import (
     open_bridge_connection,
 )
 from services.agent.tests.unit.runtime_state_helpers import set_floor
+from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
 from services.speaker.domain import SpeakerDecision
 
 
@@ -2102,6 +2103,9 @@ async def test_typed_device_playback_error_is_not_successful_completion() -> Non
     context.output.playback.start(fence)
     assert context.output.playback.register_audio(fence, 0, 0, 320)
     context.output.provider_complete = True
+    context.output.assistant_text = CRISIS_SELF_SCRIPT.display
+    published: list[str] = []
+    registry.crisis_script_interrupt_publisher = published.append
 
     await registry.on_playback_progress(
         session,
@@ -2131,3 +2135,4 @@ async def test_typed_device_playback_error_is_not_successful_completion() -> Non
             "device_playback_error",
         )
     ]
+    assert len(published) == 1
