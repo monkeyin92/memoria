@@ -186,7 +186,7 @@ def _board_function(board: str, signature: str) -> str:
 
 def test_board_notice_precedes_the_story_in_every_playback_path() -> None:
     board = BOARD_CC.read_text(encoding="utf-8")
-    helper = _board_function(board, "static bool PlayStoryWithAigcNoticeNow(")
+    helper = _board_function(board, "bool PlayStoryWithAigcNoticeNow(")
     assert helper.index("AigcNoticeFileFor(start)") < helper.index("PlayLocalAssetClip(story_file)")
     schedule = _board_function(board, "Application::GetInstance().Schedule([this, out, generation]")
     notices = [

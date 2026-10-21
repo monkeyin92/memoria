@@ -649,12 +649,12 @@ private:
     // The one entry into a story from anywhere outside the offline-menu task.
     // The spoken notice plays first and a missing notice refuses the story, so
     // resume, single-title loop and cut-ins cannot reach a story file without it.
-    static bool PlayStoryWithAigcNoticeNow(const char* story_file,
-                                           memoria::AigcPlaybackStart start) {
+    bool PlayStoryWithAigcNoticeNow(const char* story_file,
+                                    memoria::AigcPlaybackStart start) {
         void* data = nullptr;
         size_t size = 0;
         if (!Assets::GetInstance().GetAssetData(
-                std::string(memoria::kAigcNoticeFileFor(start)), data, size) ||
+                std::string(memoria::AigcNoticeFileFor(start)), data, size) ||
             data == nullptr || size == 0) {
             ESP_LOGE(TAG, "refusing %s without AIGC intro %s", story_file,
                      memoria::kAigcNoticeStoryFile);
