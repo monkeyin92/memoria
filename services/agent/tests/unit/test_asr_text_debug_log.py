@@ -25,6 +25,7 @@ from services.agent.src.asr_text_debug_log import (
 from services.agent.src.providers.funasr_protocol import FunASRSentence
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
 from services.agent.src.voice_core.media_session import MediaVoiceCoreRegistry
+from services.agent.src.voice_core.media_session_commit import MediaSessionCommitMixin
 from services.agent.src.voice_core.media_session_pending_turn import PendingTurn
 from services.agent.src.voice_core.media_session_playback_stop import MediaPlaybackStopMixin
 from services.agent.src.voice_core.provider_adapter import ExistingVoiceProviderAdapter
@@ -88,9 +89,8 @@ class _StopSession(MediaPlaybackStopMixin):
     def _schedule_turn_commit(self, context: Any) -> None:
         return None
 
-    @staticmethod
-    def _mark_empty_turn_endpoint_pin(context: Any, *, source: str) -> None:
-        return None
+    def _mark_empty_turn_endpoint_pin(self, context: Any, *, source: str) -> None:
+        MediaSessionCommitMixin._mark_empty_turn_endpoint_pin(context, source=source)
 
 
 def _context(
