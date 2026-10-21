@@ -449,6 +449,11 @@ class ResponsePlannerClient:
             if response.status_code != 200:
                 return ResponsePlanFetch(None, f"http_{response.status_code}")
             plan = self._parse(response.json())
+        except httpx.TimeoutException:
+            # The plan request exceeded the Agent budget. This is a latency
+            # failure, not a malformed payload; keep it visible as its own
+            # reason so a budget overrun is not misread as a validation bug.
+            return ResponsePlanFetch(None, "timeout")
         except (httpx.HTTPError, TypeError, ValueError):
             return ResponsePlanFetch(None, "request_or_payload_invalid")
         if not plan.fence.matches(fence):
@@ -516,6 +521,8 @@ class ResponsePlannerClient:
                 )
             ):
                 raise ValueError("context prefetch persona version is invalid")
+        except httpx.TimeoutException:
+            return ContextPrefetchFetch((), None, None, "timeout")
         except (httpx.HTTPError, TypeError, ValueError):
             return ContextPrefetchFetch((), None, None, "request_or_payload_invalid")
         return ContextPrefetchFetch(

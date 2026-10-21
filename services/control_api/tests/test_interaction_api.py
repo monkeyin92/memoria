@@ -1185,6 +1185,26 @@ class _ChangingMemoryCatalog:
         )
 
 
+class _SlowRecallStore:
+    """Session recall that has grown behind a long session and now queues."""
+
+    def __init__(self, inner: Any, delay_s: float = 1.0) -> None:
+        self._inner = inner
+        self._delay_s = delay_s
+        self.calls = 0
+
+    async def append(self, **kwargs: Any) -> None:
+        await self._inner.append(**kwargs)
+
+    async def list_recent(self, **kwargs: Any) -> tuple[str, ...]:
+        self.calls += 1
+        await asyncio.sleep(self._delay_s)
+        return cast(tuple[str, ...], await self._inner.list_recent(**kwargs))
+
+    async def erase_subject(self, **kwargs: Any) -> int:
+        return cast(int, await self._inner.erase_subject(**kwargs))
+
+
 class _PersonaEngine:
     async def capsule(self, _: object) -> PersonaCapsule:
         return PersonaCapsule(
@@ -2017,10 +2037,85 @@ async def test_slow_companion_memory_still_returns_a_plan_inside_the_client_budg
     elapsed = time.perf_counter() - started
 
     assert catalog.context_calls == 1
-    assert elapsed < 1.0
+    assert elapsed < 0.8
     assert fetch.reason == "ok"
     assert fetch.plan is not None
     assert fetch.plan.grounded_items == ()
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_long_session_over_budget_crisis_turn_skips_companion_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    catalog = _SlowMemoryCatalog(2.0)
+    app.state.memory_catalog = catalog
+    app.state.persona_engine = _PersonaEngine()
+    recall = _SlowRecallStore(app.state.subject_session_recall_store)
+    app.state.subject_session_recall_store = recall
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, user_headers = await _identity(client)
+        session_id = (await client.post("/v1/sessions", headers=user_headers, json={})).json()[
+            "session_id"
+        ]
+        _mark_verified_adult(app, user_id)
+
+    body = _response_plan_body(session_id)
+    body["query"] = "我想拿刀划自己"
+    body["recall_context"] = [f"第{index}轮普通聊天" for index in range(4)]
+    body["fence"]["turn_id"] = 9
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    started = time.perf_counter()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/v1/interaction/response-plan", headers=token, json=body)
+    elapsed = time.perf_counter() - started
+
+    assert response.status_code == 200
+    assert elapsed < 0.8
+    assert response.json()["direct_text"] == CRISIS_SELF_SCRIPT.display
+    assert catalog.context_calls == 0
+    assert recall.calls == 0
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_over_budget_normal_turn_degrades_gracefully(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    catalog = _SlowMemoryCatalog(2.0)
+    app.state.memory_catalog = catalog
+    app.state.persona_engine = _PersonaEngine()
+    app.state.subject_session_recall_store = _SlowRecallStore(
+        app.state.subject_session_recall_store
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, user_headers = await _identity(client)
+        session_id = (await client.post("/v1/sessions", headers=user_headers, json={})).json()[
+            "session_id"
+        ]
+        _mark_verified_adult(app, user_id)
+
+    body = _response_plan_body(session_id)
+    body["query"] = "我找不到我的橡皮了"
+    body["recall_context"] = [f"第{index}轮普通聊天" for index in range(4)]
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    started = time.perf_counter()
+    with caplog.at_level("WARNING"):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/v1/interaction/response-plan", headers=token, json=body)
+    elapsed = time.perf_counter() - started
+
+    assert response.status_code == 200
+    assert elapsed < 0.8
+    assert response.json()["grounded_items"] == []
+    assert any("companion context exceeded budget" in record.getMessage() for record in caplog.records)
 
 
 @pytest.mark.asyncio

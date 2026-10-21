@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -12,6 +14,10 @@ from services.agent.src import response_plan_sidecar
 from services.agent.src.contracts.ids import CancellationContext
 from services.agent.src.duplex_runtime import POST_PLAYBACK_ECHO_GUARD_MS, DuplexRuntime
 from services.agent.src.orchestration.handlers import LanguageModelRequest
+from services.agent.src.providers.fixed_safety_audio import (
+    DEFAULT_FIXED_SAFETY_AUDIO_DIR,
+    FixedSafetyAudioCatalog,
+)
 from services.agent.src.reply_pipeline import ReplyPipeline
 from services.agent.src.response_planner_client import (
     ResponsePlan,
@@ -170,6 +176,92 @@ async def test_invalid_planner_payload_still_speaks_the_routed_script(
         )
     ]
     assert spoken == [expected]
+    await runtime.close()
+
+
+class _SlowPlanner:
+    """A planner slower than the reply budget, as seen on a long session."""
+
+    echoes_session_epoch = True
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.calls = 0
+
+    async def fetch(self, **kwargs: Any) -> ResponsePlanFetch:
+        self.calls += 1
+        self.started.set()
+        await asyncio.sleep(0.6)
+        return ResponsePlanFetch(None, "timeout")
+
+
+class _RaisingPlanner:
+    echoes_session_epoch = True
+
+    async def fetch(self, **kwargs: Any) -> ResponsePlanFetch:
+        raise RuntimeError("planner unavailable")
+
+
+@pytest.mark.asyncio
+async def test_a_crisis_turn_does_not_wait_for_a_slow_planner_on_a_long_session() -> None:
+    runtime = _runtime("long-session-crisis")
+    for index in range(8):
+        runtime.orchestrator.context.add_user(
+            f"第{index}轮在聊学校", speaker_scope="owner"
+        )
+        runtime.orchestrator.context.commit_assistant_heard(
+            "嗯嗯。", speaker_scope="owner"
+        )
+    planner = _SlowPlanner()
+    pipeline = _pipeline(runtime, planner)  # type: ignore[arg-type]
+    started = time.perf_counter()
+    fence = await pipeline.prepare_committed_turn("我想拿刀划自己")
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.4
+    await asyncio.wait_for(planner.started.wait(), timeout=0.2)
+    cached = pipeline.response_plans.get(fence)
+    assert cached is not None
+    assert cached.fixed_safety_script == CRISIS_SELF_SCRIPT
+    assert runtime.fixed_safety_echo_text == CRISIS_SELF_SCRIPT.display
+    catalog = FixedSafetyAudioCatalog.load(
+        Path(__file__).resolve().parents[4] / DEFAULT_FIXED_SAFETY_AUDIO_DIR
+    )
+    clip = catalog.match(CRISIS_SELF_SCRIPT.spoken)
+    assert clip is not None and clip.playable
+    assert clip.template_id == "crisis-self-v1"
+    spoken = [
+        token
+        async for token in pipeline.stream(
+            LanguageModelRequest(
+                user_text="我想拿刀划自己",
+                cancellation=CancellationContext.capture(fence),
+            )
+        )
+    ]
+    assert spoken == [CRISIS_SELF_SCRIPT]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_failing_planner_cannot_downgrade_a_crisis_turn() -> None:
+    runtime = _runtime("failing-planner-crisis")
+    pipeline = _pipeline(runtime, _RaisingPlanner())  # type: ignore[arg-type]
+    fence = await pipeline.prepare_committed_turn("我想拿刀划自己")
+
+    cached = pipeline.response_plans.get(fence)
+    assert cached is not None
+    assert cached.fixed_safety_script == CRISIS_SELF_SCRIPT
+    spoken = [
+        token
+        async for token in pipeline.stream(
+            LanguageModelRequest(
+                user_text="我想拿刀划自己",
+                cancellation=CancellationContext.capture(fence),
+            )
+        )
+    ]
+    assert spoken == [CRISIS_SELF_SCRIPT]
     await runtime.close()
 
 

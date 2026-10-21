@@ -81,7 +81,7 @@ from services.common.companion_response_safety import (
     assistant_text_repeats_or_dilutes_safety,
     strip_soothing_from_follow_up,
 )
-from services.common.crisis_policy import more_protective_local_script
+from services.common.crisis_policy import more_protective_local_script, route_crisis
 from services.common.llm_failover import LLM_UNAVAILABLE_TEXT
 from services.common.realtime_information import (
     is_incomplete_realtime_reply,
@@ -91,6 +91,8 @@ from services.common.realtime_information import (
 )
 from services.common.response_depth import SHORT_REPLY_AUDIENCES, ResponseDepth, response_depth_for
 from services.speaker.domain import DEVICE_BOUND_SUBJECT_REASON
+
+_CRISIS_PLAN_GRACE_S = 0.08
 
 media_pb2: Any = _media_pb2
 logger = logging.getLogger(__name__)
@@ -549,6 +551,53 @@ class ReplyPipeline:
             and mentions_weather(prior),
         )
 
+    async def _crisis_plan_or_local(
+        self,
+        *,
+        text: str,
+        speaker: Any,
+        fence: GenerationFence,
+    ) -> tuple[ResponsePlan | None, str]:
+        """Give the planner a short head start, then keep the local crisis reply.
+
+        The deterministic crisis reply is already decided locally. The planner
+        request still runs, because control-api records the guardian
+        notification, but it may never gate the reply: on a long session that
+        request times out and used to leave only an ordinary fallback.
+        """
+
+        client = self._response_planner_client
+        script = route_crisis(text).script
+        if client is None or not self._runtime.profile_permits(
+            fence, capability="memory_recall_private"
+        ):
+            return None, "crisis_local_route"
+        task = self._runtime._spawn(
+            self._fetch_response_plan(text=text, speaker=speaker, fence=fence),
+            name="crisis-plan-notification",
+            durable=True,
+        )
+        done, _ = await asyncio.wait({task}, timeout=_CRISIS_PLAN_GRACE_S)
+        if done:
+            try:
+                fetched = task.result()
+            except Exception:
+                logger.warning(
+                    "crisis plan request failed; keeping local route session_id=%s turn_id=%s",
+                    self._runtime.session_id,
+                    fence.turn_id,
+                    exc_info=True,
+                )
+                return None, "request_exception"
+            return fetched.plan, fetched.reason
+        logger.info(
+            "crisis_local_route template_id=%s session_id=%s turn_id=%s",
+            script.template_id if script is not None else "none",
+            self._runtime.session_id,
+            fence.turn_id,
+        )
+        return None, "crisis_local_route"
+
     def _with_local_crisis_floor(self, plan: ResponsePlan, query: str) -> ResponsePlan:
         script = more_protective_local_script(query, plan.fixed_safety_script)
         if script is None:
@@ -953,8 +1002,12 @@ class ReplyPipeline:
                 fence=fence,
             )
         warmed_memory = self._take_warmed_memory(text, speaker)
+        local_crisis = route_crisis(text).script
         memory_fetch: asyncio.Task[MemoryCapsule | None] | None = None
-        if self._device_memory_in_scope(speaker, fence):
+        if local_crisis is not None:
+            if warmed_memory is not None:
+                warmed_memory.cancel()
+        elif self._device_memory_in_scope(speaker, fence):
             memory_fetch = warmed_memory or asyncio.create_task(
                 self._fetch_device_memory(text=text, speaker=speaker),
                 name=DEVICE_MEMORY_TASK_NAME,
@@ -962,23 +1015,28 @@ class ReplyPipeline:
         elif warmed_memory is not None:
             warmed_memory.cancel()
         try:
-            try:
-                fetch = await self._fetch_response_plan(
-                    text=text,
-                    speaker=speaker,
-                    fence=fence,
+            if local_crisis is not None:
+                plan, fetch_reason = await self._crisis_plan_or_local(
+                    text=text, speaker=speaker, fence=fence
                 )
-                plan = fetch.plan
-                fetch_reason = fetch.reason
-            except Exception:
-                logger.warning(
-                    "response plan fetch failed closed session_id=%s turn_id=%s",
-                    self._runtime.session_id,
-                    fence.turn_id,
-                    exc_info=True,
-                )
-                plan = None
-                fetch_reason = "request_exception"
+            else:
+                try:
+                    fetch = await self._fetch_response_plan(
+                        text=text,
+                        speaker=speaker,
+                        fence=fence,
+                    )
+                    plan = fetch.plan
+                    fetch_reason = fetch.reason
+                except Exception:
+                    logger.warning(
+                        "response plan fetch failed closed session_id=%s turn_id=%s",
+                        self._runtime.session_id,
+                        fence.turn_id,
+                        exc_info=True,
+                    )
+                    plan = None
+                    fetch_reason = "request_exception"
             device_memory = None
             if memory_fetch is not None:
                 await asyncio.wait({memory_fetch}, timeout=_DEVICE_MEMORY_GRACE_S)

@@ -3,7 +3,12 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-COMPANION_CONTEXT_BUDGET_S = 0.45
+# The Agent abandons the whole request at 0.8 s.  This wait is only one stage
+# of that request, so 0.45 s left too little room for session, scope, recall
+# and payload once a long session slowed them down; the Agent then recorded a
+# timeout as an invalid payload.  Keep this stage small enough to finish the
+# rest of the route inside the same client budget.
+COMPANION_CONTEXT_BUDGET_S = 0.25
 
 
 async def gather_companion_context(
