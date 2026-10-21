@@ -984,6 +984,7 @@ async def _wire_services(w: Wiring) -> None:
         guardian_repository=guardian_store,
         corpus_retention_service=corpus_retention_service,
         session_terminator=session_terminator, onboarding=device_onboarding,
+        identity=app.state.identity_service,
     )
     if w.live:
         deletion_worker = AccountDeletionWorker(app.state.account_data_governance)

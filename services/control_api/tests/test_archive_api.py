@@ -43,6 +43,7 @@ from services.digital_self.domain import (
 from services.digital_self.response_planner import PLANNER_POLICY_VERSION
 from services.evolution.domain import CandidateArtifact, GateResult, ValidationReport
 from services.guardian.domain import PersonConsentRecord
+from services.identity.domain import IdentityNotFoundError
 from services.legacy.domain import (
     LegacyAccessDeniedError,
     LegacyAccessSnapshot,
@@ -3143,6 +3144,22 @@ async def test_registered_account_deletion_revokes_login_token_session_and_archi
         )
         assert (task.status_code, feedback.status_code) == (201, 201)
 
+        # Production registers an identity person for every account; the
+        # deletion must reach it too (#283).
+        await app.state.identity_service.register_person(
+            person_id=owner["user_id"],
+            display_name="账户使用人",
+            timezone="Asia/Shanghai",
+            subject_category="adult",
+            age_band="adult",
+            age_evidence_status="verified",
+            age_evidence_id="fixture-archive-deletion-owner",
+            now=datetime.now(UTC),
+        )
+        assert await app.state.identity_service.get_person(
+            owner["user_id"], actor_person_id=owner["user_id"]
+        )
+
         wrong_confirmation = await client.post(
             "/v1/archive/deletion-requests",
             headers=owner_headers,
@@ -3190,6 +3207,12 @@ async def test_registered_account_deletion_revokes_login_token_session_and_archi
         remaining_growth_events = await app.state.life_archive.context(
             ContextQuery(account_id=owner["user_id"], speaker_class="owner", limit=100)
         )
+        try:
+            identity_row = await app.state.identity_service.get_person(
+                owner["user_id"], actor_person_id=owner["user_id"]
+            )
+        except IdentityNotFoundError:
+            identity_row = None
 
     assert wrong_confirmation.status_code == 422
     assert deleted.status_code == 200
@@ -3206,6 +3229,15 @@ async def test_registered_account_deletion_revokes_login_token_session_and_archi
     assert deleted_session_event.status_code == 410
     assert other_still_exists.status_code == 200
     assert remaining_growth_events.evidence == ()
+    # #283: account deletion erases the identity person row itself, so nothing
+    # that names the usage person survives the deletion.
+    assert identity_row is None
+    assert (
+        await app.state.identity_store.remaining_account_identity(
+            account_person_id=owner["user_id"]
+        )
+        == {}
+    )
 
 
 @pytest.mark.asyncio

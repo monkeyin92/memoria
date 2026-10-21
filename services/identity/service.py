@@ -755,15 +755,27 @@ class IdentityService:
         actor_person_id: str,
         now: datetime | None = None,
     ) -> PersonSubject:
-        """Erase what identifies a person with no account once their data is gone.
+        """Clear what identifies a child once their binding is gone.
 
         Only the binding owner who attested this person (guardian_of or
         delegate_for) may, and only after no binding serves them any more:
         the name is still needed while a device does. The person becomes a
-        disabled placeholder, and earlier audit copies of the name are
-        scrubbed; relationships and bindings stay as content-free audit.
+        disabled placeholder with the domain's unknown age band, and earlier
+        audit copies of the name are scrubbed; relationships and bindings stay
+        as content-free audit. Adults and account holders are never cleared.
         """
         timestamp = _now(now)
+        person = await self.get_person(person_id, actor_person_id=actor_person_id)
+        if (
+            person.status == "disabled"
+            and person.display_name == REDACTED_DISPLAY_NAME
+            and person.subject_category == "unknown"
+        ):
+            return person
+        if person.subject_category == "adult":
+            raise IdentityAccessDeniedError(
+                "an adult person is not cleared by an unbind"
+            )
         relationships = await self._store.list_relationships(
             person_id, statuses=("active", "pending"), actor_person_id=actor_person_id
         )
@@ -786,10 +798,12 @@ class IdentityService:
             person_id, timestamp, actor_person_id=actor_person_id
         ):
             raise RelationshipLifecycleError("a device still serves this person")
-        person = await self.get_person(person_id, actor_person_id=actor_person_id)
         redacted = replace(
             person,
             display_name=REDACTED_DISPLAY_NAME,
+            subject_category="unknown",
+            age_band="unknown",
+            age_evidence_status="unverified",
             status="disabled",
             updated_at=timestamp,
         )
@@ -812,6 +826,28 @@ class IdentityService:
             actor_person_id=actor_person_id,
         )
         return redacted
+
+    async def delete_account_identity(
+        self, *, account_person_id: str
+    ) -> dict[str, int]:
+        """Erase the account's identity rows (issue #283).
+
+        The account-deletion pipeline is the only caller. The SQL port
+        re-checks the actor context and the transaction-local gate, so this
+        method carries the account itself as the actor.
+        """
+        return await self._store.delete_account_identity(
+            account_person_id=account_person_id,
+            display_name=REDACTED_DISPLAY_NAME,
+            actor_person_id=account_person_id,
+        )
+
+    async def remaining_account_identity(
+        self, *, account_person_id: str
+    ) -> dict[str, int]:
+        return await self._store.remaining_account_identity(
+            account_person_id=account_person_id
+        )
 
     async def confirm_relationship(
         self,

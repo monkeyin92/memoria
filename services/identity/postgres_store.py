@@ -889,6 +889,60 @@ class PostgresIdentityStore:
                     _timestamp(updated_at, field="updated_at"),
                 )
 
+    async def _delete_identity_rows(
+        self,
+        *,
+        function: str,
+        args: tuple[object, ...],
+        actor_person_id: str,
+    ) -> dict[str, int]:
+        pool = await self._ready()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await self._apply_context(
+                    connection, actor_person_id=actor_person_id, scope="api"
+                )
+                # The BEFORE DELETE guard stays closed by default. The port
+                # opens it inside its own body after verifying the actor, so
+                # this caller never touches the flag.
+                raw = await connection.fetchval(
+                    f"SELECT {function}({', '.join(f'${index}' for index in range(1, len(args) + 1))})",
+                    *args,
+                )
+        counts = _jsonb_object(raw, field="identity deletion counts")
+        return {
+            str(key): int(value)
+            for key, value in counts.items()
+            if key not in {"binding_refs"} and isinstance(value, (int, str))
+        }
+
+    async def delete_account_identity(
+        self,
+        *,
+        account_person_id: str,
+        display_name: str,
+        actor_person_id: str,
+    ) -> dict[str, int]:
+        return await self._delete_identity_rows(
+            function="identity_delete_account_identity",
+            args=(account_person_id, display_name),
+            actor_person_id=actor_person_id,
+        )
+
+    async def remaining_account_identity(
+        self, *, account_person_id: str
+    ) -> dict[str, int]:
+        pool = await self._ready()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await self._apply_context(
+                    connection, actor_person_id=account_person_id, scope="api"
+                )
+                exists = await connection.fetchval(
+                    "SELECT identity_person_exists($1)", account_person_id
+                )
+        return {"persons": 1} if exists else {}
+
     async def get_person(
         self,
         person_id: str,

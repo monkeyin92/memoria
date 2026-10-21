@@ -93,9 +93,11 @@ async def test_a_declared_child_is_listed_only_for_the_owner_who_declared_it(
 
 
 @pytest.mark.asyncio
-async def test_the_child_stays_listed_after_unbinding_and_can_be_bound_again(
+async def test_an_unbound_child_is_not_offered_for_rebinding(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Unbind clears the child (#283), so nothing of theirs is left to reuse."""
+
     _configure(monkeypatch, tmp_path)
     app = create_app()
     app.state.bound_subject_consent = _RecordingConsent()
@@ -107,30 +109,20 @@ async def test_the_child_stays_listed_after_unbinding_and_can_be_bound_again(
         unbound = await client.post(
             "/v1/devices/device-candidate-b1/binding/unbind",
             headers=headers,
-            json={"reason": "unbind", "purge_subject_data": False},
+            json={"reason": "unbind"},
         )
         assert unbound.status_code == 200, unbound.text
 
         candidates = (await client.get(CANDIDATES, headers=headers)).json()["subjects"]
-        assert [item["person_id"] for item in candidates] == [child_id]
-
-        rebound = await _rebind_existing(
-            client,
-            app,
-            owner_id=owner_id,
-            headers=headers,
-            device_id="device-candidate-b2",
-            child_id=candidates[0]["person_id"],
+        assert candidates == []
+        person = await app.state.identity_service.get_person(
+            child_id, actor_person_id=owner_id
         )
-        assert rebound.status_code == 201, rebound.text
-        assert rebound.json()["primary_subject_ids"] == [child_id]
-        # Reusing the child does not create a second one.
-        again = (await client.get(CANDIDATES, headers=headers)).json()["subjects"]
-        assert [item["person_id"] for item in again] == [child_id]
+        assert (person.display_name, person.status) == ("已删除的使用人", "disabled")
 
 
 @pytest.mark.asyncio
-async def test_a_child_whose_data_was_deleted_is_not_offered_again(
+async def test_only_a_child_that_is_still_bound_stays_offered(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _configure(monkeypatch, tmp_path)
@@ -138,7 +130,7 @@ async def test_a_child_whose_data_was_deleted_is_not_offered_again(
     app.state.bound_subject_consent = _RecordingConsent()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         owner_id, headers = await _owner(client, app, "candidate-deleter")
-        kept = await _bind_child(
+        still_bound = await _bind_child(
             client, app, owner_id=owner_id, headers=headers, device_id="device-candidate-c1"
         )
         erased = await _bind_child(
@@ -147,13 +139,13 @@ async def test_a_child_whose_data_was_deleted_is_not_offered_again(
         unbound = await client.post(
             "/v1/devices/device-candidate-c2/binding/unbind",
             headers=headers,
-            json={"reason": "unbind", "purge_subject_data": False},
+            json={"reason": "unbind"},
         )
         assert unbound.status_code == 200, unbound.text
-        # What the subject-deletion saga does once the data is gone.
-        await app.state.identity_service.redact_bound_subject(
-            person_id=erased, actor_person_id=owner_id
-        )
 
         candidates = (await client.get(CANDIDATES, headers=headers)).json()["subjects"]
-        assert [item["person_id"] for item in candidates] == [kept]
+        assert [item["person_id"] for item in candidates] == [still_bound]
+        erased_person = await app.state.identity_service.get_person(
+            erased, actor_person_id=owner_id
+        )
+        assert erased_person.status == "disabled"

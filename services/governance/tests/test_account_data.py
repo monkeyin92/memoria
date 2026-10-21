@@ -1310,3 +1310,48 @@ async def test_export_makes_postgres_guardian_rows_portable(
             "granted_at": granted_at.isoformat(),
         }
     ]
+
+
+class _IdentityEraser:
+    """Records the identity port the account pipeline calls."""
+
+    def __init__(self, *, leftover: bool = False) -> None:
+        self.calls: list[str] = []
+        self._leftover = leftover
+
+    async def delete_account_identity(self, account_id: str) -> dict[str, int]:
+        self.calls.append(account_id)
+        return {"persons": 1}
+
+    async def remaining_account_identity(self, account_id: str) -> dict[str, int]:
+        self.calls.append(account_id)
+        return {"persons": 1} if self._leftover else {}
+
+
+@pytest.mark.asyncio
+async def test_account_deletion_erases_the_identity_rows(
+    tmp_path: Path,
+    archive_db: ArchiveDatabase,
+) -> None:
+    governance, *_ = await _fixture(tmp_path, archive_db)
+    account_id = "account-governance"
+    eraser = _IdentityEraser()
+    governance._identity_repository = eraser  # noqa: SLF001 - the port under test
+
+    result = await governance.delete_account(account_id)
+
+    assert result["status"] == "completed"
+    assert result["deleted_counts"]["identity.persons"] == 1
+    assert eraser.calls[0] == account_id
+
+
+@pytest.mark.asyncio
+async def test_account_deletion_refuses_a_remaining_identity_row(
+    tmp_path: Path,
+    archive_db: ArchiveDatabase,
+) -> None:
+    governance, *_ = await _fixture(tmp_path, archive_db)
+    governance._identity_repository = _IdentityEraser(leftover=True)  # noqa: SLF001
+
+    with pytest.raises(AccountDeletionIncompleteError, match="appeared"):
+        await governance.delete_account("account-governance")

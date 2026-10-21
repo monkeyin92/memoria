@@ -13,7 +13,7 @@
 - **恢复后再删除（2026-09-26 已实现）**：删除台账在控制库，使用人数据在 PostgreSQL/MinIO；恢复数据层后必须先运行 `scripts/replay_subject_deletions.py --confirm-replay` 重放全部已完成删除，再恢复流量与重建投影（见发布运维手册）。
 - **仍存在的已知缺口（明确接受，不宣称已擦除）**：
   1. Redis 流 `memoria:memory:events` 中已派发的载荷无法撤回，只随约 10 万条的近似裁剪老化。
-  2. 使用人显示名：`/minors/{id}/delete`（仍在服务该使用人）不脱敏身份；`device_onboarding_activations.manifest_json` 的主要使用人显示名受 `manifest_hash` 绑定且维护角色无 DELETE，未脱敏。
+  2. 使用人显示名：`/minors/{id}/delete` 仍被设备服务的孩子保留昵称和年龄段（绑定引用该行，解绑才清除）；账号注销会在 `identity_delete_account_identity` 口子里删除该账号自己的人行。`device_onboarding_activations.manifest_json` 的主要使用人显示名受 `manifest_hash` 绑定且维护角色无 DELETE，未脱敏。
   3. `session_runtime_tool_effect_intents/outbox` 的 agent 载荷可按会话归属，但现有角色无删除权限（只读 + `ON DELETE RESTRICT`）。
   4. 仅 SQLite 部署中执行过的迁移备份表保存源行完整 JSON。
   5. 账号本人记忆中残留的 `entity_ids` 悬空 UUID（无文本），以及由账号本人话轮建立的关于孩子的 `person_entities`/关系画像（只能按姓名关联）。
