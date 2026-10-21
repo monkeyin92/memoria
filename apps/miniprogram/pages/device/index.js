@@ -425,7 +425,6 @@ Page({
     sheetOpen: false,
     diagExpanded: false,
     unbindSheetVisible: false,
-    unbindPurgeChoice: "keep",
     unbinding: false,
     unbindError: "",
     unbindResultVisible: false,
@@ -544,8 +543,7 @@ Page({
       bargeInChecked: {},
       allowedAudioModesLabel: "",
       unbindSheetVisible: false,
-      unbindPurgeChoice: "keep",
-      unbinding: false,
+        unbinding: false,
       unbindError: "",
       unbindResultVisible: false,
       unbindResultLines: [],
@@ -1212,14 +1210,13 @@ Page({
   },
 
   /*
-   * 解除绑定：先说明会停止记忆，默认保留 TA 的数据；选删除还要再确认一次。
-   * 服务端按 purge_subject_data 执行。
+   * 解除绑定：先确认，再解绑。解绑一律清除 TA 的昵称、年龄段、近期摘要和
+   * 长期档案，删除后不能恢复；只是换网络或重新配网不用解绑。
    */
   openUnbindSheet() {
     if (!this.data.binding?.device_id) return;
     this.setData({
       unbindSheetVisible: true,
-      unbindPurgeChoice: "keep",
       unbindError: "",
     });
     this._syncSheetOpen();
@@ -1227,23 +1224,17 @@ Page({
 
   closeUnbindSheet() {
     if (this.data.unbinding) return;
-    this.setData({ unbindSheetVisible: false, unbindPurgeChoice: "keep", unbindError: "" });
+    this.setData({ unbindSheetVisible: false, unbindError: "" });
     this._syncSheetOpen();
   },
 
-  pickUnbindChoice(event) {
-    const choice = event.currentTarget.dataset.choice;
-    if (choice !== "keep" && choice !== "purge") return;
-    this.setData({ unbindPurgeChoice: choice, unbindError: "" });
-  },
-
-  _confirmPurge() {
+  _confirmUnbind() {
     return new Promise((resolve) => {
       wx.showModal({
-        title: "确认删除 TA 的数据？",
+        title: "确认解绑？",
         content:
-          "TA 的记忆和对话数据会被永久删除，重新绑定也无法恢复。系统备份里最多再留 7 天，到期自动覆盖，这期间不会被使用，也不会被恢复回来。",
-        confirmText: "删除",
+          "解绑后，孩子的昵称、聊天摘要和长期档案会一起删除，删除后不能恢复。如果只是换网络或者重新配网，不用解绑。",
+        confirmText: "确认解绑",
         confirmColor: "#b3261e",
         cancelText: "再想想",
         success: (result) => resolve(Boolean(result?.confirm)),
@@ -1253,14 +1244,13 @@ Page({
   },
 
   async confirmUnbind() {
-    const { binding, unbinding, unbindPurgeChoice } = this.data;
+    const { binding, unbinding } = this.data;
     if (unbinding || !binding?.device_id) return;
-    const purgeSubjectData = unbindPurgeChoice === "purge";
-    if (purgeSubjectData && !(await this._confirmPurge())) return;
+    if (!(await this._confirmUnbind())) return;
     const authEpoch = api.currentAuthEpoch();
     this.setData({ unbinding: true, unbindError: "" });
     try {
-      const result = await api.unbindDevice(binding.device_id, { purgeSubjectData });
+      const result = await api.unbindDevice(binding.device_id);
       // The enable session that produced this binding is over with it; keeping
       // it would offer 「继续上次启用」 for a robot nobody can resume any more.
       clearOnboardingSessionId();
@@ -1270,8 +1260,7 @@ Page({
       const lines = unbindResultLines(result);
       this.setData({
         unbindSheetVisible: false,
-        unbindPurgeChoice: "keep",
-        unbindResultVisible: true,
+            unbindResultVisible: true,
         unbindResultLines: lines.length ? lines : ["设备已解除绑定。"],
       });
       this._syncSheetOpen();

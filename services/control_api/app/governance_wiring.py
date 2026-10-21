@@ -134,6 +134,23 @@ def install_subject_deletion(
     return service
 
 
+class _IdentityAccountEraser:
+    """Bind the identity service to the governance deletion port."""
+
+    def __init__(self, identity: IdentityService) -> None:
+        self._identity = identity
+
+    async def delete_account_identity(self, account_id: str) -> dict[str, int]:
+        return await self._identity.delete_account_identity(
+            account_person_id=account_id
+        )
+
+    async def remaining_account_identity(self, account_id: str) -> dict[str, int]:
+        return await self._identity.remaining_account_identity(
+            account_person_id=account_id
+        )
+
+
 def account_data_governance(
     settings: ControlSettings,
     *,
@@ -147,6 +164,7 @@ def account_data_governance(
     guardian_repository: GuardianStorePort,
     corpus_retention_service: CorpusRetentionService,
     session_terminator: AccountSessionTerminator,
+    identity: IdentityService | None = None,
     onboarding: DeviceOnboardingService | None = None,
 ) -> AccountDataGovernance:
     archive_url = settings.archive_database_url.get_secret_value()
@@ -171,4 +189,7 @@ def account_data_governance(
         operation_blocker=account_operations,
         account_read_guard=account_operations.sync_read,
         onboarding=onboarding,
+        identity_repository=(
+            _IdentityAccountEraser(identity) if identity is not None else None
+        ),
     )

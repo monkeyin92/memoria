@@ -299,9 +299,11 @@ async def test_elder_binding_registers_an_adult_and_grants_memory_as_a_delegate(
 
 
 @pytest.mark.asyncio
-async def test_unbind_keep_retains_consents_and_refuses_erasure_when_unwired(
+async def test_unbind_clears_the_child_and_ignores_the_legacy_data_switch(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    from services.identity.service import REDACTED_DISPLAY_NAME
+
     _configure(monkeypatch, tmp_path)
     app = create_app()
     recorder = _RecordingConsent()
@@ -322,38 +324,39 @@ async def test_unbind_keep_retains_consents_and_refuses_erasure_when_unwired(
         )
         assert created.status_code == 201, created.text
         child_id = created.json()["primary_subject_ids"][0]
+        before = await app.state.identity_service.get_person(child_id, actor_person_id=owner_id)
+        assert before is not None
 
-        # A deployment without the subject saga must refuse, not pretend.
-        wired = app.state.subject_deletion
-        app.state.subject_deletion = None
-        refused = await client.post(
-            "/v1/devices/device-bound-unbind/binding/unbind",
-            headers=headers,
-            json={"reason": "unbind", "purge_subject_data": True},
-        )
-        assert refused.status_code == 409
-        assert refused.json()["detail"]["code"] == "subject_deletion_unavailable"
-        # Nothing was unbound by the refused request.
-        assert recorder.revokes == []
-        app.state.subject_deletion = wired
-
+        # An older client still sends the removed switch; it must be accepted
+        # and ignored rather than rejected with a 422.
         unbound = await client.post(
             "/v1/devices/device-bound-unbind/binding/unbind",
             headers=headers,
             json={"reason": "unbind", "purge_subject_data": False},
         )
         assert unbound.status_code == 200, unbound.text
-        assert unbound.json()["consents_withdrawn"] == 0
+        body = unbound.json()
+        assert body["identity_cleared"] == "completed"
+        assert body["child_layers_purged"] in {"completed", "pending", "not_applicable"}
+        assert body["consents_withdrawn"] >= 1
+        assert "retention_basis_recorded" not in body
 
-    # The keep branch leaves both the binding-scoped grant and the guardian's
-    # person-scoped retention consent as the basis for the stored data.
-    assert recorder.revokes == []
+        cleared = await app.state.identity_service.get_person(
+            child_id, actor_person_id=owner_id
+        )
+        assert cleared is not None
+        assert cleared.display_name == REDACTED_DISPLAY_NAME
+        # The age band is gone too, and the row no longer reads as a child.
+        assert (cleared.subject_category, cleared.age_band) == ("unknown", "unknown")
+        assert cleared.age_evidence_status == "unverified"
+        assert cleared.status == "disabled"
+
+    # Nothing is left to keep, so the retention consent goes with the data.
+    assert recorder.revokes != []
     consents = await app.state.guardian_store.list_person_consents(
         subject_person_id=child_id, actor_person_id=owner_id
     )
-    assert [
-        item.consent_kind for item in consents if item.revoked_at is None
-    ] == ["memory_retention"]
+    assert [item.consent_kind for item in consents if item.revoked_at is None] == []
 
 
 @pytest.mark.asyncio
@@ -535,12 +538,14 @@ async def test_deleting_a_childs_data_keeps_the_parents_and_unbind_redacts_the_n
         unbound = await client.post(
             "/v1/devices/device-bound-erase/binding/unbind",
             headers=headers,
-            json={"reason": "unbind", "purge_subject_data": True},
+            json={"reason": "unbind"},
         )
         assert unbound.status_code == 200, unbound.text
         assert unbound.json()["subject_deletion"] == "completed"
         child = await app.state.identity_service.get_person(child_id, actor_person_id=owner_id)
         assert (child.display_name, child.status) == (REDACTED_DISPLAY_NAME, "disabled")
+        assert (child.subject_category, child.age_band) == ("unknown", "unknown")
+        assert child.age_evidence_status == "unverified"
 
 
 @pytest.mark.asyncio
@@ -953,3 +958,59 @@ async def test_session_limits_read_is_refused_outside_parent_for_child(
         {"code": "session_limits_not_applicable"},
     )
     assert recorder.limit_reads == []
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_served_childs_data_keeps_their_row_for_the_binding(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The guardian delete reaches identity, but a served child keeps a row."""
+
+    from services.identity.service import REDACTED_DISPLAY_NAME
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner_id, headers = await _owner(client, app, "bound-erase-served-owner")
+        created = await _bind(
+            client,
+            app,
+            owner_id=owner_id,
+            headers=headers,
+            device_id="device-bound-erase-served",
+            declared_mode="parent_for_child",
+            relationship="guardian_of",
+            age_band="under_14",
+            offers=["offer_minor_voice_session_v1"],
+        )
+        assert created.status_code == 201, created.text
+        child_id = created.json()["primary_subject_ids"][0]
+
+        deleted = await client.post(
+            f"/v1/guardian/minors/{child_id}/delete",
+            headers=headers,
+            json={"confirmation": "永久删除孩子的全部数据"},
+        )
+        assert deleted.status_code == 200, deleted.text
+        assert deleted.json()["status"] == "completed"
+        # The device still serves them, so the row stays and the report says
+        # the identity row itself was not removed.
+        assert "identity_deleted" not in deleted.json()
+        served = await app.state.identity_service.get_person(
+            child_id, actor_person_id=owner_id
+        )
+        assert served is not None
+        assert served.status == "active"
+
+        # Unbinding is what clears the served child's identity.
+        unbound = await client.post(
+            "/v1/devices/device-bound-erase-served/binding/unbind",
+            headers=headers,
+            json={"reason": "unbind"},
+        )
+        assert unbound.status_code == 200, unbound.text
+        cleared = await app.state.identity_service.get_person(
+            child_id, actor_person_id=owner_id
+        )
+        assert (cleared.display_name, cleared.status) == (REDACTED_DISPLAY_NAME, "disabled")
+        assert (cleared.subject_category, cleared.age_band) == ("unknown", "unknown")

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import replace
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TypeVar
 
 from services.identity.domain import (
@@ -163,7 +163,13 @@ class InMemoryIdentityStore:
         with self._lock:
             person = self._persons[person_id]
             self._persons[person_id] = replace(
-                person, display_name=display_name, status="disabled", updated_at=updated_at
+                person,
+                display_name=display_name,
+                subject_category="unknown",
+                age_band="unknown",
+                age_evidence_status="unverified",
+                status="disabled",
+                updated_at=updated_at,
             )
             self._audit[:] = [
                 replace(event, payload={**event.payload, "display_name": display_name})
@@ -173,6 +179,158 @@ class InMemoryIdentityStore:
                 for event in self._audit
             ]
             self._audit.append(audit_event)
+
+    def _erase_identity_rows_locked(
+        self,
+        person_ids: set[str],
+        binding_ids: set[str],
+        *,
+        display_name: str,
+    ) -> dict[str, int]:
+        counts = {
+            "persona_assignments": 0,
+            "transfers": 0,
+            "roles": 0,
+            "bindings": 0,
+            "relationships": 0,
+            "persons": 0,
+        }
+        for assignment_key, assignment in list(self._persona_assignments.items()):
+            if assignment.subject_id in person_ids or assignment.binding_id in binding_ids:
+                del self._persona_assignments[assignment_key]
+                counts["persona_assignments"] += 1
+        for transfer_key, transfer in list(self._transfers.items()):
+            if (
+                transfer.from_account_owner_person_id in person_ids
+                or transfer.to_account_owner_person_id in person_ids
+                or transfer.supersedes_binding_id in binding_ids
+                or transfer.resulting_binding_id in binding_ids
+            ):
+                del self._transfers[transfer_key]
+                counts["transfers"] += 1
+        doomed_relationships = {
+            relationship_id
+            for relationship_id, relationship in self._relationships.items()
+            if relationship.source_person_id in person_ids
+            or relationship.target_person_id in person_ids
+        }
+        changed = True
+        while changed:
+            changed = False
+            for relationship_id, relationship in self._relationships.items():
+                if (
+                    relationship_id not in doomed_relationships
+                    and relationship.delegated_from_relationship_id in doomed_relationships
+                ):
+                    doomed_relationships.add(relationship_id)
+                    changed = True
+        for binding_key, binding in list(self._bindings.items()):
+            if binding.binding_id in binding_ids:
+                counts["roles"] += len(binding.roles)
+                del self._bindings[binding_key]
+                counts["bindings"] += 1
+                continue
+            kept_roles = tuple(
+                grant for grant in binding.roles if grant.person_id not in person_ids
+            )
+            if len(kept_roles) == len(binding.roles):
+                continue
+            kept_subjects = tuple(
+                subject_id
+                for subject_id in binding.primary_subject_ids
+                if subject_id not in person_ids
+            )
+            if not kept_subjects:
+                counts["roles"] += len(binding.roles)
+                del self._bindings[binding_key]
+                counts["bindings"] += 1
+                continue
+            counts["roles"] += len(binding.roles) - len(kept_roles)
+            self._bindings[binding_key] = replace(
+                binding,
+                roles=kept_roles,
+                primary_subject_ids=kept_subjects,
+            )
+        for relationship_id in doomed_relationships:
+            if self._relationships.pop(relationship_id, None) is not None:
+                counts["relationships"] += 1
+        for persona_key, persona in list(self._custom_personas.items()):
+            if persona.owner_person_id in person_ids:
+                del self._custom_personas[persona_key]
+        for person_id in person_ids:
+            if self._persons.pop(person_id, None) is not None:
+                counts["persons"] += 1
+        self._audit[:] = [
+            replace(event, payload={**event.payload, "display_name": display_name})
+            if person_ids.intersection({event.person_id, event.subject_person_id})
+            and "display_name" in event.payload
+            else event
+            for event in self._audit
+        ]
+        for outbox_key, event in list(self._outbox.items()):
+            if str(event.payload.get("person_id", "")) in person_ids:
+                del self._outbox[outbox_key]
+        return counts
+
+    async def delete_account_identity(
+        self,
+        *,
+        account_person_id: str,
+        display_name: str,
+        actor_person_id: str,
+    ) -> dict[str, int]:
+        with self._lock:
+            persons = {account_person_id}
+            for binding in self._bindings.values():
+                if (
+                    binding.account_owner_person_id != account_person_id
+                    or binding.declared_mode != "parent_for_child"
+                ):
+                    continue
+                for subject_id in binding.primary_subject_ids:
+                    person = self._persons.get(subject_id)
+                    if person is None or person.subject_category not in {"minor", "unknown"}:
+                        continue
+                    if any(
+                        other.account_owner_person_id != account_person_id
+                        and other.status == "active"
+                        and any(
+                            grant.person_id == subject_id and grant.status == "active"
+                            for grant in other.roles
+                        )
+                        for other in self._bindings.values()
+                    ):
+                        continue
+                    persons.add(subject_id)
+            bindings = {
+                binding.binding_id
+                for binding in self._bindings.values()
+                if binding.account_owner_person_id in persons
+            }
+            counts = self._erase_identity_rows_locked(
+                persons, bindings, display_name=display_name
+            )
+            self._audit.append(
+                AuditEvent(
+                    event_id=f"evt:person-delete:{account_person_id}:{len(self._audit)}",
+                    action="person.delete",
+                    actor_person_id=actor_person_id,
+                    subject_person_id=account_person_id,
+                    person_id=account_person_id,
+                    device_id=None,
+                    binding_id=None,
+                    relationship_id=None,
+                    payload={"person_ids": sorted(persons)},
+                    created_at=datetime.now(UTC),
+                )
+            )
+            return counts
+
+    async def remaining_account_identity(
+        self, *, account_person_id: str
+    ) -> dict[str, int]:
+        with self._lock:
+            return {"persons": 1} if account_person_id in self._persons else {}
 
     async def get_person(
         self,

@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 from urllib.parse import quote, unquote, urlsplit
 
 import asyncpg
@@ -103,7 +103,7 @@ from services.control_api.app.text_models import (
     build_persona_extractor,
     build_persona_structurer,
 )
-from services.control_api.app.unconfigured_store import UnconfiguredStore
+from services.control_api.app.unconfigured_store import UnconfiguredStore, _unconfigured
 from services.control_api.app.voice_services import voice_profile_services
 from services.control_api.app.wiring import Wiring, run_eagerly
 from services.device_fleet.bootstrap_postgres_store import PostgresBootstrapStore
@@ -352,11 +352,6 @@ def _speaker_authority(
         guest_threshold=settings.speaker_guest_threshold,
         classify_timeout_s=settings.speaker_embedding_timeout_s,
     )
-
-
-def _unconfigured(store: str) -> Any:
-    """Eager wiring without an archive DSN: the archive family is PostgreSQL-only."""
-    return UnconfiguredStore(store, "MEMORIA_ARCHIVE_DATABASE_URL")
 
 
 def _archive_object_store(settings: ControlSettings) -> ObjectStore:
@@ -980,6 +975,7 @@ async def _wire_services(w: Wiring) -> None:
         guardian_repository=guardian_store,
         corpus_retention_service=corpus_retention_service,
         session_terminator=session_terminator, onboarding=device_onboarding,
+        identity=app.state.identity_service,
     )
     if w.live:
         deletion_worker = AccountDeletionWorker(app.state.account_data_governance)

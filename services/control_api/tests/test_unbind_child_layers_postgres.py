@@ -1,8 +1,11 @@
-"""Real-PostgreSQL contract for unbind: keep the child layers or purge them.
+"""Real-PostgreSQL contract for unbind: it always erases the child layers.
 
-The control API is driven over HTTP while ``child_layer_store`` is a real
-``ChildLayerStore`` against a fresh database from the memory-scope fixture.
-Skipped unless ``MEMORIA_TEST_POSTGRES_DSN`` is set.
+Unbind has no keep/delete choice any more (#283): the child's summaries and
+long-term archive go, the consents that justified them are withdrawn, and the
+identity row is cleared. The control API is driven over HTTP while
+``child_layer_store`` is a real ``ChildLayerStore`` against a fresh database
+from the memory-scope fixture. Skipped unless ``MEMORIA_TEST_POSTGRES_DSN`` is
+set.
 """
 
 from __future__ import annotations
@@ -10,7 +13,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,11 +22,6 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from services.control_api.app.main import create_app
 from services.control_api.app.routes.identity_lifecycle import UnbindRequest
-from services.control_api.tests.child_layer_test_support import (
-    FailOnSubjectDelete,
-    record_layer_erasures,
-)
-from services.control_api.tests.test_binding_subject_candidates import _rebind_existing
 from services.control_api.tests.test_bound_subject_binding import _bind, _owner
 from services.control_api.tests.test_guardian_api import _configure
 from services.guardian.child_memory import (
@@ -226,12 +224,10 @@ def _serialized(row: AuditRow) -> str:
     return json.dumps(row, ensure_ascii=False, default=str)
 
 
-async def _unbind(
-    client: AsyncClient, headers: dict[str, str], *, purge: bool | None
-) -> Any:
+async def _unbind(client: AsyncClient, headers: dict[str, str], *, legacy: bool | None = None) -> Any:
     body: dict[str, object] = {"reason": "unbind"}
-    if purge is not None:
-        body["purge_subject_data"] = purge
+    if legacy is not None:
+        body["purge_subject_data"] = legacy
     return await client.post(
         f"/v1/devices/{DEVICE_ID}/binding/unbind",
         headers=headers,
@@ -239,199 +235,26 @@ async def _unbind(
     )
 
 
-async def test_unbind_request_defaults_to_keeping_subject_data() -> None:
-    assert UnbindRequest().purge_subject_data is False
-    assert UnbindRequest.model_validate({"reason": "unbind"}).purge_subject_data is False
+async def test_unbind_keeps_accepting_the_removed_switch() -> None:
+    from pydantic import ValidationError
+
+    assert UnbindRequest.model_validate({"reason": "unbind"}).purge_subject_data is None
+    # An older client still sends the field; the route accepts and ignores it
+    # instead of refusing the request with a 422.
     assert (
         UnbindRequest.model_validate({"purge_subject_data": False}).purge_subject_data
         is False
     )
+    assert (
+        UnbindRequest.model_validate({"purge_subject_data": True}).purge_subject_data
+        is True
+    )
+    with pytest.raises(ValidationError):
+        UnbindRequest.model_validate({"purge_child_data": True})
 
 
 @pytest.mark.asyncio
-async def test_keep_unbind_omitting_flag_preserves_all_layers_and_retention_expires(
-    pg_env: tuple[str, str, str, str, str],
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    store, bootstrap, admin_db_dsn = await _layers(pg_env)
-    _configure(monkeypatch, tmp_path)
-    app = create_app()
-    app.state.child_layer_store = store
-    deletion = FailOnSubjectDelete()
-    app.state.subject_deletion = deletion
-    try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            owner_id, child_id, headers = await _bound_child(client, app)
-            fresh_summary = await store.write_summary(
-                DialogueSummary(
-                    subject_id=child_id,
-                    text=SUMMARY_TEXT,
-                    source_event_id="evt-keep-fresh",
-                    session_id="sess-keep",
-                ),
-                resource_owner_id=owner_id,
-                actor_id=owner_id,
-                consent_snapshot_id="consent-keep-summary",
-            )
-            expired_summary = await store.write_summary(
-                DialogueSummary(
-                    subject_id=child_id,
-                    text="孩子聊了天气",
-                    source_event_id="evt-keep-expired",
-                    session_id="sess-old",
-                ),
-                resource_owner_id=owner_id,
-                actor_id=owner_id,
-                consent_snapshot_id="consent-keep-old",
-                created_at=datetime.now(UTC) - timedelta(days=31),
-            )
-            archive = await store.write_archive_fact(
-                ArchiveFact(subject_id=child_id, field="pet_name", text=ARCHIVE_TEXT),
-                resource_owner_id=owner_id,
-                actor_id=owner_id,
-                consent_snapshot_id="consent-keep-archive",
-            )
-            long_term_id = await _insert_long_term_record(
-                admin_db_dsn, subject_id=child_id, owner_id=owner_id
-            )
-            before = await _memory_counts(admin_db_dsn, child_id)
-            assert before == {
-                KIND_DIALOGUE_SUMMARY: 2,
-                KIND_CHILD_ARCHIVE: 1,
-                "long_term_profile": 1,
-            }
-            layer_calls = record_layer_erasures(monkeypatch, store)
-            consents_before = await _person_consents(
-                app, owner_id=owner_id, child_id=child_id
-            )
-            assert [item.consent_kind for item in consents_before] == [
-                "memory_retention"
-            ]
-            started_at = datetime.now(UTC)
-
-            response = await _unbind(client, headers, purge=None)
-
-            finished_at = datetime.now(UTC)
-            assert response.status_code == 200, response.text
-            body = response.json()
-            assert body["child_layers_purged"] == "not_requested"
-            assert body["subject_deletion"] == "not_requested"
-            assert body["consents_withdrawn"] == 0
-            assert body["retention_basis_recorded"] is True
-            assert layer_calls == []
-            assert deletion.calls == []
-            assert await _memory_counts(admin_db_dsn, child_id) == before
-            assert await _child_layer_audit(admin_db_dsn) == []
-            consents_after = await _person_consents(
-                app, owner_id=owner_id, child_id=child_id
-            )
-            assert [item.consent_id for item in consents_after] == [
-                item.consent_id for item in consents_before
-            ]
-            assert all(item.revoked_at is None for item in consents_after)
-            # The grants stay, but the revoked binding fences them: Policy
-            # denies capture, recall and chat (test_device_bound_subject.py).
-            binding = await app.state.identity_service.get_binding(
-                body["binding_id"], actor_person_id=owner_id
-            )
-            assert binding.status == "revoked"
-
-            basis_audit = await _child_layer_audit(
-                admin_db_dsn, action="child_layer_retain"
-            )
-            assert len(basis_audit) == 1, basis_audit
-            basis = basis_audit[0]
-            assert basis["action"] == "child_layer_retain"
-            assert basis["actor_subject_id"] == "system:child_layer_retain"
-            assert basis["subject_id"] is None
-            assert basis["record_id"] is None
-            assert basis["proposal_id"] is None
-            assert _payload(basis) == {
-                "kind": "child_layer",
-                "dialogue_summary_count": 2,
-                "child_archive_count": 1,
-                "reason": "guardian_unbind_keep",
-            }
-            assert started_at <= basis["created_at"] <= finished_at
-            serialized_basis = _serialized(basis)
-            for value in (
-                child_id,
-                owner_id,
-                body["binding_id"],
-                DEVICE_ID,
-                fresh_summary.record_id,
-                expired_summary.record_id,
-                archive.record_id,
-                long_term_id,
-                SUMMARY_TEXT,
-                ARCHIVE_TEXT,
-                LONG_TERM_TEXT,
-                "使用人",
-                "evt-keep-fresh",
-                "sess-keep",
-            ):
-                assert value not in serialized_basis, value
-            summaries = await store.list(
-                subject_id=child_id,
-                kind=KIND_DIALOGUE_SUMMARY,
-                viewer_subject_id=owner_id,
-            )
-            assert {item.record_id for item in summaries} == {
-                fresh_summary.record_id,
-                expired_summary.record_id,
-            }
-            assert [
-                item.record_id
-                for item in await store.list(
-                    subject_id=child_id,
-                    kind=KIND_CHILD_ARCHIVE,
-                    viewer_subject_id=owner_id,
-                )
-            ] == [archive.record_id]
-            assert await _record_text(admin_db_dsn, long_term_id) == LONG_TERM_TEXT
-
-            # 30-day retention still runs after a keep-unbind: only the due row.
-            expired = await store.expire_due_summaries(subject_id=child_id)
-            assert int(expired["erased"]["memory_records"]) == 1
-            assert [
-                item.record_id
-                for item in await store.list(
-                    subject_id=child_id,
-                    kind=KIND_DIALOGUE_SUMMARY,
-                    viewer_subject_id=owner_id,
-                )
-            ] == [fresh_summary.record_id]
-            # The 180-day archive pass still removes the archive, and the
-            # ordinary long-term record stays with the account either way.
-            archived = await store.purge_archive(subject_id=child_id)
-            assert int(archived["erased"]["memory_records"]) == 1
-            assert (
-                await store.list(
-                    subject_id=child_id,
-                    kind=KIND_CHILD_ARCHIVE,
-                    viewer_subject_id=owner_id,
-                )
-                == []
-            )
-            after_retention = await _memory_counts(admin_db_dsn, child_id)
-            assert after_retention == {
-                KIND_DIALOGUE_SUMMARY: 1,
-                "long_term_profile": 1,
-            }
-            assert await _record_text(admin_db_dsn, long_term_id) == LONG_TERM_TEXT
-            retention_audit = await _child_layer_audit(admin_db_dsn)
-            assert {_payload(row)["reason"] for row in retention_audit} == {
-                "retention_expiry"
-            }
-    finally:
-        await _close_layers(store, bootstrap, admin_db_dsn)
-
-
-@pytest.mark.asyncio
-async def test_rebind_same_child_after_keep_unbind_preserves_counts(
+async def test_unbind_deletes_every_child_layer_without_a_data_switch(
     pg_env: tuple[str, str, str, str, str],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -450,53 +273,103 @@ async def test_rebind_same_child_after_keep_unbind_preserves_counts(
             )
             before = await _memory_counts(admin_db_dsn, child_id)
             assert before == {KIND_DIALOGUE_SUMMARY: 1, KIND_CHILD_ARCHIVE: 1}
-
-            unbound = await _unbind(client, headers, purge=False)
-            assert unbound.status_code == 200, unbound.text
-            assert unbound.json()["child_layers_purged"] == "not_requested"
-
-            candidates = await client.get(
-                "/v1/device-bindings/subject-candidates", headers=headers
+            consents_before = await _person_consents(
+                app, owner_id=owner_id, child_id=child_id
             )
-            assert candidates.status_code == 200, candidates.text
-            assert [item["person_id"] for item in candidates.json()["subjects"]] == [
-                child_id
+            assert [item.consent_kind for item in consents_before] == [
+                "memory_retention"
             ]
+            started_at = datetime.now(UTC)
 
-            rebound = await _rebind_existing(
-                client,
-                app,
-                owner_id=owner_id,
-                headers=headers,
-                device_id="device-unbind-layers-2",
-                child_id=child_id,
+            # No switch is sent at all: unbind still erases the layers.
+            response = await _unbind(client, headers)
+
+            finished_at = datetime.now(UTC)
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["child_layers_purged"] == "completed"
+            assert body["consents_withdrawn"] >= 1
+            assert "retention_basis_recorded" not in body
+            assert await _memory_counts(admin_db_dsn, child_id) == {}
+            assert await store.list(
+                subject_id=child_id,
+                kind=KIND_DIALOGUE_SUMMARY,
+                viewer_subject_id=owner_id,
+            ) == []
+            assert await store.list(
+                subject_id=child_id,
+                kind=KIND_CHILD_ARCHIVE,
+                viewer_subject_id=owner_id,
+            ) == []
+            consents_after = await _person_consents(
+                app, owner_id=owner_id, child_id=child_id
             )
-            assert rebound.status_code == 201, rebound.text
-            assert rebound.json()["primary_subject_ids"] == [child_id]
-            assert await _memory_counts(admin_db_dsn, child_id) == before
-            assert [
-                item.record_id
-                for item in await store.list(
-                    subject_id=child_id,
-                    kind=KIND_DIALOGUE_SUMMARY,
-                    viewer_subject_id=owner_id,
-                )
-            ] == [summary.record_id]
-            assert [
-                item.record_id
-                for item in await store.list(
-                    subject_id=child_id,
-                    kind=KIND_CHILD_ARCHIVE,
-                    viewer_subject_id=owner_id,
-                )
-            ] == [archive.record_id]
-            assert await _child_layer_audit(admin_db_dsn) == []
+            assert [item.consent_id for item in consents_after] == [
+                item.consent_id for item in consents_before
+            ]
+            assert all(item.revoked_at is not None for item in consents_after)
+            # Nothing was kept, so no keep-basis row is written.
+            assert (
+                await _child_layer_audit(admin_db_dsn, action="child_layer_retain")
+                == []
+            )
+            audit = await _child_layer_audit(admin_db_dsn)
+            assert {_payload(row)["kind"] for row in audit} == {
+                KIND_DIALOGUE_SUMMARY,
+                KIND_CHILD_ARCHIVE,
+            }
+            for row in audit:
+                assert row["action"] == "child_layer_erase"
+                assert row["actor_subject_id"] == "system:child_layer_erase"
+                assert started_at <= row["created_at"] <= finished_at
+            serialized = "\n".join(_serialized(row) for row in audit)
+            for value in (
+                child_id,
+                owner_id,
+                body["binding_id"],
+                DEVICE_ID,
+                summary.record_id,
+                archive.record_id,
+                SUMMARY_TEXT,
+                ARCHIVE_TEXT,
+                "使用人",
+            ):
+                assert value not in serialized, value
     finally:
         await _close_layers(store, bootstrap, admin_db_dsn)
 
 
 @pytest.mark.asyncio
-async def test_new_identity_and_reprovision_do_not_erase_existing_child_layers(
+async def test_unbind_written_with_the_old_keep_flag_still_deletes(
+    pg_env: tuple[str, str, str, str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An old client sends purge_subject_data=false; the switch is ignored."""
+
+    store, bootstrap, admin_db_dsn = await _layers(pg_env)
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    app.state.child_layer_store = store
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            owner_id, child_id, headers = await _bound_child(client, app)
+            await _seed_layers(store, child_id=child_id, owner_id=owner_id)
+            assert (await _memory_counts(admin_db_dsn, child_id))[KIND_CHILD_ARCHIVE] == 1
+
+            response = await _unbind(client, headers, legacy=False)
+
+            assert response.status_code == 200, response.text
+            assert response.json()["child_layers_purged"] == "completed"
+            assert await _memory_counts(admin_db_dsn, child_id) == {}
+    finally:
+        await _close_layers(store, bootstrap, admin_db_dsn)
+
+
+@pytest.mark.asyncio
+async def test_a_rebound_device_starts_without_the_erased_child(
     pg_env: tuple[str, str, str, str, str],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -505,18 +378,62 @@ async def test_new_identity_and_reprovision_do_not_erase_existing_child_layers(
     _configure(monkeypatch, tmp_path)
     app = create_app()
     app.state.child_layer_store = store
-    deletion = FailOnSubjectDelete()
-    app.state.subject_deletion = deletion
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            owner_id, child_id, headers = await _bound_child(client, app)
+            await _seed_layers(store, child_id=child_id, owner_id=owner_id)
+
+            unbound = await _unbind(client, headers)
+            assert unbound.status_code == 200, unbound.text
+            assert await _memory_counts(admin_db_dsn, child_id) == {}
+
+            # The erased child is a disabled placeholder, so the account is
+            # offered no one to reuse; binding again creates a new child.
+            candidates = await client.get(
+                "/v1/device-bindings/subject-candidates", headers=headers
+            )
+            assert candidates.status_code == 200, candidates.text
+            assert candidates.json()["subjects"] == []
+
+            rebound = await _bind(
+                client,
+                app,
+                owner_id=owner_id,
+                headers=headers,
+                device_id="device-unbind-layers-2",
+                declared_mode="parent_for_child",
+                relationship="guardian_of",
+                age_band="under_14",
+                offers=["offer_minor_voice_session_v1"],
+            )
+            assert rebound.status_code == 201, rebound.text
+            new_child = rebound.json()["primary_subject_ids"][0]
+            assert new_child != child_id
+            assert await _memory_counts(admin_db_dsn, new_child) == {}
+    finally:
+        await _close_layers(store, bootstrap, admin_db_dsn)
+
+
+@pytest.mark.asyncio
+async def test_new_identity_after_unbind_does_not_restore_the_erased_layers(
+    pg_env: tuple[str, str, str, str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store, bootstrap, admin_db_dsn = await _layers(pg_env)
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    app.state.child_layer_store = store
     try:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
             owner_a, child_a, headers_a = await _bound_child(client, app)
             await _seed_layers(store, child_id=child_a, owner_id=owner_a)
-            before_a = await _memory_counts(admin_db_dsn, child_a)
-            layer_calls = record_layer_erasures(monkeypatch, store)
 
-            unbound = await _unbind(client, headers_a, purge=False)
+            unbound = await _unbind(client, headers_a)
             assert unbound.status_code == 200, unbound.text
 
             # A new account (identity partition lost, new sign-in) claims the
@@ -536,131 +453,15 @@ async def test_new_identity_and_reprovision_do_not_erase_existing_child_layers(
             assert rebound.status_code == 201, rebound.text
             child_b = rebound.json()["primary_subject_ids"][0]
             assert child_b != child_a
-            assert layer_calls == []
-            assert deletion.calls == []
-            assert await _memory_counts(admin_db_dsn, child_a) == before_a
+            assert await _memory_counts(admin_db_dsn, child_a) == {}
             assert await _memory_counts(admin_db_dsn, child_b) == {}
+            # The erased child is not offered to the new account; only its own
+            # freshly declared one is.
             candidates_b = await client.get(
                 "/v1/device-bindings/subject-candidates", headers=headers_b
             )
             assert [
                 item["person_id"] for item in candidates_b.json()["subjects"]
             ] == [child_b]
-    finally:
-        await _close_layers(store, bootstrap, admin_db_dsn)
-
-
-@pytest.mark.asyncio
-async def test_unbind_purge_deletes_layers_and_writes_content_free_audit(
-    pg_env: tuple[str, str, str, str, str],
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    store, bootstrap, admin_db_dsn = await _layers(pg_env)
-    _configure(monkeypatch, tmp_path)
-    app = create_app()
-    app.state.child_layer_store = store
-    try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            owner_id, child_id, headers = await _bound_child(client, app)
-            summary, archive = await _seed_layers(
-                store, child_id=child_id, owner_id=owner_id
-            )
-            consents_before = await _person_consents(
-                app, owner_id=owner_id, child_id=child_id
-            )
-            assert [item.consent_kind for item in consents_before] == [
-                "memory_retention"
-            ]
-            started_at = datetime.now(UTC)
-
-            response = await _unbind(client, headers, purge=True)
-
-            finished_at = datetime.now(UTC)
-            assert response.status_code == 200, response.text
-            body = response.json()
-            assert body["child_layers_purged"] == "completed"
-            assert body["consents_withdrawn"] >= 1
-            assert body["retention_basis_recorded"] is False
-            consents_after = await _person_consents(
-                app, owner_id=owner_id, child_id=child_id
-            )
-            assert [item.consent_id for item in consents_after] == [
-                item.consent_id for item in consents_before
-            ]
-            assert all(item.revoked_at is not None for item in consents_after)
-            assert (
-                await _child_layer_audit(
-                    admin_db_dsn, action="child_layer_retain"
-                )
-                == []
-            )
-            assert await store.list(
-                subject_id=child_id,
-                kind=KIND_DIALOGUE_SUMMARY,
-                viewer_subject_id=owner_id,
-            ) == []
-            assert await store.list(
-                subject_id=child_id,
-                kind=KIND_CHILD_ARCHIVE,
-                viewer_subject_id=owner_id,
-            ) == []
-            # Explicit delete leaves no memory record or status row behind.
-            assert await _memory_counts(admin_db_dsn, child_id) == {}
-            assert (
-                await _status_event_count(
-                    admin_db_dsn, [summary.record_id, archive.record_id]
-                )
-                == 0
-            )
-
-            audit = await _child_layer_audit(admin_db_dsn)
-            assert len(audit) == 2, audit
-            by_kind = {_payload(row)["kind"]: row for row in audit}
-            assert set(by_kind) == {KIND_DIALOGUE_SUMMARY, KIND_CHILD_ARCHIVE}
-            expected_records = {
-                KIND_DIALOGUE_SUMMARY: 1,
-                KIND_CHILD_ARCHIVE: 1,
-            }
-            for kind, expected in expected_records.items():
-                row = by_kind[kind]
-                payload = _payload(row)
-                assert row["action"] == "child_layer_erase"
-                assert row["actor_subject_id"] == "system:child_layer_erase"
-                assert row["subject_id"] is None
-                assert row["record_id"] is None
-                assert row["proposal_id"] is None
-                assert set(payload) == {
-                    "kind",
-                    "memory_records",
-                    "memory_status_events",
-                    "only_expired",
-                    "reason",
-                }
-                assert payload["memory_records"] == expected
-                assert payload["memory_status_events"] == expected
-                assert payload["only_expired"] is False
-                assert payload["reason"] == "unbind_purge"
-                assert started_at <= row["created_at"] <= finished_at
-                assert "previous_value" not in _serialized(row)
-
-            serialized = "\n".join(_serialized(row) for row in audit)
-            forbidden = [
-                child_id,
-                owner_id,
-                body["binding_id"],
-                DEVICE_ID,
-                summary.record_id,
-                archive.record_id,
-                SUMMARY_TEXT,
-                ARCHIVE_TEXT,
-                "使用人",
-                "evt-unbind-summary",
-                "sess-unbind",
-            ]
-            for value in forbidden:
-                assert value not in serialized, value
     finally:
         await _close_layers(store, bootstrap, admin_db_dsn)

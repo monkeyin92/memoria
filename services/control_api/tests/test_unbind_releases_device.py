@@ -74,7 +74,7 @@ async def test_unbind_releases_the_fleet_binding(
         unbound = await client.post(
             f"/v1/devices/{DEVICE_ID}/binding/unbind",
             headers={"Authorization": f"Bearer {owner['access_token']}"},
-            json={"reason": "unbind", "purge_subject_data": False},
+            json={"reason": "unbind"},
         )
         assert unbound.status_code == 200, unbound.text
         assert unbound.json()["device_released"] is True
@@ -93,53 +93,39 @@ async def test_unbind_releases_the_fleet_binding(
     assert after.certificate_id == CERTIFICATE_ID
 
 
-class _FailingRetentionBasis:
-    async def record_retention_basis(self, **_kwargs: object) -> None:
-        raise RuntimeError("retention basis store unavailable in test")
+class _FailingLayerPurge:
+    async def purge_both_layers(self, *, subject_id: str) -> None:
+        del subject_id
+        raise RuntimeError("child layer purge unavailable in test")
 
 
 @pytest.mark.asyncio
-async def test_keep_unbind_reports_a_failed_retention_basis_write(
+async def test_unbind_reports_a_failed_child_layer_purge_and_still_clears_identity(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    from services.identity.service import REDACTED_DISPLAY_NAME
+
     app = _app(monkeypatch, tmp_path, offline_mock=True)
     key = Ed25519PrivateKey.generate()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         owner, child_id = await _bound_child_device(client, app, key)
-        app.state.memory_store.bind_external_identities(
-            preferred_user_id=str(owner["user_id"]),
-            identities={"wechat_openid": "wx-fleet-keep-owner"},
-            now=datetime.now(UTC).isoformat(),
-        )
-        granted = await client.post(
-            f"/v1/guardian/minors/{child_id}/consents",
-            headers={
-                "Authorization": f"Bearer {owner['access_token']}",
-                "Idempotency-Key": "fleet-keep-person-consent",
-            },
-            json={
-                "consent_kind": "memory_retention",
-                "policy_version": "minor-retention-v1",
-            },
-        )
-        assert granted.status_code == 201, granted.text
-        app.state.child_layer_store = _FailingRetentionBasis()
+        app.state.child_layer_store = _FailingLayerPurge()
         unbound = await client.post(
             f"/v1/devices/{DEVICE_ID}/binding/unbind",
             headers={"Authorization": f"Bearer {owner['access_token']}"},
-            json={"reason": "unbind", "purge_subject_data": False},
+            json={"reason": "unbind"},
         )
         assert unbound.status_code == 200, unbound.text
         body = unbound.json()
-        assert body["consents_withdrawn"] == 0
-        assert body["retention_basis_recorded"] is False
-
-    consents = await app.state.guardian_store.list_person_consents(
-        subject_person_id=child_id, actor_person_id=str(owner["user_id"])
-    )
-    assert [item.consent_kind for item in consents if item.revoked_at is None] == [
-        "memory_retention"
-    ]
+        # A failed layer purge is reported, and the identity row is still
+        # cleared: the name never outlives the binding.
+        assert body["child_layers_purged"] == "pending"
+        assert body["identity_cleared"] == "completed"
+        child = await app.state.identity_service.get_person(
+            child_id, actor_person_id=str(owner["user_id"])
+        )
+        assert child.display_name == REDACTED_DISPLAY_NAME
+        assert child.status == "disabled"
 
 
 async def _layer_counts(
@@ -238,11 +224,13 @@ async def _bound_child_device(
     not os.environ.get("MEMORIA_TEST_POSTGRES_DSN"),
     reason="set MEMORIA_TEST_POSTGRES_DSN to run the PostgreSQL contract",
 )
-async def test_release_manifest_and_new_identity_do_not_touch_child_layers(
+async def test_reprovisioning_does_not_unbind_or_lose_the_child(
     pg_env: tuple[str, str, str, str, str],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """Re-provisioning is not an unbind (product acceptance, issue #283)."""
+
     store, bootstrap, admin_db_dsn = await _layers(pg_env)
     app = _app(monkeypatch, tmp_path, offline_mock=True)
     key = Ed25519PrivateKey.generate()
@@ -277,25 +265,9 @@ async def test_release_manifest_and_new_identity_do_not_touch_child_layers(
             app.state.child_layer_store = store
             app.state.subject_deletion = deletion
 
-            unbound = await client.post(
-                f"/v1/devices/{DEVICE_ID}/binding/unbind",
-                headers={"Authorization": f"Bearer {owner['access_token']}"},
-                json={"reason": "unbind", "purge_subject_data": False},
-            )
-            assert unbound.status_code == 200, unbound.text
-            assert unbound.json()["device_released"] is True
-
-            # Both device reads an unbound board makes on its way to a local
-            # erase: the activation manifest and the idle display poll.
-            manifest = await client.get(
-                MANIFEST_PATH, headers=_signed_headers(key, path=MANIFEST_PATH)
-            )
-            display = await client.get(PATH, headers=_signed_headers(key))
-            assert manifest.status_code == 409
-            assert display.status_code == 409
-
             service = app.state.device_onboarding_service
-            # Re-bootstrap / re-provision creates a new onboarding session.
+            # Re-bootstrap / re-provision creates a new onboarding session
+            # while the binding still stands.
             session = service.introspect(
                 actor_id=owner_id,
                 qr_payload=encode_bootstrap_qr(_reprovision_payload(), key),
@@ -322,19 +294,20 @@ async def test_release_manifest_and_new_identity_do_not_touch_child_layers(
                         "base_library_version": "3.0.0",
                     },
                 )
-            # Releasing again is a no-op for the fleet, never an erasure.
-            assert (
-                service.release_device_binding(
-                    device_id=DEVICE_ID,
-                    binding_id=str(unbound.json()["binding_id"]),
-                )
-                is False
-            )
+
+            # Re-provisioning never unbinds: the child keeps their name, age
+            # band and memory layers.
             assert layer_calls == []
             assert deletion.calls == []
             assert (
                 await _layer_counts(store, subject_id=child_id, owner_id=owner_id)
                 == before
             )
+            child = await app.state.identity_service.get_person(
+                child_id, actor_person_id=owner_id
+            )
+            assert (child.display_name, child.subject_category) == ("小乐", "minor")
+            assert child.age_band == "under_14"
+            assert child.status == "active"
     finally:
         await _close_layers(store, bootstrap, admin_db_dsn)

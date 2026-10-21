@@ -828,7 +828,6 @@ async def test_accountless_child_person_consent_lifts_and_reverts_the_retention_
             headers=owner_headers,
             json={
                 "reason": "person consent lifecycle test",
-                "purge_subject_data": True,
             },
         )
         assert unbind_res.status_code == 200, unbind_res.text

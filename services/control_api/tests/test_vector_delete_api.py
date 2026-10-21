@@ -174,7 +174,7 @@ async def test_guardian_retract_deletes_the_childs_vector(
 
 
 @pytest.mark.asyncio
-async def test_unbind_keeping_subject_data_keeps_the_childs_vector(
+async def test_unbind_deletes_the_childs_vector_without_a_data_switch(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _configure(monkeypatch, tmp_path)
@@ -185,15 +185,16 @@ async def test_unbind_keeping_subject_data_keeps_the_childs_vector(
         )
         claim_id = await _seed_child_vector(app, owner_id, child_id)
 
+        # No purge_subject_data: unbind always erases now (#283).
         unbound = await client.post(
             "/v1/devices/device-vector-keep/binding/unbind",
             headers=headers,
-            json={"reason": "unbind", "purge_subject_data": False},
+            json={"reason": "unbind"},
         )
 
         assert unbound.status_code == 200, unbound.text
-        assert unbound.json()["subject_deletion"] == "not_requested"
-        assert _vector_count(owner_id, claim_id) == 1
+        assert unbound.json()["subject_deletion"] == "completed"
+        assert _vector_count(owner_id, claim_id) == 0
 
 
 @pytest.mark.asyncio
@@ -242,7 +243,7 @@ async def test_unbind_purging_subject_data_deletes_the_childs_vector(
             unbound = await client.post(
                 "/v1/devices/device-vector-purge/binding/unbind",
                 headers=headers,
-                json={"reason": "unbind", "purge_subject_data": True},
+                json={"reason": "unbind"},
             )
 
             assert unbound.status_code == 200, unbound.text
