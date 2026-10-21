@@ -44,7 +44,7 @@ def test_every_fixed_safety_script_has_the_approved_parent_copy() -> None:
         summary="孩子说到了自己可能受到伤害",
         robot_said=ROBOT_SAID,
         parent_action="尽快当面陪孩子聊聊，先让孩子安心，不反复追问细节。如有危险请拨打110",
-        interrupted_detail="如有危险请拨打110",
+        interrupted_detail="这次的提醒话术孩子没有听完，如有危险请拨打110",
     )
     assert PARENT_ALERT_COPY["support-other-v1"] == ParentAlertCopy(
         category_label="孩子提到的安全话题",
@@ -120,7 +120,7 @@ def test_an_unfinished_playback_uses_the_tier_sentence() -> None:
     )
     assert (
         PARENT_ALERT_COPY["victim-support-v1"].interrupted_detail
-        == "如有危险请拨打110"
+        == "这次的提醒话术孩子没有听完，如有危险请拨打110"
     )
 
 
@@ -140,7 +140,7 @@ def test_victim_action_is_the_final_sentence_and_does_not_describe_an_incident()
 
 def test_interrupted_detail_uses_the_tier_table_only_when_the_flag_is_set() -> None:
     unfinished_self = "这次的提醒话术孩子没有听完，如需帮助可拨打心理援助热线12356"
-    unfinished_victim = "如有危险请拨打110"
+    unfinished_victim = "这次的提醒话术孩子没有听完，如有危险请拨打110"
     assert (
         interrupted_parent_detail("victim-support-v1", script_interrupted=False) is None
     )

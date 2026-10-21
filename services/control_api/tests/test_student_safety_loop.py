@@ -923,7 +923,7 @@ async def test_unfinished_script_detail_is_fixed_copy_and_omits_the_child_words(
     """Interrupted detail is the script-id sentence. The child's words never enter it."""
 
     self_harm = "这次的提醒话术孩子没有听完，如需帮助可拨打心理援助热线12356"
-    victim = "如有危险请拨打110"
+    victim = "这次的提醒话术孩子没有听完，如有危险请拨打110"
     _configure(monkeypatch, tmp_path)
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
