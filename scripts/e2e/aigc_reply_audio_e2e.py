@@ -513,10 +513,12 @@ class _DeviceClient:
         # Turn ids are deterministic from the scenario; remembering the VAD end
         # per turn keeps the latency clock on the device's speech edge.
         self._pending_vad_end: dict[int, float] = {}
-        # Loop-clock moment each 停 was queued, and how much of the turn's first
-        # generation had arrived then. Both prove the stop interrupted playback.
+        # Loop-clock moment each 停 was queued, and the number of the turn's
+        # first-generation frames received by then. The final count is read
+        # later, so a larger total proves the downlink kept streaming after the
+        # stop.
         self.stop_sent_at: dict[int, float] = {}
-        self.stop_frames: dict[int, int] = {}
+        self.frames_at_stop: dict[int, int] = {}
 
     async def __aenter__(self) -> _DeviceClient:
         rpc = self.channel.stream_stream(
@@ -664,7 +666,9 @@ class _DeviceClient:
             turn = self.turns.get(turn_id)
             if turn is not None and turn.generation_frames:
                 first = min(turn.generation_frames)
-                self.stop_frames[turn_id] = len(turn.generation_frames[first])
+                # A snapshot of what the device has received. Frames arriving
+                # after this line still append to the same generation.
+                self.frames_at_stop[turn_id] = len(turn.generation_frames[first])
         await self.send(
             media_pb2.MediaToCore(
                 keyword=media_pb2.KeywordEvent(
@@ -801,9 +805,13 @@ def _assert_crisis_script_complete(
     *,
     label: str,
     stop_at: float | None,
-    stop_frames: int | None,
+    frames_at_stop: int | None,
 ) -> None:
-    """The approved clip played in full although the device sent 停 mid-script."""
+    """The approved clip played in full although the device sent 停 mid-script.
+
+    Fixed-safety crisis audio is emitted as one generation, so that
+    generation's frame clock covers the whole script.
+    """
 
     script = _crisis_pcm()
     reply = _turn_reply_pcm(turn)
@@ -814,11 +822,11 @@ def _assert_crisis_script_complete(
     assert hashlib.sha256(reply).hexdigest() == _crisis_manifest_digest(), (
         f"{label}: crisis sha256 mismatch"
     )
-    assert stop_at is not None and stop_frames is not None, f"{label}: no 停 was sent"
+    assert stop_at is not None and frames_at_stop is not None, f"{label}: no 停 was sent"
     first_generation = min(turn.generation_frames)
     times = turn.frame_times[first_generation]
-    total_frames = len(turn.generation_frames[first_generation])
-    assert stop_frames < total_frames, (
+    final_frames = len(turn.generation_frames[first_generation])
+    assert frames_at_stop < final_frames, (
         f"{label}: 停 was queued after the script had already streamed in full"
     )
     assert times[0] < stop_at < times[-1], (
@@ -1050,14 +1058,14 @@ async def _run_scenario(*, cert_dir: Path) -> dict[str, Any]:
                 crisis_stop,
                 label="crisis_stop",
                 stop_at=client.stop_sent_at.get(stop_turn_id),
-                stop_frames=client.stop_frames.get(stop_turn_id),
+                frames_at_stop=client.frames_at_stop.get(stop_turn_id),
             )
             results["crisis_stop_script"] = {
                 "turn_id": stop_turn_id,
                 "script_bytes": len(_crisis_pcm()),
                 "script_sha256": _crisis_manifest_digest(),
-                "stop_after_frames": client.stop_frames[stop_turn_id],
-                "total_frames": len(
+                "frames_at_stop": client.frames_at_stop[stop_turn_id],
+                "final_frames": len(
                     crisis_stop.generation_frames[min(crisis_stop.generation_frames)]
                 ),
             }
