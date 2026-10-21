@@ -44,6 +44,10 @@ ship_images() { local i; for i in "${!SHIP[@]}"; do printf '%s=memoria-%s ' "${S
 PREV_OVERRIDE_WHITELIST='
 control-api              /opt/memoria/component-releases/20261021-a94c438-pr345-pr346-pr348-pr352/override-control-pr352.yml       95a5e03319cafcf7fcf7325f00b2cc753ea444c563bfd5de5472692ce1d67486  /tmp/override-control-pr352.yml
 voice-core-media-bridge  /opt/memoria/component-releases/20261021-a94c438-pr345-pr346-pr348-pr352-pr353-pr355/override-pr355.yml  895b17fefa3401e75ba17e1c3f08aac9cab920f7b25e55aa540ffcc5a7a22da0  /tmp/override-pr355.yml
+control-api              /opt/memoria/component-releases/20261021-stepfun-c272af5/override-control-stepfun-c272af5.yml              53db50c436f582120ea3a292be1606f11fed46e5e329e30e73f4d55caba97204  /tmp/override-control-stepfun-c272af5.yml
+voice-core-media-bridge  /opt/memoria/component-releases/20261021-stepfun-c272af5/override-bridge-stepfun-c272af5.yml               a1b51ef44d4f87160649ee2015de815089a27f15d27a88d678196ef507fa5c3c  /tmp/override-bridge-stepfun-c272af5.yml
+control-api              /opt/memoria/component-releases/20261021-pr368-dd98c4a/override-control-pr368-dd98c4a.yml                  bde575b693d379e47af7bbfbcbbcd857487532b78faef2d2957b4facaf1217c0  /tmp/override-control-pr368-dd98c4a.yml
+voice-core-media-bridge  /opt/memoria/component-releases/20261021-main-f14be64/override-bridge-20261021-main-f14be64.yml            4cfa1733236927709435c3f068276835a009de8e3603ba2bba08571cc96610cf  /tmp/override-bridge-20261021-main-f14be64.yml
 '
 # Prints "<service>|<persisted path>|<sha256>|<original path>" for either
 # whitelisted path of a row. Returns 1 for anything else. Production resolves
