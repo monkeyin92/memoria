@@ -698,6 +698,24 @@ class DelegationCoordinator:
         expires_at_ms: int,
         now_ms: int | None = None,
     ) -> Any:
+        """Build a fast-ack intent; this method selects no TTS engine.
+
+        The phrase travels in ``tts_source`` and is synthesized downstream.
+        ``MediaSessionProjectionMixin._speak_allowlisted_bridge_phrase``
+        enqueues the intent as output work, ``ExistingVoiceProviderAdapter``
+        renders it through ``_synthesize_phrase`` in ``generate_output``, and
+        that pushes the text into ``speech_synthesis.stream()``. With
+        ``TTS_PROVIDER=stepfun_primary`` that stream is
+        ``StepFunFailoverStream``: an ordinary acknowledgement opens on StepFun
+        and switches to the Doubao backup only after a primary failure or while
+        the breaker is open. It never starts on Doubao. None of today's
+        allowlisted acknowledgements matches the labeled catalogue, so it is
+        synthesized instead of replayed from a pre-synthesized take. An
+        approved fixed-safety script does not reach this method, because its
+        phrase is not allowlisted; on the fixed-safety path the same wrapper
+        skips StepFun and speaks Doubao directly.
+        """
+
         if not is_allowlisted_device_phrase(phrase):
             raise ValueError("bridge acknowledgement is not allowlisted")
         now = int(time.time() * 1_000) if now_ms is None else now_ms
