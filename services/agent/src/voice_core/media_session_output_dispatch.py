@@ -958,6 +958,7 @@ class MediaOutputDispatchMixin:
         owner_started = self._owner_has_started_playback(context, owner)
         if owner_started and (
             not context.runtime.barge_in_enabled
+            or context.runtime.floor.fixed_safety_audible
             or self._fast_ack_has_started_playback(context, owner)
             or int(getattr(work.intent, "kind", 0))
             == int(media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT)

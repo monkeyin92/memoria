@@ -187,6 +187,67 @@ _CRISIS_SELF_WORD_CLASS_RES: Final[tuple[re.Pattern[str], ...]] = (
     _LIFE_MEANINGLESS_RE,
     _WISH_NOT_EXIST_RE,
 )
+# First-person clause rule. Chinese drops the subject after the first clause
+# (「我有点难过，不想活了」), so a risk phrase that opens a clause belongs to the
+# subject in force: the speaker by default and after a clause opened by 我,
+# someone else after a clause opened by another person or holding reported speech.
+_CLAUSE_SPLIT_RE = re.compile(r"[\s，。！？、；：,.!?;:…~～]+")
+_CLAUSE_INTERJECTIONS = r"(?:嗯|啊|呃|唉|哎|哦|呜)*"
+_SELF_RISK_ADVERBS = (
+    r"(?:真的?|现在|有时候?|有点儿?|有些|好|很|太|特别|非常|已经|都|也|就|总是|老是|"
+    r"一直|其实|突然|实在|还|又|再|简直|宁愿|甚至|感觉|觉得|是)*"
+)
+_SELF_RISK_PHRASE = (
+    r"(?:不想(?:再|继续)?活(?!动)|活不下去|"
+    r"(?:想|要|准备|打算)(?:去)?(?:死|自杀|自残|自尽|轻生|跳楼|结束(?:自己的)?生命|"
+    r"伤害(?:我)?自己|杀(?:了|死)?(?:我)?自己))"
+)
+_OTHER_PERSON_NOUNS = (
+    r"(?:同学|同桌|朋友|好朋友|闺蜜|哥哥|姐姐|弟弟|妹妹|爸爸|妈妈|爷爷|奶奶|姥姥|姥爷|"
+    r"外公|外婆|叔叔|阿姨|老师|小朋友|孩子|家人|班)"
+)
+_SELF_PRONOUN = rf"我(?:们)?(?![们的]|{_OTHER_PERSON_NOUNS})"
+_SELF_RISK_IN_CLAUSE_RE = re.compile(rf"{_SELF_PRONOUN}{_SELF_RISK_ADVERBS}{_SELF_RISK_PHRASE}")
+_SUBJECTLESS_RISK_CLAUSE_RE = re.compile(
+    rf"^{_CLAUSE_INTERJECTIONS}{_SELF_RISK_ADVERBS}{_SELF_RISK_PHRASE}"
+)
+_SELF_SUBJECT_CLAUSE_RE = re.compile(rf"^{_CLAUSE_INTERJECTIONS}{_SELF_PRONOUN}")
+_OTHER_SUBJECT_CLAUSE_RE = re.compile(
+    rf"^{_CLAUSE_INTERJECTIONS}(?:(?:我|我们)的?{_OTHER_PERSON_NOUNS}|{_OTHER_PERSON_NOUNS}|"
+    r"他|她|它|有人|别人|人家|大家|ta)"
+)
+_REPORTED_SPEECH_CLAUSE_RE = re.compile(r"说|告诉|讲|提到|表示|问")
+_SELF_RISK_PHRASE_RE = re.compile(_SELF_RISK_PHRASE)
+# ASR may drop the comma (「我有点难过不想活了」): a clause the child opens keeps
+# a later risk phrase unless another person or a story enters it.
+_OTHER_PERSON_IN_CLAUSE_RE = re.compile(
+    rf"{_OTHER_PERSON_NOUNS}|他|她|它|有人|别人|人家|大家|故事|绘本|动画片|童话|神话"
+)
+
+
+def _first_person_self_risk(text: str) -> bool:
+    subject_is_self = True
+    for clause in _CLAUSE_SPLIT_RE.split(text.lower()):
+        if not clause:
+            continue
+        if _REPORTED_SPEECH_CLAUSE_RE.search(clause):
+            subject_is_self = False
+            continue
+        if _SELF_RISK_IN_CLAUSE_RE.search(clause):
+            return True
+        if _SELF_SUBJECT_CLAUSE_RE.search(clause):
+            if _SELF_RISK_PHRASE_RE.search(clause) and not _OTHER_PERSON_IN_CLAUSE_RE.search(
+                clause
+            ):
+                return True
+            subject_is_self = True
+        elif _OTHER_SUBJECT_CLAUSE_RE.search(clause):
+            subject_is_self = False
+        elif subject_is_self and _SUBJECTLESS_RISK_CLAUSE_RE.search(clause):
+            return True
+    return False
+
+
 _OTHER_JUMP_RE = re.compile(r"(?:从楼上跳|跳下去)")
 _CONFINEMENT_BEAT_RE = re.compile(r"关起来打")
 _EXPLICIT_SELF_HARM_ACTION_RE = re.compile(
@@ -206,7 +267,7 @@ _REPORTED_OR_ANALYTICAL_RE = re.compile(
 _UNQUOTED_REPORTED_SELF_HARM_RE = re.compile(
     r"(?:朋友|家人|同学|孩子|他|她|有人|别人).{0,12}"
     r"(?:跟我说|告诉我|说|表示|提到).{0,12}"
-    r"(?:我想自杀|我想死|我不想活|想自残|想轻生|想结束生命)"
+    r"(?:我想自杀|我想死|我不想活|想自残|想轻生|想结束生命|想伤害(?:他|她|我)?自己)"
 )
 _VICTIM_SUPPORT_RE = re.compile(
     r"(?:"
@@ -217,6 +278,9 @@ _VICTIM_SUPPORT_RE = re.compile(
     # Adult / relative hitting the child; 大我 is a common ASR slip for 打我.
     r"(?:有个)?(?:大人|叔叔|阿姨|老师).{0,12}(?:老是)?(?:打|大)我|"
     r"老是(?:打|大)我|"
+    # Family or an older child hitting the child. Only 打: 哥哥大我三岁 is an age.
+    r"(?:爸爸|妈妈|爸|妈|继父|继母|后爸|后妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|"
+    r"哥哥|姐姐|舅舅|姑姑|姨妈|伯伯).{0,8}(?<![不没别])打我(?!电话|的电话|手机|游戏)|"
     r"有人摸我(?:的)?身体|摸我身体|"
     r"我正在被打|"
     r"我被下毒|我中毒|"
@@ -310,13 +374,16 @@ def _normalize_query(query: str) -> str:
 def companion_safety_decision(query: str) -> SafetyDecision:
     """Classify one current-turn query without granting facts or permissions."""
     stripped_of_quotes = _QUOTED_TEXT_RE.sub("", query)
+    crisis_query = stripped_of_quotes
+    if crisis_query == query or not _REPORTED_OR_ANALYTICAL_RE.search(crisis_query):
+        crisis_query = query
+    # The child's own risk outranks anything they relay about someone else.
+    if _first_person_self_risk(crisis_query):
+        return "crisis_self"
     # Reported self-harm must survive quote stripping; otherwise fiction /
     # analysis that only quotes risk language would still trip the relay path.
     if _UNQUOTED_REPORTED_SELF_HARM_RE.search(stripped_of_quotes):
         return "support_relay"
-    crisis_query = stripped_of_quotes
-    if crisis_query == query or not _REPORTED_OR_ANALYTICAL_RE.search(crisis_query):
-        crisis_query = query
     normalized = re.sub(r"[\s，。！？、,.!?：:\-—_]+", "", crisis_query).lower()
     if (
         normalized in _EXPLICIT_SELF_HARM_EXACT

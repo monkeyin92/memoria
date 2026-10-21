@@ -22,6 +22,7 @@ from enum import Enum
 from typing import Final, Literal
 
 from services.agent.src.orchestration.state_machine import ConversationState, InteractionPhase
+from services.common.fixed_safety_scripts import fixed_safety_echo_reference
 
 
 class _Keep(Enum):
@@ -57,6 +58,8 @@ class FloorSnapshot:
     assistant_speaking: bool
     """The runtime playback latch: assistant audio is (believed) audible."""
     fresh_user_speech: bool
+    fixed_safety_audible: bool = False
+    """A fixed safety script plays and its end is not acknowledged: nothing may cut it."""
 
     @property
     def interruptible(self) -> bool:
@@ -142,6 +145,19 @@ class VoiceFloorState:
         return self._last_playback_completed_ns
 
     @property
+    def fixed_safety_audible(self) -> bool:
+        """A fixed safety script is audible and the device has not acknowledged its end.
+
+        Field 2026-10-21 H01: a 3-character final misheard as a stop cut
+        crisis-self-v1 after 5.4 s, before 12356. While this holds, the script
+        plays to its end as if barge-in were off.
+        """
+
+        return self._assistant_speaking and (
+            fixed_safety_echo_reference(self._pending_assistant_text) is not None
+        )
+
+    @property
     def echo_reference_text(self) -> str:
         """Assistant text an echo guard compares user input against."""
 
@@ -187,6 +203,7 @@ class VoiceFloorState:
             phase=self._phase,
             assistant_speaking=self._assistant_speaking,
             fresh_user_speech=self._fresh_user_speech,
+            fixed_safety_audible=self.fixed_safety_audible,
         )
 
 
