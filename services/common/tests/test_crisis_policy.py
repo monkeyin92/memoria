@@ -99,6 +99,15 @@ def test_model_evidence_cannot_execute_without_deterministic_first_person_anchor
     assert route.evidence_source == "semantic_evidence"
 
 
+@pytest.mark.parametrize("query", ("我不在家没关系", "明天我不在学校也没事"))
+def test_location_absence_is_not_a_self_crisis_anchor(query: str) -> None:
+    assert crisis_semantic_candidate(query) is False
+    assert (
+        route_crisis(query, semantic_evidence=CrisisSemanticVerdict.SELF_CRISIS).action
+        == "none"
+    )
+
+
 def test_semantic_call_candidate_is_bounded_to_unresolved_first_person_risk() -> None:
     assert crisis_semantic_candidate("我撑不下去了") is True
     assert crisis_semantic_candidate("我真的找不到活下去的理由") is False
