@@ -7,7 +7,9 @@ deployment that does not opt in keeps the current behaviour byte for byte.
 Failover is per VAD segment, never concatenated: if the primary errors or
 misses its first-result budget, the whole segment PCM is re-recognised offline
 by the deployed SenseVoice sidecar; if that also fails, the segment is replayed
-through Bailian ``fun-asr-realtime``.
+through Bailian ``fun-asr-realtime``. Degradation lasts for that segment only.
+The next segment tries the primary again whenever the process breaker allows
+it, so one quiet moment cannot pin a whole conversation to the backup.
 """
 
 from __future__ import annotations
@@ -110,6 +112,14 @@ class ProcessASRBreaker:
     session's timeout block every other session. This breaker never raises; it
     returns ``False`` so the caller can send the segment to backup, and it
     allows exactly one half-open probe at a time.
+
+    A probe lease is bounded. A session that notices the open window but dies
+    without resolving the probe (device disconnect, cancelled handshake) must
+    not disable the primary for the whole process, so the lease expires on its
+    own and ``release_probe`` frees it as soon as the owner is closed.
+
+    A lease carries an owner token so a session that never held it cannot
+    release it by reporting an unrelated verdict.
     """
 
     def __init__(
@@ -117,41 +127,81 @@ class ProcessASRBreaker:
         *,
         failures: int = 3,
         open_s: float = 30.0,
+        probe_timeout_s: float | None = None,
         clock: Callable[[], float] = monotonic,
     ) -> None:
         self.failures = failures
         self.open_s = open_s
+        self.probe_timeout_s = open_s if probe_timeout_s is None else probe_timeout_s
         self._clock = clock
         self._state = "closed"
         self._consecutive_failures = 0
         self._opened_at: float | None = None
         self._probe_in_flight = False
+        self._probe_expires_at: float | None = None
+        self._probe_token = 0
+        self._probe_owner: int | None = None
 
     @property
     def state(self) -> str:
         return self._state
 
+    @property
+    def probe_in_flight(self) -> bool:
+        return self._probe_in_flight
+
+    @property
+    def probe_owner(self) -> int | None:
+        """Token of the lease handed out by the last successful ``allow()``."""
+
+        return self._probe_owner if self._probe_in_flight else None
+
     def allow(self) -> bool:
         if self._state == "closed":
+            self._probe_owner = None
             return True
+        now = self._clock()
         if self._state == "open":
-            elapsed = self._clock() - (self._opened_at or 0.0)
+            elapsed = now - (self._opened_at or 0.0)
             if elapsed < self.open_s:
                 return False
             self._state = "half_open"
         if self._probe_in_flight:
-            return False
+            if self._probe_expires_at is not None and now >= self._probe_expires_at:
+                # The probing session never reported back; take the lease.
+                self._probe_in_flight = False
+                self._probe_expires_at = None
+                self._probe_owner = None
+            else:
+                return False
         self._probe_in_flight = True
+        self._probe_expires_at = now + self.probe_timeout_s
+        self._probe_token += 1
+        self._probe_owner = self._probe_token
         return True
+
+    def release_probe(self, owner: int | None = None) -> None:
+        """Drop a half-open lease whose owner closed without a verdict.
+
+        Without an owner this clears whatever lease is outstanding, which is
+        only correct for a deliberate reset; a session must pass the token it
+        received from ``allow()``.
+        """
+
+        if owner is not None and owner != self._probe_owner:
+            return
+        self._probe_in_flight = False
+        self._probe_expires_at = None
+        self._probe_owner = None
 
     def record_success(self) -> None:
         self._state = "closed"
         self._consecutive_failures = 0
         self._opened_at = None
-        self._probe_in_flight = False
+        self.release_probe()
 
-    def record_failure(self) -> None:
-        self._probe_in_flight = False
+    def record_failure(self, *, owner: int | None = None) -> None:
+        self.release_probe(owner)
         self._consecutive_failures += 1
         if self._state == "half_open" or self._consecutive_failures >= self.failures:
             self._state = "open"
@@ -186,19 +236,26 @@ class FailoverASRSession:
         self._clock = clock
         self._primary: StreamingASRSession | None = None
         self._closed = False
+        self._probe_lease: int | None = None
         self._degraded = False
         self._degrade_reason: str | None = None
         self._primary_first_result = False
         self._primary_final_seen = False
-        self._first_audio_at: float | None = None
+        # First frame of this segment that carries speech energy. Silence never
+        # starts the first-result clock: a child who pauses before speaking
+        # must not be mistaken for a silent provider.
+        self._speech_onset_at: float | None = None
         self._task_epoch = 0
         self._segment_epoch = 1
         self._task_sample_origin = 0
         self._last_sent_sample = 0
+        self._last_committed_sample = 0
         self._rotation_pending = False
         self._segment_start: int | None = None
         self._segment_end: int | None = None
         self._segment_pcm = bytearray()
+        self._segment_pcm_start: int | None = None
+        self._segment_voiced_start: int | None = None
         self._task_start_sample: int | None = None
         self._task_end_sample: int | None = None
         self._task_send_count = 0
@@ -255,6 +312,8 @@ class FailoverASRSession:
 
     @property
     def degraded(self) -> bool:
+        """Whether the segment in progress is going to the backup chain."""
+
         return self._degraded
 
     @property
@@ -264,6 +323,7 @@ class FailoverASRSession:
     def mark_committed_sample(self, sample: int) -> None:
         if sample < 0:
             raise ValueError("committed sample must be non-negative")
+        self._last_committed_sample = max(self._last_committed_sample, sample)
         if self._primary is not None:
             self._primary.mark_committed_sample(sample)
 
@@ -271,35 +331,66 @@ class FailoverASRSession:
         if self._closed:
             raise RuntimeError("ASR failover session is closed")
         self._ensure_task_identity()
+        await self._open_primary(segment_is_healthy=False)
+
+    async def _open_primary(self, *, segment_is_healthy: bool) -> bool:
+        """Connect the primary when the breaker allows it.
+
+        Returns whether a primary is available. ``segment_is_healthy`` marks a
+        fresh segment, where a successful connect means the previous
+        degradation no longer applies.
+        """
+
         if not self._breaker.allow():
             await self._degrade("breaker_open", count_failure=False)
-            return
+            return False
+        if self._breaker.state == "half_open":
+            # Hold the lease so ``aclose`` can hand it back if this session
+            # dies before the primary reports a verdict.
+            self._probe_lease = self._breaker.probe_owner
         primary: StreamingASRSession | None = None
         try:
             primary = self._primary_factory()
             await asyncio.wait_for(primary.connect(), timeout=self.config.connect_timeout_s)
+            if self._last_committed_sample:
+                primary.mark_committed_sample(self._last_committed_sample)
         except asyncio.CancelledError:
+            self._release_probe()
+            if primary is not None:
+                with contextlib.suppress(Exception):
+                    await primary.aclose()
             raise
         except Exception:
+            self._probe_lease = None
             if primary is not None:
                 with contextlib.suppress(Exception):
                     await primary.aclose()
             await self._degrade("connect_failed")
-            return
+            return False
         self._primary = primary
         self.task_id = primary.task_id or self._ensure_task_identity()
         self._task_epoch = max(self._task_epoch, primary.task_epoch)
         self._task_sample_origin = primary.task_sample_origin
+        if segment_is_healthy:
+            self._degraded = False
+            self._degrade_reason = None
         logger.info(
             "asr failover primary connected provider=%s task_epoch=%s",
             self.config.primary,
             self._task_epoch,
         )
+        return True
 
     def _ensure_task_identity(self) -> str:
         if not self.task_id:
             self.task_id = f"failover-{uuid.uuid4()}"
         return self.task_id
+
+    def _release_probe(self) -> None:
+        lease = self._probe_lease
+        if lease is not None:
+            self._probe_lease = None
+            self._breaker.release_probe(lease)
 
     async def _degrade(self, reason: str, *, count_failure: bool = True) -> None:
         if self._degraded:
@@ -308,8 +399,10 @@ class FailoverASRSession:
             raise ValueError(f"unknown ASR failover reason: {reason}")
         self._degraded = True
         self._degrade_reason = reason
+        lease = self._probe_lease
+        self._probe_lease = None
         if count_failure:
-            self._breaker.record_failure()
+            self._breaker.record_failure(owner=lease)
         primary = self._primary
         self._primary = None
         if primary is not None:
@@ -351,14 +444,16 @@ class FailoverASRSession:
         if start < self._last_sent_sample:
             raise ValueError("capture sample position moved backwards")
         end = start + len(pcm) // 2
+        if self._rotation_pending:
+            await self._arm_next_task(start)
         self._start_segment_if_needed(start)
         self._segment_pcm.extend(pcm)
         self._record_task_pcm(pcm, start=start, end=end)
+        if self._segment_voiced_start is None and self._has_speech_energy(pcm):
+            self._segment_voiced_start = start
         self._last_sent_sample = end
-        if self._rotation_pending:
-            self._arm_next_task(start)
-        if self._first_audio_at is None:
-            self._first_audio_at = self._clock()
+        if self._speech_onset_at is None and self._segment_voiced_start is not None:
+            self._speech_onset_at = self._clock()
         primary = self._primary
         if primary is not None and not self._degraded:
             try:
@@ -373,12 +468,12 @@ class FailoverASRSession:
                     self._task_epoch = max(self._task_epoch, self._primary.task_epoch)
                     self.task_id = self._primary.task_id or self.task_id
                     self._task_sample_origin = self._primary.task_sample_origin
-        if self._degraded:
+        if self._degraded or primary is None:
             return
         if (
-            self._first_audio_at is not None
+            self._speech_onset_at is not None
             and not self._primary_first_result
-            and self._clock() - self._first_audio_at
+            and self._clock() - self._speech_onset_at
             >= self.config.first_result_timeout_s
         ):
             await self._degrade("first_result_timeout")
@@ -388,12 +483,15 @@ class FailoverASRSession:
             return
         self._segment_start = start
         self._segment_end = start
+        self._segment_pcm_start = start
         if self._primary is None:
             self._task_sample_origin = start
 
-    def _arm_next_task(self, start: int) -> None:
+    async def _arm_next_task(self, start: int) -> None:
+        """Reset per-segment state and retry the primary for the new segment."""
+
         self._rotation_pending = False
-        self._first_audio_at = None
+        self._speech_onset_at = None
         self._primary_first_result = False
         self._primary_final_seen = False
         self._task_epoch += 1
@@ -409,6 +507,17 @@ class FailoverASRSession:
             self.task_id = self._primary.task_id or self.task_id
             self._task_epoch = max(self._task_epoch, self._primary.task_epoch)
             self._task_sample_origin = self._primary.task_sample_origin
+            return
+        # The previous segment failed over. That verdict covered that segment
+        # only, so retry the primary now; the breaker decides whether it runs.
+        self._degraded = False
+        self._degrade_reason = None
+        if await self._open_primary(segment_is_healthy=True):
+            primary = self._primary
+            assert primary is not None
+            self.task_id = primary.task_id or self.task_id
+            self._task_epoch = max(self._task_epoch, primary.task_epoch)
+            self._task_sample_origin = start
         else:
             self.task_id = f"failover-{uuid.uuid4()}"
 
@@ -449,10 +558,10 @@ class FailoverASRSession:
                 self._primary_first_result = True
             if sentence.sentence_end and sentence.text.strip():
                 self._primary_final_seen = True
-                if self.metrics is not None:
+                if self.metrics is not None and self._speech_onset_at is not None:
                     self.metrics.observe_media_metric(
                         "asr_first_result_ms",
-                        (self._clock() - (self._first_audio_at or self._clock())) * 1000.0,
+                        (self._clock() - self._speech_onset_at) * 1000.0,
                         labels={"provider": self.config.primary},
                     )
         self.events.put_nowait(event)
@@ -467,9 +576,9 @@ class FailoverASRSession:
         if (
             primary is not None
             and not self._degraded
-            and self._first_audio_at is not None
+            and self._speech_onset_at is not None
             and not self._primary_first_result
-            and self._clock() - self._first_audio_at
+            and self._clock() - self._speech_onset_at
             >= self.config.first_result_timeout_s
         ):
             await self._degrade("first_result_timeout")
@@ -487,17 +596,18 @@ class FailoverASRSession:
                     # A connected primary that returned a task boundary is a
                     # healthy segment even when the transcript is empty.
                     self._breaker.record_success()
+                    self._probe_lease = None
         if self._degraded or self._primary is None:
             if self._primary_final_seen:
                 self._emit_task_finished()
             else:
                 await self._emit_backup_result()
         self._rotation_pending = True
-        self._first_audio_at = None
+        self._speech_onset_at = None
         self._reset_segment_evidence()
 
     async def _emit_backup_result(self) -> None:
-        pcm = bytes(self._segment_pcm)
+        pcm, begin_ms = self._voiced_segment_pcm()
         samples = len(pcm) // 2
         if not pcm:
             self._emit_task_finished()
@@ -538,8 +648,8 @@ class FailoverASRSession:
                 sentence=FunASRSentence(
                     sentence_id=self._backup_sentence_id,
                     text=text,
-                    begin_ms=0,
-                    end_ms=duration_ms,
+                    begin_ms=begin_ms,
+                    end_ms=begin_ms + duration_ms,
                     sentence_end=True,
                     heartbeat=False,
                     words=(),
@@ -553,6 +663,27 @@ class FailoverASRSession:
                 "asr_failover_total",
                 labels={"provider": "backup", "reason": "recovered"},
             )
+
+    def _voiced_segment_pcm(self) -> tuple[bytes, int]:
+        """The segment from its first speech frame, not from the task start.
+
+        A degraded segment spans the whole provider task, which begins before
+        the child speaks. Sending that leading silence to the offline decoder
+        both wastes the budget and can push a normal utterance past
+        ``max_segment_s``, where it would be dropped without any reply. The
+        returned begin offset keeps the synthetic final on the absolute clock.
+        """
+
+        start = self._segment_pcm_start
+        if start is None:
+            return b"", 0
+        voiced = self._segment_voiced_start
+        if voiced is None or voiced <= start:
+            return bytes(self._segment_pcm), 0
+        return (
+            bytes(self._segment_pcm[(voiced - start) * 2 :]),
+            round((voiced - start) * 1000 / 16_000),
+        )
 
     def _has_speech_energy(self, pcm: bytes) -> bool:
         rms = audioop.rms(pcm, 2)
@@ -634,6 +765,8 @@ class FailoverASRSession:
         self._segment_pcm.clear()
         self._segment_start = None
         self._segment_end = None
+        self._segment_pcm_start = None
+        self._segment_voiced_start = None
 
     async def reconnect_with_replay(self) -> None:
         if self._closed or self._degraded or self._primary is None:
@@ -649,6 +782,9 @@ class FailoverASRSession:
         if self._closed:
             return
         self._closed = True
+        # A half-open probe that this session took but never resolved would
+        # otherwise leave ``allow()`` returning False for the whole process.
+        self._release_probe()
         primary = self._primary
         self._primary = None
         if primary is not None:
@@ -681,6 +817,9 @@ def build_asr_session_factory(
             max_audio_s=settings.max_segment_s,
         )
         sensevoice = SenseVoiceRescue(rescue_config)
+    # Fail the deploy, not every device session: without credentials the
+    # primary can only ever fail its handshake.
+    volc_config.auth_headers()
     tertiary_factory: Callable[[], StreamingASRSession] | None = None
     if settings.tertiary == "dashscope_funasr":
         tertiary_config = replace(funasr_config, rescue_config=None)
