@@ -9,7 +9,7 @@ on:
 
 jobs:
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.RUNNER_LABEL_JSON || '"ubuntu-latest"') }}
     permissions:
       contents: read
       pull-requests: read
@@ -91,14 +91,18 @@ jobs:
   firmware:
     needs: changes
     if: needs.changes.outputs.firmware == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.RUNNER_LABEL_JSON || '"ubuntu-latest"') }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
-      - name: Install ffmpeg for board ogg AIGC decode check
+      - name: Install ffmpeg for board ogg AIGC decode check (Linux)
+        if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Install ffmpeg for board ogg AIGC decode check (macOS)
+        if: runner.os == 'macOS'
+        run: brew list ffmpeg >/dev/null 2>&1 || brew install ffmpeg
       - name: Require host C++ compiler
         run: c++ --version
       - name: Firmware host regression tests
@@ -143,7 +147,7 @@ jobs:
   agent:
     needs: changes
     if: needs.changes.outputs.agent == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.RUNNER_LABEL_JSON || '"ubuntu-latest"') }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -343,7 +347,7 @@ jobs:
   python:
     needs: [changes, control-api-image, python-gates, python-shards]
     if: ${{ always() && needs.changes.outputs.python == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.RUNNER_LABEL_JSON || '"ubuntu-latest"') }}
     steps:
       - name: Every python job passed
         run: |
@@ -374,7 +378,7 @@ jobs:
   media-edge:
     needs: changes
     if: needs.changes.outputs.media_edge == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.RUNNER_LABEL_JSON || '"ubuntu-latest"') }}
     defaults:
       run:
         working-directory: services/media_edge
@@ -384,10 +388,14 @@ jobs:
         with:
           go-version: "1.26.9"
           cache-dependency-path: services/media_edge/go.sum
-      - name: Install Opus build dependency
+      - name: Install Opus build dependency (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libopus-dev pkg-config
+      - name: Install Opus build dependency (macOS)
+        if: runner.os == 'macOS'
+        run: brew list opus pkg-config >/dev/null 2>&1 || brew install opus pkg-config
       - uses: arduino/setup-protoc@v3
         with:
           version: "35.1"
@@ -505,7 +513,7 @@ jobs:
   miniprogram:
     needs: changes
     if: needs.changes.outputs.miniprogram == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.RUNNER_LABEL_JSON || '"ubuntu-latest"') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
