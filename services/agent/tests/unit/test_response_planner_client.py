@@ -385,6 +385,30 @@ def test_parse_rejects_incoherent_persona_provenance(
 
 
 @pytest.mark.asyncio
+async def test_a_planner_timeout_is_not_reported_as_an_invalid_payload() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("planner exceeded the client budget", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = ResponsePlannerClient(
+            ResponsePlannerClientConfig(
+                endpoint="https://control.test/v1/interaction/response-plan",
+                internal_token="response-plan-token",
+            ),
+            client=http_client,
+        )
+        result = await client.fetch(
+            session_id="session-1",
+            query="我想拿刀划自己",
+            fence=GenerationFence("session-1", 1, 2, 0),
+            speaker_decision=_speaker(),
+        )
+
+    assert result.plan is None
+    assert result.reason == "timeout"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("response", "expected_reason"),
     [

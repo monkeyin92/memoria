@@ -42,7 +42,33 @@ def spawn(
 ) -> ResponsePlanFetch:
     """Send the request from a tracked background task; return the outcome the reply proceeds with."""
 
-    runtime._spawn(
+    fetch, _task = spawn_task(
+        runtime,
+        client,
+        session_id=session_id,
+        text=text,
+        fence=fence,
+        speaker=speaker,
+        recall_context=recall_context,
+        utterance_intent=utterance_intent,
+    )
+    return fetch
+
+
+def spawn_task(
+    runtime: Any,
+    client: Any,
+    *,
+    session_id: str,
+    text: str,
+    fence: GenerationFence,
+    speaker: Any,
+    recall_context: Sequence[str],
+    utterance_intent: str,
+) -> tuple[ResponsePlanFetch, asyncio.Task[ResponsePlanFetch | None]]:
+    """``spawn`` plus the task whose result a late-crisis watcher may read."""
+
+    task = runtime._spawn(
         _send(
             client,
             session_id=session_id,
@@ -58,7 +84,7 @@ def spawn(
         durable=True,
     )
     # What the awaited request would have ended as, so the turn takes the same local safe plan.
-    return ResponsePlanFetch(None, "fence_mismatch")
+    return ResponsePlanFetch(None, "fence_mismatch"), task
 
 
 async def _send(
@@ -70,8 +96,8 @@ async def _send(
     speaker: Any,
     recall_context: tuple[str, ...],
     utterance_intent: str,
-) -> None:
-    """One request, one log line, no retry; nothing it returns or raises reaches the turn."""
+) -> ResponsePlanFetch | None:
+    """One request, one log line, no retry; the result is only for a late-crisis watcher."""
 
     try:
         async with asyncio.timeout(SIDECAR_TIMEOUT_S):
@@ -98,3 +124,4 @@ async def _send(
         fence.generation_id,
         outcome,
     )
+    return fetched if outcome == "ok" else None

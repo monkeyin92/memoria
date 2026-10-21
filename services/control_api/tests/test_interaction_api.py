@@ -28,8 +28,8 @@ from services.archive.memory_domain import (
     MemorySearchResult,
     PersonItem,
 )
-from services.common.crisis_policy import CrisisSemanticVerdict
-from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
+from services.common.crisis_policy import CrisisSemanticVerdict, route_crisis
+from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT, script_for_display
 from services.control_api.app.main import create_app
 from services.control_api.app.routes import interaction as interaction_routes
 from services.digital_self.domain import (
@@ -1185,6 +1185,26 @@ class _ChangingMemoryCatalog:
         )
 
 
+class _SlowRecallStore:
+    """Session recall that has grown behind a long session and now queues."""
+
+    def __init__(self, inner: Any, delay_s: float = 1.0) -> None:
+        self._inner = inner
+        self._delay_s = delay_s
+        self.calls = 0
+
+    async def append(self, **kwargs: Any) -> None:
+        await self._inner.append(**kwargs)
+
+    async def list_recent(self, **kwargs: Any) -> tuple[str, ...]:
+        self.calls += 1
+        await asyncio.sleep(self._delay_s)
+        return cast(tuple[str, ...], await self._inner.list_recent(**kwargs))
+
+    async def erase_subject(self, **kwargs: Any) -> int:
+        return cast(int, await self._inner.erase_subject(**kwargs))
+
+
 class _PersonaEngine:
     async def capsule(self, _: object) -> PersonaCapsule:
         return PersonaCapsule(
@@ -1403,6 +1423,53 @@ async def test_tutor_turn_policy_requires_two_stuck_turns_and_crisis_still_wins(
     assert crisis_response.json()["direct_text"] is not None
     assert "12356" in crisis_response.json()["direct_text"]
     assert "【导师话轮约束】" not in crisis_response.json()["instructions"]
+
+
+_DEVICE_CRISIS_SENTENCES = (
+    ("我不想活了", "crisis-self-v1"),
+    ("我想从楼上跳下去", "crisis-self-v1"),
+    ("我想拿刀划自己", "crisis-self-v1"),
+    ("救命，有人打我", "victim-support-v1"),
+    ("有个叔叔摸我不让我告诉妈妈", "victim-support-v1"),
+    ("我被关在房间里出不去了", "victim-support-v1"),
+    ("我同学被别人打了", "support-other-v1"),
+    ("我听说有人欺负小朋友", "support-other-v1"),
+    ("怎么才能不被坏人骗走", "support-other-v1"),
+)
+
+
+@pytest.mark.asyncio
+async def test_control_api_tier_matches_local_tier_for_the_nine_device_sentences(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The bridge and control-api must name the same tier for every C1-C9 turn."""
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        _, user_headers = await _identity(client)
+        session_id = (
+            await client.post("/v1/sessions", headers=user_headers, json={})
+        ).json()["session_id"]
+        for index, (query, expected) in enumerate(_DEVICE_CRISIS_SENTENCES, start=1):
+            body = _response_plan_body(session_id)
+            body["query"] = query
+            body["fence"]["turn_id"] = index
+            body["fence"]["generation_id"] = index
+            response = await client.post(
+                "/v1/interaction/response-plan",
+                headers=token,
+                json=body,
+            )
+            assert response.status_code == 200, response.text
+            direct_text = response.json()["direct_text"]
+            local = route_crisis(query).script
+            planned = script_for_display(direct_text)
+            assert local is not None and planned is not None
+            assert planned.template_id == expected
+            assert local.template_id == planned.template_id
 
 
 @pytest.mark.asyncio
@@ -2017,10 +2084,85 @@ async def test_slow_companion_memory_still_returns_a_plan_inside_the_client_budg
     elapsed = time.perf_counter() - started
 
     assert catalog.context_calls == 1
-    assert elapsed < 1.0
+    assert elapsed < 0.8
     assert fetch.reason == "ok"
     assert fetch.plan is not None
     assert fetch.plan.grounded_items == ()
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_long_session_over_budget_crisis_turn_skips_companion_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    catalog = _SlowMemoryCatalog(2.0)
+    app.state.memory_catalog = catalog
+    app.state.persona_engine = _PersonaEngine()
+    recall = _SlowRecallStore(app.state.subject_session_recall_store)
+    app.state.subject_session_recall_store = recall
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, user_headers = await _identity(client)
+        session_id = (await client.post("/v1/sessions", headers=user_headers, json={})).json()[
+            "session_id"
+        ]
+        _mark_verified_adult(app, user_id)
+
+    body = _response_plan_body(session_id)
+    body["query"] = "我想拿刀划自己"
+    body["recall_context"] = [f"第{index}轮普通聊天" for index in range(4)]
+    body["fence"]["turn_id"] = 9
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    started = time.perf_counter()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/v1/interaction/response-plan", headers=token, json=body)
+    elapsed = time.perf_counter() - started
+
+    assert response.status_code == 200
+    assert elapsed < 0.8
+    assert response.json()["direct_text"] == CRISIS_SELF_SCRIPT.display
+    assert catalog.context_calls == 0
+    assert recall.calls == 0
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_over_budget_normal_turn_degrades_gracefully(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    catalog = _SlowMemoryCatalog(2.0)
+    app.state.memory_catalog = catalog
+    app.state.persona_engine = _PersonaEngine()
+    app.state.subject_session_recall_store = _SlowRecallStore(
+        app.state.subject_session_recall_store
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, user_headers = await _identity(client)
+        session_id = (await client.post("/v1/sessions", headers=user_headers, json={})).json()[
+            "session_id"
+        ]
+        _mark_verified_adult(app, user_id)
+
+    body = _response_plan_body(session_id)
+    body["query"] = "我找不到我的橡皮了"
+    body["recall_context"] = [f"第{index}轮普通聊天" for index in range(4)]
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    started = time.perf_counter()
+    with caplog.at_level("WARNING"):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/v1/interaction/response-plan", headers=token, json=body)
+    elapsed = time.perf_counter() - started
+
+    assert response.status_code == 200
+    assert elapsed < 0.8
+    assert response.json()["grounded_items"] == []
+    assert any("companion context exceeded budget" in record.getMessage() for record in caplog.records)
 
 
 @pytest.mark.asyncio
