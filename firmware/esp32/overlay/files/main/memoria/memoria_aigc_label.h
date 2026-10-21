@@ -17,6 +17,28 @@ inline constexpr bool kAigcTurnToneEnabled = false;
 inline constexpr const char* kAigcNoticeStoryFile = "aigc_story_intro.ogg";
 inline constexpr const char* kAigcNoticeBedtimeFile = "aigc_soothe_intro.ogg";
 
+enum class AigcPlaybackStart : std::uint8_t {
+    kNewStory = 0,  // long press starts a story from the top
+    kResume = 1,    // paused story continues from where it stopped
+    kReplay = 2,    // single-title loop restarts the same story
+    kJumpIn = 3,    // playback cut into from another screen or channel
+};
+
+// Every start of a story or bedtime clip plays the notice first: a dimmed
+// screen is all the label these paths have (GB 45438-2025 5.2/5.3).
+inline constexpr const char* AigcNoticeFileFor(AigcPlaybackStart start) {
+    switch (start) {
+        case AigcPlaybackStart::kNewStory:
+        case AigcPlaybackStart::kResume:
+        case AigcPlaybackStart::kReplay:
+        case AigcPlaybackStart::kJumpIn:
+            return kAigcNoticeStoryFile;
+    }
+    return kAigcNoticeStoryFile;
+}
+
+inline constexpr const char* AigcBedtimeNoticeFile() { return kAigcNoticeBedtimeFile; }
+
 // 360x360 round panel. Every badge corner stays at least 8 px inside the rim.
 inline constexpr int kAigcBadgePanelSize = 360;
 inline constexpr int kAigcBadgePanelRadius = 180;

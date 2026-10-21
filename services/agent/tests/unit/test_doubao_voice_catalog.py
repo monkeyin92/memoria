@@ -45,6 +45,17 @@ def test_registry_must_match_reviewed_catalog(tmp_path) -> None:
     )
 
 
+def test_default_companion_voice_is_kailangjiejie() -> None:
+    assert (
+        DESIGNED_VOICE_SPEAKERS["warm_companion"]
+        == "zh_female_kailangjiejie_uranus_bigtts"
+    )
+    assert (
+        resolve_approved_voice(profile_id="warm_companion")
+        == "zh_female_kailangjiejie_uranus_bigtts"
+    )
+
+
 def test_catalog_covers_stable_profile_keys() -> None:
     assert set(catalog_by_id()) == {
         "warm_companion",
