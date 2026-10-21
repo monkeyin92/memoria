@@ -8,7 +8,7 @@ import json
 import time
 from collections.abc import Callable
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import websockets
@@ -30,6 +30,8 @@ from services.agent.src.providers.tts_failover import (
 )
 from services.agent.src.providers.tts_stream import AudioFrame, SynthesizedAudio
 from services.agent.src.runtime_provenance import DuplexRuntimeProvenanceMixin
+from websockets.exceptions import ConnectionClosedOK
+from websockets.frames import Close
 
 RATE = 24000
 PCM = b"\x01\x00" * 2400  # 100 ms of 16-bit mono
@@ -790,6 +792,68 @@ async def test_aclose_closes_the_websocket_for_a_barge_in() -> None:
         await tts.aclose()
 
 
+@pytest.mark.parametrize(
+    ("sender_error", "expected_error"),
+    [
+        (ValueError("sender bug"), ValueError),
+        (ConnectionClosedOK(Close(1000, "stop"), None), None),
+    ],
+)
+@pytest.mark.asyncio
+async def test_sender_cleanup_only_hides_a_clean_socket_close(
+    sender_error: Exception,
+    expected_error: type[Exception] | None,
+) -> None:
+    sender_failed = asyncio.Event()
+
+    class _Socket:
+        def __init__(self) -> None:
+            self._created = False
+
+        async def send(self, raw: str) -> None:
+            event = json.loads(raw)
+            if event["type"] == "tts.text.delta":
+                sender_failed.set()
+                raise sender_error
+
+        async def recv(self) -> str:
+            if not self._created:
+                self._created = True
+                return _event("tts.response.created", {"session_id": "mock-session"})
+            await asyncio.wait_for(sender_failed.wait(), timeout=1)
+            return _done_event(PCM)
+
+    class _Pool:
+        def __init__(self, socket: _Socket) -> None:
+            self._socket = socket
+            self.discarded: list[str] = []
+
+        async def acquire(self) -> SimpleNamespace:
+            return SimpleNamespace(session_id="mock-session", ws=self._socket)
+
+        async def discard(self, connection: SimpleNamespace, *, reason: str) -> None:
+            del connection
+            self.discarded.append(reason)
+
+        async def aclose(self) -> None:
+            return None
+
+    tts = StepFunTTS(
+        StepFunTTSConfig(pool_size=1),
+        pool=cast(Any, _Pool(_Socket())),
+    )
+    stream = tts.stream(conn_options=APIConnectOptions(max_retry=0))
+    stream.push_text("你好。")
+    stream.end_input()
+    if expected_error is None:
+        events = [event async for event in stream]
+        assert events
+    else:
+        with pytest.raises(expected_error, match="sender bug"):
+            _ = [event async for event in stream]
+    await tts.aclose()
+
+
 def test_breaker_opens_half_opens_and_keeps_auth_failures_long() -> None:
     now = [100.0]
     breaker = TTSFailoverBreaker(
@@ -818,6 +882,27 @@ def test_breaker_opens_half_opens_and_keeps_auth_failures_long() -> None:
     now[0] += 11
     assert breaker.allow() is False
     now[0] += 1000
+    assert breaker.allow() is True
+
+
+def test_bound_engine_follows_a_shared_open_breaker_without_consuming_a_probe() -> None:
+    now = [100.0]
+    breaker = TTSFailoverBreaker(failures=1, open_s=10, clock=lambda: now[0])
+    wrapper = StepFunPrimaryTTS(
+        primary=FakePrimary(lambda: None),
+        backup=FakeBackupTTS(),
+        breaker=breaker,
+    )
+
+    assert wrapper.bound_engine() is wrapper.primary
+    breaker.record_failure()
+    assert breaker.state == "open"
+    assert wrapper.degraded is False
+    assert wrapper.bound_engine() is wrapper.backup
+
+    now[0] += 10
+    assert wrapper.bound_engine() is wrapper.primary
+    # The provenance query must not claim the half-open probe; selection still may.
     assert breaker.allow() is True
 
 

@@ -720,8 +720,9 @@ class StepFunSynthesizeStream(SynthesizeStream):
                 # A clean socket close can leave the sender with
                 # ConnectionClosedOK. It is the same normal termination as the
                 # receive side and must not replace a cancellation or a complete
-                # audio take in this task's result.
-                with contextlib.suppress(asyncio.CancelledError, Exception):
+                # audio take. Any other sender failure is a real bug and must
+                # surface.
+                with contextlib.suppress(asyncio.CancelledError, ConnectionClosed):
                     await send_task
             self._trace(
                 "stepfun_pcm_summary",

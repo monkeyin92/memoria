@@ -156,17 +156,24 @@ class TTSFailoverBreaker:
         if self._state == "closed":
             self._current_open_s = config.open_s
 
-    def allow(self) -> bool:
+    def available(self) -> bool:
+        """Whether a unit could start now without claiming the half-open probe."""
+
         if self._state == "closed":
             return True
         if self._state == "open":
             elapsed = self._clock() - (self._opened_at or 0.0)
             if elapsed < self._current_open_s:
                 return False
-            self._state = "half_open"
-        if self._probe_in_flight:
+        return not self._probe_in_flight
+
+    def allow(self) -> bool:
+        if not self.available():
             return False
-        self._probe_in_flight = True
+        if self._state == "open":
+            self._state = "half_open"
+        if self._state == "half_open":
+            self._probe_in_flight = True
         return True
 
     def record_success(self) -> None:
@@ -750,6 +757,13 @@ class StepFunPrimaryTTS:
             return False
         return self.breaker.allow()
 
+    def primary_available(self) -> bool:
+        """Whether StepFun could start now, without claiming a half-open probe."""
+
+        if self._force_backup:
+            return False
+        return self.breaker.available()
+
     def record_failure(self, exc: BaseException) -> None:
         auth = bool(getattr(exc, "auth_failure", False))
         self.breaker.record_failure(auth=auth)
@@ -792,7 +806,7 @@ class StepFunPrimaryTTS:
     def bound_engine(self) -> Any:
         """The engine a pushed unit starts on, given degradation and voice binding."""
 
-        if self._degraded or self._force_backup:
+        if self._degraded or not self.primary_available():
             return self.backup
         return self.primary
 
