@@ -61,7 +61,7 @@ from services.agent.src.voice_core.media_session_types import (
 from services.agent.src.voice_core.media_session_types import OutputWork as _OutputWork
 from services.agent.src.voice_core.reply_delivery import ReplyDeliveryEvent
 from services.agent.src.voice_core.speech_timeline import SpeechSegment
-from services.common.realtime_information import current_local_time
+from services.common.realtime_information import current_local_time, realtime_unavailable_reply
 
 if TYPE_CHECKING:
     from services.agent.src.observability.metrics import MetricsRegistry
@@ -793,7 +793,13 @@ class MediaSessionProjectionMixin:
             ) or _live_lookup_filler_already_audible(context, fence)
             if filler_started:
                 intent.tts_source = _strip_leading_live_lookup_filler(spoken)
-            elif spoken and not spoken.startswith(LIVE_LOOKUP_FILLER):
+            elif (
+                spoken
+                and spoken != realtime_unavailable_reply(text)
+                and not spoken.startswith(LIVE_LOOKUP_FILLER)
+            ):
+                # A fixed fallback is the whole answer: prefixing the lookup
+                # filler only delays the sentence the child actually needs.
                 intent.tts_source = LIVE_LOOKUP_FILLER + spoken
             floor_allows_output = runtime.output_floor_allows_assistant
             if (

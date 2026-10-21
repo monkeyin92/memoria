@@ -101,6 +101,11 @@ class DelegationCoordinator:
     # Only consumers with a queued-output resume path may retain blocked work.
     queue_while_floor_blocked: bool = False
     _task_epoch_by_session: dict[str, int] = field(default_factory=dict)
+    # A task epoch fences one tool's results, not every tool sharing the
+    # session.  The weather path runs the response planner and the media deep
+    # response at the same time; advancing the session epoch for the lookup
+    # must not invalidate the plan that is already in flight.
+    _task_epoch_by_tool: dict[tuple[str, str], int] = field(default_factory=dict)
     _context_version_by_session: dict[str, int] = field(default_factory=dict)
     _evaluated_intents: set[str] = field(default_factory=set)
     _evaluated_intent_order: deque[str] = field(default_factory=lambda: deque(maxlen=1_024))
@@ -281,6 +286,11 @@ class DelegationCoordinator:
         if current_task_epoch is not None and request.task_epoch < current_task_epoch:
             raise ValueError("delegation task epoch moved backwards")
         self._task_epoch_by_session[session_id] = request.task_epoch
+        tool_key = (session_id, request.tool_name)
+        self._task_epoch_by_tool[tool_key] = max(
+            self._task_epoch_by_tool.get(tool_key, 0),
+            request.task_epoch,
+        )
         self.activate_context_version(session_id, request.context_version)
         record = await self.task_manager.start(
             request.tool_name,
@@ -426,7 +436,10 @@ class DelegationCoordinator:
             discard("delegation_uncommitted")
             return None
         session_id = request.fence.session_id
-        authoritative_task_epoch = self._task_epoch_by_session.get(session_id)
+        authoritative_task_epoch = self._task_epoch_by_tool.get(
+            (session_id, request.tool_name),
+            self._task_epoch_by_session.get(session_id),
+        )
         authoritative_context_version = self._context_version_by_session.get(session_id)
         if (
             authoritative_task_epoch is None

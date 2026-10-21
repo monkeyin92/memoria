@@ -81,9 +81,9 @@ from services.common.companion_response_safety import assistant_text_repeats_or_
 from services.common.crisis_policy import more_protective_local_script
 from services.common.llm_failover import LLM_UNAVAILABLE_TEXT
 from services.common.realtime_information import (
-    REALTIME_UNAVAILABLE_REPLY,
     is_incomplete_realtime_reply,
     mentions_weather,
+    realtime_unavailable_reply,
     strip_realtime_bridge_prefix,
 )
 from services.common.response_depth import SHORT_REPLY_AUDIENCES, ResponseDepth, response_depth_for
@@ -307,7 +307,9 @@ class ReplyPipeline:
             return None
         resolver = self._realtime_search_resolver
         if resolver is None:
-            return None
+            return realtime_unavailable_reply(query)
+        if not self._realtime_sources_available():
+            return realtime_unavailable_reply(query)
         try:
             result = await resolver.resolve(query=query)
         except asyncio.CancelledError:
@@ -325,7 +327,7 @@ class ReplyPipeline:
         return (
             result.strip()
             if isinstance(result, str) and result.strip()
-            else REALTIME_UNAVAILABLE_REPLY
+            else realtime_unavailable_reply(query)
         )
 
     async def _model_stream(self, chat_ctx: Any) -> AsyncGenerator[Any, None]:
@@ -1744,7 +1746,9 @@ class ReplyPipeline:
                     fence.turn_id,
                     fence.generation_id,
                 )
-                realtime_reply = REALTIME_UNAVAILABLE_REPLY
+                realtime_reply = realtime_unavailable_reply(
+                    realtime_request.query if realtime_request is not None else ""
+                )
             if realtime_request is not None and cancellation.is_current(self._runtime.fence):
                 realtime_current = True
                 for segment in segmenter.push_token(strip_realtime_bridge_prefix(realtime_reply)):
@@ -1778,7 +1782,11 @@ class ReplyPipeline:
                 fence.generation_id,
                 exc_info=True,
             )
-            for segment in segmenter.push_token(REALTIME_UNAVAILABLE_REPLY):
+            for segment in segmenter.push_token(
+                realtime_unavailable_reply(
+                    realtime_request.query if realtime_request is not None else ""
+                )
+            ):
                 accepted_segment = _ready_segment(segment.text)
                 if accepted_segment is None:
                     break

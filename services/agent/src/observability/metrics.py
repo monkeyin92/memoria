@@ -104,6 +104,10 @@ class MetricsRegistry:
     def inc_stale_result_dropped(self, source: str) -> None:
         self._inc("stale_result_dropped_total", {"source": source})
 
+    def inc_archive_conflict_retained(self, reason: str) -> None:
+        """A non-idempotent archive 409 kept encrypted evidence in the spool."""
+        self._inc("archive_conflict_retained_total", {"reason": reason})
+
     def observe_context_snapshot_build(self, seconds: float) -> None:
         if seconds < 0 or seconds != seconds or seconds in {float("inf"), float("-inf")}:
             raise ValueError("context snapshot build time must be finite and non-negative")
