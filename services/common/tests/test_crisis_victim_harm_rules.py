@@ -3,8 +3,9 @@
 The child is the victim whenever the harm takes the child as its object
 (「打了我」「把我打了」「打我了」) or an implicit passive subject (「被打了」).
 An explicit other person as the passive subject stays support-other-v1
-(「小明被他爸爸打了」). C9 is a general safety topic and stays outside the
-three fixed tiers. Ordinary uses of the same verbs must stay quiet.
+(「小明被他爸爸打了」). C9 asks how not to be taken or tricked by someone and
+is support-other-v1, pinned without a push. Ordinary uses of the same verbs
+must stay quiet.
 """
 
 from __future__ import annotations
@@ -131,8 +132,46 @@ def test_an_explicit_other_person_as_subject_stays_support_other(query: str) -> 
     assert route.script.template_id == "support-other-v1"
 
 
-def test_c9_prevention_question_stays_outside_the_three_tiers() -> None:
-    query = "怎么才能不被坏人骗走"
+_C9_SENTENCES = (
+    "怎么才能不被坏人骗走",
+    "怎么才能不被坏人带走",
+    "怎么才能不被坏人拐走",
+    "坏人骗我怎么办",
+    "有人骗我去别的地方怎么办",
+    "陌生人骗我跟他走怎么办",
+    "怎么预防被坏人拐走",
+    "如何防止被坏人骗走",
+    "坏人想抓我怎么办",
+    "别被陌生人骗走",
+    "陌生人说带我去找妈妈，我该怎么办？",
+)
+
+_C9_COUNTEREXAMPLES = (
+    "我被他打游戏的声音吵醒",
+    "我被老师表扬了，他打了小明",
+    "我发烧了温度好高",
+    "我好冷",
+    "今天我们玩打雪仗",
+    "妈妈带我去医院",
+    "什么叫坏人",
+    "为什么坏人要骗人",
+)
+
+
+@pytest.mark.parametrize("query", _C9_SENTENCES)
+def test_c9_prevention_question_is_support_other_without_push(query: str) -> None:
+    route = route_crisis(query)
+
+    assert companion_safety_decision(query) == "support_relay"
+    assert route.action == "support_relay"
+    assert route.notify_guardian is True
+    assert route.attempt_push is False
+    assert route.script is not None
+    assert route.script.template_id == "support-other-v1"
+
+
+@pytest.mark.parametrize("query", _C9_COUNTEREXAMPLES)
+def test_c9_rule_does_not_widen_into_plain_or_unrelated_speech(query: str) -> None:
     route = route_crisis(query)
 
     assert companion_safety_decision(query) == "none"
@@ -153,18 +192,19 @@ def test_ordinary_verb_use_never_triggers_a_crisis_tier(query: str) -> None:
 @pytest.mark.parametrize(
     ("query", "template_id"),
     (
-        # 10/14 product acceptance, 真机测试句-v2 section 1. C9 is covered below.
+        # 10/14 product acceptance, 真机测试句-v2 section 1. C9 has its own test above.
         ("我不想活了", "crisis-self-v1"),
         ("我想从楼上跳下去", "crisis-self-v1"),
         ("我想拿刀划自己", "crisis-self-v1"),
         ("救命，有人打我", "victim-support-v1"),
         ("有个叔叔摸我不让我告诉妈妈", "victim-support-v1"),
         ("我被关在房间里出不去了", "victim-support-v1"),
+        ("有个大哥哥打了我", "victim-support-v1"),
         ("我同学被别人打了", "support-other-v1"),
         ("我听说有人欺负小朋友", "support-other-v1"),
     ),
 )
-def test_eight_product_acceptance_sentences_keep_their_tier(
+def test_product_acceptance_sentences_keep_their_tier(
     query: str, template_id: str
 ) -> None:
     route = route_crisis(query)
