@@ -157,7 +157,7 @@ COMPANION_VOICE_PROFILES: Final[dict[str, str]] = {
 }
 
 DESIGNED_VOICE_SPEAKERS: Final[dict[str, str]] = {
-    "warm_companion": "zh_male_yangguangqingnian_uranus_bigtts",
+    "warm_companion": "zh_female_kailangjiejie_uranus_bigtts",
     "bright_peer": "zh_female_tianmeitaozi_uranus_bigtts",
     "soft_confidante": "zh_female_wenrouxiaoya_uranus_bigtts",
     "calm_guide": "zh_male_gaolengchenwen_uranus_bigtts",

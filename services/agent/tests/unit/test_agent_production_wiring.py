@@ -1391,7 +1391,7 @@ async def test_companion_voice_turn_reaches_llm_when_guest_filter_is_disabled(
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="warm_companion",
         current_model="seed-tts-2.0",
-        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_voice="zh_female_kailangjiejie_uranus_bigtts",
         current_voice_kind="designed",
         bind_fence=lambda _fence: None,
     )
@@ -1776,7 +1776,7 @@ async def test_runtime_close_is_terminal_and_leaves_no_delegation_task() -> None
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="warm_companion",
         current_model="seed-tts-2.0",
-        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_voice="zh_female_kailangjiejie_uranus_bigtts",
         current_voice_kind="designed",
         bind_fence=lambda _fence: None,
     )
@@ -1843,7 +1843,7 @@ async def test_live_lookup_starts_on_the_bound_generation() -> None:
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="warm_companion",
         current_model="seed-tts-2.0",
-        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_voice="zh_female_kailangjiejie_uranus_bigtts",
         current_voice_kind="designed",
         bind_fence=lambda _fence: None,
     )
@@ -2007,7 +2007,7 @@ async def test_identity_rotation_still_binds_companion_generation_voice() -> Non
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="warm_companion",
         current_model="seed-tts-2.0",
-        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_voice="zh_female_kailangjiejie_uranus_bigtts",
         current_voice_kind="designed",
         bind_fence=lambda _fence: None,
     )
@@ -2058,7 +2058,7 @@ def test_unknown_safe_audio_turn_binds_anonymous_approved_baseline_voice() -> No
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="warm_companion",
         current_model="seed-tts-2.0",
-        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_voice="zh_female_kailangjiejie_uranus_bigtts",
         current_voice_kind="designed",
     )
     assert bind_generation_tts_voice(runtime, runtime.fence)
@@ -2078,7 +2078,7 @@ async def test_unknown_safe_audio_turn_reaches_llm_with_current_public_turn_only
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="warm_companion",
         current_model="seed-tts-2.0",
-        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_voice="zh_female_kailangjiejie_uranus_bigtts",
         current_voice_kind="designed",
         bind_fence=lambda _fence: None,
     )
@@ -2161,7 +2161,7 @@ async def test_unknown_safe_followup_keeps_this_session_public_place(
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="warm_companion",
         current_model="seed-tts-2.0",
-        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_voice="zh_female_kailangjiejie_uranus_bigtts",
         current_voice_kind="designed",
         bind_fence=lambda _fence: None,
     )
