@@ -112,6 +112,12 @@ class MediaSessionInputMixin:
             self, context: _MediaVoiceSession, fence: GenerationFence
         ) -> None: ...
 
+        def _prerecorded_fixed_safety_heard_complete(
+            self,
+            context: _MediaVoiceSession,
+            fence: GenerationFence,
+        ) -> bool | None: ...
+
         async def _cancel_reply_task(
             self,
             context: _MediaVoiceSession,
@@ -774,6 +780,11 @@ class MediaSessionInputMixin:
                         interrupted_playback = True
                         announced = context.output.assistant_text
                         crisis_heard = context.crisis_reply_heard
+                        prerecorded_complete = (
+                            self._prerecorded_fixed_safety_heard_complete(
+                                context, previous_fence
+                            )
+                        )
                         subject_id = active_subject_id(context)
                         await self._record_interrupted_timed_spans(context, previous_fence)
                         heard = context.output.playback.actual_heard_text(previous_fence)
@@ -822,7 +833,8 @@ class MediaSessionInputMixin:
                             publish_crisis_self_interrupt(
                                 getattr(self, "crisis_script_interrupt_publisher", None),
                                 announced_text=announced,
-                                crisis_reply_heard=crisis_heard,
+                                crisis_reply_heard=crisis_heard
+                                or bool(prerecorded_complete),
                                 minor_user_id=subject_id,
                                 session_id=previous_fence.session_id,
                                 turn_id=previous_fence.turn_id,

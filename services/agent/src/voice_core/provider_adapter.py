@@ -39,6 +39,7 @@ from services.agent.src.providers.asr_failover import (
     build_asr_session_factory,
 )
 from services.agent.src.providers.asr_session import StreamingASRSession
+from services.agent.src.providers.fixed_safety_audio import heard_complete_by_sentence
 from services.agent.src.providers.funasr_protocol import (
     FunASRServerEvent,
     sentence_to_asr_result,
@@ -171,6 +172,10 @@ class ExistingVoiceProviderAdapter:
     )
     _active_speech_streams: dict[GenerationFence, Any] = field(default_factory=dict, init=False)
     _fixed_safety_fences: set[GenerationFence] = field(default_factory=set, init=False)
+    # (spoken copy, total PCM samples) when the approved clip itself played.
+    _prerecorded_fixed_safety: dict[GenerationFence, tuple[str, int]] = field(
+        default_factory=dict, init=False
+    )
     _generation_output_ends: dict[GenerationFence, int] = field(
         default_factory=dict,
         init=False,
@@ -1464,6 +1469,10 @@ class ExistingVoiceProviderAdapter:
         )
         if cancel_event.is_set() or not pcm:
             return
+        template = self._prerecorded_fixed_safety_template(spoken, pcm)
+        if template is not None:
+            self._prerecorded_fixed_safety[fence] = (template.spoken, len(pcm) // 2)
+            source = "prerecorded"
         logger.info(
             "fixed safety speech ready source=%s text_len=%d bytes=%d session=%s turn=%s",
             source,
@@ -1478,6 +1487,43 @@ class ExistingVoiceProviderAdapter:
             fence=fence,
         ):
             yield chunk
+
+    def _prerecorded_fixed_safety_template(
+        self,
+        spoken: str,
+        pcm: bytes,
+    ) -> Any | None:
+        """The stored clip that produced ``pcm``, or ``None`` for live audio."""
+
+        catalog = getattr(self.speech_synthesis, "fixed_safety_catalog", None)
+        match = getattr(catalog, "match", None)
+        if not callable(match):
+            return None
+        template = match(spoken)
+        if template is None or not getattr(template, "playable", False):
+            return None
+        return template if template.pcm == pcm else None
+
+    def fixed_safety_heard_complete(
+        self,
+        fence: GenerationFence,
+        played_samples: int,
+    ) -> bool | None:
+        """Whether every approved sentence of a prerecorded script played.
+
+        ``None`` means this fence was not served from a stored clip, so the
+        caller keeps the existing whole-reply playback evidence.
+        """
+
+        entry = self._prerecorded_fixed_safety.get(fence)
+        if entry is None:
+            return None
+        spoken, total_samples = entry
+        return heard_complete_by_sentence(
+            spoken,
+            played_samples=played_samples,
+            total_samples=total_samples,
+        )
 
     async def _fixed_safety_script_pcm(
         self,
@@ -1796,6 +1842,7 @@ class ExistingVoiceProviderAdapter:
             evicted = self._generation_history.popleft()
             self._generation_started.discard(evicted)
             self._cancelled_generations.discard(evicted)
+            self._prerecorded_fixed_safety.pop(evicted, None)
             order = self._generation_order(evicted)
             floor = self._generation_eviction_floor
             if floor is None or order > floor:

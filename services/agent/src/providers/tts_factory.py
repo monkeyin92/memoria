@@ -16,6 +16,7 @@ from typing import Any
 
 from services.agent.src.aigc_generation_log import AigcTtsDescriptor
 from services.agent.src.generation_output_policy import frozen_companion_clone_permitted
+from services.agent.src.providers.fixed_safety_audio import wrap_fixed_safety_tts
 from services.common.tts_defaults import (
     DOUBAO_TTS_FALLBACK_SPEAKER,
     DOUBAO_TTS_RESOURCE_ID,
@@ -147,8 +148,17 @@ def tts_runtime_descriptor(settings: Any) -> AigcTtsDescriptor:
 
 
 def build_tts(settings: Any) -> Any:
-    """The runtime synthesizer named by ``TTS_PROVIDER`` and its enable gate."""
+    """The runtime synthesizer with pre-synthesized fixed-safety audio in front.
 
+    Every provider goes through the wrapper.  Text that matches an approved
+    template plays its stored clip; anything else reaches the same provider and
+    fallback chain as before.
+    """
+
+    return wrap_fixed_safety_tts(_build_realtime_tts(settings), settings)
+
+
+def _build_realtime_tts(settings: Any) -> Any:
     provider = _active_provider(settings)
     if provider == "doubao":
         if str(getattr(settings, "tts_provider", "doubao")) == "stepfun_primary":

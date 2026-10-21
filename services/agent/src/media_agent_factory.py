@@ -33,6 +33,10 @@ from services.agent.src.orchestration.speaker_verify import (
     should_enable_legacy_speaker_verifier,
 )
 from services.agent.src.providers.asr_failover import build_asr_session_factory
+from services.agent.src.providers.fixed_safety_audio import (
+    catalog_for_settings,
+    wrap_fixed_safety_tts,
+)
 from services.agent.src.providers.funasr_stt import FunASRConfig
 from services.agent.src.providers.handlers import (
     build_language_model_handler,
@@ -386,7 +390,7 @@ class ProductionMediaSessionFactory:
         if not wants_clone_tts(runtime.mode_policy):
             return tts
         await close_tts(tts)
-        clone_tts = build_clone_tts()
+        clone_tts = wrap_fixed_safety_tts(build_clone_tts(), self.settings)
         runtime.tts = clone_tts
         await warm_tts(clone_tts)
         return clone_tts
@@ -470,6 +474,15 @@ def build_production_media_session_factory(settings: Any) -> ProductionMediaSess
                 ),
                 summary_model=summary_model_config_from_settings(settings),
             )
+    # Load and validate the fixed-safety clips once at startup. A bad hash
+    # degrades those turns to live TTS with an alert; the image gate still
+    # rejects a build that shipped no clips at all.
+    catalog = catalog_for_settings(settings)
+    logger.info(
+        "fixed safety audio catalog loaded playable=%d total=%d",
+        sum(1 for template in catalog.templates if template.playable),
+        len(catalog.templates),
+    )
     factory = ProductionMediaSessionFactory(
         settings=settings,
         llm_factory=OpenAIChatModel,

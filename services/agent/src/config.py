@@ -157,6 +157,15 @@ class AgentSettings(BaseSettings):
         min_length=1,
         alias="STEPFUN_TTS_VOICE",
     )
+    # Approved fixed-safety and daily-limit copy plays from pre-synthesized
+    # 24 kHz mono clips. A failed manifest or file falls back to the live TTS
+    # chain with an alert; the image gate rejects a build without the clips.
+    fixed_safety_audio_enabled: bool = Field(
+        default=True, alias="FIXED_SAFETY_AUDIO_ENABLED"
+    )
+    fixed_safety_audio_dir: str = Field(
+        default="infra/voices/fixed_safety", alias="FIXED_SAFETY_AUDIO_DIR"
+    )
 
     media_bridge_grpc_enabled: bool = Field(
         default=False, alias="MEDIA_BRIDGE_GRPC_ENABLED"
