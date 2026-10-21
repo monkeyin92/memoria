@@ -177,6 +177,9 @@ class MediaVoiceSessionState:
     aigc_round: AigcRoundRecord | None = None
     aigc_opening_marker_pending: bool = False
     aigc_opening_marker_fence: GenerationFence | None = None
+    # The pre-user turn the opening marker opened. The wake acknowledgement may
+    # share it; any later user turn advances past it and closes that gate.
+    aigc_opening_marker_turn_id: int | None = None
     aigc_opening_marker_started_at: float | None = None
     aigc_opening_marker_ready_at: float | None = None
     aigc_closing_marker_state: str = "idle"

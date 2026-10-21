@@ -2,10 +2,12 @@
 
 The wrapper keeps the state machine out of either vendor adapter. A session
 starts on StepFun; the first failure moves it to Doubao and it never moves
-back. A failure before the first PCM of a pushed sentence replays that whole
-sentence on Doubao. A failure after PCM already reached the caller drops the
-rest of that sentence and starts the next one on Doubao, so no sentence is
-stitched across engines or replayed halfway.
+back. A failed unit is re-spoken whole on Doubao, even when part of it already
+reached the caller: a truncated sentence is worse than a repeated one,
+especially for an approved fixed-safety script. An approved fixed-safety
+script skips the primary entirely, because StepFun content moderation may
+reject the exact crisis copy before any audio and the five-second opening
+budget cannot absorb that attempt.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.providers.provider_errors import APIConnectOptions
 from services.agent.src.providers.stepfun_tts import BracketInstructionFilter
 from services.agent.src.providers.tts_stream import SynthesizedAudio
+from services.common.fixed_safety_scripts import fixed_safety_echo_reference
 from services.common.tts_voice_policy import is_clone_or_icl_voice
 
 logger = logging.getLogger(__name__)
@@ -242,9 +245,22 @@ class StepFunFailoverStream:
             unit = item
             if not unit.strip():
                 continue
-            use_primary = not self._owner.degraded and self._owner.breaker.allow()
-            if not use_primary:
-                self._owner.mark_degraded("breaker_open")
+            # An approved crisis line must open inside its five-second budget.
+            # StepFun content moderation can reject that exact copy before any
+            # audio, so the line starts on Doubao instead of spending the budget
+            # on a primary attempt that can only fail.
+            fixed_safety_unit = fixed_safety_echo_reference(unit) is not None
+            if fixed_safety_unit:
+                use_primary = False
+                self._owner.trace(
+                    "tts_fixed_safety_direct_backup",
+                    "ok",
+                    {"chars": len(unit)},
+                )
+            else:
+                use_primary = not self._owner.degraded and self._owner.breaker.allow()
+                if not use_primary:
+                    self._owner.mark_degraded("breaker_open")
             audio_started = False
             first_engine: tuple[Any, bool] | None = None
             while True:

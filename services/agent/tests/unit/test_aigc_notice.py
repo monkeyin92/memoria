@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import struct
@@ -454,3 +455,142 @@ def test_non_device_session_does_not_open_an_aigc_round(tmp_path: Path) -> None:
 
     assert host._start_aigc_round(context) is None  # type: ignore[arg-type]
     assert context.aigc_round is None
+
+
+@pytest.mark.asyncio
+async def test_opening_marker_keeps_device_wake_ack_and_returns_to_listening() -> None:
+    from services.agent.src.orchestration.state_machine import InteractionPhase
+    from services.agent.src.prompts import is_allowlisted_device_phrase
+    from services.agent.src.voice_core.media_protocol import (
+        PlaybackEventType,
+        PlaybackProgress,
+    )
+    from services.agent.src.voice_core.media_session import MediaVoiceCoreRegistry
+    from services.agent.tests.unit.media_session_support import (
+        _AckCapturingProvider,
+        _CapturingGenerationBridge,
+        _device_identity,
+        _wait_until,
+    )
+
+    config = AigcNoticeConfig(
+        tone_short_ms=20,
+        tone_long_ms=30,
+        tone_gap_ms=0,
+        tone_group_gap_ms=0,
+        lead_interval_ms=150,
+    )
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        aigc_notice_config=config,
+        aigc_round_logger=None,
+        speaking_stall_timeout_s=0.3,
+    )
+    registry.install()
+    identity = _device_identity("aigc-wake-ack")
+    session = bridge.bridge.open(identity)
+    stalls_before = registry.metrics.get("voice_speaking_stall_total")
+    ack_entry: dict[str, object] = {}
+    original_ack = registry._speak_device_wake_ack
+
+    async def capture_ack(context: Any) -> None:
+        ack_entry["phase"] = context.runtime.interaction_phase
+        await original_ack(context)
+
+    registry._speak_device_wake_ack = capture_ack  # type: ignore[method-assign]
+    try:
+        context = await registry.open_session(identity)
+
+        assert ack_entry["phase"] is InteractionPhase.LISTENING
+        await _wait_until(lambda: len(provider.texts) >= 2)
+        assert is_allowlisted_device_phrase(provider.texts[-1])
+        ack_fence = context.device_wake_ack_fence
+        assert ack_fence is not None
+        ack_frame = next(
+            frame
+            for frame in reversed(bridge.frames)
+            if frame.generation_id == ack_fence.generation_id
+            and frame.turn_id == ack_fence.turn_id
+        )
+        await registry.on_playback_progress(
+            session,
+            PlaybackProgress(
+                identity=identity,
+                generation_id=ack_fence.generation_id,
+                received_sequence=ack_frame.sequence,
+                rendered_sample_end=ack_frame.source_start_sample + ack_frame.frame_samples,
+                client_monotonic_ms=1,
+                turn_id=ack_fence.turn_id,
+                tool_epoch=ack_fence.tool_epoch,
+                event_type=PlaybackEventType.ENDED,
+            ),
+        )
+        await _wait_until(
+            lambda: context.runtime.interaction_phase is InteractionPhase.LISTENING
+        )
+        await asyncio.sleep(0.35)
+        assert not context.closed
+        assert not context.standby_requested
+        assert registry.metrics.get("voice_speaking_stall_total") == stalls_before
+        assert context.runtime.interaction_phase is InteractionPhase.LISTENING
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_opening_marker_returns_to_listening_without_a_wake_ack() -> None:
+    from services.agent.src.orchestration.state_machine import InteractionPhase
+    from services.agent.src.voice_core.media_session import MediaVoiceCoreRegistry
+    from services.agent.tests.unit.media_session_support import (
+        _AckCapturingProvider,
+        _CapturingGenerationBridge,
+        _device_identity,
+        _wait_until,
+    )
+
+    config = AigcNoticeConfig(
+        tone_short_ms=20,
+        tone_long_ms=30,
+        tone_gap_ms=0,
+        tone_group_gap_ms=0,
+        lead_interval_ms=150,
+    )
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        aigc_notice_config=config,
+        aigc_round_logger=None,
+        speaking_stall_timeout_s=0.3,
+    )
+    registry.install()
+    identity = _device_identity("aigc-marker-only")
+    bridge.bridge.open(identity)
+    stalls_before = registry.metrics.get("voice_speaking_stall_total")
+
+    async def no_ack(context: Any) -> None:
+        context.device_wake_ack_pending = False
+
+    registry._speak_device_wake_ack = no_ack  # type: ignore[method-assign]
+    try:
+        context = await registry.open_session(identity)
+
+        # The marker itself opened turn 1 and reached the downlink; no wake
+        # acknowledgement followed, so only marker completion can restore the
+        # floor.
+        assert any(frame.turn_id == 1 for frame in bridge.frames)
+        await _wait_until(
+            lambda: context.runtime.interaction_phase is InteractionPhase.LISTENING
+        )
+        assert context.aigc_opening_marker_turn_id == 1
+        await asyncio.sleep(0.35)
+        assert not context.closed
+        assert not context.standby_requested
+        assert registry.metrics.get("voice_speaking_stall_total") == stalls_before
+        assert context.runtime.interaction_phase is InteractionPhase.LISTENING
+    finally:
+        await registry.finalize_session(identity.session_id)

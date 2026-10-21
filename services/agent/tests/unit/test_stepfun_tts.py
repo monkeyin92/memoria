@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import time
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
@@ -637,6 +638,113 @@ async def test_first_audio_timeout_falls_back_to_doubao() -> None:
         await wrapper.aclose()
 
     assert backup.received == ["第一句。"]
+
+
+@pytest.mark.asyncio
+async def test_moderation_rejection_switches_that_sentence_to_doubao() -> None:
+    async def handler(server: MockStepFunServer, ws: Any) -> None:
+        await _connection(server, ws)
+        while True:
+            event = await server.next_event(ws)
+            if event["type"] == "tts.create":
+                await ws.send(_event("tts.response.created", {"session_id": "mock-session"}))
+            elif event["type"] == "tts.text.delta":
+                await ws.send(
+                    _event(
+                        "tts.response.error",
+                        {
+                            "session_id": "mock-session",
+                            "code": "451",
+                            "message": "content moderation rejected",
+                        },
+                    )
+                )
+                return
+
+    backup = FakeBackupTTS()
+    async with MockStepFunServer(handler) as server:
+        wrapper = StepFunPrimaryTTS(
+            primary=StepFunTTS(_config(server)),
+            backup=backup,
+            breaker=TTSFailoverBreaker(failures=3, open_s=30),
+        )
+        wrapper.bind_fence(GenerationFence("s", 1, 1, 0, 0))
+        stream = wrapper.stream(conn_options=APIConnectOptions(max_retry=0))
+        stream.push_text("危机脚本。")
+        stream.end_input()
+        events = [event async for event in stream]
+        await wrapper.aclose()
+
+    assert backup.received == ["危机脚本。"]
+    assert [event.frame.data for event in events] == [b"\x02\x00" * 240]
+    assert wrapper.degraded is True
+
+
+@pytest.mark.asyncio
+async def test_connection_close_before_audio_switches_to_doubao() -> None:
+    async def handler(server: MockStepFunServer, ws: Any) -> None:
+        await _connection(server, ws)
+        while True:
+            event = await server.next_event(ws)
+            if event["type"] == "tts.create":
+                await ws.send(_event("tts.response.created", {"session_id": "mock-session"}))
+            elif event["type"] == "tts.text.delta":
+                await ws.close(code=1011, reason="upstream reset")
+                return
+
+    backup = FakeBackupTTS()
+    async with MockStepFunServer(handler) as server:
+        wrapper = StepFunPrimaryTTS(
+            primary=StepFunTTS(_config(server)),
+            backup=backup,
+            breaker=TTSFailoverBreaker(failures=3, open_s=30),
+        )
+        wrapper.bind_fence(GenerationFence("s", 1, 1, 0, 0))
+        stream = wrapper.stream(conn_options=APIConnectOptions(max_retry=0))
+        stream.push_text("危机脚本。")
+        stream.end_input()
+        events = [event async for event in stream]
+        await wrapper.aclose()
+
+    assert backup.received == ["危机脚本。"]
+    assert [event.frame.data for event in events] == [b"\x02\x00" * 240]
+
+
+@pytest.mark.asyncio
+async def test_first_audio_timeout_switches_within_the_five_second_budget() -> None:
+    async def handler(server: MockStepFunServer, ws: Any) -> None:
+        await _connection(server, ws)
+        while True:
+            event = await server.next_event(ws)
+            if event["type"] == "tts.create":
+                await ws.send(_event("tts.response.created", {"session_id": "mock-session"}))
+            elif event["type"] == "tts.text.delta":
+                # Never send audio: the first-packet budget must fail over.
+                await asyncio.sleep(0.2)
+                return
+            elif event["type"] == "tts.text.done":
+                return
+
+    backup = FakeBackupTTS()
+    async with MockStepFunServer(handler) as server:
+        wrapper = StepFunPrimaryTTS(
+            primary=StepFunTTS(_config(server, first_audio_timeout_s=0.05)),
+            backup=backup,
+            breaker=TTSFailoverBreaker(failures=3, open_s=30),
+        )
+        wrapper.bind_fence(GenerationFence("s", 1, 1, 0, 0))
+        stream = wrapper.stream(conn_options=APIConnectOptions(max_retry=0))
+        started = time.monotonic()
+        stream.push_text("危机脚本。")
+        stream.end_input()
+        events = [event async for event in stream]
+        elapsed = time.monotonic() - started
+        await wrapper.aclose()
+
+    assert events
+    assert [event.frame.data for event in events] == [b"\x02\x00" * 240]
+    assert backup.received == ["危机脚本。"]
+    assert elapsed < 5.0
 
 
 @pytest.mark.asyncio

@@ -253,31 +253,6 @@ async def test_offline_pipeline_speaks_spoken_copy_and_keeps_display_copy() -> N
     assert result["full_generated"] == CRISIS_SELF_SCRIPT.display
 
 
-class _FixedScriptPrimaryStream:
-    def __init__(self, *, fail_after_first_chunk: bool) -> None:
-        self.texts: list[str] = []
-        self._fail_after_first_chunk = fail_after_first_chunk
-        self._yielded = False
-
-    def push_text(self, text: str) -> None:
-        self.texts.append(text)
-
-    def end_input(self) -> None:
-        return None
-
-    async def aclose(self) -> None:
-        return None
-
-    def __aiter__(self) -> _FixedScriptPrimaryStream:
-        return self
-
-    async def __anext__(self) -> Any:
-        if self._fail_after_first_chunk and not self._yielded:
-            self._yielded = True
-            return SimpleNamespace(frame=SimpleNamespace(data=b"\x01\x00" * FRAME, sample_rate=24_000))
-        raise ConnectionError("stepfun primary unavailable")
-
-
 class _FixedScriptBackupStream:
     def __init__(self) -> None:
         self.texts: list[str] = []
@@ -303,13 +278,14 @@ class _FixedScriptBackupStream:
 
 
 class _FixedScriptPrimary:
+    """A StepFun primary that must never be opened for an approved crisis line."""
+
     provider = "stepfun"
     model = "stepaudio-3-tts"
     sample_rate = 24_000
 
-    def __init__(self, *, fail_after_first_chunk: bool) -> None:
-        self.streams: list[_FixedScriptPrimaryStream] = []
-        self._fail_after_first_chunk = fail_after_first_chunk
+    def __init__(self) -> None:
+        self.opened = 0
 
     def bind_fence(self, fence: GenerationFence) -> None:
         del fence
@@ -317,20 +293,13 @@ class _FixedScriptPrimary:
     def apply_speech_plan(self, **_kwargs: Any) -> None:
         return None
 
-    def stream(self, *, conn_options: Any = None) -> _FixedScriptPrimaryStream:
+    def stream(self, *, conn_options: Any = None) -> Any:
         del conn_options
-        stream = _FixedScriptPrimaryStream(
-            fail_after_first_chunk=self._fail_after_first_chunk
-        )
-        self.streams.append(stream)
-        return stream
+        self.opened += 1
+        raise AssertionError("StepFun must not synthesize a fixed safety script")
 
     async def aclose(self) -> None:
         return None
-
-    @property
-    def received(self) -> list[str]:
-        return [text for stream in self.streams for text in stream.texts]
 
 
 class _FixedScriptBackup:
@@ -362,8 +331,8 @@ class _FixedScriptBackup:
         return [text for stream in self.streams for text in stream.texts]
 
 
-def _failover_speech(fail_after_first_chunk: bool) -> tuple[StepFunPrimaryTTS, Any, Any]:
-    primary = _FixedScriptPrimary(fail_after_first_chunk=fail_after_first_chunk)
+def _failover_speech() -> tuple[StepFunPrimaryTTS, Any, Any]:
+    primary = _FixedScriptPrimary()
     backup = _FixedScriptBackup()
 
     wrapper = StepFunPrimaryTTS(
@@ -383,35 +352,19 @@ def _assert_spoken_only(received: list[str]) -> None:
 
 
 @pytest.mark.asyncio
-async def test_fixed_safety_script_reaches_both_engines_as_spoken_on_first_packet_switch() -> None:
-    wrapper, primary, backup = _failover_speech(fail_after_first_chunk=False)
+async def test_fixed_safety_script_bypasses_stepfun_and_speaks_on_doubao() -> None:
+    wrapper, primary, backup = _failover_speech()
     adapter = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), wrapper)
-    identity, fence = _generation("fixed-safety-failover-first-packet")
+    identity, fence = _generation("fixed-safety-direct-doubao")
 
     chunks = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
 
-    _assert_spoken_only(primary.received)
+    # StepFun's content moderation can reject the approved crisis copy before
+    # any audio, so the primary must never see this unit.
+    assert primary.opened == 0
     _assert_spoken_only(backup.received)
-    # Whole-script units: a primary that fails before any audio hands the full line
-    # to the backup instead of losing the tail of the script.
     assert backup.received == [SPOKEN_SCRIPT]
-    assert "".join(chunk.assistant_text_delta for chunk in chunks) == CRISIS_SELF_SCRIPT.display
-
-
-@pytest.mark.asyncio
-async def test_mid_script_stepfun_failure_cannot_truncate_the_crisis_line() -> None:
-    wrapper, primary, backup = _failover_speech(fail_after_first_chunk=True)
-    adapter = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), wrapper)
-    identity, fence = _generation("fixed-safety-failover-mid-sentence")
-
-    chunks = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
-
-    _assert_spoken_only(primary.received)
-    assert primary.received == [SPOKEN_SCRIPT]
-    # The primary drops the connection after its first packet.  Streaming the script
-    # phrase by phrase used to end the reply there (C1 shape); as one unit the
-    # backup re-speaks the whole approved line, never a digit-bearing display copy.
-    assert backup.received == [SPOKEN_SCRIPT]
+    assert any(chunk.pcm_s16le for chunk in chunks)
     assert "".join(chunk.assistant_text_delta for chunk in chunks) == CRISIS_SELF_SCRIPT.display
 
 
