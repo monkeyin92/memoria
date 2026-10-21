@@ -22,6 +22,12 @@ import os
 import time
 from typing import TYPE_CHECKING, Any
 
+from services.agent.src.asr_text_debug_log import (
+    asr_text_debug_line,
+    excerpt,
+    session_asr_text_debug_subjects,
+    subject_tag,
+)
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.conversation_close_router import (
     lexical_playback_control_only,
@@ -931,6 +937,52 @@ class MediaPlaybackStopMixin:
             stream_epoch=result.stream_epoch, start_sample=start, end_sample=endpoint
         )
 
+    def _log_asr_text_debug(
+        self,
+        context: _MediaVoiceSession,
+        result: ASRResult,
+        *,
+        source: str,
+    ) -> None:
+        """The final this playback-stop decision read, for a whitelisted session.
+
+        The line also covers an empty final (``text_len=0``): a 「停」 that
+        FunASR dropped reaches every guard below as an empty string, and only
+        its text and interval say whether the segment was heard at all.
+        """
+
+        subjects = session_asr_text_debug_subjects(context)
+        if not subjects.enabled:
+            return
+        identity = context.identity
+        text = result.text.strip()
+        line = asr_text_debug_line(
+            subjects,
+            identity.subject_id,
+            identity.device_id,
+            source=source,
+            session_id=identity.session_id,
+            subject_sha256_8=subject_tag(identity.subject_id),
+            device_sha256_8=subject_tag(identity.device_id),
+            stream_epoch=result.stream_epoch,
+            task_epoch=result.task_epoch,
+            sentence_id=result.sentence_id,
+            final=result.is_final,
+            rescue=result.rescue_synthesized,
+            empty=not result.text.strip(),
+            text_len=len(result.text),
+            begin_ms=result.provider_begin_ms,
+            end_ms=result.provider_end_ms,
+            begin_sample=result.capture_start_sample,
+            end_sample=result.capture_end_sample,
+            playback_boundary_sample=context.last_playback_end_sample,
+            in_flight=self._reply_in_flight(context),
+            stop_word=bool(text) and lexical_playback_control_only(text),
+            text=excerpt(result.text) if result.text else None,
+        )
+        if line is not None:
+            logger.info(line)
+
     def _maybe_pin_playback_stop(
         self,
         context: _MediaVoiceSession,
@@ -953,6 +1005,7 @@ class MediaPlaybackStopMixin:
 
         if context.identity.client_type != "device":
             return
+        self._log_asr_text_debug(context, result, source=source)
         text = result.text.strip()
         stop_word = bool(text) and lexical_playback_control_only(text)
         in_flight = self._reply_in_flight(context)

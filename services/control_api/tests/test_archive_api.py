@@ -24,13 +24,15 @@ from services.archive.memory_domain import MemorySearchResult, ReviewedClaim
 from services.archive.postgres_archive import PostgresLifeArchive
 from services.common.companions import designed_voice_speaker_sha256
 from services.common.redaction import redact_pii
+from services.control_api.app.archive_event_conflicts import (
+    ResponseProvenanceCreate,
+    _canonical_actual_voice,
+)
 from services.control_api.app.main import create_app
 from services.control_api.app.persona_learning import observe_persona
 from services.control_api.app.routes.archive import (
-    ResponseProvenanceCreate,
     _account_write,
     _actual_heard_item,
-    _canonical_actual_voice,
     _deletion_status_response,
     _owner_turn_item,
 )
@@ -2367,6 +2369,10 @@ async def test_session_event_retry_ignores_delivery_timestamp_but_rejects_semant
     assert changed_payload.status_code == 409
     assert changed_session.status_code == 409
     assert changed_owner.status_code == 409
+    assert [
+        response.json()["detail"]["code"]
+        for response in (changed_payload, changed_session, changed_owner)
+    ] == ["event_id_content_conflict"] * 3
 
 
 @pytest.mark.asyncio

@@ -17,6 +17,11 @@ from typing import Any
 import websockets
 from websockets.asyncio.client import ClientConnection
 
+from services.agent.src.asr_text_debug_log import (
+    AsrTextDebugSubjects,
+    asr_text_debug_line,
+    excerpt,
+)
 from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.providers.funasr_empty_accounting import classify_funasr_empty_outcome
 from services.agent.src.providers.funasr_protocol import (
@@ -152,6 +157,9 @@ class FunASRSession:
         config: FunASRConfig,
         *,
         metrics: MetricsRegistry | None = None,
+        asr_text_debug: AsrTextDebugSubjects | None = None,
+        asr_text_debug_subject_ids: tuple[str, ...] = (),
+        asr_text_debug_session_id: str = "",
     ) -> None:
         self.config = config
         self.metrics = metrics
@@ -202,6 +210,13 @@ class FunASRSession:
         self._mid_segment_rescue_scheduled = False
         self._rescue_deadline: float | None = None
         self._context: tuple[dict[str, object], ...] = ()
+        # Test-period transcript logging for one whitelisted session. Empty
+        # (the default) keeps every line below off.
+        self.asr_text_debug: AsrTextDebugSubjects | None = asr_text_debug
+        # The bridge's answer for this session: the ids its switch names and the
+        # session to name on the line. Unset here keeps every text line off.
+        self.asr_text_debug_subject_ids = asr_text_debug_subject_ids
+        self.asr_text_debug_session_id = asr_text_debug_session_id
         self._task_epoch = 0
         self._segment_epoch = 1
         self._task_sample_origin = 0
@@ -802,6 +817,7 @@ class FunASRSession:
                         self._task_started_event.set()
                         self._remember_current_task_event_context()
                     elif ev.event == "result-generated" and ev.sentence is not None:
+                        self._log_realtime_final_text(ev.sentence, ev.task_id)
                         if (
                             ev.sentence.sentence_end
                             and ev.sentence.text
@@ -1399,6 +1415,50 @@ class FunASRSession:
             if self.metrics is not None:
                 self.metrics.inc_funasr_rescue("failed")
 
+    def _log_asr_text(self, source: str, **fields: object) -> None:
+        """One ``asr_text_debug`` line for a whitelisted session, else nothing."""
+
+        if self.asr_text_debug is None:
+            return
+        line = asr_text_debug_line(
+            self.asr_text_debug, *self.asr_text_debug_subject_ids,
+            session_id=self.asr_text_debug_session_id or None, source=source, **fields,
+        )
+        if line is not None:
+            logger.info(line)
+
+    def _log_realtime_final_text(self, sentence: Any, task_id: str) -> None:
+        """The provider's own sentence, before mapping drops or normalizes it.
+
+        A dropped 「停」 often comes as an empty sentence_end, so an empty one
+        is written too: its length and begin/end say the segment existed.
+        """
+
+        self._log_asr_text(
+            "realtime_final", task_id=task_id or "unknown", sentence_id=sentence.sentence_id,
+            empty=not sentence.text.strip(), heartbeat=sentence.heartbeat,
+            final=sentence.sentence_end, text_len=len(sentence.text),
+            begin_ms=sentence.begin_ms, end_ms=sentence.end_ms,
+            text=excerpt(sentence.text) if sentence.text else None,
+        )
+
+    def _log_asr_text_debug_empty(
+        self, task_id: str, outcome_class: str, source: str, *, text: str = ""
+    ) -> None:
+        """An empty segment or rescue beside its class, over the VAD segment's span."""
+
+        rate = self.config.sample_rate
+        start, end = self._segment_pcm_start_sample, self._segment_pcm_end_sample
+        origin = self._task_sample_origin
+        self._log_asr_text(
+            source, task_id=task_id, empty=not text.strip(), text_len=len(text),
+            begin_ms=None if start is None else max(0, round((start - origin) * 1000 / rate)),
+            end_ms=None if end is None else max(0, round((end - origin) * 1000 / rate)),
+            asr_empty_class=outcome_class,
+            pcm_ms=round(self._segment_pcm_samples * 1000 / rate),
+            text=excerpt(text) if text else None,
+        )
+
     def _log_rescue_skipped_for_provider_text(self, *, late: bool = False) -> None:
         logger.info(
             "funasr segment rescue skipped: %sprovider text present "
@@ -1449,6 +1509,7 @@ class FunASRSession:
                 self.task_id or "unknown",
                 outcome_class,
             )
+            self._log_asr_text_debug_empty(self.task_id or "unknown", outcome_class, "rescue_no_energy")
             if self.metrics is not None:
                 self.metrics.inc_funasr_rescue("skipped")
                 self.metrics.inc_funasr_empty_transcript(outcome_class)
@@ -1502,17 +1563,14 @@ class FunASRSession:
                 round(self._segment_pcm_samples * 1000 / self.config.sample_rate),
                 outcome_class,
             )
+            self._log_asr_text_debug_empty(task_id, outcome_class, "rescue_no_text", text=text)
             if self.metrics is not None:
                 self.metrics.inc_funasr_rescue("no_text")
                 self.metrics.inc_funasr_empty_transcript(outcome_class)
             return
-        begin_ms = max(
-            0,
-            round((segment_start - task_origin) * 1000 / self.config.sample_rate),
-        )
+        begin_ms = max(0, round((segment_start - task_origin) * 1000 / self.config.sample_rate))
         end_ms = max(
-            begin_ms + 1,
-            round((segment_end - task_origin) * 1000 / self.config.sample_rate),
+            begin_ms + 1, round((segment_end - task_origin) * 1000 / self.config.sample_rate)
         )
         sentence = FunASRSentence(
             sentence_id=0,
@@ -1534,10 +1592,6 @@ class FunASRSession:
                 FunASRServerEvent(event="result-generated", task_id=task_id, sentence=sentence)
             )
             await self.events.put(FunASRServerEvent(event="task-finished", task_id=task_id))
-        elif mid_utterance:
-            await self.events.put(
-                FunASRServerEvent(event="result-generated", task_id=task_id, sentence=sentence)
-            )
         else:
             await self.events.put(
                 FunASRServerEvent(event="result-generated", task_id=task_id, sentence=sentence)

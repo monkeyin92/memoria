@@ -678,14 +678,20 @@ def test_board_wires_the_mascot_display() -> None:
 def test_body_gestures_animate_without_starting_chat() -> None:
     board = (BOARD_DIR / "memoria_esp_vocat.cc").read_text(encoding="utf-8")
     gestures = board[board.index("void OnDevicePat(") : board.index("static void imu_event_task")]
-    assert "kDeviceStateIdle" in gestures
+    assert "memoria::PatGestureDecisionFor(facts)" in gestures
     assert "display_->Pat()" in gestures
     assert "display_->Shake()" in gestures
-    for forbidden in ("ToggleChatState()", "StartListening(", "AbortSpeaking("):
-        assert forbidden not in gestures
+    # 2026-10-21: a pat while the companion speaks stops that reply through
+    # the shared policy. The gesture itself never opens a conversation: the
+    # only StartListening is inside StopSpeakingForGesture, after a stop.
+    assert 'StopSpeakingForGesture(decision, "Device pat")' in gestures
+    assert "ToggleChatState()" not in gestures
+    pat_only = gestures[: gestures.index("void StopSpeakingForGesture(")]
+    assert "StartListening(" not in pat_only
+    assert "AbortSpeaking(" not in pat_only
     imu = board[board.index("static void imu_event_task") : board.index("void MuteImuForTouch()")]
     assert "self->OnDeviceShake(result.peak)" in imu
-    assert "Device pat ignored (touch rumble" in imu
+    assert "reason=%s" in imu
 
 
 def test_display_profile_poll_follows_the_phone_pick() -> None:
