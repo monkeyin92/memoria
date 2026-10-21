@@ -26,6 +26,9 @@ from services.control_api.tests.test_guardian_api import (
 )
 from services.guardian.postgres_store import PostgresGuardianStore
 from services.guardian.push import (
+    CRISIS_PUSH_DEFAULT_CHILD_NAME,
+    CRISIS_PUSH_TIP,
+    CRISIS_PUSH_TITLE,
     CrisisPushContent,
     CrisisPushStorePort,
     PendingCrisisPush,
@@ -74,14 +77,9 @@ def test_guardian_push_is_disabled_by_default() -> None:
         build_crisis_push_worker(
             settings,
             _unused_store(),
-            display_name=_no_name,
         )
         is None
     )
-
-
-async def _no_name(guardian_user_id: str, minor_user_id: str) -> str | None:
-    return None
 
 
 def test_enabled_guardian_push_requires_wechat_credentials_and_template() -> None:
@@ -101,7 +99,6 @@ def test_enabled_guardian_push_requires_wechat_credentials_and_template() -> Non
         build_crisis_push_worker(
             _push_settings(MEMORIA_WECHAT_SUBSCRIBE_CRISIS_TEMPLATE_ID=""),
             _unused_store(),
-            display_name=_no_name,
         )
     for fields in ("title=thing1,title=thing2", "body=thing1", "tip=thing", "", "a"):
         with pytest.raises(ValidationError):
@@ -120,7 +117,6 @@ def test_enabled_guardian_push_requires_wechat_credentials_and_template() -> Non
     worker = build_crisis_push_worker(
         settings,
         _unused_store(),
-        display_name=_no_name,
     )
     assert worker is not None
 
@@ -216,15 +212,41 @@ async def test_wechat_sender_posts_only_the_fixed_alert(monkeypatch: pytest.Monk
         "lang": "zh_CN",
         "data": {
             "thing1": {"value": "有一条需要你关注的对话"},
-            "name2": {"value": "小明号"},
+            "name2": {"value": CRISIS_PUSH_DEFAULT_CHILD_NAME},
             "time3": {"value": "2026-09-25 10:30"},
             "thing4": {"value": "有一条需要你关注的对话"},
         },
     }
     body = json.dumps(posts[0]["json"], ensure_ascii=False)
-    for forbidden in ("transcript", "text", "utterance", "severity", "reply"):
+    for forbidden in ("transcript", "text", "utterance", "severity", "reply", "小明"):
         assert forbidden not in body
     wechat_auth._ACCESS_TOKEN_CACHE.clear()
+
+
+def test_crisis_push_request_body_has_no_child_name_or_transcript() -> None:
+    fake_name = "假名字小岸"
+    transcript = "我不想活了，今天数学又考砸了"
+    content = crisis_push_content(
+        occurred_at=datetime(2026, 9, 25, 2, 30, tzinfo=UTC),
+        child_display_name=fake_name,
+    )
+
+    body = WechatSubscribeSender(_push_settings()).request_body(
+        openid="openid-a",
+        template_id=TEMPLATE,
+        content=content,
+        notification_id=NOTIFICATION_ID,
+    )
+
+    assert body["data"] == {
+        "thing1": {"value": CRISIS_PUSH_TITLE},
+        "name2": {"value": CRISIS_PUSH_DEFAULT_CHILD_NAME},
+        "time3": {"value": "2026-09-25 10:30"},
+        "thing4": {"value": CRISIS_PUSH_TIP},
+    }
+    serialized = json.dumps(body["data"], ensure_ascii=False)
+    assert fake_name not in serialized
+    assert transcript not in serialized
 
 
 def test_crisis_alert_page_deep_links_only_uuid_notifications() -> None:

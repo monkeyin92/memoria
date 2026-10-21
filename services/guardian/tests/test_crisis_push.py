@@ -20,6 +20,7 @@ from services.guardian.crisis import CrisisNotificationService, GuardianNotifica
 from services.guardian.domain import GuardianAccessDeniedError
 from services.guardian.postgres_store import PostgresGuardianStore
 from services.guardian.push import (
+    CRISIS_PUSH_DEFAULT_CHILD_NAME,
     CRISIS_PUSH_TIP,
     CRISIS_PUSH_TITLE,
     CrisisPushContent,
@@ -79,11 +80,6 @@ class FakeSender:
         return self.results[0] if self.results else PushSendResult("delivered")
 
 
-async def _names(guardian_user_id: str, minor_user_id: str) -> str | None:
-    assert guardian_user_id == "guardian-a"
-    return {"minor-a": "小明"}.get(minor_user_id)
-
-
 async def _store_with_crisis(
     store: PostgresGuardianStore,
     archive: PostgresLifeArchive,
@@ -130,7 +126,6 @@ def _worker(
         store,
         sender,
         template_id=TEMPLATE,
-        display_name=_names,
         clock=clock,
         **kwargs,  # type: ignore[arg-type]
     )
@@ -286,7 +281,7 @@ async def test_worker_delivers_fixed_content_and_consumes_one_acceptance(
     assert uuid.UUID(notification_id)
     assert content == CrisisPushContent(
         title=CRISIS_PUSH_TITLE,
-        child_display_name="小明",
+        child_display_name=CRISIS_PUSH_DEFAULT_CHILD_NAME,
         occurred_at=occurred,
         tip=CRISIS_PUSH_TIP,
     )

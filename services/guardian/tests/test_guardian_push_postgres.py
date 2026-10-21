@@ -13,7 +13,12 @@ import asyncpg
 import pytest
 from services.guardian.domain import GuardianAccessDeniedError
 from services.guardian.postgres_store import PostgresGuardianStore
-from services.guardian.push import CrisisPushContent, CrisisPushWorker, PushSendResult
+from services.guardian.push import (
+    CRISIS_PUSH_DEFAULT_CHILD_NAME,
+    CrisisPushContent,
+    CrisisPushWorker,
+    PushSendResult,
+)
 from services.guardian.tests.test_guardian_postgres_store import (
     _ensure_roles,
     _postgres_dsn,
@@ -47,10 +52,6 @@ class _Sender:
     ) -> PushSendResult:
         self.calls.append((openid, template_id, content, notification_id))
         return self.result
-
-
-async def _name(guardian_user_id: str, minor_user_id: str) -> str | None:
-    return "小红"
 
 
 @asynccontextmanager
@@ -255,7 +256,6 @@ async def test_postgres_crisis_push_delivery_is_worker_only_and_idempotent() -> 
             store,
             sender,
             template_id=TEMPLATE,
-            display_name=_name,
             clock=lambda: later,
         )
         assert await worker.run_once() == 1
@@ -263,7 +263,7 @@ async def test_postgres_crisis_push_delivery_is_worker_only_and_idempotent() -> 
         assert [(item.status, item.attempts) for item in notifications] == [("delivered", 2)]
         assert await _remaining(store) == 2
         assert sender.calls[0][0] == OPENID
-        assert sender.calls[0][2].child_display_name == "小红"
+        assert sender.calls[0][2].child_display_name == CRISIS_PUSH_DEFAULT_CHILD_NAME
 
         # WeChat refusing the send exhausts the ledger.
         await _crisis(store, turn_id=2)
@@ -271,7 +271,6 @@ async def test_postgres_crisis_push_delivery_is_worker_only_and_idempotent() -> 
             store,
             _Sender(PushSendResult("no_subscription", "wechat_43101")),
             template_id=TEMPLATE,
-            display_name=_name,
         )
         assert await refused.run_once() == 1
         assert await _remaining(store) == 0
@@ -386,7 +385,6 @@ async def test_postgres_schema_upgrades_a_pre_delivery_outbox_in_place() -> None
             store,
             _Sender(PushSendResult("delivered")),
             template_id=TEMPLATE,
-            display_name=_name,
         )
         assert await worker.run_once() == 1
         notifications = await store.guardian_notifications(guardian_user_id="pg-guardian")
