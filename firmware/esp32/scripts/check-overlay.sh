@@ -165,7 +165,7 @@ rg -Fq 'memoria::WritePlay(' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc"
     die "AudioOutputTask must WritePlay the pre-I2S PCM into the software AEC reference ring"
 rg -Fq 'memoria::ApplyToFeed(' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
     die "ReadAudioData must ApplyToFeed the software AEC reference into channel 1 before resample"
-rg -Fq 'Device pat detected' "$board_dir/memoria_esp_vocat.cc" || \
+rg -Fq 'Device pat (accepted)' "$board_dir/memoria_esp_vocat.cc" || \
     die "BMI270 pat must be wired to a local animation, not ToggleChatState"
 rg -Fq 'display_->Pat()' "$board_dir/memoria_esp_vocat.cc" || \
     die "idle body pat must make the companion hop"
@@ -173,8 +173,27 @@ rg -Fq 'dizzy companion, no chat' "$board_dir/memoria_esp_vocat.cc" || \
     die "sustained IMU shake must not be treated as a pat or start a chat"
 rg -Fq 'MuteImuForTouch' "$board_dir/memoria_esp_vocat.cc" || \
     die "screen touch must mute IMU so a tap does not look like a pat"
-rg -Fq 'Device pat ignored (touch rumble' "$board_dir/memoria_esp_vocat.cc" || \
-    die "screen-tap rumble must cancel a pending body pat"
+rg -Fq 'pat motion watcher armed 20 ms poll' "$board_dir/memoria_esp_vocat.cc" || \
+    die "the pat watcher must log that it is armed (a quiet log then means no impulse)"
+rg -Fq 'reason=%s' "$board_dir/memoria_esp_vocat.cc" || \
+    die "every pat/rumble candidate must log its score, state and why it was ignored"
+rg -Fq 'memoria::PatIgnoreReasonName(result.kind, result.ignore)' \
+    "$board_dir/memoria_esp_vocat.cc" || \
+    die "every rejected pat/rumble candidate must name its reason from the shared table"
+rg -Fq 'memoria::PatGestureDecisionFor(facts)' "$board_dir/memoria_esp_vocat.cc" || \
+    die "a body pat while speaking must stop the reply through the shared policy"
+rg -Fq 'memoria::ScreenTapDecisionFor(' "$board_dir/memoria_esp_vocat.cc" || \
+    die "a screen tap while speaking must stop the reply through the shared policy"
+rg -Fq 'memoria::PlaybackStopRegistry::GetInstance().allowed()' "$board_dir/memoria_esp_vocat.cc" || \
+    die "a local gesture stop must honour the generation's interruptible flag"
+[[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_playback_stop.h" ]] || \
+    die "protected-playback registry header missing"
+rg -Fq 'cJSON_GetObjectItemCaseSensitive(root, "interruptible")' \
+    "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_protocol.cc" || \
+    die "generation.started must read the protected-playback flag"
+rg -Fq 'memoria::PlaybackStopRegistry::GetInstance().Set(' \
+    "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_protocol.cc" || \
+    die "generation.started must publish the protected-playback flag to the board"
 rg -q 'bg_image_src' "$board_dir/memoria_mascot_display.cc" || \
     die "mascot scene is not attached to the display background"
 rg -Fq 'SetOnFirstFrame' "$board_dir/memoria_esp_vocat.cc" || \
