@@ -77,13 +77,16 @@ from services.agent.src.response_planner_client import (
 )
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_profile_client import VoiceProfileClient
-from services.common.companion_response_safety import assistant_text_repeats_or_dilutes_safety
-from services.common.crisis_policy import route_crisis
+from services.common.companion_response_safety import (
+    assistant_text_repeats_or_dilutes_safety,
+    strip_soothing_from_follow_up,
+)
+from services.common.crisis_policy import more_protective_local_script
 from services.common.llm_failover import LLM_UNAVAILABLE_TEXT
 from services.common.realtime_information import (
-    REALTIME_UNAVAILABLE_REPLY,
     is_incomplete_realtime_reply,
     mentions_weather,
+    realtime_unavailable_reply,
     strip_realtime_bridge_prefix,
 )
 from services.common.response_depth import SHORT_REPLY_AUDIENCES, ResponseDepth, response_depth_for
@@ -254,6 +257,9 @@ class ReplyPipeline:
         fallback_setter = getattr(runtime.tts, "set_voice_fallback_callback", None)
         if callable(fallback_setter):
             fallback_setter(self._observe_tts_voice_fallback)
+        sentence_setter = getattr(runtime.tts, "set_tts_sentence_callback", None)
+        if callable(sentence_setter):
+            sentence_setter(self._observe_tts_sentence)
 
     @property
     def runtime(self) -> DuplexRuntime:
@@ -304,7 +310,9 @@ class ReplyPipeline:
             return None
         resolver = self._realtime_search_resolver
         if resolver is None:
-            return None
+            return realtime_unavailable_reply(query)
+        if not self._realtime_sources_available():
+            return realtime_unavailable_reply(query)
         try:
             result = await resolver.resolve(query=query)
         except asyncio.CancelledError:
@@ -322,7 +330,7 @@ class ReplyPipeline:
         return (
             result.strip()
             if isinstance(result, str) and result.strip()
-            else REALTIME_UNAVAILABLE_REPLY
+            else realtime_unavailable_reply(query)
         )
 
     async def _model_stream(self, chat_ctx: Any) -> AsyncGenerator[Any, None]:
@@ -386,6 +394,9 @@ class ReplyPipeline:
         *,
         llm_model: str | None = None,
     ) -> bool:
+        # Plan-level provenance is bound before synthesis. The selected TTS
+        # provider appends each spoken sentence's actual engine to the same
+        # generation record through ``_observe_tts_sentence``.
         voice = self._runtime.generation_voice_for(fence)
         text_only = self._runtime.input_modality_for_fence(fence) == "text"
         if self._runtime.tts is not None and voice is None and not text_only:
@@ -466,6 +477,33 @@ class ReplyPipeline:
             fence=fence,
         )
 
+    def _observe_tts_sentence(
+        self,
+        fence: GenerationFence,
+        index: int,
+        engine: str,
+        model: str,
+        voice: str,
+        switched: bool,
+    ) -> None:
+        recorded = self._runtime.record_tts_sentence_provenance(
+            fence,
+            index=index,
+            engine=engine,
+            model=model,
+            voice=voice,
+            switched=switched,
+        )
+        if not recorded:
+            logger.warning(
+                "tts sentence provenance rejected session_id=%s turn_id=%s "
+                "generation_id=%s index=%s",
+                fence.session_id,
+                fence.turn_id,
+                fence.generation_id,
+                index,
+            )
+
     def _realtime_sources_available(self) -> bool:
         resolver = self._realtime_search_resolver
         if resolver is None:
@@ -510,6 +548,21 @@ class ReplyPipeline:
             and is_city_name_report(query)
             and mentions_weather(prior),
         )
+
+    def _with_local_crisis_floor(self, plan: ResponsePlan, query: str) -> ResponsePlan:
+        script = more_protective_local_script(query, plan.fixed_safety_script)
+        if script is None:
+            return plan
+        if not plan_is_local_safe(plan):
+            planned = plan.fixed_safety_script
+            logger.warning(
+                "crisis_route_raised_over_planner planned=%s local=%s session_id=%s turn_id=%s",
+                planned.template_id if planned is not None else "none",
+                script.template_id,
+                self._runtime.session_id,
+                plan.fence.turn_id,
+            )
+        return replace(plan, direct_text=script.display)
 
     def _current_authorizing_profile_id(self) -> str | None:
         """The ``runtime_profile_id`` currently authorizing this session, if any.
@@ -968,15 +1021,13 @@ class ReplyPipeline:
             plan = None
             fetch_reason = "mode_policy_mismatch"
         if plan is None:
-            script = route_crisis(text).script
             plan = self._local_safe_plan(
                 fence=fence,
                 speaker=speaker,
                 reason=fetch_reason,
                 query=text,
             )
-            if script is not None and plan.direct_text != script.display:
-                plan = replace(plan, direct_text=script.display)
+        plan = self._with_local_crisis_floor(plan, text)
         if plan.fixed_safety_script is not None:
             self._note_fixed_safety_script(plan.fixed_safety_script.display)
         if (
@@ -1019,15 +1070,15 @@ class ReplyPipeline:
             )
             snapshot = None
         if snapshot is None:
-            script = route_crisis(text).script
-            plan = self._local_safe_plan(
-                fence=fence,
-                speaker=speaker,
-                reason="context_snapshot_unavailable",
-                query=text,
+            plan = self._with_local_crisis_floor(
+                self._local_safe_plan(
+                    fence=fence,
+                    speaker=speaker,
+                    reason="context_snapshot_unavailable",
+                    query=text,
+                ),
+                text,
             )
-            if script is not None and plan.direct_text != script.display:
-                plan = replace(plan, direct_text=script.display)
             if (
                 input_modality == "audio"
                 and output_policy.generation_voice_must_match_plan(policy)
@@ -1425,19 +1476,22 @@ class ReplyPipeline:
             _mark_first_phrase()
             return accepted
 
-        def _follow_up_blocked(text: str) -> bool:
+        def _follow_up_blocked(text: str) -> tuple[str | None, bool]:
+            """Strip what the post-safety reply may not say; say when nothing is left."""
+
             if script is not None or not self._runtime.fixed_safety_heard:
-                return False
-            if not assistant_text_repeats_or_dilutes_safety(
-                text, include_soothing=block_soothing
-            ):
-                return False
+                return text, False
+            allowed = (
+                strip_soothing_from_follow_up(text) if block_soothing else text
+            )
+            if not assistant_text_repeats_or_dilutes_safety(allowed):
+                return allowed, False
             logger.info(
                 "post_fixed_safety_follow_up_dropped session_id=%s turn_id=%s",
                 self._runtime.session_id,
                 fence.turn_id,
             )
-            return True
+            return None, True
 
         stream: Any = None
         realtime_reply = ""
@@ -1649,9 +1703,10 @@ class ReplyPipeline:
                                 realtime_reply += accepted_realtime
                         else:
                             for segment in segmenter.push_token(gated):
-                                if _follow_up_blocked(segment.text):
+                                segment_text, blocked = _follow_up_blocked(segment.text)
+                                if blocked or segment_text is None:
                                     continue
-                                accepted_segment = _ready_segment(segment.text)
+                                accepted_segment = _ready_segment(segment_text)
                                 if accepted_segment is None:
                                     break
                                 yield accepted_segment
@@ -1698,7 +1753,9 @@ class ReplyPipeline:
                     fence.turn_id,
                     fence.generation_id,
                 )
-                realtime_reply = REALTIME_UNAVAILABLE_REPLY
+                realtime_reply = realtime_unavailable_reply(
+                    realtime_request.query if realtime_request is not None else ""
+                )
             if realtime_request is not None and cancellation.is_current(self._runtime.fence):
                 realtime_current = True
                 for segment in segmenter.push_token(strip_realtime_bridge_prefix(realtime_reply)):
@@ -1716,9 +1773,10 @@ class ReplyPipeline:
                     self._runtime.complete_realtime_request(realtime_request)
             if cancellation.is_current(self._runtime.fence) and not reply_budget_exhausted:
                 for segment in segmenter.flush(end_of_stream=True):
-                    if _follow_up_blocked(segment.text):
+                    segment_text, blocked = _follow_up_blocked(segment.text)
+                    if blocked or segment_text is None:
                         continue
-                    accepted_segment = _ready_segment(segment.text)
+                    accepted_segment = _ready_segment(segment_text)
                     if accepted_segment is None:
                         break
                     yield accepted_segment
@@ -1732,7 +1790,11 @@ class ReplyPipeline:
                 fence.generation_id,
                 exc_info=True,
             )
-            for segment in segmenter.push_token(REALTIME_UNAVAILABLE_REPLY):
+            for segment in segmenter.push_token(
+                realtime_unavailable_reply(
+                    realtime_request.query if realtime_request is not None else ""
+                )
+            ):
                 accepted_segment = _ready_segment(segment.text)
                 if accepted_segment is None:
                     break

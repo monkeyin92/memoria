@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import logging
+import re
 import time as monotonic_clock
 from datetime import UTC, datetime, time, timedelta
 from types import SimpleNamespace
@@ -20,6 +23,13 @@ from services.agent.src.daily_chat import (
     GovernedDailyChat,
     governed_daily_chat,
 )
+from services.agent.src.minor_limit_bypass import (
+    MINOR_DAILY_LIMIT_BYPASSED_REASON,
+    MINOR_LIMIT_BYPASS_ENV,
+    MINOR_SESSION_LIMIT_BYPASSED_REASON,
+    MinorLimitBypass,
+    subject_id_hash,
+)
 from services.agent.src.prompts import (
     CONNECTION_RETRY_PHRASE,
     MINOR_DAILY_LIMIT_PHRASE,
@@ -29,9 +39,14 @@ from services.agent.src.prompts import (
 )
 from services.agent.src.runtime_profile import VerifiedRuntimeProfile, parse_runtime_profile
 from services.agent.src.voice_core import media_session_projection
+from services.agent.src.voice_core.aigc_notice import AigcNoticeConfig
+from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
+from services.agent.src.voice_core.media_session import MediaVoiceCoreRegistry
+from services.agent.src.voice_core.media_session_connection import MediaSessionConnectionMixin
 from services.agent.src.voice_core.media_session_output_stream import MediaOutputStreamMixin
 from services.agent.src.voice_core.media_session_projection import MediaSessionProjectionMixin
 from services.agent.src.voice_core.minor_session_limits import in_quiet_hours, minor_limits
+from services.agent.tests.unit.media_session_support import FakeMediaProvider
 from services.common.daily_chat_limit import DailyChatBudget
 from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
 from services.session_runtime.profile_service import (
@@ -173,10 +188,32 @@ def test_a_malformed_signed_daily_budget_rejects_the_whole_profile(seconds: str)
 
 
 class _Session(MediaSessionProjectionMixin, MediaOutputStreamMixin):
-    def __init__(self, daily_chat_client: DailyChatClient | None = None) -> None:
+    def __init__(
+        self,
+        daily_chat_client: DailyChatClient | None = None,
+        *,
+        minor_limit_bypass: MinorLimitBypass | None = None,
+    ) -> None:
         self.daily_chat_client = daily_chat_client
+        # This fixture exercises the refusal copy, not the AIGC round markers.
+        self.aigc_notice_config = AigcNoticeConfig(enabled=False)
+        self.minor_limit_bypass = (
+            minor_limit_bypass if minor_limit_bypass is not None else MinorLimitBypass()
+        )
         self.spoken: list[str] = []
         self.standby: list[str] = []
+
+    async def _speak_aigc_opening_marker(self, context: Any) -> None:
+        return None
+
+    async def _wait_aigc_opening_lead_in(self, context: Any) -> None:
+        return None
+
+    async def _play_aigc_closing_marker(self, context: Any) -> bool:
+        return False
+
+    def _finish_aigc_round(self, context: Any, *, close_reason: str) -> None:
+        return None
 
     async def _speak_device_enrollment_phrase(self, context: Any, phrase: str) -> bool:
         self.spoken.append(phrase)
@@ -226,6 +263,31 @@ def _ledger(used: httpx.Response, asked: list[str]) -> DailyChatClient:
 
     return DailyChatClient(
         DailyChatClientConfig(endpoint=_LEDGER, internal_token="policy-token", read_timeout_s=0.4),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(answer)),
+    )
+
+
+def _bypass(*subjects: str) -> MinorLimitBypass:
+    return MinorLimitBypass.from_env({MINOR_LIMIT_BYPASS_ENV: ",".join(subjects)})
+
+
+def _chat_ledger(
+    used_seconds: int, posts: list[dict[str, Any]], asked: list[str]
+) -> DailyChatClient:
+    def answer(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            asked.append(str(request.url))
+            return httpx.Response(200, json={"used_seconds": used_seconds})
+        posts.append(json.loads(request.content))
+        return httpx.Response(200, json={"status": "recorded"})
+
+    return DailyChatClient(
+        DailyChatClientConfig(
+            endpoint=_LEDGER,
+            internal_token="policy-token",
+            read_timeout_s=0.4,
+            retry_delay_s=0.0,
+        ),
         client=httpx.AsyncClient(transport=httpx.MockTransport(answer)),
     )
 
@@ -369,3 +431,303 @@ async def test_only_a_minors_device_wake_with_a_signed_budget_asks_the_ledger(
 
     assert await session._refuse_minor_daily_limit(_context(profile, client_type=client_type)) is False
     assert (asked, session.spoken, session.standby) == ([], [], [])
+
+
+def test_the_bypass_is_off_unless_exactly_one_subject_is_configured() -> None:
+    assert not MinorLimitBypass.from_env({}).enabled
+    assert not MinorLimitBypass.from_env({MINOR_LIMIT_BYPASS_ENV: "  "}).enabled
+    single = MinorLimitBypass.from_env({MINOR_LIMIT_BYPASS_ENV: " person-child "})
+    duplicate = MinorLimitBypass.from_env({MINOR_LIMIT_BYPASS_ENV: "person-child, person-child"})
+
+    assert single.subject_ids == frozenset({"person-child"})
+    assert single.enabled
+    assert duplicate.subject_ids == frozenset({"person-child"})
+    assert duplicate.enabled
+
+
+def test_more_than_one_configured_subject_disables_the_bypass_with_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="services.agent.src.minor_limit_bypass"):
+        bypass = _bypass("person-child", "person-other")
+
+    assert not bypass.enabled
+    assert bypass.subject_ids == frozenset()
+    assert "reason=multiple_test_subjects" in caplog.text
+    assert "person-child" not in caplog.text
+    assert "person-other" not in caplog.text
+
+
+def test_an_active_whitelist_logs_one_startup_warning_with_only_hashes(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="services.agent.src.minor_limit_bypass"):
+        _bypass("person-child")
+
+    assert len(caplog.records) == 1
+    message = caplog.records[0].getMessage()
+    assert "minor limit bypass active" in message
+    assert re.search(r"at=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", message)
+    assert f"subject_sha256_8={subject_id_hash('person-child')}" in message
+    assert "person-child" not in message
+
+
+@pytest.mark.parametrize(
+    "configured",
+    ["", "   ", " , "],
+    ids=["empty", "whitespace-only", "separator-only"],
+)
+def test_a_blank_whitelist_logs_no_startup_warning(
+    configured: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="services.agent.src.minor_limit_bypass"):
+        bypass = MinorLimitBypass.from_env({MINOR_LIMIT_BYPASS_ENV: configured})
+
+    assert not bypass.enabled
+    assert caplog.records == []
+
+
+def test_the_media_registry_reads_the_whitelist_at_startup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(MINOR_LIMIT_BYPASS_ENV, "person-child")
+
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        provider_factory=lambda _identity: FakeMediaProvider(),
+    )
+
+    assert registry.minor_limit_bypass.subject_ids == frozenset({"person-child"})
+
+
+@pytest.mark.asyncio
+async def test_a_whitelisted_minor_keeps_chatting_past_the_daily_budget_and_still_records_usage(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    asked: list[str] = []
+    posts: list[dict[str, Any]] = []
+    session = _Session(
+        _chat_ledger(2700, posts, asked),
+        minor_limit_bypass=_bypass("person-child"),
+    )
+    context = _context(_profile(daily_chat_seconds="2700"))
+
+    with caplog.at_level(logging.WARNING, logger="services.agent.src.minor_limit_bypass"):
+        assert await session._refuse_minor_daily_limit(context) is False
+
+    assert (session.spoken, session.standby) == ([], [])
+    assert asked == [f"{_LEDGER}/person-child/today"]
+    assert context.device_wake_ack_pending is True
+    accrual = context.daily_chat_accrual
+    assert accrual is not None
+    assert accrual.subject_id == "person-child"
+    context.started_at -= 412.2
+
+    await MediaSessionConnectionMixin._record_daily_chat_usage(session, context)
+
+    assert len(posts) == 1
+    assert posts[0]["accrual_id"] == accrual.accrual_id
+    assert posts[0]["subject_id"] == "person-child"
+    assert posts[0]["elapsed_seconds"] == 413
+    assert f"reason={MINOR_DAILY_LIMIT_BYPASSED_REASON}" in caplog.text
+    assert "at=" in caplog.text
+    assert f"subject_sha256_8={subject_id_hash('person-child')}" in caplog.text
+    assert "person-child" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bypass",
+    [None, _bypass("person-other"), _bypass("Person-Child")],
+    ids=["unset", "other-subject", "case-mismatch"],
+)
+async def test_the_daily_limit_still_refuses_a_subject_not_exactly_whitelisted(
+    bypass: MinorLimitBypass | None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    session = _Session(
+        _ledger(httpx.Response(200, json={"used_seconds": 2700}), []),
+        minor_limit_bypass=bypass,
+    )
+    context = _context(_profile(daily_chat_seconds="2700"))
+
+    with caplog.at_level(logging.WARNING, logger="services.agent.src.minor_limit_bypass"):
+        assert await session._refuse_minor_daily_limit(context) is True
+
+    assert session.spoken == [MINOR_DAILY_LIMIT_PHRASE]
+    assert session.standby == ["minor_daily_limit"]
+    assert context.daily_chat_accrual is None
+    assert context.device_wake_ack_pending is False
+    assert MINOR_DAILY_LIMIT_BYPASSED_REASON not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_more_than_one_subject_leaves_the_daily_limit_blocking(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="services.agent.src.minor_limit_bypass"):
+        bypass = _bypass("person-child", "person-other")
+
+    session = _Session(
+        _ledger(httpx.Response(200, json={"used_seconds": 2700}), []),
+        minor_limit_bypass=bypass,
+    )
+    context = _context(_profile(daily_chat_seconds="2700"))
+
+    assert await session._refuse_minor_daily_limit(context) is True
+    assert session.standby == ["minor_daily_limit"]
+    assert context.daily_chat_accrual is None
+    assert MINOR_DAILY_LIMIT_BYPASSED_REASON not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_an_unavailable_ledger_is_never_bypassed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    session = _Session(
+        _ledger(httpx.Response(503), []),
+        minor_limit_bypass=_bypass("person-child"),
+    )
+    context = _context(_profile(daily_chat_seconds="2700"))
+
+    with caplog.at_level(logging.WARNING, logger="services.agent.src.minor_limit_bypass"):
+        assert await session._refuse_minor_daily_limit(context) is True
+
+    assert session.spoken == [CONNECTION_RETRY_PHRASE]
+    assert session.standby == ["minor_daily_usage_unavailable"]
+    assert context.daily_chat_accrual is None
+    assert MINOR_DAILY_LIMIT_BYPASSED_REASON not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_whitelisted_minor_session_past_its_limit_keeps_going_and_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    session = _Session(minor_limit_bypass=_bypass("person-child"))
+    context = _context(_profile(max_session_seconds=900), started_ago=901.0, reply="好的。")
+
+    with caplog.at_level(logging.WARNING, logger="services.agent.src.minor_limit_bypass"):
+        await session._maybe_standby_after_session_limit(context, fence=object())  # type: ignore[arg-type]
+
+    assert (session.spoken, session.standby) == ([], [])
+    assert f"reason={MINOR_SESSION_LIMIT_BYPASSED_REASON}" in caplog.text
+    assert "at=" in caplog.text
+    assert f"subject_sha256_8={subject_id_hash('person-child')}" in caplog.text
+    assert "person-child" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bypass",
+    [None, _bypass("person-other"), _bypass("Person-Child")],
+    ids=["unset", "other-subject", "case-mismatch"],
+)
+async def test_the_session_limit_still_ends_a_subject_not_exactly_whitelisted(
+    bypass: MinorLimitBypass | None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    session = _Session(minor_limit_bypass=bypass)
+    context = _context(_profile(max_session_seconds=900), started_ago=901.0, reply="好的。")
+
+    with caplog.at_level(logging.WARNING, logger="services.agent.src.minor_limit_bypass"):
+        await session._maybe_standby_after_session_limit(context, fence=object())  # type: ignore[arg-type]
+
+    assert session.spoken == [MINOR_SESSION_LIMIT_PHRASE]
+    assert session.standby == ["minor_max_session"]
+    assert MINOR_SESSION_LIMIT_BYPASSED_REASON not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_more_than_one_subject_leaves_the_session_limit_ending_the_session(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="services.agent.src.minor_limit_bypass"):
+        bypass = _bypass("person-child", "person-other")
+    session = _Session(minor_limit_bypass=bypass)
+    context = _context(_profile(max_session_seconds=900), started_ago=901.0, reply="好的。")
+
+    await session._maybe_standby_after_session_limit(context, fence=object())  # type: ignore[arg-type]
+
+    assert session.spoken == [MINOR_SESSION_LIMIT_PHRASE]
+    assert session.standby == ["minor_max_session"]
+    assert MINOR_SESSION_LIMIT_BYPASSED_REASON not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "configured",
+    ["", "   ", " , "],
+    ids=["empty", "whitespace-only", "separator-only"],
+)
+async def test_an_empty_or_separator_only_whitelist_still_blocks_the_daily_limit(
+    configured: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setenv(MINOR_LIMIT_BYPASS_ENV, configured)
+    bypass = MinorLimitBypass.from_env()
+    session = _Session(
+        _ledger(httpx.Response(200, json={"used_seconds": 2700}), []),
+        minor_limit_bypass=bypass,
+    )
+    context = _context(_profile(daily_chat_seconds="2700"))
+
+    with caplog.at_level(logging.WARNING, logger="services.agent.src.minor_limit_bypass"):
+        refused = await session._refuse_minor_daily_limit(context)
+
+    assert bypass.subject_ids == frozenset()
+    assert refused is True
+    assert session.spoken == [MINOR_DAILY_LIMIT_PHRASE]
+    assert session.standby == ["minor_daily_limit"]
+    assert context.daily_chat_accrual is None
+    assert context.device_wake_ack_pending is False
+    assert MINOR_DAILY_LIMIT_BYPASSED_REASON not in caplog.text
+    assert MINOR_SESSION_LIMIT_BYPASSED_REASON not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "configured",
+    ["", "   ", " , "],
+    ids=["empty", "whitespace-only", "separator-only"],
+)
+async def test_an_empty_or_separator_only_whitelist_still_ends_the_session_at_its_limit(
+    configured: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setenv(MINOR_LIMIT_BYPASS_ENV, configured)
+    bypass = MinorLimitBypass.from_env()
+    session = _Session(minor_limit_bypass=bypass)
+    context = _context(_profile(max_session_seconds=900), started_ago=901.0, reply="好的。")
+
+    with caplog.at_level(logging.WARNING, logger="services.agent.src.minor_limit_bypass"):
+        await session._maybe_standby_after_session_limit(context, fence=object())  # type: ignore[arg-type]
+
+    assert bypass.subject_ids == frozenset()
+    assert session.spoken == [MINOR_SESSION_LIMIT_PHRASE]
+    assert session.standby == ["minor_max_session"]
+    assert MINOR_DAILY_LIMIT_BYPASSED_REASON not in caplog.text
+    assert MINOR_SESSION_LIMIT_BYPASSED_REASON not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_the_bypass_never_opens_quiet_hours(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(
+        media_session_projection,
+        "current_local_time",
+        lambda _tz: datetime(2026, 9, 26, 22, 0),
+    )
+    session = _Session(minor_limit_bypass=_bypass("person-child"))
+
+    with caplog.at_level(logging.WARNING, logger="services.agent.src.minor_limit_bypass"):
+        refused = await session._refuse_minor_quiet_hours(_context(_profile()))
+
+    assert refused is True
+    assert session.spoken == [MINOR_QUIET_HOURS_PHRASE]
+    assert session.standby == ["minor_quiet_hours"]
+    assert MINOR_SESSION_LIMIT_BYPASSED_REASON not in caplog.text

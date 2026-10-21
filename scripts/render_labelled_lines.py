@@ -20,6 +20,14 @@ from datetime import date
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+from services.common.aigc_opus import (  # noqa: E402
+    aigc_identity_from_env,
+    implicit_label,
+)
+
 ONLINE_ROOT = REPO / "services" / "common" / "assets" / "labelled_lines"
 OFFLINE_ROOT = (
     REPO
@@ -36,6 +44,7 @@ OFFLINE_ROOT = (
 )
 ARCHIVE_ROOT = REPO / "docs" / "acceptance" / "run-20261015-labelled-llm-state-audio" / "archive"
 VOICE_ID = "zh_female_tianmeitaozi_uranus_bigtts"
+CONTENT_PRODUCER, CONTENT_PROPAGATOR = aigc_identity_from_env()
 
 LINES = (
     ("llm_thinking", "嗯，我想一想。", 1.1, 196.0),
@@ -51,6 +60,20 @@ def _ffmpeg_from_wav(
     sample_rate: int,
     generated: str,
 ) -> None:
+    aigc = implicit_label(
+        content_id=line_id,
+        aigc={
+            "SERVICE_PROVIDER": "Volcengine Doubao",
+            "ARTIST": VOICE_ID,
+            "VOICE_ID": VOICE_ID,
+            "DATE": generated,
+        },
+        content_producer=CONTENT_PRODUCER,
+        content_propagator=CONTENT_PROPAGATOR,
+    )
+    metadata = ["-metadata", f"TITLE={line_id}"]
+    for key, value in aigc.items():
+        metadata.extend(["-metadata", f"{key}={value}"])
     subprocess.run(
         [
             "ffmpeg",
@@ -68,22 +91,7 @@ def _ffmpeg_from_wav(
             "libopus",
             "-b:a",
             "16000",
-            "-metadata",
-            f"TITLE={line_id}",
-            "-metadata",
-            f"CONTENT_ID={line_id}",
-            "-metadata",
-            "SERVICE_PROVIDER=Volcengine Doubao",
-            "-metadata",
-            "AI_GENERATED=true",
-            "-metadata",
-            f"ARTIST={VOICE_ID}",
-            "-metadata",
-            f"VOICE_ID={VOICE_ID}",
-            "-metadata",
-            f"DATE={generated}",
-            "-metadata",
-            "CONTENT_PRODUCER=Memoria",
+            *metadata,
             str(ogg),
         ],
         check=True,
@@ -184,6 +192,9 @@ def main(argv: list[str] | None = None) -> int:
             "tool": tool,
             "date": today,
             "voice_id": VOICE_ID,
+            "content_producer": CONTENT_PRODUCER,
+            "content_propagator": CONTENT_PROPAGATOR,
+            "label": "1",
             "playable": use_doubao,
             "online_sample_rate_hz": 24_000,
             "offline_sample_rate_hz": 16_000,

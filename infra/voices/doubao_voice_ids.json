@@ -4,8 +4,8 @@
   "source": "https://docs.volcengine.com/docs/6561/1257544?lang=zh",
   "voices": {
     "warm_companion": {
-      "speaker_id": "zh_male_yangguangqingnian_uranus_bigtts",
-      "display_name": "阳光青年 2.0",
+      "speaker_id": "zh_female_kailangjiejie_uranus_bigtts",
+      "display_name": "开朗姐姐 2.0",
       "model": "seed-tts-2.0"
     },
     "bright_peer": {

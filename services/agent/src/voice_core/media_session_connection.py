@@ -40,6 +40,10 @@ class MediaSessionConnectionMixin:
         _sessions: dict[str, _MediaVoiceSession]
         _cleanup_tasks: dict[str, asyncio.Task[None]]
 
+        def _finish_aigc_round(
+            self, context: _MediaVoiceSession, *, close_reason: str
+        ) -> None: ...
+
         async def open_session(self, identity: SessionIdentity) -> _MediaVoiceSession: ...
 
         async def _cancel_audio_pump(self, context: _MediaVoiceSession) -> None: ...
@@ -57,6 +61,10 @@ class MediaSessionConnectionMixin:
             self, context: _MediaVoiceSession
         ) -> None: ...
 
+        def _cancel_speaking_stall_watchdog(
+            self, context: _MediaVoiceSession
+        ) -> None: ...
+
         async def _record_interrupted_timed_spans(
             self, context: _MediaVoiceSession, fence: GenerationFence
         ) -> None: ...
@@ -68,6 +76,7 @@ class MediaSessionConnectionMixin:
             *,
             reason: str = "cancelled",
             cancel_timeout_s: float = 5.0,
+            finalize_audible: bool = True,
         ) -> None: ...
 
         def _clear_pending_turn_state(self, context: _MediaVoiceSession) -> None: ...
@@ -95,6 +104,14 @@ class MediaSessionConnectionMixin:
         # deployed and remains fail-closed in the rollout gate.
         _ = detected_monotonic_ms
         stop_started_ns = time.monotonic_ns()
+        # A stop is a barge-in: a closing marker that has not started is dropped
+        # (the next round's opening marker replaces it) and a playing one is released.
+        context.aigc_closing_marker_state = (
+            "interrupted"
+            if context.aigc_closing_marker_state == "playing"
+            else "skipped"
+        )
+        context.aigc_closing_marker_fence = None
         # MediaBridgeSession has already advanced its authoritative generation
         # before this callback runs. The Voice Core consumes that exact fence.
         previous_fence = context.output.playback.current_fence or context.runtime.fence
@@ -125,11 +142,30 @@ class MediaSessionConnectionMixin:
         if should_pause_asr_for_playback(context.identity):
             await context.provider.pause_asr_for_playback(context.identity)
         if not previous_fence.matches(session.fence):
-            await self._cancel_reply_task(context, previous_fence)
+            await self._cancel_reply_task(
+                context,
+                previous_fence,
+                finalize_audible=False,
+            )
         self.metrics.observe_voice_latency(
             "interrupt_core_stop",
             (time.monotonic_ns() - stop_started_ns) / 1_000_000_000,
         )
+
+    def _release_aigc_closing_marker(self, context: _MediaVoiceSession) -> None:
+        """The child took the floor or the transport was replaced mid-marker."""
+
+        fence = context.aigc_closing_marker_fence
+        if fence is None or context.aigc_closing_marker_state != "playing":
+            return
+        if not context.runtime.fence.matches(fence):
+            context.aigc_closing_marker_fence = None
+            context.aigc_closing_marker_state = "interrupted"
+            logger.info(
+                "AIGC closing marker interrupted session=%s fence=%s",
+                context.identity.session_id,
+                fence,
+            )
 
     async def on_downlink_overflow(self, session: MediaBridgeSession) -> None:
         """Cancel the authoritative runtime when transport delivery is lost."""
@@ -166,7 +202,11 @@ class MediaSessionConnectionMixin:
         context.output.output_complete_emitted = False
         if should_pause_asr_for_playback(context.identity):
             await context.provider.pause_asr_for_playback(context.identity)
-        await self._cancel_reply_task(context, previous_fence)
+        await self._cancel_reply_task(
+            context,
+            previous_fence,
+            finalize_audible=False,
+        )
 
     async def on_session_closed(self, session: MediaBridgeSession) -> None:
         session_id = session.identity.session_id
@@ -304,6 +344,7 @@ class MediaSessionConnectionMixin:
                 enrollment_task.cancel()
             self._cancel_owner_silence_timer(context, preserve_remaining=False)
             self._cancel_max_user_speech_watchdog(context)
+            self._cancel_speaking_stall_watchdog(context)
             context.projection.discard_provisional(None, "session_closed")
             context.projection.reset_phase(stream_epoch=context.stream_epoch)
             self._clear_pending_turn_state(context)
@@ -317,7 +358,11 @@ class MediaSessionConnectionMixin:
             if context.output.output_owner is not None
             else context.output.playback.current_fence or context.runtime.fence
         )
-        await self._cancel_reply_task(context, output_fence)
+        await self._cancel_reply_task(
+            context,
+            output_fence,
+            finalize_audible=False,
+        )
         if context.turn_endpoint_task is not None and not context.turn_endpoint_task.done():
             context.turn_endpoint_task.cancel()
         if context.pending.turn_endpoint_timeout_handle is not None:
@@ -329,6 +374,11 @@ class MediaSessionConnectionMixin:
         await self._cancel_audio_pump(context)
         await self._record_daily_chat_usage(context)
         await self._publish_child_session_recap(context)
+        # The round ends here for an explicit stop or a client close; a timed-out
+        # silence round already recorded itself before its closing marker.
+        self._finish_aigc_round(
+            context, close_reason=context.standby_reason or "session_closed"
+        )
         await context.runtime.close()
         await context.provider.close(context.identity)
         # The registry owns the transport session created by the bridge. Once

@@ -116,7 +116,8 @@ def test_short_pat_fires_after_confirm_delay(pat_tool: pathlib.Path) -> None:
 
 
 def test_ringing_pat_still_counts(pat_tool: pathlib.Path) -> None:
-    # Old detector required an immediate drop below 2500 after at most 2 highs.
+    # A real pat rings through the rumble band right after its peak; the whole
+    # pulse is judged by its peak.
     script = "\n".join(
         [
             "200 0 0",
@@ -137,10 +138,12 @@ def test_ringing_pat_still_counts(pat_tool: pathlib.Path) -> None:
 
 
 def test_sustained_shake_is_ignored(pat_tool: pathlib.Path) -> None:
+    # 5000 is screen rumble, not a pat peak. A shake that may make the
+    # companion dizzy has to clear the product's 6000 pat floor.
     lines = ["200 0 0"]
     now = 20
     for _ in range(10):
-        lines.append(f"5000 0 {now}")
+        lines.append(f"7000 0 {now}")
         now += 20
     for extra in (400, 200, 180, 160):
         lines.append(f"{extra} 0 {now}")

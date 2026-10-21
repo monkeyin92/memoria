@@ -155,7 +155,7 @@ def test_deep_sleep_reset_arms_offline_reconnect_before_the_battery_tick() -> No
     assert hits == []
 
 
-def test_board_tap_handler_uses_power_policy_and_never_stops() -> None:
+def test_board_tap_handler_uses_power_policy_and_never_ends_the_conversation() -> None:
     source = (BOARD_DIR / "memoria_esp_vocat.cc").read_text(encoding="utf-8")
     handler = _function(source, "void HandleScreenTouchRelease(std::uint32_t hold_ms)")
     assert "TapWakeActionFor" in handler
@@ -163,7 +163,19 @@ def test_board_tap_handler_uses_power_policy_and_never_stops() -> None:
     assert 'app.WakeWordInvoke("screen_tap")' in handler
     assert "offline_menu_" in source
     assert "HoldDurationMsOnRelease" in source
-    for forbidden in ("StopListening", "AbortSpeaking", "ToggleChatState", "CloseAudioChannel"):
+    # 2026-10-21 field test: a tap while the companion spoke did nothing. The
+    # tap now asks the shared policy; only that policy can stop the reply the
+    # child was listening to, through the same local stop as BOOT.
+    assert "OnScreenTapGesture(hold_ms" in handler
+    tap = _function(source, "void OnScreenTapGesture(std::uint32_t hold_ms, bool offline_wants_tap)")
+    assert "ScreenTapDecisionFor" in tap
+    assert 'StopSpeakingForGesture(memoria::PatGestureDecision::kStopSpeaking, "screen tap")' in tap
+    stop = _function(source, "void StopSpeakingForGesture(memoria::PatGestureDecision decision, const char* source)")
+    assert "app.AbortSpeaking(kAbortReasonNone)" in stop
+    assert "app.StartListening()" in stop
+    assert "kCrisisKeepPlayback" in stop
+    # It never ends the conversation or closes the transport.
+    for forbidden in ("StopListening", "ToggleChatState", "CloseAudioChannel"):
         assert forbidden not in handler, f"a tap must not call {forbidden}"
 
 

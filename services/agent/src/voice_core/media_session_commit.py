@@ -59,6 +59,7 @@ from services.agent.src.voice_core.speech_timeline import (
 if TYPE_CHECKING:
     from services.agent.src.observability.metrics import MetricsRegistry
     from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
+    from services.agent.src.voice_core.media_session_pending_turn import EndpointPinSource
 
 logger = logging.getLogger(__name__)
 media_pb2: Any = _media_pb2
@@ -318,10 +319,16 @@ class MediaSessionCommitMixin:
         ) -> str: ...
 
         def _maybe_pin_playback_stop(
-            self, context: _MediaVoiceSession, result: ASRResult, *, source: str
+            self,
+            context: _MediaVoiceSession,
+            result: ASRResult,
+            *,
+            source: str,
         ) -> None: ...
 
-        async def _stop_reply_for_voice_command(self, context: _MediaVoiceSession) -> bool: ...
+        async def _stop_reply_for_voice_command(
+            self, context: _MediaVoiceSession, text: str
+        ) -> bool: ...
 
     async def accept_asr_result(self, session_id: str, result: ASRResult) -> bool:
         """Compatibility bool seam; use the normalized decision internally."""
@@ -437,6 +444,7 @@ class MediaSessionCommitMixin:
                 session_id, accepted, ASRDecisionReason.INTERVAL_CONFLICT, stage="transcript"
             )
         if accepted.is_final:
+            self._release_empty_turn_pin_for_final(context, accepted)
             self._observe_final_asr_result(context, accepted)
             self._maybe_pin_playback_stop(context, accepted, source="final")
         else:
@@ -447,6 +455,91 @@ class MediaSessionCommitMixin:
             # A spoken stop waits for its final: a partial 「等一下」 may still
             # grow into 「等一下我想问…」, whose rest must not be dropped.
         return decision
+
+    @staticmethod
+    def _release_empty_turn_pin_for_final(
+        context: _MediaVoiceSession,
+        result: ASRResult,
+    ) -> None:
+        """Hand a pinned, wordless turn back to the final of its own speech.
+
+        Field 2026-10-21 A6 t003 / N2 C8 / N2 C-stop4 (replies of 26.85 s,
+        31.4 s and 23.7 s): a room-noise VAD edge pinned its own endpoint
+        (VAD end or playback follow-up) with no text, and ASR answered that
+        edge from an unrelated task (``empty+vendor_silent``).  The child's
+        real sentence then arrived as a final on a later task, starting after
+        that pinned endpoint; ``_maybe_endpoint_playback_followup`` refused it
+        (``endpoint_already_pinned``) and ``_observe_final_asr_result`` let
+        ``observe`` return before it reached the turn, so the commit answered
+        the empty turn and the question waited for the child's next sentence
+        to open a fresh VAD turn.
+
+        Words of the turn's own speech prove the turn had speech, so the pin
+        that assumed an empty edge lets go: the final starts the turn at its
+        own capture range, and the committed watermark and the timeline
+        interval overlap gates still decide what may be committed.
+        Admission owns this rule: the accept path calls it before
+        ``_observe_final_asr_result``, so the final can no longer be turned
+        away from the turn that its words belong to.
+        """
+
+        pending = context.pending
+        endpoint = pending.turn_endpoint_sample
+        if (
+            endpoint is None
+            or pending.empty_turn_endpoint_pin is None
+            or not result.text.strip()
+            or not MediaSessionCommitMixin._pending_turn_holds_no_words(context)
+            or result.capture_start_sample < endpoint
+            or pending.active_vad_start_sample is not None
+        ):
+            return
+        logger.warning(
+            "media empty turn pinned endpoint released for its own final session=%s "
+            "endpoint=%s pin=%s text_len=%s samples=%s-%s",
+            context.identity.session_id,
+            endpoint,
+            pending.empty_turn_endpoint_pin,
+            len(result.text.strip()),
+            result.capture_start_sample,
+            result.capture_end_sample,
+        )
+        if pending.turn_endpoint_timeout_handle is not None:
+            pending.turn_endpoint_timeout_handle.cancel()
+            pending.turn_endpoint_timeout_handle = None
+        pending.empty_turn_endpoint_pin = None
+        pending.turn_start_sample = None
+        pending.turn_end_sample = None
+        pending.turn_endpoint_sample = None
+        pending.turn_retire_sample = None
+        pending.turn_endpoint_grace_deadline = None
+        pending.turn_endpoint_tail_deadline = None
+        pending.playback_followup_endpoint_sample = None
+        pending.followup_pin_monotonic = None
+
+    @staticmethod
+    def _mark_empty_turn_endpoint_pin(
+        context: _MediaVoiceSession,
+        *,
+        source: EndpointPinSource,
+    ) -> None:
+        """Remember that the endpoint just set assumed a turn with no words."""
+
+        context.pending.empty_turn_endpoint_pin = (
+            source if MediaSessionCommitMixin._pending_turn_holds_no_words(context) else None
+        )
+
+    @staticmethod
+    def _pending_turn_holds_no_words(context: _MediaVoiceSession) -> bool:
+        start = context.pending.turn_start_sample
+        end = context.pending.turn_endpoint_sample
+        if start is None or end is None:
+            return False
+        return not context.runtime.speech_timeline.projected_text(
+            stream_epoch=context.stream_epoch,
+            start_sample=start,
+            end_sample=end,
+        ).strip()
 
     @staticmethod
     def _asr_precedes_pending_turn(context: _MediaVoiceSession, result: ASRResult) -> bool:
@@ -894,7 +987,9 @@ class MediaSessionCommitMixin:
             if reason == PLAYBACK_STOP_ROUTE_REASON:
                 # The Router suppressed the stop as a control turn; the reply
                 # it interrupts is still streaming until it is stopped here.
-                await self._stop_reply_for_voice_command(context)
+                await self._stop_reply_for_voice_command(
+                    context, context.pending.playback_stop_text or ""
+                )
             self._finish_owner_silence_turn(
                 context, accepted=fence is not None,
                 # A failed provider or a result from the replaced transport

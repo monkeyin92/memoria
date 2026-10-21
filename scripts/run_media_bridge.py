@@ -19,10 +19,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
+from services.agent.src.aigc_generation_log import AigcRoundLogger
 from services.agent.src.config import load_settings
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.heartbeat import build_agent_heartbeat
 from services.agent.src.observability.metrics import GLOBAL_METRICS
+from services.agent.src.voice_core.aigc_notice import AigcNoticeConfig
 from services.agent.src.voice_core.crisis_script_interrupt import (
     CrisisScriptInterruptReporter,
     crisis_script_interrupt_endpoint,
@@ -131,6 +133,9 @@ async def run() -> None:
     max_user_speech_duration_s = float(
         getattr(settings, "media_max_user_speech_duration_s", 60.0)
     )
+    speaking_stall_timeout_s = float(
+        getattr(settings, "media_speaking_stall_timeout_s", 15.0)
+    )
     prometheus_port = int(getattr(settings, "prometheus_port", 0))
     if prometheus_port > 0:
         try:
@@ -146,6 +151,8 @@ async def run() -> None:
     session_factory = _load_session_factory(settings)
     heartbeat = build_agent_heartbeat(settings)
     heartbeat_task: asyncio.Task[None] | None = None
+    notice_config = AigcNoticeConfig.from_settings(settings)
+    round_logger = AigcRoundLogger.from_settings(settings)
     reply_delivery_reporter: ReplyDeliveryReporter | None = None
     interrupt_reporter: CrisisScriptInterruptReporter | None = None
     interrupt_publisher: Callable[[str], None] | None = None
@@ -185,7 +192,10 @@ async def run() -> None:
                 session_factory=session_factory,
                 output_generation_timeout_s=output_generation_timeout_s,
                 owner_silence_timeout_s=owner_silence_timeout_s,
+                aigc_notice_config=notice_config,
+                aigc_round_logger=round_logger,
                 max_user_speech_duration_s=max_user_speech_duration_s,
+                speaking_stall_timeout_s=speaking_stall_timeout_s,
                 reply_delivery_publisher=(
                     reply_delivery_reporter.submit
                     if reply_delivery_reporter is not None
@@ -210,7 +220,10 @@ async def run() -> None:
                     runtime_factory=runtime_factory,
                     output_generation_timeout_s=output_generation_timeout_s,
                     owner_silence_timeout_s=owner_silence_timeout_s,
+                    aigc_notice_config=notice_config,
+                    aigc_round_logger=round_logger,
                     max_user_speech_duration_s=max_user_speech_duration_s,
+                    speaking_stall_timeout_s=speaking_stall_timeout_s,
                     reply_delivery_publisher=(
                         reply_delivery_reporter.submit
                         if reply_delivery_reporter is not None
@@ -224,7 +237,10 @@ async def run() -> None:
                     provider_factory=provider_factory,
                     output_generation_timeout_s=output_generation_timeout_s,
                     owner_silence_timeout_s=owner_silence_timeout_s,
+                    aigc_notice_config=notice_config,
+                    aigc_round_logger=round_logger,
                     max_user_speech_duration_s=max_user_speech_duration_s,
+                    speaking_stall_timeout_s=speaking_stall_timeout_s,
                     reply_delivery_publisher=(
                         reply_delivery_reporter.submit
                         if reply_delivery_reporter is not None

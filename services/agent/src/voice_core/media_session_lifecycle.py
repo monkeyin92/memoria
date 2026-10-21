@@ -71,6 +71,7 @@ class MediaSessionLifecycleMixin:
         delegation_initial_decision_timeout_s: float
         owner_silence_timeout_s: float
         max_user_speech_duration_s: float
+        speaking_stall_timeout_s: float
         _sessions: dict[str, _MediaVoiceSession]
         _cleanup_tasks: dict[str, asyncio.Task[None]]
         _creation_futures: dict[str, asyncio.Future[_MediaVoiceSession]]
@@ -142,6 +143,7 @@ class MediaSessionLifecycleMixin:
             *,
             reason: str = "cancelled",
             cancel_timeout_s: float = 5.0,
+            finalize_audible: bool = True,
         ) -> None: ...
 
         def _event_versions(
@@ -180,6 +182,18 @@ class MediaSessionLifecycleMixin:
         ) -> None: ...
 
         async def _speak_device_wake_ack(self, context: _MediaVoiceSession) -> None: ...
+
+        def _release_aigc_closing_marker(self, context: _MediaVoiceSession) -> None: ...
+
+        def _open_aigc_round(
+            self, context: _MediaVoiceSession, *, reason: str = "device_wake"
+        ) -> None: ...
+
+        async def _speak_aigc_opening_marker(
+            self, context: _MediaVoiceSession
+        ) -> None: ...
+
+        async def _wait_aigc_opening_lead_in(self, context: _MediaVoiceSession) -> None: ...
 
         async def _refuse_minor_quiet_hours(self, context: _MediaVoiceSession) -> bool: ...
 
@@ -225,6 +239,11 @@ class MediaSessionLifecycleMixin:
             or self.max_user_speech_duration_s < 0
         ):
             raise ValueError("max_user_speech_duration_s must be finite and non-negative")
+        if (
+            not math.isfinite(self.speaking_stall_timeout_s)
+            or self.speaking_stall_timeout_s < 0
+        ):
+            raise ValueError("speaking_stall_timeout_s must be finite and non-negative")
         self._creation_semaphore = asyncio.Semaphore(self.session_creation_limit)
         self._audio_ingress = MediaAudioIngress(self)
 
@@ -375,6 +394,7 @@ class MediaSessionLifecycleMixin:
                     if endpoint_task is not None and not endpoint_task.done():
                         endpoint_task.cancel()
                     self._clear_pending_turn_state(current)
+                    self._release_aigc_closing_marker(current)
                     # Sample positions are local to an epoch: the device
                     # restarts its uplink clock at 0. An old playback boundary
                     # endpointed new-epoch speech as a post-playback follow-up
@@ -529,6 +549,7 @@ class MediaSessionLifecycleMixin:
                     current,
                     old_fence,
                     reason="identity_epoch_rotated",
+                    finalize_audible=False,
                 )
 
                 runtime_fence = current.runtime.fence
@@ -622,10 +643,19 @@ class MediaSessionLifecycleMixin:
             self.metrics.inc_media_session_started()
             self.metrics.set_media_active_sessions(len(self._sessions))
             self._arm_owner_silence_timer(created, reset=True)
+            # AIGC round = point-screen wake to session end. The refusal paths
+            # below are anti-addiction blocks, so they also open and close a round.
+            self._open_aigc_round(created, reason="device_wake")
+            # Refusals keep their order; when a refusal closes the round the
+            # closing marker replaces this round's opening marker.
             if await self._refuse_minor_quiet_hours(created):
                 return created
             if await self._refuse_minor_daily_limit(created):
                 return created
+            # The opening marker precedes 「我在呢」; the wake acknowledgement is
+            # service traffic that depends on the downlink frame anyway.
+            await self._speak_aigc_opening_marker(created)
+            await self._wait_aigc_opening_lead_in(created)
             await self._speak_device_wake_ack(created)
             return created
         except BaseException as exc:

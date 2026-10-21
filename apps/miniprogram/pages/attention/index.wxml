@@ -12,12 +12,12 @@
       <view wx:if="{{alert.summary}}" class="attention-well">
         <text class="attention-summary">{{alert.summary}}</text>
       </view>
-      <text wx:if="{{alert.detail}}" class="attention-well">{{alert.detail}}</text>
     </view>
 
-    <view wx:if="{{alert.robotSaid || alert.parentAction}}" class="card attention-steps">
+    <view wx:if="{{alert.robotSaid || alert.parentAction || alert.detail}}" class="card attention-steps">
       <text wx:if="{{alert.robotSaid}}" class="attention-step">{{alert.robotSaid}}</text>
       <text wx:if="{{alert.parentAction}}" class="attention-step">{{alert.parentAction}}</text>
+      <text wx:if="{{alert.detail}}" class="attention-step">{{alert.detail}}</text>
     </view>
   </block>
 

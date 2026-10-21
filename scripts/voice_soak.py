@@ -23,10 +23,10 @@ command socket and the robot starts a conversation exactly like a tap on the rou
 gate (the phone's wake mode must include the screen). The wake word is never played, because it
 false-triggers; if the command cannot be sent, or the robot refuses it, the step fails.
 
-Without --serial-log the driver opens the port itself and writes `wake` into it. Opening the serial port may
-reset the board (`rst:0x15 USB_UART_CHIP_RESET`, seen once in four opens); the driver notices the ROM banner and
-waits for the wake word engine. A clip shorter than half a second is refused, because a silent "user" makes
-every later number meaningless.
+Without --serial-log the driver opens the port itself, the same way the logger does (`open_port`: RTS low and
+DTR high before the open, which does not reset the board), and writes `wake` into it. Should the board reboot
+anyway, the driver notices the ROM banner and waits for the wake word engine. A clip shorter than half a second
+is refused, because a silent "user" makes every later number meaningless.
 
 The Mac speaker must be near the robot; the output volume is raised for the run and restored.
 Device sessions only start outside the guardian's quiet hours (04:00-07:00 at the time of writing)
@@ -50,6 +50,7 @@ import serial  # pyserial, from the ESP-IDF python env
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from voice_soak_evidence import assess_interruption  # noqa: E402
 from voice_soak_serial_command import SerialCommandError, send_command  # noqa: E402
+from voice_soak_serial_logger import open_port  # noqa: E402
 
 STATE_RE = re.compile(r"StateMachine: State: (\w+) -> (\w+)")
 USB_WAKE_RE = re.compile(r"usb wake (accepted|ignored)(?: reason=(\w+))?")
@@ -84,7 +85,7 @@ class SerialWatcher:
         self._thread.start()
 
     def _run(self) -> None:
-        ser = serial.Serial(self.port, 115200, timeout=0.2, write_timeout=2.0)
+        ser = open_port(serial, self.port)
         self.ser = ser
         buf = b""
         with self.path.open("ab") as fh:
@@ -350,9 +351,9 @@ def main() -> int:
     previous_volume = set_volume(args.volume)
     record(kind="start", volume=args.volume, previous_volume=previous_volume, duration_min=args.duration_min)
     try:
-        # Opening the port does not always reset the board. A board that was already idle prints no
-        # state line, only its periodic logs, so after a short wait trust "serial is alive and the
-        # display-profile poll is running" (it only runs while idle) instead of waiting for a line.
+        # A board that was already idle prints no state line, only its periodic logs, so after a short
+        # wait trust "serial is alive and the display-profile poll is running" (it only runs while idle)
+        # instead of waiting for a line.
         if watcher.wait_state({"idle", "listening"}, 15) is None:
             if watcher.alive():
                 with watcher.cond:

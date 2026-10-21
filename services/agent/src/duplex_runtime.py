@@ -1766,7 +1766,7 @@ class DuplexRuntime(
 
 
     def _assistant_response_blocks_barge_in(self) -> bool:
-        return not self.barge_in_enabled and (
+        return self._voice_floor.fixed_safety_audible or not self.barge_in_enabled and (
             self._voice_floor.assistant_speaking
             or self.orchestrator.state
             in {

@@ -22,16 +22,24 @@ import os
 import time
 from typing import TYPE_CHECKING, Any
 
+from services.agent.src.asr_text_debug_log import (
+    asr_text_debug_line,
+    excerpt,
+    session_asr_text_debug_subjects,
+    subject_tag,
+)
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.conversation_close_router import (
     lexical_playback_control_only,
     rule_conversation_close_only,
 )
+from services.agent.src.orchestration.interruption_guard import is_stop_command_only
 from services.agent.src.voice_core.crisis_script_interrupt import (
     active_subject_id,
     publish_crisis_self_interrupt,
 )
 from services.agent.src.voice_core.media_protocol import should_pause_asr_for_playback
+from services.agent.src.voice_core.media_session_pending_turn import EndpointPinSource
 from services.agent.src.voice_core.speech_timeline import ASRResult
 
 if TYPE_CHECKING:
@@ -74,6 +82,7 @@ _PLAYBACK_CANDIDATE_SPLIT_GAP_SAMPLES = 40_000  # 2.5 s at 16 kHz
 # last uplink evidence) is new speech; one closer to it is still the echo's own tail (2026-10-03 round 11:
 # a VAD edge 0.08 s past the boundary was the echo, 3 s later the child's question followed).
 _PLAYBACK_NEW_SPEECH_VAD_SAMPLES = 12_800  # 0.8 s at 16 kHz
+_FIXED_SAFETY_COMMIT_RECHECK_S = 0.5
 
 # Sentence-final particles / punctuation: a follow-up that ends here may commit after one grace.
 _FOLLOWUP_COMPLETE_SUFFIXES = (
@@ -168,6 +177,7 @@ class MediaPlaybackStopMixin:
             *,
             reason: str = "cancelled",
             cancel_timeout_s: float = 5.0,
+            finalize_audible: bool = True,
         ) -> None: ...
 
         @staticmethod
@@ -196,6 +206,11 @@ class MediaPlaybackStopMixin:
 
         @staticmethod
         def _record_playback_boundary(context: _MediaVoiceSession) -> None: ...
+
+        @staticmethod
+        def _mark_empty_turn_endpoint_pin(
+            context: _MediaVoiceSession, *, source: EndpointPinSource
+        ) -> None: ...
 
     @staticmethod
     def _playback_text_is_echo(context: _MediaVoiceSession, text: str) -> bool:
@@ -437,12 +452,23 @@ class MediaPlaybackStopMixin:
             # The pending window still reaches back into the echo window; the
             # playback-boundary split owns resetting it before this may fire.
             return
-        endpoint = max(result.capture_end_sample, context.pending.turn_end_sample or 0)
-        context.pending.turn_endpoint_sample = endpoint
-        context.pending.turn_retire_sample = max(context.pending.turn_retire_sample or 0, endpoint)
-        context.pending.playback_followup_endpoint_sample = endpoint
+        pending = context.pending
+        endpoint = max(result.capture_end_sample, pending.turn_end_sample or 0)
+        pending.turn_start_sample = (
+            result.capture_start_sample
+            if pending.turn_start_sample is None
+            else min(pending.turn_start_sample, result.capture_start_sample)
+        )
+        pending.turn_end_sample = endpoint
+        pending.turn_endpoint_sample = endpoint
+        pending.turn_retire_sample = max(pending.turn_retire_sample or 0, endpoint)
+        pending.playback_followup_endpoint_sample = endpoint
         if context.pending.followup_pin_monotonic is None:
             context.pending.followup_pin_monotonic = time.monotonic()
+        # This final's own text is already on the timeline under the pinned
+        # range, so the pin assumed words: only a VAD end over a range with no
+        # projected text is a pin a later final may take back.
+        context.pending.empty_turn_endpoint_pin = None
         context.pending.turn_endpoint_grace_deadline = (
             time.monotonic() + playback_followup_grace_s()
         )
@@ -455,6 +481,41 @@ class MediaPlaybackStopMixin:
             len(result.text.strip()),
         )
         self._schedule_turn_commit(context)
+
+    def defer_commit(self, context: _MediaVoiceSession, endpoint_sample: int) -> bool:
+        """True when the commit due at ``endpoint_sample`` must wait and has been rescheduled.
+
+        Committing during a fixed safety script would supersede it mid-sentence,
+        so the turn waits for the script's end with a fresh tail bound on every
+        recheck. Otherwise an incomplete follow-up may keep waiting.
+        """
+
+        if context.runtime.floor.fixed_safety_audible:
+            # Compliance 2026-10-21: an explicit stop word may end a crisis
+            # script at once; every other turn still waits for its end.
+            stop_text = context.pending.playback_stop_text
+            if (
+                context.pending.turn_endpoint_sample == endpoint_sample
+                and stop_text is not None
+                and is_stop_command_only(stop_text)
+            ):
+                logger.info(
+                    "media turn commit released for an explicit stop during fixed safety "
+                    "session=%s endpoint=%s text_len=%s",
+                    context.identity.session_id,
+                    endpoint_sample,
+                    len(stop_text),
+                )
+                return False
+            logger.info(
+                "media turn commit held for fixed safety playback session=%s endpoint=%s",
+                context.identity.session_id,
+                endpoint_sample,
+            )
+            context.pending.restart_endpoint_bounds(_FIXED_SAFETY_COMMIT_RECHECK_S)
+            self._schedule_turn_commit(context)
+            return True
+        return self.defer_incomplete_followup_commit(context, endpoint_sample)
 
     def defer_incomplete_followup_commit(
         self, context: _MediaVoiceSession, endpoint_sample: int
@@ -854,7 +915,7 @@ class MediaPlaybackStopMixin:
         if (
             endpoint is None
             or start is None
-            or not 0 <= start < endpoint <= result.capture_start_sample
+            or endpoint > result.capture_start_sample
             or pending.clock_fact_endpoint_pinned is not None
             or pending.conversation_close_endpoint_pinned is not None
             or pending.live_query_endpoint_pinned is not None
@@ -862,9 +923,65 @@ class MediaPlaybackStopMixin:
             or pending.live_query_forced_text
         ):
             return False
+        # Field 2026-10-21 (session 74cdaf88 S1): a VAD end pinned 236480, then
+        # the turn reopened at 250880.  ``start < endpoint`` was false, so the
+        # range was never asked whether it held words and the stop final
+        # (stop_word=True, text_len=2) was refused as endpoint_already_pinned
+        # until the ASR tail timeout threw the turn away.  An inverted range
+        # cannot hold a word, but only an explicit stop may take it: a wait or
+        # completion turn (「等等」) belongs to the empty tail being retired,
+        # not to a new turn.
+        if start >= endpoint:
+            return is_stop_command_only(result.text)
         return not context.runtime.speech_timeline.projected_text(
             stream_epoch=result.stream_epoch, start_sample=start, end_sample=endpoint
         )
+
+    def _log_asr_text_debug(
+        self,
+        context: _MediaVoiceSession,
+        result: ASRResult,
+        *,
+        source: str,
+    ) -> None:
+        """The final this playback-stop decision read, for a whitelisted session.
+
+        The line also covers an empty final (``text_len=0``): a 「停」 that
+        FunASR dropped reaches every guard below as an empty string, and only
+        its text and interval say whether the segment was heard at all.
+        """
+
+        subjects = session_asr_text_debug_subjects(context)
+        if not subjects.enabled:
+            return
+        identity = context.identity
+        text = result.text.strip()
+        line = asr_text_debug_line(
+            subjects,
+            identity.subject_id,
+            identity.device_id,
+            source=source,
+            session_id=identity.session_id,
+            subject_sha256_8=subject_tag(identity.subject_id),
+            device_sha256_8=subject_tag(identity.device_id),
+            stream_epoch=result.stream_epoch,
+            task_epoch=result.task_epoch,
+            sentence_id=result.sentence_id,
+            final=result.is_final,
+            rescue=result.rescue_synthesized,
+            empty=not result.text.strip(),
+            text_len=len(result.text),
+            begin_ms=result.provider_begin_ms,
+            end_ms=result.provider_end_ms,
+            begin_sample=result.capture_start_sample,
+            end_sample=result.capture_end_sample,
+            playback_boundary_sample=context.last_playback_end_sample,
+            in_flight=self._reply_in_flight(context),
+            stop_word=bool(text) and lexical_playback_control_only(text),
+            text=excerpt(result.text) if result.text else None,
+        )
+        if line is not None:
+            logger.info(line)
 
     def _maybe_pin_playback_stop(
         self,
@@ -880,10 +997,15 @@ class MediaPlaybackStopMixin:
         otherwise merge into 「……停」, route as chat and stay held.  A stop
         phrase also replaces the endpoint of an earlier turn that holds no
         words (``_pinned_turn_holds_no_words``), which has nothing to lose.
+
+        The committed turn is marked (``pending.playback_stop_text``) so its
+        route cannot depend on the same text peeling twice: a stop stays the
+        control turn even after it already muted the reply.
         """
 
         if context.identity.client_type != "device":
             return
+        self._log_asr_text_debug(context, result, source=source)
         text = result.text.strip()
         stop_word = bool(text) and lexical_playback_control_only(text)
         in_flight = self._reply_in_flight(context)
@@ -927,6 +1049,8 @@ class MediaPlaybackStopMixin:
         endpoint = result.capture_end_sample
         pending.turn_endpoint_sample = endpoint
         pending.turn_retire_sample = endpoint
+        self._mark_empty_turn_endpoint_pin(context, source="vad_end")
+        pending.playback_stop_text = text
         # Also drops the replaced pin's tail bound: its timer belongs to the old endpoint.
         pending.restart_endpoint_bounds(0.0)
         logger.info(
@@ -942,7 +1066,9 @@ class MediaPlaybackStopMixin:
         )
         self._schedule_turn_commit(context)
 
-    async def _stop_reply_for_voice_command(self, context: _MediaVoiceSession) -> bool:
+    async def _stop_reply_for_voice_command(
+        self, context: _MediaVoiceSession, text: str
+    ) -> bool:
         """Carry out a Router-accepted spoken stop like a keyword stop.
 
         ``accept_user_turn`` only suppresses the control turn; the reply task,
@@ -955,6 +1081,12 @@ class MediaPlaybackStopMixin:
             or context.standby_requested
             or not context.runtime.floor.interruptible
         ):
+            return False
+        if context.runtime.floor.fixed_safety_audible and not is_stop_command_only(text):
+            logger.info(
+                "media spoken stop ignored during fixed safety playback session=%s",
+                context.identity.session_id,
+            )
             return False
         previous_fence = context.output.playback.current_fence or context.runtime.fence
         if not previous_fence.matches(context.runtime.fence):
@@ -980,11 +1112,20 @@ class MediaPlaybackStopMixin:
             synchronized_transcript=heard,
         )
         context.output.playback.start(cancelled)
+        context.output.playback.discard(previous_fence)
         context.output.provider_complete = False
         context.output.output_complete_emitted = False
+        # The old reply is gone: its announced text must not leak into the next
+        # turn's echo guard or be mistaken for the reply that is speaking.
+        context.output.assistant_text = ""
         if should_pause_asr_for_playback(context.identity):
             await context.provider.pause_asr_for_playback(context.identity)
-        await self._cancel_reply_task(context, previous_fence, reason=_PLAYBACK_STOP_CAUSE)
+        await self._cancel_reply_task(
+            context,
+            previous_fence,
+            reason=_PLAYBACK_STOP_CAUSE,
+            finalize_audible=False,
+        )
         flushed = await self._emit_cancel_generation(
             context,
             cancelled,

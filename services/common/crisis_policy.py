@@ -14,7 +14,11 @@ from services.common.companion_response_safety import (
     companion_safety_decision,
     is_story_retell_context,
 )
-from services.common.fixed_safety_scripts import FixedSafetyScript, script_for_decision
+from services.common.fixed_safety_scripts import (
+    FixedSafetyScript,
+    FixedSafetyTemplateId,
+    script_for_decision,
+)
 
 CrisisAction = Literal["crisis_support", "support_victim", "support_relay", "none"]
 
@@ -107,6 +111,33 @@ def route_crisis(
         evidence_source="none",
         possibly_story_retell=False,
     )
+
+
+_PROTECTION_RANK: Final[dict[FixedSafetyTemplateId, int]] = {
+    "support-other-v1": 1,
+    "victim-support-v1": 2,
+    "crisis-self-v1": 3,
+}
+
+
+def more_protective_local_script(
+    query: str, planned: FixedSafetyScript | None
+) -> FixedSafetyScript | None:
+    """The local deterministic script when it protects more than ``planned``.
+
+    The planner (control-api) and the media bridge ship as separate images, so
+    a partial rollout leaves two versions of these rules live at once.  The
+    child hears the more protective of the two; ``None`` keeps ``planned``.
+    """
+
+    local = route_crisis(query).script
+    if local is None:
+        return None
+    if planned is not None and (
+        _PROTECTION_RANK[planned.template_id] >= _PROTECTION_RANK[local.template_id]
+    ):
+        return None
+    return local
 
 
 def crisis_semantic_candidate(query: str) -> bool:

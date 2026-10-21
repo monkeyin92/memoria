@@ -15,9 +15,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from services.agent.src.aigc_generation_log import AigcRoundLogger
+from services.agent.src.asr_text_debug_log import AsrTextDebugSubjects
 from services.agent.src.daily_chat import DailyChatClient
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.minor_limit_bypass import MinorLimitBypass
 from services.agent.src.observability.metrics import GLOBAL_METRICS, MetricsRegistry
+from services.agent.src.voice_core.aigc_notice import AigcNoticeConfig
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.grpc_bridge import (
     MediaBridgeGrpcServer,
@@ -25,6 +29,9 @@ from services.agent.src.voice_core.grpc_bridge import (
 from services.agent.src.voice_core.interruption import InterruptionPolicy
 from services.agent.src.voice_core.media_audio_ingress import (
     MediaAudioIngress,
+)
+from services.agent.src.voice_core.media_session_aigc_notice import (
+    MediaSessionAigcNoticeMixin,
 )
 from services.agent.src.voice_core.media_session_commit import (
     MediaSessionCommitMixin,
@@ -42,6 +49,9 @@ from services.agent.src.voice_core.media_session_playback_stop import (
 )
 from services.agent.src.voice_core.media_session_projection import (
     MediaSessionProjectionMixin,
+)
+from services.agent.src.voice_core.media_session_speaking_watchdog import (
+    MediaSpeakingWatchdogMixin,
 )
 from services.agent.src.voice_core.media_session_standby import MediaSessionStandbyMixin
 from services.agent.src.voice_core.media_session_state import (
@@ -72,6 +82,7 @@ def _default_runtime_factory(session_id: str) -> DuplexRuntime:
 @dataclass(slots=True)
 class MediaVoiceCoreRegistry(
     MediaSessionStandbyMixin,
+    MediaSpeakingWatchdogMixin,
     MediaSessionLifecycleMixin,
     MediaSessionConnectionMixin,
     MediaSessionProjectionMixin,
@@ -80,6 +91,7 @@ class MediaVoiceCoreRegistry(
     MediaPlaybackStopMixin,
     MediaTurnEndpointMixin,
     MediaOutputMixin,
+    MediaSessionAigcNoticeMixin,
 ):
     """Attach one provider-neutral Voice Core session to each media session."""
 
@@ -112,6 +124,11 @@ class MediaVoiceCoreRegistry(
     # Disabled for direct library construction; the production bridge wires
     # AgentSettings.MEDIA_OWNER_SILENCE_TIMEOUT_S (15s by default).
     owner_silence_timeout_s: float = 0.0
+    # A device reply the server still believes is speaking, with no downlink
+    # PCM frame for this long, is closed with a CANCEL plus standby.  Zero
+    # disables the watchdog for direct/library construction; the production
+    # bridge wires AgentSettings.MEDIA_SPEAKING_STALL_TIMEOUT_S.
+    speaking_stall_timeout_s: float = 0.0
     # Hard upper bound for one device utterance when Edge never emits VAD end.
     # Keep direct/library construction fail-safe by defaulting to disabled;
     # production startup supplies the bounded AgentSettings value explicitly.
@@ -120,6 +137,17 @@ class MediaVoiceCoreRegistry(
     crisis_script_interrupt_publisher: Callable[[str], None] | None = None
     session_recap_publisher: Callable[..., Any] | None = None
     daily_chat_client: DailyChatClient | None = None
+    # AIGC markers default to the compliance-approved pure-tone rhythm; the
+    # round log is written per device conversation round without any text.
+    aigc_notice_config: AigcNoticeConfig = field(default_factory=AigcNoticeConfig)
+    aigc_round_logger: AigcRoundLogger | None = None
+    # Read once when the process starts. Empty unless one test subject is
+    # explicitly whitelisted; it never changes policy or stored usage.
+    minor_limit_bypass: MinorLimitBypass = field(default_factory=MinorLimitBypass.from_env)
+    # Test-period ASR transcript logging. Empty is off; it only reads the text.
+    asr_text_debug_subjects: AsrTextDebugSubjects = field(
+        default_factory=AsrTextDebugSubjects.from_env
+    )
     _sessions: dict[str, _MediaVoiceSession] = field(default_factory=dict, init=False)
     _cleanup_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict, init=False)
     _creation_futures: dict[str, asyncio.Future[_MediaVoiceSession]] = field(

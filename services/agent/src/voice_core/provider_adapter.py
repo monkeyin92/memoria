@@ -20,6 +20,12 @@ from dataclasses import dataclass, field, replace
 from time import monotonic
 from typing import TYPE_CHECKING, Any, cast
 
+from services.agent.src.asr_text_debug_log import (
+    AsrTextDebugSubjects,
+    asr_text_debug_line,
+    excerpt,
+    subject_tag,
+)
 from services.agent.src.contracts.ids import CancellationContext, GenerationFence
 from services.agent.src.orchestration.handlers import (
     LanguageModelHandler,
@@ -52,6 +58,27 @@ if TYPE_CHECKING:
     from services.agent.src.voice_core.media_session import MediaReplyChunk
 
 logger = logging.getLogger(__name__)
+
+# An approved fixed safety script is spoken from one whole-sentence synthesis so a
+# provider fault can never truncate it mid-script, and the exact audio is kept per
+# voice for the process: a later failure replays it instead of leaving the child in
+# silence (C1, 2026-10-21 03:51:53Z: the first Doubao attempt failed and the retry
+# only produced audio 1.9 s later).
+_FIXED_SAFETY_SYNTHESIS_ATTEMPTS = 2
+_FIXED_SAFETY_CACHE_MAX_ENTRIES = 6
+_FIXED_SAFETY_PCM_CACHE: dict[tuple[str, str], bytes] = {}
+
+
+def _remember_fixed_safety_pcm(key: tuple[str, str], pcm: bytes) -> None:
+    """Keep the most recently rendered approved script audio, bounded.
+
+    Only fixed-safety copy ever lands here (no child audio, no model text), and
+    the key carries the bound voice so a different voice re-synthesizes.
+    """
+
+    _FIXED_SAFETY_PCM_CACHE[key] = pcm
+    while len(_FIXED_SAFETY_PCM_CACHE) > _FIXED_SAFETY_CACHE_MAX_ENTRIES:
+        _FIXED_SAFETY_PCM_CACHE.pop(next(iter(_FIXED_SAFETY_PCM_CACHE)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,7 +124,11 @@ class ExistingVoiceProviderAdapter:
     metrics: MetricsRegistry | None = None
     owns_speech_synthesis: bool = False
     owns_language_model: bool = False
+    # Test-period transcript logging, off unless ASR_TEXT_DEBUG_LOG_SUBJECTS
+    # lists the session's subject or device. Never changes what is committed.
+    asr_text_debug_subjects: AsrTextDebugSubjects | None = None
     _asr: StreamingASRSession | None = field(default=None, init=False)
+    _asr_text_debug: AsrTextDebugSubjects | None = field(default=None, init=False)
     _stream_epoch: int = field(default=0, init=False)
     _asr_task_epoch_offset: int = field(default=0, init=False)
     _asr_task_epoch_floor: int = field(default=0, init=False)
@@ -346,7 +377,9 @@ class ExistingVoiceProviderAdapter:
             raise ValueError("ASR stream epoch moved backwards")
         await self._reset_asr_session(identity.stream_epoch)
 
-    async def _ensure_asr(self, stream_epoch: int) -> StreamingASRSession:
+    async def _ensure_asr(
+        self, stream_epoch: int, identity: SessionIdentity | None = None
+    ) -> StreamingASRSession:
         if self._closed:
             raise RuntimeError("media provider is closed")
         if stream_epoch < 1:
@@ -364,8 +397,76 @@ class ExistingVoiceProviderAdapter:
             raise ValueError("ASR stream epoch moved backwards")
         elif stream_epoch > self._stream_epoch:
             await self._reset_asr_session(stream_epoch)
-            return await self._ensure_asr(stream_epoch)
+            return await self._ensure_asr(stream_epoch, identity)
+        # Every provider session the bridge creates follows the whitelist, so
+        # a factory the deployment built keeps logging the same sessions. The
+        # debug switch is test-only and not part of the streaming protocol, so
+        # attach it to whichever provider session the factory built.
+        asr = cast(Any, self._asr)
+        self._asr_text_debug = self._asr_text_debug_for(identity)
+        asr.asr_text_debug = self._asr_text_debug
+        if identity is not None:
+            # The provider logs its own finals without this adapter around it.
+            asr.asr_text_debug_session_id = identity.session_id
+            asr.asr_text_debug_subject_ids = (
+                identity.subject_id,
+                identity.device_id,
+            )
         return self._asr
+
+    def _asr_text_debug_for(self, identity: SessionIdentity | None) -> AsrTextDebugSubjects:
+        """The subjects whose ASR text this adapter's provider session may log."""
+
+        subjects = self.asr_text_debug_subjects
+        if subjects is None or identity is None:
+            return AsrTextDebugSubjects()
+        return subjects.for_session(identity.subject_id, identity.device_id)
+
+    def _log_asr_text_debug_decision(
+        self,
+        identity: SessionIdentity,
+        result: ASRResult,
+        *,
+        source: str,
+    ) -> None:
+        """The final as the bridge normalized it, next to the playback-stop verdict.
+
+        The line also covers an empty final (``text_len=0``): a 「停」 that
+        FunASR dropped never reaches the stop guards visible at all.
+        """
+
+        # The mapped line stands for the audio this adapter delivered, so it
+        # is written where the audio runs, never only where a provider was made.
+        subjects = self.asr_text_debug_subjects
+        if subjects is None or not subjects.enabled:
+            return
+        boundary = getattr(identity, "last_playback_end_sample", None)
+        origin = boundary or 0
+        start_ms = (result.capture_start_sample - origin) * 1000 // self.config.sample_rate
+        end_ms = (result.capture_end_sample - origin) * 1000 // self.config.sample_rate
+        line = asr_text_debug_line(
+            subjects,
+            identity.subject_id,
+            identity.device_id,
+            source=source,
+            session_id=identity.session_id,
+            subject_sha256_8=subject_tag(identity.subject_id),
+            device_sha256_8=subject_tag(identity.device_id),
+            stream_epoch=result.stream_epoch,
+            task_epoch=result.task_epoch,
+            sentence_id=result.sentence_id,
+            final=result.is_final,
+            empty=not result.text.strip(),
+            text_len=len(result.text),
+            begin_ms=result.provider_begin_ms if result.provider_begin_ms is not None else start_ms,
+            end_ms=result.provider_end_ms if result.provider_end_ms is not None else end_ms,
+            begin_sample=result.capture_start_sample,
+            end_sample=result.capture_end_sample,
+            playback_boundary_sample=boundary,
+            text=excerpt(result.text) if result.text else None,
+        )
+        if line is not None:
+            logger.info(line)
 
     def _remember_asr_task(self, asr: StreamingASRSession, stream_epoch: int) -> None:
         task_id = str(getattr(asr, "task_id", "") or "")
@@ -391,7 +492,7 @@ class ExistingVoiceProviderAdapter:
             raise ValueError("provider frame identity does not match session")
         if len(frame.payload) % 2:
             raise ValueError("provider input must be 16-bit PCM")
-        asr = await self._ensure_asr(identity.stream_epoch)
+        asr = await self._ensure_asr(identity.stream_epoch, identity)
         self._remember_asr_task(asr, identity.stream_epoch)
         await asr.send_pcm(
             frame.payload,
@@ -425,7 +526,7 @@ class ExistingVoiceProviderAdapter:
 
         if self._asr is None or not self._audio_since_finalize:
             return ()
-        asr = await self._ensure_asr(identity.stream_epoch)
+        asr = await self._ensure_asr(identity.stream_epoch, identity)
         previous_task_id = str(getattr(asr, "task_id", "") or "")
         if not previous_task_id:
             raise RuntimeError("FunASR segment boundary has no active task id")
@@ -464,6 +565,7 @@ class ExistingVoiceProviderAdapter:
             if event.event == "result-generated" and event.sentence is not None:
                 result = self._map_asr_event(asr, event, identity.stream_epoch)
                 if result is not None:
+                    self._log_asr_text_debug_decision(identity, result, source="segment_final")
                     results.append(result)
                     if event.task_id == previous_task_id and result.is_final:
                         final_seen = True
@@ -595,6 +697,12 @@ class ExistingVoiceProviderAdapter:
         """Number of PCM samples in one fixed 20 ms output frame."""
 
         return self.config.output_sample_rate * self.config.output_frame_ms // 1000
+
+    @property
+    def output_sample_rate(self) -> int:
+        """PCM sample rate of every output frame on the downlink."""
+
+        return self.config.output_sample_rate
 
     def _record_tts_frame_age(self, received_at: float | None) -> None:
         if received_at is not None and self.metrics is not None:
@@ -870,6 +978,17 @@ class ExistingVoiceProviderAdapter:
             max_audio_end_sample=max_audio_end_sample,
         )
 
+    def is_fixed_safety_reply(self, fence: GenerationFence) -> bool:
+        """Whether this generation speaks an approved fixed safety script.
+
+        The media session asks before the first frame reaches the device: a reply
+        that is a crisis line must not be superseded by a wordless user turn (C1,
+        2026-10-21).  The fence is marked when the phrase stream yields the script,
+        which is before any text reaches the speech provider.
+        """
+
+        return fence in self._fixed_safety_fences
+
     async def interrupted_timed_text_spans(self, fence: GenerationFence) -> tuple[Any, ...]:
         """Return only the verified timed prefix available at interruption."""
 
@@ -1040,6 +1159,22 @@ class ExistingVoiceProviderAdapter:
             first_phrase = await anext(reply_iter)
         except StopAsyncIteration:
             await reply.aclose()
+            return
+
+        if fence in self._fixed_safety_fences:
+            script_phrases = [first_phrase]
+            try:
+                async for phrase in reply_iter:
+                    script_phrases.append(phrase)
+            finally:
+                await reply.aclose()
+            async for chunk in self._stream_fixed_safety_script(
+                script_phrases,
+                fence,
+                cancellation,
+                cancel_event,
+            ):
+                yield chunk
             return
 
         sample_origin = 0
@@ -1296,6 +1431,167 @@ class ExistingVoiceProviderAdapter:
                     await closed
             self._active_speech_streams.pop(fence, None)
             self._generation_output_ends.pop(fence, None)
+
+    async def _stream_fixed_safety_script(
+        self,
+        phrases: list[SpokenPhrase],
+        fence: GenerationFence,
+        cancellation: CancellationContext,
+        cancel_event: asyncio.Event,
+    ) -> AsyncIterator[MediaReplyChunk]:
+        """Speak one approved safety script from a whole-sentence, cached synthesis.
+
+        The crisis line is the one reply a child must hear in full.  Streaming it
+        phrase by phrase starts sooner, but a provider fault after the first phrase
+        leaves the rest unheard and cannot be retried without repeating words.  One
+        whole-sentence request is synthesized before the first frame, retried when
+        the provider fails, cached per voice, and replayed from that cache if the
+        provider stays down (C1, 2026-10-21 03:51:53Z).
+        """
+
+        spoken = "".join(phrase.spoken for phrase in phrases)
+        pcm, source = await self._fixed_safety_script_pcm(
+            spoken,
+            fence,
+            cancellation,
+            cancel_event,
+        )
+        if cancel_event.is_set() or not pcm:
+            return
+        logger.info(
+            "fixed safety speech ready source=%s text_len=%d bytes=%d session=%s turn=%s",
+            source,
+            len(spoken),
+            len(pcm),
+            fence.session_id,
+            fence.turn_id,
+        )
+        async for chunk in self._emit_fixed_safety_pcm(
+            pcm,
+            display="".join(phrase.display for phrase in phrases),
+            fence=fence,
+        ):
+            yield chunk
+
+    async def _fixed_safety_script_pcm(
+        self,
+        spoken: str,
+        fence: GenerationFence,
+        cancellation: CancellationContext,
+        cancel_event: asyncio.Event,
+    ) -> tuple[bytes, str]:
+        """Synthesize the whole approved script, retrying before falling back to cache.
+
+        The script is pushed to the bound speech engine as one unit so a provider
+        that loses the connection mid-unit still delivers the full line (StepFun
+        switches the whole unit to its Doubao backup), and an attempt that fails
+        is repeated before the cached take is used.
+        """
+
+        key = (self._fixed_safety_voice_key(), spoken)
+        cached = _FIXED_SAFETY_PCM_CACHE.get(key)
+        failure: Exception | None = None
+        for attempt in range(1, _FIXED_SAFETY_SYNTHESIS_ATTEMPTS + 1):
+            if cancel_event.is_set():
+                return b"", "cancelled"
+            pcm = await self._synthesize_whole_script_once(spoken, fence, cancellation, cancel_event)
+            if pcm:
+                _remember_fixed_safety_pcm(key, pcm)
+                return pcm, "synthesis"
+            failure = RuntimeError("speech provider returned no audio")
+            logger.warning(
+                "fixed safety speech attempt produced no audio attempt=%d/%d text_len=%d "
+                "session=%s",
+                attempt,
+                _FIXED_SAFETY_SYNTHESIS_ATTEMPTS,
+                len(spoken),
+                fence.session_id,
+            )
+        if cached is not None:
+            logger.warning(
+                "fixed safety speech replayed from cache text_len=%d bytes=%d session=%s",
+                len(spoken),
+                len(cached),
+                fence.session_id,
+            )
+            return cached, "cache"
+        raise RuntimeError("fixed safety script produced no audio") from failure
+
+    async def _synthesize_whole_script_once(
+        self,
+        spoken: str,
+        fence: GenerationFence,
+        cancellation: CancellationContext,
+        cancel_event: asyncio.Event,
+    ) -> bytes:
+        """One full attempt, with the engine that spoke it logged for provenance."""
+
+        pcm = bytearray()
+        try:
+            async for chunk in self._provider_pcm_chunks(
+                spoken,
+                fence,
+                cancellation,
+                cancel_event,
+            ):
+                pcm.extend(chunk)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "fixed safety speech attempt failed text_len=%d error=%s session=%s",
+                len(spoken),
+                type(exc).__name__,
+                fence.session_id,
+            )
+            return b""
+        report = getattr(self.speech_synthesis, "report_sentence_from", None)
+        if callable(report) and pcm:
+            chosen = cast(Any, self.speech_synthesis).last_engine()
+            report(chosen, index=0, switched=getattr(chosen, "provider", "") != "stepfun")
+        return bytes(pcm)
+
+    def _fixed_safety_voice_key(self) -> str:
+        return "|".join(
+            str(getattr(self.speech_synthesis, attribute, "") or "")
+            for attribute in ("current_model", "current_voice", "current_voice_profile_id")
+        )
+
+    async def _emit_fixed_safety_pcm(
+        self,
+        pcm: bytes,
+        *,
+        display: str,
+        fence: GenerationFence,
+    ) -> AsyncIterator[MediaReplyChunk]:
+        from services.agent.src.voice_core.media_session import MediaReplyChunk, MediaTextSpan
+
+        frame_samples = self.output_frame_samples
+        frame_bytes = frame_samples * 2
+        output_sample = 0
+        offset = 0
+        total = len(pcm)
+        while offset < total:
+            frame = pcm[offset : offset + frame_bytes]
+            offset += frame_bytes
+            if len(frame) < frame_bytes:
+                frame += b"\x00" * (frame_bytes - len(frame))
+            audio_end = output_sample + frame_samples
+            is_last = offset >= total
+            yield MediaReplyChunk(
+                pcm_s16le=frame,
+                source_start_sample=output_sample,
+                text=display if is_last else "",
+                assistant_text_delta=display if output_sample == 0 else "",
+                first=output_sample == 0,
+                final=is_last,
+                text_audio_start_sample=0 if is_last else None,
+                text_audio_end_sample=audio_end if is_last else None,
+                text_spans=(MediaTextSpan(display, 0, audio_end),) if is_last else (),
+            )
+            output_sample = audio_end
+            self._output_sample = output_sample
+            self._generation_output_ends[fence] = output_sample
 
     async def generate_reply(
         self,
@@ -1586,6 +1882,7 @@ def build_production_provider_factory(
 
     asr_config = FunASRConfig.from_env()
     asr_failover = ASRFailoverConfig.from_env()
+    asr_text_debug_subjects = AsrTextDebugSubjects.from_env()
     tts_config = DoubaoTTSConfig.from_env()
     if getattr(settings, "environment", "development") == "production":
         doubao_auth = tts_config.api_key.strip() or (
@@ -1661,6 +1958,7 @@ def build_production_provider_factory(
         return ExistingVoiceProviderAdapter(
             asr_session_factory=asr_session_factory,
             language_model=language_model,
+            asr_text_debug_subjects=asr_text_debug_subjects,
             speech_synthesis=cast(
                 SpeechSynthesisHandler,
                 DoubaoTTS(replace(tts_config), metrics=GLOBAL_METRICS),

@@ -41,6 +41,12 @@ class _Session(MediaPlaybackStopMixin):
     def _schedule_turn_commit(self, context: Any) -> None:
         self.commits += 1
 
+    def _mark_empty_turn_endpoint_pin(self, context: Any, *, source: str) -> None:
+        MediaSessionCommitMixin._mark_empty_turn_endpoint_pin(context, source=source)
+
+    def _pending_turn_holds_no_words(self, context: Any) -> bool:
+        return MediaSessionCommitMixin._pending_turn_holds_no_words(context)
+
 
 class _CommitSession(MediaSessionCommitMixin, _Session):
     def __init__(self, context: Any) -> None:
@@ -59,7 +65,8 @@ def _context(
     """A device session mid-story; ``words`` is the text the timeline holds in the pinned range."""
 
     return SimpleNamespace(
-        identity=SimpleNamespace(client_type="device", session_id="s1"),
+        identity=SimpleNamespace(client_type="device", session_id="s1", stream_epoch=1),
+        stream_epoch=1,
         closed=False,
         standby_requested=False,
         pending=PendingTurn(turn_endpoint_sample=endpoint, turn_start_sample=start, **pending),

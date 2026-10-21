@@ -1,4 +1,4 @@
-"""Media session: delegated lookups, fillers and QA flows."""
+"Media session: delegated lookups, fillers and QA flows."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ from services.agent.src.prompts import (
     is_allowlisted_device_phrase,
 )
 from services.agent.src.reply_pipeline import ReplyPipeline
+from services.agent.src.voice_core.aigc_notice import AigcNoticeConfig
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_protocol import (
@@ -65,6 +66,15 @@ from services.agent.tests.unit.media_session_support import (
     _wait_until,
 )
 from services.common.llm_thinking_filler import LLM_THINKING_TEXT
+from services.common.realtime_information import WEATHER_LOOKUP_UNAVAILABLE_REPLY
+
+
+def _aigc_notice_off(registry: MediaVoiceCoreRegistry) -> MediaVoiceCoreRegistry:
+    """These fixtures' first output is a wake ack, a cue or a reply, not an AIGC marker."""
+
+    registry.aigc_notice_config = AigcNoticeConfig(enabled=False)
+    registry.aigc_round_logger = None
+    return registry
 
 
 @pytest.mark.asyncio
@@ -695,9 +705,11 @@ async def test_slow_media_delegation_plays_typed_fast_ack_then_deep_result() -> 
 async def test_device_session_speaks_wake_ack_without_user_speech() -> None:
     provider = _AckCapturingProvider()
     bridge = _CapturingGenerationBridge()
-    registry = MediaVoiceCoreRegistry(
-        bridge=bridge,
-        provider_factory=lambda _identity: provider,
+    registry = _aigc_notice_off(
+        MediaVoiceCoreRegistry(
+            bridge=bridge,
+            provider_factory=lambda _identity: provider,
+        )
     )
     registry.install()
     identity = _device_identity("device-wake-ack")
@@ -722,9 +734,11 @@ async def test_device_session_speaks_wake_ack_without_user_speech() -> None:
 async def test_energy_connect_vad_after_sample_zero_skips_device_wake_ack() -> None:
     provider = _AckCapturingProvider()
     bridge = _CapturingGenerationBridge()
-    registry = MediaVoiceCoreRegistry(
-        bridge=bridge,
-        provider_factory=lambda _identity: provider,
+    registry = _aigc_notice_off(
+        MediaVoiceCoreRegistry(
+            bridge=bridge,
+            provider_factory=lambda _identity: provider,
+        )
     )
     registry.install()
     identity = _device_identity("device-energy-later-connect-vad-wake")
@@ -1180,9 +1194,11 @@ async def test_device_weather_recovery_commits_despite_post_reject_vad_jitter() 
 async def test_h5_session_does_not_speak_device_wake_ack() -> None:
     provider = _AckCapturingProvider()
     bridge = _CapturingGenerationBridge()
-    registry = MediaVoiceCoreRegistry(
-        bridge=bridge,
-        provider_factory=lambda _identity: provider,
+    registry = _aigc_notice_off(
+        MediaVoiceCoreRegistry(
+            bridge=bridge,
+            provider_factory=lambda _identity: provider,
+        )
     )
     registry.install()
     identity = SessionIdentity("h5-no-wake")
@@ -3136,3 +3152,322 @@ async def test_playback_ack_without_text_spans_still_completes_speaking() -> Non
     # SPEAKING forever.
     assert completed == [(fence, "")]
     assert context.runtime.orchestrator.state is ConversationState.LISTENING
+
+
+class _TerminalCapturingBridge(MediaBridgeGrpcServer):
+    """Record every generation action and cancel effect for terminal assertions."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.frames: list[Any] = []
+        self.generations: list[tuple[int, GenerationFence]] = []
+        self.effects: list[tuple[int, GenerationFence, str, dict[str, object]]] = []
+
+    async def emit_pcm(self, _session_id: str, frame: object) -> bool:
+        self.frames.append(frame)
+        return True
+
+    async def emit_generation(
+        self,
+        _session_id: str,
+        fence: GenerationFence,
+        *,
+        action: int,
+        **_kwargs: object,
+    ) -> bool:
+        self.generations.append((action, fence))
+        return True
+
+    async def emit_realtime_effect(
+        self,
+        _session_id: str,
+        effect_kind: int,
+        fence: GenerationFence,
+        *,
+        source_event_id: str,
+        payload: dict[str, object],
+        **_kwargs: object,
+    ) -> bool:
+        self.effects.append((effect_kind, fence, source_event_id, payload))
+        return True
+
+
+async def _ack_frame(
+    registry: MediaVoiceCoreRegistry,
+    identity: SessionIdentity,
+    session: Any,
+    bridge: _TerminalCapturingBridge,
+    fence: GenerationFence,
+) -> None:
+    frame = next(
+        item
+        for item in reversed(bridge.frames)
+        if item.turn_id == fence.turn_id and item.generation_id == fence.generation_id
+    )
+    await registry.on_playback_progress(
+        session,
+        PlaybackProgress(
+            identity=identity,
+            generation_id=fence.generation_id,
+            received_sequence=frame.sequence,
+            rendered_sample_end=frame.source_start_sample + frame.frame_samples,
+            client_monotonic_ms=1,
+            turn_id=fence.turn_id,
+            tool_epoch=fence.tool_epoch,
+            event_type=PlaybackEventType.ENDED,
+        ),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("barge_in", [False, True])
+async def test_commit_returning_after_filler_first_frame_keeps_same_turn_output(
+    barge_in: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A filler that starts while the turn is committing must survive the commit.
+
+    The regression read the previous generation before ``commit_user_turn``
+    yielded, then cancelled whatever task was current after it returned.  With
+    barge-in enabled that killed the just-started filler without a terminal
+    event, leaving the device in SPEAKING.
+    """
+
+    question = "今天南京天气怎么样"
+    provider = _LateOwnedDelegationProvider()
+    bridge = _TerminalCapturingBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=barge_in,
+        ),
+        turn_endpoint_grace_s=60,
+        turn_endpoint_absolute_timeout_s=60,
+    )
+    registry.install()
+    identity = SessionIdentity(f"same-turn-filler-barge-in-{barge_in}")
+    session = bridge.bridge.open(identity)
+    context = None
+    try:
+        context = await _seed_pending_media_turn(
+            registry,
+            identity,
+            text=question,
+            endpoint_sample=600,
+            retire_sample=640,
+        )
+        original_commit = registry.commit_user_turn
+
+        async def commit_after_filler_first_frame(
+            session_id: str,
+            *,
+            stream_epoch: int,
+            start_sample: int,
+            end_sample: int,
+            retire_sample: int | None = None,
+            provider_final_missing: bool = False,
+        ) -> tuple[GenerationFence | None, str | None]:
+            result = await original_commit(
+                session_id,
+                stream_epoch=stream_epoch,
+                start_sample=start_sample,
+                end_sample=end_sample,
+                retire_sample=retire_sample,
+                provider_final_missing=provider_final_missing,
+            )
+            fence = result[0]
+            assert fence is not None
+            # The delegation filler starts inside the commit.  Returning only
+            # after its first frame reproduces the real 1.6 s commit window.
+            await _wait_until(
+                lambda: any(
+                    frame.turn_id == fence.turn_id
+                    and frame.generation_id == fence.generation_id
+                    for frame in bridge.frames
+                ),
+                timeout=2,
+            )
+            return result
+
+        monkeypatch.setattr(registry, "commit_user_turn", commit_after_filler_first_frame)
+        reason = await registry._commit_pending_turn(context)  # noqa: SLF001
+        assert reason == (None if barge_in else "heard_output_in_flight")
+        owner = context.output.output_owner
+        assert owner is not None
+        filler_fence = owner.fence
+        assert filler_fence.turn_id == context.runtime.fence.turn_id
+        delivery = context.output.reply_delivery.get(filler_fence)
+        assert delivery is not None and delivery.first_frame_sent
+        assert not any(cancelled.matches(filler_fence) for cancelled in provider.cancelled)
+        assert context.output.output_owner is owner
+
+        await _ack_frame(registry, identity, session, bridge, filler_fence)
+        provider.release.set()
+        await _wait_until(
+            lambda: any(
+                frame.turn_id == filler_fence.turn_id
+                and frame.generation_id > filler_fence.generation_id
+                for frame in bridge.frames
+            ),
+            timeout=3,
+        )
+        deep_frame = next(
+            frame
+            for frame in bridge.frames
+            if frame.turn_id == filler_fence.turn_id
+            and frame.generation_id > filler_fence.generation_id
+        )
+        deep_fence = GenerationFence(
+            identity.session_id,
+            deep_frame.turn_id,
+            deep_frame.generation_id,
+            deep_frame.tool_epoch,
+        )
+        await _ack_frame(registry, identity, session, bridge, deep_fence)
+        await _wait_until(
+            lambda: context.runtime.orchestrator.state is ConversationState.LISTENING,
+            timeout=3,
+        )
+
+        first_frame_generations = {(frame.turn_id, frame.generation_id) for frame in bridge.frames}
+        terminal_generations = {
+            (fence.turn_id, fence.generation_id)
+            for action, fence in bridge.generations
+            if action in {media_pb2.GENERATION_ACTION_COMPLETE, media_pb2.GENERATION_ACTION_CANCEL}
+        }
+        assert first_frame_generations <= terminal_generations
+        assert not context.runtime.assistant_speaking
+        assert context.runtime.orchestrator.state is ConversationState.LISTENING
+    finally:
+        provider.release.set()
+        if context is not None:
+            await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_audible_output_gets_terminal_generation_and_listening() -> None:
+    """Cancelling a generation that already sent its first frame must close it."""
+
+    class BlockingProvider(FakeMediaProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        def generate_reply(
+            self,
+            _identity: SessionIdentity,
+            _user_text: str,
+            _fence: GenerationFence,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                self.started.set()
+                yield MediaReplyChunk(
+                    pcm_s16le=b"\x02\x00\x03\x00",
+                    source_start_sample=0,
+                    text="你好。",
+                    first=True,
+                    final=False,
+                )
+                await self.release.wait()
+
+            return chunks()
+
+    provider = BlockingProvider()
+    bridge = _TerminalCapturingBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = _device_identity("cancelled-audible-output")
+    bridge.bridge.open(identity)
+    reply: asyncio.Task[bool] | None = None
+    try:
+        context = await registry.open_session(identity)
+        fence = await context.runtime.on_turn_committed("你好")
+        context.output.playback.start(fence)
+        reply = asyncio.create_task(
+            registry.generate_reply(identity.session_id, "你好", fence)
+        )
+        await asyncio.wait_for(provider.started.wait(), timeout=2)
+        await _wait_until(lambda: bool(bridge.frames), timeout=2)
+        delivery = context.output.reply_delivery.get(fence)
+        assert delivery is not None and delivery.first_frame_sent
+        assert context.runtime.assistant_speaking
+
+        await registry._cancel_reply_task(context, fence, reason="test_cancel")  # noqa: SLF001
+
+        assert not context.runtime.assistant_speaking
+        assert context.runtime.orchestrator.state is ConversationState.LISTENING
+        assert context.runtime.fence.generation_id > fence.generation_id
+        assert any(
+            action == media_pb2.GENERATION_ACTION_CANCEL
+            and cancelled.generation_id > fence.generation_id
+            for action, cancelled in bridge.generations
+        )
+        assert any(
+            effect_kind == media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION
+            and cancelled.generation_id > fence.generation_id
+            for effect_kind, cancelled, _source, _payload in bridge.effects
+        )
+        terminal = context.output.reply_delivery.get(fence)
+        assert terminal is not None
+        assert terminal.terminal_event is not None
+    finally:
+        provider.release.set()
+        if reply is not None:
+            await asyncio.gather(reply, return_exceptions=True)
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_fixed_weather_fallback_is_the_first_and_only_spoken_text() -> None:
+    class FallbackProvider(FakeMediaProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.output_intents: list[Any] = []
+
+        async def start_delegation(self, _text: str, _fence: GenerationFence) -> str:
+            return WEATHER_LOOKUP_UNAVAILABLE_REPLY
+
+        def accept_output_intent(self, intent: Any) -> None:
+            self.output_intents.append(intent)
+
+        def generate_output(
+            self,
+            _identity: SessionIdentity,
+            _intent: Any,
+            _fence: GenerationFence,
+            *,
+            work_id: str,
+            source_start_sample: int,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            _ = work_id
+
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                yield MediaReplyChunk(
+                    pcm_s16le=b"\x02\x00\x03\x00",
+                    source_start_sample=source_start_sample,
+                    first=True,
+                    final=True,
+                )
+
+            return chunks()
+
+    provider = FallbackProvider()
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    context = await registry.open_session(SessionIdentity("weather-fallback-first"))
+    fence = await context.runtime.on_turn_committed("今天南京天气怎么样")
+    context.output.playback.start(fence)
+
+    await _wait_until(lambda: provider.output_intents, timeout=2)
+
+    assert str(provider.output_intents[0].tts_source) == WEATHER_LOOKUP_UNAVAILABLE_REPLY
+    await registry.finalize_session(context.identity.session_id)

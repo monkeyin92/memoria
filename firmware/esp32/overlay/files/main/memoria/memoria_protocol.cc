@@ -19,6 +19,7 @@
 #include "display/lcd_display.h"
 #include "http.h"
 #include "memoria_activation_error_page.h"
+#include "memoria_playback_stop.h"
 #include "memoria_activation_error_text.h"
 #include "memoria_activation_retry_policy.h"
 #include "memoria_audio_frame.h"
@@ -1544,7 +1545,6 @@ bool MemoriaProtocol::HandleSessionAccepted(const cJSON* root) {
 }
 
 bool MemoriaProtocol::HandleGenerationStarted(const cJSON* root, const GenerationFence& fence) {
-    (void)root;
     if (!fence.valid()) {
         return false;
     }
@@ -1594,6 +1594,18 @@ bool MemoriaProtocol::HandleGenerationStarted(const cJSON* root, const Generatio
     playback_output_frames_ = 0;
     playback_output_approximate_ = true;
     downlink_started_ = false;
+    // A fixed safety script is the one reply that must not be cut short. The
+    // platform owns the script text; the device only honours the flag so a
+    // pat or a screen tap cannot silence it. The board reads the published
+    // value, never the protocol object.
+    const cJSON* interruptible = cJSON_GetObjectItemCaseSensitive(root, "interruptible");
+    const bool interruptible_field = interruptible != nullptr && cJSON_IsBool(interruptible);
+    const auto stop = memoria::PlaybackStopFromInterruptible(
+        memoria::InterruptibleFromWire(interruptible != nullptr, interruptible_field,
+                                       cJSON_IsTrue(interruptible)));
+    memoria::PlaybackStopRegistry::GetInstance().Set(stop);
+    ESP_LOGI(kTag, "generation %u playback_stop=%s",
+             static_cast<unsigned int>(fence.generation_id), memoria::PlaybackStopName(stop));
     // Authoritative generation.started: the downlink sequence/sample clock
     // resets to 0 for the new generation (contract downlink_clock).
     downlink_sequence_ = 0;

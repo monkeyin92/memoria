@@ -142,6 +142,7 @@ class MediaOutputDispatchMixin:
             *,
             reason: str = "cancelled",
             cancel_timeout_s: float = 5.0,
+            finalize_audible: bool = True,
         ) -> None: ...
 
         @staticmethod
@@ -957,6 +958,7 @@ class MediaOutputDispatchMixin:
         owner_started = self._owner_has_started_playback(context, owner)
         if owner_started and (
             not context.runtime.barge_in_enabled
+            or context.runtime.floor.fixed_safety_audible
             or self._fast_ack_has_started_playback(context, owner)
             or int(getattr(work.intent, "kind", 0))
             == int(media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT)
@@ -976,7 +978,12 @@ class MediaOutputDispatchMixin:
         pending = self._queued_output_followups(context, work)
         flush_required = self._device_playback_flush_required(context, old_fence)
         heard = context.output.playback.actual_heard_text(old_fence)
-        await self._cancel_reply_task(context, old_fence, reason="preempted")
+        await self._cancel_reply_task(
+            context,
+            old_fence,
+            reason="preempted",
+            finalize_audible=False,
+        )
         if not context.runtime.fence.matches(old_fence) or not self._output_work_is_current(context, work):
             return False
         cancelled = await context.runtime.preempt_media_output(
@@ -1135,6 +1142,7 @@ class MediaOutputDispatchMixin:
             fence,
             reason="output_timeout",
             cancel_timeout_s=min(5.0, max(0.1, self.output_generation_timeout_s)),
+            finalize_audible=False,
         )
         flush_required = self._device_playback_flush_required(context, fence)
         cancelled = await self._advance_failed_output_generation(

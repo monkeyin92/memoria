@@ -10,6 +10,7 @@ import pytest
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.orchestration.interruption_guard import PlaybackInputDecision
+from services.agent.src.voice_core.aigc_notice import AigcNoticeConfig
 from services.agent.src.voice_core.asr_stream_supervisor import ASRDecisionReason
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
@@ -105,6 +106,14 @@ async def test_admitted_final_is_protected_before_projection_finishes(monkeypatc
         await registry.finalize_session(identity.session_id)
 
 
+def _aigc_off(registry: MediaVoiceCoreRegistry) -> MediaVoiceCoreRegistry:
+    """These registry builds have no media transport; the AIGC round hooks own tests."""
+
+    registry.aigc_notice_config = AigcNoticeConfig(enabled=False)
+    registry.aigc_round_logger = None
+    return registry
+
+
 async def _blocked_commit() -> tuple[Any, ...]:
     identity = _owner_silence_identity("close-during-prepare")
     runtime = DuplexRuntime.create(session_id=identity.session_id)
@@ -123,10 +132,12 @@ async def _blocked_commit() -> tuple[Any, ...]:
             return await runtime.on_turn_committed(text, input_modality="audio")
 
     provider = Provider()
-    registry = MediaVoiceCoreRegistry(
-        bridge=MediaBridgeGrpcServer(),
-        session_factory=lambda _: MediaSessionResources(runtime, provider),
-        owner_silence_timeout_s=100,
+    registry = _aigc_off(
+        MediaVoiceCoreRegistry(
+            bridge=MediaBridgeGrpcServer(),
+            session_factory=lambda _: MediaSessionResources(runtime, provider),
+            owner_silence_timeout_s=100,
+        )
     )
     context = await registry.open_session(identity)
     segment = asr_result_to_segment(_final(identity), session_id=identity.session_id)
@@ -190,10 +201,12 @@ async def _device_registry(session_id: str) -> tuple[Any, ...]:
     identity = _owner_silence_identity(session_id)
     runtime = DuplexRuntime.create(session_id=identity.session_id)
     provider = FakeMediaProvider()
-    registry = MediaVoiceCoreRegistry(
-        bridge=MediaBridgeGrpcServer(),
-        session_factory=lambda _: MediaSessionResources(runtime, provider),
-        owner_silence_timeout_s=100,
+    registry = _aigc_off(
+        MediaVoiceCoreRegistry(
+            bridge=MediaBridgeGrpcServer(),
+            session_factory=lambda _: MediaSessionResources(runtime, provider),
+            owner_silence_timeout_s=100,
+        )
     )
     context = await registry.open_session(identity)
     return registry, context, provider, runtime, identity
@@ -1126,10 +1139,12 @@ async def test_finalize_that_lands_inside_an_inflight_pcm_emit_aborts_the_stream
 
     provider = GatedTwoChunkProvider()
     bridge = MediaBridgeGrpcServer()
-    registry = MediaVoiceCoreRegistry(
-        bridge=bridge,
-        session_factory=lambda _: MediaSessionResources(runtime, provider),
-        owner_silence_timeout_s=100,
+    registry = _aigc_off(
+        MediaVoiceCoreRegistry(
+            bridge=bridge,
+            session_factory=lambda _: MediaSessionResources(runtime, provider),
+            owner_silence_timeout_s=100,
+        )
     )
     connection = open_bridge_connection(bridge, identity)
     context = await registry.open_session(identity)
@@ -1162,6 +1177,7 @@ async def test_finalize_that_lands_inside_an_inflight_pcm_emit_aborts_the_stream
         *,
         reason: str = "cancelled",
         cancel_timeout_s: float = 5.0,
+        finalize_audible: bool = True,
     ) -> None:
         # Hold the finalizer after the terminal flag is set and before the reply
         # task is cancelled, so the in-flight emit window cannot be dissolved by
@@ -1174,6 +1190,7 @@ async def test_finalize_that_lands_inside_an_inflight_pcm_emit_aborts_the_stream
             fence,
             reason=reason,
             cancel_timeout_s=cancel_timeout_s,
+            finalize_audible=finalize_audible,
         )
 
     bridge.emit_pcm_when_connected = gated_emit_pcm_when_connected  # type: ignore[method-assign]

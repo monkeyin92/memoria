@@ -36,6 +36,7 @@ HARNESS = r"""
 #include "memoria_aigc_label.h"
 
 #include <cstdio>
+#include <cstring>
 
 int main() {
     using memoria::AigcExplicitMode;
@@ -70,6 +71,21 @@ int main() {
     // A rect that clips the round panel must fail.
     const bool clipped = AigcBadgeCornersInsideSafeCircle(280, 36, 40, 20);
     std::printf("clipped_rejected=%d\n", clipped ? 0 : 1);
+    char line[32];
+    while (std::fgets(line, sizeof(line), stdin) != nullptr) {
+        line[std::strcspn(line, "\r\n")] = '\0';
+        if (line[0] == '\0') continue;
+        memoria::AigcPlaybackStart start = memoria::AigcPlaybackStart::kNewStory;
+        if (std::strcmp(line, "new") == 0) start = memoria::AigcPlaybackStart::kNewStory;
+        else if (std::strcmp(line, "resume") == 0) start = memoria::AigcPlaybackStart::kResume;
+        else if (std::strcmp(line, "replay") == 0) start = memoria::AigcPlaybackStart::kReplay;
+        else if (std::strcmp(line, "jump_in") == 0) start = memoria::AigcPlaybackStart::kJumpIn;
+        else if (std::strcmp(line, "bedtime") != 0) return 2;
+        const char* notice = std::strcmp(line, "bedtime") == 0
+                                 ? memoria::AigcBedtimeNoticeFile()
+                                 : memoria::AigcNoticeFileFor(start);
+        std::printf("%s=%s\n", line, notice);
+    }
     return corners && !clipped ? 0 : 1;
 }
 """
@@ -117,19 +133,87 @@ def test_board_syncs_badge_for_offline_menu() -> None:
     assert "offline_menu_.mode() != memoria::OfflineMode::kInactive" in board
 
 
-def test_night_soothe_requires_spoken_intro() -> None:
-    board = BOARD_CC.read_text(encoding="utf-8")
-    night = board[board.index("case memoria::TapWakeAction::kNightSoothing") :]
-    night = night[: night.index("case memoria::TapWakeAction::kOfflineMenu")]
-    assert "kAigcNoticeBedtimeFile" in night
-    assert "refusing night_soothe without AIGC intro" in night
-    assert night.index("kAigcNoticeBedtimeFile") < night.index('PlayLocalAssetClip("night_soothe.ogg")')
+def test_every_story_start_plays_the_story_notice(tool: pathlib.Path) -> None:
+    # 新开始、续播、单曲循环、中途切入 and bedtime all resolve to a notice file.
+    completed = subprocess.run(
+        [str(tool)],
+        input="\n".join(("new", "resume", "replay", "jump_in", "bedtime")) + "\n",
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    want = {
+        "new": "aigc_story_intro.ogg",
+        "resume": "aigc_story_intro.ogg",
+        "replay": "aigc_story_intro.ogg",
+        "jump_in": "aigc_story_intro.ogg",
+        "bedtime": "aigc_soothe_intro.ogg",
+    }
+    got = dict(
+        line.split("=", 1)
+        for line in completed.stdout.splitlines()
+        if line.split("=", 1)[0] in want
+    )
+    assert got == want
 
 
 def test_story_path_refuses_without_intro() -> None:
     board = BOARD_CC.read_text(encoding="utf-8")
     assert "refusing story without AIGC intro" in board
     assert "story_intro_ok" in board
+
+
+def test_offline_menu_story_start_carries_its_reason() -> None:
+    header = (MEMORIA_DIR / "memoria_offline_menu.h").read_text(encoding="utf-8")
+    menu_start = header[header.index("if (long_press) {") :]
+    menu_start = menu_start[: menu_start.index("out.start_story = true;")]
+    assert "kAigcNoticeStory" in menu_start
+    assert "AigcPlaybackStart::kNewStory" in header
+
+
+def _board_function(board: str, signature: str) -> str:
+    start = board.index(signature)
+    depth = 0
+    for index in range(board.index("{", start), len(board)):
+        if board[index] == "{":
+            depth += 1
+        elif board[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return board[start : index + 1]
+    raise AssertionError(f"{signature} has no closing brace")
+
+
+def test_board_notice_precedes_the_story_in_every_playback_path() -> None:
+    board = BOARD_CC.read_text(encoding="utf-8")
+    helper = _board_function(board, "bool PlayStoryWithAigcNoticeNow(")
+    assert helper.index("AigcNoticeFileFor(start)") < helper.index("PlayLocalAssetClip(story_file)")
+    schedule = _board_function(board, "Application::GetInstance().Schedule([this, out, generation]")
+    notices = [
+        at
+        for at in range(len(schedule))
+        if schedule.startswith("kAigcNoticeStory", at)
+        or schedule.startswith("AigcNoticeFileFor", at)
+    ]
+    stories = [
+        at
+        for at in range(len(schedule))
+        if schedule.startswith("PlayLocalAssetClip(memoria::OfflineStoryFile", at)
+    ]
+    assert len(stories) == 1
+    assert notices and max(notices) < stories[0], (
+        "the offline story start must play a notice before the story file"
+    )
+    assert "AigcNoticeFileFor(out.story_start)" in schedule
+
+
+def test_bedtime_notice_stays_in_front_of_night_soothe() -> None:
+    board = BOARD_CC.read_text(encoding="utf-8")
+    night = board[board.index("case memoria::TapWakeAction::kNightSoothing") :]
+    night = night[: night.index("case memoria::TapWakeAction::kOfflineMenu")]
+    assert night.index("kAigcNoticeBedtimeFile") < night.index(
+        'PlayLocalAssetClip("night_soothe.ogg")'
+    )
 
 
 def test_sdkconfig_enables_montserrat_16() -> None:
@@ -155,9 +239,9 @@ def test_render_aigc_notices_refuses_without_credentials() -> None:
 
 
 def test_render_aigc_notices_matches_current_doubao_api() -> None:
-    script = (
-        FIRMWARE_ROOT.parents[1] / "scripts" / "render_aigc_notices.py"
-    ).read_text(encoding="utf-8")
+    script = (FIRMWARE_ROOT.parents[1] / "scripts" / "render_aigc_notices.py").read_text(
+        encoding="utf-8"
+    )
     assert "sample_rate=DOUBAO_SAMPLE_RATE_HZ" in script or "sample_rate=24_000" in script
     assert "DOUBAO_SAMPLE_RATE_HZ = 24_000" in script
     assert "synthesize_stream_text([text], fence=fence)" in script

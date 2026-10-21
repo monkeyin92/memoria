@@ -1,8 +1,9 @@
 """Appendix-E AIGC OpusTags on Ogg Opus clips.
 
 Implicit labels for shipped audio follow GB 45438-2025 style Vorbis comments:
-CONTENT_ID, SERVICE_PROVIDER, AI_GENERATED, ARTIST, VOICE_ID, DATE, and
-CONTENT_PRODUCER. ARTIST and VOICE_ID both carry the TTS voice id.
+CONTENT_ID, SERVICE_PROVIDER, AI_GENERATED, ARTIST, VOICE_ID, DATE,
+CONTENT_PRODUCER, CONTENT_PROPAGATOR and LABEL. ARTIST and VOICE_ID both carry
+the TTS voice id.
 Provider-embedded marks are never stripped.
 
 ``rewrite_opus_comments`` replaces only the OpusTags comment packet and leaves
@@ -17,6 +18,13 @@ from collections.abc import Mapping
 from typing import Final
 
 REQUIRED_AIGC_TAG_KEYS: Final = ("CONTENT_ID", "SERVICE_PROVIDER", "AI_GENERATED")
+# GB 45438-2025 Appendix E implicit-label field names, written as Vorbis
+# comments. LABEL=1 marks explicit labelling on; CONTENT_PRODUCER and
+# CONTENT_PROPAGATOR carry the producing and propagating party identifiers.
+LABEL_KEY: Final = "LABEL"
+LABEL_EXPLICIT: Final = "1"
+CONTENT_PRODUCER_KEY: Final = "CONTENT_PRODUCER"
+CONTENT_PROPAGATOR_KEY: Final = "CONTENT_PROPAGATOR"
 IMPLICIT_AIGC_TAG_KEYS: Final = (
     "CONTENT_ID",
     "SERVICE_PROVIDER",
@@ -26,8 +34,13 @@ IMPLICIT_AIGC_TAG_KEYS: Final = (
     "DATE",
     "CONTENT_PRODUCER",
 )
+#: Added to newly rendered clips, but never required from assets that shipped
+#: before the Appendix-E addendum. The compatibility gate above stays lenient.
+IMPLICIT_AIGC_OPTIONAL_TAG_KEYS: Final = (CONTENT_PROPAGATOR_KEY, LABEL_KEY)
 CANONICAL_SERVICE_PROVIDER: Final = "Volcengine Doubao"
 CANONICAL_AI_GENERATED: Final = "true"
+#: Our party identifier for offline/render tooling; scripts may override it.
+DEFAULT_CONTENT_PRODUCER: Final = "Memoria"
 OPUS_TAGS_SCAN_BYTES: Final = 64 * 1024
 
 
@@ -114,6 +127,9 @@ def require_aigc_tags(
         result["voice_id"] = tags["VOICE_ID"].strip()
         result["date"] = tags["DATE"].strip()
         result["content_producer"] = tags["CONTENT_PRODUCER"].strip()
+        # Legacy assets predate these keys: report them when present, never fail.
+        result["content_propagator"] = tags.get(CONTENT_PROPAGATOR_KEY, "").strip()
+        result["label"] = tags.get(LABEL_KEY, "").strip() == LABEL_EXPLICIT
     return result
 
 
@@ -122,6 +138,56 @@ def title_is_placeholder(head: bytes) -> bool:
         if key.lower() == "title" and value.endswith("_placeholder"):
             return True
     return False
+
+
+def implicit_label(
+    *,
+    content_id: str,
+    aigc: Mapping[str, str],
+    content_producer: str,
+    content_propagator: str | None = None,
+) -> dict[str, str]:
+    """Implicit-label comments for one shipped clip.
+
+    ``aigc`` supplies SERVICE_PROVIDER / ARTIST / VOICE_ID / DATE. Producer and
+    propagator come from deployment config so the contract itself names no
+    company; an unset propagator defaults to the producer.
+    """
+
+    producer = content_producer.strip()
+    propagator = (content_propagator or "").strip() or producer
+    if not producer or not propagator:
+        raise ValueError("CONTENT_PRODUCER and CONTENT_PROPAGATOR must be configured")
+    return {
+        "CONTENT_ID": content_id,
+        "SERVICE_PROVIDER": aigc["SERVICE_PROVIDER"],
+        "AI_GENERATED": CANONICAL_AI_GENERATED,
+        "ARTIST": aigc["ARTIST"],
+        "VOICE_ID": aigc["VOICE_ID"],
+        "DATE": aigc["DATE"],
+        CONTENT_PRODUCER_KEY: producer,
+        CONTENT_PROPAGATOR_KEY: propagator,
+        LABEL_KEY: LABEL_EXPLICIT,
+    }
+
+
+def aigc_identity_from_env(
+    env: Mapping[str, str] | None = None,
+) -> tuple[str, str]:
+    """Producer and propagator identifiers for newly rendered clips.
+
+    ``AIGC_CONTENT_PROPAGATOR`` defaults to ``AIGC_CONTENT_PRODUCER``. These are
+    configuration, not code constants: the deployed legal entity may differ
+    from the repository default.
+    """
+
+    if env is None:
+        import os
+
+        env = os.environ
+    producer = (env.get("AIGC_CONTENT_PRODUCER") or DEFAULT_CONTENT_PRODUCER).strip()
+    propagator = (env.get("AIGC_CONTENT_PROPAGATOR") or "").strip() or producer
+    return producer, propagator
 
 
 def aigc_label_from_mapping(tags: Mapping[str, object]) -> dict[str, object]:
@@ -315,13 +381,22 @@ def merge_aigc_comments(
     for key in IMPLICIT_AIGC_TAG_KEYS:
         if key not in aigc_upper or not aigc_upper[key].strip():
             raise ValueError(f"missing AIGC value for {key}")
+    # Write the addendum keys only when the caller supplies them, so a rewrite
+    # of a legacy clip stays additive and never invents an empty label.
+    written = list(IMPLICIT_AIGC_TAG_KEYS)
+    written.extend(
+        key
+        for key in IMPLICIT_AIGC_OPTIONAL_TAG_KEYS
+        if aigc_upper.get(key, "").strip()
+    )
+    managed = set(IMPLICIT_AIGC_TAG_KEYS) | set(IMPLICIT_AIGC_OPTIONAL_TAG_KEYS)
     kept: list[tuple[str, str]] = []
     for key, value in existing:
         upper = key.upper()
-        if upper in IMPLICIT_AIGC_TAG_KEYS or upper in drop_upper:
+        if upper in managed or upper in drop_upper:
             continue
         kept.append((key, value))
-    for key in IMPLICIT_AIGC_TAG_KEYS:
+    for key in written:
         kept.append((key, aigc_upper[key]))
     return kept
 
@@ -403,12 +478,20 @@ def rewrite_opus_comments(
 __all__ = [
     "CANONICAL_AI_GENERATED",
     "CANONICAL_SERVICE_PROVIDER",
+    "CONTENT_PRODUCER_KEY",
+    "CONTENT_PROPAGATOR_KEY",
+    "DEFAULT_CONTENT_PRODUCER",
+    "IMPLICIT_AIGC_OPTIONAL_TAG_KEYS",
     "IMPLICIT_AIGC_TAG_KEYS",
+    "LABEL_EXPLICIT",
+    "LABEL_KEY",
     "OPUS_TAGS_SCAN_BYTES",
     "REQUIRED_AIGC_TAG_KEYS",
+    "aigc_identity_from_env",
     "aigc_label_from_mapping",
     "aigc_tag_map",
     "audio_packets_digest",
+    "implicit_label",
     "merge_aigc_comments",
     "opus_tag_pairs",
     "pcm_digest",

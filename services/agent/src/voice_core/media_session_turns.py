@@ -201,7 +201,7 @@ class MediaTurnEndpointMixin:
             self, context: _MediaVoiceSession, result: ASRResult
         ) -> None: ...
 
-        def defer_incomplete_followup_commit(
+        def defer_commit(
             self, context: _MediaVoiceSession, endpoint_sample: int
         ) -> bool: ...
 
@@ -1328,9 +1328,9 @@ class MediaTurnEndpointMixin:
                 if context.runtime.assistant_speaking:
                     context.runtime.publish_assistant_audio("restore", gain=1.0)
                 return
-            # Mid-clause follow-ups (「我想听」) must wait for the next final; otherwise
-            # one child sentence becomes two input turns and the tail dies on ASR timeout.
-            if self.defer_incomplete_followup_commit(context, endpoint_sample):
+            # A fixed safety script still playing, or a mid-clause follow-up (「我想听」, which would
+            # split one child sentence into two input turns), keeps the commit waiting.
+            if self.defer_commit(context, endpoint_sample):
                 return
             # Shield past the grace sleep: late offline recovery re-arms the
             # same endpoint via ``_schedule_turn_commit``, which cancels the
@@ -1412,26 +1412,26 @@ class MediaTurnEndpointMixin:
                 )
             return reason
         owner = context.output.output_owner
-        if (
-            owner is not None
-            and not context.runtime.barge_in_enabled
-            and owner.fence.turn_id == fence.turn_id
-        ):
+        cancel_previous = True
+        if owner is not None and owner.fence.turn_id == fence.turn_id:
             delivery = context.output.reply_delivery.get(owner.fence)
             if delivery is not None and delivery.first_frame_sent:
                 logger.info(
-                    "skip same-turn cancel of heard playback session=%s "
-                    "owner_gen=%s new_gen=%s",
-                    context.identity.session_id,
-                    owner.fence.generation_id,
-                    fence.generation_id,
+                    "skip same-turn cancel session=%s owner_gen=%s new_gen=%s barge_in=%s",
+                    context.identity.session_id, owner.fence.generation_id,
+                    fence.generation_id, context.runtime.barge_in_enabled,
                 )
-                return "heard_output_in_flight"
+                if not context.runtime.barge_in_enabled:
+                    return "heard_output_in_flight"
+                # barge-in keeps the owner; the delegation claim or normal
+                # reply decides what may still play.
+                cancel_previous = False
         # A final ASR result can arrive while the previous answer is still
         # synthesizing.  Wait for that task to release the per-session reply
         # lock before scheduling the new turn; otherwise ``generate_reply``
         # sees a locked session and silently drops a valid user turn.
-        await self._cancel_reply_task(context, previous_fence)
+        if cancel_previous:
+            await self._cancel_reply_task(context, previous_fence)
         if context.closed or context.standby_requested:
             await self._abort_committed_turn(context, fence, reason="session_closed")
             return "session_closed"

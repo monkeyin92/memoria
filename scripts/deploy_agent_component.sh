@@ -13,7 +13,8 @@ Usage: deploy_agent_component.sh \
   --base-image memoria-agent:TAG \
   [--expected-commit COMMIT] \
   [--remote-root /opt/memoria/component-releases] \
-  [--dry-run] [--cutover] [--skip-gates]
+  [--dry-run] [--cutover] [--skip-gates] \
+  [--allow-manual-base-image --reason TEXT]
 
 The fast lane is intentionally limited to services/agent/** and the Voice Core
 bridge launcher that wires that package. Dependency-lock, shared-service,
@@ -23,6 +24,13 @@ image release path.
 Ruff, module line budgets, mypy --strict, and the Agent unit plus deployment
 contract test suites run locally before the remote host is touched. --skip-gates
 disables them and must only be used with a filed reason.
+
+--cutover normally requires the running bridge image to differ from the runtime
+base image, so a rollback target survives the cutover. --allow-manual-base-image
+accepts a candidate that was built by hand from this base instead; the running
+bridge IS the runtime base in that case, so rolling back to the previous image
+also rolls back the base. It requires --reason, is recorded in the deployment
+log and the remote rollback point, and leaves every other check unchanged.
 EOF
 }
 
@@ -36,6 +44,8 @@ dry_run=false
 cutover=false
 allow_scope_drift=false
 skip_gates=false
+allow_manual_base_image=false
+manual_base_reason=""
 
 while (($#)); do
   case "$1" in
@@ -48,8 +58,21 @@ while (($#)); do
     --cutover) cutover=true; shift ;;
     --allow-scope-drift) allow_scope_drift=true; shift ;;
     --skip-gates) skip_gates=true; shift ;;
+    --allow-manual-base-image) allow_manual_base_image=true; shift ;;
+    --reason)
+      (($# >= 2)) || {
+        echo "--reason needs TEXT" >&2
+        exit 2
+      }
+      manual_base_reason="$2"
+      shift 2
+      ;;
     -h|--help) usage; exit 0 ;;
-    *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
+    *)
+      echo "unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
   esac
 done
 
@@ -73,6 +96,28 @@ done
   echo "invalid remote root" >&2
   exit 2
 }
+if [[ -n "$manual_base_reason" ]]; then
+  manual_base_reason="${manual_base_reason//[[:cntrl:]]/ }"
+  [[ "$manual_base_reason" =~ [^[:space:]] ]] || {
+    echo "--reason needs non-blank text" >&2
+    exit 2
+  }
+fi
+if [[ "$allow_manual_base_image" == true ]]; then
+  [[ "$cutover" == true ]] || {
+    echo "--allow-manual-base-image only changes --cutover; drop it from a build-only run" >&2
+    exit 2
+  }
+  [[ -n "$manual_base_reason" ]] || {
+    echo "--allow-manual-base-image requires --reason TEXT" >&2
+    exit 2
+  }
+else
+  [[ -z "$manual_base_reason" ]] || {
+    echo "--reason is only valid together with --allow-manual-base-image" >&2
+    exit 2
+  }
+fi
 
 for command_name in git python3 ssh rsync tar; do
   command -v "$command_name" >/dev/null || {
@@ -131,7 +176,9 @@ else
     "$ROOT/services/agent/tests/unit" \
     "$ROOT/services/control_api/tests/test_production_compose.py" \
     "$ROOT/scripts/tests/test_verify_agent_release_artifact.py" \
-    "$ROOT/scripts/tests/test_resolve_target_images.py"
+    "$ROOT/scripts/tests/test_resolve_target_images.py" \
+    "$ROOT/scripts/tests/test_local_process_probe.py" \
+    "$ROOT/scripts/tests/test_deploy_agent_component_manual_base.py"
   echo "agent component release gates passed" >&2
 fi
 
@@ -283,6 +330,11 @@ artifact_bytes="$(wc -c <"$artifact" | tr -d ' ')"
 printf 'agent_component_preflight=PASS\n'
 printf 'release_tag=%s\nrelease_commit=%s\n' "$release_tag" "$expected_commit"
 printf 'base_image=%s\nbase_image_id=%s\n' "$base_image" "$base_image_id"
+if [[ "$allow_manual_base_image" == true ]]; then
+  printf 'base_image_mode=manual\nbase_image_reason=%s\n' "$manual_base_reason"
+else
+  printf 'base_image_mode=runtime-base-required\n'
+fi
 printf 'source_artifact_bytes=%s\nsource_sha256=%s\n' "$artifact_bytes" "$source_sha"
 printf 'target_image=%s\nruntime_base=%s\n' "$target_image" "$runtime_base"
 
@@ -404,7 +456,8 @@ fi
 ssh "$remote" sudo -n bash -s -- \
   "$remote_dir" "$target_image" "$release_tag" "$compose_sha" \
   "$expected_commit" "$base_image" "$base_image_id" "$base_commit" \
-  "$runtime_base" "$source_sha" "$dockerfile_sha" "$resolver_sha" <<'REMOTE_CUTOVER'
+  "$runtime_base" "$source_sha" "$dockerfile_sha" "$resolver_sha" \
+  "$allow_manual_base_image" "$manual_base_reason" <<'REMOTE_CUTOVER'
 set -Eeuo pipefail
 remote_dir="$1"
 target_image="$2"
@@ -418,6 +471,8 @@ manifest_runtime_base="$9"
 manifest_source_sha="${10}"
 manifest_dockerfile_sha="${11}"
 manifest_resolver_sha="${12}"
+allow_manual_base="${13}"
+manual_base_reason="${14}"
 
 manifest_path="$remote_dir/component-manifest.txt"
 python3 - "$manifest_path" "$target_image" "$release_tag" "$release_commit" \
@@ -620,11 +675,24 @@ runtime_base_version="$(printf '%s' "$manifest_base_image" | cut -d: -f2-)"
 [[ "$runtime_base_metadata" == "$manifest_base_image_id amd64 $manifest_base_commit $runtime_base_version agent" \
   && "$manifest_runtime_base" != "$target_image" \
   && "$manifest_runtime_base" != "$bridge_image" \
-  && "$runtime_base_image_id" != "$target_image_id" \
-  && "$runtime_base_image_id" != "$bridge_image_id" ]] || {
+  && "$runtime_base_image_id" != "$target_image_id" ]] || {
   echo "runtime base image is missing, has invalid provenance, or is not independent" >&2
   exit 1
 }
+# A manual candidate was built from this base, so the running bridge may hold
+# the same image id. Accept that only on an explicit operator request and
+# record it, because the rollback target then shares the new base.
+manual_base_accepted=false
+if [[ "$runtime_base_image_id" == "$bridge_image_id" ]]; then
+  if [[ "$allow_manual_base" != true ]]; then
+    echo "runtime base image is missing, has invalid provenance, or is not independent" >&2
+    echo "the running bridge image is this runtime base; rerun with --allow-manual-base-image --reason TEXT for a hand-built candidate" >&2
+    exit 1
+  fi
+  manual_base_accepted=true
+  echo "manual base image accepted: the running bridge image is also the runtime base of this hand-built candidate" >&2
+  echo "manual base image reason: $manual_base_reason" >&2
+fi
 control_stack_release_tag="$(container_env_value "$control_container" MEMORIA_RELEASE_TAG)"
 control_stack_release_commit="$(container_env_value "$control_container" MEMORIA_RELEASE_COMMIT)"
 [[ -n "$bridge_stack_release_tag" \
@@ -963,6 +1031,10 @@ printf '%s\n' "${previous_files[@]}" >"$remote_dir/PRE_CUTOVER_CONFIG_FILES.txt"
   printf 'runtime_base=%s\n' "$manifest_runtime_base"
   printf 'runtime_base_image_id=%s\n' "$runtime_base_image_id"
   printf 'runtime_base_provenance_id=%s\n' "$manifest_base_image_id"
+  printf 'manual_base_image_accepted=%s\n' "$manual_base_accepted"
+  if [[ "$manual_base_accepted" == true ]]; then
+    printf 'manual_base_image_reason=%s\n' "$manual_base_reason"
+  fi
   } >"$remote_dir/ROLLBACK_POINT.txt"
 sha256sum "$remote_dir/ROLLBACK_POINT.txt" >"$remote_dir/ROLLBACK_POINT.txt.sha256"
 
@@ -1037,6 +1109,10 @@ trap - ERR
   printf 'runtime_stack_release_tag=%s\n' "$stack_release_tag"
   printf 'rollback_image=%s\n' "$rollback_image"
   printf 'resolved_target_images=%s\n' "$(printf '%s' "$resolve_output" | paste -sd'|' -)"
+  printf 'manual_base_image_accepted=%s\n' "$manual_base_accepted"
+  if [[ "$manual_base_accepted" == true ]]; then
+    printf 'manual_base_image_reason=%s\n' "$manual_base_reason"
+  fi
 } | tee "$remote_dir/CUTOVER_RESULT.txt"
 (cd "$remote_dir" && sha256sum CUTOVER_RESULT.txt >CUTOVER_RESULT.txt.sha256)
 REMOTE_CUTOVER

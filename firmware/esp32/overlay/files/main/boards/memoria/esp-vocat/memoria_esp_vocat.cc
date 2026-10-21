@@ -28,10 +28,12 @@
 #include "touch.h"
 #include "memoria_bootstrap.h"
 #include "memoria_display_hooks.h"
+#include "memoria_imu_poll.h"
 #include "memoria_mascot_display.h"
 #include "memoria_aigc_label.h"
 #include "memoria_offline_menu.h"
 #include "memoria_pat.h"
+#include "memoria_playback_stop.h"
 #include "memoria_power_policy.h"
 #include "memoria_quiet_hours.h"
 #include "memoria_usb_command.h"
@@ -67,11 +69,33 @@ extern "C" {
 
 #define TAG "MemoriaEspVocat"
 
+// The gesture policy in memoria_pat.h keeps its own copy of the four
+// DeviceState values so the host tests can compile it without ESP-IDF. These
+// assertions are the link: a renumbered enum fails the firmware build.
+static_assert(memoria::kPatStateStarting == static_cast<int>(kDeviceStateStarting),
+              "memoria_pat.h starting state drifted from DeviceState");
+static_assert(memoria::kPatStateIdle == static_cast<int>(kDeviceStateIdle),
+              "memoria_pat.h idle state drifted from DeviceState");
+static_assert(memoria::kPatStateListening == static_cast<int>(kDeviceStateListening),
+              "memoria_pat.h listening state drifted from DeviceState");
+static_assert(memoria::kPatStateSpeaking == static_cast<int>(kDeviceStateSpeaking),
+              "memoria_pat.h speaking state drifted from DeviceState");
+
 namespace Bmi270Motion {
 static bmi270_handle_t bmi_handle_ = nullptr;
+static i2c_master_dev_handle_t accel_dev_ = nullptr;
+
+// 400 kHz I2C moves one byte in 9 SCL clocks (8 data bits plus ACK), 22.5 us.
+// One accel read is 6 data bytes plus the register address, the read address,
+// a repeated start, ACKs and stop, 85 clocks or about 210 us on the wire.
+// 15 ms leaves roughly 70x margin for clock stretching, a busy bus and
+// scheduler jitter. It also caps how long a failed BMI2 read can hold the
+// shared bus, so touch and the fuel gauge never wait on the old 200 ms
+// i2c_bus budget. Those two keep their own 100 ms transfers.
+static constexpr int kBmi2ReadTimeoutMs = 15;
 
 esp_err_t Initialize(i2c_bus_handle_t i2c_bus) {
-    if (bmi_handle_) {
+    if (bmi_handle_ != nullptr && accel_dev_ != nullptr) {
         return ESP_OK;
     }
     if (!i2c_bus) {
@@ -92,16 +116,45 @@ esp_err_t Initialize(i2c_bus_handle_t i2c_bus) {
         return ESP_FAIL;
     }
 
+    // A private device handle on the same bus lets the 20 ms accel read use
+    // its own 15 ms timeout. The driver keeps its own handle for setup only.
+    i2c_master_bus_handle_t idf_bus = i2c_bus_get_internal_bus_handle(i2c_bus);
+    if (idf_bus == nullptr) {
+        ESP_LOGW(TAG, "BMI270 could not get the IDF I2C bus");
+        return ESP_FAIL;
+    }
+    i2c_device_config_t accel_cfg = {};
+    accel_cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    accel_cfg.device_address = BMI270_I2C_ADDRESS;
+    accel_cfg.scl_speed_hz = 400000;
+    ret = i2c_master_bus_add_device(idf_bus, &accel_cfg, &accel_dev_);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "BMI270 accel device add failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
     ESP_LOGI(TAG, "BMI270 initialized");
     return ESP_OK;
 }
 
-bool ReadAccelRaw(struct bmi2_sens_data& accel) {
-    if (!bmi_handle_) {
+bool ReadAccelRaw(memoria::ImuAccelSample& accel) {
+    if (accel_dev_ == nullptr) {
         return false;
     }
-    int8_t rslt = bmi2_get_sensor_data(&accel, bmi_handle_);
-    return rslt == BMI2_OK;
+    const uint8_t reg = BMI2_ACC_X_LSB_ADDR;
+    uint8_t data[6] = {};
+    const esp_err_t ret = i2c_master_transmit_receive(accel_dev_, &reg, 1, data, sizeof(data),
+                                                      kBmi2ReadTimeoutMs);
+    if (ret != ESP_OK) {
+        return false;
+    }
+    accel.x = static_cast<int16_t>(static_cast<uint16_t>(data[0]) |
+                                   (static_cast<uint16_t>(data[1]) << 8));
+    accel.y = static_cast<int16_t>(static_cast<uint16_t>(data[2]) |
+                                   (static_cast<uint16_t>(data[3]) << 8));
+    accel.z = static_cast<int16_t>(static_cast<uint16_t>(data[4]) |
+                                   (static_cast<uint16_t>(data[5]) << 8));
+    return true;
 }
 }  // namespace Bmi270Motion
 
@@ -521,6 +574,8 @@ private:
     std::atomic<int64_t> imu_mute_until_ms_{0};
     memoria::OfflineMenuMachine offline_menu_;
     std::atomic<std::uint32_t> offline_play_generation_{0};
+    // Pacing between local clips, and the story grace before OnStoryFinished.
+    static constexpr std::uint32_t kAigcClipGapMs = 1600;
     std::atomic<bool> offline_story_cancel_{false};
     TaskHandle_t usb_command_task_handle_ = nullptr;
     // Log tag of the USB command line: the test rig greps for "usb wake accepted" / "usb wake ignored".
@@ -547,28 +602,106 @@ private:
 
     // BMI270 has no haptic motor. A body tap is a short accel impulse, not
     // conversation start, screen tap rumble, or a sustained shake. The pulse
-    // classifier lives in memoria_pat.h so host tests can feed IMU sequences.
-    // Both gestures only animate the companion locally; neither starts a chat.
+    // classifier and what a pat or a tap decides in each state live in
+    // memoria_pat.h so host tests cover the exact firmware policy.
+    //
+    // Product 2026-10-21: while the companion speaks, a pat or a screen tap
+    // stops the current sentence and the device goes back to listening, so the
+    // child can talk at once. A crisis script plays to its end and ignores
+    // both.
     static constexpr int64_t kTouchImuMuteMs = 400;
+    static constexpr char kScreenTapTag[] = "MemoriaScreenTap";
+    bool imu_logged_ratio_ = false;
+    bool imu_logged_result_ = false;
+    int64_t pat_watcher_ms_ = 0;
 
-    void OnDevicePat(int score) {
-        auto& app = Application::GetInstance();
-        const auto state = app.GetDeviceState();
-        ESP_LOGI(TAG, "Device pat detected (score: %d) state=%d", score,
-                 static_cast<int>(state));
-        if (state != kDeviceStateIdle || display_ == nullptr) {
+    // A crisis script plays to its end. The device cannot tell it from a
+    // normal reply (the script text never reaches the board), so the only
+    // authority is the server: a protected generation carries
+    // "interruptible": false in generation.started. Every other generation
+    // omits the field and answers a gesture immediately.
+    static bool PlaybackMayStop() {
+        return memoria::PlaybackStopRegistry::GetInstance().allowed();
+    }
+
+    void OnDevicePat(int score, memoria::PatKind kind) {
+        DeviceState state = Application::GetInstance().GetDeviceState();
+        const bool crisis = state == kDeviceStateSpeaking && !PlaybackMayStop();
+        memoria::PatGestureFacts facts;
+        facts.state = state;
+        facts.speaking_crisis_playback = crisis;
+        facts.is_pat = true;
+        const auto decision = memoria::PatGestureDecisionFor(facts);
+        ESP_LOGI(TAG, "Device pat (accepted) kind=%s score=%d state=%d decision=%s silent=%d",
+                 memoria::PatEventName(kind), score, static_cast<int>(state),
+                 memoria::PatGestureDecisionName(decision),
+                 state == kDeviceStateListening ? 1 : 0);
+        if (state == kDeviceStateSpeaking) {
+            StopSpeakingForGesture(decision, "Device pat");
             return;
         }
-        display_->Pat();  // a happy hop
+        if (decision == memoria::PatGestureDecision::kStopSpeaking && display_ != nullptr) {
+            display_->Pat();  // a happy hop
+        }
     }
 
     void OnDeviceShake(int score) {
         const auto state = Application::GetInstance().GetDeviceState();
-        ESP_LOGI(TAG, "Device shake (score: %d): dizzy companion, no chat", score);
+        ESP_LOGI(TAG, "Device shake (score: %d) state=%d: dizzy companion, no chat, no stop",
+                 score, static_cast<int>(state));
         if (state != kDeviceStateIdle || display_ == nullptr) {
             return;
         }
         display_->Shake();
+    }
+
+    // A gesture while the companion speaks: a protected script plays on,
+    // otherwise the reply stops at once and the device returns to listening.
+    // This is the BOOT stop's own two public calls: AbortSpeaking flushes the
+    // pipeline synchronously and reports button.stop with the pre-flush
+    // fence, StartListening then reopens the microphone. Nothing waits on the
+    // server, so the child hears the effect immediately.
+    void StopSpeakingForGesture(memoria::PatGestureDecision decision, const char* source) {
+        if (decision == memoria::PatGestureDecision::kCrisisKeepPlayback) {
+            ESP_LOGI(TAG, "%s: protected playback, the sentence plays to its end", source);
+            return;
+        }
+        if (decision != memoria::PatGestureDecision::kStopSpeaking) {
+            ESP_LOGI(TAG, "%s: no stop in this state", source);
+            return;
+        }
+        auto& app = Application::GetInstance();
+        app.Schedule([&app, source]() {
+            if (app.GetDeviceState() != kDeviceStateSpeaking) {
+                ESP_LOGI(TAG, "%s stop dropped: playback already ended", source);
+                return;
+            }
+            // AbortSpeaking is the same local hard stop BOOT uses: it flushes
+            // the pipeline synchronously and reports button.stop with the
+            // pre-flush fence. StartListening then follows the driver's own
+            // "speaking -> listening" path (mic open, listening cue).
+            app.AbortSpeaking(kAbortReasonNone);
+            app.StartListening();
+            ESP_LOGI(TAG, "%s stopped playback -> listening", source);
+        });
+    }
+
+    void OnScreenTapGesture(std::uint32_t hold_ms, bool offline_wants_tap) {
+        auto& app = Application::GetInstance();
+        const auto state = app.GetDeviceState();
+        const bool crisis_playback = state == kDeviceStateSpeaking && !PlaybackMayStop();
+        memoria::TapGestureFacts facts;
+        facts.state = state;
+        facts.speaking_crisis_playback = crisis_playback;
+        facts.wifi_configuring = state == kDeviceStateWifiConfiguring;
+        facts.offline_wants_tap = offline_wants_tap;
+        const auto decision = memoria::ScreenTapDecisionFor(facts);
+        ESP_LOGI(kScreenTapTag, "Screen tap (accepted) hold_ms=%u state=%d decision=%s", hold_ms,
+                 static_cast<int>(state), memoria::ScreenTapDecisionName(decision));
+        if (decision != memoria::ScreenTapDecision::kStopSpeaking) {
+            return;  // protected playback, or a tap the power policy owns
+        }
+        StopSpeakingForGesture(memoria::PatGestureDecision::kStopSpeaking, "screen tap");
     }
 
     static void imu_event_task(void* arg) {
@@ -579,43 +712,92 @@ private:
         }
 
         memoria::PatDetector detector;
-        struct bmi2_sens_data prev = {};
-        bool has_prev = false;
+        memoria::ImuPoller poller;
+        std::uint32_t samples = 0;
+        self->pat_watcher_ms_ = esp_timer_get_time() / 1000;
+        // Armed now, read established or not five seconds later: a log with
+        // this line and no pat line says "no impulse", not "event ignored".
+        ESP_LOGI(TAG,
+                 "pat motion watcher armed 20 ms poll; log pat drop/reject (score %d) reason=%s",
+                 memoria::PatDetector::kDeltaThreshold,
+                 memoria::PatIgnoreName(memoria::PatIgnore::kNone));
 
         while (true) {
-            struct bmi2_sens_data cur = {};
-            if (!Bmi270Motion::ReadAccelRaw(cur)) {
-                detector.Reset();
-                has_prev = false;
-                vTaskDelay(pdMS_TO_TICKS(20));
-                continue;
+            poller.PollFrameInState(
+                static_cast<int>(Application::GetInstance().GetDeviceState()),
+                [&detector, &samples](memoria::ImuAccelSample& sample) {
+                    if (Bmi270Motion::ReadAccelRaw(sample)) {
+                        ++samples;
+                        return true;
+                    }
+                    detector.Reset();
+                    return false;
+                },
+                [self, &detector](int score) {
+                    const int64_t now_ms = esp_timer_get_time() / 1000;
+                    const bool muted =
+                        now_ms < self->imu_mute_until_ms_.load(std::memory_order_relaxed);
+                    const auto state = Application::GetInstance().GetDeviceState();
+                    if (!self->imu_logged_ratio_ && score > memoria::PatDetector::kDeltaThreshold) {
+                        self->imu_logged_ratio_ = true;
+                        ESP_LOGI(TAG,
+                                 "pat sample first high delta %d at %lld ms: threshold %d, x%u",
+                                 score, static_cast<long long>(now_ms - self->pat_watcher_ms_),
+                                 memoria::PatDetector::kDeltaThreshold,
+                                 static_cast<unsigned>(score /
+                                                       memoria::PatDetector::kDeltaThreshold));
+                    }
+                    const bool boot_quiet = now_ms - self->pat_watcher_ms_ <
+                                            memoria::PatDetector::kBootQuietMs;
+                    const auto result =
+                        detector.Observe(score, muted, now_ms, boot_quiet);
+                    const int reaction = memoria::PatReactionFor(score, boot_quiet);
+                    if (reaction == memoria::kPatReactionImpulse && !muted) {
+                        ESP_LOGI(TAG, "Device pat (high) score=%d state=%d reaction=%s muted=0",
+                                 score, static_cast<int>(state),
+                                 memoria::PatReactionName(reaction));
+                    }
+                    // Every rejected candidate leaves one line with the state
+                    // that judged it, so a quiet log means "no impulse".
+                    if (result.ignore != memoria::PatIgnore::kNone) {
+                        ESP_LOGI(TAG,
+                                 "Device pat ignored (score: %d, reason=%s) state=%d touch_mute=%d",
+                                 result.peak > 0 ? result.peak : score,
+                                 memoria::PatIgnoreReasonName(result.kind, result.ignore),
+                                 static_cast<int>(state), muted ? 1 : 0);
+                    }
+                    if (result.kind == memoria::PatKind::kPat) {
+                        self->OnDevicePat(result.peak, result.kind);
+                    } else if (result.kind == memoria::PatKind::kShake) {
+                        self->OnDeviceShake(result.peak);
+                    }
+                });
+
+            const int64_t now_ms = esp_timer_get_time() / 1000;
+            if (poller.StatsLogDue(now_ms)) {
+                memoria::ImuStatCounters stats;
+                poller.TakeStats(stats);
+                char line[192];
+                memoria::FormatImuStatsLine(stats, line, sizeof(line));
+                ESP_LOGI(TAG, "%s", line);
             }
-            if (has_prev) {
-                int dx = abs(static_cast<int>(cur.acc.x) - static_cast<int>(prev.acc.x));
-                int dy = abs(static_cast<int>(cur.acc.y) - static_cast<int>(prev.acc.y));
-                int dz = abs(static_cast<int>(cur.acc.z) - static_cast<int>(prev.acc.z));
-                int score = dx + dy + dz;
-                int64_t now_ms = esp_timer_get_time() / 1000;
-                const bool muted =
-                    now_ms < self->imu_mute_until_ms_.load(std::memory_order_relaxed);
-                const auto result = detector.Observe(score, muted, now_ms);
-                if (result.kind == memoria::PatKind::kPat) {
-                    self->OnDevicePat(result.peak);
-                } else if (result.kind == memoria::PatKind::kShake) {
-                    self->OnDeviceShake(result.peak);
-                } else if (result.kind == memoria::PatKind::kTouchRumble) {
-                    ESP_LOGI(TAG, "Device pat ignored (touch rumble, score: %d)",
-                             result.peak);
+            if (!self->imu_logged_result_ && now_ms - self->pat_watcher_ms_ > 5000) {
+                self->imu_logged_result_ = true;
+                if (samples == 0) {
+                    ESP_LOGW(TAG, "pat motion watcher: BMI2 returned no sample in 20 ms polls");
+                } else {
+                    ESP_LOGI(TAG, "pat motion watcher: BMI2 reading, samples=%u",
+                             static_cast<unsigned>(samples));
                 }
             }
-            prev = cur;
-            has_prev = true;
             vTaskDelay(pdMS_TO_TICKS(20));
         }
     }
 
-    void MuteImuForTouch() {
-        imu_mute_until_ms_.store((esp_timer_get_time() / 1000) + kTouchImuMuteMs,
+    void MuteImuForTouch() { MuteImu(kTouchImuMuteMs); }
+
+    void MuteImu(int64_t duration_ms) {
+        imu_mute_until_ms_.store((esp_timer_get_time() / 1000) + duration_ms,
                                  std::memory_order_relaxed);
     }
 
@@ -642,6 +824,27 @@ private:
         const std::string_view ogg(static_cast<const char*>(data), size);
         Application::GetInstance().PlaySound(ogg);
         return true;
+    }
+
+    // The one entry into a story from anywhere outside the offline-menu task.
+    // The spoken notice plays first and a missing notice refuses the story, so
+    // resume, single-title loop and cut-ins cannot reach a story file without it.
+    bool PlayStoryWithAigcNoticeNow(const char* story_file,
+                                    memoria::AigcPlaybackStart start) {
+        void* data = nullptr;
+        size_t size = 0;
+        if (!Assets::GetInstance().GetAssetData(
+                std::string(memoria::AigcNoticeFileFor(start)), data, size) ||
+            data == nullptr || size == 0) {
+            ESP_LOGE(TAG, "refusing %s without AIGC intro %s", story_file,
+                     memoria::kAigcNoticeStoryFile);
+            return false;
+        }
+        Application::GetInstance().GetAudioService().PlaySound(
+            std::string_view(static_cast<const char*>(data), size));
+        ESP_LOGI(TAG, "aigc story intro played start=%u file=%s",
+                 static_cast<unsigned>(start), story_file);
+        return PlayLocalAssetClip(story_file);
     }
 
     static bool NetworkLooksOnline() {
@@ -694,6 +897,23 @@ private:
                 return;
             }
             bool story_intro_ok = false;
+            // With no queued clip ahead of the story, its notice starts now;
+            // otherwise the queued notice does, and the start reuses it instead
+            // of repeating it (no gap long enough to drain the decoder).
+            const bool notice_ahead = out.clip_count > 0;
+            if (out.start_story && !notice_ahead) {
+                // The story follows below, once the notice has been given its lead.
+                if (!PlayLocalAssetClip(memoria::AigcNoticeFileFor(out.story_start))) {
+                    ESP_LOGE(TAG, "refusing %s without AIGC intro %s",
+                             memoria::OfflineStoryFile(out.story_index),
+                             memoria::kAigcNoticeStoryFile);
+                    return;
+                }
+                ESP_LOGI(TAG, "aigc story intro played start=%u",
+                         static_cast<unsigned>(out.story_start));
+                story_intro_ok = true;
+                vTaskDelay(pdMS_TO_TICKS(kAigcClipGapMs));
+            }
             for (std::size_t i = 0; i < out.clip_count; ++i) {
                 if (generation != offline_play_generation_.load(std::memory_order_relaxed)) {
                     return;
@@ -703,7 +923,7 @@ private:
                 if (std::string_view(out.clips[i]) == memoria::kAigcNoticeStory) {
                     story_intro_ok = played;
                 }
-                vTaskDelay(pdMS_TO_TICKS(1600));
+                vTaskDelay(pdMS_TO_TICKS(kAigcClipGapMs));
             }
             if (out.start_story) {
                 if (generation != offline_play_generation_.load(std::memory_order_relaxed)) {
@@ -801,6 +1021,8 @@ private:
         MuteImuForTouch();
         auto& app = Application::GetInstance();
         const auto state = app.GetDeviceState();
+        ESP_LOGI(kScreenTapTag, "touch release hold_ms=%u state=%d", hold_ms,
+                 static_cast<int>(state));
         if (memoria::MemoriaBootstrap::GetInstance().active()) {
             // The Mini Program asks for this when a QR expired or a claim was
             // refused ("轻点机器人屏幕换一张新二维码"). One refresh per 3 s.
@@ -821,13 +1043,19 @@ private:
         const std::uint32_t now_ms =
             static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
         if (!power.NoteTap(now_ms)) {
-            ESP_LOGI(TAG, "screen tap debounced");
+            ESP_LOGI(kScreenTapTag, "screen tap dropped (debounced) state=%d hold_ms=%u",
+                     static_cast<int>(state), static_cast<unsigned>(hold_ms));
             return;
         }
 
         const bool online = NetworkLooksOnline();
         const auto device = TapDeviceFor(state);
         const bool idle = device == memoria::TapDevice::kIdle;
+
+        // A driven conversation answers the tap; otherwise the power policy
+        // below keeps its wake, offline-menu and Wi-Fi behaviour.
+        OnScreenTapGesture(hold_ms, offline_menu_.WantsTap(online, idle));
+
         const auto action = memoria::TapWakeActionFor(memoria::TapFacts{
             .device = device,
             .in_quiet_hours = power.in_quiet_hours(BeijingMinuteNowOrZero()),
@@ -1155,6 +1383,11 @@ private:
             if (touchpad->WaitForTouchEvent()) {
                 touchpad->UpdateTouchPoint();
                 auto touch_event = touchpad->CheckTouchEvent();
+                if (touch_event != Cst816s::TOUCH_NONE && touch_event != Cst816s::TOUCH_HOLD) {
+                    ESP_LOGI(kScreenTapTag, "touch event=%d num=%d x=%d y=%d",
+                             static_cast<int>(touch_event), touchpad->GetTouchPoint().num,
+                             touchpad->GetTouchPoint().x, touchpad->GetTouchPoint().y);
+                }
                 auto& board = static_cast<MemoriaEspVocat&>(Board::GetInstance());
                 if (touch_event == Cst816s::TOUCH_PRESS ||
                     touch_event == Cst816s::TOUCH_HOLD) {
