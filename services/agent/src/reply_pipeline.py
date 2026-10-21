@@ -702,6 +702,53 @@ class ReplyPipeline:
             current_profile_id=self._current_authorizing_profile_id(),
         )
 
+    def rebind_response_plan(
+        self,
+        previous: GenerationFence,
+        current: GenerationFence,
+    ) -> None:
+        """Move the cached plan and late-crisis state to a successor generation.
+
+        The media output owner advances the fence on an internal handoff. The
+        admitted reply work keeps its per-turn answer, so its plan key must
+        move too; otherwise the next LLM request fails the exact-plan gate.
+        """
+
+        if not self._response_plans.rebind(previous, current):
+            return
+        late = self._late_crisis.pop(previous, None)
+        if late is not None:
+            self._late_crisis[current] = late
+        logger.info(
+            "response_plan_rebound session_id=%s turn_id=%s generation_id=%s previous_generation_id=%s",
+            current.session_id,
+            current.turn_id,
+            current.generation_id,
+            previous.generation_id,
+        )
+
+    def _fixed_safety_script_for_turn(self, fence: GenerationFence) -> FixedSafetyScript | None:
+        """A crisis script already decided for this turn on any generation.
+
+        Prerecorded crisis audio is not an LLM reply and must not be dropped
+        when an internal output handoff moves the reply to a new generation.
+        """
+
+        for plan in reversed(self._response_plans.same_turn(fence)):
+            script = plan.fixed_safety_script
+            if script is not None:
+                return script
+        for late_fence, state in reversed(tuple(self._late_crisis.items())):
+            if (
+                state.script is not None
+                and late_fence.session_id == fence.session_id
+                and late_fence.turn_id == fence.turn_id
+                and late_fence.tool_epoch == fence.tool_epoch
+                and late_fence.session_epoch == fence.session_epoch
+            ):
+                return state.script
+        return None
+
     def _register_response_planner_tool(self) -> bool:
         if self._response_planner_tool_registered or self._response_planner_client is None:
             return self._response_planner_tool_registered
@@ -1441,6 +1488,20 @@ class ReplyPipeline:
         self._runtime.orchestrator.set_active_llm_task(task)
         response_plan = self._response_plans.get(fence)
         if response_plan is None or not response_plan.fence.matches(fence):
+            fixed_safety = self._fixed_safety_script_for_turn(fence)
+            if fixed_safety is not None:
+                # Crisis playback is a fixed approved clip, not an LLM reply.
+                # It plays even when an internal generation handoff left the
+                # plan on the previous fence.
+                logger.warning(
+                    "fixed safety reply served without exact response plan "
+                    "session_id=%s turn_id=%s generation_id=%s",
+                    self._runtime.session_id,
+                    fence.turn_id,
+                    fence.generation_id,
+                )
+                yield fixed_safety
+                return
             logger.error(
                 "llm request blocked without exact response plan session_id=%s "
                 "turn_id=%s generation_id=%s",

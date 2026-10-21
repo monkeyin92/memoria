@@ -499,6 +499,7 @@ class _AigcHost(MediaSessionAigcNoticeMixin):
 def _notice_context() -> Any:
     return SimpleNamespace(
         aigc_round=None,
+        aigc_round_active=False,
         aigc_opening_marker_pending=False,
         aigc_opening_marker_ready_at=None,
         aigc_opening_marker_started_at=None,

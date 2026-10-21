@@ -59,6 +59,7 @@ class _RoundHost(MediaSessionAigcNoticeMixin):
 def _context(**overrides: Any) -> SimpleNamespace:
     values: dict[str, Any] = {
         "aigc_round": None,
+        "aigc_round_active": False,
         "aigc_opening_marker_pending": False,
         "aigc_opening_marker_ready_at": None,
         "aigc_opening_marker_started_at": None,
@@ -983,3 +984,27 @@ async def test_opening_marker_plays_and_releases_the_floor_after_device_ended() 
     finally:
         provider.marker_release.set()
         await registry.finalize_session(identity.session_id)
+
+
+def test_a_round_with_a_generation_logger_is_still_active() -> None:
+    """Production runs with the round logger; the END cue must still schedule."""
+
+    host = MediaSessionAigcNoticeMixin()
+    host.aigc_round_logger = AigcRoundLogger(
+        AigcTtsDescriptor(provider="stepfun", engine="stepaudio-3-tts")
+    )
+    context = SimpleNamespace(
+        identity=SimpleNamespace(session_id="aigc-round-logger", client_type="device"),
+        aigc_round=None,
+        aigc_round_active=False,
+        aigc_opening_marker_pending=False,
+        closed=False,
+        standby_requested=False,
+    )
+
+    record = host._start_aigc_round(context)
+
+    assert record is not None
+    assert context.aigc_round_active is True
+    assert host._start_aigc_round(context) is record
+    assert context.aigc_round_active is True

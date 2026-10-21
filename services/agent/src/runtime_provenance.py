@@ -8,6 +8,7 @@ checking.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -54,6 +55,10 @@ class GenerationVoiceSnapshot:
 class DuplexRuntimeProvenanceMixin:
     """Freeze planner provenance and applied voice per generation fence."""
 
+    # Re-key a cached response plan when output work moves to a successor
+    # generation. The reply pipeline that owns the cache installs it.
+    _response_plan_rebinder: Callable[[GenerationFence, GenerationFence], None] | None = None
+
     if TYPE_CHECKING:
         # Shared state owned by the DuplexRuntime dataclass.
         session_id: str
@@ -71,6 +76,22 @@ class DuplexRuntimeProvenanceMixin:
             *,
             capability: str | None = None,
         ) -> bool: ...
+
+    def set_response_plan_rebinder(
+        self,
+        rebinder: Callable[[GenerationFence, GenerationFence], None] | None,
+    ) -> None:
+        self._response_plan_rebinder = rebinder
+
+    def rebind_response_plan(
+        self,
+        previous: GenerationFence,
+        current: GenerationFence,
+    ) -> None:
+        """Move this session's cached plan to the generation that will speak it."""
+
+        if self._response_plan_rebinder is not None:
+            self._response_plan_rebinder(previous, current)
 
     def bind_response_provenance(
         self,

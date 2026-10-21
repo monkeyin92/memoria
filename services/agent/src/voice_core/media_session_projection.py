@@ -212,6 +212,7 @@ class MediaSessionProjectionMixin:
 
         @staticmethod
         def _rebind_output_work(
+            context: _MediaVoiceSession,
             work: _OutputWork,
             fence: GenerationFence,
             *,
@@ -790,6 +791,7 @@ class MediaSessionProjectionMixin:
                 return
             if not current_fence.matches(fence):
                 rebound = self._rebind_output_work(
+                    context,
                     _OutputWork(intent, fence),
                     current_fence,
                     context_version=coordinator.current_context_version(fence.session_id),
