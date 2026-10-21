@@ -18,6 +18,14 @@ SCRIPT = ROOT / "scripts" / "release_ops.sh"
 CI = ROOT / ".github" / "workflows" / "ci.yml"
 
 
+@pytest.fixture(autouse=True, scope="module")
+def _no_override_files_in_real_tmp():
+    before = set(Path("/tmp").glob("override-*.yml"))
+    yield
+    new = sorted(set(Path("/tmp").glob("override-*.yml")) - before)
+    assert not new, f"tests wrote override files into real /tmp: {new}"
+
+
 def _script() -> str:
     return SCRIPT.read_text(encoding="utf-8")
 
@@ -246,6 +254,7 @@ def test_script_names_no_release_tag_but_the_data_tree() -> None:
         "20260827-architecture-split-v1",
         "20261021-a94c438-pr345-pr346-pr348-pr352",
         "20261021-a94c438-pr345-pr346-pr348-pr352-pr353-pr355",
+        "20261021-stepfun-c272af5",
     }
     for retired in (
         "$OLD",
@@ -362,6 +371,20 @@ CONTROL_OVERRIDE = (
 )
 BRIDGE_OVERRIDE_SHA = "895b17fefa3401e75ba17e1c3f08aac9cab920f7b25e55aa540ffcc5a7a22da0"
 CONTROL_OVERRIDE_SHA = "95a5e03319cafcf7fcf7325f00b2cc753ea444c563bfd5de5472692ce1d67486"
+STEPFUN_CONTROL_IMAGE = "memoria-control-api:20261021-stepfun-c272af5"
+STEPFUN_BRIDGE_IMAGE = "memoria-agent:20261021-stepfun-c272af5"
+STEPFUN_CONTROL_OVERRIDE = (
+    "component-releases/20261021-stepfun-c272af5/override-control-stepfun-c272af5.yml"
+)
+STEPFUN_BRIDGE_OVERRIDE = (
+    "component-releases/20261021-stepfun-c272af5/override-bridge-stepfun-c272af5.yml"
+)
+STEPFUN_CONTROL_OVERRIDE_SHA = (
+    "53db50c436f582120ea3a292be1606f11fed46e5e329e30e73f4d55caba97204"
+)
+STEPFUN_BRIDGE_OVERRIDE_SHA = (
+    "a1b51ef44d4f87160649ee2015de815089a27f15d27a88d678196ef507fa5c3c"
+)
 
 _HOST_REPO = {
     "speaker-model": "memoria-speaker-model",
@@ -482,12 +505,14 @@ class FakeHost:
         return Path(os.readlink(self.memoria / "current"))
 
     def override_file(self, relative: str, service: str, image: str) -> Path:
+        assert not Path(relative).is_absolute(), "override path must stay under the fake root"
         path = self.memoria / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"services:\n  {service}:\n    image: {image}\n", encoding="utf-8")
         return path
 
     def tmp_override(self, name: str, service: str, image: str) -> Path:
+        assert not Path(name).is_absolute(), "tmp override must stay under the fake /tmp"
         path = self.tmp / name
         path.write_text(f"services:\n  {service}:\n    image: {image}\n", encoding="utf-8")
         return path
@@ -681,7 +706,7 @@ def test_freeze_derives_and_persists_prev_from_the_live_stack(tmp_path: Path) ->
     )
 
 
-def test_the_override_whitelist_pins_the_two_persisted_copies() -> None:
+def test_the_override_whitelist_pins_every_persisted_copy() -> None:
     script = _script()
     for path, sha, origin in (
         (
@@ -695,6 +720,18 @@ def test_the_override_whitelist_pins_the_two_persisted_copies() -> None:
             "20261021-a94c438-pr345-pr346-pr348-pr352-pr353-pr355/override-pr355.yml",
             BRIDGE_OVERRIDE_SHA,
             "/tmp/override-pr355.yml",
+        ),
+        (
+            "/opt/memoria/component-releases/20261021-stepfun-c272af5/"
+            "override-control-stepfun-c272af5.yml",
+            STEPFUN_CONTROL_OVERRIDE_SHA,
+            "/tmp/override-control-stepfun-c272af5.yml",
+        ),
+        (
+            "/opt/memoria/component-releases/20261021-stepfun-c272af5/"
+            "override-bridge-stepfun-c272af5.yml",
+            STEPFUN_BRIDGE_OVERRIDE_SHA,
+            "/tmp/override-bridge-stepfun-c272af5.yml",
         ),
     ):
         assert path in script
@@ -886,6 +923,54 @@ def test_freeze_accepts_a_persisted_override_path(tmp_path: Path) -> None:
 
     assert run.returncode == 0, run.output
     assert host.prev_record(RELEASE) == _component_record(host)
+
+
+def test_freeze_accepts_the_stepfun_whitelist_entries(tmp_path: Path) -> None:
+    host = component_host(tmp_path)
+    base = host.release_dir(COMPONENT_STACK) / "docker-compose.production.yml"
+    control = host.override_file(
+        STEPFUN_CONTROL_OVERRIDE, "control-api", STEPFUN_CONTROL_IMAGE
+    )
+    bridge = host.override_file(
+        STEPFUN_BRIDGE_OVERRIDE, "voice-core-media-bridge", STEPFUN_BRIDGE_IMAGE
+    )
+    control_origin = host.tmp_override(
+        "override-control-stepfun-c272af5.yml", "control-api", STEPFUN_CONTROL_IMAGE
+    )
+    bridge_origin = host.tmp_override(
+        "override-bridge-stepfun-c272af5.yml",
+        "voice-core-media-bridge",
+        STEPFUN_BRIDGE_IMAGE,
+    )
+    for service, image, image_id, origin in (
+        ("control-api", STEPFUN_CONTROL_IMAGE, "sha256:control-live", control_origin),
+        (
+            "voice-core-media-bridge",
+            STEPFUN_BRIDGE_IMAGE,
+            "sha256:bridge-live",
+            bridge_origin,
+        ),
+    ):
+        host.container(
+            service,
+            release=COMPONENT_STACK,
+            commit="e" * 40,
+            chain=f"{base},{origin}",
+            version="20261021-stepfun-c272af5",
+            image=image,
+            image_id=image_id,
+        )
+
+    run = host.step("freeze", tag=RELEASE)
+
+    assert run.returncode == 0, run.output
+    record = host.prev_record(RELEASE)
+    assert record is not None
+    assert (
+        f"overrides=control-api {control} {STEPFUN_CONTROL_OVERRIDE_SHA} sha256:control-live "
+        f"voice-core-media-bridge {bridge} {STEPFUN_BRIDGE_OVERRIDE_SHA} sha256:bridge-live\n"
+        in record
+    )
 
 
 def test_freeze_reruns_converge_on_the_same_record(tmp_path: Path) -> None:

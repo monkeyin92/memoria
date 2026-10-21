@@ -44,6 +44,8 @@ ship_images() { local i; for i in "${!SHIP[@]}"; do printf '%s=memoria-%s ' "${S
 PREV_OVERRIDE_WHITELIST='
 control-api              /opt/memoria/component-releases/20261021-a94c438-pr345-pr346-pr348-pr352/override-control-pr352.yml       95a5e03319cafcf7fcf7325f00b2cc753ea444c563bfd5de5472692ce1d67486  /tmp/override-control-pr352.yml
 voice-core-media-bridge  /opt/memoria/component-releases/20261021-a94c438-pr345-pr346-pr348-pr352-pr353-pr355/override-pr355.yml  895b17fefa3401e75ba17e1c3f08aac9cab920f7b25e55aa540ffcc5a7a22da0  /tmp/override-pr355.yml
+control-api              /opt/memoria/component-releases/20261021-stepfun-c272af5/override-control-stepfun-c272af5.yml              53db50c436f582120ea3a292be1606f11fed46e5e329e30e73f4d55caba97204  /tmp/override-control-stepfun-c272af5.yml
+voice-core-media-bridge  /opt/memoria/component-releases/20261021-stepfun-c272af5/override-bridge-stepfun-c272af5.yml               a1b51ef44d4f87160649ee2015de815089a27f15d27a88d678196ef507fa5c3c  /tmp/override-bridge-stepfun-c272af5.yml
 '
 # Prints "<service>|<persisted path>|<sha256>|<original path>" for either
 # whitelisted path of a row. Returns 1 for anything else. Production resolves
