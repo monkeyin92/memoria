@@ -550,9 +550,9 @@ SQL 侧只多返回事实 `device_bound`，与开关无关，所以 `schema` 步
 1. 先让板子跑着真实 build N 并确认（OTA 装上或 USB 刷入都行；2026-10-04 那次是 USB 刷的 21，OTA 正常路径 2026-09-27 已验过）。
 2. `firmware/esp32/scripts/build_ota_rollback_drill.sh N+1`：同一份源码、更大的 build 号、**不确认自己**的演练镜像，落在 `artifacts/ota-rollback-drill/app-<N+1>.bin`（缓存里的两处源码构建后自动还原，演练代码不进仓库）。**先构建并签好真实 build，再构建演练**：它会覆盖 `artifacts/memoria-esp-vocat-app.bin`。
 3. `publish_firmware_release.py sign --image artifacts/ota-rollback-drill/app-<N+1>.bin --build <N+1>` 与 `upload --build <N+1>`（`sign` 默认只认头文件里的 build，演练镜像必须显式给号，默认路径永远不会误签它）。
-4. 设备装上并重启进 N+1：串口出现 `OTA rollback drill: build N+1 stays PENDING_VERIFY`，**没有** `confirmed`。设备只在开机空闲约 30 s 后检查一次，之后每 6 小时一次（传输失败后 15 min），所以 `upload` 之后要**复位板子**（打开常驻串口记录进程就会复位）才会马上发现；下载约 70 s，其间任何唤醒都会暂停它，别碰机器人。
+4. 设备装上并重启进 N+1：串口出现 `OTA rollback drill: build N+1 stays PENDING_VERIFY`，**没有** `confirmed`。设备只在开机空闲约 30 s 后检查一次，之后每 6 小时一次（传输失败后 15 min），所以 `upload` 之后要**复位板子**（拔插 USB，或停掉常驻串口记录进程后 `esptool … --after hard-reset`、再重开记录进程；记录进程自 2026-10-21 起开口不再复位板子）才会马上发现；下载约 70 s，其间任何唤醒都会暂停它，别碰机器人。
 5. 板子仍停在 N+1 的 `PENDING_VERIFY` 时，**先**把 `current.json` 指回真实 build N（再次 `upload --build N`，或 `withdraw`）：否则回滚回来的 N 会发现 N+1 比自己新，再下载、再重启、再回滚，反复循环。N+1 这个号永久作废，下一个真实 build 用 N+2。
-6. 复位板子（拔插 USB、再打开串口记录进程，或 `esptool … --after hard-reset`）：预期引导程序放弃 N+1，回到旧槽，串口 `MEMORIA_FIRMWARE_BUILD=N`，能唤醒、能对话；之后固件检查返回 200 且没有再下载镜像。
+6. 复位板子（拔插 USB，或停掉记录进程后 `esptool … --after hard-reset`，之后再开记录进程；只重开记录进程不会复位）：预期引导程序放弃 N+1，回到旧槽，串口 `MEMORIA_FIRMWARE_BUILD=N`，能唤醒、能对话；之后固件检查返回 200 且没有再下载镜像。
 7. 通过判据：第 6 步回到 N 且对话正常，之后不再出现下载。失败时按下一节的固件回写恢复（只写唯一紧邻 app 与空 otadata，不动保护区）。取证（可选）：第 5 步之后、第 6 步复位之前，用 `firmware/esp32/scripts/flash_backup.py` 的 `read_region` 只读 `0xd000` 起 8 KiB（芯片停在 ROM 下载模式，不消耗 `PENDING_VERIFY`）：应见槽 0 seq 1 `VALID`（ota_0）、槽 1 seq 2 `PENDING_VERIFY`（ota_1），boot、分区表、phy、identity、ota_0、assets 的 MD5 与演练前相同（nvs 与 otadata 会变）。回滚复位之后同样转储一次（先停串口记录进程；转储后用 `esptool --chip esp32s3 -p <端口> --after hard-reset read-mac` 复位）：应见槽 1 `ABORTED`，其余区 MD5 与演练前相同（nvs 只在 OTA 下载那一步变过）。2026-10-04 那次实测（23:23）：槽 0 seq 1 `ota_0` `VALID`、槽 1 seq 2 `ota_1` `ABORTED`；没有演练「复位时指针仍在 N+1」的循环情形。
 
 ## 回滚与验收底线
