@@ -34,11 +34,15 @@ from services.agent.src.orchestration.handlers import (
     SpeechSynthesisRequest,
 )
 from services.agent.src.orchestration.phrase_segmenter import PhraseSegmenter
+from services.agent.src.providers.asr_failover import (
+    ASRFailoverConfig,
+    build_asr_session_factory,
+)
+from services.agent.src.providers.asr_session import StreamingASRSession
 from services.agent.src.providers.funasr_protocol import (
     FunASRServerEvent,
     sentence_to_asr_result,
 )
-from services.agent.src.providers.funasr_stt import FunASRSession
 from services.agent.src.voice_core.media_protocol import AudioFrame, SessionIdentity
 from services.agent.src.voice_core.media_session_types import ProviderAudioTaskSnapshot
 from services.agent.src.voice_core.speech_timeline import ASRResult
@@ -106,7 +110,7 @@ class ExistingVoiceProviderConfig:
             raise ValueError("max_generation_history must be positive")
 
 
-ASRSessionFactory = Callable[[], FunASRSession]
+ASRSessionFactory = Callable[[], StreamingASRSession]
 
 
 @dataclass(slots=True)
@@ -123,7 +127,7 @@ class ExistingVoiceProviderAdapter:
     # Test-period transcript logging, off unless ASR_TEXT_DEBUG_LOG_SUBJECTS
     # lists the session's subject or device. Never changes what is committed.
     asr_text_debug_subjects: AsrTextDebugSubjects | None = None
-    _asr: FunASRSession | None = field(default=None, init=False)
+    _asr: StreamingASRSession | None = field(default=None, init=False)
     _asr_text_debug: AsrTextDebugSubjects | None = field(default=None, init=False)
     _stream_epoch: int = field(default=0, init=False)
     _asr_task_epoch_offset: int = field(default=0, init=False)
@@ -300,7 +304,7 @@ class ExistingVoiceProviderAdapter:
             raise RuntimeError("orchestrated language-model handler returned an invalid fence")
         return fence
 
-    def _global_asr_task_epoch(self, asr: FunASRSession) -> int:
+    def _global_asr_task_epoch(self, asr: StreamingASRSession) -> int:
         value = self._asr_task_epoch_offset + max(1, int(asr.task_epoch))
         self._last_global_asr_task_epoch = max(self._last_global_asr_task_epoch, value)
         return value
@@ -375,7 +379,7 @@ class ExistingVoiceProviderAdapter:
 
     async def _ensure_asr(
         self, stream_epoch: int, identity: SessionIdentity | None = None
-    ) -> FunASRSession:
+    ) -> StreamingASRSession:
         if self._closed:
             raise RuntimeError("media provider is closed")
         if stream_epoch < 1:
@@ -395,13 +399,16 @@ class ExistingVoiceProviderAdapter:
             await self._reset_asr_session(stream_epoch)
             return await self._ensure_asr(stream_epoch, identity)
         # Every provider session the bridge creates follows the whitelist, so
-        # a factory the deployment built keeps logging the same sessions.
+        # a factory the deployment built keeps logging the same sessions. The
+        # debug switch is test-only and not part of the streaming protocol, so
+        # attach it to whichever provider session the factory built.
+        asr = cast(Any, self._asr)
         self._asr_text_debug = self._asr_text_debug_for(identity)
-        self._asr.asr_text_debug = self._asr_text_debug
+        asr.asr_text_debug = self._asr_text_debug
         if identity is not None:
             # The provider logs its own finals without this adapter around it.
-            self._asr.asr_text_debug_session_id = identity.session_id
-            self._asr.asr_text_debug_subject_ids = (
+            asr.asr_text_debug_session_id = identity.session_id
+            asr.asr_text_debug_subject_ids = (
                 identity.subject_id,
                 identity.device_id,
             )
@@ -461,7 +468,7 @@ class ExistingVoiceProviderAdapter:
         if line is not None:
             logger.info(line)
 
-    def _remember_asr_task(self, asr: FunASRSession, stream_epoch: int) -> None:
+    def _remember_asr_task(self, asr: StreamingASRSession, stream_epoch: int) -> None:
         task_id = str(getattr(asr, "task_id", "") or "")
         if task_id:
             if task_id not in self._asr_task_contexts:
@@ -621,7 +628,7 @@ class ExistingVoiceProviderAdapter:
 
     def _map_asr_event(
         self,
-        asr: FunASRSession,
+        asr: StreamingASRSession,
         event: FunASRServerEvent,
         stream_epoch: int,
     ) -> ASRResult | None:
@@ -1874,32 +1881,68 @@ def build_production_provider_factory(
         raise ValueError("orchestrated LLM builder did not return a session factory")
 
     asr_config = FunASRConfig.from_env()
+    asr_failover = ASRFailoverConfig.from_env()
     asr_text_debug_subjects = AsrTextDebugSubjects.from_env()
     tts_config = DoubaoTTSConfig.from_env()
     if getattr(settings, "environment", "development") == "production":
         doubao_auth = tts_config.api_key.strip() or (
             tts_config.app_id.strip() and tts_config.access_token.strip()
         )
-        missing = [
-            name
-            for name, value in (
-                ("DASHSCOPE_API_KEY", asr_config.api_key.strip()),
-                ("DASHSCOPE_WS_URL", asr_config.ws_url.strip()),
-                ("DOUBAO_TTS_AUTH", doubao_auth),
-                ("DOUBAO_TTS_WS_URL", tts_config.ws_url.strip()),
-                ("DOUBAO_TTS_SPEAKER", tts_config.speaker.strip()),
-            )
-            if not value
+        required: list[tuple[str, object]] = [
+            ("DOUBAO_TTS_AUTH", doubao_auth),
+            ("DOUBAO_TTS_WS_URL", tts_config.ws_url.strip()),
+            ("DOUBAO_TTS_SPEAKER", tts_config.speaker.strip()),
         ]
+        asr_endpoints: list[str] = []
+        if not asr_failover.enabled:
+            required.extend(
+                (
+                    ("DASHSCOPE_API_KEY", asr_config.api_key.strip()),
+                    ("DASHSCOPE_WS_URL", asr_config.ws_url.strip()),
+                )
+            )
+            asr_endpoints.append(asr_config.ws_url)
+        else:
+            if asr_failover.primary == "volc":
+                required.extend(
+                    (
+                        ("VOLC_ASR_APP_ID", os.getenv("VOLC_ASR_APP_ID", "").strip()),
+                        (
+                            "VOLC_ASR_ACCESS_TOKEN",
+                            os.getenv("VOLC_ASR_ACCESS_TOKEN", "").strip(),
+                        ),
+                    )
+                )
+                asr_endpoints.append(
+                    os.getenv("VOLC_ASR_WS_URL", "").strip()
+                    or os.getenv("VOLC_ASR_WS_ENDPOINT", "").strip()
+                    or "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
+                )
+            if asr_failover.tertiary == "dashscope_funasr":
+                required.extend(
+                    (
+                        ("DASHSCOPE_API_KEY", asr_config.api_key.strip()),
+                        ("DASHSCOPE_WS_URL", asr_config.ws_url.strip()),
+                    )
+                )
+                asr_endpoints.append(asr_config.ws_url)
+        missing = [name for name, value in required if not value]
         if missing:
             raise ValueError(
                 f"production media provider missing required config: {', '.join(missing)}"
             )
-        if not asr_config.ws_url.startswith("wss://") or not tts_config.ws_url.startswith("wss://"):
+        if any(not url.startswith("wss://") for url in asr_endpoints) or not (
+            tts_config.ws_url.startswith("wss://")
+        ):
             raise ValueError("production media providers require WSS endpoints")
     adapter_config = ExistingVoiceProviderConfig(
         sample_rate=asr_config.sample_rate,
         output_sample_rate=tts_config.sample_rate,
+    )
+    # Built once so the failover breaker is process-wide, not per session.
+    asr_session_factory = build_asr_session_factory(
+        funasr_config=asr_config,
+        metrics=GLOBAL_METRICS,
     )
 
     def factory(identity: SessionIdentity) -> ExistingVoiceProviderAdapter:
@@ -1913,12 +1956,7 @@ def build_production_provider_factory(
                 "orchestrated language-model handler must expose accept_output_intent()"
             )
         return ExistingVoiceProviderAdapter(
-            asr_session_factory=lambda: FunASRSession(
-                replace(asr_config),
-                metrics=GLOBAL_METRICS,
-                asr_text_debug_session_id=identity.session_id,
-                asr_text_debug_subject_ids=(identity.subject_id, identity.device_id),
-            ),
+            asr_session_factory=asr_session_factory,
             language_model=language_model,
             asr_text_debug_subjects=asr_text_debug_subjects,
             speech_synthesis=cast(
