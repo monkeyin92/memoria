@@ -622,7 +622,8 @@ private:
         memoria::ImuPoller poller;
 
         while (true) {
-            poller.PollFrame(
+            poller.PollFrameInState(
+                static_cast<int>(Application::GetInstance().GetDeviceState()),
                 [&detector](memoria::ImuAccelSample& sample) {
                     if (Bmi270Motion::ReadAccelRaw(sample)) {
                         return true;
@@ -647,10 +648,11 @@ private:
 
             const int64_t now_ms = esp_timer_get_time() / 1000;
             if (poller.StatsLogDue(now_ms)) {
-                ESP_LOGI(TAG, "BMI2 stats ok=%u fail=%u state=%d",
-                         static_cast<unsigned>(poller.ok()),
-                         static_cast<unsigned>(poller.fail()),
-                         static_cast<int>(Application::GetInstance().GetDeviceState()));
+                memoria::ImuStatCounters stats;
+                poller.TakeStats(stats);
+                char line[192];
+                memoria::FormatImuStatsLine(stats, line, sizeof(line));
+                ESP_LOGI(TAG, "%s", line);
             }
             vTaskDelay(pdMS_TO_TICKS(20));
         }
