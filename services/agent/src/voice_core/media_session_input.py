@@ -718,7 +718,7 @@ class MediaSessionInputMixin:
                         continue_output=interruption.continue_output,
                         backchannel=interruption.backchannel,
                     )
-                if interaction.duck_output and not context.runtime.fixed_safety_playback_active():
+                if interaction.duck_output and not context.runtime.floor.fixed_safety_audible:
                     context.runtime.publish_assistant_audio("duck", gain=0.0)
                 context.runtime.apply_interaction_decision(interaction)
         # Sample ranges remain authoritative for media turn boundaries.
@@ -740,8 +740,10 @@ class MediaSessionInputMixin:
             # playback.flush for that stopped generation and reconnects
             # (2026-09-30, build 12 「停」).
             device_flushed = segment.hard_stop and context.identity.client_type == "device"
-            if interruption.cancel_generation and not device_flushed and (
-                context.runtime.fixed_safety_playback_active()
+            if (
+                interruption.cancel_generation
+                and not device_flushed
+                and context.runtime.floor.fixed_safety_audible
             ):
                 logger.info(
                     "media keyword interrupt ignored during fixed safety playback session=%s",

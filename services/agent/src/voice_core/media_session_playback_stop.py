@@ -74,6 +74,7 @@ _PLAYBACK_CANDIDATE_SPLIT_GAP_SAMPLES = 40_000  # 2.5 s at 16 kHz
 # last uplink evidence) is new speech; one closer to it is still the echo's own tail (2026-10-03 round 11:
 # a VAD edge 0.08 s past the boundary was the echo, 3 s later the child's question followed).
 _PLAYBACK_NEW_SPEECH_VAD_SAMPLES = 12_800  # 0.8 s at 16 kHz
+_FIXED_SAFETY_COMMIT_RECHECK_S = 0.5
 
 # Sentence-final particles / punctuation: a follow-up that ends here may commit after one grace.
 _FOLLOWUP_COMPLETE_SUFFIXES = (
@@ -456,6 +457,25 @@ class MediaPlaybackStopMixin:
             len(result.text.strip()),
         )
         self._schedule_turn_commit(context)
+
+    def defer_commit(self, context: _MediaVoiceSession, endpoint_sample: int) -> bool:
+        """True when the commit due at ``endpoint_sample`` must wait and has been rescheduled.
+
+        Committing during a fixed safety script would supersede it mid-sentence,
+        so the turn waits for the script's end with a fresh tail bound on every
+        recheck. Otherwise an incomplete follow-up may keep waiting.
+        """
+
+        if context.runtime.floor.fixed_safety_audible:
+            logger.info(
+                "media turn commit held for fixed safety playback session=%s endpoint=%s",
+                context.identity.session_id,
+                endpoint_sample,
+            )
+            context.pending.restart_endpoint_bounds(_FIXED_SAFETY_COMMIT_RECHECK_S)
+            self._schedule_turn_commit(context)
+            return True
+        return self.defer_incomplete_followup_commit(context, endpoint_sample)
 
     def defer_incomplete_followup_commit(
         self, context: _MediaVoiceSession, endpoint_sample: int
@@ -957,7 +977,7 @@ class MediaPlaybackStopMixin:
             or not context.runtime.floor.interruptible
         ):
             return False
-        if context.runtime.fixed_safety_playback_active():
+        if context.runtime.floor.fixed_safety_audible:
             logger.info(
                 "media spoken stop ignored during fixed safety playback session=%s",
                 context.identity.session_id,

@@ -47,7 +47,6 @@ _CLOCK_FACT_PARTIAL_STABLE_S = 0.6
 _CONVERSATION_CLOSE_PARTIAL_STABLE_S = 0.6
 _LIVE_LOOKUP_PARTIAL_STABLE_S = 0.6
 _DUPLICATE_COMMIT_DELIVERY_GUARD_S = 8.0
-_FIXED_SAFETY_COMMIT_RECHECK_S = 0.5
 # Bound how long admitted output may wait behind a pending turn that has no
 # text evidence at all.  Run 2026-09-24 session b18fede9: a ready weather
 # answer waited ~8 s because room-noise VAD bursts under 2.5 s apart kept
@@ -202,7 +201,7 @@ class MediaTurnEndpointMixin:
             self, context: _MediaVoiceSession, result: ASRResult
         ) -> None: ...
 
-        def defer_incomplete_followup_commit(
+        def defer_commit(
             self, context: _MediaVoiceSession, endpoint_sample: int
         ) -> bool: ...
 
@@ -1281,18 +1280,6 @@ class MediaTurnEndpointMixin:
             )
             if not current_endpoint or context is None:
                 return
-            if context.runtime.fixed_safety_playback_active():
-                # Committing would supersede the script mid-sentence; the turn
-                # waits for its end with a fresh tail bound on every recheck.
-                logger.info(
-                    "media turn commit held for fixed safety playback session=%s endpoint=%s",
-                    session_id,
-                    endpoint_sample,
-                )
-                context.pending.restart_endpoint_bounds(_FIXED_SAFETY_COMMIT_RECHECK_S)
-                context.turn_endpoint_task = None
-                self._schedule_turn_commit(context)
-                return
             pinned_clock_fact = (
                 context.pending.clock_fact_endpoint_pinned is not None
                 and context.pending.clock_fact_endpoint_pinned == endpoint_sample
@@ -1341,9 +1328,9 @@ class MediaTurnEndpointMixin:
                 if context.runtime.assistant_speaking:
                     context.runtime.publish_assistant_audio("restore", gain=1.0)
                 return
-            # Mid-clause follow-ups (「我想听」) must wait for the next final; otherwise
-            # one child sentence becomes two input turns and the tail dies on ASR timeout.
-            if self.defer_incomplete_followup_commit(context, endpoint_sample):
+            # A fixed safety script still playing, or a mid-clause follow-up (「我想听」, which would
+            # split one child sentence into two input turns), keeps the commit waiting.
+            if self.defer_commit(context, endpoint_sample):
                 return
             # Shield past the grace sleep: late offline recovery re-arms the
             # same endpoint via ``_schedule_turn_commit``, which cancels the

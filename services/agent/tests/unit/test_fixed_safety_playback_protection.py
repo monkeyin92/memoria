@@ -45,7 +45,7 @@ async def test_device_stop_word_does_not_cut_a_fixed_safety_script(
 ) -> None:
     async def scenario(harness: _StoryHarness) -> None:
         playing = await harness.start_story()
-        assert harness.runtime.fixed_safety_playback_active()
+        assert harness.runtime.floor.fixed_safety_audible
         await harness.audio_frames(15, final_text="停")
         await harness.assert_story_still_playing(playing)
         await harness.audio_frames(15, final_text="别说了")
@@ -108,7 +108,7 @@ async def test_h5_spoken_stop_does_not_cut_the_crisis_script() -> None:
 async def test_device_stop_word_still_stops_an_ordinary_story() -> None:
     async def scenario(harness: _StoryHarness) -> None:
         playing = await harness.start_story()
-        assert not harness.runtime.fixed_safety_playback_active()
+        assert not harness.runtime.floor.fixed_safety_audible
         await harness.audio_frames(15, final_text="停")
         await harness.wait_for(lambda: bool(harness.cancel_effects()))
         harness.assert_story_stopped_session_open(playing)
@@ -126,20 +126,20 @@ def _speaking_runtime(text: str) -> DuplexRuntime:
 def test_fixed_safety_playback_blocks_barge_in_while_audible(script: FixedSafetyScript) -> None:
     runtime = _speaking_runtime(script.display)
 
-    assert runtime.fixed_safety_playback_active()
+    assert runtime.floor.fixed_safety_audible
     assert runtime.playback_overlap_input_blocked()
 
 
 def test_first_phrase_of_the_crisis_script_is_already_protected() -> None:
     runtime = _speaking_runtime(CRISIS_SELF_SCRIPT.phrases[0].display)
 
-    assert runtime.fixed_safety_playback_active()
+    assert runtime.floor.fixed_safety_audible
 
 
 def test_ordinary_reply_keeps_barge_in() -> None:
     runtime = _speaking_runtime("从前有一座山，山里有一座庙。")
 
-    assert not runtime.fixed_safety_playback_active()
+    assert not runtime.floor.fixed_safety_audible
     assert not runtime.playback_overlap_input_blocked()
 
 
@@ -147,5 +147,5 @@ def test_protection_ends_when_the_script_is_no_longer_audible() -> None:
     runtime = _speaking_runtime(CRISIS_SELF_SCRIPT.display)
     runtime._voice_floor.update(pending_assistant_text="", assistant_speaking=False)
 
-    assert not runtime.fixed_safety_playback_active()
+    assert not runtime.floor.fixed_safety_audible
     assert not runtime.playback_overlap_input_blocked()
