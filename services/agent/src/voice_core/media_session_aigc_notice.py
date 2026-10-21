@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from services.agent.src.aigc_generation_log import AigcRoundLogger, AigcRoundRecord
@@ -111,11 +111,19 @@ class MediaSessionAigcNoticeMixin:
 
         if context.identity.client_type != "device":
             return None
-        if context.aigc_round is not None or context.closed or context.standby_requested:
+        if (
+            context.aigc_round is not None
+            or context.aigc_round_active
+            or context.closed
+            or context.standby_requested
+        ):
             return context.aigc_round
+        # The round is active whether or not a logger is configured: the
+        # closing marker is scheduled from this flag, and production runs with
+        # a logger, so tying the flag to the logger disabled every END cue.
+        context.aigc_round_active = True
         round_logger = self.aigc_round_logger
         if round_logger is None:
-            context.aigc_round_active = True
             return None
         record = round_logger.start()
         context.aigc_round = record
@@ -159,22 +167,28 @@ class MediaSessionAigcNoticeMixin:
         context.aigc_closing_marker_started_at = None
 
     async def _begin_aigc_reply_round(
-        self, context: _MediaVoiceSession, *, reason: str = "reply_turn"
-    ) -> None:
+        self,
+        context: _MediaVoiceSession,
+        work: _OutputWork | None = None,
+        *,
+        reason: str = "reply_turn",
+    ) -> _OutputWork | None:
         """Open the notice pair for one reply turn before its first audio.
 
         A previous round's closing marker is allowed to finish first; a reply
         that starts on top of it would make the notice order depend on output
-        queue timing. The opening marker only needs to be admitted here: the
-        reply is queued behind it, so the child hears START before the answer.
+        queue timing. The opening cue rides the reply's own output work on the
+        same fence: admitting it as its own intent let the cue take the output
+        owner and skip the reply, which then had to be promoted to a new
+        generation without its response plan.
         """
 
         if context.identity.client_type != "device":
-            return
+            return work
         opening_enabled = self.aigc_notice_config.position_enabled("opening")
         closing_enabled = self.aigc_notice_config.position_enabled("closing")
         if not opening_enabled and not closing_enabled:
-            return
+            return work
         closing_marker_was_active = context.aigc_closing_marker_state != "idle"
         if await self._wait_aigc_round_closed(context) or closing_marker_was_active:
             # A scheduled END marker may still be draining its output task even
@@ -184,11 +198,37 @@ class MediaSessionAigcNoticeMixin:
         self._finish_aigc_round(context, close_reason="superseded")
         self._start_aigc_round(context, reason=reason)
         self._reset_aigc_closing_marker(context)
-        context.aigc_opening_marker_pending = opening_enabled
+        context.aigc_opening_marker_pending = False
         if not opening_enabled:
             context.aigc_opening_marker_ready_at = time.monotonic()
-            return
-        await self._speak_aigc_opening_marker(context)
+            return work
+        pcm = self.aigc_notice_config.marker_pcm("opening")
+        if pcm is None:
+            context.aigc_opening_marker_ready_at = time.monotonic()
+            return work
+        if work is None or work.conversation_text is None:
+            # Wake acknowledgement and refusal paths have no reply work to
+            # carry the cue; they keep the standalone marker.
+            context.aigc_opening_marker_pending = True
+            await self._speak_aigc_opening_marker(context)
+            return work
+        attached = replace(work, lead_pcm_s16le=pcm)
+        context.output.output_work[attached.intent_id] = attached
+        context.aigc_opening_marker_started_at = time.monotonic()
+        context.aigc_opening_marker_ready_at = opening_marker_ready_at(
+            started_at=context.aigc_opening_marker_started_at,
+            pcm=pcm,
+            sample_rate_hz=self._aigc_pcm_sample_rate(context),
+            lead_interval_ms=self.aigc_notice_config.lead_interval_ms,
+        )
+        self.metrics.inc_media_metric("voice_aigc_notice_opening_total")
+        logger.info(
+            "AIGC opening marker attached session=%s content_id=%s fence=%s",
+            context.identity.session_id,
+            context.aigc_round.content_id if context.aigc_round is not None else "",
+            work.fence,
+        )
+        return attached
 
     def _schedule_aigc_round_closing(
         self, context: _MediaVoiceSession, *, close_reason: str

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.response_planner_client import ResponsePlan
 
@@ -50,6 +52,41 @@ class ResponsePlanCache:
     def discard(self, fence: GenerationFence) -> None:
         self._plans.pop(fence, None)
         self._profiles.pop(fence, None)
+
+    def rebind(self, previous: GenerationFence, current: GenerationFence) -> bool:
+        """Move the plan cached for ``previous`` onto ``current``.
+
+        An internal output handoff advances only the generation. The reply
+        that was admitted under the old fence still has to answer under the
+        new one, so the plan key moves with the work instead of disappearing.
+        """
+
+        plan = self._plans.get(previous)
+        if plan is None:
+            return False
+        authorizing_profile_id = self._profiles.get(previous)
+        self.discard(previous)
+        self.store(
+            replace(plan, fence=current),
+            authorizing_profile_id=authorizing_profile_id,
+        )
+        return True
+
+    def same_turn(self, fence: GenerationFence) -> tuple[ResponsePlan, ...]:
+        """Plans for this exact turn on any generation, oldest generation first."""
+
+        plans = (
+            plan
+            for plan_fence, plan in self._plans.items()
+            if plan_fence.session_id == fence.session_id
+            and plan_fence.turn_id == fence.turn_id
+            and plan_fence.tool_epoch == fence.tool_epoch
+            and plan_fence.session_epoch == fence.session_epoch
+        )
+        # Dict insertion order is not domain order: a late planner response can
+        # land after a newer generation's plan, and rebind() re-inserts. Callers
+        # read reversed() to mean "latest", so order by the fence.
+        return tuple(sorted(plans, key=lambda plan: plan.fence.generation_id))
 
     def authorized(self, plan: ResponsePlan, *, current_profile_id: str | None) -> bool:
         """Whether the cached plan's authorizing profile is still current.

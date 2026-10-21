@@ -147,8 +147,12 @@ class MediaOutputDispatchMixin:
         ) -> None: ...
 
         async def _begin_aigc_reply_round(
-            self, context: _MediaVoiceSession, *, reason: str = ...
-        ) -> None: ...
+            self,
+            context: _MediaVoiceSession,
+            work: _OutputWork | None = None,
+            *,
+            reason: str = ...,
+        ) -> _OutputWork | None: ...
 
         @staticmethod
         async def _advance_failed_output_generation(
@@ -160,6 +164,7 @@ class MediaOutputDispatchMixin:
 
         @staticmethod
         def _rebind_output_work(
+            context: _MediaVoiceSession,
             work: _OutputWork,
             fence: GenerationFence,
             *,
@@ -491,7 +496,9 @@ class MediaOutputDispatchMixin:
                 "output_intent_inactive",
             )
         context.output.output_work[work.intent_id] = work
-        await self._begin_aigc_reply_round(context, reason="reply_turn")
+        attached = await self._begin_aigc_reply_round(context, work, reason="reply_turn")
+        if attached is not None:
+            work = attached
         if (
             not context.runtime.output_floor_allows_assistant
             or context.output.output_owner is not None
@@ -759,7 +766,9 @@ class MediaOutputDispatchMixin:
         for work in pending:
             if int(work.intent.context_version) != context_version:
                 continue
-            rebound = self._rebind_output_work(work, next_fence, context_version=context_version)
+            rebound = self._rebind_output_work(
+                context, work, next_fence, context_version=context_version
+            )
             if rebound is None:
                 logger.info(
                     "media output retired session=%s intent=%s reason=expired_during_handoff",
@@ -806,6 +815,7 @@ class MediaOutputDispatchMixin:
         ) != coordinator.current_context_version(next_fence.session_id):
             return None
         rebound = self._rebind_output_work(
+            context,
             work,
             next_fence,
             context_version=coordinator.current_context_version(next_fence.session_id),
@@ -1041,6 +1051,7 @@ class MediaOutputDispatchMixin:
             cause="media_output_preempt",
         )
         staged = self._rebind_output_work(
+            context,
             work,
             cancelled,
             context_version=coordinator.current_context_version(cancelled.session_id),

@@ -45,6 +45,9 @@ class MediaReplyChunk:
     text_spans: tuple[MediaTextSpan, ...] = ()
     # Audio that covers a slow reply; it is not the reply, so it never ends reply latency.
     thinking_filler: bool = False
+    # The AIGC opening cue plays as the head of the reply's own work: same
+    # fence, same output intent, no generation bump. It carries no reply text.
+    aigc_marker: bool = False
 
     def __post_init__(self) -> None:
         if not self.pcm_s16le or len(self.pcm_s16le) % 2:
@@ -320,6 +323,9 @@ class OutputWork:
     intent: Any
     fence: GenerationFence
     conversation_text: str | None = None
+    # Opening AIGC cue rendered before the conversation reply on this exact
+    # fence. Empty means no cue; it is never a separate output intent.
+    lead_pcm_s16le: bytes = b""
 
     @property
     def intent_id(self) -> str:

@@ -382,6 +382,7 @@ class MediaOutputOwnerMixin:
 
     @staticmethod
     def _rebind_output_work(
+        context: _MediaVoiceSession,
         work: _OutputWork,
         fence: GenerationFence,
         *,
@@ -399,4 +400,14 @@ class MediaOutputOwnerMixin:
         rebound.tool_epoch = fence.tool_epoch
         rebound.created_at_ms = now_ms
         rebound.context_version = context_version
-        return _OutputWork(rebound, fence, conversation_text=work.conversation_text)
+        if work.conversation_text is not None:
+            # A reply that moves to a successor generation must carry its
+            # exact response plan with it; leaving the plan behind turns the
+            # next LLM request into a silent "blocked without exact plan".
+            context.runtime.rebind_response_plan(work.fence, fence)
+        return _OutputWork(
+            rebound,
+            fence,
+            conversation_text=work.conversation_text,
+            lead_pcm_s16le=work.lead_pcm_s16le,
+        )

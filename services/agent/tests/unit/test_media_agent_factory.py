@@ -257,6 +257,9 @@ async def test_production_media_factory_does_not_replay_archive_during_session_c
         def set_runtime_profile_refresher(self, refresher: object) -> None:
             assert callable(refresher)
 
+        def set_response_plan_rebinder(self, rebinder: object) -> None:
+            assert callable(rebinder)
+
         def set_live_lookup_semantic_resolver(self, resolver: object) -> None:
             assert resolver is None or callable(resolver)
 
@@ -316,7 +319,11 @@ async def test_production_media_factory_does_not_replay_archive_during_session_c
         "_configure_runtime",
         lambda self, bound_runtime, tts: None,
     )
-    monkeypatch.setattr(factory_module, "ReplyPipeline", lambda **_kwargs: object())
+    class Pipeline:
+        def rebind_response_plan(self, previous: object, current: object) -> None:
+            _ = previous, current
+
+    monkeypatch.setattr(factory_module, "ReplyPipeline", lambda **_kwargs: Pipeline())
     monkeypatch.setattr(
         factory_module.FunASRConfig,
         "from_env",

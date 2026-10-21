@@ -1093,7 +1093,11 @@ class MediaOutputStreamMixin:
                     ReplyDeliveryEvent.FIRST_FRAME_SENT,
                     "downlink_frame_accepted",
                 )
-                if not chunk.thinking_filler and context.output.tts_started_ns is not None:
+                if (
+                    not chunk.thinking_filler
+                    and not chunk.aigc_marker
+                    and context.output.tts_started_ns is not None
+                ):
                     self.metrics.observe_voice_latency(
                         "tts_first_frame",
                         (time.monotonic_ns() - context.output.tts_started_ns) / 1_000_000_000,
@@ -1413,8 +1417,29 @@ class MediaOutputStreamMixin:
         source_start_sample: int,
     ) -> AsyncIterator[MediaReplyChunk]:
         if work.conversation_text is not None:
+            offset = source_start_sample
+            if work.lead_pcm_s16le:
+                frame_samples = int(getattr(context.provider, "output_frame_samples", 480))
+                if frame_samples <= 0:
+                    raise RuntimeError("media provider has an invalid output frame size")
+                frame_bytes = frame_samples * 2
+                pcm = work.lead_pcm_s16le
+                if len(pcm) % 2:
+                    raise ValueError("opening AIGC cue must be 16-bit PCM")
+                for start in range(0, len(pcm), frame_bytes):
+                    frame = pcm[start : start + frame_bytes]
+                    if len(frame) < frame_bytes:
+                        frame += b"\x00" * (frame_bytes - len(frame))
+                    yield MediaReplyChunk(
+                        pcm_s16le=frame,
+                        source_start_sample=offset,
+                        first=start == 0,
+                        final=False,
+                        aigc_marker=True,
+                    )
+                    offset += frame_samples
             async for chunk in self._conversation_chunks(
-                context, work.fence, work.conversation_text, source_start_sample
+                context, work.fence, work.conversation_text, offset
             ):
                 yield chunk
             return
