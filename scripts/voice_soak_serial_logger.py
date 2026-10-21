@@ -1,13 +1,22 @@
 #!/usr/bin/env python3
 """Hold the robot's serial port open and write it to a timestamped log, until stopped.
 
-On macOS every open of the USB-Serial-JTAG port pulses DTR/RTS and resets the board
-(`rst:0x15 USB_UART_CHIP_RESET`); a few resets in a row left the board silent at the bootloader once and it
-needed a USB re-plug. So the port is opened exactly once, here, and the soak driver / trials read this log
-(`voice_soak.py --serial-log FILE`) instead of opening the port again.
+On macOS a default pyserial open of the USB-Serial-JTAG port resets the board
+(`rst:0x15 USB_UART_CHIP_RESET`), and so does setting DTR and RTS both low before the open; a few resets in a
+row left the board silent at the bootloader once and it needed a USB re-plug. RTS low with DTR high before the
+open does not reset it (measured on the robot 2026-10-21), so `open_port` is the only way these scripts open
+the port, and nothing touches DTR/RTS afterwards. The port is still held by this one process, and the soak
+driver / trials read this log (`voice_soak.py --serial-log FILE`) instead of opening the port again.
 
     uv run --no-project --with pyserial python scripts/voice_soak_serial_logger.py outputs/serial/robot.log \
-        [--port /dev/cu.usbmodem2101] [--command-socket PATH]
+        [--port /dev/cu.usbmodem2101] [--command-socket PATH] [--last-seen-cmd 'CMD']
+
+When the port gives no data for 30 s (or reading it fails), the logger closes it, looks for /dev/cu.usbmodem*
+again (the name may change after a re-enumeration), reopens it the same way and waits another 30 s, at most
+3 times. A handle opened before an `esptool --after hard-reset` stays silent, which is how that case looks.
+The firmware has no reboot command on its USB line, so the logger never resets the board. If all 3 reopens
+stay silent it logs `LOGGER: 需要人工拔插 USB ...` and exits with status 2; with `--last-seen-cmd` it runs that
+shell command first and appends its output, meant to be when the server last heard from this device.
 
 Since firmware build 20 this process is also the only way to talk TO the robot. It listens on a unix socket
 (default /tmp/memoria-serial-<port>.sock, owner-only) and writes the few allowed commands into the port it
@@ -26,15 +35,18 @@ Stop it (Ctrl-C / kill) before flashing: esptool needs the port to itself.
 from __future__ import annotations
 
 import argparse
+import glob
 import os
 import signal
 import socket
 import stat
+import subprocess
 import sys
 import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import voice_soak_serial_command as serial_command  # noqa: E402
@@ -52,9 +64,144 @@ WIRE_COMMANDS = {
 
 _MAX_REQUEST = 64
 
+PORT_GLOB = "/dev/cu.usbmodem*"
+SILENCE_S = 30.0
+REOPEN_ATTEMPTS = 3
+REOPEN_PAUSE_S = 5.0
+REPLUG_HINT = "LOGGER: 需要人工拔插 USB"
+
 
 def stamp(t: float) -> str:
     return time.strftime("%H:%M:%S", time.localtime(t)) + f".{int((t % 1) * 1000):03d}"
+
+
+def open_port(serial_module: Any, port: str) -> Any:
+    """Open the robot's port without resetting it: RTS low and DTR high must be set before the open."""
+    ser = serial_module.Serial()
+    ser.port, ser.baudrate, ser.timeout, ser.write_timeout = port, 115200, 0.2, 2.0
+    ser.rts = False
+    ser.dtr = True
+    ser.open()
+    return ser
+
+
+def pick_port(preferred: str, found: list[str]) -> str | None:
+    """`preferred` while it exists, else the first /dev/cu.usbmodem* the system lists now."""
+    if preferred in found:
+        return preferred
+    return min(found) if found else None
+
+
+class PortGaveUp(RuntimeError):
+    """The port stayed silent through every reopen; only a USB re-plug helps now."""
+
+
+class ReopeningPort:
+    """The open port, reopened (never reset) when it gives no data for `silence_s` seconds."""
+
+    def __init__(
+        self,
+        serial_module: Any,
+        port: str,
+        log: Callable[[str], None],
+        *,
+        silence_s: float = SILENCE_S,
+        attempts: int = REOPEN_ATTEMPTS,
+        pause_s: float = REOPEN_PAUSE_S,
+        list_ports: Callable[[], list[str]] = lambda: glob.glob(PORT_GLOB),
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self._serial = serial_module
+        self.port = port
+        self._log = log
+        self._silence_s = silence_s
+        self._attempts = attempts
+        self._pause_s = pause_s
+        self._list_ports = list_ports
+        self._clock = clock
+        self._sleep = sleep
+        self._lock = threading.Lock()
+        self._ser: Any = open_port(serial_module, port)
+        self._last_data = clock()
+        self._reopens = 0
+
+    def read(self) -> bytes:
+        """Up to 4096 bytes, b"" when none came yet. Raises PortGaveUp after the last silent reopen."""
+        ser = self._ser
+        if ser is not None:
+            try:
+                chunk = ser.read(4096)
+            except self._serial.SerialException as exc:
+                self._log(f"LOGGER: serial read failed: {exc}")
+            else:
+                if chunk:
+                    self._last_data = self._clock()
+                    self._reopens = 0
+                    return bytes(chunk)
+                if self._clock() - self._last_data < self._silence_s:
+                    return b""
+                self._log(f"LOGGER: no serial data for {self._silence_s:.0f} s on {self.port}")
+        self._reopen()
+        return b""
+
+    def write(self, payload: bytes) -> None:
+        with self._lock:
+            if self._ser is None:
+                raise self._serial.SerialException("the port is being reopened")
+            self._ser.write(payload)
+            self._ser.flush()
+
+    def close(self) -> None:
+        with self._lock:
+            ser, self._ser = self._ser, None
+        if ser is not None:
+            ser.close()
+
+    def _reopen(self) -> None:
+        if self._reopens >= self._attempts:
+            raise PortGaveUp(
+                f"{self.port}: no serial data after {self._attempts} reopens, {self._silence_s:.0f} s each"
+            )
+        self._reopens += 1
+        attempt = f"reopen {self._reopens}/{self._attempts}"
+        try:
+            self.close()
+        except (self._serial.SerialException, OSError):
+            pass  # the handle is dead already; the reopen below is what matters
+        self._sleep(self._pause_s)
+        port = pick_port(self.port, self._list_ports())
+        if port is None:
+            self._log(f"LOGGER: {attempt}: no {PORT_GLOB} present")
+            return
+        try:
+            ser = open_port(self._serial, port)
+        except (self._serial.SerialException, OSError) as exc:
+            self._log(f"LOGGER: {attempt}: cannot open {port}: {exc}")
+            return
+        with self._lock:
+            self._ser = ser
+        self._last_data = self._clock()
+        if port != self.port:
+            self._log(f"LOGGER: {attempt}: port is now {port} (was {self.port})")
+        self.port = port
+        self._log(f"LOGGER: {attempt}: opened {port}")
+
+
+def last_seen(command: str | None) -> str:
+    """What `--last-seen-cmd` prints (its first line), for the re-plug hint; nothing runs without it."""
+    if not command:
+        return "未提供 --last-seen-cmd"
+    try:
+        done = subprocess.run(
+            command, shell=True, capture_output=True, text=True, timeout=30, check=False
+        )
+    except subprocess.TimeoutExpired:
+        return "--last-seen-cmd 30 秒未返回"
+    lines = done.stdout.strip().splitlines()
+    if done.returncode != 0 or not lines:
+        return f"--last-seen-cmd 没有结果 (exit {done.returncode})"
+    return lines[0][:200]
 
 
 def claim_socket_path(path: Path) -> None:
@@ -166,6 +313,12 @@ def main() -> int:
     ap.add_argument(
         "--no-command-socket", action="store_true", help="only log; never write to the port"
     )
+    ap.add_argument(
+        "--last-seen-cmd",
+        default=None,
+        help="shell command printing when the server last heard from this device; run only when the "
+        "logger gives up and asks for a USB re-plug",
+    )
     args = ap.parse_args()
     args.out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -179,14 +332,8 @@ def main() -> int:
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
-    ser = serial.Serial()
-    ser.port, ser.baudrate, ser.timeout, ser.write_timeout = args.port, 115200, 0.2, 2.0
-    ser.dtr = False
-    ser.rts = False
-    ser.open()
 
     log_lock = threading.Lock()
-    write_lock = threading.Lock()
     status = 0
     with args.out.open("ab") as fh:
 
@@ -195,15 +342,11 @@ def main() -> int:
                 fh.write(f"{stamp(time.time())} {text}\n".encode())
                 fh.flush()
 
-        def send(payload: bytes) -> None:
-            with write_lock:
-                ser.write(payload)
-                ser.flush()
-
+        ser = ReopeningPort(serial, args.port, emit)
         server: CommandServer | None = None
         if not args.no_command_socket:
             path = args.command_socket or serial_command.default_socket_path(args.port)
-            server = CommandServer(path, send, emit)
+            server = CommandServer(path, ser.write, emit)
             try:
                 server.start()
             except BaseException:
@@ -213,16 +356,18 @@ def main() -> int:
         buf = b""
         try:
             while not stopping:
-                chunk = ser.read(4096)
+                chunk = ser.read()
                 if not chunk:
                     continue
                 buf += chunk
                 while b"\n" in buf:
                     raw, buf = buf.split(b"\n", 1)
                     emit(raw.decode("utf-8", "replace").rstrip(chr(13)))
-        except serial.SerialException as exc:
-            emit(f"LOGGER: serial port lost: {exc}")
-            status = 1
+        except PortGaveUp as exc:
+            hint = f"{REPLUG_HINT}（{exc}；固件没有串口重启命令，未复位）；服务器最后一次请求: {last_seen(args.last_seen_cmd)}"
+            emit(hint)
+            print(hint, file=sys.stderr, flush=True)
+            status = 2
         finally:
             if server is not None:
                 server.stop()
