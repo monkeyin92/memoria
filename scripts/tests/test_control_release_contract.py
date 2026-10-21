@@ -3,6 +3,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_agent_release_gate_runs_the_portable_sampler_tests() -> None:
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    probe_tests = "scripts/tests/test_local_process_probe.py"
+    deploy_tests = "scripts/tests/test_deploy_agent_component_manual_base.py"
+
+    agent_job = ci[ci.index("\n  agent:\n") : ci.index("\n  python-gates:\n")]
+    assert probe_tests in agent_job
+    assert deploy_tests in agent_job
+    # Same file list as the deploy lane's own pytest gate.
+    deploy = (ROOT / "scripts" / "deploy_agent_component.sh").read_text(encoding="utf-8")
+    assert probe_tests in deploy
+    assert deploy_tests in deploy
+
+
 def test_control_component_release_is_offline_commit_bound_and_fail_closed() -> None:
     overlay = (ROOT / "infra" / "Dockerfile.control-api-source-overlay").read_text(
         encoding="utf-8"
