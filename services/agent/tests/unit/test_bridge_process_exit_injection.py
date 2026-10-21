@@ -448,11 +448,9 @@ def test_offline_trend_sample_prints_two_rows() -> None:
     assert [row["index"] for row in rows] == [0, 1]
     for row in rows:
         assert row["rss_bytes"] > 0
-        if local_process_probe.procfs_available():
-            assert row["open_sockets"] >= 0
-        else:
-            # Darwin reports the count as unmeasured instead of a false zero.
-            assert row["open_sockets"] is None
+        # None means the platform, or a sandbox hiding /proc/<pid>/fd, could not
+        # count sockets; a number is a real measurement and may be zero.
+        assert row["open_sockets"] is None or row["open_sockets"] >= 0
         assert isinstance(row["sampled_at"], float)
 
 
