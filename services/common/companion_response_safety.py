@@ -379,6 +379,41 @@ _SAFETY_PREVENTION_RE = re.compile(
     r"(?:怎么|如何|怎样)(?:预防|防止|避免)"
     r"(?:性侵|强奸|暴力|自杀|自残|轻生|下毒|投毒|诈骗)"
 )
+# C9 is a question about keeping the child out of a bad actor's hands, or the
+# child asking what to do when one targets them: 不被/别被/防止 坏人 骗, 骗走,
+# 带走, 拐走, or 坏人骗我 / 坏人想抓我 with 怎么办. The bad actor and the child
+# share one clause, and 带我去 needs a bad actor, so everyday 带我去医院 and
+# plain knowledge about strangers stay quiet.
+_CHILD_AS_TARGET = r"(?:我|你|我们)"
+_BAD_ACTOR = r"(?:坏人|陌生人|有人|别人|人家|骗子)"
+_IN_CLAUSE = r"[^，。！？、,.!?；:;]"
+_NEAR_LEAD_IN = rf"(?:{_BAD_ACTOR}|差点|差一点|万一|要是|如果|马上|就要|说)"
+# 走/去/到/离 only when the place is the child, not 去玩 or 去医院.
+_MOVEMENT_TARGET = r"(?:走|去|到|离)(?!玩|睡觉|吃饭|上学|医院|超市|公园|幼儿园|厕所|房间|楼下)"
+_TAKEN_AWAY = (
+    rf"(?:骗|拐|抓|拉|抱|领)(?:突然|当场|直接|起来)?{_CHILD_AS_TARGET}?{_MOVEMENT_TARGET}|带走"
+)
+_PROTECTED_FROM_BAD_ACTOR_RE = re.compile(
+    rf"(?:不|别|勿|防止|预防|避免|如何|怎么|怎样)(?:才能|要|会|能|可以|再|不)?"
+    rf"(?:{_NEAR_LEAD_IN}{{0,3}})?被"
+    rf"({_BAD_ACTOR})(?:(?:{_IN_CLAUSE}){{0,4}})"
+    rf"(?:{_TAKEN_AWAY}|(?:骗|害)(?:了{_CHILD_AS_TARGET}|{_CHILD_AS_TARGET})?)"
+)
+_SNATCH_INTENT = (
+    rf"(?:想|要|准备|打算|企图){_CHILD_AS_TARGET}?{_MOVEMENT_TARGET}"
+    rf"|(?:想|要|准备|打算|企图)(?:抓|拉|抱|拐|骗){_CHILD_AS_TARGET}"
+)
+_BAD_ACTOR_SNATCH_RE = re.compile(
+    rf"{_BAD_ACTOR}{_IN_CLAUSE}{{0,8}}(?:{_TAKEN_AWAY}|骗{_CHILD_AS_TARGET}|{_SNATCH_INTENT})"
+)
+_BAD_ACTOR_TAKES_CHILD_RE = re.compile(
+    rf"{_BAD_ACTOR}{_IN_CLAUSE}{{0,6}}带{_CHILD_AS_TARGET}{_MOVEMENT_TARGET}"
+)
+_BAD_ACTOR_DECIEVES_CHILD_RE = re.compile(
+    rf"{_BAD_ACTOR}{_IN_CLAUSE}{{0,6}}(?:骗|哄|诱惑)(?!人|大家){_CHILD_AS_TARGET}"
+)
+_QUESTION_FORM_RE = re.compile(r"怎么|如何|怎样|咋")
+_WHAT_TO_DO_RE = re.compile(r"怎么办|咋办|该怎么|应该怎么|要怎么|如何处理")
 _EXPLICIT_SELF_HARM_ENGLISH_RE = re.compile(
     r"(?<![a-z])(?:"
     r"i (?:want|plan|intend|am going) to (?:die|kill myself|hurt myself|end my life)|"
@@ -446,6 +481,24 @@ def _passive_harm_targets_another_person(text: str) -> bool:
     return False
 
 
+def _protected_from_bad_actor(text: str) -> bool:
+    """A question about keeping the child from being taken or tricked by someone."""
+
+    asks = _QUESTION_FORM_RE.search(text) or _WHAT_TO_DO_RE.search(text)
+    for clause in _CLAUSE_SPLIT_RE.split(text):
+        if _PROTECTED_FROM_BAD_ACTOR_RE.search(clause):
+            return True
+        if not asks:
+            continue
+        if (
+            _BAD_ACTOR_SNATCH_RE.search(clause)
+            or _BAD_ACTOR_TAKES_CHILD_RE.search(clause)
+            or _BAD_ACTOR_DECIEVES_CHILD_RE.search(clause)
+        ):
+            return True
+    return False
+
+
 def companion_safety_decision(query: str) -> SafetyDecision:
     """Classify one current-turn query without granting facts or permissions."""
     stripped_of_quotes = _QUOTED_TEXT_RE.sub("", query)
@@ -488,6 +541,8 @@ def companion_safety_decision(query: str) -> SafetyDecision:
     ):
         return "support_relay"
     if _SAFETY_PREVENTION_RE.search(full_normalized):
+        return "support_relay"
+    if _protected_from_bad_actor(harm_surface):
         return "support_relay"
     if _OTHER_JUMP_RE.search(full_normalized) or _CONFINEMENT_BEAT_RE.search(
         full_normalized

@@ -104,6 +104,10 @@ def _pipeline(runtime: DuplexRuntime, planner: _MismatchPlanner) -> ReplyPipelin
         ("我被关在房间里出不去了", SUPPORT_VICTIM_SCRIPT),
         ("我同学被别人打了", SUPPORT_RELAY_SCRIPT),
         ("我听说有人欺负小朋友", SUPPORT_RELAY_SCRIPT),
+        ("怎么才能不被坏人骗走", SUPPORT_RELAY_SCRIPT),
+        ("怎么才能不被坏人带走", SUPPORT_RELAY_SCRIPT),
+        ("怎么才能不被坏人拐走", SUPPORT_RELAY_SCRIPT),
+        ("坏人骗我怎么办", SUPPORT_RELAY_SCRIPT),
     ],
 )
 async def test_fence_mismatch_fallback_still_speaks_fixed_safety_replies(
