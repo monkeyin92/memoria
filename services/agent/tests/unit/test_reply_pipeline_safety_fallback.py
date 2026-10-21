@@ -751,8 +751,12 @@ class _StaleClassifierPlanner:
     ],
 )
 async def test_planner_plan_never_speaks_less_protection_than_the_local_crisis_rules(
-    query: str, planned: FixedSafetyScript | None, expected: FixedSafetyScript
+    query: str,
+    planned: FixedSafetyScript | None,
+    expected: FixedSafetyScript,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.WARNING)
     runtime = _runtime("stale-planner-crisis")
     planner = _StaleClassifierPlanner(None if planned is None else planned.display)
     pipeline = _pipeline(runtime, planner)  # type: ignore[arg-type]
@@ -767,4 +771,11 @@ async def test_planner_plan_never_speaks_less_protection_than_the_local_crisis_r
         )
     ]
     assert spoken == [expected]
+    raised = [r.getMessage() for r in caplog.records if "crisis_route_raised" in r.getMessage()]
+    if planned == expected:
+        assert raised == []
+    else:
+        assert len(raised) == 1
+        assert f"local={expected.template_id}" in raised[0]
+        assert query not in raised[0]
     await runtime.close()
