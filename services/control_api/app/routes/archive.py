@@ -51,6 +51,7 @@ from services.control_api.app.account_gate import (
     require_capability_for_subject,
     require_writable_account,
 )
+from services.control_api.app.archive_event_conflicts import event_id_conflict as conflict_409
 from services.control_api.app.bound_subject import (
     DEVICE_BOUND_SUBJECT_UNVERIFIED,
     claims_device_bound_subject,
@@ -1474,7 +1475,7 @@ async def append_event(
         async with _account_write(request, body.account_id):
             result = await _archive(request).record(event)
     except IdempotencyConflictError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise conflict_409(exc) from exc
     _wake_compiler(request)
     return JSONResponse(
         status_code=200 if result.duplicate else 201,
@@ -1812,7 +1813,7 @@ async def append_session_event(
             async with _account_write(request, event.account_id):
                 result = await archive.record(event)
         except IdempotencyConflictError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise conflict_409(exc) from exc
         return event, result
 
     if isinstance(learning_task_id, str) and learning_task_id:

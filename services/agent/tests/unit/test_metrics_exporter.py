@@ -71,6 +71,23 @@ def test_required_metric_helpers_and_snapshot() -> None:
     assert "tts_frame_age_ms 6.5" in body
 
 
+def test_event_id_content_conflict_has_its_own_series() -> None:
+    metrics = MetricsRegistry()
+    metrics.inc_archive_event_id_content_conflict()
+    metrics.inc_archive_conflict_retained("event_id_content_conflict")
+    metrics.inc_archive_conflict_retained("ambiguous_parent_turn")
+
+    body = metrics.render_prometheus().decode()
+    assert "archive_event_id_content_conflict_total 1.0" in body
+    assert metrics.get("archive_event_id_content_conflict_total") == 1
+    assert (
+        metrics.get(
+            "archive_conflict_retained_total", {"reason": "ambiguous_parent_turn"}
+        )
+        == 1
+    )
+
+
 def test_provider_connection_gauge_aggregates_independent_connections() -> None:
     metrics = MetricsRegistry()
 

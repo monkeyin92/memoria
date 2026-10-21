@@ -2366,6 +2366,10 @@ async def test_session_event_retry_ignores_delivery_timestamp_but_rejects_semant
     assert changed_payload.status_code == 409
     assert changed_session.status_code == 409
     assert changed_owner.status_code == 409
+    assert [
+        response.json()["detail"]["code"]
+        for response in (changed_payload, changed_session, changed_owner)
+    ] == ["event_id_content_conflict"] * 3
 
 
 @pytest.mark.asyncio
