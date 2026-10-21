@@ -761,6 +761,11 @@ async def test_planner_plan_never_speaks_less_protection_than_the_local_crisis_r
     planner = _StaleClassifierPlanner(None if planned is None else planned.display)
     pipeline = _pipeline(runtime, planner)  # type: ignore[arg-type]
     fence = await pipeline.prepare_committed_turn(query)
+    cached = pipeline.response_plans.get(fence)
+    assert cached is not None
+    assert cached.fixed_safety_script == expected
+    assert cached.fixed_safety_script.template_id == expected.template_id
+    assert runtime.fixed_safety_echo_text == expected.display
     spoken = [
         token
         async for token in pipeline.stream(
