@@ -37,6 +37,80 @@ is_ship() { [[ " ${SHIP[*]} " == *" $1 "* ]]; }
 container_of() { printf 'memoria-%s-1' "$1"; }
 ship_images() { local i; for i in "${!SHIP[@]}"; do printf '%s=memoria-%s ' "${SHIP[$i]}" "${ROLES[$i]}"; done; }
 
+# Component releases switched one image on top of the stack compose with an
+# image-only override. A live PREV may keep that chain, so freeze accepts these
+# exact bytes only; anything else fails before it touches the host.
+# Columns: service, persisted override, sha256, original path.
+PREV_OVERRIDE_WHITELIST='
+control-api              /opt/memoria/component-releases/20261021-a94c438-pr345-pr346-pr348-pr352/override-control-pr352.yml       95a5e03319cafcf7fcf7325f00b2cc753ea444c563bfd5de5472692ce1d67486  /tmp/override-control-pr352.yml
+voice-core-media-bridge  /opt/memoria/component-releases/20261021-a94c438-pr345-pr346-pr348-pr352-pr353-pr355/override-pr355.yml  895b17fefa3401e75ba17e1c3f08aac9cab920f7b25e55aa540ffcc5a7a22da0  /tmp/override-pr355.yml
+'
+# Prints "<service>|<persisted path>|<sha256>|<original path>" for either
+# whitelisted path of a row. Returns 1 for anything else. Production resolves
+# both to the absolute paths above; the test host rebases them onto its own fake
+# root (and RELEASE_OPS_TMP_ROOT onto its fake /tmp).
+override_spec() {
+  local key=$1 svc persistent sha origin path origin_path tmp_root=/tmp
+  # The fake host rebases these roots; /opt/memoria keeps the literal paths.
+  [[ "$(dirname "$RELEASES")" == /opt/memoria ]] \
+    || tmp_root="${RELEASE_OPS_TMP_ROOT:-/tmp}"
+  while read -r svc persistent sha origin; do
+    [[ -n "$svc" ]] || continue
+    path="${persistent/#\/opt\/memoria/$(dirname "$RELEASES")}"
+    origin_path="${origin/#\/tmp/$tmp_root}"
+    if [[ "$key" == "$persistent" || "$key" == "$path" \
+          || "$key" == "$origin" || "$key" == "$origin_path" ]]; then
+      printf '%s|%s|%s|%s\n' "$svc" "$path" "$sha" "$origin"
+      return 0
+    fi
+  done <<<"$PREV_OVERRIDE_WHITELIST"
+  return 1
+}
+
+file_sha256() { sha256sum "$1" | cut -d' ' -f1; }
+
+# An override may set exactly services.<service>.image, to the image the
+# container actually runs. Reject comments, quoting and every other key.
+validate_override_file() {   # <file> <service> <image>
+  python3 - "$1" "$2" "$3" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path, service, image = sys.argv[1:4]
+text = Path(path).read_text(encoding="utf-8")
+match = re.fullmatch(r"services:\n  ([A-Za-z0-9_.-]+):\n    image: ([^\s]+)\n", text)
+if match is None:
+    raise SystemExit(f"override {path} is not exactly services.<service>.image")
+covered, selected = match.groups()
+if covered != service:
+    raise SystemExit(f"override {path} covers {covered}, not {service}")
+if selected != image:
+    raise SystemExit(f"override {path} selects {selected}, but the container runs {image}")
+PY
+}
+
+# Prints the release tree's commit, or the one commit all overridden images
+# agree on. A component image's labels name its component, not the stack, so a
+# missing release commit must not turn a uniform PREV into a guess.
+prev_stack_commit() {   # <release dir> <revision>...
+  local dir=$1 value unique
+  shift
+  value="$(sed -n 's/^MEMORIA_RELEASE_COMMIT=//p' "$dir/.env" 2>/dev/null | head -n 1 || true)"
+  if [[ "$value" =~ ^[0-9a-f]{40}$ ]]; then
+    printf '%s\n' "$value"
+    return 0
+  fi
+  unique="$(printf '%s\n' "$@" | sort -u)"
+  if [[ -n "$unique" && "$unique" != *$'\n'* && "$unique" =~ ^[0-9a-f]{40}$ ]]; then
+    printf '%s\n' "$unique"
+    return 0
+  fi
+  return 1
+}
+
+declare -A PREV_OVERRIDE_PATH=() PREV_OVERRIDE_SHA=() PREV_OVERRIDE_IMAGE=()
+
 release_paths() {
   RELEASES=$1/releases
   CURRENT=$1/current
@@ -157,21 +231,81 @@ wait_healthy() {
   log "UNHEALTHY: $1"; docker logs --tail 40 "$1" 2>&1 | sed 's/^/  | /'; return 1
 }
 
-release_compose() {   # <release dir> <tag> <commit> <compose args...>
+release_compose() {   # <release dir> <tag> <commit> [--extra-file <path>]... <compose args...>
   local dir=$1 tag=$2 commit=$3
   shift 3
+  local files=(-f "$dir/docker-compose.production.yml")
+  while [[ "${1:-}" == --extra-file ]]; do
+    files+=(-f "$2")
+    shift 2
+  done
   (cd "$dir" && env MEMORIA_RELEASE_TAG="$tag" MEMORIA_RELEASE_COMMIT="$commit" \
-    docker compose -p memoria --project-directory "$dir" -f "$dir/docker-compose.production.yml" \
+    docker compose -p memoria --project-directory "$dir" "${files[@]}" \
     --profile media-runtime "$@")
 }
 new_compose() { release_compose "$R" "$TAG" "$COMMIT" "$@"; }
-prev_compose() { release_compose "$PREV_DIR" "$PREV_TAG" "$PREV_COMMIT" "$@"; }
+# <--base|service> <compose args...>, or the legacy <compose args...> form.
+# --base adds no override; a service adds only its own. A legacy batch adds
+# every recorded override, which is fine for queries but must not recreate
+# containers: Compose stamps the whole -f chain on each container it starts, so
+# the next freeze would see two overrides and reject the chain.
+prev_compose() {
+  local service=""
+  case "${1:-}" in
+    --base) shift ;;
+    *)
+      if [[ -n "${1:-}" && " ${PREV_SERVICES[*]:-} " == *" $1 "* ]]; then
+        service=$1
+        shift
+      fi
+      ;;
+  esac
+  verify_prev_overrides
+  local files=() s
+  if [[ -n "$service" ]]; then
+    [[ -z "${PREV_OVERRIDE_PATH[$service]:-}" ]] \
+      || files=(--extra-file "${PREV_OVERRIDE_PATH[$service]}")
+  else
+    for s in "${PREV_SERVICES[@]}"; do
+      [[ -z "${PREV_OVERRIDE_PATH[$s]:-}" ]] \
+        || files+=(--extra-file "${PREV_OVERRIDE_PATH[$s]}")
+    done
+  fi
+  release_compose "$PREV_DIR" "$PREV_TAG" "$PREV_COMMIT" "${files[@]}" "$@"
+}
+
+# Refuses unless every recorded persisted override still holds the frozen bytes.
+verify_prev_overrides() {
+  local s path actual
+  for s in "${PREV_SERVICES[@]}"; do
+    path="${PREV_OVERRIDE_PATH[$s]:-}"
+    [[ -n "$path" ]] || continue
+    [[ -f "$path" ]] || fail "PREV override is missing: $path"
+    actual="$(file_sha256 "$path")"
+    [[ "$actual" == "${PREV_OVERRIDE_SHA[$s]}" ]] \
+      || fail "PREV override changed: $path is $actual, recorded ${PREV_OVERRIDE_SHA[$s]}"
+  done
+}
+
+verify_prev_image_ids() {
+  local s c actual
+  for s in "${PREV_SERVICES[@]}"; do
+    [[ -n "${PREV_OVERRIDE_PATH[$s]:-}" ]] || continue
+    c="$(container_of "$s")"
+    actual="$(inspect_container "$c" image-id)" || fail "cannot read the image id of $c after rollback"
+    [[ "$actual" == "${PREV_OVERRIDE_IMAGE[$s]}" ]] \
+      || fail "$c runs image $actual, recorded ${PREV_OVERRIDE_IMAGE[$s]}"
+  done
+}
 
 # Prints the PREV record for the live stack: the release `current` names, its
 # commit, and the services it runs. Every ship row must run on PREV's compose
-# file; a retired row counts only if its container is on that file too.
+# file, optionally with the one whitelisted image-only override recorded for it.
+# A retired row counts only if its container is on that file too.
 derive_prev() {
-  local dir tag compose s c chain version revision commit="" services=()
+  local dir tag compose s c chain base extra spec osvc opath osha image image_id
+  local version revision commit="" services=() overrides=() overridden
+  local -a revisions=()
   dir="$(readlink -f "$CURRENT")"
   [[ "$(dirname "$dir")" == "$(readlink -f "$RELEASES")" ]] || fail "current is not a release dir: $dir"
   tag="$(basename "$dir")"
@@ -181,31 +315,72 @@ derive_prev() {
   for s in "${SHIP[@]}" "${RETIRED[@]}"; do
     c="$(container_of "$s")"
     chain="$(inspect_container "$c" chain 2>/dev/null)" || chain=""
-    if [[ "$chain" != "$compose" ]]; then
+    overridden=""
+    if [[ "$chain" == *,* ]]; then
+      base=${chain%%,*}
+      extra=${chain#*,}
+      if [[ "$extra" == *,* || "$base" != "$compose" || "$extra" != /* ]]; then
+        is_ship "$s" && fail "unexpected live chain for $c: ${chain:-absent}"
+        continue
+      fi
+      if ! is_ship "$s"; then
+        continue   # retired services are never rollback targets
+      fi
+      spec="$(override_spec "$extra")" || fail "override for $c is not whitelisted: $extra"
+      IFS='|' read -r osvc opath osha _ <<<"$spec"
+      [[ "$osvc" == "$s" ]] || fail "override $extra covers $osvc, not $c"
+      [[ -f "$opath" ]] || fail "PREV override is missing: $opath"
+      image="$(inspect_container "$c" image)" || fail "cannot read the running image of $c"
+      validate_override_file "$opath" "$s" "$image" \
+        || fail "override $opath is not the running image of $c"
+      [[ "$(file_sha256 "$opath")" == "$osha" ]] || fail "PREV override changed: $opath"
+      # The /tmp original is accepted only while it still equals the persisted copy.
+      if [[ "$extra" != "$opath" ]]; then
+        [[ -f "$extra" ]] || fail "PREV override is missing: $extra"
+        [[ "$(file_sha256 "$extra")" == "$osha" ]] \
+          || fail "PREV override $extra does not match the persisted copy $opath"
+      fi
+      image_id="$(inspect_container "$c" image-id)" || fail "cannot read the image id of $c"
+      revision="$(inspect_container "$c" revision 2>/dev/null || true)"
+      [[ -z "$revision" ]] || revisions+=("$revision")
+      overridden=1
+    elif [[ "$chain" != "$compose" ]]; then
       is_ship "$s" && fail "unexpected live chain for $c: ${chain:-absent}"
       continue
     fi
-    version="$(inspect_container "$c" version)" || fail "cannot read the image version of $c"
-    revision="$(inspect_container "$c" revision)" || fail "cannot read the image revision of $c"
-    # 20261016-readiness-b54189c reached production outside this script, built by
-    # hand with no OCI version label on control-api or the bridge. Accept only
-    # that shape: empty version, a 40-hex revision, a tag ending in the
-    # revision's short sha, and the container's own MEMORIA_RELEASE_TAG equal
-    # to the tag. Every other mismatch fails as before.
-    if [[ "$version" != "$tag" && -z "$version" \
-          && "$revision" =~ ^[0-9a-f]{40}$ \
-          && "$tag" == *-"${revision:0:7}" \
-          && "$(inspect_container "$c" release-tag)" == "$tag" ]]; then
-      log "accepting empty version label for $c: revision ${revision:0:7} matches tag suffix" >&2
-    else
-      [[ "$version" == "$tag" ]] || fail "$c runs $version, not $tag"
+    if [[ -z "$overridden" ]]; then
+      version="$(inspect_container "$c" version)" || fail "cannot read the image version of $c"
+      revision="$(inspect_container "$c" revision)" || fail "cannot read the image revision of $c"
+      # 20261016-readiness-b54189c reached production outside this script, built by
+      # hand with no OCI version label on control-api or the bridge. Accept only
+      # that shape: empty version, a 40-hex revision, a tag ending in the
+      # revision's short sha, and the container's own MEMORIA_RELEASE_TAG equal
+      # to the tag. Every other mismatch fails as before.
+      if [[ "$version" != "$tag" && -z "$version" \
+            && "$revision" =~ ^[0-9a-f]{40}$ \
+            && "$tag" == *-"${revision:0:7}" \
+            && "$(inspect_container "$c" release-tag)" == "$tag" ]]; then
+        log "accepting empty version label for $c: revision ${revision:0:7} matches tag suffix" >&2
+      else
+        [[ "$version" == "$tag" ]] || fail "$c runs $version, not $tag"
+      fi
+      [[ "$revision" =~ ^[0-9a-f]{40}$ ]] || fail "$c image carries no commit label"
+      [[ -z "$commit" || "$revision" == "$commit" ]] || fail "PREV images disagree on commit: $commit vs $revision"
+      commit=$revision
     fi
-    [[ "$revision" =~ ^[0-9a-f]{40}$ ]] || fail "$c image carries no commit label"
-    [[ -z "$commit" || "$revision" == "$commit" ]] || fail "PREV images disagree on commit: $commit vs $revision"
-    commit=$revision
     services+=("$s")
+    [[ -z "$overridden" ]] || overrides+=("$s $opath $osha $image_id")
   done
+  # A component image's OCI version/revision label names its component, not the
+  # stack. When every ship image is overridden the stack commit comes from the
+  # release tree the live base compose belongs to, else the one revision every
+  # overridden image still agrees on.
+  if [[ -z "$commit" ]]; then
+    commit="$(prev_stack_commit "$dir" "${revisions[@]}")" \
+      || fail "cannot derive the PREV commit: every ship image carries an override and $dir/.env has no MEMORIA_RELEASE_COMMIT"
+  fi
   printf 'tag=%s\ncommit=%s\nservices=%s\n' "$tag" "$commit" "${services[*]}"
+  [[ "${#overrides[@]}" -eq 0 ]] || printf 'overrides=%s\n' "${overrides[*]}"
 }
 
 # Writes $S/prev-release once. A re-run must derive the same record: after
@@ -229,20 +404,49 @@ freeze_prev() {
   log "$note: $S/prev-release"
 }
 
-# Sets PREV_TAG, PREV_COMMIT, PREV_SERVICES and PREV_DIR from $S/prev-release.
+# Sets PREV_TAG, PREV_COMMIT, PREV_SERVICES and PREV_DIR from $S/prev-release,
+# plus the per-service override maps when the record carries an overrides= line.
 load_prev() {
-  local key tag commit services s
+  local key tag commit services s line osvc opath osha oid spec wsvc wpath wsha i
+  local -a lines=() overrides=()
   [[ -f "$S/prev-release" ]] || fail "no $S/prev-release: run freeze first; the rollback target is unknown"
-  { IFS='=' read -r key tag && [[ "$key" == tag ]] \
-    && IFS='=' read -r key commit && [[ "$key" == commit ]] \
-    && IFS='=' read -r key services && [[ "$key" == services ]]; } < "$S/prev-release" \
-    || fail "malformed $S/prev-release"
+  mapfile -t lines < "$S/prev-release"
+  [[ "${#lines[@]}" -eq 3 || "${#lines[@]}" -eq 4 ]] || fail "malformed $S/prev-release"
+  IFS='=' read -r key tag <<<"${lines[0]}" && [[ "$key" == tag ]] || fail "malformed $S/prev-release"
+  IFS='=' read -r key commit <<<"${lines[1]}" && [[ "$key" == commit ]] || fail "malformed $S/prev-release"
+  IFS='=' read -r key services <<<"${lines[2]}" && [[ "$key" == services ]] || fail "malformed $S/prev-release"
   [[ "$tag" =~ ^[0-9]{8}-[a-z0-9.-]+$ && "$tag" != "$TAG" ]] || fail "malformed $S/prev-release: tag=$tag"
   [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail "malformed $S/prev-release: commit=$commit"
   read -ra PREV_SERVICES <<<"$services"
   for s in "${PREV_SERVICES[@]}"; do
     [[ " ${SHIP[*]} ${RETIRED[*]} " == *" $s "* ]] || fail "malformed $S/prev-release: unknown service $s"
   done
+  PREV_OVERRIDE_PATH=(); PREV_OVERRIDE_SHA=(); PREV_OVERRIDE_IMAGE=()
+  if [[ "${#lines[@]}" -eq 4 ]]; then
+    IFS='=' read -r key line <<<"${lines[3]}" && [[ "$key" == overrides ]] \
+      || fail "malformed $S/prev-release"
+    read -ra overrides <<<"$line"
+    [[ "${#overrides[@]}" -ge 4 && $(( ${#overrides[@]} % 4 )) -eq 0 ]] \
+      || fail "malformed $S/prev-release: overrides must be service/path/sha256/image-id groups"
+    for ((i = 0; i < ${#overrides[@]}; i += 4)); do
+      osvc=${overrides[i]} opath=${overrides[i + 1]} osha=${overrides[i + 2]} oid=${overrides[i + 3]}
+      [[ -n "$osvc" && -n "$opath" && -n "$osha" && -n "$oid" ]] \
+        || fail "malformed $S/prev-release: incomplete override entry for $osvc"
+      [[ -z "${PREV_OVERRIDE_PATH[$osvc]:-}" ]] \
+        || fail "malformed $S/prev-release: duplicate override for $osvc"
+      [[ " ${PREV_SERVICES[*]} " == *" $osvc "* ]] \
+        || fail "malformed $S/prev-release: override for unknown service $osvc"
+      # Only a whitelisted persisted path may be named here: /tmp originals are
+      # accepted from a live chain, never from the frozen record.
+      spec="$(override_spec "$opath")" || fail "malformed $S/prev-release: no whitelist entry for $opath"
+      IFS='|' read -r wsvc wpath wsha _ <<<"$spec"
+      [[ "$wsvc" == "$osvc" && "$opath" == "$wpath" && "$osha" == "$wsha" ]] \
+        || fail "malformed $S/prev-release: override for $osvc is not the whitelisted copy"
+      PREV_OVERRIDE_PATH[$osvc]=$opath
+      PREV_OVERRIDE_SHA[$osvc]=$osha
+      PREV_OVERRIDE_IMAGE[$osvc]=$oid
+    done
+  fi
   PREV_TAG=$tag
   PREV_COMMIT=$commit
   PREV_DIR=$RELEASES/$tag
@@ -468,15 +672,27 @@ step_finish() {
 # rollback-$TAG-pre) and the env files freeze snapshotted.
 step_rollback() {
   load_prev
+  # Fail before the env files or the current symlink move: a rollback that cannot
+  # load the frozen override bytes must leave the live stack untouched.
+  verify_prev_overrides
   log "ROLLBACK to $PREV_TAG@$PREV_COMMIT: restoring env files"
   cp -p "$S/memoria-control-api.env" /etc/memoria-control-api.env
   cp -p "$S/memoria-agent.env" /etc/memoria-agent.env
   ln -sfn "$PREV_DIR" "$CURRENT.new" && mv -T "$CURRENT.new" "$CURRENT"
-  prev_compose up -d --no-deps --no-build --force-recreate "${PREV_SERVICES[@]}"
   local s
+  if [[ "${#PREV_OVERRIDE_PATH[@]}" -eq 0 ]]; then
+    prev_compose --base up -d --no-deps --no-build --force-recreate "${PREV_SERVICES[@]}"
+  else
+    # One compose invocation per service: Compose stamps the whole -f chain on
+    # every container it starts, so a batch would leave two overrides on each.
+    for s in "${PREV_SERVICES[@]}"; do
+      prev_compose "$s" up -d --no-deps --no-build --force-recreate "$s"
+    done
+  fi
   for s in "${PREV_SERVICES[@]}"; do
     wait_healthy "$(container_of "$s")"
   done
+  verify_prev_image_ids
   MEMORIA_RELEASE_TAG="$PREV_TAG" "$CURRENT/scripts/refresh_readiness.sh" || true
   memoria_container_states
   log "rollback done; compare image ids with $S/pre-state.txt"
