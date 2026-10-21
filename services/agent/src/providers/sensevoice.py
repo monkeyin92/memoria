@@ -120,6 +120,16 @@ class SenseVoiceRescue:
         self._config = config
         self._client = client
 
+    def accepts_text(self, text: str) -> bool:
+        """Whether a transcript has enough speech to become a final."""
+
+        return self._config.accepts_text(text)
+
+    def accepts_energy(self, *, rms: int, peak_abs: int) -> bool:
+        """Whether a segment has enough energy to be worth transcribing."""
+
+        return rms >= self._config.min_rms or peak_abs >= self._config.min_peak_abs
+
     async def transcribe(
         self,
         pcm: bytes,

@@ -66,8 +66,9 @@ uv run python scripts/evaluate_sensevoice_rescue.py --url http://127.0.0.1:18001
 
 ## 待授权的线上调整（建议，未执行）
 
-1. **禁止 sidecar 使用 swap**：用 `--memory 1536m --memory-swap 1536m` 重建容器，两个值相等即不使用 swap。本地实测峰值 RSS 约 570 MB，线上 RSS 与 swap 合计约 805 MB，1.5 GB 留有余量。
-2. ~~把救援音频上限降到约 12 s~~：已改为代码默认值（见上），无需再改 env。
-3. **随下次 agent 发布带上「我。」修复**。
+1. **禁止 sidecar 使用 swap**：`infra/sensevoice-asr/compose.yaml` 已提交 `mem_limit=1536m`、`memswap_limit=1536m`（两值相等即不使用 swap），并带 `/healthz` healthcheck。本地实测峰值 RSS 约 570 MB，线上 RSS 与 swap 合计约 805 MB，1.5 GB 留有余量。**未在服务器执行**，重建容器要单独授权。
+2. **保活探针**：`scripts/sensevoice_keepalive.py` 每次发 1 s 合成静音到 `/transcribe`，只丢弃返回文本；配套 `infra/sensevoice-asr/memoria-sensevoice-keepalive.{service,timer}` 每 15 分钟跑一次。**未安装、未启用**，安装到主机要单独授权。探针音频是程序生成的静音，不是任何录音。
+3. ~~把救援音频上限降到约 12 s~~：已改为代码默认值（见上），无需再改 env。
+4. **随下次 agent 发布带上「我。」修复**。
 
 调整后按上面的评测脚本在线上用合成语音复测时延（不要上传真实录音），并在 TODOLIST P1-02 记录结果。
