@@ -370,11 +370,12 @@ async def test_soothing_phrase_on_the_turn_after_the_follow_up_stays(
     ]
     assert _heard(ordinary) == "橡皮可能在铅笔盒里。"
 
+    # The soothing filler is cut; the answer after it is what the child hears.
     reply = f"{phrase}。橡皮可能在铅笔盒里。"
+    expected = "橡皮可能在铅笔盒里。"
 
     async def later(_safe_ctx: Any, _tools: list[Any]) -> Any:
         async def one() -> Any:
-            yield CRISIS_SELF_SCRIPT.display
             yield reply
 
         return one()
@@ -393,7 +394,7 @@ async def test_soothing_phrase_on_the_turn_after_the_follow_up_stays(
             )
         ]
     heard = _heard(spoken)
-    assert heard == reply
+    assert heard == expected
     assert CRISIS_SELF_SCRIPT.display not in heard
     assert follow_up not in "\n".join(record.getMessage() for record in caplog.records)
     await runtime.close()
@@ -792,4 +793,99 @@ async def test_planner_plan_never_speaks_less_protection_than_the_local_crisis_r
         assert len(raised) == 1
         assert f"local={expected.template_id}" in raised[0]
         assert query not in raised[0]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_ordinary_follow_up_keeps_the_answer_behind_a_soothing_opener(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Field 2026-10-21 N2 t002 (14:18:36 北京时间): 「我们玩点别的吧。」 went unanswered.
+
+    The model answered with 没关系 opening the line; the first-sentence segment
+    was dropped as dilution, and the rest of the reply was discarded with it
+    (``post_fixed_safety_follow_up_dropped``, 1.6 s of speech, no content).
+    """
+
+    runtime = _runtime("post-safety-soothing-only")
+    pipeline = _pipeline(runtime, _InvalidPayloadPlanner())
+
+    async def model(_safe_ctx: Any, _tools: list[Any]) -> Any:
+        async def one() -> Any:
+            yield "没关系，我们玩点别的吧！"
+
+        return one()
+
+    pipeline.language_model = ScriptedChatModel(model)
+    first = await pipeline.prepare_committed_turn("我不想活了")
+    spoken_safety = [
+        token
+        async for token in pipeline.stream(
+            LanguageModelRequest(
+                user_text="我不想活了",
+                cancellation=CancellationContext.capture(first),
+            )
+        )
+    ]
+    assert spoken_safety == [CRISIS_SELF_SCRIPT]
+
+    follow_up = "我们玩点别的吧。"
+    with caplog.at_level(logging.INFO):
+        second = await pipeline.prepare_committed_turn(follow_up)
+        spoken = [
+            token
+            async for token in pipeline.stream(
+                LanguageModelRequest(
+                    user_text=follow_up,
+                    cancellation=CancellationContext.capture(second),
+                )
+            )
+        ]
+    heard = _heard(spoken)
+    assert heard == "我们玩点别的吧！"
+    assert CRISIS_SELF_SCRIPT.display not in heard
+    assert follow_up not in "\n".join(record.getMessage() for record in caplog.records)
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_ordinary_follow_up_keeps_a_content_sentence_while_soothing_stays_out(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    runtime = _runtime("post-safety-soothing-prefix")
+    pipeline = _pipeline(runtime, _InvalidPayloadPlanner())
+
+    async def model(_safe_ctx: Any, _tools: list[Any]) -> Any:
+        async def one() -> Any:
+            yield "没关系，我们玩点别的吧！"
+            yield "你想玩什么呢？"
+
+        return one()
+
+    pipeline.language_model = ScriptedChatModel(model)
+    first = await pipeline.prepare_committed_turn("我不想活了")
+    async for _ in pipeline.stream(
+        LanguageModelRequest(
+            user_text="我不想活了",
+            cancellation=CancellationContext.capture(first),
+        )
+    ):
+        pass
+
+    follow_up = "我们玩点别的吧。"
+    with caplog.at_level(logging.INFO):
+        second = await pipeline.prepare_committed_turn(follow_up)
+        spoken = [
+            token
+            async for token in pipeline.stream(
+                LanguageModelRequest(
+                    user_text=follow_up,
+                    cancellation=CancellationContext.capture(second),
+                )
+            )
+        ]
+    heard = _heard(spoken)
+    assert heard == "我们玩点别的吧！你想玩什么呢？"
+    assert "没关系" not in heard
+    assert follow_up not in "\n".join(record.getMessage() for record in caplog.records)
     await runtime.close()
