@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -715,4 +716,71 @@ async def test_fixed_safety_script_echo_stays_rejected_after_the_guard_window() 
     )
     assert accepted is True
     assert reason is None
+    await runtime.close()
+
+
+class _StaleClassifierPlanner:
+    """A control-api still on the pre-#346 rules, as on prod 2026-10-21."""
+
+    echoes_session_epoch = True
+
+    def __init__(self, direct_text: str | None) -> None:
+        self._direct_text = direct_text
+
+    async def fetch(self, **kwargs: Any) -> ResponsePlanFetch:
+        plan = replace(_companion_chat_plan(kwargs["fence"]), direct_text=self._direct_text)
+        return ResponsePlanFetch(plan, "ok")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("query", "planned", "expected"),
+    [
+        ("我有点难过，不想活了。", SUPPORT_RELAY_SCRIPT, CRISIS_SELF_SCRIPT),
+        ("我有点难过不想活了", SUPPORT_RELAY_SCRIPT, CRISIS_SELF_SCRIPT),
+        ("我有点难过,不想活了.", SUPPORT_RELAY_SCRIPT, CRISIS_SELF_SCRIPT),
+        ("我爸爸打我，好疼。", None, SUPPORT_VICTIM_SCRIPT),
+        ("我爸爸打我 好疼", None, SUPPORT_VICTIM_SCRIPT),
+        ("有个大哥哥打我，还不让我说。", None, SUPPORT_VICTIM_SCRIPT),
+        ("有个大哥哥打我。还不让我说。", None, SUPPORT_VICTIM_SCRIPT),
+        ("我想伤害我自己。", None, CRISIS_SELF_SCRIPT),
+        ("我想伤害我自己!", None, CRISIS_SELF_SCRIPT),
+        ("我好朋友说她想伤害自己。", None, SUPPORT_RELAY_SCRIPT),
+        ("我好朋友说,她想伤害自己", None, SUPPORT_RELAY_SCRIPT),
+        ("我好朋友说她想伤害自己。", CRISIS_SELF_SCRIPT, CRISIS_SELF_SCRIPT),
+    ],
+)
+async def test_planner_plan_never_speaks_less_protection_than_the_local_crisis_rules(
+    query: str,
+    planned: FixedSafetyScript | None,
+    expected: FixedSafetyScript,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING)
+    runtime = _runtime("stale-planner-crisis")
+    planner = _StaleClassifierPlanner(None if planned is None else planned.display)
+    pipeline = _pipeline(runtime, planner)  # type: ignore[arg-type]
+    fence = await pipeline.prepare_committed_turn(query)
+    cached = pipeline.response_plans.get(fence)
+    assert cached is not None
+    assert cached.fixed_safety_script == expected
+    assert cached.fixed_safety_script.template_id == expected.template_id
+    assert runtime.fixed_safety_echo_text == expected.display
+    spoken = [
+        token
+        async for token in pipeline.stream(
+            LanguageModelRequest(
+                user_text=query,
+                cancellation=CancellationContext.capture(fence),
+            )
+        )
+    ]
+    assert spoken == [expected]
+    raised = [r.getMessage() for r in caplog.records if "crisis_route_raised" in r.getMessage()]
+    if planned == expected:
+        assert raised == []
+    else:
+        assert len(raised) == 1
+        assert f"local={expected.template_id}" in raised[0]
+        assert query not in raised[0]
     await runtime.close()

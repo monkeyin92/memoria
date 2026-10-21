@@ -78,7 +78,7 @@ from services.agent.src.response_planner_client import (
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_profile_client import VoiceProfileClient
 from services.common.companion_response_safety import assistant_text_repeats_or_dilutes_safety
-from services.common.crisis_policy import route_crisis
+from services.common.crisis_policy import more_protective_local_script
 from services.common.llm_failover import LLM_UNAVAILABLE_TEXT
 from services.common.realtime_information import (
     REALTIME_UNAVAILABLE_REPLY,
@@ -544,6 +544,21 @@ class ReplyPipeline:
             and mentions_weather(prior),
         )
 
+    def _with_local_crisis_floor(self, plan: ResponsePlan, query: str) -> ResponsePlan:
+        script = more_protective_local_script(query, plan.fixed_safety_script)
+        if script is None:
+            return plan
+        if not plan_is_local_safe(plan):
+            planned = plan.fixed_safety_script
+            logger.warning(
+                "crisis_route_raised_over_planner planned=%s local=%s session_id=%s turn_id=%s",
+                planned.template_id if planned is not None else "none",
+                script.template_id,
+                self._runtime.session_id,
+                plan.fence.turn_id,
+            )
+        return replace(plan, direct_text=script.display)
+
     def _current_authorizing_profile_id(self) -> str | None:
         """The ``runtime_profile_id`` currently authorizing this session, if any.
 
@@ -1001,15 +1016,13 @@ class ReplyPipeline:
             plan = None
             fetch_reason = "mode_policy_mismatch"
         if plan is None:
-            script = route_crisis(text).script
             plan = self._local_safe_plan(
                 fence=fence,
                 speaker=speaker,
                 reason=fetch_reason,
                 query=text,
             )
-            if script is not None and plan.direct_text != script.display:
-                plan = replace(plan, direct_text=script.display)
+        plan = self._with_local_crisis_floor(plan, text)
         if plan.fixed_safety_script is not None:
             self._note_fixed_safety_script(plan.fixed_safety_script.display)
         if (
@@ -1052,15 +1065,15 @@ class ReplyPipeline:
             )
             snapshot = None
         if snapshot is None:
-            script = route_crisis(text).script
-            plan = self._local_safe_plan(
-                fence=fence,
-                speaker=speaker,
-                reason="context_snapshot_unavailable",
-                query=text,
+            plan = self._with_local_crisis_floor(
+                self._local_safe_plan(
+                    fence=fence,
+                    speaker=speaker,
+                    reason="context_snapshot_unavailable",
+                    query=text,
+                ),
+                text,
             )
-            if script is not None and plan.direct_text != script.display:
-                plan = replace(plan, direct_text=script.display)
             if (
                 input_modality == "audio"
                 and output_policy.generation_voice_must_match_plan(policy)
