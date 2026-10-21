@@ -892,6 +892,66 @@ async def test_planner_plan_never_speaks_less_protection_than_the_local_crisis_r
     await runtime.close()
 
 
+class _FastNonCrisisPlanner:
+    """Answers inside the crisis planner grace with an ordinary chat plan."""
+
+    echoes_session_epoch = True
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.plans: list[ResponsePlan] = []
+
+    async def fetch(self, **kwargs: Any) -> ResponsePlanFetch:
+        self.calls += 1
+        plan = _companion_chat_plan(kwargs["fence"])
+        self.plans.append(plan)
+        return ResponsePlanFetch(plan, "ok")
+
+
+@pytest.mark.asyncio
+async def test_fast_non_crisis_planner_plan_is_floored_to_the_prerecorded_crisis_reply(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A plan inside the 80ms grace is floored, not treated as crisis clearance."""
+
+    caplog.set_level(logging.INFO)
+    runtime = _runtime("fast-planner-crisis")
+    planner = _FastNonCrisisPlanner()
+    pipeline = _pipeline(runtime, planner)  # type: ignore[arg-type]
+    fence = await pipeline.prepare_committed_turn("我不想活了")
+
+    assert planner.calls == 1
+    assert planner.plans[0].fixed_safety_script is None
+    assert any(
+        "response_plan_cached reason=ok" in record.getMessage() for record in caplog.records
+    ), "the fast plan branch must be taken, not the timeout branch"
+
+    cached = pipeline.response_plans.get(fence)
+    assert cached is not None
+    assert cached.fixed_safety_script == CRISIS_SELF_SCRIPT
+    assert cached.fixed_safety_script.template_id == "crisis-self-v1"
+    assert runtime.fixed_safety_echo_text == CRISIS_SELF_SCRIPT.display
+
+    catalog = FixedSafetyAudioCatalog.load(
+        Path(__file__).resolve().parents[4] / DEFAULT_FIXED_SAFETY_AUDIO_DIR
+    )
+    clip = catalog.match(CRISIS_SELF_SCRIPT.spoken)
+    assert clip is not None and clip.playable
+    assert clip.template_id == "crisis-self-v1"
+
+    spoken = [
+        token
+        async for token in pipeline.stream(
+            LanguageModelRequest(
+                user_text="我不想活了",
+                cancellation=CancellationContext.capture(fence),
+            )
+        )
+    ]
+    assert spoken == [CRISIS_SELF_SCRIPT]
+    await runtime.close()
+
+
 @pytest.mark.asyncio
 async def test_ordinary_follow_up_keeps_the_answer_behind_a_soothing_opener(
     caplog: pytest.LogCaptureFixture,
