@@ -292,7 +292,10 @@ jobs:
         shard: [1, 2, 3, 4]
     services:
       postgres:
-        image: pgvector/pgvector:0.8.1-pg17-bookworm
+        # The runner skips a service whose image evaluates to an empty string.
+        # Invert the condition because '' is falsy, so `macOS && '' || image`
+        # would always choose the image.
+        image: ${{ !contains(vars.RUNNER_LABEL_JSON || '', 'macOS') && 'pgvector/pgvector:0.8.1-pg17-bookworm' || '' }}
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -305,23 +308,69 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      MEMORIA_TEST_POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/postgres
+      MEMORIA_TEST_POSTGRES_DSN: ${{ contains(vars.RUNNER_LABEL_JSON || '', 'macOS') && 'postgresql://memoria_ci@localhost:5432/memoria_ci' || 'postgresql://postgres:postgres@localhost:5432/postgres' }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
       - name: Install ffmpeg for labelled line AIGC tests
+        if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Install ffmpeg for labelled line AIGC tests (macOS)
+        if: runner.os == 'macOS'
+        run: command -v ffmpeg >/dev/null 2>&1 || brew install ffmpeg
       - name: Install
         run: uv sync --frozen --all-extras
+      - name: Verify local PostgreSQL (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          uv run python - <<'PY'
+          import os
+          import sys
+
+          import psycopg
+
+          dsn = os.environ.get("MEMORIA_TEST_POSTGRES_DSN")
+          if not dsn:
+              print(
+                  "本机 pg 未就绪(docker 容器 memoria-ci-pg)："
+                  "MEMORIA_TEST_POSTGRES_DSN 未设置",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          try:
+              with psycopg.connect(dsn, connect_timeout=5) as conn:
+                  with conn.cursor() as cur:
+                      cur.execute("select 1")
+                      cur.fetchone()
+          except Exception as exc:
+              print(
+                  "本机 pg 未就绪(docker 容器 memoria-ci-pg)："
+                  f"{type(exc).__name__}: {exc}",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          print("local PostgreSQL is ready")
+          PY
       - name: Pytest (shard ${{ matrix.shard }} of 4)
         env:
-          MEMORIA_TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          MEMORIA_TEST_POSTGRES_CONTAINER: ${{ runner.os == 'Linux' && job.services.postgres.id || '' }}
           COVERAGE_FILE: coverage-shard-${{ matrix.shard }}.data
         run: |
           set -o pipefail
-          mapfile -t files < <(uv run python scripts/ci_test_shards.py --shards 4 --index ${{ matrix.shard }})
+          files=()
+          while IFS= read -r f; do
+            if [[ -n "$f" ]]; then
+              files+=("$f")
+            fi
+          done < <(uv run python scripts/ci_test_shards.py --shards 4 --index ${{ matrix.shard }})
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "ci_test_shards.py returned no test files for shard ${{ matrix.shard }}" >&2
+            exit 1
+          fi
           echo "${#files[@]} test files"
           # Coverage is checked on the combined data; a shard alone is far below it.
           # Per-test durations feed scripts/ci_test_durations.json (see ci_test_shards.py).
