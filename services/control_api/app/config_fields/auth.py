@@ -113,8 +113,10 @@ class AuthFields(BaseModel):
         default="https://api.weixin.qq.com/cgi-bin/message/subscribe/send",
         alias="WECHAT_SUBSCRIBE_SEND_ENDPOINT",
     )
+    # Tap-through page of the crisis alert. The sender appends the alert id as
+    # ``?id=<uuid>`` so the detail page opens exactly that notification.
     wechat_subscribe_crisis_page: str = Field(
-        default="pages/memory/index",
+        default="pages/attention/index",
         alias="MEMORIA_WECHAT_SUBSCRIBE_CRISIS_PAGE",
     )
     wechat_miniprogram_state: Literal["formal", "trial", "developer"] = Field(

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import unicodedata
+import uuid
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
@@ -111,6 +112,24 @@ def _classify(response: httpx.Response, remote_code: int | None) -> PushSendResu
     return PushSendResult("failed", f"wechat_{remote_code}")
 
 
+def crisis_alert_page(base_page: str, notification_id: str | None) -> str:
+    """Deep-link the tap-through to the alert detail page of this notification.
+
+    The Mini Program detail page reads ``?id=`` on load; a bare configured page
+    can only show the guardian list.  An identifier that is not a UUID never
+    reaches the query string.
+    """
+
+    if not notification_id:
+        return base_page
+    try:
+        alert_id = str(uuid.UUID(str(notification_id)))
+    except (AttributeError, TypeError, ValueError):
+        return base_page
+    separator = "&" if "?" in base_page else "?"
+    return f"{base_page}{separator}id={alert_id}"
+
+
 class WechatSubscribeSender:
     """Send the fixed crisis alert through ``cgi-bin/message/subscribe/send``."""
 
@@ -137,11 +156,12 @@ class WechatSubscribeSender:
         openid: str,
         template_id: str,
         content: CrisisPushContent,
+        notification_id: str | None = None,
     ) -> dict[str, Any]:
         return {
             "touser": openid,
             "template_id": template_id,
-            "page": self._settings.wechat_subscribe_crisis_page,
+            "page": crisis_alert_page(self._settings.wechat_subscribe_crisis_page, notification_id),
             "miniprogram_state": self._settings.wechat_miniprogram_state,
             "lang": "zh_CN",
             "data": self.message_data(content),
@@ -153,8 +173,14 @@ class WechatSubscribeSender:
         openid: str,
         template_id: str,
         content: CrisisPushContent,
+        notification_id: str | None = None,
     ) -> PushSendResult:
-        body = self.request_body(openid=openid, template_id=template_id, content=content)
+        body = self.request_body(
+            openid=openid,
+            template_id=template_id,
+            content=content,
+            notification_id=notification_id,
+        )
         for attempt in range(2):
             try:
                 token, cache_key = await mini_program_access_token(self._settings)
@@ -241,6 +267,7 @@ __all__ = [
     "WechatSubscribeSender",
     "app_display_name_resolver",
     "build_crisis_push_worker",
+    "crisis_alert_page",
     "fit_keyword_value",
     "resolve_minor_display_name",
 ]

@@ -35,7 +35,7 @@ pytestmark = [
 class _Sender:
     def __init__(self, result: PushSendResult) -> None:
         self.result = result
-        self.calls: list[tuple[str, str, CrisisPushContent]] = []
+        self.calls: list[tuple[str, str, CrisisPushContent, str | None]] = []
 
     async def send_crisis_alert(
         self,
@@ -43,8 +43,9 @@ class _Sender:
         openid: str,
         template_id: str,
         content: CrisisPushContent,
+        notification_id: str | None = None,
     ) -> PushSendResult:
-        self.calls.append((openid, template_id, content))
+        self.calls.append((openid, template_id, content, notification_id))
         return self.result
 
 

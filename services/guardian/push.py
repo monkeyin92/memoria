@@ -224,6 +224,7 @@ class CrisisPushSender(Protocol):
         openid: str,
         template_id: str,
         content: CrisisPushContent,
+        notification_id: str | None = None,
     ) -> PushSendResult: ...
 
 
@@ -426,6 +427,7 @@ class CrisisPushWorker:
                 openid=openid,
                 template_id=self._template_id,
                 content=content,
+                notification_id=push.notification_id,
             )
         except Exception:
             logger.exception(

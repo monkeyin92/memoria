@@ -13,6 +13,7 @@ from services.control_api.app.config import ControlSettings
 from services.control_api.app.guardian_push import (
     WechatSubscribeSender,
     build_crisis_push_worker,
+    crisis_alert_page,
     fit_keyword_value,
 )
 from services.control_api.app.main import create_app
@@ -34,6 +35,7 @@ from services.guardian.subject_activity import SubjectActivityStore
 
 TEMPLATE = "CrisisTemplate_01-x"
 LOGIN_CODE = "dev-guardian-push-login"
+NOTIFICATION_ID = "6f21b0c8-4a0e-4f57-9c3a-2d1e5b7a9c40"
 
 
 def _unused_store() -> CrisisPushStorePort:
@@ -65,7 +67,7 @@ def test_guardian_push_is_disabled_by_default() -> None:
         settings.wechat_subscribe_send_endpoint
         == "https://api.weixin.qq.com/cgi-bin/message/subscribe/send"
     )
-    assert settings.wechat_subscribe_crisis_page == "pages/memory/index"
+    assert settings.wechat_subscribe_crisis_page == "pages/attention/index"
     assert settings.wechat_miniprogram_state == "formal"
     settings.validate_guardian_push()  # disabled: nothing to validate
     assert (
@@ -189,10 +191,16 @@ async def test_wechat_sender_posts_only_the_fixed_alert(monkeypatch: pytest.Monk
     sender = WechatSubscribeSender(_push_settings())
 
     first = await sender.send_crisis_alert(
-        openid="openid-a", template_id=TEMPLATE, content=_content()
+        openid="openid-a",
+        template_id=TEMPLATE,
+        content=_content(),
+        notification_id=NOTIFICATION_ID,
     )
     second = await sender.send_crisis_alert(
-        openid="openid-a", template_id=TEMPLATE, content=_content()
+        openid="openid-a",
+        template_id=TEMPLATE,
+        content=_content(),
+        notification_id=NOTIFICATION_ID,
     )
 
     assert first.outcome == second.outcome == "delivered"
@@ -203,7 +211,7 @@ async def test_wechat_sender_posts_only_the_fixed_alert(monkeypatch: pytest.Monk
     assert posts[0]["json"] == {
         "touser": "openid-a",
         "template_id": TEMPLATE,
-        "page": "pages/memory/index",
+        "page": f"pages/attention/index?id={NOTIFICATION_ID}",
         "miniprogram_state": "formal",
         "lang": "zh_CN",
         "data": {
@@ -217,6 +225,17 @@ async def test_wechat_sender_posts_only_the_fixed_alert(monkeypatch: pytest.Monk
     for forbidden in ("transcript", "text", "utterance", "severity", "reply"):
         assert forbidden not in body
     wechat_auth._ACCESS_TOKEN_CACHE.clear()
+
+
+def test_crisis_alert_page_deep_links_only_uuid_notifications() -> None:
+    page = "pages/attention/index"
+
+    assert crisis_alert_page(page, NOTIFICATION_ID) == f"{page}?id={NOTIFICATION_ID}"
+    assert crisis_alert_page(f"{page}?from=push", NOTIFICATION_ID) == (
+        f"{page}?from=push&id={NOTIFICATION_ID}"
+    )
+    assert crisis_alert_page(page, "not-a-uuid") == page
+    assert crisis_alert_page(page, "") == page
 
 
 @pytest.mark.asyncio

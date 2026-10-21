@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import hashlib
+import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 
@@ -61,7 +62,7 @@ class Clock:
 class FakeSender:
     def __init__(self, *results: PushSendResult) -> None:
         self.results = list(results)
-        self.calls: list[tuple[str, str, CrisisPushContent]] = []
+        self.calls: list[tuple[str, str, CrisisPushContent, str | None]] = []
 
     async def send_crisis_alert(
         self,
@@ -69,8 +70,9 @@ class FakeSender:
         openid: str,
         template_id: str,
         content: CrisisPushContent,
+        notification_id: str | None = None,
     ) -> PushSendResult:
-        self.calls.append((openid, template_id, content))
+        self.calls.append((openid, template_id, content, notification_id))
         await asyncio.sleep(0)
         if len(self.results) > 1:
             return self.results.pop(0)
@@ -276,8 +278,12 @@ async def test_worker_delivers_fixed_content_and_consumes_one_acceptance(
     assert (reach.delivered, reach.total, reach.wechat_delivery_rate) == (1, 1, 1.0)
     assert await _remaining(store) == 1
     assert len(sender.calls) == 1
-    openid, template_id, content = sender.calls[0]
+    openid, template_id, content, notification_id = sender.calls[0]
     assert (openid, template_id) == (OPENID, TEMPLATE)
+    # The sender deep-links the detail page with this id, so it must be the
+    # delivery's own notification UUID.
+    assert notification_id == notification.notification_id
+    assert uuid.UUID(notification_id)
     assert content == CrisisPushContent(
         title=CRISIS_PUSH_TITLE,
         child_display_name="小明",
