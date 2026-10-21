@@ -44,6 +44,7 @@ _MARKER_FLOOR_WAIT_S = 1.0
 DEFAULT_AIGC_PCM_SAMPLE_RATE_HZ = AIGC_NOTICE_SAMPLE_RATE_HZ
 _MARKER_DRAIN_GRACE_S = 0.3
 _MARKER_POLL_S = 0.02
+_AIGC_ROUND_CLOSE_WAIT_S = 6.0
 _CLOSE_REASON_MAX_CHARS = 128
 
 
@@ -212,12 +213,18 @@ class MediaSessionAigcNoticeMixin:
         task = context.aigc_closing_task
         if task is not None and task is not asyncio.current_task():
             try:
-                await asyncio.wait_for(asyncio.shield(task), timeout=6.0)
+                await asyncio.wait_for(
+                    asyncio.shield(task),
+                    timeout=_AIGC_ROUND_CLOSE_WAIT_S,
+                )
             except TimeoutError:
                 logger.warning(
                     "AIGC round close did not finish session=%s",
                     context.identity.session_id,
                 )
+                # Leaving the stale task in place would make the next reply's
+                # schedule see a live task and skip its END marker.
+                await self._cancel_aigc_round_closing(context)
             return True
         if getattr(context, "aigc_round_active", False):
             # The wake acknowledgement can be superseded before its own close

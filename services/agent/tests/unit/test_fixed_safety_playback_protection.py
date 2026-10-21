@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import pytest
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.tests.unit.test_media_session_golden import _h5_identity
 from services.agent.tests.unit.test_media_session_playback_stop import (
     _device_identity,
@@ -65,6 +66,43 @@ async def test_device_stop_word_does_not_cut_the_crisis_script(
         _device_identity(f"safety-stop-{script.template_id}"),
         scenario,
         opening=script.display,
+    )
+
+
+@pytest.mark.asyncio
+async def test_device_hard_stop_keyword_does_not_cut_the_crisis_script() -> None:
+    """The device already flushed locally; the Edge generation must stay playable."""
+
+    async def scenario(harness: _StoryHarness) -> None:
+        playing = await harness.start_story()
+        await harness.send(
+            media_pb2.MediaToCore(
+                keyword=media_pb2.KeywordEvent(
+                    identity=harness.wire_identity,
+                    keyword="停",
+                    confidence=0.95,
+                    start_sample=harness.sample,
+                    end_sample=harness.sample + 320,
+                    hard_stop=True,
+                )
+            )
+        )
+        await harness.assert_story_still_playing(playing)
+        bridge_session = harness.bridge.bridge.get(harness.identity.session_id)
+        assert bridge_session is not None
+        assert bridge_session.generation_active
+        assert bridge_session.fence.matches(playing)
+
+        frames_before_release = harness.count("audio")
+        await _finish_script(harness)
+        await harness.settle()
+        assert harness.count("audio") > frames_before_release
+        assert harness.cancel_effects() == []
+
+    await _run_story(
+        _device_identity("safety-hard-stop"),
+        scenario,
+        opening=CRISIS_SELF_SCRIPT.display,
     )
 
 

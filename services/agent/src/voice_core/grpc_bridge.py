@@ -44,6 +44,13 @@ FLOOR_EFFECT_TTL_MS = 10_000
 logger = logging.getLogger(__name__)
 
 
+def _local_keyword_stop_allowed(session: MediaBridgeSession) -> bool:
+    """A local hard stop must not cancel a script Voice Core is protecting."""
+
+    guard = session.local_stop_guard
+    return guard is None or guard()
+
+
 def _playback_event_type_from_proto(value: int) -> PlaybackEventType:
     mapping = {
         int(media_pb2.PLAYBACK_EVENT_TYPE_UNSPECIFIED): PlaybackEventType.WATERMARK,
@@ -809,10 +816,16 @@ class MediaBridgeGrpcServer:
                 and segment.hard_stop
                 and (segment.confidence or 0.0) >= KWS_HARD_STOP_MIN_CONFIDENCE
             ):
-                connection.session.apply_local_keyword_stop(
-                    confidence=float(segment.confidence or 0.0),
-                    min_confidence=KWS_HARD_STOP_MIN_CONFIDENCE,
-                )
+                if _local_keyword_stop_allowed(connection.session):
+                    connection.session.apply_local_keyword_stop(
+                        confidence=float(segment.confidence or 0.0),
+                        min_confidence=KWS_HARD_STOP_MIN_CONFIDENCE,
+                    )
+                else:
+                    logger.info(
+                        "media local keyword stop refused during fixed safety playback session=%s",
+                        connection.session.identity.session_id,
+                    )
             if accepted and self.on_speech_segment is not None:
                 await self.on_speech_segment(connection.session, segment, 0)
             return
@@ -844,10 +857,16 @@ class MediaBridgeGrpcServer:
                 and segment.hard_stop
                 and (segment.confidence or 0.0) >= KWS_HARD_STOP_MIN_CONFIDENCE
             ):
-                connection.session.apply_local_keyword_stop(
-                    confidence=float(segment.confidence or 0.0),
-                    min_confidence=KWS_HARD_STOP_MIN_CONFIDENCE,
-                )
+                if _local_keyword_stop_allowed(connection.session):
+                    connection.session.apply_local_keyword_stop(
+                        confidence=float(segment.confidence or 0.0),
+                        min_confidence=KWS_HARD_STOP_MIN_CONFIDENCE,
+                    )
+                else:
+                    logger.info(
+                        "media local keyword stop refused during fixed safety playback session=%s",
+                        connection.session.identity.session_id,
+                    )
             if accepted and self.on_speech_segment is not None:
                 await self.on_speech_segment(
                     connection.session,

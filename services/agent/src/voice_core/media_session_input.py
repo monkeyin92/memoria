@@ -737,6 +737,10 @@ class MediaSessionInputMixin:
             # (2026-09-30, build 12 「停」).
             device_flushed = segment.hard_stop and context.identity.client_type == "device"
             if interruption.cancel_generation and context.runtime.floor.fixed_safety_audible:
+                # The bridge refuses a hard-stop keyword's Edge generation
+                # cancel before this handler runs, so this script keeps its
+                # fence even though the device already flushed its own queue.
+                # Ignoring the interrupt leaves both sides' state unchanged.
                 logger.info(
                     "media keyword interrupt ignored during fixed safety playback session=%s",
                     context.identity.session_id,

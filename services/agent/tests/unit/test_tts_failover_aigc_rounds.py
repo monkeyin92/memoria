@@ -14,10 +14,12 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any, cast
 
 import httpx
 import pytest
+import services.agent.src.voice_core.media_session_aigc_notice as aigc_notice_module
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.orchestration.handlers import LanguageModelRequest
 from services.agent.src.orchestration.state_machine import (
@@ -40,6 +42,7 @@ from services.agent.src.voice_core.media_protocol import (
     SessionIdentity,
 )
 from services.agent.src.voice_core.media_session import MediaVoiceCoreRegistry
+from services.agent.src.voice_core.media_session_aigc_notice import MediaSessionAigcNoticeMixin
 from services.agent.src.voice_core.provider_adapter import ExistingVoiceProviderAdapter
 from services.agent.tests.unit.media_session_support import (
     _CapturingGenerationBridge,
@@ -551,3 +554,45 @@ async def test_one_round_still_plays_each_marker_once(
         )
     finally:
         await registry.finalize_session(identity.session_id)
+
+
+class _HangingCloseNotice(MediaSessionAigcNoticeMixin):
+    def __init__(self) -> None:
+        self.close_started = asyncio.Event()
+
+    async def _close_aigc_round(self, context: Any, *, close_reason: str) -> None:
+        _ = context, close_reason
+        self.close_started.set()
+        await asyncio.Event().wait()
+
+
+@pytest.mark.asyncio
+async def test_a_timed_out_round_close_is_cancelled_before_the_next_end_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale closing task must not suppress the next reply turn's END marker."""
+
+    monkeypatch.setattr(aigc_notice_module, "_AIGC_ROUND_CLOSE_WAIT_S", 0.01)
+    notices = _HangingCloseNotice()
+    context = SimpleNamespace(
+        identity=SimpleNamespace(session_id="aigc-close-timeout", client_type="device"),
+        aigc_closing_task=None,
+        aigc_closing_marker_state="idle",
+        aigc_round_active=True,
+    )
+    stale = asyncio.create_task(
+        notices._close_aigc_round(context, close_reason="stale"),
+        name="stale-aigc-close",
+    )
+    context.aigc_closing_task = stale
+    await notices.close_started.wait()
+
+    assert await notices._wait_aigc_round_closed(context) is True
+    assert stale.cancelled()
+    assert context.aigc_closing_task is None
+
+    notices._schedule_aigc_round_closing(context, close_reason="next_turn")
+    replacement = context.aigc_closing_task
+    assert replacement is not None and replacement is not stale
+    replacement.cancel()
+    await asyncio.gather(replacement, return_exceptions=True)

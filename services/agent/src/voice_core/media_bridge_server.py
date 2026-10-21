@@ -107,9 +107,10 @@ class MediaBridgeSession:
     overflow_count: int = 0
     task_epoch: int = 0
     context_version: int = 0
-    # A device pat or screen tap arrives as client.stop_assistant. While an
-    # approved fixed-safety script is audible, Voice Core refuses that local
-    # gesture; only the explicit stop-word paths may end the script.
+    # A device pat or screen tap arrives as client.stop_assistant, and a local
+    # stop-keyword hit arrives with hard_stop. While an approved fixed-safety
+    # script is audible, Voice Core refuses both local stop paths so a flushed
+    # generation cannot cut the script on the device.
     local_stop_guard: Callable[[], bool] | None = field(
         default=None, repr=False, compare=False
     )
