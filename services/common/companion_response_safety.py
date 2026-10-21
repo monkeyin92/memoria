@@ -218,7 +218,18 @@ _FIRST_PERSON_JUMP_RE = re.compile(r"我.{0,16}(?:从楼上跳|跳下去)")
 # Despair phrase group: reason-to-live, meaninglessness, wish-not-to-exist.
 # Any-subject for 找不到…理由 (story-retell). 不在了就好 stays first-person.
 _NO_REASON_TO_LIVE_RE = re.compile(r"找不[到着](?:继续)?活下去的理由")
-_LIFE_MEANINGLESS_RE = re.compile(r"活着(?:真的)?没意思")
+_LIFE_MEANINGLESS_PATTERN = (
+    r"活着(?:真的|真|太|好|很|特别|一点也?|半点)?(?:"
+    r"(?:没|没有)(?:什么|一点|任何)?(?:意思|意义)|"
+    r"(?:一点|半点)?(?:意思|意义)(?:都|也)?(?:没有|没))"
+)
+_LIFE_MEANINGLESS_RE = re.compile(_LIFE_MEANINGLESS_PATTERN)
+# The child frames their absence as better for others.  Not every 没有我:
+# 「没有我你们也能玩」 is ordinary and must stay out.
+_BETTER_WITHOUT_ME_RE = re.compile(
+    r"(?:大家|所有人|你们|他们|别人)?没有我(?:的话)?"
+    r"(?:会|都|就|才)?(?:更|才)?(?:好|开心|轻松)"
+)
 _WISH_NOT_EXIST_RE = re.compile(r"(?:要是|如果)?我不在了就好(?:了)?")
 _CRISIS_SELF_WORD_CLASS_RES: Final[tuple[re.Pattern[str], ...]] = (
     _SELF_HARM_INTENT_WORD_CLASS_RE,
@@ -242,7 +253,16 @@ _SELF_RISK_PHRASE = (
     r"(?:不想(?:再|继续)?活(?!动)|活不下去|"
     r"(?:想|要|准备|打算)(?:去)?(?:死|自杀|自残|自尽|轻生|跳楼|结束(?:自己的)?生命|"
     r"伤害(?:我)?自己|杀(?:了|死)?(?:我)?自己|"
-    r"(?:拿|用)?(?:刀|小刀|剪刀)?(?:划|割)(?:伤|破)?(?:自己|手腕)))"
+    r"(?:拿|用)?(?:刀|小刀|剪刀)?(?:划|割)(?:伤|破)?(?:自己|手腕))|"
+    # Passive self-harm: wish to vanish, never to have been born, sleep and
+    # not wake, or not being here as acceptable. Each phrase carries the
+    # child's own wording, so everyday 死/消失 (games, pets, laughter) stays
+    # out of the crisis tier.
+    r"消失(?:了|掉)?(?:就)?好(?:了)?|"
+    r"(?:没有|没)(?:被)?(?:生出来|生下来|出生)(?:就)?好(?:了)?|"
+    r"(?:睡着了|睡着|一睡)(?:就|再)?(?:不|别)(?:要)?醒(?:过来|来)?|"
+    r"(?:不在|不存在|离开)(?:了)?(?:也|都)?(?:没关系|没事|无所谓|不要紧)|"
+    rf"{_LIFE_MEANINGLESS_PATTERN})"
 )
 _OTHER_PERSON_NOUNS = (
     r"(?:同学|同桌|朋友|好朋友|闺蜜|哥哥|姐姐|弟弟|妹妹|爸爸|妈妈|爷爷|奶奶|姥姥|姥爷|"
@@ -275,6 +295,8 @@ def _first_person_self_risk(text: str) -> bool:
         if _REPORTED_SPEECH_CLAUSE_RE.search(clause):
             subject_is_self = False
             continue
+        if _BETTER_WITHOUT_ME_RE.search(clause):
+            return True
         if _SELF_RISK_IN_CLAUSE_RE.search(clause):
             return True
         if _SELF_SUBJECT_CLAUSE_RE.search(clause):
