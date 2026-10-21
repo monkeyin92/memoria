@@ -69,7 +69,14 @@ _MAX_REMEMBERED_EVENT_IDS = 2_048
 # The only 409 that proves the server already holds this event_id. Every
 # other 409 (ambiguous_parent_turn, fence or subject conflicts) means the
 # event was rejected, so the encrypted spool row must stay until it succeeds.
+#
+# The prose form is what control-api releases before the reason code shipped as
+# plain text. It must keep proving idempotency: an agent that only treats
+# ``event_id_content_conflict`` as a conflict would otherwise retain and warn on
+# every one of those duplicates. New responses carry the reason code and never
+# match the prose pattern.
 _EVENT_ID_ALREADY_STORED = re.compile(r"event_id .+ already has different content")
+_EVENT_ID_CONTENT_CONFLICT_CODE = "event_id_content_conflict"
 
 
 class ArchiveSink:
@@ -273,11 +280,27 @@ class ArchiveSink:
             return True
         if response.status_code == 409:
             detail = self._conflict_detail(response)
+            if detail == _EVENT_ID_CONTENT_CONFLICT_CODE:
+                # The archive already holds this event_id with different
+                # content. Frozen evidence cannot be overwritten, so the row
+                # stays in the spool and this write did not succeed.
+                self._retained_conflicts += 1
+                if self._metrics is not None:
+                    self._metrics.inc_archive_event_id_content_conflict()
+                    self._metrics.inc_archive_conflict_retained(detail)
+                logger.error(
+                    "archive event_id content conflict retained in spool "
+                    "event_id=%s reason=%s count=%d",
+                    body.get("event_id"),
+                    detail,
+                    self._retained_conflicts,
+                )
+                return False
             if _EVENT_ID_ALREADY_STORED.fullmatch(detail):
-                # The server already holds this event_id. A retry can rebuild
-                # the same deterministic id after its source clock advanced,
-                # but the archive keeps the immutable original, so this is a
-                # completed idempotent write.
+                # Pre-reason-code server. A retry can rebuild the same
+                # deterministic id after its source clock advanced, but the
+                # archive keeps the immutable original, so this is a completed
+                # idempotent write.
                 logger.info(
                     "archive event already stored event_id=%s",
                     body.get("event_id"),
@@ -327,8 +350,6 @@ class ArchiveSink:
 
     @staticmethod
     def _conflict_detail(response: httpx.Response) -> str:
-        """The server's explanation for a 409, empty when it carries none."""
-
         try:
             payload = response.json()
         except ValueError:

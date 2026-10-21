@@ -814,8 +814,11 @@ async def test_archive_event_id_is_sent_once(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_existing_archive_conflict_is_a_completed_idempotent_write(tmp_path: Path) -> None:
+async def test_legacy_prose_conflict_from_releases_before_the_reason_code_is_idempotent(
+    tmp_path: Path,
+) -> None:
     spool_path = tmp_path / "archive.spool"
+    metrics = MetricsRegistry()
 
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -833,6 +836,7 @@ async def test_existing_archive_conflict_is_a_completed_idempotent_write(tmp_pat
             spool_max_bytes=64 * 1024,
         ),
         client=client,
+        metrics=metrics,
     )
     event = {
         "event_id": "event-conflict",
@@ -847,20 +851,70 @@ async def test_existing_archive_conflict_is_a_completed_idempotent_write(tmp_pat
     assert await sink.publish(event) is True
     assert not spool_path.exists() or spool_path.read_bytes() == b""
     assert sink.retained_conflicts == 0
+    assert metrics.get("archive_event_id_content_conflict_total") == 0
     await client.aclose()
 
 
 @pytest.mark.asyncio
-async def test_event_id_conflict_during_replay_clears_the_spool(tmp_path: Path) -> None:
+async def test_event_id_content_conflict_stays_in_spool_and_alerts(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    spool_path = tmp_path / "archive.spool"
+    metrics = MetricsRegistry()
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"detail": {"code": "event_id_content_conflict"}})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    sink = ArchiveSink(
+        ArchiveSinkConfig(
+            endpoint="https://control.test/v1/archive/session-events",
+            internal_token="internal-test-token",
+            spool_path=spool_path,
+            spool_key=Fernet.generate_key().decode("ascii"),
+            spool_max_bytes=64 * 1024,
+        ),
+        client=client,
+        metrics=metrics,
+    )
+    event = {
+        "event_id": "event-conflict-code",
+        "session_id": "session-001",
+        "event_type": "speech.utterance_finalized",
+        "occurred_at": "2026-07-19T08:00:00+00:00",
+        "speaker_class": "owner",
+        "source": "funasr.authoritative_final",
+        "payload": {"text": "同一个 event_id 换了内容。"},
+    }
+
+    with caplog.at_level(logging.ERROR, logger="services.agent.src.archive_sink"):
+        assert await sink.publish(event) is False
+        assert spool_path.read_bytes()
+        assert await sink.replay() == 0
+
+    assert spool_path.read_bytes()
+    assert sink.retained_conflicts == 2
+    assert metrics.get("archive_event_id_content_conflict_total") == 2
+    assert metrics.get(
+        "archive_conflict_retained_total", {"reason": "event_id_content_conflict"}
+    ) == 2
+    assert "archive_event_id_content_conflict_total" in metrics.render_prometheus().decode()
+    assert "archive event_id content conflict retained in spool" in caplog.text
+    assert "event_id_content_conflict" in caplog.text
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_event_id_content_conflict_during_replay_keeps_the_encrypted_row(
+    tmp_path: Path,
+) -> None:
     online = False
 
     def handler(_: httpx.Request) -> httpx.Response:
         if not online:
             return httpx.Response(503)
-        return httpx.Response(
-            409,
-            json={"detail": "event_id 'event-retried' already has different content"},
-        )
+        return httpx.Response(409, json={"detail": {"code": "event_id_content_conflict"}})
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     spool_path = tmp_path / "archive.spool"
@@ -881,14 +935,14 @@ async def test_event_id_conflict_during_replay_clears_the_spool(tmp_path: Path) 
         "occurred_at": "2026-07-19T08:00:00+00:00",
         "speaker_class": "owner",
         "source": "funasr.authoritative_final",
-        "payload": {"text": "重放时服务端已存在。"},
+        "payload": {"text": "重放时服务端内容不同。"},
     }
 
     assert await sink.publish(event) is False
     assert spool_path.read_bytes()
     online = True
-    assert await sink.replay() == 1
-    assert spool_path.read_bytes() == b""
+    assert await sink.replay() == 0
+    assert spool_path.read_bytes()
     await client.aclose()
 
 
@@ -900,6 +954,7 @@ async def test_event_id_conflict_during_replay_clears_the_spool(tmp_path: Path) 
         {"code": "parent_turn_not_canonical"},
         {"code": "turn_event_conflict"},
         {"code": "archive_subject_fence_stale"},
+        {"code": "event_id_content_conflict"},
     ),
 )
 async def test_non_idempotent_conflict_stays_in_spool_and_alerts(
@@ -945,7 +1000,16 @@ async def test_non_idempotent_conflict_stays_in_spool_and_alerts(
     assert metrics.get(
         "archive_conflict_retained_total", {"reason": detail["code"]}
     ) == 2
-    assert "archive conflict retained in spool" in caplog.text
+    # Only the content conflict has a dedicated series; the other reasons must
+    # not leak into it.
+    assert metrics.get("archive_event_id_content_conflict_total") == (
+        2 if detail["code"] == "event_id_content_conflict" else 0
+    )
+    assert (
+        "archive event_id content conflict retained in spool"
+        if detail["code"] == "event_id_content_conflict"
+        else "archive conflict retained in spool"
+    ) in caplog.text
     assert detail["code"] in caplog.text
     await client.aclose()
 

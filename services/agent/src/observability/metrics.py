@@ -108,6 +108,15 @@ class MetricsRegistry:
         """A non-idempotent archive 409 kept encrypted evidence in the spool."""
         self._inc("archive_conflict_retained_total", {"reason": reason})
 
+    def inc_archive_event_id_content_conflict(self) -> None:
+        """The archive already holds this event_id with different content.
+
+        Counted apart from ``archive_conflict_retained_total`` (which mixes
+        every other rejected 409 under its own reason label) so compliance can
+        alert on this cause alone. It is a failed write, never a success.
+        """
+        self._inc("archive_event_id_content_conflict_total")
+
     def observe_context_snapshot_build(self, seconds: float) -> None:
         if seconds < 0 or seconds != seconds or seconds in {float("inf"), float("-inf")}:
             raise ValueError("context snapshot build time must be finite and non-negative")
