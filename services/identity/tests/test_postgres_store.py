@@ -28,7 +28,7 @@ from services.identity.domain import (
     StructuredPersonaFields,
 )
 from services.identity.postgres_store import PostgresIdentityStore
-from services.identity.service import IdentityService
+from services.identity.service import REDACTED_DISPLAY_NAME, IdentityService
 from services.identity.testing_authorities import TestTransferAuthority
 
 _DSN = os.getenv("MEMORIA_TEST_POSTGRES_DSN", "")
@@ -2470,6 +2470,321 @@ async def test_parent_for_child_still_requires_a_relationship_for_the_guardian_r
                 policy_bundle_version="multi-subject-v1",
                 now=now,
             )
+    finally:
+        if store is not None:
+            await store.close()
+        await _drop_database(database)
+
+
+async def _bound_child_for_deletion(
+    service: IdentityService, *, now: datetime
+) -> tuple[str, str, str]:
+    """One verified adult owner, one attested child they serve."""
+
+    owner = (
+        await service.register_person(
+            display_name="家长",
+            timezone="Asia/Shanghai",
+            subject_category="adult",
+            age_band="adult",
+            age_evidence_status="verified",
+            age_evidence_id="evidence-owner-delete",
+            now=now,
+        )
+    ).person_id
+    child = await service.register_person(
+        display_name="小满",
+        timezone="Asia/Shanghai",
+        subject_category="minor",
+        age_band="under_14",
+        actor_person_id=owner,
+        now=now,
+    )
+    await service.attest_binding_relationship(
+        source_person_id=owner,
+        target_person_id=child.person_id,
+        relation_type="guardian_of",
+        actor_person_id=owner,
+        now=now,
+    )
+    manifest = await service.create_binding(
+        device_id="dev-pg-delete",
+        declared_mode="parent_for_child",
+        account_owner_person_id=owner,
+        primary_subject_ids=(child.person_id,),
+        roles=((owner, "guardian"), (owner, "device_admin")),
+        service_profile_version="parent_for_child-v1",
+        policy_bundle_version="multi-subject-v1",
+        consent_offer_ids=("offer_minor_voice_session_v1",),
+        now=now,
+    )
+    assert manifest.primary_subject_ids == (child.person_id,)
+    return owner, child.person_id, manifest.binding_id
+
+
+async def test_unbind_without_a_switch_clears_the_child_and_keeps_id_only_audit() -> None:
+    """Acceptance (#283): no nickname or age band survives an unbind."""
+
+    database = f"memoria_identity_{uuid.uuid4().hex[:10]}"
+    dsns = await _bootstrap(database)
+    store = None
+    try:
+        store, service, _pg_authority = await _service(dsns)
+        now = datetime(2026, 10, 21, 3, 0, tzinfo=UTC)
+        owner, child, _binding_id = await _bound_child_for_deletion(service, now=now)
+
+        await service.revoke_binding(
+            device_id="dev-pg-delete", actor_person_id=owner, now=now + timedelta(minutes=1)
+        )
+        cleared = await service.redact_bound_subject(
+            person_id=child, actor_person_id=owner, now=now + timedelta(minutes=1)
+        )
+        assert cleared.display_name == REDACTED_DISPLAY_NAME
+        assert (cleared.subject_category, cleared.age_band) == ("unknown", "unknown")
+        assert cleared.age_evidence_status == "unverified"
+        assert cleared.status == "disabled"
+
+        admin = await asyncpg.connect(dsns["admin"])
+        try:
+            row = await admin.fetchrow(
+                "SELECT display_name, subject_category, age_band, status"
+                " FROM identity_persons WHERE person_id = $1",
+                child,
+            )
+            assert dict(row) == {
+                "display_name": REDACTED_DISPLAY_NAME,
+                "subject_category": "unknown",
+                "age_band": "unknown",
+                "status": "disabled",
+            }
+            # The binding audit rows survive with ids and times only: no name
+            # and no age band anywhere in them.
+            rows = await admin.fetch(
+                "SELECT payload_json FROM identity_audit_events"
+                " WHERE binding_id IS NOT NULL AND device_id = $1",
+                "dev-pg-delete",
+            )
+            assert rows, "the binding audit trail is kept"
+            for audit in rows:
+                payload = audit["payload_json"]
+                serialized = payload if isinstance(payload, str) else json.dumps(payload)
+                assert "小满" not in serialized
+                assert "under_14" not in serialized
+                assert REDACTED_DISPLAY_NAME not in serialized
+            assert await admin.fetchval(
+                "SELECT count(*) FROM identity_device_bindings WHERE device_id = $1",
+                "dev-pg-delete",
+            ) >= 1
+        finally:
+            await admin.close()
+    finally:
+        if store is not None:
+            await store.close()
+        await _drop_database(database)
+
+
+async def test_person_update_audit_keeps_only_changed_fields_actor_and_time() -> None:
+    """Acceptance (#283): a new update audit holds no whole-row snapshot."""
+
+    database = f"memoria_identity_{uuid.uuid4().hex[:10]}"
+    dsns = await _bootstrap(database)
+    store = None
+    try:
+        store, service, _pg_authority = await _service(dsns)
+        now = datetime(2026, 10, 21, 4, 0, tzinfo=UTC)
+        owner, child, _binding_id = await _bound_child_for_deletion(service, now=now)
+        before = await service.get_person(child, actor_person_id=owner)
+
+        updated = await service.update_person_profile(
+            person_id=owner,
+            locale="en-US",
+            actor_person_id=owner,
+            now=now + timedelta(minutes=1),
+        )
+        assert updated.locale == "en-US"
+        later = await service.get_person(child, actor_person_id=owner)
+        assert later is not None
+        del before
+
+        admin = await asyncpg.connect(dsns["admin"])
+        try:
+            row = await admin.fetchrow(
+                "SELECT payload_json FROM identity_audit_events"
+                " WHERE action = 'person.self_update' AND person_id = $1"
+                " ORDER BY created_at DESC LIMIT 1",
+                owner,
+            )
+            payload = row["payload_json"]
+            payload = json.loads(payload) if isinstance(payload, str) else dict(payload)
+            assert payload["changed_fields"] == ["locale"]
+            assert payload["actor_person_id"] == owner
+            assert set(payload) == {"changed_fields", "actor_person_id", "occurred_at"}
+            # No snapshot field leaks the name, the age band or any column.
+            for column in (
+                "display_name",
+                "age_band",
+                "subject_category",
+                "age_evidence_status",
+                "timezone",
+                "status",
+                "created_at",
+                "updated_at",
+                "person_id",
+                "locale",
+            ):
+                assert column not in payload, column
+        finally:
+            await admin.close()
+
+        # An age declaration reports the fields it changed, never the values.
+        await service.declare_age_evidence(
+            person_id=child, age_band="14_17", actor_person_id=owner, now=now + timedelta(minutes=2)
+        )
+        admin = await asyncpg.connect(dsns["admin"])
+        try:
+            row = await admin.fetchrow(
+                "SELECT payload_json FROM identity_audit_events"
+                " WHERE action = 'person.age_evidence.update' AND person_id = $1"
+                " ORDER BY created_at DESC LIMIT 1",
+                child,
+            )
+            payload = row["payload_json"]
+            payload = json.loads(payload) if isinstance(payload, str) else dict(payload)
+            # Only the band moved: category and evidence status did not.
+            assert payload["changed_fields"] == ["age_band"]
+            assert payload["actor_person_id"] == owner
+            assert "14_17" not in json.dumps(payload)
+        finally:
+            await admin.close()
+    finally:
+        if store is not None:
+            await store.close()
+        await _drop_database(database)
+
+
+async def test_account_deletion_erases_the_person_rows_and_refuses_without_the_gate() -> None:
+    """Acceptance (#283): no usage-person row survives an account deletion."""
+
+    database = f"memoria_identity_{uuid.uuid4().hex[:10]}"
+    dsns = await _bootstrap(database)
+    store = None
+    try:
+        store, service, _pg_authority = await _service(dsns)
+        now = datetime(2026, 10, 21, 5, 0, tzinfo=UTC)
+        owner, child, _binding_id = await _bound_child_for_deletion(service, now=now)
+
+        api = await asyncpg.connect(dsns["api"])
+        try:
+            # The API role holds no DELETE grant at all, and opening the gate
+            # by hand does not give it one: the GUC is not a credential.
+            with pytest.raises(asyncpg.InsufficientPrivilegeError):
+                async with api.transaction():
+                    await api.execute(
+                        "SELECT set_config('app.identity_actor', $1, true)", owner
+                    )
+                    await api.execute(
+                        "SELECT set_config('app.identity_account_deletion', '1', true)"
+                    )
+                    await api.execute(
+                        "DELETE FROM identity_persons WHERE person_id = $1", child
+                    )
+            # Nor can it borrow the port for another account.
+            with pytest.raises(asyncpg.RaiseError, match="actor context mismatch"):
+                async with api.transaction():
+                    await api.execute(
+                        "SELECT set_config('app.identity_actor', 'someone-else', true)"
+                    )
+                    await api.execute(
+                        "SELECT identity_delete_account_identity($1, $2)",
+                        owner,
+                        REDACTED_DISPLAY_NAME,
+                    )
+        finally:
+            await api.close()
+
+        counts = await service.delete_account_identity(account_person_id=owner)
+        assert counts["persons"] >= 2
+
+        admin = await asyncpg.connect(dsns["admin"])
+        try:
+            assert (
+                await admin.fetchval(
+                    "SELECT count(*) FROM identity_persons WHERE person_id = ANY($1::text[])",
+                    [owner, child],
+                )
+                == 0
+            )
+            assert (
+                await admin.fetchval(
+                    "SELECT count(*) FROM identity_device_binding_roles"
+                    " WHERE person_id = ANY($1::text[])",
+                    [owner, child],
+                )
+                == 0
+            )
+            # Residue check used by the deletion pipeline's verified_empty.
+            assert await service.remaining_account_identity(account_person_id=owner) == {}
+            # Replay is idempotent: a retry after a crash converges.
+            again = await service.delete_account_identity(account_person_id=owner)
+            assert again["persons"] == 0
+        finally:
+            await admin.close()
+    finally:
+        if store is not None:
+            await store.close()
+        await _drop_database(database)
+
+
+async def test_account_deletion_keeps_a_child_another_account_still_serves() -> None:
+    """Only the deleting account's own graph is erased (#283)."""
+
+    database = f"memoria_identity_{uuid.uuid4().hex[:10]}"
+    dsns = await _bootstrap(database)
+    store = None
+    try:
+        store, service, _pg_authority = await _service(dsns)
+        now = datetime(2026, 10, 21, 6, 0, tzinfo=UTC)
+        first_owner, child, _binding_id = await _bound_child_for_deletion(service, now=now)
+        second_owner = (
+            await service.register_person(
+                display_name="另一位家长",
+                timezone="Asia/Shanghai",
+                subject_category="adult",
+                age_band="adult",
+                age_evidence_status="verified",
+                age_evidence_id="evidence-second-parent",
+                now=now,
+            )
+        ).person_id
+        await service.attest_binding_relationship(
+            source_person_id=second_owner,
+            target_person_id=child,
+            relation_type="guardian_of",
+            actor_person_id=second_owner,
+            now=now,
+        )
+        await service.create_binding(
+            device_id="dev-pg-delete-shared",
+            declared_mode="parent_for_child",
+            account_owner_person_id=second_owner,
+            primary_subject_ids=(child,),
+            roles=((second_owner, "guardian"), (second_owner, "device_admin")),
+            service_profile_version="parent_for_child-v1",
+            policy_bundle_version="multi-subject-v1",
+            consent_offer_ids=("offer_minor_voice_session_v1",),
+            now=now,
+        )
+
+        counts = await service.delete_account_identity(account_person_id=first_owner)
+
+        # The first account is gone; the shared child still has a binding.
+        assert counts["persons"] == 1
+        remaining = await service.get_person(child, actor_person_id=second_owner)
+        assert remaining.display_name == "小满"
+        assert remaining.status == "active"
+        assert (
+            await service.get_person(second_owner, actor_person_id=second_owner)
+        ).status == "active"
     finally:
         if store is not None:
             await store.close()

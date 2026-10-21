@@ -10,6 +10,11 @@ store resumes where it stopped. While a deletion runs, the subject is fenced:
 new evidence for them is refused (``is_subject_deleting``). Content-free audit
 stays: consent evidence and revoked consents, policy receipts, identity
 relationships/bindings, session-runtime profiles.
+
+The identity step clears or erases the person row through the identity
+authority's controlled port (issue #283). Whether the row is cleared (a device
+still serves them) or erased is the identity side's decision, so the saga only
+asks for it on the path that requested it.
 """
 
 from __future__ import annotations

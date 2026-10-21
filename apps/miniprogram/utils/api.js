@@ -1098,17 +1098,14 @@ async function syncDeviceBindings() {
 }
 
 /*
- * 解除绑定。服务端先停止该使用人的记忆，再按 purge_subject_data 决定是否
- * 同时删除 TA 的记忆与对话数据；false 表示保留，重新绑定后可恢复。成功后
- * 清理本地绑定上下文，由调用方重新同步账号设备。
+ * 解除绑定。服务端一律停止该使用人的记忆，并清除 TA 的昵称、年龄段以及
+ * 近期摘要和长期档案；删除后不能恢复。成功后清理本地绑定上下文，由调用方
+ * 重新同步账号设备。
  */
-function unbindDevice(deviceId, { purgeSubjectData } = {}) {
-  if (typeof purgeSubjectData !== "boolean") {
-    return Promise.reject(new TypeError("请先选择是否删除 TA 的数据。"));
-  }
+function unbindDevice(deviceId) {
   return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/binding/unbind`, {
     method: "POST",
-    data: { reason: "unbind", purge_subject_data: purgeSubjectData },
+    data: { reason: "unbind" },
   }).then((result) => {
     const current = readBindingManifest();
     if (!current || current.device_id === deviceId) clearDeviceBindingContext();

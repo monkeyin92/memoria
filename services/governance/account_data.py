@@ -200,9 +200,19 @@ _DELETION_STEP_RANK = {
     "archive_rows_deleted": 5,
     "speaker_rows_deleted": 6,
     "evolution_rows_deleted": 7,
-    "verified_empty": 8,
-    "completed": 9,
+    "identity_rows_deleted": 8,
+    "verified_empty": 9,
+    "completed": 10,
 }
+
+
+class AccountIdentityRepository(Protocol):
+    """Controlled identity erasure port (issue #283)."""
+
+    async def delete_account_identity(self, account_id: str) -> dict[str, int]: ...
+
+    async def remaining_account_identity(self, account_id: str) -> dict[str, int]: ...
+
 
 
 class AccountRepository(Protocol):
@@ -694,6 +704,7 @@ class AccountDataGovernance:
         operation_blocker: AccountOperationBlocker | None = None,
         account_read_guard: AccountReadGuard | None = None,
         onboarding: BoundDeviceAuditDeleter | None = None,
+        identity_repository: AccountIdentityRepository | None = None,
     ) -> None:
         self._memory_store = memory_store
         self._archive_repository = archive_repository
@@ -708,6 +719,7 @@ class AccountDataGovernance:
         self._operation_blocker = operation_blocker
         self._account_read_guard = account_read_guard or _unguarded_read
         self._onboarding = onboarding
+        self._identity_repository = identity_repository
         # ponytail: deletion is rare; one lock avoids a per-account lock lifecycle.
         self._deletion_lock = asyncio.Lock()
 
@@ -958,6 +970,17 @@ class AccountDataGovernance:
                 )
                 await checkpoint("evolution_rows_deleted")
 
+            # Idempotent: a retry after a late child bind runs the erasure port
+            # again, and the port converges (already-erased rows count zero).
+            if self._identity_repository is not None:
+                identity_counts = await self._identity_repository.delete_account_identity(
+                    account_id
+                )
+                progress.update(
+                    {f"identity.{key}": value for key, value in identity_counts.items()}
+                )
+            await checkpoint("identity_rows_deleted")
+
             # Catch any asset or projection that arrived just before the deleting fence.
             (
                 late_profiles,
@@ -1030,6 +1053,7 @@ class AccountDataGovernance:
                 evolution_rows,
                 legacy_rows,
                 guardian_rows,
+                identity_rows,
             ) = await asyncio.gather(
                 self._voice_profiles.profiles(account_id=account_id),
                 self._archive_repository.object_references(account_id),
@@ -1042,6 +1066,11 @@ class AccountDataGovernance:
                     if self._guardian_repository is not None
                     else _empty_projection_rows()
                 ),
+                (
+                    self._identity_repository.remaining_account_identity(account_id)
+                    if self._identity_repository is not None
+                    else _empty_projection_rows()
+                ),
             )
             if (
                 profiles
@@ -1051,6 +1080,7 @@ class AccountDataGovernance:
                 or evolution_rows
                 or _legacy_export_has_rows(cast(LegacyAccountExport, legacy_rows))
                 or guardian_rows
+                or identity_rows
             ):
                 raise AccountDeletionIncompleteError(
                     "assets or projections appeared while account deletion was running"

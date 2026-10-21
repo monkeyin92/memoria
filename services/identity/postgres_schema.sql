@@ -1231,13 +1231,13 @@ BEGIN
     WHERE person_id = p_person_id;
     PERFORM set_config('app.identity_suppress_person_audit', COALESCE(v_suppress, ''), true);
     v_event_id := 'evt:registration-reconciled:' || gen_random_uuid()::text;
-    SELECT to_jsonb(p) || jsonb_build_object(
+    v_payload := jsonb_build_object(
         'source', 'control.wechat_phone_registration.v1',
         'evidence_id', p_evidence_id, 'source_profile_revision', p_source_revision,
         'previous_subject_category', v_person.subject_category,
         'previous_age_band', v_person.age_band,
         'previous_age_evidence_status', v_person.age_evidence_status
-    ) INTO v_payload FROM identity_persons p WHERE p.person_id = p_person_id;
+    );
     INSERT INTO identity_audit_events (
         event_id, action, actor_person_id, subject_person_id, person_id,
         device_id, binding_id, relationship_id, payload_json, created_at
@@ -1374,6 +1374,10 @@ $$;
 -- Subject deletion (2026-09-25): once a person with no account has had their
 -- data erased and no binding serves them, the owner who attested them may
 -- turn them into a disabled placeholder and scrub earlier copies of the name.
+-- Every unbind now takes this path (issue #283). ``age_band`` is NOT NULL with
+-- a category/evidence CHECK, so an erased age is the domain's ``unknown``
+-- value, not SQL NULL: the real band is gone and the row no longer reads as a
+-- child or a verified adult.
 CREATE OR REPLACE FUNCTION identity_redact_bound_subject(
     p_person_id text,
     p_actor_person_id text,
@@ -1413,8 +1417,19 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'identity_redact_bound_subject: a device still serves this person';
     END IF;
+    -- The account owner and every verified adult keep their own identity;
+    -- only a child served by this device is cleared on unbind.
+    IF EXISTS (
+        SELECT 1 FROM identity_persons
+        WHERE person_id = p_person_id AND subject_category = 'adult'
+    ) THEN
+        RAISE EXCEPTION 'identity_redact_bound_subject: an adult person is not cleared';
+    END IF;
     UPDATE identity_persons
     SET display_name = p_display_name,
+        subject_category = 'unknown',
+        age_band = 'unknown',
+        age_evidence_status = 'unverified',
         status = 'disabled',
         updated_at = p_updated_at
     WHERE person_id = p_person_id;
@@ -1437,6 +1452,182 @@ BEGIN
         p_person_id, jsonb_build_object('person_id', p_person_id, 'status', 'disabled'),
         p_updated_at
     );
+END
+$$;
+
+-- Account deletion (issue #283): the one port allowed to remove identity
+-- rows.  The BEFORE DELETE guard is unchanged and still refuses every other
+-- caller.  The gate is opened inside this function, never by the caller: the
+-- GUC is not a credential, so the owning role cannot unlock deletes with a
+-- ``set_config`` of its own.  The function verifies the transaction-local
+-- actor equals the account being erased, then deletes the account person plus
+-- the accountless children bound to it in foreign-key order, and keeps the
+-- audit trail content-free: ids and times only.
+CREATE OR REPLACE FUNCTION identity_delete_account_identity(
+    p_account_person_id text,
+    p_display_name text
+) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public SET row_security = on AS $$
+DECLARE
+    v_actor text;
+    v_persons text[];
+    v_bindings text[];
+    v_binding_refs jsonb;
+    v_relationships text[];
+    v_counts jsonb := '{}'::jsonb;
+    v_removed integer;
+BEGIN
+    v_actor := NULLIF(current_setting('app.identity_actor', true), '');
+    IF p_account_person_id IS NULL
+       OR char_length(p_account_person_id) NOT BETWEEN 1 AND 128 THEN
+        RAISE EXCEPTION 'identity_delete_account_identity: invalid account id';
+    END IF;
+    IF p_display_name IS NULL
+       OR char_length(p_display_name) NOT BETWEEN 1 AND 128 THEN
+        RAISE EXCEPTION 'identity_delete_account_identity: invalid display name';
+    END IF;
+    IF v_actor IS DISTINCT FROM p_account_person_id THEN
+        RAISE EXCEPTION 'identity_delete_account_identity: actor context mismatch';
+    END IF;
+    -- Opened here, in the definer's own transaction scope.  A caller that set
+    -- it itself changes nothing: this assignment is the only authority.
+    PERFORM set_config('app.identity_account_deletion', '1', true);
+    -- Idempotent replay: an account with no identity row and no binding of
+    -- its own has nothing left to erase.
+    IF NOT EXISTS (
+        SELECT 1 FROM identity_persons WHERE person_id = p_account_person_id
+    ) AND NOT EXISTS (
+        SELECT 1 FROM identity_device_bindings
+        WHERE account_owner_person_id = p_account_person_id
+    ) THEN
+        RETURN jsonb_build_object('persons', 0);
+    END IF;
+    -- Account person plus the accountless subjects its parent_for_child
+    -- bindings declared.  An adult who registered their own account keeps
+    -- their row: only the account's own graph is erased.
+    SELECT COALESCE(array_agg(DISTINCT c.person_id), ARRAY[p_account_person_id])
+    INTO v_persons
+    FROM (
+        SELECT p.person_id
+        FROM identity_persons p
+        WHERE p.person_id = p_account_person_id
+        UNION
+        SELECT p.person_id
+        FROM identity_device_bindings b
+        JOIN identity_device_binding_roles r ON r.binding_id = b.binding_id
+        JOIN identity_persons p ON p.person_id = r.person_id
+        WHERE b.account_owner_person_id = p_account_person_id
+          AND b.declared_mode = 'parent_for_child'
+          AND r.role = 'primary_subject'
+          AND p.subject_category IN ('minor', 'unknown')
+          AND NOT EXISTS (
+              SELECT 1
+              FROM identity_device_bindings other
+              JOIN identity_device_binding_roles other_role
+                ON other_role.binding_id = other.binding_id
+              WHERE other_role.person_id = p.person_id
+                AND other.account_owner_person_id <> p_account_person_id
+                AND other.status = 'active'
+                AND other_role.status = 'active'
+          )
+    ) c;
+    SELECT COALESCE(array_agg(b.binding_id), ARRAY[]::text[]),
+           COALESCE(
+               jsonb_agg(jsonb_build_object(
+                   'binding_id', b.binding_id, 'device_id', b.device_id
+               )),
+               '[]'::jsonb
+           )
+    INTO v_bindings, v_binding_refs
+    FROM identity_device_bindings b
+    WHERE b.account_owner_person_id = p_account_person_id;
+    -- A transferred binding belongs to the new owner; deleting the old
+    -- owner's row must not cascade into that account.
+    IF EXISTS (
+        SELECT 1 FROM identity_device_bindings child
+        WHERE child.supersedes_binding_id = ANY(v_bindings)
+          AND child.binding_id <> ALL(v_bindings)
+    ) THEN
+        RAISE EXCEPTION
+            'identity_delete_account_identity: a transferred binding still references this account';
+    END IF;
+
+    DELETE FROM identity_persona_assignments
+    WHERE subject_id = ANY(v_persons) OR binding_id = ANY(v_bindings);
+    GET DIAGNOSTICS v_removed = ROW_COUNT;
+    v_counts := v_counts || jsonb_build_object('persona_assignments', v_removed);
+
+    DELETE FROM identity_transfer_intents
+    WHERE from_account_owner_person_id = ANY(v_persons)
+       OR to_account_owner_person_id = ANY(v_persons)
+       OR created_by_person_id = ANY(v_persons)
+       OR cancelled_by_person_id = ANY(v_persons)
+       OR supersedes_binding_id = ANY(v_bindings)
+       OR resulting_binding_id = ANY(v_bindings);
+    GET DIAGNOSTICS v_removed = ROW_COUNT;
+    v_counts := v_counts || jsonb_build_object('transfers', v_removed);
+
+    DELETE FROM identity_device_binding_roles
+    WHERE person_id = ANY(v_persons) OR binding_id = ANY(v_bindings);
+    GET DIAGNOSTICS v_removed = ROW_COUNT;
+    v_counts := v_counts || jsonb_build_object('roles', v_removed);
+
+    DELETE FROM identity_device_bindings WHERE binding_id = ANY(v_bindings);
+    GET DIAGNOSTICS v_removed = ROW_COUNT;
+    v_counts := v_counts || jsonb_build_object('bindings', v_removed);
+
+    -- Delegations cite the relationship they came from, so erase the whole
+    -- closure in one statement (NO ACTION resolves inside the statement).
+    WITH RECURSIVE doomed AS (
+        SELECT r.relationship_id
+        FROM identity_relationships r
+        WHERE r.source_person_id = ANY(v_persons)
+           OR r.target_person_id = ANY(v_persons)
+        UNION
+        SELECT child.relationship_id
+        FROM identity_relationships child
+        JOIN doomed parent
+          ON child.delegated_from_relationship_id = parent.relationship_id
+    )
+    SELECT COALESCE(array_agg(relationship_id), ARRAY[]::text[])
+    INTO v_relationships
+    FROM doomed;
+    DELETE FROM identity_relationships
+    WHERE relationship_id = ANY(v_relationships);
+    GET DIAGNOSTICS v_removed = ROW_COUNT;
+    v_counts := v_counts || jsonb_build_object('relationships', v_removed);
+
+    -- The person rows go, so remove the name from anything still queued and
+    -- from the historical payloads that carried it (the same scrub the
+    -- redaction port does); the rows themselves stay for the audit trail.
+    UPDATE identity_audit_events
+    SET payload_json = jsonb_set(payload_json, '{display_name}', to_jsonb(p_display_name))
+    WHERE (person_id = ANY(v_persons) OR subject_person_id = ANY(v_persons))
+      AND payload_json ? 'display_name';
+    UPDATE identity_outbox
+    SET payload_json = jsonb_set(payload_json, '{display_name}', to_jsonb(p_display_name))
+    WHERE payload_json ->> 'person_id' = ANY(v_persons)
+      AND payload_json ? 'display_name';
+    DELETE FROM identity_outbox
+    WHERE payload_json ->> 'person_id' = ANY(v_persons);
+    DELETE FROM identity_custom_personas WHERE owner_person_id = ANY(v_persons);
+
+    DELETE FROM identity_persons WHERE person_id = ANY(v_persons);
+    GET DIAGNOSTICS v_removed = ROW_COUNT;
+    v_counts := v_counts || jsonb_build_object('persons', v_removed);
+
+    INSERT INTO identity_audit_events (
+        event_id, action, actor_person_id, subject_person_id, person_id,
+        payload_json, created_at
+    ) VALUES (
+        gen_random_uuid()::text, 'person.delete', v_actor, p_account_person_id,
+        p_account_person_id,
+        jsonb_build_object('person_ids', to_jsonb(v_persons), 'deleted_at', now()),
+        now()
+    );
+    PERFORM set_config('app.identity_account_deletion', '0', true);
+    RETURN v_counts || jsonb_build_object('binding_refs', v_binding_refs);
 END
 $$;
 
@@ -1814,6 +2005,7 @@ SET search_path = pg_catalog, public SET row_security = on AS $$
 DECLARE
     v_actor text;
     v_action text;
+    v_changed jsonb;
 BEGIN
     -- Authoritative verifications write their own evidence-carrying audit
     -- row; the trigger is suppressed for those statements.
@@ -1829,6 +2021,14 @@ BEGIN
     ELSE
         v_action := 'person.age_evidence.update';
     END IF;
+    -- Only the names of the fields that changed, plus who and when (issue
+    -- #283).  The name and age band never enter an update audit, so no later
+    -- erasure has to rewrite history to remove them.
+    SELECT COALESCE(jsonb_agg(n.key ORDER BY n.key), '[]'::jsonb)
+    INTO v_changed
+    FROM jsonb_each(to_jsonb(NEW)) AS n(key, value)
+    WHERE n.key <> 'updated_at'
+      AND n.value IS DISTINCT FROM (to_jsonb(OLD) -> n.key);
     INSERT INTO identity_audit_events (
         event_id, action, actor_person_id, subject_person_id,
         person_id, device_id, binding_id, relationship_id,
@@ -1836,7 +2036,12 @@ BEGIN
     ) VALUES (
         'evt:person:' || gen_random_uuid()::text, v_action, v_actor,
         NEW.person_id, NEW.person_id, NULL, NULL, NULL,
-        to_jsonb(NEW), NEW.updated_at
+        jsonb_build_object(
+            'changed_fields', v_changed,
+            'actor_person_id', v_actor,
+            'occurred_at', NEW.updated_at
+        ),
+        NEW.updated_at
     );
     RETURN NEW;
 END
@@ -2000,6 +2205,7 @@ REVOKE ALL ON FUNCTION identity_self_update_profile(
 REVOKE ALL ON FUNCTION identity_redact_bound_subject(
     text, text, text, timestamptz
 ) FROM PUBLIC;
+REVOKE ALL ON FUNCTION identity_delete_account_identity(text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity_declare_age_evidence(
     text, text, timestamptz, text
 ) FROM PUBLIC;
@@ -2263,6 +2469,9 @@ BEGIN
         ) TO memoria_identity;
         GRANT EXECUTE ON FUNCTION identity_redact_bound_subject(
             text, text, text, timestamptz
+        ) TO memoria_identity;
+        GRANT EXECUTE ON FUNCTION identity_delete_account_identity(
+            text, text
         ) TO memoria_identity;
 
         DROP POLICY IF EXISTS identity_api_idempotency

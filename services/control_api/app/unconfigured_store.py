@@ -10,7 +10,7 @@ consent" or "no memories".
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import NoReturn
+from typing import Any, NoReturn
 
 
 class StoreNotConfiguredError(RuntimeError):
@@ -29,3 +29,8 @@ class UnconfiguredStore:
             )
 
         return unavailable
+
+
+def _unconfigured(store: str) -> Any:
+    """Eager wiring without an archive DSN: the archive family is PostgreSQL-only."""
+    return UnconfiguredStore(store, "MEMORIA_ARCHIVE_DATABASE_URL")

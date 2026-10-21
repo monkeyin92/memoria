@@ -3,9 +3,9 @@
 WeChat one-time subscribe messages grant exactly one send per user
 acceptance.  The ledger records each acceptance per guardian and template;
 the worker reserves one acceptance per notification, sends a FIXED alert and
-settles the reservation.  The alert never carries conversation content: the
-only per-event values are the child's display name (already shown on the
-guardian page) and the time of the event.
+settles the reservation.  The alert never carries conversation content or the
+child's name: every text value is fixed and the only per-event value is the
+time of the event.
 
 When a guardian has no remaining acceptance the notification is marked
 ``no_subscription``.  Each subscribe-message answer is appended to an
@@ -224,6 +224,7 @@ class CrisisPushSender(Protocol):
         openid: str,
         template_id: str,
         content: CrisisPushContent,
+        notification_id: str | None = None,
     ) -> PushSendResult: ...
 
 
@@ -297,14 +298,18 @@ def validate_crisis_push_outcome(
 def crisis_push_content(
     *,
     occurred_at: datetime,
-    child_display_name: str | None,
+    child_display_name: str | None = None,
 ) -> CrisisPushContent:
-    name = (child_display_name or "").strip()
-    if not name or name == "朋友":
-        name = CRISIS_PUSH_DEFAULT_CHILD_NAME
+    """Build the fixed alert payload; the child slot never carries a real name.
+
+    ``child_display_name`` is accepted for caller compatibility and deliberately
+    ignored: the push is generated from a crisis row that is not allowed to
+    reveal who the child is or what they said.
+    """
+
     return CrisisPushContent(
         title=CRISIS_PUSH_TITLE,
-        child_display_name=name,
+        child_display_name=CRISIS_PUSH_DEFAULT_CHILD_NAME,
         occurred_at=occurred_at.astimezone(UTC),
         tip=CRISIS_PUSH_TIP,
     )
@@ -326,7 +331,6 @@ class CrisisPushWorker:
         sender: CrisisPushSender,
         *,
         template_id: str,
-        display_name: DisplayNameResolver,
         interval_s: float = 10.0,
         batch_size: int = 20,
         lease_s: int = 60,
@@ -344,7 +348,6 @@ class CrisisPushWorker:
         self._store = store
         self._sender = sender
         self._template_id = template_id.strip()
-        self._display_name = display_name
         self._interval_s = interval_s
         self._batch_size = batch_size
         self._lease_s = lease_s
@@ -416,16 +419,13 @@ class CrisisPushWorker:
                 exhaust_subscription=False,
             )
             return
-        try:
-            name = await self._display_name(push.guardian_user_id, push.minor_user_id)
-        except Exception:
-            name = None
-        content = crisis_push_content(occurred_at=push.occurred_at, child_display_name=name)
+        content = crisis_push_content(occurred_at=push.occurred_at)
         try:
             result = await self._sender.send_crisis_alert(
                 openid=openid,
                 template_id=self._template_id,
                 content=content,
+                notification_id=push.notification_id,
             )
         except Exception:
             logger.exception(

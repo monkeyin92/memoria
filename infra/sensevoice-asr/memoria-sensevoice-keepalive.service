@@ -1,0 +1,10 @@
+[Unit]
+Description=Warm the Memoria SenseVoice ASR sidecar with synthetic silence
+Documentation=file:///opt/memoria/docs/runbooks/sensevoice-asr.md
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/memoria/scripts/sensevoice_keepalive.py --url http://127.0.0.1:8001/transcribe --timeout-s 15
+TimeoutStartSec=30

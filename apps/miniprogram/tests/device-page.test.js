@@ -1895,14 +1895,15 @@ async function bootBoundDevicePage(manifest = familyManifest()) {
   return page;
 }
 
-test("unbind defaults to keeping the data and submits without a choice", async () => {
+test("unbind always clears the child and submits without a data switch", async () => {
   unbindCalls.length = 0;
   unbindResponse = {
     binding_id: "bd_1",
     status: "revoked",
     consents_withdrawn: 0,
-    child_layers_purged: "not_requested",
-    subject_deletion: "not_requested",
+    child_layers_purged: "completed",
+    subject_deletion: "completed",
+    identity_cleared: "completed",
   };
   const modals = [];
   const previousShowModal = global.wx.showModal;
@@ -1914,25 +1915,21 @@ test("unbind defaults to keeping the data and submits without a choice", async (
     const page = await bootBoundDevicePage();
     page.openUnbindSheet();
     assert.equal(page.data.unbindSheetVisible, true);
-    // 选项一默认选中，不选也能直接点解除绑定。
-    assert.equal(page.data.unbindPurgeChoice, "keep");
     await page.confirmUnbind();
     assert.equal(page.data.unbindError, "");
     assert.equal(unbindCalls.length, 1);
     assert.equal(unbindCalls[0].method, "POST");
-    assert.deepEqual(unbindCalls[0].data, { reason: "unbind", purge_subject_data: false });
-    // 保留数据不需要再确认，结果也用页面内弹窗，不走 showModal。
-    assert.equal(modals.length, 0);
+    assert.deepEqual(unbindCalls[0].data, { reason: "unbind" });
+    // 解绑一律删除，确认只有一次，结果用页面内弹窗，不再走 showModal。
+    assert.equal(modals.length, 1);
     assert.equal(page.data.unbindResultVisible, true);
-    assert.deepEqual(page.data.unbindResultLines, [
-      "TA 的数据已保留，重新绑定时可以选回 TA",
-    ]);
+    assert.deepEqual(page.data.unbindResultLines, ["TA 的近期摘要和长期记录已删除"]);
     assert.equal(page.data.sheetOpen, true, "结果弹窗打开时页面仍锁定滚动");
     const html = renderPage("pages/device/index", page.data);
     assert.equal((html.match(/class="unbind-result-line"/g) || []).length, 1);
     assert.match(
       visibleText(html),
-      /已解除绑定 TA 的数据已保留，重新绑定时可以选回 TA 知道了/,
+      /已解除绑定 TA 的近期摘要和长期记录已删除 知道了/,
       "解绑后设备消失，结果仍留在页面上",
     );
     assert.equal(binding.readBindingManifest(), null);
@@ -1971,7 +1968,7 @@ test("closing the unbind result releases the page and the tab bar", async () => 
   }
 });
 
-test("unbind with purge asks a second time and sends purge_subject_data true", async () => {
+test("the single unbind confirmation carries the product copy and can be cancelled", async () => {
   unbindCalls.length = 0;
   unbindResponse = {
     binding_id: "bd_1",
@@ -1979,36 +1976,34 @@ test("unbind with purge asks a second time and sends purge_subject_data true", a
     consents_withdrawn: 2,
     child_layers_purged: "completed",
     subject_deletion: "completed",
+    identity_cleared: "completed",
   };
   const modals = [];
-  let confirmPurge = false;
+  let confirmed = false;
   const previousShowModal = global.wx.showModal;
   global.wx.showModal = (options) => {
     modals.push(options);
-    options.success?.({ confirm: confirmPurge });
+    options.success?.({ confirm: confirmed });
   };
   try {
     const page = await bootBoundDevicePage();
     page.openUnbindSheet();
-    page.pickUnbindChoice({ currentTarget: { dataset: { choice: "purge" } } });
-    // 第二次确认点了「再想想」：不发请求，绑定仍在。
+    // 「再想想」：不发请求，绑定仍在。
     await page.confirmUnbind();
     assert.equal(modals.length, 1);
-    assert.equal(modals[0].title, "确认删除 TA 的数据？");
+    assert.equal(modals[0].title, "确认解绑？");
     assert.equal(
       modals[0].content,
-      "TA 的记忆和对话数据会被永久删除，重新绑定也无法恢复。系统备份里最多再留 7 天，到期自动覆盖，这期间不会被使用，也不会被恢复回来。",
+      "解绑后，孩子的昵称、聊天摘要和长期档案会一起删除，删除后不能恢复。如果只是换网络或者重新配网，不用解绑。",
     );
-    assert.deepEqual(modals[0].confirmText, "删除");
+    assert.deepEqual(modals[0].confirmText, "确认解绑");
     assert.deepEqual(modals[0].cancelText, "再想想");
     assert.equal(unbindCalls.length, 0);
     assert.notEqual(binding.readBindingManifest(), null);
 
-    confirmPurge = true;
+    confirmed = true;
     await page.confirmUnbind();
-    // 两次 showModal 都只是删除二次确认，结果不再走 showModal。
     assert.equal(modals.length, 2);
-    for (const modal of modals) assert.equal(modal.title, "确认删除 TA 的数据？");
     assert.equal(page.data.unbindResultVisible, true);
     assert.deepEqual(page.data.unbindResultLines, [
       "TA 的近期摘要和长期记录已删除",
@@ -2021,7 +2016,7 @@ test("unbind with purge asks a second time and sends purge_subject_data true", a
       /已解除绑定 TA 的近期摘要和长期记录已删除 已撤回 2 项授权。 知道了/,
     );
     assert.equal(unbindCalls.length, 1);
-    assert.deepEqual(unbindCalls[0].data, { reason: "unbind", purge_subject_data: true });
+    assert.deepEqual(unbindCalls[0].data, { reason: "unbind" });
     assert.equal(binding.readBindingManifest(), null);
   } finally {
     unbindResponse = { binding_id: "bd_1", status: "revoked" };
@@ -2037,6 +2032,7 @@ test("an unfinished delete result is shown as still deleting", async () => {
     consents_withdrawn: 2,
     child_layers_purged: "pending",
     subject_deletion: "pending",
+    identity_cleared: "pending",
   };
   const modals = [];
   const previousShowModal = global.wx.showModal;
@@ -2047,7 +2043,6 @@ test("an unfinished delete result is shown as still deleting", async () => {
   try {
     const page = await bootBoundDevicePage();
     page.openUnbindSheet();
-    page.pickUnbindChoice({ currentTarget: { dataset: { choice: "purge" } } });
     await page.confirmUnbind();
     assert.equal(modals.length, 1);
     assert.equal(page.data.unbindResultVisible, true);
@@ -2094,28 +2089,24 @@ test("unbind result renders one node per line instead of joining into showModal"
   assert.ok(!confirmUnbindBody.includes("wx.showModal"));
 });
 
-test("unbind panel copy matches the product draft character for character", () => {
+test("unbind panel copy matches the product confirmation character for character", () => {
   const panel = unbindPanel();
   const required = [
     "解除绑定",
-    "解除后设备会立即停止记忆 TA 的对话。TA 的数据怎么处理？",
-    "解绑，保留 TA 的数据",
-    "TA 的近期摘要和长期记录继续留在你的账号里，重新绑定时可以选回 TA。到期规则照常，近期摘要 30 天后自动删除，长期记录 180 天不用自动清除",
-    "解绑，并删除 TA 的数据",
-    "TA 的近期摘要和长期记录会被永久删除，重新绑定也无法恢复。系统备份里最多再留 7 天，到期自动覆盖，这期间不会被使用，也不会被恢复回来",
-    "如果只是换网络或者重新配网，不用解绑",
-    "解除绑定",
-    "取消",
+    "解绑后，孩子的昵称、聊天摘要和长期档案会一起删除，删除后不能恢复。如果只是换网络或者重新配网，不用解绑。",
+    "确认解绑",
+    "再想想",
   ];
   for (const copy of required) assert.ok(panel.includes(copy), copy);
   assert.ok(!panel.includes("无论选哪一项"));
   assert.ok(!panel.includes("部分审计记录按规定保留"));
   assert.ok(!panel.includes("删除操作本身的记录"), "audit sentence is held back");
   assert.ok(!panel.includes("unbindClearsChildLayers"));
-  // 选项一默认选中，按钮不再因为没选而禁用。
-  assert.ok(panel.includes("unbindPurgeChoice === 'keep' ? 'on'"));
+  // 解绑只有一个结论，没有保留/删除二选一。
+  assert.ok(!panel.includes("unbindPurgeChoice"));
+  assert.ok(!panel.includes("pickUnbindChoice"));
+  assert.ok(!panel.includes("保留 TA 的数据"));
   assert.ok(panel.includes('disabled="{{unbinding}}"'));
-  assert.ok(!panel.includes("!unbindPurgeChoice"));
 });
 
 test("unbind panel and result never use internal deletion words", async () => {
@@ -2125,7 +2116,6 @@ test("unbind panel and result never use internal deletion words", async () => {
   }
   const { unbindResultLines } = require("../utils/unbind-result");
   const results = [
-    { child_layers_purged: "not_requested", subject_deletion: "not_requested" },
     { child_layers_purged: "completed", subject_deletion: "completed" },
     { child_layers_purged: "pending", subject_deletion: "pending" },
   ];
@@ -2140,10 +2130,8 @@ test("unbind panel and result never use internal deletion words", async () => {
 test("self_use unbind shows the same copy without internal words", async () => {
   const page = await bootBoundDevicePage(canonicalManifest());
   page.openUnbindSheet();
-  assert.equal(page.data.unbindPurgeChoice, "keep");
   const panel = unbindPanel();
-  assert.ok(panel.includes("解绑，保留 TA 的数据"));
-  assert.ok(panel.includes("解绑，并删除 TA 的数据"));
+  assert.ok(panel.includes("解绑后，孩子的昵称、聊天摘要和长期档案会一起删除"));
   for (const forbidden of ["按使用人删除", "使用人", "运行"]) {
     assert.ok(!panel.includes(forbidden), forbidden);
   }
@@ -2155,7 +2143,6 @@ test("unbinding also drops the enable session stored for that robot", async () =
   storage[sessionKey] = "onb_old";
   const page = await bootBoundDevicePage();
   page.openUnbindSheet();
-  page.pickUnbindChoice({ currentTarget: { dataset: { choice: "keep" } } });
   await page.confirmUnbind();
   assert.equal(unbindCalls.length, 1);
   // 留着它，下一次进「启用」页会续接一个已经不存在的会话（403/409）。
@@ -2172,7 +2159,6 @@ test("a failed unbind keeps the enable session", async () => {
   try {
     const page = await bootBoundDevicePage();
     page.openUnbindSheet();
-    page.pickUnbindChoice({ currentTarget: { dataset: { choice: "keep" } } });
     await page.confirmUnbind();
     assert.match(page.data.unbindError, /网络不通/);
     assert.equal(storage[sessionKey], "onb_kept");
@@ -2182,11 +2168,12 @@ test("a failed unbind keeps the enable session", async () => {
   }
 });
 
-test("device page offers both unbind data choices with the new titles", () => {
+test("device page no longer offers an unbind data choice", () => {
   const template = fs.readFileSync(path.join(__dirname, "../pages/device/index.wxml"), "utf8");
-  assert.match(template, /解绑，并删除 TA 的数据/);
-  assert.match(template, /解绑，保留 TA 的数据/);
-  assert.match(template, /停止记忆/);
+  assert.doesNotMatch(template, /解绑，并删除 TA 的数据/);
+  assert.doesNotMatch(template, /解绑，保留 TA 的数据/);
+  assert.match(template, /确认解绑/);
+  assert.match(template, /再想想/);
 });
 
 test("device page shows a bound elder's style labels and resets only after confirmation", async () => {
