@@ -28,7 +28,7 @@
 
 - 儿童上行音频做语音识别时发往阿里云百炼 FunASR（`FUNASR_MODEL` 默认 `fun-asr-realtime`，DashScope WebSocket 由 `DASHSCOPE_WS_URL` 配置）。`DASHSCOPE_API_KEY` 为这条 ASR 保留。`LIVE_SEARCH_QWEN_ENABLED` 与 `QWEN_OMNI_SESSION_ENABLED` 默认关闭。关掉它们不会去掉这把密钥，也不会停止 FunASR。
 - 对话文本发往百炼兼容接口（默认 `https://dashscope.aliyuncs.com/compatible-mode/v1`）或 DeepSeek，由 `llm_provider` 决定。
-- 助手要说的文字发往火山引擎豆包 TTS（默认 `wss://openspeech.bytedance.com/api/v3/tts/bidirection`）。孩子的话若被复述，会夹在这段文字里。
+- 助手要说的文字发往阶跃星辰 StepAudio TTS（主用）或火山引擎豆包 TTS（备用）（默认 `wss://openspeech.bytedance.com/api/v3/tts/bidirection`）。孩子的话若被复述，会夹在这段文字里。
 - 记忆抽取读取已落库的证据文本，抽取模型同样走百炼。
 - 声纹嵌入经 CampPlus HTTP 提交 `audio_base64`（`services/speaker/campplus_http.py`）。该服务的部署位置由环境决定，仓库没有写死地域。
 - 天气查询在 `WEATHER_LOOKUP_PROVIDER=domestic` 且和风天气密钥与专属域名都已配置时，把允许表里的城市标准名发往该域名。出站字段见 `docs/compliance/weather-lookup-data-flow.md`。默认 `off`，这时没有天气客户端，也不发出这类请求。

@@ -31,7 +31,7 @@ test("child consent facts state only what the product does", () => {
   try {
     assert.deepEqual(
       harness.page.data.facts.map((fact) => fact.title),
-      ["对话经过我们的服务器", "会交给这三家服务商", "保存对话摘要", "长期只存三项", "回应由 AI 生成", "设备没有摄像头"],
+      ["对话经过我们的服务器", "会交给这四家服务商", "保存对话摘要", "长期只存三项", "回应由 AI 生成", "设备没有摄像头"],
     );
     assert.deepEqual(
       harness.page.data.facts.map((fact) => fact.subtitle),
