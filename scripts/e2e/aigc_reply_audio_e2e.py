@@ -6,7 +6,8 @@ are fake: StepFun TTS, the OpenAI-compatible LLM, FunASR and the Control API.
 
 The simulated device drives the public media-v1 gRPC stream and asserts, per
 turn, that the opening cue leads reply audio, the reply itself emitted frames,
-the closing cue followed, and the crisis turn played the approved catalog.
+the closing cue followed, and the crisis turn played the approved catalog. The
+last round sends 停 mid-crisis-script and requires the full approved clip.
 """
 
 from __future__ import annotations
@@ -512,6 +513,10 @@ class _DeviceClient:
         # Turn ids are deterministic from the scenario; remembering the VAD end
         # per turn keeps the latency clock on the device's speech edge.
         self._pending_vad_end: dict[int, float] = {}
+        # Loop-clock moment each 停 was queued, and how much of the turn's first
+        # generation had arrived then. Both prove the stop interrupted playback.
+        self.stop_sent_at: dict[int, float] = {}
+        self.stop_frames: dict[int, int] = {}
 
     async def __aenter__(self) -> _DeviceClient:
         rpc = self.channel.stream_stream(
@@ -653,7 +658,13 @@ class _DeviceClient:
         await self.begin_utterance()
         await self.finish_utterance(frames=1)
 
-    async def stop(self) -> None:
+    async def stop(self, *, turn_id: int | None = None) -> None:
+        if turn_id is not None:
+            self.stop_sent_at[turn_id] = asyncio.get_running_loop().time()
+            turn = self.turns.get(turn_id)
+            if turn is not None and turn.generation_frames:
+                first = min(turn.generation_frames)
+                self.stop_frames[turn_id] = len(turn.generation_frames[first])
         await self.send(
             media_pb2.MediaToCore(
                 keyword=media_pb2.KeywordEvent(
@@ -749,6 +760,16 @@ def _assert_approved_files_original() -> None:
         )
 
 
+def _turn_reply_pcm(turn: _TurnAudio) -> bytes:
+    """The reply's own audio: after the opening marker, before the closing one."""
+
+    generations = sorted(turn.generation_frames)
+    reply = _frames_audio(turn.generation_frames[generations[0]][MARKER_MIN_FRAMES:])
+    for later in generations[1:-1]:
+        reply += _frames_audio(turn.generation_frames[later])
+    return reply
+
+
 def _assert_turn_audio(turn: _TurnAudio, *, crisis: bool, label: str) -> None:
     """Every round: opening cue, the reply's own frames, then the closing cue."""
 
@@ -760,9 +781,7 @@ def _assert_turn_audio(turn: _TurnAudio, *, crisis: bool, label: str) -> None:
     assert len(opening_frames) > MARKER_MIN_FRAMES, (
         f"{label}: the reply emitted no audio frames of its own"
     )
-    reply = _frames_audio(opening_frames[MARKER_MIN_FRAMES:])
-    for later in generations[1:-1]:
-        reply += _frames_audio(turn.generation_frames[later])
+    reply = _turn_reply_pcm(turn)
     assert reply, f"{label}: the reply emitted no audio frames of its own"
     closing_frames = turn.generation_frames[generations[-1]]
     closing = _frames_audio(closing_frames)
@@ -775,6 +794,36 @@ def _assert_turn_audio(turn: _TurnAudio, *, crisis: bool, label: str) -> None:
         assert digest == _crisis_manifest_digest(), f"{label}: crisis sha256 mismatch"
     else:
         assert reply.count(b"\x00") < len(reply), f"{label}: reply audio is all silence"
+
+
+def _assert_crisis_script_complete(
+    turn: _TurnAudio,
+    *,
+    label: str,
+    stop_at: float | None,
+    stop_frames: int | None,
+) -> None:
+    """The approved clip played in full although the device sent 停 mid-script."""
+
+    script = _crisis_pcm()
+    reply = _turn_reply_pcm(turn)
+    assert reply == script, (
+        f"{label}: approved crisis script was interrupted "
+        f"(delivered {len(reply)} of {len(script)} bytes)"
+    )
+    assert hashlib.sha256(reply).hexdigest() == _crisis_manifest_digest(), (
+        f"{label}: crisis sha256 mismatch"
+    )
+    assert stop_at is not None and stop_frames is not None, f"{label}: no 停 was sent"
+    first_generation = min(turn.generation_frames)
+    times = turn.frame_times[first_generation]
+    total_frames = len(turn.generation_frames[first_generation])
+    assert stop_frames < total_frames, (
+        f"{label}: 停 was queued after the script had already streamed in full"
+    )
+    assert times[0] < stop_at < times[-1], (
+        f"{label}: 停 was not sent while the script was streaming"
+    )
 
 
 def _crisis_latency(turn: _TurnAudio) -> dict[str, float]:
@@ -929,7 +978,7 @@ async def _run_scenario(*, cert_dir: Path) -> dict[str, Any]:
         await client.utterance(turn_id=turn_id)
         if stop:
             await client.wait_for_reply_audio(turn_id)
-            await client.stop()
+            await client.stop(turn_id=turn_id)
         turn = await client.wait_turn_complete(turn_id, timeout=timeout)
         _assert_turn_audio(turn, crisis=crisis, label=label)
         results[label] = {
@@ -985,6 +1034,33 @@ async def _run_scenario(*, cert_dir: Path) -> dict[str, Any]:
             results["crisis_latencies_s"] = latencies
             results["crisis_latency_budget_s"] = CRISIS_LATENCY_BUDGET_S
             results["crisis_latency_pass"] = f"{len(latencies)}/{CRISIS_ROUNDS}"
+
+            # Round 8: the child says 停 while the crisis script is audible. The
+            # approved clip must stream in full, then the closing cue as usual.
+            stop_turn_id = 4 + CRISIS_ROUNDS
+            crisis_stop = await run_round(
+                client,
+                turn_id=stop_turn_id,
+                label="crisis_stop",
+                stop=True,
+                crisis=True,
+                timeout=90,
+            )
+            _assert_crisis_script_complete(
+                crisis_stop,
+                label="crisis_stop",
+                stop_at=client.stop_sent_at.get(stop_turn_id),
+                stop_frames=client.stop_frames.get(stop_turn_id),
+            )
+            results["crisis_stop_script"] = {
+                "turn_id": stop_turn_id,
+                "script_bytes": len(_crisis_pcm()),
+                "script_sha256": _crisis_manifest_digest(),
+                "stop_after_frames": client.stop_frames[stop_turn_id],
+                "total_frames": len(
+                    crisis_stop.generation_frames[min(crisis_stop.generation_frames)]
+                ),
+            }
     finally:
         await channel.close()
     return results
@@ -1008,7 +1084,7 @@ async def main() -> int:
         stepfun_port=stepfun_port,
         llm_port=llm_port,
     )
-    for text in (NORMAL_TEXT, NORMAL_TEXT, *([CRISIS_TEXT] * CRISIS_ROUNDS)):
+    for text in (NORMAL_TEXT, NORMAL_TEXT, *([CRISIS_TEXT] * (CRISIS_ROUNDS + 1))):
         await state.asr_texts.put(text)
     logs: str = ""
     try:
