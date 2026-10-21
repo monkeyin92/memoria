@@ -25,13 +25,19 @@ assert_skill_name() {
   fi
 }
 
+# `realpath -m` is GNU-only; os.path.realpath resolves symlinks in existing
+# components and normalizes dot segments without requiring the path to exist.
+resolve_path() {
+  python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1"
+}
+
 # Destination must resolve to exactly one directory entry under SKILLS_DST.
 # Never the skills root itself (blocks empty / '.' names that would rm -rf it).
 assert_skill_dest() {
   local path="$1"
   local skills_real path_real parent_real
-  skills_real="$(realpath -m "${SKILLS_DST}")"
-  path_real="$(realpath -m "${path}")"
+  skills_real="$(resolve_path "${SKILLS_DST}")"
+  path_real="$(resolve_path "${path}")"
   parent_real="$(dirname "${path_real}")"
   if [[ "${path_real}" == "${skills_real}" ]]; then
     echo "error: refuse skills root as target: ${path}" >&2
