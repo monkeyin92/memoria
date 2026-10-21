@@ -718,7 +718,7 @@ class MediaSessionInputMixin:
                         continue_output=interruption.continue_output,
                         backchannel=interruption.backchannel,
                     )
-                if interaction.duck_output:
+                if interaction.duck_output and not context.runtime.fixed_safety_playback_active():
                     context.runtime.publish_assistant_audio("duck", gain=0.0)
                 context.runtime.apply_interaction_decision(interaction)
         # Sample ranges remain authoritative for media turn boundaries.
@@ -735,7 +735,19 @@ class MediaSessionInputMixin:
                 local_hard_stop=segment.hard_stop,
                 device_conversation=context.identity.client_type == "device",
             )
-            if interruption.cancel_generation:
+            # A device hard-stop keyword is produced by the device's own local
+            # playback flush (the button.stop path); its firmware fail-closes a
+            # playback.flush for that stopped generation and reconnects
+            # (2026-09-30, build 12 「停」).
+            device_flushed = segment.hard_stop and context.identity.client_type == "device"
+            if interruption.cancel_generation and not device_flushed and (
+                context.runtime.fixed_safety_playback_active()
+            ):
+                logger.info(
+                    "media keyword interrupt ignored during fixed safety playback session=%s",
+                    context.identity.session_id,
+                )
+            elif interruption.cancel_generation:
                 # Never subtract an Edge wall-clock timestamp from Core's
                 # monotonic clock. The only trustworthy local measurement is
                 # this handler's own work; end-to-end timing is fail-closed
@@ -791,14 +803,6 @@ class MediaSessionInputMixin:
                             context,
                             previous_fence,
                             finalize_audible=False,
-                        )
-                        # A device hard-stop keyword is produced by the
-                        # device's own local playback flush (the button.stop
-                        # path); its firmware fail-closes a playback.flush for
-                        # that stopped generation and reconnects (2026-09-30,
-                        # build 12 「停」).
-                        device_flushed = (
-                            segment.hard_stop and context.identity.client_type == "device"
                         )
                         await self._emit_cancel_generation(
                             context,

@@ -1765,7 +1765,23 @@ class DuplexRuntime(
         )
 
 
+    def fixed_safety_playback_active(self) -> bool:
+        """A fixed safety script is audible and the device has not acknowledged its end.
+
+        Field 2026-10-21 H01: a 3-character final misheard as a stop cut
+        crisis-self-v1 after 5.4 s, before 12356. While this holds, the script
+        plays to its end as if barge-in were off.
+        """
+
+        floor = self._voice_floor
+        return (
+            floor.assistant_speaking
+            and fixed_safety_echo_reference(floor.pending_assistant_text) is not None
+        )
+
     def _assistant_response_blocks_barge_in(self) -> bool:
+        if self.fixed_safety_playback_active():
+            return True
         return not self.barge_in_enabled and (
             self._voice_floor.assistant_speaking
             or self.orchestrator.state

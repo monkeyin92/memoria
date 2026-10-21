@@ -957,6 +957,12 @@ class MediaPlaybackStopMixin:
             or not context.runtime.floor.interruptible
         ):
             return False
+        if context.runtime.fixed_safety_playback_active():
+            logger.info(
+                "media spoken stop ignored during fixed safety playback session=%s",
+                context.identity.session_id,
+            )
+            return False
         previous_fence = context.output.playback.current_fence or context.runtime.fence
         if not previous_fence.matches(context.runtime.fence):
             # Another control already replaced this generation.
