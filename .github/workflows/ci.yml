@@ -182,13 +182,11 @@ jobs:
     if: needs.changes.outputs.python == 'true'
     runs-on: ${{ fromJSON(vars.RUNNER_LABEL_JSON || '["self-hosted","macOS","ARM64","memoria-mac"]') }}
     env:
-      MEMORIA_TEST_POSTGRES_DSN: postgresql://memoria_ci@localhost:5432/memoria_ci
+      MEMORIA_TEST_POSTGRES_DSN: postgresql://memoria_ci@127.0.0.1:5432/memoria_ci_gates
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Ensure and reset the local CI PostgreSQL
-        run: scripts/ensure_ci_postgres.sh --reset-schema
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
@@ -198,6 +196,8 @@ jobs:
         run: command -v buf >/dev/null 2>&1 || brew install bufbuild/buf/buf
       - name: Install
         run: uv sync --frozen --all-extras
+      - name: Ensure the local CI PostgreSQL gates database
+        run: scripts/ensure_ci_postgres.sh --database memoria_ci_gates
       - name: Ruff
         run: uv run ruff check .
       - name: Module line budgets
@@ -277,11 +277,9 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4]
     env:
-      MEMORIA_TEST_POSTGRES_DSN: postgresql://memoria_ci@localhost:5432/memoria_ci
+      MEMORIA_TEST_POSTGRES_DSN: postgresql://memoria_ci@127.0.0.1:5432/memoria_ci_shard_${{ matrix.shard }}
     steps:
       - uses: actions/checkout@v4
-      - name: Ensure and reset the local CI PostgreSQL
-        run: scripts/ensure_ci_postgres.sh --reset-schema
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
@@ -289,6 +287,8 @@ jobs:
         run: command -v ffmpeg >/dev/null 2>&1 || brew install ffmpeg
       - name: Install
         run: uv sync --frozen --all-extras
+      - name: Ensure the local CI PostgreSQL shard ${{ matrix.shard }} database
+        run: scripts/ensure_ci_postgres.sh --database memoria_ci_shard_${{ matrix.shard }}
       - name: Verify local PostgreSQL
         run: |
           uv run python - <<'PY'
@@ -300,7 +300,7 @@ jobs:
           dsn = os.environ.get("MEMORIA_TEST_POSTGRES_DSN")
           if not dsn:
               print(
-                  "本机 pg 未就绪(docker 容器 memoria-ci-pg)："
+                  "本机 pg 未就绪(127.0.0.1:5432)："
                   "MEMORIA_TEST_POSTGRES_DSN 未设置",
                   file=sys.stderr,
               )
@@ -313,7 +313,7 @@ jobs:
                       cur.fetchone()
           except Exception as exc:
               print(
-                  "本机 pg 未就绪(docker 容器 memoria-ci-pg)："
+                  "本机 pg 未就绪(127.0.0.1:5432)："
                   f"{type(exc).__name__}: {exc}",
                   file=sys.stderr,
               )
@@ -323,7 +323,9 @@ jobs:
           PY
       - name: Pytest (shard ${{ matrix.shard }} of 4)
         env:
-          MEMORIA_TEST_POSTGRES_CONTAINER: memoria-ci-pg
+          # The joint restore drill shells out to docker exec; the macOS runner
+          # has no docker socket, so leave it empty and let that test skip.
+          MEMORIA_TEST_POSTGRES_CONTAINER: ""
           COVERAGE_FILE: coverage-shard-${{ matrix.shard }}.data
         run: |
           set -o pipefail
