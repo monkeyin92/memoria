@@ -1,10 +1,14 @@
 #!/bin/sh
-# Prepare an isolated CI PostgreSQL database.
+# Prepare an isolated CI PostgreSQL database on the CI-only cluster.
+#
+# CI uses memoria-ci-runner-pg on 127.0.0.1:5433, never the shared development
+# cluster memoria-ci-pg on 5432. Roles are cluster-wide objects, so concurrent
+# test runs against one cluster can fail with "tuple concurrently updated".
 #
 # The maintenance database (memoria_ci) is probed over TCP first. When it
 # answers, no Docker call is made and the target database is dropped and
 # recreated through SQL. Only when TCP is unreachable does the script create or
-# start the memoria-ci-pg container and probe again.
+# start the memoria-ci-runner-pg container and probe again.
 #
 # MEMORIA_CI_POSTGRES_DSN selects the maintenance connection. When it is unset,
 # MEMORIA_TEST_POSTGRES_DSN is used with its database replaced by memoria_ci,
@@ -15,10 +19,10 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-container="${MEMORIA_CI_POSTGRES_CONTAINER:-memoria-ci-pg}"
+container="${MEMORIA_CI_POSTGRES_CONTAINER:-memoria-ci-runner-pg}"
 image="${MEMORIA_CI_POSTGRES_IMAGE:-pgvector/pgvector:0.8.1-pg17-bookworm}"
 maintenance_db="memoria_ci"
-maintenance_dsn="${MEMORIA_CI_POSTGRES_DSN:-postgresql://memoria_ci@127.0.0.1:5432/memoria_ci}"
+maintenance_dsn="${MEMORIA_CI_POSTGRES_DSN:-postgresql://memoria_ci@127.0.0.1:5433/memoria_ci}"
 database=""
 
 usage() {
@@ -117,7 +121,7 @@ if not dsn:
     if test_dsn:
         dsn = conninfo.make_conninfo(test_dsn, dbname="memoria_ci")
 if not dsn:
-    dsn = "postgresql://memoria_ci@127.0.0.1:5432/memoria_ci"
+    dsn = "postgresql://memoria_ci@127.0.0.1:5433/memoria_ci"
 
 try:
     with psycopg.connect(dsn, connect_timeout=5) as connection:
@@ -142,7 +146,7 @@ if not dsn:
     if test_dsn:
         dsn = conninfo.make_conninfo(test_dsn, dbname="memoria_ci")
 if not dsn:
-    dsn = "postgresql://memoria_ci@127.0.0.1:5432/memoria_ci"
+    dsn = "postgresql://memoria_ci@127.0.0.1:5433/memoria_ci"
 
 try:
     admin = psycopg.connect(dsn, autocommit=True, connect_timeout=5)
@@ -263,7 +267,7 @@ else
       --env POSTGRES_USER=memoria_ci \
       --env POSTGRES_DB="$maintenance_db" \
       --env POSTGRES_HOST_AUTH_METHOD=trust \
-      --publish 127.0.0.1:5432:5432 \
+      --publish 127.0.0.1:5433:5432 \
       "$image" >/dev/null
   fi
 
