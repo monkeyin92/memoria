@@ -88,6 +88,7 @@ class ExistingVoiceProviderConfig:
     max_asr_task_history: int = 8
     max_asr_result_history: int = 256
     max_generation_history: int = 256
+    fixed_safety_opening_budget_s: float = 5.0
 
     def __post_init__(self) -> None:
         if self.sample_rate <= 0 or self.output_sample_rate <= 0:
@@ -104,6 +105,8 @@ class ExistingVoiceProviderConfig:
             raise ValueError("ASR metadata history bounds must be positive")
         if self.max_generation_history <= 0:
             raise ValueError("max_generation_history must be positive")
+        if self.fixed_safety_opening_budget_s <= 0:
+            raise ValueError("fixed safety opening budget must be positive")
 
 
 ASRSessionFactory = Callable[[], FunASRSession]
@@ -1439,7 +1442,10 @@ class ExistingVoiceProviderAdapter:
         leaves the rest unheard and cannot be retried without repeating words.  One
         whole-sentence request is synthesized before the first frame, retried when
         the provider fails, cached per voice, and replayed from that cache if the
-        provider stays down (C1, 2026-10-21 03:51:53Z).
+        provider stays down (C1, 2026-10-21 03:51:53Z).  Nothing reaches the device
+        until a whole take exists, so a Doubao drop after part of the line needs no
+        device stop: the discarded partial never played, and the device starts the
+        replacement once from sample zero.
         """
 
         spoken = "".join(phrase.spoken for phrase in phrases)
@@ -1473,21 +1479,50 @@ class ExistingVoiceProviderAdapter:
         cancellation: CancellationContext,
         cancel_event: asyncio.Event,
     ) -> tuple[bytes, str]:
-        """Synthesize the whole approved script, retrying before falling back to cache.
+        """Synthesize the whole approved script inside the five-second opening budget.
 
-        The script is pushed to the bound speech engine as one unit so a provider
-        that loses the connection mid-unit still delivers the full line (StepFun
-        switches the whole unit to its Doubao backup), and an attempt that fails
-        is repeated before the cached take is used.
+        The script is pushed to the bound speech engine as one unit, so a
+        provider that loses the connection mid-unit still delivers the full line
+        (the wrapper buffers each engine's take, drops a partial one, and speaks
+        the whole text again on StepFun). The wrapper's fixed-safety cascade
+        tries Doubao and then StepFun inside its own allowance; the deadline here
+        bounds every synthesis attempt so a cold, unreachable provider cannot
+        exceed the five-second crisis budget. A cached approved take is replayed
+        immediately after the first failed attempt, because waiting for a second
+        cascade would spend the budget the child's line needs. Only a complete
+        take is cached, so a half line can never join a whole one.
         """
 
         key = (self._fixed_safety_voice_key(), spoken)
         cached = _FIXED_SAFETY_PCM_CACHE.get(key)
+        deadline = monotonic() + self.config.fixed_safety_opening_budget_s
         failure: Exception | None = None
         for attempt in range(1, _FIXED_SAFETY_SYNTHESIS_ATTEMPTS + 1):
             if cancel_event.is_set():
                 return b"", "cancelled"
-            pcm = await self._synthesize_whole_script_once(spoken, fence, cancellation, cancel_event)
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                break
+            try:
+                pcm = await asyncio.wait_for(
+                    self._synthesize_whole_script_once(
+                        spoken,
+                        fence,
+                        cancellation,
+                        cancel_event,
+                    ),
+                    timeout=remaining,
+                )
+            except TimeoutError:
+                pcm = b""
+                logger.warning(
+                    "fixed safety speech attempt exceeded the opening budget "
+                    "attempt=%d/%d text_len=%d session=%s",
+                    attempt,
+                    _FIXED_SAFETY_SYNTHESIS_ATTEMPTS,
+                    len(spoken),
+                    fence.session_id,
+                )
             if pcm:
                 _remember_fixed_safety_pcm(key, pcm)
                 return pcm, "synthesis"
@@ -1500,6 +1535,8 @@ class ExistingVoiceProviderAdapter:
                 len(spoken),
                 fence.session_id,
             )
+            if cached is not None:
+                break
         if cached is not None:
             logger.warning(
                 "fixed safety speech replayed from cache text_len=%d bytes=%d session=%s",

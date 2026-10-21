@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any, cast, get_args
@@ -16,7 +17,9 @@ from services.agent.src.orchestration.handlers import (
     SpeechSynthesisRequest,
 )
 from services.agent.src.orchestration.orchestrator import OfflinePipeline, Orchestrator
+from services.agent.src.providers.provider_errors import APIStatusError
 from services.agent.src.providers.tts_failover import (
+    StepFunFailoverConfig,
     StepFunPrimaryTTS,
     TTSFailoverBreaker,
 )
@@ -360,12 +363,455 @@ async def test_fixed_safety_script_bypasses_stepfun_and_speaks_on_doubao() -> No
     chunks = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
 
     # StepFun's content moderation can reject the approved crisis copy before
-    # any audio, so the primary must never see this unit.
+    # any audio, so the unit starts on Doubao; the primary is only opened when
+    # Doubao produces no audio.
     assert primary.opened == 0
     _assert_spoken_only(backup.received)
     assert backup.received == [SPOKEN_SCRIPT]
     assert any(chunk.pcm_s16le for chunk in chunks)
     assert "".join(chunk.assistant_text_delta for chunk in chunks) == CRISIS_SELF_SCRIPT.display
+
+
+class _QuotaError(ConnectionError):
+    auth_failure = True
+
+
+class _ScriptAttemptStream:
+    def __init__(self, engine: _ScriptEngine) -> None:
+        self._engine = engine
+        self._yielded = False
+
+    def push_text(self, text: str) -> None:
+        self._engine.received.append(text)
+
+    def end_input(self) -> None:
+        return None
+
+    def __aiter__(self) -> _ScriptAttemptStream:
+        return self
+
+    async def __anext__(self) -> Any:
+        engine = self._engine
+        if engine.behavior == "timeout":
+            await asyncio.Event().wait()
+        if engine.behavior == "auth":
+            raise _QuotaError("doubao account balance exhausted")
+        if engine.behavior == "audio_then_error" and self._yielded:
+            raise engine.error or ConnectionError("upstream dropped after audio")
+        if engine.behavior != "audio_then_error" and engine.error is not None:
+            raise engine.error
+        if engine.behavior == "empty" or self._yielded:
+            raise StopAsyncIteration
+        self._yielded = True
+        return SimpleNamespace(
+            frame=SimpleNamespace(data=b"\x01\x00" * FRAME, sample_rate=24_000)
+        )
+
+    async def aclose(self) -> None:
+        return None
+
+
+class _ScriptEngine:
+    """One approved-script engine: audio, a provider error, a hang or silence."""
+
+    def __init__(
+        self,
+        provider: str,
+        model: str,
+        *,
+        behavior: str = "audio",
+        error: BaseException | None = None,
+    ) -> None:
+        self.provider = provider
+        self.model = model
+        self.current_model = model
+        self.current_voice = f"{provider}-voice"
+        self.behavior = behavior
+        self.error = error
+        self.received: list[str] = []
+
+    def bind_fence(self, _fence: GenerationFence) -> None:
+        return None
+
+    def apply_speech_plan(self, **_kwargs: Any) -> None:
+        return None
+
+    def stream(self, *, conn_options: Any = None) -> _ScriptAttemptStream:
+        del conn_options
+        return _ScriptAttemptStream(self)
+
+    async def aclose(self) -> None:
+        return None
+
+
+def _script_speech(
+    *,
+    primary: _ScriptEngine,
+    backup: _ScriptEngine,
+) -> StepFunPrimaryTTS:
+    return StepFunPrimaryTTS(
+        primary=primary,
+        backup=backup,
+        config=StepFunFailoverConfig(
+            failures=3,
+            open_s=30,
+            fixed_safety_budget_s=2.0,
+            fixed_safety_backup_first_audio_s=0.05,
+            fixed_safety_primary_first_audio_s=0.05,
+        ),
+        breaker=TTSFailoverBreaker(failures=3, open_s=30),
+    )
+
+
+def _phrase_frame(engine_tag: bytes, phrase_index: int) -> bytes:
+    """One 20 ms frame whose bytes identify the engine and approved phrase."""
+
+    marker = engine_tag + bytes((phrase_index,))
+    return (marker * (FRAME * 2 // len(marker) + 1))[: FRAME * 2]
+
+
+def _whole_script_pcm(engine_tag: bytes) -> bytes:
+    return b"".join(
+        _phrase_frame(engine_tag, index)
+        for index in range(len(CRISIS_SELF_SCRIPT.phrases))
+    )
+
+
+class _PhraseScriptStream:
+    """Emit one tagged frame per approved phrase, then an optional drop."""
+
+    def __init__(self, engine: _PhraseScriptEngine) -> None:
+        self._engine = engine
+        self._index = 0
+
+    def push_text(self, text: str) -> None:
+        self._engine.received.append(text)
+
+    def end_input(self) -> None:
+        return None
+
+    def __aiter__(self) -> _PhraseScriptStream:
+        return self
+
+    async def __anext__(self) -> Any:
+        engine = self._engine
+        if self._index >= engine.emit_frames:
+            if engine.error is not None:
+                raise engine.error
+            raise StopAsyncIteration
+        data = _phrase_frame(engine.tag, self._index)
+        self._index += 1
+        return SimpleNamespace(frame=SimpleNamespace(data=data, sample_rate=24_000))
+
+    async def aclose(self) -> None:
+        return None
+
+
+class _PhraseScriptEngine:
+    """An approved-script engine that can stop after any phrase."""
+
+    def __init__(
+        self,
+        provider: str,
+        model: str,
+        *,
+        tag: bytes,
+        emit_frames: int,
+        error: BaseException | None = None,
+    ) -> None:
+        self.provider = provider
+        self.model = model
+        self.current_model = model
+        self.current_voice = f"{provider}-voice"
+        self.tag = tag
+        self.emit_frames = emit_frames
+        self.error = error
+        self.received: list[str] = []
+
+    def bind_fence(self, _fence: GenerationFence) -> None:
+        return None
+
+    def apply_speech_plan(self, **_kwargs: Any) -> None:
+        return None
+
+    def stream(self, *, conn_options: Any = None) -> _PhraseScriptStream:
+        del conn_options
+        return _PhraseScriptStream(self)
+
+    async def aclose(self) -> None:
+        return None
+
+
+def _fixed_safety_cache_key(
+    adapter: ExistingVoiceProviderAdapter,
+    spoken: str,
+) -> tuple[str, str]:
+    return adapter._fixed_safety_voice_key(), spoken
+
+
+def _assert_whole_script_reached_the_device(
+    chunks: list[Any],
+    engine_tag: bytes,
+) -> None:
+    """The emitted frames cover every approved phrase and end with the last one."""
+
+    phrases = CRISIS_SELF_SCRIPT.phrases
+    pcm = b"".join(chunk.pcm_s16le for chunk in chunks)
+    assert pcm == _whole_script_pcm(engine_tag)
+    assert [chunk.source_start_sample for chunk in chunks] == [
+        index * FRAME for index in range(len(phrases))
+    ]
+    text = "".join(chunk.text for chunk in chunks)
+    assert text == CRISIS_SELF_SCRIPT.display
+    offset = 0
+    for phrase in phrases:
+        assert text[offset : offset + len(phrase.display)] == phrase.display
+        offset += len(phrase.display)
+    assert offset == len(text)
+    assert chunks[-1].text.endswith(phrases[-1].display)
+    assert chunks[-1].final is True
+    assert _spans(chunks[-1]) == [(CRISIS_SELF_SCRIPT.display, 0, len(phrases) * FRAME)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backup_behavior", ["connection", "auth", "timeout", "empty"])
+async def test_doubao_outage_falls_back_to_stepfun_for_the_same_crisis_script(
+    backup_behavior: str,
+) -> None:
+    if backup_behavior == "connection":
+        backup = _ScriptEngine(
+            "volcengine_doubao",
+            "seed-tts-2.0",
+            behavior="error",
+            error=ConnectionError("doubao connection closed"),
+        )
+    else:
+        backup = _ScriptEngine("volcengine_doubao", "seed-tts-2.0", behavior=backup_behavior)
+    primary = _ScriptEngine("stepfun", "stepaudio-3-tts")
+    adapter = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), _script_speech(primary=primary, backup=backup))
+    identity, fence = _generation(f"fixed-safety-fallback-{backup_behavior}")
+
+    started = time.monotonic()
+    chunks = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
+    elapsed = time.monotonic() - started
+
+    assert backup.received == [SPOKEN_SCRIPT]
+    assert primary.received == [SPOKEN_SCRIPT]
+    assert any(chunk.pcm_s16le for chunk in chunks)
+    assert "".join(chunk.assistant_text_delta for chunk in chunks) == CRISIS_SELF_SCRIPT.display
+    assert chunks[-1].final is True
+    assert elapsed < 5.0
+
+
+@pytest.mark.asyncio
+async def test_doubao_and_stepfun_failure_replays_the_approved_cache(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    primary = _ScriptEngine("stepfun", "stepaudio-3-tts")
+    backup = _ScriptEngine("volcengine_doubao", "seed-tts-2.0")
+    speech = _script_speech(primary=primary, backup=backup)
+    warm = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), speech)
+    identity, fence = _generation("fixed-safety-cache-fallback-warm")
+    [warm_chunk] = [chunk async for chunk in warm.generate_reply(identity, CHILD_TEXT, fence)]
+    assert warm_chunk.pcm_s16le
+    backup.received.clear()
+
+    backup.behavior = "error"
+    backup.error = ConnectionError("doubao unavailable")
+    primary.error = APIStatusError("content moderation rejected", status_code=451)
+
+    cold = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), speech)
+    identity, fence = _generation("fixed-safety-cache-fallback-cold")
+    started = time.monotonic()
+    with caplog.at_level(logging.INFO):
+        chunks = [chunk async for chunk in cold.generate_reply(identity, CHILD_TEXT, fence)]
+    elapsed = time.monotonic() - started
+
+    ready = [
+        record.getMessage()
+        for record in caplog.records
+        if "fixed safety speech ready" in record.getMessage()
+    ]
+    assert len(ready) == 1 and "source=cache" in ready[0]
+    assert backup.received == [SPOKEN_SCRIPT]
+    assert primary.received == [SPOKEN_SCRIPT]
+    assert any(chunk.pcm_s16le for chunk in chunks)
+    assert "".join(chunk.assistant_text_delta for chunk in chunks) == CRISIS_SELF_SCRIPT.display
+    assert elapsed < 5.0
+
+
+@pytest.mark.asyncio
+async def test_doubao_start_failure_speaks_the_whole_script_on_stepfun() -> None:
+    phrases = CRISIS_SELF_SCRIPT.phrases
+    backup = _PhraseScriptEngine(
+        "volcengine_doubao",
+        "seed-tts-2.0",
+        tag=b"D",
+        emit_frames=0,
+        error=ConnectionError("doubao unavailable"),
+    )
+    primary = _PhraseScriptEngine(
+        "stepfun",
+        "stepaudio-3-tts",
+        tag=b"S",
+        emit_frames=len(phrases),
+    )
+    adapter = _adapter(
+        ReplyLLM(CRISIS_SELF_SCRIPT),
+        _script_speech(primary=primary, backup=backup),
+    )
+    identity, fence = _generation("fixed-safety-start-failure")
+
+    started = time.monotonic()
+    chunks = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
+    elapsed = time.monotonic() - started
+
+    assert backup.received == [SPOKEN_SCRIPT]
+    assert primary.received == [SPOKEN_SCRIPT]
+    _assert_whole_script_reached_the_device(chunks, b"S")
+    assert elapsed < 5.0
+
+
+@pytest.mark.asyncio
+async def test_doubao_mid_script_drop_speaks_the_whole_script_on_stepfun() -> None:
+    phrases = CRISIS_SELF_SCRIPT.phrases
+    backup = _PhraseScriptEngine(
+        "volcengine_doubao",
+        "seed-tts-2.0",
+        tag=b"D",
+        emit_frames=2,
+        error=ConnectionError("doubao dropped mid-script"),
+    )
+    primary = _PhraseScriptEngine(
+        "stepfun",
+        "stepaudio-3-tts",
+        tag=b"S",
+        emit_frames=len(phrases),
+    )
+    speech = _script_speech(primary=primary, backup=backup)
+    adapter = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), speech)
+    identity, fence = _generation("fixed-safety-mid-drop")
+
+    started = time.monotonic()
+    chunks = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
+    elapsed = time.monotonic() - started
+
+    assert backup.received == [SPOKEN_SCRIPT]
+    assert primary.received == [SPOKEN_SCRIPT]
+    # The two frames Doubao produced are discarded before the device sees
+    # anything; the emitted audio is one complete StepFun take.
+    pcm = b"".join(chunk.pcm_s16le for chunk in chunks)
+    assert _phrase_frame(b"D", 0) not in pcm
+    assert _phrase_frame(b"D", 1) not in pcm
+    _assert_whole_script_reached_the_device(chunks, b"S")
+    # A partial Doubao take never joins the whole StepFun take in the cache.
+    from services.agent.src.voice_core import provider_adapter
+
+    assert provider_adapter._FIXED_SAFETY_PCM_CACHE[
+        _fixed_safety_cache_key(adapter, SPOKEN_SCRIPT)
+    ] == _whole_script_pcm(b"S")
+    assert elapsed < 5.0
+
+
+@pytest.mark.asyncio
+async def test_doubao_and_stepfun_failure_replays_the_whole_cached_script(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    phrases = CRISIS_SELF_SCRIPT.phrases
+    backup = _PhraseScriptEngine(
+        "volcengine_doubao",
+        "seed-tts-2.0",
+        tag=b"D",
+        emit_frames=len(phrases),
+    )
+    primary = _PhraseScriptEngine(
+        "stepfun",
+        "stepaudio-3-tts",
+        tag=b"S",
+        emit_frames=len(phrases),
+    )
+    speech = _script_speech(primary=primary, backup=backup)
+    warm = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), speech)
+    identity, fence = _generation("fixed-safety-whole-cache-warm")
+    warm_chunks = [
+        chunk async for chunk in warm.generate_reply(identity, CHILD_TEXT, fence)
+    ]
+    _assert_whole_script_reached_the_device(warm_chunks, b"D")
+
+    from services.agent.src.voice_core import provider_adapter
+
+    key = _fixed_safety_cache_key(warm, SPOKEN_SCRIPT)
+    cached = provider_adapter._FIXED_SAFETY_PCM_CACHE[key]
+    assert cached == _whole_script_pcm(b"D")
+    backup.received.clear()
+    primary.received.clear()
+
+    backup.emit_frames = 0
+    backup.error = ConnectionError("doubao unavailable")
+    primary.emit_frames = 0
+    primary.error = APIStatusError("content moderation rejected", status_code=451)
+
+    cold = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), speech)
+    identity, fence = _generation("fixed-safety-whole-cache-cold")
+    started = time.monotonic()
+    with caplog.at_level(logging.INFO):
+        chunks = [chunk async for chunk in cold.generate_reply(identity, CHILD_TEXT, fence)]
+    elapsed = time.monotonic() - started
+
+    ready = [
+        record.getMessage()
+        for record in caplog.records
+        if "fixed safety speech ready" in record.getMessage()
+    ]
+    assert len(ready) == 1 and "source=cache" in ready[0]
+    assert backup.received == [SPOKEN_SCRIPT]
+    assert primary.received == [SPOKEN_SCRIPT]
+    _assert_whole_script_reached_the_device(chunks, b"D")
+    assert provider_adapter._FIXED_SAFETY_PCM_CACHE[key] == cached
+    assert elapsed < 5.0
+
+
+@pytest.mark.asyncio
+async def test_two_engine_first_packet_timeouts_stay_inside_the_crisis_budget() -> None:
+    primary = _ScriptEngine("stepfun", "stepaudio-3-tts", behavior="timeout")
+    backup = _ScriptEngine("volcengine_doubao", "seed-tts-2.0", behavior="timeout")
+    adapter = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), _script_speech(primary=primary, backup=backup))
+    identity, fence = _generation("fixed-safety-both-timeout")
+
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match="fixed safety script produced no audio"):
+        [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
+    elapsed = time.monotonic() - started
+
+    assert backup.received
+    assert primary.received
+    assert elapsed < 5.0
+
+
+@pytest.mark.asyncio
+async def test_doubao_and_stepfun_failure_without_cache_fails_loudly() -> None:
+    primary = _ScriptEngine(
+        "stepfun",
+        "stepaudio-3-tts",
+        behavior="error",
+        error=APIStatusError("content moderation rejected", status_code=451),
+    )
+    backup = _ScriptEngine(
+        "volcengine_doubao",
+        "seed-tts-2.0",
+        behavior="error",
+        error=ConnectionError("doubao unavailable"),
+    )
+    adapter = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), _script_speech(primary=primary, backup=backup))
+    identity, fence = _generation("fixed-safety-cache-fallback-cold-failure")
+
+    with pytest.raises(RuntimeError, match="fixed safety script produced no audio"):
+        [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
+
+    # A cold cache retries the whole cascade once, then fails instead of
+    # leaving the child in silence with a half-reported success.
+    assert backup.received == [SPOKEN_SCRIPT, SPOKEN_SCRIPT]
+    assert primary.received == [SPOKEN_SCRIPT, SPOKEN_SCRIPT]
 
 
 class _FailureOnceSpeech:

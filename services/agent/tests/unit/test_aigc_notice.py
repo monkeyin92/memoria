@@ -825,3 +825,161 @@ async def test_ended_receipt_leaves_the_opening_marker_fence_for_finish_to_clear
     assert context.output.output_owner is None
     assert context.runtime.interaction_phase is InteractionPhase.LISTENING
     assert context.aigc_opening_marker_fence is None
+
+
+@pytest.mark.asyncio
+async def test_opening_marker_plays_and_releases_the_floor_after_device_ended() -> None:
+    from services.agent.src.orchestration.state_machine import InteractionPhase
+    from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
+    from services.agent.src.voice_core.media_protocol import (
+        PlaybackEventType,
+        PlaybackProgress,
+    )
+    from services.agent.src.voice_core.media_session import (
+        MediaReplyChunk,
+        MediaVoiceCoreRegistry,
+    )
+    from services.agent.tests.unit.media_session_support import (
+        _AckCapturingProvider,
+        _CapturingGenerationBridge,
+        _device_identity,
+        _wait_until,
+    )
+
+    class _ActionBridge(_CapturingGenerationBridge):
+        def __init__(self) -> None:
+            super().__init__()
+            self.generations: list[tuple[int, Any]] = []
+
+        async def emit_generation(self, *_args: object, **_kwargs: object) -> bool:
+            action = _kwargs.get("action")
+            fence = _args[1] if len(_args) > 1 else _kwargs.get("fence")
+            if isinstance(action, int):
+                self.generations.append((action, fence))
+            return await super().emit_generation(*_args, **_kwargs)
+
+    class _GatedOpeningMarkerProvider(_AckCapturingProvider):
+        """Hold the opening marker stream open after its first PCM frame."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.marker_started = asyncio.Event()
+            self.marker_release = asyncio.Event()
+
+        def generate_output(
+            self,
+            _identity: Any,
+            intent: Any,
+            _fence: Any,
+            *,
+            work_id: str,
+            source_start_sample: int,
+        ) -> Any:
+            _ = work_id
+            self.texts.append(str(intent.tts_source))
+            gated = bool(intent.pcm_s16le)
+
+            async def chunks() -> Any:
+                yield MediaReplyChunk(
+                    pcm_s16le=b"\x02\x00\x03\x00",
+                    source_start_sample=source_start_sample,
+                    text=str(intent.tts_source),
+                    first=True,
+                    final=False,
+                )
+                if gated:
+                    self.marker_started.set()
+                    await self.marker_release.wait()
+                yield MediaReplyChunk(
+                    pcm_s16le=b"\x04\x00\x05\x00",
+                    source_start_sample=source_start_sample + 2,
+                    text="",
+                    first=False,
+                    final=True,
+                )
+                self.completed.set()
+
+            return chunks()
+
+    config = AigcNoticeConfig(
+        tone_short_ms=20,
+        tone_long_ms=30,
+        tone_gap_ms=0,
+        tone_group_gap_ms=0,
+        lead_interval_ms=150,
+    )
+    provider = _GatedOpeningMarkerProvider()
+    bridge = _ActionBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        aigc_notice_config=config,
+        aigc_round_logger=None,
+        speaking_stall_timeout_s=0.3,
+    )
+    registry.install()
+    identity = _device_identity("aigc-marker-really-plays")
+    session = bridge.bridge.open(identity)
+
+    async def no_ack(context: Any) -> None:
+        context.device_wake_ack_pending = False
+
+    registry._speak_device_wake_ack = no_ack  # type: ignore[method-assign]
+    opening = asyncio.create_task(registry.open_session(identity))
+    try:
+        await _wait_until(lambda: provider.marker_started.is_set())
+        context = registry.session_state(identity.session_id)
+        marker_fence = context.aigc_opening_marker_fence
+        assert marker_fence is not None
+        marker_frame = next(
+            frame
+            for frame in bridge.frames
+            if frame.generation_id == marker_fence.generation_id
+            and frame.turn_id == marker_fence.turn_id
+        )
+        assert marker_frame.pcm_s16le
+        assert [
+            action
+            for action, fence in bridge.generations
+            if fence.matches(marker_fence)
+        ] == [media_pb2.GENERATION_ACTION_START]
+
+        for event_type in (PlaybackEventType.STARTED, PlaybackEventType.ENDED):
+            await registry.on_playback_progress(
+                session,
+                PlaybackProgress(
+                    identity=identity,
+                    generation_id=marker_fence.generation_id,
+                    received_sequence=marker_frame.sequence,
+                    rendered_sample_end=(
+                        marker_frame.source_start_sample + marker_frame.frame_samples
+                    ),
+                    client_monotonic_ms=1,
+                    approximate=False,
+                    turn_id=marker_fence.turn_id,
+                    tool_epoch=marker_fence.tool_epoch,
+                    session_epoch=marker_fence.session_epoch,
+                    event_type=event_type,
+                ),
+            )
+
+        # The device acknowledged STARTED and ENDED for a real frame; both
+        # receipts reached the playback ledger.
+        assert context.output.playback.rendered_sample_end(marker_fence) == (
+            marker_frame.source_start_sample + marker_frame.frame_samples
+        )
+        # The ENDED receipt must not clear the marker fence: the stream still
+        # owns the output and _finish_aigc_opening_marker is the single release.
+        assert context.aigc_opening_marker_fence is not None
+        provider.marker_release.set()
+        await asyncio.wait_for(opening, timeout=2)
+        await _wait_until(lambda: context.output.output_owner is None)
+        await _wait_until(
+            lambda: context.runtime.interaction_phase is InteractionPhase.LISTENING
+        )
+        assert context.aigc_opening_marker_fence is None
+        assert not context.closed
+        assert not context.standby_requested
+    finally:
+        provider.marker_release.set()
+        await registry.finalize_session(identity.session_id)
