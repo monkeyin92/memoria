@@ -14,6 +14,7 @@ from services.agent.src.agent_voice_profile import (
     align_tts_voice_to_policy,
 )
 from services.agent.src.archive_sink import ArchiveSink, ArchiveSinkConfig
+from services.agent.src.asr_text_debug_log import AsrTextDebugSubjects
 from services.agent.src.conversation_close_wiring import (
     install_conversation_close_semantic_resolver,
 )
@@ -132,6 +133,7 @@ class ProductionMediaSessionFactory:
     async def __call__(self, identity: SessionIdentity) -> MediaSessionResources:
         if not identity.session_id:
             raise ValueError("production media session requires a session id")
+        asr_text_debug_subjects = AsrTextDebugSubjects.from_env()
         tts = build_tts(self.settings)
         runtime: DuplexRuntime | None = None
         owned: list[object] = []
@@ -229,6 +231,8 @@ class ProductionMediaSessionFactory:
                 asr_session_factory=lambda: FunASRSession(
                     replace(asr_config),
                     metrics=GLOBAL_METRICS,
+                    asr_text_debug_session_id=identity.session_id,
+                    asr_text_debug_subject_ids=(identity.subject_id, identity.device_id),
                 ),
                 language_model=handler,
                 speech_synthesis=cast(SpeechSynthesisHandler, tts),
@@ -239,6 +243,7 @@ class ProductionMediaSessionFactory:
                 metrics=GLOBAL_METRICS,
                 owns_speech_synthesis=True,
                 owns_language_model=True,
+                asr_text_debug_subjects=asr_text_debug_subjects,
             )
             return MediaSessionResources(runtime=runtime, provider=provider)
         except Exception:
