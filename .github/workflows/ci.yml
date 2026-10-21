@@ -170,6 +170,8 @@ jobs:
           scripts/tests/test_verify_agent_release_artifact.py
           scripts/tests/test_resolve_target_images.py
           scripts/tests/test_provider_smoke_llm.py
+          scripts/tests/test_local_process_probe.py
+          scripts/tests/test_deploy_agent_component_manual_base.py
       - name: Agent source-overlay script syntax
         run: bash -n scripts/deploy_agent_component.sh
 
@@ -224,6 +226,8 @@ jobs:
           scripts/tests/test_verify_control_release_artifact.py
           scripts/tests/test_resolve_target_images.py
           scripts/tests/test_provider_smoke_llm.py
+          scripts/tests/test_local_process_probe.py
+          scripts/tests/test_deploy_agent_component_manual_base.py
       - name: Nightly backup script tests (fake docker and df)
         run: >-
           uv run pytest --import-mode=importlib --no-cov

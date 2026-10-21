@@ -16,8 +16,11 @@ a longsoak memory or connection or latency window, FunASR, production, or
 firmware. The provider-neutral child loads no session factory, so this harness
 has no Voice Core runtime or media lease to reclaim.
 
-``scripts/offline_process_trend_sample.py`` prints a few /proc samples only.
-It is not that longsoak window.
+``scripts/offline_process_trend_sample.py`` prints a few samples only. It is
+not that longsoak window. Linux reads them from /proc; macOS reads RSS and
+liveness from libproc and proves a closed listener with a refused connect, and
+reports the socket count as unmeasured. Both paths assert the same reclaim
+facts, so a local Mac run exercises this harness instead of skipping it.
 """
 
 from __future__ import annotations
@@ -37,6 +40,7 @@ from pathlib import Path
 from typing import TextIO
 
 import pytest
+from scripts import local_process_probe
 
 _CHILD = Path(__file__).with_name("bridge_process_exit_child.py")
 _REPO = Path(__file__).resolve().parents[4]
@@ -134,31 +138,44 @@ def _listen_ports_from(text: str) -> set[int]:
     return found
 
 
-def _listen_ports() -> set[int]:
-    found: set[int] = set()
-    for path in ("/proc/net/tcp", "/proc/net/tcp6"):
-        try:
-            text = Path(path).read_text(encoding="utf-8")
-        except OSError:
-            continue
-        found.update(_listen_ports_from(text))
-    return found
+def _connect_probe(port: int) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            return True
+    except OSError:
+        return False
 
 
 def _ports_listening(ports: tuple[int, ...]) -> bool:
-    listening = _listen_ports()
-    return all(port in listening for port in ports)
+    if local_process_probe.procfs_available():
+        listening: set[int] = set()
+        for path in ("/proc/net/tcp", "/proc/net/tcp6"):
+            try:
+                text = Path(path).read_text(encoding="utf-8")
+            except OSError:
+                continue
+            listening.update(_listen_ports_from(text))
+        return all(port in listening for port in ports)
+    # Darwin: a refused connect is the end-to-end proof the listener is gone.
+    return all(_connect_probe(port) for port in ports)
+
+
+def _wait_until_unreachable(ports: tuple[int, ...]) -> bool:
+    deadline = time.monotonic() + 2.0
+    while True:
+        if not any(_connect_probe(port) for port in ports):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.02)
+
+
+def _sigterm_observed(mask: int) -> bool:
+    return not local_process_probe.procfs_available() or _sigterm_caught(mask)
 
 
 def _caught_mask(pid: int) -> int | None:
-    try:
-        text = Path(f"/proc/{pid}/status").read_text(encoding="utf-8")
-    except OSError:
-        return None
-    for line in text.splitlines():
-        if line.startswith("SigCgt:"):
-            return int(line.split()[1], 16)
-    return None
+    return local_process_probe.caught_signals(pid)
 
 
 def _free_ports(count: int) -> tuple[int, ...]:
@@ -213,6 +230,8 @@ def _group_alive(pid: int) -> bool:
         os.killpg(pid, 0)
     except ProcessLookupError:
         return False
+    except PermissionError:
+        return True
     return True
 
 
@@ -283,7 +302,7 @@ def _wait_until_serving(bridge: _RunningBridge, grpc_port: int, metrics_port: in
             and "mtls=False" in text
             and _ports_listening(ports)
             and mask is not None
-            and _sigterm_caught(mask)
+            and _sigterm_observed(mask)
         ):
             return
         time.sleep(0.05)
@@ -293,13 +312,15 @@ def _wait_until_serving(bridge: _RunningBridge, grpc_port: int, metrics_port: in
 
 
 def _wait_until_quiet(ports: tuple[int, ...]) -> bool:
-    deadline = time.monotonic() + 2.0
-    while True:
-        if not any(port in _listen_ports() for port in ports):
-            return True
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(0.02)
+    if local_process_probe.procfs_available():
+        deadline = time.monotonic() + 2.0
+        while True:
+            if not any(_ports_listening((port,)) for port in ports):
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.02)
+    return _wait_until_unreachable(ports)
 
 
 def _stop_and_collect(bridge: _RunningBridge, signum: int, ports: tuple[int, ...]) -> _Observation:
@@ -427,7 +448,11 @@ def test_offline_trend_sample_prints_two_rows() -> None:
     assert [row["index"] for row in rows] == [0, 1]
     for row in rows:
         assert row["rss_bytes"] > 0
-        assert row["open_sockets"] >= 0
+        if local_process_probe.procfs_available():
+            assert row["open_sockets"] >= 0
+        else:
+            # Darwin reports the count as unmeasured instead of a false zero.
+            assert row["open_sockets"] is None
         assert isinstance(row["sampled_at"], float)
 
 

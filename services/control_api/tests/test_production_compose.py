@@ -596,6 +596,10 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
     assert r"printf 'rollback_image=%s\n'" in deploy
     assert 'runtime_base_image_id="$(docker image inspect "$runtime_base" --format' in deploy
     assert 'runtime_base_metadata="$(docker image inspect "$runtime_base" --format' in deploy
+    # A hand-built candidate may reuse the running bridge image as its base only
+    # through --allow-manual-base-image --reason; see
+    # scripts/tests/test_deploy_agent_component_manual_base.py.
+    assert "--allow-manual-base-image" in deploy
     assert "base_version=\"$(printf '%s' \"$base_image\" | cut -d: -f2-)\"" in deploy
     assert '[[ "$runtime_base_metadata" == "$base_image_id amd64 $base_commit $base_version agent" ]]' in deploy
     assert 'target_image_id="$(docker image inspect "$target_image" --format' in deploy
