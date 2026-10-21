@@ -27,7 +27,7 @@ from services.agent.src.voice_core.aigc_notice import (
     AigcNoticePosition,
     opening_marker_ready_at,
 )
-from services.agent.src.voice_core.media_protocol import PlaybackProgress
+from services.agent.src.voice_core.media_protocol import PlaybackEventType, PlaybackProgress
 from services.agent.src.voice_core.media_session_state import (
     MediaVoiceSessionState as _MediaVoiceSession,
 )
@@ -82,6 +82,14 @@ class MediaSessionAigcNoticeMixin:
         ) -> bool: ...
 
         def _media_output_is_busy(self, context: _MediaVoiceSession) -> bool: ...
+
+        @staticmethod
+        def _release_output_owner(
+            context: _MediaVoiceSession,
+            fence: GenerationFence,
+            *,
+            reason: str,
+        ) -> bool: ...
 
         async def _speak_device_wake_ack(self, context: _MediaVoiceSession) -> None: ...
 
@@ -256,11 +264,45 @@ class MediaSessionAigcNoticeMixin:
         context: _MediaVoiceSession,
         progress: PlaybackProgress,
     ) -> None:
-        """A played opening marker is no longer awaiting its first ack."""
+        """A marker playback ACK never ends the opening marker.
 
+        ``ENDED`` can arrive before the marker output stream completes. Clearing
+        the fence here would make ``_finish_aigc_opening_marker``'s guard skip
+        the owner release and leave the session in SPEAKING. That method owns
+        the single clear, after the owner is released and the floor is back.
+        """
         fence = context.aigc_opening_marker_fence
-        if fence is not None and progress.generation_id == fence.generation_id:
-            context.aigc_opening_marker_fence = None
+        if (
+            fence is not None
+            and progress.generation_id == fence.generation_id
+            and progress.event_type is PlaybackEventType.ENDED
+        ):
+            # The stream may still be draining when ENDED arrives. Keep the
+            # fence until _finish_aigc_opening_marker releases the owner and
+            # restores the listening phase.
+            return
+
+    async def _finish_aigc_opening_marker(
+        self, context: _MediaVoiceSession, fence: GenerationFence
+    ) -> None:
+        """Close the opening cue without treating it as an assistant reply.
+
+        The marker opened the first wire-legal turn and entered SPEAKING on its
+        first PCM frame. Release that output and return the floor to LISTENING
+        before the wake acknowledgement is admitted; otherwise both the owner
+        and the speaking phase outlive the cue and block 「我在呢」.
+        """
+
+        opening = context.aigc_opening_marker_fence
+        if opening is None or not fence.matches(opening):
+            return
+        context.aigc_opening_marker_fence = None
+        self._release_output_owner(context, fence, reason="aigc_marker_complete")
+        if context.closed or context.standby_requested:
+            return
+        if not context.runtime.fence.matches(fence):
+            return
+        await context.runtime.on_media_playback_done(fence, "")
 
     async def _finish_aigc_closing_marker(
         self, context: _MediaVoiceSession, request: _MarkerRequest
@@ -288,7 +330,9 @@ class MediaSessionAigcNoticeMixin:
 
         runtime = context.runtime
         if runtime.fence.turn_id == 0 and position == "opening":
-            await runtime.begin_media_auxiliary_output(runtime.fence)
+            opened = await runtime.begin_media_auxiliary_output(runtime.fence)
+            if opened is not None:
+                context.aigc_opening_marker_turn_id = opened.turn_id
         if runtime.fence.turn_id == 0:
             return None
         if position == "closing":

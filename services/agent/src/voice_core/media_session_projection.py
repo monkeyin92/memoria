@@ -235,6 +235,18 @@ class MediaSessionProjectionMixin:
             self, context: _MediaVoiceSession, *, reset: bool
         ) -> None: ...
 
+    @staticmethod
+    def _device_wake_ack_turn_available(context: _MediaVoiceSession) -> bool:
+        """Whether the wake acknowledgement may still use the current turn.
+
+        Turn 0 is the untouched pre-user fence. The opening AIGC marker opens
+        turn 1 before 「我在呢」, so that exact turn is also pre-user; once a
+        real user turn advances the fence, the gate closes again.
+        """
+
+        turn_id = context.runtime.fence.turn_id
+        return turn_id == 0 or turn_id == context.aigc_opening_marker_turn_id
+
     async def _speak_device_wake_ack(self, context: _MediaVoiceSession) -> None:
         if context.identity.client_type != "device":
             context.device_wake_ack_pending = False
@@ -247,7 +259,10 @@ class MediaSessionProjectionMixin:
             if context.closed or context.standby_requested:
                 context.device_wake_ack_pending = False
                 return
-            if context.runtime.fence.turn_id != 0 or context.pending.turn_start_sample is not None:
+            if (
+                not self._device_wake_ack_turn_available(context)
+                or context.pending.turn_start_sample is not None
+            ):
                 context.device_wake_ack_pending = False
                 return
             if context.output.output_owner is not None:
@@ -262,7 +277,7 @@ class MediaSessionProjectionMixin:
                 )
             if (
                 context.closed
-                or context.runtime.fence.turn_id != 0
+                or not self._device_wake_ack_turn_available(context)
                 or context.pending.turn_start_sample is not None
             ):
                 context.device_wake_ack_pending = False
@@ -298,6 +313,8 @@ class MediaSessionProjectionMixin:
                 context.identity.session_id,
             )
         finally:
+            # 唤醒应答尝试结束（成功、失败、跳过）后关闭 marker turn 门禁。
+            context.aigc_opening_marker_turn_id = None
             remember_device_wake(context.identity.device_id, now)
 
 

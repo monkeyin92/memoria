@@ -186,6 +186,12 @@ class MediaOutputStreamMixin:
             progress: PlaybackProgress,
         ) -> None: ...
 
+        async def _finish_aigc_opening_marker(
+            self,
+            context: _MediaVoiceSession,
+            fence: GenerationFence,
+        ) -> None: ...
+
         @staticmethod
         async def _advance_failed_output_generation(
             context: _MediaVoiceSession,
@@ -1151,6 +1157,9 @@ class MediaOutputStreamMixin:
             if self._is_aigc_marker_fence(context, fence):
                 # The closing marker is the round's last audible output; the
                 # session closes after it, so it gets no completion lifecycle.
+                # The opening marker owns the turn alone, so it must hand the
+                # floor back before the wake acknowledgement is admitted.
+                await self._finish_aigc_opening_marker(context, fence)
                 return OutputDispatchResult(
                     fence,
                     OutputDispatchStatus.COMPLETED,
