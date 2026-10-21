@@ -56,6 +56,10 @@ _UNHEARD_OUTPUT_FLOOR_WAIT_S = 4.0
 # words to give the floor back.  The evidence-less hold cap (media_session_turns,
 # 6 s at most) is what normally reopens it; this only bounds the wait if it never does.
 _UNHEARD_OUTPUT_TEXTLESS_HOLD_WAIT_S = 7.0
+# An approved fixed safety script is the one reply the child must hear (C1,
+# 2026-10-21: the crisis line was held behind a noise edge and dropped).  It
+# outranks a wordless turn for longer, so a slow recovery still gets to speak.
+_UNHEARD_OUTPUT_FIXED_SAFETY_WAIT_S = 30.0
 _UNHEARD_OUTPUT_FLOOR_POLL_S = 0.02
 # Echo of the reply's tail can outlive the playback completion event by the
 # ASR pipeline's segmentation lag, so the boundary that gates early follow-up
@@ -403,6 +407,62 @@ class MediaOutputStreamMixin:
         )
 
     @staticmethod
+    def _reply_is_fixed_safety_script(
+        context: _MediaVoiceSession,
+        fence: GenerationFence,
+    ) -> bool:
+        """Whether this generation speaks an approved fixed safety script.
+
+        The provider owns the fixed-safety fence set; ask it as an optional
+        capability so test and compatibility providers simply answer no.
+        """
+
+        probe = getattr(getattr(context, "provider", None), "is_fixed_safety_reply", None)
+        return bool(probe(fence)) if callable(probe) else False
+
+    def _hand_floor_back_for_fixed_safety(
+        self,
+        context: _MediaVoiceSession,
+        lease: _OutputOwnerLease,
+    ) -> bool:
+        """Reopen the floor for an unheard safety script a wordless turn left closed.
+
+        C1 (bridge bf245ed1, 2026-10-21 03:51:53Z): a device VAD edge on room noise
+        opened a user turn, the crisis line was synthesized 1.9 s later, and the edge
+        ended with no text 176 ms after that.  The empty turn retired while the floor
+        stayed closed, so the held script was dropped as ``textless_turn_over`` and
+        the child heard nothing.  A turn that produced no words cannot outrank the
+        script; this is the same hand-back the evidence-less hold cap performs when it
+        retires a wordless turn, applied at the moment the reply would be dropped.
+        """
+
+        if context.pending.turn_start_sample is not None:
+            return False
+        if self._pending_turn_has_fresh_text_evidence(context):
+            return False
+        # Same selection as any other owner, but asked against the floor as it
+        # stands now: once the wordless turn is gone the intent is selected again.
+        if self._output_owner_is_current(context, lease):
+            return True
+        floor_was_open = context.runtime.output_floor_allows_assistant
+        if not floor_was_open:
+            context.runtime.open_assistant_floor(cause="fixed_safety_reply")
+        floor_open = context.runtime.output_floor_allows_assistant
+        if not floor_open:
+            # Never reopen a floor the runtime closed for another reason (stop,
+            # control restore, a newer generation): only a textless turn does.
+            return False
+        logger.warning(
+            "media fixed safety reply reclaimed the floor after a turn with no words "
+            "session=%s fence=%s floor_was_open=%s floor_open=%s",
+            context.identity.session_id,
+            lease.fence,
+            floor_was_open,
+            floor_open,
+        )
+        return floor_open
+
+    @staticmethod
     def _reply_owner_intact(context: _MediaVoiceSession, lease: _OutputOwnerLease) -> bool:
         """The lease is still this task's, on the live fence; the floor is not asked here."""
 
@@ -489,7 +549,21 @@ class MediaOutputStreamMixin:
         if context.runtime.barge_in_enabled:
             if self._output_owner_is_current(context, lease):
                 return True
-            if not self._floor_held_by_textless_turn(context):
+            if self._floor_held_by_textless_turn(context):
+                textless_hold = True
+                self._arm_evidence_less_floor_hold(context)
+                logger.info(
+                    "media prepared reply held for a user turn with no words session=%s fence=%s",
+                    context.identity.session_id,
+                    lease.fence,
+                )
+            elif not (
+                # Only an approved safety script may reclaim a floor it lost, and only
+                # from a turn with no words; everything else keeps the old decision.
+                self._reply_is_fixed_safety_script(context, lease.fence)
+                and not self._pending_turn_has_fresh_text_evidence(context)
+                and self._hand_floor_back_for_fixed_safety(context, lease)
+            ):
                 # Round 18 lost 3 prepared replies here without a "held" line; the guess is that
                 # the recognizer's interim text counted as words.  Say which input decided it.
                 partial = context.pending.pending_partial
@@ -505,18 +579,15 @@ class MediaOutputStreamMixin:
                     len(((provisional.text if provisional is not None else "") or "").strip()),
                 )
                 return False
-            textless_hold = True
-            self._arm_evidence_less_floor_hold(context)
-            logger.info(
-                "media prepared reply held for a user turn with no words session=%s fence=%s",
-                context.identity.session_id,
-                lease.fence,
-            )
+        protected = self._reply_is_fixed_safety_script(context, lease.fence)
         loop = asyncio.get_running_loop()
         started = loop.time()
-        deadline = started + (
-            _UNHEARD_OUTPUT_TEXTLESS_HOLD_WAIT_S if textless_hold else _UNHEARD_OUTPUT_FLOOR_WAIT_S
-        )
+        if protected:
+            deadline = started + _UNHEARD_OUTPUT_FIXED_SAFETY_WAIT_S
+        elif textless_hold:
+            deadline = started + _UNHEARD_OUTPUT_TEXTLESS_HOLD_WAIT_S
+        else:
+            deadline = started + _UNHEARD_OUTPUT_FLOOR_WAIT_S
         while True:
             if self._output_owner_can_start_first_frame(context, lease):
                 if textless_hold:
@@ -542,14 +613,20 @@ class MediaOutputStreamMixin:
                 return False
             if textless_hold and not self._floor_held_by_textless_turn(context):
                 # Words arrived (or the turn ended): the user really holds the floor.
-                self._log_unheard_reply_dropped(
-                    context,
-                    lease,
-                    cause="textless_turn_over",
-                    textless_hold=textless_hold,
-                    waited_s=loop.time() - started,
-                )
-                return False
+                # A turn that ended without words never did, so an unheard fixed safety
+                # script keeps its claim instead of being dropped (C1, 2026-10-21).
+                # ``_floor_held_by_textless_turn`` already proved there are no fresh
+                # words on this turn, so this only asks whether the script may speak.
+                if not (protected and self._hand_floor_back_for_fixed_safety(context, lease)):
+                    self._log_unheard_reply_dropped(
+                        context,
+                        lease,
+                        cause="textless_turn_over",
+                        textless_hold=textless_hold,
+                        waited_s=loop.time() - started,
+                    )
+                    return False
+                textless_hold = False
             if loop.time() >= deadline:
                 self._log_unheard_reply_dropped(
                     context,
@@ -582,7 +659,8 @@ class MediaOutputStreamMixin:
         logger.info(
             "media prepared reply dropped cause=%s textless_hold=%s waited_s=%.2f session=%s fence=%s "
             "owner_is_lease=%s task_is_current=%s fence_matches=%s floor_open=%s turn_started=%s "
-            "text_evidence=%s fresh_text_evidence=%s partial_chars=%d provisional_chars=%d",
+            "text_evidence=%s fresh_text_evidence=%s fixed_safety=%s "
+            "partial_chars=%d provisional_chars=%d",
             cause,
             textless_hold,
             waited_s,
@@ -595,6 +673,7 @@ class MediaOutputStreamMixin:
             context.pending.turn_start_sample is not None,
             self._pending_turn_has_text_evidence(context),
             self._pending_turn_has_fresh_text_evidence(context),
+            self._reply_is_fixed_safety_script(context, lease.fence),
             len(((partial.text if partial is not None else "") or "").strip()),
             len(((provisional.text if provisional is not None else "") or "").strip()),
         )
