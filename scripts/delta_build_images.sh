@@ -116,6 +116,7 @@ COPY scripts/verify_env.py scripts/provider_smoke_test.py scripts/run_media_brid
 COPY scripts/verify_agent_release_artifact.py ./scripts/
 COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json
 COPY infra/voices/doubao_voice_ids.json ./infra/voices/doubao_voice_ids.json
+COPY infra/voices/fixed_safety ./infra/voices/fixed_safety
 RUN chmod -R u=rwX,go=rX /app/services /app/packages /app/scripts /app/infra
 RUN /app/.venv/bin/python -m scripts.verify_agent_release_artifact
 USER 65532:65532

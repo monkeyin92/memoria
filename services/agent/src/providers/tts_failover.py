@@ -6,15 +6,18 @@ back. A failed unit is re-spoken whole on the next engine, even when part of it
 already reached the caller: a truncated sentence is worse than a repeated one,
 especially for an approved fixed-safety script.
 
-An approved fixed-safety script starts on Doubao, because StepFun content
-moderation may reject the exact crisis copy before any audio. It is the one
-unit that may move the other way, and it is buffered per engine: if Doubao
-fails before or after producing part of the line, that partial audio is
-discarded before it reaches the caller and StepFun synthesizes the whole text
-again inside the remaining opening budget. If StepFun also fails, the media
-adapter falls back to its approved per-voice PCM cache; a cold cache reports a
-loud failure instead of leaving the child in silence. Only a complete take is
-ever forwarded, so a half line can never join a whole line in the cache.
+An approved fixed-safety script is normally served by the pre-synthesized clip
+before this wrapper is reached. If that clip is missing or fails its manifest
+hash, the live cascade starts on StepFun by default
+(``STEPFUN_TTS_FIXED_SAFETY_PRIMARY_FIRST=true``) and moves to Doubao, or the
+reverse when the switch is off. It is the one unit that may move the other way,
+and it is buffered per engine: if the first engine fails before or after
+producing part of the line, that partial audio is discarded before it reaches
+the caller and the next engine synthesizes the whole text again inside the
+remaining opening budget. If both fail there is no runtime audio to approve, so
+the media adapter reports a loud failure instead of leaving the child in
+silence. Only a complete take is ever forwarded, so a half line can never join
+a whole line.
 """
 
 from __future__ import annotations
@@ -41,15 +44,28 @@ STEPFUN_PRIMARY_PROVIDER = "stepfun_primary"
 _NO_RETRY_CONNECT_OPTIONS = APIConnectOptions(max_retry=0)
 
 
+def _env_bool(values: dict[str, str], name: str, default: bool) -> bool:
+    raw = values.get(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean")
+
+
 @dataclass
 class StepFunFailoverConfig:
     """Process-level circuit thresholds and the fixed-safety opening budget.
 
-    A crisis line must reach the child inside five seconds. Doubao gets at most
-    ``fixed_safety_backup_first_audio_s``, StepFun at most
-    ``fixed_safety_primary_first_audio_s``, and both attempts share
-    ``fixed_safety_budget_s``. The media adapter then has the rest of its own
-    five-second allowance to replay the approved PCM cache.
+    A crisis line must reach the child inside five seconds. The first engine
+    gets at most ``fixed_safety_primary_first_audio_s`` when StepFun leads or
+    ``fixed_safety_backup_first_audio_s`` when Doubao leads, the second engine
+    gets the other allowance, and both attempts share
+    ``fixed_safety_budget_s``. This budget applies only to the live fallback
+    used when the approved stored clip is unavailable.
     """
 
     failures: int = 3
@@ -59,6 +75,7 @@ class StepFunFailoverConfig:
     fixed_safety_budget_s: float = 4.5
     fixed_safety_backup_first_audio_s: float = 1.8
     fixed_safety_primary_first_audio_s: float = 1.5
+    fixed_safety_primary_first: bool = True
 
     def __post_init__(self) -> None:
         if self.failures < 1:
@@ -94,6 +111,9 @@ class StepFunFailoverConfig:
             ),
             fixed_safety_primary_first_audio_s=float(
                 values.get("STEPFUN_TTS_FIXED_SAFETY_PRIMARY_FIRST_AUDIO_S", "1.5")
+            ),
+            fixed_safety_primary_first=_env_bool(
+                values, "STEPFUN_TTS_FIXED_SAFETY_PRIMARY_FIRST", True
             ),
         )
 
@@ -295,9 +315,12 @@ class StepFunFailoverStream:
             )
             if fixed_safety_unit:
                 self._owner.trace(
-                    "tts_fixed_safety_direct_backup",
+                    "tts_fixed_safety_live_fallback",
                     "ok",
-                    {"chars": len(unit)},
+                    {
+                        "chars": len(unit),
+                        "primary_first": candidates[0],
+                    },
                 )
             first_engine: tuple[Any, bool] | None = None
             progress = _UnitProgress()
@@ -418,11 +441,14 @@ class StepFunFailoverStream:
     def _engine_candidates(self, fixed_safety_unit: bool) -> tuple[bool, ...]:
         """Engine order for one unit; ``True`` means the StepFun primary.
 
-        A fixed-safety line starts on Doubao but may fall back to StepFun.
-        Every other unit starts on StepFun and moves to Doubao once.
+        A fixed-safety fallback follows ``fixed_safety_primary_first``: StepFun
+        then Doubao by default, reversed when the switch is off. Every other
+        unit starts on StepFun and moves to Doubao once.
         """
 
         if fixed_safety_unit:
+            if self._owner._config.fixed_safety_primary_first:
+                return (True, False)
             return (False, True)
         use_primary = not self._owner.degraded and self._owner.breaker.allow()
         if not use_primary:

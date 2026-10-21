@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import inspect
 import math
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
 from services.agent.src.contracts.ids import GenerationFence
@@ -266,6 +266,7 @@ class MediaSessionLifecycleMixin:
         if current is not None:
             try:
                 await self._reuse_session(current, session.identity)
+                session.local_stop_guard = self._local_stop_guard(current)
             except Exception:
                 # The bridge has already accepted the replacement transport
                 # epoch before this callback runs.  If the provider cannot
@@ -299,6 +300,12 @@ class MediaSessionLifecycleMixin:
                 )
             )
         )
+
+    @staticmethod
+    def _local_stop_guard(context: _MediaVoiceSession) -> Callable[[], bool]:
+        """Refuse a pat/tap stop while the approved script is audible."""
+
+        return lambda: not context.runtime.floor.fixed_safety_audible
 
     async def _cancel_audio_pump(self, context: _MediaVoiceSession) -> None:
         await self._audio_ingress.cancel(context)
@@ -637,6 +644,8 @@ class MediaSessionLifecycleMixin:
                     bridge_session is not None and not bridge_session.accepts_input()
                 ):
                     raise ValueError("media session is terminal")
+                if bridge_session is not None:
+                    bridge_session.local_stop_guard = self._local_stop_guard(created)
                 self._sessions[identity.session_id] = created
                 self._creation_futures.pop(identity.session_id, None)
             future.set_result(created)

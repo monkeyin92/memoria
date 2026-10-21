@@ -1066,6 +1066,19 @@ class MediaPlaybackStopMixin:
         )
         self._schedule_turn_commit(context)
 
+    def _prerecorded_fixed_safety_heard_complete(
+        self,
+        context: _MediaVoiceSession,
+        fence: GenerationFence,
+    ) -> bool | None:
+        """Whether the stored clip's final sentence finished before a stop."""
+
+        probe = getattr(context.provider, "fixed_safety_heard_complete", None)
+        if not callable(probe):
+            return None
+        result = probe(fence, context.output.playback.rendered_sample_end(fence))
+        return result if isinstance(result, bool) else None
+
     async def _stop_reply_for_voice_command(
         self, context: _MediaVoiceSession, text: str
     ) -> bool:
@@ -1095,6 +1108,9 @@ class MediaPlaybackStopMixin:
         stop_started_ns = time.monotonic_ns()
         announced = context.output.assistant_text
         crisis_heard = context.crisis_reply_heard
+        prerecorded_complete = self._prerecorded_fixed_safety_heard_complete(
+            context, previous_fence
+        )
         subject_id = active_subject_id(context)
         flush_required = self._device_playback_flush_required(context, previous_fence)
         await self._record_interrupted_timed_spans(context, previous_fence)
@@ -1150,7 +1166,7 @@ class MediaPlaybackStopMixin:
         publish_crisis_self_interrupt(
             getattr(self, "crisis_script_interrupt_publisher", None),
             announced_text=announced,
-            crisis_reply_heard=crisis_heard,
+            crisis_reply_heard=crisis_heard or bool(prerecorded_complete),
             minor_user_id=subject_id,
             session_id=previous_fence.session_id,
             turn_id=previous_fence.turn_id,

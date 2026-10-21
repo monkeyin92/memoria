@@ -41,6 +41,9 @@ COPY --chmod=0644 scripts/verify_agent_release_artifact.py ./scripts/verify_agen
 # Reviewed runtime voice maps (no secrets).
 COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json
 COPY infra/voices/doubao_voice_ids.json ./infra/voices/doubao_voice_ids.json
+# Approved fixed-safety and daily-limit playback. The release gate validates
+# every manifest hash, so a missing or tampered clip fails the build.
+COPY infra/voices/fixed_safety ./infra/voices/fixed_safety
 
 # COPY preserves the build host's file modes, and a checkout made under a
 # restrictive umask ships 0600 sources the runtime user (65532) cannot read —

@@ -89,6 +89,20 @@ assert len(denoiser.process(pcm)) == len(pcm), "DTLN changed the PCM length"
     print("DTLN denoiser OK")
 
 
+def _check_fixed_safety_audio() -> None:
+    """Every approved safety clip must ship with a matching manifest hash."""
+
+    code = """
+from services.agent.src.providers.fixed_safety_audio import (
+    verify_fixed_safety_audio_directory,
+)
+
+verify_fixed_safety_audio_directory()
+"""
+    _run_subprocess_check(code)
+    print("fixed safety audio clips OK")
+
+
 def _check_media_telemetry_privacy() -> None:
     """Prove the self-owned media telemetry bridge does not export raw identity/content."""
 
@@ -160,6 +174,7 @@ else:
 
 def main() -> int:
     _check_bridge_wiring()
+    _check_fixed_safety_audio()
     _check_media_telemetry_privacy()
     _check_dtln_denoiser()
     print("agent release artifact verification PASSED")

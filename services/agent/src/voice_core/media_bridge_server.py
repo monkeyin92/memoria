@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -106,6 +107,12 @@ class MediaBridgeSession:
     overflow_count: int = 0
     task_epoch: int = 0
     context_version: int = 0
+    # A device pat or screen tap arrives as client.stop_assistant. While an
+    # approved fixed-safety script is audible, Voice Core refuses that local
+    # gesture; only the explicit stop-word paths may end the script.
+    local_stop_guard: Callable[[], bool] | None = field(
+        default=None, repr=False, compare=False
+    )
     _last_client_event_sequence: int = -1
     _last_client_event_id: str | None = None
     _last_client_progress_fingerprint: tuple[object, ...] | None = None
@@ -356,6 +363,14 @@ class MediaBridgeSession:
             event.stream_epoch != self.identity.stream_epoch
             or event.type != "client.stop_assistant"
         ):
+            return False
+        if self.local_stop_guard is not None and not self.local_stop_guard():
+            logger.info(
+                "media local gesture stop refused during fixed safety playback "
+                "session=%s reason=%s",
+                self.identity.session_id,
+                str(event.payload.get("reason", "client_stop"))[:64],
+            )
             return False
         key = event.payload.get("idempotency_key")
         if not isinstance(key, str) or not key.strip():
