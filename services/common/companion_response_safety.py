@@ -166,7 +166,8 @@ _EXPLICIT_SELF_HARM_INTENT_RE = re.compile(
     r"不想(?:再|继续)?(?:活(?:下去)?(?:了)?|[或霍货和]了)|"
     r"活不下去(?:了)?|"
     r"(?:想|要|准备|打算)(?:去)?(?:"
-    r"死|自杀|自残|自尽|轻生|结束生命|杀(?:了|死)?自己|跳楼|伤害自己"
+    r"死|自杀|自残|自尽|轻生|结束生命|杀(?:了|死)?自己|跳楼|伤害自己|"
+    r"(?:拿|用)?(?:刀|小刀|剪刀)?(?:划|割)(?:伤|破)?自己"
     r")"
     r")"
 )
@@ -200,7 +201,8 @@ _SELF_RISK_ADVERBS = (
 _SELF_RISK_PHRASE = (
     r"(?:不想(?:再|继续)?活(?!动)|活不下去|"
     r"(?:想|要|准备|打算)(?:去)?(?:死|自杀|自残|自尽|轻生|跳楼|结束(?:自己的)?生命|"
-    r"伤害(?:我)?自己|杀(?:了|死)?(?:我)?自己))"
+    r"伤害(?:我)?自己|杀(?:了|死)?(?:我)?自己|"
+    r"(?:拿|用)?(?:刀|小刀|剪刀)?(?:划|割)(?:伤|破)?自己))"
 )
 _OTHER_PERSON_NOUNS = (
     r"(?:同学|同桌|朋友|好朋友|闺蜜|哥哥|姐姐|弟弟|妹妹|爸爸|妈妈|爷爷|奶奶|姥姥|姥爷|"
@@ -281,13 +283,72 @@ _VICTIM_SUPPORT_RE = re.compile(
     # Family or an older child hitting the child. Only 打: 哥哥大我三岁 is an age.
     r"(?:爸爸|妈妈|爸|妈|继父|继母|后爸|后妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|"
     r"哥哥|姐姐|舅舅|姑姑|姨妈|伯伯).{0,8}(?<![不没别])打我(?!电话|的电话|手机|游戏)|"
+    r"(?:有个)?(?:叔叔|阿姨|大人|老师|陌生人|爷爷|奶奶).{0,12}"
+    r"摸我(?!头|头发|脑袋|肩膀|手臂)|"
     r"有人摸我(?:的)?身体|摸我身体|"
     r"我正在被打|"
+    r"我被关(?:在|进|起来)|"
     r"我被下毒|我中毒|"
     r"有人要杀(?:了)?我|"
     r"快救我|救救我|"
     r"(?<!稻草)救命(?!稻草)"
     r")"
+)
+_HARM_VERBS = r"(?:打|揍|踢|掐|推倒|欺负)"
+# Passives also cover ordinary 打 compounds, so 被打扰了 / 被打电话 / 打游戏 are
+# not read as a hit. The active rule already guards the object (打我电话).
+_PASSIVE_HARM_VERBS = (
+    r"(?:打(?!扰|听|断|开|扫|扮|包|分|呼|喷|印|字|针|雷|篮|电|手|游|招)|"
+    r"揍|踢|掐|推倒|欺负)"
+)
+_HARM_NEGATION = r"(?<!不)(?<!没)(?<!别)(?<!没有)(?<!不曾)(?<!从未)"
+_FIRST_PERSON_HARM_RE = re.compile(
+    rf"(?:{_HARM_NEGATION}{_HARM_VERBS}(?:了|过)?(?:我|我们)"
+    rf"(?!电话|的电话|手机|的手机|自己)(?:了|过|一下|一顿)?"
+    rf"|把(?:我|我们)(?:给)?{_HARM_VERBS}(?:了)?(?:一下|一顿)?)"
+)
+_PASSIVE_HARM_ADVERBS = (
+    r"(?:也|又|都|还|已经|刚|刚刚|刚才|正|正在|曾|曾经|今天|昨天|突然|就|才)"
+)
+_HARM_WITHIN_CLAUSE = r"[^，。！？、,.!?；:;]"
+_CLAUSE_BREAK = r"[，。！？、,.!?；:;]"
+_SELF_PASSIVE_HARM_RE = re.compile(
+    rf"(?:我|我们){_PASSIVE_HARM_ADVERBS}{{0,4}}"
+    rf"被{_HARM_WITHIN_CLAUSE}{{0,8}}?{_PASSIVE_HARM_VERBS}(?:了|过)?"
+)
+_SUBJECTLESS_PASSIVE_HARM_RE = re.compile(
+    rf"^{_CLAUSE_INTERJECTIONS}{_CLAUSE_BREAK}?"
+    rf"(?:今天|昨天|刚才|刚刚|早上|晚上|中午)?{_CLAUSE_BREAK}?"
+    rf"被{_HARM_WITHIN_CLAUSE}{{0,8}}?{_PASSIVE_HARM_VERBS}(?:了|过)?"
+)
+_PASSIVE_HARM_RE = re.compile(
+    rf"被{_HARM_WITHIN_CLAUSE}{{0,8}}?{_PASSIVE_HARM_VERBS}(?:了|过)?"
+)
+_INANIMATE_PASSIVE_SUBJECTS: Final[tuple[str, ...]] = (
+    "桌子",
+    "椅子",
+    "杯子",
+    "积木",
+    "玩具",
+    "门",
+    "窗户",
+    "花瓶",
+    "书",
+    "书包",
+    "球",
+    "娃娃",
+    "机器人",
+    "小车",
+    "房子",
+    "树",
+    "花",
+    "灯",
+    "电视",
+)
+_REPORTED_HARM_RE = re.compile(
+    rf"(?:听说|看到|看见|新闻|报道){_HARM_WITHIN_CLAUSE}{{0,16}}"
+    rf"(?:有人|别人|小朋友|同学|他|她){_HARM_WITHIN_CLAUSE}{{0,16}}"
+    r"(?:欺负|挨打|拐走|骗走|伤害|被(?:打|揍|踢|掐|推倒|骗|欺负))"
 )
 _REPORTED_PEER_HARM_RE = re.compile(
     r"(?:"
@@ -313,6 +374,9 @@ _SELF_HARM_METHOD_RE = re.compile(
 _SAFETY_PREVENTION_RE = re.compile(
     r"(?:怎么|如何|怎样)(?:预防|防止|避免)"
     r"(?:性侵|强奸|暴力|自杀|自残|轻生|下毒|投毒|诈骗)"
+    r"|(?:怎么|如何|怎样)(?:才能|可以|能|才)?不(?:被|让|给)"
+    r"(?:坏人|陌生人|别人|同学|人)?"
+    r"(?:骗(?:走)?|拐(?:走)?|带走|欺负|打(?!扰|听|断|开|扫|扮)|揍|踢|掐)"
 )
 _EXPLICIT_SELF_HARM_ENGLISH_RE = re.compile(
     r"(?<![a-z])(?:"
@@ -371,6 +435,16 @@ def _normalize_query(query: str) -> str:
     return text
 
 
+def _passive_harm_targets_another_person(text: str) -> bool:
+    """A passive harm clause whose subject is not the child or an object."""
+
+    for match in _PASSIVE_HARM_RE.finditer(text):
+        prefix = text[: match.start()].rstrip("，。！？、,.!?；:; ")
+        if not any(prefix.endswith(subject) for subject in _INANIMATE_PASSIVE_SUBJECTS):
+            return True
+    return False
+
+
 def companion_safety_decision(query: str) -> SafetyDecision:
     """Classify one current-turn query without granting facts or permissions."""
     stripped_of_quotes = _QUOTED_TEXT_RE.sub("", query)
@@ -395,9 +469,22 @@ def companion_safety_decision(query: str) -> SafetyDecision:
     ):
         return "crisis_self"
     full_normalized = re.sub(r"[\s，。！？、,.!?：:\-—_]+", "", query).lower()
+    # Harm keeps clause punctuation so 打/被 in one clause cannot pair with an
+    # object or verb in the next one.
+    harm_surface = re.sub(r"\s+", "", query).lower()
+    if (
+        _FIRST_PERSON_HARM_RE.search(harm_surface)
+        or _SELF_PASSIVE_HARM_RE.search(harm_surface)
+        or _SUBJECTLESS_PASSIVE_HARM_RE.search(harm_surface)
+    ):
+        return "support_victim"
     if _VICTIM_SUPPORT_RE.search(full_normalized):
         return "support_victim"
     if _REPORTED_PEER_HARM_RE.search(full_normalized):
+        return "support_relay"
+    if _REPORTED_HARM_RE.search(full_normalized) or _passive_harm_targets_another_person(
+        harm_surface
+    ):
         return "support_relay"
     if _SAFETY_PREVENTION_RE.search(full_normalized):
         return "support_relay"

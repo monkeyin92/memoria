@@ -96,6 +96,8 @@ def _pipeline(runtime: DuplexRuntime, planner: _MismatchPlanner) -> ReplyPipelin
         ("我同桌说她爸爸打她，我该怎么帮她？", SUPPORT_RELAY_SCRIPT),
         ("我朋友说有人欺负她。", SUPPORT_RELAY_SCRIPT),
         ("我同学被人打了。", SUPPORT_RELAY_SCRIPT),
+        ("有个大哥哥打了我，还不让我说。", SUPPORT_VICTIM_SCRIPT),
+        ("小明被他爸爸打了。", SUPPORT_RELAY_SCRIPT),
     ],
 )
 async def test_fence_mismatch_fallback_still_speaks_fixed_safety_replies(
@@ -137,6 +139,7 @@ class _InvalidPayloadPlanner:
         ("有个大哥哥打我，还不让我说。", SUPPORT_VICTIM_SCRIPT),
         ("我好朋友说她想伤害自己。", SUPPORT_RELAY_SCRIPT),
         ("我同学说他不想活了。", SUPPORT_RELAY_SCRIPT),
+        ("他把我推倒了。", SUPPORT_VICTIM_SCRIPT),
     ],
 )
 async def test_invalid_planner_payload_still_speaks_the_routed_script(
