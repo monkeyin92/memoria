@@ -75,3 +75,5 @@ infra/voices/previews/
 
 # Gate caches redirected into the tree when the home cache is unwritable
 .tmp-gate/
+# Local scratch/cache directory used when the home cache is not writable
+.tmp/

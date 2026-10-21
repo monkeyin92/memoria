@@ -478,6 +478,30 @@ async def test_device_stop_word_takes_over_an_endpoint_held_by_a_textless_vad() 
 
 
 @pytest.mark.asyncio
+async def test_device_stop_word_takes_over_a_pin_the_turn_outgrew() -> None:
+    """Field 2026-10-21 (session 74cdaf88 S1): start moved past the pinned endpoint.
+
+    A VAD end pinned 236480, then the turn reopened at 250880.  ``start < endpoint``
+    was false, so the pinned range was never asked whether it held words and the
+    recognized stop final (stop_word=True, text_len=2) was refused as
+    ``endpoint_already_pinned`` until the ASR tail timeout discarded the turn.
+    """
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        pending = harness.context.pending
+        pending.turn_endpoint_sample = harness.sample - 8_000
+        pending.turn_start_sample = harness.sample
+        assert pending.turn_start_sample > pending.turn_endpoint_sample
+
+        await harness.audio_frames(15, final_text="停。")
+        await harness.wait_for(lambda: bool(harness.cancel_effects()))
+        harness.assert_story_stopped_session_open(story)
+
+    await _run_story(_device_identity("stale-inverted-pin"), script)
+
+
+@pytest.mark.asyncio
 async def test_device_story_saying_goodbye_does_not_end_itself() -> None:
     """The reply's own 「再见！」 on the open microphone is echo, not a farewell."""
 

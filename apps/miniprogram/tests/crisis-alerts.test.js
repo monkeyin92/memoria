@@ -68,7 +68,7 @@ async function withWxRequest(respond, fn) {
 
 test("parseSafetyAlert keeps a server detail sentence and drops an empty one", () => {
   const selfHarm = "这次的提醒话术孩子没有听完，如需帮助可拨打心理援助热线12356";
-  const victim = "这次的提醒话术孩子没有听完，如有危险请拨打110";
+  const victim = "如有危险请拨打110";
   const selfHarmAlert = crisisAlerts.parseSafetyAlert({
     notification_id: "n9",
     message: "请尽快联系",
