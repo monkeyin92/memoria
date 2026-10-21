@@ -261,4 +261,7 @@ def test_board_logs_per_state_stats_without_changing_the_loop() -> None:
     assert "poller.TakeStats(stats)" in imu
     assert "memoria::FormatImuStatsLine(stats, line, sizeof(line))" in imu
     assert "vTaskDelay(pdMS_TO_TICKS(20))" in imu
-    assert "state=%d" not in imu
+    # 2026-10-21: every candidate now logs the state that judged it, so the
+    # field log can tell "no impulse" from "impulse ignored". The polling
+    # cadence itself is unchanged.
+    assert "reason=%s" in imu
