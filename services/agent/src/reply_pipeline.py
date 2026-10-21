@@ -20,7 +20,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncGenerator, Callable, Iterable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal, cast
 
 from services.agent.src import generation_output_policy as output_policy
@@ -82,6 +82,7 @@ from services.common.companion_response_safety import (
     strip_soothing_from_follow_up,
 )
 from services.common.crisis_policy import more_protective_local_script, route_crisis
+from services.common.fixed_safety_scripts import FixedSafetyScript
 from services.common.llm_failover import LLM_UNAVAILABLE_TEXT
 from services.common.realtime_information import (
     is_incomplete_realtime_reply,
@@ -129,6 +130,15 @@ def _compact_sentence(text: str) -> str:
     """The sentence without punctuation or spaces: the final and the committed text may differ in those."""
 
     return "".join(character for character in text if character.isalnum())
+
+
+@dataclass(slots=True)
+class _LateCrisisPlan:
+    """A control-api plan still in the background, and the script it raised."""
+
+    started: float
+    event: asyncio.Event = field(default_factory=asyncio.Event)
+    script: FixedSafetyScript | None = None
 
 
 @dataclass(slots=True)
@@ -248,6 +258,7 @@ class ReplyPipeline:
         ] = {}
         self._realtime_tool_registered = False
         self._warmed_memory: _WarmedMemory | None = None
+        self._late_crisis: dict[GenerationFence, _LateCrisisPlan] = {}
         self._block_soothing_on_next_reply = False
         if callable(getattr(response_planner_client, "prefetch_context", None)):
             runtime.orchestrator.context_snapshots.builder = self._build_prefetched_context_snapshot
@@ -577,6 +588,10 @@ class ReplyPipeline:
             name="crisis-plan-notification",
             durable=True,
         )
+        if not response_plan_sidecar.applies(
+            self._response_planner_client, self._runtime, fence
+        ):
+            self._watch_late_crisis_plan(task, text=text, fence=fence)
         done, _ = await asyncio.wait({task}, timeout=_CRISIS_PLAN_GRACE_S)
         if done:
             try:
@@ -597,6 +612,52 @@ class ReplyPipeline:
             fence.turn_id,
         )
         return None, "crisis_local_route"
+
+    def _watch_late_crisis_plan(
+        self,
+        task: asyncio.Task[Any],
+        *,
+        text: str,
+        fence: GenerationFence,
+    ) -> None:
+        """Keep a background plan only when it raises the protective script.
+
+        The reply may already be speaking. Nothing here reads or logs the child's
+        words; the state holds the script the media bridge must play instead.
+        """
+
+        state = _LateCrisisPlan(started=time.monotonic())
+        self._late_crisis[fence] = state
+
+        def _resolved(done: asyncio.Task[Any]) -> None:
+            if done.cancelled():
+                return
+            try:
+                fetched = done.result()
+            except Exception:
+                fetched = None
+            planned = getattr(getattr(fetched, "plan", None), "fixed_safety_script", None)
+            local = route_crisis(text).script
+            script = (
+                planned
+                if local is None
+                else more_protective_local_script(text, planned)
+            )
+            latency_ms = (time.monotonic() - state.started) * 1000.0
+            if script is not None:
+                state.script = script
+                state.event.set()
+            logger.info(
+                "late_crisis_plan hit=%s category=%s latency_ms=%.1f "
+                "session_id=%s turn_id=%s",
+                "true" if script is not None else "false",
+                script.template_id if script is not None else "none",
+                latency_ms,
+                fence.session_id,
+                fence.turn_id,
+            )
+
+        task.add_done_callback(_resolved)
 
     def _with_local_crisis_floor(self, plan: ResponsePlan, query: str) -> ResponsePlan:
         script = more_protective_local_script(query, plan.fixed_safety_script)
@@ -735,7 +796,7 @@ class ReplyPipeline:
             return ResponsePlanFetch(None, "no_verified_runtime_profile")
         recall_context = self._recall_context_for_fence(fence, speaker=speaker)
         if response_plan_sidecar.applies(self._response_planner_client, self._runtime, fence):
-            return response_plan_sidecar.spawn(
+            fetch, task = response_plan_sidecar.spawn_task(
                 self._runtime,
                 self._response_planner_client,
                 session_id=self._runtime.session_id,
@@ -745,6 +806,8 @@ class ReplyPipeline:
                 recall_context=recall_context,
                 utterance_intent=self._runtime.route_user_turn(text).intent,
             )
+            self._watch_late_crisis_plan(task, text=text, fence=fence)
+            return fetch
         coordinator = self._runtime.orchestrator.delegation
         context_version = self._runtime.orchestrator.context_version_for_fence(fence)
         handle = await coordinator.delegate(
@@ -1002,7 +1065,17 @@ class ReplyPipeline:
                 fence=fence,
             )
         warmed_memory = self._take_warmed_memory(text, speaker)
+        classification_started = time.perf_counter()
         local_crisis = route_crisis(text).script
+        logger.info(
+            "local_crisis_classification hit=%s category=%s latency_ms=%.1f "
+            "session_id=%s turn_id=%s",
+            "true" if local_crisis is not None else "false",
+            local_crisis.template_id if local_crisis is not None else "none",
+            (time.perf_counter() - classification_started) * 1000.0,
+            self._runtime.session_id,
+            fence.turn_id,
+        )
         memory_fetch: asyncio.Task[MemoryCapsule | None] | None = None
         if local_crisis is not None:
             if warmed_memory is not None:
@@ -1414,6 +1487,15 @@ class ReplyPipeline:
             return
         speaker_class = response_plan.provenance.speaker_class
         script = response_plan.fixed_safety_script
+        late_plan = self._late_crisis.get(fence)
+        if script is None and late_plan is not None and late_plan.script is not None:
+            script = late_plan.script
+            logger.info(
+                "late_crisis_plan_applied category=%s session_id=%s turn_id=%s",
+                script.template_id,
+                self._runtime.session_id,
+                fence.turn_id,
+            )
         block_soothing = script is None and self._block_soothing_on_next_reply
         if resume_interrupted_reply or script is not None:
             realtime_request, resume_realtime_request = None, False
@@ -1534,6 +1616,34 @@ class ReplyPipeline:
             _mark_first_phrase()
             return accepted
 
+        late_crisis_script: FixedSafetyScript | None = None
+
+        def _late_crisis_now() -> FixedSafetyScript | None:
+            nonlocal late_crisis_script
+            if late_crisis_script is not None:
+                return late_crisis_script
+            state = self._late_crisis.get(fence)
+            if state is None or state.script is None:
+                return None
+            late_crisis_script = state.script
+            logger.info(
+                "late_crisis_preempted category=%s session_id=%s turn_id=%s",
+                late_crisis_script.template_id,
+                self._runtime.session_id,
+                fence.turn_id,
+            )
+            return late_crisis_script
+
+        async def _play_late_crisis(
+            script_to_play: FixedSafetyScript,
+        ) -> AsyncGenerator[ReplyItem, None]:
+            self._note_fixed_safety_script(script_to_play.display)
+            self._runtime.mark_audio_event("llm_first_content_token")
+            gated = self._runtime.gate_llm_token(cancellation, script_to_play.display)
+            if gated is not None and cancellation.is_current(self._runtime.fence):
+                _mark_first_phrase()
+                yield script_to_play
+
         def _follow_up_blocked(text: str) -> tuple[str | None, bool]:
             """Strip what the post-safety reply may not say; say when nothing is left."""
 
@@ -1574,16 +1684,31 @@ class ReplyPipeline:
                 )
                 if gated is not None:
                     for segment in segmenter.push_token(gated):
+                        if _late_crisis_now() is not None:
+                            break
                         accepted_segment = _ready_segment(segment.text)
                         if accepted_segment is None:
                             break
+                        if _late_crisis_now() is not None:
+                            break
                         yield accepted_segment
-                    if cancellation.is_current(self._runtime.fence) and not reply_budget_exhausted:
+                    if (
+                        late_crisis_script is None
+                        and cancellation.is_current(self._runtime.fence)
+                        and not reply_budget_exhausted
+                    ):
                         for segment in segmenter.flush(end_of_stream=True):
+                            if _late_crisis_now() is not None:
+                                break
                             accepted_segment = _ready_segment(segment.text)
                             if accepted_segment is None:
                                 break
+                            if _late_crisis_now() is not None:
+                                break
                             yield accepted_segment
+                if late_crisis_script is not None:
+                    async for item in _play_late_crisis(late_crisis_script):
+                        yield item
                 return
             context_snapshot = self._runtime.context_snapshot_for_fence(fence)
             frozen_session_turns = [
@@ -1733,6 +1858,8 @@ class ReplyPipeline:
                         break
                     if self._runtime.orchestrator.tts_cancel_event().is_set():
                         break
+                    if _late_crisis_now() is not None:
+                        break
                     text = _chunk_text(chunk)
                     if text:
                         if not first_content_marked:
@@ -1761,13 +1888,19 @@ class ReplyPipeline:
                                 realtime_reply += accepted_realtime
                         else:
                             for segment in segmenter.push_token(gated):
+                                if _late_crisis_now() is not None:
+                                    break
                                 segment_text, blocked = _follow_up_blocked(segment.text)
                                 if blocked or segment_text is None:
                                     continue
                                 accepted_segment = _ready_segment(segment_text)
                                 if accepted_segment is None:
                                     break
+                                if _late_crisis_now() is not None:
+                                    break
                                 yield accepted_segment
+                            if late_crisis_script is not None:
+                                break
                         if reply_budget_exhausted or realtime_buffer_exhausted:
                             logger.info(
                                 "voice_reply_budget_reached chars=%s sentences=%s",
@@ -1792,6 +1925,10 @@ class ReplyPipeline:
                     fence.generation_id,
                     first_content_marked,
                 )
+                if late_crisis_script is not None:
+                    async for item in _play_late_crisis(late_crisis_script):
+                        yield item
+                    return
                 if not first_content_marked:
                     self._runtime.mark_audio_event("llm_first_content_token")
                 gated = self._runtime.gate_llm_token(cancellation, LLM_UNAVAILABLE_TEXT)
@@ -1799,6 +1936,10 @@ class ReplyPipeline:
                     accepted_segment = _ready_segment(gated)
                     if accepted_segment is not None:
                         yield accepted_segment
+                return
+            if late_crisis_script is not None:
+                async for item in _play_late_crisis(late_crisis_script):
+                    yield item
                 return
             realtime_completed = bool(realtime_reply) and not is_incomplete_realtime_reply(
                 realtime_reply,
@@ -1829,7 +1970,11 @@ class ReplyPipeline:
                     and cancellation.is_current(self._runtime.fence)
                 ):
                     self._runtime.complete_realtime_request(realtime_request)
-            if cancellation.is_current(self._runtime.fence) and not reply_budget_exhausted:
+            if (
+                late_crisis_script is None
+                and cancellation.is_current(self._runtime.fence)
+                and not reply_budget_exhausted
+            ):
                 for segment in segmenter.flush(end_of_stream=True):
                     segment_text, blocked = _follow_up_blocked(segment.text)
                     if blocked or segment_text is None:
@@ -1864,9 +2009,14 @@ class ReplyPipeline:
                         break
                     yield accepted_segment
         finally:
-            if (reply_budget_exhausted or realtime_buffer_exhausted) and stream is not None:
+            if (
+                reply_budget_exhausted
+                or realtime_buffer_exhausted
+                or late_crisis_script is not None
+            ) and stream is not None:
                 close = getattr(stream, "aclose", None)
                 if callable(close):
                     with contextlib.suppress(Exception):
                         await close()
+            self._late_crisis.pop(fence, None)
             self._runtime.orchestrator.clear_active_llm_task(task)

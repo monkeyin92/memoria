@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from collections.abc import Mapping
 from typing import Any, cast
 
@@ -13,6 +15,8 @@ from services.memory_scope.subject_session_recall import (
     SubjectSessionRecallDenied,
     SubjectSessionRecallStore,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def wire_subject_session_recall_store(app: FastAPI) -> None:
@@ -136,6 +140,7 @@ async def authoritative_recall_context(
         or session_epoch is None
     ):
         return _bounded(client_items)
+    started = time.perf_counter()
     try:
         # Session recall is an optional memory enrichment. A long session makes
         # this indexed read a queue behind more work, and it used to run outside
@@ -152,6 +157,12 @@ async def authoritative_recall_context(
     except SubjectSessionRecallDenied:
         return ()
     except TimeoutError:
+        logger.info(
+            "recall_timeout hit=false category=session_recall latency_ms=%.1f "
+            "session_id=%s",
+            (time.perf_counter() - started) * 1000.0,
+            session_id,
+        )
         return _bounded(client_items)
     merged: list[str] = []
     seen: set[str] = set()

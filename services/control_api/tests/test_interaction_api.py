@@ -28,8 +28,8 @@ from services.archive.memory_domain import (
     MemorySearchResult,
     PersonItem,
 )
-from services.common.crisis_policy import CrisisSemanticVerdict
-from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
+from services.common.crisis_policy import CrisisSemanticVerdict, route_crisis
+from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT, script_for_display
 from services.control_api.app.main import create_app
 from services.control_api.app.routes import interaction as interaction_routes
 from services.digital_self.domain import (
@@ -1423,6 +1423,53 @@ async def test_tutor_turn_policy_requires_two_stuck_turns_and_crisis_still_wins(
     assert crisis_response.json()["direct_text"] is not None
     assert "12356" in crisis_response.json()["direct_text"]
     assert "【导师话轮约束】" not in crisis_response.json()["instructions"]
+
+
+_DEVICE_CRISIS_SENTENCES = (
+    ("我不想活了", "crisis-self-v1"),
+    ("我想从楼上跳下去", "crisis-self-v1"),
+    ("我想拿刀划自己", "crisis-self-v1"),
+    ("救命，有人打我", "victim-support-v1"),
+    ("有个叔叔摸我不让我告诉妈妈", "victim-support-v1"),
+    ("我被关在房间里出不去了", "victim-support-v1"),
+    ("我同学被别人打了", "support-other-v1"),
+    ("我听说有人欺负小朋友", "support-other-v1"),
+    ("怎么才能不被坏人骗走", "support-other-v1"),
+)
+
+
+@pytest.mark.asyncio
+async def test_control_api_tier_matches_local_tier_for_the_nine_device_sentences(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The bridge and control-api must name the same tier for every C1-C9 turn."""
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        _, user_headers = await _identity(client)
+        session_id = (
+            await client.post("/v1/sessions", headers=user_headers, json={})
+        ).json()["session_id"]
+        for index, (query, expected) in enumerate(_DEVICE_CRISIS_SENTENCES, start=1):
+            body = _response_plan_body(session_id)
+            body["query"] = query
+            body["fence"]["turn_id"] = index
+            body["fence"]["generation_id"] = index
+            response = await client.post(
+                "/v1/interaction/response-plan",
+                headers=token,
+                json=body,
+            )
+            assert response.status_code == 200, response.text
+            direct_text = response.json()["direct_text"]
+            local = route_crisis(query).script
+            planned = script_for_display(direct_text)
+            assert local is not None and planned is not None
+            assert planned.template_id == expected
+            assert local.template_id == planned.template_id
 
 
 @pytest.mark.asyncio

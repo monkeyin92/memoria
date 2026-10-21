@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from typing import Any
 
 # The Agent abandons the whole request at 0.8 s.  This wait is only one stage
@@ -10,6 +12,8 @@ from typing import Any
 # rest of the route inside the same client budget.
 COMPANION_CONTEXT_BUDGET_S = 0.25
 
+logger = logging.getLogger(__name__)
+
 
 async def gather_companion_context(
     memory_task: asyncio.Task[Any] | None,
@@ -18,6 +22,7 @@ async def gather_companion_context(
     pending = [task for task in (memory_task, persona_task) if task is not None]
     if not pending:
         return []
+    started = time.perf_counter()
     try:
         completed = await asyncio.wait_for(
             asyncio.gather(*pending, return_exceptions=True),
@@ -27,5 +32,9 @@ async def gather_companion_context(
         for task in pending:
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
+        logger.info(
+            "recall_timeout hit=false category=companion_context latency_ms=%.1f",
+            (time.perf_counter() - started) * 1000.0,
+        )
         return None
     return list(completed)
