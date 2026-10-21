@@ -6,9 +6,14 @@ import asyncio
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from typing import Literal
 
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.voice_core.speech_timeline import ASRResult
+
+# Who pinned the endpoint of a pending turn that has no accepted text yet:
+# the device VAD end, or the playback-followup boundary.
+EndpointPinSource = Literal["vad_end", "playback_followup"]
 
 
 @dataclass(slots=True)
@@ -37,6 +42,9 @@ class PendingTurn:
     turn_input_fence: GenerationFence | None = None
     turn_end_sample: int | None = None
     turn_endpoint_sample: int | None = None
+    # Only set while ``turn_endpoint_sample`` came from a source that a later
+    # final of the turn's own speech may take back (see media_session_commit).
+    empty_turn_endpoint_pin: EndpointPinSource | None = None
     child_speech_ended_mono: float | None = None
     turn_retire_sample: int | None = None
     turn_endpoint_grace_deadline: float | None = None
@@ -155,6 +163,7 @@ class PendingTurn:
         self.turn_input_fence = None
         self.turn_end_sample = None
         self.turn_endpoint_sample = None
+        self.empty_turn_endpoint_pin = None
         self.child_speech_ended_mono = None
         self.turn_retire_sample = None
         self.turn_endpoint_grace_deadline = None

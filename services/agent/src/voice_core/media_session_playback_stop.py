@@ -33,6 +33,7 @@ from services.agent.src.voice_core.crisis_script_interrupt import (
     publish_crisis_self_interrupt,
 )
 from services.agent.src.voice_core.media_protocol import should_pause_asr_for_playback
+from services.agent.src.voice_core.media_session_pending_turn import EndpointPinSource
 from services.agent.src.voice_core.speech_timeline import ASRResult
 
 if TYPE_CHECKING:
@@ -199,6 +200,11 @@ class MediaPlaybackStopMixin:
 
         @staticmethod
         def _record_playback_boundary(context: _MediaVoiceSession) -> None: ...
+
+        @staticmethod
+        def _mark_empty_turn_endpoint_pin(
+            context: _MediaVoiceSession, *, source: EndpointPinSource
+        ) -> None: ...
 
     @staticmethod
     def _playback_text_is_echo(context: _MediaVoiceSession, text: str) -> bool:
@@ -440,12 +446,23 @@ class MediaPlaybackStopMixin:
             # The pending window still reaches back into the echo window; the
             # playback-boundary split owns resetting it before this may fire.
             return
-        endpoint = max(result.capture_end_sample, context.pending.turn_end_sample or 0)
-        context.pending.turn_endpoint_sample = endpoint
-        context.pending.turn_retire_sample = max(context.pending.turn_retire_sample or 0, endpoint)
-        context.pending.playback_followup_endpoint_sample = endpoint
+        pending = context.pending
+        endpoint = max(result.capture_end_sample, pending.turn_end_sample or 0)
+        pending.turn_start_sample = (
+            result.capture_start_sample
+            if pending.turn_start_sample is None
+            else min(pending.turn_start_sample, result.capture_start_sample)
+        )
+        pending.turn_end_sample = endpoint
+        pending.turn_endpoint_sample = endpoint
+        pending.turn_retire_sample = max(pending.turn_retire_sample or 0, endpoint)
+        pending.playback_followup_endpoint_sample = endpoint
         if context.pending.followup_pin_monotonic is None:
             context.pending.followup_pin_monotonic = time.monotonic()
+        # This final's own text is already on the timeline under the pinned
+        # range, so the pin assumed words: only a VAD end over a range with no
+        # projected text is a pin a later final may take back.
+        context.pending.empty_turn_endpoint_pin = None
         context.pending.turn_endpoint_grace_deadline = (
             time.monotonic() + playback_followup_grace_s()
         )
@@ -979,6 +996,7 @@ class MediaPlaybackStopMixin:
         endpoint = result.capture_end_sample
         pending.turn_endpoint_sample = endpoint
         pending.turn_retire_sample = endpoint
+        self._mark_empty_turn_endpoint_pin(context, source="vad_end")
         pending.playback_stop_text = text
         # Also drops the replaced pin's tail bound: its timer belongs to the old endpoint.
         pending.restart_endpoint_bounds(0.0)
