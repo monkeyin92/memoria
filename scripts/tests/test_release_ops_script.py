@@ -124,6 +124,8 @@ def _host_log_gate(log_dir: Path, before: int) -> subprocess.CompletedProcess[st
             f"source {shlex.quote(str(SCRIPT))}",
             "sleep() { :; }",
             f"HOST_LOG_DIR={shlex.quote(str(log_dir))}",
+            # GNU stat is not on every developer host; the gate itself is the subject here.
+            'host_log_size() { [[ -f "$HOST_LOG_DIR/$1.log" ]] && wc -c < "$HOST_LOG_DIR/$1.log" || echo 0; }',
             f"assert_host_log_has control-api {before} control_env_valid=PASS",
         )
     )
@@ -238,7 +240,13 @@ def test_speaker_guard_accepts_only_values_every_reader_treats_as_off(
 
 
 def test_script_names_no_release_tag_but_the_data_tree() -> None:
-    assert re.findall(r"\b20\d{6}-[a-z0-9.-]+", _code()) == ["20260827-architecture-split-v1"]
+    # Whitelisted component overrides are the only other dated names.
+    stale = re.findall(r"\b20\d{6}-[a-z0-9.-]+", _code())
+    assert set(stale) == {
+        "20260827-architecture-split-v1",
+        "20261021-a94c438-pr345-pr346-pr348-pr352",
+        "20261021-a94c438-pr345-pr346-pr348-pr352-pr353-pr355",
+    }
     for retired in (
         "$OLD",
         "LIVE_CONTROL_RELEASE",
@@ -342,6 +350,19 @@ EDGE_OVERRIDE = (
     "media-edge-component.override.yml"
 )
 
+COMPONENT_STACK = "20261020-minor-bypass-a94c438"
+COMPONENT_STACK_COMMIT = "a94c43813a8893a07bbe3bf4815cae52745cd88a"
+BRIDGE_IMAGE = "memoria-agent:20261021-a94c438-pr345-pr346-pr348-pr352-pr353-pr355"
+CONTROL_IMAGE = "memoria-control-api:20261021-a94c438-pr345-pr346-pr348-pr352"
+BRIDGE_OVERRIDE = (
+    "component-releases/20261021-a94c438-pr345-pr346-pr348-pr352-pr353-pr355/override-pr355.yml"
+)
+CONTROL_OVERRIDE = (
+    "component-releases/20261021-a94c438-pr345-pr346-pr348-pr352/override-control-pr352.yml"
+)
+BRIDGE_OVERRIDE_SHA = "895b17fefa3401e75ba17e1c3f08aac9cab920f7b25e55aa540ffcc5a7a22da0"
+CONTROL_OVERRIDE_SHA = "95a5e03319cafcf7fcf7325f00b2cc753ea444c563bfd5de5472692ce1d67486"
+
 _HOST_REPO = {
     "speaker-model": "memoria-speaker-model",
     "control-api": "memoria-control-api",
@@ -431,9 +452,11 @@ class FakeHost:
     def __init__(self, root: Path, *, current: str) -> None:
         self.root = root
         self.memoria = root / "opt" / "memoria"
+        self.tmp = root / "tmp"
         self.fake = root / "fake"
         self.bin = root / "bin"
         (self.fake / "containers").mkdir(parents=True)
+        self.tmp.mkdir()
         self.bin.mkdir()
         _executable(self.bin / "record", f"#!{sys.executable}\n{_RECORD}")
         _executable(self.bin / "docker", '#!/usr/bin/env bash\nexec record docker "$@"\n')
@@ -458,6 +481,17 @@ class FakeHost:
     def current_target(self) -> Path:
         return Path(os.readlink(self.memoria / "current"))
 
+    def override_file(self, relative: str, service: str, image: str) -> Path:
+        path = self.memoria / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"services:\n  {service}:\n    image: {image}\n", encoding="utf-8")
+        return path
+
+    def tmp_override(self, name: str, service: str, image: str) -> Path:
+        path = self.tmp / name
+        path.write_text(f"services:\n  {service}:\n    image: {image}\n", encoding="utf-8")
+        return path
+
     def container(
         self,
         service: str,
@@ -468,11 +502,13 @@ class FakeHost:
         chain: str | None = None,
         version: str | None = None,
         release_tag: str | None = None,
+        image: str | None = None,
+        image_id: str | None = None,
     ) -> None:
         facts = {
             "chain": chain or str(self.release_dir(release) / "docker-compose.production.yml"),
-            "image": f"{_HOST_REPO[service]}:{release}",
-            "image-id": f"sha-{service}",
+            "image": image or f"{_HOST_REPO[service]}:{release}",
+            "image-id": image_id or f"sha-{service}",
             "running": "true" if running else "false",
             "version": release if version is None else version,
             "revision": commit,
@@ -504,11 +540,16 @@ class FakeHost:
             (
                 "set -Eeuo pipefail",
                 f"export TAG={tag} COMMIT={commit}",
+                f"export RELEASE_OPS_TMP_ROOT={shlex.quote(str(self.tmp))}",
                 f"source {shlex.quote(str(SCRIPT))}",
                 f"release_paths {shlex.quote(str(self.memoria))}",
                 f'inspect_container() {{ cat {containers}/"$1/$2" 2>/dev/null; }}',
                 'cp() { record cp "$@"; }',
                 'wait_healthy() { record wait "$1"; }',
+                # GNU mv -T is not on every developer host; os.replace keeps its replace-not-move-into semantics.
+                'mv() { if [[ "$1" == -T ]]; then shift; '
+                'python3 -c "import os,sys; os.replace(sys.argv[1], sys.argv[2])" "$1" "$2"; '
+                'else command mv "$@"; fi; }',
                 f"main {name}",
             )
         )
@@ -558,6 +599,59 @@ def host_built_host(tmp_path: Path) -> FakeHost:
     return host
 
 
+def component_host(tmp_path: Path) -> FakeHost:
+    """The live stack after two component releases: base compose plus one
+    image-only override per ship service, both still chained from /tmp."""
+
+    host = FakeHost(tmp_path, current=COMPONENT_STACK)
+    tree = host.release_dir(COMPONENT_STACK)
+    (tree / ".env").write_text(
+        f"MEMORIA_RELEASE_COMMIT={COMPONENT_STACK_COMMIT}\n", encoding="utf-8"
+    )
+    control = host.override_file(CONTROL_OVERRIDE, "control-api", CONTROL_IMAGE)
+    bridge = host.override_file(BRIDGE_OVERRIDE, "voice-core-media-bridge", BRIDGE_IMAGE)
+    control_origin = host.tmp_override("override-control-pr352.yml", "control-api", CONTROL_IMAGE)
+    bridge_origin = host.tmp_override("override-pr355.yml", "voice-core-media-bridge", BRIDGE_IMAGE)
+    base = tree / "docker-compose.production.yml"
+    host.container(
+        "control-api",
+        release=COMPONENT_STACK,
+        commit="b" * 40,
+        version=CONTROL_IMAGE.split(":", 1)[1],
+        chain=f"{base},{control_origin}",
+        image=CONTROL_IMAGE,
+        image_id="sha256:control-live",
+    )
+    host.container(
+        "voice-core-media-bridge",
+        release=COMPONENT_STACK,
+        commit="d" * 40,
+        version=BRIDGE_IMAGE.split(":", 1)[1],
+        chain=f"{base},{bridge_origin}",
+        image=BRIDGE_IMAGE,
+        image_id="sha256:bridge-live",
+    )
+    assert control.read_text(encoding="utf-8") == (
+        f"services:\n  control-api:\n    image: {CONTROL_IMAGE}\n"
+    )
+    assert bridge.read_text(encoding="utf-8") == (
+        f"services:\n  voice-core-media-bridge:\n    image: {BRIDGE_IMAGE}\n"
+    )
+    return host
+
+
+def _component_record(host: FakeHost) -> str:
+    control = host.memoria / CONTROL_OVERRIDE
+    bridge = host.memoria / BRIDGE_OVERRIDE
+    return (
+        f"tag={COMPONENT_STACK}\n"
+        f"commit={COMPONENT_STACK_COMMIT}\n"
+        "services=control-api voice-core-media-bridge\n"
+        f"overrides=control-api {control} {CONTROL_OVERRIDE_SHA} sha256:control-live "
+        f"voice-core-media-bridge {bridge} {BRIDGE_OVERRIDE_SHA} sha256:bridge-live\n"
+    )
+
+
 def _finish_this_release(host: FakeHost) -> None:
     host.set_current(RELEASE)
     for service in ("control-api", "voice-core-media-bridge"):
@@ -585,6 +679,213 @@ def test_freeze_derives_and_persists_prev_from_the_live_stack(tmp_path: Path) ->
         f"prev={GUARDIAN}@{GUARDIAN_COMMIT} services=control-api voice-core-media-bridge "
         "speaker-model" in run.output
     )
+
+
+def test_the_override_whitelist_pins_the_two_persisted_copies() -> None:
+    script = _script()
+    for path, sha, origin in (
+        (
+            "/opt/memoria/component-releases/20261021-a94c438-pr345-pr346-pr348-pr352/"
+            "override-control-pr352.yml",
+            CONTROL_OVERRIDE_SHA,
+            "/tmp/override-control-pr352.yml",
+        ),
+        (
+            "/opt/memoria/component-releases/"
+            "20261021-a94c438-pr345-pr346-pr348-pr352-pr353-pr355/override-pr355.yml",
+            BRIDGE_OVERRIDE_SHA,
+            "/tmp/override-pr355.yml",
+        ),
+    ):
+        assert path in script
+        assert sha in script
+        assert origin in script
+
+
+def test_freeze_accepts_whitelisted_image_only_overrides(tmp_path: Path) -> None:
+    host = component_host(tmp_path)
+
+    run = host.step("freeze", tag=RELEASE)
+
+    assert run.returncode == 0, run.output
+    assert host.prev_record(RELEASE) == _component_record(host)
+    assert "PREV override changed" not in run.output
+
+
+def test_freeze_reruns_a_component_prev_record_unchanged(tmp_path: Path) -> None:
+    host = component_host(tmp_path)
+    assert host.step("freeze", tag=RELEASE).returncode == 0
+    frozen = host.prev_record(RELEASE)
+
+    again = host.step("freeze", tag=RELEASE)
+
+    assert again.returncode == 0, again.output
+    assert "prev already frozen (unchanged)" in again.output
+    assert host.prev_record(RELEASE) == frozen
+
+
+def test_freeze_refuses_an_override_path_outside_the_whitelist(tmp_path: Path) -> None:
+    host = component_host(tmp_path)
+    base = host.release_dir(COMPONENT_STACK) / "docker-compose.production.yml"
+    stray = host.tmp_override("override-pr999.yml", "voice-core-media-bridge", BRIDGE_IMAGE)
+    host.container(
+        "voice-core-media-bridge",
+        release=COMPONENT_STACK,
+        commit="d" * 40,
+        chain=f"{base},{stray}",
+        image=BRIDGE_IMAGE,
+        image_id="sha256:bridge-live",
+    )
+
+    run = host.step("freeze", tag=RELEASE)
+
+    assert run.returncode == 1
+    assert "is not whitelisted" in run.output
+    assert host.prev_record(RELEASE) is None
+    assert run.actions == [] and run.copies == []
+
+
+def test_freeze_refuses_an_override_that_is_not_image_only(tmp_path: Path) -> None:
+    host = component_host(tmp_path)
+    base = host.release_dir(COMPONENT_STACK) / "docker-compose.production.yml"
+    bridge = host.memoria / BRIDGE_OVERRIDE
+    bridge.write_text(
+        f"services:\n  voice-core-media-bridge:\n    image: {BRIDGE_IMAGE}\n"
+        "    environment:\n      ENVIRONMENT: production\n",
+        encoding="utf-8",
+    )
+    host.container(
+        "voice-core-media-bridge",
+        release=COMPONENT_STACK,
+        commit="d" * 40,
+        chain=f"{base},{bridge}",
+        image=BRIDGE_IMAGE,
+        image_id="sha256:bridge-live",
+    )
+
+    run = host.step("freeze", tag=RELEASE)
+
+    assert run.returncode == 1
+    assert "is not exactly services.<service>.image" in run.output
+    assert host.prev_record(RELEASE) is None
+
+
+def test_freeze_refuses_an_override_image_the_container_is_not_running(tmp_path: Path) -> None:
+    host = component_host(tmp_path)
+    base = host.release_dir(COMPONENT_STACK) / "docker-compose.production.yml"
+    control = host.memoria / CONTROL_OVERRIDE
+    host.container(
+        "control-api",
+        release=COMPONENT_STACK,
+        commit="b" * 40,
+        chain=f"{base},{control}",
+        image=f"{CONTROL_IMAGE}-stale",
+        image_id="sha256:control-live",
+    )
+
+    run = host.step("freeze", tag=RELEASE)
+
+    assert run.returncode == 1
+    assert "selects memoria-control-api:20261021-a94c438-pr345-pr346-pr348-pr352" in run.output
+    assert (
+        "but the container runs memoria-control-api:20261021-a94c438-pr345-pr346-pr348-pr352-stale"
+        in run.output
+    )
+    assert host.prev_record(RELEASE) is None
+
+
+def test_freeze_refuses_a_chain_with_more_than_one_override(tmp_path: Path) -> None:
+    host = component_host(tmp_path)
+    base = host.release_dir(COMPONENT_STACK) / "docker-compose.production.yml"
+    control = host.memoria / CONTROL_OVERRIDE
+    bridge = host.memoria / BRIDGE_OVERRIDE
+    host.container(
+        "control-api",
+        release=COMPONENT_STACK,
+        commit="b" * 40,
+        chain=f"{base},{control},{bridge}",
+        image=CONTROL_IMAGE,
+        image_id="sha256:control-live",
+    )
+
+    run = host.step("freeze", tag=RELEASE)
+
+    assert run.returncode == 1
+    assert "unexpected live chain for memoria-control-api-1" in run.output
+    assert host.prev_record(RELEASE) is None
+
+
+def test_freeze_refuses_a_tmp_origin_without_the_persisted_copy(tmp_path: Path) -> None:
+    host = component_host(tmp_path)
+    (host.memoria / CONTROL_OVERRIDE).unlink()
+
+    run = host.step("freeze", tag=RELEASE)
+
+    assert run.returncode == 1
+    assert "PREV override is missing" in run.output
+    assert host.prev_record(RELEASE) is None
+
+
+def test_freeze_refuses_an_override_for_another_service(tmp_path: Path) -> None:
+    host = component_host(tmp_path)
+    base = host.release_dir(COMPONENT_STACK) / "docker-compose.production.yml"
+    host.container(
+        "voice-core-media-bridge",
+        release=COMPONENT_STACK,
+        commit="d" * 40,
+        chain=f"{base},{host.memoria / CONTROL_OVERRIDE}",
+        image=BRIDGE_IMAGE,
+        image_id="sha256:bridge-live",
+    )
+
+    run = host.step("freeze", tag=RELEASE)
+
+    assert run.returncode == 1
+    assert "covers control-api, not memoria-voice-core-media-bridge-1" in run.output
+    assert host.prev_record(RELEASE) is None
+
+
+def test_freeze_refuses_a_tmp_override_that_differs_from_the_persisted_copy(
+    tmp_path: Path,
+) -> None:
+    host = component_host(tmp_path)
+    origin = host.tmp / "override-control-pr352.yml"
+    origin.write_text(
+        f"services:\n  control-api:\n    image: {CONTROL_IMAGE}\n# drift\n", encoding="utf-8"
+    )
+
+    run = host.step("freeze", tag=RELEASE)
+
+    assert run.returncode == 1
+    assert "does not match the persisted copy" in run.output
+    assert host.prev_record(RELEASE) is None
+
+
+def test_freeze_accepts_a_persisted_override_path(tmp_path: Path) -> None:
+    host = component_host(tmp_path)
+    base = host.release_dir(COMPONENT_STACK) / "docker-compose.production.yml"
+    for service, relative, image, image_id in (
+        ("control-api", CONTROL_OVERRIDE, CONTROL_IMAGE, "sha256:control-live"),
+        (
+            "voice-core-media-bridge",
+            BRIDGE_OVERRIDE,
+            BRIDGE_IMAGE,
+            "sha256:bridge-live",
+        ),
+    ):
+        host.container(
+            service,
+            release=COMPONENT_STACK,
+            commit="e" * 40,
+            chain=f"{base},{host.memoria / relative}",
+            image=image,
+            image_id=image_id,
+        )
+
+    run = host.step("freeze", tag=RELEASE)
+
+    assert run.returncode == 0, run.output
+    assert host.prev_record(RELEASE) == _component_record(host)
 
 
 def test_freeze_reruns_converge_on_the_same_record(tmp_path: Path) -> None:
@@ -807,6 +1108,196 @@ def test_rollback_restores_prev_from_the_frozen_record(tmp_path: Path) -> None:
         "wait memoria-speaker-model-1",
         f"refresh {GUARDIAN}",
     ]
+
+
+def _component_cutover_done(host: FakeHost) -> None:
+    host.set_current(RELEASE)
+    for service, image in (
+        ("control-api", CONTROL_IMAGE),
+        ("voice-core-media-bridge", BRIDGE_IMAGE),
+    ):
+        host.container(
+            service,
+            release=RELEASE,
+            commit=NEW_COMMIT,
+            image=image,
+            image_id="sha256:this-release",
+        )
+
+
+def test_rollback_composes_prev_with_each_persisted_override(tmp_path: Path) -> None:
+    host = component_host(tmp_path)
+    assert host.step("freeze", tag=RELEASE).returncode == 0
+    _component_cutover_done(host)
+    prev_dir = host.release_dir(COMPONENT_STACK)
+    base = prev_dir / "docker-compose.production.yml"
+    control = host.memoria / CONTROL_OVERRIDE
+    bridge = host.memoria / BRIDGE_OVERRIDE
+    # Compose would recreate the containers on the recorded images.
+    for service, image_id in (
+        ("control-api", "sha256:control-live"),
+        ("voice-core-media-bridge", "sha256:bridge-live"),
+    ):
+        host.container(
+            service,
+            release=COMPONENT_STACK,
+            commit=COMPONENT_STACK_COMMIT,
+            image_id=image_id,
+        )
+
+    run = host.step("rollback", tag=RELEASE)
+
+    assert run.returncode == 0, run.output
+    assert host.current_target() == prev_dir
+    assert run.compose_calls == [
+        ComposeCall(
+            cwd=prev_dir,
+            release_tag=COMPONENT_STACK,
+            release_commit=COMPONENT_STACK_COMMIT,
+            argv=(
+                "compose",
+                "-p",
+                "memoria",
+                "--project-directory",
+                str(prev_dir),
+                "-f",
+                str(base),
+                "-f",
+                str(control),
+                "--profile",
+                "media-runtime",
+                "up",
+                "-d",
+                "--no-deps",
+                "--no-build",
+                "--force-recreate",
+                "control-api",
+            ),
+        ),
+        ComposeCall(
+            cwd=prev_dir,
+            release_tag=COMPONENT_STACK,
+            release_commit=COMPONENT_STACK_COMMIT,
+            argv=(
+                "compose",
+                "-p",
+                "memoria",
+                "--project-directory",
+                str(prev_dir),
+                "-f",
+                str(base),
+                "-f",
+                str(bridge),
+                "--profile",
+                "media-runtime",
+                "up",
+                "-d",
+                "--no-deps",
+                "--no-build",
+                "--force-recreate",
+                "voice-core-media-bridge",
+            ),
+        ),
+    ]
+    assert run.actions == [
+        _up("control-api"),
+        _up("voice-core-media-bridge"),
+        "wait memoria-control-api-1",
+        "wait memoria-voice-core-media-bridge-1",
+        f"refresh {COMPONENT_STACK}",
+    ]
+
+
+def test_rollback_refuses_a_persisted_override_that_changed(tmp_path: Path) -> None:
+    host = component_host(tmp_path)
+    assert host.step("freeze", tag=RELEASE).returncode == 0
+    _component_cutover_done(host)
+    (host.memoria / CONTROL_OVERRIDE).write_text(
+        f"services:\n  control-api:\n    image: {CONTROL_IMAGE}-changed\n", encoding="utf-8"
+    )
+
+    run = host.step("rollback", tag=RELEASE)
+
+    assert run.returncode == 1
+    assert "PREV override changed" in run.output
+    assert host.current_target() == host.release_dir(RELEASE)
+    assert run.copies == [] and run.docker == [] and run.actions == []
+
+
+def test_rollback_refuses_a_missing_persisted_override(tmp_path: Path) -> None:
+    host = component_host(tmp_path)
+    assert host.step("freeze", tag=RELEASE).returncode == 0
+    _component_cutover_done(host)
+    (host.memoria / BRIDGE_OVERRIDE).unlink()
+
+    run = host.step("rollback", tag=RELEASE)
+
+    assert run.returncode == 1
+    assert "PREV override is missing" in run.output
+    assert host.current_target() == host.release_dir(RELEASE)
+    assert run.copies == [] and run.docker == [] and run.actions == []
+
+
+def test_rollback_refuses_a_container_that_did_not_return_to_the_recorded_image(
+    tmp_path: Path,
+) -> None:
+    host = component_host(tmp_path)
+    assert host.step("freeze", tag=RELEASE).returncode == 0
+    _component_cutover_done(host)
+    for service in ("control-api", "voice-core-media-bridge"):
+        host.container(
+            service,
+            release=COMPONENT_STACK,
+            commit=COMPONENT_STACK_COMMIT,
+            image_id="sha256:not-the-recorded-image",
+        )
+
+    run = host.step("rollback", tag=RELEASE)
+
+    assert run.returncode == 1
+    assert "runs image sha256:not-the-recorded-image, recorded sha256:control-live" in run.output
+    assert "refresh" not in run.output
+
+
+def test_rollback_refuses_a_record_that_names_a_tmp_original(tmp_path: Path) -> None:
+    host = component_host(tmp_path)
+    assert host.step("freeze", tag=RELEASE).returncode == 0
+    _component_cutover_done(host)
+    snapshots = host.release_dir(RELEASE) / ".cutover"
+    (snapshots / "prev-release").write_text(
+        _component_record(host).replace(
+            str(host.memoria / CONTROL_OVERRIDE),
+            str(host.tmp / "override-control-pr352.yml"),
+        ),
+        encoding="utf-8",
+    )
+
+    run = host.step("rollback", tag=RELEASE)
+
+    assert run.returncode == 1
+    assert "not the whitelisted copy" in run.output
+    assert host.current_target() == host.release_dir(RELEASE)
+    assert run.copies == [] and run.docker == [] and run.actions == []
+
+
+def test_rollback_still_reads_an_old_record_without_overrides(tmp_path: Path) -> None:
+    host = guardian_host(tmp_path)
+    snapshots = host.release_dir(RELEASE) / ".cutover"
+    snapshots.mkdir()
+    (snapshots / "prev-release").write_text(
+        f"tag={GUARDIAN}\ncommit={GUARDIAN_COMMIT}\n"
+        "services=control-api voice-core-media-bridge speaker-model\n",
+        encoding="utf-8",
+    )
+    host.set_current(RELEASE)
+    for service in ("control-api", "voice-core-media-bridge", "speaker-model"):
+        host.container(service, release=GUARDIAN, commit=GUARDIAN_COMMIT)
+
+    run = host.step("rollback", tag=RELEASE)
+
+    assert run.returncode == 0, run.output
+    assert [len(call.argv) for call in run.compose_calls] == [17]
+    assert not any("-f" in call.argv[9:] for call in run.compose_calls)
 
 
 def test_the_next_release_leaves_out_the_stopped_speaker_model(tmp_path: Path) -> None:
