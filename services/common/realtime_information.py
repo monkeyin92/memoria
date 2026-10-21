@@ -56,6 +56,34 @@ _WEATHER_TOPIC_MARKERS = (
     "冰雹",
     "霜冻",
 )
+# Body complaints reuse weather words ("温度", "冷", "热") but are never a
+# weather question.  Crisis support and this check run before the fallback.
+_BODY_DISCOMFORT_MARKERS = (
+    "发烧",
+    "发热",
+    "体温",
+    "温度好高",
+    "不舒服",
+    "难受",
+    "生病",
+    "咳嗽",
+    "头晕",
+    "头疼",
+    "头痛",
+    "肚子疼",
+    "肚子痛",
+    "想吐",
+    "恶心",
+    "拉肚子",
+    "没力气",
+    "乏力",
+    "浑身",
+    "发抖",
+    "打冷战",
+)
+_BODY_DISCOMFORT_SELF = re.compile(
+    r"我(?:现在|今天|感觉|觉得|有点|有些|好|很|特别|超级|浑身|全身)*(?:冷|热|疼|痛)"
+)
 _LIVE_MARKERS = (
     "天气",
     "新闻",
@@ -172,11 +200,25 @@ def mentions_weather(query: str) -> bool:
     return "天气" in _normalized(query)
 
 
+def mentions_body_discomfort(query: str) -> bool:
+    """Whether the turn describes the speaker's body rather than the weather."""
+
+    compact = _normalized(query)
+    return bool(compact) and (
+        any(marker in compact for marker in _BODY_DISCOMFORT_MARKERS)
+        or _BODY_DISCOMFORT_SELF.search(compact) is not None
+    )
+
+
 def asks_about_weather(query: str) -> bool:
     """Whether the turn is a weather question, not only a literal 天气 mention."""
 
     compact = _normalized(query)
-    return bool(compact) and any(marker in compact for marker in _WEATHER_TOPIC_MARKERS)
+    if not compact or companion_safety_decision(query) != "none":
+        return False
+    if mentions_body_discomfort(query):
+        return False
+    return any(marker in compact for marker in _WEATHER_TOPIC_MARKERS)
 
 
 def weekday_lookup_query(query: str) -> str:
@@ -233,6 +275,10 @@ def fixed_realtime_reply(
     if asks_time and not has_live_topic:
         return f"现在是北京时间{now.hour}点{now.minute:02d}分。"
     if not weather_lookup_available and (asks_about_weather(query) or city_followup):
+        # Crisis support and body discomfort outrank the weather fallback: a
+        # child saying "我发烧了温度好高" or "我好冷" must not hear it.
+        if companion_safety_decision(query) != "none" or mentions_body_discomfort(query):
+            return None
         return WEATHER_LOOKUP_UNAVAILABLE_REPLY
     if compact in _WEATHER_WITHOUT_LOCATION:
         return ASK_WEATHER_CITY_REPLY

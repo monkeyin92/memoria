@@ -439,7 +439,8 @@ def build_production_media_session_factory(settings: Any) -> ProductionMediaSess
                 spool_path=Path(settings.archive_spool_path),
                 spool_key=spool_key,
                 spool_max_bytes=settings.archive_spool_max_bytes,
-            )
+            ),
+            metrics=GLOBAL_METRICS,
         )
     session_recap_sink: SessionRecapSink | None = None
     if bool(getattr(settings, "session_recap_enabled", True)):

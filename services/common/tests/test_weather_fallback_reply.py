@@ -8,6 +8,7 @@ from services.common.realtime_information import (
     fixed_realtime_reply,
     is_incomplete_realtime_reply,
     is_safe_realtime_reply,
+    mentions_body_discomfort,
     realtime_unavailable_reply,
     weather_lookup_configured,
 )
@@ -94,3 +95,45 @@ def test_non_weather_live_failure_keeps_the_generic_fallback() -> None:
     assert realtime_unavailable_reply("美元兑人民币汇率是多少？", now=_NOW) == (
         REALTIME_UNAVAILABLE_REPLY
     )
+
+
+def test_body_discomfort_outranks_the_weather_fallback() -> None:
+    for query in ("我发烧了温度好高", "我好冷"):
+        assert mentions_body_discomfort(query) is True
+        assert asks_about_weather(query) is False
+        assert (
+            fixed_realtime_reply(
+                query=query,
+                now=_NOW,
+                weather_lookup_available=False,
+            )
+            is None
+        )
+        assert realtime_unavailable_reply(query, now=_NOW) == REALTIME_UNAVAILABLE_REPLY
+
+
+def test_crisis_outranks_the_weather_fallback() -> None:
+    query = "我不想活了，今天好冷"
+    assert asks_about_weather(query) is False
+    assert (
+        fixed_realtime_reply(
+            query=query,
+            now=_NOW,
+            weather_lookup_available=False,
+        )
+        is None
+    )
+
+
+def test_normal_weather_question_still_gets_the_fallback() -> None:
+    for query in ("今天天气怎么样", "外面冷不冷？", "明天会下雨吗？"):
+        assert mentions_body_discomfort(query) is False
+        assert asks_about_weather(query) is True
+        assert (
+            fixed_realtime_reply(
+                query=query,
+                now=_NOW,
+                weather_lookup_available=False,
+            )
+            == _SENTENCE
+        )

@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 from pathlib import Path
 
 import httpx
 import pytest
 from cryptography.fernet import Fernet
 from services.agent.src.archive_sink import ArchiveSink, ArchiveSinkConfig
+from services.agent.src.observability.metrics import MetricsRegistry
 
 
 @pytest.mark.asyncio
@@ -844,17 +846,21 @@ async def test_existing_archive_conflict_is_a_completed_idempotent_write(tmp_pat
 
     assert await sink.publish(event) is True
     assert not spool_path.exists() or spool_path.read_bytes() == b""
+    assert sink.retained_conflicts == 0
     await client.aclose()
 
 
 @pytest.mark.asyncio
-async def test_retried_event_already_on_the_server_clears_the_spool(tmp_path: Path) -> None:
+async def test_event_id_conflict_during_replay_clears_the_spool(tmp_path: Path) -> None:
     online = False
 
     def handler(_: httpx.Request) -> httpx.Response:
         if not online:
             return httpx.Response(503)
-        return httpx.Response(409, json={"detail": {"code": "ambiguous_parent_turn"}})
+        return httpx.Response(
+            409,
+            json={"detail": "event_id 'event-retried' already has different content"},
+        )
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     spool_path = tmp_path / "archive.spool"
@@ -883,6 +889,64 @@ async def test_retried_event_already_on_the_server_clears_the_spool(tmp_path: Pa
     online = True
     assert await sink.replay() == 1
     assert spool_path.read_bytes() == b""
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "detail",
+    (
+        {"code": "ambiguous_parent_turn"},
+        {"code": "parent_turn_not_canonical"},
+        {"code": "turn_event_conflict"},
+        {"code": "archive_subject_fence_stale"},
+    ),
+)
+async def test_non_idempotent_conflict_stays_in_spool_and_alerts(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    detail: dict[str, str],
+) -> None:
+    spool_path = tmp_path / "archive.spool"
+    metrics = MetricsRegistry()
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"detail": detail})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    sink = ArchiveSink(
+        ArchiveSinkConfig(
+            endpoint="https://control.test/v1/archive/session-events",
+            internal_token="internal-test-token",
+            spool_path=spool_path,
+            spool_key=Fernet.generate_key().decode("ascii"),
+            spool_max_bytes=64 * 1024,
+        ),
+        client=client,
+        metrics=metrics,
+    )
+    event = {
+        "event_id": "event-conflict-open",
+        "session_id": "session-001",
+        "event_type": "speech.utterance_finalized",
+        "occurred_at": "2026-07-19T08:00:00+00:00",
+        "speaker_class": "owner",
+        "source": "funasr.authoritative_final",
+        "payload": {"text": "服务端拒绝了这条留证。"},
+    }
+
+    with caplog.at_level(logging.ERROR, logger="services.agent.src.archive_sink"):
+        assert await sink.publish(event) is False
+        assert spool_path.read_bytes()
+        assert await sink.replay() == 0
+
+    assert spool_path.read_bytes()
+    assert sink.retained_conflicts == 2
+    assert metrics.get(
+        "archive_conflict_retained_total", {"reason": detail["code"]}
+    ) == 2
+    assert "archive conflict retained in spool" in caplog.text
+    assert detail["code"] in caplog.text
     await client.aclose()
 
 

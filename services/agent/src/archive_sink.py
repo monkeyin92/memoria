@@ -7,15 +7,19 @@ import fcntl
 import json
 import logging
 import os
+import re
 from collections import OrderedDict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
 from cryptography.fernet import Fernet, InvalidToken
+
+if TYPE_CHECKING:
+    from services.agent.src.observability.metrics import MetricsRegistry
 
 
 class ArchiveSpoolFullError(RuntimeError):
@@ -62,6 +66,10 @@ class ArchiveSinkConfig:
 
 
 _MAX_REMEMBERED_EVENT_IDS = 2_048
+# The only 409 that proves the server already holds this event_id. Every
+# other 409 (ambiguous_parent_turn, fence or subject conflicts) means the
+# event was rejected, so the encrypted spool row must stay until it succeeds.
+_EVENT_ID_ALREADY_STORED = re.compile(r"event_id .+ already has different content")
 
 
 class ArchiveSink:
@@ -72,13 +80,21 @@ class ArchiveSink:
         config: ArchiveSinkConfig,
         *,
         client: httpx.AsyncClient | None = None,
+        metrics: MetricsRegistry | None = None,
     ) -> None:
         self._config = config
         self._fernet = Fernet(config.spool_key.encode("ascii"))
         self._client = client or httpx.AsyncClient(timeout=config.timeout_s)
         self._owns_client = client is None
+        self._metrics = metrics
         self._lock = asyncio.Lock()
         self._delivered_event_ids: OrderedDict[str, None] = OrderedDict()
+        self._retained_conflicts = 0
+
+    @property
+    def retained_conflicts(self) -> int:
+        """Count of 409s that were not an idempotent event_id write."""
+        return self._retained_conflicts
 
     async def publish(
         self,
@@ -256,17 +272,32 @@ class ArchiveSink:
             self._remember_delivered(body)
             return True
         if response.status_code == 409:
-            # A retry can rebuild the same deterministic event_id after its
-            # source clock or derived payload advanced.  The archive already
-            # holds the immutable event, so this conflict is a successful
-            # idempotent write, not a lost evidence task.
-            logger.info(
-                "archive event already stored event_id=%s detail_code=%s",
+            detail = self._conflict_detail(response)
+            if _EVENT_ID_ALREADY_STORED.fullmatch(detail):
+                # The server already holds this event_id. A retry can rebuild
+                # the same deterministic id after its source clock advanced,
+                # but the archive keeps the immutable original, so this is a
+                # completed idempotent write.
+                logger.info(
+                    "archive event already stored event_id=%s",
+                    body.get("event_id"),
+                )
+                self._remember_delivered(body)
+                return True
+            # Any other 409 rejected the event. Keep the encrypted row, count
+            # it, and make it visible: clearing the spool here would lose the
+            # evidence that the archive refused to store.
+            reason = detail or "unclassified"
+            self._retained_conflicts += 1
+            if self._metrics is not None:
+                self._metrics.inc_archive_conflict_retained(reason[:64])
+            logger.error(
+                "archive conflict retained in spool event_id=%s reason=%s count=%d",
                 body.get("event_id"),
-                self._conflict_code(response),
+                reason,
+                self._retained_conflicts,
             )
-            self._remember_delivered(body)
-            return True
+            return False
         if response.status_code == 425:
             # Derived evidence can race its canonical parent across retries.
             # Keep it encrypted until the parent turn is durably visible.
@@ -295,16 +326,20 @@ class ArchiveSink:
             self._delivered_event_ids.popitem(last=False)
 
     @staticmethod
-    def _conflict_code(response: httpx.Response) -> str:
+    def _conflict_detail(response: httpx.Response) -> str:
+        """The server's explanation for a 409, empty when it carries none."""
+
         try:
             payload = response.json()
         except ValueError:
-            return "unknown"
+            return ""
         detail = payload.get("detail") if isinstance(payload, dict) else None
         if isinstance(detail, dict):
             code = detail.get("code")
-            return str(code)[:64] if code else "unknown"
-        return "idempotency_conflict"
+            return str(code) if code else ""
+        if isinstance(detail, str):
+            return detail
+        return ""
 
     @staticmethod
     def _decode_envelope(payload: bytes) -> tuple[ArchiveTarget, dict[str, Any]]:
