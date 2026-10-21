@@ -2,10 +2,13 @@ from datetime import datetime
 from types import SimpleNamespace
 
 from services.common.realtime_information import (
+    REALTIME_UNAVAILABLE_REPLY,
     WEATHER_LOOKUP_UNAVAILABLE_REPLY,
+    asks_about_weather,
     fixed_realtime_reply,
     is_incomplete_realtime_reply,
     is_safe_realtime_reply,
+    realtime_unavailable_reply,
     weather_lookup_configured,
 )
 
@@ -69,4 +72,25 @@ def test_weather_lookup_is_configured_only_with_a_real_source() -> None:
             )
         )
         is False
+    )
+
+
+def test_weather_fallback_covers_weather_questions_without_the_literal_word() -> None:
+    for query in ("明天会下雨吗？", "外面冷不冷？", "今天要穿外套吗？", "这周末天气好吗？"):
+        assert asks_about_weather(query) is True
+        assert (
+            fixed_realtime_reply(
+                query=query,
+                now=_NOW,
+                weather_lookup_available=False,
+            )
+            == _SENTENCE
+        )
+        assert realtime_unavailable_reply(query, now=_NOW) == _SENTENCE
+
+
+def test_non_weather_live_failure_keeps_the_generic_fallback() -> None:
+    assert asks_about_weather("美元兑人民币汇率是多少？") is False
+    assert realtime_unavailable_reply("美元兑人民币汇率是多少？", now=_NOW) == (
+        REALTIME_UNAVAILABLE_REPLY
     )

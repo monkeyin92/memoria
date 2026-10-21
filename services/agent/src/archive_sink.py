@@ -7,6 +7,7 @@ import fcntl
 import json
 import logging
 import os
+from collections import OrderedDict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -60,6 +61,9 @@ class ArchiveSinkConfig:
         return self.endpoint.removesuffix("/session-events") + "/session-raw-voice-consent"
 
 
+_MAX_REMEMBERED_EVENT_IDS = 2_048
+
+
 class ArchiveSink:
     """Deliver evidence off the realtime path; replay failures remain encrypted on disk."""
 
@@ -74,6 +78,7 @@ class ArchiveSink:
         self._client = client or httpx.AsyncClient(timeout=config.timeout_s)
         self._owns_client = client is None
         self._lock = asyncio.Lock()
+        self._delivered_event_ids: OrderedDict[str, None] = OrderedDict()
 
     async def publish(
         self,
@@ -82,9 +87,13 @@ class ArchiveSink:
         target: ArchiveTarget = "event",
     ) -> bool:
         """Return True when delivered now, False when safely queued for replay."""
+        if target == "event" and self._already_delivered(event):
+            return True
         payload = self._encode({"target": target, "body": event})
         try:
             async with self._lock:
+                if target == "event" and self._already_delivered(event):
+                    return True
                 async with self._exclusive_spool_lock():
                     if self._read_lines():
                         await self._replay_locked()
@@ -209,7 +218,10 @@ class ArchiveSink:
                 payload = self._fernet.decrypt(token)
             except InvalidToken as exc:
                 raise ArchiveSpoolKeyError("archive spool key mismatch or corrupt data") from exc
-            target, _ = self._decode_envelope(payload)
+            target, body = self._decode_envelope(payload)
+            if target == "event" and self._already_delivered(body):
+                # The same logical event reached the server by another path.
+                continue
             if await self._deliver(payload):
                 delivered += 1
                 continue
@@ -241,6 +253,19 @@ class ArchiveSink:
         except (httpx.TimeoutException, httpx.NetworkError):
             return False
         if response.status_code in {200, 201, 202}:
+            self._remember_delivered(body)
+            return True
+        if response.status_code == 409:
+            # A retry can rebuild the same deterministic event_id after its
+            # source clock or derived payload advanced.  The archive already
+            # holds the immutable event, so this conflict is a successful
+            # idempotent write, not a lost evidence task.
+            logger.info(
+                "archive event already stored event_id=%s detail_code=%s",
+                body.get("event_id"),
+                self._conflict_code(response),
+            )
+            self._remember_delivered(body)
             return True
         if response.status_code == 425:
             # Derived evidence can race its canonical parent across retries.
@@ -249,11 +274,37 @@ class ArchiveSink:
         if response.status_code == 410:
             # A deleted-session tombstone is permanent. Keeping this row would
             # violate deletion and head-of-line block every later event.
+            self._remember_delivered(body)
             return True
         if response.status_code >= 500:
             return False
         response.raise_for_status()
         return False  # pragma: no cover - raise_for_status covers other responses
+
+    def _already_delivered(self, event: dict[str, Any]) -> bool:
+        event_id = event.get("event_id")
+        return isinstance(event_id, str) and bool(event_id) and event_id in self._delivered_event_ids
+
+    def _remember_delivered(self, event: dict[str, Any]) -> None:
+        event_id = event.get("event_id")
+        if not isinstance(event_id, str) or not event_id:
+            return
+        self._delivered_event_ids[event_id] = None
+        self._delivered_event_ids.move_to_end(event_id)
+        while len(self._delivered_event_ids) > _MAX_REMEMBERED_EVENT_IDS:
+            self._delivered_event_ids.popitem(last=False)
+
+    @staticmethod
+    def _conflict_code(response: httpx.Response) -> str:
+        try:
+            payload = response.json()
+        except ValueError:
+            return "unknown"
+        detail = payload.get("detail") if isinstance(payload, dict) else None
+        if isinstance(detail, dict):
+            code = detail.get("code")
+            return str(code)[:64] if code else "unknown"
+        return "idempotency_conflict"
 
     @staticmethod
     def _decode_envelope(payload: bytes) -> tuple[ArchiveTarget, dict[str, Any]]:

@@ -35,6 +35,27 @@ _WEATHER_WITHOUT_LOCATION = frozenset(
         "外面天气怎么样",
     }
 )
+_WEATHER_TOPIC_MARKERS = (
+    "天气",
+    "下雨",
+    "下雪",
+    "降雨",
+    "降雪",
+    "气温",
+    "温度",
+    "冷不冷",
+    "热不热",
+    "穿外套",
+    "带伞",
+    "刮风",
+    "风力",
+    "紫外线",
+    "雾霾",
+    "寒潮",
+    "台风",
+    "冰雹",
+    "霜冻",
+)
 _LIVE_MARKERS = (
     "天气",
     "新闻",
@@ -151,6 +172,13 @@ def mentions_weather(query: str) -> bool:
     return "天气" in _normalized(query)
 
 
+def asks_about_weather(query: str) -> bool:
+    """Whether the turn is a weather question, not only a literal 天气 mention."""
+
+    compact = _normalized(query)
+    return bool(compact) and any(marker in compact for marker in _WEATHER_TOPIC_MARKERS)
+
+
 def weekday_lookup_query(query: str) -> str:
     """Keep a weather mention intact when a fuzzy weekday shares the turn."""
 
@@ -204,11 +232,22 @@ def fixed_realtime_reply(
         return f"今天是{now.year}年{now.month}月{now.day}日，{weekday}。"
     if asks_time and not has_live_topic:
         return f"现在是北京时间{now.hour}点{now.minute:02d}分。"
-    if not weather_lookup_available and (mentions_weather(query) or city_followup):
+    if not weather_lookup_available and (asks_about_weather(query) or city_followup):
         return WEATHER_LOOKUP_UNAVAILABLE_REPLY
     if compact in _WEATHER_WITHOUT_LOCATION:
         return ASK_WEATHER_CITY_REPLY
     return None
+
+
+def realtime_unavailable_reply(query: str, *, now: datetime | None = None) -> str:
+    """The product fallback for a public live lookup that produced no answer."""
+
+    fixed = fixed_realtime_reply(
+        query=query,
+        now=now or current_local_time(),
+        weather_lookup_available=False,
+    )
+    return fixed or REALTIME_UNAVAILABLE_REPLY
 
 
 def realtime_instruction(*, query: str, now: datetime) -> str | None:

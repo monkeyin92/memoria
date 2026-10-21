@@ -66,6 +66,7 @@ from services.agent.tests.unit.media_session_support import (
     _wait_until,
 )
 from services.common.llm_thinking_filler import LLM_THINKING_TEXT
+from services.common.realtime_information import WEATHER_LOOKUP_UNAVAILABLE_REPLY
 
 
 def _aigc_notice_off(registry: MediaVoiceCoreRegistry) -> MediaVoiceCoreRegistry:
@@ -3420,3 +3421,53 @@ async def test_cancelled_audible_output_gets_terminal_generation_and_listening()
         if reply is not None:
             await asyncio.gather(reply, return_exceptions=True)
         await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_fixed_weather_fallback_is_the_first_and_only_spoken_text() -> None:
+    class FallbackProvider(FakeMediaProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.output_intents: list[Any] = []
+
+        async def start_delegation(self, _text: str, _fence: GenerationFence) -> str:
+            return WEATHER_LOOKUP_UNAVAILABLE_REPLY
+
+        def accept_output_intent(self, intent: Any) -> None:
+            self.output_intents.append(intent)
+
+        def generate_output(
+            self,
+            _identity: SessionIdentity,
+            _intent: Any,
+            _fence: GenerationFence,
+            *,
+            work_id: str,
+            source_start_sample: int,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            _ = work_id
+
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                yield MediaReplyChunk(
+                    pcm_s16le=b"\x02\x00\x03\x00",
+                    source_start_sample=source_start_sample,
+                    first=True,
+                    final=True,
+                )
+
+            return chunks()
+
+    provider = FallbackProvider()
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    context = await registry.open_session(SessionIdentity("weather-fallback-first"))
+    fence = await context.runtime.on_turn_committed("今天南京天气怎么样")
+    context.output.playback.start(fence)
+
+    await _wait_until(lambda: provider.output_intents, timeout=2)
+
+    assert str(provider.output_intents[0].tts_source) == WEATHER_LOOKUP_UNAVAILABLE_REPLY
+    await registry.finalize_session(context.identity.session_id)
