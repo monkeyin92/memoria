@@ -313,6 +313,10 @@ class MediaSessionProjectionMixin:
                 context.identity.session_id,
             )
         finally:
+            # The acknowledgement attempt is over, so the pre-user marker
+            # turn must stop admitting it; a later wake without a fresh
+            # marker can only use turn 0.
+            context.aigc_opening_marker_turn_id = None
             remember_device_wake(context.identity.device_id, now)
 
 

@@ -536,8 +536,30 @@ async def test_opening_marker_keeps_device_wake_ack_and_returns_to_listening() -
         assert not context.standby_requested
         assert registry.metrics.get("voice_speaking_stall_total") == stalls_before
         assert context.runtime.interaction_phase is InteractionPhase.LISTENING
+        assert context.aigc_opening_marker_turn_id is None
     finally:
         await registry.finalize_session(identity.session_id)
+
+
+def test_device_wake_ack_gate_closes_after_user_turn_advances() -> None:
+    from services.agent.src.contracts.ids import GenerationFence
+    from services.agent.src.voice_core.media_session import MediaVoiceCoreRegistry
+
+    def context_at(turn_id: int) -> SimpleNamespace:
+        return SimpleNamespace(
+            runtime=SimpleNamespace(
+                fence=GenerationFence(
+                    session_id="session-gate",
+                    turn_id=turn_id,
+                    generation_id=turn_id,
+                    tool_epoch=0,
+                )
+            ),
+            aigc_opening_marker_turn_id=1,
+        )
+
+    assert MediaVoiceCoreRegistry._device_wake_ack_turn_available(context_at(1)) is True
+    assert MediaVoiceCoreRegistry._device_wake_ack_turn_available(context_at(2)) is False
 
 
 @pytest.mark.asyncio
