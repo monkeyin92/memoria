@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import hashlib
+import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 
@@ -19,6 +20,7 @@ from services.guardian.crisis import CrisisNotificationService, GuardianNotifica
 from services.guardian.domain import GuardianAccessDeniedError
 from services.guardian.postgres_store import PostgresGuardianStore
 from services.guardian.push import (
+    CRISIS_PUSH_DEFAULT_CHILD_NAME,
     CRISIS_PUSH_TIP,
     CRISIS_PUSH_TITLE,
     CrisisPushContent,
@@ -61,7 +63,7 @@ class Clock:
 class FakeSender:
     def __init__(self, *results: PushSendResult) -> None:
         self.results = list(results)
-        self.calls: list[tuple[str, str, CrisisPushContent]] = []
+        self.calls: list[tuple[str, str, CrisisPushContent, str | None]] = []
 
     async def send_crisis_alert(
         self,
@@ -69,17 +71,13 @@ class FakeSender:
         openid: str,
         template_id: str,
         content: CrisisPushContent,
+        notification_id: str | None = None,
     ) -> PushSendResult:
-        self.calls.append((openid, template_id, content))
+        self.calls.append((openid, template_id, content, notification_id))
         await asyncio.sleep(0)
         if len(self.results) > 1:
             return self.results.pop(0)
         return self.results[0] if self.results else PushSendResult("delivered")
-
-
-async def _names(guardian_user_id: str, minor_user_id: str) -> str | None:
-    assert guardian_user_id == "guardian-a"
-    return {"minor-a": "小明"}.get(minor_user_id)
 
 
 async def _store_with_crisis(
@@ -128,7 +126,6 @@ def _worker(
         store,
         sender,
         template_id=TEMPLATE,
-        display_name=_names,
         clock=clock,
         **kwargs,  # type: ignore[arg-type]
     )
@@ -276,11 +273,15 @@ async def test_worker_delivers_fixed_content_and_consumes_one_acceptance(
     assert (reach.delivered, reach.total, reach.wechat_delivery_rate) == (1, 1, 1.0)
     assert await _remaining(store) == 1
     assert len(sender.calls) == 1
-    openid, template_id, content = sender.calls[0]
+    openid, template_id, content, notification_id = sender.calls[0]
     assert (openid, template_id) == (OPENID, TEMPLATE)
+    # The sender deep-links the detail page with this id, so it must be the
+    # delivery's own notification UUID.
+    assert notification_id == notification.notification_id
+    assert uuid.UUID(notification_id)
     assert content == CrisisPushContent(
         title=CRISIS_PUSH_TITLE,
-        child_display_name="小明",
+        child_display_name=CRISIS_PUSH_DEFAULT_CHILD_NAME,
         occurred_at=occurred,
         tip=CRISIS_PUSH_TIP,
     )
