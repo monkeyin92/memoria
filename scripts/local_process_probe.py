@@ -8,7 +8,8 @@ macOS has no /proc, no lsof, and this repository has no psutil dependency.
 RSS and liveness come from libproc (``proc_pidinfo``) and the POSIX ``kill``
 probe. ESTABLISHED TCP counting has no lsof-free sampler here yet, so it
 raises :class:`UnreadableProcess` instead of reporting a zero that would read
-as a healthy measurement.
+as a healthy measurement. A pid whose ``/proc`` entries are hidden from this
+user (``hidepid``, or a CI sandbox) is unreadable for the same reason.
 """
 
 from __future__ import annotations
@@ -130,7 +131,7 @@ def established_tcp_count(pid: int) -> int | None:
         targets = [os.readlink(entry) for entry in (_PROC / str(pid) / "fd").iterdir()]
     except OSError as exc:
         if process_exists(pid):
-            raise UnreadableProcess(f"cannot list /proc/{pid}/fd") from exc
+            raise UnreadableProcess(f"cannot list /proc/{pid}/fd: {exc.strerror}") from exc
         return 0
     table: set[int] = set()
     for name in ("tcp", "tcp6"):
