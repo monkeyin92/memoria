@@ -449,3 +449,22 @@ def test_crisis_lookup_follows_the_turn_across_a_generation_bump() -> None:
     )
     script = ReplyPipeline._fixed_safety_script_for_turn(pipeline, new)  # type: ignore[arg-type]
     assert script == CRISIS_SELF_SCRIPT
+
+
+def test_same_turn_plans_are_ordered_by_generation_not_insertion() -> None:
+    """A plan stored late for an older generation must not read as the latest."""
+
+    from dataclasses import replace as dataclass_replace
+
+    from services.agent.src.response_plan_cache import ResponsePlanCache
+
+    newer_fence = GenerationFence("plan-order", turn_id=2, generation_id=6, tool_epoch=0)
+    older_fence = dataclass_replace(newer_fence, generation_id=4)
+    newer = _companion_plan(newer_fence)
+    older = _companion_plan(older_fence)
+    cache = ResponsePlanCache()
+    cache.store(newer)
+    cache.store(older)
+
+    assert [plan.fence.generation_id for plan in cache.same_turn(older_fence)] == [4, 6]
+    assert cache.same_turn(older_fence)[-1] is newer

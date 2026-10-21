@@ -73,9 +73,9 @@ class ResponsePlanCache:
         return True
 
     def same_turn(self, fence: GenerationFence) -> tuple[ResponsePlan, ...]:
-        """Plans for this exact turn on any generation, oldest first."""
+        """Plans for this exact turn on any generation, oldest generation first."""
 
-        return tuple(
+        plans = (
             plan
             for plan_fence, plan in self._plans.items()
             if plan_fence.session_id == fence.session_id
@@ -83,6 +83,10 @@ class ResponsePlanCache:
             and plan_fence.tool_epoch == fence.tool_epoch
             and plan_fence.session_epoch == fence.session_epoch
         )
+        # Dict insertion order is not domain order: a late planner response can
+        # land after a newer generation's plan, and rebind() re-inserts. Callers
+        # read reversed() to mean "latest", so order by the fence.
+        return tuple(sorted(plans, key=lambda plan: plan.fence.generation_id))
 
     def authorized(self, plan: ResponsePlan, *, current_profile_id: str | None) -> bool:
         """Whether the cached plan's authorizing profile is still current.
