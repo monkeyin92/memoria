@@ -28,6 +28,7 @@
 #include "touch.h"
 #include "memoria_bootstrap.h"
 #include "memoria_display_hooks.h"
+#include "memoria_imu_poll.h"
 #include "memoria_mascot_display.h"
 #include "memoria_aigc_label.h"
 #include "memoria_offline_menu.h"
@@ -69,9 +70,19 @@ extern "C" {
 
 namespace Bmi270Motion {
 static bmi270_handle_t bmi_handle_ = nullptr;
+static i2c_master_dev_handle_t accel_dev_ = nullptr;
+
+// 400 kHz I2C moves one byte in 9 SCL clocks (8 data bits plus ACK), 22.5 us.
+// One accel read is 6 data bytes plus the register address, the read address,
+// a repeated start, ACKs and stop, 85 clocks or about 210 us on the wire.
+// 15 ms leaves roughly 70x margin for clock stretching, a busy bus and
+// scheduler jitter. It also caps how long a failed BMI2 read can hold the
+// shared bus, so touch and the fuel gauge never wait on the old 200 ms
+// i2c_bus budget. Those two keep their own 100 ms transfers.
+static constexpr int kBmi2ReadTimeoutMs = 15;
 
 esp_err_t Initialize(i2c_bus_handle_t i2c_bus) {
-    if (bmi_handle_) {
+    if (bmi_handle_ != nullptr && accel_dev_ != nullptr) {
         return ESP_OK;
     }
     if (!i2c_bus) {
@@ -92,16 +103,45 @@ esp_err_t Initialize(i2c_bus_handle_t i2c_bus) {
         return ESP_FAIL;
     }
 
+    // A private device handle on the same bus lets the 20 ms accel read use
+    // its own 15 ms timeout. The driver keeps its own handle for setup only.
+    i2c_master_bus_handle_t idf_bus = i2c_bus_get_internal_bus_handle(i2c_bus);
+    if (idf_bus == nullptr) {
+        ESP_LOGW(TAG, "BMI270 could not get the IDF I2C bus");
+        return ESP_FAIL;
+    }
+    i2c_device_config_t accel_cfg = {};
+    accel_cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    accel_cfg.device_address = BMI270_I2C_ADDRESS;
+    accel_cfg.scl_speed_hz = 400000;
+    ret = i2c_master_bus_add_device(idf_bus, &accel_cfg, &accel_dev_);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "BMI270 accel device add failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
     ESP_LOGI(TAG, "BMI270 initialized");
     return ESP_OK;
 }
 
-bool ReadAccelRaw(struct bmi2_sens_data& accel) {
-    if (!bmi_handle_) {
+bool ReadAccelRaw(memoria::ImuAccelSample& accel) {
+    if (accel_dev_ == nullptr) {
         return false;
     }
-    int8_t rslt = bmi2_get_sensor_data(&accel, bmi_handle_);
-    return rslt == BMI2_OK;
+    const uint8_t reg = BMI2_ACC_X_LSB_ADDR;
+    uint8_t data[6] = {};
+    const esp_err_t ret = i2c_master_transmit_receive(accel_dev_, &reg, 1, data, sizeof(data),
+                                                      kBmi2ReadTimeoutMs);
+    if (ret != ESP_OK) {
+        return false;
+    }
+    accel.x = static_cast<int16_t>(static_cast<uint16_t>(data[0]) |
+                                   (static_cast<uint16_t>(data[1]) << 8));
+    accel.y = static_cast<int16_t>(static_cast<uint16_t>(data[2]) |
+                                   (static_cast<uint16_t>(data[3]) << 8));
+    accel.z = static_cast<int16_t>(static_cast<uint16_t>(data[4]) |
+                                   (static_cast<uint16_t>(data[5]) << 8));
+    return true;
 }
 }  // namespace Bmi270Motion
 
@@ -579,37 +619,39 @@ private:
         }
 
         memoria::PatDetector detector;
-        struct bmi2_sens_data prev = {};
-        bool has_prev = false;
+        memoria::ImuPoller poller;
 
         while (true) {
-            struct bmi2_sens_data cur = {};
-            if (!Bmi270Motion::ReadAccelRaw(cur)) {
-                detector.Reset();
-                has_prev = false;
-                vTaskDelay(pdMS_TO_TICKS(20));
-                continue;
+            poller.PollFrame(
+                [&detector](memoria::ImuAccelSample& sample) {
+                    if (Bmi270Motion::ReadAccelRaw(sample)) {
+                        return true;
+                    }
+                    detector.Reset();
+                    return false;
+                },
+                [self, &detector](int score) {
+                    const int64_t now_ms = esp_timer_get_time() / 1000;
+                    const bool muted =
+                        now_ms < self->imu_mute_until_ms_.load(std::memory_order_relaxed);
+                    const auto result = detector.Observe(score, muted, now_ms);
+                    if (result.kind == memoria::PatKind::kPat) {
+                        self->OnDevicePat(result.peak);
+                    } else if (result.kind == memoria::PatKind::kShake) {
+                        self->OnDeviceShake(result.peak);
+                    } else if (result.kind == memoria::PatKind::kTouchRumble) {
+                        ESP_LOGI(TAG, "Device pat ignored (touch rumble, score: %d)",
+                                 result.peak);
+                    }
+                });
+
+            const int64_t now_ms = esp_timer_get_time() / 1000;
+            if (poller.StatsLogDue(now_ms)) {
+                ESP_LOGI(TAG, "BMI2 stats ok=%u fail=%u state=%d",
+                         static_cast<unsigned>(poller.ok()),
+                         static_cast<unsigned>(poller.fail()),
+                         static_cast<int>(Application::GetInstance().GetDeviceState()));
             }
-            if (has_prev) {
-                int dx = abs(static_cast<int>(cur.acc.x) - static_cast<int>(prev.acc.x));
-                int dy = abs(static_cast<int>(cur.acc.y) - static_cast<int>(prev.acc.y));
-                int dz = abs(static_cast<int>(cur.acc.z) - static_cast<int>(prev.acc.z));
-                int score = dx + dy + dz;
-                int64_t now_ms = esp_timer_get_time() / 1000;
-                const bool muted =
-                    now_ms < self->imu_mute_until_ms_.load(std::memory_order_relaxed);
-                const auto result = detector.Observe(score, muted, now_ms);
-                if (result.kind == memoria::PatKind::kPat) {
-                    self->OnDevicePat(result.peak);
-                } else if (result.kind == memoria::PatKind::kShake) {
-                    self->OnDeviceShake(result.peak);
-                } else if (result.kind == memoria::PatKind::kTouchRumble) {
-                    ESP_LOGI(TAG, "Device pat ignored (touch rumble, score: %d)",
-                             result.peak);
-                }
-            }
-            prev = cur;
-            has_prev = true;
             vTaskDelay(pdMS_TO_TICKS(20));
         }
     }
