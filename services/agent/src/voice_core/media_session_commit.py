@@ -318,10 +318,16 @@ class MediaSessionCommitMixin:
         ) -> str: ...
 
         def _maybe_pin_playback_stop(
-            self, context: _MediaVoiceSession, result: ASRResult, *, source: str
+            self,
+            context: _MediaVoiceSession,
+            result: ASRResult,
+            *,
+            source: str,
         ) -> None: ...
 
-        async def _stop_reply_for_voice_command(self, context: _MediaVoiceSession) -> bool: ...
+        async def _stop_reply_for_voice_command(
+            self, context: _MediaVoiceSession, text: str
+        ) -> bool: ...
 
     async def accept_asr_result(self, session_id: str, result: ASRResult) -> bool:
         """Compatibility bool seam; use the normalized decision internally."""
@@ -894,7 +900,9 @@ class MediaSessionCommitMixin:
             if reason == PLAYBACK_STOP_ROUTE_REASON:
                 # The Router suppressed the stop as a control turn; the reply
                 # it interrupts is still streaming until it is stopped here.
-                await self._stop_reply_for_voice_command(context)
+                await self._stop_reply_for_voice_command(
+                    context, context.pending.playback_stop_text or ""
+                )
             self._finish_owner_silence_turn(
                 context, accepted=fence is not None,
                 # A failed provider or a result from the replaced transport

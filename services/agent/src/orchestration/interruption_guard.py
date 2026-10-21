@@ -66,6 +66,12 @@ INTERRUPT_PREFIXES = (
 )
 
 _LEADING_INTERRUPT_FILLERS = (
+    # The wake name is part of the transcript when the device lets the ASR hear
+    # it (field 2026-10-21 F: 「茉莉，停」 0/5).  A leading vocative is not
+    # content: what follows decides the turn.
+    "小茉莉",
+    "茉莉",
+    "莫莉",
     "嗯",
     "啊",
     "呃",
@@ -102,8 +108,11 @@ _TRAILING_CONTROL_PARTICLES = (
     "呀",
     "啊",
     "哦",
+    "啦",
     "好",
     "好的",
+    # Her own acknowledgment heard in the same final (「停，好的。」).
+    "好了",
 )
 
 _INTERRUPT_PUNCTUATION = re.compile(r"""[\s。！？.!?，,；;：:"'“”‘’（）()【】[\]…·~～]""")
@@ -159,16 +168,23 @@ _STOP_LEXICON: tuple[_StopLexeme, ...] = (
     _PrefixStop("暂停"),
     _PrefixStop("安静"),
     _PrefixStop("闭嘴"),
-    _ExactStop("嘘"),
+    _PrefixStop("好了", glued_followers=("知道了", "我知道了")),
+    _CharRunStop("嘘"),
     _ExactStop("stop"),
 )
+
+_STOP_CHARACTERS = "停嘘"
+#: Commands that yield the floor without being stop words.  「好了」 alone is a
+#: completion acknowledgment, but it may precede a real stop (「好了别说了」).
+_SOFT_STOP_PHRASES = frozenset({"好了"})
+#: Interrupt prefixes that are genuine stop commands (「先停」「你先停」);
+#: every other prefix (「等等」「等一下」) only yields the floor.
+_STOP_PREFIX_COMMANDS = frozenset({"先停", "你先停"})
 
 _STOP_NEGATORS = ("不想", "不能", "不会", "不用", "没有", "不要", "别", "不", "没")
 
 _STOP_TALKING_PHRASES = (
     "先别说",
-    "先停",
-    "你先停",
     "够了",
     "好了",
     "行了",
@@ -530,10 +546,29 @@ def _interrupt_prefix(text: str) -> str | None:
     )
 
 
+def _leading_stop_run(text: str) -> int | None:
+    """End of a leading run of stop characters (「停」「停停」「嘘嘘」).
+
+    The lexeme ``_CharRunStop`` only matches a whole text of that character so
+    that an embedded one (「公交车停了」) is never a command.  A leading run is
+    different: what follows it must peel away as particles or an
+    acknowledgment (「停吧」「停，好的。」), otherwise the text is content
+    (「停车」「停电了」「停好听」).
+    """
+
+    end = 0
+    while end < len(text) and text[end] in _STOP_CHARACTERS:
+        end += 1
+    return end or None
+
+
 def _leading_command(text: str) -> tuple[_StopLexeme | str, int] | None:
     span = _stop_span_at(text, 0)
     if span is not None:
         return span
+    run_end = _leading_stop_run(text)
+    if run_end is not None:
+        return text[:run_end], run_end
     prefix = _interrupt_prefix(text)
     return None if prefix is None else (prefix, len(prefix))
 
@@ -593,18 +628,8 @@ _RESUME_COMMANDS = (
 )
 
 
-def is_interrupt_command_only(text: str) -> bool:
-    """True when the utterance is only stop/wait commands (no real question).
-
-    e.g. 「等等」「嗯，等等，等等。」「等一下」→ True
-         「等一下我想问下周三」→ False (has content beyond the command)
-    """
-    if is_completion_ack_only(text):
-        return True
-    normalized = _normalize_stop_text(text)
-    commands, remainder = _peel_commands(normalized)
-    if not commands:
-        return is_embedded_short_stop(text)
+def _strip_trailing_control_particles(text: str) -> str:
+    remainder = text
     while remainder:
         particle = next(
             (
@@ -621,7 +646,61 @@ def is_interrupt_command_only(text: str) -> bool:
         if particle is None:
             break
         remainder = remainder[: -len(particle)]
-    return not remainder
+    return remainder
+
+
+def is_interrupt_command_only(text: str) -> bool:
+    """True when the utterance is only stop/wait commands (no real question).
+
+    e.g. 「等等」「嗯，等等，等等。」「等一下」→ True
+         「等一下我想问下周三」→ False (has content beyond the command)
+
+    A stop spoken with its own acknowledgment in one final (「停，好的。」
+    「停好了」) peels: the command is the stop, the rest is a particle.
+    """
+    if is_completion_ack_only(text):
+        return True
+    # 「停下来吧」「停啦」: the particle belongs to the command, so strip it
+    # before peeling (「停下来」 is an exact stop, not a prefix).
+    normalized = _strip_trailing_control_particles(_normalize_stop_text(text))
+    commands, remainder = _peel_commands(normalized)
+    if not commands:
+        return is_embedded_short_stop(text)
+    return not _strip_trailing_control_particles(remainder)
+
+
+def is_stop_command_only(text: str) -> bool:
+    """True only for stop words, never a wait or a completion acknowledgment.
+
+    Used where a script must keep playing through anything but an explicit
+    stop (fixed safety playback, compliance 2026-10-21): 「停」「别说了」
+    「先停」 stop it, while 「等等」「等一下」「够了」「好了」 are control turns
+    that yield the floor and must not cut it.
+    """
+
+    normalized = _strip_trailing_control_particles(_normalize_stop_text(text))
+    commands, remainder = _peel_commands(normalized)
+    if not commands:
+        # 「你别说了」: an address before the stop, with nothing after it.
+        hit = _match_stop(normalized)
+        if hit is None or hit.start == 0:
+            return False
+        return not (
+            isinstance(hit.lexeme, _PrefixStop) and hit.lexeme.phrase in _SOFT_STOP_PHRASES
+        )
+    if _strip_trailing_control_particles(remainder):
+        return False
+    strong = False
+    for command in commands:
+        if isinstance(command, _PrefixStop) and command.phrase in _SOFT_STOP_PHRASES:
+            continue
+        if isinstance(command, str):
+            if command not in _STOP_PREFIX_COMMANDS:
+                return False
+            strong = True
+            continue
+        strong = True
+    return strong
 
 
 def is_resume_command_only(text: str) -> bool:

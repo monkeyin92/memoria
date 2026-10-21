@@ -341,7 +341,7 @@ async def test_script_interrupted_mark_keeps_the_tier_copy_until_the_flag_is_set
             after[0].reply_template_id,
             script_interrupted=after[0].script_interrupted,
         )
-        == "这次的提醒话术孩子没有听完，如有危险请拨打110"
+        == "如有危险请拨打110"
     )
     replay = await service.record_minor_crisis(
         minor_user_id="minor-interrupt",

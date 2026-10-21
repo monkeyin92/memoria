@@ -27,6 +27,7 @@ from services.agent.src.conversation_close_router import (
     lexical_playback_control_only,
     rule_conversation_close_only,
 )
+from services.agent.src.orchestration.interruption_guard import is_stop_command_only
 from services.agent.src.voice_core.crisis_script_interrupt import (
     active_subject_id,
     publish_crisis_self_interrupt,
@@ -467,6 +468,22 @@ class MediaPlaybackStopMixin:
         """
 
         if context.runtime.floor.fixed_safety_audible:
+            # Compliance 2026-10-21: an explicit stop word may end a crisis
+            # script at once; every other turn still waits for its end.
+            stop_text = context.pending.playback_stop_text
+            if (
+                context.pending.turn_endpoint_sample == endpoint_sample
+                and stop_text is not None
+                and is_stop_command_only(stop_text)
+            ):
+                logger.info(
+                    "media turn commit released for an explicit stop during fixed safety "
+                    "session=%s endpoint=%s text_len=%s",
+                    context.identity.session_id,
+                    endpoint_sample,
+                    len(stop_text),
+                )
+                return False
             logger.info(
                 "media turn commit held for fixed safety playback session=%s endpoint=%s",
                 context.identity.session_id,
@@ -875,7 +892,7 @@ class MediaPlaybackStopMixin:
         if (
             endpoint is None
             or start is None
-            or not 0 <= start < endpoint <= result.capture_start_sample
+            or endpoint > result.capture_start_sample
             or pending.clock_fact_endpoint_pinned is not None
             or pending.conversation_close_endpoint_pinned is not None
             or pending.live_query_endpoint_pinned is not None
@@ -883,6 +900,16 @@ class MediaPlaybackStopMixin:
             or pending.live_query_forced_text
         ):
             return False
+        # Field 2026-10-21 (session 74cdaf88 S1): a VAD end pinned 236480, then
+        # the turn reopened at 250880.  ``start < endpoint`` was false, so the
+        # range was never asked whether it held words and the stop final
+        # (stop_word=True, text_len=2) was refused as endpoint_already_pinned
+        # until the ASR tail timeout threw the turn away.  An inverted range
+        # cannot hold a word, but only an explicit stop may take it: a wait or
+        # completion turn (「等等」) belongs to the empty tail being retired,
+        # not to a new turn.
+        if start >= endpoint:
+            return is_stop_command_only(result.text)
         return not context.runtime.speech_timeline.projected_text(
             stream_epoch=result.stream_epoch, start_sample=start, end_sample=endpoint
         )
@@ -901,6 +928,10 @@ class MediaPlaybackStopMixin:
         otherwise merge into 「……停」, route as chat and stay held.  A stop
         phrase also replaces the endpoint of an earlier turn that holds no
         words (``_pinned_turn_holds_no_words``), which has nothing to lose.
+
+        The committed turn is marked (``pending.playback_stop_text``) so its
+        route cannot depend on the same text peeling twice: a stop stays the
+        control turn even after it already muted the reply.
         """
 
         if context.identity.client_type != "device":
@@ -948,6 +979,7 @@ class MediaPlaybackStopMixin:
         endpoint = result.capture_end_sample
         pending.turn_endpoint_sample = endpoint
         pending.turn_retire_sample = endpoint
+        pending.playback_stop_text = text
         # Also drops the replaced pin's tail bound: its timer belongs to the old endpoint.
         pending.restart_endpoint_bounds(0.0)
         logger.info(
@@ -963,7 +995,9 @@ class MediaPlaybackStopMixin:
         )
         self._schedule_turn_commit(context)
 
-    async def _stop_reply_for_voice_command(self, context: _MediaVoiceSession) -> bool:
+    async def _stop_reply_for_voice_command(
+        self, context: _MediaVoiceSession, text: str
+    ) -> bool:
         """Carry out a Router-accepted spoken stop like a keyword stop.
 
         ``accept_user_turn`` only suppresses the control turn; the reply task,
@@ -977,7 +1011,7 @@ class MediaPlaybackStopMixin:
             or not context.runtime.floor.interruptible
         ):
             return False
-        if context.runtime.floor.fixed_safety_audible:
+        if context.runtime.floor.fixed_safety_audible and not is_stop_command_only(text):
             logger.info(
                 "media spoken stop ignored during fixed safety playback session=%s",
                 context.identity.session_id,
@@ -1007,8 +1041,12 @@ class MediaPlaybackStopMixin:
             synchronized_transcript=heard,
         )
         context.output.playback.start(cancelled)
+        context.output.playback.discard(previous_fence)
         context.output.provider_complete = False
         context.output.output_complete_emitted = False
+        # The old reply is gone: its announced text must not leak into the next
+        # turn's echo guard or be mistaken for the reply that is speaking.
+        context.output.assistant_text = ""
         if should_pause_asr_for_playback(context.identity):
             await context.provider.pause_asr_for_playback(context.identity)
         await self._cancel_reply_task(

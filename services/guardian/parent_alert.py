@@ -37,7 +37,7 @@ PARENT_ALERT_COPY: Final[Mapping[FixedSafetyTemplateId, ParentAlertCopy]] = Mapp
             summary="孩子说到了自己可能受到伤害",
             robot_said=_ROBOT_SAID_DEFAULT,
             parent_action="尽快当面陪孩子聊聊，先让孩子安心，不反复追问细节。如有危险请拨打110",
-            interrupted_detail="这次的提醒话术孩子没有听完，如有危险请拨打110",
+            interrupted_detail="如有危险请拨打110",
         ),
         "support-other-v1": ParentAlertCopy(
             category_label="孩子提到的安全话题",

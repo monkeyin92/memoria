@@ -1,10 +1,12 @@
-"""A fixed safety script plays to its end (field 2026-10-21 H01).
+"""A fixed safety script is interrupted only by an explicit stop word.
 
-crisis-self-v1 was cut after 5.4 s, before 12356: a 3-character final read as
-a spoken stop superseded it. While a fixed safety script is audible no stop
-word, farewell or next question may stop or supersede it; the turn waits for
-the script's end. These scenarios drive the real registry/runtime with a
-script reply that stays audible until the test releases it.
+Field 2026-10-21 H01 cut crisis-self-v1 after 5.4 s, before 12356, on a final
+the old guard read as a spoken stop.  Product/compliance 2026-10-21 (12:02):
+a crisis script may be ended at once by an explicit stop word (「停」「别说了」,
+the same judgment as an ordinary dialogue), without playing the number
+sentence first; every other interjection, noise, wait or completion turn
+still cannot cut it (#346).  After a stop the record, the pin and the parent
+push are unchanged, and crisis-self/victim mark the unfinished-script detail.
 """
 
 from __future__ import annotations
@@ -40,28 +42,55 @@ async def _finish_script(harness: _StoryHarness) -> None:
 
 @_SCRIPTS
 @pytest.mark.asyncio
-async def test_device_stop_word_does_not_cut_a_fixed_safety_script(
+async def test_device_stop_word_ends_the_crisis_script_at_once(
     script: FixedSafetyScript,
 ) -> None:
+    """「停」 cuts the script before its number sentence; the pair still records."""
+
     async def scenario(harness: _StoryHarness) -> None:
+        published: list[str] = []
+        harness.registry.crisis_script_interrupt_publisher = published.append
         playing = await harness.start_story()
         assert harness.runtime.floor.fixed_safety_audible
         await harness.audio_frames(15, final_text="停")
-        await harness.assert_story_still_playing(playing)
-        await harness.audio_frames(15, final_text="别说了")
-        await harness.assert_story_still_playing(playing)
+        await harness.wait_for(lambda: bool(harness.cancel_effects()))
+        harness.assert_story_stopped_session_open(playing)
+        assert not harness.closed()
+        # crisis-self and victim mark the unfinished script for the parent;
+        # support-other has no hotline sentence in the tier table.
+        expected_marks = 0 if script is SUPPORT_RELAY_SCRIPT else 1
+        assert len(published) == expected_marks
+        if published:
+            assert "停" not in published[0]
 
+    await _run_story(
+        _device_identity(f"safety-stop-{script.template_id}"),
+        scenario,
+        opening=script.display,
+    )
+
+
+@_SCRIPTS
+@pytest.mark.asyncio
+async def test_device_non_stop_turns_do_not_cut_a_fixed_safety_script(
+    script: FixedSafetyScript,
+) -> None:
+    """Wait/completion turns and new questions keep #346 protection."""
+
+    async def scenario(harness: _StoryHarness) -> None:
+        playing = await harness.start_story()
+        assert harness.runtime.floor.fixed_safety_audible
+        for text in ("等一下", "好了", "我们下午几点出发"):
+            await harness.audio_frames(15, final_text=text)
+            await harness.assert_story_still_playing(playing)
         await _finish_script(harness)
         await harness.settle()
         assert harness.cancel_effects() == []
-        assert [
-            d["terminal_event"] for d in harness.deliveries_for(playing) if d["terminal_event"]
-        ] != ["preempted"]
         assert harness.story.reply_calls == 1
         assert not harness.closed()
 
     await _run_story(
-        _device_identity(f"safety-stop-{script.template_id}"),
+        _device_identity(f"safety-nonstop-{script.template_id}"),
         scenario,
         opening=script.display,
     )

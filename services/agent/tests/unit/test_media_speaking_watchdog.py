@@ -266,6 +266,73 @@ async def test_a_stop_that_already_sent_the_terminal_does_not_trip_the_watchdog(
         await harness.close()
 
 
+async def _finish_without_device_ack(harness: _StoryHarness) -> GenerationFence:
+    """The provider finishes and the server sends COMPLETE; the device never acks."""
+
+    story = await harness.start_story()
+    harness.story.release.set()
+    await harness.wait_for(
+        lambda: harness.count(
+            "generation", lambda g: g.action == media_pb2.GENERATION_ACTION_COMPLETE
+        )
+        >= 1,
+        timeout=3.0,
+    )
+    assert harness.context.runtime.assistant_speaking
+    return story
+
+
+@pytest.mark.asyncio
+async def test_a_completed_reply_the_device_never_acknowledged_still_times_out() -> None:
+    """Field 2026-10-21 (session 74cdaf88 S2): server sent everything, device stayed SPEAKING.
+
+    ``generation.completed`` went out at 11:32:58 and no ``playback.ended`` ever
+    came back; the device stayed in SPEAKING for 4+ minutes and
+    ``voice_speaking_stall`` never fired because the old check treated the sent
+    terminal as the device's end.
+    """
+
+    provider = _LongStoryProvider()
+    harness = _with_stall(_StoryHarness(_dev_identity("stall-terminal-unacked"), provider))
+    await harness.start()
+    try:
+        story = await _finish_without_device_ack(harness)
+        context = harness.context
+        await _wait_for_standby(harness, context)
+
+        assert _close_states(harness)[-1].reason == "speaking_stalled"
+        assert context.standby_reason == "speaking_stalled"
+        assert context.ingress.input_revoked
+        # The terminal was already sent for the story: the close must not
+        # pretend to cancel a generation the edge has finished.
+        assert _cancelled_generations(harness) == []
+        assert harness.registry.session_state(harness.identity.session_id) is None
+        assert story is not None
+    finally:
+        provider.release.set()
+        await harness.close()
+
+
+@pytest.mark.asyncio
+async def test_a_completed_reply_the_device_acknowledged_is_not_a_stall() -> None:
+    """A healthy drain reports playback.ended well inside the window."""
+
+    provider = _LongStoryProvider()
+    harness = _with_stall(_StoryHarness(_dev_identity("stall-terminal-acked"), provider))
+    await harness.start()
+    try:
+        await _finish_without_device_ack(harness)
+        await harness.playback_ended()
+        await harness.wait_for(lambda: not harness.runtime.assistant_speaking)
+        await asyncio.sleep(_STALL_S * 3)
+        assert not harness.context.standby_requested
+        assert _close_states(harness) == []
+        assert _cancelled_generations(harness) == []
+    finally:
+        provider.release.set()
+        await harness.close()
+
+
 @pytest.mark.asyncio
 async def test_the_production_window_is_the_documented_15_seconds() -> None:
     assert SPEAKING_STALL_TIMEOUT_S == 15.0

@@ -98,6 +98,19 @@ class MediaSpeakingWatchdogMixin:
             return True
         return context.output.playback.terminal_received(fence)
 
+    def _device_playback_finished(self, context: _MediaVoiceSession, fence: GenerationFence) -> bool:
+        """True only once the device itself reported this generation's end.
+
+        A generation terminal on the wire is the server's instruction, not the
+        device's exit from SPEAKING: the firmware flushes its queue and acks
+        with ``playback.ended``.  Field 2026-10-21 (session 74cdaf88):
+        ``generation.completed`` went out at 11:32:58 and the device never
+        acked; it stayed in SPEAKING for 4+ minutes because this check treated
+        the sent terminal as the end and the watchdog stood down.
+        """
+
+        return context.output.playback.terminal_received(fence)
+
     def _speaking_output_active(self, context: _MediaVoiceSession) -> bool:
         """Return whether the server still owes the device an audible ending."""
 
@@ -184,7 +197,9 @@ class MediaSpeakingWatchdogMixin:
                     return
                 if not self._speaking_output_active(context):
                     return
-                if self._fence_terminal_sent(context, fence):
+                # A terminal the server sent is not a terminal the device
+                # applied; only its playback receipt ends this wait.
+                if self._device_playback_finished(context, fence):
                     return
                 if not self.bridge.has_live_connection(context.identity.session_id):
                     # A reconnect suspends pacing inside its bounded grace;

@@ -47,7 +47,7 @@ function failingSave(error) {
 }
 
 const SELF_HARM_UNFINISHED = "这次的提醒话术孩子没有听完，如需帮助可拨打心理援助热线12356";
-const VICTIM_UNFINISHED = "这次的提醒话术孩子没有听完，如有危险请拨打110";
+const VICTIM_UNFINISHED = "如有危险请拨打110";
 
 test("the detail shows category, summary, what the robot said and what to do, never the words", async () => {
   const harness = await openAttention({ id: "n1" });
@@ -78,6 +78,9 @@ test("an interrupted crisis script keeps the headline and shows the server sente
     assert.ok(text.startsWith("有一条需要你关注的对话"));
     assert.ok(text.includes(SELF_HARM_UNFINISHED));
     assert.equal(text.includes(VICTIM_UNFINISHED), false);
+    // 「放在建议下面」: the unfinished-script line follows the advice, not the summary.
+    const advice = "找个安静的时间陪孩子聊聊，先听孩子说，不急着讲道理。如需帮助可拨打心理援助热线12356";
+    assert.ok(text.indexOf(advice) < text.indexOf(SELF_HARM_UNFINISHED));
     assert.equal(text.includes("这段总结由 AI 生成"), false);
   } finally {
     harness.restore();
