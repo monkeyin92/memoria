@@ -177,6 +177,16 @@ def _build_realtime_tts(settings: Any) -> Any:
         )
 
         failover_config = StepFunFailoverConfig.from_env()
+        failover_config = replace(
+            failover_config,
+            fixed_safety_primary_first=bool(
+                getattr(
+                    settings,
+                    "fixed_safety_primary_first",
+                    failover_config.fixed_safety_primary_first,
+                )
+            ),
+        )
         PROCESS_TTS_BREAKER.configure(failover_config)
         return StepFunPrimaryTTS(
             primary=_stepfun_tts(settings),

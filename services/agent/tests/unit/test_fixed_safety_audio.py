@@ -57,6 +57,21 @@ _TEMPLATE_IDS = (
     "support-other-v1",
     "daily-limit",
 )
+# Exactly the four approved clips' PCM hashes from the reviewed manifest.
+_APPROVED_PCM_SHA256 = {
+    "crisis-self-v1": (
+        "f28af42f21ab1efc8c641c58bc4aba86cf9d7353812af6d3e90eac039f1fb545"
+    ),
+    "victim-support-v1": (
+        "6660d1446cd9fbcb6019cc86fe0cd0bc2f1333aa7cde427432008f20edcf5e3e"
+    ),
+    "support-other-v1": (
+        "67d919eca0a4d30089b171cfc9caa806b3788ac60180964cf2e0014b0c2a5a3c"
+    ),
+    "daily-limit": (
+        "c1fb628b85151b9588d49cc1663c516fcfc890e9e2953663e2b2bfade0b8bc93"
+    ),
+}
 
 
 def _script_for(template_id: str) -> FixedSafetyScript:
@@ -99,6 +114,58 @@ class _InnerTTS:
         _ = kwargs
         self.streams += 1
         return _InnerStream(self)
+
+
+class _RuntimePcmStream:
+    def __init__(self, pcm: bytes) -> None:
+        self._pcm = pcm
+        self._emitted = False
+
+    def push_text(self, text: str) -> None:
+        _ = text
+
+    def end_input(self) -> None:
+        return None
+
+    def __aiter__(self) -> _RuntimePcmStream:
+        return self
+
+    async def __anext__(self) -> bytes:
+        if self._emitted:
+            raise StopAsyncIteration
+        self._emitted = True
+        return self._pcm
+
+    async def aclose(self) -> None:
+        return None
+
+
+class _RuntimePcmTTS:
+    """A live provider that produces a take distinguishable from the clips."""
+
+    def __init__(self, pcm: bytes) -> None:
+        self.pcm = pcm
+        self.pushed: list[str] = []
+        self.streams = 0
+
+    def stream(self, **kwargs: Any) -> _RuntimePcmStream:
+        _ = kwargs
+        self.streams += 1
+        return _RuntimePcmStream(self.pcm)
+
+
+class _DoubaoRealtimeTTS:
+    """A Doubao double that fails the test if a valid clip opens it."""
+
+    provider = "volcengine_doubao"
+
+    def __init__(self) -> None:
+        self.streams = 0
+
+    def stream(self, **kwargs: Any) -> Any:
+        _ = kwargs
+        self.streams += 1
+        raise AssertionError("Doubao must not synthesize an approved fixed-safety clip")
 
 
 def _load(directory: Path = _AUDIO_DIR) -> FixedSafetyAudioCatalog:
@@ -225,6 +292,127 @@ async def test_fixed_safety_audio_crisis_tiers_and_daily_limit_play_prerecorded_
         assert inner.streams == 0
         assert pcm.startswith(template.pcm)
         assert set(pcm[len(template.pcm) :]) <= {0}
+
+
+@pytest.mark.asyncio
+async def test_fixed_safety_prerecorded_plays_before_any_realtime_tts_including_doubao() -> (
+    None
+):
+    catalog = _load()
+    for template_id in _TEMPLATE_IDS:
+        template = catalog.get(template_id)
+        assert template is not None and template.pcm
+        inner = _DoubaoRealtimeTTS()
+        wrapper = FixedSafetyTTS(cast(Any, inner), catalog)
+        if template_id == "daily-limit":
+            identity = _identity(f"precedes-live-daily-{template_id}")
+            adapter = ExistingVoiceProviderAdapter(
+                asr_session_factory=cast(Any, lambda: None),
+                language_model=_ScriptLLM(CRISIS_SELF_SCRIPT),
+                speech_synthesis=cast(Any, wrapper),
+            )
+            chunks = [
+                chunk
+                async for chunk in adapter.generate_output(
+                    identity,
+                    _TtsIntent(MINOR_DAILY_LIMIT_PHRASE),
+                    _fence(identity),
+                    work_id="precedes-live-daily-limit",
+                    source_start_sample=0,
+                )
+            ]
+            pcm = b"".join(chunk.pcm_s16le for chunk in chunks)
+        else:
+            script = _script_for(template_id)
+            identity = _identity(f"precedes-live-crisis-{template_id}")
+            adapter = _adapter(script, wrapper)
+            pcm = await _reply_pcm(adapter, identity, _fence(identity), script)
+        assert inner.streams == 0
+        assert pcm.startswith(template.pcm)
+
+
+@pytest.mark.asyncio
+async def test_crisis_turn_plays_only_approved_prerecorded_pcm_sha256() -> None:
+    """Every crisis tier and daily-limit turn emits exactly one approved PCM."""
+
+    catalog = _load()
+    for template_id in _TEMPLATE_IDS:
+        template = catalog.get(template_id)
+        assert template is not None and template.pcm
+        assert template.pcm_sha256 == _APPROVED_PCM_SHA256[template_id]
+        inner = _InnerTTS()
+        wrapper = FixedSafetyTTS(inner, catalog)
+        if template_id == "daily-limit":
+            identity = _identity(f"sha256-daily-{template_id}")
+            adapter = ExistingVoiceProviderAdapter(
+                asr_session_factory=cast(Any, lambda: None),
+                language_model=_ScriptLLM(CRISIS_SELF_SCRIPT),
+                speech_synthesis=cast(Any, wrapper),
+            )
+            chunks = [
+                chunk
+                async for chunk in adapter.generate_output(
+                    identity,
+                    _TtsIntent(MINOR_DAILY_LIMIT_PHRASE),
+                    _fence(identity),
+                    work_id="daily-limit-sha256",
+                    source_start_sample=0,
+                )
+            ]
+            pcm = b"".join(chunk.pcm_s16le for chunk in chunks)
+        else:
+            script = _script_for(template_id)
+            identity = _identity(f"sha256-crisis-{template_id}")
+            adapter = _adapter(script, wrapper)
+            pcm = await _reply_pcm(adapter, identity, _fence(identity), script)
+        assert inner.streams == 0
+        assert hashlib.sha256(pcm).hexdigest() == _APPROVED_PCM_SHA256[template_id]
+
+
+@pytest.mark.asyncio
+async def test_runtime_synthesized_crisis_audio_is_never_cached_as_approved(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A live fallback take must not become a later turn's approved audio."""
+
+    runtime_pcm = b"\x42\x00" * 960
+    broken_directory = _tampered_copy(tmp_path, pcm_sha256="0" * 64)
+    runtime_inner = _RuntimePcmTTS(runtime_pcm)
+    broken_wrapper = FixedSafetyTTS(runtime_inner, _load(broken_directory))
+    identity = _identity("runtime-synth-fallback")
+    broken_fence = _fence(identity)
+    broken_adapter = _adapter(CRISIS_SELF_SCRIPT, broken_wrapper)
+
+    with caplog.at_level("WARNING"):
+        first_pcm = await _reply_pcm(
+            broken_adapter, identity, broken_fence, CRISIS_SELF_SCRIPT
+        )
+
+    assert first_pcm == runtime_pcm
+    assert runtime_inner.streams == 1
+    assert broken_adapter.fixed_safety_heard_complete(
+        broken_fence, len(runtime_pcm) // 2
+    ) is None
+    assert any(
+        "template_id=crisis-self-v1" in record.getMessage()
+        and "not_playable" in record.getMessage()
+        for record in caplog.records
+    )
+
+    approved_inner = _InnerTTS()
+    approved_wrapper = FixedSafetyTTS(approved_inner, _load())
+    approved_identity = _identity("approved-after-runtime-synth")
+    approved_pcm = await _reply_pcm(
+        _adapter(CRISIS_SELF_SCRIPT, approved_wrapper),
+        approved_identity,
+        _fence(approved_identity),
+        CRISIS_SELF_SCRIPT,
+    )
+
+    assert approved_inner.streams == 0
+    assert hashlib.sha256(approved_pcm).hexdigest() == _APPROVED_PCM_SHA256["crisis-self-v1"]
+    assert approved_pcm != runtime_pcm
 
 
 @pytest.mark.asyncio

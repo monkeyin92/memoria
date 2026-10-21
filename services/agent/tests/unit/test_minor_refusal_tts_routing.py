@@ -22,6 +22,7 @@ from services.agent.src.prompts import (
     MINOR_QUIET_HOURS_PHRASE,
 )
 from services.agent.src.providers.tts_failover import (
+    StepFunFailoverConfig,
     StepFunPrimaryTTS,
     TTSFailoverBreaker,
 )
@@ -146,6 +147,7 @@ def _speech() -> tuple[StepFunPrimaryTTS, _Engine, _Engine]:
     wrapper = StepFunPrimaryTTS(
         primary=primary,
         backup=backup,
+        config=StepFunFailoverConfig(fixed_safety_primary_first=False),
         breaker=TTSFailoverBreaker(failures=3, open_s=30),
     )
     return wrapper, primary, backup

@@ -166,6 +166,12 @@ class AgentSettings(BaseSettings):
     fixed_safety_audio_dir: str = Field(
         default="infra/voices/fixed_safety", alias="FIXED_SAFETY_AUDIO_DIR"
     )
+    # Live TTS order only when a stored clip is missing or fails its hash:
+    # true starts on StepFun, false starts on Doubao. The clip always plays
+    # before either engine.
+    fixed_safety_primary_first: bool = Field(
+        default=True, alias="STEPFUN_TTS_FIXED_SAFETY_PRIMARY_FIRST"
+    )
 
     media_bridge_grpc_enabled: bool = Field(
         default=False, alias="MEDIA_BRIDGE_GRPC_ENABLED"

@@ -199,6 +199,7 @@ def _speech(
             fixed_safety_budget_s=2.0,
             fixed_safety_backup_first_audio_s=0.05,
             fixed_safety_primary_first_audio_s=0.05,
+            fixed_safety_primary_first=False,
         ),
         breaker=TTSFailoverBreaker(failures=3, open_s=30),
     )

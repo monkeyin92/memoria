@@ -10,6 +10,7 @@ SDK in the media bridge.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib
 import inspect
 import logging
@@ -60,26 +61,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# An approved fixed safety script is spoken from one whole-sentence synthesis so a
-# provider fault can never truncate it mid-script, and the exact audio is kept per
-# voice for the process: a later failure replays it instead of leaving the child in
-# silence (C1, 2026-10-21 03:51:53Z: the first Doubao attempt failed and the retry
-# only produced audio 1.9 s later).
+# The approved clip is the only source for a fixed-safety script. A live
+# whole-sentence synthesis exists only while the stored clip is missing or fails
+# its manifest hash, so a provider fault can never truncate the line mid-script.
+# The fallback is retried once inside the opening budget (C1, 2026-10-21
+# 03:51:53Z: the first Doubao attempt failed and the retry only produced audio
+# 1.9 s later).
 _FIXED_SAFETY_SYNTHESIS_ATTEMPTS = 2
-_FIXED_SAFETY_CACHE_MAX_ENTRIES = 6
-_FIXED_SAFETY_PCM_CACHE: dict[tuple[str, str], bytes] = {}
-
-
-def _remember_fixed_safety_pcm(key: tuple[str, str], pcm: bytes) -> None:
-    """Keep the most recently rendered approved script audio, bounded.
-
-    Only fixed-safety copy ever lands here (no child audio, no model text), and
-    the key carries the bound voice so a different voice re-synthesizes.
-    """
-
-    _FIXED_SAFETY_PCM_CACHE[key] = pcm
-    while len(_FIXED_SAFETY_PCM_CACHE) > _FIXED_SAFETY_CACHE_MAX_ENTRIES:
-        _FIXED_SAFETY_PCM_CACHE.pop(next(iter(_FIXED_SAFETY_PCM_CACHE)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -1447,32 +1435,35 @@ class ExistingVoiceProviderAdapter:
         cancellation: CancellationContext,
         cancel_event: asyncio.Event,
     ) -> AsyncIterator[MediaReplyChunk]:
-        """Speak one approved safety script from a whole-sentence, cached synthesis.
+        """Speak one approved safety script from its stored clip first.
 
-        The crisis line is the one reply a child must hear in full.  Streaming it
-        phrase by phrase starts sooner, but a provider fault after the first phrase
-        leaves the rest unheard and cannot be retried without repeating words.  One
-        whole-sentence request is synthesized before the first frame, retried when
-        the provider fails, cached per voice, and replayed from that cache if the
-        provider stays down (C1, 2026-10-21 03:51:53Z).  Nothing reaches the device
-        until a whole take exists, so a Doubao drop after part of the line needs no
-        device stop: the discarded partial never played, and the device starts the
-        replacement once from sample zero.
+        The crisis line is the one reply a child must hear in full. The four
+        approved clips under ``infra/voices/fixed_safety`` are played directly,
+        without a live provider, whenever the manifest's ``pcm_sha256`` still
+        matches. Only a missing file or a failed PCM/file hash degrades to live
+        TTS, starting on StepFun by default
+        (``STEPFUN_TTS_FIXED_SAFETY_PRIMARY_FIRST``) or on Doubao when that
+        switch is off; nothing is synthesized into an approved cache. A live
+        take is still buffered whole so a dropped provider cannot truncate the
+        line, and the fallback is retried once inside the opening budget (C1,
+        2026-10-21 03:51:53Z).
         """
 
         spoken = "".join(phrase.spoken for phrase in phrases)
-        pcm, source = await self._fixed_safety_script_pcm(
-            spoken,
-            fence,
-            cancellation,
-            cancel_event,
-        )
+        template = self._approved_prerecorded_template(spoken)
+        if template is not None:
+            pcm = template.pcm or b""
+            source = "prerecorded"
+            self._prerecorded_fixed_safety[fence] = (template.spoken, len(pcm) // 2)
+        else:
+            pcm, source = await self._fixed_safety_script_pcm(
+                spoken,
+                fence,
+                cancellation,
+                cancel_event,
+            )
         if cancel_event.is_set() or not pcm:
             return
-        template = self._prerecorded_fixed_safety_template(spoken, pcm)
-        if template is not None:
-            self._prerecorded_fixed_safety[fence] = (template.spoken, len(pcm) // 2)
-            source = "prerecorded"
         logger.info(
             "fixed safety speech ready source=%s text_len=%d bytes=%d session=%s turn=%s",
             source,
@@ -1488,21 +1479,42 @@ class ExistingVoiceProviderAdapter:
         ):
             yield chunk
 
-    def _prerecorded_fixed_safety_template(
+    def _approved_prerecorded_template(
         self,
         spoken: str,
-        pcm: bytes,
     ) -> Any | None:
-        """The stored clip that produced ``pcm``, or ``None`` for live audio."""
+        """The stored clip for ``spoken``, only when its PCM matches the manifest."""
 
         catalog = getattr(self.speech_synthesis, "fixed_safety_catalog", None)
         match = getattr(catalog, "match", None)
         if not callable(match):
+            logger.warning("fixed safety prerecorded unavailable reason=no_catalog")
             return None
         template = match(spoken)
-        if template is None or not getattr(template, "playable", False):
+        if template is None:
+            logger.warning(
+                "fixed safety prerecorded unavailable reason=not_in_catalog "
+                "spoken_sha256_16=%s",
+                hashlib.sha256(spoken.encode("utf-8")).hexdigest()[:16],
+            )
             return None
-        return template if template.pcm == pcm else None
+        template_id = str(getattr(template, "template_id", "") or "unknown")
+        pcm = getattr(template, "pcm", None)
+        if not getattr(template, "playable", False) or not isinstance(pcm, (bytes, bytearray)):
+            logger.warning(
+                "fixed safety prerecorded unavailable template_id=%s reason=not_playable",
+                template_id,
+            )
+            return None
+        expected = str(getattr(template, "pcm_sha256", "") or "")
+        digest = hashlib.sha256(bytes(pcm)).hexdigest()
+        if not expected or digest != expected:
+            logger.warning(
+                "fixed safety prerecorded rejected template_id=%s reason=pcm_sha256_mismatch",
+                template_id,
+            )
+            return None
+        return template
 
     def fixed_safety_heard_complete(
         self,
@@ -1532,22 +1544,19 @@ class ExistingVoiceProviderAdapter:
         cancellation: CancellationContext,
         cancel_event: asyncio.Event,
     ) -> tuple[bytes, str]:
-        """Synthesize the whole approved script inside the five-second opening budget.
+        """Synthesize the whole approved script as the live fallback.
 
+        Used only when the stored clip is missing or fails its manifest hash.
         The script is pushed to the bound speech engine as one unit, so a
         provider that loses the connection mid-unit still delivers the full line
-        (the wrapper buffers each engine's take, drops a partial one, and speaks
-        the whole text again on StepFun). The wrapper's fixed-safety cascade
-        tries Doubao and then StepFun inside its own allowance; the deadline here
-        bounds every synthesis attempt so a cold, unreachable provider cannot
-        exceed the five-second crisis budget. A cached approved take is replayed
-        immediately after the first failed attempt, because waiting for a second
-        cascade would spend the budget the child's line needs. Only a complete
-        take is cached, so a half line can never join a whole one.
+        (the failover wrapper buffers each engine's take, drops a partial one,
+        and speaks the whole text again on the next engine). That cascade
+        follows ``STEPFUN_TTS_FIXED_SAFETY_PRIMARY_FIRST`` inside its own
+        allowance; the deadline here bounds every attempt so a cold,
+        unreachable provider cannot exceed the five-second crisis budget.
+        Nothing synthesized here is stored as an approved take.
         """
 
-        key = (self._fixed_safety_voice_key(), spoken)
-        cached = _FIXED_SAFETY_PCM_CACHE.get(key)
         deadline = monotonic() + self.config.fixed_safety_opening_budget_s
         failure: Exception | None = None
         for attempt in range(1, _FIXED_SAFETY_SYNTHESIS_ATTEMPTS + 1):
@@ -1577,7 +1586,6 @@ class ExistingVoiceProviderAdapter:
                     fence.session_id,
                 )
             if pcm:
-                _remember_fixed_safety_pcm(key, pcm)
                 return pcm, "synthesis"
             failure = RuntimeError("speech provider returned no audio")
             logger.warning(
@@ -1588,16 +1596,6 @@ class ExistingVoiceProviderAdapter:
                 len(spoken),
                 fence.session_id,
             )
-            if cached is not None:
-                break
-        if cached is not None:
-            logger.warning(
-                "fixed safety speech replayed from cache text_len=%d bytes=%d session=%s",
-                len(spoken),
-                len(cached),
-                fence.session_id,
-            )
-            return cached, "cache"
         raise RuntimeError("fixed safety script produced no audio") from failure
 
     async def _synthesize_whole_script_once(
@@ -1633,12 +1631,6 @@ class ExistingVoiceProviderAdapter:
             chosen = cast(Any, self.speech_synthesis).last_engine()
             report(chosen, index=0, switched=getattr(chosen, "provider", "") != "stepfun")
         return bytes(pcm)
-
-    def _fixed_safety_voice_key(self) -> str:
-        return "|".join(
-            str(getattr(self.speech_synthesis, attribute, "") or "")
-            for attribute in ("current_model", "current_voice", "current_voice_profile_id")
-        )
 
     async def _emit_fixed_safety_pcm(
         self,
