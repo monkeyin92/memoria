@@ -260,6 +260,7 @@ def test_script_names_no_release_tag_but_the_data_tree() -> None:
         "20261021-stepfun-c272af5",
         "20261021-pr368-dd98c4a",
         "20261021-main-f14be64",
+        "20261021-pr376-8dda764",
     }
     for retired in (
         "$OLD",
@@ -403,6 +404,9 @@ MAIN_F14BE64_BRIDGE_OVERRIDE = (
 )
 MAIN_F14BE64_BRIDGE_OVERRIDE_SHA = (
     "4cfa1733236927709435c3f068276835a009de8e3603ba2bba08571cc96610cf"
+)
+PR376_BRIDGE_OVERRIDE_SHA = (
+    "f7a3173d46ec1feee656d8bb6abffbdf509c6b1301c930c50614b5c8c9cf60a1"
 )
 
 _HOST_REPO = {
@@ -764,6 +768,12 @@ def test_the_override_whitelist_pins_every_persisted_copy() -> None:
             MAIN_F14BE64_BRIDGE_OVERRIDE_SHA,
             "/tmp/override-bridge-20261021-main-f14be64.yml",
         ),
+        (
+            "/opt/memoria/component-releases/20261021-pr376-8dda764/"
+            "override-bridge-20261021-pr376-8dda764.yml",
+            PR376_BRIDGE_OVERRIDE_SHA,
+            "/tmp/override-bridge-20261021-pr376-8dda764.yml",
+        ),
     ):
         assert path in script
         assert sha in script
@@ -1020,6 +1030,13 @@ def test_freeze_accepts_the_stepfun_whitelist_entries(tmp_path: Path) -> None:
             "override-bridge-20261021-main-f14be64.yml",
             MAIN_F14BE64_BRIDGE_OVERRIDE_SHA,
             "/tmp/override-bridge-20261021-main-f14be64.yml",
+        ),
+        (
+            "voice-core-media-bridge",
+            "/opt/memoria/component-releases/20261021-pr376-8dda764/"
+            "override-bridge-20261021-pr376-8dda764.yml",
+            PR376_BRIDGE_OVERRIDE_SHA,
+            "/tmp/override-bridge-20261021-pr376-8dda764.yml",
         ),
     ],
 )
