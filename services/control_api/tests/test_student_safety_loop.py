@@ -13,6 +13,7 @@ import hashlib
 import json
 import logging
 import re
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,7 @@ from services.control_api.tests.test_interaction_api import (
 from services.guardian.crisis import minor_crisis_event_id
 from services.guardian.parent_alert import PARENT_ALERT_COPY, alert_time_label
 from services.session_runtime.profile_service import verify_runtime_profile_payload
+from testing import app_store
 
 _RESPONSE_PLAN_TOKEN = "p0-04-student-safety-plan-token-long-enough"
 _POLICY_TOKEN = "p0-04-student-safety-policy-token-long-enough"
@@ -738,6 +740,114 @@ async def test_guardian_notification_list_is_guardian_scoped_and_needs_an_active
             "subject_capability_forbidden",
             "minor_forbidden",
         }
+
+
+@pytest.mark.asyncio
+async def test_guardian_notification_detail_rejects_unbound_accounts_and_guessed_ids(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """详情只给当前仍有有效绑定的家长，猜 id、旁人和孩子本人都拿不到。"""
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        _, parent_headers, link, child, child_headers = await _bind_family(
+            client,
+            app,
+            parent_username="safety-detail-parent",
+            child_username="safety-detail-child",
+            binding_key="safety-detail",
+        )
+        session = await _minor_session(
+            client,
+            app,
+            child=child,
+            child_headers=child_headers,
+            link=link,
+            parent_headers=parent_headers,
+            binding_key="safety-detail",
+        )
+        crisis = await _response_plan(
+            client,
+            session_id=session["session_id"],
+            query=_CRISIS_QUERY,
+            turn_id=1,
+            generation_id=1,
+        )
+        assert crisis.status_code == 200
+
+        listing = await client.get("/v1/guardian/notifications", headers=parent_headers)
+        assert listing.status_code == 200, listing.text
+        (notification,) = listing.json()["items"]
+        notification_id = notification["notification_id"]
+        detail_path = f"/v1/guardian/notifications/{notification_id}"
+
+        # a) The bound guardian can read the alert.
+        bound = await client.get(detail_path, headers=parent_headers)
+        assert bound.status_code == 200, bound.text
+        assert bound.json()["notification_id"] == notification_id
+
+        # b) Another verified adult with a WeChat identity is still a stranger.
+        stranger, _ = await _register(client, "safety-detail-stranger")
+        _mark_verified_adult(app, stranger["user_id"])
+        stranger_headers = await _login(client, "safety-detail-stranger")
+        app.state.memory_store.bind_external_identities(
+            preferred_user_id=stranger["user_id"],
+            identities={"wechat_openid": "detail-stranger-openid"},
+            now=datetime.now(UTC).isoformat(),
+        )
+        stranger_view = await client.get(detail_path, headers=stranger_headers)
+        assert stranger_view.status_code in {403, 404}, stranger_view.text
+        if stranger_view.status_code == 404:
+            assert stranger_view.json()["detail"] == {
+                "code": "guardian_notification_not_found"
+            }
+
+        # c) A guessed-but-valid UUID is not found, even for the bound guardian.
+        guessed = await client.get(
+            f"/v1/guardian/notifications/{uuid.uuid4()}", headers=parent_headers
+        )
+        assert guessed.status_code == 404
+        assert guessed.json()["detail"] == {"code": "guardian_notification_not_found"}
+
+        # d) The child has no guardian capability.
+        child_view = await client.get(detail_path, headers=child_headers)
+        assert child_view.status_code == 403, child_view.text
+
+        # 解绑前仍绑定，家长列表里还有这一条。
+        still_bound = await client.get("/v1/guardian/notifications", headers=parent_headers)
+        assert still_bound.status_code == 200, still_bound.text
+        assert len(still_bound.json()["items"]) == 1
+
+        # e) Revoking the link takes the alert away with it. There is no
+        # self-service unlink route on this branch, so the owner row is moved to
+        # the same revoked state the store contract tests use.
+        app_store.execute(
+            str(tmp_path / "memoria.sqlite3"),
+            "UPDATE guardian_links SET status = 'revoked', revoked_at = ? WHERE link_id = ?",
+            (datetime.now(UTC).isoformat(), link["link_id"]),
+        )
+        after_unbind = await client.get(detail_path, headers=parent_headers)
+        assert after_unbind.status_code == 404, after_unbind.text
+        assert after_unbind.json()["detail"] == {
+            "code": "guardian_notification_not_found"
+        }
+        after_unbind_read = await client.put(
+            f"{detail_path}/read", headers=parent_headers
+        )
+        assert after_unbind_read.status_code == 404, after_unbind_read.text
+
+        after_unbind_list = await client.get(
+            "/v1/guardian/notifications", headers=parent_headers
+        )
+        assert after_unbind_list.status_code == 200, after_unbind_list.text
+        assert after_unbind_list.json()["items"] == []
+        after_unbind_unread = await client.get(
+            "/v1/guardian/notifications/unread", headers=parent_headers
+        )
+        assert after_unbind_unread.status_code == 200, after_unbind_unread.text
+        assert after_unbind_unread.json() == {"newest": None, "others_count": 0}
 
 
 @pytest.mark.asyncio

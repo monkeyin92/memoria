@@ -54,10 +54,7 @@ from services.control_api.app.governance_wiring import (
     claim_bound_child_subject_ids,
     install_subject_deletion,
 )
-from services.control_api.app.guardian_push import (
-    app_display_name_resolver,
-    build_crisis_push_worker,
-)
+from services.control_api.app.guardian_push import build_crisis_push_worker
 from services.control_api.app.lifespan_resources import LifespanResources, SharedPostgresPools
 from services.control_api.app.media_runtime import mint_streamcore_token
 from services.control_api.app.media_slo import MediaSLOGate
@@ -963,7 +960,6 @@ async def _wire_services(w: Wiring) -> None:
         crisis_push_worker = build_crisis_push_worker(
             settings,
             cast(CrisisPushStorePort, guardian_store),
-            display_name=app_display_name_resolver(app),
         )
         if crisis_push_worker is not None:
             w.start(crisis_push_worker)
