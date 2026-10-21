@@ -345,7 +345,7 @@ async def test_first_packet_failure_replays_the_whole_sentence_on_doubao() -> No
 
 
 @pytest.mark.asyncio
-async def test_failure_after_a_sentence_audio_skips_its_remainder_and_never_switches_back() -> None:
+async def test_failure_after_a_sentence_audio_repeats_the_unit_on_doubao() -> None:
     async def handler(server: MockStepFunServer, ws: Any) -> None:
         await _connection(server, ws)
         while True:
@@ -401,7 +401,10 @@ async def test_failure_after_a_sentence_audio_skips_its_remainder_and_never_swit
     assert joined.endswith(b"\x02\x00" * 240)
     assert len(joined) > len(PCM) + 240 * 2
     assert server.texts == ["第一句。", "第二句。"]
-    assert backup.received == ["第三句。", "第四句。"]
+    # A unit that dies after its first packet is re-spoken whole on Doubao: a
+    # truncated sentence is worse than a repeated one, especially for the approved
+    # fixed safety script, which the media adapter now pushes as a single unit.
+    assert backup.received == ["第二句。", "第三句。", "第四句。"]
     assert fragments == [
         (0, "stepfun", False),
         (1, "stepfun", False),

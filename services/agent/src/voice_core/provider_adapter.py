@@ -49,6 +49,27 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# An approved fixed safety script is spoken from one whole-sentence synthesis so a
+# provider fault can never truncate it mid-script, and the exact audio is kept per
+# voice for the process: a later failure replays it instead of leaving the child in
+# silence (C1, 2026-10-21 03:51:53Z: the first Doubao attempt failed and the retry
+# only produced audio 1.9 s later).
+_FIXED_SAFETY_SYNTHESIS_ATTEMPTS = 2
+_FIXED_SAFETY_CACHE_MAX_ENTRIES = 6
+_FIXED_SAFETY_PCM_CACHE: dict[tuple[str, str], bytes] = {}
+
+
+def _remember_fixed_safety_pcm(key: tuple[str, str], pcm: bytes) -> None:
+    """Keep the most recently rendered approved script audio, bounded.
+
+    Only fixed-safety copy ever lands here (no child audio, no model text), and
+    the key carries the bound voice so a different voice re-synthesizes.
+    """
+
+    _FIXED_SAFETY_PCM_CACHE[key] = pcm
+    while len(_FIXED_SAFETY_PCM_CACHE) > _FIXED_SAFETY_CACHE_MAX_ENTRIES:
+        _FIXED_SAFETY_PCM_CACHE.pop(next(iter(_FIXED_SAFETY_PCM_CACHE)))
+
 
 @dataclass(frozen=True, slots=True)
 class ExistingVoiceProviderConfig:
@@ -872,6 +893,17 @@ class ExistingVoiceProviderAdapter:
             max_audio_end_sample=max_audio_end_sample,
         )
 
+    def is_fixed_safety_reply(self, fence: GenerationFence) -> bool:
+        """Whether this generation speaks an approved fixed safety script.
+
+        The media session asks before the first frame reaches the device: a reply
+        that is a crisis line must not be superseded by a wordless user turn (C1,
+        2026-10-21).  The fence is marked when the phrase stream yields the script,
+        which is before any text reaches the speech provider.
+        """
+
+        return fence in self._fixed_safety_fences
+
     async def interrupted_timed_text_spans(self, fence: GenerationFence) -> tuple[Any, ...]:
         """Return only the verified timed prefix available at interruption."""
 
@@ -1042,6 +1074,22 @@ class ExistingVoiceProviderAdapter:
             first_phrase = await anext(reply_iter)
         except StopAsyncIteration:
             await reply.aclose()
+            return
+
+        if fence in self._fixed_safety_fences:
+            script_phrases = [first_phrase]
+            try:
+                async for phrase in reply_iter:
+                    script_phrases.append(phrase)
+            finally:
+                await reply.aclose()
+            async for chunk in self._stream_fixed_safety_script(
+                script_phrases,
+                fence,
+                cancellation,
+                cancel_event,
+            ):
+                yield chunk
             return
 
         sample_origin = 0
@@ -1298,6 +1346,167 @@ class ExistingVoiceProviderAdapter:
                     await closed
             self._active_speech_streams.pop(fence, None)
             self._generation_output_ends.pop(fence, None)
+
+    async def _stream_fixed_safety_script(
+        self,
+        phrases: list[SpokenPhrase],
+        fence: GenerationFence,
+        cancellation: CancellationContext,
+        cancel_event: asyncio.Event,
+    ) -> AsyncIterator[MediaReplyChunk]:
+        """Speak one approved safety script from a whole-sentence, cached synthesis.
+
+        The crisis line is the one reply a child must hear in full.  Streaming it
+        phrase by phrase starts sooner, but a provider fault after the first phrase
+        leaves the rest unheard and cannot be retried without repeating words.  One
+        whole-sentence request is synthesized before the first frame, retried when
+        the provider fails, cached per voice, and replayed from that cache if the
+        provider stays down (C1, 2026-10-21 03:51:53Z).
+        """
+
+        spoken = "".join(phrase.spoken for phrase in phrases)
+        pcm, source = await self._fixed_safety_script_pcm(
+            spoken,
+            fence,
+            cancellation,
+            cancel_event,
+        )
+        if cancel_event.is_set() or not pcm:
+            return
+        logger.info(
+            "fixed safety speech ready source=%s text_len=%d bytes=%d session=%s turn=%s",
+            source,
+            len(spoken),
+            len(pcm),
+            fence.session_id,
+            fence.turn_id,
+        )
+        async for chunk in self._emit_fixed_safety_pcm(
+            pcm,
+            display="".join(phrase.display for phrase in phrases),
+            fence=fence,
+        ):
+            yield chunk
+
+    async def _fixed_safety_script_pcm(
+        self,
+        spoken: str,
+        fence: GenerationFence,
+        cancellation: CancellationContext,
+        cancel_event: asyncio.Event,
+    ) -> tuple[bytes, str]:
+        """Synthesize the whole approved script, retrying before falling back to cache.
+
+        The script is pushed to the bound speech engine as one unit so a provider
+        that loses the connection mid-unit still delivers the full line (StepFun
+        switches the whole unit to its Doubao backup), and an attempt that fails
+        is repeated before the cached take is used.
+        """
+
+        key = (self._fixed_safety_voice_key(), spoken)
+        cached = _FIXED_SAFETY_PCM_CACHE.get(key)
+        failure: Exception | None = None
+        for attempt in range(1, _FIXED_SAFETY_SYNTHESIS_ATTEMPTS + 1):
+            if cancel_event.is_set():
+                return b"", "cancelled"
+            pcm = await self._synthesize_whole_script_once(spoken, fence, cancellation, cancel_event)
+            if pcm:
+                _remember_fixed_safety_pcm(key, pcm)
+                return pcm, "synthesis"
+            failure = RuntimeError("speech provider returned no audio")
+            logger.warning(
+                "fixed safety speech attempt produced no audio attempt=%d/%d text_len=%d "
+                "session=%s",
+                attempt,
+                _FIXED_SAFETY_SYNTHESIS_ATTEMPTS,
+                len(spoken),
+                fence.session_id,
+            )
+        if cached is not None:
+            logger.warning(
+                "fixed safety speech replayed from cache text_len=%d bytes=%d session=%s",
+                len(spoken),
+                len(cached),
+                fence.session_id,
+            )
+            return cached, "cache"
+        raise RuntimeError("fixed safety script produced no audio") from failure
+
+    async def _synthesize_whole_script_once(
+        self,
+        spoken: str,
+        fence: GenerationFence,
+        cancellation: CancellationContext,
+        cancel_event: asyncio.Event,
+    ) -> bytes:
+        """One full attempt, with the engine that spoke it logged for provenance."""
+
+        pcm = bytearray()
+        try:
+            async for chunk in self._provider_pcm_chunks(
+                spoken,
+                fence,
+                cancellation,
+                cancel_event,
+            ):
+                pcm.extend(chunk)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "fixed safety speech attempt failed text_len=%d error=%s session=%s",
+                len(spoken),
+                type(exc).__name__,
+                fence.session_id,
+            )
+            return b""
+        report = getattr(self.speech_synthesis, "report_sentence_from", None)
+        if callable(report) and pcm:
+            chosen = cast(Any, self.speech_synthesis).last_engine()
+            report(chosen, index=0, switched=getattr(chosen, "provider", "") != "stepfun")
+        return bytes(pcm)
+
+    def _fixed_safety_voice_key(self) -> str:
+        return "|".join(
+            str(getattr(self.speech_synthesis, attribute, "") or "")
+            for attribute in ("current_model", "current_voice", "current_voice_profile_id")
+        )
+
+    async def _emit_fixed_safety_pcm(
+        self,
+        pcm: bytes,
+        *,
+        display: str,
+        fence: GenerationFence,
+    ) -> AsyncIterator[MediaReplyChunk]:
+        from services.agent.src.voice_core.media_session import MediaReplyChunk, MediaTextSpan
+
+        frame_samples = self.output_frame_samples
+        frame_bytes = frame_samples * 2
+        output_sample = 0
+        offset = 0
+        total = len(pcm)
+        while offset < total:
+            frame = pcm[offset : offset + frame_bytes]
+            offset += frame_bytes
+            if len(frame) < frame_bytes:
+                frame += b"\x00" * (frame_bytes - len(frame))
+            audio_end = output_sample + frame_samples
+            is_last = offset >= total
+            yield MediaReplyChunk(
+                pcm_s16le=frame,
+                source_start_sample=output_sample,
+                text=display if is_last else "",
+                assistant_text_delta=display if output_sample == 0 else "",
+                first=output_sample == 0,
+                final=is_last,
+                text_audio_start_sample=0 if is_last else None,
+                text_audio_end_sample=audio_end if is_last else None,
+                text_spans=(MediaTextSpan(display, 0, audio_end),) if is_last else (),
+            )
+            output_sample = audio_end
+            self._output_sample = output_sample
+            self._generation_output_ends[fence] = output_sample
 
     async def generate_reply(
         self,

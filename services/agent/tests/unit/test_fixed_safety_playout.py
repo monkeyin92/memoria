@@ -28,6 +28,7 @@ from services.guardian.crisis import NotificationStatus
 
 CHILD_TEXT = "我不想活了"
 FRAME = 480
+SPOKEN_SCRIPT = "".join(phrase.spoken for phrase in CRISIS_SELF_SCRIPT.phrases)
 
 
 class ReplyLLM:
@@ -145,9 +146,12 @@ async def test_live_speech_gets_spoken_copy_and_heard_history_gets_display_copy(
     with caplog.at_level(logging.INFO):
         chunks = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
 
-    assert speech.pushed == [phrase.spoken for phrase in CRISIS_SELF_SCRIPT.phrases]
+    # The approved line is synthesized as one whole sentence so no provider
+    # fault can truncate it mid-script (C1, 2026-10-21).
+    assert speech.pushed == [SPOKEN_SCRIPT]
     assert "".join(chunk.assistant_text_delta for chunk in chunks) == CRISIS_SELF_SCRIPT.display
-    assert _spans(chunks[-1]) == [(CRISIS_SELF_SCRIPT.display, 0, FRAME * 4)]
+    assert [chunk.final for chunk in chunks] == [True]
+    assert _spans(chunks[-1]) == [(CRISIS_SELF_SCRIPT.display, 0, FRAME)]
     playout = _playout_lines(caplog)
     assert len(playout) == 1
     assert re.fullmatch(
@@ -191,17 +195,15 @@ async def test_stop_cuts_the_crisis_script_and_leaves_the_guardian_pin() -> None
     speech = StoppingSpeech()
     adapter = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), speech)
     identity, fence = _generation("crisis-stopped")
-    first_spoken = CRISIS_SELF_SCRIPT.phrases[0].spoken
     speech.cancel = lambda: adapter.cancel_generation(fence)
     chunks = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
 
     spoken = "".join(speech.pushed)
-    assert speech.pushed == [first_spoken]
+    assert speech.pushed == [SPOKEN_SCRIPT]
     assert "好的" not in spoken
     assert "嗯，你说" not in spoken
-    for phrase in CRISIS_SELF_SCRIPT.phrases[1:]:
-        assert phrase.spoken not in spoken
-        assert phrase.display not in "".join(chunk.assistant_text_delta for chunk in chunks)
+    # The stop lands before the first frame, so nothing of the script is claimed as spoken.
+    assert chunks == []
     assert route_crisis(CHILD_TEXT).notify_guardian is True
     assert "pending" in get_args(NotificationStatus)
     assert "delivered" in get_args(NotificationStatus)
@@ -375,7 +377,7 @@ def _failover_speech(fail_after_first_chunk: bool) -> tuple[StepFunPrimaryTTS, A
 def _assert_spoken_only(received: list[str]) -> None:
     spoken = [phrase.spoken for phrase in CRISIS_SELF_SCRIPT.phrases]
     assert received
-    assert all(text in spoken for text in received)
+    assert all(text == SPOKEN_SCRIPT or text in spoken for text in received)
     assert all(not any(character.isdigit() for character in text) for text in received)
     assert any(character.isdigit() for character in CRISIS_SELF_SCRIPT.display)
 
@@ -390,12 +392,14 @@ async def test_fixed_safety_script_reaches_both_engines_as_spoken_on_first_packe
 
     _assert_spoken_only(primary.received)
     _assert_spoken_only(backup.received)
-    assert backup.received == [phrase.spoken for phrase in CRISIS_SELF_SCRIPT.phrases]
+    # Whole-script units: a primary that fails before any audio hands the full line
+    # to the backup instead of losing the tail of the script.
+    assert backup.received == [SPOKEN_SCRIPT]
     assert "".join(chunk.assistant_text_delta for chunk in chunks) == CRISIS_SELF_SCRIPT.display
 
 
 @pytest.mark.asyncio
-async def test_fixed_safety_script_reaches_both_engines_as_spoken_on_mid_sentence_switch() -> None:
+async def test_mid_script_stepfun_failure_cannot_truncate_the_crisis_line() -> None:
     wrapper, primary, backup = _failover_speech(fail_after_first_chunk=True)
     adapter = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), wrapper)
     identity, fence = _generation("fixed-safety-failover-mid-sentence")
@@ -403,7 +407,119 @@ async def test_fixed_safety_script_reaches_both_engines_as_spoken_on_mid_sentenc
     chunks = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
 
     _assert_spoken_only(primary.received)
-    _assert_spoken_only(backup.received)
-    assert primary.received == [CRISIS_SELF_SCRIPT.phrases[0].spoken]
-    assert backup.received == [phrase.spoken for phrase in CRISIS_SELF_SCRIPT.phrases[1:]]
+    assert primary.received == [SPOKEN_SCRIPT]
+    # The primary drops the connection after its first packet.  Streaming the script
+    # phrase by phrase used to end the reply there (C1 shape); as one unit the
+    # backup re-speaks the whole approved line, never a digit-bearing display copy.
+    assert backup.received == [SPOKEN_SCRIPT]
     assert "".join(chunk.assistant_text_delta for chunk in chunks) == CRISIS_SELF_SCRIPT.display
+
+
+class _FailureOnceSpeech:
+    """The provider drops the connection on its first whole-script request."""
+
+    def __init__(self) -> None:
+        self.pushed: list[str] = []
+        self.requests = 0
+
+    def bind_fence(self, fence: GenerationFence) -> None:
+        del fence
+
+    def stream(self) -> _FailureOnceSpeech:
+        self.requests += 1
+        return self
+
+    def push_text(self, text: str) -> None:
+        self.pushed.append(text)
+
+    def end_input(self) -> None:
+        return None
+
+    def __aiter__(self) -> AsyncIterator[Any]:
+        async def events() -> AsyncIterator[Any]:
+            if self.requests == 1:
+                raise ConnectionError("doubao stream dropped before any audio")
+            yield SimpleNamespace(frame=SimpleNamespace(data=b"\x01\x00" * FRAME, sample_rate=24_000))
+
+        return events()
+
+    async def aclose(self) -> None:
+        return None
+
+
+class _UnavailableSpeech(_FailureOnceSpeech):
+    """The provider never produces audio for the script."""
+
+    def __aiter__(self) -> AsyncIterator[Any]:
+        async def events() -> AsyncIterator[Any]:
+            raise ConnectionError("doubao unavailable")
+            yield  # pragma: no cover - unreachable, keeps this an async generator
+
+        return events()
+
+
+@pytest.fixture(autouse=True)
+def clear_fixed_safety_cache() -> Any:
+    from services.agent.src.voice_core import provider_adapter
+
+    provider_adapter._FIXED_SAFETY_PCM_CACHE.clear()
+    yield
+    provider_adapter._FIXED_SAFETY_PCM_CACHE.clear()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_synthesis_is_retried_before_the_crisis_line_is_given_up_on(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """C1: ``failed to synthesize speech text_len=100`` must not cost the child the line."""
+
+    speech = _FailureOnceSpeech()
+    adapter = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), speech)
+    identity, fence = _generation("fixed-safety-retry")
+
+    with caplog.at_level(logging.INFO):
+        chunks = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
+
+    assert speech.pushed == [SPOKEN_SCRIPT, SPOKEN_SCRIPT]
+    assert not adapter.is_fixed_safety_reply(fence)  # cleared once the reply ends
+    assert "".join(chunk.assistant_text_delta for chunk in chunks) == CRISIS_SELF_SCRIPT.display
+    assert chunks[-1].final
+    ready = [r.getMessage() for r in caplog.records if "fixed safety speech ready" in r.getMessage()]
+    assert len(ready) == 1 and "source=synthesis" in ready[0]
+    assert any("fixed safety speech attempt failed" in r.getMessage() for r in caplog.records)
+    for record in caplog.records:
+        assert CHILD_TEXT not in record.getMessage()
+        assert SPOKEN_SCRIPT not in record.getMessage()
+
+
+@pytest.mark.asyncio
+async def test_a_later_failure_replays_the_approved_script_from_cache(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A provider outage must not leave the child in silence after one good synthesis."""
+
+    first = SubtitledSpeech()
+    adapter = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), first)
+    identity, fence = _generation("fixed-safety-cache-warm")
+    [warm] = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
+    assert warm.pcm_s16le
+
+    second = _UnavailableSpeech()
+    cold = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), second)
+    identity, fence = _generation("fixed-safety-cache-cold")
+    with caplog.at_level(logging.INFO):
+        chunks = [chunk async for chunk in cold.generate_reply(identity, CHILD_TEXT, fence)]
+
+    assert "".join(chunk.assistant_text_delta for chunk in chunks) == CRISIS_SELF_SCRIPT.display
+    ready = [r.getMessage() for r in caplog.records if "fixed safety speech ready" in r.getMessage()]
+    assert len(ready) == 1 and "source=cache" in ready[0]
+    assert any("replayed from cache" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_without_cache_a_failed_script_fails_loudly() -> None:
+    adapter = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), _UnavailableSpeech())
+    identity, fence = _generation("fixed-safety-no-cache")
+
+    with pytest.raises(RuntimeError, match="fixed safety script produced no audio"):
+        [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]

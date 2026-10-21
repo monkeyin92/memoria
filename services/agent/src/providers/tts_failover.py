@@ -246,6 +246,7 @@ class StepFunFailoverStream:
             if not use_primary:
                 self._owner.mark_degraded("breaker_open")
             audio_started = False
+            first_engine: tuple[Any, bool] | None = None
             while True:
                 try:
                     stream = await self._open_stream(use_primary)
@@ -256,6 +257,11 @@ class StepFunFailoverStream:
                         return
                     self._owner.record_failure(exc)
                     self._owner.mark_degraded(type(exc).__name__)
+                    # `self._owner.primary` still names the engine whose reopen
+                    # failed; without this the unit would claim the backup spoke
+                    # from its first packet.
+                    if first_engine is None:
+                        first_engine = (self._owner.primary, False)
                     use_primary = False
                     continue
                 self._current_stream = stream
@@ -269,6 +275,11 @@ class StepFunFailoverStream:
                     async for event in stream:
                         if not audio_started:
                             audio_started = True
+                            # Remember the engine that speaks this unit; the media
+                            # adapter reports it as sentence provenance.
+                            self._owner._last_engine = (
+                                self._owner.primary if use_primary else self._owner.backup
+                            )
                             self._owner._report_sentence(
                                 index=index,
                                 use_primary=use_primary,
@@ -293,10 +304,11 @@ class StepFunFailoverStream:
                         type(exc).__name__,
                         getattr(exc, "auth_failure", False),
                     )
-                    if audio_started:
-                        # The rest of this sentence is not replayed. The next
-                        # complete pushed sentence starts on Doubao.
-                        break
+                    if audio_started and first_engine is None:
+                        first_engine = (self._owner.primary, True)
+                    # The unit restarts on the backup so a whole-script unit (the
+                    # approved fixed safety line) is never left truncated; its
+                    # provenance names the engine that opened the unit.
                     use_primary = False
                     continue
                 else:
@@ -304,6 +316,8 @@ class StepFunFailoverStream:
                         self._owner.record_success()
                     await self._close_stream(stream)
                     break
+            if first_engine is not None:
+                self._owner._last_engine = first_engine[0]
             index += 1
             self._current_stream = None
 
@@ -399,6 +413,7 @@ class StepFunPrimaryTTS:
         self._sentence_callback: (
             Callable[[GenerationFence, int, str, str, str, bool], None] | None
         ) = None
+        self._last_engine: Any | None = None
 
     @property
     def provider(self) -> str:
@@ -463,10 +478,25 @@ class StepFunPrimaryTTS:
 
     def bind_fence(self, fence: GenerationFence) -> None:
         self._fence = fence
+        self._last_engine = None
         for provider in (self.primary, self.backup):
             bind = getattr(provider, "bind_fence", None)
             if callable(bind):
                 bind(fence)
+
+    def last_engine(self) -> Any:
+        """The engine the most recent unit actually came from, or the bound default."""
+
+        if self._last_engine is not None:
+            return self._last_engine
+        return self.bound_engine()
+
+    def bound_engine(self) -> Any:
+        """The engine a pushed unit starts on, given degradation, breaker and voice binding."""
+
+        if not self._degraded and self.breaker.allow() and not self._force_backup:
+            return self.primary
+        return self.backup
 
     def set_trace_callback(
         self,
@@ -607,12 +637,26 @@ class StepFunPrimaryTTS:
         return 1.0
 
     def _report_sentence(self, *, index: int, use_primary: bool) -> None:
+        self.report_sentence_from(
+            self.primary if use_primary else self.backup,
+            index=index,
+            switched=not use_primary,
+        )
+
+    def report_sentence_from(self, provider: Any, *, index: int, switched: bool) -> None:
+        """Record which engine actually spoke one unit of this generation.
+
+        The fixed-safety whole-script path synthesizes outside this stream and
+        reports the engine it used, so per-sentence provenance stays complete.
+        """
+
         fence = self._fence
         callback = self._sentence_callback
         if fence is None or callback is None:
             return
-        provider = self.primary if use_primary else self.backup
-        engine = str(getattr(provider, "provider", "stepfun" if use_primary else "volcengine_doubao"))
+        engine = str(
+            getattr(provider, "provider", "volcengine_doubao" if switched else "stepfun")
+        )
         model = str(getattr(provider, "current_model", getattr(provider, "model", "")))
         voice = str(
             getattr(
@@ -622,7 +666,7 @@ class StepFunPrimaryTTS:
             )
         )
         try:
-            callback(fence, index, engine, model, voice, not use_primary)
+            callback(fence, index, engine, model, voice, bool(switched))
         except Exception:
             logger.warning("TTS sentence provenance callback failed", exc_info=True)
 
