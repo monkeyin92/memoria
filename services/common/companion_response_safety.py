@@ -49,6 +49,46 @@ _SOOTHING_DILUTION_PHRASES: Final[tuple[str, ...]] = (
     "我陪着你",
 )
 
+# Longer would be a sentence of its own, not the filler before the answer.
+_SOOTHING_OPENER_MAX_CHARS = 8
+_FILLER_CLAUSE_SPLIT_RE = re.compile(r"(?<=[，,、；;：:.!！?？。])\s*")
+
+
+def _non_soothing_chars(text: str) -> str:
+    compact = "".join(ch for ch in text if not ch.isspace())
+    for phrase in _SOOTHING_DILUTION_PHRASES:
+        compact = compact.replace(phrase, "")
+    return "".join(ch for ch in compact if ch.isalnum())
+
+
+def strip_soothing_from_follow_up(text: str) -> str:
+    """Remove soothing wording that opens a post-safety reply, keeping the rest.
+
+    Field 2026-10-21 N2 t002: the reply after the crisis script opened with
+    「没关系，」 and ``assistant_text_repeats_or_dilutes_safety`` dropped the
+    whole first sentence with the wording, and the pipeline had nothing left
+    to say.  Only a leading filler clause that holds nothing but soothing
+    wording is cut; the rest of the sentence is the child's answer.
+
+    A segment that is nothing but soothing wording is returned unchanged so
+    the caller's dilution check still drops it: the 产品部 list stays unsaid,
+    and only a filler in front of the child's answer is cut.
+    """
+
+    stripped = text.lstrip()
+    if not any(phrase in stripped for phrase in _SOOTHING_DILUTION_PHRASES):
+        return text
+    parts = _FILLER_CLAUSE_SPLIT_RE.split(stripped.rstrip(), maxsplit=1)
+    if len(parts) < 2:
+        return text
+    head = parts[0]
+    if not any(phrase in head for phrase in _SOOTHING_DILUTION_PHRASES):
+        return text
+    if len(_non_soothing_chars(head)) > _SOOTHING_OPENER_MAX_CHARS:
+        return text
+    rest = parts[1].lstrip()
+    return rest or text
+
 
 def assistant_text_repeats_or_dilutes_safety(
     text: str,
