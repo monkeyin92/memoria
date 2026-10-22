@@ -513,6 +513,7 @@ class MediaSessionStandbyMixin:
         reason: str,
         expected_activity_revision: int | None = None,
         expected_endpoint: tuple[int, int] | None = None,
+        play_line: bool = False,
     ) -> bool:
         if not reason or len(reason) > 128:
             raise ValueError("conversation close reason must be 1-128 characters")
@@ -581,6 +582,7 @@ class MediaSessionStandbyMixin:
                 reason=reason,
                 task_epoch=task_epoch,
                 context_version=context_version,
+                play_line=play_line,
             )
             self.metrics.inc_media_metric(
                 "voice_conversation_standby_total",

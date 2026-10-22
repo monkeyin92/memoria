@@ -521,6 +521,7 @@ message StateEvent {
   uint64 tool_epoch = 7;
   uint64 task_epoch = 8;
   uint64 context_version = 9;
+  bool play_line = 10;
 }
 
 message ClientEvent {

@@ -62,8 +62,8 @@ services:
       STEPFUN_TTS_ENABLED: "true"
       STEPFUN_TTS_MOCK_WS_URL: ${E2E_STEPFUN_URL}
       STEPFUN_API_KEY: e2e-stepfun-key
-      STEPFUN_TTS_MODEL: stepaudio-3-tts
-      STEPFUN_TTS_VOICE: yuanqishaonv
+      STEPFUN_TTS_MODEL: stepaudio-2.5-tts
+      STEPFUN_TTS_VOICE: wenrounansheng
       DOUBAO_TTS_MOCK_WS_URL: ${E2E_STEPFUN_URL}
       DOUBAO_TTS_APP_ID: e2e-doubao-app
       DOUBAO_TTS_ACCESS_TOKEN: e2e-doubao-token

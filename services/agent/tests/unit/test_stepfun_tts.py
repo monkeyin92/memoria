@@ -33,6 +33,7 @@ from services.agent.src.runtime_provenance import (
     DuplexRuntimeProvenanceMixin,
     GenerationVoiceSnapshot,
 )
+from services.common.tts_defaults import DOUBAO_TTS_FALLBACK_SPEAKER
 from websockets.exceptions import ConnectionClosedOK
 from websockets.frames import Close
 
@@ -301,7 +302,7 @@ async def test_normal_synthesis_uses_documented_events_and_24k_pcm() -> None:
         or server.headers[0].get("authorization") == "Bearer test-stepfun-secret"
     )
     create = next(event["data"] for event in server.client_events if event["type"] == "tts.create")
-    assert create["voice_id"] == STEPFUN_TTS_VOICE == "yuanqishaonv"
+    assert create["voice_id"] == STEPFUN_TTS_VOICE
     assert create["response_format"] == "pcm"
     assert create["sample_rate"] == 24000
     # A deployment with no STEPFUN_TTS_INSTRUCTION sends no guard wording.
@@ -602,6 +603,153 @@ async def test_auth_error_opens_a_long_breaker_and_subsequent_sessions_use_douba
     assert backup.received == ["第一句。", "第二句。"]
     assert server.create_count == 1
     assert second.degraded is True
+
+
+async def _speak(
+    server: MockStepFunServer,
+    backup: FakeBackupTTS,
+    breaker: TTSFailoverBreaker,
+    fence: str,
+    text: str,
+) -> list[SynthesizedAudio]:
+    wrapper = StepFunPrimaryTTS(
+        primary=StepFunTTS(_config(server)),
+        backup=backup,
+        breaker=breaker,
+    )
+    wrapper.bind_fence(GenerationFence(fence, 1, 1, 0, 0))
+    stream = wrapper.stream(conn_options=APIConnectOptions(max_retry=0))
+    stream.push_text(text)
+    stream.end_input()
+    events = [event async for event in stream]
+    await wrapper.aclose()
+    return events
+
+
+def _pcm(events: list[SynthesizedAudio]) -> bytes:
+    return b"".join(event.frame.data for event in events)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", ["402", "403"])
+async def test_auth_status_recovers_on_stepfun_after_300_seconds(status_code: str) -> None:
+    fail = {"on": True}
+
+    async def handler(server: MockStepFunServer, ws: Any) -> None:
+        await _connection(server, ws)
+        while True:
+            event = await server.next_event(ws)
+            if event["type"] == "tts.create":
+                await ws.send(_event("tts.response.created", {"session_id": "mock-session"}))
+            elif event["type"] == "tts.text.delta":
+                if fail["on"]:
+                    await ws.send(
+                        _event(
+                            "tts.response.error",
+                            {
+                                "session_id": "mock-session",
+                                "code": status_code,
+                                "message": "rejected",
+                            },
+                        )
+                    )
+                    return
+                await ws.send(_audio_event(PCM))
+            elif event["type"] == "tts.text.done":
+                await ws.send(_done_event())
+                return
+
+    now = [1000.0]
+    backup = FakeBackupTTS()
+    breaker = TTSFailoverBreaker(clock=lambda: now[0])
+    async with MockStepFunServer(handler) as server:
+        failed = await _speak(server, backup, breaker, "s1", "第一句。")
+        assert breaker.state == "open"
+        assert server.create_count == 1
+        assert backup.received == ["第一句。"]
+        assert _pcm(failed) == b"\x02\x00" * 240
+
+        now[0] += 299
+        blocked = await _speak(server, backup, breaker, "s2", "第二句。")
+        assert breaker.state == "open"
+        assert server.create_count == 1
+        assert backup.received == ["第一句。", "第二句。"]
+        assert _pcm(blocked) == b"\x02\x00" * 240
+
+        now[0] += 1
+        fail["on"] = False
+        recovered = await _speak(server, backup, breaker, "s3", "第三句。")
+        assert breaker.state == "closed"
+        assert server.create_count == 2
+        assert backup.received == ["第一句。", "第二句。"]
+        assert _pcm(recovered) == PCM
+
+        stayed = await _speak(server, backup, breaker, "s4", "第四句。")
+        assert breaker.state == "closed"
+        assert server.create_count == 3
+        assert backup.received == ["第一句。", "第二句。"]
+        assert _pcm(stayed) == PCM
+
+
+@pytest.mark.asyncio
+async def test_server_error_still_opens_for_thirty_seconds() -> None:
+    failures_left = {"n": 3}
+
+    async def handler(server: MockStepFunServer, ws: Any) -> None:
+        await _connection(server, ws)
+        while True:
+            event = await server.next_event(ws)
+            if event["type"] == "tts.create":
+                await ws.send(_event("tts.response.created", {"session_id": "mock-session"}))
+            elif event["type"] == "tts.text.delta":
+                if failures_left["n"] > 0:
+                    failures_left["n"] -= 1
+                    await ws.send(
+                        _event(
+                            "tts.response.error",
+                            {
+                                "session_id": "mock-session",
+                                "code": "500",
+                                "message": "overloaded",
+                            },
+                        )
+                    )
+                    return
+                await ws.send(_audio_event(PCM))
+            elif event["type"] == "tts.text.done":
+                await ws.send(_done_event())
+                return
+
+    now = [2000.0]
+    backup = FakeBackupTTS()
+    breaker = TTSFailoverBreaker(clock=lambda: now[0])
+    async with MockStepFunServer(handler) as server:
+        await _speak(server, backup, breaker, "o1", "第一句。")
+        assert breaker.state == "closed"
+        assert server.create_count == 1
+
+        await _speak(server, backup, breaker, "o2", "第二句。")
+        assert breaker.state == "closed"
+        assert server.create_count == 2
+
+        await _speak(server, backup, breaker, "o3", "第三句。")
+        assert breaker.state == "open"
+        assert server.create_count == 3
+        assert backup.received == ["第一句。", "第二句。", "第三句。"]
+
+        now[0] += 29
+        blocked = await _speak(server, backup, breaker, "o4", "第四句。")
+        assert breaker.state == "open"
+        assert server.create_count == 3
+        assert backup.received[-1] == "第四句。"
+        assert _pcm(blocked) == b"\x02\x00" * 240
+
+        now[0] += 1
+        recovered = await _speak(server, backup, breaker, "o5", "第五句。")
+        assert breaker.state == "closed"
+        assert server.create_count == 4
+        assert "第五句。" not in backup.received
+        assert _pcm(recovered) == PCM
 
 
 @pytest.mark.asyncio
@@ -955,15 +1103,15 @@ def test_factory_is_doubao_by_default_and_requires_both_switches(
     )
 
 
-def test_env_defaults_use_stepaudio_3_and_yuanqishaonv_and_hide_the_key() -> None:
+def test_env_defaults_use_the_shared_stepfun_voice_and_hide_the_key() -> None:
     config = StepFunTTSConfig.from_env(
         {
             "STEPFUN_API_KEY": "hidden-secret",
             "STEPFUN_TTS_MOCK_WS_URL": "ws://127.0.0.1:1",
         }
     )
-    assert config.model == STEPFUN_TTS_MODEL == "stepaudio-3-tts"
-    assert config.voice == STEPFUN_TTS_VOICE == "yuanqishaonv"
+    assert config.model == STEPFUN_TTS_MODEL == "stepaudio-2.5-tts"
+    assert config.voice == STEPFUN_TTS_VOICE == "wenrounansheng"
     # The delivery guard is deployment wording, so code carries no default text.
     assert config.instruction == ""
     assert STEPFUN_INSTRUCTION_GUARD == ""
@@ -1255,9 +1403,9 @@ def test_env_example_matches_the_runtime_tts_defaults() -> None:
     production = (root / "infra" / "memoria.env.production.example").read_text(encoding="utf-8")
 
     for text in (example, production):
-        assert "STEPFUN_TTS_MODEL=stepaudio-3-tts" in text
-        assert "STEPFUN_TTS_VOICE=yuanqishaonv" in text
-        assert "DOUBAO_TTS_FALLBACK_SPEAKER=zh_female_kailangjiejie_uranus_bigtts" in text
+        assert f"STEPFUN_TTS_MODEL={STEPFUN_TTS_MODEL}" in text
+        assert f"STEPFUN_TTS_VOICE={STEPFUN_TTS_VOICE}" in text
+        assert f"DOUBAO_TTS_FALLBACK_SPEAKER={DOUBAO_TTS_FALLBACK_SPEAKER}" in text
 
 
 def test_main_backup_rejects_a_male_preset_before_construction() -> None:

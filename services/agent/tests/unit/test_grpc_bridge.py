@@ -1262,3 +1262,43 @@ def test_downlink_pacing_reports_produced_audio_against_the_wall_clock(
     assert "send_audio_ratio=0.50" in pacing[0]
     assert "reason=final_frame" in pacing[0]
     assert session._pacing_queue_high_water == 3
+
+
+@pytest.mark.asyncio
+async def test_emit_conversation_state_with_play_line() -> None:
+    bridge = MediaBridgeGrpcServer()
+    identity = SessionIdentity("play-line", account_id="account", device_id="device")
+    connection = open_bridge_connection(bridge, identity)
+    fence = connection.session.fence.with_session_epoch(1)
+    assert await bridge.emit_conversation_state(
+        identity.session_id,
+        media_pb2.CONVERSATION_STATE_CLOSED,
+        fence=fence,
+        reason="tts_unavailable",
+        play_line=True,
+    )
+    outgoing = connection.outgoing.get_nowait()
+    assert outgoing.WhichOneof("event") == "state"
+    assert outgoing.state.state == media_pb2.CONVERSATION_STATE_CLOSED
+    assert outgoing.state.reason == "tts_unavailable"
+    assert outgoing.state.play_line is True
+
+
+@pytest.mark.asyncio
+async def test_emit_conversation_state_defaults_play_line_to_false() -> None:
+    bridge = MediaBridgeGrpcServer()
+    identity = SessionIdentity("default-play-line", account_id="account", device_id="device")
+    connection = open_bridge_connection(bridge, identity)
+    fence = connection.session.fence.with_session_epoch(1)
+    assert await bridge.emit_conversation_state(
+        identity.session_id,
+        media_pb2.CONVERSATION_STATE_CLOSED,
+        fence=fence,
+        reason="user_stop",
+    )
+    outgoing = connection.outgoing.get_nowait()
+    assert outgoing.WhichOneof("event") == "state"
+    assert outgoing.state.state == media_pb2.CONVERSATION_STATE_CLOSED
+    assert outgoing.state.reason == "user_stop"
+    assert outgoing.state.play_line is False
+

@@ -22,6 +22,7 @@ from services.agent.src.orchestration.state_machine import (
 from services.agent.src.prompts import (
     BRIDGE_PHRASES,
 )
+from services.agent.src.providers.tts_failover import TTSUnavailableError
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_protocol import (
@@ -2136,3 +2137,194 @@ async def test_typed_device_playback_error_is_not_successful_completion() -> Non
         )
     ]
     assert len(published) == 1
+
+
+@pytest.mark.asyncio
+async def test_tts_unavailable_requests_standby_with_play_line_when_no_audio_sent() -> None:
+    """TTS failover exhaustion with no audio sent requests standby with play_line=True."""
+
+    standby_calls: list[tuple[str, bool]] = []
+
+    class FailingProvider(FakeMediaProvider):
+        def generate_reply(
+            self,
+            _identity: SessionIdentity,
+            _user_text: str,
+            _fence: GenerationFence,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                raise TTSUnavailableError("all TTS engines failed")
+                yield  # type: ignore[unreachable]
+
+            return chunks()
+
+    class StandbyCapturingRegistry(MediaVoiceCoreRegistry):
+        async def _request_device_standby(
+            self,
+            context: Any,
+            *,
+            reason: str,
+            expected_activity_revision: int | None = None,
+            expected_endpoint: tuple[int, int] | None = None,
+            play_line: bool = False,
+        ) -> bool:
+            standby_calls.append((reason, play_line))
+            return True
+
+    bridge = MediaBridgeGrpcServer()
+    registry = StandbyCapturingRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: FailingProvider(),
+    )
+    registry.install()
+    identity = _device_identity("tts-unavailable-no-audio")
+    bridge.bridge.open(identity)
+    context = await registry.open_session(identity)
+    fence = await context.runtime.on_turn_committed("你好")
+    context.output.playback.start(fence)
+    with pytest.raises(TTSUnavailableError, match="all TTS engines failed"):
+        await registry.generate_reply(identity.session_id, "你好", fence)
+    assert len(standby_calls) == 1
+    assert standby_calls[0][0] == "tts_unavailable"
+    assert standby_calls[0][1] is True
+    await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_tts_unavailable_does_not_request_standby_when_audio_already_sent() -> None:
+    """TTS failover exhaustion after audio was sent does not request standby."""
+
+    standby_calls: list[tuple[str, bool]] = []
+
+    class FailingProvider(FakeMediaProvider):
+        def generate_reply(
+            self,
+            _identity: SessionIdentity,
+            _user_text: str,
+            _fence: GenerationFence,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                raise TTSUnavailableError("all TTS engines failed")
+                yield  # type: ignore[unreachable]
+
+            return chunks()
+
+    class StandbyCapturingRegistry(MediaVoiceCoreRegistry):
+        async def _request_device_standby(
+            self,
+            context: Any,
+            *,
+            reason: str,
+            expected_activity_revision: int | None = None,
+            expected_endpoint: tuple[int, int] | None = None,
+            play_line: bool = False,
+        ) -> bool:
+            standby_calls.append((reason, play_line))
+            return True
+
+    bridge = MediaBridgeGrpcServer()
+    registry = StandbyCapturingRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: FailingProvider(),
+    )
+    registry.install()
+    identity = _device_identity("tts-unavailable-with-audio")
+    bridge.bridge.open(identity)
+    context = await registry.open_session(identity)
+    fence = await context.runtime.on_turn_committed("你好")
+    context.output.playback.start(fence)
+    context.output.reply_delivery.record(fence, ReplyDeliveryEvent.FIRST_FRAME_SENT)
+    delivery = context.output.reply_delivery.get(fence)
+    assert delivery is not None and delivery.first_frame_sent is True
+    with pytest.raises(TTSUnavailableError, match="all TTS engines failed"):
+        await registry.generate_reply(identity.session_id, "你好", fence)
+    assert len(standby_calls) == 0
+    await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_user_stop_does_not_request_tts_unavailable_standby() -> None:
+    """A user stop does not trigger TTS unavailable standby."""
+
+    standby_calls: list[tuple[str, bool]] = []
+
+    class StandbyCapturingRegistry(MediaVoiceCoreRegistry):
+        async def _request_device_standby(
+            self,
+            context: Any,
+            *,
+            reason: str,
+            expected_activity_revision: int | None = None,
+            expected_endpoint: tuple[int, int] | None = None,
+            play_line: bool = False,
+        ) -> bool:
+            standby_calls.append((reason, play_line))
+            return True
+
+    bridge = MediaBridgeGrpcServer()
+    registry = StandbyCapturingRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: FakeMediaProvider(),
+    )
+    registry.install()
+    identity = _device_identity("user-stop-no-tts-unavailable")
+    bridge.bridge.open(identity)
+    context = await registry.open_session(identity)
+    await context.runtime.on_turn_committed("你好")
+    await registry._request_device_standby(context, reason="user_stop")
+    tts_unavailable_calls = [
+        (reason, play_line)
+        for reason, play_line in standby_calls
+        if reason == "tts_unavailable"
+    ]
+    assert len(tts_unavailable_calls) == 0
+    await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_generic_provider_failure_does_not_request_tts_unavailable_standby() -> None:
+    """A non-TTS provider failure class never triggers the fallback-line standby."""
+
+    standby_calls: list[tuple[str, bool]] = []
+
+    class FailingProvider(FakeMediaProvider):
+        def generate_reply(
+            self,
+            _identity: SessionIdentity,
+            _user_text: str,
+            _fence: GenerationFence,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                raise RuntimeError("language model unavailable")
+                yield  # type: ignore[unreachable]
+
+            return chunks()
+
+    class StandbyCapturingRegistry(MediaVoiceCoreRegistry):
+        async def _request_device_standby(
+            self,
+            context: Any,
+            *,
+            reason: str,
+            expected_activity_revision: int | None = None,
+            expected_endpoint: tuple[int, int] | None = None,
+            play_line: bool = False,
+        ) -> bool:
+            standby_calls.append((reason, play_line))
+            return True
+
+    bridge = MediaBridgeGrpcServer()
+    registry = StandbyCapturingRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: FailingProvider(),
+    )
+    registry.install()
+    identity = _device_identity("generic-failure-no-standby")
+    bridge.bridge.open(identity)
+    context = await registry.open_session(identity)
+    fence = await context.runtime.on_turn_committed("你好")
+    context.output.playback.start(fence)
+    with pytest.raises(RuntimeError, match="language model unavailable"):
+        await registry.generate_reply(identity.session_id, "你好", fence)
+    assert standby_calls == []
+    await registry.finalize_session(identity.session_id)

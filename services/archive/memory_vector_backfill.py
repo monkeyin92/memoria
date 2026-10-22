@@ -164,16 +164,29 @@ WHERE document.account_id = $1
   )
 """
 
+# Lock the evidence row before the claim. A concurrent delete locks the
+# evidence row and then cascades to the claim; taking the claim first and the
+# evidence key-share later (the vector insert) deadlocks that delete.
 _RECHECK_CLAIM = """
+WITH locked_evidence AS MATERIALIZED (
+    SELECT evidence.event_id
+    FROM archive_evidence_events evidence
+    JOIN memory_claims claim
+      ON claim.source_event_id = evidence.event_id
+     AND claim.account_id = evidence.account_id
+    WHERE claim.claim_id = $1
+      AND claim.account_id = $2
+      AND claim.status <> 'retracted'
+      AND claim.value = $3
+    FOR KEY SHARE OF evidence
+)
 SELECT 1
 FROM memory_claims claim
-JOIN archive_evidence_events evidence
-  ON evidence.event_id = claim.source_event_id
- AND evidence.account_id = claim.account_id
 WHERE claim.claim_id = $1
   AND claim.account_id = $2
   AND claim.status <> 'retracted'
   AND claim.value = $3
+  AND EXISTS (SELECT 1 FROM locked_evidence)
 FOR UPDATE OF claim
 """
 

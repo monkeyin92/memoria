@@ -503,6 +503,10 @@ type deviceServerSessionClose struct {
 	ControlSequence   uint64 `json:"control_sequence"`
 	ServerMonotonicMS uint64 `json:"server_monotonic_ms"`
 	Reason            string `json:"reason,omitempty"`
+	// PlayLine tells the device the fallback line was not yet spoken and
+	// must play locally on the close reason (T-15a). Older firmware ignores
+	// the unknown key, so this stays wire-compatible with the live fleet.
+	PlayLine bool `json:"play_line,omitempty"`
 }
 
 type deviceListeningResume struct {

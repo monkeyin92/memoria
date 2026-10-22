@@ -410,6 +410,7 @@ func (c *DeviceConnection) ForwardCoreEvent(event *mediav1.CoreToMedia) {
 			ControlSequence:   controlSequence,
 			ServerMonotonicMS: now,
 			Reason:            reason,
+			PlayLine:          state.GetPlayLine(),
 		})
 		if err != nil {
 			c.stateMu.Lock()

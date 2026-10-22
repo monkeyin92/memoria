@@ -8,13 +8,11 @@ from __future__ import annotations
 
 from typing import Final
 
-STEPFUN_TTS_MODEL: Final = "stepaudio-3-tts"
-STEPFUN_TTS_VOICE: Final = "yuanqishaonv"
-STEPFUN_TTS_MODEL_MALE: Final = "stepaudio-2.5-tts"
-STEPFUN_TTS_VOICE_MALE: Final = "wenrounansheng"
+STEPFUN_TTS_MODEL: Final = "stepaudio-2.5-tts"
+STEPFUN_TTS_VOICE: Final = "wenrounansheng"
 STEPFUN_PROVIDER: Final = "stepfun"
 STEPFUN_ARCHIVE_MODELS: Final[frozenset[str]] = frozenset(
-    {STEPFUN_TTS_MODEL, STEPFUN_TTS_MODEL_MALE}
+    {STEPFUN_TTS_MODEL, "stepaudio-3-tts"}
 )
 DOUBAO_TTS_RESOURCE_ID: Final = "seed-tts-2.0"
 #: Designed female voice for the Doubao backup in StepFun-primary mode. Product
@@ -28,7 +26,5 @@ __all__ = [
     "STEPFUN_ARCHIVE_MODELS",
     "STEPFUN_PROVIDER",
     "STEPFUN_TTS_MODEL",
-    "STEPFUN_TTS_MODEL_MALE",
     "STEPFUN_TTS_VOICE",
-    "STEPFUN_TTS_VOICE_MALE",
 ]
