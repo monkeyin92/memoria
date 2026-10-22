@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from services.common.tts_defaults import STEPFUN_TTS_VOICE
 from services.common.tts_voice_policy import is_clone_or_icl_voice, is_male_speaker
 
 
@@ -10,7 +11,7 @@ from services.common.tts_voice_policy import is_clone_or_icl_voice, is_male_spea
     ("voice", "voice_kind", "resource_id", "provider"),
     [
         ("zh_female_kailangjiejie_uranus_bigtts", "designed", "seed-tts-2.0", "volcengine_doubao"),
-        ("yuanqishaonv", "designed", "seed-tts-2.0", "stepfun"),
+        (STEPFUN_TTS_VOICE, "designed", "seed-tts-2.0", "stepfun"),
     ],
 )
 def test_designed_presets_are_allowed(

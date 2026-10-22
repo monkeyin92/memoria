@@ -33,6 +33,7 @@ from services.agent.src.voice_core.media_protocol import SessionIdentity
 from services.agent.src.voice_core.provider_adapter import ExistingVoiceProviderAdapter
 from services.common.crisis_policy import route_crisis
 from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
+from services.common.tts_defaults import STEPFUN_TTS_MODEL
 from services.guardian.crisis import NotificationStatus
 
 CHILD_TEXT = "我不想活了"
@@ -356,7 +357,7 @@ def _script_speech(
 
 @pytest.mark.asyncio
 async def test_fixed_safety_stepfun_speaks_the_script_and_never_opens_doubao() -> None:
-    primary = _ScriptEngine("stepfun", "stepaudio-3-tts")
+    primary = _ScriptEngine("stepfun", STEPFUN_TTS_MODEL)
     backup = _ScriptEngine("volcengine_doubao", "seed-tts-2.0")
     adapter = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), _script_speech(primary=primary, backup=backup))
     identity, fence = _generation("fixed-safety-stepfun-only")
@@ -377,7 +378,7 @@ async def test_fixed_safety_stepfun_speaks_the_script_and_never_opens_doubao() -
 async def test_fixed_safety_primary_first_false_still_starts_on_stepfun() -> None:
     """The old compatibility switch cannot route a crisis unit to Doubao."""
 
-    primary = _ScriptEngine("stepfun", "stepaudio-3-tts")
+    primary = _ScriptEngine("stepfun", STEPFUN_TTS_MODEL)
     backup = _ScriptEngine("volcengine_doubao", "seed-tts-2.0")
     speech = StepFunPrimaryTTS(
         primary=primary,
@@ -399,7 +400,7 @@ async def test_fixed_safety_primary_first_false_still_starts_on_stepfun() -> Non
 async def test_fixed_safety_stepfun_failure_plays_the_shipped_approved_clip() -> None:
     primary = _ScriptEngine(
         "stepfun",
-        "stepaudio-3-tts",
+        STEPFUN_TTS_MODEL,
         behavior="error",
         error=APIStatusError("content moderation rejected", status_code=451),
     )
@@ -431,7 +432,7 @@ async def test_fixed_safety_prerecorded_hash_mismatch_uses_stepfun_before_any_do
             ),
         )
     )
-    primary = _ScriptEngine("stepfun", "stepaudio-3-tts")
+    primary = _ScriptEngine("stepfun", STEPFUN_TTS_MODEL)
     backup = _ScriptEngine("volcengine_doubao", "seed-tts-2.0")
     speech = FixedSafetyTTS(_script_speech(primary=primary, backup=backup), broken)
     adapter = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), cast(Any, speech))
@@ -459,7 +460,7 @@ async def test_fixed_safety_broken_clip_and_stepfun_failure_use_the_shipped_clip
     )
     primary = _ScriptEngine(
         "stepfun",
-        "stepaudio-3-tts",
+        STEPFUN_TTS_MODEL,
         behavior="error",
         error=ConnectionError("stepfun unavailable"),
     )
@@ -480,7 +481,7 @@ async def test_fixed_safety_broken_clip_and_stepfun_failure_use_the_shipped_clip
 
 @pytest.mark.asyncio
 async def test_stepfun_first_packet_timeout_falls_back_to_the_shipped_clip_inside_budget() -> None:
-    primary = _ScriptEngine("stepfun", "stepaudio-3-tts", behavior="timeout")
+    primary = _ScriptEngine("stepfun", STEPFUN_TTS_MODEL, behavior="timeout")
     backup = _ScriptEngine("volcengine_doubao", "seed-tts-2.0", behavior="timeout")
     adapter = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), _script_speech(primary=primary, backup=backup))
     identity, fence = _generation("fixed-safety-stepfun-timeout")

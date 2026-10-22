@@ -51,6 +51,7 @@ from services.agent.tests.unit.media_session_support import (
 )
 from services.agent.tests.unit.test_minor_session_limits import _ledger
 from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
+from services.common.tts_defaults import STEPFUN_TTS_MODEL
 from websockets.exceptions import ConnectionClosedOK
 from websockets.frames import Close
 
@@ -212,7 +213,7 @@ def _speech(
     primary_behavior: str,
     backup_behavior: str,
 ) -> tuple[StepFunPrimaryTTS, _RoundEngine, _RoundEngine]:
-    primary = _RoundEngine("stepfun", "stepaudio-3-tts", primary_behavior)
+    primary = _RoundEngine("stepfun", STEPFUN_TTS_MODEL, primary_behavior)
     backup = _RoundEngine("volcengine_doubao", "seed-tts-2.0", backup_behavior)
     wrapper = StepFunPrimaryTTS(
         primary=primary,
