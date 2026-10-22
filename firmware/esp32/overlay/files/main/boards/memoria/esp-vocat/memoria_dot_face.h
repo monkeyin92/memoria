@@ -28,7 +28,6 @@ enum class FaceId : uint8_t {
 constexpr int kFaceCount = 7;
 constexpr int kFaceScreen = 360;
 constexpr uint16_t kFaceYellow = 0xFFE0;
-constexpr int kFaceBadgeClearY = 40;
 
 enum FaceDeviceState : int {
     kFaceStateUnknown = 0,
@@ -64,8 +63,8 @@ const char* FaceName(FaceId id);
 FaceId FaceForFacts(const FaceFacts& facts);
 FaceRect FaceBounds(bool captioned);
 
-// Black panel, yellow squares, no frame. `captioned` lifts the face above the
-// status band. The buffer is width * height RGB565, row-major.
+// Black panel, yellow squares, no frame. `captioned` centers the glyph between
+// the rim and the status band. The buffer is width * height RGB565, row-major.
 void PaintDotFace(uint16_t* buffer, int width, int height, FaceId id, bool captioned);
 
 }  // namespace memoria

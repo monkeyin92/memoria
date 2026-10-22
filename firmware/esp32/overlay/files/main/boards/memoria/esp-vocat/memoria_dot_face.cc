@@ -9,7 +9,8 @@ constexpr int kCols = 13;
 constexpr int kRows = 11;
 constexpr int kPitch = 16;
 constexpr int kDot = 10;
-constexpr int kCaptionBottom = 216;
+constexpr int kRim = 8;
+constexpr int kCaptionLimit = 216;
 
 constexpr uint16_t Row(const char* text) {
     uint16_t bits = 0;
@@ -136,7 +137,7 @@ int OriginX() { return (kFaceScreen - kCols * kPitch) / 2; }
 int OriginY(bool captioned) {
     const int height = kRows * kPitch;
     if (captioned) {
-        return kCaptionBottom - height;
+        return kRim + (kCaptionLimit - kRim - height) / 2;
     }
     return (kFaceScreen - height) / 2;
 }

@@ -20,6 +20,7 @@ DISPLAY = BOARD_DIR / "memoria_mascot_display.cc"
 
 WIDTH = 360
 YELLOW = 0xFFE0
+BADGE_BAND_Y = 46
 NAMES = ("calm", "listen", "think", "speak", "connect", "greet", "pair")
 FORBIDDEN = ("surprised", "shocked", "scared", "angry", "dizzy", "惊吓", "生气")
 
@@ -268,7 +269,6 @@ def test_paint_is_yellow_dots_without_a_frame(report: dict) -> None:
             assert paint["other"] == 0
             assert paint["edge"] == 0
             assert paint["outside"] == 0
-            assert paint["min_y"] >= 40
             assert paint["rim"] > 0
             assert paint["rim_yellow"] * 2 < paint["rim"]
             signatures.add(paint["sig"])
@@ -276,6 +276,7 @@ def test_paint_is_yellow_dots_without_a_frame(report: dict) -> None:
         lifted = report["paints"][(name, 1)]
         assert lifted["min_y"] < rest["min_y"]
         assert lifted["max_y"] <= 216
+        assert lifted["min_y"] <= BADGE_BAND_Y
         assert lifted["sig"] != rest["sig"]
     assert len(signatures) == 14
 
