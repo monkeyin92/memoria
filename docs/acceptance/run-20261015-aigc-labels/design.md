@@ -65,3 +65,16 @@ From Candidate B (scene-raster badge + OfflineMenu-only notices): keep the insig
 ## Next implementation step
 
 Land retagged pack + required intros; keep badge geometry as product-approved.
+
+## Addendum, 2026-10-22 (T-23)
+
+Monkey removed the persistent corner badge and the spoken intros described
+above. The device no longer draws an 「AI」 label, and offline stories and
+bedtime play with no intro file. Firmware and CI no longer refuse playback or
+fail the build when those two files are absent. This section leaves the
+2026-10-15 design in place.
+
+Implicit Vorbis tags on shipped clips stay required. The live-dialogue AIGC
+voice prompt stays. The parent miniprogram stays. The turn-tone fallback is
+removed with the badge, because it applied only when that badge could not
+render.

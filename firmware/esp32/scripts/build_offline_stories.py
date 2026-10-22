@@ -14,9 +14,8 @@ characters. The 8 MiB assets partition keeps >= 0.5 MiB free.
 
 Implicit AIGC Vorbis comments (CONTENT_ID, SERVICE_PROVIDER, AI_GENERATED,
 ARTIST, VOICE_ID, DATE, CONTENT_PRODUCER) are required on every shipped clip.
-Provider-embedded marks are never stripped. Spoken AIGC intros
-(aigc_story_intro / aigc_soothe_intro) are required in the pack; CI fails if
-either is absent. Decode-and-tag CI for every board ``*.ogg`` lives in
+Provider-embedded marks are never stripped. Spoken intros are not part of the
+pack. Decode-and-tag CI for every board ``*.ogg`` lives in
 ``check_device_ogg_aigc.py`` (this script never shells out to a decoder).
 """
 
@@ -92,16 +91,11 @@ OFFLINE_LINES = (
     ("offline-menu-idle-v1", "我先休息一下，点屏幕就能叫醒我。"),
     ("llm_unavailable", "我现在有点卡住了，等一会儿再来找我聊吧。"),
     ("llm_thinking", "嗯，我想一想。"),
-    ("aigc_story_intro", "下面是 AI 合成的声音给你讲故事。"),
-    ("aigc_soothe_intro", "AI 合成的声音陪你睡觉啦。"),
 )
 
 # No pending placeholder line ids. Product locked llm_* copy on 2026-10-15;
 # replacement speech oggs still outstanding (check_device_ogg_aigc.py fails them).
 PENDING_PLACEHOLDER_LINE_IDS: frozenset[str] = frozenset()
-
-# Spoken AIGC intros required in the shipped pack (no skip-if-missing).
-REQUIRED_AIGC_INTRO_LINE_IDS = frozenset({"aigc_story_intro", "aigc_soothe_intro"})
 
 BOARD_CLIPS = ("wo_zai_ne", "night_soothe")
 
@@ -205,14 +199,8 @@ def check_pack(root: Path, *, write_manifests: bool) -> int:
         except ValueError as exc:
             errors.append(f"{rel.as_posix()}: {exc}")
 
-    # Refresh manifests whenever every non-intro clip is present so the index
-    # tables stay in sync while AIGC intros are still being dropped in.
-    non_intro_missing = [
-        rel
-        for rel in clip_paths()
-        if rel not in kinds and rel.stem not in REQUIRED_AIGC_INTRO_LINE_IDS
-    ]
-    if not non_intro_missing:
+    absent = [rel for rel in clip_paths() if rel not in kinds]
+    if not absent:
         for rel, text in derive_manifests(kinds).items():
             dest = root / rel
             if write_manifests:
@@ -257,14 +245,6 @@ def check_pack(root: Path, *, write_manifests: bool) -> int:
             continue
         _check_implicit_tags(rel, root / rel, errors)
 
-    for intro_id in sorted(REQUIRED_AIGC_INTRO_LINE_IDS):
-        intro_rel = PurePosixPath("offline_lines") / f"{intro_id}.ogg"
-        if intro_rel not in kinds:
-            errors.append(
-                f"missing required AIGC intro {intro_rel.as_posix()}; "
-                "run scripts/render_aigc_notices.py and copy the ogg into the pack"
-            )
-
     total = _tree_bytes(root) if root.is_dir() else 0
     free = ASSETS_PARTITION_BYTES - total
     production = sum(kind is AssetKind.PRODUCTION for kind in kinds.values())
@@ -275,7 +255,6 @@ def check_pack(root: Path, *, write_manifests: bool) -> int:
     print(f"production_clips={production}")
     print(f"placeholder_clips={placeholder}")
     print(f"pending_placeholder_clips={pending_placeholders}")
-    print(f"required_aigc_intros={len(REQUIRED_AIGC_INTRO_LINE_IDS)}")
     if free < MIN_FREE_MARGIN_BYTES:
         errors.append(f"free margin {free} < required {MIN_FREE_MARGIN_BYTES}")
 
