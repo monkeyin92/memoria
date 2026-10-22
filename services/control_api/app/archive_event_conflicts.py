@@ -27,6 +27,7 @@ from services.common.companions import (
     designed_voice_profile,
     designed_voice_speaker_sha256,
 )
+from services.common.tts_defaults import STEPFUN_ARCHIVE_MODELS
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.mode_policy import FrozenMode
 from services.digital_self.domain import (
@@ -47,7 +48,26 @@ from services.legacy.domain import LegacyAccessSnapshot
 EVENT_ID_CONTENT_CONFLICT = "event_id_content_conflict"
 _LOCAL_SAFE_PLANNER_POLICY_VERSION = "local-safe-fallback-v1"
 _DOUBAO_TTS_PROVIDER = "volcengine_doubao"
+_STEPFUN_TTS_PROVIDER = "stepfun"
 _DOUBAO_PERSONAL_VOICE_MODEL = "seed-icl-2.0"
+
+
+def _tts_matches_applied_voice(submitted: ResponseProvenanceCreate) -> bool:
+    """Doubao pairs with its voice resource. StepFun pairs with the designed voice.
+
+    Production speech is StepFun primary. The session still freezes the
+    approved designed-voice contract, and the archive records which engine
+    actually spoke that turn.
+    """
+
+    if submitted.tts_provider == _DOUBAO_TTS_PROVIDER:
+        return submitted.tts_model == submitted.actual_voice_resource_id
+    if submitted.tts_provider == _STEPFUN_TTS_PROVIDER:
+        return (
+            submitted.tts_model in STEPFUN_ARCHIVE_MODELS
+            and submitted.actual_voice_resource_id == DESIGNED_VOICE_MODEL
+        )
+    return False
 
 
 def event_id_conflict(_exc: IdempotencyConflictError) -> HTTPException:
@@ -162,7 +182,9 @@ class ResponseProvenanceCreate(BaseModel):
     persona_style_only: bool = False
     source_refs: list[ResponseSourceRefCreate] = Field(default_factory=list, max_length=32)
     evolution_contract_version: Literal["v1"] | None = None
-    evolution_artifacts: list[EvolutionArtifactRefCreate] = Field(default_factory=list, max_length=8)
+    evolution_artifacts: list[EvolutionArtifactRefCreate] = Field(
+        default_factory=list, max_length=8
+    )
     evolution_receipt: EvolutionReceiptCreate | None = None
     epistemic_status: Literal["not_applicable", "fact", "inference", "unknown", "mixed"]
     epistemic_reason_codes: list[str] = Field(default_factory=list, max_length=16)
@@ -254,10 +276,7 @@ class ResponseProvenanceCreate(BaseModel):
             or self.actual_voice_provider_expires_at is not None
         ):
             raise ValueError("designed voice provenance cannot claim personal metadata")
-        if has_actual_voice and (
-            self.tts_provider != _DOUBAO_TTS_PROVIDER
-            or self.tts_model != self.actual_voice_resource_id
-        ):
+        if has_actual_voice and not _tts_matches_applied_voice(self):
             raise ValueError("actual voice snapshot does not match the tts runtime")
         return self
 
@@ -381,10 +400,14 @@ def _canonical_actual_voice(
     valid = False
     if interaction_mode == "companion":
         expected_profile = designed_voice_profile(frozen.companion_style_id or DEFAULT_COMPANION_ID)
+        designed_engine = submitted.tts_provider == _DOUBAO_TTS_PROVIDER or (
+            submitted.tts_provider == _STEPFUN_TTS_PROVIDER
+            and submitted.tts_model in STEPFUN_ARCHIVE_MODELS
+        )
         valid = (
             expected_profile is not None
             and profile_id == expected_profile
-            and submitted.tts_provider == _DOUBAO_TTS_PROVIDER
+            and designed_engine
             and resource_id == DESIGNED_VOICE_MODEL
             and speaker_sha256 == designed_voice_speaker_sha256(expected_profile)
         )
@@ -417,7 +440,16 @@ def _canonical_actual_voice(
             and resource_id == frozen.fallback_voice_resource_id
             and speaker_sha256 == designed_voice_speaker_sha256(frozen.fallback_voice_profile_id)
         )
-        valid = personal or safe_baseline
+        stepfun_designed = (
+            frozen.fallback_voice_profile_id is not None
+            and profile_id == frozen.fallback_voice_profile_id
+            and submitted.tts_provider == _STEPFUN_TTS_PROVIDER
+            and submitted.tts_model in STEPFUN_ARCHIVE_MODELS
+            and resource_id == DESIGNED_VOICE_MODEL
+            and frozen.fallback_voice_resource_id == DESIGNED_VOICE_MODEL
+            and speaker_sha256 == designed_voice_speaker_sha256(frozen.fallback_voice_profile_id)
+        )
+        valid = personal or safe_baseline or stepfun_designed
     elif interaction_mode == "archive":
         valid = profile_id is None and resource_id == DESIGNED_VOICE_MODEL
     if not valid:
@@ -503,15 +535,9 @@ async def _canonical_evolution_artifacts(
             or candidate.artifact_hash != artifact.artifact_hash
             or (
                 candidate.scope == "owner_private"
-                and (
-                    not owner_projection_eligible
-                    or candidate.account_id != account_id
-                )
+                and (not owner_projection_eligible or candidate.account_id != account_id)
             )
-            or (
-                candidate.scope == "global_redacted"
-                and candidate.account_id is not None
-            )
+            or (candidate.scope == "global_redacted" and candidate.account_id is not None)
         ):
             raise HTTPException(
                 status_code=409,
@@ -760,7 +786,9 @@ async def canonicalize_response_provenance(
         or event.payload.get("owner_projection_eligible") is not True
         or (
             interaction_mode == "companion"
-            and (parent is None or parent.subject_id is None or event.subject_id != parent.subject_id)
+            and (
+                parent is None or parent.subject_id is None or event.subject_id != parent.subject_id
+            )
         )
         for event in resolved_events
     ):
@@ -844,7 +872,11 @@ async def canonicalize_response_provenance(
         "llm_provider": submitted.llm_provider,
         "llm_model": submitted.llm_model,
         "tts_provider": submitted.tts_provider,
-        "tts_model": actual_voice_resource_id,
+        "tts_model": (
+            submitted.tts_model
+            if submitted.tts_provider == _STEPFUN_TTS_PROVIDER
+            else actual_voice_resource_id
+        ),
         "actual_voice_profile_id": actual_voice_profile_id,
         "actual_voice_profile_version": actual_voice_profile_version,
         "actual_voice_resource_id": actual_voice_resource_id,

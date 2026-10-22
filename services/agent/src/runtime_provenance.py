@@ -17,6 +17,7 @@ from services.agent.src.generation_output_policy import (
     frozen_companion_clone_permitted,
     generation_voice_allowed,
 )
+from services.common.tts_defaults import STEPFUN_ARCHIVE_MODELS, STEPFUN_TTS_MODEL
 from services.guardian.child_memory import TRANSCRIPT_KEYS
 
 if TYPE_CHECKING:
@@ -25,6 +26,8 @@ if TYPE_CHECKING:
 
 RESPONSE_PROVENANCE_MAX_BYTES = 16 * 1024
 _TTS_SENTENCES_MAX = 64
+# Engines control-api will store on one playout. Anything else stays unlabeled.
+_ARCHIVE_TTS_ENGINES = frozenset({"stepfun", "volcengine_doubao"})
 _RESPONSE_PROVENANCE_FORBIDDEN_KEYS = frozenset(
     {
         "query",
@@ -40,6 +43,36 @@ _RESPONSE_PROVENANCE_FORBIDDEN_KEYS = frozenset(
         "cookie",
     }
 ) | {key.lower() for key in TRANSCRIPT_KEYS}
+
+
+def project_spoken_tts_provider(provenance: dict[str, Any]) -> dict[str, Any]:
+    """One provider for the turn the child heard, without the sentence list.
+
+    The sentence list is how the runtime remembers a failover. Control-api
+    rejects that list, so the archive keeps the engine of the sentence that
+    finished the turn.
+    """
+
+    sentences = provenance.pop("tts_sentences", None)
+    chosen: dict[str, Any] | None = None
+    if isinstance(sentences, list):
+        for item in sentences:
+            if not isinstance(item, dict):
+                continue
+            engine = item.get("engine")
+            if engine in _ARCHIVE_TTS_ENGINES:
+                chosen = item
+    if chosen is not None:
+        provenance["tts_provider"] = chosen["engine"]
+        model = chosen.get("model")
+        if isinstance(model, str) and model:
+            provenance["tts_model"] = model
+        return provenance
+    if provenance.get("tts_provider") == "stepfun":
+        model = provenance.get("tts_model")
+        if not isinstance(model, str) or model not in STEPFUN_ARCHIVE_MODELS:
+            provenance["tts_model"] = STEPFUN_TTS_MODEL
+    return provenance
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,9 +201,7 @@ class DuplexRuntimeProvenanceMixin:
             or not self.fence.matches(fence)
             or not generation_voice_allowed(
                 policy,
-                personal_voice_permitted=self.profile_permits(
-                    fence, capability="voice_clone_use"
-                )
+                personal_voice_permitted=self.profile_permits(fence, capability="voice_clone_use")
                 or frozen_companion_clone_permitted(policy),
                 profile_id=profile_id,
                 resource_id=resource_id,
@@ -218,12 +249,17 @@ class DuplexRuntimeProvenanceMixin:
         provenance = cast(dict[str, Any], json.loads(json.dumps(stored)))
         voice = self.generation_voice_for(fence)
         if voice is not None:
-            provenance.update(
-                {
-                    "tts_model": voice.resource_id,
-                    "actual_voice_profile_id": voice.profile_id,
-                    "actual_voice_resource_id": voice.resource_id,
-                    "actual_voice_speaker_sha256": voice.speaker_sha256,
-                }
-            )
-        return provenance
+            planned_model = provenance.get("tts_model")
+            applied: dict[str, Any] = {
+                "actual_voice_profile_id": voice.profile_id,
+                "actual_voice_resource_id": voice.resource_id,
+                "actual_voice_speaker_sha256": voice.speaker_sha256,
+            }
+            if not (
+                provenance.get("tts_provider") == "stepfun"
+                and isinstance(planned_model, str)
+                and planned_model in STEPFUN_ARCHIVE_MODELS
+            ):
+                applied["tts_model"] = voice.resource_id
+            provenance.update(applied)
+        return project_spoken_tts_provider(provenance)

@@ -23,6 +23,7 @@ from services.agent.src.providers.tts_failover import (
 from services.agent.src.voice_core.crisis_script_interrupt import (
     active_subject_id,
     publish_crisis_self_interrupt,
+    unfinished_safety_announcement,
 )
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.media_bridge_server import MediaBridgeSession, PCMFrame
@@ -1457,10 +1458,17 @@ class MediaOutputStreamMixin:
                         aigc_marker=True,
                     )
                     offset += frame_samples
+            end = offset
             async for chunk in self._conversation_chunks(
                 context, work.fence, work.conversation_text, offset
             ):
-                yield chunk
+                end = chunk.source_start_sample + chunk.frame_samples
+                # The closing cue rides this fence, so no source frame may
+                # carry final_frame before the cue has been sent.
+                yield replace(chunk, final=False) if work.tail_pcm_s16le else chunk
+            if work.tail_pcm_s16le:
+                async for tail in self._tail_marker_chunks(context, work.tail_pcm_s16le, end):
+                    yield tail
             return
         renderer = getattr(context.provider, "generate_output", None)
         if callable(renderer):
@@ -1473,8 +1481,13 @@ class MediaOutputStreamMixin:
             )
             if inspect.isawaitable(produced):
                 produced = await produced
+            end = source_start_sample
             async for chunk in produced:
-                yield chunk
+                end = chunk.source_start_sample + chunk.frame_samples
+                yield replace(chunk, final=False) if work.tail_pcm_s16le else chunk
+            if work.tail_pcm_s16le:
+                async for tail in self._tail_marker_chunks(context, work.tail_pcm_s16le, end):
+                    yield tail
             return
         if getattr(work.intent, "WhichOneof", lambda _name: None)("source") != "pcm_s16le":
             raise RuntimeError("media provider cannot render an output text source")
@@ -1488,7 +1501,7 @@ class MediaOutputStreamMixin:
         sample = source_start_sample
         for offset in range(0, len(pcm), frame_bytes):
             frame = pcm[offset : offset + frame_bytes]
-            final = offset + frame_bytes >= len(pcm)
+            final = offset + frame_bytes >= len(pcm) and not work.tail_pcm_s16le
             if len(frame) < frame_bytes:
                 frame += b"\x00" * (frame_bytes - len(frame))
             yield MediaReplyChunk(
@@ -1498,6 +1511,52 @@ class MediaOutputStreamMixin:
                 final=final,
             )
             sample += frame_samples
+        if work.tail_pcm_s16le:
+            async for tail in self._tail_marker_chunks(context, work.tail_pcm_s16le, sample):
+                yield tail
+
+    async def _tail_marker_chunks(
+        self,
+        context: _MediaVoiceSession,
+        pcm: bytes,
+        source_start_sample: int,
+    ) -> AsyncIterator[MediaReplyChunk]:
+        """Append the closing cue to the round's own generation.
+
+        The device only leaves SPEAKING on this generation's
+        ``generation.completed``, so the cue must not open a successor
+        generation. Its frames are the last ones and carry ``final_frame``.
+        """
+
+        frame_samples = int(getattr(context.provider, "output_frame_samples", 480))
+        if frame_samples <= 0:
+            raise RuntimeError("media provider has an invalid output frame size")
+        if not pcm or len(pcm) % 2:
+            raise ValueError("closing AIGC cue must be 16-bit PCM")
+        frame_bytes = frame_samples * 2
+        context.aigc_closing_marker_state = "playing"
+        context.aigc_closing_marker_started_at = time.monotonic()
+        sample = source_start_sample
+        completed = False
+        try:
+            for offset in range(0, len(pcm), frame_bytes):
+                frame = pcm[offset : offset + frame_bytes]
+                final = offset + frame_bytes >= len(pcm)
+                if len(frame) < frame_bytes:
+                    frame += b"\x00" * (frame_bytes - len(frame))
+                yield MediaReplyChunk(
+                    pcm_s16le=frame,
+                    source_start_sample=sample,
+                    first=False,
+                    final=final,
+                    aigc_marker=True,
+                )
+                sample += frame_samples
+            completed = True
+        finally:
+            # A stop that cancels this stream mid-cue leaves the marker
+            # unfinished; the close path then plays it in its own generation.
+            context.aigc_closing_marker_state = "done" if completed else "idle"
 
     async def _maybe_standby_after_farewell_complete(
         self,
@@ -1722,16 +1781,18 @@ class MediaOutputStreamMixin:
         # A playback/transport failure is one of the three cases that may raise
         # the parent's unfinished-script reminder. A user stop never reaches
         # this method, and its announced text is cleared before any later close.
-        publish_crisis_self_interrupt(
-            getattr(self, "crisis_script_interrupt_publisher", None),
-            announced_text=context.output.assistant_text,
-            crisis_reply_heard=context.crisis_reply_heard,
-            minor_user_id=active_subject_id(context),
-            session_id=fence.session_id,
-            turn_id=fence.turn_id,
-            generation_id=fence.generation_id,
-            tool_epoch=fence.tool_epoch,
-        )
+        unfinished_script = unfinished_safety_announcement(context)
+        if unfinished_script is not None:
+            publish_crisis_self_interrupt(
+                getattr(self, "crisis_script_interrupt_publisher", None),
+                announced_text=unfinished_script,
+                crisis_reply_heard=context.crisis_reply_heard,
+                minor_user_id=active_subject_id(context),
+                session_id=fence.session_id,
+                turn_id=fence.turn_id,
+                generation_id=fence.generation_id,
+                tool_epoch=fence.tool_epoch,
+            )
         await self._cancel_reply_task(
             context,
             fence,

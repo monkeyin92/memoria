@@ -54,6 +54,8 @@ func (c *DeviceConnection) handleControl(data []byte) bool {
 		return c.handleRuntimeProfileApplied(envelope)
 	case "session.close":
 		return c.handleSessionClose(envelope)
+	case "listening.resume":
+		return c.handleListeningResume(envelope, runtime)
 	default:
 		_ = session
 		c.server.metrics.controlRejected.Add(1)
@@ -382,6 +384,29 @@ func (c *DeviceConnection) logDroppedLateReceipt(receiptType string, fence devic
 	slog.Info("media edge dropped late receipt for a replaced generation",
 		"session", c.sessionID, "device", c.deviceID, "epoch", c.epoch,
 		"type", receiptType, "generation", fence.GenerationID, "stage", stage)
+}
+
+func (c *DeviceConnection) handleListeningResume(envelope deviceControlEnvelope, runtime *VoiceCoreMediaRuntime) bool {
+	if err := requireVersion(envelope.Version, 2); err != nil {
+		c.server.metrics.controlRejected.Add(1)
+		return false
+	}
+	var event deviceListeningResume
+	if err := jsonUnmarshalStrict(envelope.Raw, &event); err != nil || event.validate() != nil ||
+		uint64(c.epoch) != event.StreamEpoch || !c.acceptControlSequence(event.ControlSequence) {
+		c.server.metrics.controlRejected.Add(1)
+		c.sendSessionError("invalid_control", false)
+		return false
+	}
+	if runtime == nil {
+		return true
+	}
+	if err := runtime.SendListeningResume(event.WakeSample); err != nil {
+		c.server.metrics.controlRejected.Add(1)
+		c.sendSessionError("listening_resume_rejected", true)
+		return false
+	}
+	return true
 }
 
 func (c *DeviceConnection) handleDeviceState(envelope deviceControlEnvelope) bool {

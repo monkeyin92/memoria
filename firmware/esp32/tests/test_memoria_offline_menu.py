@@ -733,7 +733,7 @@ def test_device_ogg_aigc_check_rejects_doubao_on_wenrounansheng(
     shutil.copytree(BOARD_ASSETS, root)
     _retag_board_ogg(
         root,
-        "offline_lines/llm_thinking.ogg",
+        "wo_zai_ne.ogg",
         service_provider="Volcengine Doubao",
         artist="wenrounansheng",
         voice_id="wenrounansheng",
@@ -741,7 +741,7 @@ def test_device_ogg_aigc_check_rejects_doubao_on_wenrounansheng(
     completed = _run_device_ogg_aigc_check(root)
     assert completed.returncode == 1
     assert completed.stderr.count("error:") == 1
-    assert "offline_lines/llm_thinking.ogg" in completed.stderr
+    assert "wo_zai_ne.ogg" in completed.stderr
     assert "SERVICE_PROVIDER must be 'StepFun'" in completed.stderr
     assert "VOICE_ID 'wenrounansheng'" in completed.stderr
     assert "got 'Volcengine Doubao'" in completed.stderr

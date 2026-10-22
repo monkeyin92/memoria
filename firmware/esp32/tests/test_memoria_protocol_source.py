@@ -2207,3 +2207,18 @@ def test_online_proof_reserves_its_counter_before_sending() -> None:
     # The only other write skips ahead after the server refused the counter.
     assert proof.count('runtime.SetInt("activation_ctr"') == 2
     assert proof.index('runtime.SetInt("activation_ctr", counter + kCounterSkipOnConflict);') > send
+
+
+def test_v2_listening_closed_leaves_the_listening_face_until_a_screen_resume() -> None:
+    handler = SOURCE[SOURCE.index('if (type == "assistant.state")') :]
+    handler = handler[: handler.index('if (type == "session.close")')]
+    assert 'assistant_state == "listening_closed"' in handler
+    assert "NotifyListeningClosed(true)" in handler
+    assert 'assistant_state == "listening"' in handler
+    assert "EmitLegacyTts" not in handler
+    resume = SOURCE[SOURCE.index("bool MemoriaProtocol::SendListeningResume()") :]
+    resume = resume[: resume.index("void MemoriaProtocol::SendWakeWordDetected")]
+    assert '"listening.resume"' in resume
+    assert '"wake_sample"' in resume
+    assert "WakeWordInvoke" not in resume
+    assert "NotifyListeningClosed(false)" in SOURCE[SOURCE.index('if (type == "session.close")') :]

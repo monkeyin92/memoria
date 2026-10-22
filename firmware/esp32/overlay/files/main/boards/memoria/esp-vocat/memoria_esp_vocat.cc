@@ -34,6 +34,7 @@
 #include "memoria_pat.h"
 #include "memoria_playback_stop.h"
 #include "memoria_power_policy.h"
+#include "memoria_protocol.h"
 #include "memoria_quiet_hours.h"
 #include "memoria_usb_command.h"
 #include "memoria_wake_mode.h"
@@ -576,6 +577,7 @@ private:
     // Pacing between local clips, and the story grace before OnStoryFinished.
     static constexpr std::uint32_t kOfflineClipGapMs = 1600;
     std::atomic<bool> offline_story_cancel_{false};
+    std::atomic<bool> listening_capture_closed_{false};
     TaskHandle_t usb_command_task_handle_ = nullptr;
     // Log tag of the USB command line: the test rig greps for "usb wake accepted" / "usb wake ignored".
     static constexpr char kUsbTag[] = "MemoriaUsbCommand";
@@ -835,12 +837,16 @@ private:
                state != kDeviceStateWifiConfiguring;
     }
 
-    static memoria::TapDevice TapDeviceFor(DeviceState state) {
+    memoria::TapDevice TapDeviceFor(DeviceState state) const {
         if (state == kDeviceStateStarting) {
             return memoria::TapDevice::kStarting;
         }
-        if (state == kDeviceStateIdle) {
-            return memoria::TapDevice::kIdle;
+        if (state == kDeviceStateIdle || state == kDeviceStateWifiConfiguring) {
+            return state == kDeviceStateIdle ? memoria::TapDevice::kIdle
+                                             : memoria::TapDevice::kBusy;
+        }
+        if (listening_capture_closed_.load(std::memory_order_relaxed)) {
+            return memoria::TapDevice::kListeningClosed;
         }
         return memoria::TapDevice::kBusy;
     }
@@ -1043,6 +1049,10 @@ private:
                 wifi_hold_since_ms_.store(kWifiHoldNotArmed, std::memory_order_relaxed);
                 PlayLocalAssetClip("wo_zai_ne.ogg");
                 app.WakeWordInvoke("screen_tap");
+                return;
+            case memoria::TapWakeAction::kResumeListening:
+                PlayLocalAssetClip("wo_zai_ne.ogg");
+                memoria::SendListeningResume();
                 return;
             case memoria::TapWakeAction::kIgnore:
                 return;
@@ -1543,6 +1553,12 @@ private:
             backlight_->RestoreBrightness();
         }
         // The phone's companion pick arrives through the display-profile poll.
+        memoria::SetListeningClosedHandler([this](bool closed) {
+            listening_capture_closed_.store(closed, std::memory_order_relaxed);
+            if (display_ != nullptr) {
+                display_->SetListeningClosed(closed);
+            }
+        });
         memoria::SetCompanionSink([](const char* companion_id) {
             auto* display = static_cast<MemoriaMascotDisplay*>(Board::GetInstance().GetDisplay());
             if (display != nullptr) {

@@ -38,6 +38,10 @@ type vadStream interface {
 	SendVadWithVoicedEnd(sample, voicedEnd uint64, probability, rms, noiseFloor float32, start bool) error
 }
 
+type listeningResumeStream interface {
+	SendListeningResume(wakeSample uint64) error
+}
+
 type playbackProgressStream interface {
 	SendPlaybackProgress(PlaybackProgress) error
 }
@@ -132,6 +136,14 @@ func newVoiceCoreMediaRuntime(
 }
 
 func (r *VoiceCoreMediaRuntime) HasDownlinkSender() bool { return r.downlinkSender != nil }
+
+func (r *VoiceCoreMediaRuntime) SendListeningResume(wakeSample uint64) error {
+	sender, ok := r.core.(listeningResumeStream)
+	if !ok {
+		return fmt.Errorf("voice-core stream does not support listening resume")
+	}
+	return sender.SendListeningResume(wakeSample)
+}
 
 func (r *VoiceCoreMediaRuntime) SendVAD(
 	sample, voicedEnd uint64,

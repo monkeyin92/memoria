@@ -344,13 +344,41 @@ std::string RenderJson(cJSON* root) {
 
 }  // namespace
 
+namespace {
+MemoriaProtocol* g_active_protocol = nullptr;
+std::function<void(bool)> g_listening_closed_handler;
+}  // namespace
+
+void SetListeningClosedHandler(std::function<void(bool closed)> handler) {
+    g_listening_closed_handler = std::move(handler);
+}
+
+bool SendListeningResume() {
+    if (g_active_protocol == nullptr) {
+        return false;
+    }
+    return g_active_protocol->SendListeningResume();
+}
+
+namespace {
+void NotifyListeningClosed(bool closed) {
+    if (g_listening_closed_handler) {
+        g_listening_closed_handler(closed);
+    }
+}
+}  // namespace
+
 MemoriaProtocol::MemoriaProtocol() {
+    g_active_protocol = this;
     event_group_ = xEventGroupCreate();
     server_sample_rate_ = kDownlinkSampleRate24k;
     server_frame_duration_ = kFrameMs;
 }
 
 MemoriaProtocol::~MemoriaProtocol() {
+    if (g_active_protocol == this) {
+        g_active_protocol = nullptr;
+    }
     // Application owns the AudioService captured by this callback and its
     // lifetime can end before Protocol member destruction.
     on_local_flush_requested_ = nullptr;
@@ -2171,6 +2199,24 @@ bool MemoriaProtocol::HandleServerText(const char* data, size_t size) {
             }
             return true;
         }
+        if (type == "assistant.state") {
+            uint32_t control_sequence = 0;
+            uint64_t server_monotonic_ms = 0;
+            if (!ValidateServerBase(root.value, "assistant.state", &control_sequence,
+                                    &server_monotonic_ms)) {
+                return false;
+            }
+            std::string assistant_state;
+            if (!GetString(root.value, "state", &assistant_state, 64)) {
+                return false;
+            }
+            if (assistant_state == "listening_closed") {
+                NotifyListeningClosed(true);
+            } else if (assistant_state == "listening") {
+                NotifyListeningClosed(false);
+            }
+            return true;
+        }
         if (type == "session.close") {
             uint32_t control_sequence = 0;
             uint64_t server_monotonic_ms = 0;
@@ -2185,6 +2231,7 @@ bool MemoriaProtocol::HandleServerText(const char* data, size_t size) {
                 // without replaying the offline clip.
                 OfflineMenuSignals::PostLlmUnavailable(/*play_line=*/false);
             }
+            NotifyListeningClosed(false);
             terminal_session_close_ = true;
             resumable_session_id_.clear();
             resumable_stream_epoch_ = 0;
@@ -2466,6 +2513,25 @@ void MemoriaProtocol::DrainTransportActions() {
             return;
         }
     }
+}
+
+bool MemoriaProtocol::SendListeningResume() {
+    std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+    if (protocol_version_ != kProtocolVersionV2 || stream_epoch_ == 0) {
+        return false;
+    }
+    ++control_sequence_;
+    ScopedJson root{cJSON_CreateObject()};
+    if (root.value == nullptr) {
+        return false;
+    }
+    cJSON_AddStringToObject(root.value, "type", "listening.resume");
+    cJSON_AddNumberToObject(root.value, "version", 2);
+    cJSON_AddNumberToObject(root.value, "stream_epoch", stream_epoch_);
+    cJSON_AddNumberToObject(root.value, "control_sequence", control_sequence_);
+    cJSON_AddNumberToObject(root.value, "device_monotonic_ms", DeviceMonotonicMs());
+    cJSON_AddNumberToObject(root.value, "wake_sample", static_cast<double>(uplink_sample_start_));
+    return QueueTransportText(RenderJson(root.value));
 }
 
 void MemoriaProtocol::SendWakeWordDetected(const std::string& wake_word) {

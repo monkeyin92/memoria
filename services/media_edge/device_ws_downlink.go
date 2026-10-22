@@ -425,6 +425,24 @@ func (c *DeviceConnection) ForwardCoreEvent(event *mediav1.CoreToMedia) {
 		c.sendControl(deviceControlPriority("session.close"), payload)
 	case event.GetClient() != nil:
 		client := event.GetClient()
+		if client.GetType() == "assistant_state" {
+			state, ok := deviceAssistantCaptureState(client.GetJsonPayload())
+			if !ok {
+				return
+			}
+			payload, err := marshalDeviceControl(deviceAssistantState{
+				Type: "assistant.state", Version: 2,
+				SessionID: c.sessionID, StreamEpoch: uint64(c.epoch),
+				ControlSequence:   c.nextServerSequence(),
+				ServerMonotonicMS: now,
+				State:             state,
+			})
+			if err != nil {
+				return
+			}
+			c.sendControl(deviceControlPriority("assistant.state"), payload)
+			return
+		}
 		if client.GetType() != "assistant_expression" {
 			return
 		}
