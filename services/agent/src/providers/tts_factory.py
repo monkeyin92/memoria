@@ -133,7 +133,7 @@ def tts_runtime_descriptor(settings: Any) -> AigcTtsDescriptor:
         return AigcTtsDescriptor(
             provider="stepfun",
             engine=str(getattr(settings, "stepfun_tts_model", STEPFUN_TTS_MODEL)),
-            voice=str(getattr(settings, "stepfun_tts_voice", "")),
+            voice=str(getattr(settings, "stepfun_tts_voice", STEPFUN_TTS_VOICE)),
             fallback_provider="volcengine_doubao",
             fallback_engine=str(
                 getattr(settings, "doubao_tts_resource_id", DOUBAO_TTS_RESOURCE_ID)

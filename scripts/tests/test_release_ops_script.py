@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -89,7 +90,10 @@ def test_finish_fails_only_on_unhealthy_or_starting(line: str, blocks: bool) -> 
 
 def test_freeze_keeps_sqlite_snapshot_in_cutover_and_prunes_old_dumps() -> None:
     freeze = _function("step_freeze")
-    assert 'docker cp "memoria-control-api-1:/data/memoria.pre-$TAG.sqlite3" "$S/memoria.pre-$TAG.sqlite3"' in freeze
+    assert (
+        'docker cp "memoria-control-api-1:/data/memoria.pre-$TAG.sqlite3" "$S/memoria.pre-$TAG.sqlite3"'
+        in freeze
+    )
     assert 'rm -f "/data/memoria.pre-$TAG.sqlite3"' in freeze
     assert "cleanup_freeze_dumps" in freeze
     cleanup = _function("cleanup_freeze_dumps")
@@ -249,10 +253,7 @@ def test_speaker_guard_accepts_only_values_every_reader_treats_as_off(
 
 def test_script_names_no_release_tag_but_the_data_tree() -> None:
     # Whitelisted component overrides are the only other dated names.
-    stale = {
-        name.removesuffix(".yml")
-        for name in re.findall(r"\b20\d{6}-[a-z0-9.-]+", _code())
-    }
+    stale = {name.removesuffix(".yml") for name in re.findall(r"\b20\d{6}-[a-z0-9.-]+", _code())}
     assert stale == {
         "20260827-architecture-split-v1",
         "20261021-a94c438-pr345-pr346-pr348-pr352",
@@ -385,19 +386,13 @@ STEPFUN_CONTROL_OVERRIDE = (
 STEPFUN_BRIDGE_OVERRIDE = (
     "component-releases/20261021-stepfun-c272af5/override-bridge-stepfun-c272af5.yml"
 )
-STEPFUN_CONTROL_OVERRIDE_SHA = (
-    "53db50c436f582120ea3a292be1606f11fed46e5e329e30e73f4d55caba97204"
-)
-STEPFUN_BRIDGE_OVERRIDE_SHA = (
-    "a1b51ef44d4f87160649ee2015de815089a27f15d27a88d678196ef507fa5c3c"
-)
+STEPFUN_CONTROL_OVERRIDE_SHA = "53db50c436f582120ea3a292be1606f11fed46e5e329e30e73f4d55caba97204"
+STEPFUN_BRIDGE_OVERRIDE_SHA = "a1b51ef44d4f87160649ee2015de815089a27f15d27a88d678196ef507fa5c3c"
 PR368_CONTROL_IMAGE = "memoria-control-api:20261021-pr368-dd98c4a"
 PR368_CONTROL_OVERRIDE = (
     "component-releases/20261021-pr368-dd98c4a/override-control-pr368-dd98c4a.yml"
 )
-PR368_CONTROL_OVERRIDE_SHA = (
-    "bde575b693d379e47af7bbfbcbbcd857487532b78faef2d2957b4facaf1217c0"
-)
+PR368_CONTROL_OVERRIDE_SHA = "bde575b693d379e47af7bbfbcbbcd857487532b78faef2d2957b4facaf1217c0"
 MAIN_F14BE64_BRIDGE_IMAGE = "memoria-agent:20261021-main-f14be64"
 MAIN_F14BE64_BRIDGE_OVERRIDE = (
     "component-releases/20261021-main-f14be64/override-bridge-20261021-main-f14be64.yml"
@@ -405,8 +400,10 @@ MAIN_F14BE64_BRIDGE_OVERRIDE = (
 MAIN_F14BE64_BRIDGE_OVERRIDE_SHA = (
     "4cfa1733236927709435c3f068276835a009de8e3603ba2bba08571cc96610cf"
 )
-PR376_BRIDGE_OVERRIDE_SHA = (
-    "f7a3173d46ec1feee656d8bb6abffbdf509c6b1301c930c50614b5c8c9cf60a1"
+PR376_BRIDGE_OVERRIDE_SHA = "f7a3173d46ec1feee656d8bb6abffbdf509c6b1301c930c50614b5c8c9cf60a1"
+PR376_BRIDGE_IMAGE = "memoria-agent:20261021-pr376-8dda764"
+PR376_BRIDGE_OVERRIDE = (
+    "component-releases/20261021-pr376-8dda764/override-bridge-20261021-pr376-8dda764.yml"
 )
 
 _HOST_REPO = {
@@ -501,6 +498,9 @@ class FakeHost:
         self.tmp = root / "tmp"
         self.fake = root / "fake"
         self.bin = root / "bin"
+        # The fake host is rootless; the state file is signed off as root-owned
+        # unless the test pins another uid (override_spec mode checks stay real).
+        self.state_owner = "0"
         (self.fake / "containers").mkdir(parents=True)
         self.tmp.mkdir()
         self.bin.mkdir()
@@ -579,11 +579,23 @@ class FakeHost:
         record = self.release_dir(tag) / ".cutover" / "prev-release"
         return record.read_text(encoding="utf-8") if record.exists() else None
 
-    def step(self, name: str, *, tag: str, commit: str = NEW_COMMIT) -> StepRun:
+    @property
+    def state_file(self) -> Path:
+        return self.memoria / "state" / "component-overrides.tsv"
+
+    def set_state_owner(self, uid: str) -> None:
+        self.state_owner = uid
+
+    def step(
+        self, name: str, *, tag: str, commit: str = NEW_COMMIT, args: list[str] | None = None
+    ) -> StepRun:
         self.release_dir(tag)
         calls = self.fake / "calls.jsonl"
         calls.write_text("", encoding="utf-8")
         containers = shlex.quote(str(self.fake / "containers"))
+        invocation = f"main {name}"
+        if args:
+            invocation += " " + " ".join(shlex.quote(a) for a in args)
         program = "\n".join(
             (
                 "set -Eeuo pipefail",
@@ -598,7 +610,22 @@ class FakeHost:
                 'mv() { if [[ "$1" == -T ]]; then shift; '
                 'python3 -c "import os,sys; os.replace(sys.argv[1], sys.argv[2])" "$1" "$2"; '
                 'else command mv "$@"; fi; }',
-                f"main {name}",
+                # macOS has no flock; the fake host serializes nothing (the lock file
+                # itself is still created by the fd redirect).
+                "flock() { :; }",
+                # The script claims root ownership for host-facing directories.
+                # A non-root runner cannot honor the claim: BSD install shrugs
+                # (exit 0), GNU install aborts (exit 1), so the real command
+                # would make every -o/-g call fail only on Linux. The fake
+                # host drops the ownership flags; production keeps them and
+                # override_spec still verifies the owner via the stat stub.
+                "install() { local a=() arg; while [[ $# -gt 0 ]]; do "
+                'case "$1" in -o|-g) shift 2 ;; *) a+=("$1"); shift ;; esac; done; '
+                'command install "${a[@]}"; }',
+                'stat() { if [[ "$1" == -c || "$1" == -f ]] && [[ "$2" == *%u* ]]; '
+                'then printf "%s\\n" "$FAKE_STATE_OWNER"; else command stat "$@"; fi; }',
+                f"export FAKE_STATE_OWNER={self.state_owner}",
+                invocation,
             )
         )
         env = {k: v for k, v in os.environ.items() if not k.startswith("MEMORIA_")}
@@ -685,6 +712,10 @@ def component_host(tmp_path: Path) -> FakeHost:
     assert bridge.read_text(encoding="utf-8") == (
         f"services:\n  voice-core-media-bridge:\n    image: {BRIDGE_IMAGE}\n"
     )
+    # The whitelist rows live in host state now; the fixture seeds them with the
+    # real migration step so the tests always read what production reads.
+    migrated = host.step("migrate-component-overrides", tag=COMPONENT_STACK)
+    assert migrated.returncode == 0, migrated.output
     return host
 
 
@@ -729,55 +760,192 @@ def test_freeze_derives_and_persists_prev_from_the_live_stack(tmp_path: Path) ->
     )
 
 
-def test_the_override_whitelist_pins_every_persisted_copy() -> None:
-    script = _script()
-    for path, sha, origin in (
+def test_the_migrate_seed_pins_every_persisted_copy() -> None:
+    migrate = _function("step_migrate_component_overrides")
+    for svc, path, sha, origin in (
         (
+            "control-api",
             "/opt/memoria/component-releases/20261021-a94c438-pr345-pr346-pr348-pr352/"
             "override-control-pr352.yml",
             CONTROL_OVERRIDE_SHA,
             "/tmp/override-control-pr352.yml",
         ),
         (
+            "voice-core-media-bridge",
             "/opt/memoria/component-releases/"
             "20261021-a94c438-pr345-pr346-pr348-pr352-pr353-pr355/override-pr355.yml",
             BRIDGE_OVERRIDE_SHA,
             "/tmp/override-pr355.yml",
         ),
         (
+            "control-api",
             "/opt/memoria/component-releases/20261021-stepfun-c272af5/"
             "override-control-stepfun-c272af5.yml",
             STEPFUN_CONTROL_OVERRIDE_SHA,
             "/tmp/override-control-stepfun-c272af5.yml",
         ),
         (
+            "voice-core-media-bridge",
             "/opt/memoria/component-releases/20261021-stepfun-c272af5/"
             "override-bridge-stepfun-c272af5.yml",
             STEPFUN_BRIDGE_OVERRIDE_SHA,
             "/tmp/override-bridge-stepfun-c272af5.yml",
         ),
         (
+            "control-api",
             "/opt/memoria/component-releases/20261021-pr368-dd98c4a/"
             "override-control-pr368-dd98c4a.yml",
             PR368_CONTROL_OVERRIDE_SHA,
             "/tmp/override-control-pr368-dd98c4a.yml",
         ),
         (
+            "voice-core-media-bridge",
             "/opt/memoria/component-releases/20261021-main-f14be64/"
             "override-bridge-20261021-main-f14be64.yml",
             MAIN_F14BE64_BRIDGE_OVERRIDE_SHA,
             "/tmp/override-bridge-20261021-main-f14be64.yml",
         ),
+        # PR #377 added this row; a later merge dropped it from the constant on
+        # main, so the seed has to restore what production runs on.
         (
+            "voice-core-media-bridge",
             "/opt/memoria/component-releases/20261021-pr376-8dda764/"
             "override-bridge-20261021-pr376-8dda764.yml",
             PR376_BRIDGE_OVERRIDE_SHA,
             "/tmp/override-bridge-20261021-pr376-8dda764.yml",
         ),
     ):
-        assert path in script
-        assert sha in script
-        assert origin in script
+        # The row itself, not just the pieces drifting in elsewhere.
+        assert f"{svc} {path} {sha} {origin}" in migrate
+
+
+def test_migrate_is_idempotent(tmp_path: Path) -> None:
+    host = FakeHost(tmp_path, current=COMPONENT_STACK)
+
+    first = host.step("migrate-component-overrides", tag=COMPONENT_STACK)
+    assert first.returncode == 0, first.output
+    assert "migrated component overrides" in first.output
+    mode_before = host.state_file.stat().st_mode
+    text_before = host.state_file.read_text(encoding="utf-8")
+
+    again = host.step("migrate-component-overrides", tag=COMPONENT_STACK)
+
+    assert again.returncode == 0, again.output
+    assert "state file already migrated (unchanged)" in again.output
+    assert host.state_file.stat().st_mode == mode_before
+    assert host.state_file.read_text(encoding="utf-8") == text_before
+
+
+def test_migrate_refuses_to_overwrite_differing_state(tmp_path: Path) -> None:
+    host = FakeHost(tmp_path, current=COMPONENT_STACK)
+    assert host.step("migrate-component-overrides", tag=COMPONENT_STACK).returncode == 0
+    drifted = "control-api relative.yml deadbeef /tmp/override.yml\n"
+    host.state_file.write_text(drifted, encoding="utf-8")
+
+    run = host.step("migrate-component-overrides", tag=COMPONENT_STACK)
+
+    assert run.returncode == 1
+    assert "refusing to overwrite" in run.output
+    assert host.state_file.read_text(encoding="utf-8") == drifted
+
+
+def _spec_host(tmp_path: Path) -> FakeHost:
+    host = FakeHost(tmp_path, current=COMPONENT_STACK)
+    migrated = host.step("migrate-component-overrides", tag=COMPONENT_STACK)
+    assert migrated.returncode == 0, migrated.output
+    return host
+
+
+def _spec_run(host: FakeHost) -> subprocess.CompletedProcess[str]:
+    program = "\n".join(
+        (
+            "set -Eeuo pipefail",
+            "export TAG=t COMMIT=c",
+            f"export RELEASE_OPS_TMP_ROOT={shlex.quote(str(host.tmp))}",
+            f"source {shlex.quote(str(SCRIPT))}",
+            f"release_paths {shlex.quote(str(host.memoria))}",
+            f"export FAKE_STATE_OWNER={host.state_owner}",
+            'stat() { if [[ "$1" == -c || "$1" == -f ]] && [[ "$2" == *%u* ]]; '
+            'then printf "%s\\n" "$FAKE_STATE_OWNER"; else command stat "$@"; fi; }',
+            # A probe key that matches nothing forces a full scan: the row
+            # validations run before the key match, so a corrupt row fails here
+            # however early the valid rows are.
+            "override_spec /tmp/override-probe.yml",
+        )
+    )
+    return subprocess.run(["bash", "-c", program], capture_output=True, text=True, check=False)
+
+
+def test_override_spec_refuses_a_symlinked_state_file(tmp_path: Path) -> None:
+    host = _spec_host(tmp_path)
+    elsewhere = host.memoria / "state" / "elsewhere.tsv"
+    elsewhere.write_text(host.state_file.read_text(encoding="utf-8"), encoding="utf-8")
+    host.state_file.unlink()
+    host.state_file.symlink_to(elsewhere)
+
+    run = _spec_run(host)
+
+    assert run.returncode == 1
+    assert "state file must be a regular file, not a symlink" in run.stderr
+
+
+def test_override_spec_refuses_a_group_writable_state_file(tmp_path: Path) -> None:
+    host = _spec_host(tmp_path)
+    host.state_file.chmod(0o664)
+
+    run = _spec_run(host)
+
+    assert run.returncode == 1
+    assert "state file must be 0600 or 0644" in run.stderr
+
+
+def test_override_spec_refuses_a_state_file_not_owned_by_root(tmp_path: Path) -> None:
+    host = _spec_host(tmp_path)
+    host.set_state_owner("501")
+
+    run = _spec_run(host)
+
+    assert run.returncode == 1
+    assert "state file must be owned by uid 0" in run.stderr
+
+
+@pytest.mark.parametrize(
+    ("row", "message"),
+    [
+        (
+            f"control-api component-releases/20261021-x/override.yml {'e' * 64} /tmp/override.yml",
+            "persisted path must be under /opt/memoria/component-releases/",
+        ),
+        (
+            f"control-api /opt/memoria/component-releases/x/override.yml {'z' * 64} "
+            "/tmp/override.yml",
+            "sha must be 64 hex chars",
+        ),
+        (
+            "control-api /opt/memoria/component-releases/x/override.yml",
+            "must have exactly 4 fields",
+        ),
+        (
+            f"control-api /opt/memoria/component-releases/x/override.yml {'a' * 64} "
+            "/var/tmp/override-control-monitor.yml",
+            "original path must be under /tmp/",
+        ),
+    ],
+    ids=["relative-path", "non-hex-sha", "three-fields", "nested-tmp"],
+)
+def test_override_spec_fails_closed_on_a_malformed_row(
+    tmp_path: Path, row: str, message: str
+) -> None:
+    host = _spec_host(tmp_path)
+    line_number = len(host.state_file.read_text(encoding="utf-8").splitlines()) + 1
+    with host.state_file.open("a", encoding="utf-8") as state:
+        state.write(row + "\n")
+
+    run = _spec_run(host)
+
+    assert run.returncode == 1
+    assert f"malformed state file line {line_number}" in run.stderr
+    assert message in run.stderr
 
 
 def test_freeze_accepts_whitelisted_image_only_overrides(tmp_path: Path) -> None:
@@ -969,9 +1137,7 @@ def test_freeze_accepts_a_persisted_override_path(tmp_path: Path) -> None:
 def test_freeze_accepts_the_stepfun_whitelist_entries(tmp_path: Path) -> None:
     host = component_host(tmp_path)
     base = host.release_dir(COMPONENT_STACK) / "docker-compose.production.yml"
-    control = host.override_file(
-        STEPFUN_CONTROL_OVERRIDE, "control-api", STEPFUN_CONTROL_IMAGE
-    )
+    control = host.override_file(STEPFUN_CONTROL_OVERRIDE, "control-api", STEPFUN_CONTROL_IMAGE)
     bridge = host.override_file(
         STEPFUN_BRIDGE_OVERRIDE, "voice-core-media-bridge", STEPFUN_BRIDGE_IMAGE
     )
@@ -1015,48 +1181,56 @@ def test_freeze_accepts_the_stepfun_whitelist_entries(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("service", "persisted", "sha", "origin"),
+    ("service", "relative", "sha", "origin"),
     [
         (
             "control-api",
-            "/opt/memoria/component-releases/20261021-pr368-dd98c4a/"
-            "override-control-pr368-dd98c4a.yml",
+            "component-releases/20261021-pr368-dd98c4a/override-control-pr368-dd98c4a.yml",
             PR368_CONTROL_OVERRIDE_SHA,
             "/tmp/override-control-pr368-dd98c4a.yml",
         ),
         (
             "voice-core-media-bridge",
-            "/opt/memoria/component-releases/20261021-main-f14be64/"
-            "override-bridge-20261021-main-f14be64.yml",
+            "component-releases/20261021-main-f14be64/override-bridge-20261021-main-f14be64.yml",
             MAIN_F14BE64_BRIDGE_OVERRIDE_SHA,
             "/tmp/override-bridge-20261021-main-f14be64.yml",
         ),
         (
             "voice-core-media-bridge",
-            "/opt/memoria/component-releases/20261021-pr376-8dda764/"
-            "override-bridge-20261021-pr376-8dda764.yml",
+            "component-releases/20261021-pr376-8dda764/override-bridge-20261021-pr376-8dda764.yml",
             PR376_BRIDGE_OVERRIDE_SHA,
             "/tmp/override-bridge-20261021-pr376-8dda764.yml",
         ),
     ],
 )
 def test_override_spec_recognizes_the_new_whitelist_entries(
-    service: str, persisted: str, sha: str, origin: str
+    tmp_path: Path, service: str, relative: str, sha: str, origin: str
 ) -> None:
+    host = _spec_host(tmp_path)
+    overridden = f"override_spec /opt/memoria/{relative}"
+    resolver = f"override_spec {origin}"
+
     program = "\n".join(
         (
             "set -Eeuo pipefail",
             "export TAG=t COMMIT=c",
+            f"export RELEASE_OPS_TMP_ROOT={shlex.quote(str(host.tmp))}",
             f"source {shlex.quote(str(SCRIPT))}",
-            f"override_spec {shlex.quote(persisted)}",
-            f"override_spec {shlex.quote(origin)}",
+            f"release_paths {shlex.quote(str(host.memoria))}",
+            'stat() { if [[ "$1" == -c || "$1" == -f ]] && [[ "$2" == *%u* ]]; '
+            'then printf "%s\\n" "$FAKE_STATE_OWNER"; else command stat "$@"; fi; }',
+            f"export FAKE_STATE_OWNER={host.state_owner}",
+            overridden,
+            resolver,
         )
     )
 
     run = subprocess.run(["bash", "-c", program], capture_output=True, text=True, check=False)
 
     assert run.returncode == 0, run.stderr
-    assert run.stdout == f"{service}|{persisted}|{sha}|{origin}\n" * 2
+    persisted = host.memoria / relative
+    original = host.tmp / origin.removeprefix("/tmp/")
+    assert run.stdout == f"{service}|{persisted}|{sha}|{original}\n" * 2
 
 
 def test_freeze_accepts_the_pr368_and_main_f14be64_whitelist_entries(
@@ -1064,9 +1238,7 @@ def test_freeze_accepts_the_pr368_and_main_f14be64_whitelist_entries(
 ) -> None:
     host = component_host(tmp_path)
     base = host.release_dir(COMPONENT_STACK) / "docker-compose.production.yml"
-    control = host.override_file(
-        PR368_CONTROL_OVERRIDE, "control-api", PR368_CONTROL_IMAGE
-    )
+    control = host.override_file(PR368_CONTROL_OVERRIDE, "control-api", PR368_CONTROL_IMAGE)
     bridge = host.override_file(
         MAIN_F14BE64_BRIDGE_OVERRIDE,
         "voice-core-media-bridge",
@@ -1116,6 +1288,168 @@ def test_freeze_accepts_the_pr368_and_main_f14be64_whitelist_entries(
         f"voice-core-media-bridge {bridge} {MAIN_F14BE64_BRIDGE_OVERRIDE_SHA} "
         "sha256:bridge-live\n" in record
     )
+
+
+_NEW_TAG = "20261022-main-main"
+
+_NEW_OVERRIDE = f"component-releases/{_NEW_TAG}/override-control-{_NEW_TAG}.yml"
+_NEW_ORIGIN = f"/tmp/override-control-{_NEW_TAG}.yml"
+
+
+def _record_args() -> list[str]:
+    return [
+        "control-api",
+        f"/opt/memoria/{_NEW_OVERRIDE}",
+        _NEW_ORIGIN,
+    ]
+
+
+def _record(host: FakeHost) -> StepRun:
+    return host.step("record-override", tag=COMPONENT_STACK, args=_record_args())
+
+
+def _record_files(host: FakeHost, image: str) -> tuple[Path, str]:
+    """An image-only override for the control image, persisted plus its /tmp original."""
+
+    content = f"services:\n  control-api:\n    image: {image}\n"
+    box = host.override_file(_NEW_OVERRIDE, "control-api", image)
+    host.tmp_override(_NEW_ORIGIN.removeprefix("/tmp/"), "control-api", image)
+    return box, hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def test_record_override_appends_a_row_the_next_freeze_uses(tmp_path: Path) -> None:
+    host = component_host(tmp_path)
+    box, sha = _record_files(host, CONTROL_IMAGE)
+    rows_before = host.state_file.read_text(encoding="utf-8")
+
+    run = _record(host)
+
+    assert run.returncode == 0, run.output
+    assert host.state_file.read_text(encoding="utf-8") == (
+        rows_before + f"control-api /opt/memoria/{_NEW_OVERRIDE} {sha} {_NEW_ORIGIN}\n"
+    )
+    assert (host.state_file.stat().st_mode & 0o777) == 0o600
+
+    base = host.release_dir(COMPONENT_STACK) / "docker-compose.production.yml"
+    origin = host.tmp / _NEW_ORIGIN.removeprefix("/tmp/")
+    host.container(
+        "control-api",
+        release=COMPONENT_STACK,
+        commit="b" * 40,
+        chain=f"{base},{origin}",
+        version=CONTROL_IMAGE.split(":", 1)[1],
+        image=CONTROL_IMAGE,
+        image_id="sha256:control-live",
+    )
+
+    freeze = host.step("freeze", tag=RELEASE)
+
+    assert freeze.returncode == 0, freeze.output
+    record = host.prev_record(RELEASE)
+    assert record is not None
+    assert f" {box} {sha} sha256:control-live " in record
+
+
+def test_record_override_is_idempotent(tmp_path: Path) -> None:
+    host = component_host(tmp_path)
+    _record_files(host, CONTROL_IMAGE)
+    assert _record(host).returncode == 0
+
+    again = _record(host)
+
+    assert again.returncode == 0, again.output
+    assert "override already recorded" in again.output
+    assert again.output.count("override already recorded") == 1
+
+
+def test_record_override_refuses_an_override_that_is_not_image_only(
+    tmp_path: Path,
+) -> None:
+    host = component_host(tmp_path)
+    box, _ = _record_files(host, CONTROL_IMAGE)
+    drifted = (
+        f"services:\n  control-api:\n    image: {CONTROL_IMAGE}\n"
+        "    environment:\n      ENVIRONMENT: production\n"
+    )
+    box.write_text(drifted, encoding="utf-8")
+    (host.tmp / _NEW_ORIGIN.removeprefix("/tmp/")).write_text(drifted, encoding="utf-8")
+
+    run = _record(host)
+
+    assert run.returncode == 1
+    assert "is not exactly services.<service>.image" in run.output
+    assert _NEW_OVERRIDE not in host.state_file.read_text(encoding="utf-8")
+
+
+def test_record_override_refuses_a_path_outside_component_releases(
+    tmp_path: Path,
+) -> None:
+    host = component_host(tmp_path)
+
+    run = host.step(
+        "record-override",
+        tag=COMPONENT_STACK,
+        args=["control-api", "/opt/memoria/incoming/override.yml", _NEW_ORIGIN],
+    )
+
+    assert run.returncode == 1
+    assert "persisted path must be under /opt/memoria/component-releases/" in run.output
+    assert _NEW_OVERRIDE not in host.state_file.read_text(encoding="utf-8")
+
+
+def test_record_override_refuses_an_original_outside_tmp(tmp_path: Path) -> None:
+    host = component_host(tmp_path)
+    _record_files(host, CONTROL_IMAGE)
+
+    run = host.step(
+        "record-override",
+        tag=COMPONENT_STACK,
+        args=[
+            "control-api",
+            f"/opt/memoria/{_NEW_OVERRIDE}",
+            "/var/tmp/override-control-main.yml",
+        ],
+    )
+
+    assert run.returncode == 1
+    assert "original path must be under /tmp/" in run.output
+    assert _NEW_OVERRIDE not in host.state_file.read_text(encoding="utf-8")
+
+
+def test_record_override_refuses_an_existing_row_with_a_changed_sha(
+    tmp_path: Path,
+) -> None:
+    host = component_host(tmp_path)
+    # The image moved since pr352 was recorded; the persisted copy and its origin
+    # now say the new image, which is image-only and matches the container, but
+    # the recorded sha no longer matches the file.
+    image = CONTROL_IMAGE + "-new"
+    (host.memoria / CONTROL_OVERRIDE).write_text(
+        f"services:\n  control-api:\n    image: {image}\n", encoding="utf-8"
+    )
+    host.tmp_override("override-control-pr352.yml", "control-api", image)
+    host.container(
+        "control-api",
+        release=COMPONENT_STACK,
+        commit="b" * 40,
+        image=image,
+        image_id="sha256:control-live",
+    )
+    before = host.state_file.read_text(encoding="utf-8")
+
+    run = host.step(
+        "record-override",
+        tag=COMPONENT_STACK,
+        args=[
+            "control-api",
+            f"/opt/memoria/{CONTROL_OVERRIDE}",
+            "/tmp/override-control-pr352.yml",
+        ],
+    )
+
+    assert run.returncode == 1
+    assert "refusing to change existing override sha256" in run.output
+    assert host.state_file.read_text(encoding="utf-8") == before
 
 
 def test_freeze_reruns_converge_on_the_same_record(tmp_path: Path) -> None:
@@ -1322,12 +1656,23 @@ def test_rollback_restores_prev_from_the_frozen_record(tmp_path: Path) -> None:
             release_tag=GUARDIAN,
             release_commit=GUARDIAN_COMMIT,
             argv=(
-                "compose", "-p", "memoria",
-                "--project-directory", str(prev_dir),
-                "-f", str(prev_dir / "docker-compose.production.yml"),
-                "--profile", "media-runtime",
-                "up", "-d", "--no-deps", "--no-build", "--force-recreate",
-                "control-api", "voice-core-media-bridge", "speaker-model",
+                "compose",
+                "-p",
+                "memoria",
+                "--project-directory",
+                str(prev_dir),
+                "-f",
+                str(prev_dir / "docker-compose.production.yml"),
+                "--profile",
+                "media-runtime",
+                "up",
+                "-d",
+                "--no-deps",
+                "--no-build",
+                "--force-recreate",
+                "control-api",
+                "voice-core-media-bridge",
+                "speaker-model",
             ),
         )
     ]
@@ -1728,7 +2073,7 @@ def test_finish_probes_readiness_on_the_live_port() -> None:
     assert 'curl -fsS "http://127.0.0.1:$(control_api_port)/health/ready"' in finish
     # 8791 survives only as the helper's default, never as a hard-coded probe.
     assert _code().count("8791") == 1
-    assert 'printf \'%s\' "${port:-8791}"' in _function("control_api_port")
+    assert "printf '%s' \"${port:-8791}\"" in _function("control_api_port")
 
 
 def test_preflight_ports_never_collide_with_the_production_control_api() -> None:
@@ -1749,11 +2094,24 @@ def test_shared_host_bringup_script_is_checked_in_and_keeps_its_step_contract() 
     assert os.access(BRINGUP, os.X_OK)
     subprocess.run(["bash", "-n", str(BRINGUP)], check=True)
     assert "speaker-model" not in text
-    for step in ("net", "data", "redis", "schema", "verify", "replay", "apps", "checks", "status", "down"):
+    for step in (
+        "net",
+        "data",
+        "redis",
+        "schema",
+        "verify",
+        "replay",
+        "apps",
+        "checks",
+        "status",
+        "down",
+    ):
         assert f"  {step}) step_{step} ;;" in text
     # Restored data is replayed through the Control API image, which now carries the module.
     assert "-m scripts.replay_subject_deletions --confirm-replay" in text
     dockerfile = (ROOT / "infra" / "Dockerfile.control-api").read_text(encoding="utf-8")
     assert "scripts/replay_subject_deletions.py" in dockerfile
     # Env files are named by path only; no secret value belongs in a checked-in helper.
-    assert not re.search(r"(?im)^\s*(?:export\s+)?[A-Z_]*(?:PASSWORD|SECRET|TOKEN|KEY)[A-Z_]*=\S+", text)
+    assert not re.search(
+        r"(?im)^\s*(?:export\s+)?[A-Z_]*(?:PASSWORD|SECRET|TOKEN|KEY)[A-Z_]*=\S+", text
+    )

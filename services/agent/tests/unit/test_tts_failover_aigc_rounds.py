@@ -32,6 +32,7 @@ from services.agent.src.providers.tts_failover import (
     StepFunFailoverConfig,
     StepFunPrimaryTTS,
     TTSFailoverBreaker,
+    TTSUnavailableError,
 )
 from services.agent.src.providers.tts_stream import AudioFrame, SynthesizedAudio
 from services.agent.src.voice_core.aigc_notice import AigcNoticeConfig
@@ -51,6 +52,7 @@ from services.agent.tests.unit.media_session_support import (
 )
 from services.agent.tests.unit.test_minor_session_limits import _ledger
 from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
+from services.common.tts_defaults import STEPFUN_TTS_MODEL
 from websockets.exceptions import ConnectionClosedOK
 from websockets.frames import Close
 
@@ -212,7 +214,7 @@ def _speech(
     primary_behavior: str,
     backup_behavior: str,
 ) -> tuple[StepFunPrimaryTTS, _RoundEngine, _RoundEngine]:
-    primary = _RoundEngine("stepfun", "stepaudio-3-tts", primary_behavior)
+    primary = _RoundEngine("stepfun", STEPFUN_TTS_MODEL, primary_behavior)
     backup = _RoundEngine("volcengine_doubao", "seed-tts-2.0", backup_behavior)
     wrapper = StepFunPrimaryTTS(
         primary=primary,
@@ -485,7 +487,7 @@ async def test_doubao_403_does_not_pin_later_turns_to_the_backup() -> None:
     first = speech.stream(conn_options=cast(Any, None))
     first.push_text(_NORMAL_REPLY)
     first.end_input()
-    with pytest.raises(APIStatusError):
+    with pytest.raises(TTSUnavailableError, match="403"):
         _ = [event async for event in first]
 
     assert speech.degraded is False

@@ -6,6 +6,11 @@ import pytest
 from pydantic import ValidationError
 from services.agent.src.config import AgentSettings, load_settings
 from services.agent.src.contracts.errors import ConfigValidationError
+from services.common.tts_defaults import (
+    DOUBAO_TTS_FALLBACK_SPEAKER,
+    STEPFUN_TTS_MODEL,
+    STEPFUN_TTS_VOICE,
+)
 
 
 def _without_deepseek_url(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -527,11 +532,9 @@ def test_stepfun_defaults_and_main_backup_fallback_speaker(
 
     settings = AgentSettings(_env_file=None)
 
-    assert settings.stepfun_tts_model == "stepaudio-3-tts"
-    assert settings.stepfun_tts_voice == "yuanqishaonv"
-    assert settings.doubao_tts_fallback_speaker == (
-        "zh_female_kailangjiejie_uranus_bigtts"
-    )
+    assert settings.stepfun_tts_model == STEPFUN_TTS_MODEL
+    assert settings.stepfun_tts_voice == STEPFUN_TTS_VOICE
+    assert settings.doubao_tts_fallback_speaker == DOUBAO_TTS_FALLBACK_SPEAKER
     assert settings.aigc_notice_enabled is True
     assert settings.aigc_notice_mode == "tone"
 

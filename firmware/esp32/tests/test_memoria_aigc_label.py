@@ -1,12 +1,14 @@
-"""Host checks for explicit AIGC label policy, geometry, and notice clip wiring."""
+"""Host checks that explicit AI chrome and spoken intros are gone.
+
+Implicit OpusTags stay on every shipped ogg. The live-dialogue AIGC tone is
+owned by the agent and is not covered here.
+"""
 
 from __future__ import annotations
 
+import json
 import pathlib
 import subprocess
-import tempfile
-
-import pytest
 
 FIRMWARE_ROOT = pathlib.Path(__file__).parents[1]
 MEMORIA_DIR = FIRMWARE_ROOT / "overlay" / "files" / "main" / "memoria"
@@ -30,197 +32,94 @@ DISPLAY_CC = (
     / "esp-vocat"
     / "memoria_mascot_display.cc"
 )
+DISPLAY_H = (
+    FIRMWARE_ROOT
+    / "overlay"
+    / "files"
+    / "main"
+    / "boards"
+    / "memoria"
+    / "esp-vocat"
+    / "memoria_mascot_display.h"
+)
 BOARD_DIR = FIRMWARE_ROOT / "overlay" / "files" / "main" / "boards" / "memoria" / "esp-vocat"
-
-HARNESS = r"""
-#include "memoria_aigc_label.h"
-
-#include <cstdio>
-#include <cstring>
-
-int main() {
-    using memoria::AigcExplicitMode;
-    using memoria::AigcExplicitModeFor;
-    using memoria::AigcBadgeVisible;
-    using memoria::AigcTurnToneWanted;
-    using memoria::AigcBadgeCornersInsideSafeCircle;
-    using memoria::AigcBadgeLayoutInsideSafeCircle;
-    const auto idle = AigcExplicitModeFor(false, true);
-    const auto badge = AigcExplicitModeFor(true, true);
-    const auto tone_off = AigcExplicitModeFor(true, false);
-    const auto offline = AigcExplicitModeFor(true, true);  // stuck → offline menu
-    std::printf("idle=%d badge=%d tone_off=%d flag=%d story=%s bedtime=%s\n",
-                static_cast<int>(idle), static_cast<int>(badge),
-                static_cast<int>(tone_off),
-                memoria::kAigcTurnToneEnabled ? 1 : 0,
-                memoria::kAigcNoticeStoryFile, memoria::kAigcNoticeBedtimeFile);
-    std::printf("badge_vis=%d tone_want=%d offline_vis=%d layout_ok=%d\n",
-                AigcBadgeVisible(badge) ? 1 : 0,
-                AigcTurnToneWanted(tone_off) ? 1 : 0,
-                AigcBadgeVisible(offline) ? 1 : 0,
-                AigcBadgeLayoutInsideSafeCircle() ? 1 : 0);
-    std::printf("geom=%d,%d,%d,%d font=%d\n",
-                memoria::kAigcBadgeX, memoria::kAigcBadgeY,
-                memoria::kAigcBadgeW, memoria::kAigcBadgeH,
-                memoria::kAigcBadgeFontPx);
-    // Every corner must keep the 8 px edge margin (compile-time assert + runtime).
-    const bool corners = AigcBadgeCornersInsideSafeCircle(
-        memoria::kAigcBadgeX, memoria::kAigcBadgeY,
-        memoria::kAigcBadgeW, memoria::kAigcBadgeH);
-    std::printf("corners_ok=%d\n", corners ? 1 : 0);
-    // A rect that clips the round panel must fail.
-    const bool clipped = AigcBadgeCornersInsideSafeCircle(280, 36, 40, 20);
-    std::printf("clipped_rejected=%d\n", clipped ? 0 : 1);
-    char line[32];
-    while (std::fgets(line, sizeof(line), stdin) != nullptr) {
-        line[std::strcspn(line, "\r\n")] = '\0';
-        if (line[0] == '\0') continue;
-        memoria::AigcPlaybackStart start = memoria::AigcPlaybackStart::kNewStory;
-        if (std::strcmp(line, "new") == 0) start = memoria::AigcPlaybackStart::kNewStory;
-        else if (std::strcmp(line, "resume") == 0) start = memoria::AigcPlaybackStart::kResume;
-        else if (std::strcmp(line, "replay") == 0) start = memoria::AigcPlaybackStart::kReplay;
-        else if (std::strcmp(line, "jump_in") == 0) start = memoria::AigcPlaybackStart::kJumpIn;
-        else if (std::strcmp(line, "bedtime") != 0) return 2;
-        const char* notice = std::strcmp(line, "bedtime") == 0
-                                 ? memoria::AigcBedtimeNoticeFile()
-                                 : memoria::AigcNoticeFileFor(start);
-        std::printf("%s=%s\n", line, notice);
-    }
-    return corners && !clipped ? 0 : 1;
-}
-"""
+OVERLAY_CHECK = FIRMWARE_ROOT / "scripts" / "check-overlay.sh"
 
 
-@pytest.fixture(scope="module")
-def tool() -> pathlib.Path:
-    with tempfile.TemporaryDirectory() as tmp:
-        src = pathlib.Path(tmp) / "aigc_label_tool.cc"
-        out = pathlib.Path(tmp) / "aigc_label_tool"
-        src.write_text(HARNESS, encoding="utf-8")
-        subprocess.run(
-            ["g++", "-std=c++17", "-I", str(MEMORIA_DIR), "-o", str(out), str(src)],
-            check=True,
-        )
-        yield out
-
-
-def test_badge_is_primary_and_turn_tone_defaults_off(tool: pathlib.Path) -> None:
-    completed = subprocess.run([str(tool)], check=True, capture_output=True, text=True)
-    assert "idle=0 badge=1 tone_off=0 flag=0" in completed.stdout
-    assert "story=aigc_story_intro.ogg bedtime=aigc_soothe_intro.ogg" in completed.stdout
-    assert "badge_vis=1 tone_want=0 offline_vis=1 layout_ok=1" in completed.stdout
-    assert "corners_ok=1" in completed.stdout
-    assert "clipped_rejected=1" in completed.stdout
-    assert "geom=163,10,34,22 font=16" in completed.stdout
-
-
-def test_display_wires_top_centre_badge_inside_safe_circle() -> None:
-    display = DISPLAY_CC.read_text(encoding="utf-8")
-    assert 'lv_label_set_text(aigc_badge_, "AI")' in display
-    assert "lv_font_montserrat_16" in display
-    assert "LV_OPA_COVER" in display
-    assert "memoria::kAigcBadgeX" in display
-    assert "lv_obj_set_pos(aigc_badge_" in display
-    assert "UpdateAigcBadge(phase)" in display
-    assert "aigc_offline_active_" in display
-    assert "SetAigcOfflineActive" in display
-
-
-def test_board_syncs_badge_for_offline_menu() -> None:
-    board = BOARD_CC.read_text(encoding="utf-8")
-    assert "SetAigcOfflineActive" in board
-    assert "SyncAigcOfflineBadge" in board
-    assert "offline_menu_.mode() != memoria::OfflineMode::kInactive" in board
-
-
-def test_every_story_start_plays_the_story_notice(tool: pathlib.Path) -> None:
-    # 新开始、续播、单曲循环、中途切入 and bedtime all resolve to a notice file.
-    completed = subprocess.run(
-        [str(tool)],
-        input="\n".join(("new", "resume", "replay", "jump_in", "bedtime")) + "\n",
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    want = {
-        "new": "aigc_story_intro.ogg",
-        "resume": "aigc_story_intro.ogg",
-        "replay": "aigc_story_intro.ogg",
-        "jump_in": "aigc_story_intro.ogg",
-        "bedtime": "aigc_soothe_intro.ogg",
-    }
-    got = dict(
-        line.split("=", 1)
-        for line in completed.stdout.splitlines()
-        if line.split("=", 1)[0] in want
-    )
-    assert got == want
-
-
-def test_story_path_refuses_without_intro() -> None:
-    board = BOARD_CC.read_text(encoding="utf-8")
-    assert "refusing story without AIGC intro" in board
-    assert "story_intro_ok" in board
-
-
-def test_offline_menu_story_start_carries_its_reason() -> None:
-    header = (MEMORIA_DIR / "memoria_offline_menu.h").read_text(encoding="utf-8")
-    menu_start = header[header.index("if (long_press) {") :]
-    menu_start = menu_start[: menu_start.index("out.start_story = true;")]
-    assert "kAigcNoticeStory" in menu_start
-    assert "AigcPlaybackStart::kNewStory" in header
-
-
-def _board_function(board: str, signature: str) -> str:
-    start = board.index(signature)
+def _function(source: str, signature: str) -> str:
+    start = source.index(signature)
     depth = 0
-    for index in range(board.index("{", start), len(board)):
-        if board[index] == "{":
+    for index in range(source.index("{", start), len(source)):
+        if source[index] == "{":
             depth += 1
-        elif board[index] == "}":
+        elif source[index] == "}":
             depth -= 1
             if depth == 0:
-                return board[start : index + 1]
+                return source[start : index + 1]
     raise AssertionError(f"{signature} has no closing brace")
 
 
-def test_board_notice_precedes_the_story_in_every_playback_path() -> None:
+def test_display_does_not_render_an_ai_badge() -> None:
+    display = DISPLAY_CC.read_text(encoding="utf-8")
+    header = DISPLAY_H.read_text(encoding="utf-8")
+    assert "aigc_badge_" not in display
+    assert "aigc_badge_" not in header
+    assert 'lv_label_set_text(aigc_badge_, "AI")' not in display
+    assert '"AI"' not in display
+    assert "UpdateAigcBadge" not in display
+    assert "EnsureAigcBadge" not in display
+    assert "lv_font_montserrat_16" not in display
+    assert "kAigcBadge" not in display
+    assert not (MEMORIA_DIR / "memoria_aigc_label.h").is_file()
+
+
+def test_badge_font_is_not_in_board_config() -> None:
+    for name in ("config.json", "config.bench.json", "config.keep-awake.json"):
+        product = json.loads((BOARD_DIR / name).read_text(encoding="utf-8"))
+        flags = product["builds"][0]["sdkconfig_append"]
+        assert "CONFIG_LV_FONT_MONTSERRAT_16=y" not in flags
+
+
+def test_story_schedule_plays_the_story_without_an_intro() -> None:
     board = BOARD_CC.read_text(encoding="utf-8")
-    helper = _board_function(board, "bool PlayStoryWithAigcNoticeNow(")
-    assert helper.index("AigcNoticeFileFor(start)") < helper.index("PlayLocalAssetClip(story_file)")
-    schedule = _board_function(board, "Application::GetInstance().Schedule([this, out, generation]")
-    notices = [
-        at
-        for at in range(len(schedule))
-        if schedule.startswith("kAigcNoticeStory", at)
-        or schedule.startswith("AigcNoticeFileFor", at)
-    ]
-    stories = [
-        at
-        for at in range(len(schedule))
-        if schedule.startswith("PlayLocalAssetClip(memoria::OfflineStoryFile", at)
-    ]
-    assert len(stories) == 1
-    assert notices and max(notices) < stories[0], (
-        "the offline story start must play a notice before the story file"
-    )
-    assert "AigcNoticeFileFor(out.story_start)" in schedule
+    schedule = _function(board, "Application::GetInstance().Schedule([this, out, generation]")
+    assert "PlayLocalAssetClip(memoria::OfflineStoryFile(out.story_index))" in schedule
+    assert "aigc_story_intro" not in schedule
+    assert "AigcNotice" not in schedule
+    assert "refusing" not in schedule
+    assert "story_intro_ok" not in board
+    assert "PlayStoryWithAigcNoticeNow" not in board
 
 
-def test_bedtime_notice_stays_in_front_of_night_soothe() -> None:
+def test_night_soothe_plays_without_an_intro() -> None:
     board = BOARD_CC.read_text(encoding="utf-8")
     night = board[board.index("case memoria::TapWakeAction::kNightSoothing") :]
     night = night[: night.index("case memoria::TapWakeAction::kOfflineMenu")]
-    assert night.index("kAigcNoticeBedtimeFile") < night.index(
-        'PlayLocalAssetClip("night_soothe.ogg")'
-    )
+    assert 'PlayLocalAssetClip("night_soothe.ogg")' in night
+    assert "aigc_soothe_intro" not in night
+    assert "refusing" not in night
+    assert night.index('PlayLocalAssetClip("night_soothe.ogg")') < night.index("EnterTapDeepSleep")
 
 
-def test_sdkconfig_enables_montserrat_16() -> None:
-    import json
+def test_offline_menu_does_not_queue_a_spoken_intro() -> None:
+    header = (MEMORIA_DIR / "memoria_offline_menu.h").read_text(encoding="utf-8")
+    assert "aigc_story_intro" not in header
+    assert "aigc_soothe_intro" not in header
+    assert "AigcPlaybackStart" not in header
+    menu_start = header[header.index("if (long_press) {") :]
+    menu_start = menu_start[: menu_start.index("out.start_story = true;")]
+    assert "kOfflineMenuStart" in menu_start
+    assert "kAigc" not in menu_start
 
-    product = json.loads((BOARD_DIR / "config.json").read_text(encoding="utf-8"))
-    assert "CONFIG_LV_FONT_MONTSERRAT_16=y" in product["builds"][0]["sdkconfig_append"]
+
+def test_overlay_check_keeps_implicit_tags_and_drops_intro_gates() -> None:
+    script = OVERLAY_CHECK.read_text(encoding="utf-8")
+    assert "check_device_ogg_aigc.py" in script
+    assert 'build_offline_stories.py" --check-only' in script
+    assert "AIGC corner badge" not in script
+    assert "spoken AIGC notice" not in script
+    assert "memoria_aigc_label.h" not in script
+    assert "kAigcNoticeBedtimeFile" not in script
 
 
 def test_render_aigc_notices_refuses_without_credentials() -> None:

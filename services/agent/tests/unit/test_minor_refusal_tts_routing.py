@@ -38,6 +38,7 @@ from services.agent.src.voice_core.provider_adapter import ExistingVoiceProvider
 from services.agent.tests.unit.media_session_support import _CapturingGenerationBridge
 from services.agent.tests.unit.test_minor_session_limits import _ledger, _profile
 from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
+from services.common.tts_defaults import STEPFUN_TTS_MODEL
 
 _FRAME = 480
 _CHILD_CRISIS_TEXT = "我不想活了"
@@ -142,7 +143,7 @@ def _provider(speech: StepFunPrimaryTTS, llm: Any) -> ExistingVoiceProviderAdapt
 
 
 def _speech() -> tuple[StepFunPrimaryTTS, _Engine, _Engine]:
-    primary = _Engine("stepfun", "stepaudio-3-tts")
+    primary = _Engine("stepfun", STEPFUN_TTS_MODEL)
     backup = _Engine("volcengine_doubao", "seed-tts-2.0")
     wrapper = StepFunPrimaryTTS(
         primary=primary,
