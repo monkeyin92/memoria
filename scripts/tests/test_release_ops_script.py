@@ -613,6 +613,10 @@ class FakeHost:
                 # macOS has no flock; the fake host serializes nothing (the lock file
                 # itself is still created by the fd redirect).
                 "flock() { :; }",
+                # The fake host is rootless. Production still uses install -o root.
+                'install() { local kept=(); while [[ $# -gt 0 ]]; do '
+                'if [[ "$1" == -o || "$1" == -g ]]; then shift 2; continue; fi; '
+                'kept+=("$1"); shift; done; command install "${kept[@]}"; }',
                 'stat() { if [[ "$1" == -c || "$1" == -f ]] && [[ "$2" == *%u* ]]; '
                 'then printf "%s\\n" "$FAKE_STATE_OWNER"; else command stat "$@"; fi; }',
                 f"export FAKE_STATE_OWNER={self.state_owner}",
