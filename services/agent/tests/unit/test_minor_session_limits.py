@@ -329,7 +329,7 @@ async def test_an_adult_wake_at_night_is_not_refused(monkeypatch: pytest.MonkeyP
     ("started_ago", "reply", "ends"),
     [
         (60.0, "好的。", False),  # inside the limit
-        (1900.0, "好的。", True),  # past the limit: goodbye after the reply
+        (1900.0, "好的。", True),  # past the limit: silent standby
         (1900.0, CRISIS_SELF_SCRIPT.display, False),
     ],
 )
@@ -341,8 +341,19 @@ async def test_a_minor_session_past_its_limit_ends_after_the_reply(
 
     await session._maybe_standby_after_session_limit(context, fence=object())  # type: ignore[arg-type]
 
-    assert session.spoken == ([MINOR_SESSION_LIMIT_PHRASE] if ends else [])
+    assert session.spoken == []
     assert session.standby == (["minor_max_session"] if ends else [])
+
+
+@pytest.mark.asyncio
+async def test_a_session_past_its_limit_disconnects_silently_without_approved_audio() -> None:
+    session = _Session()
+    context = _context(_profile(), started_ago=1900.0, reply="好的。")
+
+    await session._maybe_standby_after_session_limit(context, fence=object())  # type: ignore[arg-type]
+
+    assert session.spoken == []
+    assert session.standby == ["minor_max_session"]
 
 
 @pytest.mark.asyncio
@@ -371,7 +382,7 @@ async def test_an_out_of_range_stored_cap_is_issued_as_15_minutes_and_stops_the_
         _context(profile, started_ago=900.0, reply="好的。"),
         fence=object(),  # type: ignore[arg-type]
     )
-    assert session.spoken == [MINOR_SESSION_LIMIT_PHRASE]
+    assert session.spoken == []
     assert session.standby == ["minor_max_session"]
 
     earlier = _Session()
@@ -636,7 +647,7 @@ async def test_the_session_limit_still_ends_a_subject_not_exactly_whitelisted(
     with caplog.at_level(logging.WARNING, logger="services.agent.src.minor_limit_bypass"):
         await session._maybe_standby_after_session_limit(context, fence=object())  # type: ignore[arg-type]
 
-    assert session.spoken == [MINOR_SESSION_LIMIT_PHRASE]
+    assert session.spoken == []
     assert session.standby == ["minor_max_session"]
     assert MINOR_SESSION_LIMIT_BYPASSED_REASON not in caplog.text
 
@@ -652,7 +663,7 @@ async def test_more_than_one_subject_leaves_the_session_limit_ending_the_session
 
     await session._maybe_standby_after_session_limit(context, fence=object())  # type: ignore[arg-type]
 
-    assert session.spoken == [MINOR_SESSION_LIMIT_PHRASE]
+    assert session.spoken == []
     assert session.standby == ["minor_max_session"]
     assert MINOR_SESSION_LIMIT_BYPASSED_REASON not in caplog.text
 
@@ -709,7 +720,7 @@ async def test_an_empty_or_separator_only_whitelist_still_ends_the_session_at_it
         await session._maybe_standby_after_session_limit(context, fence=object())  # type: ignore[arg-type]
 
     assert bypass.subject_ids == frozenset()
-    assert session.spoken == [MINOR_SESSION_LIMIT_PHRASE]
+    assert session.spoken == []
     assert session.standby == ["minor_max_session"]
     assert MINOR_DAILY_LIMIT_BYPASSED_REASON not in caplog.text
     assert MINOR_SESSION_LIMIT_BYPASSED_REASON not in caplog.text
