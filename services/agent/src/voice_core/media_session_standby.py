@@ -292,8 +292,9 @@ class MediaSessionStandbyMixin:
             context.runtime.set_interaction_phase(
                 InteractionPhase.CONNECTING,
                 cause="listening_capture_hold",
-                publish=False,
+                publish=True,
             )
+        context.runtime.publish_assistant_state("listening_closed")
 
     def resume_listening_from_screen_tap(
         self,
@@ -312,8 +313,10 @@ class MediaSessionStandbyMixin:
             context.runtime.set_interaction_phase(
                 InteractionPhase.LISTENING,
                 cause="screen_tap",
-                publish=False,
+                publish=True,
             )
+        else:
+            context.runtime.publish_assistant_state("listening")
 
     def _expire_listening_capture(self, context: _MediaVoiceSession) -> None:
         deadline = context.listening_capture_deadline

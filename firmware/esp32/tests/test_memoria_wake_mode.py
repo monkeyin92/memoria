@@ -43,10 +43,13 @@ int main() {
             if (sscanf(line + 4, "%63s %d", name, &idle) != 2) return 2;
             memoria::WakeMode mode;
             if (!memoria::ParseWakeMode(name, &mode)) return 3;
-            printf("%s\n", memoria::TapActionFor(mode, idle != 0) ==
-                                   memoria::TapAction::kStartConversation
-                               ? "start"
-                               : "ignore");
+            printf("%s\n", memoria::TapWakeActionName(
+                               memoria::TapActionFor(mode, idle != 0)));
+        } else if (strncmp(line, "held ", 5) == 0) {
+            memoria::WakeMode mode;
+            if (!memoria::ParseWakeMode(line + 5, &mode)) return 3;
+            printf("%s\n", memoria::TapWakeActionName(
+                               memoria::TapActionFor(mode, memoria::TapDevice::kListeningClosed)));
         } else {
             return 2;
         }
@@ -110,6 +113,14 @@ def test_all_legacy_modes_coerce_to_tap_only(tool: pathlib.Path) -> None:
         "button keyword=0 tap=1",
         "button keyword=0 tap=1",
         "button keyword=0 tap=1",
+    ]
+
+
+def test_listening_closed_tap_resumes_on_the_open_session(tool: pathlib.Path) -> None:
+    assert _run(tool, "tap button 1", "tap button 0", "held button") == [
+        "start",
+        "ignore",
+        "resume",
     ]
 
 
@@ -177,6 +188,10 @@ def test_board_tap_handler_uses_power_policy_and_never_ends_the_conversation() -
     # It never ends the conversation or closes the transport.
     for forbidden in ("StopListening", "ToggleChatState", "CloseAudioChannel"):
         assert forbidden not in handler, f"a tap must not call {forbidden}"
+    resume = handler.split("kResumeListening", 1)[1].split("kIgnore", 1)[0]
+    assert 'PlayLocalAssetClip("wo_zai_ne.ogg")' in resume
+    assert "SendListeningResume()" in resume
+    assert "WakeWordInvoke" not in resume
 
 
 def test_boot_key_keeps_its_hard_stop_and_pairing_roles() -> None:

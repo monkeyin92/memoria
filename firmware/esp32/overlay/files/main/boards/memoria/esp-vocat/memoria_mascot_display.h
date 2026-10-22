@@ -55,6 +55,7 @@ public:
     // Keep the AIGC badge (and screen) up during stuck → offline menu and other
     // active offline-menu modes, even when DeviceState is idle.
     void SetAigcOfflineActive(bool active);
+    void SetListeningClosed(bool closed) { listening_closed_.store(closed, std::memory_order_relaxed); }
     // Body gestures from the IMU.
     void Pat();
     void Shake();
@@ -126,6 +127,7 @@ private:
     memoria::BrandMark brand_;
     TaskHandle_t task_ = nullptr;
     std::atomic<bool> running_{false};
+    std::atomic<bool> listening_closed_{false};
     std::function<void()> on_first_frame_;
     std::function<void()> on_screen_off_;
     Backlight* backlight_ = nullptr;

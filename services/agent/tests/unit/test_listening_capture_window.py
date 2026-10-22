@@ -8,7 +8,7 @@ import pytest
 from services.agent.src.orchestration.state_machine import InteractionPhase
 from services.agent.src.voice_core import media_audio_ingress, media_session_standby
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
-from services.agent.src.voice_core.media_protocol import AudioFrame
+from services.agent.src.voice_core.media_protocol import AudioFrame, MediaEnvelope
 from services.agent.src.voice_core.media_session import MediaVoiceCoreRegistry
 from services.agent.tests.unit.media_session_support import (
     FakeMediaProvider,
@@ -82,6 +82,18 @@ async def _open(monkeypatch: pytest.MonkeyPatch, clock: dict[str, float]):
     return registry, context, provider, identity
 
 
+def _spy_states(monkeypatch: pytest.MonkeyPatch, runtime: object) -> list[str]:
+    published: list[str] = []
+    original = runtime.publish_assistant_state
+
+    def _publish(state: str, **kwargs: object) -> object:
+        published.append(state)
+        return original(state, **kwargs)
+
+    monkeypatch.setattr(runtime, "publish_assistant_state", _publish)
+    return published
+
+
 async def _ingested(provider: _CaptureProvider, count: int) -> None:
     for _ in range(50):
         if len(provider.frames) >= count:
@@ -106,6 +118,7 @@ async def test_listening_capture_stops_after_thirty_seconds_and_keeps_the_connec
         await _ingested(provider, 1)
 
         clock["now"] = 1_031.0
+        published = _spy_states(monkeypatch, context.runtime)
         denoiser_frames = context.ingress.denoiser.get_stats()["total_frames"]
         tap_files = set(tmp_path.iterdir())
         with caplog.at_level(logging.DEBUG):
@@ -115,6 +128,9 @@ async def test_listening_capture_stops_after_thirty_seconds_and_keeps_the_connec
         assert provider.audio_calls == [1]
         assert context.listening_capture_hold is True
         assert context.runtime.interaction_phase is InteractionPhase.CONNECTING
+        assert "listening_closed" in published
+        for _ in range(5):
+            await asyncio.sleep(0)
         assert context.standby_requested is False
         assert provider.closed is False
         assert registry.context(identity.session_id) is context.runtime
@@ -174,7 +190,21 @@ async def test_screen_tap_resumes_capture_without_replaying_or_vad(
         context.ingress.pump_task = None
 
         wake_sample = 8_000
-        registry.resume_listening_from_screen_tap(context, wake_sample=wake_sample)
+        published = _spy_states(monkeypatch, context.runtime)
+        connection = registry.bridge._connections[identity.session_id]
+        await registry.on_client_event(
+            connection.session,
+            MediaEnvelope.create(
+                type="listening.resume",
+                event_id="listening-resume",
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                sequence=1,
+                payload={"wake_sample": wake_sample},
+            ),
+            0,
+        )
+        assert "listening" in published
         assert context.runtime.interaction_phase is InteractionPhase.LISTENING
         assert context.standby_requested is False
         await registry._audio_ingress.accept(context, _frame(identity, 4, wake_sample))

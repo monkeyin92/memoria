@@ -225,6 +225,7 @@ func TestDeviceControlPriorityLanes(t *testing.T) {
 	for _, messageType := range []string{
 		"session.accepted", "generation.started", "vad.start", "keyword.detected",
 		"button.stop", "playback.ended", "playback.duck", "runtime_profile.applied",
+		"assistant.state", "listening.resume",
 	} {
 		if priority := deviceControlPriority(messageType); priority != 1 {
 			t.Fatalf("%s must be P1, got %d", messageType, priority)
@@ -241,6 +242,23 @@ func TestDeviceControlPriorityLanes(t *testing.T) {
 	}
 	if priority := deviceControlPriority("screen.expression"); priority != 3 {
 		t.Fatalf("screen.expression must be P3, got %d", priority)
+	}
+}
+
+func TestDeviceAssistantCaptureStateKeepsListeningAndClosed(t *testing.T) {
+	closed, ok := deviceAssistantCaptureState([]byte(`{"payload":{"state":"listening_closed"}}`))
+	if !ok || closed != "listening_closed" {
+		t.Fatalf("listening_closed = %q ok=%v", closed, ok)
+	}
+	listening, ok := deviceAssistantCaptureState([]byte(`{"payload":{"state":"listening"}}`))
+	if !ok || listening != "listening" {
+		t.Fatalf("listening = %q ok=%v", listening, ok)
+	}
+	if _, ok := deviceAssistantCaptureState([]byte(`{"payload":{"state":"idle"}}`)); ok {
+		t.Fatal("idle must not be forwarded as a capture state")
+	}
+	if !isDeviceControlType("listening.resume") {
+		t.Fatal("listening.resume must be a device control")
 	}
 }
 
