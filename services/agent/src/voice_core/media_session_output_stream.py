@@ -16,6 +16,10 @@ from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.orchestration.interruption_guard import (
     is_short_assistant_farewell_reply,
 )
+from services.agent.src.providers.tts_failover import (
+    TTS_UNAVAILABLE_STANDBY_REASON,
+    TTSUnavailableError,
+)
 from services.agent.src.voice_core.crisis_script_interrupt import (
     active_subject_id,
     publish_crisis_self_interrupt,
@@ -1153,7 +1157,7 @@ class MediaOutputStreamMixin:
         except asyncio.CancelledError:
             self._release_output_owner(context, fence, reason="cancelled")
             raise
-        except Exception:
+        except Exception as exc:
             self.metrics.inc_media_session_failed()
             # A provider that dies before its first frame leaves a half-duplex
             # device session in THINKING, where every later vad.end is dropped
@@ -1165,6 +1169,21 @@ class MediaOutputStreamMixin:
                 reason="provider_failed",
                 emitted_audio=emitted_audio,
             )
+            if (
+                isinstance(exc, TTSUnavailableError)
+                and not emitted_audio
+                and not context.output.audio_sent_for(fence)
+                and context.identity.client_type == "device"
+                and not context.closed
+                and not context.standby_requested
+            ):
+                request_standby = getattr(self, "_request_device_standby", None)
+                if callable(request_standby):
+                    await request_standby(
+                        context,
+                        reason=TTS_UNAVAILABLE_STANDBY_REASON,
+                        play_line=True,
+                    )
             raise
         if emitted_audio and context.runtime.fence.matches(fence):
             if self._is_aigc_marker_fence(context, fence):

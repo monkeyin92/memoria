@@ -1431,3 +1431,27 @@ async def test_ending_a_measured_budget_records_it_as_spent_not_unmeasured() -> 
         ) < 0.5
     finally:
         await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_tts_unavailable_standby_forwards_play_line(monkeypatch: Any) -> None:
+    """The standby seam forwards play_line into the emitted StateEvent."""
+
+    registry, context, _, _, identity = await _device_registry("standby-play-line")
+    open_bridge_connection(registry.bridge, identity)
+    captured: dict[str, Any] = {}
+    original = registry.bridge.emit_conversation_state
+
+    async def capture(session_id: str, state: int, **kwargs: Any) -> bool:
+        captured["kwargs"] = kwargs
+        return await original(session_id, state, **kwargs)
+
+    monkeypatch.setattr(registry.bridge, "emit_conversation_state", capture)
+    try:
+        assert await registry._request_device_standby(
+            context, reason="tts_unavailable", play_line=True
+        )
+    finally:
+        await registry.finalize_session(identity.session_id)
+    assert context.standby_reason == "tts_unavailable"
+    assert captured["kwargs"]["play_line"] is True
