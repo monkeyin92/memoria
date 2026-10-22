@@ -17,6 +17,8 @@ import struct
 from collections.abc import Mapping
 from typing import Final
 
+from services.common.companions import DESIGNED_VOICE_SPEAKERS
+
 REQUIRED_AIGC_TAG_KEYS: Final = ("CONTENT_ID", "SERVICE_PROVIDER", "AI_GENERATED")
 # GB 45438-2025 Appendix E implicit-label field names, written as Vorbis
 # comments. LABEL=1 marks explicit labelling on; CONTENT_PRODUCER and
@@ -38,6 +40,15 @@ IMPLICIT_AIGC_TAG_KEYS: Final = (
 #: before the Appendix-E addendum. The compatibility gate above stays lenient.
 IMPLICIT_AIGC_OPTIONAL_TAG_KEYS: Final = (CONTENT_PROPAGATOR_KEY, LABEL_KEY)
 CANONICAL_SERVICE_PROVIDER: Final = "Volcengine Doubao"
+STEPFUN_SERVICE_PROVIDER: Final = "StepFun"
+STEPFUN_ROBOT_VOICE: Final = "wenrounansheng"
+VOICE_SERVICE_PROVIDERS: Final[Mapping[str, str]] = {
+    **{
+        speaker: CANONICAL_SERVICE_PROVIDER
+        for speaker in DESIGNED_VOICE_SPEAKERS.values()
+    },
+    STEPFUN_ROBOT_VOICE: STEPFUN_SERVICE_PROVIDER,
+}
 CANONICAL_AI_GENERATED: Final = "true"
 #: Our party identifier for offline/render tooling; scripts may override it.
 DEFAULT_CONTENT_PRODUCER: Final = "Memoria"
@@ -98,6 +109,17 @@ def aigc_tag_map(head: bytes) -> dict[str, str]:
     return {key.upper(): value for key, value in opus_tag_pairs(head)}
 
 
+def require_voice_service_provider(service_provider: str, voice_id: str) -> None:
+    expected = VOICE_SERVICE_PROVIDERS.get(voice_id)
+    if expected is None:
+        raise ValueError(f"VOICE_ID {voice_id!r} has no service provider")
+    if service_provider != expected:
+        raise ValueError(
+            f"SERVICE_PROVIDER must be {expected!r} for VOICE_ID {voice_id!r}, "
+            f"got {service_provider!r}"
+        )
+
+
 def require_aigc_tags(
     head: bytes,
     *,
@@ -130,6 +152,10 @@ def require_aigc_tags(
         # Legacy assets predate these keys: report them when present, never fail.
         result["content_propagator"] = tags.get(CONTENT_PROPAGATOR_KEY, "").strip()
         result["label"] = tags.get(LABEL_KEY, "").strip() == LABEL_EXPLICIT
+        require_voice_service_provider(
+            str(result["service_provider"]),
+            str(result["voice_id"]),
+        )
     return result
 
 
@@ -478,6 +504,9 @@ def rewrite_opus_comments(
 __all__ = [
     "CANONICAL_AI_GENERATED",
     "CANONICAL_SERVICE_PROVIDER",
+    "STEPFUN_ROBOT_VOICE",
+    "STEPFUN_SERVICE_PROVIDER",
+    "VOICE_SERVICE_PROVIDERS",
     "CONTENT_PRODUCER_KEY",
     "CONTENT_PROPAGATOR_KEY",
     "DEFAULT_CONTENT_PRODUCER",
@@ -496,6 +525,7 @@ __all__ = [
     "opus_tag_pairs",
     "pcm_digest",
     "require_aigc_tags",
+    "require_voice_service_provider",
     "rewrite_opus_comments",
     "title_is_placeholder",
 ]
