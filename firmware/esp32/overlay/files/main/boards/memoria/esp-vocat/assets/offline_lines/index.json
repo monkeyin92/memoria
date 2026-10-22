@@ -140,18 +140,6 @@
       "text": "嗯，我想一想。",
       "file": "llm_thinking.ogg",
       "placeholder": false
-    },
-    {
-      "id": "aigc_story_intro",
-      "text": "下面是 AI 合成的声音给你讲故事。",
-      "file": "aigc_story_intro.ogg",
-      "placeholder": false
-    },
-    {
-      "id": "aigc_soothe_intro",
-      "text": "AI 合成的声音陪你睡觉啦。",
-      "file": "aigc_soothe_intro.ogg",
-      "placeholder": false
     }
   ]
 }
