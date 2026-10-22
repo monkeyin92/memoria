@@ -34,12 +34,25 @@ from services.agent.src.providers.provider_errors import APIConnectOptions
 from services.agent.src.providers.stepfun_tts import BracketInstructionFilter
 from services.agent.src.providers.tts_stream import SynthesizedAudio
 from services.common.fixed_safety_scripts import fixed_safety_echo_reference
+from services.common.tts_defaults import STEPFUN_TTS_MODEL
 from services.common.tts_voice_policy import is_clone_or_icl_voice
 
 logger = logging.getLogger(__name__)
 
 STEPFUN_PRIMARY_PROVIDER = "stepfun_primary"
+TTS_UNAVAILABLE_STANDBY_REASON = "tts_unavailable"
 _NO_RETRY_CONNECT_OPTIONS = APIConnectOptions(max_retry=0)
+
+
+class TTSUnavailableError(RuntimeError):
+    """Every TTS engine failed on an ordinary unit.
+
+    Raised instead of the last engine's own error once the engine candidate
+    list for a non-fixed-safety unit is exhausted, so the media adapter can
+    tell real TTS exhaustion from LLM, ASR, and encoding failures. Crisis
+    units never raise it: they have one candidate whose failure the adapter
+    already routes to the sha256-verified approved clip.
+    """
 
 
 def _env_bool(values: dict[str, str], name: str, default: bool) -> bool:
@@ -364,7 +377,9 @@ class StepFunFailoverStream:
                     if not has_next:
                         if not use_primary:
                             self._owner.record_backup_failure()
-                        self._put_failure(exc)
+                        self._put_failure(
+                            self._exhaustion_error(exc, fixed_safety_unit)
+                        )
                         return
                     self._record_engine_failure(
                         use_primary,
@@ -413,7 +428,9 @@ class StepFunFailoverStream:
                     if not has_next:
                         if not use_primary:
                             self._owner.record_backup_failure()
-                        self._put_failure(exc)
+                        self._put_failure(
+                            self._exhaustion_error(exc, fixed_safety_unit)
+                        )
                         return
                     self._record_engine_failure(
                         use_primary,
@@ -605,6 +622,12 @@ class StepFunFailoverStream:
         self._events.put_nowait(_Failure(exc))
         self._events.put_nowait(_STREAM_END)
 
+    @staticmethod
+    def _exhaustion_error(exc: BaseException, fixed_safety_unit: bool) -> BaseException:
+        if fixed_safety_unit:
+            return exc
+        return TTSUnavailableError(f"all TTS engines failed: {type(exc).__name__}: {exc}")
+
     async def _open_stream(self, use_primary: bool) -> Any:
         provider = self._owner.primary if use_primary else self._owner.backup
         bind = getattr(provider, "bind_fence", None)
@@ -705,7 +728,7 @@ class StepFunPrimaryTTS:
 
     @property
     def model(self) -> str:
-        return str(getattr(self.primary, "model", "stepaudio-3-tts"))
+        return str(getattr(self.primary, "model", STEPFUN_TTS_MODEL))
 
     @property
     def sample_rate(self) -> int:
@@ -1006,4 +1029,6 @@ __all__ = [
     "StepFunFailoverStream",
     "StepFunPrimaryTTS",
     "TTSFailoverBreaker",
+    "TTSUnavailableError",
+    "TTS_UNAVAILABLE_STANDBY_REASON",
 ]

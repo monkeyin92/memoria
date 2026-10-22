@@ -150,3 +150,29 @@ func TestDeviceWSSClosedConversationEntersStandbyAndRejectsLateAudio(t *testing.
 		t.Fatal("late audio reached the device after conversation close")
 	}
 }
+
+func TestDeviceWSSessionCloseForwardsPlayLineTTSUnavailable(t *testing.T) {
+	env := newDeviceTestEnv(t, nil)
+	connection, _ := env.dial(t, env.token(t, nil), "client_1")
+	writeDeviceJSON(t, connection, deviceV2Hello())
+	deviceReadAccepted(t, connection)
+
+	core := env.cores["session_1"]
+	core.inject(&mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_State{
+		State: &mediav1.StateEvent{
+			Identity: deviceCoreIdentity("session_1", 18), Sequence: 2,
+			State:  mediav1.ConversationState_CONVERSATION_STATE_CLOSED,
+			Reason: "tts_unavailable", PlayLine: true,
+		},
+	}})
+	messageType, payload, err := readDeviceMessage(connection, 3*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if messageType != websocket.TextMessage ||
+		!strings.Contains(string(payload), `"type":"session.close"`) ||
+		!strings.Contains(string(payload), `"reason":"tts_unavailable"`) ||
+		!strings.Contains(string(payload), `"play_line":true`) {
+		t.Fatalf("play_line did not reach the device control: %s", payload)
+	}
+}

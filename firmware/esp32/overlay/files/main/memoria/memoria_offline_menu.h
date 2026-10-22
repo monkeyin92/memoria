@@ -3,8 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "memoria_aigc_label.h"
-
 namespace memoria {
 
 inline constexpr std::uint32_t kOfflineLongPressMs = 800;
@@ -34,8 +32,6 @@ inline constexpr const char* kOfflineMenuEnd = "offline-menu-end-v1";
 inline constexpr const char* kOfflineMenuIdle = "offline-menu-idle-v1";
 inline constexpr const char* kLlmUnavailable = "llm_unavailable";
 inline constexpr const char* kLlmThinking = "llm_thinking";
-inline constexpr const char* kAigcNoticeStory = "aigc_story_intro";
-inline constexpr const char* kAigcNoticeBedtime = "aigc_soothe_intro";
 
 // TODO(release-blocker): offline clips use a trial/demo-only Doubao voice; clear Volcengine terms or re-voice before final firmware
 inline constexpr const char* kOfflineLineIds[] = {
@@ -46,7 +42,7 @@ inline constexpr const char* kOfflineLineIds[] = {
     kOfflineMenuConfirmHow,   kOfflineMenuItem01,      kOfflineMenuItem02,
     kOfflineMenuItem03,       kOfflineMenuChoose,      kOfflineMenuStart,
     kOfflineMenuEnd,          kOfflineMenuIdle,        kLlmUnavailable,
-    kLlmThinking,             kAigcNoticeStory,        kAigcNoticeBedtime,
+    kLlmThinking,
 };
 inline constexpr std::size_t kOfflineLineCount =
     sizeof(kOfflineLineIds) / sizeof(kOfflineLineIds[0]);
@@ -72,8 +68,6 @@ struct OfflineMenuOutput {
     bool enter_deep_sleep = false;
     bool retry_network = false;
     bool stop_retry_network = false;
-    // Why start_story began; the board plays the matching AIGC intro first.
-    AigcPlaybackStart story_start = AigcPlaybackStart::kNewStory;
 };
 
 inline bool OfflineIsLongPress(std::uint32_t hold_ms) {
@@ -275,9 +269,7 @@ public:
         if (mode_ == OfflineMode::kMenu) {
             if (long_press) {
                 Push(out, kOfflineMenuStart);
-                Push(out, kAigcNoticeStory);
                 out.start_story = true;
-                out.story_start = AigcPlaybackStart::kNewStory;
                 out.story_index = menu_item_;
                 mode_ = OfflineMode::kPlaying;
                 menu_idle_deadline_ms_ = 0;

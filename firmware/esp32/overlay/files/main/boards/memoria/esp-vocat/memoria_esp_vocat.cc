@@ -30,7 +30,6 @@
 #include "memoria_display_hooks.h"
 #include "memoria_imu_poll.h"
 #include "memoria_mascot_display.h"
-#include "memoria_aigc_label.h"
 #include "memoria_offline_menu.h"
 #include "memoria_pat.h"
 #include "memoria_playback_stop.h"
@@ -575,7 +574,7 @@ private:
     memoria::OfflineMenuMachine offline_menu_;
     std::atomic<std::uint32_t> offline_play_generation_{0};
     // Pacing between local clips, and the story grace before OnStoryFinished.
-    static constexpr std::uint32_t kAigcClipGapMs = 1600;
+    static constexpr std::uint32_t kOfflineClipGapMs = 1600;
     std::atomic<bool> offline_story_cancel_{false};
     TaskHandle_t usb_command_task_handle_ = nullptr;
     // Log tag of the USB command line: the test rig greps for "usb wake accepted" / "usb wake ignored".
@@ -826,27 +825,6 @@ private:
         return true;
     }
 
-    // The one entry into a story from anywhere outside the offline-menu task.
-    // The spoken notice plays first and a missing notice refuses the story, so
-    // resume, single-title loop and cut-ins cannot reach a story file without it.
-    bool PlayStoryWithAigcNoticeNow(const char* story_file,
-                                    memoria::AigcPlaybackStart start) {
-        void* data = nullptr;
-        size_t size = 0;
-        if (!Assets::GetInstance().GetAssetData(
-                std::string(memoria::AigcNoticeFileFor(start)), data, size) ||
-            data == nullptr || size == 0) {
-            ESP_LOGE(TAG, "refusing %s without AIGC intro %s", story_file,
-                     memoria::kAigcNoticeStoryFile);
-            return false;
-        }
-        Application::GetInstance().GetAudioService().PlaySound(
-            std::string_view(static_cast<const char*>(data), size));
-        ESP_LOGI(TAG, "aigc story intro played start=%u file=%s",
-                 static_cast<unsigned>(start), story_file);
-        return PlayLocalAssetClip(story_file);
-    }
-
     static bool NetworkLooksOnline() {
         auto& wifi = WifiManager::GetInstance();
         return wifi.IsConnected() && !wifi.GetIpAddress().empty();
@@ -867,15 +845,15 @@ private:
         return memoria::TapDevice::kBusy;
     }
 
-    void SyncAigcOfflineBadge() {
+    void SyncOfflineMenuScreen() {
         if (display_ == nullptr) {
             return;
         }
-        display_->SetAigcOfflineActive(offline_menu_.mode() != memoria::OfflineMode::kInactive);
+        display_->SetOfflineMenuActive(offline_menu_.mode() != memoria::OfflineMode::kInactive);
     }
 
     void ApplyOfflineMenuOutput(const memoria::OfflineMenuOutput& out) {
-        SyncAigcOfflineBadge();
+        SyncOfflineMenuScreen();
         if (out.stop_retry_network) {
             ESP_LOGI(TAG, "offline menu stop network retry");
         }
@@ -896,42 +874,16 @@ private:
             if (generation != offline_play_generation_.load(std::memory_order_relaxed)) {
                 return;
             }
-            bool story_intro_ok = false;
-            // With no queued clip ahead of the story, its notice starts now;
-            // otherwise the queued notice does, and the start reuses it instead
-            // of repeating it (no gap long enough to drain the decoder).
-            const bool notice_ahead = out.clip_count > 0;
-            if (out.start_story && !notice_ahead) {
-                // The story follows below, once the notice has been given its lead.
-                if (!PlayLocalAssetClip(memoria::AigcNoticeFileFor(out.story_start))) {
-                    ESP_LOGE(TAG, "refusing %s without AIGC intro %s",
-                             memoria::OfflineStoryFile(out.story_index),
-                             memoria::kAigcNoticeStoryFile);
-                    return;
-                }
-                ESP_LOGI(TAG, "aigc story intro played start=%u",
-                         static_cast<unsigned>(out.story_start));
-                story_intro_ok = true;
-                vTaskDelay(pdMS_TO_TICKS(kAigcClipGapMs));
-            }
             for (std::size_t i = 0; i < out.clip_count; ++i) {
                 if (generation != offline_play_generation_.load(std::memory_order_relaxed)) {
                     return;
                 }
                 const std::string name = std::string(out.clips[i]) + ".ogg";
-                const bool played = PlayLocalAssetClip(name.c_str());
-                if (std::string_view(out.clips[i]) == memoria::kAigcNoticeStory) {
-                    story_intro_ok = played;
-                }
-                vTaskDelay(pdMS_TO_TICKS(kAigcClipGapMs));
+                PlayLocalAssetClip(name.c_str());
+                vTaskDelay(pdMS_TO_TICKS(kOfflineClipGapMs));
             }
             if (out.start_story) {
                 if (generation != offline_play_generation_.load(std::memory_order_relaxed)) {
-                    return;
-                }
-                if (!story_intro_ok) {
-                    ESP_LOGE(TAG, "refusing story without AIGC intro %s",
-                             memoria::kAigcNoticeStoryFile);
                     return;
                 }
                 PlayLocalAssetClip(memoria::OfflineStoryFile(out.story_index));
@@ -969,7 +921,7 @@ private:
         ApplyOfflineMenuOutput(offline_menu_.OnNetworkSample(
             now_ms, NetworkLooksOnline(), DeviceInConversation(state)));
         ApplyOfflineMenuOutput(offline_menu_.OnTimer(now_ms));
-        SyncAigcOfflineBadge();
+        SyncOfflineMenuScreen();
     }
 
     void EnterTapDeepSleep() {
@@ -1071,12 +1023,6 @@ private:
                 return;
             case memoria::TapWakeAction::kNightSoothing:
                 power.SetPhase(memoria::PowerPhase::kNightSoothing);
-                // Screen is dimmed in quiet hours; spoken AIGC intro is required.
-                if (!PlayLocalAssetClip(memoria::kAigcNoticeBedtimeFile)) {
-                    ESP_LOGE(TAG, "refusing night_soothe without AIGC intro %s",
-                             memoria::kAigcNoticeBedtimeFile);
-                    return;
-                }
                 PlayLocalAssetClip("night_soothe.ogg");
                 app.Schedule([this]() {
                     vTaskDelay(pdMS_TO_TICKS(2500));

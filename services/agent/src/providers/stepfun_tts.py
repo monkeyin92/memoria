@@ -1,4 +1,4 @@
-"""StepFun StepAudio 3 TTS WebSocket adapter.
+"""StepFun TTS WebSocket adapter.
 
 Protocol source (checked 2026-10-20):
 https://platform.stepfun.com/docs/zh/api-reference/audio/ws-audio.md

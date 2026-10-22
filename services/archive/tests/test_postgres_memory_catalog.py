@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import uuid
@@ -730,6 +731,127 @@ async def test_hybrid_search_ignores_stale_vectors_from_an_older_model() -> None
         assert result.items
         assert result.items[0].source_event_id == event_id
     finally:
+        await connection.execute(
+            "DELETE FROM archive_evidence_events WHERE account_id = $1",
+            account_id,
+        )
+        await connection.close()
+        await upgraded_catalog.close()
+        await old_catalog.close()
+        await archive.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
+    reason="set MEMORIA_TEST_POSTGRES_DSN to a pgvector PostgreSQL for model upgrade",
+)
+async def test_deleting_evidence_while_vector_repair_holds_the_claim_does_not_deadlock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A repair that already locked the claim must not deadlock the evidence delete.
+
+    The CI failure was two ShareLocks: the repair's claim lock against the
+    delete's evidence lock, then the insert's key share the other way.
+    """
+
+    from services.archive import memory_vector_backfill as backfill
+
+    dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
+    account_id = f"embedding-deadlock-{uuid.uuid4()}"
+    event_id = f"embedding-deadlock-event-{uuid.uuid4()}"
+    archive = PostgresLifeArchive(dsn)
+    old_catalog = PostgresMemoryCatalog(
+        dsn,
+        extractor=RuleBasedMemoryExtractor(),
+        embedder=SemanticEmbedderStub(),
+        require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
+    )
+    upgraded_catalog = PostgresMemoryCatalog(
+        dsn,
+        extractor=RuleBasedMemoryExtractor(),
+        embedder=UpgradedEmbedderStub(),
+        require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
+    )
+    held = asyncio.Event()
+    release = asyncio.Event()
+    original_write = backfill.write_document_vector
+
+    async def pause_before_insert(
+        connection: asyncpg.Connection,
+        embedder: object,
+        **kwargs: object,
+    ) -> None:
+        held.set()
+        await release.wait()
+        await original_write(connection, embedder, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(backfill, "write_document_vector", pause_before_insert)
+    await archive.initialize()
+    await old_catalog.initialize()
+    await upgraded_catalog.initialize()
+    connection = await asyncpg.connect(dsn)
+    repair: asyncio.Task[str] | None = None
+    try:
+        await archive.record(
+            EvidenceEvent(
+                event_id=event_id,
+                account_id=account_id,
+                event_type="speech.utterance_finalized",
+                occurred_at=datetime.now(UTC),
+                speaker_class="owner",
+                source="embedding-deadlock-test",
+                payload={
+                    "text": "我们家的家训是答应别人的事一定做到。",
+                    "interaction_mode": "companion",
+                    "prompt_kind": "spontaneous",
+                    "owner_projection_eligible": True,
+                },
+            )
+        )
+        await old_catalog.compile_pending(limit=1000)
+        assert upgraded_catalog._vector_backfill is not None
+        async with upgraded_catalog._pool.acquire() as lookup:  # type: ignore[union-attr]
+            await lookup.execute(
+                "SELECT set_config('app.account_id', $1, true)",
+                account_id,
+            )
+            row = await lookup.fetchrow(
+                """
+                SELECT claim.claim_id, claim.value, claim.subject_key,
+                       claim.predicate, claim.source_event_id
+                FROM memory_claims claim
+                WHERE claim.account_id = $1 AND claim.source_event_id = $2
+                """,
+                account_id,
+                event_id,
+            )
+        assert row is not None
+        repair = asyncio.create_task(
+            upgraded_catalog._vector_backfill._repair_row(account_id, row)
+        )
+        await asyncio.wait_for(held.wait(), timeout=2)
+        delete = asyncio.create_task(
+            connection.execute(
+                "DELETE FROM archive_evidence_events WHERE account_id = $1",
+                account_id,
+            )
+        )
+        await asyncio.sleep(0.05)
+        release.set()
+        done = await asyncio.wait_for(
+            asyncio.gather(repair, delete, return_exceptions=True),
+            timeout=3,
+        )
+        assert not any(isinstance(item, asyncpg.DeadlockDetectedError) for item in done), done
+        assert not any(isinstance(item, BaseException) for item in done), done
+    finally:
+        release.set()
+        if repair is not None and not repair.done():
+            repair.cancel()
+            await asyncio.gather(repair, return_exceptions=True)
         await connection.execute(
             "DELETE FROM archive_evidence_events WHERE account_id = $1",
             account_id,
