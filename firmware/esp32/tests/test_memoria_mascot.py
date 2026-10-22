@@ -654,17 +654,19 @@ def test_board_wires_the_mascot_display() -> None:
     assert '"mascot_anim", 6144, this, 1,' in display
     assert "brand_mark.mma" in display
     assert "scene_->SetBrand(&brand_)" in display
-    # The audio tasks' level taps drive the mouth and the glow: drained inside the display lock on every
-    # frame (lit or not, so nothing stale plays back after the screen was off) and handed to the scene
-    # before it renders.
+    # The audio tasks' level taps are drained inside the display lock on every
+    # frame (lit or not, so nothing stale plays back after the screen was off)
+    # and handed to the scene before the dot face is painted. The mascot
+    # compositor does not run on that path.
     assert '#include "memoria_audio_level.h"' in display
     loop = display[display.index("void MemoriaMascotDisplay::AnimationLoop") :]
     take_spoken = loop.index("memoria::output_level_tap.Take()")
     take_heard = loop.index("memoria::input_level_tap.Take()")
     set_output = loop.index("scene_->SetOutputLevel(spoken.valley, spoken.peak, spoken.blocks, frame_now)")
     set_input = loop.index("scene_->SetInputLevel(heard.peak, heard.blocks, frame_now)")
-    assert loop.index("Lock(100)") < take_spoken < set_output < loop.index("scene_->Render(")
-    assert loop.index("Lock(100)") < take_heard < set_input < loop.index("scene_->Render(")
+    assert "scene_->Render(" not in loop
+    assert loop.index("Lock(100)") < take_spoken < set_output < loop.index("PaintDotFace(")
+    assert loop.index("Lock(100)") < take_heard < set_input < loop.index("PaintDotFace(")
     assert "screen_off_ ?" not in loop[take_spoken - 200 : set_input]
 
 

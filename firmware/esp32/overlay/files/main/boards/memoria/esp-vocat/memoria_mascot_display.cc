@@ -715,10 +715,8 @@ void MemoriaMascotDisplay::AnimationLoop() {
             if (shake) {
                 scene_->Shake(frame_now);
             }
-            memoria::SceneRect dirty[memoria::MascotScene::kMaxDirty];
+            bool painted = false;
             const int64_t render_started = esp_timer_get_time();
-            const int count =
-                screen_off_ ? 0 : scene_->Render(frame_now, dirty, memoria::MascotScene::kMaxDirty);
             if (!screen_off_ && framebuffer_ != nullptr) {
                 memoria::FaceFacts facts;
                 facts.state = static_cast<int>(Application::GetInstance().GetDeviceState());
@@ -733,56 +731,29 @@ void MemoriaMascotDisplay::AnimationLoop() {
                     ESP_LOGI(TAG, "face=%s", memoria::FaceName(face));
                     shown_face_ = face;
                 }
+                painted = true;
             }
             const int64_t render_us = esp_timer_get_time() - render_started;
             ++stats_frames;
 #if CONFIG_MEMORIA_BENCH_SERIAL
             ++bench.frames;
 #endif
-            if (count > 0) {
+            if (painted) {
                 ++stats_drawn;
                 stats_render_us += render_us;
                 stats_render_max_us = render_us > stats_render_max_us ? render_us : stats_render_max_us;
-                for (int i = 0; i < count; ++i) {
-                    stats_pixels += static_cast<uint64_t>(dirty[i].x1 - dirty[i].x0) *
-                                    (dirty[i].y1 - dirty[i].y0);
-                }
-                stats_composed += scene_->last_composed_px();
+                const uint64_t pixels = static_cast<uint64_t>(width_) * static_cast<uint64_t>(height_);
+                stats_pixels += pixels;
 #if CONFIG_MEMORIA_BENCH_SERIAL
                 ++bench.drawn;
                 bench.render_us += static_cast<uint64_t>(render_us);
                 if (static_cast<uint64_t>(render_us) > bench.render_max_us) {
                     bench.render_max_us = static_cast<uint32_t>(render_us);
                 }
-                for (int i = 0; i < count; ++i) {
-                    bench.pixels += static_cast<uint64_t>(dirty[i].x1 - dirty[i].x0) *
-                                    (dirty[i].y1 - dirty[i].y0);
-                }
-                bench.composed_px += scene_->last_composed_px();
+                bench.pixels += pixels;
 #endif
-            }
-            // Hand LVGL exactly what the scene composed: every rectangle it returns. The scene decides
-            // how narrow each one may be (MMP2, TODOLIST M-7) — it alone knows whether the base is still,
-            // which is what makes a patch-rect-only redraw safe. Invalidating one box here, as the
-            // 2026-10-07 probe did, drops the state ring's four rim strips: composed_px counts them and
-            // the panel would keep showing the previous glow.
-            for (int i = 0; i < count && container_ != nullptr; ++i) {
-                if (memoria::RectEmpty(dirty[i])) {
-                    continue;  // the scene composed nothing for this rectangle (every row cancelled out)
-                }
-                lv_area_t area = {static_cast<int32_t>(dirty[i].x0), static_cast<int32_t>(dirty[i].y0),
-                                  static_cast<int32_t>(dirty[i].x1 - 1),
-                                  static_cast<int32_t>(dirty[i].y1 - 1)};
-                lv_obj_invalidate_area(container_, &area);
-            }
-            if (!screen_off_ && container_ != nullptr && framebuffer_ != nullptr) {
-                // Both layouts: a caption lift must not leave the previous dots on the panel.
-                for (int lifted = 0; lifted < 2; ++lifted) {
-                    const memoria::FaceRect box = memoria::FaceBounds(lifted != 0);
-                    lv_area_t face_area = {static_cast<int32_t>(box.x0), static_cast<int32_t>(box.y0),
-                                           static_cast<int32_t>(box.x1 - 1),
-                                           static_cast<int32_t>(box.y1 - 1)};
-                    lv_obj_invalidate_area(container_, &face_area);
+                if (container_ != nullptr) {
+                    lv_obj_invalidate(container_);
                 }
             }
             const uint8_t opa = scene_->chrome_opa(frame_now);
@@ -793,7 +764,7 @@ void MemoriaMascotDisplay::AnimationLoop() {
                 ApplyChromeOpacity(opa);
             }
             Unlock();
-            if (count > 0) {
+            if (painted) {
                 drawn_busy_us = esp_timer_get_time() - frame_started;
             }
         }

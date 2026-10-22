@@ -26,12 +26,12 @@ extern "C" const char memoria_bench_build_marker[];
 class Backlight;
 
 // LCD display for the Memoria ESP-VoCat. The 360x360 panel shows the yellow
-// dot face from memoria_dot_face.h. The mascot compositor still times the boot
-// beat, the caption band, and the chrome; PaintDotFace replaces its pixels
-// before the flush. LVGL keeps the text, the AI badge, and the binding QR
-// card. A server emotion name never selects a face. While the device is
-// getting online the face lifts and the status text sits on the band below it.
-// The QR card is a screen of its own; no other text is drawn over it.
+// dot face from memoria_dot_face.h. The mascot scene still times the boot
+// beat, the caption band, and the chrome. While the dot face is on screen the
+// scene does not draw. LVGL keeps the text and the binding QR card. A server
+// emotion name never selects a face. While the device is getting online the
+// face lifts and the status text sits on the band below it. The QR card is a
+// screen of its own; no other text is drawn over it.
 class MemoriaMascotDisplay : public SpiLcdDisplay {
 public:
     MemoriaMascotDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,

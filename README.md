@@ -469,7 +469,7 @@ uv run python firmware/esp32/scripts/publish_firmware_release.py withdraw --remo
 | 问好 | `greet` | 开机动画还在走 |
 | 配对 | `pair` | 未绑定，二维码卡片在画面上 |
 
-几何在 `memoria_dot_face.cc`。13×11 的黄点，方点之间留空。待机时脸在圆屏正中。联网阶段脸在字幕带上方的圆里居中，上沿可以进到 y 18 到 46，不再为常驻 AI 角标留空。角标的绘制代码这次仍留着，另开 PR 再删。二维码卡片、字幕和背光策略不变。小程序里选的伙伴仍然只改下一轮的声音，屏幕不换装。`mascot_*.mmp` 只留在 `firmware/esp32/tests/fixtures/mascots/`，给旧合成器的主机测试用，不进镜像。
+几何在 `memoria_dot_face.cc`。13×11 的黄点，方点之间留空。待机时脸在圆屏正中。联网阶段脸在字幕带上方的圆里居中，最上排黄点落在 y 18 到 46。常驻 AI 角标已经从固件删除。点阵脸亮着时不跑吉祥物合成器。二维码卡片、字幕和背光策略不变。小程序里选的伙伴仍然只改下一轮的声音，屏幕不换装。`mascot_*.mmp` 只留在 `firmware/esp32/tests/fixtures/mascots/`，不进镜像。`firmware/esp32/scripts/preview_memoria_mascot.py` 只在主机上预览旧合成器，读的是这批夹具，不是设备画面。
 
 ```bash
 uv run pytest firmware/esp32/tests/test_memoria_dot_face.py -q

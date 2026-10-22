@@ -20,7 +20,8 @@ DISPLAY = BOARD_DIR / "memoria_mascot_display.cc"
 
 WIDTH = 360
 YELLOW = 0xFFE0
-BADGE_BAND_Y = 46
+FACE_TOP_MIN_Y = 18
+FACE_TOP_MAX_Y = 46
 NAMES = ("calm", "listen", "think", "speak", "connect", "greet", "pair")
 FORBIDDEN = ("surprised", "shocked", "scared", "angry", "dizzy", "惊吓", "生气")
 
@@ -276,7 +277,7 @@ def test_paint_is_yellow_dots_without_a_frame(report: dict) -> None:
         lifted = report["paints"][(name, 1)]
         assert lifted["min_y"] < rest["min_y"]
         assert lifted["max_y"] <= 216
-        assert lifted["min_y"] <= BADGE_BAND_Y
+        assert FACE_TOP_MIN_Y <= lifted["min_y"] <= FACE_TOP_MAX_Y
         assert lifted["sig"] != rest["sig"]
     assert len(signatures) == 14
 
@@ -303,5 +304,5 @@ def test_display_paints_from_device_state_not_emotion_names() -> None:
     assert "SceneMoodFromName" not in source
     assert "kFaceStateSpeaking" in source
     loop = source[source.index("void MemoriaMascotDisplay::AnimationLoop") :]
-    assert loop.index("scene_->SetOutputLevel(") < loop.index("scene_->Render(")
-    assert loop.index("scene_->Render(") < loop.index("PaintDotFace(")
+    assert "scene_->Render(" not in loop
+    assert loop.index("scene_->SetOutputLevel(") < loop.index("PaintDotFace(")
