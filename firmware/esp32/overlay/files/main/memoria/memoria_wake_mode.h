@@ -39,9 +39,14 @@ inline bool TapWakeEnabled(WakeMode) { return true; }
 // Kept name used by USB and board call sites; maps onto the power-policy action.
 using TapAction = TapWakeAction;
 
-inline TapWakeAction TapActionFor(WakeMode, bool device_idle) {
-    // Pre-phase call sites: idle starts a conversation; busy ignores.
-    return device_idle ? TapWakeAction::kStartConversation : TapWakeAction::kIgnore;
+inline TapWakeAction TapActionFor(WakeMode, TapDevice device) {
+    TapFacts facts;
+    facts.device = device;
+    return TapWakeActionFor(facts);
+}
+
+inline TapWakeAction TapActionFor(WakeMode mode, bool device_idle) {
+    return TapActionFor(mode, device_idle ? TapDevice::kIdle : TapDevice::kBusy);
 }
 
 class WakeModeRegistry {

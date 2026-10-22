@@ -161,6 +161,8 @@ class MediaSessionInputMixin:
     def _admit_vad_start(self, context: _MediaVoiceSession, segment: SpeechSegment) -> bool:
         """Open accepted speech synchronously, before projection can yield."""
 
+        if context.listening_capture_hold:
+            return False
         if _vad_precedes_pending_turn(segment, context):
             return False
         for kind, endpoint in (

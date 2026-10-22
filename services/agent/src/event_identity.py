@@ -312,6 +312,7 @@ def phase_for_published_state(state: str) -> object | None:
 
     return {
         "connecting": InteractionPhase.CONNECTING,
+        "listening_closed": InteractionPhase.CONNECTING,
         "ready": InteractionPhase.LISTENING,
         "speaker_enroll": InteractionPhase.LISTENING,
         "listening": InteractionPhase.LISTENING,
@@ -352,6 +353,8 @@ def input_policy_for_state(state: str) -> tuple[bool, str] | None:
         return False, "transport_recovering"
     if state in {"connecting", "closed"}:
         return False, f"session_{state}"
+    if state == "listening_closed":
+        return False, "listening_capture_hold"
     return None
 
 

@@ -129,3 +129,52 @@ async def test_submit_posts_only_the_event_id_and_returns_before_the_response() 
     release.set()
     await asyncio.gather(*list(reporter._tasks))
     await reporter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_not_found_is_retried_until_the_crisis_row_exists() -> None:
+    calls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        body = json.loads(request.content)
+        assert body == {"crisis_event_id": _EVENT}
+        if calls < 3:
+            return httpx.Response(404)
+        return httpx.Response(202, json={"crisis_event_id": _EVENT})
+
+    reporter = CrisisScriptInterruptReporter(
+        endpoint="http://control-api:8000/v1/guardian/crisis-script-interrupted",
+        token="t" * 32,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        not_found_backoff_s=0,
+    )
+    reporter.submit(_EVENT)
+    await asyncio.gather(*list(reporter._tasks))
+    await reporter.aclose()
+
+    assert calls == 3
+
+
+@pytest.mark.asyncio
+async def test_not_found_retries_stop_at_the_cap() -> None:
+    calls = 0
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(404)
+
+    reporter = CrisisScriptInterruptReporter(
+        endpoint="http://control-api:8000/v1/guardian/crisis-script-interrupted",
+        token="t" * 32,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        not_found_attempts=3,
+        not_found_backoff_s=0,
+    )
+    reporter.submit(_EVENT)
+    await asyncio.gather(*list(reporter._tasks))
+    await reporter.aclose()
+
+    assert calls == 3

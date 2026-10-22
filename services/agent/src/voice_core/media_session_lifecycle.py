@@ -70,6 +70,7 @@ class MediaSessionLifecycleMixin:
         output_generation_timeout_s: float
         delegation_initial_decision_timeout_s: float
         owner_silence_timeout_s: float
+        listening_capture_window_s: float
         max_user_speech_duration_s: float
         speaking_stall_timeout_s: float
         _sessions: dict[str, _MediaVoiceSession]
@@ -234,6 +235,11 @@ class MediaSessionLifecycleMixin:
             raise ValueError("delegation_initial_decision_timeout_s must be finite and positive")
         if not math.isfinite(self.owner_silence_timeout_s) or self.owner_silence_timeout_s < 0:
             raise ValueError("owner_silence_timeout_s must be finite and non-negative")
+        if (
+            not math.isfinite(self.listening_capture_window_s)
+            or self.listening_capture_window_s < 0
+        ):
+            raise ValueError("listening_capture_window_s must be finite and non-negative")
         if (
             not math.isfinite(self.max_user_speech_duration_s)
             or self.max_user_speech_duration_s < 0

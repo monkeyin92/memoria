@@ -27,6 +27,7 @@ from services.agent.src.voice_core.aigc_notice import (
     AigcNoticePosition,
     opening_marker_ready_at,
 )
+from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.media_protocol import PlaybackEventType, PlaybackProgress
 from services.agent.src.voice_core.media_session_state import (
     MediaVoiceSessionState as _MediaVoiceSession,
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
     from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 
 logger = logging.getLogger(__name__)
+media_pb2: Any = _media_pb2
 
 _MARKER_TTL_MS = 10_000
 _MARKER_FLOOR_WAIT_S = 1.0
@@ -83,6 +85,10 @@ class MediaSessionAigcNoticeMixin:
         ) -> bool: ...
 
         def _media_output_is_busy(self, context: _MediaVoiceSession) -> bool: ...
+
+        def _event_versions(
+            self, context: _MediaVoiceSession, fence: GenerationFence
+        ) -> tuple[int, int]: ...
 
         @staticmethod
         def _release_output_owner(
@@ -199,20 +205,24 @@ class MediaSessionAigcNoticeMixin:
         self._start_aigc_round(context, reason=reason)
         self._reset_aigc_closing_marker(context)
         context.aigc_opening_marker_pending = False
+        closing_pcm = (
+            self.aigc_notice_config.marker_pcm("closing") if closing_enabled else None
+        )
+        tail = closing_pcm if work is not None and closing_pcm is not None else b""
         if not opening_enabled:
             context.aigc_opening_marker_ready_at = time.monotonic()
-            return work
+            return replace(work, tail_pcm_s16le=tail) if work is not None and tail else work
         pcm = self.aigc_notice_config.marker_pcm("opening")
         if pcm is None:
             context.aigc_opening_marker_ready_at = time.monotonic()
-            return work
+            return replace(work, tail_pcm_s16le=tail) if work is not None and tail else work
         if work is None or work.conversation_text is None:
             # Wake acknowledgement and refusal paths have no reply work to
             # carry the cue; they keep the standalone marker.
             context.aigc_opening_marker_pending = True
             await self._speak_aigc_opening_marker(context)
             return work
-        attached = replace(work, lead_pcm_s16le=pcm)
+        attached = replace(work, lead_pcm_s16le=pcm, tail_pcm_s16le=tail)
         context.output.output_work[attached.intent_id] = attached
         context.aigc_opening_marker_started_at = time.monotonic()
         context.aigc_opening_marker_ready_at = opening_marker_ready_at(
@@ -228,6 +238,14 @@ class MediaSessionAigcNoticeMixin:
             context.aigc_round.content_id if context.aigc_round is not None else "",
             work.fence,
         )
+        if tail:
+            self.metrics.inc_media_metric("voice_aigc_notice_closing_total")
+            logger.info(
+                "AIGC closing marker attached session=%s content_id=%s fence=%s",
+                context.identity.session_id,
+                context.aigc_round.content_id if context.aigc_round is not None else "",
+                work.fence,
+            )
         return attached
 
     def _schedule_aigc_round_closing(
@@ -393,7 +411,6 @@ class MediaSessionAigcNoticeMixin:
             context.aigc_closing_marker_state = "unavailable"
             logger.warning("AIGC closing marker not played session=%s", context.identity.session_id)
             return False
-        context.aigc_closing_marker_fence = request.fence
         context.aigc_closing_marker_started_at = time.monotonic()
         context.aigc_closing_marker_state = "playing"
         self.metrics.inc_media_metric("voice_aigc_notice_closing_total")
@@ -452,12 +469,33 @@ class MediaSessionAigcNoticeMixin:
         opening = context.aigc_opening_marker_fence
         closing = getattr(context, "aigc_closing_marker_fence", None)
         opening_marker = opening is not None and fence.matches(opening)
-        if not opening_marker and not (closing is not None and fence.matches(closing)):
+        closing_marker = closing is not None and fence.matches(closing)
+        if not opening_marker and not closing_marker:
             return
         if opening_marker:
             context.aigc_opening_marker_fence = None
         else:
             context.aigc_closing_marker_fence = None
+        if closing_marker:
+            # A closing cue that could not ride the round's own generation
+            # (a stopped reply) stands alone. The firmware only leaves
+            # SPEAKING on this generation's generation.completed, so send the
+            # authoritative terminal the reply path would have sent.
+            task_epoch, context_version = self._event_versions(context, fence)
+            completed = await self.bridge.emit_generation(
+                fence.session_id,
+                fence,
+                action=media_pb2.GENERATION_ACTION_COMPLETE,
+                reason="aigc_closing_marker_complete",
+                task_epoch=task_epoch,
+                context_version=context_version,
+            )
+            if not completed:
+                logger.warning(
+                    "AIGC closing marker terminal rejected session=%s fence=%s",
+                    context.identity.session_id,
+                    fence,
+                )
         self._release_output_owner(context, fence, reason="aigc_marker_complete")
         if context.closed or context.standby_requested:
             return
@@ -562,6 +600,11 @@ class MediaSessionAigcNoticeMixin:
         fence = await self._aigc_marker_fence(context, position=position)
         if fence is None:
             return None
+        if position == "closing":
+            # The fence must be known before the output task can stream: a
+            # marker that finishes first would otherwise be dispatched as a
+            # reply and never receive its authoritative terminal.
+            context.aigc_closing_marker_fence = fence
         # A cue is consumer audio, not a conversation reply: never publish it as
         # assistant text or as a plan-bound media output.
         session = self.bridge.bridge.get(session_id)
@@ -595,12 +638,16 @@ class MediaSessionAigcNoticeMixin:
             floor_allows_output=True,
             now_ms=now_ms,
         ):
+            if position == "closing":
+                context.aigc_closing_marker_fence = None
             return None
         # The source is retained rather than waited on: the marker tells the
         # device the AI notice is on, and a stalled downlink must not hold the
         # round open (the closing path already does this).
         if not await self._enqueue_output_work(context, _OutputWork(intent, fence)):
             self._restore_aigc_marker_phase(context)
+            if position == "closing":
+                context.aigc_closing_marker_fence = None
             return None
         context.aigc_marker_previous_phase = previous_phase
         sample_rate = self._aigc_pcm_sample_rate(context)

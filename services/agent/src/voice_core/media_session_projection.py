@@ -286,6 +286,11 @@ class MediaSessionProjectionMixin:
             generation_tts_voice_can_bind(runtime)
             policy = runtime.mode_policy
             companion_style_id = policy.companion_style_id if policy.available else None
+            closing_pcm = (
+                self.aigc_notice_config.marker_pcm("closing")
+                if self.aigc_notice_config.position_enabled("closing")
+                else None
+            )
             spoken = await self._speak_allowlisted_bridge_phrase(
                 context,
                 device_wake_phrase(
@@ -298,6 +303,7 @@ class MediaSessionProjectionMixin:
                     ),
                 ),
                 require_idle_input=True,
+                tail_pcm_s16le=closing_pcm or b"",
             )
             if spoken:
                 context.device_wake_ack_fence = runtime.fence
@@ -571,6 +577,7 @@ class MediaSessionProjectionMixin:
         phrase: str,
         *,
         require_idle_input: bool,
+        tail_pcm_s16le: bytes = b"",
     ) -> bool:
         if context.closed or context.standby_requested:
             return False
@@ -615,7 +622,7 @@ class MediaSessionProjectionMixin:
             return False
         return await self._enqueue_output_work(
             context,
-            _OutputWork(acknowledgement, fence),
+            _OutputWork(acknowledgement, fence, tail_pcm_s16le=tail_pcm_s16le),
         )
 
     async def _release_media_delegation_claim(

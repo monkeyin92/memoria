@@ -410,4 +410,5 @@ class MediaOutputOwnerMixin:
             fence,
             conversation_text=work.conversation_text,
             lead_pcm_s16le=work.lead_pcm_s16le,
+            tail_pcm_s16le=work.tail_pcm_s16le,
         )

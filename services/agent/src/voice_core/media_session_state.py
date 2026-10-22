@@ -156,6 +156,9 @@ class MediaVoiceSessionState:
     live_lookup_filler_admitted_at: float | None = None
     owner_silence_task: asyncio.Task[None] | None = None
     owner_silence_deadline: float | None = None
+    listening_capture_deadline: float | None = None
+    listening_capture_hold: bool = False
+    listening_capture_resume_sample: int | None = None
     owner_silence_remaining_s: float | None = None
     owner_silence_grace_used: bool = False
     owner_silence_grace_deadline: float | None = None

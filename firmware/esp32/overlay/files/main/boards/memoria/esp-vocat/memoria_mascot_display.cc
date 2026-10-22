@@ -581,6 +581,9 @@ memoria::ScenePhase MemoriaMascotDisplay::CurrentPhase(uint32_t now_ms) {
         return ScenePhase::kSetup;
     }
     const DeviceState state = Application::GetInstance().GetDeviceState();
+    if (listening_closed_.load(std::memory_order_relaxed) && state == kDeviceStateListening) {
+        return ScenePhase::kIdle;
+    }
     if (state != kDeviceStateListening) {
         user_spoke_.store(false);
     }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import time
@@ -14,6 +15,7 @@ from services.agent.src.session_recap_sink import snapshot_context_turns
 from services.agent.src.voice_core.crisis_script_interrupt import (
     active_subject_id,
     publish_crisis_self_interrupt,
+    unfinished_safety_announcement,
 )
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_bridge_server import MediaBridgeSession
@@ -81,6 +83,13 @@ class MediaSessionConnectionMixin:
 
         def _clear_pending_turn_state(self, context: _MediaVoiceSession) -> None: ...
 
+        def resume_listening_from_screen_tap(
+            self,
+            context: _MediaVoiceSession,
+            *,
+            wake_sample: int,
+        ) -> None: ...
+
     async def on_client_event(
         self,
         session: MediaBridgeSession,
@@ -91,6 +100,14 @@ class MediaSessionConnectionMixin:
             return
         current = self._sessions.get(session.identity.session_id)
         if current is not None and (current.closed or current.standby_requested):
+            return
+        if event.type == "listening.resume":
+            if current is None or current.identity.stream_epoch != session.identity.stream_epoch:
+                return
+            wake_sample = event.payload.get("wake_sample")
+            if isinstance(wake_sample, bool) or not isinstance(wake_sample, int) or wake_sample < 0:
+                return
+            self.resume_listening_from_screen_tap(current, wake_sample=wake_sample)
             return
         context = await self.open_session(session.identity)
         if context.closed or context.standby_requested or not session.accepts_input():
@@ -354,6 +371,9 @@ class MediaSessionConnectionMixin:
             if context.output.output_owner is not None
             else context.output.playback.current_fence or context.runtime.fence
         )
+        # Read before cancellation. Teardown can clear the speaking latch, and
+        # the opening cue has no script text yet.
+        unfinished_script = unfinished_safety_announcement(context)
         await self._cancel_reply_task(
             context,
             output_fence,
@@ -370,14 +390,13 @@ class MediaSessionConnectionMixin:
         await self._cancel_audio_pump(context)
         await self._record_daily_chat_usage(context)
         await self._publish_child_session_recap(context)
-        # A power/network loss during an unfinished fixed safety script is the
-        # other case that raises the parent reminder. A user stop clears the
-        # announced text before this path, and a completed script is no longer
-        # audible.
-        if context.runtime.floor.fixed_safety_audible:
+        # Power loss and a network drop that never reconnects both land here.
+        # The opening cue counts: the script is committed before its text is
+        # appended, and the child has not heard it.
+        if unfinished_script is not None:
             publish_crisis_self_interrupt(
                 getattr(self, "crisis_script_interrupt_publisher", None),
-                announced_text=context.output.assistant_text,
+                announced_text=unfinished_script,
                 crisis_reply_heard=context.crisis_reply_heard,
                 minor_user_id=active_subject_id(context),
                 session_id=context.identity.session_id,
@@ -391,6 +410,24 @@ class MediaSessionConnectionMixin:
         self._finish_aigc_round(context, close_reason=context.standby_reason or "session_closed")
         await context.runtime.close()
         await context.provider.close(context.identity)
+        ingress = context.ingress
+        logger.info(
+            "media_audio_buffers_cleared %s",
+            json.dumps(
+                {
+                    "session_id": context.identity.session_id,
+                    "stream_epoch": context.stream_epoch,
+                    "queue_frames": ingress.queue.qsize(),
+                    "pcm_tap_open": ingress.pcm_tap is not None,
+                    "denoiser_frames": int(ingress.denoiser.get_stats().get("total_frames", 0)),
+                    "silence_dropped_frames": ingress.listening_silence_dropped_frames,
+                    "silence_dropped_samples": ingress.listening_silence_dropped_samples,
+                    "overflow_dropped_frames": ingress.overflow_dropped_frames,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
         # The registry owns the transport session created by the bridge. Once
         # reconnect grace expires there is no replacement epoch left to claim
         # it, so remove it as well; otherwise stale identities accumulate in
