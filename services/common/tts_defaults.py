@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import Final
 
-STEPFUN_TTS_MODEL: Final = "stepaudio-3-tts"
-STEPFUN_TTS_VOICE: Final = "yuanqishaonv"
+STEPFUN_TTS_MODEL: Final = "stepaudio-2.5-tts"
+STEPFUN_TTS_VOICE: Final = "wenrounansheng"
 STEPFUN_PROVIDER: Final = "stepfun"
 DOUBAO_TTS_RESOURCE_ID: Final = "seed-tts-2.0"
 #: Designed female voice for the Doubao backup in StepFun-primary mode. Product

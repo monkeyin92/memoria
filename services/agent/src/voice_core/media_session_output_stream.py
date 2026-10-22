@@ -1536,13 +1536,18 @@ class MediaOutputStreamMixin:
         context: _MediaVoiceSession,
         fence: GenerationFence,
     ) -> None:
-        """P0-04 D3: end a minor's session past its signed limit after the reply."""
+        """End a minor session past its signed limit.
+
+        Speak the goodbye only when a playable approved clip exists. Otherwise
+        the device goes to standby with no live TTS.
+        """
 
         from services.agent.src.minor_limit_bypass import (
             MINOR_SESSION_LIMIT_BYPASSED_REASON,
             configured_minor_limit_bypass,
         )
         from services.agent.src.prompts import MINOR_SESSION_LIMIT_PHRASE
+        from services.agent.src.providers.fixed_safety_audio import shipped_approved_catalog
         from services.agent.src.voice_core.minor_session_limits import (
             minor_limits,
             minor_subject_id,
@@ -1571,9 +1576,12 @@ class MediaOutputStreamMixin:
             return
         speak = getattr(self, "_speak_device_enrollment_phrase", None)
         request_standby = getattr(self, "_request_device_standby", None)
-        if callable(speak) and callable(request_standby):
+        if not callable(request_standby):
+            return
+        approved = shipped_approved_catalog().match(MINOR_SESSION_LIMIT_PHRASE)
+        if callable(speak) and approved is not None and approved.playable:
             await speak(context, MINOR_SESSION_LIMIT_PHRASE)
-            await request_standby(context, reason="minor_max_session")
+        await request_standby(context, reason="minor_max_session")
 
     async def _maybe_standby_after_llm_unavailable(
         self,

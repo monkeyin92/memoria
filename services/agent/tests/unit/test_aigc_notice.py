@@ -34,6 +34,7 @@ from services.agent.src.voice_core.media_session_aigc_notice import (
 from services.agent.src.voice_core.media_session_standby import (
     MediaSessionStandbyMixin,
 )
+from services.common.tts_defaults import STEPFUN_TTS_MODEL, STEPFUN_TTS_VOICE
 
 
 class _NoticeHost(MediaSessionAigcNoticeMixin):
@@ -284,8 +285,8 @@ def test_round_log_writes_time_vendor_and_content_id_without_text(
     logger = AigcRoundLogger(
         AigcTtsDescriptor(
             provider="stepfun",
-            engine="stepaudio-3-tts",
-            voice="yuanqishaonv",
+            engine=STEPFUN_TTS_MODEL,
+            voice=STEPFUN_TTS_VOICE,
             fallback_provider="volcengine_doubao",
             fallback_engine="seed-tts-2.0",
             fallback_voice="zh_female_kailangjiejie_uranus_bigtts",
@@ -300,7 +301,7 @@ def test_round_log_writes_time_vendor_and_content_id_without_text(
     assert payload["event"] == AIGC_ROUND_EVENT
     assert payload["content_id"] == "aigc-round-test"
     assert payload["provider"] == "stepfun"
-    assert payload["engine"] == "stepaudio-3-tts"
+    assert payload["engine"] == STEPFUN_TTS_MODEL
     assert payload["fallback_voice"] == "zh_female_kailangjiejie_uranus_bigtts"
     assert payload["close_reason"] == "child_stop"
     assert not {
@@ -341,7 +342,7 @@ def test_round_logger_is_optional_and_idempotent(tmp_path: Path) -> None:
 
 def test_round_bookkeeping_starts_once_and_finishes_once(tmp_path: Path) -> None:
     logger = AigcRoundLogger(
-        AigcTtsDescriptor(provider="stepfun", engine="stepaudio-3-tts"),
+        AigcTtsDescriptor(provider="stepfun", engine=STEPFUN_TTS_MODEL),
         path=str(tmp_path / "rounds.jsonl"),
         content_id_factory=lambda: "round-1",
     )
@@ -382,7 +383,7 @@ async def test_device_session_opens_and_finishes_one_round_record(tmp_path: Path
 
     path = tmp_path / "rounds.jsonl"
     logger = AigcRoundLogger(
-        AigcTtsDescriptor(provider="stepfun", engine="stepaudio-3-tts"),
+        AigcTtsDescriptor(provider="stepfun", engine=STEPFUN_TTS_MODEL),
         path=str(path),
         content_id_factory=lambda: "round-from-session",
     )
@@ -446,7 +447,7 @@ def test_aigc_marker_is_a_pcm_fast_acknowledgement_not_a_tts_reply() -> None:
 
 def test_non_device_session_does_not_open_an_aigc_round(tmp_path: Path) -> None:
     logger = AigcRoundLogger(
-        AigcTtsDescriptor(provider="stepfun", engine="stepaudio-3-tts"),
+        AigcTtsDescriptor(provider="stepfun", engine=STEPFUN_TTS_MODEL),
         path=str(tmp_path / "rounds.jsonl"),
     )
     host = _RoundHost(logger)
@@ -991,7 +992,7 @@ def test_a_round_with_a_generation_logger_is_still_active() -> None:
 
     host = MediaSessionAigcNoticeMixin()
     host.aigc_round_logger = AigcRoundLogger(
-        AigcTtsDescriptor(provider="stepfun", engine="stepaudio-3-tts")
+        AigcTtsDescriptor(provider="stepfun", engine=STEPFUN_TTS_MODEL)
     )
     context = SimpleNamespace(
         identity=SimpleNamespace(session_id="aigc-round-logger", client_type="device"),

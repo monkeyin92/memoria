@@ -34,6 +34,7 @@ from services.agent.src.providers.provider_errors import APIConnectOptions
 from services.agent.src.providers.stepfun_tts import BracketInstructionFilter
 from services.agent.src.providers.tts_stream import SynthesizedAudio
 from services.common.fixed_safety_scripts import fixed_safety_echo_reference
+from services.common.tts_defaults import STEPFUN_TTS_MODEL
 from services.common.tts_voice_policy import is_clone_or_icl_voice
 
 logger = logging.getLogger(__name__)
@@ -727,7 +728,7 @@ class StepFunPrimaryTTS:
 
     @property
     def model(self) -> str:
-        return str(getattr(self.primary, "model", "stepaudio-3-tts"))
+        return str(getattr(self.primary, "model", STEPFUN_TTS_MODEL))
 
     @property
     def sample_rate(self) -> int:

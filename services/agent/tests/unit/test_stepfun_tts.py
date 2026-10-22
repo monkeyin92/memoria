@@ -30,6 +30,7 @@ from services.agent.src.providers.tts_failover import (
 )
 from services.agent.src.providers.tts_stream import AudioFrame, SynthesizedAudio
 from services.agent.src.runtime_provenance import DuplexRuntimeProvenanceMixin
+from services.common.tts_defaults import DOUBAO_TTS_FALLBACK_SPEAKER
 from websockets.exceptions import ConnectionClosedOK
 from websockets.frames import Close
 
@@ -298,7 +299,7 @@ async def test_normal_synthesis_uses_documented_events_and_24k_pcm() -> None:
         or server.headers[0].get("authorization") == "Bearer test-stepfun-secret"
     )
     create = next(event["data"] for event in server.client_events if event["type"] == "tts.create")
-    assert create["voice_id"] == STEPFUN_TTS_VOICE == "yuanqishaonv"
+    assert create["voice_id"] == STEPFUN_TTS_VOICE
     assert create["response_format"] == "pcm"
     assert create["sample_rate"] == 24000
     # A deployment with no STEPFUN_TTS_INSTRUCTION sends no guard wording.
@@ -1099,15 +1100,15 @@ def test_factory_is_doubao_by_default_and_requires_both_switches(
     )
 
 
-def test_env_defaults_use_stepaudio_3_and_yuanqishaonv_and_hide_the_key() -> None:
+def test_env_defaults_use_the_shared_stepfun_voice_and_hide_the_key() -> None:
     config = StepFunTTSConfig.from_env(
         {
             "STEPFUN_API_KEY": "hidden-secret",
             "STEPFUN_TTS_MOCK_WS_URL": "ws://127.0.0.1:1",
         }
     )
-    assert config.model == STEPFUN_TTS_MODEL == "stepaudio-3-tts"
-    assert config.voice == STEPFUN_TTS_VOICE == "yuanqishaonv"
+    assert config.model == STEPFUN_TTS_MODEL == "stepaudio-2.5-tts"
+    assert config.voice == STEPFUN_TTS_VOICE == "wenrounansheng"
     # The delivery guard is deployment wording, so code carries no default text.
     assert config.instruction == ""
     assert STEPFUN_INSTRUCTION_GUARD == ""
@@ -1308,9 +1309,9 @@ def test_env_example_matches_the_runtime_tts_defaults() -> None:
     production = (root / "infra" / "memoria.env.production.example").read_text(encoding="utf-8")
 
     for text in (example, production):
-        assert "STEPFUN_TTS_MODEL=stepaudio-3-tts" in text
-        assert "STEPFUN_TTS_VOICE=yuanqishaonv" in text
-        assert "DOUBAO_TTS_FALLBACK_SPEAKER=zh_female_kailangjiejie_uranus_bigtts" in text
+        assert f"STEPFUN_TTS_MODEL={STEPFUN_TTS_MODEL}" in text
+        assert f"STEPFUN_TTS_VOICE={STEPFUN_TTS_VOICE}" in text
+        assert f"DOUBAO_TTS_FALLBACK_SPEAKER={DOUBAO_TTS_FALLBACK_SPEAKER}" in text
 
 
 def test_main_backup_rejects_a_male_preset_before_construction() -> None:
