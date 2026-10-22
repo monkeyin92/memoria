@@ -1,5 +1,3 @@
-"""Render the production keepalive timeout with docker compose config."""
-
 from __future__ import annotations
 
 import functools

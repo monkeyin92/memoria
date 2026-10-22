@@ -1,5 +1,3 @@
-"""The production keepalive override renders 180. The base file stays 30."""
-
 from __future__ import annotations
 
 import subprocess
