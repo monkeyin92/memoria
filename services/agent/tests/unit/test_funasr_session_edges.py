@@ -35,6 +35,10 @@ async def test_unconnected_session_control_methods_and_ring_bound() -> None:
     assert session._pcm_ring_bytes <= session._max_ring_bytes
     assert b"".join(session._pcm_ring) == b"b" * 120
     await session.aclose()
+    # Idle/terminal teardown must not leave replayable uplink PCM behind.
+    assert session._pcm_ring_bytes == 0
+    assert not session._pcm_ring
+    assert not session._pcm_ring_ranges
     with pytest.raises(RuntimeError, match="closed"):
         await session.connect()
 

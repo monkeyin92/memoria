@@ -12,6 +12,8 @@ import logging
 from collections.abc import Coroutine
 from typing import Any
 
+from services.agent.src.orchestration.speaker_verify import SpeakerVerifier
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,12 +32,18 @@ class DuplexRuntimeShutdownMixin:
     _background_tasks: set[asyncio.Task[Any]]
     _durable_tasks: set[asyncio.Task[Any]]
     _evidence_drain_timeout_s: float
+    _speaker_pcm: bytearray
+    speaker_verifier: SpeakerVerifier
 
     def begin_close(self) -> bool:
         """Mark the runtime closed; True means it was already closed."""
         if self._closed:
             return True
         self._closed = True
+        # Terminal teardown must not retain the last utterance's PCM for
+        # speaker evidence; nothing may consume it after close.
+        self._speaker_pcm.clear()
+        self.speaker_verifier.clear_audio_buffers()
         return False
 
     def refuse_after_close(

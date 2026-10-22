@@ -359,7 +359,6 @@ class FunASRSession:
 
     def _reset_segment_evidence(self) -> None:
         """Drop the current VAD segment's rescue evidence (segment boundary)."""
-
         self._segment_pcm.clear()
         self._segment_pcm_ranges.clear()
         self._segment_pcm_samples = 0
@@ -1753,6 +1752,7 @@ class FunASRSession:
         self._closed = True
         self._rescue_deadline = None
         self._reset_segment_evidence()
+        self._clear_pcm_ring()  # never retain replayable uplink PCM after close
         if self._ws_trace_enabled and self._trace_suppressed_total:
             logger.info(
                 "funasr_ws_trace closing suppressed_total=%s task_id=%s",

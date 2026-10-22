@@ -375,6 +375,14 @@ class SpeakerVerifier:
     def mark_utterance_end(self) -> None:
         self._collecting_utterance = False
 
+    def clear_audio_buffers(self) -> None:
+        """Drop every PCM buffer kept for enrollment or utterance scoring."""
+
+        self._enroll_pcm.clear()
+        self._rolling.clear()
+        self._utterance.clear()
+        self._collecting_utterance = False
+
     def _near_rms_threshold(self) -> float:
         if self.owner_ref_rms > 0.0:
             return max(0.02, self.owner_ref_rms * self.near_field_rms_ratio)

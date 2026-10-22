@@ -14,6 +14,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Protocol
 
 from services.agent.src.observability.metrics import MetricsRegistry
+from services.agent.src.orchestration.state_machine import InteractionPhase
 from services.agent.src.voice_core.asr_stream_supervisor import ASRAcceptDecision
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_pcm_tap import MediaPcmTap, maybe_create_tap
@@ -37,6 +38,8 @@ logger = logging.getLogger(__name__)
 _OVERFLOW_LOG_INTERVAL_S = 5.0
 _PUMP_STALL_THRESHOLD_S = 2.0
 _PUMP_STALL_LOG_INTERVAL_S = 5.0
+# 16-bit peak at or below this is digital silence / dither, not uplink speech.
+_LISTENING_SILENCE_PEAK = 4
 
 
 def _create_media_denoiser() -> TwoStageDenoiser:
@@ -73,6 +76,10 @@ class MediaAudioIngressState:
     pcm_tap_initialized: bool = False
     overflow_dropped_frames: int = 0
     overflow_dropped_samples: int = 0
+    # Frames refused at the listening seam. They never reach the denoiser, the
+    # PCM tap, the provider, or a log line carrying audio.
+    listening_silence_dropped_frames: int = 0
+    listening_silence_dropped_samples: int = 0
     last_overflow_log: float = 0.0
     last_pump_stall_log: float = 0.0
 
@@ -139,6 +146,8 @@ class MediaAudioIngress:
         if tap is not None:
             tap.close()
         state.denoiser.reset()
+        state.loss_concealed_ranges.clear()
+        state.discontinuity_pending = False
         self._host.metrics.set_media_metric("media_pcm_queue_depth", 0.0)
 
     async def accept(self, context: _MediaVoiceSession, frame: AudioFrame) -> None:
@@ -148,6 +157,55 @@ class MediaAudioIngress:
         # the task/epoch boundary before recording or queueing the next frame.
         async with context.ingress.finalize_lock:
             await self._accept_serialized(context, frame)
+
+    @staticmethod
+    def _is_listening_silence(
+        context: _MediaVoiceSession,
+        frame: AudioFrame,
+    ) -> bool:
+        """True for silent uplink PCM that arrived while the device is listening.
+
+        A device streams its microphone continuously. Once the assistant has
+        returned the floor, digital silence outside an accepted VAD utterance
+        carries no content we may retain: it must not reach the denoiser, the
+        PCM tap, the ASR provider, or a log line that includes audio. Only
+        near-zero PCM is refused, so a real question whose device VAD edge was
+        suppressed during playback still reaches ASR. The gate is limited to
+        the explicit LISTENING phase so CONNECTING/library seams keep their
+        existing ingestion path.
+        """
+
+        if not MediaAudioIngress._is_silent_pcm(frame.payload):
+            return False
+        runtime = getattr(context, "runtime", None)
+        if getattr(runtime, "interaction_phase", None) is not InteractionPhase.LISTENING:
+            return False
+        pending = getattr(context, "pending", None)
+        if pending is None:
+            return False
+        commit_task = getattr(context, "turn_commit_task", None)
+        if (
+            pending.turn_start_sample is not None
+            or pending.active_vad_stream_epoch == context.stream_epoch
+            or pending.admitted_input_stream_epoch == context.stream_epoch
+            or (commit_task is not None and not commit_task.done())
+        ):
+            return False
+        return True
+
+    @staticmethod
+    def _is_silent_pcm(payload: bytes) -> bool:
+        """True when every 16-bit sample is at or below the silence floor."""
+
+        if not payload or len(payload) % 2:
+            return False
+        for index in range(0, len(payload), 2):
+            sample = payload[index] | (payload[index + 1] << 8)
+            if sample & 0x8000:
+                sample = 0x10000 - sample
+            if sample > _LISTENING_SILENCE_PEAK:
+                return False
+        return True
 
     async def _accept_serialized(
         self,
@@ -163,6 +221,12 @@ class MediaAudioIngress:
             return
         state = context.ingress
         if state.input_revoked:
+            return
+        if self._is_listening_silence(context, frame):
+            # Count only; never log the payload or its content. The frame is
+            # refused before the denoiser, the tap and the ASR provider.
+            state.listening_silence_dropped_frames += 1
+            state.listening_silence_dropped_samples += frame.frame_samples
             return
         if state.provider_failed:
             async with state.recovery_lock:

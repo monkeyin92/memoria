@@ -85,7 +85,11 @@ class _FakeState:
     stepfun_texts: list[str] = field(default_factory=list)
     asr_tasks: int = 0
     asr_connections: int = 0
+    # Every binary frame the fake ASR received, including the silent window.
+    asr_pcm_bytes: int = 0
     llm_calls: int = 0
+    # Every POST body the agent sent to the guardian crisis-script mark route.
+    crisis_script_interrupts: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -278,7 +282,7 @@ def _policy_envelope(session_id: str) -> dict[str, Any]:
     }
 
 
-async def _control_api_app() -> web.Application:
+async def _control_api_app(state: _FakeState) -> web.Application:
     async def policy(request: web.Request) -> web.Response:
         body = await request.json()
         return web.json_response(_policy_envelope(str(body["session_id"])))
@@ -289,12 +293,19 @@ async def _control_api_app() -> web.Application:
     async def accepted(_request: web.Request) -> web.Response:
         return web.json_response({"status": "recorded"}, status=202)
 
+    async def crisis_script_interrupted(request: web.Request) -> web.Response:
+        body = await request.json()
+        state.crisis_script_interrupts.append(
+            {"crisis_event_id": str(body.get("crisis_event_id", ""))}
+        )
+        return web.json_response({"status": "recorded"}, status=202)
+
     app = web.Application()
     app.router.add_post("/v1/interaction/session-policy", policy)
     app.router.add_post("/internal/readiness/agent-heartbeat", heartbeat)
     app.router.add_post("/v1/interaction/response-plan", accepted)
     app.router.add_post("/v1/interaction/context-prefetch", accepted)
-    app.router.add_post("/v1/guardian/crisis-script-interrupted", accepted)
+    app.router.add_post("/v1/guardian/crisis-script-interrupted", crisis_script_interrupted)
     app.router.add_post("/{tail:.*}", accepted)
     return app
 
@@ -411,6 +422,7 @@ async def _asr_handler(ws: Any, state: _FakeState) -> None:
         async for raw in ws:
             if isinstance(raw, (bytes, bytearray)):
                 pcm_bytes += len(raw)
+                state.asr_pcm_bytes += len(raw)
                 continue
             message = json.loads(raw)
             header = message.get("header") or {}
@@ -550,6 +562,7 @@ class _DeviceClient:
         self._terminals: dict[tuple[int, int], str] = {}
         self._drain_tasks: dict[tuple[int, int], asyncio.Task[Any]] = {}
         self.stalled: list[str] = []
+        self.uplink_pcm_bytes = 0
 
     async def __aenter__(self) -> _DeviceClient:
         rpc = self.channel.stream_stream(
@@ -593,6 +606,8 @@ class _DeviceClient:
             yield item
 
     async def send(self, message: media_pb2.MediaToCore) -> None:
+        if message.WhichOneof("event") == "audio":
+            self.uplink_pcm_bytes += len(message.audio.payload)
         await self.requests.put(message)
 
     def _transition(self, state: int, turn_id: int, generation_id: int, cause: str) -> None:
@@ -612,7 +627,9 @@ class _DeviceClient:
                 self.stream_error = f"{type(exc).__name__}: {exc}"
                 self.stream_ended = True
                 return
-            if message is None:
+            if message is grpc.aio.EOF or message is None:
+                # grpc.aio read() ends a stream with its EOF sentinel, not
+                # None; keep None for any sync/bridge compatibility.
                 self.stream_ended = True
                 return
             event = message.WhichOneof("event")
@@ -628,7 +645,13 @@ class _DeviceClient:
             elif event == "error":
                 self.errors.append(message.error.message)
             elif event == "accepted":
-                continue
+                # The initial accept was consumed in __aenter__. Any accept on
+                # the reader task is a server-side re-wake/re-accept.
+                self.session_accepts += 1
+                accepted = message.accepted
+                self.runtime_states.append(
+                    (int(accepted.state), int(accepted.current_turn_id))
+                )
 
     async def _on_audio(self, frame: Any) -> None:
         turn_id = int(frame.turn_id)
@@ -1218,6 +1241,109 @@ def _compose_logs(docker_env: dict[str, str]) -> str:
     return completed.stdout + completed.stderr
 
 
+_AUDIO_SUFFIXES = (".wav", ".pcm", ".s16le", ".raw", ".opus", ".mp3", ".flac", ".ogg", ".m4a")
+_AUDIO_INVENTORY_SCRIPT = f"""
+import json, os
+suffixes = {_AUDIO_SUFFIXES!r}
+out = {{}}
+for root in ("/tmp", "/var/tmp", "/dev/shm"):
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [name for name in dirnames if name not in {{".cache", "__pycache__"}}]
+        for name in filenames:
+            if not name.lower().endswith(suffixes):
+                continue
+            path = os.path.join(dirpath, name)
+            try:
+                info = os.stat(path)
+            except OSError:
+                continue
+            out[path] = [info.st_size, info.st_mtime_ns]
+print(json.dumps(out, sort_keys=True))
+"""
+
+
+def _container_audio_inventory(
+    docker_env: dict[str, str],
+    compose_env: dict[str, str],
+) -> dict[str, list[int]]:
+    """Audio files the running agent wrote to its writable container mounts.
+
+    The e2e image runs with ``ENVIRONMENT=production`` (so the PCM tap is
+    refused) and a read-only root; every legitimate audio write would land in
+    one of these tmpfs roots. Sizes and mtimes let a before/after snapshot
+    prove that no audio bytes were written during the silent window.
+    """
+
+    completed = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "-f",
+            str(COMPOSE_FILE),
+            "exec",
+            "-T",
+            "voice-core-media-bridge",
+            "/app/.venv/bin/python",
+            "-c",
+            _AUDIO_INVENTORY_SCRIPT,
+        ],
+        cwd=REPO_ROOT,
+        env={**docker_env, **compose_env},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "could not inventory container audio files: "
+            f"{completed.stdout}\n{completed.stderr}"
+        )
+    value = json.loads(completed.stdout)
+    if not isinstance(value, dict):
+        raise RuntimeError("container audio inventory was not an object")
+    return {str(path): [int(size), int(mtime)] for path, (size, mtime) in value.items()}
+
+
+def _audio_written_since(
+    before: dict[str, list[int]],
+    after: dict[str, list[int]],
+) -> dict[str, int]:
+    """New or changed audio files, keyed by path, valued by their size."""
+
+    written: dict[str, int] = {}
+    for path, (size, mtime) in after.items():
+        previous = before.get(path)
+        if previous is None or previous[0] != size or previous[1] != mtime:
+            written[path] = size
+    return written
+
+
+def _assert_audio_buffers_cleared(logs: str) -> dict[str, Any]:
+    lines = [
+        line.split("media_audio_buffers_cleared ", 1)[1]
+        for line in logs.splitlines()
+        if "media_audio_buffers_cleared " in line
+    ]
+    if not lines:
+        raise RuntimeError("agent did not log media_audio_buffers_cleared after idle close")
+    report = json.loads(lines[-1])
+    if not isinstance(report, dict):
+        raise RuntimeError(f"buffer report was not an object: {report!r}")
+    if report.get("session_id") != SESSION_ID:
+        raise RuntimeError(f"buffer report is for another session: {report}")
+    if report.get("queue_frames") != 0:
+        raise RuntimeError(f"ingress queue was not drained: {report}")
+    if report.get("pcm_tap_open") is not False:
+        raise RuntimeError(f"PCM tap was not closed: {report}")
+    if report.get("denoiser_frames") != 0:
+        raise RuntimeError(f"denoiser buffers were not reset: {report}")
+    if int(report.get("silence_dropped_frames", 0)) <= 0:
+        raise RuntimeError(f"silent-window frames were not dropped at ingress: {report}")
+    if "media PCM tap opened" in logs:
+        raise RuntimeError("PCM tap opened despite ENVIRONMENT=production")
+    return {str(key): value for key, value in report.items()}
+
+
 def _wait_port(host: str, port: int, *, timeout: float = 30.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -1231,7 +1357,12 @@ def _wait_port(host: str, port: int, *, timeout: float = 30.0) -> None:
     raise RuntimeError(f"port {host}:{port} did not open")
 
 
-async def _run_scenario(*, cert_dir: Path, state: _FakeState) -> dict[str, Any]:
+async def _run_scenario(
+    *,
+    cert_dir: Path,
+    state: _FakeState,
+    audio_inventory: Callable[[], dict[str, list[int]]],
+) -> dict[str, Any]:
     ca = (cert_dir / "ca.pem").read_bytes()
     client_key = (cert_dir / "client.key").read_bytes()
     client_cert = (cert_dir / "client.pem").read_bytes()
@@ -1379,11 +1510,25 @@ async def _run_scenario(*, cert_dir: Path, state: _FakeState) -> dict[str, Any]:
 
             # After the last closing marker the device is listening. Silence
             # without a speech edge must not start a turn, call the LLM, or
-            # emit any assistant audio.
+            # emit any assistant audio. The server may still be projecting the
+            # terminal completion when the device flips, so let that settle
+            # before measuring; no audio is sent during the settle.
             idle_started_at = client.last_listening_at(stop_turn_id)
+            assert not client.closed_states, (
+                f"session closed before the silent window: {client.closed_states}"
+            )
+            assert not client.stream_ended, (
+                f"media stream ended before the silent window (error={client.stream_error})"
+            )
+            await asyncio.sleep(0.5)
+            assert not client.closed_states, (
+                f"session closed during the listening settle: {client.closed_states}"
+            )
             silent_snapshot = client.generation_snapshot()
             llm_calls_before = state.llm_calls
             stepfun_before = len(state.stepfun_texts)
+            asr_pcm_before = state.asr_pcm_bytes
+            disk_before = audio_inventory()
             await client.send_silence(seconds=SILENT_WINDOW_S)
             await asyncio.sleep(0.5)
             client.assert_no_generation_since(silent_snapshot, label="silent window")
@@ -1391,11 +1536,32 @@ async def _run_scenario(*, cert_dir: Path, state: _FakeState) -> dict[str, Any]:
                 f"silent window triggered {state.llm_calls - llm_calls_before} LLM call(s)"
             )
             assert len(state.stepfun_texts) == stepfun_before, "silent window triggered TTS"
+            silent_asr_pcm_bytes = state.asr_pcm_bytes - asr_pcm_before
+            silent_disk_audio = _audio_written_since(disk_before, audio_inventory())
+            assert silent_asr_pcm_bytes == 0, (
+                f"silent window forwarded {silent_asr_pcm_bytes} bytes of PCM to fake ASR"
+            )
+            assert not silent_disk_audio, (
+                f"silent window wrote audio to disk: {silent_disk_audio}"
+            )
             results["silent_window"] = {
                 "seconds": SILENT_WINDOW_S,
                 "llm_calls": state.llm_calls - llm_calls_before,
                 "new_generations": len(client.generation_actions) - silent_snapshot[0],
+                "asr_pcm_bytes": silent_asr_pcm_bytes,
+                "disk_audio_bytes": sum(silent_disk_audio.values()),
+                "disk_audio_files": sorted(silent_disk_audio),
             }
+            print(
+                json.dumps(
+                    {
+                        "silent_window_asr_pcm_bytes": silent_asr_pcm_bytes,
+                        "silent_window_disk_audio_bytes": sum(silent_disk_audio.values()),
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
 
             # The e2e shortens MEDIA_OWNER_SILENCE_TIMEOUT_S; production keeps
             # the same variable at 180 s. With no speech the session must close
@@ -1426,7 +1592,7 @@ async def main() -> int:
     ssl_context = _server_ssl(files)
     state = _FakeState()
     FAKE_LOG.write_text("", encoding="utf-8")
-    control_runner, control_port = await _start_http(await _control_api_app(), None)
+    control_runner, control_port = await _start_http(await _control_api_app(state), None)
     llm_runner, llm_port = await _start_http(await _llm_app(state), None)
     asr_server, asr_port = await _start_ws(_asr_handler, state, ssl_context)
     stepfun_server, stepfun_port = await _start_ws(_stepfun_handler, state, ssl_context)
@@ -1455,11 +1621,23 @@ async def main() -> int:
         )
         _compose_up(compose_env, docker_env)
         _wait_port("127.0.0.1", AGENT_PORT, timeout=60)
-        results = await _run_scenario(cert_dir=cert_dir, state=state)
+        def audio_inventory() -> dict[str, list[int]]:
+            return _container_audio_inventory(docker_env, compose_env)
+
+        disk_before_run = audio_inventory()
+        results = await _run_scenario(
+            cert_dir=cert_dir,
+            state=state,
+            audio_inventory=audio_inventory,
+        )
+        disk_after_run = audio_inventory()
         logs = _compose_logs(docker_env)
         for line in logs.splitlines():
             if "ERROR" in line or "output_intent_not_selected" in line:
                 raise RuntimeError(f"E2E agent emitted an error line: {line}")
+        buffers_cleared = _assert_audio_buffers_cleared(logs)
+        disk_written = _audio_written_since(disk_before_run, disk_after_run)
+        assert not disk_written, f"e2e wrote audio to disk: {disk_written}"
         if any(CRISIS_TEXT in spoken for spoken in state.stepfun_texts):
             raise RuntimeError("crisis text reached the live StepFun engine")
         results["llm_calls"] = state.llm_calls
@@ -1467,6 +1645,18 @@ async def main() -> int:
         results["asr_connections"] = state.asr_connections
         results["asr_tasks"] = state.asr_tasks
         results["crisis_sha256"] = hashlib.sha256(_crisis_pcm()).hexdigest()
+        results["disk_audio_written_bytes"] = sum(disk_written.values())
+        results["audio_buffers_cleared"] = buffers_cleared
+        print(
+            json.dumps(
+                {
+                    "disk_audio_written_bytes": sum(disk_written.values()),
+                    "audio_buffers_cleared": buffers_cleared,
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
         print(json.dumps({"ok": True, **results}, ensure_ascii=False, indent=2))
         return 0
     except Exception:

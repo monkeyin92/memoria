@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import time
@@ -391,6 +392,29 @@ class MediaSessionConnectionMixin:
         self._finish_aigc_round(context, close_reason=context.standby_reason or "session_closed")
         await context.runtime.close()
         await context.provider.close(context.identity)
+        # Idle/terminal teardown completed: publish the ingress buffer facts
+        # without any audio content so the e2e (and an operator) can prove the
+        # listening-silence frames and all queued/denoised/TAP buffers are gone.
+        ingress = context.ingress
+        logger.info(
+            "media_audio_buffers_cleared %s",
+            json.dumps(
+                {
+                    "session_id": context.identity.session_id,
+                    "stream_epoch": context.stream_epoch,
+                    "queue_frames": ingress.queue.qsize(),
+                    "pcm_tap_open": ingress.pcm_tap is not None,
+                    "denoiser_frames": int(
+                        ingress.denoiser.get_stats().get("total_frames", 0)
+                    ),
+                    "silence_dropped_frames": ingress.listening_silence_dropped_frames,
+                    "silence_dropped_samples": ingress.listening_silence_dropped_samples,
+                    "overflow_dropped_frames": ingress.overflow_dropped_frames,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
         # The registry owns the transport session created by the bridge. Once
         # reconnect grace expires there is no replacement epoch left to claim
         # it, so remove it as well; otherwise stale identities accumulate in
