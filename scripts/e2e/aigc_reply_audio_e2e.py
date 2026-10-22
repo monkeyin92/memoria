@@ -507,7 +507,9 @@ class _DeviceClient:
     The firmware enters SPEAKING on the first playable frame of a generation
     and leaves it only through the protocol's authoritative terminal:
     ``generation.completed`` for the current fence (after its playback drains)
-    or ``generation.cancelled``. The final audio frame is never a turn end.
+    or ``generation.cancelled``. A completion ends playback even when the
+    generation carried no frames; only the ENDED receipt is frame-gated. The
+    final audio frame is never a turn end.
     """
 
     PLAYBACK_SPEED = 20.0
@@ -583,9 +585,7 @@ class _DeviceClient:
         if state == self.device_state and cause != "session_accepted":
             return
         self.device_state = state
-        self.device_states.append(
-            (time.monotonic(), state, turn_id, generation_id, cause)
-        )
+        self.device_states.append((time.monotonic(), state, turn_id, generation_id, cause))
         _fake_log(
             f"device_state state={state} turn={turn_id} generation={generation_id} cause={cause}"
         )
@@ -682,10 +682,10 @@ class _DeviceClient:
             return
         if (turn_id, generation) != (self.current_turn, self.current_generation):
             return
-        if not frames:
-            return
-        last = frames[-1]
-        await self._send_ended(last)
+        if frames:
+            await self._send_ended(frames[-1])
+        # generation.completed for the current fence ends playback even when
+        # the generation carried no frames; only the ENDED receipt needs audio.
         self._transition(
             int(media_pb2.CONVERSATION_STATE_LISTENING),
             turn_id,
@@ -700,8 +700,7 @@ class _DeviceClient:
                     identity=self.identity,
                     generation_id=int(frame.generation_id),
                     received_sequence=int(frame.sequence),
-                    rendered_sample_end=int(frame.source_start_sample)
-                    + int(frame.frame_samples),
+                    rendered_sample_end=int(frame.source_start_sample) + int(frame.frame_samples),
                     client_monotonic_ms=int(time.monotonic() * 1000),
                     approximate=False,
                     turn_id=int(frame.turn_id),
@@ -826,8 +825,12 @@ class _DeviceClient:
                 if stopped:
                     last_generation = max(turn.generation_frames)
                     closing = _frames_audio(turn.generation_frames[last_generation])
-                    if not closing.startswith(MARKER_PCM):
-                        # The stopped reply's closing cue has not arrived yet.
+                    # The stopped round is complete only once its successor
+                    # generation completed on the wire and played the closing cue.
+                    successor_completed = (
+                        self._terminals.get((turn_id, last_generation)) == "completed"
+                    )
+                    if not (successor_completed and closing.startswith(MARKER_PCM)):
                         await asyncio.sleep(0.02)
                         continue
                 return turn
@@ -941,8 +944,7 @@ def _assert_turn_audio(
         reply = _turn_reply_pcm(turn, stopped=True)
     else:
         assert len(generations) == 1, (
-            f"{label}: closing cue must ride the round's generation, "
-            f"got generations {generations}"
+            f"{label}: closing cue must ride the round's generation, got generations {generations}"
         )
         audio = _frames_audio(turn.generation_frames[generations[0]])
         assert audio.endswith(MARKER_PCM), f"{label}: closing cue missing after the reply"
