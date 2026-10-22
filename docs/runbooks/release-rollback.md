@@ -371,6 +371,8 @@ no control-api line with control_env_valid=PASS reached /var/log/memoria/control
 
 轮转把当前文件改名为 `.1` 时，门从快照偏移接着读 `.1`。再轮转一次进 `.2` 才会漏掉标记，重跑 `env` 即可。
 
+提供方冒烟（`env`、`finish` 的 readiness 刷新、`memoria-readiness-refresh.timer`）测的是 `TTS_PROVIDER` 与 `STEPFUN_TTS_ENABLED` 解析出来的**主用**语音引擎，`tts_factory._active_provider` 是那条解析的唯一出处。StepFun 主用时豆包降为备份：它失败只打一行 `Doubao backup probe: DEGRADED …`，冒烟照常 PASS，PASS 行写 `StepFun`。2026-10-22 之前这里硬编码测豆包，10-21 21:49 火山把这个 app 的 seedtts 授权收回后，冒烟每 12 小时失败一次，readiness 从 10-22 起一直是 `not_ready` / `smokes=expired`，`env` 也被挡住。豆包恢复授权后备份探针自动回到 `ok`，不需要改配置。
+
 ### 读日志
 
 ~~~bash
