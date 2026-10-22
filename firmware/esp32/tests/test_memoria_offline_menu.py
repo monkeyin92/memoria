@@ -752,6 +752,48 @@ def test_device_ogg_aigc_check_rejects_wrong_service_provider(
     assert "got 'Memoria'" in completed.stderr
 
 
+def test_device_ogg_aigc_check_rejects_stepfun_on_a_doubao_voice(
+    tmp_path: pathlib.Path,
+) -> None:
+    root = tmp_path / "assets"
+    shutil.copytree(BOARD_ASSETS, root)
+    _retag_board_ogg(
+        root,
+        "offline_lines/llm_thinking.ogg",
+        service_provider="StepFun",
+        artist="zh_female_tianmeitaozi_uranus_bigtts",
+        voice_id="zh_female_tianmeitaozi_uranus_bigtts",
+    )
+    completed = _run_device_ogg_aigc_check(root)
+    assert completed.returncode == 1
+    assert completed.stderr.count("error:") == 1
+    assert "offline_lines/llm_thinking.ogg" in completed.stderr
+    assert "SERVICE_PROVIDER must be 'Volcengine Doubao'" in completed.stderr
+    assert "VOICE_ID 'zh_female_tianmeitaozi_uranus_bigtts'" in completed.stderr
+    assert "got 'StepFun'" in completed.stderr
+
+
+def test_device_ogg_aigc_check_rejects_doubao_on_wenrounansheng(
+    tmp_path: pathlib.Path,
+) -> None:
+    root = tmp_path / "assets"
+    shutil.copytree(BOARD_ASSETS, root)
+    _retag_board_ogg(
+        root,
+        "offline_lines/llm_thinking.ogg",
+        service_provider="Volcengine Doubao",
+        artist="wenrounansheng",
+        voice_id="wenrounansheng",
+    )
+    completed = _run_device_ogg_aigc_check(root)
+    assert completed.returncode == 1
+    assert completed.stderr.count("error:") == 1
+    assert "offline_lines/llm_thinking.ogg" in completed.stderr
+    assert "SERVICE_PROVIDER must be 'StepFun'" in completed.stderr
+    assert "VOICE_ID 'wenrounansheng'" in completed.stderr
+    assert "got 'Volcengine Doubao'" in completed.stderr
+
+
 def test_device_ogg_aigc_check_rejects_artist_ne_voice_id(tmp_path: pathlib.Path) -> None:
     root = tmp_path / "assets"
     shutil.copytree(BOARD_ASSETS, root)

@@ -169,6 +169,66 @@ def test_implicit_label_writes_propagator_and_label_for_new_clips() -> None:
     assert raw[LABEL_KEY] == LABEL_EXPLICIT
 
 
+def _implicit_head(*, service_provider: str, voice_id: str) -> bytes:
+    return _ogg_with_comments(
+        [
+            "CONTENT_ID=demo",
+            f"SERVICE_PROVIDER={service_provider}",
+            "AI_GENERATED=true",
+            f"ARTIST={voice_id}",
+            f"VOICE_ID={voice_id}",
+            "DATE=2026-10-22",
+            "CONTENT_PRODUCER=Memoria",
+        ]
+    )
+
+
+def test_implicit_tags_accept_stepfun_wenrounansheng() -> None:
+    tags = require_aigc_tags(
+        _implicit_head(service_provider="StepFun", voice_id="wenrounansheng"),
+        content_id="demo",
+        implicit=True,
+    )
+    assert tags["service_provider"] == "StepFun"
+    assert tags["voice_id"] == "wenrounansheng"
+
+
+def test_implicit_tags_reject_stepfun_on_a_doubao_voice() -> None:
+    with pytest.raises(ValueError, match="SERVICE_PROVIDER must be 'Volcengine Doubao'"):
+        require_aigc_tags(
+            _implicit_head(
+                service_provider="StepFun",
+                voice_id="zh_female_tianmeitaozi_uranus_bigtts",
+            ),
+            content_id="demo",
+            implicit=True,
+        )
+
+
+def test_implicit_tags_reject_doubao_on_wenrounansheng() -> None:
+    with pytest.raises(ValueError, match="SERVICE_PROVIDER must be 'StepFun'"):
+        require_aigc_tags(
+            _implicit_head(service_provider="Volcengine Doubao", voice_id="wenrounansheng"),
+            content_id="demo",
+            implicit=True,
+        )
+
+
+def test_implicit_tags_reject_an_unknown_provider_and_an_unknown_voice() -> None:
+    with pytest.raises(ValueError, match="SERVICE_PROVIDER must be 'Volcengine Doubao'"):
+        require_aigc_tags(
+            _implicit_head(service_provider="Memoria", voice_id="zh_female_tianmeitaozi_uranus_bigtts"),
+            content_id="demo",
+            implicit=True,
+        )
+    with pytest.raises(ValueError, match="has no service provider"):
+        require_aigc_tags(
+            _implicit_head(service_provider="StepFun", voice_id="not-a-voice"),
+            content_id="demo",
+            implicit=True,
+        )
+
+
 def test_identity_defaults_to_the_producer_and_accepts_configuration() -> None:
     from services.common.aigc_opus import aigc_identity_from_env
 
