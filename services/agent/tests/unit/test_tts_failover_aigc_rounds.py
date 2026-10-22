@@ -318,16 +318,38 @@ async def _wait_for_reply_frames(
     )
 
 
+def _frame_aligned_tone(notice: AigcNoticeConfig) -> bytes:
+    tone = notice.tone_pcm()
+    return tone + b"\x00" * (-len(tone) % (_FRAME * 2))
+
+
 def _assert_reply_round_audio(
-    bridge: _RoundBridge, fence: GenerationFence, notice: AigcNoticeConfig
+    bridge: _RoundBridge,
+    fence: GenerationFence,
+    notice: AigcNoticeConfig,
+    *,
+    closing_on_own_fence: bool = True,
 ) -> None:
-    """Every round: cue first, then the reply's own frames, then the END cue."""
+    """Every round: cue first, the reply's own frames, then the END cue.
+
+    The END cue rides the reply's generation whenever that generation is still
+    open. A stopped round cancelled it, so its cue is admitted separately.
+    """
 
     frames = _reply_fence_frames(bridge, fence)
     assert frames, "the reply fence emitted no frames"
     audio = b"".join(bytes(frame.pcm_s16le) for frame in frames)
     assert audio.startswith(notice.tone_pcm()), "opening cue must lead the reply audio"
-    reply = b"".join(bytes(frame.pcm_s16le) for frame in frames[_marker_frame_count(notice) :])
+    if closing_on_own_fence:
+        tone = _frame_aligned_tone(notice)
+        assert audio.endswith(tone), "closing cue must follow the reply on its own fence"
+        reply = b"".join(
+            bytes(frame.pcm_s16le) for frame in frames[_marker_frame_count(notice) :]
+        )[:-len(tone)]
+    else:
+        reply = b"".join(
+            bytes(frame.pcm_s16le) for frame in frames[_marker_frame_count(notice) :]
+        )
     assert reply, "the reply itself emitted no audio frames"
 
 
@@ -381,13 +403,12 @@ async def test_three_rounds_play_start_and_end_markers_after_normal_stop_and_fal
         await _ack_marker(registry, identity, session, markers[1][0])
         markers.clear()
 
-        # Round 1: ordinary StepFun reply. Its opening cue rides the reply
-        # work, so only the closing cue is admitted as a marker.
+        # Round 1: ordinary StepFun reply. Both cues ride the reply's own
+        # generation, so no marker is admitted as a separate output.
         fence, reply_task = await _round_audio(registry, identity, context)
         await _playback(registry, identity, session, fence)
-        await _wait_until(lambda: len(markers) == 1)
-        await _ack_marker(registry, identity, session, markers[0][0])
-        assert [pcm for _fence, pcm in markers] == [notice.tone_pcm()]
+        await _wait_until(lambda: context.aigc_closing_marker_state == "done")
+        assert markers == []
         _assert_reply_round_audio(bridge, fence, notice)
         assert primary.received.count(_NORMAL_REPLY) >= 1
         assert backup.received == []
@@ -409,10 +430,17 @@ async def test_three_rounds_play_start_and_end_markers_after_normal_stop_and_fal
         registry._schedule_aigc_round_closing(context, close_reason="voice_stop_command")
         primary.release.set()
         await asyncio.gather(reply_task, return_exceptions=True)
-        await _wait_until(lambda: len(markers) == 2)
-        await _ack_marker(registry, identity, session, markers[1][0])
-        assert [pcm for _fence, pcm in markers[1:]] == [notice.tone_pcm()]
-        _assert_reply_round_audio(bridge, fence, notice)
+        # The cancelled generation cannot carry the cue, so it is admitted on
+        # its own successor fence and must end that fence explicitly.
+        await _wait_until(lambda: len(markers) == 1)
+        await _ack_marker(registry, identity, session, markers[0][0])
+        assert [pcm for _fence, pcm in markers] == [notice.tone_pcm()]
+        _assert_reply_round_audio(bridge, fence, notice, closing_on_own_fence=False)
+        await _wait_until(
+            lambda: markers[0][0].generation_id
+            in {complete.generation_id for complete in bridge.generation_completes},
+            timeout=3.0,
+        )
         assert primary.received.count(_NORMAL_REPLY) >= 2
         assert backup.received == []
 
@@ -420,13 +448,11 @@ async def test_three_rounds_play_start_and_end_markers_after_normal_stop_and_fal
         primary.behavior = "connection"
         fence, reply_task = await _round_audio(registry, identity, context)
         await _playback(registry, identity, session, fence)
-        await _wait_until(lambda: len(markers) == 3)
-        await _ack_marker(registry, identity, session, markers[2][0])
-        assert [pcm for _fence, pcm in markers[2:]] == [notice.tone_pcm()]
+        await _wait_until(lambda: context.aigc_closing_marker_state == "done")
+        assert len(markers) == 1
         _assert_reply_round_audio(bridge, fence, notice)
         assert _NORMAL_REPLY in primary.received
         assert _NORMAL_REPLY in backup.received
-        assert len(markers) == 3
         await asyncio.gather(reply_task, return_exceptions=True)
     finally:
         await registry.finalize_session(identity.session_id)
@@ -563,11 +589,9 @@ async def test_one_round_still_plays_each_marker_once(
 
         fence, reply_task = await _round_audio(registry, identity, context)
         await _playback(registry, identity, session, fence)
-        await _wait_until(lambda: len(markers) == 1)
-        await _ack_marker(registry, identity, session, markers[0][0])
+        await _wait_until(lambda: context.aigc_closing_marker_state == "done")
 
-        assert len(markers) == 1
-        assert [pcm for _fence, pcm in markers] == [notice.tone_pcm()]
+        assert markers == []
         _assert_reply_round_audio(bridge, fence, notice)
         expected = reply.spoken if reply is _CRISIS_REPLY else _NORMAL_REPLY
         assert primary.received == [expected]

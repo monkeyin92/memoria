@@ -316,6 +316,7 @@ class _CapturingGenerationBridge(MediaBridgeGrpcServer):
         super().__init__()
         self.frames: list[object] = []
         self.generation_starts: list[GenerationFence] = []
+        self.generation_completes: list[GenerationFence] = []
 
     async def emit_pcm(self, _session_id: str, _frame: object) -> bool:
         self.frames.append(_frame)
@@ -326,6 +327,11 @@ class _CapturingGenerationBridge(MediaBridgeGrpcServer):
         fence = _args[1] if len(_args) > 1 else _kwargs.get("fence")
         if action == media_pb2.GENERATION_ACTION_START and isinstance(fence, GenerationFence):
             self.generation_starts.append(fence)
+        if (
+            action == media_pb2.GENERATION_ACTION_COMPLETE
+            and isinstance(fence, GenerationFence)
+        ):
+            self.generation_completes.append(fence)
         return True
 
 

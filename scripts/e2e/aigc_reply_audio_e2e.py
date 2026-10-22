@@ -4,10 +4,13 @@ The agent runs from ``infra/Dockerfile.agent`` under the production compose
 shape with mTLS and the shipped fixed-safety catalog. Only the network edges
 are fake: StepFun TTS, the OpenAI-compatible LLM, FunASR and the Control API.
 
-The simulated device drives the public media-v1 gRPC stream and asserts, per
-turn, that the opening cue leads reply audio, the reply itself emitted frames,
-the closing cue followed, and the crisis turn played the approved catalog. The
-last round sends 停 mid-crisis-script and requires the full approved clip.
+The simulated device drives the public media-v1 gRPC stream with the ESP32
+media-v2 state machine: the first playable frame opens SPEAKING and only the
+current fence's ``generation.completed`` or ``generation.cancelled`` returns it
+to LISTENING. Per turn it asserts that the opening cue leads reply audio, the
+reply emitted frames, the closing cue followed on the round's own generation,
+and the crisis turn played the approved catalog. The last round sends 停
+mid-crisis-script and requires the full approved clip.
 """
 
 from __future__ import annotations
@@ -499,26 +502,39 @@ async def _start_ws(
 
 
 class _DeviceClient:
+    """Simulated device that follows the ESP32 media-v2 state machine.
+
+    The firmware enters SPEAKING on the first playable frame of a generation
+    and leaves it only through the protocol's authoritative terminal:
+    ``generation.completed`` for the current fence (after its playback drains)
+    or ``generation.cancelled``. The final audio frame is never a turn end.
+    """
+
+    PLAYBACK_SPEED = 20.0
+    STALL_TIMEOUT_S = 3.0
+
     def __init__(self, channel: grpc.aio.Channel, identity: media_pb2.SessionIdentity) -> None:
         self.channel = channel
         self.identity = identity
         self.requests: asyncio.Queue[media_pb2.MediaToCore | None] = asyncio.Queue()
         self.turns: dict[int, _TurnAudio] = defaultdict(lambda: _TurnAudio(0))
         self.runtime_states: list[tuple[int, int]] = []
+        self.device_states: list[tuple[float, int, int, int, str]] = []
+        self.generation_actions: list[tuple[int, int, int]] = []
         self.errors: list[str] = []
         self._sample = 0
         self._audio_sequence = 0
         self._last_frame_at = 0.0
         self._task: asyncio.Task[Any] | None = None
-        # Turn ids are deterministic from the scenario; remembering the VAD end
-        # per turn keeps the latency clock on the device's speech edge.
         self._pending_vad_end: dict[int, float] = {}
-        # Loop-clock moment each 停 was queued, and the number of the turn's
-        # first-generation frames received by then. The final count is read
-        # later, so a larger total proves the downlink kept streaming after the
-        # stop.
         self.stop_sent_at: dict[int, float] = {}
         self.frames_at_stop: dict[int, int] = {}
+        self.current_turn = 0
+        self.current_generation = 0
+        self.device_state = int(media_pb2.CONVERSATION_STATE_CONNECTING)
+        self._terminals: dict[tuple[int, int], str] = {}
+        self._drain_tasks: dict[tuple[int, int], asyncio.Task[Any]] = {}
+        self.stalled: list[str] = []
 
     async def __aenter__(self) -> _DeviceClient:
         rpc = self.channel.stream_stream(
@@ -538,10 +554,15 @@ class _DeviceClient:
         self.runtime_states.append(
             (int(accepted.accepted.state), int(accepted.accepted.current_turn_id))
         )
+        self._transition(int(accepted.accepted.state), 0, 0, "session_accepted")
         self._task = asyncio.create_task(self._read())
         return self
 
     async def __aexit__(self, *_args: object) -> None:
+        for task in self._drain_tasks.values():
+            task.cancel()
+        if self._drain_tasks:
+            await asyncio.gather(*self._drain_tasks.values(), return_exceptions=True)
         await self.requests.put(None)
         if self._task is not None:
             self._task.cancel()
@@ -558,6 +579,17 @@ class _DeviceClient:
     async def send(self, message: media_pb2.MediaToCore) -> None:
         await self.requests.put(message)
 
+    def _transition(self, state: int, turn_id: int, generation_id: int, cause: str) -> None:
+        if state == self.device_state and cause != "session_accepted":
+            return
+        self.device_state = state
+        self.device_states.append(
+            (time.monotonic(), state, turn_id, generation_id, cause)
+        )
+        _fake_log(
+            f"device_state state={state} turn={turn_id} generation={generation_id} cause={cause}"
+        )
+
     async def _read(self) -> None:
         while True:
             try:
@@ -566,16 +598,9 @@ class _DeviceClient:
                 return
             event = message.WhichOneof("event")
             if event == "audio":
-                frame = message.audio
-                turn_id = int(frame.turn_id)
-                turn = self.turns.setdefault(turn_id, _TurnAudio(turn_id))
-                arrived_at = asyncio.get_running_loop().time()
-                if turn.vad_end_at is None:
-                    turn.vad_end_at = self._pending_vad_end.pop(turn_id, None)
-                turn.add(frame, arrived_at=arrived_at)
-                self._last_frame_at = arrived_at
-                if frame.final_frame:
-                    await self._ack(frame)
+                await self._on_audio(message.audio)
+            elif event == "generation":
+                await self._on_generation(message.generation)
             elif event == "state":
                 self.runtime_states.append((int(message.state.state), int(message.state.turn_id)))
             elif event == "error":
@@ -583,19 +608,100 @@ class _DeviceClient:
             elif event == "accepted":
                 continue
 
-    async def _ack(self, frame: Any) -> None:
-        turn = self.turns[int(frame.turn_id)]
+    async def _on_audio(self, frame: Any) -> None:
+        turn_id = int(frame.turn_id)
         generation = int(frame.generation_id)
-        if generation in turn.acked:
+        turn = self.turns.setdefault(turn_id, _TurnAudio(turn_id))
+        arrived_at = asyncio.get_running_loop().time()
+        if turn.vad_end_at is None:
+            turn.vad_end_at = self._pending_vad_end.pop(turn_id, None)
+        turn.add(frame, arrived_at=arrived_at)
+        self._last_frame_at = arrived_at
+        if self.device_state != int(media_pb2.CONVERSATION_STATE_ASSISTANT_SPEAKING):
+            # First playable downlink frame: the firmware opens the speaker.
+            self._transition(
+                int(media_pb2.CONVERSATION_STATE_ASSISTANT_SPEAKING),
+                turn_id,
+                generation,
+                "first_playable_frame",
+            )
+
+    async def _on_generation(self, control: Any) -> None:
+        turn_id = int(control.turn_id)
+        generation = int(control.generation_id)
+        action = int(control.action)
+        self.generation_actions.append((turn_id, generation, action))
+        key = (turn_id, generation)
+        if action == media_pb2.GENERATION_ACTION_START:
+            # A successor fence supersedes the previous generation's drain; the
+            # speaker stays open across the switch, exactly like the firmware.
+            for old_key, task in list(self._drain_tasks.items()):
+                if old_key != key and not task.done():
+                    task.cancel()
+            self.current_turn = turn_id
+            self.current_generation = generation
             return
-        turn.acked.add(generation)
+        if action == media_pb2.GENERATION_ACTION_CANCEL:
+            self._terminals[key] = "cancelled"
+            task = self._drain_tasks.pop(key, None)
+            if task is not None and not task.done():
+                task.cancel()
+            if (turn_id, generation) == (self.current_turn, self.current_generation):
+                # The firmware flushes and reports the legacy tts stop here.
+                self._transition(
+                    int(media_pb2.CONVERSATION_STATE_LISTENING),
+                    turn_id,
+                    generation,
+                    "generation_cancelled",
+                )
+            return
+        if action == media_pb2.GENERATION_ACTION_COMPLETE:
+            self._terminals[key] = "completed"
+            self._schedule_drain(turn_id, generation)
+            return
+
+    def _schedule_drain(self, turn_id: int, generation: int) -> None:
+        key = (turn_id, generation)
+        if key in self._drain_tasks:
+            return
+        self._drain_tasks[key] = asyncio.create_task(
+            self._drain_playback(turn_id, generation),
+            name=f"device-drain-{turn_id}-{generation}",
+        )
+
+    async def _drain_playback(self, turn_id: int, generation: int) -> None:
+        """Play the buffered generation, then honour its authoritative terminal."""
+
+        key = (turn_id, generation)
+        turn = self.turns.get(turn_id)
+        frames = turn.generation_frames.get(generation, []) if turn is not None else []
+        audio_samples = sum(int(frame.frame_samples) for frame in frames)
+        delay = audio_samples / 24_000 / self.PLAYBACK_SPEED + 0.02
+        await asyncio.sleep(delay)
+        if self._terminals.get(key) != "completed":
+            return
+        if (turn_id, generation) != (self.current_turn, self.current_generation):
+            return
+        if not frames:
+            return
+        last = frames[-1]
+        await self._send_ended(last)
+        self._transition(
+            int(media_pb2.CONVERSATION_STATE_LISTENING),
+            turn_id,
+            generation,
+            "generation_completed",
+        )
+
+    async def _send_ended(self, frame: Any) -> None:
         await self.send(
             media_pb2.MediaToCore(
                 playback=media_pb2.PlaybackProgress(
                     identity=self.identity,
-                    generation_id=generation,
+                    generation_id=int(frame.generation_id),
                     received_sequence=int(frame.sequence),
-                    rendered_sample_end=int(frame.source_start_sample) + int(frame.frame_samples),
+                    rendered_sample_end=int(frame.source_start_sample)
+                    + int(frame.frame_samples),
                     client_monotonic_ms=int(time.monotonic() * 1000),
                     approximate=False,
                     turn_id=int(frame.turn_id),
@@ -605,6 +711,27 @@ class _DeviceClient:
                 )
             )
         )
+
+    def _stuck_reason(self) -> str | None:
+        if self.device_state != int(media_pb2.CONVERSATION_STATE_ASSISTANT_SPEAKING):
+            return None
+        if self._last_frame_at <= 0:
+            return None
+        idle = asyncio.get_running_loop().time() - self._last_frame_at
+        if idle < self.STALL_TIMEOUT_S:
+            return None
+        key = (self.current_turn, self.current_generation)
+        terminal = self._terminals.get(key)
+        reason = (
+            f"device stuck in speaking: turn={key[0]} generation={key[1]} "
+            f"terminal={terminal or 'missing'} idle={idle:.2f}s"
+        )
+        if terminal != "completed":
+            reason += " (no generation.completed for the current fence)"
+        if reason not in self.stalled:
+            self.stalled.append(reason)
+            _fake_log(reason)
+        return reason
 
     async def begin_utterance(self) -> None:
         start = self._sample
@@ -666,8 +793,6 @@ class _DeviceClient:
             turn = self.turns.get(turn_id)
             if turn is not None and turn.generation_frames:
                 first = min(turn.generation_frames)
-                # A snapshot of what the device has received. Frames arriving
-                # after this line still append to the same generation.
                 self.frames_at_stop[turn_id] = len(turn.generation_frames[first])
         await self.send(
             media_pb2.MediaToCore(
@@ -682,19 +807,41 @@ class _DeviceClient:
             )
         )
 
-    async def wait_turn_complete(self, turn_id: int, *, timeout: float = 40.0) -> _TurnAudio:
+    async def wait_turn_complete(
+        self,
+        turn_id: int,
+        *,
+        stopped: bool = False,
+        timeout: float = 60.0,
+    ) -> _TurnAudio:
         deadline = asyncio.get_running_loop().time() + timeout
         while asyncio.get_running_loop().time() < deadline:
             turn = self.turns.get(turn_id)
-            if turn is not None and len(turn.generation_frames) >= 2:
-                closing = max(turn.generation_frames)
-                if any(int(frame.final_frame) for frame in turn.generation_frames[closing]):
-                    await self.wait_quiet(quiet_s=0.5, timeout=10)
-                    return turn
+            listening = self.device_state == int(media_pb2.CONVERSATION_STATE_LISTENING)
+            quiet = (
+                self._last_frame_at > 0
+                and asyncio.get_running_loop().time() - self._last_frame_at >= 0.4
+            )
+            if turn is not None and listening and quiet:
+                if stopped:
+                    last_generation = max(turn.generation_frames)
+                    closing = _frames_audio(turn.generation_frames[last_generation])
+                    if not closing.startswith(MARKER_PCM):
+                        # The stopped reply's closing cue has not arrived yet.
+                        await asyncio.sleep(0.02)
+                        continue
+                return turn
+            stuck = self._stuck_reason()
+            if stuck is not None:
+                raise RuntimeError(stuck)
             if self.errors:
                 raise RuntimeError(f"media bridge error: {self.errors}")
-            await asyncio.sleep(0.05)
-        raise RuntimeError(f"turn {turn_id} did not complete AIGC reply audio")
+            await asyncio.sleep(0.02)
+        raise RuntimeError(
+            f"turn {turn_id} did not return to listening "
+            f"(state={self.device_state} turn={self.current_turn} "
+            f"generation={self.current_generation})"
+        )
 
     async def wait_for_reply_audio(self, turn_id: int, *, timeout: float = 30.0) -> None:
         deadline = asyncio.get_running_loop().time() + timeout
@@ -710,34 +857,17 @@ class _DeviceClient:
             await asyncio.sleep(0.02)
         raise RuntimeError(f"turn {turn_id} produced no reply audio")
 
-    async def wait_quiet(self, *, quiet_s: float = 1.0, timeout: float = 40.0) -> None:
-        """Wait until the downlink stopped carrying assistant audio."""
-
-        deadline = asyncio.get_running_loop().time() + timeout
-        while asyncio.get_running_loop().time() < deadline:
-            idle_for = asyncio.get_running_loop().time() - self._last_frame_at
-            listening = (
-                bool(self.runtime_states)
-                and self.runtime_states[-1][0] == media_pb2.CONVERSATION_STATE_LISTENING
-            )
-            if listening and idle_for >= quiet_s:
-                return
-            await asyncio.sleep(0.02)
-        raise RuntimeError("assistant audio did not settle")
-
     async def wait_listening(self, *, timeout: float = 15.0) -> None:
         deadline = asyncio.get_running_loop().time() + timeout
         while asyncio.get_running_loop().time() < deadline:
-            if (
-                self.runtime_states
-                and self.runtime_states[-1][0] == media_pb2.CONVERSATION_STATE_LISTENING
-            ):
+            if self.device_state == int(media_pb2.CONVERSATION_STATE_LISTENING):
                 return
             await asyncio.sleep(0.02)
         raise RuntimeError("media session did not return to listening")
 
 
 MARKER_PCM = AigcNoticeConfig().tone_pcm()
+MARKER_PCM_LEN = len(MARKER_PCM)
 MARKER_MIN_FRAMES = (len(MARKER_PCM) + MARKER_FRAME_SAMPLES * 2 - 1) // (MARKER_FRAME_SAMPLES * 2)
 MARKER_DURATION_S = len(MARKER_PCM) / 2 / MARKER_SAMPLE_RATE
 CRISIS_ROUNDS = 5
@@ -764,33 +894,60 @@ def _assert_approved_files_original() -> None:
         )
 
 
-def _turn_reply_pcm(turn: _TurnAudio) -> bytes:
-    """The reply's own audio: after the opening marker, before the closing one."""
+def _turn_reply_pcm(turn: _TurnAudio, *, stopped: bool = False, wake: bool = False) -> bytes:
+    """The reply's own audio, with both AIGC cues stripped.
+
+    A normal round keeps opening, reply and closing on one fence. The wake
+    greeting plays its opening cue in its own preceding generation. A stopped
+    round keeps opening and reply on the first fence and plays the closing cue
+    in a successor generation.
+    """
 
     generations = sorted(turn.generation_frames)
-    reply = _frames_audio(turn.generation_frames[generations[0]][MARKER_MIN_FRAMES:])
-    for later in generations[1:-1]:
-        reply += _frames_audio(turn.generation_frames[later])
-    return reply
+    if stopped:
+        first = _frames_audio(turn.generation_frames[generations[0]])
+        return first[MARKER_PCM_LEN:]
+    if wake:
+        last = _frames_audio(turn.generation_frames[generations[-1]])
+        return last[:-MARKER_PCM_LEN]
+    audio = _frames_audio(turn.generation_frames[generations[0]])
+    return audio[MARKER_PCM_LEN:-MARKER_PCM_LEN]
 
 
-def _assert_turn_audio(turn: _TurnAudio, *, crisis: bool, label: str) -> None:
+def _assert_turn_audio(
+    turn: _TurnAudio,
+    *,
+    crisis: bool,
+    label: str,
+    stopped: bool = False,
+    wake: bool = False,
+) -> None:
     """Every round: opening cue, the reply's own frames, then the closing cue."""
 
     generations = sorted(turn.generation_frames)
-    assert len(generations) >= 2, f"{label}: reply and closing cue are separate generations"
-    opening_frames = turn.generation_frames[generations[0]]
-    opening = _frames_audio(opening_frames)
+    assert generations, f"{label}: no audio generation"
+    opening = _frames_audio(turn.generation_frames[generations[0]])
     assert opening.startswith(MARKER_PCM), f"{label}: opening cue must lead the reply"
-    assert len(opening_frames) > MARKER_MIN_FRAMES, (
-        f"{label}: the reply emitted no audio frames of its own"
-    )
-    reply = _turn_reply_pcm(turn)
+    if wake:
+        assert len(generations) >= 2, f"{label}: wake greeting follows its opening cue"
+        assert _frames_audio(turn.generation_frames[generations[-1]]).endswith(MARKER_PCM), (
+            f"{label}: closing cue must ride the wake greeting's generation"
+        )
+        reply = _turn_reply_pcm(turn, wake=True)
+    elif stopped:
+        assert len(generations) >= 2, f"{label}: stopped round needs a closing generation"
+        closing = _frames_audio(turn.generation_frames[generations[-1]])
+        assert closing.startswith(MARKER_PCM), f"{label}: closing cue missing after the stop"
+        reply = _turn_reply_pcm(turn, stopped=True)
+    else:
+        assert len(generations) == 1, (
+            f"{label}: closing cue must ride the round's generation, "
+            f"got generations {generations}"
+        )
+        audio = _frames_audio(turn.generation_frames[generations[0]])
+        assert audio.endswith(MARKER_PCM), f"{label}: closing cue missing after the reply"
+        reply = _turn_reply_pcm(turn)
     assert reply, f"{label}: the reply emitted no audio frames of its own"
-    closing_frames = turn.generation_frames[generations[-1]]
-    closing = _frames_audio(closing_frames)
-    assert closing.startswith(MARKER_PCM), f"{label}: closing cue missing after the reply"
-    assert closing[: len(MARKER_PCM)] == MARKER_PCM
     if crisis:
         catalog_pcm = _crisis_pcm()
         assert catalog_pcm in reply, f"{label}: approved crisis clip missing"
@@ -987,13 +1144,16 @@ async def _run_scenario(*, cert_dir: Path) -> dict[str, Any]:
         if stop:
             await client.wait_for_reply_audio(turn_id)
             await client.stop(turn_id=turn_id)
-        turn = await client.wait_turn_complete(turn_id, timeout=timeout)
-        _assert_turn_audio(turn, crisis=crisis, label=label)
+        # A crisis stop is not interruptible: the approved clip keeps playing
+        # and its closing cue still rides the reply's own generation.
+        stopped = stop and not crisis
+        turn = await client.wait_turn_complete(turn_id, stopped=stopped, timeout=timeout)
+        _assert_turn_audio(turn, crisis=crisis, label=label, stopped=stopped)
         results[label] = {
             "turn_id": turn_id,
             "generations": sorted(turn.generation_frames),
             "audio_bytes": len(turn.audio()),
-            "reply_bytes": len(turn.audio()) - len(MARKER_PCM) * 2,
+            "reply_bytes": len(_turn_reply_pcm(turn, stopped=stopped)),
         }
         return turn
 
@@ -1003,18 +1163,22 @@ async def _run_scenario(*, cert_dir: Path) -> dict[str, Any]:
             # acknowledgement as turn 1. Its audio must finish before the first
             # real utterance or the VAD edge is dropped as echo.
             await client.open_session()
-            await client.wait_turn_complete(1, timeout=40)
-            await client.wait_quiet(quiet_s=1.2, timeout=40)
+            wake = await client.wait_turn_complete(1, timeout=40)
+            _assert_turn_audio(wake, crisis=False, label="wake", wake=True)
+            results["wake"] = {
+                "turn_id": 1,
+                "generations": sorted(wake.generation_frames),
+                "audio_bytes": len(wake.audio()),
+                "reply_bytes": len(_turn_reply_pcm(wake, wake=True)),
+            }
 
-            # Round 1: an ordinary reply still carries the opening cue as the
-            # head of its own audio, then the closing cue on a new generation.
+            # Round 1: an ordinary reply carries opening cue, reply audio and
+            # closing cue on its own generation.
             await run_round(client, turn_id=2, label="normal", stop=False, crisis=False, timeout=45)
-            await client.wait_quiet(quiet_s=0.8, timeout=30)
 
             # Round 2: the child says 停 mid-reply. The interrupted turn must
             # still show opening, its own reply frames, and the closing cue.
             await run_round(client, turn_id=3, label="stop", stop=True, crisis=False, timeout=45)
-            await client.wait_quiet(quiet_s=0.8, timeout=30)
 
             # Rounds 3-7: the crisis turn, five times, each timed from the
             # device's VAD end through the opening cue to the reply playback.
@@ -1038,7 +1202,6 @@ async def _run_scenario(*, cert_dir: Path) -> dict[str, Any]:
                     f"{CRISIS_LATENCY_BUDGET_S:.1f}s including the opening cue"
                 )
                 latencies.append(record)
-                await client.wait_quiet(quiet_s=0.8, timeout=30)
             results["crisis_latencies_s"] = latencies
             results["crisis_latency_budget_s"] = CRISIS_LATENCY_BUDGET_S
             results["crisis_latency_pass"] = f"{len(latencies)}/{CRISIS_ROUNDS}"

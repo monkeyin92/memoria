@@ -311,16 +311,31 @@ async def test_four_consecutive_rounds_keep_reply_audio_on_its_own_plan(
             for frame in frames
             if frame.generation_id != fence.generation_id or frame.turn_id != fence.turn_id
         ]
+        frame_bytes = int(getattr(context.provider, "output_frame_samples", 480)) * 2
+        marker_audio = notice.tone_pcm()
+        # The cue is padded to a whole provider frame, as every PCM frame is.
+        marker_audio += b"\x00" * (-len(marker_audio) % frame_bytes)
         turn_audio = _audio_bytes(turn_frames)
         assert turn_audio.startswith(notice.tone_pcm()), "opening cue must lead the reply"
-        assert closing_frames, "closing cue must own a new generation after the reply"
-        assert _audio_bytes(closing_frames).startswith(notice.tone_pcm())
-        first_turn = frames.index(turn_frames[0])
-        first_closing = frames.index(closing_frames[0])
-        assert first_turn < first_closing, "order must be reply (opening head) then closing"
-        # The reply itself is the audio after the opening cue, never a marker
-        # that skipped the reply work.
-        reply_audio = turn_audio[len(notice.tone_pcm()) :]
+        if stop:
+            # A stopped round cannot append to the cancelled generation, so the
+            # cue owns a successor generation and must end it explicitly for
+            # the firmware to leave SPEAKING.
+            assert closing_frames, "stopped round must still play its closing cue"
+            assert _audio_bytes(closing_frames).startswith(notice.tone_pcm())
+            first_turn = frames.index(turn_frames[0])
+            first_closing = frames.index(closing_frames[0])
+            assert first_turn < first_closing, "order must be reply (opening head) then closing"
+            assert closing_frames[0].generation_id in {
+                complete.generation_id for complete in registry.bridge.generation_completes
+            }, "standalone closing generation must send generation.completed"
+            reply_audio = turn_audio[len(notice.tone_pcm()) :]
+        else:
+            # The closing cue rides the round's own generation, so the reply
+            # and the cue share one fence and no successor is left open.
+            assert not closing_frames, "closing cue must ride the reply's generation"
+            assert turn_audio.endswith(marker_audio), "closing cue must follow the reply"
+            reply_audio = turn_audio[len(marker_audio) : -len(marker_audio)]
         assert reply_audio
         return fence, frames, reply_audio
 
@@ -406,6 +421,7 @@ def test_rebinding_reply_work_moves_its_response_plan_to_the_new_fence() -> None
         old,
         conversation_text="回答",
         lead_pcm_s16le=b"\x00\x00" * 4,
+        tail_pcm_s16le=b"\x04\x00" * 4,
     )
 
     rebound = MediaOutputOwnerMixin._rebind_output_work(
@@ -419,6 +435,7 @@ def test_rebinding_reply_work_moves_its_response_plan_to_the_new_fence() -> None
     assert calls == [(old, new)]
     assert rebound.fence == new
     assert rebound.lead_pcm_s16le == work.lead_pcm_s16le
+    assert rebound.tail_pcm_s16le == work.tail_pcm_s16le
     assert rebound.conversation_text == work.conversation_text
 
 

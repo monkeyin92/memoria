@@ -326,6 +326,11 @@ class OutputWork:
     # Opening AIGC cue rendered before the conversation reply on this exact
     # fence. Empty means no cue; it is never a separate output intent.
     lead_pcm_s16le: bytes = b""
+    # Closing AIGC cue rendered after the round's own audio on the same fence.
+    # The firmware only returns to listening on the current generation's
+    # ``generation.completed``; the cue rides the reply's stream so no
+    # successor generation is left without a terminal.
+    tail_pcm_s16le: bytes = b""
 
     @property
     def intent_id(self) -> str:
