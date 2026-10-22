@@ -48,6 +48,7 @@ control-api              /opt/memoria/component-releases/20261021-stepfun-c272af
 voice-core-media-bridge  /opt/memoria/component-releases/20261021-stepfun-c272af5/override-bridge-stepfun-c272af5.yml               a1b51ef44d4f87160649ee2015de815089a27f15d27a88d678196ef507fa5c3c  /tmp/override-bridge-stepfun-c272af5.yml
 control-api              /opt/memoria/component-releases/20261021-pr368-dd98c4a/override-control-pr368-dd98c4a.yml                  bde575b693d379e47af7bbfbcbbcd857487532b78faef2d2957b4facaf1217c0  /tmp/override-control-pr368-dd98c4a.yml
 voice-core-media-bridge  /opt/memoria/component-releases/20261021-main-f14be64/override-bridge-20261021-main-f14be64.yml            4cfa1733236927709435c3f068276835a009de8e3603ba2bba08571cc96610cf  /tmp/override-bridge-20261021-main-f14be64.yml
+voice-core-media-bridge  /opt/memoria/component-releases/20261021-pr376-8dda764/override-bridge-20261021-pr376-8dda764.yml        f7a3173d46ec1feee656d8bb6abffbdf509c6b1301c930c50614b5c8c9cf60a1  /tmp/override-bridge-20261021-pr376-8dda764.yml
 '
 # Prints "<service>|<persisted path>|<sha256>|<original path>" for either
 # whitelisted path of a row. Returns 1 for anything else. Production resolves
