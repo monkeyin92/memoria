@@ -1,0 +1,4 @@
+services:
+  voice-core-media-bridge:
+    environment:
+      MEDIA_OWNER_SILENCE_TIMEOUT_S: "180"
