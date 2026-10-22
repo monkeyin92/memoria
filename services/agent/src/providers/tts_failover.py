@@ -64,11 +64,6 @@ class StepFunFailoverConfig:
     used when the approved stored clip is unavailable. Doubao is not a
     candidate for that unit.
 
-    ``auth_open_s`` is the authentication/quota circuit window, overridable
-    with ``STEPFUN_TTS_AUTH_BREAKER_OPEN_S``. It defaults to five minutes: a
-    provider 401/402/403 moves ordinary replies to Doubao, but a misconfigured
-    or also-failing backup must not leave the child silent for an hour.
-
     ``fixed_safety_primary_first`` is accepted for deployed configuration
     compatibility and has no effect: a crisis unit always starts on StepFun and
     then moves to the shipped approved clip, never to Doubao.
@@ -123,8 +118,7 @@ class TTSFailoverBreaker:
     It never raises; ``allow`` returns ``False`` so a session sends the next
     sentence to Doubao. One half-open probe at a time keeps a recovering
     provider from receiving every session at once. Authentication and balance
-    failures open a shorter configured window than a transient count would, so
-    a recovering primary is retried within five minutes by default.
+    failures open a much longer window than transient transport failures.
     """
 
     def __init__(

@@ -1,10 +1,3 @@
-"""StepFun circuit windows: auth/quota versus ordinary failures.
-
-Authentication and balance errors still open the circuit on the first failure,
-but only for a configurable five minutes by default. Ordinary transport
-failures keep the pre-existing three-failure, thirty-second window.
-"""
-
 from __future__ import annotations
 
 from services.agent.src.providers.tts_failover import (
