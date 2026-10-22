@@ -73,8 +73,6 @@ async def _classify_speaker(runtime: DuplexRuntime, decision: SpeakerDecision) -
 
 @pytest.mark.asyncio
 async def test_close_clears_the_speaker_pcm_audio_buffer() -> None:
-    """Idle/terminal close must not retain the last utterance's PCM."""
-
     runtime = DuplexRuntime.create(session_id="close-clears-speaker-pcm")
     runtime.on_user_voice_started()
     runtime.feed_speaker_pcm(b"\x01\x00" * 800)

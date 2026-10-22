@@ -313,7 +313,6 @@ async def test_four_consecutive_rounds_keep_reply_audio_on_its_own_plan(
         ]
         frame_bytes = int(getattr(context.provider, "output_frame_samples", 480)) * 2
         marker_audio = notice.tone_pcm()
-        # The cue is padded to a whole provider frame, as every PCM frame is.
         marker_audio += b"\x00" * (-len(marker_audio) % frame_bytes)
         turn_audio = _audio_bytes(turn_frames)
         assert turn_audio.startswith(notice.tone_pcm()), "opening cue must lead the reply"
@@ -331,8 +330,6 @@ async def test_four_consecutive_rounds_keep_reply_audio_on_its_own_plan(
             }, "standalone closing generation must send generation.completed"
             reply_audio = turn_audio[len(notice.tone_pcm()) :]
         else:
-            # The closing cue rides the round's own generation, so the reply
-            # and the cue share one fence and no successor is left open.
             assert not closing_frames, "closing cue must ride the reply's generation"
             assert turn_audio.endswith(marker_audio), "closing cue must follow the reply"
             reply_audio = turn_audio[len(marker_audio) : -len(marker_audio)]

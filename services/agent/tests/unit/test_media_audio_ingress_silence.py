@@ -1,11 +1,3 @@
-"""Listening-silence compliance at the Media audio ingress seam.
-
-After the device returns to LISTENING the uplink keeps streaming microphone
-PCM. Those frames must never reach the denoiser, the diagnostics PCM tap, the
-ASR provider, or a log line carrying audio. Teardown must also clear every
-buffer that could still hold uplink PCM.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -19,6 +11,7 @@ from services.agent.src.voice_core.media_audio_ingress import (
     MediaAudioIngress,
     MediaAudioIngressState,
 )
+from services.agent.src.voice_core.media_pcm_tap import MediaPcmTap
 from services.agent.src.voice_core.media_protocol import AudioFrame, SessionIdentity
 from services.agent.src.voice_core.media_session_pending_turn import PendingTurn
 
@@ -26,6 +19,15 @@ _STREAM_EPOCH = 7
 _IDENTITY = SessionIdentity(session_id="silence-gate", stream_epoch=_STREAM_EPOCH)
 _SPEECH_PCM = b"\x01\x10" * 320
 _SILENT_PCM = b"\x00\x00" * 320
+
+
+class _RecordingTap(MediaPcmTap):
+    def __init__(self, closed: list[bool]) -> None:
+        super().__init__(directory="", session_id="cancel", stream_epoch=1, max_bytes=0)
+        self.closed = closed
+
+    def close(self) -> None:
+        self.closed.append(True)
 
 
 class _Host:
@@ -142,8 +144,6 @@ async def test_accepted_utterance_audio_still_reaches_provider(
 
 @pytest.mark.asyncio
 async def test_non_silent_uplink_without_vad_is_still_admitted() -> None:
-    """A device question can begin without a VAD edge during playback."""
-
     state = MediaAudioIngressState.create(max_frames=4)
     provider = _Provider()
     ingress = MediaAudioIngress(_Host())
@@ -173,7 +173,7 @@ async def test_cancel_clears_queue_denoiser_and_tap() -> None:
     state.loss_concealed_ranges.append((0, 320))
     state.discontinuity_pending = True
     closed: list[bool] = []
-    state.pcm_tap = SimpleNamespace(close=lambda: closed.append(True))  # type: ignore[assignment]
+    state.pcm_tap = _RecordingTap(closed)
     state.pcm_tap_initialized = True
 
     await ingress.cancel(context)

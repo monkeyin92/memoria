@@ -3,19 +3,6 @@
 The agent runs from ``infra/Dockerfile.agent`` under the production compose
 shape with mTLS and the shipped fixed-safety catalog. Only the network edges
 are fake: StepFun TTS, the OpenAI-compatible LLM, FunASR and the Control API.
-
-The simulated device drives the public media-v1 gRPC stream with the ESP32
-media-v2 state machine: the first playable frame opens SPEAKING and only the
-current fence's ``generation.completed`` or ``generation.cancelled`` returns it
-to LISTENING. Per turn it asserts that the opening cue leads reply audio, the
-reply emitted frames, the closing cue followed on the round's own generation,
-and the crisis turn played the approved catalog. The last round sends 停
-mid-crisis-script and requires the full approved clip.
-
-Every round also asserts the device is LISTENING after its terminal generation
-completed. The rounds share one accepted session with no re-wake. A silent
-window after the last round must trigger no generation and no LLM call, and the
-shortened idle timeout then closes the session cleanly.
 """
 
 from __future__ import annotations
@@ -85,10 +72,8 @@ class _FakeState:
     stepfun_texts: list[str] = field(default_factory=list)
     asr_tasks: int = 0
     asr_connections: int = 0
-    # Every binary frame the fake ASR received, including the silent window.
     asr_pcm_bytes: int = 0
     llm_calls: int = 0
-    # Every POST body the agent sent to the guardian crisis-script mark route.
     crisis_script_interrupts: list[dict[str, str]] = field(default_factory=list)
 
 
@@ -663,7 +648,6 @@ class _DeviceClient:
         turn.add(frame, arrived_at=arrived_at)
         self._last_frame_at = arrived_at
         if self.device_state != int(media_pb2.CONVERSATION_STATE_ASSISTANT_SPEAKING):
-            # First playable downlink frame: the firmware opens the speaker.
             self._transition(
                 int(media_pb2.CONVERSATION_STATE_ASSISTANT_SPEAKING),
                 turn_id,
@@ -692,7 +676,6 @@ class _DeviceClient:
             if task is not None and not task.done():
                 task.cancel()
             if (turn_id, generation) == (self.current_turn, self.current_generation):
-                # The firmware flushes and reports the legacy tts stop here.
                 self._transition(
                     int(media_pb2.CONVERSATION_STATE_LISTENING),
                     turn_id,
@@ -715,8 +698,6 @@ class _DeviceClient:
         )
 
     async def _drain_playback(self, turn_id: int, generation: int) -> None:
-        """Play the buffered generation, then honour its authoritative terminal."""
-
         key = (turn_id, generation)
         turn = self.turns.get(turn_id)
         frames = turn.generation_frames.get(generation, []) if turn is not None else []
@@ -729,8 +710,6 @@ class _DeviceClient:
             return
         if frames:
             await self._send_ended(frames[-1])
-        # generation.completed for the current fence ends playback even when
-        # the generation carried no frames; only the ENDED receipt needs audio.
         self._transition(
             int(media_pb2.CONVERSATION_STATE_LISTENING),
             turn_id,
@@ -832,8 +811,6 @@ class _DeviceClient:
         await self.finish_utterance(frames=1)
 
     async def send_silence(self, *, seconds: float) -> None:
-        """Feed zero PCM at the capture cadence without a speech edge."""
-
         for _ in range(max(1, int(seconds / 0.02))):
             await self.send(
                 media_pb2.MediaToCore(
@@ -888,19 +865,10 @@ class _DeviceClient:
             if turn is not None and listening and quiet:
                 if stopped:
                     if not turn.generation_frames:
-                        # A turn can exist before any frame arrives. A stopped
-                        # round is complete only after its successor closing
-                        # generation completes; the deadline bounds this wait,
-                        # so do not max() an empty mapping.
                         await asyncio.sleep(0.02)
                         continue
                     last_generation = max(turn.generation_frames)
                     closing = _frames_audio(turn.generation_frames[last_generation])
-                    # The stopped round is complete only once its successor
-                    # generation completed on the wire and played the closing
-                    # cue. A cancelled successor is not accepted here: the
-                    # stopped round must end with a completed closing marker,
-                    # and the deadline bounds the wait for it.
                     successor_completed = (
                         self._terminals.get((turn_id, last_generation)) == "completed"
                     )
@@ -943,8 +911,6 @@ class _DeviceClient:
         raise RuntimeError("media session did not return to listening")
 
     def assert_listening_after_terminal(self, turn: _TurnAudio, *, label: str) -> None:
-        """The round's last generation completed and the device is listening."""
-
         assert not self.stalled, f"{label}: {self.stalled[-1]}"
         listening = int(media_pb2.CONVERSATION_STATE_LISTENING)
         assert self.device_state == listening, (
@@ -1308,8 +1274,6 @@ def _audio_written_since(
     before: dict[str, list[int]],
     after: dict[str, list[int]],
 ) -> dict[str, int]:
-    """New or changed audio files, keyed by path, valued by their size."""
-
     written: dict[str, int] = {}
     for path, (size, mtime) in after.items():
         previous = before.get(path)
@@ -1409,8 +1373,6 @@ async def _run_scenario(
         # and its closing cue still rides the reply's own generation.
         stopped = stop and not crisis
         turn = await client.wait_turn_complete(turn_id, stopped=stopped, timeout=timeout)
-        # The device must leave SPEAKING on the round's terminal completion,
-        # not linger until the idle timeout.
         client.assert_listening_after_terminal(turn, label=label)
         _assert_turn_audio(turn, crisis=crisis, label=label, stopped=stopped)
         results[label] = {
@@ -1437,8 +1399,6 @@ async def _run_scenario(
                 "reply_bytes": len(_turn_reply_pcm(wake, wake=True)),
             }
 
-            # Round 1: an ordinary reply carries opening cue, reply audio and
-            # closing cue on its own generation.
             await run_round(client, turn_id=2, label="normal", stop=False, crisis=False, timeout=45)
 
             # Round 2: the child says 停 mid-reply. The interrupted turn must
@@ -1498,8 +1458,6 @@ async def _run_scenario(
                 ),
             }
 
-            # Every round above ran on this one accepted stream. A second
-            # accept would mean the device re-woke and started a new session.
             assert client.session_accepts == 1, (
                 f"rounds must share one accepted session, got {client.session_accepts}"
             )
@@ -1563,9 +1521,6 @@ async def _run_scenario(
                 flush=True,
             )
 
-            # The e2e shortens MEDIA_OWNER_SILENCE_TIMEOUT_S; production keeps
-            # the same variable at 180 s. With no speech the session must close
-            # through the normal owner-silence path, not hang or error.
             closed = await client.wait_session_closed(timeout=IDLE_TIMEOUT_S + 10)
             elapsed = time.monotonic() - idle_started_at
             assert closed[1] == "owner_silence_timeout", (

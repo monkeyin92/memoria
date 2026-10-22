@@ -376,8 +376,6 @@ class SpeakerVerifier:
         self._collecting_utterance = False
 
     def clear_audio_buffers(self) -> None:
-        """Drop every PCM buffer kept for enrollment or utterance scoring."""
-
         self._enroll_pcm.clear()
         self._rolling.clear()
         self._utterance.clear()

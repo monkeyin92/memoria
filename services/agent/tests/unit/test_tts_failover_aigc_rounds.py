@@ -403,8 +403,6 @@ async def test_three_rounds_play_start_and_end_markers_after_normal_stop_and_fal
         await _ack_marker(registry, identity, session, markers[1][0])
         markers.clear()
 
-        # Round 1: ordinary StepFun reply. Both cues ride the reply's own
-        # generation, so no marker is admitted as a separate output.
         fence, reply_task = await _round_audio(registry, identity, context)
         await _playback(registry, identity, session, fence)
         await _wait_until(lambda: context.aigc_closing_marker_state == "done")

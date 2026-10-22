@@ -395,9 +395,6 @@ class MediaSessionConnectionMixin:
         self._finish_aigc_round(context, close_reason=context.standby_reason or "session_closed")
         await context.runtime.close()
         await context.provider.close(context.identity)
-        # Idle/terminal teardown completed: publish the ingress buffer facts
-        # without any audio content so the e2e (and an operator) can prove the
-        # listening-silence frames and all queued/denoised/TAP buffers are gone.
         ingress = context.ingress
         logger.info(
             "media_audio_buffers_cleared %s",

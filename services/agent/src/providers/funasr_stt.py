@@ -1752,7 +1752,7 @@ class FunASRSession:
         self._closed = True
         self._rescue_deadline = None
         self._reset_segment_evidence()
-        self._clear_pcm_ring()  # never retain replayable uplink PCM after close
+        self._clear_pcm_ring()
         if self._ws_trace_enabled and self._trace_suppressed_total:
             logger.info(
                 "funasr_ws_trace closing suppressed_total=%s task_id=%s",

@@ -40,8 +40,6 @@ class DuplexRuntimeShutdownMixin:
         if self._closed:
             return True
         self._closed = True
-        # Terminal teardown must not retain the last utterance's PCM for
-        # speaker evidence; nothing may consume it after close.
         self._speaker_pcm.clear()
         self.speaker_verifier.clear_audio_buffers()
         return False

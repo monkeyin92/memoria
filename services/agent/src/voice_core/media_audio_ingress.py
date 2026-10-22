@@ -76,8 +76,6 @@ class MediaAudioIngressState:
     pcm_tap_initialized: bool = False
     overflow_dropped_frames: int = 0
     overflow_dropped_samples: int = 0
-    # Frames refused at the listening seam. They never reach the denoiser, the
-    # PCM tap, the provider, or a log line carrying audio.
     listening_silence_dropped_frames: int = 0
     listening_silence_dropped_samples: int = 0
     last_overflow_log: float = 0.0
@@ -195,8 +193,6 @@ class MediaAudioIngress:
 
     @staticmethod
     def _is_silent_pcm(payload: bytes) -> bool:
-        """True when every 16-bit sample is at or below the silence floor."""
-
         if not payload or len(payload) % 2:
             return False
         for index in range(0, len(payload), 2):
@@ -223,8 +219,6 @@ class MediaAudioIngress:
         if state.input_revoked:
             return
         if self._is_listening_silence(context, frame):
-            # Count only; never log the payload or its content. The frame is
-            # refused before the denoiser, the tap and the ASR provider.
             state.listening_silence_dropped_frames += 1
             state.listening_silence_dropped_samples += frame.frame_samples
             return

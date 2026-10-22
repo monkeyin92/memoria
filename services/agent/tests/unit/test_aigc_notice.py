@@ -510,8 +510,6 @@ async def test_opening_marker_keeps_device_wake_ack_and_returns_to_listening() -
         assert is_allowlisted_device_phrase(provider.texts[-1])
         ack_fence = context.device_wake_ack_fence
         assert ack_fence is not None
-        # The wake acknowledgement carries its closing cue on the same
-        # generation; ack the drained stream, not an intermediate frame.
         await _wait_until(lambda: context.aigc_closing_marker_state == "done", timeout=3)
         ack_frame = next(
             frame
@@ -749,8 +747,6 @@ async def test_opening_marker_ended_before_stream_completion_releases_output_and
         assert is_allowlisted_device_phrase(provider.texts[-1])
         ack_fence = context.device_wake_ack_fence
         assert ack_fence is not None
-        # The wake acknowledgement carries its closing cue on the same
-        # generation; ack the drained stream, not an intermediate frame.
         await _wait_until(lambda: context.aigc_closing_marker_state == "done", timeout=3)
         ack_frame = next(
             frame

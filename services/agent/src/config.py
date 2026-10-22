@@ -205,7 +205,6 @@ class AgentSettings(BaseSettings):
             "PCM chunk resets it; it is not a wall-clock cap on reply duration."
         ),
     )
-    # Product: keep the session listening for three minutes after speech.
     media_owner_silence_timeout_s: float = Field(
         default=180.0,
         ge=1.0,
