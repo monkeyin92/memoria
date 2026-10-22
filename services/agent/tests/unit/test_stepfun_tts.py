@@ -1043,22 +1043,43 @@ def test_sentence_provenance_is_written_into_the_generation_record() -> None:
     )
     provenance = runtime.response_provenance_for(fence)
     assert provenance is not None
-    assert provenance["tts_sentences"] == [
-        {
-            "index": 0,
-            "engine": "stepfun",
-            "model": STEPFUN_TTS_MODEL,
-            "voice": STEPFUN_TTS_VOICE,
-            "switched": False,
-        },
-        {
-            "index": 1,
-            "engine": "volcengine_doubao",
-            "model": "seed-tts-2.0",
-            "voice": "backup-voice",
-            "switched": True,
-        },
+    assert "tts_sentences" not in provenance
+    assert provenance["tts_provider"] == "volcengine_doubao"
+    assert provenance["tts_model"] == "seed-tts-2.0"
+    stored = runtime._generation_records.response_provenance_for(fence)
+    assert stored is not None
+    assert [item["engine"] for item in stored["tts_sentences"]] == [
+        "stepfun",
+        "volcengine_doubao",
     ]
+
+
+def test_a_stepfun_turn_reports_stepfun_without_the_sentence_list() -> None:
+    fence = GenerationFence("s", 2, 1, 0, 0)
+    runtime = _ProvenanceRuntime(fence)
+    assert runtime.bind_response_provenance(
+        fence,
+        {
+            "fence": {"session_id": "s"},
+            "tts_provider": "volcengine_doubao",
+            "tts_model": "seed-tts-2.0",
+        },
+    )
+    assert runtime.record_tts_sentence_provenance(
+        fence,
+        index=0,
+        engine="stepfun",
+        model=STEPFUN_TTS_MODEL,
+        voice=STEPFUN_TTS_VOICE,
+        switched=False,
+    )
+
+    provenance = runtime.response_provenance_for(fence)
+
+    assert provenance is not None
+    assert provenance["tts_provider"] == "stepfun"
+    assert provenance["tts_model"] == STEPFUN_TTS_MODEL
+    assert "tts_sentences" not in provenance
 
 
 def test_doubao_backup_defaults_to_the_product_voice_without_style_control(

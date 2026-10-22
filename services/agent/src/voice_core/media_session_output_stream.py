@@ -19,6 +19,7 @@ from services.agent.src.orchestration.interruption_guard import (
 from services.agent.src.voice_core.crisis_script_interrupt import (
     active_subject_id,
     publish_crisis_self_interrupt,
+    unfinished_safety_announcement,
 )
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.media_bridge_server import MediaBridgeSession, PCMFrame
@@ -1753,16 +1754,18 @@ class MediaOutputStreamMixin:
         # A playback/transport failure is one of the three cases that may raise
         # the parent's unfinished-script reminder. A user stop never reaches
         # this method, and its announced text is cleared before any later close.
-        publish_crisis_self_interrupt(
-            getattr(self, "crisis_script_interrupt_publisher", None),
-            announced_text=context.output.assistant_text,
-            crisis_reply_heard=context.crisis_reply_heard,
-            minor_user_id=active_subject_id(context),
-            session_id=fence.session_id,
-            turn_id=fence.turn_id,
-            generation_id=fence.generation_id,
-            tool_epoch=fence.tool_epoch,
-        )
+        unfinished_script = unfinished_safety_announcement(context)
+        if unfinished_script is not None:
+            publish_crisis_self_interrupt(
+                getattr(self, "crisis_script_interrupt_publisher", None),
+                announced_text=unfinished_script,
+                crisis_reply_heard=context.crisis_reply_heard,
+                minor_user_id=active_subject_id(context),
+                session_id=fence.session_id,
+                turn_id=fence.turn_id,
+                generation_id=fence.generation_id,
+                tool_epoch=fence.tool_epoch,
+            )
         await self._cancel_reply_task(
             context,
             fence,
