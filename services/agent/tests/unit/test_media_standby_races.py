@@ -1412,12 +1412,13 @@ async def test_ending_a_measured_budget_records_it_as_spent_not_unmeasured() -> 
 
     registry, context, _, _, identity = await _device_registry("spent-vs-unmeasured")
     try:
-        # An unmeasured window arms the full interval once.
+        # open_session already armed a deadline. Cancel drops it first.
+        # None written before that cancel is copied back from the clock, so
+        # the full interval would depend on how long open_session took.
+        registry._cancel_owner_silence_timer(context, preserve_remaining=False)
         context.owner_silence_remaining_s = None
         registry._arm_owner_silence_timer(context, reset=False)
-        assert context.owner_silence_remaining_s == pytest.approx(
-            registry.owner_silence_timeout_s
-        )
+        assert context.owner_silence_remaining_s == registry.owner_silence_timeout_s
 
         # Ending a measured budget records it as spent, not as unmeasured.
         registry._cancel_owner_silence_timer(context, preserve_remaining=False)
