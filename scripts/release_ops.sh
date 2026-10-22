@@ -37,38 +37,57 @@ is_ship() { [[ " ${SHIP[*]} " == *" $1 "* ]]; }
 container_of() { printf 'memoria-%s-1' "$1"; }
 ship_images() { local i; for i in "${!SHIP[@]}"; do printf '%s=memoria-%s ' "${SHIP[$i]}" "${ROLES[$i]}"; done; }
 
-# Component releases switched one image on top of the stack compose with an
-# image-only override. A live PREV may keep that chain, so freeze accepts these
-# exact bytes only; anything else fails before it touches the host.
-# Columns: service, persisted override, sha256, original path.
-PREV_OVERRIDE_WHITELIST='
-control-api              /opt/memoria/component-releases/20261021-a94c438-pr345-pr346-pr348-pr352/override-control-pr352.yml       95a5e03319cafcf7fcf7325f00b2cc753ea444c563bfd5de5472692ce1d67486  /tmp/override-control-pr352.yml
-voice-core-media-bridge  /opt/memoria/component-releases/20261021-a94c438-pr345-pr346-pr348-pr352-pr353-pr355/override-pr355.yml  895b17fefa3401e75ba17e1c3f08aac9cab920f7b25e55aa540ffcc5a7a22da0  /tmp/override-pr355.yml
-control-api              /opt/memoria/component-releases/20261021-stepfun-c272af5/override-control-stepfun-c272af5.yml              53db50c436f582120ea3a292be1606f11fed46e5e329e30e73f4d55caba97204  /tmp/override-control-stepfun-c272af5.yml
-voice-core-media-bridge  /opt/memoria/component-releases/20261021-stepfun-c272af5/override-bridge-stepfun-c272af5.yml               a1b51ef44d4f87160649ee2015de815089a27f15d27a88d678196ef507fa5c3c  /tmp/override-bridge-stepfun-c272af5.yml
-control-api              /opt/memoria/component-releases/20261021-pr368-dd98c4a/override-control-pr368-dd98c4a.yml                  bde575b693d379e47af7bbfbcbbcd857487532b78faef2d2957b4facaf1217c0  /tmp/override-control-pr368-dd98c4a.yml
-voice-core-media-bridge  /opt/memoria/component-releases/20261021-main-f14be64/override-bridge-20261021-main-f14be64.yml            4cfa1733236927709435c3f068276835a009de8e3603ba2bba08571cc96610cf  /tmp/override-bridge-20261021-main-f14be64.yml
-voice-core-media-bridge  /opt/memoria/component-releases/20261021-pr376-8dda764/override-bridge-20261021-pr376-8dda764.yml        f7a3173d46ec1feee656d8bb6abffbdf509c6b1301c930c50614b5c8c9cf60a1  /tmp/override-bridge-20261021-pr376-8dda764.yml
-'
-# Prints "<service>|<persisted path>|<sha256>|<original path>" for either
-# whitelisted path of a row. Returns 1 for anything else. Production resolves
-# both to the absolute paths above; the test host rebases them onto its own fake
-# root (and RELEASE_OPS_TMP_ROOT onto its fake /tmp).
+# Prints "<service>|<persisted path>|<sha256>|<original path>" for the override
+# row (host state: state/component-overrides.tsv) whose persisted or original
+# path equals $1. Returns 1 for anything else. Production resolves the row to
+# those absolute paths; the test host rebases them onto its own fake root (and
+# RELEASE_OPS_TMP_ROOT onto its fake /tmp).
 override_spec() {
-  local key=$1 svc persistent sha origin path origin_path tmp_root=/tmp
+  local key=$1 svc persistent sha origin path origin_path tmp_root=/tmp line_num=0
+  local state_file="$(dirname "$RELEASES")/state/component-overrides.tsv"
+  local release_root="$(dirname "$RELEASES")"
+
+  if [[ ! -e "$state_file" ]]; then
+    [[ -L "$state_file" ]] && fail "state file must be a regular file, not a symlink: $state_file"
+    return 1
+  fi
+  [[ -f "$state_file" && ! -L "$state_file" ]] \
+    || fail "state file must be a regular file, not a symlink: $state_file"
+
+  local mode owner
+  mode="$(stat -c '%a' "$state_file" 2>/dev/null || stat -f '%A' "$state_file" 2>/dev/null)"
+  owner="$(stat -c '%u' "$state_file" 2>/dev/null || stat -f '%u' "$state_file" 2>/dev/null)"
+  [[ "$owner" == "0" ]] || fail "state file must be owned by uid 0: $state_file"
+  [[ "$mode" == "600" || "$mode" == "644" ]] \
+    || fail "state file must be 0600 or 0644, not $mode: $state_file"
+
   # The fake host rebases these roots; /opt/memoria keeps the literal paths.
-  [[ "$(dirname "$RELEASES")" == /opt/memoria ]] \
-    || tmp_root="${RELEASE_OPS_TMP_ROOT:-/tmp}"
-  while read -r svc persistent sha origin; do
+  [[ "$release_root" == /opt/memoria ]] || tmp_root="${RELEASE_OPS_TMP_ROOT:-/tmp}"
+
+  while IFS=' ' read -r svc persistent sha origin; do
+    line_num=$((line_num + 1))
     [[ -n "$svc" ]] || continue
-    path="${persistent/#\/opt\/memoria/$(dirname "$RELEASES")}"
+
+    # Validate line structure.
+    [[ -n "$persistent" && -n "$sha" && -n "$origin" ]] \
+      || fail "malformed state file line $line_num: must have exactly 4 fields: $state_file"
+
+    # Validate each row: 64-hex sha, persisted under component-releases/, original under /tmp/.
+    [[ "$sha" =~ ^[0-9a-f]{64}$ ]] \
+      || fail "malformed state file line $line_num: sha must be 64 hex chars: $state_file"
+    [[ "$persistent" == "/opt/memoria/component-releases/"* ]] \
+      || fail "malformed state file line $line_num: persisted path must be under /opt/memoria/component-releases/ - $persistent"
+    [[ "$origin" == "/tmp/"* ]] \
+      || fail "malformed state file line $line_num: original path must be under /tmp/ - $origin"
+
+    path="${persistent/#\/opt\/memoria/$release_root}"
     origin_path="${origin/#\/tmp/$tmp_root}"
     if [[ "$key" == "$persistent" || "$key" == "$path" \
           || "$key" == "$origin" || "$key" == "$origin_path" ]]; then
-      printf '%s|%s|%s|%s\n' "$svc" "$path" "$sha" "$origin"
+      printf '%s|%s|%s|%s\n' "$svc" "$path" "$sha" "$origin_path"
       return 0
     fi
-  done <<<"$PREV_OVERRIDE_WHITELIST"
+  done < "$state_file"
   return 1
 }
 
@@ -775,6 +794,119 @@ step_control_store() {
   log "control-store apply=PASS"
 }
 
+# Registers a component-switch override in host state so the next full-stack
+# freeze honors its chain without a code PR. Overrides must already be on the
+# host in production coordinates; every claim is re-proven here before the row
+# is appended under a lock.
+step_record_override() {
+  local service=$1 arg_p=$2 arg_o=$3
+  local release_root="$(dirname "$RELEASES")"
+  local state_dir="$release_root/state"
+  local state_file="$state_dir/component-overrides.tsv"
+  local lock_file="$state_file.lock"
+
+  [[ -n "$service" && -n "$arg_p" && -n "$arg_o" ]] \
+    || fail "record-override requires <service> <persisted-path> <original-path>"
+  # Arguments speak production coordinates (/opt/memoria/..., /tmp/...); they
+  # resolve onto this host the same way override_spec resolves its rows.
+  [[ "$arg_p" == "/opt/memoria/component-releases/"* ]] \
+    || fail "persisted path must be under /opt/memoria/component-releases/ - $arg_p"
+  [[ "$arg_o" == "/tmp/"* ]] \
+    || fail "original path must be under /tmp/ - $arg_o"
+
+  local persisted="${arg_p/#\/opt\/memoria/$release_root}"
+  local tmp_root=/tmp
+  [[ "$release_root" == /opt/memoria ]] || tmp_root="${RELEASE_OPS_TMP_ROOT:-/tmp}"
+  local original="$arg_o"
+  [[ "$release_root" == /opt/memoria ]] || original="${arg_o/#\/tmp/$tmp_root}"
+
+  [[ -f "$persisted" && ! -L "$persisted" ]] \
+    || fail "persisted file must be a regular file: $persisted"
+
+  [[ -f "$original" ]] || fail "original file does not exist: $original"
+
+  cmp -s "$persisted" "$original" \
+    || fail "persisted and original files are not byte-identical"
+
+  local container="$(container_of "$service")"
+  local running_image
+  running_image="$(inspect_container "$container" image)" \
+    || fail "cannot read the running image of $container"
+
+  validate_override_file "$persisted" "$service" "$running_image" \
+    || fail "override $persisted is not image-only for $service"
+
+  local sha
+  sha="$(file_sha256 "$persisted")"
+
+  local normalized_persisted="/opt/memoria/${persisted#$release_root/}"
+  local row="$service $normalized_persisted $sha $arg_o"
+
+  (
+    flock -x 200
+
+    install -d -o root -m 0700 "$state_dir"
+
+    if [[ -f "$state_file" ]]; then
+      local existing_sha
+      existing_sha="$(awk -v svc="$service" -v path="$normalized_persisted" \
+        '$1 == svc && $2 == path {print $3; exit}' "$state_file" || true)"
+
+      if [[ -n "$existing_sha" ]]; then
+        if [[ "$existing_sha" == "$sha" ]]; then
+          log "override already recorded: $row"
+          return 0
+        else
+          fail "refusing to change existing override sha256 for $service $normalized_persisted: recorded $existing_sha, file is $sha"
+        fi
+      fi
+    fi
+
+    local temp_file="$state_dir/.component-overrides.tsv.tmp.$$"
+    if [[ -f "$state_file" ]]; then
+      cat "$state_file" > "$temp_file"
+    fi
+    printf '%s\n' "$row" >> "$temp_file"
+    chmod 0600 "$temp_file"
+    mv -f "$temp_file" "$state_file"
+
+    log "recorded override: $row"
+  ) 200>"$lock_file"
+}
+
+# One-shot bootstrap: seeds host state with the rows the retired
+# PREV_OVERRIDE_WHITELIST constant held (including the pr376 row a wrong merge
+# dropped). A seeded file is left alone; a different one is a manual edit.
+step_migrate_component_overrides() {
+  local release_root="$(dirname "$RELEASES")"
+  local state_dir="$release_root/state"
+  local state_file="$state_dir/component-overrides.tsv"
+
+  local expected='control-api /opt/memoria/component-releases/20261021-a94c438-pr345-pr346-pr348-pr352/override-control-pr352.yml 95a5e03319cafcf7fcf7325f00b2cc753ea444c563bfd5de5472692ce1d67486 /tmp/override-control-pr352.yml
+voice-core-media-bridge /opt/memoria/component-releases/20261021-a94c438-pr345-pr346-pr348-pr352-pr353-pr355/override-pr355.yml 895b17fefa3401e75ba17e1c3f08aac9cab920f7b25e55aa540ffcc5a7a22da0 /tmp/override-pr355.yml
+control-api /opt/memoria/component-releases/20261021-stepfun-c272af5/override-control-stepfun-c272af5.yml 53db50c436f582120ea3a292be1606f11fed46e5e329e30e73f4d55caba97204 /tmp/override-control-stepfun-c272af5.yml
+voice-core-media-bridge /opt/memoria/component-releases/20261021-stepfun-c272af5/override-bridge-stepfun-c272af5.yml a1b51ef44d4f87160649ee2015de815089a27f15d27a88d678196ef507fa5c3c /tmp/override-bridge-stepfun-c272af5.yml
+control-api /opt/memoria/component-releases/20261021-pr368-dd98c4a/override-control-pr368-dd98c4a.yml bde575b693d379e47af7bbfbcbbcd857487532b78faef2d2957b4facaf1217c0 /tmp/override-control-pr368-dd98c4a.yml
+voice-core-media-bridge /opt/memoria/component-releases/20261021-main-f14be64/override-bridge-20261021-main-f14be64.yml 4cfa1733236927709435c3f068276835a009de8e3603ba2bba08571cc96610cf /tmp/override-bridge-20261021-main-f14be64.yml
+voice-core-media-bridge /opt/memoria/component-releases/20261021-pr376-8dda764/override-bridge-20261021-pr376-8dda764.yml f7a3173d46ec1feee656d8bb6abffbdf509c6b1301c930c50614b5c8c9cf60a1 /tmp/override-bridge-20261021-pr376-8dda764.yml'
+
+  if [[ -f "$state_file" ]]; then
+    local actual
+    actual="$(cat "$state_file")"
+    if [[ "$actual" == "$expected" ]]; then
+      log "state file already migrated (unchanged)"
+      return 0
+    else
+      fail "state file exists with different content; refusing to overwrite: $state_file"
+    fi
+  fi
+
+  install -d -o root -m 0700 "$state_dir"
+  printf '%s\n' "$expected" > "$state_file"
+  chmod 0600 "$state_file"
+  log "migrated component overrides to $state_file"
+}
+
 main() {
   case "${1:-}" in
     verify-load) step_verify_load ;;
@@ -786,7 +918,12 @@ main() {
     rollback) step_rollback ;;
     cleanup-freeze-dumps) step_cleanup_freeze_dumps ;;
     control-store) step_control_store ;;
-    *) echo "usage: $0 verify-load|freeze|env|schema|cutover|finish|rollback|cleanup-freeze-dumps|control-store" >&2; exit 2 ;;
+    record-override)
+      shift
+      step_record_override "$@"
+      ;;
+    migrate-component-overrides) step_migrate_component_overrides ;;
+    *) echo "usage: $0 verify-load|freeze|env|schema|cutover|finish|rollback|cleanup-freeze-dumps|control-store|record-override|migrate-component-overrides" >&2; exit 2 ;;
   esac
 }
 # Sourcing only defines (the tests run single steps against a fake host).
