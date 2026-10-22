@@ -4,9 +4,10 @@
 Reads the source art in ``apps/miniprogram/assets/companions/<id>/`` (512 px
 RGBA, including the device-only ``*-blink``, ``*-talk`` and ``greeting``
 frames made by ``design-preview/memoria-v2/tools/device_frames.py``) and writes
-one ``mascot_<id>.mmp`` per companion plus ``brand_mark.mma`` into the board's
-assets directory, which the firmware build copies into the ``assets``
-partition.
+one ``mascot_<id>.mmp`` per companion into
+``firmware/esp32/tests/fixtures/mascots/``. Those packs are not copied into
+the firmware assets image. ``brand_mark.mma`` still lands in the board assets
+directory.
 
 The pack format is read by ``memoria_mascot_pack.cc`` (see the layout comment
 in ``memoria_mascot_pack.h``).  Every frame is palette-indexed (at most 255
@@ -35,7 +36,8 @@ HERE = pathlib.Path(__file__).resolve()
 REPO = HERE.parents[3]
 SOURCE_DIR = REPO / "apps" / "miniprogram" / "assets" / "companions"
 BOARD_DIR = HERE.parents[1] / "overlay" / "files" / "main" / "boards" / "memoria" / "esp-vocat"
-OUT_DIR = BOARD_DIR / "assets"
+OUT_DIR = HERE.parents[1] / "tests" / "fixtures" / "mascots"
+BRAND_PATH = BOARD_DIR / "assets" / "brand_mark.mma"
 BRAND_FONT_CANDIDATES = (
     # Montserrat is OFL-licensed and ships with the LVGL component.
     HERE.parents[1]
@@ -291,7 +293,8 @@ def build_all(out_dir: pathlib.Path, font_path: pathlib.Path | None) -> dict[str
         sizes[f"mascot_{companion}.mmp"] = len(data)
     if font_path is not None:
         data = build_brand_mark(font_path)
-        (out_dir / "brand_mark.mma").write_bytes(data)
+        BRAND_PATH.parent.mkdir(parents=True, exist_ok=True)
+        BRAND_PATH.write_bytes(data)
         sizes["brand_mark.mma"] = len(data)
     return sizes
 

@@ -3,6 +3,7 @@
 
 #include "display/lcd_display.h"
 #include "lvgl_image.h"
+#include "memoria_dot_face.h"
 #include "memoria_mascot_pack.h"
 #include "memoria_mascot_scene.h"
 #include "sdkconfig.h"
@@ -24,14 +25,13 @@ extern "C" const char memoria_bench_build_marker[];
 
 class Backlight;
 
-// LCD display for the Memoria ESP-VoCat: the 360x360 round panel shows the
-// account's companion mascot (memoria_mascot_scene.h) as a living character,
-// with the boot animation, state ring and companion switching. LVGL keeps
-// only the text on top: a quiet status line, notification and subtitle pills,
-// and the binding QR card. While the device is getting online (network scan,
-// Wi-Fi setup, activation) the scene is captioned: the mascot moves up and the
-// text sits on its own band below it, never on the mascot. The QR card is a
-// screen of its own; no other text is drawn over it.
+// LCD display for the Memoria ESP-VoCat. The 360x360 panel shows the yellow
+// dot face from memoria_dot_face.h. The mascot compositor still times the boot
+// beat, the caption band, and the chrome; PaintDotFace replaces its pixels
+// before the flush. LVGL keeps the text, the AI badge, and the binding QR
+// card. A server emotion name never selects a face. While the device is
+// getting online the face lifts and the status text sits on the band below it.
+// The QR card is a screen of its own; no other text is drawn over it.
 class MemoriaMascotDisplay : public SpiLcdDisplay {
 public:
     MemoriaMascotDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,
@@ -98,7 +98,6 @@ private:
     // is dark; the panel keeps its last frame. Entering dark notifies the board
     // so WifiHold can start.
     void UpdateIdleScreen(memoria::ScenePhase phase, uint32_t now_ms);
-    bool LoadCompanion(const std::string& id, std::unique_ptr<memoria::MascotPack>* out);
     void ApplyChrome();                 // caller holds the display lock
     void ApplyChromeOpacity(uint8_t opa);  // caller holds the display lock
     void EnsureAigcBadge();             // caller holds the display lock
@@ -122,7 +121,6 @@ private:
     uint16_t* framebuffer_ = nullptr;
     std::unique_ptr<LvglAllocatedImage> frame_image_;
     std::unique_ptr<memoria::MascotScene> scene_;
-    std::unique_ptr<memoria::MascotPack> pack_;
     memoria::BrandMark brand_;
     TaskHandle_t task_ = nullptr;
     std::atomic<bool> running_{false};
@@ -148,8 +146,7 @@ private:
     SemaphoreHandle_t input_mutex_ = nullptr;
     std::string companion_id_ = "starlight";
     std::string pending_companion_;
-    memoria::SceneMood pending_mood_ = memoria::SceneMood::kNeutral;
-    bool mood_pending_ = false;
+    memoria::FaceId shown_face_ = static_cast<memoria::FaceId>(0xFF);
     bool pat_pending_ = false;
     bool shake_pending_ = false;
     std::atomic<uint32_t> error_until_ms_{0};

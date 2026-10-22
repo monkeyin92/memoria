@@ -21,6 +21,7 @@ import pytest
 FIRMWARE_ROOT = pathlib.Path(__file__).parents[1]
 BOARD_DIR = FIRMWARE_ROOT / "overlay" / "files" / "main" / "boards" / "memoria" / "esp-vocat"
 ASSETS_DIR = BOARD_DIR / "assets"
+PACK_DIR = FIRMWARE_ROOT / "tests" / "fixtures" / "mascots"
 MEMORIA_DIR = FIRMWARE_ROOT / "overlay" / "files" / "main" / "memoria"
 PATCH = FIRMWARE_ROOT / "overlay" / "patches" / "0027-memoria-mascot-display.patch"
 COMPANIONS = ("starlight", "taoxi", "mianmian", "axu", "xuanmo")
@@ -598,7 +599,7 @@ def test_mascot_packs_match_the_source_art() -> None:
     builder = _load_module("build_mascot_pack", FIRMWARE_ROOT / "scripts" / "build_mascot_pack.py")
     for companion in COMPANIONS:
         name = f"mascot_{companion}.mmp"
-        header, frames = builder.decode_frames((ASSETS_DIR / name).read_bytes())
+        header, frames = builder.decode_frames((PACK_DIR / name).read_bytes())
         assert set(frames) == {frame for frame, _ in builder.FRAMES}, name
         theme = builder.THEMES[companion]
         assert header[8] == theme["soft"] and header[9] == theme["ink"], name
