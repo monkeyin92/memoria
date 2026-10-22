@@ -228,6 +228,7 @@ jobs:
           scripts/tests/test_provider_smoke_llm.py
           scripts/tests/test_local_process_probe.py
           scripts/tests/test_deploy_agent_component_manual_base.py
+          scripts/tests/test_production_keepalive_override.py
       - name: Nightly backup script tests (fake docker and df)
         run: >-
           uv run pytest --import-mode=importlib --no-cov
