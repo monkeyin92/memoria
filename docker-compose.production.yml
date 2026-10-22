@@ -141,6 +141,7 @@ services:
       MEDIA_BRIDGE_SESSION_FACTORY: "services.agent.src.media_agent_factory:build_production_media_session_factory"
       MEDIA_OUTPUT_GENERATION_TIMEOUT_S: "45"
       MEDIA_OWNER_SILENCE_TIMEOUT_S: "180"
+      MEDIA_LISTENING_CAPTURE_WINDOW_S: "30"
       MEDIA_MAX_USER_SPEECH_DURATION_S: "60"
       # Empty, not absent: /etc/memoria-agent.env may still carry a diagnostic
       # tap dir, and the Agent refuses to start with one outside development.

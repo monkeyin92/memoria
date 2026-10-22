@@ -67,6 +67,7 @@ async def test_run_wires_max_user_speech_duration_to_session_registry(
     session_factory = _SessionFactory()
     settings = _settings()
     settings.media_max_user_speech_duration_s = 37.5
+    settings.media_listening_capture_window_s = 12.5
     _patch_run(monkeypatch, server=server, session_factory=session_factory)
     monkeypatch.setattr(run_media_bridge, "load_settings", lambda **_kwargs: settings)
 
@@ -86,6 +87,7 @@ async def test_run_wires_max_user_speech_duration_to_session_registry(
     assert len(captured) == 1
     assert captured[0]["output_generation_timeout_s"] == 45.0
     assert captured[0]["owner_silence_timeout_s"] == 180.0
+    assert captured[0]["listening_capture_window_s"] == 12.5
     assert captured[0]["max_user_speech_duration_s"] == 37.5
     assert captured[0]["speaking_stall_timeout_s"] == 15.0
     assert captured[0]["crisis_script_interrupt_publisher"] is None

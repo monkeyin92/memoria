@@ -211,6 +211,12 @@ class AgentSettings(BaseSettings):
         le=300.0,
         alias="MEDIA_OWNER_SILENCE_TIMEOUT_S",
     )
+    media_listening_capture_window_s: float = Field(
+        default=30.0,
+        ge=0.0,
+        le=300.0,
+        alias="MEDIA_LISTENING_CAPTURE_WINDOW_S",
+    )
     # Hard upper bound for one device utterance when the edge never emits VAD
     # end.  Registry direct/library callers retain their own disabled (0s)
     # default; normal AgentSettings-based bridge startup uses a bounded 60s

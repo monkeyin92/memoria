@@ -127,15 +127,10 @@ async def run() -> None:
     output_generation_timeout_s = float(
         getattr(settings, "media_output_generation_timeout_s", 45.0)
     )
-    owner_silence_timeout_s = float(
-        getattr(settings, "media_owner_silence_timeout_s", 180.0)
-    )
-    max_user_speech_duration_s = float(
-        getattr(settings, "media_max_user_speech_duration_s", 60.0)
-    )
-    speaking_stall_timeout_s = float(
-        getattr(settings, "media_speaking_stall_timeout_s", 15.0)
-    )
+    owner_silence_timeout_s = float(getattr(settings, "media_owner_silence_timeout_s", 180.0))
+    listening_capture_window_s = float(getattr(settings, "media_listening_capture_window_s", 30.0))
+    max_user_speech_duration_s = float(getattr(settings, "media_max_user_speech_duration_s", 60.0))
+    speaking_stall_timeout_s = float(getattr(settings, "media_speaking_stall_timeout_s", 15.0))
     prometheus_port = int(getattr(settings, "prometheus_port", 0))
     if prometheus_port > 0:
         try:
@@ -192,14 +187,13 @@ async def run() -> None:
                 session_factory=session_factory,
                 output_generation_timeout_s=output_generation_timeout_s,
                 owner_silence_timeout_s=owner_silence_timeout_s,
+                listening_capture_window_s=listening_capture_window_s,
                 aigc_notice_config=notice_config,
                 aigc_round_logger=round_logger,
                 max_user_speech_duration_s=max_user_speech_duration_s,
                 speaking_stall_timeout_s=speaking_stall_timeout_s,
                 reply_delivery_publisher=(
-                    reply_delivery_reporter.submit
-                    if reply_delivery_reporter is not None
-                    else None
+                    reply_delivery_reporter.submit if reply_delivery_reporter is not None else None
                 ),
                 crisis_script_interrupt_publisher=interrupt_publisher,
                 session_recap_publisher=(
@@ -220,6 +214,7 @@ async def run() -> None:
                     runtime_factory=runtime_factory,
                     output_generation_timeout_s=output_generation_timeout_s,
                     owner_silence_timeout_s=owner_silence_timeout_s,
+                    listening_capture_window_s=listening_capture_window_s,
                     aigc_notice_config=notice_config,
                     aigc_round_logger=round_logger,
                     max_user_speech_duration_s=max_user_speech_duration_s,
@@ -237,6 +232,7 @@ async def run() -> None:
                     provider_factory=provider_factory,
                     output_generation_timeout_s=output_generation_timeout_s,
                     owner_silence_timeout_s=owner_silence_timeout_s,
+                    listening_capture_window_s=listening_capture_window_s,
                     aigc_notice_config=notice_config,
                     aigc_round_logger=round_logger,
                     max_user_speech_duration_s=max_user_speech_duration_s,
