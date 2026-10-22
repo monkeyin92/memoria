@@ -601,6 +601,153 @@ async def test_auth_error_opens_a_long_breaker_and_subsequent_sessions_use_douba
     assert second.degraded is True
 
 
+async def _speak(
+    server: MockStepFunServer,
+    backup: FakeBackupTTS,
+    breaker: TTSFailoverBreaker,
+    fence: str,
+    text: str,
+) -> list[SynthesizedAudio]:
+    wrapper = StepFunPrimaryTTS(
+        primary=StepFunTTS(_config(server)),
+        backup=backup,
+        breaker=breaker,
+    )
+    wrapper.bind_fence(GenerationFence(fence, 1, 1, 0, 0))
+    stream = wrapper.stream(conn_options=APIConnectOptions(max_retry=0))
+    stream.push_text(text)
+    stream.end_input()
+    events = [event async for event in stream]
+    await wrapper.aclose()
+    return events
+
+
+def _pcm(events: list[SynthesizedAudio]) -> bytes:
+    return b"".join(event.frame.data for event in events)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", ["402", "403"])
+async def test_auth_status_recovers_on_stepfun_after_300_seconds(status_code: str) -> None:
+    fail = {"on": True}
+
+    async def handler(server: MockStepFunServer, ws: Any) -> None:
+        await _connection(server, ws)
+        while True:
+            event = await server.next_event(ws)
+            if event["type"] == "tts.create":
+                await ws.send(_event("tts.response.created", {"session_id": "mock-session"}))
+            elif event["type"] == "tts.text.delta":
+                if fail["on"]:
+                    await ws.send(
+                        _event(
+                            "tts.response.error",
+                            {
+                                "session_id": "mock-session",
+                                "code": status_code,
+                                "message": "rejected",
+                            },
+                        )
+                    )
+                    return
+                await ws.send(_audio_event(PCM))
+            elif event["type"] == "tts.text.done":
+                await ws.send(_done_event())
+                return
+
+    now = [1000.0]
+    backup = FakeBackupTTS()
+    breaker = TTSFailoverBreaker(clock=lambda: now[0])
+    async with MockStepFunServer(handler) as server:
+        failed = await _speak(server, backup, breaker, "s1", "第一句。")
+        assert breaker.state == "open"
+        assert server.create_count == 1
+        assert backup.received == ["第一句。"]
+        assert _pcm(failed) == b"\x02\x00" * 240
+
+        now[0] += 299
+        blocked = await _speak(server, backup, breaker, "s2", "第二句。")
+        assert breaker.state == "open"
+        assert server.create_count == 1
+        assert backup.received == ["第一句。", "第二句。"]
+        assert _pcm(blocked) == b"\x02\x00" * 240
+
+        now[0] += 1
+        fail["on"] = False
+        recovered = await _speak(server, backup, breaker, "s3", "第三句。")
+        assert breaker.state == "closed"
+        assert server.create_count == 2
+        assert backup.received == ["第一句。", "第二句。"]
+        assert _pcm(recovered) == PCM
+
+        stayed = await _speak(server, backup, breaker, "s4", "第四句。")
+        assert breaker.state == "closed"
+        assert server.create_count == 3
+        assert backup.received == ["第一句。", "第二句。"]
+        assert _pcm(stayed) == PCM
+
+
+@pytest.mark.asyncio
+async def test_server_error_still_opens_for_thirty_seconds() -> None:
+    failures_left = {"n": 3}
+
+    async def handler(server: MockStepFunServer, ws: Any) -> None:
+        await _connection(server, ws)
+        while True:
+            event = await server.next_event(ws)
+            if event["type"] == "tts.create":
+                await ws.send(_event("tts.response.created", {"session_id": "mock-session"}))
+            elif event["type"] == "tts.text.delta":
+                if failures_left["n"] > 0:
+                    failures_left["n"] -= 1
+                    await ws.send(
+                        _event(
+                            "tts.response.error",
+                            {
+                                "session_id": "mock-session",
+                                "code": "500",
+                                "message": "overloaded",
+                            },
+                        )
+                    )
+                    return
+                await ws.send(_audio_event(PCM))
+            elif event["type"] == "tts.text.done":
+                await ws.send(_done_event())
+                return
+
+    now = [2000.0]
+    backup = FakeBackupTTS()
+    breaker = TTSFailoverBreaker(clock=lambda: now[0])
+    async with MockStepFunServer(handler) as server:
+        await _speak(server, backup, breaker, "o1", "第一句。")
+        assert breaker.state == "closed"
+        assert server.create_count == 1
+
+        await _speak(server, backup, breaker, "o2", "第二句。")
+        assert breaker.state == "closed"
+        assert server.create_count == 2
+
+        await _speak(server, backup, breaker, "o3", "第三句。")
+        assert breaker.state == "open"
+        assert server.create_count == 3
+        assert backup.received == ["第一句。", "第二句。", "第三句。"]
+
+        now[0] += 29
+        blocked = await _speak(server, backup, breaker, "o4", "第四句。")
+        assert breaker.state == "open"
+        assert server.create_count == 3
+        assert backup.received[-1] == "第四句。"
+        assert _pcm(blocked) == b"\x02\x00" * 240
+
+        now[0] += 1
+        recovered = await _speak(server, backup, breaker, "o5", "第五句。")
+        assert breaker.state == "closed"
+        assert server.create_count == 4
+        assert "第五句。" not in backup.received
+        assert _pcm(recovered) == PCM
+
+
 @pytest.mark.asyncio
 async def test_text_deltas_are_split_at_the_documented_1000_character_limit() -> None:
     async def handler(server: MockStepFunServer, ws: Any) -> None:
