@@ -243,6 +243,8 @@ jobs:
         run: |
           bash -n scripts/deploy_agent_component.sh
           bash -n scripts/deploy_control_component.sh
+          bash -n scripts/switch_production_keepalive_180.sh
+          bash -n scripts/rollback_production_keepalive_180.sh
       - name: Media proto generation is reproducible
         run: |
           uv run --extra dev python scripts/generate_media_proto.py
