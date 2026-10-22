@@ -613,10 +613,15 @@ class FakeHost:
                 # macOS has no flock; the fake host serializes nothing (the lock file
                 # itself is still created by the fd redirect).
                 "flock() { :; }",
-                # The fake host is rootless. Production still uses install -o root.
-                'install() { local kept=(); while [[ $# -gt 0 ]]; do '
-                'if [[ "$1" == -o || "$1" == -g ]]; then shift 2; continue; fi; '
-                'kept+=("$1"); shift; done; command install "${kept[@]}"; }',
+                # The script claims root ownership for host-facing directories.
+                # A non-root runner cannot honor the claim: BSD install shrugs
+                # (exit 0), GNU install aborts (exit 1), so the real command
+                # would make every -o/-g call fail only on Linux. The fake
+                # host drops the ownership flags; production keeps them and
+                # override_spec still verifies the owner via the stat stub.
+                "install() { local a=() arg; while [[ $# -gt 0 ]]; do "
+                'case "$1" in -o|-g) shift 2 ;; *) a+=("$1"); shift ;; esac; done; '
+                'command install "${a[@]}"; }',
                 'stat() { if [[ "$1" == -c || "$1" == -f ]] && [[ "$2" == *%u* ]]; '
                 'then printf "%s\\n" "$FAKE_STATE_OWNER"; else command stat "$@"; fi; }',
                 f"export FAKE_STATE_OWNER={self.state_owner}",
