@@ -32,6 +32,7 @@ from services.agent.src.providers.tts_failover import (
     StepFunFailoverConfig,
     StepFunPrimaryTTS,
     TTSFailoverBreaker,
+    TTSUnavailableError,
 )
 from services.agent.src.providers.tts_stream import AudioFrame, SynthesizedAudio
 from services.agent.src.voice_core.aigc_notice import AigcNoticeConfig
@@ -485,7 +486,7 @@ async def test_doubao_403_does_not_pin_later_turns_to_the_backup() -> None:
     first = speech.stream(conn_options=cast(Any, None))
     first.push_text(_NORMAL_REPLY)
     first.end_input()
-    with pytest.raises(APIStatusError):
+    with pytest.raises(TTSUnavailableError, match="403"):
         _ = [event async for event in first]
 
     assert speech.degraded is False

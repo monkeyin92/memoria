@@ -1454,6 +1454,7 @@ class MediaBridgeGrpcServer:
         reason: str,
         task_epoch: int = 0,
         context_version: int = 0,
+        play_line: bool = False,
     ) -> bool:
         """Project one typed authoritative conversation state to Media Edge."""
 
@@ -1482,10 +1483,7 @@ class MediaBridgeGrpcServer:
             # concurrently arriving audio/VAD/KWS event is rejected.
             connection.session.mark_terminal()
         connection.session.generation_active = False
-        task_epoch, context_version = connection.session.observe_versions(
-            task_epoch,
-            context_version,
-        )
+        task_epoch, context_version = connection.session.observe_versions(task_epoch, context_version)
         return await self._enqueue(
             connection,
             media_pb2.CoreToMedia(
@@ -1498,6 +1496,7 @@ class MediaBridgeGrpcServer:
                     tool_epoch=fence.tool_epoch,
                     task_epoch=task_epoch,
                     context_version=context_version,
+                    play_line=play_line,
                 )
             ),
         )
