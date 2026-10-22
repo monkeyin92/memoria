@@ -88,6 +88,30 @@ def test_sentence_list_on_playout_provenance_is_rejected() -> None:
 
 
 @pytest.mark.hermetic
+def test_stepfun_male_model_is_accepted_for_the_designed_voice() -> None:
+    submitted = ResponseProvenanceCreate.model_validate(
+        _stepfun_provenance(tts_model="stepaudio-2.5-tts")
+    )
+
+    assert _canonical_actual_voice(
+        submitted=submitted,
+        session={
+            "interaction_mode": "companion",
+            "mode_policy_version": "s2-v1",
+            "companion_style_id": "starlight",
+            "user_id": "account-1",
+        },
+        interaction_mode="companion",
+    ) == (
+        "warm_companion",
+        None,
+        "seed-tts-2.0",
+        None,
+        designed_voice_speaker_sha256("warm_companion"),
+    )
+
+
+@pytest.mark.hermetic
 def test_stepfun_personal_voice_snapshot_is_rejected() -> None:
     with pytest.raises(ValidationError):
         ResponseProvenanceCreate.model_validate(

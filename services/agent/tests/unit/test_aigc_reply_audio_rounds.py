@@ -13,13 +13,17 @@ Doubao TTS engines and the chat model.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, cast
 
 import httpx
 import pytest
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.orchestration.state_machine import (
+    ConversationState,
+    InteractionPhase,
+)
 from services.agent.src.providers.fixed_safety_audio import (
     load_fixed_safety_audio_catalog,
 )
@@ -131,6 +135,29 @@ class _PipelineLanguageModel:
 
 class _RoundBridge(_CapturingGenerationBridge):
     pass
+
+
+class _CrisisStopBridge(_CapturingGenerationBridge):
+    def __init__(self) -> None:
+        super().__init__()
+        self.stop_during_fixed_safety: Callable[[], Awaitable[None]] | None = None
+        self.note_complete: Callable[[], None] | None = None
+
+    async def emit_pcm(self, session_id: str, frame: object) -> bool:
+        accepted = await super().emit_pcm(session_id, frame)
+        callback = self.stop_during_fixed_safety
+        if callback is not None:
+            await callback()
+        return accepted
+
+    async def emit_generation(self, *args: object, **kwargs: object) -> bool:
+        accepted = await super().emit_generation(*args, **kwargs)
+        if (
+            kwargs.get("action") == media_pb2.GENERATION_ACTION_COMPLETE
+            and self.note_complete is not None
+        ):
+            self.note_complete()
+        return accepted
 
 
 def _audio_bytes(frames: list[Any]) -> bytes:
@@ -255,9 +282,7 @@ async def test_four_consecutive_rounds_keep_reply_audio_on_its_own_plan(
         start = len(registry.bridge.frames)
         fence = await context.provider.prepare_committed_turn(identity, text)  # type: ignore[attr-defined]
         context.output.begin_turn_output(fence)
-        reply_task = asyncio.create_task(
-            registry.generate_reply(identity.session_id, text, fence)
-        )
+        reply_task = asyncio.create_task(registry.generate_reply(identity.session_id, text, fence))
         context.output.reply_task = reply_task
         engine_before = len(primary.received)
         if expected_engine_count:
@@ -267,9 +292,11 @@ async def test_four_consecutive_rounds_keep_reply_audio_on_its_own_plan(
             )
         if stop:
             await _wait_until(
-                lambda: context.output.output_owner is not None
-                and int(context.output.output_owner.intent.kind)
-                != int(media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT),
+                lambda: (
+                    context.output.output_owner is not None
+                    and int(context.output.output_owner.intent.kind)
+                    != int(media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT)
+                ),
                 timeout=3.0,
             )
             marker_frames = (
@@ -278,13 +305,15 @@ async def test_four_consecutive_rounds_keep_reply_audio_on_its_own_plan(
                 - 1
             ) // (int(getattr(context.provider, "output_frame_samples", 480)) * 2)
             await _wait_until(
-                lambda: sum(
-                    1
-                    for frame in registry.bridge.frames
-                    if frame.generation_id == fence.generation_id
-                    and frame.turn_id == fence.turn_id
-                )
-                > marker_frames,
+                lambda: (
+                    sum(
+                        1
+                        for frame in registry.bridge.frames
+                        if frame.generation_id == fence.generation_id
+                        and frame.turn_id == fence.turn_id
+                    )
+                    > marker_frames
+                ),
                 timeout=3.0,
             )
             await registry._cancel_reply_task(context, fence, reason="voice_stop_command")
@@ -371,7 +400,9 @@ async def test_four_consecutive_rounds_keep_reply_audio_on_its_own_plan(
         primary.behavior = "audio"
         primary.received.clear()
         backup.received.clear()
-        fence, frames, reply_audio = await run_round(_CRISIS_TEXT, expected_engine_count=0, spoken="")
+        fence, frames, reply_audio = await run_round(
+            _CRISIS_TEXT, expected_engine_count=0, spoken=""
+        )
         crisis_audio = catalog.get("crisis-self-v1")
         assert crisis_audio is not None and crisis_audio.pcm
         assert bytes(crisis_audio.pcm) in reply_audio
@@ -381,6 +412,178 @@ async def test_four_consecutive_rounds_keep_reply_audio_on_its_own_plan(
         assert "output_intent_not_selected" not in text
         assert "blocked without exact response plan" not in text
         assert planner.calls >= 4
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+def _generation_at(frames: list[Any], byte_index: int) -> int:
+    cursor = 0
+    for frame in frames:
+        chunk = bytes(frame.pcm_s16le)
+        if cursor <= byte_index < cursor + len(chunk):
+            return int(frame.generation_id)
+        cursor += len(chunk)
+    raise AssertionError(byte_index)
+
+
+def _fence_for_generation(
+    frames: list[Any],
+    generation_id: int,
+    session_id: str,
+) -> GenerationFence:
+    frame = next(frame for frame in reversed(frames) if int(frame.generation_id) == generation_id)
+    return GenerationFence(
+        session_id,
+        int(frame.turn_id),
+        int(frame.generation_id),
+        int(frame.tool_epoch),
+        int(getattr(frame, "session_epoch", 0) or 0),
+    )
+
+
+def _script_then_closing(audio: bytes, script: bytes, tone: bytes) -> tuple[int, int]:
+    script_at = audio.find(script)
+    assert script_at >= 0
+    before = audio[:script_at]
+    assert before.startswith(tone)
+    assert tone not in before[len(tone) :]
+    after = audio[script_at + len(script) :]
+    tone_at = after.find(tone)
+    assert tone_at >= 0
+    assert set(after[:tone_at]) <= {0}
+    return script_at, script_at + len(script) + tone_at
+
+
+@pytest.mark.asyncio
+async def test_crisis_stop_plays_the_whole_script_then_the_closing_tone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    notice = _notice_config()
+    speech, primary, _backup = _speech("audio", "audio")
+    catalog = load_fixed_safety_audio_catalog(_DEFAULT_FIXED_SAFETY_DIR)
+    crisis = catalog.get("crisis-self-v1")
+    assert crisis is not None and crisis.pcm
+    crisis_pcm = bytes(crisis.pcm)
+    tone = notice.tone_pcm()
+    assert tone not in crisis_pcm
+    cast(Any, speech).fixed_safety_catalog = catalog
+    planner = _PlanPlanner()
+    runtimes: dict[str, DuplexRuntime] = {}
+    adapters: dict[str, ExistingVoiceProviderAdapter] = {}
+
+    def runtime_factory(session_id: str) -> DuplexRuntime:
+        runtime = DuplexRuntime.create(session_id=session_id)
+        bind_owner_policy(runtime)
+        bind_owner_speaker(runtime)
+        runtimes[session_id] = runtime
+        return runtime
+
+    def provider_factory(identity: SessionIdentity) -> ExistingVoiceProviderAdapter:
+        runtime = runtimes[identity.session_id]
+        pipeline = ReplyPipeline(
+            instructions="系统提示",
+            runtime=runtime,
+            response_planner_client=cast(Any, planner),
+            tts_model="seed-tts-2.0",
+        )
+
+        async def tokens(_ctx: Any, _tools: list[Any]) -> AsyncIterator[str]:
+            yield _NORMAL_REPLY
+
+        pipeline.language_model = ScriptedChatModel(lambda ctx, tools: tokens(ctx, tools))
+        runtime.set_response_plan_rebinder(pipeline.rebind_response_plan)
+        adapter = ExistingVoiceProviderAdapter(
+            asr_session_factory=cast(Any, lambda: None),
+            language_model=_PipelineLanguageModel(pipeline),
+            speech_synthesis=cast(Any, speech),
+        )
+        adapters[identity.session_id] = adapter
+        return adapter
+
+    bridge = _CrisisStopBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=provider_factory,
+        runtime_factory=runtime_factory,
+        aigc_notice_config=notice,
+        aigc_round_logger=None,
+        daily_chat_client=_ledger(httpx.Response(200, json={"used_seconds": 0}), []),
+        owner_silence_timeout_s=100,
+        speaking_stall_timeout_s=0.3,
+    )
+    registry.install()
+    identity = _device_identity("aigc-crisis-stop")
+
+    async def no_wake_ack(_registry: Any, _context: Any) -> None:
+        return None
+
+    monkeypatch.setattr(MediaVoiceCoreRegistry, "_speak_device_wake_ack", no_wake_ack)
+    session = registry.bridge.bridge.open(identity)
+    context = await registry.open_session(identity)
+    if context.runtime.orchestrator.state.name == "CONNECTING":
+        await context.runtime.orchestrator.ready()
+    spoken_stop: list[bool] = []
+    phase_at_complete: list[InteractionPhase] = []
+
+    async def stop_if_audible() -> None:
+        if not spoken_stop and context.runtime.floor.fixed_safety_audible:
+            spoken_stop.append(await registry._stop_reply_for_voice_command(context, "停"))
+
+    def note_complete() -> None:
+        phase_at_complete.append(context.runtime.interaction_phase)
+
+    bridge.stop_during_fixed_safety = stop_if_audible
+    bridge.note_complete = note_complete
+    try:
+        await _wait_until(lambda: context.aigc_closing_marker_state != "playing", timeout=3.0)
+        await registry._close_aigc_round(context, close_reason="wake_ack")
+        await registry._wait_for_output_idle(context, timeout_s=4.0)
+        if context.runtime.orchestrator.state.name == "CONNECTING":
+            await context.runtime.orchestrator.ready()
+        await registry._wait_for_output_idle(context, timeout_s=4.0)
+        start = len(bridge.frames)
+        phase_at_complete.clear()
+        completes_before = len(bridge.generation_completes)
+        fence = await adapters[identity.session_id].prepare_committed_turn(identity, _CRISIS_TEXT)
+        context.output.begin_turn_output(fence)
+        reply_task = asyncio.create_task(
+            registry.generate_reply(identity.session_id, _CRISIS_TEXT, fence)
+        )
+        context.output.reply_task = reply_task
+        await _wait_until(lambda: bool(spoken_stop), timeout=10.0)
+
+        def clip_and_closing_sent() -> bool:
+            audio = _audio_bytes(list(bridge.frames[start:]))
+            script_at = audio.find(crisis_pcm)
+            return script_at >= 0 and tone in audio[script_at + len(crisis_pcm) :]
+
+        await _wait_until(clip_and_closing_sent, timeout=40.0)
+        await asyncio.gather(reply_task, return_exceptions=True)
+        round_frames = list(bridge.frames[start:])
+        audio = _audio_bytes(round_frames)
+        script_at, closing_at = _script_then_closing(audio, crisis_pcm, tone)
+        script_generation = _generation_at(round_frames, script_at)
+        closing_generation = _generation_at(round_frames, closing_at)
+        completed = {item.generation_id for item in bridge.generation_completes[completes_before:]}
+        assert spoken_stop == [False]
+        assert closing_generation == script_generation == fence.generation_id
+        assert closing_generation in completed
+        assert phase_at_complete == [InteractionPhase.SPEAKING]
+        assert context.runtime.interaction_phase is InteractionPhase.SPEAKING
+        await _playback(
+            registry,
+            identity,
+            session,
+            _fence_for_generation(round_frames, closing_generation, identity.session_id),
+        )
+        await _wait_until(
+            lambda: (
+                context.runtime.interaction_phase is InteractionPhase.LISTENING
+                and context.runtime.orchestrator.state is ConversationState.LISTENING
+            ),
+            timeout=5.0,
+        )
+        assert primary.received == []
     finally:
         await registry.finalize_session(identity.session_id)
 

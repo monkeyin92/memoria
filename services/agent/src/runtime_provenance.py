@@ -17,7 +17,7 @@ from services.agent.src.generation_output_policy import (
     frozen_companion_clone_permitted,
     generation_voice_allowed,
 )
-from services.common.tts_defaults import STEPFUN_TTS_MODEL
+from services.common.tts_defaults import STEPFUN_ARCHIVE_MODELS, STEPFUN_TTS_MODEL
 from services.guardian.child_memory import TRANSCRIPT_KEYS
 
 if TYPE_CHECKING:
@@ -50,8 +50,7 @@ def project_spoken_tts_provider(provenance: dict[str, Any]) -> dict[str, Any]:
 
     The sentence list is how the runtime remembers a failover. Control-api
     rejects that list, so the archive keeps the engine of the sentence that
-    finished the turn. With no sentence yet, a StepFun plan still names the
-    StepFun model instead of the Doubao voice snapshot the policy binding uses.
+    finished the turn.
     """
 
     sentences = provenance.pop("tts_sentences", None)
@@ -70,7 +69,9 @@ def project_spoken_tts_provider(provenance: dict[str, Any]) -> dict[str, Any]:
             provenance["tts_model"] = model
         return provenance
     if provenance.get("tts_provider") == "stepfun":
-        provenance["tts_model"] = STEPFUN_TTS_MODEL
+        model = provenance.get("tts_model")
+        if not isinstance(model, str) or model not in STEPFUN_ARCHIVE_MODELS:
+            provenance["tts_model"] = STEPFUN_TTS_MODEL
     return provenance
 
 
@@ -248,12 +249,17 @@ class DuplexRuntimeProvenanceMixin:
         provenance = cast(dict[str, Any], json.loads(json.dumps(stored)))
         voice = self.generation_voice_for(fence)
         if voice is not None:
-            provenance.update(
-                {
-                    "tts_model": voice.resource_id,
-                    "actual_voice_profile_id": voice.profile_id,
-                    "actual_voice_resource_id": voice.resource_id,
-                    "actual_voice_speaker_sha256": voice.speaker_sha256,
-                }
-            )
+            planned_model = provenance.get("tts_model")
+            applied: dict[str, Any] = {
+                "actual_voice_profile_id": voice.profile_id,
+                "actual_voice_resource_id": voice.resource_id,
+                "actual_voice_speaker_sha256": voice.speaker_sha256,
+            }
+            if not (
+                provenance.get("tts_provider") == "stepfun"
+                and isinstance(planned_model, str)
+                and planned_model in STEPFUN_ARCHIVE_MODELS
+            ):
+                applied["tts_model"] = voice.resource_id
+            provenance.update(applied)
         return project_spoken_tts_provider(provenance)

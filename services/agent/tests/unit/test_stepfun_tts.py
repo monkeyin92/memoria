@@ -29,7 +29,10 @@ from services.agent.src.providers.tts_failover import (
     TTSFailoverBreaker,
 )
 from services.agent.src.providers.tts_stream import AudioFrame, SynthesizedAudio
-from services.agent.src.runtime_provenance import DuplexRuntimeProvenanceMixin
+from services.agent.src.runtime_provenance import (
+    DuplexRuntimeProvenanceMixin,
+    GenerationVoiceSnapshot,
+)
 from websockets.exceptions import ConnectionClosedOK
 from websockets.frames import Close
 
@@ -1052,6 +1055,76 @@ def test_sentence_provenance_is_written_into_the_generation_record() -> None:
         "stepfun",
         "volcengine_doubao",
     ]
+
+
+def test_a_stepfun_male_sentence_keeps_its_model_after_the_voice_snapshot() -> None:
+    fence = GenerationFence("s", 3, 1, 0, 0)
+    runtime = _ProvenanceRuntime(fence)
+    assert runtime.bind_response_provenance(
+        fence,
+        {
+            "fence": {"session_id": "s"},
+            "tts_provider": "stepfun",
+            "tts_model": "stepaudio-2.5-tts",
+        },
+    )
+    runtime._generation_records.bind_voice_snapshot(
+        fence,
+        GenerationVoiceSnapshot(
+            profile_id="warm_companion",
+            resource_id="seed-tts-2.0",
+            speaker_sha256="a" * 64,
+            voice_kind="designed",
+        ),
+    )
+    assert runtime.record_tts_sentence_provenance(
+        fence,
+        index=0,
+        engine="stepfun",
+        model="stepaudio-2.5-tts",
+        voice="wenrounansheng",
+        switched=False,
+    )
+
+    provenance = runtime.response_provenance_for(fence)
+
+    assert provenance is not None
+    assert provenance["tts_provider"] == "stepfun"
+    assert provenance["tts_model"] == "stepaudio-2.5-tts"
+    assert "tts_sentences" not in provenance
+    stored = runtime._generation_records.response_provenance_for(fence)
+    assert stored is not None
+    assert stored["tts_sentences"][0]["voice"] == "wenrounansheng"
+    assert stored["tts_sentences"][0]["model"] == "stepaudio-2.5-tts"
+
+
+def test_a_stepfun_male_plan_without_sentences_keeps_stepaudio_2_5() -> None:
+    fence = GenerationFence("s", 4, 1, 0, 0)
+    runtime = _ProvenanceRuntime(fence)
+    assert runtime.bind_response_provenance(
+        fence,
+        {
+            "fence": {"session_id": "s"},
+            "tts_provider": "stepfun",
+            "tts_model": "stepaudio-2.5-tts",
+        },
+    )
+    runtime._generation_records.bind_voice_snapshot(
+        fence,
+        GenerationVoiceSnapshot(
+            profile_id="warm_companion",
+            resource_id="seed-tts-2.0",
+            speaker_sha256="a" * 64,
+            voice_kind="designed",
+        ),
+    )
+
+    provenance = runtime.response_provenance_for(fence)
+
+    assert provenance is not None
+    assert provenance["tts_provider"] == "stepfun"
+    assert provenance["tts_model"] == "stepaudio-2.5-tts"
+    assert provenance["actual_voice_resource_id"] == "seed-tts-2.0"
 
 
 def test_a_stepfun_turn_reports_stepfun_without_the_sentence_list() -> None:

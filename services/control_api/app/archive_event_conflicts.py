@@ -27,7 +27,7 @@ from services.common.companions import (
     designed_voice_profile,
     designed_voice_speaker_sha256,
 )
-from services.common.tts_defaults import STEPFUN_TTS_MODEL
+from services.common.tts_defaults import STEPFUN_ARCHIVE_MODELS
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.mode_policy import FrozenMode
 from services.digital_self.domain import (
@@ -64,7 +64,7 @@ def _tts_matches_applied_voice(submitted: ResponseProvenanceCreate) -> bool:
         return submitted.tts_model == submitted.actual_voice_resource_id
     if submitted.tts_provider == _STEPFUN_TTS_PROVIDER:
         return (
-            submitted.tts_model == STEPFUN_TTS_MODEL
+            submitted.tts_model in STEPFUN_ARCHIVE_MODELS
             and submitted.actual_voice_resource_id == DESIGNED_VOICE_MODEL
         )
     return False
@@ -402,7 +402,7 @@ def _canonical_actual_voice(
         expected_profile = designed_voice_profile(frozen.companion_style_id or DEFAULT_COMPANION_ID)
         designed_engine = submitted.tts_provider == _DOUBAO_TTS_PROVIDER or (
             submitted.tts_provider == _STEPFUN_TTS_PROVIDER
-            and submitted.tts_model == STEPFUN_TTS_MODEL
+            and submitted.tts_model in STEPFUN_ARCHIVE_MODELS
         )
         valid = (
             expected_profile is not None
@@ -444,7 +444,7 @@ def _canonical_actual_voice(
             frozen.fallback_voice_profile_id is not None
             and profile_id == frozen.fallback_voice_profile_id
             and submitted.tts_provider == _STEPFUN_TTS_PROVIDER
-            and submitted.tts_model == STEPFUN_TTS_MODEL
+            and submitted.tts_model in STEPFUN_ARCHIVE_MODELS
             and resource_id == DESIGNED_VOICE_MODEL
             and frozen.fallback_voice_resource_id == DESIGNED_VOICE_MODEL
             and speaker_sha256 == designed_voice_speaker_sha256(frozen.fallback_voice_profile_id)
