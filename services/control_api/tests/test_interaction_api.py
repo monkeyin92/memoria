@@ -1205,6 +1205,17 @@ class _SlowRecallStore:
         return cast(int, await self._inner.erase_subject(**kwargs))
 
 
+class _SlowPersonaEngine:
+    def __init__(self, delay_s: float = 2.0) -> None:
+        self.delay_s = delay_s
+        self.calls = 0
+
+    async def capsule(self, _: object) -> PersonaCapsule:
+        self.calls += 1
+        await asyncio.sleep(self.delay_s)
+        return PersonaCapsule()
+
+
 class _PersonaEngine:
     async def capsule(self, _: object) -> PersonaCapsule:
         return PersonaCapsule(
@@ -2163,6 +2174,46 @@ async def test_over_budget_normal_turn_degrades_gracefully(
     assert elapsed < 0.8
     assert response.json()["grounded_items"] == []
     assert any("companion context exceeded budget" in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_a_slow_persona_keeps_account_memory_that_already_finished(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Persona missing the companion budget must not discard a finished memory read."""
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    catalog = _MemoryCatalog()
+    persona = _SlowPersonaEngine()
+    app.state.memory_catalog = catalog
+    app.state.persona_engine = persona
+    app.state.subject_session_recall_store = _SlowRecallStore(
+        app.state.subject_session_recall_store
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, user_headers = await _identity(client)
+        session_id = (await client.post("/v1/sessions", headers=user_headers, json={})).json()[
+            "session_id"
+        ]
+        _mark_verified_adult(app, user_id)
+
+    body = _response_plan_body(session_id)
+    body["query"] = "我在杭州读过书。"
+    body["recall_context"] = [f"第{index}轮普通聊天" for index in range(4)]
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    started = time.perf_counter()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/v1/interaction/response-plan", headers=token, json=body)
+    elapsed = time.perf_counter() - started
+
+    assert response.status_code == 200, response.text
+    assert elapsed < 0.8
+    assert persona.calls == 1
+    assert catalog.queries
+    assert any("杭州" in item["content"] for item in response.json()["grounded_items"])
 
 
 @pytest.mark.asyncio
