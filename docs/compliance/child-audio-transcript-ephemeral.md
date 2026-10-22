@@ -104,7 +104,7 @@ ESP32-S3 内存中的 Opus 上行
 - FunASR 任务失败的消息经过 `sanitize_error_message`（去掉带标签的密钥、`redact_pii`、截到 400 字符）。厂商错误若引用一句不含 PII 形态的原话，仍会整句打出。
 - Control API：`services/control_api/app/routes/multi_subject.py` 第 326–340 行以 `message=%r` 打出 `PersistentSessionDenied` 的原文，代码注明它可能是 PostgreSQL 错误文本；`routes/session.py` 第 634–638 行、`routes/media.py` 第 497–501 行以 `reason=%s` 打出同一串。asyncpg 是否把 SQL 或绑定值带进这段文字，没有核对。`routes/device_control.py` 第 368 行的 httpx 状态错误带请求 URL；边缘令牌在请求头里，不在 URL 里。
 - 两个服务的 `logger.exception` 打 traceback 和异常消息，不带局部变量。
-- 发布 `env` 步的提供方冒烟失败时打 `provider_smoke_test FAIL: <异常类型>: <异常消息>`（`scripts/provider_smoke_test.py` 第 326 行），可能带厂商响应正文；这一行也写进 `voice-core-media-bridge.log`。
+- 发布 `env` 步的提供方冒烟失败时打 `provider_smoke_test FAIL: <异常类型>: <异常消息>`（`scripts/provider_smoke_test.py` 第 434 行），可能带厂商响应正文；这一行也写进 `voice-core-media-bridge.log`。备份探针失败打的是 `Doubao backup probe: DEGRADED (<异常类型>: <异常消息>)`，同样是厂商正文，同样落盘。
 
 **密钥。** 厂商 API key 和内部令牌都走请求头，没有一处应用日志格式拼接请求头，也没有找到打印 bearer token、Authorization 头或厂商 key 的日志行。剩下三条路：失败路径上的厂商与 Control 响应正文；上面 80 字符的遥测字段；任何把第三方 logger 调到 INFO 或 DEBUG 的改动。微信调用把 `secret` 和 `access_token` 放在查询串里（`services/control_api/app/wechat_auth.py` 第 119–125 行，`guardian_push.py` 第 167–170 行）。Control API 今天不输出 httpx 的 INFO 行，所以不打这些 URL；一旦调到 INFO 就会打。Voice Core 的 httpx 可能在 INFO 打出请求行（`DomesticWeather` 是否在生产里构造、从而把它压低，未核对），这类行只带方法、URL 和状态码；按仓库检索，Voice Core 调用的 URL 不把密钥放在查询串里（检索结论，没有实跑）。因此不加 `--log-config`，不去掉 `--no-access-log`，不调高 `LOG_LEVEL`。Voice Core 调到 DEBUG 可能让 websockets 打出带 Authorization 的握手请求头（未读库代码）。
 
