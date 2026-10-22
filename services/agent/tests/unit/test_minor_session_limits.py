@@ -160,6 +160,9 @@ def test_signed_limits_reach_the_agent_and_apply_to_minors_only() -> None:
     assert minor_limits(_profile()) == (1800, ("21:30", "06:30"))
     assert minor_limits(_profile("adult")) == (None, None)
     assert minor_limits(None) == (None, None)
+    assert MINOR_SESSION_LIMIT_PHRASE == (
+        "这次聊了好一会儿啦，先去休息一下，想聊的时候再点点我。"
+    )
     assert is_allowlisted_device_phrase(MINOR_QUIET_HOURS_PHRASE)
     assert is_allowlisted_device_phrase(MINOR_SESSION_LIMIT_PHRASE)
 
