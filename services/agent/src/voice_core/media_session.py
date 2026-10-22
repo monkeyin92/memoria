@@ -122,7 +122,7 @@ class MediaVoiceCoreRegistry(
     output_generation_timeout_s: float = 45.0
     delegation_initial_decision_timeout_s: float = 0.5
     # Disabled for direct library construction; the production bridge wires
-    # AgentSettings.MEDIA_OWNER_SILENCE_TIMEOUT_S (15s by default).
+    # AgentSettings.MEDIA_OWNER_SILENCE_TIMEOUT_S (180s by default).
     owner_silence_timeout_s: float = 0.0
     # A device reply the server still believes is speaking, with no downlink
     # PCM frame for this long, is closed with a CANCEL plus standby.  Zero

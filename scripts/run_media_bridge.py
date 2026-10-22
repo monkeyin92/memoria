@@ -128,7 +128,7 @@ async def run() -> None:
         getattr(settings, "media_output_generation_timeout_s", 45.0)
     )
     owner_silence_timeout_s = float(
-        getattr(settings, "media_owner_silence_timeout_s", 15.0)
+        getattr(settings, "media_owner_silence_timeout_s", 180.0)
     )
     max_user_speech_duration_s = float(
         getattr(settings, "media_max_user_speech_duration_s", 60.0)

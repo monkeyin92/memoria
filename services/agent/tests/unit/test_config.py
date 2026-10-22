@@ -69,12 +69,25 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.media_bridge_mtls is False
     assert s.media_bridge_max_pending_audio_frames == 20
     assert s.media_output_generation_timeout_s == 45.0
-    assert s.media_owner_silence_timeout_s == 15.0
+    assert s.media_owner_silence_timeout_s == 180.0
     assert s.media_max_user_speech_duration_s == 60.0
     assert s.media_speaking_stall_timeout_s == 15.0
     assert s.media_slo_report_enabled is False
     assert s.media_slo_metrics_url == "http://agent:9090/"
     assert s.media_slo_report_interval_s == 30.0
+
+
+def test_production_idle_disconnect_default_is_three_minutes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("MEDIA_OWNER_SILENCE_TIMEOUT_S", raising=False)
+    assert AgentSettings(_env_file=None).media_owner_silence_timeout_s == 180.0
+
+    repo_root = Path(__file__).resolve().parents[4]
+    compose = (repo_root / "docker-compose.production.yml").read_text()
+    assert 'MEDIA_OWNER_SILENCE_TIMEOUT_S: "180"' in compose
+    env_example = (repo_root / "infra/memoria.env.production.example").read_text()
+    assert "\nMEDIA_OWNER_SILENCE_TIMEOUT_S=180\n" in env_example
 
 
 def test_production_media_bridge_requires_mtls_material(

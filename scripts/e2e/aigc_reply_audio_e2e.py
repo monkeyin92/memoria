@@ -11,6 +11,11 @@ to LISTENING. Per turn it asserts that the opening cue leads reply audio, the
 reply emitted frames, the closing cue followed on the round's own generation,
 and the crisis turn played the approved catalog. The last round sends 停
 mid-crisis-script and requires the full approved clip.
+
+Every round also asserts the device is LISTENING after its terminal generation
+completed. The rounds share one accepted session with no re-wake. A silent
+window after the last round must trigger no generation and no LLM call, and the
+shortened idle timeout then closes the session cleanly.
 """
 
 from __future__ import annotations
@@ -63,6 +68,10 @@ MARKER_FRAME_SAMPLES = 480
 CRISIS_CATALOG = REPO_ROOT / "infra/voices/fixed_safety"
 DEFAULT_DOCKER_CONFIG = "/tmp/aigc-e2e-docker-config"
 FAKE_LOG = Path("/tmp/aigc-e2e-fake.log")
+# Production keeps the session listening for 180 s after the last speech; the
+# e2e shortens it through the same env var so the idle close is observable.
+IDLE_TIMEOUT_S = 8.0
+SILENT_WINDOW_S = 3.0
 
 
 def _fake_log(message: str) -> None:
@@ -524,6 +533,10 @@ class _DeviceClient:
         self.device_states: list[tuple[float, int, int, int, str]] = []
         self.generation_actions: list[tuple[int, int, int]] = []
         self.errors: list[str] = []
+        self.session_accepts = 0
+        self.closed_states: list[tuple[int, str]] = []
+        self.stream_ended = False
+        self.stream_error: str | None = None
         self._sample = 0
         self._audio_sequence = 0
         self._last_frame_at = 0.0
@@ -556,6 +569,7 @@ class _DeviceClient:
         self.runtime_states.append(
             (int(accepted.accepted.state), int(accepted.accepted.current_turn_id))
         )
+        self.session_accepts += 1
         self._transition(int(accepted.accepted.state), 0, 0, "session_accepted")
         self._task = asyncio.create_task(self._read())
         return self
@@ -594,7 +608,12 @@ class _DeviceClient:
         while True:
             try:
                 message = await self._call.read()
-            except Exception:
+            except Exception as exc:
+                self.stream_error = f"{type(exc).__name__}: {exc}"
+                self.stream_ended = True
+                return
+            if message is None:
+                self.stream_ended = True
                 return
             event = message.WhichOneof("event")
             if event == "audio":
@@ -602,7 +621,10 @@ class _DeviceClient:
             elif event == "generation":
                 await self._on_generation(message.generation)
             elif event == "state":
-                self.runtime_states.append((int(message.state.state), int(message.state.turn_id)))
+                state = message.state
+                self.runtime_states.append((int(state.state), int(state.turn_id)))
+                if int(state.state) == int(media_pb2.CONVERSATION_STATE_CLOSED):
+                    self.closed_states.append((int(state.turn_id), str(state.reason)))
             elif event == "error":
                 self.errors.append(message.error.message)
             elif event == "accepted":
@@ -786,6 +808,25 @@ class _DeviceClient:
         await self.begin_utterance()
         await self.finish_utterance(frames=1)
 
+    async def send_silence(self, *, seconds: float) -> None:
+        """Feed zero PCM at the capture cadence without a speech edge."""
+
+        for _ in range(max(1, int(seconds / 0.02))):
+            await self.send(
+                media_pb2.MediaToCore(
+                    audio=media_pb2.AudioFrame(
+                        identity=self.identity,
+                        sequence=self._audio_sequence,
+                        capture_start_sample=self._sample,
+                        frame_samples=320,
+                        payload=b"\x00\x00" * 320,
+                    )
+                )
+            )
+            self._audio_sequence += 1
+            self._sample += 320
+            await asyncio.sleep(0.02)
+
     async def stop(self, *, turn_id: int | None = None) -> None:
         if turn_id is not None:
             self.stop_sent_at[turn_id] = asyncio.get_running_loop().time()
@@ -823,10 +864,20 @@ class _DeviceClient:
             )
             if turn is not None and listening and quiet:
                 if stopped:
+                    if not turn.generation_frames:
+                        # A turn can exist before any frame arrives. A stopped
+                        # round is complete only after its successor closing
+                        # generation completes; the deadline bounds this wait,
+                        # so do not max() an empty mapping.
+                        await asyncio.sleep(0.02)
+                        continue
                     last_generation = max(turn.generation_frames)
                     closing = _frames_audio(turn.generation_frames[last_generation])
                     # The stopped round is complete only once its successor
-                    # generation completed on the wire and played the closing cue.
+                    # generation completed on the wire and played the closing
+                    # cue. A cancelled successor is not accepted here: the
+                    # stopped round must end with a completed closing marker,
+                    # and the deadline bounds the wait for it.
                     successor_completed = (
                         self._terminals.get((turn_id, last_generation)) == "completed"
                     )
@@ -867,6 +918,82 @@ class _DeviceClient:
                 return
             await asyncio.sleep(0.02)
         raise RuntimeError("media session did not return to listening")
+
+    def assert_listening_after_terminal(self, turn: _TurnAudio, *, label: str) -> None:
+        """The round's last generation completed and the device is listening."""
+
+        assert not self.stalled, f"{label}: {self.stalled[-1]}"
+        listening = int(media_pb2.CONVERSATION_STATE_LISTENING)
+        assert self.device_state == listening, (
+            f"{label}: device state {self.device_state} after the closing marker, "
+            f"want LISTENING ({listening})"
+        )
+        transitions = [
+            event
+            for event in self.device_states
+            if event[2] == turn.turn_id and event[1] == listening
+        ]
+        assert transitions, f"{label}: device never returned to listening"
+        assert transitions[-1][4] == "generation_completed", (
+            f"{label}: last listening transition was {transitions[-1][4]}, "
+            "want generation_completed"
+        )
+        generations = sorted(turn.generation_frames)
+        assert generations, f"{label}: no generation"
+        terminal = (turn.turn_id, generations[-1])
+        assert self._terminals.get(terminal) == "completed", (
+            f"{label}: terminal generation {terminal[1]} is "
+            f"{self._terminals.get(terminal) or 'missing'}, want completed"
+        )
+
+    def last_listening_at(self, turn_id: int) -> float:
+        listening = int(media_pb2.CONVERSATION_STATE_LISTENING)
+        transitions = [
+            event for event in self.device_states if event[2] == turn_id and event[1] == listening
+        ]
+        assert transitions, f"turn {turn_id}: device never returned to listening"
+        return transitions[-1][0]
+
+    def generation_snapshot(self) -> tuple[int, int, int]:
+        return (
+            len(self.generation_actions),
+            sum(
+                len(frames)
+                for turn in self.turns.values()
+                for frames in turn.generation_frames.values()
+            ),
+            len(self.closed_states),
+        )
+
+    def assert_no_generation_since(self, snapshot: tuple[int, int, int], *, label: str) -> None:
+        actions, frames, closed = snapshot
+        assert len(self.generation_actions) == actions, f"{label}: new generation control"
+        assert (
+            sum(
+                len(audio)
+                for turn in self.turns.values()
+                for audio in turn.generation_frames.values()
+            )
+            == frames
+        ), f"{label}: new assistant audio frame"
+        assert len(self.closed_states) == closed, f"{label}: session closed during the window"
+
+    async def wait_session_closed(self, *, timeout: float = 20.0) -> tuple[int, str]:
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            if self.closed_states:
+                return self.closed_states[-1]
+            if self.errors:
+                raise RuntimeError(f"media bridge error: {self.errors}")
+            if self.stream_ended:
+                raise RuntimeError(
+                    f"media stream ended without CLOSED (error={self.stream_error or 'eof'})"
+                )
+            await asyncio.sleep(0.02)
+        raise RuntimeError(
+            f"media session did not close within {timeout:.1f}s "
+            f"(state={self.device_state} turn={self.current_turn})"
+        )
 
 
 MARKER_PCM = AigcNoticeConfig().tone_pcm()
@@ -1057,6 +1184,7 @@ def _compose_env(
         "E2E_LLM_URL": f"http://host.docker.internal:{llm_port}/v1",
         "E2E_VERIFY_KEY": VERIFY_KEY,
         "E2E_SESSION_ID": SESSION_ID,
+        "E2E_OWNER_SILENCE_TIMEOUT_S": f"{IDLE_TIMEOUT_S:g}",
     }
 
 
@@ -1103,7 +1231,7 @@ def _wait_port(host: str, port: int, *, timeout: float = 30.0) -> None:
     raise RuntimeError(f"port {host}:{port} did not open")
 
 
-async def _run_scenario(*, cert_dir: Path) -> dict[str, Any]:
+async def _run_scenario(*, cert_dir: Path, state: _FakeState) -> dict[str, Any]:
     ca = (cert_dir / "ca.pem").read_bytes()
     client_key = (cert_dir / "client.key").read_bytes()
     client_cert = (cert_dir / "client.pem").read_bytes()
@@ -1150,6 +1278,9 @@ async def _run_scenario(*, cert_dir: Path) -> dict[str, Any]:
         # and its closing cue still rides the reply's own generation.
         stopped = stop and not crisis
         turn = await client.wait_turn_complete(turn_id, stopped=stopped, timeout=timeout)
+        # The device must leave SPEAKING on the round's terminal completion,
+        # not linger until the idle timeout.
+        client.assert_listening_after_terminal(turn, label=label)
         _assert_turn_audio(turn, crisis=crisis, label=label, stopped=stopped)
         results[label] = {
             "turn_id": turn_id,
@@ -1166,6 +1297,7 @@ async def _run_scenario(*, cert_dir: Path) -> dict[str, Any]:
             # real utterance or the VAD edge is dropped as echo.
             await client.open_session()
             wake = await client.wait_turn_complete(1, timeout=40)
+            client.assert_listening_after_terminal(wake, label="wake")
             _assert_turn_audio(wake, crisis=False, label="wake", wake=True)
             results["wake"] = {
                 "turn_id": 1,
@@ -1234,6 +1366,55 @@ async def _run_scenario(*, cert_dir: Path) -> dict[str, Any]:
                     crisis_stop.generation_frames[min(crisis_stop.generation_frames)]
                 ),
             }
+
+            # Every round above ran on this one accepted stream. A second
+            # accept would mean the device re-woke and started a new session.
+            assert client.session_accepts == 1, (
+                f"rounds must share one accepted session, got {client.session_accepts}"
+            )
+            results["single_session"] = {
+                "accepts": client.session_accepts,
+                "turn_ids": sorted(client.turns),
+            }
+
+            # After the last closing marker the device is listening. Silence
+            # without a speech edge must not start a turn, call the LLM, or
+            # emit any assistant audio.
+            idle_started_at = client.last_listening_at(stop_turn_id)
+            silent_snapshot = client.generation_snapshot()
+            llm_calls_before = state.llm_calls
+            stepfun_before = len(state.stepfun_texts)
+            await client.send_silence(seconds=SILENT_WINDOW_S)
+            await asyncio.sleep(0.5)
+            client.assert_no_generation_since(silent_snapshot, label="silent window")
+            assert state.llm_calls == llm_calls_before, (
+                f"silent window triggered {state.llm_calls - llm_calls_before} LLM call(s)"
+            )
+            assert len(state.stepfun_texts) == stepfun_before, "silent window triggered TTS"
+            results["silent_window"] = {
+                "seconds": SILENT_WINDOW_S,
+                "llm_calls": state.llm_calls - llm_calls_before,
+                "new_generations": len(client.generation_actions) - silent_snapshot[0],
+            }
+
+            # The e2e shortens MEDIA_OWNER_SILENCE_TIMEOUT_S; production keeps
+            # the same variable at 180 s. With no speech the session must close
+            # through the normal owner-silence path, not hang or error.
+            closed = await client.wait_session_closed(timeout=IDLE_TIMEOUT_S + 10)
+            elapsed = time.monotonic() - idle_started_at
+            assert closed[1] == "owner_silence_timeout", (
+                f"idle close reason {closed[1]!r}, want owner_silence_timeout"
+            )
+            assert not client.errors, f"idle close emitted errors: {client.errors}"
+            assert IDLE_TIMEOUT_S - 1.0 <= elapsed <= IDLE_TIMEOUT_S + 5.0, (
+                f"idle close took {elapsed:.2f}s, want about {IDLE_TIMEOUT_S:.1f}s"
+            )
+            results["idle_close"] = {
+                "reason": closed[1],
+                "timeout_s": IDLE_TIMEOUT_S,
+                "elapsed_s": round(elapsed, 3),
+                "clean": True,
+            }
     finally:
         await channel.close()
     return results
@@ -1274,7 +1455,7 @@ async def main() -> int:
         )
         _compose_up(compose_env, docker_env)
         _wait_port("127.0.0.1", AGENT_PORT, timeout=60)
-        results = await _run_scenario(cert_dir=cert_dir)
+        results = await _run_scenario(cert_dir=cert_dir, state=state)
         logs = _compose_logs(docker_env)
         for line in logs.splitlines():
             if "ERROR" in line or "output_intent_not_selected" in line:
