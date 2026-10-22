@@ -14,7 +14,7 @@
 
 其他状态码仍走普通窗口。一次 500 或 503 不打开熔断。累计 3 次后打开 30 秒。到时放行一次探测。探测成功后熔断关闭，下一句回到阶跃。
 
-进程环境如果带了 `STEPFUN_TTS_AUTH_BREAKER_OPEN_S`，用环境里的值，不用代码默认值。`.env.example` 和 `infra/memoria.env.production.example` 把这个变量设为 3600。加载这两个文件的进程用 3600 秒。
+进程环境如果带了 `STEPFUN_TTS_AUTH_BREAKER_OPEN_S`，用环境里的值，不用代码默认值。`.env.example` 和 `infra/memoria.env.production.example` 把这个变量设为 300，与代码默认值相同。
 
 ## 豆包
 
