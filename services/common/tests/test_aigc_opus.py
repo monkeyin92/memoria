@@ -217,7 +217,10 @@ def test_implicit_tags_reject_doubao_on_wenrounansheng() -> None:
 def test_implicit_tags_reject_an_unknown_provider_and_an_unknown_voice() -> None:
     with pytest.raises(ValueError, match="SERVICE_PROVIDER must be 'Volcengine Doubao'"):
         require_aigc_tags(
-            _implicit_head(service_provider="Memoria", voice_id="zh_female_tianmeitaozi_uranus_bigtts"),
+            _implicit_head(
+                service_provider="Memoria",
+                voice_id="zh_female_tianmeitaozi_uranus_bigtts",
+            ),
             content_id="demo",
             implicit=True,
         )

@@ -730,7 +730,7 @@ def test_device_ogg_aigc_check_passes_on_board_pack() -> None:
     completed = _run_device_ogg_aigc_check(BOARD_ASSETS)
     assert completed.returncode == 0, completed.stderr
     assert "checked_oggs=29" in completed.stdout
-    assert "canonical_service_provider=Volcengine Doubao" in completed.stdout
+    assert "service_providers=StepFun,Volcengine Doubao" in completed.stdout
     assert completed.stderr == ""
 
 
