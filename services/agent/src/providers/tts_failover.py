@@ -71,7 +71,7 @@ class StepFunFailoverConfig:
 
     failures: int = 3
     open_s: float = 30.0
-    auth_open_s: float = 3600.0
+    auth_open_s: float = 300.0
     pool_size: int = 2
     fixed_safety_budget_s: float = 4.5
     fixed_safety_primary_first_audio_s: float = 1.5
@@ -100,7 +100,7 @@ class StepFunFailoverConfig:
         return cls(
             failures=int(values.get("STEPFUN_TTS_BREAKER_FAILURES", "3")),
             open_s=float(values.get("STEPFUN_TTS_BREAKER_OPEN_S", "30")),
-            auth_open_s=float(values.get("STEPFUN_TTS_AUTH_BREAKER_OPEN_S", "3600")),
+            auth_open_s=float(values.get("STEPFUN_TTS_AUTH_BREAKER_OPEN_S", "300")),
             pool_size=int(values.get("STEPFUN_TTS_POOL_SIZE", "2")),
             fixed_safety_budget_s=float(values.get("STEPFUN_TTS_FIXED_SAFETY_BUDGET_S", "4.5")),
             fixed_safety_primary_first_audio_s=float(
@@ -126,7 +126,7 @@ class TTSFailoverBreaker:
         *,
         failures: int = 3,
         open_s: float = 30.0,
-        auth_open_s: float = 3600.0,
+        auth_open_s: float = 300.0,
         clock: Callable[[], float] = monotonic,
     ) -> None:
         self.failures = failures
@@ -769,7 +769,7 @@ class StepFunPrimaryTTS:
         self.breaker.record_failure(auth=auth)
         if auth:
             logger.warning(
-                "StepFun TTS authentication/quota failure; long circuit open "
+                "StepFun TTS authentication/quota failure; auth circuit open "
                 "error_type=%s breaker_state=%s",
                 type(exc).__name__,
                 self.breaker.state,
