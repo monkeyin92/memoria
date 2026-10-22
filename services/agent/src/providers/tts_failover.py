@@ -64,6 +64,11 @@ class StepFunFailoverConfig:
     used when the approved stored clip is unavailable. Doubao is not a
     candidate for that unit.
 
+    ``auth_open_s`` is the authentication/quota circuit window, overridable
+    with ``STEPFUN_TTS_AUTH_BREAKER_OPEN_S``. It defaults to five minutes: a
+    provider 401/402/403 moves ordinary replies to Doubao, but a misconfigured
+    or also-failing backup must not leave the child silent for an hour.
+
     ``fixed_safety_primary_first`` is accepted for deployed configuration
     compatibility and has no effect: a crisis unit always starts on StepFun and
     then moves to the shipped approved clip, never to Doubao.
@@ -71,7 +76,7 @@ class StepFunFailoverConfig:
 
     failures: int = 3
     open_s: float = 30.0
-    auth_open_s: float = 3600.0
+    auth_open_s: float = 300.0
     pool_size: int = 2
     fixed_safety_budget_s: float = 4.5
     fixed_safety_primary_first_audio_s: float = 1.5
@@ -100,7 +105,7 @@ class StepFunFailoverConfig:
         return cls(
             failures=int(values.get("STEPFUN_TTS_BREAKER_FAILURES", "3")),
             open_s=float(values.get("STEPFUN_TTS_BREAKER_OPEN_S", "30")),
-            auth_open_s=float(values.get("STEPFUN_TTS_AUTH_BREAKER_OPEN_S", "3600")),
+            auth_open_s=float(values.get("STEPFUN_TTS_AUTH_BREAKER_OPEN_S", "300")),
             pool_size=int(values.get("STEPFUN_TTS_POOL_SIZE", "2")),
             fixed_safety_budget_s=float(values.get("STEPFUN_TTS_FIXED_SAFETY_BUDGET_S", "4.5")),
             fixed_safety_primary_first_audio_s=float(
@@ -118,7 +123,8 @@ class TTSFailoverBreaker:
     It never raises; ``allow`` returns ``False`` so a session sends the next
     sentence to Doubao. One half-open probe at a time keeps a recovering
     provider from receiving every session at once. Authentication and balance
-    failures open a much longer window than transient transport failures.
+    failures open a shorter configured window than a transient count would, so
+    a recovering primary is retried within five minutes by default.
     """
 
     def __init__(
@@ -126,7 +132,7 @@ class TTSFailoverBreaker:
         *,
         failures: int = 3,
         open_s: float = 30.0,
-        auth_open_s: float = 3600.0,
+        auth_open_s: float = 300.0,
         clock: Callable[[], float] = monotonic,
     ) -> None:
         self.failures = failures
@@ -769,7 +775,7 @@ class StepFunPrimaryTTS:
         self.breaker.record_failure(auth=auth)
         if auth:
             logger.warning(
-                "StepFun TTS authentication/quota failure; long circuit open "
+                "StepFun TTS authentication/quota failure; auth circuit open "
                 "error_type=%s breaker_state=%s",
                 type(exc).__name__,
                 self.breaker.state,
