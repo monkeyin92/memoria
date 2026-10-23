@@ -277,8 +277,7 @@ func TestDeviceWSSLateReceiptOfAReplacedGenerationLeavesTheNewWindowAlone(t *tes
 	}
 }
 
-// A receipt Voice Core refuses while its generation is still the current one is a real fault, not a late tick:
-// the edge still fails closed and tells the device (retryable) why.
+// A terminal receipt the ledger refuses for a replaced generation still owns its playback window.
 func TestDeviceWSSLateTerminalReceiptRefusedByLedgerClosesItsPlaybackWindow(t *testing.T) {
 	scene := newCancelledStoryScene(t)
 	scene.receipt(t, "playback.started", 1)
@@ -321,6 +320,8 @@ func TestDeviceWSSLateTerminalReceiptDroppedByPrecheckClosesItsPlaybackWindow(t 
 	scene.requireSessionKept(t)
 }
 
+// A receipt Voice Core refuses while its generation is still the current one is a real fault, not a late tick:
+// the edge still fails closed and tells the device (retryable) why.
 func TestDeviceWSSPlaybackReceiptRefusedForTheCurrentGenerationStillClosesRetryably(t *testing.T) {
 	scene := newCancelledStoryScene(t)
 	scene.core.mu.Lock()
