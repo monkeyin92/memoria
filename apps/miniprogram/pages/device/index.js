@@ -1204,9 +1204,14 @@ Page({
   },
 
   openReprovision() {
+    // 重新配网必须从新二维码开始：机器人重新进入配网时会换新 nonce，本地存的
+    // 旧启用会话已失效。缺 fresh=1 时 onShow 会接上旧会话，停在完成卡片上，
+    // 界面没有任何扫码入口。
     const deviceId = this.data.binding?.device_id;
     const query = deviceId ? `&device_id=${encodeURIComponent(deviceId)}` : "";
-    wx.navigateTo({ url: `/pages/device-onboarding/index?mode=reprovision${query}` });
+    wx.navigateTo({
+      url: `/pages/device-onboarding/index?mode=reprovision&fresh=1${query}`,
+    });
   },
 
   /*
