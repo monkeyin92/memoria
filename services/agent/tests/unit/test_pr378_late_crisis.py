@@ -33,7 +33,7 @@ from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT, FixedSafety
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _AUDIO_DIR = _REPO_ROOT / DEFAULT_FIXED_SAFETY_AUDIO_DIR
 _LOCAL_MISS = "我撑不下去了"
-_CRISIS_PCM_SHA256 = "f28af42f21ab1efc8c641c58bc4aba86cf9d7353812af6d3e90eac039f1fb545"
+_CRISIS_PCM_SHA256 = "8e4d748a4f241e9aad37d160f3bcf2535ab8d13030f068f1a8e6ba7f60729d50"
 
 
 def _runtime(name: str) -> DuplexRuntime:

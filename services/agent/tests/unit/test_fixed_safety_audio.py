@@ -59,10 +59,18 @@ _TEMPLATE_IDS = (
 )
 # Exactly the four approved clips' PCM hashes from the reviewed manifest.
 _APPROVED_PCM_SHA256 = {
-    "crisis-self-v1": ("f28af42f21ab1efc8c641c58bc4aba86cf9d7353812af6d3e90eac039f1fb545"),
-    "victim-support-v1": ("6660d1446cd9fbcb6019cc86fe0cd0bc2f1333aa7cde427432008f20edcf5e3e"),
-    "support-other-v1": ("67d919eca0a4d30089b171cfc9caa806b3788ac60180964cf2e0014b0c2a5a3c"),
-    "daily-limit": ("c1fb628b85151b9588d49cc1663c516fcfc890e9e2953663e2b2bfade0b8bc93"),
+    "crisis-self-v1": (
+        "8e4d748a4f241e9aad37d160f3bcf2535ab8d13030f068f1a8e6ba7f60729d50"
+    ),
+    "victim-support-v1": (
+        "eb31b21294f9adbdc0bf5d5f5a2888f7721b54c9b00a9236f2ea7a6d714e7bd9"
+    ),
+    "support-other-v1": (
+        "c614bf3602f1415a0f685f19292adaa9b44a9685b1d1b6d11f6aeb6816653a06"
+    ),
+    "daily-limit": (
+        "04840abb8d779ca9a36cb815b4e588286788a7c2eee255312793869a6f8febef"
+    ),
 }
 
 
@@ -704,7 +712,7 @@ def test_fixed_safety_wav_implicit_aigc_label_metadata_present_and_pcm_unchanged
         assert parsed.info["IART"] == FIXED_SAFETY_AUDIO_ARTIST
         assert parsed.info["ISFT"] == FIXED_SAFETY_AUDIO_SOFTWARE
         assert parsed.info["ICMT"] == entry["content_id"]
-        assert parsed.info["ICRD"] == "2026-10-21"
+        assert parsed.info["ICRD"] == "2026-10-23"
         assert hashlib.sha256(parsed.pcm).hexdigest() == entry["pcm_sha256"]
         assert hashlib.sha256(raw).hexdigest() == entry["audio_sha256"]
 
