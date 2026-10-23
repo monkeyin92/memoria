@@ -335,9 +335,9 @@ def test_status_is_asked_by_a_flag_and_answered_by_the_animation_task() -> None:
         "bench.render_us +=",
         "bench.busy_us +=",
         "bench.pixels +=",
-        "bench.composed_px +=",
     ):
         assert counter in loop, counter
+    assert "bench.composed_px +=" not in loop
     assert loop.count("BenchLogStatus(") == 1
 
 

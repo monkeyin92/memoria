@@ -89,10 +89,13 @@ for mascot_file in memoria_mascot_pack.h memoria_mascot_pack.cc memoria_mascot_s
     [[ -f "$board_dir/$mascot_file" ]] || die "companion mascot source missing: $mascot_file"
 done
 for companion in starlight taoxi mianmian axu xuanmo; do
-    [[ -s "$board_dir/assets/mascot_$companion.mmp" ]] || die "mascot pack missing: $companion"
+    [[ ! -e "$board_dir/assets/mascot_$companion.mmp" ]] || \
+        die "mascot sticker must stay out of the assets image: $companion"
 done
 [[ -s "$board_dir/assets/brand_mark.mma" ]] || die "boot wordmark missing"
-[[ ! -e "$board_dir/memoria_face.cc" ]] || die "the white line face was replaced by the mascot"
+[[ -f "$board_dir/memoria_dot_face.h" ]] || die "dot face header missing"
+[[ -f "$board_dir/memoria_dot_face.cc" ]] || die "dot face source missing"
+[[ ! -e "$board_dir/memoria_face.cc" ]] || die "the white line face stays out"
 [[ -f "$board_dir/memoria_pat.h" ]] || die "body-pat detector header missing"
 rg -q 'new MemoriaMascotDisplay\(' "$board_dir/memoria_esp_vocat.cc" || \
     die "board does not use the companion mascot display"

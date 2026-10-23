@@ -6,7 +6,9 @@
 #include "backlight.h"
 #include "display/lvgl_display/lvgl_theme.h"
 #include "memoria_audio_level.h"
+#include "memoria_dot_face.h"
 #include "memoria_frame_pacer.h"
+#include "memoria_playback_stop.h"
 #include "settings.h"
 #include "system_info.h"
 
@@ -20,6 +22,31 @@
 #include <cstring>
 
 #define TAG "MemoriaMascot"
+
+static_assert(memoria::kFaceStateUnknown == static_cast<int>(kDeviceStateUnknown),
+              "dot face unknown state drifted from DeviceState");
+static_assert(memoria::kFaceStateStarting == static_cast<int>(kDeviceStateStarting),
+              "dot face starting state drifted from DeviceState");
+static_assert(memoria::kFaceStateWifiConfiguring == static_cast<int>(kDeviceStateWifiConfiguring),
+              "dot face wifi state drifted from DeviceState");
+static_assert(memoria::kFaceStateIdle == static_cast<int>(kDeviceStateIdle),
+              "dot face idle state drifted from DeviceState");
+static_assert(memoria::kFaceStateConnecting == static_cast<int>(kDeviceStateConnecting),
+              "dot face connecting state drifted from DeviceState");
+static_assert(memoria::kFaceStateRecovering == static_cast<int>(kDeviceStateRecovering),
+              "dot face recovering state drifted from DeviceState");
+static_assert(memoria::kFaceStateListening == static_cast<int>(kDeviceStateListening),
+              "dot face listening state drifted from DeviceState");
+static_assert(memoria::kFaceStateSpeaking == static_cast<int>(kDeviceStateSpeaking),
+              "dot face speaking state drifted from DeviceState");
+static_assert(memoria::kFaceStateUpgrading == static_cast<int>(kDeviceStateUpgrading),
+              "dot face upgrading state drifted from DeviceState");
+static_assert(memoria::kFaceStateActivating == static_cast<int>(kDeviceStateActivating),
+              "dot face activating state drifted from DeviceState");
+static_assert(memoria::kFaceStateAudioTesting == static_cast<int>(kDeviceStateAudioTesting),
+              "dot face audio-test state drifted from DeviceState");
+static_assert(memoria::kFaceStateFatalError == static_cast<int>(kDeviceStateFatalError),
+              "dot face fatal state drifted from DeviceState");
 
 namespace {
 
@@ -148,9 +175,6 @@ MemoriaMascotDisplay::MemoriaMascotDisplay(esp_lcd_panel_io_handle_t panel_io,
     } else {
         ESP_LOGW(TAG, "brand mark unavailable");
     }
-    if (LoadCompanion(companion_id_, &pack_)) {
-        scene_->SetPack(pack_.get(), NowMs());
-    }
 }
 
 MemoriaMascotDisplay::~MemoriaMascotDisplay() {
@@ -166,7 +190,6 @@ MemoriaMascotDisplay::~MemoriaMascotDisplay() {
         Unlock();
     }
     scene_.reset();
-    pack_.reset();
     if (brand_.alpha != nullptr) {
         PsramFree(brand_.alpha);
         brand_.alpha = nullptr;
@@ -176,27 +199,6 @@ MemoriaMascotDisplay::~MemoriaMascotDisplay() {
     if (input_mutex_ != nullptr) {
         vSemaphoreDelete(input_mutex_);
     }
-}
-
-bool MemoriaMascotDisplay::LoadCompanion(const std::string& id,
-                                         std::unique_ptr<memoria::MascotPack>* out) {
-    const std::string name = "mascot_" + id + ".mmp";
-    void* data = nullptr;
-    std::size_t size = 0;
-    if (!Assets::GetInstance().GetAssetData(name, data, size)) {
-        ESP_LOGE(TAG, "asset %s missing", name.c_str());
-        return false;
-    }
-    auto pack = std::make_unique<memoria::MascotPack>(PsramAlloc, PsramFree, RomInflate);
-    const int64_t started = esp_timer_get_time();
-    if (!pack->Load(static_cast<const uint8_t*>(data), size)) {
-        ESP_LOGE(TAG, "asset %s invalid", name.c_str());
-        return false;
-    }
-    ESP_LOGI(TAG, "companion=%s decoded in %lld ms", id.c_str(),
-             static_cast<long long>((esp_timer_get_time() - started) / 1000));
-    *out = std::move(pack);
-    return true;
 }
 
 void MemoriaMascotDisplay::SetupUI() {
@@ -448,22 +450,13 @@ void MemoriaMascotDisplay::SetEmotion(const char* emotion) {
         LcdDisplay::SetEmotion(emotion);
         return;
     }
-    // Upstream alerts pass icon names; the error ones make the companion dizzy.
+    // Upstream alert icons. The face still comes from device state.
     if (Equals(emotion, "cancel") || Equals(emotion, "cloud_off") || Equals(emotion, "warning")) {
         error_until_ms_.store(NowMs() + kErrorHoldMs);
         ESP_LOGI(TAG, "emotion=%s -> error", emotion);
         return;
     }
-    memoria::SceneMood mood;
-    if (!memoria::SceneMoodFromName(emotion, &mood)) {
-        return;  // gear, link, download, ...: the phase already tells the story
-    }
-    ESP_LOGI(TAG, "emotion=%s", emotion);
-    if (xSemaphoreTake(input_mutex_, portMAX_DELAY) == pdTRUE) {
-        pending_mood_ = mood;
-        mood_pending_ = true;
-        xSemaphoreGive(input_mutex_);
-    }
+    ESP_LOGI(TAG, "emotion ignored: %s", emotion);
 }
 
 void MemoriaMascotDisplay::SetStatus(const char* status) {
@@ -667,15 +660,10 @@ void MemoriaMascotDisplay::AnimationLoop() {
     while (running_.load()) {
         // Collect inputs from other tasks.
         std::string companion;
-        bool mood_pending = false;
-        memoria::SceneMood mood = memoria::SceneMood::kNeutral;
         bool pat = false;
         bool shake = false;
         if (xSemaphoreTake(input_mutex_, pdMS_TO_TICKS(5)) == pdTRUE) {
             companion.swap(pending_companion_);
-            mood_pending = mood_pending_;
-            mood = pending_mood_;
-            mood_pending_ = false;
             pat = pat_pending_;
             shake = shake_pending_;
             pat_pending_ = false;
@@ -683,17 +671,11 @@ void MemoriaMascotDisplay::AnimationLoop() {
             xSemaphoreGive(input_mutex_);
         }
 
-        // A companion switch decodes outside the display lock (only this task
-        // touches pack_), then swaps under it: companion_id_ is also read by
-        // StyleQrCard from other tasks.
-        std::unique_ptr<memoria::MascotPack> previous;
-        std::unique_ptr<memoria::MascotPack> next;
-        if (!companion.empty() && companion != companion_id_ && LoadCompanion(companion, &next)) {
+        const bool companion_changed = !companion.empty() && companion != companion_id_;
+        if (companion_changed) {
             Settings settings(kSettingsNamespace, true);
             settings.SetString(kCompanionKey, companion);
-            ESP_LOGI(TAG, "companion switched to %s", companion.c_str());
-        } else {
-            next.reset();
+            ESP_LOGI(TAG, "companion recorded %s", companion.c_str());
         }
 
         // A drawn frame's cost to this task includes the wait for the display lock: that wait is LVGL still
@@ -708,12 +690,8 @@ void MemoriaMascotDisplay::AnimationLoop() {
             const memoria::AudioLevelTap::Reading heard = memoria::input_level_tap.Take();
             scene_->SetOutputLevel(spoken.valley, spoken.peak, spoken.blocks, frame_now);
             scene_->SetInputLevel(heard.peak, heard.blocks, frame_now);
-            if (next != nullptr) {
-                previous = std::move(pack_);
-                pack_ = std::move(next);
+            if (companion_changed) {
                 companion_id_ = companion;
-                scene_->SetPack(pack_.get(), frame_now);
-                ApplyChrome();  // ink colour follows the companion
             }
             const memoria::ScenePhase phase = CurrentPhase(frame_now);
             scene_->SetPhase(phase, frame_now);
@@ -734,59 +712,74 @@ void MemoriaMascotDisplay::AnimationLoop() {
                     lv_obj_remove_flag(status_label_, LV_OBJ_FLAG_HIDDEN);
                 }
             }
-            if (mood_pending) {
-                scene_->SetMood(mood, frame_now);
-            }
             if (pat) {
                 scene_->Pat(frame_now);
             }
             if (shake) {
                 scene_->Shake(frame_now);
             }
-            memoria::SceneRect dirty[memoria::MascotScene::kMaxDirty];
+            bool painted = false;
             const int64_t render_started = esp_timer_get_time();
-            const int count =
-                screen_off_ ? 0 : scene_->Render(frame_now, dirty, memoria::MascotScene::kMaxDirty);
+            if (!screen_off_ && framebuffer_ != nullptr) {
+                memoria::FaceFacts facts;
+                facts.state = static_cast<int>(Application::GetInstance().GetDeviceState());
+                facts.crisis = facts.state == memoria::kFaceStateSpeaking &&
+                               !memoria::PlaybackStopRegistry::GetInstance().allowed();
+                facts.user_spoke = user_spoke_.load();
+                facts.intro = scene_->intro_active(frame_now);
+                facts.setup = qr_visible_.load();
+                const memoria::FaceId face = memoria::FaceForFacts(facts);
+                memoria::FaceFrame frame;
+                frame.face = face;
+                frame.captioned = caption_mix_ > 0;
+                // FaceForFacts puts the crisis round on calm before anything
+                // else, so the blink only ever modifies that face.
+                if (facts.crisis) {
+                    if (!crisis_blink_on_) {
+                        crisis_blink_on_ = true;
+                        crisis_blink_started_ms_ = frame_now;
+                    }
+                    frame.eyes_closed =
+                        memoria::CrisisEyesClosed(frame_now - crisis_blink_started_ms_);
+                } else {
+                    crisis_blink_on_ = false;
+                }
+                // A frame equal to the last painted one is already on the
+                // panel, so it needs no rebuild and no invalidate. Blink
+                // windows, the caption lift, and state changes all flow
+                // through the frame's fields, so they keep repainting.
+                if (!frame_shown_ || frame != shown_frame_) {
+                    memoria::PaintDotFace(framebuffer_, width_, height_, frame);
+                    if (!frame_shown_ || frame.face != shown_frame_.face) {
+                        ESP_LOGI(TAG, "face=%s", memoria::FaceName(frame.face));
+                    }
+                    shown_frame_ = frame;
+                    frame_shown_ = true;
+                    painted = true;
+                }
+            }
             const int64_t render_us = esp_timer_get_time() - render_started;
             ++stats_frames;
 #if CONFIG_MEMORIA_BENCH_SERIAL
             ++bench.frames;
 #endif
-            if (count > 0) {
+            if (painted) {
                 ++stats_drawn;
                 stats_render_us += render_us;
                 stats_render_max_us = render_us > stats_render_max_us ? render_us : stats_render_max_us;
-                for (int i = 0; i < count; ++i) {
-                    stats_pixels += static_cast<uint64_t>(dirty[i].x1 - dirty[i].x0) *
-                                    (dirty[i].y1 - dirty[i].y0);
-                }
-                stats_composed += scene_->last_composed_px();
+                const uint64_t pixels = static_cast<uint64_t>(width_) * static_cast<uint64_t>(height_);
+                stats_pixels += pixels;
 #if CONFIG_MEMORIA_BENCH_SERIAL
                 ++bench.drawn;
                 bench.render_us += static_cast<uint64_t>(render_us);
                 if (static_cast<uint64_t>(render_us) > bench.render_max_us) {
                     bench.render_max_us = static_cast<uint32_t>(render_us);
                 }
-                for (int i = 0; i < count; ++i) {
-                    bench.pixels += static_cast<uint64_t>(dirty[i].x1 - dirty[i].x0) *
-                                    (dirty[i].y1 - dirty[i].y0);
-                }
-                bench.composed_px += scene_->last_composed_px();
+                bench.pixels += pixels;
 #endif
-            }
-            // Hand LVGL exactly what the scene composed: every rectangle it returns. The scene decides
-            // how narrow each one may be (MMP2, TODOLIST M-7) — it alone knows whether the base is still,
-            // which is what makes a patch-rect-only redraw safe. Invalidating one box here, as the
-            // 2026-10-07 probe did, drops the state ring's four rim strips: composed_px counts them and
-            // the panel would keep showing the previous glow.
-            for (int i = 0; i < count && container_ != nullptr; ++i) {
-                if (memoria::RectEmpty(dirty[i])) {
-                    continue;  // the scene composed nothing for this rectangle (every row cancelled out)
+                if (container_ != nullptr) {
+                    lv_obj_invalidate(container_);
                 }
-                lv_area_t area = {static_cast<int32_t>(dirty[i].x0), static_cast<int32_t>(dirty[i].y0),
-                                  static_cast<int32_t>(dirty[i].x1 - 1),
-                                  static_cast<int32_t>(dirty[i].y1 - 1)};
-                lv_obj_invalidate_area(container_, &area);
             }
             const uint8_t opa = scene_->chrome_opa(frame_now);
             const uint8_t text_opa =
@@ -796,7 +789,7 @@ void MemoriaMascotDisplay::AnimationLoop() {
                 ApplyChromeOpacity(opa);
             }
             Unlock();
-            if (count > 0) {
+            if (painted) {
                 drawn_busy_us = esp_timer_get_time() - frame_started;
             }
         }
@@ -806,15 +799,6 @@ void MemoriaMascotDisplay::AnimationLoop() {
 #if CONFIG_MEMORIA_BENCH_SERIAL
             bench.busy_us += static_cast<uint64_t>(drawn_busy_us);
 #endif
-        }
-        previous.reset();  // the scene no longer references the old pack
-        if (next != nullptr && xSemaphoreTake(input_mutex_, portMAX_DELAY) == pdTRUE) {
-            // The display was busy; try the switch again next frame rather than
-            // wait for the next display_version change.
-            if (pending_companion_.empty()) {
-                pending_companion_ = companion;
-            }
-            xSemaphoreGive(input_mutex_);
         }
 
         if (first_frame) {

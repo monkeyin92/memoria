@@ -44,7 +44,7 @@ import tempfile
 HERE = pathlib.Path(__file__).resolve()
 BOARD_DIR = HERE.parents[1] / "overlay" / "files" / "main" / "boards" / "memoria" / "esp-vocat"
 MEMORIA_DIR = HERE.parents[1] / "overlay" / "files" / "main" / "memoria"
-ASSETS_DIR = BOARD_DIR / "assets"
+ASSETS_DIR = HERE.parents[1] / "tests" / "fixtures" / "mascots"
 SIZE = 360
 
 HARNESS = r"""
