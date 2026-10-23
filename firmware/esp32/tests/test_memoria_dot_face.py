@@ -430,3 +430,6 @@ def test_display_paints_from_device_state_not_emotion_names() -> None:
     assert "memoria::FaceFrame frame;" in loop
     assert "memoria::CrisisEyesClosed(frame_now - crisis_blink_started_ms_)" in loop
     assert "memoria::PaintDotFace(framebuffer_, width_, height_, frame);" in loop
+    # steady-state frames skip the rebuild; a changed frame input repaints
+    assert "!frame_shown_ || frame != shown_frame_" in loop
+    assert loop.index("frame != shown_frame_") < loop.index("PaintDotFace(")

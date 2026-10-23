@@ -31,7 +31,8 @@ class Backlight;
 // scene does not draw. LVGL keeps the text and the binding QR card. A server
 // emotion name never selects a face. While the device is getting online the
 // face lifts and the status text sits on the band below it. The QR card is a
-// screen of its own; no other text is drawn over it.
+// screen of its own; no other text is drawn over it. Frames whose inputs all
+// match the last painted frame skip the rebuild and the invalidate.
 class MemoriaMascotDisplay : public SpiLcdDisplay {
 public:
     MemoriaMascotDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,
@@ -140,7 +141,9 @@ private:
     SemaphoreHandle_t input_mutex_ = nullptr;
     std::string companion_id_ = "starlight";
     std::string pending_companion_;
-    memoria::FaceId shown_face_ = static_cast<memoria::FaceId>(0xFF);
+    // The last painted frame's inputs: an equal frame is already on the panel.
+    memoria::FaceFrame shown_frame_{};
+    bool frame_shown_ = false;
     // Anchor of the crisis-round slow blink (CrisisEyesClosed), set anew each
     // time a round begins.
     bool crisis_blink_on_ = false;

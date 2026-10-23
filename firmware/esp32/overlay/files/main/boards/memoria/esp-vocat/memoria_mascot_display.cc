@@ -741,12 +741,19 @@ void MemoriaMascotDisplay::AnimationLoop() {
                 } else {
                     crisis_blink_on_ = false;
                 }
-                memoria::PaintDotFace(framebuffer_, width_, height_, frame);
-                if (face != shown_face_) {
-                    ESP_LOGI(TAG, "face=%s", memoria::FaceName(face));
-                    shown_face_ = face;
+                // A frame equal to the last painted one is already on the
+                // panel, so it needs no rebuild and no invalidate. Blink
+                // windows, the caption lift, and state changes all flow
+                // through the frame's fields, so they keep repainting.
+                if (!frame_shown_ || frame != shown_frame_) {
+                    memoria::PaintDotFace(framebuffer_, width_, height_, frame);
+                    if (!frame_shown_ || frame.face != shown_frame_.face) {
+                        ESP_LOGI(TAG, "face=%s", memoria::FaceName(frame.face));
+                    }
+                    shown_frame_ = frame;
+                    frame_shown_ = true;
+                    painted = true;
                 }
-                painted = true;
             }
             const int64_t render_us = esp_timer_get_time() - render_started;
             ++stats_frames;
