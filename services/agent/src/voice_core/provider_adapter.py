@@ -272,6 +272,17 @@ class ExistingVoiceProviderAdapter:
             raise RuntimeError("orchestrated language-model handler has no output-intent seam")
         return acceptor(intent)
 
+    def fixed_safety_planned(self, fence: GenerationFence) -> bool:
+        """Whether the prepared plan for ``fence`` is an approved fixed safety script.
+
+        The media session marks ``generation.started`` protected so the device
+        keeps the calm face and ignores a pat or tap. A language model without
+        the seam answers no.
+        """
+
+        probe = getattr(self.language_model, "fixed_safety_planned", None)
+        return bool(probe(fence)) if callable(probe) else False
+
     def warm_committed_turn(self, identity: SessionIdentity, text: str) -> None:
         """Tell the shared Agent which sentence is about to be committed, while its grace still runs.
 

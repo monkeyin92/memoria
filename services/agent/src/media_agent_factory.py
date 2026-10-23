@@ -90,6 +90,9 @@ class _SessionLanguageModel:
     async def prepare_committed_turn(self, text: str) -> Any:
         return await self.pipeline.prepare_committed_turn(text)
 
+    def fixed_safety_planned(self, fence: Any) -> bool:
+        return self.pipeline.fixed_safety_planned(fence)
+
     def warm_committed_turn(self, text: str) -> None:
         self.pipeline.warm_committed_turn(text)
 

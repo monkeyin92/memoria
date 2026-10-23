@@ -702,6 +702,16 @@ class ReplyPipeline:
             current_profile_id=self._current_authorizing_profile_id(),
         )
 
+    def fixed_safety_planned(self, fence: GenerationFence) -> bool:
+        """Whether this turn's reply is an approved fixed safety script.
+
+        ``prepare_turn`` caches the plan before the media session emits
+        ``generation.started``, so the session can mark that start protected on
+        the device before any audio arrives.
+        """
+
+        return self._fixed_safety_script_for_turn(fence) is not None
+
     def rebind_response_plan(
         self,
         previous: GenerationFence,

@@ -18,6 +18,7 @@ from services.agent.src.voice_core.media_session_types import (
     MediaReplyChunk,
     OutputDispatchResult,
     OutputDispatchStatus,
+    fixed_safety_planned_for,
 )
 from services.agent.src.voice_core.media_session_types import (
     OutputOwnerLease as _OutputOwnerLease,
@@ -850,6 +851,7 @@ class MediaOutputDispatchMixin:
             reason="auxiliary_output",
             task_epoch=task_epoch,
             context_version=context_version,
+            protected_playback=fixed_safety_planned_for(context, next_fence),
         ):
             coordinator.complete_output_intent(
                 rebound.intent,
@@ -889,6 +891,7 @@ class MediaOutputDispatchMixin:
             reason="output_generation_start",
             task_epoch=task_epoch,
             context_version=context_version,
+            protected_playback=fixed_safety_planned_for(context, fence),
         )
 
     @staticmethod

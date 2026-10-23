@@ -1186,6 +1186,7 @@ class MediaBridgeGrpcServer:
         reason: str = "",
         task_epoch: int = 0,
         context_version: int = 0,
+        protected_playback: bool = False,
     ) -> bool:
         connection = self._connections.get(session_id)
         if connection is None or connection.closed or not connection.session.accepts_input():
@@ -1233,6 +1234,7 @@ class MediaBridgeGrpcServer:
                     reason=reason[:256],
                     task_epoch=task_epoch,
                     context_version=context_version,
+                    protected_playback=protected_playback,
                 )
             ),
         )

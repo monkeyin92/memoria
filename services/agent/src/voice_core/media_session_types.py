@@ -95,6 +95,18 @@ class MediaVoiceProvider(Protocol):
     async def close(self, identity: SessionIdentity) -> None: ...
 
 
+def fixed_safety_planned_for(context: Any, fence: GenerationFence) -> bool:
+    """Whether the prepared reply for ``fence`` is an approved fixed safety script.
+
+    A provider without the seam answers no, so every other reply keeps the
+    existing interruptible behaviour.
+    """
+
+    provider = getattr(context, "provider", None)
+    probe = getattr(provider, "fixed_safety_planned", None)
+    return bool(probe(fence)) if callable(probe) else False
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderAudioTaskSnapshot:
     """PCM that the active ASR task actually accepted at its provider boundary."""
