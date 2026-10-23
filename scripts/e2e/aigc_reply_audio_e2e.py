@@ -7,6 +7,7 @@ are fake: StepFun TTS, the OpenAI-compatible LLM, FunASR and the Control API.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import base64
 import hashlib
@@ -70,6 +71,12 @@ def _fake_log(message: str) -> None:
 class _FakeState:
     asr_texts: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
     stepfun_texts: list[str] = field(default_factory=list)
+    # "all" makes both fake TTS engines fail before any audio. The two engines
+    # share one endpoint, so the mode is counted per protocol: StepFun speaks
+    # JSON, the Doubao backup speaks binary frames.
+    tts_fault: str = ""
+    stepfun_failures: int = 0
+    doubao_failures: int = 0
     asr_tasks: int = 0
     asr_connections: int = 0
     asr_pcm_bytes: int = 0
@@ -209,6 +216,12 @@ def _write_certs(directory: Path) -> dict[str, Path]:
         )
         files[name] = cert
         files[f"{name}_key"] = key
+    # CI (Linux containers) mount this directory as a non-root user; a 0700
+    # mkdtemp is unreadable there. Docker Desktop on macOS masks the mismatch,
+    # which is why this only failed inside CI.
+    directory.chmod(0o755)
+    for entry in directory.iterdir():
+        entry.chmod(0o644)
     return files
 
 
@@ -350,12 +363,37 @@ async def _stepfun_handler(ws: Any, state: _FakeState) -> None:
         async for raw in ws:
             if not isinstance(raw, str):
                 # The Doubao backup shares this endpoint; its protocol is
-                # binary and only opens when StepFun fails.
+                # binary and only opens when StepFun fails. A text frame is not
+                # a connection-started frame, so the backup fails at its
+                # handshake before it can synthesize anything.
+                if state.tts_fault == "all":
+                    state.doubao_failures += 1
+                    _fake_log("doubao handshake rejected before audio")
+                    await ws.send(json.dumps({"type": "tts.fault"}))
+                    continue
                 _fake_log("stepfun binary frame ignored")
                 continue
             event = json.loads(raw)
             event_type = str(event.get("type") or "")
             if event_type == "tts.create":
+                if state.tts_fault == "all":
+                    # The documented error event, answered before any audio
+                    # delta, so the primary fails with nothing emitted.
+                    state.stepfun_failures += 1
+                    _fake_log("stepfun response rejected before audio")
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "type": "tts.response.error",
+                                "data": {
+                                    "session_id": session_id,
+                                    "code": "unavailable",
+                                    "message": "e2e fault injection",
+                                },
+                            }
+                        )
+                    )
+                    continue
                 await ws.send(
                     json.dumps(
                         {
@@ -531,7 +569,7 @@ class _DeviceClient:
         self.generation_actions: list[tuple[int, int, int]] = []
         self.errors: list[str] = []
         self.session_accepts = 0
-        self.closed_states: list[tuple[int, str]] = []
+        self.closed_states: list[tuple[int, str, bool]] = []
         self.stream_ended = False
         self.stream_error: str | None = None
         self._sample = 0
@@ -626,7 +664,9 @@ class _DeviceClient:
                 state = message.state
                 self.runtime_states.append((int(state.state), int(state.turn_id)))
                 if int(state.state) == int(media_pb2.CONVERSATION_STATE_CLOSED):
-                    self.closed_states.append((int(state.turn_id), str(state.reason)))
+                    self.closed_states.append(
+                        (int(state.turn_id), str(state.reason), bool(state.play_line))
+                    )
             elif event == "error":
                 self.errors.append(message.error.message)
             elif event == "accepted":
@@ -967,7 +1007,7 @@ class _DeviceClient:
         ), f"{label}: new assistant audio frame"
         assert len(self.closed_states) == closed, f"{label}: session closed during the window"
 
-    async def wait_session_closed(self, *, timeout: float = 20.0) -> tuple[int, str]:
+    async def wait_session_closed(self, *, timeout: float = 20.0) -> tuple[int, str, bool]:
         deadline = asyncio.get_running_loop().time() + timeout
         while asyncio.get_running_loop().time() < deadline:
             if self.closed_states:
@@ -1163,6 +1203,7 @@ def _compose_env(
     asr_port: int,
     stepfun_port: int,
     llm_port: int,
+    tts_fault: bool = False,
 ) -> dict[str, str]:
     return {
         "E2E_AGENT_PORT": str(AGENT_PORT),
@@ -1174,6 +1215,10 @@ def _compose_env(
         "E2E_VERIFY_KEY": VERIFY_KEY,
         "E2E_SESSION_ID": SESSION_ID,
         "E2E_OWNER_SILENCE_TIMEOUT_S": f"{IDLE_TIMEOUT_S:g}",
+        # The opening cue is local PCM played before any TTS. A fault round
+        # must reach the engine with nothing played yet, so the cue stays off
+        # there and on everywhere else.
+        "E2E_AIGC_OPENING_ENABLED": "false" if tts_fault else "true",
     }
 
 
@@ -1526,6 +1571,7 @@ async def _run_scenario(
             assert closed[1] == "owner_silence_timeout", (
                 f"idle close reason {closed[1]!r}, want owner_silence_timeout"
             )
+            assert closed[2] is False, "idle close must not ask for the closing line"
             assert not client.errors, f"idle close emitted errors: {client.errors}"
             assert IDLE_TIMEOUT_S - 1.0 <= elapsed <= IDLE_TIMEOUT_S + 5.0, (
                 f"idle close took {elapsed:.2f}s, want about {IDLE_TIMEOUT_S:.1f}s"
@@ -1541,26 +1587,107 @@ async def _run_scenario(
     return results
 
 
-async def main() -> int:
+async def _run_tts_fault_scenario(
+    *,
+    cert_dir: Path,
+    state: _FakeState,
+) -> dict[str, Any]:
+    """Both TTS engines fail before any audio, so the session closes on it.
+
+    The wake greeting is the first thing the session speaks, and it is spoken
+    through the same failover as every later reply. With both engines down the
+    session never reaches a conversation turn: the device sees one close, and
+    that close names the outage and asks for the local closing line.
+    """
+
+    ca = (cert_dir / "ca.pem").read_bytes()
+    credentials = grpc.ssl_channel_credentials(
+        root_certificates=ca,
+        private_key=(cert_dir / "client.key").read_bytes(),
+        certificate_chain=(cert_dir / "client.pem").read_bytes(),
+    )
+    channel = grpc.aio.secure_channel(
+        f"localhost:{AGENT_PORT}",
+        credentials,
+        options=(("grpc.ssl_target_name_override", "localhost"),),
+    )
+    await asyncio.wait_for(channel.channel_ready(), timeout=30)
+    identity = media_pb2.SessionIdentity(
+        session_id=SESSION_ID,
+        account_id=ACCOUNT_ID,
+        participant_id=ACCOUNT_ID,
+        device_id=DEVICE_ID,
+        client_type="device",
+        stream_epoch=1,
+        subject_id=SUBJECT_ID,
+        binding_id=BINDING_ID,
+        binding_version=BINDING_VERSION,
+        runtime_profile_version=RUNTIME_PROFILE_VERSION,
+    )
+    try:
+        async with _DeviceClient(channel, identity) as client:
+            await client.open_session()
+            closed = await client.wait_session_closed(timeout=40)
+            audio_bytes = sum(len(turn.audio()) for turn in client.turns.values())
+            assert audio_bytes == 0, (
+                f"tts fault delivered {audio_bytes} bytes of audio before the close"
+            )
+            assert len(client.closed_states) == 1, (
+                f"tts fault closed the session {len(client.closed_states)} times: "
+                f"{client.closed_states}"
+            )
+            assert closed[1] == "tts_unavailable", (
+                f"close reason {closed[1]!r}, want tts_unavailable"
+            )
+            assert closed[2] is True, "close did not ask the device to play the local line"
+            assert state.stepfun_failures >= 1, "the StepFun primary was never attempted"
+            assert state.doubao_failures >= 1, "the Doubao backup was never attempted"
+            return {
+                "close_reason": closed[1],
+                "play_line": closed[2],
+                "audio_bytes": audio_bytes,
+                "stepfun_failures": state.stepfun_failures,
+                "doubao_failures": state.doubao_failures,
+            }
+    finally:
+        await channel.close()
+
+
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--tts-fault",
+        choices=["all"],
+        default="",
+        help="fail every fake TTS engine before its first audio byte",
+    )
+    return parser.parse_args(argv)
+
+
+async def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(sys.argv[1:] if argv is None else argv)
     cert_dir = Path(tempfile.mkdtemp(prefix=".aigc-e2e-certs-", dir=REPO_ROOT))
     files = _write_certs(cert_dir)
     ssl_context = _server_ssl(files)
-    state = _FakeState()
+    state = _FakeState(tts_fault=args.tts_fault)
     FAKE_LOG.write_text("", encoding="utf-8")
     control_runner, control_port = await _start_http(await _control_api_app(state), None)
     llm_runner, llm_port = await _start_http(await _llm_app(state), None)
     asr_server, asr_port = await _start_ws(_asr_handler, state, ssl_context)
     stepfun_server, stepfun_port = await _start_ws(_stepfun_handler, state, ssl_context)
     docker_env = _docker_env()
+    fault = state.tts_fault == "all"
     compose_env = _compose_env(
         cert_dir=cert_dir,
         control_port=control_port,
         asr_port=asr_port,
         stepfun_port=stepfun_port,
         llm_port=llm_port,
+        tts_fault=fault,
     )
-    for text in (NORMAL_TEXT, NORMAL_TEXT, *([CRISIS_TEXT] * (CRISIS_ROUNDS + 1))):
-        await state.asr_texts.put(text)
+    if not fault:
+        for text in (NORMAL_TEXT, NORMAL_TEXT, *([CRISIS_TEXT] * (CRISIS_ROUNDS + 1))):
+            await state.asr_texts.put(text)
     logs: str = ""
     try:
         print(
@@ -1576,42 +1703,46 @@ async def main() -> int:
         )
         _compose_up(compose_env, docker_env)
         _wait_port("127.0.0.1", AGENT_PORT, timeout=60)
+
         def audio_inventory() -> dict[str, list[int]]:
             return _container_audio_inventory(docker_env, compose_env)
 
-        disk_before_run = audio_inventory()
-        results = await _run_scenario(
-            cert_dir=cert_dir,
-            state=state,
-            audio_inventory=audio_inventory,
-        )
-        disk_after_run = audio_inventory()
-        logs = _compose_logs(docker_env)
-        for line in logs.splitlines():
-            if "ERROR" in line or "output_intent_not_selected" in line:
-                raise RuntimeError(f"E2E agent emitted an error line: {line}")
-        buffers_cleared = _assert_audio_buffers_cleared(logs)
-        disk_written = _audio_written_since(disk_before_run, disk_after_run)
-        assert not disk_written, f"e2e wrote audio to disk: {disk_written}"
-        if any(CRISIS_TEXT in spoken for spoken in state.stepfun_texts):
-            raise RuntimeError("crisis text reached the live StepFun engine")
+        if fault:
+            results = await _run_tts_fault_scenario(cert_dir=cert_dir, state=state)
+        else:
+            disk_before_run = audio_inventory()
+            results = await _run_scenario(
+                cert_dir=cert_dir,
+                state=state,
+                audio_inventory=audio_inventory,
+            )
+            disk_after_run = audio_inventory()
+            logs = _compose_logs(docker_env)
+            for line in logs.splitlines():
+                if "ERROR" in line or "output_intent_not_selected" in line:
+                    raise RuntimeError(f"E2E agent emitted an error line: {line}")
+            buffers_cleared = _assert_audio_buffers_cleared(logs)
+            disk_written = _audio_written_since(disk_before_run, disk_after_run)
+            assert not disk_written, f"e2e wrote audio to disk: {disk_written}"
+            if any(CRISIS_TEXT in spoken for spoken in state.stepfun_texts):
+                raise RuntimeError("crisis text reached the live StepFun engine")
+            results["crisis_sha256"] = hashlib.sha256(_crisis_pcm()).hexdigest()
+            results["disk_audio_written_bytes"] = sum(disk_written.values())
+            results["audio_buffers_cleared"] = buffers_cleared
+            print(
+                json.dumps(
+                    {
+                        "disk_audio_written_bytes": sum(disk_written.values()),
+                        "audio_buffers_cleared": buffers_cleared,
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
         results["llm_calls"] = state.llm_calls
         results["stepfun_units"] = len(state.stepfun_texts)
         results["asr_connections"] = state.asr_connections
         results["asr_tasks"] = state.asr_tasks
-        results["crisis_sha256"] = hashlib.sha256(_crisis_pcm()).hexdigest()
-        results["disk_audio_written_bytes"] = sum(disk_written.values())
-        results["audio_buffers_cleared"] = buffers_cleared
-        print(
-            json.dumps(
-                {
-                    "disk_audio_written_bytes": sum(disk_written.values()),
-                    "audio_buffers_cleared": buffers_cleared,
-                },
-                sort_keys=True,
-            ),
-            flush=True,
-        )
         print(json.dumps({"ok": True, **results}, ensure_ascii=False, indent=2))
         return 0
     except Exception:
