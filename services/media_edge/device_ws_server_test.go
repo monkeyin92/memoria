@@ -21,18 +21,19 @@ import (
 )
 
 type deviceTestCore struct {
-	mu        sync.Mutex
-	events    chan *mediav1.CoreToMedia
-	closed    chan struct{}
-	closeOnce sync.Once
-	current   Fence
-	uplink    []AudioFrame
-	vad       []mediaVADEvent
-	stops     []Fence
-	keywords  []string
-	playback  []PlaybackProgress
-	resumes   []uint64
-	authority mediav1.InteractionAuthority
+	mu                sync.Mutex
+	events            chan *mediav1.CoreToMedia
+	closed            chan struct{}
+	closeOnce         sync.Once
+	current           Fence
+	currentFenceReads []Fence
+	uplink            []AudioFrame
+	vad               []mediaVADEvent
+	stops             []Fence
+	keywords          []string
+	playback          []PlaybackProgress
+	resumes           []uint64
+	authority         mediav1.InteractionAuthority
 	// strictPlayback mirrors VoiceCoreSession.SendPlaybackProgress: progress
 	// for any generation but current is rejected as stale.
 	strictPlayback bool
@@ -75,6 +76,11 @@ func (c *deviceTestCore) Close() error {
 func (c *deviceTestCore) CurrentFence() Fence {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if len(c.currentFenceReads) > 0 {
+		fence := c.currentFenceReads[0]
+		c.currentFenceReads = c.currentFenceReads[1:]
+		return fence
+	}
 	return c.current
 }
 

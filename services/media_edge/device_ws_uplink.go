@@ -318,6 +318,9 @@ func (c *DeviceConnection) handlePlaybackReceipt(envelope deviceControlEnvelope,
 			// receipt of a device that was stalled for seconds, 2026-09-30)
 			// can no longer change what was heard. Closing the WSS for it
 			// forced a reconnect; drop it, and only it.
+			if receipt.Type == "playback.ended" || receipt.Type == "playback.error" {
+				c.clearPlaybackActive("replaced_generation_receipt", receipt.Fence)
+			}
 			slog.Info("media edge dropped late receipt for a replaced generation",
 				"session", c.sessionID, "device", c.deviceID, "epoch", c.epoch,
 				"type", envelope.Type, "generation", receipt.Fence.GenerationID)
@@ -349,6 +352,9 @@ func (c *DeviceConnection) handlePlaybackReceipt(envelope deviceControlEnvelope,
 	// playback window of whatever plays now: drop it, and only it. (Closing the WSS for it cost the owner a
 	// reconnect of about 7 s and the next sentence, 2026-10-02: 2 of 17 spoken stops.)
 	if runtime != nil && runtime.GenerationReplaced(receipt.Fence.toFence(c.sessionID)) {
+		if receipt.Type == "playback.ended" || receipt.Type == "playback.error" {
+			c.clearPlaybackActive("replaced_generation_receipt", receipt.Fence)
+		}
 		c.logDroppedLateReceipt(envelope.Type, receipt.Fence, "precheck")
 		return true
 	}

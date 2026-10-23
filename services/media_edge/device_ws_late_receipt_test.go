@@ -277,6 +277,49 @@ func TestDeviceWSSLateReceiptOfAReplacedGenerationLeavesTheNewWindowAlone(t *tes
 	}
 }
 
+// A terminal receipt the ledger refuses for a replaced generation still owns its playback window.
+func TestDeviceWSSLateTerminalReceiptRefusedByLedgerClosesItsPlaybackWindow(t *testing.T) {
+	scene := newCancelledStoryScene(t)
+	scene.receipt(t, "playback.started", 1)
+	waitUntil(t, 3*time.Second, scene.serverConn.isPlaybackActive)
+	scene.cancel(t)
+
+	// Seed the ledger with a terminal receipt without sending it through the handler. The next terminal receipt
+	// is a duplicate, so the ledger refuses it while the handler still owns the story's open playback window.
+	scene.serverConn.ledger.recordSent(scene.story, 2, 9600)
+	if _, ok := scene.serverConn.ledger.record(devicePlaybackReceipt{
+		deviceEventBase: deviceEventBase{
+			Type: "playback.ended", Version: 2, StreamEpoch: 18, DeviceMonotonicMS: 2,
+		},
+		Fence: scene.story, ReceivedSequence: 2, RenderedSampleEnd: 9600, Approximate: true,
+	}, 2); !ok {
+		t.Fatal("failed to seed the ledger with the terminal receipt")
+	}
+
+	scene.receipt(t, "playback.ended", 2)
+	waitUntil(t, 3*time.Second, func() bool { return !scene.serverConn.isPlaybackActive() })
+	scene.requireSessionKept(t)
+}
+
+func TestDeviceWSSLateTerminalReceiptDroppedByPrecheckClosesItsPlaybackWindow(t *testing.T) {
+	scene := newCancelledStoryScene(t)
+	scene.receipt(t, "playback.started", 1)
+	waitUntil(t, 3*time.Second, scene.serverConn.isPlaybackActive)
+
+	// The first replacement check still sees the old Voice Core fence. The second check sees the cancel that
+	// landed between the terminal and precheck branches, reproducing the handler's early terminal drop.
+	scene.core.mu.Lock()
+	scene.core.currentFenceReads = []Fence{
+		{SessionID: "session_1", TurnID: 1, GenerationID: 1, SessionEpoch: 1},
+		{SessionID: "session_1", TurnID: 1, GenerationID: 2, SessionEpoch: 1},
+	}
+	scene.core.mu.Unlock()
+
+	scene.receipt(t, "playback.ended", 2)
+	waitUntil(t, 3*time.Second, func() bool { return !scene.serverConn.isPlaybackActive() })
+	scene.requireSessionKept(t)
+}
+
 // A receipt Voice Core refuses while its generation is still the current one is a real fault, not a late tick:
 // the edge still fails closed and tells the device (retryable) why.
 func TestDeviceWSSPlaybackReceiptRefusedForTheCurrentGenerationStillClosesRetryably(t *testing.T) {
