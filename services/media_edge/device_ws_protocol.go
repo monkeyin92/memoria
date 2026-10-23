@@ -470,6 +470,10 @@ type deviceGenerationControl struct {
 	ServerMonotonicMS uint64      `json:"server_monotonic_ms"`
 	Fence             deviceFence `json:"fence"`
 	Reason            string      `json:"reason"`
+	// The firmware reads an explicit false as "do not cut this reply short".
+	// Any other reply omits the key, which older firmware ignores and current
+	// firmware reads as interruptible.
+	Interruptible *bool `json:"interruptible,omitempty"`
 }
 
 type devicePlaybackControl struct {

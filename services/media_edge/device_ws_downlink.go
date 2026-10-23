@@ -305,12 +305,18 @@ func (c *DeviceConnection) ForwardCoreEvent(event *mediav1.CoreToMedia) {
 				c.beginDownlinkClock(fence, false)
 			}
 		}
+		var interruptible *bool
+		if messageType == "generation.started" && generation.GetProtectedPlayback() {
+			protected := false
+			interruptible = &protected
+		}
 		payload, err := marshalDeviceControl(deviceGenerationControl{
 			Type: messageType, Version: 2,
 			SessionID: c.sessionID, StreamEpoch: uint64(c.epoch),
 			ControlSequence:   c.nextServerSequence(),
 			ServerMonotonicMS: now,
 			Fence:             fence, Reason: generation.GetReason(),
+			Interruptible: interruptible,
 		})
 		if err != nil {
 			return

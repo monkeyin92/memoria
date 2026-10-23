@@ -48,6 +48,7 @@ from services.agent.src.voice_core.media_session_state import (
 from services.agent.src.voice_core.media_session_types import (
     OutputDispatchResult,
     OutputDispatchStatus,
+    fixed_safety_planned_for,
 )
 from services.agent.src.voice_core.speech_timeline import (
     ASRResult,
@@ -1572,6 +1573,7 @@ class MediaSessionCommitMixin:
             reason="user_turn_committed",
             task_epoch=task_epoch,
             context_version=context_version,
+            protected_playback=fixed_safety_planned_for(context, fence),
         )
         if not generation_started:
             # Without an accepted START the transport generation gate stays
