@@ -394,6 +394,9 @@ message GenerationControl {
   uint64 task_epoch = 8;
   uint64 context_version = 9;
   uint64 session_epoch = 10;
+  // The device must not cut this reply short (a fixed safety script). The
+  // device wire key is "interruptible" with the opposite polarity.
+  bool protected_playback = 11;
 }
 
 message TranscriptEvent {
