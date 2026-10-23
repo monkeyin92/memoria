@@ -1,7 +1,7 @@
 """Pre-synthesized audio for the approved fixed-safety and daily-limit turns.
 
 The four clips live under ``infra/voices/fixed_safety`` and were rendered once
-with the StepFun ``stepaudio-3-tts`` ``yuanqishaonv`` voice on 2026-10-21.  A
+with the StepFun ``stepaudio-2.5-tts`` ``wenrounansheng`` voice on 2026-10-23.  A
 crisis turn must not depend on a live TTS connection: this module validates the
 manifest and the labelled WAVs, then serves the stored PCM directly.  Any
 validation failure degrades to the existing realtime provider with an alert
@@ -35,11 +35,11 @@ DEFAULT_FIXED_SAFETY_AUDIO_DIR: Final = "infra/voices/fixed_safety"
 FIXED_SAFETY_AUDIO_SAMPLE_RATE_HZ: Final = 24_000
 FIXED_SAFETY_AUDIO_CHANNELS: Final = 1
 FIXED_SAFETY_AUDIO_BITS_PER_SAMPLE: Final = 16
-FIXED_SAFETY_AUDIO_VOICE: Final = "yuanqishaonv"
-FIXED_SAFETY_AUDIO_SYNTHESIZED_ON: Final = "2026-10-21"
-FIXED_SAFETY_AUDIO_ENGINE: Final = "stepfun stepaudio-3-tts"
-FIXED_SAFETY_AUDIO_ARTIST: Final = "StepFun stepaudio-3-tts / memoria"
-FIXED_SAFETY_AUDIO_SOFTWARE: Final = "StepFun stepaudio-3-tts / memoria"
+FIXED_SAFETY_AUDIO_VOICE: Final = "wenrounansheng"
+FIXED_SAFETY_AUDIO_SYNTHESIZED_ON: Final = "2026-10-23"
+FIXED_SAFETY_AUDIO_ENGINE: Final = "stepfun stepaudio-2.5-tts"
+FIXED_SAFETY_AUDIO_ARTIST: Final = "StepFun stepaudio-2.5-tts / memoria"
+FIXED_SAFETY_AUDIO_SOFTWARE: Final = "StepFun stepaudio-2.5-tts / memoria"
 _MANIFEST_SCHEMA_VERSION: Final = 1
 _FRAME_BYTES: Final = FIXED_SAFETY_AUDIO_SAMPLE_RATE_HZ * 2 * 20 // 1000
 _SENTENCE_END = re.compile(r"(?<=[。！？!?])")
