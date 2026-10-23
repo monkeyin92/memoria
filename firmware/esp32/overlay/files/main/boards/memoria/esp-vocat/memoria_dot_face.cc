@@ -24,6 +24,9 @@ constexpr uint16_t Row(const char* text) {
 
 struct Glyph {
     uint16_t row[kRows];
+    // Rows this glyph hides while the crisis-round blink closes the eyes. Only
+    // the calm face blinks today; 0 keeps every other glyph intact.
+    uint8_t eye_rows;
 };
 
 constexpr Glyph kGlyphs[kFaceCount] = {
@@ -39,7 +42,7 @@ constexpr Glyph kGlyphs[kFaceCount] = {
         Row("............."),
         Row("............."),
         Row("............."),
-    }},
+    }, 0x06},
     {{
         Row("............."),
         Row("..##.....##.."),
@@ -52,7 +55,7 @@ constexpr Glyph kGlyphs[kFaceCount] = {
         Row(".....#####..."),
         Row("............."),
         Row("............."),
-    }},
+    }, 0x00},
     {{
         Row("............."),
         Row("....##....##."),
@@ -65,7 +68,7 @@ constexpr Glyph kGlyphs[kFaceCount] = {
         Row("...#........."),
         Row("............."),
         Row("............."),
-    }},
+    }, 0x00},
     {{
         Row("............."),
         Row("..##.....##.."),
@@ -78,7 +81,7 @@ constexpr Glyph kGlyphs[kFaceCount] = {
         Row("...#######..."),
         Row("............."),
         Row("............."),
-    }},
+    }, 0x00},
     {{
         Row("............."),
         Row(".##......##.."),
@@ -91,7 +94,7 @@ constexpr Glyph kGlyphs[kFaceCount] = {
         Row("............."),
         Row("............."),
         Row("............."),
-    }},
+    }, 0x00},
     {{
         Row(".##.......##."),
         Row("...##...##..."),
@@ -104,7 +107,7 @@ constexpr Glyph kGlyphs[kFaceCount] = {
         Row("............."),
         Row("............."),
         Row("............."),
-    }},
+    }, 0x00},
     {{
         Row("..##.....##.."),
         Row("..##.....##.."),
@@ -117,7 +120,7 @@ constexpr Glyph kGlyphs[kFaceCount] = {
         Row("............."),
         Row("............."),
         Row("............."),
-    }},
+    }, 0x00},
 };
 
 const char* const kNames[kFaceCount] = {
@@ -126,6 +129,8 @@ const char* const kNames[kFaceCount] = {
 
 static_assert(static_cast<int>(FaceId::kCalm) == 0, "name table starts at calm");
 static_assert(static_cast<int>(FaceId::kPair) + 1 == kFaceCount, "seven faces");
+static_assert(kCrisisBlinkClosedMs < kCrisisBlinkPeriodMs,
+              "a slow blink closes for a fraction of its cycle");
 
 FaceId ClampFace(FaceId id) {
     const auto index = static_cast<uint8_t>(id);
@@ -145,6 +150,10 @@ int OriginY(bool captioned) {
 }  // namespace
 
 const char* FaceName(FaceId id) { return kNames[static_cast<int>(ClampFace(id))]; }
+
+bool CrisisEyesClosed(uint32_t elapsed_ms) {
+    return elapsed_ms % kCrisisBlinkPeriodMs >= kCrisisBlinkPeriodMs - kCrisisBlinkClosedMs;
+}
 
 FaceId FaceForFacts(const FaceFacts& facts) {
     if (facts.crisis) {
@@ -184,16 +193,19 @@ FaceRect FaceBounds(bool captioned) {
     return box;
 }
 
-void PaintDotFace(uint16_t* buffer, int width, int height, FaceId id, bool captioned) {
+void PaintDotFace(uint16_t* buffer, int width, int height, const FaceFrame& frame) {
     if (buffer == nullptr || width <= 0 || height <= 0) {
         return;
     }
     std::memset(buffer, 0, static_cast<std::size_t>(width) * static_cast<std::size_t>(height) *
                                sizeof(uint16_t));
-    const Glyph& glyph = kGlyphs[static_cast<int>(ClampFace(id))];
+    const Glyph& glyph = kGlyphs[static_cast<int>(ClampFace(frame.face))];
     const int origin_x = OriginX();
-    const int origin_y = OriginY(captioned);
+    const int origin_y = OriginY(frame.captioned);
     for (int row = 0; row < kRows; ++row) {
+        if (frame.eyes_closed && ((glyph.eye_rows >> row) & 1u) != 0) {
+            continue;
+        }
         const uint16_t bits = glyph.row[row];
         for (int col = 0; col < kCols; ++col) {
             if ((bits & (1u << col)) == 0) {

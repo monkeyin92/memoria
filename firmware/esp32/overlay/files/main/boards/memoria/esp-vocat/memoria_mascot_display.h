@@ -141,6 +141,10 @@ private:
     std::string companion_id_ = "starlight";
     std::string pending_companion_;
     memoria::FaceId shown_face_ = static_cast<memoria::FaceId>(0xFF);
+    // Anchor of the crisis-round slow blink (CrisisEyesClosed), set anew each
+    // time a round begins.
+    bool crisis_blink_on_ = false;
+    uint32_t crisis_blink_started_ms_ = 0;
     bool pat_pending_ = false;
     bool shake_pending_ = false;
     std::atomic<uint32_t> error_until_ms_{0};

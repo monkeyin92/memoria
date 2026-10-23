@@ -88,8 +88,11 @@ int main() {
     for (int i = 0; i < memoria::kFaceCount; ++i) {
         const auto id = static_cast<memoria::FaceId>(i);
         for (int captioned = 0; captioned < 2; ++captioned) {
-            memoria::PaintDotFace(g_buffer.data(), memoria::kFaceScreen, memoria::kFaceScreen, id,
-                                  captioned != 0);
+            memoria::FaceFrame frame;
+            frame.face = id;
+            frame.captioned = captioned != 0;
+            memoria::PaintDotFace(g_buffer.data(), memoria::kFaceScreen, memoria::kFaceScreen,
+                                  frame);
             const memoria::FaceRect box = memoria::FaceBounds(captioned != 0);
             int yellow = 0;
             int other = 0;
@@ -152,6 +155,70 @@ int main() {
                 rim_yellow, outside);
         }
     }
+    // The crisis blink: its pace, sample-by-sample, then the closed-eyes paint.
+    std::printf("blink-param %u %u\n", static_cast<unsigned>(memoria::kCrisisBlinkPeriodMs),
+                static_cast<unsigned>(memoria::kCrisisBlinkClosedMs));
+    const unsigned open_ms = memoria::kCrisisBlinkPeriodMs - memoria::kCrisisBlinkClosedMs;
+    const unsigned elapsed_samples[] = {
+        0,
+        open_ms - 1,
+        open_ms,
+        open_ms + 1,
+        memoria::kCrisisBlinkPeriodMs - 1,
+        memoria::kCrisisBlinkPeriodMs,
+        memoria::kCrisisBlinkPeriodMs + open_ms,
+        100000,
+    };
+    for (unsigned elapsed : elapsed_samples) {
+        std::printf("blink %u %d\n", elapsed, memoria::CrisisEyesClosed(elapsed) ? 1 : 0);
+    }
+
+    memoria::FaceFrame frame;
+    frame.face = memoria::FaceId::kCalm;
+    std::printf("frameeq open %d\n", frame == memoria::FaceFrame{} ? 1 : 0);
+    frame.eyes_closed = true;
+    std::printf("frameeq eyes %d\n", frame == memoria::FaceFrame{} ? 1 : 0);
+    frame.eyes_closed = false;
+    frame.captioned = true;
+    std::printf("frameeq caption %d\n", frame == memoria::FaceFrame{} ? 1 : 0);
+
+    memoria::FaceFrame closed;
+    closed.face = memoria::FaceId::kCalm;
+    closed.eyes_closed = true;
+    memoria::PaintDotFace(g_buffer.data(), memoria::kFaceScreen, memoria::kFaceScreen, closed);
+    const memoria::FaceRect closed_box = memoria::FaceBounds(false);
+    int closed_yellow = 0;
+    int closed_other = 0;
+    int closed_edge = 0;
+    int closed_outside = 0;
+    int closed_min_y = memoria::kFaceScreen;
+    int closed_max_y = 0;
+    for (int y = 0; y < memoria::kFaceScreen; ++y) {
+        for (int x = 0; x < memoria::kFaceScreen; ++x) {
+            const uint16_t pixel = g_buffer[static_cast<size_t>(y) * memoria::kFaceScreen + x];
+            if (pixel == 0) {
+                continue;
+            }
+            if (pixel != memoria::kFaceYellow) {
+                ++closed_other;
+                continue;
+            }
+            ++closed_yellow;
+            if (x < closed_box.x0 || x >= closed_box.x1 || y < closed_box.y0 ||
+                y >= closed_box.y1) {
+                ++closed_outside;
+            }
+            if (x < 8 || y < 8 || x >= memoria::kFaceScreen - 8 ||
+                y >= memoria::kFaceScreen - 8) {
+                ++closed_edge;
+            }
+            if (y < closed_min_y) closed_min_y = y;
+            if (y > closed_max_y) closed_max_y = y;
+        }
+    }
+    std::printf("paintclosed yellow=%d other=%d edge=%d outside=%d min_y=%d max_y=%d\n",
+                closed_yellow, closed_other, closed_edge, closed_outside, closed_min_y,
+                closed_max_y);
     return 0;
 }
 """
@@ -194,6 +261,10 @@ def report() -> dict:
     mapped: dict[tuple[str, str], str] = {}
     names: list[str] = []
     paints: dict[tuple[str, int], dict[str, int]] = {}
+    paintclosed = None
+    blink_params = None
+    blink: dict[int, int] = {}
+    frameeq: dict[str, int] = {}
     count = None
     for parts in lines:
         if parts[0] == "count":
@@ -202,6 +273,14 @@ def report() -> dict:
             names.append(parts[2])
         elif parts[0] == "map":
             mapped[(parts[1], parts[2])] = parts[3]
+        elif parts[0] == "paintclosed":
+            paintclosed = {key: int(value) for key, value in (item.split("=") for item in parts[1:])}
+        elif parts[0] == "blink-param":
+            blink_params = (int(parts[1]), int(parts[2]))
+        elif parts[0] == "blink":
+            blink[int(parts[1])] = int(parts[2])
+        elif parts[0] == "frameeq":
+            frameeq[parts[1]] = int(parts[2])
         elif parts[0] == "paint":
             fields = {}
             for item in parts[3:]:
@@ -210,7 +289,16 @@ def report() -> dict:
                     continue
                 fields[key] = int(value)
             paints[(parts[1], int(parts[2]))] = fields
-    return {"count": count, "names": names, "mapped": mapped, "paints": paints}
+    return {
+        "count": count,
+        "names": names,
+        "mapped": mapped,
+        "paints": paints,
+        "paintclosed": paintclosed,
+        "blink_params": blink_params,
+        "blink": blink,
+        "frameeq": frameeq,
+    }
 
 
 def _face(report: dict, kind: str, state: int) -> str:
@@ -261,6 +349,38 @@ def test_crisis_is_always_the_calm_face(report: dict) -> None:
         assert _face(report, "crisis_all", state) == "calm"
 
 
+def test_crisis_blink_is_slow_and_lands_on_cycle_tails(report: dict) -> None:
+    period, closed = report["blink_params"]
+    assert closed > 0
+    assert closed * 4 <= period  # the eyes mostly stay open: a blink, not a stare
+    open_ms = period - closed
+    assert report["blink"][open_ms - 1] == 0
+    assert report["blink"][open_ms] == 1
+    assert report["blink"][period - 1] == 1
+    assert report["blink"][period] == 0
+    assert report["blink"][period + open_ms] == 1
+    for elapsed, state in report["blink"].items():
+        assert state == (1 if elapsed % period >= open_ms else 0), elapsed
+
+
+def test_closed_calm_hides_the_eyes_and_keeps_the_mouth(report: dict) -> None:
+    open_calm = report["paints"][("calm", 0)]
+    closed = report["paintclosed"]
+    assert closed["yellow"] > 0
+    assert closed["yellow"] < open_calm["yellow"]
+    assert closed["min_y"] > open_calm["min_y"]  # the topmost rows were the eyes
+    assert closed["max_y"] == open_calm["max_y"]  # the mouth still ends the face
+    assert closed["other"] == 0
+    assert closed["edge"] == 0
+    assert closed["outside"] == 0
+
+
+def test_face_frame_compares_every_paint_input(report: dict) -> None:
+    assert report["frameeq"]["open"] == 1
+    assert report["frameeq"]["eyes"] == 0
+    assert report["frameeq"]["caption"] == 0
+
+
 def test_paint_is_yellow_dots_without_a_frame(report: dict) -> None:
     signatures = set()
     for name in NAMES:
@@ -306,3 +426,7 @@ def test_display_paints_from_device_state_not_emotion_names() -> None:
     loop = source[source.index("void MemoriaMascotDisplay::AnimationLoop") :]
     assert "scene_->Render(" not in loop
     assert loop.index("scene_->SetOutputLevel(") < loop.index("PaintDotFace(")
+    # crisis round: calm face, and the display owns the round's blink clock
+    assert "memoria::FaceFrame frame;" in loop
+    assert "memoria::CrisisEyesClosed(frame_now - crisis_blink_started_ms_)" in loop
+    assert "memoria::PaintDotFace(framebuffer_, width_, height_, frame);" in loop

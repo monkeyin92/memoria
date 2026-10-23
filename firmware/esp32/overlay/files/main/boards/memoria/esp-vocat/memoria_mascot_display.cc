@@ -726,7 +726,22 @@ void MemoriaMascotDisplay::AnimationLoop() {
                 facts.intro = scene_->intro_active(frame_now);
                 facts.setup = qr_visible_.load();
                 const memoria::FaceId face = memoria::FaceForFacts(facts);
-                memoria::PaintDotFace(framebuffer_, width_, height_, face, caption_mix_ > 0);
+                memoria::FaceFrame frame;
+                frame.face = face;
+                frame.captioned = caption_mix_ > 0;
+                // FaceForFacts puts the crisis round on calm before anything
+                // else, so the blink only ever modifies that face.
+                if (facts.crisis) {
+                    if (!crisis_blink_on_) {
+                        crisis_blink_on_ = true;
+                        crisis_blink_started_ms_ = frame_now;
+                    }
+                    frame.eyes_closed =
+                        memoria::CrisisEyesClosed(frame_now - crisis_blink_started_ms_);
+                } else {
+                    crisis_blink_on_ = false;
+                }
+                memoria::PaintDotFace(framebuffer_, width_, height_, frame);
                 if (face != shown_face_) {
                     ESP_LOGI(TAG, "face=%s", memoria::FaceName(face));
                     shown_face_ = face;
