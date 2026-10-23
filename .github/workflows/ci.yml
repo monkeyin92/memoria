@@ -502,6 +502,20 @@ jobs:
           ignore-unfixed: true
           severity: CRITICAL,HIGH
 
+  aigc-e2e-tts-fault:
+    needs: changes
+    # Manual only (ci > Run workflow): builds the agent image and runs one
+    # full-stack fault round, too heavy for every pull request.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: TTS fault closes the round with the local line
+        run: uv run python scripts/e2e/aigc_reply_audio_e2e.py --tts-fault=all
+
   miniprogram:
     needs: changes
     if: needs.changes.outputs.miniprogram == 'true'
