@@ -45,6 +45,7 @@ PRIMARY_CFG_PATH = SPEC_DIR / "LateReceipts.cfg"
 # A different count means the spec changed; re-derive the model and update this
 # number in the same change, so a silently weakened model cannot pass.
 EXPECTED_BASE_DISTINCT = 27759
+REQUIRED_PRIMARY_INVARIANT = "TerminalReceiptEndsOwnWindow"
 REQUIRED_ACTIONS = (
     "Enqueue",
     "Begin",
@@ -477,7 +478,16 @@ def tail(output: str, lines: int = 12) -> str:
 
 
 def check_property(java: Path, jar: Path) -> bool:
-    result = run_tlc(java, jar, spec_text(), "LateReceipts", cfg_text(PRIMARY_CFG_PATH))
+    primary_cfg = cfg_text(PRIMARY_CFG_PATH)
+    if not re.search(
+        rf"(?m)^\s{{2}}{re.escape(REQUIRED_PRIMARY_INVARIANT)}\s*$", primary_cfg
+    ):
+        print(
+            f"FAIL  primary config no longer checks {REQUIRED_PRIMARY_INVARIANT}; "
+            "the repaired F1 guarantee would silently pass without it"
+        )
+        return False
+    result = run_tlc(java, jar, spec_text(), "LateReceipts", primary_cfg)
     states = result["states_distinct"]
     if result["violation"]:
         print(f"FAIL  property violated: {result['violation']}")
@@ -612,15 +622,19 @@ def main(argv: list[str]) -> int:
         print(f"SETUP {exc}", file=sys.stderr)
         return 2
     print(f"  {banner} | TLA+ tools {TLA_VERSION}")
-    ok = True
-    primary_ok = None
-    if modes["check"] or modes["mutants"] or modes["finding"]:
-        primary_ok = check_property(java, jar)
-        ok = primary_ok
-    if modes["mutants"]:
-        ok = check_mutants(java, jar) and ok
-    if modes["finding"]:
-        ok = check_finding(java, jar, primary_ok) and ok
+    try:
+        ok = True
+        primary_ok = None
+        if modes["check"] or modes["mutants"] or modes["finding"]:
+            primary_ok = check_property(java, jar)
+            ok = primary_ok
+        if modes["mutants"]:
+            ok = check_mutants(java, jar) and ok
+        if modes["finding"]:
+            ok = check_finding(java, jar, primary_ok) and ok
+    except SetupError as exc:
+        print(f"SETUP {exc}", file=sys.stderr)
+        return 2
     if not ok:
         print(
             "\nSee .cursor/skills/verify-media-edge-late-receipts/SKILL.md for the "
