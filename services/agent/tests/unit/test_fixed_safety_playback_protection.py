@@ -10,10 +10,32 @@ for power loss, network loss and playback failure.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from typing import Any, cast
+
 import pytest
+from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.reply_pipeline import ReplyPipeline
+from services.agent.src.response_planner_client import (
+    ResponsePlan,
+    ResponsePlanFetch,
+    ResponseProvenance,
+    ResponseVoiceTarget,
+)
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
-from services.agent.tests.unit.test_media_session_golden import _h5_identity
+from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
+from services.agent.src.voice_core.media_protocol import SessionIdentity
+from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
+from services.agent.tests.unit.runtime_state_helpers import (
+    ScriptedChatModel,
+    bind_owner_speaker,
+)
+from services.agent.tests.unit.test_media_session_golden import (
+    _h5_identity,
+    _Harness,
+    _ScriptedProvider,
+)
 from services.agent.tests.unit.test_media_session_playback_stop import (
     _device_identity,
     _run_story,
@@ -214,3 +236,239 @@ def test_protection_ends_when_the_script_is_no_longer_audible() -> None:
 
     assert not runtime.floor.fixed_safety_audible
     assert not runtime.playback_overlap_input_blocked()
+
+
+_PLAYBACK_TEXT = {
+    CRISIS_SELF_SCRIPT.template_id: "我想伤害自己。",
+    SUPPORT_VICTIM_SCRIPT.template_id: "有人正在打我",
+    SUPPORT_RELAY_SCRIPT.template_id: "我朋友说他不想活了",
+}
+_ORDINARY_TEXT = "你好呀"
+_ORDINARY_REPLY = "好的，我记住了。"
+
+
+class _CompanionPlanner:
+    """An ordinary plan; the deterministic crisis route decides a script locally."""
+
+    echoes_session_epoch = True
+
+    async def fetch(self, **kwargs: Any) -> ResponsePlanFetch:
+        return ResponsePlanFetch(_companion_plan(kwargs["fence"]), "ok")
+
+
+def _companion_plan(fence: GenerationFence) -> ResponsePlan:
+    return ResponsePlan(
+        fence=fence,
+        instructions="系统提示",
+        direct_text=None,
+        epistemic_status="not_applicable",
+        epistemic_reason_codes=("test",),
+        grounded_items=(),
+        disclosures=(),
+        voice_target=ResponseVoiceTarget(
+            kind="companion",
+            profile_id="warm_companion",
+            model="seed-tts-2.0",
+        ),
+        provenance=ResponseProvenance(
+            planner_policy_version="digital-self-response-planner-v2",
+            interaction_mode="companion",
+            mode_policy_version="test-policy",
+            digital_self_version_id=None,
+            manifest_sha256=None,
+            persona_version_id=None,
+            persona_version_number=None,
+            persona_style_only=False,
+            relationship_profile_id=None,
+            relationship_profile_version=None,
+            speaker_class="owner",
+            speaker_reason_code="owner_match",
+            speaker_profile_id="owner-profile",
+            speaker_model_version="test",
+            speaker_template_version=None,
+            source_refs=(),
+            epistemic_status="not_applicable",
+            epistemic_reason_codes=("test",),
+            disclosures=(),
+        ),
+    )
+
+
+class _PipelineLanguageModel:
+    """The adapter seam that drives the real pipeline for commit and stream."""
+
+    supports_delegation = False
+
+    def __init__(self, pipeline: ReplyPipeline) -> None:
+        self.pipeline = pipeline
+
+    async def prepare_committed_turn(self, text: str) -> GenerationFence:
+        return await self.pipeline.prepare_committed_turn(text)
+
+    def stream(self, request: Any) -> AsyncIterator[Any]:
+        return self.pipeline.stream(request)
+
+    def fixed_safety_planned(self, fence: GenerationFence) -> bool:
+        return self.pipeline.fixed_safety_planned(fence)
+
+    @staticmethod
+    def accept_output_intent(intent: Any) -> Any:
+        return intent
+
+
+class _LiveSpeech:
+    """A live voice that yields silence; it never speaks a fixed safety script."""
+
+    fixed_safety_catalog = None
+
+    def __init__(self) -> None:
+        self.spoken: list[str] = []
+
+    def stream(self, **kwargs: Any) -> Any:
+        self.spoken.append(str(kwargs.get("text", "")))
+
+        async def pcm() -> AsyncIterator[bytes]:
+            yield b"\x00\x00" * 480
+
+        return pcm()
+
+
+class _PlannedScriptProvider(_ScriptedProvider):
+    """A wire harness whose turn preparation and plan come from the real pipeline."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.pipeline: ReplyPipeline | None = None
+
+    def attach(self, runtime: DuplexRuntime) -> ReplyPipeline:
+        bind_owner_policy(runtime)
+        bind_owner_speaker(runtime)
+        pipeline = ReplyPipeline(
+            instructions="系统提示",
+            runtime=runtime,
+            response_planner_client=cast(Any, _CompanionPlanner()),
+            tts_model="seed-tts-2.0",
+        )
+
+        async def tokens(_ctx: Any, _tools: list[Any]) -> AsyncIterator[str]:
+            yield _ORDINARY_REPLY
+
+        pipeline.language_model = ScriptedChatModel(lambda ctx, tools: tokens(ctx, tools))
+        runtime.set_response_plan_rebinder(pipeline.rebind_response_plan)
+        self.pipeline = pipeline
+        return pipeline
+
+    async def prepare_committed_turn(
+        self,
+        _identity: SessionIdentity,
+        text: str,
+    ) -> GenerationFence:
+        assert self.pipeline is not None
+        return await self.pipeline.prepare_committed_turn(text)
+
+    def fixed_safety_planned(self, fence: GenerationFence) -> bool:
+        assert self.pipeline is not None
+        return self.pipeline.fixed_safety_planned(fence)
+
+
+class _StartBridge(MediaBridgeGrpcServer):
+    """Records each generation start's reason and protected flag."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.starts: list[tuple[str, bool]] = []
+
+    async def emit_generation(
+        self,
+        session_id: str,
+        fence: object,
+        *,
+        action: int,
+        reason: str = "",
+        protected_playback: bool = False,
+        **kwargs: object,
+    ) -> bool:
+        if action == media_pb2.GENERATION_ACTION_START:
+            self.starts.append((reason, protected_playback))
+        return await super().emit_generation(
+            session_id,
+            cast(GenerationFence, fence),
+            action=action,
+            reason=reason,
+            protected_playback=protected_playback,
+            **kwargs,
+        )
+
+
+def _wire_session(identity: SessionIdentity) -> tuple[_Harness, _StartBridge]:
+    provider = _PlannedScriptProvider()
+    harness = _Harness(identity, provider)
+    provider.attach(harness.runtime)
+    harness.registry.bridge = _StartBridge()
+    return harness, harness.registry.bridge
+
+
+def _commit_starts(bridge: _StartBridge) -> list[tuple[str, bool]]:
+    return [start for start in bridge.starts if start[0] == "user_turn_committed"]
+
+
+@_SCRIPTS
+@pytest.mark.asyncio
+async def test_committed_fixed_safety_turn_starts_protected_playback(
+    script: FixedSafetyScript,
+) -> None:
+    """The device learns the reply must not be cut before any of its audio."""
+
+    identity = _device_identity(f"protected-start-{script.template_id}")
+    harness, bridge = _wire_session(identity)
+    await harness.start()
+    try:
+        await harness.utterance(_PLAYBACK_TEXT[script.template_id], frames=25)
+        await harness.wait_for(lambda: bool(_commit_starts(bridge)), timeout=4.0)
+        assert _commit_starts(bridge) == [("user_turn_committed", True)]
+    finally:
+        await harness.close()
+
+
+@pytest.mark.asyncio
+async def test_ordinary_committed_turn_starts_interruptible() -> None:
+    """Every reply that is not a fixed safety script keeps today's behaviour."""
+
+    identity = _device_identity("ordinary-start")
+    harness, bridge = _wire_session(identity)
+    await harness.start()
+    try:
+        await harness.utterance(_ORDINARY_TEXT, frames=25)
+        await harness.wait_for(lambda: bool(_commit_starts(bridge)), timeout=4.0)
+        assert _commit_starts(bridge) == [("user_turn_committed", False)]
+    finally:
+        await harness.close()
+
+@_SCRIPTS
+@pytest.mark.asyncio
+async def test_output_generation_start_carries_the_planned_protection(
+    script: FixedSafetyScript,
+) -> None:
+    """A late transport start for the same turn is protected too.
+
+    The speech lane starts the generation itself when the turn commit's START
+    lost the race to its first frame, so that path must carry the same flag.
+    """
+
+    identity = _device_identity(f"late-start-{script.template_id}")
+    harness, bridge = _wire_session(identity)
+    await harness.start()
+    try:
+        context = await harness.registry.open_session(identity)
+        provider = cast(Any, context.provider)
+        fence = await provider.prepare_committed_turn(identity, _PLAYBACK_TEXT[script.template_id])
+        connection = bridge._open_connection(identity)
+        connection.session.generation_active = False
+
+        assert await harness.registry._ensure_transport_generation_started(context, fence)
+
+        assert [start for start in bridge.starts if start[0] == "output_generation_start"] == [
+            ("output_generation_start", True)
+        ]
+    finally:
+        await harness.close()

@@ -53,6 +53,97 @@ func readGenerationStarted(t *testing.T, connection *websocket.Conn, wantGenerat
 	}
 }
 
+func readGenerationControl(t *testing.T, connection *websocket.Conn) (string, []byte) {
+	t.Helper()
+	messageType, payload, err := readDeviceMessage(connection, 3*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if messageType != websocket.TextMessage {
+		t.Fatalf("expected generation control text, got %d", messageType)
+	}
+	var generation deviceGenerationControl
+	if err := json.Unmarshal(payload, &generation); err != nil {
+		t.Fatalf("unexpected control: %s err=%v", payload, err)
+	}
+	return generation.Type, payload
+}
+
+// TestDeviceWSSProtectedGenerationStartIsNotInterruptible is the crisis path:
+// the core marks the fixed-safety reply protected, and the firmware must see
+// an explicit interruptible=false so a pat or tap cannot cut it. Every other
+// generation omits the key and stays interruptible.
+func TestDeviceWSSProtectedGenerationStartIsNotInterruptible(t *testing.T) {
+	env := newDeviceTestEnv(t, nil)
+	connection, _ := env.dial(t, env.token(t, nil), "client_1")
+	writeDeviceJSON(t, connection, deviceV2Hello())
+	deviceReadAccepted(t, connection)
+	env.mu.Lock()
+	core := env.cores["session_1"]
+	env.mu.Unlock()
+
+	protected := deviceGenerationEvent(
+		"session_1", 18, 1, 1, 1, mediav1.GenerationAction_GENERATION_ACTION_START,
+	)
+	protected.GetGeneration().ProtectedPlayback = true
+	core.inject(protected)
+	messageType, payload := readGenerationControl(t, connection)
+	if messageType != "generation.started" {
+		t.Fatalf("type = %q, want generation.started", messageType)
+	}
+	if !strings.Contains(string(payload), `"interruptible":false`) {
+		t.Fatalf("protected generation.started lost interruptible=false: %s", payload)
+	}
+
+	ordinary := deviceGenerationEvent(
+		"session_1", 18, 2, 1, 2, mediav1.GenerationAction_GENERATION_ACTION_START,
+	)
+	core.inject(ordinary)
+	messageType, payload = readGenerationControl(t, connection)
+	if messageType != "generation.started" {
+		t.Fatalf("type = %q, want generation.started", messageType)
+	}
+	if strings.Contains(string(payload), `"interruptible"`) {
+		t.Fatalf("ordinary generation.started must omit the key: %s", payload)
+	}
+	var generation deviceGenerationControl
+	if err := json.Unmarshal(payload, &generation); err != nil || generation.Interruptible != nil {
+		t.Fatalf("ordinary interruptible = %v err=%v, want absent", generation.Interruptible, err)
+	}
+}
+
+// The flag belongs to the start only. A protected generation's later controls
+// must not carry it, because the firmware reads the key on any control frame.
+func TestDeviceWSSProtectedPlaybackFlagIsNotOnLaterGenerationControls(t *testing.T) {
+	env := newDeviceTestEnv(t, nil)
+	connection, _ := env.dial(t, env.token(t, nil), "client_1")
+	writeDeviceJSON(t, connection, deviceV2Hello())
+	deviceReadAccepted(t, connection)
+	env.mu.Lock()
+	core := env.cores["session_1"]
+	env.mu.Unlock()
+
+	protected := deviceGenerationEvent(
+		"session_1", 18, 1, 1, 1, mediav1.GenerationAction_GENERATION_ACTION_START,
+	)
+	protected.GetGeneration().ProtectedPlayback = true
+	core.inject(protected)
+	readGenerationControl(t, connection)
+
+	pause := deviceGenerationEvent(
+		"session_1", 18, 2, 1, 1, mediav1.GenerationAction_GENERATION_ACTION_PAUSE,
+	)
+	pause.GetGeneration().ProtectedPlayback = true
+	core.inject(pause)
+	messageType, payload := readGenerationControl(t, connection)
+	if messageType != "generation.pause" {
+		t.Fatalf("type = %q, want generation.pause", messageType)
+	}
+	if strings.Contains(string(payload), `"interruptible"`) {
+		t.Fatalf("generation.pause must not carry the key: %s", payload)
+	}
+}
+
 func downlinkTestSamples() []int16 {
 	samples := make([]int16, 480)
 	for index := range samples {
