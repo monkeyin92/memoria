@@ -28,6 +28,7 @@
 #include "memoria_display_hooks.h"
 #include "memoria_firmware_update.h"
 #include "memoria_offline_menu.h"
+#include "memoria_session_close.h"
 #include "memoria_stop_keyword.h"
 #include "memoria_wake_mode.h"
 #include "memoria_wake_word.h"
@@ -2225,11 +2226,17 @@ bool MemoriaProtocol::HandleServerText(const char* data, size_t size) {
                 return false;
             }
             std::string close_reason;
-            if (GetString(root.value, "reason", &close_reason, 128) &&
-                close_reason == "llm_unavailable") {
-                // Server already spoke the fixed line; board enters the menu
-                // without replaying the offline clip.
-                OfflineMenuSignals::PostLlmUnavailable(/*play_line=*/false);
+            if (GetString(root.value, "reason", &close_reason, 128)) {
+                // An older server omits play_line; absence means the line was
+                // already heard on the wire.
+                bool play_line = false;
+                GetBool(root.value, "play_line", &play_line);
+                const SessionCloseFallback fallback =
+                    ClassifySessionCloseFallback(close_reason, play_line);
+                if (fallback != SessionCloseFallback::kNone) {
+                    OfflineMenuSignals::PostLlmUnavailable(
+                        fallback == SessionCloseFallback::kMenuPlayLine);
+                }
             }
             NotifyListeningClosed(false);
             terminal_session_close_ = true;
