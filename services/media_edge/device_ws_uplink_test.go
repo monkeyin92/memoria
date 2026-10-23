@@ -135,6 +135,54 @@ func TestDeviceWSSBargeInIngressRequiresSignedSources(t *testing.T) {
 	}
 }
 
+// Old edges (before listening.resume existed) answered this control with a
+// terminal unsupported_control and dropped the WSS. The device now sends it on
+// every wake, so the connection must survive it and keep serving the lane.
+func TestDeviceWSSListeningResumeKeepsConnectionAlive(t *testing.T) {
+	env := newDeviceTestEnv(t, func(server *DeviceWSServer) {
+		server.SessionCloseReportHook = func(DeviceSessionCloseReport) {}
+	})
+	connection, _ := env.dial(t, env.token(t, nil), "client_1")
+	writeDeviceJSON(t, connection, deviceV2Hello())
+	deviceReadAccepted(t, connection)
+	core := env.cores["session_1"]
+	serverConn := env.server.connectionBySession("session_1")
+	if serverConn == nil {
+		t.Fatal("server connection not registered")
+	}
+
+	writeDeviceJSON(t, connection, deviceListeningResume{
+		deviceEventBase: deviceEventBase{
+			Type: "listening.resume", Version: 2, StreamEpoch: 18,
+			ControlSequence: 1, DeviceMonotonicMS: 1,
+		},
+		WakeSample: 123,
+	})
+	waitUntil(t, 3*time.Second, func() bool {
+		core.mu.Lock()
+		defer core.mu.Unlock()
+		return len(core.resumes) == 1 && core.resumes[0] == 123
+	})
+
+	// The same connection still serves the next control: on the pre-resume
+	// edge this sequence ended with a session.error before the close frame.
+	writeDeviceJSON(t, connection, deviceVADEvent{
+		deviceEventBase: deviceEventBase{
+			Type: "vad.end", Version: 2, StreamEpoch: 18,
+			ControlSequence: 2, DeviceMonotonicMS: 2,
+		},
+		SamplePosition: 320, Probability: 0.9, NearEndRMS: 0.1,
+	})
+	waitUntil(t, 3*time.Second, func() bool {
+		core.mu.Lock()
+		defer core.mu.Unlock()
+		return len(core.vad) == 1 && !core.vad[0].Start
+	})
+	if env.server.Leases.ActiveCount() == 0 {
+		t.Fatal("listening.resume tore down the session")
+	}
+}
+
 func TestDeviceWSSPlaybackVADRequiresVoiceSourceAndTracksReceipts(t *testing.T) {
 	env := newDeviceTestEnv(t, func(server *DeviceWSServer) {
 		server.SessionCloseReportHook = func(DeviceSessionCloseReport) {}
