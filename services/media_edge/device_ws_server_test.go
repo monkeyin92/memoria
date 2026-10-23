@@ -31,6 +31,7 @@ type deviceTestCore struct {
 	stops     []Fence
 	keywords  []string
 	playback  []PlaybackProgress
+	resumes   []uint64
 	authority mediav1.InteractionAuthority
 	// strictPlayback mirrors VoiceCoreSession.SendPlaybackProgress: progress
 	// for any generation but current is rejected as stale.
@@ -127,6 +128,13 @@ func (c *deviceTestCore) SendPlaybackProgress(progress PlaybackProgress) error {
 		return fmt.Errorf("playback progress belongs to a stale generation")
 	}
 	c.playback = append(c.playback, progress)
+	return nil
+}
+
+func (c *deviceTestCore) SendListeningResume(wakeSample uint64) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.resumes = append(c.resumes, wakeSample)
 	return nil
 }
 
