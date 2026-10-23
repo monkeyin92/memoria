@@ -1,0 +1,636 @@
+#!/usr/bin/env python3
+"""Model-check Media Edge late-playback-receipt guarantees with TLA+/TLC.
+
+Reads services/media_edge/formal/LateReceipts.tla and its configs, runs TLC on
+current guarantees and mutation evidence, and confirms the repaired F1 property.
+See the skill's SKILL.md for the code mapping, coverage record, and interpretation
+guide.
+
+Usage:
+    bin/verify              # property check + mutation evidence + fixed F1
+    bin/verify --check      # property check only
+    bin/verify --mutants    # property check + mutation evidence
+    bin/verify --finding    # property check + fixed F1 confirmation
+
+Exit codes: 0 all runs matched their expectation, 1 a check failed, 2 setup
+problem (no JDK 11+, download/hash failure, missing spec).
+"""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import urllib.request
+from pathlib import Path
+
+TLA_VERSION = "1.7.4"
+TLA_URL = (
+    "https://github.com/tlaplus/tlaplus/releases/download/"
+    f"v{TLA_VERSION}/tla2tools.jar"
+)
+TLA_SHA256 = "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
+
+SKILL_DIR = Path(__file__).resolve().parents[1]
+REPO_ROOT = SKILL_DIR.parents[2]
+SPEC_DIR = REPO_ROOT / "services" / "media_edge" / "formal"
+SPEC_PATH = SPEC_DIR / "LateReceipts.tla"
+PRIMARY_CFG_PATH = SPEC_DIR / "LateReceipts.cfg"
+
+# TLC explores 27759 distinct states for the current spec at MaxReceipts = 3.
+# A different count means the spec changed; re-derive the model and update this
+# number in the same change, so a silently weakened model cannot pass.
+EXPECTED_BASE_DISTINCT = 27759
+REQUIRED_ACTIONS = (
+    "Enqueue",
+    "Begin",
+    "TerminalCheck",
+    "PrecheckCheck",
+    "CoreAdvance",
+    "EdgeApplyCore",
+    "DeviceStopEdgeFirst",
+    "SendDownlink",
+    "DropRefused",
+    "CloseRefused",
+    "DropTerminalReplaced",
+    "DropPrecheck",
+    "OpenWindow",
+    "Forward",
+    "DropAfterForwardError",
+    "CloseAfterForwardError",
+)
+
+# Each mutant removes one guard, one window effect, or one branch that the
+# product code needed at some point.  The substitutions are applied to the
+# current spec, so a renamed or rewritten spec fails loudly instead of mutating
+# nothing.  An expectation of "coverage:<Action>" means the guard/action removal
+# is caught by the coverage assertion in --check, not by an invariant.
+MUTANTS = [
+    {
+        "name": "M0_ledger_refusal_no_drop",
+        "about": "pre-2026-09-30: a ledger-rejected late receipt closes the WSS",
+        "expected": ["NoCloseForReplaced"],
+        "subs": [
+            (
+                '  /\\ Replaced(cur.fence)\n  /\\ status\' = "idle"\n  /\\ MarkDrop("drop")',
+                '  /\\ FALSE\n  /\\ status\' = "idle"\n  /\\ MarkDrop("drop")',
+            ),
+            (
+                '  /\\ status = "ledgerRefused"\n  /\\ ~Replaced(cur.fence)\n  /\\ connOpen\' = FALSE',
+                '  /\\ status = "ledgerRefused"\n  /\\ connOpen\' = FALSE',
+            ),
+        ],
+    },
+    {
+        "name": "M1_no_precheck_no_forward_recheck",
+        "about": "pre-2026-10-02: a replaced generation's receipt is forwarded",
+        "expected": ["NoForwardForReplacedAtBegin", "NoCloseForReplaced"],
+        "subs": [
+            (
+                '  /\\ status\' = IF Replaced(cur.fence) THEN "precheckReplaced" ELSE "openWindow"',
+                '  /\\ status\' = "openWindow"',
+            ),
+            (
+                '  /\\ status = "forwardRefused" /\\ Replaced(cur.fence)',
+                '  /\\ status = "forwardRefused" /\\ FALSE',
+            ),
+            (
+                '  /\\ status = "forwardRefused" /\\ ~Replaced(cur.fence)',
+                '  /\\ status = "forwardRefused"',
+            ),
+        ],
+    },
+    {
+        "name": "M2_edge_authority_ignored",
+        "about": "GenerationReplaced consults only Voice Core's fence",
+        "expected": ["NoForwardForReplacedAtBegin", "NoCloseForReplaced"],
+        "subs": [
+            (
+                "\nReplaced(f) == Ahead(f, coreGen) \\/ Ahead(f, edgeGen)\n",
+                "\nReplaced(f) == Ahead(f, coreGen)\n",
+            ),
+        ],
+    },
+    {
+        "name": "M3_terminal_clear_ignores_fence",
+        "about": "a replaced terminal receipt clears somebody else's window",
+        "expected": ["TerminalClearOnlyOwnWindow"],
+        "subs": [
+            (
+                '  /\\ LET wasOwn == windowActive /\\ windowFence = cur.fence IN\n'
+                "       /\\ IF wasOwn\n"
+                "          THEN /\\ windowActive' = FALSE\n"
+                "               /\\ UNCHANGED << windowFence >>\n"
+                "          ELSE /\\ UNCHANGED << windowActive, windowFence >>\n"
+                '  /\\ status\' = "idle"\n'
+                "  /\\ MarkTerminalDrop",
+                "  /\\ windowActive' = FALSE\n"
+                "  /\\ UNCHANGED << windowFence >>\n"
+                '  /\\ status\' = "idle"\n'
+                "  /\\ MarkTerminalDrop",
+            ),
+        ],
+    },
+    {
+        "name": "M4_forward_drop_keeps_window",
+        "about": "a send refused after replacement leaves its own window open",
+        "expected": ["ForwardDropClosesOwnWindow"],
+        "subs": [
+            (
+                '  /\\ LET wasOwn == windowActive /\\ windowFence = cur.fence IN\n'
+                "       /\\ IF wasOwn\n"
+                "          THEN /\\ windowActive' = FALSE\n"
+                "               /\\ UNCHANGED << windowFence >>\n"
+                "          ELSE /\\ UNCHANGED << windowActive, windowFence >>\n"
+                '  /\\ status\' = "idle"\n'
+                '  /\\ MarkDrop("forwardErrorDrop")',
+                "  /\\ UNCHANGED << windowActive, windowFence >>\n"
+                '  /\\ status\' = "idle"\n'
+                '  /\\ MarkDrop("forwardErrorDrop")',
+            ),
+        ],
+    },
+    {
+        "name": "M5_precheck_drop_clears_window",
+        "about": "a dropped receipt clears a window that belongs to another generation",
+        "expected": ["DropKeepsForeignWindow"],
+        "subs": [
+            (
+                'DropPrecheck ==\n'
+                '  /\\ status = "precheckReplaced"\n'
+                '  /\\ status\' = "idle"\n'
+                '  /\\ MarkDrop("drop")\n'
+                '  /\\ IF IsTerminal(cur.type) /\\ windowActive /\\ windowFence = cur.fence\n'
+                '     THEN /\\ windowActive\' = FALSE\n'
+                '          /\\ UNCHANGED << windowFence >>\n'
+                '     ELSE /\\ UNCHANGED << windowActive, windowFence >>',
+                'DropPrecheck ==\n'
+                '  /\\ status = "precheckReplaced"\n'
+                '  /\\ status\' = "idle"\n'
+                '  /\\ MarkDrop("drop")\n'
+                '  /\\ windowActive\' = FALSE\n'
+                '  /\\ UNCHANGED << windowFence >>',
+            ),
+        ],
+    },
+    {
+        "name": "M6_overdrop_replaced_true",
+        "about": "Replaced over-approximates and drops live receipts",
+        "expected": ["DropsOnlyForReplaced"],
+        "subs": [
+            (
+                "\nReplaced(f) == Ahead(f, coreGen) \\/ Ahead(f, edgeGen)\n",
+                "\nReplaced(f) == TRUE\n",
+            ),
+        ],
+    },
+    {
+        "name": "M7_openwindow_update_removed",
+        "about": "an accepted receipt no longer opens/closes the playback window",
+        "expected": ["WindowMatchesForward"],
+        "subs": [
+            (
+                '  /\\ IF cur.type = "started" \\/ cur.type = "progress"\n'
+                "     THEN /\\ windowActive' = TRUE\n"
+                "          /\\ windowFence' = cur.fence\n"
+                "     ELSE /\\ windowActive' = FALSE\n"
+                "          /\\ UNCHANGED << windowFence >>\n"
+                "  /\\ MarkIdle",
+                "  /\\ UNCHANGED << windowActive, windowFence >>\n"
+                "  /\\ MarkIdle",
+            ),
+        ],
+    },
+    {
+        "name": "M8_terminal_clear_removed",
+        "about": "a replaced terminal receipt no longer ends its own window (2026-09-29)",
+        "expected": ["TerminalClearEndsOwnWindow"],
+        "subs": [
+            (
+                '  /\\ LET wasOwn == windowActive /\\ windowFence = cur.fence IN\n'
+                "       /\\ IF wasOwn\n"
+                "          THEN /\\ windowActive' = FALSE\n"
+                "               /\\ UNCHANGED << windowFence >>\n"
+                "          ELSE /\\ UNCHANGED << windowActive, windowFence >>\n"
+                '  /\\ status\' = "idle"\n'
+                "  /\\ MarkTerminalDrop",
+                "  /\\ UNCHANGED << windowActive, windowFence >>\n"
+                '  /\\ status\' = "idle"\n'
+                "  /\\ MarkTerminalDrop",
+            ),
+        ],
+    },
+    {
+        "name": "M9_underdrop_replaced_false",
+        "about": "Replaced under-approximates and forwards/closes stale receipts",
+        "expected": ["NoForwardForReplacedAtBegin", "NoCloseForReplaced"],
+        "subs": [
+            (
+                "\nReplaced(f) == Ahead(f, coreGen) \\/ Ahead(f, edgeGen)\n",
+                "\nReplaced(f) == FALSE\n",
+            ),
+        ],
+    },
+    {
+        "name": "M10_live_terminal_keeps_window",
+        "about": "a live ended/error receipt no longer closes the playback window",
+        "expected": ["WindowMatchesForward"],
+        "subs": [
+            (
+                '  /\\ IF cur.type = "started" \\/ cur.type = "progress"\n'
+                "     THEN /\\ windowActive' = TRUE\n"
+                "          /\\ windowFence' = cur.fence\n"
+                "     ELSE /\\ windowActive' = FALSE\n"
+                "          /\\ UNCHANGED << windowFence >>\n"
+                "  /\\ MarkIdle",
+                '  /\\ IF cur.type = "started" \\/ cur.type = "progress"\n'
+                "     THEN /\\ windowActive' = TRUE\n"
+                "          /\\ windowFence' = cur.fence\n"
+                "     ELSE /\\ UNCHANGED << windowActive, windowFence >>\n"
+                "  /\\ MarkIdle",
+            ),
+        ],
+    },
+    {
+        "name": "M11_core_authority_ignored",
+        "about": "GenerationReplaced consults only the Edge Session fence",
+        "expected": ["NoForwardForReplacedAtBegin", "NoCloseForReplaced"],
+        "subs": [
+            (
+                "\nReplaced(f) == Ahead(f, coreGen) \\/ Ahead(f, edgeGen)\n",
+                "\nReplaced(f) == Ahead(f, edgeGen)\n",
+            ),
+        ],
+    },
+    {
+        "name": "M12_forward_fence_check_removed",
+        "about": "SendPlaybackProgress no longer checks Voice Core's fence",
+        "expected": ["ForwardAcceptedAtCoreFence"],
+        "subs": [
+            (
+                '  /\\ \\/ ( /\\ cur.fence = coreGen\n'
+                '           /\\ status\' = "idle"\n'
+                "           /\\ lastForwardAccepted' = TRUE\n"
+                "           /\\ lastForwardAcceptedOracleReplaced' = beginOracleReplaced )\n"
+                '      \\/ ( /\\ status\' = "forwardRefused"\n'
+                "           /\\ lastForwardAccepted' = FALSE\n"
+                "           /\\ lastForwardAcceptedOracleReplaced' = FALSE )",
+                '  /\\ \\/ ( /\\ status\' = "idle"\n'
+                "           /\\ lastForwardAccepted' = TRUE\n"
+                "           /\\ lastForwardAcceptedOracleReplaced' = beginOracleReplaced )\n"
+                '      \\/ ( /\\ status\' = "forwardRefused"\n'
+                "           /\\ lastForwardAccepted' = FALSE\n"
+                "           /\\ lastForwardAcceptedOracleReplaced' = FALSE )",
+            ),
+        ],
+    },
+    {
+        "name": "M13_terminal_branch_removed",
+        "about": "the 2026-09-29 terminal-replaced branch is gone",
+        "expected": ["coverage:DropTerminalReplaced"],
+        "subs": [
+            (
+                '  /\\ status\' = IF Replaced(cur.fence) THEN "terminalReplaced" ELSE "precheckCheck"',
+                '  /\\ status\' = "precheckCheck"',
+            ),
+        ],
+    },
+    {
+        "name": "M14_device_stop_removed",
+        "about": "the device-stop edge-first state is unreachable",
+        "expected": ["coverage:DeviceStopEdgeFirst"],
+        "subs": [
+            (
+                '  /\\ status = "idle" /\\ pending = NONE\n  /\\ coreGen = F1 /\\ edgeGen = F1',
+                "  /\\ FALSE",
+            ),
+        ],
+    },
+]
+
+
+class SetupError(RuntimeError):
+    pass
+
+
+def java_version(java: Path) -> tuple[int, str]:
+    try:
+        proc = subprocess.run(
+            [str(java), "-version"], capture_output=True, text=True, timeout=20
+        )
+    except (OSError, subprocess.SubprocessError):
+        return 0, ""
+    text = proc.stdout + proc.stderr
+    match = re.search(r'version "(\d+)(?:\.(\d+))?', text)
+    if not match:
+        return 0, ""
+    major = int(match.group(1))
+    if major == 1 and match.group(2):
+        major = int(match.group(2))
+    first = next((line for line in text.splitlines() if line.strip()), "")
+    return major, first.strip()
+
+
+def find_java() -> tuple[Path, str]:
+    candidates: list[Path] = []
+    if os.environ.get("JAVA_HOME"):
+        candidates.append(Path(os.environ["JAVA_HOME"]) / "bin" / "java")
+    if sys.platform == "darwin" and Path("/usr/libexec/java_home").is_file():
+        for version in ("21", "17", "11"):
+            try:
+                home = subprocess.run(
+                    ["/usr/libexec/java_home", "-v", version],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                ).stdout.strip()
+            except (OSError, subprocess.SubprocessError):
+                continue
+            if home:
+                candidates.append(Path(home) / "bin" / "java")
+    found = shutil.which("java")
+    if found:
+        candidates.append(Path(found))
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            major, banner = java_version(candidate)
+            if major >= 11:
+                return candidate, banner
+    raise SetupError(
+        "no JDK 11+ found (TLC 1.7.4 needs it). Set JAVA_HOME or install a JDK; "
+        "on macOS /usr/libexec/java_home -v 21 is tried automatically."
+    )
+
+
+def sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def ensure_jar() -> Path:
+    cache_root = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    cache = Path(cache_root) / "memoria-tla"
+    cache.mkdir(parents=True, exist_ok=True)
+    jar = cache / f"tla2tools-{TLA_VERSION}.jar"
+    if jar.is_file() and sha256(jar) == TLA_SHA256:
+        return jar
+    if jar.is_file():
+        print(f"cached {jar.name} has a wrong SHA-256; re-downloading", file=sys.stderr)
+        jar.unlink()
+    print(
+        f"downloading TLA+ tools v{TLA_VERSION} to {jar} (first run only)...",
+        file=sys.stderr,
+    )
+    tmp = jar.with_name(jar.name + ".tmp")
+    try:
+        urllib.request.urlretrieve(TLA_URL, tmp)
+    except OSError as exc:
+        raise SetupError(f"cannot download {TLA_URL}: {exc}") from exc
+    if sha256(tmp) != TLA_SHA256:
+        tmp.unlink(missing_ok=True)
+        raise SetupError("downloaded tla2tools.jar failed the pinned SHA-256 check")
+    tmp.replace(jar)
+    return jar
+
+
+def run_tlc(
+    java: Path,
+    jar: Path,
+    spec_text: str,
+    module: str,
+    cfg_text: str,
+) -> dict[str, object]:
+    with tempfile.TemporaryDirectory(prefix="memoria-tla-") as tmp:
+        work = Path(tmp)
+        (work / f"{module}.tla").write_text(spec_text)
+        (work / f"{module}.cfg").write_text(cfg_text)
+        cmd = [
+            str(java),
+            "-XX:+UseParallelGC",
+            "-cp",
+            str(jar),
+            "tlc2.TLC",
+            "-workers",
+            "auto",
+            "-metadir",
+            str(work / "states"),
+            "-coverage",
+            "1",
+            "-config",
+            f"{module}.cfg",
+            f"{module}.tla",
+        ]
+        try:
+            proc = subprocess.run(
+                cmd, cwd=work, capture_output=True, text=True, timeout=600
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise SetupError("TLC did not finish within 600 s") from exc
+    output = proc.stdout + proc.stderr
+    violation = re.search(r"Error: Invariant (\w+) is violated", output)
+    states = re.search(
+        r"(\d+) states generated, (\d+) distinct states found", output
+    )
+    coverage = {
+        match.group(1): int(match.group(2))
+        for match in re.finditer(
+            r"^<(\w+) line [^>]+>: (\d+):(\d+)$", output, re.MULTILINE
+        )
+    }
+    warnings = [
+        line.strip()
+        for line in output.splitlines()
+        if line.strip().startswith("Warning:")
+    ]
+    return {
+        "output": output,
+        "passed": "No error has been found." in output,
+        "violation": violation.group(1) if violation else None,
+        "states_generated": int(states.group(1)) if states else None,
+        "states_distinct": int(states.group(2)) if states else None,
+        "coverage": coverage,
+        "warnings": warnings,
+    }
+
+
+def spec_text() -> str:
+    if not SPEC_PATH.is_file():
+        raise SetupError(f"missing spec: {SPEC_PATH}")
+    return SPEC_PATH.read_text()
+
+
+def cfg_text(path: Path) -> str:
+    if not path.is_file():
+        raise SetupError(f"missing config: {path}")
+    return path.read_text()
+
+
+def tail(output: str, lines: int = 12) -> str:
+    return "\n".join(output.strip().splitlines()[-lines:])
+
+
+def check_property(java: Path, jar: Path) -> bool:
+    result = run_tlc(java, jar, spec_text(), "LateReceipts", cfg_text(PRIMARY_CFG_PATH))
+    states = result["states_distinct"]
+    if result["violation"]:
+        print(f"FAIL  property violated: {result['violation']}")
+        print(tail(str(result["output"])))
+        return False
+    if not result["passed"]:
+        print("FAIL  TLC did not finish cleanly")
+        print(tail(str(result["output"])))
+        return False
+    if result["warnings"]:
+        print("FAIL  TLC reported a warning; the spec is malformed")
+        for warning in result["warnings"]:
+            print(f"      {warning}")
+        return False
+    if states != EXPECTED_BASE_DISTINCT:
+        print(
+            f"FAIL  model state space changed: expected {EXPECTED_BASE_DISTINCT} "
+            f"distinct states, got {states}.  Re-derive the model, then update "
+            "EXPECTED_BASE_DISTINCT in this script and the SKILL coverage record."
+        )
+        return False
+    coverage = result["coverage"]
+    missing = [action for action in REQUIRED_ACTIONS if coverage.get(action, 0) == 0]
+    if missing:
+        print(
+            "FAIL  coverage: these actions are unreachable in the model, so the "
+            f"paths they check are not verified: {', '.join(missing)}"
+        )
+        return False
+    print(
+        f"PASS  late receipts: no spurious close, no stale forward, no "
+        f"cross-generation window damage ({states} distinct states, "
+        f"{len(REQUIRED_ACTIONS)} actions covered)"
+    )
+    return True
+
+
+def check_mutants(java: Path, jar: Path) -> bool:
+    base = spec_text()
+    primary_cfg = cfg_text(PRIMARY_CFG_PATH)
+    ok = True
+    for mutant in MUTANTS:
+        mutated = base
+        for old, new in mutant["subs"]:
+            count = mutated.count(old)
+            if count != 1:
+                print(
+                    f"FAIL  mutant {mutant['name']}: mutation anchor matched "
+                    f"{count} times, expected 1; update bin/verify mutants"
+                )
+                ok = False
+                break
+            mutated = mutated.replace(old, new, 1)
+        else:
+            module = mutant["name"]
+            mutated = mutated.replace(
+                "---- MODULE LateReceipts ----", f"---- MODULE {module} ----", 1
+            )
+            result = run_tlc(java, jar, mutated, module, primary_cfg)
+            got = result["violation"]
+            expected = " or ".join(mutant["expected"])
+            coverage = result["coverage"]
+            coverage_hit = any(
+                item.startswith("coverage:")
+                and coverage.get(item.split(":", 1)[1], 0) == 0
+                for item in mutant["expected"]
+            )
+            if got in mutant["expected"]:
+                print(
+                    f"PASS  mutant {mutant['name']} caught by {got} "
+                    f"({mutant['about']})"
+                )
+            elif got is None and coverage_hit:
+                print(
+                    f"PASS  mutant {mutant['name']} caught by the coverage "
+                    f"assertion ({mutant['about']})"
+                )
+            elif got:
+                print(
+                    f"FAIL  mutant {mutant['name']} caught by {got}, expected "
+                    f"{expected} ({mutant['about']})"
+                )
+                ok = False
+            else:
+                print(
+                    f"FAIL  mutant {mutant['name']} NOT caught: expected "
+                    f"{expected} ({mutant['about']})"
+                )
+                ok = False
+    return ok
+
+
+def check_finding(java: Path, jar: Path, primary_ok: bool) -> bool:
+    if not primary_ok:
+        print(
+            "FAIL  fixed F1 check skipped: the primary property check failed, "
+            "so the model no longer proves the repaired guarantees"
+        )
+        return False
+    print(
+        "PASS  fixed F1: terminal replaced receipts clear only their own playback "
+        "window in both early-drop paths"
+    )
+    return True
+
+
+def main(argv: list[str]) -> int:
+    modes = {"check": False, "mutants": False, "finding": False}
+    for arg in argv:
+        if arg == "--check":
+            modes["check"] = True
+        elif arg == "--mutants":
+            modes["mutants"] = True
+        elif arg == "--finding":
+            modes["finding"] = True
+        elif arg in {"-h", "--help"}:
+            print(__doc__)
+            return 0
+        else:
+            print(f"unknown argument: {arg}\n", file=sys.stderr)
+            print(__doc__, file=sys.stderr)
+            return 2
+    selected = any(modes.values())
+    if not selected:
+        modes = {"check": True, "mutants": True, "finding": True}
+    print("verify-media-edge-late-receipts")
+    print(f"  spec: services/media_edge/formal/{SPEC_PATH.name}")
+    try:
+        java, banner = find_java()
+        jar = ensure_jar()
+    except SetupError as exc:
+        print(f"SETUP {exc}", file=sys.stderr)
+        return 2
+    print(f"  {banner} | TLA+ tools {TLA_VERSION}")
+    ok = True
+    primary_ok = None
+    if modes["check"] or modes["mutants"] or modes["finding"]:
+        primary_ok = check_property(java, jar)
+        ok = primary_ok
+    if modes["mutants"]:
+        ok = check_mutants(java, jar) and ok
+    if modes["finding"]:
+        ok = check_finding(java, jar, primary_ok) and ok
+    if not ok:
+        print(
+            "\nSee .cursor/skills/verify-media-edge-late-receipts/SKILL.md for the "
+            "code mapping, how to read the TLC counterexample, and when to update "
+            "the model instead of the invariant.",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
