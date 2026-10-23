@@ -2433,3 +2433,22 @@ test("failed subscription-state load shows unknown caption and retry restores th
     Object.assign(api, originals);
   }
 });
+
+test("重新配网从新二维码开始，不带旧启用会话", () => {
+  const calls = [];
+  const previous = { navigateTo: global.wx.navigateTo };
+  global.wx.navigateTo = (options) => calls.push(options.url);
+  try {
+    const page = instantiate(pageDefinition);
+    page.data.binding = { device_id: "dev_repro_1" };
+    page.openReprovision();
+    assert.deepEqual(calls, [
+      "/pages/device-onboarding/index?mode=reprovision&fresh=1&device_id=dev_repro_1",
+    ]);
+    page.data.binding = { device_id: "dev re?pro" };
+    page.openReprovision();
+    assert.equal(calls[1], "/pages/device-onboarding/index?mode=reprovision&fresh=1&device_id=dev%20re%3Fpro");
+  } finally {
+    global.wx.navigateTo = previous.navigateTo;
+  }
+});
