@@ -68,5 +68,5 @@ test("the review step labels itself as steps 3 and 4 and keeps 上一步 inside 
   const { text } = view(harness);
   harness.restore();
   assert.match(text, /第 3、4 步 · 确认授权并提交 绑定设备 确认一下 核对下面的信息，勾选需要的授权后提交 设备用途 给孩子使用 使用者 乐乐 AI 角色 星澜/);
-  assert.match(text, /上一步 开启安全提醒/);
+  assert.match(text, /上一步 提交绑定/);
 });

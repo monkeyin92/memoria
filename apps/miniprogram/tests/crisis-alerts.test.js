@@ -177,20 +177,39 @@ test("moreUnreadLabel counts the alerts not shown and says nothing for none", ()
   assert.equal(crisisAlerts.moreUnreadLabel(2), "还有 2 条");
 });
 
-test("requireCrisisSubscribeBeforeBind blocks parent bind without accept", async () => {
+// The shipped config keeps push paused (#019), so the gate's paused branch is
+// the production default (DECISIONS #021): no subscribe outcome — not a tap
+// rejection, not a missing template — may block the binding. These cases omit
+// subscriptionPushEnabled to exercise the shipped default.
+test("requireCrisisSubscribeBeforeBind lets rejected subscribe still bind", async () => {
   const config = guardianPush.normalizeCrisisPushConfig({
     enabled: true,
     template_ids: { crisis: "tmpl-crisis" },
   });
-  const paused = await crisisAlerts.requireCrisisSubscribeBeforeBind({
+  const rejected = await crisisAlerts.requireCrisisSubscribeBeforeBind({
     declaredMode: "parent_for_child",
     config,
     api: fakeApi(),
-    wxApi: fakeWx({ "tmpl-crisis": "accept" }),
-    subscriptionPushEnabled: false,
+    wxApi: fakeWx({ "tmpl-crisis": "reject" }),
   });
-  assert.deepEqual(paused, { ok: true, kind: "paused" });
+  assert.deepEqual(rejected, { ok: true, kind: "paused" });
+});
 
+test("requireCrisisSubscribeBeforeBind lets a missing template still bind", async () => {
+  const missing = await crisisAlerts.requireCrisisSubscribeBeforeBind({
+    declaredMode: "parent_for_child",
+    config: { enabled: false, templateId: "" },
+    api: fakeApi(),
+    wxApi: fakeWx({ "tmpl-crisis": "accept" }),
+  });
+  assert.deepEqual(missing, { ok: true, kind: "paused" });
+});
+
+test("requireCrisisSubscribeBeforeBind blocks parent bind only when push is re-enabled", async () => {
+  const config = guardianPush.normalizeCrisisPushConfig({
+    enabled: true,
+    template_ids: { crisis: "tmpl-crisis" },
+  });
   const unavailable = await crisisAlerts.requireCrisisSubscribeBeforeBind({
     declaredMode: "parent_for_child",
     config: { enabled: false, templateId: "" },
@@ -242,7 +261,8 @@ test("bind runs the subscribe gate before creating the binding; memory pins aler
   const homeWxml = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
   const configJs = fs.readFileSync(path.join(root, "config.js"), "utf8");
 
-  assert.match(configJs, /SUBSCRIPTION_PUSH_ENABLED\s*=\s*true/);
+  // DECISIONS #021: subscribing stays out of the bind path; #019 keeps push paused.
+  assert.match(configJs, /SUBSCRIPTION_PUSH_ENABLED\s*=\s*false/);
   assert.match(bindJs, /requireCrisisSubscribeBeforeBind/);
   assert.match(bindJs, /createDeviceBinding/);
   assert.match(bindJs, /SUBSCRIPTION_PUSH_ENABLED/);

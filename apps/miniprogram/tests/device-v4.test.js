@@ -19,8 +19,10 @@ test("the usage screen shows the real quiet window as the card chip, then the of
   const text = visibleText(html);
   assert.match(
     text,
-    /安静时段 孩子睡觉的时间，机器人不陪聊 21:00–07:00 安全提醒 家长打开小程序时首页会置顶显示 安全提醒已关闭，打开小程序仍会看到置顶提醒。 离线故事 不联网也能听 小星星的枕头 月亮不着急 大熊和森林里的悄悄话 隐私说明 管理与导出数据 解绑设备/,
+    // Push stays paused (#019), so the device safety-subscribe inset is hidden.
+    /安静时段 孩子睡觉的时间，机器人不陪聊 21:00–07:00 离线故事 不联网也能听 小星星的枕头 月亮不着急 大熊和森林里的悄悄话 隐私说明 管理与导出数据 解绑设备/,
   );
+  assert.doesNotMatch(text, /安全提醒已关闭/);
   assert.doesNotMatch(text, /即将上线/);
   assert.match(html, /class="mps-fill" style="width: 33\.3%;"/);
 });
