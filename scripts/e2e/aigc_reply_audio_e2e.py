@@ -216,6 +216,12 @@ def _write_certs(directory: Path) -> dict[str, Path]:
         )
         files[name] = cert
         files[f"{name}_key"] = key
+    # CI (Linux containers) mount this directory as a non-root user; a 0700
+    # mkdtemp is unreadable there. Docker Desktop on macOS masks the mismatch,
+    # which is why this only failed inside CI.
+    directory.chmod(0o755)
+    for entry in directory.iterdir():
+        entry.chmod(0o644)
     return files
 
 
