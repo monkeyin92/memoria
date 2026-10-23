@@ -218,9 +218,10 @@ PYEOF
 ## 发布前门禁
 
 1. 干净 worktree 冻结目标 source/tag，按影响域运行定向/必需门禁；Agent/python CI 通过不代替跳过的镜像、固件和客户端检查。授权/schema/RLS 变动须带真实 `MEMORIA_TEST_POSTGRES_DSN` 跑受影响契约，跳过不算通过。
-2. 在候选镜像跑 Agent 发布门（`scripts.verify_agent_release_artifact`：bridge 与提供方适配器不导入 livekit、自有媒体遥测隐私 canary、DTLN 去噪器可加载）；镜像解析显式给 expected candidate 并对齐有效 overrides。已有自动门禁接线，当前候选/生产复验要求见 P1-01。
-3. 冻结 source/images/manifest/verifier 摘要和 OCI revision/role/architecture；现场复核 image ID、软链、有效 env 摘要、数据风险与一个可运行回滚。
-4. dry-run→上传校验→授权切流→候选 provider smoke→具名 readiness、外部 Host/SNI 路由、设备和延迟复核；非目标容器/配置不得变化，失败即停止或按授权回滚。
+2. **手动补一条 tag 名下的 CI 收据**。ci.yml 对 main 不再跑 push 触发，PR run 都挂在分支头，main 收下合并没有自己的 run（2026-10-23 发现 99b8d32a 名下无收据）。发布的目标提交若是 merge commit（不在任何分支），先 `git push origin <sha>:refs/heads/deploy/<tag>-ci-receipt` 再 `gh workflow run ci --ref <该分支>`（workflow_dispatch 的 `--ref` 不收裸 sha，HTTP 422）。收据是 run URL；分支留着（deploy/* 前缀约定）。
+3. 在候选镜像跑 Agent 发布门（`scripts.verify_agent_release_artifact`：bridge 与提供方适配器不导入 livekit、自有媒体遥测隐私 canary、DTLN 去噪器可加载）；镜像解析显式给 expected candidate 并对齐有效 overrides。已有自动门禁接线，当前候选/生产复验要求见 P1-01。
+4. 冻结 source/images/manifest/verifier 摘要和 OCI revision/role/architecture；现场复核 image ID、软链、有效 env 摘要、数据风险与一个可运行回滚。
+5. dry-run→上传校验→授权切流→候选 provider smoke→具名 readiness、外部 Host/SNI 路由、设备和延迟复核；非目标容器/配置不得变化，失败即停止或按授权回滚。
 5. 对外声称「我们自己的服务器不保存录音和原话」之前：每次更换服务器或改动与存储相关的代码后，都要在目标服务器上重新核查存储。最近一次核查：aginice.cn 测试服务器，2026-10-14（见 docs/compliance/deletion-record-20261014.md）。另外，「机器人本身不存录音」这句话依赖当前固件：不挂载 SD 卡，也不把音频写入 flash。任何固件存储改动（例如启用 SD 卡、加入离线缓存、修改分区表）都要像服务器规则一样重新核查这句话。试用机的 SD 卡槽要封住。
 
 `scripts/deploy_agent_component.sh` 的 source overlay 仅适用 Agent 源码切片，只切 `voice-core-media-bridge`；线上 bridge 可以是整栈镜像（不带 `com.memoria.release.kind`，且 version 必须等于该容器的 `MEMORIA_RELEASE_TAG`），也可以是组件或回滚恢复镜像；已存在的同名回滚 tag（`release_ops.sh` 也用 `rollback-<tag>-pre` 命名上一栈）只有与当前 bridge 镜像 image id 相同时才复用。`--dry-run` 不检查线上 bridge，这一步的拒绝只在 `--cutover` 出现，且发生在任何切换之前。默认要求运行时底座与线上 bridge 是不同镜像，否则拒绝 `runtime base image is missing, has invalid provenance, or is not independent`；手工在发布机上构建的候选（如 `memoria-agent:20261021-a94c438-pr345`）底座就是线上 bridge 本身，需显式加 `--allow-manual-base-image --reason TEXT`（必须同时给 `--cutover` 和非空理由），此时回滚到上一个镜像等于连底座一起回滚。该决定会写进本地预检日志、远端 `ROLLBACK_POINT.txt` 与 `CUTOVER_RESULT.txt`（`manual_base_image_accepted` / `manual_base_image_reason`），其余检查不变；不带该选项的行为不变。`.dockerignore/pyproject.toml/uv.lock/infra/Dockerfile.agent` 变化必须完整构建，`--allow-scope-drift` 不豁免。不得为行预算顺手修改依赖输入；`check_module_budget.py check` 校验精确行数。切流 Compose 使用 Control 有效栈 tag，不用 OCI revision 或目录名代替。
@@ -443,6 +444,8 @@ sudo find /var/log/memoria -type f -delete && sudo rmdir /var/log/memoria
 第 ④ 步之后若要回滚那次发布：PREV 带着 `logging:` 块，容器又会往 5514 发。先装回关闭版 drop-in（第 ① 步的前三行），再回滚。
 
 ## media-edge 组件发布（手工，只换 media-edge 一个容器）
+
+**删镜像前的核对规则（2026-10-23）**：删除任何 `memoria-*` 镜像标签之前，先核对最新 `.cutover/prev-release` 的 `overrides=` 记录里每个 image id 仍能 `docker image inspect` 成功。回滚只 recreate `services=` 名单里的服务、逐服务按记录追加覆盖 `--no-deps --no-build`，所以只要覆盖镜像还在，基础标签（整栈同名 tag）被删不影响回滚起得来；但覆盖镜像一旦丢失，`verify_prev_image_ids` 会直接拒。composite 合并配置里出现的其他标签（如 media-edge / media-slo-reporter 解析出的整栈 tag）不参与 recreate，允许被清。10-22 的清理就删掉了 `memoria-{control-api,agent,media-edge}:20261020-minor-bypass-a94c438`，14:1x 复核确认回滚仍完整可跑。
 
 media-edge 不在 `release_ops.sh` 的整栈切流里，镜像按组件 tag 单独换，后续整栈发布没有换过它。编排链以线上容器为准：`docker inspect memoria-media-edge-1 --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}'`（2026-10-02 起是 `releases/20260930-local-stop-v2/docker-compose.production.yml` + `component-releases/<tag>-media-edge/media-edge-component.override.yml`）。收据样例见 `docs/HANDOFF-archive-0924-1003.md`「2026-10-02 media-edge 组件发布 20261002-late-progress-v1」。
 
