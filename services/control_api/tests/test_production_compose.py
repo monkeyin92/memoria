@@ -535,12 +535,18 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
         "COPY --chown=65532:65532 memoria/scripts/run_media_bridge.py "
         "/app/scripts/run_media_bridge.py"
     ) in overlay
+    # The approved fixed-safety clips ship through the overlay too, so the
+    # archive that becomes its build context has to carry them.
+    assert (
+        "COPY --chown=65532:65532 memoria/infra/voices/fixed_safety "
+        "/app/infra/voices/fixed_safety"
+    ) in overlay
     assert "uv pip install" not in overlay
     assert "apt-get" not in overlay
 
     assert "scripts/verify_release_source.py" in deploy
     assert "git get-tar-commit-id" in deploy
-    assert "services packages \\\n  scripts/run_media_bridge.py" in deploy
+    assert "services packages infra/voices/fixed_safety \\\n  scripts/run_media_bridge.py" in deploy
     assert "scripts/run_media_bridge.py" in deploy
     assert "--network=none" in deploy
     assert "docker save" not in deploy
