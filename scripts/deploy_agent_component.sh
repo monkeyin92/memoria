@@ -456,11 +456,19 @@ if [[ "$cutover" != true ]]; then
   exit 0
 fi
 
-ssh "$remote" sudo -n bash -s -- \
-  "$remote_dir" "$target_image" "$release_tag" "$compose_sha" \
-  "$expected_commit" "$base_image" "$base_image_id" "$base_commit" \
-  "$runtime_base" "$source_sha" "$dockerfile_sha" "$resolver_sha" \
-  "$allow_manual_base_image" "$manual_base_reason" <<'REMOTE_CUTOVER'
+# ssh joins its arguments into one remote command line, so an empty argument
+# disappears and a reason with a space splits into two. Quote each value for
+# the remote shell and send the whole thing as that one line.
+cutover_args=(
+  "$remote_dir" "$target_image" "$release_tag" "$compose_sha"
+  "$expected_commit" "$base_image" "$base_image_id" "$base_commit"
+  "$runtime_base" "$source_sha" "$dockerfile_sha" "$resolver_sha"
+  "$allow_manual_base_image" "$manual_base_reason"
+)
+for index in "${!cutover_args[@]}"; do
+  cutover_args[index]="$(printf '%q' "${cutover_args[index]}")"
+done
+ssh "$remote" "sudo -n bash -s -- ${cutover_args[*]}" <<'REMOTE_CUTOVER'
 set -Eeuo pipefail
 remote_dir="$1"
 target_image="$2"
