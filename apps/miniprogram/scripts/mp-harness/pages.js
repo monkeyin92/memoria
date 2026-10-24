@@ -6,6 +6,7 @@ const fx = require("./fixtures");
 
 const { authed, guest } = fx;
 const READY_AGREEMENT = "# 用户协议\n\n## 正文\n\n甲。\n";
+const PENDING_AGREEMENT = "# 用户协议\n\n## 正文\n\n<!-- agreement: pending -->\n";
 const FIXTURE_EFFECTIVE_ON = "2026年4月1日";
 
 function withReadyAgreement(harness) {
@@ -14,6 +15,11 @@ function withReadyAgreement(harness) {
     files: { "legal/user-agreement.md": READY_AGREEMENT },
     effectiveOn: FIXTURE_EFFECTIVE_ON,
   };
+}
+
+// 真协议已经生效，锁定的页面得自己带一份还挂着 pending 标记的正文。
+function withPendingAgreement(harness) {
+  return { ...harness, files: { "legal/user-agreement.md": PENDING_AGREEMENT } };
 }
 
 const PAGES = [
@@ -62,7 +68,7 @@ const PAGES = [
     actions: [["toggleAccountConsent"]],
   },
   { slug: "child-consent", page: "pages/child-consent/index", harness: withReadyAgreement(guest()) },
-  { slug: "child-consent-locked", page: "pages/child-consent/index", harness: guest() },
+  { slug: "child-consent-locked", page: "pages/child-consent/index", harness: withPendingAgreement(guest()) },
   { slug: "privacy-policy", page: "pages/privacy-policy/index", harness: guest() },
   { slug: "attention", page: "pages/attention/index", harness: authed(), query: { id: "n1" } },
   { slug: "attention-empty", page: "pages/attention/index", harness: authed(fx.safetyAlertApi([])), query: { id: "n1" } },
