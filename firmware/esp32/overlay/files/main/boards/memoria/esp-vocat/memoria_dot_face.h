@@ -79,9 +79,9 @@ const char* FaceName(FaceId id);
 // from parsing the server string itself.
 const char* ReceivedExpression(const FaceFacts& facts);
 
-// The face a reply expression draws while the device is speaking. No name at
-// all keeps the speaking face, and a name the seven faces have no reading for
-// is the calm face.
+// The face a reply expression draws while the device is speaking. A name the
+// seven faces have a use for picks that face; no name at all, or one they have
+// no use for, keeps the speaking face.
 FaceId FaceForExpression(const char* expression);
 
 FaceId FaceForFacts(const FaceFacts& facts);

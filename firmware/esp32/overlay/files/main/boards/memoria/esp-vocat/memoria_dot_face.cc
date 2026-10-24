@@ -174,8 +174,8 @@ bool CrisisEyesClosed(uint32_t elapsed_ms) {
 namespace {
 
 // The reply expressions the seven faces can show, and the face each one draws.
-// Names the server sends and the media edge does not fold are both listed, so
-// the panel reads either spelling. Anything else stays the calm face.
+// Names the server sends and the names the media edge folds them into are both
+// listed, so the panel reads either spelling.
 struct ExpressionFace {
     const char* name;
     FaceId face;
@@ -185,11 +185,13 @@ constexpr ExpressionFace kExpressionFaces[] = {
     {"happy", FaceId::kSpeak},
     {"caring", FaceId::kSpeak},
     {"loving", FaceId::kSpeak},
+    // Neutral is what most replies resolve to, and the device is still saying
+    // them: dropping to calm would read as a face that stopped talking.
+    {"neutral", FaceId::kSpeak},
     {"curious", FaceId::kThink},
     {"thinking", FaceId::kThink},
-    {"sad", FaceId::kCalm},
     {"surprised", FaceId::kGreet},
-    {"neutral", FaceId::kCalm},
+    {"sad", FaceId::kCalm},
 };
 
 bool SameToken(const char* value, const char* name) {
@@ -207,17 +209,17 @@ bool SameToken(const char* value, const char* name) {
 }  // namespace
 
 FaceId FaceForExpression(const char* expression) {
-    // No reply expression yet: the device is simply speaking, so it keeps the
-    // speaking face rather than dropping to calm between replies.
-    if (expression == nullptr || expression[0] == '\0') {
-        return FaceId::kSpeak;
-    }
-    for (const ExpressionFace& entry : kExpressionFaces) {
-        if (SameToken(expression, entry.name)) {
-            return entry.face;
+    if (expression != nullptr) {
+        for (const ExpressionFace& entry : kExpressionFaces) {
+            if (SameToken(expression, entry.name)) {
+                return entry.face;
+            }
         }
     }
-    return FaceId::kCalm;
+    // Nothing to read: no name yet, or one the seven faces have no use for.
+    // The device is speaking either way, so it keeps the speaking face rather
+    // than dropping to calm, which would read as a face that stopped talking.
+    return FaceId::kSpeak;
 }
 
 FaceId FaceForFacts(const FaceFacts& facts) {

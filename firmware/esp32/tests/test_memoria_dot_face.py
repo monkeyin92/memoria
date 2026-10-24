@@ -401,6 +401,8 @@ def test_a_reply_expression_picks_the_speaking_face_and_no_other(report: dict) -
     assert expressions["overrun"] == "empty"
     # Speaking follows the reply. The names are the ones the server sends and
     # the ones the media edge folds them into, and both spellings draw a face.
+    # Neutral and anything the faces have no use for keep the speaking face: the
+    # device is still talking, so a calm face would read as a face that stopped.
     drawn = {
         "happy": "speak",
         "caring": "speak",
@@ -409,10 +411,10 @@ def test_a_reply_expression_picks_the_speaking_face_and_no_other(report: dict) -
         "thinking": "think",
         "sad": "calm",
         "surprised": "greet",
-        "neutral": "calm",
-        "angry": "calm",
+        "neutral": "speak",
+        "angry": "speak",
         "none": "speak",
-        "light_laughter": "calm",
+        "light_laughter": "speak",
     }
     for name, face in drawn.items():
         assert report["expression_faces"][name] == face, name
