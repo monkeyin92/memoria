@@ -520,7 +520,7 @@ def _notice_context() -> Any:
 
 @pytest.mark.asyncio
 async def test_aigc_notice_plays_once_at_start_and_end_on_prerecorded_safety_turn() -> None:
-    host = _AigcHost(AigcNoticeConfig())
+    host = _AigcHost(AigcNoticeConfig(enabled=True))
     context = _notice_context()
     wrapper, inner = _wrapper()
 

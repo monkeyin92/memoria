@@ -201,6 +201,7 @@ class _RoundBridge(_CapturingGenerationBridge):
 
 def _notice_config() -> AigcNoticeConfig:
     return AigcNoticeConfig(
+        enabled=True,
         tone_short_ms=20,
         tone_long_ms=30,
         tone_gap_ms=0,
