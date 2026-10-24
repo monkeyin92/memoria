@@ -340,6 +340,13 @@ test("consent catalogs keep sensitive capabilities off by default", () => {
   assert.equal(byId.offer_self_legacy_v1.defaultChecked, false);
 
   const minorOffers = binding.consentOffersFor("parent_for_child");
+  const childRules = minorOffers.find((offer) => offer.id === "offer_child_rules_v1");
+  assert.equal(childRules.defaultChecked, false);
+  assert.equal(childRules.requiredForSubmit, true);
+  assert.equal(
+    minorOffers.filter((offer) => offer.requiredForSubmit).map((offer) => offer.id).join(","),
+    "offer_child_rules_v1",
+  );
   const minorMemory = minorOffers.find((offer) => offer.id === "offer_minor_memory_retention_v1");
   assert.equal(minorMemory.defaultChecked, false);
   assert.equal(minorMemory.requiresParentSelfAcceptance, false);
