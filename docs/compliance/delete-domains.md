@@ -7,6 +7,7 @@
 按使用人删除（`services/governance/subject_deletion.py`）的覆盖面按存储逐项复核，结论取代下方 09-20 结论中已过时的部分（`memory_scope` 已由 P1-11 的维护角色函数按使用人擦除，不再是"无法物理删除"）。
 
 - **已删除并在 `verified_empty` 核对为空**：归档证据（按血缘与 `subject_id`）、转写、证据对象行、处理 outbox、编译收据、所有以 `source_event_id` 关联的投影；监护/导师与危机行；语料活行；`memory_scope` 记录、状态事件、共享提案与投票、采集证据（outbox/审计载荷清空）；人格（特征、风格统计、版本，2026-09-26 起按使用人记账并在删除末尾核对）。
+- **向量域（2026-10-24 补充）**：`memory_vector_documents` 是搜索投影的一部分，不是独立留存域。删除时按血缘走 `_delete_order`，条件 `source_event_id IN :ids OR CAST(item_id AS TEXT) IN :items`；末尾的 `verified_empty` 另有两条按主体的计数核对（`about_subject` 直接计数，以及经 `memory_claim_subjects` 反查 `item_id` 计数），都进 `verified_empty` 结果。撤回与修正单条记忆时的向量清理走 `services/archive/memory_vector_cleanup.py`（#326，2026-10-19 合入）：撤回删除向量并把搜索行置 `status='retracted'`，重新确认恢复同一行的向量，修正删除旧措辞的每份副本并在同一事务内为改正后的文本重新嵌入。恢复重放（`replay_subject_deletions.py`）在正常删除之后再跑一次 `delete_subject_vectors` 的按证据 join，只为覆盖「从早于 #326 的备份恢复、向量又指向已删除证据」这一种情况；对证据行已不存在的孤立向量它无能为力，留待投影重建。
 - **已删除但未在末尾复核**：归档对象（每次删除后立即回读确认）、语料对象、身份脱敏、会话终止、按 id 收集的投影（通过 `source_event_id` 间接核对）。
 - **有意保留的内容无关审计**：同意要约/证据/快照、`policy_receipts_v2`、会话 runtime profile 与事件（签名载荷只含 id、年龄段、类别与 `persona_id`，无人格文本与姓名）、身份关系与绑定、`guardian_person_consents`、删除台账本身。
 - **2026-09-26 已修复的来源**：数字分身与进化学习此前只校验"主人说话人/成年账号"，会把孩子或老人的话轮写入账号本人的数字分身快照与学习信号；现在两者只接收主体为空（早于主体归属）或等于账号本人的证据。response-plan 缓存在删除前按使用人失效。线上两张表当时为空，无存量需要清理。

@@ -563,10 +563,12 @@ class PostgresSubjectArchive(PostgresAccountRepository):
     async def delete_subject_vectors(self, *, account_id: str, subject_id: str) -> int:
         """Delete vectors whose evidence still names this subject.
 
-        The vector-deletion PR is not merged yet, so a restored vector row can
-        outlive the captured lineage while its ``source_event_id`` still points
-        at evidence carrying the subject. The normal saga already deletes
-        vectors by lineage; this replay-only join is the belt-and-braces pass.
+        Vector deletion on recall and deletion landed in #326, so the replay
+        only needs this pass for a vector restored from a backup taken before
+        that: it can outlive the recaptured lineage while its
+        ``source_event_id`` still points at evidence carrying the subject. The
+        normal saga already deletes vectors by lineage; this replay-only join
+        is the belt-and-braces pass.
         An orphan whose evidence row is gone cannot be attributed to a subject
         and is left for the next projection rebuild.
         """
