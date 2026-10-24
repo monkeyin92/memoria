@@ -151,6 +151,22 @@ int OriginY(bool captioned) {
 
 const char* FaceName(FaceId id) { return kNames[static_cast<int>(ClampFace(id))]; }
 
+const char* ReceivedExpression(const FaceFacts& facts) {
+    for (int i = 0; i < kExpressionNameMax; ++i) {
+        const char character = facts.expression[i];
+        if (character == '\0') {
+            return facts.expression;
+        }
+        // A server value with a character outside a short token, or one that
+        // fills the buffer without a terminator, is treated as no expression.
+        const bool letter = (character >= 'a' && character <= 'z') || character == '_';
+        if (!letter) {
+            return "";
+        }
+    }
+    return "";
+}
+
 bool CrisisEyesClosed(uint32_t elapsed_ms) {
     return elapsed_ms % kCrisisBlinkPeriodMs >= kCrisisBlinkPeriodMs - kCrisisBlinkClosedMs;
 }

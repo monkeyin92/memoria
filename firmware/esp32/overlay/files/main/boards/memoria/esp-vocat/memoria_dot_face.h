@@ -42,12 +42,18 @@ enum FaceDeviceState : int {
     kFaceStateFatalError = 11,
 };
 
+// The reply's expression as the server named it (screen.expression), or empty
+// when the server sent none. Nothing paints from it. The seven faces follow
+// device state, and a content-driven face means adding a face.
+constexpr int kExpressionNameMax = 16;
+
 struct FaceFacts {
     int state = kFaceStateIdle;
     bool crisis = false;
     bool user_spoke = false;
     bool intro = false;
     bool setup = false;
+    char expression[kExpressionNameMax] = {};
 };
 
 struct FaceRect {
@@ -66,6 +72,12 @@ constexpr uint32_t kCrisisBlinkClosedMs = 320;
 bool CrisisEyesClosed(uint32_t elapsed_ms);
 
 const char* FaceName(FaceId id);
+
+// The expression name the facts carry, or empty when the server sent none or
+// sent one that is not a short token. Owning this read here keeps the panel
+// from parsing the server string itself.
+const char* ReceivedExpression(const FaceFacts& facts);
+
 FaceId FaceForFacts(const FaceFacts& facts);
 FaceRect FaceBounds(bool captioned);
 

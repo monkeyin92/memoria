@@ -83,7 +83,25 @@ int main() {
         crisis_intro.setup = true;
         crisis_intro.user_spoke = true;
         PrintFacts("crisis_all", crisis_intro);
+
+        // A reply expression is recorded and changes nothing. The face for a
+        // given state stays the one device state already selects.
+        memoria::FaceFacts expressed = plain;
+        std::snprintf(expressed.expression, sizeof(expressed.expression), "caring");
+        PrintFacts("expressed", expressed);
     }
+
+    memoria::FaceFacts token;
+    std::snprintf(token.expression, sizeof(token.expression), "light_laughter");
+    std::printf("expr %s\n", memoria::ReceivedExpression(token));
+    memoria::FaceFacts empty;
+    std::printf("exprnone %s\n", memoria::ReceivedExpression(empty)[0] == '\0' ? "empty" : "set");
+    memoria::FaceFacts junk;
+    std::snprintf(junk.expression, sizeof(junk.expression), "Happy!");
+    std::printf("exprjunk %s\n", memoria::ReceivedExpression(junk)[0] == '\0' ? "empty" : "set");
+    memoria::FaceFacts overrun;
+    std::memset(overrun.expression, 'a', sizeof(overrun.expression));
+    std::printf("exprover %s\n", memoria::ReceivedExpression(overrun)[0] == '\0' ? "empty" : "set");
 
     for (int i = 0; i < memoria::kFaceCount; ++i) {
         const auto id = static_cast<memoria::FaceId>(i);
@@ -265,6 +283,7 @@ def report() -> dict:
     blink_params = None
     blink: dict[int, int] = {}
     frameeq: dict[str, int] = {}
+    expressions: dict[str, str] = {}
     count = None
     for parts in lines:
         if parts[0] == "count":
@@ -281,6 +300,14 @@ def report() -> dict:
             blink[int(parts[1])] = int(parts[2])
         elif parts[0] == "frameeq":
             frameeq[parts[1]] = int(parts[2])
+        elif parts[0] == "expr":
+            expressions["token"] = parts[1]
+        elif parts[0] == "exprnone":
+            expressions["none"] = parts[1]
+        elif parts[0] == "exprjunk":
+            expressions["junk"] = parts[1]
+        elif parts[0] == "exprover":
+            expressions["overrun"] = parts[1]
         elif parts[0] == "paint":
             fields = {}
             for item in parts[3:]:
@@ -298,6 +325,7 @@ def report() -> dict:
         "blink_params": blink_params,
         "blink": blink,
         "frameeq": frameeq,
+        "expressions": expressions,
     }
 
 
@@ -340,6 +368,17 @@ def test_device_state_selects_the_face(report: dict) -> None:
     assert _face(report, "intro", SPEAKING) == "greet"
     assert _face(report, "setup", CONNECTING) == "pair"
     assert _face(report, "setup", IDLE) == "pair"
+
+
+def test_a_reply_expression_is_recorded_and_never_changes_the_face(report: dict) -> None:
+    expressions = report["expressions"]
+    assert expressions["token"] == "light_laughter"
+    assert expressions["none"] == "empty"
+    assert expressions["junk"] == "empty"
+    assert expressions["overrun"] == "empty"
+    for state in (UNKNOWN, STARTING, WIFI, IDLE, CONNECTING, RECOVERING, LISTENING, SPEAKING,
+                  UPGRADING, ACTIVATING, AUDIO, FATAL, 99):
+        assert _face(report, "expressed", state) == _face(report, "plain", state)
 
 
 def test_crisis_is_always_the_calm_face(report: dict) -> None:
