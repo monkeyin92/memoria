@@ -296,6 +296,23 @@ class MediaSessionStandbyMixin:
             )
         context.runtime.publish_assistant_state("listening_closed")
 
+    def hold_listening_capture_until_tap(self, context: _MediaVoiceSession) -> None:
+        """Hold the microphone on a reclaimed transport until the child taps.
+
+        A reconnect is not a tap, and the firmware only turns a tap into
+        `listening.resume` while it believes capture is closed. The hold itself
+        survives on the server, but the newly attached transport has to be told
+        again, so this publishes `listening_closed` even when the capture was
+        already held before the drop.
+        """
+
+        if not self._listening_capture_armed(context):
+            return
+        already_held = context.listening_capture_hold
+        self._latch_listening_capture(context)
+        if already_held:
+            context.runtime.publish_assistant_state("listening_closed")
+
     def resume_listening_from_screen_tap(
         self,
         context: _MediaVoiceSession,

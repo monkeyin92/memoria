@@ -24,6 +24,7 @@ from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.media_protocol import (
     DEVICE_POST_PLAYBACK_HOLDOFF_S,
     AudioFrame,
+    MediaEnvelope,
     SessionIdentity,
 )
 from services.agent.src.voice_core.media_session import MediaReplyChunk
@@ -200,6 +201,27 @@ class _StoryHarness(_Harness):
         await self.wait_for(lambda: self.count("accepted") == accepted + 1)
         self.sample = 0
         self._audio_sequence = 0
+
+    async def screen_tap(self, *, wake_sample: int = 0) -> None:
+        """The child taps the screen after a reconnect, as the firmware reports it."""
+
+        resume = MediaEnvelope.create(
+            type="listening.resume",
+            event_id="listening-resume",
+            session_id=self.identity.session_id,
+            stream_epoch=self.identity.stream_epoch,
+            sequence=1,
+            payload={"wake_sample": wake_sample},
+        )
+        await self.send(
+            media_pb2.MediaToCore(
+                device=media_pb2.DeviceEvent(
+                    identity=self.wire_identity,
+                    event_type="listening.resume",
+                    json_payload=resume.encode(),
+                )
+            )
+        )
 
     async def start_story(self) -> GenerationFence:
         """The owner asks for a story; its first phrase is on the speaker."""
@@ -741,6 +763,7 @@ async def test_device_utterance_after_stop_and_reconnect_is_one_answered_turn() 
         assert story in harness.story.cancelled
 
         await harness.reconnect()
+        await harness.screen_tap()
         # Past the old boundary on the new clock; the owner pauses mid-request
         # longer than the follow-up grace while the device VAD stays open.
         await harness.audio_frames(75)
@@ -925,6 +948,7 @@ async def test_device_request_after_reconnect_survives_the_next_task_reusing_its
         assert story in harness.story.cancelled
 
         await harness.reconnect()
+        await harness.screen_tap()
         epoch = harness.identity.stream_epoch
         # The production endpoint grace, so the next task can answer inside it.
         harness.registry.turn_endpoint_grace_s = 0.9

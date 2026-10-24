@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.orchestration.state_machine import InteractionPhase
 from services.agent.src.providers.funasr_protocol import (
     FunASRSentence,
     FunASRServerEvent,
@@ -19,6 +20,7 @@ from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_protocol import (
     AudioFrame,
+    MediaEnvelope,
     SessionIdentity,
 )
 from services.agent.src.voice_core.media_session import (
@@ -762,3 +764,131 @@ async def test_registry_fences_old_result_as_soon_as_provider_switches_tasks() -
     assert context.runtime.speech_timeline.pending == ()
     await context.runtime.close()
     await provider.close(identity)
+
+
+class _CountingAudioProvider(FakeMediaProvider):
+    async def ingest_audio(
+        self, _identity: SessionIdentity, frame: AudioFrame
+    ) -> tuple[()]:
+        self.audio_calls.append(frame.sequence)
+        return ()
+
+
+def _speech_frame(identity: SessionIdentity, sequence: int, start: int) -> AudioFrame:
+    return AudioFrame(identity, sequence, start, 320, b"\x01\x10" * 320)
+
+
+async def _provider_saw(provider: _CountingAudioProvider, sequences: list[int]) -> None:
+    for _ in range(50):
+        if provider.audio_calls == sequences:
+            return
+        await asyncio.sleep(0)
+    raise AssertionError(f"provider audio calls stopped at {provider.audio_calls}")
+
+
+@pytest.mark.asyncio
+async def test_reclaimed_transport_holds_uplink_until_the_screen_tap() -> None:
+    """A reconnect is not a tap, and the new connection has to be told.
+
+    The promise to parents is that the device records only after the child taps
+    the screen. A reclaimed transport therefore drops its uplink and publishes
+    `listening_closed`, because the firmware only turns a tap into
+    `listening.resume` while it believes capture is closed. The tap admits the
+    microphone again; a session that never reconnected is admitted throughout.
+    """
+
+    provider = _CountingAudioProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = _device_identity("reclaim-holds-uplink")
+    connection = open_bridge_connection(bridge, identity)
+    session = connection.session
+    context = await registry.open_session(identity)
+    context.runtime.set_interaction_phase(
+        InteractionPhase.LISTENING,
+        cause="test",
+        publish=False,
+    )
+    try:
+        await registry.on_audio_frame(session, _speech_frame(identity, 0, 0))
+        await _provider_saw(provider, [0])
+
+        await registry.on_session_closed(session)
+        reclaimed = replace(identity, stream_epoch=identity.stream_epoch + 1)
+        assert session.reconnect(reclaimed)
+        await registry.open_session(reclaimed)
+
+        assert context.listening_capture_hold is True
+        await registry.on_audio_frame(session, _speech_frame(reclaimed, 1, 0))
+        await asyncio.sleep(0)
+        assert provider.audio_calls == [0]
+
+        await registry.on_client_event(
+            session,
+            MediaEnvelope.create(
+                type="listening.resume",
+                event_id="listening-resume",
+                session_id=identity.session_id,
+                stream_epoch=reclaimed.stream_epoch,
+                sequence=1,
+                payload={"wake_sample": 0},
+            ),
+            0,
+        )
+        assert context.listening_capture_hold is False
+        await registry.on_audio_frame(session, _speech_frame(reclaimed, 2, 320))
+        await _provider_saw(provider, [0, 2])
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_reclaim_after_the_capture_window_closed_publishes_closed_again() -> None:
+    """A transport that reattaches after capture closed must be told again.
+
+    The hold already survives on the server, but the new connection never saw
+    `listening_closed`, so the tap would be dropped as busy on the device.
+    """
+
+    provider = _CountingAudioProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = _device_identity("reclaim-after-hold")
+    connection = open_bridge_connection(bridge, identity)
+    session = connection.session
+    context = await registry.open_session(identity)
+    context.runtime.set_interaction_phase(
+        InteractionPhase.LISTENING,
+        cause="test",
+        publish=False,
+    )
+    published: list[str] = []
+    original = context.runtime.publish_assistant_state
+
+    def _record(state: str, **kwargs: Any) -> Any:
+        published.append(state)
+        return original(state, **kwargs)
+
+    context.runtime.publish_assistant_state = _record  # type: ignore[method-assign]
+    try:
+        registry._latch_listening_capture(context)
+        assert context.listening_capture_hold is True
+        assert published.count("listening_closed") == 1
+
+        await registry.on_session_closed(session)
+        reclaimed = replace(identity, stream_epoch=identity.stream_epoch + 1)
+        assert session.reconnect(reclaimed)
+        await registry.open_session(reclaimed)
+
+        assert context.listening_capture_hold is True
+        assert published.count("listening_closed") == 2
+    finally:
+        await registry.finalize_session(identity.session_id)

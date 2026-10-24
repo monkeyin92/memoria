@@ -178,6 +178,8 @@ class MediaSessionLifecycleMixin:
             self, context: _MediaVoiceSession, *, reset: bool
         ) -> None: ...
 
+        def hold_listening_capture_until_tap(self, context: _MediaVoiceSession) -> None: ...
+
         def _resume_owner_silence_after_reconnect(
             self, context: _MediaVoiceSession
         ) -> None: ...
@@ -415,6 +417,12 @@ class MediaSessionLifecycleMixin:
                     current.last_playback_end_sample = None
                     current.last_asr_evidence_end_sample = 0
                     self._audio_ingress.reset_for_reconnect(current)
+                    # The promise to parents is that the device records only
+                    # after the child taps the screen. A reclaimed transport is
+                    # not a tap, so hold the microphone the same way the closed
+                    # capture window does, and tell the new connection again so
+                    # the firmware turns the next tap into `listening.resume`.
+                    self.hold_listening_capture_until_tap(current)
                     reconnected = True
         if discarded is not None:
             await self._emit_projection_patch(current, discarded)
