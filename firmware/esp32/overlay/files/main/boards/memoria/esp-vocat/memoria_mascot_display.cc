@@ -456,7 +456,10 @@ void MemoriaMascotDisplay::SetEmotion(const char* emotion) {
         ESP_LOGI(TAG, "emotion=%s -> error", emotion);
         return;
     }
-    ESP_LOGI(TAG, "emotion ignored: %s", emotion);
+    // Named, not painted. The log is the record that the server's expression
+    // arrived. The seven faces follow device state, and painting from it means
+    // adding a face.
+    ESP_LOGI(TAG, "expression=%s", emotion);
 }
 
 void MemoriaMascotDisplay::SetStatus(const char* status) {
