@@ -10,6 +10,7 @@ on:
 jobs:
   changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
       pull-requests: read
@@ -20,6 +21,7 @@ jobs:
       miniprogram: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.miniprogram }}
       firmware: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.firmware }}
       firmware_build: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.firmware_build }}
+      aigc_e2e: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.aigc_e2e }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v4
@@ -87,11 +89,18 @@ jobs:
             firmware_build:
               - '.github/workflows/ci.yml'
               - 'firmware/esp32/**'
+            aigc_e2e:
+              - '.github/workflows/ci.yml'
+              - 'scripts/e2e/aigc_reply_audio_e2e.py'
+              - 'infra/e2e/**'
+              - 'infra/Dockerfile.agent'
+              - 'infra/voices/fixed_safety/**'
 
   firmware:
     needs: changes
     if: needs.changes.outputs.firmware == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -144,6 +153,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.agent == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -179,6 +189,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     services:
       postgres:
         image: pgvector/pgvector:0.8.1-pg17-bookworm
@@ -282,6 +293,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -344,6 +356,7 @@ jobs:
     needs: [changes, control-api-image, python-gates, python-shards]
     if: ${{ always() && needs.changes.outputs.python == 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Every python job passed
         run: |
@@ -375,6 +388,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.media_edge == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: services/media_edge
@@ -416,6 +430,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Build the Agent image with its in-build release gate
@@ -430,6 +445,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       RELEASE_COMMIT: ${{ github.sha }}
       RELEASE_TAG: control-ci-${{ github.sha }}
@@ -489,6 +505,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.media_edge == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Build media edge image
@@ -504,10 +521,11 @@ jobs:
 
   aigc-e2e-tts-fault:
     needs: changes
-    # Manual only (ci > Run workflow): builds the agent image and runs one
-    # full-stack fault round, too heavy for every pull request.
-    if: github.event_name == 'workflow_dispatch'
+    # About one minute, not too heavy for the PR gate. The no-fault step is
+    # the one that asserts a stop does not interrupt and a start within 5 seconds.
+    if: needs.changes.outputs.aigc_e2e == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -515,11 +533,14 @@ jobs:
           python-version: "3.12"
       - name: TTS fault closes the round with the local line
         run: uv run python scripts/e2e/aigc_reply_audio_e2e.py --tts-fault=all
+      - name: Stop does not interrupt and the crisis reply starts within 5 seconds
+        run: uv run python scripts/e2e/aigc_reply_audio_e2e.py
 
   miniprogram:
     needs: changes
     if: needs.changes.outputs.miniprogram == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
