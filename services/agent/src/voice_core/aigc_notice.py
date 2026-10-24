@@ -1,9 +1,9 @@
 """Configurable AIGC notice hooks for one device conversation round.
 
-The default notice is a short pure-tone rhythm generated from parameters. No
-prompt text and no audio file lives here. Speech mode only loads a pre-rendered
-external resource at its native, normal speed; an unconfigured resource means
-silence, never a synthesized stand-in.
+Off unless a deployment turns it on. When on, the notice is a short pure-tone
+rhythm generated from parameters. No prompt text and no audio file lives here.
+Speech mode only loads a pre-rendered external resource at its native, normal
+speed; an unconfigured resource means silence, never a synthesized stand-in.
 """
 
 from __future__ import annotations
