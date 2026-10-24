@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 import asyncpg
 
@@ -72,6 +72,15 @@ class ExpirySummary:
             memory_records=sum(int(item.get("memory_records", 0)) for item in erased),
             memory_status_events=sum(int(item.get("memory_status_events", 0)) for item in erased),
         )
+
+
+PassStatus = Literal["ok", "skipped", "failed"]
+
+
+@dataclass(frozen=True, slots=True)
+class _PassResult:
+    status: PassStatus
+    summary: ExpirySummary
 
 
 async def due_summary_subjects(layers: ChildLayerExpiryStore) -> tuple[str, ...]:
@@ -166,7 +175,14 @@ class ChildLayerRetentionWorker:
             await _logged(KIND_DIALOGUE_SUMMARY, self._expire_summaries()),
             await _logged(KIND_CHILD_ARCHIVE, self._expire_archives(stamped)),
         )
-        return [summary for summary in passes if summary is not None]
+        logger.info(
+            "child layer retention round %s",
+            " ".join(
+                _summary_fields(pass_result.summary, pass_result.status)
+                for pass_result in passes
+            ),
+        )
+        return [pass_result.summary for pass_result in passes if pass_result.status == "ok"]
 
     async def _expire_summaries(self) -> ExpirySummary:
         subjects = await due_summary_subjects(self._layers)
@@ -184,25 +200,45 @@ class ChildLayerRetentionWorker:
             await asyncio.sleep(self._interval_s)
 
 
-async def _logged(kind: ChildMemoryKind, job: Awaitable[ExpirySummary]) -> ExpirySummary | None:
+async def _logged(kind: ChildMemoryKind, job: Awaitable[ExpirySummary]) -> _PassResult:
     try:
         summary = await job
-    except IdleActivityUnavailable as exc:
-        logger.warning("child layer retention kind=%s skipped reason=%s", kind, exc)
-        return None
-    except Exception:
-        logger.exception("child layer retention kind=%s failed", kind)
-        return None
-    logger.info(
-        "child layer retention kind=%s subjects=%s failed=%s"
-        " memory_records=%s memory_status_events=%s",
-        summary.kind,
-        summary.subjects,
-        summary.failed,
-        summary.memory_records,
-        summary.memory_status_events,
+    except IdleActivityUnavailable:
+        skipped = _empty_summary(kind)
+        logger.warning(
+            "child layer retention %s reason=IdleActivityUnavailable",
+            _summary_fields(skipped, "skipped"),
+        )
+        return _PassResult("skipped", skipped)
+    except Exception as exc:
+        failed = _empty_summary(kind)
+        logger.error(
+            "child layer retention %s error_type=%s",
+            _summary_fields(failed, "failed"),
+            type(exc).__name__,
+        )
+        return _PassResult("failed", failed)
+    logged = _PassResult("ok", summary)
+    logger.info("child layer retention %s", _summary_fields(summary, "ok"))
+    return logged
+
+
+def _empty_summary(kind: ChildMemoryKind) -> ExpirySummary:
+    return ExpirySummary(
+        kind=kind,
+        subjects=0,
+        failed=0,
+        memory_records=0,
+        memory_status_events=0,
     )
-    return summary
+
+
+def _summary_fields(summary: ExpirySummary, status: PassStatus) -> str:
+    return (
+        f"kind={summary.kind} status={status} subjects={summary.subjects}"
+        f" failed={summary.failed} memory_records={summary.memory_records}"
+        f" memory_status_events={summary.memory_status_events}"
+    )
 
 
 __all__ = [
