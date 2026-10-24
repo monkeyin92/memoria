@@ -11,6 +11,7 @@ from services.agent.src.voice_core.media_protocol import AudioFrame, SessionIden
 from services.agent.src.voice_core.media_session_state import MediaVoiceSessionState
 from services.agent.src.voice_core.speech_timeline import ASRResult
 from services.agent.tests.unit.media_session_support import (
+    _screen_tap,
     _verified_owner_decision,
     open_bridge_connection,
 )
@@ -184,6 +185,7 @@ async def test_late_finalize_fault_cannot_clear_replacement_input(
             if superseded_by == "reconnect":
                 assert not context.ingress.provider_failed
                 await registry._reuse_session(context, new_identity)
+                await _screen_tap(registry, session, new_identity)
                 await registry.on_speech_segment(session, _vad(new_identity, start=1280))
                 watchdog = context.pending.max_user_speech_task
                 active_start = context.pending.active_vad_start_sample

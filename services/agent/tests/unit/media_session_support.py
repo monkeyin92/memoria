@@ -24,6 +24,7 @@ from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_protocol import (
     AudioFrame,
+    MediaEnvelope,
     PlaybackEventType,
     PlaybackProgress,
     SessionIdentity,
@@ -241,6 +242,29 @@ async def _next_event(call, kind: str):
             return event
         backlog.append(event)
     raise AssertionError(f"bridge did not emit {kind}")
+
+
+async def _screen_tap(
+    registry: MediaVoiceCoreRegistry,
+    session: Any,
+    identity: SessionIdentity,
+    *,
+    wake_sample: int = 0,
+) -> None:
+    """The child taps the screen, as the firmware reports it on the new epoch."""
+
+    await registry.on_client_event(
+        session,
+        MediaEnvelope.create(
+            type="listening.resume",
+            event_id=f"listening-resume-{identity.stream_epoch}",
+            session_id=identity.session_id,
+            stream_epoch=identity.stream_epoch,
+            sequence=1,
+            payload={"wake_sample": wake_sample},
+        ),
+        0,
+    )
 
 
 def _queued_event(connection: Any, kind: str) -> Any:

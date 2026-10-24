@@ -32,6 +32,7 @@ from services.agent.tests.unit.media_session_support import (
     FakeMediaProvider,
     _CapturingMediaBridge,
     _owner_silence_identity,
+    _screen_tap,
     _seed_pending_media_turn,
     _verified_owner_decision,
     open_bridge_connection,
@@ -548,6 +549,7 @@ async def test_reconnect_fences_old_retry_result_before_new_input(
         assert 0 <= case.context.owner_silence_remaining_s <= _BUDGET
         assert case.context.owner_silence_task is not None
         assert not case.context.owner_silence_task.done()
+        await _screen_tap(case.registry, new_session, replacement)
         await case.registry.on_speech_segment(new_session, _vad(replacement, start=960))
         assert case.context.pending.turn_start_sample == 960
         assert case.context.pending.active_vad_stream_epoch == replacement.stream_epoch
@@ -692,6 +694,7 @@ async def test_old_tail_callback_cannot_detach_the_replacement_live_timer(
         await asyncio.wait_for(asyncio.shield(replacement), 1)
         assert old_handle.cancelled()
         if replacement_kind == "reconnect":
+            await _screen_tap(case.registry, session, identity)
             await case.registry.on_speech_segment(session, _vad(identity, start=start))
         assert await case.registry.accept_asr_result(identity.session_id, ASRResult(
             task_epoch=2, sentence_id="replacement-final", revision=1,
