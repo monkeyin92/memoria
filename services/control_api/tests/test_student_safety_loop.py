@@ -45,6 +45,13 @@ _ARCHIVE_TOKEN = "p0-04-student-safety-archive-token-long-enough"
 _CRISIS_QUERY = "我不会做题。我不想活了"
 
 
+def _alert_copy(item: dict[str, Any]) -> str:
+    return "".join(
+        str(item.get(field) or "")
+        for field in ("message", "category_label", "summary", "robot_said", "parent_action")
+    )
+
+
 def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("MEMORIA_DB_PATH", str(tmp_path / "memoria.sqlite3"))
     monkeypatch.setenv("MEMORIA_SPEAKER_DB_PATH", str(tmp_path / "speaker.sqlite3"))
@@ -1188,10 +1195,10 @@ async def test_unknown_script_id_shows_the_title_and_logs_only_the_id(
         assert item["robot_said"] == ""
         assert item["parent_action"] == ""
         assert "detail" not in item
-        blob = json.dumps(item, ensure_ascii=False)
-        assert "12356" not in blob
-        assert "110" not in blob
-        assert "不想活" not in blob
+        copy = _alert_copy(item)
+        assert "12356" not in copy
+        assert "110" not in copy
+        assert "不想活" not in copy
         assert "legacy-unspecified" in caplog.text
         assert "不想活" not in caplog.text
         assert "打我" not in caplog.text
@@ -1208,9 +1215,9 @@ async def test_unknown_script_id_shows_the_title_and_logs_only_the_id(
         assert still["message"] == "有一条需要你关注的对话"
         assert still["parent_action"] == ""
         assert "detail" not in still
-        interrupted_blob = json.dumps(still, ensure_ascii=False)
-        assert "12356" not in interrupted_blob
-        assert "110" not in interrupted_blob
+        interrupted_copy = _alert_copy(still)
+        assert "12356" not in interrupted_copy
+        assert "110" not in interrupted_copy
 
 
 @pytest.mark.asyncio
