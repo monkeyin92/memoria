@@ -178,7 +178,8 @@ else
     "$ROOT/scripts/tests/test_verify_agent_release_artifact.py" \
     "$ROOT/scripts/tests/test_resolve_target_images.py" \
     "$ROOT/scripts/tests/test_local_process_probe.py" \
-    "$ROOT/scripts/tests/test_deploy_agent_component_manual_base.py"
+    "$ROOT/scripts/tests/test_deploy_agent_component_manual_base.py" \
+    "$ROOT/scripts/tests/test_deploy_agent_component_overlay_context.py"
   echo "agent component release gates passed" >&2
 fi
 
@@ -269,12 +270,14 @@ manifest="$tmp/component-manifest.txt"
 # packages whose in-image copies are pinned by the dependency base image, so
 # the archive must ship one consistent source revision. The release-artifact
 # verifier ships inside that tree because the overlay replaces the base image's
-# copy with the candidate's own source.
+# copy with the candidate's own source. Every path the overlay copies must be
+# listed here: the archive is the Docker build context, so a COPY source that
+# is not archived fails the remote build before cutover.
 git -C "$ROOT" archive \
   --format=tar \
   --prefix=memoria/ \
   "$expected_commit" \
-  services packages \
+  services packages infra/voices/fixed_safety \
   scripts/run_media_bridge.py \
   scripts/verify_agent_release_artifact.py \
   >"$artifact"
