@@ -457,16 +457,16 @@ uv run python firmware/esp32/scripts/publish_firmware_release.py withdraw --remo
 
 ### 屏幕：黄色点阵脸
 
-360x360 圆屏用代码画黄色点阵脸，黑底，不画边框，也不再把吉祥物贴图打进 assets 分区。表情固定 7 个，由设备状态决定，不读服务器情绪名。危机脚本（`interruptible: false`）在任何状态下都是平静脸。
+360x360 圆屏用代码画黄色点阵脸，黑底，不画边框，也不再把吉祥物贴图打进 assets 分区。表情固定 7 个，不新增。除了说话状态，脸由设备状态决定；说话时读服务端发来的回复表情名，在 7 张脸里挑一张（`happy`/`caring`/`loving`/`neutral` 走说话脸，`curious`/`thinking` 走思考脸，`surprised` 走招呼脸，`sad` 走平静脸；没收到名字或名字不认识时保持说话脸）。危机脚本（`interruptible: false`）在任何状态下都是平静脸。
 
 | 脸 | 串口 `face=` | 何时 |
 | --- | --- | --- |
-| 平静 | `calm` | 待机、未知、致命错误，以及任何危机 |
+| 平静 | `calm` | 待机、未知、致命错误、任何危机，以及说话时回复表情是 `sad` |
 | 聆听 | `listen` | 聆听、音频测试 |
-| 思考 | `think` | 聆听中孩子已经说完、回复还没开始 |
-| 说话 | `speak` | 说话，且这一句可以打断 |
+| 思考 | `think` | 聆听中孩子已经说完、回复还没开始；或说话时回复表情是 `curious`、`thinking` |
+| 说话 | `speak` | 说话，且这一句可以打断；回复表情是 `happy`、`caring`、`loving`、`neutral`，或者名字没读懂时 |
 | 连接 | `connect` | 开机、配网、连接、恢复、激活、升级 |
-| 问好 | `greet` | 开机动画还在走 |
+| 问好 | `greet` | 开机动画还在走，或说话时回复表情是 `surprised` |
 | 配对 | `pair` | 未绑定，二维码卡片在画面上 |
 
 几何在 `memoria_dot_face.cc`。13×11 的黄点，方点之间留空。待机时脸在圆屏正中。联网阶段脸在字幕带上方的圆里居中，最上排黄点落在 y 18 到 46。常驻 AI 角标已经从固件删除。点阵脸亮着时不跑吉祥物合成器。二维码卡片、字幕和背光策略不变。小程序里选的伙伴仍然只改下一轮的声音，屏幕不换装。`mascot_*.mmp` 只留在 `firmware/esp32/tests/fixtures/mascots/`，不进镜像。`firmware/esp32/scripts/preview_memoria_mascot.py` 只在主机上预览旧合成器，读的是这批夹具，不是设备画面。
