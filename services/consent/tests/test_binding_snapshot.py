@@ -192,3 +192,63 @@ async def test_snapshot_is_acceptance_evidence_not_a_capability_grant(tmp_path) 
     assert "capabilities" not in payload
     assert payload["schema_version"] == "binding-consent-snapshot-v1"
     await store.close()
+
+
+@pytest.mark.asyncio
+async def test_parent_for_child_persists_child_rules_offer(tmp_path) -> None:
+    store = SqliteBindingConsentStore(str(tmp_path / "child-rules.sqlite3"))
+    await store.initialize()
+    authority = BindingConsentAuthority(store)
+    command = _command(
+        mode="parent_for_child",
+        offer_ids=(
+            "offer_minor_voice_session_v1",
+            "offer_child_rules_v1",
+        ),
+        preferences={"memory_level": "ephemeral"},
+    )
+
+    snapshot = await authority.get(await authority.resolve(command=command))
+
+    assert "offer_child_rules_v1" in snapshot.consent_offer_ids
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_parent_for_child_omitting_child_rules_still_succeeds(
+    tmp_path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = SqliteBindingConsentStore(str(tmp_path / "child-rules-warn.sqlite3"))
+    await store.initialize()
+    authority = BindingConsentAuthority(store)
+    command = _command(
+        mode="parent_for_child",
+        offer_ids=("offer_minor_voice_session_v1",),
+        preferences={"memory_level": "ephemeral"},
+    )
+
+    with caplog.at_level("WARNING", logger="services.consent.binding_snapshot"):
+        snapshot_id = await authority.resolve(command=command)
+
+    assert snapshot_id
+    warnings = [
+        record
+        for record in caplog.records
+        if record.levelname == "WARNING"
+        and "offer_child_rules_v1 was not presented" in record.message
+    ]
+    assert len(warnings) == 1
+    await store.close()
+
+
+def test_catalog_still_rejects_an_unknown_offer() -> None:
+    with pytest.raises(BindingConsentValidationError, match="consent offers are not valid"):
+        BINDING_OFFER_CATALOG.validate(
+            declared_mode="parent_for_child",
+            consent_offer_ids=(
+                "offer_minor_voice_session_v1",
+                "offer_not_registered_v1",
+            ),
+            service_preferences={"memory_level": "ephemeral"},
+        )

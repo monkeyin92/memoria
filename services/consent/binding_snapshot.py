@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import sqlite3
 import threading
 from collections.abc import Mapping
@@ -27,6 +28,13 @@ from packages.contracts.generated.python.multi_subject_contracts import (
 
 BINDING_CONSENT_SCHEMA_VERSION = "binding-consent-snapshot-v1"
 BINDING_OFFER_CATALOG_VERSION = "binding-offers-v1"
+
+OFFER_CHILD_RULES_V1 = "offer_child_rules_v1"
+_OFFER_CHILD_RULES_NOT_PRESENTED = (
+    "offer_child_rules_v1 was not presented"
+)
+
+logger = logging.getLogger(__name__)
 
 
 class BindingConsentValidationError(ValueError):
@@ -260,6 +268,7 @@ class BindingOfferCatalog:
                     "offer_minor_memory_retention_v1",
                     "offer_guardian_weekly_summary_v1",
                     "offer_emergency_contact_v1",
+                    OFFER_CHILD_RULES_V1,
                 }
             ),
             "self_use": frozenset(
@@ -382,6 +391,11 @@ class BindingOfferCatalog:
             raise BindingConsentValidationError(
                 f"required consent offers are missing: {sorted(missing)}"
             )
+        if (
+            declared_mode == "parent_for_child"
+            and OFFER_CHILD_RULES_V1 not in selected
+        ):
+            logger.warning(_OFFER_CHILD_RULES_NOT_PRESENTED)
         memory_offer = MEMORY_RETENTION_OFFERS.get(declared_mode)
         if (
             memory_offer is not None
