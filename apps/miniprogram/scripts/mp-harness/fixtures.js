@@ -5,6 +5,7 @@
  */
 
 const { normalizeGuardianSummary } = require("../../utils/guardian");
+const { consentStamp } = require("../../utils/child-consent");
 const { STATE_LABELS } = require("../../utils/device-onboarding/state");
 
 const NOW = new Date("2026-10-14T19:42:00+08:00");
@@ -54,7 +55,7 @@ const BINDING = {
 
 const STORAGE = {
   "memoria:miniprogram:device:binding-manifest": BINDING,
-  "memoria:miniprogram:child-info-consent": "accepted",
+  "memoria:miniprogram:child-info-consent": consentStamp(),
 };
 
 const RUNTIME_PROFILE = {

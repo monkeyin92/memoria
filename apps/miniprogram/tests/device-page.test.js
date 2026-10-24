@@ -8,6 +8,7 @@ const api = require("../utils/api");
 const binding = require("../utils/device-binding");
 const { canonicalManifest } = require("./manifest-fixtures");
 const { readSubjectLabel } = require("../utils/subject-label");
+const { consentStamp } = require("../utils/child-consent");
 const { renderPage } = require("../scripts/mp-harness/render");
 
 const visibleText = (html) => html.replace(/<style>[\s\S]*?<\/style>/g, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
@@ -1151,7 +1152,7 @@ test("age declaration offers only three bands and never claims verification", as
     }
     return originalRequest(options);
   };
-  storage["memoria:miniprogram:child-info-consent"] = "accepted";
+  storage["memoria:miniprogram:child-info-consent"] = consentStamp();
   const page = instantiate(pageDefinition);
   await page.onShow();
   await new Promise((resolve) => setImmediate(resolve));
@@ -1215,7 +1216,7 @@ test("age declaration explains owner-only and unavailable authority failures", a
     }
     return originalRequest(options);
   };
-  storage["memoria:miniprogram:child-info-consent"] = "accepted";
+  storage["memoria:miniprogram:child-info-consent"] = consentStamp();
   const page = instantiate(pageDefinition);
   await page.onShow();
   await page.declareAge({ currentTarget: { dataset: { personId: "person_child" } } });
