@@ -1,150 +1,24 @@
 #include "memoria_dot_face.h"
+#include "memoria_dot_face_data.inc"
 
 #include <cstring>
 
 namespace memoria {
 namespace {
 
-constexpr int kCols = 13;
-constexpr int kRows = 11;
-constexpr int kPitch = 16;
-constexpr int kDot = 10;
-constexpr int kRim = 8;
-constexpr int kCaptionLimit = 216;
-
-constexpr uint16_t Row(const char* text) {
-    uint16_t bits = 0;
-    for (int col = 0; col < kCols; ++col) {
-        if (text[col] == '#') {
-            bits = static_cast<uint16_t>(bits | (1u << col));
-        }
-    }
-    return bits;
-}
-
-struct Glyph {
-    uint16_t row[kRows];
-    // Rows this glyph hides while the crisis-round blink closes the eyes. Only
-    // the calm face blinks today; 0 keeps every other glyph intact.
-    uint8_t eye_rows;
-};
-
-constexpr Glyph kGlyphs[kFaceCount] = {
-    {{
-        Row("............."),
-        Row("..###...###.."),
-        Row("..###...###.."),
-        Row("............."),
-        Row("............."),
-        Row("............."),
-        Row("....#####...."),
-        Row("............."),
-        Row("............."),
-        Row("............."),
-        Row("............."),
-    }, 0x06},
-    {{
-        Row("............."),
-        Row("..##.....##.."),
-        Row("..##.....##.."),
-        Row("..##.....##.."),
-        Row("............."),
-        Row("............."),
-        Row(".....#####..."),
-        Row("....##...##.."),
-        Row(".....#####..."),
-        Row("............."),
-        Row("............."),
-    }, 0x00},
-    {{
-        Row("............."),
-        Row("....##....##."),
-        Row("..##....##..."),
-        Row("............."),
-        Row("............."),
-        Row("............."),
-        Row("....#####...."),
-        Row("............."),
-        Row("...#........."),
-        Row("............."),
-        Row("............."),
-    }, 0x00},
-    {{
-        Row("............."),
-        Row("..##.....##.."),
-        Row("..##.....##.."),
-        Row("............."),
-        Row("............."),
-        Row("...#######..."),
-        Row("..##.....##.."),
-        Row("..##.....##.."),
-        Row("...#######..."),
-        Row("............."),
-        Row("............."),
-    }, 0x00},
-    {{
-        Row("............."),
-        Row(".##......##.."),
-        Row("...##......##"),
-        Row("............."),
-        Row("............."),
-        Row("............."),
-        Row(".....#.#.#..."),
-        Row("............."),
-        Row("............."),
-        Row("............."),
-        Row("............."),
-    }, 0x00},
-    {{
-        Row(".##.......##."),
-        Row("...##...##..."),
-        Row("....#...#...."),
-        Row("............."),
-        Row("............."),
-        Row("............."),
-        Row("....#...#...."),
-        Row("...#######..."),
-        Row("............."),
-        Row("............."),
-        Row("............."),
-    }, 0x00},
-    {{
-        Row("..##.....##.."),
-        Row("..##.....##.."),
-        Row("............."),
-        Row("............."),
-        Row("....#####...."),
-        Row("....#...#...."),
-        Row("....#...#...."),
-        Row("....#####...."),
-        Row("............."),
-        Row("............."),
-        Row("............."),
-    }, 0x00},
-};
-
 const char* const kNames[kFaceCount] = {
-    "calm", "listen", "think", "speak", "connect", "greet", "pair",
+    "calm", "happy", "listen", "think", "speak",
+    "surprised", "shy", "sleepy", "comfort", "wake",
 };
 
 static_assert(static_cast<int>(FaceId::kCalm) == 0, "name table starts at calm");
-static_assert(static_cast<int>(FaceId::kPair) + 1 == kFaceCount, "seven faces");
+static_assert(static_cast<int>(FaceId::kWake) + 1 == kFaceCount, "ten faces");
 static_assert(kCrisisBlinkClosedMs < kCrisisBlinkPeriodMs,
               "a slow blink closes for a fraction of its cycle");
 
 FaceId ClampFace(FaceId id) {
     const auto index = static_cast<uint8_t>(id);
     return index < kFaceCount ? id : FaceId::kCalm;
-}
-
-int OriginX() { return (kFaceScreen - kCols * kPitch) / 2; }
-
-int OriginY(bool captioned) {
-    const int height = kRows * kPitch;
-    if (captioned) {
-        return kRim + (kCaptionLimit - kRim - height) / 2;
-    }
-    return (kFaceScreen - height) / 2;
 }
 
 }  // namespace
@@ -157,8 +31,6 @@ const char* ReceivedExpression(const FaceFacts& facts) {
         if (character == '\0') {
             return facts.expression;
         }
-        // A server value with a character outside a short token, or one that
-        // fills the buffer without a terminator, is treated as no expression.
         const bool letter = (character >= 'a' && character <= 'z') || character == '_';
         if (!letter) {
             return "";
@@ -173,25 +45,24 @@ bool CrisisEyesClosed(uint32_t elapsed_ms) {
 
 namespace {
 
-// The reply expressions the seven faces can show, and the face each one draws.
-// Names the server sends and the names the media edge folds them into are both
-// listed, so the panel reads either spelling.
 struct ExpressionFace {
     const char* name;
     FaceId face;
 };
 
 constexpr ExpressionFace kExpressionFaces[] = {
-    {"happy", FaceId::kSpeak},
-    {"caring", FaceId::kSpeak},
-    {"loving", FaceId::kSpeak},
-    // Neutral is what most replies resolve to, and the device is still saying
-    // them: dropping to calm would read as a face that stopped talking.
+    {"happy", FaceId::kHappy},
+    {"caring", FaceId::kComfort},
+    {"loving", FaceId::kComfort},
     {"neutral", FaceId::kSpeak},
     {"curious", FaceId::kThink},
     {"thinking", FaceId::kThink},
-    {"surprised", FaceId::kGreet},
-    {"sad", FaceId::kCalm},
+    {"surprised", FaceId::kSurprised},
+    {"shy", FaceId::kShy},
+    {"sleepy", FaceId::kSleepy},
+    {"comfort", FaceId::kComfort},
+    {"wake", FaceId::kWake},
+    {"sad", FaceId::kComfort},
 };
 
 bool SameToken(const char* value, const char* name) {
@@ -216,9 +87,6 @@ FaceId FaceForExpression(const char* expression) {
             }
         }
     }
-    // Nothing to read: no name yet, or one the seven faces have no use for.
-    // The device is speaking either way, so it keeps the speaking face rather
-    // than dropping to calm, which would read as a face that stopped talking.
     return FaceId::kSpeak;
 }
 
@@ -227,10 +95,10 @@ FaceId FaceForFacts(const FaceFacts& facts) {
         return FaceId::kCalm;
     }
     if (facts.intro) {
-        return FaceId::kGreet;
+        return FaceId::kWake;
     }
     if (facts.setup) {
-        return FaceId::kPair;
+        return FaceId::kWake;
     }
     switch (facts.state) {
         case kFaceStateStarting:
@@ -239,7 +107,7 @@ FaceId FaceForFacts(const FaceFacts& facts) {
         case kFaceStateRecovering:
         case kFaceStateUpgrading:
         case kFaceStateActivating:
-            return FaceId::kConnect;
+            return FaceId::kWake;
         case kFaceStateListening:
             return facts.user_spoke ? FaceId::kThink : FaceId::kListen;
         case kFaceStateSpeaking:
@@ -253,10 +121,15 @@ FaceId FaceForFacts(const FaceFacts& facts) {
 
 FaceRect FaceBounds(bool captioned) {
     FaceRect box;
-    box.x0 = OriginX();
-    box.y0 = OriginY(captioned);
-    box.x1 = box.x0 + kCols * kPitch;
-    box.y1 = box.y0 + kRows * kPitch;
+    box.x0 = 30;
+    box.x1 = 330;
+    if (captioned) {
+        box.y0 = 20;
+        box.y1 = 215;
+    } else {
+        box.y0 = 70;
+        box.y1 = 290;
+    }
     return box;
 }
 
@@ -266,35 +139,34 @@ void PaintDotFace(uint16_t* buffer, int width, int height, const FaceFrame& fram
     }
     std::memset(buffer, 0, static_cast<std::size_t>(width) * static_cast<std::size_t>(height) *
                                sizeof(uint16_t));
-    const Glyph& glyph = kGlyphs[static_cast<int>(ClampFace(frame.face))];
-    const int origin_x = OriginX();
-    const int origin_y = OriginY(frame.captioned);
-    for (int row = 0; row < kRows; ++row) {
-        if (frame.eyes_closed && ((glyph.eye_rows >> row) & 1u) != 0) {
+
+    const FaceDescriptor* desc = nullptr;
+    if (frame.face == FaceId::kCalm && frame.eyes_closed) {
+        desc = &kClosedCalmDescriptor;
+    } else {
+        const auto index = static_cast<uint8_t>(ClampFace(frame.face));
+        desc = &kFaceDescriptors[index];
+    }
+
+    const FaceSpan* spans = frame.captioned ? desc->capt_spans : desc->norm_spans;
+    const uint16_t count = frame.captioned ? desc->capt_count : desc->norm_count;
+
+    for (uint16_t i = 0; i < count; ++i) {
+        const FaceSpan& span = spans[i];
+        if (span.y >= height) {
             continue;
         }
-        const uint16_t bits = glyph.row[row];
-        for (int col = 0; col < kCols; ++col) {
-            if ((bits & (1u << col)) == 0) {
-                continue;
-            }
-            const int x0 = origin_x + col * kPitch + (kPitch - kDot) / 2;
-            const int y0 = origin_y + row * kPitch + (kPitch - kDot) / 2;
-            for (int dy = 0; dy < kDot; ++dy) {
-                const int y = y0 + dy;
-                if (y < 0 || y >= height) {
-                    continue;
-                }
-                uint16_t* line = buffer + static_cast<std::size_t>(y) * static_cast<std::size_t>(width);
-                for (int dx = 0; dx < kDot; ++dx) {
-                    const int x = x0 + dx;
-                    if (x < 0 || x >= width) {
-                        continue;
-                    }
-                    line[x] = kFaceYellow;
-                }
-            }
+        if (span.x >= width) {
+            continue;
         }
+        const int available = width - span.x;
+        const int copy_len = span.len < available ? span.len : available;
+        if (copy_len <= 0) {
+            continue;
+        }
+        uint16_t* dest = buffer + static_cast<std::size_t>(span.y) * static_cast<std::size_t>(width) + span.x;
+        const uint16_t* src = kFacePixelData + span.offset;
+        std::memcpy(dest, src, static_cast<std::size_t>(copy_len) * sizeof(uint16_t));
     }
 }
 

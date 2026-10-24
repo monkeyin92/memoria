@@ -6,25 +6,34 @@
 
 namespace memoria {
 
-// Yellow dot-matrix face for the 360x360 round panel.
+// Expressive dot-matrix face for the 360x360 round panel.
 //
-// Seven faces, and only these seven. Scared and angry are not in the set.
+// 10 expressions matching the approved design sheet:
+// calm (平静), happy (开心), listen (倾听), think (思考), speak (说话),
+// surprised (惊讶), shy (害羞), sleepy (犯困), comfort (关心), wake (打招呼).
 // While the device speaks, the face follows the reply's expression, drawn
-// with one of these seven. Every other state follows the device state.
+// with one of these faces. Every other state follows the device state.
 // A crisis script (protected playback) is the calm face in every state, and
 // the crisis round breathes with a slow blink (product decision 2026-10-23).
 
 enum class FaceId : uint8_t {
     kCalm = 0,
-    kListen,
-    kThink,
-    kSpeak,
-    kConnect,
-    kGreet,
-    kPair,
+    kHappy = 1,
+    kListen = 2,
+    kThink = 3,
+    kSpeak = 4,
+    kSurprised = 5,
+    kShy = 6,
+    kSleepy = 7,
+    kComfort = 8,
+    kWake = 9,
+    // Aliases for compatibility
+    kConnect = kWake,
+    kGreet = kWake,
+    kPair = kComfort,
 };
 
-constexpr int kFaceCount = 7;
+constexpr int kFaceCount = 10;
 constexpr int kFaceScreen = 360;
 constexpr uint16_t kFaceYellow = 0xFFE0;
 
@@ -44,8 +53,8 @@ enum FaceDeviceState : int {
 };
 
 // The reply's expression as the server named it (screen.expression), or empty
-// when the server sent none. While speaking it picks among the seven faces.
-// It never adds one, and a crisis round ignores it.
+// when the server sent none. While speaking it picks among the faces.
+// A crisis round ignores it.
 constexpr int kExpressionNameMax = 16;
 
 struct FaceFacts {
@@ -80,7 +89,7 @@ const char* FaceName(FaceId id);
 const char* ReceivedExpression(const FaceFacts& facts);
 
 // The face a reply expression draws while the device is speaking. A name the
-// seven faces have a use for picks that face; no name at all, or one they have
+// faces have a use for picks that face; no name at all, or one they have
 // no use for, keeps the speaking face.
 FaceId FaceForExpression(const char* expression);
 
@@ -103,8 +112,8 @@ inline bool operator==(const FaceFrame& a, const FaceFrame& b) {
 
 inline bool operator!=(const FaceFrame& a, const FaceFrame& b) { return !(a == b); }
 
-// Black panel, yellow squares, no frame. `captioned` centers the glyph between
-// the rim and the status band. The buffer is width * height RGB565, row-major.
+// Black panel, glowing multi-color dot matrix. `captioned` centers the face
+// between the rim and the status band. The buffer is width * height RGB565, row-major.
 void PaintDotFace(uint16_t* buffer, int width, int height, const FaceFrame& frame);
 
 }  // namespace memoria
