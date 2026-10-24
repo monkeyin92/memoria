@@ -57,6 +57,9 @@ jobs:
               - 'infra/memoria-data.production.yml'
               - 'scripts/**/*.py'
               - 'scripts/**/*.sh'
+              - 'scripts/nightly_backup*.sh'
+              - 'scripts/nightly_backup_retention.py'
+              - 'infra/memoria-*backup*'
               - '!scripts/deploy_agent_component.sh'
               - 'scripts/deploy_control_component.sh'
               - 'infra/Dockerfile.agent*'
@@ -167,6 +170,8 @@ jobs:
           scripts/tests/test_verify_agent_release_artifact.py
           scripts/tests/test_resolve_target_images.py
           scripts/tests/test_provider_smoke_llm.py
+          scripts/tests/test_local_process_probe.py
+          scripts/tests/test_deploy_agent_component_manual_base.py
       - name: Agent source-overlay script syntax
         run: bash -n scripts/deploy_agent_component.sh
 
@@ -197,6 +202,8 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
+      - name: Install ffmpeg for labelled line AIGC tests
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - uses: bufbuild/buf-setup-action@v1
         with:
           github_token: ${{ github.token }}
@@ -212,12 +219,20 @@ jobs:
         run: >-
           uv run pytest --import-mode=importlib --no-cov
           scripts/tests/test_release_ops_script.py
+          scripts/tests/test_refresh_readiness_contract.py
           scripts/tests/test_smoke_response_plan_safety.py
           scripts/tests/test_cleanup_freeze_dumps.py
           scripts/tests/test_control_release_contract.py
           scripts/tests/test_verify_control_release_artifact.py
           scripts/tests/test_resolve_target_images.py
           scripts/tests/test_provider_smoke_llm.py
+          scripts/tests/test_local_process_probe.py
+          scripts/tests/test_deploy_agent_component_manual_base.py
+      - name: Nightly backup script tests (fake docker and df)
+        run: >-
+          uv run pytest --import-mode=importlib --no-cov
+          scripts/tests/test_nightly_backup_script.py
+          scripts/tests/test_nightly_backup_retention.py
       - name: Control release artifact smoke (offline)
         env:
           ENVIRONMENT: development
@@ -292,6 +307,8 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
+      - name: Install ffmpeg for labelled line AIGC tests
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - name: Install
         run: uv sync --frozen --all-extras
       - name: Pytest (shard ${{ matrix.shard }} of 4)
@@ -299,6 +316,7 @@ jobs:
           MEMORIA_TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
           COVERAGE_FILE: coverage-shard-${{ matrix.shard }}.data
         run: |
+          set -o pipefail
           mapfile -t files < <(uv run python scripts/ci_test_shards.py --shards 4 --index ${{ matrix.shard }})
           echo "${#files[@]} test files"
           # Coverage is checked on the combined data; a shard alone is far below it.
@@ -364,7 +382,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26.6"
+          go-version: "1.26.10"
           cache-dependency-path: services/media_edge/go.sum
       - name: Install Opus build dependency
         run: |
@@ -484,6 +502,20 @@ jobs:
           ignore-unfixed: true
           severity: CRITICAL,HIGH
 
+  aigc-e2e-tts-fault:
+    needs: changes
+    # Manual only (ci > Run workflow): builds the agent image and runs one
+    # full-stack fault round, too heavy for every pull request.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: TTS fault closes the round with the local line
+        run: uv run python scripts/e2e/aigc_reply_audio_e2e.py --tts-fault=all
+
   miniprogram:
     needs: changes
     if: needs.changes.outputs.miniprogram == 'true'
@@ -501,5 +533,7 @@ jobs:
         run: npm --prefix apps/miniprogram test
       - name: Forbidden UI copy
         run: npm --prefix apps/miniprogram run check:forbidden-copy
+      - name: Release gate
+        run: npm --prefix apps/miniprogram run check:release-gate
       - name: Syntax
         run: find apps/miniprogram -type f -name '*.js' ! -path '*/node_modules/*' -print0 | xargs -0 -n1 node --check

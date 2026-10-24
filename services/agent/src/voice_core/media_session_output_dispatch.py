@@ -18,6 +18,7 @@ from services.agent.src.voice_core.media_session_types import (
     MediaReplyChunk,
     OutputDispatchResult,
     OutputDispatchStatus,
+    fixed_safety_planned_for,
 )
 from services.agent.src.voice_core.media_session_types import (
     OutputOwnerLease as _OutputOwnerLease,
@@ -83,6 +84,7 @@ class MediaOutputDispatchMixin:
 
         @staticmethod
         def _clear_evidence_less_floor_hold(context: _MediaVoiceSession) -> None: ...
+
         delegation_initial_decision_timeout_s: float
 
         def _event_versions(
@@ -142,7 +144,16 @@ class MediaOutputDispatchMixin:
             *,
             reason: str = "cancelled",
             cancel_timeout_s: float = 5.0,
+            finalize_audible: bool = True,
         ) -> None: ...
+
+        async def _begin_aigc_reply_round(
+            self,
+            context: _MediaVoiceSession,
+            work: _OutputWork | None = None,
+            *,
+            reason: str = ...,
+        ) -> _OutputWork | None: ...
 
         @staticmethod
         async def _advance_failed_output_generation(
@@ -154,6 +165,7 @@ class MediaOutputDispatchMixin:
 
         @staticmethod
         def _rebind_output_work(
+            context: _MediaVoiceSession,
             work: _OutputWork,
             fence: GenerationFence,
             *,
@@ -260,14 +272,19 @@ class MediaOutputDispatchMixin:
         if not changed:
             return
         wake_fence = context.device_wake_ack_fence
-        if wake_fence is not None and wake_fence.matches(fence) and event in {
-            ReplyDeliveryEvent.FIRST_FRAME_SENT,
-            ReplyDeliveryEvent.SKIPPED,
-            ReplyDeliveryEvent.PREEMPTED,
-            ReplyDeliveryEvent.ERROR,
-            ReplyDeliveryEvent.NO_AUDIO,
-            ReplyDeliveryEvent.TRANSPORT_REJECTED,
-        }:
+        if (
+            wake_fence is not None
+            and wake_fence.matches(fence)
+            and event
+            in {
+                ReplyDeliveryEvent.FIRST_FRAME_SENT,
+                ReplyDeliveryEvent.SKIPPED,
+                ReplyDeliveryEvent.PREEMPTED,
+                ReplyDeliveryEvent.ERROR,
+                ReplyDeliveryEvent.NO_AUDIO,
+                ReplyDeliveryEvent.TRANSPORT_REJECTED,
+            }
+        ):
             context.device_wake_ack_pending = False
         self._observe_conversation_yield_delivery(context, fence, event)
         labels = {"status": event.value}
@@ -380,7 +397,9 @@ class MediaOutputDispatchMixin:
                 await asyncio.sleep(0.01)
                 if context.closed or context.standby_requested:
                     return OutputDispatchResult(
-                        fence, OutputDispatchStatus.SKIPPED, "session_closed",
+                        fence,
+                        OutputDispatchStatus.SKIPPED,
+                        "session_closed",
                     )
                 if not context.runtime.fence.matches(fence):
                     return OutputDispatchResult(
@@ -406,7 +425,9 @@ class MediaOutputDispatchMixin:
                         )
             if context.closed or context.standby_requested:
                 return OutputDispatchResult(
-                    fence, OutputDispatchStatus.SKIPPED, "session_closed",
+                    fence,
+                    OutputDispatchStatus.SKIPPED,
+                    "session_closed",
                 )
             if not context.runtime.fence.matches(fence):
                 return OutputDispatchResult(
@@ -423,10 +444,7 @@ class MediaOutputDispatchMixin:
                     OutputDispatchStatus.COMPLETED,
                     "delegation_output_owned",
                 )
-            if (
-                claim.state is DelegationOutputState.RELEASED
-                and not claim.reserve_local_reply()
-            ):
+            if claim.state is DelegationOutputState.RELEASED and not claim.reserve_local_reply():
                 return OutputDispatchResult(
                     fence,
                     OutputDispatchStatus.COMPLETED,
@@ -479,6 +497,9 @@ class MediaOutputDispatchMixin:
                 "output_intent_inactive",
             )
         context.output.output_work[work.intent_id] = work
+        attached = await self._begin_aigc_reply_round(context, work, reason="reply_turn")
+        if attached is not None:
+            work = attached
         if (
             not context.runtime.output_floor_allows_assistant
             or context.output.output_owner is not None
@@ -530,15 +551,14 @@ class MediaOutputDispatchMixin:
             coordinator.complete_output_intent(
                 work.intent,
                 current_fence=context.runtime.fence,
-                current_context_version=coordinator.current_context_version(
-                    work.fence.session_id
-                ),
+                current_context_version=coordinator.current_context_version(work.fence.session_id),
                 floor_allows_output=context.runtime.output_floor_allows_assistant,
                 reason="unsupported_streamcore_output_kind",
             )
             return False
         if (
-            context.closed or context.standby_requested
+            context.closed
+            or context.standby_requested
             or not self._output_work_is_active(context, work)
         ):
             return False
@@ -555,9 +575,8 @@ class MediaOutputDispatchMixin:
         self._clear_evidence_less_floor_hold(context)
         owner = context.output.output_owner
         if owner is not None:
-            if (
-                str(owner.intent.intent_id) != work.intent_id
-                and self._output_work_is_current(context, work)
+            if str(owner.intent.intent_id) != work.intent_id and self._output_work_is_current(
+                context, work
             ):
                 return await self._preempt_output_owner(context, work)
             return True
@@ -571,7 +590,8 @@ class MediaOutputDispatchMixin:
                 context.output.output_work.pop(intent_id, None)
                 logger.info(
                     "media output retired session=%s fence=%s reason=intent_inactive",
-                    context.identity.session_id, work.fence,
+                    context.identity.session_id,
+                    work.fence,
                 )
 
     async def _start_selected_output(self, context: _MediaVoiceSession) -> bool:
@@ -720,7 +740,8 @@ class MediaOutputDispatchMixin:
 
         owner = context.output.output_owner
         return tuple(
-            work for work in tuple(context.output.output_work.values())
+            work
+            for work in tuple(context.output.output_work.values())
             if work.intent_id != selected.intent_id
             and (owner is None or work.intent_id != str(owner.intent.intent_id))
             and work.fence.matches(selected.fence)
@@ -728,27 +749,37 @@ class MediaOutputDispatchMixin:
         )
 
     def _carry_output_followups(
-        self, context: _MediaVoiceSession, pending: tuple[_OutputWork, ...],
+        self,
+        context: _MediaVoiceSession,
+        pending: tuple[_OutputWork, ...],
         next_fence: GenerationFence,
     ) -> None:
         """Carry admitted peers across internal output handoffs, never user turns."""
 
         coordinator = context.runtime.orchestrator.delegation
         context_version = coordinator.current_context_version(next_fence.session_id)
-        if context.closed or context.standby_requested or not context.runtime.fence.matches(next_fence):
+        if (
+            context.closed
+            or context.standby_requested
+            or not context.runtime.fence.matches(next_fence)
+        ):
             return
         for work in pending:
             if int(work.intent.context_version) != context_version:
                 continue
-            rebound = self._rebind_output_work(work, next_fence, context_version=context_version)
+            rebound = self._rebind_output_work(
+                context, work, next_fence, context_version=context_version
+            )
             if rebound is None:
                 logger.info(
                     "media output retired session=%s intent=%s reason=expired_during_handoff",
-                    next_fence.session_id, work.intent_id,
+                    next_fence.session_id,
+                    work.intent_id,
                 )
                 continue
             coordinator.admit_output_intent(
-                rebound.intent, current_fence=next_fence,
+                rebound.intent,
+                current_fence=next_fence,
                 current_context_version=context_version,
                 floor_allows_output=context.runtime.output_floor_allows_assistant,
             )
@@ -756,7 +787,10 @@ class MediaOutputDispatchMixin:
                 context.output.output_work[rebound.intent_id] = rebound
                 logger.info(
                     "media output carried session=%s intent=%s next_intent=%s fence=%s",
-                    next_fence.session_id, work.intent_id, rebound.intent_id, next_fence,
+                    next_fence.session_id,
+                    work.intent_id,
+                    rebound.intent_id,
+                    next_fence,
                 )
         self._prune_output_work(context)
 
@@ -767,7 +801,9 @@ class MediaOutputDispatchMixin:
     ) -> _OutputWork | None:
         """Move a late selected source to a new audible generation."""
 
-        if not context.runtime.output_floor_allows_assistant or not self._output_work_is_active(context, work):
+        if not context.runtime.output_floor_allows_assistant or not self._output_work_is_active(
+            context, work
+        ):
             return None
         old_fence = work.fence
         pending = self._queued_output_followups(context, work)
@@ -775,12 +811,12 @@ class MediaOutputDispatchMixin:
         if next_fence is None:
             return None
         coordinator = context.runtime.orchestrator.delegation
-        if (
-            not context.runtime.fence.matches(next_fence)
-            or int(work.intent.context_version) != coordinator.current_context_version(next_fence.session_id)
-        ):
+        if not context.runtime.fence.matches(next_fence) or int(
+            work.intent.context_version
+        ) != coordinator.current_context_version(next_fence.session_id):
             return None
         rebound = self._rebind_output_work(
+            context,
             work,
             next_fence,
             context_version=coordinator.current_context_version(next_fence.session_id),
@@ -815,6 +851,7 @@ class MediaOutputDispatchMixin:
             reason="auxiliary_output",
             task_epoch=task_epoch,
             context_version=context_version,
+            protected_playback=fixed_safety_planned_for(context, next_fence),
         ):
             coordinator.complete_output_intent(
                 rebound.intent,
@@ -854,6 +891,7 @@ class MediaOutputDispatchMixin:
             reason="output_generation_start",
             task_epoch=task_epoch,
             context_version=context_version,
+            protected_playback=fixed_safety_planned_for(context, fence),
         )
 
     @staticmethod
@@ -957,9 +995,9 @@ class MediaOutputDispatchMixin:
         owner_started = self._owner_has_started_playback(context, owner)
         if owner_started and (
             not context.runtime.barge_in_enabled
+            or context.runtime.floor.fixed_safety_audible
             or self._fast_ack_has_started_playback(context, owner)
-            or int(getattr(work.intent, "kind", 0))
-            == int(media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT)
+            or int(getattr(work.intent, "kind", 0)) == int(media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT)
         ):
             logger.info(
                 "defer output preempt until current playback finishes session=%s "
@@ -976,8 +1014,15 @@ class MediaOutputDispatchMixin:
         pending = self._queued_output_followups(context, work)
         flush_required = self._device_playback_flush_required(context, old_fence)
         heard = context.output.playback.actual_heard_text(old_fence)
-        await self._cancel_reply_task(context, old_fence, reason="preempted")
-        if not context.runtime.fence.matches(old_fence) or not self._output_work_is_current(context, work):
+        await self._cancel_reply_task(
+            context,
+            old_fence,
+            reason="preempted",
+            finalize_audible=False,
+        )
+        if not context.runtime.fence.matches(old_fence) or not self._output_work_is_current(
+            context, work
+        ):
             return False
         cancelled = await context.runtime.preempt_media_output(
             cause="output_preempted",
@@ -1000,16 +1045,16 @@ class MediaOutputDispatchMixin:
         ):
             return False
         coordinator = context.runtime.orchestrator.delegation
-        if (
-            not context.runtime.fence.matches(cancelled)
-            or int(work.intent.context_version) != coordinator.current_context_version(cancelled.session_id)
-        ):
+        if not context.runtime.fence.matches(cancelled) or int(
+            work.intent.context_version
+        ) != coordinator.current_context_version(cancelled.session_id):
             return False
         context.runtime.set_interaction_phase(
             InteractionPhase.THINKING_SILENT,
             cause="media_output_preempt",
         )
         staged = self._rebind_output_work(
+            context,
             work,
             cancelled,
             context_version=coordinator.current_context_version(cancelled.session_id),
@@ -1069,7 +1114,9 @@ class MediaOutputDispatchMixin:
             task = asyncio.current_task()
             if task is not None:
                 context.output.reply_task = task
-            chunks = self._output_chunks(context, work, context.output.playback.renderable_sample_end(fence))
+            chunks = self._output_chunks(
+                context, work, context.output.playback.renderable_sample_end(fence)
+            )
             try:
                 deadline = asyncio.timeout(self.output_generation_timeout_s)
                 try:
@@ -1135,6 +1182,7 @@ class MediaOutputDispatchMixin:
             fence,
             reason="output_timeout",
             cancel_timeout_s=min(5.0, max(0.1, self.output_generation_timeout_s)),
+            finalize_audible=False,
         )
         flush_required = self._device_playback_flush_required(context, fence)
         cancelled = await self._advance_failed_output_generation(
@@ -1151,9 +1199,7 @@ class MediaOutputDispatchMixin:
         for intent_id, pending in tuple(context.output.output_work.items()):
             if pending.fence.matches(fence):
                 context.output.output_work.pop(intent_id, None)
-        context.runtime.orchestrator.delegation.reset_output_intent_state(
-            fence.session_id
-        )
+        context.runtime.orchestrator.delegation.reset_output_intent_state(fence.session_id)
 
         if cancelled is None:
             await context.runtime.on_assistant_reply_aborted(

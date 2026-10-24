@@ -144,6 +144,27 @@ class IdentityStore(Protocol):
         actor_person_id: str,
     ) -> None: ...
 
+    async def delete_account_identity(
+        self,
+        *,
+        account_person_id: str,
+        display_name: str,
+        actor_person_id: str,
+    ) -> dict[str, int]:
+        """Controlled account erasure port (issue #283).
+
+        Deletes the account person, its accountless children and the identity
+        rows that reference them. Only the account-deletion pipeline calls
+        it; the SQL port verifies the actor and the transaction-local gate.
+        """
+        ...
+
+    async def remaining_account_identity(
+        self, *, account_person_id: str
+    ) -> dict[str, int]:
+        """Read-only residue check used by account-deletion verification."""
+        ...
+
     async def reconcile_account_registration(
         self,
         person: PersonSubject,

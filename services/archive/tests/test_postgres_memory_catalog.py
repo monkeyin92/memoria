@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import uuid
@@ -20,8 +21,9 @@ from services.archive.memory_domain import (
     MemorySearchQuery,
 )
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
+from services.archive.memory_vector_cleanup import QwenMemoryEmbedder
 from services.archive.postgres_archive import PostgresLifeArchive
-from services.archive.postgres_memory_catalog import PostgresMemoryCatalog, QwenMemoryEmbedder
+from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
 
 
 class _DomainDriftCanonicalExtractor:
@@ -190,11 +192,10 @@ async def test_compiler_role_claims_outbox_without_bypassing_account_rls() -> No
             """
         )
         await admin.execute(
-            f'CREATE ROLE "{app_role}" LOGIN PASSWORD \'{app_password}\' '
-            "NOSUPERUSER NOBYPASSRLS"
+            f"CREATE ROLE \"{app_role}\" LOGIN PASSWORD '{app_password}' NOSUPERUSER NOBYPASSRLS"
         )
         await admin.execute(
-            f'CREATE ROLE "{compiler_role}" LOGIN PASSWORD \'{compiler_password}\' '
+            f"CREATE ROLE \"{compiler_role}\" LOGIN PASSWORD '{compiler_password}' "
             "NOSUPERUSER NOBYPASSRLS IN ROLE memoria_archive_compiler"
         )
         await admin.execute(f'CREATE DATABASE "{database}" OWNER "{app_role}"')
@@ -211,13 +212,18 @@ async def test_compiler_role_claims_outbox_without_bypassing_account_rls() -> No
             database=database,
         )
         archive = PostgresLifeArchive(app_dsn)
-        ordinary = PostgresMemoryCatalog(app_dsn, extractor=RuleBasedMemoryExtractor())
+        ordinary = PostgresMemoryCatalog(
+            app_dsn,
+            extractor=RuleBasedMemoryExtractor(),
+            evidence_subject_category_resolver=lambda _event: "adult",
+        )
         compiler = PostgresMemoryCatalog(
             app_dsn,
             compiler_dsn=compiler_dsn,
             compiler_role=compiler_role,
             extractor=RuleBasedMemoryExtractor(),
             capture_evidence_projector=project_capture,
+            evidence_subject_category_resolver=lambda _event: "adult",
         )
         await archive.initialize()
         await ordinary.initialize()
@@ -299,6 +305,7 @@ async def test_pgvector_projection_and_hybrid_search_are_rebuildable() -> None:
         extractor=RuleBasedMemoryExtractor(),
         embedder=SemanticEmbedderStub(),
         require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
     )
     await archive.initialize()
     await catalog.initialize()
@@ -373,6 +380,7 @@ async def test_vector_search_gives_the_keyword_bonus_only_to_terms_that_name_som
         extractor=RuleBasedMemoryExtractor(),
         embedder=ConstantEmbedderStub(),
         require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
     )
     await archive.initialize()
     await catalog.initialize()
@@ -417,20 +425,24 @@ async def test_vector_search_gives_the_keyword_bonus_only_to_terms_that_name_som
             return [
                 (
                     item.source_event_id,
-                    item.score
-                    - (0.45 + 0.2 * (0.35 * item.stability + 0.65 * item.salience)),
+                    item.score - (0.45 + 0.2 * (0.35 * item.stability + 0.65 * item.salience)),
                 )
                 for item in result.items
             ]
 
         # A question word and word fragments ("什么", "处会") name nothing: no bonus, in
         # particular not for the knowledge boilerplate that contains "是什么".
-        assert all(bonus == pytest.approx(0.0, abs=1e-3) for _, bonus in await scored("身处高处会有什么反应？"))
+        assert all(
+            bonus == pytest.approx(0.0, abs=1e-3)
+            for _, bonus in await scored("身处高处会有什么反应？")
+        )
         # A real keyword still earns the bonus, and only on the memory that contains it.
         bonuses = await scored("阳台")
         assert {event for event, bonus in bonuses if bonus > 0.1} == {event_ids[0]}
         assert all(
-            bonus == pytest.approx(0.175, abs=1e-3) for event, bonus in bonuses if event == event_ids[0]
+            bonus == pytest.approx(0.175, abs=1e-3)
+            for event, bonus in bonuses
+            if event == event_ids[0]
         )
     finally:
         await connection.execute(
@@ -469,6 +481,7 @@ async def test_recall_embeds_a_redacted_query_and_matches_lexically_on_the_raw_o
         extractor=RuleBasedMemoryExtractor(),
         embedder=embedder,
         require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
     )
     await archive.initialize()
     await catalog.initialize()
@@ -516,7 +529,8 @@ async def test_recall_embeds_a_redacted_query_and_matches_lexically_on_the_raw_o
         matched = await search_scores("13812345678")
         assert matched[event_ids[0]] > matched[event_ids[1]]
         unmatched = await search_scores("13900000000")
-        assert unmatched[event_ids[0]] == pytest.approx(unmatched[event_ids[1]])
+        assert unmatched[event_ids[1]] == pytest.approx(matched[event_ids[1]])
+        assert matched[event_ids[0]] - unmatched[event_ids[0]] == pytest.approx(0.175, abs=1e-3)
         assert embedder.inputs == ["[手机号]", "[手机号]"]
     finally:
         await connection.execute(
@@ -543,6 +557,7 @@ async def test_embedding_outage_keeps_fulltext_projection_and_search_available()
         extractor=RuleBasedMemoryExtractor(),
         embedder=UnavailableEmbedderStub(),
         require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
     )
     await archive.initialize()
     await catalog.initialize()
@@ -611,6 +626,7 @@ async def test_strict_embedding_outage_fails_compile_and_search() -> None:
         embedder=UnavailableEmbedderStub(),
         require_vector=True,
         fail_on_embedding_error=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
     )
     await archive.initialize()
     await catalog.initialize()
@@ -671,12 +687,14 @@ async def test_hybrid_search_ignores_stale_vectors_from_an_older_model() -> None
         extractor=RuleBasedMemoryExtractor(),
         embedder=SemanticEmbedderStub(),
         require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
     )
     upgraded_catalog = PostgresMemoryCatalog(
         dsn,
         extractor=RuleBasedMemoryExtractor(),
         embedder=UpgradedEmbedderStub(),
         require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
     )
     await archive.initialize()
     await old_catalog.initialize()
@@ -726,6 +744,127 @@ async def test_hybrid_search_ignores_stale_vectors_from_an_older_model() -> None
 @pytest.mark.asyncio
 @pytest.mark.skipif(
     not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
+    reason="set MEMORIA_TEST_POSTGRES_DSN to a pgvector PostgreSQL for model upgrade",
+)
+async def test_deleting_evidence_while_vector_repair_holds_the_claim_does_not_deadlock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A repair that already locked the claim must not deadlock the evidence delete.
+
+    The CI failure was two ShareLocks: the repair's claim lock against the
+    delete's evidence lock, then the insert's key share the other way.
+    """
+
+    from services.archive import memory_vector_backfill as backfill
+
+    dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
+    account_id = f"embedding-deadlock-{uuid.uuid4()}"
+    event_id = f"embedding-deadlock-event-{uuid.uuid4()}"
+    archive = PostgresLifeArchive(dsn)
+    old_catalog = PostgresMemoryCatalog(
+        dsn,
+        extractor=RuleBasedMemoryExtractor(),
+        embedder=SemanticEmbedderStub(),
+        require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
+    )
+    upgraded_catalog = PostgresMemoryCatalog(
+        dsn,
+        extractor=RuleBasedMemoryExtractor(),
+        embedder=UpgradedEmbedderStub(),
+        require_vector=True,
+        evidence_subject_category_resolver=lambda _event: "adult",
+    )
+    held = asyncio.Event()
+    release = asyncio.Event()
+    original_write = backfill.write_document_vector
+
+    async def pause_before_insert(
+        connection: asyncpg.Connection,
+        embedder: object,
+        **kwargs: object,
+    ) -> None:
+        held.set()
+        await release.wait()
+        await original_write(connection, embedder, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(backfill, "write_document_vector", pause_before_insert)
+    await archive.initialize()
+    await old_catalog.initialize()
+    await upgraded_catalog.initialize()
+    connection = await asyncpg.connect(dsn)
+    repair: asyncio.Task[str] | None = None
+    try:
+        await archive.record(
+            EvidenceEvent(
+                event_id=event_id,
+                account_id=account_id,
+                event_type="speech.utterance_finalized",
+                occurred_at=datetime.now(UTC),
+                speaker_class="owner",
+                source="embedding-deadlock-test",
+                payload={
+                    "text": "我们家的家训是答应别人的事一定做到。",
+                    "interaction_mode": "companion",
+                    "prompt_kind": "spontaneous",
+                    "owner_projection_eligible": True,
+                },
+            )
+        )
+        await old_catalog.compile_pending(limit=1000)
+        assert upgraded_catalog._vector_backfill is not None
+        async with upgraded_catalog._pool.acquire() as lookup:  # type: ignore[union-attr]
+            await lookup.execute(
+                "SELECT set_config('app.account_id', $1, true)",
+                account_id,
+            )
+            row = await lookup.fetchrow(
+                """
+                SELECT claim.claim_id, claim.value, claim.subject_key,
+                       claim.predicate, claim.source_event_id
+                FROM memory_claims claim
+                WHERE claim.account_id = $1 AND claim.source_event_id = $2
+                """,
+                account_id,
+                event_id,
+            )
+        assert row is not None
+        repair = asyncio.create_task(
+            upgraded_catalog._vector_backfill._repair_row(account_id, row)
+        )
+        await asyncio.wait_for(held.wait(), timeout=2)
+        delete = asyncio.create_task(
+            connection.execute(
+                "DELETE FROM archive_evidence_events WHERE account_id = $1",
+                account_id,
+            )
+        )
+        await asyncio.sleep(0.05)
+        release.set()
+        done = await asyncio.wait_for(
+            asyncio.gather(repair, delete, return_exceptions=True),
+            timeout=3,
+        )
+        assert not any(isinstance(item, asyncpg.DeadlockDetectedError) for item in done), done
+        assert not any(isinstance(item, BaseException) for item in done), done
+    finally:
+        release.set()
+        if repair is not None and not repair.done():
+            repair.cancel()
+            await asyncio.gather(repair, return_exceptions=True)
+        await connection.execute(
+            "DELETE FROM archive_evidence_events WHERE account_id = $1",
+            account_id,
+        )
+        await connection.close()
+        await upgraded_catalog.close()
+        await old_catalog.close()
+        await archive.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
     reason="set MEMORIA_TEST_POSTGRES_DSN for the PostgreSQL episode identity contract",
 )
 async def test_postgres_one_canonical_key_merges_across_domains() -> None:
@@ -739,7 +878,11 @@ async def test_postgres_one_canonical_key_merges_across_domains() -> None:
     suffix = uuid.uuid4().hex[:10]
     account_id = f"pg-episode-{suffix}"
     archive = PostgresLifeArchive(dsn)
-    catalog = PostgresMemoryCatalog(dsn, extractor=_DomainDriftCanonicalExtractor())
+    catalog = PostgresMemoryCatalog(
+        dsn,
+        extractor=_DomainDriftCanonicalExtractor(),
+        evidence_subject_category_resolver=lambda _event: "adult",
+    )
     await archive.initialize()
     await catalog.initialize()
     connection = await asyncpg.connect(dsn)
@@ -806,12 +949,8 @@ async def test_postgres_one_canonical_key_merges_across_domains() -> None:
         }
         assert "校园外卖创业" in memories.items[0].snippet
     finally:
-        await connection.execute(
-            "DELETE FROM episode_evidence WHERE account_id = $1", account_id
-        )
-        await connection.execute(
-            "DELETE FROM timeline_entries WHERE account_id = $1", account_id
-        )
+        await connection.execute("DELETE FROM episode_evidence WHERE account_id = $1", account_id)
+        await connection.execute("DELETE FROM timeline_entries WHERE account_id = $1", account_id)
         await connection.execute("DELETE FROM life_episodes WHERE account_id = $1", account_id)
         await connection.execute(
             "DELETE FROM archive_evidence_events WHERE account_id = $1", account_id
@@ -830,7 +969,11 @@ async def test_postgres_memory_catalog_matches_sqlite_contract_and_forces_rls() 
     dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
     account_id = "postgres-memory-account"
     archive = PostgresLifeArchive(dsn)
-    catalog = PostgresMemoryCatalog(dsn, extractor=RuleBasedMemoryExtractor())
+    catalog = PostgresMemoryCatalog(
+        dsn,
+        extractor=RuleBasedMemoryExtractor(),
+        evidence_subject_category_resolver=lambda _event: "adult",
+    )
     await archive.initialize()
     await catalog.initialize()
     connection = await asyncpg.connect(dsn)
@@ -892,9 +1035,7 @@ async def test_postgres_memory_catalog_matches_sqlite_contract_and_forces_rls() 
     )
     people = await catalog.people(account_id=account_id)
     queue = await catalog.review_queue(account_id=account_id)
-    family_claim = next(
-        item for item in queue if item.source_event_id == "postgres-memory-0"
-    )
+    family_claim = next(item for item in queue if item.source_event_id == "postgres-memory-0")
     reviewed = await catalog.review(
         MemoryClaimReview(
             account_id=account_id,
@@ -910,9 +1051,7 @@ async def test_postgres_memory_catalog_matches_sqlite_contract_and_forces_rls() 
         )
     )
     mother_claim = next(
-        item
-        for item in queue
-        if item.source_event_id == "postgres-memory-1" and item.value != "60"
+        item for item in queue if item.source_event_id == "postgres-memory-1" and item.value != "60"
     )
     await catalog.review(
         MemoryClaimReview(
@@ -935,9 +1074,7 @@ async def test_postgres_memory_catalog_matches_sqlite_contract_and_forces_rls() 
     conflicts = [item for item in queue if item.reason == "conflicting_values"]
     assert {item.value for item in conflicts} == {"60", "61"}
     assert reviewed.status == "confirmed"
-    assert {
-        (item.kind, item.source_event_id, item.status) for item in context.items
-    } == {
+    assert {(item.kind, item.source_event_id, item.status) for item in context.items} == {
         ("claim", "postgres-memory-0", "confirmed"),
         ("knowledge", "postgres-memory-0", "confirmed"),
         ("episode", "postgres-memory-0", "confirmed"),
@@ -948,9 +1085,7 @@ async def test_postgres_memory_catalog_matches_sqlite_contract_and_forces_rls() 
         "episodic",
         "procedural",
     }
-    assert [(item.display_name, item.status) for item in reviewed_people] == [
-        ("李梅", "confirmed")
-    ]
+    assert [(item.display_name, item.status) for item in reviewed_people] == [("李梅", "confirmed")]
     assert {item.value for item in queue_after_review if item.reason == "conflicting_values"} == {
         "60",
         "61",
@@ -1001,7 +1136,11 @@ async def test_postgres_person_alias_is_recallable_and_status_gated() -> None:
     account_id = f"person-alias-{uuid.uuid4()}"
     event_id = f"person-alias-event-{uuid.uuid4()}"
     archive = PostgresLifeArchive(dsn)
-    catalog = PostgresMemoryCatalog(dsn, extractor=RuleBasedMemoryExtractor())
+    catalog = PostgresMemoryCatalog(
+        dsn,
+        extractor=RuleBasedMemoryExtractor(),
+        evidence_subject_category_resolver=lambda _event: "adult",
+    )
     await archive.initialize()
     await catalog.initialize()
     try:
@@ -1079,14 +1218,7 @@ async def test_postgres_person_alias_is_recallable_and_status_gated() -> None:
     not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
     reason="set MEMORIA_TEST_POSTGRES_DSN for the PostgreSQL minor subject contract",
 )
-async def test_postgres_minor_subject_filter_keeps_only_allowlisted_demo_memories() -> None:
-    """The demo minor cases must survive the production PostgreSQL compiler.
-
-    The resolver is the only category authority.  A payload that claims adult,
-    or a retention marker that is not the compiler's input, must not reopen the
-    minor allowlist or drop an allowlisted projection.
-    """
-
+async def test_postgres_minor_subjects_are_never_extracted() -> None:
     admin_dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
     database = f"memoria_minor_demo_{uuid.uuid4().hex[:10]}"
     admin = await asyncpg.connect(admin_dsn)
@@ -1114,13 +1246,20 @@ async def test_postgres_minor_subject_filter_keeps_only_allowlisted_demo_memorie
             raise AssertionError(f"unexpected subject {subject_id}")
         return categories[subject_id]
 
+    extracted: list[str] = []
+
+    class CountingRuleExtractor(RuleBasedMemoryExtractor):
+        async def extract(self, event: EvidenceEvent) -> MemoryExtraction:
+            extracted.append(event.event_id)
+            return await super().extract(event)
+
     archive: PostgresLifeArchive | None = None
     catalog: PostgresMemoryCatalog | None = None
     try:
         archive = PostgresLifeArchive(dsn)
         catalog = PostgresMemoryCatalog(
             dsn,
-            extractor=RuleBasedMemoryExtractor(),
+            extractor=CountingRuleExtractor(),
             evidence_subject_category_resolver=resolve_category,
         )
         await archive.initialize()
@@ -1179,9 +1318,7 @@ async def test_postgres_minor_subject_filter_keeps_only_allowlisted_demo_memorie
                 },
             ),
         )
-        for index, (event_id, subject_id, text, explicit_memory, extra) in enumerate(
-            utterances
-        ):
+        for index, (event_id, subject_id, text, explicit_memory, extra) in enumerate(utterances):
             payload: dict[str, object] = {
                 "text": text,
                 "interaction_mode": "companion",
@@ -1244,24 +1381,24 @@ async def test_postgres_minor_subject_filter_keeps_only_allowlisted_demo_memorie
             )
         )
 
-        assert report.failed_events == 0
-        assert report.compiled_events == len(utterances)
-        assert {
-            (item.source_event_id, item.domain_category, item.status)
-            for item in study.items
-            if item.source_event_id in {"math-progress", "learning-preference"}
-        } == {
-            ("math-progress", "study_progress", "candidate"),
-            ("learning-preference", "learning_preference", "candidate"),
-        }
-        assert {
-            (item.source_event_id, item.domain_category, item.status)
-            for item in reading.items
-        } == {("reading-preference", "daily_life", "confirmed")}
-        assert all("阅读" in f"{item.title} {item.snippet}" for item in reading.items)
+        connection = await asyncpg.connect(dsn)
+        try:
+            receipts = await connection.fetch(
+                "SELECT event_id, outcome, ignored_reason FROM memory_compile_receipts"
+                " ORDER BY event_id"
+            )
+        finally:
+            await connection.close()
+
+        assert extracted == []
+        assert report == CompileReport(ignored_events=len(utterances))
+        assert [tuple(row) for row in receipts] == sorted(
+            (event_id, "ignored", "minor_subject_skipped") for event_id, *_ in utterances
+        )
+        assert study.items == ()
+        assert reading.items == ()
         assert sensitive.items == ()
-        assert any(item.source_event_id == "retention-cannot-drop" for item in retained.items)
-        assert all(item.source_event_id != "payload-cannot-widen" for item in sensitive.items)
+        assert retained.items == ()
     finally:
         if catalog is not None:
             await catalog.close()

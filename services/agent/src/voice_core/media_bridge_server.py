@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -98,15 +99,31 @@ class MediaBridgeSession:
     # ``state`` so the still-open gRPC stream cannot admit late input or revive
     # a cancelled downlink generation during that teardown window.
     terminal_requested: bool = False
+    # Separate from ``terminal_requested``: the speaking watchdog cuts the
+    # uplink at once but must still be able to enqueue the generation CANCEL
+    # and CONVERSATION_STATE_CLOSED on the downlink.
+    uplink_revoked: bool = False
     stale_downlink_count: int = 0
     overflow_count: int = 0
     task_epoch: int = 0
     context_version: int = 0
+    # A device pat or screen tap arrives as client.stop_assistant, and a local
+    # stop-keyword hit arrives with hard_stop. While an approved fixed-safety
+    # script is audible, Voice Core refuses both local stop paths so a flushed
+    # generation cannot cut the script on the device.
+    local_stop_guard: Callable[[], bool] | None = field(
+        default=None, repr=False, compare=False
+    )
     _last_client_event_sequence: int = -1
     _last_client_event_id: str | None = None
     _last_client_progress_fingerprint: tuple[object, ...] | None = None
     _stop_keys: deque[str] = field(default_factory=lambda: deque(maxlen=64))
     _stop_fences: dict[str, GenerationFence] = field(default_factory=dict)
+    # Fences whose terminal control (COMPLETE/CANCEL) was already enqueued.
+    # The speaking watchdog must not close a generation the device is about to
+    # finish on its own.
+    _terminal_fences: deque[GenerationFence] = field(default_factory=lambda: deque(maxlen=64))
+    _terminal_fence_set: set[GenerationFence] = field(default_factory=set)
     last_downlink_reject_log: float = 0.0
     # Bridge admission after the output pacer, not provider production speed
     # or device playback. Statistics never span a transport or generation fence.
@@ -149,13 +166,46 @@ class MediaBridgeSession:
 
         return self.state != "closed" and not self.terminal_requested
 
+    def accepts_uplink(self) -> bool:
+        """Return whether this epoch may still deliver media input.
+
+        The speaking watchdog revokes only the uplink so the device stops
+        feeding a lost generation while the terminal close still has a usable
+        downlink.
+        """
+
+        return self.accepts_input() and not self.uplink_revoked
+
     def mark_terminal(self) -> None:
         """Revoke all subsequent input for this session epoch."""
 
         self.terminal_requested = True
 
+    def revoke_uplink(self) -> None:
+        """Reject every later input event before its payload is parsed."""
+
+        self.uplink_revoked = True
+
+    def mark_generation_terminal(self, fence: GenerationFence) -> None:
+        """Record that this epoch already sent ``fence`` its end signal."""
+
+        if fence in self._terminal_fence_set:
+            return
+        if self._terminal_fences.maxlen is not None and (
+            len(self._terminal_fences) >= self._terminal_fences.maxlen
+        ):
+            evicted = self._terminal_fences.popleft()
+            self._terminal_fence_set.discard(evicted)
+        self._terminal_fences.append(fence)
+        self._terminal_fence_set.add(fence)
+
+    def terminal_covers(self, fence: GenerationFence) -> bool:
+        """True when the device was already told how ``fence`` ends."""
+
+        return fence in self._terminal_fence_set
+
     def accept_uplink(self, frame: AudioFrame) -> bool:
-        if not self.accepts_input() or frame.identity != self.identity:
+        if not self.accepts_uplink() or frame.identity != self.identity:
             return False
         if frame.sequence <= self.last_uplink_sequence:
             return False
@@ -314,6 +364,14 @@ class MediaBridgeSession:
             event.stream_epoch != self.identity.stream_epoch
             or event.type != "client.stop_assistant"
         ):
+            return False
+        if self.local_stop_guard is not None and not self.local_stop_guard():
+            logger.info(
+                "media local gesture stop refused during fixed safety playback "
+                "session=%s reason=%s",
+                self.identity.session_id,
+                str(event.payload.get("reason", "client_stop"))[:64],
+            )
             return False
         key = event.payload.get("idempotency_key")
         if not isinstance(key, str) or not key.strip():
@@ -671,6 +729,17 @@ class MediaBridgeServer:
             return False
         session.mark_terminal()
         self._record_terminal_epoch(session_id, session.identity.stream_epoch)
+        return True
+
+    def revoke_uplink(self, session_id: str, *, stream_epoch: int | None = None) -> bool:
+        """Cut media input without touching the downlink terminal path."""
+
+        session = self.sessions.get(session_id)
+        if session is None:
+            return False
+        if stream_epoch is not None and session.identity.stream_epoch != stream_epoch:
+            return False
+        session.revoke_uplink()
         return True
 
     def accept_client_event(self, event: MediaEnvelope) -> bool:

@@ -74,16 +74,29 @@
       </view>
       <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
     </view>
+    <view wx:if="{{memoryLifecycleEntryAllowed}}" class="list-row" bindtap="openMemoryLifecycle">
+      <mp-icon name="shield" tone="ink"></mp-icon>
+      <view class="row-copy">
+        <text class="row-title">记忆管理</text>
+        <text class="row-meta">查看、确认或撤回机器人记住的事</text>
+      </view>
+      <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
+    </view>
     <view class="list-row" bindtap="openPrivacy">
       <mp-icon name="shield" tone="ink"></mp-icon>
       <text class="row-title row-copy">授权与隐私说明</text>
       <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
     </view>
-    <button class="list-row" open-type="feedback" hover-class="none">
+    <button wx:if="{{authenticated}}" class="list-row" open-type="feedback" hover-class="none">
       <mp-icon name="help" tone="ink"></mp-icon>
       <text class="row-title row-copy">帮助与反馈</text>
       <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
     </button>
+    <view wx:else class="list-row" bindtap="loginForFeedback">
+      <mp-icon name="help" tone="ink"></mp-icon>
+      <text class="row-title row-copy">帮助与反馈</text>
+      <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
+    </view>
     <view class="list-row" bindtap="openAbout">
       <mp-icon name="info" tone="ink"></mp-icon>
       <text class="row-title row-copy">关于</text>

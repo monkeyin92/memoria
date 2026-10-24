@@ -10,6 +10,11 @@ store resumes where it stopped. While a deletion runs, the subject is fenced:
 new evidence for them is refused (``is_subject_deleting``). Content-free audit
 stays: consent evidence and revoked consents, policy receipts, identity
 relationships/bindings, session-runtime profiles.
+
+The identity step clears or erases the person row through the identity
+authority's controlled port (issue #283). Whether the row is cleared (a device
+still serves them) or erased is the identity side's decision, so the saga only
+asks for it on the path that requested it.
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import sqlite3
 import uuid
 from collections.abc import Awaitable, Callable, Iterator, Sequence
@@ -43,6 +49,8 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
+_LEDGER_SNAPSHOT_VERSION: Final = 1
+
 _STEPS: Final[tuple[str, ...]] = (
     "started",
     "sessions_terminated",
@@ -67,6 +75,56 @@ class SubjectDeletionIncompleteError(RuntimeError):
 
 def _hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _snapshot_text(value: object, field: str, *, maximum: int = 512) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value) > maximum:
+        raise ValueError(f"snapshot {field} must be a bounded non-empty string")
+    return value
+
+
+def _snapshot_json_object(value: object, field: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"snapshot {field} must be a JSON object string")
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"snapshot {field} must be a JSON object string") from exc
+    if not isinstance(decoded, dict):
+        raise ValueError(f"snapshot {field} must be a JSON object string")
+    return value
+
+
+def _snapshot_row(value: object) -> dict[str, Any]:
+    """Validate one exported row; the snapshot is written by trusted code."""
+
+    if not isinstance(value, dict):
+        raise ValueError("snapshot rows must be objects")
+    row: dict[str, Any] = {
+        "account_id": _snapshot_text(value.get("account_id"), "account_id", maximum=128),
+        "subject_id": _snapshot_text(value.get("subject_id"), "subject_id", maximum=128),
+        "request_id": _snapshot_text(value.get("request_id"), "request_id", maximum=128),
+        "lineage_json": _snapshot_json_object(value.get("lineage_json", "{}"), "lineage_json"),
+        "progress_json": _snapshot_json_object(
+            value.get("progress_json", "{}"), "progress_json"
+        ),
+        "started_at": _snapshot_text(value.get("started_at"), "started_at", maximum=64),
+        "updated_at": _snapshot_text(value.get("updated_at"), "updated_at", maximum=64),
+    }
+    redact = value.get("redact_identity")
+    if isinstance(redact, bool):
+        row["redact_identity"] = redact
+    elif isinstance(redact, int) and redact in (0, 1):
+        row["redact_identity"] = bool(redact)
+    else:
+        raise ValueError("snapshot redact_identity must be a boolean")
+    completed = value.get("completed_at")
+    row["completed_at"] = (
+        _snapshot_text(completed, "completed_at", maximum=64)
+        if completed is not None
+        else row["updated_at"]
+    )
+    return row
 
 
 class DbConnection(Protocol):
@@ -267,6 +325,100 @@ class SubjectDeletionLedger:
             for row in rows
         )
 
+    def completed_rows(self, *, limit: int = 100_000) -> tuple[dict[str, Any], ...]:
+        """Completed deletions with the identifiers a restore cannot roll back."""
+
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT account_id, subject_id, request_id, status, step, "
+                "redact_identity, lineage_json, progress_json, started_at, "
+                "updated_at, completed_at "
+                "FROM subject_deletions WHERE status = 'completed' "
+                "ORDER BY completed_at, updated_at LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return tuple(dict(row) for row in rows)
+
+    def export_completed(self, path: str | Path, *, limit: int = 100_000) -> int:
+        """Write completed deletions to a root-only 0600 snapshot file.
+
+        The file contains subject and account identifiers, so callers create it
+        outside the repository, keep it 0600, and delete it after the replay.
+        """
+
+        target = Path(path).expanduser().resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        rows = self.completed_rows(limit=limit)
+        temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {"version": _LEDGER_SNAPSHOT_VERSION, "rows": rows},
+                    handle,
+                    sort_keys=True,
+                )
+                handle.write("\n")
+            os.replace(temporary, target)
+            os.chmod(target, 0o600)
+        finally:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
+        return len(rows)
+
+    def merge_completed(self, path: str | Path) -> dict[str, int]:
+        """Add snapshot rows missing from the restored ledger; never overwrite.
+
+        A row already present under the same account/subject key (or the same
+        request id) is skipped, so merging the same snapshot twice is a no-op.
+        """
+
+        source = Path(path).expanduser().resolve()
+        document = json.loads(source.read_text(encoding="utf-8"))
+        if (
+            not isinstance(document, dict)
+            or document.get("version") != _LEDGER_SNAPSHOT_VERSION
+        ):
+            raise ValueError("not a subject-deletion ledger snapshot")
+        raw_rows = document.get("rows")
+        if not isinstance(raw_rows, list):
+            raise ValueError("snapshot rows must be a list")
+
+        merged = existing = 0
+        with self._connect() as connection:
+            for raw in raw_rows:
+                row = _snapshot_row(raw)
+                cursor = connection.execute(
+                    """
+                    INSERT INTO subject_deletions (
+                        account_id_hash, subject_id_hash, account_id, subject_id,
+                        request_id, status, step, redact_identity, lineage_json,
+                        progress_json, started_at, updated_at, completed_at
+                    ) VALUES (?, ?, ?, ?, ?, 'completed', 'completed', ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (
+                        _hash(row["account_id"]),
+                        _hash(row["subject_id"]),
+                        row["account_id"],
+                        row["subject_id"],
+                        row["request_id"],
+                        int(row["redact_identity"]),
+                        row["lineage_json"],
+                        row["progress_json"],
+                        row["started_at"],
+                        row["updated_at"],
+                        row["completed_at"],
+                    ),
+                )
+                if cursor.rowcount:
+                    merged += 1
+                else:
+                    existing += 1
+        return {"merged": merged, "existing": existing}
+
 
 @dataclass(frozen=True, slots=True)
 class _Lineage:
@@ -335,6 +487,10 @@ class SubjectDeletionService:
         self._persona = persona
         self._lock = asyncio.Lock()
 
+    @property
+    def ledger(self) -> SubjectDeletionLedger:
+        return self._ledger
+
     def is_subject_deleting(self, *, account_id: str, subject_id: str) -> bool:
         return self._ledger.is_deleting(account_id=account_id, subject_id=subject_id)
 
@@ -369,10 +525,13 @@ class SubjectDeletionService:
 
         The ledger lives in the control database while subject data is in the
         archive/persona/memory stores, so restoring those stores from a backup
-        brings erased rows back while the ledger still says ``completed``. Each
-        replay recaptures lineage from the restored evidence and runs the whole
-        saga again, which is idempotent for data that is already gone. Run it
-        after a restore and before traffic and projection rebuilds resume.
+        brings erased rows back while the ledger still says ``completed``. The
+        same backup also rolls the ledger back, which is why the restore
+        procedure exports the online ledger first and merges it afterwards.
+        Each replay recaptures lineage from the restored evidence and runs the
+        whole saga again, which is idempotent for data that is already gone.
+        Run it after a restore and before traffic and projection rebuilds
+        resume.
         """
 
         replayed = incomplete = 0
@@ -383,6 +542,12 @@ class SubjectDeletionService:
                 await self.delete_subject(
                     SubjectScope(account_id=account_id, subject_id=subject_id),
                     redact_identity=redact,
+                )
+                # The vector-deletion PR is not merged: a vector restored from
+                # before the deletion can cite evidence outside the recaptured
+                # lineage. Delete whatever the subject's evidence still reaches.
+                await self._archive.delete_subject_vectors(
+                    account_id=account_id, subject_id=subject_id
                 )
             except Exception as exc:
                 incomplete += 1
@@ -459,14 +624,17 @@ class SubjectDeletionService:
                 await checkpoint("objects_deleted")
 
             if due("archive_rows_deleted"):
-                for account_id, events in (
-                    (scope.account_id, lineage.owner_events),
-                    (scope.subject_id, lineage.subject_account_events),
+                # The owner call also collects claims about the child whose
+                # evidence is the parent's; it must run even when the child has
+                # no evidence of their own left.
+                for account_id, events, subject_id in (
+                    (scope.account_id, lineage.owner_events, scope.subject_id),
+                    (scope.subject_id, lineage.subject_account_events, None),
                 ):
-                    if not events:
+                    if not events and subject_id is None:
                         continue
                     counts = await self._archive.delete_events(
-                        account_id=account_id, event_ids=events
+                        account_id=account_id, event_ids=events, subject_id=subject_id
                     )
                     for table, count in counts.items():
                         progress[f"archive.{table}"] = progress.get(f"archive.{table}", 0) + count

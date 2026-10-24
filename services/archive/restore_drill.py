@@ -11,14 +11,18 @@ import re
 import shutil
 import subprocess
 import time
+import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 from urllib.parse import unquote, urlsplit, urlunsplit
 
 import asyncpg
 
+from services.archive.claim_subjects import BoundChildSubjectIds
+from services.archive.domain import EvidenceEvent
 from services.archive.memory_domain import MemoryEmbedder, MemoryExtractor
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
 from services.archive.object_store import EncryptedLocalObjectStore, ObjectRef
@@ -539,19 +543,30 @@ async def rebuild_postgres_memory_projections(
     extractor: MemoryExtractor | None = None,
     embedder: MemoryEmbedder | None = None,
     require_vector: bool = False,
+    bound_child_subject_ids: BoundChildSubjectIds | None = None,
 ) -> ProjectionRebuildReport:
     """Rebuild derived projections with the same components as the serving runtime."""
 
     if require_vector and embedder is None:
         raise ValueError("pgvector projection rebuild requires an embedder")
+
+    def stamped_subject_category(event: EvidenceEvent) -> str | None:
+        stamped = event.payload.get("subject_category")
+        return stamped if isinstance(stamped, str) else None
+
     catalog = PostgresMemoryCatalog(
         dsn,
         extractor=extractor or RuleBasedMemoryExtractor(),
         embedder=embedder,
         require_vector=require_vector,
+        evidence_subject_category_resolver=stamped_subject_category,
+        # A rebuild may run after a restore with no identity store; a caller
+        # that has one injects it so recompiled claims land on their child.
+        bound_child_subject_ids=bound_child_subject_ids,
     )
     connection = await asyncpg.connect(dsn)
     skill_account_ids: tuple[str, ...] = ()
+    claim_subjects: tuple[tuple[uuid.UUID, str, str], ...] = ()
     try:
         present = await _public_tables(connection)
         projections = tuple(table for table in _PROJECTION_TABLES if table in present)
@@ -569,6 +584,19 @@ async def rebuild_postgres_memory_projections(
                 "memory projection rebuild requires a maintenance role that bypasses RLS"
             )
         await catalog.initialize()
+        present = await _public_tables(connection)
+        projections = tuple(table for table in _PROJECTION_TABLES if table in present)
+        if "memory_claim_subjects" in present:
+            claim_subjects = tuple(
+                (
+                    cast(uuid.UUID, row["claim_id"]),
+                    str(row["account_id"]),
+                    str(row["subject_id"]),
+                )
+                for row in await connection.fetch(
+                    "SELECT claim_id, account_id, subject_id FROM memory_claim_subjects"
+                )
+            )
         protected_identity_projections = (
             {
                 "person_entities",
@@ -646,6 +674,18 @@ async def rebuild_postgres_memory_projections(
         await catalog.close()
     connection = await asyncpg.connect(dsn)
     try:
+        if claim_subjects:
+            # Recompilation may run without identity; keep the association the
+            # deleted projection rows carried before the rebuild.
+            await connection.executemany(
+                """
+                INSERT INTO memory_claim_subjects (account_id, claim_id, subject_id)
+                SELECT $2, $1, $3
+                WHERE EXISTS (SELECT 1 FROM memory_claims WHERE claim_id = $1)
+                ON CONFLICT DO NOTHING
+                """,
+                list(claim_subjects),
+            )
         incomplete = int(
             await connection.fetchval(
                 """
@@ -796,9 +836,7 @@ async def verify_postgres_rls(dsn: str) -> RLSRestoreReport:
             )
         )
         controller_tables = tuple(
-            str(row["table_name"])
-            for row in controller_metadata_rows
-            if bool(row["table_exists"])
+            str(row["table_name"]) for row in controller_metadata_rows if bool(row["table_exists"])
         )
         controller_counts = {
             table: int(

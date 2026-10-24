@@ -33,6 +33,7 @@ int main() {
             if (strcmp(device, "starting") == 0) tap_device = memoria::TapDevice::kStarting;
             else if (strcmp(device, "idle") == 0) tap_device = memoria::TapDevice::kIdle;
             else if (strcmp(device, "busy") == 0) tap_device = memoria::TapDevice::kBusy;
+            else if (strcmp(device, "held") == 0) tap_device = memoria::TapDevice::kListeningClosed;
             else return 2;
             memoria::TapFacts facts;
             facts.device = tap_device;
@@ -125,6 +126,14 @@ def test_quiet_idle_tap_soothes_and_skips_the_offline_menu(tool: pathlib.Path) -
 
 def test_awake_idle_tap_opens_the_menu_only_when_offline_wants_it(tool: pathlib.Path) -> None:
     assert _run(tool, "tap idle 0 1", "tap idle 0 0") == ["offline", "start"]
+
+
+def test_listening_closed_tap_resumes_without_a_new_wake(tool: pathlib.Path) -> None:
+    assert _run(tool, "tap held 0 0", "tap held 1 1", "tap held 0 1") == [
+        "resume",
+        "resume",
+        "resume",
+    ]
 
 
 def test_busy_tap_reaches_the_offline_menu_only_when_it_wants_the_tap(tool: pathlib.Path) -> None:

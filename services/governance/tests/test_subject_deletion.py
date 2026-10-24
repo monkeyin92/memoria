@@ -36,6 +36,8 @@ class _Archive:
     subject_events: set[str] = field(default_factory=lambda: {"crisis-1"})
     calls: list[str] = field(default_factory=list)
     fail_delete_once: bool = False
+    vectors: int = 0
+    deleted_events: int = 0
 
     async def subject_event_ids(self, scope: SubjectScope) -> tuple[str, ...]:
         self.calls.append("subject_event_ids")
@@ -49,7 +51,13 @@ class _Archive:
     ) -> tuple[ObjectRef, ...]:
         return (_ref("blob-e1"),) if account_id == "parent" and "e1" in event_ids else ()
 
-    async def delete_events(self, *, account_id: str, event_ids: tuple[str, ...]) -> dict[str, int]:
+    async def delete_events(
+        self,
+        *,
+        account_id: str,
+        event_ids: tuple[str, ...],
+        subject_id: str | None = None,
+    ) -> dict[str, int]:
         if self.fail_delete_once:
             self.fail_delete_once = False
             raise RuntimeError("database went away")
@@ -57,6 +65,7 @@ class _Archive:
         target = self.owner_events if account_id == "parent" else self.subject_events
         removed = len(target & set(event_ids))
         target -= set(event_ids)
+        self.deleted_events += removed
         return {"evidence_events": removed}
 
     async def remaining_rows_for(
@@ -65,6 +74,10 @@ class _Archive:
         target = self.owner_events if account_id == "parent" else self.subject_events
         left = len(target & set(event_ids))
         return {"evidence_events": left} if left else {}
+
+    async def delete_subject_vectors(self, *, account_id: str, subject_id: str) -> int:
+        removed, self.vectors = self.vectors, 0
+        return removed
 
 
 @dataclass
@@ -295,3 +308,119 @@ async def test_a_replay_that_cannot_finish_stays_pending_for_the_worker(tmp_path
     assert service.is_subject_deleting(account_id="parent", subject_id="child") is True
     assert await service.retry_pending_deletions() == 1
     assert parts["archive"].owner_events == set()
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_completed_rows_capture_lineage_again_when_replayed(tmp_path: Path) -> None:
+    """``begin`` resets a completed row to ``started``; replay really reruns it."""
+
+    service, parts = _service(tmp_path)
+    await service.delete_subject(SCOPE)
+    assert service.ledger.completed_rows()[0]["step"] == "completed"
+
+    parts["archive"].owner_events |= {"e1", "e2"}
+    report = await service.replay_completed_deletions()
+
+    assert report == {"replayed": 1, "incomplete": 0}
+    assert parts["archive"].calls.count("subject_event_ids") == 2
+    assert parts["archive"].owner_events == set()
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_ledger_snapshot_exports_and_merges_idempotently(tmp_path: Path) -> None:
+    service, _parts = _service(tmp_path)
+    await service.delete_subject(SCOPE)
+    snapshot = tmp_path / "ledger.json"
+
+    assert service.ledger.export_completed(snapshot) == 1
+    assert snapshot.stat().st_mode & 0o777 == 0o600
+
+    restored = SubjectDeletionLedger(tmp_path / "restored.sqlite3")
+    restored.initialize()
+    assert restored.completed() == ()
+    assert restored.merge_completed(snapshot) == {"merged": 1, "existing": 0}
+    assert restored.completed() == (("parent", "child", False),)
+    assert restored.merge_completed(snapshot) == {"merged": 0, "existing": 1}
+    assert restored.completed() == (("parent", "child", False),)
+
+
+@pytest.mark.asyncio
+async def test_ledger_snapshot_round_trips_on_postgres(
+    postgres_database: Any, tmp_path: Path
+) -> None:
+    """The same snapshot format works when the ledger lives in PostgreSQL."""
+
+    from services.control_api.app.database import MemoryStore
+
+    store = MemoryStore(
+        dsn=postgres_database.control_env()["MEMORIA_CONTROL_DATABASE_URL"],
+        initialize_schema=False,
+    )
+    try:
+        ledger = SubjectDeletionLedger.beside(store, tmp_path / "unused.sqlite3")
+        ledger.initialize()
+        service = SubjectDeletionService(
+            ledger=ledger,
+            archive=_Archive(),
+            object_store=_Objects(),
+            guardian=_Guardian(),
+            memory_scope=_MemoryScope(),
+            persona=_Persona(),
+        )
+        await service.delete_subject(SCOPE, redact_identity=True)
+        snapshot = tmp_path / "ledger.json"
+        assert ledger.export_completed(snapshot) == 1
+
+        with store.connection() as connection:
+            connection.execute("DELETE FROM subject_deletions")
+        assert ledger.completed() == ()
+
+        assert ledger.merge_completed(snapshot) == {"merged": 1, "existing": 0}
+        assert ledger.completed() == (("parent", "child", True),)
+        assert ledger.merge_completed(snapshot) == {"merged": 0, "existing": 1}
+        assert ledger.completed() == (("parent", "child", True),)
+    finally:
+        store.close()
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_snapshot_merge_restores_a_deletion_missing_from_the_ledger(
+    tmp_path: Path,
+) -> None:
+    """The restore rolls the ledger back; the snapshot merge puts the row back."""
+
+    service, parts = _service(tmp_path)
+    await service.delete_subject(SCOPE)
+    snapshot = tmp_path / "ledger.json"
+    assert service.ledger.export_completed(snapshot) == 1
+
+    # The backup predates the deletion: erased rows and vectors return.
+    parts["archive"].owner_events |= {"e1", "e2"}
+    parts["archive"].subject_events |= {"crisis-1"}
+    parts["archive"].vectors = 2
+    restored_ledger = SubjectDeletionLedger(tmp_path / "restored.sqlite3")
+    restored_ledger.initialize()
+    assert restored_ledger.completed() == ()
+    restored_ledger.merge_completed(snapshot)
+
+    restored, restored_parts = _service(
+        tmp_path,
+        ledger=restored_ledger,
+        archive=parts["archive"],
+        memory_scope=parts["memory_scope"],
+    )
+    report = await restored.replay_completed_deletions()
+
+    assert report == {"replayed": 1, "incomplete": 0}
+    assert restored_parts["archive"].owner_events == set()
+    assert restored_parts["archive"].subject_events == set()
+    assert restored_parts["archive"].vectors == 0
+
+    before = restored_parts["archive"].deleted_events
+    again = await restored.replay_completed_deletions()
+    assert again == {"replayed": 1, "incomplete": 0}
+    assert restored_parts["archive"].deleted_events == before
+    assert restored_parts["archive"].owner_events == set()

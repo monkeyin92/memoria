@@ -1,0 +1,108 @@
+name: memoria-aigc-e2e
+
+services:
+  voice-core-media-bridge:
+    image: memoria-agent:aigc-e2e
+    build:
+      context: ../..
+      dockerfile: infra/Dockerfile.agent
+      args:
+        MEMORIA_RELEASE_TAG: aigc-e2e
+        MEMORIA_RELEASE_COMMIT: aigc-e2e
+    entrypoint:
+      - /app/.venv/bin/python
+    environment:
+      ENVIRONMENT: production
+      MEMORIA_RELEASE_TAG: aigc-e2e
+      HOME: /tmp
+      XDG_CACHE_HOME: /tmp/.cache
+      SSL_CERT_FILE: /e2e/certs/ca.pem
+      MEDIA_BRIDGE_GRPC_ENABLED: "true"
+      MEDIA_BRIDGE_GRPC_ADDR: "0.0.0.0:7001"
+      MEDIA_BRIDGE_MTLS: "true"
+      MEDIA_BRIDGE_TLS_CERT_FILE: /e2e/certs/server.pem
+      MEDIA_BRIDGE_TLS_KEY_FILE: /e2e/certs/server.key
+      MEDIA_BRIDGE_CLIENT_CA_FILE: /e2e/certs/ca.pem
+      MEDIA_BRIDGE_SESSION_FACTORY: services.agent.src.media_agent_factory:build_production_media_session_factory
+      MEDIA_OUTPUT_GENERATION_TIMEOUT_S: "60"
+      MEDIA_OWNER_SILENCE_TIMEOUT_S: "${E2E_OWNER_SILENCE_TIMEOUT_S:-8}"
+      MEDIA_SPEAKING_STALL_TIMEOUT_S: "30"
+      AIGC_NOTICE_ENABLED: "true"
+      AIGC_NOTICE_OPENING_ENABLED: "${E2E_AIGC_OPENING_ENABLED:-true}"
+      AIGC_NOTICE_CLOSING_ENABLED: "true"
+      FIXED_SAFETY_AUDIO_ENABLED: "true"
+      FIXED_SAFETY_AUDIO_DIR: /app/infra/voices/fixed_safety
+      MEMORIA_ARCHIVE_SINK_ENABLED: "false"
+      MEMORIA_SESSION_RECAP_ENABLED: "false"
+      MEMORIA_VOICE_PROFILE_ENABLED: "false"
+      MEDIA_REPLY_DELIVERY_ENABLED: "false"
+      MEDIA_SLO_REPORT_ENABLED: "false"
+      SPEAKER_VERIFY_ENABLED: "false"
+      SPEAKER_AUTHORITY_ENABLED: "false"
+      MEMORIA_RUNTIME_PROFILE_VERIFY_KEY: ${E2E_VERIFY_KEY}
+      MEMORIA_INTERACTION_POLICY_URL: ${E2E_CONTROL_URL}/v1/interaction/session-policy
+      MEMORIA_INTERACTION_POLICY_TIMEOUT_S: "2.0"
+      MEMORIA_RESPONSE_PLAN_URL: ${E2E_CONTROL_URL}/v1/interaction/response-plan
+      MEMORIA_RESPONSE_PLAN_TIMEOUT_S: "0.5"
+      MEMORIA_ARCHIVE_SESSION_EVENTS_URL: ${E2E_CONTROL_URL}/v1/archive/session-events
+      MEMORIA_AGENT_HEARTBEAT_TOKEN: e2e-heartbeat-token-0123456789abcdef
+      MEMORIA_INTERACTION_POLICY_TOKEN: e2e-interaction-policy-token-0123456789
+      MEMORIA_RESPONSE_PLAN_TOKEN: e2e-response-plan-token-0123456789abcdef
+      DASHSCOPE_API_KEY: e2e-dashscope-key
+      FUNASR_MOCK_WS_URL: ${E2E_ASR_URL}
+      FUNASR_MODEL: fun-asr-realtime
+      FUNASR_WS_TRACE: "true"
+      SENSEVOICE_URL: ""
+      LLM_PROVIDER: deepseek
+      DEEPSEEK_API_KEY: e2e-deepseek-key
+      DEEPSEEK_BASE_URL: ${E2E_LLM_URL}
+      DEEPSEEK_FAST_MODEL: e2e-chat
+      DEEPSEEK_DEEP_MODEL: e2e-chat
+      TTS_PROVIDER: stepfun_primary
+      STEPFUN_TTS_ENABLED: "true"
+      STEPFUN_TTS_MOCK_WS_URL: ${E2E_STEPFUN_URL}
+      STEPFUN_API_KEY: e2e-stepfun-key
+      STEPFUN_TTS_MODEL: stepaudio-2.5-tts
+      STEPFUN_TTS_VOICE: wenrounansheng
+      DOUBAO_TTS_MOCK_WS_URL: ${E2E_STEPFUN_URL}
+      DOUBAO_TTS_APP_ID: e2e-doubao-app
+      DOUBAO_TTS_ACCESS_TOKEN: e2e-doubao-token
+      STEPFUN_TTS_FIXED_SAFETY_PRIMARY_FIRST: "true"
+    command:
+      - -m
+      - scripts.run_media_bridge
+    ports:
+      - "127.0.0.1:${E2E_AGENT_PORT}:7001"
+    volumes:
+      - type: bind
+        source: ${E2E_CERT_DIR}
+        target: /e2e/certs
+        read_only: true
+      - type: bind
+        source: ../../infra/voices/fixed_safety
+        target: /app/infra/voices/fixed_safety
+        read_only: true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "control-api:host-gateway"
+    healthcheck:
+      test:
+        - CMD
+        - /app/.venv/bin/python
+        - -c
+        - >-
+          import socket;
+          s=socket.create_connection(('127.0.0.1',7001),3);
+          s.close()
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: "no"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m

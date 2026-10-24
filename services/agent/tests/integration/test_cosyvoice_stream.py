@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import struct
+import traceback
 
 import pytest
 from services.agent.src.contracts.ids import GenerationFence
-from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoiceTTS
-from services.agent.src.providers.provider_errors import APIConnectOptions
+from services.agent.src.providers.cosyvoice_tts import (
+    CosyVoiceBeforeAudioError,
+    CosyVoiceConfig,
+    CosyVoiceTTS,
+)
+from services.agent.src.providers.provider_errors import APIConnectionError, APIConnectOptions
 from services.agent.tests.integration.mock_servers import MockCosyVoiceServer
 
 
@@ -141,6 +147,37 @@ async def test_stream_empty_timestamps_discards_connection() -> None:
         await tts.aclose()
     finally:
         srv.stop()
+
+
+@pytest.mark.asyncio
+async def test_task_failure_keeps_the_vendor_text_and_reply_out_of_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    planted = "白鹭把灯塔借给了第九只蜗牛"
+    reply = "我们一起数到十好不好。"
+    srv = MockCosyVoiceServer(scenario="fail", failure_message=planted)
+    srv.start()
+    caplog.set_level(logging.INFO)
+    try:
+        tts = CosyVoiceTTS(CosyVoiceConfig(api_key="test", ws_url=srv.ws_url, pool_size=1))
+        stream = tts.stream(conn_options=APIConnectOptions(max_retry=0))
+        stream.push_text(reply)
+        stream.end_input()
+        with pytest.raises(APIConnectionError) as caught:
+            async for _ in stream:
+                pass
+        await stream.aclose()
+        with pytest.raises(CosyVoiceBeforeAudioError) as batch:
+            await tts.synthesize_stream_text([reply], fence=GenerationFence("s", 1, 1, 0))
+        await tts.aclose()
+    finally:
+        srv.stop()
+
+    assert f"failed to synthesize speech text_len={len(reply)}" in caplog.text
+    for text in (planted, reply):
+        assert text not in caplog.text
+        assert text not in "".join(traceback.format_exception(caught.value))
+        assert text not in "".join(traceback.format_exception(batch.value))
 
 
 @pytest.mark.asyncio

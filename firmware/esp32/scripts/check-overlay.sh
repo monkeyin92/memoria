@@ -19,6 +19,10 @@ for script in "$SCRIPT_DIR"/*.sh; do
     rg -q '^set -euo pipefail$' "$script" || die "missing strict shell mode: $script"
 done
 
+"$python_bin" "$SCRIPT_DIR/identity_guard.py" scan \
+    "$MEMORIA_FIRMWARE_ROOT/overlay" \
+    "$SCRIPT_DIR"
+
 rg -Fq 'WAKE_WORD_MODEL="${MEMORIA_FIRMWARE_WAKE_WORD_MODEL:-}"' \
     "$SCRIPT_DIR/build.sh" || die "product build must use the board's Memoria wake word by default"
 
@@ -85,10 +89,13 @@ for mascot_file in memoria_mascot_pack.h memoria_mascot_pack.cc memoria_mascot_s
     [[ -f "$board_dir/$mascot_file" ]] || die "companion mascot source missing: $mascot_file"
 done
 for companion in starlight taoxi mianmian axu xuanmo; do
-    [[ -s "$board_dir/assets/mascot_$companion.mmp" ]] || die "mascot pack missing: $companion"
+    [[ ! -e "$board_dir/assets/mascot_$companion.mmp" ]] || \
+        die "mascot sticker must stay out of the assets image: $companion"
 done
 [[ -s "$board_dir/assets/brand_mark.mma" ]] || die "boot wordmark missing"
-[[ ! -e "$board_dir/memoria_face.cc" ]] || die "the white line face was replaced by the mascot"
+[[ -f "$board_dir/memoria_dot_face.h" ]] || die "dot face header missing"
+[[ -f "$board_dir/memoria_dot_face.cc" ]] || die "dot face source missing"
+[[ ! -e "$board_dir/memoria_face.cc" ]] || die "the white line face stays out"
 [[ -f "$board_dir/memoria_pat.h" ]] || die "body-pat detector header missing"
 rg -q 'new MemoriaMascotDisplay\(' "$board_dir/memoria_esp_vocat.cc" || \
     die "board does not use the companion mascot display"
@@ -161,7 +168,7 @@ rg -Fq 'memoria::WritePlay(' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc"
     die "AudioOutputTask must WritePlay the pre-I2S PCM into the software AEC reference ring"
 rg -Fq 'memoria::ApplyToFeed(' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
     die "ReadAudioData must ApplyToFeed the software AEC reference into channel 1 before resample"
-rg -Fq 'Device pat detected' "$board_dir/memoria_esp_vocat.cc" || \
+rg -Fq 'Device pat (accepted)' "$board_dir/memoria_esp_vocat.cc" || \
     die "BMI270 pat must be wired to a local animation, not ToggleChatState"
 rg -Fq 'display_->Pat()' "$board_dir/memoria_esp_vocat.cc" || \
     die "idle body pat must make the companion hop"
@@ -169,8 +176,27 @@ rg -Fq 'dizzy companion, no chat' "$board_dir/memoria_esp_vocat.cc" || \
     die "sustained IMU shake must not be treated as a pat or start a chat"
 rg -Fq 'MuteImuForTouch' "$board_dir/memoria_esp_vocat.cc" || \
     die "screen touch must mute IMU so a tap does not look like a pat"
-rg -Fq 'Device pat ignored (touch rumble' "$board_dir/memoria_esp_vocat.cc" || \
-    die "screen-tap rumble must cancel a pending body pat"
+rg -Fq 'pat motion watcher armed 20 ms poll' "$board_dir/memoria_esp_vocat.cc" || \
+    die "the pat watcher must log that it is armed (a quiet log then means no impulse)"
+rg -Fq 'reason=%s' "$board_dir/memoria_esp_vocat.cc" || \
+    die "every pat/rumble candidate must log its score, state and why it was ignored"
+rg -Fq 'memoria::PatIgnoreReasonName(result.kind, result.ignore)' \
+    "$board_dir/memoria_esp_vocat.cc" || \
+    die "every rejected pat/rumble candidate must name its reason from the shared table"
+rg -Fq 'memoria::PatGestureDecisionFor(facts)' "$board_dir/memoria_esp_vocat.cc" || \
+    die "a body pat while speaking must stop the reply through the shared policy"
+rg -Fq 'memoria::ScreenTapDecisionFor(' "$board_dir/memoria_esp_vocat.cc" || \
+    die "a screen tap while speaking must stop the reply through the shared policy"
+rg -Fq 'memoria::PlaybackStopRegistry::GetInstance().allowed()' "$board_dir/memoria_esp_vocat.cc" || \
+    die "a local gesture stop must honour the generation's interruptible flag"
+[[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_playback_stop.h" ]] || \
+    die "protected-playback registry header missing"
+rg -Fq 'cJSON_GetObjectItemCaseSensitive(root, "interruptible")' \
+    "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_protocol.cc" || \
+    die "generation.started must read the protected-playback flag"
+rg -Fq 'memoria::PlaybackStopRegistry::GetInstance().Set(' \
+    "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_protocol.cc" || \
+    die "generation.started must publish the protected-playback flag to the board"
 rg -q 'bg_image_src' "$board_dir/memoria_mascot_display.cc" || \
     die "mascot scene is not attached to the display background"
 rg -Fq 'SetOnFirstFrame' "$board_dir/memoria_esp_vocat.cc" || \
@@ -206,14 +232,8 @@ rg -Fq 'CONFIG_SR_MN_CN_MULTINET6_QUANT=y' "$board_dir/config.json" && \
     die "quiet hours header missing"
 [[ -f "$MEMORIA_FIRMWARE_ROOT/overlay/files/main/memoria/memoria_offline_menu.h" ]] || \
     die "offline menu policy header missing"
-[[ -f "$MEMORIA_FIRMWARE_ROOT/overlay/files/main/memoria/memoria_aigc_label.h" ]] || \
-    die "AIGC explicit-label policy header missing"
 rg -Fq 'offline_menu_' "$board_dir/memoria_esp_vocat.cc" || \
     die "board must wire OfflineMenuMachine"
-rg -Fq 'kAigcNoticeBedtimeFile' "$board_dir/memoria_esp_vocat.cc" || \
-    die "night soothe must prepend the spoken AIGC notice"
-rg -Fq 'aigc_badge_' "$board_dir/memoria_mascot_display.cc" || \
-    die "mascot display must wire the AIGC corner badge"
 rg -Fq 'HoldDurationMsOnRelease' "$board_dir/memoria_esp_vocat.cc" || \
     die "touch task must measure hold duration for the offline menu"
 "$python_bin" "$MEMORIA_FIRMWARE_ROOT/scripts/build_offline_stories.py" --check-only || \
@@ -616,6 +636,12 @@ if any("xiaozhi" in str(value).casefold() for value in flash_files.values()):
 PY
 if find "$MEMORIA_ARTIFACT_DIR" -maxdepth 1 -type f -name '*-xiaozhi.bin' -print -quit | rg -q .; then
     die "upstream-named product artifact remains in artifacts/"
+fi
+if find "$MEMORIA_ARTIFACT_DIR" -maxdepth 1 -type f -name '*merged.bin' -print -quit | rg -q .; then
+    die "build published a merged.bin full-chip image"
+fi
+if [[ -e "$MEMORIA_UPSTREAM_DIR/build/merged-binary.bin" ]]; then
+    die "build left merged-binary.bin in the tree"
 fi
 if rg -q '^CONFIG_MEMORIA_KEEP_AWAKE=y$' "$sdkconfig"; then
     if rg -q '^CONFIG_MEMORIA_BENCH_SERIAL=y$' "$sdkconfig"; then

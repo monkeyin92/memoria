@@ -12,7 +12,7 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 import asyncpg
 from packages.contracts.generated.python.multi_subject_contracts import MemoryScope
@@ -29,6 +29,10 @@ from services.guardian.child_memory import (
     summary_payload,
 )
 from services.memory_scope.subject_erasure import MAINTENANCE_ROLE, _require_subject
+
+ChildLayerEraseReason = Literal[
+    "unbind_purge", "retention_expiry", "child_layer_erase"
+]
 
 
 async def _scope(connection: asyncpg.Connection, **values: str | None) -> None:
@@ -413,10 +417,17 @@ class ChildLayerStore:
         subject_id: str,
         kind: ChildMemoryKind,
         only_expired: bool = False,
+        reason: ChildLayerEraseReason = "child_layer_erase",
     ) -> Mapping[str, Any]:
         _require_subject(subject_id)
         async with (await self._maintenance()).acquire() as connection:
             async with connection.transaction():
+                # Transaction-local audit label; the SQL function falls back
+                # to only_expired when a caller does not set it.
+                await connection.execute(
+                    "SELECT set_config('app.memory.child_layer_erase_reason', $1, true)",
+                    reason,
+                )
                 raw = await connection.fetchval(
                     "SELECT memory_kind_erase($1, $2, $3)",
                     subject_id,
@@ -442,14 +453,30 @@ class ChildLayerStore:
             )
         return _jsonb(raw)
 
+    async def record_retention_basis(self, *, subject_id: str) -> Mapping[str, Any]:
+        """Append the content-free basis for keeping the child layers on unbind."""
+
+        _require_subject(subject_id)
+        async with (await self._maintenance()).acquire() as connection:
+            raw = await connection.fetchval(
+                "SELECT memory_child_layer_retain($1)", subject_id
+            )
+        return _jsonb(raw)
+
     async def purge_both_layers(self, *, subject_id: str) -> dict[str, Mapping[str, Any]]:
-        """Unbind / PIPL art. 47: delete archive and all summaries, including fresh ones."""
+        """Guardian chose delete: remove the archive and every summary, including fresh ones."""
 
         summary = await self.erase_kind(
-            subject_id=subject_id, kind=KIND_DIALOGUE_SUMMARY, only_expired=False
+            subject_id=subject_id,
+            kind=KIND_DIALOGUE_SUMMARY,
+            only_expired=False,
+            reason="unbind_purge",
         )
         archive = await self.erase_kind(
-            subject_id=subject_id, kind=KIND_CHILD_ARCHIVE, only_expired=False
+            subject_id=subject_id,
+            kind=KIND_CHILD_ARCHIVE,
+            only_expired=False,
+            reason="unbind_purge",
         )
         summary_left = await self.remaining_kind(
             subject_id=subject_id, kind=KIND_DIALOGUE_SUMMARY, only_expired=False
@@ -468,7 +495,10 @@ class ChildLayerStore:
 
     async def expire_due_summaries(self, *, subject_id: str) -> Mapping[str, Any]:
         erased = await self.erase_kind(
-            subject_id=subject_id, kind=KIND_DIALOGUE_SUMMARY, only_expired=True
+            subject_id=subject_id,
+            kind=KIND_DIALOGUE_SUMMARY,
+            only_expired=True,
+            reason="retention_expiry",
         )
         remaining = await self.remaining_kind(
             subject_id=subject_id, kind=KIND_DIALOGUE_SUMMARY, only_expired=True
@@ -482,7 +512,10 @@ class ChildLayerStore:
 
     async def purge_archive(self, *, subject_id: str) -> Mapping[str, Any]:
         erased = await self.erase_kind(
-            subject_id=subject_id, kind=KIND_CHILD_ARCHIVE, only_expired=False
+            subject_id=subject_id,
+            kind=KIND_CHILD_ARCHIVE,
+            only_expired=False,
+            reason="retention_expiry",
         )
         remaining = await self.remaining_kind(
             subject_id=subject_id, kind=KIND_CHILD_ARCHIVE, only_expired=False

@@ -17,6 +17,7 @@
 #include "http.h"
 #include "settings.h"
 #include "sodium.h"
+#include "memoria_local_data_erase.h"
 
 #include <cJSON.h>
 
@@ -254,10 +255,20 @@ bool HttpRequest(const std::string& method,
                  const std::vector<std::pair<std::string, std::string>>& headers,
                  std::string body,
                  std::string* response,
-                 int* status_code = nullptr) {
+                 int* status_code = nullptr,
+                 int* transport_error = nullptr) {
+    if (status_code != nullptr) {
+        *status_code = 0;
+    }
+    if (transport_error != nullptr) {
+        *transport_error = 0;
+    }
     auto network = Board::GetInstance().GetNetwork();
     auto http = network->CreateHttp(0);
     if (http == nullptr) {
+        if (transport_error != nullptr) {
+            *transport_error = -1;
+        }
         return false;
     }
     http->SetTimeout(kHttpTimeoutMs);
@@ -270,7 +281,11 @@ bool HttpRequest(const std::string& method,
         http->SetContent(std::move(body));
     }
     if (!http->Open(method, url)) {
-        ESP_LOGE(kTag, "Activation HTTP transport failed, code=0x%x", http->GetLastError());
+        const int code = http->GetLastError();
+        if (transport_error != nullptr) {
+            *transport_error = code;
+        }
+        ESP_LOGE(kTag, "Activation HTTP transport failed, code=0x%x", code);
         return false;
     }
     const int status = http->GetStatusCode();
@@ -450,6 +465,8 @@ esp_err_t MemoriaActivationClient::Activate(ActivationProfile* profile) {
     if (profile == nullptr || !identity_.loaded()) {
         return ESP_ERR_INVALID_ARG;
     }
+    last_http_status_ = 0;
+    last_transport_error_ = 0;
     const std::string path = "/v1/devices/" + identity_.device_id() + "/activation-manifest";
     const std::string request_payload = BuildSignedGetPayload(identity_, path);
     const std::string request_signature = SignedRequestHeader(identity_, request_payload);
@@ -461,19 +478,28 @@ esp_err_t MemoriaActivationClient::Activate(ActivationProfile* profile) {
     if (!HttpRequest("GET", JoinUrl(identity_.control_api_url(), path),
                      {{"X-Device-Certificate-ID", identity_.certificate_id()},
                       {"X-Device-Signature", request_signature}},
-                     {}, &response, &manifest_status)) {
+                     {}, &response, &manifest_status, &last_transport_error_)) {
+        last_http_status_ = manifest_status;
         if (manifest_status == 409) {
-            // A released device is intentionally not bound yet.  Do not let
-            // the previous activation version strand the board in an error
-            // screen; keep activation_ctr so the next binding cannot replay
-            // the device's monotonic activation counter.
+            // Device released by server. Erase child-related local data and clear the activation
+            // marker (but keep activation_ctr for replay prevention), only on successful erase.
+            // Failed erase keeps activation_v set, so the next 409 retries the erase.
             Settings runtime("memoria_runtime", true);
-            runtime.SetInt("activation_v", 0);
-            ESP_LOGW(kTag, "Activation unavailable while device is unbound; bootstrap required");
+            const int32_t previous_activation_v = runtime.GetInt("activation_v", 0);
+
+            if (previous_activation_v != 0) {
+                if (EraseLocalChildData()) {
+                    runtime.SetInt("activation_v", 0);
+                    ESP_LOGW(kTag, "Device released; bootstrap required");
+                } else {
+                    ESP_LOGW(kTag, "Child data erase incomplete; release deferred to next 409");
+                }
+            }
             return ESP_ERR_INVALID_STATE;
         }
         return ESP_FAIL;
     }
+    last_http_status_ = manifest_status;
     ScopedJson manifest{cJSON_ParseWithLength(response.data(), response.size())};
     std::string config_hash;
     std::string expires_at;
@@ -502,7 +528,8 @@ esp_err_t MemoriaActivationClient::Activate(ActivationProfile* profile) {
         !HttpRequest("POST",
                      JoinUrl(profile->control_api_url,
                              "/v1/devices/" + identity_.device_id() + "/activation-ack"),
-                     {}, ack, nullptr, &ack_status)) {
+                     {}, ack, nullptr, &ack_status, &last_transport_error_)) {
+        last_http_status_ = ack_status;
         if (ack_status == 409) {
             // Keep the counter this ACK spent: the server already holds one at
             // least this high, and a later proof must sign above it.
@@ -514,6 +541,7 @@ esp_err_t MemoriaActivationClient::Activate(ActivationProfile* profile) {
         }
         return ESP_FAIL;
     }
+    last_http_status_ = ack_status;
     runtime.SetInt("activation_ctr", counter);
     runtime.SetInt("activation_v", profile->activation_version);
     ESP_LOGI(kTag, "Activation acknowledged, version=%ld",
@@ -538,13 +566,17 @@ esp_err_t MemoriaActivationClient::FetchDisplayProfile(const std::string& contro
         return ESP_FAIL;
     }
     std::string response;
+    last_http_status_ = 0;
+    last_transport_error_ = 0;
     int status = 0;
     if (!HttpRequest("GET", JoinUrl(control_api_url, path),
                      {{"X-Device-Certificate-ID", identity_.certificate_id()},
                       {"X-Device-Signature", request_signature}},
-                     {}, &response, &status)) {
+                     {}, &response, &status, &last_transport_error_)) {
+        last_http_status_ = status;
         return status == 409 ? ESP_ERR_INVALID_STATE : ESP_FAIL;
     }
+    last_http_status_ = status;
     ScopedJson root{cJSON_ParseWithLength(response.data(), response.size())};
     std::string companion_id;
     std::string display_version;

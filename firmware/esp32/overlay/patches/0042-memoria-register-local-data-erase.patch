@@ -1,0 +1,10 @@
+--- a/main/CMakeLists.txt
++++ b/main/CMakeLists.txt
+@@ -42,6 +42,7 @@ set(SOURCES "audio/audio_codec.cc"
+             "memoria/memoria_bootstrap.cc"
+             "memoria/memoria_firmware_update.cc"
+             "memoria/memoria_display_hooks.cc"
++            "memoria/memoria_local_data_erase.cc"
+             "mcp_server.cc"
+             "system_info.cc"
+             "application.cc"

@@ -1549,6 +1549,35 @@ def test_generation_started_must_strictly_advance_the_current_fence() -> None:
     assert monotonic < flush
 
 
+def test_protected_generation_refuses_a_local_gesture_stop() -> None:
+    started = SOURCE[SOURCE.index("bool MemoriaProtocol::HandleGenerationStarted") :]
+    started = started[: started.index("bool MemoriaProtocol::HandleGenerationPauseResume")]
+    # A fixed safety script is the platform's call, not the device's: the
+    # device honours "interruptible": false and nothing else. An absent field
+    # keeps every ordinary reply interruptible.
+    assert 'cJSON_GetObjectItemCaseSensitive(root, "interruptible")' in started
+    assert "memoria::InterruptibleFromWire(" in started
+    assert "memoria::PlaybackStopRegistry::GetInstance().Set(" in started
+    board = (
+        Path(__file__).parents[1]
+        / "overlay"
+        / "files"
+        / "main"
+        / "boards"
+        / "memoria"
+        / "esp-vocat"
+        / "memoria_esp_vocat.cc"
+    ).read_text(encoding="utf-8")
+    # Both gestures read the published value; neither reaches into the
+    # protocol, and neither waits on the server to stop.
+    assert "memoria::PlaybackStopRegistry::GetInstance().allowed()" in board
+    assert "protocol_->" not in board
+    stop = board[board.index("void StopSpeakingForGesture(") : board.index("void OnScreenTapGesture(")]
+    assert "app.AbortSpeaking(kAbortReasonNone)" in stop
+    assert "app.StartListening()" in stop
+    assert "protected playback, the sentence plays to its end" in stop
+
+
 def test_local_hard_stop_marks_the_generation_terminal_receipted() -> None:
     local_flush = SOURCE[SOURCE.index("void MemoriaProtocol::NotifyLocalFlush") :]
     # The button stop is the terminal receipt for the stopped generation: the
@@ -1783,7 +1812,19 @@ def test_network_disconnect_actively_recovers_the_same_session() -> None:
     assert "dizzy companion, no chat" in board_source
     assert '#include "memoria_pat.h"' in board_source
     assert "memoria::PatDetector detector" in board_source
-    assert "Device pat ignored (touch rumble" in board_source
+    # 2026-10-21: touch rumble reaches the log through the shared reason
+    # table ("reason=touch_rumble"), next to the state that judged it.
+    assert "memoria::PatIgnoreReasonName(result.kind, result.ignore)" in board_source
+    assert '"touch_rumble"' in (
+        Path(__file__).parents[1]
+        / "overlay"
+        / "files"
+        / "main"
+        / "boards"
+        / "memoria"
+        / "esp-vocat"
+        / "memoria_pat.h"
+    ).read_text(encoding="utf-8")
     assert "kPatDeltaThreshold = 6000" not in board_source
 
 
@@ -2166,3 +2207,18 @@ def test_online_proof_reserves_its_counter_before_sending() -> None:
     # The only other write skips ahead after the server refused the counter.
     assert proof.count('runtime.SetInt("activation_ctr"') == 2
     assert proof.index('runtime.SetInt("activation_ctr", counter + kCounterSkipOnConflict);') > send
+
+
+def test_v2_listening_closed_leaves_the_listening_face_until_a_screen_resume() -> None:
+    handler = SOURCE[SOURCE.index('if (type == "assistant.state")') :]
+    handler = handler[: handler.index('if (type == "session.close")')]
+    assert 'assistant_state == "listening_closed"' in handler
+    assert "NotifyListeningClosed(true)" in handler
+    assert 'assistant_state == "listening"' in handler
+    assert "EmitLegacyTts" not in handler
+    resume = SOURCE[SOURCE.index("bool MemoriaProtocol::SendListeningResume()") :]
+    resume = resume[: resume.index("void MemoriaProtocol::SendWakeWordDetected")]
+    assert '"listening.resume"' in resume
+    assert '"wake_sample"' in resume
+    assert "WakeWordInvoke" not in resume
+    assert "NotifyListeningClosed(false)" in SOURCE[SOURCE.index('if (type == "session.close")') :]

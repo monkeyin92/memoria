@@ -41,6 +41,36 @@ func (s *VoiceCoreSession) send(message *mediav1.MediaToCore) error {
 	return nil
 }
 
+func (s *VoiceCoreSession) SendListeningResume(wakeSample uint64) error {
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	s.stateMu.Lock()
+	sequence := s.nextClientSequence
+	s.nextClientSequence++
+	s.stateMu.Unlock()
+	envelope := map[string]any{
+		"v": 1, "protocol": "media-v1", "type": "listening.resume",
+		"event_id":     fmt.Sprintf("listening-resume:%d:%d", s.identity.StreamEpoch, wakeSample),
+		"session_id":   s.identity.SessionID,
+		"stream_epoch": s.identity.StreamEpoch,
+		"sequence":     sequence,
+		"payload":      map[string]any{"wake_sample": wakeSample},
+	}
+	raw, err := json.Marshal(envelope)
+	if err != nil {
+		return fmt.Errorf("encode listening resume: %w", err)
+	}
+	if err := s.stream.Send(&mediav1.MediaToCore{Event: &mediav1.MediaToCore_Device{
+		Device: &mediav1.DeviceEvent{
+			Identity: s.identity.proto(), EventType: "listening.resume",
+			JsonPayload: raw, MonotonicMs: uint64(time.Now().UnixMilli()),
+		},
+	}}); err != nil {
+		return fmt.Errorf("send media-v1 event: %w", err)
+	}
+	return nil
+}
+
 func (s *VoiceCoreSession) SendAudio(frame AudioFrame) error {
 	if frame.SessionID != s.identity.SessionID || frame.StreamEpoch != s.identity.StreamEpoch {
 		return fmt.Errorf("audio identity or stream epoch does not match")

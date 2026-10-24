@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import asyncpg
 import pytest
 from httpx import ASGITransport, AsyncClient
 from packages.contracts.generated.python.multi_subject_contracts import PolicyReceiptV2
@@ -176,14 +178,18 @@ async def test_tool_effect_commit_requires_token_and_uses_authenticated_session_
 
 @pytest.mark.asyncio
 async def test_tool_effect_reconcile_authority_failure_is_unknown_503(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
+    planted = "UPDATE notes SET body = '海豚把钥匙藏在枕头下'"
     _configure(monkeypatch, tmp_path)
     app = create_app()
+    caplog.set_level(logging.INFO)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         class Service:
             async def reconcile_tool_effect(self, *, idempotency_key: str) -> dict[str, object]:
-                raise PersistentSessionUnavailable("db down")
+                raise PersistentSessionUnavailable(planted) from (
+                    asyncpg.exceptions.SerializationError(planted)
+                )
 
         app.state.session_runtime_service = Service()
         response = await client.post(
@@ -195,3 +201,8 @@ async def test_tool_effect_reconcile_authority_failure_is_unknown_503(
         )
     assert response.status_code == 503
     assert response.json()["detail"]["state"] == "unknown"
+    assert (
+        "tool effect reconcile authority unavailable "
+        "error_type=PersistentSessionUnavailable error_code=40001"
+    ) in caplog.text
+    assert planted not in caplog.text

@@ -48,7 +48,7 @@ from services.agent.tests.unit.runtime_state_helpers import (
     commit_media_turn,
 )
 from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
-from services.common.realtime_information import REALTIME_UNAVAILABLE_REPLY
+from services.common.realtime_information import WEATHER_LOOKUP_UNAVAILABLE_REPLY
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -652,7 +652,7 @@ async def test_realtime_search_timeout_then_nudge_resumes_the_public_request(
     first_spoken = [
         item async for item in agent.stream_reply(chat_ctx) if isinstance(item, str)
     ]
-    assert first_spoken == [BRIDGE_PHRASES[1], REALTIME_UNAVAILABLE_REPLY]
+    assert first_spoken == [BRIDGE_PHRASES[1], WEATHER_LOOKUP_UNAVAILABLE_REPLY]
 
     runtime.orchestrator.context.commit_assistant_heard(
         "我不知道。",
@@ -677,15 +677,15 @@ async def test_realtime_search_timeout_then_nudge_resumes_the_public_request(
 @pytest.mark.parametrize(
     ("provider_reply", "expected", "pending"),
     (
-        ("我需要查一下哦，稍等一下～", REALTIME_UNAVAILABLE_REPLY, True),
-        ("抱歉，联网失败，暂时拿不到南京天气。", REALTIME_UNAVAILABLE_REPLY, True),
-        ("抱歉，我不能查询实时天气。", REALTIME_UNAVAILABLE_REPLY, True),
+        ("我需要查一下哦，稍等一下～", WEATHER_LOOKUP_UNAVAILABLE_REPLY, True),
+        ("抱歉，联网失败，暂时拿不到南京天气。", WEATHER_LOOKUP_UNAVAILABLE_REPLY, True),
+        ("抱歉，我不能查询实时天气。", WEATHER_LOOKUP_UNAVAILABLE_REPLY, True),
         (
             "今天南京的天气我暂时不清楚呢，要不你查一下实时天气预报呀？",
-            REALTIME_UNAVAILABLE_REPLY,
+            WEATHER_LOOKUP_UNAVAILABLE_REPLY,
             True,
         ),
-        ("我确实没办法直接查实时天气。", REALTIME_UNAVAILABLE_REPLY, True),
+        ("我确实没办法直接查实时天气。", WEATHER_LOOKUP_UNAVAILABLE_REPLY, True),
         ("我查一下。南京今天多云，最高气温三十二度。", "南京今天多云，最高气温三十二度。", False),
         (
             "我查了一下，美元兑人民币最新汇率是七点一八。",
@@ -896,7 +896,7 @@ async def test_failed_forced_search_does_not_fall_back_to_shared_chat_context(
     output = [item async for item in agent.stream_reply(chat_ctx) if isinstance(item, str)]
 
     assert queries == ["今天南京天气怎么样"]
-    assert "".join(output) == f"{BRIDGE_PHRASES[1]}{REALTIME_UNAVAILABLE_REPLY}"
+    assert "".join(output) == f"{BRIDGE_PHRASES[1]}{WEATHER_LOOKUP_UNAVAILABLE_REPLY}"
     assert runtime.pending_realtime_request is not None
 
 
@@ -1001,7 +1001,7 @@ async def test_media_delegation_returns_a_safe_reply_when_the_resolver_has_no_re
 
     assert (
         await agent.resolve_media_delegation("今天南京天气怎么样", fence)
-        == REALTIME_UNAVAILABLE_REPLY
+        == WEATHER_LOOKUP_UNAVAILABLE_REPLY
     )
     await runtime.close()
 
@@ -1113,7 +1113,7 @@ async def test_realtime_request_without_a_verified_search_resolver_fails_closed(
 
     output = [item async for item in agent.stream_reply(chat_ctx) if isinstance(item, str)]
 
-    assert "".join(output) == REALTIME_UNAVAILABLE_REPLY
+    assert "".join(output) == WEATHER_LOOKUP_UNAVAILABLE_REPLY
     assert runtime.pending_realtime_request is not None
 
 
@@ -1141,7 +1141,7 @@ async def test_realtime_provider_exception_emits_fallback_only_for_current_fence
 
     output = [item async for item in agent.stream_reply(chat_ctx) if isinstance(item, str)]
 
-    assert "".join(output).endswith(REALTIME_UNAVAILABLE_REPLY)
+    assert "".join(output).endswith(WEATHER_LOOKUP_UNAVAILABLE_REPLY)
     await runtime.close()
 
 
@@ -1391,7 +1391,7 @@ async def test_companion_voice_turn_reaches_llm_when_guest_filter_is_disabled(
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="warm_companion",
         current_model="seed-tts-2.0",
-        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_voice="zh_female_kailangjiejie_uranus_bigtts",
         current_voice_kind="designed",
         bind_fence=lambda _fence: None,
     )
@@ -1776,7 +1776,7 @@ async def test_runtime_close_is_terminal_and_leaves_no_delegation_task() -> None
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="warm_companion",
         current_model="seed-tts-2.0",
-        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_voice="zh_female_kailangjiejie_uranus_bigtts",
         current_voice_kind="designed",
         bind_fence=lambda _fence: None,
     )
@@ -1843,7 +1843,7 @@ async def test_live_lookup_starts_on_the_bound_generation() -> None:
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="warm_companion",
         current_model="seed-tts-2.0",
-        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_voice="zh_female_kailangjiejie_uranus_bigtts",
         current_voice_kind="designed",
         bind_fence=lambda _fence: None,
     )
@@ -2007,7 +2007,7 @@ async def test_identity_rotation_still_binds_companion_generation_voice() -> Non
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="warm_companion",
         current_model="seed-tts-2.0",
-        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_voice="zh_female_kailangjiejie_uranus_bigtts",
         current_voice_kind="designed",
         bind_fence=lambda _fence: None,
     )
@@ -2058,7 +2058,7 @@ def test_unknown_safe_audio_turn_binds_anonymous_approved_baseline_voice() -> No
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="warm_companion",
         current_model="seed-tts-2.0",
-        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_voice="zh_female_kailangjiejie_uranus_bigtts",
         current_voice_kind="designed",
     )
     assert bind_generation_tts_voice(runtime, runtime.fence)
@@ -2078,7 +2078,7 @@ async def test_unknown_safe_audio_turn_reaches_llm_with_current_public_turn_only
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="warm_companion",
         current_model="seed-tts-2.0",
-        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_voice="zh_female_kailangjiejie_uranus_bigtts",
         current_voice_kind="designed",
         bind_fence=lambda _fence: None,
     )
@@ -2161,7 +2161,7 @@ async def test_unknown_safe_followup_keeps_this_session_public_place(
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="warm_companion",
         current_model="seed-tts-2.0",
-        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_voice="zh_female_kailangjiejie_uranus_bigtts",
         current_voice_kind="designed",
         bind_fence=lambda _fence: None,
     )

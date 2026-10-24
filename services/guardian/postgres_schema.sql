@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS guardian_person_consents (
     ),
     consent_kind TEXT NOT NULL CHECK (consent_kind IN (
         'minor_voice_session', 'memory_retention',
-        'weekly_report', 'corpus_recording', 'child_archive'
+        'weekly_report', 'corpus_recording', 'child_archive', 'subject_custody'
     )),
     policy_version TEXT NOT NULL CHECK (
         char_length(policy_version) BETWEEN 1 AND 64
@@ -145,10 +145,12 @@ CREATE TABLE IF NOT EXISTS guardian_person_consents (
     ),
     CHECK (subject_person_id <> grantor_person_id),
     CHECK (expires_at IS NULL OR expires_at > granted_at),
-    CHECK (
+    CONSTRAINT guardian_person_consents_expiry_by_kind CHECK (
         (consent_kind = 'corpus_recording' AND expires_at IS NOT NULL
             AND expires_at <= granted_at + INTERVAL '30 days')
-        OR (consent_kind <> 'corpus_recording' AND expires_at IS NULL)
+        OR (consent_kind = 'subject_custody' AND expires_at IS NOT NULL)
+        OR (consent_kind NOT IN ('corpus_recording', 'subject_custody')
+            AND expires_at IS NULL)
     ),
     CHECK (
         (revoked_at IS NULL AND revocation_evidence_event_id IS NULL)
@@ -164,12 +166,40 @@ BEGIN
         ADD CONSTRAINT guardian_person_consents_consent_kind_check
         CHECK (consent_kind IN (
             'minor_voice_session', 'memory_retention',
-            'weekly_report', 'corpus_recording', 'child_archive'
+            'weekly_report', 'corpus_recording', 'child_archive', 'subject_custody'
         ));
 EXCEPTION
     WHEN duplicate_object THEN NULL;
 END
 $guardian_person_consent_kind_child_archive$;
+
+DO $guardian_person_consent_expiry_by_kind$
+DECLARE legacy TEXT;
+BEGIN
+    FOR legacy IN
+        SELECT conname FROM pg_constraint
+        WHERE conrelid = 'guardian_person_consents'::regclass AND contype = 'c'
+          AND conname <> 'guardian_person_consents_expiry_by_kind'
+          AND pg_get_constraintdef(oid) LIKE '%corpus_recording%'
+          AND pg_get_constraintdef(oid) LIKE '%expires_at%'
+    LOOP
+        EXECUTE format('ALTER TABLE guardian_person_consents DROP CONSTRAINT %I', legacy);
+    END LOOP;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'guardian_person_consents_expiry_by_kind'
+    ) THEN
+        ALTER TABLE guardian_person_consents
+            ADD CONSTRAINT guardian_person_consents_expiry_by_kind CHECK (
+                (consent_kind = 'corpus_recording' AND expires_at IS NOT NULL
+                    AND expires_at <= granted_at + INTERVAL '30 days')
+                OR (consent_kind = 'subject_custody' AND expires_at IS NOT NULL)
+                OR (consent_kind NOT IN ('corpus_recording', 'subject_custody')
+                    AND expires_at IS NULL)
+            );
+    END IF;
+END
+$guardian_person_consent_expiry_by_kind$;
 
 CREATE TABLE IF NOT EXISTS guardian_subject_activity (
     subject_person_id TEXT PRIMARY KEY CHECK (
@@ -183,9 +213,33 @@ CREATE TABLE IF NOT EXISTS guardian_subject_activity (
 CREATE INDEX IF NOT EXISTS idx_guardian_subject_activity_idle
 ON guardian_subject_activity(last_active_at);
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_guardian_person_consents_active_kind
+ALTER TABLE guardian_person_consents ADD COLUMN IF NOT EXISTS superseded_at TIMESTAMPTZ;
+ALTER TABLE guardian_person_consents
+    ADD COLUMN IF NOT EXISTS superseded_by_consent_id UUID
+    REFERENCES guardian_person_consents(consent_id) DEFERRABLE INITIALLY DEFERRED;
+
+DO $guardian_person_consent_supersede$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'guardian_person_consents_supersede_pair'
+    ) THEN
+        ALTER TABLE guardian_person_consents
+            ADD CONSTRAINT guardian_person_consents_supersede_pair CHECK (
+                (superseded_at IS NULL AND superseded_by_consent_id IS NULL)
+                OR (consent_kind = 'subject_custody'
+                    AND superseded_at IS NOT NULL
+                    AND superseded_by_consent_id IS NOT NULL
+                    AND superseded_by_consent_id <> consent_id)
+            );
+    END IF;
+END
+$guardian_person_consent_supersede$;
+
+DROP INDEX IF EXISTS idx_guardian_person_consents_active_kind;
+CREATE UNIQUE INDEX idx_guardian_person_consents_active_kind
 ON guardian_person_consents(subject_person_id, consent_kind)
-WHERE revoked_at IS NULL;
+WHERE revoked_at IS NULL AND superseded_at IS NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_guardian_person_consents_grant_evidence
 ON guardian_person_consents(evidence_event_id);
@@ -359,7 +413,8 @@ CREATE TABLE IF NOT EXISTS guardian_crisis_events (
     ),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     attempt_push BOOLEAN NOT NULL DEFAULT TRUE,
-    possibly_story_retell BOOLEAN NOT NULL DEFAULT FALSE
+    possibly_story_retell BOOLEAN NOT NULL DEFAULT FALSE,
+    script_interrupted BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 -- Relay-tier support requests pin without WeChat push: their outbox rows are
@@ -374,6 +429,47 @@ ALTER TABLE guardian_crisis_events
 -- Story-retell framing annotates the in-app pin only; it never skips the script.
 ALTER TABLE guardian_crisis_events
     ADD COLUMN IF NOT EXISTS possibly_story_retell BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- True only after an in-progress crisis-self or victim script was cancelled.
+-- The column is a boolean. It does not store the child utterance or the stop keyword.
+ALTER TABLE guardian_crisis_events
+    ADD COLUMN IF NOT EXISTS script_interrupted BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE guardian_crisis_events
+    ADD COLUMN IF NOT EXISTS reply_session_id TEXT,
+    ADD COLUMN IF NOT EXISTS reply_turn_id INTEGER,
+    ADD COLUMN IF NOT EXISTS reply_generation_id INTEGER,
+    ADD COLUMN IF NOT EXISTS reply_tool_epoch INTEGER;
+
+DO $guardian_crisis_reply_fence$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'guardian_crisis_events'::regclass
+          AND conname = 'guardian_crisis_events_reply_fence_check'
+    ) THEN
+        ALTER TABLE guardian_crisis_events
+            ADD CONSTRAINT guardian_crisis_events_reply_fence_check CHECK (
+                (
+                    reply_session_id IS NULL
+                    AND reply_turn_id IS NULL
+                    AND reply_generation_id IS NULL
+                    AND reply_tool_epoch IS NULL
+                )
+                OR (
+                    reply_session_id IS NOT NULL
+                    AND char_length(reply_session_id) BETWEEN 1 AND 128
+                    AND reply_turn_id IS NOT NULL
+                    AND reply_turn_id >= 0
+                    AND reply_generation_id IS NOT NULL
+                    AND reply_generation_id >= 0
+                    AND reply_tool_epoch IS NOT NULL
+                    AND reply_tool_epoch >= 0
+                )
+            );
+    END IF;
+END
+$guardian_crisis_reply_fence$;
 
 CREATE INDEX IF NOT EXISTS idx_guardian_crisis_minor_occurred
 ON guardian_crisis_events(minor_user_id, occurred_at DESC);
@@ -444,6 +540,29 @@ ON guardian_notification_outbox(guardian_user_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_guardian_notification_push_claim
 ON guardian_notification_outbox(created_at, notification_id)
 WHERE status = 'pending';
+
+DO $guardian_outbox_recipient_key$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'guardian_notification_outbox'::regclass
+          AND conname = 'guardian_notification_outbox_recipient_key'
+    ) THEN
+        ALTER TABLE guardian_notification_outbox
+            ADD CONSTRAINT guardian_notification_outbox_recipient_key
+            UNIQUE (notification_id, guardian_user_id);
+    END IF;
+END
+$guardian_outbox_recipient_key$;
+
+CREATE TABLE IF NOT EXISTS guardian_notification_reads (
+    notification_id UUID PRIMARY KEY,
+    guardian_user_id TEXT NOT NULL,
+    read_at TIMESTAMPTZ NOT NULL,
+    FOREIGN KEY (notification_id, guardian_user_id)
+        REFERENCES guardian_notification_outbox(notification_id, guardian_user_id)
+        ON DELETE CASCADE
+);
 
 -- One-time WeChat subscribe-message acceptances per guardian and template.
 -- ``openid`` is the send address, written only from a server-side
@@ -603,6 +722,12 @@ DROP TRIGGER IF EXISTS guardian_notification_outbox_delete_guard
 ON guardian_notification_outbox;
 CREATE TRIGGER guardian_notification_outbox_delete_guard
 BEFORE DELETE ON guardian_notification_outbox
+FOR EACH ROW EXECUTE FUNCTION guardian_delete_guard();
+
+DROP TRIGGER IF EXISTS guardian_notification_reads_delete_guard
+ON guardian_notification_reads;
+CREATE TRIGGER guardian_notification_reads_delete_guard
+BEFORE DELETE ON guardian_notification_reads
 FOR EACH ROW EXECUTE FUNCTION guardian_delete_guard();
 
 DROP TRIGGER IF EXISTS guardian_push_subscriptions_delete_guard
@@ -1229,6 +1354,41 @@ BEGIN
 END
 $notification_enqueue_declared$;
 
+-- Flips one boolean on an existing crisis row and returns the stored template
+-- id. It does not insert a notification and it does not accept text. The API
+-- role has no UPDATE grant, so this SECURITY DEFINER function is the only
+-- write. WITH CHECK on the crisis table still requires the actor to be the
+-- minor, which this function sets from the row itself for the update only.
+CREATE OR REPLACE FUNCTION guardian_mark_script_interrupted(
+    p_crisis_event_id UUID
+) RETURNS TEXT
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $mark_script_interrupted$
+DECLARE
+    v_minor_user_id TEXT;
+    v_reply_template_id TEXT;
+BEGIN
+    PERFORM set_config('memoria.guardian_maintenance_scope', '1', true);
+    SELECT crisis.minor_user_id, crisis.reply_template_id
+      INTO v_minor_user_id, v_reply_template_id
+      FROM guardian_crisis_events crisis
+     WHERE crisis.crisis_event_id = p_crisis_event_id;
+    IF v_minor_user_id IS NULL THEN
+        PERFORM set_config('memoria.guardian_maintenance_scope', '0', true);
+        RETURN NULL;
+    END IF;
+    PERFORM set_config('memoria.guardian_actor_id', v_minor_user_id, true);
+    PERFORM set_config('memoria.guardian_subject_id', v_minor_user_id, true);
+    UPDATE guardian_crisis_events
+       SET script_interrupted = TRUE
+     WHERE crisis_event_id = p_crisis_event_id;
+    PERFORM set_config('memoria.guardian_actor_id', '', true);
+    PERFORM set_config('memoria.guardian_subject_id', '', true);
+    PERFORM set_config('memoria.guardian_maintenance_scope', '0', true);
+    RETURN v_reply_template_id;
+END
+$mark_script_interrupted$;
+
 -- Crisis push delivery.  These SECURITY DEFINER functions are owned by the
 -- maintenance role and executable ONLY by the worker role; the API role can
 -- neither claim a notification nor read a stored openid.  Each opens the
@@ -1436,6 +1596,7 @@ ALTER TABLE tutor_practice_evidence ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tutor_commit_outbox ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardian_crisis_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardian_notification_outbox ENABLE ROW LEVEL SECURITY;
+ALTER TABLE guardian_notification_reads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardian_push_subscriptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardian_push_subscription_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardian_links FORCE ROW LEVEL SECURITY;
@@ -1448,6 +1609,7 @@ ALTER TABLE tutor_practice_evidence FORCE ROW LEVEL SECURITY;
 ALTER TABLE tutor_commit_outbox FORCE ROW LEVEL SECURITY;
 ALTER TABLE guardian_crisis_events FORCE ROW LEVEL SECURITY;
 ALTER TABLE guardian_notification_outbox FORCE ROW LEVEL SECURITY;
+ALTER TABLE guardian_notification_reads FORCE ROW LEVEL SECURITY;
 ALTER TABLE guardian_push_subscriptions FORCE ROW LEVEL SECURITY;
 ALTER TABLE guardian_push_subscription_events FORCE ROW LEVEL SECURITY;
 
@@ -1466,6 +1628,7 @@ BEGIN
         GRANT SELECT, INSERT, UPDATE, DELETE ON tutor_commit_outbox TO memoria_guardian;
         GRANT SELECT, INSERT ON guardian_crisis_events TO memoria_guardian;
         GRANT SELECT ON guardian_notification_outbox TO memoria_guardian;
+        GRANT SELECT, INSERT ON guardian_notification_reads TO memoria_guardian;
         GRANT SELECT, INSERT, UPDATE ON guardian_push_subscriptions TO memoria_guardian;
         GRANT SELECT, INSERT ON guardian_push_subscription_events TO memoria_guardian;
 
@@ -1479,6 +1642,7 @@ BEGIN
                    guardian_crisis_events, guardian_notification_outbox,
                    guardian_push_subscriptions, guardian_push_subscription_events
                 TO memoria_guardian_maintenance;
+            GRANT SELECT ON guardian_notification_reads TO memoria_guardian_maintenance;
         END IF;
 
         DROP POLICY IF EXISTS guardian_controller_links ON guardian_links;
@@ -1987,6 +2151,38 @@ BEGIN
                 ) = '1'
             );
 
+        -- The EXISTS runs under the outbox policy, so a guardian whose link
+        -- is gone cannot acknowledge an alert it can no longer see.
+        DROP POLICY IF EXISTS guardian_controller_notification_reads
+            ON guardian_notification_reads;
+        CREATE POLICY guardian_controller_notification_reads ON guardian_notification_reads
+            TO memoria_guardian, memoria_guardian_maintenance
+            USING (
+                (
+                    current_user = 'memoria_guardian_maintenance'
+                    AND COALESCE(
+                        current_setting('memoria.guardian_maintenance_scope', true),
+                        ''
+                    ) = '1'
+                )
+                OR (
+                    COALESCE(current_setting('memoria.guardian_actor_id', true), '') <> ''
+                    AND guardian_user_id = current_setting('memoria.guardian_actor_id', true)
+                    AND guardian_user_id = current_setting('memoria.guardian_subject_id', true)
+                )
+            )
+            WITH CHECK (
+                COALESCE(current_setting('memoria.guardian_actor_id', true), '') <> ''
+                AND guardian_user_id = current_setting('memoria.guardian_actor_id', true)
+                AND guardian_user_id = current_setting('memoria.guardian_subject_id', true)
+                AND EXISTS (
+                    SELECT 1
+                    FROM guardian_notification_outbox outbox
+                    WHERE outbox.notification_id = guardian_notification_reads.notification_id
+                      AND outbox.guardian_user_id = guardian_notification_reads.guardian_user_id
+                )
+            );
+
         -- A guardian reads and writes only its own subscribe-message ledger,
         -- in its own actor == subject context.  The maintenance scope serves
         -- delivery settlement and account export/deletion.
@@ -2088,6 +2284,12 @@ BEGIN
             GRANT EXECUTE ON FUNCTION guardian_enqueue_declared_notification(UUID, UUID, TEXT, TIMESTAMPTZ)
                 TO memoria_guardian;
             ALTER FUNCTION guardian_enqueue_declared_notification(UUID, UUID, TEXT, TIMESTAMPTZ)
+                OWNER TO memoria_guardian_maintenance;
+            REVOKE EXECUTE ON FUNCTION guardian_mark_script_interrupted(UUID)
+                FROM PUBLIC;
+            GRANT EXECUTE ON FUNCTION guardian_mark_script_interrupted(UUID)
+                TO memoria_guardian;
+            ALTER FUNCTION guardian_mark_script_interrupted(UUID)
                 OWNER TO memoria_guardian_maintenance;
             REVOKE EXECUTE ON FUNCTION guardian_crisis_push_claim(
                 TEXT, TIMESTAMPTZ, INTEGER, INTEGER, INTEGER, INTEGER

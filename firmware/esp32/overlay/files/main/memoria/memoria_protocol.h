@@ -119,6 +119,8 @@ public:
     // generation (0 closes it) while clearing queued/in-flight tails.
     void SetLocalFlushCallback(std::function<void(uint32_t)> callback);
 
+    bool SendListeningResume();
+
     // Apply the server-signed hardware settings snapshot carried by
     // session.accepted. Application owns the concrete codec/display objects.
     void SetDeviceSettingsCallback(
@@ -321,5 +323,8 @@ private:
     bool RetireTransportAttempt(uint32_t websocket_attempt);
     void ResetSessionState();
 };
+
+void SetListeningClosedHandler(std::function<void(bool closed)> handler);
+bool SendListeningResume();
 
 }  // namespace memoria

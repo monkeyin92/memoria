@@ -38,6 +38,7 @@ let personaPayload = () => ({
 let personasPayload = () => ({ custom_personas: [], builtin: [] });
 let accountProfilePayload = null;
 const unbindCalls = [];
+let unbindResponse = { binding_id: "bd_1", status: "revoked" };
 
 global.wx = {
   getStorageSync: (key) => storage[key],
@@ -221,7 +222,7 @@ global.wx = {
     }
     if (pathname === "/v1/devices/dev_1/binding/unbind") {
       unbindCalls.push({ method: options.method, data: options.data });
-      options.success({ statusCode: 200, data: { binding_id: "bd_1", status: "revoked" } });
+      options.success({ statusCode: 200, data: unbindResponse });
       return;
     }
     options.success(nextRequestResult);
@@ -1150,6 +1151,7 @@ test("age declaration offers only three bands and never claims verification", as
     }
     return originalRequest(options);
   };
+  storage["memoria:miniprogram:child-info-consent"] = "accepted";
   const page = instantiate(pageDefinition);
   await page.onShow();
   await new Promise((resolve) => setImmediate(resolve));
@@ -1172,6 +1174,7 @@ test("age declaration offers only three bands and never claims verification", as
   assert.equal(page.data.ageRows[0].declaredLabel, "申报 14 至 17 岁");
   assert.equal(page.data.ageRows[0].evidenceLabel, "未核验");
   assert.equal(page.data.profile.runtime_profile_id, "rp_age");
+  delete storage["memoria:miniprogram:child-info-consent"];
   global.wx.request = originalRequest;
 });
 
@@ -1212,6 +1215,7 @@ test("age declaration explains owner-only and unavailable authority failures", a
     }
     return originalRequest(options);
   };
+  storage["memoria:miniprogram:child-info-consent"] = "accepted";
   const page = instantiate(pageDefinition);
   await page.onShow();
   await page.declareAge({ currentTarget: { dataset: { personId: "person_child" } } });
@@ -1222,6 +1226,7 @@ test("age declaration explains owner-only and unavailable authority failures", a
   assert.match(page.data.ageError, /暂时无法确认/);
   assert.match(page.data.ageError, /受限模式/);
   assert.doesNotMatch(page.data.ageError, /能力/);
+  delete storage["memoria:miniprogram:child-info-consent"];
   global.wx.request = originalRequest;
 });
 
@@ -1876,8 +1881,8 @@ test("device page shows the network as connected without claiming it is a home n
   assert.ok(!wxml.includes('bindtap="saveCustomWakeWord"'), "自定义唤醒词在抽屉里保存，页面底部不再重复一张卡");
 });
 
-async function bootBoundDevicePage() {
-  binding.saveBindingManifest(familyManifest());
+async function bootBoundDevicePage(manifest = familyManifest()) {
+  binding.saveBindingManifest(manifest);
   profilePayload = wireUnknownSafeProfile({
     runtime_profile_id: "rp_unbind",
     session_id: "ses_unbind",
@@ -1890,8 +1895,16 @@ async function bootBoundDevicePage() {
   return page;
 }
 
-test("unbind keeps the subject's data when the owner chooses to keep it", async () => {
+test("unbind always clears the child and submits without a data switch", async () => {
   unbindCalls.length = 0;
+  unbindResponse = {
+    binding_id: "bd_1",
+    status: "revoked",
+    consents_withdrawn: 0,
+    child_layers_purged: "completed",
+    subject_deletion: "completed",
+    identity_cleared: "completed",
+  };
   const modals = [];
   const previousShowModal = global.wx.showModal;
   global.wx.showModal = (options) => {
@@ -1902,54 +1915,225 @@ test("unbind keeps the subject's data when the owner chooses to keep it", async 
     const page = await bootBoundDevicePage();
     page.openUnbindSheet();
     assert.equal(page.data.unbindSheetVisible, true);
-    // 没有二选一之前不能提交。
     await page.confirmUnbind();
-    assert.equal(unbindCalls.length, 0);
-    assert.match(page.data.unbindError, /请先选择/);
-
-    page.pickUnbindChoice({ currentTarget: { dataset: { choice: "keep" } } });
-    await page.confirmUnbind();
+    assert.equal(page.data.unbindError, "");
     assert.equal(unbindCalls.length, 1);
     assert.equal(unbindCalls[0].method, "POST");
-    assert.deepEqual(unbindCalls[0].data, { reason: "unbind", purge_subject_data: false });
-    // 保留数据不需要再弹删除确认。
-    assert.equal(modals.length, 0);
+    assert.deepEqual(unbindCalls[0].data, { reason: "unbind" });
+    // 解绑一律删除，确认只有一次，结果用页面内弹窗，不再走 showModal。
+    assert.equal(modals.length, 1);
+    assert.equal(page.data.unbindResultVisible, true);
+    assert.deepEqual(page.data.unbindResultLines, ["TA 的近期摘要和长期记录已删除"]);
+    assert.equal(page.data.sheetOpen, true, "结果弹窗打开时页面仍锁定滚动");
+    const html = renderPage("pages/device/index", page.data);
+    assert.equal((html.match(/class="unbind-result-line"/g) || []).length, 1);
+    assert.match(
+      visibleText(html),
+      /已解除绑定 TA 的近期摘要和长期记录已删除 知道了/,
+      "解绑后设备消失，结果仍留在页面上",
+    );
     assert.equal(binding.readBindingManifest(), null);
     assert.equal(page.data.unbindSheetVisible, false);
     assert.equal(page.data.hasBinding, false);
   } finally {
+    unbindResponse = { binding_id: "bd_1", status: "revoked" };
     global.wx.showModal = previousShowModal;
   }
 });
 
-test("unbind with purge asks a second time and sends purge_subject_data true", async () => {
+test("closing the unbind result releases the page and the tab bar", async () => {
   unbindCalls.length = 0;
+  unbindResponse = {
+    binding_id: "bd_1",
+    status: "revoked",
+    consents_withdrawn: 0,
+    child_layers_purged: "not_requested",
+    subject_deletion: "not_requested",
+  };
+  try {
+    const page = await bootBoundDevicePage();
+    const tabBar = { data: {}, setData(update) { Object.assign(this.data, update); } };
+    page.getTabBar = () => tabBar;
+    page.openUnbindSheet();
+    await page.confirmUnbind();
+    assert.equal(page.data.unbindResultVisible, true);
+    assert.equal(page.data.sheetOpen, true);
+    assert.equal(tabBar.data.hidden, true);
+    page.closeUnbindResult();
+    assert.equal(page.data.unbindResultVisible, false);
+    assert.equal(page.data.sheetOpen, false);
+    assert.equal(tabBar.data.hidden, false);
+  } finally {
+    unbindResponse = { binding_id: "bd_1", status: "revoked" };
+  }
+});
+
+test("the single unbind confirmation carries the product copy and can be cancelled", async () => {
+  unbindCalls.length = 0;
+  unbindResponse = {
+    binding_id: "bd_1",
+    status: "revoked",
+    consents_withdrawn: 2,
+    child_layers_purged: "completed",
+    subject_deletion: "completed",
+    identity_cleared: "completed",
+  };
   const modals = [];
-  let confirmPurge = false;
+  let confirmed = false;
   const previousShowModal = global.wx.showModal;
   global.wx.showModal = (options) => {
     modals.push(options);
-    options.success?.({ confirm: confirmPurge });
+    options.success?.({ confirm: confirmed });
   };
   try {
     const page = await bootBoundDevicePage();
     page.openUnbindSheet();
-    page.pickUnbindChoice({ currentTarget: { dataset: { choice: "purge" } } });
-    // 第二次确认点了「再想想」：不发请求，绑定仍在。
+    // 「再想想」：不发请求，绑定仍在。
     await page.confirmUnbind();
     assert.equal(modals.length, 1);
-    assert.match(modals[0].content, /永久删除/);
+    assert.equal(modals[0].title, "确认解绑？");
+    assert.equal(
+      modals[0].content,
+      "解绑后，孩子的昵称、聊天摘要和长期档案会一起删除，删除后不能恢复。如果只是换网络或者重新配网，不用解绑。",
+    );
+    assert.deepEqual(modals[0].confirmText, "确认解绑");
+    assert.deepEqual(modals[0].cancelText, "再想想");
     assert.equal(unbindCalls.length, 0);
     assert.notEqual(binding.readBindingManifest(), null);
 
-    confirmPurge = true;
+    confirmed = true;
     await page.confirmUnbind();
     assert.equal(modals.length, 2);
+    assert.equal(page.data.unbindResultVisible, true);
+    assert.deepEqual(page.data.unbindResultLines, [
+      "TA 的近期摘要和长期记录已删除",
+      "已撤回 2 项授权。",
+    ]);
+    const html = renderPage("pages/device/index", page.data);
+    assert.equal((html.match(/class="unbind-result-line"/g) || []).length, 2);
+    assert.match(
+      visibleText(html),
+      /已解除绑定 TA 的近期摘要和长期记录已删除 已撤回 2 项授权。 知道了/,
+    );
     assert.equal(unbindCalls.length, 1);
-    assert.deepEqual(unbindCalls[0].data, { reason: "unbind", purge_subject_data: true });
+    assert.deepEqual(unbindCalls[0].data, { reason: "unbind" });
     assert.equal(binding.readBindingManifest(), null);
   } finally {
+    unbindResponse = { binding_id: "bd_1", status: "revoked" };
     global.wx.showModal = previousShowModal;
+  }
+});
+
+test("an unfinished delete result is shown as still deleting", async () => {
+  unbindCalls.length = 0;
+  unbindResponse = {
+    binding_id: "bd_1",
+    status: "revoked",
+    consents_withdrawn: 2,
+    child_layers_purged: "pending",
+    subject_deletion: "pending",
+    identity_cleared: "pending",
+  };
+  const modals = [];
+  const previousShowModal = global.wx.showModal;
+  global.wx.showModal = (options) => {
+    modals.push(options);
+    options.success?.({ confirm: true });
+  };
+  try {
+    const page = await bootBoundDevicePage();
+    page.openUnbindSheet();
+    await page.confirmUnbind();
+    assert.equal(modals.length, 1);
+    assert.equal(page.data.unbindResultVisible, true);
+    assert.deepEqual(page.data.unbindResultLines, [
+      "TA 的数据正在删除中，完成后不会再显示",
+      "已撤回 2 项授权。",
+    ]);
+    assert.ok(page.data.unbindResultLines.every((line) => !line.includes("\n")));
+    assert.ok(!page.data.unbindResultLines.join("").includes("按使用人删除"));
+  } finally {
+    unbindResponse = { binding_id: "bd_1", status: "revoked" };
+    global.wx.showModal = previousShowModal;
+  }
+});
+
+function unbindPanel() {
+  const wxml = fs.readFileSync(path.join(__dirname, "../pages/device/index.wxml"), "utf8");
+  const start = wxml.indexOf("<!-- 解除绑定底部抽屉");
+  assert.ok(start >= 0, "unbind panel comment exists");
+  return wxml.slice(start);
+}
+
+test("unbind result renders one node per line instead of joining into showModal", () => {
+  const wxml = fs.readFileSync(path.join(__dirname, "../pages/device/index.wxml"), "utf8");
+  const maskTag = wxml.match(/<view wx:if="\{\{unbindResultVisible\}\}"[^>]*>/);
+  assert.ok(maskTag, "结果弹窗的遮罩存在");
+  assert.ok(maskTag[0].includes('catchtouchmove="noop"'));
+  assert.ok(!maskTag[0].includes("bindtap"), "点遮罩不关闭");
+  assert.match(
+    wxml,
+    /<text[^>]*wx:for="\{\{unbindResultLines\}\}"[^>]*>\{\{item\}\}<\/text>/,
+    "每行一个 text 节点",
+  );
+  assert.ok(wxml.includes('bindtap="closeUnbindResult"'));
+  assert.ok(wxml.includes("已解除绑定"));
+  assert.ok(wxml.includes("知道了"));
+
+  const js = fs.readFileSync(path.join(__dirname, "../pages/device/index.js"), "utf8");
+  const start = js.indexOf("async confirmUnbind()");
+  const end = js.indexOf("closeUnbindResult()", start);
+  assert.ok(start >= 0 && end > start);
+  const confirmUnbindBody = js.slice(start, end);
+  assert.ok(!confirmUnbindBody.includes('unbindResultLines(result).join("\\n")'));
+  assert.ok(!confirmUnbindBody.includes("wx.showModal"));
+});
+
+test("unbind panel copy matches the product confirmation character for character", () => {
+  const panel = unbindPanel();
+  const required = [
+    "解除绑定",
+    "解绑后，孩子的昵称、聊天摘要和长期档案会一起删除，删除后不能恢复。如果只是换网络或者重新配网，不用解绑。",
+    "确认解绑",
+    "再想想",
+  ];
+  for (const copy of required) assert.ok(panel.includes(copy), copy);
+  assert.ok(!panel.includes("无论选哪一项"));
+  assert.ok(!panel.includes("部分审计记录按规定保留"));
+  assert.ok(!panel.includes("删除操作本身的记录"), "audit sentence is held back");
+  assert.ok(!panel.includes("unbindClearsChildLayers"));
+  // 解绑只有一个结论，没有保留/删除二选一。
+  assert.ok(!panel.includes("unbindPurgeChoice"));
+  assert.ok(!panel.includes("pickUnbindChoice"));
+  assert.ok(!panel.includes("保留 TA 的数据"));
+  assert.ok(panel.includes('disabled="{{unbinding}}"'));
+});
+
+test("unbind panel and result never use internal deletion words", async () => {
+  const panel = unbindPanel();
+  for (const forbidden of ["按使用人删除", "使用人", "运行"]) {
+    assert.ok(!panel.includes(forbidden), forbidden);
+  }
+  const { unbindResultLines } = require("../utils/unbind-result");
+  const results = [
+    { child_layers_purged: "completed", subject_deletion: "completed" },
+    { child_layers_purged: "pending", subject_deletion: "pending" },
+  ];
+  for (const result of results) {
+    const text = unbindResultLines(result).join("\n");
+    for (const forbidden of ["按使用人删除", "使用人", "运行"]) {
+      assert.ok(!text.includes(forbidden), forbidden);
+    }
+  }
+});
+
+test("self_use unbind shows the same copy without internal words", async () => {
+  const page = await bootBoundDevicePage(canonicalManifest());
+  page.openUnbindSheet();
+  const panel = unbindPanel();
+  assert.ok(panel.includes("解绑后，孩子的昵称、聊天摘要和长期档案会一起删除"));
+  for (const forbidden of ["按使用人删除", "使用人", "运行"]) {
+    assert.ok(!panel.includes(forbidden), forbidden);
   }
 });
 
@@ -1959,7 +2143,6 @@ test("unbinding also drops the enable session stored for that robot", async () =
   storage[sessionKey] = "onb_old";
   const page = await bootBoundDevicePage();
   page.openUnbindSheet();
-  page.pickUnbindChoice({ currentTarget: { dataset: { choice: "keep" } } });
   await page.confirmUnbind();
   assert.equal(unbindCalls.length, 1);
   // 留着它，下一次进「启用」页会续接一个已经不存在的会话（403/409）。
@@ -1976,7 +2159,6 @@ test("a failed unbind keeps the enable session", async () => {
   try {
     const page = await bootBoundDevicePage();
     page.openUnbindSheet();
-    page.pickUnbindChoice({ currentTarget: { dataset: { choice: "keep" } } });
     await page.confirmUnbind();
     assert.match(page.data.unbindError, /网络不通/);
     assert.equal(storage[sessionKey], "onb_kept");
@@ -1986,11 +2168,12 @@ test("a failed unbind keeps the enable session", async () => {
   }
 });
 
-test("device page offers both unbind data choices", () => {
+test("device page no longer offers an unbind data choice", () => {
   const template = fs.readFileSync(path.join(__dirname, "../pages/device/index.wxml"), "utf8");
-  assert.match(template, /同时删除 TA 的记忆和对话数据/);
-  assert.match(template, /保留数据（重新绑定后可恢复）/);
-  assert.match(template, /停止记忆/);
+  assert.doesNotMatch(template, /解绑，并删除 TA 的数据/);
+  assert.doesNotMatch(template, /解绑，保留 TA 的数据/);
+  assert.match(template, /确认解绑/);
+  assert.match(template, /再想想/);
 });
 
 test("device page shows a bound elder's style labels and resets only after confirmation", async () => {
@@ -2248,5 +2431,24 @@ test("failed subscription-state load shows unknown caption and retry restores th
     assert.equal(page.data.safetySubscribeBusy, false);
   } finally {
     Object.assign(api, originals);
+  }
+});
+
+test("重新配网从新二维码开始，不带旧启用会话", () => {
+  const calls = [];
+  const previous = { navigateTo: global.wx.navigateTo };
+  global.wx.navigateTo = (options) => calls.push(options.url);
+  try {
+    const page = instantiate(pageDefinition);
+    page.data.binding = { device_id: "dev_repro_1" };
+    page.openReprovision();
+    assert.deepEqual(calls, [
+      "/pages/device-onboarding/index?mode=reprovision&fresh=1&device_id=dev_repro_1",
+    ]);
+    page.data.binding = { device_id: "dev re?pro" };
+    page.openReprovision();
+    assert.equal(calls[1], "/pages/device-onboarding/index?mode=reprovision&fresh=1&device_id=dev%20re%3Fpro");
+  } finally {
+    global.wx.navigateTo = previous.navigateTo;
   }
 });

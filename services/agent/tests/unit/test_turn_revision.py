@@ -66,6 +66,6 @@ async def test_final_revision_cannot_diverge_from_durable_history() -> None:
         event for event in ui_events if event.get("type") == "transcript_delta"
     ]
     assert [event["text"] for event in transcript_events] == ["第一份最终稿"]
-    assert [event["payload"]["text"] for event in evidence_events] == [
-        "第一份最终稿"
-    ]
+    # #282: the durable history carries no turn text; the UI subtitle still does.
+    assert len(evidence_events) == 1
+    assert "text" not in evidence_events[0]["payload"]

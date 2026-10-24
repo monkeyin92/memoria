@@ -20,6 +20,7 @@ enum class TapDevice : unsigned char {
     kStarting,
     kIdle,
     kBusy,
+    kListeningClosed,
 };
 
 enum class TapWakeAction : unsigned char {
@@ -28,6 +29,7 @@ enum class TapWakeAction : unsigned char {
     kNightSoothing,
     kOfflineMenu,
     kWifiConfig,
+    kResumeListening,
 };
 
 struct TapFacts {
@@ -48,6 +50,9 @@ struct PowerPolicy {
 inline TapWakeAction TapWakeActionFor(TapFacts facts) {
     if (facts.device == TapDevice::kStarting) {
         return facts.offline_wants_tap ? TapWakeAction::kOfflineMenu : TapWakeAction::kWifiConfig;
+    }
+    if (facts.device == TapDevice::kListeningClosed) {
+        return TapWakeAction::kResumeListening;
     }
     if (facts.device == TapDevice::kIdle && facts.in_quiet_hours) {
         return TapWakeAction::kNightSoothing;
@@ -93,6 +98,8 @@ inline const char* TapWakeActionName(TapWakeAction action) {
             return "offline";
         case TapWakeAction::kWifiConfig:
             return "wifi_config";
+        case TapWakeAction::kResumeListening:
+            return "resume";
     }
     return "unknown";
 }

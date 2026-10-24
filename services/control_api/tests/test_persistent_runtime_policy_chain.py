@@ -1476,7 +1476,11 @@ async def test_real_catalog_withholds_account_memory_from_a_child_subject(
         profile_ttl=timedelta(minutes=30),
     )
     archive = PostgresLifeArchive(bootstrap_dsn)
-    catalog = PostgresMemoryCatalog(bootstrap_dsn, extractor=RuleBasedMemoryExtractor())
+    catalog = PostgresMemoryCatalog(
+        bootstrap_dsn,
+        extractor=RuleBasedMemoryExtractor(),
+        evidence_subject_category_resolver=lambda _event: "adult",
+    )
     await archive.initialize()
     await catalog.initialize()
     app.state.memory_catalog = catalog

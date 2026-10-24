@@ -16,6 +16,15 @@ from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.orchestration.interruption_guard import (
     is_short_assistant_farewell_reply,
 )
+from services.agent.src.providers.tts_failover import (
+    TTS_UNAVAILABLE_STANDBY_REASON,
+    TTSUnavailableError,
+)
+from services.agent.src.voice_core.crisis_script_interrupt import (
+    active_subject_id,
+    publish_crisis_self_interrupt,
+    unfinished_safety_announcement,
+)
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.media_bridge_server import MediaBridgeSession, PCMFrame
 from services.agent.src.voice_core.media_protocol import PlaybackEventType, PlaybackProgress
@@ -56,6 +65,10 @@ _UNHEARD_OUTPUT_FLOOR_WAIT_S = 4.0
 # words to give the floor back.  The evidence-less hold cap (media_session_turns,
 # 6 s at most) is what normally reopens it; this only bounds the wait if it never does.
 _UNHEARD_OUTPUT_TEXTLESS_HOLD_WAIT_S = 7.0
+# An approved fixed safety script is the one reply the child must hear (C1,
+# 2026-10-21: the crisis line was held behind a noise edge and dropped).  It
+# outranks a wordless turn for longer, so a slow recovery still gets to speak.
+_UNHEARD_OUTPUT_FIXED_SAFETY_WAIT_S = 30.0
 _UNHEARD_OUTPUT_FLOOR_POLL_S = 0.02
 # Echo of the reply's tail can outlive the playback completion event by the
 # ASR pipeline's segmentation lag, so the boundary that gates early follow-up
@@ -171,9 +184,26 @@ class MediaOutputStreamMixin:
             *,
             reason: str = "cancelled",
             cancel_timeout_s: float = 5.0,
+            finalize_audible: bool = True,
         ) -> None: ...
 
         async def _start_selected_output(self, context: _MediaVoiceSession) -> bool: ...
+
+        def _on_aigc_marker_playback(
+            self,
+            context: _MediaVoiceSession,
+            progress: PlaybackProgress,
+        ) -> None: ...
+
+        async def _finish_aigc_opening_marker(
+            self,
+            context: _MediaVoiceSession,
+            fence: GenerationFence,
+        ) -> None: ...
+
+        def _schedule_aigc_round_closing(
+            self, context: _MediaVoiceSession, *, close_reason: str
+        ) -> None: ...
 
         @staticmethod
         async def _advance_failed_output_generation(
@@ -222,6 +252,12 @@ class MediaOutputStreamMixin:
             previous_phase: TurnPhase,
         ) -> None: ...
 
+        def _note_downlink_audio(
+            self,
+            context: _MediaVoiceSession,
+            fence: GenerationFence,
+        ) -> None: ...
+
         def flush_pending_missed_hearing_nudge(self, context: _MediaVoiceSession) -> None: ...
 
         @staticmethod
@@ -259,7 +295,12 @@ class MediaOutputStreamMixin:
                 ReplyDeliveryEvent.ERROR,
                 "session_closed",
             )
-            await self._cancel_reply_task(context, fence, reason="session_closed")
+            await self._cancel_reply_task(
+                context,
+                fence,
+                reason="session_closed",
+                finalize_audible=False,
+            )
             return
         # This dispatch may have sent nothing (its first frame was rejected) while an earlier output
         # of the same fence, e.g. a lookup acknowledgement, already put audio on the device: that
@@ -275,7 +316,12 @@ class MediaOutputStreamMixin:
                 current_context_version=coordinator.current_context_version(fence.session_id),
                 floor_allows_output=context.runtime.output_floor_allows_assistant,
             )
-        await self._cancel_reply_task(context, fence, reason=reason)
+        await self._cancel_reply_task(
+            context,
+            fence,
+            reason=reason,
+            finalize_audible=False,
+        )
         if emitted_audio and context.runtime.fence.matches(fence):
             # A higher-priority owner has its own preemption path.  If the
             # current owner instead disappeared because its intent expired (or
@@ -380,6 +426,62 @@ class MediaOutputStreamMixin:
         )
 
     @staticmethod
+    def _reply_is_fixed_safety_script(
+        context: _MediaVoiceSession,
+        fence: GenerationFence,
+    ) -> bool:
+        """Whether this generation speaks an approved fixed safety script.
+
+        The provider owns the fixed-safety fence set; ask it as an optional
+        capability so test and compatibility providers simply answer no.
+        """
+
+        probe = getattr(getattr(context, "provider", None), "is_fixed_safety_reply", None)
+        return bool(probe(fence)) if callable(probe) else False
+
+    def _hand_floor_back_for_fixed_safety(
+        self,
+        context: _MediaVoiceSession,
+        lease: _OutputOwnerLease,
+    ) -> bool:
+        """Reopen the floor for an unheard safety script a wordless turn left closed.
+
+        C1 (bridge bf245ed1, 2026-10-21 03:51:53Z): a device VAD edge on room noise
+        opened a user turn, the crisis line was synthesized 1.9 s later, and the edge
+        ended with no text 176 ms after that.  The empty turn retired while the floor
+        stayed closed, so the held script was dropped as ``textless_turn_over`` and
+        the child heard nothing.  A turn that produced no words cannot outrank the
+        script; this is the same hand-back the evidence-less hold cap performs when it
+        retires a wordless turn, applied at the moment the reply would be dropped.
+        """
+
+        if context.pending.turn_start_sample is not None:
+            return False
+        if self._pending_turn_has_fresh_text_evidence(context):
+            return False
+        # Same selection as any other owner, but asked against the floor as it
+        # stands now: once the wordless turn is gone the intent is selected again.
+        if self._output_owner_is_current(context, lease):
+            return True
+        floor_was_open = context.runtime.output_floor_allows_assistant
+        if not floor_was_open:
+            context.runtime.open_assistant_floor(cause="fixed_safety_reply")
+        floor_open = context.runtime.output_floor_allows_assistant
+        if not floor_open:
+            # Never reopen a floor the runtime closed for another reason (stop,
+            # control restore, a newer generation): only a textless turn does.
+            return False
+        logger.warning(
+            "media fixed safety reply reclaimed the floor after a turn with no words "
+            "session=%s fence=%s floor_was_open=%s floor_open=%s",
+            context.identity.session_id,
+            lease.fence,
+            floor_was_open,
+            floor_open,
+        )
+        return floor_open
+
+    @staticmethod
     def _reply_owner_intact(context: _MediaVoiceSession, lease: _OutputOwnerLease) -> bool:
         """The lease is still this task's, on the live fence; the floor is not asked here."""
 
@@ -466,7 +568,21 @@ class MediaOutputStreamMixin:
         if context.runtime.barge_in_enabled:
             if self._output_owner_is_current(context, lease):
                 return True
-            if not self._floor_held_by_textless_turn(context):
+            if self._floor_held_by_textless_turn(context):
+                textless_hold = True
+                self._arm_evidence_less_floor_hold(context)
+                logger.info(
+                    "media prepared reply held for a user turn with no words session=%s fence=%s",
+                    context.identity.session_id,
+                    lease.fence,
+                )
+            elif not (
+                # Only an approved safety script may reclaim a floor it lost, and only
+                # from a turn with no words; everything else keeps the old decision.
+                self._reply_is_fixed_safety_script(context, lease.fence)
+                and not self._pending_turn_has_fresh_text_evidence(context)
+                and self._hand_floor_back_for_fixed_safety(context, lease)
+            ):
                 # Round 18 lost 3 prepared replies here without a "held" line; the guess is that
                 # the recognizer's interim text counted as words.  Say which input decided it.
                 partial = context.pending.pending_partial
@@ -482,18 +598,15 @@ class MediaOutputStreamMixin:
                     len(((provisional.text if provisional is not None else "") or "").strip()),
                 )
                 return False
-            textless_hold = True
-            self._arm_evidence_less_floor_hold(context)
-            logger.info(
-                "media prepared reply held for a user turn with no words session=%s fence=%s",
-                context.identity.session_id,
-                lease.fence,
-            )
+        protected = self._reply_is_fixed_safety_script(context, lease.fence)
         loop = asyncio.get_running_loop()
         started = loop.time()
-        deadline = started + (
-            _UNHEARD_OUTPUT_TEXTLESS_HOLD_WAIT_S if textless_hold else _UNHEARD_OUTPUT_FLOOR_WAIT_S
-        )
+        if protected:
+            deadline = started + _UNHEARD_OUTPUT_FIXED_SAFETY_WAIT_S
+        elif textless_hold:
+            deadline = started + _UNHEARD_OUTPUT_TEXTLESS_HOLD_WAIT_S
+        else:
+            deadline = started + _UNHEARD_OUTPUT_FLOOR_WAIT_S
         while True:
             if self._output_owner_can_start_first_frame(context, lease):
                 if textless_hold:
@@ -519,14 +632,20 @@ class MediaOutputStreamMixin:
                 return False
             if textless_hold and not self._floor_held_by_textless_turn(context):
                 # Words arrived (or the turn ended): the user really holds the floor.
-                self._log_unheard_reply_dropped(
-                    context,
-                    lease,
-                    cause="textless_turn_over",
-                    textless_hold=textless_hold,
-                    waited_s=loop.time() - started,
-                )
-                return False
+                # A turn that ended without words never did, so an unheard fixed safety
+                # script keeps its claim instead of being dropped (C1, 2026-10-21).
+                # ``_floor_held_by_textless_turn`` already proved there are no fresh
+                # words on this turn, so this only asks whether the script may speak.
+                if not (protected and self._hand_floor_back_for_fixed_safety(context, lease)):
+                    self._log_unheard_reply_dropped(
+                        context,
+                        lease,
+                        cause="textless_turn_over",
+                        textless_hold=textless_hold,
+                        waited_s=loop.time() - started,
+                    )
+                    return False
+                textless_hold = False
             if loop.time() >= deadline:
                 self._log_unheard_reply_dropped(
                     context,
@@ -559,7 +678,8 @@ class MediaOutputStreamMixin:
         logger.info(
             "media prepared reply dropped cause=%s textless_hold=%s waited_s=%.2f session=%s fence=%s "
             "owner_is_lease=%s task_is_current=%s fence_matches=%s floor_open=%s turn_started=%s "
-            "text_evidence=%s fresh_text_evidence=%s partial_chars=%d provisional_chars=%d",
+            "text_evidence=%s fresh_text_evidence=%s fixed_safety=%s "
+            "partial_chars=%d provisional_chars=%d",
             cause,
             textless_hold,
             waited_s,
@@ -572,6 +692,7 @@ class MediaOutputStreamMixin:
             context.pending.turn_start_sample is not None,
             self._pending_turn_has_text_evidence(context),
             self._pending_turn_has_fresh_text_evidence(context),
+            self._reply_is_fixed_safety_script(context, lease.fence),
             len(((partial.text if partial is not None else "") or "").strip()),
             len(((provisional.text if provisional is not None else "") or "").strip()),
         )
@@ -613,6 +734,14 @@ class MediaOutputStreamMixin:
                 (rendered - previously_rendered) * 1_000 / _DOWNLINK_PCM_SAMPLE_RATE,
             )
         self._observe_projection_playback_evidence(context, fence, progress.event_type)
+        # A marker is the device's notice for this round; it never becomes assistant text.
+        if (
+            getattr(context, "aigc_opening_marker_fence", None) is not None
+            or getattr(context, "aigc_closing_marker_fence", None) is not None
+        ):
+            if self._is_aigc_marker_fence(context, fence):
+                self._on_aigc_marker_playback(context, progress)
+                return
         # Publish the cumulative acknowledged prefix under one turn/revision;
         # publishing only the newly acknowledged span would make clients
         # replace a complete answer with its last phrase.
@@ -682,6 +811,14 @@ class MediaOutputStreamMixin:
                 text_delivered=True,
                 fence=fence,
             )
+
+    @staticmethod
+    def _is_aigc_marker_fence(context: _MediaVoiceSession, fence: GenerationFence) -> bool:
+        opening = context.aigc_opening_marker_fence
+        if opening is not None and fence.matches(opening):
+            return True
+        closing = context.aigc_closing_marker_fence
+        return closing is not None and fence.matches(closing)
 
     def _observe_projection_playback_evidence(
         self,
@@ -935,6 +1072,7 @@ class MediaOutputStreamMixin:
                     )
                 if context.closed or context.standby_requested:
                     return await abort_for_session_close()
+                self._note_downlink_audio(context, fence)
                 if not context.output.playback.register_audio(
                     fence,
                     frame.sequence,
@@ -942,7 +1080,12 @@ class MediaOutputStreamMixin:
                     frame.frame_samples,
                 ):
                     self.metrics.inc_media_stale_generation()
-                    await self._cancel_reply_task(context, fence, reason="playback_rejected")
+                    await self._cancel_reply_task(
+                        context,
+                        fence,
+                        reason="playback_rejected",
+                        finalize_audible=False,
+                    )
                     return OutputDispatchResult(
                         fence,
                         OutputDispatchStatus.ABORTED,
@@ -955,7 +1098,11 @@ class MediaOutputStreamMixin:
                     ReplyDeliveryEvent.FIRST_FRAME_SENT,
                     "downlink_frame_accepted",
                 )
-                if not chunk.thinking_filler and context.output.tts_started_ns is not None:
+                if (
+                    not chunk.thinking_filler
+                    and not chunk.aigc_marker
+                    and context.output.tts_started_ns is not None
+                ):
                     self.metrics.observe_voice_latency(
                         "tts_first_frame",
                         (time.monotonic_ns() - context.output.tts_started_ns) / 1_000_000_000,
@@ -1011,7 +1158,7 @@ class MediaOutputStreamMixin:
         except asyncio.CancelledError:
             self._release_output_owner(context, fence, reason="cancelled")
             raise
-        except Exception:
+        except Exception as exc:
             self.metrics.inc_media_session_failed()
             # A provider that dies before its first frame leaves a half-duplex
             # device session in THINKING, where every later vad.end is dropped
@@ -1023,8 +1170,33 @@ class MediaOutputStreamMixin:
                 reason="provider_failed",
                 emitted_audio=emitted_audio,
             )
+            if (
+                isinstance(exc, TTSUnavailableError)
+                and not emitted_audio
+                and not context.output.audio_sent_for(fence)
+                and context.identity.client_type == "device"
+                and not context.closed
+                and not context.standby_requested
+            ):
+                request_standby = getattr(self, "_request_device_standby", None)
+                if callable(request_standby):
+                    await request_standby(
+                        context,
+                        reason=TTS_UNAVAILABLE_STANDBY_REASON,
+                        play_line=True,
+                    )
             raise
         if emitted_audio and context.runtime.fence.matches(fence):
+            if self._is_aigc_marker_fence(context, fence):
+                # Both markers own a wire-legal turn alone, so each hands the
+                # floor back before the next source is admitted.
+                await self._finish_aigc_opening_marker(context, fence)
+                return OutputDispatchResult(
+                    fence,
+                    OutputDispatchStatus.COMPLETED,
+                    "aigc_marker_complete",
+                    emitted_audio,
+                )
             # Provider completion is not playback completion. Keep the runtime
             # speaking until the client watermark covers all emitted audio.
             context.output.provider_complete = True
@@ -1265,10 +1437,38 @@ class MediaOutputStreamMixin:
         source_start_sample: int,
     ) -> AsyncIterator[MediaReplyChunk]:
         if work.conversation_text is not None:
+            offset = source_start_sample
+            if work.lead_pcm_s16le:
+                frame_samples = int(getattr(context.provider, "output_frame_samples", 480))
+                if frame_samples <= 0:
+                    raise RuntimeError("media provider has an invalid output frame size")
+                frame_bytes = frame_samples * 2
+                pcm = work.lead_pcm_s16le
+                if len(pcm) % 2:
+                    raise ValueError("opening AIGC cue must be 16-bit PCM")
+                for start in range(0, len(pcm), frame_bytes):
+                    frame = pcm[start : start + frame_bytes]
+                    if len(frame) < frame_bytes:
+                        frame += b"\x00" * (frame_bytes - len(frame))
+                    yield MediaReplyChunk(
+                        pcm_s16le=frame,
+                        source_start_sample=offset,
+                        first=start == 0,
+                        final=False,
+                        aigc_marker=True,
+                    )
+                    offset += frame_samples
+            end = offset
             async for chunk in self._conversation_chunks(
-                context, work.fence, work.conversation_text, source_start_sample
+                context, work.fence, work.conversation_text, offset
             ):
-                yield chunk
+                end = chunk.source_start_sample + chunk.frame_samples
+                # The closing cue rides this fence, so no source frame may
+                # carry final_frame before the cue has been sent.
+                yield replace(chunk, final=False) if work.tail_pcm_s16le else chunk
+            if work.tail_pcm_s16le:
+                async for tail in self._tail_marker_chunks(context, work.tail_pcm_s16le, end):
+                    yield tail
             return
         renderer = getattr(context.provider, "generate_output", None)
         if callable(renderer):
@@ -1281,8 +1481,13 @@ class MediaOutputStreamMixin:
             )
             if inspect.isawaitable(produced):
                 produced = await produced
+            end = source_start_sample
             async for chunk in produced:
-                yield chunk
+                end = chunk.source_start_sample + chunk.frame_samples
+                yield replace(chunk, final=False) if work.tail_pcm_s16le else chunk
+            if work.tail_pcm_s16le:
+                async for tail in self._tail_marker_chunks(context, work.tail_pcm_s16le, end):
+                    yield tail
             return
         if getattr(work.intent, "WhichOneof", lambda _name: None)("source") != "pcm_s16le":
             raise RuntimeError("media provider cannot render an output text source")
@@ -1296,7 +1501,7 @@ class MediaOutputStreamMixin:
         sample = source_start_sample
         for offset in range(0, len(pcm), frame_bytes):
             frame = pcm[offset : offset + frame_bytes]
-            final = offset + frame_bytes >= len(pcm)
+            final = offset + frame_bytes >= len(pcm) and not work.tail_pcm_s16le
             if len(frame) < frame_bytes:
                 frame += b"\x00" * (frame_bytes - len(frame))
             yield MediaReplyChunk(
@@ -1306,6 +1511,52 @@ class MediaOutputStreamMixin:
                 final=final,
             )
             sample += frame_samples
+        if work.tail_pcm_s16le:
+            async for tail in self._tail_marker_chunks(context, work.tail_pcm_s16le, sample):
+                yield tail
+
+    async def _tail_marker_chunks(
+        self,
+        context: _MediaVoiceSession,
+        pcm: bytes,
+        source_start_sample: int,
+    ) -> AsyncIterator[MediaReplyChunk]:
+        """Append the closing cue to the round's own generation.
+
+        The device only leaves SPEAKING on this generation's
+        ``generation.completed``, so the cue must not open a successor
+        generation. Its frames are the last ones and carry ``final_frame``.
+        """
+
+        frame_samples = int(getattr(context.provider, "output_frame_samples", 480))
+        if frame_samples <= 0:
+            raise RuntimeError("media provider has an invalid output frame size")
+        if not pcm or len(pcm) % 2:
+            raise ValueError("closing AIGC cue must be 16-bit PCM")
+        frame_bytes = frame_samples * 2
+        context.aigc_closing_marker_state = "playing"
+        context.aigc_closing_marker_started_at = time.monotonic()
+        sample = source_start_sample
+        completed = False
+        try:
+            for offset in range(0, len(pcm), frame_bytes):
+                frame = pcm[offset : offset + frame_bytes]
+                final = offset + frame_bytes >= len(pcm)
+                if len(frame) < frame_bytes:
+                    frame += b"\x00" * (frame_bytes - len(frame))
+                yield MediaReplyChunk(
+                    pcm_s16le=frame,
+                    source_start_sample=sample,
+                    first=False,
+                    final=final,
+                    aigc_marker=True,
+                )
+                sample += frame_samples
+            completed = True
+        finally:
+            # A stop that cancels this stream mid-cue leaves the marker
+            # unfinished; the close path then plays it in its own generation.
+            context.aigc_closing_marker_state = "done" if completed else "idle"
 
     async def _maybe_standby_after_farewell_complete(
         self,
@@ -1344,11 +1595,21 @@ class MediaOutputStreamMixin:
         context: _MediaVoiceSession,
         fence: GenerationFence,
     ) -> None:
-        """P0-04 D3: end a minor's session past its signed limit after the reply."""
+        """End a minor session past its signed limit.
 
+        Speak the goodbye only when a playable approved clip exists. Otherwise
+        the device goes to standby with no live TTS.
+        """
+
+        from services.agent.src.minor_limit_bypass import (
+            MINOR_SESSION_LIMIT_BYPASSED_REASON,
+            configured_minor_limit_bypass,
+        )
         from services.agent.src.prompts import MINOR_SESSION_LIMIT_PHRASE
+        from services.agent.src.providers.fixed_safety_audio import shipped_approved_catalog
         from services.agent.src.voice_core.minor_session_limits import (
             minor_limits,
+            minor_subject_id,
             session_limit_reached,
         )
         from services.common.fixed_safety_scripts import script_for_display
@@ -1356,7 +1617,8 @@ class MediaOutputStreamMixin:
         if script_for_display(context.output.assistant_text.strip()) is not None:
             context.crisis_reply_heard = True
             context.runtime.note_fixed_safety_spoken(context.output.assistant_text.strip())
-        max_seconds, _quiet_hours = minor_limits(context.runtime.mode_policy.runtime_profile)
+        profile = context.runtime.mode_policy.runtime_profile
+        max_seconds, _quiet_hours = minor_limits(profile)
         if (
             context.closed
             or context.standby_requested
@@ -1366,11 +1628,19 @@ class MediaOutputStreamMixin:
             or not session_limit_reached(context.started_at, time.monotonic(), max_seconds)
         ):
             return
+        if configured_minor_limit_bypass(self).allows(
+            minor_subject_id(profile),
+            reason=MINOR_SESSION_LIMIT_BYPASSED_REASON,
+        ):
+            return
         speak = getattr(self, "_speak_device_enrollment_phrase", None)
         request_standby = getattr(self, "_request_device_standby", None)
-        if callable(speak) and callable(request_standby):
+        if not callable(request_standby):
+            return
+        approved = shipped_approved_catalog().match(MINOR_SESSION_LIMIT_PHRASE)
+        if callable(speak) and approved is not None and approved.playable:
             await speak(context, MINOR_SESSION_LIMIT_PHRASE)
-            await request_standby(context, reason="minor_max_session")
+        await request_standby(context, reason="minor_max_session")
 
     async def _maybe_standby_after_llm_unavailable(
         self,
@@ -1433,6 +1703,10 @@ class MediaOutputStreamMixin:
         if owner is not None and not owner.fence.matches(fence):
             return
         self._record_playback_boundary(context)
+        wake_ack = (
+            context.device_wake_ack_fence is not None
+            and context.device_wake_ack_fence.matches(fence)
+        )
         endpoint_overlap = getattr(self, "endpoint_overlapped_pending_after_playback", None)
         if callable(endpoint_overlap):
             endpoint_overlap(context)
@@ -1481,6 +1755,10 @@ class MediaOutputStreamMixin:
         # race between playback.ended and delegation completion, and could send
         # new PCM into a fence the device had already terminally closed.
         await self._start_selected_output(context)
+        self._schedule_aigc_round_closing(
+            context,
+            close_reason="wake_ack" if wake_ack else "reply_completed",
+        )
 
     async def _fail_playback_output(
         self,
@@ -1500,7 +1778,27 @@ class MediaOutputStreamMixin:
             ReplyDeliveryEvent.ERROR,
             reason,
         )
-        await self._cancel_reply_task(context, fence, reason=reason)
+        # A playback/transport failure is one of the three cases that may raise
+        # the parent's unfinished-script reminder. A user stop never reaches
+        # this method, and its announced text is cleared before any later close.
+        unfinished_script = unfinished_safety_announcement(context)
+        if unfinished_script is not None:
+            publish_crisis_self_interrupt(
+                getattr(self, "crisis_script_interrupt_publisher", None),
+                announced_text=unfinished_script,
+                crisis_reply_heard=context.crisis_reply_heard,
+                minor_user_id=active_subject_id(context),
+                session_id=fence.session_id,
+                turn_id=fence.turn_id,
+                generation_id=fence.generation_id,
+                tool_epoch=fence.tool_epoch,
+            )
+        await self._cancel_reply_task(
+            context,
+            fence,
+            reason=reason,
+            finalize_audible=False,
+        )
         cancelled = await self._advance_failed_output_generation(
             context,
             fence,
@@ -1514,6 +1812,7 @@ class MediaOutputStreamMixin:
         context.output.output_complete_emitted = False
         if cancelled is None:
             await context.runtime.on_assistant_reply_aborted(fence, cause=reason)
+            self._schedule_aigc_round_closing(context, close_reason=reason)
             return
         task_epoch, context_version = self._event_versions(context, cancelled)
         await self.bridge.emit_generation(
@@ -1524,3 +1823,4 @@ class MediaOutputStreamMixin:
             task_epoch=task_epoch,
             context_version=context_version,
         )
+        self._schedule_aigc_round_closing(context, close_reason=reason)

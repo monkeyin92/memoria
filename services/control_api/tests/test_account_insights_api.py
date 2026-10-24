@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 from cryptography.fernet import Fernet
 from httpx import ASGITransport, AsyncClient
-from pydantic import ValidationError
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.main import create_app
 from services.speaker.authority import SpeakerAuthority
@@ -69,7 +68,7 @@ async def test_delivered_capabilities_reports_identity_signals_only(
     assert payload["memory_days_with_activity"] == 0
     assert payload["total_messages"] == 0
     assert payload["chat_llm_providers"] == []
-    assert payload["voice_clone_enabled"] is False
+    assert "voice_clone_enabled" not in payload
     assert "TAM" not in payload["notes"]
 
 
@@ -183,46 +182,38 @@ async def test_delivered_capabilities_disclose_the_chat_models_the_agent_last_re
 
 
 @pytest.mark.hermetic
-def test_voice_clone_enabled_defaults_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("VOICE_CLONE_ENABLED", raising=False)
+def test_voice_clone_settings_are_not_a_switch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VOICE_CLONE_ENABLED", "true")
+    monkeypatch.setenv("MEMORIA_VOICE_ENROLLMENT_URL", "retired")
     settings = ControlSettings(_env_file=None)
-    assert settings.voice_clone_enabled is False
-
-
-@pytest.mark.hermetic
-def test_voice_clone_enabled_rejects_a_non_boolean(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("VOICE_CLONE_ENABLED", "sometimes")
-    with pytest.raises(ValidationError):
-        ControlSettings(_env_file=None)
+    aliases = {
+        field.alias
+        for field in ControlSettings.model_fields.values()
+        if isinstance(field.alias, str)
+    }
+    assert "VOICE_CLONE_ENABLED" not in aliases
+    assert "MEMORIA_VOICE_ENROLLMENT_URL" not in aliases
+    assert "MEMORIA_DOUBAO_VOICE_CLONE_URL" not in aliases
+    assert "QWEN_OMNI_VOICE_CLONE_ID" not in aliases
+    assert not hasattr(settings, "voice_clone_enabled")
+    assert not hasattr(settings, "voice_enrollment_url")
 
 
 @pytest.mark.hermetic
 @pytest.mark.asyncio
-async def test_delivered_capabilities_reports_the_voice_clone_switch(
+async def test_delivered_capabilities_has_no_voice_clone_switch(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     _configure(monkeypatch, tmp_path)
-    monkeypatch.delenv("VOICE_CLONE_ENABLED", raising=False)
-    closed = create_app()
-    async with AsyncClient(transport=ASGITransport(app=closed), base_url="http://test") as client:
-        registered = await client.post(
-            "/v1/auth/register",
-            json={"username": "clone-off", "password": "safe-password"},
-        )
-        headers = {"Authorization": f"Bearer {registered.json()['access_token']}"}
-        response = await client.get("/v1/account/delivered-capabilities", headers=headers)
-    assert response.status_code == 200
-    assert response.json()["voice_clone_enabled"] is False
-
     monkeypatch.setenv("VOICE_CLONE_ENABLED", "true")
-    opened = create_app()
-    async with AsyncClient(transport=ASGITransport(app=opened), base_url="http://test") as client:
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         registered = await client.post(
             "/v1/auth/register",
-            json={"username": "clone-on", "password": "safe-password"},
+            json={"username": "clone-gone", "password": "safe-password"},
         )
         headers = {"Authorization": f"Bearer {registered.json()['access_token']}"}
         response = await client.get("/v1/account/delivered-capabilities", headers=headers)
     assert response.status_code == 200
-    assert response.json()["voice_clone_enabled"] is True
+    assert "voice_clone_enabled" not in response.json()

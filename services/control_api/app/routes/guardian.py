@@ -6,7 +6,7 @@ import hashlib
 import hmac
 import secrets
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated, Any, Literal, cast
 from zoneinfo import ZoneInfo
@@ -27,6 +27,7 @@ from services.archive.memory_domain import (
     MemoryClaimReview,
     MemorySearchQuery,
 )
+from services.archive.memory_retractions import list_retracted_claims
 from services.archive.object_store import ObjectStore
 from services.common.companion_response_safety import guardian_attention_copy
 from services.consent.bound_subject import (
@@ -49,6 +50,9 @@ from services.control_api.app.guardian_recap import (
     recap_for_day,
 )
 from services.control_api.app.response_plan_cache import forget_subject_plans
+from services.control_api.app.routes.crisis_script_interrupt import (
+    router as crisis_script_interrupt_router,
+)
 from services.control_api.app.security import AuthenticatedUser, require_authenticated_user
 from services.control_api.app.session_termination import AccountSessionTerminator
 from services.control_api.app.wechat_auth import WechatAuthError, code_to_session, openid_hash
@@ -70,7 +74,7 @@ from services.guardian.child_memory import (
 )
 from services.guardian.consent import GuardianConsentService
 from services.guardian.corpus import CorpusRetentionService
-from services.guardian.crisis import CrisisNotificationStorePort, crisis_alert_is_pinned
+from services.guardian.crisis import CrisisNotificationStorePort, GuardianNotification
 from services.guardian.domain import (
     AgeEvidenceStatus,
     BirthYearBand,
@@ -87,6 +91,11 @@ from services.guardian.domain import (
     SubjectTransitionError,
     validate_subject_transition,
 )
+from services.guardian.parent_alert import (
+    PARENT_ALERT_COPY,
+    alert_time_label,
+    interrupted_parent_detail,
+)
 from services.guardian.push import PushSubscriptionResult, PushSubscriptionStorePort
 from services.guardian.weekly_report import WeeklyReportProjector
 from services.identity.service import IdentityService
@@ -96,6 +105,7 @@ from services.speaker.domain import RevokeSpeakerProfile, SpeakerAuthorityPort
 from services.voice_profile.domain import VoiceProfilePort
 
 router = APIRouter(prefix="/v1/guardian", tags=["guardian"])
+router.include_router(crisis_script_interrupt_router)
 _BINDING_TTL = timedelta(minutes=15)
 _CONSENT_KINDS: tuple[ConsentKind, ...] = (
     "minor_voice_session",
@@ -631,6 +641,70 @@ async def list_links(
     }
 
 
+def _safety_alert_item(
+    notification: GuardianNotification,
+    *,
+    minor_display_name: str,
+    zone: ZoneInfo,
+) -> dict[str, Any]:
+    copy = (
+        PARENT_ALERT_COPY[notification.reply_template_id]
+        if notification.reply_template_id is not None
+        else None
+    )
+    return {
+        "notification_id": notification.notification_id,
+        "minor_user_id": notification.minor_user_id,
+        "minor_display_name": minor_display_name,
+        "occurred_at": notification.created_at.isoformat(),
+        "occurred_label": alert_time_label(notification.created_at, zone),
+        "delivery_status": notification.status,
+        "channel": notification.channel,
+        "message": guardian_attention_copy(
+            possibly_story_retell=notification.possibly_story_retell
+        ),
+        "category_label": "" if copy is None else copy.category_label,
+        "summary": "" if copy is None else copy.summary,
+        "robot_said": "" if copy is None else copy.robot_said,
+        "parent_action": "" if copy is None else copy.parent_action,
+        "contains_transcript": False,
+        "contains_severity": False,
+    }
+
+
+def _interrupted_detail(notification: GuardianNotification) -> str | None:
+    return interrupted_parent_detail(
+        notification.reply_template_id,
+        script_interrupted=notification.script_interrupted,
+    )
+
+
+async def _safety_alert_items(
+    request: Request,
+    user: AuthenticatedUser,
+    notifications: Sequence[GuardianNotification],
+) -> list[dict[str, Any]]:
+    display_name = resolve_minor_display_name(
+        _profiles(request),
+        getattr(request.app.state, "identity_service", None),
+    )
+    zone = ZoneInfo(_settings(request).memoria_timezone)
+    items: list[dict[str, Any]] = []
+    for item in notifications:
+        payload = _safety_alert_item(
+            item,
+            minor_display_name=str(
+                await display_name(user.user_id, item.minor_user_id) or "TA"
+            ),
+            zone=zone,
+        )
+        detail = _interrupted_detail(item)
+        if detail is not None:
+            payload["detail"] = detail
+        items.append(payload)
+    return items
+
+
 @router.get("/notifications")
 async def guardian_notifications(
     request: Request,
@@ -642,30 +716,62 @@ async def guardian_notifications(
         guardian_user_id=user.user_id,
         limit=limit,
     )
-    display_name = resolve_minor_display_name(
-        _profiles(request),
-        getattr(request.app.state, "identity_service", None),
+    return {"items": await _safety_alert_items(request, user, notifications)}
+
+
+@router.get("/notifications/unread")
+async def unread_guardian_notifications(
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+) -> dict[str, Any]:
+    _require_wechat_guardian(request, user)
+    unread = await _notification_store(request).unread_guardian_notifications(
+        guardian_user_id=user.user_id,
     )
-    items = []
-    for item in notifications:
-        minor_display_name = await display_name(user.user_id, item.minor_user_id)
-        items.append(
-            {
-                "notification_id": item.notification_id,
-                "minor_user_id": item.minor_user_id,
-                "minor_display_name": str(minor_display_name or "TA"),
-                "occurred_at": item.created_at.isoformat(),
-                "delivery_status": item.status,
-                "pinned": crisis_alert_is_pinned(item.status),
-                "channel": item.channel,
-                "message": guardian_attention_copy(
-                    possibly_story_retell=item.possibly_story_retell
-                ),
-                "contains_transcript": False,
-                "contains_severity": False,
-            }
+    if unread is None:
+        return {"newest": None, "others_count": 0}
+    (newest,) = await _safety_alert_items(request, user, (unread.newest,))
+    return {"newest": newest, "others_count": unread.others_count}
+
+
+@router.get("/notifications/{notification_id}")
+async def guardian_notification(
+    notification_id: uuid.UUID,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+) -> dict[str, Any]:
+    _require_wechat_guardian(request, user)
+    try:
+        notification = await _notification_store(request).guardian_notification(
+            guardian_user_id=user.user_id,
+            notification_id=str(notification_id),
         )
-    return {"items": items}
+    except GuardianNotFoundError as exc:
+        raise HTTPException(
+            status_code=404, detail={"code": "guardian_notification_not_found"}
+        ) from exc
+    (item,) = await _safety_alert_items(request, user, (notification,))
+    return item
+
+
+@router.put("/notifications/{notification_id}/read")
+async def mark_guardian_notification_read(
+    notification_id: uuid.UUID,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
+) -> dict[str, Any]:
+    _require_wechat_guardian(request, user)
+    try:
+        read_at = await _notification_store(request).mark_guardian_notification_read(
+            guardian_user_id=user.user_id,
+            notification_id=str(notification_id),
+            now=_now(),
+        )
+    except GuardianNotFoundError as exc:
+        raise HTTPException(
+            status_code=404, detail={"code": "guardian_notification_not_found"}
+        ) from exc
+    return {"notification_id": str(notification_id), "read_at": read_at.isoformat()}
 
 
 def _push_store(request: Request) -> PushSubscriptionStorePort:
@@ -1638,6 +1744,44 @@ async def child_memories(
             }
             for item in kept.items
         ],
+    }
+
+
+@router.get("/minors/{minor_user_id}/memories/retracted")
+async def child_retracted_memories(
+    minor_user_id: str,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+) -> dict[str, Any]:
+    """Memories this child's guardian retracted, newest first, still restorable.
+
+    Corrections are not retractions and stay out of this list. The review
+    endpoint already puts a confirmed claim's vector back, so the page needs
+    the claim ids across page loads: the list is one query on the child's own
+    retracted claims, not a cached page in the mini program.
+    """
+
+    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    items = await list_retracted_claims(
+        _catalog(request),
+        account_id=account_id,
+        subject_id=minor_user_id,
+        limit=limit,
+    )
+    return {
+        "subject_id": minor_user_id,
+        "items": [
+            {
+                "claim_id": item.claim_id,
+                "title": item.title,
+                "value": item.value,
+                "domain_category": item.domain_category,
+                "retracted_at": item.retracted_at.isoformat(),
+            }
+            for item in items
+        ],
+        "privacy": {"contains_transcript": False},
     }
 
 

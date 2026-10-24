@@ -17,6 +17,7 @@ from services.control_api.app.lifespan_resources import (
     LifespanResources,
     SharedPostgresPools,
 )
+from services.guardian.subject_activity import SubjectActivityStore
 
 
 class _FakePool:
@@ -149,6 +150,8 @@ async def test_live_wiring_shares_one_archive_pool_without_leaking_session_state
 
     monkeypatch.setattr(main.PostgresGuardianStore, "initialize", idle)
     monkeypatch.setattr(main.PostgresGuardianStore, "close", idle)
+    monkeypatch.setattr(SubjectActivityStore, "initialize", idle)
+    monkeypatch.setattr(SubjectActivityStore, "close", idle)
 
     app = create_app()
     try:

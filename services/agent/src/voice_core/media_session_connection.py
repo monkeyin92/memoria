@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import time
@@ -11,6 +12,11 @@ from typing import TYPE_CHECKING
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.session_recap_sink import snapshot_context_turns
+from services.agent.src.voice_core.crisis_script_interrupt import (
+    active_subject_id,
+    publish_crisis_self_interrupt,
+    unfinished_safety_announcement,
+)
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_bridge_server import MediaBridgeSession
 from services.agent.src.voice_core.media_protocol import (
@@ -40,6 +46,10 @@ class MediaSessionConnectionMixin:
         _sessions: dict[str, _MediaVoiceSession]
         _cleanup_tasks: dict[str, asyncio.Task[None]]
 
+        def _finish_aigc_round(self, context: _MediaVoiceSession, *, close_reason: str) -> None: ...
+
+        async def _cancel_aigc_round_closing(self, context: _MediaVoiceSession) -> None: ...
+
         async def open_session(self, identity: SessionIdentity) -> _MediaVoiceSession: ...
 
         async def _cancel_audio_pump(self, context: _MediaVoiceSession) -> None: ...
@@ -53,9 +63,9 @@ class MediaSessionConnectionMixin:
             preserve_remaining: bool,
         ) -> None: ...
 
-        def _cancel_max_user_speech_watchdog(
-            self, context: _MediaVoiceSession
-        ) -> None: ...
+        def _cancel_max_user_speech_watchdog(self, context: _MediaVoiceSession) -> None: ...
+
+        def _cancel_speaking_stall_watchdog(self, context: _MediaVoiceSession) -> None: ...
 
         async def _record_interrupted_timed_spans(
             self, context: _MediaVoiceSession, fence: GenerationFence
@@ -68,9 +78,17 @@ class MediaSessionConnectionMixin:
             *,
             reason: str = "cancelled",
             cancel_timeout_s: float = 5.0,
+            finalize_audible: bool = True,
         ) -> None: ...
 
         def _clear_pending_turn_state(self, context: _MediaVoiceSession) -> None: ...
+
+        def resume_listening_from_screen_tap(
+            self,
+            context: _MediaVoiceSession,
+            *,
+            wake_sample: int,
+        ) -> None: ...
 
     async def on_client_event(
         self,
@@ -82,6 +100,14 @@ class MediaSessionConnectionMixin:
             return
         current = self._sessions.get(session.identity.session_id)
         if current is not None and (current.closed or current.standby_requested):
+            return
+        if event.type == "listening.resume":
+            if current is None or current.identity.stream_epoch != session.identity.stream_epoch:
+                return
+            wake_sample = event.payload.get("wake_sample")
+            if isinstance(wake_sample, bool) or not isinstance(wake_sample, int) or wake_sample < 0:
+                return
+            self.resume_listening_from_screen_tap(current, wake_sample=wake_sample)
             return
         context = await self.open_session(session.identity)
         if context.closed or context.standby_requested or not session.accepts_input():
@@ -95,6 +121,12 @@ class MediaSessionConnectionMixin:
         # deployed and remains fail-closed in the rollout gate.
         _ = detected_monotonic_ms
         stop_started_ns = time.monotonic_ns()
+        # A stop is a barge-in: a closing marker that has not started is dropped
+        # (the next round's opening marker replaces it) and a playing one is released.
+        context.aigc_closing_marker_state = (
+            "interrupted" if context.aigc_closing_marker_state == "playing" else "skipped"
+        )
+        context.aigc_closing_marker_fence = None
         # MediaBridgeSession has already advanced its authoritative generation
         # before this callback runs. The Voice Core consumes that exact fence.
         previous_fence = context.output.playback.current_fence or context.runtime.fence
@@ -125,11 +157,30 @@ class MediaSessionConnectionMixin:
         if should_pause_asr_for_playback(context.identity):
             await context.provider.pause_asr_for_playback(context.identity)
         if not previous_fence.matches(session.fence):
-            await self._cancel_reply_task(context, previous_fence)
+            await self._cancel_reply_task(
+                context,
+                previous_fence,
+                finalize_audible=False,
+            )
         self.metrics.observe_voice_latency(
             "interrupt_core_stop",
             (time.monotonic_ns() - stop_started_ns) / 1_000_000_000,
         )
+
+    def _release_aigc_closing_marker(self, context: _MediaVoiceSession) -> None:
+        """The child took the floor or the transport was replaced mid-marker."""
+
+        fence = context.aigc_closing_marker_fence
+        if fence is None or context.aigc_closing_marker_state != "playing":
+            return
+        if not context.runtime.fence.matches(fence):
+            context.aigc_closing_marker_fence = None
+            context.aigc_closing_marker_state = "interrupted"
+            logger.info(
+                "AIGC closing marker interrupted session=%s fence=%s",
+                context.identity.session_id,
+                fence,
+            )
 
     async def on_downlink_overflow(self, session: MediaBridgeSession) -> None:
         """Cancel the authoritative runtime when transport delivery is lost."""
@@ -166,7 +217,11 @@ class MediaSessionConnectionMixin:
         context.output.output_complete_emitted = False
         if should_pause_asr_for_playback(context.identity):
             await context.provider.pause_asr_for_playback(context.identity)
-        await self._cancel_reply_task(context, previous_fence)
+        await self._cancel_reply_task(
+            context,
+            previous_fence,
+            finalize_audible=False,
+        )
 
     async def on_session_closed(self, session: MediaBridgeSession) -> None:
         session_id = session.identity.session_id
@@ -214,9 +269,7 @@ class MediaSessionConnectionMixin:
 
         publisher = getattr(self, "session_recap_publisher", None)
         profile = context.runtime.mode_policy.runtime_profile
-        subject_category = (
-            profile.profile.subject_category if profile is not None else None
-        )
+        subject_category = profile.profile.subject_category if profile is not None else None
         subject_id = (
             profile.profile.active_subject_id
             if profile is not None
@@ -304,6 +357,7 @@ class MediaSessionConnectionMixin:
                 enrollment_task.cancel()
             self._cancel_owner_silence_timer(context, preserve_remaining=False)
             self._cancel_max_user_speech_watchdog(context)
+            self._cancel_speaking_stall_watchdog(context)
             context.projection.discard_provisional(None, "session_closed")
             context.projection.reset_phase(stream_epoch=context.stream_epoch)
             self._clear_pending_turn_state(context)
@@ -317,7 +371,14 @@ class MediaSessionConnectionMixin:
             if context.output.output_owner is not None
             else context.output.playback.current_fence or context.runtime.fence
         )
-        await self._cancel_reply_task(context, output_fence)
+        # Read before cancellation. Teardown can clear the speaking latch, and
+        # the opening cue has no script text yet.
+        unfinished_script = unfinished_safety_announcement(context)
+        await self._cancel_reply_task(
+            context,
+            output_fence,
+            finalize_audible=False,
+        )
         if context.turn_endpoint_task is not None and not context.turn_endpoint_task.done():
             context.turn_endpoint_task.cancel()
         if context.pending.turn_endpoint_timeout_handle is not None:
@@ -329,8 +390,44 @@ class MediaSessionConnectionMixin:
         await self._cancel_audio_pump(context)
         await self._record_daily_chat_usage(context)
         await self._publish_child_session_recap(context)
+        # Power loss and a network drop that never reconnects both land here.
+        # The opening cue counts: the script is committed before its text is
+        # appended, and the child has not heard it.
+        if unfinished_script is not None:
+            publish_crisis_self_interrupt(
+                getattr(self, "crisis_script_interrupt_publisher", None),
+                announced_text=unfinished_script,
+                crisis_reply_heard=context.crisis_reply_heard,
+                minor_user_id=active_subject_id(context),
+                session_id=context.identity.session_id,
+                turn_id=context.runtime.fence.turn_id,
+                generation_id=context.runtime.fence.generation_id,
+                tool_epoch=context.runtime.fence.tool_epoch,
+            )
+        # The round ends here for an explicit stop or a client close; a timed-out
+        # silence round already recorded itself before its closing marker.
+        await self._cancel_aigc_round_closing(context)
+        self._finish_aigc_round(context, close_reason=context.standby_reason or "session_closed")
         await context.runtime.close()
         await context.provider.close(context.identity)
+        ingress = context.ingress
+        logger.info(
+            "media_audio_buffers_cleared %s",
+            json.dumps(
+                {
+                    "session_id": context.identity.session_id,
+                    "stream_epoch": context.stream_epoch,
+                    "queue_frames": ingress.queue.qsize(),
+                    "pcm_tap_open": ingress.pcm_tap is not None,
+                    "denoiser_frames": int(ingress.denoiser.get_stats().get("total_frames", 0)),
+                    "silence_dropped_frames": ingress.listening_silence_dropped_frames,
+                    "silence_dropped_samples": ingress.listening_silence_dropped_samples,
+                    "overflow_dropped_frames": ingress.overflow_dropped_frames,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
         # The registry owns the transport session created by the bridge. Once
         # reconnect grace expires there is no replacement epoch left to claim
         # it, so remove it as well; otherwise stale identities accumulate in

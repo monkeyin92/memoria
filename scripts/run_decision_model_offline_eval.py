@@ -204,7 +204,11 @@ async def live_run(cases: list[dict[str, Any]]) -> dict[str, Any]:
     run_qwen = _env_on("DECISION_MODEL_EVAL_RUN_QWEN", "1")
     deepseek_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
     run_deepseek = bool(deepseek_key) and _env_on("DECISION_MODEL_EVAL_RUN_DEEPSEEK", "1")
-    deepseek_base = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip()
+    deepseek_base = (
+        os.environ.get("DEEPSEEK_API_URL")
+        or os.environ.get("DEEPSEEK_BASE_URL")
+        or "https://api.deepseek.com"
+    ).strip()
     deepseek_model = os.environ.get("DEEPSEEK_FAST_MODEL", "deepseek-flash").strip()
 
     dm = DecisionModelClient(

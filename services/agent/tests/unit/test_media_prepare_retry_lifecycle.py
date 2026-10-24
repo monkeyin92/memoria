@@ -20,6 +20,7 @@ from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.voice_core import media_session_turns
+from services.agent.src.voice_core.aigc_notice import AigcNoticeConfig
 from services.agent.src.voice_core.media_protocol import SessionIdentity
 from services.agent.src.voice_core.media_session import (
     MediaReplyChunk,
@@ -153,6 +154,10 @@ async def _scenario(
         metrics=MetricsRegistry(),
         owner_silence_timeout_s=100, max_user_speech_duration_s=60,
         turn_endpoint_grace_s=0, turn_endpoint_absolute_timeout_s=60,
+        # These tests drive the silence/commit lifecycle with no owner-silence
+        # transport path; AIGC round hooks are covered by test_aigc_notice.py.
+        aigc_notice_config=AigcNoticeConfig(enabled=False),
+        aigc_round_logger=None,
     )
     session = open_bridge_connection(bridge, identity).session
     context = await registry.open_session(identity)

@@ -3,27 +3,31 @@
 from __future__ import annotations
 
 import json
-import math
 import re
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import asyncpg
-import httpx
 
 from services.archive import memory_lexical_sql as lexical_sql
+from services.archive.claim_subjects import (
+    BoundChildSubjectIds,
+    bound_children,
+    claim_about_subject,
+    confirmed_evidence_subject,
+)
 from services.archive.domain import EvidenceEvent, EvidenceNotFoundError
 from services.archive.episode_consolidator import (
     EpisodeCandidate,
     EpisodeConsolidator,
     ExistingEpisode,
 )
-from services.archive.memory_catalog import SubjectCategoryUnresolved, _await_category
+from services.archive.extraction_gate import IgnoredReason, Withhold, extraction_gate
 from services.archive.memory_domain import (
     AccountWriteGuard,
     AccountWriteRejectedError,
@@ -49,6 +53,19 @@ from services.archive.memory_domain import (
     subject_lineage_predicates,
 )
 from services.archive.memory_lexical_sql import search_terms
+from services.archive.memory_vector_backfill import (
+    BackfillReport,
+    ClaimVectorBackfill,
+    MissingVectorCount,
+)
+from services.archive.memory_vector_cleanup import (
+    claim_vector_body,
+    ensure_vector_index,
+    forget_claim_vectors,
+    has_correction_review,
+    restore_claim_vector,
+    upsert_document_vector,
+)
 from services.archive.memory_write_policy import (
     SINGLE_VALUE_PREDICATES,
     MemoryWriteDecision,
@@ -60,16 +77,6 @@ from services.common.evidence_policy import contribution_for
 from services.common.redaction import redact_pii
 
 _SINGLE_VALUE_PREDICATES = SINGLE_VALUE_PREDICATES
-
-
-def _confirmed_evidence_subject(event: EvidenceEvent) -> str | None:
-    """The speaker the evidence actually names, or None when it names nobody.
-
-    A blank subject stays unclaimed; a named subject folds only against its own lineage.
-    """
-
-    subject_id = event.subject_id.strip() if isinstance(event.subject_id, str) else ""
-    return subject_id or None
 
 
 def _bind_dollar(parameters: list[Any]) -> Callable[[str], str]:
@@ -177,64 +184,6 @@ def _sensitivity(value: str) -> MemorySensitivity:
     return "personal"
 
 
-class QwenMemoryEmbedder:
-    def __init__(
-        self,
-        *,
-        endpoint: str,
-        api_key: str,
-        model: str,
-        dimensions: int,
-        timeout_s: float = 5.0,
-        transport: httpx.AsyncBaseTransport | None = None,
-    ) -> None:
-        if not endpoint.startswith(("http://", "https://")):
-            raise ValueError("memory embedding endpoint must use HTTP(S)")
-        if not api_key or not model.strip() or timeout_s <= 0 or not 1 <= dimensions <= 2000:
-            raise ValueError(
-                "memory embedding API key, model, dimensions 1..2000 and timeout are required"
-            )
-        self._endpoint = endpoint
-        self._api_key = api_key
-        self.model = model.strip()
-        self.dimensions = dimensions
-        self._timeout_s = timeout_s
-        self._transport = transport
-
-    async def embed(self, text: str) -> tuple[float, ...]:
-        if not text.strip():
-            raise ValueError("memory embedding text must not be blank")
-        try:
-            async with httpx.AsyncClient(
-                timeout=self._timeout_s,
-                transport=self._transport,
-            ) as client:
-                response = await client.post(
-                    self._endpoint,
-                    headers={"Authorization": f"Bearer {self._api_key}"},
-                    json={
-                        "model": self.model,
-                        "input": text,
-                        "encoding_format": "float",
-                        "dimensions": self.dimensions,
-                    },
-                )
-                response.raise_for_status()
-                values = response.json()["data"][0]["embedding"]
-            embedding = tuple(float(value) for value in values)
-        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
-            raise MemoryEmbeddingUnavailableError(
-                "memory embedding service returned an invalid response"
-            ) from exc
-        if len(embedding) != self.dimensions or any(
-            not math.isfinite(value) for value in embedding
-        ):
-            raise MemoryEmbeddingUnavailableError(
-                "memory embedding service returned an invalid vector dimension"
-            )
-        return embedding
-
-
 class PostgresMemoryCatalog:
     def __init__(
         self,
@@ -252,6 +201,7 @@ class PostgresMemoryCatalog:
         evidence_subject_category_resolver: (
             Callable[[EvidenceEvent], str | None | Awaitable[str | None]] | None
         ) = None,
+        bound_child_subject_ids: BoundChildSubjectIds | None = None,
         capture_evidence_projector: Callable[[EvidenceEvent], Awaitable[bool]] | None = None,
         outbox_lease_s: float = 300.0,
         outbox_retry_base_s: float = 2.0,
@@ -288,16 +238,17 @@ class PostgresMemoryCatalog:
         # Compilation must ask about the evidence subject.  Callers that only
         # know the account owner keep the account resolver; it is not a guess
         # that every subject is that owner.
-        self._evidence_subject_category_resolver = (
-            evidence_subject_category_resolver
-            or (lambda event: self._subject_category_resolver(event.account_id))
+        self._evidence_subject_category_resolver = evidence_subject_category_resolver or (
+            lambda event: self._subject_category_resolver(event.account_id)
         )
+        self._bound_child_subject_ids = bound_child_subject_ids
         self._capture_evidence_projector = capture_evidence_projector
         self._outbox_lease_s = outbox_lease_s
         self._outbox_retry_base_s = outbox_retry_base_s
         self._outbox_retry_max_s = outbox_retry_max_s
         self._worker_id = f"memory-compiler:{uuid.uuid4()}"
         self._vector_enabled = False
+        self._vector_backfill: ClaimVectorBackfill | None = None
         self._shared_pool = pool
         self._pool: asyncpg.Pool | None = None
         self._compiler_pool: asyncpg.Pool | None = None
@@ -322,11 +273,14 @@ class PostgresMemoryCatalog:
                 )
             )
             if self._vector_enabled and self._embedder is not None:
-                await self._ensure_vector_index(connection)
+                await ensure_vector_index(connection, self._embedder)
         if self._require_vector and (not self._vector_enabled or self._embedder is None):
             await pool.close()
             raise RuntimeError("production memory catalog requires pgvector and an embedder")
         self._pool = pool
+        if self._vector_enabled and self._embedder is not None:
+            # Only a deployment with pgvector and an embedder can repair.
+            self._vector_backfill = ClaimVectorBackfill(pool, self._embedder)
         if self._compiler_dsn is not None:
             compiler_pool = await asyncpg.create_pool(
                 self._compiler_dsn, min_size=1, max_size=2, command_timeout=15
@@ -363,30 +317,54 @@ class PostgresMemoryCatalog:
                 raise
             self._compiler_pool = compiler_pool
 
-    async def _ensure_vector_index(self, connection: asyncpg.Connection) -> None:
-        if self._embedder is None:
-            return
-        digest = sha256(f"{self._embedder.model}:{self._embedder.dimensions}".encode()).hexdigest()[
-            :12
-        ]
-        index_name = f"idx_memory_vector_hnsw_{digest}"
-        model = self._embedder.model.replace("'", "''")
-        dimensions = self._embedder.dimensions
-        await connection.execute(
-            f"""
-            CREATE INDEX IF NOT EXISTS {index_name}
-            ON memory_vector_documents
-            USING hnsw ((embedding::vector({dimensions})) vector_cosine_ops)
-            WHERE embedding_model = '{model}'
-              AND embedding_dimensions = {dimensions}
-            """
-        )
-
     async def _ready_pool(self) -> asyncpg.Pool:
         await self.initialize()
         if self._pool is None:  # pragma: no cover
             raise RuntimeError("PostgreSQL memory catalog is not initialized")
         return self._pool
+
+    @property
+    def vector_enabled(self) -> bool:
+        """Whether this deployment has pgvector and an embedder.
+
+        The periodic repair and background scheduling both key off this flag.
+        """
+        return self._vector_enabled and self._embedder is not None
+
+    async def wait_for_vector_backfills(self) -> None:
+        if self._vector_backfill is not None:
+            await self._vector_backfill.wait()
+
+    async def count_missing_claim_vectors(self, *, account_id: str) -> MissingVectorCount:
+        """Read-only count of claims missing the current model's vector; zero when off."""
+
+        if self._vector_backfill is None:
+            return MissingVectorCount()
+        return await self._vector_backfill.count(account_id=account_id)
+
+    async def backfill_missing_claim_vectors(
+        self, *, account_ids: Sequence[str], limit: int
+    ) -> BackfillReport:
+        """Repair one round; the module rechecks every row under lock before writing."""
+
+        if self._vector_backfill is None:
+            return BackfillReport()
+        return await self._vector_backfill.backfill_accounts(account_ids=account_ids, limit=limit)
+
+    def _schedule_claim_vector_backfill(
+        self, *, account_id: str, items: tuple[MemorySearchItem, ...]
+    ) -> None:
+        """Queue repairs so recall never waits on embedding.
+
+        A task failure only logs a count; the search result is unchanged."""
+
+        if self._vector_backfill is None:
+            return
+        # Duplicate searches share the same in-flight key, so one claim is repaired once.
+        self._vector_backfill.schedule(
+            account_id=account_id,
+            claim_ids=(uuid.UUID(item.item_id) for item in items if item.kind == "claim"),
+        )
 
     @staticmethod
     async def _scope(connection: asyncpg.Connection, account_id: str) -> None:
@@ -543,43 +521,21 @@ class PostgresMemoryCatalog:
                     error_code=type(exc).__name__,
                 )
                 return "failed"
-        contribution = contribution_for(event)
-        if not contribution.accepted:
-            async with pool.acquire() as connection, connection.transaction():
-                await self._scope(connection, account_id)
-                await self._record_receipt(connection, event, outcome="ignored")
-                await self._complete_outbox(
-                    connection,
-                    outbox_id,
-                    fencing_token=fencing_token,
-                )
-            return "ignored"
+        if not contribution_for(event).accepted:
+            return await self._ignore(pool, event, outbox_id, fencing_token=fencing_token)
         try:
+            gate = await extraction_gate(self._evidence_subject_category_resolver, event)
+            if isinstance(gate, Withhold):
+                return await self._ignore(
+                    pool, event, outbox_id, fencing_token=fencing_token, reason=gate.ignored_reason
+                )
             extraction = await self._extractor.extract(event)
             if not isinstance(extraction, MemoryExtraction):
                 raise TypeError("memory extractor returned an invalid result")
-            try:
-                subject_category = await _await_category(
-                    self._evidence_subject_category_resolver(event)
-                )
-            except SubjectCategoryUnresolved:
-                # Identity could not classify this subject.  Do not project the
-                # row as the account owner (and do not guess adult); the archive
-                # evidence stays, and only this compile is withheld.  None is
-                # "category unknown" and still compiles on the non-minor path.
-                async with pool.acquire() as connection, connection.transaction():
-                    await self._scope(connection, account_id)
-                    await self._record_receipt(connection, event, outcome="ignored")
-                    await self._complete_outbox(
-                        connection,
-                        outbox_id,
-                        fencing_token=fencing_token,
-                    )
-                return "ignored"
             extraction = filter_extraction_for_subject(
                 event,
                 extraction,
-                subject_category=subject_category,
+                subject_category=gate.subject_category,
             )
             async with pool.acquire() as connection, connection.transaction():
                 await self._scope(connection, account_id)
@@ -591,7 +547,7 @@ class PostgresMemoryCatalog:
                         event=event,
                         extraction=extraction,
                     ),
-                    subject_category=subject_category,
+                    subject_category=gate.subject_category,
                 )
                 await self._write_extraction(connection, event, extraction)
                 await self._apply_memory_write_decision(
@@ -621,11 +577,24 @@ class PostgresMemoryCatalog:
                 max_attempts=max_attempts,
                 error_code=type(exc).__name__,
             )
-            if self._fail_on_embedding_error and isinstance(
-                exc, MemoryEmbeddingUnavailableError
-            ):
+            if self._fail_on_embedding_error and isinstance(exc, MemoryEmbeddingUnavailableError):
                 raise
             return "failed"
+
+    async def _ignore(
+        self,
+        pool: asyncpg.Pool,
+        event: EvidenceEvent,
+        outbox_id: uuid.UUID,
+        *,
+        fencing_token: int,
+        reason: IgnoredReason | None = None,
+    ) -> str:
+        async with pool.acquire() as connection, connection.transaction():
+            await self._scope(connection, event.account_id)
+            await self._record_receipt(connection, event, outcome="ignored", ignored_reason=reason)
+            await self._complete_outbox(connection, outbox_id, fencing_token=fencing_token)
+        return "ignored"
 
     async def _project_capture_evidence(self, event: EvidenceEvent) -> None:
         candidate = event.payload.get("memory_capture_candidate_v1")
@@ -699,6 +668,8 @@ class PostgresMemoryCatalog:
         event: EvidenceEvent,
         extraction: MemoryExtraction,
     ) -> None:
+        evidence_subject_id = confirmed_evidence_subject(event)
+        bound_child_ids = await bound_children(self._bound_child_subject_ids, event.account_id)
         person_ids: dict[str, uuid.UUID] = {}
         for person in extraction.people:
             person_id = _stable_uuid("person", event.account_id, person.canonical_key)
@@ -755,9 +726,7 @@ class PostgresMemoryCatalog:
                     )
                 )[:8000],
                 domain_category=(
-                    extraction.claims[0].domain_category
-                    if extraction.claims
-                    else "daily_life"
+                    extraction.claims[0].domain_category if extraction.claims else "daily_life"
                 ),
                 entity_ids=(person_id,),
                 source_event_ids=(event.event_id,),
@@ -772,9 +741,7 @@ class PostgresMemoryCatalog:
             )
 
         for index, relationship in enumerate(extraction.relationships):
-            person_id = person_ids.get(relationship.person_key) or _stable_uuid(
-                "person", event.account_id, relationship.person_key
-            )
+            person_id = person_ids.get(relationship.person_key) or _stable_uuid("person", event.account_id, relationship.person_key)
             await connection.execute(
                 """
                 INSERT INTO relationships (
@@ -803,6 +770,7 @@ class PostgresMemoryCatalog:
                 for key in sorted(entity_keys)
             )
             sensitivity = _sensitivity(claim.sensitive_domain)
+            claim_subject_ids = await claim_about_subject(connection, account_id=event.account_id, evidence_subject_id=evidence_subject_id, subject_key=claim.subject_key, bound_child_ids=bound_child_ids)
             await connection.execute(
                 """
                 INSERT INTO memory_claims (
@@ -837,6 +805,7 @@ class PostgresMemoryCatalog:
                 claim.salience,
                 sensitivity,
             )
+            await connection.executemany("INSERT INTO memory_claim_subjects (account_id, claim_id, subject_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING", [(event.account_id, claim_id, subject_id) for subject_id in claim_subject_ids])
             await self._insert_search_document(
                 connection,
                 account_id=event.account_id,
@@ -844,10 +813,12 @@ class PostgresMemoryCatalog:
                 kind="claim",
                 memory_kind="semantic",
                 title=claim.value[:80],
-                body=(
-                    f"subject:{claim.subject_key} predicate:{claim.predicate} "
-                    f"value:{claim.value} context:{redact_pii(str(event.payload.get('text') or ''))[:240]}"
-                )[:8000],
+                body=claim_vector_body(
+                    claim.subject_key,
+                    claim.predicate,
+                    claim.value,
+                    context=redact_pii(str(event.payload.get("text") or ""))[:240],
+                ),
                 domain_category=claim.domain_category,
                 entity_ids=entity_ids,
                 source_event_ids=(event.event_id,),
@@ -863,7 +834,7 @@ class PostgresMemoryCatalog:
             # A named subject folds only its own lineage.  A blank subject
             # folds only other unclaimed rows: passing no subject here would
             # mark the account owner's claims as conflicts too.
-            claim_subject_id = _confirmed_evidence_subject(event)
+            claim_subject_id = confirmed_evidence_subject(event)
             await self._refresh_claim_conflicts(
                 connection,
                 account_id=event.account_id,
@@ -1056,7 +1027,7 @@ class PostgresMemoryCatalog:
         # conflict with other unclaimed rows, but it must not inherit a value
         # that already belongs to a named subject, and it must not be stored
         # as the account owner: NULL means "no confirmed speaker".
-        subject_id = _confirmed_evidence_subject(event) or ""
+        subject_id = confirmed_evidence_subject(event) or ""
         lineage = (
             "(SELECT lineage.subject_id FROM archive_evidence_events lineage"
             " WHERE lineage.event_id = memory_claims.source_event_id"
@@ -1530,44 +1501,20 @@ class PostgresMemoryCatalog:
             """,
             [(document_id, account_id, source_event_id) for source_event_id in source_event_ids],
         )
-        if self._vector_enabled and self._embedder is not None:
-            try:
-                embedding = await self._embedder.embed(
-                    " ".join(part for part in (title, body) if part)
-                )
-            except MemoryEmbeddingUnavailableError:
-                await connection.execute(
-                    """
-                    DELETE FROM memory_vector_documents
-                    WHERE item_id = $1 AND account_id = $2
-                      AND embedding_model = $3 AND embedding_dimensions = $4
-                    """,
-                    item_id,
-                    account_id,
-                    self._embedder.model,
-                    self._embedder.dimensions,
-                )
-                if self._fail_on_embedding_error:
-                    raise
-                return
-            vector = json.dumps(embedding, separators=(",", ":"))
-            await connection.execute(
-                """
-                INSERT INTO memory_vector_documents (
-                    item_id, account_id, embedding_model, embedding_dimensions,
-                    embedding, source_event_id
-                ) VALUES ($1, $2, $3, $4, $5::vector, $6)
-                ON CONFLICT (item_id, embedding_model, embedding_dimensions) DO UPDATE
-                SET embedding = EXCLUDED.embedding,
-                    source_event_id = EXCLUDED.source_event_id,
-                    created_at = now()
-                """,
-                item_id,
-                account_id,
-                self._embedder.model,
-                self._embedder.dimensions,
-                vector,
-                source_event_ids[0],
+        corrected = self._vector_enabled and kind == "claim" and await has_correction_review(
+            connection, item_id, account_id
+        )
+        if self._vector_enabled and self._embedder is not None and not corrected:
+            # A corrected claim is embedded by its review replay, not here.
+            await upsert_document_vector(
+                connection,
+                self._embedder,
+                item_id=item_id,
+                account_id=account_id,
+                source_event_id=source_event_ids[0],
+                title=title,
+                body=body,
+                fail_on_embedding_error=self._fail_on_embedding_error,
             )
 
     async def _record_receipt(
@@ -1575,20 +1522,22 @@ class PostgresMemoryCatalog:
         connection: asyncpg.Connection,
         event: EvidenceEvent,
         *,
-        outcome: str,
+        outcome: Literal["compiled", "ignored"],
         extractor_version: str = "",
+        ignored_reason: IgnoredReason | None = None,
     ) -> None:
         await connection.execute(
             """
             INSERT INTO memory_compile_receipts (
-                event_id, account_id, extractor_version, outcome
-            ) VALUES ($1, $2, $3, $4)
+                event_id, account_id, extractor_version, outcome, ignored_reason
+            ) VALUES ($1, $2, $3, $4, $5)
             ON CONFLICT DO NOTHING
             """,
             event.event_id,
             event.account_id,
             extractor_version or self._extractor.version,
             outcome,
+            ignored_reason,
         )
 
     @staticmethod
@@ -1664,7 +1613,8 @@ class PostgresMemoryCatalog:
 
             whole = like(query.text.strip())
             sparse = [
-                like(term) for term in search_terms(query.text, with_embedding=embedding is not None)
+                like(term)
+                for term in search_terms(query.text, with_embedding=embedding is not None)
             ]
             text_match = lexical_sql.text_match(text_index, whole, sparse)
             if embedding is None or embedder is None:
@@ -1788,7 +1738,9 @@ class PostgresMemoryCatalog:
                 """,
                 *parameters,
             )
-        return MemorySearchResult(items=tuple(self._search_item(row) for row in rows))
+        items = tuple(self._search_item(row) for row in rows)
+        self._schedule_claim_vector_backfill(account_id=query.account_id, items=items)
+        return MemorySearchResult(items=items)
 
     async def timeline(
         self,
@@ -2065,8 +2017,7 @@ class PostgresMemoryCatalog:
             )
             if row is None:
                 raise EvidenceNotFoundError(command.claim_id)
-            previous_value = str(row["value"])
-            value = (command.corrected_value or previous_value).strip()
+            value = (command.corrected_value or str(row["value"])).strip()
             status = _REVIEW_STATUS[command.action]
             review_event = EvidenceEvent(
                 event_id=str(uuid.uuid4()),
@@ -2078,7 +2029,6 @@ class PostgresMemoryCatalog:
                 payload={
                     "target_id": command.claim_id,
                     "action": command.action,
-                    "previous_value": previous_value,
                     **({"corrected_value": value} if command.action == "correct" else {}),
                 },
                 # The review inherits the reviewed claim's own speaker instead
@@ -2096,6 +2046,8 @@ class PostgresMemoryCatalog:
                 value=value,
                 review_event_id=review_event.event_id,
                 subject_id=command.subject_id,
+                restore_vector=command.action == "confirm",
+                replace_vector=command.action == "correct",
             )
         return ReviewedClaim(
             claim_id=command.claim_id,
@@ -2109,6 +2061,7 @@ class PostgresMemoryCatalog:
         connection: asyncpg.Connection,
         event: EvidenceEvent,
     ) -> None:
+        """Rebuild one review; a correction re-embeds and an older one never rewinds."""
         target_id = str(event.payload.get("target_id", ""))
         action = str(event.payload.get("action", ""))
         try:
@@ -2118,7 +2071,7 @@ class PostgresMemoryCatalog:
             raise ValueError("invalid memory review evidence") from exc
         row = await connection.fetchrow(
             """
-            SELECT value, source_event_id FROM memory_claims
+            SELECT value, source_event_id, review_event_id FROM memory_claims
             WHERE claim_id = $1 AND account_id = $2
             FOR UPDATE
             """,
@@ -2136,6 +2089,17 @@ class PostgresMemoryCatalog:
             value = str(event.payload.get("corrected_value", "")).strip()
             if not value:
                 raise ValueError("corrected memory value must not be blank")
+            applied = await connection.fetchrow(
+                "SELECT occurred_at FROM archive_evidence_events"
+                " WHERE event_id = $1 AND account_id = $2",
+                row["review_event_id"],
+                event.account_id,
+            )
+            if applied is not None and (
+                cast(datetime, applied["occurred_at"]),
+                str(row["review_event_id"]),
+            ) > (event.occurred_at, event.event_id):
+                return
         await self._write_review_projection(
             connection,
             account_id=event.account_id,
@@ -2146,6 +2110,7 @@ class PostgresMemoryCatalog:
             value=value,
             review_event_id=event.event_id,
             subject_id=event.subject_id,
+            replace_vector=action == "correct",
         )
 
     async def _write_review_projection(
@@ -2160,6 +2125,8 @@ class PostgresMemoryCatalog:
         value: str,
         review_event_id: str,
         subject_id: str | None = None,
+        restore_vector: bool = False,
+        replace_vector: bool = False,
     ) -> None:
         source = await connection.fetchrow(
             """
@@ -2181,9 +2148,14 @@ class PostgresMemoryCatalog:
             account_id,
         )
         source_text = redact_pii(str(source_event["text"] or "") if source_event else "")[:240]
-        contextual_body = (
-            f"subject:{subject_key} predicate:{predicate} value:{value} context:{source_text}"
-        )[:8000]
+        corrected = replace_vector or await has_correction_review(connection, claim_id, account_id)
+        # Keep the replaced wording out of the body, lexical row and vector.
+        contextual_body = claim_vector_body(
+            subject_key,
+            predicate,
+            value,
+            context=None if corrected else source_text,
+        )
         episode_ids = await connection.fetch(
             """
             SELECT episode_id FROM episode_evidence
@@ -2233,7 +2205,7 @@ class PostgresMemoryCatalog:
                   SELECT document_id FROM memory_search_document_sources
                   WHERE account_id = $2 AND source_event_id = $3
               )
-              {_SCOPED_DOCUMENT_CASCADE_GUARD.replace('?', '$4') if subject_id is not None else ""}
+              {_SCOPED_DOCUMENT_CASCADE_GUARD.replace("?", "$4") if subject_id is not None else ""}
             """,
             projection_status,
             account_id,
@@ -2271,6 +2243,22 @@ class PostgresMemoryCatalog:
             predicate=predicate,
             subject_id=subject_id,
         )
+        await forget_claim_vectors(connection, status, claim_id, account_id, self._vector_enabled, review_event_id)
+        if replace_vector or (restore_vector and status == "confirmed"):
+            # A correction replaces every model's copy; a confirmation only
+            # restores the one a retraction removed.
+            await restore_claim_vector(
+                connection,
+                self._embedder,
+                claim_id=claim_id,
+                account_id=account_id,
+                source_event_id=source_event_id,
+                title=title,
+                body=contextual_body,
+                vector_enabled=self._vector_enabled,
+                fail_on_embedding_error=self._fail_on_embedding_error,
+                replace_vectors=replace_vector,
+            )
 
     @staticmethod
     async def _insert_evidence(
@@ -2377,6 +2365,9 @@ class PostgresMemoryCatalog:
         )
 
     async def close(self) -> None:
+        if self._vector_backfill is not None:
+            await self._vector_backfill.close()
+            self._vector_backfill = None
         if self._compiler_pool is not None:
             await self._compiler_pool.close()
             self._compiler_pool = None

@@ -27,7 +27,7 @@ class DoubaoVoiceSpec:
 DOUBAO_VOICE_CATALOG: tuple[DoubaoVoiceSpec, ...] = (
     DoubaoVoiceSpec(
         profile_id="warm_companion",
-        display_name="阳光青年 2.0",
+        display_name="开朗姐姐 2.0",
         speaker_id=DESIGNED_VOICE_SPEAKERS["warm_companion"],
         role="default_companion",
         description="明亮、自然，像可靠的同龄朋友",

@@ -24,7 +24,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from services.agent.src.prompts import AI_IDENTITY_RULE_TRANSPARENT
 from services.archive.memory_domain import MemoryCatalogPort, MemorySearchQuery, MemorySearchResult
 from services.archive.recall_planner import RecallPlanner
-from services.common.companion_response_safety import fixed_companion_reply
 from services.common.companions import (
     COMPANION_STYLE_VERSION,
     DESIGNED_VOICE_MODEL,
@@ -37,9 +36,9 @@ from services.common.crisis_policy import (
     log_fixed_safety_reply,
     route_crisis,
 )
+from services.common.failure_log import failure_log
 from services.common.realtime_information import (
     current_local_time,
-    fixed_realtime_reply,
     realtime_instruction,
 )
 from services.common.redaction import redact_pii
@@ -76,6 +75,7 @@ from services.control_api.app.subject_session_recall import (
     authoritative_recall_context,
     session_epoch_from_runtime_profile,
 )
+from services.control_api.app.weather_turn import fixed_reply_for_query, remember_user_query
 from services.digital_self.domain import (
     CognitiveClaimManifestEntry,
     DecisionCaseManifestEntry,
@@ -154,20 +154,6 @@ _RECALL_CONTEXT_TOTAL_MAX_CHARS = 960
 
 def _local_now(settings: ControlSettings) -> datetime:
     return current_local_time(settings.memoria_timezone)
-
-def _fixed_reply_for_query(*, query: str, frozen: FrozenMode, now: datetime) -> str | None:
-    companion = companion_definition(frozen.companion_style_id)
-    safety_reply = fixed_companion_reply(
-        query=query,
-        is_companion=frozen.interaction_mode == "companion",
-        display_name=companion.display_name if companion is not None else None,
-        style_description=companion.style_description if companion is not None else None,
-    )
-    if safety_reply is not None:
-        return safety_reply
-    if frozen.interaction_mode == "companion":
-        return fixed_realtime_reply(query=query, now=now)
-    return None
 
 def _with_fixed_reply(plan: ResponsePlan, reply: str | None) -> ResponsePlan:
     if reply is None:
@@ -642,9 +628,7 @@ async def _current_persistent_runtime_profile(
         )
     except (PersistentSessionNotFound, PersistentSessionUnavailable) as exc:
         logger.warning(
-            "persistent Runtime Profile unavailable session_id=%s reason=%s",
-            session_id,
-            exc,
+            "persistent Runtime Profile unavailable session_id=%s %s", session_id, failure_log(exc)
         )
         raise HTTPException(
             status_code=503,
@@ -1009,9 +993,9 @@ async def action_policy(
         )
     except (PersistentSessionNotFound, PersistentSessionUnavailable) as exc:
         logger.warning(
-            "action-policy Runtime Profile unavailable session_id=%s reason=%s",
+            "action-policy Runtime Profile unavailable session_id=%s %s",
             body.session_id,
-            exc,
+            failure_log(exc),
         )
         raise HTTPException(
             status_code=503,
@@ -1084,9 +1068,9 @@ async def action_policy(
         ) from exc
     except (PersistentSessionNotFound, PersistentSessionUnavailable) as exc:
         logger.warning(
-            "action-policy authority unavailable session_id=%s reason=%s",
+            "action-policy authority unavailable session_id=%s %s",
             body.session_id,
-            exc,
+            failure_log(exc),
         )
         raise HTTPException(
             status_code=503,
@@ -1176,9 +1160,9 @@ async def commit_tool_effect(
         ) from exc
     except (PersistentSessionNotFound, PersistentSessionUnavailable) as exc:
         logger.warning(
-            "tool effect authority unavailable session_id=%s reason=%s",
+            "tool effect authority unavailable session_id=%s %s",
             body.session_id,
-            exc,
+            failure_log(exc),
         )
         raise HTTPException(
             status_code=503,
@@ -1226,7 +1210,7 @@ async def reconcile_tool_effect(
             idempotency_key=body.idempotency_key,
         )
     except Exception as exc:
-        logger.warning("tool effect reconcile authority unavailable: %s", exc)
+        logger.warning("tool effect reconcile authority unavailable %s", failure_log(exc))
         raise HTTPException(
             status_code=503,
             detail={"code": "tool_effect_authority_unknown", "state": "unknown"},
@@ -2130,6 +2114,12 @@ async def response_plan(
     evolution_protocol = (
         _EVOLUTION_PROTOCOL_V1 if evolution_protocol_header == _EVOLUTION_PROTOCOL_V1 else ""
     )
+    # Safety reads only the current utterance. Run it before the cache, scope,
+    # recall and companion context: none may delay it or answer a crisis turn.
+    crisis = await _route_crisis_with_bounded_evidence(request, body.query)
+    script = crisis.script
+    if script is not None:
+        log_fixed_safety_reply(logger, crisis)
     cache = _response_plan_cache(request)
     # Resolve the subject before the cache key.  A plan computed for the
     # previous person must not answer after the device switches subject, even
@@ -2158,31 +2148,30 @@ async def response_plan(
             # the cache hit behind the same deletion fence as a fresh plan.
             with account_gate.sync_read(account_id):
                 if await asyncio.to_thread(evolution_store.is_account_deleting, account_id):
-                    raise HTTPException(status_code=409, detail="account deletion is in progress")
+                    raise HTTPException(
+                        status_code=409, detail="account deletion is in progress"
+                    )
                 cached = await cache.get(key, fingerprint)
                 if cached is not None:
-                    if await _cached_plan_is_still_authorized(
+                    if script is None and await _cached_plan_is_still_authorized(
                         request,
                         session_id=body.session_id,
                         actor_id=account_id,
                     ):
+                        remember_user_query(
+                            request, session_id=body.session_id, query=body.query
+                        )
                         return cached
-                    # The session's authorization is gone, so the snapshot is
-                    # private data this process must stop serving AND stop
-                    # holding; the fresh pass below answers conservatively.
+                    # A crisis turn must not reuse a non-crisis snapshot, and a
+                    # withdrawn session's plan is private data to drop.
                     await cache.invalidate(key)
         except AccountDeletingError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         now = _local_now(settings)
-        crisis = await _route_crisis_with_bounded_evidence(request, body.query)
-        script = crisis.script
-        fixed_reply = script.display if script is not None else _fixed_reply_for_query(
-            query=body.query,
-            frozen=frozen,
-            now=now,
+        fixed_reply = script.display if script is not None else fixed_reply_for_query(
+            query=body.query, frozen=frozen, now=now, settings=settings,
+            request=request, session_id=body.session_id,
         )
-        if script is not None:
-            log_fixed_safety_reply(logger, crisis)
         # The subject was resolved once, before the cache key, and decides the
         # category, the consent lookup, the memory scope and the notification
         # target -- through the one resolver every Agent-facing seam shares.
@@ -2238,13 +2227,17 @@ async def response_plan(
                 )
                 .instruction
             )
-        merged_recall = await authoritative_recall_context(
-            request,
-            subject_id=scope.subject_id,
-            session_id=body.session_id,
-            session_epoch=scope.session_epoch,
-            retention_allowed=retention_allowed,
-            client_items=tuple(body.recall_context),
+        merged_recall = (
+            await authoritative_recall_context(
+                request,
+                subject_id=scope.subject_id,
+                session_id=body.session_id,
+                session_epoch=scope.session_epoch,
+                retention_allowed=retention_allowed,
+                client_items=tuple(body.recall_context),
+            )
+            if fixed_reply is None
+            else ()
         )
         companion_items, persona_capsule = (
             await _companion_items(
@@ -2322,10 +2315,14 @@ async def response_plan(
         plan = _with_fixed_reply(plan, fixed_reply)
         # A custom persona (cu_*) contributes the SAME CompanionDefinition the
         # built-in catalogue would; the old bio free-text form is gone.
-        custom_persona = await _custom_persona_definition(
-            request,
-            persona_id=frozen.companion_style_id,
-            owner_person_id=account_id,
+        custom_persona = (
+            await _custom_persona_definition(
+                request,
+                persona_id=frozen.companion_style_id,
+                owner_person_id=account_id,
+            )
+            if script is None
+            else None
         )
         try:
             with account_gate.sync_read(account_id):

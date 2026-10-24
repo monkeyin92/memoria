@@ -47,12 +47,20 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now memoria-freeze-dump-cleanup.timer
 ~~~
 
+容器日志（control-api 与 voice-core-media-bridge，`/var/log/memoria`）由 `memoria-log-rotate.timer` 每小时轮转：每个服务最坏约 160 MiB 未压缩，两个服务约 320 MiB；另有 Docker 本地缓存每个容器 30 MiB，在 `/var/lib/docker/containers/<id>/` 下，随容器删除。数字在 `infra/memoria-logs.logrotate` 与 `docker-compose.production.yml`。空间清理不动这个目录；安装、停写、清理与回滚只按 `docs/runbooks/release-rollback.md`「容器日志落盘」做，执行同样需另行授权。
+
 儿童记忆两层的到期物理删除不装 systemd timer。control-api 启动时跑一次，之后每 24 小时跑一次（`ChildLayerRetentionWorker`，`services/memory_scope/child_layer_retention.py`）：先删已过 `retention_expires_at` 的 `kind=dialogue_summary`，再删连续 180 天无活跃的 `kind=child_archive`。读不到 `guardian_subject_activity` 时跳过档案、照删摘要。日志只有计数，不含使用人 id。control-api 停机的日子不会补跑，下一次启动会补上。清除前 30 天、7 天的家长提醒还没有发送，180 天清除照常执行。
 
 确认它在跑：
 
 ~~~bash
 docker compose -f docker-compose.production.yml logs control-api | grep 'child layer retention'
+~~~
+
+这条只读当前容器的 Docker 缓存。跨重建的历史在主机文件里：
+
+~~~bash
+sudo sh -c "zgrep -h 'child layer retention' /var/log/memoria/control-api.log* | sort"
 ~~~
 
 每一轮两行，形如 `child layer retention kind=dialogue_summary subjects=0 failed=0 memory_records=0 memory_status_events=0`；`kind=child_archive ... skipped reason=...` 表示档案这一轮没有删。手工核对用一次性 Control API 容器，先不带 `--apply` 看候选，带 `--apply` 才删；重复 `--apply` 删除计数为零、退出码 0，`failed` 非零时退出码 1。生产 compose 需要 `MEMORIA_RELEASE_TAG` 和 `MEMORIA_RELEASE_COMMIT`，从运行中的 control-api 容器导出后再跑：
@@ -63,6 +71,88 @@ export MEMORIA_RELEASE_TAG="$(docker exec "$control" printenv MEMORIA_RELEASE_TA
 export MEMORIA_RELEASE_COMMIT="$(docker exec "$control" printenv MEMORIA_RELEASE_COMMIT)"
 docker compose -f docker-compose.production.yml run --rm --no-deps control-api /app/.venv/bin/python -m scripts.expire_child_dialogue_summaries
 docker compose -f docker-compose.production.yml run --rm --no-deps control-api /app/.venv/bin/python -m scripts.expire_idle_child_archive
+~~~
+
+## 记忆向量缺口巡检
+
+家长纠正记忆或编译期嵌入失败时，best-effort 路径会提交审核、删掉旧向量，却可能没有写回当前模型的新向量；这类 claim 只缺向量通道，词法召回仍在。control-api 的 `MemoryVectorBackfillWorker` 默认每 3600 秒跑一轮（`MEMORIA_MEMORY_VECTOR_BACKFILL_INTERVAL_S`），每轮最多处理 `MEMORIA_MEMORY_VECTOR_BACKFILL_BATCH` 条（默认 200），只按 `memory_claims` 当前值重嵌，不读原话、历史 payload 或 search 行里的 `context:` 段。向量表或 embedder 未配置时不启动，日志里没有任何 ID。
+
+巡检脚本是只读的，只做 SELECT；输出一行 JSON 计数，`missing` 大于 0 时退出码 1，无缺口 0，脚本自身错误 3（同 `disk_patrol.sh` 的约定）。`unlinked_child_claims` 是观察项，不影响退出码：它统计未撤回、源证据仍在、`memory_claim_subjects` 里没有任何关联行，且 `subject_key` 指向孩子的 claim。指向孩子的判据与编译期关联一致：`subject_key` 以 `son:`/`daughter:` 开头（不区分大小写、忽略首尾空白），或同账户 `person_entities` 里 `canonical_key = subject_key` 且 `relationship_to_owner` 为 `son`/`daughter`。现在编译时多孩全关联：一条家长说的「儿子/女儿」记忆会关联账户下所有绑定孩子，新编译的 claim 不会因此留下未关联行；升级前已经留下的未关联行不会自动回填。剩下的未关联只表示当时身份服务不可用、编译时没有绑定孩子等没关联上的情况，这类记忆在删孩子时不会被连带删除。非 0 仍只用于观察，不报警、也不改退出码；只有向量缺口 `missing` 决定 1。
+
+~~~bash
+control=memoria-control-api-1
+export MEMORIA_RELEASE_TAG="$(docker exec "$control" printenv MEMORIA_RELEASE_TAG)"
+export MEMORIA_RELEASE_COMMIT="$(docker exec "$control" printenv MEMORIA_RELEASE_COMMIT)"
+docker compose -f docker-compose.production.yml run --rm --no-deps control-api /app/.venv/bin/python -m scripts.count_missing_memory_vectors
+# {"corrected": 0, "missing": 0, "unlinked_child_claims": 2}
+~~~
+
+直接在 postgres 容器里核对的等价只读查询如下；把 `<model>` 和 `<dimensions>` 换成控制面容器里的 `MEMORIA_MEMORY_EMBEDDING_MODEL` / `MEMORIA_MEMORY_EMBEDDING_DIMENSIONS`，不要靠猜：
+
+~~~sql
+WITH current AS (
+    SELECT '<model>'::text AS model, <dimensions>::integer AS dimensions
+)
+SELECT count(*) AS missing,
+       count(*) FILTER (
+           WHERE EXISTS (
+               SELECT 1 FROM archive_evidence_events review
+               WHERE review.account_id = claim.account_id
+                 AND review.event_type = 'memory.claim_reviewed'
+                 AND review.source = 'user.memory_review'
+                 AND review.payload->>'action' = 'correct'
+                 AND review.payload->>'target_id' = claim.claim_id::text
+           )
+       ) AS corrected
+FROM memory_search_documents document
+JOIN memory_claims claim
+  ON claim.claim_id = document.item_id
+ AND claim.account_id = document.account_id
+JOIN archive_evidence_events evidence
+  ON evidence.event_id = claim.source_event_id
+ AND evidence.account_id = claim.account_id
+CROSS JOIN current
+WHERE document.kind = 'claim'
+  AND document.status <> 'retracted'
+  AND claim.status <> 'retracted'
+  AND NOT EXISTS (
+      SELECT 1 FROM memory_vector_documents stored
+      WHERE stored.account_id = document.account_id
+        AND stored.item_id = document.item_id
+        AND stored.embedding_model = current.model
+        AND stored.embedding_dimensions = current.dimensions
+  );
+~~~
+
+`unlinked_child_claims` 的等价只读查询，同样只出计数；需要单账户时加上 `AND claim.account_id = '<account>'`：
+
+~~~sql
+SELECT count(*) AS unlinked_child_claims
+FROM memory_claims claim
+JOIN archive_evidence_events evidence
+  ON evidence.event_id = claim.source_event_id
+ AND evidence.account_id = claim.account_id
+WHERE claim.status <> 'retracted'
+  AND NOT EXISTS (
+      SELECT 1 FROM memory_claim_subjects linked
+      WHERE linked.account_id = claim.account_id
+        AND linked.claim_id = claim.claim_id
+  )
+  AND (lower(btrim(claim.subject_key)) LIKE 'son:%'
+       OR lower(btrim(claim.subject_key)) LIKE 'daughter:%'
+       OR EXISTS (
+           SELECT 1 FROM person_entities person
+           WHERE person.account_id = claim.account_id
+             AND person.canonical_key = claim.subject_key
+             AND lower(person.relationship_to_owner) IN ('son', 'daughter')
+       ));
+~~~
+
+定时任务每轮一行日志，形如 `memory vector backfill attempted=0 embedded=0 failed=0 skipped=0 remaining=0`，`remaining` 就是上面查询的总数。确认它在跑：
+
+~~~bash
+docker compose -f docker-compose.production.yml logs control-api | grep 'memory vector backfill'
+sudo sh -c "zgrep -h 'memory vector backfill' /var/log/memoria/control-api.log* | sort"
 ~~~
 
 ## 发布制品的手工清理（2026-10-01 首次执行，经用户授权）
@@ -123,6 +213,20 @@ docker compose -f docker-compose.production.yml run --rm --no-deps control-api /
 有意保留：`releases/20261007-n8-diag-v1/.cutover`（收据）；`incoming/20261009-textless-spare-v1`（回滚目标的增量种子）与 `incoming/20261010-stale-interim-v1`（当前）；镜像 `20261010`、`20261009` 与 `rollback-20261010-stale-interim-v1-pre`（= 20261009 镜像）、media-edge、SenseVoice；`releases/20261009-textless-spare-v1`（回滚目标的 compose 链）、`releases/20261004-first-warm-v1`、`releases/20260827-architecture-split-v1`；数据卷、journald、`/root/old-host-20261005/`。本机（Mac）上 `~/Library/Caches/memoria-release-build/20261007-n8-diag-v1/`（64 M）与本机 Docker 里的 20261007 镜像没有动。
 
 结果：根分区 25 G → 21 G（65 % → 55 %，剩 18 G）；memoria 镜像标签 17 → 11 个；`docker system df` 的镜像可回收量为 4.2 G。清理后七个健康检查容器全部 healthy、SenseVoice 在跑、重启次数不变，本机与外部 readiness 200，`current` 不变，回滚目标 20261009 的三个镜像 id 与 compose 文件都在。`apply` 的最后一行 `docker system df | head -2` 因 SIGPIPE 退出 141，发生在所有删除与校验之后，不影响结果。收据在服务器 `/root/memoria-release/cleanup-20261010.log`、`cleanup-20261010-precheck.log` 与 `cleanup-20261010-pre/`。
+
+### 2026-10-19 第七次手工清理（经用户授权「允许磁盘清理」）
+
+同一套规则，距上次约 9 天，期间整栈发布 20 余次，根分区 29 G / 40 G（76 %，过了 75 % 告警线）。脚本 `/root/memoria-release/cleanup-20261019.sh`（root 0700）分 `pre`（只读）与 `apply`，候选写死，不用通配符、不 prune。`apply` 前后各过一遍门禁：没有发布或 docker 进程；六个带健康检查的容器 healthy 且 SenseVoice 在跑；bridge 与 control-api 在当前 tag；`current` 指向当前发布树；保留集镜像都在；本机与外部 readiness 通过。此外 `refs_check` 核对候选树不被任何容器的 compose 标签引用、候选镜像不被孤儿容器之外的容器使用。
+
+删除的：
+- 孤儿容器 `memoria-speaker-model-1`（speaker-model 10-13 退役后一直 exited，compose 每次都提示 orphan）和它的镜像 `memoria-speaker-model:20261013-guardian-summaries-v1`（627 M）。
+- 镜像标签 `memoria-{agent,control-api}:20261016-device-registration-v1`（这版 22:28 切流后 22:30 已回滚，镜像 id 与回滚点不同，逐个 `docker rmi`）。
+- `incoming/` 三个发布包各 1.2 G：`20261016-device-registration-v1`、`20261015-stop-standby-v1`（已回滚、对应 PR #270 已关闭）、`20261015-daily-chat-limit-v1`。
+- 22 棵旧发布树的源码，保留各自 `.cutover`（收据）；`20261014-support-tiers-v1`（verify-load 盘满中止的那版）本来就没有 `.cutover`。删除前核对：其中 21 棵的 tag 提交已在 `origin/main`；`20261015-stop-standby-v1`（提交 `0228dfdf`）不在 main，已存进本机 bundle，删后可恢复。
+
+有意保留：当前发布树 `20261016-readiness-b54189c`；回滚目标 `20261016-session-cap-fallback-v1`（`.cutover/prev-release` 指向它）和手工一步回退点 `20261016-log-redaction-v1`，两者的镜像、发布树、`incoming/` 包都在；compose 链 `releases/20260827-architecture-split-v1`、`releases/20261004-first-warm-v1` 与 `component-releases/20261002-late-progress-v1-media-edge`；media-edge、SenseVoice、redis、minio、pgvector 镜像；数据卷、journald、`/var/log`。
+
+结果：根分区 29 G → 21 G（76 % → 56 %，剩 17 G）；容器全部 healthy，外部 readiness 通过。收据在服务器 `/root/memoria-release/cleanup-20261019.log` 与 `cleanup-20261019-pre/`（root 0700，含三个 `incoming` 包的 sha256 与前后快照）。**下一次整栈发布**：当前版没有 `incoming/` 包可作增量种子，会走整包上传（约 1.5 GB，几分钟）。
 
 ### 2026-10-05 迁到 110.42.235.198 后的空间基线（新机，不是一次清理）
 

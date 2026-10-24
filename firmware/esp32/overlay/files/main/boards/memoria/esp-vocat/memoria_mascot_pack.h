@@ -7,8 +7,8 @@
 namespace memoria {
 
 // Companion mascot frames for the 360x360 round LCD, packed on the host by
-// firmware/esp32/scripts/build_mascot_pack.py into mascot_<id>.mmp in the
-// assets partition.
+// firmware/esp32/scripts/build_mascot_pack.py. The product image does not ship
+// mascot_<id>.mmp. Host tests read them from firmware/esp32/tests/fixtures/mascots/.
 //
 // File layout (little endian):
 //   header, 64 bytes:

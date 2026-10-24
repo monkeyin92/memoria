@@ -27,7 +27,7 @@ def _provider_env(monkeypatch: pytest.MonkeyPatch, provider: str, *, deepseek_ke
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
     )
     monkeypatch.setenv("DEEPSEEK_API_KEY", deepseek_key)
-    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://deepseek.example.invalid")
+    monkeypatch.setenv("DEEPSEEK_API_URL", "https://deepseek.example.invalid")
     monkeypatch.setenv("DEEPSEEK_FAST_MODEL", "deepseek-flash")
     monkeypatch.setenv("LIVE_LOOKUP_SEMANTIC_MODEL", "qwen-live")
     monkeypatch.setenv("CONVERSATION_CLOSE_SEMANTIC_MODEL", "qwen-close")

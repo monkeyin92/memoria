@@ -52,9 +52,10 @@ test("home page is a status board without rooms or realtime chat", () => {
   assert.match(template, /Memoria|trial-title">今天/);
   assert.doesNotMatch(template, /startVoice|startText|sendText|可直接对话/);
   assert.doesNotMatch(template, /先了解怎么用|openHowItWorks|家中的设备/);
-  assert.match(template, /wx:if="\{\{!authenticated\}\}"[\s\S]*微信一键登录/);
+  assert.match(template, /wx:if="\{\{!authenticated\}\}"[\s\S]*guestHome\.features/);
   assert.match(template, /home-usage-card|home-ring/);
-  assert.match(template, /home-stat|今日摘要/);
+  assert.match(template, /home-stat[\s\S]*近期摘要/);
+  assert.doesNotMatch(template, /今日摘要/);
   assert.match(template, /home-toggle-card|安静时段/);
   assert.match(template, /unreadSafetyCopy|unreadSafetyAlert/);
   assert.doesNotMatch(template, /status-chips|glass-icon|battery|电量/);
@@ -105,10 +106,7 @@ test("online hero caption names the device's configured wake word", () => {
 });
 
 test("trial device card helper uses profile quiet hours and usage limit", () => {
-  const {
-    buildTrialDeviceCard,
-    hasUnreadSafetyAlert,
-  } = require("../utils/trial-device-card");
+  const { buildTrialDeviceCard } = require("../utils/trial-device-card");
   const profile = {
     valid: true,
     subject_category: "minor",
@@ -136,11 +134,6 @@ test("trial device card helper uses profile quiet hours and usage limit", () => 
   });
   assert.equal(known.usageKnown, true);
   assert.equal(known.usageUsedMinutes, 12);
-  assert.equal(
-    hasUnreadSafetyAlert([{ pinned: true, delivery_status: "no_subscription" }]),
-    true,
-  );
-  assert.equal(hasUnreadSafetyAlert([{ pinned: false, delivery_status: "delivered" }]), false);
 });
 
 test("parent v4 tokens live in app.wxss and pages avoid third-party art", () => {

@@ -102,6 +102,9 @@ async function withPage(relativePath, callback) {
     navigateTo(options) {
       loginNavigations.push(options.url);
     },
+    showModal(options) {
+      options.success?.({ confirm: true, cancel: false });
+    },
   };
   global.getApp = () => ({
     subscribeAuthCleared: () => () => {},
@@ -176,7 +179,7 @@ test("home retry 未授权时 fail closed，恢复失败后迟到响应不回填
   restore();
 });
 
-test("home retry 恢复登录后正常同步", async () => {
+test("home retry while logged out asks for login and does not sync", async () => {
   const state = makeAuth({ authenticated: false });
   let syncCalls = 0;
   let restoreCalls = 0;
@@ -203,13 +206,13 @@ test("home retry 恢复登录后正常同步", async () => {
     getProfile: async () => ({ display_name: "主人" }),
     requireRuntimeCapability: async () => ({ allowed: false }),
   });
-  await withPage("../pages/home/index", async (page) => {
+  await withPage("../pages/home/index", async (page, loginNavigations) => {
     await page.retryBindingSync();
-    assert.equal(restoreCalls, 1);
-    assert.equal(syncCalls, 1);
-    assert.equal(page.data.authenticated, true);
-    assert.equal(page.data.hasBinding, true);
-    assert.equal(page.data.bindingSyncError, "");
+    assert.equal(restoreCalls, 0);
+    assert.equal(syncCalls, 0);
+    assert.equal(page.data.authenticated, false);
+    assert.equal(loginNavigations.length, 1);
+    assert.match(loginNavigations[0], /\/pages\/auth\/index/);
   });
   restore();
 });
@@ -259,11 +262,17 @@ test("device retry 未授权时清空敏感设备态，迟到响应不回填", a
   restore();
 });
 
-test("device retry 恢复登录后正常同步", async () => {
+test("device retry while logged out asks for login and does not sync", async () => {
   const state = makeAuth({ authenticated: false });
   let syncCalls = 0;
+  let restoreCalls = 0;
   const restore = stubApi({
     ...authStubs(state),
+    restoreWechatIdentity: async () => {
+      restoreCalls += 1;
+      state.authenticated = true;
+      return state.identity;
+    },
     syncDeviceBindings: async () => {
       syncCalls += 1;
       return {
@@ -280,15 +289,13 @@ test("device retry 恢复登录后正常同步", async () => {
     getOfflineStories: async () => ({ items: [] }),
     getSessionLimits: async () => null,
   });
-  await withPage("../pages/device/index", async (page) => {
+  await withPage("../pages/device/index", async (page, loginNavigations) => {
     await page.retryBindingSync();
-    assert.equal(syncCalls, 1);
-    assert.equal(page.data.hasBinding, true);
-    assert.equal(page.data.binding.device_id, "dev_retry");
-    assert.equal(page.data.bindingSyncError, "");
-    // Runtime Profile 读不到时，形象与名字仍跟随账号选定的伙伴，而不是回落成默认伙伴。
-    assert.equal(page.data.heroRoleId, "taoxi");
-    assert.equal(page.data.personaName, "桃喜");
+    assert.equal(restoreCalls, 0);
+    assert.equal(syncCalls, 0);
+    assert.equal(page.data.authenticated, false);
+    assert.equal(loginNavigations.length, 1);
+    assert.match(loginNavigations[0], /reason=manage_device/);
   });
   restore();
 });
@@ -381,11 +388,17 @@ test("profile retry 未授权时进入游客态，旧同步迟到不得回填", 
   restore();
 });
 
-test("profile retry 恢复登录后正常同步", async () => {
+test("profile retry while logged out asks for login and does not sync", async () => {
   const state = makeAuth({ authenticated: false });
   let syncCalls = 0;
+  let restoreCalls = 0;
   const restore = stubApi({
     ...authStubs(state),
+    restoreWechatIdentity: async () => {
+      restoreCalls += 1;
+      state.authenticated = true;
+      return state.identity;
+    },
     syncDeviceBindings: async () => {
       syncCalls += 1;
       return {
@@ -398,13 +411,13 @@ test("profile retry 恢复登录后正常同步", async () => {
     getDeliveredCapabilities: async () => ({}),
     requireRuntimeCapability: async () => ({ allowed: false }),
   });
-  await withPage("../pages/profile/index", async (page) => {
+  await withPage("../pages/profile/index", async (page, loginNavigations) => {
     await page.retryDeviceBindingSync();
-    assert.equal(syncCalls, 1);
-    assert.equal(page.data.authenticated, true);
-    assert.equal(page.data.deviceBindingState, "ready");
-    assert.equal(page.data.deviceBinding.device_id, "dev_retry");
-    assert.equal(page.data.deviceBindingError, "");
+    assert.equal(restoreCalls, 0);
+    assert.equal(syncCalls, 0);
+    assert.equal(page.data.authenticated, false);
+    assert.equal(loginNavigations.length, 1);
+    assert.match(loginNavigations[0], /reason=view_profile/);
   });
   restore();
 });

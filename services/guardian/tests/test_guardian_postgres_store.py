@@ -37,6 +37,10 @@ def test_guardian_core_policies_require_actor_and_subject_context() -> None:
             "guardian_controller_notification_outbox",
         ),
         (
+            "guardian_notification_reads",
+            "guardian_controller_notification_reads",
+        ),
+        (
             "guardian_push_subscriptions",
             "guardian_controller_push_subscriptions",
         ),
@@ -268,6 +272,7 @@ async def test_postgres_guardian_schema_and_corpus_consent_fence() -> None:
                         "tutor_commit_outbox",
                         "guardian_crisis_events",
                         "guardian_notification_outbox",
+                        "guardian_notification_reads",
                         "guardian_push_subscriptions",
                         "guardian_push_subscription_events",
                     ],
@@ -308,7 +313,7 @@ async def test_postgres_guardian_schema_and_corpus_consent_fence() -> None:
             }
         finally:
             await connection.close()
-        assert len(forced_tables) == 12
+        assert len(forced_tables) == 13
         assert policy_names == {
             ("guardian_links", "guardian_controller_links"),
             ("guardian_links", "guardian_controller_links_insert"),
@@ -324,6 +329,10 @@ async def test_postgres_guardian_schema_and_corpus_consent_fence() -> None:
             (
                 "guardian_notification_outbox",
                 "guardian_controller_notification_outbox",
+            ),
+            (
+                "guardian_notification_reads",
+                "guardian_controller_notification_reads",
             ),
             (
                 "guardian_push_subscriptions",

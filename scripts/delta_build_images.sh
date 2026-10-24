@@ -116,6 +116,7 @@ COPY scripts/verify_env.py scripts/provider_smoke_test.py scripts/run_media_brid
 COPY scripts/verify_agent_release_artifact.py ./scripts/
 COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json
 COPY infra/voices/doubao_voice_ids.json ./infra/voices/doubao_voice_ids.json
+COPY infra/voices/fixed_safety ./infra/voices/fixed_safety
 RUN chmod -R u=rwX,go=rX /app/services /app/packages /app/scripts /app/infra
 RUN /app/.venv/bin/python -m scripts.verify_agent_release_artifact
 USER 65532:65532
@@ -129,7 +130,7 @@ EOF
       cat <<'EOF'
 COPY services ./services
 COPY packages ./packages
-COPY scripts/mark_readiness.py scripts/rebuild_memory_projections.py scripts/replay_subject_deletions.py scripts/migrate_control_sqlite_to_postgres.py scripts/expire_child_dialogue_summaries.py scripts/expire_idle_child_archive.py ./scripts/
+COPY scripts/mark_readiness.py scripts/rebuild_memory_projections.py scripts/replay_subject_deletions.py scripts/migrate_control_sqlite_to_postgres.py scripts/expire_child_dialogue_summaries.py scripts/expire_idle_child_archive.py scripts/count_missing_memory_vectors.py ./scripts/
 COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json
 USER 65532:65532
 EOF

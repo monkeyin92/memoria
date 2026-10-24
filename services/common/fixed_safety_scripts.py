@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from itertools import accumulate
 from typing import Final, Literal
 
@@ -120,11 +121,11 @@ def fixed_safety_echo_reference(text: str | None) -> str | None:
 
 
 def log_fixed_safety_playout(logger: logging.Logger, script: FixedSafetyScript) -> None:
+    # The media bridge log format has no timestamp of its own.
     logger.info(
-        "fixed_safety_playout reply_template_id=%s script_version=%s tts_text=%s",
+        "fixed_safety_playout reply_template_id=%s at=%s",
         script.template_id,
-        script.template_id,
-        script.spoken,
+        datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
 
 

@@ -20,6 +20,7 @@ import pytest
 FIRMWARE_ROOT = pathlib.Path(__file__).parents[1]
 BOARD_DIR = FIRMWARE_ROOT / "overlay" / "files" / "main" / "boards" / "memoria" / "esp-vocat"
 ASSETS_DIR = BOARD_DIR / "assets"
+PACK_DIR = FIRMWARE_ROOT / "tests" / "fixtures" / "mascots"
 MEMORIA_DIR = FIRMWARE_ROOT / "overlay" / "files" / "main" / "memoria"
 PATCH = FIRMWARE_ROOT / "overlay" / "patches" / "0027-memoria-mascot-display.patch"
 COMPANIONS = ("starlight", "taoxi", "mianmian", "axu", "xuanmo")
@@ -516,6 +517,27 @@ def test_captioned_layout_leaves_the_text_band_free(harness) -> None:
         assert rows[ms][1] > 290
 
 
+def test_full_size_mascot_renders_in_dialogue_phases(harness) -> None:
+    preview, work, binary = harness
+    stats, rows = _mascot_rows(
+        preview,
+        work,
+        binary,
+        [
+            (0, "phase", "setup"),
+            (400, "phase", "idle"),
+            (2000, "phase", "listening"),
+            (3000, "phase", "thinking"),
+            (4000, "phase", "speaking"),
+            (6000, "end", ""),
+        ],
+        [1600, 2200, 3200, 4200],
+    )
+    assert stats["mismatches"] == 0
+    for ms, (_top, bottom) in rows.items():
+        assert bottom > 290, f"mascot ends at row {bottom} at {ms} ms"
+
+
 def test_captioned_layout_is_wired_to_network_states() -> None:
     display = (BOARD_DIR / "memoria_mascot_display.cc").read_text(encoding="utf-8")
     wants = display[display.index("bool MemoriaMascotDisplay::WantsCaption") :]
@@ -569,7 +591,7 @@ def test_mascot_packs_match_the_source_art() -> None:
     builder = _load_module("build_mascot_pack", FIRMWARE_ROOT / "scripts" / "build_mascot_pack.py")
     for companion in COMPANIONS:
         name = f"mascot_{companion}.mmp"
-        header, frames = builder.decode_frames((ASSETS_DIR / name).read_bytes())
+        header, frames = builder.decode_frames((PACK_DIR / name).read_bytes())
         assert set(frames) == {frame for frame, _ in builder.FRAMES}, name
         theme = builder.THEMES[companion]
         assert header[8] == theme["soft"] and header[9] == theme["ink"], name
@@ -632,31 +654,39 @@ def test_board_wires_the_mascot_display() -> None:
     assert '"mascot_anim", 6144, this, 1,' in display
     assert "brand_mark.mma" in display
     assert "scene_->SetBrand(&brand_)" in display
-    # The audio tasks' level taps drive the mouth and the glow: drained inside the display lock on every
-    # frame (lit or not, so nothing stale plays back after the screen was off) and handed to the scene
-    # before it renders.
+    # The audio tasks' level taps are drained inside the display lock on every
+    # frame (lit or not, so nothing stale plays back after the screen was off)
+    # and handed to the scene before the dot face is painted. The mascot
+    # compositor does not run on that path.
     assert '#include "memoria_audio_level.h"' in display
     loop = display[display.index("void MemoriaMascotDisplay::AnimationLoop") :]
     take_spoken = loop.index("memoria::output_level_tap.Take()")
     take_heard = loop.index("memoria::input_level_tap.Take()")
     set_output = loop.index("scene_->SetOutputLevel(spoken.valley, spoken.peak, spoken.blocks, frame_now)")
     set_input = loop.index("scene_->SetInputLevel(heard.peak, heard.blocks, frame_now)")
-    assert loop.index("Lock(100)") < take_spoken < set_output < loop.index("scene_->Render(")
-    assert loop.index("Lock(100)") < take_heard < set_input < loop.index("scene_->Render(")
+    assert "scene_->Render(" not in loop
+    assert loop.index("Lock(100)") < take_spoken < set_output < loop.index("PaintDotFace(")
+    assert loop.index("Lock(100)") < take_heard < set_input < loop.index("PaintDotFace(")
     assert "screen_off_ ?" not in loop[take_spoken - 200 : set_input]
 
 
 def test_body_gestures_animate_without_starting_chat() -> None:
     board = (BOARD_DIR / "memoria_esp_vocat.cc").read_text(encoding="utf-8")
     gestures = board[board.index("void OnDevicePat(") : board.index("static void imu_event_task")]
-    assert "kDeviceStateIdle" in gestures
+    assert "memoria::PatGestureDecisionFor(facts)" in gestures
     assert "display_->Pat()" in gestures
     assert "display_->Shake()" in gestures
-    for forbidden in ("ToggleChatState()", "StartListening(", "AbortSpeaking("):
-        assert forbidden not in gestures
+    # 2026-10-21: a pat while the companion speaks stops that reply through
+    # the shared policy. The gesture itself never opens a conversation: the
+    # only StartListening is inside StopSpeakingForGesture, after a stop.
+    assert 'StopSpeakingForGesture(decision, "Device pat")' in gestures
+    assert "ToggleChatState()" not in gestures
+    pat_only = gestures[: gestures.index("void StopSpeakingForGesture(")]
+    assert "StartListening(" not in pat_only
+    assert "AbortSpeaking(" not in pat_only
     imu = board[board.index("static void imu_event_task") : board.index("void MuteImuForTouch()")]
     assert "self->OnDeviceShake(result.peak)" in imu
-    assert "Device pat ignored (touch rumble" in imu
+    assert "reason=%s" in imu
 
 
 def test_display_profile_poll_follows_the_phone_pick() -> None:
@@ -702,11 +732,11 @@ def test_idle_clock_is_never_shown_on_the_screen() -> None:
     assert "IsClockText(status)" in clock_branch
 
 
-def test_display_wires_aigc_corner_badge() -> None:
+def test_wifi_connecting_line_names_no_ssid() -> None:
     display = (BOARD_DIR / "memoria_mascot_display.cc").read_text(encoding="utf-8")
-    assert 'lv_label_set_text(aigc_badge_, "AI")' in display
-    assert "UpdateAigcBadge(phase)" in display
-    assert "0x4A52C9" in display
-    assert "lv_font_montserrat_20" in display
-    assert "memoria::kAigcBadgeX" in display
-    assert "SetAigcOfflineActive" in display
+    assert 'kConnectingNetworkText = "正在连接网络…"' in display
+    notify = display[display.index("void MemoriaMascotDisplay::ShowNotification") :]
+    notify = notify[: notify.index("void MemoriaMascotDisplay::SetChatMessage")]
+    assert "Lang::Strings::CONNECT_TO" in notify
+    assert "LvglDisplay::ShowNotification(kConnectingNetworkText, duration_ms);" in notify
+    assert "notification +" not in notify

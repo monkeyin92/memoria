@@ -1,0 +1,40 @@
+# SenseVoice ASR rescue sidecar with swap disabled.
+#
+# Committed as configuration only. Applying it (recreating the production
+# container) is a separate operator action; see docs/runbooks/sensevoice-asr.md.
+#
+# mem_limit == memswap_limit means the container may not use swap. The 1.5 GB
+# cap covers peak RSS (~570 MB local, ~805 MB RSS+swap on the host) while
+# keeping the model resident, so an idle sidecar does not pay a 12.7 s
+# first-request fault after the page cache has cooled.
+services:
+  sensevoice-asr:
+    image: memoria-sensevoice-asr:20260901-pin-language
+    container_name: memoria-sensevoice-asr
+    restart: unless-stopped
+    networks:
+      - memoria_default
+    mem_limit: 1536m
+    memswap_limit: 1536m
+    cpus: 2
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - /opt/memoria/sidecars/sensevoice-asr/models:/models/sensevoice:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8001/healthz', timeout=3)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+networks:
+  memoria_default:
+    external: true

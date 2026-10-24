@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 from asyncio import to_thread
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from fastapi import FastAPI
 
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.lifespan_resources import LifespanResources
+
+if TYPE_CHECKING:
+    from services.archive.memory_vector_backfill import MemoryVectorBackfillWorker
+    from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
 
 
 class Worker(Protocol):
@@ -75,6 +79,42 @@ class Wiring:
     def start(self, worker: Worker) -> None:
         worker.start()
         self.resources.add(worker.stop)
+
+    def start_memory_vector_backfill(
+        self,
+        app: FastAPI,
+        settings: ControlSettings,
+        catalog: PostgresMemoryCatalog,
+        accounts: Callable[[], Sequence[str]],
+    ) -> MemoryVectorBackfillWorker | None:
+        """Start the claim-vector repair only when vectors and a live app exist."""
+
+        from services.archive.memory_vector_backfill import (
+            BackfillReport,
+            build_memory_vector_backfill_worker,
+        )
+
+        if not self.live or not catalog.vector_enabled:
+            app.state.memory_vector_backfill_worker = None
+            return None
+
+        async def run(limit: int) -> BackfillReport:
+            account_ids = await to_thread(accounts)
+            return await catalog.backfill_missing_claim_vectors(
+                account_ids=account_ids,
+                limit=limit,
+            )
+
+        worker = build_memory_vector_backfill_worker(
+            run,
+            vector_enabled=True,
+            interval_s=settings.memory_vector_backfill_interval_s,
+            batch_size=settings.memory_vector_backfill_batch,
+        )
+        if worker is not None:
+            self.start(worker)
+        app.state.memory_vector_backfill_worker = worker
+        return worker
 
 
 def run_eagerly(wiring: Coroutine[object, None, None]) -> None:

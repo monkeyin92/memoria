@@ -50,16 +50,8 @@ INTERRUPT_PREFIXES = (
     "等等",
     "等一下",
     "等下",
-    "停一下",
-    "停下",
-    "暂停",
     "先停",
-    "别说了",
-    "不要说了",
-    "别讲了",
     "先别说",
-    "闭嘴",
-    "安静",
     "你先停",
     "听我说",
     "不是",
@@ -74,6 +66,12 @@ INTERRUPT_PREFIXES = (
 )
 
 _LEADING_INTERRUPT_FILLERS = (
+    # The wake name is part of the transcript when the device lets the ASR hear
+    # it (field 2026-10-21 F: 「茉莉，停」 0/5).  A leading vocative is not
+    # content: what follows decides the turn.
+    "小茉莉",
+    "茉莉",
+    "莫莉",
     "嗯",
     "啊",
     "呃",
@@ -110,45 +108,88 @@ _TRAILING_CONTROL_PARTICLES = (
     "呀",
     "啊",
     "哦",
+    "啦",
     "好",
     "好的",
+    # Her own acknowledgment heard in the same final (「停，好的。」).
+    "好了",
 )
 
 _INTERRUPT_PUNCTUATION = re.compile(r"""[\s。！？.!?，,；;：:"'“”‘’（）()【】[\]…·~～]""")
 
-# Semantic ack after interrupt (order: longer / stop-intent first).
-# stop_talking → AI should just acknowledge and stay quiet ("好的。")
-# yield_floor → AI hands the floor to the user ("嗯，你说。")
+_QUIET_ACK = "好的。"
+_YIELD_ACK = "嗯，你说。"
+_STOP_MAX_CHARS = 6
+
+
+@dataclass(frozen=True)
+class _ExactStop:
+    phrase: str
+
+    def span_end(self, text: str, start: int) -> int | None:
+        return len(text) if start == 0 and text == self.phrase else None
+
+
+@dataclass(frozen=True)
+class _CharRunStop:
+    character: str
+
+    def span_end(self, text: str, start: int) -> int | None:
+        run = 0 < len(text) <= _STOP_MAX_CHARS and text == self.character * len(text)
+        return len(text) if start == 0 and run else None
+
+
+@dataclass(frozen=True)
+class _PrefixStop:
+    phrase: str
+    glued_followers: tuple[str, ...] = ()
+
+    def span_end(self, text: str, start: int) -> int | None:
+        end = start + len(self.phrase)
+        if text.startswith(self.phrase, start) and not text.startswith(self.glued_followers, end):
+            return end
+        return None
+
+
+_StopLexeme = _ExactStop | _CharRunStop | _PrefixStop
+
+_STOP_LEXICON: tuple[_StopLexeme, ...] = (
+    _CharRunStop("停"),
+    _PrefixStop("我不想听了"),
+    _PrefixStop("不要说了"),
+    _PrefixStop("不要讲了"),
+    _PrefixStop("别说了"),
+    _PrefixStop("别讲了"),
+    _PrefixStop("不讲了"),
+    _PrefixStop("不听了"),
+    _PrefixStop("停一下"),
+    _PrefixStop("停下", glued_followers=("来",)),
+    _ExactStop("停下来"),
+    _PrefixStop("暂停"),
+    _PrefixStop("安静"),
+    _PrefixStop("闭嘴"),
+    _PrefixStop("好了", glued_followers=("知道了", "我知道了")),
+    _CharRunStop("嘘"),
+    _ExactStop("stop"),
+)
+
+_STOP_CHARACTERS = "停嘘"
+#: Commands that yield the floor without being stop words.  「好了」 alone is a
+#: completion acknowledgment, but it may precede a real stop (「好了别说了」).
+_SOFT_STOP_PHRASES = frozenset({"好了"})
+#: Interrupt prefixes that are genuine stop commands (「先停」「你先停」);
+#: every other prefix (「等等」「等一下」) only yields the floor.
+_STOP_PREFIX_COMMANDS = frozenset({"先停", "你先停"})
+
+_STOP_NEGATORS = ("不想", "不能", "不会", "不用", "没有", "不要", "别", "不", "没")
+
 _STOP_TALKING_PHRASES = (
-    "别说了",
-    "不要说了",
-    "别讲了",
     "先别说",
-    "闭嘴",
-    "安静",
-    "暂停",
-    "停下",
-    "先停",
-    "你先停",
     "够了",
     "好了",
     "行了",
     "可以了",
     "不用了",
-)
-_YIELD_FLOOR_PHRASES = (
-    "停一下",
-    "等一下",
-    "等下",
-    "等等",
-    "你听我说",
-    "听我说",
-    "我的意思是",
-    "我问的是",
-    "换一个",
-    "不是",
-    "不对",
-    "先别",
 )
 
 # A completion acknowledgement is different from a normal backchannel: while
@@ -317,7 +358,11 @@ def is_backchannel(text: str, *, duration_ms: int) -> bool:
 
 
 def is_explicit_interrupt(text: str) -> bool:
-    return _interrupt_prefix(text) is not None or is_completion_ack_only(text)
+    return (
+        _match_stop(_normalize_stop_text(text)) is not None
+        or _interrupt_prefix(text) is not None
+        or is_completion_ack_only(text)
+    )
 
 
 def is_completion_ack_only(text: str) -> bool:
@@ -433,15 +478,62 @@ def _compact_interrupt_text(text: str) -> str:
     return _INTERRUPT_PUNCTUATION.sub("", text)
 
 
+def _normalize_stop_text(text: str) -> str:
+    return _compact_interrupt_text(text).casefold()
+
+
+def _stop_span_at(text: str, start: int) -> tuple[_StopLexeme, int] | None:
+    spans = [
+        (lexeme, end)
+        for lexeme in _STOP_LEXICON
+        if (end := lexeme.span_end(text, start)) is not None
+    ]
+    return max(spans, key=lambda candidate: candidate[1], default=None)
+
+
+@dataclass(frozen=True)
+class _StopHit:
+    lexeme: _StopLexeme
+    start: int
+    end: int
+
+
+def _match_stop(normalized: str) -> _StopHit | None:
+    stripped = _strip_leading_interrupt_fillers(normalized)
+    starts = range(len(stripped)) if len(normalized) <= _STOP_MAX_CHARS else range(1)
+    hits = [
+        _StopHit(span[0], start, span[1])
+        for start in starts
+        if start == 0 or not stripped[:start].endswith(_STOP_NEGATORS)
+        if (span := _stop_span_at(stripped, start)) is not None
+    ]
+    return max(hits, key=lambda hit: hit.end - hit.start, default=None)
+
+
+def is_embedded_short_stop(text: str) -> bool:
+    hit = _match_stop(_normalize_stop_text(text))
+    return hit is not None and hit.start > 0
+
+
+def _strip_stop_spans(normalized: str) -> str:
+    kept: list[str] = []
+    index = 0
+    while index < len(normalized):
+        span = _stop_span_at(normalized, index)
+        if span is None:
+            kept.append(normalized[index])
+            index += 1
+        else:
+            index = span[1]
+    return "".join(kept)
+
+
 def _interrupt_prefix(text: str) -> str | None:
     normalized = _strip_leading_interrupt_fillers(_compact_interrupt_text(text))
     if not normalized:
         return None
     if normalized in {"等下我", "等下你"}:
         return None
-    # 「停」「停停」「停，停」: only a bare repeated 停, never 「停车」「停电」.
-    if normalized == "停" or (len(normalized) <= 4 and set(normalized) == {"停"}):
-        return "停"
     if any(normalized.startswith(prefix) for prefix in _NEGATED_PROPOSITION_PREFIXES):
         return None
     return next(
@@ -454,28 +546,54 @@ def _interrupt_prefix(text: str) -> str | None:
     )
 
 
-def interrupt_ack_phrase(text: str) -> str:
-    """Pick a natural interrupt ack from user wording.
+def _leading_stop_run(text: str) -> int | None:
+    """End of a leading run of stop characters (「停」「停停」「嘘嘘」).
 
-    - yield floor (停一下 / 等等 / 听我说…):「嗯，你说。」
-    - stop talking (别说了 / 暂停 / 停下…):「好的。」
-    - unknown / empty: default yield-floor style.
+    The lexeme ``_CharRunStop`` only matches a whole text of that character so
+    that an embedded one (「公交车停了」) is never a command.  A leading run is
+    different: what follows it must peel away as particles or an
+    acknowledgment (「停吧」「停，好的。」), otherwise the text is content
+    (「停车」「停电了」「停好听」).
     """
+
+    end = 0
+    while end < len(text) and text[end] in _STOP_CHARACTERS:
+        end += 1
+    return end or None
+
+
+def _leading_command(text: str) -> tuple[_StopLexeme | str, int] | None:
+    span = _stop_span_at(text, 0)
+    if span is not None:
+        return span
+    run_end = _leading_stop_run(text)
+    if run_end is not None:
+        return text[:run_end], run_end
+    prefix = _interrupt_prefix(text)
+    return None if prefix is None else (prefix, len(prefix))
+
+
+def _peel_commands(normalized: str) -> tuple[list[_StopLexeme | str], str]:
+    commands: list[_StopLexeme | str] = []
+    remainder = normalized
+    while True:
+        candidate = _strip_leading_interrupt_fillers(remainder)
+        command = _leading_command(candidate)
+        if command is None:
+            return commands, remainder
+        commands.append(command[0])
+        remainder = candidate[command[1] :]
+
+
+def interrupt_ack_phrase(text: str) -> str | None:
     t = normalize_short(text)
     if not t:
-        return "嗯，你说。"
-    if is_completion_ack_only(t):
-        return "好的。"
-    for p in _STOP_TALKING_PHRASES:
-        if t.startswith(p) or p in t:
-            return "好的。"
-    for p in _YIELD_FLOOR_PHRASES:
-        if t.startswith(p) or p in t:
-            return "嗯，你说。"
-    # Bare「停」without「一下」is ambiguous; prefer quiet ack.
-    if t == "停" or t.startswith("停") and "一下" not in t:
-        return "好的。"
-    return "嗯，你说。"
+        return _YIELD_ACK
+    if _match_stop(_normalize_stop_text(text)) is not None:
+        return None
+    if is_completion_ack_only(t) or any(phrase in t for phrase in _STOP_TALKING_PHRASES):
+        return _QUIET_ACK
+    return _YIELD_ACK
 
 
 _INTERRUPT_FILLERS = (
@@ -510,27 +628,8 @@ _RESUME_COMMANDS = (
 )
 
 
-def is_interrupt_command_only(text: str) -> bool:
-    """True when the utterance is only stop/wait commands (no real question).
-
-    e.g. 「等等」「嗯，等等，等等。」「等一下」→ True
-         「等一下我想问下周三」→ False (has content beyond the command)
-    """
-    if is_completion_ack_only(text):
-        return True
-    remainder = _strip_leading_interrupt_fillers(_compact_interrupt_text(text))
-    if not remainder or _interrupt_prefix(remainder) is None:
-        return False
-    while remainder:
-        prefix = _interrupt_prefix(remainder)
-        if prefix is None:
-            break
-        remainder = remainder[len(prefix) :]
-        between_commands = _strip_leading_interrupt_fillers(remainder)
-        if _interrupt_prefix(between_commands) is None:
-            break
-        remainder = between_commands
-    remainder = _compact_interrupt_text(remainder)
+def _strip_trailing_control_particles(text: str) -> str:
+    remainder = text
     while remainder:
         particle = next(
             (
@@ -547,7 +646,61 @@ def is_interrupt_command_only(text: str) -> bool:
         if particle is None:
             break
         remainder = remainder[: -len(particle)]
-    return not _compact_interrupt_text(remainder)
+    return remainder
+
+
+def is_interrupt_command_only(text: str) -> bool:
+    """True when the utterance is only stop/wait commands (no real question).
+
+    e.g. 「等等」「嗯，等等，等等。」「等一下」→ True
+         「等一下我想问下周三」→ False (has content beyond the command)
+
+    A stop spoken with its own acknowledgment in one final (「停，好的。」
+    「停好了」) peels: the command is the stop, the rest is a particle.
+    """
+    if is_completion_ack_only(text):
+        return True
+    # 「停下来吧」「停啦」: the particle belongs to the command, so strip it
+    # before peeling (「停下来」 is an exact stop, not a prefix).
+    normalized = _strip_trailing_control_particles(_normalize_stop_text(text))
+    commands, remainder = _peel_commands(normalized)
+    if not commands:
+        return is_embedded_short_stop(text)
+    return not _strip_trailing_control_particles(remainder)
+
+
+def is_stop_command_only(text: str) -> bool:
+    """True only for stop words, never a wait or a completion acknowledgment.
+
+    Used where a script must keep playing through anything but an explicit
+    stop (fixed safety playback, compliance 2026-10-21): 「停」「别说了」
+    「先停」 stop it, while 「等等」「等一下」「够了」「好了」 are control turns
+    that yield the floor and must not cut it.
+    """
+
+    normalized = _strip_trailing_control_particles(_normalize_stop_text(text))
+    commands, remainder = _peel_commands(normalized)
+    if not commands:
+        # 「你别说了」: an address before the stop, with nothing after it.
+        hit = _match_stop(normalized)
+        if hit is None or hit.start == 0:
+            return False
+        return not (
+            isinstance(hit.lexeme, _PrefixStop) and hit.lexeme.phrase in _SOFT_STOP_PHRASES
+        )
+    if _strip_trailing_control_particles(remainder):
+        return False
+    strong = False
+    for command in commands:
+        if isinstance(command, _PrefixStop) and command.phrase in _SOFT_STOP_PHRASES:
+            continue
+        if isinstance(command, str):
+            if command not in _STOP_PREFIX_COMMANDS:
+                return False
+            strong = True
+            continue
+        strong = True
+    return strong
 
 
 def is_resume_command_only(text: str) -> bool:
@@ -564,6 +717,7 @@ def is_resume_command_only(text: str) -> bool:
     remainder = normalized
     for command in sorted(_RESUME_COMMANDS, key=len, reverse=True):
         remainder = remainder.replace(command, "")
+    remainder = _strip_stop_spans(_normalize_stop_text(remainder))
     for interrupt in sorted(INTERRUPT_PREFIXES, key=len, reverse=True):
         remainder = remainder.replace(interrupt, "")
     for filler in sorted(_CONTROL_ACK_FILLERS, key=len, reverse=True):

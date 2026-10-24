@@ -55,12 +55,45 @@ def _settings(provider: Provider, *, deepseek_key: str = "deepseek-test-key") ->
         DASHSCOPE_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1",
         DASHSCOPE_WORKSPACE_ID="ws-test",
         DEEPSEEK_API_KEY=deepseek_key,
-        DEEPSEEK_BASE_URL="https://deepseek.example.invalid",
+        DEEPSEEK_API_URL="https://deepseek.example.invalid",
         DEEPSEEK_FAST_MODEL="deepseek-flash",
         CRISIS_SEMANTIC_ENABLED=True,
         CRISIS_SEMANTIC_MODEL="qwen-crisis",
         MEMORIA_MEMORY_EXTRACTION_MODEL="qwen-extract",
         MEMORIA_PERSONA_STRUCTURING_MODEL="qwen-structure",
+    )
+
+
+def _clear_deepseek_url_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DEEPSEEK_API_URL", raising=False)
+    monkeypatch.delenv("DEEPSEEK_BASE_URL", raising=False)
+
+
+def test_deepseek_api_url_is_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_deepseek_url_env(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_URL", "https://api-url.example.invalid")
+
+    assert ControlSettings(_env_file=None, OFFLINE_MOCK=False).deepseek_base_url == (
+        "https://api-url.example.invalid"
+    )
+
+
+def test_deepseek_base_url_still_sets_the_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_deepseek_url_env(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://base-url.example.invalid")
+
+    assert ControlSettings(_env_file=None, OFFLINE_MOCK=False).deepseek_base_url == (
+        "https://base-url.example.invalid"
+    )
+
+
+def test_deepseek_api_url_wins_over_the_legacy_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_deepseek_url_env(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_URL", "https://api-url.example.invalid")
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://base-url.example.invalid")
+
+    assert ControlSettings(_env_file=None, OFFLINE_MOCK=False).deepseek_base_url == (
+        "https://api-url.example.invalid"
     )
 
 

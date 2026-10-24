@@ -8,6 +8,7 @@ import logging
 import time
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import Any
 
 import grpc
@@ -29,6 +30,7 @@ from services.agent.src.prompts import (
     LIVE_LOOKUP_FILLER,
 )
 from services.agent.src.voice_core import media_session_input
+from services.agent.src.voice_core.asr_stream_supervisor import ASRAcceptDecision, ASRDecisionReason
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_protocol import (
@@ -44,6 +46,7 @@ from services.agent.src.voice_core.media_session import (
     _OutputWork,
 )
 from services.agent.src.voice_core.media_session_commit import _resolve_media_turn_text
+from services.agent.src.voice_core.media_session_pending_turn import PendingTurn
 from services.agent.src.voice_core.media_session_types import (
     DelegationOutputState,
     OutputDispatchResult,
@@ -7026,3 +7029,123 @@ async def test_registry_chain_normalizes_tail_and_keeps_rejected_replay_out_of_n
     assert len({payload["provisional_id"] for payload in provisional_started}) == 3
     assert [payload["text"] for payload in committed] == ["你好", "世界", "下一轮"]
     assert all(payload["history_eligible"] is False for payload in committed)
+
+
+class _UnlockedReplyLock:
+    def locked(self) -> bool:
+        return False
+
+
+@pytest.mark.asyncio
+async def test_question_final_after_a_pinned_noise_turn_commits_the_question() -> None:
+    """Field 2026-10-21 A6 t003 / N2 C8 / N2 C-stop4: 20-30 s replies.
+
+    A sub-second noise edge pinned its own endpoint with no words (the ASR
+    answered it from an unrelated task, ``empty+vendor_silent``), and the
+    child's question then arrived as a final whose audio began after that
+    pinned endpoint.  Committing the pinned turn carried nothing, and the
+    question was only answered once the next sentence opened a fresh VAD turn.
+    """
+
+    identity = _device_identity("device-noise-turn-before-question")
+    context = SimpleNamespace(
+        identity=identity,
+        runtime=DuplexRuntime.create(session_id=identity.session_id, barge_in_enabled=False),
+        stream_epoch=identity.stream_epoch,
+        closed=False,
+        standby_requested=False,
+        pending=PendingTurn(
+            turn_start_sample=425_920,
+            turn_end_sample=425_921,
+            turn_endpoint_sample=425_921,
+            empty_turn_endpoint_pin="vad_end",
+        ),
+        asr=SimpleNamespace(
+            last_committed_sample=0,
+            preview_result=lambda result: ASRAcceptDecision(
+                result, ASRDecisionReason.ACCEPTED
+            ),
+            accept_result=lambda result, session_id: ASRAcceptDecision(
+                result, ASRDecisionReason.ACCEPTED
+            ),
+        ),
+        projection=SimpleNamespace(provisional=None),
+        output=SimpleNamespace(
+            reply_task=None,
+            output_owner=None,
+            reply_lock=_UnlockedReplyLock(),
+            delegation_output_claims={},
+        ),
+        owner_silence_grace_deadline=None,
+        last_asr_evidence_end_sample=0,
+        last_playback_end_sample=12_800,
+    )
+
+    async def never_standby(ctx: Any, *, reason: str) -> bool:
+        raise AssertionError(f"unexpected standby {reason}")
+
+    async def noop_patch(ctx: Any, patch: Any) -> None:
+        return None
+
+    class _NoSessionBridge:
+        def get(self, session_id: str) -> None:
+            return None
+
+    class _BridgeHarness:
+        bridge = _NoSessionBridge()
+
+        async def emit_transcript(self, *args: Any, **kwargs: Any) -> None:
+            return None
+
+    registry = object.__new__(MediaVoiceCoreRegistry)
+    registry._sessions = {identity.session_id: context}  # noqa: SLF001
+    registry.bridge = _BridgeHarness()  # noqa: SLF001
+    registry.metrics = MetricsRegistry()  # noqa: SLF001
+    registry._schedule_turn_commit = (  # noqa: SLF001
+        lambda ctx: None
+    )
+    registry._request_device_standby = never_standby  # type: ignore[method-assign]  # noqa: SLF001
+    registry._split_pending_turn_at_unvoiced_gap = (  # noqa: SLF001
+        lambda ctx, result: None
+    )
+    registry._emit_projection_patch = noop_patch  # type: ignore[method-assign]  # noqa: SLF001
+
+    async def noop_apply(ctx: Any, segment: Any) -> None:
+        return None
+
+    registry._apply_projection_segment = noop_apply  # type: ignore[method-assign]  # noqa: SLF001
+    context.runtime.live_lookup_needed = lambda text, start_verdict=True: False  # type: ignore[method-assign]
+
+    vad_end = ASRResult(
+        stream_epoch=identity.stream_epoch,
+        task_epoch=1,
+        sentence_id="vad-end",
+        revision=1,
+        capture_start_sample=425_920,
+        capture_end_sample=425_921,
+        text="",
+        is_final=True,
+    )
+    assert (
+        await registry._accept_asr_result_decision(identity.session_id, vad_end)  # noqa: SLF001
+    ).accepted is not None
+    assert context.pending.turn_endpoint_sample == 425_921
+    assert context.pending.empty_turn_endpoint_pin == "vad_end"
+
+    question = ASRResult(
+        stream_epoch=identity.stream_epoch,
+        task_epoch=3,
+        sentence_id="question-final",
+        revision=1,
+        capture_start_sample=523_520,
+        capture_end_sample=529_280,
+        text="它一天要吃多少",
+        is_final=True,
+    )
+    assert (
+        await registry._accept_asr_result_decision(identity.session_id, question)  # noqa: SLF001
+    ).accepted is not None
+    assert context.pending.empty_turn_endpoint_pin is None
+    assert context.pending.turn_start_sample == 523_520
+    assert context.pending.turn_end_sample == 529_280
+    assert context.pending.turn_endpoint_sample == 529_280

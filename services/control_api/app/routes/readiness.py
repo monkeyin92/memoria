@@ -93,7 +93,10 @@ def _store(request: Request) -> MemoryStore:
 
 def _missing_config(settings: ControlSettings) -> list[str]:
     missing: list[str] = []
-    if not settings.dashscope_api_key.get_secret_value():
+    if (
+        settings.asr_provider == "funasr"
+        and not settings.dashscope_api_key.get_secret_value()
+    ):
         missing.append("DASHSCOPE_API_KEY")
     if settings.llm_provider == "deepseek" and not settings.deepseek_api_key.get_secret_value():
         missing.append("DEEPSEEK_API_KEY")
@@ -153,19 +156,7 @@ def _component(request: Request, name: str) -> object:
 
 
 async def _probe_object_store(store: ObjectStore) -> object:
-    # ponytail: use the existing public seam; add a cached native health probe if polling gets hot.
-    payload = b"memoria-readiness"
-    reference = await store.put(
-        account_id="memoria-readiness-probe",
-        purpose="readiness",
-        data=payload,
-        media_type="application/octet-stream",
-    )
-    try:
-        if await store.get(reference) != payload:
-            raise RuntimeError("object store readiness payload mismatch")
-    finally:
-        await store.delete(reference)
+    await store.probe()
     return None
 
 

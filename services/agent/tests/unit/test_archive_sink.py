@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 from pathlib import Path
 
 import httpx
 import pytest
 from cryptography.fernet import Fernet
 from services.agent.src.archive_sink import ArchiveSink, ArchiveSinkConfig
+from services.agent.src.observability.metrics import MetricsRegistry
 
 
 @pytest.mark.asyncio
@@ -773,4 +775,326 @@ async def test_cancelled_consent_query_shields_the_transcript_delivery(tmp_path:
         await task
 
     assert posted == [event]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_archive_event_id_is_sent_once(tmp_path: Path) -> None:
+    posts: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        posts.append(json.loads(request.content))
+        return httpx.Response(201)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    sink = ArchiveSink(
+        ArchiveSinkConfig(
+            endpoint="https://control.test/v1/archive/session-events",
+            internal_token="internal-test-token",
+            spool_path=tmp_path / "archive.spool",
+            spool_key=Fernet.generate_key().decode("ascii"),
+            spool_max_bytes=64 * 1024,
+        ),
+        client=client,
+    )
+    event = {
+        "event_id": "event-dedupe",
+        "session_id": "session-001",
+        "event_type": "speech.utterance_finalized",
+        "occurred_at": "2026-07-19T08:00:00+00:00",
+        "speaker_class": "owner",
+        "source": "funasr.authoritative_final",
+        "payload": {"text": "同一条只写一次。"},
+    }
+
+    assert await sink.publish(event) is True
+    assert await sink.publish(event) is True
+    assert posts == [event]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_legacy_prose_conflict_from_releases_before_the_reason_code_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    spool_path = tmp_path / "archive.spool"
+    metrics = MetricsRegistry()
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            409,
+            json={"detail": "event_id 'event-conflict' already has different content"},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    sink = ArchiveSink(
+        ArchiveSinkConfig(
+            endpoint="https://control.test/v1/archive/session-events",
+            internal_token="internal-test-token",
+            spool_path=spool_path,
+            spool_key=Fernet.generate_key().decode("ascii"),
+            spool_max_bytes=64 * 1024,
+        ),
+        client=client,
+        metrics=metrics,
+    )
+    event = {
+        "event_id": "event-conflict",
+        "session_id": "session-001",
+        "event_type": "speech.utterance_finalized",
+        "occurred_at": "2026-07-19T08:00:00+00:00",
+        "speaker_class": "owner",
+        "source": "funasr.authoritative_final",
+        "payload": {"text": "服务端已有不可变版本。"},
+    }
+
+    assert await sink.publish(event) is True
+    assert not spool_path.exists() or spool_path.read_bytes() == b""
+    assert sink.retained_conflicts == 0
+    assert metrics.get("archive_event_id_content_conflict_total") == 0
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_event_id_content_conflict_stays_in_spool_and_alerts(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    spool_path = tmp_path / "archive.spool"
+    metrics = MetricsRegistry()
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"detail": {"code": "event_id_content_conflict"}})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    sink = ArchiveSink(
+        ArchiveSinkConfig(
+            endpoint="https://control.test/v1/archive/session-events",
+            internal_token="internal-test-token",
+            spool_path=spool_path,
+            spool_key=Fernet.generate_key().decode("ascii"),
+            spool_max_bytes=64 * 1024,
+        ),
+        client=client,
+        metrics=metrics,
+    )
+    event = {
+        "event_id": "event-conflict-code",
+        "session_id": "session-001",
+        "event_type": "speech.utterance_finalized",
+        "occurred_at": "2026-07-19T08:00:00+00:00",
+        "speaker_class": "owner",
+        "source": "funasr.authoritative_final",
+        "payload": {"text": "同一个 event_id 换了内容。"},
+    }
+
+    with caplog.at_level(logging.ERROR, logger="services.agent.src.archive_sink"):
+        assert await sink.publish(event) is False
+        assert spool_path.read_bytes()
+        assert await sink.replay() == 0
+
+    assert spool_path.read_bytes()
+    assert sink.retained_conflicts == 2
+    assert metrics.get("archive_event_id_content_conflict_total") == 2
+    assert metrics.get(
+        "archive_conflict_retained_total", {"reason": "event_id_content_conflict"}
+    ) == 2
+    assert "archive_event_id_content_conflict_total" in metrics.render_prometheus().decode()
+    assert "archive event_id content conflict retained in spool" in caplog.text
+    assert "event_id_content_conflict" in caplog.text
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_event_id_content_conflict_during_replay_keeps_the_encrypted_row(
+    tmp_path: Path,
+) -> None:
+    online = False
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        if not online:
+            return httpx.Response(503)
+        return httpx.Response(409, json={"detail": {"code": "event_id_content_conflict"}})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    spool_path = tmp_path / "archive.spool"
+    sink = ArchiveSink(
+        ArchiveSinkConfig(
+            endpoint="https://control.test/v1/archive/session-events",
+            internal_token="internal-test-token",
+            spool_path=spool_path,
+            spool_key=Fernet.generate_key().decode("ascii"),
+            spool_max_bytes=64 * 1024,
+        ),
+        client=client,
+    )
+    event = {
+        "event_id": "event-retried",
+        "session_id": "session-001",
+        "event_type": "speech.utterance_finalized",
+        "occurred_at": "2026-07-19T08:00:00+00:00",
+        "speaker_class": "owner",
+        "source": "funasr.authoritative_final",
+        "payload": {"text": "重放时服务端内容不同。"},
+    }
+
+    assert await sink.publish(event) is False
+    assert spool_path.read_bytes()
+    online = True
+    assert await sink.replay() == 0
+    assert spool_path.read_bytes()
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "detail",
+    (
+        {"code": "ambiguous_parent_turn"},
+        {"code": "parent_turn_not_canonical"},
+        {"code": "turn_event_conflict"},
+        {"code": "archive_subject_fence_stale"},
+        {"code": "event_id_content_conflict"},
+    ),
+)
+async def test_non_idempotent_conflict_stays_in_spool_and_alerts(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    detail: dict[str, str],
+) -> None:
+    spool_path = tmp_path / "archive.spool"
+    metrics = MetricsRegistry()
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"detail": detail})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    sink = ArchiveSink(
+        ArchiveSinkConfig(
+            endpoint="https://control.test/v1/archive/session-events",
+            internal_token="internal-test-token",
+            spool_path=spool_path,
+            spool_key=Fernet.generate_key().decode("ascii"),
+            spool_max_bytes=64 * 1024,
+        ),
+        client=client,
+        metrics=metrics,
+    )
+    event = {
+        "event_id": "event-conflict-open",
+        "session_id": "session-001",
+        "event_type": "speech.utterance_finalized",
+        "occurred_at": "2026-07-19T08:00:00+00:00",
+        "speaker_class": "owner",
+        "source": "funasr.authoritative_final",
+        "payload": {"text": "服务端拒绝了这条留证。"},
+    }
+
+    with caplog.at_level(logging.ERROR, logger="services.agent.src.archive_sink"):
+        assert await sink.publish(event) is False
+        assert spool_path.read_bytes()
+        assert await sink.replay() == 0
+
+    assert spool_path.read_bytes()
+    assert sink.retained_conflicts == 2
+    assert metrics.get(
+        "archive_conflict_retained_total", {"reason": detail["code"]}
+    ) == 2
+    # Only the content conflict has a dedicated series; the other reasons must
+    # not leak into it.
+    assert metrics.get("archive_event_id_content_conflict_total") == (
+        2 if detail["code"] == "event_id_content_conflict" else 0
+    )
+    assert (
+        "archive event_id content conflict retained in spool"
+        if detail["code"] == "event_id_content_conflict"
+        else "archive conflict retained in spool"
+    ) in caplog.text
+    assert detail["code"] in caplog.text
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_too_early_is_not_a_terminal_write_and_retries(tmp_path: Path) -> None:
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(201) if calls > 1 else httpx.Response(425)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    spool_path = tmp_path / "archive.spool"
+    sink = ArchiveSink(
+        ArchiveSinkConfig(
+            endpoint="https://control.test/v1/archive/session-events",
+            internal_token="internal-test-token",
+            spool_path=spool_path,
+            spool_key=Fernet.generate_key().decode("ascii"),
+            spool_max_bytes=64 * 1024,
+        ),
+        client=client,
+    )
+    event = {
+        "event_id": "event-too-early",
+        "session_id": "session-001",
+        "event_type": "assistant.playout_stopped",
+        "occurred_at": "2026-07-19T08:00:01+00:00",
+        "speaker_class": "assistant",
+        "source": "generation_fence.actual_heard",
+        "turn_id": 1,
+        "generation_id": 1,
+        "payload": {"text": "等待父话轮。", "actual_heard": True},
+    }
+
+    assert await sink.publish(event) is False
+    assert await sink.replay() == 1
+    assert calls == 2
+    assert spool_path.read_bytes() == b""
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_spooled_duplicate_event_ids_are_delivered_once(tmp_path: Path) -> None:
+    posts = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal posts
+        posts += 1
+        return httpx.Response(201)
+
+    spool_path = tmp_path / "archive.spool"
+    spool_key = Fernet.generate_key().decode("ascii")
+    event = {
+        "event_id": "event-spool-duplicate",
+        "session_id": "session-001",
+        "event_type": "speech.utterance_finalized",
+        "occurred_at": "2026-07-19T08:00:00+00:00",
+        "speaker_class": "owner",
+        "source": "funasr.authoritative_final",
+        "payload": {"text": "重连重复写。"},
+    }
+    _seed_encrypted_spool(
+        spool_path,
+        spool_key,
+        [
+            {"target": "event", "body": event},
+            {"target": "event", "body": event},
+        ],
+    )
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    sink = ArchiveSink(
+        ArchiveSinkConfig(
+            endpoint="https://control.test/v1/archive/session-events",
+            internal_token="internal-test-token",
+            spool_path=spool_path,
+            spool_key=spool_key,
+            spool_max_bytes=64 * 1024,
+        ),
+        client=client,
+    )
+
+    assert await sink.replay() == 1
+    assert posts == 1
+    assert spool_path.read_bytes() == b""
     await client.aclose()

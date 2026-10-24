@@ -198,10 +198,11 @@ class UnbindRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     reason: str = Field(default="unbind", min_length=1, max_length=256)
-    #: Also erase the served person's memory and conversations. Unbinding
-    #: always withdraws their consents; erasure needs the subject-scoped
-    #: deletion saga, which does not exist yet (P2-03).
-    purge_subject_data: bool = False
+    #: Deprecated and ignored since #283: unbind always erases the served
+    #: child's data and clears their identity row, so there is no switch to
+    #: carry. It stays declared only so an older client that still sends it
+    #: is not rejected with a 422.
+    purge_subject_data: bool | None = None
 
 
 def _role_permissions(
@@ -667,13 +668,6 @@ async def unbind_device(
         SubjectDeletionService | None,
         getattr(request.app.state, "subject_deletion", None),
     )
-    if body.purge_subject_data and deletion is None:
-        # Without the subject saga nothing could erase their rows; refuse
-        # rather than pretend, and unbind nothing.
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "subject_deletion_unavailable"},
-        )
     try:
         manifest = await identity.get_active_manifest(
             device_id, actor_person_id=user.user_id
@@ -694,51 +688,76 @@ async def unbind_device(
         request, device_id=device_id, binding_id=binding.binding_id
     )
     withdrawn = 0
+    identity_cleared = "not_applicable"
     subject_deletion = "not_requested"
     child_layers_purged = "not_applicable"
     if manifest is not None and manifest.account_owner_id == user.user_id:
-        withdrawn = await _withdraw_bound_subject_consents(
-            request,
-            user=user,
-            binding_id=manifest.binding_id,
-            subject_ids=manifest.primary_subject_ids,
+        subject_ids = tuple(
+            subject_id
+            for subject_id in manifest.primary_subject_ids
+            if subject_id != user.user_id
         )
-        # PIPL art. 47 / owner decision: unbind always deletes child_archive
-        # and all dialogue_summary rows, including those under 30 days.
-        child_layers = getattr(request.app.state, "child_layer_store", None)
-        if child_layers is not None:
-            child_layers_purged = "completed"
-            for subject_id in manifest.primary_subject_ids:
-                if subject_id == user.user_id:
-                    continue
+        if subject_ids:
+            # #283: unbind always erases the data and clears the child's
+            # identity row. There is no keep switch any more; old clients that
+            # still send purge_subject_data get the same result.
+            withdrawn = await _withdraw_bound_subject_consents(
+                request,
+                user=user,
+                binding_id=manifest.binding_id,
+                subject_ids=subject_ids,
+            )
+            child_layers = getattr(request.app.state, "child_layer_store", None)
+            if child_layers is not None:
+                child_layers_purged = "completed"
+                for subject_id in subject_ids:
+                    try:
+                        await child_layers.purge_both_layers(subject_id=subject_id)
+                    except Exception:
+                        logger.exception("child layer purge after unbind failed")
+                        child_layers_purged = "pending"
+            identity_cleared = "completed"
+            for subject_id in subject_ids:
                 try:
-                    await child_layers.purge_both_layers(subject_id=subject_id)
-                except Exception:
-                    logger.exception(
-                        "child layer purge after unbind failed subject_id=%s", subject_id
+                    person = await identity.get_person(
+                        subject_id, actor_person_id=user.user_id
                     )
-                    child_layers_purged = "pending"
-        if body.purge_subject_data and deletion is not None:
-            subject_deletion = "completed"
-            for subject_id in manifest.primary_subject_ids:
-                if subject_id == user.user_id:
+                    if person.subject_category == "adult":
+                        # A verified adult member keeps their own row.
+                        continue
+                    await identity.redact_bound_subject(
+                        person_id=subject_id, actor_person_id=user.user_id
+                    )
+                except IdentityNotFoundError:
+                    # Already gone, or a person this owner cannot read.
                     continue
-                await forget_subject_plans(request.app.state, subject_id)
-                try:
-                    await deletion.delete_subject(
-                        SubjectScope(account_id=user.user_id, subject_id=subject_id),
-                        # Unbound now, so the name is no longer needed either.
-                        redact_identity=True,
+                except IdentityAccessDeniedError:
+                    logger.info(
+                        "unbind left a subject identity in place: not attested by this owner"
                     )
                 except Exception:
-                    # Checkpointed and fenced; the deletion worker resumes it.
-                    logger.exception("subject deletion after unbind is incomplete")
-                    subject_deletion = "pending"
+                    logger.exception("identity clear after unbind failed")
+                    identity_cleared = "pending"
+            if deletion is not None:
+                subject_deletion = "completed"
+                for subject_id in subject_ids:
+                    await forget_subject_plans(request.app.state, subject_id)
+                    try:
+                        await deletion.delete_subject(
+                            SubjectScope(account_id=user.user_id, subject_id=subject_id),
+                            # Unbound now, so the name is no longer needed either.
+                            redact_identity=True,
+                        )
+                    except Exception:
+                        # Checkpointed and fenced; the deletion worker resumes it.
+                        logger.exception("subject deletion after unbind is incomplete")
+                        subject_deletion = "pending"
     return {
         "binding_id": binding.binding_id,
         "status": binding.status,
         "device_released": device_released,
         "consents_withdrawn": withdrawn,
+        "identity_cleared": identity_cleared,
         "subject_deletion": subject_deletion,
         "child_layers_purged": child_layers_purged,
     }
@@ -771,10 +790,12 @@ async def _withdraw_bound_subject_consents(
     binding_id: str,
     subject_ids: tuple[str, ...],
 ) -> int:
-    """Unbinding stops memory: withdraw what the owner granted for each person.
+    """Delete path: withdraw what the owner granted for each person.
 
-    The revoked binding already fences every grant out of Policy, so a failure
-    here cannot leave memory on; it is logged and the unbind still stands.
+    Only the explicit-delete branch calls this, before erasing the rows. The
+    revoked binding already fences every grant out of Policy, so a failure here
+    cannot leave memory on; it is logged and the unbind still stands. The
+    keep-data branch deliberately leaves these consents in place.
     """
 
     service = cast(

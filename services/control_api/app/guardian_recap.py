@@ -30,6 +30,7 @@ from services.archive.domain import EvidenceEvent
 from services.common.llm_thinking import ThinkingMode, thinking_disabled
 from services.common.redaction import redact_pii
 from services.control_api.app.config import ControlSettings
+from services.guardian.retention import TEXT_WITHHELD_SUBJECT_CATEGORIES
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,7 @@ def child_utterances(
             and payload.get("history_eligible") is True
             and payload.get("owner_projection_eligible") is True
             and payload.get("memory_retention") != "ephemeral_only"
+            and payload.get("subject_category") not in TEXT_WITHHELD_SUBJECT_CATEGORIES
             and isinstance(text, str)
             and text.strip()
             and event.event_id not in seen

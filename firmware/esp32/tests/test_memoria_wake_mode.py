@@ -43,10 +43,13 @@ int main() {
             if (sscanf(line + 4, "%63s %d", name, &idle) != 2) return 2;
             memoria::WakeMode mode;
             if (!memoria::ParseWakeMode(name, &mode)) return 3;
-            printf("%s\n", memoria::TapActionFor(mode, idle != 0) ==
-                                   memoria::TapAction::kStartConversation
-                               ? "start"
-                               : "ignore");
+            printf("%s\n", memoria::TapWakeActionName(
+                               memoria::TapActionFor(mode, idle != 0)));
+        } else if (strncmp(line, "held ", 5) == 0) {
+            memoria::WakeMode mode;
+            if (!memoria::ParseWakeMode(line + 5, &mode)) return 3;
+            printf("%s\n", memoria::TapWakeActionName(
+                               memoria::TapActionFor(mode, memoria::TapDevice::kListeningClosed)));
         } else {
             return 2;
         }
@@ -113,6 +116,14 @@ def test_all_legacy_modes_coerce_to_tap_only(tool: pathlib.Path) -> None:
     ]
 
 
+def test_listening_closed_tap_resumes_on_the_open_session(tool: pathlib.Path) -> None:
+    assert _run(tool, "tap button 1", "tap button 0", "held button") == [
+        "start",
+        "ignore",
+        "resume",
+    ]
+
+
 def test_unknown_text_is_rejected(tool: pathlib.Path) -> None:
     assert _run(
         tool,
@@ -155,7 +166,7 @@ def test_deep_sleep_reset_arms_offline_reconnect_before_the_battery_tick() -> No
     assert hits == []
 
 
-def test_board_tap_handler_uses_power_policy_and_never_stops() -> None:
+def test_board_tap_handler_uses_power_policy_and_never_ends_the_conversation() -> None:
     source = (BOARD_DIR / "memoria_esp_vocat.cc").read_text(encoding="utf-8")
     handler = _function(source, "void HandleScreenTouchRelease(std::uint32_t hold_ms)")
     assert "TapWakeActionFor" in handler
@@ -163,8 +174,24 @@ def test_board_tap_handler_uses_power_policy_and_never_stops() -> None:
     assert 'app.WakeWordInvoke("screen_tap")' in handler
     assert "offline_menu_" in source
     assert "HoldDurationMsOnRelease" in source
-    for forbidden in ("StopListening", "AbortSpeaking", "ToggleChatState", "CloseAudioChannel"):
+    # 2026-10-21 field test: a tap while the companion spoke did nothing. The
+    # tap now asks the shared policy; only that policy can stop the reply the
+    # child was listening to, through the same local stop as BOOT.
+    assert "OnScreenTapGesture(hold_ms" in handler
+    tap = _function(source, "void OnScreenTapGesture(std::uint32_t hold_ms, bool offline_wants_tap)")
+    assert "ScreenTapDecisionFor" in tap
+    assert 'StopSpeakingForGesture(memoria::PatGestureDecision::kStopSpeaking, "screen tap")' in tap
+    stop = _function(source, "void StopSpeakingForGesture(memoria::PatGestureDecision decision, const char* source)")
+    assert "app.AbortSpeaking(kAbortReasonNone)" in stop
+    assert "app.StartListening()" in stop
+    assert "kCrisisKeepPlayback" in stop
+    # It never ends the conversation or closes the transport.
+    for forbidden in ("StopListening", "ToggleChatState", "CloseAudioChannel"):
         assert forbidden not in handler, f"a tap must not call {forbidden}"
+    resume = handler.split("kResumeListening", 1)[1].split("kIgnore", 1)[0]
+    assert 'PlayLocalAssetClip("wo_zai_ne.ogg")' in resume
+    assert "SendListeningResume()" in resume
+    assert "WakeWordInvoke" not in resume
 
 
 def test_boot_key_keeps_its_hard_stop_and_pairing_roles() -> None:

@@ -60,3 +60,10 @@
 - 新的回滚备份：先清掉文本，再运行 freeze，所以本次 freeze 生成的 `memoria-pre-20261014-child-playout-ephemeral-v1.dump`（3,924,871 B，16:38）中带文本的 playout 行为 0（已用 pg_restore 核对）。配套的 `memoria.pre-20261014-child-playout-ephemeral-v1.sqlite3` 中 daily_summaries 为 0。这两份作为当前唯一的回滚点保留。
 - 全盘复查：除上面这一份新 dump 外，再没有 memoria 的 dump；`/opt/pocketsparks/backups` 属于共用主机上的另一个项目，没有动。
 - 剩余事项：HANDOFF 中「备份已全删」一句需要加注更正（不删原句），由技术部在仓库中处理。注意现在仍保留一份不含文本的回滚 dump。
+
+## 补记（2026-10-17）：保留的回滚备份删除与复查、旧机器
+
+- 删除：(c) 里保留的唯一回滚点 `/opt/memoria/releases/20261014-child-playout-ephemeral-v1/.cutover/memoria-pre-20261014-child-playout-ephemeral-v1.dump`（3,924,871 B）和 `/var/lib/memoria/memoria.pre-20261014-child-playout-ephemeral-v1.sqlite3`（2,027,520 B，另 -shm 32,768 B、-wal 0 B），已于 2026-10-16 16:02:59（UTC+8）删除，不是定时清理删的。批准：Monkey In 2026-10-16 16:01（UTC+8）群内回复。同一批共删 29 个文件、81,280,926 B，还包括 2026-10-14 至 10-15 各次发布 `.cutover/` 下的 `memoria-pre-*.dump` 和 `memoria.pre-*.sqlite3`，以及当时的 `/var/lib/memoria/memoria.sqlite3`。逐个文件的路径、sha256、字节数在服务器 `/root/memoria-phone-clear-20261016/backup-deletion.txt`（root，600）。
+- 复查（2026-10-17 10:36，UTC+8，只读）：`/var/lib/memoria/` 下没有 `memoria.pre-*.sqlite3`；全盘（`find / -xdev`）查 `memoria-pre-*.dump` 和 `*.pre-*.sqlite3`，2026-10-14、10-15 的一个都没有了。还在的只有 2026-10-16 三次发布 freeze 生成的回滚点：`20261016-session-cap-fallback-v1`（13:06）、`20261016-log-redaction-v1`（19:04，`20261016-readiness-b54189c` 树里有同名的一份）、`20261016-device-registration-v1`（22:26），共 4 个 dump、4 个 sqlite3。
+- 定时清理：`memoria-freeze-dump-cleanup.timer` 每 24 小时跑一次 `cleanup_freeze_dumps.py --retention-days 3 --apply`。2026-10-14 17:28、10-15 17:35、10-16 17:41 三次都是 `removed=0`，10/14 那份 dump 在到期（10-17 16:38）前已被上面那次手动删除，所以这次不是靠定时清理删掉的。2026-10-16 那批由它在超过 3 天后清掉，最早一份 10-19 13:06 后到期。
+- 旧机器 memoria-prod-old：实例、云盘已释放，无快照（Monkey 10/14 在控制台确认）。

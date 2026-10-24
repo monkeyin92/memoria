@@ -10,12 +10,15 @@
     "pages/child-memory/index",
     "pages/attention/index",
     "pages/auth/index",
+    "pages/child-consent/index",
+    "pages/privacy-policy/index",
     "pages/guardian-consent/index",
     "pages/digital-self/index",
     "pages/privacy/index",
     "pages/user-agreement/index",
     "pages/bind/index",
-    "pages/device-onboarding/index"
+    "pages/device-onboarding/index",
+    "pages/memory-lifecycle/index"
   ],
   "window": {
     "backgroundColor": "#F4F4F7",

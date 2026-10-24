@@ -6,24 +6,6 @@
   <text wx:if="{{loading}}" class="loading-text">正在读取授权状态…</text>
   <text wx:if="{{error}}" class="error-text">{{error}}</text>
 
-  <text class="group-label">原始语音</text>
-  <view class="card">
-    <view class="privacy-head">
-      <mp-icon name="wave" tone="ink"></mp-icon>
-      <view class="row-copy">
-        <text class="setting-name">原始语音归档</text>
-        <text class="setting-desc">{{consent ? consentLabel : '默认关闭'}}</text>
-      </view>
-      <switch wx:if="{{!guest}}" checked="{{consent ? true : false}}" color="#4A52C9" disabled="{{!configOpen}}" bindchange="onRawAudioSwitch" aria-label="原始语音归档" />
-    </view>
-    <text class="privacy-copy">开启后，机器人对话的原始语音会保存在你的账号下，直到你撤回授权。撤回时服务端会删除这些录音。</text>
-    <text wx:if="{{!configOpen && configNote}}" class="privacy-copy">{{configNote}}</text>
-    <view wx:if="{{!guest}}" class="privacy-foot">
-      <button wx:if="{{!consent}}" class="primary-button" loading="{{acting}}" disabled="{{!configOpen}}" bindtap="grant">明确授权原始语音归档</button>
-      <button wx:else class="danger-link" disabled="{{!configOpen}}" bindtap="revoke">撤回并删除录音</button>
-    </view>
-  </view>
-
   <text class="group-label">长期记忆</text>
   <view class="list">
     <view class="list-row" bindtap="openChildMemory">

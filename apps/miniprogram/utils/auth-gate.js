@@ -1,4 +1,5 @@
 const api = require("./api");
+const { LOGIN_REQUIRED_COPY } = require("./guest-access");
 
 function currentRoute() {
   try {
@@ -15,29 +16,34 @@ function currentRoute() {
   }
 }
 
-function openLogin({ reason, redirect, skipRestore = false }) {
+function openLogin({ reason, redirect } = {}) {
   const target = redirect || currentRoute();
   wx.navigateTo({
     url:
       `/pages/auth/index?redirect=${encodeURIComponent(target)}` +
-      `&reason=${encodeURIComponent(reason || "protected_action")}` +
-      (skipRestore ? "&skip_restore=1" : ""),
+      `&reason=${encodeURIComponent(reason || "protected_action")}`,
   });
 }
 
-async function requireLogin({ reason = "protected_action", redirect } = {}) {
-  if (api.hasAuthenticatedSession()) return true;
-  try {
-    await api.restoreWechatIdentity();
-    return true;
-  } catch (error) {
-    openLogin({
-      reason,
-      redirect,
-      skipRestore: error?.code === "phone_authorization_required",
+function requireLogin({ reason = "protected_action", redirect } = {}) {
+  if (api.hasAuthenticatedSession()) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (confirmed) => {
+      if (settled) return;
+      settled = true;
+      if (confirmed) openLogin({ reason, redirect });
+      resolve(false);
+    };
+    wx.showModal({
+      title: "需要登录",
+      content: LOGIN_REQUIRED_COPY,
+      confirmText: "去登录",
+      cancelText: "先看看",
+      success: (result) => finish(Boolean(result?.confirm)),
+      fail: () => finish(false),
     });
-    return false;
-  }
+  });
 }
 
 module.exports = {

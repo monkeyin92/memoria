@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Final, Literal
 
@@ -13,7 +14,11 @@ from services.common.companion_response_safety import (
     companion_safety_decision,
     is_story_retell_context,
 )
-from services.common.fixed_safety_scripts import FixedSafetyScript, script_for_decision
+from services.common.fixed_safety_scripts import (
+    FixedSafetyScript,
+    FixedSafetyTemplateId,
+    script_for_decision,
+)
 
 CrisisAction = Literal["crisis_support", "support_victim", "support_relay", "none"]
 
@@ -26,9 +31,14 @@ class CrisisSemanticVerdict(StrEnum):
     NO_CRISIS = "NO_CRISIS"
     UNSURE = "UNSURE"
 
+# Bare self-absence, not a location: 「不在家」「不在学校」 must not reach the
+# marker, so only 了/也/都 may sit between 不在 and 没关系.
 _FIRST_PERSON_RISK_ANCHOR = re.compile(
     r"(?:我|本人).{0,16}(?:不想活|想死|自伤|自残|轻生|结束生命|"
-    r"活下去的理由|撑不下去|准备行动|已经行动)"
+    r"活下去的理由|撑不下去|准备行动|已经行动|"
+    r"消失(?:了)?(?:就)?好|(?:没有|没)(?:被)?(?:生出来|生下来|出生)|"
+    r"睡着.{0,4}不醒|不在(?:了)?(?:也|都)?(?:没关系|没事|无所谓|不要紧)|"
+    r"活着.{0,6}(?:没意思|没有意思|没意义))"
 )
 
 
@@ -108,6 +118,33 @@ def route_crisis(
     )
 
 
+_PROTECTION_RANK: Final[dict[FixedSafetyTemplateId, int]] = {
+    "support-other-v1": 1,
+    "victim-support-v1": 2,
+    "crisis-self-v1": 3,
+}
+
+
+def more_protective_local_script(
+    query: str, planned: FixedSafetyScript | None
+) -> FixedSafetyScript | None:
+    """The local deterministic script when it protects more than ``planned``.
+
+    The planner (control-api) and the media bridge ship as separate images, so
+    a partial rollout leaves two versions of these rules live at once.  The
+    child hears the more protective of the two; ``None`` keeps ``planned``.
+    """
+
+    local = route_crisis(query).script
+    if local is None:
+        return None
+    if planned is not None and (
+        _PROTECTION_RANK[planned.template_id] >= _PROTECTION_RANK[local.template_id]
+    ):
+        return None
+    return local
+
+
 def crisis_semantic_candidate(query: str) -> bool:
     """Bound semantic calls to first-person risk language not already resolved.
 
@@ -123,14 +160,13 @@ def crisis_semantic_candidate(query: str) -> bool:
 
 
 def fixed_safety_reply_log_fields(route: CrisisRoute) -> dict[str, str] | None:
-    """Ids and route for a spoken fixed safety reply. Never includes child text."""
+    """Template id and UTC time of a spoken fixed safety reply. Never child text."""
 
     if route.script is None:
         return None
     return {
-        "route": route.action,
         "reply_template_id": route.script.template_id,
-        "script_version": route.script.template_id,
+        "at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
 
 
@@ -141,8 +177,7 @@ def log_fixed_safety_reply(logger: logging.Logger, route: CrisisRoute) -> None:
     if fields is None:
         return
     logger.info(
-        "fixed_safety_reply route=%s reply_template_id=%s script_version=%s",
-        fields["route"],
+        "fixed_safety_reply reply_template_id=%s at=%s",
         fields["reply_template_id"],
-        fields["script_version"],
+        fields["at"],
     )

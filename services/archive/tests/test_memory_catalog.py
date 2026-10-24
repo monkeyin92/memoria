@@ -15,6 +15,7 @@ from services.archive.domain import ContextQuery, EvidenceEvent, MemoryReview
 from services.archive.memory_catalog import SubjectCategoryUnresolved
 from services.archive.memory_domain import (
     AccountWriteRejectedError,
+    CompileReport,
     ExtractedClaim,
     ExtractedKnowledge,
     ExtractedPerson,
@@ -32,6 +33,13 @@ from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
 
 MakeCatalog = Callable[..., Awaitable[PostgresMemoryCatalog]]
 OwnerSql = Callable[..., list[tuple[Any, ...]]]
+
+RECEIPT_SQL = (
+    "SELECT outcome, ignored_reason, extractor_version FROM memory_compile_receipts"
+    " WHERE event_id = %s"
+)
+CLAIM_COUNT_SQL = "SELECT count(*) FROM memory_claims WHERE source_event_id = %s"
+OUTBOX_STATUS_SQL = "SELECT status FROM archive_processing_outbox WHERE event_id = %s"
 
 
 class FlakyExtractor:
@@ -390,8 +398,7 @@ async def test_search_defaults_to_confirmed_non_conflicting_claims(
 
     assert default_search.items == ()
     assert {
-        (item.source_event_id, item.status, item.conflict_state)
-        for item in candidate_search.items
+        (item.source_event_id, item.status, item.conflict_state) for item in candidate_search.items
     } == {
         ("search-age-60", "candidate", "active"),
         ("search-age-61", "candidate", "active"),
@@ -443,8 +450,7 @@ async def test_search_defaults_to_confirmed_non_conflicting_claims(
     assert conflicted_default.items == ()
     assert conflicted_context.items == ()
     assert {
-        (item.source_event_id, item.status, item.conflict_state)
-        for item in conflicted_opt_in.items
+        (item.source_event_id, item.status, item.conflict_state) for item in conflicted_opt_in.items
     } == {
         ("search-age-60", "confirmed", "active"),
         ("search-age-61", "disputed", "active"),
@@ -472,9 +478,9 @@ async def test_search_defaults_to_confirmed_non_conflicting_claims(
         )
     )
 
-    assert [(item.source_event_id, item.status, item.conflict_state) for item in resolved_default.items] == [
-        ("search-age-60", "confirmed", "none")
-    ]
+    assert [
+        (item.source_event_id, item.status, item.conflict_state) for item in resolved_default.items
+    ] == [("search-age-60", "confirmed", "none")]
     assert [(item.source_event_id, item.status) for item in resolved_context.items] == [
         ("search-age-60", "confirmed")
     ]
@@ -575,7 +581,9 @@ def test_edge_content_query_terms_keep_named_things_and_drop_word_fragments() ->
     assert {"橘色", "小猫", "称呼"} <= set(edge)
     assert all(term[0] not in "的了么什怎" and term[-1] not in "的了么什怎" for term in edge)
     # Names, years and terms of art keep their exact-match value.
-    assert {"刘老师", "刘老", "老师"} <= set(edge_content_query_terms(lexical_query_terms("刘老师是我的什么人？")))
+    assert {"刘老师", "刘老", "老师"} <= set(
+        edge_content_query_terms(lexical_query_terms("刘老师是我的什么人？"))
+    )
     assert "2016" in edge_content_query_terms(lexical_query_terms("2016年发生了什么？"))
     # Unlike content_query_terms this may return nothing; embeddings still rank the query.
     assert edge_content_query_terms(lexical_query_terms("那是什么")) == ()
@@ -633,7 +641,6 @@ async def test_explicit_low_sensitivity_memory_is_immediately_confirmed(
     assert dict(audit_events[0].payload) == {
         "target_id": audit_events[0].payload["target_id"],
         "action": "confirm",
-        "previous_value": "我喜欢雨天散步。",
         "source_event_id": "explicit-memory-low-risk",
         "policy_version": "explicit-memory-v2",
         "reason": "explicit-memory-low-risk",
@@ -658,36 +665,129 @@ async def test_explicit_low_sensitivity_memory_is_immediately_confirmed(
 
 
 @pytest.mark.asyncio
-async def test_minor_projection_uses_authoritative_category_and_drops_sensitive_candidates(
+@pytest.mark.parametrize("category", ["minor", "under_14", "14_17"])
+@pytest.mark.parametrize("seam", ["evidence_resolver", "account_resolver"])
+async def test_a_minor_subject_never_reaches_the_extractor(
     archive: PostgresLifeArchive,
     make_catalog: MakeCatalog,
+    owner_sql: OwnerSql,
+    category: str,
+    seam: str,
 ) -> None:
     await _record(
         archive,
-        event_id="minor-family-conflict",
-        text="我和爸爸最近总吵架。",
+        event_id="minor-study",
+        text="我今天练习了英语口语，过去式还是薄弱点。",
+        subject_id="account-memory",
     )
-    catalog = await make_catalog(
-        extractor=RuleBasedMemoryExtractor(),
-        subject_category_resolver=lambda _: "minor",
+    extractor = CountingExtractor()
+    resolver: dict[str, Callable[[Any], str]] = (
+        {"evidence_subject_category_resolver": lambda _event: category}
+        if seam == "evidence_resolver"
+        else {"subject_category_resolver": lambda _account_id: category}
     )
+    catalog = await make_catalog(extractor=extractor, **resolver)
 
     report = await catalog.compile_pending()
-    context = await catalog.context(
-        MemorySearchQuery(
-            account_id="account-memory",
-            speaker_class="owner",
-            text="爸爸 吵架",
-            include_candidates=True,
-        )
-    )
 
-    assert report.failed_events == 0
-    assert context.items == ()
+    assert extractor.calls == 0
+    assert report == CompileReport(ignored_events=1)
+    assert owner_sql(RECEIPT_SQL, "minor-study") == [
+        ("ignored", "minor_subject_skipped", "counting-test-v1")
+    ]
+    assert owner_sql(CLAIM_COUNT_SQL, "minor-study") == [(0,)]
+    assert await archive.event(account_id="account-memory", event_id="minor-study") is not None
+    assert owner_sql(OUTBOX_STATUS_SQL, "minor-study") == [("completed",)]
 
 
 @pytest.mark.asyncio
-async def test_minor_projection_keeps_safe_study_progress(
+@pytest.mark.parametrize("category", ["adult"])
+async def test_an_extractable_subject_is_extracted_exactly_once(
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
+    owner_sql: OwnerSql,
+    category: str | None,
+) -> None:
+    await _record(
+        archive,
+        event_id="extractable-study",
+        text="我今天练习了英语口语，过去式还是薄弱点。",
+        subject_id="account-memory",
+    )
+    extractor = CountingExtractor()
+    catalog = await make_catalog(
+        extractor=extractor,
+        evidence_subject_category_resolver=lambda _event: category,
+    )
+
+    report = await catalog.compile_pending()
+
+    assert extractor.calls == 1
+    assert report == CompileReport(compiled_events=1)
+    assert owner_sql(RECEIPT_SQL, "extractable-study") == [("compiled", None, "counting-test-v1")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("category", ["unknown", None, "teen"])
+async def test_a_subject_that_is_not_an_explicit_adult_is_not_extracted(
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
+    owner_sql: OwnerSql,
+    category: str | None,
+) -> None:
+    await _record(
+        archive,
+        event_id="not-adult-study",
+        text="我今天练习了英语口语，过去式还是薄弱点。",
+        subject_id="account-memory",
+    )
+    extractor = CountingExtractor()
+    catalog = await make_catalog(
+        extractor=extractor,
+        evidence_subject_category_resolver=lambda _event: category,
+    )
+
+    report = await catalog.compile_pending()
+
+    assert extractor.calls == 0
+    assert report == CompileReport(ignored_events=1)
+    assert owner_sql(RECEIPT_SQL, "not-adult-study") == [
+        ("ignored", "not_explicit_adult", "counting-test-v1")
+    ]
+    assert owner_sql(CLAIM_COUNT_SQL, "not-adult-study") == [(0,)]
+
+
+@pytest.mark.asyncio
+async def test_an_unresolved_subject_is_ignored_without_extraction(
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
+    owner_sql: OwnerSql,
+) -> None:
+    await _record(
+        archive,
+        event_id="unresolved-subject",
+        text="我习惯先核对范围，再开始动手。",
+        subject_id="person-missing",
+    )
+    extractor = CountingExtractor()
+
+    def refuse(event: EvidenceEvent) -> str | None:
+        raise SubjectCategoryUnresolved(event.subject_id)
+
+    catalog = await make_catalog(extractor=extractor, evidence_subject_category_resolver=refuse)
+
+    report = await catalog.compile_pending()
+
+    assert extractor.calls == 0
+    assert report == CompileReport(ignored_events=1)
+    assert owner_sql(RECEIPT_SQL, "unresolved-subject") == [("ignored", None, "counting-test-v1")]
+    assert owner_sql(CLAIM_COUNT_SQL, "unresolved-subject") == [(0,)]
+    stored = await archive.event(account_id="account-memory", event_id="unresolved-subject")
+    assert stored is not None
+
+
+@pytest.mark.asyncio
+async def test_a_minors_study_progress_is_not_projected(
     archive: PostgresLifeArchive,
     make_catalog: MakeCatalog,
 ) -> None:
@@ -711,47 +811,15 @@ async def test_minor_projection_keeps_safe_study_progress(
         )
     )
 
-    assert report.failed_events == 0
-    assert [(item.domain_category, item.source_event_id) for item in context.items] == [
-        ("study_progress", "minor-study-progress"),
-        ("study_progress", "minor-study-progress"),
-        ("study_progress", "minor-study-progress"),
-    ]
-
-
-@pytest.mark.asyncio
-async def test_minor_projection_drops_study_sentence_with_teacher_scolding(
-    archive: PostgresLifeArchive,
-    make_catalog: MakeCatalog,
-) -> None:
-    await _record(
-        archive,
-        event_id="minor-scolded-math",
-        text="我今天练习了数学，被老师骂了。",
-    )
-    catalog = await make_catalog(
-        extractor=RuleBasedMemoryExtractor(),
-        subject_category_resolver=lambda _: "minor",
-    )
-
-    report = await catalog.compile_pending()
-    context = await catalog.search(
-        MemorySearchQuery(
-            account_id="account-memory",
-            speaker_class="owner",
-            text="数学 老师",
-            include_candidates=True,
-        )
-    )
-
-    assert report.failed_events == 0
+    assert report == CompileReport(ignored_events=1)
     assert context.items == ()
 
 
 @pytest.mark.asyncio
-async def test_minor_explicit_daily_preference_confirms_without_sensitive_capture(
+async def test_a_childs_explicit_request_is_neither_extracted_nor_confirmed(
     archive: PostgresLifeArchive,
     make_catalog: MakeCatalog,
+    owner_sql: OwnerSql,
 ) -> None:
     await _record(
         archive,
@@ -785,28 +853,19 @@ async def test_minor_explicit_daily_preference_confirms_without_sensitive_captur
             include_candidates=False,
         )
     )
-    sensitive = await catalog.search(
-        MemorySearchQuery(
-            account_id="account-memory",
-            speaker_class="owner",
-            text="难过 爸爸",
-            include_candidates=True,
-        )
-    )
 
-    assert report.failed_events == 0
-    assert {(item.domain_category, item.status, item.source_event_id) for item in confirmed.items} == {
-        ("daily_life", "confirmed", "minor-reading")
-    }
-    assert sensitive.items == ()
+    assert report == CompileReport(ignored_events=3)
+    assert confirmed.items == ()
+    assert await catalog.review_queue(account_id="account-memory") == ()
+    assert owner_sql(
+        "SELECT count(*) FROM archive_evidence_events WHERE source = 'system.memory_write_policy'"
+    ) == [(0,)]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("text", "prompt_kind"),
     [
-        # The robot ends nearly every line with a question, so from the second turn on the child's
-        # command used to score 0.95 x 0.7 and stay a candidate nobody could confirm.
         ("帮我记住我最喜欢蓝色。", "open"),
         ("帮我记住我最喜欢蓝色。", "structured"),
         # First sentence after wake: the greeting echo is glued in front of the command.
@@ -814,7 +873,7 @@ async def test_minor_explicit_daily_preference_confirms_without_sensitive_captur
         ("哎，你好！ 帮我记住我最喜欢蓝色。", "open"),
     ],
 )
-async def test_a_childs_explicit_request_is_confirmed_whatever_preceded_it(
+async def test_an_explicit_request_is_confirmed_whatever_preceded_it(
     archive: PostgresLifeArchive,
     make_catalog: MakeCatalog,
     text: str,
@@ -822,15 +881,12 @@ async def test_a_childs_explicit_request_is_confirmed_whatever_preceded_it(
 ) -> None:
     await _record(
         archive,
-        event_id="minor-explicit-after-question",
+        event_id="explicit-after-question",
         text=text,
         explicit_memory=True,
         prompt_kind=prompt_kind,
     )
-    catalog = await make_catalog(
-        extractor=RuleBasedMemoryExtractor(),
-        subject_category_resolver=lambda _: "minor",
-    )
+    catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
 
     report = await catalog.compile_pending()
     confirmed = await catalog.search(
@@ -844,25 +900,22 @@ async def test_a_childs_explicit_request_is_confirmed_whatever_preceded_it(
 
     assert report.failed_events == 0
     assert {(item.status, item.source_event_id) for item in confirmed.items} == {
-        ("confirmed", "minor-explicit-after-question")
+        ("confirmed", "explicit-after-question")
     }
 
 
 @pytest.mark.asyncio
-async def test_a_childs_plain_statement_after_a_question_still_only_becomes_a_candidate(
+async def test_a_plain_statement_after_a_question_still_only_becomes_a_candidate(
     archive: PostgresLifeArchive,
     make_catalog: MakeCatalog,
 ) -> None:
     await _record(
         archive,
-        event_id="minor-plain-after-question",
+        event_id="plain-after-question",
         text="我最喜欢蓝色。",
         prompt_kind="open",
     )
-    catalog = await make_catalog(
-        extractor=RuleBasedMemoryExtractor(),
-        subject_category_resolver=lambda _: "minor",
-    )
+    catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
 
     await catalog.compile_pending()
     confirmed = await catalog.search(
@@ -875,6 +928,9 @@ async def test_a_childs_plain_statement_after_a_question_still_only_becomes_a_ca
     )
 
     assert confirmed.items == ()
+    assert [
+        item.source_event_id for item in await catalog.review_queue(account_id="account-memory")
+    ] == ["plain-after-question"]
 
 
 @pytest.mark.asyncio
@@ -1007,9 +1063,6 @@ async def test_single_value_claims_do_not_conflict_across_subjects(
     )
     catalog = await make_catalog(
         extractor=SingleValueClaimExtractor(),
-        # Both speakers are adults here.  The point of the test is the fold,
-        # not the minor allowlist; a missing identity must not be what hides
-        # the child's row.
         evidence_subject_category_resolver=lambda _event: "adult",
     )
     await catalog.compile_pending()
@@ -1072,31 +1125,30 @@ async def test_single_value_claims_do_not_conflict_across_subjects(
 
 
 @pytest.mark.asyncio
-async def test_default_resolver_still_compiles_a_named_other_subject(
+async def test_a_missing_category_does_not_compile(
     archive: PostgresLifeArchive,
     make_catalog: MakeCatalog,
+    owner_sql: OwnerSql,
 ) -> None:
-    """None from the default resolver is unknown, not "do not project".
-
-    A catalog with no evidence resolver used to compile every accepted event.
-    Naming another subject must not change that: only an explicit unresolved
-    signal skips the projection.
-    """
-
     await _record(
         archive,
         event_id="other-subject-fact",
         text="我习惯先找事实，再讨论责任。",
         subject_id="person-other",
     )
-    catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
+    extractor = CountingExtractor()
+    catalog = await make_catalog(
+        extractor=extractor,
+        evidence_subject_category_resolver=lambda _event: None,
+    )
 
     report = await catalog.compile_pending()
 
-    assert report.compiled_events == 1
-    assert report.ignored_events == 0
-    queue = await catalog.review_queue(account_id="account-memory")
-    assert [item.source_event_id for item in queue] == ["other-subject-fact"]
+    assert extractor.calls == 0
+    assert report == CompileReport(ignored_events=1)
+    assert owner_sql(RECEIPT_SQL, "other-subject-fact") == [
+        ("ignored", "not_explicit_adult", "counting-test-v1")
+    ]
 
 
 @pytest.mark.asyncio
@@ -1105,8 +1157,6 @@ async def test_unresolved_other_subject_is_ignored_without_a_projection(
     make_catalog: MakeCatalog,
     owner_sql: OwnerSql,
 ) -> None:
-    """The sentinel, not None, is what withholds a long-term projection."""
-
     await _record(
         archive,
         event_id="owner-fact",
@@ -1124,7 +1174,7 @@ async def test_unresolved_other_subject_is_ignored_without_a_projection(
     def resolve(event: EvidenceEvent) -> str | None:
         if event.subject_id == "person-missing":
             raise SubjectCategoryUnresolved(event.subject_id)
-        return None
+        return "adult"
 
     catalog = await make_catalog(
         extractor=RuleBasedMemoryExtractor(),
@@ -1139,10 +1189,10 @@ async def test_unresolved_other_subject_is_ignored_without_a_projection(
     stored = await archive.event(account_id="account-memory", event_id="missing-person-fact")
     assert stored is not None
     receipts = owner_sql(
-        "SELECT outcome FROM memory_compile_receipts WHERE event_id = %s",
+        "SELECT outcome, ignored_reason FROM memory_compile_receipts WHERE event_id = %s",
         "missing-person-fact",
     )
-    assert receipts == [("ignored",)]
+    assert receipts == [("ignored", None)]
 
 
 @pytest.mark.asyncio
@@ -1268,7 +1318,6 @@ async def test_legacy_v1_policy_confirmation_cannot_promote_a_rebuilt_claim(
             payload={
                 "target_id": claim.item_id,
                 "action": "confirm",
-                "previous_value": claim.value,
                 "source_event_id": "legacy-v1-source",
                 "policy_version": "explicit-memory-v1",
                 "reason": "explicit-memory-low-risk",
@@ -1537,7 +1586,7 @@ async def test_correction_is_confirmed_searchable_and_written_as_audit_evidence(
         ("claim", "我认为做决定前应该等两天。")
     ]
     assert evidence.evidence[0].event_type == "memory.claim_reviewed"
-    assert evidence.evidence[0].payload["previous_value"] == "我认为做决定前应该等一天。"
+    assert "previous_value" not in evidence.evidence[0].payload
 
 
 @pytest.mark.asyncio
@@ -1604,9 +1653,7 @@ async def test_person_alias_is_recallable_and_stays_gated_by_status(
     await catalog.compile_pending()
 
     people = await catalog.people(account_id="account-memory")
-    assert [(person.display_name, person.status) for person in people] == [
-        ("李梅", "candidate")
-    ]
+    assert [(person.display_name, person.status) for person in people] == [("李梅", "candidate")]
     assert "阿梅" in people[0].aliases
 
     context = await catalog.context(

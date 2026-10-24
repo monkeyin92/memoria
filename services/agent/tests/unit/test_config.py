@@ -6,6 +6,37 @@ import pytest
 from pydantic import ValidationError
 from services.agent.src.config import AgentSettings, load_settings
 from services.agent.src.contracts.errors import ConfigValidationError
+from services.common.tts_defaults import (
+    DOUBAO_TTS_FALLBACK_SPEAKER,
+    STEPFUN_TTS_MODEL,
+    STEPFUN_TTS_VOICE,
+)
+
+
+def _without_deepseek_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DEEPSEEK_API_URL", raising=False)
+    monkeypatch.delenv("DEEPSEEK_BASE_URL", raising=False)
+
+
+def test_deepseek_api_url_is_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    _without_deepseek_url(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_URL", "https://api-url.example.invalid")
+
+    assert AgentSettings(_env_file=None).deepseek_base_url == "https://api-url.example.invalid"
+
+
+def test_deepseek_base_url_still_sets_the_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    _without_deepseek_url(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://base-url.example.invalid")
+
+    assert AgentSettings(_env_file=None).deepseek_base_url == "https://base-url.example.invalid"
+
+
+def test_deepseek_api_url_wins_over_the_legacy_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_URL", "https://api-url.example.invalid")
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://base-url.example.invalid")
+
+    assert AgentSettings(_env_file=None).deepseek_base_url == "https://api-url.example.invalid"
 
 
 @pytest.fixture(autouse=True)
@@ -25,6 +56,7 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FUNASR_SAMPLE_RATE", "16000")
     monkeypatch.setenv("DEPLOYMENT_PROFILE", "livekit_cloud")
     monkeypatch.delenv("MEDIA_MAX_USER_SPEECH_DURATION_S", raising=False)
+    monkeypatch.delenv("MEDIA_LISTENING_CAPTURE_WINDOW_S", raising=False)
     s = AgentSettings(_env_file=None)
     assert s.funasr_sample_rate == 16000
     assert s.funasr_context_enabled is False
@@ -43,11 +75,29 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.media_bridge_mtls is False
     assert s.media_bridge_max_pending_audio_frames == 20
     assert s.media_output_generation_timeout_s == 45.0
-    assert s.media_owner_silence_timeout_s == 15.0
+    assert s.media_owner_silence_timeout_s == 180.0
+    assert s.media_listening_capture_window_s == 30.0
     assert s.media_max_user_speech_duration_s == 60.0
+    assert s.media_speaking_stall_timeout_s == 15.0
     assert s.media_slo_report_enabled is False
     assert s.media_slo_metrics_url == "http://agent:9090/"
     assert s.media_slo_report_interval_s == 30.0
+
+
+def test_production_idle_disconnect_default_is_three_minutes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("MEDIA_OWNER_SILENCE_TIMEOUT_S", raising=False)
+    monkeypatch.delenv("MEDIA_LISTENING_CAPTURE_WINDOW_S", raising=False)
+    assert AgentSettings(_env_file=None).media_owner_silence_timeout_s == 180.0
+
+    repo_root = Path(__file__).resolve().parents[4]
+    compose = (repo_root / "docker-compose.production.yml").read_text()
+    assert 'MEDIA_OWNER_SILENCE_TIMEOUT_S: "180"' in compose
+    assert 'MEDIA_LISTENING_CAPTURE_WINDOW_S: "30"' in compose
+    env_example = (repo_root / "infra/memoria.env.production.example").read_text()
+    assert "\nMEDIA_OWNER_SILENCE_TIMEOUT_S=180\n" in env_example
+    assert "\nMEDIA_LISTENING_CAPTURE_WINDOW_S=30\n" in env_example
 
 
 def test_production_media_bridge_requires_mtls_material(
@@ -487,3 +537,47 @@ def test_production_enabled_capabilities_require_independent_tokens(
 
     with pytest.raises(ValidationError, match="capability tokens must be independent"):
         AgentSettings()
+
+
+def test_stepfun_defaults_and_main_backup_fallback_speaker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TTS_PROVIDER", "stepfun_primary")
+    monkeypatch.setenv("STEPFUN_TTS_ENABLED", "true")
+    monkeypatch.delenv("STEPFUN_TTS_MODEL", raising=False)
+    monkeypatch.delenv("STEPFUN_TTS_VOICE", raising=False)
+    monkeypatch.delenv("DOUBAO_TTS_FALLBACK_SPEAKER", raising=False)
+
+    settings = AgentSettings(_env_file=None)
+
+    assert settings.stepfun_tts_model == STEPFUN_TTS_MODEL
+    assert settings.stepfun_tts_voice == STEPFUN_TTS_VOICE
+    assert settings.doubao_tts_fallback_speaker == DOUBAO_TTS_FALLBACK_SPEAKER
+    assert settings.aigc_notice_enabled is True
+    assert settings.aigc_notice_mode == "tone"
+
+
+def test_main_backup_mode_accepts_an_operator_fallback_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TTS_PROVIDER", "stepfun_primary")
+    monkeypatch.setenv("STEPFUN_TTS_ENABLED", "true")
+    monkeypatch.setenv("DOUBAO_TTS_FALLBACK_SPEAKER", "zh_female_linjianvhai_uranus_bigtts")
+
+    assert AgentSettings(_env_file=None).doubao_tts_fallback_speaker == (
+        "zh_female_linjianvhai_uranus_bigtts"
+    )
+
+
+@pytest.mark.parametrize(
+    "voice", ["S_personal_synth_ready", "zh_male_test_voice_uranus_bigtts"]
+)
+def test_main_backup_mode_rejects_clone_voice(
+    monkeypatch: pytest.MonkeyPatch, voice: str
+) -> None:
+    monkeypatch.setenv("TTS_PROVIDER", "stepfun_primary")
+    monkeypatch.setenv("STEPFUN_TTS_ENABLED", "true")
+    monkeypatch.setenv("DOUBAO_TTS_FALLBACK_SPEAKER", voice)
+
+    with pytest.raises(ValidationError, match="not a clone/ICL voice|not a male preset"):
+        AgentSettings(_env_file=None)

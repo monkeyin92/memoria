@@ -101,6 +101,11 @@ class DelegationCoordinator:
     # Only consumers with a queued-output resume path may retain blocked work.
     queue_while_floor_blocked: bool = False
     _task_epoch_by_session: dict[str, int] = field(default_factory=dict)
+    # A task epoch fences one tool's results, not every tool sharing the
+    # session.  The weather path runs the response planner and the media deep
+    # response at the same time; advancing the session epoch for the lookup
+    # must not invalidate the plan that is already in flight.
+    _task_epoch_by_tool: dict[tuple[str, str], int] = field(default_factory=dict)
     _context_version_by_session: dict[str, int] = field(default_factory=dict)
     _evaluated_intents: set[str] = field(default_factory=set)
     _evaluated_intent_order: deque[str] = field(default_factory=lambda: deque(maxlen=1_024))
@@ -281,6 +286,11 @@ class DelegationCoordinator:
         if current_task_epoch is not None and request.task_epoch < current_task_epoch:
             raise ValueError("delegation task epoch moved backwards")
         self._task_epoch_by_session[session_id] = request.task_epoch
+        tool_key = (session_id, request.tool_name)
+        self._task_epoch_by_tool[tool_key] = max(
+            self._task_epoch_by_tool.get(tool_key, 0),
+            request.task_epoch,
+        )
         self.activate_context_version(session_id, request.context_version)
         record = await self.task_manager.start(
             request.tool_name,
@@ -426,7 +436,10 @@ class DelegationCoordinator:
             discard("delegation_uncommitted")
             return None
         session_id = request.fence.session_id
-        authoritative_task_epoch = self._task_epoch_by_session.get(session_id)
+        authoritative_task_epoch = self._task_epoch_by_tool.get(
+            (session_id, request.tool_name),
+            self._task_epoch_by_session.get(session_id),
+        )
         authoritative_context_version = self._context_version_by_session.get(session_id)
         if (
             authoritative_task_epoch is None
@@ -685,6 +698,24 @@ class DelegationCoordinator:
         expires_at_ms: int,
         now_ms: int | None = None,
     ) -> Any:
+        """Build a fast-ack intent; this method selects no TTS engine.
+
+        The phrase travels in ``tts_source`` and is synthesized downstream.
+        ``MediaSessionProjectionMixin._speak_allowlisted_bridge_phrase``
+        enqueues the intent as output work, ``ExistingVoiceProviderAdapter``
+        renders it through ``_synthesize_phrase`` in ``generate_output``, and
+        that pushes the text into ``speech_synthesis.stream()``. With
+        ``TTS_PROVIDER=stepfun_primary`` that stream is
+        ``StepFunFailoverStream``: an ordinary acknowledgement opens on StepFun
+        and switches to the Doubao backup only after a primary failure or while
+        the breaker is open. It never starts on Doubao. None of today's
+        allowlisted acknowledgements matches the labeled catalogue, so it is
+        synthesized instead of replayed from a pre-synthesized take. An
+        approved fixed-safety script does not reach this method, because its
+        phrase is not allowlisted; on the fixed-safety path the same wrapper
+        skips StepFun and speaks Doubao directly.
+        """
+
         if not is_allowlisted_device_phrase(phrase):
             raise ValueError("bridge acknowledgement is not allowlisted")
         now = int(time.time() * 1_000) if now_ms is None else now_ms
@@ -703,6 +734,41 @@ class DelegationCoordinator:
             floor_requirement=media_pb2.FLOOR_REQUIREMENT_ASSISTANT_MAY_SPEAK,
             context_version=context_version,
             tts_source=phrase,
+        )
+
+    @staticmethod
+    def aigc_marker(
+        *,
+        fence: GenerationFence,
+        context_version: int,
+        expires_at_ms: int,
+        pcm_s16le: bytes,
+        now_ms: int | None = None,
+    ) -> Any:
+        """A non-text audible marker on the assistant output path.
+
+        It uses the fast-acknowledgement wire kind because the media protocol
+        has no separate compliance-cue kind, and its PCM source bypasses TTS.
+        """
+
+        if not pcm_s16le or len(pcm_s16le) % 2:
+            raise ValueError("AIGC marker PCM must be non-empty 16-bit audio")
+        now = int(time.time() * 1_000) if now_ms is None else now_ms
+        if context_version < 0 or expires_at_ms <= now:
+            raise ValueError("AIGC marker metadata is stale")
+        return media_pb2.OutputIntent(
+            intent_id=str(uuid.uuid4()),
+            session_id=fence.session_id,
+            turn_id=fence.turn_id,
+            generation_id=fence.generation_id,
+            tool_epoch=fence.tool_epoch,
+            kind=media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT,
+            priority=110,
+            created_at_ms=now,
+            expires_at_ms=expires_at_ms,
+            floor_requirement=media_pb2.FLOOR_REQUIREMENT_ASSISTANT_MAY_SPEAK,
+            context_version=context_version,
+            pcm_s16le=pcm_s16le,
         )
 
     @staticmethod

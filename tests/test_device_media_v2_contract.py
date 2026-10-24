@@ -258,6 +258,43 @@ def test_session_close_has_a_strict_reason_shape() -> None:
         _validate(close)
 
 
+def _generation_started() -> dict[str, object]:
+    return {
+        "type": "generation.started",
+        "version": 2,
+        "session_id": "session_01",
+        "stream_epoch": 18,
+        "control_sequence": 3,
+        "server_monotonic_ms": 42_100,
+        "fence": {
+            "turn_id": 4,
+            "generation_id": 7,
+            "tool_epoch": 1,
+            "session_epoch": 1,
+        },
+        "reason": "user_turn_committed",
+    }
+
+
+def test_generation_started_accepts_an_optional_interruptible_flag() -> None:
+    started = _generation_started()
+    _validate(started)
+
+    started["interruptible"] = False
+    _validate(started)
+
+    started["interruptible"] = "no"
+    with pytest.raises(ValidationError):
+        _validate(started)
+
+
+def test_generation_started_still_rejects_unknown_properties() -> None:
+    started = _generation_started()
+    started["protected_playback"] = True
+    with pytest.raises(ValidationError):
+        _validate(started)
+
+
 def test_generation_complete_is_an_ordered_audio_lane_barrier() -> None:
     assert "generation.completed" in CONTRACT["priority_lanes"]["p2"]
     assert "generation.completed" not in CONTRACT["priority_lanes"]["p1"]

@@ -787,6 +787,47 @@ def test_postgres_archive_key_spellings_are_reduced_the_same_way() -> None:
     )
 
 
+def test_subject_export_withholds_retained_minor_and_unknown_evidence_text() -> None:
+    snapshot = {
+        "sections": {
+            "archive": {
+                "archive_evidence_events": [
+                    {
+                        "event_id": "retained-minor",
+                        "account_id": ACCOUNT_ID,
+                        "subject_id": "child",
+                        "payload": {
+                            "text": "legacy child text",
+                            "memory_retention": "retained",
+                            "subject_category": "minor",
+                        },
+                    },
+                    {
+                        "event_id": "retained-unknown",
+                        "account_id": ACCOUNT_ID,
+                        "subject_id": "unknown",
+                        "payload": {
+                            "text": "legacy unknown text",
+                            "memory_retention": "retained",
+                            "subject_category": "unknown",
+                        },
+                    },
+                ]
+            }
+        }
+    }
+    child_export = build_subject_export(
+        snapshot=snapshot, account_id=ACCOUNT_ID, subject_id="child", audience="self"
+    )
+    unknown_export = build_subject_export(
+        snapshot=snapshot, account_id=ACCOUNT_ID, subject_id="unknown", audience="self"
+    )
+    assert child_export["sections"]["evidence"]["items"] == []
+    assert unknown_export["sections"]["evidence"]["items"] == []
+    assert child_export["sections"]["evidence"]["excluded_counts"]["retention_withheld"] == 1
+    assert unknown_export["sections"]["evidence"]["excluded_counts"]["retention_withheld"] == 1
+
+
 def _person_consent(*, consent_id: str, subject: str) -> PersonConsentRecord:
     return PersonConsentRecord(
         consent_id=consent_id,

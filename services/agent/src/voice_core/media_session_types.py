@@ -45,6 +45,9 @@ class MediaReplyChunk:
     text_spans: tuple[MediaTextSpan, ...] = ()
     # Audio that covers a slow reply; it is not the reply, so it never ends reply latency.
     thinking_filler: bool = False
+    # The AIGC opening cue plays as the head of the reply's own work: same
+    # fence, same output intent, no generation bump. It carries no reply text.
+    aigc_marker: bool = False
 
     def __post_init__(self) -> None:
         if not self.pcm_s16le or len(self.pcm_s16le) % 2:
@@ -90,6 +93,18 @@ class MediaVoiceProvider(Protocol):
     async def pause_asr_for_playback(self, identity: SessionIdentity) -> None: ...
 
     async def close(self, identity: SessionIdentity) -> None: ...
+
+
+def fixed_safety_planned_for(context: Any, fence: GenerationFence) -> bool:
+    """Whether the prepared reply for ``fence`` is an approved fixed safety script.
+
+    A provider without the seam answers no, so every other reply keeps the
+    existing interruptible behaviour.
+    """
+
+    provider = getattr(context, "provider", None)
+    probe = getattr(provider, "fixed_safety_planned", None)
+    return bool(probe(fence)) if callable(probe) else False
 
 
 @dataclass(frozen=True, slots=True)
@@ -320,6 +335,14 @@ class OutputWork:
     intent: Any
     fence: GenerationFence
     conversation_text: str | None = None
+    # Opening AIGC cue rendered before the conversation reply on this exact
+    # fence. Empty means no cue; it is never a separate output intent.
+    lead_pcm_s16le: bytes = b""
+    # Closing AIGC cue rendered after the round's own audio on the same fence.
+    # The firmware only returns to listening on the current generation's
+    # ``generation.completed``; the cue rides the reply's stream so no
+    # successor generation is left without a terminal.
+    tail_pcm_s16le: bytes = b""
 
     @property
     def intent_id(self) -> str:

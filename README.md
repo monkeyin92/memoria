@@ -425,6 +425,8 @@ cd firmware/esp32
 ./scripts/flash.sh --port /dev/cu.usbmodemXXXX --monitor
 ```
 
+`flash.sh` 按分区计划烧引导、分区表和应用，不烧整片镜像。整片镜像的规矩在「身份分区安全」。
+
 ### 在线升级（OTA）
 
 设备空闲时向 control-api 查询签名的固件发布（`GET /v1/devices/{id}/firmware-release`，设备签名与 Activation Manifest 相同，只是 path 不同；未发布时答 `204`），首次在空闲约 30 秒后，此后每 6 小时，失败或被打断的下载 15 分钟后重试。只有构建号大于本机（`memoria_firmware_release.h` 的 `MEMORIA_FIRMWARE_BUILD`）且 Ed25519 签名能用固件内置的发布公钥验过的发布才会安装：镜像流式写入空闲 OTA 分区，同时校验大小与 SHA-256，bootloader 格式校验通过、项目名为 `memoria` 后才切换启动分区，并等到空闲时重启。新固件以 `PENDING_VERIFY` 启动，拿到服务端对激活的明确答复（已绑定或 409 未绑定）后才标记为有效；在那之前复位，bootloader 自动回到旧分区（`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`）。`esp_app_desc` 的版本号仍是上游 `2.4.2`（配网二维码与 online-proof 携带它，服务端逐字比对），OTA 只比较构建号。第一个带 OTA 的固件（构建 1）仍需 USB 刷入。
@@ -450,35 +452,30 @@ uv run python firmware/esp32/scripts/publish_firmware_release.py withdraw --remo
 
 - **唤醒方式**由家长在小程序设备页设置，两个开关至少开一个，对应设备设置 `wake_mode`：`keyword`（只有唤醒词，点屏没有任何反应）、`button`（只有点击屏幕，唤醒词关闭；对话中再点屏幕没有效果，也不会回到待命）、`button_or_keyword`（默认，两者都开，对话中点屏同样没有效果）。枚举沿用冻结契约，`button` 在这块板子上的含义改为「点击屏幕」。设备空闲时每 20 秒的 display-profile 轮询带回该值并写入 NVS（`memoria_ui/wake_mode`），改设置后最多约 20 秒生效；开机先用 NVS 值，从未收到过时按「两者都开」。
 - **点屏**只会唤醒：仅在空闲、且模式含屏幕时，走与唤醒词相同的路径（带聆听提示音）；说话中、聆听中、重连中点屏一律无效（此前会停止说话或回到待命）。配网二维码刷新和开机阶段点屏进配网不变。**BOOT 键始终可用**：短按启动/停止会话，长按配网。
-- **熄屏**：对话结束、回到待机后 10 秒，背光渐灭到 0 并停止渲染；唤醒词、点屏、BOOT、配网、错误、连接中都会立刻点亮。板子是 360×360 圆屏 + PWM 背光（GPIO44），所以是真正的熄屏，不做「黑底显示时间」的兜底。
+- **熄屏**：对话结束、回到待机后 15 秒，背光渐灭到 0 并停止渲染（`kIdleScreenOffMs`，build 18 记录里的 10 秒是当时的值）；唤醒词、点屏、BOOT、配网、错误、连接中都会立刻点亮。板子是 360×360 圆屏 + PWM 背光（GPIO44），所以是真正的熄屏，不做「黑底显示时间」的兜底。
 - 补丁 `0032` 改 `Application`（待机只在模式含唤醒词时开启检测），`memoria_wake_mode.{h,cc}` 是模式与 NVS，主机测试见 `firmware/esp32/tests/test_memoria_wake_mode.py`。
 
-### 屏幕：伙伴吉祥物（替换原白描对话脸）
+### 屏幕：黄色点阵脸
 
-360x360 圆屏显示账号所选伙伴（星澜/桃喜/绵绵/阿序/玄墨）的毛绒吉祥物，像 Muse Charm 一样是一个"活着"的角色，而不是表情符号：
+360x360 圆屏用代码画黄色点阵脸，黑底，不画边框，也不再把吉祥物贴图打进 assets 分区。表情固定 7 个，由设备状态决定，不读服务器情绪名。危机脚本（`interruptible: false`）在任何状态下都是平静脸。
 
-- **场景**：伙伴主题色的径向渐变背景（有序抖动，RGB565 无色带）+ 地面柔影 + 角色 + 圆屏边缘的状态光环。聆听=光环呼吸，思考/连接中=彗星光环旋转，说话=光环随声音的包络明暗。
-- **角色行为**：待机呼吸、随机眨眼（含双眨）、说话时口型随真实音量开合（每个心情有独立张嘴帧，见下方「口型与动画」）、心情切换时"压扁-弹起"、被拍一下开心跳、摇晃后晕乎乎、空闲时偶尔小动作（开心/思考/挥手）、闲置 3 分钟打瞌睡并调暗背光、回复结束后心情停留约 2 秒。
-- **开机**：黑屏 → 暖光光球 → 光圈扩散展开场景 → `memoria` 字标淡入淡出 → 伙伴从底部弹入落地 → 眨眼 → 挥手问好。背光在第一帧画好后才渐亮（不再闪白屏）。未绑定时中间是白色圆角二维码卡片，上方「欢迎使用 Memoria」（此时还没选伙伴），下方「微信扫一扫 开始配网」，边缘光环呼吸；轻点屏幕换一张新二维码（新 nonce/PoP，3 秒内只响应一次），小程序里过期或被拒的码都引导用户这样做。素材分区的常用字库在开机时、二维码出现前加载（patch `0030`），不再先缺字后补全。
-- **文字**：联网阶段（扫描/连接 Wi-Fi、配网模式、激活）伙伴缩到约 0.64 倍并上移，状态和提示文字排在它下方的独立字幕带（热点兜底提示拆成两行），不压在角色身上，回到待机时伙伴再长回原大、30 秒的「已连接」通知随之收起；对话中不再显示「正在连接」（彗星光环已表达）；二维码卡片是独立画面，其它状态/字幕文字一律不叠加；字幕是底部半透明胶囊；版本号/UA/品牌通知不再上屏。
-- **手机同步**：小程序「选TA陪伴」保存后，control-api 同时把该伙伴写成设备主使用人的人格（声音从下一轮对话起切换）；设备空闲时每 20 秒用设备签名调用 `GET /v1/devices/{id}/display-profile`，`display_version` 变化即挥手换装，并写入 NVS（重启后直接显示）。
+| 脸 | 串口 `face=` | 何时 |
+| --- | --- | --- |
+| 平静 | `calm` | 待机、未知、致命错误，以及任何危机 |
+| 聆听 | `listen` | 聆听、音频测试 |
+| 思考 | `think` | 聆听中孩子已经说完、回复还没开始 |
+| 说话 | `speak` | 说话，且这一句可以打断 |
+| 连接 | `connect` | 开机、配网、连接、恢复、激活、升级 |
+| 问好 | `greet` | 开机动画还在走 |
+| 配对 | `pair` | 未绑定，二维码卡片在画面上 |
 
-实现分三层：`memoria_mascot_pack.{h,cc}`（帧包解码）与 `memoria_mascot_scene.{h,cc}`（行为状态机 + 行缓冲合成，只重绘变化矩形并裁到圆内）不依赖 ESP-IDF/LVGL；`memoria_mascot_display.{h,cc}` 接 LVGL、设备状态、QR 卡片与背光。动画任务优先级 2（低于全部音频任务）。亮屏且伙伴醒着时 25 fps（Wi‑Fi 与绑定画面、瞌睡时 12.5 fps）：呼吸与光环按亚像素移动，每一帧都是看得见的一小步；`memoria_frame_pacer.h` 跟着实测的渲染耗时走，一帧占满间隔的 65 % 以上就把间隔每次拉长 10 ms（最多 +120 ms），宽裕约一秒后再慢慢放回，宁可降帧也不挤占音频。
-
-**口型与动画**：patch `0034` 在 `AudioService` 放两个音量采样点——输出是交给 codec 的 PCM（比出声早约 60 ms），输入是 AEC / NS 之后的上行 RMS；`memoria_audio_level.h` 把 −54…−12 dBFS 映射到 0…255。显示任务每帧取走采样点的数据（熄屏时也取），交给 `MascotScene::SetOutputLevel` / `SetInputLevel`：嘴在音量从谷底上升时张开、从峰值回落时合上（最短张口 80 ms、最短闭口 60 ms，防抖），光环与身体的轻微上抬跟着慢包络走；播放队列停转（没有新块）时嘴闭上、光环变暗。画面用亚像素双线性光栅（`memoria_mascot_raster.{h,cc}`）画，呼吸以脚底为支点、保持体积（`kPlushRatio = 0.7`）。
-
-美术：`apps/miniprogram/assets/companions/<id>/` 的 8 个心情帧之外，`*-blink`、`*-talk`、`greeting` 由 `design-preview/memoria-v2/tools/device_frames.py` 生成（图像编辑只改眼/嘴，再对齐并只把变化区域合成回原帧，其余像素逐位不变）。`firmware/esp32/scripts/build_mascot_pack.py` 打包成 `assets/mascot_<id>.mmp`（每个 110–180 KB，调色板 + zlib，眨眼/口型帧只存差异补丁）和 `brand_mark.mma`，由 patch `0026` 放进 assets 分区。
-
-离线预览与回归（不需要硬件）：
+几何在 `memoria_dot_face.cc`。13×11 的黄点，方点之间留空。待机时脸在圆屏正中。联网阶段脸在字幕带上方的圆里居中，最上排黄点落在 y 18 到 46。常驻 AI 角标已经从固件删除。点阵脸亮着时不跑吉祥物合成器。二维码卡片、字幕和背光策略不变。小程序里选的伙伴仍然只改下一轮的声音，屏幕不换装。`mascot_*.mmp` 只留在 `firmware/esp32/tests/fixtures/mascots/`，不进镜像。`firmware/esp32/scripts/preview_memoria_mascot.py` 只在主机上预览旧合成器，读的是这批夹具，不是设备画面。
 
 ```bash
-uv run python firmware/esp32/scripts/preview_memoria_mascot.py --out .tmp-mascot
-uv run pytest firmware/esp32/tests/test_memoria_mascot.py -q
+uv run pytest firmware/esp32/tests/test_memoria_dot_face.py -q
 ```
 
-预览编译的是固件同一份合成器，输出 `scene.mp4`、`sheet.png`，逐帧校验"增量重绘 = 全量重绘"，并数出每个状态每秒有多少帧真的变了（测试要求中位数不少于 20、最差的一秒不少于 18）；加 `--sanitize` 用 ASan / UBSan 重编译再跑一遍（`test_compositor_is_clean_under_sanitizers`）。改了源美术后先重跑 `build_mascot_pack.py`，测试会比对帧包字节。
-
-真机验收要看：开机动画、待机呼吸/眨眼、拍一下、摇晃、聆听光环、思考彗星、说话口型、未绑定二维码卡片、小程序换伙伴后 20 秒内设备换装（需先发布含 display-profile 的 control-api）。
+真机先不要刷。刷之后看：开机是问好脸，待机是平静脸，唤醒后聆听，说完一句进入思考再说话，危机话术全程平静脸。串口对应 `face=greet`、`face=calm`、`face=listen`、`face=think`、`face=speak`。配网或未绑定是连接脸或配对脸，画面上没有吉祥物，也没有方框。待合规复核（T-23）。
 
 **bench 构建（调试用，不发布）**：`./scripts/build.sh --bench` 在产品配置之上只多开 `CONFIG_MEMORIA_BENCH_SERIAL` 与 `CONFIG_LV_USE_SNAPSHOT`（patch `0035`，`config.bench.json`），让 USB 串口多认两条命令：`snap` 把屏幕当前内容按 `SNAP <id> <w>x<h> <seq>/<total> <crc> <base64>` 行分块吐出（约 6–8 s），`status` 吐一行 `MemoriaBench: status up_ms=… frames= drawn= render_us= busy_us= heap_free= …`（帧率、渲染耗时、堆余量）。电脑侧：`scripts/voice_soak_serial_command.py snap|status --log <串口记录>`，`scripts/snap_to_png.py` 把 SNAP 行还原成 PNG，`scripts/bench_status.py` 解析 `status` 行。刷入用 `./scripts/flash.sh --bench`，量完必须刷回产品镜像：bench 镜像文件名带 `-bench`、内嵌标记 `MEMORIA_BENCH_BUILD=1;`，`publish_firmware_release.py` 拒绝签名与上传它，产品镜像里没有这两条命令。
 
@@ -495,9 +492,13 @@ Mac 进入下载模式：按住 BOOT，轻按 RESET，松开 RESET，再松开 B
 
 ### 身份分区安全
 
-Flash `0x10000..0x1ffff` 是独立 `memoria_identity` NVS。普通固件更新不得写入该区：优先 app-only 刷写 `0x20000`，整包刷写前后都必须回读身份区并逐字节比较。任何身份摘要变化、Manifest v2 验签失败或设备 SKU 不符都必须停止验收，禁止靠重置身份绕过。
+Flash `0x10000..0x1ffff` 是独立 `memoria_identity` NVS。保留身份分区。普通固件更新不得写入该区，优先只刷 `0x20000` 的应用。`build.sh` 在上游写出整片镜像后删掉它，不把 `merged.bin` 放进 `artifacts/`。需要整片包时用 `build.sh --danger-full-erase`，文件名带 `DANGER_FULL_ERASE`。`flash.sh` 默认拒绝烧这类文件，也拒绝任何会盖住该分区的写入。只有同时带上 `--allow-danger-full-erase` 才放行这一次。
 
-长按 5 秒只重置网络配置，不清除身份分区，也不解除云端绑定。当前没有启用 Secure Boot、Flash Encryption 或 eFuse，量产安全不可由研发身份验收替代。
+`flash.sh` 在烧录前和烧录后各读一次该分区。它只判断 NVS namespace `device` 在不在，不读取、不打印任何键值。烧前 namespace 已在、烧后不在，脚本失败退出。烧前就没有身份时，脚本打印 `WARNING: memoria_identity 尚未写入设备身份，需运行 provision_identity.py`，退出码 0。
+
+解绑和恢复出厂都不擦身份分区。仓库里还没有恢复出厂擦除函数。将来的恢复出厂按键还没有定 GPIO。它只能按名字擦默认 `nvs` 分区，或擦一个具体 namespace。它不能调用不带分区名的 `nvs_flash_erase()`，不能做全片擦除，也不能擦 `memoria_identity`。`esp_partition_erase_range` 和 `esp_flash_erase_region` 默认也不允许。确需调用时，把文件和函数写进 `firmware/esp32/scripts/identity_guard.py` 的 `ERASE_RANGE_ALLOWLIST`，并写明擦的是哪一个分区。`esp_ota_*` 不在这条规则里。`check-overlay.sh` 用同一套规则扫叠加层和脚本。`nvs_open` 得到的句柄如果传到另一个函数里再调用 `nvs_erase_all`，这次静态检查看不到。那种写法仍然不能擦身份分区。
+
+长按 5 秒只重置网络配置，不清除身份分区，也不解除云端绑定。任何身份摘要变化、Manifest v2 验签失败或设备 SKU 不符都必须停止验收，禁止靠重置身份绕过。当前没有启用 Secure Boot、Flash Encryption 或 eFuse，量产安全不可由研发身份验收替代。
 
 ### 设备媒体协议
 

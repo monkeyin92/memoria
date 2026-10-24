@@ -10,7 +10,6 @@ from fastapi import APIRouter, Depends, Request
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.routes.readiness import agent_chat_llm_providers
 from services.control_api.app.security import AuthenticatedUser, require_authenticated_user
-from services.voice_profile.clone_authority import VoiceCloneAuthority
 
 router = APIRouter(prefix="/v1/account", tags=["account"])
 
@@ -49,9 +48,6 @@ async def delivered_capabilities(
         "age_evidence_status": profile.get("age_evidence_status"),
         "speaker_profiles_active": 0,
         "speaker_enrollment_ready": False,
-        "voice_clone_enabled": cast(
-            VoiceCloneAuthority, request.app.state.voice_clone_authority
-        ).enabled,
         "reject_non_owner_voice": False,
         "memory_days_with_activity": memory_activity["memory_days_with_activity"],
         "total_messages": memory_activity["total_messages"],

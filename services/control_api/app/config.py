@@ -759,23 +759,6 @@ class ControlSettings(
             self.voice_object_endpoint.strip() and not voice_access_key
         ):
             raise ValueError("production requires a complete voice object credential pair")
-        if self.voice_clone_provider == "alibaba_model_studio":
-            if not self.voice_target_model.startswith("cosyvoice-v3.5-"):
-                raise ValueError("CosyVoice voice cloning requires a CosyVoice v3.5 target")
-        else:
-            if self.voice_target_model != "seed-icl-2.0":
-                raise ValueError("Doubao voice cloning requires seed-icl-2.0")
-            if not self.doubao_voice_api_key.get_secret_value().strip():
-                raise ValueError("Doubao voice cloning requires an independent API key")
-            if self.doubao_voice_synth_ready_id_mode == "unverified":
-                raise ValueError("Doubao voice cloning requires a smoke-verified synth ID mapping")
-            if (
-                self.doubao_voice_synth_ready_id_mode == "response_field"
-                and not self.doubao_voice_synth_ready_id_field.strip()
-            ):
-                raise ValueError("Doubao response-field synth ID mapping requires a field path")
-            if not self.doubao_voice_expires_at_field.strip():
-                raise ValueError("Doubao voice cloning requires a provider expiry field path")
         archive_object_key = self.archive_object_encryption_key.get_secret_value()
         if not archive_object_key or not self.archive_object_key_version.strip():
             raise ValueError("production requires encrypted archive object storage")

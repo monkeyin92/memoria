@@ -736,7 +736,12 @@ async def test_started_live_lookup_ack_cancelled_does_not_repeat_filler() -> Non
         await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
         ack_owner = context.output.output_owner
         assert ack_owner is not None
-        await registry._cancel_reply_task(context, ack_owner.fence, reason="preempted")
+        await registry._cancel_reply_task(
+            context,
+            ack_owner.fence,
+            reason="preempted",
+            finalize_audible=False,
+        )
         provider.ack_hold.set()
         provider.release.set()
         await asyncio.wait_for(provider.deep_started.wait(), timeout=2)
@@ -826,7 +831,11 @@ async def test_qa_weather_interrupt_restarts_output_after_old_dispatch_drains() 
         assert context.output.reply_delivery.get(first_owner.fence).first_frame_sent
 
         cancellation = asyncio.create_task(
-            registry._cancel_reply_task(context, first_owner.fence),
+            registry._cancel_reply_task(
+                context,
+                first_owner.fence,
+                finalize_audible=False,
+            ),
         )
         await asyncio.wait_for(provider.first_draining.wait(), timeout=2)
         assert context.output.output_owner is None

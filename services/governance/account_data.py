@@ -20,6 +20,7 @@ from typing import Any, Literal, Protocol, cast
 import asyncpg
 
 from services.archive.object_store import ObjectNotFoundError, ObjectRef, ObjectStore
+from services.device_fleet.test_device_registration import RegistrationAuditDeletion
 from services.evolution.account_fence import AccountReadGuard, AccountWriteBlockedError
 from services.governance.subject_export import (
     build_subject_export,
@@ -65,6 +66,7 @@ _POSTGRES_ARCHIVE_EXPORT_TABLES = (
     ),
     TableSpec("archive_transcript_versions"),
     TableSpec("memory_claims"),
+    TableSpec("memory_claim_subjects"),
     TableSpec("person_entities"),
     TableSpec("person_aliases"),
     TableSpec("relationships"),
@@ -179,6 +181,7 @@ _POSTGRES_ARCHIVE_DELETE_ORDER = (
     "person_aliases",
     "person_entities",
     "knowledge_items",
+    "memory_claim_subjects",
     "memory_claims",
     "memory_compile_receipts",
     "archive_transcript_versions",
@@ -197,9 +200,19 @@ _DELETION_STEP_RANK = {
     "archive_rows_deleted": 5,
     "speaker_rows_deleted": 6,
     "evolution_rows_deleted": 7,
-    "verified_empty": 8,
-    "completed": 9,
+    "identity_rows_deleted": 8,
+    "verified_empty": 9,
+    "completed": 10,
 }
+
+
+class AccountIdentityRepository(Protocol):
+    """Controlled identity erasure port (issue #283)."""
+
+    async def delete_account_identity(self, account_id: str) -> dict[str, int]: ...
+
+    async def remaining_account_identity(self, account_id: str) -> dict[str, int]: ...
+
 
 
 class AccountRepository(Protocol):
@@ -210,6 +223,10 @@ class AccountRepository(Protocol):
     async def delete_account(self, account_id: str) -> dict[str, int]: ...
 
     async def remaining_account_rows(self, account_id: str) -> dict[str, int]: ...
+
+
+class BoundDeviceAuditDeleter(Protocol):
+    def delete_account_registration_audits(self, *, account_id: str) -> RegistrationAuditDeletion: ...
 
 
 class AccountProjectionRepository(Protocol):
@@ -686,6 +703,8 @@ class AccountDataGovernance:
         session_terminator: AccountSessionTerminator | None = None,
         operation_blocker: AccountOperationBlocker | None = None,
         account_read_guard: AccountReadGuard | None = None,
+        onboarding: BoundDeviceAuditDeleter | None = None,
+        identity_repository: AccountIdentityRepository | None = None,
     ) -> None:
         self._memory_store = memory_store
         self._archive_repository = archive_repository
@@ -699,6 +718,8 @@ class AccountDataGovernance:
         self._session_terminator = session_terminator
         self._operation_blocker = operation_blocker
         self._account_read_guard = account_read_guard or _unguarded_read
+        self._onboarding = onboarding
+        self._identity_repository = identity_repository
         # ponytail: deletion is rare; one lock avoids a per-account lock lifecycle.
         self._deletion_lock = asyncio.Lock()
 
@@ -826,6 +847,7 @@ class AccountDataGovernance:
         progress = {
             str(key): int(value) for key, value in dict(deletion["progress"]).items()
         }
+        registration_audits_deleted_at: str | None = None
 
         async def checkpoint(next_step: str, *, last_error: str | None = None) -> None:
             nonlocal step
@@ -948,6 +970,17 @@ class AccountDataGovernance:
                 )
                 await checkpoint("evolution_rows_deleted")
 
+            # Idempotent: a retry after a late child bind runs the erasure port
+            # again, and the port converges (already-erased rows count zero).
+            if self._identity_repository is not None:
+                identity_counts = await self._identity_repository.delete_account_identity(
+                    account_id
+                )
+                progress.update(
+                    {f"identity.{key}": value for key, value in identity_counts.items()}
+                )
+            await checkpoint("identity_rows_deleted")
+
             # Catch any asset or projection that arrived just before the deleting fence.
             (
                 late_profiles,
@@ -1020,6 +1053,7 @@ class AccountDataGovernance:
                 evolution_rows,
                 legacy_rows,
                 guardian_rows,
+                identity_rows,
             ) = await asyncio.gather(
                 self._voice_profiles.profiles(account_id=account_id),
                 self._archive_repository.object_references(account_id),
@@ -1032,6 +1066,11 @@ class AccountDataGovernance:
                     if self._guardian_repository is not None
                     else _empty_projection_rows()
                 ),
+                (
+                    self._identity_repository.remaining_account_identity(account_id)
+                    if self._identity_repository is not None
+                    else _empty_projection_rows()
+                ),
             )
             if (
                 profiles
@@ -1041,9 +1080,19 @@ class AccountDataGovernance:
                 or evolution_rows
                 or _legacy_export_has_rows(cast(LegacyAccountExport, legacy_rows))
                 or guardian_rows
+                or identity_rows
             ):
                 raise AccountDeletionIncompleteError(
                     "assets or projections appeared while account deletion was running"
+                )
+            if self._onboarding is not None:
+                receipt = await asyncio.to_thread(
+                    self._onboarding.delete_account_registration_audits,
+                    account_id=account_id,
+                )
+                progress["onboarding.registration_audits"] = receipt.deleted_count
+                registration_audits_deleted_at = receipt.deleted_at.isoformat().replace(
+                    "+00:00", "Z"
                 )
             await checkpoint("verified_empty")
         except Exception as exc:
@@ -1058,13 +1107,16 @@ class AccountDataGovernance:
             completed_at=completed_at,
             deleted_counts=progress,
         )
-        return {
+        result: dict[str, Any] = {
             "request_id": request_id,
             "status": "completed",
             "completed_at": completed_at,
             "deleted_counts": finalized,
             "terminate_sessions": True,
         }
+        if registration_audits_deleted_at is not None:
+            result["registration_audits_deleted_at"] = registration_audits_deleted_at
+        return result
 
 
 async def _empty_projection_rows() -> dict[str, int]:

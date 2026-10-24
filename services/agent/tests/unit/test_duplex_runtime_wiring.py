@@ -72,6 +72,23 @@ async def _classify_speaker(runtime: DuplexRuntime, decision: SpeakerDecision) -
 
 
 @pytest.mark.asyncio
+async def test_close_clears_the_speaker_pcm_audio_buffer() -> None:
+    runtime = DuplexRuntime.create(session_id="close-clears-speaker-pcm")
+    runtime.on_user_voice_started()
+    runtime.feed_speaker_pcm(b"\x01\x00" * 800)
+    assert runtime._speaker_pcm
+    assert runtime.speaker_verifier._rolling
+    assert runtime.speaker_verifier._utterance
+
+    await runtime.close()
+
+    assert not runtime._speaker_pcm
+    assert not runtime.speaker_verifier._rolling
+    assert not runtime.speaker_verifier._utterance
+    assert not runtime.speaker_verifier._collecting_utterance
+
+
+@pytest.mark.asyncio
 async def test_uncertain_user_evidence_carries_shadow_owner_provenance() -> None:
     evidence: list[dict[str, object]] = []
 
@@ -100,8 +117,8 @@ async def test_uncertain_user_evidence_carries_shadow_owner_provenance() -> None
         event for event in evidence if event.get("event_type") == "speech.utterance_finalized"
     )
     assert utterance["speaker_class"] == "uncertain"
+    # #282: the evidence never carries turn text.
     assert utterance["payload"] == {
-        "text": text,
         "persona_eligible": True,
         "prompt_kind": "spontaneous",
         "speaker_reason_code": "shadow_owner_candidate",

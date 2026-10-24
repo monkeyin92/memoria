@@ -683,10 +683,13 @@ esp_err_t MemoriaBootstrap::HandleConfig(uint32_t,
     password = password_value->valuestring;
     SsidManager::GetInstance().AddSsid(ssid, password);
     std::fill(password.begin(), password.end(), '\0');
-    if (WifiManager::GetInstance().IsInitialized()) {
-        WifiManager::GetInstance().StopConfigAp();
-        WifiManager::GetInstance().StopStation();
-        WifiManager::GetInstance().StartStation();
+    auto& wifi = WifiManager::GetInstance();
+    // Already on this network: a restart would drop the online proof's HTTPS
+    // request mid-flight, and the IP event of the stopped station crashed the board.
+    if (wifi.IsInitialized() && !(wifi.IsConnected() && wifi.GetSsid() == ssid)) {
+        wifi.StopConfigAp();
+        wifi.StopStation();
+        wifi.StartStation();
     }
     return EncodeJsonEnvelope("{\"accepted\":true}", outbuf, outlen);
 }

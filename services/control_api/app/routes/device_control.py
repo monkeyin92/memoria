@@ -21,6 +21,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from services.common.failure_log import failure_log
 from services.control_api.app.account_gate import (
     SubjectCapability,
     require_capability_for_account_id,
@@ -202,7 +203,9 @@ async def _invalidate_active_device_session(
                 request.app.state.settings
             )
         except Exception as exc:
-            logger.warning("device runtime invalidation client is not configured: %s", exc)
+            logger.warning(
+                "device runtime invalidation client is not configured %s", failure_log(exc)
+            )
             return False
         if not base_url or len(token) < 32:
             return False
@@ -341,7 +344,7 @@ async def _read_live_device_runtime_status(
                 request.app.state.settings
             )
         except Exception as exc:
-            logger.warning("device runtime status client is not configured: %s", exc)
+            logger.warning("device runtime status client is not configured %s", failure_log(exc))
             return None
         if not base_url or len(token) < 32:
             return None
@@ -365,7 +368,9 @@ async def _read_live_device_runtime_status(
     try:
         value = await reader(device_id=device_id)
     except Exception as exc:
-        logger.warning("device runtime status unavailable device_id=%s error=%s", device_id, exc)
+        logger.warning(
+            "device runtime status unavailable device_id=%s %s", device_id, failure_log(exc)
+        )
         return None
     if not isinstance(value, dict) or value.get("device_id") != device_id:
         return None

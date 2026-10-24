@@ -54,7 +54,6 @@ async def test_policy_provenance_is_frozen_per_fence_and_owner_evidence_is_serve
     await asyncio.sleep(0)
 
     assert published[0]["payload"] == {
-        "text": "这是一个足够长的主人真实表达。",
         "persona_eligible": True,
         "prompt_kind": "spontaneous",
         "interaction_mode": "companion",

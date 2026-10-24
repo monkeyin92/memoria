@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import logging
 import unicodedata
-from typing import Any, cast
+import uuid
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import httpx
-from fastapi import FastAPI
 
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
@@ -23,6 +23,7 @@ from services.control_api.app.wechat_auth import (
     mini_program_access_token,
 )
 from services.guardian.push import (
+    CRISIS_PUSH_DEFAULT_CHILD_NAME,
     CrisisPushContent,
     CrisisPushSender,
     CrisisPushStorePort,
@@ -111,6 +112,24 @@ def _classify(response: httpx.Response, remote_code: int | None) -> PushSendResu
     return PushSendResult("failed", f"wechat_{remote_code}")
 
 
+def crisis_alert_page(base_page: str, notification_id: str | None) -> str:
+    """Deep-link the tap-through to the alert detail page of this notification.
+
+    The Mini Program detail page reads ``?id=`` on load; a bare configured page
+    can only show the guardian list.  An identifier that is not a UUID never
+    reaches the query string.
+    """
+
+    if not notification_id:
+        return base_page
+    try:
+        alert_id = str(uuid.UUID(str(notification_id)))
+    except (AttributeError, TypeError, ValueError):
+        return base_page
+    separator = "&" if "?" in base_page else "?"
+    return f"{base_page}{separator}id={alert_id}"
+
+
 class WechatSubscribeSender:
     """Send the fixed crisis alert through ``cgi-bin/message/subscribe/send``."""
 
@@ -122,7 +141,8 @@ class WechatSubscribeSender:
     def message_data(self, content: CrisisPushContent) -> dict[str, dict[str, str]]:
         values = {
             "title": content.title,
-            "child": content.child_display_name,
+            # The card never names the child, whatever a caller put in content.
+            "child": CRISIS_PUSH_DEFAULT_CHILD_NAME,
             "time": content.occurred_at.astimezone(self._zone).strftime("%Y-%m-%d %H:%M"),
             "tip": content.tip,
         }
@@ -137,11 +157,12 @@ class WechatSubscribeSender:
         openid: str,
         template_id: str,
         content: CrisisPushContent,
+        notification_id: str | None = None,
     ) -> dict[str, Any]:
         return {
             "touser": openid,
             "template_id": template_id,
-            "page": self._settings.wechat_subscribe_crisis_page,
+            "page": crisis_alert_page(self._settings.wechat_subscribe_crisis_page, notification_id),
             "miniprogram_state": self._settings.wechat_miniprogram_state,
             "lang": "zh_CN",
             "data": self.message_data(content),
@@ -153,8 +174,14 @@ class WechatSubscribeSender:
         openid: str,
         template_id: str,
         content: CrisisPushContent,
+        notification_id: str | None = None,
     ) -> PushSendResult:
-        body = self.request_body(openid=openid, template_id=template_id, content=content)
+        body = self.request_body(
+            openid=openid,
+            template_id=template_id,
+            content=content,
+            notification_id=notification_id,
+        )
         for attempt in range(2):
             try:
                 token, cache_key = await mini_program_access_token(self._settings)
@@ -203,22 +230,10 @@ def resolve_minor_display_name(
     return resolve
 
 
-def app_display_name_resolver(app: FastAPI) -> DisplayNameResolver:
-    async def resolve(guardian_user_id: str, minor_user_id: str) -> str | None:
-        resolver = resolve_minor_display_name(
-            cast(MemoryStore, app.state.memory_store),
-            getattr(app.state, "identity_service", None),
-        )
-        return await resolver(guardian_user_id, minor_user_id)
-
-    return resolve
-
-
 def build_crisis_push_worker(
     settings: ControlSettings,
     store: CrisisPushStorePort,
     *,
-    display_name: DisplayNameResolver,
     sender: CrisisPushSender | None = None,
 ) -> CrisisPushWorker | None:
     """Return the delivery worker, or ``None`` when push is disabled."""
@@ -231,7 +246,6 @@ def build_crisis_push_worker(
         store,
         sender or WechatSubscribeSender(settings),
         template_id=settings.wechat_subscribe_crisis_template_id.strip(),
-        display_name=display_name,
         interval_s=settings.guardian_push_interval_s,
         max_attempts=settings.guardian_push_max_attempts,
     )
@@ -239,8 +253,8 @@ def build_crisis_push_worker(
 
 __all__ = [
     "WechatSubscribeSender",
-    "app_display_name_resolver",
     "build_crisis_push_worker",
+    "crisis_alert_page",
     "fit_keyword_value",
     "resolve_minor_display_name",
 ]

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, SecretStr, model_validator
+from pydantic import AliasChoices, BaseModel, Field, SecretStr, model_validator
 
 from services.common.llm_failover import (
     dashscope_endpoint_in_use,
@@ -22,14 +22,25 @@ class ProviderFields(BaseModel):
         alias="TTS_PROVIDER",
     )
     dashscope_api_key: SecretStr = Field(default=SecretStr(""), alias="DASHSCOPE_API_KEY")
+    # control-api does not run ASR. Readiness counts the DashScope key only for funasr.
+    asr_provider: Literal["none", "funasr"] = Field(default="none", alias="ASR_PROVIDER")
+    qwen_omni_session_enabled: bool = Field(
+        default=False, alias="QWEN_OMNI_SESSION_ENABLED"
+    )
+    live_search_qwen_enabled: bool = Field(
+        default=False, alias="LIVE_SEARCH_QWEN_ENABLED"
+    )
+    weather_lookup_provider: Literal["off", "domestic"] = Field(
+        default="off", alias="WEATHER_LOOKUP_PROVIDER"
+    )
+    qweather_api_key: SecretStr = Field(default=SecretStr(""), alias="QWEATHER_API_KEY")
+    qweather_api_host: str = Field(default="", alias="QWEATHER_API_HOST")
     dashscope_ws_url: str = Field(default="", alias="DASHSCOPE_WS_URL")
     dashscope_workspace_id: str = Field(default="", alias="DASHSCOPE_WORKSPACE_ID")
     # P1-8: fixed Memoria persona voice on Omni (DashScope preset; not free-form clone).
     # Qwen3.5-Omni Realtime voice (not Qwen-TTS names like Cherry).
     # Liora Mira = 清欢，温柔女声（官方 Omni 音色表）.
     qwen_omni_voice: str = Field(default="Liora Mira", alias="QWEN_OMNI_VOICE")
-    # Optional custom/cloned voice id from DashScope voice-clone product; wins over preset.
-    qwen_omni_voice_clone_id: str = Field(default="", alias="QWEN_OMNI_VOICE_CLONE_ID")
     qwen_omni_persona_label: str = Field(
         default="Memoria 人设声",
         alias="QWEN_OMNI_PERSONA_LABEL",
@@ -113,7 +124,7 @@ class ProviderFields(BaseModel):
     deepseek_api_key: SecretStr = Field(default=SecretStr(""), alias="DEEPSEEK_API_KEY")
     deepseek_base_url: str = Field(
         default="https://api.deepseek.com",
-        alias="DEEPSEEK_BASE_URL",
+        validation_alias=AliasChoices("DEEPSEEK_API_URL", "DEEPSEEK_BASE_URL"),
     )
     # With LLM_PROVIDER=deepseek the crisis evidence, memory/persona extraction and
     # persona structuring calls use this model; recap and daily summary use the next one.

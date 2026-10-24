@@ -44,6 +44,7 @@ def _configure(
         monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
     else:
         monkeypatch.setenv("DASHSCOPE_API_KEY", "test-dashscope-key")
+        monkeypatch.setenv("QWEN_OMNI_SESSION_ENABLED", "true")
 
 
 async def _anonymous_identity(client: AsyncClient) -> tuple[str, dict[str, str]]:
@@ -127,6 +128,7 @@ async def test_create_session_freezes_the_conversation_without_media_credentials
     assert stop.json()["detail"] == {"code": "stop_response_runtime_unsupported"}
 
 
+@pytest.mark.hermetic
 @pytest.mark.asyncio
 async def test_create_omni_session_requires_only_dashscope_api_key(
     monkeypatch: pytest.MonkeyPatch,
@@ -134,6 +136,7 @@ async def test_create_omni_session_requires_only_dashscope_api_key(
 ) -> None:
     _configure(monkeypatch, tmp_path, offline=False)
     monkeypatch.setenv("DASHSCOPE_WORKSPACE_ID", "")
+    monkeypatch.setenv("QWEN_OMNI_VOICE_CLONE_ID", "cloned-voice-id")
     app = create_app()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -307,20 +310,48 @@ async def test_omni_owner_can_publish_only_allowlisted_numeric_telemetry(
                 "error_message": "不得写入日志的上游正文",
             },
         )
+        planted = "刺猬把第十片云装进了口袋"
+        accepted_error = await client.post(
+            f"/v1/sessions/{created['session_id']}/telemetry",
+            headers=headers,
+            json={
+                "name": "omni_upstream_error",
+                "elapsed_ms": 5003,
+                "turn_id": 1,
+                "generation_id": 1,
+                "error_type": planted,
+                "error_code": planted,
+                "error_param": planted,
+            },
+        )
 
     assert accepted.status_code == 204
     assert rejected.status_code == 422
     assert rejected_message.status_code == 422
+    assert accepted_error.status_code == 204
     assert "不得上传文本" not in caplog.text
     assert "不得写入日志的上游正文" not in caplog.text
+    assert planted not in caplog.text
+    telemetry = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("omni_realtime_telemetry ")
+    ]
+    assert len(telemetry) == 2
+    assert "packets_lost" in telemetry[0]
+    for line in telemetry:
+        for key in ("error_type=", "error_code=", "error_param="):
+            assert key not in line
 
 
+@pytest.mark.hermetic
 @pytest.mark.asyncio
 async def test_omni_creation_fails_closed_without_server_configuration(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     _configure(monkeypatch, tmp_path, offline=True)
+    monkeypatch.setenv("QWEN_OMNI_SESSION_ENABLED", "true")
     monkeypatch.setenv("DASHSCOPE_WORKSPACE_ID", "llm-test-workspace")
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -336,7 +367,52 @@ async def test_omni_creation_fails_closed_without_server_configuration(
             json={"user_id": user_id, "voice_backend": "unknown"},
         )
     assert missing_key.status_code == 503
+    assert missing_key.json()["detail"] == "Qwen3.5-Omni 服务端尚未配置"
     assert invalid_backend.status_code == 422
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_omni_session_stays_closed_when_the_switch_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path, offline=False)
+    monkeypatch.setenv("QWEN_OMNI_SESSION_ENABLED", "false")
+    monkeypatch.setenv("DASHSCOPE_WORKSPACE_ID", "llm-test-workspace")
+    posted: list[str] = []
+
+    class RecordingClient:
+        def __init__(self, **kwargs: Any) -> None:
+            _ = kwargs
+
+        async def __aenter__(self) -> RecordingClient:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def post(self, url: str, **kwargs: Any) -> object:
+            posted.append(url)
+            raise AssertionError("dashscope must not be called")
+
+    monkeypatch.setattr(session_routes.httpx, "AsyncClient", RecordingClient)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, headers = await _anonymous_identity(client)
+        response = await client.post(
+            "/v1/sessions",
+            headers=headers,
+            json={"user_id": user_id, "voice_backend": "qwen_omni"},
+        )
+    with pytest.raises(HTTPException) as caught:
+        await session_routes._exchange_omni_sdp(app.state.settings, b"v=0\r\n")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Qwen Omni 会话未开启"
+    assert caught.value.status_code == 503
+    assert caught.value.detail == "Qwen Omni 会话未开启"
+    assert posted == []
 
 
 @pytest.mark.asyncio
@@ -439,6 +515,7 @@ async def test_omni_sdp_exchange_is_limited_per_session(
     assert after_restart.status_code == 429
 
 
+@pytest.mark.hermetic
 @pytest.mark.asyncio
 async def test_omni_upstream_uses_fixed_url_without_redirects_or_client_secret(
     monkeypatch: pytest.MonkeyPatch,
@@ -489,6 +566,7 @@ async def test_omni_upstream_uses_fixed_url_without_redirects_or_client_secret(
     assert request["content"] == b"v=0\r\no=browser-offer\r\n"
 
 
+@pytest.mark.hermetic
 @pytest.mark.asyncio
 async def test_omni_upstream_error_body_is_not_exposed(
     monkeypatch: pytest.MonkeyPatch,

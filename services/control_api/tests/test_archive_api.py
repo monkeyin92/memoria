@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,13 +24,17 @@ from services.archive.memory_domain import MemorySearchResult, ReviewedClaim
 from services.archive.postgres_archive import PostgresLifeArchive
 from services.common.companions import designed_voice_speaker_sha256
 from services.common.redaction import redact_pii
+from services.control_api.app.archive_event_conflicts import (
+    ResponseProvenanceCreate,
+    _canonical_actual_voice,
+)
 from services.control_api.app.main import create_app
 from services.control_api.app.persona_learning import observe_persona
 from services.control_api.app.routes.archive import (
-    ResponseProvenanceCreate,
     _account_write,
-    _canonical_actual_voice,
+    _actual_heard_item,
     _deletion_status_response,
+    _owner_turn_item,
 )
 from services.digital_self.domain import (
     DigitalSelfManifest,
@@ -40,6 +45,7 @@ from services.digital_self.domain import (
 from services.digital_self.response_planner import PLANNER_POLICY_VERSION
 from services.evolution.domain import CandidateArtifact, GateResult, ValidationReport
 from services.guardian.domain import PersonConsentRecord
+from services.identity.domain import IdentityNotFoundError
 from services.legacy.domain import (
     LegacyAccessDeniedError,
     LegacyAccessSnapshot,
@@ -108,6 +114,47 @@ class LegacyVersionStub:
             "version_id": self.version.version_id,
         }
         return self.version
+
+
+def test_retained_minor_and_unknown_rows_never_project_verbatim_turns() -> None:
+    base = {
+        "history_eligible": True,
+        "owner_projection_eligible": True,
+        "memory_retention": "retained",
+    }
+    owner = EvidenceEvent(
+        event_id="retained-minor-owner",
+        account_id="account",
+        subject_id="child",
+        event_type="speech.utterance_finalized",
+        occurred_at=datetime(2026, 10, 1, tzinfo=UTC),
+        speaker_class="owner",
+        source="test",
+        session_id="session",
+        turn_id=1,
+        generation_id=1,
+        payload={**base, "subject_category": "minor", "text": "child text"},
+    )
+    assistant = EvidenceEvent(
+        event_id="retained-unknown-assistant",
+        account_id="account",
+        subject_id="unknown",
+        event_type="assistant.playout_stopped",
+        occurred_at=datetime(2026, 10, 1, tzinfo=UTC),
+        speaker_class="assistant",
+        source="test",
+        session_id="session",
+        turn_id=1,
+        generation_id=1,
+        payload={
+            **base,
+            "subject_category": "unknown",
+            "actual_heard": True,
+            "text": "assistant text",
+        },
+    )
+    assert _owner_turn_item(owner) is None
+    assert _actual_heard_item(assistant) is None
 
 
 def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -781,6 +828,7 @@ async def test_archive_accepts_only_the_exact_runtime_evolution_provenance(
     tmp_path: Path,
 ) -> None:
     _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv("LIVE_SEARCH_QWEN_ENABLED", "true")
     app = create_app()
     internal = {
         "X-Memoria-Internal-Token": "test-internal-archive-token",
@@ -2321,6 +2369,10 @@ async def test_session_event_retry_ignores_delivery_timestamp_but_rejects_semant
     assert changed_payload.status_code == 409
     assert changed_session.status_code == 409
     assert changed_owner.status_code == 409
+    assert [
+        response.json()["detail"]["code"]
+        for response in (changed_payload, changed_session, changed_owner)
+    ] == ["event_id_content_conflict"] * 3
 
 
 @pytest.mark.asyncio
@@ -3098,6 +3150,22 @@ async def test_registered_account_deletion_revokes_login_token_session_and_archi
         )
         assert (task.status_code, feedback.status_code) == (201, 201)
 
+        # Production registers an identity person for every account; the
+        # deletion must reach it too (#283).
+        await app.state.identity_service.register_person(
+            person_id=owner["user_id"],
+            display_name="账户使用人",
+            timezone="Asia/Shanghai",
+            subject_category="adult",
+            age_band="adult",
+            age_evidence_status="verified",
+            age_evidence_id="fixture-archive-deletion-owner",
+            now=datetime.now(UTC),
+        )
+        assert await app.state.identity_service.get_person(
+            owner["user_id"], actor_person_id=owner["user_id"]
+        )
+
         wrong_confirmation = await client.post(
             "/v1/archive/deletion-requests",
             headers=owner_headers,
@@ -3145,6 +3213,12 @@ async def test_registered_account_deletion_revokes_login_token_session_and_archi
         remaining_growth_events = await app.state.life_archive.context(
             ContextQuery(account_id=owner["user_id"], speaker_class="owner", limit=100)
         )
+        try:
+            identity_row = await app.state.identity_service.get_person(
+                owner["user_id"], actor_person_id=owner["user_id"]
+            )
+        except IdentityNotFoundError:
+            identity_row = None
 
     assert wrong_confirmation.status_code == 422
     assert deleted.status_code == 200
@@ -3161,6 +3235,15 @@ async def test_registered_account_deletion_revokes_login_token_session_and_archi
     assert deleted_session_event.status_code == 410
     assert other_still_exists.status_code == 200
     assert remaining_growth_events.evidence == ()
+    # #283: account deletion erases the identity person row itself, so nothing
+    # that names the usage person survives the deletion.
+    assert identity_row is None
+    assert (
+        await app.state.identity_store.remaining_account_identity(
+            account_person_id=owner["user_id"]
+        )
+        == {}
+    )
 
 
 @pytest.mark.asyncio
@@ -3538,9 +3621,82 @@ async def test_conversation_sessions_preview_uses_latest_nonblank_eligible_text_
     assert response.json()["items"] == [
         {
             "session_id": session["session_id"],
-            "occurred_at": (now + timedelta(seconds=1)).isoformat(),
-            "turn_count": 1,
+            "occurred_at": (now + timedelta(seconds=2)).isoformat(),
+            "turn_count": 2,
             "preview": "答" * 80,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_conversation_sessions_list_turns_that_carry_no_text(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # #282: archived turns hold metadata only, so the session list must not
+    # depend on a preview text that no real turn has.
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    now = datetime.now(UTC)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = await _register_verified_adult(
+            client, app, username="conversation-session-no-text"
+        )
+        headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        session = (await client.post("/v1/sessions", headers=headers, json={})).json()
+        subject_id = str(owner["user_id"])
+        for event in (
+            _conversation_session_event(
+                account_id=subject_id,
+                event_id="no-text-user",
+                subject_id=subject_id,
+                session_id=session["session_id"],
+                occurred_at=now,
+                text="",
+                turn_id=1,
+            ),
+            _conversation_session_event(
+                account_id=subject_id,
+                event_id="no-text-assistant",
+                subject_id=subject_id,
+                session_id=session["session_id"],
+                occurred_at=now,
+                text="",
+                turn_id=1,
+                speaker_class="assistant",
+            ),
+        ):
+            await app.state.life_archive.record(
+                replace(event, payload={k: v for k, v in event.payload.items() if k != "text"})
+            )
+        await app.state.life_archive.record(
+            EvidenceEvent(
+                event_id="no-text-ephemeral",
+                account_id=subject_id,
+                subject_id=subject_id,
+                event_type="speech.utterance_finalized",
+                occurred_at=now,
+                speaker_class="owner",
+                source="test",
+                session_id="no-text-ephemeral-session",
+                turn_id=1,
+                generation_id=1,
+                payload={
+                    "history_eligible": True,
+                    "owner_projection_eligible": True,
+                    "memory_retention": "ephemeral_only",
+                },
+            )
+        )
+        response = await client.get("/v1/archive/conversation-sessions", headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["items"] == [
+        {
+            "session_id": session["session_id"],
+            "occurred_at": now.isoformat(),
+            "turn_count": 1,
+            "preview": "",
         }
     ]
 
@@ -3657,11 +3813,12 @@ async def test_retention_ceiling_follows_the_speaking_subject_not_the_account(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """P2-03: a child speaking on the owner's device must not be retained.
+    """P2-03: a child's evidence row stays metadata-only after consent.
 
     Before the subject column existed, the ingest decided retention from the
     ACCOUNT's category, so a minor speaking on an adult's family device was
-    stored as retained adult content and surfaced by the review exits.
+    stored as retained adult content and surfaced by the review exits. Consent
+    may retain metadata, but it must never retain verbatim turn text.
     """
     _configure(monkeypatch, tmp_path)
     app = create_app()
@@ -3710,6 +3867,18 @@ async def test_retention_ceiling_follows_the_speaking_subject_not_the_account(
         )
         assert bound.status_code == 201, bound.text
         child_id = bound.json()["primary_subject_ids"][0]
+        await app.state.guardian_store.grant_person_consent(
+            PersonConsentRecord(
+                consent_id=str(uuid.uuid4()),
+                subject_person_id=child_id,
+                grantor_person_id="subject-fence-guardian",
+                consent_kind="memory_retention",
+                policy_version="subject-fence-minor-memory-v1",
+                granted_at=datetime.now(UTC),
+                evidence_event_id="subject-fence-minor-retention-grant",
+            ),
+            actor_person_id="subject-fence-guardian",
+        )
         session = (await client.post("/v1/sessions", headers=owner_headers, json={})).json()
         internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
 
@@ -3747,9 +3916,13 @@ async def test_retention_ceiling_follows_the_speaking_subject_not_the_account(
     )
     assert child_event is not None and owner_event is not None
     assert child_event.subject_id == child_id
-    assert child_event.payload.get("history_eligible") is False
-    assert "text" not in child_event.payload
-    assert child_event.payload.get("memory_retention") != "retained"
+    assert child_event.payload.get("memory_retention") == "retained"
+    assert not {
+        "text",
+        "transcript",
+        "user_text",
+        "assistant_text",
+    }.intersection(child_event.payload)
     # 同一账户、同一会话：成人本人说话仍按账户保留，证明天花板随说话主体。
     assert owner_event.subject_id == owner["user_id"]
     assert owner_event.payload.get("history_eligible") is True

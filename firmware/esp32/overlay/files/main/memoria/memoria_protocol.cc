@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <string_view>
@@ -11,20 +12,27 @@
 
 #include "board.h"
 #include "esp_app_desc.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "display/lcd_display.h"
 #include "http.h"
+#include "memoria_activation_error_page.h"
+#include "memoria_playback_stop.h"
+#include "memoria_activation_error_text.h"
+#include "memoria_activation_retry_policy.h"
 #include "memoria_audio_frame.h"
 #include "application.h"
 #include "memoria_bootstrap.h"
 #include "memoria_display_hooks.h"
 #include "memoria_firmware_update.h"
 #include "memoria_offline_menu.h"
+#include "memoria_session_close.h"
 #include "memoria_stop_keyword.h"
 #include "memoria_wake_mode.h"
 #include "memoria_wake_word.h"
+#include "settings.h"
 #include "sodium.h"
 #include "web_socket.h"
 
@@ -36,7 +44,6 @@ constexpr int kHttpTimeoutMs = 10000;
 constexpr int kSessionReadyTimeoutMs = 10000;
 constexpr int64_t kTransportPingIntervalUs = 30LL * 1000LL * 1000LL;
 constexpr int64_t kTransportPongTimeoutUs = 10LL * 1000LL * 1000LL;
-constexpr uint32_t kActivationRetryDelayMs = 5000;
 // The phone's companion pick reaches an idle device within one poll.
 constexpr uint32_t kDisplayProfilePollMs = 20000;
 // A bound board whose display profile is unavailable rechecks the manifest
@@ -61,6 +68,35 @@ constexpr uint64_t kAfeVadHangoverSamples =
 // prevents one bad/noisy capture from holding a signed media session open
 // indefinitely; ordinary turns must still end through the AFE VAD callback.
 constexpr uint64_t kMaxVadSpeechSamples = static_cast<uint64_t>(kUplinkSampleRate) * 20;
+
+ActivationAttemptOutcome ActivationOutcomeFor(esp_err_t result) {
+    if (result == ESP_OK) {
+        return ActivationAttemptOutcome::kOk;
+    }
+    // Activate() maps a manifest 409 to INVALID_STATE after clearing the
+    // activation marker; the parent still has to scan the nearby QR.
+    if (result == ESP_ERR_INVALID_STATE) {
+        return ActivationAttemptOutcome::kServerUnbound;
+    }
+    return ActivationAttemptOutcome::kFailed;
+}
+
+// Read after Activate(): a 409 clears activation_v itself before returning, so
+// a bound board released by the server becomes unbound here too.
+bool ActivationAwaitingBinding() {
+    Settings runtime("memoria_runtime", true);
+    return runtime.GetInt("activation_v", 0) == 0 ||
+           MemoriaBootstrap::GetInstance().active();
+}
+
+std::string ActivationFailureDetail(esp_err_t result,
+                                    const MemoriaActivationClient& client) {
+    char detail[160];
+    std::snprintf(detail, sizeof(detail), kActivationNetworkErrorDetailFormat,
+                  esp_err_to_name(result), static_cast<int>(result),
+                  client.last_http_status(), client.last_transport_error());
+    return detail;
+}
 
 struct ScopedJson final {
     cJSON* value = nullptr;
@@ -309,13 +345,41 @@ std::string RenderJson(cJSON* root) {
 
 }  // namespace
 
+namespace {
+MemoriaProtocol* g_active_protocol = nullptr;
+std::function<void(bool)> g_listening_closed_handler;
+}  // namespace
+
+void SetListeningClosedHandler(std::function<void(bool closed)> handler) {
+    g_listening_closed_handler = std::move(handler);
+}
+
+bool SendListeningResume() {
+    if (g_active_protocol == nullptr) {
+        return false;
+    }
+    return g_active_protocol->SendListeningResume();
+}
+
+namespace {
+void NotifyListeningClosed(bool closed) {
+    if (g_listening_closed_handler) {
+        g_listening_closed_handler(closed);
+    }
+}
+}  // namespace
+
 MemoriaProtocol::MemoriaProtocol() {
+    g_active_protocol = this;
     event_group_ = xEventGroupCreate();
     server_sample_rate_ = kDownlinkSampleRate24k;
     server_frame_duration_ = kFrameMs;
 }
 
 MemoriaProtocol::~MemoriaProtocol() {
+    if (g_active_protocol == this) {
+        g_active_protocol = nullptr;
+    }
     // Application owns the AudioService captured by this callback and its
     // lifetime can end before Protocol member destruction.
     on_local_flush_requested_ = nullptr;
@@ -354,14 +418,25 @@ bool MemoriaProtocol::Start() {
         MemoriaFirmwareUpdate::ConfirmRunningImage();
     }
     if (activation_result != ESP_OK) {
-        if (activation_result == ESP_ERR_INVALID_STATE) {
+        const ActivationAttemptOutcome outcome = ActivationOutcomeFor(activation_result);
+        if (ActivationRetryPolicy::ShouldRetryOnBoot(ActivationAwaitingBinding(), outcome)) {
             auto* display = dynamic_cast<LcdDisplay*>(Board::GetInstance().GetDisplay());
             if (display != nullptr &&
-                MemoriaBootstrap::GetInstance().Start(display) == ESP_OK) {
-                StartActivationRetry();
-                ESP_LOGW(kTag, "Device is unbound; nearby bootstrap remains available");
-                return false;
+                MemoriaBootstrap::GetInstance().Start(display) != ESP_OK) {
+                ESP_LOGE(kTag, "Unable to keep nearby bootstrap available; activation retry continues");
             }
+            ESP_LOGW(kTag,
+                     "Activation failed while unbound, code=%s (%d) http_status=%d transport_err=0x%x internal_free=%u internal_largest=%u",
+                     esp_err_to_name(activation_result),
+                     static_cast<int>(activation_result),
+                     activation_client.last_http_status(),
+                     activation_client.last_transport_error(),
+                     static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                     static_cast<unsigned>(
+                         heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
+            StartActivationRetry();
+            ESP_LOGW(kTag, "Device is unbound; nearby bootstrap remains available, activation retry started");
+            return false;
         }
         ESP_LOGE(kTag, "Memoria activation failed, code=%s", esp_err_to_name(activation_result));
         SetError("Memoria 激活失败");
@@ -404,8 +479,13 @@ void MemoriaProtocol::RunActivationRetry() {
     // so the first activation attempt can legitimately precede the manifest.
     // Keep the retry on its own task; never block Application's main loop on
     // the 10-second HTTPS timeout while the phone completes binding.
+    //
+    // Start() already logged the first failure, so the schedule begins here at
+    // failure 1 and waits 5 s, 10 s, then 20 s forever.
+    uint32_t failures = 1;
+    bool error_page_shown = false;
     while (true) {
-        vTaskDelay(pdMS_TO_TICKS(kActivationRetryDelayMs));
+        vTaskDelay(pdMS_TO_TICKS(ActivationRetryPolicy::DelayMsForFailureCount(failures)));
 
         MemoriaActivationClient activation_client(identity_);
         const esp_err_t result = activation_client.Activate(&activation_);
@@ -422,7 +502,39 @@ void MemoriaProtocol::RunActivationRetry() {
             vTaskDelay(pdMS_TO_TICKS(500));
             esp_restart();
         }
-        ESP_LOGW(kTag, "Activation retry pending, code=%s", esp_err_to_name(result));
+
+        ++failures;
+        const ActivationAttemptOutcome outcome = ActivationOutcomeFor(result);
+        ESP_LOGW(kTag, "Activation retry pending, code=%s (%d) http_status=%d transport_err=0x%x internal_free=%u internal_largest=%u",
+                 esp_err_to_name(result), static_cast<int>(result),
+                 activation_client.last_http_status(), activation_client.last_transport_error(),
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                 static_cast<unsigned>(
+                     heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
+
+        auto* display = dynamic_cast<LcdDisplay*>(Board::GetInstance().GetDisplay());
+        if (error_page_shown && display != nullptr &&
+            ActivationRetryPolicy::ShouldRestoreQr(outcome)) {
+            // Create the QR before deleting the page so the screen never goes
+            // blank, and leave the page up if the QR cannot be allocated.
+            if (MemoriaBootstrap::GetInstance().Start(display) == ESP_OK) {
+                HideActivationNetworkErrorPage(display);
+                error_page_shown = false;
+                ESP_LOGW(kTag, "Server reports the board unbound; QR restored");
+            }
+        }
+        if (display != nullptr &&
+            ActivationRetryPolicy::ShouldShowErrorPage(failures, outcome)) {
+            if (!error_page_shown) {
+                // Free the QR canvas before the next TLS attempt and replace it
+                // with the product's network-error page.
+                display->ClearQrCode();
+            }
+            if (ShowActivationNetworkErrorPage(
+                    display, ActivationFailureDetail(result, activation_client).c_str())) {
+                error_page_shown = true;
+            }
+        }
     }
 }
 
@@ -1462,7 +1574,6 @@ bool MemoriaProtocol::HandleSessionAccepted(const cJSON* root) {
 }
 
 bool MemoriaProtocol::HandleGenerationStarted(const cJSON* root, const GenerationFence& fence) {
-    (void)root;
     if (!fence.valid()) {
         return false;
     }
@@ -1512,6 +1623,18 @@ bool MemoriaProtocol::HandleGenerationStarted(const cJSON* root, const Generatio
     playback_output_frames_ = 0;
     playback_output_approximate_ = true;
     downlink_started_ = false;
+    // A fixed safety script is the one reply that must not be cut short. The
+    // platform owns the script text; the device only honours the flag so a
+    // pat or a screen tap cannot silence it. The board reads the published
+    // value, never the protocol object.
+    const cJSON* interruptible = cJSON_GetObjectItemCaseSensitive(root, "interruptible");
+    const bool interruptible_field = interruptible != nullptr && cJSON_IsBool(interruptible);
+    const auto stop = memoria::PlaybackStopFromInterruptible(
+        memoria::InterruptibleFromWire(interruptible != nullptr, interruptible_field,
+                                       cJSON_IsTrue(interruptible)));
+    memoria::PlaybackStopRegistry::GetInstance().Set(stop);
+    ESP_LOGI(kTag, "generation %u playback_stop=%s",
+             static_cast<unsigned int>(fence.generation_id), memoria::PlaybackStopName(stop));
     // Authoritative generation.started: the downlink sequence/sample clock
     // resets to 0 for the new generation (contract downlink_clock).
     downlink_sequence_ = 0;
@@ -2077,6 +2200,24 @@ bool MemoriaProtocol::HandleServerText(const char* data, size_t size) {
             }
             return true;
         }
+        if (type == "assistant.state") {
+            uint32_t control_sequence = 0;
+            uint64_t server_monotonic_ms = 0;
+            if (!ValidateServerBase(root.value, "assistant.state", &control_sequence,
+                                    &server_monotonic_ms)) {
+                return false;
+            }
+            std::string assistant_state;
+            if (!GetString(root.value, "state", &assistant_state, 64)) {
+                return false;
+            }
+            if (assistant_state == "listening_closed") {
+                NotifyListeningClosed(true);
+            } else if (assistant_state == "listening") {
+                NotifyListeningClosed(false);
+            }
+            return true;
+        }
         if (type == "session.close") {
             uint32_t control_sequence = 0;
             uint64_t server_monotonic_ms = 0;
@@ -2085,12 +2226,19 @@ bool MemoriaProtocol::HandleServerText(const char* data, size_t size) {
                 return false;
             }
             std::string close_reason;
-            if (GetString(root.value, "reason", &close_reason, 128) &&
-                close_reason == "llm_unavailable") {
-                // Server already spoke the fixed line; board enters the menu
-                // without replaying the offline clip.
-                OfflineMenuSignals::PostLlmUnavailable(/*play_line=*/false);
+            if (GetString(root.value, "reason", &close_reason, 128)) {
+                // An older server omits play_line; absence means the line was
+                // already heard on the wire.
+                bool play_line = false;
+                GetBool(root.value, "play_line", &play_line);
+                const SessionCloseFallback fallback =
+                    ClassifySessionCloseFallback(close_reason, play_line);
+                if (fallback != SessionCloseFallback::kNone) {
+                    OfflineMenuSignals::PostLlmUnavailable(
+                        fallback == SessionCloseFallback::kMenuPlayLine);
+                }
             }
+            NotifyListeningClosed(false);
             terminal_session_close_ = true;
             resumable_session_id_.clear();
             resumable_stream_epoch_ = 0;
@@ -2372,6 +2520,25 @@ void MemoriaProtocol::DrainTransportActions() {
             return;
         }
     }
+}
+
+bool MemoriaProtocol::SendListeningResume() {
+    std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+    if (protocol_version_ != kProtocolVersionV2 || stream_epoch_ == 0) {
+        return false;
+    }
+    ++control_sequence_;
+    ScopedJson root{cJSON_CreateObject()};
+    if (root.value == nullptr) {
+        return false;
+    }
+    cJSON_AddStringToObject(root.value, "type", "listening.resume");
+    cJSON_AddNumberToObject(root.value, "version", 2);
+    cJSON_AddNumberToObject(root.value, "stream_epoch", stream_epoch_);
+    cJSON_AddNumberToObject(root.value, "control_sequence", control_sequence_);
+    cJSON_AddNumberToObject(root.value, "device_monotonic_ms", DeviceMonotonicMs());
+    cJSON_AddNumberToObject(root.value, "wake_sample", static_cast<double>(uplink_sample_start_));
+    return QueueTransportText(RenderJson(root.value));
 }
 
 void MemoriaProtocol::SendWakeWordDetected(const std::string& wake_word) {

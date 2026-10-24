@@ -1,0 +1,101 @@
+<view class="page-shell memory-lifecycle-page">
+  <text class="eyebrow">孩子的记忆</text>
+  <text class="page-title">记忆管理</text>
+  <text class="page-lede">看看机器人记住了什么，确认它可以提起的事，或撤回不想让它再提起的事。</text>
+
+  <view wx:if="{{unavailable}}" class="notice">{{unavailable}}</view>
+
+  <block wx:else>
+    <view wx:if="{{loading}}" class="card lifecycle-loading">
+      <text class="loading-text">正在读取记忆…</text>
+    </view>
+
+    <view wx:if="{{error}}" class="notice notice-warn">
+      <text class="notice-title">记忆暂时没有加载出来</text>
+      <text class="notice-copy">{{error}}</text>
+      <button class="secondary-button btn-sm lifecycle-retry" bindtap="loadMemories">重试</button>
+    </view>
+
+    <block wx:if="{{!loading && !error}}">
+      <view wx:if="{{isEmpty}}" class="card empty-block">
+        <text class="empty-title">还没有需要管理的记忆</text>
+        <text class="empty-copy">机器人还没有记住什么。孩子和机器人聊过之后，这里会出现待确认和已记住的事。</text>
+      </view>
+
+      <block wx:else>
+        <view wx:if="{{pendingItems.length}}" class="lifecycle-group">
+          <text class="section-title">待确认</text>
+          <view wx:for="{{pendingItems}}" wx:key="id" class="card lifecycle-item">
+            <view class="lifecycle-item-head">
+              <text class="l2-card-title">{{item.title}}</text>
+              <text class="pill pill-draft">{{item.statusLabel}}</text>
+            </view>
+            <text class="l2-card-sub">{{item.body}}</text>
+            <view class="button-row">
+              <button
+                class="secondary-button btn-sm"
+                data-id="{{item.id}}"
+                disabled="{{reviewingId}}"
+                bindtap="confirmMemory"
+              >确认记住</button>
+              <button
+                class="secondary-button btn-sm"
+                data-id="{{item.id}}"
+                data-kind="candidate"
+                disabled="{{reviewingId}}"
+                bindtap="retractMemory"
+              >撤回</button>
+            </view>
+          </view>
+        </view>
+
+        <view wx:if="{{confirmedItems.length}}" class="lifecycle-group">
+          <text class="section-title">已记住</text>
+          <view wx:for="{{confirmedItems}}" wx:key="id" class="card lifecycle-item">
+            <view class="lifecycle-item-head">
+              <text class="l2-card-title">{{item.title}}</text>
+              <text class="pill pill-neutral">{{item.statusLabel}}</text>
+            </view>
+            <text wx:if="{{item.body}}" class="l2-card-sub">{{item.body}}</text>
+            <text wx:if="{{item.occurredAtLabel}}" class="lifecycle-time">{{item.occurredAtLabel}}</text>
+            <view class="button-row">
+              <button
+                class="secondary-button btn-sm"
+                data-id="{{item.id}}"
+                data-kind="confirmed"
+                disabled="{{reviewingId}}"
+                bindtap="retractMemory"
+              >撤回</button>
+            </view>
+          </view>
+        </view>
+
+        <view wx:if="{{retractedItems.length}}" class="lifecycle-group">
+          <text class="section-title">已撤回</text>
+          <text class="caption">撤回的记忆机器人不会用到，可以随时恢复。</text>
+          <view wx:for="{{retractedItems}}" wx:key="id" class="card lifecycle-item lifecycle-item-retracted">
+            <view class="lifecycle-item-head">
+              <text class="l2-card-title">{{item.title}}</text>
+              <text class="pill pill-neutral">{{item.statusLabel}}</text>
+            </view>
+            <text wx:if="{{item.body}}" class="l2-card-sub">{{item.body}}</text>
+            <text wx:if="{{item.retractedAtLabel}}" class="lifecycle-time">撤回于 {{item.retractedAtLabel}}</text>
+            <view class="button-row">
+              <button
+                class="secondary-button btn-sm"
+                data-id="{{item.id}}"
+                disabled="{{reviewingId}}"
+                bindtap="restoreMemory"
+              >恢复</button>
+            </view>
+          </view>
+        </view>
+      </block>
+    </block>
+  </block>
+
+  <view class="card lifecycle-delete-hint">
+    <text class="l2-card-sub">想把孩子的数据全部删掉，可以在设备页解绑时选择删除数据</text>
+    <text class="text-button lifecycle-hint-link" bindtap="openUnbindDeletePath">去设备页解绑</text>
+  </view>
+</view>

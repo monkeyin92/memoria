@@ -132,7 +132,11 @@ async def test_postgres_skill_catalog_matches_sqlite_execution_and_rls_contract(
     approval = f"approval-{uuid.uuid4()}"
     confirmation = f"confirmation-{uuid.uuid4()}"
     archive = PostgresLifeArchive(dsn)
-    memory = PostgresMemoryCatalog(dsn, extractor=RuleBasedMemoryExtractor())
+    memory = PostgresMemoryCatalog(
+        dsn,
+        extractor=RuleBasedMemoryExtractor(),
+        evidence_subject_category_resolver=lambda _event: "adult",
+    )
     skill = PostgresSkillCatalog(dsn)
     await archive.initialize()
     await memory.initialize()

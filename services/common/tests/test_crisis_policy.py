@@ -1,4 +1,5 @@
 import logging
+import re
 
 import pytest
 from services.common.crisis_policy import (
@@ -15,6 +16,8 @@ from services.common.fixed_safety_scripts import (
     SUPPORT_VICTIM_SCRIPT,
     script_for_decision,
 )
+
+_UTC_SECOND = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 
 
 def test_explicit_self_crisis_always_uses_fixed_script_and_notification() -> None:
@@ -96,6 +99,15 @@ def test_model_evidence_cannot_execute_without_deterministic_first_person_anchor
     assert route.evidence_source == "semantic_evidence"
 
 
+@pytest.mark.parametrize("query", ("我不在家没关系", "明天我不在学校也没事"))
+def test_location_absence_is_not_a_self_crisis_anchor(query: str) -> None:
+    assert crisis_semantic_candidate(query) is False
+    assert (
+        route_crisis(query, semantic_evidence=CrisisSemanticVerdict.SELF_CRISIS).action
+        == "none"
+    )
+
+
 def test_semantic_call_candidate_is_bounded_to_unresolved_first_person_risk() -> None:
     assert crisis_semantic_candidate("我撑不下去了") is True
     assert crisis_semantic_candidate("我真的找不到活下去的理由") is False
@@ -103,18 +115,19 @@ def test_semantic_call_candidate_is_bounded_to_unresolved_first_person_risk() ->
     assert crisis_semantic_candidate("同学找不到活下去的理由") is False
 
 
-def test_fixed_safety_reply_log_fields_are_ids_and_route_only() -> None:
+def test_fixed_safety_reply_log_fields_are_template_id_and_time_only() -> None:
     query = "我不想活了"
     route = route_crisis(query)
     fields = fixed_safety_reply_log_fields(route)
-    assert fields == {
-        "route": "crisis_support",
-        "reply_template_id": "crisis-self-v1",
-        "script_version": "crisis-self-v1",
-    }
+    assert fields is not None
+    assert fields.keys() == {"reply_template_id", "at"}
+    assert fields["reply_template_id"] == "crisis-self-v1"
+    assert _UTC_SECOND.fullmatch(fields["at"])
     blob = " ".join(fields.values())
     assert query not in blob
-    assert "不想活" not in blob
+    for phrase in CRISIS_SELF_SCRIPT.phrases:
+        assert phrase.spoken not in blob
+        assert phrase.display not in blob
 
 
 def test_log_fixed_safety_reply_emits_structured_line_without_child_text(
@@ -125,10 +138,16 @@ def test_log_fixed_safety_reply_emits_structured_line_without_child_text(
     logger = logging.getLogger("test.fixed_safety_reply")
     with caplog.at_level(logging.INFO, logger=logger.name):
         log_fixed_safety_reply(logger, route)
-    assert [record.getMessage() for record in caplog.records] == [
-        "fixed_safety_reply route=support_victim reply_template_id=victim-support-v1 "
-        "script_version=victim-support-v1"
-    ]
+    messages = [record.getMessage() for record in caplog.records]
+    assert len(messages) == 1
+    assert re.fullmatch(
+        rf"fixed_safety_reply reply_template_id=victim-support-v1 at={_UTC_SECOND.pattern}",
+        messages[0],
+    )
+    assert query not in messages[0]
+    for phrase in SUPPORT_VICTIM_SCRIPT.phrases:
+        assert phrase.spoken not in messages[0]
+        assert phrase.display not in messages[0]
 
 
 def test_none_route_does_not_log_fixed_safety_reply(

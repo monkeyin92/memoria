@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Sequence
 
 import httpx
@@ -48,9 +49,9 @@ async def test_publish_posts_summary_and_facts_without_transcript() -> None:
         resource_owner_id="parent-1",
         session_id="sess-1",
         turns=[
-            SessionTurn(role="user", text="我想听恐龙"),
+            SessionTurn(role="user", text="我最喜欢恐龙"),
             SessionTurn(role="assistant", text="好呀"),
-            SessionTurn(role="user", text="还有小狗"),
+            SessionTurn(role="user", text="我还喜欢小狗"),
             SessionTurn(role="assistant", text="可爱"),
         ],
     )
@@ -60,7 +61,10 @@ async def test_publish_posts_summary_and_facts_without_transcript() -> None:
     assert posted[0]["subject_id"] == "child-1"
     assert posted[0]["summary_text"] == "聊了恐龙和小狗"
     assert "transcript" not in posted[0]
-    assert any(item["text"] == "喜欢恐龙" for item in posted[0]["archive_facts"])  # type: ignore[index]
+    assert [item["text"] for item in posted[0]["archive_facts"]] == [  # type: ignore[union-attr]
+        "喜欢恐龙",
+        "喜欢小狗",
+    ]
 
 
 @pytest.mark.asyncio
@@ -147,6 +151,62 @@ async def test_publish_skips_when_model_fails_without_raw_fallback() -> None:
     assert calls == 0
 
 
+@pytest.mark.asyncio
+async def test_failed_post_logs_type_and_status_never_the_body_or_error_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    planted = "河马在第八个书架后面藏了一首歌"
+    summary = "聊了恐龙和小狗"
+    responses: list[httpx.Response | Exception] = [
+        httpx.Response(422, json={"detail": planted}),
+        httpx.ConnectError(planted),
+    ]
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        outcome = responses.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    async def fake_summary(_: Sequence[SessionTurn]) -> str | None:
+        return summary
+
+    sink = SessionRecapSink(
+        HttpSessionRecapConfig(
+            endpoint="http://control.test/v1/internal/child-memory/session-recap",
+            internal_token="token-that-is-long-enough",
+        ),
+        _client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        _summary_generator=fake_summary,
+    )
+    turns = [
+        SessionTurn(role="user", text="我想听恐龙"),
+        SessionTurn(role="assistant", text="好呀"),
+        SessionTurn(role="user", text="还有小狗"),
+        SessionTurn(role="assistant", text="可爱"),
+    ]
+    caplog.set_level(logging.INFO)
+    for _ in range(2):
+        assert (
+            await sink.publish_session_end(
+                subject_id="child-1",
+                resource_owner_id="parent-1",
+                session_id="sess-1",
+                turns=turns,
+            )
+            is None
+        )
+    await sink.aclose()
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings == [
+        "session recap rejected error_type=HTTPStatusError error_code=422",
+        "session recap post failed error_type=ConnectError error_code=-",
+    ]
+    assert planted not in caplog.text
+    assert summary not in caplog.text
+
+
 def test_snapshot_then_clear_discards_transcript() -> None:
     manager = ContextManager(system_prompt="sys")
     manager.add_user("第一句", speaker_scope="owner")
@@ -156,3 +216,48 @@ def test_snapshot_then_clear_discards_transcript() -> None:
     manager.clear_turns()
     assert manager.turns == []
     assert [turn.text for turn in snapped if turn.role == "user"] == ["第一句", "第二句恐龙"]
+
+
+@pytest.mark.asyncio
+async def test_any_crisis_turn_posts_nothing_and_skips_the_model() -> None:
+    calls = 0
+    model_calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json={})
+
+    async def fake_summary(_: Sequence[SessionTurn]) -> str | None:
+        nonlocal model_calls
+        model_calls += 1
+        return "聊了恐龙"
+
+    sink = SessionRecapSink(
+        HttpSessionRecapConfig(
+            endpoint="http://control.test/v1/internal/child-memory/session-recap",
+            internal_token="token-that-is-long-enough",
+        ),
+        _client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        _summary_generator=fake_summary,
+    )
+    result = await sink.publish_session_end(
+        subject_id="child-1",
+        resource_owner_id="parent-1",
+        session_id="sess-1",
+        turns=[
+            SessionTurn(role="user", text="我最喜欢小狗"),
+            SessionTurn(role="assistant", text="小狗很可爱"),
+            SessionTurn(role="user", text="我不想活了"),
+            SessionTurn(role="assistant", text="我在这儿陪你。"),
+        ],
+    )
+    await sink.aclose()
+    assert result == {
+        "skipped": True,
+        "reason": "crisis_in_session",
+        "summary_record_id": None,
+        "archive_record_ids": [],
+    }
+    assert calls == 0
+    assert model_calls == 0

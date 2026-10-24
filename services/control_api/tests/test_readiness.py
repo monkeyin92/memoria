@@ -4,9 +4,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from cryptography.fernet import Fernet
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
+from services.archive.object_store import EncryptedS3ObjectStore
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.main import create_app
 from services.control_api.app.routes import readiness as readiness_routes
@@ -50,6 +52,8 @@ async def test_local_readiness_checks_core_services_without_active_profiles(
 
     assert status == 200
     assert body["status"] == "ready"
+    assert list((tmp_path / "archive-objects").rglob("*")) == []
+    assert list((tmp_path / "voice-samples").rglob("*")) == []
     assert body["checks"]["core"] == {
         "control_database": "ready",
         "evolution_store": "ready",
@@ -82,7 +86,7 @@ async def test_readiness_fails_closed_when_a_runtime_component_is_missing(
 
 
 class _UnavailableObjectStore:
-    async def put(self, **_: object) -> object:
+    async def probe(self) -> None:
         raise RuntimeError("object service unavailable")
 
 
@@ -104,6 +108,74 @@ async def test_readiness_fails_closed_when_object_storage_is_unavailable(
 
     assert status == 503
     assert body["checks"]["core"]["archive_object_store"] == "unavailable"
+
+
+class _RecordingS3:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls: list[tuple[str, str]] = []
+
+    def head_bucket(self, **kwargs: object) -> None:
+        self.calls.append(("head_bucket", str(kwargs["Bucket"])))
+        if self.fail:
+            raise RuntimeError("bucket missing")
+
+    def put_object(self, **kwargs: object) -> None:
+        self.calls.append(("put_object", str(kwargs.get("Bucket", ""))))
+
+    def delete_object(self, **kwargs: object) -> None:
+        self.calls.append(("delete_object", str(kwargs.get("Bucket", ""))))
+
+    def delete_objects(self, **kwargs: object) -> None:
+        self.calls.append(("delete_objects", str(kwargs.get("Bucket", ""))))
+
+    def get_object(self, **kwargs: object) -> None:
+        self.calls.append(("get_object", str(kwargs.get("Bucket", ""))))
+
+    def list_object_versions(self, **kwargs: object) -> None:
+        self.calls.append(("list_object_versions", str(kwargs.get("Bucket", ""))))
+
+
+def _s3_store(client: _RecordingS3, bucket: str) -> EncryptedS3ObjectStore:
+    return EncryptedS3ObjectStore(
+        client=client,
+        bucket=bucket,
+        key=Fernet.generate_key().decode("ascii"),
+        key_version="v1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_readiness_heads_real_buckets_and_does_not_write_or_delete(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_local(monkeypatch, tmp_path)
+    app = create_app()
+    archive = _RecordingS3()
+    voice = _RecordingS3()
+    app.state.archive_object_store = _s3_store(archive, "memoria-archive")
+    app.state.voice_object_store = _s3_store(voice, "memoria-voice")
+
+    status, body = await _ready(app)
+
+    assert status == 200
+    assert body["checks"]["core"]["archive_object_store"] == "ready"
+    assert body["checks"]["core"]["voice_object_store"] == "ready"
+    assert archive.calls == [("head_bucket", "memoria-archive")]
+    assert voice.calls == [("head_bucket", "memoria-voice")]
+
+    missing = _RecordingS3(fail=True)
+    app.state.archive_object_store = _s3_store(missing, "memoria-archive")
+    status, body = await _ready(app)
+
+    assert status == 503
+    assert body["checks"]["core"]["archive_object_store"] == "unavailable"
+    assert missing.calls == [("head_bucket", "memoria-archive")]
+    assert voice.calls == [
+        ("head_bucket", "memoria-voice"),
+        ("head_bucket", "memoria-voice"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -436,6 +508,49 @@ async def test_readiness_reports_an_overdue_smoke_refresh_before_it_expires(
     if warnings is not None:
         assert body["status"] == "ready"
         assert body["warnings"] == warnings
+
+
+@pytest.mark.hermetic
+def test_missing_config_counts_dashscope_only_for_funasr() -> None:
+    funasr = ControlSettings(
+        _env_file=None,
+        ASR_PROVIDER="funasr",
+        MEMORIA_RELEASE_TAG="release-readiness-test",
+    )
+    present = ControlSettings(
+        _env_file=None,
+        ASR_PROVIDER="funasr",
+        DASHSCOPE_API_KEY="dashscope-key",
+        MEMORIA_RELEASE_TAG="release-readiness-test",
+    )
+    untouched = ControlSettings(
+        _env_file=None,
+        MEMORIA_RELEASE_TAG="release-readiness-test",
+    )
+
+    assert "DASHSCOPE_API_KEY" in readiness_routes._missing_config(funasr)
+    assert "DASHSCOPE_API_KEY" not in readiness_routes._missing_config(present)
+    assert untouched.asr_provider == "none"
+    assert "DASHSCOPE_API_KEY" not in readiness_routes._missing_config(untouched)
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_health_ready_is_503_when_funasr_has_no_dashscope_key(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_local(monkeypatch, tmp_path)
+    monkeypatch.setenv("OFFLINE_MOCK", "false")
+    monkeypatch.setenv("MEMORIA_RELEASE_TAG", "release-readiness-test")
+    monkeypatch.setenv("ASR_PROVIDER", "funasr")
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    app = create_app()
+
+    status, body = await _ready(app)
+
+    assert status == 503
+    assert "DASHSCOPE_API_KEY" in body["missing"]
 
 
 def test_overdue_threshold_follows_the_refresh_timer() -> None:

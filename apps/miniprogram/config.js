@@ -5,6 +5,8 @@
  */
 const CONTROL_API_BASE_URL = "https://aginice.cn:8443/memoria-api";
 
+// DECISIONS #021：绑定不以订阅危机提醒为前提；#019：订阅推送继续暂停。
+// 重新打开前需重新决策（原 #315 已被 #021 撤销）。
 const SUBSCRIPTION_PUSH_ENABLED = false;
 
 module.exports = {

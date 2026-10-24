@@ -414,3 +414,25 @@ class RecordStoreMixin:
                 (delivery_id,),
             ).fetchall()
         return tuple(dict(row) for row in rows)
+
+    def reply_playback_facts(
+        self,
+        *,
+        session_id: str,
+        turn_id: int,
+        generation_id: int,
+        tool_epoch: int,
+    ) -> tuple[bool, tuple[str, ...]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT terminal_event, playback_ended
+                FROM media_reply_delivery_events
+                WHERE session_id = ? AND turn_id = ? AND generation_id = ? AND tool_epoch = ?
+                """,
+                (session_id, turn_id, generation_id, tool_epoch),
+            ).fetchall()
+        terminals = tuple(
+            str(row["terminal_event"]) for row in rows if row["terminal_event"] is not None
+        )
+        return any(bool(row["playback_ended"]) for row in rows), terminals

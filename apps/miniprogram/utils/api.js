@@ -224,7 +224,11 @@ function errorFromResponse(response) {
                                 ? "学生账号不开放这项能力。"
                                 : code === "CLAIM_CONFLICT"
                                   ? "这台机器人还有一次没做完的确认，最多 10 分钟后自动释放，之后轻点机器人屏幕换一张新二维码再扫码。"
-                                  : code === "BINDING_CONFLICT" || code === "binding_conflict"
+                                  : code === "CLAIM_EXPIRED"
+                                    ? "这次确认已经超时（超过 10 分钟），请轻点机器人屏幕换一张新二维码，再重新扫码。"
+                                    : code === "QR_SESSION_EXPIRED"
+                                      ? "这张设备码已经过期，请轻点机器人屏幕换一张新二维码后再扫。"
+                                      : code === "BINDING_CONFLICT" || code === "binding_conflict"
                                     ? "这次绑定没有完成，请稍后在这里再点一次完成绑定。"
                                     : code === "DEVICE_ALREADY_BOUND"
                                       ? "这台机器人已绑定到其他账号，请由绑定它的账号操作。"
@@ -320,15 +324,6 @@ async function requestWechatIdentity({ phoneCode, displayName } = {}) {
 }
 
 let restorePromise = null;
-
-function restoreWechatIdentity() {
-  if (hasAuthenticatedSession()) return Promise.resolve(currentIdentity());
-  if (restorePromise) return restorePromise;
-  restorePromise = requestWechatIdentity().finally(() => {
-    restorePromise = null;
-  });
-  return restorePromise;
-}
 
 function loginWithWechat({ phoneCode, displayName } = {}) {
   return requestWechatIdentity({ phoneCode, displayName });
@@ -537,6 +532,20 @@ function getGuardianNotifications() {
   return rawRequest("/v1/guardian/notifications");
 }
 
+function getUnreadGuardianNotifications() {
+  return rawRequest("/v1/guardian/notifications/unread");
+}
+
+function getGuardianNotification(notificationId) {
+  return rawRequest(`/v1/guardian/notifications/${encodeURIComponent(notificationId)}`);
+}
+
+function markGuardianNotificationRead(notificationId) {
+  return rawRequest(`/v1/guardian/notifications/${encodeURIComponent(notificationId)}/read`, {
+    method: "PUT",
+  });
+}
+
 /* 危机提醒订阅（一次性订阅消息）。关闭时服务端不下发模板 ID。 */
 function getGuardianPushConfig() {
   return rawRequest("/v1/guardian/push-config");
@@ -584,13 +593,6 @@ function getMemoryDays(userId, limit = 14) {
   );
 }
 
-function summarizeDay(userId, date) {
-  return rawRequest(`/v1/memory/days/${encodeURIComponent(date)}/summary`, {
-    method: "POST",
-    data: { user_id: userId },
-  });
-}
-
 /*
  * 监护人看自己绑定的孩子：哪些天聊过（只有次数），以及某一天的 AI 概括。概括由服务端
  * 按请求现写、不落库，且不含孩子的原话（产品决定：家长只看小结、趋势和提醒）。
@@ -598,13 +600,6 @@ function summarizeDay(userId, date) {
 function getGuardianChildDays(minorUserId, limit = 30) {
   return rawRequest(
     `/v1/guardian/minors/${encodeURIComponent(minorUserId)}/days?limit=${encodeURIComponent(limit)}`,
-  );
-}
-
-function generateGuardianChildRecap(minorUserId, day) {
-  return rawRequest(
-    `/v1/guardian/minors/${encodeURIComponent(minorUserId)}/days/${encodeURIComponent(day)}/recap`,
-    { method: "POST", timeout: 30000, data: {} },
   );
 }
 
@@ -673,6 +668,13 @@ function reviewMemoryClaim(claimId, action = "confirm") {
 function getGuardianChildMemories(minorUserId, limit = 20) {
   return rawRequest(
     `/v1/guardian/minors/${encodeURIComponent(minorUserId)}/memories?limit=${encodeURIComponent(limit)}`,
+  );
+}
+
+/* 已撤回的记忆跨次显示：列表由服务端按孩子的 claim 重新读出，不缓存在页面。 */
+function getGuardianChildRetractedMemories(minorUserId, limit = 20) {
+  return rawRequest(
+    `/v1/guardian/minors/${encodeURIComponent(minorUserId)}/memories/retracted?limit=${encodeURIComponent(limit)}`,
   );
 }
 
@@ -1096,17 +1098,14 @@ async function syncDeviceBindings() {
 }
 
 /*
- * 解除绑定。服务端先停止该使用人的记忆，再按 purge_subject_data 决定是否
- * 同时删除 TA 的记忆与对话数据；false 表示保留，重新绑定后可恢复。成功后
- * 清理本地绑定上下文，由调用方重新同步账号设备。
+ * 解除绑定。服务端一律停止该使用人的记忆，并清除 TA 的昵称、年龄段以及
+ * 近期摘要和长期档案；删除后不能恢复。成功后清理本地绑定上下文，由调用方
+ * 重新同步账号设备。
  */
-function unbindDevice(deviceId, { purgeSubjectData } = {}) {
-  if (typeof purgeSubjectData !== "boolean") {
-    return Promise.reject(new TypeError("请先选择是否删除使用人的数据。"));
-  }
+function unbindDevice(deviceId) {
   return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/binding/unbind`, {
     method: "POST",
-    data: { reason: "unbind", purge_subject_data: purgeSubjectData },
+    data: { reason: "unbind" },
   }).then((result) => {
     const current = readBindingManifest();
     if (!current || current.device_id === deviceId) clearDeviceBindingContext();
@@ -1431,7 +1430,6 @@ module.exports = {
   currentAuthEpoch,
   isAuthEpochCurrent,
   requireAuthenticatedIdentity,
-  restoreWechatIdentity,
   loginWithWechat,
   uploadWechatAvatar,
   logoutLocal,
@@ -1457,16 +1455,18 @@ module.exports = {
   declareAgeEvidence,
   readAgeEvidence,
   getGuardianNotifications,
+  getUnreadGuardianNotifications,
+  getGuardianNotification,
+  markGuardianNotificationRead,
   getGuardianPushConfig,
   getGuardianPushSubscription,
   recordGuardianPushSubscription,
   wechatLoginCode,
   updateProfile,
   getMemoryDays,
-  summarizeDay,
   getGuardianChildDays,
-  generateGuardianChildRecap,
   getGuardianChildMemories,
+  getGuardianChildRetractedMemories,
   reviewGuardianChildMemory,
   getChildSessionSummaries,
   deleteChildSessionSummary,

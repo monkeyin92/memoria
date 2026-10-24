@@ -2,7 +2,8 @@ const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
 const { leavePage } = require("../../utils/nav-back");
 const { companions } = require("../../utils/companions");
-const { requireLogin } = require("../../utils/auth-gate");
+const { currentRoute, requireLogin } = require("../../utils/auth-gate");
+const { ensureChildInfoConsent } = require("../../utils/child-consent");
 const {
   MODE_META,
   PRIMARY_RELATIONSHIPS,
@@ -47,6 +48,12 @@ const ADMIN_VISIBILITY_OPTIONS = [
   { value: "device_status", label: "只看设备状态与提醒" },
   { value: "device_status_and_reminders", label: "设备状态 + 周报聚合" },
 ];
+
+// 服务端的绑定确认（claim）从扫码起只保留 10 分钟，重新扫同一张码不会续期。
+// 进入确认页前再核一次，别让微信订阅框花在注定被拒的提交上。
+const CLAIM_BINDABLE_STATUSES = ["reserved", "binding_committing", "committed"];
+const CLAIM_UNUSABLE_MESSAGE =
+  "这次确认已经超时或失效，不能继续提交。请轻点机器人屏幕换一张新二维码，再重新扫码。";
 
 const modeCards = Object.entries(MODE_META).map(([id, meta]) => ({
   id,
@@ -194,6 +201,7 @@ Page({
 
   async onShow() {
     if (!(await requireLogin({ reason: "bind_device" }))) return;
+    if (!ensureChildInfoConsent(currentRoute())) return;
     if (this._claimLoaded) return;
     await this.loadClaim();
   },
@@ -513,10 +521,40 @@ Page({
     return "";
   },
 
+  // The claim runs out 10 minutes after the QR scan and a re-scan of the same
+  // code reuses it without extending it, so a spent claim has to be reported
+  // here instead of after the review step's subscribe prompt.
+  async _claimAcceptsReview() {
+    if (!this._claimId) return false;
+    try {
+      const claim = await api.getDeviceClaim(this._claimId);
+      const status = String(claim?.status || "");
+      return (
+        claim?.onboarding_session_id === this._onboardingSessionId &&
+        CLAIM_BINDABLE_STATUSES.includes(status) &&
+        (status === "committed" || !isExpired(claim.expires_at))
+      );
+    } catch (error) {
+      const code = String(error?.code || "").toUpperCase();
+      if (code === "CLAIM_EXPIRED" || code === "QR_SESSION_EXPIRED") return false;
+      // The submit itself stays server-authoritative; a network hiccup must
+      // not stop someone from reaching the review step on its own.
+      return true;
+    }
+  },
+
   async goToReview() {
     const error = this.validateForm();
     if (error) {
       this.setData({ error });
+      return;
+    }
+    if (!(await this._claimAcceptsReview())) {
+      this.setData({
+        step: "error",
+        needsRescan: true,
+        error: CLAIM_UNUSABLE_MESSAGE,
+      });
       return;
     }
     const crisisSubscribeRequired =

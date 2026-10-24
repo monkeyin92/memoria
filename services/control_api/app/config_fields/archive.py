@@ -82,6 +82,18 @@ class ArchiveFields(BaseModel):
         le=3600.0,
         alias="MEMORIA_CORPUS_RETENTION_INTERVAL_S",
     )
+    memory_vector_backfill_interval_s: float = Field(
+        default=3600.0,
+        ge=10.0,
+        le=86400.0,
+        alias="MEMORIA_MEMORY_VECTOR_BACKFILL_INTERVAL_S",
+    )
+    memory_vector_backfill_batch: int = Field(
+        default=200,
+        ge=1,
+        le=1000,
+        alias="MEMORIA_MEMORY_VECTOR_BACKFILL_BATCH",
+    )
     memory_embedding_url: str = Field(default="", alias="MEMORIA_MEMORY_EMBEDDING_URL")
     memory_embedding_api_key: SecretStr = Field(
         default=SecretStr(""),

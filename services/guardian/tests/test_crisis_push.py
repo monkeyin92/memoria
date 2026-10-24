@@ -10,19 +10,17 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import hashlib
+import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from services.archive.postgres_archive import PostgresLifeArchive
-from services.guardian.crisis import (
-    CrisisNotificationService,
-    GuardianNotification,
-    crisis_alert_is_pinned,
-)
+from services.guardian.crisis import CrisisNotificationService, GuardianNotification
 from services.guardian.domain import GuardianAccessDeniedError
 from services.guardian.postgres_store import PostgresGuardianStore
 from services.guardian.push import (
+    CRISIS_PUSH_DEFAULT_CHILD_NAME,
     CRISIS_PUSH_TIP,
     CRISIS_PUSH_TITLE,
     CrisisPushContent,
@@ -65,7 +63,7 @@ class Clock:
 class FakeSender:
     def __init__(self, *results: PushSendResult) -> None:
         self.results = list(results)
-        self.calls: list[tuple[str, str, CrisisPushContent]] = []
+        self.calls: list[tuple[str, str, CrisisPushContent, str | None]] = []
 
     async def send_crisis_alert(
         self,
@@ -73,17 +71,13 @@ class FakeSender:
         openid: str,
         template_id: str,
         content: CrisisPushContent,
+        notification_id: str | None = None,
     ) -> PushSendResult:
-        self.calls.append((openid, template_id, content))
+        self.calls.append((openid, template_id, content, notification_id))
         await asyncio.sleep(0)
         if len(self.results) > 1:
             return self.results.pop(0)
         return self.results[0] if self.results else PushSendResult("delivered")
-
-
-async def _names(guardian_user_id: str, minor_user_id: str) -> str | None:
-    assert guardian_user_id == "guardian-a"
-    return {"minor-a": "小明"}.get(minor_user_id)
 
 
 async def _store_with_crisis(
@@ -132,7 +126,6 @@ def _worker(
         store,
         sender,
         template_id=TEMPLATE,
-        display_name=_names,
         clock=clock,
         **kwargs,  # type: ignore[arg-type]
     )
@@ -240,17 +233,6 @@ async def test_ledger_counts_acceptances_and_bans_void_the_balance(
     assert len(audit) == 46
 
 
-def test_crisis_alert_statuses_stay_pinned_regardless_of_push_delivery() -> None:
-    from typing import get_args
-
-    from services.guardian.crisis import NotificationStatus
-
-    for status in get_args(NotificationStatus):
-        assert crisis_alert_is_pinned(status), status
-    assert crisis_alert_is_pinned("delivered")
-    assert not crisis_alert_is_pinned("retry")
-
-
 def test_crisis_reach_breakdown_exposes_wechat_and_pin_rates() -> None:
     stats = crisis_reach_breakdown(
         ("delivered", "delivered", "no_subscription", "failed", "pending", "pin_only")
@@ -282,7 +264,7 @@ async def test_worker_delivers_fixed_content_and_consumes_one_acceptance(
 
     notification = await _only_notification(store)
     assert notification.status == "delivered"
-    assert crisis_alert_is_pinned(notification.status)
+    assert notification.read_at is None
     assert notification.delivered_at is not None
     reach = await store.crisis_reach_for_window(
         since=occurred - timedelta(minutes=1),
@@ -291,11 +273,15 @@ async def test_worker_delivers_fixed_content_and_consumes_one_acceptance(
     assert (reach.delivered, reach.total, reach.wechat_delivery_rate) == (1, 1, 1.0)
     assert await _remaining(store) == 1
     assert len(sender.calls) == 1
-    openid, template_id, content = sender.calls[0]
+    openid, template_id, content, notification_id = sender.calls[0]
     assert (openid, template_id) == (OPENID, TEMPLATE)
+    # The sender deep-links the detail page with this id, so it must be the
+    # delivery's own notification UUID.
+    assert notification_id == notification.notification_id
+    assert uuid.UUID(notification_id)
     assert content == CrisisPushContent(
         title=CRISIS_PUSH_TITLE,
-        child_display_name="小明",
+        child_display_name=CRISIS_PUSH_DEFAULT_CHILD_NAME,
         occurred_at=occurred,
         tip=CRISIS_PUSH_TIP,
     )
@@ -309,6 +295,39 @@ async def test_worker_delivers_fixed_content_and_consumes_one_acceptance(
     # Delivered rows are never claimed again.
     assert await _worker(store, sender, clock).run_once() == 0
     assert len(sender.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_delivered_alert_stays_unread_until_the_parent_acknowledges(
+    guardian_postgres_store: PostgresGuardianStore,
+    archive: PostgresLifeArchive,
+) -> None:
+    occurred = _now()
+    store, _ = await _store_with_crisis(
+        guardian_postgres_store, archive, occurred_at=occurred
+    )
+    await _accept(store, occurred)
+    clock = Clock(occurred + timedelta(seconds=5))
+    assert await _worker(store, FakeSender(), clock).run_once() == 1
+
+    delivered = await _only_notification(store)
+    assert (delivered.status, delivered.read_at) == ("delivered", None)
+    unread = await store.unread_guardian_notifications(guardian_user_id="guardian-a")
+    assert unread is not None
+    assert (unread.newest.notification_id, unread.others_count) == (
+        delivered.notification_id,
+        0,
+    )
+
+    read_at = clock() + timedelta(minutes=1)
+    assert await store.mark_guardian_notification_read(
+        guardian_user_id="guardian-a",
+        notification_id=delivered.notification_id,
+        now=read_at,
+    ) == read_at
+    acknowledged = await _only_notification(store)
+    assert (acknowledged.status, acknowledged.read_at) == ("delivered", read_at)
+    assert await store.unread_guardian_notifications(guardian_user_id="guardian-a") is None
 
 
 @pytest.mark.asyncio
@@ -327,7 +346,7 @@ async def test_guardian_without_acceptance_is_marked_no_subscription(
     notification = await _only_notification(store)
     assert notification.status == "no_subscription"
     assert notification.last_error_code == "no_subscription"
-    assert crisis_alert_is_pinned(notification.status)
+    assert notification.read_at is None
     assert sender.calls == []
     reach = await store.crisis_reach_for_window(
         since=occurred - timedelta(minutes=1),
@@ -355,7 +374,7 @@ async def test_wechat_refusal_marks_no_subscription_and_exhausts_the_ledger(
     notification = await _only_notification(store)
     assert notification.status == "no_subscription"
     assert notification.last_error_code == "wechat_43101"
-    assert crisis_alert_is_pinned(notification.status)
+    assert notification.read_at is None
     assert await _remaining(store) == 0
 
 
@@ -545,11 +564,11 @@ async def test_relay_tier_alert_pins_as_pin_only_and_is_never_claimed_for_push(
 
     notifications = await store.guardian_notifications(guardian_user_id="guardian-a")
     assert {
-        item.crisis_event_id: (item.status, crisis_alert_is_pinned(item.status))
+        item.crisis_event_id: (item.status, item.read_at)
         for item in notifications
     } == {
-        crisis_event_id: ("delivered", True),
-        relay.crisis_event_id: ("pin_only", True),
+        crisis_event_id: ("delivered", None),
+        relay.crisis_event_id: ("pin_only", None),
     }
     assert len(sender.calls) == 1
     assert await _remaining(store) == 1

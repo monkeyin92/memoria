@@ -5,6 +5,7 @@ Skipped unless ``MEMORIA_TEST_POSTGRES_DSN`` is set.
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -144,4 +145,52 @@ async def test_missing_activity_table_keeps_archives_and_still_expires_summaries
         assert await _texts(store, ACTIVE, KIND_CHILD_ARCHIVE) == ["宠物叫豆豆"]
     finally:
         await activity.close()
+        await _close_layers(store, bootstrap, admin_db_dsn)
+
+
+async def test_retention_expiry_audits_only_the_call_that_deletes(
+    pg_env: tuple[str, str, str, str, str],
+) -> None:
+    store, bootstrap, admin_db_dsn = await _layers(pg_env)
+    try:
+        await _seed(store)
+        admin = await asyncpg.connect(admin_db_dsn)
+        try:
+            erased = await store.expire_due_summaries(subject_id=DUE)
+            rows = await admin.fetch(
+                "SELECT * FROM memory_audit_events"
+                " WHERE action = 'child_layer_erase'"
+            )
+            assert int(erased["erased"]["memory_records"]) == 1
+            assert len(rows) == 1, rows
+            row = rows[0]
+            payload = (
+                json.loads(row["payload"])
+                if isinstance(row["payload"], str)
+                else dict(row["payload"])
+            )
+            assert row["subject_id"] is None
+            assert row["record_id"] is None
+            assert row["proposal_id"] is None
+            assert row["actor_subject_id"] == "system:child_layer_erase"
+            assert payload["kind"] == KIND_DIALOGUE_SUMMARY
+            assert payload["memory_records"] == 1
+            assert payload["memory_status_events"] == 1
+            assert payload["only_expired"] is True
+            assert payload["reason"] == "retention_expiry"
+            assert row["created_at"] is not None
+            serialized = json.dumps(dict(row), default=str, ensure_ascii=False)
+            assert "previous_value" not in serialized
+            assert DUE not in serialized
+
+            again = await store.expire_due_summaries(subject_id=DUE)
+            count = await admin.fetchval(
+                "SELECT count(*) FROM memory_audit_events"
+                " WHERE action = 'child_layer_erase'"
+            )
+            assert int(again["erased"]["memory_records"]) == 0
+            assert count == 1
+        finally:
+            await admin.close()
+    finally:
         await _close_layers(store, bootstrap, admin_db_dsn)

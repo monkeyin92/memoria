@@ -26,6 +26,7 @@
     <view class="l2-card">
       <text class="l2-card-title">无法继续绑定</text>
       <text class="l2-card-sub">{{error}}</text>
+      <button wx:if="{{needsRescan}}" class="secondary-button empty-button" bindtap="rescanDevice">轻点机器人屏幕换码后，重新扫码</button>
       <button class="secondary-button empty-button" bindtap="openDevicePage">返回设备管理</button>
     </view>
   </block>

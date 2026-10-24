@@ -383,7 +383,12 @@ async def test_self_use_owner_without_verified_age_stays_unconfirmed(
         # No bind-form values: the policy defaults.
         (None, (900, ["21:00", "07:00"])),
         # The parent's session length and quiet hours (P0-04 D3).
-        ((2700, ("21:00", "07:00")), (2700, ["21:00", "07:00"])),
+        # Valid range: 10-30 minutes (600-1800 seconds).
+        ((1800, ("21:00", "07:00")), (1800, ["21:00", "07:00"])),
+        ((600, ("21:00", "07:00")), (600, ["21:00", "07:00"])),
+        # Outside the range the stored value is issued as the 15-minute default.
+        ((599, ("21:00", "07:00")), (900, ["21:00", "07:00"])),
+        ((1801, ("21:00", "07:00")), (900, ["21:00", "07:00"])),
     ],
 )
 async def test_parent_for_child_opens_the_summary_but_the_guardian_never_reads_memory(
@@ -533,14 +538,14 @@ async def test_a_changed_session_limit_reaches_the_reissued_profile(
             actor_person_id="parent-1",
             subject_person_id="child-1",
             binding_id="b-child",
-            max_session_seconds=3600,
+            max_session_seconds=1200,
             quiet_hours=("22:30", "06:00"),
             daily_chat=DailyChatBudget(45),
         )
         stored = await consent.session_limits(
             actor_person_id="parent-1", subject_person_id="child-1", binding_id="b-child"
         )
-        assert (stored.max_session_seconds, stored.quiet_hours) == (3600, ("22:30", "06:00"))
+        assert (stored.max_session_seconds, stored.quiet_hours) == (1200, ("22:30", "06:00"))
         # A plain read still serves the stored profile; the explicit refresh
         # is what makes the guardian's change reach the device.
         assert limits(await _read(control, manifest, now=now + timedelta(minutes=2))) == (
@@ -554,7 +559,7 @@ async def test_a_changed_session_limit_reaches_the_reissued_profile(
     finally:
         await consent_store.close()
 
-    changed = (3600, ["22:30", "06:00"], (("daily_chat_seconds", "2700"),))
+    changed = (1200, ["22:30", "06:00"], (("daily_chat_seconds", "2700"),))
     assert limits(after) == changed
     assert after.session_epoch > before.session_epoch
     assert after.active_subject_id == "child-1"

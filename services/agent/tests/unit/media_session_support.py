@@ -19,6 +19,7 @@ from services.agent.src.orchestration.state_machine import (
     ConversationState,
     InteractionPhase,
 )
+from services.agent.src.voice_core.aigc_notice import AigcNoticeConfig
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_protocol import (
@@ -315,6 +316,7 @@ class _CapturingGenerationBridge(MediaBridgeGrpcServer):
         super().__init__()
         self.frames: list[object] = []
         self.generation_starts: list[GenerationFence] = []
+        self.generation_completes: list[GenerationFence] = []
 
     async def emit_pcm(self, _session_id: str, _frame: object) -> bool:
         self.frames.append(_frame)
@@ -325,6 +327,11 @@ class _CapturingGenerationBridge(MediaBridgeGrpcServer):
         fence = _args[1] if len(_args) > 1 else _kwargs.get("fence")
         if action == media_pb2.GENERATION_ACTION_START and isinstance(fence, GenerationFence):
             self.generation_starts.append(fence)
+        if (
+            action == media_pb2.GENERATION_ACTION_COMPLETE
+            and isinstance(fence, GenerationFence)
+        ):
+            self.generation_completes.append(fence)
         return True
 
 
@@ -821,6 +828,10 @@ async def _open_device_overlap_session(
         bridge=bridge,
         session_factory=lambda _identity: MediaSessionResources(runtime, provider),
         turn_endpoint_grace_s=0.01,
+        # This fixture's device wake acknowledgement is the first output; the
+        # AIGC round hooks own their tests.
+        aigc_notice_config=AigcNoticeConfig(enabled=False),
+        aigc_round_logger=None,
     )
     registry.install()
     identity = _device_identity(session_id)

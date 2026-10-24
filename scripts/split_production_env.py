@@ -8,6 +8,7 @@ import os
 import tempfile
 from pathlib import Path
 
+from pydantic import AliasChoices
 from services.agent.src.config import AgentSettings, pcm_tap_directory, validate_doubao_auth
 from services.control_api.app.config import ControlSettings
 
@@ -29,6 +30,40 @@ _AGENT_EXTRA_KEYS = frozenset(
         "DOUBAO_TTS_STYLE_CONTROL_ENABLED",
         "DOUBAO_TTS_TOTAL_TIMEOUT_S",
         "DOUBAO_TTS_VOICE_REGISTRY",
+        "STEPFUN_API_KEY",
+        "STEPFUN_TTS_AUTH_BREAKER_OPEN_S",
+        "STEPFUN_TTS_BREAKER_FAILURES",
+        "STEPFUN_TTS_BREAKER_OPEN_S",
+        "STEPFUN_TTS_CONNECT_TIMEOUT_S",
+        "STEPFUN_TTS_ENABLED",
+        "STEPFUN_TTS_FIRST_AUDIO_TIMEOUT_S",
+        "STEPFUN_TTS_HARD_DEADLINE_S",
+        "STEPFUN_TTS_INSTRUCTION",
+        "STEPFUN_TTS_MODEL",
+        "STEPFUN_TTS_POOL_SIZE",
+        "STEPFUN_TTS_SAMPLE_RATE",
+        "STEPFUN_TTS_TOTAL_TIMEOUT_S",
+        "STEPFUN_TTS_VOICE",
+        "STEPFUN_TTS_WS_URL",
+        "DOUBAO_TTS_FALLBACK_SPEAKER",
+        "AIGC_NOTICE_ENABLED",
+        "AIGC_NOTICE_MODE",
+        "AIGC_NOTICE_OPENING_ENABLED",
+        "AIGC_NOTICE_CLOSING_ENABLED",
+        "AIGC_NOTICE_TONE_PATTERN",
+        "AIGC_NOTICE_TONE_FREQUENCY_HZ",
+        "AIGC_NOTICE_TONE_SHORT_MS",
+        "AIGC_NOTICE_TONE_LONG_MS",
+        "AIGC_NOTICE_TONE_GAP_MS",
+        "AIGC_NOTICE_TONE_GROUP_GAP_MS",
+        "AIGC_NOTICE_TONE_VOLUME",
+        "AIGC_NOTICE_LEAD_INTERVAL_MS",
+        "AIGC_NOTICE_MARKER_DURATION_MS",
+        "AIGC_NOTICE_SPEECH_RESOURCE",
+        "AIGC_NOTICE_SPEECH_ROOT",
+        "AIGC_NOTICE_SPEECH_SAMPLE_RATE_HZ",
+        "AIGC_GENERATION_LOG_ENABLED",
+        "AIGC_GENERATION_LOG_PATH",
         "ENDPOINTING_ALPHA",
         "ENDPOINTING_MAX_DELAY_S",
         "ENDPOINTING_MIN_DELAY_S",
@@ -128,6 +163,22 @@ _MEDIA_EDGE_EXTRA_KEYS = frozenset(
 # so they are accepted but routed to no service.
 _RETIRED_KEYS = frozenset(
     {
+        # Voice clone and custom-voice enrollment were removed. Preset Doubao
+        # TTS stays on DOUBAO_TTS_*. These keys must not reach a service.
+        "MEMORIA_DOUBAO_VOICE_API_KEY",
+        "MEMORIA_DOUBAO_VOICE_CLONE_POLL_INTERVAL_S",
+        "MEMORIA_DOUBAO_VOICE_CLONE_URL",
+        "MEMORIA_DOUBAO_VOICE_EXPIRES_AT_FIELD",
+        "MEMORIA_DOUBAO_VOICE_EXPIRES_AT_FORMAT",
+        "MEMORIA_DOUBAO_VOICE_QUERY_URL",
+        "MEMORIA_DOUBAO_VOICE_SYNTH_READY_ID_FIELD",
+        "MEMORIA_DOUBAO_VOICE_SYNTH_READY_ID_MODE",
+        "MEMORIA_VOICE_CLONE_PROVIDER",
+        "MEMORIA_VOICE_ENROLLMENT_TIMEOUT_S",
+        "MEMORIA_VOICE_ENROLLMENT_URL",
+        "MEMORIA_VOICE_TARGET_MODEL",
+        "QWEN_OMNI_VOICE_CLONE_ID",
+        "VOICE_CLONE_ENABLED",
         "MEDIA_BRIDGE_GO_SHADOW_ENABLED",
         # /v1/evolution (and its validator token) was removed on 2026-09-28;
         # it had no caller.
@@ -225,11 +276,14 @@ _RETIRED_KEYS = frozenset(
 
 
 def _aliases(settings_type: type[AgentSettings] | type[ControlSettings]) -> set[str]:
-    return {
-        str(field.alias)
-        for field in settings_type.model_fields.values()
-        if isinstance(field.alias, str)
-    }
+    names: set[str] = set()
+    for field in settings_type.model_fields.values():
+        validation_alias = field.validation_alias
+        if isinstance(validation_alias, AliasChoices):
+            names.update(str(choice) for choice in validation_alias.choices)
+        elif isinstance(validation_alias, str):
+            names.add(validation_alias)
+    return names
 
 
 def split_env(
@@ -245,14 +299,6 @@ def split_env(
         required=False,
     )
     pcm_tap_directory(values.get("ENVIRONMENT", ""), values.get("MEDIA_PCM_TAP_DIR", ""))
-    clone_key = values.get("MEMORIA_DOUBAO_VOICE_API_KEY", "").strip()
-    runtime_tts_secrets = {
-        values.get("DOUBAO_TTS_API_KEY", "").strip(),
-        values.get("DOUBAO_TTS_ACCESS_TOKEN", "").strip(),
-    }
-    runtime_tts_secrets.discard("")
-    if clone_key and clone_key in runtime_tts_secrets:
-        raise ValueError("Doubao voice clone and runtime TTS credentials must be independent")
     if values.get("ENVIRONMENT", "").strip().lower() == "production":
         if values.get("MEMORIA_ARCHIVE_INTERNAL_TOKEN", "").strip():
             raise ValueError("production forbids the legacy all-access internal token")

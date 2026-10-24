@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 from urllib.parse import quote, unquote, urlsplit
 
 import asyncpg
@@ -51,12 +51,10 @@ from services.control_api.app.database import MemoryStore
 from services.control_api.app.device_registry import DeviceRegistry
 from services.control_api.app.governance_wiring import (
     account_data_governance,
+    claim_bound_child_subject_ids,
     install_subject_deletion,
 )
-from services.control_api.app.guardian_push import (
-    app_display_name_resolver,
-    build_crisis_push_worker,
-)
+from services.control_api.app.guardian_push import build_crisis_push_worker
 from services.control_api.app.lifespan_resources import LifespanResources, SharedPostgresPools
 from services.control_api.app.media_runtime import mint_streamcore_token
 from services.control_api.app.media_slo import MediaSLOGate
@@ -105,7 +103,7 @@ from services.control_api.app.text_models import (
     build_persona_extractor,
     build_persona_structurer,
 )
-from services.control_api.app.unconfigured_store import UnconfiguredStore
+from services.control_api.app.unconfigured_store import UnconfiguredStore, _unconfigured
 from services.control_api.app.voice_services import voice_profile_services
 from services.control_api.app.wiring import Wiring, run_eagerly
 from services.device_fleet.bootstrap_postgres_store import PostgresBootstrapStore
@@ -234,8 +232,8 @@ def _evidence_subject_category_resolver(
     """Category of the person the evidence names, never of the login account.
 
     The account owner and a blank subject keep the existing profile lookup.
-    ``None`` from that lookup is an unknown category and still compiles on the
-    non-minor path; it is not a reason to skip.  Any other subject is read from
+    ``None`` from that lookup is not the string adult, so extraction_gate
+    withholds it. Any other subject is read from
     identity as the evidence account (an actor-less PostgreSQL read hides everyone).
     A fresh thread plus ``asyncio.run`` cannot use the Postgres identity pool,
     which is bound to the loop that created it, so that path is not a fallback.
@@ -354,11 +352,6 @@ def _speaker_authority(
         guest_threshold=settings.speaker_guest_threshold,
         classify_timeout_s=settings.speaker_embedding_timeout_s,
     )
-
-
-def _unconfigured(store: str) -> Any:
-    """Eager wiring without an archive DSN: the archive family is PostgreSQL-only."""
-    return UnconfiguredStore(store, "MEMORIA_ARCHIVE_DATABASE_URL")
 
 
 def _archive_object_store(settings: ControlSettings) -> ObjectStore:
@@ -789,25 +782,24 @@ async def _wire_services(w: Wiring) -> None:
                 occurred_at=event.occurred_at,
                 candidate=cast(dict[str, object], candidate),
             )
-
         postgres_catalog = PostgresMemoryCatalog(
             archive_url,
             extractor=extractor,
-            compiler_dsn=compiler_url or None,
-            compiler_role=settings.archive_compiler_role or None,
+            compiler_dsn=compiler_url or None, compiler_role=settings.archive_compiler_role or None,
             account_guard=account_guard,
             subject_category_resolver=_subject_category_resolver(store),
             evidence_subject_category_resolver=evidence_category,
+            bound_child_subject_ids=claim_bound_child_subject_ids(
+                cast(IdentityService, app.state.identity_service)
+            ),
             capture_evidence_projector=project_capture_evidence if production else None,
-            embedder=embedder,
-            require_vector=production,
-            outbox_lease_s=settings.archive_compile_lease_s,
-            outbox_retry_base_s=settings.archive_compile_retry_base_s,
-            outbox_retry_max_s=settings.archive_compile_retry_max_s,
-            pool=archive_pool,
+            embedder=embedder, require_vector=production,
+            outbox_lease_s=settings.archive_compile_lease_s, outbox_retry_base_s=settings.archive_compile_retry_base_s,
+            outbox_retry_max_s=settings.archive_compile_retry_max_s, pool=archive_pool,
         )
         await w.open(postgres_catalog.initialize, postgres_catalog.close)
         memory_catalog = postgres_catalog
+        w.start_memory_vector_backfill(app, settings, postgres_catalog, store.list_account_ids)
         postgres_skills = PostgresSkillCatalog(archive_url, pool=archive_pool)
         await w.open(postgres_skills.initialize, postgres_skills.close)
         skill_catalog = postgres_skills
@@ -922,9 +914,7 @@ async def _wire_services(w: Wiring) -> None:
         voice_profile_manager,
         voice_sample_signer,
         voice_object_store,
-        voice_clone,
     ) = voice_profile_services(settings, archive_pool=archive_pool)
-    app.state.voice_clone_authority = voice_clone
     if isinstance(voice_profile_manager, PostgresVoiceProfileManager):
         await w.open(voice_profile_manager.initialize, voice_profile_manager.close)
     app.state.voice_profile_manager = voice_profile_manager
@@ -965,7 +955,6 @@ async def _wire_services(w: Wiring) -> None:
         crisis_push_worker = build_crisis_push_worker(
             settings,
             cast(CrisisPushStorePort, guardian_store),
-            display_name=app_display_name_resolver(app),
         )
         if crisis_push_worker is not None:
             w.start(crisis_push_worker)
@@ -985,7 +974,8 @@ async def _wire_services(w: Wiring) -> None:
         ),
         guardian_repository=guardian_store,
         corpus_retention_service=corpus_retention_service,
-        session_terminator=session_terminator,
+        session_terminator=session_terminator, onboarding=device_onboarding,
+        identity=app.state.identity_service,
     )
     if w.live:
         deletion_worker = AccountDeletionWorker(app.state.account_data_governance)

@@ -995,3 +995,89 @@ def test_output_intent_observer_failure_does_not_change_admission() -> None:
         )
         == BRIDGE_PHRASES[0]
     )
+
+
+@pytest.mark.asyncio
+async def test_control_result_survives_a_newer_epoch_from_another_tool() -> None:
+    manager = TaskManager()
+
+    async def tool_handler(_args: dict[str, object], _cancel: asyncio.Event) -> object:
+        return "计划"
+
+    for name in ("response_planner", "media_deep_response"):
+        manager.register(
+            ToolSpec(
+                name,
+                "",
+                {},
+                True,
+                True,
+                1,
+                side_effect_policy=SideEffectPolicy.READ_ONLY.value,
+            ),
+            tool_handler,
+        )
+    coordinator = DelegationCoordinator(manager)
+    planner_request = replace(
+        _request(),
+        tool_name="response_planner",
+        output_kind=media_pb2.OUTPUT_INTENT_KIND_UNSPECIFIED,
+    )
+    planner = await coordinator.delegate(planner_request)
+    await planner.record.task
+    lookup_request = replace(_request(), tool_name="media_deep_response", task_epoch=5)
+    lookup = await coordinator.delegate(lookup_request)
+    await lookup.record.task
+
+    accepted = coordinator.accept_control_result(
+        planner,
+        current_fence=planner_request.fence,
+        current_task_epoch=planner_request.task_epoch,
+        current_context_version=planner_request.context_version,
+        relevant=True,
+        now_ms=1_001,
+    )
+
+    assert accepted == "计划"
+
+
+@pytest.mark.asyncio
+async def test_control_result_is_dropped_when_the_same_tool_moves_on() -> None:
+    manager = TaskManager()
+
+    async def planner(_args: dict[str, object], _cancel: asyncio.Event) -> object:
+        return "旧计划"
+
+    manager.register(
+        ToolSpec(
+            "response_planner",
+            "",
+            {},
+            True,
+            True,
+            1,
+            side_effect_policy=SideEffectPolicy.READ_ONLY.value,
+        ),
+        planner,
+    )
+    coordinator = DelegationCoordinator(manager)
+    old_request = replace(
+        _request(),
+        tool_name="response_planner",
+        output_kind=media_pb2.OUTPUT_INTENT_KIND_UNSPECIFIED,
+    )
+    old = await coordinator.delegate(old_request)
+    await old.record.task
+    newer = await coordinator.delegate(replace(old_request, task_epoch=5))
+    await newer.record.task
+
+    accepted = coordinator.accept_control_result(
+        old,
+        current_fence=old_request.fence,
+        current_task_epoch=old_request.task_epoch,
+        current_context_version=old_request.context_version,
+        relevant=True,
+        now_ms=1_001,
+    )
+
+    assert accepted is None

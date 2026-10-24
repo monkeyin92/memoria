@@ -43,6 +43,9 @@ SummarySource = Literal["qwen", "deepseek", "fallback"]
 _LEGACY_MEMORY_WRITE_UNAVAILABLE_DETAIL = (
     "legacy memory writes are unavailable in production"
 )
+_LEGACY_DAILY_SUMMARY_READ_UNAVAILABLE_DETAIL = (
+    "legacy daily summaries are unavailable in production"
+)
 
 
 def _clean_user_id(value: str) -> str:
@@ -206,6 +209,27 @@ def _reject_legacy_memory_write_in_production(request: Request) -> None:
         raise HTTPException(
             status_code=503,
             detail=_LEGACY_MEMORY_WRITE_UNAVAILABLE_DETAIL,
+        )
+
+
+def _reject_legacy_daily_summary_read_in_production(request: Request) -> None:
+    """Refuse production reads that can return daily_summaries content.
+
+    daily_summaries may hold a child's own words: the deterministic fallback
+    summary is built from up to three source messages when the model fails.
+    Production therefore keeps both reads and writes closed. If writes are ever
+    reopened, every deletion path must cover this table and have a test:
+    per-subject deletion (services/governance/subject_deletion.py and
+    subject_archive.py), unbind deletion
+    (services/control_api/app/routes/identity_lifecycle.py), and replay after a
+    restore (scripts/replay_subject_deletions.py).
+    """
+
+    settings = _settings(request)
+    if settings.environment == "production":
+        raise HTTPException(
+            status_code=503,
+            detail=_LEGACY_DAILY_SUMMARY_READ_UNAVAILABLE_DETAIL,
         )
 
 
@@ -423,6 +447,7 @@ def list_days(
     limit: int = Query(default=30, ge=1, le=90),
     before: date | None = None,
 ) -> dict[str, Any]:
+    _reject_legacy_daily_summary_read_in_production(request)
     try:
         clean_user_id = _clean_user_id(user_id)
     except ValueError as exc:

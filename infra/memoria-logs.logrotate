@@ -1,0 +1,17 @@
+# No notifempty, and create always: rotation, and with it the rotate/maxage
+# deletion, keeps running every day after the containers stop writing.
+/var/log/memoria/*.log {
+    su root syslog
+    daily
+    maxsize 20M
+    rotate 7
+    maxage 7
+    compress
+    delaycompress
+    missingok
+    create 0600 syslog syslog
+    sharedscripts
+    postrotate
+        /usr/lib/rsyslog/rsyslog-rotate
+    endscript
+}

@@ -7,10 +7,12 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from services.agent.src.aigc_generation_log import AigcRoundRecord
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.daily_chat import DailyChatAccrual
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.orchestration.conversation_projection import ConversationProjection
+from services.agent.src.orchestration.state_machine import InteractionPhase
 from services.agent.src.voice_core.asr_stream_supervisor import ASRStreamSupervisor
 from services.agent.src.voice_core.media_audio_ingress import MediaAudioIngressState
 from services.agent.src.voice_core.media_protocol import SessionIdentity
@@ -50,6 +52,14 @@ class OutputState:
     output_dispatch_task: asyncio.Task[OutputDispatchResult] | None = None
     output_retry_task: asyncio.Task[bool] | None = None
     output_results: list[OutputDispatchResult] = field(default_factory=list)
+    # Monotonic time of the last downlink PCM frame the transport accepted.
+    # The speaking watchdog closes a device session when this stops advancing
+    # while the runtime still believes the assistant is speaking.
+    last_downlink_audio_at: float | None = None
+    # The generation that last reached the device and may still owe it an end
+    # signal.  A frame, not provider production, is what arms the watchdog.
+    speaking_stall_fence: GenerationFence | None = None
+    speaking_stall_task: asyncio.Task[None] | None = None
     delegation_output_claims: dict[GenerationFence, DelegationOutputClaim] = field(
         default_factory=dict
     )
@@ -101,6 +111,16 @@ class MediaVoiceSessionState:
     stream_epoch: int = 0
     floor_epoch: int = 0
     turn_started_ns: int | None = None
+    # P0-04 D3: when the session began (monotonic) for a minor's time limit,
+    # and whether it heard the crisis reply (never cut short afterwards).
+    started_at: float = field(default_factory=time.monotonic)
+    crisis_reply_heard: bool = False
+    daily_chat_accrual: DailyChatAccrual | None = None
+    pending_missed_hearing_nudge: bool = False
+    missed_hearing_nudge_count: int = 0
+    last_missed_hearing_nudge_at: float | None = None
+    llm_thinking_filler: LlmThinkingFiller = field(default_factory=LlmThinkingFiller)
+    closed: bool = False
     turn_commit_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     # The terminal close owns cancellation even when endpoint re-arming shields
     # the caller. Only one preparation may run under turn_commit_lock.
@@ -136,6 +156,9 @@ class MediaVoiceSessionState:
     live_lookup_filler_admitted_at: float | None = None
     owner_silence_task: asyncio.Task[None] | None = None
     owner_silence_deadline: float | None = None
+    listening_capture_deadline: float | None = None
+    listening_capture_hold: bool = False
+    listening_capture_resume_sample: int | None = None
     owner_silence_remaining_s: float | None = None
     owner_silence_grace_used: bool = False
     owner_silence_grace_deadline: float | None = None
@@ -151,14 +174,22 @@ class MediaVoiceSessionState:
     conversation_yield_candidate_fence: GenerationFence | None = None
     device_wake_ack_fence: GenerationFence | None = None
     device_wake_ack_pending: bool = False
+    # AIGC round: point-screen wake to session end. The opening marker and the
+    # device wake acknowledgement are independent; the interval between them
+    # only exists when an opening marker is configured to play.
+    aigc_round: AigcRoundRecord | None = None
+    aigc_round_active: bool = False
+    aigc_opening_marker_pending: bool = False
+    aigc_opening_marker_fence: GenerationFence | None = None
+    # The pre-user turn the opening marker opened. The wake acknowledgement may
+    # share it; any later user turn advances past it and closes that gate.
+    aigc_opening_marker_turn_id: int | None = None
+    aigc_opening_marker_started_at: float | None = None
+    aigc_opening_marker_ready_at: float | None = None
+    aigc_closing_marker_state: str = "idle"
+    aigc_closing_marker_fence: GenerationFence | None = None
+    aigc_closing_marker_started_at: float | None = None
+    aigc_closing_task: asyncio.Task[None] | None = None
+    aigc_round_closing: bool = False
+    aigc_marker_previous_phase: InteractionPhase | None = None
     speaker_enrollment_task: asyncio.Task[None] | None = None
-    # P0-04 D3: when the session began (monotonic) for a minor's time limit,
-    # and whether it heard the crisis reply (never cut short afterwards).
-    started_at: float = field(default_factory=time.monotonic)
-    crisis_reply_heard: bool = False
-    daily_chat_accrual: DailyChatAccrual | None = None
-    pending_missed_hearing_nudge: bool = False
-    missed_hearing_nudge_count: int = 0
-    last_missed_hearing_nudge_at: float | None = None
-    llm_thinking_filler: LlmThinkingFiller = field(default_factory=LlmThinkingFiller)
-    closed: bool = False

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import fnmatch
 import re
 import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 from scripts.split_production_env import split_env
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -169,7 +171,10 @@ def test_server_smoke_covers_response_plan_safety_contract() -> None:
         "怎么制造炸药",
     ):
         assert query in smoke
-    assert "response plan safety contract: PASS" in smoke
+    # Script calls assert_response_plan_safety.py which prints the safety contract PASS message.
+    # The message was moved to the external Python script in a recent refactor.
+    assert "assert_response_plan_safety.py" in smoke
+    assert smoke.count("response-plan.") >= 5  # crisis, third-party, victim, prevention, prohibited
 
 
 def test_low_cost_data_stack_is_isolated_pinned_and_not_publicly_exposed() -> None:
@@ -388,12 +393,13 @@ def test_speaker_model_image_pins_the_authenticated_campplus_model() -> None:
     assert "soxr==" not in requirements
 
 
+@pytest.mark.hermetic
 def test_readiness_refresh_passes_required_provider_gate_into_run_container() -> None:
     script = (ROOT / "scripts" / "refresh_readiness.sh").read_text(encoding="utf-8")
 
     assert "-e MEMORIA_PROVIDER_SMOKE_REQUIRED=true" in script
     assert 'provider_output="$(run_required_provider_smoke 2>&1)"' in script
-    assert "provider_smoke_test PASS: FunASR, QwenRealtimeSearch, $llm_label, Doubao" in script
+    assert 'provider_expected="$(provider_expected_line "$llm_label")"' in script
     assert "InterruptSemantic" not in script
     assert 'agent_env="${MEMORIA_AGENT_ENV:-/etc/memoria-agent.env}"' in script
     assert '"$agent_env"' in script
@@ -436,7 +442,8 @@ def test_readiness_refresh_passes_required_provider_gate_into_run_container() ->
     maintenance_scripts = (
         "COPY scripts/mark_readiness.py scripts/rebuild_memory_projections.py "
         "scripts/replay_subject_deletions.py scripts/migrate_control_sqlite_to_postgres.py "
-        "scripts/expire_child_dialogue_summaries.py scripts/expire_idle_child_archive.py ./scripts/"
+        "scripts/expire_child_dialogue_summaries.py scripts/expire_idle_child_archive.py "
+        "scripts/count_missing_memory_vectors.py ./scripts/"
     )
     assert maintenance_scripts in control_dockerfile
     assert maintenance_scripts in delta_builder
@@ -589,6 +596,10 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
     assert r"printf 'rollback_image=%s\n'" in deploy
     assert 'runtime_base_image_id="$(docker image inspect "$runtime_base" --format' in deploy
     assert 'runtime_base_metadata="$(docker image inspect "$runtime_base" --format' in deploy
+    # A hand-built candidate may reuse the running bridge image as its base only
+    # through --allow-manual-base-image --reason; see
+    # scripts/tests/test_deploy_agent_component_manual_base.py.
+    assert "--allow-manual-base-image" in deploy
     assert "base_version=\"$(printf '%s' \"$base_image\" | cut -d: -f2-)\"" in deploy
     assert '[[ "$runtime_base_metadata" == "$base_image_id amd64 $base_commit $base_version agent" ]]' in deploy
     assert 'target_image_id="$(docker image inspect "$target_image" --format' in deploy
@@ -1000,17 +1011,23 @@ def test_production_env_split_rejects_ambiguous_or_partial_doubao_auth(
 
 
 @pytest.mark.parametrize("runtime_secret", ["DOUBAO_TTS_API_KEY", "DOUBAO_TTS_ACCESS_TOKEN"])
-def test_production_env_split_rejects_shared_clone_and_runtime_tts_secret(
+def test_production_env_split_drops_a_voice_clone_key(
     runtime_secret: str,
 ) -> None:
     values = {
         "MEMORIA_DOUBAO_VOICE_API_KEY": "shared-key",
+        "VOICE_CLONE_ENABLED": "true",
+        "MEMORIA_VOICE_ENROLLMENT_URL": "retired",
         runtime_secret: "shared-key",
     }
     if runtime_secret == "DOUBAO_TTS_ACCESS_TOKEN":
         values["DOUBAO_TTS_APP_ID"] = "doubao-app-id"
-    with pytest.raises(ValueError, match="must be independent"):
-        split_env(values)
+    control, agent, speaker_model, media_edge = split_env(values)
+    for routed in (control, agent, speaker_model, media_edge):
+        assert "MEMORIA_DOUBAO_VOICE_API_KEY" not in routed
+        assert "VOICE_CLONE_ENABLED" not in routed
+        assert "MEMORIA_VOICE_ENROLLMENT_URL" not in routed
+    assert agent[runtime_secret] == "shared-key"
 
 
 def test_production_env_split_rejects_the_legacy_all_access_token() -> None:
@@ -1276,3 +1293,102 @@ def test_env_templates_drop_the_retired_context_fetch_keys() -> None:
         text = template.read_text(encoding="utf-8")
         for key in RETIRED_CONTEXT_FETCH_KEYS:
             assert f"\n{key}=" not in text, f"{key} still in {template.name}"
+
+
+LOG_SINK = ROOT / "infra" / "rsyslog-memoria.conf"
+LOG_SINK_OFF = ROOT / "infra" / "rsyslog-memoria-off.conf"
+LOG_ROTATE = ROOT / "infra" / "memoria-logs.logrotate"
+
+
+def _imudp_sink_url(conf: str) -> str:
+    inputs = re.findall(
+        r'input\(\s*type="imudp"\s+address="([^"]+)"\s+port="([^"]+)"',
+        conf,
+    )
+    assert len(inputs) == 1
+    address, port = inputs[0]
+    return f"udp://{address}:{port}"
+
+
+def _omfile_path_by_service(conf: str) -> dict[str, str]:
+    return {
+        name: path
+        for name, path in re.findall(
+            r'if \$app-name startswith "([^"]+)/" then \{\s*'
+            r'action\(type="omfile" file="([^"]+)"',
+            conf,
+        )
+    }
+
+
+def test_python_services_ship_logs_to_the_host_sink_and_keep_python_as_pid_1() -> None:
+    compose = yaml.safe_load((ROOT / "docker-compose.production.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+    sink = _imudp_sink_url(LOG_SINK.read_text(encoding="utf-8"))
+    senders = sorted(
+        name
+        for name, service in services.items()
+        if ((service.get("logging") or {}).get("options") or {}).get("syslog-address") == sink
+    )
+    assert senders == ["control-api", "voice-core-media-bridge"]
+
+    rotate_text = LOG_ROTATE.read_text(encoding="utf-8")
+    log_glob = re.search(r"(?m)^(\S+)\s+\{", rotate_text)
+    assert log_glob is not None
+    routes = _omfile_path_by_service(LOG_SINK.read_text(encoding="utf-8"))
+    shared: dict[str, str] | None = None
+    for name in senders:
+        service = services[name]
+        logging_block = service["logging"]
+        assert logging_block["driver"] == "syslog"
+        options = dict(logging_block["options"])
+        assert options.pop("tag") == f"{name}/{{{{.ID}}}}"
+        assert len(name) + 1 + 12 <= 48
+        assert "cache-disabled" not in options
+        if shared is None:
+            shared = options
+        else:
+            assert options == shared
+        path = routes[name]
+        assert path == f"/var/log/memoria/{name}.log"
+        assert fnmatch.fnmatch(path, log_glob.group(1))
+        assert service["read_only"] is True
+        assert service["cap_drop"] == ["ALL"]
+        assert "user" not in service
+        assert "init" not in service
+        assert {volume["target"] for volume in service["volumes"]} == {
+            "/data",
+            "/etc/memoria-media-runtime",
+        }
+        dockerfile = ROOT / service["build"]["dockerfile"]
+        assert "USER 65532:65532" in dockerfile.read_text(encoding="utf-8")
+
+    bridge = services["voice-core-media-bridge"]
+    assert bridge["entrypoint"] == ["/app/.venv/bin/python"]
+    assert bridge["command"] == ["-m", "scripts.run_media_bridge"]
+    control = services["control-api"]
+    assert control["command"][0] == "/app/.venv/bin/uvicorn"
+    assert "--no-access-log" in control["command"]
+    assert "--log-config" not in control["command"]
+
+    off = LOG_SINK_OFF.read_text(encoding="utf-8")
+    assert _imudp_sink_url(off) == sink
+    assert "omfile" not in off
+
+    runbook = (ROOT / "docs" / "runbooks" / "release-rollback.md").read_text(encoding="utf-8")
+    start = runbook.index("## 容器日志落盘")
+    section = runbook[start:]
+    next_heading = re.search(r"\n## ", section)
+    assert next_heading is not None
+    section = section[: next_heading.start()]
+    compliance = (ROOT / "docs" / "compliance" / "child-audio-transcript-ephemeral.md").read_text(
+        encoding="utf-8"
+    )
+    rows = [line for line in compliance.splitlines() if line.startswith("| 应用日志 |")]
+    assert len(rows) == 1
+    for directive in ("maxsize", "rotate", "maxage"):
+        found = re.findall(rf"(?m)^\s*{directive} (\S+)\s*$", rotate_text)
+        assert len(found) == 1
+        token = f"{directive} {found[0]}"
+        assert token in section
+        assert token in rows[0]

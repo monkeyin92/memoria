@@ -85,7 +85,7 @@ const ERROR_MESSAGES = Object.freeze({
   CLOUD_TLS_FAILED: "机器人没能安全地连上 Memoria，请检查网络，或先升级机器人固件。",
   DEVICE_ONLINE_TIMEOUT: "机器人暂时还没连上 Memoria，可以稍后再来看看状态。",
   CLAIM_CONFLICT: "这台机器人还有一次没做完的确认（可能是刚才那次），最多 10 分钟后自动释放，请稍后再扫码。",
-  CLAIM_EXPIRED: "这次确认已超时，请重新确认一次，不用重新输入 Wi‑Fi。",
+  CLAIM_EXPIRED: "这次确认已超时，这张码不能再用了。请轻点机器人屏幕换一张新二维码，再重新扫码。",
   BINDING_FAILED: "机器人的设置没有完成，请回到当前这一步重试。",
   ACTIVATION_ACK_TIMEOUT: "设置已保存，机器人还在同步，稍后刷新设备状态就好。",
   ONBOARDING_SESSION_ENDED:

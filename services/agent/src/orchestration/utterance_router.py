@@ -34,7 +34,6 @@ class UtteranceIntent(StrEnum):
     ENROLL = "enroll"
     # Explicit end-of-conversation phrase — close the media session and standby.
     END_SESSION = "end_session"
-    # Pure stop/wait command (等等 / 停一下 / 别说了) — ack only, no LLM.
     INTERRUPT_COMMAND = "interrupt_command"
     # Explicit interrupt wording plus real content (等一下我想问…) — interrupt then chat.
     INTERRUPT_THEN_CHAT = "interrupt_then_chat"
@@ -294,7 +293,7 @@ def route_utterance(
       1. speaker PENDING → enroll (blocks all chat, including stop phrases)
       2. resume command while a reply is paused → resume
       3. exact conversation-close phrase → end_session (no chat, no ack)
-      4. interrupt-command-only → interrupt_command (no chat, yield/stop ack)
+      4. interrupt-command-only → interrupt_command (no chat)
       5. sticky interrupt exact replay → interrupt_replay
       6. semantic control-only evidence → interrupt_command
       7. explicit interrupt + content → interrupt_then_chat

@@ -2939,8 +2939,11 @@ type GenerationControl struct {
 	TaskEpoch      uint64                 `protobuf:"varint,8,opt,name=task_epoch,json=taskEpoch,proto3" json:"task_epoch,omitempty"`
 	ContextVersion uint64                 `protobuf:"varint,9,opt,name=context_version,json=contextVersion,proto3" json:"context_version,omitempty"`
 	SessionEpoch   uint64                 `protobuf:"varint,10,opt,name=session_epoch,json=sessionEpoch,proto3" json:"session_epoch,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// The device must not cut this reply short (a fixed safety script). The
+	// device wire key is "interruptible" with the opposite polarity.
+	ProtectedPlayback bool `protobuf:"varint,11,opt,name=protected_playback,json=protectedPlayback,proto3" json:"protected_playback,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *GenerationControl) Reset() {
@@ -3041,6 +3044,13 @@ func (x *GenerationControl) GetSessionEpoch() uint64 {
 		return x.SessionEpoch
 	}
 	return 0
+}
+
+func (x *GenerationControl) GetProtectedPlayback() bool {
+	if x != nil {
+		return x.ProtectedPlayback
+	}
+	return false
 }
 
 type TranscriptEvent struct {
@@ -4011,6 +4021,7 @@ type StateEvent struct {
 	ToolEpoch      uint64                 `protobuf:"varint,7,opt,name=tool_epoch,json=toolEpoch,proto3" json:"tool_epoch,omitempty"`
 	TaskEpoch      uint64                 `protobuf:"varint,8,opt,name=task_epoch,json=taskEpoch,proto3" json:"task_epoch,omitempty"`
 	ContextVersion uint64                 `protobuf:"varint,9,opt,name=context_version,json=contextVersion,proto3" json:"context_version,omitempty"`
+	PlayLine       bool                   `protobuf:"varint,10,opt,name=play_line,json=playLine,proto3" json:"play_line,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -4106,6 +4117,13 @@ func (x *StateEvent) GetContextVersion() uint64 {
 		return x.ContextVersion
 	}
 	return 0
+}
+
+func (x *StateEvent) GetPlayLine() bool {
+	if x != nil {
+		return x.PlayLine
+	}
+	return false
 }
 
 type ClientEvent struct {
@@ -4788,7 +4806,7 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"\n" +
 	"task_epoch\x18\v \x01(\x04R\ttaskEpoch\x12'\n" +
 	"\x0fcontext_version\x18\f \x01(\x04R\x0econtextVersion\x12#\n" +
-	"\rsession_epoch\x18\r \x01(\x04R\fsessionEpoch\"\x8c\x03\n" +
+	"\rsession_epoch\x18\r \x01(\x04R\fsessionEpoch\"\xbb\x03\n" +
 	"\x11GenerationControl\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x12\x17\n" +
 	"\aturn_id\x18\x02 \x01(\x04R\x06turnId\x12#\n" +
@@ -4802,7 +4820,8 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"task_epoch\x18\b \x01(\x04R\ttaskEpoch\x12'\n" +
 	"\x0fcontext_version\x18\t \x01(\x04R\x0econtextVersion\x12#\n" +
 	"\rsession_epoch\x18\n" +
-	" \x01(\x04R\fsessionEpoch\"\xa3\x04\n" +
+	" \x01(\x04R\fsessionEpoch\x12-\n" +
+	"\x12protected_playback\x18\v \x01(\bR\x11protectedPlayback\"\xa3\x04\n" +
 	"\x0fTranscriptEvent\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x12\x17\n" +
 	"\aturn_id\x18\x02 \x01(\x04R\x06turnId\x12\x1a\n" +
@@ -4894,7 +4913,7 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"\x1dauthoritative_context_version\x18\x10 \x01(\x04R\x1bauthoritativeContextVersion\x12l\n" +
 	"\x1cauthoritative_output_arbiter\x18\x12 \x01(\v2*.memoria.media.v1.ShadowOutputArbiterStateR\x1aauthoritativeOutputArbiter\x125\n" +
 	"\x16authoritative_consumed\x18\x13 \x01(\bR\x15authoritativeConsumedB\a\n" +
-	"\x05input\"\xdf\x02\n" +
+	"\x05input\"\xfc\x02\n" +
 	"\n" +
 	"StateEvent\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x129\n" +
@@ -4907,7 +4926,9 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"tool_epoch\x18\a \x01(\x04R\ttoolEpoch\x12\x1d\n" +
 	"\n" +
 	"task_epoch\x18\b \x01(\x04R\ttaskEpoch\x12'\n" +
-	"\x0fcontext_version\x18\t \x01(\x04R\x0econtextVersion\"\xc4\x02\n" +
+	"\x0fcontext_version\x18\t \x01(\x04R\x0econtextVersion\x12\x1b\n" +
+	"\tplay_line\x18\n" +
+	" \x01(\bR\bplayLine\"\xc4\x02\n" +
 	"\vClientEvent\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12!\n" +

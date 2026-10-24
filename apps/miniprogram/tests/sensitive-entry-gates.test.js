@@ -131,41 +131,6 @@ test("memory page loads the owner's own recap without consulting the Runtime Pro
   });
 });
 
-test("memory page summarize action does not consult the Runtime Profile", async () => {
-  await withWx(async () => {
-    const definition = loadPage("../pages/memory/index");
-    const page = instantiate(definition);
-    let summarizeCalls = 0;
-    let gateCalls = 0;
-    const restore = stubApi({
-      currentIdentity: () => ({ user_id: "person_owner" }),
-      isAuthEpochCurrent: () => true,
-      hasAuthenticatedSession: () => true,
-      requireRuntimeCapability: async () => {
-        gateCalls += 1;
-        return { allowed: false, reason: "capability_missing" };
-      },
-      summarizeDay: async () => {
-        summarizeCalls += 1;
-      },
-      getMemoryDays: async () => ({ items: [] }),
-      getConversationReview: async () => ({
-        actual_heard: [],
-        memory_candidates: [],
-        confirmed_memories: [],
-      }),
-      getConversationSessions: async () => ({ items: [] }),
-    });
-    try {
-      await page.summarizeSelectedDay();
-      assert.equal(gateCalls, 0);
-      assert.equal(summarizeCalls, 1);
-    } finally {
-      restore();
-    }
-  });
-});
-
 function policyProfile() {
   const now = Date.now();
   return {
@@ -224,99 +189,6 @@ function mockPolicyDecision(decision) {
   return requests;
 }
 
-test("privacy load/grant/revoke are each gated by raw_audio_retention", async () => {
-  await withWx(async () => {
-    const definition = loadPage("../pages/privacy/index");
-    const page = instantiate(definition);
-    let consentCalls = 0;
-    let grantCalls = 0;
-    let revokeCalls = 0;
-    const restore = stubApi({
-      hasAuthenticatedSession: () => true,
-      isAuthEpochCurrent: () => true,
-      requireRuntimeCapability: async () => ({ allowed: false, reason: "invalid_profile" }),
-      getRawVoiceConsent: async () => {
-        consentCalls += 1;
-        return { consent: null };
-      },
-      grantRawVoiceConsent: async () => {
-        grantCalls += 1;
-        return { policy_version: "x" };
-      },
-      revokeRawVoiceConsent: async () => {
-        revokeCalls += 1;
-      },
-    });
-    try {
-      delete storage["memoria:miniprogram:device:binding-manifest"];
-      await page.loadConsent();
-      await page.grant();
-      await page.revoke();
-      assert.equal(consentCalls, 0);
-      assert.equal(grantCalls, 0);
-      assert.equal(revokeCalls, 0);
-      assert.match(page.data.error, /操作保持关闭/);
-      assert.equal(page.data.error.includes("无法取得 Runtime Profile"), false);
-    } finally {
-      restore();
-    }
-  });
-});
-
-test("privacy grant and revoke run only when the policy decision allows", async () => {
-  await withWx(async () => {
-    const definition = loadPage("../pages/privacy/index");
-    const page = instantiate(definition);
-    let grantCalls = 0;
-    let revokeCalls = 0;
-    const restore = stubApi({
-      hasAuthenticatedSession: () => true,
-      isAuthEpochCurrent: () => true,
-      grantRawVoiceConsent: async () => {
-        grantCalls += 1;
-        return { policy_version: "x" };
-      },
-      revokeRawVoiceConsent: async () => {
-        revokeCalls += 1;
-      },
-    });
-    try {
-      mockPolicyDecision({
-        effect: "deny",
-        reason_code: "capability_not_in_runtime_profile",
-        obligations: [],
-      });
-      await page.grant();
-      await page.revoke();
-      assert.equal(grantCalls, 0);
-      assert.equal(revokeCalls, 0);
-      assert.equal(page.data.configOpen, false);
-      assert.match(page.data.error, /未允许/);
-
-      const requests = mockPolicyDecision({
-        effect: "allow",
-        reason_code: "subject_authorized",
-        obligations: [],
-      });
-      await page.grant();
-      await page.revoke();
-      assert.equal(grantCalls, 1);
-      assert.equal(revokeCalls, 1);
-      assert.equal(page.data.configOpen, true);
-      const decisions = requests.filter((item) => item.url.endsWith("/v1/policy/decisions"));
-      assert.equal(decisions.length, 2);
-      assert.equal(decisions[0].url, `${CONTROL_API_BASE_URL}/v1/policy/decisions`);
-      assert.equal(decisions[0].data.capability, "raw_audio_retention");
-      assert.equal(decisions[0].data.data_classification, "biometric");
-      assert.equal(decisions[0].data.safety_state, "normal");
-      assert.equal(decisions[0].data.runtime_profile_id, "rp_gate");
-    } finally {
-      restore();
-      api.clearRuntimeProfileMemory();
-    }
-  });
-});
-
 test("guardian config actions use the config seam, not the usage capability", async () => {
   await withWx(async () => {
     const definition = loadPage("../pages/guardian/index");
@@ -336,6 +208,7 @@ test("guardian config actions use the config seam, not the usage capability", as
     });
     try {
       delete storage["memoria:miniprogram:device:binding-manifest"];
+      storage["memoria:miniprogram:child-info-consent"] = "accepted";
       page.setData({ minorUserId: "person_child" });
       await page.createLink();
       assert.equal(createCalls, 0, "配置动作不得依赖使用类能力门禁");
@@ -356,6 +229,7 @@ test("guardian config actions use the config seam, not the usage capability", as
       assert.equal(grantCalls, 0);
       assert.match(page.data.error, /操作保持关闭/);
     } finally {
+      delete storage["memoria:miniprogram:child-info-consent"];
       restore();
     }
   });
@@ -385,6 +259,7 @@ test("guardian config actions proceed only when the policy decision allows", asy
         reason_code: "guardian_summary_forbidden",
         obligations: [],
       });
+      storage["memoria:miniprogram:child-info-consent"] = "accepted";
       page.setData({ minorUserId: "person_child" });
       await page.createLink();
       assert.equal(createCalls, 0);
@@ -416,6 +291,7 @@ test("guardian config actions proceed only when the policy decision allows", asy
       assert.equal(decision.data.safety_state, "normal");
       assert.equal(decision.data.runtime_profile_id, "rp_gate");
     } finally {
+      delete storage["memoria:miniprogram:child-info-consent"];
       restore();
       api.clearRuntimeProfileMemory();
     }

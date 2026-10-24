@@ -1,0 +1,13 @@
+[Unit]
+Description=Memoria nightly database backup
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/memoria
+ExecStart=/opt/memoria/ops-tools/nightly_backup.sh
+User=root
+StandardOutput=journal
+StandardError=journal

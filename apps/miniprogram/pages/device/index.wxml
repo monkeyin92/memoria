@@ -535,32 +535,28 @@
         <button class="primary-button sheet-action" loading="{{limitsSaving}}" disabled="{{limitsSaving}}" bindtap="confirmLimitsSheet">保存</button>
       </view>
 
-      <!-- 解除绑定底部抽屉：先停止记忆，再二选一保留或删除使用人数据 -->
+      <!-- 解除绑定底部抽屉：解绑一律清除孩子信息，因此先二次确认再解绑 -->
       <view wx:if="{{unbindSheetVisible}}" class="sheet-mask" bindtap="closeUnbindSheet" catchtouchmove="noop"></view>
       <view wx:if="{{unbindSheetVisible}}" class="sheet device-sheet">
         <view class="sheet-grab"></view>
         <text class="sheet-title">解除绑定</text>
-        <text class="sheet-sub">解除后设备会立即停止记忆 TA 的对话。TA 的数据怎么处理？</text>
-        <view class="sheet-opt {{unbindPurgeChoice === 'keep' ? 'on' : ''}}" data-choice="keep" bindtap="pickUnbindChoice">
-          <view class="choice-radio"></view>
-          <view class="row-copy">
-            <text class="row-title">保留数据（重新绑定后可恢复）</text>
-            <text class="row-meta">记忆和对话数据继续保存，TA 重新绑定后接着用</text>
-          </view>
-          <view class="opt-check"><view class="icon-check"></view></view>
-        </view>
-        <view class="sheet-opt {{unbindPurgeChoice === 'purge' ? 'on' : ''}}" data-choice="purge" bindtap="pickUnbindChoice">
-          <view class="choice-radio"></view>
-          <view class="row-copy">
-            <text class="row-title">同时删除 TA 的记忆和对话数据</text>
-            <text class="row-meta">永久删除，重新绑定也无法恢复</text>
-          </view>
-          <view class="opt-check"><view class="icon-check"></view></view>
-        </view>
+        <text class="sheet-sub">解绑后，孩子的昵称、聊天摘要和长期档案会一起删除，删除后不能恢复。如果只是换网络或者重新配网，不用解绑。</text>
         <text wx:if="{{unbindError}}" class="error-text">{{unbindError}}</text>
-        <button class="danger-button sheet-action" loading="{{unbinding}}" disabled="{{unbinding || !unbindPurgeChoice}}" bindtap="confirmUnbind">解除绑定</button>
-        <button class="text-button sheet-cancel" disabled="{{unbinding}}" bindtap="closeUnbindSheet">取消</button>
+        <button class="danger-button sheet-action" loading="{{unbinding}}" disabled="{{unbinding}}" bindtap="confirmUnbind">确认解绑</button>
+        <button class="text-button sheet-cancel" disabled="{{unbinding}}" bindtap="closeUnbindSheet">再想想</button>
       </view>
     </block>
+
+    <!-- 解绑结果：一句一行，不依赖换行符；点遮罩不关闭。
+         放在 hasBinding 分支之外，解绑后设备消失也不会把结果一起卸载。 -->
+    <view wx:if="{{unbindResultVisible}}" class="modal-wrap" catchtouchmove="noop">
+      <view class="modal-card unbind-result-card">
+        <text class="modal-title">已解除绑定</text>
+        <view class="unbind-result-lines">
+          <text wx:for="{{unbindResultLines}}" wx:key="*this" class="unbind-result-line">{{item}}</text>
+        </view>
+        <button class="primary-button unbind-result-action" bindtap="closeUnbindResult">知道了</button>
+      </view>
+    </view>
   </block>
 </view>

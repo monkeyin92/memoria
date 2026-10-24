@@ -1,5 +1,5 @@
 <view class="page-shell tab-page" style="{{statusBarStyle}}">
-  <text class="eyebrow">按天查看</text>
+  <text class="eyebrow">最近几天</text>
   <text class="page-title">对话回顾</text>
   <text class="page-lede">{{guardianMode ? '这里只有摘要，不显示原话，也没有录音。' : '想记住的事，点确认后才会留下。'}}</text>
 
@@ -10,16 +10,16 @@
 
   <block wx:else>
     <view
-      wx:for="{{pinnedCrisisAlerts}}"
-      wx:key="notificationId"
+      wx:if="{{safetyBanner}}"
       class="trial-banner"
-      data-id="{{item.notificationId}}"
+      data-id="{{safetyBanner.notificationId}}"
       bindtap="openAttention"
     >
       <view class="trial-banner-icon"><image src="/assets/ui/v4/heart-rust.svg" /></view>
       <view class="trial-banner-copy">
-        <text class="trial-banner-title">{{item.message}}</text>
-        <text class="trial-banner-meta">{{item.timeLabel}}</text>
+        <text class="trial-banner-title">{{safetyBanner.message}}</text>
+        <text class="trial-banner-meta">{{safetyBanner.timeLabel}}</text>
+        <text wx:if="{{safetyBanner.moreLabel}}" class="trial-banner-meta">{{safetyBanner.moreLabel}}</text>
       </view>
       <image class="memory-chev" src="/assets/ui/v4/chev-rust.svg" />
     </view>
@@ -38,18 +38,6 @@
 
     <block wx:elif="{{memoryTab === 'reviews'}}">
       <view wx:if="{{guardianError}}" class="notice notice-warn">{{guardianError}}</view>
-      <view class="card memory-strip">
-        <view
-          wx:for="{{dateStrip}}"
-          wx:key="date"
-          class="memory-strip-day {{selectedDate === item.date ? 'memory-strip-on' : ''}}"
-          data-date="{{item.date}}"
-          bindtap="chooseDay"
-        >
-          <text class="memory-strip-week">{{item.weekday}}</text>
-          <text class="memory-strip-num">{{item.dayNum}}</text>
-        </view>
-      </view>
       <view wx:if="{{!days.length}}" class="card memory-card memory-empty">
         <mp-icon name="note" size="112"></mp-icon>
         <text class="l2-card-title">还没有可回顾的内容</text>
@@ -59,13 +47,7 @@
           <button class="secondary-button btn-sm" bindtap="goCompanion">看看 AI 角色</button>
         </view>
       </view>
-      <view
-        wx:for="{{days}}"
-        wx:key="date"
-        class="card memory-day"
-        data-date="{{item.date}}"
-        bindtap="chooseDay"
-      >
+      <view wx:for="{{days}}" wx:key="date" class="card memory-day">
         <view class="memory-day-head">
           <text class="memory-day-label">{{item.dayLabel}}</text>
           <text class="memory-day-meta">{{item.dateLabel}}</text>
@@ -75,10 +57,6 @@
           <view class="memory-dot"></view><text class="memory-line-text">{{line}}</text>
         </view>
         <text wx:if="{{item.suggestion}}" class="caption">{{item.suggestion}}</text>
-      </view>
-      <view wx:if="{{days.length}}" class="button-row memory-actions">
-        <button class="primary-button btn-sm" loading="{{summarizing}}" bindtap="summarizeSelectedDay">整理选中这一天</button>
-        <button class="secondary-button btn-sm" open-type="share" data-date="{{selectedDate}}">分享这一天</button>
       </view>
       <view class="card list-row memory-claims-row" bindtap="showMemories">
         <mp-icon name="star"></mp-icon>
@@ -176,6 +154,18 @@
         <view class="row-copy">
           <text class="row-title">打开我的记忆档案</text>
           <text class="row-meta">已确认的偏好、来源与版本</text>
+        </view>
+        <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
+      </view>
+      <view
+        wx:if="{{guardianMode}}"
+        class="card list-row memory-lifecycle-row"
+        bindtap="openMemoryLifecycle"
+      >
+        <mp-icon name="shield"></mp-icon>
+        <view class="row-copy">
+          <text class="row-title">记忆管理</text>
+          <text class="row-meta">查看、确认或撤回机器人记住的事</text>
         </view>
         <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
       </view>

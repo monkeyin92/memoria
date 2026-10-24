@@ -95,7 +95,10 @@ def decide_persistence(
     Policy decides ``memory_recall_private`` and ``memory_capture`` under the
     same consent, delegation/guardian and trusted-device rules for an adult
     and for a minor, and both carry the same retention and no-training
-    obligations, so the grant stands for either.  For a minor it exists only
+    obligations, so the grant stands for either.  No granted subject persists
+    turn text (#282): an adult and a minor take the same metadata-only path,
+    so a turn the speaker model misread as an adult cannot store a child's
+    words.  For a minor the grant exists only
     while the guardian's long-term-memory consent holds.  Control and the
     Agent both read it as history eligibility; the Archive re-verifies the
     profile, the subject's category and the guardian's active consent before
@@ -162,8 +165,6 @@ def decide_persistence(
         return common
     if _AGGREGATE_OBLIGATIONS & obligations:
         content_ceiling: ContentCeiling = "aggregate_only"
-    elif profile.profile.subject_category == "adult":
-        content_ceiling = "verbatim"
     else:
         content_ceiling = "metadata_only"
     return replace(common, allowed=True, content_ceiling=content_ceiling)

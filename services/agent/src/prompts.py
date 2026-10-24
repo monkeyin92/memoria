@@ -227,7 +227,7 @@ SPEAKER_ENROLLMENT_PHRASES = SPEAKER_ENROLLMENT_SAMPLE_PROMPTS + (
 
 # P0-04 D3: a minor's signed session limits are enforced with fixed phrases.
 MINOR_QUIET_HOURS_PHRASE = "现在是休息时间啦，我们明天再聊吧，晚安。"
-MINOR_SESSION_LIMIT_PHRASE = "今天我们聊了挺久啦，先休息一下，下次再聊吧。"
+MINOR_SESSION_LIMIT_PHRASE = "这次聊了好一会儿啦，先去休息一下，想聊的时候再点点我。"
 MINOR_DAILY_LIMIT_PHRASE = "今天的聊天时间用完啦，明天再来找我。"
 MINOR_SESSION_LIMIT_PHRASES = (
     MINOR_QUIET_HOURS_PHRASE,

@@ -64,6 +64,15 @@ services:
       - ALL
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
+    # UDP: a dead sink loses host lines but never blocks a write or fails a start.
+    logging:
+      driver: syslog
+      options:
+        syslog-address: "udp://127.0.0.1:5514"
+        syslog-format: rfc5424micro
+        tag: "control-api/{{.ID}}"
+        cache-max-size: "10m"
+        cache-max-file: "3"
 
   # Optional rollout sidecar in the media-runtime profile. It scrapes the
   # Voice Core media bridge's aggregate metrics; run it only once
@@ -131,7 +140,8 @@ services:
       MEDIA_BRIDGE_MTLS: "true"
       MEDIA_BRIDGE_SESSION_FACTORY: "services.agent.src.media_agent_factory:build_production_media_session_factory"
       MEDIA_OUTPUT_GENERATION_TIMEOUT_S: "45"
-      MEDIA_OWNER_SILENCE_TIMEOUT_S: "30"
+      MEDIA_OWNER_SILENCE_TIMEOUT_S: "180"
+      MEDIA_LISTENING_CAPTURE_WINDOW_S: "30"
       MEDIA_MAX_USER_SPEECH_DURATION_S: "60"
       # Empty, not absent: /etc/memoria-agent.env may still carry a diagnostic
       # tap dir, and the Agent refuses to start with one outside development.
@@ -171,6 +181,14 @@ services:
       - ALL
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
+    logging:
+      driver: syslog
+      options:
+        syslog-address: "udp://127.0.0.1:5514"
+        syslog-format: rfc5424micro
+        tag: "voice-core-media-bridge/{{.ID}}"
+        cache-max-size: "10m"
+        cache-max-file: "3"
 
   device-state-redis:
     profiles:

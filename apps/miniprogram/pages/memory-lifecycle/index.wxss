@@ -1,0 +1,66 @@
+.memory-lifecycle-page {
+  background-color: var(--mp-bg);
+}
+
+.lifecycle-loading {
+  margin-top: 24px;
+}
+
+.lifecycle-group {
+  margin-top: 8px;
+}
+
+.lifecycle-group .section-title {
+  margin-top: 24px;
+  margin-bottom: 12px;
+}
+
+.lifecycle-item {
+  margin-top: 12px;
+}
+
+.lifecycle-item-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.lifecycle-item-head .l2-card-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.lifecycle-time {
+  display: block;
+  margin-top: 8px;
+  color: var(--mp-ink-3);
+  font-size: var(--mp-type-meta);
+  line-height: var(--mp-lh-caption);
+}
+
+.lifecycle-retry {
+  align-self: flex-start;
+  width: auto;
+  margin-top: 12px;
+}
+
+.lifecycle-item-retracted {
+  border-left: 3px solid var(--mp-line);
+}
+
+.lifecycle-delete-hint {
+  margin-top: 24px;
+}
+
+.lifecycle-delete-hint .l2-card-sub {
+  margin: 0;
+}
+
+.lifecycle-hint-link {
+  display: block;
+  width: auto;
+  margin-top: 8px;
+  padding-left: 0;
+  text-align: left;
+}

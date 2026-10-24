@@ -79,6 +79,17 @@ def test_only_the_childs_own_consented_turns_count() -> None:
     assert all(item.day == date(2026, 10, 1) for item in found)
 
 
+def test_retained_minor_or_unknown_rows_are_not_recap_sources() -> None:
+    at = datetime(2026, 10, 1, 1, 0, tzinfo=UTC)
+    events = [
+        _event("minor-retained", "child", "不得进入回顾", at, subject_category="minor"),
+        _event("unknown-retained", "unknown", "不得进入回顾", at, subject_category="unknown"),
+        _event("adult-retained", "adult", "可以进入回顾", at, subject_category="adult"),
+    ]
+    assert child_utterances(events, subject_id="child", zone=ZONE) == []
+    assert child_utterances(events, subject_id="unknown", zone=ZONE) == []
+
+
 def test_days_are_shanghai_days_newest_first_and_carry_no_text() -> None:
     late_evening_utc = datetime(2026, 9, 30, 17, 30, tzinfo=UTC)  # already 10-01 in Shanghai
     utterances = child_utterances(

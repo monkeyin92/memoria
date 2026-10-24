@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import struct
 from collections.abc import Callable, Coroutine
 from typing import Any
@@ -11,6 +12,7 @@ import pytest
 from services.agent.src.providers.provider_errors import (
     APIConnectionError,
     APIConnectOptions,
+    APIError,
     APIStatusError,
 )
 from services.agent.src.providers.tts_stream import (
@@ -51,9 +53,9 @@ class ScriptedStream(SynthesizeStream):
         return texts
 
 
-def start(emitter: AudioEmitter, segment: str = "seg") -> None:
+def start(emitter: AudioEmitter, segment: str = "seg", *, request_id: str = "req") -> None:
     emitter.initialize(
-        request_id="req",
+        request_id=request_id,
         sample_rate=RATE,
         num_channels=1,
         mime_type="audio/pcm",
@@ -215,6 +217,45 @@ async def test_status_499_ends_quietly_and_a_silent_success_is_retried() -> None
         events = await drain(stream)
     assert stream.attempts == 2
     assert b"".join(event.frame.data for event in events) == ramp(480)
+
+
+async def test_synthesis_failure_logs_length_and_request_id_never_the_reply(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    reply = "长颈鹿把第七颗纽扣藏进了蓝色邮筒。"
+
+    async def attempt(stream: ScriptedStream, emitter: AudioEmitter, index: int) -> None:
+        await stream.read_text()
+        if index == 0:
+            raise APIStatusError(
+                f"provider rejected: {reply}",
+                status_code=503,
+                request_id="provider-req-7",
+                body={"text": reply},
+            )
+        start(emitter, request_id="emitter-req-9")
+        emitter.end_segment()
+
+    caplog.set_level(logging.DEBUG)
+    stream = ScriptedStream(attempt, max_retry=1)
+    stream.push_text(reply)
+    stream.end_input()
+    async with stream:
+        with pytest.raises(APIError) as caught:
+            await drain(stream)
+
+    assert stream.attempts == 2
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "services.agent.src.providers.tts_stream"
+    ] == [
+        f"failed to synthesize speech text_len={len(reply)} request_id=provider-req-7",
+        f"failed to synthesize speech text_len={len(reply)} request_id=emitter-req-9",
+    ]
+    assert reply not in caplog.text
+    assert reply not in str(caught.value)
+    assert reply not in repr(caught.value)
 
 
 async def test_one_segment_per_stream_and_no_text_after_end_input() -> None:

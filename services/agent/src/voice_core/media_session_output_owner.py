@@ -40,6 +40,15 @@ class MediaOutputOwnerMixin:
             fence: GenerationFence,
         ) -> tuple[int, int]: ...
 
+        async def _abort_unheard_stream(
+            self,
+            context: _MediaVoiceSession,
+            fence: GenerationFence,
+            *,
+            reason: str,
+            emitted_audio: bool,
+        ) -> None: ...
+
     @staticmethod
     async def _cancel_provider_generation(
         context: _MediaVoiceSession,
@@ -245,27 +254,43 @@ class MediaOutputOwnerMixin:
                 )
             )
 
-    @classmethod
     async def _cancel_reply_task(
-        cls,
+        self,
         context: _MediaVoiceSession,
         fence: GenerationFence,
         *,
         reason: str = "cancelled",
         cancel_timeout_s: float = 5.0,
+        finalize_audible: bool = True,
     ) -> None:
-        """Cancel provider work and drain the old reply task before reuse."""
+        """Cancel provider work and drain the old reply task before reuse.
+
+        ``finalize_audible`` closes a generation that already reached the
+        device when no caller will publish its terminal event.  Callers that
+        immediately install a successor, or that emit the terminal themselves,
+        pass ``False``.
+        """
 
         task = context.output.reply_task
-        cls._release_output_owner(context, fence, reason=reason)
-        if task is not None and not task.done() and task is not asyncio.current_task():
+        owner = context.output.output_owner
+        owner_fence = owner.fence if owner is not None and owner.task is task else None
+        self._release_output_owner(context, fence, reason=reason)
+        if owner_fence is not None and not owner_fence.matches(fence):
+            # The task belongs to a newer generation than the fence the caller
+            # read before its await.  Revoke that real owner, not just the
+            # stale fence, so no successor can resurrect it.
+            self._release_output_owner(context, owner_fence, reason=reason)
+        cancelled_task = (
+            task is not None and not task.done() and task is not asyncio.current_task()
+        )
+        if cancelled_task and task is not None:
             task.cancel()
         else:
             task = None
         # A provider can own a remote stream after its local task has already
         # completed. Transport cancellation must still reach that provider.
         try:
-            await cls._cancel_provider_generation(
+            await self._cancel_provider_generation(
                 context,
                 fence,
                 timeout_s=cancel_timeout_s,
@@ -291,6 +316,28 @@ class MediaOutputOwnerMixin:
             pass
         except Exception:
             logger.exception("media reply cancellation observed a failed task")
+        reap_fence = owner_fence or fence
+        if (
+            finalize_audible
+            and cancelled_task
+            and not context.closed
+            and not context.standby_requested
+            and context.output.output_owner is None
+            and context.runtime.fence.matches(reap_fence)
+            and context.output.audio_sent_for(reap_fence)
+        ):
+            logger.warning(
+                "finalize cancelled audible output session=%s generation=%s reason=%s",
+                reap_fence.session_id,
+                reap_fence.generation_id,
+                reason,
+            )
+            await self._abort_unheard_stream(
+                context,
+                reap_fence,
+                reason="cancelled",
+                emitted_audio=True,
+            )
 
     @staticmethod
     def _output_context_version(
@@ -335,6 +382,7 @@ class MediaOutputOwnerMixin:
 
     @staticmethod
     def _rebind_output_work(
+        context: _MediaVoiceSession,
         work: _OutputWork,
         fence: GenerationFence,
         *,
@@ -352,4 +400,15 @@ class MediaOutputOwnerMixin:
         rebound.tool_epoch = fence.tool_epoch
         rebound.created_at_ms = now_ms
         rebound.context_version = context_version
-        return _OutputWork(rebound, fence, conversation_text=work.conversation_text)
+        if work.conversation_text is not None:
+            # A reply that moves to a successor generation must carry its
+            # exact response plan with it; leaving the plan behind turns the
+            # next LLM request into a silent "blocked without exact plan".
+            context.runtime.rebind_response_plan(work.fence, fence)
+        return _OutputWork(
+            rebound,
+            fence,
+            conversation_text=work.conversation_text,
+            lead_pcm_s16le=work.lead_pcm_s16le,
+            tail_pcm_s16le=work.tail_pcm_s16le,
+        )

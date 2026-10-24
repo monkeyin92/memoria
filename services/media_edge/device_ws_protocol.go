@@ -407,7 +407,7 @@ func deviceControlPriority(messageType string) int {
 		"runtime_profile.applied",
 		"keyword.detected", "button.stop", "playback.started",
 		"playback.progress", "playback.ended", "playback.error",
-		"device.mute_changed":
+		"device.mute_changed", "assistant.state", "listening.resume":
 		return 1
 	case "assistant.audio.frame", "generation.completed":
 		return 2
@@ -424,7 +424,7 @@ func isDeviceControlType(messageType string) bool {
 		"button.stop", "playback.started", "playback.progress",
 		"playback.ended", "playback.error", "device.mute_changed",
 		"device.network_changed", "device.telemetry", "runtime_profile.applied",
-		"session.close":
+		"session.close", "listening.resume":
 		return true
 	}
 	return false
@@ -470,6 +470,10 @@ type deviceGenerationControl struct {
 	ServerMonotonicMS uint64      `json:"server_monotonic_ms"`
 	Fence             deviceFence `json:"fence"`
 	Reason            string      `json:"reason"`
+	// The firmware reads an explicit false as "do not cut this reply short".
+	// Any other reply omits the key, which older firmware ignores and current
+	// firmware reads as interruptible.
+	Interruptible *bool `json:"interruptible,omitempty"`
 }
 
 type devicePlaybackControl struct {
@@ -503,6 +507,45 @@ type deviceServerSessionClose struct {
 	ControlSequence   uint64 `json:"control_sequence"`
 	ServerMonotonicMS uint64 `json:"server_monotonic_ms"`
 	Reason            string `json:"reason,omitempty"`
+	// PlayLine tells the device the fallback line was not yet spoken and
+	// must play locally on the close reason (T-15a). Older firmware ignores
+	// the unknown key, so this stays wire-compatible with the live fleet.
+	PlayLine bool `json:"play_line,omitempty"`
+}
+
+type deviceListeningResume struct {
+	deviceEventBase
+	WakeSample uint64 `json:"wake_sample"`
+}
+
+type deviceAssistantState struct {
+	Type              string `json:"type"`
+	Version           uint64 `json:"version"`
+	SessionID         string `json:"session_id"`
+	StreamEpoch       uint64 `json:"stream_epoch"`
+	ControlSequence   uint64 `json:"control_sequence"`
+	ServerMonotonicMS uint64 `json:"server_monotonic_ms"`
+	State             string `json:"state"`
+}
+
+func deviceAssistantCaptureState(payload []byte) (string, bool) {
+	var envelope struct {
+		Payload struct {
+			State string `json:"state"`
+		} `json:"payload"`
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		return "", false
+	}
+	state := envelope.Payload.State
+	if state == "" {
+		state = envelope.State
+	}
+	if state != "listening_closed" && state != "listening" {
+		return "", false
+	}
+	return state, true
 }
 
 type deviceScreenExpression struct {

@@ -636,70 +636,39 @@ def test_upgrade_env_accepts_doubao_api_key_authentication(tmp_path: Path) -> No
     assert "DOUBAO_TTS_ACCESS_TOKEN" not in agent
 
 
-def test_upgrade_env_routes_independent_doubao_clone_key_to_control_only(tmp_path: Path) -> None:
-    legacy, postgres, minio = _upgrade_inputs(tmp_path)
+def test_upgrade_env_drops_voice_clone_keys(tmp_path: Path) -> None:
+    legacy, postgres, minio = _upgrade_inputs(tmp_path, {"DOUBAO_TTS_API_KEY": "preset-tts-key"})
     legacy.update(
         {
             "MEMORIA_VOICE_CLONE_PROVIDER": "volcengine_doubao",
             "MEMORIA_VOICE_TARGET_MODEL": "seed-icl-2.0",
             "MEMORIA_DOUBAO_VOICE_API_KEY": "control-only-clone-key",
-            "MEMORIA_DOUBAO_VOICE_SYNTH_READY_ID_MODE": "custom_speaker_id",
-            "MEMORIA_DOUBAO_VOICE_EXPIRES_AT_FIELD": "result.ExpireTime",
+            "MEMORIA_DOUBAO_VOICE_CLONE_URL": "https://openspeech.bytedance.com/api/v3/tts/voice_clone",
+            "MEMORIA_VOICE_ENROLLMENT_URL": "retired",
+            "VOICE_CLONE_ENABLED": "true",
+            "QWEN_OMNI_VOICE_CLONE_ID": "cloned-voice-id",
         }
     )
 
-    control, agent, speaker_model, _ = prepare(
+    routed = prepare(
         legacy=legacy,
         postgres=postgres,
         minio=minio,
-        release_tag="20260723-doubao-clone",
+        release_tag="20261016-no-voice-clone",
     )
 
-    assert control["MEMORIA_DOUBAO_VOICE_API_KEY"] == "control-only-clone-key"
-    assert control["MEMORIA_VOICE_CLONE_PROVIDER"] == "volcengine_doubao"
-    assert control["MEMORIA_VOICE_TARGET_MODEL"] == "seed-icl-2.0"
-    assert "MEMORIA_DOUBAO_VOICE_API_KEY" not in agent
-    assert "MEMORIA_DOUBAO_VOICE_API_KEY" not in speaker_model
-
-
-def test_upgrade_env_rejects_a_shared_doubao_clone_and_runtime_key(tmp_path: Path) -> None:
-    legacy, postgres, minio = _upgrade_inputs(tmp_path, {"DOUBAO_TTS_API_KEY": "shared-key"})
-    legacy.update(
-        {
-            "MEMORIA_VOICE_CLONE_PROVIDER": "volcengine_doubao",
-            "MEMORIA_VOICE_TARGET_MODEL": "seed-icl-2.0",
-            "MEMORIA_DOUBAO_VOICE_API_KEY": "shared-key",
-            "MEMORIA_DOUBAO_VOICE_SYNTH_READY_ID_MODE": "custom_speaker_id",
-            "MEMORIA_DOUBAO_VOICE_EXPIRES_AT_FIELD": "result.ExpireTime",
-        }
-    )
-
-    with pytest.raises(ValueError, match="must be independent"):
-        prepare(
-            legacy=legacy,
-            postgres=postgres,
-            minio=minio,
-            release_tag="20260723-doubao-shared-key",
-        )
-
-
-def test_upgrade_env_rejects_unverified_doubao_clone_synth_id_mapping(tmp_path: Path) -> None:
-    legacy, postgres, minio = _upgrade_inputs(tmp_path)
-    legacy.update(
-        {
-            "MEMORIA_VOICE_CLONE_PROVIDER": "volcengine_doubao",
-            "MEMORIA_VOICE_TARGET_MODEL": "seed-icl-2.0",
-            "MEMORIA_DOUBAO_VOICE_API_KEY": "control-only-clone-key",
-        }
-    )
-
-    with pytest.raises(ValueError, match="smoke-verified synth ID mapping"):
-        prepare(
-            legacy=legacy,
-            postgres=postgres,
-            minio=minio,
-            release_tag="20260723-doubao-unverified",
-        )
+    retired = {
+        "MEMORIA_VOICE_CLONE_PROVIDER",
+        "MEMORIA_VOICE_TARGET_MODEL",
+        "MEMORIA_DOUBAO_VOICE_API_KEY",
+        "MEMORIA_DOUBAO_VOICE_CLONE_URL",
+        "MEMORIA_VOICE_ENROLLMENT_URL",
+        "VOICE_CLONE_ENABLED",
+        "QWEN_OMNI_VOICE_CLONE_ID",
+    }
+    for env in routed:
+        assert retired.isdisjoint(env)
+    assert routed[1]["DOUBAO_TTS_API_KEY"] == "preset-tts-key"
 
 
 def test_upgrade_env_direct_voice_core_generates_complete_direct_bundle(

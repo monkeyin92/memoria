@@ -1,14 +1,14 @@
 # Memoria 优先级执行清单
 
-更新于 2026-10-12｜**本文件只留未关闭事项**：做完的条目直接删除；收据在 `HANDOFF.md` 与 `docs/HANDOFF-archive-*.md`，真机轮次的数字在 `docs/acceptance/*/findings.md`，被删掉的全文在 git 历史里。条目编号被代码注释与文档引用，已完成而删掉的编号见文末「编号索引」。线上现状（当前发布、固件、小程序体验版、主机资源）以 `HANDOFF.md` 开头「当前生产快照」为准，这里只放不得越界宣称的边界。
+更新于 2026-10-23｜**本文件只留未关闭事项**：做完的条目直接删除；收据在 `HANDOFF.md` 与 `docs/HANDOFF-archive-*.md`，真机轮次的数字在 `docs/acceptance/*/findings.md`，被删掉的全文在 git 历史里。条目编号被代码注释与文档引用，已完成而删掉的编号见文末「编号索引」。线上现状（当前发布、固件、小程序体验版、主机资源）以 `HANDOFF.md` 开头「当前生产快照」为准，这里只放不得越界宣称的边界。
 
 ## 当前边界（不得越界宣称）
 
 ```yaml
-enabled_release: 20261010-stale-interim-v1  # 整栈，源 bef8e117（PR #198，07:58:53–07:59:39 CST 切流，08:01 finish）；旧临时文字不再当新边缘证据，继承 #197 的首帧之后保护。16:33–16:51 只读核验三角色 healthy/重启0、public ready；media-edge 仍为 20261002-late-progress-v1 / f3fe8742。回滚 → 20261009-textless-spare-v1（*:rollback-20261010-stale-interim-v1-pre，各 image id 与上一栈一致；本次未演练）。真实目标路径验收未通过，见 docs/acceptance/run-20261010-verify/findings.md
-production_host: 110.42.235.198（2026-10-05 01:37 起，原 pocketSparks 生产机，与 hr-tracker / MySQL / aginice.cn 共用；ssh 别名 memoria-prod；Control API 在 127.0.0.1:18791；4 vCPU、内存 3.7 GiB、盘 40 GB；无持续数据库备份，整栈回滚深度 1）；旧机 122.51.108.140（别名 memoria-prod-old）只剩 8443 中继，2026-10-06 到期
+enabled_release: 20261023-edge-fix-v1  # 整栈 control-api + bridge，commit c44267c9（PR #403 media-edge F1 修复），release_ops.sh 六步全 PASS 2026-10-23 23:24-23:28 CST，全部一次通过；两容器 healthy/restarts 0，local/public ready 200，freeze dump memoria-pre-20261023-edge-fix-v1.dump（4,964,406 B）；CI 收据 run 39976974037 success。media-edge 随后组件发布 23:31（同 commit，二进制 sha 86290eaf…，component-releases/20261023-edge-fix-v1-media-edge 有 pre/post 快照与 override 双件；组件 rollback → 20261023-protected-crisis-v1）。整栈 rollback → 20261023-protected-crisis-v1@93aad713（无 overrides）。TTS_PROVIDER=stepfun_primary、STEPFUN_TTS_ENABLED=true、STEPFUN_TTS_VOICE=wenrounansheng；豆包备份 403 已探针化、不挡发布。板子已刷 main c44267c9 的 keep-awake build（build 25，app 5a9d1427…，收据 firmware/esp32/artifacts/backups/pre-edgefix-fw-20261023/RECEIPT.md）。开放项：盘 85%（待授权清理）、F-05 真机、女声三段素材待产品/合规、产品部 5 条标准 × 5 次语音验收。发布链见 HANDOFF「当前生产快照」与「2026-10-13 至 10-17 整栈发布链」。
+production_host: 110.42.235.198（2026-10-05 01:37 起，原 pocketSparks 生产机，与 hr-tracker / MySQL / aginice.cn 共用；ssh 别名 memoria-prod；Control API 在 127.0.0.1:18791；4 vCPU、内存 3.7 GiB（swap 已用约 1.2 GiB）、盘 40 GB，10-24 07:59 清理后已用 76%（仍刚过 75% 告警线；incoming 旧包与 10-22 的三对旧镜像已删，回滚镜像保留）；ADR-004 夜间备份已装，发布前 freeze dump 仍是第二还原点（最新 memoria-pre-20261023-edge-fix-v1.dump））；旧机 122.51.108.140 实例与云盘已于 10-14 释放、无快照（见 docs/compliance/deletion-record-20261014.md 补记）
 public_domain: aginice.cn（2026-10-05 起，aigcnice.com 弃用、不做桥；证书 2027-01-02 到期，最迟 2026-12-19 换，见「定期运维」；小程序体验版、固件与机器人身份都已指向它）
-control_api_release_lane: 整栈走 scripts/release_ops.sh（见 docs/runbooks/release-rollback.md）；主机 /root/memoria-release/release-ops.sh SHA-256 为 a8dfb1ba…，PREV=20261009-textless-spare-v1 / 2f70ed2a…，与当前 20261010 发布时的回滚目标一致。当前候选分支已将仓库脚本及测试断言前移到 PREV=20261010-stale-interim-v1 / bef8e117；尚未安装到主机，生产文件未改。下次整栈发布前按既有流程安装并核对该版本。Control=18791、预检=28791/28891；media-edge compose 仍依赖 releases/20261004-first-warm-v1，不删；数据层依赖 20260827-architecture-split-v1/infra。component 快车道与依赖漂移限制见运行手册。
+control_api_release_lane: 整栈走 scripts/release_ops.sh（见 docs/runbooks/release-rollback.md）；主机 /root/memoria-release/release-ops.sh SHA-256 68fc15fe…，与 main 一致（10-23 核对）。自 #225 起 PREV 在 freeze 时从运行中的容器推出、写进 .cutover/prev-release，不再在脚本里手工 bump。服务只剩 control-api 与 voice-core-media-bridge；Control=18791、预检=28791/28891；media-edge compose 仍依赖 releases/20261004-first-warm-v1，不删；数据层依赖 20260827-architecture-split-v1/infra
 memory_candidate_visibility: code=main 0059368 / enabled=true（随整栈上线）/ verified=SQLite/HTTP/主体隔离/评测适配器回归；四份 2026-09-23 评测收据为上线前 parent_baseline（固定集 recall@5/10=0.857、未见集 0.4、双泄漏 0），真实 PG candidate 行为与线上带鉴权读口未单独取证
 direct_real_device_verified: false
 full_duplex_verified: false
@@ -21,23 +21,23 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 
 ## 下一步与执行边界
 
-1. **当前已发布，不重复发布 #198**：20261010-stale-interim-v1 / bef8e117 于 10-10 07:59 上线，六步 PASS；16:33–16:51 只读核对 current、三角色身份/health 与 public ready。回滚目标 20261009（本次未演练），清理 20261007 的收据已有，incoming 留 20261009/20261010。细节与已有两轮的复盘在 docs/acceptance/run-20261010-verify/findings.md。
-2. **真机窗口（每轮语音/每次刷机要你点头）**：10-10 已有两轮已复盘，不能算 #197/#198 的目标路径通过。输入、关闭及 ASR 重叠诊断与 `voice_soak` 新判据已在本地候选分支，Agent/脚本和本地门禁已通过，远端 CI 随候选 PR 核验；t038 差分回放没有证明行为缺陷，新 reopen-window 原因日志尚未发布。生产切流和每轮真机语音另需授权；获准进入设备窗口后，先核对正常问句的 VAD / endpoint / 终稿，再覆盖 #197/#198 目标事件与真实打断，之后完成 N-5 ≥30 分钟混合长稳。M 系列产品固件仍为 build24；动画新上板另问，不排在语音问题之前。后续 P0 窗口覆盖孩子绑定、跨天人格/记忆、撤销、TLS/WSS 重连、长答/故障矩阵和 P0-04 安全闭环；孩子真实声音取证仍按你此前决定暂不做。
-3. **不动线上就能直接做的代码项**：P0-04 剩余部分、P1-04 自定义声音闭环、P2-06 回放评测、P2-04 Python 侧进程退出注入。
+1. **线上收尾（10-23 更新，10-17 绕过发布的收据缺口已由 10-22/23 两次整栈发布自然抹平）**：（一）豆包备份 403：火山控制台补大模型语音合成（顺带 ASR）授权即可，发布门已改「跟随配置」，探针会自动回到 ok；（二）盘在 10-24 07:59 清理后为 76%（29 GB / 剩 9.2 GB，仍刚过 75% 告警线）：已删已 load 的 `incoming/20261023-protected-crisis-v1` 与两个旧 edge 组件包，以及 `*:20261022-wake-closing-v1`、`*:20261022-main-1f96115`、`*:20261022-main-138d95e` 三对镜像，外加 `20261021-pr368-dd98c4a` 与 `20261021-pr376-8dda764`（`20261022-wake-closing-v2` 那档回滚因此不再可跑）；`incoming/20261023-edge-fix-v1` 留作下次发布的 seeded 种子，回滚镜像 `*:20261023-protected-crisis-v1` 与 `*:20261022-wake-closing-v2` 保留，见[空间治理](docs/runbooks/operations-space-governance.md)；（三）夜间备份（P1-08）已随 ADR-004 装机，仍开放异地副本与每月恢复演练；（四）`scripts/strip_minor_evidence_text.py`（#299 带的服务端历史行兜底）约定发布后单独授权执行，至今没跑过；（五）10-15 stop-standby（#270 未合并分支）与 10-16 device-registration（#294）两次回滚的原因主机上没有记录，仍要从当时操作的会话补；（六）Media Edge 迟到 terminal receipt F1 修复已随 2026-10-23 23:13 合并（`c44267c9`）与 23:31 组件发布上线，此项关闭。
+2. **真机窗口（每轮语音/每次刷机要你点头）**：10-10 已有两轮已复盘，不能算 #197/#198 的目标路径通过。输入、关闭及 ASR 重叠诊断与 `voice_soak` 新判据已在本地候选分支，Agent/脚本和本地门禁已通过，远端 CI 随候选 PR 核验；t038 差分回放没有证明行为缺陷，新 reopen-window 原因日志尚未发布。生产切流和每轮真机语音另需授权；获准进入设备窗口后，先核对正常问句的 VAD / endpoint / 终稿，再覆盖 #197/#198 目标事件与真实打断，之后完成 N-5 ≥30 分钟混合长稳。板上已是 main `c44267c9` 的 keep-awake build（build 25，10-23 23:47–23:51 USB 刷入，含七张黄点脸与 dot face 慢眨眼；收据 `firmware/esp32/artifacts/backups/pre-edgefix-fw-20261023/RECEIPT.md`）；#386 男声本地音频随 assets 一起上板（OTA 只写应用分区，assets 分区要 USB 刷）。下一轮真机直接在板上版本上测即可，动画与语音一起验。后续 P0 窗口覆盖孩子绑定、跨天人格/记忆、撤销、TLS/WSS 重连、长答/故障矩阵和 P0-04 安全闭环；孩子真实声音取证仍按你此前决定暂不做。
+3. **不动线上就能直接做的代码项**：issue #291（解绑选「保留数据」仍硬删摘要与档案）、#281 / #282 / #283 解绑擦除与去原文、P0-04 剩余部分、P2-06 回放评测、P2-04 Python 侧进程退出注入。
 4. **要你定的事（汇总；细节与选项在各自条目里，不挡以上步骤）**：
-   - 线上与运维：固件 OTA 指针留 21 还是指回 8（「2026-09-28 收尾待办」）；新机每夜 `pg_dump` 做不做（P1-08，默认不做）；是否轮换数据库角色口令；P1-09 readiness 逾期的告警渠道；P1-02 两项线上调整；`MEMORIA_GUARDIAN_PUSH_ENABLED` 与话术专业审核、未成年人人格学习口径（P0-04）。
+   - 线上与运维：固件 OTA 指针留 21 还是指回 8（「2026-09-28 收尾待办」）；夜间 `pg_dump` 已装，异地副本 provider/凭据与每月恢复演练仍待安排（P1-08）；是否轮换数据库角色口令；危机/日限 4 条本地音频男声已合并发布，女声三段素材待产品/合规签批；P1-09 readiness 逾期的告警渠道；P1-02 两项线上调整；`MEMORIA_GUARDIAN_PUSH_ENABLED` 与话术专业审核、未成年人人格学习口径（P0-04）。
    - 产品口径：N-1 关键字唤醒的代码与开关随不随一起删；N-4 监护人看不看孩子原文、周小结的数据从哪来；N-6 听感、危机话术、天气城市；N-9 孩子闭集词表、置信度余量、规划器；N-10 `FUNASR_VOCABULARY_ID`；N-8 尚未归因的识别/endpoint、重叠拒绝与安静房间假回合阈值；N-13 / N-14 的 2.2 s 阈值、0.8–0.9 s 宽限中间值、影子模式的数据去向、「前半句先提交、后半句被丢」要不要单独立项；P2-03 已知缺口接不接受；P2-07 第 2 / 3 项；P2-08 里的 `self_model` 版本保护、PCM tap 留存、控制词与静默计时。
    - 设计取舍：M-5 预读（pre-roll）做不做；M-8 角色包存放选 A 还是 B；stash 存档的「本会话说过的地点也行」要不要作为产品改动重新评估。
-5. 边界：生产切流、回滚演练和制品清理须另获授权（2026-10-01 已获授权打开设备信任开关并清理旧制品，那次授权不外延）；`MEMORIA_BOUND_DEVICE_TRUST_ENABLED` 的开 / 关仍属改变安全口径的动作，变更须用户授权；删除、重启、定时任务、自动备份和异地副本不在当前授权内；设备功能通过不等于学生安全或全双工通过。
+5. 边界：生产切流、组件发布、回滚演练和制品清理须另获授权（2026-10-01 已获授权打开设备信任开关并清理旧制品，那次授权不外延）；`MEMORIA_BOUND_DEVICE_TRUST_ENABLED` 的开 / 关仍属改变安全口径的动作，变更须用户授权；本机夜间备份 timer 已装机，其变更、异地副本以及删除或重启主机的动作不在当前授权内；设备功能通过不等于学生安全或全双工通过。
 
 ## 域名切换与新机收尾（2026-10-05 迁移与换域名之后还开着的）
 
 收据与细节见 [HANDOFF「2026-10-05 域名切换到 aginice.cn」「2026-10-05 服务迁移到 110.42.235.198」](HANDOFF.md)。
 
-- [ ] **新机没有持续数据库备份（P1-08）**：WAL 归档已在 2026-10-06 09:58–10:00 关闭（`archive_mode=off`，postgres 容器重建，归档卷 39 个文件 / 654 MB 已清空，盘剩 14 GB），不再增长；现在靠发布前 `freeze` 的 dump。要不要另做每夜 `pg_dump`，你定（默认不做）；以后若要重开归档，归档卷必须是 `999:999 0700` 并先做 base backup。
+- [ ] **新机夜间备份已装，异地副本与恢复演练仍开放（P1-08）**：WAL 归档已在 2026-10-06 09:58–10:00 关闭；2026-10-23 ADR-004 夜间 `pg_dump` timer 与 freshness timer 已装机，首份备份及 TOC 校验通过，发布前 `freeze` dump 是第二还原点。尚未完成异地副本和每月恢复演练；以后若重开 WAL 归档，归档卷必须是 `999:999 0700` 并先做 base backup。
 - [ ] 旧域名残留（2026-10-06 已做掉大半）：新机 `sites-enabled/memoria-prod`（aigcnice.com 站点，已移到 `/etc/nginx/backup-20261005-domain-switch/memoria-prod.site.removed-20261006`）、`/etc/nginx/ssl/aigcnice.com/`（已删）、`/root/domain-switch-20261005/`（旧证书私钥、env 备份与四个脚本已删；**头像原值 TSV 与那份旧 env 备份留在 `/root/domain-switch-20261005-kept/`**，见下条）、`ALLOWED_ORIGINS` 的旧机 IP（已换成 `https://aginice.cn:8443,https://www.aginice.cn:8443`，备份 `/etc/memoria-control-api.env.pre-aginice-origins-20261006`）。**仍开着**：`/etc/memoria-control-api.env` 与 `/etc/memoria-agent.env` 的 `LIVEKIT_URL` 还指旧机（LiveKit 已退役，代码只在 `scripts/split_production_env.py` 的键名列表与测试里出现，没有容器在跑；要动它得再重建一次 control-api 与 bridge，值本身没用了，删不删你定）；`outputs/` 里指旧域名的脚本核对（未做）。
 - [ ] 你定：域切换时头像改写的数据回滚记录（`/root/domain-switch-20261005-kept/profiles-avatar-preimage-20261005-091021.tsv`，867 B，含孩子头像 URL 原值；那份旧 env 备份只留了控制台口令类的键值）留不留。切换本身没回滚过，我留着它做原值比对；确认不需要就删这个目录。
-- [ ] 旧机 122.51.108.140 2026-10-06 到期（时刻不明）：**截至 10-06 11:50 仍可连（`ssh memoria-prod-old` 通）**，所以别名和 known_hosts 条目没动；到期后删掉 ssh 别名 `memoria-prod-old` 与 `~/.ssh/known_hosts` 里旧机的条目；旧机上没迁的东西（WMS、13 GB WAL、7.3 GB `incoming`、旧发布树与回滚镜像）随机器消失，按你的决定不再保留。`aigcnice.com` 不做桥（已定）：仍用旧域名的别的设备 / 旧版小程序在旧机到期后连不上，据我所知没有。
+- [ ] 旧机 122.51.108.140 实例与云盘已于 10-14 释放、无快照（[删除记录补记](docs/compliance/deletion-record-20261014.md)）；剩本机 ssh 别名 `memoria-prod-old` 与 `~/.ssh/known_hosts` 里旧机的条目可删。
 - [ ] 新机资源偏紧：内存 3.7 GiB（Memoria 栈约 1.3–1.4 GiB，可用约 1.7 GiB，swap 已用约 0.6 GiB，与 pocketSparks 的 MySQL / node 共用），4 vCPU 约比旧机慢 1.3 倍。发布后 1–2 天看 `docker stats`、`free -m` 与时延（对照第十六轮 24 轮时延场景说完 → 首帧 p50 2.92 s）；不够就扩内存（你在控制台做）。
 - [ ] build 24 的时钟修复仍无证据：2026-10-05 22:56 的重绑一次过，但时钟多半是 21:32 拔插 USB 后清空的，老版本也能过；要证明得让机器人时钟比清单 `issued` 落后 5 分钟以上再绑。不紧迫，碰上再看串口（那次的记录在本机 git-ignored 的 `outputs/serial/robot-20261005-trial3-rebind.log`）。
 - [ ] 你定：是否轮换数据库角色口令。**两次本机会话记录里出现过口令**：一次 grep 把各角色连接串打进了会话记录（更早的会话），2026-10-06 我做维护窗口时用 `docker compose config` 核对线上数据层 compose，它把 postgres 服务的环境变量展开成了明文（`MEMORIA_DB_*_PASSWORD` 五个角色的键与值都在输出里，只在会话记录、没进仓库、没进文档、没出机器）。库不发布到宿主端口，风险限于本机会话记录的读权限；要轮换就是一次 `ALTER ROLE` + 两份 env 的改写 + 重建 control-api/bridge，你说了我做。
@@ -124,13 +124,14 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 - [x] **2026-10-13 三窗 bench PCM（修复前）**：见 [三窗收据](docs/acceptance/run-20261013-triwindow/findings.md)。`pre_afe_ref` 近静音；安静近端可达；双讲不可分。
 - [x] **2026-10-13 软件 AEC 参考 + 三窗复测**：`memoria_software_aec_ref.h`（patch 0037）在 24 kHz 把 pre-I2S 播放拷进 AFE R。复测见 [复测收据](docs/acceptance/run-20261013-triwindow-retest/findings.md)。只播粗 ERLE ≈ 5→23 dB，参考 ≈ −20 dBFS 且与 play NCC≈0.996；安静近端仍保留；**双讲停止词仍不可分**。不关 N-10；`aec_reference_verified` 仍 false。已刷回产品。
 - [ ] 口头停止的成功率随音量剧变：音量 30 为 1/24（放大 2 倍 1/12），50 为 8/10（第十一轮）；第十八轮音量 50 下 46 步停下 25 次（54 %；停止延迟 p50 0.74 s / p90 1.58 s；没停下的 21 步服务端没有任何 `stop_word=True` 的终稿，故事讲满）。未被接受的几乎都是 ASR 终稿里只有机器人自己的回声。含义：声音小或离得远的孩子靠嗓子停不住它（P1-07 的范围）；测试时音量要写进结果。
-- [ ] 「停」单字识别偏弱（第十轮 1/5，「别说了」11/15；第八轮基线 3/7）：热词仍会动生产 env，须另授权。参考路已修；双讲近端仍未过，热词不能替代 NLP/NS 调参。
+- [x] **2026-10-19 停止词热词表上线（`FUNASR_VOCABULARY_ID`，目标模型 `fun-asr-realtime`，「停」「别说了」权重 5）**：用户授权后改生产 env、只重建 bridge，无发版。首轮真机在音量 30 下 0 / 7 停下，但该音量的历史基线本来就是 1 / 24，分不出热词效应；**未验收**。要判断热词有没有用，须在音量 50 下复测并和第十一轮 8 / 10、第十八轮 25 / 46 比（要你点头升音量）。收据 [N-10 热词收据](docs/acceptance/run-20261019-n10-vocab/findings.md)。
+- [ ] 「停」单字识别偏弱（第十轮 1/5，「别说了」11/15；第八轮基线 3/7）：热词表 10-19 已上线（见上一条），效果未量。参考路已修；双讲近端仍未过，热词不能替代 NLP/NS 调参。
 - [ ] 机器人自己的声音透过回声消除漏进来（历史 −43…−51 dBFS）。只播复测后 `post_afe` ≈ −54 dBFS，回声泄漏应明显下降，须用停止 soak 再验。
 - [ ] **下一步（要你点头）**：在已有软件参考上调 AFE NLP / WebRTC NS（或参考时延/增益），目标是双讲窗停止词在 `post_afe` 上的 NCC 明显高于只播假峰；通过后再跑停止矩阵。不先上热词、不先松停止规则。
 
 ### [ ] N-11 同类未处理：设备按钮停止带着已被替换代的围栏
 
-edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃、不再关连接（PR #174，第十、十八轮真机 0 次 `playback_receipt_rejected`）。形状相同但没动的：设备按钮停止带着已被替换代的围栏时，`CancelGeneration` 失败 → `stop_rejected` 并关连接（2026-09-30 04:30 一次，`button.stop … expected_fence.generation=2`）；按钮停止没有测过，看 edge 日志里的频率再定。
+edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃、不再关连接（PR #174，第十、十八轮真机 0 次 `playback_receipt_rejected`）。同一 handler 的 ledger 拒绝与 precheck 两条 terminal receipt 路径也已补上 terminal-only 窗口清理；Go/formal 回归在 PR #403 通过，已随 2026-10-23 23:31 的组件发布上线。形状相同但没动的：设备按钮停止带着已被替换代的围栏时，`CancelGeneration` 失败 → `stop_rejected` 并关连接（2026-09-30 04:30 一次，`button.stop … expected_fence.generation=2`）；按钮停止没有测过，看 edge 日志里的频率再定。
 
 ### [ ] N-13 唤醒后的问候与第一句（观察项）
 
@@ -274,6 +275,7 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 ## 定期运维
 
 - [ ] **证书定期更换**：aginice.cn 现用的证书 2026-10-05 装入，**2027-01-02 23:59:59（GMT）到期**（腾讯云免费证书约 90 天一期、不会自动到服务器）；最迟 2026-12-19 前从腾讯云下载新一期 Nginx 格式（RSA）给我，我在新机原位替换 `/etc/nginx/ssl/aginice.cn/aginice.cn_bundle.crt` 与 `aginice.cn.key`（先备份、核对密钥与证书匹配 / SAN / 有效期 / 链，`nginx -t` 后 reload，核对 443 与 8443；做法见运行手册「生产主机」一节的换证书条）。这份证书与 pocketSparks 的其它站点共用，换的时候别碰它们的站点文件。
+- [ ] **换证书前先验固件的 TLS（2026-10-19 加）**：#313 把 `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY` 关了（修每次 TLS 校验泄漏 SRAM），依据是当前证书链已带跨签根且两个根都在固件证书包里。新证书若换了签发链，要在装证书之前确认一次：用刷了 #313 之后的固件连新证书（可先在 bench 板或测试机上），串口出现 `Certificate validated` 才算过；板子还没刷过 #313 的版本，则这条在刷机之后才有意义。
 - [x] **根分区（2026-10-08 清理）**：清理前 28 G / 40 G（75 %），清理后 21 G（55 %）；删了什么、保留什么见运行手册「2026-10-08 第四次手工清理」，收据在主机 `/root/memoria-release/cleanup-20261008.log` 与 `cleanup-20261008-pre/`。下一次整栈发布后再看（约每 6 次整栈清一次，或超过 70 % 时清）。
 - [ ] **发布制品随发布累积**：每次整栈约占 4 GB（`/opt/memoria/incoming/` 约 1.5 GB + 镜像 tag 约 2.2 GB）；清理按「当前 + 紧邻回滚」、清单带 sha256、逐项 `docker rmi` / 精确目录删除、不用 `docker system prune`，每次要你授权（规则、脚本与收据见 `docs/runbooks/operations-space-governance.md`），约每 5–6 次整栈清一次，或根分区超过 70 % 时。待做：`scripts/docker_image_retention.sh` 因保护全部 `rollback-*` / runtime-base 与 pre-state 引用仍是 0 候选，要改成「只保护当前发布的 rollback 与运行中引用」，否则下一轮仍要手工清理。新机的磁盘现状（40 GB 盘，2026-10-05 16:37 整栈发布后剩 17 GB）见「域名切换与新机收尾」的 WAL 一条。
 
@@ -307,8 +309,8 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 
 ### [ ] P1-08 新机的数据库备份策略
 
-- 现状：WAL 归档已于 2026-10-06 关闭（仓库 `infra/memoria-data.production.yml` 与主机一致，归档卷已清空），新机没有 base backup（09-14 演练的 base 在 `/root/old-host-20261005/var-backups-memoria.tar.gz`，它的 WAL 链在旧机、到期即失）。以后若要重新开归档：归档卷必须是 `999:999 0700`，否则 `archive_command` 一直失败，并先做 base backup。
-- 需你定并授权：每夜 `pg_dump`（默认不做）；不得按 mtime 删除或清理 `pg_wal`。
+- 现状：WAL 归档已于 2026-10-06 关闭（仓库 `infra/memoria-data.production.yml` 与主机一致，归档卷已清空），新机没有 base backup（09-14 演练的 base 在 `/root/old-host-20261005/var-backups-memoria.tar.gz`，它的 WAL 链在旧机、到期即失）。以后若要重新开归档：归档卷必须是 `999:999 0700`，否则 `archive_command` 一直失败，并先做 base backup。2026-10-23 ADR-004 已安装本机夜间 `pg_dump` + freshness timer，首份备份校验通过。
+- 待完成：异地副本、每月恢复演练；变更备份 timer/保留策略须另行授权；不得按 mtime 删除或清理 `pg_wal`。
 - 完成条件：保护集合、容量 / 恢复影响、执行证据和后续责任明确，保留恢复目标可验证。
 
 ### [ ] P1-09 readiness 刷新失败的主动告警（刷新修复与逾期提示已上线）
@@ -330,13 +332,6 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 - 已知风险（你的决定）：未成年人与成人一样完整学习人格特征（含价值观、决定等可画像特征），而 P0-04 学生安全闭环尚未完成；对外发布前需在 P0-04 中复核这一口径。
 - 待完成：设备验收：同一台设备绑定孩子后隔天体现孩子自己的表达风格，账号本人的人格不串入；建后年龄申报 UI；guardian 邀请 / 授权与声音撤销的 consent 决策 seam；运行中会话的 `next_safe_point` 主动重协商与 device → session 映射；同 binding 两个 subject 的人格 / 音色设备实听。
 - 完成条件：切换推进版本并使旧签名、上下文和音频失效；取消分配回落默认，克隆未 ready 回落设计音色；PG 与设备证据分开记录。入口：`routes/{identity_lifecycle,persona_assignment,custom_personas,multi_subject}.py`、`services/session_runtime/profile_service.py`、`apps/miniprogram/pages/{device,persona-custom,guardian,privacy}/`。
-
-### [ ] P1-04 自定义声音：样本上传到设备出声
-
-- 待完成：取得真实 provider 克隆 → 分配 → 设备可听的端到端耗时与失败证据。
-- 离线已接通：enrollment 用单一状态表区分 `over_budget`（仍在处理，可以离开）与 `reconciliation_required`（需人工核对，不伪造进度）；隐私页声音样本撤回调用声音档案删除接口，未登录、门禁关闭或接口失败时失败关闭。记忆撤回仍是单独提示。
-- 保持 `reconciliation_required` 为可恢复语义，不伪造 ready 或百分比；声纹 / 声音样本使用单独同意，未 ready 回落设计音色。
-- 完成条件：录音 → 上传 → 真实解码 → 训练 → ready / failed / 超时 → 分配 → 设备实听，连同拒绝、取消、重放、撤销和样本处置全链通过。
 
 ### [ ] P1-05 补权威会话状态，再做小程序三端验收
 
@@ -427,7 +422,7 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 
 ## 暂缓，不自动扩张范围
 
-- 自动备份与异地副本：真实家庭服务 / 数据、正式发布或价值量级增长前重评；WAL 仅按 P1-08 处理。
+- 异地备份副本：本机夜间备份已装；异地 endpoint/凭据与恢复演练在真实家庭服务、正式发布或价值量级增长前重评；WAL 仅按 P1-08 处理。
 - 家长通知发送 worker / 外部渠道：仅保留 outbox / readback 验收；启用另定授权和渠道。
 - Qwen-Audio 3.1 ASR / TTS（已评估，结论）：ASR 两次真机对照均失败（播放期回声被提交为话轮、漏识别轻声、「稍等」开口延迟 4.1 s），生产保持 fun-asr；TTS 迁移按你 2026-09-25 的决定回退、生产保持豆包，重新启用即再 revert 回退提交 `d0d7a43` 与 `2be2f50`。重试前先定位新模型 VAD / 段落与回声边界，并在新候选上重做缺陷 A 的设备验收。收据 `docs/acceptance/run-20260924-d1d2-deploy/findings.md`。
 - 流式 ASR 四家离线 A/B（2026-09-29，收据 `docs/acceptance/run-20260929-asr-ab/findings.md`，脚本 `scripts/evaluate_streaming_asr.py`）：43 段真机录音中有 11 句对上剧本。正常朗读四家基本打平；fun-asr 控制词出错最多，qwen3-realtime 在非人声段普遍吐「嗯。」，qwen-audio-3.1 与豆包最干净。第二轮补录的轻声段与重连后的低电平段四家全空，空结果是上行电平（无有效 AGC）问题，不换厂商。
@@ -466,6 +461,7 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 - N-12 不用唤醒词唤醒机器人：固件 build 20 的 USB `wake` 命令（PR #176），用法见上「真机测试约定」，收据 `docs/HANDOFF-archive-0924-1003.md`。
 - P1-12 旧媒体链去留：2026-09-29 随 `20260929-livekit-retire-v1` 下线并清理。
 - P2-02 多成员声纹与不依赖小程序的选人：并入上面的「暂缓」。
+- P1-04 自定义声音：撤销。2026-10-13 方案 B 删除了克隆数据与百炼音色，#264 加 `VOICE_CLONE_ENABLED` 开关，#289 删掉 control-api 的克隆 enrollment；以后要重做另立项。
 - M-4 预览编译加 ASan / UBSan：`firmware/esp32/scripts/preview_memoria_mascot.py --sanitize` 与 `test_compositor_is_clean_under_sanitizers`（5 个伙伴 × 3 条时间线）已入库，没有发现。
 - 2026-09-28 收尾待办里删掉的四项：writer-teardown 版本切换后的设备重连（此后多轮真机已覆盖）；`response_plan_cached reason=no_verified_runtime_profile`（09-28 的两次发生在设备信任开关 2026-10-01 00:30 打开之前，2026-10-06 只读查新机 voice-core 容器近 24 h 日志该签名 0 次，设备会话现在走本地安全计划，见 N-9 的规划器一条）；SenseVoice 救援 `httpx.ReadTimeout`（归 P1-02 ①）；回复首音时延（归 N-14）。
 - 边界 yaml 里原有的 `subject_scope_batch`、`account_to_subject_migrations`、`read_path_postgres_parity` 三项：账号 → 主体迁移于 2026-09-28 第 2 批删除，人格改为按使用人学习与读取（P1-03）；表结构保留在各 schema，git 历史可恢复。

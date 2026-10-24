@@ -57,6 +57,21 @@ def test_child_on_own_device_uses_own_memory_with_guardian_consent(capability: s
     assert decision.effect == "allow_with_obligations"
 
 
+@pytest.mark.parametrize("capability", ["chat", "memory_capture", "memory_recall_private"])
+def test_revoked_binding_fences_capture_recall_and_chat(capability: str) -> None:
+    decision = PolicyEngine().decide(
+        _minor(
+            capability,
+            subject_presence="device_bound",
+            binding_evidence=make_binding(
+                declared_mode="parent_for_child", status="revoked", now=NOW
+            ),
+        )
+    )
+
+    assert (decision.effect, decision.reason_code) == ("deny", "binding_evidence_required")
+
+
 @pytest.mark.parametrize(
     ("capability", "reason"),
     [

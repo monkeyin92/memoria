@@ -1,8 +1,6 @@
-"""Speaker verification, voice samples and voice cloning."""
+"""Speaker verification and stored voice samples."""
 
 from __future__ import annotations
-
-from typing import Literal
 
 from pydantic import BaseModel, Field, SecretStr
 
@@ -96,58 +94,3 @@ class VoiceFields(BaseModel):
         default="cn-beijing",
         alias="MEMORIA_VOICE_PROVIDER_REGION",
     )
-    voice_clone_provider: Literal["alibaba_model_studio", "volcengine_doubao"] = Field(
-        default="alibaba_model_studio",
-        alias="MEMORIA_VOICE_CLONE_PROVIDER",
-    )
-    voice_enrollment_url: str = Field(
-        default="https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization",
-        alias="MEMORIA_VOICE_ENROLLMENT_URL",
-    )
-    voice_enrollment_timeout_s: float = Field(
-        default=120.0,
-        ge=5.0,
-        le=180.0,
-        alias="MEMORIA_VOICE_ENROLLMENT_TIMEOUT_S",
-    )
-    voice_target_model: str = Field(
-        default="cosyvoice-v3.5-flash",
-        alias="MEMORIA_VOICE_TARGET_MODEL",
-    )
-    doubao_voice_api_key: SecretStr = Field(
-        default=SecretStr(""),
-        alias="MEMORIA_DOUBAO_VOICE_API_KEY",
-    )
-    doubao_voice_clone_url: str = Field(
-        default="https://openspeech.bytedance.com/api/v3/tts/voice_clone",
-        alias="MEMORIA_DOUBAO_VOICE_CLONE_URL",
-    )
-    doubao_voice_query_url: str = Field(
-        default="https://openspeech.bytedance.com/api/v3/tts/get_voice",
-        alias="MEMORIA_DOUBAO_VOICE_QUERY_URL",
-    )
-    doubao_voice_clone_poll_interval_s: float = Field(
-        default=1.0,
-        ge=0.05,
-        le=30.0,
-        alias="MEMORIA_DOUBAO_VOICE_CLONE_POLL_INTERVAL_S",
-    )
-    doubao_voice_synth_ready_id_mode: Literal[
-        "unverified", "custom_speaker_id", "response_field"
-    ] = Field(
-        default="unverified",
-        alias="MEMORIA_DOUBAO_VOICE_SYNTH_READY_ID_MODE",
-    )
-    doubao_voice_synth_ready_id_field: str = Field(
-        default="",
-        alias="MEMORIA_DOUBAO_VOICE_SYNTH_READY_ID_FIELD",
-    )
-    doubao_voice_expires_at_field: str = Field(
-        default="",
-        alias="MEMORIA_DOUBAO_VOICE_EXPIRES_AT_FIELD",
-    )
-    doubao_voice_expires_at_format: Literal["epoch_ms", "rfc3339"] = Field(
-        default="epoch_ms",
-        alias="MEMORIA_DOUBAO_VOICE_EXPIRES_AT_FORMAT",
-    )
-    voice_clone_enabled: bool = Field(default=False, alias="VOICE_CLONE_ENABLED")

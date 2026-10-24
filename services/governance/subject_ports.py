@@ -70,21 +70,42 @@ class SubjectArchivePort(Protocol):
         ...
 
     async def delete_events(
-        self, *, account_id: str, event_ids: tuple[str, ...]
+        self,
+        *,
+        account_id: str,
+        event_ids: tuple[str, ...],
+        subject_id: str | None = None,
     ) -> dict[str, int]:
         """Delete these events and everything derived from any of them.
 
         Merged projections (episodes, search documents, their vectors) that
         cite any of these events are deleted before the evidence, since the
-        lineage join disappears with it. Idempotent: already-deleted ids are
-        skipped. Returns per-table deleted counts.
+        lineage join disappears with it. When ``subject_id`` is given, claims
+        linked to that child through ``memory_claim_subjects`` go too, even
+        when their source evidence belongs to a parent; a claim linked to
+        several children goes when any one of them is deleted. Idempotent:
+        already-deleted ids are skipped. Returns per-table deleted counts.
         """
         ...
 
     async def remaining_rows_for(
         self, *, account_id: str, event_ids: tuple[str, ...], subject_id: str | None
     ) -> dict[str, int]:
-        """Rows still attributable to these events (or ``subject_id``); empty when done."""
+        """Rows still attributable to these events (or ``subject_id``); empty when done.
+
+        A subject's claims linked through ``memory_claim_subjects`` are
+        included, together with their search documents and vectors.
+        """
+        ...
+
+    async def delete_subject_vectors(self, *, account_id: str, subject_id: str) -> int:
+        """Replay-only fallback: vectors reachable from the subject's evidence.
+
+        ``memory_vector_documents`` has no ``subject_id`` column. The normal
+        saga deletes vectors through the captured lineage, but a restored
+        vector can outlive that lineage while its evidence row still names the
+        subject. This join covers that gap; see ``replay_completed_deletions``.
+        """
         ...
 
 

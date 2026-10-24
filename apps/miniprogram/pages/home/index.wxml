@@ -1,21 +1,32 @@
 <view class="page-shell trial-page tab-page home-v4" style="{{statusBarStyle}}">
   <view wx:if="{{!authenticated}}" class="home-guest">
-    <view class="home-login-hero">
-      <image class="home-login-art" src="/assets/ui/v4/dusk.jpg" mode="heightFix" />
-      <view class="home-login-scrim"></view>
-      <view class="home-login-brand">
-        <text class="home-login-title">Memoria</text>
-        <text class="home-login-tag">陪孩子聊天、讲故事的 AI 助手</text>
+    <text class="page-title">{{guestHome.productTitle}}</text>
+    <text class="page-lede">{{guestHome.productBody}}</text>
+    <view class="card guest-features">
+      <view wx:for="{{guestHome.features}}" wx:key="id" class="guest-feature">
+        <text class="home-card-title">{{item.title}}</text>
       </view>
     </view>
-    <view class="home-login-body">
-      <text class="home-login-hello">{{greeting}}</text>
-      <text class="page-lede">登录后查看孩子今天聊了什么</text>
-      <button class="trial-primary home-login-wechat" bindtap="loginFromHome">
-        <image class="home-btn-icon" src="/assets/ui/v4/wechat-white.svg" />微信一键登录
-      </button>
-      <button class="trial-secondary home-login-phone" bindtap="loginWithPhone">手机号登录</button>
-      <view class="home-note home-login-note">登录即表示你已阅读<text class="legal-link" catchtap="openUserAgreement">《用户协议》</text>和<text class="legal-link" catchtap="openPrivacyNotice">《隐私说明》</text></view>
+    <view class="home-note guest-agreements">
+      <text
+        wx:for="{{guestHome.agreements}}"
+        wx:key="id"
+        class="legal-link"
+        data-id="{{item.id}}"
+        catchtap="openGuestAgreement"
+      >《{{item.title}}》</text>
+    </view>
+    <button class="trial-primary" bindtap="openAccountLogin">登录</button>
+    <view class="list guest-actions">
+      <view
+        wx:for="{{loginGatedActions}}"
+        wx:key="id"
+        class="list-row"
+        data-id="{{item.id}}"
+        bindtap="onGuestGatedAction"
+      >
+        <text class="row-title row-copy">{{item.label}}</text>
+      </view>
     </view>
   </view>
 
@@ -66,7 +77,7 @@
 
     <block wx:else>
       <view
-        wx:if="{{unreadSafetyAlert || pinnedCrisisAlerts.length}}"
+        wx:if="{{unreadSafetyAlert}}"
         class="trial-banner home-attention"
         bindtap="openUnreadSafety"
       >
@@ -110,7 +121,7 @@
         </view>
         <view class="trial-card home-stat" bindtap="openMemory">
           <view class="mp-icon-tile"><image src="/assets/ui/v4/note-accent.svg" /></view>
-          <text class="home-lbl">今日摘要</text>
+          <text class="home-lbl">近期摘要</text>
           <view class="home-stat-line">
             <text class="home-stat-num">{{summaryCount}}</text>
             <text class="home-stat-unit"> 条</text>
@@ -122,7 +133,7 @@
         <mp-icon name="heart" size="96"></mp-icon>
         <view class="home-row-copy">
           <text class="home-card-title">{{childMemoryName}}的记忆</text>
-          <text class="home-row-sub">{{memoryPreviews.length ? '最近：' + memoryPreviews[0].text : '还没有摘要，聊过之后会出现在这里'}}</text>
+          <text class="home-row-sub">{{memoryPreviews.length ? (todayTitle === '近期摘要' ? '近期摘要：' : '最近：') + memoryPreviews[0].text : '还没有摘要，聊过之后会出现在这里'}}</text>
         </view>
         <image class="home-chev" src="/assets/ui/v4/chev-faint.svg" />
       </view>
@@ -151,6 +162,6 @@
       </view>
     </block>
 
-    <text class="home-note">在设备上使用，手机不录音，回应由 AI 生成。</text>
+    <text class="home-note">在设备上和孩子对话，手机端不收声，回应由 AI 生成。</text>
   </block>
 </view>

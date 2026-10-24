@@ -110,6 +110,7 @@ required_tables(table_name, force_rls) AS (
         ('device_onboarding_claims', TRUE),
         ('device_onboarding_bindings', TRUE),
         ('device_onboarding_activations', TRUE),
+        ('device_onboarding_registration_audits', TRUE),
         ('session_runtime_contexts', TRUE),
         ('session_runtime_profiles', TRUE),
         ('session_runtime_profile_receipts', TRUE),

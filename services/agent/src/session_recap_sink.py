@@ -13,9 +13,11 @@ from services.agent.src.session_recap_llm import (
     SessionSummaryModelConfig,
     generate_parent_session_summary,
 )
+from services.common.failure_log import FailureLog, failure_log
 from services.guardian.session_recap import (
     SessionTurn,
     draft_session_recap,
+    session_hits_crisis,
     skip_session_recap,
 )
 
@@ -87,6 +89,8 @@ class SessionRecapSink:
 
         event_id = source_event_id or f"session-end:{session_id}"
         early_skip = skip_session_recap(turns)
+        if early_skip is None and session_hits_crisis(turns):
+            early_skip = "crisis_in_session"
         summary_text: str | None = None
         model_skip: str | None = early_skip
         if early_skip is None:
@@ -143,7 +147,7 @@ class SessionRecapSink:
                 json=payload,
             )
         except (httpx.TimeoutException, httpx.NetworkError) as exc:
-            logger.warning("session recap post failed: %s", exc)
+            logger.warning("session recap post failed %s", failure_log(exc))
             return None
         if response.status_code in {200, 201}:
             try:
@@ -151,9 +155,8 @@ class SessionRecapSink:
             except ValueError:
                 return {"ok": True}
         logger.warning(
-            "session recap rejected status=%s body=%s",
-            response.status_code,
-            response.text[:200],
+            "session recap rejected %s",
+            FailureLog(error_type="HTTPStatusError", error_code=str(response.status_code)),
         )
         return None
 

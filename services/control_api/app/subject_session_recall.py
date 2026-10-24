@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import time
 from collections.abc import Mapping
 from typing import Any, cast
 
@@ -12,6 +15,8 @@ from services.memory_scope.subject_session_recall import (
     SubjectSessionRecallDenied,
     SubjectSessionRecallStore,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def wire_subject_session_recall_store(app: FastAPI) -> None:
@@ -27,6 +32,7 @@ def session_epoch_from_runtime_profile(runtime_profile: Mapping[str, object]) ->
 _RECALL_CONTEXT_MAX_ITEMS = 4
 _RECALL_CONTEXT_ITEM_MAX_CHARS = 240
 _RECALL_CONTEXT_TOTAL_MAX_CHARS = 960
+_RECALL_CONTEXT_BUDGET_S = 0.15
 
 
 def _store(request: Request) -> SubjectSessionRecallStore | None:
@@ -134,16 +140,30 @@ async def authoritative_recall_context(
         or session_epoch is None
     ):
         return _bounded(client_items)
+    started = time.perf_counter()
     try:
-        server_items = await store.list_recent(
-            subject_id=subject_id,
-            session_id=session_id,
-            session_epoch=session_epoch,
-            actor_subject_id=subject_id,
-            limit=_RECALL_CONTEXT_MAX_ITEMS,
-        )
+        # Session recall is an optional memory enrichment. A long session makes
+        # this indexed read a queue behind more work, and it used to run outside
+        # every budget on the response-plan path. Cap it and keep the client
+        # items so a slow store degrades the memory context, never the plan.
+        async with asyncio.timeout(_RECALL_CONTEXT_BUDGET_S):
+            server_items = await store.list_recent(
+                subject_id=subject_id,
+                session_id=session_id,
+                session_epoch=session_epoch,
+                actor_subject_id=subject_id,
+                limit=_RECALL_CONTEXT_MAX_ITEMS,
+            )
     except SubjectSessionRecallDenied:
         return ()
+    except TimeoutError:
+        logger.info(
+            "recall_timeout hit=false category=session_recall latency_ms=%.1f "
+            "session_id=%s",
+            (time.perf_counter() - started) * 1000.0,
+            session_id,
+        )
+        return _bounded(client_items)
     merged: list[str] = []
     seen: set[str] = set()
     for item in (*server_items, *client_items):

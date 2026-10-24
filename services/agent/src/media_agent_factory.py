@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
@@ -14,6 +14,7 @@ from services.agent.src.agent_voice_profile import (
     align_tts_voice_to_policy,
 )
 from services.agent.src.archive_sink import ArchiveSink, ArchiveSinkConfig
+from services.agent.src.asr_text_debug_log import AsrTextDebugSubjects
 from services.agent.src.conversation_close_wiring import (
     install_conversation_close_semantic_resolver,
 )
@@ -31,7 +32,12 @@ from services.agent.src.orchestration.speaker_verify import (
     SpeakerVerifier,
     should_enable_legacy_speaker_verifier,
 )
-from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
+from services.agent.src.providers.asr_failover import build_asr_session_factory
+from services.agent.src.providers.fixed_safety_audio import (
+    catalog_for_settings,
+    wrap_fixed_safety_tts,
+)
+from services.agent.src.providers.funasr_stt import FunASRConfig
 from services.agent.src.providers.handlers import (
     build_language_model_handler,
     build_realtime_search_resolver,
@@ -84,6 +90,9 @@ class _SessionLanguageModel:
     async def prepare_committed_turn(self, text: str) -> Any:
         return await self.pipeline.prepare_committed_turn(text)
 
+    def fixed_safety_planned(self, fence: Any) -> bool:
+        return self.pipeline.fixed_safety_planned(fence)
+
     def warm_committed_turn(self, text: str) -> None:
         self.pipeline.warm_committed_turn(text)
 
@@ -128,10 +137,14 @@ class ProductionMediaSessionFactory:
     archive_sink: ArchiveSink | None = None
     session_recap_sink: SessionRecapSink | None = None
     daily_chat_client: DailyChatClient | None = None
+    # One factory per process: the failover breaker must be shared across
+    # sessions, not recreated for every device connection.
+    _asr_session_factory: Any = field(default=None, init=False, repr=False)
 
     async def __call__(self, identity: SessionIdentity) -> MediaSessionResources:
         if not identity.session_id:
             raise ValueError("production media session requires a session id")
+        asr_text_debug_subjects = AsrTextDebugSubjects.from_env()
         tts = build_tts(self.settings)
         runtime: DuplexRuntime | None = None
         owned: list[object] = []
@@ -219,17 +232,20 @@ class ProductionMediaSessionFactory:
                 tts_provider=tts_provider_label(self.settings),
                 tts_model=self.settings.doubao_tts_resource_id,
             )
+            runtime.set_response_plan_rebinder(pipeline.rebind_response_plan)
             handler = _SessionLanguageModel(
                 pipeline,
                 tuple(reversed(owned)),
                 delegation_enabled=realtime_search_resolver is not None,
             )
             asr_config = FunASRConfig.from_env()
-            provider = ExistingVoiceProviderAdapter(
-                asr_session_factory=lambda: FunASRSession(
-                    replace(asr_config),
+            if self._asr_session_factory is None:
+                self._asr_session_factory = build_asr_session_factory(
+                    funasr_config=asr_config,
                     metrics=GLOBAL_METRICS,
-                ),
+                )
+            provider = ExistingVoiceProviderAdapter(
+                asr_session_factory=self._asr_session_factory,
                 language_model=handler,
                 speech_synthesis=cast(SpeechSynthesisHandler, tts),
                 config=ExistingVoiceProviderConfig(
@@ -239,6 +255,7 @@ class ProductionMediaSessionFactory:
                 metrics=GLOBAL_METRICS,
                 owns_speech_synthesis=True,
                 owns_language_model=True,
+                asr_text_debug_subjects=asr_text_debug_subjects,
             )
             return MediaSessionResources(runtime=runtime, provider=provider)
         except Exception:
@@ -377,7 +394,7 @@ class ProductionMediaSessionFactory:
         if not wants_clone_tts(runtime.mode_policy):
             return tts
         await close_tts(tts)
-        clone_tts = build_clone_tts()
+        clone_tts = wrap_fixed_safety_tts(build_clone_tts(), self.settings)
         runtime.tts = clone_tts
         await warm_tts(clone_tts)
         return clone_tts
@@ -439,7 +456,8 @@ def build_production_media_session_factory(settings: Any) -> ProductionMediaSess
                 spool_path=Path(settings.archive_spool_path),
                 spool_key=spool_key,
                 spool_max_bytes=settings.archive_spool_max_bytes,
-            )
+            ),
+            metrics=GLOBAL_METRICS,
         )
     session_recap_sink: SessionRecapSink | None = None
     if bool(getattr(settings, "session_recap_enabled", True)):
@@ -460,13 +478,29 @@ def build_production_media_session_factory(settings: Any) -> ProductionMediaSess
                 ),
                 summary_model=summary_model_config_from_settings(settings),
             )
-    return ProductionMediaSessionFactory(
+    # Load and validate the fixed-safety clips once at startup. A bad hash
+    # degrades those turns to live TTS with an alert; the image gate still
+    # rejects a build that shipped no clips at all.
+    catalog = catalog_for_settings(settings)
+    logger.info(
+        "fixed safety audio catalog loaded playable=%d total=%d",
+        sum(1 for template in catalog.templates if template.playable),
+        len(catalog.templates),
+    )
+    factory = ProductionMediaSessionFactory(
         settings=settings,
         llm_factory=OpenAIChatModel,
         archive_sink=archive_sink,
         session_recap_sink=session_recap_sink,
         daily_chat_client=build_daily_chat_client(settings),
     )
+    # Resolve the ASR failover configuration at startup so a missing backup
+    # endpoint fails the deploy instead of every device session.
+    factory._asr_session_factory = build_asr_session_factory(
+        funasr_config=FunASRConfig.from_env(),
+        metrics=GLOBAL_METRICS,
+    )
+    return factory
 
 
 __all__ = ["ProductionMediaSessionFactory", "build_production_media_session_factory"]

@@ -125,7 +125,7 @@ def build_realtime_search_resolver(*, settings: AgentSettings) -> PublicRealtime
 
     api_key = str(getattr(settings, "dashscope_api_key", "") or "").strip()
     qwen = None
-    if api_key:
+    if api_key and bool(getattr(settings, "live_search_qwen_enabled", False)):
         qwen = QwenRealtimeSearch(
             QwenRealtimeSearchConfig(
                 api_key=api_key,

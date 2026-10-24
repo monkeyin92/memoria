@@ -20,6 +20,7 @@ from packages.contracts.generated.python.multi_subject_contracts import (
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from services.common.companions import DEFAULT_COMPANION_ID, companion_definition
+from services.common.failure_log import failure_log
 from services.control_api.app.account_gate import (
     SubjectCapability,
     require_capability_for_account_id,
@@ -29,6 +30,7 @@ from services.control_api.app.companion_delivery import freeze_companion_deliver
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.media_runtime import mint_streamcore_token
 from services.control_api.app.mode_policy import FrozenMode, ModePolicy
+from services.control_api.app.omni_session_gate import require_omni_api_key
 from services.control_api.app.security import (
     AuthenticatedUser,
     create_session_id,
@@ -326,7 +328,7 @@ class OmniTelemetryBody(BaseModel):
     turn_id: int = Field(ge=0)
     generation_id: int = Field(ge=0)
     metrics: WebRTCMetrics | None = None
-    # Optional DashScope realtime error fields (short, no audio/credentials).
+    # Client free text: still accepted so existing clients get 204, never logged.
     error_type: str | None = Field(default=None, max_length=80)
     error_code: str | None = Field(default=None, max_length=80)
     error_param: str | None = Field(default=None, max_length=80)
@@ -632,9 +634,9 @@ async def create_session(
             )
         except PersistentSessionDenied as exc:
             logger.warning(
-                "persistent Session authority denied session_id=%s reason=%s",
+                "persistent Session authority denied session_id=%s %s",
                 session_id,
-                exc,
+                failure_log(exc),
             )
             raise HTTPException(
                 status_code=403,
@@ -646,9 +648,10 @@ async def create_session(
                 detail={"code": "session_runtime_conflict"},
             ) from exc
         except PersistentSessionUnavailable as exc:
-            logger.exception(
-                "persistent Session authority failed session_id=%s",
+            logger.warning(
+                "persistent Session authority failed session_id=%s %s",
                 session_id,
+                failure_log(exc),
             )
             raise HTTPException(
                 status_code=503,
@@ -788,8 +791,7 @@ async def create_session(
         return None
 
     if body.voice_backend in OMNI_BACKENDS:
-        if not settings.dashscope_api_key.get_secret_value():
-            raise HTTPException(status_code=503, detail="Qwen3.5-Omni 服务端尚未配置")
+        require_omni_api_key(settings)
         model = OMNI_MODELS[body.voice_backend]
         _omni_signaling_url(settings, model=model)
         learning_task_id = await persist_voice_session()
@@ -799,19 +801,16 @@ async def create_session(
             f":th={turn_detection['threshold']}"
             f":pad={turn_detection['prefix_padding_ms']}"
         )
-        # P1-8: fixed persona voice; optional clone id from DashScope voice product.
-        clone_id = (getattr(settings, "qwen_omni_voice_clone_id", None) or "").strip()
-        persona_voice = clone_id or (settings.qwen_omni_voice.strip() or "Liora Mira")
+        persona_voice = settings.qwen_omni_voice.strip() or "Liora Mira"
         persona_label = (
             getattr(settings, "qwen_omni_persona_label", None) or "Memoria 人设声"
         ).strip() or "Memoria 人设声"
         logger.info(
-            "omni_session_ab_profile session_id=%s profile=%s model=%s voice=%s clone=%s",
+            "omni_session_ab_profile session_id=%s profile=%s model=%s voice=%s",
             session_id,
             ab_profile,
             model,
             persona_voice,
-            bool(clone_id),
         )
         return CreateOmniSessionResponse(
             session_id=session_id,
@@ -824,7 +823,7 @@ async def create_session(
                 "persona": {
                     "label": persona_label,
                     "voice": persona_voice,
-                    "cloned": bool(clone_id),
+                    "cloned": False,
                 },
                 "turn_detection": turn_detection,
                 "ab_profile": ab_profile,
@@ -925,17 +924,13 @@ async def publish_omni_telemetry(
         raise HTTPException(status_code=409, detail="session does not use realtime voice")
     telemetry_logger.info(
         "omni_realtime_telemetry session_id=%s name=%s elapsed_ms=%s "
-        "turn_id=%s generation_id=%s metrics=%s "
-        "error_type=%s error_code=%s error_param=%s",
+        "turn_id=%s generation_id=%s metrics=%s",
         session_id,
         body.name,
         body.elapsed_ms,
         body.turn_id,
         body.generation_id,
         body.metrics.model_dump(exclude_none=True) if body.metrics else {},
-        body.error_type,
-        body.error_code,
-        body.error_param,
     )
     return Response(status_code=204)
 
@@ -967,9 +962,7 @@ async def _exchange_omni_sdp(
     *,
     model: str = QWEN_OMNI_FLASH_MODEL,
 ) -> bytes:
-    api_key = settings.dashscope_api_key.get_secret_value()
-    if not api_key:
-        raise HTTPException(status_code=503, detail="Qwen3.5-Omni 服务端尚未配置")
+    api_key = require_omni_api_key(settings)
     try:
         async with httpx.AsyncClient(
             timeout=settings.qwen_omni_sdp_timeout_s,

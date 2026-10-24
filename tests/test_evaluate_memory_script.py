@@ -7,7 +7,7 @@ from scripts.evaluate_memory import (
     _build_adapter,
     _parser,
 )
-from services.archive.postgres_memory_catalog import QwenMemoryEmbedder
+from services.archive.memory_vector_cleanup import QwenMemoryEmbedder
 
 
 def test_embedding_flag_defaults_to_the_requested_bailian_model() -> None:

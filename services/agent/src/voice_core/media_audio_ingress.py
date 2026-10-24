@@ -14,6 +14,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Protocol
 
 from services.agent.src.observability.metrics import MetricsRegistry
+from services.agent.src.orchestration.state_machine import InteractionPhase
 from services.agent.src.voice_core.asr_stream_supervisor import ASRAcceptDecision
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_pcm_tap import MediaPcmTap, maybe_create_tap
@@ -37,6 +38,8 @@ logger = logging.getLogger(__name__)
 _OVERFLOW_LOG_INTERVAL_S = 5.0
 _PUMP_STALL_THRESHOLD_S = 2.0
 _PUMP_STALL_LOG_INTERVAL_S = 5.0
+# 16-bit peak at or below this is digital silence / dither, not uplink speech.
+_LISTENING_SILENCE_PEAK = 4
 
 
 def _create_media_denoiser() -> TwoStageDenoiser:
@@ -60,6 +63,10 @@ class MediaAudioIngressState:
     denoiser: TwoStageDenoiser = field(default_factory=_create_media_denoiser)
     pump_task: asyncio.Task[None] | None = None
     discontinuity_pending: bool = False
+    # Set when the speaking watchdog gives up on a lost device generation.
+    # The transport gate rejects the frame before payload parsing; this flag
+    # also stops any frame already queued in the pump from reaching ASR.
+    input_revoked: bool = False
     provider_failed: bool = False
     recovery_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     finalize_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -69,6 +76,10 @@ class MediaAudioIngressState:
     pcm_tap_initialized: bool = False
     overflow_dropped_frames: int = 0
     overflow_dropped_samples: int = 0
+    listening_silence_dropped_frames: int = 0
+    listening_silence_dropped_samples: int = 0
+    listening_capture_dropped_frames: int = 0
+    listening_capture_dropped_samples: int = 0
     last_overflow_log: float = 0.0
     last_pump_stall_log: float = 0.0
 
@@ -135,6 +146,8 @@ class MediaAudioIngress:
         if tap is not None:
             tap.close()
         state.denoiser.reset()
+        state.loss_concealed_ranges.clear()
+        state.discontinuity_pending = False
         self._host.metrics.set_media_metric("media_pcm_queue_depth", 0.0)
 
     async def accept(self, context: _MediaVoiceSession, frame: AudioFrame) -> None:
@@ -144,6 +157,85 @@ class MediaAudioIngress:
         # the task/epoch boundary before recording or queueing the next frame.
         async with context.ingress.finalize_lock:
             await self._accept_serialized(context, frame)
+
+    @staticmethod
+    def _is_listening_silence(
+        context: _MediaVoiceSession,
+        frame: AudioFrame,
+    ) -> bool:
+        """True for silent uplink PCM that arrived while the device is listening.
+
+        A device streams its microphone continuously. Once the assistant has
+        returned the floor, digital silence outside an accepted VAD utterance
+        carries no content we may retain: it must not reach the denoiser, the
+        PCM tap, the ASR provider, or a log line that includes audio. Only
+        near-zero PCM is refused, so a real question whose device VAD edge was
+        suppressed during playback still reaches ASR. The gate is limited to
+        the explicit LISTENING phase so CONNECTING/library seams keep their
+        existing ingestion path.
+        """
+
+        if not MediaAudioIngress._is_silent_pcm(frame.payload):
+            return False
+        runtime = getattr(context, "runtime", None)
+        if getattr(runtime, "interaction_phase", None) is not InteractionPhase.LISTENING:
+            return False
+        pending = getattr(context, "pending", None)
+        if pending is None:
+            return False
+        commit_task = getattr(context, "turn_commit_task", None)
+        if (
+            pending.turn_start_sample is not None
+            or pending.active_vad_stream_epoch == context.stream_epoch
+            or pending.admitted_input_stream_epoch == context.stream_epoch
+            or (commit_task is not None and not commit_task.done())
+        ):
+            return False
+        return True
+
+    def _listening_capture_refused(
+        self,
+        context: _MediaVoiceSession,
+        frame: AudioFrame,
+    ) -> bool:
+        if getattr(context, "listening_capture_hold", False):
+            return True
+        resume_sample = getattr(context, "listening_capture_resume_sample", None)
+        if isinstance(resume_sample, int) and frame.capture_start_sample <= resume_sample:
+            return True
+        if not self._listening_capture_expired(context):
+            return False
+        latch = getattr(self._host, "_latch_listening_capture", None)
+        if callable(latch):
+            latch(context)
+        elif hasattr(context, "listening_capture_hold"):
+            context.listening_capture_hold = True
+        return True
+
+    @staticmethod
+    def _listening_capture_expired(context: _MediaVoiceSession) -> bool:
+        if getattr(context, "listening_capture_hold", False):
+            return False
+        runtime = getattr(context, "runtime", None)
+        phase = getattr(runtime, "interaction_phase", None)
+        if phase not in (InteractionPhase.LISTENING, InteractionPhase.USER_SPEAKING):
+            return False
+        deadline = getattr(context, "listening_capture_deadline", None)
+        if isinstance(deadline, bool) or not isinstance(deadline, (int, float)):
+            return False
+        return time.monotonic() > deadline
+
+    @staticmethod
+    def _is_silent_pcm(payload: bytes) -> bool:
+        if not payload or len(payload) % 2:
+            return False
+        for index in range(0, len(payload), 2):
+            sample = payload[index] | (payload[index + 1] << 8)
+            if sample & 0x8000:
+                sample = 0x10000 - sample
+            if sample > _LISTENING_SILENCE_PEAK:
+                return False
+        return True
 
     async def _accept_serialized(
         self,
@@ -158,6 +250,16 @@ class MediaAudioIngress:
         ):
             return
         state = context.ingress
+        if state.input_revoked:
+            return
+        if self._listening_capture_refused(context, frame):
+            state.listening_capture_dropped_frames += 1
+            state.listening_capture_dropped_samples += frame.frame_samples
+            return
+        if self._is_listening_silence(context, frame):
+            state.listening_silence_dropped_frames += 1
+            state.listening_silence_dropped_samples += frame.frame_samples
+            return
         if state.provider_failed:
             async with state.recovery_lock:
                 if state.provider_failed:
@@ -208,6 +310,16 @@ class MediaAudioIngress:
         # for a slow external ASR provider.
         await asyncio.sleep(0)
 
+    def discard_queued(self, context: _MediaVoiceSession) -> None:
+        state = context.ingress
+        while True:
+            try:
+                dropped, _enqueued_at = state.queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            state.listening_capture_dropped_frames += 1
+            state.listening_capture_dropped_samples += dropped.frame_samples
+
     def reset_for_reconnect(self, context: _MediaVoiceSession) -> None:
         context.ingress.loss_concealed_ranges.clear()
         context.ingress.discontinuity_pending = False
@@ -243,7 +355,9 @@ class MediaAudioIngress:
             # any VAD admitted during that await owns a new speech watchdog.
             self._host._clear_pending_turn_state(context)
             self._host._finish_owner_silence_turn(
-                context, accepted=False, refresh_owner_budget=False,
+                context,
+                accepted=False,
+                refresh_owner_budget=False,
             )
             await self._host._discard_projection(context, "audio_discontinuity")
             context.ingress.loss_concealed_ranges.clear()
@@ -354,7 +468,9 @@ class MediaAudioIngress:
                         # own lifecycle. A fault never proves owner activity.
                         self._host._clear_pending_turn_state(context)
                         self._host._finish_owner_silence_turn(
-                            context, accepted=False, refresh_owner_budget=False,
+                            context,
+                            accepted=False,
+                            refresh_owner_budget=False,
                         )
                         await self._host._discard_projection(context, "asr_finalize_failed")
                 logger.exception(
@@ -555,6 +671,8 @@ class MediaAudioIngress:
         callback_stream_epoch: int,
         observe_task_before_results: bool = True,
     ) -> None:
+        if context.ingress.input_revoked:
+            return
         if observe_task_before_results:
             await self._observe_provider_task(context)
         results = tuple(results)
@@ -602,7 +720,8 @@ class MediaAudioIngress:
 
     @staticmethod
     def _provider_result_rejection_reason(
-        context: _MediaVoiceSession, callback_stream_epoch: int,
+        context: _MediaVoiceSession,
+        callback_stream_epoch: int,
     ) -> str:
         if context.closed or context.standby_requested:
             return "session_closed"
@@ -625,13 +744,15 @@ class MediaAudioIngress:
         callback_stream_epoch = frame.identity.stream_epoch
         if not self._host._stream_epoch_is_current(context, callback_stream_epoch):
             return
+        if context.ingress.input_revoked:
+            return
 
         if frame.discontinuity or context.ingress.discontinuity_pending:
             await self._reset_discontinuity(context, frame)
 
         raw_payload = frame.payload
-        denoised_payload, _vad_probability, denoising_stats = (
-            context.ingress.denoiser.process(raw_payload)
+        denoised_payload, _vad_probability, denoising_stats = context.ingress.denoiser.process(
+            raw_payload
         )
         frame = replace(frame, payload=denoised_payload)
         if denoising_stats["total_frames"] % 100 == 0:
@@ -644,11 +765,14 @@ class MediaAudioIngress:
 
         self._tap_frame(context, frame)
         results = await context.provider.ingest_audio(context.identity, frame)
+        if context.ingress.input_revoked:
+            # The watchdog may revoke input while the provider still owns this
+            # frame. Never admit its results or feed the speaker classifier.
+            return
         stall_s = time.monotonic() - enqueued_at
         if (
             stall_s > _PUMP_STALL_THRESHOLD_S
-            and time.monotonic() - context.ingress.last_pump_stall_log
-            > _PUMP_STALL_LOG_INTERVAL_S
+            and time.monotonic() - context.ingress.last_pump_stall_log > _PUMP_STALL_LOG_INTERVAL_S
         ):
             context.ingress.last_pump_stall_log = time.monotonic()
             logger.warning(
@@ -724,7 +848,7 @@ class MediaAudioIngress:
     async def _pump(self, context: _MediaVoiceSession) -> None:
         state = context.ingress
         try:
-            while not context.closed and not context.standby_requested:
+            while not context.closed and not context.standby_requested and not state.input_revoked:
                 try:
                     frame, enqueued_at = state.queue.get_nowait()
                 except asyncio.QueueEmpty:

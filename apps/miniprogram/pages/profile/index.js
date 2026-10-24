@@ -4,11 +4,10 @@ const compliance = require("../../utils/compliance");
 const { companionById, defaultCompanionId } = require("../../utils/companions");
 const { requireLogin } = require("../../utils/auth-gate");
 const { MODE_META, readBindingManifest, entryAllowed } = require("../../utils/device-binding");
+const { guardianSubjectFromBinding } = require("../../utils/guardian");
 const { devicePlaceName } = require("../../utils/device-status");
 const { openPrivacyContract } = require("../../utils/privacy-contract");
 const contracts = require("../../utils/multi-subject-contracts");
-const { isVoiceCloneOpen } = require("../../utils/voice-clone-gate");
-
 const defaultProfile = {
   display_name: "新朋友",
   companion_id: defaultCompanionId,
@@ -233,12 +232,12 @@ Page({
     speakerEntryAllowed: false,
     digitalSelfEntryAllowed: false,
     guardianEntryAllowed: false,
+    memoryLifecycleEntryAllowed: false,
     rawVoiceEntryAllowed: false,
     profileUnavailableReason: "",
     deliveredCapabilities: [],
     deliveredCapabilitiesLoading: false,
     chatLlmProviders: [],
-    voiceCloneOpen: false,
     appVersionLabel: "",
     showAbout: false,
     aboutLines: [],
@@ -324,12 +323,12 @@ Page({
       speakerEntryAllowed: false,
       digitalSelfEntryAllowed: false,
       guardianEntryAllowed: false,
+      memoryLifecycleEntryAllowed: false,
       rawVoiceEntryAllowed: false,
       profileUnavailableReason: "",
       deliveredCapabilities: [],
       deliveredCapabilitiesLoading: false,
       chatLlmProviders: [],
-      voiceCloneOpen: false,
       ...deviceBindingReset(),
     });
   },
@@ -442,6 +441,12 @@ Page({
     return request;
   },
 
+  async loginForFeedback() {
+    if (!(await requireLogin({ reason: "help_feedback" }))) return;
+    this.setData({ authenticated: true });
+    await this._loadAuthenticatedData();
+  },
+
   async loginFromProfile() {
     if (!(await requireLogin({ reason: "view_profile" }))) return;
     this.setData({ authenticated: true });
@@ -531,11 +536,13 @@ Page({
         speakerEntryAllowed: false,
         digitalSelfEntryAllowed: false,
         guardianEntryAllowed: false,
+        memoryLifecycleEntryAllowed: false,
         rawVoiceEntryAllowed: false,
         profileUnavailableReason: reasonByState[this.data.deviceBindingState] ||
           "设备绑定状态不完整，无法取得 Runtime Profile。",
       };
     }
+    const guardianMinorUserId = guardianSubjectFromBinding(binding);
     try {
       const profile = await api.getRuntimeProfile(binding.device_id);
       if (profile === null) {
@@ -568,6 +575,9 @@ Page({
         speakerEntryAllowed: false,
         digitalSelfEntryAllowed: entryAllowed(profile, contracts.Capability.DigitalSelfPreview),
         guardianEntryAllowed: entryAllowed(profile, contracts.Capability.GuardianSummaryView),
+        memoryLifecycleEntryAllowed:
+          Boolean(guardianMinorUserId) &&
+          entryAllowed(profile, contracts.Capability.GuardianSummaryView),
         rawVoiceEntryAllowed: entryAllowed(profile, contracts.Capability.RawAudioRetention),
         profileUnavailableReason: "",
       };
@@ -580,6 +590,7 @@ Page({
         speakerEntryAllowed: false,
         digitalSelfEntryAllowed: false,
         guardianEntryAllowed: false,
+        memoryLifecycleEntryAllowed: false,
         rawVoiceEntryAllowed: false,
         profileUnavailableReason: "Runtime Profile 获取失败，敏感能力入口已关闭。",
       };
@@ -595,14 +606,12 @@ Page({
       this.setData({
         deliveredCapabilities: formatDeliveredCapabilityRows(payload),
         chatLlmProviders: chatLlmProvidersFrom(payload),
-        voiceCloneOpen: isVoiceCloneOpen(payload),
       });
     } catch {
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({
         deliveredCapabilities: [],
         chatLlmProviders: [],
-        voiceCloneOpen: false,
       });
     } finally {
       if (api.isAuthEpochCurrent(authEpoch)) {
@@ -625,7 +634,9 @@ Page({
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ stats: computeStats(result.items) });
     } catch {
-      // 统计只作展示，失败时保持默认值，不打断页面。
+      // 统计只作展示。旧 daily_summaries 读接口关闭时回落到 0，不报错。
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
+      this.setData({ stats: { totalDays: 0, moments: 0, streak: 0 } });
     }
   },
 
@@ -652,6 +663,12 @@ Page({
     if (!(await requireLogin({ reason: "view_guardian_summary" }))) return;
     if (!this._allowSensitiveEntry("成长小结", contracts.Capability.GuardianSummaryView)) return;
     wx.navigateTo({ url: "/pages/guardian/index" });
+  },
+
+  async openMemoryLifecycle() {
+    if (!(await requireLogin({ reason: "view_child_memory" }))) return;
+    if (!this._allowSensitiveEntry("记忆管理", contracts.Capability.GuardianSummaryView)) return;
+    wx.navigateTo({ url: "/pages/memory-lifecycle/index" });
   },
 
   // The *EntryAllowed flags come from entryAllowed(), which also opens

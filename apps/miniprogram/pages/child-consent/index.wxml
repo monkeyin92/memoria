@@ -1,0 +1,31 @@
+<view class="page-shell auth-wrap sub-page" style="{{statusBarStyle}}">
+  <view class="auth-copy">
+    <text class="pill pill-teal auth-chip">{{releaseChip}}</text>
+    <view class="auth-title">
+      <text class="page-title auth-copy-line">开始前，</text>
+      <text class="page-title auth-copy-line">请先确认这几件事</text>
+    </view>
+    <text class="page-lede">作为孩子的监护人，你需要知道我们实际会处理哪些信息。这一步只用于绑定设备和填写孩子资料，与登录页的账号同意是两件事。</text>
+  </view>
+
+  <view class="card auth-facts">
+    <view class="auth-fact" wx:for="{{facts}}" wx:key="title">
+      <mp-icon name="{{item.icon}}" tone="ink"></mp-icon>
+      <view class="auth-fact-copy">
+        <text class="auth-fact-title">{{item.title}}</text>
+        <text wx:if="{{item.subtitle}}" class="auth-fact-sub">{{item.subtitle}}</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="auth-consent {{agreementPending ? 'auth-consent-locked' : ''}}" bindtap="toggleConsent" aria-role="checkbox" aria-checked="{{consented}}" aria-disabled="{{agreementPending}}">
+    <view class="auth-check {{consented ? 'auth-check-on' : ''}}">
+      <image wx:if="{{consented}}" class="auth-check-icon" src="/assets/ui/v4/check-white-bold.svg" />
+    </view>
+    <view class="auth-consent-copy">我是孩子的监护人，已阅读并同意<text class="legal-link" catchtap="openPrivacy">《隐私保护指引》</text>和<text class="legal-link" catchtap="openGuardianConsent">《监护人同意书》</text></view>
+  </view>
+  <text wx:if="{{agreementHint}}" class="login-note auth-agreement-hint">{{agreementHint}}</text>
+
+  <button class="trial-primary" bindtap="confirmChildConsent" disabled="{{agreementPending || !consented}}">同意并继续</button>
+  <button class="auth-decline" bindtap="decline">暂不同意</button>
+</view>

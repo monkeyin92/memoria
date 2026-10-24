@@ -4,6 +4,7 @@ const path = require("node:path");
 const test = require("node:test");
 
 const api = require("../utils/api");
+const { renderPage } = require("../scripts/mp-harness/render");
 
 const root = path.join(__dirname, "..");
 const storage = {};
@@ -135,6 +136,10 @@ function homeApiStubs(overrides = {}) {
   };
 }
 
+function visibleText(html) {
+  return html.replace(/<head>[\s\S]*?<\/head>/, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+
 function todayKey(date = new Date()) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
@@ -183,7 +188,102 @@ test("home today count uses session reads and composes the daily summary", async
   });
 });
 
-test("loadHome wires a non-UTC local-day session through page data into sharing", async () => {
+test("home keeps the recent child summary when the legacy day read is closed", async () => {
+  await withWx(async () => {
+    const definition = loadPage("../pages/home/index");
+    const page = instantiate(definition);
+    const restore = stubApi(
+      homeApiStubs({
+        syncDeviceBindings: async () => ({
+          status: "ready",
+          binding: {
+            binding_id: "bd_1",
+            device_id: "dev_1",
+            declared_mode: "parent_for_child",
+            status: "active",
+            account_owner_id: "person_owner",
+            primary_subject_ids: ["person_owner", "person_child"],
+          },
+        }),
+        getMemoryDays: async () => {
+          throw Object.assign(new Error("legacy daily summaries are unavailable in production"), {
+            status: 503,
+          });
+        },
+        getChildSessionSummaries: async () => ({
+          items: [
+            {
+              record_id: "sum_1",
+              text: "最近在聊画画和幼儿园的新朋友。",
+              created_at: new Date().toISOString(),
+            },
+          ],
+        }),
+        getConversationSessions: async () => ({
+          items: [{ session_id: "s_today", occurred_at: new Date().toISOString() }],
+        }),
+      }),
+    );
+    try {
+      page.setData({ authenticated: true });
+      await page.loadHome();
+      assert.equal(page.data.todayCount, 1, "today's count comes from sessions");
+      assert.equal(page.data.summaryCount, 1, "the stat counts every recent summary");
+      assert.equal(page.data.todayTitle, "近期摘要");
+      assert.equal(page.data.todayOverview, "最近在聊画画和幼儿园的新朋友。");
+      assert.equal(page.data.dailySummaryText, "最近：最近在聊画画和幼儿园的新朋友。");
+      assert.equal(page.data.memoryPreviews.length, 1);
+      const text = visibleText(renderPage("pages/home/index", page.data));
+      assert.match(text, /孩子的记忆 近期摘要：最近在聊画画和幼儿园的新朋友。/);
+      assert.doesNotMatch(text, /回顾暂时无法加载|daily summaries/);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("home shows the existing empty state when neither day rows nor child summaries exist", async () => {
+  await withWx(async () => {
+    const definition = loadPage("../pages/home/index");
+    const page = instantiate(definition);
+    const restore = stubApi(
+      homeApiStubs({
+        syncDeviceBindings: async () => ({
+          status: "ready",
+          binding: {
+            binding_id: "bd_1",
+            device_id: "dev_1",
+            declared_mode: "parent_for_child",
+            status: "active",
+            account_owner_id: "person_owner",
+            primary_subject_ids: ["person_owner", "person_child"],
+          },
+        }),
+        getMemoryDays: async () => {
+          throw Object.assign(new Error("legacy daily summaries are unavailable in production"), {
+            status: 503,
+          });
+        },
+        getChildSessionSummaries: async () => ({ items: [] }),
+      }),
+    );
+    try {
+      page.setData({ authenticated: true });
+      await page.loadHome();
+      assert.equal(page.data.todayTitle, "");
+      assert.equal(page.data.todayOverview, "");
+      assert.equal(page.data.dailySummaryText, "");
+      assert.deepEqual(page.data.memoryPreviews, []);
+      const text = visibleText(renderPage("pages/home/index", page.data));
+      assert.match(text, /还没有摘要，聊过之后会出现在这里/);
+      assert.doesNotMatch(text, /回顾暂时无法加载|daily summaries/);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("loadHome wires a non-UTC local-day session into page data and generic sharing", async () => {
   await withTimezone("Asia/Shanghai", async () => {
     await withWx(async () => {
       const definition = loadPage("../pages/home/index");
@@ -240,7 +340,8 @@ test("loadHome wires a non-UTC local-day session through page data into sharing"
         );
         const shared = page.onShareAppMessage();
         assert.equal(shared.path, "/pages/home/index");
-        assert.equal(shared.title, `今天和 Memoria 聊了 1 次。${overview}`);
+        assert.equal(shared.title, "Memoria · 每天的对话回顾");
+        assert.doesNotMatch(shared.title, new RegExp(overview));
       } finally {
         restore();
       }
@@ -248,7 +349,7 @@ test("loadHome wires a non-UTC local-day session through page data into sharing"
   });
 });
 
-test("loadHome falls back to the day count when the session list is unavailable", async () => {
+test("home never falls back to the day count when the session list is unavailable", async () => {
   await withWx(async () => {
     const definition = loadPage("../pages/home/index");
     const page = instantiate(definition);
@@ -263,13 +364,9 @@ test("loadHome falls back to the day count when the session list is unavailable"
     try {
       page.setData({ authenticated: true });
       await page.loadHome();
-      assert.equal(page.data.todayCount, 3);
-      assert.equal(page.data.todayMeta, "今天 · 3 次对话");
-      assert.equal(
-        page.data.dailySummaryText,
-        "今天和 Memoria 聊了 3 次。回顾还没生成，可在回顾页生成。",
-        "没有服务端回顾时不得编造摘要内容",
-      );
+      assert.equal(page.data.todayCount, 0, "the legacy day rows must not supply the count");
+      assert.equal(page.data.todayMeta, "");
+      assert.equal(page.data.dailySummaryText, "");
     } finally {
       restore();
     }
@@ -459,7 +556,9 @@ test("an older home flow cannot overwrite the latest private summary", async () 
             ],
           };
         },
-        getConversationSessions: async () => ({ items: [] }),
+        getConversationSessions: async () => ({
+          items: [{ session_id: "s-latest", occurred_at: new Date().toISOString() }],
+        }),
       }),
     );
     try {
@@ -509,7 +608,7 @@ test("home reads the daily summary without consulting the Runtime Profile", asyn
   });
 });
 
-test("home share carries the gated summary only when authenticated", async () => {
+test("home share never carries private summary copy", async () => {
   await withWx(async () => {
     const definition = loadPage("../pages/home/index");
     const page = instantiate(definition);
@@ -519,62 +618,43 @@ test("home share carries the gated summary only when authenticated", async () =>
     });
     const shared = page.onShareAppMessage();
     assert.equal(shared.path, "/pages/home/index");
-    assert.equal(shared.title, "今天和 Memoria 聊了 2 次。他提到数学考了 95 分。");
+    assert.equal(shared.title, "Memoria · 每天的对话回顾");
+    assert.doesNotMatch(shared.title, /数学|95 分|聊了/);
 
     page.setData({ authenticated: false });
     const guest = page.onShareAppMessage();
     assert.equal(guest.path, "/pages/home/index");
-    assert.doesNotMatch(guest.title, /数学|聊了/, "未登录分享不得带出私人摘要");
-    assert.match(guest.title, /Memoria/);
+    assert.equal(guest.title, "Memoria · 每天的对话回顾");
   });
 });
 
-test("memory share uses the pressed day and falls back for guests", async () => {
+test("memory page no longer offers sharing or a chosen day", async () => {
   await withWx(async () => {
     const definition = loadPage("../pages/memory/index");
     const page = instantiate(definition);
-    page.setData({
-      authenticated: true,
-      selectedDate: "2026-09-22",
-      days: [
-        { date: "2026-09-22", title: "今天的回顾", overview: "聊了数学考试。" },
-        { date: "2026-09-20", title: "昨天的回顾", overview: "聊了恐龙。" },
-      ],
-    });
-    const pressed = page.onShareAppMessage({
-      from: "button",
-      target: { dataset: { date: "2026-09-20" } },
-    });
-    assert.equal(pressed.path, "/pages/memory/index");
-    assert.equal(pressed.title, "Memoria 回顾 · 昨天的回顾");
-
-    const menu = page.onShareAppMessage({ from: "menu" });
-    assert.equal(menu.title, "Memoria 回顾 · 今天的回顾");
-
-    page.setData({ authenticated: false });
-    const guest = page.onShareAppMessage({ from: "menu" });
-    assert.equal(guest.title, "Memoria · 每天的对话回顾");
-    assert.doesNotMatch(guest.title, /昨天的回顾|恐龙/);
+    assert.equal(page.onShareAppMessage, undefined);
+    assert.equal(page.chooseDay, undefined);
+    const memory = fs.readFileSync(path.join(root, "pages/memory/index.wxml"), "utf8");
+    assert.doesNotMatch(memory, /分享这一天|open-type="share"|bindtap="chooseDay"|memory-strip/);
   });
 });
 
-test("DEMO-03 keeps share handlers; trial home drops the daily summary card", () => {
+test("home keeps a generic share while the review page has no share entry", () => {
   const home = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
   const homeScript = fs.readFileSync(path.join(root, "pages/home/index.js"), "utf8");
   const memory = fs.readFileSync(path.join(root, "pages/memory/index.wxml"), "utf8");
   const memoryScript = fs.readFileSync(path.join(root, "pages/memory/index.js"), "utf8");
 
-  // Trial home is a device status board. Summary copy still loads for menu share.
-  assert.doesNotMatch(home, /每日摘要/);
+  assert.doesNotMatch(home, /每日摘要|今日摘要/);
   assert.doesNotMatch(home, /open-type="share"/);
   assert.doesNotMatch(home, /\{\{dailySummaryText \|\| todayOverview\}\}/);
   assert.match(homeScript, /次对话/);
   assert.match(homeScript, /onShareAppMessage/);
-  assert.match(homeScript, /dailySummaryText/);
+  assert.match(homeScript, /Memoria · 每天的对话回顾/);
+  assert.doesNotMatch(homeScript, /countCreatedToday/);
 
-  assert.match(memory, /分享这一天/);
-  assert.match(memory, /open-type="share"/);
+  assert.doesNotMatch(memory, /分享这一天|open-type="share"|bindtap="chooseDay"|memory-strip/);
   assert.match(memory, /\{\{item\.preview\}\}/);
-  assert.match(memoryScript, /onShareAppMessage/);
+  assert.doesNotMatch(memoryScript, /onShareAppMessage|chooseDay|selectedDate|dateStrip/);
   assert.match(memoryScript, /preview: item\.preview \|\| ""/);
 });

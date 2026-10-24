@@ -55,7 +55,7 @@ def _doubao_pool() -> tuple[DoubaoTTSPool, DoubaoConnection]:
     pool = DoubaoTTSPool(
         DoubaoTTSConfig(
             api_key="test",
-            speaker="zh_male_yangguangqingnian_uranus_bigtts",
+            speaker="zh_female_kailangjiejie_uranus_bigtts",
             pool_size=1,
         )
     )
@@ -67,7 +67,7 @@ async def test_doubao_pool_reports_active_connections_and_refill_reconnects() ->
     pool = DoubaoTTSPool(
         DoubaoTTSConfig(
             api_key="test",
-            speaker="zh_male_yangguangqingnian_uranus_bigtts",
+            speaker="zh_female_kailangjiejie_uranus_bigtts",
             pool_size=1,
         ),
         metrics=MetricsRegistry(),
@@ -104,7 +104,7 @@ async def test_doubao_active_connections_are_aggregated_across_pools(
     metrics = MetricsRegistry()
     config = DoubaoTTSConfig(
         api_key="test",
-        speaker="zh_male_yangguangqingnian_uranus_bigtts",
+        speaker="zh_female_kailangjiejie_uranus_bigtts",
         pool_size=1,
     )
     first = DoubaoTTSPool(config, metrics=metrics)
@@ -126,7 +126,7 @@ async def test_doubao_release_removes_a_socket_already_marked_closed() -> None:
     pool = DoubaoTTSPool(
         DoubaoTTSConfig(
             api_key="test",
-            speaker="zh_male_yangguangqingnian_uranus_bigtts",
+            speaker="zh_female_kailangjiejie_uranus_bigtts",
             pool_size=1,
         ),
         metrics=metrics,
@@ -152,7 +152,7 @@ async def test_doubao_acquire_replaces_a_server_expired_pooled_connection() -> N
     pool = DoubaoTTSPool(
         DoubaoTTSConfig(
             api_key="test",
-            speaker="zh_male_yangguangqingnian_uranus_bigtts",
+            speaker="zh_female_kailangjiejie_uranus_bigtts",
             pool_size=1,
         ),
         metrics=metrics,

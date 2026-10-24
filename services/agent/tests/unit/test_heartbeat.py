@@ -160,9 +160,10 @@ async def test_release_tag_rejection_logs_status_and_reported_tag(
     """A stack tag split must be distinguishable from Control API being down."""
 
     caplog.set_level(logging.WARNING, logger="services.agent.src.heartbeat")
+    planted = "松鼠在第六号站台等一封蓝色的信"
 
     async def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(409, json={"detail": "agent release tag does not match config"})
+        return httpx.Response(409, json={"detail": planted})
 
     heartbeat = _heartbeat(
         tmp_path / "heartbeat.json",
@@ -183,9 +184,11 @@ async def test_release_tag_rejection_logs_status_and_reported_tag(
         if record.message.startswith("agent heartbeat rejected")
     ]
     assert rejected, f"no rejection logged; got {[r.message for r in caplog.records]}"
-    assert "status=409" in rejected[0]
-    assert "release_tag=20260831-2215-miniprogram-bind-view-control-api" in rejected[0]
-    assert "agent release tag does not match config" in rejected[0]
+    assert rejected[0] == (
+        "agent heartbeat rejected error_type=HTTPStatusError error_code=409 "
+        "release_tag=20260831-2215-miniprogram-bind-view-control-api"
+    )
+    assert planted not in caplog.text
 
 
 @pytest.mark.asyncio
