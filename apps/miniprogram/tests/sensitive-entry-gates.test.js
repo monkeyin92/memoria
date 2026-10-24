@@ -8,6 +8,7 @@ const binding = require("../utils/device-binding");
 const { CONTROL_API_BASE_URL } = require("../config");
 const contracts = require("../utils/multi-subject-contracts");
 const { canonicalManifest } = require("./manifest-fixtures");
+const { consentStamp } = require("../utils/child-consent");
 
 const storage = {};
 let pageDefinition = null;
@@ -208,7 +209,7 @@ test("guardian config actions use the config seam, not the usage capability", as
     });
     try {
       delete storage["memoria:miniprogram:device:binding-manifest"];
-      storage["memoria:miniprogram:child-info-consent"] = "accepted";
+      storage["memoria:miniprogram:child-info-consent"] = consentStamp();
       page.setData({ minorUserId: "person_child" });
       await page.createLink();
       assert.equal(createCalls, 0, "配置动作不得依赖使用类能力门禁");
@@ -259,7 +260,7 @@ test("guardian config actions proceed only when the policy decision allows", asy
         reason_code: "guardian_summary_forbidden",
         obligations: [],
       });
-      storage["memoria:miniprogram:child-info-consent"] = "accepted";
+      storage["memoria:miniprogram:child-info-consent"] = consentStamp();
       page.setData({ minorUserId: "person_child" });
       await page.createLink();
       assert.equal(createCalls, 0);

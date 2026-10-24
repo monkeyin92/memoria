@@ -10,6 +10,7 @@ const {
   CHILD_INFO_CONSENT_KEY,
   CHILD_INFO_CONSENT_VERSIONS_KEY,
   grantChildInfoConsent,
+  consentStamp,
   recordInternalTestConsentVersions,
 } = require("../utils/child-consent");
 
@@ -44,18 +45,18 @@ test("consent stays locked for a pending agreement and a blank effective date", 
   assert.equal(legal.consentLocked(false, legal.EFFECTIVE_ON), false);
 });
 
-test("a grant outside the unlock path writes accepted and leaves versions absent", () => {
+test("a grant stores the current versions and leaves the unlock record absent", () => {
   withWx((storage) => {
     grantChildInfoConsent();
     recordInternalTestConsentVersions(false);
-    assert.equal(storage[CHILD_INFO_CONSENT_KEY], "accepted");
+    assert.equal(storage[CHILD_INFO_CONSENT_KEY], consentStamp());
     assert.equal(Object.hasOwn(storage, CHILD_INFO_CONSENT_VERSIONS_KEY), false);
   });
   withWx((storage) => {
     storage[CHILD_INFO_CONSENT_KEY] = "accepted";
     grantChildInfoConsent();
     recordInternalTestConsentVersions(false);
-    assert.equal(storage[CHILD_INFO_CONSENT_KEY], "accepted");
+    assert.equal(storage[CHILD_INFO_CONSENT_KEY], consentStamp());
     assert.equal(Object.hasOwn(storage, CHILD_INFO_CONSENT_VERSIONS_KEY), false);
   });
 });
@@ -67,7 +68,7 @@ test("an unlock-path grant records versions and keeps the consent string accepte
     grantChildInfoConsent();
     recordInternalTestConsentVersions(true);
     const after = Date.now();
-    assert.equal(storage[CHILD_INFO_CONSENT_KEY], "accepted");
+    assert.equal(storage[CHILD_INFO_CONSENT_KEY], consentStamp());
     const versions = storage[CHILD_INFO_CONSENT_VERSIONS_KEY];
     assert.equal(versions.guideVersion, legal.GUIDE_VERSION);
     assert.equal(versions.consentDocVersion, legal.CONSENT_DOC_VERSION);

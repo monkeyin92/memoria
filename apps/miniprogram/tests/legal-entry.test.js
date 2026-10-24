@@ -7,6 +7,7 @@ const { loadPage } = require("../scripts/mp-harness/runtime");
 const { renderPage } = require("../scripts/mp-harness/render");
 const fx = require("../scripts/mp-harness/fixtures");
 const { EFFECTIVE_ON, consentLocked, releaseChip } = require("../utils/legal-release");
+const { consentStamp, CHILD_INFO_CONSENT_KEY } = require("../utils/child-consent");
 const { AGREEMENT_PENDING, presentUserAgreement } = require("../utils/legal-doc");
 
 function visibleText(html) {
@@ -248,5 +249,44 @@ test("parent-visible login and consent surfaces do not say 草稿", async () => 
     } finally {
       harness.restore();
     }
+  }
+});
+
+test("confirming stores the versions and a stored older version sends the guardian back", async () => {
+  const harness = loadPage("pages/child-consent/index", {
+    ...fx.guest(),
+    files: { "legal/user-agreement.md": READY_AGREEMENT },
+    effectiveOn: "2026年4月1日",
+  });
+  await harness.run({ redirect: "/pages/home/index" });
+  try {
+    harness.page.toggleConsent();
+    harness.page.confirmChildConsent();
+    const stored = harness.wxCalls.filter(
+      (call) => call.name === "setStorageSync" && call.args[0] === CHILD_INFO_CONSENT_KEY,
+    );
+    assert.deepEqual(stored.map((call) => call.args[1]), [consentStamp()]);
+  } finally {
+    harness.restore();
+  }
+
+  const stale = loadPage("pages/bind/index", {
+    ...fx.authed(),
+    storage: { ...fx.STORAGE, [CHILD_INFO_CONSENT_KEY]: "accepted" },
+  });
+  stale.page._claimLoaded = true;
+  await stale.page.onShow();
+  try {
+    assert.deepEqual(navigations(stale), ["/pages/child-consent/index?redirect=%2Fpages%2Fhome%2Findex"]);
+  } finally {
+    stale.restore();
+  }
+
+  const current = loadPage("pages/bind/index", fx.authed());
+  await current.run();
+  try {
+    assert.deepEqual(navigations(current), []);
+  } finally {
+    current.restore();
   }
 });

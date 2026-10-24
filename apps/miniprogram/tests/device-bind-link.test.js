@@ -127,7 +127,7 @@ test("opening the onboarding page from WeChat's scanner starts with the scanned 
   page.onLoad({ q: encodeURIComponent(LINK) });
   const previousWx = global.wx;
   global.wx = {
-    getStorageSync: () => "accepted",
+    getStorageSync: () => require("../utils/child-consent").consentStamp(),
     navigateTo() {},
   };
   const scanned = [];
