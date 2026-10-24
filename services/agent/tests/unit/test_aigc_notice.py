@@ -73,8 +73,18 @@ def _context(**overrides: Any) -> SimpleNamespace:
     return SimpleNamespace(**values)
 
 
-def test_defaults_are_the_compliance_short_long_short_short_tone() -> None:
+def test_the_notice_is_off_unless_a_deployment_turns_it_on() -> None:
     config = AigcNoticeConfig()
+
+    assert config.enabled is False
+    assert config.position_enabled("opening") is False
+    assert config.position_enabled("closing") is False
+    assert config.marker_pcm("opening") is None
+    assert config.marker_pcm("closing") is None
+
+
+def test_the_enabled_notice_keeps_the_short_long_short_short_tone() -> None:
+    config = AigcNoticeConfig(enabled=True)
 
     assert config.enabled is True
     assert config.mode == "tone"
@@ -107,7 +117,7 @@ def test_tone_pcm_is_generated_in_memory_without_writing_a_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    config = AigcNoticeConfig()
+    config = AigcNoticeConfig(enabled=True)
 
     pcm = config.marker_pcm("opening")
 
@@ -123,19 +133,29 @@ def test_tone_pcm_is_generated_in_memory_without_writing_a_file(
 
 def test_disabled_and_position_flags_play_nothing() -> None:
     assert AigcNoticeConfig(enabled=False).marker_pcm("opening") is None
-    assert AigcNoticeConfig(mode="none").marker_pcm("closing") is None
-    assert AigcNoticeConfig(opening_enabled=False).marker_pcm("opening") is None
-    assert AigcNoticeConfig(closing_enabled=False).marker_pcm("closing") is None
+    assert AigcNoticeConfig(enabled=True, mode="none").marker_pcm("closing") is None
+    assert (
+        AigcNoticeConfig(enabled=True, opening_enabled=False).marker_pcm("opening")
+        is None
+    )
+    assert (
+        AigcNoticeConfig(enabled=True, closing_enabled=False).marker_pcm("closing")
+        is None
+    )
 
 
 def test_speech_mode_without_a_resource_or_with_a_missing_file_plays_nothing(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     assert (
-        AigcNoticeConfig(mode="speech", speech_resource="").marker_pcm("opening") is None
+        AigcNoticeConfig(
+            enabled=True, mode="speech", speech_resource=""
+        ).marker_pcm("opening")
+        is None
     )
 
     config = AigcNoticeConfig(
+        enabled=True,
         mode="speech",
         speech_resource="missing_intro",
         speech_root=str(tmp_path),
@@ -155,6 +175,7 @@ def test_speech_mode_plays_an_external_24k_wav_at_native_speed(
         handle.setframerate(AIGC_NOTICE_SAMPLE_RATE_HZ)
         handle.writeframes(b"\x01\x00" * 480)
     config = AigcNoticeConfig(
+        enabled=True,
         mode="speech",
         speech_resource="approved_intro",
         speech_root=str(tmp_path),
@@ -171,6 +192,7 @@ def test_speech_mode_plays_an_external_24k_wav_at_native_speed(
     with caplog.at_level("WARNING"):
         assert (
             AigcNoticeConfig(
+                enabled=True,
                 mode="speech",
                 speech_resource="slow",
                 speech_root=str(tmp_path),
@@ -182,8 +204,9 @@ def test_speech_mode_plays_an_external_24k_wav_at_native_speed(
 
 def test_from_env_defaults_and_boolean_parsing() -> None:
     assert AigcNoticeConfig.from_env({}).mode == "tone"
-    assert AigcNoticeConfig.from_env({}).enabled is True
+    assert AigcNoticeConfig.from_env({}).enabled is False
     assert AigcNoticeConfig.from_env({"AIGC_NOTICE_ENABLED": "off"}).enabled is False
+    assert AigcNoticeConfig.from_env({"AIGC_NOTICE_ENABLED": "true"}).enabled is True
     config = AigcNoticeConfig.from_env(
         {
             "AIGC_NOTICE_MODE": "speech",
@@ -216,7 +239,7 @@ def test_opening_ready_at_follows_the_whole_clip_then_the_configured_gap() -> No
 
 @pytest.mark.asyncio
 async def test_opening_marker_plays_configured_pcm_and_clears_pending() -> None:
-    config = AigcNoticeConfig()
+    config = AigcNoticeConfig(enabled=True)
     host = _NoticeHost(config)
     context = _context(aigc_opening_marker_pending=True)
 
@@ -228,7 +251,9 @@ async def test_opening_marker_plays_configured_pcm_and_clears_pending() -> None:
 
 @pytest.mark.asyncio
 async def test_opening_marker_is_silent_without_a_resource_and_clears_pending() -> None:
-    host = _NoticeHost(AigcNoticeConfig(mode="speech", speech_resource=""))
+    host = _NoticeHost(
+        AigcNoticeConfig(enabled=True, mode="speech", speech_resource="")
+    )
     context = _context(aigc_opening_marker_pending=True)
 
     await host._speak_aigc_opening_marker(context)  # type: ignore[arg-type]
@@ -248,7 +273,7 @@ async def test_opening_lead_in_waits_for_the_remaining_interval(
 
     monkeypatch.setattr(media_session_aigc_notice.asyncio, "sleep", fake_sleep)
     monkeypatch.setattr(media_session_aigc_notice.time, "monotonic", lambda: 10.0)
-    host = _NoticeHost(AigcNoticeConfig())
+    host = _NoticeHost(AigcNoticeConfig(enabled=True))
     context = _context(aigc_opening_marker_ready_at=11.5)
 
     await host._wait_aigc_opening_lead_in(context)  # type: ignore[arg-type]
@@ -257,7 +282,7 @@ async def test_opening_lead_in_waits_for_the_remaining_interval(
 
 
 def test_closing_marker_pending_only_when_enabled_and_idle() -> None:
-    host = _StandbyHost(AigcNoticeConfig())
+    host = _StandbyHost(AigcNoticeConfig(enabled=True))
 
     assert host._aigc_closing_marker_pending(_context()) is True  # type: ignore[arg-type]
     assert (
@@ -476,6 +501,7 @@ async def test_opening_marker_keeps_device_wake_ack_and_returns_to_listening() -
     )
 
     config = AigcNoticeConfig(
+        enabled=True,
         tone_short_ms=20,
         tone_long_ms=30,
         tone_gap_ms=0,
@@ -577,6 +603,7 @@ async def test_opening_marker_returns_to_listening_without_a_wake_ack() -> None:
     )
 
     config = AigcNoticeConfig(
+        enabled=True,
         tone_short_ms=20,
         tone_long_ms=30,
         tone_gap_ms=0,
@@ -685,6 +712,7 @@ async def test_opening_marker_ended_before_stream_completion_releases_output_and
             return chunks()
 
     config = AigcNoticeConfig(
+        enabled=True,
         tone_short_ms=20,
         tone_long_ms=30,
         tone_gap_ms=0,
@@ -906,6 +934,7 @@ async def test_opening_marker_plays_and_releases_the_floor_after_device_ended() 
             return chunks()
 
     config = AigcNoticeConfig(
+        enabled=True,
         tone_short_ms=20,
         tone_long_ms=30,
         tone_gap_ms=0,

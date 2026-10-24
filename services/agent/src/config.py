@@ -246,10 +246,10 @@ class AgentSettings(BaseSettings):
         ),
     )
     # AIGC notice hooks at the start and end of one device conversation round.
-    # Compliance 2026-10-20 18:52: on by default, default mode is the
-    # short-long / short-short pure-tone rhythm (generated from these
-    # parameters in memory; no audio file, no spoken prompt text).
-    aigc_notice_enabled: bool = Field(default=True, alias="AIGC_NOTICE_ENABLED")
+    # Off by default since 2026-10-24: the opening and closing tones are not
+    # played unless a deployment sets AIGC_NOTICE_ENABLED. The mode and rhythm
+    # stay configured, so turning it back on restores them unchanged.
+    aigc_notice_enabled: bool = Field(default=False, alias="AIGC_NOTICE_ENABLED")
     aigc_notice_mode: Literal["tone", "speech", "none"] = Field(
         default="tone", alias="AIGC_NOTICE_MODE"
     )

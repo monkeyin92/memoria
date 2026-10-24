@@ -29,10 +29,11 @@ class Backlight;
 // dot face from memoria_dot_face.h. The mascot scene still times the boot
 // beat, the caption band, and the chrome. While the dot face is on screen the
 // scene does not draw. LVGL keeps the text and the binding QR card. A server
-// emotion name never selects a face. While the device is getting online the
-// face lifts and the status text sits on the band below it. The QR card is a
-// screen of its own; no other text is drawn over it. Frames whose inputs all
-// match the last painted frame skip the rebuild and the invalidate.
+// emotion name picks the face only while the device speaks. While the device is
+// getting online the face lifts and the status text sits on the band below it.
+// The QR card is a screen of its own; no other text is drawn over it. Frames
+// whose inputs all match the last painted frame skip the rebuild and the
+// invalidate.
 class MemoriaMascotDisplay : public SpiLcdDisplay {
 public:
     MemoriaMascotDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,
@@ -155,6 +156,10 @@ private:
     std::atomic<uint32_t> error_until_ms_{0};
     std::atomic<bool> user_spoke_{false};
     std::atomic<bool> qr_visible_{false};
+    // The reply expression the server last sent, one byte per slot so the
+    // animation task can read it without sharing the string. Empty until one
+    // arrives, and a speaking frame reads it; every other state ignores it.
+    std::atomic<char> expression_[memoria::kExpressionNameMax] = {};
 #if CONFIG_MEMORIA_BENCH_SERIAL
     std::atomic<bool> bench_status_requested_{false};
 #endif
