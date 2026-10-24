@@ -6,7 +6,7 @@ const REMINDER_CHECK_MS = 60 * 1000;
 const PRODUCT_POSITIONING =
   "Memoria 是家庭桌面档案终端：在设备上使用，在手机上查看和管理。";
 const AI_DISCLOSURE =
-  "设备回应由人工智能生成，会在交互中明确标识。";
+  "设备回应由人工智能生成，对话开始时会响一声提示音。";
 const TRAINING_DEFAULT_OFF = "你的对话与声音默认不用于模型训练。";
 
 const CHAT_MODEL_FILING_LINES = Object.freeze({
