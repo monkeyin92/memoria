@@ -171,6 +171,55 @@ bool CrisisEyesClosed(uint32_t elapsed_ms) {
     return elapsed_ms % kCrisisBlinkPeriodMs >= kCrisisBlinkPeriodMs - kCrisisBlinkClosedMs;
 }
 
+namespace {
+
+// The reply expressions the seven faces can show, and the face each one draws.
+// Names the server sends and the media edge does not fold are both listed, so
+// the panel reads either spelling. Anything else stays the calm face.
+struct ExpressionFace {
+    const char* name;
+    FaceId face;
+};
+
+constexpr ExpressionFace kExpressionFaces[] = {
+    {"happy", FaceId::kSpeak},
+    {"caring", FaceId::kSpeak},
+    {"loving", FaceId::kSpeak},
+    {"curious", FaceId::kThink},
+    {"thinking", FaceId::kThink},
+    {"sad", FaceId::kCalm},
+    {"surprised", FaceId::kGreet},
+    {"neutral", FaceId::kCalm},
+};
+
+bool SameToken(const char* value, const char* name) {
+    for (int i = 0; i < kExpressionNameMax; ++i) {
+        if (value[i] != name[i]) {
+            return false;
+        }
+        if (value[i] == '\0') {
+            return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
+FaceId FaceForExpression(const char* expression) {
+    // No reply expression yet: the device is simply speaking, so it keeps the
+    // speaking face rather than dropping to calm between replies.
+    if (expression == nullptr || expression[0] == '\0') {
+        return FaceId::kSpeak;
+    }
+    for (const ExpressionFace& entry : kExpressionFaces) {
+        if (SameToken(expression, entry.name)) {
+            return entry.face;
+        }
+    }
+    return FaceId::kCalm;
+}
+
 FaceId FaceForFacts(const FaceFacts& facts) {
     if (facts.crisis) {
         return FaceId::kCalm;
@@ -192,7 +241,7 @@ FaceId FaceForFacts(const FaceFacts& facts) {
         case kFaceStateListening:
             return facts.user_spoke ? FaceId::kThink : FaceId::kListen;
         case kFaceStateSpeaking:
-            return FaceId::kSpeak;
+            return FaceForExpression(ReceivedExpression(facts));
         case kFaceStateAudioTesting:
             return FaceId::kListen;
         default:

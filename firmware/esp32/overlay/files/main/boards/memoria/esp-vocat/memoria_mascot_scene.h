@@ -78,8 +78,8 @@ public:
     static constexpr int kMaxDirty = 6;
     // Code-drawn flecks (thinking dots, hearts, sparkles) carried on a placement.
     static constexpr int kOverlayCount = 4;
-    // Screen row the mascot's feet stand on. It stands low enough that the
-    // top-centre AIGC badge, and a hop or a breath under it, stay clear.
+    // Screen row the mascot's feet stand on. It stands low enough that a hop
+    // or a breath keeps the whole body inside the round panel.
     static constexpr int kRestFootY = 304;
     static constexpr int kRestScaleQ = 240;  // 0.9375 in 8.8 fixed point
     // Captioned layout: the mascot shrinks onto a higher ground row and the
