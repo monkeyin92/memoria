@@ -133,9 +133,15 @@ def test_tone_pcm_is_generated_in_memory_without_writing_a_file(
 
 def test_disabled_and_position_flags_play_nothing() -> None:
     assert AigcNoticeConfig(enabled=False).marker_pcm("opening") is None
-    assert AigcNoticeConfig(mode="none").marker_pcm("closing") is None
-    assert AigcNoticeConfig(opening_enabled=False).marker_pcm("opening") is None
-    assert AigcNoticeConfig(closing_enabled=False).marker_pcm("closing") is None
+    assert AigcNoticeConfig(enabled=True, mode="none").marker_pcm("closing") is None
+    assert (
+        AigcNoticeConfig(enabled=True, opening_enabled=False).marker_pcm("opening")
+        is None
+    )
+    assert (
+        AigcNoticeConfig(enabled=True, closing_enabled=False).marker_pcm("closing")
+        is None
+    )
 
 
 def test_speech_mode_without_a_resource_or_with_a_missing_file_plays_nothing(
@@ -245,7 +251,9 @@ async def test_opening_marker_plays_configured_pcm_and_clears_pending() -> None:
 
 @pytest.mark.asyncio
 async def test_opening_marker_is_silent_without_a_resource_and_clears_pending() -> None:
-    host = _NoticeHost(AigcNoticeConfig(mode="speech", speech_resource=""))
+    host = _NoticeHost(
+        AigcNoticeConfig(enabled=True, mode="speech", speech_resource="")
+    )
     context = _context(aigc_opening_marker_pending=True)
 
     await host._speak_aigc_opening_marker(context)  # type: ignore[arg-type]
