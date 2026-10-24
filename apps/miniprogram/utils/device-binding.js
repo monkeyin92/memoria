@@ -73,7 +73,7 @@ const CONSENT_OFFERS = Object.freeze([
     modes: ["parent_for_child"],
     label: "孩子使用规则",
     description:
-      "设备会陪孩子聊天和学习；每段对话开始有一声提示音；对话会为你生成小结；孩子随时可以喊停",
+      "设备会陪孩子聊天和学习；回应由 AI 生成，设备里说话的是合成语音，不是真人；对话会为你生成小结；孩子随时可以喊停",
     defaultChecked: false,
     requiresParentSelfAcceptance: false,
     requiredForSubmit: true,

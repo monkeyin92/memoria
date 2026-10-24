@@ -343,6 +343,9 @@ test("consent catalogs keep sensitive capabilities off by default", () => {
   const childRules = minorOffers.find((offer) => offer.id === "offer_child_rules_v1");
   assert.equal(childRules.defaultChecked, false);
   assert.equal(childRules.requiredForSubmit, true);
+  // 开头提示音已默认关掉，文案改成与设备实际说的话一致。
+  assert.match(childRules.description, /设备里说话的是合成语音，不是真人/);
+  assert.doesNotMatch(childRules.description, /提示音|角标/);
   assert.equal(
     minorOffers.filter((offer) => offer.requiredForSubmit).map((offer) => offer.id).join(","),
     "offer_child_rules_v1",
