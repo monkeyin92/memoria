@@ -687,7 +687,7 @@ class OnboardingController {
       saveOnboardingSessionId(session.onboarding_session_id);
       const nextState = clientStateForSession(session);
       if (nextState) this._setState(nextState, { force: true });
-      if (nextState === "complete" && isReprovisionSession(session)) {
+      if (nextState === "complete") {
         clearOnboardingSessionId();
         return session;
       }
