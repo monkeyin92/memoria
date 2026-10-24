@@ -9,6 +9,13 @@ POSTGRES_IMAGE="${MEMORIA_TEST_POSTGRES_IMAGE:-pgvector/pgvector:0.8.1-pg17-book
 POSTGRES_CONTAINER="${MEMORIA_TEST_POSTGRES_CONTAINER:-memoria-authority-gate-$$}"
 export POSTGRES_CONTAINER
 
+# This gate needs a throwaway cluster for first-boot init, and its cleanup
+# removes the container. Never point it at the shared CI database.
+if [ "$POSTGRES_CONTAINER" = memoria-ci-pg ]; then
+  echo "refusing to use the shared CI container memoria-ci-pg" >&2
+  exit 1
+fi
+
 cleanup() {
   docker rm -f "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
 }

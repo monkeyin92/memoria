@@ -9,7 +9,7 @@ on:
 
 jobs:
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.RUNNER_LABEL_JSON || '["self-hosted","macOS","ARM64","memoria-mac"]') }}
     permissions:
       contents: read
       pull-requests: read
@@ -91,14 +91,14 @@ jobs:
   firmware:
     needs: changes
     if: needs.changes.outputs.firmware == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.RUNNER_LABEL_JSON || '["self-hosted","macOS","ARM64","memoria-mac"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
       - name: Install ffmpeg for board ogg AIGC decode check
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+        run: command -v ffmpeg >/dev/null 2>&1 || brew install ffmpeg
       - name: Require host C++ compiler
         run: c++ --version
       - name: Firmware host regression tests
@@ -111,39 +111,41 @@ jobs:
   firmware-build:
     needs: changes
     if: needs.changes.outputs.firmware_build == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.RUNNER_LABEL_JSON || '["self-hosted","macOS","ARM64","memoria-mac"]') }}
     timeout-minutes: 45
-    container:
-      image: espressif/idf:v6.0.2
     env:
       MEMORIA_ESP_IDF_PATH: /opt/esp/idf
+      IDF_IMAGE: espressif/idf:v6.0.2
     steps:
       - uses: actions/checkout@v4
-      - name: Tools for the overlay check
-        run: apt-get update -qq && apt-get install -y -qq ripgrep ffmpeg
-      - name: Trust the workspace checkout
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      # GitHub's container: skips the image entrypoint, so the IDF Python env
-      # is not exported until export.sh is sourced.
-      - name: Build firmware from the locked upstream and overlay
+      # The macOS runner cannot use a job-level container:, so the locked IDF
+      # image runs as a one-shot container with the checkout bind-mounted.
+      - name: Build firmware and check the overlay in the IDF container
         shell: bash
         run: |
-          . /opt/esp/idf/export.sh >/dev/null
-          export MEMORIA_PYTHON_BIN="$(command -v python)"
-          cd firmware/esp32
-          ./scripts/build.sh --no-idf-install
-      - name: Overlay and artifact checks
-        shell: bash
-        run: |
-          . /opt/esp/idf/export.sh >/dev/null
-          export MEMORIA_PYTHON_BIN="$(command -v python)"
-          cd firmware/esp32
-          ./scripts/check-overlay.sh
+          set -euo pipefail
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            --workdir /workspace \
+            --env MEMORIA_ESP_IDF_PATH \
+            --env GITHUB_WORKSPACE=/workspace \
+            "$IDF_IMAGE" \
+            bash -c '
+              set -euo pipefail
+              apt-get update -qq
+              apt-get install -y -qq ripgrep ffmpeg
+              git config --global --add safe.directory /workspace
+              . /opt/esp/idf/export.sh >/dev/null
+              export MEMORIA_PYTHON_BIN="$(command -v python)"
+              cd firmware/esp32
+              ./scripts/build.sh --no-idf-install
+              ./scripts/check-overlay.sh
+            '
 
   agent:
     needs: changes
     if: needs.changes.outputs.agent == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.RUNNER_LABEL_JSON || '["self-hosted","macOS","ARM64","memoria-mac"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -178,23 +180,9 @@ jobs:
   python-gates:
     needs: changes
     if: needs.changes.outputs.python == 'true'
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: pgvector/pgvector:0.8.1-pg17-bookworm
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+    runs-on: ${{ fromJSON(vars.RUNNER_LABEL_JSON || '["self-hosted","macOS","ARM64","memoria-mac"]') }}
     env:
-      MEMORIA_TEST_POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/postgres
+      MEMORIA_TEST_POSTGRES_DSN: postgresql://memoria_ci@127.0.0.1:5433/memoria_ci_gates
     steps:
       - uses: actions/checkout@v4
         with:
@@ -203,12 +191,13 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install ffmpeg for labelled line AIGC tests
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
-      - uses: bufbuild/buf-setup-action@v1
-        with:
-          github_token: ${{ github.token }}
+        run: command -v ffmpeg >/dev/null 2>&1 || brew install ffmpeg
+      - name: Install buf
+        run: command -v buf >/dev/null 2>&1 || brew install bufbuild/buf/buf
       - name: Install
         run: uv sync --frozen --all-extras
+      - name: Ensure the local CI PostgreSQL gates database
+        run: scripts/ensure_ci_postgres.sh --database memoria_ci_gates
       - name: Ruff
         run: uv run ruff check .
       - name: Module line budgets
@@ -276,48 +265,89 @@ jobs:
 
   # The Pytest step alone took 16 minutes in one process. The suite's PostgreSQL
   # tests share roles in one cluster and cannot run in parallel against it, so
-  # the files are split across runners, each with its own PostgreSQL service
-  # (scripts/ci_test_shards.py). `python` below folds the coverage back together.
+  # the files are split across four shards (scripts/ci_test_shards.py). The
+  # single self-hosted runner serializes the shards against one local container;
+  # `python` below folds the coverage back together.
   python-shards:
     needs: changes
     if: needs.changes.outputs.python == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.RUNNER_LABEL_JSON || '["self-hosted","macOS","ARM64","memoria-mac"]') }}
     strategy:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
-    services:
-      postgres:
-        image: pgvector/pgvector:0.8.1-pg17-bookworm
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     env:
-      MEMORIA_TEST_POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/postgres
+      MEMORIA_TEST_POSTGRES_DSN: postgresql://memoria_ci@127.0.0.1:5433/memoria_ci_shard_${{ matrix.shard }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
       - name: Install ffmpeg for labelled line AIGC tests
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+        run: command -v ffmpeg >/dev/null 2>&1 || brew install ffmpeg
       - name: Install
         run: uv sync --frozen --all-extras
+      - name: Ensure the local CI PostgreSQL shard ${{ matrix.shard }} database
+        run: scripts/ensure_ci_postgres.sh --database memoria_ci_shard_${{ matrix.shard }}
+      - name: Verify local PostgreSQL
+        run: |
+          uv run python - <<'PY'
+          import os
+          import sys
+
+          import psycopg
+
+          dsn = os.environ.get("MEMORIA_TEST_POSTGRES_DSN")
+          if not dsn:
+              print(
+                  "本机 pg 未就绪(127.0.0.1:5433)："
+                  "MEMORIA_TEST_POSTGRES_DSN 未设置",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          try:
+              with psycopg.connect(dsn, connect_timeout=5) as conn:
+                  with conn.cursor() as cur:
+                      cur.execute("select 1")
+                      cur.fetchone()
+          except Exception as exc:
+              print(
+                  "本机 pg 未就绪(127.0.0.1:5433)："
+                  f"{type(exc).__name__}: {exc}",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          print("local PostgreSQL is ready")
+          PY
+      - name: Remove stale coverage and durations for shard ${{ matrix.shard }}
+        run: |
+          # The self-hosted workspace survives between runs; stale coverage can
+          # mix statement and branch formats, and stale durations mislead the shard map.
+          shard="${{ matrix.shard }}"
+          rm -f -- \
+            "coverage-shard-${shard}.data" \
+            "coverage-shard-${shard}.data".* \
+            "durations-shard-${shard}.log"
       - name: Pytest (shard ${{ matrix.shard }} of 4)
         env:
-          MEMORIA_TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          # The joint restore drill shells out to docker exec; the macOS runner
+          # has no docker socket, so leave it empty and let that test skip.
+          MEMORIA_TEST_POSTGRES_CONTAINER: ""
           COVERAGE_FILE: coverage-shard-${{ matrix.shard }}.data
         run: |
           set -o pipefail
-          mapfile -t files < <(uv run python scripts/ci_test_shards.py --shards 4 --index ${{ matrix.shard }})
+          files=()
+          while IFS= read -r f; do
+            if [[ -n "$f" ]]; then
+              files+=("$f")
+            fi
+          done < <(uv run python scripts/ci_test_shards.py --shards 4 --index ${{ matrix.shard }})
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "ci_test_shards.py returned no test files for shard ${{ matrix.shard }}" >&2
+            exit 1
+          fi
           echo "${#files[@]} test files"
           # Coverage is checked on the combined data; a shard alone is far below it.
           # Per-test durations feed scripts/ci_test_durations.json (see ci_test_shards.py).
@@ -343,7 +373,7 @@ jobs:
   python:
     needs: [changes, control-api-image, python-gates, python-shards]
     if: ${{ always() && needs.changes.outputs.python == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.RUNNER_LABEL_JSON || '["self-hosted","macOS","ARM64","memoria-mac"]') }}
     steps:
       - name: Every python job passed
         run: |
@@ -363,6 +393,11 @@ jobs:
         with:
           pattern: coverage-shard-*
           merge-multiple: true
+      - name: Remove stale combined coverage data
+        run: |
+          # Downloads land as coverage-shard-*.data. Any .coverage* file is left
+          # over from an earlier run in this persisted self-hosted workspace.
+          rm -f -- .coverage .coverage.*
       - name: Coverage gates
         run: |
           uv run coverage combine coverage-shard-*.data
@@ -374,7 +409,7 @@ jobs:
   media-edge:
     needs: changes
     if: needs.changes.outputs.media_edge == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.RUNNER_LABEL_JSON || '["self-hosted","macOS","ARM64","memoria-mac"]') }}
     defaults:
       run:
         working-directory: services/media_edge
@@ -385,9 +420,7 @@ jobs:
           go-version: "1.26.10"
           cache-dependency-path: services/media_edge/go.sum
       - name: Install Opus build dependency
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libopus-dev pkg-config
+        run: brew list opus pkg-config >/dev/null 2>&1 || brew install opus pkg-config
       - uses: arduino/setup-protoc@v3
         with:
           version: "35.1"
@@ -415,7 +448,7 @@ jobs:
   agent-image:
     needs: changes
     if: needs.changes.outputs.python == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.RUNNER_LABEL_JSON || '["self-hosted","macOS","ARM64","memoria-mac"]') }}
     steps:
       - uses: actions/checkout@v4
       - name: Build the Agent image with its in-build release gate
@@ -425,11 +458,14 @@ jobs:
           docker run --rm --network none
           --entrypoint /app/.venv/bin/python memoria-agent:ci
           -m scripts.verify_agent_release_artifact
+      - name: Remove the CI image
+        if: always()
+        run: docker image rm -f memoria-agent:ci >/dev/null 2>&1 || true
 
   control-api-image:
     needs: changes
     if: needs.changes.outputs.python == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.RUNNER_LABEL_JSON || '["self-hosted","macOS","ARM64","memoria-mac"]') }}
     env:
       RELEASE_COMMIT: ${{ github.sha }}
       RELEASE_TAG: control-ci-${{ github.sha }}
@@ -484,23 +520,45 @@ jobs:
           -m scripts.verify_control_release_artifact
           --expected-commit "$RELEASE_COMMIT"
           --expected-tag "$RELEASE_TAG" --require-metadata
+      - name: Remove the CI images
+        if: always()
+        run: |
+          docker image rm -f "$CANDIDATE_IMAGE" >/dev/null 2>&1 || true
+          docker image rm -f "$BASE_IMAGE" >/dev/null 2>&1 || true
 
   media-edge-image:
     needs: changes
     if: needs.changes.outputs.media_edge == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.RUNNER_LABEL_JSON || '["self-hosted","macOS","ARM64","memoria-mac"]') }}
+    env:
+      TRIVY_IMAGE: aquasec/trivy:0.67.0
     steps:
       - uses: actions/checkout@v4
       - name: Build media edge image
         run: docker build -f infra/Dockerfile.media-edge -t memoria-media-edge:ci .
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: memoria-media-edge:ci
-          format: table
-          exit-code: "1"
-          ignore-unfixed: true
-          severity: CRITICAL,HIGH
+        run: |
+          set -euo pipefail
+          if ! docker image inspect "$TRIVY_IMAGE" >/dev/null 2>&1; then
+            docker pull "$TRIVY_IMAGE"
+            echo "TRIVY_IMAGE_PULLED=true" >> "$GITHUB_ENV"
+          fi
+          archive="$RUNNER_TEMP/memoria-media-edge-image.tar"
+          docker save --output "$archive" memoria-media-edge:ci
+          docker run --rm \
+            --volume "$archive:/scan/image.tar:ro" \
+            "$TRIVY_IMAGE" image \
+            --input /scan/image.tar --scanners vuln \
+            --format table --exit-code 1 \
+            --ignore-unfixed --severity CRITICAL,HIGH
+      - name: Remove the CI image and the Trivy image pulled by this job
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/memoria-media-edge-image.tar"
+          docker image rm -f memoria-media-edge:ci >/dev/null 2>&1 || true
+          if [ "${TRIVY_IMAGE_PULLED:-}" = true ]; then
+            docker image rm -f "$TRIVY_IMAGE" >/dev/null 2>&1 || true
+          fi
 
   aigc-e2e-tts-fault:
     needs: changes
@@ -519,7 +577,7 @@ jobs:
   miniprogram:
     needs: changes
     if: needs.changes.outputs.miniprogram == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.RUNNER_LABEL_JSON || '["self-hosted","macOS","ARM64","memoria-mac"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
