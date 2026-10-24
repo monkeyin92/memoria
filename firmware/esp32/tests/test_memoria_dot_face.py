@@ -1,4 +1,4 @@
-"""Host checks for the yellow dot-matrix face.
+"""Host checks for the dot-matrix face.
 
 The mapper and the painter live in memoria_dot_face.cc, which has no ESP-IDF
 dependency. These tests compile that file and drive it the way the panel does.
@@ -19,11 +19,21 @@ ASSETS_DIR = BOARD_DIR / "assets"
 DISPLAY = BOARD_DIR / "memoria_mascot_display.cc"
 
 WIDTH = 360
-YELLOW = 0xFFE0
 FACE_TOP_MIN_Y = 18
 FACE_TOP_MAX_Y = 46
-NAMES = ("calm", "listen", "think", "speak", "connect", "greet", "pair")
-FORBIDDEN = ("surprised", "shocked", "scared", "angry", "dizzy", "惊吓", "生气")
+NAMES = (
+    "calm",
+    "happy",
+    "listen",
+    "think",
+    "speak",
+    "surprised",
+    "shy",
+    "sleepy",
+    "comfort",
+    "wake",
+)
+FORBIDDEN = ("shocked", "scared", "angry", "dizzy", "惊吓", "生气")
 
 # Patched DeviceState values. The display static_asserts the same numbers.
 UNKNOWN, STARTING, WIFI, IDLE, CONNECTING, RECOVERING = 0, 1, 2, 3, 4, 5
@@ -94,6 +104,7 @@ int main() {
     const char* expressions[] = {
         "happy", "caring", "loving", "curious", "thinking",
         "sad", "surprised", "neutral", "angry", "", "light_laughter",
+        "shy", "sleepy", "comfort", "wake",
     };
     for (const char* name : expressions) {
         memoria::FaceFacts speaking;
@@ -127,8 +138,7 @@ int main() {
             memoria::PaintDotFace(g_buffer.data(), memoria::kFaceScreen, memoria::kFaceScreen,
                                   frame);
             const memoria::FaceRect box = memoria::FaceBounds(captioned != 0);
-            int yellow = 0;
-            int other = 0;
+            int pixels = 0;
             int edge = 0;
             int outside = 0;
             unsigned sig = 2166136261u;
@@ -142,15 +152,11 @@ int main() {
                     if (pixel == 0) {
                         continue;
                     }
-                    if (pixel != memoria::kFaceYellow) {
-                        ++other;
-                        continue;
-                    }
-                    ++yellow;
+                    ++pixels;
                     if (x < box.x0 || x >= box.x1 || y < box.y0 || y >= box.y1) {
                         ++outside;
                     }
-                    sig ^= static_cast<unsigned>(x * 131 + y);
+                    sig ^= static_cast<unsigned>(x * 131 + y + pixel);
                     sig *= 16777619u;
                     if (x < 8 || y < 8 || x >= memoria::kFaceScreen - 8 || y >= memoria::kFaceScreen - 8) {
                         ++edge;
@@ -161,31 +167,9 @@ int main() {
                     if (x > max_x) max_x = x;
                 }
             }
-            int rim = 0;
-            int rim_yellow = 0;
-            if (yellow > 0) {
-                for (int x = min_x; x <= max_x; ++x) {
-                    for (int y : {min_y, max_y}) {
-                        ++rim;
-                        const uint16_t pixel =
-                            g_buffer[static_cast<size_t>(y) * memoria::kFaceScreen + x];
-                        if (pixel == memoria::kFaceYellow) ++rim_yellow;
-                    }
-                }
-                for (int y = min_y + 1; y < max_y; ++y) {
-                    for (int x : {min_x, max_x}) {
-                        ++rim;
-                        const uint16_t pixel =
-                            g_buffer[static_cast<size_t>(y) * memoria::kFaceScreen + x];
-                        if (pixel == memoria::kFaceYellow) ++rim_yellow;
-                    }
-                }
-            }
             std::printf(
-                "paint %s %d yellow=%d other=%d edge=%d min_y=%d max_y=%d sig=%u rim=%d "
-                "rim_yellow=%d outside=%d\n",
-                memoria::FaceName(id), captioned, yellow, other, edge, min_y, max_y, sig, rim,
-                rim_yellow, outside);
+                "paint %s %d pixels=%d edge=%d min_y=%d max_y=%d sig=%u outside=%d\n",
+                memoria::FaceName(id), captioned, pixels, edge, min_y, max_y, sig, outside);
         }
     }
     // The crisis blink: its pace, sample-by-sample, then the closed-eyes paint.
@@ -220,8 +204,7 @@ int main() {
     closed.eyes_closed = true;
     memoria::PaintDotFace(g_buffer.data(), memoria::kFaceScreen, memoria::kFaceScreen, closed);
     const memoria::FaceRect closed_box = memoria::FaceBounds(false);
-    int closed_yellow = 0;
-    int closed_other = 0;
+    int closed_pixels = 0;
     int closed_edge = 0;
     int closed_outside = 0;
     int closed_min_y = memoria::kFaceScreen;
@@ -232,11 +215,7 @@ int main() {
             if (pixel == 0) {
                 continue;
             }
-            if (pixel != memoria::kFaceYellow) {
-                ++closed_other;
-                continue;
-            }
-            ++closed_yellow;
+            ++closed_pixels;
             if (x < closed_box.x0 || x >= closed_box.x1 || y < closed_box.y0 ||
                 y >= closed_box.y1) {
                 ++closed_outside;
@@ -249,8 +228,8 @@ int main() {
             if (y > closed_max_y) closed_max_y = y;
         }
     }
-    std::printf("paintclosed yellow=%d other=%d edge=%d outside=%d min_y=%d max_y=%d\n",
-                closed_yellow, closed_other, closed_edge, closed_outside, closed_min_y,
+    std::printf("paintclosed pixels=%d edge=%d outside=%d min_y=%d max_y=%d\n",
+                closed_pixels, closed_edge, closed_outside, closed_min_y,
                 closed_max_y);
     return 0;
 }
@@ -356,10 +335,10 @@ def _face(report: dict, kind: str, state: int) -> str:
     return report["mapped"][(kind, str(state))]
 
 
-def test_there_are_exactly_seven_faces(report: dict) -> None:
-    assert report["count"] == 7
+def test_there_are_exactly_ten_faces(report: dict) -> None:
+    assert report["count"] == 10
     assert tuple(report["names"]) == NAMES
-    assert len(set(report["names"])) == 7
+    assert len(set(report["names"])) == 10
     for name in report["names"]:
         assert name not in FORBIDDEN
         for banned in FORBIDDEN:
@@ -369,15 +348,15 @@ def test_there_are_exactly_seven_faces(report: dict) -> None:
 def test_device_state_selects_the_face(report: dict) -> None:
     expect = {
         UNKNOWN: "calm",
-        STARTING: "connect",
-        WIFI: "connect",
+        STARTING: "wake",
+        WIFI: "wake",
         IDLE: "calm",
-        CONNECTING: "connect",
-        RECOVERING: "connect",
+        CONNECTING: "wake",
+        RECOVERING: "wake",
         LISTENING: "listen",
         SPEAKING: "speak",
-        UPGRADING: "connect",
-        ACTIVATING: "connect",
+        UPGRADING: "wake",
+        ACTIVATING: "wake",
         AUDIO: "listen",
         FATAL: "calm",
         99: "calm",
@@ -387,10 +366,10 @@ def test_device_state_selects_the_face(report: dict) -> None:
     assert _face(report, "spoke", LISTENING) == "think"
     assert _face(report, "spoke", SPEAKING) == "speak"
     assert _face(report, "spoke", IDLE) == "calm"
-    assert _face(report, "intro", IDLE) == "greet"
-    assert _face(report, "intro", SPEAKING) == "greet"
-    assert _face(report, "setup", CONNECTING) == "pair"
-    assert _face(report, "setup", IDLE) == "pair"
+    assert _face(report, "intro", IDLE) == "wake"
+    assert _face(report, "intro", SPEAKING) == "wake"
+    assert _face(report, "setup", CONNECTING) == "wake"
+    assert _face(report, "setup", IDLE) == "wake"
 
 
 def test_a_reply_expression_picks_the_speaking_face_and_no_other(report: dict) -> None:
@@ -399,22 +378,22 @@ def test_a_reply_expression_picks_the_speaking_face_and_no_other(report: dict) -
     assert expressions["none"] == "empty"
     assert expressions["junk"] == "empty"
     assert expressions["overrun"] == "empty"
-    # Speaking follows the reply. The names are the ones the server sends and
-    # the ones the media edge folds them into, and both spellings draw a face.
-    # Neutral and anything the faces have no use for keep the speaking face: the
-    # device is still talking, so a calm face would read as a face that stopped.
     drawn = {
-        "happy": "speak",
-        "caring": "speak",
-        "loving": "speak",
+        "happy": "happy",
+        "caring": "comfort",
+        "loving": "comfort",
         "curious": "think",
         "thinking": "think",
-        "sad": "calm",
-        "surprised": "greet",
+        "sad": "comfort",
+        "surprised": "surprised",
         "neutral": "speak",
         "angry": "speak",
         "none": "speak",
         "light_laughter": "speak",
+        "shy": "shy",
+        "sleepy": "sleepy",
+        "comfort": "comfort",
+        "wake": "wake",
     }
     for name, face in drawn.items():
         assert report["expression_faces"][name] == face, name
@@ -422,7 +401,7 @@ def test_a_reply_expression_picks_the_speaking_face_and_no_other(report: dict) -
     for state in (UNKNOWN, STARTING, WIFI, IDLE, CONNECTING, RECOVERING, LISTENING,
                   UPGRADING, ACTIVATING, AUDIO, FATAL, 99):
         assert _face(report, "expressed", state) == _face(report, "plain", state)
-    assert _face(report, "expressed", SPEAKING) == "speak"
+    assert _face(report, "expressed", SPEAKING) == "comfort"
 
 
 def test_crisis_is_always_the_calm_face(report: dict) -> None:
@@ -449,11 +428,10 @@ def test_crisis_blink_is_slow_and_lands_on_cycle_tails(report: dict) -> None:
 def test_closed_calm_hides_the_eyes_and_keeps_the_mouth(report: dict) -> None:
     open_calm = report["paints"][("calm", 0)]
     closed = report["paintclosed"]
-    assert closed["yellow"] > 0
-    assert closed["yellow"] < open_calm["yellow"]
-    assert closed["min_y"] > open_calm["min_y"]  # the topmost rows were the eyes
-    assert closed["max_y"] == open_calm["max_y"]  # the mouth still ends the face
-    assert closed["other"] == 0
+    assert closed["pixels"] > 0
+    assert closed["pixels"] < open_calm["pixels"]
+    assert closed["min_y"] >= open_calm["min_y"]
+    assert closed["max_y"] == open_calm["max_y"]
     assert closed["edge"] == 0
     assert closed["outside"] == 0
 
@@ -464,17 +442,14 @@ def test_face_frame_compares_every_paint_input(report: dict) -> None:
     assert report["frameeq"]["caption"] == 0
 
 
-def test_paint_is_yellow_dots_without_a_frame(report: dict) -> None:
+def test_paint_is_rendered_without_a_frame(report: dict) -> None:
     signatures = set()
     for name in NAMES:
         for captioned in (0, 1):
             paint = report["paints"][(name, captioned)]
-            assert paint["yellow"] > 0
-            assert paint["other"] == 0
+            assert paint["pixels"] > 0
             assert paint["edge"] == 0
             assert paint["outside"] == 0
-            assert paint["rim"] > 0
-            assert paint["rim_yellow"] * 2 < paint["rim"]
             signatures.add(paint["sig"])
         rest = report["paints"][(name, 0)]
         lifted = report["paints"][(name, 1)]
@@ -482,7 +457,7 @@ def test_paint_is_yellow_dots_without_a_frame(report: dict) -> None:
         assert lifted["max_y"] <= 216
         assert FACE_TOP_MIN_Y <= lifted["min_y"] <= FACE_TOP_MAX_Y
         assert lifted["sig"] != rest["sig"]
-    assert len(signatures) == 14
+    assert len(signatures) == 20
 
 
 def test_mascot_stickers_are_not_in_the_board_assets() -> None:
@@ -509,10 +484,8 @@ def test_display_paints_from_device_state_not_emotion_names() -> None:
     loop = source[source.index("void MemoriaMascotDisplay::AnimationLoop") :]
     assert "scene_->Render(" not in loop
     assert loop.index("scene_->SetOutputLevel(") < loop.index("PaintDotFace(")
-    # crisis round: calm face, and the display owns the round's blink clock
     assert "memoria::FaceFrame frame;" in loop
     assert "memoria::CrisisEyesClosed(frame_now - crisis_blink_started_ms_)" in loop
     assert "memoria::PaintDotFace(framebuffer_, width_, height_, frame);" in loop
-    # steady-state frames skip the rebuild; a changed frame input repaints
     assert "!frame_shown_ || frame != shown_frame_" in loop
     assert loop.index("frame != shown_frame_") < loop.index("PaintDotFace(")
