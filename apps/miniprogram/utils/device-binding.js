@@ -69,6 +69,16 @@ const PRIMARY_RELATIONSHIPS = Object.freeze({
  */
 const CONSENT_OFFERS = Object.freeze([
   {
+    id: "offer_child_rules_v1",
+    modes: ["parent_for_child"],
+    label: "孩子使用规则",
+    description:
+      "设备会陪孩子聊天和学习；每段对话开始有一声提示音；对话会为你生成小结；孩子随时可以喊停",
+    defaultChecked: false,
+    requiresParentSelfAcceptance: false,
+    requiredForSubmit: true,
+  },
+  {
     id: "offer_minor_voice_session_v1",
     modes: ["parent_for_child"],
     label: "语音陪伴与学习会话",
@@ -707,7 +717,19 @@ function consentOffersFor(mode) {
     defaultChecked: offer.defaultChecked,
     requiresParentSelfAcceptance: offer.requiresParentSelfAcceptance,
     proxyConsent: offer.proxyConsent === true,
+    requiredForSubmit: offer.requiredForSubmit === true,
   }));
+}
+
+/*
+ * 绑定前必须勾选的授权（规则告知类）。返回第一项缺失的 offer，没有缺失就返回 null。
+ */
+function missingRequiredOfferFor(mode, offerIds) {
+  const accepted = new Set(offerIds || []);
+  const missing = CONSENT_OFFERS.find(
+    (offer) => offer.modes.includes(mode) && offer.requiredForSubmit && !accepted.has(offer.id),
+  );
+  return missing || null;
 }
 
 function stringOrNull(value) {
@@ -1633,6 +1655,7 @@ module.exports = {
   MINOR_FORBIDDEN_MODES,
   buildBindingRequest,
   consentOffersFor,
+  missingRequiredOfferFor,
   memoryLevelForOffers,
   normalizeRuntimeProfile,
   normalizeSubjectResolution,

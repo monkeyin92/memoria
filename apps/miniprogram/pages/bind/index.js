@@ -10,6 +10,7 @@ const {
   AGE_BAND_LABELS,
   MODE_AGE_BANDS,
   consentOffersFor,
+  missingRequiredOfferFor,
   memoryLevelForOffers,
 } = require("../../utils/device-binding");
 const { isExpired } = require("../../utils/device-onboarding/state");
@@ -648,6 +649,11 @@ Page({
 
   async submitBinding() {
     if (this.data.submitting) return;
+    const missing = missingRequiredOfferFor(this.data.declaredMode, this.data.acceptedOfferIds);
+    if (missing) {
+      this.setData({ error: `请先勾选「${missing.label}」，绑定才能提交。` });
+      return;
+    }
     // Hard gate: subscribe must start in this tap stack before any other await
     // (including the quiet-hours confirm modal).
     let gate;

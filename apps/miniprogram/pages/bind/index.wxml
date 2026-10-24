@@ -199,6 +199,7 @@
           <text class="offer-desc">{{item.description}}</text>
           <text wx:if="{{item.requiresParentSelfAcceptance}}" class="offer-note">需父母本人确认，绑定后在设备上完成</text>
           <text wx:if="{{item.proxyConsent}}" class="offer-note">由你代父母同意，可随时在小程序里撤回</text>
+          <text wx:if="{{item.requiredForSubmit}}" class="offer-note">完成绑定前必须勾选</text>
         </view>
       </view>
       <text class="form-note">敏感能力（长期记忆、数字自我、传承、原始音频等）只有明确勾选才会申请；孩子和父母的长期记忆默认不勾选，不勾选也能完成绑定。</text>
