@@ -543,9 +543,10 @@ class SubjectDeletionService:
                     SubjectScope(account_id=account_id, subject_id=subject_id),
                     redact_identity=redact,
                 )
-                # The vector-deletion PR is not merged: a vector restored from
-                # before the deletion can cite evidence outside the recaptured
-                # lineage. Delete whatever the subject's evidence still reaches.
+                # #326 deletes vectors with the recall and the deletion itself;
+                # this covers a vector restored from a backup older than that,
+                # which can cite evidence outside the recaptured lineage.
+                # Delete whatever the subject's evidence still reaches.
                 await self._archive.delete_subject_vectors(
                     account_id=account_id, subject_id=subject_id
                 )
