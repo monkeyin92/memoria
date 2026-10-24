@@ -563,6 +563,27 @@ test("late activation ACK cannot be regressed by an older response", async () =>
   controller.dispose();
 });
 
+test("resuming an already-complete add session clears the stored session id", () =>
+  withStoredSession("onb_01", async (store) => {
+    let claimLookups = 0;
+    const controller = new OnboardingController({
+      apiClient: {
+        getOnboardingSession: async () => makeSession({ state: "activated" }),
+        getDeviceClaim: async () => {
+          claimLookups += 1;
+          return makeClaim();
+        },
+      },
+    });
+
+    const session = await controller.resume("onb_01");
+    assert.equal(session.state, "activated");
+    assert.equal(controller.snapshot().state, "complete");
+    assert.equal(store.has("memoria:miniprogram:onboarding_session_id"), false);
+    assert.equal(claimLookups, 0);
+    controller.dispose();
+  }));
+
 // An unbind that happens after a session was stored leaves the phone with a
 // session the server no longer answers for.
 function withStoredSession(sessionId, body) {

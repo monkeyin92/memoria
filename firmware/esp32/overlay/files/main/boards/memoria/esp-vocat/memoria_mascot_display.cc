@@ -456,7 +456,16 @@ void MemoriaMascotDisplay::SetEmotion(const char* emotion) {
         ESP_LOGI(TAG, "emotion=%s -> error", emotion);
         return;
     }
-    ESP_LOGI(TAG, "emotion ignored: %s", emotion);
+    // Stored, then painted. The animation task reads it into the speaking
+    // frame, which picks among the seven faces. A crisis round stays calm.
+    // The terminator lands in the slot after the last letter, so a short name
+    // ends where it ends instead of running into whatever was stored before.
+    int i = 0;
+    for (; i < memoria::kExpressionNameMax - 1 && emotion[i] != '\0'; ++i) {
+        expression_[i].store(emotion[i]);
+    }
+    expression_[i].store('\0');
+    ESP_LOGI(TAG, "expression=%s", emotion);
 }
 
 void MemoriaMascotDisplay::SetStatus(const char* status) {
@@ -728,6 +737,12 @@ void MemoriaMascotDisplay::AnimationLoop() {
                 facts.user_spoke = user_spoke_.load();
                 facts.intro = scene_->intro_active(frame_now);
                 facts.setup = qr_visible_.load();
+                for (int i = 0; i < memoria::kExpressionNameMax; ++i) {
+                    facts.expression[i] = expression_[i].load();
+                    if (facts.expression[i] == '\0') {
+                        break;
+                    }
+                }
                 const memoria::FaceId face = memoria::FaceForFacts(facts);
                 memoria::FaceFrame frame;
                 frame.face = face;

@@ -5,6 +5,7 @@ const test = require("node:test");
 
 const root = path.join(__dirname, "..");
 const api = require("../utils/api");
+const binding = require("../utils/device-binding");
 const { canonicalManifest } = require("./manifest-fixtures");
 const { readSubjectLabel } = require("../utils/subject-label");
 
@@ -170,7 +171,7 @@ function defaultManifestResponse(declaredMode) {
   });
 }
 
-async function bootToMode(mode) {
+async function bootToMode(mode, { acceptRequiredOffers = true } = {}) {
   pushConfigEnabled = mode === "parent_for_child" || mode === "child_for_parent";
   subscribeAnswer = "accept";
   const page = instantiate(pageDefinition);
@@ -179,6 +180,12 @@ async function bootToMode(mode) {
   assert.equal(page.data.step, "mode");
   page.chooseMode({ currentTarget: { dataset: { mode } } });
   assert.equal(page.data.step, "form");
+  if (acceptRequiredOffers) {
+    for (const offer of binding.consentOffersFor(mode)) {
+      if (!offer.requiredForSubmit) continue;
+      page.toggleOffer({ currentTarget: { dataset: { id: offer.id } } });
+    }
+  }
   return page;
 }
 
@@ -362,6 +369,28 @@ test("parent_for_child flow validates minimal info and submits guardian relation
   assert.equal(readSubjectLabel(page.data.manifest), "小乐");
   // Push stays paused (#019), so the submit never ran the subscribe prompt.
   assert.equal(page.data.crisisSubscribeAccepted, false);
+});
+
+test("parent_for_child cannot submit until the child rules are accepted", async () => {
+  nextResponse = successResponse(defaultManifestResponse("parent_for_child"));
+  const page = await bootToMode("parent_for_child", { acceptRequiredOffers: false });
+  page.setData({ "form.childNickname": "小乐" });
+  await page.goToReview();
+  assert.equal(page.data.step, "review");
+  const rules = page.data.offers.find((offer) => offer.id === "offer_child_rules_v1");
+  assert.equal(rules.checked, false);
+  assert.equal(rules.requiredForSubmit, true);
+
+  lastWxRequest = null;
+  await page.submitBinding();
+  assert.equal(page.data.step, "review");
+  assert.equal(lastWxRequest, null);
+  assert.match(page.data.error, /孩子使用规则/);
+
+  page.toggleOffer({ currentTarget: { dataset: { id: "offer_child_rules_v1" } } });
+  await page.submitBinding();
+  assert.equal(page.data.step, "done");
+  assert.ok(lastWxRequest.data.consent_offer_ids.includes("offer_child_rules_v1"));
 });
 
 test("parent_for_child bind still completes when WeChat subscribe is rejected", async () => {

@@ -83,7 +83,40 @@ int main() {
         crisis_intro.setup = true;
         crisis_intro.user_spoke = true;
         PrintFacts("crisis_all", crisis_intro);
+
+        // While speaking, the reply's expression picks the face. Every other
+        // state keeps the face device state already selects.
+        memoria::FaceFacts expressed = plain;
+        std::snprintf(expressed.expression, sizeof(expressed.expression), "caring");
+        PrintFacts("expressed", expressed);
     }
+
+    const char* expressions[] = {
+        "happy", "caring", "loving", "curious", "thinking",
+        "sad", "surprised", "neutral", "angry", "", "light_laughter",
+    };
+    for (const char* name : expressions) {
+        memoria::FaceFacts speaking;
+        speaking.state = 7;
+        std::snprintf(speaking.expression, sizeof(speaking.expression), "%s", name);
+        std::printf("exprface %s %s\n", name[0] == '\0' ? "none" : name,
+                    memoria::FaceName(memoria::FaceForFacts(speaking)));
+        speaking.crisis = true;
+        std::printf("exprcrisis %s %s\n", name[0] == '\0' ? "none" : name,
+                    memoria::FaceName(memoria::FaceForFacts(speaking)));
+    }
+
+    memoria::FaceFacts token;
+    std::snprintf(token.expression, sizeof(token.expression), "light_laughter");
+    std::printf("expr %s\n", memoria::ReceivedExpression(token));
+    memoria::FaceFacts empty;
+    std::printf("exprnone %s\n", memoria::ReceivedExpression(empty)[0] == '\0' ? "empty" : "set");
+    memoria::FaceFacts junk;
+    std::snprintf(junk.expression, sizeof(junk.expression), "Happy!");
+    std::printf("exprjunk %s\n", memoria::ReceivedExpression(junk)[0] == '\0' ? "empty" : "set");
+    memoria::FaceFacts overrun;
+    std::memset(overrun.expression, 'a', sizeof(overrun.expression));
+    std::printf("exprover %s\n", memoria::ReceivedExpression(overrun)[0] == '\0' ? "empty" : "set");
 
     for (int i = 0; i < memoria::kFaceCount; ++i) {
         const auto id = static_cast<memoria::FaceId>(i);
@@ -265,6 +298,9 @@ def report() -> dict:
     blink_params = None
     blink: dict[int, int] = {}
     frameeq: dict[str, int] = {}
+    expressions: dict[str, str] = {}
+    expression_faces: dict[str, str] = {}
+    expression_crisis: dict[str, str] = {}
     count = None
     for parts in lines:
         if parts[0] == "count":
@@ -281,6 +317,18 @@ def report() -> dict:
             blink[int(parts[1])] = int(parts[2])
         elif parts[0] == "frameeq":
             frameeq[parts[1]] = int(parts[2])
+        elif parts[0] == "exprface":
+            expression_faces[parts[1]] = parts[2]
+        elif parts[0] == "exprcrisis":
+            expression_crisis[parts[1]] = parts[2]
+        elif parts[0] == "expr":
+            expressions["token"] = parts[1]
+        elif parts[0] == "exprnone":
+            expressions["none"] = parts[1]
+        elif parts[0] == "exprjunk":
+            expressions["junk"] = parts[1]
+        elif parts[0] == "exprover":
+            expressions["overrun"] = parts[1]
         elif parts[0] == "paint":
             fields = {}
             for item in parts[3:]:
@@ -298,6 +346,9 @@ def report() -> dict:
         "blink_params": blink_params,
         "blink": blink,
         "frameeq": frameeq,
+        "expressions": expressions,
+        "expression_faces": expression_faces,
+        "expression_crisis": expression_crisis,
     }
 
 
@@ -340,6 +391,38 @@ def test_device_state_selects_the_face(report: dict) -> None:
     assert _face(report, "intro", SPEAKING) == "greet"
     assert _face(report, "setup", CONNECTING) == "pair"
     assert _face(report, "setup", IDLE) == "pair"
+
+
+def test_a_reply_expression_picks_the_speaking_face_and_no_other(report: dict) -> None:
+    expressions = report["expressions"]
+    assert expressions["token"] == "light_laughter"
+    assert expressions["none"] == "empty"
+    assert expressions["junk"] == "empty"
+    assert expressions["overrun"] == "empty"
+    # Speaking follows the reply. The names are the ones the server sends and
+    # the ones the media edge folds them into, and both spellings draw a face.
+    # Neutral and anything the faces have no use for keep the speaking face: the
+    # device is still talking, so a calm face would read as a face that stopped.
+    drawn = {
+        "happy": "speak",
+        "caring": "speak",
+        "loving": "speak",
+        "curious": "think",
+        "thinking": "think",
+        "sad": "calm",
+        "surprised": "greet",
+        "neutral": "speak",
+        "angry": "speak",
+        "none": "speak",
+        "light_laughter": "speak",
+    }
+    for name, face in drawn.items():
+        assert report["expression_faces"][name] == face, name
+        assert report["expression_crisis"][name] == "calm", name
+    for state in (UNKNOWN, STARTING, WIFI, IDLE, CONNECTING, RECOVERING, LISTENING,
+                  UPGRADING, ACTIVATING, AUDIO, FATAL, 99):
+        assert _face(report, "expressed", state) == _face(report, "plain", state)
+    assert _face(report, "expressed", SPEAKING) == "speak"
 
 
 def test_crisis_is_always_the_calm_face(report: dict) -> None:

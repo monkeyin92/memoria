@@ -151,8 +151,75 @@ int OriginY(bool captioned) {
 
 const char* FaceName(FaceId id) { return kNames[static_cast<int>(ClampFace(id))]; }
 
+const char* ReceivedExpression(const FaceFacts& facts) {
+    for (int i = 0; i < kExpressionNameMax; ++i) {
+        const char character = facts.expression[i];
+        if (character == '\0') {
+            return facts.expression;
+        }
+        // A server value with a character outside a short token, or one that
+        // fills the buffer without a terminator, is treated as no expression.
+        const bool letter = (character >= 'a' && character <= 'z') || character == '_';
+        if (!letter) {
+            return "";
+        }
+    }
+    return "";
+}
+
 bool CrisisEyesClosed(uint32_t elapsed_ms) {
     return elapsed_ms % kCrisisBlinkPeriodMs >= kCrisisBlinkPeriodMs - kCrisisBlinkClosedMs;
+}
+
+namespace {
+
+// The reply expressions the seven faces can show, and the face each one draws.
+// Names the server sends and the names the media edge folds them into are both
+// listed, so the panel reads either spelling.
+struct ExpressionFace {
+    const char* name;
+    FaceId face;
+};
+
+constexpr ExpressionFace kExpressionFaces[] = {
+    {"happy", FaceId::kSpeak},
+    {"caring", FaceId::kSpeak},
+    {"loving", FaceId::kSpeak},
+    // Neutral is what most replies resolve to, and the device is still saying
+    // them: dropping to calm would read as a face that stopped talking.
+    {"neutral", FaceId::kSpeak},
+    {"curious", FaceId::kThink},
+    {"thinking", FaceId::kThink},
+    {"surprised", FaceId::kGreet},
+    {"sad", FaceId::kCalm},
+};
+
+bool SameToken(const char* value, const char* name) {
+    for (int i = 0; i < kExpressionNameMax; ++i) {
+        if (value[i] != name[i]) {
+            return false;
+        }
+        if (value[i] == '\0') {
+            return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
+FaceId FaceForExpression(const char* expression) {
+    if (expression != nullptr) {
+        for (const ExpressionFace& entry : kExpressionFaces) {
+            if (SameToken(expression, entry.name)) {
+                return entry.face;
+            }
+        }
+    }
+    // Nothing to read: no name yet, or one the seven faces have no use for.
+    // The device is speaking either way, so it keeps the speaking face rather
+    // than dropping to calm, which would read as a face that stopped talking.
+    return FaceId::kSpeak;
 }
 
 FaceId FaceForFacts(const FaceFacts& facts) {
@@ -176,7 +243,7 @@ FaceId FaceForFacts(const FaceFacts& facts) {
         case kFaceStateListening:
             return facts.user_spoke ? FaceId::kThink : FaceId::kListen;
         case kFaceStateSpeaking:
-            return FaceId::kSpeak;
+            return FaceForExpression(ReceivedExpression(facts));
         case kFaceStateAudioTesting:
             return FaceId::kListen;
         default:

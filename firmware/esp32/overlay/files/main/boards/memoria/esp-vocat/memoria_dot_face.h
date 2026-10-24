@@ -9,7 +9,8 @@ namespace memoria {
 // Yellow dot-matrix face for the 360x360 round panel.
 //
 // Seven faces, and only these seven. Scared and angry are not in the set.
-// The face follows device state. It does not read a server emotion name.
+// While the device speaks, the face follows the reply's expression, drawn
+// with one of these seven. Every other state follows the device state.
 // A crisis script (protected playback) is the calm face in every state, and
 // the crisis round breathes with a slow blink (product decision 2026-10-23).
 
@@ -42,12 +43,18 @@ enum FaceDeviceState : int {
     kFaceStateFatalError = 11,
 };
 
+// The reply's expression as the server named it (screen.expression), or empty
+// when the server sent none. While speaking it picks among the seven faces.
+// It never adds one, and a crisis round ignores it.
+constexpr int kExpressionNameMax = 16;
+
 struct FaceFacts {
     int state = kFaceStateIdle;
     bool crisis = false;
     bool user_spoke = false;
     bool intro = false;
     bool setup = false;
+    char expression[kExpressionNameMax] = {};
 };
 
 struct FaceRect {
@@ -66,6 +73,17 @@ constexpr uint32_t kCrisisBlinkClosedMs = 320;
 bool CrisisEyesClosed(uint32_t elapsed_ms);
 
 const char* FaceName(FaceId id);
+
+// The expression name the facts carry, or empty when the server sent none or
+// sent one that is not a short token. Owning this read here keeps the panel
+// from parsing the server string itself.
+const char* ReceivedExpression(const FaceFacts& facts);
+
+// The face a reply expression draws while the device is speaking. A name the
+// seven faces have a use for picks that face; no name at all, or one they have
+// no use for, keeps the speaking face.
+FaceId FaceForExpression(const char* expression);
+
 FaceId FaceForFacts(const FaceFacts& facts);
 FaceRect FaceBounds(bool captioned);
 

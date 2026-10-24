@@ -553,7 +553,7 @@ def test_stepfun_defaults_and_main_backup_fallback_speaker(
     assert settings.stepfun_tts_model == STEPFUN_TTS_MODEL
     assert settings.stepfun_tts_voice == STEPFUN_TTS_VOICE
     assert settings.doubao_tts_fallback_speaker == DOUBAO_TTS_FALLBACK_SPEAKER
-    assert settings.aigc_notice_enabled is True
+    assert settings.aigc_notice_enabled is False
     assert settings.aigc_notice_mode == "tone"
 
 

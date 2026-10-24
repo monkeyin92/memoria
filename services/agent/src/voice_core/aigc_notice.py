@@ -1,9 +1,9 @@
 """Configurable AIGC notice hooks for one device conversation round.
 
-The default notice is a short pure-tone rhythm generated from parameters. No
-prompt text and no audio file lives here. Speech mode only loads a pre-rendered
-external resource at its native, normal speed; an unconfigured resource means
-silence, never a synthesized stand-in.
+Off unless a deployment turns it on. When on, the notice is a short pure-tone
+rhythm generated from parameters. No prompt text and no audio file lives here.
+Speech mode only loads a pre-rendered external resource at its native, normal
+speed; an unconfigured resource means silence, never a synthesized stand-in.
 """
 
 from __future__ import annotations
@@ -53,9 +53,14 @@ def validate_tone_pattern(pattern: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class AigcNoticeConfig:
-    """Runtime policy for the opening and closing AIGC notice hooks."""
+    """Runtime policy for the opening and closing AIGC notice hooks.
 
-    enabled: bool = True
+    Off unless a deployment turns it on. The tone, its rhythm and both
+    positions stay configured, so enabling it restores the previous notice
+    without any other change.
+    """
+
+    enabled: bool = False
     mode: AigcNoticeMode = "tone"
     opening_enabled: bool = True
     closing_enabled: bool = True
@@ -107,7 +112,7 @@ class AigcNoticeConfig:
             return getattr(settings, name, default)
 
         return cls(
-            enabled=bool(value("aigc_notice_enabled", True)),
+            enabled=bool(value("aigc_notice_enabled", False)),
             mode=cast(AigcNoticeMode, str(value("aigc_notice_mode", "tone"))),
             opening_enabled=bool(value("aigc_notice_opening_enabled", True)),
             closing_enabled=bool(value("aigc_notice_closing_enabled", True)),
@@ -142,7 +147,7 @@ class AigcNoticeConfig:
             return raw.strip().lower() in {"1", "true", "yes", "on"}
 
         return cls(
-            enabled=enabled("AIGC_NOTICE_ENABLED", True),
+            enabled=enabled("AIGC_NOTICE_ENABLED", False),
             mode=cast(AigcNoticeMode, values.get("AIGC_NOTICE_MODE", "tone").strip()),
             opening_enabled=enabled("AIGC_NOTICE_OPENING_ENABLED", True),
             closing_enabled=enabled("AIGC_NOTICE_CLOSING_ENABLED", True),

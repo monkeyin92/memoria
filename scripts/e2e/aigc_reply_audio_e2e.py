@@ -1025,7 +1025,7 @@ class _DeviceClient:
         )
 
 
-MARKER_PCM = AigcNoticeConfig().tone_pcm()
+MARKER_PCM = AigcNoticeConfig(enabled=True).tone_pcm()
 MARKER_PCM_LEN = len(MARKER_PCM)
 MARKER_MIN_FRAMES = (len(MARKER_PCM) + MARKER_FRAME_SAMPLES * 2 - 1) // (MARKER_FRAME_SAMPLES * 2)
 MARKER_DURATION_S = len(MARKER_PCM) / 2 / MARKER_SAMPLE_RATE
