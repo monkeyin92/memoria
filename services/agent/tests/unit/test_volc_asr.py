@@ -42,6 +42,7 @@ class FakeVolcConnection:
         self.text_frames = text_frames
         self.closed = False
         self.requests = 0
+        self.last_sequence = 0
         self._incoming: asyncio.Queue[bytes | None] = asyncio.Queue()
 
     async def send(self, data: bytes | str) -> None:
@@ -53,12 +54,22 @@ class FakeVolcConnection:
             if self.fail_first_request and self.requests == 1:
                 self._push_error(45_000_001)
                 return
+            if frame.sequence != 1:
+                self._push_error(45_000_000)
+                return
+            self.last_sequence = 1
             self._push_result("", last=False)
             for _ in range(self.text_frames):
                 self._incoming.put_nowait("ignored text frame")
             return
         if frame.message_type != AUDIO_ONLY_REQUEST:
             return
+        if frame.sequence is not None:
+            expected = self.last_sequence + 1
+            if abs(frame.sequence) != expected:
+                self._push_error(45_000_000)
+                return
+            self.last_sequence = expected
         if frame.is_last:
             self._push_result(self.result_text, last=True, sequence=frame.sequence or 1)
 
@@ -175,12 +186,13 @@ async def test_audio_is_chunked_and_last_packet_is_negative() -> None:
     session = VolcASRSession(_config(_one_connection(conn)))
     await session.connect()
     await session.send_pcm(_pcm(3200))
-    # Whole chunks go out as positive-sequence packets; nothing is held back.
-    assert [frame.sequence for frame in conn.audio_frames] == [1, 2]
+    # Whole chunks go out as positive-sequence packets; sequence starts at 2
+    # because configuration took sequence 1.
+    assert [frame.sequence for frame in conn.audio_frames] == [2, 3]
     await session.rotate_task(require_consumed=False)
     # The audio ended on a chunk boundary, so the final packet carries the
     # "last package, no sequence" flag instead of a negative sequence.
-    assert [frame.sequence for frame in conn.audio_frames] == [1, 2, None]
+    assert [frame.sequence for frame in conn.audio_frames] == [2, 3, None]
     assert conn.audio_frames[-1].is_last is True
     assert conn.audio_frames[-1].is_last is True
     assert session.rotation_pending is True
@@ -265,7 +277,7 @@ async def test_reconnect_replays_audio_after_the_committed_point() -> None:
     )
     # 320..960 was already sent before the disconnect and is sent again.
     assert len(replayed) >= 320 * 2
-    assert second.audio_frames[0].sequence == 1
+    assert second.audio_frames[0].sequence == 2
     await session.rotate_task(require_consumed=False)
     assert (await _next_event(session)).event == "result-generated"
     await session.aclose()

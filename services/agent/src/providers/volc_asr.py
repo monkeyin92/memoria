@@ -228,7 +228,9 @@ class VolcASRSession:
         self._recv_task: asyncio.Task[None] | None = None
         self._control: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
         self._audio_buffer = bytearray()
-        self._audio_sequence = 0
+        # The JSON configuration frame takes sequence 1 on this WebSocket
+        # connection; audio frames must start at sequence 2.
+        self._audio_sequence = 1
         self._task_open = False
         self._origin_known = False
         self._sentence_id = 0
@@ -342,7 +344,8 @@ class VolcASRSession:
         )
         self.task_id = str(uuid.uuid4())
         self._task_epoch += 1
-        self._audio_sequence = 0
+        # The configuration frame above was sent with sequence 1.
+        self._audio_sequence = 1
         self._audio_buffer.clear()
         self._sentence_id = 0
         self._last_final_text = ""
