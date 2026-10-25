@@ -22,6 +22,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Final, Literal
 
+from services.agent.src.providers.provider_errors import TTSUnavailableError
+
 logger = logging.getLogger(__name__)
 
 FixedSafetyAudioTemplateId = Literal[
@@ -49,6 +51,16 @@ class FixedSafetyAudioError(ValueError):
     """The stored fixed-safety audio cannot be trusted."""
 
 
+class FixedSafetyClipUnavailableError(TTSUnavailableError):
+    """A reviewed crisis line has no approved clip to play.
+
+    Crisis copy is reviewed verbatim and its approved artifact is the stored
+    clip. A live engine speaking it would be runtime synthesis of child-facing
+    safety audio, so this is the floor: the media adapter sees a TTS failure it
+    can name and gives the device its floor back.
+    """
+
+
 def content_id_for(template_id: str) -> str:
     return f"memoria-fixed-safety-{template_id}-v1"
 
@@ -71,6 +83,11 @@ class FixedSafetyAudioTemplate:
     voice: str = FIXED_SAFETY_AUDIO_VOICE
     synthesized_on: str = FIXED_SAFETY_AUDIO_SYNTHESIZED_ON
     file: str = ""
+    # Reviewed safety copy: the approved artifact is the stored clip, and a
+    # live engine speaking it would be runtime synthesis of child-facing
+    # safety audio. False only for copy that is safe to speak when the clip
+    # is missing.
+    clip_only: bool = True
 
     @property
     def playable(self) -> bool:
@@ -308,7 +325,12 @@ def approved_templates() -> tuple[FixedSafetyAudioTemplate, ...]:
             SUPPORT_RELAY_SCRIPT.display,
             SUPPORT_RELAY_SCRIPT.spoken,
         ),
-        FixedSafetyAudioTemplate("daily-limit", MINOR_DAILY_LIMIT_PHRASE, MINOR_DAILY_LIMIT_PHRASE),
+        FixedSafetyAudioTemplate(
+            "daily-limit",
+            MINOR_DAILY_LIMIT_PHRASE,
+            MINOR_DAILY_LIMIT_PHRASE,
+            clip_only=False,
+        ),
     )
 
 
@@ -674,6 +696,7 @@ class FixedSafetySpeechStream:
     __slots__ = (
         "_buffer",
         "_catalog",
+        "_clip_error",
         "_closed",
         "_decided",
         "_inner",
@@ -696,6 +719,7 @@ class FixedSafetySpeechStream:
         self._inner_stream: Any = None
         self._buffer = ""
         self._matched: FixedSafetyAudioTemplate | None = None
+        self._clip_error: FixedSafetyClipUnavailableError | None = None
         self._offset = 0
         self._passthrough = False
         self._closed = False
@@ -718,30 +742,61 @@ class FixedSafetySpeechStream:
         self._buffer += text
         template = self._catalog.match(self._buffer)
         if template is not None:
-            if template.playable:
-                logger.info(
-                    "fixed_safety_audio_playout template_id=%s source=prerecorded",
-                    template.template_id,
-                )
-                self._matched = template
-                self._decided.set()
-                return
-            # Approved copy but no trusted clip: the realtime engine must still
-            # receive the reviewed 幺/幺/幺 readings, never ASCII digits.
-            self._fallback(template.spoken)
+            self._matched_template(template)
             return
         if not self._catalog.could_continue(self._buffer):
             self._fallback(self._buffer)
 
+    def _matched_template(self, template: FixedSafetyAudioTemplate) -> None:
+        if template.playable:
+            logger.info(
+                "fixed_safety_audio_playout template_id=%s source=prerecorded",
+                template.template_id,
+            )
+            self._matched = template
+            self._decided.set()
+            return
+        if template.clip_only:
+            # Reviewed safety copy whose approved artifact is the clip. The
+            # shipped image carries a second copy, and that is the last rung.
+            # A live engine is never a candidate: speaking it would synthesize
+            # child-facing safety audio that no one approved.
+            shipped = shipped_approved_catalog().get(template.template_id)
+            if shipped is not None and shipped.playable:
+                logger.warning(
+                    "fixed_safety_audio_playout template_id=%s source=shipped_clip",
+                    template.template_id,
+                )
+                self._matched = shipped
+                self._decided.set()
+                return
+            logger.error(
+                "fixed_safety_audio_playout template_id=%s source=none reason=no_approved_clip",
+                template.template_id,
+            )
+            self._clip_error = FixedSafetyClipUnavailableError(
+                f"no approved clip for fixed safety template {template.template_id}"
+            )
+            self._decided.set()
+            return
+        # Approved copy with no trusted clip that is still safe to speak at
+        # runtime: the live engine must receive the reviewed 幺/幺/幺 readings,
+        # never ASCII digits.
+        self._fallback(template.spoken)
+
     def end_input(self) -> None:
         if self._closed:
             return
-        if self._inner_stream is None and self._matched is None:
+        if self._inner_stream is None and self._matched is None and self._clip_error is None:
             template = self._catalog.match(self._buffer)
-            text = template.spoken if template is not None else self._buffer
-            self._buffer = ""
-            if text:
-                self._to_inner(text)
+            if template is not None and template.clip_only:
+                self._matched_template(template)
+            else:
+                text = template.spoken if template is not None else self._buffer
+                self._buffer = ""
+                if text:
+                    self._to_inner(text)
+        self._buffer = ""
         if self._inner_stream is not None:
             self._inner_stream.end_input()
         self._decided.set()
@@ -758,6 +813,8 @@ class FixedSafetySpeechStream:
 
     async def __anext__(self) -> Any:
         await self._decided.wait()
+        if self._clip_error is not None:
+            raise self._clip_error
         if self._matched is not None:
             pcm = self._matched.pcm or b""
             if self._offset < len(pcm):
@@ -784,8 +841,10 @@ class FixedSafetySpeechStream:
 
 
 def wrap_fixed_safety_tts(inner: Any, settings: object) -> Any:
-    if not fixed_safety_audio_enabled(settings):
-        return inner
+    """Always wrap. ``FIXED_SAFETY_AUDIO_ENABLED=false`` only drops the
+    deployment's own clip directory; the shipped clips still guard every
+    reviewed safety line, and crisis copy must never reach a live engine."""
+
     return FixedSafetyTTS(inner, catalog_for_settings(settings))
 
 
@@ -803,6 +862,7 @@ __all__ = [
     "FixedSafetyAudioError",
     "FixedSafetyAudioIssue",
     "FixedSafetyAudioTemplate",
+    "FixedSafetyClipUnavailableError",
     "FixedSafetySentence",
     "FixedSafetySpeechStream",
     "FixedSafetyTTS",

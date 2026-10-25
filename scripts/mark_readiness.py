@@ -16,6 +16,8 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from services.common.voice_engines import VoiceEngines
+
 
 def _request_json(
     url: str,
@@ -67,6 +69,10 @@ def _mark_smokes_passed(base_url: str) -> bool:
                 "audio": True,
                 "word_timestamps": True,
             },
+            # The engines this env asks for. The Control API rejects the mark
+            # when they differ from its own, and it is the only place a stale
+            # selector can show up before a device session does.
+            "engines": VoiceEngines.from_env(os.environ).smoke_line(),
         },
     )
     if status != 200 or body.get("status") != "marked":

@@ -17,6 +17,7 @@ from services.archive.domain import ContextQuery, LifeArchivePort
 from services.archive.memory_domain import MemoryCatalogPort
 from services.archive.object_store import ObjectStore
 from services.common.chat_llm_providers import CHAT_LLM_FAMILIES, ChatLlmFamily
+from services.common.voice_engines import VoiceEngines
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.evolution.store import EvolutionStore
@@ -44,6 +45,20 @@ class SmokeChecks(BaseModel):
     llm_provider: Literal["qwen", "bailian_deepseek", "deepseek"]
     release_tag: str = Field(min_length=1, max_length=200)
     tts: TTSSmokeChecks
+    # The engines the smoke actually exercised, in the wire form
+    # ``VoiceEngines.smoke_line`` produces. The Control API rejects a mark whose
+    # engines differ from its own, so a bridge that ran one selector and a
+    # Control API configured with another cannot both claim the same evidence.
+    # Optional only so the previous image, which posts no engines, can still
+    # mark during a rollback.
+    engines: str | None = Field(default=None, max_length=120)
+
+    @field_validator("engines")
+    @classmethod
+    def _known_engines(cls, value: str | None) -> str | None:
+        if value is not None:
+            VoiceEngines.parse_smoke_line(value)
+        return value
 
     @model_validator(mode="after")
     def require_all_passed(self) -> SmokeChecks:
@@ -69,6 +84,18 @@ class AgentHeartbeat(BaseModel):
     worker_ready: bool
     last_loop_at: datetime
     chat_llm_providers: tuple[ChatLlmFamily, ...] = Field(min_length=1, max_length=2)
+    # What the bridge process actually built. Agent and Control read separate
+    # env files, so the two can disagree; readiness names that rather than
+    # claiming a smoke for an engine the bridge never runs. Optional so the
+    # previous image, which sends no engines, still heartbeats during rollback.
+    engines: str | None = Field(default=None, max_length=120)
+
+    @field_validator("engines")
+    @classmethod
+    def _known_engines(cls, value: str | None) -> str | None:
+        if value is not None:
+            VoiceEngines.parse_smoke_line(value)
+        return value
 
     @field_validator("last_loop_at")
     @classmethod
@@ -93,11 +120,6 @@ def _store(request: Request) -> MemoryStore:
 
 def _missing_config(settings: ControlSettings) -> list[str]:
     missing: list[str] = []
-    if (
-        settings.asr_provider == "funasr"
-        and not settings.dashscope_api_key.get_secret_value()
-    ):
-        missing.append("DASHSCOPE_API_KEY")
     if settings.llm_provider == "deepseek" and not settings.deepseek_api_key.get_secret_value():
         missing.append("DEEPSEEK_API_KEY")
     if not settings.memoria_release_tag.strip():
@@ -281,12 +303,21 @@ def _agent_state(request: Request, settings: ControlSettings) -> dict[str, objec
     heartbeat = cast(AgentHeartbeat | None, getattr(request.app.state, "agent_heartbeat", None))
     if heartbeat is None:
         return {"status": "missing"}
+    agent_engines = (
+        VoiceEngines.parse_smoke_line(heartbeat.engines)
+        if heartbeat.engines is not None
+        else None
+    )
     state: dict[str, object] = {
         "release_tag": heartbeat.release_tag,
         "boot_id": str(heartbeat.boot_id),
         "worker_ready": heartbeat.worker_ready,
         "last_loop_at": heartbeat.last_loop_at.isoformat(),
     }
+    # Only present when the bridge named them. An older image sends none, and
+    # its heartbeat shape must stay exactly what the rollback expects.
+    if heartbeat.engines is not None:
+        state["engines"] = heartbeat.engines
     age_s = (datetime.now(UTC) - heartbeat.last_loop_at).total_seconds()
     if heartbeat.release_tag != settings.memoria_release_tag:
         status = "release_mismatch"
@@ -296,6 +327,11 @@ def _agent_state(request: Request, settings: ControlSettings) -> dict[str, objec
         status = "stale"
     elif not heartbeat.worker_ready:
         status = "starting"
+    elif agent_engines is not None and agent_engines != VoiceEngines.from_settings(settings):
+        # A heartbeat that is otherwise healthy but built a different engine is
+        # not a bridge this Control API can vouch for: the smoke evidence it
+        # would read was collected for another engine.
+        status = "engine_mismatch"
     else:
         status = "ready"
     return {"status": status, **state}
@@ -338,6 +374,18 @@ def mark_smokes_passed(
         raise HTTPException(status_code=409, detail="smoke LLM provider does not match config")
     if body.release_tag != settings.memoria_release_tag:
         raise HTTPException(status_code=409, detail="smoke release tag does not match config")
+    if body.engines is not None:
+        marked = VoiceEngines.parse_smoke_line(body.engines)
+        configured = VoiceEngines.from_settings(settings)
+        if marked != configured:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "smoke engines do not match config: "
+                    f"marked asr={marked.asr} tts={marked.tts}, "
+                    f"configured asr={configured.asr} tts={configured.tts}"
+                ),
+            )
     if not _valid_configuration(settings):
         raise HTTPException(status_code=503, detail="invalid production configuration")
     missing = _missing_config(settings)
@@ -372,7 +420,7 @@ async def health_ready(request: Request) -> JSONResponse:
                     "config": config_ready,
                     "core": core_checks,
                     "agent": {"status": "skipped"},
-                    "funasr": "skipped",
+                    "asr": {"provider": settings.asr_provider, "status": "skipped"},
                     "llm": {"provider": settings.llm_provider, "status": "skipped"},
                     "tts": {"provider": "doubao", "status": "skipped"},
                 },
@@ -410,7 +458,7 @@ async def health_ready(request: Request) -> JSONResponse:
                 "config": True,
                 "core": core_checks,
                 "agent": agent_state,
-                "funasr": True,
+                "asr": {"provider": settings.asr_provider, "passed": True},
                 "llm": {"provider": settings.llm_provider, "passed": True},
                 "tts": {
                     "provider": "doubao",

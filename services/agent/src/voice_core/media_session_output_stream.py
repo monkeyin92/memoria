@@ -16,7 +16,7 @@ from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.orchestration.interruption_guard import (
     is_short_assistant_farewell_reply,
 )
-from services.agent.src.providers.tts_failover import (
+from services.agent.src.providers.provider_errors import (
     TTS_UNAVAILABLE_STANDBY_REASON,
     TTSUnavailableError,
 )

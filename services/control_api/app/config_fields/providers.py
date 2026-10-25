@@ -10,6 +10,7 @@ from services.common.llm_failover import (
     dashscope_endpoint_in_use,
     normalize_dashscope_compatible_base_url,
 )
+from services.common.voice_engines import ASREngine, TTSEngine
 
 
 class ProviderFields(BaseModel):
@@ -17,13 +18,12 @@ class ProviderFields(BaseModel):
         default="qwen",
         alias="LLM_PROVIDER",
     )
-    tts_provider: Literal["cosyvoice", "doubao"] = Field(
+    tts_provider: TTSEngine = Field(
         default="doubao",
         alias="TTS_PROVIDER",
     )
     dashscope_api_key: SecretStr = Field(default=SecretStr(""), alias="DASHSCOPE_API_KEY")
-    # control-api does not run ASR. Readiness counts the DashScope key only for funasr.
-    asr_provider: Literal["none", "funasr"] = Field(default="none", alias="ASR_PROVIDER")
+    asr_provider: ASREngine = Field(default="funasr", alias="ASR_PROVIDER")
     qwen_omni_session_enabled: bool = Field(
         default=False, alias="QWEN_OMNI_SESSION_ENABLED"
     )

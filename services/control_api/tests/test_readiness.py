@@ -309,6 +309,106 @@ async def test_smoke_mark_rejects_invalid_control_production_configuration(
 
 
 @pytest.mark.asyncio
+async def test_smoke_mark_rejects_engines_the_control_api_is_not_configured_with(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A smoke that exercised another engine than this Control API runs is not evidence."""
+
+    _configure_local(monkeypatch, tmp_path)
+    app = create_app()
+    app.state.settings = ControlSettings(
+        _env_file=None,
+        ENVIRONMENT="production",
+        PUBLIC_BASE_URL="https://voice.example.com",
+        ALLOWED_ORIGINS="https://voice.example.com",
+        DASHSCOPE_API_KEY="dashscope-key",
+        MEMORIA_AUTH_SECRET="control-auth-material-that-is-long-enough",
+        MEMORIA_RELEASE_TAG="release-readiness-test",
+        LLM_PROVIDER="bailian_deepseek",
+        ASR_PROVIDER="volc",
+        OFFLINE_MOCK=False,
+    )
+    body = {
+        "funasr": True,
+        "llm": True,
+        "llm_provider": "bailian_deepseek",
+        "release_tag": "release-readiness-test",
+        "tts": {"provider": "doubao", "audio": True, "word_timestamps": True},
+        "engines": "voice_engines asr=funasr tts=doubao",
+    }
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.post(
+            "/internal/readiness/smokes",
+            headers={"Authorization": "Bearer control-auth-material-that-is-long-enough"},
+            json=body,
+        )
+
+    assert response.status_code == 409
+    assert "asr=funasr" in response.json()["detail"]
+    assert "asr=volc" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_running_another_engine_closes_production_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Agent and Control read separate env files, so their engines can split.
+
+    The bridge heartbeat is otherwise fresh and the smokes passed, but the
+    engine it built is not the one this Control API configured. Reporting that
+    is the only way the split shows up before a child hears the wrong voice.
+    """
+
+    _configure_local(monkeypatch, tmp_path)
+    app = create_app()
+    app.state.settings = ControlSettings(
+        _env_file=None,
+        ENVIRONMENT="production",
+        MEMORIA_RELEASE_TAG="release-heartbeat-test",
+        MEMORIA_AGENT_HEARTBEAT_TOKEN=SecretStr("agent-heartbeat-token"),
+        ASR_PROVIDER="funasr",
+        OFFLINE_MOCK=False,
+    )
+
+    async def ready_core(*_: object) -> dict[str, str]:
+        return {"control_database": "ready"}
+
+    monkeypatch.setattr(readiness_routes, "_valid_configuration", lambda _: True)
+    monkeypatch.setattr(readiness_routes, "_missing_config", lambda _: [])
+    monkeypatch.setattr(readiness_routes, "_smoke_state", lambda *_: "passed")
+    monkeypatch.setattr(readiness_routes, "_core_checks", ready_core)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        heartbeat = await client.post(
+            "/internal/readiness/agent-heartbeat",
+            headers={"X-Memoria-Internal-Token": "agent-heartbeat-token"},
+            json={
+                "release_tag": "release-heartbeat-test",
+                "boot_id": "8f819a3b-ec8f-4319-94ab-7cace979145f",
+                "worker_ready": True,
+                "last_loop_at": datetime.now(UTC).isoformat(),
+                "chat_llm_providers": ["deepseek"],
+                "engines": "voice_engines asr=volc tts=doubao",
+            },
+        )
+        ready = await client.get("/health/ready")
+
+    assert heartbeat.status_code == 200
+    assert ready.status_code == 503
+    assert ready.json()["checks"]["agent"]["status"] == "engine_mismatch"
+    assert ready.json()["checks"]["agent"]["engines"] == "voice_engines asr=volc tts=doubao"
+
+
+@pytest.mark.asyncio
 async def test_fresh_agent_heartbeat_opens_production_readiness(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -511,16 +611,16 @@ async def test_readiness_reports_an_overdue_smoke_refresh_before_it_expires(
 
 
 @pytest.mark.hermetic
-def test_missing_config_counts_dashscope_only_for_funasr() -> None:
+def test_missing_config_no_longer_checks_asr_credentials() -> None:
+    """Control-api does not run ASR, so it does not check ASR credentials."""
     funasr = ControlSettings(
         _env_file=None,
         ASR_PROVIDER="funasr",
         MEMORIA_RELEASE_TAG="release-readiness-test",
     )
-    present = ControlSettings(
+    volc = ControlSettings(
         _env_file=None,
-        ASR_PROVIDER="funasr",
-        DASHSCOPE_API_KEY="dashscope-key",
+        ASR_PROVIDER="volc",
         MEMORIA_RELEASE_TAG="release-readiness-test",
     )
     untouched = ControlSettings(
@@ -528,29 +628,30 @@ def test_missing_config_counts_dashscope_only_for_funasr() -> None:
         MEMORIA_RELEASE_TAG="release-readiness-test",
     )
 
-    assert "DASHSCOPE_API_KEY" in readiness_routes._missing_config(funasr)
-    assert "DASHSCOPE_API_KEY" not in readiness_routes._missing_config(present)
-    assert untouched.asr_provider == "none"
+    assert "DASHSCOPE_API_KEY" not in readiness_routes._missing_config(funasr)
+    assert "DASHSCOPE_API_KEY" not in readiness_routes._missing_config(volc)
+    assert untouched.asr_provider == "funasr"
     assert "DASHSCOPE_API_KEY" not in readiness_routes._missing_config(untouched)
 
 
 @pytest.mark.hermetic
 @pytest.mark.asyncio
-async def test_health_ready_is_503_when_funasr_has_no_dashscope_key(
+async def test_health_ready_ignores_a_missing_dashscope_key(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """The bridge owns the ASR credential check, so control no longer 503s for it."""
     _configure_local(monkeypatch, tmp_path)
     monkeypatch.setenv("OFFLINE_MOCK", "false")
     monkeypatch.setenv("MEMORIA_RELEASE_TAG", "release-readiness-test")
     monkeypatch.setenv("ASR_PROVIDER", "funasr")
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
-    app = create_app()
 
-    status, body = await _ready(app)
+    status, body = await _ready(create_app())
 
     assert status == 503
-    assert "DASHSCOPE_API_KEY" in body["missing"]
+    assert body["missing"] == []
+    assert body["smokes"] == "not_run"
 
 
 def test_overdue_threshold_follows_the_refresh_timer() -> None:

@@ -41,6 +41,7 @@ from services.agent.src.providers.asr_failover import (
 )
 from services.agent.src.providers.asr_session import StreamingASRSession
 from services.agent.src.providers.fixed_safety_audio import (
+    FixedSafetyClipUnavailableError,
     heard_complete_by_sentence,
     shipped_approved_catalog,
 )
@@ -1512,7 +1513,12 @@ class ExistingVoiceProviderAdapter:
             catalog=shipped_approved_catalog(),
         )
         if template is None:
-            raise RuntimeError("fixed safety script produced no audio")
+            # Every rung is gone. The child will not hear the reviewed line,
+            # and the one thing that must not happen next is a live engine
+            # inventing it, so name the failure the adapter can hand back.
+            raise FixedSafetyClipUnavailableError(
+                "fixed safety script produced no audio"
+            )
         pcm = template.pcm or b""
         self._prerecorded_fixed_safety[fence] = (template.spoken, len(pcm) // 2)
         return pcm, "prerecorded_fallback"
@@ -1979,6 +1985,7 @@ def build_production_provider_factory(
     from services.agent.src.observability.metrics import GLOBAL_METRICS
     from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
     from services.agent.src.providers.funasr_stt import FunASRConfig
+    from services.agent.src.providers.volc_asr import VolcASRConfig
 
     orchestrated_reference = os.getenv(
         "MEDIA_BRIDGE_ORCHESTRATED_LLM_FACTORY",
@@ -2000,7 +2007,7 @@ def build_production_provider_factory(
         raise ValueError("orchestrated LLM builder did not return a session factory")
 
     asr_config = FunASRConfig.from_env()
-    asr_failover = ASRFailoverConfig.from_env()
+    asr_provider = settings.asr_provider
     asr_text_debug_subjects = AsrTextDebugSubjects.from_env()
     tts_config = DoubaoTTSConfig.from_env()
     if getattr(settings, "environment", "development") == "production":
@@ -2013,7 +2020,11 @@ def build_production_provider_factory(
             ("DOUBAO_TTS_SPEAKER", tts_config.speaker.strip()),
         ]
         asr_endpoints: list[str] = []
-        if not asr_failover.enabled:
+        dashscope_required = asr_provider == "funasr" or (
+            asr_provider == "volc"
+            and ASRFailoverConfig.from_env().tertiary == "dashscope_funasr"
+        )
+        if dashscope_required:
             required.extend(
                 (
                     ("DASHSCOPE_API_KEY", asr_config.api_key.strip()),
@@ -2021,30 +2032,15 @@ def build_production_provider_factory(
                 )
             )
             asr_endpoints.append(asr_config.ws_url)
-        else:
-            if asr_failover.primary == "volc":
-                required.extend(
-                    (
-                        ("VOLC_ASR_APP_ID", os.getenv("VOLC_ASR_APP_ID", "").strip()),
-                        (
-                            "VOLC_ASR_ACCESS_TOKEN",
-                            os.getenv("VOLC_ASR_ACCESS_TOKEN", "").strip(),
-                        ),
-                    )
+        if asr_provider == "volc":
+            volc_config = VolcASRConfig.from_env()
+            required.extend(
+                (
+                    ("VOLC_ASR_APP_ID", volc_config.app_id.strip()),
+                    ("VOLC_ASR_ACCESS_TOKEN", volc_config.access_token.strip()),
                 )
-                asr_endpoints.append(
-                    os.getenv("VOLC_ASR_WS_URL", "").strip()
-                    or os.getenv("VOLC_ASR_WS_ENDPOINT", "").strip()
-                    or "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
-                )
-            if asr_failover.tertiary == "dashscope_funasr":
-                required.extend(
-                    (
-                        ("DASHSCOPE_API_KEY", asr_config.api_key.strip()),
-                        ("DASHSCOPE_WS_URL", asr_config.ws_url.strip()),
-                    )
-                )
-                asr_endpoints.append(asr_config.ws_url)
+            )
+            asr_endpoints.append(volc_config.ws_url)
         missing = [name for name, value in required if not value]
         if missing:
             raise ValueError(
@@ -2060,6 +2056,7 @@ def build_production_provider_factory(
     )
     # Built once so the failover breaker is process-wide, not per session.
     asr_session_factory = build_asr_session_factory(
+        asr_provider=asr_provider,
         funasr_config=asr_config,
         metrics=GLOBAL_METRICS,
     )

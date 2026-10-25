@@ -427,3 +427,124 @@ async def test_pool_close_serializes_with_release_enqueue(
     assert close_waited_for_release
     assert pool.available_approx == 0
     assert conn.ws.closed
+
+
+def _rejection(status: int) -> Exception:
+    from websockets.datastructures import Headers
+    from websockets.exceptions import InvalidStatus
+    from websockets.http11 import Response
+
+    return InvalidStatus(Response(status, "rejected", Headers(), b""))
+
+
+@pytest.mark.asyncio
+async def test_a_credential_rejection_stops_later_sessions_paying_the_handshake(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The account, not the pool, is what failed, so the fact outlives one pool.
+
+    A device session builds its own pool, so the per-pool breaker never
+    accumulated. Production ran a day of sessions that each paid three
+    handshakes before the child heard the floor line.
+    """
+
+    attempts: list[str] = []
+    latch = doubao_tts.DoubaoAuthLatch(open_s=300.0)
+
+    async def connect(*_args: object, **_kwargs: object) -> object:
+        attempts.append("refused")
+        raise _rejection(403)
+
+    monkeypatch.setattr(doubao_tts.websockets, "connect", connect)
+    config = DoubaoTTSConfig(
+        api_key="test",
+        speaker="zh_female_kailangjiejie_uranus_bigtts",
+        pool_size=1,
+    )
+    first = DoubaoTTSPool(config, auth_latch=latch)
+    with pytest.raises(doubao_tts.DoubaoAuthRejectedError):
+        await first.warm()
+    await first.aclose()
+    assert attempts == ["refused"]
+
+    # A brand new pool, exactly what the next device session builds.
+    second = DoubaoTTSPool(config, auth_latch=latch)
+    with pytest.raises(doubao_tts.DoubaoAuthRejectedError):
+        await second.warm()
+    await second.aclose()
+    assert attempts == ["refused"], "the latch must answer without a socket"
+
+
+@pytest.mark.asyncio
+async def test_the_latch_expires_so_the_next_attempt_proves_the_fix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A console change has to take effect without restarting the bridge."""
+
+    now = {"value": 100.0}
+    attempts: list[str] = []
+    latch = doubao_tts.DoubaoAuthLatch(open_s=300.0, clock=lambda: now["value"])
+
+    async def connect(*_args: object, **_kwargs: object) -> object:
+        attempts.append("refused")
+        raise _rejection(403)
+
+    monkeypatch.setattr(doubao_tts.websockets, "connect", connect)
+    pool = DoubaoTTSPool(
+        DoubaoTTSConfig(
+            api_key="test",
+            speaker="zh_female_kailangjiejie_uranus_bigtts",
+            pool_size=1,
+        ),
+        auth_latch=latch,
+    )
+    with pytest.raises(doubao_tts.DoubaoAuthRejectedError):
+        await pool.warm()
+    assert attempts == ["refused"]
+
+    now["value"] += 301.0
+    with pytest.raises(doubao_tts.DoubaoAuthRejectedError):
+        await pool.warm()
+    assert attempts == ["refused", "refused"], "the window must let one attempt through"
+    await pool.aclose()
+
+
+def test_one_rejected_resource_does_not_silence_the_other() -> None:
+    """seed-tts-2.0 and seed-icl-2.0 are granted separately by the account."""
+
+    latch = doubao_tts.DoubaoAuthLatch(open_s=300.0, clock=lambda: 10.0)
+
+    latch.record_rejection("seed-tts-2.0")
+
+    assert latch.is_open("seed-tts-2.0")
+    assert not latch.is_open("seed-icl-2.0")
+
+    latch.record_success("seed-tts-2.0")
+    assert not latch.is_open("seed-tts-2.0")
+
+
+@pytest.mark.asyncio
+async def test_a_transport_failure_leaves_the_latch_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only credentials are remembered; a flaky network still retries."""
+
+    latch = doubao_tts.DoubaoAuthLatch(open_s=300.0)
+
+    async def connect(*_args: object, **_kwargs: object) -> object:
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(doubao_tts.websockets, "connect", connect)
+    pool = DoubaoTTSPool(
+        DoubaoTTSConfig(
+            api_key="test",
+            speaker="zh_female_kailangjiejie_uranus_bigtts",
+            pool_size=1,
+        ),
+        auth_latch=latch,
+    )
+    with pytest.raises(OSError):
+        await pool.warm()
+
+    assert not latch.is_open("seed-tts-2.0")
+    await pool.aclose()

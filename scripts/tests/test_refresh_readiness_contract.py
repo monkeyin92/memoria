@@ -82,6 +82,7 @@ def _provider_expected(agent_env: Path) -> str:
     program = (
         "set -Eeuo pipefail\n"
         f"agent_env={shlex.quote(str(agent_env))}\n"
+        + _shell_function(script, "agent_env_value")
         + _shell_function(script, "provider_expected_line")
         + "\n"
         + block
@@ -97,8 +98,14 @@ def _provider_expected(agent_env: Path) -> str:
     return result.stdout.strip()
 
 
-def _required_pass_line(*, search_on: bool, llm_label: str, tts_label: str = "Doubao") -> str:
-    names = ["FunASR"]
+def _required_pass_line(
+    *,
+    search_on: bool,
+    llm_label: str,
+    asr: str,
+    tts_label: str = "Doubao",
+) -> str:
+    names = ["VolcASR" if asr == "volc" else "FunASR"]
     if search_on:
         names.append("QwenRealtimeSearch")
     names.extend((llm_label, tts_label))
@@ -112,15 +119,12 @@ def _write_agent_env(
     asr: str,
     omni: str,
     llm_provider: str,
-    tts_provider: str = "doubao",
-    stepfun_enabled: str = "false",
 ) -> Path:
     lines = [
         f"LLM_PROVIDER={llm_provider}",
         f"ASR_PROVIDER={asr}",
         f"QWEN_OMNI_SESSION_ENABLED={omni}",
-        f"TTS_PROVIDER={tts_provider}",
-        f"STEPFUN_TTS_ENABLED={stepfun_enabled}",
+        "TTS_PROVIDER=doubao",
     ]
     if search_value is not None:
         lines.append(f"LIVE_SEARCH_QWEN_ENABLED={search_value}")
@@ -138,8 +142,6 @@ async def _smoke_pass_line(
     omni: str,
     llm_provider: str,
     llm_label: str,
-    tts_provider: str = "doubao",
-    stepfun_enabled: str = "false",
 ) -> str:
     monkeypatch.setenv("OFFLINE_MOCK", "false")
     monkeypatch.setenv("DASHSCOPE_API_KEY", "test-dashscope-key")
@@ -149,12 +151,12 @@ async def _smoke_pass_line(
     monkeypatch.setenv("LLM_PROVIDER", llm_provider)
     monkeypatch.setenv("ASR_PROVIDER", asr)
     monkeypatch.setenv("QWEN_OMNI_SESSION_ENABLED", omni)
-    monkeypatch.setenv("TTS_PROVIDER", tts_provider)
-    monkeypatch.setenv("STEPFUN_TTS_ENABLED", stepfun_enabled)
-    if tts_provider == "stepfun_primary":
-        monkeypatch.setenv("STEPFUN_API_KEY", "test-stepfun-key")
-    else:
-        monkeypatch.delenv("STEPFUN_API_KEY", raising=False)
+    monkeypatch.setenv("TTS_PROVIDER", "doubao")
+    # The Volc chain needs both its credential and its backup endpoint present
+    # before the smoke runs any of it; the fake session replaces the calls.
+    monkeypatch.setenv("VOLC_ASR_APP_ID", "test-volc-app")
+    monkeypatch.setenv("VOLC_ASR_ACCESS_TOKEN", "test-volc-token")
+    monkeypatch.setenv("SENSEVOICE_URL", "http://sensevoice.invalid/transcribe")
     if search_value is None:
         monkeypatch.delenv("LIVE_SEARCH_QWEN_ENABLED", raising=False)
     else:
@@ -163,39 +165,39 @@ async def _smoke_pass_line(
     async def fake_doubao() -> list[tuple[bytes, tuple[str, ...], tuple[str, ...]]]:
         return [(b"\x00\x00", ("测试",), ())]
 
-    async def fake_stepfun() -> list[tuple[bytes, tuple[str, ...], tuple[str, ...]]]:
-        return [(b"\x00\x00", ("测试",), ())]
-
-    async def fake_backup_doubao() -> str:
-        return "degraded"
-
     async def fake_realtime_search(_settings: object) -> None:
         return None
 
-    async def fake_funasr(
-        pcm: bytes,
-        *,
-        expected_markers: tuple[str, ...],
-        forbidden_markers: tuple[str, ...],
-    ) -> None:
-        assert pcm == b"\x00\x00"
+    ran: list[str] = []
+
+    def asr_recorder(engine: str) -> object:
+        async def fake_asr(
+            pcm: bytes,
+            *,
+            expected_markers: tuple[str, ...],
+            forbidden_markers: tuple[str, ...],
+        ) -> None:
+            assert pcm == b"\x00\x00"
+            ran.append(engine)
+
+        return fake_asr
 
     async def fake_llm() -> str:
         return llm_label
 
     monkeypatch.setattr(provider_smoke_test, "smoke_doubao", fake_doubao)
-    monkeypatch.setattr(provider_smoke_test, "smoke_stepfun", fake_stepfun)
-    monkeypatch.setattr(provider_smoke_test, "smoke_backup_doubao", fake_backup_doubao)
     monkeypatch.setattr(provider_smoke_test, "smoke_realtime_search", fake_realtime_search)
-    monkeypatch.setattr(provider_smoke_test, "smoke_funasr", fake_funasr)
+    monkeypatch.setattr(provider_smoke_test, "smoke_funasr", asr_recorder("FunASR"))
+    monkeypatch.setattr(provider_smoke_test, "smoke_volc_asr", asr_recorder("VolcASR"))
     monkeypatch.setattr(provider_smoke_test, "smoke_llm", fake_llm)
 
     assert await provider_smoke_test.main() == 0
-    lines = [
-        line
-        for line in capsys.readouterr().out.splitlines()
-        if line.startswith("provider_smoke_test PASS:")
-    ]
+    output = capsys.readouterr().out.splitlines()
+    # The smoke must have run the engine its selector names, not the one the
+    # script used to assume. Today only FunASR and Volc are selectable.
+    assert ran == ["VolcASR" if asr == "volc" else "FunASR"]
+    assert f"voice_engines asr={asr} tts=doubao" in output
+    lines = [line for line in output if line.startswith("provider_smoke_test PASS:")]
     assert len(lines) == 1
     return lines[0]
 
@@ -203,23 +205,13 @@ async def _smoke_pass_line(
 @pytest.mark.parametrize(
     ("search_value", "asr", "omni", "llm_provider", "llm_label", "search_on"),
     [
-        ("false", "none", "false", "bailian_deepseek", "DeepSeek", False),
-        (None, "none", "false", "bailian_deepseek", "DeepSeek", False),
-        ("true", "none", "false", "bailian_deepseek", "DeepSeek", True),
+        ("false", "funasr", "false", "bailian_deepseek", "DeepSeek", False),
+        (None, "volc", "false", "bailian_deepseek", "DeepSeek", False),
+        ("true", "volc", "false", "bailian_deepseek", "DeepSeek", True),
         ("True", "funasr", "true", "qwen", "Qwen", True),
         ("0", "funasr", "true", "qwen", "Qwen", False),
-        ("yes", "none", "false", "deepseek", "DeepSeek", True),
+        ("yes", "funasr", "false", "deepseek", "DeepSeek", True),
         ("no", "funasr", "true", "qwen", "Qwen", False),
-    ],
-)
-@pytest.mark.parametrize(
-    ("tts_provider", "stepfun_enabled", "tts_label"),
-    [
-        ("doubao", "false", "Doubao"),
-        ("stepfun_primary", "true", "StepFun"),
-        # A stepfun_primary without its switch falls back to Doubao, and the
-        # expected line has to follow the engine the smoke will really use.
-        ("stepfun_primary", "false", "Doubao"),
     ],
 )
 async def test_readiness_expected_line_matches_smoke_for_search_flag(
@@ -229,22 +221,17 @@ async def test_readiness_expected_line_matches_smoke_for_search_flag(
     llm_provider: str,
     llm_label: str,
     search_on: bool,
-    tts_provider: str,
-    stepfun_enabled: str,
-    tts_label: str,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    required = _required_pass_line(search_on=search_on, llm_label=llm_label, tts_label=tts_label)
+    required = _required_pass_line(search_on=search_on, llm_label=llm_label, asr=asr)
     agent_env = _write_agent_env(
         tmp_path,
         search_value=search_value,
         asr=asr,
         omni=omni,
         llm_provider=llm_provider,
-        tts_provider=tts_provider,
-        stepfun_enabled=stepfun_enabled,
     )
     shell_line = _provider_expected(agent_env)
     smoke_line = await _smoke_pass_line(
@@ -255,8 +242,6 @@ async def test_readiness_expected_line_matches_smoke_for_search_flag(
         omni=omni,
         llm_provider=llm_provider,
         llm_label=llm_label,
-        tts_provider=tts_provider,
-        stepfun_enabled=stepfun_enabled,
     )
 
     assert shell_line == required

@@ -681,6 +681,11 @@ class MockDoubaoServer:
     scenario: str = "happy"  # happy|split_pcm|split_pcm_odd|odd_pcm|stall_after_first_pcm|slow|slow_once|slow_after_first|slow_after_second|slow_after_sixth|expire_after_first|empty_ts|scaled_ts|degraded_ts
     chunk_delay_s: float = 0.0
     connection_failure_payload: bytes | None = None
+    #: Reject the HTTP upgrade with this status, which is what Volcengine does
+    #: to an account without the TTS entitlement. The client never reaches the
+    #: protocol, so ``connections`` stays untouched.
+    reject_status: int = 0
+    rejected_handshakes: int = 0
     connections: int = 0
     sessions: int = 0
     #: PCM frames actually sent, so a test proves how much the server streamed
@@ -714,7 +719,12 @@ class MockDoubaoServer:
             asyncio.set_event_loop(self._loop)
 
             async def _start() -> Any:
-                return await websockets.serve(self._handler, self.host, self.port)
+                return await websockets.serve(
+                    self._handler,
+                    self.host,
+                    self.port,
+                    process_request=self._process_request,
+                )
 
             self._server = self._loop.run_until_complete(_start())
             self.port = int(self._server.sockets[0].getsockname()[1])
@@ -726,6 +736,17 @@ class MockDoubaoServer:
         self._thread = threading.Thread(target=_run, daemon=True)
         self._thread.start()
         ready.wait(timeout=5)
+
+    def _process_request(self, _connection: Any, _request: Any) -> Any:
+        """Answer the upgrade itself when the test wants a rejected account."""
+
+        if not self.reject_status:
+            return None
+        from websockets.datastructures import Headers
+        from websockets.http11 import Response
+
+        self.rejected_handshakes += 1
+        return Response(self.reject_status, "rejected", Headers(), b"")
 
     def stop(self) -> None:
         if self._loop is None or self._server is None:

@@ -27,9 +27,10 @@ import math
 import os
 import uuid
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import dataclass
 from time import monotonic
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import websockets
 from websockets.asyncio.client import ClientConnection
@@ -49,6 +50,24 @@ from services.agent.src.providers.volc_protocol import (
 
 logger = logging.getLogger(__name__)
 
+
+class _DeclaredEnv:
+    """A mapping that refuses a read of a key its owner did not declare.
+
+    ``from_env`` reads through this, so a new knob that was never added to
+    ``ENV_KEYS`` fails here instead of being dropped by a release. A recording
+    mapping passed in by a test sees exactly the keys the config reads.
+    """
+
+    def __init__(self, env: Mapping[str, str], declared: frozenset[str]) -> None:
+        self._env = env
+        self._declared = declared
+
+    def get(self, key: str, default: str = "") -> str:
+        if key not in self._declared:
+            raise KeyError(f"{key} is read but not declared in ENV_KEYS")
+        return self._env.get(key, default)
+
 DEFAULT_VOLC_ASR_ENDPOINT = (
     "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
 )
@@ -61,6 +80,23 @@ class VolcASRError(RuntimeError):
 
 @dataclass
 class VolcASRConfig:
+    ENV_KEYS: ClassVar[frozenset[str]] = frozenset({
+        "VOLC_ASR_WS_URL",
+        "VOLC_ASR_WS_ENDPOINT",
+        "VOLC_ASR_APP_ID",
+        "VOLC_ASR_ACCESS_TOKEN",
+        "VOLC_ASR_RESOURCE_ID",
+        "VOLC_ASR_MODEL",
+        "VOLC_ASR_CHUNK_MS",
+        "VOLC_ASR_END_WINDOW_MS",
+        "VOLC_ASR_ENABLE_NONSTREAM",
+        "VOLC_ASR_SHOW_UTTERANCES",
+        "VOLC_ASR_BOOSTING_TABLE_ID",
+        "VOLC_ASR_CONNECT_TIMEOUT_S",
+        "VOLC_ASR_RESULT_TIMEOUT_S",
+        "VOLC_ASR_POST_FINISH_TAIL_GRACE_S",
+        "VOLC_ASR_RECONNECT_AUDIO_MS",
+    })
     app_id: str
     access_token: str
     resource_id: str = DEFAULT_VOLC_RESOURCE_ID
@@ -98,7 +134,7 @@ class VolcASRConfig:
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> VolcASRConfig:
-        e = env or dict(os.environ)
+        e = _DeclaredEnv(env if env is not None else dict(os.environ), cls.ENV_KEYS)
         endpoint = (
             e.get("VOLC_ASR_WS_URL", "").strip()
             or e.get("VOLC_ASR_WS_ENDPOINT", "").strip()

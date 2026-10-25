@@ -1,8 +1,10 @@
 """Config-driven ASR failover: Volc primary, SenseVoice backup, Bailian tertiary.
 
-The switch is off by default. When ``ASR_FAILOVER_ENABLED`` is false the
-factory returns the existing DashScope ``FunASRSession`` unchanged, so a
-deployment that does not opt in keeps the current behaviour byte for byte.
+``ASR_PROVIDER`` selects the engine. ``volc`` builds this chain, ``funasr``
+builds the plain DashScope ``FunASRSession``. The selector is one key on
+purpose: ``ASR_FAILOVER_ENABLED`` used to spell the same choice a second time,
+and the two copies drifted, so the shell gate could expect one engine while the
+process ran the other.
 
 Failover is per VAD segment, never concatenated: if the primary errors or
 misses its first-result budget, the whole segment PCM is re-recognised offline
@@ -24,20 +26,25 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from time import monotonic
-from typing import Any
+from typing import Any, ClassVar, assert_never
 
 from services.agent.src.providers.asr_session import StreamingASRSession
 from services.agent.src.providers.funasr_protocol import FunASRSentence, FunASRServerEvent
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
 from services.agent.src.providers.sensevoice import SenseVoiceRescue, SenseVoiceRescueConfig
 from services.agent.src.providers.volc_asr import VolcASRConfig, VolcASRSession
+from services.common.voice_engines import ASREngine
 
 logger = logging.getLogger(__name__)
+
+# The chain this module builds has exactly one primary. It used to be a config
+# field read from ASR_PRIMARY, which could only ever hold this value.
+_PRIMARY_PROVIDER = "volc"
 
 _FAILOVER_REASONS = frozenset(
     {
         "connect_failed",
-        "first_result_timeout",
+        "final_result_timeout",
         "provider_error",
         "breaker_open",
     }
@@ -46,13 +53,34 @@ _FAILOVER_REASONS = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class ASRFailoverConfig:
-    """Environment-driven knobs for the optional ASR failover chain."""
+    """Environment-driven knobs for the Volcengine ASR chain.
 
-    enabled: bool = False
-    primary: str = "volc"
+    There is no switch here. ``ASR_PROVIDER=volc`` is what builds this chain,
+    and ``ASR_FAILOVER_ENABLED`` / ``ASR_PRIMARY`` used to repeat that decision
+    inside this file. They are rejected upstream by ``reject_replaced_keys``,
+    so a deployment still carrying one fails the split instead of silently
+    running a different engine than the selector asked for.
+    """
+
+    ENV_KEYS: ClassVar[frozenset[str]] = frozenset({
+        "ASR_BACKUP",
+        "ASR_TERTIARY",
+        "ASR_FAILOVER_FINAL_RESULT_TIMEOUT_MS",
+        "ASR_FAILOVER_CONNECT_TIMEOUT_MS",
+        "ASR_BREAKER_FAILURES",
+        "ASR_BREAKER_OPEN_S",
+        "ASR_BACKUP_TIMEOUT_S",
+        "ASR_BACKUP_MAX_AUDIO_S",
+    })
+
     backup: str = "sensevoice"
     tertiary: str = "dashscope_funasr"
-    first_result_timeout_s: float = 1.5
+    # How long the primary gets, from the negative packet to its final, before
+    # the segment goes to the backup. The backup re-recognises the whole
+    # segment and cannot start until the audio ends, so a verdict before
+    # ``rotate_task`` saves nothing. Measured on the offline A/B: final p50
+    # 0.09 s, p90 0.18 s, against a first partial p50 of 3.40 s.
+    final_result_timeout_s: float = 1.0
     connect_timeout_s: float = 2.0
     breaker_failures: int = 3
     breaker_open_s: float = 30.0
@@ -61,16 +89,14 @@ class ASRFailoverConfig:
     post_finish_tail_grace_s: float = 0.25
 
     def __post_init__(self) -> None:
-        if self.primary not in {"volc"}:
-            raise ValueError("ASR_PRIMARY must be volc when failover is enabled")
         if self.backup not in {"sensevoice", "none"}:
             raise ValueError("ASR_BACKUP must be sensevoice or none")
         if self.tertiary not in {"dashscope_funasr", "none"}:
             raise ValueError("ASR_TERTIARY must be dashscope_funasr or none")
-        if self.enabled and self.backup == "none" and self.tertiary == "none":
+        if self.backup == "none" and self.tertiary == "none":
             raise ValueError("ASR failover needs at least one backup or tertiary provider")
-        if not 0 < self.first_result_timeout_s <= 30:
-            raise ValueError("ASR first-result timeout must be within (0, 30] seconds")
+        if not 0 < self.final_result_timeout_s <= 30:
+            raise ValueError("ASR final-result timeout must be within (0, 30] seconds")
         if not 0 < self.connect_timeout_s <= 30:
             raise ValueError("ASR connect timeout must be within (0, 30] seconds")
         if self.breaker_failures < 1:
@@ -84,15 +110,15 @@ class ASRFailoverConfig:
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> ASRFailoverConfig:
-        e = env or dict(os.environ)
+        from services.agent.src.providers.volc_asr import _DeclaredEnv
+
+        e = _DeclaredEnv(env if env is not None else dict(os.environ), cls.ENV_KEYS)
         return cls(
-            enabled=e.get("ASR_FAILOVER_ENABLED", "false").strip().lower() == "true",
-            primary=e.get("ASR_PRIMARY", "volc").strip().lower() or "volc",
             backup=e.get("ASR_BACKUP", "sensevoice").strip().lower() or "sensevoice",
             tertiary=e.get("ASR_TERTIARY", "dashscope_funasr").strip().lower()
             or "dashscope_funasr",
-            first_result_timeout_s=float(
-                e.get("ASR_FAILOVER_FIRST_RESULT_TIMEOUT_MS", "1500")
+            final_result_timeout_s=float(
+                e.get("ASR_FAILOVER_FINAL_RESULT_TIMEOUT_MS", "1000")
             )
             / 1000.0,
             connect_timeout_s=float(e.get("ASR_FAILOVER_CONNECT_TIMEOUT_MS", "2000"))
@@ -239,12 +265,10 @@ class FailoverASRSession:
         self._probe_lease: int | None = None
         self._degraded = False
         self._degrade_reason: str | None = None
-        self._primary_first_result = False
         self._primary_final_seen = False
-        # First frame of this segment that carries speech energy. Silence never
-        # starts the first-result clock: a child who pauses before speaking
-        # must not be mistaken for a silent provider.
-        self._speech_onset_at: float | None = None
+        # Set when the negative packet goes out, cleared when the final lands,
+        # so ``asr_finalize_ms`` measures the wait the budget actually bounds.
+        self._finalize_at: float | None = None
         self._task_epoch = 0
         self._segment_epoch = 1
         self._task_sample_origin = 0
@@ -376,7 +400,7 @@ class FailoverASRSession:
             self._degrade_reason = None
         logger.info(
             "asr failover primary connected provider=%s task_epoch=%s",
-            self.config.primary,
+            _PRIMARY_PROVIDER,
             self._task_epoch,
         )
         return True
@@ -420,13 +444,13 @@ class FailoverASRSession:
                 self.metrics.inc_media_metric(
                     "asr_failover_total",
                     labels={
-                        "provider": self.config.primary,
+                        "provider": _PRIMARY_PROVIDER,
                         "reason": reason,
                     },
                 )
         logger.info(
             "asr failover primary degraded provider=%s reason=%s",
-            self.config.primary,
+            _PRIMARY_PROVIDER,
             reason,
         )
 
@@ -452,8 +476,6 @@ class FailoverASRSession:
         if self._segment_voiced_start is None and self._has_speech_energy(pcm):
             self._segment_voiced_start = start
         self._last_sent_sample = end
-        if self._speech_onset_at is None and self._segment_voiced_start is not None:
-            self._speech_onset_at = self._clock()
         primary = self._primary
         if primary is not None and not self._degraded:
             try:
@@ -468,15 +490,6 @@ class FailoverASRSession:
                     self._task_epoch = max(self._task_epoch, self._primary.task_epoch)
                     self.task_id = self._primary.task_id or self.task_id
                     self._task_sample_origin = self._primary.task_sample_origin
-        if self._degraded or primary is None:
-            return
-        if (
-            self._speech_onset_at is not None
-            and not self._primary_first_result
-            and self._clock() - self._speech_onset_at
-            >= self.config.first_result_timeout_s
-        ):
-            await self._degrade("first_result_timeout")
 
     def _start_segment_if_needed(self, start: int) -> None:
         if self._segment_start is not None:
@@ -491,9 +504,8 @@ class FailoverASRSession:
         """Reset per-segment state and retry the primary for the new segment."""
 
         self._rotation_pending = False
-        self._speech_onset_at = None
-        self._primary_first_result = False
         self._primary_final_seen = False
+        self._finalize_at = None
         self._task_epoch += 1
         self._segment_epoch += 1
         self._task_sample_origin = start
@@ -554,16 +566,15 @@ class FailoverASRSession:
             return False
         sentence = event.sentence
         if event.event == "result-generated" and sentence is not None:
-            if sentence.text.strip():
-                self._primary_first_result = True
             if sentence.sentence_end and sentence.text.strip():
                 self._primary_final_seen = True
-                if self.metrics is not None and self._speech_onset_at is not None:
+                if self.metrics is not None and self._finalize_at is not None:
                     self.metrics.observe_media_metric(
-                        "asr_first_result_ms",
-                        (self._clock() - self._speech_onset_at) * 1000.0,
-                        labels={"provider": self.config.primary},
+                        "asr_finalize_ms",
+                        (self._clock() - self._finalize_at) * 1000.0,
+                        labels={"provider": _PRIMARY_PROVIDER},
                     )
+                    self._finalize_at = None
         self.events.put_nowait(event)
         return False
 
@@ -573,21 +584,22 @@ class FailoverASRSession:
         primary = self._primary
         if primary is not None and not self._degraded:
             await self._drain_primary()
-        if (
-            primary is not None
-            and not self._degraded
-            and self._speech_onset_at is not None
-            and not self._primary_first_result
-            and self._clock() - self._speech_onset_at
-            >= self.config.first_result_timeout_s
-        ):
-            await self._degrade("first_result_timeout")
-            primary = None
         if primary is not None and not self._degraded:
+            # The budget runs from the negative packet, not from speech onset.
+            # The backup re-recognises the whole segment and cannot start until
+            # the audio ends, so judging a primary that is still streaming buys
+            # nothing. Cancelling the rotation is safe: the primary aborts its
+            # own task in a finally block.
+            self._finalize_at = self._clock()
             try:
-                await primary.rotate_task(require_consumed=require_consumed)
+                await asyncio.wait_for(
+                    primary.rotate_task(require_consumed=require_consumed),
+                    timeout=self.config.final_result_timeout_s,
+                )
             except asyncio.CancelledError:
                 raise
+            except TimeoutError:
+                await self._degrade("final_result_timeout")
             except Exception:
                 await self._degrade("provider_error")
             else:
@@ -603,7 +615,7 @@ class FailoverASRSession:
             else:
                 await self._emit_backup_result()
         self._rotation_pending = True
-        self._speech_onset_at = None
+        self._finalize_at = None
         self._reset_segment_evidence()
 
     async def _emit_backup_result(self) -> None:
@@ -795,15 +807,28 @@ class FailoverASRSession:
 
 def build_asr_session_factory(
     *,
+    asr_provider: ASREngine,
     funasr_config: FunASRConfig,
     metrics: Any = None,
     env: dict[str, str] | None = None,
 ) -> Callable[[], StreamingASRSession]:
-    """Return the configured factory; the default remains the existing session."""
+    """Build the session the selector names, failing the deploy on bad config.
 
+    ``funasr`` is the plain DashScope session. ``volc`` is this chain, and its
+    backups are resolved here so a missing SenseVoice endpoint or a missing
+    Volc credential fails startup instead of every device session. A new
+    engine value cannot reach here without a type error, because ``match``
+    ends in ``assert_never``.
+    """
+
+    match asr_provider:
+        case "funasr":
+            return lambda: FunASRSession(replace(funasr_config), metrics=metrics)
+        case "volc":
+            pass
+        case _ as unreachable:
+            assert_never(unreachable)
     settings = ASRFailoverConfig.from_env(env)
-    if not settings.enabled:
-        return lambda: FunASRSession(replace(funasr_config), metrics=metrics)
     environment = env or dict(os.environ)
     volc_config = VolcASRConfig.from_env(environment)
     sensevoice: SenseVoiceRescue | None = None

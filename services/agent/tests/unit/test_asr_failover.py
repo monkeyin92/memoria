@@ -61,6 +61,7 @@ class FakeSession:
         fail_rotate: bool = False,
         fail_event_on_send: bool = False,
         final_on_rotate: bool = True,
+        rotate_blocks: float = 0.0,
     ) -> None:
         self.config = SimpleNamespace(post_finish_tail_grace_s=0.0)
         self.events: asyncio.Queue[FunASRServerEvent] = asyncio.Queue()
@@ -74,6 +75,7 @@ class FakeSession:
         self.fail_rotate = fail_rotate
         self.fail_event_on_send = fail_event_on_send
         self.final_on_rotate = final_on_rotate
+        self.rotate_blocks = rotate_blocks
         self.sent: list[bytes] = []
         self.closed = False
         self.rotated = 0
@@ -98,6 +100,12 @@ class FakeSession:
 
     async def rotate_task(self, *, require_consumed: bool = True) -> None:
         self.rotated += 1
+        try:
+            await asyncio.sleep(self.rotate_blocks)
+        except asyncio.CancelledError:
+            # Mirrors VolcASRSession, which aborts its task in a finally block.
+            self.rotation_pending = True
+            raise
         if self.fail_rotate:
             raise RuntimeError("rotation failed")
         if self.text and self.final_on_rotate:
@@ -141,8 +149,7 @@ class FakeSenseVoice:
 
 def _config(**overrides: Any) -> ASRFailoverConfig:
     values: dict[str, Any] = {
-        "enabled": True,
-        "first_result_timeout_s": 1.5,
+        "final_result_timeout_s": 1.0,
         "connect_timeout_s": 0.2,
         "backup_timeout_s": 0.5,
         "max_segment_s": 12.0,
@@ -182,24 +189,62 @@ async def test_primary_connect_failure_reidentifies_whole_segment() -> None:
 
 
 @pytest.mark.asyncio
-async def test_first_result_timeout_switches_to_backup() -> None:
+async def test_streaming_for_minutes_is_not_a_failure() -> None:
+    """The budget bounds the finalize wait only.
+
+    Volc's first partial arrives at p50 3.4 s, so a clock that started at
+    speech onset failed ordinary speech. A primary that is still streaming is
+    never late.
+    """
+
     now = [0.0]
-    sensevoice = FakeSenseVoice("超时兜底")
+    sensevoice = FakeSenseVoice("不应调用")
     session = FailoverASRSession(
         config=_config(),
-        primary_factory=lambda: FakeSession(),
+        primary_factory=lambda: FakeSession(text="主用结果"),
         sensevoice=sensevoice,
         clock=lambda: now[0],
     )
     await session.connect()
-    await session.send_pcm(_pcm())
-    now[0] = 2.0
-    await session.send_pcm(_pcm(), capture_start_sample=1600)
-    assert session.degraded is True
-    assert session.degrade_reason == "first_result_timeout"
-    assert session._primary is None
+    start = 0
+    for _ in range(30):
+        await session.send_pcm(_pcm(), capture_start_sample=start)
+        start += 1600
+        now[0] += 2.0
+    assert session.degraded is False
+    assert sensevoice.requests == []
 
     await session.rotate_task(require_consumed=False)
+    events = _drain(session.events)
+    assert any(
+        event.sentence is not None and event.sentence.text == "主用结果"
+        for event in events
+        if event.event == "result-generated"
+    )
+
+
+@pytest.mark.asyncio
+async def test_finalize_timeout_switches_to_backup() -> None:
+    """A primary that ignores the negative packet past the budget is replaced.
+
+    The fake never returns from ``rotate_task``, so the failover has to come
+    from the budget, not from the primary's own error path.
+    """
+
+    sensevoice = FakeSenseVoice("超时兜底")
+    session = FailoverASRSession(
+        config=_config(final_result_timeout_s=0.05),
+        primary_factory=lambda: FakeSession(text="永不返回", rotate_blocks=5.0),
+        sensevoice=sensevoice,
+        clock=lambda: 0.0,
+    )
+    await session.connect()
+    await session.send_pcm(_pcm())
+    await session.rotate_task(require_consumed=False)
+
+    assert session.degraded is True
+    assert session.degrade_reason == "final_result_timeout"
+    assert session._primary is None
     events = _drain(session.events)
     assert any(
         event.sentence is not None and event.sentence.text == "超时兜底"
@@ -209,38 +254,26 @@ async def test_first_result_timeout_switches_to_backup() -> None:
 
 
 @pytest.mark.asyncio
-async def test_silence_before_speech_never_starts_the_first_result_clock() -> None:
-    """A child who pauses before talking must not be read as a silent provider."""
-
-    now = [0.0]
+async def test_a_final_within_the_budget_is_forwarded_without_backup() -> None:
     sensevoice = FakeSenseVoice("不应调用")
-    primary = FakeSession()
     session = FailoverASRSession(
-        config=_config(first_result_timeout_s=1.5),
-        primary_factory=lambda: primary,
+        config=_config(final_result_timeout_s=0.5),
+        primary_factory=lambda: FakeSession(text="准时结果"),
         sensevoice=sensevoice,
-        clock=lambda: now[0],
+        clock=lambda: 0.0,
     )
     await session.connect()
-    start = 0
-    for _ in range(50):  # one second of frames, ten seconds of clock
-        await session.send_pcm(_silence(), capture_start_sample=start)
-        start += 1600
-        now[0] += 0.2
-    assert session.degraded is False
-    assert session.degrade_reason is None
+    await session.send_pcm(_pcm())
+    await session.rotate_task(require_consumed=False)
 
-    # Speech starts now; the clock starts with it, not with the segment.
-    await session.send_pcm(_pcm(), capture_start_sample=start)
-    start += 1600
-    now[0] += 0.5
-    await session.send_pcm(_silence(), capture_start_sample=start)
     assert session.degraded is False
-    now[0] += 1.1
-    await session.send_pcm(_silence(), capture_start_sample=start + 1600)
-    assert session.degraded is True
-    assert session.degrade_reason == "first_result_timeout"
     assert sensevoice.requests == []
+    events = _drain(session.events)
+    assert any(
+        event.sentence is not None and event.sentence.text == "准时结果"
+        for event in events
+        if event.event == "result-generated"
+    )
 
 
 @pytest.mark.asyncio
@@ -249,23 +282,26 @@ async def test_degradation_covers_one_segment_and_the_next_retries_primary() -> 
     primaries: list[FakeSession] = []
 
     def primary_factory() -> FakeSession:
-        session = FakeSession(text="主用第二段")
+        # The first segment's primary never answers past the budget; the
+        # retried primary does.
+        session = FakeSession(
+            text="主用第二段", rotate_blocks=5.0 if not primaries else 0.0
+        )
         primaries.append(session)
         return session
 
     sensevoice = FakeSenseVoice("兜底第一段")
     session = FailoverASRSession(
-        config=_config(),
+        config=_config(final_result_timeout_s=0.05),
         primary_factory=primary_factory,
         sensevoice=sensevoice,
         clock=lambda: now[0],
     )
     await session.connect()
     await session.send_pcm(_pcm())
-    now[0] = 2.0
-    await session.send_pcm(_pcm(), capture_start_sample=1600)
-    assert session.degraded is True
     await session.rotate_task(require_consumed=False)
+    assert session.degraded is True
+    assert session.degrade_reason == "final_result_timeout"
     _drain(session.events)
 
     # The next segment starts: the primary is retried and the session is no
@@ -467,10 +503,10 @@ async def test_repeated_timeouts_open_breaker_for_the_next_session() -> None:
 
     def primary_factory() -> FakeSession:
         called.append(1)
-        return FakeSession()
+        return FakeSession(rotate_blocks=5.0)
 
     session = FailoverASRSession(
-        config=_config(),
+        config=_config(final_result_timeout_s=0.05),
         primary_factory=primary_factory,
         sensevoice=FakeSenseVoice("兜底"),
         breaker=breaker,
@@ -482,17 +518,14 @@ async def test_repeated_timeouts_open_breaker_for_the_next_session() -> None:
     for _ in range(2):
         await session.send_pcm(_pcm(), capture_start_sample=start)
         start += 1600
-        now[0] += 2.0
-        await session.send_pcm(_pcm(), capture_start_sample=start)
-        start += 1600
-        assert session.degrade_reason == "first_result_timeout"
         await session.rotate_task(require_consumed=False)
+        assert session.degrade_reason == "final_result_timeout"
         _drain(session.events)
         now[0] += 0.1
     await session.aclose()
 
     skipped = FailoverASRSession(
-        config=_config(),
+        config=_config(final_result_timeout_s=0.05),
         primary_factory=primary_factory,
         sensevoice=FakeSenseVoice("兜底"),
         breaker=breaker,
@@ -576,41 +609,42 @@ def test_a_session_cannot_release_a_probe_it_does_not_own() -> None:
     assert breaker.probe_in_flight is False
 
 
-def test_config_is_off_by_default_and_factory_is_unchanged() -> None:
-    assert ASRFailoverConfig.from_env({}).enabled is False
+def test_funasr_selector_builds_the_plain_session_and_reads_no_chain_keys() -> None:
+    """``ASR_PROVIDER=funasr`` must not need any Volc or backup config."""
+
     factory = build_asr_session_factory(
+        asr_provider="funasr",
         funasr_config=FunASRConfig(api_key="key", ws_url="ws://example.invalid"),
         env={},
     )
     assert isinstance(factory(), FunASRSession)
 
 
-def test_enabled_factory_requires_sensevoice_endpoint() -> None:
+def test_volc_selector_requires_sensevoice_endpoint() -> None:
     with pytest.raises(ValueError, match="SENSEVOICE_URL"):
         build_asr_session_factory(
+            asr_provider="volc",
             funasr_config=FunASRConfig(api_key="key", ws_url="ws://example.invalid"),
-            env={"ASR_FAILOVER_ENABLED": "true"},
+            env={},
         )
 
 
-def test_enabled_factory_requires_volc_credentials() -> None:
-    """A deploy with the switch on but no credentials must fail at build time."""
+def test_volc_selector_requires_volc_credentials() -> None:
+    """A deploy that selected Volc without credentials must fail at build time."""
 
     with pytest.raises(ValueError, match="VOLC_ASR_APP_ID"):
         build_asr_session_factory(
+            asr_provider="volc",
             funasr_config=FunASRConfig(api_key="key", ws_url="ws://example.invalid"),
-            env={
-                "ASR_FAILOVER_ENABLED": "true",
-                "SENSEVOICE_URL": "http://127.0.0.1:9/transcribe",
-            },
+            env={"SENSEVOICE_URL": "http://127.0.0.1:9/transcribe"},
         )
 
 
-def test_enabled_factory_builds_failover_session() -> None:
+def test_volc_selector_builds_the_failover_session() -> None:
     factory = build_asr_session_factory(
+        asr_provider="volc",
         funasr_config=FunASRConfig(api_key="key", ws_url="ws://example.invalid"),
         env={
-            "ASR_FAILOVER_ENABLED": "true",
             "SENSEVOICE_URL": "http://127.0.0.1:9/transcribe",
             "VOLC_ASR_APP_ID": "app",
             "VOLC_ASR_ACCESS_TOKEN": "token",

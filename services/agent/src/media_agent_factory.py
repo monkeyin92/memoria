@@ -241,6 +241,7 @@ class ProductionMediaSessionFactory:
             asr_config = FunASRConfig.from_env()
             if self._asr_session_factory is None:
                 self._asr_session_factory = build_asr_session_factory(
+                    asr_provider=self.settings.asr_provider,
                     funasr_config=asr_config,
                     metrics=GLOBAL_METRICS,
                 )
@@ -494,9 +495,10 @@ def build_production_media_session_factory(settings: Any) -> ProductionMediaSess
         session_recap_sink=session_recap_sink,
         daily_chat_client=build_daily_chat_client(settings),
     )
-    # Resolve the ASR failover configuration at startup so a missing backup
-    # endpoint fails the deploy instead of every device session.
+    # Resolve the ASR configuration at startup so a missing backup endpoint or
+    # credential fails the deploy instead of every device session.
     factory._asr_session_factory = build_asr_session_factory(
+        asr_provider=settings.asr_provider,
         funasr_config=FunASRConfig.from_env(),
         metrics=GLOBAL_METRICS,
     )

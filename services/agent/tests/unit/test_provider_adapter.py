@@ -1703,6 +1703,7 @@ async def test_production_provider_factory_owns_session_tts_and_uses_injected_or
         llm_base_url="https://llm.example/v1",
         llm_fast_model="fast-model",
         llm_provider="bailian_deepseek",
+        asr_provider="funasr",
     )
 
     factory = build_production_provider_factory(cast(Any, settings))
@@ -1791,6 +1792,7 @@ def test_production_provider_factory_fails_closed_without_production_keys(
         llm_base_url="https://llm.example/v1",
         llm_fast_model="fast-model",
         llm_provider="bailian_deepseek",
+        asr_provider="funasr",
     )
 
     monkeypatch.setenv("MEDIA_BRIDGE_ORCHESTRATED_LLM_FACTORY", "fake.module:build")
@@ -1799,6 +1801,14 @@ def test_production_provider_factory_fails_closed_without_production_keys(
         lambda _name: SimpleNamespace(build=lambda _settings: lambda _identity: FakeLLM()),
     )
     with pytest.raises(ValueError, match="DASHSCOPE_API_KEY"):
+        build_production_provider_factory(cast(Any, settings))
+
+    # The same check follows the selector: with Volc selected, the credential
+    # it needs is the one the deploy has to carry.
+    settings.asr_provider = "volc"
+    monkeypatch.setenv("VOLC_ASR_APP_ID", "")
+    monkeypatch.setenv("VOLC_ASR_ACCESS_TOKEN", "")
+    with pytest.raises(ValueError, match="VOLC_ASR_APP_ID"):
         build_production_provider_factory(cast(Any, settings))
 
 

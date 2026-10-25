@@ -77,4 +77,5 @@ def test_mark_uses_selected_llm_provider_without_exposing_secret(
         "audio": True,
         "word_timestamps": True,
     }
+    assert captured["payload"]["engines"] == "voice_engines asr=funasr tts=doubao"
     assert captured["authorization"] == "test-auth-material-that-is-long-enough"

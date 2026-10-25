@@ -5,13 +5,19 @@ from typing import Any
 
 import pytest
 from services.agent.src.providers import doubao_tts, tts_factory
+from services.agent.src.providers.fixed_safety_audio import FixedSafetyTTS
 
 
 def test_build_tts_follows_tts_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     sentinel = object()
     monkeypatch.setattr(doubao_tts.DoubaoTTS, "from_env", classmethod(lambda cls: sentinel))
 
-    assert tts_factory.build_tts(SimpleNamespace(tts_provider="doubao")) is sentinel
+    built = tts_factory.build_tts(SimpleNamespace(tts_provider="doubao"))
+    # The fixed-safety wrapper is always in front: crisis copy reaches a live
+    # engine only through a template that allows it, never by the wrapper
+    # being absent.
+    assert isinstance(built, FixedSafetyTTS)
+    assert built._inner is sentinel
     assert tts_factory.tts_provider_label(SimpleNamespace(tts_provider="doubao")) == (
         "volcengine_doubao"
     )

@@ -170,32 +170,30 @@ run_required_provider_smoke() {
     --entrypoint /app/.venv/bin/python voice-core-media-bridge -m scripts.provider_smoke_test
 }
 
+agent_env_value() {
+  awk -F= -v key="$2" '$1 == key {value = $2} END {print value}' "$1"
+}
+
 provider_expected_line() {
-  local llm_label="$1" raw tts_engine
-  raw="$(awk -F= '$1 == "LIVE_SEARCH_QWEN_ENABLED" {print $2}' "$agent_env" | tail -1)"
+  local llm_label="$1" raw asr_engine asr_label
+  raw="$(agent_env_value "$agent_env" LIVE_SEARCH_QWEN_ENABLED)"
   raw="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
-  # The smoke names the engine the session actually speaks with, so this must
-  # resolve the same pair tts_factory._active_provider does.
-  tts_engine="$(awk -F= '$1 == "TTS_PROVIDER" {print $2}' "$agent_env" | tail -1)"
-  local stepfun_enabled
-  stepfun_enabled="$(awk -F= '$1 == "STEPFUN_TTS_ENABLED" {print $2}' "$agent_env" | tail -1)"
-  stepfun_enabled="$(printf '%s' "$stepfun_enabled" | tr '[:upper:]' '[:lower:]')"
-  if [[ "$tts_engine" == stepfun_primary ]]; then
-    case "$stepfun_enabled" in
-      1|true|yes|on|t|y) ;;
-      *) tts_engine=volcengine_doubao ;;
-    esac
-  fi
-  case "$tts_engine" in
-    stepfun_primary) tts_engine=StepFun ;;
-    *) tts_engine=Doubao ;;
+  # ASR_PROVIDER decides what the smoke exercises, so the expected line reads
+  # the same selector the bridge does. Assuming FunASR here is what let a Volc
+  # deploy pass with an untested engine.
+  asr_engine="$(agent_env_value "$agent_env" ASR_PROVIDER)"
+  case "${asr_engine:-funasr}" in
+    funasr) asr_label=FunASR ;;
+    volc) asr_label=VolcASR ;;
+    *) echo "invalid ASR_PROVIDER in $agent_env" >&2; exit 1 ;;
   esac
+  # TTS_PROVIDER has one legal value now, so the smoke always speaks Doubao.
   case "$raw" in
     1|true|yes|on|t|y)
-      printf 'provider_smoke_test PASS: FunASR, QwenRealtimeSearch, %s, %s\n' "$llm_label" "$tts_engine"
+      printf 'provider_smoke_test PASS: %s, QwenRealtimeSearch, %s, Doubao\n' "$asr_label" "$llm_label"
       ;;
     *)
-      printf 'provider_smoke_test PASS: FunASR, %s, %s\n' "$llm_label" "$tts_engine"
+      printf 'provider_smoke_test PASS: %s, %s, Doubao\n' "$asr_label" "$llm_label"
       ;;
   esac
 }

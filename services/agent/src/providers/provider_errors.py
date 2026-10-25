@@ -9,6 +9,11 @@ adapters were written against, with the same retry semantics:
   and 499, whatever the caller asked for.
 - ``APIConnectOptions`` bounds those attempts: ``max_retry`` extra attempts,
   0.1 s before the first retry and ``retry_interval`` before each later one.
+
+``TTSUnavailableError`` is the one non-vendor type here. A synthesizer raises
+it once it has given up and no audio reached the caller, so the media adapter
+can tell real TTS exhaustion from an LLM, ASR or encoding failure and hand the
+device its floor back.
 """
 
 from __future__ import annotations
@@ -90,6 +95,20 @@ class APITimeoutError(APIConnectionError):
         super().__init__(message, retryable=retryable)
 
 
+TTS_UNAVAILABLE_STANDBY_REASON = "tts_unavailable"
+
+
+class TTSUnavailableError(RuntimeError):
+    """Every TTS engine failed on an ordinary unit.
+
+    Raised instead of the last engine's own error once the synthesizer has
+    stopped retrying and no audio reached the caller, so the media adapter can
+    tell real TTS exhaustion from LLM, ASR, and encoding failures. Crisis units
+    never raise it: they have one candidate whose failure the adapter already
+    routes to the sha256-verified approved clip.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class APIConnectOptions:
     max_retry: int = 3
@@ -119,4 +138,6 @@ __all__ = [
     "APIError",
     "APIStatusError",
     "APITimeoutError",
+    "TTS_UNAVAILABLE_STANDBY_REASON",
+    "TTSUnavailableError",
 ]

@@ -42,6 +42,9 @@ def test_mark_and_check_use_control_env_secret_and_release_metadata(
                     "audio": True,
                     "word_timestamps": True,
                 },
+                # The Control API refuses a mark whose engines differ from its
+                # own, so the marker names the engines this env selects.
+                "engines": "voice_engines asr=funasr tts=doubao",
             },
         },
         {"url": "http://control-api:8000/health/ready"},

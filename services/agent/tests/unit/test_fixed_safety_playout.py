@@ -421,7 +421,9 @@ async def test_fixed_safety_stepfun_failure_plays_the_shipped_approved_clip() ->
 
 
 @pytest.mark.asyncio
-async def test_fixed_safety_prerecorded_hash_mismatch_uses_stepfun_before_any_doubao() -> None:
+async def test_fixed_safety_prerecorded_hash_mismatch_uses_the_shipped_clip_only() -> None:
+    """A broken configured clip goes to the shipped clip; no engine is opened."""
+
     broken = FixedSafetyAudioCatalog(
         (
             FixedSafetyAudioTemplate(
@@ -440,14 +442,17 @@ async def test_fixed_safety_prerecorded_hash_mismatch_uses_stepfun_before_any_do
 
     chunks = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
 
-    assert primary.received == [SPOKEN_SCRIPT]
+    template = shipped_approved_catalog().get("crisis-self-v1")
+    assert template is not None and template.pcm
+    pcm = b"".join(chunk.pcm_s16le for chunk in chunks)
+    assert pcm.startswith(template.pcm)
+    assert primary.received == []
     assert backup.received == []
-    assert any(chunk.pcm_s16le for chunk in chunks)
     assert "".join(chunk.assistant_text_delta for chunk in chunks) == CRISIS_SELF_SCRIPT.display
 
 
 @pytest.mark.asyncio
-async def test_fixed_safety_broken_clip_and_stepfun_failure_use_the_shipped_clip() -> None:
+async def test_fixed_safety_broken_clip_and_stepfun_down_still_play_the_shipped_clip() -> None:
     broken = FixedSafetyAudioCatalog(
         (
             FixedSafetyAudioTemplate(
@@ -467,7 +472,7 @@ async def test_fixed_safety_broken_clip_and_stepfun_failure_use_the_shipped_clip
     backup = _ScriptEngine("volcengine_doubao", "seed-tts-2.0", behavior="error")
     speech = FixedSafetyTTS(_script_speech(primary=primary, backup=backup), broken)
     adapter = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), cast(Any, speech))
-    identity, fence = _generation("fixed-safety-broken-clip-stepfun-failure")
+    identity, fence = _generation("fixed-safety-broken-clip-stepfun-down")
 
     chunks = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
 
@@ -475,7 +480,7 @@ async def test_fixed_safety_broken_clip_and_stepfun_failure_use_the_shipped_clip
     assert template is not None and template.pcm
     pcm = b"".join(chunk.pcm_s16le for chunk in chunks)
     assert pcm.startswith(template.pcm)
-    assert primary.received == [SPOKEN_SCRIPT, SPOKEN_SCRIPT]
+    assert primary.received == []
     assert backup.received == []
 
 
