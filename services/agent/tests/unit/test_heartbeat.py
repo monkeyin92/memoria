@@ -244,6 +244,8 @@ async def test_build_agent_heartbeat_is_production_only_and_reports_the_chat_pla
         internal_token=internal_token,
         llm_provider="bailian_deepseek",
         llm_failover_enabled=True,
+        asr_provider="volc",
+        tts_provider="doubao",
     )
 
     assert build_agent_heartbeat(SimpleNamespace(environment="development")) is None
@@ -253,6 +255,9 @@ async def test_build_agent_heartbeat_is_production_only_and_reports_the_chat_pla
         await heartbeat.report(client)
     assert tokens == ["agent_heartbeat"]
     assert [payload["chat_llm_providers"] for payload in posted] == [["deepseek", "qwen"]]
+    # The engines this bridge built travel with the heartbeat, so the Control
+    # API can tell a healthy bridge running a different engine from a ready one.
+    assert [payload["engines"] for payload in posted] == ["voice_engines asr=volc tts=doubao"]
 
 
 def test_a_heartbeat_must_name_the_chat_model_families_it_builds(tmp_path: Path) -> None:

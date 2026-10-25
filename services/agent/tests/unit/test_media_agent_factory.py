@@ -170,6 +170,7 @@ async def test_production_media_factory_builds_one_policy_bound_agent_session(
         voice_profile_enabled=False,
         funasr_sample_rate=16000,
         llm_provider="bailian_deepseek",
+        asr_provider="funasr",
         llm_fast_model="deepseek-v4-flash",
         llm_api_key="secret",
         llm_base_url="https://llm.example/v1",
@@ -362,6 +363,7 @@ async def test_production_media_factory_does_not_replay_archive_during_session_c
     factory = factory_module.ProductionMediaSessionFactory(
         settings=SimpleNamespace(
             llm_provider="test",
+            asr_provider="funasr",
             llm_fast_model="test",
             doubao_tts_resource_id="test",
             doubao_tts_sample_rate=24000,

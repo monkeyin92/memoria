@@ -78,6 +78,23 @@ class VoiceEngines:
         """Both agent and control settings satisfy this. No env read here."""
         return cls(asr=settings.asr_provider, tts=settings.tts_provider)
 
+    @classmethod
+    def from_env(cls, env: Mapping[str, str]) -> Self:
+        """For scripts that post evidence without building full settings.
+
+        The libraries are the same defaults the settings classes carry, so a
+        short-lived container that omits a selector reports what a service
+        built from the same env would run. An unknown value raises here rather
+        than posting evidence for an engine no process can build.
+        """
+        asr = (env.get("ASR_PROVIDER", "").strip().lower() or "funasr")
+        tts = (env.get("TTS_PROVIDER", "").strip().lower() or "doubao")
+        if asr not in ASR_ENGINES:
+            raise ValueError(f"unknown ASR_PROVIDER {asr!r}")
+        if tts not in TTS_ENGINES:
+            raise ValueError(f"unknown TTS_PROVIDER {tts!r}")
+        return cls(asr=asr, tts=tts)
+
     def smoke_line(self) -> str:
         """The only producer of the wire form the smoke prints and readiness parses."""
         return f"{SMOKE_LINE_PREFIX} asr={self.asr} tts={self.tts}"
@@ -97,7 +114,7 @@ class VoiceEngines:
             raise ValueError(f"unknown ASR engine {asr!r}")
         if tts not in TTS_ENGINES:
             raise ValueError(f"unknown TTS engine {tts!r}")
-        return cls(asr=asr, tts=tts)  # type: ignore[arg-type]
+        return cls(asr=asr, tts=tts)
 
 
 def _pair(part: str) -> tuple[str, str]:

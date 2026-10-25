@@ -82,6 +82,7 @@ def _provider_expected(agent_env: Path) -> str:
     program = (
         "set -Eeuo pipefail\n"
         f"agent_env={shlex.quote(str(agent_env))}\n"
+        + _shell_function(script, "agent_env_value")
         + _shell_function(script, "provider_expected_line")
         + "\n"
         + block
@@ -97,8 +98,14 @@ def _provider_expected(agent_env: Path) -> str:
     return result.stdout.strip()
 
 
-def _required_pass_line(*, search_on: bool, llm_label: str, tts_label: str = "Doubao") -> str:
-    names = ["FunASR"]
+def _required_pass_line(
+    *,
+    search_on: bool,
+    llm_label: str,
+    asr: str,
+    tts_label: str = "Doubao",
+) -> str:
+    names = ["VolcASR" if asr == "volc" else "FunASR"]
     if search_on:
         names.append("QwenRealtimeSearch")
     names.extend((llm_label, tts_label))
@@ -145,6 +152,11 @@ async def _smoke_pass_line(
     monkeypatch.setenv("ASR_PROVIDER", asr)
     monkeypatch.setenv("QWEN_OMNI_SESSION_ENABLED", omni)
     monkeypatch.setenv("TTS_PROVIDER", "doubao")
+    # The Volc chain needs both its credential and its backup endpoint present
+    # before the smoke runs any of it; the fake session replaces the calls.
+    monkeypatch.setenv("VOLC_ASR_APP_ID", "test-volc-app")
+    monkeypatch.setenv("VOLC_ASR_ACCESS_TOKEN", "test-volc-token")
+    monkeypatch.setenv("SENSEVOICE_URL", "http://sensevoice.invalid/transcribe")
     if search_value is None:
         monkeypatch.delenv("LIVE_SEARCH_QWEN_ENABLED", raising=False)
     else:
@@ -156,28 +168,36 @@ async def _smoke_pass_line(
     async def fake_realtime_search(_settings: object) -> None:
         return None
 
-    async def fake_funasr(
-        pcm: bytes,
-        *,
-        expected_markers: tuple[str, ...],
-        forbidden_markers: tuple[str, ...],
-    ) -> None:
-        assert pcm == b"\x00\x00"
+    ran: list[str] = []
+
+    def asr_recorder(engine: str) -> object:
+        async def fake_asr(
+            pcm: bytes,
+            *,
+            expected_markers: tuple[str, ...],
+            forbidden_markers: tuple[str, ...],
+        ) -> None:
+            assert pcm == b"\x00\x00"
+            ran.append(engine)
+
+        return fake_asr
 
     async def fake_llm() -> str:
         return llm_label
 
     monkeypatch.setattr(provider_smoke_test, "smoke_doubao", fake_doubao)
     monkeypatch.setattr(provider_smoke_test, "smoke_realtime_search", fake_realtime_search)
-    monkeypatch.setattr(provider_smoke_test, "smoke_funasr", fake_funasr)
+    monkeypatch.setattr(provider_smoke_test, "smoke_funasr", asr_recorder("FunASR"))
+    monkeypatch.setattr(provider_smoke_test, "smoke_volc_asr", asr_recorder("VolcASR"))
     monkeypatch.setattr(provider_smoke_test, "smoke_llm", fake_llm)
 
     assert await provider_smoke_test.main() == 0
-    lines = [
-        line
-        for line in capsys.readouterr().out.splitlines()
-        if line.startswith("provider_smoke_test PASS:")
-    ]
+    output = capsys.readouterr().out.splitlines()
+    # The smoke must have run the engine its selector names, not the one the
+    # script used to assume. Today only FunASR and Volc are selectable.
+    assert ran == ["VolcASR" if asr == "volc" else "FunASR"]
+    assert f"voice_engines asr={asr} tts=doubao" in output
+    lines = [line for line in output if line.startswith("provider_smoke_test PASS:")]
     assert len(lines) == 1
     return lines[0]
 
@@ -205,7 +225,7 @@ async def test_readiness_expected_line_matches_smoke_for_search_flag(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    required = _required_pass_line(search_on=search_on, llm_label=llm_label)
+    required = _required_pass_line(search_on=search_on, llm_label=llm_label, asr=asr)
     agent_env = _write_agent_env(
         tmp_path,
         search_value=search_value,

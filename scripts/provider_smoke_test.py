@@ -14,6 +14,7 @@ from services.agent.src.config import AgentSettings
 from services.agent.src.contracts.events import TimedWord
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.llm_types import ChatContext
+from services.agent.src.providers.asr_failover import ASRFailoverConfig
 from services.agent.src.providers.doubao_protocol import pcm_duration_ms
 from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
 from services.agent.src.providers.doubao_voice_catalog import (
@@ -27,11 +28,10 @@ from services.agent.src.providers.handlers import (
     build_realtime_search_resolver,
 )
 from services.agent.src.providers.openai_chat import OpenAIChatModel
-from services.agent.src.providers.tts_factory import (
-    build_tts,
-    tts_provider_label,
-    tts_runtime_descriptor,
-)
+from services.agent.src.providers.tts_factory import tts_provider_label
+from services.agent.src.providers.volc_asr import VolcASRConfig, VolcASRSession
+from services.common.llm_failover import dashscope_endpoint_in_use
+from services.common.voice_engines import VoiceEngines
 
 DEFAULT_DASHSCOPE_WS_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
 
@@ -290,6 +290,59 @@ async def smoke_funasr(
     print(f"FunASR smoke: PASS (interim + {len(finals)} final(s) + monotonic word timestamps)")
 
 
+async def smoke_volc_asr(
+    pcm_16k: bytes,
+    *,
+    expected_markers: tuple[str, ...],
+    forbidden_markers: tuple[str, ...] = (),
+) -> None:
+    """The Volcengine path the bridge builds when ASR_PROVIDER=volc.
+
+    Same audio as the FunASR smoke, so the release gate proves the engine the
+    deploy selected rather than the one it used to run. Volc word timestamps
+    are empty by the protocol, so only text is asserted. Whether the service
+    streams partials depends on its account config, so that is reported rather
+    than required: the characters a child's turn is built from come from the
+    final.
+    """
+
+    cfg = VolcASRConfig.from_env()
+    session = VolcASRSession(cfg)
+    interim = False
+    finals: list[FunASRSentence] = []
+    finished = False
+    try:
+        await session.connect()
+        chunk_bytes = cfg.sample_rate * 2 * cfg.chunk_ms // 1000
+        for offset in range(0, len(pcm_16k), chunk_bytes):
+            await session.send_pcm(pcm_16k[offset : offset + chunk_bytes])
+            await asyncio.sleep(cfg.chunk_ms / 1000)
+        await session.rotate_task()
+        while True:
+            event = await asyncio.wait_for(session.events.get(), timeout=cfg.result_timeout_s)
+            if event.event == "result-generated" and event.sentence is not None:
+                if event.sentence.sentence_end:
+                    finals.append(event.sentence)
+                elif event.sentence.text:
+                    interim = True
+            elif event.event == "task-failed":
+                raise AssertionError(event.error_message or "Volc ASR task-failed")
+            elif event.event == "task-finished":
+                finished = True
+                break
+    finally:
+        await session.aclose()
+    text = "".join(sentence.text for sentence in finals)
+    if not finals or not all(marker in text for marker in expected_markers):
+        raise AssertionError(f"Volc ASR final mismatch: {[sentence.text for sentence in finals]!r}")
+    if any(marker in text for marker in forbidden_markers):
+        raise AssertionError(f"Volc ASR unexpectedly transcribed reference context: {text!r}")
+    if not finished:
+        raise AssertionError("Volc ASR task did not finish normally")
+    stream = "interim" if interim else "no-interim"
+    print(f"Volc ASR smoke: PASS ({stream} + {len(finals)} final(s) + task boundary)")
+
+
 async def smoke_llm() -> str:
     settings = AgentSettings()
     model = build_language_model_handler(
@@ -340,7 +393,32 @@ async def main() -> int:
     if tts_label != "volcengine_doubao":
         print(f"provider_smoke_test FAIL: unexpected TTS engine {tts_label!r}")
         return 1
-    missing = [name for name in ("DASHSCOPE_API_KEY",) if not os.getenv(name)]
+    # Printed before any provider call, so a failing smoke still says which
+    # engines it was configured with. The release gate compares this line with
+    # the ASR the PASS line names, and the Control API rejects a mark whose
+    # engines differ from its own, so one selector cannot silently run here and
+    # another in the bridge.
+    engines = VoiceEngines.from_settings(settings)
+    print(engines.smoke_line())
+    asr_label = "VolcASR" if engines.asr == "volc" else "FunASR"
+    run_asr = smoke_volc_asr if engines.asr == "volc" else smoke_funasr
+    missing: list[str] = []
+    failover = ASRFailoverConfig.from_env() if engines.asr == "volc" else None
+    # Every rung the deploy configured has to be usable, or the smoke would
+    # prove a chain that silently cannot fall back.
+    if failover is not None:
+        volc_asr = VolcASRConfig.from_env()
+        if not volc_asr.app_id or not volc_asr.access_token:
+            missing.append("VOLC_ASR_APP_ID/VOLC_ASR_ACCESS_TOKEN")
+        if failover.backup == "sensevoice" and not os.getenv("SENSEVOICE_URL", "").strip():
+            missing.append("SENSEVOICE_URL")
+    needs_dashscope = (
+        engines.asr == "funasr"
+        or dashscope_endpoint_in_use(llm_provider=settings.llm_provider)
+        or (failover is not None and failover.tertiary == "dashscope_funasr")
+    )
+    if needs_dashscope and not os.getenv("DASHSCOPE_API_KEY"):
+        missing.append("DASHSCOPE_API_KEY")
     has_doubao_auth = bool(os.getenv("DOUBAO_TTS_API_KEY")) or bool(
         os.getenv("DOUBAO_TTS_APP_ID") and os.getenv("DOUBAO_TTS_ACCESS_TOKEN")
     )
@@ -355,14 +433,14 @@ async def main() -> int:
     if required and os.getenv("DOUBAO_TTS_STYLE_CONTROL_ENABLED", "false").lower() != "true":
         print("provider_smoke_test FAIL: Doubao style control is required but disabled")
         return 1
-    passed = ["FunASR"]
+    passed = [asr_label]
     try:
         if settings.live_search_qwen_enabled:
             await smoke_realtime_search(settings)
             passed.append("QwenRealtimeSearch")
         samples = await smoke_doubao()
         for pcm_16k, expected_markers, forbidden_markers in samples:
-            await smoke_funasr(
+            await run_asr(
                 pcm_16k,
                 expected_markers=expected_markers,
                 forbidden_markers=forbidden_markers,

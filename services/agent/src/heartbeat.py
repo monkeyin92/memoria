@@ -28,6 +28,7 @@ import httpx
 
 from services.common.chat_llm_providers import ChatLlmFamily, chat_llm_plan
 from services.common.failure_log import failure_log
+from services.common.voice_engines import VoiceEngines
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,10 @@ class AgentHeartbeatConfig:
     internal_token: str
     release_tag: str
     chat_llm_providers: tuple[ChatLlmFamily, ...]
+    # What this process built, so Control can name a split where the two env
+    # files selected different engines instead of vouching for a smoke that
+    # tested the other one.
+    engines: str = ""
     interval_s: float = 10.0
     timeout_s: float = 3.0
     state_path: Path = HEARTBEAT_STATE_PATH
@@ -80,16 +85,19 @@ class AgentHeartbeat:
 
     async def report(self, client: httpx.AsyncClient) -> None:
         worker_ready = self._worker_ready
+        payload: dict[str, object] = {
+            "release_tag": self._config.release_tag,
+            "boot_id": str(self._boot_id),
+            "worker_ready": worker_ready,
+            "last_loop_at": self._clock().astimezone(UTC).isoformat(),
+            "chat_llm_providers": list(self._config.chat_llm_providers),
+        }
+        if self._config.engines:
+            payload["engines"] = self._config.engines
         response = await client.post(
             self._config.endpoint,
             headers={"X-Memoria-Internal-Token": self._config.internal_token},
-            json={
-                "release_tag": self._config.release_tag,
-                "boot_id": str(self._boot_id),
-                "worker_ready": worker_ready,
-                "last_loop_at": self._clock().astimezone(UTC).isoformat(),
-                "chat_llm_providers": list(self._config.chat_llm_providers),
-            },
+            json=payload,
         )
         response.raise_for_status()
         try:
@@ -154,6 +162,7 @@ def build_agent_heartbeat(settings: Any) -> AgentHeartbeat | None:
                 llm_provider=settings.llm_provider,
                 llm_failover_enabled=settings.llm_failover_enabled,
             ).families,
+            engines=VoiceEngines.from_settings(settings).smoke_line(),
         )
     )
 

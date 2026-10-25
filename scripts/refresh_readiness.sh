@@ -170,18 +170,30 @@ run_required_provider_smoke() {
     --entrypoint /app/.venv/bin/python voice-core-media-bridge -m scripts.provider_smoke_test
 }
 
+agent_env_value() {
+  awk -F= -v key="$2" '$1 == key {value = $2} END {print value}' "$1"
+}
+
 provider_expected_line() {
-  local llm_label="$1" raw
-  raw="$(awk -F= '$1 == "LIVE_SEARCH_QWEN_ENABLED" {print $2}' "$agent_env" | tail -1)"
+  local llm_label="$1" raw asr_engine asr_label
+  raw="$(agent_env_value "$agent_env" LIVE_SEARCH_QWEN_ENABLED)"
   raw="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
-  # TTS_PROVIDER has one legal value now, so the smoke the release runs always
-  # speaks Doubao and this line does not have to resolve a selector.
+  # ASR_PROVIDER decides what the smoke exercises, so the expected line reads
+  # the same selector the bridge does. Assuming FunASR here is what let a Volc
+  # deploy pass with an untested engine.
+  asr_engine="$(agent_env_value "$agent_env" ASR_PROVIDER)"
+  case "${asr_engine:-funasr}" in
+    funasr) asr_label=FunASR ;;
+    volc) asr_label=VolcASR ;;
+    *) echo "invalid ASR_PROVIDER in $agent_env" >&2; exit 1 ;;
+  esac
+  # TTS_PROVIDER has one legal value now, so the smoke always speaks Doubao.
   case "$raw" in
     1|true|yes|on|t|y)
-      printf 'provider_smoke_test PASS: FunASR, QwenRealtimeSearch, %s, Doubao\n' "$llm_label"
+      printf 'provider_smoke_test PASS: %s, QwenRealtimeSearch, %s, Doubao\n' "$asr_label" "$llm_label"
       ;;
     *)
-      printf 'provider_smoke_test PASS: FunASR, %s, Doubao\n' "$llm_label"
+      printf 'provider_smoke_test PASS: %s, %s, Doubao\n' "$asr_label" "$llm_label"
       ;;
   esac
 }

@@ -1,8 +1,10 @@
 """Config-driven ASR failover: Volc primary, SenseVoice backup, Bailian tertiary.
 
-The switch is off by default. When ``ASR_FAILOVER_ENABLED`` is false the
-factory returns the existing DashScope ``FunASRSession`` unchanged, so a
-deployment that does not opt in keeps the current behaviour byte for byte.
+``ASR_PROVIDER`` selects the engine. ``volc`` builds this chain, ``funasr``
+builds the plain DashScope ``FunASRSession``. The selector is one key on
+purpose: ``ASR_FAILOVER_ENABLED`` used to spell the same choice a second time,
+and the two copies drifted, so the shell gate could expect one engine while the
+process ran the other.
 
 Failover is per VAD segment, never concatenated: if the primary errors or
 misses its first-result budget, the whole segment PCM is re-recognised offline
@@ -24,15 +26,20 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from time import monotonic
-from typing import Any, ClassVar
+from typing import Any, ClassVar, assert_never
 
 from services.agent.src.providers.asr_session import StreamingASRSession
 from services.agent.src.providers.funasr_protocol import FunASRSentence, FunASRServerEvent
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
 from services.agent.src.providers.sensevoice import SenseVoiceRescue, SenseVoiceRescueConfig
 from services.agent.src.providers.volc_asr import VolcASRConfig, VolcASRSession
+from services.common.voice_engines import ASREngine
 
 logger = logging.getLogger(__name__)
+
+# The chain this module builds has exactly one primary. It used to be a config
+# field read from ASR_PRIMARY, which could only ever hold this value.
+_PRIMARY_PROVIDER = "volc"
 
 _FAILOVER_REASONS = frozenset(
     {
@@ -46,16 +53,16 @@ _FAILOVER_REASONS = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class ASRFailoverConfig:
-    """Environment-driven knobs for the optional ASR failover chain.
+    """Environment-driven knobs for the Volcengine ASR chain.
 
-    ENV_KEYS includes ASR_FAILOVER_ENABLED and ASR_PRIMARY because failover code
-    still reads them. They are rejected upstream by reject_replaced_keys before
-    reaching from_env.
+    There is no switch here. ``ASR_PROVIDER=volc`` is what builds this chain,
+    and ``ASR_FAILOVER_ENABLED`` / ``ASR_PRIMARY`` used to repeat that decision
+    inside this file. They are rejected upstream by ``reject_replaced_keys``,
+    so a deployment still carrying one fails the split instead of silently
+    running a different engine than the selector asked for.
     """
 
     ENV_KEYS: ClassVar[frozenset[str]] = frozenset({
-        "ASR_FAILOVER_ENABLED",
-        "ASR_PRIMARY",
         "ASR_BACKUP",
         "ASR_TERTIARY",
         "ASR_FAILOVER_FINAL_RESULT_TIMEOUT_MS",
@@ -66,8 +73,6 @@ class ASRFailoverConfig:
         "ASR_BACKUP_MAX_AUDIO_S",
     })
 
-    enabled: bool = False
-    primary: str = "volc"
     backup: str = "sensevoice"
     tertiary: str = "dashscope_funasr"
     # How long the primary gets, from the negative packet to its final, before
@@ -84,13 +89,11 @@ class ASRFailoverConfig:
     post_finish_tail_grace_s: float = 0.25
 
     def __post_init__(self) -> None:
-        if self.primary not in {"volc"}:
-            raise ValueError("ASR_PRIMARY must be volc when failover is enabled")
         if self.backup not in {"sensevoice", "none"}:
             raise ValueError("ASR_BACKUP must be sensevoice or none")
         if self.tertiary not in {"dashscope_funasr", "none"}:
             raise ValueError("ASR_TERTIARY must be dashscope_funasr or none")
-        if self.enabled and self.backup == "none" and self.tertiary == "none":
+        if self.backup == "none" and self.tertiary == "none":
             raise ValueError("ASR failover needs at least one backup or tertiary provider")
         if not 0 < self.final_result_timeout_s <= 30:
             raise ValueError("ASR final-result timeout must be within (0, 30] seconds")
@@ -111,8 +114,6 @@ class ASRFailoverConfig:
 
         e = _DeclaredEnv(env if env is not None else dict(os.environ), cls.ENV_KEYS)
         return cls(
-            enabled=e.get("ASR_FAILOVER_ENABLED", "false").strip().lower() == "true",
-            primary=e.get("ASR_PRIMARY", "volc").strip().lower() or "volc",
             backup=e.get("ASR_BACKUP", "sensevoice").strip().lower() or "sensevoice",
             tertiary=e.get("ASR_TERTIARY", "dashscope_funasr").strip().lower()
             or "dashscope_funasr",
@@ -399,7 +400,7 @@ class FailoverASRSession:
             self._degrade_reason = None
         logger.info(
             "asr failover primary connected provider=%s task_epoch=%s",
-            self.config.primary,
+            _PRIMARY_PROVIDER,
             self._task_epoch,
         )
         return True
@@ -443,13 +444,13 @@ class FailoverASRSession:
                 self.metrics.inc_media_metric(
                     "asr_failover_total",
                     labels={
-                        "provider": self.config.primary,
+                        "provider": _PRIMARY_PROVIDER,
                         "reason": reason,
                     },
                 )
         logger.info(
             "asr failover primary degraded provider=%s reason=%s",
-            self.config.primary,
+            _PRIMARY_PROVIDER,
             reason,
         )
 
@@ -571,7 +572,7 @@ class FailoverASRSession:
                     self.metrics.observe_media_metric(
                         "asr_finalize_ms",
                         (self._clock() - self._finalize_at) * 1000.0,
-                        labels={"provider": self.config.primary},
+                        labels={"provider": _PRIMARY_PROVIDER},
                     )
                     self._finalize_at = None
         self.events.put_nowait(event)
@@ -806,15 +807,28 @@ class FailoverASRSession:
 
 def build_asr_session_factory(
     *,
+    asr_provider: ASREngine,
     funasr_config: FunASRConfig,
     metrics: Any = None,
     env: dict[str, str] | None = None,
 ) -> Callable[[], StreamingASRSession]:
-    """Return the configured factory; the default remains the existing session."""
+    """Build the session the selector names, failing the deploy on bad config.
 
+    ``funasr`` is the plain DashScope session. ``volc`` is this chain, and its
+    backups are resolved here so a missing SenseVoice endpoint or a missing
+    Volc credential fails startup instead of every device session. A new
+    engine value cannot reach here without a type error, because ``match``
+    ends in ``assert_never``.
+    """
+
+    match asr_provider:
+        case "funasr":
+            return lambda: FunASRSession(replace(funasr_config), metrics=metrics)
+        case "volc":
+            pass
+        case _ as unreachable:
+            assert_never(unreachable)
     settings = ASRFailoverConfig.from_env(env)
-    if not settings.enabled:
-        return lambda: FunASRSession(replace(funasr_config), metrics=metrics)
     environment = env or dict(os.environ)
     volc_config = VolcASRConfig.from_env(environment)
     sensevoice: SenseVoiceRescue | None = None

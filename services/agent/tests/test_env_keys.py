@@ -49,7 +49,7 @@ def test_volc_asr_never_reads_doubao_tts_keys() -> None:
 
 
 def test_asr_failover_from_env_reads_only_declared_keys() -> None:
-    env = _Recording({"ASR_FAILOVER_ENABLED": "false"})
+    env = _Recording({"ASR_BACKUP": "sensevoice"})
     ASRFailoverConfig.from_env(env)
     _assert_declared(ASRFailoverConfig, env)
 

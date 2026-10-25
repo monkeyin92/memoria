@@ -149,7 +149,6 @@ class FakeSenseVoice:
 
 def _config(**overrides: Any) -> ASRFailoverConfig:
     values: dict[str, Any] = {
-        "enabled": True,
         "final_result_timeout_s": 1.0,
         "connect_timeout_s": 0.2,
         "backup_timeout_s": 0.5,
@@ -610,41 +609,42 @@ def test_a_session_cannot_release_a_probe_it_does_not_own() -> None:
     assert breaker.probe_in_flight is False
 
 
-def test_config_is_off_by_default_and_factory_is_unchanged() -> None:
-    assert ASRFailoverConfig.from_env({}).enabled is False
+def test_funasr_selector_builds_the_plain_session_and_reads_no_chain_keys() -> None:
+    """``ASR_PROVIDER=funasr`` must not need any Volc or backup config."""
+
     factory = build_asr_session_factory(
+        asr_provider="funasr",
         funasr_config=FunASRConfig(api_key="key", ws_url="ws://example.invalid"),
         env={},
     )
     assert isinstance(factory(), FunASRSession)
 
 
-def test_enabled_factory_requires_sensevoice_endpoint() -> None:
+def test_volc_selector_requires_sensevoice_endpoint() -> None:
     with pytest.raises(ValueError, match="SENSEVOICE_URL"):
         build_asr_session_factory(
+            asr_provider="volc",
             funasr_config=FunASRConfig(api_key="key", ws_url="ws://example.invalid"),
-            env={"ASR_FAILOVER_ENABLED": "true"},
+            env={},
         )
 
 
-def test_enabled_factory_requires_volc_credentials() -> None:
-    """A deploy with the switch on but no credentials must fail at build time."""
+def test_volc_selector_requires_volc_credentials() -> None:
+    """A deploy that selected Volc without credentials must fail at build time."""
 
     with pytest.raises(ValueError, match="VOLC_ASR_APP_ID"):
         build_asr_session_factory(
+            asr_provider="volc",
             funasr_config=FunASRConfig(api_key="key", ws_url="ws://example.invalid"),
-            env={
-                "ASR_FAILOVER_ENABLED": "true",
-                "SENSEVOICE_URL": "http://127.0.0.1:9/transcribe",
-            },
+            env={"SENSEVOICE_URL": "http://127.0.0.1:9/transcribe"},
         )
 
 
-def test_enabled_factory_builds_failover_session() -> None:
+def test_volc_selector_builds_the_failover_session() -> None:
     factory = build_asr_session_factory(
+        asr_provider="volc",
         funasr_config=FunASRConfig(api_key="key", ws_url="ws://example.invalid"),
         env={
-            "ASR_FAILOVER_ENABLED": "true",
             "SENSEVOICE_URL": "http://127.0.0.1:9/transcribe",
             "VOLC_ASR_APP_ID": "app",
             "VOLC_ASR_ACCESS_TOKEN": "token",

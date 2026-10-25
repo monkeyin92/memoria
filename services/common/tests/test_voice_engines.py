@@ -88,6 +88,23 @@ def test_reject_replaced_keys_names_each() -> None:
         assert reason_fragment in str(exc_info.value)
 
 
+def test_from_env_matches_the_settings_defaults() -> None:
+    """A short-lived container that omits a selector reports what services build."""
+
+    assert VoiceEngines.from_env({}) == VoiceEngines(
+        asr=AgentSettings(_env_file=None).asr_provider,
+        tts=AgentSettings(_env_file=None).tts_provider,
+    )
+    assert VoiceEngines.from_env({"ASR_PROVIDER": " VOLC "}).asr == "volc"
+
+
+def test_from_env_refuses_an_engine_no_process_can_build() -> None:
+    with pytest.raises(ValueError, match="ASR_PROVIDER"):
+        VoiceEngines.from_env({"ASR_PROVIDER": "sensevoice"})
+    with pytest.raises(ValueError, match="TTS_PROVIDER"):
+        VoiceEngines.from_env({"TTS_PROVIDER": "stepfun_primary"})
+
+
 def test_reject_replaced_keys_passes_when_absent() -> None:
     """A mapping with no replaced keys returns None."""
     env = {"TTS_PROVIDER": "doubao", "ASR_PROVIDER": "funasr"}
