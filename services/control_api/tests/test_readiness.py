@@ -511,16 +511,16 @@ async def test_readiness_reports_an_overdue_smoke_refresh_before_it_expires(
 
 
 @pytest.mark.hermetic
-def test_missing_config_counts_dashscope_only_for_funasr() -> None:
+def test_missing_config_no_longer_checks_asr_credentials() -> None:
+    """Control-api does not run ASR, so it does not check ASR credentials."""
     funasr = ControlSettings(
         _env_file=None,
         ASR_PROVIDER="funasr",
         MEMORIA_RELEASE_TAG="release-readiness-test",
     )
-    present = ControlSettings(
+    volc = ControlSettings(
         _env_file=None,
-        ASR_PROVIDER="funasr",
-        DASHSCOPE_API_KEY="dashscope-key",
+        ASR_PROVIDER="volc",
         MEMORIA_RELEASE_TAG="release-readiness-test",
     )
     untouched = ControlSettings(
@@ -528,29 +528,30 @@ def test_missing_config_counts_dashscope_only_for_funasr() -> None:
         MEMORIA_RELEASE_TAG="release-readiness-test",
     )
 
-    assert "DASHSCOPE_API_KEY" in readiness_routes._missing_config(funasr)
-    assert "DASHSCOPE_API_KEY" not in readiness_routes._missing_config(present)
-    assert untouched.asr_provider == "none"
+    assert "DASHSCOPE_API_KEY" not in readiness_routes._missing_config(funasr)
+    assert "DASHSCOPE_API_KEY" not in readiness_routes._missing_config(volc)
+    assert untouched.asr_provider == "funasr"
     assert "DASHSCOPE_API_KEY" not in readiness_routes._missing_config(untouched)
 
 
 @pytest.mark.hermetic
 @pytest.mark.asyncio
-async def test_health_ready_is_503_when_funasr_has_no_dashscope_key(
+async def test_health_ready_ignores_a_missing_dashscope_key(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """The bridge owns the ASR credential check, so control no longer 503s for it."""
     _configure_local(monkeypatch, tmp_path)
     monkeypatch.setenv("OFFLINE_MOCK", "false")
     monkeypatch.setenv("MEMORIA_RELEASE_TAG", "release-readiness-test")
     monkeypatch.setenv("ASR_PROVIDER", "funasr")
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
-    app = create_app()
 
-    status, body = await _ready(app)
+    status, body = await _ready(create_app())
 
     assert status == 503
-    assert "DASHSCOPE_API_KEY" in body["missing"]
+    assert body["missing"] == []
+    assert body["smokes"] == "not_run"
 
 
 def test_overdue_threshold_follows_the_refresh_timer() -> None:

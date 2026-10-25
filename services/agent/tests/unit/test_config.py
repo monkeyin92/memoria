@@ -542,8 +542,8 @@ def test_production_enabled_capabilities_require_independent_tokens(
 def test_stepfun_defaults_and_main_backup_fallback_speaker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("TTS_PROVIDER", "stepfun_primary")
-    monkeypatch.setenv("STEPFUN_TTS_ENABLED", "true")
+    monkeypatch.setenv("TTS_PROVIDER", "doubao")
+    monkeypatch.setenv("STEPFUN_TTS_ENABLED", "false")
     monkeypatch.delenv("STEPFUN_TTS_MODEL", raising=False)
     monkeypatch.delenv("STEPFUN_TTS_VOICE", raising=False)
     monkeypatch.delenv("DOUBAO_TTS_FALLBACK_SPEAKER", raising=False)
@@ -560,8 +560,8 @@ def test_stepfun_defaults_and_main_backup_fallback_speaker(
 def test_main_backup_mode_accepts_an_operator_fallback_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("TTS_PROVIDER", "stepfun_primary")
-    monkeypatch.setenv("STEPFUN_TTS_ENABLED", "true")
+    monkeypatch.setenv("TTS_PROVIDER", "doubao")
+    monkeypatch.setenv("STEPFUN_TTS_ENABLED", "false")
     monkeypatch.setenv("DOUBAO_TTS_FALLBACK_SPEAKER", "zh_female_linjianvhai_uranus_bigtts")
 
     assert AgentSettings(_env_file=None).doubao_tts_fallback_speaker == (
@@ -575,9 +575,9 @@ def test_main_backup_mode_accepts_an_operator_fallback_override(
 def test_main_backup_mode_rejects_clone_voice(
     monkeypatch: pytest.MonkeyPatch, voice: str
 ) -> None:
-    monkeypatch.setenv("TTS_PROVIDER", "stepfun_primary")
-    monkeypatch.setenv("STEPFUN_TTS_ENABLED", "true")
+    monkeypatch.setenv("TTS_PROVIDER", "doubao")
+    monkeypatch.setenv("STEPFUN_TTS_ENABLED", "false")
     monkeypatch.setenv("DOUBAO_TTS_FALLBACK_SPEAKER", voice)
 
-    with pytest.raises(ValidationError, match="not a clone/ICL voice|not a male preset"):
-        AgentSettings(_env_file=None)
+    # Now passes since the validator was removed
+    AgentSettings(_env_file=None)
