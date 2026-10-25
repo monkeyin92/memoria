@@ -62,3 +62,10 @@ def test_stepfun_voice_still_routes_while_the_field_exists() -> None:
     """
     _control, agent, _speaker, _edge = split_env({**_BASE, "STEPFUN_TTS_VOICE": "wenrounansheng"})
     assert agent["STEPFUN_TTS_VOICE"] == "wenrounansheng"
+
+
+def test_split_carries_the_doubao_auth_latch_window() -> None:
+    """The window is read by the pool, so the agent env has to carry it."""
+
+    _control, agent, _speaker, _edge = split_env({**_BASE, "DOUBAO_TTS_AUTH_LATCH_OPEN_S": "90"})
+    assert agent["DOUBAO_TTS_AUTH_LATCH_OPEN_S"] == "90"

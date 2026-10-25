@@ -11,11 +11,13 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from time import monotonic
 from typing import Any
 from urllib.parse import urlsplit
 
 import websockets
 from websockets.asyncio.client import ClientConnection
+from websockets.exceptions import InvalidStatus
 from websockets.protocol import State
 
 from services.agent.src.config import validate_doubao_auth
@@ -99,6 +101,11 @@ class DoubaoTTSConfig:
     #: runaway generation still ends. Configurable so the bound is provable in
     #: tests and operators can tighten it without a code change.
     hard_deadline_s: float = 180.0
+    #: How long a credential rejection suppresses new handshakes, process wide.
+    #: 300 s is the same window StepFun uses for the same failure class: long
+    #: enough that a day of sessions does not re-pay it, short enough that a
+    #: console fix takes effect without an operator restarting the bridge.
+    auth_latch_open_s: float = 300.0
     instruction: str | None = None
     reference_contexts: tuple[str, ...] = ()
     style_control_enabled: bool = False
@@ -116,7 +123,13 @@ class DoubaoTTSConfig:
             raise ValueError("Doubao loudness_rate must be between -50 and 100")
         if not -12 <= self.pitch <= 12:
             raise ValueError("Doubao pitch must be between -12 and 12")
-        for name in ("connect_timeout_s", "first_audio_timeout_s", "total_timeout_s", "hard_deadline_s"):
+        for name in (
+            "connect_timeout_s",
+            "first_audio_timeout_s",
+            "total_timeout_s",
+            "hard_deadline_s",
+            "auth_latch_open_s",
+        ):
             value = getattr(self, name)
             if not math.isfinite(value) or value <= 0:
                 raise ValueError(f"Doubao TTS {name} must be finite and positive")
@@ -174,6 +187,7 @@ class DoubaoTTSConfig:
             first_audio_timeout_s=float(values.get("DOUBAO_TTS_FIRST_AUDIO_TIMEOUT_S", "1.5")),
             total_timeout_s=float(values.get("DOUBAO_TTS_TOTAL_TIMEOUT_S", "20")),
             hard_deadline_s=float(values.get("DOUBAO_TTS_HARD_DEADLINE_S", "180")),
+            auth_latch_open_s=float(values.get("DOUBAO_TTS_AUTH_LATCH_OPEN_S", "300")),
             style_control_enabled=(
                 values.get("DOUBAO_TTS_STYLE_CONTROL_ENABLED", "false").strip().lower() == "true"
             ),
@@ -251,6 +265,96 @@ class DoubaoPCMContinuityError(ValueError):
     pass
 
 
+class DoubaoAuthRejectedError(APIError):
+    """Doubao refused this process's credentials, and will keep refusing them.
+
+    Deliberately not an ``APIStatusError``: nothing here came from a completed
+    request, and a retryable marker would make the stream loop replay the
+    sentence against an account that cannot speak it.
+    """
+
+    def __init__(self, message: str = "Doubao credentials were rejected") -> None:
+        super().__init__(message, retryable=False)
+
+
+#: Handshake rejections that mean the account, not the transport. 403 is the
+#: shape a revoked or unentitled Volcengine account returns, and 401 the shape
+#: a wrong key returns; both keep failing identically until an operator fixes
+#: the console, so retrying them inside one sentence only delays the floor.
+_AUTH_REJECTION_STATUS = frozenset({401, 403})
+
+
+class DoubaoAuthLatch:
+    """Process-wide memory that Doubao refused this process's credentials.
+
+    The pool's own ``CircuitBreaker`` cannot serve this purpose. A device
+    session builds its own ``DoubaoTTS`` and pool, so three consecutive
+    failures never accumulate across sessions, and every new session pays three
+    handshakes and a first-audio timeout before the child hears the floor line.
+    Production did exactly that for a day: ``TTS pool warm failed ...
+    error=InvalidStatus`` on every session start while the account answered 403.
+
+    The latch is deliberately narrower than a breaker. Only an authentication
+    rejection sets it, because that is the class of failure where another
+    attempt cannot help. Transport failures keep the per-pool breaker, and the
+    half-open attempt after ``open_s`` is the operator's evidence that the
+    console change took effect without a restart.
+
+    State is keyed by resource because the two Doubao resources are granted
+    separately (``seed-tts-2.0`` and ``seed-icl-2.0``). A personal voice the
+    account is not entitled to must not silence the companion voice that works.
+    """
+
+    def __init__(self, *, open_s: float = 300.0, clock: Callable[[], float] = monotonic) -> None:
+        if open_s <= 0:
+            raise ValueError("Doubao auth latch open seconds must be positive")
+        self._open_s = open_s
+        self._clock = clock
+        self._opened_at: dict[str, float] = {}
+
+    def configure(self, *, open_s: float) -> None:
+        """Apply the deployed window, in the shape ``PROCESS_TTS_BREAKER`` uses.
+
+        A window already running keeps its start timestamp, so changing the
+        value mid-window neither restarts nor hides the suppression; the next
+        rejection is the one that uses the new length.
+        """
+
+        if open_s <= 0:
+            raise ValueError("Doubao auth latch open seconds must be positive")
+        self._open_s = open_s
+
+    def is_open(self, resource_id: str) -> bool:
+        """True while a fresh attempt on this resource is known to fail."""
+
+        opened_at = self._opened_at.get(resource_id)
+        if opened_at is None:
+            return False
+        if self._clock() - opened_at >= self._open_s:
+            # The window elapsed: let exactly this next attempt through. A
+            # rejection closes the window again, a success clears it.
+            self._opened_at.pop(resource_id, None)
+            return False
+        return True
+
+    def record_rejection(self, resource_id: str) -> None:
+        self._opened_at[resource_id] = self._clock()
+
+    def record_success(self, resource_id: str) -> None:
+        self._opened_at.pop(resource_id, None)
+
+
+#: One latch per process. The credentials live in the process env, so a
+#: rejection is a fact about the whole process rather than about one pool.
+PROCESS_DOUBAO_AUTH_LATCH = DoubaoAuthLatch()
+
+
+def _auth_rejection(exc: BaseException) -> bool:
+    """Whether a failed Doubao handshake was refused for its credentials."""
+
+    return isinstance(exc, InvalidStatus) and exc.response.status_code in _AUTH_REJECTION_STATUS
+
+
 def _session_context_texts(config: DoubaoTTSConfig) -> tuple[str, ...]:
     """Build bounded StartSession context; TaskRequest remains synthesis-only."""
     if not config.style_control_enabled or config.resource_id != DOUBAO_TTS_MODEL:
@@ -322,7 +426,13 @@ def _error_message(message: ServerMessage) -> str:
 class DoubaoTTSPool:
     """Reusable connected sockets; canceled or failed sessions are discarded."""
 
-    def __init__(self, config: DoubaoTTSConfig, metrics: MetricsRegistry | None = None) -> None:
+    def __init__(
+        self,
+        config: DoubaoTTSConfig,
+        metrics: MetricsRegistry | None = None,
+        *,
+        auth_latch: DoubaoAuthLatch | None = None,
+    ) -> None:
         self.config = config
         self.metrics = metrics or MetricsRegistry()
         self._available: asyncio.Queue[PooledConnection] = asyncio.Queue()
@@ -332,6 +442,8 @@ class DoubaoTTSPool:
         self._refill_tasks: set[asyncio.Task[None]] = set()
         self._metered_connection_ids: set[str] = set()
         self._breaker = CircuitBreaker()
+        self._auth_latch = auth_latch or PROCESS_DOUBAO_AUTH_LATCH
+        self._auth_latch.configure(open_s=config.auth_latch_open_s)
         self.active_by_fence: dict[str, PooledConnection] = {}
         self.discarded_count = 0
 
@@ -344,6 +456,16 @@ class DoubaoTTSPool:
     async def _open(self) -> PooledConnection:
         if self._closing:
             raise RuntimeError("Doubao TTS pool is closing")
+        # Checked before the socket, because the whole point is to stop paying
+        # a handshake whose answer is already known. Logged once per suppressed
+        # attempt so the operator reading this session's start sees why the
+        # voice is missing rather than a bare timeout.
+        if self._auth_latch.is_open(self.config.resource_id):
+            logger.info(
+                "Doubao auth latch open; skipping handshake resource_id=%s",
+                self.config.resource_id,
+            )
+            raise DoubaoAuthRejectedError("Doubao auth latch is open")
         self._breaker.before_request()
         connect_id = str(uuid.uuid4())
         ws: ClientConnection | None = None
@@ -366,12 +488,20 @@ class DoubaoTTSPool:
                 with contextlib.suppress(Exception):
                     await ws.close()
             raise
-        except Exception:
+        except Exception as exc:
             self._breaker.record_failure()
             if ws is not None:
                 with contextlib.suppress(Exception):
                     await ws.close()
+            if _auth_rejection(exc):
+                self._auth_latch.record_rejection(self.config.resource_id)
+                self.metrics.inc_media_metric(
+                    "tts_auth_rejected_total",
+                    labels={"provider": DOUBAO_PROVIDER},
+                )
+                raise DoubaoAuthRejectedError() from exc
             raise
+        self._auth_latch.record_success(self.config.resource_id)
         self._breaker.record_success()
         conn = PooledConnection(
             ws=ws,
@@ -556,9 +686,12 @@ class DoubaoTTSPoolRouter:
         self,
         baseline_config: DoubaoTTSConfig,
         baseline_pool: DoubaoTTSPool,
+        *,
+        auth_latch: DoubaoAuthLatch | None = None,
     ) -> None:
         self._baseline_resource_id = baseline_config.resource_id
         self._baseline_pool = baseline_pool
+        self._auth_latch = auth_latch or baseline_pool._auth_latch
         self._pools: dict[str, DoubaoTTSPool] = {
             baseline_config.resource_id: baseline_pool,
         }
@@ -569,7 +702,11 @@ class DoubaoTTSPoolRouter:
             raise ValueError("unsupported Doubao TTS resource")
         pool = self._pools.get(resource_id)
         if pool is None:
-            pool = DoubaoTTSPool(replace(config), metrics=self.metrics)
+            pool = DoubaoTTSPool(
+                replace(config),
+                metrics=self.metrics,
+                auth_latch=self._auth_latch,
+            )
             self._pools[resource_id] = pool
         if pool.config.resource_id != resource_id:
             raise RuntimeError("Doubao TTS resource pool is misconfigured")
@@ -989,6 +1126,7 @@ class DoubaoTTS:
         pool: DoubaoTTSPool | None = None,
         *,
         metrics: MetricsRegistry | None = None,
+        auth_latch: DoubaoAuthLatch | None = None,
     ) -> None:
         baseline_config = replace(config)
         self._config = replace(baseline_config)
@@ -999,8 +1137,17 @@ class DoubaoTTS:
         self._voice_kind = "designed"
         if pool is not None and pool.config.resource_id != self._baseline_resource_id:
             raise ValueError("injected Doubao TTS pool must use the baseline resource")
-        baseline_pool = pool or DoubaoTTSPool(replace(baseline_config), metrics=metrics)
-        self._pools = DoubaoTTSPoolRouter(baseline_config, baseline_pool)
+        self._auth_latch = auth_latch or PROCESS_DOUBAO_AUTH_LATCH
+        baseline_pool = pool or DoubaoTTSPool(
+            replace(baseline_config),
+            metrics=metrics,
+            auth_latch=self._auth_latch,
+        )
+        self._pools = DoubaoTTSPoolRouter(
+            baseline_config,
+            baseline_pool,
+            auth_latch=self._auth_latch,
+        )
         self._active_fence: GenerationFence | None = None
         self._speech_configs_by_fence: dict[GenerationFence, DoubaoTTSConfig] = {}
         self._trace_callback: Callable[[str, str, dict[str, Any] | None], None] | None = None

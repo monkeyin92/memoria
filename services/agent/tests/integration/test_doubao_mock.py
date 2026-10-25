@@ -10,6 +10,7 @@ import traceback
 import pytest
 from scripts import provider_smoke_test
 from services.agent.src.contracts.ids import GenerationFence
+from services.agent.src.providers import doubao_tts
 from services.agent.src.providers.doubao_tts import (
     DOUBAO_PERSONAL_VOICE_MODEL,
     DoubaoBeforeAudioError,
@@ -1121,3 +1122,47 @@ async def test_stream_personal_fallback_fires_once_under_sustained_first_audio_f
     finally:
         await tts.aclose()
         server.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_account_costs_one_handshake_not_one_per_session() -> None:
+    """The 402/403 class is about the account, and the account outlives a pool.
+
+    Production on 2026-10-25 answered every Doubao handshake with HTTP 403 for
+    a day. Each device session built its own pool, so each one paid a
+    handshake and then a first-audio timeout before the child heard the floor
+    line. The latch makes the second session fail immediately instead.
+    """
+
+    server = MockDoubaoServer(reject_status=403)
+    server.start()
+    latch = doubao_tts.DoubaoAuthLatch(open_s=300.0)
+    first = DoubaoTTS(_config(server), auth_latch=latch)
+    try:
+        stream = first.stream(conn_options=APIConnectOptions(max_retry=0))
+        stream.push_text("你好")
+        stream.end_input()
+        with pytest.raises(TTSUnavailableError):
+            async for _ in stream:
+                pass
+        await stream.aclose()
+    finally:
+        await first.aclose()
+
+    assert server.rejected_handshakes == 1
+
+    # A second session, built from scratch exactly as the media factory does.
+    second = DoubaoTTS(_config(server), auth_latch=latch)
+    try:
+        stream = second.stream(conn_options=APIConnectOptions(max_retry=0))
+        stream.push_text("你好")
+        stream.end_input()
+        with pytest.raises(TTSUnavailableError):
+            async for _ in stream:
+                pass
+        await stream.aclose()
+    finally:
+        await second.aclose()
+        server.stop()
+
+    assert server.rejected_handshakes == 1, "the latch must answer without a socket"

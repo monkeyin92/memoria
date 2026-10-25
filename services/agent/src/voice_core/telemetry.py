@@ -48,6 +48,7 @@ MEDIA_METRIC_NAMES = frozenset(
         "asr_failover_total",
         "asr_both_failed_total",
         "tts_frame_age_ms",
+        "tts_auth_rejected_total",
         "voice_vad_onset_ms",
         "voice_asr_partial_latency_ms",
         "voice_asr_final_latency_ms",

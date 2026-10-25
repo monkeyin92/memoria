@@ -372,7 +372,11 @@ no control-api line with control_env_valid=PASS reached /var/log/memoria/control
 
 轮转把当前文件改名为 `.1` 时，门从快照偏移接着读 `.1`。再轮转一次进 `.2` 才会漏掉标记，重跑 `env` 即可。
 
-提供方冒烟（`env`、`finish` 的 readiness 刷新、`memoria-readiness-refresh.timer`）测的是 `TTS_PROVIDER` 与 `STEPFUN_TTS_ENABLED` 解析出来的**主用**语音引擎，`tts_factory._active_provider` 是那条解析的唯一出处。StepFun 主用时豆包降为备份：它失败只打一行 `Doubao backup probe: DEGRADED …`，冒烟照常 PASS，PASS 行写 `StepFun`。2026-10-22 之前这里硬编码测豆包，10-21 21:49 火山把这个 app 的 seedtts 授权收回后，冒烟每 12 小时失败一次，readiness 从 10-22 起一直是 `not_ready` / `smokes=expired`，`env` 也被挡住。豆包恢复授权后备份探针自动回到 `ok`，不需要改配置。
+提供方冒烟（`env`、`finish` 的 readiness 刷新、`memoria-readiness-refresh.timer`）测的是这一个部署实际会跑的引擎。`TTS_PROVIDER` 只有一个合法值，冒烟永远说豆包；ASR 由 `ASR_PROVIDER` 决定，`funasr` 走 FunASR 冒烟，`volc` 走 Volc 冒烟。
+
+冒烟在调用任何供应商之前先打一行 `voice_engines asr=… tts=…`。发布门用它和仓里脚本按同一份 env 推出来的 PASS 行比对，Control API 拒收引擎与自身配置不符的标记（409），bridge 心跳里带的引擎与 Control 配置不一致时 `/health/ready` 报 `engine_mismatch`。所以「冒烟测了一个引擎、线上跑的是另一个」这一类错配会在发布时或第一次心跳里暴露，不会等设备说话。
+
+2026-10-21 21:49 火山把这个 app 的 seedtts 授权收回后，冒烟每 12 小时失败一次，readiness 从 10-22 起一直是 `not_ready` / `smokes=expired`，`env` 也被挡住；授权恢复后自动回到 PASS。当时冒烟硬编码测豆包，而 StepFun 是主用，那是这段历史的起因。现在只有豆包一条路，同样的授权收回会直接让冒烟失败，这是对的。
 
 ### 读日志
 
