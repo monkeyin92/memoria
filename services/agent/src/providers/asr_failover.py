@@ -24,7 +24,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from time import monotonic
-from typing import Any
+from typing import Any, ClassVar
 
 from services.agent.src.providers.asr_session import StreamingASRSession
 from services.agent.src.providers.funasr_protocol import FunASRSentence, FunASRServerEvent
@@ -46,7 +46,25 @@ _FAILOVER_REASONS = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class ASRFailoverConfig:
-    """Environment-driven knobs for the optional ASR failover chain."""
+    """Environment-driven knobs for the optional ASR failover chain.
+
+    ENV_KEYS includes ASR_FAILOVER_ENABLED, ASR_PRIMARY, and
+    ASR_FAILOVER_FIRST_RESULT_TIMEOUT_MS because failover code still reads them.
+    They are rejected upstream by reject_replaced_keys before reaching from_env.
+    """
+
+    ENV_KEYS: ClassVar[frozenset[str]] = frozenset({
+        "ASR_FAILOVER_ENABLED",
+        "ASR_PRIMARY",
+        "ASR_BACKUP",
+        "ASR_TERTIARY",
+        "ASR_FAILOVER_FIRST_RESULT_TIMEOUT_MS",
+        "ASR_FAILOVER_CONNECT_TIMEOUT_MS",
+        "ASR_BREAKER_FAILURES",
+        "ASR_BREAKER_OPEN_S",
+        "ASR_BACKUP_TIMEOUT_S",
+        "ASR_BACKUP_MAX_AUDIO_S",
+    })
 
     enabled: bool = False
     primary: str = "volc"
@@ -84,7 +102,9 @@ class ASRFailoverConfig:
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> ASRFailoverConfig:
-        e = env or dict(os.environ)
+        from services.agent.src.providers.volc_asr import _DeclaredEnv
+
+        e = _DeclaredEnv(env if env is not None else dict(os.environ), cls.ENV_KEYS)
         return cls(
             enabled=e.get("ASR_FAILOVER_ENABLED", "false").strip().lower() == "true",
             primary=e.get("ASR_PRIMARY", "volc").strip().lower() or "volc",

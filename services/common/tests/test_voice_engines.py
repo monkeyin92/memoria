@@ -79,7 +79,6 @@ def test_reject_replaced_keys_names_each() -> None:
 
     # Test a few other replaced keys
     for key, reason_fragment in [
-        ("STEPFUN_TTS_ENABLED", "no longer selectable"),
         ("ASR_FAILOVER_ENABLED", "use ASR_PROVIDER"),
         ("ASR_PRIMARY", "implied by ASR_PROVIDER"),
     ]:
@@ -93,6 +92,15 @@ def test_reject_replaced_keys_passes_when_absent() -> None:
     """A mapping with no replaced keys returns None."""
     env = {"TTS_PROVIDER": "doubao", "ASR_PROVIDER": "funasr"}
     reject_replaced_keys(env)  # Should not raise
+
+
+def test_stepfun_enabled_survives_the_split_for_rollback() -> None:
+    """The live operator env sets it true, and the previous image reads it.
+
+    Rejecting it would fail the first release after the switch, and retiring it
+    would drop the key an env-level rollback needs.
+    """
+    reject_replaced_keys({"TTS_PROVIDER": "doubao", "STEPFUN_TTS_ENABLED": "true"})
 
 
 def test_asr_provider_defaults_to_funasr(monkeypatch: pytest.MonkeyPatch) -> None:

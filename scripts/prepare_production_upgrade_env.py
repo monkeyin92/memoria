@@ -17,6 +17,7 @@ from services.agent.src.config import (
     AgentSettings,
     validate_doubao_auth,
 )
+from services.common.voice_engines import reject_replaced_keys
 from services.control_api.app.config import ControlSettings
 
 from scripts.production_postgres_roles import production_control_database_urls
@@ -75,6 +76,7 @@ def prepare(
     evolution_trusted_root: str | None = None,
 ) -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
     """Return the validated (control, agent, speaker_model, media_edge) envs."""
+    reject_replaced_keys(legacy)
     known = (
         _aliases(ControlSettings)
         | _aliases(AgentSettings)

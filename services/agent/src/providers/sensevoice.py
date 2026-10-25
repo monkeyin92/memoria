@@ -23,6 +23,7 @@ import logging
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import ClassVar
 
 import httpx
 
@@ -61,6 +62,15 @@ def slice_segment_pcm(
 
 @dataclass(frozen=True, slots=True)
 class SenseVoiceRescueConfig:
+    ENV_KEYS: ClassVar[frozenset[str]] = frozenset({
+        "SENSEVOICE_URL",
+        "SENSEVOICE_TIMEOUT_S",
+        "SENSEVOICE_MIN_RMS",
+        "SENSEVOICE_MIN_PEAK_ABS",
+        "SENSEVOICE_MAX_AUDIO_S",
+        "SENSEVOICE_MIN_TEXT_CHARS",
+    })
+
     endpoint: str
     timeout_s: float = 2.5
     min_rms: int = 100
@@ -98,13 +108,16 @@ class SenseVoiceRescueConfig:
 
     @classmethod
     def from_env(cls, env: dict[str, str]) -> SenseVoiceRescueConfig:
+        from services.agent.src.providers.volc_asr import _DeclaredEnv
+
+        declared = _DeclaredEnv(env, cls.ENV_KEYS)
         return cls(
-            endpoint=env.get("SENSEVOICE_URL", "").strip(),
-            timeout_s=float(env.get("SENSEVOICE_TIMEOUT_S", "2.5")),
-            min_rms=int(env.get("SENSEVOICE_MIN_RMS", "100")),
-            min_peak_abs=int(env.get("SENSEVOICE_MIN_PEAK_ABS", "350")),
-            max_audio_s=float(env.get("SENSEVOICE_MAX_AUDIO_S", "12")),
-            min_text_chars=int(env.get("SENSEVOICE_MIN_TEXT_CHARS", "2")),
+            endpoint=declared.get("SENSEVOICE_URL").strip(),
+            timeout_s=float(declared.get("SENSEVOICE_TIMEOUT_S", "2.5")),
+            min_rms=int(declared.get("SENSEVOICE_MIN_RMS", "100")),
+            min_peak_abs=int(declared.get("SENSEVOICE_MIN_PEAK_ABS", "350")),
+            max_audio_s=float(declared.get("SENSEVOICE_MAX_AUDIO_S", "12")),
+            min_text_chars=int(declared.get("SENSEVOICE_MIN_TEXT_CHARS", "2")),
         )
 
 

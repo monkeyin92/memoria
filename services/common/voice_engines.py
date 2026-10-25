@@ -33,10 +33,11 @@ SMOKE_LINE_PREFIX: Final = "voice_engines"
 
 # Keys whose meaning moved. A present key is a hard error that names the
 # replacement, so a release cannot silently drop one and boot the wrong
-# engine. Inert leftovers that select nothing are not here. The splitter
-# retires those.
+# engine. Two kinds of key stay out: ones a service still reads, and ones that
+# select nothing. STEPFUN_TTS_ENABLED is both. It is inert under
+# TTS_PROVIDER=doubao, and the previous image still reads it, so an env-level
+# rollback needs the key to survive a split until the StepFun files are deleted.
 REPLACED_ENV_KEYS: Final[Mapping[str, str]] = {
-    "STEPFUN_TTS_ENABLED": "StepFun is no longer selectable; delete it (TTS_PROVIDER=doubao)",
     "STEPFUN_TTS_FIXED_SAFETY_PRIMARY_FIRST": "crisis lines never use live TTS; delete it",
     "ASR_FAILOVER_ENABLED": "use ASR_PROVIDER=volc or ASR_PROVIDER=funasr",
     "ASR_PRIMARY": "implied by ASR_PROVIDER=volc; delete it",
@@ -50,7 +51,6 @@ REPLACED_ENV_KEYS: Final[Mapping[str, str]] = {
 REPLACED_ENV_PREFIXES: Final[Mapping[str, str]] = {
     "DOUBAO_ASR_": "Volc ASR uses VOLC_ASR_APP_ID + VOLC_ASR_ACCESS_TOKEN",
 }
-
 
 class _HasEngines(Protocol):
     asr_provider: ASREngine
@@ -104,7 +104,9 @@ def reject_replaced_keys(env: Mapping[str, str]) -> None:
     Called by the env splitter, by release preparation before its silent
     filter, and by the bridge at boot. Pure, and it never includes a value.
     ``ASR_PROVIDER=none`` is matched on the value because the key itself stays
-    legal for ``funasr`` and ``volc``.
+    legal for ``funasr`` and ``volc``. A live ``STEPFUN_TTS_ENABLED`` is not a
+    replaced key: it is inert under ``TTS_PROVIDER=doubao`` and the previous
+    image still reads it, so an env-level rollback needs it to survive a split.
     """
     problems: list[str] = []
     for key, reason in REPLACED_ENV_KEYS.items():
