@@ -435,6 +435,15 @@ class MediaSessionInputMixin:
         context = await self.open_session(session.identity)
         if context.closed or context.standby_requested or not session.accepts_uplink():
             return
+        if segment.kind is SegmentKind.VAD and context.listening_capture_hold:
+            logger.info(
+                "media vad ignored during listening capture hold session=%s "
+                "sample=%s final=%s",
+                context.identity.session_id,
+                segment.capture_start_sample,
+                segment.final,
+            )
+            return
         if _is_spurious_connect_vad(segment, context):
             logger.info(
                 "media empty vad ignored session=%s sample=%s rms=%s final=%s pending_wake_ack=%s",
@@ -471,6 +480,7 @@ class MediaSessionInputMixin:
             or context.stream_epoch != segment.stream_epoch
             or self._sessions.get(session.identity.session_id) is not context
             or _vad_precedes_pending_turn(segment, context)
+            or (segment.kind is SegmentKind.VAD and context.listening_capture_hold)
         ):
             return
         if segment.kind is SegmentKind.VAD:
@@ -541,6 +551,7 @@ class MediaSessionInputMixin:
                 or context.stream_epoch != segment.stream_epoch
                 or self._sessions.get(session.identity.session_id) is not context
                 or _vad_precedes_pending_turn(segment, context)
+                or context.listening_capture_hold
             ):
                 return
             if segment.final:
@@ -599,6 +610,7 @@ class MediaSessionInputMixin:
                     or context.stream_epoch != segment.stream_epoch
                     or self._sessions.get(session.identity.session_id) is not context
                     or _vad_precedes_pending_turn(segment, context)
+                    or context.listening_capture_hold
                     or (
                         context.pending.active_vad_start_sample is not None
                         and segment.capture_start_sample < context.pending.active_vad_start_sample
