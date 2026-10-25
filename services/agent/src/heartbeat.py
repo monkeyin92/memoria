@@ -76,6 +76,7 @@ class AgentHeartbeat:
         self._boot_id = boot_id or uuid4()
         self._clock = clock or (lambda: datetime.now(UTC))
         self._worker_ready = False
+        self._control_accepts_engines: bool | None = None
 
     def mark_worker_ready(self) -> None:
         self._worker_ready = True
@@ -83,22 +84,38 @@ class AgentHeartbeat:
     def mark_worker_stopped(self) -> None:
         self._worker_ready = False
 
-    async def report(self, client: httpx.AsyncClient) -> None:
-        worker_ready = self._worker_ready
+    def _payload(self) -> dict[str, object]:
         payload: dict[str, object] = {
             "release_tag": self._config.release_tag,
             "boot_id": str(self._boot_id),
-            "worker_ready": worker_ready,
+            "worker_ready": self._worker_ready,
             "last_loop_at": self._clock().astimezone(UTC).isoformat(),
             "chat_llm_providers": list(self._config.chat_llm_providers),
         }
-        if self._config.engines:
+        if self._config.engines and self._control_accepts_engines is not False:
             payload["engines"] = self._config.engines
+        return payload
+
+    async def _post(self, client: httpx.AsyncClient) -> httpx.Response:
         response = await client.post(
             self._config.endpoint,
             headers={"X-Memoria-Internal-Token": self._config.internal_token},
-            json=payload,
+            json=self._payload(),
         )
+        if response.status_code == 422 and self._config.engines and self._control_accepts_engines is not False:
+            self._control_accepts_engines = False
+            response = await client.post(
+                self._config.endpoint,
+                headers={"X-Memoria-Internal-Token": self._config.internal_token},
+                json=self._payload(),
+            )
+        elif response.is_success and self._config.engines:
+            self._control_accepts_engines = True
+        return response
+
+    async def report(self, client: httpx.AsyncClient) -> None:
+        worker_ready = self._worker_ready
+        response = await self._post(client)
         response.raise_for_status()
         try:
             accepted = response.json().get("status") == "recorded"
