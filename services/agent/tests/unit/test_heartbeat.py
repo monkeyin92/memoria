@@ -29,6 +29,7 @@ def _heartbeat(
     release_tag: str = "release-heartbeat-test",
     interval_s: float = 10.0,
     clock: object = None,
+    engines: str = "",
 ) -> AgentHeartbeat:
     return AgentHeartbeat(
         AgentHeartbeatConfig(
@@ -36,6 +37,7 @@ def _heartbeat(
             internal_token="agent-heartbeat-token",
             release_tag=release_tag,
             chat_llm_providers=("deepseek", "qwen"),
+            engines=engines,
             state_path=state_path,
             interval_s=interval_s,
         ),
@@ -77,6 +79,52 @@ async def test_heartbeat_reports_the_bridge_contract_without_livekit_fields(
         "chat_llm_providers": ["deepseek", "qwen"],
     }
     assert [payload["worker_ready"] for payload in payloads] == [False, True, False]
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_retries_without_engines_for_an_old_control_api(
+    tmp_path: Path,
+) -> None:
+    requests: list[dict[str, object]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        requests.append(payload)
+        if "engines" in payload:
+            return httpx.Response(422, json={"detail": "extra fields"})
+        return httpx.Response(200, json={"status": "recorded"})
+
+    heartbeat = _heartbeat(
+        tmp_path / "heartbeat.json",
+        engines="voice_engines asr=volc tts=doubao",
+    )
+    heartbeat.mark_worker_ready()
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await heartbeat.report(client)
+        await heartbeat.report(client)
+
+    assert requests[0]["engines"] == "voice_engines asr=volc tts=doubao"
+    assert "engines" not in requests[1]
+    assert "engines" not in requests[2]
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_keeps_other_http_errors_failing(
+    tmp_path: Path,
+) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert "engines" in json.loads(request.content)
+        return httpx.Response(409, json={"detail": "release mismatch"})
+
+    heartbeat = _heartbeat(
+        tmp_path / "heartbeat.json",
+        engines="voice_engines asr=volc tts=doubao",
+    )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await heartbeat.report(client)
 
 
 @pytest.mark.asyncio
