@@ -41,6 +41,7 @@ from services.agent.src.providers.asr_failover import (
 )
 from services.agent.src.providers.asr_session import StreamingASRSession
 from services.agent.src.providers.fixed_safety_audio import (
+    FixedSafetyClipUnavailableError,
     heard_complete_by_sentence,
     shipped_approved_catalog,
 )
@@ -1512,7 +1513,12 @@ class ExistingVoiceProviderAdapter:
             catalog=shipped_approved_catalog(),
         )
         if template is None:
-            raise RuntimeError("fixed safety script produced no audio")
+            # Every rung is gone. The child will not hear the reviewed line,
+            # and the one thing that must not happen next is a live engine
+            # inventing it, so name the failure the adapter can hand back.
+            raise FixedSafetyClipUnavailableError(
+                "fixed safety script produced no audio"
+            )
         pcm = template.pcm or b""
         self._prerecorded_fixed_safety[fence] = (template.spoken, len(pcm) // 2)
         return pcm, "prerecorded_fallback"

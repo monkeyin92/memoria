@@ -1067,14 +1067,18 @@ def test_factory_is_doubao_by_default_and_requires_both_switches(
     sentinel = object()
     monkeypatch.setattr(doubao_tts.DoubaoTTS, "from_env", classmethod(lambda cls: sentinel))
 
+    def inner_of(settings: object) -> object:
+        # build_tts always puts the fixed-safety wrapper in front.
+        return tts_factory.build_tts(settings)._inner
+
     settings = SimpleNamespace(tts_provider="stepfun_primary", stepfun_tts_enabled=False)
-    assert tts_factory.build_tts(settings) is sentinel
+    assert inner_of(settings) is sentinel
     assert tts_factory.tts_provider_label(settings) == "volcengine_doubao"
 
     # The switch is off by default even when the provider name is new.
     monkeypatch.delenv("STEPFUN_TTS_ENABLED", raising=False)
     default_off = SimpleNamespace(tts_provider="stepfun_primary")
-    assert tts_factory.build_tts(default_off) is sentinel
+    assert inner_of(default_off) is sentinel
 
     monkeypatch.setattr(
         tts_factory,
@@ -1091,15 +1095,14 @@ def test_factory_is_doubao_by_default_and_requires_both_switches(
         stepfun_tts_voice=STEPFUN_TTS_VOICE,
         doubao_tts_fallback_speaker="zh_female_fallback_test",
     )
-    built = tts_factory.build_tts(enabled)
+    built = inner_of(enabled)
     assert isinstance(built, StepFunPrimaryTTS)
     assert isinstance(built.primary, stepfun_tts.StepFunTTS)
     assert isinstance(built.backup, doubao_tts.DoubaoTTS)
     assert tts_factory.tts_provider_label(enabled) == "stepfun"
 
     assert (
-        tts_factory.build_tts(SimpleNamespace(tts_provider="doubao", stepfun_tts_enabled=True))
-        is sentinel
+        inner_of(SimpleNamespace(tts_provider="doubao", stepfun_tts_enabled=True)) is sentinel
     )
 
 

@@ -20,7 +20,11 @@ from services.agent.src.providers.doubao_tts import (
     DoubaoTTSPool,
 )
 from services.agent.src.providers.doubao_voice_catalog import catalog_by_id
-from services.agent.src.providers.provider_errors import APIConnectionError, APIConnectOptions
+from services.agent.src.providers.provider_errors import (
+    APIConnectionError,
+    APIConnectOptions,
+    TTSUnavailableError,
+)
 from services.agent.src.providers.tts_stream import USERDATA_TIMED_TRANSCRIPT
 from services.agent.tests.integration.mock_servers import MockDoubaoServer
 
@@ -759,7 +763,10 @@ async def test_connection_failure_keeps_the_vendor_body_and_reply_out_of_logs(
         stream = tts.stream(conn_options=APIConnectOptions(max_retry=0))
         stream.push_text(reply)
         stream.end_input()
-        with pytest.raises(APIConnectionError) as caught:
+        # Nothing reached the device, so the failure is the engine-gone type
+        # the media adapter turns into the stored standby line. The vendor
+        # detail must still survive inside it, sanitized.
+        with pytest.raises(TTSUnavailableError) as caught:
             async for _ in stream:
                 pass
         await stream.aclose()
@@ -767,7 +774,8 @@ async def test_connection_failure_keeps_the_vendor_body_and_reply_out_of_logs(
         await tts.aclose()
         server.stop()
 
-    assert str(caught.value).startswith("Doubao error ")
+    assert isinstance(caught.value.__cause__, APIConnectionError)
+    assert "Doubao error " in str(caught.value)
     assert f"failed to synthesize speech text_len={len(reply)}" in caplog.text
     rendered = "".join(traceback.format_exception(caught.value))
     for text in (planted, reply):
@@ -907,6 +915,9 @@ async def test_stream_hard_deadline_bounds_runaway_generation_despite_progress()
     only absolute cap.  The server keeps producing frames far past that cap, so
     the client must fail with the classified ``total-timeout`` (not a raw
     ``TimeoutError``, and not a silent success) after receiving many frames.
+    The cap fires before a whole 20 ms frame reaches the emitter, so the child
+    heard nothing and the failure surfaces as the engine-gone type with the
+    classified cause still inside it.
     """
     server = MockDoubaoServer(scenario="split_pcm", chunk_delay_s=0.05, pcm_chunks=40)
     server.start()
@@ -922,7 +933,7 @@ async def test_stream_hard_deadline_bounds_runaway_generation_despite_progress()
     try:
         await tts.pool.warm(1)
         started = asyncio.get_running_loop().time()
-        with pytest.raises(APIConnectionError, match="total-timeout"):
+        with pytest.raises(TTSUnavailableError) as caught:
             async with tts.stream(conn_options=APIConnectOptions(max_retry=0)) as stream:
                 stream.push_text("无限流式的长句")
                 stream.end_input()
@@ -931,6 +942,8 @@ async def test_stream_hard_deadline_bounds_runaway_generation_despite_progress()
         elapsed = asyncio.get_running_loop().time() - started
 
         # Renewal really happened (many frames), and the cap really bound.
+        assert isinstance(caught.value.__cause__, APIConnectionError)
+        assert "total-timeout" in str(caught.value)
         assert server.chunk_count >= 8
         assert elapsed < 2.0
     finally:
@@ -1089,9 +1102,10 @@ async def test_stream_personal_fallback_fires_once_under_sustained_first_audio_f
         )
         stream.push_text("持续首包失败只回落一次")
         stream.end_input()
-        with pytest.raises(APIConnectionError, match="first-audio-timeout"):
+        with pytest.raises(TTSUnavailableError) as caught:
             async for _ in stream:
                 pass
+        assert "first-audio-timeout" in str(caught.value)
         await stream.aclose()
         personal_sessions = [
             speaker for speaker in server.speakers if speaker == "S_stream_fallback_once"

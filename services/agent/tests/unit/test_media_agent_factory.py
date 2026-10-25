@@ -80,6 +80,28 @@ async def test_production_media_factory_builds_one_policy_bound_agent_session(
         async def aclose(self) -> None:
             closed.append("search")
 
+    class TTSStream:
+        def __init__(self) -> None:
+            self._sent = False
+
+        def push_text(self, text: str) -> None:
+            assert text
+
+        def end_input(self) -> None:
+            return None
+
+        def __aiter__(self) -> TTSStream:
+            return self
+
+        async def __anext__(self) -> bytes:
+            if self._sent:
+                raise StopAsyncIteration
+            self._sent = True
+            return b"\x01\x00" * 480
+
+        async def aclose(self) -> None:
+            return None
+
     class TTS:
         current_voice_profile_id = "warm_companion"
         current_model = "seed-tts-2.0"
@@ -97,6 +119,9 @@ async def test_production_media_factory_builds_one_policy_bound_agent_session(
 
         def apply_speech_plan(self, **_kwargs: object) -> None:
             return None
+
+        def stream(self, **_kwargs: object) -> TTSStream:
+            return TTSStream()
 
         async def synthesize(self, request: SpeechSynthesisRequest) -> Any:
             assert request.phrases

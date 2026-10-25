@@ -20,6 +20,7 @@ from services.agent.src.providers.fixed_safety_audio import (
     FIXED_SAFETY_AUDIO_ARTIST,
     FIXED_SAFETY_AUDIO_SOFTWARE,
     FixedSafetyAudioCatalog,
+    FixedSafetyClipUnavailableError,
     FixedSafetyTTS,
     approved_templates,
     heard_complete_by_sentence,
@@ -175,6 +176,11 @@ def _load(directory: Path = _AUDIO_DIR) -> FixedSafetyAudioCatalog:
 def _wrapper(directory: Path = _AUDIO_DIR) -> tuple[FixedSafetyTTS, _InnerTTS]:
     inner = _InnerTTS()
     return FixedSafetyTTS(inner, _load(directory)), inner
+
+
+def _wrapper_with_catalog(catalog: FixedSafetyAudioCatalog) -> tuple[FixedSafetyTTS, _InnerTTS]:
+    inner = _InnerTTS()
+    return FixedSafetyTTS(inner, catalog), inner
 
 
 async def _serve(wrapper: FixedSafetyTTS, text: str) -> bytes:
@@ -388,7 +394,12 @@ async def test_runtime_synthesized_crisis_audio_is_never_cached_as_approved(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A live fallback take must not become a later turn's approved audio."""
+    """A live take must not become a later turn's approved audio.
+
+    The configured clip fails its hash, so the shipped copy of the same
+    template plays. That is a stored clip, not a live one, and it must never
+    be recorded as this deployment's approved audio.
+    """
 
     runtime_pcm = b"\x42\x00" * 960
     broken_directory = _tampered_copy(tmp_path, pcm_sha256="0" * 64)
@@ -401,12 +412,14 @@ async def test_runtime_synthesized_crisis_audio_is_never_cached_as_approved(
     with caplog.at_level("WARNING"):
         first_pcm = await _reply_pcm(broken_adapter, identity, broken_fence, CRISIS_SELF_SCRIPT)
 
-    assert first_pcm == runtime_pcm
-    assert runtime_inner.streams == 1
-    assert broken_adapter.fixed_safety_heard_complete(broken_fence, len(runtime_pcm) // 2) is None
+    shipped = _load().get("crisis-self-v1")
+    assert shipped is not None and shipped.pcm
+    assert first_pcm.startswith(shipped.pcm)
+    assert first_pcm != runtime_pcm
+    assert runtime_inner.streams == 0
     assert any(
         "template_id=crisis-self-v1" in record.getMessage()
-        and "not_playable" in record.getMessage()
+        and "pcm_sha256 mismatch" in record.getMessage()
         for record in caplog.records
     )
 
@@ -426,28 +439,33 @@ async def test_runtime_synthesized_crisis_audio_is_never_cached_as_approved(
 
 
 @pytest.mark.asyncio
-async def test_fixed_safety_audio_hash_mismatch_falls_back_to_realtime_tts_and_alerts(
+async def test_fixed_safety_audio_hash_mismatch_plays_the_shipped_clip_and_alerts(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """A bad configured clip falls to the shipped clip, never a live engine."""
+
     directory = _tampered_copy(tmp_path, audio_sha256="0" * 64)
     wrapper, inner = _wrapper(directory)
 
-    with caplog.at_level("ERROR"):
+    with caplog.at_level("WARNING"):
         pcm = await _serve(wrapper, CRISIS_SELF_SCRIPT.spoken)
 
-    assert pcm == b""
-    assert inner.pushed == [CRISIS_SELF_SCRIPT.spoken]
-    assert inner.streams == 1
+    shipped = _load().get("crisis-self-v1")
+    assert shipped is not None and shipped.pcm
+    assert pcm.startswith(shipped.pcm)
+    assert inner.pushed == []
+    assert inner.streams == 0
     messages = [record.getMessage() for record in caplog.records]
     assert any(
         "template_id=crisis-self-v1" in message and "audio_sha256 mismatch" in message
         for message in messages
     )
+    assert any("source=shipped_clip" in message for message in messages)
     assert not any("12356" in message or "不想活" in message for message in messages)
 
 
 @pytest.mark.asyncio
-async def test_fixed_safety_audio_missing_file_falls_back_to_realtime_tts_and_alerts(
+async def test_fixed_safety_audio_missing_file_plays_the_shipped_clip(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     directory = tmp_path / "fixed_safety"
@@ -458,31 +476,60 @@ async def test_fixed_safety_audio_missing_file_falls_back_to_realtime_tts_and_al
     with caplog.at_level("ERROR"):
         pcm = await _serve(wrapper, CRISIS_SELF_SCRIPT.spoken)
 
-    assert pcm == b""
-    assert inner.pushed == [CRISIS_SELF_SCRIPT.spoken]
+    shipped = _load().get("crisis-self-v1")
+    assert shipped is not None and shipped.pcm
+    assert pcm.startswith(shipped.pcm)
+    assert inner.streams == 0
     assert any("template_id=crisis-self-v1" in record.getMessage() for record in caplog.records)
 
 
 @pytest.mark.asyncio
-async def test_fixed_safety_audio_fallback_sends_hotline_numbers_as_yao_text(
+async def test_a_crisis_line_with_no_clip_anywhere_never_reaches_a_live_engine(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Both clip sources gone: the stream fails, the inner engine stays unopened."""
+
+    monkeypatch.setattr(
+        "services.agent.src.providers.fixed_safety_audio.shipped_approved_catalog",
+        lambda: FixedSafetyAudioCatalog(()),
+    )
+    empty = FixedSafetyAudioCatalog(approved_templates())
+    wrapper, inner = _wrapper_with_catalog(empty)
+
+    with caplog.at_level("ERROR"):
+        stream = wrapper.stream()
+        stream.push_text(CRISIS_SELF_SCRIPT.display)
+        stream.end_input()
+        with pytest.raises(FixedSafetyClipUnavailableError, match="crisis-self-v1"):
+            _ = [chunk async for chunk in stream]
+
+    assert inner.pushed == []
+    assert inner.streams == 0
+    assert any(
+        "template_id=crisis-self-v1" in record.getMessage()
+        and "reason=no_approved_clip" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_daily_limit_copy_still_speaks_live_when_its_clip_is_missing(
     tmp_path: Path,
 ) -> None:
-    directory = _tampered_copy(tmp_path, audio_sha256="0" * 64)
+    """The daily-limit sentence is not reviewed safety copy, so it may be spoken.
+
+    A benign "time is up" line is the one template allowed to reach a live
+    engine; the four crisis lines never are.
+    """
+
+    directory = _tampered_copy(tmp_path, "daily-limit", audio_sha256="0" * 64)
     wrapper, inner = _wrapper(directory)
 
-    await _serve(wrapper, CRISIS_SELF_SCRIPT.display)
+    await _serve(wrapper, MINOR_DAILY_LIMIT_PHRASE)
 
-    assert inner.pushed == [CRISIS_SELF_SCRIPT.spoken]
-    assert all(not character.isdigit() for character in inner.pushed[0])
-    assert "幺二零" in inner.pushed[0]
-    assert "幺二三五六" in inner.pushed[0]
-
-    victim_directory = _tampered_copy(tmp_path, "victim-support-v1", audio_sha256="1" * 64)
-    victim_wrapper, victim_inner = _wrapper(victim_directory)
-    await _serve(victim_wrapper, SUPPORT_VICTIM_SCRIPT.display)
-    assert victim_inner.pushed == [SUPPORT_VICTIM_SCRIPT.spoken]
-    assert all(not character.isdigit() for character in victim_inner.pushed[0])
-    assert "幺幺零" in victim_inner.pushed[0]
+    assert inner.pushed == [MINOR_DAILY_LIMIT_PHRASE]
+    assert inner.streams == 1
 
 
 class _AigcHost(MediaSessionAigcNoticeMixin):

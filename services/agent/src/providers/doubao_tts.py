@@ -49,6 +49,8 @@ from services.agent.src.providers.provider_errors import (
     DEFAULT_API_CONNECT_OPTIONS,
     APIConnectionError,
     APIConnectOptions,
+    APIError,
+    TTSUnavailableError,
 )
 from services.agent.src.providers.reliability import CircuitBreaker
 from services.agent.src.providers.tts_stream import AudioEmitter, SynthesizeStream, TimedString
@@ -654,6 +656,10 @@ class DoubaoSynthesizeStream(SynthesizeStream):
         self._fence = fence
         self._conn: PooledConnection | None = None
         self._fallback_used = False
+        # Any PCM that ever reached the emitter this stream. The base retry
+        # loop only retries while nothing was pushed, so a stream that pushed
+        # once can no longer replay the text without speaking it twice.
+        self._audio_emitted = False
         self._timed_transcript: tuple[TimedString, ...] = ()
         self._timed_transcript_alignment = "pending"
 
@@ -667,6 +673,32 @@ class DoubaoSynthesizeStream(SynthesizeStream):
 
         return self._timed_transcript_alignment
 
+    async def _main_task(self) -> None:
+        """The base retry loop, then one classification for its caller.
+
+        A stream that carried text and never completed a single frame leaves
+        the child in silence, and ``TTSUnavailableError`` is what tells the
+        media adapter to give the device its floor back and play the stored
+        line. The retry itself stays in the base class, which is the only place
+        that knows an attempt pushed no audio and may therefore be replayed
+        safely. A stream with no text, or one that already pushed audio, keeps
+        its provider error: nothing was left unheard, or replaying it would say
+        the sentence twice.
+        """
+
+        try:
+            await super()._main_task()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if self._audio_emitted or not self._pushed_text.strip():
+                raise
+            # Vendor text can quote the reply or the request, so only an
+            # APIError, whose own __str__ is already sanitized, contributes
+            # its message. Anything else is named by type.
+            detail = str(exc) if isinstance(exc, APIError) else type(exc).__name__
+            raise TTSUnavailableError(f"doubao produced no audio: {detail}") from exc
+
     async def _run(self, output_emitter: AudioEmitter) -> None:
         replay: list[str] = []
         # One-shot gate: a framework re-entry of ``_run`` after a fallback must
@@ -678,31 +710,36 @@ class DoubaoSynthesizeStream(SynthesizeStream):
             self._config = self._fallback_config
             self._pool = self._fallback_pool or self._pool
         try:
-            await self._run_attempt(
-                output_emitter,
-                config=self._config,
-                pool=self._pool,
-                replay=replay,
-            )
-        except DoubaoBeforeAudioError:
-            if (
-                self._fallback_used
-                or self._fallback_config is None
-                or self._fallback_pool is None
-            ):
-                raise
-            self._tts_instance._activate_fallback_for_fence(
-                self._fence,
-                self._fallback_config,
-            )
-            self._fallback_used = True
-            self._config = self._fallback_config
-            await self._run_attempt(
-                output_emitter,
-                config=self._fallback_config,
-                pool=self._fallback_pool,
-                replay=replay,
-            )
+            try:
+                await self._run_attempt(
+                    output_emitter,
+                    config=self._config,
+                    pool=self._pool,
+                    replay=replay,
+                )
+            except DoubaoBeforeAudioError:
+                if (
+                    self._fallback_used
+                    or self._fallback_config is None
+                    or self._fallback_pool is None
+                ):
+                    raise
+                self._tts_instance._activate_fallback_for_fence(
+                    self._fence,
+                    self._fallback_config,
+                )
+                self._fallback_used = True
+                self._config = self._fallback_config
+                await self._run_attempt(
+                    output_emitter,
+                    config=self._fallback_config,
+                    pool=self._fallback_pool,
+                    replay=replay,
+                )
+        finally:
+            # The same measure the base retry loop uses to decide whether an
+            # attempt may be replayed: whole frames the emitter actually sent.
+            self._audio_emitted = self._audio_emitted or output_emitter.pushed_duration() > 0.0
 
     async def _run_attempt(
         self,
