@@ -48,6 +48,15 @@ REPLACED_ENV_KEYS: Final[Mapping[str, str]] = {
     "ASR_PROVIDER=none": "ASR_PROVIDER=none no longer means anything; use funasr or volc",
 }
 
+# Values a selector used to accept. A key can stay legal while its old value
+# stops selecting anything, and settings validation would only fail once the
+# service starts, after the release has already been cut.
+REPLACED_ENV_VALUES: Final[Mapping[tuple[str, str], str]] = {
+    ("TTS_PROVIDER", "stepfun_primary"): (
+        "TTS_PROVIDER=stepfun_primary is no longer selectable; use TTS_PROVIDER=doubao"
+    ),
+}
+
 REPLACED_ENV_PREFIXES: Final[Mapping[str, str]] = {
     "DOUBAO_ASR_": "Volc ASR uses VOLC_ASR_APP_ID + VOLC_ASR_ACCESS_TOKEN",
 }
@@ -120,5 +129,8 @@ def reject_replaced_keys(env: Mapping[str, str]) -> None:
         for prefix, reason in REPLACED_ENV_PREFIXES.items():
             if key.startswith(prefix):
                 problems.append(f"{key}: {reason}")
+    for (key, retired), reason in REPLACED_ENV_VALUES.items():
+        if env.get(key, "").strip().lower() == retired:
+            problems.append(reason)
     if problems:
         raise ValueError("replaced voice engine keys: " + "; ".join(sorted(problems)))

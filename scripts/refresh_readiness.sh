@@ -171,31 +171,17 @@ run_required_provider_smoke() {
 }
 
 provider_expected_line() {
-  local llm_label="$1" raw tts_engine
+  local llm_label="$1" raw
   raw="$(awk -F= '$1 == "LIVE_SEARCH_QWEN_ENABLED" {print $2}' "$agent_env" | tail -1)"
   raw="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
-  # The smoke names the engine the session actually speaks with, so this must
-  # resolve the same pair tts_factory._active_provider does.
-  tts_engine="$(awk -F= '$1 == "TTS_PROVIDER" {print $2}' "$agent_env" | tail -1)"
-  local stepfun_enabled
-  stepfun_enabled="$(awk -F= '$1 == "STEPFUN_TTS_ENABLED" {print $2}' "$agent_env" | tail -1)"
-  stepfun_enabled="$(printf '%s' "$stepfun_enabled" | tr '[:upper:]' '[:lower:]')"
-  if [[ "$tts_engine" == stepfun_primary ]]; then
-    case "$stepfun_enabled" in
-      1|true|yes|on|t|y) ;;
-      *) tts_engine=volcengine_doubao ;;
-    esac
-  fi
-  case "$tts_engine" in
-    stepfun_primary) tts_engine=StepFun ;;
-    *) tts_engine=Doubao ;;
-  esac
+  # TTS_PROVIDER has one legal value now, so the smoke the release runs always
+  # speaks Doubao and this line does not have to resolve a selector.
   case "$raw" in
     1|true|yes|on|t|y)
-      printf 'provider_smoke_test PASS: FunASR, QwenRealtimeSearch, %s, %s\n' "$llm_label" "$tts_engine"
+      printf 'provider_smoke_test PASS: FunASR, QwenRealtimeSearch, %s, Doubao\n' "$llm_label"
       ;;
     *)
-      printf 'provider_smoke_test PASS: FunASR, %s, %s\n' "$llm_label" "$tts_engine"
+      printf 'provider_smoke_test PASS: FunASR, %s, Doubao\n' "$llm_label"
       ;;
   esac
 }

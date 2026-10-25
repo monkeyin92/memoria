@@ -103,6 +103,21 @@ def test_stepfun_enabled_survives_the_split_for_rollback() -> None:
     reject_replaced_keys({"TTS_PROVIDER": "doubao", "STEPFUN_TTS_ENABLED": "true"})
 
 
+def test_a_retired_selector_value_fails_before_the_service_starts() -> None:
+    """The live agent env still says stepfun_primary, which no longer validates.
+
+    A release that copied it through would only fail at import time in the
+    container, after the cutover.
+    """
+    with pytest.raises(ValueError, match="TTS_PROVIDER=doubao"):
+        reject_replaced_keys({"TTS_PROVIDER": "stepfun_primary"})
+
+    # The same key with a live value and other casing of the retired one.
+    reject_replaced_keys({"TTS_PROVIDER": "doubao"})
+    with pytest.raises(ValueError, match="stepfun_primary"):
+        reject_replaced_keys({"TTS_PROVIDER": " StepFun_Primary "})
+
+
 def test_asr_provider_defaults_to_funasr(monkeypatch: pytest.MonkeyPatch) -> None:
     """AgentSettings with no env has asr_provider == funasr and tts_provider == doubao."""
     monkeypatch.delenv("ASR_PROVIDER", raising=False)

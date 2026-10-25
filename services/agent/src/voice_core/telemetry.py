@@ -44,7 +44,7 @@ MEDIA_METRIC_NAMES = frozenset(
         "media_loss_concealed_frames_total",
         "asr_send_lag_ms",
         "asr_partial_age_ms",
-        "asr_first_result_ms",
+        "asr_finalize_ms",
         "asr_failover_total",
         "asr_both_failed_total",
         "tts_frame_age_ms",

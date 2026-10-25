@@ -60,14 +60,13 @@
 - `end_window_ms=550` 与 `enable_nonstream=true` 的组合会触发服务端 VAD 分句，中间结果里可能出现 `definite: true` 的分句。当前实现把 `definite` 分句当作句末结果转发，同时继续等负包边界；这一行为与 FunASR 路径的 `sentence_end` 语义一致，但没有在真实端点上观察过中间 `definite` 的时序。
 - 文档未给出“一条连接能否承载第二个任务”的明确禁止。即使允许，当前实现选择一段一连接，成本是多一次 WebSocket 建连，收益是任务边界与连接生命周期一致，不依赖未写明的服务端行为。
 
-## 与首结果预算的关系（需要决策）
+## finalize 预算：从负包到 final
 
-`docs/acceptance/run-20260929-asr-ab/findings.md` 的离线 A/B 在同一端点上测到：豆包 `bigmodel_async` 的**首个 partial p50 是 3.40 s**，而 final p50 只有 0.09 s。默认 `ASR_FAILOVER_FIRST_RESULT_TIMEOUT_MS=1500` 比这个首 partial 分布还紧，正常朗读也可能在第一次出字前就触发 `first_result_timeout`。
+`docs/acceptance/run-20260929-asr-ab/findings.md` 的离线 A/B 在同一端点上测到：豆包 `bigmodel_async` 的**首个 partial p50 是 3.40 s**，第二组是 4.28 s，而 final p50 只有 0.09 s、p90 是 0.18 s。
 
-本轮把计时的起点从“任务第一帧”改到“首个有能量的帧”，只消除了静音导致的误判；**说话中的 1.5 s 预算本身仍可能偏紧**。打开开关前建议按下面两步定值，不要沿用默认值：
+旧实现从语音起点计时，1.5 s 内没有首个 partial 就降级。这个时钟量错了对象：备选（SenseVoice 离线重识别）必须等整段音频结束才能开始，说话中途判定什么都省不下来，只会把正常朗读判成失败。现在预算从 `rotate_task` 发出负包开始计时，到 primary 返回 final 为止，`ASR_FAILOVER_FINAL_RESULT_TIMEOUT_MS` 默认 1000 ms，落在 final p90 加 0.25 s 尾部宽限之上。去掉了说话中途的判定。
 
-1. 用合成音在真实端点测首个 partial 的 p50/p90（`asr_first_result_ms` 已经按语音起点计量）。
-2. 把 `ASR_FAILOVER_FIRST_RESULT_TIMEOUT_MS` 设到 p90 之上，再观察 `asr_failover_total{reason="first_result_timeout"}` 是否落到可接受范围。
+计量改为 `asr_finalize_ms`（负包到 final），它和预算量的是同一段等待。打开开关前按下面两步定值：
 
-这条没有在本轮改动默认值：默认值的调整会影响降级覆盖率，属于上线参数决策，需要真实端点的数据支撑。
-
+1. 用合成音在真实端点跑第一次 smoke，读 `asr_finalize_ms` 的 p50/p90。A/B 数据来自 model 1.0，生产跑的是 2.0，不能直接沿用。
+2. p90 超过预算一半时上调 `ASR_FAILOVER_FINAL_RESULT_TIMEOUT_MS`。之后再观察 `asr_failover_total{reason="final_result_timeout"}` 的占比。
