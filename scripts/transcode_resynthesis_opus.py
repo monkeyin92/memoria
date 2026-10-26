@@ -50,7 +50,7 @@ ENCODE_BITRATE_BPS = 16_000
 SPOKEN_DIGITS = {"12356": "幺二三五六", "120": "幺二零", "110": "幺幺零"}
 
 
-CONTENT_ROOT = Path("share/_from-box-20261020/memoria-content")
+CONTENT_ROOT = Path("share/产品文稿")
 PRODUCT_ROOT = Path("share/产品文稿")
 
 
@@ -434,9 +434,9 @@ def _render_manifest(
         )
     out.extend(["", "## 说明", ""])
     out.append(
-        "文稿文件位置：`offline-lines-v2.md`、`offline-stories-v2.md` 在 "
-        "`share/_from-box-20261020/memoria-content/`；`安全话术定稿-20261021.md` 在 "
-        "`share/产品文稿/`；`services/agent/src/prompts.py` 在仓库内。"
+        "文稿文件位置：`offline-lines-v2.md`、`offline-stories-v2.md`、"
+        "`安全话术定稿-20261021.md` 均在 `share/产品文稿/`；"
+        "`services/agent/src/prompts.py` 在仓库内。"
     )
     out.extend(
         [
