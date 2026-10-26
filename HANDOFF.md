@@ -251,7 +251,7 @@ PR #393 的修复：冒烟主用引擎由 `tts_factory` 解析，StepFun 主用�
 ## 2026-10-07 PR #196：N-8 held reply 诊断日志（合并提交 `145f3f43`，2026-10-07 约 22:45 CST，2026-10-08 随 `20261007-n8-diag-v1` 切流上线）
 
 - **内容**：`services/agent/src/voice_core/media_session_output_stream.py` 在 `_wait_for_unheard_output_floor` 的三个退出点各加一行 INFO 日志，格式 `media prepared reply dropped cause=lease_lost|textless_turn_over|deadline … waited_s=… partial_chars=… provisional_chars=…`，只记标志位与文本长度，不记孩子说的话，无行为变更。同批修复已有测试里 `SimpleNamespace` 传给 `OutputOwnerLease` 参数的 mypy 类型错误（加 `cast(Any, ...)`）。
-- **背景**：10-07 的四轮 bench（音量 30，无噪声）bridge 日志出现 3 次 `superseded_unsent`——held reply 被替换代取消，却没有 released 行；两个猜想的根因均被日志证伪（详见 `docs/acceptance/run-20261007-*/findings.md`），真实原因需真机诊断日志才能区分。
+- **背景**：10-07 的四轮 bench（音量 30，无噪声）bridge 日志出现 3 次 `superseded_unsent`——held reply 被替换代取消，却没有 released 行；两个猜想的根因均被日志证伪（详见 `docs/acceptance.md`），真实原因需真机诊断日志才能区分。
 - **验证**：ruff clean、mypy success（2 文件）、pytest `test_media_session_unheard_reply_hold.py` 14/14 pass；CI（workflow_dispatch run `37643404743`）所有 job success。
 - **已发布**：2026-10-08 14:14 CST 随整栈 `20261007-n8-diag-v1` 切流上线（见上一节）；诊断一轮还没做，音量 50 须先问。
 - **分支**：`fix/n8-held-reply-drop-diagnosis` 本地与远端均已删；原诊断分支 `test/n8-held-reply-repro` 本地已删（内容在本 PR 里）。

@@ -30,8 +30,8 @@ assert_skill_name() {
 assert_skill_dest() {
   local path="$1"
   local skills_real path_real parent_real
-  skills_real="$(realpath -m "${SKILLS_DST}")"
-  path_real="$(realpath -m "${path}")"
+  skills_real="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "${SKILLS_DST}")"
+  path_real="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "${path}")"
   parent_real="$(dirname "${path_real}")"
   if [[ "${path_real}" == "${skills_real}" ]]; then
     echo "error: refuse skills root as target: ${path}" >&2
