@@ -40,6 +40,7 @@ from services.agent.src.providers.doubao_voice_catalog import (
     DEFAULT_VOICE_PROFILE,
     DOUBAO_TTS_MODEL,
     catalog_by_id,
+    designed_spec,
     resolve_approved_voice,
 )
 from services.agent.src.providers.generation_budget import (
@@ -1273,10 +1274,7 @@ class DoubaoTTS:
             self._config.reference_contexts = ()
             self._voice_kind = "personal"
             return
-        spec = next(
-            (item for item in catalog_by_id().values() if item.speaker_id == voice),
-            None,
-        )
+        spec = designed_spec(voice=voice, profile_id=profile_id)
         if (
             model != DOUBAO_TTS_MODEL
             or resource != DOUBAO_TTS_MODEL

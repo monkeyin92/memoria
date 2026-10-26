@@ -12,6 +12,8 @@ from typing import Final, Literal
 
 DEFAULT_COMPANION_ID: Final = "starlight"
 DESIGNED_VOICE_MODEL: Final = "seed-tts-2.0"
+#: The one voice a child hears. Companion style still varies. The speaker does not.
+CHILD_STORY_SPEAKER: Final = "zh_female_shaoergushi_uranus_bigtts"
 
 COMPANION_STYLE_VERSION: Final = "companion-v1"
 
@@ -157,11 +159,14 @@ COMPANION_VOICE_PROFILES: Final[dict[str, str]] = {
 }
 
 DESIGNED_VOICE_SPEAKERS: Final[dict[str, str]] = {
-    "warm_companion": "zh_female_kailangjiejie_uranus_bigtts",
-    "bright_peer": "zh_female_tianmeitaozi_uranus_bigtts",
-    "soft_confidante": "zh_female_wenrouxiaoya_uranus_bigtts",
-    "calm_guide": "zh_male_gaolengchenwen_uranus_bigtts",
-    "low_magnetic": "zh_male_shenyeboke_uranus_bigtts",
+    profile_id: CHILD_STORY_SPEAKER
+    for profile_id in (
+        "warm_companion",
+        "bright_peer",
+        "soft_confidante",
+        "calm_guide",
+        "low_magnetic",
+    )
 }
 
 COMPANION_IDS: Final[frozenset[str]] = frozenset(COMPANION_VOICE_PROFILES)

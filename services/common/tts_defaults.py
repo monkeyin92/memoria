@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Final
 
+from services.common.companions import CHILD_STORY_SPEAKER
+
 STEPFUN_TTS_MODEL: Final = "stepaudio-2.5-tts"
 STEPFUN_TTS_VOICE: Final = "wenrounansheng"
 STEPFUN_PROVIDER: Final = "stepfun"
@@ -18,7 +20,7 @@ DOUBAO_TTS_RESOURCE_ID: Final = "seed-tts-2.0"
 #: Designed female voice for the Doubao backup in StepFun-primary mode. Product
 #: chose it on 2026-10-20 19:09; operators may still override the env var. It is
 #: deliberately not the pure-Doubao warm_companion default.
-DOUBAO_TTS_FALLBACK_SPEAKER: Final = "zh_female_kailangjiejie_uranus_bigtts"
+DOUBAO_TTS_FALLBACK_SPEAKER: Final = CHILD_STORY_SPEAKER
 
 __all__ = [
     "DOUBAO_TTS_FALLBACK_SPEAKER",

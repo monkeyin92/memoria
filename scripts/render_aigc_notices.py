@@ -7,7 +7,7 @@ Texts (also listed in docs/design.md):
 * aigc_soothe_intro: 「AI 合成的声音陪你睡觉啦。」
 
 Requires DOUBAO_TTS_APP_ID and DOUBAO_TTS_ACCESS_TOKEN. Voice
-zh_female_tianmeitaozi_uranus_bigtts at normal speed and normal volume
+zh_female_shaoergushi_uranus_bigtts at normal speed and normal volume
 (speech_rate / loudness_rate / pitch = 0). Synthesizes 24 kHz PCM (provider
 requirement), then ffmpeg-encodes 16 kHz Opus with implicit AIGC OpusTags
 (CONTENT_ID, SERVICE_PROVIDER=Volcengine Doubao, AI_GENERATED, ARTIST, VOICE_ID,
@@ -53,7 +53,7 @@ OFFLINE_ROOT = (
     / "offline_lines"
 )
 ARCHIVE_ROOT = REPO / "docs" / "acceptance" / "run-20261015-aigc-labels" / "archive"
-VOICE_ID = "zh_female_tianmeitaozi_uranus_bigtts"
+VOICE_ID = "zh_female_shaoergushi_uranus_bigtts"
 SERVICE_PROVIDER = "Volcengine Doubao"
 CONTENT_PRODUCER, CONTENT_PROPAGATOR = aigc_identity_from_env()
 DOUBAO_SAMPLE_RATE_HZ = 24_000

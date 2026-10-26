@@ -18,7 +18,7 @@ from services.common.aigc_opus import (
     rewrite_opus_comments,
 )
 
-BOARD_NIGHT = (
+BOARD_CLIP = (
     Path(__file__).resolve().parents[3]
     / "firmware"
     / "esp32"
@@ -29,7 +29,8 @@ BOARD_NIGHT = (
     / "memoria"
     / "esp-vocat"
     / "assets"
-    / "night_soothe.ogg"
+    / "offline_lines"
+    / "llm_unavailable.ogg"
 )
 
 
@@ -65,15 +66,15 @@ def test_implicit_tags_require_voice_date_and_producer() -> None:
             "CONTENT_ID=demo",
             f"SERVICE_PROVIDER={CANONICAL_SERVICE_PROVIDER}",
             f"AI_GENERATED={CANONICAL_AI_GENERATED}",
-            "ARTIST=zh_female_tianmeitaozi_uranus_bigtts",
-            "VOICE_ID=zh_female_tianmeitaozi_uranus_bigtts",
+            "ARTIST=zh_female_shaoergushi_uranus_bigtts",
+            "VOICE_ID=zh_female_shaoergushi_uranus_bigtts",
             "DATE=2026-10-15",
             "CONTENT_PRODUCER=Memoria",
         ]
     )
     tags = require_aigc_tags(head, content_id="demo", implicit=True)
-    assert tags["artist"] == "zh_female_tianmeitaozi_uranus_bigtts"
-    assert tags["voice_id"] == "zh_female_tianmeitaozi_uranus_bigtts"
+    assert tags["artist"] == "zh_female_shaoergushi_uranus_bigtts"
+    assert tags["voice_id"] == "zh_female_shaoergushi_uranus_bigtts"
     assert tags["date"] == "2026-10-15"
     assert tags["content_producer"] == "Memoria"
     assert IMPLICIT_AIGC_TAG_KEYS[-4:] == (
@@ -91,7 +92,7 @@ def test_implicit_tags_reject_partial_label() -> None:
             "CONTENT_ID=demo",
             "SERVICE_PROVIDER=Memoria",
             "AI_GENERATED=true",
-            "ARTIST=zh_female_tianmeitaozi_uranus_bigtts",
+            "ARTIST=zh_female_shaoergushi_uranus_bigtts",
         ]
     )
     with pytest.raises(ValueError, match="VOICE_ID, DATE, CONTENT_PRODUCER"):
@@ -99,26 +100,26 @@ def test_implicit_tags_reject_partial_label() -> None:
 
 
 def test_rewrite_opus_comments_keeps_audio_and_pcm_digests() -> None:
-    before = BOARD_NIGHT.read_bytes()
+    before = BOARD_CLIP.read_bytes()
     before_packets = audio_packets_digest(before)
     before_pcm = pcm_digest(before)
     after = rewrite_opus_comments(
         before,
         aigc={
-            "CONTENT_ID": "night_soothe",
+            "CONTENT_ID": "llm_unavailable",
             "SERVICE_PROVIDER": CANONICAL_SERVICE_PROVIDER,
             "AI_GENERATED": CANONICAL_AI_GENERATED,
-            "ARTIST": "zh_female_tianmeitaozi_uranus_bigtts",
-            "VOICE_ID": "zh_female_tianmeitaozi_uranus_bigtts",
+            "ARTIST": "zh_female_shaoergushi_uranus_bigtts",
+            "VOICE_ID": "zh_female_shaoergushi_uranus_bigtts",
             "DATE": "2026-10-14",
             "CONTENT_PRODUCER": "Memoria",
         },
     )
     assert audio_packets_digest(after) == before_packets
     assert pcm_digest(after) == before_pcm
-    tags = require_aigc_tags(after[:65536], content_id="night_soothe", implicit=True)
+    tags = require_aigc_tags(after[:65536], content_id="llm_unavailable", implicit=True)
     assert tags["service_provider"] == CANONICAL_SERVICE_PROVIDER
-    assert tags["voice_id"] == "zh_female_tianmeitaozi_uranus_bigtts"
+    assert tags["voice_id"] == "zh_female_shaoergushi_uranus_bigtts"
 
 
 def test_legacy_implicit_label_is_optional_for_the_addendum_keys() -> None:
@@ -127,8 +128,8 @@ def test_legacy_implicit_label_is_optional_for_the_addendum_keys() -> None:
             "CONTENT_ID=demo",
             f"SERVICE_PROVIDER={CANONICAL_SERVICE_PROVIDER}",
             f"AI_GENERATED={CANONICAL_AI_GENERATED}",
-            "ARTIST=zh_female_tianmeitaozi_uranus_bigtts",
-            "VOICE_ID=zh_female_tianmeitaozi_uranus_bigtts",
+            "ARTIST=zh_female_shaoergushi_uranus_bigtts",
+            "VOICE_ID=zh_female_shaoergushi_uranus_bigtts",
             "DATE=2026-10-15",
             "CONTENT_PRODUCER=Memoria",
         ]
@@ -146,22 +147,22 @@ def test_implicit_label_writes_propagator_and_label_for_new_clips() -> None:
         implicit_label,
     )
 
-    before = BOARD_NIGHT.read_bytes()
+    before = BOARD_CLIP.read_bytes()
     after = rewrite_opus_comments(
         before,
         aigc=implicit_label(
-            content_id="night_soothe",
+            content_id="llm_unavailable",
             aigc={
                 "SERVICE_PROVIDER": CANONICAL_SERVICE_PROVIDER,
-                "ARTIST": "zh_female_tianmeitaozi_uranus_bigtts",
-                "VOICE_ID": "zh_female_tianmeitaozi_uranus_bigtts",
+                "ARTIST": "zh_female_shaoergushi_uranus_bigtts",
+                "VOICE_ID": "zh_female_shaoergushi_uranus_bigtts",
                 "DATE": "2026-10-15",
             },
             content_producer="Memoria",
             content_propagator="Memoria Propagator",
         ),
     )
-    tags = require_aigc_tags(after[:65536], content_id="night_soothe", implicit=True)
+    tags = require_aigc_tags(after[:65536], content_id="llm_unavailable", implicit=True)
     assert tags["content_propagator"] == "Memoria Propagator"
     assert tags["label"] is True
     raw = dict(opus_tag_pairs(after[:65536]))
@@ -198,7 +199,7 @@ def test_implicit_tags_reject_stepfun_on_a_doubao_voice() -> None:
         require_aigc_tags(
             _implicit_head(
                 service_provider="StepFun",
-                voice_id="zh_female_tianmeitaozi_uranus_bigtts",
+                voice_id="zh_female_shaoergushi_uranus_bigtts",
             ),
             content_id="demo",
             implicit=True,
@@ -219,7 +220,7 @@ def test_implicit_tags_reject_an_unknown_provider_and_an_unknown_voice() -> None
         require_aigc_tags(
             _implicit_head(
                 service_provider="Memoria",
-                voice_id="zh_female_tianmeitaozi_uranus_bigtts",
+                voice_id="zh_female_shaoergushi_uranus_bigtts",
             ),
             content_id="demo",
             implicit=True,

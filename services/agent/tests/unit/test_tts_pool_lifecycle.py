@@ -55,7 +55,7 @@ def _doubao_pool() -> tuple[DoubaoTTSPool, DoubaoConnection]:
     pool = DoubaoTTSPool(
         DoubaoTTSConfig(
             api_key="test",
-            speaker="zh_female_kailangjiejie_uranus_bigtts",
+            speaker="zh_female_shaoergushi_uranus_bigtts",
             pool_size=1,
         )
     )
@@ -67,7 +67,7 @@ async def test_doubao_pool_reports_active_connections_and_refill_reconnects() ->
     pool = DoubaoTTSPool(
         DoubaoTTSConfig(
             api_key="test",
-            speaker="zh_female_kailangjiejie_uranus_bigtts",
+            speaker="zh_female_shaoergushi_uranus_bigtts",
             pool_size=1,
         ),
         metrics=MetricsRegistry(),
@@ -104,7 +104,7 @@ async def test_doubao_active_connections_are_aggregated_across_pools(
     metrics = MetricsRegistry()
     config = DoubaoTTSConfig(
         api_key="test",
-        speaker="zh_female_kailangjiejie_uranus_bigtts",
+        speaker="zh_female_shaoergushi_uranus_bigtts",
         pool_size=1,
     )
     first = DoubaoTTSPool(config, metrics=metrics)
@@ -126,7 +126,7 @@ async def test_doubao_release_removes_a_socket_already_marked_closed() -> None:
     pool = DoubaoTTSPool(
         DoubaoTTSConfig(
             api_key="test",
-            speaker="zh_female_kailangjiejie_uranus_bigtts",
+            speaker="zh_female_shaoergushi_uranus_bigtts",
             pool_size=1,
         ),
         metrics=metrics,
@@ -152,7 +152,7 @@ async def test_doubao_acquire_replaces_a_server_expired_pooled_connection() -> N
     pool = DoubaoTTSPool(
         DoubaoTTSConfig(
             api_key="test",
-            speaker="zh_female_kailangjiejie_uranus_bigtts",
+            speaker="zh_female_shaoergushi_uranus_bigtts",
             pool_size=1,
         ),
         metrics=metrics,
@@ -458,7 +458,7 @@ async def test_a_credential_rejection_stops_later_sessions_paying_the_handshake(
     monkeypatch.setattr(doubao_tts.websockets, "connect", connect)
     config = DoubaoTTSConfig(
         api_key="test",
-        speaker="zh_female_kailangjiejie_uranus_bigtts",
+        speaker="zh_female_shaoergushi_uranus_bigtts",
         pool_size=1,
     )
     first = DoubaoTTSPool(config, auth_latch=latch)
@@ -493,7 +493,7 @@ async def test_the_latch_expires_so_the_next_attempt_proves_the_fix(
     pool = DoubaoTTSPool(
         DoubaoTTSConfig(
             api_key="test",
-            speaker="zh_female_kailangjiejie_uranus_bigtts",
+            speaker="zh_female_shaoergushi_uranus_bigtts",
             pool_size=1,
         ),
         auth_latch=latch,
@@ -538,7 +538,7 @@ async def test_a_transport_failure_leaves_the_latch_closed(
     pool = DoubaoTTSPool(
         DoubaoTTSConfig(
             api_key="test",
-            speaker="zh_female_kailangjiejie_uranus_bigtts",
+            speaker="zh_female_shaoergushi_uranus_bigtts",
             pool_size=1,
         ),
         auth_latch=latch,

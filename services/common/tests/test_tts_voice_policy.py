@@ -10,7 +10,7 @@ from services.common.tts_voice_policy import is_clone_or_icl_voice, is_male_spea
 @pytest.mark.parametrize(
     ("voice", "voice_kind", "resource_id", "provider"),
     [
-        ("zh_female_kailangjiejie_uranus_bigtts", "designed", "seed-tts-2.0", "volcengine_doubao"),
+        ("zh_female_shaoergushi_uranus_bigtts", "designed", "seed-tts-2.0", "volcengine_doubao"),
         (STEPFUN_TTS_VOICE, "designed", "seed-tts-2.0", "stepfun"),
     ],
 )
@@ -48,4 +48,4 @@ def test_clone_and_icl_identities_are_rejected(
 
 def test_male_presets_are_never_the_companion_backup() -> None:
     assert is_male_speaker("zh_male_test_voice_uranus_bigtts") is True
-    assert is_male_speaker("zh_female_kailangjiejie_uranus_bigtts") is False
+    assert is_male_speaker("zh_female_shaoergushi_uranus_bigtts") is False

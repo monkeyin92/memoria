@@ -612,7 +612,7 @@ async def test_completed_voice_resolution_is_applied_without_network_wait() -> N
         pool = None  # no real provider connection pool in this stub
         current_voice_profile_id = "warm_companion"
         current_model = "seed-tts-2.0"
-        current_voice = "zh_female_kailangjiejie_uranus_bigtts"
+        current_voice = "zh_female_shaoergushi_uranus_bigtts"
         current_voice_kind = "designed"
 
         def set_alignment_callback(self, _callback: object) -> None:
@@ -647,7 +647,7 @@ async def test_completed_voice_resolution_is_applied_without_network_wait() -> N
             return VoiceRuntimeProfile(
                 profile_id="warm_companion",
                 model="seed-tts-2.0",
-                voice_id="zh_female_kailangjiejie_uranus_bigtts",
+                voice_id="zh_female_shaoergushi_uranus_bigtts",
             )
 
     runtime = DuplexRuntime.create(
@@ -672,7 +672,7 @@ async def test_completed_voice_resolution_is_applied_without_network_wait() -> N
 
     await commit_media_turn(agent, Message("继续"))
 
-    assert applied == [("seed-tts-2.0", "zh_female_kailangjiejie_uranus_bigtts")]
+    assert applied == [("seed-tts-2.0", "zh_female_shaoergushi_uranus_bigtts")]
     await runtime.close()
 
 
@@ -733,7 +733,7 @@ async def test_first_turn_waits_for_voice_profile_refresh_before_applying_voice(
         pool = None  # no real provider connection pool in this stub
         current_voice_profile_id = "warm_companion"
         current_model = "seed-tts-2.0"
-        current_voice = "zh_female_kailangjiejie_uranus_bigtts"
+        current_voice = "zh_female_shaoergushi_uranus_bigtts"
         current_voice_kind = "designed"
 
         def set_alignment_callback(self, _callback: object) -> None:
@@ -772,7 +772,7 @@ async def test_first_turn_waits_for_voice_profile_refresh_before_applying_voice(
             return VoiceRuntimeProfile(
                 profile_id="warm_companion",
                 model="seed-tts-2.0",
-                voice_id="zh_female_kailangjiejie_uranus_bigtts",
+                voice_id="zh_female_shaoergushi_uranus_bigtts",
             )
 
     voice = VoiceStub()
@@ -814,5 +814,5 @@ async def test_first_turn_waits_for_voice_profile_refresh_before_applying_voice(
 
     release.set()
     await turn
-    assert applied[-1] == "seed-tts-2.0:zh_female_kailangjiejie_uranus_bigtts"
+    assert applied[-1] == "seed-tts-2.0:zh_female_shaoergushi_uranus_bigtts"
     await runtime.close()

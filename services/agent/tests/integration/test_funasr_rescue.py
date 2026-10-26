@@ -435,12 +435,15 @@ async def test_mid_segment_rescue_emits_final_before_vad_end(
             _speech_pcm(chunk),
             capture_start_sample=start,
         )
-    await asyncio.sleep(0.05)
     finals: list[str] = []
-    while not session.events.empty():
-        event = session.events.get_nowait()
-        if event.event == "result-generated" and event.sentence is not None:
-            finals.append(event.sentence.text)
+    deadline = asyncio.get_running_loop().time() + 2.0
+    while not finals and asyncio.get_running_loop().time() < deadline:
+        while not session.events.empty():
+            event = session.events.get_nowait()
+            if event.event == "result-generated" and event.sentence is not None:
+                finals.append(event.sentence.text)
+        if not finals:
+            await asyncio.sleep(0.02)
     await session.aclose()
     assert finals == ["兜底识别成功。"]
     assert rescue_server.requests == 1

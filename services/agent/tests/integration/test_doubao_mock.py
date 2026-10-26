@@ -302,6 +302,7 @@ async def test_voice_is_snapshotted_before_waiting_for_a_connection() -> None:
         tts.apply_voice_profile(
             model="seed-tts-2.0",
             voice=_VOICES["bright_peer"].speaker_id,
+            profile_id="bright_peer",
         )
         await pool.release(held)
         result = await synthesis

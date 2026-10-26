@@ -72,6 +72,26 @@ def catalog_by_id() -> dict[str, DoubaoVoiceSpec]:
     return {spec.profile_id: spec for spec in DOUBAO_VOICE_CATALOG}
 
 
+def designed_spec(*, voice: str, profile_id: str | None) -> DoubaoVoiceSpec | None:
+    """The approved spec for this speaker.
+
+    Every designed profile shares one speaker, so a speaker id alone is not a
+    profile. Callers that name a profile resolve that profile and must present
+    its speaker. A speaker that belongs to exactly one profile still resolves
+    without one.
+    """
+
+    if profile_id is not None:
+        spec = catalog_by_id().get(profile_id)
+        if spec is None or spec.speaker_id != voice:
+            return None
+        return spec
+    matches = [item for item in DOUBAO_VOICE_CATALOG if item.speaker_id == voice]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
 def default_registry_path() -> Path:
     configured = os.environ.get("DOUBAO_TTS_VOICE_REGISTRY")
     if configured:

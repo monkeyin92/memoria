@@ -58,7 +58,7 @@ REPORT = (
     / "metadata-retag-voice-id.json"
 )
 
-VOICE_ID = "zh_female_tianmeitaozi_uranus_bigtts"
+VOICE_ID = "zh_female_shaoergushi_uranus_bigtts"
 # AIGC_CONTENT_PRODUCER / AIGC_CONTENT_PROPAGATOR configure our party ids.
 CONTENT_PRODUCER, CONTENT_PROPAGATOR = aigc_identity_from_env()
 DATE = "2026-10-14"
