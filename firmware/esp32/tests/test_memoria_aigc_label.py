@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import pathlib
 import subprocess
+import sys
 
 FIRMWARE_ROOT = pathlib.Path(__file__).parents[1]
 MEMORIA_DIR = FIRMWARE_ROOT / "overlay" / "files" / "main" / "memoria"
@@ -124,11 +125,11 @@ def test_overlay_check_keeps_implicit_tags_and_drops_intro_gates() -> None:
 def test_render_aigc_notices_refuses_without_credentials() -> None:
     script = FIRMWARE_ROOT.parents[1] / "scripts" / "render_aigc_notices.py"
     completed = subprocess.run(
-        ["uv", "run", "python", str(script)],
+        [sys.executable, str(script)],
         check=False,
         capture_output=True,
         text=True,
-        env={"PATH": "/usr/bin:/bin:/opt/homebrew/bin"},
+        env={"PATH": "/usr/bin:/bin"},
     )
     assert completed.returncode == 2
     assert "TODO: DOUBAO_TTS_APP_ID" in completed.stderr
