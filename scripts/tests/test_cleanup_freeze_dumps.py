@@ -9,7 +9,9 @@ from scripts.cleanup_freeze_dumps import (
     DEFAULT_RETENTION_DAYS,
     expired_freeze_dumps,
     is_freeze_dump_name,
+    is_migration_backup_name,
     list_freeze_dump_candidates,
+    list_migration_backup_candidates,
     main,
 )
 
@@ -154,3 +156,66 @@ def test_missing_releases_directory_exits_zero(
     out = capsys.readouterr().out
     assert "no releases directory" in out
     assert "nothing to clean" in out
+
+
+def test_control_store_dump_candidates(tmp_path: Path) -> None:
+    now = time.time()
+    stale_dump = _touch(
+        tmp_path / "releases" / "20261016-control-store-v1" / ".control-store-20261016T120000Z" / "memoria-pre-control-store.dump",
+        age_days=5,
+        now=now,
+    )
+    stale_sqlite = _touch(
+        tmp_path / "releases" / "20261016-control-store-v1" / ".control-store-20261016T120000Z" / "memoria.sqlite3",
+        age_days=5,
+        now=now,
+    )
+    receipt = _touch(
+        tmp_path / "releases" / "20261016-control-store-v1" / ".control-store-20261016T120000Z" / "apply-receipt.json",
+        age_days=5,
+        now=now,
+    )
+    candidates = list_freeze_dump_candidates(tmp_path)
+    assert stale_dump in candidates
+    assert stale_sqlite in candidates
+    assert receipt not in candidates
+
+
+def test_migration_backup_candidates_and_cleanup(tmp_path: Path) -> None:
+    now = time.time()
+    migrations_dir = tmp_path / "var" / "backups" / "memoria" / "migrations"
+    batch_dir = migrations_dir / "20260720-140053"
+    stale_sqlite = _touch(batch_dir / "memoria.sqlite3", age_days=10, now=now)
+    stale_tar = _touch(batch_dir / "frozen-state.tar.zst", age_days=10, now=now)
+    fresh_dump = _touch(migrations_dir / "recent.dump", age_days=1, now=now)
+
+    assert is_migration_backup_name("memoria.sqlite3")
+    assert is_migration_backup_name("frozen-state.tar.zst")
+    assert is_migration_backup_name("derived.sql")
+    assert is_migration_backup_name("old.bak")
+    assert not is_migration_backup_name("README.txt")
+
+    candidates = list_migration_backup_candidates(migrations_dir)
+    assert stale_sqlite in candidates
+    assert stale_tar in candidates
+    assert fresh_dump in candidates
+
+    assert (
+        main(
+            [
+                "--root",
+                str(tmp_path),
+                "--migrations-root",
+                str(migrations_dir),
+                "--apply",
+                "--retention-days",
+                "3",
+            ]
+        )
+        == 0
+    )
+    assert not stale_sqlite.exists()
+    assert not stale_tar.exists()
+    assert not batch_dir.exists()  # empty batch directory cleaned up
+    assert fresh_dump.is_file()
+
