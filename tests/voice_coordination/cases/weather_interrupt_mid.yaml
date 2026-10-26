@@ -1,0 +1,121 @@
+# 测试案例: 天气查询 + 中期打断
+
+case_id: weather_interrupt_mid
+request_kind: weather
+timing_pattern: interrupt_mid
+
+description: |
+  用户询问天气,在助手回答中途打断,改为询问明天天气。
+
+  预期行为:
+  - 助手立即停止播放当前回答
+  - 取消已生成但未播放的音频
+  - 发起新的工具调用查询明天天气
+  - 播放新的回答
+
+  失败模式:
+  - 继续播放今天天气 (stale_output)
+  - 忽略打断,播放完后再响应 (ignored_interrupt)
+
+# 用户输入序列
+user_inputs:
+  - kind: utterance
+    text: "今天天气怎么样?"
+    start_time_s: 0.0
+    duration_s: 1.2
+
+  - kind: interrupt
+    text: "等等,我是说明天的天气"
+    start_time_s: 3.5  # 助手开始说话 0.5s 后
+    duration_s: 1.5
+
+# 后台任务 (工具调用)
+background_tasks:
+  - task_id: weather_query_today
+    start_time_s: 1.5  # 用户话语结束后 0.3s
+    latency_s: 1.0  # 工具调用延迟 1s
+    result:
+      date: "2026-10-26"
+      temperature: 25
+      condition: "晴"
+    expire_after_s: null
+
+  - task_id: weather_query_tomorrow
+    start_time_s: 5.2  # 打断后立即发起
+    latency_s: 1.0
+    result:
+      date: "2026-10-27"
+      temperature: 22
+      condition: "多云"
+    expire_after_s: null
+
+# 预期结果
+expected:
+  terminal_failure: correct
+  score_min: 0.8
+
+  # 时间轴检查点
+  checkpoints:
+    - timestamp_s: 0.0
+      state: listening
+      description: "初始状态"
+
+    - timestamp_s: 0.0
+      state: user_speaking
+      description: "用户开始说话"
+
+    - timestamp_s: 1.2
+      state: thinking
+      description: "用户话语结束,进入 thinking"
+
+    - timestamp_s: 1.5
+      event: tool_call_start
+      tool: weather_query_today
+
+    - timestamp_s: 2.5
+      event: tool_call_complete
+      tool: weather_query_today
+
+    - timestamp_s: 3.0
+      state: speaking
+      description: "助手开始播放回答"
+
+    - timestamp_s: 3.5
+      state: interruption_pending
+      description: "检测到用户语音"
+
+    - timestamp_s: 4.0
+      state: user_speaking
+      description: "确认打断,取消播放"
+      must_cancel_audio: true
+
+    - timestamp_s: 5.0
+      state: thinking
+      description: "打断话语结束"
+
+    - timestamp_s: 5.2
+      event: tool_call_start
+      tool: weather_query_tomorrow
+
+    - timestamp_s: 6.2
+      event: tool_call_complete
+      tool: weather_query_tomorrow
+
+    - timestamp_s: 6.5
+      state: speaking
+      description: "播放新回答 (明天天气)"
+      must_mention_tomorrow: true
+
+# 失败判定规则
+failure_rules:
+  - condition: speaking_after_interrupt_without_cancel
+    terminal_failure: ignored_interrupt
+    score: 0.2
+
+  - condition: stale_content_in_new_reply
+    terminal_failure: stale_output
+    score: 0.3
+
+  - condition: tool_result_arrived_but_not_used
+    terminal_failure: tool_result_ignored
+    score: 0.4

@@ -60,7 +60,7 @@ class FakeVolcConnection:
             self.last_sequence = 1
             self._push_result("", last=False)
             for _ in range(self.text_frames):
-                self._incoming.put_nowait("ignored text frame")
+                self._incoming.put_nowait(b"ignored text frame")
             return
         if frame.message_type != AUDIO_ONLY_REQUEST:
             return
@@ -362,11 +362,13 @@ def test_config_reads_credentials_only_from_env() -> None:
             "VOLC_ASR_APP_ID": "app",
             "VOLC_ASR_ACCESS_TOKEN": "token",
             "VOLC_ASR_RESOURCE_ID": "volc.seedasr.sauc.duration",
+            "VOLC_ASR_BOOSTING_TABLE_ID": "1eee65f3-d583-43ee-8d31-df64b7a36bf0",
         }
     )
     assert config.app_id == "app"
     assert config.access_token == "token"
     assert config.resource_id == "volc.seedasr.sauc.duration"
+    assert config.boosting_table_id == "1eee65f3-d583-43ee-8d31-df64b7a36bf0"
     assert config.ws_url.endswith("/bigmodel_async")
     headers = config.auth_headers()
     assert headers["X-Api-App-Key"] == "app"

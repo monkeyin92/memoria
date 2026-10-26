@@ -16,6 +16,7 @@ import json
 import logging
 import re
 import struct
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from functools import lru_cache
@@ -25,6 +26,8 @@ from typing import Any, Final, Literal
 from services.agent.src.providers.provider_errors import TTSUnavailableError
 
 logger = logging.getLogger(__name__)
+
+_CRISIS_PLAYOUT_LIMIT_MS: Final = 5000.0
 
 FixedSafetyAudioTemplateId = Literal[
     "crisis-self-v1",
@@ -705,6 +708,10 @@ class FixedSafetySpeechStream:
         "_matched",
         "_offset",
         "_passthrough",
+        "_t0",
+        "_t_selected",
+        "_t_validated",
+        "_timing_logged",
     )
 
     def __init__(
@@ -724,6 +731,10 @@ class FixedSafetySpeechStream:
         self._passthrough = False
         self._closed = False
         self._decided = asyncio.Event()
+        self._t0: float | None = None
+        self._t_selected: float | None = None
+        self._t_validated: float | None = None
+        self._timing_logged = False
 
     def __getattr__(self, name: str) -> Any:
         if self._inner_stream is None:
@@ -740,8 +751,11 @@ class FixedSafetySpeechStream:
             self._to_inner(text)
             return
         self._buffer += text
+        t_start = time.perf_counter()
         template = self._catalog.match(self._buffer)
         if template is not None:
+            self._t0 = t_start
+            self._t_selected = time.perf_counter()
             self._matched_template(template)
             return
         if not self._catalog.could_continue(self._buffer):
@@ -754,6 +768,7 @@ class FixedSafetySpeechStream:
                 template.template_id,
             )
             self._matched = template
+            self._t_validated = time.perf_counter()
             self._decided.set()
             return
         if template.clip_only:
@@ -768,6 +783,7 @@ class FixedSafetySpeechStream:
                     template.template_id,
                 )
                 self._matched = shipped
+                self._t_validated = time.perf_counter()
                 self._decided.set()
                 return
             logger.error(
@@ -788,8 +804,11 @@ class FixedSafetySpeechStream:
         if self._closed:
             return
         if self._inner_stream is None and self._matched is None and self._clip_error is None:
+            t_start = time.perf_counter()
             template = self._catalog.match(self._buffer)
             if template is not None and template.clip_only:
+                self._t0 = t_start
+                self._t_selected = time.perf_counter()
                 self._matched_template(template)
             else:
                 text = template.spoken if template is not None else self._buffer
@@ -816,6 +835,7 @@ class FixedSafetySpeechStream:
         if self._clip_error is not None:
             raise self._clip_error
         if self._matched is not None:
+            self._log_playout_timing()
             pcm = self._matched.pcm or b""
             if self._offset < len(pcm):
                 chunk = pcm[self._offset : self._offset + _FRAME_BYTES]
@@ -827,6 +847,33 @@ class FixedSafetySpeechStream:
         if self._inner_stream is None:
             raise StopAsyncIteration
         return await self._inner_stream.__anext__()
+
+    def _log_playout_timing(self) -> None:
+        if (
+            self._timing_logged
+            or self._t0 is None
+            or self._t_selected is None
+            or self._t_validated is None
+            or self._matched is None
+        ):
+            return
+        delivered = time.perf_counter()
+        select_ms = (self._t_selected - self._t0) * 1000.0
+        validate_ms = (self._t_validated - self._t_selected) * 1000.0
+        deliver_ms = (delivered - self._t_validated) * 1000.0
+        total_ms = (delivered - self._t0) * 1000.0
+        passed = "true" if total_ms <= _CRISIS_PLAYOUT_LIMIT_MS else "false"
+        logger.info(
+            "fixed_safety_audio_timing template_id=%s select_ms=%.2f validate_ms=%.2f "
+            "deliver_ms=%.2f total_ms=%.2f limit_ms=5000 passed=%s",
+            self._matched.template_id,
+            select_ms,
+            validate_ms,
+            deliver_ms,
+            total_ms,
+            passed,
+        )
+        self._timing_logged = True
 
     def _to_inner(self, text: str) -> None:
         if self._inner_stream is None:

@@ -230,7 +230,7 @@ def test_story_finished_offline_plays_end(tool: pathlib.Path) -> None:
 
 
 def test_mid_drop_then_reconnect_timeout_opens_menu(tool: pathlib.Path) -> None:
-    lines = _run(tool, "reset", "down 1000 1", "tap 2000 100 0 0 1", "timer 22000")
+    lines = _run(tool, "reset", "down 1000 1", "tap 2000 100 0 0 1", "timer 9000")
     assert "offline-mid-drop-v2" in lines[1]
     assert "offline-mid-ask-parent-v1" in lines[1]
     assert "offline-mid-retry-v1" in lines[1]
@@ -238,6 +238,15 @@ def test_mid_drop_then_reconnect_timeout_opens_menu(tool: pathlib.Path) -> None:
     assert "offline-reconnecting-v1" in lines[3]
     assert "offline-menu-intro-v2" in lines[5]
     assert "offline-wake-no-network-v1" not in lines[5]
+    assert lines[6].startswith("mode=menu item=1")
+
+
+def test_reconnect_waits_the_full_8s_before_the_menu(tool: pathlib.Path) -> None:
+    lines = _run(tool, "reset", "down 1000 1", "timer 8999", "timer 9000")
+    assert lines[2] == "mode=mid_reconnecting"
+    assert "intercept=0 mode_clips=0" in lines[3]
+    assert "mode=mid_reconnecting" in lines[4]
+    assert "offline-menu-intro-v2" in lines[5]
     assert lines[6].startswith("mode=menu item=1")
 
 
@@ -251,7 +260,7 @@ def test_idle_drop_is_silent_next_tap_opens_wake_menu(tool: pathlib.Path) -> Non
 
 
 def test_deep_sleep_wake_reconnect_then_menu(tool: pathlib.Path) -> None:
-    lines = _run(tool, "reset", "wake 1000 0", "tap 2000 100 0 1 0", "timer 22000")
+    lines = _run(tool, "reset", "wake 1000 0", "tap 2000 100 0 1 0", "timer 9000")
     assert lines[1].startswith("intercept=1 mode_clips=0")
     assert lines[2] == "mode=awake_reconnecting"
     assert "offline-reconnecting-v1" in lines[3]
@@ -294,7 +303,7 @@ def test_online_idle_tap_is_not_intercepted(tool: pathlib.Path) -> None:
     assert lines[2] == "mode=inactive item=1"
 
 
-def test_awake_known_offline_tap_skips_20s_reconnect(tool: pathlib.Path) -> None:
+def test_awake_known_offline_tap_skips_reconnect(tool: pathlib.Path) -> None:
     lines = _run(
         tool,
         "reset",
@@ -312,8 +321,8 @@ def test_awake_known_offline_tap_skips_20s_reconnect(tool: pathlib.Path) -> None
     assert lines[7] == "mode=menu item=1"
 
 
-def test_deep_sleep_wake_arms_20s_reconnect_then_menu(tool: pathlib.Path) -> None:
-    lines = _run(tool, "reset", "wake 300 0", "wants 0 0", "tap 2000 100 0 0 0", "timer 20300")
+def test_deep_sleep_wake_arms_8s_reconnect_then_menu(tool: pathlib.Path) -> None:
+    lines = _run(tool, "reset", "wake 300 0", "wants 0 0", "tap 2000 100 0 0 0", "timer 8300")
     assert lines[1].startswith("intercept=1 mode_clips=0")
     assert lines[2] == "mode=awake_reconnecting"
     assert lines[3] == "yes"
@@ -357,8 +366,8 @@ def test_idle_drop_restore_still_says_network_is_back(tool: pathlib.Path) -> Non
     assert lines[6] == "mode=inactive"
 
 
-def test_mid_conversation_drop_keeps_20s_reconnect(tool: pathlib.Path) -> None:
-    lines = _run(tool, "reset", "net 500 1 0", "net 1000 0 1", "timer 21000")
+def test_mid_conversation_drop_keeps_8s_reconnect(tool: pathlib.Path) -> None:
+    lines = _run(tool, "reset", "net 500 1 0", "net 1000 0 1", "timer 9000")
     assert lines[1].startswith("intercept=0 mode_clips=0")
     assert "offline-mid-drop-v2" in lines[3]
     assert lines[4] == "mode=mid_reconnecting"

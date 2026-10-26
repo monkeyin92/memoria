@@ -1,0 +1,55 @@
+# 测试案例: 简单问答 + 正常流程
+
+case_id: simple_qa_normal
+request_kind: simple_qa
+timing_pattern: normal
+
+description: |
+  用户问简单问题,助手正常回答,无打断。
+
+  这是最基础的协调场景,用于验证正常路径。
+
+# 用户输入序列
+user_inputs:
+  - kind: utterance
+    text: "今天星期几?"
+    start_time_s: 0.0
+    duration_s: 0.8
+
+# 后台任务 (无工具调用,直接回答)
+background_tasks: []
+
+# 预期结果
+expected:
+  terminal_failure: correct
+  score_min: 0.95
+
+  checkpoints:
+    - timestamp_s: 0.0
+      state: listening
+
+    - timestamp_s: 0.0
+      state: user_speaking
+
+    - timestamp_s: 0.8
+      state: thinking
+      description: "用户话语结束"
+
+    - timestamp_s: 1.5
+      state: speaking
+      description: "助手开始回答"
+      reply_latency_max_s: 0.8
+
+    - timestamp_s: 3.0
+      state: listening
+      description: "回答结束,回到 listening"
+
+failure_rules:
+  - condition: reply_latency_too_high
+    terminal_failure: late_response
+    score: 0.5
+    threshold_s: 1.5
+
+  - condition: no_reply_after_user_turn
+    terminal_failure: late_response
+    score: 0.0

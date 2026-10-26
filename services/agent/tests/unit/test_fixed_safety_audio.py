@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 import shutil
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -462,6 +463,53 @@ async def test_fixed_safety_audio_hash_mismatch_plays_the_shipped_clip_and_alert
     )
     assert any("source=shipped_clip" in message for message in messages)
     assert not any("12356" in message or "不想活" in message for message in messages)
+
+
+_TIMING_LOG = re.compile(
+    r"fixed_safety_audio_timing template_id=(?P<template_id>\S+) "
+    r"select_ms=(?P<select_ms>\d+\.\d{2}) "
+    r"validate_ms=(?P<validate_ms>\d+\.\d{2}) "
+    r"deliver_ms=(?P<deliver_ms>\d+\.\d{2}) "
+    r"total_ms=(?P<total_ms>\d+\.\d{2}) "
+    r"limit_ms=5000 passed=(?P<passed>true|false)$"
+)
+
+
+@pytest.mark.asyncio
+async def test_fixed_safety_audio_timing_logged_when_a_clip_plays(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A played fixed-safety clip logs one timing line against the 5s limit."""
+
+    wrapper, inner = _wrapper()
+    with caplog.at_level("INFO"):
+        pcm = await _serve(wrapper, CRISIS_SELF_SCRIPT.spoken)
+
+    shipped = _load().get("crisis-self-v1")
+    assert shipped is not None and shipped.pcm
+    assert pcm.startswith(shipped.pcm)
+    assert inner.streams == 0
+    matches = [
+        _TIMING_LOG.fullmatch(record.getMessage())
+        for record in caplog.records
+        if record.getMessage().startswith("fixed_safety_audio_timing")
+    ]
+    assert len(matches) == 1
+    match = matches[0]
+    assert match is not None
+    assert match.group("template_id") == "crisis-self-v1"
+    assert match.group("passed") == "true"
+    select_ms = float(match.group("select_ms"))
+    validate_ms = float(match.group("validate_ms"))
+    deliver_ms = float(match.group("deliver_ms"))
+    total_ms = float(match.group("total_ms"))
+    assert select_ms >= 0
+    assert validate_ms >= 0
+    assert deliver_ms >= 0
+    assert total_ms <= 5000
+    # The three segments are the same clock as total, so they add back to it
+    # within one displayed millisecond on each side.
+    assert abs((select_ms + validate_ms + deliver_ms) - total_ms) < 0.03
 
 
 @pytest.mark.asyncio

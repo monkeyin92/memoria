@@ -1,0 +1,13 @@
+ts	phase	decision	why	evidence	result
+2026-10-22T04:38:38Z	start	2026-10-22 今日任务收口（poteto-mode / figure-it-out）	用户要求按今日计划与看板完成今日任务内容	share/今日任务看板-20261022.md	open
+2026-10-22T04:38:38Z	frame	done predicate: 看板每条今日可执行任务有完成证据或写明阻塞归属（Monkey/真机暂停/依赖未满足），不写代码、不切生产	可检查的完成条件，避免把文档交付当成任务完成	share/今日任务看板-20261022.md + share/DECISIONS.md 2026-10-22 10:05	framed
+2026-10-22T04:38:39Z	frame	scope: 代码任务 T-03/04/05/07/09/11/15 按 Monkey 10:05 决定交 Monkey，只做只读评审；今日可做的为 T-06/07/13/14/21/23/28 与看板同步	10:05 决定禁止 dsh 改代码，尊重在册决定	share/DECISIONS.md 2026-10-22 10:05，看板 10:07 停工记录	constraint_locked
+2026-10-22T04:38:46Z	design	fan-out 7 delegates with disjoint file scopes: 工程评审、工程核查、硬件评审、产品已读、市场交付、合规评审、合规音频	5 个部门任务互不依赖，文件范围按部门/文件切分，避免并发写同一文件	share/今日任务看板-20261022.md 并行分组	started
+2026-10-22T04:38:46Z	t13	probe: prod bridge 容器有 STEPFUN_API_KEY，/v1/audio/system_voices 返回 200	先证可行再合成，避免把卡住原因当结论	ssh memoria-prod docker exec memoria-voice-core-media-bridge-1，12:32 输出 status 200	verified
+2026-10-22T04:38:46Z	t13	合成 offline-mid-drop-v2：HTTP 200，3.04 秒，24k 单声道 16bit，file sha256 3fb4522c…	Monkey 10:13 批准用容器内 key 合这一句	share/合规留证/20261022-offline-fallback/offline-mid-drop-v2.wav + manifest.json	delivered
+2026-10-22T04:38:46Z	t13	取回后本地重算 sha256 与容器内一致；容器内临时文件已删；容器 StartedAt 23:40:50Z 未变、env 156 条未变	证明没有改生产状态，符合 10:13 的限制	shasum 3fb4522c…；docker inspect；env | wc -l	verified
+2026-10-22T04:54:28Z	t13	12:41 Monkey 决定统一男声，元气少女 #4 作废；manifest 标 voided，文件留证不删，T-14 暂停	决定取代了原产物，作废要留证据而不是删文件	share/合规留证/20261022-offline-fallback/manifest.json status=voided	voided
+2026-10-22T04:54:28Z	t13	按 12:45/12:46 决定合成男声试听句：stepaudio-2.5-tts + wenrounansheng，18.08 秒，file sha256 09438e79…	产品部先合试听句再合 6 条，音色和模型已由 Monkey 定	share/TTS试听/20261022-男声/	delivered
+2026-10-22T04:54:28Z	verify	T-06/T-07 只读核查交付，未改代码；容器与真机项标未核	Prove It Works 要求区分已核与未核	share/部门记录/附件/T-06-代码成立性-20261022.md、评审-377-20261022.md	verified
+2026-10-22T04:54:28Z	compliance	T-23 有条件通过；T-14 对象已作废不通过；均写清未核项	合规结论基于文件与记录，不编条款	share/合规留证/20261022-表情方案/compliance-opinion.md、20261022-offline-fallback/compliance-review.md	verified
+2026-10-22T04:58:40Z	close	收口：看板状态列已更新，补 8 条收口证据和 8 个新任务，五个部门记录追加完成条目；T-13 男声试听句待 Monkey 试听，T-28 等产品部 v3	每条任务都要有证据或阻塞归属，不以交付文件代替验收	share/今日任务看板-20261022.md 12:57 收口节；.audit/20261022-day-run.tsv	done

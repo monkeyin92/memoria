@@ -6,7 +6,7 @@
 namespace memoria {
 
 inline constexpr std::uint32_t kOfflineLongPressMs = 800;
-inline constexpr std::uint32_t kOfflineReconnectTimeoutMs = 20 * 1000;
+inline constexpr std::uint32_t kOfflineReconnectTimeoutMs = 8 * 1000;
 inline constexpr std::uint32_t kOfflineMenuIdleMs = 30 * 1000;
 inline constexpr std::uint8_t kOfflineStoryCount = 3;
 

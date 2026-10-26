@@ -94,7 +94,9 @@ override_spec() {
 file_sha256() { sha256sum "$1" | cut -d' ' -f1; }
 
 # An override may set exactly services.<service>.image, to the image the
-# container actually runs. Reject comments, quoting and every other key.
+# container actually runs. Reject comments and every other key. The value may
+# be written bare or double-quoted: deploy_agent_component.sh quotes it, and a
+# quoting-only difference must not decide whether an override is registrable.
 validate_override_file() {   # <file> <service> <image>
   python3 - "$1" "$2" "$3" <<'PY'
 import re
@@ -103,10 +105,13 @@ from pathlib import Path
 
 path, service, image = sys.argv[1:4]
 text = Path(path).read_text(encoding="utf-8")
-match = re.fullmatch(r"services:\n  ([A-Za-z0-9_.-]+):\n    image: ([^\s]+)\n", text)
+match = re.fullmatch(
+    r'services:\n  ([A-Za-z0-9_.-]+):\n    image: (?:"([^"\s]+)"|([^\s"]+))\n', text
+)
 if match is None:
     raise SystemExit(f"override {path} is not exactly services.<service>.image")
-covered, selected = match.groups()
+covered, quoted, bare = match.groups()
+selected = quoted or bare
 if covered != service:
     raise SystemExit(f"override {path} covers {covered}, not {service}")
 if selected != image:
