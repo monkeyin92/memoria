@@ -18,8 +18,9 @@ live here and use the stores' own transaction and scope helpers.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from services.device_fleet.bootstrap_domain import ClaimStatus, DeviceLifecycle, now_utc
 from services.device_fleet.bootstrap_port import BootstrapStorePort
@@ -58,6 +59,28 @@ def release_committed_binding(
     raise TypeError(f"unsupported bootstrap store {type(store).__name__}")
 
 
+def _cleared_manifest(raw: str | bytes | None) -> str | None:
+    """Drop the subject display name from a stored activation manifest.
+
+    The manifest is signed and its hash is stored beside it, but a released
+    binding is never served again: the device only receives the manifest while
+    it is bound. The signature and hash are left as they are, so the row still
+    records exactly what the device was given, minus the one personal field.
+    """
+
+    if not raw:
+        return None
+    try:
+        manifest: Any = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    display = manifest.get("display") if isinstance(manifest, dict) else None
+    if not isinstance(display, dict) or "primary_subject_display_name" not in display:
+        return None
+    display["primary_subject_display_name"] = ""
+    return json.dumps(manifest, ensure_ascii=False, separators=(",", ":"))
+
+
 def _release_sqlite(
     store: SQLiteBootstrapStore,
     *,
@@ -91,6 +114,18 @@ def _release_sqlite(
             "UPDATE device_onboarding_bindings SET status = 'released' WHERE binding_id = ?",
             (binding_id,),
         )
+        for activation in connection.execute(
+            "SELECT activation_id, manifest_json FROM device_onboarding_activations "
+            "WHERE binding_id = ?",
+            (binding_id,),
+        ).fetchall():
+            cleared = _cleared_manifest(activation["manifest_json"])
+            if cleared is not None:
+                connection.execute(
+                    "UPDATE device_onboarding_activations SET manifest_json = ? "
+                    "WHERE activation_id = ?",
+                    (cleared, activation["activation_id"]),
+                )
         connection.execute(
             """
             UPDATE device_onboarding_claims
@@ -150,6 +185,20 @@ def _release_postgres(
             "UPDATE device_onboarding_bindings SET status = 'released' WHERE binding_id = $1",
             binding_id,
         )
+        activations = await connection.fetch(
+            "SELECT activation_id, manifest_json FROM device_onboarding_activations "
+            "WHERE binding_id = $1",
+            binding_id,
+        )
+        for activation in activations:
+            cleared = _cleared_manifest(activation["manifest_json"])
+            if cleared is not None:
+                await connection.execute(
+                    "UPDATE device_onboarding_activations SET manifest_json = $1::jsonb "
+                    "WHERE activation_id = $2",
+                    cleared,
+                    activation["activation_id"],
+                )
         await connection.execute(
             """
             UPDATE device_onboarding_claims
