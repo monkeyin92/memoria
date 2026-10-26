@@ -91,7 +91,7 @@ def test_catalogue_excludes_synthetic_tone_even_when_ogg_and_pcm_exist(
                 "-metadata",
                 "AI_GENERATED=true",
                 "-metadata",
-                "ARTIST=zh_female_tianmeitaozi_uranus_bigtts",
+                "ARTIST=zh_female_shaoergushi_uranus_bigtts",
                 str(ogg),
             ],
             check=True,

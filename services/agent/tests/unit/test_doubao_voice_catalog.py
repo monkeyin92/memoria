@@ -14,7 +14,7 @@ from services.common.companions import DESIGNED_VOICE_SPEAKERS
 def test_all_companion_voices_are_unique_and_approved() -> None:
     assert len(DOUBAO_VOICE_CATALOG) == 5
     assert len({voice.profile_id for voice in DOUBAO_VOICE_CATALOG}) == 5
-    assert len({voice.speaker_id for voice in DOUBAO_VOICE_CATALOG}) == 5
+    assert len({voice.speaker_id for voice in DOUBAO_VOICE_CATALOG}) == 1
     for voice in DOUBAO_VOICE_CATALOG:
         assert resolve_approved_voice(profile_id=voice.profile_id) == voice.speaker_id
 
@@ -45,15 +45,11 @@ def test_registry_must_match_reviewed_catalog(tmp_path) -> None:
     )
 
 
-def test_default_companion_voice_is_kailangjiejie() -> None:
-    assert (
-        DESIGNED_VOICE_SPEAKERS["warm_companion"]
-        == "zh_female_kailangjiejie_uranus_bigtts"
-    )
-    assert (
-        resolve_approved_voice(profile_id="warm_companion")
-        == "zh_female_kailangjiejie_uranus_bigtts"
-    )
+def test_every_designed_profile_uses_the_child_story_voice() -> None:
+    from services.common.companions import CHILD_STORY_SPEAKER
+
+    assert set(DESIGNED_VOICE_SPEAKERS.values()) == {CHILD_STORY_SPEAKER}
+    assert resolve_approved_voice(profile_id="warm_companion") == CHILD_STORY_SPEAKER
 
 
 def test_catalog_covers_stable_profile_keys() -> None:

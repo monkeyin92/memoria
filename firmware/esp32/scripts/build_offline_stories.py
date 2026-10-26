@@ -57,37 +57,22 @@ MIN_FREE_MARGIN_BYTES = 512 * 1024
 MAX_ASSET_NAME_LEN = 32
 
 VOICE = {
-    "id": "zh_female_tianmeitaozi_uranus_bigtts",
+    "id": "zh_female_shaoergushi_uranus_bigtts",
     "generated": "2026-10-14",
     "terms": "trial/demo only pending Volcengine terms",
 }
 
-STORIES = (
-    ("story_01", "小星星的枕头"),
-    ("story_02", "月亮不着急"),
-    ("story_03", "大熊和森林里的悄悄话"),
-)
+# Story clips stay off the board until a new script is recorded in the child voice.
+STORIES: tuple[tuple[str, str], ...] = ()
 
 OFFLINE_LINES = (
     ("offline-wake-no-network-v1", "我现在连不上网。"),
     ("offline-wake-ask-parent-v1", "请爸爸妈妈看看家里的网络。"),
-    ("offline-wake-story-hint-v2", "不联网也能听故事。"),
-    ("offline-mid-drop-v2", "网络断开了，刚才的话先停一下。"),
     ("offline-mid-ask-parent-v1", "请爸爸妈妈帮忙看看网络。"),
     ("offline-mid-retry-v1", "我在试着重新连网，等一等。"),
     ("offline-reconnecting-v1", "还在连网，再等一小会儿。"),
     ("online-restored-v1", "网络连好了。"),
     ("online-restored-chat-v1", "现在可以和我聊天了。"),
-    ("online-restored-in-story-v2", "网络连好了，故事讲完再聊。"),
-    ("offline-menu-intro-v2", "这里有三个故事。"),
-    ("offline-menu-how-v1", "点一下屏幕，换下一个。"),
-    ("offline-menu-confirm-how-v2", "按住屏幕不放，就开始播放。"),
-    ("offline-menu-item-01-v2", "第一个故事：小星星的枕头。"),
-    ("offline-menu-item-02-v2", "第二个故事：月亮不着急。"),
-    ("offline-menu-item-03-v2", "第三个故事：大熊和森林里的悄悄话。"),
-    ("offline-menu-choose-v2", "选好了，就按住屏幕。"),
-    ("offline-menu-start-v1", "好的，现在开始。"),
-    ("offline-menu-end-v1", "讲完啦。点一下屏幕，再选一个。"),
     ("offline-menu-idle-v1", "我先休息一下，点屏幕就能叫醒我。"),
     ("llm_unavailable", "我现在有点卡住了，等一会儿再来找我聊吧。"),
     ("llm_thinking", "嗯，我想一想。"),
@@ -97,7 +82,7 @@ OFFLINE_LINES = (
 # replacement speech oggs still outstanding (check_device_ogg_aigc.py fails them).
 PENDING_PLACEHOLDER_LINE_IDS: frozenset[str] = frozenset()
 
-BOARD_CLIPS = ("wo_zai_ne", "night_soothe")
+BOARD_CLIPS = ("wo_zai_ne",)
 
 STORIES_MANIFEST = PurePosixPath("stories/index.json")
 LINES_MANIFEST = PurePosixPath("offline_lines/index.json")

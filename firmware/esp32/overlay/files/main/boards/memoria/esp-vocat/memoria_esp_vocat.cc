@@ -1029,11 +1029,8 @@ private:
                 return;
             case memoria::TapWakeAction::kNightSoothing:
                 power.SetPhase(memoria::PowerPhase::kNightSoothing);
-                PlayLocalAssetClip("night_soothe.ogg");
-                app.Schedule([this]() {
-                    vTaskDelay(pdMS_TO_TICKS(2500));
-                    EnterTapDeepSleep();
-                });
+                // The night clip is off the board until the new script is recorded.
+                app.Schedule([this]() { EnterTapDeepSleep(); });
                 return;
             case memoria::TapWakeAction::kOfflineMenu: {
                 auto out = offline_menu_.OnTap(now_ms, hold_ms, online, idle);

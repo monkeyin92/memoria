@@ -4,7 +4,7 @@
   "bitrate_bps": 16000,
   "sample_rate_hz": 16000,
   "voice": {
-    "id": "zh_female_tianmeitaozi_uranus_bigtts",
+    "id": "zh_female_shaoergushi_uranus_bigtts",
     "generated": "2026-10-14",
     "terms": "trial/demo only pending Volcengine terms"
   },
@@ -19,18 +19,6 @@
       "id": "offline-wake-ask-parent-v1",
       "text": "请爸爸妈妈看看家里的网络。",
       "file": "offline-wake-ask-parent-v1.ogg",
-      "placeholder": false
-    },
-    {
-      "id": "offline-wake-story-hint-v2",
-      "text": "不联网也能听故事。",
-      "file": "offline-wake-story-hint-v2.ogg",
-      "placeholder": false
-    },
-    {
-      "id": "offline-mid-drop-v2",
-      "text": "网络断开了，刚才的话先停一下。",
-      "file": "offline-mid-drop-v2.ogg",
       "placeholder": false
     },
     {
@@ -61,66 +49,6 @@
       "id": "online-restored-chat-v1",
       "text": "现在可以和我聊天了。",
       "file": "online-restored-chat-v1.ogg",
-      "placeholder": false
-    },
-    {
-      "id": "online-restored-in-story-v2",
-      "text": "网络连好了，故事讲完再聊。",
-      "file": "online-restored-in-story-v2.ogg",
-      "placeholder": false
-    },
-    {
-      "id": "offline-menu-intro-v2",
-      "text": "这里有三个故事。",
-      "file": "offline-menu-intro-v2.ogg",
-      "placeholder": false
-    },
-    {
-      "id": "offline-menu-how-v1",
-      "text": "点一下屏幕，换下一个。",
-      "file": "offline-menu-how-v1.ogg",
-      "placeholder": false
-    },
-    {
-      "id": "offline-menu-confirm-how-v2",
-      "text": "按住屏幕不放，就开始播放。",
-      "file": "offline-menu-confirm-how-v2.ogg",
-      "placeholder": false
-    },
-    {
-      "id": "offline-menu-item-01-v2",
-      "text": "第一个故事：小星星的枕头。",
-      "file": "offline-menu-item-01-v2.ogg",
-      "placeholder": false
-    },
-    {
-      "id": "offline-menu-item-02-v2",
-      "text": "第二个故事：月亮不着急。",
-      "file": "offline-menu-item-02-v2.ogg",
-      "placeholder": false
-    },
-    {
-      "id": "offline-menu-item-03-v2",
-      "text": "第三个故事：大熊和森林里的悄悄话。",
-      "file": "offline-menu-item-03-v2.ogg",
-      "placeholder": false
-    },
-    {
-      "id": "offline-menu-choose-v2",
-      "text": "选好了，就按住屏幕。",
-      "file": "offline-menu-choose-v2.ogg",
-      "placeholder": false
-    },
-    {
-      "id": "offline-menu-start-v1",
-      "text": "好的，现在开始。",
-      "file": "offline-menu-start-v1.ogg",
-      "placeholder": false
-    },
-    {
-      "id": "offline-menu-end-v1",
-      "text": "讲完啦。点一下屏幕，再选一个。",
-      "file": "offline-menu-end-v1.ogg",
       "placeholder": false
     },
     {

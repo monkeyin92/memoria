@@ -314,7 +314,7 @@ def test_round_log_writes_time_vendor_and_content_id_without_text(
             voice=STEPFUN_TTS_VOICE,
             fallback_provider="volcengine_doubao",
             fallback_engine="seed-tts-2.0",
-            fallback_voice="zh_female_kailangjiejie_uranus_bigtts",
+            fallback_voice="zh_female_shaoergushi_uranus_bigtts",
         ),
         path=str(path),
         content_id_factory=lambda: "aigc-round-test",
@@ -327,7 +327,7 @@ def test_round_log_writes_time_vendor_and_content_id_without_text(
     assert payload["content_id"] == "aigc-round-test"
     assert payload["provider"] == "stepfun"
     assert payload["engine"] == STEPFUN_TTS_MODEL
-    assert payload["fallback_voice"] == "zh_female_kailangjiejie_uranus_bigtts"
+    assert payload["fallback_voice"] == "zh_female_shaoergushi_uranus_bigtts"
     assert payload["close_reason"] == "child_stop"
     assert not {
         "text",

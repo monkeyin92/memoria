@@ -35,14 +35,9 @@ inline constexpr const char* kLlmThinking = "llm_thinking";
 
 // TODO(release-blocker): offline clips use a trial/demo-only Doubao voice; clear Volcengine terms or re-voice before final firmware
 inline constexpr const char* kOfflineLineIds[] = {
-    kOfflineWakeNoNetwork,    kOfflineWakeAskParent,   kOfflineWakeStoryHint,
-    kOfflineMidDrop,          kOfflineMidAskParent,    kOfflineMidRetry,
-    kOfflineReconnecting,     kOnlineRestored,         kOnlineRestoredChat,
-    kOnlineRestoredInStory,   kOfflineMenuIntro,       kOfflineMenuHow,
-    kOfflineMenuConfirmHow,   kOfflineMenuItem01,      kOfflineMenuItem02,
-    kOfflineMenuItem03,       kOfflineMenuChoose,      kOfflineMenuStart,
-    kOfflineMenuEnd,          kOfflineMenuIdle,        kLlmUnavailable,
-    kLlmThinking,
+    kOfflineWakeNoNetwork, kOfflineWakeAskParent, kOfflineMidAskParent, kOfflineMidRetry,
+    kOfflineReconnecting,  kOnlineRestored,       kOnlineRestoredChat,  kOfflineMenuIdle,
+    kLlmUnavailable,       kLlmThinking,
 };
 inline constexpr std::size_t kOfflineLineCount =
     sizeof(kOfflineLineIds) / sizeof(kOfflineLineIds[0]);
@@ -165,8 +160,10 @@ public:
         if (play_line) {
             Push(out, kLlmUnavailable);
         }
-        AppendMenuEntry(out);
+        // The station is still online. Do not offer stories that are not on the board.
+        mode_ = OfflineMode::kInactive;
         menu_idle_deadline_ms_ = 0;
+        reconnect_deadline_ms_ = 0;
         (void)now_ms;
         return out;
     }
@@ -183,8 +180,7 @@ public:
         if (mode_ == OfflineMode::kAwakeReconnecting && reconnect_deadline_ms_ != 0 &&
             now_ms >= reconnect_deadline_ms_) {
             reconnect_deadline_ms_ = 0;
-            AppendWakeThenMenu(out);
-            menu_idle_deadline_ms_ = 0;
+            AppendWakeThenStandby(out, now_ms);
             out.intercept = true;
             out.retry_network = true;
             return out;
@@ -192,14 +188,13 @@ public:
         if (mode_ == OfflineMode::kMidReconnecting && reconnect_deadline_ms_ != 0 &&
             now_ms >= reconnect_deadline_ms_) {
             reconnect_deadline_ms_ = 0;
-            AppendMenuEntry(out);
-            menu_idle_deadline_ms_ = 0;
+            mode_ = OfflineMode::kStandbyOffline;
             out.intercept = true;
             out.retry_network = true;
             return out;
         }
-        if (mode_ == OfflineMode::kMenu && menu_idle_deadline_ms_ != 0 &&
-            now_ms >= menu_idle_deadline_ms_) {
+        if ((mode_ == OfflineMode::kMenu || mode_ == OfflineMode::kStandbyOffline) &&
+            menu_idle_deadline_ms_ != 0 && now_ms >= menu_idle_deadline_ms_) {
             Push(out, kOfflineMenuIdle);
             mode_ = OfflineMode::kInactive;
             menu_idle_deadline_ms_ = 0;
@@ -239,8 +234,7 @@ public:
             if (network_online || !device_idle) {
                 return out;
             }
-            AppendWakeThenMenu(out);
-            menu_idle_deadline_ms_ = 0;
+            AppendWakeThenStandby(out, now_ms);
             out.intercept = true;
             out.retry_network = true;
             return out;
@@ -260,8 +254,7 @@ public:
             if (network_online) {
                 return OnNetworkUp();
             }
-            AppendWakeThenMenu(out);
-            menu_idle_deadline_ms_ = 0;
+            AppendWakeThenStandby(out, now_ms);
             out.retry_network = true;
             return out;
         }
@@ -310,7 +303,6 @@ private:
         if (in_conversation) {
             mode_ = OfflineMode::kMidReconnecting;
             reconnect_deadline_ms_ = now_ms + kOfflineReconnectTimeoutMs;
-            Push(out, kOfflineMidDrop);
             Push(out, kOfflineMidAskParent);
             Push(out, kOfflineMidRetry);
             out.intercept = true;
@@ -375,16 +367,18 @@ private:
         menu_idle_deadline_ms_ = 0;
     }
 
-    void AppendWakeThenMenu(OfflineMenuOutput& out) {
+    // Story clips are off the board, so a failed reconnect does not open the menu.
+    void AppendWakeThenStandby(OfflineMenuOutput& out, std::uint32_t now_ms) {
         Push(out, kOfflineWakeNoNetwork);
         Push(out, kOfflineWakeAskParent);
-        Push(out, kOfflineWakeStoryHint);
-        AppendMenuEntry(out);
+        mode_ = OfflineMode::kStandbyOffline;
+        ArmMenuIdle(now_ms);
     }
 
 public:
     void NoteMenuActivity(std::uint32_t now_ms) {
-        if (mode_ == OfflineMode::kMenu) {
+        if ((mode_ == OfflineMode::kMenu || mode_ == OfflineMode::kStandbyOffline) &&
+            menu_idle_deadline_ms_ != 0) {
             ArmMenuIdle(now_ms);
         }
     }

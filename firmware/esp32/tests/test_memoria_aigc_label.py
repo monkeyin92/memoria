@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import pathlib
 import subprocess
+import sys
 
 FIRMWARE_ROOT = pathlib.Path(__file__).parents[1]
 MEMORIA_DIR = FIRMWARE_ROOT / "overlay" / "files" / "main" / "memoria"
@@ -91,14 +92,13 @@ def test_story_schedule_plays_the_story_without_an_intro() -> None:
     assert "PlayStoryWithAigcNoticeNow" not in board
 
 
-def test_night_soothe_plays_without_an_intro() -> None:
+def test_night_soothe_does_not_play_a_clip() -> None:
     board = BOARD_CC.read_text(encoding="utf-8")
     night = board[board.index("case memoria::TapWakeAction::kNightSoothing") :]
     night = night[: night.index("case memoria::TapWakeAction::kOfflineMenu")]
-    assert 'PlayLocalAssetClip("night_soothe.ogg")' in night
-    assert "aigc_soothe_intro" not in night
-    assert "refusing" not in night
-    assert night.index('PlayLocalAssetClip("night_soothe.ogg")') < night.index("EnterTapDeepSleep")
+    assert "night_soothe.ogg" not in night
+    assert "PlayLocalAssetClip" not in night
+    assert "EnterTapDeepSleep" in night
 
 
 def test_offline_menu_does_not_queue_a_spoken_intro() -> None:
@@ -125,7 +125,7 @@ def test_overlay_check_keeps_implicit_tags_and_drops_intro_gates() -> None:
 def test_render_aigc_notices_refuses_without_credentials() -> None:
     script = FIRMWARE_ROOT.parents[1] / "scripts" / "render_aigc_notices.py"
     completed = subprocess.run(
-        ["python3", str(script)],
+        [sys.executable, str(script)],
         check=False,
         capture_output=True,
         text=True,

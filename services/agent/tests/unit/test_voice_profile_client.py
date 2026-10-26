@@ -220,7 +220,7 @@ async def test_http_5xx_evicts_cached_personal_voice_and_restores_baseline() -> 
             DoubaoTTSConfig(
                 api_key="test",
                 voice_profile="warm_companion",
-                speaker="zh_female_kailangjiejie_uranus_bigtts",
+                speaker="zh_female_shaoergushi_uranus_bigtts",
             )
         )
         try:
@@ -245,7 +245,7 @@ async def test_http_5xx_evicts_cached_personal_voice_and_restores_baseline() -> 
             )
 
             assert client.cached(session_id="session-personal") is None
-            assert tts.current_voice == "zh_female_tianmeitaozi_uranus_bigtts"
+            assert tts.current_voice == "zh_female_shaoergushi_uranus_bigtts"
             assert tts.current_voice_profile_id == "bright_peer"
             assert tts.current_voice_kind == "designed"
         finally:
@@ -283,7 +283,7 @@ async def test_cosyvoice_clone_is_not_applied_on_doubao_tts() -> None:
             DoubaoTTSConfig(
                 api_key="test",
                 voice_profile="warm_companion",
-                speaker="zh_female_kailangjiejie_uranus_bigtts",
+                speaker="zh_female_shaoergushi_uranus_bigtts",
             )
         )
         try:
@@ -334,7 +334,7 @@ async def test_legacy_personal_voice_revocation_switches_to_frozen_designed_fall
             DoubaoTTSConfig(
                 api_key="test",
                 voice_profile="warm_companion",
-                speaker="zh_female_kailangjiejie_uranus_bigtts",
+                speaker="zh_female_shaoergushi_uranus_bigtts",
             )
         )
         try:
@@ -359,7 +359,7 @@ async def test_legacy_personal_voice_revocation_switches_to_frozen_designed_fall
             )
             assert client.cached(session_id="session-legacy") is None
             assert tts.current_voice_profile_id == "bright_peer"
-            assert tts.current_voice == "zh_female_tianmeitaozi_uranus_bigtts"
+            assert tts.current_voice == "zh_female_shaoergushi_uranus_bigtts"
             assert tts.current_voice_kind == "designed"
         finally:
             await tts.aclose()
@@ -373,7 +373,7 @@ async def test_legacy_personal_voice_revocation_switches_to_frozen_designed_fall
         ("voice_kind", "designed"),
         ("model", "seed-tts-2.0"),
         ("resource_id", "seed-tts-2.0"),
-        ("voice_id", "zh_female_kailangjiejie_uranus_bigtts"),
+        ("voice_id", "zh_female_shaoergushi_uranus_bigtts"),
     ),
 )
 @pytest.mark.asyncio
@@ -439,7 +439,7 @@ async def test_designed_companion_voice_resolves_from_approved_local_registry() 
     assert profile is not None
     assert profile.profile_id == "bright_peer"
     assert profile.model == "seed-tts-2.0"
-    assert profile.voice_id == "zh_female_tianmeitaozi_uranus_bigtts"
+    assert profile.voice_id == "zh_female_shaoergushi_uranus_bigtts"
 
 
 @pytest.mark.asyncio
@@ -527,7 +527,7 @@ async def test_doubao_resolver_failure_restores_selected_companion_voice() -> No
             DoubaoTTSConfig(
                 api_key="test",
                 voice_profile="warm_companion",
-                speaker="zh_female_kailangjiejie_uranus_bigtts",
+                speaker="zh_female_shaoergushi_uranus_bigtts",
             )
         )
 
@@ -537,7 +537,7 @@ async def test_doubao_resolver_failure_restores_selected_companion_voice() -> No
             client=client,
             session_id="session-taoxi",
         )
-        assert tts.current_voice == "zh_female_tianmeitaozi_uranus_bigtts"
+        assert tts.current_voice == "zh_female_shaoergushi_uranus_bigtts"
 
         failing = True
         assert not await client.refresh(session_id="session-taoxi")
@@ -547,7 +547,7 @@ async def test_doubao_resolver_failure_restores_selected_companion_voice() -> No
             session_id="session-taoxi",
         )
 
-        assert tts.current_voice == "zh_female_tianmeitaozi_uranus_bigtts"
+        assert tts.current_voice == "zh_female_shaoergushi_uranus_bigtts"
         await tts.aclose()
 
 
@@ -581,7 +581,7 @@ async def test_self_preview_applies_selected_designed_fallback_from_resolver() -
             DoubaoTTSConfig(
                 api_key="test",
                 voice_profile="warm_companion",
-                speaker="zh_female_kailangjiejie_uranus_bigtts",
+                speaker="zh_female_shaoergushi_uranus_bigtts",
             )
         )
         try:
@@ -595,7 +595,7 @@ async def test_self_preview_applies_selected_designed_fallback_from_resolver() -
             )
 
             assert tts.current_voice_profile_id == "bright_peer"
-            assert tts.current_voice == "zh_female_tianmeitaozi_uranus_bigtts"
+            assert tts.current_voice == "zh_female_shaoergushi_uranus_bigtts"
             assert tts.current_voice_kind == "designed"
         finally:
             await tts.aclose()
@@ -607,18 +607,19 @@ async def test_doubao_applied_profile_does_not_replace_configured_baseline() -> 
         DoubaoTTSConfig(
             api_key="test",
             voice_profile="warm_companion",
-            speaker="zh_female_kailangjiejie_uranus_bigtts",
+            speaker="zh_female_shaoergushi_uranus_bigtts",
         )
     )
 
     tts.apply_voice_profile(
         model="seed-tts-2.0",
-        voice="zh_female_tianmeitaozi_uranus_bigtts",
+        voice="zh_female_shaoergushi_uranus_bigtts",
+        profile_id="bright_peer",
     )
-    assert tts.current_voice == "zh_female_tianmeitaozi_uranus_bigtts"
+    assert tts.current_voice == "zh_female_shaoergushi_uranus_bigtts"
     tts.use_baseline_voice()
 
-    assert tts.current_voice == "zh_female_kailangjiejie_uranus_bigtts"
+    assert tts.current_voice == "zh_female_shaoergushi_uranus_bigtts"
     await tts.aclose()
 
 
@@ -628,7 +629,7 @@ async def test_doubao_accepts_only_explicit_personal_clone_resolution() -> None:
         DoubaoTTSConfig(
             api_key="test",
             voice_profile="warm_companion",
-            speaker="zh_female_kailangjiejie_uranus_bigtts",
+            speaker="zh_female_shaoergushi_uranus_bigtts",
         )
     )
     try:
@@ -685,7 +686,7 @@ async def test_companion_mode_never_applies_a_personal_clone() -> None:
             DoubaoTTSConfig(
                 api_key="test",
                 voice_profile="warm_companion",
-                speaker="zh_female_kailangjiejie_uranus_bigtts",
+                speaker="zh_female_shaoergushi_uranus_bigtts",
             )
         )
         try:
@@ -789,7 +790,7 @@ async def test_companion_mode_applies_a_matching_frozen_personal_clone() -> None
             DoubaoTTSConfig(
                 api_key="test",
                 voice_profile="warm_companion",
-                speaker="zh_female_kailangjiejie_uranus_bigtts",
+                speaker="zh_female_shaoergushi_uranus_bigtts",
             )
         )
         try:
@@ -872,7 +873,7 @@ async def test_wake_aligns_tts_to_the_frozen_catalog_companion() -> None:
         DoubaoTTSConfig(
             api_key="test",
             voice_profile="warm_companion",
-            speaker="zh_female_kailangjiejie_uranus_bigtts",
+            speaker="zh_female_shaoergushi_uranus_bigtts",
         )
     )
     try:

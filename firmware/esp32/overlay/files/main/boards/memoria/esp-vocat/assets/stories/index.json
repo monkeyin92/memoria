@@ -4,28 +4,9 @@
   "bitrate_bps": 16000,
   "sample_rate_hz": 16000,
   "voice": {
-    "id": "zh_female_tianmeitaozi_uranus_bigtts",
+    "id": "zh_female_shaoergushi_uranus_bigtts",
     "generated": "2026-10-14",
     "terms": "trial/demo only pending Volcengine terms"
   },
-  "stories": [
-    {
-      "id": "story_01",
-      "title": "小星星的枕头",
-      "file": "story_01.ogg",
-      "placeholder": false
-    },
-    {
-      "id": "story_02",
-      "title": "月亮不着急",
-      "file": "story_02.ogg",
-      "placeholder": false
-    },
-    {
-      "id": "story_03",
-      "title": "大熊和森林里的悄悄话",
-      "file": "story_03.ogg",
-      "placeholder": false
-    }
-  ]
+  "stories": []
 }

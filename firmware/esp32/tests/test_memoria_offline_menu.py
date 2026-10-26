@@ -168,86 +168,48 @@ def test_long_press_threshold(tool: pathlib.Path) -> None:
     assert _run(tool, "long 799", "long 800", "long 801") == ["tap", "long", "long"]
 
 
-def test_idle_offline_tap_opens_wake_then_menu(tool: pathlib.Path) -> None:
+def test_idle_offline_tap_says_the_network_is_down(tool: pathlib.Path) -> None:
     lines = _run(tool, "reset", "tap 1000 100 0 1 0")
     assert lines[0].startswith("ok mode=inactive")
     assert "offline-wake-no-network-v1" in lines[1]
     assert "offline-wake-ask-parent-v1" in lines[1]
-    assert "offline-wake-story-hint-v2" in lines[1]
-    assert "offline-menu-intro-v2" in lines[1]
-    assert "offline-menu-item-01-v2" in lines[1]
-    assert "offline-menu-choose-v2" in lines[1]
-    assert lines[2] == "mode=menu item=1"
+    assert "offline-wake-story-hint-v2" not in lines[1]
+    assert "offline-menu-intro-v2" not in lines[1]
+    assert "start_story" not in lines[1]
+    assert lines[2] == "mode=standby_offline item=1"
 
 
-def test_menu_tap_cycles_items(tool: pathlib.Path) -> None:
-    lines = _run(
-        tool,
-        "reset",
-        "tap 1000 100 0 1 0",
-        "tap 2000 100 0 1 0",
-        "tap 3000 100 0 1 0",
-        "tap 4000 100 0 1 0",
-    )
-    assert "offline-menu-item-02-v2" in lines[3]
-    assert lines[4] == "mode=menu item=2"
-    assert "offline-menu-item-03-v2" in lines[5]
-    assert lines[6] == "mode=menu item=3"
-    assert "offline-menu-item-01-v2" in lines[7]
-    assert lines[8] == "mode=menu item=1"
-
-
-def test_menu_long_press_starts_story(tool: pathlib.Path) -> None:
+def test_another_tap_does_not_offer_a_story(tool: pathlib.Path) -> None:
     lines = _run(tool, "reset", "tap 1000 100 0 1 0", "tap 2000 800 0 1 0")
-    assert "offline-menu-start-v1" in lines[3]
-    assert "aigc_story_intro" not in lines[3]
-    assert "aigc_soothe_intro" not in lines[3]
-    assert "start_story=1" in lines[3]
-    assert lines[4] == "mode=playing item=1"
+    assert "start_story" not in "\n".join(lines)
+    assert "offline-menu-item-01-v2" not in "\n".join(lines)
+    assert lines[4] == "mode=standby_offline item=1"
 
 
-def test_playing_tap_ignored_long_press_returns_to_menu(tool: pathlib.Path) -> None:
-    lines = _run(
-        tool,
-        "reset",
-        "tap 1000 100 0 1 0",
-        "tap 2000 800 0 1 0",
-        "tap 3000 100 0 1 0",
-        "tap 4000 900 0 1 0",
-    )
-    assert lines[5].startswith("intercept=1 mode_clips=0")
-    assert lines[6] == "mode=playing item=1"
-    assert "stop_story" in lines[7]
-    assert "offline-menu-item-01-v2" in lines[7]
-    assert "offline-menu-choose-v2" in lines[7]
-    assert lines[8] == "mode=menu item=1"
+def test_story_finished_while_idle_does_nothing(tool: pathlib.Path) -> None:
+    lines = _run(tool, "reset", "tap 1000 100 0 1 0", "done 5000")
+    assert "offline-menu-end-v1" not in "\n".join(lines)
+    assert lines[4] == "mode=standby_offline item=1"
 
 
-def test_story_finished_offline_plays_end(tool: pathlib.Path) -> None:
-    lines = _run(tool, "reset", "tap 1000 100 0 1 0", "tap 2000 800 0 1 0", "done 5000")
-    assert "offline-menu-end-v1" in lines[5]
-    assert lines[6] == "mode=menu item=1"
-
-
-def test_mid_drop_then_reconnect_timeout_opens_menu(tool: pathlib.Path) -> None:
+def test_mid_drop_then_reconnect_timeout_stands_by(tool: pathlib.Path) -> None:
     lines = _run(tool, "reset", "down 1000 1", "tap 2000 100 0 0 1", "timer 9000")
-    assert "offline-mid-drop-v2" in lines[1]
+    assert "offline-mid-drop-v2" not in lines[1]
     assert "offline-mid-ask-parent-v1" in lines[1]
     assert "offline-mid-retry-v1" in lines[1]
     assert lines[2] == "mode=mid_reconnecting"
     assert "offline-reconnecting-v1" in lines[3]
-    assert "offline-menu-intro-v2" in lines[5]
-    assert "offline-wake-no-network-v1" not in lines[5]
-    assert lines[6].startswith("mode=menu item=1")
+    assert "offline-menu-intro-v2" not in lines[5]
+    assert lines[6].startswith("mode=standby_offline")
 
 
-def test_reconnect_waits_the_full_8s_before_the_menu(tool: pathlib.Path) -> None:
+def test_reconnect_waits_the_full_8s_before_standby(tool: pathlib.Path) -> None:
     lines = _run(tool, "reset", "down 1000 1", "timer 8999", "timer 9000")
     assert lines[2] == "mode=mid_reconnecting"
     assert "intercept=0 mode_clips=0" in lines[3]
     assert "mode=mid_reconnecting" in lines[4]
-    assert "offline-menu-intro-v2" in lines[5]
-    assert lines[6].startswith("mode=menu item=1")
+    assert "offline-menu-intro-v2" not in lines[5]
+    assert lines[6].startswith("mode=standby_offline")
 
 
 def test_idle_drop_is_silent_next_tap_opens_wake_menu(tool: pathlib.Path) -> None:
@@ -256,7 +218,7 @@ def test_idle_drop_is_silent_next_tap_opens_wake_menu(tool: pathlib.Path) -> Non
     assert "retry" in lines[1]
     assert lines[2] == "mode=standby_offline"
     assert "offline-wake-no-network-v1" in lines[3]
-    assert lines[4] == "mode=menu item=1"
+    assert lines[4] == "mode=standby_offline item=1"
 
 
 def test_deep_sleep_wake_reconnect_then_menu(tool: pathlib.Path) -> None:
@@ -265,7 +227,7 @@ def test_deep_sleep_wake_reconnect_then_menu(tool: pathlib.Path) -> None:
     assert lines[2] == "mode=awake_reconnecting"
     assert "offline-reconnecting-v1" in lines[3]
     assert "offline-wake-no-network-v1" in lines[5]
-    assert lines[6].startswith("mode=menu item=1")
+    assert lines[6].startswith("mode=standby_offline")
 
 
 def test_network_restored_while_idle_menu(tool: pathlib.Path) -> None:
@@ -275,21 +237,7 @@ def test_network_restored_while_idle_menu(tool: pathlib.Path) -> None:
     assert lines[4] == "mode=inactive"
 
 
-def test_network_restored_during_story_waits_for_end(tool: pathlib.Path) -> None:
-    lines = _run(
-        tool,
-        "reset",
-        "tap 1000 100 0 1 0",
-        "tap 2000 800 0 1 0",
-        "up 3000",
-        "done 12000",
-    )
-    assert lines[6] == "mode=pending_online_after_story"
-    assert "online-restored-in-story-v2" in lines[7]
-    assert lines[8] == "mode=inactive item=1"
-
-
-def test_menu_idle_sleep_stops_retry(tool: pathlib.Path) -> None:
+def test_standby_idle_sleep_stops_retry(tool: pathlib.Path) -> None:
     lines = _run(tool, "reset", "tap 1000 100 0 1 0", "note 2000", "timer 33000")
     assert "offline-menu-idle-v1" in lines[4]
     assert "deep_sleep" in lines[4]
@@ -317,19 +265,19 @@ def test_awake_known_offline_tap_skips_reconnect(tool: pathlib.Path) -> None:
     joined = "\n".join(lines)
     assert "awake_reconnecting" not in joined
     assert "offline-wake-no-network-v1" in lines[6]
-    assert "offline-menu-intro-v2" in lines[6]
-    assert lines[7] == "mode=menu item=1"
+    assert "offline-menu-intro-v2" not in lines[6]
+    assert lines[7] == "mode=standby_offline item=1"
 
 
-def test_deep_sleep_wake_arms_8s_reconnect_then_menu(tool: pathlib.Path) -> None:
+def test_deep_sleep_wake_arms_8s_reconnect_then_standby(tool: pathlib.Path) -> None:
     lines = _run(tool, "reset", "wake 300 0", "wants 0 0", "tap 2000 100 0 0 0", "timer 8300")
     assert lines[1].startswith("intercept=1 mode_clips=0")
     assert lines[2] == "mode=awake_reconnecting"
     assert lines[3] == "yes"
     assert "offline-reconnecting-v1" in lines[4]
     assert "offline-wake-no-network-v1" in lines[6]
-    assert "offline-menu-intro-v2" in lines[6]
-    assert lines[7].startswith("mode=menu item=1")
+    assert "offline-menu-intro-v2" not in lines[6]
+    assert lines[7].startswith("mode=standby_offline")
 
 
 def test_deep_sleep_wake_in_quiet_hours_stays_inactive(tool: pathlib.Path) -> None:
@@ -369,30 +317,28 @@ def test_idle_drop_restore_still_says_network_is_back(tool: pathlib.Path) -> Non
 def test_mid_conversation_drop_keeps_8s_reconnect(tool: pathlib.Path) -> None:
     lines = _run(tool, "reset", "net 500 1 0", "net 1000 0 1", "timer 9000")
     assert lines[1].startswith("intercept=0 mode_clips=0")
-    assert "offline-mid-drop-v2" in lines[3]
+    assert "offline-mid-drop-v2" not in lines[3]
+    assert "offline-mid-ask-parent-v1" in lines[3]
     assert lines[4] == "mode=mid_reconnecting"
-    assert "offline-menu-intro-v2" in lines[5]
-    assert "offline-wake-no-network-v1" not in lines[5]
-    assert lines[6].startswith("mode=menu item=1")
+    assert "offline-menu-intro-v2" not in lines[5]
+    assert lines[6].startswith("mode=standby_offline")
 
 
-def test_llm_unavailable_enters_menu_without_replay_when_server_spoke(
-    tool: pathlib.Path,
-) -> None:
+def test_llm_unavailable_does_not_open_a_story_menu(tool: pathlib.Path) -> None:
     lines = _run(tool, "reset", "llm 1000 0", "net 2000 1 0")
     assert "llm_unavailable" not in lines[1]
-    assert "offline-menu-intro-v2" in lines[1]
-    assert lines[2].startswith("mode=menu item=1")
+    assert "offline-menu-intro-v2" not in lines[1]
+    assert lines[2].startswith("mode=inactive")
     # Still online: a steady online sample must not fire OnNetworkUp.
     assert lines[3].startswith("intercept=0 mode_clips=0")
-    assert lines[4] == "mode=menu"
+    assert lines[4] == "mode=inactive"
 
 
 def test_llm_unavailable_can_play_local_line(tool: pathlib.Path) -> None:
     lines = _run(tool, "reset", "llm 1000 1")
     assert "llm_unavailable" in lines[1]
-    assert "offline-menu-intro-v2" in lines[1]
-    assert lines[2].startswith("mode=menu item=1")
+    assert "offline-menu-intro-v2" not in lines[1]
+    assert lines[2].startswith("mode=inactive")
 
 
 def test_offline_menu_signals_post_and_consume(tool: pathlib.Path) -> None:
@@ -404,7 +350,7 @@ def test_offline_menu_signals_post_and_consume(tool: pathlib.Path) -> None:
 
 
 VOICE = {
-    "id": "zh_female_tianmeitaozi_uranus_bigtts",
+    "id": "zh_female_shaoergushi_uranus_bigtts",
     "generated": "2026-10-14",
     "terms": "trial/demo only pending Volcengine terms",
 }
@@ -446,7 +392,7 @@ def test_check_only_passes_without_spoken_intros() -> None:
     completed = _pack_script("--check-only")
     assert completed.returncode == 0, completed.stderr
     fields = dict(line.split("=", 1) for line in completed.stdout.splitlines() if "=" in line)
-    assert fields["production_clips"] == "27"
+    assert fields["production_clips"] == "11"
     assert fields["placeholder_clips"] == "0"
     assert fields["pending_placeholder_clips"] == "0"
     assert "required_aigc_intros" not in fields
@@ -463,7 +409,7 @@ def test_copied_pack_checks_without_spoken_intros(tmp_path: pathlib.Path) -> Non
     assert completed.returncode == 0, completed.stderr
     fields = dict(line.split("=", 1) for line in completed.stdout.splitlines() if "=" in line)
     assert int(fields["free_margin_bytes"]) >= 512 * 1024
-    assert fields["production_clips"] == "27"
+    assert fields["production_clips"] == "11"
     assert fields["placeholder_clips"] == "0"
     assert fields["pending_placeholder_clips"] == "0"
     assert "missing required AIGC intro" not in completed.stderr
@@ -494,12 +440,12 @@ def test_default_run_never_writes_audio_and_converges(tmp_path: pathlib.Path) ->
 def test_placeholder_clip_fails_check(tmp_path: pathlib.Path) -> None:
     root = tmp_path / "assets"
     shutil.copytree(BOARD_ASSETS, root)
-    target = root / "stories" / "story_01.ogg"
-    blob = _ogg_with_title("story_01_placeholder")
+    target = root / "offline_lines" / "llm_thinking.ogg"
+    blob = _ogg_with_title("llm_thinking_placeholder")
     target.write_bytes(blob)
     completed = _pack_script("--assets-root", str(root))
     assert completed.returncode == 1
-    assert "stories/story_01.ogg is a placeholder; copy the production clip" in completed.stderr
+    assert "offline_lines/llm_thinking.ogg is a placeholder; copy the production clip" in completed.stderr
     assert target.read_bytes() == blob
 
 
@@ -532,11 +478,11 @@ def test_clip_without_opus_tags_is_not_production(tmp_path: pathlib.Path) -> Non
 def test_missing_clip_fails_without_creating_it(tmp_path: pathlib.Path) -> None:
     root = tmp_path / "assets"
     shutil.copytree(BOARD_ASSETS, root)
-    target = root / "stories" / "story_03.ogg"
+    target = root / "offline_lines" / "llm_unavailable.ogg"
     target.unlink()
     completed = _pack_script("--assets-root", str(root))
     assert completed.returncode == 1
-    assert "missing asset stories/story_03.ogg; copy the production clip" in completed.stderr
+    assert "missing asset offline_lines/llm_unavailable.ogg; copy the production clip" in completed.stderr
     assert not target.exists()
 
 
@@ -566,15 +512,17 @@ def test_hand_edited_manifest_fails_check_only(tmp_path: pathlib.Path) -> None:
     shutil.copytree(BOARD_ASSETS, root)
     prepared = _pack_script("--assets-root", str(root))
     assert prepared.returncode == 0, prepared.stderr
-    manifest = root / "stories" / "index.json"
+    manifest = root / "offline_lines" / "index.json"
     manifest.write_text(
-        manifest.read_text(encoding="utf-8").replace("大熊和森林里的悄悄话", "一只会听的熊"),
+        manifest.read_text(encoding="utf-8").replace(
+            "点屏幕就能叫醒我。", "点屏幕就能叫醒我！"
+        ),
         encoding="utf-8",
     )
     completed = _pack_script("--assets-root", str(root), "--check-only")
     assert completed.returncode == 1
-    assert "stories/index.json is stale; run build_offline_stories.py" in completed.stderr
-    assert "一只会听的熊" in manifest.read_text(encoding="utf-8")
+    assert "offline_lines/index.json is stale; run build_offline_stories.py" in completed.stderr
+    assert "点屏幕就能叫醒我！" in manifest.read_text(encoding="utf-8")
 
 
 def test_manifests_record_production_voice() -> None:
@@ -582,22 +530,25 @@ def test_manifests_record_production_voice() -> None:
         manifest = json.loads((BOARD_ASSETS / rel).read_text(encoding="utf-8"))
         assert manifest["voice"] == VOICE
         entries = manifest["stories"] if "stories" in manifest else manifest["lines"]
-        assert entries
-        assert all(entry["placeholder"] is False for entry in entries)
+        if "stories" in manifest:
+            assert entries == []
+        else:
+            assert entries
+            assert all(entry["placeholder"] is False for entry in entries)
 
 
 def test_offline_line_manifest_matches_pack() -> None:
     manifest = json.loads((BOARD_ASSETS / "offline_lines" / "index.json").read_text(encoding="utf-8"))
     ids = [entry["id"] for entry in manifest["lines"]]
-    assert len(ids) == 22
+    assert len(ids) == 10
     assert "offline-chat-request-v1" not in ids
     assert "aigc_story_intro" not in ids
     assert "aigc_soothe_intro" not in ids
+    assert "offline-mid-drop-v2" not in ids
     assert ids[0] == "offline-wake-no-network-v1"
-    assert ids[15] == "offline-menu-item-03-v2"
-    assert ids[19] == "offline-menu-idle-v1"
-    assert ids[20] == "llm_unavailable"
-    assert ids[21] == "llm_thinking"
+    assert ids[7] == "offline-menu-idle-v1"
+    assert ids[8] == "llm_unavailable"
+    assert ids[9] == "llm_thinking"
     by_id = {entry["id"]: entry for entry in manifest["lines"]}
     assert by_id["llm_unavailable"]["placeholder"] is False
     assert by_id["llm_unavailable"]["text"] == (
@@ -637,13 +588,12 @@ def test_offline_line_ids_match_header_and_script() -> None:
     assert [entry["id"] for entry in manifest["lines"]] == script_ids
 
 
-def test_story_03_title_renamed() -> None:
+def test_story_clips_are_off_the_board() -> None:
     manifest = json.loads((BOARD_ASSETS / "stories" / "index.json").read_text(encoding="utf-8"))
-    by_id = {s["id"]: s["title"] for s in manifest["stories"]}
-    assert by_id["story_03"] == "大熊和森林里的悄悄话"
-    script = BUILD_SCRIPT.read_text(encoding="utf-8")
-    assert "大熊和森林里的悄悄话" in script
-    assert "一只会听的熊" not in script
+    assert manifest["stories"] == []
+    assert not list((BOARD_ASSETS / "stories").glob("*.ogg"))
+    assert not (BOARD_ASSETS / "night_soothe.ogg").exists()
+    assert not (BOARD_ASSETS / "offline_lines" / "offline-mid-drop-v2.ogg").exists()
 
 
 def _run_device_ogg_aigc_check(assets_root: pathlib.Path) -> subprocess.CompletedProcess[str]:
@@ -691,7 +641,7 @@ def _retag_board_ogg(
 def test_device_ogg_aigc_check_passes_on_board_pack() -> None:
     completed = _run_device_ogg_aigc_check(BOARD_ASSETS)
     assert completed.returncode == 0, completed.stderr
-    assert "checked_oggs=27" in completed.stdout
+    assert "checked_oggs=11" in completed.stdout
     assert "service_providers=StepFun,Volcengine Doubao" in completed.stdout
     assert completed.stderr == ""
 
@@ -705,8 +655,8 @@ def test_device_ogg_aigc_check_rejects_wrong_service_provider(
         root,
         "offline_lines/llm_thinking.ogg",
         service_provider="Memoria",
-        artist="zh_female_tianmeitaozi_uranus_bigtts",
-        voice_id="zh_female_tianmeitaozi_uranus_bigtts",
+        artist="zh_female_shaoergushi_uranus_bigtts",
+        voice_id="zh_female_shaoergushi_uranus_bigtts",
     )
     completed = _run_device_ogg_aigc_check(root)
     assert completed.returncode == 1
@@ -723,15 +673,15 @@ def test_device_ogg_aigc_check_rejects_stepfun_on_a_doubao_voice(
         root,
         "offline_lines/llm_thinking.ogg",
         service_provider="StepFun",
-        artist="zh_female_tianmeitaozi_uranus_bigtts",
-        voice_id="zh_female_tianmeitaozi_uranus_bigtts",
+        artist="zh_female_shaoergushi_uranus_bigtts",
+        voice_id="zh_female_shaoergushi_uranus_bigtts",
     )
     completed = _run_device_ogg_aigc_check(root)
     assert completed.returncode == 1
     assert completed.stderr.count("error:") == 1
     assert "offline_lines/llm_thinking.ogg" in completed.stderr
     assert "SERVICE_PROVIDER must be 'Volcengine Doubao'" in completed.stderr
-    assert "VOICE_ID 'zh_female_tianmeitaozi_uranus_bigtts'" in completed.stderr
+    assert "VOICE_ID 'zh_female_shaoergushi_uranus_bigtts'" in completed.stderr
     assert "got 'StepFun'" in completed.stderr
 
 
@@ -764,10 +714,10 @@ def test_device_ogg_aigc_check_rejects_artist_ne_voice_id(tmp_path: pathlib.Path
         "offline_lines/llm_thinking.ogg",
         service_provider="Volcengine Doubao",
         artist="other_voice",
-        voice_id="zh_female_tianmeitaozi_uranus_bigtts",
+        voice_id="zh_female_shaoergushi_uranus_bigtts",
     )
     completed = _run_device_ogg_aigc_check(root)
     assert completed.returncode == 1
     assert "ARTIST must equal VOICE_ID" in completed.stderr
     assert "ARTIST='other_voice'" in completed.stderr
-    assert "VOICE_ID='zh_female_tianmeitaozi_uranus_bigtts'" in completed.stderr
+    assert "VOICE_ID='zh_female_shaoergushi_uranus_bigtts'" in completed.stderr

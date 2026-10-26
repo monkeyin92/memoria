@@ -42,7 +42,16 @@ IMPLICIT_AIGC_OPTIONAL_TAG_KEYS: Final = (CONTENT_PROPAGATOR_KEY, LABEL_KEY)
 CANONICAL_SERVICE_PROVIDER: Final = "Volcengine Doubao"
 STEPFUN_SERVICE_PROVIDER: Final = "StepFun"
 STEPFUN_ROBOT_VOICE: Final = "wenrounansheng"
+# Voices that already shipped on the board before the child-story speaker.
+# A clip keeps its recorded voice until it is re-recorded. New rendering uses
+# the child-story speaker, and these ids are no longer selectable at runtime.
+LEGACY_BOARD_VOICES: Final[Mapping[str, str]] = {
+    "zh_female_tianmeitaozi_uranus_bigtts": CANONICAL_SERVICE_PROVIDER,
+    "zh_female_kailangjiejie_uranus_bigtts": CANONICAL_SERVICE_PROVIDER,
+    "zh_female_wenrouxiaoya_uranus_bigtts": CANONICAL_SERVICE_PROVIDER,
+}
 VOICE_SERVICE_PROVIDERS: Final[Mapping[str, str]] = {
+    **LEGACY_BOARD_VOICES,
     **{
         speaker: CANONICAL_SERVICE_PROVIDER
         for speaker in DESIGNED_VOICE_SPEAKERS.values()

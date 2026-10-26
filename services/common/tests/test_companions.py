@@ -1,6 +1,10 @@
 from datetime import datetime
 
-from services.common.companions import COMPANIONS
+from services.common.companions import (
+    CHILD_STORY_SPEAKER,
+    COMPANIONS,
+    DESIGNED_VOICE_SPEAKERS,
+)
 from services.common.realtime_information import (
     fixed_realtime_reply,
     is_incomplete_realtime_reply,
@@ -35,6 +39,8 @@ def test_each_companion_has_a_distinct_in_character_welcome_and_delivery() -> No
 
     assert len(welcomes) == len(COMPANIONS)
     assert len(voice_rates) == len(COMPANIONS)
+    assert set(DESIGNED_VOICE_SPEAKERS.values()) == {CHILD_STORY_SPEAKER}
+    assert "_male_" not in CHILD_STORY_SPEAKER
 
 
 def test_clock_reply_does_not_hide_a_second_live_information_request() -> None:

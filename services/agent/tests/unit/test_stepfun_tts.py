@@ -1321,7 +1321,7 @@ def test_doubao_backup_defaults_to_the_product_voice_without_style_control(
 
     backup = tts_factory.build_doubao_backup(settings)
 
-    assert backup.current_voice == "zh_female_kailangjiejie_uranus_bigtts"
+    assert backup.current_voice == "zh_female_shaoergushi_uranus_bigtts"
     assert backup.current_instruction is None
     assert backup.current_pitch == 0
     assert backup._config.style_control_enabled is False

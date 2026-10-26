@@ -2,7 +2,7 @@
 """Render llm_thinking / llm_unavailable clips with Appendix-E AIGC OpusTags.
 
 With DOUBAO_TTS_APP_ID and DOUBAO_TTS_ACCESS_TOKEN set, synthesizes peach-voice
-speech (zh_female_tianmeitaozi_uranus_bigtts). Without credentials, writes the
+speech (zh_female_shaoergushi_uranus_bigtts). Without credentials, writes the
 same AIGC-tagged scaffold tones used in-repo so CI and online playback stay
 label-valid. Archives prompt/tool/date under
 docs/acceptance/run-20261015-labelled-llm-state-audio/archive/.
@@ -43,7 +43,7 @@ OFFLINE_ROOT = (
     / "offline_lines"
 )
 ARCHIVE_ROOT = REPO / "docs" / "acceptance" / "run-20261015-labelled-llm-state-audio" / "archive"
-VOICE_ID = "zh_female_tianmeitaozi_uranus_bigtts"
+VOICE_ID = "zh_female_shaoergushi_uranus_bigtts"
 CONTENT_PRODUCER, CONTENT_PROPAGATOR = aigc_identity_from_env()
 
 LINES = (
