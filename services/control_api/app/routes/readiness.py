@@ -422,7 +422,7 @@ async def health_ready(request: Request) -> JSONResponse:
                     "agent": {"status": "skipped"},
                     "asr": {"provider": settings.asr_provider, "status": "skipped"},
                     "llm": {"provider": settings.llm_provider, "status": "skipped"},
-                    "tts": {"provider": "doubao", "status": "skipped"},
+                    "tts": {"provider": settings.tts_provider, "status": "skipped"},
                 },
             },
         )
@@ -461,7 +461,7 @@ async def health_ready(request: Request) -> JSONResponse:
                 "asr": {"provider": settings.asr_provider, "passed": True},
                 "llm": {"provider": settings.llm_provider, "passed": True},
                 "tts": {
-                    "provider": "doubao",
+                    "provider": settings.tts_provider,
                     "audio": True,
                     "word_timestamps": True,
                 },

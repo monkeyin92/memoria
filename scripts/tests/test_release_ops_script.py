@@ -1362,6 +1362,39 @@ def test_record_override_is_idempotent(tmp_path: Path) -> None:
     assert again.output.count("override already recorded") == 1
 
 
+def test_record_override_accepts_a_double_quoted_image(tmp_path: Path) -> None:
+    """deploy_agent_component.sh writes ``image: "..."``; quoting alone must record."""
+
+    host = component_host(tmp_path)
+    host.override_file(_NEW_OVERRIDE, "control-api", f'"{CONTROL_IMAGE}"')
+    host.tmp_override(_NEW_ORIGIN.removeprefix("/tmp/"), "control-api", f'"{CONTROL_IMAGE}"')
+
+    run = _record(host)
+
+    assert run.returncode == 0, run.output
+    assert _NEW_OVERRIDE in host.state_file.read_text(encoding="utf-8")
+
+
+def test_freeze_accepts_a_double_quoted_override_image(tmp_path: Path) -> None:
+    host = component_host(tmp_path)
+    quoted = f'services:\n  voice-core-media-bridge:\n    image: "{BRIDGE_IMAGE}"\n'
+    bridge = host.memoria / BRIDGE_OVERRIDE
+    bridge.write_text(quoted, encoding="utf-8")
+    (host.tmp / "override-pr355.yml").write_text(quoted, encoding="utf-8")
+    sha = hashlib.sha256(quoted.encode("utf-8")).hexdigest()
+    host.state_file.write_text(
+        host.state_file.read_text(encoding="utf-8").replace(BRIDGE_OVERRIDE_SHA, sha),
+        encoding="utf-8",
+    )
+
+    run = host.step("freeze", tag=RELEASE)
+
+    assert run.returncode == 0, run.output
+    assert f"voice-core-media-bridge {bridge} {sha} sha256:bridge-live" in (
+        host.prev_record(RELEASE) or ""
+    )
+
+
 def test_record_override_refuses_an_override_that_is_not_image_only(
     tmp_path: Path,
 ) -> None:

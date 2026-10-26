@@ -1,0 +1,79 @@
+# 测试案例: 工具调用 + 超时失败
+
+case_id: tool_call_timeout
+request_kind: tool_call
+timing_pattern: tool_timeout
+
+description: |
+  用户请求查询信息,工具调用超时,助手需要优雅降级。
+
+  预期行为:
+  - 检测到工具超时
+  - 向用户说明工具不可用
+  - 提供后备回答或道歉
+
+  失败模式:
+  - 无限等待工具返回 (卡死)
+  - 不向用户说明就结束会话 (abandoned_tool)
+
+# 用户输入序列
+user_inputs:
+  - kind: utterance
+    text: "帮我查一下最近的电影院"
+    start_time_s: 0.0
+    duration_s: 1.5
+
+# 后台任务
+background_tasks:
+  - task_id: nearby_cinema_query
+    start_time_s: 2.0
+    latency_s: 10.0  # 超长延迟,模拟超时
+    result: null  # 超时失败
+    expire_after_s: null
+
+# 预期结果
+expected:
+  terminal_failure: correct  # 优雅降级是正确行为
+  score_min: 0.7
+
+  checkpoints:
+    - timestamp_s: 0.0
+      state: listening
+
+    - timestamp_s: 0.0
+      state: user_speaking
+
+    - timestamp_s: 1.5
+      state: thinking
+
+    - timestamp_s: 2.0
+      event: tool_call_start
+      tool: nearby_cinema_query
+
+    - timestamp_s: 7.0  # 5s 超时阈值
+      event: tool_timeout_detected
+      state: thinking
+      description: "检测到工具超时"
+
+    - timestamp_s: 7.5
+      state: speaking
+      description: "向用户说明工具不可用"
+      must_contain_apology: true
+
+    - timestamp_s: 10.0
+      state: listening
+
+failure_rules:
+  - condition: waiting_indefinitely
+    terminal_failure: abandoned_tool
+    score: 0.0
+    timeout_threshold_s: 8.0
+
+  - condition: no_feedback_after_timeout
+    terminal_failure: abandoned_tool
+    score: 0.2
+
+  - condition: tool_result_used_after_timeout
+    terminal_failure: stale_output
+    score: 0.3
+    description: "工具调用在超时后返回,但结果已过时"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from dataclasses import replace
 
 import pytest
 from services.agent.src.orchestration.state_machine import InteractionPhase
@@ -10,6 +11,7 @@ from services.agent.src.voice_core import media_audio_ingress, media_session_sta
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_protocol import AudioFrame, MediaEnvelope
 from services.agent.src.voice_core.media_session import MediaVoiceCoreRegistry
+from services.agent.src.voice_core.speech_timeline import SegmentKind, SpeechSegment
 from services.agent.tests.unit.media_session_support import (
     FakeMediaProvider,
     _connect_vad_segment,
@@ -100,6 +102,224 @@ async def _ingested(provider: _CaptureProvider, count: int) -> None:
             return
         await asyncio.sleep(0)
     raise AssertionError(f"ingest_audio calls stopped at {len(provider.frames)}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hold_reason", ["expired", "reclaimed"])
+async def test_held_capture_ignores_vad_end_without_opening_an_empty_turn(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    hold_reason: str,
+) -> None:
+    clock = _clock()
+    registry, context, provider, identity = await _open(monkeypatch, clock)
+    try:
+        if hold_reason == "expired":
+            clock["now"] = 1_031.0
+            await registry._audio_ingress.accept(context, _frame(identity, 1, 48_000))
+        else:
+            registry.hold_listening_capture_until_tap(context)
+        assert context.listening_capture_hold is True
+        session = registry.bridge._connections[identity.session_id].session
+        projection_before = context.projection.current_frame
+        provisional_before = context.projection.provisional
+
+        with caplog.at_level(logging.INFO):
+            for sample in (48_000, 64_000, 80_000):
+                await registry.on_speech_segment(
+                    session,
+                    replace(
+                        _connect_vad_segment(
+                            identity, sample=sample, segment_id=f"held-end-{sample}"
+                        ),
+                        final=True,
+                        voiced_end_sample=sample,
+                    ),
+                )
+                assert context.pending.turn_start_sample is None
+                assert context.pending.turn_endpoint_sample is None
+                assert context.pending.turn_endpoint_timeout_handle is None
+                assert context.turn_endpoint_task is None
+                assert context.projection.current_frame is projection_before
+                assert context.projection.provisional is provisional_before
+
+        assert provider.frames == []
+        assert provider.closed is False
+        assert context.listening_capture_hold is True
+        assert registry.context(identity.session_id) is context.runtime
+        assert not [record for record in caplog.records if "media_asr_boundary" in record.message]
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_capture_hold_preserves_an_already_open_pending_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _clock()
+    registry, context, provider, identity = await _open(monkeypatch, clock)
+    try:
+        session = registry.bridge._connections[identity.session_id].session
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=48_000, segment_id="open-turn"),
+                capture_end_sample=49_280,
+            ),
+        )
+        existing_turn_start = context.pending.turn_start_sample
+        existing_vad_epoch = context.pending.active_vad_stream_epoch
+        existing_vad_start = context.pending.active_vad_start_sample
+        existing_frame = context.projection.current_frame
+        assert existing_turn_start == 48_000
+
+        registry.hold_listening_capture_until_tap(context)
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=64_000, segment_id="held-final"),
+                final=True,
+                voiced_end_sample=64_000,
+            ),
+        )
+
+        assert context.pending.turn_start_sample == existing_turn_start
+        assert context.pending.active_vad_stream_epoch == existing_vad_epoch
+        assert context.pending.active_vad_start_sample == existing_vad_start
+        assert context.projection.current_frame is existing_frame
+        assert context.pending.turn_endpoint_sample is None
+        assert context.pending.turn_endpoint_timeout_handle is None
+        assert context.turn_endpoint_task is None
+        assert provider.frames == []
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_vad_during_projection_that_latches_capture_cannot_endpoint_a_turn(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    clock = _clock()
+    registry, context, provider, identity = await _open(monkeypatch, clock)
+    try:
+        session = registry.bridge._connections[identity.session_id].session
+        apply_projection = registry._apply_projection_segment
+
+        async def latch_during_projection(target, segment) -> None:
+            await apply_projection(target, segment)
+            registry.hold_listening_capture_until_tap(target)
+
+        monkeypatch.setattr(registry, "_apply_projection_segment", latch_during_projection)
+        with caplog.at_level(logging.INFO):
+            await registry.on_speech_segment(
+                session,
+                replace(
+                    _connect_vad_segment(identity, sample=48_000, segment_id="latch-end"),
+                    final=True,
+                    voiced_end_sample=48_000,
+                ),
+            )
+
+        assert context.listening_capture_hold is True
+        assert context.pending.turn_start_sample is None
+        assert context.pending.turn_endpoint_sample is None
+        assert context.pending.turn_endpoint_timeout_handle is None
+        assert context.turn_endpoint_task is None
+        assert context.projection.provisional is not None
+        assert context.projection.current_frame is None
+        assert provider.frames == []
+        assert not [record for record in caplog.records if "media_asr_boundary" in record.message]
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_capture_hold_does_not_swallow_a_local_stop_keyword(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _clock()
+    registry, context, provider, identity = await _open(monkeypatch, clock)
+    try:
+        events: list[str] = []
+
+        async def record(_session_id: str, event_type: str, _payload: object, **_kwargs: object) -> bool:
+            events.append(event_type)
+            return True
+
+        monkeypatch.setattr(registry.bridge, "emit_event", record)
+        registry.hold_listening_capture_until_tap(context)
+        assert context.listening_capture_hold is True
+        session = registry.bridge._connections[identity.session_id].session
+
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=0,
+                segment_id="held-keyword-stop",
+                revision=1,
+                kind=SegmentKind.KWS,
+                capture_start_sample=48_000,
+                capture_end_sample=48_002,
+                text="停",
+                final=True,
+                confidence=0.95,
+                hard_stop=True,
+            ),
+        )
+
+        assert "keyword.hit" in events
+        assert context.pending.turn_start_sample is None
+        assert context.pending.turn_endpoint_timeout_handle is None
+        assert provider.frames == []
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_screen_tap_restores_vad_processing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _clock()
+    registry, context, provider, identity = await _open(monkeypatch, clock)
+    try:
+        registry.hold_listening_capture_until_tap(context)
+        session = registry.bridge._connections[identity.session_id].session
+        resume_sample = 40_000
+        await registry.on_client_event(
+            session,
+            MediaEnvelope.create(
+                type="listening.resume",
+                event_id="resume-before-vad",
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                sequence=1,
+                payload={"wake_sample": resume_sample},
+            ),
+            0,
+        )
+        assert context.listening_capture_hold is False
+
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(
+                    identity, sample=resume_sample + 1, segment_id="resumed-vad-start"
+                ),
+                capture_end_sample=resume_sample + 1_280,
+            ),
+        )
+
+        assert context.pending.turn_start_sample == resume_sample + 1
+        assert context.pending.active_vad_stream_epoch == identity.stream_epoch
+        assert context.projection.provisional is not None
+        assert context.projection.provisional.capture_start_sample == resume_sample + 1
+        assert context.pending.turn_endpoint_sample is None
+        assert provider.frames == []
+    finally:
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
