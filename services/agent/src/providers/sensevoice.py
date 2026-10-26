@@ -76,7 +76,7 @@ class SenseVoiceRescueConfig:
     min_rms: int = 100
     min_peak_abs: int = 350
     # ~0.1-0.16 s decode per audio second on the 2-CPU sidecar plus transport:
-    # 12 s stays inside the 2.5 s timeout (docs/runbooks/sensevoice-asr.md).
+    # 12 s stays inside the 2.5 s timeout (docs/runbooks.md).
     max_audio_s: float = 12.0
     min_text_chars: int = 2
 

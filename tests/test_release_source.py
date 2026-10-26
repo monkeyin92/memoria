@@ -375,7 +375,7 @@ def test_image_archive_rejects_the_retired_speaker_model_image(tmp_path: Path) -
 
 def test_production_runbook_verifies_manifest_and_portable_sidecars() -> None:
     # The release procedure moved out of HANDOFF into the permanent runbook.
-    runbook = (ROOT / "docs/runbooks/release-rollback.md").read_text(encoding="utf-8")
+    runbook = (ROOT / "docs/runbooks.md").read_text(encoding="utf-8")
 
     assert "scripts/package_release_verifier.py" in runbook
     assert 'python3 "$UPLOAD_DIR/release-verifier.pyz"' in runbook

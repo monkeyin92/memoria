@@ -5,5 +5,5 @@
   <view class="guardian-consent-copy">
     <text class="guardian-consent-p" wx:for="{{paragraphs}}" wx:key="*this">{{item}}</text>
   </view>
-  <text class="guardian-consent-source">来源：docs/compliance/child-audio-transcript-ephemeral.md</text>
+  <text class="guardian-consent-source">来源：docs/compliance.md</text>
 </view>

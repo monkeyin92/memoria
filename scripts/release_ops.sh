@@ -246,7 +246,7 @@ assert_host_log_has() {
     fi
     [[ "$attempt" == 5 ]] || sleep 1
   done
-  fail "no $service line with $marker reached $HOST_LOG_DIR/$service.log; install the host log sink (docs/runbooks/release-rollback.md, 容器日志落盘) and rerun env"
+  fail "no $service line with $marker reached $HOST_LOG_DIR/$service.log; install the host log sink (docs/runbooks.md, 容器日志落盘) and rerun env"
 }
 
 wait_healthy() {

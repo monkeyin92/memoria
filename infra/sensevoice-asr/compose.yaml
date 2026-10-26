@@ -1,7 +1,7 @@
 # SenseVoice ASR rescue sidecar with swap disabled.
 #
 # Committed as configuration only. Applying it (recreating the production
-# container) is a separate operator action; see docs/runbooks/sensevoice-asr.md.
+# container) is a separate operator action; see docs/runbooks.md.
 #
 # mem_limit == memswap_limit means the container may not use swap. The 1.5 GB
 # cap covers peak RSS (~570 MB local, ~805 MB RSS+swap on the host) while

@@ -6,22 +6,22 @@
 
 ```yaml
 enabled_release: 20261023-edge-fix-v1  # 整栈 control-api + bridge，commit c44267c9（PR #403 media-edge F1 修复），release_ops.sh 六步全 PASS 2026-10-23 23:24-23:28 CST，全部一次通过；两容器 healthy/restarts 0，local/public ready 200，freeze dump memoria-pre-20261023-edge-fix-v1.dump（4,964,406 B）；CI 收据 run 39976974037 success。media-edge 随后组件发布 23:31（同 commit，二进制 sha 86290eaf…，component-releases/20261023-edge-fix-v1-media-edge 有 pre/post 快照与 override 双件；组件 rollback → 20261023-protected-crisis-v1）。整栈 rollback → 20261023-protected-crisis-v1@93aad713（无 overrides）。TTS_PROVIDER=stepfun_primary、STEPFUN_TTS_ENABLED=true、STEPFUN_TTS_VOICE=wenrounansheng；豆包备份 403 已探针化、不挡发布。板子已刷 main c44267c9 的 keep-awake build（build 25，app 5a9d1427…，收据 firmware/esp32/artifacts/backups/pre-edgefix-fw-20261023/RECEIPT.md）。开放项：盘 85%（待授权清理）、F-05 真机、女声三段素材待产品/合规、产品部 5 条标准 × 5 次语音验收。发布链见 HANDOFF「当前生产快照」与「2026-10-13 至 10-17 整栈发布链」。
-production_host: 110.42.235.198（2026-10-05 01:37 起，原 pocketSparks 生产机，与 hr-tracker / MySQL / aginice.cn 共用；ssh 别名 memoria-prod；Control API 在 127.0.0.1:18791；4 vCPU、内存 3.7 GiB（swap 已用约 1.2 GiB）、盘 40 GB，10-24 07:59 清理后已用 76%（仍刚过 75% 告警线；incoming 旧包与 10-22 的三对旧镜像已删，回滚镜像保留）；ADR-004 夜间备份已装，发布前 freeze dump 仍是第二还原点（最新 memoria-pre-20261023-edge-fix-v1.dump））；旧机 122.51.108.140 实例与云盘已于 10-14 释放、无快照（见 docs/compliance/deletion-record-20261014.md 补记）
+production_host: 110.42.235.198（2026-10-05 01:37 起，原 pocketSparks 生产机，与 hr-tracker / MySQL / aginice.cn 共用；ssh 别名 memoria-prod；Control API 在 127.0.0.1:18791；4 vCPU、内存 3.7 GiB（swap 已用约 1.2 GiB）、盘 40 GB，10-24 07:59 清理后已用 76%（仍刚过 75% 告警线；incoming 旧包与 10-22 的三对旧镜像已删，回滚镜像保留）；ADR-004 夜间备份已装，发布前 freeze dump 仍是第二还原点（最新 memoria-pre-20261023-edge-fix-v1.dump））；旧机 122.51.108.140 实例与云盘已于 10-14 释放、无快照（见 docs/compliance.md 补记）
 public_domain: aginice.cn（2026-10-05 起，aigcnice.com 弃用、不做桥；证书 2027-01-02 到期，最迟 2026-12-19 换，见「定期运维」；小程序体验版、固件与机器人身份都已指向它）
-control_api_release_lane: 整栈走 scripts/release_ops.sh（见 docs/runbooks/release-rollback.md）；主机 /root/memoria-release/release-ops.sh SHA-256 68fc15fe…，与 main 一致（10-23 核对）。自 #225 起 PREV 在 freeze 时从运行中的容器推出、写进 .cutover/prev-release，不再在脚本里手工 bump。服务只剩 control-api 与 voice-core-media-bridge；Control=18791、预检=28791/28891；media-edge compose 仍依赖 releases/20261004-first-warm-v1，不删；数据层依赖 20260827-architecture-split-v1/infra
+control_api_release_lane: 整栈走 scripts/release_ops.sh（见 docs/runbooks.md）；主机 /root/memoria-release/release-ops.sh SHA-256 68fc15fe…，与 main 一致（10-23 核对）。自 #225 起 PREV 在 freeze 时从运行中的容器推出、写进 .cutover/prev-release，不再在脚本里手工 bump。服务只剩 control-api 与 voice-core-media-bridge；Control=18791、预检=28791/28891；media-edge compose 仍依赖 releases/20261004-first-warm-v1，不删；数据层依赖 20260827-architecture-split-v1/infra
 memory_candidate_visibility: code=main 0059368 / enabled=true（随整栈上线）/ verified=SQLite/HTTP/主体隔离/评测适配器回归；四份 2026-09-23 评测收据为上线前 parent_baseline（固定集 recall@5/10=0.857、未见集 0.4、双泄漏 0），真实 PG candidate 行为与线上带鉴权读口未单独取证
 direct_real_device_verified: false
 full_duplex_verified: false
 student_safety_loop_verified: false
 deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 saga 用例在远端实跑）/ enabled=未启用 / verified=PG 全 saga 本地已验（归档/声纹行 + 加密对象 + 厂商音色桩 + 收据幂等）；真实 MinIO 仍未验（本地 Docker MinIO 对象写入不可用）、真实 provider 未验（需密钥与授权）、备份「恢复后再删除」无实现、subject 键存储不在 saga；已删除的 subject 重放由 `scripts/replay_subject_deletions.py` 负责
-conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与闸门）、#153（设备信任分档）均已合并 / wired=Agent 归档闸门认已签名 profile 的 `memory_recall_private`；Policy 按能力分档设备信任 / enabled=已随整栈 `20261001-device-archive-v1` 上线，`MEMORIA_BOUND_DEVICE_TRUST_ENABLED=true` 于 2026-10-01 00:30 打开（env 备份 `/etc/memoria-control-api.env.pre-bound-trust-20261001`，关闭 = 删该行并重建 control-api） / verified=本地 PG 链路与变异测试，线上只读核对（`action_device_lock_trust` 返回 `device_bound=true`；开关打开后 00:33–01:32 有 8 条 `owner` 的 `speech.utterance_finalized` 入库，`history_eligible` / `owner_projection_eligible` 均为真、`retained`，`subject_id` 是孩子的 person id）；生产自 2026-08-08 起无设备对话入库，原因是设备无 attestation 而 `untrusted`（`device_fleet_attestations` 0 行，根因与证据见 `docs/HANDOFF-archive-0924-1003.md` 2026-09-30 两节）。尚未验证：编译 / 向量写入 / 隔天召回 / 家长小结的下游结果，以及家长账号看不到孩子原文的回顾页表现（见 N-4）
+conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与闸门）、#153（设备信任分档）均已合并 / wired=Agent 归档闸门认已签名 profile 的 `memory_recall_private`；Policy 按能力分档设备信任 / enabled=已随整栈 `20261001-device-archive-v1` 上线，`MEMORIA_BOUND_DEVICE_TRUST_ENABLED=true` 于 2026-10-01 00:30 打开（env 备份 `/etc/memoria-control-api.env.pre-bound-trust-20261001`，关闭 = 删该行并重建 control-api） / verified=本地 PG 链路与变异测试，线上只读核对（`action_device_lock_trust` 返回 `device_bound=true`；开关打开后 00:33–01:32 有 8 条 `owner` 的 `speech.utterance_finalized` 入库，`history_eligible` / `owner_projection_eligible` 均为真、`retained`，`subject_id` 是孩子的 person id）；生产自 2026-08-08 起无设备对话入库，原因是设备无 attestation 而 `untrusted`（`device_fleet_attestations` 0 行，根因与证据见 `docs/handoff-archive.md` 2026-09-30 两节）。尚未验证：编译 / 向量写入 / 隔天召回 / 家长小结的下游结果，以及家长账号看不到孩子原文的回顾页表现（见 N-4）
 ```
 
 这里的“通过”仅代表本地、SQLite 或临时 PostgreSQL 证据，不等于远端 CI、生产、设备或真实机器人对话验收。
 
 ## 下一步与执行边界
 
-1. **线上收尾（10-23 更新，10-17 绕过发布的收据缺口已由 10-22/23 两次整栈发布自然抹平）**：（一）豆包备份 403：火山控制台补大模型语音合成（顺带 ASR）授权即可，发布门已改「跟随配置」，探针会自动回到 ok；（二）盘在 10-24 07:59 清理后为 76%（29 GB / 剩 9.2 GB，仍刚过 75% 告警线）：已删已 load 的 `incoming/20261023-protected-crisis-v1` 与两个旧 edge 组件包，以及 `*:20261022-wake-closing-v1`、`*:20261022-main-1f96115`、`*:20261022-main-138d95e` 三对镜像，外加 `20261021-pr368-dd98c4a` 与 `20261021-pr376-8dda764`（`20261022-wake-closing-v2` 那档回滚因此不再可跑）；`incoming/20261023-edge-fix-v1` 留作下次发布的 seeded 种子，回滚镜像 `*:20261023-protected-crisis-v1` 与 `*:20261022-wake-closing-v2` 保留，见[空间治理](docs/runbooks/operations-space-governance.md)；（三）夜间备份（P1-08）已随 ADR-004 装机，仍开放异地副本与每月恢复演练；（四）`scripts/strip_minor_evidence_text.py`（#299 带的服务端历史行兜底）约定发布后单独授权执行，至今没跑过；（五）10-15 stop-standby（#270 未合并分支）与 10-16 device-registration（#294）两次回滚的原因主机上没有记录，仍要从当时操作的会话补；（六）Media Edge 迟到 terminal receipt F1 修复已随 2026-10-23 23:13 合并（`c44267c9`）与 23:31 组件发布上线，此项关闭。
+1. **线上收尾（10-23 更新，10-17 绕过发布的收据缺口已由 10-22/23 两次整栈发布自然抹平）**：（一）豆包备份 403：火山控制台补大模型语音合成（顺带 ASR）授权即可，发布门已改「跟随配置」，探针会自动回到 ok；（二）盘在 10-24 07:59 清理后为 76%（29 GB / 剩 9.2 GB，仍刚过 75% 告警线）：已删已 load 的 `incoming/20261023-protected-crisis-v1` 与两个旧 edge 组件包，以及 `*:20261022-wake-closing-v1`、`*:20261022-main-1f96115`、`*:20261022-main-138d95e` 三对镜像，外加 `20261021-pr368-dd98c4a` 与 `20261021-pr376-8dda764`（`20261022-wake-closing-v2` 那档回滚因此不再可跑）；`incoming/20261023-edge-fix-v1` 留作下次发布的 seeded 种子，回滚镜像 `*:20261023-protected-crisis-v1` 与 `*:20261022-wake-closing-v2` 保留，见[空间治理](docs/runbooks.md)；（三）夜间备份（P1-08）已随 ADR-004 装机，仍开放异地副本与每月恢复演练；（四）`scripts/strip_minor_evidence_text.py`（#299 带的服务端历史行兜底）约定发布后单独授权执行，至今没跑过；（五）10-15 stop-standby（#270 未合并分支）与 10-16 device-registration（#294）两次回滚的原因主机上没有记录，仍要从当时操作的会话补；（六）Media Edge 迟到 terminal receipt F1 修复已随 2026-10-23 23:13 合并（`c44267c9`）与 23:31 组件发布上线，此项关闭。
 2. **真机窗口（每轮语音/每次刷机要你点头）**：10-10 已有两轮已复盘，不能算 #197/#198 的目标路径通过。输入、关闭及 ASR 重叠诊断与 `voice_soak` 新判据已在本地候选分支，Agent/脚本和本地门禁已通过，远端 CI 随候选 PR 核验；t038 差分回放没有证明行为缺陷，新 reopen-window 原因日志尚未发布。生产切流和每轮真机语音另需授权；获准进入设备窗口后，先核对正常问句的 VAD / endpoint / 终稿，再覆盖 #197/#198 目标事件与真实打断，之后完成 N-5 ≥30 分钟混合长稳。板上已是 main `c44267c9` 的 keep-awake build（build 25，10-23 23:47–23:51 USB 刷入，含七张黄点脸与 dot face 慢眨眼；收据 `firmware/esp32/artifacts/backups/pre-edgefix-fw-20261023/RECEIPT.md`）；#386 男声本地音频随 assets 一起上板（OTA 只写应用分区，assets 分区要 USB 刷）。下一轮真机直接在板上版本上测即可，动画与语音一起验。后续 P0 窗口覆盖孩子绑定、跨天人格/记忆、撤销、TLS/WSS 重连、长答/故障矩阵和 P0-04 安全闭环；孩子真实声音取证仍按你此前决定暂不做。
 3. **不动线上就能直接做的代码项**：issue #291（解绑选「保留数据」仍硬删摘要与档案）、#281 / #282 / #283 解绑擦除与去原文、P0-04 剩余部分、P2-06 回放评测、P2-04 Python 侧进程退出注入。
 4. **要你定的事（汇总；细节与选项在各自条目里，不挡以上步骤）**：
@@ -37,7 +37,7 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 - [ ] **新机夜间备份已装，异地副本与恢复演练仍开放（P1-08）**：WAL 归档已在 2026-10-06 09:58–10:00 关闭；2026-10-23 ADR-004 夜间 `pg_dump` timer 与 freshness timer 已装机，首份备份及 TOC 校验通过，发布前 `freeze` dump 是第二还原点。尚未完成异地副本和每月恢复演练；以后若重开 WAL 归档，归档卷必须是 `999:999 0700` 并先做 base backup。
 - [ ] 旧域名残留（2026-10-06 已做掉大半）：新机 `sites-enabled/memoria-prod`（aigcnice.com 站点，已移到 `/etc/nginx/backup-20261005-domain-switch/memoria-prod.site.removed-20261006`）、`/etc/nginx/ssl/aigcnice.com/`（已删）、`/root/domain-switch-20261005/`（旧证书私钥、env 备份与四个脚本已删；**头像原值 TSV 与那份旧 env 备份留在 `/root/domain-switch-20261005-kept/`**，见下条）、`ALLOWED_ORIGINS` 的旧机 IP（已换成 `https://aginice.cn:8443,https://www.aginice.cn:8443`，备份 `/etc/memoria-control-api.env.pre-aginice-origins-20261006`）。**仍开着**：`/etc/memoria-control-api.env` 与 `/etc/memoria-agent.env` 的 `LIVEKIT_URL` 还指旧机（LiveKit 已退役，代码只在 `scripts/split_production_env.py` 的键名列表与测试里出现，没有容器在跑；要动它得再重建一次 control-api 与 bridge，值本身没用了，删不删你定）；`outputs/` 里指旧域名的脚本核对（未做）。
 - [ ] 你定：域切换时头像改写的数据回滚记录（`/root/domain-switch-20261005-kept/profiles-avatar-preimage-20261005-091021.tsv`，867 B，含孩子头像 URL 原值；那份旧 env 备份只留了控制台口令类的键值）留不留。切换本身没回滚过，我留着它做原值比对；确认不需要就删这个目录。
-- [ ] 旧机 122.51.108.140 实例与云盘已于 10-14 释放、无快照（[删除记录补记](docs/compliance/deletion-record-20261014.md)）；剩本机 ssh 别名 `memoria-prod-old` 与 `~/.ssh/known_hosts` 里旧机的条目可删。
+- [ ] 旧机 122.51.108.140 实例与云盘已于 10-14 释放、无快照（[删除记录补记](docs/compliance.md)）；剩本机 ssh 别名 `memoria-prod-old` 与 `~/.ssh/known_hosts` 里旧机的条目可删。
 - [ ] 新机资源偏紧：内存 3.7 GiB（Memoria 栈约 1.3–1.4 GiB，可用约 1.7 GiB，swap 已用约 0.6 GiB，与 pocketSparks 的 MySQL / node 共用），4 vCPU 约比旧机慢 1.3 倍。发布后 1–2 天看 `docker stats`、`free -m` 与时延（对照第十六轮 24 轮时延场景说完 → 首帧 p50 2.92 s）；不够就扩内存（你在控制台做）。
 - [ ] build 24 的时钟修复仍无证据：2026-10-05 22:56 的重绑一次过，但时钟多半是 21:32 拔插 USB 后清空的，老版本也能过；要证明得让机器人时钟比清单 `issued` 落后 5 分钟以上再绑。不紧迫，碰上再看串口（那次的记录在本机 git-ignored 的 `outputs/serial/robot-20261005-trial3-rebind.log`）。
 - [ ] 你定：是否轮换数据库角色口令。**两次本机会话记录里出现过口令**：一次 grep 把各角色连接串打进了会话记录（更早的会话），2026-10-06 我做维护窗口时用 `docker compose config` 核对线上数据层 compose，它把 postgres 服务的环境变量展开成了明文（`MEMORIA_DB_*_PASSWORD` 五个角色的键与值都在输出里，只在会话记录、没进仓库、没进文档、没出机器）。库不发布到宿主端口，风险限于本机会话记录的读权限；要轮换就是一次 `ALTER ROLE` + 两份 env 的改写 + 重建 control-api/bridge，你说了我做。
@@ -63,15 +63,15 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 
 ### [ ] N-5 电脑对话长稳测试（≥ 30 分钟，修复上线后复测）
 
-2026-10-01 第二、三轮（36 分钟那次在修复之前）暴露的问题都已修复上线；之后的真机轮次以针对性场景为主。10-11 有两圈 `child.json` 历史收据，**待复核、不采信关闭**（见 [待复核收据](docs/acceptance/run-20261011-n5-longsoak/findings.md)）：有效圈内约 31 分 09 秒、分圈本身不是不通过理由，但逐句与 stop 的 v2 围栏未完整审计，第二圈情绪无答与旧叙述矛盾。N-5 保持开放。
+2026-10-01 第二、三轮（36 分钟那次在修复之前）暴露的问题都已修复上线；之后的真机轮次以针对性场景为主。10-11 有两圈 `child.json` 历史收据，**待复核、不采信关闭**（见 [待复核收据](docs/acceptance.md)）：有效圈内约 31 分 09 秒、分圈本身不是不通过理由，但逐句与 stop 的 v2 围栏未完整审计，第二圈情绪无答与旧叙述矛盾。N-5 保持开放。
 
 - 2026-10-10 已有标准轮实际 13.31 分钟（`--duration-min 30` 是上限，不是实际跑满），探针 3.44 分钟；停止统计已纠正但没有有效新停止窗口，N-5 不关闭。
-- 2026-10-10 19:48–19:50 经授权复测四句（约 90 秒），验证了问候延迟 4.553 秒时首句仍会播放；这不是 ≥30 分钟混合对话，也未覆盖停止、续问、重连或长静默，N-5 仍开放。末句识别错误、额外 VAD 回合与丢帧见 [复测收据](docs/acceptance/run-20261010-volume-retest/findings.md)。
+- 2026-10-10 19:48–19:50 经授权复测四句（约 90 秒），验证了问候延迟 4.553 秒时首句仍会播放；这不是 ≥30 分钟混合对话，也未覆盖停止、续问、重连或长静默，N-5 仍开放。末句识别错误、额外 VAD 回合与丢帧见 [复测收据](docs/acceptance.md)。
 - 2026-10-10 21:38 音量 45 四句短测完整跑完，90 秒尾窗有串口 `listening -> idle`；验证新收尾判据，但逐句 ASR /设备错误日志仍有异常，不算长稳或整机通过。
-- 21:44 故事播报“别说了”和“停”各测一次，均未进入可证实的 stop 路由，回复自然播完。其后 10-11 [stop-target](docs/acceptance/run-20261011-stop-target/findings.md) 与 [停止词对照](docs/acceptance/run-20261011-stop-control-a-b/findings.md) 仍不稳定；N-5 ≥30 分钟混合长稳暂缓，先定位停止词路径，不能以长时间发声替代停止验收。
-- 2026-10-12 经授权一圈 `child.json`（音量 30，产品 build 24）：44 步、41 有回复、2 no_reply，约 13 分钟场景 + 90 s 尾窗（退出 4，idle 证据不足）。不是 ≥30 分钟混合长稳，不关闭 N-5。见 [多轮对话收据](docs/acceptance/run-20261012-multiturn/findings.md)。
+- 21:44 故事播报“别说了”和“停”各测一次，均未进入可证实的 stop 路由，回复自然播完。其后 10-11 [stop-target](docs/acceptance.md) 与 [停止词对照](docs/acceptance.md) 仍不稳定；N-5 ≥30 分钟混合长稳暂缓，先定位停止词路径，不能以长时间发声替代停止验收。
+- 2026-10-12 经授权一圈 `child.json`（音量 30，产品 build 24）：44 步、41 有回复、2 no_reply，约 13 分钟场景 + 90 s 尾窗（退出 4，idle 证据不足）。不是 ≥30 分钟混合长稳，不关闭 N-5。见 [多轮对话收据](docs/acceptance.md)。
 - `voice_soak` 场景后默认保留 90 秒（最大 180 秒）日志观察；只在尾窗内观察到真实串口 `StateMachine -> idle` 才通过。推定 idle 返回 4（证据不足），非 idle 返回 3（超时）。21:38 真机样本覆盖该判据，旧 10-10 timeline 缺少新收尾记录仍保持未验证。
-- [ ] 要你点头的一轮：天气 / 知识 / 故事 / 闲聊、播放中打断（「停」「别说了」）、续问、长静默、重连、负面情绪（孤独、难过、被欺负、焦虑、厌学；不含危机类话术，会给家长队列写入假的危机提醒）、USB 唤醒。孩子的 profile 带 `QUIET_HOURS 04:00–07:00`（时段内唤醒只播晚安）与 `MAX_SESSION_SECONDS 1800`（单次最长 30 分钟），这两项是家长设定、我不绕过，所以不能在 07:00 前测，≥ 30 分钟要分多次会话。工具 `scripts/voice_soak.py`（场景在 `scripts/voice_soak_scenarios/`），产出写进 `docs/acceptance/run-20261001-longsoak/findings.md`。
+- [ ] 要你点头的一轮：天气 / 知识 / 故事 / 闲聊、播放中打断（「停」「别说了」）、续问、长静默、重连、负面情绪（孤独、难过、被欺负、焦虑、厌学；不含危机类话术，会给家长队列写入假的危机提醒）、USB 唤醒。孩子的 profile 带 `QUIET_HOURS 04:00–07:00`（时段内唤醒只播晚安）与 `MAX_SESSION_SECONDS 1800`（单次最长 30 分钟），这两项是家长设定、我不绕过，所以不能在 07:00 前测，≥ 30 分钟要分多次会话。工具 `scripts/voice_soak.py`（场景在 `scripts/voice_soak_scenarios/`），产出写进 `docs/acceptance.md`。
 
 ### [ ] N-6 产品体验官评审：说话内容、语气（孩子；2026-10-04 起老人一侧不再评）
 
@@ -89,10 +89,10 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 已修并验证：同围栏输出序号重置（整栈 `20261001-output-seq-v1`）、熄屏计时回绕（build 19）、回答被丢的预算与回退（`20261001-turn-budget-v1`）、假 VAD 抢掉已提交的回复（PR #171 的扣住，第十轮 12/12）。未关：
 
 - [ ] **诊断日志已上线，仍需目标路径设备证据**（整栈 `20261007-n8-diag-v1`，2026-10-08 14:14 CST 切流，当前栈继承）：bridge 每个扣住后没放出的准备回复都会打一行 `media prepared reply dropped cause=lease_lost|textless_turn_over|deadline …`，只记出口与长度，不记孩子的话。下一轮按这一行的出口与完整回复围栏分类；#197 / #198 已上线，不再当作待选修法，真实覆盖范围仍需核对。真机轮次要你点头。
-- [ ] **10-10 两组已有日志已复盘，N-8 仍不关闭**（`docs/acceptance/run-20261010-verify/findings.md`）：标准轮46步/44次出声/2次无回复；t038 等待主要发生在反复重开的输入/endpoint阶段，提交后又被 t039 开始后的 `fresh_text_evidence=True` 取代；t046 是关闭路由提前结束，不是准备回复取消，`source=final` 不能断言关键词命中。探针6步只有1次出声且答非所问，其余5步无准备回复取消。p01 同期没有新 VAD，文字落在旧 endpoint 外，超时在计划噪声之前；本机素材非全零不能证明提供方输入质量。#197/#198目标路径未被证实撞中，不靠放宽40ms阈值猜。
-- [ ] **19:48 修复后短测不是 N-8 目标路径验收**：四句中性场景后，19:49:48 附近归档证实有未安排的文本输入回合并形成第 5 次播报，源声未知；最后一问的转写与回答也不匹配。本次未说停止词，没有 `playback-stop taken` 证据，不宣称 #197/#198 命中或通过；设备侧证据与限制见 [复测收据](docs/acceptance/run-20261010-volume-retest/findings.md)。
+- [ ] **10-10 两组已有日志已复盘，N-8 仍不关闭**（`docs/acceptance.md`）：标准轮46步/44次出声/2次无回复；t038 等待主要发生在反复重开的输入/endpoint阶段，提交后又被 t039 开始后的 `fresh_text_evidence=True` 取代；t046 是关闭路由提前结束，不是准备回复取消，`source=final` 不能断言关键词命中。探针6步只有1次出声且答非所问，其余5步无准备回复取消。p01 同期没有新 VAD，文字落在旧 endpoint 外，超时在计划噪声之前；本机素材非全零不能证明提供方输入质量。#197/#198目标路径未被证实撞中，不靠放宽40ms阈值猜。
+- [ ] **19:48 修复后短测不是 N-8 目标路径验收**：四句中性场景后，19:49:48 附近归档证实有未安排的文本输入回合并形成第 5 次播报，源声未知；最后一问的转写与回答也不匹配。本次未说停止词，没有 `playback-stop taken` 证据，不宣称 #197/#198 命中或通过；设备侧证据与限制见 [复测收据](docs/acceptance.md)。
 - [ ] **输入与关闭诊断已接入候选分支，尚未发布**：`code=候选分支 / wired=既有日志出口 / enabled=false / verified=12 条诊断用例、Agent 全套 2958 条通过`。重叠拒绝返回最多4条阻挡区间与总数、rescue标志；空回合记录 endpoint 外文字数和 VAD/水位；关闭记录 `rule_match` 与 ASR 范围，不记语音原文。当前旧日志仍缺阻挡区间和那条3字终稿，不能复原真实识别内容；获发布授权后按新字段核对。样例与留存素材的哈希见 findings 和 `input-audit.json`。
-- [ ] **2026-10-08 18:13 诊断一轮（电脑模拟，音量 30，产品 build 24，12 句中性问题；结果见 `docs/acceptance/run-20261008-n8-diag/findings.md`）**：11 句有效，1 句（t012「你会唱歌吗？」）在首帧发出 82 ms 后被一次 20 ms 的 VAD 起点（rms 0.0009）取代，设备 `output_frames=0`；取代它的回合没有文字、没有提交。**原因已由读码确认，并在测试夹具里复现了线上同一串日志**：[`_wait_for_unheard_output_floor`](services/agent/src/voice_core/media_session_output_stream.py) 的「无文字则等待」只在首帧之前生效，首帧一发出就只问所有权；VAD 起点一到，发言权标志翻转，下一个 PCM 块被 `_abort_unheard_stream(superseded)` 中止。第十八轮 p03 是同一机制。**修复是 PR #197，已于 2026-10-09 14:59 CST 随整栈 `20261009-textless-spare-v1` 上线**：首帧之后、设备还没确认渲染过之前，没有文字的用户回合不能取消回复（同一回合一旦被保护就持续保护；来了字、或回复已被听到则照旧让位），测试见 `test_media_session_noise_edge_after_first_frame.py`。候选修法二（重放）不再采用。2026-10-09 20:03 的发布后复测（音量 30，46 步；结果见 `docs/acceptance/run-20261009-n8-after/findings.md`）：35 句中性问题 0 句丢失（基线 12 句丢 2），但这一轮 #197 要修的那一类一次都没出现（`media reply spared…` 0、`superseded` 0、`prepared reply not held` 0），所以证明不了 #197 起了作用；打断在音量 30 下无法评估（见下面驱动判据一条）。要主动撞这一类，需要噪声注入的配方（第十轮 0.6 s、−20 dBFS 粉红噪声；第十八轮音量 50，要先问）。VAD 起点的来源（扬声器瞬态、底噪、回声）仍未查清。
+- [ ] **2026-10-08 18:13 诊断一轮（电脑模拟，音量 30，产品 build 24，12 句中性问题；结果见 `docs/acceptance.md`）**：11 句有效，1 句（t012「你会唱歌吗？」）在首帧发出 82 ms 后被一次 20 ms 的 VAD 起点（rms 0.0009）取代，设备 `output_frames=0`；取代它的回合没有文字、没有提交。**原因已由读码确认，并在测试夹具里复现了线上同一串日志**：[`_wait_for_unheard_output_floor`](services/agent/src/voice_core/media_session_output_stream.py) 的「无文字则等待」只在首帧之前生效，首帧一发出就只问所有权；VAD 起点一到，发言权标志翻转，下一个 PCM 块被 `_abort_unheard_stream(superseded)` 中止。第十八轮 p03 是同一机制。**修复是 PR #197，已于 2026-10-09 14:59 CST 随整栈 `20261009-textless-spare-v1` 上线**：首帧之后、设备还没确认渲染过之前，没有文字的用户回合不能取消回复（同一回合一旦被保护就持续保护；来了字、或回复已被听到则照旧让位），测试见 `test_media_session_noise_edge_after_first_frame.py`。候选修法二（重放）不再采用。2026-10-09 20:03 的发布后复测（音量 30，46 步；结果见 `docs/acceptance.md`）：35 句中性问题 0 句丢失（基线 12 句丢 2），但这一轮 #197 要修的那一类一次都没出现（`media reply spared…` 0、`superseded` 0、`prepared reply not held` 0），所以证明不了 #197 起了作用；打断在音量 30 下无法评估（见下面驱动判据一条）。要主动撞这一类，需要噪声注入的配方（第十轮 0.6 s、−20 dBFS 粉红噪声；第十八轮音量 50，要先问）。VAD 起点的来源（扬声器瞬态、底噪、回声）仍未查清。
 - [ ] **t010 旧临时文字修复已上线，专项设备证据仍缺**：#198 新增 `_pending_turn_has_fresh_text_evidence`，止于新回合起点之后不足 40ms 的临时文字不再让回复让位，真实新文字/终稿仍立即让位；10-10 随 `20261010-stale-interim-v1` 上线。代码/单测已完成，不解决半句终稿的根源；标准轮的两个取消都是 `fresh_text_evidence=True`，探针没有准备回复取消，不能宣称命中修复。t011 / t039 的阻挡区间诊断已本地补上（上一条），仍待发布后取证，不改拒绝规则。
 - [ ] **历史停止数字复核与新的有效打断窗口**：本批已修 `voice_soak`/分析器判据，按完整 delivery fence + 实际 `media spoken stop interrupted reply` + preempted 终态 + 设备播放/退出收据核验；缺证据 `stopped=null`，原 JSONL 不改，回归与命令见 10-10 findings。10-10 的 7 次旧成功全作废，10次均自然完成；10-09 基线10次自然完成，晚间9次自然完成/1次TTS任务异常（不是停止）。代码没有 `playback-stop taken`。10-02起其他历史轮次未逐轮复核，老记录缺刺激时间不能补成成功；新判据未新真机验收，音量50必须另问。
 - [ ] **Doubao TTS 返回空时间戳导致整句回复没出声（10-09 复测里 1/45）**：`APIConnectionError: empty-timestamps`（`doubao_tts.py:_run_attempt`）→ 回复任务异常（`reply_task_exception`，`emitted_audio=False`，`interrupt_no_yield:provider_failed`），这一句（t016 长颈鹿）约 28 s 后才与下一句的回复合并说出。没有看到重试；要不要对「还没出过声」的 `empty-timestamps` 重试一次，待查 `doubao_tts.py` 的重试条件（agent 镜像，要 PR 与整栈发布）。
@@ -118,13 +118,13 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 空 VAD 占住终点时停止词接管（PR #169，第九轮真机通过）与停止后迟到收据不再关连接（PR #174）已上线。未关：
 
 - [x] **2026-10-12 bench 诊断 PCM 采集（代码 + 本地编译 + 刷机烟雾，无声学窗）**：在既有 `CONFIG_MEMORIA_BENCH_SERIAL` 内增加 `pcmarm` / `pcmdump`，三路 lane journal（`play_pre_i2s`、交织 `pre_afe_mic`+`pre_afe_ref`、`post_afe`），共享 16 kHz mic 时钟，3.0 s 窗，SNAP 式 CRC 导出；主机 `scripts/diag_pcm_extract.py` fail-closed。产品镜像仍只收 `wake`。不假装同时导出 post-AEC / post-NS；当时 `pre_afe_ref` 仍是空的 ES7210 R（后续 0037 改为软件注入）；`play_pre_i2s` 不是 exact DAC。产品/bench 构建与定向测试通过；设备曾刷 bench 镜像做烟雾，**未发 `pcmarm`、未做声学窗**。2026-10-12 晚为多轮对话已刷回产品 build 24。N-10 / N-5 仍开放。见 #200。
-- [x] **2026-10-12 停止 PCM 离线诊断工具入库**：`scripts/diagnose_stop_pcm.py` 与定向测试、[停止词对照收据](docs/acceptance/run-20261011-stop-control-a-b/findings.md) / `receipts.json`。Fail-closed 窗与身份校验已验；NCC/Whisper 结论见该 findings。不运行 `scripts/create_funasr_vocabulary.py`。三窗声学仍待授权。
-- [x] **2026-10-11 停止专项收据入库（不关闭 N-10）**：[stop-target](docs/acceptance/run-20261011-stop-target/findings.md)（同音色正序 1/2、反序 0/2 等）与同目录 receipts；样本不足以改规则。N-10 保持开放。
-- [x] **2026-10-12 电脑多轮一圈（音量 30，观察项）**：见 [多轮对话收据](docs/acceptance/run-20261012-multiturn/findings.md)。「别说了」v2 成功、「停」失败；不作 N-10 关闭依据。
-- [x] **2026-10-13 三窗 bench PCM（修复前）**：见 [三窗收据](docs/acceptance/run-20261013-triwindow/findings.md)。`pre_afe_ref` 近静音；安静近端可达；双讲不可分。
-- [x] **2026-10-13 软件 AEC 参考 + 三窗复测**：`memoria_software_aec_ref.h`（patch 0037）在 24 kHz 把 pre-I2S 播放拷进 AFE R。复测见 [复测收据](docs/acceptance/run-20261013-triwindow-retest/findings.md)。只播粗 ERLE ≈ 5→23 dB，参考 ≈ −20 dBFS 且与 play NCC≈0.996；安静近端仍保留；**双讲停止词仍不可分**。不关 N-10；`aec_reference_verified` 仍 false。已刷回产品。
+- [x] **2026-10-12 停止 PCM 离线诊断工具入库**：`scripts/diagnose_stop_pcm.py` 与定向测试、[停止词对照收据](docs/acceptance.md) / `receipts.json`。Fail-closed 窗与身份校验已验；NCC/Whisper 结论见该 findings。不运行 `scripts/create_funasr_vocabulary.py`。三窗声学仍待授权。
+- [x] **2026-10-11 停止专项收据入库（不关闭 N-10）**：[stop-target](docs/acceptance.md)（同音色正序 1/2、反序 0/2 等）与同目录 receipts；样本不足以改规则。N-10 保持开放。
+- [x] **2026-10-12 电脑多轮一圈（音量 30，观察项）**：见 [多轮对话收据](docs/acceptance.md)。「别说了」v2 成功、「停」失败；不作 N-10 关闭依据。
+- [x] **2026-10-13 三窗 bench PCM（修复前）**：见 [三窗收据](docs/acceptance.md)。`pre_afe_ref` 近静音；安静近端可达；双讲不可分。
+- [x] **2026-10-13 软件 AEC 参考 + 三窗复测**：`memoria_software_aec_ref.h`（patch 0037）在 24 kHz 把 pre-I2S 播放拷进 AFE R。复测见 [复测收据](docs/acceptance.md)。只播粗 ERLE ≈ 5→23 dB，参考 ≈ −20 dBFS 且与 play NCC≈0.996；安静近端仍保留；**双讲停止词仍不可分**。不关 N-10；`aec_reference_verified` 仍 false。已刷回产品。
 - [ ] 口头停止的成功率随音量剧变：音量 30 为 1/24（放大 2 倍 1/12），50 为 8/10（第十一轮）；第十八轮音量 50 下 46 步停下 25 次（54 %；停止延迟 p50 0.74 s / p90 1.58 s；没停下的 21 步服务端没有任何 `stop_word=True` 的终稿，故事讲满）。未被接受的几乎都是 ASR 终稿里只有机器人自己的回声。含义：声音小或离得远的孩子靠嗓子停不住它（P1-07 的范围）；测试时音量要写进结果。
-- [x] **2026-10-19 停止词热词表上线（`FUNASR_VOCABULARY_ID`，目标模型 `fun-asr-realtime`，「停」「别说了」权重 5）**：用户授权后改生产 env、只重建 bridge，无发版。首轮真机在音量 30 下 0 / 7 停下，但该音量的历史基线本来就是 1 / 24，分不出热词效应；**未验收**。要判断热词有没有用，须在音量 50 下复测并和第十一轮 8 / 10、第十八轮 25 / 46 比（要你点头升音量）。收据 [N-10 热词收据](docs/acceptance/run-20261019-n10-vocab/findings.md)。
+- [x] **2026-10-19 停止词热词表上线（`FUNASR_VOCABULARY_ID`，目标模型 `fun-asr-realtime`，「停」「别说了」权重 5）**：用户授权后改生产 env、只重建 bridge，无发版。首轮真机在音量 30 下 0 / 7 停下，但该音量的历史基线本来就是 1 / 24，分不出热词效应；**未验收**。要判断热词有没有用，须在音量 50 下复测并和第十一轮 8 / 10、第十八轮 25 / 46 比（要你点头升音量）。收据 [N-10 热词收据](docs/acceptance.md)。
 - [ ] 「停」单字识别偏弱（第十轮 1/5，「别说了」11/15；第八轮基线 3/7）：热词表 10-19 已上线（见上一条），效果未量。参考路已修；双讲近端仍未过，热词不能替代 NLP/NS 调参。
 - [ ] 机器人自己的声音透过回声消除漏进来（历史 −43…−51 dBFS）。只播复测后 `post_afe` ≈ −54 dBFS，回声泄漏应明显下降，须用停止 soak 再验。
 - [ ] **下一步（要你点头）**：在已有软件参考上调 AFE NLP / WebRTC NS（或参考时延/增益），目标是双讲窗停止词在 `post_afe` 上的 NCC 明显高于只播假峰；通过后再跑停止矩阵。不先上热词、不先松停止规则。
@@ -147,7 +147,7 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 
 已上线并在第十至十六轮真机验证：①分类器去重并在终稿时起跑、②回复不再等回复计划、④提交各段打点（`python scripts/voice_commit_timing.py <bridge.log>`）、⑦结束对话判定在端点钉住时起跑、⑧设备记忆提前取回、⑨VAD 流程的提交也给提前量、⑩唤醒后第一句与 VAD 起头句子的设备记忆提前取回；旋钮 `MEDIA_PLAYBACK_FOLLOWUP_GRACE_S`（bridge 环境变量，0.3–1.2 s，只能缩短，默认 1.2 s）。剩下的大头是 1.2 s 的播放后续问宽限（终稿 → 提交开始 p50 约 1.3 s，约占一半）。
 
-- [ ] ③宽限改短：第十七轮实验（步骤 `docs/runbooks/followup-grace-experiment.md`，数字见 findings 第十七轮，50 步 × 2 种宽限）——0.6 s 省约 0.6 s（终稿 → 提交开始 p50 1201 → 602 ms），runbook 判据满足（停顿 0.3 + 0.6 s 切成两次提交 0/20 对 0/20），但停顿 ≥ 0.9 s 的句子切成两次提交 1/19 → 8/20（p = 0.020），「前半句先提交、后半句被丢」7/50 → 14/50（基线 1.2 s 下就有），整句没被一次答对 8/50 → 22/50。**默认值维持 1.2 s（你已定）。** 还没定：要不要试 0.8–0.9 s 的中间值（约 15 分钟，要你当场授权再改一次线上环境变量，机器人 USB 接着）、真实孩子的停顿分布怎么量、「前半句先提交、后半句被丢」要不要单独立项。
+- [ ] ③宽限改短：第十七轮实验（步骤 `docs/runbooks.md`，数字见 findings 第十七轮，50 步 × 2 种宽限）——0.6 s 省约 0.6 s（终稿 → 提交开始 p50 1201 → 602 ms），runbook 判据满足（停顿 0.3 + 0.6 s 切成两次提交 0/20 对 0/20），但停顿 ≥ 0.9 s 的句子切成两次提交 1/19 → 8/20（p = 0.020），「前半句先提交、后半句被丢」7/50 → 14/50（基线 1.2 s 下就有），整句没被一次答对 8/50 → 22/50。**默认值维持 1.2 s（你已定）。** 还没定：要不要试 0.8–0.9 s 的中间值（约 15 分钟，要你当场授权再改一次线上环境变量，机器人 USB 接着）、真实孩子的停顿分布怎么量、「前半句先提交、后半句被丢」要不要单独立项。
 - [ ] ⑤影子模式、⑥级联接入（百炼决策模型 `decision-model-preview`，评测与脚本在 `docs/acceptance/run-20261003-decision-model/`）：**暂缓，不替换 DeepSeek**——快约 4 倍（一对调用 p50 约 170 ms，DeepSeek 约 650 ms），但结束对话准确率 95–99 % 对 DeepSeek 100 %，是预览版、限时免费，孩子的原话要交给数据处理条款没核对的模型。启动条件：宽限缩到 0.6 s 以内之后，提交路径上又在等结束对话判定（`close_ms` p90 ≥ 100 ms，或 ≥ 10 % 的提交 `close_ms` ≥ 200 ms；0.6 s 宽限实验里 p90 77 ms、基线 0，未到）；⑤ 还要你同意数据去向（每句话多发一次请求）；⑥ 只在 ⑤ 做了且数据支持时单独一个 PR（阈值事先定、不在评测集上调；危机与打断分类器不动）。
 - [ ] 其余候选（未做）：回声终稿不必起分类器（N-15 修复后回声候选能在提交前被认出，认出时可跳过，先看打点数据）；去掉 `on_turn_committed` 里第二次 `refresh_runtime_profile`（约 0.06 s，先确认是否有意）；LLM 首 token / 豆包首包 / 首句缩短（各 0.1 s 量级，可能影响语气）；每轮两次 context-prefetch（设备记忆一次、`duplex_runtime.py` 的上下文预取一次）有一次是重复的；要到 2.5 s 以内还得预跑 LLM（更大的设计改动，未评估）。
 - [ ] 第十六轮遗留：「问句 + 再见 × 6」那一遍只有第 1 个问句有回答，后 5 个服务端没有 ASR 终稿或只有 2 字终稿，进到服务端的声音很弱（救援片段 `rms` 9–51，健康值 554–2547）；第十四轮有过同类的一段，都没复现，原因没查清。
@@ -174,7 +174,7 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 ### [x] M-2 串口截屏与只读状态命令（只进 bench 构建；代码、主机测试与真机验收完成，板子已在 10-07 00:17 刷回 build 24）
 
 - 做了什么：Kconfig `CONFIG_MEMORIA_BENCH_SERIAL`（patch `0035`，默认 n）加 `config.bench.json`；只有 bench 构建多两条只读 USB 命令。`snap`：LVGL snapshot（带文字层，场景帧缓冲不含它），经串口分块 base64 吐出 RGB565，行格式 `SNAP <id> <w>x<h> <seq>/<total> <crc> <base64>`，PC 端 `scripts/snap_to_png.py` 校验 CRC 后还原 PNG。`status`：一行 `MemoriaBench: status up_ms=… phase=… mood=… frame=… frames=… drawn=… render_us=… busy_us=… px=… heap_free=…`（相位、心情、帧名、是否熄屏，加自开机的重绘次数与合成耗时的累计），`scripts/bench_status.py` 读它，两行之间算出速率；字段表与 C++ 格式串由测试互相核对。`scripts/voice_soak_serial_command.py snap|status --log …` 经常驻串口记录那一路发请求并等答案（snap 约 6–8 s）。产品固件没有这两条：二维码卡片上有绑定载荷，产品固件不能有把屏幕吐出来的入口；`memoria_usb_command.h` 的头注释与 `test_memoria_usb_command.py` 同步成「产品只收 `wake`，bench 多 `snap`、`status`」。
-- 防串味：bench 镜像带标记 `MEMORIA_BENCH_BUILD=1;`，`publish_firmware_release.py` 见到就拒绝发布；入口是 `build.sh --bench` 与 `flash.sh --bench`；用完要把产品镜像刷回（USB）。两种镜像各编译过一遍，产品镜像里没有 bench 的代码，`check-overlay.sh` 通过。用法见运行手册 `docs/runbooks/release-rollback.md`「固件 bench 构建」。
+- 防串味：bench 镜像带标记 `MEMORIA_BENCH_BUILD=1;`，`publish_firmware_release.py` 见到就拒绝发布；入口是 `build.sh --bench` 与 `flash.sh --bench`；用完要把产品镜像刷回（USB）。两种镜像各编译过一遍，产品镜像里没有 bench 的代码，`check-overlay.sh` 通过。用法见运行手册 `docs/runbooks.md`「固件 bench 构建」。
 - 发现（读源码，没上机）：上游的 MCP 工具 `self.screen.snapshot` 链进了产品固件（`LV_USE_SNAPSHOT` 上游默认开），但 Memoria 的协议上没有通道能调到它；Memoria 自己加的吐屏代码只在 bench 构建里。
 - 未验：真机上 `snap` 还原图与肉眼所见一致，`status` 的数字合理；常驻串口记录里同一次会话自动留下「这一刻屏幕是什么样」，不再靠拍照。Muse 的 `>face=<mode>` 强制切状态会改显示状态，不在「只读」范围，要不要加另议。
 - **2026-10-06 真机验收：通过**（收据在 HANDOFF「2026-10-06 bench 真机窗口」）。`status` 与 `snap` 都在真机上工作，`snap` 还原出 360×360 的 PNG（桃喜，与日志 `companion=taoxi` 一致），CRC 通过；`status` 每次采样的字段都自洽，熄屏窗口 `drawn 0.0/s` 与亮屏窗口的差值正可用它区分。**遗留一件操作**：板子现在还跑着 bench 镜像（用户 13:05 说先不刷），刷回产品镜像是收尾步骤；回滚源 `firmware/esp32/artifacts/backups/pre-bench-20261006/ota0-before.bin`。
@@ -201,7 +201,7 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 - 你的验收（10-06 20:4x，机器旁）：**不通过**。原话：「画面感觉还是和以前一样，感觉像是图片上下动来动去的。说话与待命状态之间切换也很突兀」。含义：帧率从来不是主因，①②③⑥ 只是把同一张图动得更细；换姿势仍是整图硬换，而压扁段约 170 ms，在 6–7 fps 下只有一两帧，所以更像硬切。预览视频是 25 fps、板子只有 6–7 fps，**动画好坏以后在板子上看，不拿预览视频验收**。
 - 为什么板上只有 6–7 fps（10-06 / 10-07 的 bench 真机实测，各轮数字在 `HANDOFF.md`「2026-10-07 M-6 成本剖析」）：核 1 上每个绘制帧，`mascot_anim` 占约 50 ms CPU，`taskLVGL`（把帧缓冲刷到屏幕）再占约 35–40 ms，合计 85–92 ms；说话时这两个任务合起来只拿到约 0.48 个核（opus 编码占 0.34，核 1 空闲只剩 0.06），帧率约等于份额除以每帧成本，与实测 5.9–6.5 吻合。核 0 被 `audio_input` 占 0.60–0.70，没有地方挪任务。`mascot_anim` 的 50 ms 里精灵采样占 55–80 %；采样器是**算力受限**（快路径约 505–537 ns/像素，精灵放片内 SRAM 还是 PSRAM 几乎没差别），所以「把源数据搬进 SRAM」作废。
 - **更正：10-07 凌晨你同意的「anim ≤ 15 ms」口径不完整**（口径是我提的，我漏了 LVGL 那一半）。按状态行与 tasks 行配对的近似值（`outputs/firmware-20261006-mascot/profile/lvgl_share.py`，配对有半个采样周期的误差）：listening 每绘制帧 anim 51.7 ms + taskLVGL 39.9 ms = 91.6；speaking 49.7 + 35.4 = 85.1。每帧交给 LVGL 的脏矩形面积合计平均约 12–13.5 万像素，屏幕是 12.96 万——声环四条带加精灵包围盒加起来几乎是整屏，LVGL 每个绘制帧都在重刷接近整屏（合并后的真实面积没量）。这也解释了 span-compose 为什么没换来帧率：它只少合成了像素，交给 LVGL 的脏矩形没变（`Render` 返回的仍是整盒，`memoria_mascot_display.cc` 原样 `lv_obj_invalidate_area`）。这是推断，没有单独验证。
-- **scratch 实验已做（10-07 01:12–01:20，一次性 bench 镜像：身体运动归零、声环关掉、采样器基准任务关掉，USB 唤醒加 4 句全答出；镜像与日志 `outputs/firmware-20261006-mascot/scratch-experiment/`，收据 `outputs/acceptance/run-20261007-scratch-measure/`）**：只有眨眼和张嘴补丁在变时，每绘制帧仍要约 59 ms（anim 33–35 + taskLVGL 24–26；完整场景 85–92）。**结论：成本不随变化面积下降**——眨眼 / 张嘴补丁在 MMP1 里就是一张 256×256 的整幅精灵重采样，「静止大底图 + 只动小部件」不会自动变快。M-7 若要更快，得给包格式加「只重采样补丁矩形」的能力，或接受分层后仍约 10–12 fps；两者都要先出设计。审查底稿：`docs/acceptance/run-20261007-m6-overnight/REVIEW.md`。
+- **scratch 实验已做（10-07 01:12–01:20，一次性 bench 镜像：身体运动归零、声环关掉、采样器基准任务关掉，USB 唤醒加 4 句全答出；镜像与日志 `outputs/firmware-20261006-mascot/scratch-experiment/`，收据 `outputs/acceptance/run-20261007-scratch-measure/`）**：只有眨眼和张嘴补丁在变时，每绘制帧仍要约 59 ms（anim 33–35 + taskLVGL 24–26；完整场景 85–92）。**结论：成本不随变化面积下降**——眨眼 / 张嘴补丁在 MMP1 里就是一张 256×256 的整幅精灵重采样，「静止大底图 + 只动小部件」不会自动变快。M-7 若要更快，得给包格式加「只重采样补丁矩形」的能力，或接受分层后仍约 10–12 fps；两者都要先出设计。审查底稿：`docs/acceptance.md`。
 - **口径已定（用户 10-07 09:1x「采纳」）**：`mascot_anim` + `taskLVGL` 合计 **≤ 32 ms 每绘制帧**（现在 85–92 ms，约降到三分之一）。算法：说话时这两个任务拿约 0.48 个核，除以 0.032 s 约 15 fps；只把 anim 压到 15 ms、LVGL 不动的话是约 50 ms，约 9.6 fps，达不到想要的。前提是这两个任务的核份额不变，是推算。量法：bench 镜像 `tasks` 行的 CPU 时间增量除以 `status` 行 `drawn` 增量（`profile/task_table.py`、`lvgl_share.py`）。它只管成本，「像不像视频」仍以你在机器旁看为准。
 - 试过、结论明确的：**快路径阈值**（精灵不透明像素 alpha 存成 252，采样器却判 255，快路径从不触发；改成 ≥ 250 与 `Blend565` 对齐）——板上精灵阶段 listening 44.7 → 31.4 ms（−30 %）、speaking 56.4 → 44.5，像素输出有 4.2 % 的像素差 1 个最低位，**已获认可（用户 10-07 09:1x「接受」）**；**只合成精灵覆盖列**（span-compose）——合成像素 −25 %，墙钟只 −10 %、帧率没动，不该直接上产品；**精灵源数据搬 SRAM**——作废；**声环只合成有权重的像素**——只省约 4 %，作废。
 - **我的建议（按顺序；没有一项已动手）**：
@@ -220,7 +220,7 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 - 现状：美术是整张姿势图——源图在 `apps/miniprogram/assets/companions/<id>/`（512 px），眨眼和张嘴是图像编辑出来的差异补丁（`apps/miniprogram/design-preview/memoria-v2/tools/device_frames.py`），打成 19 帧的 `MMP1` 包（`memoria_mascot_pack.h`）。眼睛、嘴、耳朵、手臂不能单独动，所以视线不会游移、嘴形不连续、耳朵不会甩。Muse 的灵动来自逐部件的实时控制：视线每 1.2–3.6 s 漂向新目标并缓动，每 2.2–5.2 s 随机眨眼含双眨，呼吸约 ±3 %，嘴随电平加微颤，听、想、开心各有肢体语言。阵容是占位资产（README，将来整体替换），五个都拆层不值得，先拿星澜（默认角色）试点。
 - 做法：① 先出一个星澜小样，验证分层图怎么来——美术重画、3D 毛绒建模分部件渲染，或用图像模型把现有姿势图拆层，哪种质量可接受没验证；② 交付规格（也写进将来的定稿美术要求，仓库里目前没有这份需求文档）：统一画布与脚点；部件清单（身体、头、耳 / 触角 / 叶芽、双臂、瞳孔、眼睑、每个心情若干嘴形、听 / 想 / 惊讶的小道具）；每个部件带枢轴点和层序；眨眼与嘴形成系列；格式用分层 PNG；③ 包格式：`MMP1` 升版本，加部件表（锚点、枢轴、父子、层序）与嘴形 / 眼睑表，沿用调色板加 zlib，旧包仍走整帧路径；④ 合成器：部件各自旋转平移缩放，弹簧跟随（头滞后身体，耳朵、触角摆动），瞳孔漂移与缓动，随机眨眼含双眨，嘴形由 M-1 的电平映射成连续开度，各心情的肢体语言做成姿势偏置而不是整图替换。运动库（弹簧、注视、眨眼）是共用代码，新角色只交付分层图和很小的 rig 描述。
 - 不做的（已想过）：不照搬 Muse 的程序化像素角色，会丢掉毛绒质感；不做预渲染整幅动画片段——固定的帧不会看你、嘴不会跟声音走，几百帧全解码进不了 PSRAM（一张解码后约 147 KB），要边读边解（新的播放路径），每个角色都得出几百帧；按 14 KB 一张全帧、25 fps 算，assets 剩余空间五等分只够约 1.4 s，每槽 6 MiB 约 17.6 s，而一套完整动画（9 个姿势各循环 2 s 加过渡，假设）约 20 s。第 1 档（在现有位图上套粗网格形变，让触角、耳朵、叶芽带滞后摆动）只在分层美术迟迟不到时当过渡，不与第 2 档并行。
-- 完成条件：星澜小样在主机预览里出片——视线游移、双眨、嘴随电平连续张合、头与耳的滞后、听 / 想 / 开心的肢体语言，你看了认可；包体积进预算（一个角色估 100–300 KB，没有分层美术可量，以实测为准），`test_pack_budget_fits_the_assets_partition` 与「增量重绘 = 全量重绘」继续通过，旧包仍可读；真机一轮对比（要你点头）。M-6 的 scratch 实验否定了「静止底图 + 只动小部件」的自动变快，用户 10-07 09:1x 定了「要」M-7：**先出 MMP2「补丁矩形重绘」的包格式与合成器设计再动手**。**设计稿已出并经你「可以，继续」放行 §6.1 实验（10-07 09:4x）：`docs/strategy/mmp2-patch-rect-design.md`（§6.1a 已补实测结果）**——补丁矩形 5.2k–12.8k px（星澜实测）。**§6.1 的答案已量**：LVGL 只刷补丁矩形（探针 `feat/mmp2-lvgl-rect-probe`，合成逐位不变）时 taskLVGL 35–40 → 17.5–21.9 ms/帧（−18 ms，一半），帧率 6.5 → 8.3/s；合成逐位不变（851 帧 mismatch 0），anim 与昨晚满帧相同，所以下降归给 invalidate 面积。**同一窗口音频侧的独立警示——已复核（10-07 10:29–10:32，build 24 产品镜像，USB 唤醒加 4 句，Mac 音量 30，收据 `outputs/acceptance/run-20261007-audio-integrity-vol30/`）**：4/4 全部答出（时延 2.18–7.10 s，story 那次 7.1 s 是 ASR 等终稿），`close_dropped` 与 `exact_timeouts` 为 0，无看门狗。当时的 `Encode queue is full` 30 次（昨晚 fastpath 轮 172 次也全答）——低音量 6 才把这条已知弱点踩过线。**音频承载复核通过，MMP2 可以动工。**
+- 完成条件：星澜小样在主机预览里出片——视线游移、双眨、嘴随电平连续张合、头与耳的滞后、听 / 想 / 开心的肢体语言，你看了认可；包体积进预算（一个角色估 100–300 KB，没有分层美术可量，以实测为准），`test_pack_budget_fits_the_assets_partition` 与「增量重绘 = 全量重绘」继续通过，旧包仍可读；真机一轮对比（要你点头）。M-6 的 scratch 实验否定了「静止底图 + 只动小部件」的自动变快，用户 10-07 09:1x 定了「要」M-7：**先出 MMP2「补丁矩形重绘」的包格式与合成器设计再动手**。**设计稿已出并经你「可以，继续」放行 §6.1 实验（10-07 09:4x）：`docs/strategy.md`（§6.1a 已补实测结果）**——补丁矩形 5.2k–12.8k px（星澜实测）。**§6.1 的答案已量**：LVGL 只刷补丁矩形（探针 `feat/mmp2-lvgl-rect-probe`，合成逐位不变）时 taskLVGL 35–40 → 17.5–21.9 ms/帧（−18 ms，一半），帧率 6.5 → 8.3/s；合成逐位不变（851 帧 mismatch 0），anim 与昨晚满帧相同，所以下降归给 invalidate 面积。**同一窗口音频侧的独立警示——已复核（10-07 10:29–10:32，build 24 产品镜像，USB 唤醒加 4 句，Mac 音量 30，收据 `outputs/acceptance/run-20261007-audio-integrity-vol30/`）**：4/4 全部答出（时延 2.18–7.10 s，story 那次 7.1 s 是 ASR 等终稿），`close_dropped` 与 `exact_timeouts` 为 0，无看门狗。当时的 `Encode queue is full` 30 次（昨晚 fastpath 轮 172 次也全答）——低音量 6 才把这条已知弱点踩过线。**音频承载复核通过，MMP2 可以动工。**
 - 2026-10-06 夜小样进展（用户 20:4x 验收 M-6 不通过后说「按你推荐的 1 来做」，并提供了 bb-api 图像接口可生成素材）：①让图像模型（gpt-image-2.5 编辑接口，参照星澜默认图）只画「无头身体层」，毛绒质感和配色一致、脖子衔接自然，但比例与原图对不上（主体放大、位置下移），拼回去会有接缝，所以**不用模型重画分层**，改为直接从原图按颜色切层，保证逐像素对齐；②已切出虹膜层和补了眼白底色的脸底图（`outputs/firmware-20261006-mascot/layers/`，git 忽略）：两个虹膜各约 1.4k 像素，眼眶约 3.5k 像素，把虹膜平移 ±5/±4 px 的 `gaze-sheet.png` 显示视线游移可行，左眼干净，右眼眼眶边缘有锯齿和白色碎边，需要清理掩膜；③还没做：嘴的连续张合（现有闭嘴与张嘴两个补丁，可做纵向缩放插值）、眨眼（现有闭眼帧可直接交叉或用虹膜压扁）、头与身体的切分（兜帽与身体同色，没有颜色边界，只能人工画切线并补脖子被遮住的部分）、耳朵和触角的滞后摆动、包格式与合成器。**风险**：板上每绘制帧现在约 85–92 ms（anim 加 LVGL，见 M-6），分层后如果每个部件每帧都重采样，总面积不会比整图小，部件运动在板上仍是 6–7 fps 一档的台阶；只有「大部件静止、小部件才动」才能让成本随变化面积下降，这一点还没有实测。预览用 25 fps 看着顺不代表板上顺。
 - **2026-10-07 复核：PR #192 的两条路都被实测否掉，已改实现并上板量过**（收据 `outputs/acceptance/run-20261007-mmp2-fix2/`、`outputs/serial/robot-20261007-mmp2-fix.log`，git 忽略）：
   - **display 的 invalidate 收窄有正确性缺陷**（PR #190 就带进了 main，跟着 MMP2 一起合）。它只递交 `last_active_box()` 一个矩形，而场景每帧还给 LVGL **四条声环带**（`RingStrips`，19k–55k px/帧）；声环因此根本没有被刷，屏上那一圈会停在旧亮度。这也意味着 **§6.1 的「taskLVGL 35–40 → 17.5–21.9 ms」不是「小 invalidate 便宜」的证据**——那 18 ms 主要是被丢掉的声环带面积。
@@ -252,7 +252,7 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 - 可复用：手机选伙伴 → 设备空闲轮询显示档案 → `companion_id`（`memoria_activation_client.cc`），档案加字段对老固件无害（`wake_mode` 先例），但 `display_version` 只在换角色时变，美术更新要另有包版本；固件 OTA 整套（`memoria_firmware_update.cc`：设备签名的 GET、Ed25519 签名清单、流式 SHA-256、用户一开口就中止、校验通过才切指针；服务端 `services/control_api/app/device_firmware.py`；发布脚本 `publish_firmware_release.py`）；`LoadCompanion` 本来就一次只在 PSRAM 里放一个角色。一个速度数据点：build 22 的 OTA 3,331,344 B 用了 70 s，约 47 KB/s。
 - 做法：① 容器与内部格式无关：头部加签名清单 `{companion_id, pack_version, format, size, sha256, min_firmware_build}`，Ed25519，签名域与固件清单隔开；服务端加 `GET /v1/devices/{id}/companion-pack`，发布脚本照固件那个；② 存放（要你定）：A. assets 尾部做 A/B，不改分区表，每槽 1.2–1.6 MiB，靠「镜像之外不参与校验」这个实现细节；B. 用末尾空着的 16 MiB 开两个槽，例如各 6 MiB，USB 刷一次分区表（只写 0x8000 的表加新分区，按 ESP-IDF 的设计不碰身份区与 nvs，需演练）。倾向 B，趁只有一台机器时做；③ 设备端 `memoria_companion_pack.{h,cc}` 仿固件更新：槽头带提交标记，写完且校验通过才翻指针，旧槽留到下次下载时再擦（「先下载再删旧的」不需要单独删）；只在空闲下载，用户一开口就中止，不续传、重来；包版本或最低固件版本不兼容就不装也不动旧的；下载期间旧角色照常显示，装好后走现有的换装「挥手」；④ 出厂默认：星澜（142 KB）留在镜像里——开机配网时还没有网络，屏幕就要有角色；实际是「一个下载位加一个小默认」；⑤ 小程序在选伙伴后提示「机器正在换装」（可选）。
 - 范围：服务端角色固定五个且带人格、音色、欢迎语（`services/common/companions.py`），小程序目录也写死五个（`apps/miniprogram/utils/companions.js`），所以现阶段的价值是替换这五个的美术；「目录无限扩」另需服务端与小程序各发一版，不在本项内。
-- 完成条件：主机测试编译真实的槽状态机，覆盖断电矩阵（下载一半、校验后翻指针前、翻指针后）、清单验签与签名域隔离、版本与固件兼容、用户开口中止；真机（每一步要你点头）：写前后用 `flash_backup.py md5` 比较保护区，B 方案 USB 刷一次分区表并用 `flash-id` 读出真实 flash 大小，Wi-Fi 下载一个包并换装，下载一半断电后旧角色仍在、重新上电再下，改一个字节的包校验失败且不换装不删旧的，再换回星澜。完成后在 `docs/runbooks/release-rollback.md` 加「角色包发布与回滚」一节（照「固件 OTA 发布与回滚演练」），并更新 README「手机同步」一段。
+- 完成条件：主机测试编译真实的槽状态机，覆盖断电矩阵（下载一半、校验后翻指针前、翻指针后）、清单验签与签名域隔离、版本与固件兼容、用户开口中止；真机（每一步要你点头）：写前后用 `flash_backup.py md5` 比较保护区，B 方案 USB 刷一次分区表并用 `flash-id` 读出真实 flash 大小，Wi-Fi 下载一个包并换装，下载一半断电后旧角色仍在、重新上电再下，改一个字节的包校验失败且不换装不删旧的，再换回星澜。完成后在 `docs/runbooks.md` 加「角色包发布与回滚」一节（照「固件 OTA 发布与回滚演练」），并更新 README「手机同步」一段。
 - 未知：flash 实际是不是 32 MB（没读过芯片）；只刷分区表是否不碰身份区；下载速度只有一次测量（6 MiB 约 2 分钟）；设备端工作量按固件 OTA 的规模估（342 行加发布脚本加回滚演练），没做过。
 - [ ] 取舍（放法）　[ ] 主机测试　[ ] 服务端与发布脚本　[ ] 设备端　[ ] 真机验收
 
@@ -277,13 +277,13 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 - [ ] **证书定期更换**：aginice.cn 现用的证书 2026-10-05 装入，**2027-01-02 23:59:59（GMT）到期**（腾讯云免费证书约 90 天一期、不会自动到服务器）；最迟 2026-12-19 前从腾讯云下载新一期 Nginx 格式（RSA）给我，我在新机原位替换 `/etc/nginx/ssl/aginice.cn/aginice.cn_bundle.crt` 与 `aginice.cn.key`（先备份、核对密钥与证书匹配 / SAN / 有效期 / 链，`nginx -t` 后 reload，核对 443 与 8443；做法见运行手册「生产主机」一节的换证书条）。这份证书与 pocketSparks 的其它站点共用，换的时候别碰它们的站点文件。
 - [ ] **换证书前先验固件的 TLS（2026-10-19 加）**：#313 把 `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY` 关了（修每次 TLS 校验泄漏 SRAM），依据是当前证书链已带跨签根且两个根都在固件证书包里。新证书若换了签发链，要在装证书之前确认一次：用刷了 #313 之后的固件连新证书（可先在 bench 板或测试机上），串口出现 `Certificate validated` 才算过；板子还没刷过 #313 的版本，则这条在刷机之后才有意义。
 - [x] **根分区（2026-10-08 清理）**：清理前 28 G / 40 G（75 %），清理后 21 G（55 %）；删了什么、保留什么见运行手册「2026-10-08 第四次手工清理」，收据在主机 `/root/memoria-release/cleanup-20261008.log` 与 `cleanup-20261008-pre/`。下一次整栈发布后再看（约每 6 次整栈清一次，或超过 70 % 时清）。
-- [ ] **发布制品随发布累积**：每次整栈约占 4 GB（`/opt/memoria/incoming/` 约 1.5 GB + 镜像 tag 约 2.2 GB）；清理按「当前 + 紧邻回滚」、清单带 sha256、逐项 `docker rmi` / 精确目录删除、不用 `docker system prune`，每次要你授权（规则、脚本与收据见 `docs/runbooks/operations-space-governance.md`），约每 5–6 次整栈清一次，或根分区超过 70 % 时。待做：`scripts/docker_image_retention.sh` 因保护全部 `rollback-*` / runtime-base 与 pre-state 引用仍是 0 候选，要改成「只保护当前发布的 rollback 与运行中引用」，否则下一轮仍要手工清理。新机的磁盘现状（40 GB 盘，2026-10-05 16:37 整栈发布后剩 17 GB）见「域名切换与新机收尾」的 WAL 一条。
+- [ ] **发布制品随发布累积**：每次整栈约占 4 GB（`/opt/memoria/incoming/` 约 1.5 GB + 镜像 tag 约 2.2 GB）；清理按「当前 + 紧邻回滚」、清单带 sha256、逐项 `docker rmi` / 精确目录删除、不用 `docker system prune`，每次要你授权（规则、脚本与收据见 `docs/runbooks.md`），约每 5–6 次整栈清一次，或根分区超过 70 % 时。待做：`scripts/docker_image_retention.sh` 因保护全部 `rollback-*` / runtime-base 与 pre-state 引用仍是 0 候选，要改成「只保护当前发布的 rollback 与运行中引用」，否则下一轮仍要手工清理。新机的磁盘现状（40 GB 盘，2026-10-05 16:37 整栈发布后剩 17 GB）见「域名切换与新机收尾」的 WAL 一条。
 
 ## P0：发布前必须闭环
 
 ### [ ] P0-04 当前使用人的监护授权与学生安全闭环
 
-- 产品决定（你 2026-09-26，详见 `docs/compliance/p0-04-minor-safety-decisions.md`「实现状态」）：未成年人不分档、只学表达风格；时长与夜间时段运行时强制（危机除外）；年龄以家长申报为准并可在设备页修改；年龄不明也允许不留存的学习辅导；删「每周小结」勾选项；危机提醒推送给家长（老人一侧 2026-10-04 起暂不适用，代码暂留）；话术加 12356 并待专业审核。D2–D8 已随 `20260926-minor-safety-v1` 上线；未成年人长期记忆的留存口径（有效监护同意、有效 `guardian_of`、绑定 fence、受信设备、使用人本人说话同时满足时只带 30 天 TTL 与禁止训练）随 #152 上线，Agent 归档闸门对孩子也认 profile 的 `memory_recall_private`。设备上都没验。
+- 产品决定（你 2026-09-26，详见 `docs/compliance.md`「实现状态」）：未成年人不分档、只学表达风格；时长与夜间时段运行时强制（危机除外）；年龄以家长申报为准并可在设备页修改；年龄不明也允许不留存的学习辅导；删「每周小结」勾选项；危机提醒推送给家长（老人一侧 2026-10-04 起暂不适用，代码暂留）；话术加 12356 并待专业审核。D2–D8 已随 `20260926-minor-safety-v1` 上线；未成年人长期记忆的留存口径（有效监护同意、有效 `guardian_of`、绑定 fence、受信设备、使用人本人说话同时满足时只带 30 天 TTL 与禁止训练）随 #152 上线，Agent 归档闸门对孩子也认 profile 的 `memory_recall_private`。设备上都没验。
 - 小程序监护与隐私配置门已接 `POST /v1/policy/decisions`，服务端未允许或请求失败时保持关闭。
 - 待完成：微信订阅消息模板开通与 `MEMORIA_GUARDIAN_PUSH_ENABLED`（要你授权）；建后年龄资料与 `app_confirm` UI；会话记忆 subject 键：`memory_scope/subject_session_recall` 已接 `/response-plan` 读与 archive 写，PG 持久化与 agent 侧仍待迁；两条策略入口的软件矩阵；安全专项设备链验收（身份 / 年龄 → 有效同意 → 准入或受限能力 → 固定话术真实交付 → outbox 绑定 / 幂等 / 家长读回）；话术专业审核。发送 worker / 外部投递暂缓。
 - 软件门：两条策略入口覆盖 under_14 / 14_17 / adult / unknown_safe、权威 unavailable / 过期、profile-session 错绑、同意撤销 / 过期 / 无权限、管理账号更换与切人并发；不能决定时 fail closed，且不得读取其他主体私密记忆。
@@ -292,7 +292,7 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 ### [ ] P0-03 TTS、续问竞态、设备停滞与真实时延
 
 - 待完成：G 的 owner-silence / endpoint / commit / watchdog 真实配置矩阵；B/D 的 Bridge → Edge → 设备接收 / 解码 / 播放同 fence 证据；部分音频失败后的设备终态；ACK → 正文 < 1.5 s 的链路拆分与达标（你暂缓了埋点）。
-- 设备验收：同一已启用候选完成天气 → 续问 → 播后告别至少三轮、> 45 s 与 B/D 同类长答、临近静默和部分下发后故障；补待机、五表情及点屏 / 摇晃 / 短拍 / BOOT 不回归。已有：缺陷 A 核心续问的真机证据（3 / 5 / 8 s 精确格通过，30 分钟基础长稳通过但带 TLS/WSS 自动重连观察项，`docs/acceptance/run-20260924-defect-a-retest-live/findings.md`），工具查询最终回答走通。仍缺：TLS/WSS 重连、长答 / 故障 / 待机 / 表情及交互矩阵，以及完整 3 / 5 / 8 s 格在当前版本上的复测。
+- 设备验收：同一已启用候选完成天气 → 续问 → 播后告别至少三轮、> 45 s 与 B/D 同类长答、临近静默和部分下发后故障；补待机、五表情及点屏 / 摇晃 / 短拍 / BOOT 不回归。已有：缺陷 A 核心续问的真机证据（3 / 5 / 8 s 精确格通过，30 分钟基础长稳通过但带 TLS/WSS 自动重连观察项，`docs/acceptance.md`），工具查询最终回答走通。仍缺：TLS/WSS 重连、长答 / 故障 / 待机 / 表情及交互矩阵，以及完整 3 / 5 / 8 s 格在当前版本上的复测。
 - F1 / F2（`20260920-f1f2-owner-silence-and-barge` 已发布）：F1 有 2026-09-21 设备窗口的 owner-silence 观察；F2 只有 `button.stop` happy path 的设备证据，禁止源 barge 没有在设备旁真实触发，不能宣称完整 F1/F2 契约已完成。固件侧「播放期不发 `vad.start`」是可选加固（要刷机），voice barge 长期走 P1-07。修好模拟音频工具的两处自检判据（live 缓冲窗口、参考波形匹配）后跑自动问答扫频仍开放。
 - 嘈杂环境：#83 的 2 s 证据窗口已上线，没在嘈杂环境实测（见「2026-09-28 收尾待办里还开着的」）。
 - 上行削波：真话上行普遍削波（DTLN makeup gain 18 dB），单独评估；下次采集须确认 agent 日志流非空。
@@ -303,7 +303,7 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 
 ### [ ] P1-01 冻结修复候选，完成发布与回滚验收
 
-- 门禁、构建、上传、切流、回滚与验收底线在 `docs/runbooks/release-rollback.md`；整栈发布已用 `scripts/release_ops.sh` 跑过多次（`verify-load`、`freeze`、`cutover`、`finish`）。整栈 `rollback` 已于 2026-10-06 在新机演练一次并通过（切回 `20261005-subject-candidates-v1` 三个角色 health、重启 0，再 `env` → `cutover` → `finish` 切回，见 `HANDOFF.md`「2026-10-06 主机维护窗口」）。
+- 门禁、构建、上传、切流、回滚与验收底线在 `docs/runbooks.md`；整栈发布已用 `scripts/release_ops.sh` 跑过多次（`verify-load`、`freeze`、`cutover`、`finish`）。整栈 `rollback` 已于 2026-10-06 在新机演练一次并通过（切回 `20261005-subject-candidates-v1` 三个角色 health、重启 0，再 `env` → `cutover` → `finish` 切回，见 `HANDOFF.md`「2026-10-06 主机维护窗口」）。
 - 完成条件：同一候选的构建、切流、回滚、设备验收分别有证据；仅保留当前和一个可运行回滚，清理生产另授权。
 - 身份收敛（发布治理）：control-api 期望的 release tag 应与真实发布 tag 一致，取消「agent 上报历史冻结 tag」的临时对齐；与预构建镜像入口一并作为本项输入。
 
@@ -317,11 +317,11 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 
 - 已上线：刷新脚本修复（2026-09-22）；逾期提示（`20260926-edge-flush-v1`）：证据超过刷新间隔 12 h + 1 h 宽限未更新时，`/health/ready` 报 `smokes: "overdue"` 与 `warnings: ["smoke_refresh_overdue"]`，状态仍为 ready。
 - 待完成：主动告警渠道（要你定渠道与授权）；目前逾期只在有人或脚本读取 readiness 时可见。
-- 发布链缺口（供 P1-01）：组件发布脚本 `deploy_control_component.sh` 的 cutover 块缺已构建候选续跑入口，image-only 覆盖无法承载身份 env，配置不变时需显式 `--force-recreate`，且不校验挂载 / 端口（细节见 `docs/HANDOFF-archive-0916-0923.md` 2026-09-22 节）；整栈发布走 `scripts/release_ops.sh`。
+- 发布链缺口（供 P1-01）：组件发布脚本 `deploy_control_component.sh` 的 cutover 块缺已构建候选续跑入口，image-only 覆盖无法承载身份 env，配置不变时需显式 `--force-recreate`，且不校验挂载 / 端口（细节见 `docs/handoff-archive.md` 2026-09-22 节）；整栈发布走 `scripts/release_ops.sh`。
 
 ### [ ] P1-02 ASR 救援 sidecar：两项线上调整待授权
 
-- 已完成：`infra/sensevoice-asr/` 入库 Dockerfile（基础镜像按 digest 锁定）、哈希锁定的 17 个依赖与模型校验值，重建镜像的转写与线上逐字相同；评测脚本 `scripts/evaluate_sensevoice_rescue.py`；模型对静音和任意噪声都返回「我。」的缺陷已修并上线（`SenseVoiceRescueConfig.accepts_text`）。手册 `docs/runbooks/sensevoice-asr.md`。
+- 已完成：`infra/sensevoice-asr/` 入库 Dockerfile（基础镜像按 digest 锁定）、哈希锁定的 17 个依赖与模型校验值，重建镜像的转写与线上逐字相同；评测脚本 `scripts/evaluate_sensevoice_rescue.py`；模型对静音和任意噪声都返回「我。」的缺陷已修并上线（`SenseVoiceRescueConfig.accepts_text`）。手册 `docs/runbooks.md`。
 - 待授权（线上问题，建议见手册）：① 空闲约 7 h 后首请求解码 12.7 s（模型匿名内存被换到主机 swap，VmSwap 约 450 MB），空闲后的首次救援必超 2.5 s 预算，建议 `--memory 1536m --memory-swap 1536m` 重建容器禁用 swap（新机内存只有 3.7 GiB、swap 已用约 0.6 GiB，应先看它在新机上的表现）；② 27–30 s 语段解码 2.5–2.8 s 必超时，建议 agent `SENSEVOICE_MAX_AUDIO_S=12`。现场证据：2026-09-28 两次对话的首个救援请求 `httpx.ReadTimeout`（04:59:40、06:23:46），与 ① 一致。
 - 约束：主链是云服务商 FunASR，救援后端单独核验；不把本地 FunASR PyPI、仓内 sherpa-onnx 或云模型版本混为一体，也不顺手改 NumPy / 设备 VAD。
 - 完成条件：两项线上调整执行后，用合成语音在线上复测首请求与长语段时延均在 2.5 s 内。
@@ -341,7 +341,7 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 
 ### [ ] P1-06 定义跨会话记忆语义，补未见召回评测
 
-- 现状：候选可见性契约（main `0059368`）与向量路径词面项改动（#150，`20260930-vector-keyword-v1`，模型仍为 `text-embedding-v4`）已上线；抽取提示词 v3 + 中文关系标签后固定集 recall 0.875、未见集 1.0、泄漏 0。评测的完整叙事与数字（2026-09-23 至 09-30 的 Qwen、规则、向量路径与 422 条记忆的大语料干扰评测）在 [`docs/HANDOFF-archive-0924-1003.md` 末节「跨会话记忆语义与召回评测」](docs/HANDOFF-archive-0924-1003.md)，收据在 `docs/memory-evaluation-*.json`，复跑用 `scripts/evaluate_memory.py` 与 `scripts/evaluate_memory_distractors.py`（严格模式，需要 PG DSN）。
+- 现状：候选可见性契约（main `0059368`）与向量路径词面项改动（#150，`20260930-vector-keyword-v1`，模型仍为 `text-embedding-v4`）已上线；抽取提示词 v3 + 中文关系标签后固定集 recall 0.875、未见集 1.0、泄漏 0。评测的完整叙事与数字（2026-09-23 至 09-30 的 Qwen、规则、向量路径与 422 条记忆的大语料干扰评测）在 [`docs/handoff-archive.md` 末节「跨会话记忆语义与召回评测」](docs/handoff-archive.md)，收据在 `docs/memory-evaluation-*.json`，复跑用 `scripts/evaluate_memory.py` 与 `scripts/evaluate_memory_distractors.py`（严格模式，需要 PG DSN）。
 - 待完成：用线上带鉴权读口与设备追问验收向量路径词面项的改动；是否加分数阈值（近似缺失分不开，话题缺失 AUC 0.80–0.82，保住 75 % 目标的阈值约 0.347 时仍有 20 % 的话题缺失查询带垃圾；control_api / agent 里没找到按分数过滤记忆的调用方，未逐一核实）；用真实 Qwen 抽取的 claim 形态与更多真实专名 / 英文词复测；评估 claim / episode / 原子 projection 去重（向量路径下同一句话会占满 top-k 的 2–3 个位置；claim 送去 embedding 的文本带 `subject:/predicate:/value:` 脚手架是否拉低语义分，未验证）；生产更换 embedding 模型前须先回填向量——向量行只在编译落文档时写入、检索按（模型，维度）过滤，换模型后已有记忆只剩词面路径，仓库暂无回填工具；补齐实际 `ResponsePlannerClient` 超时、fallback 和生产 catalog 限额证据；把会话记忆迁到当前 person / subject 键、覆盖切人、撤销、删除和旧缓存的工作仍不提前宣称完成。
 - 完成条件：固定集与未见集分别报告 recall / nDCG / extraction / leakage，candidate 语义、projection 去重、实际超时 / catalog 限额和 person / subject 隔离均有可复核证据；线上 / 设备边界仍未达成，设备追问另取 Actual Heard。
 
@@ -354,13 +354,13 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 ### [ ] P1-11 一台设备只服务一个使用人：声纹下线，信任与同意来自绑定（已上线，设备验收未完成）
 
 - 现状：暂不用声纹（`MEMORIA_SPEAKER_AUTHORITY_ENABLED` 自 2026-09-25 为 false）；设备只服务绑定时选定的使用人（孩子；老人 / 本人绑定 2026-10-04 起不在范围内）；家长只看摘要、趋势、风险提醒，不看孩子原文；孩子的长期记忆需家长在绑定时勾选（默认不勾）；同意长期有效直到撤销；解绑撤销同意并询问是否删除；监护小结（`guardian_summary_view`）随长期记忆勾选一起授予，存量绑定要重新绑定或在家长页重开长期记忆开关才获得。按使用人删除流程（可续跑、有进度记录）已上线。
-- 设备信任分档（#153，`MEMORIA_BOUND_DEVICE_TRUST_ENABLED=true` 自 2026-10-01 00:30）：生产设备没有 attestation（`device_fleet_attestations` 0 行），绑定链路上的设备按 `trusted` 只放行 `memory_capture`、`memory_recall_private`、`guardian_summary_view`，其余仍要 `verified`（硬件 attestation）。运维步骤见 `docs/runbooks/release-rollback.md`「设备信任开关」。残余风险：设备私钥种子在普通 NVS 分区，取出私钥的人可在电脑上冒充设备、通过对话召回孩子的记忆，家长解绑即 `revoked`，根治要固件开 flash 与 NVS 加密；`trusted` 不防被改过的固件；真硬件 attestation 留作后续。
+- 设备信任分档（#153，`MEMORIA_BOUND_DEVICE_TRUST_ENABLED=true` 自 2026-10-01 00:30）：生产设备没有 attestation（`device_fleet_attestations` 0 行），绑定链路上的设备按 `trusted` 只放行 `memory_capture`、`memory_recall_private`、`guardian_summary_view`，其余仍要 `verified`（硬件 attestation）。运维步骤见 `docs/runbooks.md`「设备信任开关」。残余风险：设备私钥种子在普通 NVS 分区，取出私钥的人可在电脑上冒充设备、通过对话召回孩子的记忆，家长解绑即 `revoked`，根治要固件开 flash 与 NVS 加密；`trusted` 不防被改过的固件；真硬件 attestation 留作后续。
 - 待完成设备验收：新设备会话 profile 含 `memory_recall_private` 且没有其他敏感能力 → `archive_processing_outbox` 为 completed 而非 dead → 隔天追问能记起 → 家长小程序出现小结入口（回顾页见 N-4）；孩子绑定一次（10-05 重绑已有一次）后隔天仍记得前一天说过的事；播放期回声不自答、刚播完的回声「再见」不结束会话、真人「再见」能结束；家长端看不到孩子原文；撤销后不再记忆。编译与向量写入自 08-08 后没在现网跑过，可能暴露新问题。
 - 已做：服务端声纹登记 / 声音复刻路由与小程序入口已移除（表结构保留，后续 PR 再 drop）；危机推送订阅号未开通（功能另分支，默认关闭）。已知残留（按使用人删除覆盖不到的）：已推送到 Redis 的记忆事件无法撤回（随流修剪老化）；`speech_style_stats` 聚合、persona / digital-self 快照、`entity_ids` 数组无行级来源可追。
 
 ### [ ] P1-13 《人工智能拟人化互动服务管理暂行办法》（2026-07-15 已施行）对照与补缺
 
-- 来由（2026-10-12 研究扫描）：网信办等五部门令第 21 号已施行，直接约束「面向孩子的拟人化陪伴」。现有 P0-04 / `docs/compliance/p0-04-minor-safety-decisions.md` 只按《未成年人保护法》口径做了时长 / 夜间 / 危机推送，没有按本办法逐条对照。
+- 来由（2026-10-12 研究扫描）：网信办等五部门令第 21 号已施行，直接约束「面向孩子的拟人化陪伴」。现有 P0-04 / `docs/compliance.md` 只按《未成年人保护法》口径做了时长 / 夜间 / 危机推送，没有按本办法逐条对照。
 - 要逐条对照的义务：①第 14 条不得向未成年人提供虚拟亲属、虚拟伴侣等虚拟亲密关系——检查各吉祥物人格提示词与固定话术，不得以「家人 / 哥哥姐姐 / 男女朋友 / 最好的朋友只有我」等自我定位，不得诱导情感依赖或替代真实人际（第 9 条第五项）；②不满 14 周岁须监护人同意（绑定时的监护同意已有，核对能否作为本办法的同意凭据）；③未成年人模式须含定期现实提醒、使用时长限制（单次 1800 s 已有；跨会话累计、连续使用每超 2 小时的提醒未有）；④监护人可接收风险提醒（危机 outbox 已有）、了解使用概况（监护小结已有）、**屏蔽特定角色**（未有：家长端无法禁用某个吉祥物）；⑤发现过度依赖 / 沉迷倾向时显著提示「内容由人工智能生成」（未有判据与话术）。
 - 完成条件：在合规文档里加一张「条款 → 现状 → 缺口 → 决定」表；能纯代码做的（提示词措辞审计、跨会话累计时长、依赖提示话术）给出改动建议并经你确认；需要产品取舍的（角色屏蔽、依赖判据）列入「要你定的事」。不改线上开关，不宣称已合规。
 - 与《国务院关于保障未成年人健康安全使用网络的规定（征求意见稿）》（见「研究重评条件」）同方向，正式稿出来后合并复核，不另开项。
@@ -374,7 +374,7 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 
 ### [ ] P2-03 可证明删除与导出证据链
 
-- 现状：PG 全 saga 删除（归档 / 声纹行 + 加密对象 + 厂商音色桩 + 收据幂等）本地与 CI 已验；按使用人删除覆盖面逐存储记在 `docs/compliance/delete-domains.md`；备份「恢复后再删除」由 `scripts/replay_subject_deletions.py` 重放全部已完成删除，已写入运维手册恢复流程。
+- 现状：PG 全 saga 删除（归档 / 声纹行 + 加密对象 + 厂商音色桩 + 收据幂等）本地与 CI 已验；按使用人删除覆盖面逐存储记在 `docs/compliance.md`；备份「恢复后再删除」由 `scripts/replay_subject_deletions.py` 重放全部已完成删除，已写入运维手册恢复流程。
 - 待完成：真实 MinIO 版本删除与真实 provider 删除各需一次可复现收据（需可用环境与授权）；已知缺口（Redis 已派发载荷、未脱敏的显示名与激活清单、工具效果载荷、SQLite 迁移备份、悬空实体 id、空主体历史证据）按合规文档明确接受，若要闭合需先定权限与迁移方案；小程序成员主体读口（P1-03 / P1-05）；生产 / 设备与真实机器人对话验收。
 - 读口真相：产品召回不读 `memory_records`，走 archive 目录（`services/control_api/app/routes/interaction.py` 的 account_id + subject_id），所以仅封存 memory_scope 不会让轮次内容消失。
 - 安全约束：不得默认 `account_id == subject_id`；必须有 Control 注册、active Identity person、owner evidence 和一致事件 subject；child / member 只接受唯一 lineage，foreign / inactive / ambiguous / NULL / mixed subject fail closed；源表与 `snapshot_json` 保持字节不变。
@@ -410,7 +410,7 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 
 ### [ ] P2-08 架构整理后续（2026-09-26 审计，减法优先）
 
-第 0–6 批代码与 09-29、09-30 的小批次都已合并上线（过程见 `docs/HANDOFF-archive-0924-1003.md` 与更早的归档）。约束：涉及生产数据迁移须另获授权并先演练恢复；不做大爆炸重写，每步可独立发布与回滚。
+第 0–6 批代码与 09-29、09-30 的小批次都已合并上线（过程见 `docs/handoff-archive.md` 与更早的归档）。约束：涉及生产数据迁移须另获授权并先演练恢复；不做大爆炸重写，每步可独立发布与回滚。
 
 - 第 3 批 ② 其余域：剩控制库 `MemoryStore`、speaker、evolution 的 SQLite（没要求删除）。
 - #148 去 livekit 依赖已上线（bridge 镜像 892 → 683 MB）；发布后仍待真机对话验收：慢速 TTS 的节奏，用 `scripts/voice_session_capture.py`，须在使用时段内。
@@ -424,8 +424,8 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 
 - 异地备份副本：本机夜间备份已装；异地 endpoint/凭据与恢复演练在真实家庭服务、正式发布或价值量级增长前重评；WAL 仅按 P1-08 处理。
 - 家长通知发送 worker / 外部渠道：仅保留 outbox / readback 验收；启用另定授权和渠道。
-- Qwen-Audio 3.1 ASR / TTS（已评估，结论）：ASR 两次真机对照均失败（播放期回声被提交为话轮、漏识别轻声、「稍等」开口延迟 4.1 s），生产保持 fun-asr；TTS 迁移按你 2026-09-25 的决定回退、生产保持豆包，重新启用即再 revert 回退提交 `d0d7a43` 与 `2be2f50`。重试前先定位新模型 VAD / 段落与回声边界，并在新候选上重做缺陷 A 的设备验收。收据 `docs/acceptance/run-20260924-d1d2-deploy/findings.md`。
-- 流式 ASR 四家离线 A/B（2026-09-29，收据 `docs/acceptance/run-20260929-asr-ab/findings.md`，脚本 `scripts/evaluate_streaming_asr.py`）：43 段真机录音中有 11 句对上剧本。正常朗读四家基本打平；fun-asr 控制词出错最多，qwen3-realtime 在非人声段普遍吐「嗯。」，qwen-audio-3.1 与豆包最干净。第二轮补录的轻声段与重连后的低电平段四家全空，空结果是上行电平（无有效 AGC）问题，不换厂商。
+- Qwen-Audio 3.1 ASR / TTS（已评估，结论）：ASR 两次真机对照均失败（播放期回声被提交为话轮、漏识别轻声、「稍等」开口延迟 4.1 s），生产保持 fun-asr；TTS 迁移按你 2026-09-25 的决定回退、生产保持豆包，重新启用即再 revert 回退提交 `d0d7a43` 与 `2be2f50`。重试前先定位新模型 VAD / 段落与回声边界，并在新候选上重做缺陷 A 的设备验收。收据 `docs/acceptance.md`。
+- 流式 ASR 四家离线 A/B（2026-09-29，收据 `docs/acceptance.md`，脚本 `scripts/evaluate_streaming_asr.py`）：43 段真机录音中有 11 句对上剧本。正常朗读四家基本打平；fun-asr 控制词出错最多，qwen3-realtime 在非人声段普遍吐「嗯。」，qwen-audio-3.1 与豆包最干净。第二轮补录的轻声段与重连后的低电平段四家全空，空结果是上行电平（无有效 AGC）问题，不换厂商。
 - 多成员声纹与不依赖小程序的选人（原 P2-02）：随 P1-11 一对一绑定暂停；重启前须用真实标注样本校准误识 / 拒识后再定门槛。
 - EOU 新模型、DuplexModel、expressive / 抢跑；ESP-IDF / ESP-SR / upstream 整体升级；老人故事册 / 人物复刻、年轻人潮玩（2026-10-04 起产品聚焦儿童青少年，老年人与年轻人方向先删去，见 README「产品定位」）和最终外形均不进入当前队列。
 
@@ -458,7 +458,7 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 - N-2 空闲熄屏：固件 build 18，你 2026-10-02 确认「空闲时黑屏」，第十轮串口有熄屏 / 亮屏记录。
 - N-3 发布与刷机：`20261001-wake-mode-v1`、整栈 `20261001-audience-recap-v1`（PR #156）、小程序 `0.2.20261001.1` 与 `.2`、固件 build 18；OTA 指针留哪一版见「2026-09-28 收尾待办」。
 - N-7 bridge 容器 `/tmp` 被 PCM tap 写满：已修，随 `20261001-audience-recap-v1` 上线；留下的隐私问题（PCM tap 长期留不留）在 P2-08。
-- N-12 不用唤醒词唤醒机器人：固件 build 20 的 USB `wake` 命令（PR #176），用法见上「真机测试约定」，收据 `docs/HANDOFF-archive-0924-1003.md`。
+- N-12 不用唤醒词唤醒机器人：固件 build 20 的 USB `wake` 命令（PR #176），用法见上「真机测试约定」，收据 `docs/handoff-archive.md`。
 - P1-12 旧媒体链去留：2026-09-29 随 `20260929-livekit-retire-v1` 下线并清理。
 - P2-02 多成员声纹与不依赖小程序的选人：并入上面的「暂缓」。
 - P1-04 自定义声音：撤销。2026-10-13 方案 B 删除了克隆数据与百炼音色，#264 加 `VOICE_CLONE_ENABLED` 开关，#289 删掉 control-api 的克隆 enrollment；以后要重做另立项。
@@ -470,5 +470,5 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 
 ## 历史材料索引（非执行队列）
 
-市场、融资、BP、产品战略和架构简化讨论已迁移至 [历史战略与融资分析](docs/strategy/fundraising-analysis-20260921.md)。
+市场、融资、BP、产品战略和架构简化讨论已迁移至 [历史战略与融资分析](docs/strategy.md)。
 该文件不构成当前工程执行项、发布门禁或完成证据。

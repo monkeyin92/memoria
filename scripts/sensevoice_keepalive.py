@@ -4,7 +4,7 @@ Committed as configuration only; nothing in this repository schedules it on a
 server. The probe exercises the model rather than just the HTTP socket, because
 the failure this guards against is anonymous model pages being swapped out
 after hours of idleness (12.7 s first request, see
-docs/runbooks/sensevoice-asr.md).
+docs/runbooks.md).
 
 The probe audio is generated silence, never a recording. The response text is
 discarded: this script never prints a transcript.
