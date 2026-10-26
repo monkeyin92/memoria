@@ -35,14 +35,15 @@ def _deletion_receipt(row: Mapping[str, Any]) -> dict[str, Any]:
     """One receipt row with an audit hash instead of the account id."""
 
     user_id = row["user_id"]
+    status = str(row["status"])
     return {
         "account_ref": (
             None
-            if user_id is None
+            if user_id is None or status == "completed"
             else hashlib.sha256(str(user_id).encode("utf-8")).hexdigest()[:16]
         ),
         "request_id": str(row["request_id"]),
-        "status": str(row["status"]),
+        "status": status,
         "step": str(row["step"]),
         "started_at": row["started_at"],
         "updated_at": row["updated_at"],

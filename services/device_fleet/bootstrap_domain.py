@@ -472,8 +472,14 @@ def _require_exact_keys(
         raise InvalidOnboardingRequest(f"{context} contains an unsupported field")
 
 
-def _text(value: object, *, field: str, max_length: int = 256) -> str:
-    if not isinstance(value, str) or not value or len(value) > max_length:
+def _text(
+    value: object,
+    *,
+    field: str,
+    max_length: int = 256,
+    allow_empty: bool = False,
+) -> str:
+    if not isinstance(value, str) or (not allow_empty and not value) or len(value) > max_length:
         raise InvalidOnboardingRequest(f"{field} is invalid")
     if value != value.strip():
         raise InvalidOnboardingRequest(f"{field} is invalid")
@@ -1014,8 +1020,14 @@ def validate_activation_manifest(value: Mapping[str, object]) -> dict[str, objec
         frozenset({"robot_name", "primary_subject_display_name"}),
         context="display",
     )
-    for field in ("robot_name", "primary_subject_display_name"):
-        _text(cast(Mapping[str, object], display)[field], field=field, max_length=128)
+    display_map = cast(Mapping[str, object], display)
+    _text(display_map["robot_name"], field="robot_name", max_length=128)
+    _text(
+        display_map["primary_subject_display_name"],
+        field="primary_subject_display_name",
+        max_length=128,
+        allow_empty=True,
+    )
     endpoints = value["endpoints"]
     if not isinstance(endpoints, Mapping):
         raise InvalidOnboardingRequest("endpoints is invalid")

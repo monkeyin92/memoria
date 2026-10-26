@@ -1051,6 +1051,53 @@ async def test_postgres_unbind_clears_the_display_name_from_the_activation_manif
     try:
         await connection.execute(
             """
+            INSERT INTO device_onboarding_sessions (
+                onboarding_session_id, device_id, actor_id, client_onboarding_id,
+                qr_nonce_hash, pop_hash, mobile_nonce_hash, protocol_version,
+                ble_name, ble_service_uuid, state, state_version,
+                first_seen_at, expires_at
+            ) VALUES (
+                'sess_synth_01', 'dev_synth_01', 'actor_synth_01', 'cli_synth_01',
+                $1, $2, $3, 1,
+                'ble_synth', 'uuid_synth', 'online', 1,
+                $4, $5
+            )
+            """,
+            "b" * 64,
+            "c" * 64,
+            "d" * 64,
+            NOW,
+            LATER,
+        )
+        await connection.execute(
+            """
+            INSERT INTO device_onboarding_claims (
+                claim_id, onboarding_session_id, device_id, actor_id,
+                status, idempotency_key, reserved_at, expires_at
+            ) VALUES (
+                'claim_synth_01', 'sess_synth_01', 'dev_synth_01', 'actor_synth_01',
+                'committed', 'idem_claim_01', $1, $2
+            )
+            """,
+            NOW,
+            LATER,
+        )
+        await connection.execute(
+            """
+            INSERT INTO device_onboarding_bindings (
+                binding_id, claim_id, device_id, actor_id,
+                binding_version, status, initialization_json, idempotency_key,
+                created_at, committed_at
+            ) VALUES (
+                'bind_synth_01', 'claim_synth_01', 'dev_synth_01', 'actor_synth_01',
+                1, 'committed', '{}'::jsonb, 'idem_bind_01',
+                $1, $1
+            )
+            """,
+            NOW,
+        )
+        await connection.execute(
+            """
             UPDATE device_onboarding_devices
             SET lifecycle_status = 'bound', binding_id = $2, binding_version = 1,
                 actor_id = $3
