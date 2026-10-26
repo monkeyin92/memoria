@@ -9,7 +9,6 @@ import re
 from pathlib import Path
 from urllib.parse import urlparse
 
-
 GROUPS = {
     "acceptance": ("docs/acceptance",),
     "compliance": ("docs/compliance",),
