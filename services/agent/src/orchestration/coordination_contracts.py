@@ -6,7 +6,7 @@ Worker / Deliver / Memory framework. All implementations stay in their
 respective modules; this file only declares contracts.
 
 References:
-    docs/architecture/coordination-harness.md
+    docs/strategy/coordination-harness.md
 """
 
 from __future__ import annotations

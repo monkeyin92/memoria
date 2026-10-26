@@ -21,8 +21,7 @@
     )
 
 文档:
-- 架构设计: docs/architecture/temporal-simulator.md
-- 使用指南: tests/voice_coordination/README.md
+- 架构设计: docs/strategy/temporal-simulator.md
 """
 
 __all__ = [

@@ -69,10 +69,10 @@ LLM 自动改代码无法通过合规审批流程,因此 RSI 闭环不部署到�
 
 两份架构文档已完成:
 
-1. [docs/architecture/coordination-harness.md](docs/architecture/coordination-harness.md)  
+1. [docs/strategy/coordination-harness.md](docs/strategy/coordination-harness.md)  
    六模块协调契约、失败分类法、模块间接口协议、实施路径
 
-2. [docs/architecture/temporal-simulator.md](docs/architecture/temporal-simulator.md)  
+2. [docs/strategy/temporal-simulator.md](docs/strategy/temporal-simulator.md)  
    时序对话仿真器、19×22 测试矩阵、sim/run 双模式、YAML 案例格式
 
 ## 实施路线图
