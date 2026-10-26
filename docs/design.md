@@ -1,10 +1,307 @@
-# Mini program v4 test report
+# Memoria Design
+
+本文件由 `scripts/consolidate_docs.py` 按类型归并生成。每个来源章节保留原文和来源路径。
+
+## 来源文件
+
+- `docs/design/20261013-tap-wake-power.md`
+- `docs/design/20261014-miniprogram-trial-ui-sketch.md`
+- `docs/design/20261014-offline-story-menu.md`
+- `docs/design/app-v4/README.md`
+- `docs/design/app-v4/TEST-REPORT.md`
+- `docs/design/app-v4/design-notes.md`
+- `docs/design/offline-lines-v2.md`
+
+---
+
+## 来源：`docs/design/20261013-tap-wake-power.md`
+
+## Tap wake, mic-off standby, power states (2026-10-13)
+
+Owner-approved product change. One PR. Do not merge from this agent.
+
+### Domain model (principle: Model the domain)
+
+Power and wake are one explicit state machine, not scattered ifs on the board file.
+
+```
+DeepSleep --tap(GPIO10 RTC)--> Waking
+Waking    --quiet hours?--> NightSoothing --clip done--> DeepSleep
+Waking    --else--> Connecting --channel ready--> Conversing
+Conversing --15s no speech--> WifiHold
+WifiHold  --tap--> Waking (mic still closed until conversation arms)
+WifiHold  --hold window expires (default 3 min)--> DeepSleep
+```
+
+Illegal combinations made unrepresentable:
+
+- Keyword wake cannot be armed while product policy is tap-only.
+- Mic cannot be wanted open while phase is WifiHold or DeepSleep.
+- Night tap cannot open a conversation channel.
+
+### Temporary keep-awake test profile
+
+The diagram above is the product firmware. `CONFIG_MEMORIA_KEEP_AWAKE` defaults to n, so product and bench images still take the edges into chip deep sleep.
+
+`./scripts/build.sh --keep-awake` builds `config.keep-awake.json`. That file is the product `sdkconfig_append` plus `CONFIG_MEMORIA_KEEP_AWAKE=y`. `EnterTapDeepSleep` then sets `PowerPhase::kWifiHold` and clears the hold timer. It does not call `esp_deep_sleep_start`. USB serial stays enumerated.
+
+`MicWantedOpen` is false for `kWifiHold`. An idle keep-awake device does not open the microphone and does not upload audio. A screen tap or the USB `wake` line is still what starts a session.
+
+The image name is `memoria-esp-vocat-keep-awake-*`. `publish_firmware_release.py` refuses it. Flash with `./scripts/flash.sh --keep-awake --port /dev/cu.usbmodem101`. Use this profile on a remote test device that must keep USB serial.
+
+### Designs compared (principle: Foundational thinking)
+
+1. Keep `wake_mode` enum, default to `button`. Smallest server diff. Rejected: leaves keyword paths live (violates Subtract before you add).
+2. Delete voice-wake packaging and gate; force tap-only; add `memoria_power_policy` + `memoria_mic_gate`. Chosen.
+3. Split power policy into Application patches only. Rejected: board, display, and audio would re-encode the same transitions.
+
+### Subtract before add (principle: Subtract before you add)
+
+Remove first:
+
+- `CONFIG_USE_CUSTOM_WAKE_WORD` and `CONFIG_SR_MN_CN_MULTINET6_QUANT` (packages `mn6_cn`, ~3.7 MB inferred from prior acceptance notes).
+- Keyword branches in `memoria_wake_mode`, USB/tap wake_mode gates, mini-program wake switches, server acceptance of keyword modes.
+- `check-overlay` rules that require MultiNet6 for this board.
+
+Keep: AFE AEC/NS/VAD for conversation. Local stop keyword stays off (`kLocalStopKeywordEnabled=false`), so MultiNet is not required.
+
+Then add: tap debounce, local 「我在呢」 clip, waiting animation, mic gate logs, WifiHold, deep sleep on GPIO10, offline story pack.
+
+### Flash (principle: Explain the number)
+
+Partition table already ends at 16 MiB (`assets` at `0x800000` size 8M). Claimed `FLASHSIZE_32MB` / `N32R16` is wrong for the EchoEar/VoCat N16R16 board. Rename overlay table to `16m.csv` and set `FLASHSIZE_16MB`. App slots stay `0x3f0000` each; assets stay 8 MiB.
+
+### Mic and GPIO48 (principle: Prove it works / report findings)
+
+Measured from board source: `CORDEC_POWER_CTRL` is GPIO48. `DetectPcbVersion` toggles it and probes I2C `0x18` (ES8311). ES7210 uses `AUDIO_CODEC_ES7210_ADDR`. Upstream `BoxAudioCodec::EnableInput(false)` closes the ES7210 codec device (`esp_codec_dev_close`) and does not toggle GPIO48. Inferred: GPIO48 is a shared codec rail used for ES8311 bring-up detection; it is not a dedicated ES7210 power switch in this tree. Mic-off policy therefore uses `EnableInput(false)` / voice-processing off, and logs every open/close at tag `MemoriaMic`.
+
+### Quiet hours / night tap (principle: Boundary discipline)
+
+Server already enforces quiet hours on the conversation path (`minor_quiet_hours`). Device deep sleep and WifiHold need a local copy so a night tap can play a soothing line without opening the channel. Deliver optional `quiet_hours` on the existing display-profile poll (additive), cache in NVS, evaluate on device in Asia/Shanghai wall clock when available, else last-cached window only.
+
+### Offline stories (principle: Explain the number)
+
+Freed MultiNet space goes to Opus 16 kbps story clips in the board assets extra-files dir. Budget: assets partition 8 MiB; keep >= 0.5 MiB free margin after mascots + prompts + stories. Packing script produces placeholders; real recordings replace later.
+
+### Blast radius
+
+| Area | Change |
+|------|--------|
+| `config.json` / `config.bench.json` | wake disabled, MN none, 16MB flash |
+| `partitions/v2/32m.csv` -> `16m.csv` | rename + comment |
+| `check-overlay.sh` | stop requiring MN6; require wake disabled + 16MB |
+| patches `0032` wake mode | retarget to arm mic-off idle, not keyword |
+| new patch for power/mic/sleep | Application + audio_service hooks |
+| control_api settings | `wake_mode` only `button` |
+| display-profile | optional `quiet_hours`; `wake_mode` stays `button` |
+| mini-program device page | remove wake switches; copy says tap only |
+| contracts `device-media-v2.json` | wake_mode enum -> `button` only |
+| host tests | wake_mode, usb, overlay, protocol source, device page |
+
+### Verification plan
+
+Host: firmware unit tests, control_api tests, miniprogram device-page tests, `check-overlay` after bootstrap. Device build: `build.sh`, report `app.bin` and assets sizes vs 8 MiB with 0.5 MiB margin. On-device (owner): tap debounce, 1s prompt, 5s ready, mic logs, WifiHold, deep sleep wake, night soothing, offline stories.
+
+### Measured build (2026-10-13, host)
+
+Product `./scripts/build.sh --no-idf-install` after overlay hash `d8035b49…`. Limiter for flash is the partition map, not the binary packing script.
+
+| Artifact | Bytes | Limit | Notes |
+|---|---:|---:|---|
+| `memoria-esp-vocat-app.bin` | 3,354,432 | 0x3f0000 (4,063,232) OTA slot | measured |
+| `generated_assets.bin` | 2,186,328 | 8 MiB assets partition | measured; free 6,202,280 (≥0.5 MiB) |
+| board `assets/` tree | 812,839 | feeds generated pack | measured; includes 3 placeholder stories + prompts |
+
+sdkconfig (measured): `CONFIG_WAKE_WORD_DISABLED=y`, `CONFIG_SR_MN_CN_NONE=y`, `CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y`, partition `partitions/v2/16m.csv`. MultiNet6 not selected.
+
+### Adversarial review (before PR)
+
+- `SetOnScreenOff` was private; board could not wire WifiHold. Fixed (compile-fail → public next to `SetOnFirstFrame`).
+- Quiet hours on the wire today map `night_mode` / `do_not_disturb` to `00:00`–`23:59`. Guardian consent windows are not yet copied onto the same poll. Documented gap.
+- `MemoriaMic` logs policy edges from `SetPhase`. Actual `EnableInput(false)` still rides `AudioService` idle power-down after wake-word and voice-processing are off. On-device serial must confirm timing.
+- Waiting animation is the existing connecting/listening mascot path after `WakeWordInvoke("screen_tap")`, not a new clip. On-device check required.
+- Story Ogg files are ffmpeg sine placeholders at Opus 16 kbps. Product recordings replace later via `build_offline_stories.py`.
+
+### Open questions
+
+- Exact ES7210 rail wiring beyond GPIO48 probe behavior (needs schematic or scope).
+- Whether CST816S INT polarity for `ext0` wake is active-low on all PCB revs (code assumes active-low, matches current ISR usage).
+- Whether guardian consent quiet-hours should replace or intersect the night_mode/DND full-day window on the display-profile poll.
+- Wall-clock source quality after deep sleep before SNTP (night window may use stale NVS until sync).
+
+---
+
+## 来源：`docs/design/20261014-miniprogram-trial-ui-sketch.md`
+
+## Trial UI sketch (architect)
+
+### Usage (call sites)
+
+```js
+// home bound state
+setData({
+  online: true,
+  usageUsedMinutes: 12,       // real when known; else 0
+  usageLimitMinutes: 30,      // from Runtime Profile MAX_SESSION_SECONDS
+  quietHoursLine: "夜间 21:00–07:00",
+  unreadSafetyAlert: true,    // from undelivered/pinned guardian notifications
+});
+
+// device settings group (parent_for_child with sessionLimits)
+setData({
+  trialSettingsVisible: true,
+  quietHoursLabel: "21:00 – 次日 07:00",
+  dailyCapLabel: "30 分钟",
+  safetySubscribeOn: true,
+});
+```
+
+### Candidate A: page-local skins
+
+Each page owns palette hexes and card chrome. No shared module.
+Rejected: four copies of the same mint/apricot tokens drift on the next tweak.
+
+### Candidate B: shared tokens + thin view helpers (chosen)
+
+- CSS vars on `.trial-page` / page roots: `--trial-bg #FAF7F2`, `--trial-apricot #F5EBDD`, `--trial-mint #3CB8A0`.
+- `utils/trial-device-card.js`: build home card fields from binding + profile + notifications.
+- Settings stay on `pages/device` as an inset group when `sessionLimits` exists.
+- Memory is `pages/child-memory` (privacy line + tabs already live there).
+- Bind keeps #229 subscribe gate; this PR only skins copy/layout and does not re-add `crisis-alerts.js`.
+
+### Synthesis
+
+B wins on one palette source and one home view helper. No new page. No fifth route for alerts.
+
+### Asset compliance
+
+Style references to Apple Home / Mi Home are layout cues only. Do not ship their icons, illustrations, or screenshots. Do not add AI-generated art. Trial chrome uses CSS/system shapes; any bitmap must already live in the repo (for example bind persona `face-badge`).
+
+---
+
+## 来源：`docs/design/20261014-offline-story-menu.md`
+
+## Offline story menu (2026-10-14)
+
+Owner-approved product change. One PR. Do not merge from this agent. Do not flash.
+
+### Problem
+
+When Wi-Fi is down, a screen tap must not open a cloud conversation. The device plays fixed local lines and a three-story menu. All audio is placeholder Opus until the owner picks a voice.
+
+Constraints from main @27bf17b and offline-lines v2.1:
+
+- Tap wake, quiet hours, keep-awake, pat/shake, and BOOT provisioning stay as they are.
+- `CONFIG_MMAP_FILE_NAME_LENGTH=32`. Upstream packs `DEFAULT_ASSETS_EXTRA_FILES` by basename, so `GetAssetData` keys are flat names such as `offline-wake-no-network-v1.ogg`, not subdirectory paths.
+- Assets partition 8 MiB with >=0.5 MiB headroom.
+
+### Usage (caller's view)
+
+```cpp
+memoria::OfflineMenuMachine menu;
+menu.OnDeepSleepWake(now_ms);                 // first tap after deep sleep: wake only
+auto out = menu.OnTap(now_ms, hold_ms, online, quiet, device_idle, in_conversation);
+for (auto id : out.clips) PlayLocalAssetClip(ClipFile(id));
+if (out.enter_deep_sleep) EnterTapDeepSleep();
+
+menu.OnNetworkDown(now_ms, in_conversation);  // mid-chat vs idle standby
+menu.OnNetworkUp(now_ms);
+menu.OnTimer(now_ms);                         // 20s reconnect, 30s menu idle
+menu.OnStoryFinished(now_ms);
+```
+
+Host tests compile the header with g++ and drive the same events through a stdin harness, matching `test_memoria_power_policy.py`.
+
+### Shape
+
+`OfflineMode` enum owns the offline UX. Power phases stay separate.
+
+| Mode | Meaning |
+|------|---------|
+| `kInactive` | Online path; offline machine ignores taps |
+| `kAwakeReconnecting` | After deep-sleep wake while offline; 20s retry; taps play reconnecting line |
+| `kStandbyOffline` | Idle drop: silent background retry; next tap opens wake+menu |
+| `kMidReconnecting` | Mid-chat drop after 4+5+6; 20s; taps play #7 |
+| `kMenu` | Item 1..3 selected |
+| `kPlaying` | Story playing for current item |
+| `kPendingOnlineAfterStory` | Network restored during play; finish story then #10 |
+
+Events are pure inputs. Outputs are ordered clip ids, optional `start_story` / `stop_story` / `enter_deep_sleep` / `retry_network` flags. The board shell plays clips, starts/stops story Ogg, and calls `EnterTapDeepSleep` (respecting keep-awake).
+
+Hold classification: `hold_ms < 800` is a tap; `hold_ms >= 800` is a long press. Press time is measured in the touch task.
+
+### Synthesis decision
+
+Candidate A (separate `memoria_offline_menu.h`) is the base. Candidate B (extend `PowerPhase`) lost because quiet-hours and WifiHold already own that enum, and host tests for tap wake would grow unrelated states. Graft from B: reuse the host-compilable header + stdin harness pattern from `memoria_power_policy.h`.
+
+### Tradeoffs accepted
+
+- We accept polling or board-observed Wi-Fi edges instead of a new Application patch, so the offline UX stays board-local.
+- We accept flattened asset basenames (upstream packer). Manifests under `stories/` and `offline_lines/` stay host-side; packing overwrites a copied `index.json` with the real assets index.
+- We accept placeholder sine Ogg until voice selection.
+
+### Alternatives considered
+
+1. Fold offline modes into `PowerPhase`. Rejected: mixes conversation power with menu UX; enlarges every tap-wake test.
+2. Drive the menu from Application patches only. Rejected: board already owns touch hold and local clips; scattering transitions would re-encode the same table.
+
+### Resolved product calls (were "待技术部定")
+
+1. Long-press stop while playing: replay current item (#14/#15/#16) then #17; restart 30s idle timer.
+2. Network drop while idle/standby (not in conversation): play nothing; background retry only. Next tap if still offline: #1+#2+#3 then menu.
+3. Menu idle into deep sleep: stop reconnecting. On wake: retry 20s; if still offline, play #1+#2+#3 then menu.
+
+### Next implementation step
+
+Add `memoria_offline_menu.h`, rename story_03, generate offline line placeholders, wire the board, add host tests and asset checks.
+
+---
+
+## 来源：`docs/design/app-v4/README.md`
+
+## Memoria parent-app design v4
+
+This folder is the design reference for the WeChat mini program now, and for the native App later.
+
+### Contents
+
+- `all-pages.jpg` and `01`–`10` page PNGs. Static mockups at phone size.
+- `app.html`. Interactive HTML source for the same ten screens.
+- `design-notes.md`. Visual system, copy rules, and review notes from the design pass.
+- `assets/`. Story and mascot stills used in the mockups. Archive copies are JPEG-compressed for size. Prefer regenerating from the original pipeline if you need print resolution.
+
+### Mascot images
+
+The mascot images in `assets/` are AI-generated (`gpt-image-2.5` via bb-api, 14 Oct 2026). Early-stage product use is allowed. Re-evaluate licensing and quality before mass production or store marketing at scale.
+
+### Mapping to the mini program
+
+| Design screen | Mini program area |
+|---|---|
+| Login | `pages/auth` |
+| Guardian consent | bind / privacy consent steps |
+| Home | `pages/home` |
+| Conversation review | `pages/memory` (daily summaries) |
+| Needs attention | home attention detail / crisis alert sheet |
+| Usage limits | `pages/device` session limits |
+| Content / stories | home recommendation or future content surface |
+| Roles | `pages/companion` (tab name stays 「角色」) |
+| Memory (three long-term facts) | `pages/memory` / child-memory |
+| Profile | `pages/profile` |
+
+Subscription WeChat push is paused in product. The mockups already drop the remaining-count card. The mini program keeps the subscribe code behind a flag that defaults off.
+
+---
+
+## 来源：`docs/design/app-v4/TEST-REPORT.md`
+
+## Mini program v4 test report
 
 This report records how the v4 restyle of the Memoria WeChat mini program was tested on branch `cursor/miniprogram-design-v4-14a0`. It covers every page under `apps/miniprogram/pages`. It lists the commands, the measured results, side-by-side images against the design PNGs in this folder, and each place where the mini program still differs from the design.
 
 The performance table comes from runs on 2026-10-14. The unit tests, forbidden-copy check, package size, layout shots and the 05-attention and 09-memory parity ratios were measured again on 2026-10-15. Later that day, the session-limits and stories change made home and device read two new parent APIs. The tests, package size, 03-home and 06-usage parity shots, and the home and device page shots were then measured a third time. After 关于 began reading its filing lines from the server, the tests and package size were measured once more. The daily chat limit change then gave device a 每天上限 slider and made home and device count today's minutes against that budget. For it, the tests, package size, layout checks, home and device page shots, and 03-home and 06-usage parity shots were measured again. Both days used a Linux cloud VM with 4 cores, Node v22.14.0 and headless Chrome driven by puppeteer-core. Nothing ran in WeChat DevTools, through miniprogram-automator or on a phone, because none of them is available on the VM. The harness approximates the WeChat renderer. Read the images as close evidence of layout and copy, not as proof of on-device pixels.
 
-## Results
+### Results
 
 | Check | Result |
 |---|---|
@@ -16,7 +313,7 @@ The performance table comes from runs on 2026-10-14. The unit tests, forbidden-c
 | Parity side-by-sides (`scripts/v4-parity/render-and-compare.js`) | 9 mapped screens, diffRatio 0.056 to 0.298, down from 0.245 to 0.647 |
 | Main package before minification (`scripts/package-size.js`) | 1880.8 KiB of the 2048 KiB limit |
 
-## How the harness works
+### How the harness works
 
 The harness lives in `apps/miniprogram/scripts/mp-harness/`. It runs the real page code, so each screenshot shows what the page produced from fixture API responses, not exported design HTML.
 
@@ -38,7 +335,7 @@ Sizes are CSS px. The 390 view captures the full page height and the others capt
 
 All v4 lengths are px. `scripts/codemods/rpx-to-px.js` halved every rpx length in commit `1869d4f1`, and `v4-tokens.test.js` rejects rpx in templates and styles. `render.js` still converts any rpx at 750 per screen width.
 
-## Reproduce
+### Reproduce
 
 Run from `apps/miniprogram`. The tests and scripts set `TZ=Asia/Shanghai` themselves.
 
@@ -58,7 +355,7 @@ The Chrome steps need `puppeteer-core` from `package.json` and Chrome at `CHROME
 
 Do not run `npm --prefix apps/miniprogram exec -- node scripts/v4-parity/render-and-compare.js` from the repo root. `npm exec` keeps the caller's working directory, so the script path resolves against the repo root and Node exits with `MODULE_NOT_FOUND`.
 
-## Visual parity
+### Visual parity
 
 `render-and-compare.js` renders each mapped page state at the design frame of 390 by 844 CSS px at 2x, with a 47 px status bar and a 34 px home indicator. It writes three files per screen:
 
@@ -68,7 +365,7 @@ Do not run `npm --prefix apps/miniprogram exec -- node scripts/v4-parity/render-
 
 `diffRatio` is the share of pixels whose squared RGBA distance from the design exceeds 25. A card that sits 4 px lower counts all of its pixels as different. So the ratio mostly measures where content lands and how much of it there is, and real data changes both. Treat it as a regression signal and as a pointer to where a screen differs, not as a parity score.
 
-### The floor no live page can beat
+#### The floor no live page can beat
 
 `design-floor.js` renders the design source, `docs/design/app-v4/app.html`, in this VM's Chrome at the same frame and diffs it against the PNG exported from that same HTML. The layout is identical, so the floor is font and rasteriser drift alone. The VM has Noto Sans CJK SC and no PingFang SC, which is most of that drift. A live page cannot score below its screen's floor on this machine.
 
@@ -92,7 +389,7 @@ The consent change reshot only 02-consent. diffRatio went from 0.0945 to 0.2740.
 
 The daily chat limit change redraws 03-home and 06-usage, and only those two were shot again. The base commit, rendered on the same VM, scores 0.0706 and 0.1812 on them. 03-home is now 0.0669. Its bands from 211 and 316 CSS px fell from 0.072 and 0.125 to 0.061 and 0.106, because the copy beside the ring now shows 「18 分钟」 as the design does. 06-usage is now 0.0828. Its four bands from 422 CSS px fell from 0.260, 0.444, 0.273 and 0.172 to 0.082, 0.043, 0.145 and 0.108, because the 每天上限 slider now sits where the design puts it. The base render reproduces the committed 01-login, 04-summary, 05-attention, 08-roles and 10-profile shots byte for byte. It does not reproduce the committed 02-consent, 03-home, 06-usage and 09-memory shots, so those four came from an earlier state of their pages. 02-consent and 09-memory stay as committed, and a rerun scores them 0.2678 and 0.2978.
 
-### Where the remaining difference sits
+#### Where the remaining difference sits
 
 `diff-bands.js` splits each pair into eight bands of 211 device px, about 105 CSS px each, and prints the diffRatio of each band. The columns below are the band's top edge in CSS px.
 
@@ -112,15 +409,15 @@ The daily chat limit change redraws 03-home and 06-usage, and only those two wer
 
 07-content has no live page. It is a story catalogue with play buttons. The device page lists the three firmware titles under 离线故事, and the app cannot play a clip from the phone, so a mapped 07-content page would still need play UI the API does not offer.
 
-### 01-login
+#### 01-login
 
-![01-login, live page left, design right](mp-screenshots/side-by-side/01-login.png)
+![01-login, live page left, design right](design/app-v4/mp-screenshots/side-by-side/01-login.png)
 
 The guest home is the full-bleed login screen with no tab bar. The greeting follows the clock, so the fixture's 19:42 gives the design's 「晚上好，欢迎回来」. 「微信一键登录」 restores a returning WeChat identity and otherwise opens the auth page. 「手机号登录」 opens the auth page directly, where WeChat's own phone authorization runs. Neither button adds an SMS form. The tab bar returns once the guest signs in.
 
-### 02-consent
+#### 02-consent
 
-![02-consent, live page left, design right](mp-screenshots/side-by-side/02-consent.png)
+![02-consent, live page left, design right](design/app-v4/mp-screenshots/side-by-side/02-consent.png)
 
 The consent screen leads the auth page. Five fact cards, the guardian tick, 「同意并继续」, 「暂不同意」 and the two notes under it sit inside the 390×844 frame. The tick stays locked when the agreement still has `<!-- agreement: pending -->`, or when `EFFECTIVE_ON` is blank. Either one is enough. The line under the tick reads 「用户协议正在定稿，定稿后才能勾选同意」. In that shipping state the last note ends at 833 CSS px. The tick works only after the body replaces the marker and the date constant is filled. The ready screenshot uses a fixture date, `2026年4月1日`, and is not the release date. The name and avatar step comes after phone authorization, and only on a first registration. Horizontal overflow and content under the capsule are both 0. This reshoot compares the locked live page with the five-card design. diffRatio is 0.213.
 
@@ -133,29 +430,29 @@ The five cards now use the same sentences as the design.
 
 The checkbox reads 「我是孩子的监护人，已阅读并同意《隐私保护指引》和《监护人同意书》」. While the agreement marker is present or the effective date is blank, the row is locked and a tap does not tick it. After both are filled, a tap ticks it. Each title is its own link, so a tap opens that document. 《隐私保护指引》 calls `wx.openPrivacyContract`. 《监护人同意书》 opens `pages/guardian-consent/index`. The page chip is 「内测版」. The effective date stays blank until 融资合规部 sets it. Parent-visible copy does not say 「草稿」. Notes on login and recording still follow 「暂不同意」.
 
-### 03-home
+#### 03-home
 
-![03-home, live page left, design right](mp-screenshots/side-by-side/03-home.png)
+![03-home, live page left, design right](design/app-v4/mp-screenshots/side-by-side/03-home.png)
 
 The cards, radii, shadows, gaps, type scale and icon tiles follow the design. The three bands above 0.1 are the ring, the stat units and the memory card. The ring shows the daily budget from the signed Runtime Profile, 30 with 「分钟 · 每天上限」, on a track that never fills. The policy signs that budget as `daily_chat_seconds` in the extras of the `MAX_SESSION_SECONDS` obligation. When the profile carries no budget, as from an older server, the ring reads 未设置 above 每天上限. The design fills the ring to 60% and prints the percentage. Used minutes over the daily budget is the right ratio for that fill, but the page draws none.
 
 Home reads `today_used_minutes` from `GET /v1/devices/{device_id}/session-limits`. The control API sums the child's chat seconds since midnight in Asia/Shanghai from its chat usage ledger and returns whole minutes, so the fixture's 18 shows as 「今天聊了 18 分钟」. The field is null only when the ledger read fails, and then the line reads 「用量暂未统计」. `home-v4-dashboard.test.js` covers null, 18 and a failed call. 「今天对话 3 次」 replaces 「今天讲了 3 个故事」, and the 孩子的记忆 card replaces 今晚推荐, because no story field exists. The AI disclosure line replaces 「名字和数字均为示例」, and the pill names the fixture's role, 星澜.
 
-### 04-summary
+#### 04-summary
 
-![04-summary, live page left, design right](mp-screenshots/side-by-side/04-summary.png)
+![04-summary, live page left, design right](design/app-v4/mp-screenshots/side-by-side/04-summary.png)
 
 The 「最近几天」 header, the day strip and today's card match the design. The high bands from 527 CSS px are the cards below today. The fixture has summaries for today only, so 昨天 and 周一 show the honest 「孩子聊了 N 次，还没整理」 where the design shows sample bullets, and a fourth card, 周日, fits on screen. The design's 「摘要内容为示例」 caption has no counterpart. 记住的事 moved from a switcher above the strip to a row under the day cards, below the fold.
 
-### 05-attention
+#### 05-attention
 
-![05-attention, live page left, design right](mp-screenshots/side-by-side/05-attention.png)
+![05-attention, live page left, design right](design/app-v4/mp-screenshots/side-by-side/05-attention.png)
 
 The attention detail page is new. Home's attention card and the review banner open it. It has the design's back button, mascot, peach box, four numbered tips and 「我知道了」, which returns to where the parent came from. Tip 4 now matches the design, 「需要时寻求帮助」 and 「可拨打 12356 心理援助热线」. The full-screen diffRatio was 0.1938 before this change and is 0.0561 now, just above the floor of 0.0536. The bands at 633 and 738 CSS px fell from 0.565 and 0.732 to 0.108 and 0.088. The bands above 633 CSS px are unchanged. The peach box says TA where the design says 他, the neutral pronoun the guardian alerts already use.
 
-### 06-usage
+#### 06-usage
 
-![06-usage, live page left, design right](mp-screenshots/side-by-side/06-usage.png)
+![06-usage, live page left, design right](design/app-v4/mp-screenshots/side-by-side/06-usage.png)
 
 The slider card, the quiet-hours card, the online pill and the row chrome follow the design. The ring shows today's minutes over the daily budget, 18 / 30 分钟, and the title beside it reads 「今天还可以聊 12 分钟」. The design also fills the ring to 60% and prints 「已用 60% · 数字为示例」 where the page has the online pill, so the band from 211 CSS px still differs, at 0.150. When today's minutes are unknown, the ring shows the budget with 「分钟 · 每天上限」 and the title reads 「用量暂未统计」. When the profile carries no budget, the ring shows the per-session cap with 「分钟 · 单次上限」, and it reads 未设置 when the profile has no cap either.
 
@@ -163,23 +460,23 @@ The slider card holds 单次上限 and 每天上限, split by a rule as in the d
 
 Before the stories change, the 隐私说明 and 管理与导出数据 rows came next. Now the 离线故事 card sits there, with the caption 「不联网也能听」 and one row per title from `GET /v1/devices/{device_id}/stories`. With the second slider above it, only the top edge of that card shows above the tab bar. The privacy rows sit below the fold, and the full page is 3084 px tall at 390, 129 px more than with one slider. When the call fails or the list is empty, the card reads 「暂无可显示的离线故事」. The card shows titles only, with no play button, because the clips play on the robot.
 
-### 08-roles
+#### 08-roles
 
-![08-roles, live page left, design right](mp-screenshots/side-by-side/08-roles.png)
+![08-roles, live page left, design right](design/app-v4/mp-screenshots/side-by-side/08-roles.png)
 
 The grid cards, the selected border, the 正在使用 pill and the 48 px 新建角色 button match the design. Names, art and taglines come from the live catalogue, so five roles (星澜, 桃喜, 绵绵, 阿序 and 玄墨) replace the design's four samples. The bands from 211 and 422 CSS px are the different mascots. The fifth card takes the place of the 新建角色 button, which moves below the fold, and that is the band from 633 CSS px. There is no 「角色名称为示例」 caption.
 
-### 09-memory
+#### 09-memory
 
-![09-memory, live page left, design right](mp-screenshots/side-by-side/09-memory.png)
+![09-memory, live page left, design right](design/app-v4/mp-screenshots/side-by-side/09-memory.png)
 
 The archive leads the page with the design's labels 称呼, 喜好 and 宠物名, their icons, and the mascot card 「除这三项外，不长期保存其他信息。」. The page opens at the tab-page inset, the status bar plus the 17 px tab gap, with no back button and no tab bar. The parent leaves with WeChat's edge swipe or the system back button. The full-screen diffRatio was 0.3560 before this change and is 0.2984 now. The bands at 105 and 211 CSS px fell from 0.193 and 0.331 to 0.076 and 0.029. The band from 527 CSS px rose from 0.283 to 0.377 because the consent card now sits higher.
 
 Three content differences remain. The title names the child, 乐乐的记忆, where the design says 记忆. Each fact has its own line with its date and a delete button, so 喜好 lists 恐龙 and 画画 separately where the design joins 「恐龙、画画、草莓」, and the dates take the place of the design's captions such as 「孩子喜欢被这样叫」. Below the mascot card come the 长期记忆 consent card and the summaries. The design ends there with 「以上内容为示例」 and its tab bar, which accounts for the bands at 0.688 and 0.969.
 
-### 10-profile
+#### 10-profile
 
-![10-profile, live page left, design right](mp-screenshots/side-by-side/10-profile.png)
+![10-profile, live page left, design right](design/app-v4/mp-screenshots/side-by-side/10-profile.png)
 
 The page has the design's title, the account card with 「已绑定 1 台设备」, the device card with the mascot, and the four rows 设备管理, 授权与隐私说明, 帮助与反馈 and 关于. 帮助与反馈 is WeChat's native feedback button. 授权与隐私说明 opens the raw-audio consent page when that capability is open, and WeChat's privacy guideline otherwise. The role and custom persona rows moved to the 角色 tab.
 
@@ -198,9 +495,9 @@ A guest, a payload that omits `chat_llm_providers`, and an empty list show no fi
 
 The device card reads 孩子的星澜 with 已绑定设备, not 小乐 with 在线, because the profile page does not fetch presence. The two bottom bands are the 账号 group with 账号编号, 退出当前设备, 退出所有设备 and 永久注销, which the design does not show. The design's 「绑定新设备请在 Memoria 小程序中完成」 is gone, because this is the mini program and binding lives on the 设备 tab. The version line reads 「版本 x.y.z」 in a release build and 开发版 or 体验版 before release, never 「版本 0.1 设计稿」.
 
-## Differences from the design
+### Differences from the design
 
-### Platform differences
+#### Platform differences
 
 These come from WeChat or the test machine, and no page change removes them.
 
@@ -210,7 +507,7 @@ These come from WeChat or the test machine, and no page change removes them.
 - `<button open-type="feedback">` is the only way to open WeChat's feedback page, and WeChat buttons ship their own width, padding, radius, fill and bold text. The profile stylesheet resets them so the row matches the other three.
 - The VM renders CJK text in Noto Sans CJK SC. A phone uses PingFang SC or the Android system font, so line widths differ slightly on device.
 
-### Differences the data and copy rules require
+#### Differences the data and copy rules require
 
 - Used minutes. Home and device read `today_used_minutes` from `GET /v1/devices/{device_id}/session-limits`, which the control API sums from its chat usage ledger. Both rings show minutes and never a percentage, and neither ring fills.
 - Stories. The firmware holds three offline story clips, `kOfflineStoryCount = 3` in `firmware/esp32/overlay/files/main/memoria/memoria_offline_menu.h`. The clips are Opus recordings copied in by hand. `firmware/esp32/scripts/build_offline_stories.py` checks them and writes `stories/index.json`, which marks all three as production clips and their voice as 「trial/demo only pending Volcengine terms」. The firmware titles are 小星星的枕头, 月亮不着急 and 大熊和森林里的悄悄话. The device page lists them under 离线故事 from `GET /v1/devices/{device_id}/stories`. The control API copies the titles in `OFFLINE_STORIES`, and `test_offline_stories.py` fails when the copy and `index.json` disagree. The design catalogue titles, 大熊和森林里的悄悄话, 小兔的纸船月亮 and 小狐狸收集星星, appear nowhere. Home still shows 「今天对话 N 次」 in place of a story count or 今晚推荐, and 07-content has no page, because the app cannot play a story.
@@ -224,14 +521,14 @@ These come from WeChat or the test machine, and no page change removes them.
 - The attention copy uses TA.
 - 07-content has no page.
 
-### Differences that follow the app's structure
+#### Differences that follow the app's structure
 
 - Long-term memory opens without a back button like the design, has no tab bar, and keeps per-fact dates and delete buttons.
 - 记住的事 opens from a row under the day cards, not a switcher.
 - The quiet-hours chip shows the real window. The 离线故事 card and then the privacy rows follow it on the usage screen.
 - The profile keeps the account and deletion actions below the menu, and drops the design's binding note.
 
-## Layout checks across widths
+### Layout checks across widths
 
 `v4-layout.test.js` renders all 29 page states at all five views, 145 layouts in one test. A layout fails when any of these holds:
 
@@ -242,7 +539,7 @@ These come from WeChat or the test machine, and no page change removes them.
 
 All 145 pass. `screenshot-pages.js` runs the same checks while it writes the PNGs and records them in `mp-screenshots/pages/results.json`.
 
-## Page screenshots
+### Page screenshots
 
 `mp-screenshots/pages/` holds one PNG per page state and view, named `<slug>-<view>.png`. The 390 full-page and 320 shots are committed, 58 files and 3.9 MB. The 375, 430 and large-font shots add 5.7 MB, so `pages/.gitignore` excludes them and `node scripts/screenshot-pages.js` regenerates them. The daily chat limit change reshot `home` and `device` and took only their rows of `results.json` from the new run. At its base commit, the committed `auth`, `child-memory` and `child-memory-archive` shots already differed from what those pages render, and they stay as committed. `device-onboarding-progress` renders a few pixels differently from run to run at 390 and 430.
 
@@ -265,11 +562,11 @@ The 29 page states are these:
 
 For example, `mp-screenshots/pages/attention-390.png` is the full attention page at 390 and `mp-screenshots/pages/auth-profile-320.png` is the first screen of the name step at 320.
 
-## Performance
+### Performance
 
 `scripts/perf-report.js` writes every number in this section to `mp-screenshots/perf.json`. `v4-perf.test.js` turns the budgets into tests. The load average was between 0.39 and 1.66 on 4 cores during these runs.
 
-### Per page
+#### Per page
 
 These numbers come from one run at the 390 view.
 
@@ -314,7 +611,7 @@ After the session-limits and stories change, home and device were measured again
 
 The test budget per state is at most 16 setData calls, no call over 16 KiB and at most 32 KiB in total. The largest call in the table is 4323 B on device, and the most calls are 11 on profile and guardian. home, device and device-onboarding load slowest because each is the first state of its page in the run and pays for the first require of its modules. The later states of home and device-onboarding load in 1.2 to 1.6 ms. That cause is inferred from the pattern, not profiled.
 
-### Long lists
+#### Long lists
 
 `LONG_LISTS` in `pages.js` loads 200 days of summaries into the review tab and 200 facts into child-memory. The script scrolls each list from top to bottom at 120 px per animation frame, three times. It reports the median of the runs and the worst frame of any run.
 
@@ -327,7 +624,7 @@ Frame intervals sit at 16.7 ms, the 60 Hz frame clock of headless Chrome on the 
 
 `v4-perf.test.js` asserts that both lists render every item, keep each setData call under WeChat's 256 KiB guidance and render in under 500 ms. child-memory keeps both `archiveFlat` and `archiveGroups` in its data, which stores each fact twice. That is why its largest call, 79.5 KB, is bigger than the review tab's 43.0 KB for 200 days.
 
-### Package size
+#### Package size
 
 The shipped files total 1925984 B, 1880.8 KiB of WeChat's 2048 KiB main package limit before minification. The base commit of the daily chat limit change measures 1921540 B, 1876.5 KiB, the same way. That change adds 4444 B, 4.3 KiB, most of it in `pages/device`. `package-size.js` follows `packOptions.ignore` in `project.config.example.json` plus the folders the runtime never loads. It skips `tests`, `design-preview`, `scripts`, `node_modules`, `assets/companions`, `package.json`, `package-lock.json`, `project.config*.json` and Markdown files. The profile mascot, `assets/ui/v4/mascot-happy.jpg`, adds 32.4 KiB.
 
@@ -344,7 +641,7 @@ The shipped files total 1925984 B, 1880.8 KiB of WeChat's 2048 KiB main package 
 | pages/bind | 44.9 |
 | generated/multi-subject-contracts.js | 42.5 |
 
-## Function tests
+### Function tests
 
 Each v4 test file loads the live page through the harness, drives its handlers the way a tap would and asserts on the resulting data, the rendered text or the API payload.
 
@@ -378,7 +675,7 @@ Each v4 test file loads the live page through the harness, drives its handlers t
 
 `guardian-consent.test.js` has 1 test.
 
-- The page chip is 「内测版」. Parent-visible text does not say 「草稿」. The source path is `docs/compliance/child-audio-transcript-ephemeral.md`, and the paragraphs follow `docs/compliance/guardian-consent-draft.md` in order. The rendered text includes 「设备没有摄像头，也不采集图像」 and does not claim a later camera or connector.
+- The page chip is 「内测版」. Parent-visible text does not say 「草稿」. The source path is `docs/compliance.md`, and the paragraphs follow `docs/compliance.md` in order. The rendered text includes 「设备没有摄像头，也不采集图像」 and does not claim a later camera or connector.
 
 `memory-v4.test.js` has 3 tests.
 
@@ -521,7 +818,7 @@ Older tests that asserted v3 strings, structure or removed rows now assert the v
 - `home-status-board.test.js` asserts that an unset profile gives no cap, no quiet label and no night mode, and that the trial card takes its limit from the signed daily budget.
 - `guest-login-flow.test.js` asserts the 微信一键登录 hero on home and the guest prompt on the review tab.
 
-## Gaps
+### Gaps
 
 - Nothing ran in WeChat DevTools, through miniprogram-automator or on a phone. Images and timings come from Chrome on the VM, and native components such as `switch` and `picker` are approximations.
 - CI runs only on pull requests, and no pull request is open for this branch, so CI has not run `v4-layout.test.js`. If the CI runner lacks Chrome, the layout test skips. If it lacks CJK fonts, the text metrics differ from these results.
@@ -537,3 +834,107 @@ Older tests that asserted v3 strings, structure or removed rows now assert the v
 - The persona-custom placeholder 「例如：说话短一点，像朋友。」 still uses 朋友. The forbidden-copy check does not ban that word.
 - child-memory stores each archive fact twice in its data.
 - The large-font view is a CSS scale, not WeChat's own font-size setting.
+
+---
+
+## 来源：`docs/design/app-v4/design-notes.md`
+
+## Memoria 家长端 App 设计稿 v4 说明
+
+基于 v3，继续遵循 baoyu-design（../baoyu-design/：先定系统、去 AI 套路、不画假状态栏、对比度 ≥4.5:1、不加填充内容）。本版没有生成新图片，沿用 v3 素材（assets/），所以没有 prompts.md。
+
+### 关键词怎么落地
+- **minimal**：去掉 v3 的纸张噪点、衬线体和插画大卡；每屏只保留一个主信息块；图标底色统一成浅灰或浅靛蓝，不再一项一个颜色。
+- **soft UI**：卡片用三层很淡的阴影（1px 贴边、8px 扩散、24px 环境），浮在 #F4F4F7 浅灰底上。不做重拟物凸起，文字对比度都保持在 4.5:1 以上。
+- **card layout**：所有内容都放进卡片。首页是卡片网格：置顶关注卡、今日时长主卡、两张小数据卡、今晚推荐卡。设置类列表做成 iOS inset-grouped 卡片。
+- **large radius**：主卡 32px，普通卡 24px，按钮、缩略图和图标 16px 或 12px，胶囊标签全圆。
+- **8pt grid**：页边距 24，卡片间距 16，卡片内边距 16 或 24，图标 40 或 24，按钮高 56，标签栏 88，行高 24 或 40，都是 8 的倍数；只有细节（如 4px 圆点、4px 标题间距）用 4。
+- **apple style**：大标题 32px/800 字重、字距收紧（仿 iOS Large Title）；用 Inter 加 Noto Sans CJK SC 模拟 SF 的层级；底栏半透明加模糊；返回键是圆形浮动按钮；不画假状态栏。
+- **premium dashboard**：首页参照 Apple 健身：圆环显示已用上限的百分比，旁边是大号数字，两张小卡放「今天讲了 3 个故事」「今日摘要 3 条」。数字用等宽数字。
+- 只用一个强调色：靛蓝 #4A52C9。浅锈红只用于「需要你关注」，绿色只用于在线状态，黄色只用于待确认标签。吉祥物少量使用，只出现在 4 处：关注详情、角色、记忆底部、我的设备卡。
+
+### 内容变更（订阅推送暂停）
+- 删掉首页「守护提醒还剩 N 次 / 可能通过微信提醒」卡，换成「今日摘要 3 条」。
+- 置顶卡副标题改为「今天 19:42 · 打开时首页会置顶显示」。
+- 全页文字检查：危机、伙伴、好朋友、家人、一定会推送、剩、订阅、推送、通知、电量、第一时间，命中都是 0。
+- 其余规则不变：不显示电量；摘要页写「最近几天」，不写保存期限；同意页标「内测版」，生效日期留空时不编日期；记忆页只有三项，不承诺查看或删除；安静时段显示已经生效的起止时间；没有绑定或订阅页面；12356 提示保留，等产品部确认。
+
+### 关于弹窗
+- 「我的」页点「关于」，打开和注销账号同一张居中卡片。标题是「关于 Memoria」。底部一个「知道了」，点它或点遮罩都会关上。未登录也可以打开。
+- 正文每一行单独一块，左对齐。第一行是「陪孩子聊天、讲故事的 AI 助手。」，最后一行是版本。正式版写「版本 x.y.z」，开发版和体验版只写渠道名。
+- 中间几行来自 `GET /v1/account/delivered-capabilities` 的 `chat_llm_providers`。「我的」页把这个数组存在 `chatLlmProviders`。数组取自语音 agent 最近一次心跳，列的是 agent 实际搭建的对话模型所属的备案族。agent 按自己的 `LLM_PROVIDER` 归族，`deepseek` 和 `bailian_deepseek` 都归入 `deepseek`，`qwen` 归入 `qwen`。agent 的 `LLM_FAILOVER_ENABLED` 为 true 时，它还会搭建 qwen 并上报 `qwen`。同一族只保留一次，`deepseek` 在前，`qwen` 在后。agent 还没有上报心跳时，数组为空。
+- 字段缺失、数组为空或未登录时，不写备案行，正文只有第一行和版本。
+- 列表是 `["deepseek"]` 时，中间一行是「对话大模型：DeepSeek（备案号 Beijing-DeepseekChat-202404280016）」。
+- 列表是 `["qwen"]` 时，中间一行是「对话大模型：通义千问（网信算备330110507206401230035号，登记号 ZheJiang-TongYiQianWen-20230901）」。
+- 列表是 `["deepseek", "qwen"]` 时，中间先写「对话可能由 DeepSeek 或阿里云通义千问生成」，再写上面两行备案。两行备案都以「对话大模型：」开头。
+
+### 两轮视觉检查
+- 第 1 轮：关注详情页的「我知道了」按钮被裁掉；使用时长页的安静时段卡压在底栏下面；首页圆环和右侧都显示 18，信息重复；内容页推荐标题压在插画上；首页推荐缩略图里的吉祥物裁切奇怪。
+- 第 2 轮：关注页缩小吉祥物、压缩行距，按钮完整显示；两个滑杆合进一张卡；圆环改成显示「60% · 上限 30 分钟」；推荐标题改为三行，插画右移；推荐缩略图换成故事插画。现在关注页按钮离底边 18px（这页没有底栏），可以接受，定稿时可再多留 8px。
+
+---
+
+## 来源：`docs/design/offline-lines-v2.md`
+
+## Offline lines v2
+
+Host-side inventory for the ESP-VoCat offline pack. Clip ids are flat basenames
+(`CONFIG_MMAP_FILE_NAME_LENGTH=32`). Audio lives under
+`firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/assets/`.
+
+### AIGC spoken intros (screen dimmed)
+
+Offline stories and bedtime (`night_soothe`) play with the screen dimmed, so the
+persistent 「AI」 dialogue badge is not the signal. Firmware **must** play a short
+spoken intro that contains 「AI」 and 「合成」 before the story or soothe clip.
+Missing intro → build/CI fail; at runtime the story/soothe path is refused.
+
+| id | Text | When |
+|---|---|---|
+| `aigc_story_intro` | 下面是 AI 合成的声音给你讲故事。 | Before each offline story file |
+| `aigc_soothe_intro` | AI 合成的声音陪你睡觉啦。 | Before `night_soothe.ogg` |
+
+Voice: `zh_female_tianmeitaozi_uranus_bigtts`, normal speed, normal volume.
+Render: `scripts/render_aigc_notices.py` (requires `DOUBAO_TTS_*`). Each file
+must carry implicit AIGC OpusTags (`CONTENT_ID`, `SERVICE_PROVIDER=Volcengine Doubao`,
+`AI_GENERATED`, `ARTIST`, `VOICE_ID`, `DATE`, `CONTENT_PRODUCER=Memoria`).
+
+### Live dialogue (screen on)
+
+Primary explicit label: persistent 「AI」 corner badge on the device while a
+conversation is active. Fallback end-of-turn tone is behind
+`kAigcTurnToneEnabled` (default off) and only applies when the badge cannot
+render. No per-session spoken notice.
+
+#### Dialogue system lines (no spoken AI intro)
+
+Hidden tags only. Voice: `zh_female_tianmeitaozi_uranus_bigtts`.
+
+| id | Text |
+|---|---|
+| `llm_thinking` | 嗯，我想一想。 |
+| `llm_unavailable` | 我现在有点卡住了，等一会儿再来找我聊吧。 |
+
+定稿 v2，产品部 2026-10-15 确认
+
+### Pack gate
+
+`firmware/esp32/scripts/build_offline_stories.py` fails CI when any shipped
+clip lacks implicit tags, including the 25 production oggs from #244 (metadata-only
+retag; audio packets unchanged). `check_device_ogg_aigc.py` also requires every
+board ``*.ogg`` to decode and to carry `VOICE_ID`. Do not strip provider-embedded
+marks.
+
+### Addendum, 2026-10-22
+
+Monkey removed the persistent 「AI」 badge and the two spoken intros from the
+shipped device. `aigc_story_intro.ogg` and `aigc_soothe_intro.ogg` are not in
+the board pack. Firmware plays each offline story and `night_soothe.ogg` with
+no intro ahead of the clip. A missing intro does not fail the pack check, and
+it does not refuse playback. The sections above stay as the 2026-10-15
+description.
+
+Implicit OpusTags stay required on every shipped clip. The live-dialogue AIGC
+voice prompt stays. The parent miniprogram stays.
+
+---

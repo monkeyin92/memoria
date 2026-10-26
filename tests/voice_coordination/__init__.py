@@ -21,7 +21,7 @@
     )
 
 文档:
-- 架构设计: docs/strategy/temporal-simulator.md
+- 架构设计: docs/strategy.md
 """
 
 __all__ = [

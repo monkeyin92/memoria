@@ -1,7 +1,7 @@
 """时序对话仿真器契约定义。
 
 本模块定义仿真器的所有接口,不包含实现逻辑。
-实现路径见 docs/strategy/temporal-simulator.md。
+实现路径见 docs/strategy.md。
 """
 
 from __future__ import annotations

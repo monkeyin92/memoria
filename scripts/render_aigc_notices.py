@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Render spoken AIGC intro clips for offline story and bedtime playback.
 
-Texts (also listed in docs/design/offline-lines-v2.md):
+Texts (also listed in docs/design.md):
 
 * aigc_story_intro: 「下面是 AI 合成的声音给你讲故事。」
 * aigc_soothe_intro: 「AI 合成的声音陪你睡觉啦。」
@@ -174,7 +174,7 @@ def main(argv: list[str] | None = None) -> int:
     if not _have_doubao():
         print(
             "TODO: DOUBAO_TTS_APP_ID / DOUBAO_TTS_ACCESS_TOKEN unset. "
-            "Refusing to fabricate notice audio. Texts are in docs/design/offline-lines-v2.md.",
+            "Refusing to fabricate notice audio. Texts are in docs/design.md.",
             file=sys.stderr,
         )
         for line_id, text in LINES:

@@ -1,6 +1,6 @@
 [Unit]
 Description=Warm the Memoria SenseVoice ASR sidecar with synthetic silence
-Documentation=file:///opt/memoria/docs/runbooks/sensevoice-asr.md
+Documentation=file:///opt/memoria/docs/runbooks.md
 After=docker.service
 Requires=docker.service
 

@@ -71,6 +71,9 @@ async def _run(
         if ledger_snapshot is not None:
             report.update(await asyncio.to_thread(service.ledger.merge_completed, ledger_snapshot))
         report.update(await service.replay_completed_deletions(limit=limit))
+        account_service: Any = getattr(app.state, "account_data_governance", None)
+        if account_service is not None and hasattr(account_service, "replay_completed_deletions"):
+            report.update(await account_service.replay_completed_deletions(limit=limit))
         return report
 
 
@@ -108,7 +111,8 @@ def main() -> int:
         )
     )
     print(json.dumps(report, sort_keys=True))
-    return 1 if report.get("incomplete") else 0
+    incomplete = int(report.get("incomplete", 0)) + int(report.get("account_incomplete", 0))
+    return 1 if incomplete else 0
 
 
 if __name__ == "__main__":

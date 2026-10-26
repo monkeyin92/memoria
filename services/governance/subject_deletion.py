@@ -199,6 +199,23 @@ class SubjectDeletionLedger:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS account_deletions (
+                    user_id_hash TEXT PRIMARY KEY,
+                    user_id TEXT UNIQUE,
+                    request_id TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL CHECK (status IN ('deleting', 'completed')),
+                    step TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    progress_json TEXT NOT NULL DEFAULT '{}',
+                    last_error TEXT,
+                    deleted_counts_json TEXT NOT NULL DEFAULT '{}'
+                )
+                """
+            )
 
     def begin(
         self, scope: SubjectScope, *, redact_identity: bool, now: str
@@ -339,6 +356,26 @@ class SubjectDeletionLedger:
             ).fetchall()
         return tuple(dict(row) for row in rows)
 
+    def completed_account_rows(self, *, limit: int = 100_000) -> tuple[dict[str, Any], ...]:
+        """Completed account deletions for post-restore replay."""
+
+        try:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    "SELECT user_id_hash, user_id, request_id, status, step, "
+                    "started_at, updated_at, completed_at, deleted_counts_json "
+                    "FROM account_deletions WHERE status = 'completed' AND user_id IS NOT NULL "
+                    "ORDER BY completed_at, updated_at LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            return tuple(dict(row) for row in rows)
+        except Exception as exc:
+            if "account_deletions" in str(exc) and (
+                "no such table" in str(exc).lower() or "does not exist" in str(exc).lower()
+            ):
+                return ()
+            raise
+
     def export_completed(self, path: str | Path, *, limit: int = 100_000) -> int:
         """Write completed deletions to a root-only 0600 snapshot file.
 
@@ -349,12 +386,17 @@ class SubjectDeletionLedger:
         target = Path(path).expanduser().resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
         rows = self.completed_rows(limit=limit)
+        account_rows = self.completed_account_rows(limit=limit)
         temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         try:
             with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
                 json.dump(
-                    {"version": _LEDGER_SNAPSHOT_VERSION, "rows": rows},
+                    {
+                        "version": _LEDGER_SNAPSHOT_VERSION,
+                        "rows": rows,
+                        "account_rows": account_rows,
+                    },
                     handle,
                     sort_keys=True,
                 )
@@ -366,7 +408,7 @@ class SubjectDeletionLedger:
                 temporary.unlink()
             except FileNotFoundError:
                 pass
-        return len(rows)
+        return len(rows) + len(account_rows)
 
     def merge_completed(self, path: str | Path) -> dict[str, int]:
         """Add snapshot rows missing from the restored ledger; never overwrite.
@@ -387,6 +429,7 @@ class SubjectDeletionLedger:
             raise ValueError("snapshot rows must be a list")
 
         merged = existing = 0
+        account_merged = account_existing = 0
         with self._connect() as connection:
             for raw in raw_rows:
                 row = _snapshot_row(raw)
@@ -417,7 +460,40 @@ class SubjectDeletionLedger:
                     merged += 1
                 else:
                     existing += 1
-        return {"merged": merged, "existing": existing}
+            account_raw_rows = document.get("account_rows")
+            if isinstance(account_raw_rows, list):
+                for raw in account_raw_rows:
+                    if not isinstance(raw, dict):
+                        continue
+                    user_id = str(raw.get("user_id") or "")
+                    if not user_id:
+                        continue
+                    cursor = connection.execute(
+                        """
+                        INSERT INTO account_deletions (
+                            user_id_hash, user_id, request_id, status, step,
+                            started_at, updated_at, completed_at, deleted_counts_json
+                        ) VALUES (?, ?, ?, 'completed', 'completed', ?, ?, ?, ?)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        (
+                            _hash(user_id),
+                            user_id,
+                            str(raw["request_id"]),
+                            str(raw.get("started_at") or ""),
+                            str(raw.get("updated_at") or ""),
+                            str(raw.get("completed_at") or ""),
+                            str(raw.get("deleted_counts_json") or "{}"),
+                        ),
+                    )
+                    if cursor.rowcount:
+                        account_merged += 1
+                    else:
+                        account_existing += 1
+        result = {"merged": merged, "existing": existing}
+        if account_merged or account_existing:
+            result.update({"account_merged": account_merged, "account_existing": account_existing})
+        return result
 
 
 @dataclass(frozen=True, slots=True)

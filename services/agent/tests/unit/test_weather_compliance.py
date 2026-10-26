@@ -13,8 +13,8 @@ from services.agent.src.providers.domestic_weather import (
 from services.agent.src.providers.weather_places import City
 
 _ROOT = Path(__file__).resolve().parents[4]
-_DOC = _ROOT / "docs/compliance/weather-lookup-data-flow.md"
-_CHILD_DOC = _ROOT / "docs/compliance/child-audio-transcript-ephemeral.md"
+_DOC = _ROOT / "docs/compliance.md"
+_CHILD_DOC = _ROOT / "docs/compliance.md"
 _HEADER_NAMES = {
     "host",
     "accept",
@@ -27,6 +27,9 @@ _HEADER_NAMES = {
 
 def _documented_fields(text: str) -> dict[str, set[str]]:
     found: dict[str, set[str]] = {}
+    if "## 来源：`docs/compliance/weather-lookup-data-flow.md`" in text:
+        section = text.split("## 来源：`docs/compliance/weather-lookup-data-flow.md`")[1]
+        text = section.split("\n---")[0]
     for line in text.splitlines():
         if not line.startswith("| `/"):
             continue
@@ -89,7 +92,7 @@ async def test_compliance_doc_keyset_matches_the_recorded_request() -> None:
     doc = _DOC.read_text(encoding="utf-8")
     for name in ("Host", "Accept", "Accept-Encoding", "Connection", "User-Agent", "X-QW-Api-Key"):
         assert f"`{name}`" in doc
-    assert "docs/compliance/weather-lookup-data-flow.md" in _CHILD_DOC.read_text(encoding="utf-8")
+    assert "docs/compliance.md" in _CHILD_DOC.read_text(encoding="utf-8")
 
 
 def test_repo_has_no_foreign_weather_vendor() -> None:

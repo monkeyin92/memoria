@@ -19,12 +19,18 @@ esac
 
 interval="${MEMORIA_OFFSITE_SYNC_INTERVAL_S:-60}"
 wal_retention_days="${MEMORIA_WAL_LOCAL_RETENTION_DAYS:-7}"
-case "$interval:$wal_retention_days" in
-  *[!0-9:]*|:*|*:|0:*|*:0)
-    echo "sync interval and WAL retention must be positive integers" >&2
+offsite_retention_days="${MEMORIA_OFFSITE_RETENTION_DAYS:-7}"
+case "$interval:$wal_retention_days:$offsite_retention_days" in
+  *[!0-9:]*|:*|*:|0:*|*:0|*:0:*)
+    echo "sync interval, WAL retention, and offsite retention must be positive integers" >&2
     exit 2
     ;;
 esac
+
+if [ "$offsite_retention_days" -lt 1 ] || [ "$offsite_retention_days" -gt 7 ]; then
+  echo "MEMORIA_OFFSITE_RETENTION_DAYS must be between 1 and 7 days (got $offsite_retention_days)" >&2
+  exit 2
+fi
 
 mc alias set --quiet local http://memoria-minio:9000 \
   "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
@@ -32,6 +38,13 @@ mc alias set --quiet offsite "$MEMORIA_OFFSITE_S3_ENDPOINT" \
   "$MEMORIA_OFFSITE_S3_ACCESS_KEY" "$MEMORIA_OFFSITE_S3_SECRET_KEY"
 mc stat "offsite/$MEMORIA_OFFSITE_S3_BUCKET" >/dev/null
 mc version info "offsite/$MEMORIA_OFFSITE_S3_BUCKET" | grep -q 'Enabled'
+
+# Configure lifecycle expiration policy (<= 7 days) if not already present
+if ! mc ilm rule list "offsite/$MEMORIA_OFFSITE_S3_BUCKET" 2>/dev/null | grep -q -E 'Expiry|Expire|expiration'; then
+  mc ilm rule add --expire-days "$offsite_retention_days" \
+    --noncurrent-expire-days "$offsite_retention_days" \
+    "offsite/$MEMORIA_OFFSITE_S3_BUCKET" || echo "warning: could not set ILM rule on offsite bucket" >&2
+fi
 
 while :; do
   test -s /backup-staging/LATEST

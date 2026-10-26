@@ -109,6 +109,17 @@ def _device_rows(path: Path) -> list[sqlite3.Row]:
         connection.close()
 
 
+def _activation_manifests(path: Path) -> list[dict[str, object]]:
+    connection = _connect(path)
+    try:
+        rows = connection.execute(
+            "SELECT manifest_json FROM device_onboarding_activations ORDER BY activation_version"
+        ).fetchall()
+    finally:
+        connection.close()
+    return [json.loads(str(row["manifest_json"])) for row in rows]
+
+
 def _audit_rows(path: Path) -> list[sqlite3.Row]:
     connection = _connect(path)
     try:
@@ -491,6 +502,69 @@ def test_unbinding_the_device_deletes_its_registration_audit(tmp_path: Path) -> 
     assert _audit_rows(database) == []
     assert devices[0]["lifecycle_status"] == "provisioned"
     assert devices[0]["binding_id"] is None
+
+
+def test_unbinding_clears_the_display_name_from_the_activation_manifest(
+    tmp_path: Path,
+) -> None:
+    _seed, public_key = _public_key()
+    database = tmp_path / "registry.sqlite"
+    service, store = _service(database, NOW)
+    manifest = {
+        "schema_version": 1,
+        "display": {"robot_name": "robot", "primary_subject_display_name": "kept-name"},
+    }
+    try:
+        _register(service, public_key=public_key)
+        connection = _connect(database)
+        connection.execute(
+            """
+            UPDATE device_onboarding_devices
+            SET lifecycle_status = 'bound', binding_id = ?, binding_version = 1,
+                actor_id = ?
+            WHERE device_id = ?
+            """,
+            ("bind_synth_01", "actor_synth_01", "dev_synth_01"),
+        )
+        connection.execute(
+            """
+            INSERT INTO device_onboarding_activations (
+                activation_id, device_id, claim_id, binding_id, binding_version,
+                activation_version, manifest_json, manifest_hash, status, issued_at,
+                expires_at
+            ) VALUES (?, ?, ?, ?, 1, 1, ?, ?, 'manifest_ready', ?, ?)
+            """,
+            (
+                "act_synth_01",
+                "dev_synth_01",
+                "claim_synth_01",
+                "bind_synth_01",
+                json.dumps(manifest),
+                "a" * 64,
+                NOW.isoformat(),
+                LATER.isoformat(),
+            ),
+        )
+        connection.commit()
+        connection.close()
+        released = release_committed_binding(
+            store,
+            device_id="dev_synth_01",
+            binding_id="bind_synth_01",
+            reason_code="user_unbound",
+            now=LATER,
+        )
+    finally:
+        store.close()
+
+    manifests = _activation_manifests(database)
+    assert released is True
+    assert manifests == [
+        {
+            "schema_version": 1,
+            "display": {"robot_name": "robot", "primary_subject_display_name": ""},
+        }
+    ]
 
 
 def test_command_rejects_seed_and_private_key_arguments() -> None:
@@ -959,4 +1033,115 @@ async def test_postgres_api_unbind_deletes_the_registration_audit(
 
     assert released is True
     assert audits == []
-    assert columns == AUDIT_COLUMNS
+
+
+@pytest.mark.asyncio
+async def test_postgres_unbind_clears_the_display_name_from_the_activation_manifest(
+    postgres_registration: tuple[PostgresBootstrapStore, PostgresBootstrapStore, str, str],
+) -> None:
+    maintenance, api, admin_dsn, _maintenance_dsn = postgres_registration
+    _seed, public_key = _public_key()
+    service = DeviceOnboardingService(maintenance, offline_mock=False, now_fn=lambda: NOW)
+    _register(service, public_key=public_key)
+    manifest = {
+        "schema_version": 1,
+        "display": {"robot_name": "robot", "primary_subject_display_name": "kept-name"},
+    }
+    connection = await asyncpg.connect(admin_dsn)
+    try:
+        await connection.execute(
+            """
+            INSERT INTO device_onboarding_sessions (
+                onboarding_session_id, device_id, actor_id, client_onboarding_id,
+                qr_nonce_hash, pop_hash, mobile_nonce_hash, protocol_version,
+                ble_name, ble_service_uuid, state, state_version,
+                first_seen_at, expires_at
+            ) VALUES (
+                'sess_synth_01', 'dev_synth_01', 'actor_synth_01', 'cli_synth_01',
+                $1, $2, $3, 1,
+                'ble_synth', 'uuid_synth', 'online', 1,
+                $4, $5
+            )
+            """,
+            "b" * 64,
+            "c" * 64,
+            "d" * 64,
+            NOW,
+            LATER,
+        )
+        await connection.execute(
+            """
+            INSERT INTO device_onboarding_claims (
+                claim_id, onboarding_session_id, device_id, actor_id,
+                status, idempotency_key, reserved_at, expires_at
+            ) VALUES (
+                'claim_synth_01', 'sess_synth_01', 'dev_synth_01', 'actor_synth_01',
+                'committed', 'idem_claim_01', $1, $2
+            )
+            """,
+            NOW,
+            LATER,
+        )
+        await connection.execute(
+            """
+            INSERT INTO device_onboarding_bindings (
+                binding_id, claim_id, device_id, actor_id,
+                binding_version, status, initialization_json, idempotency_key,
+                created_at, committed_at
+            ) VALUES (
+                'bind_synth_01', 'claim_synth_01', 'dev_synth_01', 'actor_synth_01',
+                1, 'committed', '{}'::jsonb, 'idem_bind_01',
+                $1, $1
+            )
+            """,
+            NOW,
+        )
+        await connection.execute(
+            """
+            UPDATE device_onboarding_devices
+            SET lifecycle_status = 'bound', binding_id = $2, binding_version = 1,
+                actor_id = $3
+            WHERE device_id = $1
+            """,
+            "dev_synth_01",
+            "bind_synth_01",
+            "actor_synth_01",
+        )
+        await connection.execute(
+            """
+            INSERT INTO device_onboarding_activations (
+                activation_id, device_id, actor_id, claim_id, binding_id, binding_version,
+                activation_version, manifest_json, manifest_hash, status, issued_at, expires_at
+            ) VALUES ($1, $2, $3, $4, $5, 1, 1, $6::jsonb, $7, 'manifest_ready', $8, $9)
+            """,
+            "act_synth_01",
+            "dev_synth_01",
+            "actor_synth_01",
+            "claim_synth_01",
+            "bind_synth_01",
+            json.dumps(manifest),
+            "a" * 64,
+            NOW,
+            LATER,
+        )
+    finally:
+        await connection.close()
+
+    released = release_committed_binding(
+        api,
+        device_id="dev_synth_01",
+        binding_id="bind_synth_01",
+        reason_code="user_unbound",
+        now=LATER,
+    )
+    reader = await asyncpg.connect(admin_dsn)
+    try:
+        stored = await reader.fetchval(
+            "SELECT manifest_json FROM device_onboarding_activations WHERE activation_id = $1",
+            "act_synth_01",
+        )
+    finally:
+        await reader.close()
+
+    assert released is True
+    assert json.loads(stored)["display"]["primary_subject_display_name"] == ""

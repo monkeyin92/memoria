@@ -3,7 +3,7 @@
 After a reply the child's next sentence has no device VAD edge, so its ASR final is endpointed with a
 fixed 1.2 s grace.  Shortening it saves that long on every follow-up question; the risk is a child's
 mid-sentence pause being cut into two turns.  Whether to shorten it for good is a robot experiment
-(docs/runbooks/followup-grace-experiment.md); until then the default is unchanged and an unreadable
+(docs/runbooks.md); until then the default is unchanged and an unreadable
 setting must never shorten it.
 """
 

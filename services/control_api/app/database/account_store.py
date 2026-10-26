@@ -35,14 +35,15 @@ def _deletion_receipt(row: Mapping[str, Any]) -> dict[str, Any]:
     """One receipt row with an audit hash instead of the account id."""
 
     user_id = row["user_id"]
+    status = str(row["status"])
     return {
         "account_ref": (
             None
-            if user_id is None
+            if user_id is None or status == "completed"
             else hashlib.sha256(str(user_id).encode("utf-8")).hexdigest()[:16]
         ),
         "request_id": str(row["request_id"]),
-        "status": str(row["status"]),
+        "status": status,
         "step": str(row["step"]),
         "started_at": row["started_at"],
         "updated_at": row["updated_at"],
@@ -466,25 +467,38 @@ class AccountStoreMixin:
             ).fetchall()
         return tuple(_deletion_receipt(row) for row in rows)
 
-    def begin_account_deletion(self, *, user_id: str, started_at: str) -> dict[str, Any]:
+    def begin_account_deletion(
+        self, *, user_id: str, started_at: str, replay: bool = False
+    ) -> dict[str, Any]:
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
-                "SELECT request_id FROM account_deletions WHERE user_id_hash = ?",
+                "SELECT request_id, status FROM account_deletions WHERE user_id_hash = ?",
                 (self._user_id_hash(user_id),),
             ).fetchone()
-            if existing is None:
+            if existing is None or (replay and existing["status"] == "completed"):
+                request_id = str(uuid.uuid4())
                 connection.execute(
                     """
                     INSERT INTO account_deletions (
                         user_id_hash, user_id, request_id, status, step,
                         started_at, updated_at
                     ) VALUES (?, ?, ?, 'deleting', 'started', ?, ?)
+                    ON CONFLICT (user_id_hash) DO UPDATE
+                    SET user_id = excluded.user_id,
+                        request_id = excluded.request_id,
+                        status = 'deleting',
+                        step = 'started',
+                        started_at = excluded.started_at,
+                        updated_at = excluded.updated_at,
+                        completed_at = NULL,
+                        progress_json = '{}',
+                        last_error = NULL
                     """,
                     (
                         self._user_id_hash(user_id),
                         user_id,
-                        str(uuid.uuid4()),
+                        request_id,
                         started_at,
                         started_at,
                     ),
@@ -536,6 +550,20 @@ class AccountStoreMixin:
                 SELECT user_id FROM account_deletions
                 WHERE status = 'deleting' AND user_id IS NOT NULL
                 ORDER BY started_at LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return tuple(str(row["user_id"]) for row in rows)
+
+    def completed_account_deletions(self, *, limit: int = 1000) -> tuple[str, ...]:
+        if not 1 <= limit <= 100_000:
+            raise ValueError("completed deletion limit must be between 1 and 100000")
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT user_id FROM account_deletions
+                WHERE status = 'completed' AND user_id IS NOT NULL
+                ORDER BY completed_at, updated_at LIMIT ?
                 """,
                 (limit,),
             ).fetchall()
@@ -842,7 +870,7 @@ class AccountStoreMixin:
             connection.execute(
                 """
                 UPDATE account_deletions
-                SET user_id = NULL, status = 'completed', step = 'completed',
+                SET status = 'completed', step = 'completed',
                     updated_at = ?, completed_at = ?, progress_json = '{}',
                     last_error = NULL, deleted_counts_json = ?
                 WHERE user_id_hash = ? AND request_id = ? AND status = 'deleting'

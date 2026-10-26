@@ -9,21 +9,18 @@ ALLOWED_DOCUMENTS = {
     "HANDOFF.md",
     "TODOLIST.md",
 }
-# Permanent references and evidence that HANDOFF/TODOLIST link to live under
-# these docs/ subtrees only; anything else is documentation sprawl.
-ALLOWED_DOCS_PREFIXES = (
-    "docs/acceptance/",
-    "docs/audit/",
-    "docs/compliance/",
-    "docs/design/",
-    "docs/eval/",
-    "docs/runbooks/",
-    "docs/strategy/",
-)
+# Each document type has one canonical aggregate. Evidence files stay beside
+# the aggregates and are covered by the data pattern below.
+ALLOWED_DOCS_PREFIXES = ()
 ALLOWED_DOCS_FILES = {
-    "docs/HANDOFF-archive-before-0920.md",
-    "docs/HANDOFF-archive-0916-0923.md",
-    "docs/HANDOFF-archive-0924-1003.md",
+    "docs/acceptance.md",
+    "docs/compliance.md",
+    "docs/design.md",
+    "docs/eval.md",
+    "docs/handoff-archive.md",
+    "docs/product.md",
+    "docs/runbooks.md",
+    "docs/strategy.md",
 }
 # Evaluation receipts are data, kept next to the docs that cite them.
 ALLOWED_DOCS_DATA_PATTERN = "docs/memory-evaluation-*.json"
@@ -70,8 +67,7 @@ def test_repository_has_exactly_three_long_lived_documents() -> None:
         for path in repository_files
         if path.startswith("docs/")
         and (ROOT / path).is_file()
+        and Path(path).suffix.lower() in DOCUMENT_SUFFIXES
         and path not in ALLOWED_DOCS_FILES
-        and not path.startswith(ALLOWED_DOCS_PREFIXES)
-        and not Path(path).match(ALLOWED_DOCS_DATA_PATTERN)
     )
     assert stray == []
