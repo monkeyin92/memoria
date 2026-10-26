@@ -121,7 +121,7 @@ def test_retired_livekit_media_chain_is_not_part_of_the_production_stack() -> No
     nginx = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
     smoke = (ROOT / "scripts" / "smoke_server_deployment.sh").read_text(encoding="utf-8")
     example = (ROOT / "infra" / "memoria.env.production.example").read_text(encoding="utf-8")
-    runbook = (ROOT / "docs" / "runbooks" / "release-rollback.md").read_text(encoding="utf-8")
+    runbook = (ROOT / "docs" / "runbooks.md").read_text(encoding="utf-8")
 
     # The only device media chain is media-edge -> Voice Core bridge. The
     # LiveKit worker and both Python gateways are gone from Compose, the image
@@ -354,7 +354,7 @@ def test_offsite_backup_profile_covers_base_backup_wal_and_critical_objects() ->
 
 
 def test_production_runbook_pins_data_compose_path_and_network_bootstrap_order() -> None:
-    runbook = (ROOT / "docs" / "runbooks" / "release-rollback.md").read_text(encoding="utf-8")
+    runbook = (ROOT / "docs" / "runbooks.md").read_text(encoding="utf-8")
 
     assert "DATA_COMPOSE_DIR=/opt/memoria/current/infra" in runbook
     network_create = "docker compose -f docker-compose.production.yml create --no-build"
@@ -455,7 +455,7 @@ def test_readiness_refresh_passes_required_provider_gate_into_run_container() ->
 
 
 def test_memory_projection_rebuild_uses_the_control_api_module_entrypoint() -> None:
-    archive_runbook = (ROOT / "docs" / "runbooks" / "release-rollback.md").read_text(encoding="utf-8")
+    archive_runbook = (ROOT / "docs" / "runbooks.md").read_text(encoding="utf-8")
     production_runbook = archive_runbook
     module_entrypoint = "-m scripts.rebuild_memory_projections --confirm-rebuild"
 
@@ -1066,7 +1066,7 @@ def test_media_edge_direct_device_ingress_uses_new_loopback_port_and_exact_path(
     device_edge = (ROOT / "infra" / "nginx-memoria-device-edge.conf").read_text(encoding="utf-8")
     https_conf = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
     example = (ROOT / "infra" / "memoria.env.production.example").read_text(encoding="utf-8")
-    runbook = (ROOT / "docs" / "runbooks" / "release-rollback.md").read_text(encoding="utf-8")
+    runbook = (ROOT / "docs" / "runbooks.md").read_text(encoding="utf-8")
 
     # Direct device WSS is published loopback-only to a NEW media-edge port and
     # never reuses the legacy gateway port 8793.
@@ -1383,13 +1383,13 @@ def test_python_services_ship_logs_to_the_host_sink_and_keep_python_as_pid_1() -
     assert _imudp_sink_url(off) == sink
     assert "omfile" not in off
 
-    runbook = (ROOT / "docs" / "runbooks" / "release-rollback.md").read_text(encoding="utf-8")
-    start = runbook.index("## 容器日志落盘")
+    runbook = (ROOT / "docs" / "runbooks.md").read_text(encoding="utf-8")
+    start = runbook.index("### 容器日志落盘")
     section = runbook[start:]
-    next_heading = re.search(r"\n## ", section)
+    next_heading = re.search(r"\n###? ", section[1:])
     assert next_heading is not None
-    section = section[: next_heading.start()]
-    compliance = (ROOT / "docs" / "compliance" / "child-audio-transcript-ephemeral.md").read_text(
+    section = section[: next_heading.start() + 1]
+    compliance = (ROOT / "docs" / "compliance.md").read_text(
         encoding="utf-8"
     )
     rows = [line for line in compliance.splitlines() if line.startswith("| 应用日志 |")]

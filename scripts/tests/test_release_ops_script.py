@@ -318,7 +318,7 @@ def test_every_release_artifact_list_ships_the_stack_roles() -> None:
     roles = set(sourced_stack().roles)
     assert _ROLES == {role: f"memoria-{role}" for role in roles}
 
-    runbook = (ROOT / "docs" / "runbooks" / "release-rollback.md").read_text(encoding="utf-8")
+    runbook = (ROOT / "docs" / "runbooks.md").read_text(encoding="utf-8")
     save = re.search(r'docker save -o "\$ARTIFACT_DIR/images\.tar" ((?:.*\\\n)*.*)', runbook)
     assert save, "the runbook must show the docker save that builds images.tar"
     assert set(re.findall(r"memoria-([a-z-]+):\$RELEASE_TAG", save.group(1))) == roles
