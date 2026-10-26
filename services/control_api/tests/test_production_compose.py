@@ -340,6 +340,8 @@ def test_offsite_backup_profile_covers_base_backup_wal_and_critical_objects() ->
     assert "local/memoria-archive" in mirror
     assert "local/memoria-voice" in mirror
     assert "mc version info" in mirror
+    assert "MEMORIA_OFFSITE_RETENTION_DAYS" in mirror
+    assert "mc ilm rule" in mirror
     for forbidden in ("localhost", "127.0.0.1", "memoria-minio", "host.docker.internal"):
         assert f"*{forbidden}*" in mirror
 
