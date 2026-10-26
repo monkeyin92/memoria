@@ -488,7 +488,7 @@ sudo systemctl enable --now memoria-freeze-dump-cleanup.timer
 
 恢复集合须含 PostgreSQL base/WAL、MinIO versioned objects、SQLite 兼容快照、root-only env、manifest/回执。用 `scripts/run_offsite_restore_drill.sh` 在隔离环境校验备份、对象清单/哈希、外键和应用读取；不能拿缓存当权威。
 
-恢复后、恢复流量和重建投影之前，必须先按上文「从备份恢复」的完整顺序做：停流量 → 从线上控制库导出 completed 删除快照 → 恢复数据层 → `--ledger-snapshot` 合并快照并 replay → 确认 `incomplete=0` → 删快照 → 重建投影 → 恢复流量。只跑 `python -m scripts.replay_subject_deletions --confirm-replay` 只覆盖恢复后账本里仍然存在的 completed 行；备份之后才完成的删除，其账本行也随备份回滚了，必须靠恢复前导出的快照补回来。
+恢复后、恢复流量和重建投影之前，必须先按上文「从备份恢复」的完整顺序做：停流量 → 从线上控制库导出 completed 删除与注销快照（含 `subject_deletions` 与 `account_deletions`） → 恢复数据层 → `--ledger-snapshot` 合并快照并 replay → 确认 `incomplete=0`（且 `account_incomplete=0`） → 删快照 → 重建投影 → 恢复流量。只跑 `python -m scripts.replay_subject_deletions --confirm-replay` 只覆盖恢复后账本里仍然存在的 completed 行；备份之后才完成的主体删除与账号注销，其账本行也随备份回滚了，必须靠恢复前导出的快照补回来。
 
 **镜像里有没有这个脚本**：`infra/Dockerfile.control-api` 与 `scripts/delta_build_images.sh` 从 2026-10-05 的端口参数化改动起会复制 `scripts/replay_subject_deletions.py`；本分支新增的 `--export-ledger` 与 `--ledger-snapshot` 只存在于包含本分支代码的镜像。更早的镜像（含回滚目标 `20261004-first-warm-v1`）没有这个模块，命令报 `No module named scripts.replay_subject_deletions`，可以从发布树把脚本只读挂进一次性容器：在 `docker compose run`（或 `docker run`）上加 `-v <发布树>/scripts/replay_subject_deletions.py:/app/scripts/replay_subject_deletions.py:ro`。2026-10-05 只在新机上用 `docker run` 验证过带挂载的 `--help` 能解析参数；带 `--confirm-replay` 的真实重放（会导入 `services.control_api.app.main.create_app` 并改库）没有跑过，首次使用前先在隔离的恢复库上试。
 

@@ -11,7 +11,7 @@
 - **已删除但未在末尾复核**：归档对象（每次删除后立即回读确认）、语料对象、身份脱敏、会话终止、按 id 收集的投影（通过 `source_event_id` 间接核对）。
 - **有意保留的内容无关审计**：同意要约/证据/快照、`policy_receipts_v2`、会话 runtime profile 与事件（签名载荷只含 id、年龄段、类别与 `persona_id`，无人格文本与姓名）、身份关系与绑定、`guardian_person_consents`、删除台账本身。
 - **2026-09-26 已修复的来源**：数字分身与进化学习此前只校验"主人说话人/成年账号"，会把孩子或老人的话轮写入账号本人的数字分身快照与学习信号；现在两者只接收主体为空（早于主体归属）或等于账号本人的证据。response-plan 缓存在删除前按使用人失效。线上两张表当时为空，无存量需要清理。
-- **恢复后再删除（2026-09-26 已实现）**：删除台账在控制库，使用人数据在 PostgreSQL/MinIO；恢复数据层后必须先运行 `scripts/replay_subject_deletions.py --confirm-replay` 重放全部已完成删除，再恢复流量与重建投影（见发布运维手册）。
+- **恢复后再删除（2026-09-26 已实现，2026-10-26 扩展覆盖账号注销）**：删除台账在控制库，使用人与账号数据在 PostgreSQL/MinIO；恢复数据层后必须先运行 `scripts/replay_subject_deletions.py --confirm-replay` 重放全部已完成主体删除与账号注销（`account_deletions`），再恢复流量与重建投影（见发布运维手册）。
 - **仍存在的已知缺口（明确接受，不宣称已擦除）**：
   1. Redis 流 `memoria:memory:events` 中已派发的载荷无法撤回，只随约 10 万条的近似裁剪老化。
   2. 使用人显示名：`/minors/{id}/delete` 仍被设备服务的孩子保留昵称和年龄段（绑定引用该行，解绑才清除）；账号注销会在 `identity_delete_account_identity` 口子里删除该账号自己的人行。设备解绑时（`release_committed_binding`），`device_onboarding_activations.manifest_json` 中的主要使用人显示名已脱敏置空（保留签名与哈希用于审计记录，避免明文泄露个人信息）。

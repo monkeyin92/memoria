@@ -41,7 +41,12 @@ def test_replay_requires_explicit_confirmation(tmp_path: Path) -> None:
 def test_replay_reports_counts_only(tmp_path: Path, dev_database_url: str) -> None:
     result = _run(tmp_path, "--confirm-replay", database_url=dev_database_url)
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout.strip().splitlines()[-1]) == {"incomplete": 0, "replayed": 0}
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == {
+        "account_incomplete": 0,
+        "account_replayed": 0,
+        "incomplete": 0,
+        "replayed": 0,
+    }
 
 
 def test_export_ledger_writes_a_root_only_snapshot_and_prints_counts(
@@ -52,7 +57,11 @@ def test_export_ledger_writes_a_root_only_snapshot_and_prints_counts(
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout.strip().splitlines()[-1]) == {"exported": 0}
     assert snapshot.stat().st_mode & 0o777 == 0o600
-    assert json.loads(snapshot.read_text(encoding="utf-8")) == {"version": 1, "rows": []}
+    assert json.loads(snapshot.read_text(encoding="utf-8")) == {
+        "account_rows": [],
+        "rows": [],
+        "version": 1,
+    }
 
 
 def test_ledger_snapshot_requires_confirmation(tmp_path: Path) -> None:

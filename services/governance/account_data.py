@@ -664,7 +664,11 @@ class AccountStore(Protocol):
 
     def pending_account_deletions(self, *, limit: int = 100) -> tuple[str, ...]: ...
 
-    def begin_account_deletion(self, *, user_id: str, started_at: str) -> dict[str, Any]: ...
+    def completed_account_deletions(self, *, limit: int = 1000) -> tuple[str, ...]: ...
+
+    def begin_account_deletion(
+        self, *, user_id: str, started_at: str, replay: bool = False
+    ) -> dict[str, Any]: ...
 
     def update_account_deletion(
         self,
@@ -796,9 +800,31 @@ class AccountDataGovernance:
             return _empty_legacy_export()
         return await self._legacy_registry.export_for_account(account_id=account_id)
 
-    async def delete_account(self, account_id: str) -> dict[str, Any]:
+    async def delete_account(self, account_id: str, *, replay: bool = False) -> dict[str, Any]:
         async with self._deletion_lock:
-            return await self._delete_account(account_id)
+            return await self._delete_account(account_id, replay=replay)
+
+    async def replay_completed_deletions(self, *, limit: int = 1000) -> dict[str, int]:
+        """Re-apply completed account deletions after restoring data layers."""
+
+        account_ids = await asyncio.to_thread(
+            self._memory_store.completed_account_deletions,
+            limit=limit,
+        )
+        replayed = incomplete = 0
+        for account_id in account_ids:
+            try:
+                await self.delete_account(account_id, replay=True)
+            except Exception as exc:
+                incomplete += 1
+                logger.warning(
+                    "account deletion replay remains incomplete account_hash=%s reason=%s",
+                    hashlib.sha256(account_id.encode("utf-8")).hexdigest()[:16],
+                    type(exc).__name__,
+                )
+            else:
+                replayed += 1
+        return {"account_replayed": replayed, "account_incomplete": incomplete}
 
     async def retry_pending_deletions(self, *, limit: int = 100) -> int:
         account_ids = await asyncio.to_thread(
@@ -819,7 +845,7 @@ class AccountDataGovernance:
                 completed += 1
         return completed
 
-    async def _delete_account(self, account_id: str) -> dict[str, Any]:
+    async def _delete_account(self, account_id: str, *, replay: bool = False) -> dict[str, Any]:
         started_at = datetime.now(UTC).isoformat()
         # Set the durable evolution tombstone before the primary account saga
         # becomes visible. A fresh process/worker then fails closed even if it
@@ -833,8 +859,9 @@ class AccountDataGovernance:
             self._memory_store.begin_account_deletion,
             user_id=account_id,
             started_at=started_at,
+            replay=replay,
         )
-        if deletion["status"] == "completed":
+        if not replay and deletion["status"] == "completed":
             return {
                 "request_id": deletion["request_id"],
                 "status": "completed",
