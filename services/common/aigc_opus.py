@@ -17,7 +17,7 @@ import struct
 from collections.abc import Mapping
 from typing import Final
 
-from services.common.companions import CHILD_STORY_SPEAKER, DESIGNED_VOICE_SPEAKERS
+from services.common.companions import DESIGNED_VOICE_SPEAKERS
 
 REQUIRED_AIGC_TAG_KEYS: Final = ("CONTENT_ID", "SERVICE_PROVIDER", "AI_GENERATED")
 # GB 45438-2025 Appendix E implicit-label field names, written as Vorbis
