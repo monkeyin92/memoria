@@ -1,32 +1,43 @@
 {
-  "generated": "2026-10-15",
+  "generated": "2026-10-27",
   "voice": {
-    "id": "zh_female_tianmeitaozi_uranus_bigtts",
+    "id": "zh_female_shaoergushi_uranus_bigtts",
     "terms": "trial/demo only pending Volcengine terms"
   },
-  "tool": "ffmpeg-libopus-scaffold",
-  "status": "no_playable_online_assets",
-  "note": "No Doubao-rendered speech is checked in. Scaffold tones must not enter any play path. Run scripts/render_labelled_lines.py with DOUBAO_TTS_* to produce playable online ogg + s16le (tool doubao-seed-tts-2.0) before loading the catalogue.",
+  "tool": "doubao-seed-tts-2.0",
+  "status": "playable",
   "lines": [
     {
       "id": "llm_thinking",
       "prompt": "嗯，我想一想。",
-      "tool": "ffmpeg-libopus-scaffold",
-      "date": "2026-10-15",
-      "voice_id": "zh_female_tianmeitaozi_uranus_bigtts",
-      "playable": false,
+      "tool": "doubao-seed-tts-2.0",
+      "date": "2026-10-27",
+      "voice_id": "zh_female_shaoergushi_uranus_bigtts",
+      "content_producer": "Memoria",
+      "content_propagator": "Memoria",
+      "label": "1",
+      "playable": true,
       "online_sample_rate_hz": 24000,
-      "offline_sample_rate_hz": 16000
+      "offline_sample_rate_hz": 16000,
+      "online_ogg": "services/common/assets/labelled_lines/llm_thinking.ogg",
+      "online_pcm": "services/common/assets/labelled_lines/llm_thinking.s16le",
+      "offline_ogg": "firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/assets/offline_lines/llm_thinking.ogg"
     },
     {
       "id": "llm_unavailable",
       "prompt": "我现在有点卡住了，等一会儿再来找我聊吧。",
-      "tool": "ffmpeg-libopus-scaffold",
-      "date": "2026-10-15",
-      "voice_id": "zh_female_tianmeitaozi_uranus_bigtts",
-      "playable": false,
+      "tool": "doubao-seed-tts-2.0",
+      "date": "2026-10-27",
+      "voice_id": "zh_female_shaoergushi_uranus_bigtts",
+      "content_producer": "Memoria",
+      "content_propagator": "Memoria",
+      "label": "1",
+      "playable": true,
       "online_sample_rate_hz": 24000,
-      "offline_sample_rate_hz": 16000
+      "offline_sample_rate_hz": 16000,
+      "online_ogg": "services/common/assets/labelled_lines/llm_unavailable.ogg",
+      "online_pcm": "services/common/assets/labelled_lines/llm_unavailable.s16le",
+      "offline_ogg": "firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/assets/offline_lines/llm_unavailable.ogg"
     }
   ]
 }

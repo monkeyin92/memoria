@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Final
 
 from services.common.aigc_opus import (
+    CANONICAL_SERVICE_PROVIDER,
     OPUS_TAGS_SCAN_BYTES,
     require_aigc_tags,
     title_is_placeholder,
@@ -205,9 +206,11 @@ def load_catalogue(
         if title_is_placeholder(head):
             raise ValueError(f"{line_id} TITLE marks a placeholder; refusing play catalogue")
         aigc = require_aigc_tags(head, content_id=line_id)
-        if aigc["service_provider"] != expected_aigc["service_provider"]:
+        expected_sp = expected_aigc["service_provider"]
+        if aigc["service_provider"] not in (expected_sp, CANONICAL_SERVICE_PROVIDER):
             raise ValueError(
-                f"{line_id} SERVICE_PROVIDER must be {expected_aigc['service_provider']}"
+                f"{line_id} SERVICE_PROVIDER must be {expected_sp} "
+                f"or {CANONICAL_SERVICE_PROVIDER}"
             )
         pcm = _load_pcm(path, sample_rate_hz=sample_rate_hz)
         loaded[line_id] = LabelledLine(

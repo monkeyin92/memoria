@@ -3085,6 +3085,8 @@ For online catalogue playback a clip must be **real_speech**, carry Appendix-E A
 
 No such asset exists today for `llm_thinking` / `llm_unavailable` (the only pack files with those ids are placeholders; the 25 real-speech clips lack those CONTENT_IDs). Online path therefore uses **streaming TTS** for both exact texts until Doubao regeneration.
 
+2026-10-27. Both lines now ship as Doubao `seed-tts-2.0` speech in the child-story voice `zh_female_shaoergushi_uranus_bigtts`, with Appendix-E tags and `provenance.json` status `playable`. The online catalogue plays the pre-recorded clips, and the board copies (`wo_zai_ne.ogg`, `offline_lines/llm_thinking.ogg`, `offline_lines/llm_unavailable.ogg`) use the same voice.
+
 ### Restore actions (this PR)
 
 1. Offline `llm_thinking.ogg` / `llm_unavailable.ogg` restored byte-for-byte from `e8cff95a`.
