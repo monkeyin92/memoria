@@ -67,7 +67,9 @@ PROMPT_CLIPS = (
 )
 
 
-def _encode_board_opus(wav_path: Path, ogg_path: Path, *, content_id: str, today: str) -> None:
+def _encode_board_opus(
+    wav_path: Path, ogg_path: Path, *, content_id: str, title: str, today: str
+) -> None:
     """Encode 16 kHz mono 16 kbps Opus with GB 45438-2025 Vorbis comments."""
     ogg_path.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
@@ -108,7 +110,7 @@ def _encode_board_opus(wav_path: Path, ogg_path: Path, *, content_id: str, today
         content_producer=CONTENT_PRODUCER,
         content_propagator=CONTENT_PROPAGATOR,
     )
-    comments = {"TITLE": text, **dict(aigc)}
+    comments = {"TITLE": title, **dict(aigc)}
     raw = ogg_path.read_bytes()
     tagged = rewrite_opus_comments(raw, aigc=comments)
     if audio_packets_digest(raw) != audio_packets_digest(tagged):
@@ -123,6 +125,7 @@ def _encode_online_assets(
     pcm_path: Path,
     *,
     content_id: str,
+    title: str,
     today: str,
 ) -> None:
     """Encode 24 kHz mono 16 kbps Opus and s16le PCM sidecar for server catalogue."""
@@ -163,7 +166,7 @@ def _encode_online_assets(
         content_producer=CONTENT_PRODUCER,
         content_propagator=CONTENT_PROPAGATOR,
     )
-    comments = {"TITLE": text, **dict(aigc)}
+    comments = {"TITLE": title, **dict(aigc)}
     raw = ogg_path.read_bytes()
     tagged = rewrite_opus_comments(raw, aigc=comments)
     if audio_packets_digest(raw) != audio_packets_digest(tagged):
@@ -195,8 +198,8 @@ def _encode_online_assets(
 
 
 async def _synthesize_doubao_wav(text: str, dest_wav: Path) -> None:
-    from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
     from services.agent.src.contracts.ids import GenerationFence
+    from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
 
     config = DoubaoTTSConfig.from_env(os.environ)
     config = DoubaoTTSConfig(
@@ -237,7 +240,7 @@ def synthesize_all(app_id: str, access_token: str) -> None:
         try:
             asyncio.run(_synthesize_doubao_wav(text, tmp_wav))
             board_dest = BOARD_ASSETS_ROOT / board_rel
-            _encode_board_opus(tmp_wav, board_dest, content_id=content_id, today=today)
+            _encode_board_opus(tmp_wav, board_dest, content_id=content_id, title=text, today=today)
             print(f"  -> Wrote board clip: {board_dest.relative_to(REPO)}")
 
             if is_online:
@@ -248,6 +251,7 @@ def synthesize_all(app_id: str, access_token: str) -> None:
                     online_ogg,
                     online_pcm,
                     content_id=content_id,
+                    title=text,
                     today=today,
                 )
                 print(f"  -> Wrote online clip: {online_ogg.relative_to(REPO)}")
