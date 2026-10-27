@@ -188,6 +188,31 @@ KNOWN_CHILD_IPS: Final[Mapping[str, ChildIpCanon]] = {
             "3. 灰太狼：极具毅力的发明家，虽然屡遭波折但始终深爱家庭，口号：“我一定会回来的！”与羊村共创和平。"
         ),
     ),
+    "孙悟空": ChildIpCanon(
+        canonical_name="西游记",
+        aliases=("孙悟空", "齐天大圣", "美猴王", "西游记", "猪八戒", "唐僧", "沙僧"),
+        canon_summary=(
+            "《西游记》齐天大圣孙悟空官方设定：\n"
+            "由仙石孕育而生，拜菩提祖师学得七十二变与筋斗云，手持如意金箍棒，火眼金睛识破妖魔。\n"
+            "一路保护师父唐僧西天取经，性格机智勇敢、不畏艰险，降妖伏魔保佑正义。"
+        ),
+    ),
+    "哪吒": ChildIpCanon(
+        canonical_name="哪吒闹海",
+        aliases=("哪吒", "三太子", "李哪吒", "哪吒传奇"),
+        canon_summary=(
+            "《哪吒闹海》/《哪吒传奇》少年英雄哪吒官方设定：\n"
+            "手持乾坤圈，身披混天绫，脚踏风火轮，配火尖枪，英勇无畏、惩恶扬善、孝顺重情义的小英雄。"
+        ),
+    ),
+    "白雪公主": ChildIpCanon(
+        canonical_name="白雪公主",
+        aliases=("白雪公主", "七个小矮人", "白雪公主与七个小矮人"),
+        canon_summary=(
+            "《白雪公主》经典童话官方设定：\n"
+            "美丽纯洁善良的白雪公主，在神秘大森林里与七个性格各异但忠诚友爱的小矮人生活，最终战胜邪恶皇后，迎来幸福。"
+        ),
+    ),
 }
 
 # ---------------------------------------------------------------------------
@@ -278,6 +303,97 @@ _EXCLUDE_IP_WORDS = frozenset(
     }
 )
 
+_GENERIC_THEMES_AND_SETTINGS = frozenset(
+    {
+        "森林",
+        "森林里",
+        "大森林",
+        "树林",
+        "丛林",
+        "草地",
+        "草原",
+        "花园",
+        "小河",
+        "池塘",
+        "大海",
+        "大海里",
+        "海洋",
+        "海洋里",
+        "太空",
+        "宇宙",
+        "星球",
+        "天空",
+        "白云",
+        "城堡",
+        "城堡里",
+        "农场",
+        "学校",
+        "家里",
+        "城市",
+        "王国",
+        "小镇",
+        "村庄",
+        "动物",
+        "小动物",
+        "昆虫",
+        "恐龙",
+        "小鸟",
+        "鱼儿",
+        "小鱼",
+        "小兔",
+        "小兔子",
+        "小狗",
+        "小猫",
+        "小熊",
+        "大熊",
+        "小猴",
+        "小猴子",
+        "友谊",
+        "朋友",
+        "小伙伴",
+        "冒险",
+        "探险",
+        "魔法",
+        "奇幻",
+        "勇敢",
+        "诚实",
+        "善良",
+        "爱心",
+        "成长",
+        "暖心",
+        "温馨",
+        "治愈",
+        "好玩",
+        "好笑",
+        "搞笑",
+        "幽默",
+        "科幻",
+        "益智",
+        "白天",
+        "晚上",
+        "夜晚",
+        "睡前",
+        "阳光",
+        "月夜",
+        "星空",
+        "春天",
+        "夏天",
+        "秋天",
+        "冬天",
+        "四季",
+        "自然",
+        "大自然",
+        "寓言",
+        "成语",
+        "神话",
+        "民间",
+        "童话",
+        "绘本",
+        "生活",
+        "日常",
+    }
+)
+
 _GENERIC_STORY_CHARS = frozenset("一个新小大短长好听有趣精彩经典睡前故事童话绘本篇部首的另外别什么这那")
 
 
@@ -351,7 +467,7 @@ def extract_story_ip(query: str) -> str | None:
             candidate = match.group("ip").strip()
             norm_cand = _normalize(candidate)
             # Strip leading classifiers / quantifiers if captured by loose boundaries
-            for pfx in ("另外一个", "另一个", "换一个", "一个新的", "一个新", "一个小", "一个", "个小", "个新", "个短", "个大", "个"):
+            for pfx in ("另外一个", "另一个", "换一个", "一个新的", "一个新", "一个小", "一个", "个小", "个新", "个短", "个大", "个", "关于"):
                 if norm_cand.startswith(pfx):
                     norm_cand = norm_cand[len(pfx):]
                     break
@@ -360,13 +476,25 @@ def extract_story_ip(query: str) -> str | None:
                     norm_cand = norm_cand[:-len(sfx)]
                     break
 
-            if len(norm_cand) < 2 or norm_cand in _EXCLUDE_IP_WORDS:
+            if (
+                len(norm_cand) < 2
+                or norm_cand in _EXCLUDE_IP_WORDS
+                or norm_cand in _GENERIC_THEMES_AND_SETTINGS
+            ):
                 continue
+            if (norm_cand.endswith("里") or norm_cand.endswith("中")) and len(norm_cand) > 2:
+                if norm_cand[:-1] in _GENERIC_THEMES_AND_SETTINGS:
+                    continue
             if set(norm_cand).issubset(_GENERIC_STORY_CHARS):
                 continue
-            # Ensure it's not one of our local stories
-            if not any(_normalize(alias) in norm_cand for s in LOCAL_STORIES.values() for alias in s.aliases):
-                return norm_cand
+            # Ensure it is not one of our local stories or an alias substring
+            if any(
+                norm_cand in _normalize(alias) or _normalize(alias) in norm_cand
+                for s in LOCAL_STORIES.values()
+                for alias in s.aliases
+            ):
+                continue
+            return norm_cand
 
     return None
 

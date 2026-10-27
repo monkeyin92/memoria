@@ -79,6 +79,7 @@ def test_extract_story_ip_generic_regex() -> None:
     assert extract_story_ip("讲一个哪吒的故事") == "哪吒"
     assert extract_story_ip("给我讲个哪吒的故事吧") == "哪吒"
     assert extract_story_ip("我想听白雪公主的故事") == "白雪公主"
+    assert extract_story_ip("我想听孙悟空的故事") == "孙悟空"
 
 
 def test_extract_story_ip_excludes_common_story_words_and_local_titles() -> None:
@@ -86,6 +87,9 @@ def test_extract_story_ip_excludes_common_story_words_and_local_titles() -> None
     assert extract_story_ip("讲个好听的故事") is None
     assert extract_story_ip("讲一个小星星的枕头") is None
     assert extract_story_ip("讲月亮不着急") is None
+    assert extract_story_ip("请给我讲一个森林里的故事") is None
+    assert extract_story_ip("讲一个关于友谊的故事") is None
+    assert extract_story_ip("讲个城堡里的故事") is None
     assert extract_story_ip("给我讲个小故事吧") is None
     assert extract_story_ip("讲个小故事") is None
     assert extract_story_ip("讲一个小故事") is None
