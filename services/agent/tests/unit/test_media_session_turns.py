@@ -7101,6 +7101,7 @@ async def test_question_final_after_a_pinned_noise_turn_commits_the_question() -
     registry._sessions = {identity.session_id: context}  # noqa: SLF001
     registry.bridge = _BridgeHarness()  # noqa: SLF001
     registry.metrics = MetricsRegistry()  # noqa: SLF001
+    registry.turn_endpoint_grace_s = 0.0  # noqa: SLF001
     registry._schedule_turn_commit = (  # noqa: SLF001
         lambda ctx: None
     )

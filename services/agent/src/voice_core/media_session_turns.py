@@ -23,6 +23,10 @@ from services.agent.src.voice_core.media_session_types import (
     OutputWork,
     owned_delegation_holds_turn,
 )
+from services.agent.src.voice_core.semantic_completeness import (
+    adaptive_endpoint_grace,
+    maybe_rearm_grace_on_evidence,
+)
 from services.agent.src.voice_core.speech_timeline import ASRResult
 
 if TYPE_CHECKING:
@@ -96,6 +100,8 @@ class MediaTurnEndpointMixin:
         turn_endpoint_grace_s: float
         turn_endpoint_min_grace_s: float
         turn_endpoint_max_grace_s: float
+        turn_endpoint_grace_complete_s: float
+        turn_endpoint_grace_incomplete_s: float
         turn_endpoint_absolute_timeout_s: float
         _sessions: dict[str, _MediaVoiceSession]
 
@@ -279,6 +285,7 @@ class MediaTurnEndpointMixin:
         # A provider final is evidence, never the endpoint itself. If VAD has
         # already ended, a late final re-arms the same logical-turn commit.
         if context.pending.turn_endpoint_sample is not None:
+            maybe_rearm_grace_on_evidence(self, context, result.text)
             self._schedule_turn_commit(context)
 
     @staticmethod
@@ -748,8 +755,8 @@ class MediaTurnEndpointMixin:
             context.pending.clock_fact_partial_text = text
             context.pending.clock_fact_partial_stable_since = now
 
-    @staticmethod
     def _observe_partial_asr_result(
+        self,
         context: _MediaVoiceSession,
         result: ASRResult,
     ) -> None:
@@ -762,6 +769,8 @@ class MediaTurnEndpointMixin:
         previous = context.pending.pending_partial
         if previous is None or result.logical_version >= previous.logical_version:
             context.pending.pending_partial = result
+        if maybe_rearm_grace_on_evidence(self, context, result.text):
+            self._schedule_turn_commit(context)
 
     @staticmethod
     def _asr_covers_endpoint(
@@ -776,19 +785,10 @@ class MediaTurnEndpointMixin:
             and endpoint_sample - result_end_sample <= _ENDPOINT_ASR_COVERAGE_TOLERANCE_SAMPLES
         )
 
-    def _adaptive_endpoint_grace(self, context: _MediaVoiceSession) -> float:
-        configured = float(self.turn_endpoint_grace_s)
-        minimum = float(self.turn_endpoint_min_grace_s)
-        maximum = float(self.turn_endpoint_max_grace_s)
-        if configured <= 0 or configured < minimum:
-            return configured
-        observed = context.observed_within_turn_pause_s
-        if observed is None:
-            return min(configured, maximum)
-        return min(
-            maximum,
-            max(minimum, observed + 0.15),
-        )
+    def _adaptive_endpoint_grace(
+        self, context: _MediaVoiceSession, *, text: str | None = None
+    ) -> float:
+        return adaptive_endpoint_grace(self, context, text=text)
 
     def _arm_endpoint_tail_timeout(
         self,

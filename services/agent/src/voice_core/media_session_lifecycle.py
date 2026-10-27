@@ -66,6 +66,8 @@ class MediaSessionLifecycleMixin:
         turn_endpoint_grace_s: float
         turn_endpoint_min_grace_s: float
         turn_endpoint_max_grace_s: float
+        turn_endpoint_grace_complete_s: float
+        turn_endpoint_grace_incomplete_s: float
         turn_endpoint_absolute_timeout_s: float
         output_generation_timeout_s: float
         delegation_initial_decision_timeout_s: float
@@ -223,6 +225,8 @@ class MediaSessionLifecycleMixin:
             self.turn_endpoint_min_grace_s < 0
             or self.turn_endpoint_max_grace_s < self.turn_endpoint_min_grace_s
             or self.turn_endpoint_absolute_timeout_s <= self.turn_endpoint_max_grace_s
+            or self.turn_endpoint_grace_complete_s < 0
+            or self.turn_endpoint_grace_incomplete_s < self.turn_endpoint_grace_complete_s
         ):
             raise ValueError("media endpoint grace and tail timeouts are invalid")
         if (
