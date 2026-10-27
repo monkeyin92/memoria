@@ -794,7 +794,7 @@ async def test_fixed_safety_script_echo_stays_rejected_after_the_guard_window() 
         last_playback_completed_ns=aged,
         assistant_speaking=False,
     )
-    echo = "你说的话很重要"
+    echo = "听到你这么说，我很心疼"
     accepted, reason = runtime.accept_user_turn(
         echo,
         input_modality="audio",

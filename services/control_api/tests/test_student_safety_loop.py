@@ -256,8 +256,9 @@ async def test_minor_crisis_queues_one_notification_and_fixed_text_reaches_the_d
 
         # 设备端固定安全话术就是 response plan 的 direct_text，逐字相同。
         assert body["direct_text"] == CRISIS_SELF_SCRIPT.display
-        assert "12356" in body["direct_text"]
-        assert "120" in body["direct_text"]
+        assert "12356" not in body["direct_text"]
+        assert "120" not in body["direct_text"]
+        assert "心疼" in body["direct_text"]
         assert not body["direct_text"].endswith("？")
         # 固定话术不得被导师话轮约束或普通人格上下文改写。
         assert "【导师话轮约束】" not in body["instructions"]
@@ -1039,7 +1040,7 @@ async def test_unfinished_script_detail_is_fixed_copy_and_omits_the_child_words(
 ) -> None:
     """Interrupted detail is the script-id sentence. The child's words never enter it."""
 
-    self_harm = "这次的提醒话术孩子没有听完，如需帮助可拨打心理援助热线12356"
+    self_harm = "这次的安抚话术孩子没有听完，如需帮助可拨打心理援助热线12356"
     victim = "这次的提醒话术孩子没有听完，如有危险请拨打110"
     _configure(monkeypatch, tmp_path)
     app = create_app()

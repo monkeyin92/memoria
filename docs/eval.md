@@ -187,7 +187,7 @@ Note: broader CHAT / INTERRUPT routing is rule-based in `utterance_router.py`, n
 | --- | --- |
 | Deterministic front door | `services/common/companion_response_safety.py` → `companion_safety_decision` |
 | Execution policy | `services/common/crisis_policy.py` → `route_crisis` (model cannot execute alone) |
-| Fixed scripts (12356) | `services/common/fixed_safety_scripts.py` (`crisis-self-v1` speaks 心理援助热线 **12356**) |
+| Fixed scripts (soothing + parent alert) | `services/common/fixed_safety_scripts.py` (`crisis-self-v1` soothes child; parent notification includes **12356**) |
 | Bounded semantic evidence | `services/agent/src/providers/crisis_semantic_classifier.py` (`qwen-flash`, 1.2 s, enum only) |
 | Call site | `services/control_api/app/routes/interaction.py` `_route_crisis_with_bounded_evidence` |
 | Build | `services/control_api/app/text_models.py` `build_crisis_semantic_classifier` (flag `crisis_semantic_enabled`) |

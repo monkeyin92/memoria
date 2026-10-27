@@ -25,9 +25,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
         (
             CRISIS_SELF_SCRIPT,
             "crisis-self-v1",
-            "你说的话很重要，这件事一定要请大人来帮你。现在就去找爸爸妈妈或者身边的大人，"
-            "告诉他们你刚才说的话。请大人陪着你，也可以请大人拨打心理援助热线12356。"
-            "如果你已经受伤了，马上告诉大人，请大人打120。",
+            "听到你这么说，我很心疼。你现在一定特别难受，我就在这里陪着你，哪儿也不去。"
+            "愿意的话，跟我说说发生了什么事。",
         ),
         (
             SUPPORT_VICTIM_SCRIPT,
@@ -52,31 +51,26 @@ def test_display_copy_matches_approved_copy_character_by_character(
     assert list(script.display) == list(display)
 
 
-def test_crisis_script_speaks_the_hotline_and_ambulance_digit_by_digit() -> None:
+def test_crisis_script_soothes_and_accompanies() -> None:
     assert CRISIS_SELF_SCRIPT.phrases == (
         SpokenPhrase(
-            "你说的话很重要，这件事一定要请大人来帮你。",
-            "你说的话很重要，这件事一定要请大人来帮你。",
+            "听到你这么说，我很心疼。",
+            "听到你这么说，我很心疼。",
         ),
         SpokenPhrase(
-            "现在就去找爸爸妈妈或者身边的大人，告诉他们你刚才说的话。",
-            "现在就去找爸爸妈妈或者身边的大人，告诉他们你刚才说的话。",
+            "你现在一定特别难受，我就在这里陪着你，哪儿也不去。",
+            "你现在一定特别难受，我就在这里陪着你，哪儿也不去。",
         ),
         SpokenPhrase(
-            "请大人陪着你，也可以请大人拨打心理援助热线12356。",
-            "请大人陪着你，也可以请大人拨打心理援助热线幺二三五六。",
-        ),
-        SpokenPhrase(
-            "如果你已经受伤了，马上告诉大人，请大人打120。",
-            "如果你已经受伤了，马上告诉大人，请大人打幺二零。",
+            "愿意的话，跟我说说发生了什么事。",
+            "愿意的话，跟我说说发生了什么事。",
         ),
     )
     assert list(CRISIS_SELF_SCRIPT.spoken) == list(
-        "你说的话很重要，这件事一定要请大人来帮你。现在就去找爸爸妈妈或者身边的大人，"
-        "告诉他们你刚才说的话。请大人陪着你，也可以请大人拨打心理援助热线幺二三五六。"
-        "如果你已经受伤了，马上告诉大人，请大人打幺二零。"
+        "听到你这么说，我很心疼。你现在一定特别难受，我就在这里陪着你，哪儿也不去。"
+        "愿意的话，跟我说说发生了什么事。"
     )
-    assert "一二三五六" not in CRISIS_SELF_SCRIPT.spoken
+    assert CRISIS_SELF_SCRIPT.spoken == CRISIS_SELF_SCRIPT.display
 
 
 def test_victim_script_speaks_the_police_number_digit_by_digit() -> None:
@@ -106,26 +100,24 @@ def test_scripts_resolve_by_decision_and_exact_display_copy_only() -> None:
     assert script_for_decision("prohibited_request") is None
     for script in (CRISIS_SELF_SCRIPT, SUPPORT_VICTIM_SCRIPT, SUPPORT_RELAY_SCRIPT):
         assert script_for_display(script.display) is script
-    assert script_for_display(CRISIS_SELF_SCRIPT.spoken) is None
+    assert script_for_display(CRISIS_SELF_SCRIPT.spoken) is CRISIS_SELF_SCRIPT
     assert script_for_display(SUPPORT_VICTIM_SCRIPT.spoken) is None
     assert script_for_display(CRISIS_SELF_SCRIPT.phrases[0].display) is None
     assert script_for_display(None) is None
 
 
 def test_announced_display_maps_to_spoken_copy_only_at_phrase_boundaries() -> None:
-    first, second, third, _ = CRISIS_SELF_SCRIPT.phrases
+    first, second, third = CRISIS_SELF_SCRIPT.phrases
 
     assert spoken_prefix_for_display(first.display) == first.spoken
     assert (
-        spoken_prefix_for_display(first.display + second.display + third.display)
-        == "你说的话很重要，这件事一定要请大人来帮你。现在就去找爸爸妈妈或者身边的大人，"
-        "告诉他们你刚才说的话。请大人陪着你，也可以请大人拨打心理援助热线幺二三五六。"
+        spoken_prefix_for_display(first.display + second.display)
+        == first.spoken + second.spoken
     )
     assert spoken_prefix_for_display(CRISIS_SELF_SCRIPT.display) == CRISIS_SELF_SCRIPT.spoken
     assert spoken_prefix_for_display(SUPPORT_VICTIM_SCRIPT.display) == SUPPORT_VICTIM_SCRIPT.spoken
     assert spoken_prefix_for_display(CRISIS_SELF_SCRIPT.display[:5]) is None
-    assert spoken_prefix_for_display(third.display) is None
-    assert spoken_prefix_for_display("请打 120。") is None
+    assert spoken_prefix_for_display(second.display) is None
 
 
 def test_ordinary_text_is_spoken_as_written() -> None:

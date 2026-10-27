@@ -57,9 +57,8 @@ def _approved(template_id: FixedSafetyTemplateId, display: str) -> FixedSafetySc
 
 CRISIS_SELF_SCRIPT: Final = _approved(
     "crisis-self-v1",
-    "你说的话很重要，这件事一定要请大人来帮你。现在就去找爸爸妈妈或者身边的大人，"
-    "告诉他们你刚才说的话。请大人陪着你，也可以请大人拨打心理援助热线12356。"
-    "如果你已经受伤了，马上告诉大人，请大人打120。",
+    "听到你这么说，我很心疼。你现在一定特别难受，我就在这里陪着你，哪儿也不去。"
+    "愿意的话，跟我说说发生了什么事。",
 )
 SUPPORT_VICTIM_SCRIPT: Final = _approved(
     "victim-support-v1",

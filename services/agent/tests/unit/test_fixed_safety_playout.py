@@ -244,7 +244,7 @@ async def test_buffered_synthesis_gets_spoken_copy_per_approved_phrase() -> None
     assert [chunk.text for chunk in chunks] == [
         phrase.display for phrase in CRISIS_SELF_SCRIPT.phrases
     ]
-    assert [chunk.final for chunk in chunks] == [False, False, False, True]
+    assert [chunk.final for chunk in chunks] == [False, False, True]
 
 
 @pytest.mark.asyncio

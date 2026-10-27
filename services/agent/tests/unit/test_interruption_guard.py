@@ -213,8 +213,8 @@ def test_wait_alias_cannot_bypass_assistant_echo_guard() -> None:
 
 def test_speaker_echo_of_a_read_out_helpline_is_guarded_mid_script() -> None:
     guard = PlaybackInputGuard(enabled=True)
-    announced = "".join(phrase.display for phrase in CRISIS_SELF_SCRIPT.phrases[:3])
-    echo = "请大人陪着你，也可以请大人拨打心理援助热线幺二三五六"
+    announced = "".join(phrase.display for phrase in CRISIS_SELF_SCRIPT.phrases[:2])
+    echo = "你现在一定特别难受，我就在这里陪着你，哪儿也不去"
 
     for assistant_text in (announced, CRISIS_SELF_SCRIPT.display):
         assert (
