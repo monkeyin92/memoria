@@ -20,17 +20,24 @@ from services.common.llm_failover import LLM_UNAVAILABLE_LINE_ID, LLM_UNAVAILABL
 from services.common.llm_thinking_filler import LLM_THINKING_LINE_ID, LLM_THINKING_TEXT
 
 
-def test_shipped_provenance_scaffold_is_not_loaded_for_play() -> None:
+def test_shipped_provenance_matches_catalogue_playability() -> None:
     provenance = json.loads((DEFAULT_ASSETS_ROOT / "provenance.json").read_text(encoding="utf-8"))
     catalogue = load_catalogue()
-    for entry in provenance["lines"]:
-        assert is_synthetic_render_tool(entry["tool"])
-        assert entry.get("playable") is False
-        assert catalogue.get(str(entry["id"])) is None
-    assert catalogue.get(LLM_THINKING_LINE_ID) is None
-    assert catalogue.get(LLM_UNAVAILABLE_LINE_ID) is None
-    assert catalogue.by_text(LLM_THINKING_TEXT) is None
-    assert catalogue.by_text(LLM_UNAVAILABLE_TEXT) is None
+    if provenance.get("status") == "no_playable_online_assets":
+        for entry in provenance["lines"]:
+            assert is_synthetic_render_tool(entry["tool"])
+            assert entry.get("playable") is False
+            assert catalogue.get(str(entry["id"])) is None
+        assert catalogue.get(LLM_THINKING_LINE_ID) is None
+        assert catalogue.get(LLM_UNAVAILABLE_LINE_ID) is None
+        assert catalogue.by_text(LLM_THINKING_TEXT) is None
+        assert catalogue.by_text(LLM_UNAVAILABLE_TEXT) is None
+    else:
+        assert provenance.get("status") == "playable"
+        assert catalogue.get(LLM_THINKING_LINE_ID) is not None
+        assert catalogue.get(LLM_UNAVAILABLE_LINE_ID) is not None
+        assert catalogue.by_text(LLM_THINKING_TEXT) is not None
+        assert catalogue.by_text(LLM_UNAVAILABLE_TEXT) is not None
 
 
 def test_catalogue_excludes_synthetic_tone_even_when_ogg_and_pcm_exist(
