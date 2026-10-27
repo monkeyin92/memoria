@@ -1010,6 +1010,12 @@ private:
         const auto device = TapDeviceFor(state);
         const bool idle = device == memoria::TapDevice::kIdle;
 
+        if (online) {
+            ESP_LOGI(kScreenTapTag, "screen tap dropped (online voice-only control) state=%d hold_ms=%u",
+                     static_cast<int>(state), static_cast<unsigned>(hold_ms));
+            return;
+        }
+
         // A driven conversation answers the tap; otherwise the power policy
         // below keeps its wake, offline-menu and Wi-Fi behaviour.
         OnScreenTapGesture(hold_ms, offline_menu_.WantsTap(online, idle));
@@ -1018,6 +1024,7 @@ private:
             .device = device,
             .in_quiet_hours = power.in_quiet_hours(BeijingMinuteNowOrZero()),
             .offline_wants_tap = offline_menu_.WantsTap(online, idle),
+            .online = online,
         });
         ESP_LOGI(TAG, "screen tap hold_ms=%u action=%s state=%d offline=%s",
                  static_cast<unsigned>(hold_ms), memoria::TapWakeActionName(action),

@@ -9,6 +9,7 @@ from typing import Literal
 
 from services.common.companion_response_safety import companion_safety_decision
 from services.common.companions import companion_definition
+from services.common.story_grounding import is_volume_command
 
 VoiceEmotion = Literal[
     "neutral",
@@ -149,6 +150,7 @@ class SpeechPlan:
     dialect: VoiceDialect = "standard"
     tone: VoiceTone = "natural"
     pitch: int = 0
+    loudness_rate: int = 0
     # Trusted provider instruction assembled only from the whitelist above.
     tts_instruction: str = ""
 
@@ -385,9 +387,19 @@ def _style_command_body(text: str) -> str | None:
         "把语速",
         "把音调",
         "把声音",
+        "把音量",
         "语速调",
         "音调调",
         "声音调",
+        "音量调",
+        "声音大",
+        "声音小",
+        "音量大",
+        "音量小",
+        "大声",
+        "小声",
+        "放大声",
+        "放小声",
         "都用",
     )
     if normalized.startswith(style_prefixes):
@@ -414,6 +426,7 @@ def _apply_explicit_voice_style(plan: SpeechPlan, text: str) -> SpeechPlan:
     tone: VoiceTone = "natural"
     rate = plan.rate
     pitch = 0
+    loudness_rate = plan.loudness_rate
     explicit_emotion = False
 
     if _contains_any(command, ("用悲伤的语气", "用悲伤语气", "悲伤一点说", "语气悲伤一点")):
@@ -459,6 +472,10 @@ def _apply_explicit_voice_style(plan: SpeechPlan, text: str) -> SpeechPlan:
     ):
         pitch = -2
 
+    is_vol, delta_vol, _ = is_volume_command(command)
+    if is_vol:
+        loudness_rate = min(100, max(-50, loudness_rate + delta_vol))
+
     styled = replace(
         plan,
         voice_emotion=emotion,
@@ -468,6 +485,7 @@ def _apply_explicit_voice_style(plan: SpeechPlan, text: str) -> SpeechPlan:
         tone=tone,
         rate=1.0 if explicit_emotion and rate == plan.rate else rate,
         pitch=pitch,
+        loudness_rate=loudness_rate,
     )
     return replace(styled, tts_instruction=_tts_instruction_for_plan(styled))
 

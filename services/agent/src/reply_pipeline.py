@@ -91,6 +91,14 @@ from services.common.realtime_information import (
     strip_realtime_bridge_prefix,
 )
 from services.common.response_depth import SHORT_REPLY_AUDIENCES, ResponseDepth, response_depth_for
+from services.common.story_grounding import (
+    build_grounded_story_system_instruction,
+    build_ip_story_search_query,
+    build_local_story_prompt_instruction,
+    extract_story_ip,
+    is_story_request,
+    match_local_story,
+)
 from services.speaker.domain import DEVICE_BOUND_SUBJECT_REASON
 
 _CRISIS_PLAN_GRACE_S = 0.08
@@ -1385,7 +1393,15 @@ class ReplyPipeline:
     ) -> bool:
         pending = self._runtime.pending_realtime_request
         return bool(
-            self._runtime.fence.matches(fence) and (pending is None or pending.query == query)
+            self._runtime.fence.matches(fence)
+            and (
+                pending is None
+                or pending.query == query
+                or (
+                    (ip := extract_story_ip(pending.query)) is not None
+                    and query == build_ip_story_search_query(ip)
+                )
+            )
         )
 
     async def _start_committed_delegation(
@@ -1394,9 +1410,13 @@ class ReplyPipeline:
         fence: GenerationFence,
     ) -> None:
         await self._runtime.resolve_live_lookup_needed(text)
+        delegation_query = text
+        ip = extract_story_ip(text)
+        if ip is not None:
+            delegation_query = build_ip_story_search_query(ip)
         if self._response_planner_client is None:
             if self._runtime.live_lookup_needed(text) and self._realtime_sources_available():
-                await self._get_or_start_realtime_delegation(query=text, fence=fence)
+                await self._get_or_start_realtime_delegation(query=delegation_query, fence=fence)
             return
         ready = self._context_ready_by_fence.setdefault(fence, asyncio.Event())
         try:
@@ -1408,7 +1428,7 @@ class ReplyPipeline:
         if not self._runtime.fence.matches(fence):
             return
         if self._runtime.live_lookup_needed(text) and self._realtime_sources_available():
-            await self._get_or_start_realtime_delegation(query=text, fence=fence)
+            await self._get_or_start_realtime_delegation(query=delegation_query, fence=fence)
 
     async def _get_or_start_realtime_delegation(
         self,
@@ -1861,8 +1881,10 @@ class ReplyPipeline:
                         )
                     ),
                 )
+            is_story = is_story_request(last_user)
+            target_depth = ResponseDepth.EXTENDED if is_story else depth_policy.depth
             max_chars, max_sentences = reply_limits_for(
-                depth_policy.depth,
+                target_depth,
                 barge_in_enabled=self._runtime.barge_in_enabled,
                 realtime=realtime_request is not None,
                 audience=audience,
@@ -1870,9 +1892,28 @@ class ReplyPipeline:
             if self._runtime.fixed_safety_heard and depth_policy.depth is ResponseDepth.BRIEF:
                 max_chars = min(max_chars, MAX_CONTROLLED_VOICE_REPLY_CHARS)
                 max_sentences = min(max_sentences, 2)
+
+            story_ip = (
+                extract_story_ip(realtime_request.query)
+                if realtime_request is not None
+                else extract_story_ip(last_user)
+            )
+            if story_ip is None and is_story and realtime_request is None:
+                matched_local = match_local_story(last_user, prioritize_generic=True)
+                if matched_local is not None:
+                    safe_chat_ctx.add_message(
+                        role="system",
+                        content=build_local_story_prompt_instruction(matched_local),
+                    )
+
             if realtime_request is not None and not resume_realtime_request:
+                delegated_search_query = (
+                    build_ip_story_search_query(story_ip)
+                    if story_ip is not None
+                    else realtime_request.query
+                )
                 handle = await self._get_or_start_realtime_delegation(
-                    query=realtime_request.query,
+                    query=delegated_search_query,
                     fence=fence,
                 )
                 if handle is not None:
@@ -1884,8 +1925,13 @@ class ReplyPipeline:
                             asyncio.shield(handle.record.task),
                             timeout=0.02,
                         )
+                    bridge_phrase = (
+                        f"好呀，我来给你讲一个{story_ip}的故事。"
+                        if story_ip is not None
+                        else LIVE_LOOKUP_FILLER
+                    )
                     bridge_intent = self._runtime.orchestrator.delegation.bridge_acknowledgement(
-                        LIVE_LOOKUP_FILLER,
+                        bridge_phrase,
                         fence=fence,
                         context_version=handle.request.context_version,
                         expires_at_ms=int(time.time() * 1_000) + 5_000,
@@ -1919,6 +1965,44 @@ class ReplyPipeline:
                                 floor_allows_output=self._runtime.output_floor_allows_assistant,
                                 reason="bridge_acknowledgement_emitted",
                             )
+
+                if story_ip is not None and handle is not None:
+                    coordinator = self._runtime.orchestrator.delegation
+                    try:
+                        async for _event in coordinator.events(handle):
+                            pass
+                    finally:
+                        async with self._realtime_delegation_lock:
+                            if self._realtime_delegations.get(fence) == (delegated_search_query, handle):
+                                self._realtime_delegations.pop(fence, None)
+                    intent = coordinator.output_intent(
+                        handle,
+                        current_fence=self._runtime.fence,
+                        current_task_epoch=handle.request.task_epoch,
+                        current_context_version=coordinator.current_context_version(fence.session_id),
+                        relevant=self._realtime_delegation_relevant(
+                            query=delegated_search_query, fence=fence
+                        ),
+                    )
+                    canon_summary = ""
+                    if intent is not None and intent.tts_source.strip():
+                        canon_summary = intent.tts_source.strip()
+                        coordinator.complete_output_intent(
+                            intent,
+                            current_fence=self._runtime.fence,
+                            current_context_version=coordinator.current_context_version(
+                                fence.session_id
+                            ),
+                            floor_allows_output=self._runtime.output_floor_allows_assistant,
+                            reason="grounded_canon_received",
+                        )
+                    safe_chat_ctx.add_message(
+                        role="system",
+                        content=build_grounded_story_system_instruction(story_ip, canon_summary),
+                    )
+                    self._runtime.complete_realtime_request(realtime_request)
+                    realtime_request = None
+
             if realtime_request is not None:
                 stream = self._forced_realtime_search_stream(query=realtime_request.query)
             else:

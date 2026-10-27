@@ -27,8 +27,9 @@ int main() {
         if (line[0] == '\0' || line[0] == '#') continue;
         if (strncmp(line, "tap ", 4) == 0) {
             char device[32];
-            int quiet = 0, wants = 0;
-            if (sscanf(line + 4, "%31s %d %d", device, &quiet, &wants) != 3) return 2;
+            int quiet = 0, wants = 0, online = 0;
+            int n = sscanf(line + 4, "%31s %d %d %d", device, &quiet, &wants, &online);
+            if (n < 3) return 2;
             memoria::TapDevice tap_device = memoria::TapDevice::kBusy;
             if (strcmp(device, "starting") == 0) tap_device = memoria::TapDevice::kStarting;
             else if (strcmp(device, "idle") == 0) tap_device = memoria::TapDevice::kIdle;
@@ -39,6 +40,7 @@ int main() {
             facts.device = tap_device;
             facts.in_quiet_hours = quiet != 0;
             facts.offline_wants_tap = wants != 0;
+            facts.online = (n >= 4 && online != 0);
             printf("%s\n", memoria::TapWakeActionName(memoria::TapWakeActionFor(facts)));
         } else if (strncmp(line, "mic ", 4) == 0) {
             char phase[32];
@@ -140,6 +142,24 @@ def test_busy_tap_reaches_the_offline_menu_only_when_it_wants_the_tap(tool: path
     assert _run(tool, "tap busy 0 0", "tap busy 0 1", "tap busy 1 0") == [
         "ignore",
         "offline",
+        "ignore",
+    ]
+
+
+def test_online_tap_is_completely_ignored(tool: pathlib.Path) -> None:
+    """When online, screen taps are complete no-ops: interaction is voice-only."""
+    assert _run(
+        tool,
+        "tap idle 0 0 1",
+        "tap idle 1 0 1",
+        "tap starting 0 1 1",
+        "tap busy 0 1 1",
+        "tap held 0 0 1",
+    ) == [
+        "ignore",
+        "ignore",
+        "ignore",
+        "ignore",
         "ignore",
     ]
 

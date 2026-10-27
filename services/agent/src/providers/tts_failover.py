@@ -870,6 +870,7 @@ class StepFunPrimaryTTS:
         rate: float,
         instruction: str = "",
         pitch: int = 0,
+        loudness_rate: int = 0,
         reference_contexts: tuple[str, ...] = (),
         fence: GenerationFence | None = None,
     ) -> None:
@@ -881,6 +882,7 @@ class StepFunPrimaryTTS:
                     rate=rate,
                     instruction=instruction,
                     pitch=pitch,
+                    loudness_rate=loudness_rate,
                     reference_contexts=reference_contexts,
                     fence=fence,
                 )

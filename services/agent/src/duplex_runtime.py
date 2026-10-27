@@ -701,6 +701,7 @@ class DuplexRuntime(
                 rate=plan.rate,
                 instruction=plan.tts_instruction,
                 pitch=plan.pitch,
+                loudness_rate=plan.loudness_rate,
                 reference_contexts=self._generation_records.tts_references_for(fence),
                 fence=fence,
             )

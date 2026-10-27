@@ -36,6 +36,7 @@ struct TapFacts {
     TapDevice device = TapDevice::kBusy;
     bool in_quiet_hours = false;
     bool offline_wants_tap = false;
+    bool online = false;
 };
 
 struct PowerPolicy {
@@ -48,6 +49,9 @@ struct PowerPolicy {
 };
 
 inline TapWakeAction TapWakeActionFor(TapFacts facts) {
+    if (facts.online) {
+        return TapWakeAction::kIgnore;
+    }
     if (facts.device == TapDevice::kStarting) {
         return facts.offline_wants_tap ? TapWakeAction::kOfflineMenu : TapWakeAction::kWifiConfig;
     }
