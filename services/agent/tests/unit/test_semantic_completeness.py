@@ -88,6 +88,10 @@ from services.agent.src.voice_core.semantic_completeness import (
         ("准备", SemanticCompleteness.INCOMPLETE),
         ("我想听", SemanticCompleteness.INCOMPLETE),
         ("我想把", SemanticCompleteness.INCOMPLETE),
+        ("我想说", SemanticCompleteness.INCOMPLETE),
+        ("我要去", SemanticCompleteness.INCOMPLETE),
+        ("我想吃苹果", SemanticCompleteness.COMPLETE),
+        ("我不想说", SemanticCompleteness.COMPLETE),
         ("把小猫抱走", SemanticCompleteness.COMPLETE),
         # Trailing punctuation preserving incompleteness
         ("因为。", SemanticCompleteness.INCOMPLETE),
