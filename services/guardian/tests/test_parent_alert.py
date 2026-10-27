@@ -24,6 +24,7 @@ from services.guardian.parent_alert import (
 ROOT = Path(__file__).resolve().parents[3]
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 ROBOT_SAID = "机器人已提醒孩子去找身边的大人"
+ROBOT_SAID_CRISIS = "机器人已安抚孩子情绪并在旁陪伴"
 
 
 def _strings(copy: ParentAlertCopy) -> list[str]:
@@ -35,9 +36,9 @@ def test_every_fixed_safety_script_has_the_approved_parent_copy() -> None:
     assert PARENT_ALERT_COPY["crisis-self-v1"] == ParentAlertCopy(
         category_label="情绪和安全",
         summary="孩子说到了和自己情绪、安全有关的内容",
-        robot_said=ROBOT_SAID,
+        robot_said=ROBOT_SAID_CRISIS,
         parent_action="找个安静的时间陪孩子聊聊，先听孩子说，不急着讲道理。如需帮助可拨打心理援助热线12356",
-        interrupted_detail="这次的提醒话术孩子没有听完，如需帮助可拨打心理援助热线12356",
+        interrupted_detail="这次的安抚话术孩子没有听完，如需帮助可拨打心理援助热线12356",
     )
     assert PARENT_ALERT_COPY["victim-support-v1"] == ParentAlertCopy(
         category_label="人身安全",
@@ -116,7 +117,7 @@ def test_an_unfinished_playback_uses_the_tier_sentence() -> None:
     assert PARENT_ALERT_COPY["support-other-v1"].interrupted_detail is None
     assert (
         PARENT_ALERT_COPY["crisis-self-v1"].interrupted_detail
-        == "这次的提醒话术孩子没有听完，如需帮助可拨打心理援助热线12356"
+        == "这次的安抚话术孩子没有听完，如需帮助可拨打心理援助热线12356"
     )
     assert (
         PARENT_ALERT_COPY["victim-support-v1"].interrupted_detail
@@ -139,7 +140,7 @@ def test_victim_action_is_the_final_sentence_and_does_not_describe_an_incident()
 
 
 def test_interrupted_detail_uses_the_tier_table_only_when_the_flag_is_set() -> None:
-    unfinished_self = "这次的提醒话术孩子没有听完，如需帮助可拨打心理援助热线12356"
+    unfinished_self = "这次的安抚话术孩子没有听完，如需帮助可拨打心理援助热线12356"
     unfinished_victim = "这次的提醒话术孩子没有听完，如有危险请拨打110"
     assert (
         interrupted_parent_detail("victim-support-v1", script_interrupted=False) is None

@@ -1,51 +1,51 @@
 {
   "bits_per_sample": 16,
   "channels": 1,
-  "engine": "stepfun stepaudio-2.5-tts",
+  "engine": "volcengine doubao-seed-tts-2.0",
   "sample_rate_hz": 24000,
   "schema_version": 1,
-  "synthesized_on": "2026-10-23",
+  "synthesized_on": "2026-10-27",
   "templates": [
     {
-      "audio_sha256": "5ffc631c0f9801c2c2fbccd9ec6e51f0c05c735d98502129b25f16a0cb78ca72",
+      "audio_sha256": "444674df638ea780550e8638242c1b812b81326e05fde0f99d798d46760f786e",
       "content_id": "memoria-fixed-safety-crisis-self-v1-v1",
       "file": "crisis-self-v1.wav",
-      "pcm_sha256": "8e4d748a4f241e9aad37d160f3bcf2535ab8d13030f068f1a8e6ba7f60729d50",
-      "spoken_sha256": "9befe782890271fbd12851cd4641e87aeab3b2f1d99da0a1368a2c99f933e96d",
-      "synthesized_on": "2026-10-23",
+      "pcm_sha256": "f463a8547c6ed176a70924813a6e58bda370bcb4557109ad779c7f8af57ea5b7",
+      "spoken_sha256": "915c58fbb3a9e8fea873a39ae718c46ac1bf7484de6bb33ce1e4f0ee9ec7bcaf",
+      "synthesized_on": "2026-10-27",
       "template_id": "crisis-self-v1",
-      "voice": "wenrounansheng"
+      "voice": "zh_female_shaoergushi_uranus_bigtts"
     },
     {
-      "audio_sha256": "dbc6dda514ff4b419e1b66bbbcd2c255a351c23c73382d273b6f85cc2bb9f302",
+      "audio_sha256": "b8ef53b1a99c0fb4e82f6a35f1e139ef67c15eeaa4bc9d44e0ffc4fce3e73455",
       "content_id": "memoria-fixed-safety-victim-support-v1-v1",
       "file": "victim-support-v1.wav",
-      "pcm_sha256": "eb31b21294f9adbdc0bf5d5f5a2888f7721b54c9b00a9236f2ea7a6d714e7bd9",
+      "pcm_sha256": "908b75c12732cb71f175cf67cc39e25449ffb39ee921c87930ebe9637ebc3ea2",
       "spoken_sha256": "0c4c801a67f29cbf2a5436d34b91ce2d9d1af2ae765dfec1ecbd93f694a81688",
-      "synthesized_on": "2026-10-23",
+      "synthesized_on": "2026-10-27",
       "template_id": "victim-support-v1",
-      "voice": "wenrounansheng"
+      "voice": "zh_female_shaoergushi_uranus_bigtts"
     },
     {
-      "audio_sha256": "e9e7885cfee0c8fc37e7b0df0e8b96f91f76d2ffeb81f3e9ea4b1893e5b95338",
+      "audio_sha256": "024f7a0fced8fe4b32c11c176826f1751ca7d1eb60351449d6e40cfc14d16199",
       "content_id": "memoria-fixed-safety-support-other-v1-v1",
       "file": "support-other-v1.wav",
-      "pcm_sha256": "c614bf3602f1415a0f685f19292adaa9b44a9685b1d1b6d11f6aeb6816653a06",
+      "pcm_sha256": "a2b52bde1a7f5715a07b588da46c9b4daddd77602e12a8c02aabbeda31b060fe",
       "spoken_sha256": "8a969945c5e3634ede9055854edcaa13f9567757d057303898d7b1828f5eb873",
-      "synthesized_on": "2026-10-23",
+      "synthesized_on": "2026-10-27",
       "template_id": "support-other-v1",
-      "voice": "wenrounansheng"
+      "voice": "zh_female_shaoergushi_uranus_bigtts"
     },
     {
-      "audio_sha256": "3be1a9e0d3c9d96704ca239eb702db0af349512664b3b40a1134e15a5b4b6417",
+      "audio_sha256": "5debcc94e7f8da91c6bc6bef270223a8511f5414c874d9b59cfe65d90db1b5d9",
       "content_id": "memoria-fixed-safety-daily-limit-v1",
       "file": "daily-limit.wav",
-      "pcm_sha256": "04840abb8d779ca9a36cb815b4e588286788a7c2eee255312793869a6f8febef",
+      "pcm_sha256": "5ac3cc407306cafb2e450f878ff5cd7cabbae2639d639b3e0d7235d22d5a4c2e",
       "spoken_sha256": "c3922a49f1305b03b671a3fee18a440630b89a0f15d1fc1f294d7ab1c4b8310a",
-      "synthesized_on": "2026-10-23",
+      "synthesized_on": "2026-10-27",
       "template_id": "daily-limit",
-      "voice": "wenrounansheng"
+      "voice": "zh_female_shaoergushi_uranus_bigtts"
     }
   ],
-  "voice": "wenrounansheng"
+  "voice": "zh_female_shaoergushi_uranus_bigtts"
 }

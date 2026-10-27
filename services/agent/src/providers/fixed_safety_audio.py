@@ -1,11 +1,12 @@
 """Pre-synthesized audio for the approved fixed-safety and daily-limit turns.
 
 The four clips live under ``infra/voices/fixed_safety`` and were rendered once
-with the StepFun ``stepaudio-2.5-tts`` ``wenrounansheng`` voice on 2026-10-23.  A
-crisis turn must not depend on a live TTS connection: this module validates the
-manifest and the labelled WAVs, then serves the stored PCM directly.  Any
-validation failure degrades to the existing realtime provider with an alert
-that names only the template id.
+with the Volcengine Doubao ``seed-tts-2.0`` child-story female voice
+``zh_female_shaoergushi_uranus_bigtts`` on 2026-10-27.  A crisis turn must not
+depend on a live TTS connection: this module validates the manifest and the
+labelled WAVs, then serves the stored PCM directly.  Any validation failure
+degrades to the existing realtime provider with an alert that names only the
+template id.
 """
 
 from __future__ import annotations
@@ -40,11 +41,11 @@ DEFAULT_FIXED_SAFETY_AUDIO_DIR: Final = "infra/voices/fixed_safety"
 FIXED_SAFETY_AUDIO_SAMPLE_RATE_HZ: Final = 24_000
 FIXED_SAFETY_AUDIO_CHANNELS: Final = 1
 FIXED_SAFETY_AUDIO_BITS_PER_SAMPLE: Final = 16
-FIXED_SAFETY_AUDIO_VOICE: Final = "wenrounansheng"
-FIXED_SAFETY_AUDIO_SYNTHESIZED_ON: Final = "2026-10-23"
-FIXED_SAFETY_AUDIO_ENGINE: Final = "stepfun stepaudio-2.5-tts"
-FIXED_SAFETY_AUDIO_ARTIST: Final = "StepFun stepaudio-2.5-tts / memoria"
-FIXED_SAFETY_AUDIO_SOFTWARE: Final = "StepFun stepaudio-2.5-tts / memoria"
+FIXED_SAFETY_AUDIO_VOICE: Final = "zh_female_shaoergushi_uranus_bigtts"
+FIXED_SAFETY_AUDIO_SYNTHESIZED_ON: Final = "2026-10-27"
+FIXED_SAFETY_AUDIO_ENGINE: Final = "volcengine doubao-seed-tts-2.0"
+FIXED_SAFETY_AUDIO_ARTIST: Final = "Volcengine Doubao / memoria"
+FIXED_SAFETY_AUDIO_SOFTWARE: Final = "Volcengine Doubao / memoria"
 _MANIFEST_SCHEMA_VERSION: Final = 1
 _FRAME_BYTES: Final = FIXED_SAFETY_AUDIO_SAMPLE_RATE_HZ * 2 * 20 // 1000
 _SENTENCE_END = re.compile(r"(?<=[。！？!?])")

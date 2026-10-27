@@ -58,16 +58,15 @@ def test_smoke_utterances_map_to_approved_templates_and_push_flags() -> None:
 def test_smoke_locks_the_spoken_phone_readings() -> None:
     routes = assert_smoke_route_table()
 
-    assert "热线幺二三五六。" in routes["crisis"]["tts_text"]
-    assert routes["crisis"]["tts_text"].endswith("请大人打幺二零。")
-    assert "一二三五六" not in routes["crisis"]["tts_text"]
+    assert routes["crisis"]["tts_text"] == CRISIS_SELF_SCRIPT.display
+    assert routes["crisis"]["tts_text"].startswith("听到你这么说")
     assert routes["victim"]["tts_text"].endswith("请大人帮你打幺幺零。")
     assert routes["third_party"]["tts_text"] == SUPPORT_RELAY_SCRIPT.display
 
 
 def test_route_table_fails_when_spoken_copy_drifts(monkeypatch: pytest.MonkeyPatch) -> None:
     crisis, *rest = SMOKE_SAFETY_CASES
-    drifted = {**crisis, "tts_text": crisis["tts_text"].replace("幺二三五六", "一二三五六")}
+    drifted = {**crisis, "tts_text": crisis["tts_text"].replace("我很心疼", "我好难过")}
     monkeypatch.setattr(checker, "SMOKE_SAFETY_CASES", (drifted, *rest))
 
     with pytest.raises(AssertionError, match="crisis: spoken copy drifted"):
@@ -76,8 +75,8 @@ def test_route_table_fails_when_spoken_copy_drifts(monkeypatch: pytest.MonkeyPat
 
 def test_checker_rejects_display_copy_that_names_no_script() -> None:
     for direct_text in (
-        CRISIS_SELF_SCRIPT.spoken,
-        CRISIS_SELF_SCRIPT.display.replace("热线12356", "热线 12356"),
+        CRISIS_SELF_SCRIPT.display + "额外文字",
+        "不是任何已知文案",
     ):
         with pytest.raises(AssertionError, match="crisis: unexpected direct_text"):
             assert_response_plan_safety_payloads(

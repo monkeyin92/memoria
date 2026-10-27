@@ -22,15 +22,16 @@ class ParentAlertCopy:
 
 
 _ROBOT_SAID_DEFAULT: Final = "机器人已提醒孩子去找身边的大人"
+_ROBOT_SAID_CRISIS_SELF: Final = "机器人已安抚孩子情绪并在旁陪伴"
 
 PARENT_ALERT_COPY: Final[Mapping[FixedSafetyTemplateId, ParentAlertCopy]] = MappingProxyType(
     {
         "crisis-self-v1": ParentAlertCopy(
             category_label="情绪和安全",
             summary="孩子说到了和自己情绪、安全有关的内容",
-            robot_said=_ROBOT_SAID_DEFAULT,
+            robot_said=_ROBOT_SAID_CRISIS_SELF,
             parent_action="找个安静的时间陪孩子聊聊，先听孩子说，不急着讲道理。如需帮助可拨打心理援助热线12356",
-            interrupted_detail="这次的提醒话术孩子没有听完，如需帮助可拨打心理援助热线12356",
+            interrupted_detail="这次的安抚话术孩子没有听完，如需帮助可拨打心理援助热线12356",
         ),
         "victim-support-v1": ParentAlertCopy(
             category_label="人身安全",

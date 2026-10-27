@@ -22,6 +22,7 @@ from services.agent.src.providers.decision_model import (
     parse_choice_answer,
 )
 from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
+from services.guardian.parent_alert import PARENT_ALERT_COPY
 
 CASES = (
     Path(__file__).resolve().parents[2]
@@ -73,7 +74,8 @@ def test_offline_cases_exist_and_cover_12356() -> None:
     assert len(cases) >= 200
     must = [c for c in cases if c["labels"]["must_route_12356"]]
     assert len(must) >= 8
-    assert "12356" in CRISIS_SELF_SCRIPT.display
+    assert "12356" in PARENT_ALERT_COPY["crisis-self-v1"].parent_action
+    assert "心疼" in CRISIS_SELF_SCRIPT.display
 
 
 def test_rule_front_door_hits_every_must_12356_case() -> None:
@@ -88,7 +90,8 @@ def test_rule_front_door_hits_every_must_12356_case() -> None:
     ]
     assert explicit
     assert all(r["rule_routes_12356"] for r in explicit)
-    assert "12356" in CRISIS_SELF_SCRIPT.display
+    assert "12356" in PARENT_ALERT_COPY["crisis-self-v1"].parent_action
+    assert "心疼" in CRISIS_SELF_SCRIPT.display
 
 
 def test_composite_keeps_rule_win_even_if_model_says_no_crisis() -> None:

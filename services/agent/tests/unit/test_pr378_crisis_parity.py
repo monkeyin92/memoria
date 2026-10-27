@@ -55,10 +55,10 @@ _DEVICE_NEAR_MISSES = (
 )
 
 _APPROVED_PCM_SHA256 = {
-    "crisis-self-v1": "8e4d748a4f241e9aad37d160f3bcf2535ab8d13030f068f1a8e6ba7f60729d50",
-    "victim-support-v1": "eb31b21294f9adbdc0bf5d5f5a2888f7721b54c9b00a9236f2ea7a6d714e7bd9",
-    "support-other-v1": "c614bf3602f1415a0f685f19292adaa9b44a9685b1d1b6d11f6aeb6816653a06",
-    "daily-limit": "04840abb8d779ca9a36cb815b4e588286788a7c2eee255312793869a6f8febef",
+    "crisis-self-v1": "f463a8547c6ed176a70924813a6e58bda370bcb4557109ad779c7f8af57ea5b7",
+    "victim-support-v1": "908b75c12732cb71f175cf67cc39e25449ffb39ee921c87930ebe9637ebc3ea2",
+    "support-other-v1": "a2b52bde1a7f5715a07b588da46c9b4daddd77602e12a8c02aabbeda31b060fe",
+    "daily-limit": "5ac3cc407306cafb2e450f878ff5cd7cabbae2639d639b3e0d7235d22d5a4c2e",
 }
 
 

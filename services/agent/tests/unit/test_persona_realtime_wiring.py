@@ -22,7 +22,11 @@ from services.agent.tests.unit.runtime_state_helpers import (
     set_floor,
 )
 from services.common.companion_response_safety import AFTER_FIXED_SAFETY_SESSION_INSTRUCTION
-from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT, SUPPORT_RELAY_SCRIPT
+from services.common.fixed_safety_scripts import (
+    CRISIS_SELF_SCRIPT,
+    SUPPORT_RELAY_SCRIPT,
+    SUPPORT_VICTIM_SCRIPT,
+)
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -600,8 +604,9 @@ def test_heard_fixed_safety_script_adds_the_after_safety_instruction() -> None:
         )
 
     assert AFTER_FIXED_SAFETY_SESSION_INSTRUCTION in system_text([SUPPORT_RELAY_SCRIPT.display])
+    assert AFTER_FIXED_SAFETY_SESSION_INSTRUCTION in system_text([CRISIS_SELF_SCRIPT.display])
     assert AFTER_FIXED_SAFETY_SESSION_INSTRUCTION not in system_text(["你好呀。"])
-    assert AFTER_FIXED_SAFETY_SESSION_INSTRUCTION not in system_text([CRISIS_SELF_SCRIPT.spoken])
+    assert AFTER_FIXED_SAFETY_SESSION_INSTRUCTION not in system_text([SUPPORT_VICTIM_SCRIPT.spoken])
 
 
 @pytest.mark.asyncio
