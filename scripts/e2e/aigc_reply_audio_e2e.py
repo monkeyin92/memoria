@@ -2,14 +2,13 @@
 
 The agent runs from ``infra/Dockerfile.agent`` under the production compose
 shape with mTLS and the shipped fixed-safety catalog. Only the network edges
-are fake: StepFun TTS, the OpenAI-compatible LLM, FunASR and the Control API.
+are fake: Doubao TTS, the OpenAI-compatible LLM, FunASR and the Control API.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import base64
 import hashlib
 import hmac
 import json
@@ -70,12 +69,10 @@ def _fake_log(message: str) -> None:
 @dataclass(slots=True)
 class _FakeState:
     asr_texts: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
-    stepfun_texts: list[str] = field(default_factory=list)
-    # "all" makes both fake TTS engines fail before any audio. The two engines
-    # share one endpoint, so the mode is counted per protocol: StepFun speaks
-    # JSON, the Doubao backup speaks binary frames.
+    tts_texts: list[str] = field(default_factory=list)
+    # "all" makes the fake Doubao engine fail before any audio, so the session
+    # closes on the outage and asks the device to play its local line.
     tts_fault: str = ""
-    stepfun_failures: int = 0
     doubao_failures: int = 0
     asr_tasks: int = 0
     asr_connections: int = 0
@@ -347,91 +344,145 @@ def _reply_pcm(text: str) -> bytes:
     return struct.pack("<" + "h" * count, *([amplitude] * count))
 
 
-async def _stepfun_handler(ws: Any, state: _FakeState) -> None:
-    session_id = uuid.uuid4().hex
-    texts: list[str] = []
-    _fake_log("stepfun connect")
-    await ws.send(
-        json.dumps(
-            {
-                "type": "tts.connection.done",
-                "data": {"session_id": session_id},
-            }
-        )
+async def _doubao_handler(ws: Any, state: _FakeState) -> None:
+    """The one TTS engine. Speaks the binary Doubao protocol, or fails it.
+
+    A fault round answers the connection with CONNECTION_FAILED and nothing
+    else, which is the provider's before-audio failure: the session then
+    closes with the local line and no audio leaves the container. A healthy
+    round answers each session with one PCM frame and subtitle timing that
+    covers exactly that audio, which is what the client needs to finish.
+    """
+
+    import struct
+
+    from services.agent.src.providers.doubao_protocol import EventType, MessageType
+
+    connection_events = frozenset(
+        {
+            EventType.START_CONNECTION,
+            EventType.FINISH_CONNECTION,
+            EventType.CONNECTION_STARTED,
+            EventType.CONNECTION_FAILED,
+            EventType.CONNECTION_FINISHED,
+        }
     )
+    connection_responses = frozenset(
+        {
+            EventType.CONNECTION_STARTED,
+            EventType.CONNECTION_FAILED,
+            EventType.CONNECTION_FINISHED,
+        }
+    )
+
+    def server_frame(
+        event: EventType,
+        *,
+        session_id: str = "",
+        connect_id: str = "",
+        payload: bytes = b"{}",
+        audio: bool = False,
+    ) -> bytes:
+        message_type = MessageType.AUDIO_ONLY_SERVER if audio else MessageType.FULL_SERVER_RESPONSE
+        serialization = 0 if audio else 1
+        frame = bytearray((0x11, (int(message_type) << 4) | 0x04, serialization << 4, 0x00))
+        frame.extend(struct.pack(">i", int(event)))
+        if event not in connection_events:
+            frame.extend(struct.pack(">I", len(session_id.encode())) + session_id.encode())
+        if event in connection_responses:
+            frame.extend(struct.pack(">I", len(connect_id.encode())) + connect_id.encode())
+        frame.extend(struct.pack(">I", len(payload)) + payload)
+        return bytes(frame)
+
+    def client_event(data: bytes) -> tuple[EventType, str, dict[str, Any]]:
+        header_size = (data[0] & 0x0F) * 4
+        offset = header_size
+        event = EventType(struct.unpack_from(">i", data, offset)[0])
+        offset += 4
+        session_id = ""
+        if event not in connection_events:
+            size = struct.unpack_from(">I", data, offset)[0]
+            offset += 4
+            session_id = data[offset : offset + size].decode()
+            offset += size
+        size = struct.unpack_from(">I", data, offset)[0]
+        offset += 4
+        raw = data[offset : offset + size]
+        return event, session_id, json.loads(raw) if raw else {}
+
+    connect_id = uuid.uuid4().hex
+    _fake_log("doubao connect")
     try:
+        raw = await ws.recv()
+        event, _, _ = client_event(raw)
+        if event != EventType.START_CONNECTION:
+            _fake_log(f"doubao first frame was {event.name}, not START_CONNECTION")
+            return
+        if state.tts_fault == "all":
+            state.doubao_failures += 1
+            _fake_log("doubao connection rejected before audio")
+            await ws.send(server_frame(EventType.CONNECTION_FAILED, connect_id=connect_id))
+            return
+        await ws.send(server_frame(EventType.CONNECTION_STARTED, connect_id=connect_id))
+        active_session = ""
+        texts: list[str] = []
         async for raw in ws:
-            if not isinstance(raw, str):
-                # The Doubao backup shares this endpoint; its protocol is
-                # binary and only opens when StepFun fails. A text frame is not
-                # a connection-started frame, so the backup fails at its
-                # handshake before it can synthesize anything.
-                if state.tts_fault == "all":
-                    state.doubao_failures += 1
-                    _fake_log("doubao handshake rejected before audio")
-                    await ws.send(json.dumps({"type": "tts.fault"}))
-                    continue
-                _fake_log("stepfun binary frame ignored")
+            if not isinstance(raw, (bytes, bytearray)):
                 continue
-            event = json.loads(raw)
-            event_type = str(event.get("type") or "")
-            if event_type == "tts.create":
-                if state.tts_fault == "all":
-                    # The documented error event, answered before any audio
-                    # delta, so the primary fails with nothing emitted.
-                    state.stepfun_failures += 1
-                    _fake_log("stepfun response rejected before audio")
-                    await ws.send(
-                        json.dumps(
-                            {
-                                "type": "tts.response.error",
-                                "data": {
-                                    "session_id": session_id,
-                                    "code": "unavailable",
-                                    "message": "e2e fault injection",
-                                },
-                            }
-                        )
-                    )
-                    continue
-                await ws.send(
-                    json.dumps(
-                        {
-                            "type": "tts.response.created",
-                            "data": {"session_id": session_id},
-                        }
-                    )
-                )
-            elif event_type == "tts.text.delta":
-                text = str((event.get("data") or {}).get("text") or "")
+            event, session_id, payload = client_event(raw)
+            if event == EventType.START_SESSION:
+                active_session = session_id
+                texts = []
+                await ws.send(server_frame(EventType.SESSION_STARTED, session_id=session_id))
+            elif event == EventType.TASK_REQUEST:
+                text = str((payload.get("req_params") or {}).get("text") or "")
                 if text:
                     texts.append(text)
-            elif event_type == "tts.text.done":
+            elif event == EventType.CANCEL_SESSION:
+                await ws.send(server_frame(EventType.SESSION_CANCELED, session_id=session_id))
+            elif event == EventType.FINISH_SESSION:
                 spoken = "".join(texts)
-                state.stepfun_texts.append(spoken)
+                state.tts_texts.append(spoken)
                 pcm = _reply_pcm(spoken)
-                encoded = base64.b64encode(pcm).decode("ascii")
                 await ws.send(
-                    json.dumps(
-                        {
-                            "type": "tts.response.audio.delta",
-                            "data": {"session_id": session_id, "audio": encoded},
-                        }
+                    server_frame(
+                        EventType.TTS_RESPONSE,
+                        session_id=active_session,
+                        payload=pcm,
+                        audio=True,
                     )
                 )
-                await ws.send(
-                    json.dumps(
+                if spoken:
+                    duration_s = len(pcm) / 2 / 24_000
+                    words = [
                         {
-                            "type": "tts.response.audio.done",
-                            "data": {"session_id": session_id},
+                            "word": char,
+                            "startTime": index * duration_s / len(spoken),
+                            "endTime": (index + 1) * duration_s / len(spoken),
                         }
+                        for index, char in enumerate(spoken)
+                    ]
+                    await ws.send(
+                        server_frame(
+                            EventType.TTS_SUBTITLE,
+                            session_id=active_session,
+                            payload=json.dumps({"words": words}, ensure_ascii=False).encode(),
+                        )
                     )
+                await ws.send(
+                    server_frame(EventType.SESSION_FINISHED, session_id=active_session)
                 )
+                texts = []
+            elif event == EventType.FINISH_CONNECTION:
+                await ws.send(
+                    server_frame(EventType.CONNECTION_FINISHED, connect_id=connect_id)
+                )
+                return
     except websockets.ConnectionClosed:
-        _fake_log("stepfun closed")
+        _fake_log("doubao closed")
         return
     except Exception as exc:  # noqa: BLE001 - the fake server must stay observable
-        _fake_log(f"stepfun handler error {type(exc).__name__}: {exc}")
+        _fake_log(f"doubao handler error {type(exc).__name__}: {exc}")
         raise
 
 
@@ -1529,7 +1580,7 @@ async def _run_scenario(
             )
             silent_snapshot = client.generation_snapshot()
             llm_calls_before = state.llm_calls
-            stepfun_before = len(state.stepfun_texts)
+            tts_before = len(state.tts_texts)
             asr_pcm_before = state.asr_pcm_bytes
             disk_before = audio_inventory()
             await client.send_silence(seconds=SILENT_WINDOW_S)
@@ -1538,7 +1589,7 @@ async def _run_scenario(
             assert state.llm_calls == llm_calls_before, (
                 f"silent window triggered {state.llm_calls - llm_calls_before} LLM call(s)"
             )
-            assert len(state.stepfun_texts) == stepfun_before, "silent window triggered TTS"
+            assert len(state.tts_texts) == tts_before, "silent window triggered TTS"
             silent_asr_pcm_bytes = state.asr_pcm_bytes - asr_pcm_before
             silent_disk_audio = _audio_written_since(disk_before, audio_inventory())
             assert silent_asr_pcm_bytes == 0, (
@@ -1640,13 +1691,11 @@ async def _run_tts_fault_scenario(
                 f"close reason {closed[1]!r}, want tts_unavailable"
             )
             assert closed[2] is True, "close did not ask the device to play the local line"
-            assert state.stepfun_failures >= 1, "the StepFun primary was never attempted"
-            assert state.doubao_failures >= 1, "the Doubao backup was never attempted"
+            assert state.doubao_failures >= 1, "the Doubao engine was never attempted"
             return {
                 "close_reason": closed[1],
                 "play_line": closed[2],
                 "audio_bytes": audio_bytes,
-                "stepfun_failures": state.stepfun_failures,
                 "doubao_failures": state.doubao_failures,
             }
     finally:
@@ -1674,7 +1723,7 @@ async def main(argv: list[str] | None = None) -> int:
     control_runner, control_port = await _start_http(await _control_api_app(state), None)
     llm_runner, llm_port = await _start_http(await _llm_app(state), None)
     asr_server, asr_port = await _start_ws(_asr_handler, state, ssl_context)
-    stepfun_server, stepfun_port = await _start_ws(_stepfun_handler, state, ssl_context)
+    stepfun_server, stepfun_port = await _start_ws(_doubao_handler, state, ssl_context)
     docker_env = _docker_env()
     fault = state.tts_fault == "all"
     compose_env = _compose_env(
@@ -1724,8 +1773,8 @@ async def main(argv: list[str] | None = None) -> int:
             buffers_cleared = _assert_audio_buffers_cleared(logs)
             disk_written = _audio_written_since(disk_before_run, disk_after_run)
             assert not disk_written, f"e2e wrote audio to disk: {disk_written}"
-            if any(CRISIS_TEXT in spoken for spoken in state.stepfun_texts):
-                raise RuntimeError("crisis text reached the live StepFun engine")
+            if any(CRISIS_TEXT in spoken for spoken in state.tts_texts):
+                raise RuntimeError("crisis text reached the live TTS engine")
             results["crisis_sha256"] = hashlib.sha256(_crisis_pcm()).hexdigest()
             results["disk_audio_written_bytes"] = sum(disk_written.values())
             results["audio_buffers_cleared"] = buffers_cleared
@@ -1740,7 +1789,7 @@ async def main(argv: list[str] | None = None) -> int:
                 flush=True,
             )
         results["llm_calls"] = state.llm_calls
-        results["stepfun_units"] = len(state.stepfun_texts)
+        results["tts_units"] = len(state.tts_texts)
         results["asr_connections"] = state.asr_connections
         results["asr_tasks"] = state.asr_tasks
         print(json.dumps({"ok": True, **results}, ensure_ascii=False, indent=2))

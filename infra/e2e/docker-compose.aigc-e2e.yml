@@ -58,16 +58,10 @@ services:
       DEEPSEEK_BASE_URL: ${E2E_LLM_URL}
       DEEPSEEK_FAST_MODEL: e2e-chat
       DEEPSEEK_DEEP_MODEL: e2e-chat
-      TTS_PROVIDER: stepfun_primary
-      STEPFUN_TTS_ENABLED: "true"
-      STEPFUN_TTS_MOCK_WS_URL: ${E2E_STEPFUN_URL}
-      STEPFUN_API_KEY: e2e-stepfun-key
-      STEPFUN_TTS_MODEL: stepaudio-2.5-tts
-      STEPFUN_TTS_VOICE: wenrounansheng
+      TTS_PROVIDER: doubao
       DOUBAO_TTS_MOCK_WS_URL: ${E2E_STEPFUN_URL}
       DOUBAO_TTS_APP_ID: e2e-doubao-app
       DOUBAO_TTS_ACCESS_TOKEN: e2e-doubao-token
-      STEPFUN_TTS_FIXED_SAFETY_PRIMARY_FIRST: "true"
     command:
       - -m
       - scripts.run_media_bridge
