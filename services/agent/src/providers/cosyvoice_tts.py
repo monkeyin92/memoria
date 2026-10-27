@@ -654,11 +654,10 @@ class CosyVoiceTTS:
         rate: float,
         instruction: str = "",
         pitch: int = 0,
-        loudness_rate: int = 0,
         reference_contexts: tuple[str, ...] = (),
         fence: GenerationFence | None = None,
     ) -> None:
-        del instruction, pitch, loudness_rate, reference_contexts, fence
+        del instruction, pitch, reference_contexts, fence
         if emotion not in COSYVOICE_EMOTIONS:
             emotion = "neutral"
         self._config.instruction = cosyvoice_instruction(

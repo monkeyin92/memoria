@@ -57,6 +57,7 @@ from services.agent.src.providers.provider_errors import (
 )
 from services.agent.src.providers.reliability import CircuitBreaker
 from services.agent.src.providers.tts_stream import AudioEmitter, SynthesizeStream, TimedString
+from services.common.story_grounding import DEFAULT_VOLUME_STEP
 
 logger = logging.getLogger(__name__)
 DEFAULT_WS_URL = "wss://openspeech.bytedance.com/api/v3/tts/bidirection"
@@ -1220,7 +1221,6 @@ class DoubaoTTS:
         rate: float,
         instruction: str = "",
         pitch: int = 0,
-        loudness_rate: int = 0,
         reference_contexts: tuple[str, ...] = (),
         fence: GenerationFence | None = None,
     ) -> None:
@@ -1230,15 +1230,16 @@ class DoubaoTTS:
             config.instruction = None
             config.reference_contexts = ()
             config.pitch = 0
-            config.loudness_rate = 0
             clamped = min(1.05, max(0.95, rate))
         else:
             cleaned_instruction = instruction.strip()
             config.instruction = cleaned_instruction[:240] or None
             config.reference_contexts = tuple(reference_contexts[-2:])
             config.pitch = min(3, max(-3, int(pitch)))
-            config.loudness_rate = min(100, max(-50, int(loudness_rate)))
             clamped = min(1.20, max(0.85, rate))
+        # Loudness is a session setting the child asks for by voice, not a per-turn style, so it
+        # rides in the unused high bits of ``pitch`` (one step per 16) and survives every turn.
+        config.loudness_rate = min(100, max(-50, (int(pitch) // 16) * DEFAULT_VOLUME_STEP))
         config.speech_rate = round((clamped - 1.0) * 100)
         if fence is None:
             self._config = config

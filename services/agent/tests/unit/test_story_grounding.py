@@ -165,22 +165,45 @@ def test_fixed_companion_reply_handles_pure_volume_immediately() -> None:
     assert fixed_companion_reply(query="声音小一点", is_companion=False) is None
 
 
-def test_prosody_adjusts_loudness_rate() -> None:
+def test_prosody_carries_volume_in_pitch_and_keeps_it_across_turns() -> None:
+    # 1. Start from neutral (0), increase volume by 1 step -> +DEFAULT_VOLUME_STEP
     plan_up = speech_plan_for_turn(
         label="neutral",
         provider_label="neutral",
         text="声音大一点",
         companion_id="taoxi",
     )
-    assert plan_up.loudness_rate == DEFAULT_VOLUME_STEP
+    assert plan_up.pitch // 16 * DEFAULT_VOLUME_STEP == DEFAULT_VOLUME_STEP
 
+    # 2. Next turn asks for a story without volume command -> retains +DEFAULT_VOLUME_STEP
+    plan_kept = speech_plan_for_turn(
+        label="neutral",
+        provider_label="neutral",
+        text="给我讲个故事",
+        companion_id="taoxi",
+        previous=plan_up,
+    )
+    assert plan_kept.pitch // 16 * DEFAULT_VOLUME_STEP == DEFAULT_VOLUME_STEP
+
+    # 3. Next turn asks to decrease volume -> goes from +15 down to 0
     plan_down = speech_plan_for_turn(
         label="neutral",
         provider_label="neutral",
         text="声音小一点",
         companion_id="taoxi",
+        previous=plan_kept,
     )
-    assert plan_down.loudness_rate == -DEFAULT_VOLUME_STEP
+    assert plan_down.pitch // 16 * DEFAULT_VOLUME_STEP == 0
+
+    # 4. Another decrease turn -> goes from 0 down to -15
+    plan_down_again = speech_plan_for_turn(
+        label="neutral",
+        provider_label="neutral",
+        text="声音小一点",
+        companion_id="taoxi",
+        previous=plan_down,
+    )
+    assert plan_down_again.pitch // 16 * DEFAULT_VOLUME_STEP == -DEFAULT_VOLUME_STEP
 
 
 def test_live_lookup_router_triggers_for_ip_story() -> None:

@@ -791,11 +791,10 @@ class StepFunTTS:
         rate: float,
         instruction: str = "",
         pitch: int = 0,
-        loudness_rate: int = 0,
         reference_contexts: tuple[str, ...] = (),
         fence: GenerationFence | None = None,
     ) -> None:
-        del emotion, pitch, loudness_rate, reference_contexts, fence
+        del emotion, pitch, reference_contexts, fence
         self._config.instruction = _effective_instruction(instruction)
         self._config.sample_rate = self._base_config.sample_rate
 
