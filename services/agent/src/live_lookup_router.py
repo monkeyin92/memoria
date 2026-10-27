@@ -36,6 +36,10 @@ def keyword_requires_live_media_lookup(query: str) -> bool:
         return False
     if requires_realtime_lookup(query):
         return True
+    from services.common.story_grounding import extract_story_ip
+
+    if extract_story_ip(query) is not None:
+        return True
     compact = _normalized(query)
     return (
         bool(compact)

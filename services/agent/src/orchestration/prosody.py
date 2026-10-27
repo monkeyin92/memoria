@@ -9,6 +9,12 @@ from typing import Literal
 
 from services.common.companion_response_safety import companion_safety_decision
 from services.common.companions import companion_definition
+from services.common.story_grounding import DEFAULT_VOLUME_STEP, is_volume_command
+
+# The child asks for volume by voice and it has to hold for the rest of the session, while pitch is
+# restated by every turn. The two ride in one ``SpeechPlan.pitch`` int so the per-turn plan plumbing
+# gains no new field: loudness lives in steps of 16, far above the pitch range of -12..12.
+_LOUDNESS_UNIT = 16
 
 VoiceEmotion = Literal[
     "neutral",
@@ -156,6 +162,21 @@ class SpeechPlan:
     def instruction(self) -> str:
         # Fixed system-voice format (longanyang). TTS may re-map for freeform.
         return cosyvoice_instruction(self.voice_emotion, freeform=False)
+
+
+def _tone_of(pitch: int) -> int:
+    """The pitch offset, which stays inside -12..12 and never reaches one loudness step."""
+    return pitch - (pitch // _LOUDNESS_UNIT) * _LOUDNESS_UNIT
+
+
+def _loudness_of(pitch: int) -> int:
+    return (pitch // _LOUDNESS_UNIT) * DEFAULT_VOLUME_STEP
+
+
+def _with_loudness(tone: int, loudness: int) -> int:
+    bounded = min(100, max(-50, loudness))
+    steps = (abs(bounded) + DEFAULT_VOLUME_STEP // 2) // DEFAULT_VOLUME_STEP
+    return tone + (steps if bounded >= 0 else -steps) * _LOUDNESS_UNIT
 
 
 def cosyvoice_instruction(emotion: str, *, freeform: bool = False) -> str:
@@ -385,9 +406,19 @@ def _style_command_body(text: str) -> str | None:
         "把语速",
         "把音调",
         "把声音",
+        "把音量",
         "语速调",
         "音调调",
         "声音调",
+        "音量调",
+        "声音大",
+        "声音小",
+        "音量大",
+        "音量小",
+        "大声",
+        "小声",
+        "放大声",
+        "放小声",
         "都用",
     )
     if normalized.startswith(style_prefixes):
@@ -413,7 +444,7 @@ def _apply_explicit_voice_style(plan: SpeechPlan, text: str) -> SpeechPlan:
     dialect: VoiceDialect = "standard"
     tone: VoiceTone = "natural"
     rate = plan.rate
-    pitch = 0
+    pitch = plan.pitch
     explicit_emotion = False
 
     if _contains_any(command, ("用悲伤的语气", "用悲伤语气", "悲伤一点说", "语气悲伤一点")):
@@ -448,16 +479,20 @@ def _apply_explicit_voice_style(plan: SpeechPlan, text: str) -> SpeechPlan:
     ):
         rate = 0.90
 
-    if _contains_any(
+    # "声音小一点" contains "声音低一点", so a request that names the volume is not a pitch request.
+    volume_request = is_volume_command(command)[0]
+    if not volume_request and _contains_any(
         command,
         ("音调调高", "音调提高", "音调高一点", "声音调高", "声音提高", "声音高一点"),
     ):
-        pitch = 2
-    elif _contains_any(
+        pitch = _with_loudness(2, _loudness_of(pitch))
+    elif not volume_request and _contains_any(
         command,
         ("音调调低", "音调降低", "音调低一点", "声音调低", "声音降低", "声音低一点"),
     ):
-        pitch = -2
+        pitch = _with_loudness(-2, _loudness_of(pitch))
+    else:
+        pitch = _with_loudness(_tone_of(pitch), _loudness_of(pitch))
 
     styled = replace(
         plan,
@@ -509,8 +544,10 @@ def speech_plan_for_turn(
     use_markup_tags: bool = False,
     companion_id: str | None = None,
     service_mode: str | None = None,
+    previous: SpeechPlan | None = None,
 ) -> SpeechPlan:
     """The turn's speech plan, tuned to the listener (child, elder) unless the user asked for a style."""
+    carried = _with_loudness(0, _loudness_of(previous.pitch)) if previous is not None else 0
     plan = _speech_plan_for_turn(
         label=label,
         provider_label=provider_label,
@@ -518,7 +555,13 @@ def speech_plan_for_turn(
         evidence=evidence,
         use_markup_tags=use_markup_tags,
         companion_id=companion_id,
+        carried_pitch=carried,
     )
+    is_vol, delta_vol, _ = is_volume_command(text)
+    if is_vol:
+        plan = replace(
+            plan, pitch=_with_loudness(_tone_of(plan.pitch), _loudness_of(plan.pitch) + delta_vol)
+        )
     if _style_command_body(text) is not None:
         return plan
     hints = _AUDIENCE_VOICE_HINTS.get(service_mode or "")
@@ -539,6 +582,7 @@ def _speech_plan_for_turn(
     evidence: tuple[str, ...] = (),
     use_markup_tags: bool = False,
     companion_id: str | None = None,
+    carried_pitch: int = 0,
 ) -> SpeechPlan:
     """Choose one bounded provider-neutral style, including explicit requests."""
     plan = _semantic_speech_plan_for_turn(
@@ -548,6 +592,7 @@ def _speech_plan_for_turn(
         evidence=evidence,
         use_markup_tags=use_markup_tags,
     )
+    plan = replace(plan, pitch=carried_pitch)
     styled = _apply_explicit_voice_style(plan, text)
     if companion_safety_decision(text) not in {
         "crisis_self",

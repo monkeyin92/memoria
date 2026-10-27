@@ -124,6 +124,7 @@ class DuplexRuntimeEmotionMixin:
                 if self.mode_policy.runtime_profile is not None
                 else None
             ),
+            previous=self.speech_plan,
         )
         self._generation_records.bind_speech_plan(fence, self.speech_plan)
         apply_plan = getattr(self.tts, "apply_speech_plan", None)

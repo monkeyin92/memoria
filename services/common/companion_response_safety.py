@@ -642,7 +642,16 @@ def companion_identity_replies(display_name: str, style_description: str) -> fro
     """
 
     del display_name, style_description
-    return frozenset({NAMELESS_IDENTITY_REPLY, AFFECTION_FIXED_REPLY})
+    from services.common.story_grounding import VOLUME_DOWN_REPLY, VOLUME_UP_REPLY
+
+    return frozenset(
+        {
+            NAMELESS_IDENTITY_REPLY,
+            AFFECTION_FIXED_REPLY,
+            VOLUME_UP_REPLY,
+            VOLUME_DOWN_REPLY,
+        }
+    )
 
 
 def fixed_companion_reply(
@@ -653,7 +662,7 @@ def fixed_companion_reply(
     style_description: str | None = None,
     audience: str | None = None,
 ) -> str | None:
-    """Return a fixed reply for crisis, prohibited, identity, or affection queries."""
+    """Return a fixed reply for crisis, prohibited, identity, affection, or volume queries."""
 
     del display_name, style_description, audience
     decision = companion_safety_decision(query)
@@ -664,6 +673,11 @@ def fixed_companion_reply(
         return SAFE_UNKNOWN_REPLY
     if not is_companion:
         return None
+    from services.common.story_grounding import is_pure_volume_command
+
+    is_pure_vol, _delta, vol_reply = is_pure_volume_command(query)
+    if is_pure_vol and vol_reply is not None:
+        return vol_reply
     normalized = _normalize_query(query)
     if normalized in _IDENTITY_FIXED_QUERIES:
         return NAMELESS_IDENTITY_REPLY
