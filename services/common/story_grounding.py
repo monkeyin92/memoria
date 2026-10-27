@@ -212,6 +212,8 @@ _GENERIC_BEDTIME_KEYWORDS = frozenset(
         "来个故事",
         "说个故事",
         "讲小故事",
+        "讲个小故事",
+        "讲一个小故事",
     }
 )
 
@@ -234,11 +236,24 @@ _EXCLUDE_IP_WORDS = frozenset(
         "好听的",
         "有趣",
         "有趣的",
+        "精彩",
+        "精彩的",
+        "经典",
+        "经典的",
         "童话",
         "一个",
+        "一个新",
+        "一个新的",
+        "一个小",
+        "新的",
         "个",
+        "个小",
+        "个新",
+        "个短",
+        "个大",
         "另外",
         "另外一个",
+        "另一个",
         "别的",
         "别讲",
         "不要",
@@ -250,11 +265,20 @@ _EXCLUDE_IP_WORDS = frozenset(
         "这个",
         "那个",
         "短",
+        "短的",
         "长的",
         "小",
+        "大",
         "短篇",
+        "长篇",
+        "故事",
+        "小故事",
+        "大故事",
+        "短故事",
     }
 )
+
+_GENERIC_STORY_CHARS = frozenset("一个新小大短长好听有趣精彩经典睡前故事童话绘本篇部首的另外别什么这那")
 
 
 def _normalize(text: str) -> str:
@@ -319,18 +343,30 @@ def extract_story_ip(query: str) -> str | None:
 
     # 2. Check regex patterns for generic "[IP]的故事" or "我想听[IP]"
     patterns = (
-        r"(?:想听|讲一个|讲个|讲|听|说)(?P<ip>[一-龥a-zA-Z0-9]{2,10}?)(?:的)?(?:睡前)?(?:故事|童话)",
-        r"(?:有没有|换成)(?P<ip>[一-龥a-zA-Z0-9]{2,10}?)(?:的)?(?:故事)",
+        r"(?:想听|要听|讲一个|讲个|讲|听|说|放|播)(?P<ip>[一-龥a-zA-Z0-9]{2,10}?)(?:的)?(?:睡前)?(?:故事|童话|绘本)",
+        r"(?:有没有|换成)(?P<ip>[一-龥a-zA-Z0-9]{2,10}?)(?:的)?(?:故事|童话)",
     )
     for pattern in patterns:
-        match = re.search(pattern, query)
-        if match:
+        for match in re.finditer(pattern, query):
             candidate = match.group("ip").strip()
             norm_cand = _normalize(candidate)
-            if norm_cand not in _EXCLUDE_IP_WORDS and len(norm_cand) >= 2:
-                # Ensure it's not one of our local stories
-                if not any(_normalize(alias) in norm_cand for s in LOCAL_STORIES.values() for alias in s.aliases):
-                    return candidate
+            # Strip leading classifiers / quantifiers if captured by loose boundaries
+            for pfx in ("另外一个", "另一个", "换一个", "一个新的", "一个新", "一个小", "一个", "个小", "个新", "个短", "个大", "个"):
+                if norm_cand.startswith(pfx):
+                    norm_cand = norm_cand[len(pfx):]
+                    break
+            for sfx in ("的", "小", "新", "短"):
+                if norm_cand.endswith(sfx) and len(norm_cand) > len(sfx) + 1:
+                    norm_cand = norm_cand[:-len(sfx)]
+                    break
+
+            if len(norm_cand) < 2 or norm_cand in _EXCLUDE_IP_WORDS:
+                continue
+            if set(norm_cand).issubset(_GENERIC_STORY_CHARS):
+                continue
+            # Ensure it's not one of our local stories
+            if not any(_normalize(alias) in norm_cand for s in LOCAL_STORIES.values() for alias in s.aliases):
+                return norm_cand
 
     return None
 
@@ -421,6 +457,14 @@ VOLUME_DOWN_PATTERNS: Final[tuple[str, ...]] = (
     "音量再小一点",
 )
 
+def _names_volume(compact: str, pattern: str) -> bool:
+    start = compact.find(pattern)
+    if start < 0:
+        return False
+    window = compact[max(0, start - 4) : start]
+    return "声音" in window or "音量" in window or pattern.startswith(("声音", "音量", "大声", "小声"))
+
+
 DEFAULT_VOLUME_STEP: Final[int] = 15
 VOLUME_UP_REPLY: Final[str] = "好的，声音调大了一点。"
 VOLUME_DOWN_REPLY: Final[str] = "好的，声音调小了一点。"
@@ -437,12 +481,14 @@ def is_volume_command(query: str) -> tuple[bool, int, str | None]:
     if not compact:
         return False, 0, None
 
+    # Match only where the words name the volume. A bare "调低一点" also describes pitch and pace,
+    # and a substring match would move the volume when the child asked for something else.
     for pattern in VOLUME_UP_PATTERNS:
-        if _normalize(pattern) in compact:
+        if _names_volume(compact, _normalize(pattern)):
             return True, DEFAULT_VOLUME_STEP, VOLUME_UP_REPLY
 
     for pattern in VOLUME_DOWN_PATTERNS:
-        if _normalize(pattern) in compact:
+        if _names_volume(compact, _normalize(pattern)):
             return True, -DEFAULT_VOLUME_STEP, VOLUME_DOWN_REPLY
 
     return False, 0, None

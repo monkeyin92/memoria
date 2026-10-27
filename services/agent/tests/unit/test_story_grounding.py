@@ -77,6 +77,8 @@ def test_extract_story_ip_from_known_child_ips() -> None:
 def test_extract_story_ip_generic_regex() -> None:
     assert extract_story_ip("我想听孙悟空的故事") == "孙悟空"
     assert extract_story_ip("讲一个哪吒的故事") == "哪吒"
+    assert extract_story_ip("给我讲个哪吒的故事吧") == "哪吒"
+    assert extract_story_ip("我想听白雪公主的故事") == "白雪公主"
 
 
 def test_extract_story_ip_excludes_common_story_words_and_local_titles() -> None:
@@ -84,6 +86,16 @@ def test_extract_story_ip_excludes_common_story_words_and_local_titles() -> None
     assert extract_story_ip("讲个好听的故事") is None
     assert extract_story_ip("讲一个小星星的枕头") is None
     assert extract_story_ip("讲月亮不着急") is None
+    assert extract_story_ip("给我讲个小故事吧") is None
+    assert extract_story_ip("讲个小故事") is None
+    assert extract_story_ip("讲一个小故事") is None
+    assert extract_story_ip("我想听一个小故事") is None
+    assert extract_story_ip("我想听个小故事") is None
+    assert extract_story_ip("讲个新故事") is None
+    assert extract_story_ip("我想听一个新的故事") is None
+    assert extract_story_ip("讲个有趣的故事") is None
+    assert extract_story_ip("讲个短故事") is None
+    assert extract_story_ip("讲个大故事") is None
 
 
 def test_build_ip_story_search_query() -> None:
@@ -149,6 +161,10 @@ def test_volume_command_parsing() -> None:
     assert is_vol is False
     assert delta == 0
     assert reply is None
+
+    # A pitch request shares the words but must not move the volume.
+    assert is_volume_command("请把音调调低一点")[0] is False
+    assert is_volume_command("请把音调调高一点")[0] is False
 
 
 def test_is_pure_volume_command() -> None:
