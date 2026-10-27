@@ -13,10 +13,10 @@ STRONG_BOUNDARY = set("。！？；\n")
 WEAK_BOUNDARY = set("，、：")
 _TERMINAL_PUNCT = frozenset("。！？；!?")
 HARD_LIMIT = 42
-FIRST_TARGET_MIN = 6
+FIRST_TARGET_MIN = 4
 WEAK_SUBMIT_MIN = 12
 WEAK_SUBMIT_MAX = 28
-FIRST_WEAK_MIN = 6  # first segment may cut earlier for lower TTFB
+FIRST_WEAK_MIN = 4  # D-08: first segment cuts earlier (4-6 chars) for lower TTFB
 # P1-6: snappier first audible phrase while LLM is still streaming (边想边说).
 FIRST_WAIT_MS = 120
 FIRST_HARD_WAIT_MS = 260

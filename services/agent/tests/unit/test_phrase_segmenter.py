@@ -56,3 +56,39 @@ def test_streaming_chunks_do_not_duplicate_terminal_punctuation() -> None:
     assert "。。" not in joined
     assert joined == "那我讲一个。有只小兔子"
     assert parts == ["那我讲一个。", "有只小兔子"]
+
+
+def test_d08_streaming_first_phrase_4_to_6_chars_cut_on_weak_boundary() -> None:
+    """D-08: first phrase cuts on weak boundary with 4-6 chars for snappier TTFB."""
+    # 4 characters + weak boundary
+    seg = PhraseSegmenter(GenerationFence("d08-4char", 1, 1, 0))
+    emitted = seg.push_token("我知道啦，")
+    assert [s.text for s in emitted] == ["我知道啦，"]
+
+    # 5 characters + weak boundary
+    seg = PhraseSegmenter(GenerationFence("d08-5char", 1, 1, 0))
+    emitted = seg.push_token("好的没问题，")
+    assert [s.text for s in emitted] == ["好的没问题，"]
+
+    # 6 characters + weak boundary
+    seg = PhraseSegmenter(GenerationFence("d08-6char", 1, 1, 0))
+    emitted = seg.push_token("今天天气真好，")
+    assert [s.text for s in emitted] == ["今天天气真好，"]
+
+    # Under 4 characters: should NOT cut on weak boundary alone
+    seg = PhraseSegmenter(GenerationFence("d08-under4", 1, 1, 0))
+    emitted = seg.push_token("好啊，")
+    assert emitted == []
+
+
+def test_d08_streaming_first_phrase_hard_wait_cut_at_4_chars() -> None:
+    """At FIRST_HARD_WAIT_MS, four characters cut even without punctuation."""
+    t0 = 1_000_000_000
+    seg = PhraseSegmenter(GenerationFence("d08-hardwait", 1, 1, 0))
+
+    emitted = seg.push_token("我们在", now_ns=t0)
+    assert emitted == []
+
+    emitted = seg.push_token("听", now_ns=t0 + 260_000_000)
+    assert [s.text for s in emitted] == ["我们在听"]
+
