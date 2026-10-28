@@ -114,12 +114,7 @@ def test_a_run_with_a_confirmed_stop_and_idle_tail_passes(tmp_path: Path, capsys
     assert report["failures"] == []
     assert report["no_reply"] == 0
     assert report["reply_latency_p95_s"] == 1.25
-    assert report["gates"] == {"max_no_reply": None, "max_reply_latency_p95_s": None}
-
-
-def test_numeric_gates_stay_unset_until_monkey_sets_them() -> None:
-    assert voice_soak_verdict.MAX_NO_REPLY is None
-    assert voice_soak_verdict.MAX_REPLY_LATENCY_P95_S is None
+    assert report["gates"] == {"max_no_reply": 0, "max_reply_latency_p95_s": 2.0}
 
 
 def test_a_claimed_stop_without_log_evidence_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -148,6 +143,7 @@ def test_abort_silence_and_tail_each_fail_the_run(tmp_path: Path, capsys: pytest
         "step_failed: t001 could not wake the device",
         "silence_not_idle: t002",
         "tail_idle: timeout",
+        "reply_latency_p95_s: missing > 2.0",
     ]
 
 
@@ -155,39 +151,57 @@ def test_missing_tail_observation_fails(tmp_path: Path, capsys: pytest.CaptureFi
     run = tmp_path / "run-notail"
     _write(run, [{"kind": "said", "tag": "t001", "text": "你好"}])
     assert voice_soak_verdict.main([str(run)]) == 1
-    assert json.loads(capsys.readouterr().out)["failures"] == ["tail_idle: missing"]
+    assert json.loads(capsys.readouterr().out)["failures"] == [
+        "tail_idle: missing",
+        "reply_latency_p95_s: missing > 2.0",
+    ]
 
 
-def test_no_reply_is_reported_and_fails_only_when_the_gate_is_set(
+def test_no_reply_zero_passes_and_one_fails(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    run = tmp_path / "run-noreply"
-    _write(run, [{"kind": "no_reply", "tag": "t001"}, _tail()])
-    assert voice_soak_verdict.main([str(run)]) == 0
-    assert json.loads(capsys.readouterr().out)["no_reply"] == 1
-    assert voice_soak_verdict.main([str(run), "--max-no-reply", "0"]) == 1
+    ok = tmp_path / "run-noreply-zero"
+    _write(ok, [{"kind": "reply", "tag": "t001", "latency_s": 2.0}, _tail()])
+    assert voice_soak_verdict.main([str(ok)]) == 0
     report = json.loads(capsys.readouterr().out)
+    assert report["passed"] is True
+    assert report["no_reply"] == 0
+    assert report["failures"] == []
+
+    bad = tmp_path / "run-noreply-one"
+    _write(
+        bad,
+        [
+            {"kind": "no_reply", "tag": "t001"},
+            {"kind": "reply", "tag": "t002", "latency_s": 2.0},
+            _tail(),
+        ],
+    )
+    assert voice_soak_verdict.main([str(bad)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["no_reply"] == 1
     assert report["failures"] == ["no_reply: 1 > 0"]
     assert report["gates"]["max_no_reply"] == 0
 
 
-def test_reply_latency_p95_fails_only_when_the_gate_is_set(
+def test_reply_latency_p95_at_2s_passes_and_above_fails(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    run = tmp_path / "run-slow"
-    _write(
-        run,
-        [
-            {"kind": "reply", "tag": "t001", "latency_s": 1.5},
-            {"kind": "reply", "tag": "t002", "latency_s": 9.5},
-            _tail(),
-        ],
-    )
-    assert voice_soak_verdict.main([str(run)]) == 0
-    assert json.loads(capsys.readouterr().out)["reply_latency_p95_s"] == 9.5
-    assert voice_soak_verdict.main([str(run), "--max-reply-latency-p95", "3"]) == 1
+    ok = tmp_path / "run-p95-exact"
+    _write(ok, [{"kind": "reply", "tag": "t001", "latency_s": 2.0}, _tail()])
+    assert voice_soak_verdict.main([str(ok)]) == 0
     report = json.loads(capsys.readouterr().out)
-    assert report["failures"] == ["reply_latency_p95_s: 9.5 > 3.0"]
+    assert report["passed"] is True
+    assert report["reply_latency_p95_s"] == 2.0
+    assert report["failures"] == []
+
+    bad = tmp_path / "run-p95-over"
+    _write(bad, [{"kind": "reply", "tag": "t001", "latency_s": 2.01}, _tail()])
+    assert voice_soak_verdict.main([str(bad)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["reply_latency_p95_s"] == 2.01
+    assert report["failures"] == ["reply_latency_p95_s: 2.01 > 2.0"]
+    assert report["gates"]["max_reply_latency_p95_s"] == 2.0
 
 
 def test_invalid_timeline_json_fails_closed(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
