@@ -9,7 +9,7 @@ mascot expression read the same per-turn value.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Final, Literal, cast
+from typing import Final, Literal
 
 AssistantEmotion = Literal["neutral", "happy", "caring", "curious"]
 
@@ -88,7 +88,7 @@ class AssistantEmotionFilter:
             return text
         value = inner.split(":", 1)[1].strip().lower()
         if value in ASSISTANT_EMOTIONS:
-            self.emotion = cast(AssistantEmotion, value)
+            self.emotion = value
         self._resolved = True
         text = stripped[end + 1 :].lstrip()
         self._buffer = ""
