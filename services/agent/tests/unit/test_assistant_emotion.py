@@ -81,6 +81,31 @@ def test_plain_text_is_unchanged() -> None:
     assert "".join(parts) == "今天星期三。"
 
 
+def test_reset_emotion_filter_rearms_after_server_text() -> None:
+    seg = PhraseSegmenter(_fence())
+    seg.push_token("好呀，我来给你讲一个故事。")
+    assert seg.assistant_emotion is None
+
+    seg.reset_emotion_filter()
+    parts = [s.text for s in seg.push_token("[emotion:happy]你好呀。")]
+    parts.extend(s.text for s in seg.flush(end_of_stream=True))
+
+    assert seg.assistant_emotion == "happy"
+    assert "".join(parts) == "你好呀。"
+
+
+def test_oversized_incomplete_tag_is_dropped_until_close() -> None:
+    seg = PhraseSegmenter(_fence())
+    assert seg.push_token("[emotion:" + "x" * 40) == []
+    assert seg.assistant_emotion is None
+
+    parts = [s.text for s in seg.push_token("more]你好。")]
+    parts.extend(s.text for s in seg.flush(end_of_stream=True))
+
+    assert "".join(parts) == "你好。"
+    assert "[emotion" not in "".join(parts)
+
+
 @pytest.mark.parametrize(
     ("emotion", "expected"),
     [("happy", "happy"), ("caring", "caring"), ("curious", "curious")],

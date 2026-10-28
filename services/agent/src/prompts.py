@@ -7,10 +7,18 @@ from services.common.companion_response_safety import NAMELESS_IDENTITY_REPLY
 from services.common.llm_thinking_filler import LLM_THINKING_TEXT
 from services.tutor.prompts import TUTOR_STYLE
 
-COMPANION_STYLE = """
-在陪伴模式下，你是用户当前选择的陪伴机器人。像面对面聊天一样说话，不要朗读文章。
-每一轮回复开头先输出一个情绪标签，格式为 [emotion:neutral]、[emotion:happy]、[emotion:caring] 或 [emotion:curious]，标签后直接接正文。标签只用于内部语音和表情控制，不要解释、不要重复、不要念出来。
-""".strip()
+EMOTION_TAG_RULE = (
+    "每一轮回复开头先输出一个情绪标签，格式为 [emotion:neutral]、[emotion:happy]、"
+    "[emotion:caring] 或 [emotion:curious]，标签后直接接正文。"
+    "标签只用于内部语音和表情控制，不要解释、不要重复、不要念出来。"
+)
+
+COMPANION_STYLE = "\n".join(
+    (
+        "在陪伴模式下，你是用户当前选择的陪伴机器人。像面对面聊天一样说话，不要朗读文章。",
+        EMOTION_TAG_RULE,
+    )
+)
 
 _SAFETY_CORE_BODY = """
 用户请求实施暴力、色情、违法或其他危害行为时只回答“我不知道。”不要解释、扩写、复述或变相提供。
@@ -306,6 +314,7 @@ __all__ = [
     "LIVE_LOOKUP_FILLER",
     "DEVICE_WAKE_PHRASES",
     "DEVICE_WAKE_GREETING_PHRASES",
+    "EMOTION_TAG_RULE",
     "SAFETY_CORE",
     "SAFETY_CORE_TRANSPARENT",
     "SPEAKER_ENROLLMENT_DONE_PHRASE",

@@ -56,9 +56,16 @@ class AssistantEmotionFilter:
     emotion: AssistantEmotion | None = None
     _buffer: str = ""
     _resolved: bool = False
+    _drop_until_close: bool = False
 
     def feed(self, token: str) -> str | None:
         if self._resolved:
+            if self._drop_until_close:
+                end = token.find("]")
+                if end < 0:
+                    return None
+                self._drop_until_close = False
+                return token[end + 1 :].lstrip()
             return token
         self._buffer += token
         stripped = self._buffer.lstrip()
@@ -76,9 +83,8 @@ class AssistantEmotionFilter:
         if end < 0:
             if len(stripped) > _MAX_TAG_LEN:
                 self._resolved = True
-                text = self._buffer
+                self._drop_until_close = True
                 self._buffer = ""
-                return text
             return None
         inner = stripped[1:end].strip()
         if not inner.lower().startswith("emotion:"):
@@ -97,6 +103,8 @@ class AssistantEmotionFilter:
     def flush(self) -> str:
         """Release pending text, or drop an incomplete reserved tag."""
         if self._resolved:
+            if self._drop_until_close:
+                self._buffer = ""
             return ""
         self._resolved = True
         stripped = self._buffer.lstrip()
