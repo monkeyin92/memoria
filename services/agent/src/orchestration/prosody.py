@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Literal
 
+from services.agent.src.orchestration.assistant_emotion import AssistantEmotion
 from services.common.companion_response_safety import companion_safety_decision
 from services.common.companions import companion_definition
 from services.common.story_grounding import DEFAULT_VOLUME_STEP, is_volume_command
@@ -157,6 +158,8 @@ class SpeechPlan:
     pitch: int = 0
     # Trusted provider instruction assembled only from the whitelist above.
     tts_instruction: str = ""
+    # Emotion declared by the reply model for this turn, if any.
+    assistant_emotion: AssistantEmotion | None = None
 
     @property
     def instruction(self) -> str:
@@ -643,6 +646,12 @@ def mascot_expression_for_reply(
     if plan.delivery_mode == "light_laughter":
         return "happy"
     if plan.delivery_mode == "deliberative":
+        return "curious"
+    if plan.assistant_emotion == "caring":
+        return "caring"
+    if plan.assistant_emotion == "happy":
+        return "happy"
+    if plan.assistant_emotion == "curious":
         return "curious"
 
     spoken = strip_paralinguistic_markup(text)

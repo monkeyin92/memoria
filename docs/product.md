@@ -22,7 +22,7 @@
 #### 现状
 
 - **固件。** [`MemoriaMascotDisplay::SetEmotion()`](../firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/memoria_mascot_display.cc:445) 把服务端的表情名存进一个定长缓冲，动画任务读进说话帧，由 `FaceForExpression()` 在现有七张脸里挑一张（happy/caring/loving 和 neutral 用说话脸，curious/thinking 用思考脸，surprised 用招呼脸，sad 用平静脸；没收到名字或名字不认识时也保持说话脸）。危机脚本仍固定平静脸。不说话的状态仍跟设备状态和音频电平走（[M-7](../TODOLIST.md:M-7)），没有新增表情。
-- **服务端。** AI 回复里已经有了 `"emotion"` 字段（例如 `"happy"`），但目前只用于记忆存档与展示，不驱动伙伴。
+- **服务端。** 回复开头可以带一个内部标签 `[emotion:neutral|happy|caring|curious]`。`PhraseSegmenter` 在进入 TTS 前剥离标签，并把值写入当前 turn 的 `SpeechPlan.assistant_emotion`。豆包 TTS 只有开启 `DOUBAO_TTS_STYLE_CONTROL_ENABLED` 时才把情绪追加到 `context_texts`；表情走 `assistant_expression`，不依赖这个开关。
 
 ---
 
@@ -335,5 +335,16 @@ Mock 数据字段（index.js L28-81、operation-detail.js L16-109）完全对应
 ---
 
 **审查完成**。PR #307 在产品层面可接受，mp-icon 问题已由 PR #311 修复，无产品 blocker。
+
+---
+
+## N-16：回复情绪标签联动
+
+2026-10-28 落地。回复模型在首行输出一个受控标签 `[emotion:neutral|happy|caring|curious]`。`PhraseSegmenter` 在流式入口剥离标签，标签不会进入 TTS、聊天历史或字幕。
+
+- 数据形状：`AssistantEmotion` 只有四个值，解析在 `services/agent/src/orchestration/assistant_emotion.py`。未知值会被剥离但不生效。
+- TTS：`DuplexRuntimeEmotionMixin.apply_assistant_emotion` 只在非 supportive 模式下把情绪追加到当前 fence 的 `SpeechPlan.tts_instruction`。supportive 模式保留原安全指令。豆包路径只有开启 `DOUBAO_TTS_STYLE_CONTROL_ENABLED` 且音色为 designed 时才把指令送进 `context_texts`，默认关闭。
+- 表情：`mascot_expression_for_reply` 优先使用 `assistant_emotion` 的 happy、caring、curious；neutral 回退到文本启发式。supportive、light_laughter、deliberative 三种模式仍优先，危机脚本不被覆盖。
+- 未验：真机 TTS 听感和表情变化还没跑，等后续烟测。
 
 ---

@@ -9,6 +9,7 @@ from services.tutor.prompts import TUTOR_STYLE
 
 COMPANION_STYLE = """
 在陪伴模式下，你是用户当前选择的陪伴机器人。像面对面聊天一样说话，不要朗读文章。
+每一轮回复开头先输出一个情绪标签，格式为 [emotion:neutral]、[emotion:happy]、[emotion:caring] 或 [emotion:curious]，标签后直接接正文。标签只用于内部语音和表情控制，不要解释、不要重复、不要念出来。
 """.strip()
 
 _SAFETY_CORE_BODY = """
