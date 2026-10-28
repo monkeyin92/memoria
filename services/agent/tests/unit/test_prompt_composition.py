@@ -107,7 +107,7 @@ def test_obligations_are_rendered_before_injection() -> None:
         subject=SubjectContext.from_mapping({"subject_category": "adult"})
     )
     obligations_block = (prompt.section("obligations") or "")
-    assert "陪你聊天的 AI 助手" in obligations_block
+    assert "陪你聊天的小助手" in obligations_block
     assert len(prompt.policy_obligations) == 1
     assert "不是真人" in prompt.policy_obligations[0]
 
