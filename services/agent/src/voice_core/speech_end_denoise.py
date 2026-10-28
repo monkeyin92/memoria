@@ -1,5 +1,3 @@
-"""DTLN model-1 mask confidence for one marked utterance."""
-
 from __future__ import annotations
 
 import math
@@ -8,8 +6,6 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class SpeechEndDenoiseScore:
-    """Finite mean of DTLN model-1 mask bins for one marked utterance."""
-
     summary: float
 
     def __post_init__(self) -> None:
@@ -19,8 +15,6 @@ class SpeechEndDenoiseScore:
 
 @dataclass(frozen=True, slots=True)
 class SpeechEndDenoiseLatch:
-    """One speech-end score, valid only for its endpoint sample."""
-
     endpoint_sample: int
     score: SpeechEndDenoiseScore
 
