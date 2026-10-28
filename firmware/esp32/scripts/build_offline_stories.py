@@ -62,8 +62,13 @@ VOICE = {
     "terms": "trial/demo only pending Volcengine terms",
 }
 
-# Story clips stay off the board until a new script is recorded in the child voice.
-STORIES: tuple[tuple[str, str], ...] = ()
+# Story clips recorded in the shipping voice on 2026-10-28.
+STORIES: tuple[tuple[str, str], ...] = (
+    ("story_01", "小星星的枕头"),
+    ("story_02", "月亮不着急"),
+    ("story_03", "大熊和森林里的悄悄话"),
+    ("night_soothe", "哄睡词"),
+)
 
 OFFLINE_LINES = (
     ("offline-wake-no-network-v1", "我现在连不上网。"),
