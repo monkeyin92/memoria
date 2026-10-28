@@ -2,9 +2,7 @@
 """Pass or fail one voice_soak run from its logs. No device, no network.
 
 The tail-idle verdict, silence steps, and spoken-stop audit follow the rules the
-driver and voice_soak_evidence.py already use. Two numeric gates have no value
-in the repo. They stay unset (None) until Monkey sets the constants or passes
-the matching flag. An unset gate is reported and does not fail the run.
+driver and voice_soak_evidence.py already use.
 
     python scripts/voice_soak_verdict.py outputs/acceptance/run-<stamp>-soak
     python scripts/voice_soak_verdict.py RUN --max-no-reply N --max-reply-latency-p95 SECONDS
@@ -25,9 +23,8 @@ else:
     from voice_soak_analyze import pct
     from voice_soak_evidence import audit_interruptions
 
-# None means Monkey has not chosen the number. The check still prints it.
-MAX_NO_REPLY: int | None = None
-MAX_REPLY_LATENCY_P95_S: float | None = None
+MAX_NO_REPLY: int | None = 0
+MAX_REPLY_LATENCY_P95_S: float | None = 2.0
 
 
 @dataclass(frozen=True)
