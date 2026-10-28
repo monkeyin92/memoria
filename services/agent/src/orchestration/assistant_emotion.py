@@ -88,7 +88,7 @@ class AssistantEmotionFilter:
             return text
         value = inner.split(":", 1)[1].strip().lower()
         if value in ASSISTANT_EMOTIONS:
-            self.emotion = cast(AssistantEmotion, value)
+            self.emotion = cast(AssistantEmotion, value)  # type: ignore[redundant-cast]
         self._resolved = True
         text = stripped[end + 1 :].lstrip()
         self._buffer = ""
