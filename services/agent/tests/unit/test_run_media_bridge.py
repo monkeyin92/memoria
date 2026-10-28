@@ -68,6 +68,7 @@ async def test_run_wires_max_user_speech_duration_to_session_registry(
     settings = _settings()
     settings.media_max_user_speech_duration_s = 37.5
     settings.media_listening_capture_window_s = 12.5
+    settings.media_dtln_tail_confidence_enabled = True
     _patch_run(monkeypatch, server=server, session_factory=session_factory)
     monkeypatch.setattr(run_media_bridge, "load_settings", lambda **_kwargs: settings)
 
@@ -90,6 +91,7 @@ async def test_run_wires_max_user_speech_duration_to_session_registry(
     assert captured[0]["listening_capture_window_s"] == 12.5
     assert captured[0]["max_user_speech_duration_s"] == 37.5
     assert captured[0]["speaking_stall_timeout_s"] == 15.0
+    assert captured[0]["dtln_tail_confidence_enabled"] is True
     assert captured[0]["crisis_script_interrupt_publisher"] is None
 
 
@@ -159,6 +161,7 @@ async def test_run_wires_watchdog_in_provider_registry_variants(
     assert len(captured) == 1
     assert captured[0]["owner_silence_timeout_s"] == 180.0
     assert captured[0]["max_user_speech_duration_s"] == 41.0
+    assert captured[0]["dtln_tail_confidence_enabled"] is False
     if runtime_factory is None:
         assert "runtime_factory" not in captured[0]
     else:

@@ -14,6 +14,7 @@ from services.agent.src.voice_core.deep_denoiser import (
     DeepDenoiser,
     DeepDenoiserConfig,
 )
+from services.agent.src.voice_core.speech_end_denoise import SpeechEndDenoiseScore
 
 
 def _sine_frame(*, frame_index: int, samples: int = 320) -> bytes:
@@ -54,6 +55,19 @@ def test_pinned_dtln_models_have_expected_provenance_and_contract() -> None:
 
     denoiser = DeepDenoiser()
     assert denoiser._model_available
+
+
+def test_process_speech_end_score_is_finite_and_reset_clears_it() -> None:
+    denoiser = DeepDenoiser()
+    denoiser.mark_utterance_start()
+    pcm = _sine_frame(frame_index=0)
+    output = denoiser.process(pcm)
+    assert len(output) == len(pcm)
+    score = denoiser.speech_end_score()
+    assert isinstance(score, SpeechEndDenoiseScore)
+    assert math.isfinite(score.summary)
+    denoiser.reset()
+    assert denoiser.speech_end_score() is None
 
 
 def test_dtln_stream_preserves_pcm_length_and_reset_is_session_local() -> None:

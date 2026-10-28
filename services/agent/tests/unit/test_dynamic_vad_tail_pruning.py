@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import time
 from typing import Any
 
@@ -7,6 +8,14 @@ import pytest
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_protocol import SessionIdentity
 from services.agent.src.voice_core.media_session import MediaVoiceCoreRegistry
+from services.agent.src.voice_core.semantic_completeness import (
+    DTLN_SPEECH_END_SCORE_HIGH_CUT,
+    adaptive_endpoint_grace,
+)
+from services.agent.src.voice_core.speech_end_denoise import (
+    SpeechEndDenoiseLatch,
+    SpeechEndDenoiseScore,
+)
 from services.agent.src.voice_core.speech_timeline import ASRResult
 from services.agent.tests.unit.media_session_support import (
     FakeMediaProvider,
@@ -203,3 +212,233 @@ async def test_reactive_grace_ignored_when_grace_disabled(identity: SessionIdent
     registry._observe_partial_asr_result(context, partial)
 
     assert context.pending.turn_endpoint_grace_deadline == initial_deadline
+
+
+def _neutral_grace(registry: MediaVoiceCoreRegistry, context: Any) -> float:
+    configured = float(registry.turn_endpoint_grace_s)
+    minimum = float(registry.turn_endpoint_min_grace_s)
+    maximum = float(registry.turn_endpoint_max_grace_s)
+    observed = context.observed_within_turn_pause_s
+    if observed is None:
+        return min(configured, maximum)
+    return min(maximum, max(minimum, observed + 0.15))
+
+
+def _below_cut_score() -> SpeechEndDenoiseScore:
+    return SpeechEndDenoiseScore(
+        math.nextafter(DTLN_SPEECH_END_SCORE_HIGH_CUT, -math.inf),
+    )
+
+
+def _high_score() -> SpeechEndDenoiseScore:
+    return SpeechEndDenoiseScore(DTLN_SPEECH_END_SCORE_HIGH_CUT)
+
+
+def _bind(
+    context: Any,
+    score: SpeechEndDenoiseScore | None,
+    *,
+    endpoint: int | None = None,
+) -> None:
+    sample = context.pending.turn_endpoint_sample if endpoint is None else endpoint
+    if score is None or sample is None:
+        context.pending.speech_end_denoise_latch = None
+        return
+    context.pending.speech_end_denoise_latch = SpeechEndDenoiseLatch(sample, score)
+
+
+async def test_flag_off_complete_keeps_complete_grace_with_low_score(
+    identity: SessionIdentity,
+) -> None:
+    registry, context = await _setup_registry_and_context(identity, initial_text="讲个故事吧")
+    registry.dtln_tail_confidence_enabled = False
+    context.observed_within_turn_pause_s = 0.8
+    _bind(context, _below_cut_score())
+    assert registry._adaptive_endpoint_grace(context) == registry.turn_endpoint_grace_complete_s
+
+
+async def test_flag_on_cut_score_complete_uses_complete_grace(
+    identity: SessionIdentity,
+) -> None:
+    registry, context = await _setup_registry_and_context(identity, initial_text="讲个故事吧")
+    registry.dtln_tail_confidence_enabled = True
+    _bind(context, _high_score())
+    assert registry._adaptive_endpoint_grace(context) == registry.turn_endpoint_grace_complete_s
+
+
+async def test_flag_on_below_cut_complete_uses_neutral_grace(
+    identity: SessionIdentity,
+) -> None:
+    registry, context = await _setup_registry_and_context(identity, initial_text="讲个故事吧")
+    registry.dtln_tail_confidence_enabled = True
+    context.observed_within_turn_pause_s = 0.8
+    _bind(context, _below_cut_score())
+    grace = registry._adaptive_endpoint_grace(context)
+    assert grace == pytest.approx(_neutral_grace(registry, context))
+    assert grace != registry.turn_endpoint_grace_complete_s
+
+
+async def test_flag_on_missing_latch_complete_uses_neutral_grace(
+    identity: SessionIdentity,
+) -> None:
+    registry, context = await _setup_registry_and_context(identity, initial_text="讲个故事吧")
+    registry.dtln_tail_confidence_enabled = True
+    context.observed_within_turn_pause_s = 0.8
+    _bind(context, None)
+    grace = registry._adaptive_endpoint_grace(context)
+    assert grace == pytest.approx(_neutral_grace(registry, context))
+
+
+async def test_flag_on_mismatched_endpoint_complete_uses_neutral_grace(
+    identity: SessionIdentity,
+) -> None:
+    registry, context = await _setup_registry_and_context(identity, initial_text="讲个故事吧")
+    registry.dtln_tail_confidence_enabled = True
+    context.observed_within_turn_pause_s = 0.8
+    _bind(context, _high_score(), endpoint=context.pending.turn_endpoint_sample + 1)
+    grace = registry._adaptive_endpoint_grace(context)
+    assert grace == pytest.approx(_neutral_grace(registry, context))
+
+
+async def test_flag_on_low_score_incomplete_uses_incomplete_grace(
+    identity: SessionIdentity,
+) -> None:
+    registry, context = await _setup_registry_and_context(identity, initial_text="让我想想")
+    registry.dtln_tail_confidence_enabled = True
+    context.observed_within_turn_pause_s = 0.8
+    _bind(context, _below_cut_score())
+    assert registry._adaptive_endpoint_grace(context) == registry.turn_endpoint_grace_incomplete_s
+
+
+async def test_flag_on_neutral_zero_and_fast_grace_unchanged(
+    identity: SessionIdentity,
+) -> None:
+    long_text = "我今天在学校吃了一个特别特别甜而且味道很香的大苹果"
+    registry, context = await _setup_registry_and_context(identity, initial_text=long_text)
+    registry.dtln_tail_confidence_enabled = True
+    _bind(context, _below_cut_score())
+    assert registry._adaptive_endpoint_grace(context) == pytest.approx(0.9, abs=0.001)
+
+    registry, context = await _setup_registry_and_context(
+        identity, grace_s=0.0, initial_text="讲个故事吧"
+    )
+    registry.dtln_tail_confidence_enabled = True
+    context.observed_within_turn_pause_s = 0.8
+    _bind(context, _below_cut_score())
+    assert registry._adaptive_endpoint_grace(context) == 0.0
+
+    registry, context = await _setup_registry_and_context(
+        identity, grace_s=0.0, initial_text="让我想想"
+    )
+    registry.dtln_tail_confidence_enabled = True
+    context.observed_within_turn_pause_s = 0.8
+    _bind(context, _below_cut_score())
+    assert registry._adaptive_endpoint_grace(context) == 0.0
+
+    registry, context = await _setup_registry_and_context(
+        identity, grace_s=0.01, min_grace_s=0.7, initial_text="讲个故事吧"
+    )
+    registry.dtln_tail_confidence_enabled = True
+    context.observed_within_turn_pause_s = 0.8
+    _bind(context, _below_cut_score())
+    assert registry._adaptive_endpoint_grace(context) == 0.01
+
+
+@pytest.mark.parametrize(
+    "pin_field",
+    [
+        "clock_fact_endpoint_pinned",
+        "live_query_endpoint_pinned",
+        "conversation_close_endpoint_pinned",
+        "playback_followup_endpoint_sample",
+    ],
+)
+async def test_flag_on_pinned_endpoint_ignores_low_score(
+    identity: SessionIdentity,
+    pin_field: str,
+) -> None:
+    registry, context = await _setup_registry_and_context(identity, initial_text="讲个故事吧")
+    registry.dtln_tail_confidence_enabled = True
+    context.observed_within_turn_pause_s = 0.8
+    _bind(context, _below_cut_score())
+    setattr(context.pending, pin_field, context.pending.turn_endpoint_sample)
+    assert registry._adaptive_endpoint_grace(context) == registry.turn_endpoint_grace_complete_s
+
+
+def _complete_partial(identity: SessionIdentity, endpoint: int) -> ASRResult:
+    return ASRResult(
+        task_epoch=1,
+        sentence_id="partial-1",
+        revision=1,
+        capture_start_sample=0,
+        capture_end_sample=endpoint,
+        text="讲个故事吧",
+        is_final=False,
+        stream_epoch=identity.stream_epoch,
+    )
+
+
+async def test_reactive_complete_partial_holds_when_latch_missing(
+    identity: SessionIdentity,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry, context = await _setup_registry_and_context(identity)
+    registry.dtln_tail_confidence_enabled = True
+    endpoint = 16_000
+    now = time.monotonic()
+    monkeypatch.setattr(time, "monotonic", lambda: now)
+    context.pending.turn_start_sample = 0
+    context.pending.turn_endpoint_sample = endpoint
+    context.pending.child_speech_ended_mono = now
+    context.pending.speech_end_denoise_latch = None
+    registry._schedule_turn_commit(context)
+
+    initial_deadline = context.pending.turn_endpoint_grace_deadline
+    assert initial_deadline == now + registry.turn_endpoint_grace_s
+
+    registry._observe_partial_asr_result(context, _complete_partial(identity, endpoint))
+
+    assert context.pending.turn_endpoint_grace_deadline == initial_deadline
+
+
+async def test_reactive_complete_partial_prunes_with_high_latch(
+    identity: SessionIdentity,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry, context = await _setup_registry_and_context(identity)
+    registry.dtln_tail_confidence_enabled = True
+    endpoint = 16_000
+    now = time.monotonic()
+    monkeypatch.setattr(time, "monotonic", lambda: now)
+    context.pending.turn_start_sample = 0
+    context.pending.turn_endpoint_sample = endpoint
+    context.pending.child_speech_ended_mono = now
+    context.pending.speech_end_denoise_latch = SpeechEndDenoiseLatch(endpoint, _high_score())
+    registry._schedule_turn_commit(context)
+
+    initial_deadline = context.pending.turn_endpoint_grace_deadline
+    assert initial_deadline == now + registry.turn_endpoint_grace_s
+
+    registry._observe_partial_asr_result(context, _complete_partial(identity, endpoint))
+
+    assert context.pending.turn_endpoint_grace_deadline == (
+        now + registry.turn_endpoint_grace_complete_s
+    )
+
+
+async def test_adaptive_endpoint_grace_twice_returns_the_same_float(
+    identity: SessionIdentity,
+) -> None:
+    registry, context = await _setup_registry_and_context(identity, initial_text="讲个故事吧")
+    registry.dtln_tail_confidence_enabled = True
+    _bind(context, _high_score())
+    first = adaptive_endpoint_grace(registry, context, text="讲个故事吧")
+    second = adaptive_endpoint_grace(registry, context, text="讲个故事吧")
+    assert first == second == registry.turn_endpoint_grace_complete_s
+
+    context.observed_within_turn_pause_s = 0.8
+    _bind(context, None)
+    held = adaptive_endpoint_grace(registry, context, text="讲个故事吧")
+    held_again = adaptive_endpoint_grace(registry, context, text="讲个故事吧")
+    assert held == held_again
+    assert held == pytest.approx(_neutral_grace(registry, context))

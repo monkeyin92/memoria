@@ -119,6 +119,7 @@ class MediaVoiceCoreRegistry(
     # conjunctions or fillers) extend grace to 1200 ms to protect mid-utterance pauses.
     turn_endpoint_grace_complete_s: float = 0.5
     turn_endpoint_grace_incomplete_s: float = 1.2
+    dtln_tail_confidence_enabled: bool = False
     # The first question after a reply waits a 2.0 s follow-up window before it commits, and then the
     # commit itself prepares (two classifiers, runtime profile, response plan, context prefetch) for
     # 1-1.5 s. 2.5 s left 0.5 s for that and closed the conversation (turn_prepare_timeout) under the

@@ -79,6 +79,7 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.media_listening_capture_window_s == 30.0
     assert s.media_max_user_speech_duration_s == 60.0
     assert s.media_speaking_stall_timeout_s == 15.0
+    assert s.media_dtln_tail_confidence_enabled is False
     assert s.media_slo_report_enabled is False
     assert s.media_slo_metrics_url == "http://agent:9090/"
     assert s.media_slo_report_interval_s == 30.0

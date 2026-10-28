@@ -245,6 +245,10 @@ class AgentSettings(BaseSettings):
             "interval 20 ms."
         ),
     )
+    media_dtln_tail_confidence_enabled: bool = Field(
+        default=False,
+        alias="MEDIA_DTLN_TAIL_CONFIDENCE_ENABLED",
+    )
     # AIGC notice hooks at the start and end of one device conversation round.
     # Off by default since 2026-10-24: the opening and closing tones are not
     # played unless a deployment sets AIGC_NOTICE_ENABLED. The mode and rhythm
