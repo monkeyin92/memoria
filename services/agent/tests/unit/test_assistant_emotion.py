@@ -152,6 +152,7 @@ class _FakeRuntime(DuplexRuntimeEmotionMixin):
     def __init__(self, plan: SpeechPlan, records: _FakeRecords) -> None:
         self.speech_plan = plan
         self._generation_records = records  # type: ignore[assignment]
+        self._assistant_expression_fence: GenerationFence | None = None
         self.tts_calls = 0
 
     def apply_speech_plan_to_tts(self, fence: GenerationFence) -> None:
@@ -185,6 +186,18 @@ def test_supportive_plan_keeps_its_safety_instruction() -> None:
     assert records.bound is not None
     assert records.bound.assistant_emotion == "happy"
     assert records.bound.tts_instruction == plan.tts_instruction
+
+
+def test_apply_assistant_emotion_reopens_expression_latch() -> None:
+    plan = _plan()
+    records = _FakeRecords(plan)
+    runtime = _FakeRuntime(plan, records)
+    fence = _fence()
+    runtime._assistant_expression_fence = fence
+
+    runtime.apply_assistant_emotion(fence, "caring")
+
+    assert runtime._assistant_expression_fence is None
 
 
 @pytest.mark.asyncio
