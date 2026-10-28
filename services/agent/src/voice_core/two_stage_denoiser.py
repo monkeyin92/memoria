@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from services.agent.src.voice_core.audio_denoiser import AudioDenoiser, DenoiserConfig
 from services.agent.src.voice_core.deep_denoiser import DeepDenoiser, DeepDenoiserConfig
+from services.agent.src.voice_core.speech_end_denoise import SpeechEndDenoiseScore
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +125,12 @@ class TwoStageDenoiser:
         }
 
         return final_output, vad_prob, stats
+
+    def mark_utterance_start(self) -> None:
+        self._stage2.mark_utterance_start()
+
+    def speech_end_score(self) -> SpeechEndDenoiseScore | None:
+        return self._stage2.speech_end_score()
 
     def reset(self) -> None:
         """Reset both denoiser stages."""

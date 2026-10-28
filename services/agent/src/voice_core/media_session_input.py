@@ -29,6 +29,7 @@ from services.agent.src.voice_core.media_protocol import (
 from services.agent.src.voice_core.media_session_state import (
     MediaVoiceSessionState as _MediaVoiceSession,
 )
+from services.agent.src.voice_core.speech_end_denoise import SpeechEndDenoiseLatch
 from services.agent.src.voice_core.speech_timeline import SegmentKind, SpeechSegment
 from services.common.llm_thinking_filler import speech_end_monotonic
 
@@ -241,6 +242,7 @@ class MediaSessionInputMixin:
             context.pending.max_user_speech_task is not None,
             context.owner_silence_activity_revision,
         )
+        context.ingress.denoiser.mark_utterance_start()
         return True
 
     def _arm_reopen_evidence_window(
@@ -687,6 +689,13 @@ class MediaSessionInputMixin:
                         received_at=received_at,
                         event_sample=segment.capture_start_sample,
                         voiced_end_sample=segment.voiced_end_sample,
+                    )
+                    score = context.ingress.denoiser.speech_end_score()
+                    endpoint = context.pending.turn_endpoint_sample
+                    context.pending.speech_end_denoise_latch = (
+                        SpeechEndDenoiseLatch(endpoint, score)
+                        if score is not None and endpoint is not None
+                        else None
                     )
                 context.pending.turn_retire_sample = max(
                     context.pending.turn_retire_sample or 0,

@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from services.agent.src.contracts.ids import GenerationFence
+from services.agent.src.voice_core.speech_end_denoise import SpeechEndDenoiseLatch
 from services.agent.src.voice_core.speech_timeline import ASRResult
 
 # Who pinned the endpoint of a pending turn that has no accepted text yet:
@@ -46,6 +47,7 @@ class PendingTurn:
     # final of the turn's own speech may take back (see media_session_commit).
     empty_turn_endpoint_pin: EndpointPinSource | None = None
     child_speech_ended_mono: float | None = None
+    speech_end_denoise_latch: SpeechEndDenoiseLatch | None = None
     turn_retire_sample: int | None = None
     turn_endpoint_grace_deadline: float | None = None
     turn_endpoint_tail_deadline: float | None = None
@@ -165,6 +167,7 @@ class PendingTurn:
         self.turn_endpoint_sample = None
         self.empty_turn_endpoint_pin = None
         self.child_speech_ended_mono = None
+        self.speech_end_denoise_latch = None
         self.turn_retire_sample = None
         self.turn_endpoint_grace_deadline = None
         self.turn_endpoint_tail_deadline = None

@@ -242,6 +242,9 @@ def current_pending_turn_text(context: _MediaVoiceSession) -> str:
     return partial_text
 
 
+DTLN_SPEECH_END_SCORE_HIGH_CUT = 0.5
+
+
 def _semantic_tail_enabled(registry: Any) -> bool:
     """Semantic pruning only engages for production-range grace settings.
 
@@ -259,6 +262,35 @@ def _semantic_tail_enabled(registry: Any) -> bool:
     return configured >= floor
 
 
+def _neutral_tail_grace(registry: Any, observed_pause_s: float | None) -> float:
+    configured = float(registry.turn_endpoint_grace_s)
+    minimum = float(registry.turn_endpoint_min_grace_s)
+    maximum = float(registry.turn_endpoint_max_grace_s)
+    if observed_pause_s is None:
+        return min(configured, maximum)
+    return min(
+        maximum,
+        max(minimum, observed_pause_s + 0.15),
+    )
+
+
+def _complete_prune_withheld(registry: Any, context: _MediaVoiceSession) -> bool:
+    if not registry.dtln_tail_confidence_enabled:
+        return False
+    pending = context.pending
+    if (
+        pending.clock_fact_endpoint_pinned is not None
+        or pending.live_query_endpoint_pinned is not None
+        or pending.conversation_close_endpoint_pinned is not None
+        or pending.playback_followup_endpoint_sample is not None
+    ):
+        return False
+    latch = pending.speech_end_denoise_latch
+    if latch is None or not latch.applies_to(pending.turn_endpoint_sample):
+        return True
+    return latch.score.summary < DTLN_SPEECH_END_SCORE_HIGH_CUT
+
+
 def adaptive_endpoint_grace(
     registry: Any,
     context: _MediaVoiceSession,
@@ -267,25 +299,21 @@ def adaptive_endpoint_grace(
 ) -> float:
     configured = float(registry.turn_endpoint_grace_s)
     minimum = float(registry.turn_endpoint_min_grace_s)
-    maximum = float(registry.turn_endpoint_max_grace_s)
     if configured <= 0 or configured < minimum:
         return configured
 
     if _semantic_tail_enabled(registry):
         eval_text = text if text is not None else current_pending_turn_text(context)
         completeness = classify_semantic_completeness(eval_text)
-        if completeness == SemanticCompleteness.COMPLETE:
+        if (
+            completeness == SemanticCompleteness.COMPLETE
+            and not _complete_prune_withheld(registry, context)
+        ):
             return float(registry.turn_endpoint_grace_complete_s)
         if completeness == SemanticCompleteness.INCOMPLETE:
             return float(registry.turn_endpoint_grace_incomplete_s)
 
-    observed = context.observed_within_turn_pause_s
-    if observed is None:
-        return min(configured, maximum)
-    return min(
-        maximum,
-        max(minimum, observed + 0.15),
-    )
+    return _neutral_tail_grace(registry, context.observed_within_turn_pause_s)
 
 
 def maybe_rearm_grace_on_evidence(
@@ -310,9 +338,9 @@ def maybe_rearm_grace_on_evidence(
     now = time.monotonic()
     base_time = context.pending.child_speech_ended_mono or now
     current_deadline = context.pending.turn_endpoint_grace_deadline
+    target_grace = adaptive_endpoint_grace(registry, context, text=text)
 
     if completeness == SemanticCompleteness.COMPLETE:
-        target_grace = float(registry.turn_endpoint_grace_complete_s)
         target_deadline = max(now, base_time + target_grace)
         if current_deadline is not None and target_deadline >= current_deadline:
             return False
@@ -325,7 +353,6 @@ def maybe_rearm_grace_on_evidence(
             target_grace,
         )
     elif completeness == SemanticCompleteness.INCOMPLETE:
-        target_grace = float(registry.turn_endpoint_grace_incomplete_s)
         target_deadline = base_time + target_grace
         if current_deadline is not None and target_deadline <= current_deadline:
             return False

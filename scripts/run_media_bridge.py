@@ -200,6 +200,7 @@ async def run() -> None:
                     recap_sink.publish_session_end if recap_sink is not None else None
                 ),
                 daily_chat_client=getattr(session_factory, "daily_chat_client", None),
+                dtln_tail_confidence_enabled=settings.media_dtln_tail_confidence_enabled,
             )
             registry.install()
             logger.info("media bridge shared Agent session registry installed")
@@ -225,6 +226,7 @@ async def run() -> None:
                         else None
                     ),
                     crisis_script_interrupt_publisher=interrupt_publisher,
+                    dtln_tail_confidence_enabled=settings.media_dtln_tail_confidence_enabled,
                 )
                 if runtime_factory is not None
                 else MediaVoiceCoreRegistry(
@@ -243,6 +245,7 @@ async def run() -> None:
                         else None
                     ),
                     crisis_script_interrupt_publisher=interrupt_publisher,
+                    dtln_tail_confidence_enabled=settings.media_dtln_tail_confidence_enabled,
                 )
             )
             registry.install()
