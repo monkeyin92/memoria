@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import replace
+from typing import Any
 
 import pytest
+from services.agent.src import llm_types as llm
 from services.agent.src.contracts.ids import GenerationFence
+from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.orchestration.assistant_emotion import compose_tts_instruction
 from services.agent.src.orchestration.phrase_segmenter import PhraseSegmenter
 from services.agent.src.orchestration.prosody import (
@@ -11,7 +15,14 @@ from services.agent.src.orchestration.prosody import (
     mascot_expression_for_reply,
     speech_plan_for_turn,
 )
+from services.agent.src.reply_pipeline import ReplyPipeline
 from services.agent.src.runtime_emotion import DuplexRuntimeEmotionMixin
+from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
+from services.agent.tests.unit.runtime_state_helpers import (
+    ScriptedChatModel,
+    bind_owner_speaker,
+    commit_media_turn,
+)
 
 
 def _fence(name: str = "emotion-tag") -> GenerationFence:
@@ -149,3 +160,36 @@ def test_supportive_plan_keeps_its_safety_instruction() -> None:
     assert records.bound is not None
     assert records.bound.assistant_emotion == "happy"
     assert records.bound.tts_instruction == plan.tts_instruction
+
+
+@pytest.mark.asyncio
+async def test_stream_reply_strips_tag_and_binds_plan() -> None:
+    async def fake_llm(_ctx: Any, _tools: list[Any]) -> AsyncIterator[str]:
+        yield "[emotion:happy]"
+        yield "你好呀。"
+
+    runtime = DuplexRuntime.create(session_id="emotion-e2e")
+    await runtime.orchestrator.ready()
+    bind_owner_policy(
+        runtime,
+        policy_version="test-policy",
+        private_context=True,
+        owner_evidence=False,
+        tools=False,
+        voice_profile=False,
+        memory_recall_grant=True,
+    )
+    bind_owner_speaker(runtime)
+    pipeline = ReplyPipeline(instructions="test", runtime=runtime)
+    pipeline.language_model = ScriptedChatModel(fake_llm)
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="user", content="你好")
+    fence = await commit_media_turn(pipeline, "你好")
+
+    spoken = [item async for item in pipeline.stream_reply(chat_ctx)]
+
+    assert spoken == ["你好呀。"]
+    plan = runtime.speech_plan_for_fence(fence)
+    assert plan.assistant_emotion == "happy"
+    assert "回复情绪轻快" in plan.tts_instruction
+    await runtime.close()
