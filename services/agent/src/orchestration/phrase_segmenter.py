@@ -8,6 +8,10 @@ import uuid
 from dataclasses import dataclass, field
 
 from services.agent.src.contracts.ids import GenerationFence
+from services.agent.src.orchestration.assistant_emotion import (
+    AssistantEmotion,
+    AssistantEmotionFilter,
+)
 
 STRONG_BOUNDARY = set("。！？；\n")
 WEAK_BOUNDARY = set("，、：")
@@ -114,6 +118,8 @@ class PhraseSegmenter:
     first_token_ns: int | None = None
     stream_ended: bool = False
     _index: int = 0
+    assistant_emotion: AssistantEmotion | None = None
+    _emotion_filter: AssistantEmotionFilter = field(default_factory=AssistantEmotionFilter)
 
     def reset(self, fence: GenerationFence) -> None:
         self.fence = fence
@@ -122,14 +128,28 @@ class PhraseSegmenter:
         self.first_token_ns = None
         self.stream_ended = False
         self._index = 0
+        self.assistant_emotion = None
+        self._emotion_filter = AssistantEmotionFilter()
+
+    def reset_emotion_filter(self) -> None:
+        """Rearm the emotion tag filter after server-generated text."""
+        self.assistant_emotion = None
+        self._emotion_filter = AssistantEmotionFilter()
 
     def push_token(self, token: str, *, now_ns: int | None = None) -> list[PhraseSegment]:
         if not token:
             return []
+        text = self._emotion_filter.feed(token)
+        if text is None:
+            return []
+        if self.assistant_emotion is None and self._emotion_filter.emotion is not None:
+            self.assistant_emotion = self._emotion_filter.emotion
+        if not text:
+            return []
         now = now_ns if now_ns is not None else time.monotonic_ns()
         if self.first_token_ns is None:
             self.first_token_ns = now
-        tts_part, _ = normalize_for_tts(token)
+        tts_part, _ = normalize_for_tts(text)
         if not tts_part:
             return []
         if self.buffer and self.buffer[-1] in _TERMINAL_PUNCT:
@@ -142,6 +162,13 @@ class PhraseSegmenter:
 
     def flush(self, *, end_of_stream: bool = False) -> list[PhraseSegment]:
         self.stream_ended = end_of_stream or self.stream_ended
+        if self.assistant_emotion is None and self._emotion_filter.emotion is not None:
+            self.assistant_emotion = self._emotion_filter.emotion
+        leftover = self._emotion_filter.flush()
+        if leftover:
+            tts_part, _ = normalize_for_tts(leftover)
+            if tts_part:
+                self.buffer = collapse_terminal_punctuation(self.buffer + tts_part)
         return self._drain(now_ns=time.monotonic_ns(), force=end_of_stream)
 
     def _drain(self, *, now_ns: int, force: bool) -> list[PhraseSegment]:

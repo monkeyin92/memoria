@@ -9,10 +9,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from services.agent.src.contracts.ids import GenerationFence
+from services.agent.src.orchestration.assistant_emotion import (
+    AssistantEmotion,
+    compose_tts_instruction,
+)
 from services.agent.src.orchestration.emotion import (
     EmotionObservation,
     EmotionSmoother,
@@ -152,3 +157,27 @@ class DuplexRuntimeEmotionMixin:
             turn_id,
         )
         return self.speech_plan
+
+    def apply_assistant_emotion(
+        self,
+        fence: GenerationFence,
+        emotion: AssistantEmotion | None,
+    ) -> None:
+        """Rebind the current fence's plan with the emotion declared by the reply."""
+        if emotion is None:
+            return
+        plan = self._generation_records.speech_plan_for(fence, self.speech_plan)
+        if plan.assistant_emotion == emotion:
+            return
+        instruction = (
+            plan.tts_instruction
+            if plan.delivery_mode == "supportive"
+            else compose_tts_instruction(plan.tts_instruction, emotion)
+        )
+        updated = replace(
+            plan,
+            assistant_emotion=emotion,
+            tts_instruction=instruction,
+        )
+        self._generation_records.bind_speech_plan(fence, updated)
+        self.apply_speech_plan_to_tts(fence)

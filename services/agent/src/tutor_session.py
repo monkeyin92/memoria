@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, cast
 from services.agent.src.prompt_composition import compose_production_prompt
 from services.agent.src.prompts import (
     COMPANION_STYLE,
+    EMOTION_TAG_RULE,
     SAFETY_CORE,
     TUTOR_STYLE,
     VOICE_SYSTEM_PROMPT,
@@ -56,7 +57,11 @@ def production_system_prompt(runtime: DuplexRuntime) -> str:
         metrics=runtime.orchestrator.metrics,
         custom_persona=runtime.mode_policy.custom_persona,
     )
-    return composed.system
+    return (
+        composed.system
+        if EMOTION_TAG_RULE in composed.system
+        else f"{composed.system}\n\n{EMOTION_TAG_RULE}"
+    )
 
 
 def is_tutor_focus(session_focus: SessionFocus | None) -> bool:

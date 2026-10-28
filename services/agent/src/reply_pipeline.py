@@ -1620,6 +1620,16 @@ class ReplyPipeline:
         if segmenter is None:
             raise RuntimeError("PhraseSegmenter is not configured")
         segmenter.reset(fence)
+        applied_assistant_emotion = None
+
+        def _apply_assistant_emotion() -> None:
+            nonlocal applied_assistant_emotion
+            emotion = segmenter.assistant_emotion
+            if emotion is None or emotion == applied_assistant_emotion:
+                return
+            applied_assistant_emotion = emotion
+            self._runtime.apply_assistant_emotion(fence, emotion)
+
         if script is None:
             self._block_soothing_on_next_reply = False
         reply_chars = 0
@@ -1775,6 +1785,7 @@ class ReplyPipeline:
                 )
                 if gated is not None:
                     for segment in segmenter.push_token(gated):
+                        _apply_assistant_emotion()
                         if _late_crisis_now() is not None:
                             break
                         accepted_segment = _ready_segment(segment.text)
@@ -1789,6 +1800,7 @@ class ReplyPipeline:
                         and not reply_budget_exhausted
                     ):
                         for segment in segmenter.flush(end_of_stream=True):
+                            _apply_assistant_emotion()
                             if _late_crisis_now() is not None:
                                 break
                             accepted_segment = _ready_segment(segment.text)
@@ -1949,6 +1961,7 @@ class ReplyPipeline:
                     if bridge is not None:
                         try:
                             for segment in segmenter.push_token(bridge):
+                                _apply_assistant_emotion()
                                 accepted_segment = _ready_segment(segment.text)
                                 if accepted_segment is None:
                                     break
@@ -1965,6 +1978,7 @@ class ReplyPipeline:
                                 floor_allows_output=self._runtime.output_floor_allows_assistant,
                                 reason="bridge_acknowledgement_emitted",
                             )
+                    segmenter.reset_emotion_filter()
 
                 if story_ip is not None and handle is not None:
                     coordinator = self._runtime.orchestrator.delegation
@@ -2043,6 +2057,7 @@ class ReplyPipeline:
                                 realtime_reply += accepted_realtime
                         else:
                             for segment in segmenter.push_token(gated):
+                                _apply_assistant_emotion()
                                 if _late_crisis_now() is not None:
                                     break
                                 segment_text, blocked = _follow_up_blocked(segment.text)
@@ -2113,6 +2128,7 @@ class ReplyPipeline:
             if realtime_request is not None and cancellation.is_current(self._runtime.fence):
                 realtime_current = True
                 for segment in segmenter.push_token(strip_realtime_bridge_prefix(realtime_reply)):
+                    _apply_assistant_emotion()
                     accepted_segment = _ready_segment(segment.text)
                     if accepted_segment is None:
                         realtime_current = False
@@ -2131,6 +2147,7 @@ class ReplyPipeline:
                 and not reply_budget_exhausted
             ):
                 for segment in segmenter.flush(end_of_stream=True):
+                    _apply_assistant_emotion()
                     segment_text, blocked = _follow_up_blocked(segment.text)
                     if blocked or segment_text is None:
                         continue
@@ -2153,12 +2170,14 @@ class ReplyPipeline:
                     realtime_request.query if realtime_request is not None else ""
                 )
             ):
+                _apply_assistant_emotion()
                 accepted_segment = _ready_segment(segment.text)
                 if accepted_segment is None:
                     break
                 yield accepted_segment
             if cancellation.is_current(self._runtime.fence) and not reply_budget_exhausted:
                 for segment in segmenter.flush(end_of_stream=True):
+                    _apply_assistant_emotion()
                     accepted_segment = _ready_segment(segment.text)
                     if accepted_segment is None:
                         break
