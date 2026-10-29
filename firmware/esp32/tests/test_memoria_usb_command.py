@@ -515,6 +515,30 @@ def test_the_switch_comes_from_the_sdkconfig_esp_idf_generates(
     assert _run(binary, "config", "parse snap", "parse status") == expected
 
 
+def test_listening_closed_usb_wake_resumes_the_open_session() -> None:
+    """A standby face is listening with capture closed. USB wake resumes that session."""
+    source = BOARD.read_text(encoding="utf-8")
+    handler = _function(source, "void HandleUsbWake()")
+    assert "TapDeviceFor(state)" in handler
+    assert handler.index("MemoriaBootstrap") < handler.index("TapDeviceFor(state)")
+    assert handler.index("kDeviceStateStarting") < handler.index("TapDeviceFor(state)")
+    assert "UsbWakeDecisionFor" not in handler
+    assert "state == kDeviceStateIdle" not in handler
+    assert 'ESP_LOGI(kUsbTag, "usb wake action=resume_listening")' in handler
+    assert 'DispatchTapWakeAction(action, "usb_wake"' in handler
+    tap = _function(source, "void HandleScreenTouchRelease(std::uint32_t hold_ms)")
+    assert 'DispatchTapWakeAction(action, "screen_tap"' in tap
+    assert source.count("case memoria::TapWakeAction::kResumeListening:") == 1
+    dispatch = _function(source, "void DispatchTapWakeAction(")
+    resume = dispatch.split("kResumeListening:", 1)[1].split("kIgnore:", 1)[0]
+    assert 'PlayLocalAssetClip("wo_zai_ne.ogg")' in resume
+    assert "SendListeningResume()" in resume
+    assert "WakeWordInvoke" not in resume
+    start = dispatch.split("kStartConversation:", 1)[1].split("kResumeListening:", 1)[0]
+    assert "WakeWordInvoke(wake_source)" in start
+    assert 'PlayLocalAssetClip("wo_zai_ne.ogg")' in start
+
+
 def test_board_handler_only_wakes_an_idle_device_under_the_taps_gate() -> None:
     source = BOARD.read_text(encoding="utf-8")
     handler = _function(source, "void HandleUsbWake()")
