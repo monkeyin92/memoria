@@ -600,3 +600,36 @@ async def test_long_playout_opens_a_fresh_capture_window_for_the_next_vad(
         assert context.listening_capture_hold is False
     finally:
         await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_speech_after_the_capture_window_reopens_capture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _clock()
+    registry, context, provider, identity = await _open(monkeypatch, clock)
+    try:
+        clock["now"] = 1_031.0
+        await registry._audio_ingress.accept(context, _frame(identity, 1, 48_000))
+        assert context.listening_capture_hold is True
+        assert context.runtime.interaction_phase is InteractionPhase.CONNECTING
+        published = _spy_states(monkeypatch, context.runtime)
+
+        session = registry.bridge._connections[identity.session_id].session
+        rewake_sample = 64_000
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=rewake_sample, segment_id="rewake"),
+                capture_end_sample=rewake_sample + 1_280,
+            ),
+        )
+
+        assert context.listening_capture_hold is False
+        assert "listening" in published
+        assert context.pending.turn_start_sample == rewake_sample
+        await registry._audio_ingress.accept(context, _frame(identity, 2, rewake_sample + 1))
+        await _ingested(provider, 1)
+        assert provider.frames[-1].capture_start_sample == rewake_sample + 1
+    finally:
+        await registry.finalize_session(identity.session_id)
