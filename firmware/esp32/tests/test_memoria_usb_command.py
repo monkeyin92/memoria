@@ -1,9 +1,9 @@
 """Host-side checks for USB `wake` / `sleep` / `poweroff` / `temp` and the bench-only `snap`/`status`.
 
-`memoria_usb_command.h` has no ESP-IDF dependency, so the exact parser, line assembler and wake policy
-compile on the host, in both configurations: a product image (`CONFIG_MEMORIA_BENCH_SERIAL` off) and a bench
-build (on). The task that reads the port and the board handler are checked as source text, because those
-only build inside ESP-IDF.
+`memoria_usb_command.h` has no ESP-IDF dependency, so the exact parser and line assembler compile on the
+host, in both configurations: a product image (`CONFIG_MEMORIA_BENCH_SERIAL` off) and a bench build (on).
+The wake action is the screen tap's. The task that reads the port and the board handler are checked as
+source text, because those only build inside ESP-IDF.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ BOARD = BOARD_DIR / "memoria_esp_vocat.cc"
 
 HARNESS = r"""
 #include "memoria_usb_command.h"
+#include "memoria_wake_mode.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -107,18 +108,25 @@ int main() {
             printf("%zu\n", assembler.pending());
         } else if (strncmp(line, "decide ", 7) == 0) {
             char name[64];
-            int idle = 0;
-            if (sscanf(line + 7, "%63s %d", name, &idle) != 2) {
+            char state[32];
+            if (sscanf(line + 7, "%63s %31s", name, state) != 2) {
                 return 2;
             }
             memoria::WakeMode mode;
             if (!memoria::ParseWakeMode(name, &mode)) {
                 return 3;
             }
-            printf("%s %s\n", memoria::UsbWakeDecisionName(memoria::UsbWakeDecisionFor(mode, idle != 0)),
-                   memoria::TapActionFor(mode, idle != 0) == memoria::TapAction::kStartConversation
-                       ? "tap-starts"
-                       : "tap-ignores");
+            memoria::TapDevice device = memoria::TapDevice::kBusy;
+            if (strcmp(state, "idle") == 0 || strcmp(state, "1") == 0) {
+                device = memoria::TapDevice::kIdle;
+            } else if (strcmp(state, "busy") == 0 || strcmp(state, "0") == 0) {
+                device = memoria::TapDevice::kBusy;
+            } else if (strcmp(state, "closed") == 0) {
+                device = memoria::TapDevice::kListeningClosed;
+            } else {
+                return 2;
+            }
+            printf("%s\n", memoria::TapWakeActionName(memoria::TapActionFor(mode, device)));
         } else {
             return 2;
         }
@@ -210,9 +218,10 @@ def test_header_stays_free_of_esp_dependencies() -> None:
     source = HEADER.read_text(encoding="utf-8")
     for forbidden in ("esp_", "lvgl", "lv_", "freertos", "nvs", "settings.h", "driver/"):
         assert forbidden not in source
-    # The only project header it needs is the wake policy it shares with the screen tap, plus the generated
-    # sdkconfig.h that carries the bench switch (guarded: the host tests have none).
-    assert re.findall(r'#include "([^"]+)"', source) == ["sdkconfig.h", "memoria_wake_mode.h"]
+    # The generated sdkconfig.h carries the bench switch (guarded: the host tests have none).
+    # The wake action lives with the screen tap, not in this header.
+    assert re.findall(r'#include "([^"]+)"', source) == ["sdkconfig.h"]
+    assert "UsbWakeDecision" not in source
     assert '#if __has_include("sdkconfig.h")' in source
 
 
@@ -336,25 +345,14 @@ def test_the_stale_window_survives_the_millisecond_counter_wrapping(tool: pathli
     ) == ["-", "wake", "-", "wake", "-", "unknown"]
 
 
-def test_the_wake_policy_is_the_screen_taps_gate_in_every_mode_and_state(tool: pathlib.Path) -> None:
-    # Tap-only product: legacy keyword wire values coerce to button; idle starts.
+def test_the_wake_action_matches_the_tap_for_idle_busy_and_closed(tool: pathlib.Path) -> None:
+    # Legacy keyword wire values coerce to button. Idle starts, busy ignores, closed resumes.
     lines = [
-        f"decide {mode} {idle}"
+        f"decide {mode} {state}"
         for mode in ("keyword", "button", "button_or_keyword")
-        for idle in (0, 1)
+        for state in ("busy", "idle", "closed")
     ]
-    results = _run(tool, *lines)
-    assert results == [
-        "not_idle tap-ignores",
-        "start tap-starts",
-        "not_idle tap-ignores",
-        "start tap-starts",
-        "not_idle tap-ignores",
-        "start tap-starts",
-    ]
-    for result in results:
-        decision, tap = result.split()
-        assert (decision == "start") == (tap == "tap-starts")
+    assert _run(tool, *lines) == ["ignore", "start", "resume"] * 3
 
 
 def test_a_product_image_knows_no_bench_verbs(tool: pathlib.Path) -> None:
@@ -542,18 +540,20 @@ def test_listening_closed_usb_wake_resumes_the_open_session() -> None:
 def test_board_handler_only_wakes_an_idle_device_under_the_taps_gate() -> None:
     source = BOARD.read_text(encoding="utf-8")
     handler = _function(source, "void HandleUsbWake()")
+    dispatch = _function(source, "void DispatchTapWakeAction(")
     # Pairing and start-up come first and keep their behaviour, as for a tap.
-    assert handler.index("MemoriaBootstrap") < handler.index("UsbWakeDecisionFor")
-    assert handler.index("kDeviceStateStarting") < handler.index("UsbWakeDecisionFor")
+    assert handler.index("MemoriaBootstrap") < handler.index("TapDeviceFor(state)")
+    assert handler.index("kDeviceStateStarting") < handler.index("TapDeviceFor(state)")
     assert "WakeModeRegistry::GetInstance().mode()" in handler
-    assert "UsbWakeDecisionFor(mode, state == kDeviceStateIdle)" in handler
-    # The application is invoked once, only on the accepted branch, with its own source name.
-    assert handler.count("WakeWordInvoke(") == 1
-    assert 'app.WakeWordInvoke("usb_wake")' in handler
-    accepted = handler[handler.index("kStartConversation") :]
-    assert accepted.index("usb wake accepted") < accepted.index("WakeWordInvoke")
+    assert "TapActionFor(mode, device)" in handler
+    assert 'DispatchTapWakeAction(action, "usb_wake"' in handler
+    # The application is invoked once, only on the start arm, with the caller's source name.
+    assert handler.count("WakeWordInvoke(") == 0
+    assert dispatch.count("WakeWordInvoke(") == 1
+    assert "WakeWordInvoke(wake_source)" in dispatch
+    assert handler.index("usb wake accepted") < handler.index("DispatchTapWakeAction")
     assert "usb wake ignored" in handler
-    # It can wake, nothing else: no stop, abort, close, toggle, reboot or state change.
+    # It can wake or resume, nothing else: no stop, abort, close, toggle, reboot or state change.
     for forbidden in (
         "StopListening",
         "AbortSpeaking",
@@ -565,6 +565,7 @@ def test_board_handler_only_wakes_an_idle_device_under_the_taps_gate() -> None:
         "Apply(",
     ):
         assert forbidden not in handler, f"the USB wake must not call {forbidden}"
+        assert forbidden not in dispatch, f"the shared tap action must not call {forbidden}"
 
 
 def test_the_task_only_reads_the_secondary_console_and_product_verbs_reach_handlers() -> None:
