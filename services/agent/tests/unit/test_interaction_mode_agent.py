@@ -15,6 +15,7 @@ from services.agent.src.agent import (
     plan_is_local_safe,
     plan_matches_mode_policy,
 )
+from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.llm_types import StopResponse
 from services.agent.src.mode_policy_client import ModePolicy
@@ -439,11 +440,14 @@ async def test_policy_mismatched_fetched_plan_downgrades_to_local_safe_plan() ->
         )
 
     class ResponsePlannerStub:
-        async def fetch(self, **_kwargs: object) -> ResponsePlanFetch:
+        async def fetch(self, **kwargs: object) -> ResponsePlanFetch:
+            fence = kwargs["fence"]
+            assert isinstance(fence, GenerationFence)
             plan = _plan(runtime)
             return ResponsePlanFetch(
                 plan=replace(
                     plan,
+                    fence=fence,
                     provenance=replace(plan.provenance, interaction_mode="legacy"),
                 ),
                 reason="ok",
