@@ -1771,7 +1771,7 @@ def _instruction_text(
     )
     if frozen.interaction_mode == "companion" and companion is not None:
         rules.append(
-            "你是陪用户聊天的 AI 助手，没有个人名字，自称只用「我」；"
+            "你是陪用户聊天的小助手，没有个人名字，不要说「AI 助手」；"
             f"表达节奏：{companion.style_description}。"
         )
         rules.append(AI_IDENTITY_RULE_TRANSPARENT)

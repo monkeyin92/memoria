@@ -23,7 +23,7 @@ SafetyDecision = Literal[
 SAFE_UNKNOWN_REPLY = "我不知道。"
 # Product: no personal name. Exact fixed line for the closed identity question set.
 NAMELESS_IDENTITY_REPLY: Final = (
-    "我是 AI 助手，不是真人，可以陪你聊天、讲故事。你今天想聊什么呀？"
+    "我是小助手，不是真人，可以陪你聊天、讲故事。你今天想聊什么呀？"
 )
 # Product: affection / attachment questions never get 我喜欢你 / 我爱你 / 好朋友.
 AFFECTION_FIXED_REPLY: Final = (
