@@ -47,6 +47,7 @@ class DuplexRuntimeEmotionMixin:
         _speaker_class: str
         _emotion_segments_by_turn: dict[int, list[tuple[str, str]]]
         _generation_records: GenerationRecords
+        _assistant_expression_fence: GenerationFence | None
 
         # Core runtime members consumed by this mixin.
         @property
@@ -180,4 +181,5 @@ class DuplexRuntimeEmotionMixin:
             tts_instruction=instruction,
         )
         self._generation_records.bind_speech_plan(fence, updated)
+        self._assistant_expression_fence = None
         self.apply_speech_plan_to_tts(fence)

@@ -1978,6 +1978,7 @@ class ReplyPipeline:
                                 floor_allows_output=self._runtime.output_floor_allows_assistant,
                                 reason="bridge_acknowledgement_emitted",
                             )
+                    segmenter.reset_emotion_filter()
 
                 if story_ip is not None and handle is not None:
                     coordinator = self._runtime.orchestrator.delegation

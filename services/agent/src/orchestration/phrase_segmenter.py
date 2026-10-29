@@ -131,6 +131,11 @@ class PhraseSegmenter:
         self.assistant_emotion = None
         self._emotion_filter = AssistantEmotionFilter()
 
+    def reset_emotion_filter(self) -> None:
+        """Rearm the emotion tag filter after server-generated text."""
+        self.assistant_emotion = None
+        self._emotion_filter = AssistantEmotionFilter()
+
     def push_token(self, token: str, *, now_ns: int | None = None) -> list[PhraseSegment]:
         if not token:
             return []

@@ -892,6 +892,31 @@ bench 镜像在 USB 串口多认两条命令；产品镜像不含这两个动词
 
 `config.keep-awake.json` 只比产品清单多 `CONFIG_MEMORIA_KEEP_AWAKE=y`。固件停在 wifi hold，不调用 `esp_deep_sleep_start()`。空闲时麦克风关闭，不上传音频。屏幕轻点或 USB `wake` 才开始会话。文件名带 `-keep-awake`，`publish_firmware_release.py` 拒绝发布。测完刷回产品镜像。`--bench` 与 `--keep-awake` 不能同时使用。
 
+### 真机窗口：串口、句表、判据、日志包
+
+这一节不授权刷机、播放或改音量。下面的命令都在电脑上跑。
+
+真机窗口用 `scripts/voice_soak_serial_logger.py` 抓串口。`open()` 之前把 RTS 设为低、DTR 设为高，避免 USB-Serial-JTAG 复位板子。`--port` 和 `--baud` 可改，波特率默认 115200。每一行日志带本机时间戳。刷机前停掉这个进程。
+
+```bash
+uv run --no-project --with pyserial python scripts/voice_soak_serial_logger.py outputs/serial/robot.log \
+    --port /dev/cu.usbmodem2101 --baud 115200
+```
+
+拨测句表是 `scripts/voice_soak_scenarios/child.json`。不要另建一份。`voice_soak.py --scenario` 读这一份。
+
+窗口结束后用 run 目录算通过或失败。命令只读本地文件。尾窗必须是 `verified_idle`。静音步必须看到 idle。打断由 `voice_soak_evidence.py` 用 bridge 和 serial 日志重算。timeline 里旧的 `stopped` 字段不算数。没复核成停止就不通过。`scripts/voice_soak_verdict.py` 的 `MAX_NO_REPLY` 是 0。`MAX_REPLY_LATENCY_P95_S` 是 2.0。漏答 `no_reply` 必须为 0。回复时延 `reply_latency_p95_s` 不超过 2.0 秒。`reply_latency_p95_s` 缺失时脚本判失败。判失败时脚本以退出码 1 结束。
+
+```bash
+python scripts/voice_soak_verdict.py outputs/acceptance/run-<stamp>-soak
+```
+
+同一目录里打包 `timeline.jsonl`，以及已经跟上的 `serial.log`、`bridge.log`、`edge.log`、`control.log`。缺的日志不进包。没有 `timeline.jsonl` 则命令失败。包写在 run 目录的上一级，旁边有 sha256。不连设备，不连生产。
+
+```bash
+python scripts/voice_soak_pack.py outputs/acceptance/run-<stamp>-soak
+```
+
 ### 电脑语音测试的停止证据（2026-10-10 修正）
 
 每轮真机、串口命令、刷机与调整音量仍须当场授权；本节只规定判据，不授权执行。运行脚本时显式给用户确认的 `--volume`，不靠脚本默认值；缺声学测量不报端到端声学停止延迟。

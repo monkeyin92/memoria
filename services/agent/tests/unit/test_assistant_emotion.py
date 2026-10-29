@@ -81,6 +81,31 @@ def test_plain_text_is_unchanged() -> None:
     assert "".join(parts) == "今天星期三。"
 
 
+def test_reset_emotion_filter_rearms_after_server_text() -> None:
+    seg = PhraseSegmenter(_fence())
+    seg.push_token("好呀，我来给你讲一个故事。")
+    assert seg.assistant_emotion is None
+
+    seg.reset_emotion_filter()
+    parts = [s.text for s in seg.push_token("[emotion:happy]你好呀。")]
+    parts.extend(s.text for s in seg.flush(end_of_stream=True))
+
+    assert seg.assistant_emotion == "happy"
+    assert "".join(parts) == "你好呀。"
+
+
+def test_oversized_incomplete_tag_is_dropped_until_close() -> None:
+    seg = PhraseSegmenter(_fence())
+    assert seg.push_token("[emotion:" + "x" * 40) == []
+    assert seg.assistant_emotion is None
+
+    parts = [s.text for s in seg.push_token("more]你好。")]
+    parts.extend(s.text for s in seg.flush(end_of_stream=True))
+
+    assert "".join(parts) == "你好。"
+    assert "[emotion" not in "".join(parts)
+
+
 @pytest.mark.parametrize(
     ("emotion", "expected"),
     [("happy", "happy"), ("caring", "caring"), ("curious", "curious")],
@@ -127,6 +152,7 @@ class _FakeRuntime(DuplexRuntimeEmotionMixin):
     def __init__(self, plan: SpeechPlan, records: _FakeRecords) -> None:
         self.speech_plan = plan
         self._generation_records = records  # type: ignore[assignment]
+        self._assistant_expression_fence: GenerationFence | None = None
         self.tts_calls = 0
 
     def apply_speech_plan_to_tts(self, fence: GenerationFence) -> None:
@@ -160,6 +186,18 @@ def test_supportive_plan_keeps_its_safety_instruction() -> None:
     assert records.bound is not None
     assert records.bound.assistant_emotion == "happy"
     assert records.bound.tts_instruction == plan.tts_instruction
+
+
+def test_apply_assistant_emotion_reopens_expression_latch() -> None:
+    plan = _plan()
+    records = _FakeRecords(plan)
+    runtime = _FakeRuntime(plan, records)
+    fence = _fence()
+    runtime._assistant_expression_fence = fence
+
+    runtime.apply_assistant_emotion(fence, "caring")
+
+    assert runtime._assistant_expression_fence is None
 
 
 @pytest.mark.asyncio
