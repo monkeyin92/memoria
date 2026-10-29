@@ -1020,7 +1020,8 @@ uv run python scripts/evaluate_sensevoice_rescue.py --url http://127.0.0.1:18001
 
 - `result=duplicate` 且 `audio_admitted_watermark <= previous_finalized_watermark` 表示从上次 finalize 以来没有新增的已送音频。结合 `listening_capture_hold` 和连续冻结的水位，可以区分收麦后的设备 VAD 边沿与真正的 ASR 空结果。
 - 水位有推进时，再检查 `provider_pcm_observed_samples`、`provider_pcm_rms`、`provider_pcm_peak_abs` 和 `provider_pcm_clipping_detected`。短噪声与削波不能靠延长尾超时修复。
-- 收麦期间的 VAD 不应创建新的回合或尾超时，也不能删除收麦前已经接收的真实输入。点屏后的 `listening.resume` 恢复收音，恢复后的 VAD 仍须能正常定端点。
+- 收麦期间的 VAD end 不创建新的回合或尾超时，也不能删除收麦前已经接收的真实输入。设备 VAD start 与点屏后的 `listening.resume` 一样恢复收音（phase cause 分别为 `vad_rewake` 和 `screen_tap`），只送恢复点之后的音频，恢复后的 VAD 仍须能正常定端点。产品固件熄屏后进 wifi hold 关麦，所以 VAD 恢复只发生在熄屏前和 keep-awake 测试机上。
+- 尾超时之前，同一 `task_epoch` 出现过 `reason=straddles_committed_without_timing is_final=True` 且 `text_len>0` 时，`empty+vendor_silent` 是误标。厂商把已提交的上一句和新的一句合成了一条没有词时间戳的 final。该句最后被接收的文本若是新 final 的前缀，supervisor 只收后面的新话；对不上时仍整条丢弃。
 
 2026-10-25 排查的 37 次尾超时中，33 次发生在收麦后，没有新增的已送音频。其余 4 次有音频，另按采集质量排查。该历史结论不代表其他 `empty+vendor_silent` 都属于同一原因。
 
