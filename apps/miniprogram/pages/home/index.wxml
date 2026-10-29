@@ -89,50 +89,46 @@
         <image class="home-chev" src="/assets/ui/v4/chev-rust.svg" />
       </view>
 
-      <view class="card card-xl home-usage-card" bindtap="openDevice">
-        <view class="home-ring" style="{{usageRingStyle}}">
-          <view class="home-ring-inner">
-            <text class="home-ring-num">{{usageCenterLabel}}</text>
-            <text class="home-ring-cap">{{usageCapLabel}}</text>
-          </view>
+      <view class="card card-xl home-hero role-{{heroRoleId}} is-{{heroState}}">
+        <view class="home-hero-stage">
+          <view class="pill {{heroPillClass}} home-hero-pill"><text>{{heroPill}}</text></view>
+          <face-badge
+            role="{{heroRoleId}}"
+            size="hero"
+            plain="{{true}}"
+            animated="{{heroAnimated}}"
+            mood="{{heroMood}}"
+            dim="{{heroDim}}"
+          ></face-badge>
         </view>
-        <view class="home-usage-copy">
-          <text class="home-lbl">今天聊了</text>
-          <view wx:if="{{usageKnown}}" class="home-usage-line">
-            <text class="home-usage-num">{{usageUsedMinutes}}</text>
-            <text class="home-usage-unit"> 分钟</text>
+        <view class="home-hero-body">
+          <text class="home-hero-name">{{personaName}}</text>
+          <text class="home-hero-line">{{heroLine}}</text>
+        </view>
+        <view class="home-usage-chip" bindtap="openDevice">
+          <view class="home-usage-chip-copy">
+            <text class="home-usage-chip-label">{{usageChipLabel}}</text>
+            <view wx:if="{{usageKnown && usageLimitMinutes}}" class="progress-track home-usage-track">
+              <view class="progress-fill" style="width: {{usageFillPercent}}%"></view>
+            </view>
           </view>
-          <text wx:else class="home-usage-pending">用量暂未统计</text>
-          <view class="pill pill-online {{online ? '' : 'pill-neutral'}}">
-            <text>{{personaName}}{{online ? '在线' : '离线'}}</text>
-          </view>
+          <image class="home-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
       </view>
 
-      <view class="home-stat-grid">
-        <view class="card home-stat" bindtap="openMemory">
-          <view class="mp-icon-tile"><image src="/assets/ui/v4/book-accent.svg" /></view>
-          <text class="home-lbl">今天对话</text>
-          <view class="home-stat-line">
-            <text class="home-stat-num">{{todayCount}}</text>
-            <text class="home-stat-unit"> 次</text>
-          </view>
+      <view class="card home-today role-{{heroRoleId}}" bindtap="openMemory">
+        <view class="home-today-head">
+          <text class="home-today-label">{{highlightLabel}}</text>
+          <text wx:if="{{summaryCount}}" class="home-today-count">近期摘要 {{summaryCount}} 条</text>
         </view>
-        <view class="card home-stat" bindtap="openMemory">
-          <view class="mp-icon-tile"><image src="/assets/ui/v4/note-accent.svg" /></view>
-          <text class="home-lbl">近期摘要</text>
-          <view class="home-stat-line">
-            <text class="home-stat-num">{{summaryCount}}</text>
-            <text class="home-stat-unit"> 条</text>
-          </view>
-        </view>
+        <text class="home-today-text">{{highlightText}}</text>
       </view>
 
       <view wx:if="{{showChildMemory}}" class="card home-row-card" bindtap="openChildMemory">
         <mp-icon name="heart" size="96"></mp-icon>
         <view class="home-row-copy">
           <text class="home-card-title">{{childMemoryName}}的记忆</text>
-          <text class="home-row-sub">{{memoryPreviews.length ? (todayTitle === '近期摘要' ? '近期摘要：' : '最近：') + memoryPreviews[0].text : '还没有摘要，聊过之后会出现在这里'}}</text>
+          <text class="home-row-sub">{{summaryCount ? '近期摘要和记住的事' : '还没有摘要，聊过之后会出现在这里'}}</text>
         </view>
         <image class="home-chev" src="/assets/ui/v4/chev-faint.svg" />
       </view>

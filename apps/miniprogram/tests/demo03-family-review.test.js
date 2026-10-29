@@ -234,7 +234,7 @@ test("home keeps the recent child summary when the legacy day read is closed", a
       assert.equal(page.data.dailySummaryText, "最近：最近在聊画画和幼儿园的新朋友。");
       assert.equal(page.data.memoryPreviews.length, 1);
       const text = visibleText(renderPage("pages/home/index", page.data));
-      assert.match(text, /孩子的记忆 近期摘要：最近在聊画画和幼儿园的新朋友。/);
+      assert.match(text, /今天聊了 1 次 近期摘要 1 条 最近在聊画画和幼儿园的新朋友。/);
       assert.doesNotMatch(text, /回顾暂时无法加载|daily summaries/);
     } finally {
       restore();

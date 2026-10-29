@@ -22,7 +22,7 @@ function visibleText(html) {
   return html.replace(/<head>[\s\S]*?<\/head>/, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 }
 
-test("home ring shows the daily budget without inventing minutes the ledger could not read", async () => {
+test("home usage chip shows the daily budget without inventing minutes the ledger could not read", async () => {
   const { data } = await loadHome({
     api: {
       getSessionLimits: async () => ({
@@ -39,27 +39,12 @@ test("home ring shows the daily budget without inventing minutes the ledger coul
   assert.equal(data.usageLimitMinutes, 30);
   const html = renderPage("pages/home/index", data);
   const text = visibleText(html);
-  assert.match(text, /上限 30 分钟 今天聊了 用量暂未统计/);
+  assert.match(text, /用量暂未统计 · 每天上限 30 分钟/);
   assert.doesNotMatch(text, /\d+%|单次上限/);
-  assert.match(html, /conic-gradient\(var\(--mp-accent\) 0% 0%, var\(--mp-track\) 0% 100%\)/);
+  assert.doesNotMatch(html, /class="progress-fill"/);
 });
 
-test("the home ring center reads the used percent and the daily cap", async () => {
-  const { data } = await loadHome({
-    api: {
-      getSessionLimits: async () => ({
-        max_session_minutes: 15,
-        quiet_hours: null,
-        daily_chat_minutes: 30,
-        today_used_minutes: 18,
-      }),
-    },
-  });
-  const text = visibleText(renderPage("pages/home/index", data));
-  assert.match(text, /60% 上限 30 分钟 今天聊了 18 分钟/);
-});
-
-test("home ring fills the used share of the daily budget", async () => {
+test("home usage chip reads used and capped minutes and fills the used share", async () => {
   const { data } = await loadHome({
     api: {
       getSessionLimits: async () => ({
@@ -74,8 +59,8 @@ test("home ring fills the used share of the daily budget", async () => {
   assert.equal(data.usageLimitMinutes, 30);
   assert.equal(data.usageFillPercent, 13);
   const html = renderPage("pages/home/index", data);
-  assert.match(html, /conic-gradient\(var\(--mp-accent\) 0% 13%, var\(--mp-track\) 13% 100%\)/);
-  assert.match(visibleText(html), /13% 上限 30 分钟 今天聊了 4 分钟/);
+  assert.match(html, /class="progress-fill" style="width: 13%"/);
+  assert.match(visibleText(html), /今天聊了 4 \/ 30 分钟/);
 });
 
 test("home shows today's minutes only when the session-limits read carries them", async () => {
@@ -93,10 +78,10 @@ test("home shows today's minutes only when the session-limits read carries them"
   assert.equal(data.usageUsedMinutes, 18);
   const html = renderPage("pages/home/index", data);
   const text = visibleText(html);
-  assert.match(text, /60% 上限 30 分钟 今天聊了 18 分钟/);
+  assert.match(text, /今天聊了 18 \/ 30 分钟/);
   assert.doesNotMatch(text, /用量暂未统计/);
   assert.equal(data.usageFillPercent, 60);
-  assert.match(html, /conic-gradient\(var\(--mp-accent\) 0% 60%, var\(--mp-track\) 60% 100%\)/);
+  assert.match(html, /class="progress-fill" style="width: 60%"/);
 
   const failed = await loadHome({
     api: {
@@ -106,10 +91,10 @@ test("home shows today's minutes only when the session-limits read carries them"
     },
   });
   assert.equal(failed.data.usageKnown, false);
-  assert.match(visibleText(renderPage("pages/home/index", failed.data)), /今天聊了 用量暂未统计/);
+  assert.match(visibleText(renderPage("pages/home/index", failed.data)), /用量暂未统计/);
 });
 
-test("home ring reads 未设置 when the signed profile carries a session cap but no daily budget", async () => {
+test("home usage chip reads 未设上限 when the signed profile carries a session cap but no daily budget", async () => {
   const { data } = await loadHome({
     api: {
       getRuntimeProfile: async () => ({
@@ -122,9 +107,42 @@ test("home ring reads 未设置 when the signed profile carries a session cap bu
   assert.equal(data.usageLimitMinutes, null);
   assert.equal(data.quietHoursLabel, "");
   const text = visibleText(renderPage("pages/home/index", data));
-  assert.match(text, /未设置 每天上限 今天聊了 18 分钟/);
+  assert.match(text, /今天聊了 18 分钟 · 未设上限/);
   assert.match(text, /安静时段 未设置/);
   assert.doesNotMatch(text, /21:00|\b30\b/);
+});
+
+test("home hero puts the chosen companion on screen and follows the device state", async () => {
+  const profileWith = (companionId) => async () => ({ user_id: "u_parent", display_name: "乐乐妈妈", companion_id: companionId });
+  const awake = await loadHome();
+  assert.equal(awake.data.heroRoleId, "starlight");
+  assert.equal(awake.data.heroState, "awake");
+  assert.equal(awake.data.heroAnimated, true);
+  const awakeHtml = renderPage("pages/home/index", awake.data);
+  assert.match(awakeHtml, /home-hero role-starlight is-awake/);
+  assert.match(awakeHtml, /\/assets\/mascots\/starlight\/default\.png/);
+  assert.match(visibleText(awakeHtml), /在线 星澜 轻点机器人屏幕就能聊/);
+
+  const quietProfile = {
+    ...fx.RUNTIME_PROFILE,
+    obligations: [{ code: "QUIET_HOURS", params: { quiet_hours: ["19:00", "07:00"] } }, fx.RUNTIME_PROFILE.obligations[1]],
+  };
+  const quiet = await loadHome({ api: { getRuntimeProfile: async () => quietProfile, getProfile: profileWith("taoxi") } });
+  assert.equal(quiet.data.heroState, "quiet");
+  assert.equal(quiet.data.heroAnimated, false);
+  const quietHtml = renderPage("pages/home/index", quiet.data);
+  assert.match(quietHtml, /home-hero role-taoxi is-quiet/);
+  assert.match(quietHtml, /\/assets\/mascots\/taoxi\/sleepy\.png/);
+  assert.match(visibleText(quietHtml), /安静时段 桃喜 休息中 · 19:00 – 次日 07:00/);
+
+  const offline = await loadHome({
+    api: { getActivationStatus: async () => ({ status: "offline", network: { internet: false } }), getProfile: profileWith("mianmian") },
+  });
+  assert.equal(offline.data.heroState, "offline");
+  assert.equal(offline.data.heroDim, true);
+  const offlineHtml = renderPage("pages/home/index", offline.data);
+  assert.match(offlineHtml, /fb-dim/);
+  assert.match(visibleText(offlineHtml), /离线 绵绵 设备连上网后回来，回顾照常可看/);
 });
 
 test("home counts all recent summaries and today's conversations separately", async () => {
@@ -135,7 +153,8 @@ test("home counts all recent summaries and today's conversations separately", as
     data.memoryPreviews.map((item) => item.text),
     ["讲了《大熊和森林里的悄悄话》", "聊到了幼儿园的新朋友", "一起数了天上的星星"],
   );
-  assert.match(visibleText(renderPage("pages/home/index", data)), /今天对话 0 次 近期摘要 4 条/);
+  assert.equal(data.highlightLabel, "最近一次 · 10 月 14 日");
+  assert.match(visibleText(renderPage("pages/home/index", data)), /最近一次 · 10 月 14 日 近期摘要 4 条 讲了《大熊和森林里的悄悄话》/);
   const empty = await loadHome({ api: { getChildSessionSummaries: async () => ({ items: [] }), getMemoryDays: async () => ({ items: [] }) } });
   assert.equal(empty.data.summaryCount, 0);
   assert.equal(empty.data.todayCount, 0);
@@ -147,7 +166,7 @@ test("home pins the attention card with its time and the open-to-pin meta", asyn
   assert.equal(data.unreadSafetyCopy, "有一条需要你关注的对话");
   assert.equal(data.unreadSafetyMeta, "今天 19:42 · 打开时首页会置顶显示");
   const body = renderPage("pages/home/index", data).replace(/<style>[\s\S]*?<\/style>/, "");
-  assert.ok(body.indexOf("有一条需要你关注的对话") < body.indexOf("home-usage-card"), "attention card renders above the usage ring");
+  assert.ok(body.indexOf("有一条需要你关注的对话") < body.indexOf("home-hero"), "attention card renders above the companion hero");
   const calm = await loadHome({ api: fx.safetyAlertApi([]) });
   assert.equal(calm.data.unreadSafetyAlert, false);
   assert.doesNotMatch(renderPage("pages/home/index", calm.data), /需要你关注/);
@@ -168,10 +187,10 @@ test("home shows the safety subscribe card only while subscription push is enabl
   assert.match(onText, /安静时段 21:00 – 次日 07:00/);
 });
 
-test("home memory card previews the latest summary and opens child memory", async () => {
+test("home memory row opens child memory without repeating the highlight", async () => {
   const { data } = await loadHome();
   const text = visibleText(renderPage("pages/home/index", data));
-  assert.match(text, /孩子的记忆 最近：讲了《大熊和森林里的悄悄话》/);
+  assert.match(text, /孩子的记忆 近期摘要和记住的事/);
   assert.match(renderPage("pages/home/index", data), /class="card home-row-card" data-tap/);
 });
 

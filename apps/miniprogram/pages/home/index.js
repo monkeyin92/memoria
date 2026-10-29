@@ -29,10 +29,11 @@ const {
   SAFETY_SUBSCRIBE_HELPER,
   alertTimeLabel,
   buildTrialDeviceCard,
+  heroState,
+  homeHighlight,
   memoryPreviewItems,
   pinnedAlertMeta,
-  usageCenterCopy,
-  usageRingStyle,
+  usageChipLabel,
 } = require("../../utils/trial-device-card");
 
 function guestGreeting() {
@@ -78,10 +79,8 @@ function emptyDashboard() {
     personaSummary: companion.description,
     devicePlaceName: "我的设备",
     heroRoleId: defaultCompanionId,
+    ...heroState({ online: false }),
     pageLede: formatDateLabel(),
-    heroTitle: "给今天，留一点回味。",
-    heroCaption: "在设备旁唤醒「茉莉」。需要记住的事，稍后确认。",
-    heroFoot: "在设备上使用，手机不录音",
     pendingCount: 0,
     todayCount: 0,
     todayMeta: "",
@@ -92,6 +91,7 @@ function emptyDashboard() {
     childMemoryMinorId: "",
     childMemoryName: "",
     memoryPreviews: [],
+    ...homeHighlight(),
     safetyAlertId: "",
     statusPill: "离线",
     statusLine: "离线 · 已绑定",
@@ -99,8 +99,7 @@ function emptyDashboard() {
     usageUsedMinutes: null,
     usageLimitMinutes: null,
     usageFillPercent: 0,
-    usageRingStyle: usageRingStyle(null, null),
-    ...usageCenterCopy(null, null),
+    usageChipLabel: usageChipLabel(null, null),
     summaryCount: 0,
     avatarGlyph: "M",
     subscriptionPushEnabled: SUBSCRIPTION_PUSH_ENABLED,
@@ -138,7 +137,6 @@ Page({
     loginGatedActions: LOGIN_GATED_ACTIONS,
     authenticated: false,
     ...emptyDashboard(),
-    todoExpanded: true,
   },
 
   onLoad() {
@@ -162,10 +160,6 @@ Page({
     if (typeof this.getTabBar === "function" && this.getTabBar()) {
       this.getTabBar().setData({ selected: 0, hidden: !authenticated });
     }
-  },
-
-  toggleTodo() {
-    this.setData({ todoExpanded: !this.data.todoExpanded });
   },
 
   onUnload() {
@@ -592,13 +586,15 @@ Page({
       personaVoice,
       personaSummary,
       heroRoleId: companion.id,
+      heroState: trialCard.heroState,
+      heroAnimated: trialCard.heroAnimated,
+      heroMood: trialCard.heroMood,
+      heroDim: trialCard.heroDim,
+      heroPill: trialCard.heroPill,
+      heroPillClass: trialCard.heroPillClass,
+      heroLine: trialCard.heroLine,
       devicePlaceName: placeName,
       pageLede: formatDateLabel(),
-      heroTitle: online ? "给今天，留一点回味。" : "等它回来，记录还在。",
-      heroCaption: online
-        ? `在设备旁唤醒「${settings?.wake_word_display || "茉莉"}」。需要记住的事，稍后确认。`
-        : "可查看已同步的回顾。设备恢复连接后再记录。",
-      heroFoot: online ? "在设备上使用，手机不录音" : "绑定关系不受影响",
       pendingCount: todayView.pendingCount || 0,
       todayCount,
       todayMeta: todayView.todayMeta || "",
@@ -612,6 +608,11 @@ Page({
       childMemoryMinorId: boundChild?.personId || "",
       childMemoryName: childName,
       memoryPreviews,
+      ...homeHighlight({
+        todayCount,
+        todayOverview: todayView.todayOverview,
+        memoryPreviews,
+      }),
       safetyAlertId: unread?.newest.notificationId || "",
       statusPill: trialCard.statusPill,
       statusLine: trialCard.statusLine,
@@ -619,9 +620,7 @@ Page({
       usageUsedMinutes: trialCard.usageUsedMinutes,
       usageLimitMinutes: trialCard.usageLimitMinutes,
       usageFillPercent: trialCard.usageFillPercent,
-      usageRingStyle: trialCard.usageRingStyle,
-      usageCenterLabel: trialCard.usageCenterLabel,
-      usageCapLabel: trialCard.usageCapLabel,
+      usageChipLabel: trialCard.usageChipLabel,
       quietHoursLabel: trialCard.quietHoursLabel,
       nightModeOn: trialCard.nightModeOn,
       showSafetyNightCard: offerSafety,

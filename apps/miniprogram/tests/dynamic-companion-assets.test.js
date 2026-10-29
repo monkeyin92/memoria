@@ -71,17 +71,17 @@ test("the full expression frame set stays out of the package and out of pages", 
   }
 });
 
-test("v4 home keeps the mascot off the dashboard; settings keep none", () => {
+test("home hero shows the chosen companion through face-badge; settings keep none", () => {
   const home = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
   const homeJson = require("../pages/home/index.json");
   const device = fs.readFileSync(path.join(root, "pages/device/index.wxml"), "utf8");
   const memory = fs.readFileSync(path.join(root, "pages/child-memory/index.wxml"), "utf8");
-  assert.doesNotMatch(home, /<face-badge/);
-  assert.deepEqual(homeJson.usingComponents, { "mp-icon": "/components/mp-icon/index" });
+  assert.match(home, /class="card card-xl home-hero role-\{\{heroRoleId\}\}[^"]*"[\s\S]*<face-badge[\s\S]*role="\{\{heroRoleId\}\}"/);
+  assert.equal(homeJson.usingComponents["face-badge"], "/components/face-badge/index");
   assert.doesNotMatch(device, /<face-badge/);
   assert.doesNotMatch(home, /<device-screen/);
   assert.doesNotMatch(device, /<device-screen/);
-  assert.match(home, /class="card card-xl home-usage-card" bindtap="openDevice"/);
+  assert.match(home, /class="home-usage-chip" bindtap="openDevice"/);
   assert.match(device, /trialSettingsVisible|inset-group/);
   assert.match(memory, /<face-badge/);
   assert.match(memory, /mood="thinking"|mood="happy"/);

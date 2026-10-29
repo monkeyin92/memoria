@@ -53,13 +53,13 @@ test("home page is a status board without rooms or realtime chat", () => {
   assert.doesNotMatch(template, /startVoice|startText|sendText|可直接对话/);
   assert.doesNotMatch(template, /先了解怎么用|openHowItWorks|家中的设备/);
   assert.match(template, /wx:if="\{\{!authenticated\}\}"[\s\S]*guestHome\.features/);
-  assert.match(template, /home-usage-card|home-ring/);
-  assert.match(template, /home-stat[\s\S]*近期摘要/);
+  assert.match(template, /home-hero[\s\S]*<face-badge/);
+  assert.match(template, /home-today[\s\S]*近期摘要/);
   assert.doesNotMatch(template, /今日摘要/);
   assert.match(template, /home-toggle-card|安静时段/);
   assert.match(template, /unreadSafetyCopy|unreadSafetyAlert/);
   assert.doesNotMatch(template, /status-chips|glass-icon|battery|电量/);
-  assert.match(template, /usagePercent|usageDisplayMinutes|home-usage/);
+  assert.match(template, /home-usage-chip[\s\S]*usageChipLabel/);
   assert.match(script, /subscribeAuthCleared\(\(\) => this\._enterGuestState\(\)\)/);
   assert.doesNotMatch(script, /待在设备上确认/);
   assert.doesNotMatch(script, /resolveSessionSubject/);
@@ -99,10 +99,43 @@ test("profile has no voice-sample entry points after voice-clone removal", () =>
   assert.doesNotMatch(template, /评估/);
 });
 
-test("online hero caption names the device's configured wake word", () => {
-  const script = fs.readFileSync(path.join(root, "pages/home/index.js"), "utf8");
-  assert.match(script, /唤醒「\$\{settings\?\.wake_word_display \|\| "茉莉"\}」/);
-  assert.doesNotMatch(script, /\? "在设备旁唤醒「茉莉」/);
+test("home hero state, usage chip and highlight read the device and summary state", () => {
+  const { heroState, homeHighlight, usageChipLabel } = require("../utils/trial-device-card");
+  assert.deepEqual(heroState({ online: true }), {
+    heroState: "awake",
+    heroAnimated: true,
+    heroMood: "default",
+    heroDim: false,
+    heroPill: "在线",
+    heroPillClass: "pill-online",
+    heroLine: "轻点机器人屏幕就能聊",
+  });
+  const quiet = heroState({ online: true, inQuietHours: true, quietHoursLabel: "21:00 – 次日 07:00" });
+  assert.equal(quiet.heroState, "quiet");
+  assert.equal(quiet.heroMood, "sleepy");
+  assert.equal(quiet.heroLine, "休息中 · 21:00 – 次日 07:00");
+  // 离线优先：设备不在线时不管是不是安静时段都显示离线。
+  const offline = heroState({ online: false, inQuietHours: true });
+  assert.equal(offline.heroState, "offline");
+  assert.equal(offline.heroDim, true);
+  assert.equal(offline.heroPill, "离线");
+
+  assert.equal(usageChipLabel(18, 30), "今天聊了 18 / 30 分钟");
+  assert.equal(usageChipLabel(18, null), "今天聊了 18 分钟 · 未设上限");
+  assert.equal(usageChipLabel(null, 30), "用量暂未统计 · 每天上限 30 分钟");
+  assert.equal(usageChipLabel(null, null), "用量暂未统计");
+
+  const previews = [{ text: "一起数了星星", dateLabel: "10 月 13 日" }];
+  assert.deepEqual(homeHighlight({ todayCount: 2, todayOverview: "聊了恐龙", memoryPreviews: previews }), {
+    highlightLabel: "今天聊了 2 次",
+    highlightText: "聊了恐龙",
+  });
+  assert.deepEqual(homeHighlight({ todayCount: 0, memoryPreviews: previews }), {
+    highlightLabel: "最近一次 · 10 月 13 日",
+    highlightText: "一起数了星星",
+  });
+  assert.equal(homeHighlight({ memoryPreviews: [{ text: "x", dateLabel: "最近" }] }).highlightLabel, "最近一次");
+  assert.equal(homeHighlight().highlightLabel, "今天还没聊");
 });
 
 test("trial device card helper uses profile quiet hours and usage limit", () => {

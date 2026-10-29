@@ -4,6 +4,7 @@
   "backgroundColor": "#F7F2EB",
   "enablePullDownRefresh": true,
   "usingComponents": {
-    "mp-icon": "/components/mp-icon/index"
+    "mp-icon": "/components/mp-icon/index",
+    "face-badge": "/components/face-badge/index"
   }
 }
