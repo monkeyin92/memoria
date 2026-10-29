@@ -328,6 +328,8 @@ def maybe_rearm_grace_on_evidence(
     """
     if context.pending.turn_endpoint_sample is None:
         return False
+    if context.pending.final_vad_endpoint_pinned is not None:
+        return False
     if not _semantic_tail_enabled(registry):
         return False
 

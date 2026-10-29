@@ -52,6 +52,10 @@ class PendingTurn:
     turn_endpoint_grace_deadline: float | None = None
     turn_endpoint_tail_deadline: float | None = None
     turn_endpoint_timeout_handle: asyncio.TimerHandle | None = None
+    # Armed by the first final with no device VAD end: the commit waits at most this long for that signal.
+    final_vad_end_wait_handle: asyncio.TimerHandle | None = None
+    # The endpoint the final wait committed at; a later device VAD end must not move it.
+    final_vad_endpoint_pinned: int | None = None
     # A turn that already has text, reopened by a later vad.start: the
     # text-covered endpoint to fall back to, the transcript end it had, and
     # the bounded window for the new speech to produce any text of its own.
@@ -160,6 +164,10 @@ class PendingTurn:
         if self.turn_endpoint_timeout_handle is not None:
             self.turn_endpoint_timeout_handle.cancel()
             self.turn_endpoint_timeout_handle = None
+        if self.final_vad_end_wait_handle is not None:
+            self.final_vad_end_wait_handle.cancel()
+            self.final_vad_end_wait_handle = None
+        self.final_vad_endpoint_pinned = None
         self.clear_commit_retry()
         self.turn_start_sample = None
         self.turn_input_fence = None

@@ -282,8 +282,7 @@ class MediaTurnEndpointMixin:
         self._maybe_early_commit_live_lookup(context, result)
         self._maybe_early_commit_conversation_close(context, result)
         self._maybe_endpoint_playback_followup(context, result)
-        # A provider final is evidence, never the endpoint itself. If VAD has
-        # already ended, a late final re-arms the same logical-turn commit.
+        # A provider final is evidence, never the endpoint itself. If VAD has already ended, a late final re-arms the same logical-turn commit.
         if context.pending.turn_endpoint_sample is not None:
             maybe_rearm_grace_on_evidence(self, context, result.text)
             self._schedule_turn_commit(context)
@@ -860,6 +859,7 @@ class MediaTurnEndpointMixin:
     @staticmethod
     def _clear_pending_turn_state(context: _MediaVoiceSession) -> None:
         context.pending.reset()
+        context.runtime.begin_turn_verdicts()
         context.missed_hearing_nudge_count = 0
         context.last_missed_hearing_nudge_at = None
 

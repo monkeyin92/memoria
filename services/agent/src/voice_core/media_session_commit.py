@@ -77,6 +77,11 @@ media_pb2: Any = _media_pb2
 _CLOSE_RECOVERY_MIN_RESCUE_RMS = 1_000
 _CLOSE_RECOVERY_MIN_RESCUE_PEAK_ABS = 8_000
 
+# After an accepted final the commit waits at most this long for the device VAD end.  Soak
+# 20261029-200043: the slow turns spent 1.0-2.0 s there while ASR already had the sentence.
+_FINAL_VAD_END_WAIT_S = 0.3
+_FINAL_VAD_END_WAIT_SAMPLES = 4_800  # 300 ms of 16 kHz uplink past the final
+
 
 def _elapsed_ms(started: float) -> int:
     return int((time.monotonic() - started) * 1000)
@@ -451,6 +456,7 @@ class MediaSessionCommitMixin:
         if accepted.is_final:
             self._release_empty_turn_pin_for_final(context, accepted)
             self._observe_final_asr_result(context, accepted)
+            self._arm_final_vad_end_wait(context, accepted)
             self._maybe_pin_playback_stop(context, accepted, source="final")
         else:
             self._observe_partial_asr_result(context, accepted)
@@ -460,6 +466,91 @@ class MediaSessionCommitMixin:
             # A spoken stop waits for its final: a partial 「等一下」 may still
             # grow into 「等一下我想问…」, whose rest must not be dropped.
         return decision
+
+    def _arm_final_vad_end_wait(self, context: _MediaVoiceSession, result: ASRResult) -> None:
+        """Bound how long the commit waits for the device VAD end after a final.
+
+        The final already carries the endpoint evidence.  The wait is spent on the uplink the device also sends
+        its VAD end on: only once the stream has moved past the final does a missing end mean the commit may go
+        ahead at the ASR-covered endpoint.  A turn that is still growing, and a reply still in flight, keep the
+        old wait.
+        """
+
+        pending = context.pending
+        playback_end = context.last_playback_end_sample
+        if (
+            context.identity.client_type != "device"
+            or pending.turn_endpoint_sample is not None
+            or pending.final_vad_end_wait_handle is not None
+            or pending.turn_start_sample is None
+            or pending.turn_end_sample is None
+            or pending.turn_end_sample < result.capture_end_sample
+            or self._reply_in_flight(context)
+            or (playback_end is not None and result.capture_start_sample < playback_end)
+        ):
+            # The last clause is the playback echo margin: a final there may be the reply's own tail.
+            return
+        self._schedule_final_vad_end_wait(context)
+
+    def _schedule_final_vad_end_wait(self, context: _MediaVoiceSession) -> None:
+        pending = context.pending
+        pending.final_vad_end_wait_handle = asyncio.get_running_loop().call_later(
+            _FINAL_VAD_END_WAIT_S,
+            self._commit_final_without_vad_end,
+            context.identity.session_id,
+            context.stream_epoch,
+            pending.turn_start_sample,
+            pending.turn_end_sample,
+        )
+
+    def _commit_final_without_vad_end(
+        self,
+        session_id: str,
+        stream_epoch: int,
+        turn_start_sample: int | None,
+        armed_end_sample: int | None,
+    ) -> None:
+        context = self._sessions.get(session_id)
+        if context is None:
+            return
+        pending = context.pending
+        pending.final_vad_end_wait_handle = None
+        if (
+            context.closed
+            or context.standby_requested
+            or context.stream_epoch != stream_epoch
+            or pending.turn_endpoint_sample is not None
+            or pending.turn_start_sample != turn_start_sample
+            or turn_start_sample is None
+            or pending.turn_end_sample is None
+            or pending.turn_end_sample <= turn_start_sample
+        ):
+            return
+        if pending.turn_end_sample != armed_end_sample or pending.pending_partial is not None:
+            # The sentence grew after the wait was armed: wait again from its new end.
+            self._schedule_final_vad_end_wait(context)
+            return
+        if (
+            int(getattr(context.asr, "last_sent_sample", 0) or 0) - pending.turn_end_sample
+            < _FINAL_VAD_END_WAIT_SAMPLES
+        ):
+            # The uplink has not moved past the final, so its VAD end cannot be overdue yet.
+            self._schedule_final_vad_end_wait(context)
+            return
+        endpoint = pending.turn_end_sample
+        pending.turn_endpoint_sample = endpoint
+        pending.turn_retire_sample = max(pending.turn_retire_sample or 0, endpoint)
+        pending.final_vad_endpoint_pinned = endpoint
+        pending.turn_endpoint_grace_deadline = time.monotonic()
+        logger.info(
+            "media final committed without device VAD end session=%s stream_epoch=%s "
+            "endpoint=%s waited_s=%.1f",
+            session_id,
+            stream_epoch,
+            endpoint,
+            _FINAL_VAD_END_WAIT_S,
+        )
+        self._schedule_turn_commit(context)
 
     @staticmethod
     def _release_empty_turn_pin_for_final(
