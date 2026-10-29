@@ -628,6 +628,31 @@ async def test_device_question_begun_before_playback_end_is_answered_without_vad
 
 
 @pytest.mark.asyncio
+async def test_device_comma_final_inside_an_open_vad_after_playback_does_not_end_the_turn() -> None:
+    """Soak 2026-10-29 t042: a final at a comma, 62 s after playback, ended the turn."""
+
+    async def script(harness: _StoryHarness) -> None:
+        await harness.utterance("你好", frames=25)
+        await harness.wait_for(lambda: harness.count("audio") >= 1)
+        await harness.audio_frames(60)
+        await harness.playback_ended()
+        await harness.audio_frames(60)
+        await harness.vad_start(harness.sample)
+        await harness.audio_frames(25, final_text="我又回来啦，")
+        await asyncio.sleep(1.5)
+        await harness.audio_frames(25, final_text="你还记得我今天画的什么吗？")
+        await harness.vad_end(harness.sample)
+        await harness.wait_for(lambda: harness.story.reply_calls >= 2, timeout=5.0)
+        await asyncio.sleep(1.5)
+        assert _user_turn_texts(harness.context) == [
+            "你好",
+            "我又回来啦， 你还记得我今天画的什么吗？",
+        ]
+
+    await _run_story(_device_identity("comma-final-in-open-vad"), script, story_call=0)
+
+
+@pytest.mark.asyncio
 async def test_device_farewell_during_story_still_ends_the_session() -> None:
     async def script(harness: _StoryHarness) -> None:
         await harness.start_story()

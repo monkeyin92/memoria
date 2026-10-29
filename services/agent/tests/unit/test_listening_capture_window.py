@@ -470,6 +470,33 @@ async def test_accepted_speech_restarts_the_thirty_second_capture_window(
 
 
 @pytest.mark.asyncio
+async def test_capture_window_does_not_close_on_a_child_mid_sentence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _clock()
+    registry, context, provider, identity = await _open(monkeypatch, clock)
+    try:
+        session = registry.bridge._connections[identity.session_id].session
+        clock["now"] = 1_028.0
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=48_000, segment_id="mid-sentence"),
+                capture_end_sample=49_280,
+            ),
+        )
+        assert context.runtime.interaction_phase is InteractionPhase.USER_SPEAKING
+
+        clock["now"] = 1_031.0
+        await registry._audio_ingress.accept(context, _frame(identity, 1, 49_281))
+        await _ingested(provider, 1)
+        assert context.listening_capture_hold is False
+        assert context.runtime.interaction_phase is InteractionPhase.USER_SPEAKING
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("already_latched", [False, True])
 async def test_empty_asr_retire_admits_the_next_vad_after_the_capture_window(
     monkeypatch: pytest.MonkeyPatch,
