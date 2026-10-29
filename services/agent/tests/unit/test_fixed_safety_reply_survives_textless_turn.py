@@ -10,11 +10,9 @@ Production C1 (bridge ``bf245ed1``, session ``a6b8d6ac``, 2026-10-21 03:51:53Z):
 - 03:51:55.555 ``prepared reply dropped cause=textless_turn_over`` ->
   ``status=aborted reason=superseded emitted_audio=False``.
 
-The child heard nothing.  The scenarios below replay that order inside the media
-session: the reply is held before its first PCM, a VAD edge opens a wordless turn
-that endpoint-commits as ``empty_media_turn`` while the reply waits, and the
-script is only released afterwards.  A fixed safety script must still be spoken;
-an ordinary reply keeps its previous behaviour, and real words still win.
+The scenarios below replay that order: the reply is ready behind a wordless turn
+that produced no ASR text.  Such a turn no longer holds the reply (soak
+2026-10-29), so the script speaks at once; words on the turn still take the floor.
 """
 
 from __future__ import annotations
@@ -26,7 +24,6 @@ from typing import Any
 
 import pytest
 from services.agent.src.contracts.ids import GenerationFence
-from services.agent.src.voice_core import media_session_output_stream, media_session_turns
 from services.agent.src.voice_core.media_protocol import SessionIdentity
 from services.agent.src.voice_core.media_session import MediaReplyChunk
 from services.agent.tests.unit.test_media_session_golden import (
@@ -42,11 +39,6 @@ from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
 
 DISPLAY = CRISIS_SELF_SCRIPT.display
 ORDINARY = "从前有一座山。"
-# The wordless turn is retired by the (shortened) evidence-less cap before the reply
-# is released: C1 released the script 1.9 s after the edge, past the 1 s cap.
-HOLD_RETIRE_S = 1.2
-# The pre-C1 hold cap retired an empty turn about a second after it opened; C1
-# released the script 1.9 s after the edge, so the release lands after the cap.
 
 
 class _FixedScriptProvider(_ScriptedProvider):
@@ -105,13 +97,6 @@ class _Scene(_Harness):
     def terminals(self) -> list[str]:
         return [d["terminal_event"] for d in self.deliveries if d["terminal_event"]]
 
-    def wordless_turn_is_gone(self) -> bool:
-        state = self.registry.session_state(self.identity.session_id)
-        return (
-            state.pending.turn_start_sample is None
-            and state.runtime.output_floor_allows_assistant
-        )
-
     async def prepare_reply(self) -> GenerationFence:
         await self.utterance(QUESTION, frames=25)
         await self.wait_for(lambda: self.gated.reply_calls == 1)
@@ -128,17 +113,16 @@ async def _run(scene: _Scene, body: Any) -> None:
         await scene.close()
 
 
-async def _answer_after_the_wordless_turn(scene: _Scene) -> None:
-    """C1 order: the edge opens and commits empty while the reply waits, then the reply is ready."""
+async def _speak_after_the_wordless_edge(scene: _Scene) -> None:
+    """C1 order: the edge opens while the reply waits, and the reply is ready with no words."""
 
     await scene.prepare_reply()
     await scene.vad_start(scene.sample)
+    scene.gated.gate.set()
+    await scene.wait_for(scene.first_frame_sent, timeout=2.0)
+    # The empty edge ends after the script started; it must not take it back.
     await scene.audio_frames(3, final_text="")
     await scene.vad_end(scene.sample)
-    # C1: the cap retired the wordless turn first; the script's first packet came
-    # 1.9 s after the edge, behind a reply the child had never heard.
-    await asyncio.sleep(HOLD_RETIRE_S)
-    scene.gated.gate.set()
 
 
 def _scene(name: str, *, text: str = DISPLAY, fixed_safety: bool = True) -> _Scene:
@@ -148,27 +132,16 @@ def _scene(name: str, *, text: str = DISPLAY, fixed_safety: bool = True) -> _Sce
     )
 
 
-@pytest.fixture
-def short_hold(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The pre-C1 evidence-less cap: an empty turn is retired about a second after it opens."""
-
-    monkeypatch.setattr(media_session_turns, "_EVIDENCE_LESS_HOLD_BASE_S", 0.5)
-    monkeypatch.setattr(media_session_turns, "_EVIDENCE_LESS_HOLD_VAD_EXTENSION_S", 0.3)
-    monkeypatch.setattr(media_session_turns, "_EVIDENCE_LESS_HOLD_MAX_S", 1.0)
-
-
 @pytest.mark.asyncio
 async def test_a_wordless_turn_does_not_drop_the_prepared_crisis_script(
-    short_hold: None,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """C1: the script is ready after the noise edge emptied a turn; the child must hear it."""
+    """C1: the script is ready behind the noise edge; the child must hear it at once."""
 
     scene = _scene("c1-crisis-script")
 
     async def body(current: _Scene) -> None:
-        await _answer_after_the_wordless_turn(current)
-        await current.wait_for(current.first_frame_sent, timeout=8.0)
+        await _speak_after_the_wordless_edge(current)
         await current.settle()
 
         assert "preempted" not in current.terminals()
@@ -178,10 +151,10 @@ async def test_a_wordless_turn_does_not_drop_the_prepared_crisis_script(
 
     messages = [record.getMessage() for record in caplog.records]
     joined = " ".join(messages)
-    # The wordless turn existed and the reply waited behind it ...
-    assert "prepared reply held for a user turn with no words" in joined
-    # ... and the C1 drop is not what ended the wait.
-    assert "cause=textless_turn_over" not in joined
+    # The wordless turn existed, and the script went out without waiting on it.
+    assert "prepared reply released past a user turn with no words" in joined
+    assert "prepared reply held for a user turn with no words" not in joined
+    assert "evidence-less floor hold capped" not in joined
     # Never the child's words or the script itself.
     for message in messages:
         assert QUESTION not in message
@@ -228,28 +201,3 @@ async def test_words_on_the_new_turn_still_take_the_floor_from_the_script() -> N
         assert current.terminals() == ["preempted"]
 
     await _run(scene, body)
-
-
-@pytest.mark.asyncio
-async def test_the_script_release_is_logged_without_the_childs_words(
-    short_hold: None,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """The C1 wait still leaves a diagnosable trace when a safety script is released."""
-
-    scene = _scene("c1-crisis-trace")
-
-    async def body(current: _Scene) -> None:
-        await _answer_after_the_wordless_turn(current)
-        await current.wait_for(current.first_frame_sent, timeout=8.0)
-
-    with caplog.at_level(logging.INFO, logger=media_session_output_stream.logger.name):
-        await _run(scene, body)
-
-    lines = [r.getMessage() for r in caplog.records]
-    released = [line for line in lines if "prepared reply released" in line]
-    assert len(released) == 1
-    assert "session=c1-crisis-trace" in released[0]
-    for line in lines:
-        assert QUESTION not in line
-        assert DISPLAY not in line
