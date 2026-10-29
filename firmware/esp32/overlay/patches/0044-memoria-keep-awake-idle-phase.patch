@@ -1,0 +1,30 @@
+diff --git a/main/application.cc b/main/application.cc
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -7,6 +7,9 @@
+ #include "mcp_server.h"
+ #include "mqtt_protocol.h"
+ #include "memoria/memoria_power_policy.h"
++#if CONFIG_MEMORIA_KEEP_AWAKE
++extern "C" const char memoria_keep_awake_build_marker[];
++#endif
+ #include "memoria/memoria_wake_mode.h"
+ #include "memoria/memoria_wake_word.h"
+ #include "memoria_protocol.h"
+@@ -1349,10 +1352,14 @@
+ 
+ void Application::ArmIdleWakeWord() {
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
+-    // Tap-only product: never arm keyword wake. Mic stays closed until a tap
+-    // starts (or resumes) a conversation.
++    // Tap-only product: never arm keyword wake.
+     audio_service_.EnableWakeWordDetection(false);
++#if CONFIG_MEMORIA_KEEP_AWAKE
++    ESP_LOGW(TAG, "wifi hold suppressed %s", memoria_keep_awake_build_marker);
++#else
++    // Mic stays closed until a tap starts (or resumes) a conversation.
+     memoria::PowerPolicyRegistry::GetInstance().SetPhase(memoria::PowerPhase::kWifiHold);
++#endif
+ #else
+     audio_service_.EnableWakeWordDetection(true);
+ #endif

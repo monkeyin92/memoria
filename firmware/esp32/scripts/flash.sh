@@ -26,8 +26,8 @@ Usage: flash.sh [--port /dev/cu.*|auto] [--monitor] [--build] [--clean] [--bench
                Without it a bench build in the tree is refused, and with it a product
                build is refused. The two never swap places by accident.
   --keep-awake Flash the remote-test image (build.sh --keep-awake, CONFIG_MEMORIA_KEEP_AWAKE).
-               Chip deep sleep stays off. The microphone stays closed until a screen tap
-               or USB wake. A keep-awake build in the tree is refused without this flag,
+               Chip deep sleep stays off. Screen-off and idle entry do not enter wifi
+               hold. A keep-awake build in the tree is refused without this flag,
                and this flag refuses a product or bench build. Do not combine with --bench.
   --image      Write this file at offset 0. A name containing DANGER_FULL_ERASE or
                merged.bin, and any file that covers memoria_identity, is refused

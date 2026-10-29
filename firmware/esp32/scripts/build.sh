@@ -33,8 +33,8 @@ with --bench.
 
 --keep-awake builds the remote-test image from config.keep-awake.json: the
 product build plus CONFIG_MEMORIA_KEEP_AWAKE. Chip deep sleep stays off so
-USB serial remains enumerated. The microphone stays closed until a screen
-tap or USB wake. Artifacts are memoria-esp-vocat-keep-awake-*.bin. The
+USB serial remains enumerated. Screen-off and idle entry do not enter
+wifi hold. Artifacts are memoria-esp-vocat-keep-awake-*.bin. The
 firmware publisher refuses them. Do not combine with --bench.
 EOF
 }
@@ -93,7 +93,7 @@ if [[ "$BENCH" == 1 ]]; then
 elif [[ "$KEEP_AWAKE" == 1 ]]; then
     artifact_name="$MEMORIA_BOARD_NAME-keep-awake"
     printf '%s\n' \
-        '*** KEEP-AWAKE BUILD: chip deep sleep is off (CONFIG_MEMORIA_KEEP_AWAKE). The mic stays closed until a screen tap or USB wake. ***' \
+        '*** KEEP-AWAKE BUILD: chip deep sleep is off (CONFIG_MEMORIA_KEEP_AWAKE). Screen-off and idle entry do not enter wifi hold. ***' \
         '*** For a remote test device only: never publish it, never ship it. ***' >&2
 fi
 

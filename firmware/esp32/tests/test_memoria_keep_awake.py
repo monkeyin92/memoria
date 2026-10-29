@@ -127,13 +127,10 @@ def _patched_hunk(patch: str, must_contain: str) -> str:
 def test_keep_awake_idle_arm_does_not_enter_wifi_hold() -> None:
     assert IDLE_ARM_PATCH.is_file()
     patch = _read(IDLE_ARM_PATCH)
-    removed = [
-        line[1:]
-        for line in patch.splitlines()
-        if line.startswith("-") and not line.startswith("---")
-    ]
-    assert "SetPhase(memoria::PowerPhase::kWifiHold)" in "\n".join(removed)
+    assert 'extern "C" const char memoria_keep_awake_build_marker[];' in patch
     body = _patched_hunk(patch, "void Application::ArmIdleWakeWord()")
+    before_gate = body.split("#if CONFIG_MEMORIA_KEEP_AWAKE", 1)[0]
+    assert "SetPhase" not in before_gate
     assert body.count("#if CONFIG_MEMORIA_KEEP_AWAKE") == 1
     assert body.count("#else") == 2
     assert body.count("#endif") == 2
