@@ -1,10 +1,22 @@
 <view class="page-shell tab-page home-v4" style="{{statusBarStyle}}">
   <view wx:if="{{!authenticated}}" class="home-guest">
-    <text class="page-title">{{guestHome.productTitle}}</text>
-    <text class="page-lede">{{guestHome.productBody}}</text>
-    <view class="card guest-features">
-      <view wx:for="{{guestHome.features}}" wx:key="id" class="guest-feature">
-        <text class="home-card-title">{{item.title}}</text>
+    <view class="card card-xl guest-hero">
+      <view class="guest-stage" aria-hidden="true">
+        <view class="guest-fig guest-fig-axu"><face-badge role="axu" size="tile" plain="{{true}}"></face-badge></view>
+        <view class="guest-fig guest-fig-xuanmo"><face-badge role="xuanmo" size="tile" plain="{{true}}"></face-badge></view>
+        <view class="guest-fig guest-fig-taoxi"><face-badge role="taoxi" size="md" plain="{{true}}" mood="happy"></face-badge></view>
+        <view class="guest-fig guest-fig-mianmian"><face-badge role="mianmian" size="md" plain="{{true}}"></face-badge></view>
+        <view class="guest-fig guest-fig-lead"><face-badge role="starlight" size="hero" plain="{{true}}" animated="{{true}}"></face-badge></view>
+      </view>
+      <view class="guest-hero-body">
+        <text class="guest-brand">{{guestHome.productTitle}}</text>
+        <text class="guest-lede">{{guestHome.productBody}}</text>
+        <view class="guest-features">
+          <view wx:for="{{guestHome.features}}" wx:key="id" class="guest-feature">
+            <image class="guest-feature-icon" src="/assets/ui/v4/{{item.icon}}-accent.svg" />
+            <text>{{item.title}}</text>
+          </view>
+        </view>
       </view>
     </view>
     <view class="home-note guest-agreements">

@@ -5,10 +5,10 @@ const GUEST_HOME = Object.freeze({
   productTitle: "Memoria",
   productBody: "Memoria 是给 3 到 10 岁孩子的陪伴机器人。孩子在设备上使用，家长在手机上查看和管理。",
   features: Object.freeze([
-    Object.freeze({ id: "chat", title: "陪聊" }),
-    Object.freeze({ id: "offline-stories", title: "离线故事" }),
-    Object.freeze({ id: "time-limits", title: "每次和每天的时长上限" }),
-    Object.freeze({ id: "summaries", title: "家长能查看和删除聊天摘要" }),
+    Object.freeze({ id: "chat", title: "陪聊", icon: "wave" }),
+    Object.freeze({ id: "offline-stories", title: "离线故事", icon: "book" }),
+    Object.freeze({ id: "time-limits", title: "每次和每天的时长上限", icon: "moon" }),
+    Object.freeze({ id: "summaries", title: "家长能查看和删除聊天摘要", icon: "note" }),
   ]),
   agreements: Object.freeze([
     Object.freeze({ id: "terms", title: "用户服务协议", url: "/pages/user-agreement/index" }),

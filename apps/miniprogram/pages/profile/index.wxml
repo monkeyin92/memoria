@@ -20,7 +20,7 @@
     </view>
 
     <view class="card device-card" bindtap="openDevice">
-      <view class="device-art" aria-hidden="true"><image class="device-art-img" src="/assets/ui/v4/mascot-happy.jpg" mode="widthFix" /></view>
+      <view class="device-art" aria-hidden="true"><face-badge role="{{profile.companion_id}}" size="tile"></face-badge></view>
       <view class="row-copy">
         <text class="device-name">{{deviceName || '我的设备'}}</text>
         <view class="device-pill pill {{deviceBindingState === 'ready' || deviceBindingState === 'cached' ? 'pill-online' : 'pill-neutral'}}">{{deviceBindingStateLabel}}</view>

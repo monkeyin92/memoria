@@ -60,17 +60,78 @@
   margin-top: 16px;
 }
 
+.guest-hero {
+  margin-top: 8px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.guest-stage {
+  position: relative;
+  height: 208px;
+  background: linear-gradient(180deg, var(--mp-role-starlight-soft) 0%, var(--mp-accent-soft) 62%, var(--mp-surface) 100%);
+}
+
+.guest-fig {
+  position: absolute;
+}
+
+.guest-fig-lead {
+  left: 50%;
+  bottom: 20px;
+  z-index: 2;
+  margin-left: -65px;
+}
+
+.guest-fig-taoxi { left: 3%; bottom: 20px; }
+.guest-fig-mianmian { right: 3%; bottom: 20px; }
+.guest-fig-axu { left: 14%; top: 20px; }
+.guest-fig-xuanmo { right: 14%; top: 20px; }
+
+.guest-hero-body {
+  padding: 8px var(--mp-pad-card-lg) var(--mp-pad-card-lg);
+}
+
+.guest-brand {
+  display: block;
+  color: var(--mp-ink);
+  font-size: var(--mp-type-display);
+  font-weight: 800;
+  letter-spacing: -0.6px;
+  line-height: var(--mp-lh-display);
+}
+
+.guest-lede {
+  display: block;
+  margin-top: 8px;
+  color: var(--mp-ink-2);
+  font-size: var(--mp-type-body);
+  line-height: var(--mp-lh-body);
+}
+
 .guest-features {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-top: 16px;
-  padding: 4px 0;
 }
 
 .guest-feature {
-  padding: 12px 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 12px 0 10px;
+  border-radius: var(--mp-radius-pill);
+  background: var(--mp-fill);
+  color: var(--mp-ink);
+  font-size: var(--mp-type-caption);
+  font-weight: 600;
 }
 
-.guest-feature + .guest-feature {
-  box-shadow: inset 0 1px 0 var(--mp-line);
+.guest-feature-icon {
+  width: 16px;
+  height: 16px;
 }
 
 .guest-agreements {
