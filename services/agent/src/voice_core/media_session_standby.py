@@ -314,6 +314,15 @@ class MediaSessionStandbyMixin:
                 cause="listening_capture_hold",
                 publish=True,
             )
+        self._publish_listening_closed(context)
+
+    def _publish_listening_closed(self, context: _MediaVoiceSession) -> None:
+        completed_ns = context.runtime._voice_floor.last_playback_completed_ns
+        logger.info(
+            "media listening closed session=%s silence_since_reply_s=%s",
+            context.identity.session_id,
+            None if completed_ns is None else f"{(time.monotonic_ns() - completed_ns) / 1e9:.1f}",
+        )
         context.runtime.publish_assistant_state("listening_closed")
 
     def hold_listening_capture_until_tap(self, context: _MediaVoiceSession) -> None:
@@ -331,7 +340,7 @@ class MediaSessionStandbyMixin:
         already_held = context.listening_capture_hold
         self._latch_listening_capture(context)
         if already_held:
-            context.runtime.publish_assistant_state("listening_closed")
+            self._publish_listening_closed(context)
 
     def resume_listening_capture(
         self,

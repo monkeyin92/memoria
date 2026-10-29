@@ -664,17 +664,25 @@ async def test_speech_after_the_capture_window_reopens_capture(
 @pytest.mark.parametrize("noise_after_reply_s", [None, 27.6])
 async def test_listening_closes_within_sixty_seconds_of_a_silent_room_after_the_reply(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
     noise_after_reply_s: float | None,
 ) -> None:
     clock = _clock()
     registry, context, provider, identity = await _open(monkeypatch, clock)
+    monkeypatch.setattr(
+        media_session_standby.time, "monotonic_ns", lambda: int(clock["now"] * 1e9)
+    )
+    caplog.set_level(logging.INFO, logger=media_session_standby.__name__)
     try:
         session = registry.bridge._connections[identity.session_id].session
         context.runtime.barge_in_enabled = False
         await context.runtime.on_assistant_speaking("reply")
         clock["now"] = 1_010.0
         reply_end = clock["now"]
-        context.runtime._voice_floor.update(assistant_speaking=False)
+        context.runtime._voice_floor.update(
+            assistant_speaking=False,
+            last_playback_completed_ns=int(reply_end * 1e9),
+        )
         context.runtime.set_interaction_phase(
             InteractionPhase.LISTENING,
             cause="media_playback_ack",
@@ -726,5 +734,9 @@ async def test_listening_closes_within_sixty_seconds_of_a_silent_room_after_the_
 
         assert closed_at, "listening_closed never published"
         assert closed_at[0] - reply_end <= 60.0
+        assert [r.getMessage() for r in caplog.records if "listening closed" in r.getMessage()] == [
+            f"media listening closed session={identity.session_id} "
+            f"silence_since_reply_s={closed_at[0] - reply_end:.1f}"
+        ]
     finally:
         await registry.finalize_session(identity.session_id)
