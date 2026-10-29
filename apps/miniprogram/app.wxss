@@ -25,7 +25,7 @@ page {
   --mp-ink: #231c17;
   --mp-ink-body: #3d352e;
   --mp-ink-2: #645a52;
-  --mp-ink-3: #786e66;
+  --mp-ink-3: #746a62;
   --mp-ink-4: #bdb3aa;
   --mp-line: #eee7df;
   --mp-fill: #f8f3ed;
