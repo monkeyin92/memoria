@@ -396,17 +396,16 @@ async def test_four_consecutive_rounds_keep_reply_audio_on_its_own_plan(
         assert _NORMAL_REPLY in backup.received
         assert pipeline.response_plans.get(fence) is not None
 
-        # Round 4: crisis. The approved prerecorded clip plays, no live voice.
+        # Round 4: the stored clip does not match the short script, so StepFun speaks it.
         primary.behavior = "audio"
         primary.received.clear()
         backup.received.clear()
-        fence, frames, reply_audio = await run_round(
-            _CRISIS_TEXT, expected_engine_count=0, spoken=""
-        )
+        fence, frames, reply_audio = await run_round(_CRISIS_TEXT, expected_engine_count=1)
         crisis_audio = catalog.get("crisis-self-v1")
-        assert crisis_audio is not None and crisis_audio.pcm
-        assert bytes(crisis_audio.pcm) in reply_audio
-        assert primary.received == []
+        assert crisis_audio is not None and crisis_audio.playable is False
+        assert b"\x01\x00" in reply_audio
+        assert primary.received == [CRISIS_SELF_SCRIPT.spoken]
+        assert backup.received == []
 
         text = "\n".join(record.message for record in caplog.records)
         assert "output_intent_not_selected" not in text
@@ -462,10 +461,11 @@ async def test_crisis_stop_plays_the_whole_script_then_the_closing_tone(
     speech, primary, _backup = _speech("audio", "audio")
     catalog = load_fixed_safety_audio_catalog(_DEFAULT_FIXED_SAFETY_DIR)
     crisis = catalog.get("crisis-self-v1")
-    assert crisis is not None and crisis.pcm
-    crisis_pcm = bytes(crisis.pcm)
+    assert crisis is not None and crisis.playable is False
+    # The doubled StepFun engine speaks one frame of this pattern when the clip is missing.
+    spoken_pcm = b"\x01\x00" * 480
     tone = notice.tone_pcm()
-    assert tone not in crisis_pcm
+    assert tone not in spoken_pcm
     cast(Any, speech).fixed_safety_catalog = catalog
     planner = _PlanPlanner()
     runtimes: dict[str, DuplexRuntime] = {}
@@ -554,14 +554,14 @@ async def test_crisis_stop_plays_the_whole_script_then_the_closing_tone(
 
         def clip_and_closing_sent() -> bool:
             audio = _audio_bytes(list(bridge.frames[start:]))
-            script_at = audio.find(crisis_pcm)
-            return script_at >= 0 and tone in audio[script_at + len(crisis_pcm) :]
+            script_at = audio.find(spoken_pcm)
+            return script_at >= 0 and tone in audio[script_at + len(spoken_pcm) :]
 
         await _wait_until(clip_and_closing_sent, timeout=40.0)
         await asyncio.gather(reply_task, return_exceptions=True)
         round_frames = list(bridge.frames[start:])
         audio = _audio_bytes(round_frames)
-        script_at, closing_at = _script_then_closing(audio, crisis_pcm, tone)
+        script_at, closing_at = _script_then_closing(audio, spoken_pcm, tone)
         script_generation = _generation_at(round_frames, script_at)
         closing_generation = _generation_at(round_frames, closing_at)
         completed = {item.generation_id for item in bridge.generation_completes[completes_before:]}
@@ -583,7 +583,7 @@ async def test_crisis_stop_plays_the_whole_script_then_the_closing_tone(
             ),
             timeout=5.0,
         )
-        assert primary.received == []
+        assert primary.received == [CRISIS_SELF_SCRIPT.spoken]
     finally:
         await registry.finalize_session(identity.session_id)
 
