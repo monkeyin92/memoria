@@ -358,7 +358,7 @@ class MediaSessionStandbyMixin:
         if context.listening_capture_hold or deadline is None or time.monotonic() <= deadline:
             return
         phase = context.runtime.interaction_phase
-        if phase not in (InteractionPhase.LISTENING, InteractionPhase.USER_SPEAKING):
+        if phase is not InteractionPhase.LISTENING:
             return
         self._latch_listening_capture(context)
 

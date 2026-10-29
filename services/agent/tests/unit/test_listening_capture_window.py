@@ -536,7 +536,7 @@ async def test_empty_asr_retire_admits_the_next_vad_after_the_capture_window(
 
         clock["now"] = 1_031.0
         if already_latched:
-            await registry._audio_ingress.accept(context, _frame(identity, 1, 70_000))
+            registry.hold_listening_capture_until_tap(context)
             assert context.listening_capture_hold is True
         with caplog.at_level(logging.INFO):
             await registry._expire_endpoint_tail(
