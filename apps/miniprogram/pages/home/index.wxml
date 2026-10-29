@@ -145,7 +145,7 @@
           </view>
           <switch
             checked="{{safetySubscribeKnown && safetySubscribeOn}}"
-            color="#4A52C9"
+            color="#B9481F"
             disabled="{{!safetySubscribeKnown || safetySubscribeBusy}}"
             bindchange="onSafetySubscribeChange"
           />

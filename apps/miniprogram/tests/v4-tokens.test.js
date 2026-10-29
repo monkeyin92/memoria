@@ -74,6 +74,6 @@ test("mp-icon tiles of 48px and up take the design's 16px inset radius", () => {
 test("app.wxss declares raw colours only inside the page token block", () => {
   const app = fs.readFileSync(path.join(root, "app.wxss"), "utf8");
   const tokenBlock = app.match(/^page \{[\s\S]*?^\}/m)[0];
-  assert.ok(tokenBlock.includes("--mp-accent: #4a52c9;"));
+  assert.ok(tokenBlock.includes("--mp-accent: #b9481f;"));
   assert.deepEqual(app.replace(tokenBlock, "").match(RAW_COLOR), null);
 });

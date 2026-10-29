@@ -37,7 +37,7 @@
       </view>
 
       <text class="field-label">语速（0.90 - 1.10）</text>
-      <slider min="90" max="110" step="1" value="{{rateValue}}" show-value="{{true}}" activeColor="#4A52C9" backgroundColor="#ECECF2" block-size="24" bindchange="onRateChange" />
+      <slider min="90" max="110" step="1" value="{{rateValue}}" show-value="{{true}}" activeColor="#B9481F" backgroundColor="#ECECF2" block-size="24" bindchange="onRateChange" />
 
       <text class="field-label">没有克隆声音时用谁的音色</text>
       <picker mode="selector" range="{{voiceOptions}}" range-key="name" value="{{voiceIndex}}" bindchange="onVoiceChange">

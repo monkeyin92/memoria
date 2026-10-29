@@ -47,13 +47,13 @@ const ICONS = {
 };
 
 const VARIANTS = {
-  "tab-off": { stroke: "#8E91A3", fill: "none" },
-  "tab-on": { stroke: "#4A52C9", fill: "#EEEFFC" },
-  accent: { stroke: "#4A52C9", fill: "none" },
-  strong: { stroke: "#16182B", fill: "none" },
-  ink: { stroke: "#5B5F73", fill: "none" },
-  faint: { stroke: "#B4B6C4", fill: "none" },
-  rust: { stroke: "#9A4732", fill: "none" },
+  "tab-off": { stroke: "#958B83", fill: "none" },
+  "tab-on": { stroke: "#B9481F", fill: "#FDF0E9" },
+  accent: { stroke: "#B9481F", fill: "none" },
+  strong: { stroke: "#231C17", fill: "none" },
+  ink: { stroke: "#645A52", fill: "none" },
+  faint: { stroke: "#BDB3AA", fill: "none" },
+  rust: { stroke: "#A6363A", fill: "none" },
   white: { stroke: "#FFFFFF", fill: "none" },
   "white-bold": { stroke: "#FFFFFF", fill: "none", width: 2.6 },
 };

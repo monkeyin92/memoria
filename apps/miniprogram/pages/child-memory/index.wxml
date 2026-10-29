@@ -70,7 +70,7 @@
         </view>
         <switch
           checked="{{archiveConsent.active}}"
-          color="#4A52C9"
+          color="#B9481F"
           disabled="{{working}}"
           bindchange="onArchiveConsentChange"
           aria-label="长期记忆"

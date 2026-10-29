@@ -1,37 +1,52 @@
 /* ============================================================
-   Memoria parent UI v4 tokens (docs/design/app-v4).
-   One indigo accent, light grey bg, white cards, 8pt grid, layered shadows.
+   Memoria parent UI v4 tokens (docs/design/app-v4, brand pass docs/design.md).
+   Warm paper bg, white cards, one terracotta brand accent, 8pt grid, layered shadows.
+   Each companion owns a role colour (--mp-role-<id>); a `.role-<id>` class on a
+   container points --mp-role / --mp-role-soft at it, so the plush hero tints follow
+   the child's chosen companion while buttons and links stay on the brand accent.
    Lengths are the design's px, not rpx, so the 390 pt frame renders 1:1 like an iOS
    layout instead of scaling with screen width. Page styles use these tokens only.
    ============================================================ */
 page {
-  --mp-bg: #f4f4f7;
+  --mp-bg: #f7f2eb;
   --mp-surface: #ffffff;
-  --mp-accent: #4a52c9;
-  --mp-accent-soft: #eeeffc;
+  --mp-accent: #b9481f;
+  --mp-accent-soft: #fdf0e9;
   --mp-on-accent: #ffffff;
-  --mp-rust: #9a4732;
-  --mp-rust-bg: #fbeee9;
-  --mp-rust-ink: #8a5848;
-  --mp-rust-deep: #7a3d2c;
-  --mp-rust-tile: #f5dcd3;
+  --mp-rust: #a6363a;
+  --mp-rust-bg: #fcecea;
+  --mp-rust-ink: #8c4f4a;
+  --mp-rust-deep: #7d2b2e;
+  --mp-rust-tile: #f7d9d7;
   --mp-sage: #23805f;
   --mp-sage-bg: #e7f4ee;
   --mp-sun: #7f5a00;
   --mp-sun-bg: #fbf1d6;
-  --mp-ink: #16182b;
-  --mp-ink-body: #34374d;
-  --mp-ink-2: #5b5f73;
-  --mp-ink-3: #7a7e92;
-  --mp-ink-4: #b4b6c4;
-  --mp-line: #ececf1;
-  --mp-fill: #f4f4f8;
-  --mp-fill-art: #f1f2f6;
-  --mp-track: #ececf2;
-  --mp-scrim: rgba(22, 24, 43, 0.42);
-  --mp-tabbar-bg: rgba(250, 250, 252, 0.86);
-  --mp-tab-ink: #8e91a3;
-  --mp-hairline: rgba(22, 24, 43, 0.06);
+  --mp-ink: #231c17;
+  --mp-ink-body: #3d352e;
+  --mp-ink-2: #645a52;
+  --mp-ink-3: #786e66;
+  --mp-ink-4: #bdb3aa;
+  --mp-line: #eee7df;
+  --mp-fill: #f8f3ed;
+  --mp-fill-art: #f4ede5;
+  --mp-track: #efe7de;
+  --mp-scrim: rgba(35, 28, 23, 0.42);
+  --mp-tabbar-bg: rgba(252, 249, 245, 0.88);
+  --mp-tab-ink: #958b83;
+  --mp-hairline: rgba(35, 28, 23, 0.06);
+  --mp-role-starlight: #4b57c8;
+  --mp-role-starlight-soft: #ebeffa;
+  --mp-role-taoxi: #c24a6e;
+  --mp-role-taoxi-soft: #fdeef2;
+  --mp-role-mianmian: #3f7d50;
+  --mp-role-mianmian-soft: #ecf5ee;
+  --mp-role-axu: #9a5f27;
+  --mp-role-axu-soft: #f8eee2;
+  --mp-role-xuanmo: #5b6838;
+  --mp-role-xuanmo-soft: #eef0e6;
+  --mp-role: var(--mp-role-starlight);
+  --mp-role-soft: var(--mp-role-starlight-soft);
   --mp-radius-card: 24px;
   --mp-radius-card-xl: 32px;
   --mp-radius-inset: 16px;
@@ -47,15 +62,15 @@ page {
   --mp-icon: 40px;
   --mp-tab-clearance: calc(88px + 24px + env(safe-area-inset-bottom));
   --mp-page-foot: calc(32px + env(safe-area-inset-bottom));
-  --mp-shadow-card: 0 1px 2px rgba(22, 24, 43, 0.04),
-    0 8px 24px -8px rgba(22, 24, 43, 0.08),
-    0 24px 48px -24px rgba(22, 24, 43, 0.1);
-  --mp-shadow-float: 0 2px 8px rgba(22, 24, 43, 0.08);
-  --mp-shadow-thumb: 0 2px 8px rgba(22, 24, 43, 0.18), 0 0 0 0.5px rgba(22, 24, 43, 0.08);
-  --mp-shadow-button: 0 1px 2px rgba(22, 24, 43, 0.06), 0 8px 24px -12px rgba(22, 24, 43, 0.12);
-  --mp-shadow-hero: 0 24px 48px -24px rgba(22, 24, 43, 0.35);
-  --mp-hero-scrim: rgba(16, 18, 48, 0.32);
-  --mp-shadow-selected: 0 0 0 2px var(--mp-accent), 0 8px 24px -8px rgba(74, 82, 201, 0.25);
+  --mp-shadow-card: 0 1px 2px rgba(60, 38, 18, 0.04),
+    0 8px 24px -8px rgba(60, 38, 18, 0.08),
+    0 24px 48px -24px rgba(60, 38, 18, 0.1);
+  --mp-shadow-float: 0 2px 8px rgba(60, 38, 18, 0.08);
+  --mp-shadow-thumb: 0 2px 8px rgba(60, 38, 18, 0.18), 0 0 0 0.5px rgba(60, 38, 18, 0.08);
+  --mp-shadow-button: 0 1px 2px rgba(60, 38, 18, 0.06), 0 8px 24px -12px rgba(60, 38, 18, 0.12);
+  --mp-shadow-hero: 0 24px 48px -24px rgba(60, 38, 18, 0.35);
+  --mp-hero-scrim: rgba(40, 24, 12, 0.32);
+  --mp-shadow-selected: 0 0 0 2px var(--mp-accent), 0 8px 24px -8px rgba(185, 72, 31, 0.25);
   --mp-type-num-xl: 40px;
   --mp-type-display: 32px;
   --mp-type-headline: 24px;
@@ -86,6 +101,13 @@ page {
 
 button::after { border: none; }
 button { font-family: inherit; }
+
+/* 陪伴角色色：容器加 role-<companion id>，内部用 --mp-role / --mp-role-soft。 */
+.role-starlight { --mp-role: var(--mp-role-starlight); --mp-role-soft: var(--mp-role-starlight-soft); }
+.role-taoxi { --mp-role: var(--mp-role-taoxi); --mp-role-soft: var(--mp-role-taoxi-soft); }
+.role-mianmian { --mp-role: var(--mp-role-mianmian); --mp-role-soft: var(--mp-role-mianmian-soft); }
+.role-axu { --mp-role: var(--mp-role-axu); --mp-role-soft: var(--mp-role-axu-soft); }
+.role-xuanmo { --mp-role: var(--mp-role-xuanmo); --mp-role-soft: var(--mp-role-xuanmo-soft); }
 
 /* ---------- 页面骨架 ---------- */
 .page-shell {
@@ -263,7 +285,7 @@ button { font-family: inherit; }
 }
 .primary-button {
   color: var(--mp-on-accent);
-  background: var(--mp-ink);
+  background: var(--mp-accent);
 }
 .primary-button:active,
 .secondary-button:active { transform: scale(0.98); opacity: 0.9; }

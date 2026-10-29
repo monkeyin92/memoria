@@ -138,8 +138,8 @@ test("trial device card helper uses profile quiet hours and usage limit", () => 
 
 test("parent v4 tokens live in app.wxss and pages avoid third-party art", () => {
   const appWxss = fs.readFileSync(path.join(root, "app.wxss"), "utf8");
-  assert.match(appWxss, /--mp-bg:\s*#f4f4f7/i);
-  assert.match(appWxss, /--mp-accent:\s*#4a52c9/i);
+  assert.match(appWxss, /--mp-bg:\s*#f7f2eb/i);
+  assert.match(appWxss, /--mp-accent:\s*#b9481f/i);
   assert.match(appWxss, /--mp-surface:\s*#ffffff/i);
   assert.match(appWxss, /--mp-shadow-card/);
   const surfaces = [

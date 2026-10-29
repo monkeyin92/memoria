@@ -81,7 +81,7 @@ test("the usage ring fills today's share of the daily budget", async () => {
   const scenario = PAGES.find((item) => item.slug === "device");
   const { data } = await scenarioData(scenario);
   const html = renderPage(scenario.page, data);
-  assert.match(html, /class="device-ring"[^>]*style="[^"]*conic-gradient\(#4A52C9 0% 60%, #ECECF2 60% 100%\)/);
+  assert.match(html, /class="device-ring"[^>]*style="[^"]*conic-gradient\(var\(--mp-accent\) 0% 60%, var\(--mp-track\) 60% 100%\)/);
 });
 
 test("a missing per-session cap displays 15 minutes and the slider rests on 15", async () => {

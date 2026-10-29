@@ -1,7 +1,7 @@
 {
   "navigationBarTitleText": "孩子的记忆",
   "navigationStyle": "custom",
-  "backgroundColor": "#F4F4F7",
+  "backgroundColor": "#F7F2EB",
   "enablePullDownRefresh": true,
   "usingComponents": {
     "face-badge": "/components/face-badge/index",

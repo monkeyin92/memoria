@@ -13,7 +13,7 @@ function usageFillPercent(usedMinutes, limitMinutes) {
 
 function usageRingStyle(usedMinutes, limitMinutes) {
   const percent = usageFillPercent(usedMinutes, limitMinutes);
-  return `background:conic-gradient(#4A52C9 0% ${percent}%, #ECECF2 ${percent}% 100%)`;
+  return `background:conic-gradient(var(--mp-accent) 0% ${percent}%, var(--mp-track) ${percent}% 100%)`;
 }
 
 function usageCenterCopy(usedMinutes, limitMinutes) {
