@@ -270,8 +270,7 @@ class MediaSessionStandbyMixin:
     def _open_listening_capture(self, context: _MediaVoiceSession) -> None:
         if context.listening_capture_hold or not self._listening_capture_armed(context):
             return
-        if context.listening_capture_deadline is None:
-            context.listening_capture_deadline = time.monotonic() + self.listening_capture_window_s
+        context.listening_capture_deadline = time.monotonic() + self.listening_capture_window_s
 
     def _restart_listening_capture(self, context: _MediaVoiceSession) -> None:
         if context.listening_capture_hold or not self._listening_capture_armed(context):
