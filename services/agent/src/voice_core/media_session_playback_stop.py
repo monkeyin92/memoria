@@ -498,6 +498,8 @@ class MediaPlaybackStopMixin:
                 context.pending.playback_followup_endpoint_sample = endpoint
                 if context.pending.followup_pin_monotonic is None:
                     context.pending.followup_pin_monotonic = time.monotonic()
+                # The follow-up grew: its sentence changed, so verdicts ask again.
+                context.runtime.begin_turn_verdicts()
                 context.pending.restart_endpoint_bounds(playback_followup_grace_s())
                 logger.info(
                     "media playback-followup endpoint advanced session=%s "

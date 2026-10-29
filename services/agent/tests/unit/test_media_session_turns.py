@@ -5845,7 +5845,7 @@ async def test_media_playback_followup_names_the_sentence_to_the_provider_before
     assert window.provider.prepared == []  # the commit has not begun
     await _wait_until(lambda: window.provider.prepared == ["后天呢"], timeout=3.0)
     assert window.provider.warmed == ["后天呢"]
-    assert context.pending.turn_endpoint_sample is None  # committed
+    await _wait_until(lambda: context.pending.turn_endpoint_sample is None, timeout=3.0)
 
 
 @pytest.mark.asyncio

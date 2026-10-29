@@ -12,10 +12,19 @@ from collections.abc import Awaitable, Callable
 
 
 class DuplexRuntimeClassifierMixin:
+    session_id: str
     _live_lookup_cache: dict[str, bool]
     _live_lookup_semantic_resolver: Callable[[str], Awaitable[bool]] | None
     _conversation_close_cache: dict[str, bool]
     _conversation_close_semantic_resolver: Callable[[str], Awaitable[bool]] | None
+    _turn_verdict_key: str | None
+    _turn_verdict_serial: int
+
+    def begin_turn_verdicts(self) -> None:
+        """Open a verdict scope for the next turn; a settled verdict answers only the turn that asked."""
+
+        self._turn_verdict_serial += 1
+        self._turn_verdict_key = f"{self.session_id}:{self._turn_verdict_serial}"
 
     async def close_classifier_calls(self) -> None:
         """Cancel the verdict calls still in flight; nothing may outlive the runtime."""
@@ -38,6 +47,7 @@ class DuplexRuntimeClassifierMixin:
             query,
             cache=self._live_lookup_cache,
             semantic_resolver=self._live_lookup_semantic_resolver,
+            turn_key=self._turn_verdict_key,
         )
 
     def live_lookup_needed(self, query: str, *, start_verdict: bool = False) -> bool:
@@ -53,6 +63,7 @@ class DuplexRuntimeClassifierMixin:
                 query,
                 cache=self._live_lookup_cache,
                 semantic_resolver=self._live_lookup_semantic_resolver,
+                turn_key=self._turn_verdict_key,
             )
         return live_lookup_needed(query, cache=self._live_lookup_cache)
 
@@ -74,6 +85,7 @@ class DuplexRuntimeClassifierMixin:
             cache=self._conversation_close_cache,
             semantic_resolver=self._conversation_close_semantic_resolver,
             log_wait=log_wait,
+            turn_key=self._turn_verdict_key,
         )
 
     def start_conversation_close_verdict(self, text: str) -> None:
@@ -85,6 +97,7 @@ class DuplexRuntimeClassifierMixin:
             text,
             cache=self._conversation_close_cache,
             semantic_resolver=self._conversation_close_semantic_resolver,
+            turn_key=self._turn_verdict_key,
         )
 
     def conversation_close_needed(self, text: str) -> bool:

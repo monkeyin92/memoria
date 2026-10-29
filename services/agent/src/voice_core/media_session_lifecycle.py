@@ -489,6 +489,7 @@ class MediaSessionLifecycleMixin:
                 device_wake_ack_pending=identity.client_type == "device",
             )
             runtime.set_device_conversation_controls(identity.client_type == "device")
+            runtime.begin_turn_verdicts()
             runtime.orchestrator.delegation.queue_while_floor_blocked = True
             delegation_starter = getattr(provider, "start_delegation", None)
             output_intent_acceptor = getattr(provider, "accept_output_intent", None)

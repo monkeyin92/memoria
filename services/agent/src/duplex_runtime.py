@@ -234,9 +234,7 @@ class DuplexRuntime(
     RUNTIME_PROFILE_REFRESH_TIMEOUT_S: float = 0.8
     _pending_tool_results: int = 0
     _enroll_fence: GenerationFence | None = None
-    _formal_enrollment: _InactiveFormalEnrollment = field(
-        default_factory=_InactiveFormalEnrollment
-    )
+    _formal_enrollment: _InactiveFormalEnrollment = field(default_factory=_InactiveFormalEnrollment)
     _formal_enrollment_sample_sink: (
         Callable[[bytes, int], Coroutine[Any, Any, None]] | None
     ) = None
@@ -246,6 +244,8 @@ class DuplexRuntime(
     _live_lookup_semantic_resolver: Callable[[str], Awaitable[bool]] | None = None
     _conversation_close_cache: dict[str, bool] = field(default_factory=conversation_close_cache)
     _conversation_close_semantic_resolver: Callable[[str], Awaitable[bool]] | None = None
+    _turn_verdict_key: str | None = None
+    _turn_verdict_serial: int = 0
     _interaction_prefetch_epoch: int | None = None
     _interaction_context_prefetch_key: tuple[int, str] | None = None
     _context_prefetch_text: str = ""

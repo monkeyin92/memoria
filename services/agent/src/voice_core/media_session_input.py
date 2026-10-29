@@ -666,6 +666,15 @@ class MediaSessionInputMixin:
                         voiced_end_sample,
                     )
                     return
+                if context.pending.final_vad_endpoint_pinned is not None:
+                    logger.info(
+                        "media vad_end ignored after final-wait commit session=%s "
+                        "pinned_endpoint=%s voiced_end=%s",
+                        context.identity.session_id,
+                        context.pending.final_vad_endpoint_pinned,
+                        voiced_end_sample,
+                    )
+                    return
                 if (
                     context.pending.live_query_forced_authoritative
                     and context.pending.live_query_forced_text
@@ -692,9 +701,15 @@ class MediaSessionInputMixin:
                     voiced_end_sample,
                 )
                 if context.pending.turn_endpoint_sample != previous_endpoint:
+                    if previous_endpoint is not None:
+                        # The turn grew past its first endpoint: the sentence changed, so verdicts ask again.
+                        context.runtime.begin_turn_verdicts()
                     if context.pending.turn_endpoint_timeout_handle is not None:
                         context.pending.turn_endpoint_timeout_handle.cancel()
                         context.pending.turn_endpoint_timeout_handle = None
+                    if context.pending.final_vad_end_wait_handle is not None:
+                        context.pending.final_vad_end_wait_handle.cancel()
+                        context.pending.final_vad_end_wait_handle = None
                     context.pending.turn_endpoint_grace_deadline = None
                     context.pending.turn_endpoint_tail_deadline = None
                     context.pending.child_speech_ended_mono = speech_end_monotonic(
