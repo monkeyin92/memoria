@@ -33,10 +33,9 @@ from services.common.companions import (
 from services.common.crisis_policy import (
     CrisisRoute,
     crisis_semantic_candidate,
-    log_fixed_safety_reply,
     route_crisis,
 )
-from services.common.crisis_reply import CRISIS_GUARD_PASSED, resolve_crisis_reply
+from services.common.crisis_reply import CRISIS_GUARD_PASSED, speak_routed_script
 from services.common.failure_log import failure_log
 from services.common.realtime_information import (
     current_local_time,
@@ -1893,9 +1892,7 @@ def _response_plan_payload(
             "model": frozen.fallback_voice_model,
         }
     )
-    reason_codes = _epistemic_reason_codes(plan)
-    if crisis_guard_passed and CRISIS_GUARD_PASSED not in reason_codes:
-        reason_codes = [*reason_codes, CRISIS_GUARD_PASSED]
+    reason_codes = _epistemic_reason_codes(plan) + ([CRISIS_GUARD_PASSED] if crisis_guard_passed else [])
     instructions, included_evolution_artifacts = _instruction_text(
         frozen=frozen,
         plan=plan,
@@ -2118,25 +2115,10 @@ async def response_plan(
     evolution_protocol = (
         _EVOLUTION_PROTOCOL_V1 if evolution_protocol_header == _EVOLUTION_PROTOCOL_V1 else ""
     )
-    # Safety reads only the current utterance, before cache, scope, recall,
-    # and companion context. A crisis hit may spend the reply budget on one
-    # guarded draft. The short script is what remains when that draft fails.
     crisis = await _route_crisis_with_bounded_evidence(request, body.query)
     script = crisis.script
-    spoken = None
-    if script is not None:
-        spoken = await resolve_crisis_reply(
-            query=body.query,
-            script=script,
-            model=getattr(request.app.state, "crisis_reply_model", None),
-        )
-        if spoken.kind == "fallback":
-            log_fixed_safety_reply(logger, crisis)
-        else:
-            logger.info(
-                "crisis_reply kind=dynamic template_id=%s",
-                script.template_id,
-            )
+    spoken = await speak_routed_script(logger, crisis, body.query, getattr(
+        request.app.state, "crisis_reply_model", None))
     cache = _response_plan_cache(request)
     # Resolve the subject before the cache key.  A plan computed for the
     # previous person must not answer after the device switches subject, even
@@ -2185,17 +2167,9 @@ async def response_plan(
         except AccountDeletingError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         now = _local_now(settings)
-        fixed_reply = (
-            spoken.text
-            if spoken is not None
-            else fixed_reply_for_query(
-                query=body.query,
-                frozen=frozen,
-                now=now,
-                settings=settings,
-                request=request,
-                session_id=body.session_id,
-            )
+        fixed_reply = spoken.text if spoken is not None else fixed_reply_for_query(
+            query=body.query, frozen=frozen, now=now, settings=settings,
+            request=request, session_id=body.session_id,
         )
         # The subject was resolved once, before the cache key, and decides the
         # category, the consent lookup, the memory scope and the notification

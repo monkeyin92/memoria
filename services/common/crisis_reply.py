@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
+from services.common.crisis_policy import CrisisRoute, log_fixed_safety_reply
 from services.common.fixed_safety_scripts import FixedSafetyScript, speak_hotline_digits
 
 CrisisReplyKind = Literal["dynamic", "fallback"]
@@ -177,3 +179,19 @@ async def _review(
     if accepted:
         return ()
     return ("semantic_reject",)
+
+
+async def speak_routed_script(
+    logger: logging.Logger,
+    route: CrisisRoute,
+    query: str,
+    model: CrisisReplyModel | None,
+) -> CrisisSpoken | None:
+    if route.script is None:
+        return None
+    spoken = await resolve_crisis_reply(query=query, script=route.script, model=model)
+    if spoken.kind == "fallback":
+        log_fixed_safety_reply(logger, route)
+    else:
+        logger.info("crisis_reply kind=dynamic template_id=%s", route.script.template_id)
+    return spoken

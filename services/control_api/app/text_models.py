@@ -8,7 +8,9 @@ DeepSeek models, so there every task uses ``DEEPSEEK_FAST_MODEL``.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from services.agent.src.providers.crisis_reply_model import (
     CrisisReplyModel,
@@ -121,6 +123,21 @@ def build_crisis_semantic_classifier(
             thinking_mode=endpoint.thinking_mode,
         )
     )
+
+
+def install_crisis_models(
+    app: Any,
+    settings: ControlSettings,
+    on_close: Callable[[Callable[[], object]], None],
+) -> None:
+    for name, build in (
+        ("crisis_semantic_classifier", build_crisis_semantic_classifier),
+        ("crisis_reply_model", build_crisis_reply_model),
+    ):
+        model = build(settings)
+        setattr(app.state, name, model)
+        if model is not None:
+            on_close(model.aclose)
 
 
 def build_crisis_reply_model(settings: ControlSettings) -> CrisisReplyModel | None:
